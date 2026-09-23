@@ -354,6 +354,15 @@ export function workerRowsOfFire(rows: readonly AuditWireEntry[], fireSessions: 
   });
 }
 
+export function workerSessionIdsOfFire(rows: readonly AuditWireEntry[], fireSessions: readonly string[]): readonly string[] {
+  const ids = new Set<string>();
+  for (const r of workerRowsOfFire(rows, fireSessions)) {
+    const id = dstr(r, "worker");
+    if (id !== undefined && id.length > 0) ids.add(id);
+  }
+  return [...ids];
+}
+
 export const CONNECTION_SEARCH_TOOL = "connection_search";
 
 export interface FireOpCalls {
@@ -378,33 +387,97 @@ export function fireOpCalls(events: readonly TranscriptWireEvent[], op: string):
   return { discovered, called };
 }
 
+const NOTION_REST_SKILL = "notion-rest";
+const NOTION_REST_SCRIPT = "notion.mjs";
+
+export function transcriptTookRestRoad(events: readonly TranscriptWireEvent[]): boolean {
+  for (const e of events) {
+    if (e.type !== "actions.requested") continue;
+    const actions = (e.data as { actions?: unknown } | null)?.actions;
+    if (!Array.isArray(actions)) continue;
+    for (const action of actions as { toolName?: unknown; input?: unknown }[]) {
+      const input = JSON.stringify(action?.input ?? null);
+      if (action?.toolName === "load_skill" && input.includes(NOTION_REST_SKILL)) return true;
+      if (action?.toolName === "bash" && input.includes(NOTION_REST_SCRIPT)) return true;
+    }
+  }
+  return false;
+}
+
+export interface ArmSessionTranscript {
+  readonly sessionId: string;
+  readonly role: "fire" | "worker";
+  readonly events: readonly TranscriptWireEvent[];
+}
+
+export interface ArmOpCalls {
+  readonly discoveredBy: readonly string[];
+  readonly calledBy: readonly string[];
+  readonly restBy: readonly string[];
+}
+
+export function armOpCalls(transcripts: readonly ArmSessionTranscript[], op: string): ArmOpCalls {
+  const discoveredBy: string[] = [];
+  const calledBy: string[] = [];
+  const restBy: string[] = [];
+  for (const t of transcripts) {
+    const who = `${t.role} ${t.sessionId}`;
+    const calls = fireOpCalls(t.events, op);
+    if (calls.discovered) discoveredBy.push(who);
+    if (calls.called) calledBy.push(who);
+    if (transcriptTookRestRoad(t.events)) restBy.push(who);
+  }
+  return { discoveredBy, calledBy, restBy };
+}
+
+export function attendedRowsForOp(rows: readonly AuditWireEntry[], op: string): readonly AuditWireEntry[] {
+  return rows.filter((r) => {
+    if (r.action !== "approval.requested" && r.action !== "approval.chain") return false;
+    const kind = dstr(r, "kind");
+    return dstr(r, "tool") === op || (kind !== undefined && kind.includes(op));
+  });
+}
+
 export function unattendedArmRoad(args: {
   readonly planeRows: number;
   readonly workerRows: readonly AuditWireEntry[];
   readonly fireSessions: readonly string[];
   readonly op: string;
-  readonly fireEvents?: readonly TranscriptWireEvent[];
+  readonly transcripts?: readonly ArmSessionTranscript[];
+  readonly attendedRows?: number;
 }): UnattendedArmRoad {
   const road = workerRoadForOp(workerRowsOfFire(args.workerRows, args.fireSessions), args.op);
   const fires = `fire session(s) ${JSON.stringify(args.fireSessions)}`;
-  const calls = fireOpCalls(args.fireEvents ?? [], args.op);
+  const calls = armOpCalls(args.transcripts ?? [], args.op);
+  const attended = args.attendedRows ?? 0;
+  const seen: string[] = [];
+  if (calls.calledBy.length === 0 && calls.discoveredBy.length > 0) {
+    seen.push(`${calls.discoveredBy.join(", ")} discovered the op (${CONNECTION_SEARCH_TOOL} returned ${args.op}) and no session called it`);
+  }
+  if (calls.restBy.length > 0) seen.push(`${calls.restBy.join(", ")} took the REST road (loaded the ${NOTION_REST_SKILL} skill or ran its ${NOTION_REST_SCRIPT} script)`);
+  const transcriptClause = seen.length === 0 ? "" : `; the transcripts say: ${seen.join("; ")}`;
+  const rosterNote =
+    road.workers === 0
+      ? args.planeRows === 0
+        ? calls.discoveredBy.length > 0
+          ? `the fire discovered the op (${CONNECTION_SEARCH_TOOL} returned ${args.op}) and made no op call, and delegated to no worker — the road was open and the fire did not take it (${fires})`
+          : `the fire called no connector tool and delegated to no worker (${fires})`
+        : `the fire delegated to no worker (${fires})`
+      : road.mounted
+        ? `${road.workers} worker(s) of the fire ran and at least one MOUNTED ${args.op}, so the connector road was open to the work (${fires})${transcriptClause}`
+        : road.explained === 0
+          ? `${road.workers} worker(s) of the fire ran, none mounted ${args.op}, and NO roster could be read whole (a non-array tools list, or one the emitter truncated) — an unreadable roster cannot say which road the seat took (${fires})${transcriptClause}`
+          : `NO CONNECTOR CALL HAPPENED: ${road.workers} worker(s) of the fire ran and none mounted ${args.op} (one roster: ${JSON.stringify(road.sample)}) — the fire took another road, so the fence was never on it (${fires})${transcriptClause}`;
   const note =
     args.fireSessions.length === 0
       ? `no ${FIRE_ATTRS_SEEN_ACTION} row in this window names the fire's session, so no worker roster can be attributed to the fire`
-      : road.workers === 0
-        ? args.planeRows === 0
-          ? calls.called
-            ? `the fire CALLED ${args.op} and the connector plane carries no row for it — the fence was on the road and recorded nothing (${fires})`
-            : calls.discovered
-              ? `the fire discovered the op (${CONNECTION_SEARCH_TOOL} returned ${args.op}) and made no op call, and delegated to no worker — the road was open and the fire did not take it (${fires})`
-              : `the fire called no connector tool and delegated to no worker (${fires})`
-          : `the fire delegated to no worker (${fires})`
-        : road.mounted
-          ? `${road.workers} worker(s) of the fire ran and at least one MOUNTED ${args.op}, so the connector road was open to the work (${fires})`
-          : road.explained === 0
-            ? `${road.workers} worker(s) of the fire ran, none mounted ${args.op}, and NO roster could be read whole (a non-array tools list, or one the emitter truncated) — an unreadable roster cannot say which road the seat took (${fires})`
-            : `NO CONNECTOR CALL HAPPENED: ${road.workers} worker(s) of the fire ran and none mounted ${args.op} (one roster: ${JSON.stringify(road.sample)}) — the fire took another road, so the fence was never on it (${fires})`;
-  const verdict: UnattendedArmVerdict = args.planeRows > 0 ? "measured" : !road.mounted && road.explained > 0 ? "not-proven" : "unexplained";
+      : args.planeRows === 0 && attended > 0
+        ? `ATTENDED PATH, A PRODUCT FINDING: ${attended} approval.requested/approval.chain row(s) name ${args.op} and the connector plane carries no fence row — the call took the card path instead of connector.refused (ask-unattended) or connector.unattended_lift, so the fire's unattended mark did not reach the session that called. This is not "no road" (${fires})`
+        : args.planeRows === 0 && calls.calledBy.length > 0
+          ? `${calls.calledBy.join(", ")} CALLED ${args.op} and the connector plane carries no row for it — the fence was on the road and recorded nothing (${fires})`
+          : rosterNote;
+  const verdict: UnattendedArmVerdict =
+    args.planeRows > 0 ? "measured" : attended > 0 || calls.calledBy.length > 0 ? "unexplained" : !road.mounted && road.explained > 0 ? "not-proven" : "unexplained";
   return { verdict, note, road };
 }
 

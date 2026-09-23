@@ -187,6 +187,9 @@ import {
   unattendedArmRoad,
   FIRE_ATTRS_SEEN_ACTION,
   fireSessionIds,
+  workerSessionIdsOfFire,
+  attendedRowsForOp,
+  type ArmSessionTranscript,
   unifiedTurnSessionId,
   wakeIdForVendorInstant,
   WORKER_TOOLSET_ACTION,
@@ -7878,32 +7881,35 @@ export const SCENARIOS: readonly Scenario[] = [
       };
 
       const connectorRows = async (sinceIso: string) => {
-        const all = await auditRead({ sinceIso, actions: ["connector.refused", "connector.unattended_lift", "approval.requested"] });
-        return { all, ...splitFenceRows(all, OP) };
+        const all = await auditRead({ sinceIso, actions: ["connector.refused", "connector.unattended_lift", "approval.requested", "approval.chain"] });
+        return { all, ...splitFenceRows(all, OP), attended: attendedRowsForOp(all, OP) };
       };
 
-      const armRoad = async (arm: "A" | "B", sinceIso: string, planeRows: number) => {
+      const armRoad = async (arm: "A" | "B", sinceIso: string, planeRows: number, attendedRows: number) => {
         const fireSessions = fireSessionIds(
           await auditRead({ sinceIso, actions: [FIRE_ATTRS_SEEN_ACTION], limit: 200 }).catch(() => {
             ctx.log(`S-ROUTINE-CONNECTOR-WRITE arm ${arm}: the ${FIRE_ATTRS_SEEN_ACTION} read failed — no roster can be attributed to the fire, which keeps an empty plane HARD`);
             return [];
           }),
         );
-        const fireEvents: TranscriptWireEvent[] = [];
+        const workerRows = await auditRead({ sinceIso, actions: [WORKER_TOOLSET_ACTION], limit: 200 }).catch(() => {
+          ctx.log(`S-ROUTINE-CONNECTOR-WRITE arm ${arm}: the ${WORKER_TOOLSET_ACTION} read failed — reading the window as carrying no roster, which keeps an empty plane HARD`);
+          return [];
+        });
+        const transcripts: ArmSessionTranscript[] = [];
         if (ctx.transcriptRead !== undefined) {
-          for (const id of fireSessions) fireEvents.push(...(await ctx.transcriptRead(id)));
+          for (const id of fireSessions) transcripts.push({ sessionId: id, role: "fire", events: await ctx.transcriptRead(id) });
+          for (const id of workerSessionIdsOfFire(workerRows, fireSessions)) transcripts.push({ sessionId: id, role: "worker", events: await ctx.transcriptRead(id) });
         } else {
-          ctx.log(`S-ROUTINE-CONNECTOR-WRITE arm ${arm}: ctx.transcriptRead is unwired — the evidence line cannot say whether the fire discovered ${OP}`);
+          ctx.log(`S-ROUTINE-CONNECTOR-WRITE arm ${arm}: ctx.transcriptRead is unwired — the evidence line cannot say which session discovered or called ${OP}`);
         }
         return unattendedArmRoad({
           planeRows,
-          workerRows: await auditRead({ sinceIso, actions: [WORKER_TOOLSET_ACTION], limit: 200 }).catch(() => {
-            ctx.log(`S-ROUTINE-CONNECTOR-WRITE arm ${arm}: the ${WORKER_TOOLSET_ACTION} read failed — reading the window as carrying no roster, which keeps an empty plane HARD`);
-            return [];
-          }),
+          workerRows,
           fireSessions,
           op: OP,
-          fireEvents,
+          transcripts,
+          attendedRows,
         });
       };
 
@@ -7911,10 +7917,10 @@ export const SCENARIOS: readonly Scenario[] = [
       await arming.recheck();
       const rowsA = await connectorRows(a.sinceIso);
       const reachedA = rowsA.refused.length + rowsA.lifted.length + rowsA.otherRefusals.length;
-      const roadA = await armRoad("A", a.sinceIso, reachedA);
+      const roadA = await armRoad("A", a.sinceIso, reachedA, rowsA.attended.length);
       ctx.gate(
         roadA.verdict !== "unexplained",
-        `🔴 (hard) arm A: the fire ran and reported back, and either the connector plane carries a row for ${OP} or the worker rosters say the seat took another road — found 0 rows (no fence refusal, no lift, no other-plane refusal) AND no roster evidence of another road. The fixture preflight verified that ${fixtureClaim}, so an empty window is not a missing fixture. What the rosters and the fire's transcript say: ${roadA.note}.`,
+        `🔴 (hard) arm A: the fire ran and reported back, and either the connector plane carries a row for ${OP} or the worker rosters say the seat took another road — found 0 rows (no fence refusal, no lift, no other-plane refusal), and the rosters show no other road, or a session called the op, or the call took the ATTENDED path. An attended-path row (a card for the op) is a product finding: the fire's unattended mark did not reach its worker, which is not "no road". The fixture preflight verified that ${fixtureClaim}, so an empty window is not a missing fixture. What the rosters and the transcripts of the fire and its workers say: ${roadA.note}.`,
       );
       if (roadA.verdict === "not-proven") {
         ctx.observe(
@@ -7951,10 +7957,10 @@ export const SCENARIOS: readonly Scenario[] = [
       await arming.recheck();
       const rowsB = await connectorRows(b.sinceIso);
       const reachedB = rowsB.refused.length + rowsB.lifted.length + rowsB.otherRefusals.length;
-      const roadB = await armRoad("B", b.sinceIso, reachedB);
+      const roadB = await armRoad("B", b.sinceIso, reachedB, rowsB.attended.length);
       ctx.gate(
         roadB.verdict !== "unexplained",
-        `🔴 (hard) arm B: the DECLARED fire ran and reported back, and either the connector plane carries a row for ${OP} or the worker rosters say the seat took another road — found 0 rows (no lift, no fence refusal, no other-plane refusal) AND no roster evidence of another road. That is the declare→lift join regression: the click wrote the grant row and nothing on the fence's road recorded a lift or a refusal. The fixture preflight verified that ${fixtureClaim}, so an empty window is not a missing fixture. What the rosters and the fire's transcript say: ${roadB.note}.`,
+        `🔴 (hard) arm B: the DECLARED fire ran and reported back, and either the connector plane carries a row for ${OP} or the worker rosters say the seat took another road — found 0 rows (no lift, no fence refusal, no other-plane refusal) and the rosters show no other road, or a session called the op, or the call took the ATTENDED path. With no attended-path row, that is the declare→lift join regression: the click wrote the grant row and nothing on the fence's road recorded a lift or a refusal. An attended-path row (a card for the op) is a different product finding: the fire's unattended mark did not reach its worker, which is not "no road". The fixture preflight verified that ${fixtureClaim}, so an empty window is not a missing fixture. What the rosters and the transcripts of the fire and its workers say: ${roadB.note}.`,
       );
       if (roadB.verdict === "not-proven") {
         ctx.observe(

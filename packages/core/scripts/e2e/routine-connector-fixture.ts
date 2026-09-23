@@ -110,7 +110,10 @@ export function deployedRoutineConnectorFixture(input: { readonly surfaceKey: st
 
 export function routineConnectorWriteSteps(op: string, note: string): string {
   return (
-    `Call \`connection_search\` for the Notion page-creation operation, then call \`${op}\` with a new page titled "OE e2e ${note}" whose one-line body contains the exact token ${note}. ` +
-    "Do not load any skill and do not use the notion-rest scripts for this task."
+    "Delegate this to a worker with the `agent` tool and pass it these instructions verbatim: " +
+    `"Call \`connection_search\` for the Notion page-creation operation, then call \`${op}\` with a new page titled 'OE e2e ${note}' whose one-line body contains the exact token ${note}. ` +
+    "Do not load any skill and do not use the notion-rest scripts. " +
+    'Report exactly what the operation returned. A refusal is what a call returned, never something concluded without making one." ' +
+    "Then report the worker's answer."
   );
 }

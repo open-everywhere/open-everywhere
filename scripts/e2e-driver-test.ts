@@ -571,20 +571,36 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   );
 
   const flat = body.replace(/\s+/g, "");
-  ok(flat.includes("constfireSessions=fireSessionIds(") && flat.includes("fireSessions,op:OP,fireEvents"), "🔴 WIRING: the leg's armRoad passes the fire's session ids, read from the fire's own rows");
+  ok(flat.includes("constfireSessions=fireSessionIds(") && flat.includes("fireSessions,op:OP,transcripts"), "🔴 WIRING: the leg's armRoad passes the fire's session ids, read from the fire's own rows");
 
   const { routineConnectorWriteSteps } = await import("../packages/core/scripts/e2e/routine-connector-fixture.js");
   const steps = routineConnectorWriteSteps(OP, "rcwa-1");
   ok(
-    steps.includes(`Call \`connection_search\` for the Notion page-creation operation, then call \`${OP}\` with `),
-    `🔴 OPE-2097: the instruction names connection_search and then the op, as a fact (got: ${steps})`,
+    steps.startsWith("Delegate this to a worker with the `agent` tool and pass it these instructions verbatim: \""),
+    `🔴 OPE-2110: the fire's own step is the delegation, and the worker's instruction is quoted verbatim (got: ${steps})`,
   );
-  ok(steps.includes("Do not load any skill and do not use the notion-rest scripts for this task."), "🔴 OPE-2097: the instruction forbids the skill road in one sentence");
-  ok(steps.includes('titled "OE e2e rcwa-1"') && steps.includes("exact token rcwa-1"), "the page token rides the instruction unchanged");
+  ok(
+    steps.includes(`"Call \`connection_search\` for the Notion page-creation operation, then call \`${OP}\` with `),
+    "🔴 OPE-2097: the quoted instruction names connection_search and then the op, as a fact",
+  );
+  ok(steps.includes("Do not load any skill and do not use the notion-rest scripts."), "🔴 the quoted instruction forbids every skill and the notion-rest scripts");
+  ok(
+    steps.includes("Report exactly what the operation returned. A refusal is what a call returned, never something concluded without making one.\" Then report the worker's answer."),
+    "🔴 OPE-2110: the worker reports what the call returned, and the fire reports the worker's answer",
+  );
+  ok(steps.includes("titled 'OE e2e rcwa-1'") && steps.includes("exact token rcwa-1"), "the page token rides the worker's instruction");
+  ok(
+    flat.includes("endingthatreportwiththeword${fireWord}"),
+    "the confirmation word stays in the ask around the steps — the fire, not the worker, posts the report",
+  );
   ok(!/not available|say so and stop/iu.test(steps), "🔴 NEGATIVE CONTROL: the instruction carries no escape hatch");
   ok(flat.includes("routineConnectorWriteSteps(OP,note)"), "🔴 WIRING: both arms' ask builds its instruction from routineConnectorWriteSteps");
   ok(!/notavailable|saysoandstop/iu.test(flat), "🔴 WIRING: the leg body carries no escape-hatch sentence of its own");
-  ok(flat.includes("op:OP,fireEvents") && flat.includes("ctx.transcriptRead(id)"), "🔴 WIRING: armRoad reads each fire session's transcript and passes it to unattendedArmRoad");
+  ok(
+    flat.includes('role:"fire",events:awaitctx.transcriptRead(id)') && flat.includes('role:"worker",events:awaitctx.transcriptRead(id)') && flat.includes("workerSessionIdsOfFire(workerRows,fireSessions)"),
+    "🔴 WIRING: armRoad reads the transcript of the fire AND of every worker of the fire",
+  );
+  ok(flat.includes("op:OP,transcripts,attendedRows") && flat.includes("attended:attendedRowsForOp(all,OP)"), "🔴 WIRING: armRoad passes the transcripts and the attended-path count to unattendedArmRoad");
 
   const { fireOpCalls } = await import("../packages/core/scripts/e2e/gate-joins.js");
   const tev = (index: number, type: string, data: unknown) => ({ index, at: null, type, data });
@@ -599,17 +615,62 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     fireOpCalls([search, skillText, failed], OP).discovered === false,
     "NEGATIVE CONTROL: a tool RESULT that names the op but is not connection_search's (the skill text) is not a discovery",
   );
-  const disc = unattendedArmRoad({ planeRows: 0, workerRows: [], fireSessions: [FIRE], op: OP, fireEvents: n238 });
+  const fireT = (events: unknown[]) => [{ sessionId: FIRE, role: "fire" as const, events: events as never }];
+  const disc = unattendedArmRoad({ planeRows: 0, workerRows: [], fireSessions: [FIRE], op: OP, transcripts: fireT(nRj) });
   ok(
     disc.note === `the fire discovered the op (connection_search returned ${OP}) and made no op call, and delegated to no worker — the road was open and the fire did not take it (fire session(s) ${JSON.stringify([FIRE])})`,
     `🔴 OPE-2097: the evidence line names "discovered, not called" (got: ${disc.note})`,
   );
   ok(disc.verdict === "unexplained", "🔴 …and it stays a HARD red");
-  const noRoad = unattendedArmRoad({ planeRows: 0, workerRows: [], fireSessions: [FIRE], op: OP, fireEvents: [skill, failed] });
+  const noRoad = unattendedArmRoad({ planeRows: 0, workerRows: [], fireSessions: [FIRE], op: OP, transcripts: fireT([skill, failed]) });
   ok(noRoad.note.startsWith("the fire called no connector tool and delegated to no worker") && noRoad.verdict === "unexplained", "NEGATIVE CONTROL: no discovery ⇒ the \"no road\" line, still HARD");
   const calledOp = tev(5, "actions.requested", { actions: [{ toolName: OP, callId: "c4", input: {} }] });
-  const called = unattendedArmRoad({ planeRows: 0, workerRows: [], fireSessions: [FIRE], op: OP, fireEvents: [search, found, calledOp] });
-  ok(called.note.startsWith(`the fire CALLED ${OP} and the connector plane carries no row`) && called.verdict === "unexplained", "an op call with no plane row names the fence recording nothing, HARD");
+  const called = unattendedArmRoad({ planeRows: 0, workerRows: [], fireSessions: [FIRE], op: OP, transcripts: fireT([search, found, calledOp]) });
+  ok(called.note.startsWith(`fire ${FIRE} CALLED ${OP} and the connector plane carries no row`) && called.verdict === "unexplained", "an op call with no plane row names the calling session and the fence recording nothing, HARD");
+
+  const { workerSessionIdsOfFire, transcriptTookRestRoad, attendedRowsForOp } = await import("../packages/core/scripts/e2e/gate-joins.js");
+  const W = "wrun_example58";
+  const restWorker = worker(W, FIRE, FIRE, ["bash", "load_skill", "read_file", "reply"]);
+  ok(
+    JSON.stringify(workerSessionIdsOfFire([creationWorker, restWorker, restWorker], [FIRE])) === JSON.stringify([W]),
+    "the fire's worker ids come from its own worker.toolset rows, deduplicated; the creation turn's worker is not one",
+  );
+  const pageCreate = tev(7, "actions.requested", { actions: [{ toolName: "bash", callId: "c5", input: { command: "node skills/notion-rest/notion.mjs page create --title 'OE e2e rcwa-71582'" } }] });
+  ok(transcriptTookRestRoad([skill]) && transcriptTookRestRoad([pageCreate]), "a notion-rest skill load, or a bash run of its script, is the REST road");
+  ok(!transcriptTookRestRoad([search, found, calledOp]), "NEGATIVE CONTROL: the connector road is not the REST road");
+  const both = (workerEvents: unknown[]) => [...fireT([]), { sessionId: W, role: "worker" as const, events: workerEvents as never }];
+  const rest = unattendedArmRoad({ planeRows: 0, workerRows: [restWorker], fireSessions: [FIRE], op: OP, transcripts: both([skill, pageCreate]) });
+  ok(rest.verdict === "not-proven", "the REST worker with the op unmounted is still NOT PROVEN");
+  ok(
+    rest.note.endsWith(`; the transcripts say: worker ${W} took the REST road (loaded the notion-rest skill or ran its notion.mjs script)`),
+    `🔴 OPE-2110: the "another road" line names the worker that took the REST road (got: ${rest.note})`,
+  );
+  const wDisc = unattendedArmRoad({ planeRows: 0, workerRows: [restWorker], fireSessions: [FIRE], op: OP, transcripts: both([search, found, skill]) });
+  ok(
+    wDisc.note.includes(`worker ${W} discovered the op (connection_search returned ${OP}) and no session called it`),
+    `🔴 OPE-2110: "discovered, not called" names the WORKER that discovered (got: ${wDisc.note})`,
+  );
+  const wCalled = unattendedArmRoad({ planeRows: 0, workerRows: [restWorker], fireSessions: [FIRE], op: OP, transcripts: both([search, found, calledOp]) });
+  ok(
+    wCalled.verdict === "unexplained" && wCalled.note.startsWith(`worker ${W} CALLED ${OP} and the connector plane carries no row`),
+    `🔴 OPE-2110: a WORKER's op call with no plane row is HARD, and the note names the worker — the roster alone would have read NOT PROVEN (got: ${wCalled.verdict}: ${wCalled.note})`,
+  );
+  ok(
+    unattendedArmRoad({ planeRows: 0, workerRows: [restWorker], fireSessions: [FIRE], op: OP, transcripts: [] }).verdict === "not-proven",
+    "NEGATIVE CONTROL: with no transcript, the same roster reads NOT PROVEN — the HARD above comes from the worker's transcript",
+  );
+
+  const cardRow = { ts: at, org: "o", platform: "slack", workspace: "w", action: "approval.chain", detail: { tool: OP, verdict: "ask" } };
+  const creationCard = { ts: at, org: "o", platform: "slack", workspace: "w", action: "approval.requested", detail: { id: "p1", kind: "routine.create" } };
+  const creationChain = { ts: at, org: "o", platform: "slack", workspace: "w", action: "approval.chain", detail: { tool: "create_routine", verdict: "ask" } };
+  ok(attendedRowsForOp([cardRow, creationCard, creationChain], OP).length === 1, "only a card row for the op is attended-path evidence; the routine.create card and chain rows are not");
+  const att = unattendedArmRoad({ planeRows: 0, workerRows: [restWorker], fireSessions: [FIRE], op: OP, attendedRows: 1 });
+  ok(
+    att.verdict === "unexplained" && att.note.startsWith("ATTENDED PATH, A PRODUCT FINDING:") && att.note.includes('This is not "no road"'),
+    `🔴 OPE-2110: an attended-path row for the op is HARD and named as the product finding (got: ${att.verdict}: ${att.note})`,
+  );
+  ok(unattendedArmRoad({ planeRows: 0, workerRows: [restWorker], fireSessions: [FIRE], op: OP, attendedRows: 0 }).verdict === "not-proven", "NEGATIVE CONTROL: no attended row ⇒ the same window reads NOT PROVEN");
+  ok(unattendedArmRoad({ planeRows: 1, workerRows: [], fireSessions: [FIRE], op: OP, attendedRows: 1 }).verdict === "measured", "a fence row present ⇒ the arm scores its own gates");
 }
 
 {
