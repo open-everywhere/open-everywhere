@@ -375,7 +375,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
 }
 
 {
-  const { routineConnectorFixture, NOTION_MCP_HOST } = await import("../packages/core/scripts/e2e/routine-connector-fixture.js");
+  const { routineConnectorFixture, NOTION_MCP_HOST, ROUTINE_CONNECTOR_WRITE_OP } = await import("../packages/core/scripts/e2e/routine-connector-fixture.js");
   const { vercelConnectorHome } = await import("../packages/core/agent/access/connector-credentials.js");
   const { readFileSync: readSource } = await import("node:fs");
   const { fileURLToPath: toPath } = await import("node:url");
@@ -402,7 +402,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     routineConnectorFixture({
       surfaceKey: SURFACE,
       connector: "notion",
-      op: "notion__create_page",
+      op: ROUTINE_CONNECTOR_WRITE_OP,
       mcpHost: NOTION_MCP_HOST,
       domains,
       bundles: bundles as never,
@@ -453,7 +453,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   const otherRoom = routineConnectorFixture({
     surfaceKey: "slack/T_FIXTURE/C_ELSEWHERE",
     connector: "notion",
-    op: "notion__create_page",
+    op: ROUTINE_CONNECTOR_WRITE_OP,
     mcpHost: NOTION_MCP_HOST,
     domains,
     bundles: [{ name: "e2e-connector-fixture", connectors: [{ name: "notion", credential: "user-oauth" }] }] as never,
@@ -467,6 +467,99 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     [{ bundle: "typo-fixture", scope: { level: "domain", domain: "e2e-connector" } }],
   );
   ok(!unconfigured.ok && unconfigured.reason.includes("does not configure"), "a grant naming a credential the catalogue has no entry for reds naming it, rather than resolving to something");
+}
+
+{
+  const { ROUTINE_CONNECTOR_WRITE_OP: OP, routineConnectorFixture, routineConnectorFixtureClaim, NOTION_MCP_HOST } = await import(
+    "../packages/core/scripts/e2e/routine-connector-fixture.js"
+  );
+  const { classifyConnectorOpTier } = await import("../packages/core/agent/access/consequence.js");
+  const { effectiveConnectorOpTier } = await import("../packages/core/agent/access/connector-op-gating.js");
+  const { loadBundles } = await import("../agent/access/bundles.js");
+  const { declaredPermissionKinds } = await import("../packages/core/agent/routines/declared-permissions.js");
+  const { unattendedArmRoad, fireSessionIds, workerRowsOfFire, FIRE_ATTRS_SEEN_ACTION } = await import("../packages/core/scripts/e2e/gate-joins.js");
+  const body = SCENARIOS.find((s) => s.id === "S-ROUTINE-CONNECTOR-WRITE")!.run.toString();
+
+  ok(OP === "notion__notion-create-pages", `🔴 the leg drives the tool the hosted Notion MCP server declares (${OP}) — the name connector-approval-reachability-test.ts drives too`);
+  ok(classifyConnectorOpTier(OP) === "write", `🔴 classifyConnectorOpTier puts ${OP} in the WRITE tier (got ${classifyConnectorOpTier(OP)}) — the only tier the fence's lift arm lifts; destructive would make arm B unbuildable`);
+  ok(effectiveConnectorOpTier(OP, loadBundles()) === "write", `…and the DEPLOYED bundles do not raise it (effective tier ${effectiveConnectorOpTier(OP, loadBundles())}) — the fence reads the effective tier`);
+  ok(classifyConnectorOpTier("notion__notion-delete-pages") === "destructive", "NEGATIVE CONTROL: the same vendor-prefixed shape with a delete verb is destructive — the write answer above comes from the verb, not the shape");
+  ok(
+    JSON.stringify(declaredPermissionKinds([`tool:${OP}`])) === JSON.stringify([pinnedConnectorToolPermissionKind(OP)]),
+    "arm B's declaration `tool:<OP>` validates and maps onto the per-tool grant kind the fence's lift reads",
+  );
+  ok(body.includes("ROUTINE_CONNECTOR_WRITE_OP"), "🔴 the leg reads OP from the one constant");
+  ok(!body.includes("notion__create_page") && !body.includes("notion-create-pages"), "🔴 …and carries NO second literal of a Notion create tool — asks, permissions and messages all read the constant");
+
+  const armed = routineConnectorFixture({
+    surfaceKey: "slack/T_FIXTURE/C_CONNECTOR",
+    connector: "notion",
+    op: OP,
+    mcpHost: NOTION_MCP_HOST,
+    domains: [defineDomain({ name: "e2e-connector", reach: ["slack/T_FIXTURE/C_CONNECTOR"] })],
+    bundles: [{ name: "e2e-connector-fixture", connectors: [{ name: "notion", credential: "workspace-oauth" }] }] as never,
+    bindings: [{ bundle: "e2e-connector-fixture", scope: { level: "domain", domain: "e2e-connector" } }] as never,
+    credentials: [{ connector: "notion", allows: ["api-key"], credentials: [{ id: "workspace-oauth", type: "api-key", secretRef: "db:x", broker: "db", endpoints: { hosts: [NOTION_MCP_HOST] } }] }] as never,
+  });
+  ok(armed.ok, "fixture: a granted connector with an admitted MCP host derives ok");
+  if (armed.ok) {
+    const claim = routineConnectorFixtureClaim(armed, { connector: "notion", op: OP, mcpHost: NOTION_MCP_HOST });
+    ok(
+      claim.startsWith('connector "notion" is granted in domain "e2e-connector" by bundle "e2e-connector-fixture" as credential "workspace-oauth", whose endpoint rules admit mcp.notion.com.'),
+      `🔴 the claim names what the preflight verified — connector, domain, bundle, credential, admitted host (${claim.slice(0, 120)}…)`,
+    );
+    ok(claim.includes(`NOT verified by this preflight: that the connector's MCP server declares ${OP}`), "🔴 …and says in words that the op name is NOT verified");
+    ok(!/\breachable\b/u.test(claim), "NEGATIVE CONTROL: the claim never says the op is reachable — the measured overclaim");
+  }
+  ok(body.includes("routineConnectorFixtureClaim("), "🔴 the leg logs and quotes the honest claim");
+  ok(!/isreachableindomain|derivedthisopasreachable/u.test(body.replace(/\s+/g, "")), "🔴 …and no longer carries either overclaiming sentence");
+
+  const at = "2026-06-03T13:02:00.000Z";
+  const SEAT = "wrun_example44";
+  const FIRE = "wrun_example45";
+  const seen = { ts: at, org: "o", platform: "slack", workspace: "w", action: FIRE_ATTRS_SEEN_ACTION, detail: { attrKeys: [], attrCount: 0, sessionId: FIRE } };
+  const worker = (id: string, parent: string, root: string, tools: string[]) => ({
+    ts: at,
+    org: "o",
+    platform: "unified",
+    workspace: "e2e-connector",
+    action: "worker.toolset",
+    detail: { worker: id, parentSession: parent, rootSession: root, grain: "task", tools, toolCount: tools.length, namesTruncated: false },
+  });
+  const creationWorker = worker("wrun_example46", SEAT, SEAT, ["bash", "load_skill", "read_file", "reply"]);
+
+  ok(
+    JSON.stringify(fireSessionIds([seen, seen, { ...seen, detail: { sessionId: null } }, creationWorker])) === JSON.stringify([FIRE]),
+    "the fire's session comes from its own fire_attrs_seen row, deduplicated; a null sessionId and other actions add nothing",
+  );
+  ok(workerRowsOfFire([creationWorker], [FIRE]).length === 0, "🔴 the seat's routine-CREATION worker is not the fire's worker");
+
+  const nRh = unattendedArmRoad({ planeRows: 0, workerRows: [creationWorker], fireSessions: fireSessionIds([seen]), op: OP });
+  ok(
+    nRh.note === `the fire called no connector tool and delegated to no worker (fire session(s) ${JSON.stringify([FIRE])})`,
+    `🔴 OPE-2092: a fire that delegated nothing says so — never "1 delegated worker ran" off the creation turn's roster (got: ${nRh.note})`,
+  );
+  ok(nRh.verdict === "unexplained" && nRh.road.workers === 0, "🔴 …and the creation roster no longer buys the arm a NOT PROVEN: the empty plane stays HARD");
+
+  const fireWorker = worker("wrun_example47", FIRE, FIRE, ["bash", "load_skill", "read_file", "reply"]);
+  const own = unattendedArmRoad({ planeRows: 0, workerRows: [creationWorker, fireWorker], fireSessions: [FIRE], op: OP });
+  ok(own.verdict === "not-proven" && own.road.workers === 1, "NEGATIVE CONTROL: the FIRE's own worker without the op still explains the road — NOT PROVEN, one worker counted");
+  const nested = worker("wrun_example48", "wrun_example47", FIRE, ["bash", OP]);
+  ok(
+    unattendedArmRoad({ planeRows: 0, workerRows: [nested], fireSessions: [FIRE], op: OP }).verdict === "unexplained",
+    "a worker of the fire's worker joins by rootSession — and it mounted the op, so the empty plane is HARD",
+  );
+
+  const noFire = unattendedArmRoad({ planeRows: 0, workerRows: [creationWorker, fireWorker], fireSessions: [], op: OP });
+  ok(noFire.verdict === "unexplained" && noFire.road.workers === 0, "🔴 no fire session known ⇒ no roster is attributed, so none can excuse the empty plane");
+  ok(noFire.note.startsWith(`no ${FIRE_ATTRS_SEEN_ACTION} row in this window`), "…and the note says why");
+  ok(
+    unattendedArmRoad({ planeRows: 2, workerRows: [], fireSessions: [FIRE], op: OP }).note === `the fire delegated to no worker (fire session(s) ${JSON.stringify([FIRE])})`,
+    "a plane row present ⇒ the note never claims the fire called no connector tool",
+  );
+
+  const flat = body.replace(/\s+/g, "");
+  ok(flat.includes("fireSessions:") && flat.includes("fireSessionIds("), "🔴 WIRING: the leg's armRoad passes the fire's session ids, read from the fire's own rows");
 }
 
 {

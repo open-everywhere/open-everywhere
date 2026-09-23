@@ -7,6 +7,8 @@ import { loadConnectorCredentials } from "../../../../agent/access/connector-cre
 
 export const NOTION_MCP_HOST = "mcp.notion.com";
 
+export const ROUTINE_CONNECTOR_WRITE_OP = "notion__notion-create-pages";
+
 export type RoutineConnectorFixture =
   | {
       readonly ok: true;
@@ -83,6 +85,17 @@ export function routineConnectorFixture(input: {
     ok: false,
     reason: `RED-until-fixture: every "${input.connector}" grant reaching ${where} is blocked — ${blocked.join("; ")}. An OAuth-armed credential for this connector is what would arm it.`,
   };
+}
+
+export function routineConnectorFixtureClaim(
+  fixture: Extract<RoutineConnectorFixture, { readonly ok: true }>,
+  input: { readonly connector: string; readonly op: string; readonly mcpHost: string },
+): string {
+  return (
+    `connector "${input.connector}" is granted in domain "${fixture.domain}" by bundle "${fixture.bundle}" as credential "${fixture.credential}", ` +
+    `whose endpoint rules admit ${input.mcpHost}. NOT verified by this preflight: that the connector's MCP server declares ${input.op} — ` +
+    "the server lists its tools at runtime and no tracked config names them"
+  );
 }
 
 export function deployedRoutineConnectorFixture(input: { readonly surfaceKey: string; readonly connector: string; readonly op: string; readonly mcpHost: string }): RoutineConnectorFixture {

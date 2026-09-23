@@ -364,7 +364,7 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
 }
 
 {
-  const OP = "notion__create_page";
+  const OP = "notion__notion-create-pages";
   const worker = row("worker.toolset", "2026-01-24T01:38:50.000Z", { worker: "wrun_example24", grain: "task", tools: ["bash", "read_file", "reply"], toolCount: 3 });
   const v = workerRoadForOp([worker], OP);
   ok(v.workers === 1 && !v.mounted, "🔴 a delegated worker whose roster has no connector tool: NO CONNECTOR CALL HAPPENED, which is routing and not the fence");
@@ -377,48 +377,49 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
 }
 
 {
-  const OP = "notion__create_page";
-  const restRoad = [row("worker.toolset", "2026-01-31T04:15:11.000Z", { worker: "wrun_example35", grain: "task", tools: ["bash", "load_skill", "read_file", "reply"], toolCount: 4, namesTruncated: false })];
+  const OP = "notion__notion-create-pages";
+  const FIRE = ["wrun_example43"];
+  const restRoad = [row("worker.toolset", "2026-01-31T04:15:11.000Z", { worker: "wrun_example35", parentSession: "wrun_example43", rootSession: "wrun_example43", grain: "task", tools: ["bash", "load_skill", "read_file", "reply"], toolCount: 4, namesTruncated: false })];
 
-  const restArm = unattendedArmRoad({ planeRows: 0, workerRows: restRoad, op: OP });
+  const restArm = unattendedArmRoad({ planeRows: 0, workerRows: restRoad, fireSessions: FIRE, op: OP });
   ok(restArm.verdict === "not-proven", "🔴 the DECLARED fire took the REST road with the op unmounted: there is no lift to measure, so the arm is NOT PROVEN and never scored");
   ok(restArm.note.startsWith("NO CONNECTOR CALL HAPPENED:") && restArm.note.includes(OP), "…and the note names the road, so the observation sends the next reader to routing rather than to the declare→lift join");
 
   const mountedRoad = [{ ...restRoad[0]!, detail: { ...restRoad[0]!.detail, tools: ["bash", OP], toolCount: 2 } }];
   ok(
-    unattendedArmRoad({ planeRows: 0, workerRows: mountedRoad, op: OP }).verdict === "unexplained",
+    unattendedArmRoad({ planeRows: 0, workerRows: mountedRoad, fireSessions: FIRE, op: OP }).verdict === "unexplained",
     "🔴 a worker that DID mount the op, with neither a lift nor a refusal in the window: the declared fire held the fence's road and nothing recorded it — HARD, and without this arm the rule would excuse the regression",
   );
   ok(
-    unattendedArmRoad({ planeRows: 0, workerRows: [], op: OP }).verdict === "unexplained",
+    unattendedArmRoad({ planeRows: 0, workerRows: [], fireSessions: FIRE, op: OP }).verdict === "unexplained",
     "no roster at all is not an explanation either — the fire's own seat is where the call had to come from, so an empty plane stays HARD",
   );
 
-  const unreadable = [{ ...restRoad[0]!, detail: { worker: "wrun_example36", grain: "task", tools: "not-an-array" } }];
+  const unreadable = [{ ...restRoad[0]!, detail: { worker: "wrun_example36", parentSession: "wrun_example43", grain: "task", tools: "not-an-array" } }];
   ok(
-    unattendedArmRoad({ planeRows: 0, workerRows: unreadable, op: OP }).verdict === "unexplained",
+    unattendedArmRoad({ planeRows: 0, workerRows: unreadable, fireSessions: FIRE, op: OP }).verdict === "unexplained",
     "🔴 a roster whose tools is not an array says nothing about the road, so it cannot buy the arm its NOT PROVEN — an unreadable roster fails HARD, not open",
   );
   const truncated = [{ ...restRoad[0]!, detail: { ...restRoad[0]!.detail, namesTruncated: true, toolCount: 512 } }];
   ok(
-    unattendedArmRoad({ planeRows: 0, workerRows: truncated, op: OP }).verdict === "unexplained",
+    unattendedArmRoad({ planeRows: 0, workerRows: truncated, fireSessions: FIRE, op: OP }).verdict === "unexplained",
     "🔴 a TRUNCATED roster may have carried the op past the cap, so its silence is not the seat taking another road either",
   );
   ok(
-    unattendedArmRoad({ planeRows: 0, workerRows: [...unreadable, ...restRoad], op: OP }).verdict === "not-proven",
+    unattendedArmRoad({ planeRows: 0, workerRows: [...unreadable, ...restRoad], fireSessions: FIRE, op: OP }).verdict === "not-proven",
     "control: ONE readable roster beside an unreadable one still explains the empty plane — the rule needs a readable roster, not every roster readable",
   );
   ok(workerRoadForOp([...unreadable, ...truncated, ...restRoad], OP).explained === 1, "…and `explained` counts only the rosters that could support the claim, while `workers` still counts all three");
   ok(workerRoadForOp([...unreadable, ...truncated, ...restRoad], OP).workers === 3, "…the worker COUNT is unchanged, so a gate message still reports what the window really carried");
 
-  ok(unattendedArmRoad({ planeRows: 1, workerRows: restRoad, op: OP }).verdict === "measured", "a plane row present ⇒ the arm SCORES, and the roster never overrides a row that was really there");
+  ok(unattendedArmRoad({ planeRows: 1, workerRows: restRoad, fireSessions: FIRE, op: OP }).verdict === "measured", "a plane row present ⇒ the arm SCORES, and the roster never overrides a row that was really there");
 
   ok(
-    unattendedArmRoad({ planeRows: 0, workerRows: mountedRoad, op: OP }).note === `1 delegated worker(s) ran and at least one MOUNTED ${OP}, so the connector road was open to the work`,
+    unattendedArmRoad({ planeRows: 0, workerRows: mountedRoad, fireSessions: FIRE, op: OP }).note === `1 worker(s) of the fire ran and at least one MOUNTED ${OP}, so the connector road was open to the work (fire session(s) ${JSON.stringify(FIRE)})`,
     "the mounted roster's note says the road was OPEN, which is what makes the hard red above readable",
   );
   ok(
-    unattendedArmRoad({ planeRows: 0, workerRows: [], op: OP }).note === "no worker.toolset row in this window, so no delegated worker ran and the fire's own seat is where the call had to come from",
+    unattendedArmRoad({ planeRows: 0, workerRows: [], fireSessions: FIRE, op: OP }).note === `the fire called no connector tool and delegated to no worker (fire session(s) ${JSON.stringify(FIRE)})`,
     "…and an empty window's note names the seat, not the fence",
   );
 }

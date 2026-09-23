@@ -122,7 +122,7 @@ import { deployedSpendRefusalDmPreflight } from "./spend-refusal-dm.js";
 import { deployedSpendReportReaderPreflight, dmSpendPresence, spendMaskVerdictOver } from "./spend-dm-mask.js";
 import { dmBucketKey } from "../../agent/spend/dm-mask.js";
 import { fetchRunUsage } from "./cost.js";
-import { deployedRoutineConnectorFixture, NOTION_MCP_HOST } from "./routine-connector-fixture.js";
+import { deployedRoutineConnectorFixture, NOTION_MCP_HOST, ROUTINE_CONNECTOR_WRITE_OP, routineConnectorFixtureClaim } from "./routine-connector-fixture.js";
 import {
   APPROVAL_JUDGE_VERDICT_ACTION,
   AUDIT_SINCE_SKEW_MS,
@@ -168,6 +168,8 @@ import {
   turnStartMs,
   UNACCOUNTED_WAKES_ACTION,
   unattendedArmRoad,
+  FIRE_ATTRS_SEEN_ACTION,
+  fireSessionIds,
   unifiedTurnSessionId,
   wakeIdForVendorInstant,
   WORKER_TOOLSET_ACTION,
@@ -7646,7 +7648,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const auditRead = ctx.auditRead!;
       const connector = ctx.connectorWrite!;
 
-      const OP = "notion__create_page";
+      const OP = ROUTINE_CONNECTOR_WRITE_OP;
 
       const { teamId: connectorTeamId } = await connector.identity();
       const fixture = deployedRoutineConnectorFixture({
@@ -7656,7 +7658,8 @@ export const SCENARIOS: readonly Scenario[] = [
         mcpHost: NOTION_MCP_HOST,
       });
       if (!fixture.ok) return ctx.fixtureMissing(`S-ROUTINE-CONNECTOR-WRITE: ${fixture.reason}`);
-      ctx.log(`S-ROUTINE-CONNECTOR-WRITE: ${OP} is reachable in domain "${fixture.domain}" — bundle "${fixture.bundle}" grants it as credential "${fixture.credential}"`);
+      const fixtureClaim = routineConnectorFixtureClaim(fixture, { connector: NOTION_CONNECTOR, op: OP, mcpHost: NOTION_MCP_HOST });
+      ctx.log(`S-ROUTINE-CONNECTOR-WRITE: preflight verified ${fixtureClaim}`);
 
       if (fixture.oauthHome !== undefined) {
         const orgConsent = await deriveOrgConsent(ctx.auditRead, { oauthHome: fixture.oauthHome });
@@ -7771,6 +7774,12 @@ export const SCENARIOS: readonly Scenario[] = [
             ctx.log(`S-ROUTINE-CONNECTOR-WRITE arm ${arm}: the ${WORKER_TOOLSET_ACTION} read failed — reading the window as carrying no roster, which keeps an empty plane HARD`);
             return [];
           }),
+          fireSessions: fireSessionIds(
+            await auditRead({ sinceIso, actions: [FIRE_ATTRS_SEEN_ACTION], limit: 200 }).catch(() => {
+              ctx.log(`S-ROUTINE-CONNECTOR-WRITE arm ${arm}: the ${FIRE_ATTRS_SEEN_ACTION} read failed — no roster can be attributed to the fire, which keeps an empty plane HARD`);
+              return [];
+            }),
+          ),
           op: OP,
         });
 
@@ -7781,7 +7790,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const roadA = await armRoad("A", a.sinceIso, reachedA);
       ctx.gate(
         roadA.verdict !== "unexplained",
-        `🔴 (hard) arm A: the fire ran and reported back, and either the connector plane carries a row for ${OP} or the worker rosters say the seat took another road — found 0 rows (no fence refusal, no lift, no other-plane refusal) AND no roster evidence of another road. The fixture preflight derived this op as reachable (bundle "${fixture.bundle}" grants "${NOTION_CONNECTOR}" as credential "${fixture.credential}" in domain "${fixture.domain}"), so an empty window is not a missing fixture. What the rosters do say: ${roadA.note}.`,
+        `🔴 (hard) arm A: the fire ran and reported back, and either the connector plane carries a row for ${OP} or the worker rosters say the seat took another road — found 0 rows (no fence refusal, no lift, no other-plane refusal) AND no roster evidence of another road. The fixture preflight verified that ${fixtureClaim}, so an empty window is not a missing fixture. What the rosters do say: ${roadA.note}.`,
       );
       if (roadA.verdict === "not-proven") {
         ctx.observe(
@@ -7821,7 +7830,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const roadB = await armRoad("B", b.sinceIso, reachedB);
       ctx.gate(
         roadB.verdict !== "unexplained",
-        `🔴 (hard) arm B: the DECLARED fire ran and reported back, and either the connector plane carries a row for ${OP} or the worker rosters say the seat took another road — found 0 rows (no lift, no fence refusal, no other-plane refusal) AND no roster evidence of another road. That is the declare→lift join regression: the click wrote the grant row and nothing on the fence's road recorded a lift or a refusal. The fixture preflight derived this op as reachable (bundle "${fixture.bundle}" grants "${NOTION_CONNECTOR}" as credential "${fixture.credential}" in domain "${fixture.domain}"), so an empty window is not a missing fixture. What the rosters do say: ${roadB.note}.`,
+        `🔴 (hard) arm B: the DECLARED fire ran and reported back, and either the connector plane carries a row for ${OP} or the worker rosters say the seat took another road — found 0 rows (no lift, no fence refusal, no other-plane refusal) AND no roster evidence of another road. That is the declare→lift join regression: the click wrote the grant row and nothing on the fence's road recorded a lift or a refusal. The fixture preflight verified that ${fixtureClaim}, so an empty window is not a missing fixture. What the rosters do say: ${roadB.note}.`,
       );
       if (roadB.verdict === "not-proven") {
         ctx.observe(

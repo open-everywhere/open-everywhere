@@ -331,20 +331,48 @@ export interface UnattendedArmRoad {
   readonly road: WorkerRoadVerdict;
 }
 
+export const FIRE_ATTRS_SEEN_ACTION = "routine.fire_attrs_seen";
+
+export function fireSessionIds(rows: readonly AuditWireEntry[]): readonly string[] {
+  const ids = new Set<string>();
+  for (const r of rows) {
+    if (r.action !== FIRE_ATTRS_SEEN_ACTION) continue;
+    const id = dstr(r, "sessionId");
+    if (id !== undefined && id.length > 0) ids.add(id);
+  }
+  return [...ids];
+}
+
+export function workerRowsOfFire(rows: readonly AuditWireEntry[], fireSessions: readonly string[]): readonly AuditWireEntry[] {
+  const fire = new Set(fireSessions);
+  return rows.filter((r) => {
+    if (r.action !== WORKER_TOOLSET_ACTION) return false;
+    const parent = dstr(r, "parentSession");
+    const root = dstr(r, "rootSession");
+    return (parent !== undefined && fire.has(parent)) || (root !== undefined && fire.has(root));
+  });
+}
+
 export function unattendedArmRoad(args: {
   readonly planeRows: number;
   readonly workerRows: readonly AuditWireEntry[];
+  readonly fireSessions: readonly string[];
   readonly op: string;
 }): UnattendedArmRoad {
-  const road = workerRoadForOp(args.workerRows, args.op);
+  const road = workerRoadForOp(workerRowsOfFire(args.workerRows, args.fireSessions), args.op);
+  const fires = `fire session(s) ${JSON.stringify(args.fireSessions)}`;
   const note =
-    road.workers === 0
-      ? `no ${WORKER_TOOLSET_ACTION} row in this window, so no delegated worker ran and the fire's own seat is where the call had to come from`
-      : road.mounted
-        ? `${road.workers} delegated worker(s) ran and at least one MOUNTED ${args.op}, so the connector road was open to the work`
-        : road.explained === 0
-          ? `${road.workers} delegated worker(s) ran, none mounted ${args.op}, and NO roster could be read whole (a non-array tools list, or one the emitter truncated) — an unreadable roster cannot say which road the seat took`
-          : `NO CONNECTOR CALL HAPPENED: ${road.workers} delegated worker(s) ran and none mounted ${args.op} (one roster: ${JSON.stringify(road.sample)}) — the seat took another road, so the fence was never on it`;
+    args.fireSessions.length === 0
+      ? `no ${FIRE_ATTRS_SEEN_ACTION} row in this window names the fire's session, so no worker roster can be attributed to the fire`
+      : road.workers === 0
+        ? args.planeRows === 0
+          ? `the fire called no connector tool and delegated to no worker (${fires})`
+          : `the fire delegated to no worker (${fires})`
+        : road.mounted
+          ? `${road.workers} worker(s) of the fire ran and at least one MOUNTED ${args.op}, so the connector road was open to the work (${fires})`
+          : road.explained === 0
+            ? `${road.workers} worker(s) of the fire ran, none mounted ${args.op}, and NO roster could be read whole (a non-array tools list, or one the emitter truncated) — an unreadable roster cannot say which road the seat took (${fires})`
+            : `NO CONNECTOR CALL HAPPENED: ${road.workers} worker(s) of the fire ran and none mounted ${args.op} (one roster: ${JSON.stringify(road.sample)}) — the fire took another road, so the fence was never on it (${fires})`;
   const verdict: UnattendedArmVerdict = args.planeRows > 0 ? "measured" : !road.mounted && road.explained > 0 ? "not-proven" : "unexplained";
   return { verdict, note, road };
 }
