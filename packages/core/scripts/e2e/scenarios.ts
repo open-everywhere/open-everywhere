@@ -103,7 +103,19 @@ import {
 import { NAME_DROP_WOKE_ACTION } from "../../agent/channels/name-drop-wake-audit.js";
 import { WAKE_TURN_START_ACTION } from "../../agent/channels/wake-timing.js";
 import { seatCatchUpWake, type SeatCatchUpWakeVerdict, type TranscriptWireEvent } from "./transcript-read.js";
-import { chooseNotionTaintAnchor, notionTaintAnchorProblem, notionTaintFixtureRemedy, notionTaintGrantRoad, notionTaintNoRowReason, notionTaintReplayEvidence, transcriptHasNotionPageRead } from "./notion-taint-replay.js";
+import {
+  chooseNotionTaintAnchor,
+  notionTaintAnchorProblem,
+  notionTaintFixtureRemedy,
+  notionTaintGrantRoad,
+  notionTaintNoRowReason,
+  notionTaintReplayEvidence,
+  notionTaintRestMarkSettled,
+  notionTaintRestRoad,
+  transcriptHasNotionPageRead,
+  type NotionTaintReplayNoRow,
+  type NotionTaintReplayResult,
+} from "./notion-taint-replay.js";
 import { extractMemoryPathReads, siloOfPath } from "./memory-reads.js";
 import {
   auditSessionIds,
@@ -6730,7 +6742,16 @@ export const SCENARIOS: readonly Scenario[] = [
           );
           const discussionId = chosen.discussionId;
           const replayFrom = new Date(Date.now() - 5_000).toISOString();
-          const replayActions = ["notion.dispatched", "wake.turn_start", "notion.replied", "notion.no_reply", "taint.verdict", "worker.toolset"];
+          const replayActions = [
+            "notion.dispatched",
+            "wake.turn_start",
+            "notion.replied",
+            "notion.no_reply",
+            "taint.verdict",
+            "worker.toolset",
+            "delegation.task_started",
+            "delegation.task_settled",
+          ];
           const grantRoad = notionTaintGrantRoad(
             await auditRead({ sinceIso: lookbackIso(GRANT_OVERLAP_LOOKBACK_DAYS), limit: GRANT_LIFECYCLE_ROW_LIMIT, actions: GRANT_LIFECYCLE_ACTIONS }),
             {
@@ -6744,42 +6765,53 @@ export const SCENARIOS: readonly Scenario[] = [
           ctx.log(`arm B road admission: ${grantRoad.reason}`);
           const forge = await not.forgeCommentCreated(ctx.targetUrl, anchorId, { signed: true });
           ctx.gate(forge.status === 200, "ARM B: signed forge-replay of the human anchor comment is acked (200)");
-          const joinNow = async () =>
-            notionTaintReplayEvidence(await auditRead({ sinceIso: replayFrom, actions: replayActions }), {
+          const readTranscript = async (id: string) => (ctx.transcriptRead ? await ctx.transcriptRead(id).catch(() => undefined) : undefined);
+          const noRowTranscripts = async (noRow: NotionTaintReplayNoRow) => {
+            const workers = new Map<string, readonly TranscriptWireEvent[] | undefined>();
+            for (const worker of noRow.workerSessionIds) workers.set(worker, await readTranscript(worker));
+            return { seat: await readTranscript(noRow.sessionId), workers };
+          };
+          const joinNow = async (): Promise<NotionTaintReplayResult> => {
+            const found = notionTaintReplayEvidence(await auditRead({ sinceIso: replayFrom, actions: replayActions }), {
               deliveryId: forge.deliveryId,
               commentId: anchorId,
               discussionId,
               grantRoad,
             });
-          const replay = await pollOptional(
+            if (found.ok || !found.noRow || !notionTaintRestMarkSettled(found.noRow)) return found;
+            return notionTaintRestRoad(found.reason, found.noRow, await noRowTranscripts(found.noRow));
+          };
+          const polled = await pollOptional(
             async () => {
               const found = await joinNow();
               return found.ok ? found.evidence : undefined;
             },
-            { timeoutMs: REPLY_WAIT, what: "the taint.verdict row joined to THIS forged Notion replay by its delivery id" },
+            { timeoutMs: REPLY_WAIT, what: "the mark joined to THIS forged Notion replay by its delivery id (a taint.verdict row, or the REST road's settle row)" },
           );
-          const why = replay ? undefined : await joinNow();
+          const late = polled ? undefined : await joinNow();
+          const replay = polled ?? (late?.ok ? late.evidence : undefined);
+          const why = late && !late.ok ? late : undefined;
           if (why && !why.ok && why.fixture) {
             ctx.fixtureMissing(`S-TAINT-DRYRUN ARM B cannot attribute its replay: ${why.reason}`);
           }
           let missReason = why && !why.ok ? why.reason : undefined;
           if (why && !why.ok && why.noRow) {
-            const read = async (id: string) => (ctx.transcriptRead ? await ctx.transcriptRead(id).catch(() => undefined) : undefined);
-            const workers = new Map<string, readonly TranscriptWireEvent[] | undefined>();
-            for (const worker of why.noRow.workerSessionIds) workers.set(worker, await read(worker));
-            missReason = notionTaintNoRowReason(why.reason, why.noRow, { seat: await read(why.noRow.sessionId), workers }, NOTION_CONNECTOR);
+            missReason = notionTaintNoRowReason(why.reason, why.noRow, await noRowTranscripts(why.noRow), NOTION_CONNECTOR);
           }
           ctx.gate(
             replay !== undefined,
-            `ARM B (hard): this run's OWN forged replay (delivery ${forge.deliveryId}) produced a \`taint.verdict\` row for a Notion read — a \`notion\`-kind row (the ORG road: read_notion_page, notion_search or read_notion_comments over the deployment's own connector, and the row's own label says which) or, where the grant lifecycle rows show a live standing ${NOTION_CONNECTOR} grant while this arm replays the page the pack itself asks a grant to pin, a \`connector\` row labelled \`${grantRoad.labelPrefix}<verb>\` (the LENT road), or a \`skill-declared\` row labelled \`notion-rest\` (the REST road: the notion-rest skill's page markdown, blocks list or comments list) — joined to the delivery by id rather than by time` +
-              (replay ? ` — it did, over the ${replay.road === "notion" ? "ORG" : replay.road === "grant" ? "LENT" : "REST"} road` : ` — IT DID NOT: ${why!.ok ? "the row landed after the poll gave up (widen REPLY_WAIT)" : missReason}`),
+            `ARM B (hard): this run's OWN forged replay (delivery ${forge.deliveryId}) produced a \`taint.verdict\` row for a Notion read — a \`notion\`-kind row (the ORG road: read_notion_page, notion_search or read_notion_comments over the deployment's own connector, and the row's own label says which) or, where the grant lifecycle rows show a live standing ${NOTION_CONNECTOR} grant while this arm replays the page the pack itself asks a grant to pin, a \`connector\` row labelled \`${grantRoad.labelPrefix}<verb>\` (the LENT road); or, for the REST road, a worker's \`bash\` call to the notion-rest skill's page markdown, blocks list or comments list plus the seat's delegation.task_settled row for that worker's task with \`skill-declared\` in its kinds (a taint.verdict row is a divergence log, and the REST road's agreeing unconditional kind writes none) — joined to the delivery by id rather than by time` +
+              (replay ? ` — it did, over the ${replay.road === "notion" ? "ORG" : replay.road === "grant" ? "LENT" : "REST"} road` : ` — IT DID NOT: ${missReason ?? "the poll gave up with no join result (widen REPLY_WAIT)"}`),
           );
           if (replay) {
-            const nd = replay.verdict.detail as { applied?: unknown; assumed?: unknown; divergence?: unknown; label?: unknown; mode?: unknown };
+            const nd = replay.verdict.detail as { applied?: unknown; assumed?: unknown; divergence?: unknown; label?: unknown; mode?: unknown; task?: unknown; marker?: unknown; adopted?: unknown; kinds?: unknown };
             ctx.log(
-              `arm B: wake ${replay.wakeId} → session ${replay.sessionId}` +
+              replay.road === "rest"
+                ? `arm B: wake ${replay.wakeId} → session ${replay.sessionId} → worker ${replay.verdictSessionId} (the seat delegated the read); the REST road served it ` +
+                    `(a wrapped notion-rest \`bash\` call in the worker; settle row task=${String(nd.task)} marker=${String(nd.marker)} adopted=${String(nd.adopted)} kinds=${JSON.stringify(nd.kinds)})`
+                : `arm B: wake ${replay.wakeId} → session ${replay.sessionId}` +
                 (replay.verdictSessionId === replay.sessionId ? " (the seat read the page itself)" : ` → worker ${replay.verdictSessionId} (the seat delegated the read)`) +
-                `; the ${replay.road === "notion" ? "ORG road served it (kind `notion`, over the deployment's own connector)" : replay.road === "grant" ? "LENT road served it (kind `connector`, the tool a live standing grant mounts)" : "REST road served it (kind `skill-declared`, the notion-rest skill's envelope)"}, label \`${String(nd.label ?? "unlabelled")}\`` +
+                `; the ${replay.road === "notion" ? "ORG road served it (kind `notion`, over the deployment's own connector)" : "LENT road served it (kind `connector`, the tool a live standing grant mounts)"}, label \`${String(nd.label ?? "unlabelled")}\`` +
                 `; row mode=${String(nd.mode)} applied=${String(nd.applied)} divergence=${String(nd.divergence)} assumed=${String(nd.assumed)} — ` +
                 (nd.assumed === true
                   ? "ASSUMED, which since OPE-331 means this deployment has never VOUCHED the workspace (agent/identity/surfaces.ts), not that the metadata could not reach the seam"

@@ -40,6 +40,8 @@ import {
   notionTaintGrantRoad,
   notionTaintNoRowReason,
   notionTaintReplayEvidence,
+  notionTaintRestMarkSettled,
+  notionTaintRestRoad,
   transcriptHasNotionPageRead,
 } from "../packages/core/scripts/e2e/notion-taint-replay.js";
 import {
@@ -5345,50 +5347,78 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   }
 
   {
-    const seat = "wrun_example40";
-    const worker = "wrun_example41";
-    const delivery = { deliveryId: "00000000-0000-4000-8000-000000000042", commentId: "comment-233", discussionId: "discussion-233" };
-    const restVerdict = row("taint.verdict", {
-      applied: true,
-      kind: "skill-declared",
-      label: "notion-rest",
-      mode: "enforced",
-      parentSessionId: seat,
-      sessionId: worker,
-      turnId: "turn_1",
-    });
+    const seat = "wrun_example54";
+    const worker = "wrun_example55";
+    const delivery = { deliveryId: "238-rest-delivery", commentId: "comment-238r", discussionId: "discussion-238r" };
+    const settle = row("delegation.task_settled", { task: "task-1", status: "completed", session: seat, agent: "agent-1", marker: "tainted", adopted: true, kinds: ["skill-declared"] });
     const restRows = [
-      row("notion.dispatched", { ...delivery, addressing: "direct", wakeId: "wake-233" }),
-      row("wake.turn_start", { wakeId: "wake-233", sessionId: seat, turnId: "turn_2" }),
-      row("notion.replied", { sessionId: seat, discussionId: "discussion-233" }),
-      restVerdict,
+      row("notion.dispatched", { ...delivery, addressing: "direct", wakeId: "wake-238r" }),
+      row("wake.turn_start", { wakeId: "wake-238r", sessionId: seat, turnId: "turn_2" }),
+      row("notion.replied", { sessionId: seat, discussionId: "discussion-238r" }),
+      row("worker.toolset", { worker, parentSession: seat, parentCallId: "call-1", tools: ["bash"] }),
+      row("delegation.task_started", { task: "task-1", call: "call-1", agent: "agent-1", session: seat, continuation: false }),
+      settle,
     ];
-    const restJoin = notionTaintReplayEvidence(restRows, delivery);
-    ok(restJoin.ok, "🔴 THE BOARD #233 SHAPE JOINS: a delegated worker's notion-rest page read, marked by the skill envelope, satisfies arm B");
-    ok(restJoin.ok && restJoin.evidence.road === "rest", "…and the evidence names the REST road, not the org or the lent one");
-    ok(restJoin.ok && restJoin.evidence.verdictSessionId === worker, "…and it is attributed to the worker that wrote the verdict, through parentSessionId");
+    const restWorker: readonly TranscriptWireEvent[] = [
+      { index: 1, at: null, type: "actions.requested", data: { turnId: "turn_1", actions: [{ toolName: "bash", callId: "w1", input: { command: "cd skills/notion-rest && node scripts/notion.mjs page markdown current" } }] } },
+    ];
+    const seatDelegates: readonly TranscriptWireEvent[] = [
+      { index: 0, at: null, type: "actions.requested", data: { turnId: "turn_2", actions: [{ toolName: "agent", callId: "call-1", input: {} }] } },
+    ];
+    const transcripts = { seat: seatDelegates, workers: new Map<string, readonly TranscriptWireEvent[] | undefined>([[worker, restWorker]]) };
+    const resolve = (rows: readonly AuditWireEntry[], t = transcripts) => {
+      const join = notionTaintReplayEvidence(rows, delivery);
+      if (join.ok || !join.noRow) return { join, rest: undefined };
+      return { join, rest: notionTaintRestRoad(join.reason, join.noRow, t) };
+    };
 
-    const noRestRow = notionTaintReplayEvidence(restRows.filter((r) => r !== restVerdict), delivery);
-    ok(!noRestRow.ok, "🔴 NEGATIVE CONTROL: with no verdict row the REST road is still RED — no row is never a pass");
-    ok(!noRestRow.ok && noRestRow.reason.includes("skill-declared") && noRestRow.reason.includes("notion-rest"), "…and the red names the REST road it looked for");
+    const green = resolve(restRows);
+    ok(!green.join.ok, "the join alone finds no taint.verdict row on the REST road — that row is a divergence log");
+    ok(!green.join.ok && green.join.noRow !== undefined && notionTaintRestMarkSettled(green.join.noRow), "the no-row rung carries the seat's settle row with `skill-declared`, joined by ids");
+    ok(green.rest?.ok === true, "🔴 THE BOARD #238 SHAPE IS GREEN: a worker's wrapped notion-rest read plus a settle row with `skill-declared` satisfies arm B");
+    ok(green.rest?.ok === true && green.rest.evidence.road === "rest", "…and the evidence names the REST road");
+    ok(green.rest?.ok === true && green.rest.evidence.verdictSessionId === worker && green.rest.evidence.verdict === settle, "…attributed to the worker, with the settle row as the mark");
 
-    const otherSkill = notionTaintReplayEvidence(
-      restRows.map((r) => (r === restVerdict ? { ...r, detail: { ...(r.detail as Record<string, unknown>), label: "support-desk" } } : r)),
-      delivery,
+    const noSettle = resolve(restRows.filter((r) => r !== settle));
+    ok(!noSettle.join.ok && noSettle.join.noRow !== undefined && !notionTaintRestMarkSettled(noSettle.join.noRow), "NEGATIVE CONTROL: with no settle row, no REST mark is settled");
+    ok(noSettle.rest?.ok === false, "🔴 NEGATIVE CONTROL: the worker's REST read with NO settle row is a red — a read is not a mark");
+    const noSettleReason =
+      noSettle.rest && !noSettle.rest.ok && noSettle.rest.noRow ? notionTaintNoRowReason(noSettle.rest.reason, noSettle.rest.noRow, transcripts, "notion") : "";
+    ok(
+      noSettleReason.includes("divergence log") && noSettleReason.includes(`worker ${worker}`) && noSettleReason.includes("no delegation.task_settled row for task task-1"),
+      `…and the red names the missing settle row for the worker's task — got: ${noSettleReason.slice(-220)}`,
     );
-    ok(!otherSkill.ok, "🔴 NEGATIVE CONTROL: another skill's `skill-declared` row is not a Notion page read");
-    const wrongKind = notionTaintReplayEvidence(
-      restRows.map((r) => (r === restVerdict ? { ...r, detail: { ...(r.detail as Record<string, unknown>), kind: "web" } } : r)),
-      delivery,
-    );
-    ok(!wrongKind.ok, "NEGATIVE CONTROL: a `notion-rest` label on a non-skill kind does not count — both the kind and the label are matched");
-    const foreignRest = notionTaintReplayEvidence(
-      restRows.map((r) => (r === restVerdict ? { ...r, detail: { ...(r.detail as Record<string, unknown>), parentSessionId: "another-seat" } } : r)),
-      delivery,
-    );
-    ok(!foreignRest.ok, "🔴 NEGATIVE CONTROL: a notion-rest row from a worker of ANOTHER seat does not satisfy this replay — the id join is unchanged");
+
+    const otherKinds = resolve(restRows.map((r) => (r === settle ? { ...r, detail: { ...(r.detail as Record<string, unknown>), kinds: ["web"] } } : r)));
+    ok(otherKinds.rest?.ok === false, "🔴 NEGATIVE CONTROL: a settle row without `skill-declared` in its kinds is a red");
+    const otherKindsReason =
+      otherKinds.rest && !otherKinds.rest.ok && otherKinds.rest.noRow ? notionTaintNoRowReason(otherKinds.rest.reason, otherKinds.rest.noRow, transcripts, "notion") : "";
+    ok(otherKindsReason.includes("carries kinds [web]"), `…and the red names the kinds the settle row carries — got: ${otherKindsReason.slice(-200)}`);
+
+    const foreignSettle = resolve(restRows.map((r) => (r === settle ? { ...r, detail: { ...(r.detail as Record<string, unknown>), session: "another-seat" } } : r)));
+    ok(foreignSettle.rest?.ok === false, "🔴 NEGATIVE CONTROL: another seat's settle row for the same task id does not count — the join is on the session id");
+    const otherTask = resolve(restRows.map((r) => (r === settle ? { ...r, detail: { ...(r.detail as Record<string, unknown>), task: "task-2" } } : r)));
+    ok(otherTask.rest?.ok === false, "NEGATIVE CONTROL: a settle row for another task does not count — the join is on the task id, never on time");
+
+    const idleWorker = resolve(restRows, { seat: seatDelegates, workers: new Map([[worker, [{ index: 1, at: null, type: "actions.requested", data: { actions: [{ toolName: "bash", callId: "w1", input: { command: "node scripts/notion.mjs page current" } }] } }]]]) });
+    ok(idleWorker.rest?.ok === false, "🔴 NEGATIVE CONTROL: a settle row with `skill-declared` but no wrapped notion-rest read is a red — another skill can declare that kind");
+    const unreadWorker = resolve(restRows, { seat: seatDelegates, workers: new Map<string, readonly TranscriptWireEvent[] | undefined>([[worker, undefined]]) });
+    ok(unreadWorker.rest?.ok === false, "NEGATIVE CONTROL: an unreadable worker transcript is never a REST green");
+
     const orgAndRest = notionTaintReplayEvidence([...restRows, row("taint.verdict", { kind: "notion", sessionId: seat })], delivery);
-    ok(orgAndRest.ok && orgAndRest.evidence.road === "notion", "when the org road also wrote a row, the org road is reported — the REST road is a fallback");
+    ok(orgAndRest.ok && orgAndRest.evidence.road === "notion", "when the org road also wrote a row, the join reports the org road");
+
+    const seatOnly = notionTaintReplayEvidence(restRows.slice(0, 3), delivery);
+    const seatRest: readonly TranscriptWireEvent[] = [
+      { index: 0, at: null, type: "actions.requested", data: { turnId: "turn_2", actions: [{ toolName: "bash", callId: "s1", input: { command: "node scripts/notion.mjs page markdown current" } }] } },
+    ];
+    const seatRoad = !seatOnly.ok && seatOnly.noRow ? notionTaintRestRoad(seatOnly.reason, seatOnly.noRow, { seat: seatRest, workers: new Map() }) : undefined;
+    ok(seatRoad?.ok === false, "🔴 a seat-side REST read with no worker is a red, never a green");
+    const seatReason = !seatOnly.ok && seatOnly.noRow ? notionTaintNoRowReason(seatOnly.reason, seatOnly.noRow, { seat: seatRest, workers: new Map() }, "notion") : "";
+    ok(
+      seatReason.includes("read attempted over the REST road; the plane records no row for an agreeing unconditional kind"),
+      `…and the red states the honest answer — got: ${seatReason.slice(-200)}`,
+    );
 
     const restCall = (command: string): readonly TranscriptWireEvent[] => [
       { index: 1, at: null, type: "actions.requested", data: { actions: [{ toolName: "bash", callId: "c1", input: { command } }] } },

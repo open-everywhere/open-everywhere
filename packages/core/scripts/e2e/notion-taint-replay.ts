@@ -156,7 +156,7 @@ export function notionTaintGrantRoad(rows: readonly AuditWireEntry[], input: Not
 
 export type NotionReadRoad = "notion" | "grant" | "rest";
 
-export const NOTION_REST_ENVELOPE_SOURCE = "notion-rest";
+export const NOTION_REST_MARK_KIND = "skill-declared";
 
 export interface NotionTaintReplayEvidence {
   readonly dispatch: AuditWireEntry;
@@ -177,6 +177,16 @@ export interface NotionTaintReplayNoRow {
   readonly sessionId: string;
   readonly turnId?: string;
   readonly workerSessionIds: readonly string[];
+  readonly dispatch: AuditWireEntry;
+  readonly turnStart: AuditWireEntry;
+  readonly wakeId: string;
+  readonly lifecycle?: AuditWireEntry;
+  readonly settlements: Readonly<Record<string, NotionTaintWorkerSettlement>>;
+}
+
+export interface NotionTaintWorkerSettlement {
+  readonly task?: string;
+  readonly settle?: AuditWireEntry;
 }
 
 export interface NotionTaintReplayInput {
@@ -238,12 +248,7 @@ export function notionTaintReplayEvidence(rows: readonly AuditWireEntry[], input
     return d.kind === "connector" && label !== undefined && (input.grantRoad === undefined ? label.startsWith("grant:") : label.startsWith(input.grantRoad.labelPrefix));
   });
   const lentRoad = input.grantRoad?.admitted === true ? lentCandidates[0] : undefined;
-  const restRoad = verdicts.find((row) => {
-    const d = detail(row);
-    const label = str(d.label);
-    return d.kind === "skill-declared" && label !== undefined && label.startsWith(NOTION_REST_ENVELOPE_SOURCE);
-  });
-  const verdict = orgRoad ?? lentRoad ?? restRoad;
+  const verdict = orgRoad ?? lentRoad;
   if (!verdict) {
     const decided = lifecycle ? ` The seat's own terminal row for this session is \`${lifecycle.action}\`.` : "";
     const lentSeen =
@@ -262,11 +267,20 @@ export function notionTaintReplayEvidence(rows: readonly AuditWireEntry[], input
     const turnId = str(detail(turnStart).turnId);
     return {
       ok: false,
-      noRow: { sessionId, ...(turnId ? { turnId } : {}), workerSessionIds },
+      noRow: {
+        sessionId,
+        ...(turnId ? { turnId } : {}),
+        workerSessionIds,
+        dispatch,
+        turnStart,
+        wakeId,
+        ...(lifecycle ? { lifecycle } : {}),
+        settlements: workerSettlements(rows, sessionId, workerSessionIds),
+      },
       reason:
-        `the replay's turn ran (session ${sessionId}) but wrote no \`notion\` taint.verdict row attributed to it, no admitted lent-tool row, and no ` +
-        `\`skill-declared\` row labelled \`${NOTION_REST_ENVELOPE_SOURCE}\` (the REST skill road) — nothing in that turn, or in a worker it delegated to, ` +
-        `declared a Notion page read.${decided}${lentSeen}`,
+        `the replay's turn ran (session ${sessionId}) but wrote no \`notion\` taint.verdict row attributed to it and no admitted lent-tool row. ` +
+        `The REST road writes no taint.verdict row at all: that row is a divergence log, and the agreeing unconditional kind \`${NOTION_REST_MARK_KIND}\` writes none, ` +
+        `so the REST road's mark shows only in the kinds of the seat's delegation.task_settled row.${decided}${lentSeen}`,
     };
   }
   const vd = detail(verdict);
@@ -283,6 +297,34 @@ export function notionTaintReplayEvidence(rows: readonly AuditWireEntry[], input
       road: verdict === orgRoad ? "notion" : verdict === lentRoad ? "grant" : "rest",
     },
   };
+}
+
+function workerSettlements(rows: readonly AuditWireEntry[], seat: string, workers: readonly string[]): Record<string, NotionTaintWorkerSettlement> {
+  const out: Record<string, NotionTaintWorkerSettlement> = {};
+  for (const worker of workers) {
+    const callId = rows
+      .filter((row) => row.action === "worker.toolset" && str(detail(row).worker) === worker && str(detail(row).parentSession) === seat)
+      .map((row) => str(detail(row).parentCallId))
+      .find((id): id is string => id !== undefined);
+    const started = callId
+      ? rows.find((row) => row.action === "delegation.task_started" && str(detail(row).session) === seat && str(detail(row).call) === callId)
+      : undefined;
+    const task = started ? str(detail(started).task) : undefined;
+    const settle = task
+      ? rows.find((row) => row.action === "delegation.task_settled" && str(detail(row).session) === seat && str(detail(row).task) === task)
+      : undefined;
+    out[worker] = { ...(task ? { task } : {}), ...(settle ? { settle } : {}) };
+  }
+  return out;
+}
+
+function settleKinds(settle: AuditWireEntry | undefined): readonly string[] {
+  const kinds = settle ? detail(settle).kinds : undefined;
+  return Array.isArray(kinds) ? kinds.filter((k): k is string => typeof k === "string") : [];
+}
+
+export function notionTaintRestMarkSettled(noRow: NotionTaintReplayNoRow): boolean {
+  return Object.values(noRow.settlements).some((s) => settleKinds(s.settle).includes(NOTION_REST_MARK_KIND));
 }
 
 const NOTION_REST_WRAPPED_VERB = /notion\.mjs\s+(?:page\s+markdown|blocks\s+list|comments\s+list)\b/;
@@ -350,7 +392,7 @@ export function transcriptToolCalls(events: readonly TranscriptWireEvent[]): rea
 export function isNotionReadCall(call: TranscriptToolCall, connector: string): boolean {
   if (NOTION_ORG_READ_TOOLS.has(call.toolName)) return true;
   if (isGrantToolName(call.toolName) && (call.toolName.split("__")[1] ?? "").endsWith(`_${connector}`)) return true;
-  return call.toolName === "bash" && NOTION_REST_WRAPPED_VERB.test(JSON.stringify(call.input ?? null));
+  return isRestCall(call);
 }
 
 export interface NotionTaintNoRowTranscripts {
@@ -372,6 +414,12 @@ export function notionTaintNoRowReason(
   }
   const seatCalls = noRow.turnId === undefined ? seatAll : seatAll.filter((call) => call.turnId === noRow.turnId);
   const seatRead = seatCalls.find((call) => isNotionReadCall(call, connector));
+  if (seatRead && isRestCall(seatRead)) {
+    return (
+      `${joinReason} A Notion read WAS requested (\`bash\` with a wrapped notion-rest verb in session ${noRow.sessionId}): read attempted over the REST road; ` +
+      "the plane records no row for an agreeing unconditional kind, and a read in the seat's own turn has no settle row, so this run cannot observe the mark."
+    );
+  }
   if (seatRead) return `${joinReason} A Notion read WAS requested (\`${seatRead.toolName}\` in session ${noRow.sessionId}), so the read went over a road that wrote no row.`;
   const unread: string[] = [];
   for (const worker of noRow.workerSessionIds) {
@@ -381,6 +429,7 @@ export function notionTaintNoRowReason(
       continue;
     }
     const read = transcriptToolCalls(events).find((call) => isNotionReadCall(call, connector));
+    if (read && isRestCall(read)) return `${joinReason} A Notion read WAS requested (\`bash\` with a wrapped notion-rest verb in worker ${worker}), ${restSettleGap(worker, noRow.settlements[worker])}`;
     if (read) return `${joinReason} A Notion read WAS requested (\`${read.toolName}\` in worker ${worker}), so the read went over a road that wrote no row.`;
   }
   if (unread.length > 0) {
@@ -394,4 +443,46 @@ export function notionTaintNoRowReason(
       : "The seat delegated to no worker. ") +
     `Session ${noRow.sessionId}${noRow.turnId ? `, ${noRow.turnId}` : ""}.`
   );
+}
+
+function isRestCall(call: TranscriptToolCall): boolean {
+  return call.toolName === "bash" && NOTION_REST_WRAPPED_VERB.test(JSON.stringify(call.input ?? null));
+}
+
+function restSettleGap(worker: string, settlement: NotionTaintWorkerSettlement | undefined): string {
+  if (!settlement?.task) {
+    return `but no delegation.task_started row joins worker ${worker}'s dispatch call to a task, so no settle row can carry the REST road's mark.`;
+  }
+  if (!settlement.settle) {
+    return `but no delegation.task_settled row for task ${settlement.task} landed in the window, so the REST road's mark is not on record.`;
+  }
+  const kinds = settleKinds(settlement.settle);
+  if (kinds.includes(NOTION_REST_MARK_KIND)) return `and the settle row for task ${settlement.task} carries \`${NOTION_REST_MARK_KIND}\` — the REST road's full witness, which notionTaintRestRoad reads as a green.`;
+  return (
+    `but the settle row for task ${settlement.task} carries kinds [${kinds.join(", ")}] and marker \`${String(detail(settlement.settle).marker)}\`, ` +
+    `with no \`${NOTION_REST_MARK_KIND}\`, so the REST road's mark is not on record.`
+  );
+}
+
+export function notionTaintRestRoad(joinReason: string, noRow: NotionTaintReplayNoRow, transcripts: NotionTaintNoRowTranscripts): NotionTaintReplayResult {
+  for (const worker of noRow.workerSessionIds) {
+    const events = transcripts.workers.get(worker);
+    const settle = noRow.settlements[worker]?.settle;
+    if (events && settle && transcriptHasRestRead(events) && settleKinds(settle).includes(NOTION_REST_MARK_KIND)) {
+      return {
+        ok: true,
+        evidence: {
+          dispatch: noRow.dispatch,
+          turnStart: noRow.turnStart,
+          ...(noRow.lifecycle ? { lifecycle: noRow.lifecycle } : {}),
+          verdict: settle,
+          wakeId: noRow.wakeId,
+          sessionId: noRow.sessionId,
+          verdictSessionId: worker,
+          road: "rest",
+        },
+      };
+    }
+  }
+  return { ok: false, noRow, reason: joinReason };
 }
