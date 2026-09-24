@@ -1,5 +1,5 @@
 import { hostAuthoredModelOutput, ingestUntrustedModelOutput, UNTRUSTED_OPEN } from "./untrusted.js";
-import { declaredContentOriginForToolName } from "./connector-content-origin-state.js";
+import { declaredContentOriginForConnectionSearch, declaredContentOriginForToolName } from "./connector-content-origin-state.js";
 import { restrictToolsetForJobWake } from "./job-posture.js";
 import { currentJobWakePosture } from "./job-session-state.js";
 import { restrictToolsetForLeanSeat } from "./lean-seat.js";
@@ -135,7 +135,7 @@ export function projectToolSet(toolset: Record<string, unknown>): void {
         if (name === "connection_search" && isStatusOnlyConnectionSearch(output)) {
           return hostAuthoredModelOutput(text, { source: `connector ${name}` });
         }
-        const grantContentOrigin = declaredContentOriginForToolName(name);
+        const grantContentOrigin = name === "connection_search" ? declaredContentOriginForConnectionSearch(output) : declaredContentOriginForToolName(name);
         return ingestUntrustedModelOutput(text, {
           source: `connector ${name}`,
           ingestion: { kind: "connector", label: name, ...(grantContentOrigin !== undefined ? { grantContentOrigin } : {}) },

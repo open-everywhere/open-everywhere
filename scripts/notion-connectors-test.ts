@@ -178,6 +178,11 @@ ok(
     `🔴 the SHIPPED config arms S-ROUTINE-CONNECTOR-WRITE — an unattended fire in this room reaches a notion MCP op (reason when red: ${live.ok ? "" : live.reason})`,
   );
   ok(live.ok && live.bundle === "e2e-connector-fixture" && live.credential === "workspace-oauth", "…through the e2e-connector-fixture bundle, as the 'workspace-oauth' credential");
+  const fixtureGrant = bundles.find((b) => b.name === "e2e-connector-fixture")?.connectors?.find((c) => typeof c !== "string" && c.name === "notion");
+  ok(
+    fixtureGrant !== undefined && typeof fixtureGrant !== "string" && fixtureGrant.contentOrigin === "internal",
+    `🔴 the e2e org Notion connection declares contentOrigin "internal" (found ${JSON.stringify(fixtureGrant)})`,
+  );
 
   const elsewhere = routineConnectorFixture({
     surfaceKey: "slack/T_NOT_OURS/C_NOT_OURS",

@@ -34,7 +34,7 @@ const CATALOGUES = [
 ];
 
 import type { Binding, Bundle } from "../agent/access/bundle.js";
-import { setConnectorContentOrigin, declaredContentOriginForConnection, declaredContentOriginForToolName } from "../agent/access/connector-content-origin-state.js";
+import { setConnectorContentOrigin, declaredContentOriginForConnection, declaredContentOriginForConnectionSearch, declaredContentOriginForToolName } from "../agent/access/connector-content-origin-state.js";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 import { pinSuiteStore } from "./_suite-store.js";
@@ -592,6 +592,20 @@ console.log("6. connector grantContentOrigin, end to end:");
     eq(declaredContentOriginForToolName("acme__search__query"), "external", "🔴 LONGEST declared prefix wins — a plugin connector named `acme__search` keeps its own declaration instead of inheriting `acme`'s");
     eq(declaredContentOriginForToolName("acme__list"), "internal", "…and a tool that really does belong to `acme` still resolves `acme`'s declaration");
     eq(declaredContentOriginForToolName("acmelike__x"), undefined, "the match requires the `__` separator — a name that merely starts with the same letters is not the same connection");
+  });
+
+  await eveContextStorage().run(new FakeSession(), async () => {
+    setConnectorContentOrigin({ notion: "internal", forms: "external", helpdesk: { default: "internal", except: { search_tickets: "external" } } });
+    const row = (connection: string, tool: string) => ({ connection, description: "d", tool, qualifiedName: `${connection}__${tool}` });
+    eq(declaredContentOriginForConnectionSearch([row("notion", "search"), row("helpdesk", "list_queues")]), "internal", "every discovered tool on a declared-internal connection ⇒ internal");
+    eq(declaredContentOriginForConnectionSearch([row("notion", "search"), { connection: "linear", description: "d", needsAuthorization: true }]), "internal", "an eve-authored status row adds nothing");
+    eq(declaredContentOriginForConnectionSearch([row("notion", "search"), row("forms", "submit")]), "external", "one declared-external row ⇒ external");
+    eq(declaredContentOriginForConnectionSearch([row("helpdesk", "search_tickets")]), "external", "the per-tool grain applies to the row's own tool");
+    eq(declaredContentOriginForConnectionSearch([row("notion", "search"), row("linear-mcp", "issues")]), undefined, "one UNDECLARED connection ⇒ undefined (the ruled default), never internal");
+    eq(declaredContentOriginForConnectionSearch([{ connection: "linear", description: "d", needsAuthorization: true }]), undefined, "status rows alone ⇒ undefined (no discovered tool to vouch for)");
+    eq(declaredContentOriginForConnectionSearch([]), undefined, "an empty result ⇒ undefined");
+    eq(declaredContentOriginForConnectionSearch("notion"), undefined, "a shape it cannot decompose ⇒ undefined");
+    eq(declaredContentOriginForConnectionSearch([{ connection: "notion", description: "d" }]), undefined, "a row with neither a tool nor a status marker ⇒ undefined");
   });
 }
 

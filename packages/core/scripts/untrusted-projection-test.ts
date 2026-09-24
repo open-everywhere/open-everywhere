@@ -590,6 +590,30 @@ function replayedToolSet(name: string): Record<string, BuiltTool> {
     ok(!dryRows.some((r) => r.label === "helpdesk__search_tickets"), "…with NO divergence row: the site would have tainted anyway, so the declaration changed nothing here — which is what `external` is supposed to mean");
   });
 
+  const csRow = (connection: string, tool: string) => ({ connection, description: "server text", tool, qualifiedName: `${connection}__${tool}` });
+  await inTurn(async () => {
+    setConnectorContentOrigin({ notion: "internal" });
+    dryRows.length = 0;
+    const out = await csTool().toModelOutput!({ output: [csRow("notion", "notion-create-pages"), { connection: "linear", description: "d", needsAuthorization: true }], toolCallId: "cs-int" });
+    ok(String(out.value).startsWith(UNTRUSTED_OPEN), "connection_search over a declared-internal connection is STILL fenced");
+    ok(untrustedIngestedThisTurn() === false, "🔴 OPE-2119: connection_search whose every discovered tool belongs to a declared-internal connection leaves the turn CLEAN");
+    const row = dryRows.find((r) => r.label === "connection_search");
+    ok(!!row && row.tableTier === "trusted" && row.assumed === false, "…and logs an EXACT trusted verdict, not the `assumed` default board #240 read");
+  });
+  for (const [label, stamp, output] of [
+    ["a row from an UNDECLARED connection beside an internal one", { notion: "internal" }, [csRow("notion", "search"), csRow("acme", "forms")]],
+    ["a row from a declared-EXTERNAL connection", { notion: "internal", acme: "external" }, [csRow("notion", "search"), csRow("acme", "forms")]],
+    ["a per-tool EXCEPTED external tool", { notion: { default: "internal", except: { search: "external" } } }, [csRow("notion", "search")]],
+    ["a tool row with no `connection`", { notion: "internal" }, [{ description: "d", tool: "search", qualifiedName: "notion__search" }]],
+    ["nothing stamped", {}, [csRow("notion", "search")]],
+  ] as const) {
+    await inTurn(async () => {
+      setConnectorContentOrigin(stamp as Parameters<typeof setConnectorContentOrigin>[0]);
+      await csTool().toModelOutput!({ output, toolCallId: `cs-neg-${label}` });
+      ok(untrustedIngestedThisTurn() === true, `connection_search still TAINTS for ${label} — one row the declarations do not vouch for is enough`);
+    });
+  }
+
   await inTurn(async () => {
     dryRows.length = 0;
     await connectorTool("notion__search").toModelOutput!({ output: "x", toolCallId: "gt-3" });
