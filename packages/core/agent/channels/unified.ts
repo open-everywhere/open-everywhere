@@ -26,6 +26,7 @@ import {
   detectBridgeableInputRequest,
   bridgeQuestionToSurface,
   forgetBridgedQuestion,
+  settleAnsweredWake,
   readBridgedQuestion,
   rememberBridgedQuestion,
   resolveInboundAnswerRouting,
@@ -430,6 +431,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
           ...(t.context && t.context.length > 0 ? { context: [...t.context] } : {}),
         });
         await forgetBridgedQuestion(getOperationalStore(), org, bare);
+        await settleAnsweredWake(getOperationalStore(), org, t.wakeId);
         ulog(`answer ${t.answer.requestId} delivered to ${t.token} (floor ${t.answer.floor})`);
         await appendAudit({
           org,

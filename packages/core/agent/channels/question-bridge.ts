@@ -255,6 +255,20 @@ export async function forgetBridgedQuestion(store: BridgedQuestionStore, org: st
   }
 }
 
+export interface AnsweredWakeStore {
+  markUnifiedWakeAnswered(org: string, wakeId: string, at: string, turnId?: string): Promise<void>;
+}
+
+export async function settleAnsweredWake(store: AnsweredWakeStore, org: string, wakeId: string, at: string = new Date().toISOString()): Promise<boolean> {
+  try {
+    if (wakeId.length === 0) return false;
+    await store.markUnifiedWakeAnswered(org, wakeId, at);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export type InboundAnswerRouting =
   | {
       readonly kind: "answer";

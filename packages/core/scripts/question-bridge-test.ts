@@ -398,6 +398,7 @@ for (const [label, resolveOrigin] of [
     ok(/\.respond\(\[\{ requestId: /.test(unifiedSrc), "6: …and the channel answers with `respond([{requestId, …}])`, the one shape routeDeliverPayload can route to a child");
     ok(/rememberBridgedQuestion\(/.test(unifiedSrc), "6: …and the input.requested handler writes the row a later answer is matched on");
     ok(/forgetBridgedQuestion\(/.test(unifiedSrc), "6: …and consumes it once the answer is delivered");
+    ok(/forgetBridgedQuestion\([^;]*\);\s*await settleAnsweredWake\(getOperationalStore\(\), org, t\.wakeId\)/.test(unifiedSrc), "6: …and settles the wake the answer rode, so the seat is not told it is queued");
   }
 }
 

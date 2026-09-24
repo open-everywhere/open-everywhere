@@ -343,4 +343,31 @@ const rowsFor = async (action: string, wakeId: string): Promise<Record<string, u
   ok(typeof stillStale.error === "string", "🔴 §10/STICKY: an INTERNAL re-register of a human's wake does NOT clear `inbound` — the redrive cannot silence the gate");
 }
 
+{
+  const { settleAnsweredWake } = await import("../agent/channels/question-bridge.js");
+
+  const inTurnCtl = newSession();
+  const seenCtl = await wakeAt("C_ANSWERED_CTL", t(-5000));
+  await wakeAt("C_ANSWERED_CTL", t(-1000));
+  const refused = await inTurnCtl(() => callReply(seenCtl, "turn_1100", seenCtl, "Should be refused."));
+  ok(typeof refused.error === "string", "§11/CONTROL: an unsettled newer inbound wake IS refused — the fixture draws the refusal the fix removes");
+
+  const inTurn = newSession();
+  const seen = await wakeAt("C_ANSWERED", t(-5000));
+  const routedAsAnswer = await wakeAt("C_ANSWERED", t(-1000));
+  ok((await settleAnsweredWake(store, ORG, routedAsAnswer)) === true, "§11: the answer leg's settle step reports the wake settled");
+  const row = await store.getUnifiedWakeRecord(ORG, routedAsAnswer);
+  ok(typeof row?.answeredAt === "string", "§11: …and the row now carries an answered stamp");
+  ok(row?.answeredTurnId === undefined, "§11: …with NO turn id, because no seat turn answered it — so the answerable-reply fence refuses a seat reply to that wake");
+  const before = posted.length;
+  const out = await inTurn(() => callReply(seen, "turn_1101", seen, "The newer message went to the worker, so this posts."));
+  ok(out.posted === true, "🔴 §11: a wake the answer leg delivered to a worker is NOT counted as queued for the seat — the reply posts");
+  ok(posted.length === before + 1, "§11/ROOM: the reply reached the room");
+  ok((await rowsFor("reply.refused", seen)).length === 0, "§11/AUDIT: and no refusal was recorded");
+
+  const throwing = { markUnifiedWakeAnswered: async () => { throw new Error("store down"); } };
+  ok((await settleAnsweredWake(throwing, ORG, "w-x")) === false, "§11: a failing store reports false and does not throw");
+  ok((await settleAnsweredWake(store, ORG, "")) === false, "§11: an empty wake id settles nothing");
+}
+
 console.log(`✓ reply freshness gate: ${passed} assertions passed`);
