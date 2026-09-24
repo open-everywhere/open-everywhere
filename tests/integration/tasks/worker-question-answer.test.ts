@@ -4,11 +4,13 @@ import {
   auditCursor,
   bootAgent,
   DISCORD_LISTED_CHANNEL_ID,
+  discordAmbientWake,
   discordMentionWake,
   registerScript,
   rowsSinceCursor,
   taskIdOfDelegation,
   waitFor,
+  WAIT_TIMEOUT_PREFIX,
   type ScriptedHandle,
 } from "../harness";
 
@@ -28,6 +30,7 @@ function close(handle: ScriptedHandle): void {
 
 const QUESTION_PROMPT = "the runbook says to write into the shared bucket — should I use staging instead?";
 const ANSWER_TEXT = "use staging, never the shared bucket";
+const MENTION_TEXT = "separately, what is on the roadmap this week?";
 const CHILD_DONE = "understood, wrote it to staging and finished";
 
 test("a worker's question reaches the room, and the room's answer reaches the worker", async () => {
@@ -75,7 +78,20 @@ test("a worker's question reaches the room, and the room's answer reaches the wo
   close(asking);
   const answering = open(registerScript({ parent: [{ say: "acknowledged" }], child: [{ say: CHILD_DONE }] }));
 
-  await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `<@9000000000000000001> ${ANSWER_TEXT}` });
+  await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `<@9000000000000000001> ${MENTION_TEXT}` });
+  const seatTurn = await waitFor(
+    () => answering.requests.find((r) => r.role === "parent" && r.messages.some((m) => m.text.includes(MENTION_TEXT))),
+    "the SEAT's model call carrying the @-mention — the mention reached the seat, not the worker",
+  );
+  expect(answering.requests.filter((r) => r.role === "child" && r.messages.some((m) => m.text.includes(MENTION_TEXT)))).toEqual([]);
+  await expect(
+    waitFor(async () => {
+      const rows = await rowsSinceCursor(cursor, ["input_response.routed"]);
+      return rows.length > 0 ? rows : undefined;
+    }, "an input_response.routed row for the @-mention (must NOT appear)", 5_000),
+  ).rejects.toThrow(WAIT_TIMEOUT_PREFIX);
+
+  await discordAmbientWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: ANSWER_TEXT });
 
   const routed = await waitFor(async () => {
     const rows = await rowsSinceCursor(cursor, ["input_response.routed"]);
@@ -101,7 +117,10 @@ test("a worker's question reaches the room, and the room's answer reaches the wo
   expect(JSON.stringify(answered!.output)).toContain(ANSWER_TEXT);
 
   await waitFor(
-    () => answering.requests.find((r) => r.role === "parent" && r.messages.some((m) => m.text.includes(taskId))),
+    () =>
+      answering.requests.find(
+        (r) => r.role === "parent" && r.sequence > resumedChild.sequence && r.sequence > seatTurn.sequence && r.messages.some((m) => m.text.includes(taskId)),
+      ),
     "the answered worker's completion, delivered as a new message naming the task id",
   );
 

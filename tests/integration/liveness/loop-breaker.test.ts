@@ -4,6 +4,7 @@ import {
   auditCursor,
   bootAgent,
   DISCORD_LISTED_CHANNEL_ID,
+  discordAmbientWake,
   discordMentionWake,
   disposeLater,
   registerScript,
@@ -90,7 +91,7 @@ test("a worker's identical read repeats trip the loop breaker within a turn, and
     }),
   );
 
-  await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> stop checking" });
+  await discordAmbientWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "stop checking" });
 
   const routed = await waitFor(async () => {
     const rows = await rowsSinceCursor(cursor, ["input_response.routed"]);
