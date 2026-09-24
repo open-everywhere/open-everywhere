@@ -4,6 +4,7 @@ import { domainForChannel, type Domain } from "../../agent/memory/domain.js";
 import { loadDomains } from "../../../../agent/memory/config/domains.js";
 import { loadBundles, loadBindings } from "../../../../agent/access/bundles.js";
 import { loadConnectorCredentials } from "../../../../agent/access/connector-credentials.js";
+import type { Routine } from "../../agent/routines/routine.js";
 
 export const NOTION_MCP_HOST = "mcp.notion.com";
 
@@ -116,4 +117,67 @@ export function routineConnectorWriteSteps(op: string, note: string): string {
     'Report exactly what the operation returned. A refusal is what a call returned, never something concluded without making one." ' +
     "Then report the worker's answer."
   );
+}
+
+export function routineConnectorFirePrompt(op: string, note: string, fireWord: string): string {
+  return (
+    `${routineConnectorWriteSteps(op, note)} ` +
+    `Whether the page is created or the write is refused, report back here what was tried and what the system said, ending that report with the word ${fireWord} (do not use this word anywhere else).`
+  );
+}
+
+export function seededUndeclaredRoutine(input: {
+  readonly id: string;
+  readonly org: string;
+  readonly teamId: string;
+  readonly channelId: string;
+  readonly createdBy: string;
+  readonly prompt: string;
+  readonly fireAt: Date;
+  readonly now: Date;
+}): Routine {
+  if (input.id.length === 0 || input.id.includes(":")) {
+    throw new Error(`seededUndeclaredRoutine: routine id "${input.id}" must be non-empty and carry no ":" — the permission key grammar splits on it`);
+  }
+  if (!(input.fireAt.getTime() > input.now.getTime())) {
+    throw new Error(`seededUndeclaredRoutine: fireAt ${input.fireAt.toISOString()} must be after now ${input.now.toISOString()} — a past one-shot never fires`);
+  }
+  const at = input.fireAt.toISOString();
+  return {
+    id: input.id,
+    org: input.org,
+    surfaceKey: `slack/${input.teamId}/${input.channelId}`,
+    target: { channelId: input.channelId },
+    trigger: { kind: "once", at },
+    prompt: input.prompt,
+    createdBy: input.createdBy,
+    createdAt: input.now.toISOString(),
+    status: "active",
+    nextRunAt: at,
+    consecutiveFailures: 0,
+  };
+}
+
+export function routineNeverFired(r: Pick<Routine, "status" | "nextRunAt">): boolean {
+  return r.status === "active" && typeof r.nextRunAt === "string" && r.nextRunAt.length > 0;
+}
+
+export interface RoutineConnectorArmOutcome {
+  readonly arm: "A" | "B";
+  readonly error?: unknown;
+}
+
+export function routineConnectorArmVerdict(outcomes: readonly RoutineConnectorArmOutcome[]): RoutineConnectorArmOutcome | undefined {
+  const rank = (error: unknown): number => {
+    const name = error instanceof Error ? error.name : "";
+    if (name === "ScenarioSkip") return 1;
+    if (name === "FixtureMissing") return 2;
+    return 3;
+  };
+  let chosen: RoutineConnectorArmOutcome | undefined;
+  for (const o of outcomes) {
+    if (!("error" in o) || o.error === undefined) continue;
+    if (chosen === undefined || rank(o.error) > rank(chosen.error)) chosen = o;
+  }
+  return chosen;
 }

@@ -14,6 +14,7 @@ import { APPROVAL_ANSWER_HINT } from "../../agent/channels/question-bridge.js";
 import type { OperationalStore } from "../../agent/operational/store.js";
 import { SETTINGS } from "../../agent/settings/settings.js";
 import { DISPATCH_TICK_MINUTES } from "../../agent/routines/schedule.js";
+import { newRoutineId } from "../../agent/routines/store.js";
 import type { SlackDriver, SlackMessage } from "./slack-driver.js";
 import { cardJudgeSurface, endsOwnWakeWait, tsAfter } from "./slack-driver.js";
 import { slackVendorEventTime } from "../../agent/channels/wake-timing.js";
@@ -134,7 +135,18 @@ import { deployedSpendRefusalDmPreflight } from "./spend-refusal-dm.js";
 import { deployedSpendReportReaderPreflight, dmSpendPresence, spendMaskVerdictOver } from "./spend-dm-mask.js";
 import { dmBucketKey } from "../../agent/spend/dm-mask.js";
 import { fetchRunUsage } from "./cost.js";
-import { deployedRoutineConnectorFixture, NOTION_MCP_HOST, ROUTINE_CONNECTOR_WRITE_OP, routineConnectorFixtureClaim, routineConnectorWriteSteps } from "./routine-connector-fixture.js";
+import {
+  deployedRoutineConnectorFixture,
+  NOTION_MCP_HOST,
+  ROUTINE_CONNECTOR_WRITE_OP,
+  routineConnectorArmVerdict,
+  routineConnectorFirePrompt,
+  routineConnectorFixtureClaim,
+  routineConnectorWriteSteps,
+  routineNeverFired,
+  seededUndeclaredRoutine,
+  type RoutineConnectorArmOutcome,
+} from "./routine-connector-fixture.js";
 import {
   APPROVAL_JUDGE_VERDICT_ACTION,
   AUDIT_SINCE_SKEW_MS,
@@ -7652,7 +7664,7 @@ export const SCENARIOS: readonly Scenario[] = [
 
       const OP = ROUTINE_CONNECTOR_WRITE_OP;
 
-      const { teamId: connectorTeamId } = await connector.identity();
+      const { teamId: connectorTeamId, userId: connectorUserId } = await connector.identity();
       const fixture = deployedRoutineConnectorFixture({
         surfaceKey: `slack/${connectorTeamId}/${connector.channelId}`,
         connector: NOTION_CONNECTOR,
@@ -7674,13 +7686,25 @@ export const SCENARIOS: readonly Scenario[] = [
 
       const arming = await watchConnectorArming(armingProbeOf(ctx), NOTION_CONNECTOR);
 
-      const dbUrlForRotate = process.env.DATABASE_URL;
-      if (dbUrlForRotate) {
+      const org = process.env[ENV.org]?.trim() || "default";
+      let opStore: OperationalStore | undefined;
+      let storeNote = "DATABASE_URL is unset";
+      const dbUrl = process.env.DATABASE_URL;
+      if (dbUrl) {
         try {
-          const rotateStore = await wireNeonOperationalStore(dbUrlForRotate);
-          const org = process.env[ENV.org]?.trim() || "default";
+          opStore = await wireNeonOperationalStore(dbUrl);
+        } catch (e) {
+          storeNote = `the operational store could not be wired: ${String(e instanceof Error ? e.message : e)}`;
+        }
+      }
+      if (opStore === undefined) {
+        ctx.log(`S-ROUTINE-CONNECTOR-WRITE: ${storeNote} — no window rotate, and arm A cannot be seeded. Arm B still runs first.`);
+      }
+
+      if (opStore !== undefined) {
+        try {
           const domain = process.env[ENV.unifiedDomain]?.trim() || "e2e-unified";
-          const rot = await rotateUnifiedWindow(rotateStore, org, domain);
+          const rot = await rotateUnifiedWindow(opStore, org, domain);
           ctx.log(`S-ROUTINE-CONNECTOR-WRITE: rotated the ${domain} window → fresh generation ${rot.mintedGeneration}`);
         } catch (e) {
           ctx.log(`S-ROUTINE-CONNECTOR-WRITE: could not rotate the window (${String(e instanceof Error ? e.message : e)}) — proceeding on the standing generation`);
@@ -7689,63 +7713,32 @@ export const SCENARIOS: readonly Scenario[] = [
 
       const OP_PERMISSION_KIND = pinnedConnectorToolPermissionKind(OP);
 
-      const driveArm = async (arm: "A" | "B", declared: boolean): Promise<{ sinceIso: string; cardTs?: string }> => {
-        const sinceIso = new Date(Date.now() - 5_000).toISOString();
-        const note = factToken(`rcw${arm.toLowerCase()}`);
-        const fireWord = distinctFactToken(`rcwfx${arm.toLowerCase()}`, [note]);
-        const permissionClause = declared
-          ? `Declare the standing permission "tool:${OP}" on the routine when you create it, so the arming card I approve carries it. `
-          : "Do NOT declare any standing permission on this routine — I want to see what an undeclared fire does. ";
-        const { ts: askTs } = await connector.post(
-          connector.mention(
-            `Please schedule a one-shot check-in for a couple of minutes from now — a single "at" time, not recurring — whose instruction is: ${routineConnectorWriteSteps(OP, note)} ` +
-              permissionClause +
-              `Whether the page is created or the write is refused, have it report back here what it tried and what the system said, ending that report with the word ${fireWord} (do not use this word anywhere else). Confirm you've scheduled it.`,
-          ),
-        );
-        let cardTs: string | undefined;
-        const card = await pollOptional(
-          async () => (await connector.replies(askTs)).find((m) => connector.isBotReply(m) && approveButton(m) !== undefined),
-          { timeoutMs: FILE_REPLY_WAIT, what: `a routine.create approval card in thread ${askTs} (arm ${arm})` },
-        );
-        if (card !== undefined) {
-          const btn = approveButton(card)!;
-          ctx.gate(ctx.synthetic !== undefined, `S-ROUTINE-CONNECTOR-WRITE arm ${arm}: a routine.create card needs the synthetic capability to decide it`);
-          const clicked = await ctx.synthetic!.click({
-            pendingId: btn.pendingId,
-            org: btn.org,
-            decision: "approve",
-            messageTs: card.ts,
-            channelId: connector.channelId,
-            teamId: (await connector.identity()).teamId,
-          });
-          ctx.log(`${clicked.label}: admin approve routine.create ${btn.pendingId} (arm ${arm}) → ${clicked.status}`);
-          ctx.gate(clicked.status === 200, `S-ROUTINE-CONNECTOR-WRITE arm ${arm}: forged admin approve on the routine.create card acked 200`);
-          cardTs = card.ts;
-        }
-        if (declared) {
-          ctx.gate(
-            cardTs !== undefined,
-            "🔴 (hard) arm B: the declaring routine's creation card posted and was approved — a declared connector write is armed by a person's click only (the judge never lifts it, OPE-2101), so without the click no connector.tool grant row exists and arm B's lift gate would fail on a correct tree",
-          );
-          if (!(card?.text ?? "").includes(OP)) {
-            ctx.skip(
-              `arm B: the routine.create card does not name ${OP} among its declared permissions, so the click wrote no connector.tool row and the lift arm has nothing to read. The model scheduled the routine without honouring the declaration ask — a prompt-compliance miss, not a fence verdict. Card text: "${(card?.text ?? "").replace(/\s+/g, " ").trim().slice(0, 240)}"`,
-            );
-          }
-        }
-        const ack = await connector.awaitThreadReply(askTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) || m.ts === cardTs });
-        ctx.log(`arm ${arm}: routine scheduled — ack: "${ack.text.replace(/\s+/g, " ").trim().slice(0, 160)}"`);
+      let armBCardOrg: string | undefined;
 
+      const retireUnfiredRoutines = async (arm: "A" | "B", pick: (r: { readonly id: string; readonly createdAt: string }) => boolean): Promise<void> => {
+        if (opStore === undefined) return;
+        const surfaceKey = `slack/${connectorTeamId}/${connector.channelId}`;
+        try {
+          for (const r of await opStore.listRoutines(org, surfaceKey)) {
+            if (!pick(r) || !routineNeverFired(r)) continue;
+            await opStore.removeRoutine(org, surfaceKey, r.id);
+            ctx.log(`arm ${arm}: removed routine ${r.id} — it never fired, so a later dispatcher tick must not fire it into another leg's window`);
+          }
+        } catch (e) {
+          ctx.log(`arm ${arm}: could not check or remove the arm's unfired routines on ${surfaceKey} (${String(e instanceof Error ? e.message : e)}) — cancel any left with the control plane's cancel_routine`);
+        }
+      };
+
+      const awaitFire = async (arm: "A" | "B", sinceTs: string, note: string, fireWord: string): Promise<void> => {
         const FIRE_WAIT = (3 + DISPATCH_TICK_MINUTES + 4) * 60_000;
         const fired = await pollOptional(
-          async () => (await connector.history(askTs)).find((m) => connector.isBotReply(m) && carriesFactToken(m.text, fireWord)),
+          async () => (await connector.history(sinceTs)).find((m) => connector.isBotReply(m) && carriesFactToken(m.text, fireWord)),
           { timeoutMs: FIRE_WAIT, what: `arm ${arm}: the one-shot routine's fired post quoting "${fireWord}" (waiting up to one ${DISPATCH_TICK_MINUTES}-minute dispatcher tick)` },
         );
         if (fired === undefined) {
           try {
-            const examined = (await connector.history(askTs)).filter((m) => connector.isBotReply(m));
-            ctx.log(`S-ROUTINE-CONNECTOR-WRITE arm ${arm}: no post carried "${fireWord}" — the ${examined.length} bot post(s) the wait examined since the ask:`);
+            const examined = (await connector.history(sinceTs)).filter((m) => connector.isBotReply(m));
+            ctx.log(`S-ROUTINE-CONNECTOR-WRITE arm ${arm}: no post carried "${fireWord}" — the ${examined.length} bot post(s) the wait examined since ${sinceTs}:`);
             for (const line of examinedPostLines(examined)) ctx.log(`  ${line}`);
             const underNote = examined.filter((m) => carriesFactToken(m.text, note));
             if (underNote.length > 0) {
@@ -7759,9 +7752,95 @@ export const SCENARIOS: readonly Scenario[] = [
         }
         ctx.gate(
           fired !== undefined,
-          `🔴 (hard) arm ${arm}: the armed routine's fire posted its confirmation word within ${FIRE_WAIT / 60_000} minutes — the fire CONTINUED and reported back instead of parking on an input_required nobody could answer, which IS the OPE-1274 defect. No post means the fire never ran, or ran and never settled.`,
+          `🔴 (hard) arm ${arm}: the ${arm === "A" ? "seeded" : "armed"} routine's fire posted its confirmation word within ${FIRE_WAIT / 60_000} minutes — the fire CONTINUED and reported back instead of parking on an input_required nobody could answer, which IS the OPE-1274 defect. No post means the fire never ran, or ran and never settled.`,
         );
-        return cardTs === undefined ? { sinceIso } : { sinceIso, cardTs };
+      };
+
+      const driveDeclaredArm = async (): Promise<{ sinceIso: string; cardTs: string }> => {
+        const sinceIso = new Date(Date.now() - 5_000).toISOString();
+        try {
+          return await driveDeclaredArmInner(sinceIso);
+        } finally {
+          await retireUnfiredRoutines("B", (r) => r.createdAt >= sinceIso);
+        }
+      };
+      const driveDeclaredArmInner = async (sinceIso: string): Promise<{ sinceIso: string; cardTs: string }> => {
+        const note = factToken("rcwb");
+        const fireWord = distinctFactToken("rcwfxb", [note]);
+        const { ts: askTs } = await connector.post(
+          connector.mention(
+            `Please schedule a one-shot check-in for a couple of minutes from now — a single "at" time, not recurring — whose instruction is: ${routineConnectorWriteSteps(OP, note)} ` +
+              `Declare the standing permission "tool:${OP}" on the routine when you create it, so the arming card I approve carries it. ` +
+              `Whether the page is created or the write is refused, have it report back here what it tried and what the system said, ending that report with the word ${fireWord} (do not use this word anywhere else). Confirm you've scheduled it.`,
+          ),
+        );
+        const card = await pollOptional(
+          async () => (await connector.replies(askTs)).find((m) => connector.isBotReply(m) && approveButton(m) !== undefined),
+          { timeoutMs: FILE_REPLY_WAIT, what: `a routine.create approval card in thread ${askTs} (arm B)` },
+        );
+        ctx.gate(
+          card !== undefined,
+          "🔴 (hard) arm B: the declaring routine's creation card posted and was approved — a declared connector write is armed by a person's click only (the judge never lifts it, OPE-2101), so without the click no connector.tool grant row exists and arm B's lift gate would fail on a correct tree",
+        );
+        const btn = approveButton(card!)!;
+        armBCardOrg = btn.org;
+        ctx.gate(ctx.synthetic !== undefined, "S-ROUTINE-CONNECTOR-WRITE arm B: a routine.create card needs the synthetic capability to decide it");
+        const clicked = await ctx.synthetic!.click({
+          pendingId: btn.pendingId,
+          org: btn.org,
+          decision: "approve",
+          messageTs: card!.ts,
+          channelId: connector.channelId,
+          teamId: connectorTeamId,
+        });
+        ctx.log(`${clicked.label}: admin approve routine.create ${btn.pendingId} (arm B) → ${clicked.status}`);
+        ctx.gate(clicked.status === 200, "S-ROUTINE-CONNECTOR-WRITE arm B: forged admin approve on the routine.create card acked 200");
+        const cardTs = card!.ts;
+        if (!(card!.text ?? "").includes(OP)) {
+          ctx.skip(
+            `arm B: the routine.create card does not name ${OP} among its declared permissions, so the click wrote no connector.tool row and the lift arm has nothing to read. The model scheduled the routine without honouring the declaration ask — a prompt-compliance miss, not a fence verdict. Card text: "${(card!.text ?? "").replace(/\s+/g, " ").trim().slice(0, 240)}"`,
+          );
+        }
+        const ack = await connector.awaitThreadReply(askTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) || m.ts === cardTs });
+        ctx.log(`arm B: routine scheduled — ack: "${ack.text.replace(/\s+/g, " ").trim().slice(0, 160)}"`);
+        await awaitFire("B", askTs, note, fireWord);
+        return { sinceIso, cardTs };
+      };
+
+      const seedUndeclaredArm = async (): Promise<{ sinceIso: string }> => {
+        if (opStore === undefined) {
+          return ctx.fixtureMissing(
+            `S-ROUTINE-CONNECTOR-WRITE arm A: the harness seeds arm A's undeclared routine through the operational store, and no store is wired (${storeNote}). Set DATABASE_URL to the deployment's database — the same URL the window rotate uses.`,
+          );
+        }
+        if (armBCardOrg !== undefined && armBCardOrg !== org) {
+          return ctx.fixtureMissing(
+            `S-ROUTINE-CONNECTOR-WRITE arm A: the harness org "${org}" (E2E_ORG) is not the org arm B's creation card named ("${armBCardOrg}"), so a seeded routine would fire under the wrong partition. Set E2E_ORG to the deployment's org.`,
+          );
+        }
+        const startMs = Date.now() - 5_000;
+        const sinceIso = new Date(startMs).toISOString();
+        const note = factToken("rcwa");
+        const fireWord = distinctFactToken("rcwfxa", [note]);
+        const now = new Date();
+        const routine = seededUndeclaredRoutine({
+          id: newRoutineId(),
+          org,
+          teamId: connectorTeamId,
+          channelId: connector.channelId,
+          createdBy: connectorUserId,
+          prompt: routineConnectorFirePrompt(OP, note, fireWord),
+          fireAt: new Date(now.getTime() + 60_000),
+          now,
+        });
+        await opStore.addRoutine(routine);
+        ctx.log(`arm A: seeded undeclared routine ${routine.id} on ${routine.surfaceKey} (org ${routine.org}), one-shot at ${routine.nextRunAt}`);
+        try {
+          await awaitFire("A", (startMs / 1000).toFixed(6), note, fireWord);
+        } finally {
+          await retireUnfiredRoutines("A", (r) => r.id === routine.id);
+        }
+        return { sinceIso };
       };
 
       const connectorRows = async (sinceIso: string) => {
@@ -7797,78 +7876,91 @@ export const SCENARIOS: readonly Scenario[] = [
         });
       };
 
-      const a = await driveArm("A", false);
-      await arming.recheck();
-      const rowsA = await connectorRows(a.sinceIso);
-      const reachedA = rowsA.refused.length + rowsA.lifted.length + rowsA.otherRefusals.length;
-      const roadA = await armRoad("A", a.sinceIso, reachedA, rowsA.attended.length);
-      ctx.gate(
-        roadA.verdict !== "unexplained",
-        `🔴 (hard) arm A: the fire ran and reported back, and either the connector plane carries a row for ${OP} or the worker rosters say the seat took another road — found 0 rows (no fence refusal, no lift, no other-plane refusal), and the rosters show no other road, or a session called the op, or the call took the ATTENDED path. An attended-path row (a card for the op) is a product finding: the fire's unattended mark did not reach its worker, which is not "no road". The fixture preflight verified that ${fixtureClaim}, so an empty window is not a missing fixture. What the rosters and the transcripts of the fire and its workers say: ${roadA.note}.`,
-      );
-      if (roadA.verdict === "not-proven") {
-        ctx.observe(
-          `S-ROUTINE-CONNECTOR-WRITE arm A NOT PROVEN this run: no connector plane row for ${OP}, and the rosters say why — ${roadA.note}. The unattended fence sits on the connector-TOOL road; ` +
-            "the REST skill road is governed by the fire's declared egress policy instead (the firewall is the control for the sandbox plane). Arm A's fence gates are not scored on a run that never put the fence on the road.",
-        );
-      } else {
+      const runArmB = async (): Promise<void> => {
+        const b = await driveDeclaredArm();
+        await arming.recheck();
+        const rowsB = await connectorRows(b.sinceIso);
+        const reachedB = rowsB.refused.length + rowsB.lifted.length + rowsB.otherRefusals.length;
+        const roadB = await armRoad("B", b.sinceIso, reachedB, rowsB.attended.length);
         ctx.gate(
-          rowsA.refused.length > 0,
-          `🔴 (hard) arm A: the undeclared fire's connector WRITE was refused by the UNATTENDED FENCE — a connector.refused row for ${OP} carrying an ask-unattended reason. Other connector.refused families for this op are counted separately and do NOT satisfy this gate (the disclosure plane's audience_floor and the scope gate's unresolved_surface share the action and mean something else): found ${rowsA.refused.length} fence refusal(s), ${rowsA.otherRefusals.length} other refusal(s) ${JSON.stringify(rowsA.otherRefusals.map((e) => e.detail))}`,
+          roadB.verdict !== "unexplained",
+          `🔴 (hard) arm B: the DECLARED fire ran and reported back, and either the connector plane carries a row for ${OP} or the worker rosters say the seat took another road — found 0 rows (no lift, no fence refusal, no other-plane refusal) and the rosters show no other road, or a session called the op, or the call took the ATTENDED path. With no attended-path row, that is the declare→lift join regression: the click wrote the grant row and nothing on the fence's road recorded a lift or a refusal. An attended-path row (a card for the op) is a different product finding: the fire's unattended mark did not reach its worker, which is not "no road". The fixture preflight verified that ${fixtureClaim}, so an empty window is not a missing fixture. What the rosters and the transcripts of the fire and its workers say: ${roadB.note}.`,
         );
-        ctx.gate(
-          allAtWriteTier(rowsA.refused),
-          `🔴 (hard) arm A: every refusal row names tier "write" — the tier is what decides liftability, so a row naming another tier means the leg drove a different class of op than it believes (${JSON.stringify(rowsA.refused.map((e) => e.detail))})`,
-        );
-        ctx.gate(
-          allNamePermissionKind(rowsA.refused, OP_PERMISSION_KIND),
-          `🔴 (hard) arm A: the refusal names the grant kind a declaration WOULD have to write, "${OP_PERMISSION_KIND}" — this is the join between the fence's per-TOOL lookup and the declare vocabulary, and a drift in either spelling silently unlifts every declared routine (${JSON.stringify(rowsA.refused.map((e) => e.detail))})`,
-        );
-        ctx.gate(
-          rowsA.lifted.length === 0,
-          `🔴 (hard) arm A: NO connector.unattended_lift row exists for ${OP} — a routine that declared nothing must never be lifted (found ${rowsA.lifted.length}: ${JSON.stringify(rowsA.lifted.map((e) => e.detail))})`,
-        );
-        if (a.cardTs !== undefined) {
-          const creation = rowsA.all.filter((e) => e.action === "approval.requested" && (e.detail as { kind?: unknown } | undefined)?.kind === "routine.create");
+        if (roadB.verdict === "not-proven") {
+          ctx.observe(
+            `S-ROUTINE-CONNECTOR-WRITE arm B NOT PROVEN this run: no connector plane row for ${OP} in the DECLARED arm's window, and the rosters say why — ${roadB.note}. The lift is written by the unattended fence on the connector-TOOL road; ` +
+              "the REST skill road is governed by the fire's declared egress policy instead (the firewall is the control for the sandbox plane). Arm B's lift and refusal gates are not scored on a run that never put the fence on the road.",
+          );
+        } else {
           ctx.gate(
-            creation.length > 0,
-            `NEGATIVE CONTROL (hard) arm A: the creation ask's OWN approval.requested row (kind "routine.create") is readable in this same window (found ${creation.length}) — proves the reader surfaces real rows, so the lift absence above means absence and not a broken read`,
+            rowsB.lifted.length > 0,
+            `🔴 (hard) arm B: the DECLARED fire's connector WRITE was LIFTED — a connector.unattended_lift row for ${OP} (found ${rowsB.lifted.length}; refusals in the same window: ${JSON.stringify(rowsB.refused.map((e) => e.detail))}). The op WAS reached on this run (${reachedB} connector plane row(s), and the rosters say: ${roadB.note}), so an absence here means the declare→lift join is broken: the click wrote a row the fence does not read.`,
+          );
+          ctx.gate(
+            allNamePermissionKind(rowsB.lifted, OP_PERMISSION_KIND),
+            `🔴 (hard) arm B: the lift row names the per-TOOL grant kind "${OP_PERMISSION_KIND}" it lifted on (${JSON.stringify(rowsB.lifted.map((e) => e.detail))})`,
+          );
+          ctx.gate(
+            allAttributedToRoutine(rowsB.lifted),
+            `🔴 (hard) arm B: the lift row ATTRIBUTES the lift to a routine permission key — an unattributed lift cannot answer "whose click authorised this write?", which is the whole audit value of the row (${JSON.stringify(rowsB.lifted.map((e) => e.detail))})`,
+          );
+          ctx.gate(
+            rowsB.refused.length === 0,
+            `🔴 (hard) arm B: NO ask-unattended connector.refused row for ${OP} in the declared arm's window — the declaration must remove the refusal, not sit beside it (found ${rowsB.refused.length})`,
           );
         }
-      }
+      };
 
-      const b = await driveArm("B", true);
-      await arming.recheck();
-      const rowsB = await connectorRows(b.sinceIso);
-      const reachedB = rowsB.refused.length + rowsB.lifted.length + rowsB.otherRefusals.length;
-      const roadB = await armRoad("B", b.sinceIso, reachedB, rowsB.attended.length);
-      ctx.gate(
-        roadB.verdict !== "unexplained",
-        `🔴 (hard) arm B: the DECLARED fire ran and reported back, and either the connector plane carries a row for ${OP} or the worker rosters say the seat took another road — found 0 rows (no lift, no fence refusal, no other-plane refusal) and the rosters show no other road, or a session called the op, or the call took the ATTENDED path. With no attended-path row, that is the declare→lift join regression: the click wrote the grant row and nothing on the fence's road recorded a lift or a refusal. An attended-path row (a card for the op) is a different product finding: the fire's unattended mark did not reach its worker, which is not "no road". The fixture preflight verified that ${fixtureClaim}, so an empty window is not a missing fixture. What the rosters and the transcripts of the fire and its workers say: ${roadB.note}.`,
-      );
-      if (roadB.verdict === "not-proven") {
-        ctx.observe(
-          `S-ROUTINE-CONNECTOR-WRITE arm B NOT PROVEN this run: no connector plane row for ${OP} in the DECLARED arm's window, and the rosters say why — ${roadB.note}. The lift is written by the unattended fence on the connector-TOOL road; ` +
-            "the REST skill road is governed by the fire's declared egress policy instead (the firewall is the control for the sandbox plane). Arm B's lift and refusal gates are not scored on a run that never put the fence on the road.",
-        );
-      } else {
+      const runArmA = async (): Promise<void> => {
+        const a = await seedUndeclaredArm();
+        await arming.recheck();
+        const rowsA = await connectorRows(a.sinceIso);
+        const reachedA = rowsA.refused.length + rowsA.lifted.length + rowsA.otherRefusals.length;
+        const roadA = await armRoad("A", a.sinceIso, reachedA, rowsA.attended.length);
         ctx.gate(
-          rowsB.lifted.length > 0,
-          `🔴 (hard) arm B: the DECLARED fire's connector WRITE was LIFTED — a connector.unattended_lift row for ${OP} (found ${rowsB.lifted.length}; refusals in the same window: ${JSON.stringify(rowsB.refused.map((e) => e.detail))}). The op WAS reached on this run (${reachedB} connector plane row(s), and the rosters say: ${roadB.note}), so an absence here means the declare→lift join is broken: the click wrote a row the fence does not read.`,
+          roadA.verdict !== "unexplained",
+          `🔴 (hard) arm A: the fire ran and reported back, and either the connector plane carries a row for ${OP} or the worker rosters say the seat took another road — found 0 rows (no fence refusal, no lift, no other-plane refusal), and the rosters show no other road, or a session called the op, or the call took the ATTENDED path. An attended-path row (a card for the op) is a product finding: the fire's unattended mark did not reach its worker, which is not "no road". The fixture preflight verified that ${fixtureClaim}, so an empty window is not a missing fixture. What the rosters and the transcripts of the fire and its workers say: ${roadA.note}.`,
         );
-        ctx.gate(
-          allNamePermissionKind(rowsB.lifted, OP_PERMISSION_KIND),
-          `🔴 (hard) arm B: the lift row names the per-TOOL grant kind "${OP_PERMISSION_KIND}" it lifted on (${JSON.stringify(rowsB.lifted.map((e) => e.detail))})`,
-        );
-        ctx.gate(
-          allAttributedToRoutine(rowsB.lifted),
-          `🔴 (hard) arm B: the lift row ATTRIBUTES the lift to a routine permission key — an unattributed lift cannot answer "whose click authorised this write?", which is the whole audit value of the row (${JSON.stringify(rowsB.lifted.map((e) => e.detail))})`,
-        );
-        ctx.gate(
-          rowsB.refused.length === 0,
-          `🔴 (hard) arm B: NO ask-unattended connector.refused row for ${OP} in the declared arm's window — the declaration must remove the refusal, not sit beside it (found ${rowsB.refused.length})`,
-        );
+        if (roadA.verdict === "not-proven") {
+          ctx.observe(
+            `S-ROUTINE-CONNECTOR-WRITE arm A NOT PROVEN this run: no connector plane row for ${OP}, and the rosters say why — ${roadA.note}. The unattended fence sits on the connector-TOOL road; ` +
+              "the REST skill road is governed by the fire's declared egress policy instead (the firewall is the control for the sandbox plane). Arm A's fence gates are not scored on a run that never put the fence on the road.",
+          );
+        } else {
+          ctx.gate(
+            rowsA.refused.length > 0,
+            `🔴 (hard) arm A: the undeclared fire's connector WRITE was refused by the UNATTENDED FENCE — a connector.refused row for ${OP} carrying an ask-unattended reason. Other connector.refused families for this op are counted separately and do NOT satisfy this gate (the disclosure plane's audience_floor and the scope gate's unresolved_surface share the action and mean something else): found ${rowsA.refused.length} fence refusal(s), ${rowsA.otherRefusals.length} other refusal(s) ${JSON.stringify(rowsA.otherRefusals.map((e) => e.detail))}`,
+          );
+          ctx.gate(
+            allAtWriteTier(rowsA.refused),
+            `🔴 (hard) arm A: every refusal row names tier "write" — the tier is what decides liftability, so a row naming another tier means the leg drove a different class of op than it believes (${JSON.stringify(rowsA.refused.map((e) => e.detail))})`,
+          );
+          ctx.gate(
+            allNamePermissionKind(rowsA.refused, OP_PERMISSION_KIND),
+            `🔴 (hard) arm A: the refusal names the grant kind a declaration WOULD have to write, "${OP_PERMISSION_KIND}" — this is the join between the fence's per-TOOL lookup and the declare vocabulary, and a drift in either spelling silently unlifts every declared routine (${JSON.stringify(rowsA.refused.map((e) => e.detail))})`,
+          );
+          ctx.gate(
+            rowsA.lifted.length === 0,
+            `🔴 (hard) arm A: NO connector.unattended_lift row exists for ${OP} — a routine that declared nothing must never be lifted (found ${rowsA.lifted.length}: ${JSON.stringify(rowsA.lifted.map((e) => e.detail))})`,
+          );
+        }
+      };
+
+      const outcomes: RoutineConnectorArmOutcome[] = [];
+      for (const [arm, run] of [["B", runArmB], ["A", runArmA]] as const) {
+        try {
+          await run();
+          outcomes.push({ arm });
+        } catch (error) {
+          if (error instanceof Error && !(error instanceof GateFailure || error instanceof ScenarioSkip || error instanceof FixtureMissing)) {
+            error.message = `S-ROUTINE-CONNECTOR-WRITE arm ${arm}: ${error.message}`;
+          }
+          ctx.log(`S-ROUTINE-CONNECTOR-WRITE arm ${arm} ended: ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
+          outcomes.push({ arm, error });
+        }
       }
+      const verdict = routineConnectorArmVerdict(outcomes);
+      if (verdict !== undefined) throw verdict.error;
       ctx.log(
         `S-ROUTINE-CONNECTOR-WRITE: both arms observed. NOT proven here: the routine permission CARD on a connector refusal — connections/connector-auth.ts reaches neither approvals/flow.ts nor the card planner, so that half of OPE-1290 is unimplemented for connector ops rather than untested. See AUDIT.md.`,
       );

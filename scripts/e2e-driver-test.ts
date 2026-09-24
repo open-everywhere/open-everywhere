@@ -594,7 +594,8 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
     "the confirmation word stays in the ask around the steps — the fire, not the worker, posts the report",
   );
   ok(!/not available|say so and stop/iu.test(steps), "🔴 NEGATIVE CONTROL: the instruction carries no escape hatch");
-  ok(flat.includes("routineConnectorWriteSteps(OP,note)"), "🔴 WIRING: both arms' ask builds its instruction from routineConnectorWriteSteps");
+  ok(flat.includes("routineConnectorWriteSteps(OP,note)"), "🔴 WIRING: arm B's ask builds its instruction from routineConnectorWriteSteps");
+  ok(flat.includes("routineConnectorFirePrompt(OP,note,fireWord)"), "🔴 WIRING: arm A's seeded routine builds its instruction from routineConnectorFirePrompt, which wraps the same steps (OPE-2130)");
   ok(!/notavailable|saysoandstop/iu.test(flat), "🔴 WIRING: the leg body carries no escape-hatch sentence of its own");
   ok(
     flat.includes('role:"fire",events:awaitctx.transcriptRead(id)') && flat.includes('role:"worker",events:awaitctx.transcriptRead(id)') && flat.includes("workerSessionIdsOfFire(workerRows,fireSessions)"),
@@ -8107,12 +8108,97 @@ rmSync(dir, { recursive: true, force: true });
   ok(armBLift > armBBranch, `🔴 arm B's LIFT gate sits INSIDE the verdict branch, never before it (branch at ${armBBranch}, lift at ${armBLift})`);
   ok(armBRefusal > armBBranch, `🔴 …and so does its refusal-absence gate (branch at ${armBBranch}, refusal gate at ${armBRefusal})`);
   const armABranch = body.indexOf('roadA.verdict==="not-proven"');
-  ok(armABranch > 0 && armABranch < armBBranch, "arm A keeps the branch it landed with at OPE-1968, and it still comes first");
+  ok(armABranch > 0, "arm A keeps the branch it landed with at OPE-1968");
+  ok(armABranch > armBBranch, `🔴 OPE-2130: arm B's code comes FIRST and arm A's follows it (arm B branch at ${armBBranch}, arm A branch at ${armABranch})`);
 
   ok(
     SCENARIOS.filter((s) => s.run.toString().includes("unattendedArmRoad(")).map((s) => s.id).join(",") === "S-ROUTINE-CONNECTOR-WRITE",
     "negative control: exactly ONE leg reads this rule, so the checks above cannot be passing on another leg's body",
   );
+}
+
+{
+  const { seededUndeclaredRoutine, routineConnectorFirePrompt, routineConnectorWriteSteps, routineConnectorArmVerdict, ROUTINE_CONNECTOR_WRITE_OP: OP } = await import(
+    "../packages/core/scripts/e2e/routine-connector-fixture.js"
+  );
+  const { routinePermissionKeyParts } = await import("../packages/core/agent/routines/permission-key.js");
+  const { routinePermissionGeneration } = await import("../packages/core/agent/routines/routine.js");
+  const { newRoutineId } = await import("../packages/core/agent/routines/store.js");
+  const { ScenarioSkip, FixtureMissing, GateFailure } = await import("../packages/core/scripts/e2e/scenarios.js");
+  const flat = SCENARIOS.find((s) => s.id === "S-ROUTINE-CONNECTOR-WRITE")!.run.toString().replace(/\s+/g, "");
+
+  ok(flat.includes('for(const[arm,run]of[["B",runArmB],["A",runArmA]])'), "🔴 OPE-2130: the leg runs arm B FIRST, then arm A, from one loop");
+  ok(/constverdict=routineConnectorArmVerdict\(outcomes\);if\(verdict!==(void0|undefined)\)throwverdict\.error;/u.test(flat), "🔴 …and throws the chosen arm verdict only after both arms ran");
+  const bRuns = flat.indexOf("constb=awaitdriveDeclaredArm();");
+  const aRuns = flat.indexOf("consta=awaitseedUndeclaredArm();");
+  ok(bRuns > 0 && aRuns > 0, `arm B drives the declared routine and arm A seeds the undeclared one (b at ${bRuns}, a at ${aRuns})`);
+  ok(!flat.includes("driveArm("), "NEGATIVE: the shared model-driven driveArm is gone — no arm A ask can come back through it");
+
+  const seedStart = flat.indexOf("constseedUndeclaredArm=");
+  const seedEnd = flat.indexOf("constconnectorRows=", seedStart);
+  const declStart = flat.indexOf("constdriveDeclaredArm=");
+  ok(seedStart > 0 && seedEnd > seedStart && declStart > 0 && declStart < seedStart, "the arm A seed and the arm B drive are both findable in the body");
+  const seedBody = flat.slice(seedStart, seedEnd);
+  const declBody = flat.slice(declStart, seedStart);
+  ok(seedBody.includes("awaitopStore.addRoutine(routine)") && seedBody.includes("seededUndeclaredRoutine({"), "🔴 OPE-2130: arm A's routine is written to the operational store by the harness");
+  ok(seedBody.includes("prompt:routineConnectorFirePrompt(OP,note,fireWord)"), "🔴 …and its fire instruction is routineConnectorFirePrompt's");
+  ok(!seedBody.includes("connector.post(") && !seedBody.includes("connector.mention("), "🔴 OPE-2130: arm A posts NO ask — no model turn has to agree to create its routine");
+  ok(declBody.includes("connector.post(") && declBody.includes("connector.mention("), "NEGATIVE CONTROL: arm B's drive DOES post an ask, so the scan above can see one");
+  ok(seedBody.includes("returnctx.fixtureMissing(") && seedBody.includes("armA:theharnessseeds"), "arm A with no store is a FIXTURE miss that names arm A, never a red on the fence");
+  ok(seedBody.includes('awaitretireUnfiredRoutines("A",r=>r.id===routine.id)'), "🔴 arm A removes its seeded row when it never fired, so a missed fire cannot land in a later leg");
+  ok(declBody.includes('awaitretireUnfiredRoutines("B",r=>r.createdAt>=sinceIso)'), "…and arm B removes the routine it created when that one never fired");
+  ok(seedBody.includes("armBCardOrg!==void0&&armBCardOrg!==org") || seedBody.includes("armBCardOrg!==undefined&&armBCardOrg!==org"), "arm A refuses to seed under an org arm B's card did not name");
+  const { routineNeverFired } = await import("../packages/core/scripts/e2e/routine-connector-fixture.js");
+  ok(routineNeverFired({ status: "active", nextRunAt: "2026-06-01T18:33:00.000Z" }), "an active row still due has never fired");
+  ok(routineNeverFired({ status: "active", nextRunAt: null }) === false, "🔴 NEGATIVE: active with a null nextRunAt is a fire IN FLIGHT (the fire-path write nulls it first) — never deleted under the running session");
+  ok(routineNeverFired({ status: "disabled", nextRunAt: null }) === false && routineNeverFired({ status: "disabled", nextRunAt: "2026-06-01T18:33:00.000Z" }) === false, "NEGATIVE: a disabled row is never removed — a fired one-shot stays for the record");
+  ok(!/DoNOTdeclare|anundeclaredfiredoes/u.test(flat), "🔴 NEGATIVE: the leg body carries no \"Do NOT declare\" ask — the construct luna refused in a live run");
+
+  const firePrompt = routineConnectorFirePrompt(OP, "rcwa-1", "rcwfxa-2");
+  ok(firePrompt.startsWith(routineConnectorWriteSteps(OP, "rcwa-1")), "🔴 arm A's fire runs the SAME delegated steps arm B's ask quotes");
+  ok(firePrompt.includes("ending that report with the word rcwfxa-2 (do not use this word anywhere else)."), "the fire prompt asks for the confirmation word the leg waits on");
+  ok(!/permission|declar/iu.test(firePrompt), `🔴 the fire prompt carries NO permission language — the fence reads the missing row, not the prompt (got: ${firePrompt})`);
+  ok(/permission|declar/iu.test('Declare the standing permission "tool:x"'), "NEGATIVE CONTROL: the permission regex matches arm B's declaration clause");
+
+  const now = new Date("2026-06-01T18:32:00.000Z");
+  const fireAt = new Date("2026-06-01T18:33:00.000Z");
+  const id = newRoutineId();
+  const row = seededUndeclaredRoutine({ id, org: "default", teamId: "T0EXAMPLE", channelId: "C0EXGENRL", createdBy: "U_E2E", prompt: firePrompt, fireAt, now });
+  ok(row.surfaceKey === "slack/T0EXAMPLE/C0EXGENRL", `the row is keyed on the channel's surface key, the key the fixture preflight derives the grant from (got ${row.surfaceKey})`);
+  ok(JSON.stringify(row.target) === JSON.stringify({ channelId: "C0EXGENRL" }), "🔴 the fire target is the { channelId } resolveSlackTarget reads");
+  ok(row.trigger.kind === "once" && (row.trigger as { at: string }).at === fireAt.toISOString() && row.nextRunAt === fireAt.toISOString(), "🔴 a one-shot at fireAt, with nextRunAt set so the dispatcher's due check picks it up");
+  ok(row.status === "active" && row.consecutiveFailures === 0 && row.createdBy === "U_E2E" && row.createdAt === now.toISOString(), "active, no failures, the harness user as creator");
+  ok(row.sessionMode === undefined && row.collectors === undefined && row.gate === undefined && row.report === undefined, "🔴 NOT a job, no collectors, no gate, no report redirect — the JOB kit would drop the write before the fence");
+  const key = routinePermissionKeyParts(`oe-routine:${row.id}:g${routinePermissionGeneration(row)}`);
+  ok(key?.routineId === id && key.generation === 1, "🔴 the minted id reads back through the permission-key grammar, generation 1 — a fresh key no declared row can already sit on");
+  let threw = "";
+  try {
+    seededUndeclaredRoutine({ id: "r:1", org: "default", teamId: "T", channelId: "C", createdBy: "U", prompt: "p", fireAt, now });
+  } catch (e) {
+    threw = String(e);
+  }
+  ok(threw.includes("carry no \":\""), "NEGATIVE: an id with \":\" is refused — the permission key grammar splits on it");
+  threw = "";
+  try {
+    seededUndeclaredRoutine({ id: "r-1", org: "default", teamId: "T", channelId: "C", createdBy: "U", prompt: "p", fireAt: now, now });
+  } catch (e) {
+    threw = String(e);
+  }
+  ok(threw.includes("a past one-shot never fires"), "NEGATIVE: a fireAt that is not after now is refused");
+
+  const red = (m: string) => new GateFailure(m);
+  const bRed = red("arm B lift");
+  const aRed = red("arm A refusal");
+  ok(routineConnectorArmVerdict([{ arm: "B" }, { arm: "A" }]) === undefined, "both arms green ⇒ nothing is thrown");
+  ok(routineConnectorArmVerdict([{ arm: "B", error: bRed }, { arm: "A", error: aRed }])?.error === bRed, "🔴 two reds ⇒ arm B's is thrown");
+  ok(routineConnectorArmVerdict([{ arm: "B" }, { arm: "A", error: aRed }])?.arm === "A", "🔴 arm B green, arm A red ⇒ arm A's red is thrown");
+  const bSkip = new ScenarioSkip("arm B: the card does not name the op");
+  ok(routineConnectorArmVerdict([{ arm: "B", error: bSkip }, { arm: "A", error: aRed }])?.error === aRed, "🔴 arm B skipped (prompt-compliance) and arm A red ⇒ the RED is thrown, never hidden behind the skip");
+  ok(routineConnectorArmVerdict([{ arm: "B", error: bSkip }, { arm: "A" }])?.error === bSkip, "arm B skipped, arm A green ⇒ the skip is thrown");
+  const aFix = new FixtureMissing("arm A: no store");
+  ok(routineConnectorArmVerdict([{ arm: "B", error: bSkip }, { arm: "A", error: aFix }])?.error === aFix, "a fixture miss outranks a skip");
+  ok(routineConnectorArmVerdict([{ arm: "B", error: new Error("slack 500") }, { arm: "A", error: aFix }])?.arm === "B", "a plain error counts as a red and outranks a fixture miss");
+  ok(routineConnectorArmVerdict([{ arm: "B", error: bSkip }, { arm: "A", error: new ScenarioSkip("arm A") }])?.error === bSkip, "NEGATIVE CONTROL: two skips ⇒ arm B's, the first listed — the rank, not the order, decided the cases above");
 }
 
 {
