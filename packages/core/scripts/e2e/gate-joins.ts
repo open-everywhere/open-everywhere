@@ -36,7 +36,7 @@ export function fixtureSalt(random: () => number = Math.random): string {
 }
 
 export function saltedFixtureLine(text: string, salt: string): string {
-  return salt.length === 0 ? text : `${text} (run ${salt})`;
+  return salt.length === 0 ? text : `${text} (ref ${salt})`;
 }
 
 export function carriesHostTemplate(text: string, templates: readonly string[]): boolean {
