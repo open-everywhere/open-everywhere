@@ -1647,4 +1647,42 @@ console.log("23. S-DISCORD-GRANT phase 2 skips the hand-off ack and polls its au
   ok(/pollOptional\([\s\S]{0,200}actions: \["grant\.notified"\]/.test(leg), "🔴 OPE-2084: phase 2 POLLS grant.notified");
 }
 
+console.log("24. seatContinuity scopes replies, sessions and seats to the admitted wakes:");
+{
+  const { seatContinuity } = await import("./engaged-rows.js");
+  const SEAT = "wrun_example62";
+  const OTHER = "wrun_example63";
+  const W1 = "555a0071";
+  const W2 = "9ddc7ca8";
+  const post = (ts: string, sessionId: string, wakeId?: string): AuditWireEntry => ({
+    ...row("reply.post", ts, { sessionId, ...(wakeId !== undefined ? { wakeId } : {}) }, undefined, "notion"),
+    surface: "page-1",
+  });
+  const foreign = post("2026-01-31T07:50:13.348Z", OTHER, "b7f00fd7");
+  const noWake = post("2026-01-31T07:50:20.000Z", OTHER);
+  const first = post("2026-01-31T07:50:32.900Z", SEAT, W1);
+  const second = post("2026-01-31T07:50:49.100Z", SEAT, W2);
+
+  const scoped = seatContinuity([foreign, noWake, first, second], { surface: "page-1", admittedWakeIds: [W1, W2] });
+  ok(scoped.seatIds.length === 1 && scoped.seatIds[0] === SEAT, `🔴 OPE-2123: one seat across the admitted wakes (saw ${JSON.stringify(scoped.seatIds)})`);
+  ok(scoped.replies === 2, `only the two admitted-wake replies count (saw ${scoped.replies})`);
+  ok(scoped.sessionIds.length === 1 && scoped.unattributed === 0, "the foreign rows add no session and no unattributed row");
+  ok(scoped.answeredWakeIds.length === 2, "both admitted wakes read as answered");
+
+  const split = seatContinuity([foreign, first, post("2026-01-31T07:50:49.100Z", OTHER, W2)], {
+    surface: "page-1",
+    admittedWakeIds: [W1, W2],
+  });
+  ok(split.seatIds.length === 2, `the older shape (two seats for two admitted wakes) stays refused (saw ${JSON.stringify(split.seatIds)})`);
+
+  const unscoped = seatContinuity([foreign, noWake, first, second], { surface: "page-1" });
+  ok(unscoped.replies === 4 && unscoped.seatIds.length === 2, `unscoped reads keep every reply (saw ${unscoped.replies} replies, ${unscoped.seatIds.length} seats)`);
+
+  const src = readFileSync(new URL("./scenarios.ts", import.meta.url), "utf8");
+  ok(
+    /const seat = seatContinuity\(posts, \{ surface: opts\.surface, admittedWakeIds: wakes, workerRows \}\);/.test(src),
+    "🔴 OPE-2123: gateOneSeatAcrossNameDrops scopes its one-seat read to the admitted wakes",
+  );
+}
+
 console.log(`✓ ${n} gate-joins assertions passed`);

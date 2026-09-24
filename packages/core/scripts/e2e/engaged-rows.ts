@@ -133,7 +133,13 @@ export function seatContinuity(
   rows: readonly AuditWireEntry[],
   opts: { readonly surface?: string; readonly admittedWakeIds?: readonly string[]; readonly workerRows?: readonly AuditWireEntry[] } = {},
 ): SeatContinuity {
-  const posts = rows.filter((r) => r.action === REPLY_POST_ACTION && (opts.surface === undefined || r.surface === opts.surface));
+  const admitted = opts.admittedWakeIds;
+  const posts = rows.filter((r) => {
+    if (r.action !== REPLY_POST_ACTION || (opts.surface !== undefined && r.surface !== opts.surface)) return false;
+    if (admitted === undefined) return true;
+    const wakeId = detailString(r, "wakeId");
+    return wakeId !== undefined && wakeId.length > 0 && admitted.includes(wakeId);
+  });
   const sessionIds: string[] = [];
   let unattributed = 0;
   for (const r of posts) {
@@ -145,7 +151,7 @@ export function seatContinuity(
     if (!sessionIds.includes(id)) sessionIds.push(id);
   }
   const answeredWakeIds = [...new Set(posts.map((r) => detailString(r, "wakeId")).filter(
-    (id): id is string => id !== undefined && id.length > 0 && (opts.admittedWakeIds === undefined || opts.admittedWakeIds.includes(id)),
+    (id): id is string => id !== undefined && id.length > 0,
   ))];
   const seatIds = [...new Set(sessionIds.map((id) => seatOfSession(id, opts.workerRows ?? [])))];
   return { replies: posts.length, sessionIds, unattributed, answeredWakeIds, seatIds };

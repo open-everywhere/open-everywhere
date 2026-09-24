@@ -905,7 +905,7 @@ async function gateOneSeatAcrossNameDrops(
     ctx.log(`one-seat: the ${WORKER_TOOLSET_ACTION} read failed — judging raw session ids, so a delegated worker's reply reads as a second seat`);
     return [];
   });
-  const seat = seatContinuity(posts, { surface: opts.surface, workerRows });
+  const seat = seatContinuity(posts, { surface: opts.surface, admittedWakeIds: wakes, workerRows });
   ctx.gate(
     seat.replies >= 2,
     `second name-drop: two scoped replies landed before continuity was evaluated — ${seat.replies} ${REPLY_POST_ACTION} row(s) on ${opts.surface} since the first ask. Fewer than two and the continuity gate below has nothing to be about`,
