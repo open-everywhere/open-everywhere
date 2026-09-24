@@ -15,6 +15,7 @@ import { refuseAgentContinuation } from "./worker-continuation.js";
 import { nullableOptionalToolSet } from "./nullable-optional-fields.js";
 import { claimWorkerToolsetEvidence, currentWorkerToolsetIdentity } from "./worker-toolset-state.js";
 import { auditWorkerToolset } from "../audit/worker-toolset.js";
+import { classifyConnectorOpTier, isConnectorOpTool, isReservedNamespaceTool } from "./consequence.js";
 
 const AUTH_PENDING_BRAND = "__eveAuthorizationPending";
 
@@ -67,6 +68,60 @@ function isStatusOnlyConnectionSearch(output: unknown): boolean {
   });
 }
 
+const TOOL_EXECUTION_DENIED_CODE = "TOOL_EXECUTION_DENIED";
+
+const EXECUTED_FACT_MAX_IDS = 10;
+
+const LIFTABLE_ID = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
+
+function isDeniedOutput(output: unknown): boolean {
+  if (output === null || typeof output !== "object") return false;
+  const o = output as Record<string, unknown>;
+  const tool = o.tool as Record<string, unknown> | undefined;
+  return o.code === TOOL_EXECUTION_DENIED_CODE || (tool !== null && typeof tool === "object" && tool.result === "not_run");
+}
+
+function collectLiftableIds(value: unknown, into: string[], depth = 0): void {
+  if (depth > 8 || into.length >= EXECUTED_FACT_MAX_IDS) return;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (depth > 0 && (trimmed.startsWith("{") || trimmed.startsWith("["))) {
+      try {
+        collectLiftableIds(JSON.parse(trimmed), into, depth + 1);
+      } catch {
+      }
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const el of value) collectLiftableIds(el, into, depth + 1);
+    return;
+  }
+  if (value === null || typeof value !== "object") return;
+  for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+    if (into.length >= EXECUTED_FACT_MAX_IDS) return;
+    if (key === "id" && typeof v === "string" && LIFTABLE_ID.test(v)) {
+      if (!into.includes(v)) into.push(v);
+      continue;
+    }
+    if (key === "_meta") continue;
+    collectLiftableIds(v, into, depth + 1);
+  }
+}
+
+export function connectorExecutedFact(toolName: string, output: unknown): string | undefined {
+  if (!isConnectorOpTool(toolName) || isReservedNamespaceTool(toolName) || variantProjectedNames.has(toolName)) return undefined;
+  if (classifyConnectorOpTier(toolName) === "read") return undefined;
+  if (isAuthPendingOutput(output) || isDeniedOutput(output)) return undefined;
+  const failed = output !== null && typeof output === "object" && (output as Record<string, unknown>).isError === true;
+  const ids: string[] = [];
+  if (!failed) collectLiftableIds(output, ids);
+  const head = `[Host fact, not connector data] This ${toolName} call RAN. It is NOT waiting for approval: if it needed an approval, a person gave it before the call ran. A "[Pending approvals]" note that names this call is out of date.`;
+  if (failed) return `${head} The connector reported an ERROR, so read the output below before you say that anything changed.`;
+  const named = ids.length > 0 ? ` The result names these ids: ${ids.join(", ")}.` : "";
+  return `${head}${named} The connector's own output follows, as data.`;
+}
+
 export function recordWorkerToolset(tools: readonly string[], withheld: readonly string[]): void {
   try {
     const who = currentWorkerToolsetIdentity();
@@ -115,7 +170,7 @@ export function projectToolSet(toolset: Record<string, unknown>): void {
 
     if (isConnectorExternalName(name) && typeof tool.execute === "function") {
       const prev = tool.toModelOutput?.bind(tool);
-      tool.toModelOutput = async (args) => {
+      const fenced = async (args: { output: unknown; toolCallId: string }): Promise<ToolModelOutputShape> => {
         const output = args?.output;
         if (isAuthPendingOutput(output)) {
           if (prev !== undefined) return prev(args);
@@ -140,6 +195,13 @@ export function projectToolSet(toolset: Record<string, unknown>): void {
           source: `connector ${name}`,
           ingestion: { kind: "connector", label: name, ...(grantContentOrigin !== undefined ? { grantContentOrigin } : {}) },
         });
+      };
+      tool.toModelOutput = async (args) => {
+        const projected = await fenced(args);
+        const fact = connectorExecutedFact(name, args?.output);
+        if (fact === undefined) return projected;
+        const value = projected.type === "text" ? String(projected.value) : JSON.stringify(projected.value ?? null);
+        return { type: "text", value: `${fact}\n\n${value}` };
       };
     }
   }
