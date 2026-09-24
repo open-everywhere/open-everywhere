@@ -156,12 +156,14 @@ import {
   fixtureArithmetic,
   fixtureSalt,
   haltSetByThisRun,
-  isMemoryHopWrite,
   isPersistOutcome,
   judgeDeniedRoutineCreation,
   MEMORY_CLAIM_WITHHELD_ACTION,
   MEMORY_WRITE_ACTION,
   memoryPathReadsBetween,
+  replyPostWakeId,
+  sharedContextVerdict,
+  type SharedContextRead,
   namesOwnAccountRefusal,
   ordinaryPageReadVerdict,
   ownAccountAnswerVerdict,
@@ -5288,21 +5290,26 @@ export const SCENARIOS: readonly Scenario[] = [
         const writes = await ctx.auditRead({ sinceIso: decideAt, actions: ["memory.write", REPLY_POST_ACTION] });
         const unifiedSessionId = unifiedTurnSessionId(writes, { githubReplyId: String(reply.id), slackAnchorId: ack.ts });
 
+        const askWakeId = replyPostWakeId(writes, String(reply.id));
+        let read: SharedContextRead = { kind: "not-run" };
         if (unifiedSessionId !== undefined && ctx.transcriptRead) {
           const events = await ctx.transcriptRead(unifiedSessionId);
           const slice = memoryPathReadsBetween(events, {
             fromText: uniXAsk,
+            ...(askWakeId !== undefined ? { fromWakeId: askWakeId } : {}),
             toText: marker,
             extractPaths: (evs) => extractMemoryPathReads(evs as readonly TranscriptWireEvent[]),
           });
           if (!slice.bounded) {
+            read = { kind: "not-located" };
             ctx.log(
               `shared-context proof (read side) NOT LOCATED (skip-class) — the GitHub turn was not found in seat ${unifiedSessionId}'s replayed stream ` +
-                `(${events.length} event(s); the ask ${slice.fromIndex === undefined ? "was never seen" : `opened at event ${slice.fromIndex}`}, ` +
+                `(${events.length} event(s); opened on ${askWakeId !== undefined ? `wake-id ${askWakeId}` : "the ask's prose (no reply.post wakeId)"}; the ask ${slice.fromIndex === undefined ? "was never seen" : `opened at event ${slice.fromIndex}`}, ` +
                 `the marker-carrying reply ${slice.toIndex === undefined ? "was never seen after it" : `closed at event ${slice.toIndex}`}). ` +
                 "Nothing was measured, so nothing is claimed here — the money shot above is the authoritative verdict, and the write side below is the other witness",
             );
           } else {
+            read = slice.paths.length === 0 ? { kind: "held" } : { kind: "hop", paths: slice.paths };
             ctx.gate(
               slice.paths.length === 0,
               `shared-context proof (read side): the GitHub turn read NO memory path between its wake (event ${slice.fromIndex}) and its reply ` +
@@ -5319,14 +5326,8 @@ export const SCENARIOS: readonly Scenario[] = [
         }
 
         const memoryWrites = writes.filter((r) => r.action === MEMORY_WRITE_ACTION);
-        const hops = memoryWrites.filter((r) => isMemoryHopWrite(r));
-        ctx.gate(
-          hops.length === 0,
-          `shared-context proof (write side): NO memory write on a road OTHER than \`session-persist\` in the decide→reply window. ` +
-            `Found ${hops.length} of ${memoryWrites.length} memory.write row(s); every session's \`session-persist\` row is excluded because that road carries ` +
-            `the turn-end persist AND the remember-ask flush alike, so this half cannot tell them apart — the READ gate above is what sees a hop taken on it ` +
-            `(${JSON.stringify(hops.map((r) => r.detail))})`,
-        );
+        const verdict = sharedContextVerdict(memoryWrites, read);
+        ctx.gate(verdict.pass, verdict.text);
       } else if (singleWindow) {
         ctx.log("shared-context proof skipped — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN so the run can assert the no-memory-hop half of the money shot");
       }

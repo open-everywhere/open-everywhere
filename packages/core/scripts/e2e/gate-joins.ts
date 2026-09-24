@@ -53,7 +53,61 @@ export function isMemoryHopWrite(row: AuditWireEntry): boolean {
   if (row.action !== MEMORY_WRITE_ACTION) return false;
   const road = dstr(row, "road");
   if (road === undefined) return true;
-  return !MEMORY_OWN_PERSIST_ROADS.includes(road);
+  return !MEMORY_OWN_PERSIST_ROADS.includes(road) && !MEMORY_BACKGROUND_ROADS.includes(road);
+}
+
+export const MEMORY_BACKGROUND_ROADS: readonly string[] = ["dream-learn", "dream-tidy"] satisfies readonly MemoryWriteRoad[];
+
+export function isMemoryDeferredWrite(row: AuditWireEntry): boolean {
+  if (row.action !== MEMORY_WRITE_ACTION) return false;
+  const road = dstr(row, "road");
+  return road !== undefined && MEMORY_BACKGROUND_ROADS.includes(road);
+}
+
+export type SharedContextRead =
+  | { readonly kind: "held" }
+  | { readonly kind: "hop"; readonly paths: readonly string[] }
+  | { readonly kind: "not-located" }
+  | { readonly kind: "not-run" };
+
+export function sharedContextVerdict(
+  memoryWrites: readonly AuditWireEntry[],
+  read: SharedContextRead,
+): { readonly pass: boolean; readonly text: string } {
+  const hops = memoryWrites.filter((r) => isMemoryHopWrite(r));
+  const deferred = memoryWrites.filter((r) => isMemoryDeferredWrite(r));
+  const seen = `${memoryWrites.length} memory.write row(s) in the decide→reply window`;
+  if (hops.length > 0) {
+    return {
+      pass: false,
+      text:
+        `shared-context proof (write side): ${hops.length} memory write(s) on a road other than \`session-persist\` or a background dream road — a hop. ` +
+        `${seen}: ${JSON.stringify(hops.map((r) => r.detail))}`,
+    };
+  }
+  if (deferred.length === 0) {
+    return {
+      pass: true,
+      text:
+        `shared-context proof (write side): no memory write on a road other than \`session-persist\` (${seen}). Every session's \`session-persist\` row is excluded ` +
+        "because that road carries the turn-end persist AND the remember-ask flush alike — the READ side is what sees a hop taken on it",
+    };
+  }
+  const rows = JSON.stringify(deferred.map((r) => r.detail));
+  switch (read.kind) {
+    case "held":
+      return { pass: true, text: `shared-context proof (write side): UNDECIDED by ${deferred.length} background dream write(s) (${rows}); the READ side decided it — the GitHub turn read no memory path` };
+    case "hop":
+      return { pass: false, text: `shared-context proof (write side): UNDECIDED by ${deferred.length} background dream write(s) (${rows}); the READ side found ${read.paths.length} memory read(s) in the GitHub turn — a hop` };
+    case "not-located":
+    case "not-run":
+      return {
+        pass: false,
+        text:
+          `shared-context proof UNPROVEN: ${deferred.length} background dream write(s) in the window (${rows}) leave the write side undecided, and the read side was ` +
+          `${read.kind === "not-located" ? "NOT LOCATED" : "NOT RUN"}, so nothing shows the GitHub answer came from the live window`,
+      };
+  }
 }
 
 export interface ReplayedEvent {
@@ -69,20 +123,54 @@ export interface MemoryReadSlice {
   readonly bounded: boolean;
 }
 
+export const WAKE_ENVELOPE_EVENT = "message.received";
+
+export function decodeEnvelopeEntities(text: string): string {
+  return text
+    .replace(/&#x([0-9a-f]+);/gi, (_, h: string) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d: string) => String.fromCodePoint(Number(d)))
+    .replace(/&apos;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+function envelopeText(e: ReplayedEvent): string {
+  const out: string[] = [];
+  const walk = (v: unknown): void => {
+    if (typeof v === "string") out.push(v);
+    else if (Array.isArray(v)) v.forEach(walk);
+    else if (v !== null && typeof v === "object") Object.values(v).forEach(walk);
+  };
+  walk(e.data);
+  return decodeEnvelopeEntities(out.join("\n"));
+}
+
 export function memoryPathReadsBetween(
   events: readonly ReplayedEvent[],
-  opts: { readonly fromText: string; readonly toText: string; readonly extractPaths: (events: readonly ReplayedEvent[]) => readonly string[] },
+  opts: {
+    readonly fromText: string;
+    readonly fromWakeId?: string;
+    readonly toText: string;
+    readonly extractPaths: (events: readonly ReplayedEvent[]) => readonly string[];
+  },
 ): MemoryReadSlice {
-  const bodyOf = (e: ReplayedEvent): string => JSON.stringify({ type: e.type, data: e.data });
+  const opens = (e: ReplayedEvent): boolean => {
+    if (e.type !== WAKE_ENVELOPE_EVENT) return false;
+    const text = envelopeText(e);
+    if (opts.fromWakeId !== undefined && opts.fromWakeId.length > 0) return text.includes(`wake-id="${opts.fromWakeId}"`);
+    return opts.fromText.length > 0 && text.includes(opts.fromText);
+  };
   let fromIndex: number | undefined;
   let toIndex: number | undefined;
   for (const e of events) {
-    const body = bodyOf(e);
-    if (fromIndex === undefined) {
-      if (opts.fromText.length > 0 && body.includes(opts.fromText)) fromIndex = e.index;
+    if (opens(e)) {
+      fromIndex = e.index;
       continue;
     }
-    if (e.index > fromIndex && opts.toText.length > 0 && body.includes(opts.toText)) {
+    if (fromIndex === undefined || e.type === WAKE_ENVELOPE_EVENT) continue;
+    if (e.index > fromIndex && opts.toText.length > 0 && JSON.stringify({ type: e.type, data: e.data }).includes(opts.toText)) {
       toIndex = e.index;
       break;
     }
@@ -136,7 +224,7 @@ export type SettlementReplyVerdict =
   | { readonly kind: "answer"; readonly wakeId: string; readonly detail: string }
   | { readonly kind: "step-over"; readonly detail: string };
 
-function replyPostWakeId(rows: readonly AuditWireEntry[], messageId: string): string | undefined {
+export function replyPostWakeId(rows: readonly AuditWireEntry[], messageId: string): string | undefined {
   for (const r of rows) {
     if (r.action !== REPLY_POST_ACTION) continue;
     if (dstr(r, "id") !== messageId) continue;

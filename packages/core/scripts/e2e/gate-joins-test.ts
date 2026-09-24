@@ -23,7 +23,11 @@ import {
   judgeDeniedRoutineCreation,
   fixtureSalt,
   haltSetByThisRun,
+  isMemoryDeferredWrite,
   isMemoryHopWrite,
+  decodeEnvelopeEntities,
+  replyPostWakeId,
+  sharedContextVerdict,
   isPersistOutcome,
   MEMORY_PURGE_ROAD,
   memoryPathReadsBetween,
@@ -161,7 +165,7 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
     !isMemoryHopWrite({ ...siblingPersist, detail: { ...siblingPersist.detail, sessionId: "wrun_A_THIRD_SEAT" } }),
     "…and the exclusion is decided by the ROAD alone, so a third seat's persist is excluded on the same terms — no session id is read at all",
   );
-  for (const road of ["control-edit", "dream-learn", "dream-tidy", "purge", "pinned-instructions"]) {
+  for (const road of ["control-edit", "purge", "pinned-instructions"]) {
     ok(
       isMemoryHopWrite({ ...siblingPersist, detail: { ...siblingPersist.detail, road } }),
       `a \`${road}\` write by ANOTHER session still trips it — every road but \`session-persist\` is a deliberate act this window can see`,
@@ -188,6 +192,42 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
     "…and so does a row whose road is not a string: the gate understands the closed road set and nothing else",
   );
   ok(!isMemoryHopWrite(row("memory.operational_write", park.ts, { road: "status-board" })), "an OPERATIONAL write is a different action and is not this gate's business");
+}
+
+{
+  const dream = row("memory.write", "2026-01-31T01:59:10.000Z", {
+    road: "dream-learn",
+    kind: "memory",
+    tier: "silo:e2e-ambient-brain",
+    silo: "e2e-ambient-brain",
+    provider: "postgres",
+    files: 10,
+    version: "433",
+    bullets: 1,
+  });
+  const persist = row("memory.write", "2026-01-31T01:58:20.000Z", { road: "session-persist", kind: "memory", tier: "silo:e2e-ambient-brain", outcome: "edited", files: 9 });
+  const controlEdit = { ...dream, detail: { ...dream.detail, road: "control-edit" } };
+
+  ok(!isMemoryHopWrite(dream) && isMemoryDeferredWrite(dream), "the live-run `dream-learn` row is NOT a hop on its own — it DEFERS to the read side");
+  ok(!isMemoryHopWrite({ ...dream, detail: { ...dream.detail, road: "dream-tidy" } }), "…and neither is a `dream-tidy` row, the other background road");
+  ok(isMemoryHopWrite(controlEdit) && !isMemoryDeferredWrite(controlEdit), "a `control-edit` into the SAME silo is still a hop, and does not defer (negative control)");
+  ok(!isMemoryDeferredWrite(persist), "a `session-persist` row does not defer either — it is excluded outright, as before");
+  ok(isMemoryHopWrite({ ...dream, detail: { kind: "memory", silo: "e2e-ambient-brain" } }), "a row with NO readable road still fails toward COUNTING");
+
+  const held = sharedContextVerdict([persist, dream], { kind: "held" });
+  ok(held.pass === true && /UNDECIDED/.test(held.text), "dream row + read side HELD ⇒ the leg is GREEN, and the text says the read side decided");
+  const hop = sharedContextVerdict([persist, dream], { kind: "hop", paths: ["memory/e2e-ambient-brain/decisions.md"] });
+  ok(hop.pass === false && /a hop/.test(hop.text), "dream row + read side found a memory read ⇒ RED as a real hop");
+  const unlocated = sharedContextVerdict([persist, dream], { kind: "not-located" });
+  ok(unlocated.pass === false && /UNPROVEN/.test(unlocated.text) && /NOT LOCATED/.test(unlocated.text), "dream row + read side NOT LOCATED ⇒ RED as UNPROVEN, said so in the gate text");
+  const unrun = sharedContextVerdict([persist, dream], { kind: "not-run" });
+  ok(unrun.pass === false && /UNPROVEN/.test(unrun.text), "…and NOT RUN is unproven on the same terms");
+
+  const edited = sharedContextVerdict([persist, dream, controlEdit], { kind: "held" });
+  ok(edited.pass === false && /control-edit/.test(edited.text), "🔴 a `control-edit` in the window reds OUTRIGHT, even when the read side HELD — §4's rule for every deliberate road");
+  const quiet = sharedContextVerdict([persist], { kind: "not-located" });
+  ok(quiet.pass === true, "no dream row and no hop road ⇒ the write side passes whatever the read side found (the read gate owns its own skip-class)");
+  ok(sharedContextVerdict([], { kind: "not-run" }).pass === true, "an empty window passes the write side");
 }
 
 {
@@ -221,6 +261,61 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
   const noReply = memoryPathReadsBetween([clean[0]!, clean[1]!], { fromText: ASK, toText: MARKER, extractPaths: extract });
   ok(!noReply.bounded && noReply.fromIndex === 10 && noReply.toIndex === undefined, "…and so is one that opens and never closes, which says which mark was missing");
   ok(noReply.paths.length === 0, "an unbounded slice reports no paths — the flag, never the empty list, is what a caller may read");
+}
+
+{
+  const WAKE = "00000000-0000-4000-8000-000000000061";
+  const MARKER = "unix-6353";
+  const ASK = "Before I write this up — what was the deploy window name the team decided on earlier today? It was agreed in the team's Slack channel; asking here so it's on the record.";
+  const envelope =
+    `<wake reason="channel-activity" addressing="channel-watch" engagement="neutral" follow-up="thread-engaged" current-time="2026-01-31T01:59:52.229Z" wake-id="${WAKE}">\n` +
+    `  <channel id="ch_Z2l0aHViOnRvbW15NWRvbGxhci9iaXJkLWNhbQ" container="repo">\n  <thread ts="#1">\n` +
+    `    <message trigger="true" from="human" trust="peer" author="example-owner" author-id="example-owner" id="5808346498" sent-at="2026-01-31T01:59:50Z">\n` +
+    `      Before I write this up — what was the deploy window name the team decided on earlier today? It was agreed in the team&apos;s Slack channel; asking here so it&apos;s on the record.\n` +
+    `    </message>\n  </thread>\n  </channel>\n</wake>`;
+  const ev = (index: number, type: string, data: unknown) => ({ index, type, data });
+  const extract = (evs: readonly { readonly index: number; readonly type: string; readonly data: unknown }[]): readonly string[] =>
+    evs.flatMap((e) => {
+      const d = e.data as { path?: unknown } | undefined;
+      return typeof d?.path === "string" ? [d.path] : [];
+    });
+  const replyInput = { text: `The deploy window is \`${MARKER}\`, per the team’s earlier Slack decision; it supersedes \`uni-63513\`.`, wake: WAKE };
+  const stream = [
+    ev(120, "message.received", { message: `<wake wake-id="slack-wake"><message trigger="true">Team decision to log: the deploy window for this release is named ${MARKER}.</message></wake>`, parts: [], sequence: 1, turnId: "turn_1" }),
+    ev(266, "message.received", { message: envelope, parts: [{ text: envelope, type: "text" }], sequence: 2, turnId: "turn_2" }),
+    ev(267, "step.started", { modelId: "gateway/openai/gpt-6-luna", sequence: 2, stepIndex: 0, turnId: "turn_2" }),
+    ev(273, "action.input.appended", { callId: "call_fp", inputTextDelta: " `unix-", sequence: 2, stepIndex: 0, toolName: "reply", turnId: "turn_2" }),
+    ev(274, "action.input.appended", { callId: "call_fp", inputTextDelta: "635", sequence: 2, stepIndex: 0, toolName: "reply", turnId: "turn_2" }),
+    ev(301, "actions.requested", { actions: [{ callId: "call_fp", input: replyInput, toolName: "reply" }], sequence: 2, stepIndex: 0, turnId: "turn_2" }),
+    ev(302, "action.result", { result: { callId: "call_fp", kind: "tool-result", output: { posted: true, id: "5808350125" } } }),
+  ];
+
+  ok(decodeEnvelopeEntities("team&apos;s &quot;x&quot; &amp;apos; &#39;") === `team's "x" &apos; '`, "entity decoding undoes the envelope's escaping, `&amp;` last");
+
+  const byWake = memoryPathReadsBetween(stream, { fromText: ASK, fromWakeId: WAKE, toText: MARKER, extractPaths: extract });
+  ok(byWake.bounded && byWake.fromIndex === 266 && byWake.toIndex === 301, "🔴 the slice opens on the envelope's wake-id (event 266) and closes on the marker-carrying `reply` call (event 301)");
+  ok(byWake.paths.length === 0, "…and this board's turn read no memory path — the HELD shape");
+
+  const byProse = memoryPathReadsBetween(stream, { fromText: ASK, toText: MARKER, extractPaths: extract });
+  ok(byProse.bounded && byProse.fromIndex === 266 && byProse.toIndex === 301, "🔴 with no wake id, the ask's prose matches the envelope after entity decoding (`team's` vs `team&apos;s`)");
+
+  const read = ev(290, "action.result", { path: "memory/e2e-ambient-brain/decisions.md" });
+  const hopped = memoryPathReadsBetween([...stream.slice(0, 5), read, ...stream.slice(5)], { fromText: ASK, fromWakeId: WAKE, toText: MARKER, extractPaths: extract });
+  ok(hopped.bounded && hopped.paths.length === 1, "a memory read between the envelope and the reply IS counted (negative control)");
+
+  const otherWake = memoryPathReadsBetween(stream, { fromText: ASK, fromWakeId: "some-other-wake", toText: MARKER, extractPaths: extract });
+  ok(!otherWake.bounded && otherWake.fromIndex === undefined, "a wake id no envelope carries never opens the slice — the prose does not stand in for it");
+
+  const noEnvelope = memoryPathReadsBetween(stream.filter((e) => e.index !== 266), { fromText: ASK, fromWakeId: WAKE, toText: MARKER, extractPaths: extract });
+  ok(!noEnvelope.bounded && noEnvelope.fromIndex === undefined, "the reply call's own `wake` argument does not open the slice — only a `message.received` envelope does");
+
+  const rerun = [ev(50, "message.received", { message: envelope.replace(WAKE, "old-wake") }), ev(51, "action.result", { path: "memory/e2e-ambient-brain/old.md" }), ...stream];
+  const latest = memoryPathReadsBetween(rerun, { fromText: ASK, toText: MARKER, extractPaths: extract });
+  ok(latest.fromIndex === 266 && latest.paths.length === 0, "an earlier run's identical ask does not stretch the slice — the LATEST envelope before the close opens it");
+
+  const rows = [row("reply.post", "2026-01-31T02:00:20.000Z", { id: "5808350125", wakeId: WAKE, sessionId: "wrun_example60" }, 1, "github")];
+  ok(replyPostWakeId(rows, "5808350125") === WAKE, "replyPostWakeId names the wake the GitHub reply answered");
+  ok(replyPostWakeId(rows, "1") === undefined, "…and nothing for a message no reply.post row names");
 }
 
 {
