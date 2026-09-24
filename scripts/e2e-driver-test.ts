@@ -721,6 +721,56 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ok(flat.includes("readsAsSpendRefusalReport(reportText)"), "🔴 WIRING: the content gate reads the joined report");
   ok(!flat.includes("carriesFactToken(m.text,fireWord)"), "🔴 WIRING: no wait keys on the confirmation word any more");
   ok(body.includes("luna habit 7: the failure report dropped the literal"), "WIRING: an absent word is a log line");
+
+  ok(posted.report?.detail?.id === "1780494746.000100" && posted.reportRoad === "last-post", `a single-post fire's report is that post (got ${String(posted.report?.detail?.id)} / ${String(posted.reportRoad)})`);
+}
+
+{
+  const { fireReportJoin, readsAsSpendRefusalReport, FIRE_ATTRS_SENT_ACTION, SETTLEMENT_REPORT_POSTED_ACTION } = await import("../packages/core/scripts/e2e/gate-joins.js");
+  const { fireReportWaitMs, isPendingWorkHandoff } = await import("../packages/core/scripts/e2e/scenarios.js");
+  const FIRE = "wrun_example59";
+  const WAKE = "7664ed40-2117-4000-8000-000000000240";
+  const TASK_WAKE = "7664ed40-2117-4000-8000-00000000task";
+  const TASK = "task_2117";
+  const row = (action: string, ts: string, detail: Record<string, unknown>, seq: number) => ({ ts, org: "o", platform: "slack", workspace: "w", action, detail, seq });
+  const HANDOFF = "I've handed off the exact spend-limit proposal attempt; I'll report the tool's outcome here when it returns.";
+  const SETTLEMENT = "`set_spend_limit` was refused because this turn had no verified sender, so it couldn't propose the change in a person's name. A person in the conversation must propose it. No limit change was made. tntfx-10672";
+  const sent = row(FIRE_ATTRS_SENT_ACTION, "2026-06-03T02:42:10.000Z", { routineId: "r-2117", wakeId: WAKE, attrKeys: [], attrCount: 0 }, 1);
+  const turn = row("wake.turn_start", "2026-06-03T02:42:11.000Z", { wakeId: WAKE, sessionId: FIRE, turnStartTs: "2026-06-03T02:42:11.000Z" }, 2);
+  const started = row("delegation.task_started", "2026-06-03T02:42:15.000Z", { task: TASK, wake: WAKE }, 3);
+  const handoff = row("reply.post", "2026-06-03T02:42:21.000Z", { id: "1780453341.000100", platform: "slack", route: "tool", sessionId: FIRE, wakeId: WAKE }, 4);
+  const taskSettled = row("delegation.task_settled", "2026-06-03T02:42:59.000Z", { task: TASK }, 5);
+  const settlementPost = row("reply.post", "2026-06-03T02:43:02.000Z", { id: "1780453382.000100", platform: "slack", route: "tool", sessionId: FIRE, wakeId: TASK_WAKE }, 6);
+  const settlementRow = row(SETTLEMENT_REPORT_POSTED_ACTION, "2026-06-03T02:43:02.100Z", { task: TASK, wake: TASK_WAKE }, 7);
+
+  const early = fireReportJoin([sent, turn, started, handoff]);
+  ok(early.verdict === "posted" && early.report?.detail?.id === "1780453341.000100" && early.reportRoad === "last-post", `the hand-off alone is the newest post (got ${String(early.report?.detail?.id)} / ${String(early.reportRoad)})`);
+  ok(isPendingWorkHandoff(HANDOFF), "🔴 the measured hand-off text reads as a pending-work hand-off");
+  ok(readsAsSpendRefusalReport(HANDOFF) === false, "NEGATIVE CONTROL: the measured hand-off does NOT read as the refusal report");
+  ok(fireReportWaitMs(early.reportRoad, HANDOFF) === 420_000, `🔴 a hand-off report extends the wait by the delegated budget (got ${String(fireReportWaitMs(early.reportRoad, HANDOFF))})`);
+
+  const settled = fireReportJoin([sent, turn, started, handoff, taskSettled, settlementPost, settlementRow]);
+  ok(settled.verdict === "posted" && settled.replies.length === 2, `both fire posts join (got ${settled.verdict}, ${settled.replies.length})`);
+  ok(
+    settled.report?.detail?.id === "1780453382.000100" && settled.reportRoad === "settlement",
+    `🔴 the fire's report is the settlement post, not the hand-off (got ${String(settled.report?.detail?.id)} / ${String(settled.reportRoad)})`,
+  );
+  ok(fireReportWaitMs(settled.reportRoad, SETTLEMENT) === undefined, "🔴 a settlement-named report needs no extra wait");
+  ok(fireReportWaitMs("settlement", HANDOFF) === undefined, "a settlement row outranks the prose heuristic");
+  ok(readsAsSpendRefusalReport(SETTLEMENT), "🔴 the measured settlement wording reads as the spend refusal report");
+  ok(
+    readsAsSpendRefusalReport("`set_spend_limit` was refused because this turn had no verified sender."),
+    "🔴 the tool name alone is the spend subject (no word boundary inside set_spend_limit)",
+  );
+  ok(readsAsSpendRefusalReport("`set_channel_topic` was refused.") === false, "NEGATIVE CONTROL: another tool's refusal is NOT the spend report");
+
+  const stray = fireReportJoin([sent, turn, handoff, row(SETTLEMENT_REPORT_POSTED_ACTION, "2026-06-03T02:42:30.000Z", { task: "task_other", wake: "other-wake" }, 8)]);
+  ok(stray.reportRoad === "last-post" && stray.report?.detail?.id === "1780453341.000100", `NEGATIVE CONTROL: a stray settlement row names no fire post (got ${String(stray.reportRoad)})`);
+
+  const flat = (await import("../packages/core/scripts/e2e/scenarios.js")).SCENARIOS.find((s) => s.id === "S-TAINT-UNATTENDED-DENY")!.run.toString().replace(/\s+/g, "");
+  ok(flat.includes("REPLY_POST_ACTION,SETTLEMENT_REPORT_POSTED_ACTION]"), "🔴 WIRING: the fire read carries the settlement rows");
+  ok(flat.includes("constfired=fireReport.report;") || flat.includes("constfired=fireReport!.report;"), "🔴 WIRING: the report is the join's report, never the first or joined posts");
+  ok(flat.includes("fireReportWaitMs(firstReport.join.reportRoad,firstReport.report.text)"), "🔴 WIRING: a hand-off first report opens the settlement wait");
 }
 
 {

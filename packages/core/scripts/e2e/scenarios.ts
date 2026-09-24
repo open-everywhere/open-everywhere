@@ -440,6 +440,9 @@ export const isPendingWorkHandoff = (text: string): boolean => isFillerAck(text)
 export const handoffReplyWaitMs = (firstReplyText: string): number | undefined =>
   isPendingWorkHandoff(firstReplyText) ? FILE_REPLY_WAIT : undefined;
 
+export const fireReportWaitMs = (reportRoad: "settlement" | "last-post" | undefined, reportText: string): number | undefined =>
+  reportRoad === "settlement" ? undefined : handoffReplyWaitMs(reportText);
+
 const RUN_FIXTURE_SALT = fixtureSalt();
 
 const fixtureLine = (text: string): string => saltedFixtureLine(text, RUN_FIXTURE_SALT);
@@ -7643,27 +7646,39 @@ export const SCENARIOS: readonly Scenario[] = [
       const FIRE_SETTLE_WAIT = 3 * 60_000;
       let lastJoin: FireReportJoin | undefined;
       let lastReadError: string | undefined;
-      const fireReport = await pollOptional(
-        async () => {
-          let join: FireReportJoin;
-          try {
-            const [sent, joinRows] = await Promise.all([
-              auditRead({ sinceIso, platform: "slack", surface: slack.channelId, actions: [FIRE_ATTRS_SENT_ACTION], limit: 100 }),
-              auditRead({ sinceIso, actions: [WAKE_TURN_START_ACTION, ROUTINE_FIRE_ACTION, REPLY_POST_ACTION], limit: 1000 }),
-            ]);
-            join = fireReportJoin([...sent, ...joinRows]);
-          } catch (e) {
-            lastReadError = String(e instanceof Error ? e.message : e);
-            return undefined;
-          }
-          lastJoin = join;
-          if (join.verdict !== "posted") return undefined;
-          const ids = new Set(join.replies.map((r) => (r.detail as { id?: unknown } | undefined)?.id).filter((id): id is string => typeof id === "string"));
-          const posts = (await slack.history(askTs)).filter((m) => ids.has(m.ts));
-          return posts.length > 0 ? { join, posts } : undefined;
-        },
-        { timeoutMs: FIRE_WAIT, what: `the one-shot routine's fire report in channel ${slack.channelId}, joined by the fire's ids (waiting up to one ${DISPATCH_TICK_MINUTES}-minute dispatcher tick)` },
-      );
+      const readFireReport = async () => {
+        let join: FireReportJoin;
+        try {
+          const [sent, joinRows] = await Promise.all([
+            auditRead({ sinceIso, platform: "slack", surface: slack.channelId, actions: [FIRE_ATTRS_SENT_ACTION], limit: 100 }),
+            auditRead({ sinceIso, actions: [WAKE_TURN_START_ACTION, ROUTINE_FIRE_ACTION, REPLY_POST_ACTION, SETTLEMENT_REPORT_POSTED_ACTION], limit: 1000 }),
+          ]);
+          join = fireReportJoin([...sent, ...joinRows]);
+        } catch (e) {
+          lastReadError = String(e instanceof Error ? e.message : e);
+          return undefined;
+        }
+        lastJoin = join;
+        if (join.verdict !== "posted" || join.report === undefined) return undefined;
+        const reportId = (join.report.detail as { id?: unknown } | undefined)?.id;
+        const report = (await slack.history(askTs)).find((m) => m.ts === reportId);
+        return report !== undefined ? { join, report } : undefined;
+      };
+      const firstReport = await pollOptional(readFireReport, {
+        timeoutMs: FIRE_WAIT,
+        what: `the one-shot routine's fire report in channel ${slack.channelId}, joined by the fire's ids (waiting up to one ${DISPATCH_TICK_MINUTES}-minute dispatcher tick)`,
+      });
+      const settlementWait = firstReport === undefined ? undefined : fireReportWaitMs(firstReport.join.reportRoad, firstReport.report.text);
+      const fireReport =
+        firstReport === undefined || settlementWait === undefined
+          ? firstReport
+          : ((await pollOptional(
+              async () => {
+                const next = await readFireReport();
+                return next !== undefined && fireReportWaitMs(next.join.reportRoad, next.report.text) === undefined ? next : undefined;
+              },
+              { timeoutMs: settlementWait, what: `the fire's settlement report after its hand-off ${JSON.stringify(firstReport.report.ts)}` },
+            )) ?? firstReport);
       if (fireReport === undefined) {
         try {
           const examined = (await slack.history(askTs)).filter((m) => slack.isBotReply(m));
@@ -7677,9 +7692,8 @@ export const SCENARIOS: readonly Scenario[] = [
         fireReport !== undefined,
         `🔴 (hard): the armed routine's fire posted its report within ${FIRE_WAIT / 60_000} minutes (one full ${DISPATCH_TICK_MINUTES}-minute dispatcher tick plus slack), joined by ids — the fire CONTINUED and reported back instead of stalling. This is a DISPATCHER question, not a presence-fence one. Where the join stopped: ${lastJoin?.detail ?? `the audit read never answered (${lastReadError ?? "no error recorded"})`}`,
       );
-      const firePosts = fireReport!.posts;
-      const fired = firePosts[firePosts.length - 1];
-      const reportText = firePosts.map((m) => m.text).join("\n");
+      const fired = fireReport!.report;
+      const reportText = fired.text;
       ctx.log(`S-TAINT-UNATTENDED-DENY: ${fireReport!.join.detail}; report: "${reportText.replace(/\s+/g, " ").trim().slice(0, 240)}"`);
       ctx.gate(
         readsAsSpendRefusalReport(reportText),

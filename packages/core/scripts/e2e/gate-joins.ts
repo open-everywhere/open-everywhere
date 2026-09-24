@@ -1230,6 +1230,8 @@ export interface FireReportJoin {
   readonly fires: readonly FireReportFire[];
   readonly sessionIds: readonly string[];
   readonly replies: readonly AuditWireEntry[];
+  readonly report?: AuditWireEntry;
+  readonly reportRoad?: "settlement" | "last-post";
   readonly detail: string;
 }
 
@@ -1301,17 +1303,26 @@ export function fireReportJoin(rows: readonly AuditWireEntry[]): FireReportJoin 
       detail: `the dispatcher handed out ${named} and the fire ran as session(s) ${JSON.stringify(sessionIds)}, but no ${REPLY_POST_ACTION} row names that session or wake: the fire did not report back`,
     };
   }
+  const settledIds = new Set(settlementReportPairings(rows).map((p) => p.id));
+  const settled = replies.filter((r) => {
+    const id = dstr(r, "id");
+    return id !== undefined && settledIds.has(id);
+  });
+  const report = settled.length > 0 ? settled[settled.length - 1]! : replies[replies.length - 1]!;
+  const reportRoad = settled.length > 0 ? "settlement" : "last-post";
   return {
     verdict: "posted",
     fires,
     sessionIds,
     replies,
-    detail: `the fire ran as session(s) ${JSON.stringify(sessionIds)} and posted ${replies.length} message(s) ${JSON.stringify(replies.map((r) => dstr(r, "id") ?? null))}`,
+    report,
+    reportRoad,
+    detail: `the fire ran as session(s) ${JSON.stringify(sessionIds)} and posted ${replies.length} message(s) ${JSON.stringify(replies.map((r) => dstr(r, "id") ?? null))}; the report is ${JSON.stringify(dstr(report, "id") ?? null)} (${reportRoad})`,
   };
 }
 
 const REFUSAL_SHAPE = /\b(?:refus\w*|den(?:y|ied|ies)|reject\w*|block\w*|not (?:be )?(?:allowed|permitted|authori[sz]ed)|could ?n[o']t|can ?n[o']t|unable|fail\w*|no (?:cap|limit|spend\w*) (?:was )?changed)\b/i;
-const SPEND_SUBJECT = /\b(?:spend\w*|cap|limit|budget)\b/i;
+const SPEND_SUBJECT = /\b(?:spend\w*|cap|limit|budget)\b|set_spend_limit/i;
 
 export function readsAsSpendRefusalReport(text: string): boolean {
   return REFUSAL_SHAPE.test(text) && SPEND_SUBJECT.test(text);
