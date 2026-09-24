@@ -8114,6 +8114,119 @@ rmSync(dir, { recursive: true, force: true });
     "negative control: exactly ONE leg reads this rule, so the checks above cannot be passing on another leg's body",
   );
 }
+
+{
+  const { archiveNotionPageByTitle, notionPageIdFromText, searchNotionPagesByTitlePrefix } = await import("../packages/core/scripts/e2e/notion-driver.js");
+  const res = (status: number, body: unknown = {}) => ({
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: () => null },
+    text: async () => JSON.stringify(body),
+    json: async () => body,
+  });
+  const page = (id: string, title: string, archived = false) => ({
+    object: "page",
+    id,
+    archived,
+    properties: { Name: { type: "title", title: [{ plain_text: title }] } },
+  });
+  const ID = "0123456789abcdef0123456789abcdef";
+  const DASHED = "01234567-89ab-cdef-0123-456789abcdef";
+
+  ok(notionPageIdFromText(`Created it: https://www.notion.so/OE-suspended-x-${ID}`) === DASHED, "a Notion page link in the seat's reply yields the page id in dashed form");
+  ok(notionPageIdFromText(`<https://app.notion.so/${DASHED}|OE suspended>`) === DASHED, "…and a dashed id inside a Slack-formatted link yields the same id");
+  ok(
+    notionPageIdFromText("Done: https://app.notion.com/p/40000000000040008000000000000107?pvs=204") === "40000000-0000-4000-8000-000000000107",
+    "the live app.notion.com/p/<id> link shape (a live run's resumed reply) yields the page id",
+  );
+  ok(notionPageIdFromText("see https://app.notion.com/p/workspace-home") === undefined, "negative control: a notion.com link with no 32-hex id yields no id");
+  ok(notionPageIdFromText(`the token is ${ID}`) === undefined, "negative control: 32 hex digits with no Notion link are NOT read as a page id");
+
+  {
+    const calls: { url: string; method?: string; body?: string }[] = [];
+    const r = await archiveNotionPageByTitle({
+      driverKey: "k",
+      title: "OE suspended suspended-slack-1",
+      pageId: DASHED,
+      fetchFn: async (url, init) => {
+        calls.push({ url, method: init?.method, body: init?.body as string | undefined });
+        return res(200, { id: DASHED, archived: true });
+      },
+    });
+    ok(calls.length === 1 && calls[0]!.url.endsWith(`/v1/pages/${DASHED}`) && calls[0]!.method === "PATCH", `with a page id the teardown PATCHes /v1/pages/<id> once (calls: ${JSON.stringify(calls.map((c) => c.url))})`);
+    ok(calls[0]!.body === JSON.stringify({ archived: true }), 'the PATCH body is exactly {"archived":true}');
+    ok(r.archived.length === 1 && r.archived[0]!.id === DASHED && r.reason === undefined, "…and the result names the archived page");
+  }
+
+  {
+    const patched: string[] = [];
+    const r = await archiveNotionPageByTitle({
+      driverKey: "k",
+      title: "OE suspended suspended-slack-1",
+      fetchFn: async (url) => {
+        if (url.endsWith("/v1/search")) {
+          return res(200, {
+            results: [page("p-exact", "OE suspended suspended-slack-1"), page("p-longer", "OE suspended suspended-slack-12"), page("p-gone", "OE suspended suspended-slack-1", true)],
+          });
+        }
+        patched.push(url.split("/v1/pages/")[1] ?? "");
+        return res(200, { archived: true });
+      },
+    });
+    ok(patched.join(",") === "p-exact", `with no id the teardown archives the EXACT-title live page only (patched: ${patched.join(",")})`);
+    ok(r.archived.map((p) => p.id).join(",") === "p-exact", "…and reports that one page");
+  }
+
+  {
+    let threw = false;
+    let r: Awaited<ReturnType<typeof archiveNotionPageByTitle>> | undefined;
+    try {
+      r = await archiveNotionPageByTitle({
+        driverKey: "k",
+        title: "OE suspended suspended-slack-2",
+        pageId: DASHED,
+        fetchFn: async (url) => (url.endsWith("/v1/search") ? res(200, { results: [] }) : res(404, { code: "object_not_found" })),
+      });
+    } catch {
+      threw = true;
+    }
+    ok(!threw, "a 404 plus an empty search does NOT throw");
+    ok(r !== undefined && r.archived.length === 0 && /404/.test(r.reason ?? "") && /matched no live page/.test(r.reason ?? ""), `…and the reason names both failures (reason: ${r?.reason})`);
+    const lying = await archiveNotionPageByTitle({
+      driverKey: "k",
+      title: "t",
+      pageId: DASHED,
+      fetchFn: async (url) => (url.endsWith("/v1/search") ? res(200, { results: [] }) : res(200, { archived: false })),
+    });
+    ok(lying.archived.length === 0 && /not archived/.test(lying.reason ?? ""), "a 2xx whose page reads archived:false is NOT counted as archived");
+    const noKey = await archiveNotionPageByTitle({ driverKey: undefined, title: "t", fetchFn: async () => res(500) });
+    ok(noKey.archived.length === 0 && /E2E_NOTION_DRIVER_KEY is unset/.test(noKey.reason ?? ""), "an unset driver key is a named reason, not a throw");
+  }
+
+  {
+    let call = 0;
+    const found = await searchNotionPagesByTitlePrefix({
+      driverKey: "k",
+      prefix: "OE suspended suspended-",
+      fetchFn: async (_url, init) => {
+        call++;
+        const body = JSON.parse(String(init?.body)) as { start_cursor?: string };
+        if (call === 1) return res(200, { results: [page("a", "OE suspended suspended-slack-1"), page("x", "Unrelated OE suspended")], has_more: true, next_cursor: "c2" });
+        return res(200, { results: [page(body.start_cursor === "c2" ? "b" : "WRONG-CURSOR", "OE suspended suspended-slack-2")], has_more: false, next_cursor: null });
+      },
+    });
+    ok(found.map((p) => p.id).join(",") === "a,b", `the sweep search pages through next_cursor and keeps prefix matches only (found: ${found.map((p) => p.id).join(",")})`);
+  }
+
+  const scenariosText = readFileSync(fileURLToPath(new URL("../packages/core/scripts/e2e/scenarios.ts", import.meta.url)), "utf-8");
+  ok(!/archive the Notion page/i.test(scenariosText), "🔴 no leg asks the seat to archive a Notion page — the seat's Notion tools have no archive operation");
+  ok(!scenariosText.includes("archiveNotionPageFromDm"), "…and the DM-ask teardown helper is gone");
+  const suspended = SCENARIOS.find((s) => s.id === "S-SUSPENDED-slack")!.run.toString();
+  ok(suspended.includes("archiveNotionPageOverRest(") && !/dm\.post\([^)]*archive/i.test(suspended), "S-SUSPENDED-slack tears its page down over REST and posts no archive ask");
+  const restLegs = SCENARIOS.filter((s) => s.run.toString().includes("archiveNotionPageOverRest(")).map((s) => s.id).sort().join(",");
+  ok(restLegs === "S-EVE-BRIDGE,S-EVE-CARD,S-SUSPENDED-slack", `negative control: exactly the three page-creating DM legs use the REST teardown (got ${restLegs})`);
+}
+
 console.log(
   `✓ e2e-driver: ${passed} assertions passed (${shapeChecks} are per-scenario roster-shape checks, ` +
     `${passed - shapeChecks} are harness/driver logic — neither half is a product-behaviour coverage figure)`,

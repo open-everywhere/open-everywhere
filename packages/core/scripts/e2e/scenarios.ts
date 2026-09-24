@@ -27,7 +27,7 @@ import { commentAtOrAfter } from "./comment-window.js";
 import { capDriveOutcome } from "./cap-drive-outcome.js";
 import { FORGE_CREATOR_ID, FORGE_ISSUE_ID, FORGE_ORGANIZATION_ID, FORGE_SESSION_ID, type LinearDriver } from "./linear-driver.js";
 import type { NotionDriver } from "./notion-driver.js";
-import { notionMinuteFloor, msToNextMinuteBoundary, pinNotionQueryPage, type NotionComment, type NotionPagePinResult } from "./notion-driver.js";
+import { archiveNotionPageByTitle, notionMinuteFloor, notionPageIdFromText, msToNextMinuteBoundary, pinNotionQueryPage, type NotionComment, type NotionPagePinResult } from "./notion-driver.js";
 import { GITHUB_NOTION_REST_ACTIONS, githubNotionOriginLifecycle, githubNotionReplyRow } from "./github-notion-rest.js";
 import type { PrApi } from "./pr-api.js";
 import { buildUnifiedAuditQuery, type AuditQueryOpts, type AuditWireEntry, type UnifiedAuditCall, type UnifiedAuditWire } from "./audit-read.js";
@@ -578,57 +578,17 @@ async function awaitOwnWakeReply(
   throw new PollTimeout(`${opts.what}: ${outcome.kind} — ${outcome.detail}${opts.want ? ` (this wait only accepts ${opts.want.label}, so a message of this wake's that is NOT that one never ends it)` : ""}`, opts.timeoutMs);
 }
 
-async function archiveNotionPageFromDm(
-  ctx: ScenarioContext,
-  dm: SlackDriver,
-  teamId: string,
-  pageTitle: string,
-  legId: string,
-): Promise<void> {
-  try {
-    const sinceIso = new Date().toISOString();
-    const { ts: teardownTs } = await dm.post(`archive the Notion page titled "${pageTitle}" — it is e2e litter.`);
-    let answeredApproval: string | undefined;
-    let beforeAnswer = new Map<string, string>();
-    const done = await pollUntil(
-      async () => {
-        const [messages, auditRows] = await Promise.all([
-          dm.collectBotMessagesAfter(teardownTs, teardownTs),
-          ctx.auditRead!({ sinceIso, actions: APPROVAL_REQUEST_PROVENANCE_ACTIONS, limit: 1000 }),
-        ]);
-        if (answeredApproval === undefined) {
-          const selected = approvalRequestForSlackAsk({
-            messages,
-            auditRows,
-            anchorTs: teardownTs,
-            teamId,
-            channelId: dm.channelId,
-            decode: (message) => (message.text.includes(APPROVAL_ANSWER_HINT) ? true : undefined),
-          });
-          if (!selected) return undefined;
-          beforeAnswer = new Map(messages.map((message) => [message.ts, message.text]));
-          answeredApproval = selected.message.ts;
-          await dm.post("Approve");
-          ctx.log(`${legId} teardown: answered exact archive approval ${answeredApproval} with "Approve"`);
-          return undefined;
-        }
-        return messages.find((message) => {
-          if (message.text.includes(APPROVAL_ANSWER_HINT)) return false;
-          const text = message.text.trim();
-          if (text.length === 0 || isFillerAck(text)) return false;
-          const before = beforeAnswer.get(message.ts);
-          return before === undefined || before !== message.text;
-        });
-      },
-      { timeoutMs: FILE_REPLY_WAIT, what: `a reply after approving the exact archive request for "${pageTitle}"` },
-    );
-    ctx.observe(`${legId} teardown: archive approval ${answeredApproval} answered; the seat replied "${done.text.trim().slice(0, 160)}"`);
-  } catch (error) {
-    ctx.log(
-      `${legId} teardown did NOT complete (${error instanceof Error ? error.message : String(error)}). ` +
-        `The page "${pageTitle}" may still exist in the fixture Notion workspace — archive it by hand.`,
-    );
+async function archiveNotionPageOverRest(ctx: ScenarioContext, pageTitle: string, legId: string, replyText?: string): Promise<void> {
+  const pageId = replyText ? notionPageIdFromText(replyText) : undefined;
+  const result = await archiveNotionPageByTitle({ driverKey: process.env[ENV.notionDriverKey], title: pageTitle, pageId });
+  if (result.archived.length > 0) {
+    ctx.log(`${legId} teardown: archived ${result.archived.map((p) => `${p.id} "${p.title}"`).join(", ")} over REST${result.reason ? ` (after: ${result.reason})` : ""}`);
+    return;
   }
+  ctx.log(
+    `${legId} teardown did NOT complete (${result.reason ?? "no page archived"}). ` +
+      `The page "${pageTitle}" may still exist in the fixture Notion workspace — the litter sweep (scripts/e2e/archive-suspended-litter.ts) archives it.`,
+  );
 }
 
 export function delegationHasReturned(rows: readonly AuditWireEntry[]): boolean {
@@ -4719,6 +4679,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const pageTitle = `OE suspended ${token}`;
       const sinceIso = new Date().toISOString();
       let creationAttempted = false;
+      let createdReplyText: string | undefined;
       try {
         const { ts: askTs } = await dm.post(`Create a new Notion page titled "${pageTitle}" with a one-line body containing ${token}.`);
         creationAttempted = true;
@@ -4785,13 +4746,14 @@ export const SCENARIOS: readonly Scenario[] = [
           await arming.recheck();
           throw error;
         });
+        createdReplyText = resumed.candidate.text;
         await arming.recheck();
         ctx.gate(
           resumed.lifecycle.request.requestId === raised.request.requestId && resumed.lifecycle.request.sessionId === raised.request.sessionId,
           `S-SUSPENDED-slack: exact lifecycle joined request ${raised.request.requestId}, session ${raised.request.sessionId}, answer wake ${resumed.lifecycle.answerWakeId} and reply ${resumed.candidate.id}`,
         );
       } finally {
-        if (creationAttempted) await archiveNotionPageFromDm(ctx, dm, teamId, pageTitle, "S-SUSPENDED-slack");
+        if (creationAttempted) await archiveNotionPageOverRest(ctx, pageTitle, "S-SUSPENDED-slack", createdReplyText);
       }
     },
   },
@@ -6284,57 +6246,7 @@ export const SCENARIOS: readonly Scenario[] = [
         );
       }
 
-      try {
-        const { ts: teardownTs } = await dm.post(`archive the Notion page titled "${pageTitle}" — it is e2e litter.`);
-        const teardownClicked = new Set<string>();
-        const done = await pollUntil(
-          async () => {
-            const [msgs, auditRows] = await Promise.all([
-              dm.collectBotMessagesAfter(teardownTs, teardownTs),
-              ctx.auditRead!({ sinceIso, actions: APPROVAL_REQUEST_PROVENANCE_ACTIONS, limit: 1000 }),
-            ]);
-            let answer: SlackMessage | undefined;
-            const selected = approvalRequestForSlackAsk({
-              messages: msgs,
-              auditRows,
-              anchorTs: teardownTs,
-              teamId,
-              channelId: dm.channelId,
-              decode: eveRequestApprovalButtons,
-            });
-            for (const m of msgs) {
-              if (teardownClicked.has(m.ts)) continue;
-              if (selected?.message.ts === m.ts) {
-                teardownClicked.add(m.ts);
-                const res = await synthetic.clickBlockAction({
-                  actionId: selected.decoded.approve.actionId,
-                  blockId: selected.decoded.approve.blockId,
-                  value: selected.decoded.approve.value,
-                  buttonText: selected.decoded.approve.text,
-                  userId,
-                  teamId,
-                  channelId: dm.channelId,
-                  messageTs: m.ts,
-                  threadTs: m.threadTs ?? teardownTs,
-                });
-                ctx.log(`teardown: Approve on the archive card ${m.ts} → ${res.status}`);
-                continue;
-              }
-              if (eveRequestApprovalButtons(m)) continue;
-              const text = m.text.trim();
-              if (text.length > 0 && !isFillerAck(text)) answer = answer ?? m;
-            }
-            return answer;
-          },
-          { timeoutMs: FILE_REPLY_WAIT, what: `a reply to the archive ask for "${pageTitle}"` },
-        );
-        ctx.observe(`S-EVE-CARD teardown: ${teardownClicked.size} archive card(s) clicked; the seat answered "${done.text.trim().slice(0, 160)}"`);
-      } catch (e) {
-        ctx.log(
-          `S-EVE-CARD teardown did NOT complete (${e instanceof Error ? e.message : String(e)}). ` +
-            `The page "${pageTitle}" may still exist in the fixture Notion workspace — archive it by hand.`,
-        );
-      }
+      await archiveNotionPageOverRest(ctx, pageTitle, "S-EVE-CARD", settled.text);
     },
   },
   {
@@ -6435,48 +6347,7 @@ export const SCENARIOS: readonly Scenario[] = [
         ctx.observe("S-EVE-BRIDGE: no audit reader is wired, so the optionId half is UNPROVEN in this run — the reply gate above covers the resume only");
       }
 
-      try {
-        const { ts: teardownTs } = await dm.post(`archive the Notion page titled "${pageTitle}" — it is e2e litter.`);
-        const answered = new Set<string>();
-        const done = await pollUntil(
-          async () => {
-            const [msgs, auditRows] = await Promise.all([
-              dm.collectBotMessagesAfter(teardownTs, teardownTs),
-              ctx.auditRead!({ sinceIso, actions: APPROVAL_REQUEST_PROVENANCE_ACTIONS, limit: 1000 }),
-            ]);
-            let answer: SlackMessage | undefined;
-            const selected = approvalRequestForSlackAsk({
-              messages: msgs,
-              auditRows,
-              anchorTs: teardownTs,
-              teamId,
-              channelId: dm.channelId,
-              decode: (message) => (message.text.includes(APPROVAL_ANSWER_HINT) ? true : undefined),
-            });
-            for (const m of msgs) {
-              if (selected?.message.ts === m.ts) {
-                if (!answered.has(m.ts)) {
-                  answered.add(m.ts);
-                  await dm.post("Approve");
-                  ctx.log(`teardown: answered the archive approval ${m.ts} with "Approve"`);
-                }
-                continue;
-              }
-              if (m.text.includes(APPROVAL_ANSWER_HINT)) continue;
-              const text = m.text.trim();
-              if (text.length > 0 && !isFillerAck(text)) answer = answer ?? m;
-            }
-            return answer;
-          },
-          { timeoutMs: FILE_REPLY_WAIT, what: `a reply to the archive ask for "${pageTitle}"` },
-        );
-        ctx.observe(`S-EVE-BRIDGE teardown: ${answered.size} archive approval(s) answered; the seat answered "${done.text.trim().slice(0, 160)}"`);
-      } catch (e) {
-        ctx.log(
-          `S-EVE-BRIDGE teardown did NOT complete (${e instanceof Error ? e.message : String(e)}). ` +
-            `The page "${pageTitle}" may still exist in the fixture Notion workspace — archive it by hand.`,
-        );
-      }
+      await archiveNotionPageOverRest(ctx, pageTitle, "S-EVE-BRIDGE", settled.text);
     },
   },
   {

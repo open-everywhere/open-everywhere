@@ -240,6 +240,110 @@ export async function pinNotionQueryPage(opts: { readonly driverKey: string; rea
   }
 }
 
+export function notionPageIdFromText(text: string): string | undefined {
+  const match = /(?:notion\.(?:so|site)|app\.notion\.com)\/[^\s)>|"']*?([0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?![0-9a-f])/i.exec(text);
+  if (!match) return undefined;
+  const hex = match[1]!.replace(/-/g, "").toLowerCase();
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+export interface NotionTitledPage {
+  readonly id: string;
+  readonly title: string;
+}
+
+function driverHeaders(driverKey: string): Record<string, string> {
+  return { authorization: `Bearer ${driverKey}`, "notion-version": NOTION_VERSION, "content-type": "application/json" };
+}
+
+export async function searchNotionPagesByTitlePrefix(
+  opts: { readonly driverKey: string; readonly prefix: string; readonly maxPages?: number } & NotionDriverDeps,
+): Promise<NotionTitledPage[]> {
+  const retry = { fetchFn: opts.fetchFn, sleepFn: opts.sleepFn };
+  const found: NotionTitledPage[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < (opts.maxPages ?? 20); page++) {
+    const res = await notionFetch(
+      `${NOTION_API}/search`,
+      {
+        method: "POST",
+        headers: driverHeaders(opts.driverKey),
+        body: JSON.stringify({ query: opts.prefix, filter: { value: "page", property: "object" }, page_size: 100, ...(cursor ? { start_cursor: cursor } : {}) }),
+        signal: AbortSignal.timeout(PIN_READ_TIMEOUT_MS),
+      },
+      { what: `POST /v1/search for "${opts.prefix}"`, ...retry },
+    );
+    if (!res.ok) throw new Error(`POST /v1/search for "${opts.prefix}" → ${res.status}`);
+    const json = (await res.json()) as { results?: unknown; has_more?: unknown; next_cursor?: unknown };
+    for (const r of Array.isArray(json.results) ? (json.results as Record<string, unknown>[]) : []) {
+      if (r.object !== "page" || typeof r.id !== "string" || r.archived === true || r.in_trash === true) continue;
+      const title = pageTitle(r);
+      if (title.startsWith(opts.prefix)) found.push({ id: r.id, title });
+    }
+    if (json.has_more !== true || typeof json.next_cursor !== "string") break;
+    cursor = json.next_cursor;
+  }
+  return found;
+}
+
+export async function archiveNotionPage(opts: { readonly driverKey: string; readonly pageId: string } & NotionDriverDeps): Promise<void> {
+  const res = await notionFetch(
+    `${NOTION_API}/pages/${encodeURIComponent(opts.pageId)}`,
+    {
+      method: "PATCH",
+      headers: driverHeaders(opts.driverKey),
+      body: JSON.stringify({ archived: true }),
+      signal: AbortSignal.timeout(PIN_READ_TIMEOUT_MS),
+    },
+    { what: `PATCH /v1/pages/${opts.pageId} (archive)`, fetchFn: opts.fetchFn, sleepFn: opts.sleepFn },
+  );
+  if (!res.ok) throw new Error(`PATCH /v1/pages/${opts.pageId} (archive) → ${res.status}`);
+  const json = (await res.json()) as { archived?: unknown; in_trash?: unknown };
+  if (json.archived !== true && json.in_trash !== true) throw new Error(`PATCH /v1/pages/${opts.pageId} (archive) returned a page that is not archived`);
+}
+
+export interface NotionTeardownResult {
+  readonly archived: readonly NotionTitledPage[];
+  readonly reason?: string;
+}
+
+export async function archiveNotionPageByTitle(
+  opts: { readonly driverKey: string | undefined; readonly title: string; readonly pageId?: string } & NotionDriverDeps,
+): Promise<NotionTeardownResult> {
+  const driverKey = opts.driverKey?.trim();
+  if (!driverKey) return { archived: [], reason: "E2E_NOTION_DRIVER_KEY is unset, so the harness holds no Notion token to archive with" };
+  const deps = { fetchFn: opts.fetchFn, sleepFn: opts.sleepFn };
+  const failures: string[] = [];
+  if (opts.pageId) {
+    try {
+      await archiveNotionPage({ driverKey, pageId: opts.pageId, ...deps });
+      return { archived: [{ id: opts.pageId, title: opts.title }] };
+    } catch (err) {
+      failures.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+  let hits: NotionTitledPage[];
+  try {
+    hits = (await searchNotionPagesByTitlePrefix({ driverKey, prefix: opts.title, maxPages: 1, ...deps })).filter((p) => p.title === opts.title);
+  } catch (err) {
+    return { archived: [], reason: [...failures, err instanceof Error ? err.message : String(err)].join("; ") };
+  }
+  if (hits.length === 0) {
+    failures.push(`the driver token's search for "${opts.title}" matched no live page (the page may sit outside the pages shared with the driver integration)`);
+    return { archived: [], reason: failures.join("; ") };
+  }
+  const archived: NotionTitledPage[] = [];
+  for (const hit of hits) {
+    try {
+      await archiveNotionPage({ driverKey, pageId: hit.id, ...deps });
+      archived.push(hit);
+    } catch (err) {
+      failures.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+  return failures.length > 0 && archived.length === 0 ? { archived, reason: failures.join("; ") } : { archived };
+}
+
 export class NotionDriver {
   private readonly retry: { readonly fetchFn?: NotionFetchFn; readonly sleepFn?: (ms: number) => Promise<void> };
 
