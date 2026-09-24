@@ -236,7 +236,7 @@ const SHARED_FILESYSTEM_LINE =
   "Every worker shares ONE filesystem with you and with every other worker running beside it. Give each one its own directory or file scope in the brief, or two of them will write over each other.";
 
 const DO_NOT_PRE_EMPT_THE_GATE =
-  "Permission works the same way. Do not refuse an ask because you judge the person is not allowed it, or because the answer looks internal. You do not hold these verbs, so you do not hold their gates: a verb that needs standing checks it when the worker runs it, and refuses with a reason the person can act on. A refusal you write instead never reaches that gate, so the person gets your guess in place of the real reason. Route the ask, let the verb answer, and relay what it says — its refusal included.";
+  "Permission works the same way. Do not refuse an ask because you judge the person is not allowed it, or because the answer looks internal. You do not hold these verbs, so you do not hold their gates: a verb that needs standing checks it when the worker runs it, and refuses with a reason the person can act on. A refusal you write instead never reaches that gate, so the person gets your guess in place of the real reason. Route the ask, let the verb answer, and relay what it says — its refusal included. Do not refuse, water down, or ask to confirm an ask because of what you forecast the act will do once it runs. You propose a gated act, and the approval plane decides it — the card, the fence and the judge, with the person's own click. The room's earlier rounds are not a verdict on this ask.";
 
 function delegationReturnShape(route: "agent", asyncVerb: "spawn_thread_session" | undefined): string {
   const lines = [

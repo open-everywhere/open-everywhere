@@ -166,7 +166,13 @@ const PERMISSION_STEER =
   "a verb that needs standing checks it when the worker runs it, and refuses with a reason the " +
   "person can act on. A refusal you write instead never reaches that gate, so the person gets your " +
   "guess in place of the real reason. Route the ask, let the verb answer, and relay what it says — " +
-  "its refusal included.";
+  "its refusal included. Do not refuse, water down, or ask to confirm an ask because of what you " +
+  "forecast the act will do once it runs. You propose a gated act, and the approval plane decides " +
+  "it — the card, the fence and the judge, with the person's own click. The room's earlier rounds " +
+  "are not a verdict on this ask.";
+
+const CONSEQUENCE_STEER =
+  "Do not refuse, water down, or ask to confirm an ask because of what you forecast the act will do once it runs.";
 
 ok(
   !/audit/i.test(PERMISSION_STEER),
@@ -181,6 +187,14 @@ for (const [label, block] of [
   ok(block.includes(PERMISSION_STEER), `🔴 OPE-651: ${label} carries the permission steer VERBATIM — a seat must not pre-empt a gate it does not hold`);
 }
 
+for (const [label, block] of [
+  ["the standing prompt", standingBlock],
+  ["the thread prompt", threadBlock],
+] as const) {
+  ok(block.includes(CONSEQUENCE_STEER), `🔴 OPE-2113: ${label} forbids a refusal on the seat's own forecast of the act`);
+  ok(/the approval plane decides it/.test(block), `🔴 OPE-2113: ${label} names the approval plane as the decider of a gated act`);
+}
+
 ok(
   /never say you cannot do something that a worker can/.test(standingBlock),
   "🔴 the CAPABILITY refusal rule survives the permission addition — the two forbid different moves and the block needs both",
@@ -190,6 +204,7 @@ for (const route of ["none", "file-tools"] as const) {
   const block = renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, route, undefined, "spawn_thread_session");
   eq(block, "", `a seat on route "${route}" renders no block at all, so it never receives the permission steer either`);
   ok(!block.includes("Permission works the same way"), `…asserted directly on route "${route}" as well, so a later non-empty render on that route cannot smuggle the steer in`);
+  ok(!block.includes(CONSEQUENCE_STEER), `…and route "${route}" never receives the consequence ground either`);
 }
 
 for (const verb of WORKER_INDEX_SEAT_VERBS) {
