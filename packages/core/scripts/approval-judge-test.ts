@@ -963,7 +963,7 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
 
   ok(String(judgeHumanOnlyReason({ action: "routine.create", args: { permissions: [WRITE] } })).includes(WRITE), "🔴 human-only: a declared connector WRITE names the class and the declaration");
   ok(judgeHumanOnlyReason({ action: "routine.create", args: { permissions: [READ] } }) === undefined, "human-only negative control: a read-only declaration keeps the judge path");
-  ok(judgeHumanOnlyReason({ action: "routine.create", args: { permissions: ["pr.open"] } }) === undefined, "human-only negative control: `pr.open` is not a connector tool");
+  ok(String(judgeHumanOnlyReason({ action: "routine.create", args: { permissions: ["pr.open"] } })).includes("pr.open"), "🔴 human-only (OPE-2103): a declared `pr.open` names the class and the declaration");
   ok(judgeHumanOnlyReason({ action: "routine.create", args: {} }) === undefined, "human-only negative control: a routine that declares nothing keeps the judge path");
   ok(judgeHumanOnlyReason({ action: "spend.set", args: { permissions: [WRITE] } }) === undefined, "human-only negative control: the class is routine.create's declaration shape, not any `permissions` field");
 
@@ -1012,6 +1012,17 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
   const humanOnly = await judgeDetailWhere((d) => d.source === "human-only", "human-only");
   ok(humanOnly.verdict === "defer" && humanOnly.enforcedVerdict === "ask" && humanOnly.passes === 0, "human-only: the consult row records a defer that stayed an ask, with no model pass");
   ok(String(humanOnly.reasoning ?? "").includes(WRITE), "human-only: the consult row's reasoning names the write declaration, so the audit says why");
+  resetApprovalJudgeCompletion();
+  clearApprovalJudgeVerdictCache();
+
+  const prGrantsBefore = (await grantRows()).length;
+  const prRun = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: would have lifted" });
+  const prCarded = await requestApproval(routineInput([READ, "pr.open"], 3), { postCard });
+  ok(prCarded.autoApproved === undefined, "🔴 human-only (OPE-2103): a declared `pr.open` CARDS — the judge cannot lift it");
+  ok(prRun.calls.length === 0, "🔴 human-only (OPE-2103): the judge transport was never called for `pr.open`");
+  ok((await grantRows()).length === prGrantsBefore, "🔴 human-only (OPE-2103): no routine.grant row was written for `pr.open` without the click");
+  const prHumanOnly = await judgeDetailWhere((d) => d.source === "human-only" && String(d.reasoning ?? "").includes("pr.open"), "human-only pr.open");
+  ok(prHumanOnly.verdict === "defer" && prHumanOnly.source === "human-only" && prHumanOnly.passes === 0, "🔴 human-only (OPE-2103): the `pr.open` consult row records a human-only defer with no model pass");
   resetApprovalJudgeCompletion();
   clearApprovalJudgeVerdictCache();
 }

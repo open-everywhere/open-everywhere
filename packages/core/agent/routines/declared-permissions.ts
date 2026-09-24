@@ -148,11 +148,15 @@ export function bundleRaisedDeclarations(declared: readonly string[]): string[] 
   return out;
 }
 
-export function declaredStandingConnectorWrites(declared: readonly string[]): string[] {
+export function declaredStandingWrites(declared: readonly string[]): string[] {
   const out: string[] = [];
   for (const d of declared) {
     const trimmed = d.trim();
-    if (trimmed === PR_OPEN_DECLARATION || routinePermissionKind(trimmed) === null) continue;
+    if (routinePermissionKind(trimmed) === null) continue;
+    if (trimmed === PR_OPEN_DECLARATION) {
+      if (!out.includes(trimmed)) out.push(trimmed);
+      continue;
+    }
     const tool = declaredToolName(trimmed);
     let write: boolean;
     try {

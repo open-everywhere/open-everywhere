@@ -1,4 +1,4 @@
-import { declaredStandingConnectorWrites } from "../routines/declared-permissions.js";
+import { declaredStandingWrites } from "../routines/declared-permissions.js";
 import { classifyConnectorOp, isConnectorOpTool, judgeDeferredTool, postTurnSurfaceFloors, RESUME_TOOL, TOOL_CONSEQUENCE, type ConsequenceEntry } from "./consequence.js";
 import { awsCommandVerdict, type AwsScreenInput } from "./aws-screen.js";
 import { untrustedIngestedThisTurn, taintKindsThisTurn } from "./taint-signal.js";
@@ -271,11 +271,11 @@ export function judgeHumanOnlyReason(req: Pick<ApprovalChainRequest, "action" | 
   if (req.action !== ROUTINE_CREATE_ACTION) return undefined;
   const raw = (req.args as { permissions?: unknown } | null | undefined)?.permissions;
   const declared = Array.isArray(raw) ? raw.filter((d): d is string => typeof d === "string") : [];
-  const writes = declaredStandingConnectorWrites(declared);
+  const writes = declaredStandingWrites(declared);
   if (writes.length === 0) return undefined;
   return (
-    `human-only: this routine declares a standing unattended connector write (${writes.join(", ")}), ` +
-    "and only a person's click on the creation card may arm one — the judge is not consulted (OPE-2101)"
+    `human-only: this routine declares a standing unattended write (${writes.join(", ")}), ` +
+    "and only a person's click on the creation card may arm one — the judge is not consulted (OPE-2101, OPE-2103)"
   );
 }
 
