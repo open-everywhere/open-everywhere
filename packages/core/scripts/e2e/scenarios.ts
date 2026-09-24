@@ -450,9 +450,10 @@ const fixtureLine = (text: string): string => saltedFixtureLine(text, RUN_FIXTUR
 const HOST_AUTHORED_TEMPLATES: readonly string[] = [haltConfirmation("surface"), haltConfirmation("org"), NO_CARD_NOTE_OPENING];
 
 const FILLER_ACK_RE = new RegExp(
-  "\\b(one sec|a sec|hang on|hold on|let me (?:look|check|see)|looking (?:at|into)|checking (?:now|it)?|on it|give me a (?:sec|moment)|working on|" +
+  "\\b(one sec|a sec|hang on|hold on|let me (?:look|check|see)|looking (?:at|into)|give me a (?:sec|moment)|" +
     "just a (?:sec|moment)|hand(?:ed|ing) (?:this |it )?off|report back|delegat(?:ed|ing)\\s+(?:this|it|that|to)\\b|spun up a worker|" +
     "(?:still|currently) in progress|in progress|standing by)\\b" +
+    "|(?:^|[.!?,;:\u2014\u2013-]\\s*|\\b(?:(?:i['\u2019]?m|we['\u2019]?re|am|are)\\s+(?:still\\s+)?|still\\s+))(?:on it|checking|working on)\\b" +
     "|" +
     `${PROMISE_SUBJECT}\\s+(?:look|check|report|update|retrieve|return|fetch|get|run|confirm|post)\\b`,
   "i",

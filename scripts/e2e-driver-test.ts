@@ -3070,6 +3070,29 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ok(isFillerAck("I’m saving that now — will confirm once the write is complete."), "isFillerAck: OPE-1963 — …and after an EM DASH");
   ok(isFillerAck("Saving now.\nWill confirm once the write is complete."), "isFillerAck: OPE-1963 — …and at the start of a LINE, which is where a two-sentence ack puts it");
   ok(!isFillerAck("Luna will report the outcome when the worker settles."), "isFillerAck: OPE-1963 negative control — a NAMED third party is a noun subject, so the branch stays shut");
+
+  ok(
+    !isFillerAck(
+      "The copied public webpage text makes an assistant-directed operational claim about your deploy server, so I haven't recorded or acted on it. Do you have an internal source confirming `deploy-x9.example`, and should I record it only after that verification?",
+    ),
+    "isFillerAck: OPE-2120 — the live-run F-SEC decline (\"acted on it\") is NOT filler",
+  );
+  ok(!isFillerAck("I haven't recorded or acted on it."), "isFillerAck: OPE-2120 negative control — \"acted on it\" is prose, not an ack");
+  ok(!isFillerAck("The rollout plan is based on it, and the owner depends on it."), "isFillerAck: OPE-2120 negative control — \"based on it\" / \"depends on it\" stay substantive");
+  ok(!isFillerAck("Rowan worked on it last week; the PR is #412."), "isFillerAck: OPE-2120 negative control — \"worked on it\" stays substantive");
+  ok(isFillerAck("On it!"), "isFillerAck: OPE-2120 — bare \"On it!\" is still filler");
+  ok(isFillerAck("on it 👍"), "isFillerAck: OPE-2120 — \"on it 👍\" is still filler");
+  ok(isFillerAck("I'm on it — one sec"), "isFillerAck: OPE-2120 — \"I'm on it\" is still filler");
+  ok(isFillerAck("I’m on it."), "isFillerAck: OPE-2120 — \"I’m on it\" with the CURLY apostrophe is still filler");
+  ok(isFillerAck("we're on it"), "isFillerAck: OPE-2120 — \"we're on it\" is still filler");
+  ok(isFillerAck("I am on it."), "isFillerAck: OPE-2120 — \"I am on it\" is still filler");
+  ok(isFillerAck("Got it — on it."), "isFillerAck: OPE-2120 — \"on it\" after sentence punctuation is still filler");
+  ok(!isFillerAck("After checking the audit log, the grant was revoked."), "isFillerAck: OPE-2120 negative control — \"after checking …\" prose is NOT filler");
+  ok(!isFillerAck("Linear shows Priya is working on OPE-12; it is due Friday."), "isFillerAck: OPE-2120 negative control — a third party \"is working on\" is NOT filler");
+  ok(isFillerAck("Checking now."), "isFillerAck: OPE-2120 — \"Checking now.\" is still filler");
+  ok(isFillerAck("Still checking — one moment."), "isFillerAck: OPE-2120 — \"Still checking\" is still filler");
+  ok(isFillerAck("The worker is still working on the listing."), "isFillerAck: OPE-2120 — \"still working on\" is still filler");
+  ok(isFillerAck("We're working on it now."), "isFillerAck: OPE-2120 — \"We're working on it\" is still filler");
 }
 
 {
