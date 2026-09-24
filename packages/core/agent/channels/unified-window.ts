@@ -603,6 +603,7 @@ export interface UnifiedWindowWake {
   readonly wakeId: string;
   readonly origin: UnifiedWakeOrigin;
   readonly addressing?: "direct-mention";
+  readonly followUp?: true;
   readonly vendorTs?: VendorEventTime;
 }
 

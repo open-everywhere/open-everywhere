@@ -889,6 +889,7 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
           wakeId: mintWakeId(),
           origin: { platform: "linear", agentSessionId, issueId: c.issueId, parentId: c.parentId ?? c.id, ...(organizationId ? { organizationId } : {}) },
           addressing: "direct-mention",
+          ...(sig.action === "prompted" && linearPromptReAddress(c.body, viewer.name) !== "mention" ? { followUp: true as const } : {}),
           ...spreadVendorTs(vendorInstantEventTime(c.createdAt)),
         } satisfies UnifiedWindowWake,
       },

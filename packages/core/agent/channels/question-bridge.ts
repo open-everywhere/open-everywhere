@@ -1,6 +1,7 @@
 import { appendAudit, type AuditInput } from "../audit/audit.js";
 import { isSessionLimitContinuationRequest } from "./session-park.js";
 import { WAKE_TARGET_TTL_MS, unifiedThreadRef, type UnifiedWakeOrigin } from "./unified-window.js";
+import { dmAnchorSurfaceForToken } from "./window-key.js";
 
 export const QUESTION_BRIDGED_AUDIT_ACTION = "turn.question_bridged";
 export const QUESTION_DROPPED_AUDIT_ACTION = "turn.question_dropped";
@@ -278,7 +279,11 @@ export type InboundAnswerRouting =
       readonly taskId?: string;
       readonly optionId?: string;
     }
-  | { readonly kind: "wake"; readonly reason: "internal-dispatch" | "no-question" | "foreign-room" | "refused" | "unmatched-option" };
+  | { readonly kind: "wake"; readonly reason: "internal-dispatch" | "no-question" | "addressed-mention" | "foreign-room" | "refused" | "unmatched-option" };
+
+export function isAddressedMentionWake(window: { readonly addressing?: string; readonly followUp?: true }, bareToken: string): boolean {
+  return window.addressing === "direct-mention" && window.followUp !== true && dmAnchorSurfaceForToken(bareToken) === undefined;
+}
 
 export interface InboundAnswerDeps {
   readonly read: () => Promise<OutstandingQuestion | undefined>;
@@ -290,12 +295,14 @@ export async function resolveInboundAnswerRouting(
     readonly internalDispatch: boolean;
     readonly containerKey?: string;
     readonly text?: string;
+    readonly addressedMention?: boolean;
   },
   deps: InboundAnswerDeps,
 ): Promise<InboundAnswerRouting> {
   if (input.internalDispatch) return { kind: "wake", reason: "internal-dispatch" };
   const outstanding = await deps.read();
   if (outstanding === undefined) return { kind: "wake", reason: "no-question" };
+  if (input.addressedMention === true) return { kind: "wake", reason: "addressed-mention" };
   const asked = outstanding.containerKey;
   const here = input.containerKey;
   if (asked === undefined || asked.length === 0 || here === undefined || here.length === 0 || asked !== here) {

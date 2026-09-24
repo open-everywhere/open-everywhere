@@ -16,6 +16,7 @@ import {
   readBridgedQuestion,
   rememberBridgedQuestion,
   resolveInboundAnswerRouting,
+  isAddressedMentionWake,
   taskIdOfBridgedRequestId,
   approvalOptionIds,
   resolveApprovalOptionId,
@@ -25,6 +26,7 @@ import {
 } from "../agent/channels/question-bridge.js";
 import { detectSessionLimitPark, isSessionLimitContinuationRequest, SESSION_LIMIT_CONTINUATION_TOOL_NAME } from "../agent/channels/session-park.js";
 import { isWakeEnvelopeShaped, triggerMessageBody } from "../agent/channels/wake-envelope.js";
+import { dmWindowKey, formatWindowToken, saltSupervisorGeneration } from "../agent/channels/window-key.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -392,11 +394,61 @@ for (const [label, resolveOrigin] of [
   }
 
   {
+    const store = makeStore();
+    await rememberBridgedQuestion(store, "o1", TOKEN, { requestId: TASK_REQUEST_ID, containerKey: ROOM_A, wakeId: "w1" });
+    let admits = 0;
+    let reads = 0;
+    const deps = {
+      read: async () => {
+        reads++;
+        return readBridgedQuestion(store, "o1", TOKEN);
+      },
+      admit: async (): Promise<{ ok: true; floor: string }> => {
+        admits++;
+        return { ok: true, floor: "member" };
+      },
+    };
+    const mentioned = await resolveInboundAnswerRouting({ internalDispatch: false, containerKey: ROOM_A, addressedMention: true }, deps);
+    ok(mentioned.kind === "wake" && mentioned.reason === "addressed-mention", "6m: 🔴 an @-MENTION in the asking room is the SEAT's wake (reason addressed-mention), never the worker's answer");
+    ok(reads === 1 && admits === 0, "6m: 🔴 …and it spends no admission call, so no refusal row is written against the person who asked");
+    ok((await readBridgedQuestion(store, "o1", TOKEN))?.requestId === TASK_REQUEST_ID, "6m: 🔴 …and the question row is LEFT IN PLACE, so a plain reply can still answer the worker");
+    const plain = await resolveInboundAnswerRouting({ internalDispatch: false, containerKey: ROOM_A, addressedMention: false }, deps);
+    ok(plain.kind === "answer" && plain.requestId === TASK_REQUEST_ID, "6m: NEGATIVE CONTROL: an unaddressed reply in the asking room still ANSWERS the worker");
+    ok(admits === 1, "6m: …and that answer is the one that runs the admission");
+    const internal = await resolveInboundAnswerRouting({ internalDispatch: true, containerKey: ROOM_A, addressedMention: true }, deps);
+    ok(internal.kind === "wake" && internal.reason === "internal-dispatch", "6m: an internal dispatch keeps its own reason — the mention check runs after it");
+    const none = await resolveInboundAnswerRouting({ internalDispatch: false, containerKey: ROOM_A, addressedMention: true }, { read: async () => undefined, admit: allow });
+    ok(none.kind === "wake" && none.reason === "no-question", "6m: with no question open a mention routes exactly as before (no-question)");
+  }
+  {
+    const dmSeat = saltSupervisorGeneration(formatWindowToken(dmWindowKey("slack/T1/D_ALICE", 3)));
+    const channelWindow = TOKEN;
+    ok(isAddressedMentionWake({ addressing: "direct-mention" }, channelWindow), "6m: a direct-mention wake on a CHANNEL window is an addressed mention");
+    ok(isAddressedMentionWake({ addressing: "direct-mention" }, dmSeat) === false, "6m: 🔴 a direct-mention wake on a DM SEAT is NOT — a DM is addressed by construction");
+    ok(
+      isAddressedMentionWake({ addressing: "direct-mention", followUp: true }, channelWindow) === false,
+      "6m: 🔴 a FOLLOW-UP (a Linear `prompted` reply with no app mention) is NOT a mention — it can still answer the worker",
+    );
+    ok(isAddressedMentionWake({}, channelWindow) === false, "6m: NEGATIVE CONTROL: an ambient wake (no addressing) is not a mention");
+    ok(isAddressedMentionWake({ addressing: "channel-watch" }, channelWindow) === false, "6m: NEGATIVE CONTROL: a channel-watch wake is not a mention");
+    const dmRouted = await resolveInboundAnswerRouting(
+      { internalDispatch: false, containerKey: ROOM_A, addressedMention: isAddressedMentionWake({ addressing: "direct-mention" }, dmSeat) },
+      { read: async () => outstanding, admit: allow },
+    );
+    ok(dmRouted.kind === "answer" && dmRouted.requestId === TASK_REQUEST_ID, "6m: 🔴 a plain DM reply with the worker's question open still ANSWERS the worker");
+  }
+
+  {
     const { readFileSync } = await import("node:fs");
     const unifiedSrc = readFileSync(new URL("../agent/channels/unified.ts", import.meta.url), "utf8").replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
     ok(/admitInputResponse\(\{/.test(unifiedSrc), "6: 🔴 the live decision runs the SAME admission all five arms run (approvals/input-response-floor.ts) — the transport is not the control");
     ok(/\.respond\(\[\{ requestId: /.test(unifiedSrc), "6: …and the channel answers with `respond([{requestId, …}])`, the one shape routeDeliverPayload can route to a child");
     ok(/rememberBridgedQuestion\(/.test(unifiedSrc), "6: …and the input.requested handler writes the row a later answer is matched on");
+    {
+      const linearSrc = readFileSync(new URL("../../providers/linear/agent/channels/linear.ts", import.meta.url), "utf8").replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
+      ok(/sig\.action === "prompted" && linearPromptReAddress\(c\.body, viewer\.name\) !== "mention" \? \{ followUp: true as const \}/.test(linearSrc), "6m: 🔴 the Linear addressed leg marks a `prompted` reply with no app mention as a follow-up");
+    }
+    ok(/addressedMention: isAddressedMentionWake\(input\.window, bareToken\)/.test(unifiedSrc), "6m: 🔴 the live decision passes the wake's own addressing and window token, so a real @-mention reaches the seat");
     ok(/forgetBridgedQuestion\(/.test(unifiedSrc), "6: …and consumes it once the answer is delivered");
     ok(/forgetBridgedQuestion\([^;]*\);\s*await settleAnsweredWake\(getOperationalStore\(\), org, t\.wakeId\)/.test(unifiedSrc), "6: …and settles the wake the answer rode, so the seat is not told it is queued");
   }
@@ -505,6 +557,21 @@ for (const [label, resolveOrigin] of [
   ok(unmatched.kind === "wake" && unmatched.reason === "unmatched-option", "8d: 🔴 a reply naming no option is an ordinary WAKE — the approval stays parked instead of being denied by accident");
   ok(admits8 === 0, "8d: …and spends no admission call, because that person was not answering the approval");
   ok((await readBridgedQuestion(store8, "o8", TOKEN8))?.requestId === approval.requestId, "8d: …and the row is LEFT IN PLACE, so the room can still answer");
+
+  let admits8m = 0;
+  const mentionPick = await resolveInboundAnswerRouting(
+    { internalDispatch: false, containerKey: ROOM8, text: "Approve", addressedMention: true },
+    {
+      read: async () => stored,
+      admit: async () => {
+        admits8m++;
+        return { ok: true, floor: "member" };
+      },
+    },
+  );
+  ok(mentionPick.kind === "wake" && mentionPick.reason === "addressed-mention", "8d: 🔴 an @-MENTION naming an option picks NO option — it is the seat's wake");
+  ok(admits8m === 0, "8d: …and spends no admission call");
+  ok((await readBridgedQuestion(store8, "o8", TOKEN8))?.optionIds?.join(",") === "approve,cancel", "8d: …and the approval row stays parked, so a plain reply can still decide it");
 
   const qRow = { requestId: "call_abc123", containerKey: ROOM8, at: "2026-05-14T11:35:00.000Z" };
   const qRouted = await resolveInboundAnswerRouting({ internalDispatch: false, containerKey: ROOM8, text: "what page is this about?" }, { read: async () => qRow, admit: allow8 });

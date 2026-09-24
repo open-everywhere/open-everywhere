@@ -30,6 +30,7 @@ import {
   readBridgedQuestion,
   rememberBridgedQuestion,
   resolveInboundAnswerRouting,
+  isAddressedMentionWake,
   approvalOptionIds,
   QUESTION_ANSWERED_AUDIT_ACTION,
   QUESTION_ANSWER_DROPPED_AUDIT_ACTION,
@@ -326,6 +327,7 @@ async function resolveInboundAnswer(
         internalDispatch: input.internalDispatch === true,
         ...(containerKey ? { containerKey } : {}),
         ...(roomText !== undefined ? { text: roomText } : {}),
+        addressedMention: isAddressedMentionWake(input.window, bareToken),
       },
       {
         read: () => readBridgedQuestion(getOperationalStore(), org, bareToken),
@@ -352,6 +354,8 @@ async function resolveInboundAnswer(
         ulog(`REFUSED an answer to the outstanding question on ${bareToken} — delivering it as an ordinary wake, the question stays open`);
       } else if (routing.reason === "unmatched-option") {
         ulog(`the outstanding APPROVAL on ${bareToken} was not answered by this message (it names no option) — ordinary wake, the approval stays parked`);
+      } else if (routing.reason === "addressed-mention") {
+        ulog(`the outstanding question on ${bareToken} was not answered by this message (it @-mentions the agent) — ordinary wake, the question stays open`);
       } else if (routing.reason === "foreign-room") {
         ulog(`the outstanding question on ${bareToken} is showing in another room — this message is an ordinary wake, the question stays open`);
       }
