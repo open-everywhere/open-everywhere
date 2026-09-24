@@ -1685,4 +1685,36 @@ console.log("24. seatContinuity scopes replies, sessions and seats to the admitt
   );
 }
 
+console.log("25. the rewritten e2e asks carry no test scaffolding:");
+{
+  const SCAFFOLDING =
+    /authori[sz]ed test|platform admin|no id from an earlier|do not ask me which|fresh check|even if a similar|needs its own answer|answered before|tell me plainly|pre-?emptive|WANT this/iu;
+  const { grantAskText } = await import("./scenarios.js");
+  const asks: Array<[string, string]> = [
+    ["grantAskText (Discord, owner key)", grantAskText("<@1>", "page-1", "ref dgrant-x", "discord/1")],
+    ["grantAskText (Slack, no key)", grantAskText("<@U1>", "page-1", "ref sgrant-x")],
+  ];
+  const src = readFileSync(new URL("./scenarios.ts", import.meta.url), "utf8");
+  const legAsk = (leg: string, from: string, to: string): string => {
+    const start = src.indexOf(`id: "${leg}"`);
+    const end = src.indexOf("\n  {\n    id: ", start + 10);
+    const a = src.indexOf(from, start);
+    const b = src.indexOf(to, a);
+    ok(start > 0 && a > start && b > a && b < end, `the ${leg} ask is found inside its own leg (opening "${from}")`);
+    return src.slice(a, b + to.length);
+  };
+  asks.push(["J-SUP", legAsk("J-SUP", "Quick question for whoever's around", "`,")]);
+  asks.push(["S-TAINT-UNATTENDED-DENY", legAsk("S-TAINT-UNATTENDED-DENY", "Please schedule a one-shot check-in", "Confirm you've scheduled it.")]);
+  asks.push(["S-ROUTINE-CONNECTOR-WRITE", legAsk("S-ROUTINE-CONNECTOR-WRITE", "Please schedule a one-shot check-in", "Confirm you've scheduled it.")]);
+  for (const [site, text] of asks) {
+    const hit = SCAFFOLDING.exec(text);
+    ok(hit === null, `🔴 OPE-2125: the ${site} ask carries no test scaffolding (found "${hit?.[0] ?? ""}")`);
+  }
+  ok(SCAFFOLDING.test("This is an authorized test of our own credential-grant flow, run by the platform admin (me)."), "the scaffolding regex matches the old opening");
+  ok(SCAFFOLDING.test("(fresh check — even if a similar question was answered before, this one needs its own answer)"), "…and the old anti-dedupe clause");
+  const discordAsk = asks[0]![1];
+  ok(discordAsk.includes("ref dgrant-x") && discordAsk.includes("page-1") && discordAsk.includes("discord/1") && discordAsk.includes("<@1>"), "the grant ask keeps the mention, ref, page and owner key");
+  ok(asks[2]![1].includes("${marker}") && asks[4]![1].includes("${fireWord}") && asks[3]![1].includes("${fireWord}"), "the inline asks keep their ref and confirmation-word tokens");
+}
+
 console.log(`✓ ${n} gate-joins assertions passed`);
