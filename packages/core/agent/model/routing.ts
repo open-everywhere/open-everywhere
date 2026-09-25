@@ -3,6 +3,7 @@ import { modelRouteFor, domainMatchFor, reasoningCeilingFor, domainForChannel, c
 import { getConfig } from "../access/config.js";
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import { bindFrom, deploymentOrg, type BindableContext } from "../identity/binding.js";
+import { currentWorkerWake } from "../access/worker-seat-state.js";
 import { stampModelCall } from "./model-stamp.js";
 import { noteTurnStep, reportStepBoundary, withWrapUpNotice, turnBackstopModel, wrapUpNotice, boundaryStopReply } from "./step-boundary.js";
 import type { ModelPolicy } from "./policy.js";
@@ -11,6 +12,7 @@ import { getOperationalStore } from "../operational/provider.js";
 import { isDmAnchorWindowToken, isSupervisorShapedToken } from "../channels/window-key.js";
 import { routineModelRoleStamped } from "../routines/routine.js";
 import { captureArmed, captureSiteFrom, noteUncalledModelStep, withCapture } from "./call-capture.js";
+import { withStreamDropRetry } from "./stream-drop-retry.js";
 import {
   abBucketKey,
   abThreadKey,
@@ -311,13 +313,14 @@ export async function resolvePrimaryModel<TModel extends RoutableModel>(
   const boundary = await noteTurnStep(ctx, event);
   const captureSite = captureArmed() ? captureSiteFrom(ctx, event) : undefined;
   const capturingDeps = withCapture(deps, captureSite);
+  const retryingDeps = withStreamDropRetry(capturingDeps, currentWorkerWake());
   if (boundary.tier === "hard" || boundary.tier === "closed") {
     reportStepBoundary(ctx, boundary);
     noteUncalledModelStep(captureSite);
     stampModelCall(defaults.primary.id);
     return turnBackstopModel(deps.backend.model(defaults.primary.id), boundaryStopReply(boundary));
   }
-  const routed = await resolveRoutedPrimaryModel(ctx, defaults, capturingDeps, event);
+  const routed = await resolveRoutedPrimaryModel(ctx, defaults, retryingDeps, event);
   if (boundary.tier !== "soft") return routed;
   reportStepBoundary(ctx, boundary);
   return withWrapUpNotice(routed, wrapUpNotice(boundary));

@@ -54,6 +54,7 @@ import {
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { advanceDelegatedTaskWake, delegatedTaskDispatchAuthority, installTaskWake, openTaskWake, rememberDelegatedTaskBinding, rememberDelegatedTaskWake } from "../channels/task-wake.js";
 import { noteTurnBoundary, taskWakeThisTurn, uningressedTurn } from "../access/task-wake-signal.js";
+import { clearStreamDropRetries, streamDropRetriesThisTurn } from "../model/stream-drop-retry.js";
 import { addressedWakeThisTurn, exactDispatchWakeThisTurn, noteTaskDispatchedThisTurn } from "../access/dispatch-origin-signal.js";
 import { requesterThisTurn } from "../access/requester-identity.js";
 import { noteSettlementDispatchAuthority, settlementDispatchAuthorityThisTurn } from "../access/settlement-dispatch-signal.js";
@@ -758,6 +759,7 @@ export default defineHook({
       openTaintTurn(ctx);
       const bind = ctx as unknown as BindableContext;
       noteTurnBoundary(currentTurnId(bind), deliveryStampOf(bind));
+      clearStreamDropRetries();
     },
 
     "message.received": async (event, ctx) => {
@@ -795,6 +797,7 @@ export default defineHook({
             frames: auditErrorFrames(data?.details),
             ...(typeof ownSessionId === "string" && ownSessionId.length > 0 ? { session: ownSessionId } : {}),
             ...(turnId !== undefined && turnId.length > 0 ? { turn: turnId } : {}),
+            ...(streamDropRetriesThisTurn() > 0 ? { retried: streamDropRetriesThisTurn() } : {}),
           },
         }).catch(() => undefined);
       } catch {

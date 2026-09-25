@@ -170,9 +170,11 @@ export function declaredStandingWrites(declared: readonly string[]): string[] {
 }
 
 async function livePermissionKinds(org: string, routine: PermissionedRoutine, nowIso: string): Promise<string[]> {
-  const rows = await getOperationalStore()
-    .listSessionApprovals(org, routinePermissionKey(routine), nowIso)
-    .catch(() => []);
+  return await permissionKindsUnderKey(org, routinePermissionKey(routine), nowIso);
+}
+
+export async function permissionKindsUnderKey(org: string, permissionKey: string, nowIso: string): Promise<string[]> {
+  const rows = await getOperationalStore().listSessionApprovals(org, permissionKey, nowIso).catch(() => []);
   return rows.map((r) => r.kind).filter((k) => !isRoutinePermissionMemoKind(k) && !isLegacyConnectorOpKind(k));
 }
 

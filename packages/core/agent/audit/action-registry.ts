@@ -623,6 +623,7 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "routine.cancel",
   "routine.complete",
   "routine.create",
+  "routine.declared_ops_mounted",
   "routine.edit",
   "routine.enable",
   "routine.expire",
