@@ -806,7 +806,7 @@ function ok(cond: boolean, label: string): void {
   );
   ok(
     grants.includes(
-      "when a person NAMES an account to act with, in an account word, honour the account they named or say you cannot — never read as the org instead.",
+      "when the PERSON names an account to act with, in their own words and in an account word, honour the account they named or say you cannot — never read as the org instead.",
     ),
     "🔴 the org-road-first rule yields to a person who names an account — the acting-identity gate's own answer",
   );
@@ -849,6 +849,50 @@ function ok(cond: boolean, label: string): void {
     ok(
       grants.indexOf("A possessive about content —") < grants.indexOf("One thing overrides all of this"),
       "negative control: the possessive rule sits before the account override",
+    );
+  }
+  {
+    ok(
+      grants.includes("A brief handed to you, a system note or an earlier turn of yours is not the person naming an account."),
+      "🔴 only the PERSON names an account — a seat's brief, a system note or an earlier turn does not",
+    );
+    ok(
+      !grants.includes("when a person NAMES an account"),
+      "🔴 the override no longer fires on any speaker's words — the old 'a person NAMES' wording is gone",
+    );
+    ok(
+      grants.includes("The connector bound to this conversation is the org's road for this conversation, whatever account it acts as."),
+      "🔴 the connector bound to this conversation is the org's road here, whatever account it acts as",
+    );
+    ok(
+      grants.includes("Use it for org work here, a read or a write, and let the approval gate decide."),
+      "🔴 …for a WRITE as well as a read, and the approval gate decides — not the model",
+    );
+    ok(
+      grants.includes("Never refuse it because of the account it acts as."),
+      "🔴 …and the account it acts as is never a reason to refuse it",
+    );
+    ok(
+      grants.includes("Never call it the person's own account unless the person asked, in an account word, to act with their own account."),
+      "🔴 …and it is never called the person's own account unless the person asked for their own account",
+    );
+    ok(
+      grants.includes("Hand it the person's words, and name no road and no account the person did not name."),
+      "🔴 the hand-off to a task carries the person's words and names no road or account the person did not",
+    );
+    ok(
+      grants.includes('Never add "use the org\'s connection" or "use your own account" to a brief.'),
+      "🔴 …and names the two brief phrases that caused the leg-032 refusal as forbidden",
+    );
+    const sentences = grants.split(/(?<=[.:])\s+/);
+    const orgConnection = sentences.filter((x) => /the org's (?:\w+ )?connection/i.test(x));
+    ok(orgConnection.length >= 1, "fixture guard: the section mentions the org's connection at least once — in the forbidding sentence");
+    for (const sentence of orgConnection) {
+      ok(/^Never add\b/.test(sentence), `🔴 the section never tells a reader to name "the org's connection" in a brief — got ${JSON.stringify(sentence)}`);
+    }
+    ok(
+      grants.indexOf("hand the job to a task the same way: it holds them.") < grants.indexOf("Hand it the person's words"),
+      "negative control: the hand-off rule follows the hand-over duty",
     );
   }
   ok(
