@@ -27,6 +27,7 @@ const { postReply, replyAuditFor } = await import("../agent/channels/reply-post.
 type ReplyTarget = import("../agent/channels/reply-post.js").ReplyTarget;
 const { PROVENANCE_FOOTER_PREFIX, REPLY_PROVENANCE_ACTION } = await import("../agent/channels/reply-provenance.js");
 const { delegatedProvenanceKey, delegatingParentLink, delegatedSecondAddress } = await import("../agent/channels/delegated-provenance.js");
+const { noteBorrowedRecordRead, BORROWED_RECORD_KIND, BORROWED_READ_OP } = await import("../agent/channels/read-reach.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { taskWakeKey } = await import("../agent/channels/task-wake.js");
 const { registerUnifiedWakeTarget } = await import("../agent/channels/unified-window.js");
@@ -280,7 +281,7 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
   for (const read of reads) {
     ok(
       Object.keys(read).sort().join(",") === "connection,op",
-      `🔴 §4: a row carries the CONNECTION and the OP and NOTHING ELSE (saw keys ${Object.keys(read).sort().join(",")})`,
+      `🔴 §4: a CONNECTOR-door row carries the CONNECTION and the OP and NOTHING ELSE — no record, because rule (ii) is decided against the WORKER's own arrival stamp (saw keys ${Object.keys(read).sort().join(",")})`,
     );
   }
   ok(
@@ -547,6 +548,82 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
   ok(
     (await delegatedSecondAddress({ org: ORG, taskWakeId: TASK_WAKE, inheritedWakeId: TASK_WAKE, outcome: "installed" })) === undefined,
     "🔴 §10: ARM 4 — an inherited stamp EQUAL to the minted id widens nothing, so it is refused rather than written as a duplicate address",
+  );
+}
+
+{
+  const row = SURFACES[0]!;
+  const LABEL = "Launch checklist";
+  const OTHER_LABEL = "Release runbook";
+
+  const inWorkerSeat = newSession(SEAT_SESSION);
+  await inWorkerSeat(async () => {
+    await noteTaskReceipt({ taskId: "task_borrow", callId: "call_borrow", agentId: null, tool: "agent" }, SEAT_SESSION);
+  });
+  const inBorrowWorker = newSession("worker-call_borrow");
+  await inBorrowWorker(async () => {
+    noteBorrowedRecordRead(workerCtx("call_borrow", "worker_turn_1"), { connection: "notion", grantId: "g-1", targetLabel: LABEL });
+    noteBorrowedRecordRead(workerCtx("call_borrow", "worker_turn_1"), { connection: "notion", grantId: "g-1", targetLabel: LABEL });
+    noteBorrowedRecordRead(workerCtx("call_borrow", "worker_turn_1"), { connection: "notion", grantId: "g-2", targetLabel: OTHER_LABEL });
+  });
+  const borrowed = (await awaitWorkerRow(`subagent:${SEAT_SESSION}:call_borrow`, 2)) as { reads?: Record<string, unknown>[] };
+  const borrowReads = borrowed.reads ?? [];
+  ok(
+    borrowReads.length === 2,
+    `🔴 §11: two DISTINCT grants are two reads and the repeat is folded — the dedupe key carries the RECORD, not connection+op alone (saw ${JSON.stringify(borrowReads)})`,
+  );
+  ok(
+    Object.keys(borrowReads[0] ?? {})
+      .sort()
+      .join(",") === "connection,op,record",
+    `🔴 §11: a BORROW-door row carries the record beside the connection and the op (saw keys ${Object.keys(borrowReads[0] ?? {}).sort().join(",")})`,
+  );
+  ok(
+    JSON.stringify(borrowReads[0]?.record) === JSON.stringify({ kind: BORROWED_RECORD_KIND, id: "g-1", name: LABEL }) && borrowReads[0]?.op === BORROWED_READ_OP,
+    `🔴 §11: the record is the GRANT ROW and its PINNED TARGET — the label the owner approved, never a fetched page's own title (saw ${JSON.stringify(borrowReads[0])})`,
+  );
+
+  const turnId = "seat_turn_borrow";
+  const inSeat = newSession(SEAT_SESSION);
+  await inSeat(async () => {
+    await applyTaskSettlement(
+      [{ taskId: "task_borrow", status: "completed", agentId: null }],
+      SEAT_SESSION,
+      seatCtx(row, turnId) as unknown as Parameters<typeof applyTaskSettlement>[2],
+    );
+    await postReply(row.target, `${ANSWER} (borrowed)`, replyAuditFor(seatCtx(row, turnId), "tool", "wake-borrow"));
+  });
+  ok(
+    lastPosted() === `${ANSWER} (borrowed)\n\n${PROVENANCE_FOOTER_PREFIX} notion (${LABEL})`,
+    `🔴 §11: THE WHOLE TICKET — the delegated borrowed read foots the PINNED TARGET, exactly as a seat-turn borrowed read does. It used to foot \`notion\` alone (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+  );
+
+  const inSeat2 = newSession(SEAT_SESSION);
+  await inSeat2(async () => {
+    await noteTaskReceipt({ taskId: "task_unpinned", callId: "call_unpinned", agentId: null, tool: "agent" }, SEAT_SESSION);
+  });
+  const inUnpinnedWorker = newSession("worker-call_unpinned");
+  await inUnpinnedWorker(async () => {
+    noteBorrowedRecordRead(workerCtx("call_unpinned", "worker_turn_1"), { connection: "notion", grantId: "g-3" });
+  });
+  const unpinned = (await awaitWorkerRow(`subagent:${SEAT_SESSION}:call_unpinned`, 1)) as { reads?: Record<string, unknown>[] };
+  ok(
+    unpinned.reads?.[0]?.record === undefined,
+    `🔴 §11/NEGATIVE CONTROL: a borrowed read with no recoverable label carries NO record at all (saw ${JSON.stringify(unpinned.reads?.[0])})`,
+  );
+  const unpinnedTurn = "seat_turn_unpinned";
+  const inSeat3 = newSession(SEAT_SESSION);
+  await inSeat3(async () => {
+    await applyTaskSettlement(
+      [{ taskId: "task_unpinned", status: "completed", agentId: null }],
+      SEAT_SESSION,
+      seatCtx(row, unpinnedTurn) as unknown as Parameters<typeof applyTaskSettlement>[2],
+    );
+    await postReply(row.target, `${ANSWER} (unpinned)`, replyAuditFor(seatCtx(row, unpinnedTurn), "tool", "wake-unpinned"));
+  });
+  ok(
+    lastPosted() === `${ANSWER} (unpinned)\n\n${PROVENANCE_FOOTER_PREFIX} notion`,
+    `🔴 §11/NEGATIVE CONTROL: …and its reply names the connection alone, with no parenthesised target (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
   );
 }
 

@@ -16,6 +16,7 @@ import {
   _resetModelPricingForTest,
   builtInModelIds,
   modelPricing,
+  estimateCostUsd,
 } from "../agent/spend/pricing.js";
 import { estimateSandboxCostUsd, sandboxMemoryGiB, sandboxGiBHourUsd } from "../agent/spend/sandbox-pricing.js";
 import {
@@ -180,6 +181,19 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   ok(rowCostUsd(exactRow, ambiguousAssumed) === 3, "rowCostUsd: own-model pricing doesn't need the assumed model to resolve at all");
   ok(rowCostUsd(stamplessRow, explicitAssumed) === modelPricing(PRICED_MODEL)!.inPerMtok, "rowCostUsd: a stampless row falls back to the assumed model's rate");
   ok(rowCostUsd(stamplessRow, ambiguousAssumed) === undefined, "rowCostUsd: stampless row + no assumable model -> omitted, not guessed");
+
+  {
+    _setBuiltInForTest({ [PRICED_MODEL]: { inPerMtok: 0.125, outPerMtok: 0.5, longContext: { thresholdInputTokens: 272_001, inPerMtok: 0.25, outPerMtok: 0.75 } } });
+    const tiered = resolveAssumedModel(PRICED_MODEL);
+    const rollup = { inputTokens: 280_000, outputTokens: 0 };
+    const asAggregate = rowCostUsd(rollup, tiered, "aggregate");
+    const asOneCall = rowCostUsd(rollup, tiered, "one-call");
+    ok(asAggregate !== undefined && Math.abs(asAggregate - (280_000 * 0.125) / 1e6) < 1e-12, "🔴 rowCostUsd: an AGGREGATED row past the boundary prices at the BASE rate — a window's tokens are not one prompt");
+    ok(asOneCall !== undefined && Math.abs(asOneCall - (280_000 * 0.25) / 1e6) < 1e-12, "rowCostUsd: the SAME row as one call prices at the tier — the negative control that proves the line above tests the grain, not the arithmetic");
+    ok(asOneCall! > asAggregate! * 1.9, "rowCostUsd: the two grains differ by ~2x, so neither assertion above could pass under the other's behaviour");
+    ok(Math.abs(rowCostUsd(rollup, tiered)! - asAggregate!) < 1e-12, "🔴 rowCostUsd: the DEFAULT grain is `aggregate` — a caller that names none cannot be over-billed");
+    _setBuiltInForTest({ [PRICED_MODEL]: { inPerMtok: 0.25, outPerMtok: 1.2, cachedInPerMtok: 0.02 }, "anthropic/claude-sonnet-5": { inPerMtok: 3, outPerMtok: 15 } });
+  }
   ok(rowCostUsd(stampedUnpricedRow, explicitAssumed) === undefined, "rowCostUsd: a stamped model with NO configured rate is never priced at the assumed model's DIFFERENT rate — omitted, not silently wrong");
 
   const mix = pricingMix([exactRow, stamplessRow, stampedUnpricedRow], explicitAssumed);
@@ -460,7 +474,7 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   registerModelPricing({ "anthropic/claude-sonnet-5": { inPerMtok: 3, outPerMtok: 15 } });
 
   const mixed = await execTool(sessionCostTool)({ assumedModelId: PRICED_MODEL }, ctxEng("sess-mixed") as never);
-  const mixedExpected = 3 + modelPricing(PRICED_MODEL)!.inPerMtok;
+  const mixedExpected = 3 + estimateCostUsd({ inputTokens: 1_000_000 }, modelPricing(PRICED_MODEL), "one-call")!;
   ok(mixed.costUsd !== undefined && Math.abs(mixed.costUsd - mixedExpected) < 1e-9, "session_cost: mixed stamped+stampless rows sum EXACT + ASSUMED pricing, not a single blended rate");
   ok(/priced exactly by their own recorded model/.test(mixed.note) && /no recorded model/.test(mixed.note), "session_cost: note honestly describes the exact/assumed mix");
 
@@ -519,7 +533,8 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   const before = await execTool(spendReportTool)({ sinceDays: 365, scope: "org" }, ctxOrgAdmin as never);
   const rowBefore = before.ledger.surfaces.find((s) => s.surfaceKey === wsSurface);
   ok(rowBefore !== undefined, "spend_report ledger: the seeded surface appears in ledger.surfaces");
-  ok(Math.abs(rowBefore!.usd - modelPricing(PRICED_MODEL)!.inPerMtok) < 1e-9, `spend_report ledger: usd sums only the priced write (1M input tokens @ the built-in input rate); the unpriced-model write contributed $0 at write time, never guessed (got ${rowBefore!.usd})`);
+  const pricedWriteUsd = estimateCostUsd({ inputTokens: 1_000_000 }, modelPricing(PRICED_MODEL), "one-call")!;
+  ok(Math.abs(rowBefore!.usd - pricedWriteUsd) < 1e-9, `spend_report ledger: usd sums only the priced write (1M input tokens, priced as ONE call at write time); the unpriced-model write contributed $0 at write time, never guessed (got ${rowBefore!.usd})`);
   ok(rowBefore!.tokens === 10_000_000, "spend_report ledger: tokens sum BOTH writes — an unpriced model's tokens still count against a token cap");
   ok(rowBefore!.tokenCap === null && rowBefore!.usdCap === null, "spend_report ledger: no cap configured anywhere -> both caps null");
   ok(rowBefore!.tokenOver === false && rowBefore!.usdOver === false && rowBefore!.over === false, "spend_report ledger: no cap -> never over");
@@ -529,7 +544,7 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   ok(wsRowBefore!.usd >= rowBefore!.usd - 1e-9, "spend_report ledger: the workspace usd rolls up at least its surface's contribution");
   ok(wsRowBefore!.tokens >= rowBefore!.tokens, "spend_report ledger: the workspace tokens roll up at least its surface's contribution");
 
-  const seededUsd = modelPricing(PRICED_MODEL)!.inPerMtok;
+  const seededUsd = pricedWriteUsd;
   const usdCap = seededUsd / 2;
   await opStore.setSpendLimit(org, wsSurface, "surface", { monthlyUsd: usdCap }, { reason: "test bridge", setBy: "tester" });
   const gateVerdict = await scopeOverBudget(
@@ -559,8 +574,8 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   const prevRow = prevReport.ledger.surfaces.find((s) => s.surfaceKey === wsSurface);
   ok(prevReport.ledger.period === prevPeriod, "spend_report ledger: an explicit past period is honoured");
   ok(prevRow!.tokens === 2_000_000, "spend_report ledger: a past period's tokens come from THAT month's ledger rows, not the current one");
-  const prevExpected = 2 * modelPricing(PRICED_MODEL)!.inPerMtok;
-  ok(Math.abs(prevRow!.usd - prevExpected) < 1e-9, `spend_report ledger: a past period's usd is THAT calendar month's ledger sum (2,000,000 in-tokens at the built-in input rate = $${prevExpected}, got ${prevRow!.usd})`);
+  const prevExpected = estimateCostUsd({ inputTokens: 2_000_000 }, modelPricing(PRICED_MODEL), "one-call")!;
+  ok(Math.abs(prevRow!.usd - prevExpected) < 1e-9, `spend_report ledger: a past period's usd is THAT calendar month's ledger sum (one 2,000,000-in-token write = $${prevExpected}, got ${prevRow!.usd})`);
 }
 
 {

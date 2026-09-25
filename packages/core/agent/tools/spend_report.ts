@@ -216,7 +216,7 @@ export default defineTool({
         acc.outputTokens += r.outputTokens;
         acc.cacheReadTokens += r.cacheReadTokens;
         acc.cacheWriteTokens += r.cacheWriteTokens;
-        const cost = rowCostUsd(r, assumed);
+        const cost = rowCostUsd(r, assumed, "aggregate");
         if (cost !== undefined) acc.costUsd = (acc.costUsd ?? 0) + cost;
         grouped.set(key, acc);
       }

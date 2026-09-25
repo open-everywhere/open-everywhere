@@ -78,6 +78,7 @@ export async function executeAnalytics(compiled: CompiledAnalytics, deps: Analyt
       const cost = rowCostUsd(
         { inputTokens: num(r.input_tokens), outputTokens: num(r.output_tokens), cacheReadTokens: num(r.cache_read_tokens), model: typeof r.model === "string" ? r.model : undefined },
         deps.assumed,
+        "one-call",
       );
       if (cost !== undefined) acc.est_usd = num(acc.est_usd) + cost;
     }

@@ -12,7 +12,9 @@ import {
   type DreamJudge,
   type JudgeVerdict,
 } from "../agent/memory/dream/judge.js";
-import { tidySiloJudged } from "../agent/memory/dream/tidy.js";
+import { tidySilo, tidySiloJudged } from "../agent/memory/dream/tidy.js";
+import { applySupersedeOp } from "../agent/memory/dream/supersede-apply.js";
+import type { MemoryOp } from "../agent/memory/dream/ops.js";
 import { isSafe, SAFE_KINDS } from "../agent/memory/dream/ops.js";
 import { safeDistill, enrichmentBullets } from "../agent/memory/dream/learn.js";
 import { stampHumanEdit } from "../agent/memory/provenance.js";
@@ -87,7 +89,8 @@ function fakeJudge(verdictFor: (c: CandidateCluster) => JudgeVerdict | null): Dr
 
   const linked: MemoryFiles = { "m.md": "- Adams owns the [[billing]] rota\n- Erin holds primary pager duty for [[billing]]\n" };
   const c2 = selectCandidates(linked, { now });
-  ok(c2.some((c) => c.kind === "contradiction"), "narrow: shared-[[link]] subject pairs at ~0 word overlap (graph does the narrowing)");
+  ok(c2.some((c) => c.kind === "supersede"), "narrow: shared-[[link]] subject pairs at ~0 word overlap (graph does the narrowing)");
+  ok(!c2.some((c) => c.kind === "contradiction"), "narrow: …and a SAME-polarity pair is not offered to the judge as a contradiction (OPE-1995)");
 
   const polar: MemoryFiles = { "m.md": "- Adams owns the billing service\n- Adams no longer owns the billing service\n" };
   ok(selectCandidates(polar, { now }).some((c) => c.kind === "contradiction"), "narrow: opposing-polarity same-subject pair is a candidate");
@@ -98,6 +101,26 @@ function fakeJudge(verdictFor: (c: CandidateCluster) => JudgeVerdict | null): Dr
   ok(stale !== undefined && stale.bullets[0].includes("2019-01-01") && stale.bullets[1].includes("2026-06-01"), "narrow: past-horizon bullet + later same-subject bullet → stale candidate (old first, superseder second)");
   const lone: MemoryFiles = { "m.md": "- 2019-01-01: ancient pricing decision\n- 2026-06-01: unrelated deploy cadence note\n" };
   eq(selectCandidates(lone, { now }).filter((c) => c.kind === "stale").length, 0, "narrow: lone old bullet with no superseder is NOT a candidate ('old' ≠ 'stale')");
+
+  const swapped: MemoryFiles = { "m.md": "- [[payments]] go through stripe\n- [[payments]] go through adyen\n" };
+  const sup = selectCandidates(swapped, { now }).find((c) => c.kind === "supersede");
+  ok(sup !== undefined, "OPE-1995: two undated same-subject freehand bullets narrow as a supersede candidate");
+  ok(sup !== undefined && sup.bullets[0].includes("stripe") && sup.bullets[1].includes("adyen"), "OPE-1995: the pair is ordered [outdated, current] by FILE ORDER — the later line is the later statement");
+
+  const twoPeople: MemoryFiles = { "m.md": "- Kim joined the [[billing]] team\n- Tom joined the [[billing]] team\n" };
+  const twoPeopleKinds = selectCandidates(twoPeople, { now }).map((c) => c.kind);
+  ok(twoPeopleKinds.includes("consolidate"), "OPE-1995: the 1.00-overlap false-positive class clears the consolidate bar and is judged there");
+  ok(!twoPeopleKinds.includes("supersede"), "OPE-1995: …so it raises no supersede candidate — one pair, one judge call, never both kinds");
+
+  const staleDated: MemoryFiles = { "m.md": "- 2019-01-01: [[payments]] go through stripe\n- 2026-06-01: [[payments]] go through adyen\n" };
+  const staleKinds = selectCandidates(staleDated, { now }).map((c) => c.kind);
+  eq(staleKinds.filter((k) => k === "supersede").length, 0, "OPE-1995: a dated pair PAST the stale horizon raises no supersede — `stale` already asks that question, and asking twice costs two judge calls");
+  ok(staleKinds.includes("stale"), "OPE-1995: …and the `stale` candidate really is there, so the pair is not simply dropped (negative control)");
+
+  const recentDated: MemoryFiles = { "m.md": "- 2026-05-01: [[payments]] go through stripe\n- 2026-06-01: [[payments]] go through adyen\n" };
+  const recentKinds = selectCandidates(recentDated, { now }).map((c) => c.kind);
+  ok(recentKinds.includes("supersede"), "🔴 OPE-1995: a dated pair too RECENT for the stale horizon IS a supersede — nothing else would ever ask about it");
+  ok(!recentKinds.includes("stale"), "OPE-1995: …and `stale` genuinely cannot see it (the horizon check, not the date check, is what divides the two kinds)");
 
   const hubWords = ["alpha bravo", "charlie delta", "echo foxtrot", "golf hotel", "india juliet", "kilo lima", "mike november"];
   const hub: MemoryFiles = { "m.md": hubWords.map((w) => `- ${w} [[MEMORY]]`).join("\n") + "\n" };
@@ -170,6 +193,71 @@ const NOW = new Date("2026-07-01T00:00:00Z");
   };
   const r = await tidySiloJudged(messy, "test-brain", judge, { now: NOW });
   ok(r.proposals.length === 0 && r.applied.length > 0, "judged: a THROWING judge → no proposals, safe ops unaffected (belt-and-braces)");
+}
+const SUPERSEDE_SILO: MemoryFiles = {
+  "m.md": ["## Notes", "- [[payments]] go through stripe", "- [[payments]] go through adyen"].join("\n"),
+};
+{
+  const judge = fakeJudge((c) => (c.kind === "supersede" ? { confirm: true, keep: c.bullets[1], note: "the processor changed" } : { confirm: false }));
+  const r = await tidySiloJudged(SUPERSEDE_SILO, "test-brain", judge, { now: NOW });
+  const proposal = r.proposals.find((p) => p.kind === "supersede");
+  ok(proposal !== undefined, "OPE-1995: a judge-confirmed supersede becomes a proposal");
+  ok(proposal !== undefined && !isSafe(proposal.kind), "OPE-1995: the supersede proposal is DESTRUCTIVE — it can never reach the auto-apply layer");
+  ok(proposal?.before === "- [[payments]] go through stripe\n- [[payments]] go through adyen", "OPE-1995: the proposal carries BOTH lines, outdated first — what the human reviews");
+  ok(proposal?.after === "- [[payments]] go through adyen", "OPE-1995: …and the survivor the judge chose");
+  ok(r.files["m.md"].includes("stripe") && r.files["m.md"].includes("adyen"), "🔴 OPE-1995: a CONFIRMED supersede is NOT applied — both lines survive the tidy (human review is the only road)");
+}
+{
+  const judge = fakeJudge(() => ({ confirm: false, note: "two different processors, both live" }));
+  const r = await tidySiloJudged(SUPERSEDE_SILO, "test-brain", judge, { now: NOW });
+  eq(r.proposals.filter((p) => p.kind === "supersede").length, 0, "🔴 OPE-1995: a judge-REFUSED supersede produces no proposal — no threshold fallback behind it");
+  ok(r.judged.candidates > 0, "OPE-1995: …and the refusal is a real refusal, not an empty candidate set (negative control)");
+}
+{
+  const v1 = tidySilo(SUPERSEDE_SILO, { now: NOW });
+  eq(v1.proposals.filter((p) => p.kind === "supersede").length, 0, "🔴 OPE-1995: the v1 zero-LLM tidy raises NO supersede — the measurement says no threshold separates the classes");
+}
+
+{
+  const approved: MemoryOp = {
+    kind: "supersede",
+    file: "m.md",
+    summary: "judge-confirmed supersede — the processor changed",
+    before: "- [[payments]] go through stripe\n- [[payments]] go through adyen",
+    after: "- [[payments]] go through adyen",
+  };
+  const applied = applySupersedeOp(SUPERSEDE_SILO, approved);
+  ok(applied.applied, "OPE-1995 apply: an approved supersede applies");
+  if (applied.applied) {
+    const out = applied.files["m.md"];
+    eq((out.match(/\[\[payments\]\]/g) ?? []).length, 1, "🔴 OPE-1995 apply: ONE line survives — the stack the ticket describes is gone, not merely reordered");
+    ok(out.includes("adyen") && !out.includes("stripe"), "OPE-1995 apply: the CURRENT value survives and the outdated one is deleted");
+    ok(out.startsWith("## Notes\n"), "OPE-1995 apply: the section heading is untouched");
+    eq(applied.superseded, "- [[payments]] go through stripe", "OPE-1995 apply: the replaced line is reported back, so an approval can audit what it deleted");
+    const withNeighbour = { "m.md": ["## Notes", "- an unrelated standing note", "- [[payments]] go through stripe", "- [[payments]] go through adyen"].join("\n") };
+    const r2 = applySupersedeOp(withNeighbour, approved);
+    ok(r2.applied && r2.files["m.md"] === ["## Notes", "- an unrelated standing note", "- [[payments]] go through adyen"].join("\n"), "OPE-1995 apply: the survivor keeps the OUTDATED line's position, and unrelated bullets are byte-identical");
+  }
+
+  const declines: ReadonlyArray<readonly [MemoryOp, string, string]> = [
+    [{ ...approved, kind: "consolidate" }, "wrong-kind", "a non-supersede op is refused outright"],
+    [{ ...approved, before: "- only one line" }, "malformed-op", "a `before` that is not exactly two lines is refused"],
+    [{ ...approved, after: undefined }, "malformed-op", "an op with no survivor is refused"],
+    [{ ...approved, file: "absent.md" }, "missing-file", "an op naming a file the silo no longer holds is refused"],
+    [{ ...approved, before: "- [[payments]] go through paypal\n- [[payments]] go through adyen" }, "outdated-bullet-gone", "an outdated line the file no longer carries is refused — never a near-match"],
+    [{ ...approved, before: "- [[payments]] go through stripe\n- [[payments]] go through worldpay" }, "current-bullet-gone", "a current line the file no longer carries is refused"],
+  ];
+  for (const [op, reason, label] of declines) {
+    const res = applySupersedeOp(SUPERSEDE_SILO, op);
+    ok(!res.applied && res.reason === reason, `OPE-1995 apply: ${label} (${reason})`);
+  }
+  const headless = { "m.md": "- [[payments]] go through stripe\n- [[payments]] go through adyen" };
+  const noSection = applySupersedeOp(headless, approved);
+  ok(!noSection.applied && noSection.reason === "no-section", "OPE-1995 apply: a bullet under no heading is refused — the section is never guessed");
+
+  const drifted = { "m.md": ["## Notes", "- [[payments]] go through stripe connect", "- [[payments]] go through adyen"].join("\n") };
+  const onDrift = applySupersedeOp(drifted, approved);
+  ok(!onDrift.applied, "🔴 OPE-1995 apply: a line that DRIFTED by one word no longer matches — the key is the exact bytes the human approved, never a score");
 }
 {
   const judge = fakeJudge(() => ({ confirm: true }));

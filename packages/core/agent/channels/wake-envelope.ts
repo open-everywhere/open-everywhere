@@ -275,22 +275,6 @@ export function renderWakeEnvelope(input: WakeEnvelopeInput): string {
   return lines.join("\n");
 }
 
-export interface TriggerFireEnvelopeInput {
-  readonly currentTime: string;
-  readonly channel: WakeChannelMeta;
-  readonly note: string;
-}
-
-export function renderTriggerFireEnvelope(input: TriggerFireEnvelopeInput): string {
-  return [
-    `<wake${attr("reason", "spawn")}${attr("current-time", input.currentTime)}>`,
-    indent(renderChannelOpen(input.channel), 2),
-    indent("</channel>", 2),
-    ...(input.note.length > 0 ? [indent(`<system-note>${escapeXml(input.note)}</system-note>`, 2)] : []),
-    `</wake>`,
-  ].join("\n");
-}
-
 const MESSAGE_ELEMENT_RE = /<message(\s[^>]*)>([\s\S]*?)<\/message>/g;
 
 const WAKE_OPENER_RE = /<wake\b/g;

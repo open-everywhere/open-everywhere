@@ -124,7 +124,7 @@ export function noteBorrowedRecordRead(ctx: unknown, read: BorrowedRecordRead): 
       ...(label === undefined ? {} : { record: { kind: BORROWED_RECORD_KIND, id: read.grantId } }),
     });
     if (label !== undefined) rememberRecordName(currentSessionId(bind), turnId, BORROWED_RECORD_KIND, read.grantId, label);
-    noteDelegatedRead(bind, read.connection, BORROWED_READ_OP);
+    noteDelegatedRead(bind, read.connection, BORROWED_READ_OP, label === undefined ? undefined : { kind: BORROWED_RECORD_KIND, id: read.grantId, name: label });
   } catch {
   }
 }

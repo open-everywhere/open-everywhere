@@ -33,6 +33,12 @@ const JUDGE_TASK: Record<CandidateCluster["kind"], string> = {
   contradiction:
     "Decide whether these two bullets CONTRADICT each other — they cannot both be true now. " +
     "Unrelated or compatible facts about the same subject are NOT a contradiction.",
+  supersede:
+    "Decide whether bullet B REPLACES bullet A — the same subject and the same attribute, where B " +
+    "states the current value and A states an older value that is no longer true. Two facts that " +
+    "can both be true now are NOT a supersede, even when they share almost every word: two " +
+    "different people, places or items each having their own value is the common case, and " +
+    "confirming it would delete a fact that still holds.",
   stale:
     "Decide whether bullet A is STALE because bullet B supersedes it (B is the newer state of " +
     "the same fact). Old age alone is NOT staleness — only supersession is.",

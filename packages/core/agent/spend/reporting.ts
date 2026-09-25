@@ -7,7 +7,7 @@ import { getConfig } from "../access/config.js";
 import type { UsageSummaryRow } from "../operational/store.js";
 import { parseCron, cronMatches, DISPATCH_TICK_MINUTES } from "../routines/schedule.js";
 import type { RoutineTrigger } from "../routines/routine.js";
-import { modelPricing, estimateCostUsd, soleConfiguredModel, type ModelPricing, type UsageTokens } from "./pricing.js";
+import { modelPricing, estimateCostUsd, soleConfiguredModel, type ModelPricing, type UsageTokens, type UsageShape } from "./pricing.js";
 import { UNKNOWN_MODEL, periodOf } from "./spend.js";
 import { foldDisclosure, type SurfaceDisclosure } from "./dm-mask.js";
 import { spendRollup, type SurfacePeriodSpend } from "./store.js";
@@ -132,12 +132,12 @@ export function resolveAssumedModel(explicit?: string): AssumedModelPricing {
 
 export type PriceableRow = UsageTokens & { readonly model?: string };
 
-export function rowCostUsd(row: PriceableRow, assumed: AssumedModelPricing): number | undefined {
+export function rowCostUsd(row: PriceableRow, assumed: AssumedModelPricing, shape: UsageShape = "aggregate"): number | undefined {
   if (row.model) {
     const exact = modelPricing(row.model);
-    return exact ? estimateCostUsd(row, exact) : undefined;
+    return exact ? estimateCostUsd(row, exact, shape) : undefined;
   }
-  return assumed.pricing ? estimateCostUsd(row, assumed.pricing) : undefined;
+  return assumed.pricing ? estimateCostUsd(row, assumed.pricing, shape) : undefined;
 }
 
 export interface PricingMix {
@@ -387,7 +387,7 @@ export async function buildRoutinePredictions(
     const avgInput = acc.inputTokens / acc.sessions;
     const avgOutput = acc.outputTokens / acc.sessions;
     const avgCacheRead = acc.cacheReadTokens / acc.sessions;
-    const costPerFire = pricing ? estimateCostUsd({ inputTokens: avgInput, outputTokens: avgOutput, cacheReadTokens: avgCacheRead }, pricing) : undefined;
+    const costPerFire = pricing ? estimateCostUsd({ inputTokens: avgInput, outputTokens: avgOutput, cacheReadTokens: avgCacheRead }, pricing, "aggregate") : undefined;
 
     out.push({
       surfaceKey,

@@ -10,7 +10,7 @@ import { webhookFireAttributes } from "../routines/fire-auth.js";
 import { checkFireDisclosure } from "../routines/fire-disclosure.js";
 import { divertTriggeredFire, runFireSeatKey, type FireWindowDeps } from "../routines/fire-window.js";
 import { mintWakeId } from "../channels/unified-window.js";
-import { renderTriggerFireEnvelope } from "../channels/wake-envelope.js";
+import { renderWakeEnvelope } from "../channels/wake-envelope.js";
 import { normalizeDelivery } from "../routines/event-model.js";
 import { configHookDisclosure, configHookPosture, type FusedWebhookHook, type WebhookHook } from "./config.js";
 import { deploymentOrg } from "../identity/binding.js";
@@ -52,10 +52,12 @@ export function renderWebhookMessage(
   now: Date = new Date(),
 ): string {
   const [, , channelId] = hook.target.split("/");
-  const envelope = renderTriggerFireEnvelope({
+  const envelope = renderWakeEnvelope({
+    reason: "spawn",
     currentTime: now.toISOString(),
     channel: { id: channelId ?? hook.target },
-    note:
+    messages: [],
+    systemNote:
       `The "${hook.id}" webhook just fired. This turn has no trigger message. The operator declared ` +
       `this hook's standing instruction in reviewed deployment config; it did not arrive with the ` +
       `delivery, and it governs this judgment:\n` +

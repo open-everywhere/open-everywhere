@@ -177,12 +177,12 @@ test("a pinned lent tool states its pin to the WORKER's model, and the seat's re
   );
   expect(
     reply.content,
-    `the posted reply carries no fetched-source footer, so a misattribution in the prose is contradicted by nothing a reader can see (saw: ${JSON.stringify(reply.content.slice(0, 400))})`,
-  ).toContain(`${PROVENANCE_FOOTER_PREFIX} notion`);
-  expect(
-    reply.content,
-    `the delegated footer now names the pinned target — OPE-2026 has landed, so assert the full "\u0060${PROVENANCE_FOOTER_PREFIX} notion (${PINNED_LABEL})\u0060" above and delete this line`,
-  ).not.toContain(`${PROVENANCE_FOOTER_PREFIX} notion (${PINNED_LABEL})`);
+    `the posted reply does not name the page the lent tool actually fetched, so a misattribution in the prose is contradicted by nothing a reader can see (saw: ${JSON.stringify(reply.content.slice(0, 400))})`,
+  ).toContain(`${PROVENANCE_FOOTER_PREFIX} notion (${PINNED_LABEL})`);
+  const footerLine = reply.content.split("\n").find((l) => l.startsWith(PROVENANCE_FOOTER_PREFIX)) ?? "";
+  expect(footerLine, `the footer carries vendor bytes — it must name the grant's approved target and nothing the vendor wrote (saw: ${JSON.stringify(footerLine)})`).not.toContain(
+    VENDOR_BODY_MARKER,
+  );
   expect(reply.content, "the host rewrote the model's answer instead of adding to it").toContain(MISATTRIBUTED_ANSWER);
   armed.dispose();
 });

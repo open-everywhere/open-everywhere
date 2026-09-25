@@ -12,7 +12,7 @@ import { botDisplayNameFor } from "../identity/bot-display-name.js";
 import { planFor, resolveMemoryPlan } from "../memory/resolve.js";
 import { effectiveRoleFor, renderRoleInstructions } from "../roles/role.js";
 import { renderMemoryIndex } from "../memory/listing.js";
-import { memoryRecallRouteFor, type MemoryRecallRoute } from "../access/window-gate-manifest.js";
+import { CONVERSATIONAL_ROOT_GRAINS, memoryRecallRouteFor, type MemoryRecallRoute } from "../access/window-gate-manifest.js";
 import { canDelegateFromSeat } from "../access/delegation-mount.js";
 import { renderApprovalPreviewFor } from "../access/approval-preview.js";
 import { resolveLeanSeatPosture } from "../access/lean-seat.js";
@@ -27,6 +27,7 @@ import { isSupervisorSession } from "../model/routing.js";
 import { unifiedDomainFromToken } from "../channels/unified-supervisor.js";
 import { classifySessionId, windowTokenPlatform } from "../channels/window-key.js";
 import {
+  GRANTS_SECTION,
   composeSeatPrompt,
   renderHandle,
   renderIdentity,
@@ -46,6 +47,7 @@ import {
   windowGrainOf,
   type BindableContext,
   type SurfaceBinding,
+  type WindowGrain,
 } from "../identity/binding.js";
 
 export function renderRecoveryReadDoctrine(lean: boolean): string {
@@ -176,6 +178,17 @@ export function renderSupervisorPersona(
   return renderSeatPersona({ seatKind: "conversational", delivery: resolveDeliveryArm(ctx, sid.kind, opts) });
 }
 
+export function renderGrantsSlot(ctx: BindableContext): string {
+  if (isSupervisorSession(ctx)) return "";
+  let grain: WindowGrain;
+  try {
+    grain = windowGrainOf(ctx);
+  } catch {
+    return "";
+  }
+  return (CONVERSATIONAL_ROOT_GRAINS as readonly WindowGrain[]).includes(grain) ? GRANTS_SECTION : "";
+}
+
 function isWorkerSession(ctx: BindableContext): boolean {
   try {
     return windowGrainOf(ctx) === "task";
@@ -288,7 +301,8 @@ export function renderReadingAWake(): string {
 
 **What you see.** Every message that wakes you arrives inside a \`<wake>\` envelope. One turn can
 carry several of them, joined end to end. Anything else inside an envelope — earlier messages, the
-tail of a past session — is history for context, not things to answer.
+tail of a past session — is history for context, not things to answer. A \`<system-note>\` inside an
+envelope is this host's own framing, not message content.
 
 **How to read one.** Only the message marked \`trigger="true"\` is the new event. \`reason\` says
 why the turn happened. \`from\` says what kind of author wrote it: a \`human\`, another \`agent\`,
@@ -397,6 +411,7 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
     surface: renderUnifiedSurfaces(platforms),
     surfaceGuide: renderUnifiedSurfaceGuides(platforms, seatKindOf(ctx)),
     persona: renderSupervisorPersona(ctx, { messageToolOnly: true, ...(pinnedPlatform ? { pinnedPlatform } : {}) }),
+    grants: renderGrantsSlot(ctx),
     readingAWake: canReceiveJudgedWake(ctx) ? renderReadingAWake() : "",
     replyStyle: REPLY_STYLE_RUBRIC,
     role: roleMd,
@@ -432,6 +447,7 @@ async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
     surface: renderSurface(binding.platform),
     surfaceGuide: renderSurfaceGuide(binding.platform, seatKindOf(ctx)),
     persona: renderSupervisorPersona(ctx),
+    grants: renderGrantsSlot(ctx),
     readingAWake: canReceiveJudgedWake(ctx) ? renderReadingAWake() : "",
     replyStyle: REPLY_STYLE_RUBRIC,
     role: renderRolePrompt(ctx),

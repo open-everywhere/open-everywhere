@@ -142,8 +142,9 @@ export const requestCredentialGrantEntry = defineTool({
     "example one Notion page-reading tool, fixed to one page. They get a card in their own direct " +
     "messages and answer there; you get nothing back but confirmation that they were asked. Say in " +
     "the room that the ask went out, then carry on with something else; do not wait for an answer and " +
-    "do not ask twice. When they approve, this conversation gains a tool on its next turn and the " +
-    "answer is posted here. This grants nothing by itself. " +
+    "do not ask twice. When they approve, the grant lands on this conversation. The conversation " +
+    "reaches the tool through the next task it hands work to, and the answer is posted here. This " +
+    "grants nothing by itself. " +
     "🔴 ONE THING NEEDS THIS ASK: a PERSON'S OWN ACCOUNT, and only when a person here asked for it to be lent. " +
     "A connector NOBODY HAS BOUND HERE is a reason to SUGGEST this road, never to raise the ask yourself — name " +
     "what the org's own road cannot reach, say they can lend their own access, once, and stop. " +
@@ -331,7 +332,7 @@ export const requestCredentialGrantEntry = defineTool({
       asked: true,
       message:
         `Asked ${who}. The card is in their direct messages and only they can answer it. ` +
-        `If they approve, this conversation gains a tool that can ${grantActionPhrase(input.connector, mcpTool)} on its next turn. ` +
+        `If they approve, this conversation reaches a tool that can ${grantActionPhrase(input.connector, mcpTool)} through the next task it hands work to. ` +
         `Tell the room the ask went out and carry on — nothing is granted yet, you will not be told here the moment they answer, ` +
         `and asking again for the same thing is refused.`,
       owner: who,

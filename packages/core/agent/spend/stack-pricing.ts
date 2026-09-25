@@ -3,9 +3,16 @@ export interface RateBand {
   readonly maxPerMtok: number;
 }
 
+export interface LongContextBand {
+  readonly thresholdInputTokens: number;
+  readonly in: RateBand;
+  readonly out: RateBand;
+}
+
 export interface ModelRateBand {
   readonly in: RateBand;
   readonly out: RateBand;
+  readonly longContext?: LongContextBand;
 }
 
 function point(ratePerMtok: number): RateBand {
@@ -13,7 +20,11 @@ function point(ratePerMtok: number): RateBand {
 }
 
 const STACK_RATES: Readonly<Record<string, ModelRateBand>> = {
-  "openai/gpt-6-luna": { in: point(0.125), out: point(0.5) },
+  "openai/gpt-6-luna": {
+    in: point(0.125),
+    out: point(0.5),
+    longContext: { thresholdInputTokens: 272_001, in: point(0.25), out: point(0.75) },
+  },
   "alibaba/qwen3-vl-instruct": { in: point(0.2), out: point(0.88) },
   "google/gemini-3.7-flash": { in: point(0.75), out: point(3.75) },
   "deepseek/deepseek-v4-flash-0731": {

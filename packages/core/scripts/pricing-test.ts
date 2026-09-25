@@ -30,19 +30,61 @@ _resetModelPricingForTest();
 const BUILT_IN_ID = builtInModelIds()[0];
 const priced = modelPricing(BUILT_IN_ID);
 ok(priced?.inPerMtok === 0.125 && priced?.outPerMtok === 0.5 && priced?.cachedInPerMtok === 0.01, `built-in: ${BUILT_IN_ID} matches the gateway-billing-MEASURED rate ($0.125/$0.50, cache read $0.01)`);
+ok(
+  priced?.longContext?.thresholdInputTokens === 272_001 &&
+    priced?.longContext?.inPerMtok === 0.25 &&
+    priced?.longContext?.outPerMtok === 0.75 &&
+    priced?.longContext?.cachedInPerMtok === 0.02,
+  `built-in: ${BUILT_IN_ID} carries the catalog-read long-context tier (≥272,001 in: $0.25/$0.75, cache read $0.02)`,
+);
 ok(modelPricing("some/unknown-model") === undefined, "built-in: an unpriced model returns undefined, never a guess");
 for (const junk of ["constructor", "toString", "__proto__", "valueOf", "hasOwnProperty"]) {
   ok(modelPricing(junk) === undefined, `built-in: "${junk}" resolves UNPRICED, never an Object.prototype member`);
 }
 
-ok(close(estimateCostUsd({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, priced), 0.125 + 0.5), "estimateCostUsd: 1M in + 1M out at the built-in rate");
-ok(close(estimateCostUsd({ inputTokens: 500_000 }, priced), 0.125 / 2), "estimateCostUsd: partial input-only usage scales linearly");
-ok(close(estimateCostUsd({ inputTokens: 1_000_000, cacheReadTokens: 1_000_000 }, priced), 0.01), "estimateCostUsd: an all-cached prompt bills ONLY the cache rate (input==cached -> $0 non-cached), no double-count");
-ok(close(estimateCostUsd({ inputTokens: 1_000_000, cacheReadTokens: 800_000, outputTokens: 100_000 }, priced), 0.2 * priced!.inPerMtok + 0.8 * priced!.cachedInPerMtok! + 0.1 * priced!.outPerMtok), "estimateCostUsd: only the NON-cached remainder of input is billed at the input rate (partial-cache, no double-count)");
+const base: ModelPricing = { inPerMtok: priced!.inPerMtok, outPerMtok: priced!.outPerMtok, cachedInPerMtok: priced!.cachedInPerMtok };
+ok(close(estimateCostUsd({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, base), 0.125 + 0.5), "estimateCostUsd: 1M in + 1M out at the built-in rate");
+ok(close(estimateCostUsd({ inputTokens: 500_000 }, base), 0.125 / 2), "estimateCostUsd: partial input-only usage scales linearly");
+ok(close(estimateCostUsd({ inputTokens: 1_000_000, cacheReadTokens: 1_000_000 }, base), 0.01), "estimateCostUsd: an all-cached prompt bills ONLY the cache rate (input==cached -> $0 non-cached), no double-count");
+ok(close(estimateCostUsd({ inputTokens: 1_000_000, cacheReadTokens: 800_000, outputTokens: 100_000 }, base), 0.2 * base.inPerMtok + 0.8 * base.cachedInPerMtok! + 0.1 * base.outPerMtok), "estimateCostUsd: only the NON-cached remainder of input is billed at the input rate (partial-cache, no double-count)");
 ok(estimateCostUsd({ inputTokens: 1_000_000 }, undefined) === undefined, "estimateCostUsd: no pricing -> undefined (tokens-only upstream), never fabricated");
 const noCacheRate = { inPerMtok: 2, outPerMtok: 6 };
 ok(close(estimateCostUsd({ cacheReadTokens: 1_000_000 }, noCacheRate), 2), "estimateCostUsd: a pricing with no cachedInPerMtok bills cache reads at the plain input rate (conservative, non-underestimating)");
 ok(estimateCostUsd({}, priced) === 0, "estimateCostUsd: no usage at all -> $0, not undefined (a real zero, e.g. the sandbox usage-event kind)");
+
+const TIER = priced!.longContext!;
+const AT = TIER.thresholdInputTokens;
+const usd = (tokens: number, ratePerMtok: number): number => (tokens * ratePerMtok) / 1_000_000;
+
+ok(close(estimateCostUsd({ inputTokens: AT - 1 }, priced, "one-call"), usd(AT - 1, priced!.inPerMtok)), "long-context: one token BELOW the threshold still bills at the base input rate");
+ok(close(estimateCostUsd({ inputTokens: AT }, priced, "one-call"), usd(AT, TIER.inPerMtok)), "long-context: a prompt exactly AT the threshold bills at the tier input rate (the boundary is inclusive)");
+ok(close(estimateCostUsd({ inputTokens: AT + 100_000 }, priced, "one-call"), usd(AT + 100_000, TIER.inPerMtok)), "long-context: a prompt past the threshold bills every input token at the tier rate");
+
+const justUnder = estimateCostUsd({ inputTokens: AT - 1 }, priced, "one-call")!;
+const justOver = estimateCostUsd({ inputTokens: AT }, priced, "one-call")!;
+const graduated = usd(AT - 1, priced!.inPerMtok) + usd(1, TIER.inPerMtok);
+ok(justOver > justUnder * 1.9, "long-context: crossing the boundary by ONE token roughly DOUBLES the bill — the whole call reprices");
+ok(!close(justOver, graduated), "long-context: the tier is NOT graduated — the cost past the boundary is not 'base up to the threshold, tier above it'");
+
+ok(close(estimateCostUsd({ inputTokens: AT, outputTokens: 1_000 }, priced, "one-call"), usd(AT, TIER.inPerMtok) + usd(1_000, TIER.outPerMtok)), "long-context: a SHORT reply to a long prompt bills output at the TIER output rate");
+ok(close(estimateCostUsd({ inputTokens: 1_000, outputTokens: 1_000_000 }, priced, "one-call"), usd(1_000, priced!.inPerMtok) + usd(1_000_000, priced!.outPerMtok)), "long-context: a LONG reply to a short prompt bills output at the BASE rate — the reply's length never tiers the call");
+
+ok(close(estimateCostUsd({ inputTokens: AT, cacheReadTokens: AT }, priced, "one-call"), usd(AT, TIER.cachedInPerMtok!)), "long-context: an all-cached long prompt bills at the TIER cache rate, and its cached tokens still count toward the threshold");
+ok(close(estimateCostUsd({ inputTokens: AT, cacheReadTokens: AT - 100_000, outputTokens: 10_000 }, priced, "one-call"), usd(100_000, TIER.inPerMtok) + usd(AT - 100_000, TIER.cachedInPerMtok!) + usd(10_000, TIER.outPerMtok)), "long-context: the cached/non-cached split still holds inside the tier, at the tier's own two rates");
+
+const tierNoCacheRate: ModelPricing = { inPerMtok: 2, outPerMtok: 6, cachedInPerMtok: 0.5, longContext: { thresholdInputTokens: 1_000, inPerMtok: 4, outPerMtok: 9 } };
+ok(close(estimateCostUsd({ inputTokens: 1_000, cacheReadTokens: 1_000 }, tierNoCacheRate, "one-call"), usd(1_000, 4)), "long-context: a tier with no cachedInPerMtok falls back to the TIER's input rate ($4), never to the base cache rate ($0.5)");
+ok(close(estimateCostUsd({ inputTokens: 999, cacheReadTokens: 999 }, tierNoCacheRate, "one-call"), usd(999, 0.5)), "long-context: below the threshold the SAME pricing still uses the base cache rate — the fallback is per-tier, not global");
+
+ok(close(estimateCostUsd({ inputTokens: 10_000_000 }, base, "one-call"), usd(10_000_000, base.inPerMtok)), "long-context: a pricing with no longContext prices a 10M-token prompt at the base rate, never a tier");
+
+const AGG = { inputTokens: AT + 100_000, outputTokens: 50_000 };
+ok(close(estimateCostUsd(AGG, priced, "aggregate"), usd(AGG.inputTokens, priced!.inPerMtok) + usd(AGG.outputTokens, priced!.outPerMtok)), "🔴 usage shape: an AGGREGATE past the threshold prices at the BASE rates — a month's tokens are not one prompt");
+ok(close(estimateCostUsd(AGG, priced, "one-call"), usd(AGG.inputTokens, TIER.inPerMtok) + usd(AGG.outputTokens, TIER.outPerMtok)), "usage shape: the SAME numbers as one call price at the tier — the negative control that proves the line above is the shape, not the arithmetic");
+ok(estimateCostUsd(AGG, priced, "one-call")! >= estimateCostUsd(AGG, priced, "aggregate")! * 1.5, "usage shape: the two answers differ by at least the tier's smallest multiplier, so neither assertion above could pass under the other's behaviour");
+ok(close(estimateCostUsd(AGG, priced), estimateCostUsd(AGG, priced, "aggregate")!), "🔴 usage shape: the DEFAULT is `aggregate` — an un-updated caller keeps its old, non-surcharging behaviour");
+const SMALL = { inputTokens: 1_000, outputTokens: 500 };
+ok(close(estimateCostUsd(SMALL, priced, "one-call"), estimateCostUsd(SMALL, priced, "aggregate")!), "usage shape: below the threshold both shapes agree — the parameter only ever changes a LONG usage");
 
 _resetModelPricingForTest();
 ok(modelPricing("acme/deployer-only") === undefined, "no deployer table: an id BUILT_IN doesn't name is undefined, never a guess");
@@ -122,6 +164,18 @@ refuses({ "acme/str": { inPerMtok: "3" as unknown as number, outPerMtok: 2 } }, 
 refuses({ "acme/typo": { inPerMtok: 1, outPerMtok: 2, inPerMTok: 3 } as unknown as ModelPricing }, "assertModelPricingValid: refuses a typo'd field name rather than silently ignoring it");
 refuses({ "bare-id": { inPerMtok: 1, outPerMtok: 2 } }, "assertModelPricingValid: refuses a key that is not a <vendor>/<model> id");
 refuses({ "acme/badcache": { inPerMtok: 1, outPerMtok: 2, cachedInPerMtok: 0 } }, "assertModelPricingValid: refuses a $0 cachedInPerMtok — omit the field instead");
+ok(accepts({ "acme/tier": { inPerMtok: 1, outPerMtok: 2, longContext: { thresholdInputTokens: 272_001, inPerMtok: 2, outPerMtok: 3 } } }), "assertModelPricingValid: a well-formed longContext tier passes");
+ok(accepts({ "acme/tier": { inPerMtok: 1, outPerMtok: 2, longContext: { thresholdInputTokens: 10, inPerMtok: 2, outPerMtok: 3, cachedInPerMtok: 0.5 } } }), "assertModelPricingValid: an optional longContext.cachedInPerMtok passes");
+refuses({ "acme/t1": { inPerMtok: 1, outPerMtok: 2, longContext: { thresholdInputTokens: 0, inPerMtok: 2, outPerMtok: 3 } } }, "assertModelPricingValid: refuses a $0 threshold — a boundary of 0 tiers every call, including an empty prompt");
+refuses({ "acme/t2": { inPerMtok: 1, outPerMtok: 2, longContext: { thresholdInputTokens: -5, inPerMtok: 2, outPerMtok: 3 } } }, "assertModelPricingValid: refuses a negative threshold");
+refuses({ "acme/t3": { inPerMtok: 1, outPerMtok: 2, longContext: { thresholdInputTokens: 272_000.5, inPerMtok: 2, outPerMtok: 3 } } }, "assertModelPricingValid: refuses a fractional threshold — it is compared against a token count");
+refuses({ "acme/t4": { inPerMtok: 1, outPerMtok: 2, longContext: { thresholdInputTokens: 10, inPerMtok: 0, outPerMtok: 3 } } }, "assertModelPricingValid: refuses a $0 tier input rate");
+refuses({ "acme/t5": { inPerMtok: 1, outPerMtok: 2, longContext: { thresholdInputTokens: 10, inPerMtok: Number.NaN, outPerMtok: 3 } } }, "assertModelPricingValid: refuses a non-finite tier rate");
+refuses({ "acme/t6": { inPerMtok: 1, outPerMtok: 2, longContext: { thresholdInputTokens: 10, inPerMtok: 2 } as unknown as ModelPricing["longContext"] } }, "assertModelPricingValid: refuses a tier missing outPerMtok");
+refuses({ "acme/t7": { inPerMtok: 1, outPerMtok: 2, longContext: { inPerMtok: 2, outPerMtok: 3 } as unknown as ModelPricing["longContext"] } }, "assertModelPricingValid: refuses a tier with no threshold — rates with no boundary can never be applied");
+refuses({ "acme/t8": { inPerMtok: 1, outPerMtok: 2, longContext: { thresholdInputTokens: 10, inPerMtok: 2, outPerMtok: 3, cachedInPerMtok: 0 } } }, "assertModelPricingValid: refuses a $0 tier cachedInPerMtok — omit the field instead");
+refuses({ "acme/t9": { inPerMtok: 1, outPerMtok: 2, longContext: { thresholdInputTokens: 10, inPerMtok: 2, outPerMtok: 3, threshold: 5 } as unknown as ModelPricing["longContext"] } }, "assertModelPricingValid: refuses a typo'd tier field rather than silently ignoring it (a mis-spelled threshold would leave the real one at its default and never fire)");
+refuses({ "acme/t10": { inPerMtok: 1, outPerMtok: 2, longContext: 7 as unknown as ModelPricing["longContext"] } }, "assertModelPricingValid: refuses a non-object longContext");
 refuses({ "acme/null": null as unknown as ModelPricing }, "assertModelPricingValid: refuses a null entry with a clear message rather than throwing a TypeError");
 
 registerModelPricing({ "acme/one": { inPerMtok: 1, outPerMtok: 2 } });

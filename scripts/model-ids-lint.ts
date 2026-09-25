@@ -181,6 +181,37 @@ for (const id of [...new Set([...builtInModelIds(), ...deployerPricedModelIds()]
       );
     }
   }
+
+  const liveTier = live.longContext;
+  const bandTier = band.longContext;
+  if ((liveTier === undefined) !== (bandTier === undefined)) {
+    const [has, lacks] = liveTier !== undefined ? [PRICING, "stack-pricing.ts"] : ["stack-pricing.ts", PRICING];
+    reds.push(
+      `RATE TABLE SPLIT: "${id}" declares a long-context tier in ${has} but not in ${lacks}. A tier in only one ` +
+        `table means the two disagree about what a long prompt costs, with nothing to report the difference. ` +
+        `Add the matching tier there in this diff, from the same source.`,
+    );
+  } else if (liveTier !== undefined && bandTier !== undefined) {
+    if (liveTier.thresholdInputTokens !== bandTier.thresholdInputTokens) {
+      reds.push(
+        `RATE TABLE SPLIT: "${id}".longContext.thresholdInputTokens is ${liveTier.thresholdInputTokens} in ${PRICING} ` +
+          `but ${bandTier.thresholdInputTokens} in stack-pricing.ts. One boundary, two numbers — fix both in one diff.`,
+      );
+    }
+    for (const [field, measured] of [
+      ["inPerMtok", bandTier.in.maxPerMtok],
+      ["outPerMtok", bandTier.out.maxPerMtok],
+    ] as const) {
+      const actual = liveTier[field];
+      if (actual !== measured) {
+        reds.push(
+          `RATE TABLE SPLIT: "${id}".longContext.${field} is ${actual} in the live pricing table but ${measured} at ` +
+            `the top of stack-pricing.ts's band. The live number must be the band MAXIMUM, exactly as for the base ` +
+            `rate. Update BOTH tables in one diff.`,
+        );
+      }
+    }
+  }
 }
 
 {

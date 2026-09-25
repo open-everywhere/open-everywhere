@@ -102,6 +102,20 @@ export function removeBulletLine(content: string, bullet: string): { content: st
   return removeBulletLineWhere(content, (line) => line === target);
 }
 
+export function sectionTitleOfBullet(content: string, bullet: string): string | null {
+  const target = bullet.replace(/[ \t]+$/, "");
+  const lines = content.split("\n");
+  let current: string | null = null;
+  for (const raw of lines) {
+    if (raw.startsWith("## ")) {
+      current = raw.slice(3).trim();
+      continue;
+    }
+    if (raw.replace(/[ \t]+$/, "") === target) return current;
+  }
+  return null;
+}
+
 export function removeBulletLineWhere(content: string, matches: (normalizedLine: string) => boolean): { content: string; removed: boolean } {
   const lines = content.split("\n");
   const idx = lines.findIndex((l) => matches(l.replace(/[ \t]+$/, "")));

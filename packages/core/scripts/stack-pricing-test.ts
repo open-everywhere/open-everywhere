@@ -40,6 +40,15 @@ ok(deepseek !== undefined && deepseek.in.minPerMtok < deepseek.in.maxPerMtok, "r
 
 ok(stackModelRateBand("some/unknown-model") === undefined, "unknown id: no band, never a guess");
 
+ok(luna?.longContext?.thresholdInputTokens === 272_001, "long-context band: luna's tier boundary is the catalog's 272,001 input tokens");
+ok(luna?.longContext?.in.minPerMtok === 0.25 && luna?.longContext?.in.maxPerMtok === 0.25, "long-context band: luna's tier IN rate is a degenerate band at $0.25/Mtok (2x the base rate)");
+ok(luna?.longContext?.out.minPerMtok === 0.75 && luna?.longContext?.out.maxPerMtok === 0.75, "long-context band: luna's tier OUT rate is a degenerate band at $0.75/Mtok (1.5x the base rate)");
+ok(deepseek?.longContext === undefined && qwen?.longContext === undefined, "long-context band: an id the gateway does not tier carries no tier — the field is absent, not a copy of the base rate");
+
+const longProfile = estimateStackCostUsd({ primary: { id: "openai/gpt-6-luna" } }, { primary: { inputTokens: 10_000_000, outputTokens: 0 } });
+ok(close(longProfile.roles[0].maxUsd, 10 * 0.125), "estimate: a 10M-token PERIOD profile prices at the base rate — a period total is not a prompt size, so the tier never fires here");
+ok(!close(longProfile.roles[0].maxUsd, 10 * 0.25), "estimate: and it is NOT the tier rate — the negative control for the assertion above");
+
 const onePointStack: StackRoleMap = { primary: { id: "openai/gpt-6-luna" } };
 const est1 = estimateStackCostUsd(onePointStack, { primary: { inputTokens: 1_000_000, outputTokens: 1_000_000 } });
 ok(est1.roles.length === 1 && est1.roles[0].role === "primary", "estimate: one role in, one role out");

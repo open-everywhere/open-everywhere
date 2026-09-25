@@ -7,7 +7,7 @@ import { defineBundle, defineBinding } from "../agent/access/bundle.js";
 import { getConfig, registerConfig } from "../agent/access/config.js";
 import { appendUsageEvent } from "../agent/spend/usage-events.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
-import { builtInModelIds, modelPricing } from "../agent/spend/pricing.js";
+import { builtInModelIds, modelPricing, estimateCostUsd } from "../agent/spend/pricing.js";
 import { _setDeploymentIdentityForTest, deploymentOrg } from "../agent/identity/deployment-identity.js";
 import type { TranscriptExportRequest } from "../agent/control/transcript-export.js";
 
@@ -206,14 +206,15 @@ _setDeploymentIdentityForTest({ org: CTL_ORG });
   const spendBefore = await spendView(period);
   const rowBefore = spendBefore.surfaces.find((s) => s.org === CTL_ORG && s.surfaceKey === surfaceKey);
   ok("spendView: the seeded surface appears in this period's surfaces", rowBefore !== undefined);
-  ok("spendView: usd is rendered and matches the priced row (1M input tokens @ the built-in input rate)", Math.abs((rowBefore?.usd ?? -1) - modelPricing(PRICED_MODEL)!.inPerMtok) < 1e-9);
+  const seededWriteUsd = estimateCostUsd({ inputTokens: 1_000_000 }, modelPricing(PRICED_MODEL), "one-call")!;
+  ok("spendView: usd is rendered and matches the priced row (one 1M-input-token write, priced at write time)", Math.abs((rowBefore?.usd ?? -1) - seededWriteUsd) < 1e-9);
   ok("spendView: no cap configured anywhere -> both caps null, never over", rowBefore?.tokenCap === null && rowBefore?.usdCap === null && rowBefore?.over === false);
 
   const wsRowBefore = spendBefore.workspaces.find((w) => w.key === `${CTL_ORG}/slack/T1`);
   ok("spendView: a workspace row exists for the seeded org/workspace", wsRowBefore !== undefined);
-  ok("spendView: workspace usd rolls up at least the surface's contribution", (wsRowBefore?.usd ?? 0) >= modelPricing(PRICED_MODEL)!.inPerMtok - 1e-9);
+  ok("spendView: workspace usd rolls up at least the surface's contribution", (wsRowBefore?.usd ?? 0) >= seededWriteUsd - 1e-9);
 
-  const ctlUsdCap = modelPricing(PRICED_MODEL)!.inPerMtok / 2;
+  const ctlUsdCap = seededWriteUsd / 2;
   await opStore.setSpendLimit(CTL_ORG, surfaceKey, "surface", { monthlyUsd: ctlUsdCap }, { reason: "test", setBy: "tester" });
   const spendAfter = await spendView(period);
   const rowAfter = spendAfter.surfaces.find((s) => s.org === CTL_ORG && s.surfaceKey === surfaceKey);

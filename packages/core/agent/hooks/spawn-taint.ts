@@ -40,7 +40,17 @@ import { JOB_TAINT_ATTR } from "../access/job-posture.js";
 import { beginTaintVerdictTurn, registerTaintVerdictSink, taintEnabled, taintMode, type TaintVerdictRow } from "../access/taint-enforcement.js";
 import { appendAudit } from "../audit/audit.js";
 import { auditErrorDetail, auditErrorFrames } from "../audit/tool-action.js";
-import { bindFrom, currentTurnId, deliveryStampOf, deploymentOrg, inheritedWakeStampOf, isSubagentChildContext, isUnifiedWindowContext, type BindableContext } from "../identity/binding.js";
+import {
+  bindFrom,
+  currentSessionId,
+  currentTurnId,
+  deliveryStampOf,
+  deploymentOrg,
+  inheritedWakeStampOf,
+  isSubagentChildContext,
+  isUnifiedWindowContext,
+  type BindableContext,
+} from "../identity/binding.js";
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { advanceDelegatedTaskWake, delegatedTaskDispatchAuthority, installTaskWake, openTaskWake, rememberDelegatedTaskBinding, rememberDelegatedTaskWake } from "../channels/task-wake.js";
 import { noteTurnBoundary, taskWakeThisTurn, uningressedTurn } from "../access/task-wake-signal.js";
@@ -670,6 +680,7 @@ export async function applyTaskSettlement(
       const spend = await settleDelegatedReads({
         org: deploymentOrg(),
         childToken: link.childToken,
+        sessionId: currentSessionId(bind),
         turnId: wakeTurnId,
         reach: provable ? { ...reach, ...(alsoWakeId !== undefined ? { alsoWakeId } : {}) } : undefined,
       });

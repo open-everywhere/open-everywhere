@@ -148,7 +148,7 @@ export async function sessionUsage(org: string, sessionId: string, sinceIso?: st
     if (r.kind === "sandbox") continue;
     modelCalls++;
     tokens += r.inputTokens + r.outputTokens;
-    const cost = rowCostUsd(r, assumed);
+    const cost = rowCostUsd(r, assumed, "one-call");
     if (cost !== undefined) usd = (usd ?? 0) + cost;
   }
   return { tokens, modelCalls, ...(usd !== undefined ? { usd } : {}) };

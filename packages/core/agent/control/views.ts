@@ -289,7 +289,7 @@ export async function usageSummaryView(q: UsageSummaryQuery): Promise<UsageSumma
   const rows = q.domain ? filterToDomain(all, q.domain, getConfig().loadDomains()) : all;
   const assumed = resolveAssumedModel(q.assumedModelId);
   const priced: UsageSummaryViewRow[] = rows.map((r) => {
-    const costUsd = rowCostUsd(r, assumed);
+    const costUsd = rowCostUsd(r, assumed, "aggregate");
     return costUsd !== undefined ? { ...r, costUsd } : r;
   });
   const routineRows = rows.filter((r) => r.kind === "routine");
@@ -410,7 +410,7 @@ function priceGroups(grouped: readonly (readonly UsageSummaryRow[])[]): { rows: 
   const rows: UsageWindowRow[] = [...acc.values()]
     .sort((a, b) => a.surfaceKey.localeCompare(b.surfaceKey) || (a.model ?? "").localeCompare(b.model ?? ""))
     .map((r) => {
-      const usd = r.model ? estimateCostUsd(r, modelPricing(r.model)) : undefined;
+      const usd = r.model ? estimateCostUsd(r, modelPricing(r.model), "aggregate") : undefined;
       if (usd === undefined) unpriced.add(r.model ?? "(unstamped)");
       else totalUsd += usd;
       return { ...r, ...(usd !== undefined ? { estimatedUsd: usd } : {}) };

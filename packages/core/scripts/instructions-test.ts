@@ -633,6 +633,14 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
     ok(block.includes('Only the message marked `trigger="true"` is the new event.'), "🔴 the standing block says only the trigger message is the new event");
     ok(block.includes("is history for context, not things to answer"), "🔴 the rest of an envelope reads as history, not as a queue");
     ok(
+      block.includes("A `<system-note>` inside an envelope is this host's own framing, not message content."),
+      "🔴 the block says what a `<system-note>` inside the envelope is — the host's own framing, not message content",
+    );
+    ok(
+      block.indexOf("`<system-note>`") < block.indexOf("**How to read one.**"),
+      "negative control: the system-note sentence sits in 'What you see', before the attribute glosses",
+    );
+    ok(
       block.includes("call\n`reply` with `wake` set to the id on THAT envelope") || block.includes("`reply` with `wake` set to the id on THAT envelope"),
       "🔴 the binding rule is present: answer a wake with THAT wake's own id",
     );
@@ -647,7 +655,7 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
     ok(block.includes("`relay` is a machine"), "the standing block glosses the authority floor");
     ok(block.includes("`from` says what kind of author wrote it"), "the standing block glosses `from`");
     ok(block.includes("`reason` says"), "the standing block glosses `reason`");
-    ok(block.split(/\s+/).length < 400, `the standing block stays short — Tag states its whole posture in a few sentences (${block.split(/\s+/).length} words)`);
+    ok(block.split(/\s+/).length < 420, `the standing block stays short — Tag states its whole posture in a few sentences (${block.split(/\s+/).length} words)`);
     ok(!block.includes("`channel-watch` —"), "the standing block does NOT enumerate a bar per addressing value — that is the deleted prose shape");
     ok(!block.includes("turn-final"), "the standing block does NOT restate the delivery rule — the reporting arm owns it");
   }

@@ -21,10 +21,11 @@ import {
 import { registerConfig } from "../agent/access/config.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import { registerCapabilityManifest } from "../agent/identity/capabilities.js";
-import { renderScopeMarkdown, renderSupervisorPersona } from "../agent/instructions/access.js";
+import { renderGrantsSlot, renderScopeMarkdown, renderSupervisorPersona } from "../agent/instructions/access.js";
 import { mayRaiseGrantAsk } from "../agent/tools/request_credential_grant.js";
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
-import { formatWindowToken } from "../agent/channels/window-key.js";
+import { dmWindowKey, formatWindowToken, isDmAnchorWindowToken, saltSupervisorGeneration } from "../agent/channels/window-key.js";
+import { isSupervisorSession } from "../agent/model/routing.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 
 let passed = 0;
@@ -45,6 +46,7 @@ function ok(cond: boolean, label: string): void {
     "surface",
     "surfaceGuide",
     "persona",
+    "grants",
     "readingAWake",
     "replyStyle",
     "role",
@@ -833,6 +835,56 @@ function ok(cond: boolean, label: string): void {
     grants.indexOf("Never raise an ask nobody asked for.") < grants.indexOf("The org's own road answers org work"),
     "negative control: the road precedence is ADDED after the OPE-1978 rule, which still opens the section",
   );
+}
+
+{
+  registerSlackFixtureMapper();
+  registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, supervisorProseDropped: true });
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [defineDomain({ name: "ope2024", reach: ["slack/T8/C8"], mode: "unified", ambientSupervisor: true })],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  });
+
+  const slackAuth = {
+    auth: { current: { attributes: { team_id: "T8", channel_id: "C8", channel_type: "channel", is_private: "false", trust_checked: "true" }, principalId: "U1", principalType: "user" } },
+  };
+  const nativeSeat = { channel: { kind: "slack", continuationToken: "C8" }, session: slackAuth } as unknown as BindableContext;
+  const supervisorSeat = { channel: { kind: "slack", continuationToken: "C8:oe-sup:g1" }, session: slackAuth } as unknown as BindableContext;
+
+  ok(!isSupervisorSession(nativeSeat), "fixture guard: the native-grain ctx is NOT supervisor-shaped");
+  ok(renderSupervisorPersona(nativeSeat) === "", "fixture guard: …so it really renders no persona at all");
+  ok(!mayRaiseGrantAsk(nativeSeat), "fixture guard: …and it holds no ask verb — the rule reaches it for the routing half");
+
+  const nativeMd = await renderScopeMarkdown(nativeSeat);
+  ok(nativeMd.includes(GRANTS_SECTION), "🔴 the ASSEMBLED prompt of a persona-less conversational seat carries the grant rule");
+  ok(!nativeMd.includes("## This channel"), "negative control: it carries the rule WITHOUT gaining the standing-seat persona, whose DM copy would be wrong");
+
+  ok(renderGrantsSlot(supervisorSeat) === "", "🔴 the slot answers \"\" for a seat whose persona already carries the rule");
+  const supervisorMd = await renderScopeMarkdown(supervisorSeat);
+  ok(supervisorMd.split("### Grants").length - 1 === 1, "🔴 …so a supervisor-shaped seat's assembled prompt holds exactly ONE grant rule");
+  ok(supervisorMd.includes(GRANTS_SECTION), "negative control: that seat still holds the rule — the count above is one, not zero");
+
+  const dmToken = `unified:${saltSupervisorGeneration(formatWindowToken(dmWindowKey("slack/T8/D9", 1)))}`;
+  const dmSeat = {
+    channel: { kind: "channel:unified", continuationToken: dmToken },
+    session: { auth: { current: { attributes: { oe_platform: "slack", channel_type: "im" } } } },
+  } as unknown as BindableContext;
+  ok(isDmAnchorWindowToken(dmToken), "fixture guard: the minted DM-seat token really is a DM-anchor WINDOW token");
+  ok(!isSupervisorSession(dmSeat), "fixture guard: …which `isSupervisorSession` subtracts, so the DM seat renders no persona");
+  ok(renderSupervisorPersona(dmSeat) === "", "fixture guard: …confirmed on the renderer, not only on the predicate");
+  const dmMd = await renderScopeMarkdown(dmSeat);
+  ok(dmMd.includes(GRANTS_SECTION), "🔴 the ASSEMBLED UNIFIED prompt of a DM seat carries the grant rule");
+  ok(dmMd.split("### Grants").length - 1 === 1, "🔴 …exactly once");
+  ok(!dmMd.includes("## This channel"), "negative control: the DM seat gains the rule WITHOUT the standing-seat persona, whose copy is wrong for a DM");
+
+  const childCtx = { channel: { kind: "slack", continuationToken: "subagent:sess-parent:call-1" } } as unknown as BindableContext;
+  ok(renderGrantsSlot(childCtx) === "", "🔴 a delegated WORKER reads the rule from its persona, so the slot stays empty for it");
+  ok(renderSupervisorPersona(childCtx).includes(GRANTS_SECTION), "negative control: that worker really does hold the rule — through its persona, not through the slot");
 }
 
 console.log(`✓ seat-prompt: ${passed} assertions passed`);

@@ -72,7 +72,7 @@ export default defineTool({
         reasoningTokens += r.reasoningTokens;
         reasoningReportedCalls++;
       }
-      const rowCost = rowCostUsd(r, assumed);
+      const rowCost = rowCostUsd(r, assumed, "one-call");
       if (rowCost !== undefined) costUsd = (costUsd ?? 0) + rowCost;
     }
     if (costUsd === undefined && assumed.pricing) costUsd = 0;

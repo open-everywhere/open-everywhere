@@ -3,7 +3,7 @@ import type { MemoryFiles } from "../store.js";
 import { contentWords, jaccard, isNegated, bulletDate } from "./ops.js";
 import { SETTINGS } from "../../settings/settings.js";
 
-export type CandidateKind = "consolidate" | "contradiction" | "stale";
+export type CandidateKind = "consolidate" | "contradiction" | "supersede" | "stale";
 
 export interface CandidateCluster {
   readonly kind: CandidateKind;
@@ -91,8 +91,13 @@ export function selectCandidates(files: MemoryFiles, opts: CandidateOptions = {}
             score: overlap + shared * 0.5,
           });
         } else if (shared > 0 || (a.negated !== b.negated && overlap >= subjectThreshold)) {
+          const opposed = a.negated !== b.negated;
+          const olderDate = a.date !== null && b.date !== null ? (a.date < b.date ? a.date : b.date) : null;
+          const olderTime = olderDate !== null ? Date.parse(olderDate) : Number.NaN;
+          const staleWillSeeIt = Number.isFinite(olderTime) && olderTime < horizon;
+          const kind: CandidateKind = opposed || staleWillSeeIt ? "contradiction" : "supersede";
           out.push({
-            kind: "contradiction",
+            kind,
             file,
             bullets: [a.line, b.line],
             reason:
