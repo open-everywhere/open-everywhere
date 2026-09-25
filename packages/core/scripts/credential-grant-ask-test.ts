@@ -22,6 +22,7 @@ import { registerUserAuthFlow } from "../agent/connections/user-auth-flow.js";
 import { OE_OWN_ACCOUNT_ASK_ATTR, renderOwnAccountStamp } from "../agent/connections/own-account-carriage.js";
 import { namedOwnAccountVendor } from "../agent/connections/own-account-ask.js";
 import { ownAccountVendorFor } from "../agent/connections/own-account-vendors.js";
+import { GRANTS_SECTION } from "../agent/instructions/seat-prompt.js";
 import { registerPostArm, type DirectMessageRequest } from "../agent/channels/post-arms.js";
 import { fakeMcpServer } from "./_fake-mcp-server.js";
 import { withPatchedFetch } from "./_fetch-test-utils.js";
@@ -1199,10 +1200,19 @@ console.log("12. the ask verb records whether a person's own words asked for the
   const RECOGNISED_WORDS = "please use my own notion account for this";
   const recognised = namedOwnAccountVendor([RECOGNISED_WORDS], [ownAccountVendorFor("notion")]);
   ok(recognised !== undefined, "fixture guard: the own-account grammar really recognises the wording this leg stamps from");
+
+  const promptExample = /"(lend it my Notion account)"/.exec(GRANTS_SECTION)?.[1];
+  ok(promptExample !== undefined, "🔴 the seat prompt's lend trigger no longer carries the vendor-bearing account-word example");
   ok(
-    namedOwnAccountVendor(["use my Notion"], [ownAccountVendorFor("notion")]) === undefined,
-    "🔴 the grammar does NOT recognise the seat prompt's own trigger wording — a `false` row is not evidence that the prompt rule failed",
+    namedOwnAccountVendor([promptExample ?? ""], [ownAccountVendorFor("notion")]) !== undefined,
+    "🔴 the grammar recognises the seat prompt's own lend trigger example — the prompt and the measurement agree",
   );
+  for (const contentAsk of ["use my Notion", "can you list the pages in my Notion workspace?"]) {
+    ok(
+      namedOwnAccountVendor([contentAsk], [ownAccountVendorFor("notion")]) === undefined,
+      `🔴 the grammar does NOT read the content possessive ${JSON.stringify(contentAsk)} as an own-account ask — nor does the prompt`,
+    );
+  }
 
   const seatCtx = (sessionId: string, stamped: boolean): BindableContext =>
     ({

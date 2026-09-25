@@ -805,9 +805,52 @@ function ok(cond: boolean, label: string): void {
     "🔴 …so the road rule never becomes a wrong refusal, which `worker-capabilities.ts` forbids beside it",
   );
   ok(
-    grants.includes("when a person NAMES an account to act with, honour the account they named or say you cannot"),
+    grants.includes(
+      "when a person NAMES an account to act with, in an account word, honour the account they named or say you cannot — never read as the org instead.",
+    ),
     "🔴 the org-road-first rule yields to a person who names an account — the acting-identity gate's own answer",
   );
+
+  {
+    const triggerMatch = /names it with an account word \(([^)]*)\)/.exec(grants);
+    ok(triggerMatch !== null, "fixture guard: the lend trigger list is where this leg reads it");
+    const triggers = triggerMatch?.[1] ?? "";
+    const examples = triggers.split(",").map((e) => e.trim()).filter((e) => e.length > 0);
+    ok(examples.length >= 2, "fixture guard: the trigger list holds more than one example");
+    ok(
+      examples.every((e) => /\b(?:account|login|credential|token)\b/i.test(e)),
+      `🔴 every lend trigger example names an account word — got ${JSON.stringify(examples)}`,
+    );
+    for (const possessive of ['"use my Notion"', "my Notion workspace", "my pages", "my workspace"]) {
+      ok(!triggers.includes(possessive), `🔴 the content possessive ${possessive} is NOT a lend trigger`);
+    }
+    ok(
+      !/"use my Notion"/.test(grants),
+      '🔴 the old trigger example "use my Notion" is gone from the whole section — it is a content possessive',
+    );
+    ok(grants.includes("Raise the ask only when BOTH are true."), "🔴 the lend road has two conditions");
+    ok(
+      grants.includes("And no road already bound to this conversation answers the ask."),
+      "🔴 …and the second one is that no bound road answers the ask",
+    );
+    ok(
+      grants.includes("A road that acts as the org never answers an ask to act with the person's own account."),
+      "🔴 an org road never counts as the bound road that answers an own-account ask",
+    );
+    ok(
+      grants.includes("A connector already bound to this conversation is on that road too, and a direct message's own binding counts."),
+      "🔴 a connector bound to this conversation — a DM's own binding included — is on the road that goes first",
+    );
+    ok(
+      grants.includes('A possessive about content — "my pages", "my workspace", "my Notion" — is a content ask, not a lend ask: take that road first.'),
+      "🔴 a possessive about content is a content ask and takes the bound road first",
+    );
+    ok(grants.includes("A possessive about content names no account."), "🔴 the override does not fire on a possessive");
+    ok(
+      grants.indexOf("A possessive about content —") < grants.indexOf("One thing overrides all of this"),
+      "negative control: the possessive rule sits before the account override",
+    );
+  }
   ok(
     grants.includes("two things must BOTH be true before it is taken"),
     "🔴 the lent tool is gated on TWO conditions, never on one",
