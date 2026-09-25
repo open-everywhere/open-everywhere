@@ -3,6 +3,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { EVE_PATCH_PARTS } from "../agent/access/eve-patch-probe.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -80,6 +81,28 @@ ok(
   existsSync(patchFile),
   `patch: patches/eve+${pinned}.patch exists for the pinned version — a pin bump that leaves the ` +
     `patch filename behind makes patch-package silently skip the OE hooks (found: ${readdirSync(join(repoRoot, "patches")).filter((f) => f.startsWith("eve+")).join(", ") || "none"})`,
+);
+
+const patchBody = existsSync(patchFile) ? readFileSync(patchFile, "utf8") : "";
+const patchAdded = patchBody
+  .split("\n")
+  .filter((line) => line.startsWith("+") && !line.startsWith("+++"))
+  .join("\n");
+for (const part of EVE_PATCH_PARTS) {
+  ok(
+    patchAdded.includes(`globalThis.${part.marker}=!0;`),
+    `markers: the committed patch ADDS \`globalThis.${part.marker}=!0;\` for part ${part.part} — ` +
+      `agent/access/eve-patch-probe.ts refuses to boot without that marker, so a part whose hunk stops ` +
+      `planting it turns core's fail-closed boot into a refusal of every correctly-patched tree`,
+  );
+}
+const plantedMarkers = [...new Set([...patchAdded.matchAll(/globalThis\.(__oe[A-Za-z0-9_]*Patched)=/g)].map((m) => m[1]))].sort();
+const declaredMarkers = EVE_PATCH_PARTS.map((p) => p.marker).sort();
+ok(
+  plantedMarkers.length === declaredMarkers.length && plantedMarkers.every((m, i) => m === declaredMarkers[i]),
+  `markers: the markers the patch plants (${plantedMarkers.join(", ") || "none"}) are exactly the ones ` +
+    `EVE_PATCH_PARTS declares (${declaredMarkers.join(", ")}). A marker planted with no row in that table ` +
+    `is checked by nothing at boot; a row with no marker in the patch refuses every boot`,
 );
 
 const copies: string[] = [];
@@ -247,6 +270,16 @@ for (const eveDir of copies) {
     /async function refreshDynamicSessionToolsForRuntimeRevision\(e\)\{[^]*?await contextStorage\.run\(e\.ctx,async\(\)=>await resolveToolsFromEvent\(e\.ctx,a,e\.event,e\.messages\)\);e\.ctx\.set\(SessionDynamicToolMetadataKey/.test(lifecycleSrc),
     `scope: ${where} carries patch part 9 (OPE-2106, the session-scoped resolver re-run inside contextStorage.run) — an unpatched copy re-runs every session.started resolver outside eve's context in a fresh process, so a delegated worker binds to subagent/…/unresolved, its gated tools do not re-register, and its next gated call fails "not registered in this process" (measured on board #238, S-PR-SESSION)`,
   );
+  for (const part of EVE_PATCH_PARTS) {
+    const carrierFile = join(eveDir, part.carrier);
+    const carrierSrc = existsSync(carrierFile) ? readFileSync(carrierFile, "utf8") : "";
+    ok(
+      carrierSrc.includes(`globalThis.${part.marker}=!0;`),
+      `markers: ${where}/${part.carrier} publishes \`${part.marker}\` (patch part ${part.part}) — without it ` +
+        `core's boot probe refuses to serve a wake from this install, and the part it guards is silently ` +
+        `absent: ${part.lost}`,
+    );
+  }
   const compactionFile = join(eveDir, COMPACTION);
   ok(
     existsSync(compactionFile),

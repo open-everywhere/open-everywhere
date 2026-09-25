@@ -561,6 +561,8 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "egress.hostside.deny",
   "egress.own_account_refusal",
   "egress.policy",
+  "eve.patch.refused",
+  "eve.patch.unverifiable",
   "github.dispatched",
   "github.no_reply",
   "github.reaction_claim_unreadable",

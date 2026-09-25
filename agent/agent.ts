@@ -2,6 +2,7 @@ import { defineAgent } from "eve";
 import { defineDynamic } from "eve/tools";
 import "./lib/register-config.js";
 import "./lib/register-adapters.js";
+import "@open-everywhere/core/agent/access/eve-patch-probe-boot.js";
 import { gatewayModelResolver } from "@open-everywhere/adapters/agent/model/gateway.js";
 import { registerGatewayDreamJudge, registerGatewayFailureFacetJudge } from "@open-everywhere/adapters/agent/model/dream-judge.js";
 import { registerGatewayApprovalJudge } from "@open-everywhere/adapters/agent/model/approval-judge.js";

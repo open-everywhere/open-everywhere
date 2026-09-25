@@ -1,5 +1,6 @@
 import { defineChannel, POST, type RouteHandlerArgs } from "eve/channels";
 import { getConfig } from "../access/config.js";
+import "../access/eve-patch-probe-boot.js";
 import { getSettings } from "../settings/settings.js";
 import { configHookDisclosure, configHookPosture, findWebhook, isFusedHook, type WebhookHook } from "../webhooks/config.js";
 import { acceptedUnverified, gateWebhookDelivery, webhookMaxBodyBytes, type GateableHook, type WebhookRejection } from "../webhooks/gate.js";
