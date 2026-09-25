@@ -1,7 +1,18 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { EVE_PATCH_PARTS } from "@open-everywhere/core/agent/access/eve-patch-probe.js";
+import {
+  EVE_APPLIER_BIN,
+  EVE_PATCH_DIR,
+  checkEveApplierPacking,
+  checkEvePatchPartTable,
+  checkPackedEvePatchDir,
+  declaresEveApplier,
+  evePatchFileName,
+  evePatchPartMarkers,
+} from "@open-everywhere/core/agent/publish/eve-patch-pack.js";
 import { ALL_PUBLISHABLE_PACKAGES, PUBLISHABLE_BIN_PACKAGES, exportsMapFor } from "./publish-exports-generate.js";
 import { LICENSE_FILE, checkPackageLicense, checkTarballLicense } from "./publish-license.js";
 
@@ -104,6 +115,37 @@ for (const pkgDir of targets) {
     files: (manifest.files ?? []) as readonly string[],
   };
   for (const problem of checkPackageLicense(licenseInputs)) fail(problem);
+  const shipsEveApplier = declaresEveApplier(manifest.bin);
+  for (const problem of checkEveApplierPacking({ bin: manifest.bin, files: (manifest.files ?? []) as readonly string[] })) {
+    fail(problem);
+  }
+  const evePatchFile = /^\d+\.\d+\.\d+$/.test(String(manifest.peerDependencies?.eve)) ? evePatchFileName(manifest.peerDependencies.eve) : "";
+  if (shipsEveApplier) {
+    const patchDir = join(pkgDir, EVE_PATCH_DIR);
+    const body = (dir: string): string | undefined => {
+      if (evePatchFile === "") return undefined;
+      const file = join(dir, evePatchFile);
+      return existsSync(file) ? readFileSync(file, "utf8") : undefined;
+    };
+    for (const problem of checkPackedEvePatchDir({
+      pin: manifest.peerDependencies?.eve as string | undefined,
+      rootPatchFiles: readdirSync(join(process.cwd(), EVE_PATCH_DIR)).filter((f) => f.endsWith(".patch")),
+      packedPatchFiles: existsSync(patchDir) ? readdirSync(patchDir).filter((f) => f.endsWith(".patch")) : [],
+      rootBody: body(join(process.cwd(), EVE_PATCH_DIR)),
+      packedBody: body(patchDir),
+    })) {
+      fail(problem);
+    }
+    const packedBody = body(patchDir);
+    if (packedBody !== undefined) {
+      for (const problem of checkEvePatchPartTable({
+        declaredMarkers: EVE_PATCH_PARTS.map((part) => part.marker),
+        patchMarkers: evePatchPartMarkers(packedBody),
+      })) {
+        fail(problem);
+      }
+    }
+  }
   if (!isBin && !existsSync(join(pkgDir, "dist"))) {
     fail("dist/ is missing — run `npm run build:packages` first");
     continue;
@@ -121,21 +163,31 @@ for (const pkgDir of targets) {
 
     if (!listing.includes("NOTICE")) fail("NOTICE is not in the tarball");
     for (const problem of checkTarballLicense(listing)) fail(problem);
-    if (isBin) {
-      for (const t of binTargets) {
-        if (!listing.includes(t)) {
-          fail(`bin points at ${t}, which is NOT in the tarball`);
-          continue;
-        }
-        const src = readFileSync(join(pkgDir, t), "utf8");
-        if (!src.startsWith("#!")) fail(`bin ${t} has no shebang`);
-        for (const { spec, resolved } of runtimeUrlPaths(t, src)) {
-          if (!listing.includes(resolved)) {
-            fail(`bin ${t} runs ${spec} at runtime, which resolves to ${resolved} — NOT in the tarball`);
-          }
+    for (const t of binTargets) {
+      if (!listing.includes(t)) {
+        fail(`bin points at ${t}, which is NOT in the tarball`);
+        continue;
+      }
+      const src = readFileSync(join(pkgDir, t), "utf8");
+      if (!src.startsWith("#!")) fail(`bin ${t} has no shebang`);
+      for (const { spec, resolved } of runtimeUrlPaths(t, src)) {
+        if (!listing.includes(resolved)) {
+          fail(`bin ${t} runs ${spec} at runtime, which resolves to ${resolved} — NOT in the tarball`);
         }
       }
-    } else {
+      for (const spec of [...src.matchAll(/(?:from|import\()\s*"(\.[^"]+)"/g)].map((m) => m[1]!)) {
+        const literal = join(dirname(t), spec).replace(/\\/g, "/");
+        if (listing.includes(literal) || listing.includes(resolveInside(t, spec))) continue;
+        fail(`bin ${t} imports ${spec}, which resolves to neither ${literal} nor ${resolveInside(t, spec)} — NOT in the tarball`);
+      }
+    }
+    if (shipsEveApplier && evePatchFile !== "" && !listing.includes(`${EVE_PATCH_DIR}/${evePatchFile}`)) {
+      fail(
+        `declares the \`${EVE_APPLIER_BIN}\` bin but the tarball carries no ${EVE_PATCH_DIR}/${evePatchFile} — ` +
+          `the applier would have nothing to apply`,
+      );
+    }
+    if (!isBin) {
       if (!listing.some((f) => f.startsWith("dist/") && f.endsWith(".js"))) fail("no compiled dist/*.js in the tarball");
       if (!listing.some((f) => f.startsWith("dist/") && f.endsWith(".d.ts"))) fail("no dist/*.d.ts in the tarball");
       if (!listing.some((f) => f.startsWith("agent/") && f.endsWith(".ts"))) fail("no .ts sources in the tarball");

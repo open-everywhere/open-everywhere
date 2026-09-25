@@ -211,6 +211,13 @@ export const OFF_CHAIN_BY_DESIGN: ReadonlyMap<string, string> = new Map([
     "a LIVE pack: it drives real Docker sandbox lifecycle. Run it by hand before a deploy that touches " +
       "the Docker sandbox driver.",
   ],
+  [
+    `${ROOT_PKG_LABEL} test:publish-cold-install`,
+    "a PRE-PUBLISH gate (OPE-2184): it packs all nine publishable packages and runs a real `npm install` " +
+      "against the public registry, so it needs the network and measures in minutes — the same reasons " +
+      "`lint:publish` sits outside `npm test`. Its fast half, the applier's own decisions, IS on the chain " +
+      "as `@open-everywhere/core test:eve-patch-applier`. Run it from `docs/dev/publishing.md` § Before you publish.",
+  ],
 ]);
 
 export const SUITE_FILE_WITHOUT_SCRIPT: ReadonlyMap<string, string> = new Map([
