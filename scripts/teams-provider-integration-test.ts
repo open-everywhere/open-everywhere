@@ -99,8 +99,8 @@ const armReply = (tool: unknown, ctx: unknown): ArmedTool | null =>
 
 assert.deepStrictEqual(
   capabilitiesForPlatform("teams"),
-  { midTurnPost: true, reactions: false },
-  "registerTeamsProvider registers teams' manifest (midTurnPost wired via sendTeamsActivity, no reactions)",
+  { midTurnPost: true, reactions: false, closingProseDropped: true },
+  "registerTeamsProvider registers teams' manifest (midTurnPost wired via sendTeamsActivity, no reactions, and OPE-2006's closing-prose drop)",
 );
 n++;
 
@@ -168,13 +168,18 @@ await inSession(async () => {
     state: { conversationId: "19:conv1", tenantId: "TEN1", channelId: "19:chan1", teamId: "TEAM1", conversationType: "channel", serviceUrl: "https://smba.trafficmanager.net", replyToActivityId: "act-root-1" },
     thread: { post: async () => undefined },
   };
-  const terminalReplyPosts = async (): Promise<Array<{ detail?: Record<string, unknown> }>> =>
-    (await readAudit({ org: "default", action: "reply.post" })).filter((r) => r.platform === "teams" && r.detail?.route === "terminal");
+  const teamsReplyPosts = async (): Promise<Array<{ detail?: Record<string, unknown> }>> =>
+    (await readAudit({ org: "default", action: "reply.post" })).filter((r) => r.platform === "teams");
+  const before = (await teamsReplyPosts()).length;
   await completed(NO_REPLY_SENTINEL, auditCtx);
   ok((await readAudit({ org: "default", action: "teams.no_reply" })).length === 0, "chat-audit: a teams judged silence writes NO teams.no_reply row (actions-only)");
   await completed("done — deployed", auditCtx);
-  const tp = await terminalReplyPosts();
-  ok(tp.length === 1 && tp[0]!.detail?.chars === "done — deployed".length, "chat-audit: a teams terminal-prose reply writes ONE reply.post row (route:terminal, choke point via serviceUrl+replyToActivityId)");
+  ok((await teamsReplyPosts()).length === before, "🔴 OPE-2006: a teams turn that ends in prose writes NO reply.post row — nothing left the host, so nothing may be counted as delivered");
+  const dropped = (await readAudit({ org: "default", action: "turn.supervisor_prose_dropped" })).filter((r) => r.platform === "teams");
+  ok(
+    dropped.length === 1 && dropped[0]!.detail?.chars === "done — deployed".length && dropped[0]!.detail?.conversationId === "19:conv1",
+    "🔴 OPE-2006: …and ONE drop row records it, with the char count and the conversation the answer was owed to",
+  );
   ok((await readAudit({ org: "default", action: "teams.replied" })).length === 0, "chat-audit: the legacy teams.replied row is GONE");
   delete process.env.OE_EGRESS_SPOOF;
 }

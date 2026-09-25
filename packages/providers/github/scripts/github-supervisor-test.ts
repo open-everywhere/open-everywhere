@@ -521,6 +521,7 @@ for (const [label, err] of [
       const github = { request: async (input: unknown) => { posts.push(input); return { ok: true, status: 201, body: {} }; } };
       const before = (await nativeSilenceRows()).length;
       const beforePosts = (await replyPostRows()).length;
+      const beforeDrops = (await readPosts({ org: deploymentOrg(), action: "turn.supervisor_prose_dropped" })).filter((r) => r.platform === "github").length;
       const savedEnv = { id: process.env.GITHUB_APP_ID, pem: process.env.GITHUB_APP_PRIVATE_KEY };
       const savedFetch = globalThis.fetch;
       const wrote: string[] = [];
@@ -554,26 +555,24 @@ for (const [label, err] of [
         if (savedEnv.pem === undefined) delete process.env.GITHUB_APP_PRIVATE_KEY; else process.env.GITHUB_APP_PRIVATE_KEY = savedEnv.pem;
         _resetGitHubInstallationTokenCache();
       }
-      const rows = await replyPostRows();
-      ok(rows.length === beforePosts + 1, `OPE-1681: the post leaves exactly ONE canonical reply.post row (had ${beforePosts}, now ${rows.length}) — it left none before`);
-      ok(
-        wrote.length === 1 && wrote[0] === `https://api.github.com/repos/${OWNER}/${REPO}/issues/42/comments`,
-        `OPE-1681: the answer still reaches the issue — exactly one issue-comment POST on the anchor the state names (saw ${JSON.stringify(wrote)})`,
-      );
-      ok(threw === null, `OPE-1681: the audited terminal post completes without throwing (saw ${String(threw)})`);
-      ok(posts.length === 0, "OPE-1681: eve's default reply-poster is NOT used — the answer goes through the reply choke point, which is the only path that audits");
-      const row = rows[0]!;
-      ok(row.detail?.route === "terminal", "OPE-1681: the row names the TERMINAL route, so an operator can tell closing prose from a `reply` tool call");
+      ok(wrote.length === 0, `🔴 OPE-2006: a turn that ends in prose issues NO comment POST from the arm (saw ${JSON.stringify(wrote)}) — the closing text reaches nobody`);
+      ok(posts.length === 0, "🔴 OPE-2006: …and eve's default reply-poster is not used either — the delegation went with the choke point, so there is no second door");
+      ok(threw === null, `OPE-2006: the drop completes without throwing (saw ${String(threw)})`);
+      ok((await replyPostRows()).length === beforePosts, "🔴 OPE-2006: NO reply.post row — that row counts DELIVERED messages, and an answer nobody received must never appear in it");
+      const dropRows = (await readPosts({ org: deploymentOrg(), action: "turn.supervisor_prose_dropped" })).filter((r) => r.platform === "github");
+      ok(dropRows.length === beforeDrops + 1, `🔴 OPE-2006: exactly ONE drop row records the lost answer (had ${beforeDrops}, now ${dropRows.length})`);
+      const row = dropRows[0]!;
       ok(
         row.workspace === OWNER && row.surface === REPO,
-        `OPE-1681: the row lands on the partition the reply TOOL's own rows use — workspace=owner, surface=the BARE repo segment (saw ${row.workspace}/${row.surface})`,
+        `OPE-2006: the row lands on the partition the reply TOOL's own rows use — workspace=owner, surface=the BARE repo segment (saw ${row.workspace}/${row.surface})`,
       );
-      ok(row.detail?.id === "987654", "OPE-1681: the row carries the comment id GitHub returned — audited where the bytes left, not before");
+      ok(row.detail?.chars === "The backfill finished at 04:10 UTC.".length && row.detail?.issueNumber === 42, "OPE-2006: …carrying the char count and the issue the answer was owed to");
+      ok(!JSON.stringify(row.detail).includes("backfill"), "🔴 OPE-2006: …and NOT the model's words — the drop row is taint-clean like every other row on this plane");
       ok(
         row.principalId === "octo-reviewer",
-        `🔴 OPE-1681: the row NAMES who the agent answered (saw ${String(row.principalId)}) — an absent principalId MEANS "the delivery authenticated nobody", so a blank one would make every GitHub native row say something false`,
+        `🔴 OPE-2006: the row NAMES who the agent was answering (saw ${String(row.principalId)}) — an absent principalId MEANS "the delivery authenticated nobody", so a blank one would make every GitHub native row say something false`,
       );
-      ok((await nativeSilenceRows()).length === before, "OPE-1681 negative control: a turn that ANSWERED writes no silence row (the two outcomes stay distinguishable)");
+      ok((await nativeSilenceRows()).length === before, "OPE-2006 negative control: a dropped ANSWER is not a judged silence — the two outcomes stay distinguishable");
     }
 
     {
@@ -585,6 +584,7 @@ for (const [label, err] of [
       const posts: unknown[] = [];
       const github = { request: async (input: unknown) => { posts.push(input); return { ok: true, status: 201, body: {} }; } };
       const beforePosts2 = (await replyPostRows2()).length;
+      const beforeDrops2 = (await readPosts2({ org: deploymentOrg(), action: "turn.supervisor_prose_dropped" })).filter((r) => r.platform === "github").length;
       const savedEnv = { id: process.env.GITHUB_APP_ID, pem: process.env.GITHUB_APP_PRIVATE_KEY };
       const savedFetch = globalThis.fetch;
       const wrote: string[] = [];
@@ -613,8 +613,12 @@ for (const [label, err] of [
         if (savedEnv.pem === undefined) delete process.env.GITHUB_APP_PRIVATE_KEY; else process.env.GITHUB_APP_PRIVATE_KEY = savedEnv.pem;
         _resetGitHubInstallationTokenCache();
       }
-      ok(wrote.length === 0, `🔴 OPE-1681: a review-thread turn issues NO comment POST from this arm (saw ${JSON.stringify(wrote)}) — its answer belongs in the review thread, and eve's poster is the only path that puts it there`);
-      ok((await replyPostRows2()).length === beforePosts2, "OPE-1681: …and writes no reply.post row, because no byte left through the choke point — unchanged behaviour, honestly unaudited");
+      ok(wrote.length === 0, `🔴 OPE-2006: a review-thread turn issues NO comment POST from this arm (saw ${JSON.stringify(wrote)}) — its closing prose is dropped like every other seat's`);
+      ok(posts.length === 0, "🔴 OPE-2006: …and eve's inline-reply delegation does not run either — that was the last door, and it went with the poster");
+      ok((await replyPostRows2()).length === beforePosts2, "OPE-2006: …so no reply.post row, because no byte left at all");
+      const reviewDrops = (await readPosts2({ org: deploymentOrg(), action: "turn.supervisor_prose_dropped" })).filter((r) => r.platform === "github");
+      ok(reviewDrops.length === beforeDrops2 + 1, `🔴 OPE-2006: …and the drop is still RECORDED on a review thread (had ${beforeDrops2}, now ${reviewDrops.length}) — the placement is what this seat lost, never the record`);
+      ok(reviewDrops[0]!.detail?.conversationKind === "review_thread", "OPE-2006: …and the row names the conversation kind, so an operator can count what the review-thread trade costs");
     }
   }
 

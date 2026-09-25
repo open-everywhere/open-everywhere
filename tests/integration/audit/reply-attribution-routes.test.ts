@@ -25,17 +25,17 @@ function freshUnlistedChannelId(): string {
   return `9${randomBytes(8).readBigUInt64BE().toString().padStart(18, "0").slice(0, 18)}`;
 }
 
-const TERMINAL_SAY = "oe-659 terminal route answer";
+const DROPPED_PER_SURFACE_SAY = "oe-2006 per-surface closing prose that must reach nobody";
 const TOOL_SAY = "oe-659 tool route answer, a third length";
 const DROPPED_SAY = "oe-1982 addressed prose that must reach nobody, a deliberately different length";
 
-async function replyRowFor(input: { channelId: string; say: string; route: "tool" | "terminal" }): Promise<AuditRow> {
+async function replyRowFor(input: { channelId: string; say: string; route: "tool" | "dropped" }): Promise<AuditRow> {
   const cursor = await auditCursor();
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   const topologyBefore = settings.getSettings().window.topology;
-  if (input.route === "terminal") {
+  if (input.route === "dropped") {
     settings.overrideSettingsForTest({ window: { topology: false } });
-    expect(settings.getSettings().window.topology, "the terminal arm needs the per-surface path — see this function's header").toBe(false);
+    expect(settings.getSettings().window.topology, "the dropped arm needs the per-surface path — see this function's header").toBe(false);
   }
   const handle = registerScript(
     input.route === "tool" ? { parent: [seatReply(input.say, `oe659-${input.say.length}`), { say: "NO_REPLY" }] } : { parent: [{ say: input.say }] },
@@ -43,43 +43,46 @@ async function replyRowFor(input: { channelId: string; say: string; route: "tool
   try {
     await discordMentionWake({ channelId: input.channelId, text: `<@9000000000000000001> please answer` });
     await waitFor(() => handle.requests.find((r) => r.role === "parent"), "the scripted model to see the wake");
+    const action = input.route === "tool" ? "reply.post" : "turn.supervisor_prose_dropped";
     const row = await waitFor(async () => {
-      const rows = await rowsSinceCursor(cursor, ["reply.post"]);
+      const rows = await rowsSinceCursor(cursor, [action]);
       return rows.find((r) => r.detail?.chars === input.say.length);
-    }, `a reply.post audit row whose reply was ${input.say.length} chars`);
+    }, `a ${action} audit row whose text was ${input.say.length} chars`);
+    if (input.route === "dropped") {
+      const posts = (await rowsSinceCursor(cursor, ["reply.post"])).filter((r) => r.detail?.chars === input.say.length);
+      expect(posts, "a dropped turn writes NO reply.post row").toEqual([]);
+    }
     if (input.route === "tool") await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the turn's last step");
     return row;
   } finally {
     handle.dispose();
-    if (input.route === "terminal") settings.overrideSettingsForTest({ window: { topology: topologyBefore } });
+    if (input.route === "dropped") settings.overrideSettingsForTest({ window: { topology: topologyBefore } });
   }
 }
 
-test("both reply routes name the human who mentioned the bot — and they name the SAME one", async () => {
+test("the reply tool names the human who mentioned the bot, and a per-surface prose turn reaches nobody", async () => {
   await bootAgent();
 
-  const terminal = await replyRowFor({ channelId: freshUnlistedChannelId(), say: TERMINAL_SAY, route: "terminal" });
-  expect(terminal.detail?.route).toBe("terminal");
-  expect(terminal.principalId).toBe(DISCORD_USER_ID);
+  const dropped = await replyRowFor({ channelId: freshUnlistedChannelId(), say: DROPPED_PER_SURFACE_SAY, route: "dropped" });
+  expect(dropped.platform).toBe("discord");
 
   const toolRow = await replyRowFor({ channelId: freshUnlistedChannelId(), say: TOOL_SAY, route: "tool" });
   expect(toolRow.detail?.route).toBe("tool");
   expect(toolRow.principalId).toBe(DISCORD_USER_ID);
 
-  expect(terminal.principalId).toBe(toolRow.principalId);
+  expect(toolRow.principalId).toBe(DISCORD_USER_ID);
 
-  const chars = [terminal, toolRow].map((r) => r.detail?.chars);
+  const chars = [dropped, toolRow].map((r) => r.detail?.chars);
   expect(new Set(chars).size).toBe(2);
-  const sessions = [terminal, toolRow].map((r) => r.detail?.sessionId);
+  const sessions = [dropped, toolRow].map((r) => r.detail?.sessionId);
   expect(new Set(sessions).size).toBe(2);
 
-  for (const row of [terminal, toolRow]) {
-    expect(String(row.detail?.id)).toMatch(/^spoof-/);
-    expect(row.detail?.platform).toBe("discord");
-  }
-  for (const row of [terminal, toolRow]) expect(row.platform).toBe("discord");
+  expect(String(toolRow.detail?.id)).toMatch(/^spoof-/);
+  expect(toolRow.detail?.platform).toBe("discord");
+  expect(dropped.detail?.id, "the drop row names no message — nothing was posted to name").toBeUndefined();
+  for (const row of [dropped, toolRow]) expect(row.platform).toBe("discord");
 
-  expect(terminal.surface).not.toBe(toolRow.surface);
+  expect(dropped.surface).not.toBe(toolRow.surface);
 });
 
 test("OPE-1982 — a direct mention answered in prose reaches NO room, is re-driven exactly once, and a second prose ending is audited silence", async () => {
@@ -121,7 +124,7 @@ const REGRESSION_SETTLEMENT_SAY = "oe-734 regression settlement reply, a fifth l
 
 {
   const fingerprints = {
-    TERMINAL_SAY: TERMINAL_SAY.length,
+    DROPPED_PER_SURFACE_SAY: DROPPED_PER_SURFACE_SAY.length,
     TOOL_SAY: TOOL_SAY.length,
     DROPPED_SAY: DROPPED_SAY.length,
     SETTLEMENT_SAY: SETTLEMENT_SAY.length,

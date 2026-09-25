@@ -26,12 +26,13 @@ import { partialHaltPrefix, resolveTurnHaltReach } from "../channels/halt-per-wa
 import { markDeliveryArm } from "../channels/reply-signal.js";
 import { isSupervisorSession } from "../model/routing.js";
 import { unifiedDomainFromToken } from "../channels/unified-supervisor.js";
-import { classifySessionId, windowTokenPlatform } from "../channels/window-key.js";
+import { classifySessionId, windowTokenPlatform, type SessionId } from "../channels/window-key.js";
 import {
   GRANTS_SECTION,
   composeSeatPrompt,
   renderHandle,
   renderIdentity,
+  renderDeliverySection,
   renderSeatPersona,
   renderSurface,
   renderSurfaceGuide,
@@ -176,7 +177,7 @@ export function renderSupervisorPersona(
   }
   if (!isSupervisorSession(ctx)) return "";
   const sid = classifySessionId(ctx.channel?.continuationToken);
-  return renderSeatPersona({ seatKind: "conversational", delivery: resolveDeliveryArm(ctx, sid.kind, opts) });
+  return renderSeatPersona({ seatKind: "conversational", delivery: resolveDeliveryArm(ctx, sid, opts) });
 }
 
 function settlementWakeIdFor(ctx: BindableContext): string | undefined {
@@ -193,6 +194,22 @@ export function renderGrantsSlot(ctx: BindableContext): string {
     return "";
   }
   return (CONVERSATIONAL_ROOT_GRAINS as readonly WindowGrain[]).includes(grain) ? GRANTS_SECTION : "";
+}
+
+export function renderDeliverySlot(
+  ctx: BindableContext,
+  opts?: { readonly messageToolOnly?: boolean; readonly pinnedPlatform?: string },
+): string {
+  if (isWorkerSession(ctx)) return "";
+  if (isSupervisorSession(ctx)) return "";
+  let grain: WindowGrain;
+  try {
+    grain = windowGrainOf(ctx);
+  } catch {
+    return "";
+  }
+  if (!(CONVERSATIONAL_ROOT_GRAINS as readonly WindowGrain[]).includes(grain)) return "";
+  return renderDeliverySection(resolveDeliveryArm(ctx, classifySessionId(ctx.channel?.continuationToken), opts));
 }
 
 function isWorkerSession(ctx: BindableContext): boolean {
@@ -217,29 +234,29 @@ function workerHasMidTurnPost(ctx: BindableContext): boolean {
 
 function resolveDeliveryArm(
   ctx: BindableContext,
-  kind: string,
+  sid: SessionId,
   opts?: { readonly messageToolOnly?: boolean; readonly pinnedPlatform?: string },
 ): DeliveryArm {
-  const arm = readDeliveryArm(ctx, kind, opts);
+  const arm = readDeliveryArm(ctx, sid, opts);
   markDeliveryArm(arm.kind);
   return arm;
 }
 
 function readDeliveryArm(
   ctx: BindableContext,
-  kind: string,
+  sid: SessionId,
   opts?: { readonly messageToolOnly?: boolean; readonly pinnedPlatform?: string },
 ): DeliveryArm {
   if (opts?.messageToolOnly) return { kind: "wake-addressed", pinned: opts.pinnedPlatform !== undefined };
-  if (kind !== "container-supervisor") return { kind: "dual-mode" };
-  let caps: { supervisorProseDropped?: boolean; midTurnPost?: boolean };
+  let caps: { closingProseDropped?: boolean; supervisorProseDropped?: boolean; midTurnPost?: boolean };
   try {
     caps = capabilitiesForPlatform(bindFrom(ctx).platform);
   } catch {
     return { kind: "dual-mode" };
   }
-  if (caps.supervisorProseDropped === true) return { kind: "reply-only" };
-  if (caps.midTurnPost === false) return { kind: "closing-text" };
+  if (caps.closingProseDropped === true) return { kind: "reply-only" };
+  if (caps.supervisorProseDropped === true && (sid.grain === "standing" || sid.grain === "thread")) return { kind: "reply-only" };
+  if (sid.kind === "container-supervisor" && caps.midTurnPost === false) return { kind: "closing-text" };
   return { kind: "dual-mode" };
 }
 
@@ -419,6 +436,7 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
     surfaceGuide: renderUnifiedSurfaceGuides(platforms, seatKindOf(ctx)),
     persona: renderSupervisorPersona(ctx, { messageToolOnly: true, ...(pinnedPlatform ? { pinnedPlatform } : {}), ...(settlementWakeId === undefined ? {} : { settlementWakeId }) }),
     grants: renderGrantsSlot(ctx),
+    delivery: renderDeliverySlot(ctx, { messageToolOnly: true, ...(pinnedPlatform ? { pinnedPlatform } : {}) }),
     readingAWake: canReceiveJudgedWake(ctx) ? renderReadingAWake() : "",
     replyStyle: REPLY_STYLE_RUBRIC,
     role: roleMd,
@@ -456,6 +474,7 @@ async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
     surfaceGuide: renderSurfaceGuide(binding.platform, seatKindOf(ctx)),
     persona: renderSupervisorPersona(ctx, settlementWakeId === undefined ? {} : { settlementWakeId }),
     grants: renderGrantsSlot(ctx),
+    delivery: renderDeliverySlot(ctx),
     readingAWake: canReceiveJudgedWake(ctx) ? renderReadingAWake() : "",
     replyStyle: REPLY_STYLE_RUBRIC,
     role: renderRolePrompt(ctx),

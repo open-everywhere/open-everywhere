@@ -40,7 +40,7 @@ import { reconcileDiscordCommands } from "./commands/discord-command-sync.js";
 
 export function registerDiscordProvider(): void {
   registerIdentityMapper("discord", bindDiscord);
-  registerCapabilityManifest("discord", { midTurnPost: true, reactions: true });
+  registerCapabilityManifest("discord", { midTurnPost: true, reactions: true, closingProseDropped: true });
   registerSurfaceParity("discord", DISCORD_SURFACE_PARITY);
   registerProviderEvents("discord", DISCORD_PROVIDER_EVENTS);
   registerPostArm(discordPostArm);

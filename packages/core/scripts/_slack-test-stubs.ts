@@ -57,7 +57,7 @@ export function registerSlackTestBridge(overrides: Partial<SlackBridge> = {}): v
 }
 
 export function registerSlackFixtureManifest(): void {
-  registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, supervisorProseDropped: true });
+  registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, closingProseDropped: true });
 }
 
 export function registerSlackFixtureCodec(): void {

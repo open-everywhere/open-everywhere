@@ -38,9 +38,10 @@ registerSlackFixturePostArm();
 
 const { markThreadEngaged, markThreadStopped, getThreadEngagement, isThreadStopped, ownPostMustNotRevive, shouldDeliverReply, STAND_DOWN_DELIVERY_REFUSAL } =
   await import("../agent/channels/engagement.js");
-const { standDownSilenceLatchedDurably } = await import("../agent/channels/stand-down-silence.js");
+const standDownSilence = await import("../agent/channels/stand-down-silence.js");
 const { durableTurnKey, writeTurnState, noteStoppedAck, stoppedAckSpent } = await import("../agent/model/turn-state.js");
-const { postTerminalProse } = await import("../agent/channels/reply-post.js");
+const replyPost = await import("../agent/channels/reply-post.js");
+const { dropClosingProse, CLOSING_PROSE_DROPPED_ACTION } = await import("../agent/channels/closing-prose-drop.js");
 const { proseBlockingRefusal, PROSE_BLOCKING_REFUSALS } = await import("../agent/channels/unified-window.js");
 const { REPLY_STOPPED_REFUSAL_REASON, WAKE_DECLINED_REFUSAL_REASON, WAKE_DONE_REFUSAL_REASON } = await import("../agent/channels/reply-signal.js");
 const { REPLY_STALE_REFUSAL_REASON } = await import("../agent/channels/reply-freshness.js");
@@ -118,53 +119,39 @@ const AT = "2026-02-25T04:40:00Z";
 }
 
 {
+  ok(!("postTerminalProse" in replyPost), "🔴 §4: `postTerminalProse` is GONE from the reply spine — the per-surface terminal-prose plane is deleted, not merely unused");
+  ok(!("standDownSilenceLatchedDurably" in standDownSilence), "🔴 §4: …and the durable latch that only that poster read is gone with it");
+  ok(typeof replyPost.postReply === "function", "§4/CONTROL: the reply spine still exports `postReply` — the absence above is one symbol, not a broken import");
+  ok(typeof standDownSilence.consumeStandDownSilenceThisTurn === "function", "§4/CONTROL: the latch module still exports its turn-slot half, which Linear's native arm reads");
+
   const pair = durableTurnKey("sess_door", "turn_door");
   ok(pair !== undefined, "§4/CONTROL: a session-scoped turn HAS a durable key — a bare `turn_N` is shared by every session's Nth turn");
   await writeTurnState(pair!, { steps: 1 });
-  ok((await standDownSilenceLatchedDurably("sess_door", "turn_door")) === false, "§4/CONTROL: a turn that has NOT posted into a stopped conversation reads UNLATCHED");
+  ok((await stoppedAckSpent(pair!)) === false, "§4: a turn that has NOT posted into a stopped conversation reads UNSPENT");
   await noteStoppedAck(pair!);
-  ok((await stoppedAckSpent(pair!)) === true, "§4/CONTROL: the reply path's own writer really spent the valve");
-  ok((await standDownSilenceLatchedDurably("sess_door", "turn_door")) === true, "🔴 §4: THE FIX — the durable half answers for a turn whose own state slot a replay lost");
-
-  ok((await standDownSilenceLatchedDurably("sess_door", undefined)) === false, "🔴 §4: no turn id ⇒ POST IT — never a silence the reader cannot prove is owed");
-  ok((await standDownSilenceLatchedDurably("sess_door", "")) === false, "§4: an empty turn id is the same fail-off");
-  ok((await standDownSilenceLatchedDurably(undefined, "turn_door")) === false, "🔴 §4: no SESSION id ⇒ post it — a sessionless turn's key is shared, so it can never silence one turn only");
-  ok((await standDownSilenceLatchedDurably("sess_other", "turn_door")) === false, "🔴 §4: another SESSION's turn of the same name is not this turn — the latch cannot bleed across sessions");
+  ok((await stoppedAckSpent(pair!)) === true, "🔴 §4: the reply path's own valve still records the acknowledgement — the fact survives the reader that was deleted");
 }
 
 {
-  const target = { platform: "slack", channelId: "C_DOOR", threadTs: "ts_own" } as const;
-  const auditOf = (turnId: string) => ({
-    org: ORG,
-    platform: "slack",
-    workspace: "T_DOOR",
-    surface: "C_DOOR",
-    sessionId: "sess_post",
-    turnId,
-    route: "terminal" as const,
-  });
-
+  const before = posted.length;
+  const logged: string[] = [];
   await inSession(async () => {
-    await postTerminalProse(target, "the ordinary answer", auditOf("turn_clean"));
+    await dropClosingProse({
+      row: { org: ORG, platform: "slack", workspace: "T_DOOR", surface: "C_DOOR" },
+      chars: "and here is one more thing".length,
+      sessionId: "sess_post",
+      anchor: { threadTs: "ts_own" },
+      log: (m) => logged.push(m),
+    });
   });
-  ok(posted.length === 1, "§5(a)/CONTROL: an ordinary turn's terminal prose POSTS — the poster is not simply switched off");
-
-  const pair = durableTurnKey("sess_post", "turn_spent")!;
-  await writeTurnState(pair, { steps: 1 });
-  await noteStoppedAck(pair);
-  await inSession(async () => {
-    await postTerminalProse(target, "and here is one more thing", auditOf("turn_spent"));
-  });
-  ok(posted.length === 1, "🔴 §5(b): THE FIX — a REPLAYED turn that already posted into the stopped conversation posts NOTHING more");
+  ok(posted.length === before, "🔴 §5: the drop posts NOTHING — the room count is unchanged across it");
+  ok(logged.length === 1 && logged[0].includes("DROPPED"), "§5: …and it says so in the surface's log, so an operator asking why the turn went quiet finds it");
   await settle();
-  const refused = (await readAudit({ org: ORG, action: "reply.refused" })) as readonly { readonly detail?: Record<string, unknown> | null }[];
-  const mine = refused.filter((r) => r.detail?.["reason"] === REPLY_STOPPED_REFUSAL_REASON && r.detail?.["route"] === "terminal");
-  ok(mine.length === 1, "§5(b)/AUDIT: …and the drop leaves a `reply.refused` row on the TERMINAL route, so a silence the host chose is countable");
-
-  await inSession(async () => {
-    await postTerminalProse(target, "prose from a route that cannot name its turn", { ...auditOf("turn_spent"), turnId: undefined });
-  });
-  ok(posted.length === 2, "🔴 §5(c): a terminal route carrying NO turn id still posts — the guard is off, never a silence it cannot prove");
+  const rows = (await readAudit({ org: ORG, action: CLOSING_PROSE_DROPPED_ACTION })) as readonly { readonly detail?: Record<string, unknown> | null }[];
+  const mine = rows.filter((r) => r.detail?.["sessionId"] === "sess_post");
+  ok(mine.length === 1, "🔴 §5/AUDIT: the drop leaves exactly ONE row, so an answer that never left is countable");
+  ok(mine[0]?.detail?.["chars"] === 26 && mine[0]?.detail?.["threadTs"] === "ts_own", "§5/AUDIT: …carrying the char count and the anchor it was owed to — ids and counts, never the text");
+  ok(!JSON.stringify(mine[0]?.detail ?? {}).includes("one more thing"), "🔴 §5/AUDIT: …and the model's own words are NOT in the row — the drop row is taint-clean like every other row on this plane");
 }
 
 {
@@ -193,14 +180,17 @@ const AT = "2026-02-25T04:40:00Z";
     ["../../providers/teams/agent/channels/teams.ts", "Teams"],
     ["../../providers/discord/agent/channels/discord.ts", "Discord (Interactions)"],
     ["../../providers/discord/agent/channels/discord-gateway.ts", "Discord (guild gateway)"],
+    ["../../providers/github/agent/channels/github.ts", "GitHub (native arm)"],
   ];
-  const stampsTurnId = /\.\.\.\(turnId \? \{ turnId \} : \{\}\),/;
-  const callsPoster = /await postTerminalProse\(/;
+  const callsPoster = /postTerminalProse\(/;
+  const callsDrop = /await dropClosingProse\(/;
   for (const [rel, label] of surfaces) {
     const src = readFileSync(new URL(rel, import.meta.url), "utf8");
-    ok(callsPoster.test(src), `§7/CONTROL: ${label} really calls postTerminalProse — the guard below is reading the right file`);
-    ok(stampsTurnId.test(src), `🔴 §7: ${label} STAMPS the turn id on its terminal reply audit — without it §5's door is inert on this surface with every gate still green`);
+    ok(callsDrop.test(src), `§7/CONTROL: ${label} really calls dropClosingProse — the absence check below is reading the right file`);
+    ok(!callsPoster.test(src), `🔴 §7: ${label} calls the deleted terminal-prose poster NOWHERE — a seat's closing prose reaches no room from this handler`);
   }
+  const spine = readFileSync(new URL("../agent/channels/reply-post.ts", import.meta.url), "utf8");
+  ok(!/export async function postTerminalProse\(/.test(spine), "🔴 §7: the reply spine DEFINES no terminal-prose poster — the plane is deleted at its source, not just unreferenced");
 }
 
 {

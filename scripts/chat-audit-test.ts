@@ -58,8 +58,13 @@ async function replyPosts(platform: string): Promise<Array<{ detail?: Record<str
   ok((await readAudit({ org: deploymentOrg(), action: "discord.no_reply" })).length === 0, "discord: a judged silence writes NO discord.no_reply row (actions-only)");
 
   await completed("rolled back to v42", ctx);
-  const dp = await replyPosts("discord");
-  ok(dp.length === 1 && dp[0]!.detail?.route === "terminal" && dp[0]!.detail?.chars === "rolled back to v42".length, "discord: a terminal-prose reply writes ONE reply.post row (route:terminal)");
+  ok((await replyPosts("discord")).length === 0, "🔴 OPE-2006: a discord turn that ends in prose writes NO reply.post row — nothing left the host, so nothing may be counted as delivered");
+  const ddrop = (await readAudit({ org: deploymentOrg(), action: "turn.supervisor_prose_dropped" })).filter((r) => r.platform === "discord");
+  ok(
+    ddrop.length === 1 && ddrop[0]!.detail?.chars === "rolled back to v42".length && ddrop[0]!.detail?.channelId === "C_D1",
+    "🔴 OPE-2006: …and ONE drop row records it, with the char count and the channel the answer was owed to",
+  );
+  ok(posts.length === 0, "🔴 OPE-2006: …and the raw channel.discord.post fallback posted nothing either — the drop has no second door");
   ok((await readAudit({ org: deploymentOrg(), action: "discord.replied" })).length === 0, "discord: the legacy discord.replied row is GONE");
 }
 

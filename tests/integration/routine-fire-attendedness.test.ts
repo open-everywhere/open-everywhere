@@ -94,7 +94,7 @@ test("the fired session binds as its routine's ATTESTED creator", async () => {
   expect(started.principalId).not.toBe("eve:app");
 });
 
-test("a routine fire's reply.post row keeps the schedule app as AUTHOR and adds the creator to DETAIL — terminal route", async () => {
+test("a routine fire that ends in PROSE on the per-surface path is DROPPED — no reply.post row, one drop row", async () => {
   await bootAgent({ sharedSqlite: true });
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   const topologyBefore = settings.getSettings().window.topology;
@@ -113,14 +113,14 @@ test("a routine fire's reply.post row keeps the schedule app as AUTHOR and adds 
   });
   expect((await runRoutineDispatchTick()).length).toBeGreaterThan(0);
 
-  const reply = await waitFor(async () => {
-    const rows = await rowsSinceCursor(cursor, ["reply.post"]);
+  const dropped = await waitFor(async () => {
+    const rows = await rowsSinceCursor(cursor, ["turn.supervisor_prose_dropped"]);
     return rows.find((r) => r.detail?.chars === sayText.length && r.surface === CHANNEL);
-  }, "the routine fire's reply.post row (terminal route)", 150_000);
+  }, "the routine fire's closing-prose drop row (per-surface path)", 150_000);
 
-  expect(reply.detail?.route).toBe("terminal");
-  expect(reply.principalId).toBe("eve:app");
-  expect(reply.detail?.creatorId).toBe(CREATOR);
+  expect(dropped.platform).toBe("slack");
+  const posts = (await rowsSinceCursor(cursor, ["reply.post"])).filter((r) => r.surface === CHANNEL);
+  expect(posts).toEqual([]);
 });
 
 test("a routine fire's reply.post row keeps the schedule app as AUTHOR and adds the creator to DETAIL — tool route on a windowed seat", async () => {

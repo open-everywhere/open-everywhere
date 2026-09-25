@@ -88,7 +88,7 @@ function makeStub(opts: StubOpts = {}): Stub {
           rows.push(
             row("reply.post", {
               ...(opts.replySurface !== undefined ? { surface: opts.replySurface } : {}),
-              detail: { route: "terminal", chars: 42, sessionId: "sess-smoke", ...(replyWake === null ? {} : { wakeId: replyWake }) },
+              detail: { route: "tool", chars: 42, sessionId: "sess-smoke", ...(replyWake === null ? {} : { wakeId: replyWake }) },
             }),
           );
         }
@@ -215,7 +215,7 @@ await check("RED 2e — a reply carrying NO wake id does not satisfy the exact j
 
 await check("the exact join survives a window FULL of other replies — it picks ours out", async () => {
   const decoys = [
-    row("reply.post", { detail: { route: "terminal", chars: 9, wakeId: "wake-another-turn" } }),
+    row("reply.post", { detail: { route: "tool", chars: 9, wakeId: "wake-another-turn" } }),
     row("reply.post", { detail: { route: "tool", chars: 3 } }),
   ];
   const result = await smoke({ decoys });
@@ -262,7 +262,7 @@ await check("a fire row from ANOTHER delivery, in the same window, does NOT sati
   const decoys = [
     row("webhook.fired", { detail: { hookId: HOOK, deliveryId: "e2e-someone-elses-delivery" } }),
     row("webhook.fired", { detail: { hookId: HOOK } }),
-    row("reply.post", { detail: { route: "terminal", chars: 9 } }),
+    row("reply.post", { detail: { route: "tool", chars: 9 } }),
   ];
   const result = await smoke({ fire: "none", reply: false, decoys });
   assert.equal(result.ok, false, "a window full of other traffic must not fake a green");

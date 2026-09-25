@@ -27,7 +27,7 @@ import { githubMessageOps } from "./channels/github-message-ops.js";
 
 export function registerGithubProvider(): void {
   registerIdentityMapper("github", bindGitHub);
-  registerCapabilityManifest("github", { midTurnPost: true, reactions: true, supervisorProseDropped: true });
+  registerCapabilityManifest("github", { midTurnPost: true, reactions: true, closingProseDropped: true });
   registerSurfaceParity("github", GITHUB_SURFACE_PARITY);
   registerProviderEvents("github", GITHUB_PROVIDER_EVENTS);
   registerPostArm(githubPostArm);

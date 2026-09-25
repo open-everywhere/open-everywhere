@@ -179,7 +179,6 @@ export const teamsPostArm: PostArm = {
     return serviceUrl && conversationId ? { platform: "teams", serviceUrl, conversationId } : null;
   },
   dispatchReply: (target, text) => dispatchTeamsReply(target as TeamsTarget, text),
-  splitText: (text) => splitTeamsMessageText(text),
   dispatchUnified: (origin, text, deps: UnifiedReplyDeps) => (deps.postTeams ?? liveTeamsPost)(origin as TeamsOrigin, text),
   describeRedriveTarget: (origin) => `teams conversation ${(origin as TeamsOrigin).conversationId}`,
   redriveContainerId: (origin) => (origin as TeamsOrigin).conversationId,

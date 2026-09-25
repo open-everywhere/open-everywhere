@@ -26,6 +26,7 @@ const { resolvePartition } = await import("@open-everywhere/core/agent/memory/pa
 const { readAudit } = await import("@open-everywhere/core/agent/audit/audit.js");
 const { buildDiscordAuth } = await import("@open-everywhere/provider-discord/agent/channels/discord-identity.js");
 const { markCardPostedThisTurn } = await import("@open-everywhere/core/agent/approvals/card-signal.js");
+const { markRepliedThisTurn } = await import("@open-everywhere/core/agent/channels/reply-signal.js");
 const { NO_REPLY_SENTINEL } = await import("@open-everywhere/core/agent/channels/turn-delivery.js");
 import type { BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import type { Partition } from "@open-everywhere/core/agent/memory/partition.js";
@@ -235,6 +236,59 @@ await scenario("10-cap-decline-engaged-door", async (s) => {
   });
 });
 
+await scenario("11-warm-prose-drop-no-promote", async (s) => {
+  const p = partitionFor({ userId: "U_TALK11", guildId: "G11", channelId: "C11", channelType: "0" });
+  await markThreadEngaged(p, "C11", new Date().toISOString());
+  s.note(`channel C11 engaged WARM (real markThreadEngaged on ${p.surfaceKey})`);
+  await s.inbound({
+    id: "M111",
+    content: "did the migration finish?",
+    channelId: "C11",
+    channelType: "0",
+    guildId: "G11",
+    authorId: "U_TALK11",
+    mentionsBot: false,
+  });
+  await s.event("discord:C11", "turn.started");
+  await s.event("discord:C11", "message.completed", { finishReason: "stop", message: "It finished at step 5 of 5." });
+});
+
+await scenario("12-warm-card-promotes", async (s) => {
+  const p = partitionFor({ userId: "U_TALK12", guildId: "G12", channelId: "C12", channelType: "0" });
+  await markThreadEngaged(p, "C12", new Date().toISOString());
+  s.note(`channel C12 engaged WARM (real markThreadEngaged on ${p.surfaceKey})`);
+  await s.inbound({
+    id: "M121",
+    content: "can you raise the cap?",
+    channelId: "C12",
+    channelType: "0",
+    guildId: "G12",
+    authorId: "U_TALK12",
+    mentionsBot: false,
+  });
+  await s.event("discord:C12", "turn.started");
+  await s.markCardPosted("discord:C12", markCardPostedThisTurn);
+  await s.event("discord:C12", "message.completed", { finishReason: "stop", message: "I've posted an approval card." });
+});
+
+await scenario("13-warm-reply-tool-promotes", async (s) => {
+  const p = partitionFor({ userId: "U_TALK13", guildId: "G13", channelId: "C13", channelType: "0" });
+  await markThreadEngaged(p, "C13", new Date().toISOString());
+  s.note(`channel C13 engaged WARM (real markThreadEngaged on ${p.surfaceKey})`);
+  await s.inbound({
+    id: "M131",
+    content: "what is the rollback command?",
+    channelId: "C13",
+    channelType: "0",
+    guildId: "G13",
+    authorId: "U_TALK13",
+    mentionsBot: false,
+  });
+  await s.event("discord:C13", "turn.started");
+  await s.markReplied("discord:C13", markRepliedThisTurn);
+  await s.event("discord:C13", "message.completed", { finishReason: "stop", message: "Rolled back with `oe deploy --to v42`." });
+});
+
 const gateRows = async (part: Partition): Promise<{ door?: unknown; over?: unknown }[]> =>
   (await readAudit({ org: part.org, action: "spend.gate" })).filter((r) => r.detail?.key === part.surfaceKey).map((r) => r.detail ?? {});
 
@@ -273,8 +327,28 @@ for (const [label, part] of [
   okAudit((await gateRows(part)).length === 0, `spend.gate: ${label} writes NO row (the row is OVER-only, not per-wake)`);
 }
 
-if (auditFailures > 0) console.error(`\n✗ spend.gate audit rows: ${auditFailures} assertion(s) failed\n`);
-else console.log(`✓ spend.gate audit rows: ${auditAssertions} assertions passed (mention/engagement door, admin bypass, uncapped negative control)`);
+{
+  const { getThreadEngagement } = await import("@open-everywhere/core/agent/channels/engagement.js");
+  const dropped = await getThreadEngagement(partitionFor({ userId: "U_TALK11", guildId: "G11", channelId: "C11", channelType: "0" }), "C11");
+  okAudit(dropped !== null, "engagement/CONTROL: scenario 11's seeded warm row exists — the assertion below reads a real row, never a missing one");
+  okAudit(
+    dropped?.participating !== true,
+    "🔴 OPE-2006: a turn whose only output was DROPPED prose leaves the warm surface WARM — nothing reached the room, so no promotion was earned",
+  );
+  const delivered = await getThreadEngagement(partitionFor({ userId: "U_TALK12", guildId: "G12", channelId: "C12", channelType: "0" }), "C12");
+  okAudit(
+    delivered?.participating === true,
+    "🔴 POSITIVE CONTROL: the same door with a card POSTED this turn DOES promote to participating — the promotion is still wired",
+  );
+  const replied = await getThreadEngagement(partitionFor({ userId: "U_TALK13", guildId: "G13", channelId: "C13", channelType: "0" }), "C13");
+  okAudit(
+    replied?.participating === true,
+    "🔴 POSITIVE CONTROL: a turn that delivered through the `reply` TOOL promotes too — the predicate reads BOTH delivery signals, not the card alone",
+  );
+}
+
+if (auditFailures > 0) console.error(`\n✗ durable-write assertions: ${auditFailures} assertion(s) failed\n`);
+else console.log(`✓ durable-write assertions: ${auditAssertions} passed (spend.gate door/bypass/negative control · engagement promotes on DELIVERY, not on a dropped turn)`);
 
 rmSync(tmp, { recursive: true, force: true });
 runner.finish("scenarios (discord-gateway sequencing)", auditFailures);

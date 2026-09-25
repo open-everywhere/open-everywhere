@@ -10,10 +10,9 @@ import {
   auditNoReplySentinelObserved,
   isBareStop,
   consumeRepliedThisTurn,
-  postTerminalProse,
+  dropClosingProse,
   resolvePartition,
   authPrincipalId,
-  attestedFireCreatorId,
   type ChatAuditPartition,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { frontDiscordChannel, INTERNAL_DISCORD_ROUTE } from "./discord-front.js";
@@ -67,7 +66,6 @@ const discordInteractionChannel = discordChannel({
   events: {
     "turn.started": async (_data, channel, ctx) => {
       (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId = authPrincipalId(ctx);
-      (channel.state as unknown as Record<string, unknown>).oeFireCreatorId = attestedFireCreatorId(ctx);
       await channel.discord.startTyping();
     },
     "message.completed": async (data, channel, ctx) => {
@@ -93,24 +91,24 @@ const discordInteractionChannel = discordChannel({
       }
       {
         const p = auditPartitionForState(channel.state);
-        if (p && channel.state.channelId) {
-          await postTerminalProse(
-            { platform: "discord", channelId: channel.state.channelId },
-            action.text,
-            {
+        if (p) {
+          await dropClosingProse({
+            row: {
               org: p.org,
               platform: p.platform,
               workspace: p.workspace,
               surface: p.surface,
               principalId: (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId as string | undefined,
-              creatorId: (channel.state as unknown as Record<string, unknown>).oeFireCreatorId as string | undefined,
-              ...(sessionId ? { sessionId } : {}),
-              ...(turnId ? { turnId } : {}),
-              route: "terminal",
             },
-          );
+            chars: action.text.length,
+            ...(sessionId ? { sessionId } : {}),
+            anchor: { channelId: channel.state.channelId ?? null },
+            log: (m) => console.warn(`[open-everywhere:discord] ${m} (channel ${channel.state.channelId ?? "?"})`),
+          });
         } else {
-          await channel.discord.post(action.text);
+          console.warn(
+            `[open-everywhere:discord] closing prose DROPPED (${action.text.length}c) — nothing posted, and no partition to audit it under (channel ${channel.state.channelId ?? "?"})`,
+          );
         }
       }
     },

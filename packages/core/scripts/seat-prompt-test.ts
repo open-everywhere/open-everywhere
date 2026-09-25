@@ -23,10 +23,10 @@ import {
 import { registerConfig } from "../agent/access/config.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import { registerCapabilityManifest } from "../agent/identity/capabilities.js";
-import { renderGrantsSlot, renderScopeMarkdown, renderSupervisorPersona } from "../agent/instructions/access.js";
+import { renderDeliverySlot, renderGrantsSlot, renderScopeMarkdown, renderSupervisorPersona } from "../agent/instructions/access.js";
 import { mayRaiseGrantAsk } from "../agent/tools/request_credential_grant.js";
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
-import { dmWindowKey, formatWindowToken, isDmAnchorWindowToken, saltSupervisorGeneration } from "../agent/channels/window-key.js";
+import { classifySessionId, dmWindowKey, formatWindowToken, isDmAnchorWindowToken, saltSupervisorGeneration, threadSeatWindowId } from "../agent/channels/window-key.js";
 import { isSupervisorSession } from "../agent/model/routing.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 
@@ -49,6 +49,7 @@ function ok(cond: boolean, label: string): void {
     "surfaceGuide",
     "persona",
     "grants",
+    "delivery",
     "readingAWake",
     "replyStyle",
     "role",
@@ -132,6 +133,69 @@ function ok(cond: boolean, label: string): void {
   ok(!replyOnly.includes("wake-id"), "negative control: …and never asks that seat for a wake-id");
   ok(dual.includes("posts into the channel mid-turn"), "negative control: the dual-mode arm still states the mid-turn post");
   ok(!dual.includes("DISCARDED"), "negative control: …and never claims a drop that surface does not do");
+}
+
+{
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [defineDomain({ name: "ope2006", reach: ["slack/T_2006/C_2006"], ambientSupervisor: true })],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  });
+  registerSlackFixtureMapper();
+  const seatCtx = (token: string): BindableContext =>
+    ({
+      channel: { kind: "slack", continuationToken: token },
+      session: { auth: { current: { attributes: { team_id: "T_2006", channel_id: "C_2006", channel_type: "channel", is_private: "false", trust_checked: "true" }, principalId: "U1", principalType: "user" } } },
+    }) as BindableContext;
+  const seats: readonly [string, string][] = [
+    ["container supervisor", "C_2006:oe-sup:g1"],
+    ["standing window", formatWindowToken({ domain: "ope2006", windowId: "ope2006", generation: 1 })],
+    ["thread seat", `oe-dom:ope2006:win:${threadSeatWindowId("slack/T_2006/C_2006", "1700.5")}:oe-sup:g1`],
+  ];
+  const dropCopy = renderDeliverySection({ kind: "reply-only" });
+  const dualCopy = renderDeliverySection({ kind: "dual-mode" });
+  const NATIVE_TOKEN = "slack:C_2006:1700.5";
+  const armFor = (token: string): string => `${renderSupervisorPersona(seatCtx(token))}\n${renderDeliverySlot(seatCtx(token))}`;
+
+  registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, closingProseDropped: true });
+  ok(classifySessionId(NATIVE_TOKEN).kind === "native", "§3a/CONTROL: the bare token really classifies as `native` — the shape that renders no persona");
+  ok(renderSupervisorPersona(seatCtx(NATIVE_TOKEN)) === "", "🔴 §3a/CONTROL: …and it renders NO persona, which is why the delivery slot has to exist at all");
+  for (const [label, token] of [...seats, ["native @mention thread", NATIVE_TOKEN] as const]) {
+    const arm = armFor(token);
+    ok(arm.trim() !== "", `§3a/CONTROL: the ${label} token renders delivery copy at all — the arm checks below read real bytes`);
+    ok(arm.includes(dropCopy), `🔴 §3a: the ${label} seat reads the REPLY-ONLY arm — its closing prose is dropped, so this is the only true thing to tell it`);
+    ok(!arm.includes(dualCopy), `🔴 §3a: …and never the dual-mode arm, whose claim that the closing text posts is false on this surface now`);
+  }
+  for (const [label, token] of seats) {
+    ok(renderDeliverySlot(seatCtx(token)) === "", `🔴 §3a: the ${label} seat's slot renders "" — its persona carries the arm, and no seat may read the delivery rule twice`);
+  }
+
+  registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, closingProseDropped: false });
+  for (const [label, token] of [...seats, ["native @mention thread", NATIVE_TOKEN] as const]) {
+    const arm = armFor(token);
+    ok(arm.includes(dualCopy), `🔴 §3a/NEGATIVE: with the fact OFF the ${label} seat reads dual-mode again — the arm is read off the manifest, never hardcoded`);
+    ok(!arm.includes(dropCopy), `§3a/NEGATIVE: …and is never told about a drop this surface would not do`);
+  }
+  registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, supervisorProseDropped: true });
+  for (const [label, token] of seats) {
+    const arm = armFor(token);
+    ok(arm.includes(dropCopy), `🔴 §3a/NARROW: the ${label} seat reads REPLY-ONLY under the supervisor-scoped fact — its grain is \`standing\` or \`thread\`, the two shapes that drop`);
+    ok(!arm.includes(dualCopy), `§3a/NARROW: …and never the dual-mode arm, which would claim a post this shape does not get`);
+  }
+  {
+    const nativeArm = armFor(NATIVE_TOKEN);
+    ok(nativeArm.trim() !== "", "§3a/NARROW/CONTROL: the native seat still renders delivery copy at all — the two checks below read real bytes");
+    ok(
+      nativeArm.includes(dualCopy),
+      "🔴 §3a/NARROW: the native @mention seat reads DUAL-MODE under the supervisor-scoped fact — on Linear its closing text really is published, and the drop arm there would discard an answer the surface posts",
+    );
+    ok(!nativeArm.includes(dropCopy), "🔴 §3a/NARROW: …and is NEVER told its turn-final text is discarded — that claim is false on the one surface that declares this fact");
+  }
+  registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, closingProseDropped: true });
 }
 
 {
@@ -254,7 +318,7 @@ function ok(cond: boolean, label: string): void {
 }
 
 {
-  registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, supervisorProseDropped: true });
+  registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, closingProseDropped: true });
   const TASK_TOKEN = "unified:oe-dom:acme:win:t/C1/1721018940.000100:oe-sup:g3";
   const ctx = {
     channel: { kind: "slack", continuationToken: TASK_TOKEN },
@@ -347,7 +411,7 @@ function ok(cond: boolean, label: string): void {
 
 {
   registerSlackFixtureMapper();
-  registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, supervisorProseDropped: true });
+  registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, closingProseDropped: true });
   registerConfig({
     loadBundles: () => [],
     loadBindings: () => [],
@@ -756,7 +820,7 @@ function ok(cond: boolean, label: string): void {
 
 {
   registerSlackFixtureMapper();
-  registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, supervisorProseDropped: true });
+  registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, closingProseDropped: true });
   registerConfig({
     loadBundles: () => [],
     loadBindings: () => [],
@@ -952,7 +1016,7 @@ function ok(cond: boolean, label: string): void {
 
 {
   registerSlackFixtureMapper();
-  registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, supervisorProseDropped: true });
+  registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, closingProseDropped: true });
   registerConfig({
     loadBundles: () => [],
     loadBindings: () => [],

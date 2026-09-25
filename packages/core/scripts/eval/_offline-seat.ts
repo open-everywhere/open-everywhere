@@ -80,7 +80,7 @@ export function ticketingCtx(platform: "github" | "linear"): BindableContext {
 }
 
 export function registerTicketingFixtureManifests(): void {
-  registerCapabilityManifest("github", { midTurnPost: true, reactions: true, supervisorProseDropped: true });
+  registerCapabilityManifest("github", { midTurnPost: true, reactions: true, closingProseDropped: true });
   registerCapabilityManifest("linear", { midTurnPost: true, reactions: true, supervisorProseDropped: true });
 }
 

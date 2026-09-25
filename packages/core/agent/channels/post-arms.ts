@@ -68,7 +68,6 @@ export interface PostArm {
   resolveTarget?(bag: TargetResolveBag): ReplyTarget | null;
   dispatchReply?(target: ReplyTarget, text: string, replier?: ReplierLabel): Promise<string>;
   readonly displayNameCapable?: boolean;
-  splitText?(text: string): readonly string[];
   dispatchUnified?(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps, replier?: ReplierLabel, intent?: PostIntent): Promise<string>;
   dispatchUnifiedActions?(
     origin: UnifiedWakeOrigin,

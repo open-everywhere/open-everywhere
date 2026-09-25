@@ -1,4 +1,4 @@
-import { teamsChannel, splitTeamsMessageText, type TeamsInboundMessageContext, type TeamsMessageActivity, type TeamsInboundResult } from "eve/channels/teams";
+import { teamsChannel, type TeamsInboundMessageContext, type TeamsMessageActivity, type TeamsInboundResult } from "eve/channels/teams";
 import { frontTeamsChannel, INTERNAL_TEAMS_ROUTE } from "./teams-front.js";
 import { buildTeamsAuth, teamsMembershipType } from "./teams-identity.js";
 import { teamsEngagedAdmits } from "./teams-engagement.js";
@@ -9,15 +9,12 @@ import {
   NO_REPLY_SENTINEL_REASON,
   auditNoReplySentinelObserved,
   isBareStop,
-  postTerminalProse,
+  dropClosingProse,
   consumeRepliedThisTurn,
   resolvePartition,
   ingressSpendGate,
-  replierLabelFromAuthAttributes,
   authPrincipalId,
-  attestedFireCreatorId,
   type ChatAuditPartition,
-  type ReplierLabel,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 function auditPartitionForState(state: {
@@ -88,11 +85,7 @@ const native = teamsChannel({
   events: {
     "turn.started": async (_data, channel, ctx) => {
       await channel.thread.startTyping();
-      (channel.state as unknown as Record<string, unknown>).oeReplierLabel = replierLabelFromAuthAttributes(
-        ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined,
-      );
       (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId = authPrincipalId(ctx);
-      (channel.state as unknown as Record<string, unknown>).oeFireCreatorId = attestedFireCreatorId(ctx);
     },
     "message.completed": async (data, channel, ctx) => {
       const sessionId = ctx?.session?.id;
@@ -116,27 +109,24 @@ const native = teamsChannel({
       }
       {
         const p = auditPartitionForState(channel.state);
-        if (p && channel.state.serviceUrl && channel.state.conversationId) {
-          await postTerminalProse(
-            { platform: "teams", serviceUrl: channel.state.serviceUrl, conversationId: channel.state.conversationId, ...(channel.state.replyToActivityId ? { replyToActivityId: channel.state.replyToActivityId } : {}) },
-            action.text,
-            {
+        if (p) {
+          await dropClosingProse({
+            row: {
               org: p.org,
               platform: p.platform,
               workspace: p.workspace,
               surface: p.surface,
               principalId: (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId as string | undefined,
-              creatorId: (channel.state as unknown as Record<string, unknown>).oeFireCreatorId as string | undefined,
-              ...(sessionId ? { sessionId } : {}),
-              ...(turnId ? { turnId } : {}),
-              route: "terminal",
             },
-            (channel.state as unknown as Record<string, unknown>).oeReplierLabel as ReplierLabel | undefined,
-          );
+            chars: action.text.length,
+            ...(sessionId ? { sessionId } : {}),
+            anchor: { conversationId: channel.state.conversationId ?? null },
+            log: (m) => console.warn(`[open-everywhere:teams] ${m} (conversation ${channel.state.conversationId ?? "?"})`),
+          });
         } else {
-          for (const part of splitTeamsMessageText(action.text)) {
-            await channel.thread.post(part);
-          }
+          console.warn(
+            `[open-everywhere:teams] closing prose DROPPED (${action.text.length}c) — nothing posted, and no partition to audit it under (conversation ${channel.state.conversationId ?? "?"})`,
+          );
         }
       }
     },

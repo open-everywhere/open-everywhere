@@ -5,6 +5,7 @@ import { processRegistryMap } from "../lib/process-registry.js";
 export interface CapabilityManifest {
   readonly midTurnPost: boolean;
   readonly reactions: boolean;
+  readonly closingProseDropped?: boolean;
   readonly supervisorProseDropped?: boolean;
 }
 

@@ -24,7 +24,7 @@ const MODEL_ID = process.env.OPE863_MODEL ?? defaultAgentModelId();
 
 registerSlackTestBridge({ botDisplayName: async () => "Test Bot" });
 registerSlackFixtureMapper();
-registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, supervisorProseDropped: true });
+registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, closingProseDropped: true });
 registerConfig({
   loadBundles: () => [],
   loadBindings: () => [],

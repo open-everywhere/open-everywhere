@@ -10,12 +10,11 @@ import { resolvePartition } from "../memory/partition.js";
 import type { EditLocus } from "./reply-edit.js";
 import { platformFailureClass, platformFailureStatus, type PlatformFailureClass } from "./platform-failure.js";
 import { recordPostTail } from "./session-tail-record.js";
-import { markWakeRefusedThisTurn, REPLY_STOPPED_REFUSAL_REASON } from "./reply-signal.js";
+import { markWakeRefusedThisTurn } from "./reply-signal.js";
 import { applyReplyProvenance, auditReplyProvenance } from "./reply-provenance.js";
 import { auditWithheldMemoryClaim, guardMemoryClaims } from "./memory-claim-guard.js";
 import { auditWithheldApprovalClaim, guardApprovalClaims } from "./approval-claim-guard.js";
 import { auditWithheldRequestClaim, guardRequestClaims } from "./request-claim-guard.js";
-import { standDownSilenceLatchedDurably } from "./stand-down-silence.js";
 
 export type { ReplierLabel };
 
@@ -56,7 +55,7 @@ export interface ReplyAudit {
   readonly sessionId?: string;
   readonly wakeId?: string;
   readonly turnId?: string;
-  readonly route: "tool" | "terminal";
+  readonly route: "tool";
 }
 
 export function replyAuditFor(ctx: BindableContext, route: ReplyAudit["route"], wakeId?: string): ReplyAudit {
@@ -301,42 +300,3 @@ async function dispatchReply(target: ReplyTarget, text: string, replier?: Replie
   }
   return arm.dispatchReply(target, text, replier);
 }
-
-export async function postTerminalProse(target: ReplyTarget, text: string, audit: ReplyAudit, replier?: ReplierLabel): Promise<void> {
-  if (await standDownSilenceLatchedDurably(audit.sessionId, audit.turnId)) {
-    await auditReplyRefused(audit, REPLY_STOPPED_REFUSAL_REASON);
-    return;
-  }
-  const claimGuard = guardMemoryClaims(truncateMemoryCitationPaths(text), audit);
-  const approvalGuard = guardApprovalClaims(claimGuard.body, audit);
-  const requestGuard = guardRequestClaims(approvalGuard.body, audit);
-  const provenance = applyReplyProvenance(requestGuard.body, audit);
-  const clean = provenance.bare;
-  const arm = postArm(target.platform);
-  const nativeReplier = arm?.displayNameCapable ? replier : undefined;
-  const body = replier && !arm?.displayNameCapable ? withReplierPrefix(clean, replier) : clean;
-  const split = arm?.splitText?.(body) ?? [body];
-  const chunks = [...split];
-  if (provenance.footer !== undefined) {
-    const last = chunks.reduce((best, c, i) => (c.trim() ? i : best), -1);
-    if (last >= 0) chunks[last] = `${chunks[last]}\n\n${provenance.footer}`;
-  }
-  let firstId: string | undefined;
-  try {
-    for (const chunk of chunks) {
-      if (!chunk.trim()) continue;
-      const id = await dispatchReply(target, chunk, nativeReplier);
-      firstId ??= id;
-    }
-  } catch (err) {
-    await notePostFailure(audit, err, target.platform);
-    throw err;
-  }
-  if (firstId === undefined) return;
-  await auditReplyPost(audit, firstId, target.platform, body.length + (provenance.footer === undefined ? 0 : provenance.footer.length + 2));
-  await auditReplyProvenance(audit, firstId, target.platform, provenance.reads, provenance.shown);
-  await auditWithheldMemoryClaim(audit, target.platform, claimGuard.withheld);
-  await auditWithheldApprovalClaim(audit, target.platform, approvalGuard.withheld, approvalGuard.cause);
-  await auditWithheldRequestClaim(audit, target.platform, requestGuard.withheld);
-}
-

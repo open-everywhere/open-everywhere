@@ -31,7 +31,7 @@ import { registerNotionMemory } from "./memory/memory.js";
 
 export function registerNotionProvider(): void {
   registerIdentityMapper("notion", bindNotion);
-  registerCapabilityManifest("notion", { midTurnPost: true, reactions: false, supervisorProseDropped: true });
+  registerCapabilityManifest("notion", { midTurnPost: true, reactions: false, closingProseDropped: true });
   registerSurfaceParity("notion", NOTION_SURFACE_PARITY);
   registerProviderEvents("notion", NOTION_PROVIDER_EVENTS);
   registerPostArm(notionPostArm);

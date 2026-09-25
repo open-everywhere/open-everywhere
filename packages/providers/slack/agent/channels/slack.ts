@@ -32,7 +32,7 @@ import {
   consumeCardPostedThisTurn,
   consumeReactedThisTurn,
   consumeRepliedThisTurn,
-  postTerminalProse,
+  dropClosingProse,
   markThreadEngaged,
   disengageThread,
   getThreadEngagement,
@@ -47,7 +47,6 @@ import {
   upsertUnderSection,
   bindFrom,
   authPrincipalId,
-  attestedFireCreatorId,
   isAllowedSlackDriver,
   planFor,
   extractPinnedInstructions,
@@ -63,11 +62,9 @@ import {
   admittedTenantsFromConfig,
   unadmittedTenantLog,
   UNADMITTED_TENANT_DROP_REASON,
-  replierLabelFromAuthAttributes,
   type Partition,
   type BindableContext,
   type ReactionState,
-  type ReplierLabel,
   dmTrustTtlMs,
   swallowRoomOp,
   domainRoster,
@@ -495,11 +492,7 @@ const slackMentionChannel = slackChannel({
           ? ({ channelId, threadTs } satisfies SupervisorReplyTarget)
           : undefined;
       }
-      (channel.state as unknown as Record<string, unknown>).oeReplierLabel = replierLabelFromAuthAttributes(
-        ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined,
-      );
       (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId = authPrincipalId(ctx);
-      (channel.state as unknown as Record<string, unknown>).oeFireCreatorId = attestedFireCreatorId(ctx);
       {
         const attrs = ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined;
         if (attrs?.channel_type === "im") {
@@ -669,41 +662,41 @@ const slackMentionChannel = slackChannel({
       }
       if (effects.postText) {
         const channelId = channel.state.channelId ?? undefined;
+        const replyThreadTs = replyThreadTsForState(channel.state);
         if (channelId) {
           const p = resolvePartition({
             channel: { kind: "slack" },
             session: { auth: { current: { attributes: { team_id: channel.state.teamId ?? "", channel_id: channelId }, principalId: "", principalType: "slack-user" } } },
           });
-          const replyThreadTs = replyThreadTsForState(channel.state);
-          await postTerminalProse(
-            { platform: "slack", channelId, ...(replyThreadTs ? { threadTs: replyThreadTs } : {}) },
-            action.text,
-            {
+          await dropClosingProse({
+            row: {
               org: p.org,
               platform: p.platform,
               workspace: p.workspace,
               surface: p.surface,
               principalId: (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId as string | undefined,
-              creatorId: (channel.state as unknown as Record<string, unknown>).oeFireCreatorId as string | undefined,
-              ...(sessionId ? { sessionId } : {}),
-              ...(turnId ? { turnId } : {}),
-              route: "terminal",
             },
-            (channel.state as unknown as Record<string, unknown>).oeReplierLabel as ReplierLabel | undefined,
-          );
+            chars: action.text.length,
+            ...(sessionId ? { sessionId } : {}),
+            anchor: { threadTs: replyThreadTs ?? null },
+            log: (m) => console.warn(`[open-everywhere:slack] ${m} (${channelId}/${replyThreadTs ?? "?"})`),
+          });
         } else {
-          await channel.thread.post(markdownToSlackMrkdwn(action.text));
+          console.warn(
+            `[open-everywhere:slack] closing prose DROPPED (${action.text.length}c) — nothing posted, and no partition to audit it under (?/${replyThreadTs ?? "?"})`,
+          );
         }
       } else {
         console.log(
           `[open-everywhere:slack] approval card already posted this turn — suppressing the redundant text reply (${channel.state.channelId ?? "?"}/${channel.state.threadTs ?? "?"})`,
         );
       }
-      (channel.state as unknown as Record<string, unknown>).oeUninvited = false;
+      const deliveredThisTurn = repliedThisTurn || cardPostedThisTurn;
+      if (deliveredThisTurn) (channel.state as unknown as Record<string, unknown>).oeUninvited = false;
       await setStatusReaction(channel.slack, "none", dmWakeThreadOverride(channel.state));
       try {
         const { channelId, teamId, threadTs } = channel.state;
-        if (channelId && threadTs) {
+        if (deliveredThisTurn && channelId && threadTs) {
           const p = resolvePartition({
             channel: { kind: "slack" },
             session: { auth: { current: { attributes: { team_id: teamId ?? "", channel_id: channelId }, principalId: "", principalType: "slack-user" } } },

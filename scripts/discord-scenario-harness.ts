@@ -162,8 +162,11 @@ class FakeEveContext {
   private readonly durable = new Map<string, unknown>();
   private readonly virtual = new Map<string, unknown>();
 
+  readonly turnId: string;
+
   constructor(sessionId: string) {
-    this.durable.set("eve.session", { sessionId, auth: null, turn: 1, parent: undefined });
+    this.turnId = `${sessionId}#turn`;
+    this.durable.set("eve.session", { sessionId, auth: null, turn: { id: this.turnId, sequence: 1 }, parent: undefined });
   }
 
   get<T>(key: { name: string }): T | undefined {
@@ -354,6 +357,14 @@ export class ScenarioDriver {
     this.timeline.add(`ACT propose tool posts an approval card on ${continuationToken} (card-signal armed)`);
     await eveContextStorage().run(session.ctx, async () => {
       mark();
+    });
+  }
+
+  async markReplied(continuationToken: string, mark: (turnId: string) => void): Promise<void> {
+    const session = this.mustSession(continuationToken);
+    this.timeline.add(`ACT reply tool posts on ${continuationToken} (reply-signal armed)`);
+    await eveContextStorage().run(session.ctx, async () => {
+      mark(session.ctx.turnId);
     });
   }
 

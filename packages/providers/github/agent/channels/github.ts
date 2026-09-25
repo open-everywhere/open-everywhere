@@ -41,7 +41,7 @@ import {
   finalMessageActionForTurn,
   completeSupervisorTurn,
   consumeSupervisorReplyMark,
-  postTerminalProse,
+  dropClosingProse,
   resolvePartition,
   type ChatAuditPartition,
   auditSupervisorFailure,
@@ -607,35 +607,26 @@ const native: GitHubChannel = githubChannel({
         }
         const nativePartition = nativeGitHubAuditPartition(channel.state);
         const nativeAnchor = channel.state.issueNumber ?? channel.state.pullRequestNumber;
-        if (
-          nativeAction.kind === "post" &&
-          channel.state.conversationKind !== "review_thread" &&
-          nativePartition !== null &&
-          nativeAnchor !== null
-        ) {
-          await postTerminalProse(
-            {
-              platform: "github",
-              owner: channel.state.owner,
-              repo: channel.state.repo,
-              issueNumber: nativeAnchor,
-              ...(channel.state.installationId !== null ? { installationId: channel.state.installationId } : {}),
-            },
-            nativeAction.text,
-            {
+        if (nativeAction.kind !== "post") return;
+        if (nativePartition !== null) {
+          await dropClosingProse({
+            row: {
               org: nativePartition.org,
               platform: nativePartition.platform,
               workspace: nativePartition.workspace,
               surface: nativePartition.surface,
               ...(channel.state.triggeringUserLogin ? { principalId: channel.state.triggeringUserLogin } : {}),
-              ...(ctx?.session?.id ? { sessionId: ctx.session.id } : {}),
-              ...(nativeTurnId ? { turnId: nativeTurnId } : {}),
-              route: "terminal",
             },
-          );
+            chars: nativeAction.text.length,
+            ...(ctx?.session?.id ? { sessionId: ctx.session.id } : {}),
+            anchor: { issueNumber: nativeAnchor, conversationKind: channel.state.conversationKind },
+            log: (m) => log(`${m} (${channel.state.owner}/${channel.state.repo}#${nativeAnchor ?? "?"})`),
+          });
           return;
         }
-        await defaultEvent("message.completed")?.(data, channel);
+        log(
+          `closing prose DROPPED (${nativeAction.text.length}c) — nothing posted, and no partition to audit it under (${channel.state.owner}/${channel.state.repo}#${nativeAnchor ?? "?"})`,
+        );
         return;
       }
       const sessionId = ctx?.session?.id;

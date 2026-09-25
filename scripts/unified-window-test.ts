@@ -1443,10 +1443,12 @@ function inOpe922Turn<T>(fn: () => Promise<T>): Promise<T> {
     const row = rows.find((r) => r.detail?.wakeId === received[0].target.wakeId && r.detail?.sessionId === "sess-choke");
     ok(!!row, "choke point: postUnifiedReply(audit) writes a reply.post row joined by wakeId + sessionId");
     ok(row?.detail?.route === "tool" && row?.detail?.platform === "slack" && row?.detail?.id === "ts-1" && row?.detail?.chars === 14, "choke point: reply.post detail carries route/platform/id/chars (taint-clean)");
-    const retiredRoute: ReplyAudit["route"] = "bridge";
-    void retiredRoute;
-    const liveRoutes: ReplyAudit["route"][] = ["tool", "terminal"];
-    ok(liveRoutes.length === 2, "OPE-1982: the reply route vocabulary is exactly `tool` + `terminal`");
+    const retiredBridgeRoute: ReplyAudit["route"] = "bridge";
+    void retiredBridgeRoute;
+    const retiredTerminalRoute: ReplyAudit["route"] = "terminal";
+    void retiredTerminalRoute;
+    const liveRoutes: ReplyAudit["route"][] = ["tool"];
+    ok(liveRoutes.length === 1, "OPE-2006: the reply route vocabulary is exactly `tool`");
   }
 
   ok((await resolveUnifiedWakeTarget(store, "default", "no-such-wake")) === null, "an unknown wakeId resolves null (never guessed)");

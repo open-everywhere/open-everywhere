@@ -958,7 +958,7 @@ async function assertSeatShape(system: string): Promise<void> {
     if (system.includes("reply` posts into the channel mid-turn")) throw new Error("fixture guard: the ticketing prompt carries the dual-mode arm 4 text — this seat's turn-final prose is DROPPED, so that arm is false here");
     if (system.includes("This is a cross-surface session")) throw new Error("fixture guard: the ticketing prompt carries the UNIFIED arm's cross-surface claim — that sentence is false on this seat");
     if (system.includes("mounts no working `reply` tool")) throw new Error("fixture guard: the ticketing prompt carries the RETIRED OPE-786 arm (OPE-811) — `reply` works on this seat, and that copy teaches the one habit whose prose is dropped");
-    if (!system.includes("Your turn-final text is DISCARDED")) throw new Error("fixture guard: the ticketing prompt does not state the DROP (OPE-811 arm 2) — `supervisorProseDropped` may be unregistered or the arm moved");
+    if (!system.includes("Your turn-final text is DISCARDED")) throw new Error("fixture guard: the ticketing prompt does not state the DROP (OPE-811 arm 2) — `closingProseDropped` may be unregistered or the arm moved");
     console.log(`seat: path=${PATH} platform=${PLATFORM} reply=base (no wake arg), the only delivery route reading-a-wake=${carriesBlock ? "PRESENT" : "ABSENT"}`);
     return;
   }
@@ -971,7 +971,7 @@ async function assertSeatShape(system: string): Promise<void> {
     if (ARM === "w") throw new Error("--arm w now duplicates the shipped prompt: OPE-771 shipped canReceiveJudgedWake, so arm 'a' already carries the 'Reading a wake' block on a per-container supervisor seat. Use --arm a.");
     if (!carriesBlock) throw new Error("fixture guard: the per-surface prompt is missing the 'Reading a wake' block — canReceiveJudgedWake regressed (OPE-771)");
     if (ARM !== "r" && !system.includes("Your turn-final text is DISCARDED"))
-      throw new Error("fixture guard: the per-surface prompt does not carry the per-container delivery rule (OPE-784) — the manifest fact `supervisorProseDropped` is unregistered or the arm moved, so these numbers describe a prompt nobody ships");
+      throw new Error("fixture guard: the per-surface prompt does not carry the per-container delivery rule (OPE-784) — the manifest fact `closingProseDropped` is unregistered or the arm moved, so these numbers describe a prompt nobody ships");
     if (ARM !== "r" && system.includes("This is a cross-surface session"))
       throw new Error("fixture guard: the per-surface prompt carries the UNIFIED arm's cross-surface claim — that sentence is false on this seat");
   } else {

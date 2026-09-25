@@ -38,7 +38,7 @@ const inSession = <T>(fn: () => Promise<T>): Promise<T> => {
   return contextStorage.run(c, fn);
 };
 
-const { readAudit, deploymentOrg, markRepliedThisTurn, NO_REPLY_SENTINEL } = await import("@open-everywhere/core/agent/adapter-api.js");
+const { readAudit, deploymentOrg, markRepliedThisTurn, NO_REPLY_SENTINEL, resolvePartition, getThreadEngagement } = await import("@open-everywhere/core/agent/adapter-api.js");
 
 async function replyPosts(platform: string): Promise<Array<{ detail?: Record<string, unknown> }>> {
   return (await readAudit({ org: deploymentOrg(), action: "reply.post" })).filter((r) => r.platform === platform);
@@ -60,19 +60,39 @@ async function replyPosts(platform: string): Promise<Array<{ detail?: Record<str
   ok(posts.length === 0, "slack: the judged silence posts NOTHING (silence stays silence)");
 
   await completed("here's the answer", ctxFor({ channelId: "C_AUD", teamId: "T_AUD", threadTs: "1752501000.000100" }));
-  const sp = await replyPosts("slack");
-  ok(sp.length === 1, "slack: a terminal-prose reply writes exactly ONE reply.post row (choke point)");
-  ok(sp[0]!.detail?.route === "terminal" && sp[0]!.detail?.chars === "here's the answer".length, "slack: the reply.post row carries route:\"terminal\" + chars");
-  ok(sp[0]!.detail?.sessionId === "chat-audit-test", "slack: the reply.post row STAMPS the eve sessionId (audit→transcript join key)");
-  ok((await readAudit({ org: deploymentOrg(), action: "slack.replied" })).length === 0, "slack: the legacy slack.replied row is GONE (folded into reply.post)");
+  ok((await replyPosts("slack")).length === 0, "🔴 OPE-2006: a slack turn that ends in prose writes NO reply.post row — that row counts DELIVERED messages, and nothing was delivered");
+  ok(posts.length === 0, "🔴 OPE-2006: …and the raw channel.thread.post fallback posted nothing either — the drop has no second door");
+  const dropped = (await readAudit({ org: deploymentOrg(), action: "turn.supervisor_prose_dropped" })).filter((r) => r.platform === "slack");
+  ok(dropped.length === 1, "🔴 OPE-2006: …and ONE drop row records the lost answer, so a silence the host chose stays countable");
+  ok(dropped[0]!.detail?.chars === "here's the answer".length && dropped[0]!.detail?.threadTs === "1752501000.000100", "slack: the drop row carries the char count and the thread the answer was owed to");
+  ok(dropped[0]!.detail?.sessionId === "chat-audit-test", "slack: the drop row STAMPS the eve sessionId (audit→transcript join key)");
+  ok(!JSON.stringify(dropped[0]!.detail).includes("the answer"), "🔴 OPE-2006: …and NOT the model's words — the drop row is taint-clean");
+  ok((await readAudit({ org: deploymentOrg(), action: "slack.replied" })).length === 0, "slack: the legacy slack.replied row is GONE");
 
   await inSession(async () => {
     markRepliedThisTurn("t1");
     await slackChannel.adapter["message.completed"]!({ finishReason: "stop", message: "" }, ctxFor({ channelId: "C_AUD", teamId: "T_AUD", threadTs: "1752501000.000100" }));
   });
-  ok((await replyPosts("slack")).length === 1, "slack: a reply-tool turn's empty terminal writes NO terminal reply.post row");
+  ok((await replyPosts("slack")).length === 0, "slack: a reply-tool turn's empty terminal writes no reply.post row here — the tool's own door wrote its row");
+  ok((await readAudit({ org: deploymentOrg(), action: "turn.supervisor_prose_dropped" })).filter((r) => r.platform === "slack").length === 1, "🔴 negative control: an EMPTY terminal writes NO second drop row — a drop is prose that was lost, never every turn");
   ok((await readAudit({ org: deploymentOrg(), action: "slack.no_reply" })).length === 0, "slack: a reply-tool turn's empty terminal writes NO slack.no_reply row");
+
+  const engPartition = resolvePartition({
+    channel: { kind: "slack" },
+    session: { auth: { current: { attributes: { team_id: "T_AUD", channel_id: "C_AUD" }, principalId: "", principalType: "slack-user" } } },
+  });
+  ok(
+    (await getThreadEngagement(engPartition, "1752501000.000100")) === null,
+    "🔴 OPE-2006: a turn whose only output was DROPPED prose leaves the thread unengaged — nothing reached the room, so nothing was earned",
+  );
+  await inSession(async () => {
+    markRepliedThisTurn("t1");
+    await slackChannel.adapter["message.completed"]!({ finishReason: "stop", message: "here's the answer" }, ctxFor({ channelId: "C_AUD", teamId: "T_AUD", threadTs: "1752501000.000100" }));
+  });
+  const engaged = await getThreadEngagement(engPartition, "1752501000.000100");
+  ok(engaged !== null, "🔴 POSITIVE CONTROL: a turn that DID deliver through the `reply` tool engages the thread — the promotion is still wired");
+  ok(engaged?.participating === true, "POSITIVE CONTROL: …and it is the participating promotion, the one the drop must not earn");
 }
 
 
-console.log(`✓ slack-chat-audit: ${passed} assertions passed (judged silence rowless · one terminal reply.post row · reply-tool empty terminal rowless)`);
+console.log(`✓ slack-chat-audit: ${passed} assertions passed (judged silence rowless · closing prose dropped and rowed, never posted · reply-tool empty terminal rowless)`);

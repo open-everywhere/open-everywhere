@@ -99,7 +99,7 @@ import {
   consumeCardPostedThisTurn,
   peekCardPostedThisTurn,
   consumeRepliedThisTurn,
-  postTerminalProse,
+  dropClosingProse,
   isAllowedDriver,
   parseDriverAllowlist,
   getOrCreateDmSeat,
@@ -117,10 +117,7 @@ import {
   NO_REPLY_SENTINEL_REASON,
   auditNoReplySentinelObserved,
   getSettings,
-  replierLabelFromAuthAttributes,
   authPrincipalId,
-  attestedFireCreatorId,
-  type ReplierLabel,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { fetchDiscordBackscrollLines, gradeDiscordContextLines, DISCORD_RAW_FETCH_REACHBACK_HOURS } from "./discord-backscroll.js";
 
@@ -1642,11 +1639,7 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
   events: {
     "turn.started": async (_data, channel, ctx) => {
       if (statusUxEnabled() && typingGateOpen(channel.channelId)) await triggerDiscordTyping(channel.channelId);
-      (channel.state as unknown as Record<string, unknown>).oeReplierLabel = replierLabelFromAuthAttributes(
-        ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined,
-      );
       (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId = authPrincipalId(ctx);
-      (channel.state as unknown as Record<string, unknown>).oeFireCreatorId = attestedFireCreatorId(ctx);
     },
     "actions.requested": async (_data, channel) => {
       if (statusUxEnabled() && typingGateOpen(channel.channelId) && !peekCardPostedThisTurn()) await triggerDiscordTyping(channel.channelId);
@@ -1700,25 +1693,22 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
         : null;
       if (plan.delivery.kind === "post") {
         const text = action.kind === "post" ? action.text : plan.delivery.chunks.join("\n");
-        if (auditP && channel.channelId) {
-          await postTerminalProse(
-            { platform: "discord", channelId: channel.channelId },
-            text,
-            {
+        if (auditP) {
+          await dropClosingProse({
+            row: {
               org: auditP.org,
               platform: auditP.platform,
               workspace: auditP.workspace,
               surface: auditP.surface,
               principalId: (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId as string | undefined,
-              creatorId: (channel.state as unknown as Record<string, unknown>).oeFireCreatorId as string | undefined,
-              ...(sessionId ? { sessionId } : {}),
-              ...(turnId ? { turnId } : {}),
-              route: "terminal",
             },
-            (channel.state as unknown as Record<string, unknown>).oeReplierLabel as ReplierLabel | undefined,
-          );
+            chars: text.length,
+            ...(sessionId ? { sessionId } : {}),
+            anchor: { channelId: channel.channelId || null },
+            log: (m) => log(`${m} (channel ${channel.channelId || "?"})`),
+          });
         } else {
-          await postDiscordReply(channel.channelId, text);
+          log(`closing prose DROPPED (${text.length}c) — nothing posted, and no partition to audit it under (channel ${channel.channelId || "?"})`);
         }
       } else if (action.kind === "silent") {
         if (data.message) log(`judged silence (NO_REPLY) — nothing posted (channel ${channel.channelId || "?"})`);
@@ -1727,7 +1717,8 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
         }
       }
 
-      if (action.kind === "post") {
+      const deliveredThisTurn = repliedThisTurn || cardPostedThisTurn;
+      if (deliveredThisTurn) {
         await promoteParticipatingOnReply(channel.state);
       } else if (action.kind === "silent") {
         await maybeShedWarmSurface(channel.state);

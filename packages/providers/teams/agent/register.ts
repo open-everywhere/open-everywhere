@@ -75,7 +75,7 @@ export function resolveTeamsTarget(r: Routine): DispatchTarget | null {
 
 export function registerTeamsProvider(): void {
   registerIdentityMapper("teams", bindTeams);
-  registerCapabilityManifest("teams", { midTurnPost: true, reactions: false });
+  registerCapabilityManifest("teams", { midTurnPost: true, reactions: false, closingProseDropped: true });
   registerSurfaceParity("teams", TEAMS_SURFACE_PARITY);
   registerProviderEvents("teams", TEAMS_PROVIDER_EVENTS);
   registerPostArm(teamsPostArm);

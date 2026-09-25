@@ -323,9 +323,10 @@ await inSession(async () => {
 
 {
   const { registerCapabilityManifest } = await import("@open-everywhere/core/agent/identity/capabilities.js");
-  for (const platform of ["github", "linear", "notion"] as const) {
-    registerCapabilityManifest(platform, { midTurnPost: true, reactions: false, supervisorProseDropped: true });
+  for (const platform of ["github", "notion"] as const) {
+    registerCapabilityManifest(platform, { midTurnPost: true, reactions: false, closingProseDropped: true });
   }
+  registerCapabilityManifest("linear", { midTurnPost: true, reactions: false, supervisorProseDropped: true });
   const slack = renderSupervisorPersona({ channel: { kind: "slack", continuationToken: "C_811:oe-sup:g1" } } as never);
   for (const platform of ["github", "linear", "notion"] as const) {
     const persona = renderSupervisorPersona({ channel: { kind: platform, continuationToken: `X_811:oe-sup:g1` } } as never);
@@ -343,7 +344,7 @@ await inSession(async () => {
   const unwired = renderSupervisorPersona({ channel: { kind: "github", continuationToken: "X_811:oe-sup:g1" } } as never);
   ok(unwired.includes("mounts no working `reply` tool"), "negative control: a surface declaring NO midTurnPost still reads the no-working-reply arm");
   ok(!unwired.includes("Your turn-final text is DISCARDED"), "negative control: and it never claims a drop it cannot honour");
-  registerCapabilityManifest("github", { midTurnPost: true, reactions: false, supervisorProseDropped: true });
+  registerCapabilityManifest("github", { midTurnPost: true, reactions: false, closingProseDropped: true });
 }
 
 console.log(`\n✓ reply: ${n} assertions passed (gate, target, signal, reply on all wired surfaces, dual-mode, persona, post-arm registry, OPE-811 uniform supervisor mount + one delivery arm)\n`);

@@ -19,6 +19,7 @@ export const SEAT_PROMPT_SLOTS = [
   "surfaceGuide",
   "persona",
   "grants",
+  "delivery",
   "readingAWake",
   "replyStyle",
   "role",

@@ -92,8 +92,8 @@ const armReply = (tool: unknown, ctx: unknown): ArmedTool | null =>
 
 assert.deepStrictEqual(
   capabilitiesForPlatform("notion"),
-  { midTurnPost: true, reactions: false, supervisorProseDropped: true },
-  "registerNotionProvider registers notion's manifest (midTurnPost wired, no reactions, prose dropped on a supervisor turn — OPE-811)",
+  { midTurnPost: true, reactions: false, closingProseDropped: true },
+  "registerNotionProvider registers notion's manifest (midTurnPost wired, no reactions, closing prose dropped on EVERY seat — the one completion handler routes every session through the shared arm and delegates to no default poster)",
 );
 n++;
 

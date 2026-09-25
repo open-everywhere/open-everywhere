@@ -40,7 +40,7 @@ import { registerSlackOps } from "./ops.js";
 
 export function registerSlackProvider(): void {
   registerIdentityMapper("slack", bindSlack);
-  registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, supervisorProseDropped: true });
+  registerCapabilityManifest("slack", { midTurnPost: true, reactions: true, closingProseDropped: true });
   registerSurfaceParity("slack", SLACK_SURFACE_PARITY);
   registerProviderEvents("slack", SLACK_PROVIDER_EVENTS);
   registerPostArm(slackPostArm);

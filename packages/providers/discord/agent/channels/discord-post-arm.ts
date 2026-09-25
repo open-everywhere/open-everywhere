@@ -105,7 +105,6 @@ export const discordPostArm: PostArm = {
     return channelId ? { platform: "discord", channelId } : null;
   },
   dispatchReply: (target, text) => discordPostMessage((target as DiscordTarget).channelId, text),
-  splitText: (text) => splitForDiscord(text),
   dispatchUnified: (origin, text, deps: UnifiedReplyDeps) => (deps.postDiscord ?? liveDiscordPost)(origin as DiscordOrigin, text),
   dispatchUnifiedActions: (origin, text, actions, deps: UnifiedReplyDeps) =>
     deps.postDiscord ? deps.postDiscord(origin as DiscordOrigin, text) : liveDiscordPostWithActions(origin as DiscordOrigin, text, actions),

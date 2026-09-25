@@ -326,7 +326,8 @@ export { markNotApplied, carryFailureSignals, platformFailureClass } from "./cha
 export type { PlatformFailureClass } from "./channels/platform-failure.js";
 export { recordOwnPost } from "./channels/own-post-ledger.js";
 
-export { postTerminalProse } from "./channels/reply-post.js";
+export { dropClosingProse, CLOSING_PROSE_DROPPED_ACTION } from "./channels/closing-prose-drop.js";
+export type { ClosingProseDrop, ClosingProseDropRow } from "./channels/closing-prose-drop.js";
 export type { ReplyAudit, ReplierLabel } from "./channels/reply-post.js";
 export { postHostNotice } from "./channels/reply-post.js";
 export { detectBridgeableInputRequest, renderQuestionForSurface } from "./channels/question-bridge.js";
