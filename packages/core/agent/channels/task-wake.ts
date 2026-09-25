@@ -190,7 +190,12 @@ async function restoreDelegatedTaskBinding(input: {
   ) return "no-binding";
   const binding = "binding" in authority ? authority.binding : resolved?.binding;
   if (binding === undefined) return "no-binding";
-  const snapshot: DelegatedDispatchAuthority = { binding, requester: authority.requester, nonMemberWake: authority.nonMemberWake };
+  const snapshot: DelegatedDispatchAuthority = {
+    binding,
+    requester: authority.requester,
+    nonMemberWake: authority.nonMemberWake,
+    ...("wakeId" in authority ? { wakeId: authority.wakeId } : {}),
+  };
   return adoptDelegatedAuthority(snapshot, input.turnId) ? "adopted" : "no-binding";
 }
 

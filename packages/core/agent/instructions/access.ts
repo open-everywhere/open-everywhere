@@ -6,6 +6,7 @@ import { resolveAccess } from "../access/resolver.js";
 import { getConfig } from "../access/config.js";
 import { resolvePartition, type Partition } from "../memory/partition.js";
 import { bindFrom } from "../identity/binding.js";
+import { delegatedWakeThisTurn } from "../identity/delegated-binding.js";
 import { capabilitiesFor, capabilitiesForPlatform } from "../identity/capabilities.js";
 import { configuredAgentName } from "../identity/bot-name.js";
 import { botDisplayNameFor } from "../identity/bot-display-name.js";
@@ -167,15 +168,20 @@ version, the full list, or your working, give it to them.`;
 
 export function renderSupervisorPersona(
   ctx: BindableContext,
-  opts?: { readonly messageToolOnly?: boolean; readonly pinnedPlatform?: string },
+  opts?: { readonly messageToolOnly?: boolean; readonly pinnedPlatform?: string; readonly settlementWakeId?: string },
 ): string {
   if (isWorkerSession(ctx)) {
     const midTurnPost = opts?.messageToolOnly === true ? false : workerHasMidTurnPost(ctx);
-    return renderSeatPersona({ seatKind: "worker", midTurnPost });
+    return renderSeatPersona({ seatKind: "worker", midTurnPost, ...(opts?.settlementWakeId === undefined ? {} : { settlementWakeId: opts.settlementWakeId }) });
   }
   if (!isSupervisorSession(ctx)) return "";
   const sid = classifySessionId(ctx.channel?.continuationToken);
   return renderSeatPersona({ seatKind: "conversational", delivery: resolveDeliveryArm(ctx, sid.kind, opts) });
+}
+
+function settlementWakeIdFor(ctx: BindableContext): string | undefined {
+  if (!isWorkerSession(ctx)) return undefined;
+  return delegatedWakeThisTurn();
 }
 
 export function renderGrantsSlot(ctx: BindableContext): string {
@@ -405,12 +411,13 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
   const soloMode = soloWindowId !== undefined;
   const pinnedPlatform = windowTokenPlatform(ctx.channel?.continuationToken);
   const handleInfo = await unifiedSurfaceHandle(platforms, pinnedPlatform);
+  const settlementWakeId = settlementWakeIdFor(ctx);
   return composeSeatPrompt({
     identity: renderIdentity(agentIdentityName()),
     handle: handleInfo ? renderHandle(handleInfo.platform, handleInfo.handle) : "",
     surface: renderUnifiedSurfaces(platforms),
     surfaceGuide: renderUnifiedSurfaceGuides(platforms, seatKindOf(ctx)),
-    persona: renderSupervisorPersona(ctx, { messageToolOnly: true, ...(pinnedPlatform ? { pinnedPlatform } : {}) }),
+    persona: renderSupervisorPersona(ctx, { messageToolOnly: true, ...(pinnedPlatform ? { pinnedPlatform } : {}), ...(settlementWakeId === undefined ? {} : { settlementWakeId }) }),
     grants: renderGrantsSlot(ctx),
     readingAWake: canReceiveJudgedWake(ctx) ? renderReadingAWake() : "",
     replyStyle: REPLY_STYLE_RUBRIC,
@@ -441,12 +448,13 @@ async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
   const recall = memoryRecallRouteFor(windowGrainOf(ctx), undefined, undefined, canDelegateFromSeat(ctx));
   const memoryMd = plan.reads.length > 0 ? renderMemoryIndex(plan.reads, [], recall) : "";
   const handleInfo = await surfaceHandleFor(ctx);
+  const settlementWakeId = settlementWakeIdFor(ctx);
   return composeSeatPrompt({
     identity: renderIdentity(agentIdentityName()),
     handle: handleInfo ? renderHandle(handleInfo.platform, handleInfo.handle) : "",
     surface: renderSurface(binding.platform),
     surfaceGuide: renderSurfaceGuide(binding.platform, seatKindOf(ctx)),
-    persona: renderSupervisorPersona(ctx),
+    persona: renderSupervisorPersona(ctx, settlementWakeId === undefined ? {} : { settlementWakeId }),
     grants: renderGrantsSlot(ctx),
     readingAWake: canReceiveJudgedWake(ctx) ? renderReadingAWake() : "",
     replyStyle: REPLY_STYLE_RUBRIC,

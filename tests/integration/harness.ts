@@ -39,6 +39,7 @@ import {
 export {
   registerScript,
   WAKE_FROM_ENVELOPE,
+  WAKE_FROM_REPORT,
   type RecordedRequest,
   type ResolveObservation,
   type ScriptedHandle,

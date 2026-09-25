@@ -6,6 +6,7 @@ export type DelegatedDispatchAuthority = {
   readonly binding: SurfaceBinding;
   readonly requester: RequesterVerdict;
   readonly nonMemberWake: boolean;
+  readonly wakeId?: string;
 };
 
 const slot = defineState<DelegatedDispatchAuthority | null>("open-everywhere.delegated-binding", () => null);
@@ -59,6 +60,14 @@ export function delegatedBindingThisTurn(_turnId: string | undefined): SurfaceBi
 export function delegatedRequesterThisTurn(_turnId: string | undefined): RequesterVerdict | undefined {
   try {
     return slot.get()?.requester;
+  } catch {
+    return undefined;
+  }
+}
+
+export function delegatedWakeThisTurn(): string | undefined {
+  try {
+    return slot.get()?.wakeId;
   } catch {
     return undefined;
   }

@@ -10,6 +10,7 @@ import {
   SCRIPTED_MODEL_ENV,
   SCRIPTED_MODEL_ID,
   clearIncompleteParentTurn,
+  fillReportWakePlaceholder,
   fillWakePlaceholder,
   incompleteParentTurnFor,
   noteStaleHoldExpiry,
@@ -18,8 +19,10 @@ import {
   scriptedRegistrationSeq,
   scriptedStore,
   staleTurnParkMs,
+  unresolvedReportWakePlaceholderFault,
   unresolvedWakePlaceholderFault,
   wakeIdFromPrompt,
+  wakeIdFromReport,
   type RecordedRequest,
   type ResolveObservation,
   type ScriptedEntry,
@@ -281,9 +284,18 @@ function buildStepModel(entry: ScriptedEntry, at: ResolveObservation, seqAtResol
       }
       const { fault: stepFault, served, step, redriveSilence } = verdict;
 
-      const filled = (step.calls ?? []).map((c) => ({ call: c, ...fillWakePlaceholder(c.input, promptWakeId) }));
+      const filled = (step.calls ?? []).map((c) => {
+        const envelope = fillWakePlaceholder(c.input, promptWakeId);
+        const report = fillReportWakePlaceholder(envelope.value, wakeIdFromReport(request.messages));
+        return { call: c, value: report.value, unresolved: envelope.unresolved || report.unresolved, reportUnresolved: report.unresolved };
+      });
       const unresolvedCall = filled.find((f) => f.unresolved);
-      const wakeFault = unresolvedCall ? unresolvedWakePlaceholderFault(unresolvedCall.call.tool) : undefined;
+      const saidReport = fillReportWakePlaceholder(step.say, wakeIdFromReport(request.messages));
+      const wakeFault = unresolvedCall
+        ? (unresolvedCall.reportUnresolved ? unresolvedReportWakePlaceholderFault : unresolvedWakePlaceholderFault)(unresolvedCall.call.tool)
+        : saidReport.unresolved
+          ? unresolvedReportWakePlaceholderFault("say")
+          : undefined;
       const fault = stepFault ?? wakeFault;
 
       observation.fault = fault;
@@ -309,7 +321,7 @@ function buildStepModel(entry: ScriptedEntry, at: ResolveObservation, seqAtResol
       if (wakeFault !== undefined) return { text: wakeFault };
 
       return {
-        ...(step.say !== undefined ? { text: step.say } : {}),
+        ...(step.say !== undefined ? { text: typeof saidReport.value === "string" ? saidReport.value : step.say } : {}),
         ...(step.calls !== undefined
           ? { toolCalls: filled.map((f) => ({ name: f.call.tool, ...(f.call.input !== undefined ? { input: f.value } : {}), ...(f.call.id !== undefined ? { id: f.call.id } : {}) })) }
           : {}),

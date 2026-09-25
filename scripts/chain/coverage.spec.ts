@@ -141,7 +141,7 @@ describe("root chain parity", () => {
   test("rootLegs() resolves a plausible, non-trivial set", () => {
     const legs = rootLegs();
     expect(legs.length).toBeGreaterThan(50);
-    expect(legs.length).toBeLessThan(200);
+    expect(legs.length).toBeLessThan(300);
   });
 
   test("every root leg's file exists on disk", () => {

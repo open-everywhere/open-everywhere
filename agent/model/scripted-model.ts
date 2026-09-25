@@ -24,17 +24,35 @@ export function wakeIdFromPrompt(messages: readonly { readonly text: string }[])
   return found;
 }
 
+export const WAKE_FROM_REPORT = "<wake-from-report>";
+
+export function wakeIdFromReport(messages: readonly { readonly text: string }[]): string | undefined {
+  let found: string | undefined;
+  for (const m of messages) {
+    for (const match of m.text.matchAll(/^for wake ([^\s<>]+)[ \t]*$/gm)) found = match[1];
+  }
+  return found;
+}
+
 export function fillWakePlaceholder(input: unknown, wakeId: string | undefined): { readonly value: unknown; readonly unresolved: boolean } {
-  if (input === undefined || !JSON.stringify(input)?.includes(WAKE_FROM_ENVELOPE)) return { value: input, unresolved: false };
+  return fillOnePlaceholder(input, WAKE_FROM_ENVELOPE, wakeId);
+}
+
+export function fillReportWakePlaceholder(input: unknown, wakeId: string | undefined): { readonly value: unknown; readonly unresolved: boolean } {
+  return fillOnePlaceholder(input, WAKE_FROM_REPORT, wakeId);
+}
+
+function fillOnePlaceholder(input: unknown, placeholder: string, wakeId: string | undefined): { readonly value: unknown; readonly unresolved: boolean } {
+  if (input === undefined || !JSON.stringify(input)?.includes(placeholder)) return { value: input, unresolved: false };
   let unresolved = false;
   const walk = (node: unknown): unknown => {
     if (typeof node === "string") {
-      if (!node.includes(WAKE_FROM_ENVELOPE)) return node;
+      if (!node.includes(placeholder)) return node;
       if (wakeId === undefined) {
         unresolved = true;
         return node;
       }
-      return node.split(WAKE_FROM_ENVELOPE).join(wakeId);
+      return node.split(placeholder).join(wakeId);
     }
     if (Array.isArray(node)) return node.map(walk);
     if (node !== null && typeof node === "object") {
@@ -52,6 +70,14 @@ export function unresolvedWakePlaceholderFault(tool: string): string {
     `scripted model: step called "${tool}" with ${WAKE_FROM_ENVELOPE}, but the served prompt carries no ` +
     "`<wake wake-id=…>` envelope. A native per-container session mints no wake id — only a standing " +
     "seat's rendered envelope does — so this script is scripting a seat shape the wake never had."
+  );
+}
+
+export function unresolvedReportWakePlaceholderFault(tool: string): string {
+  return (
+    `scripted model: step called "${tool}" with ${WAKE_FROM_REPORT}, but no served message carries a ` +
+    "`for wake <id>` line on its own line. A settlement report names the wake that dispatched the " +
+    "worker (OPE-2133); a prompt without that line means the worker's persona rendered no address."
   );
 }
 
