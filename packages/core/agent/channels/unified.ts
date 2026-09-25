@@ -18,7 +18,7 @@ import {
 } from "./wake-timing.js";
 import { withRetryAfterThrown, isRateLimitThrow, RateLimitExhaustedError } from "./rate-limit-retry.js";
 import { postUnifiedReply, completeUnifiedSessionSilently } from "./unified-reply.js";
-import { canPostUnifiedActions } from "./post-arms.js";
+import { canPostUnifiedActions, postArm } from "./post-arms.js";
 import { approvalCardActions, mintApprovalCardTicket, rememberApprovalCardTicket } from "./approval-card.js";
 import { containerAnsweredSince } from "./answered-container-ledger.js";
 import { isWakeEnvelopeShaped, triggerMessageBody } from "./wake-envelope.js";
@@ -188,6 +188,10 @@ export function ambientProseDropDetail(
           ? "no-reply-call"
           : NO_SUBSTANCE_DROP_REASON,
   };
+}
+
+export function proseDropClosesWakeSession(answeredThisWake: boolean, redriven: boolean): boolean {
+  return !answeredThisWake && !redriven;
 }
 
 export const NO_SUBSTANCE_DROP_REASON = "no-substance";
@@ -560,6 +564,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         },
       }).catch(() => undefined);
 
+      let redriven = false;
       if (!replied && blockingRefusal === undefined && channel.continuation?.token !== undefined) {
         const wakeId = currentWakeId(bind);
         const rawToken = channel.continuation.token;
@@ -578,6 +583,22 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         } else if (outcome.status !== "skip-replied") {
           if (wakeId) dropCarriedRunRefusals(wakeId);
           ulog(`auto-redrive: NOT fired (${outcome.status}) for wake ${outcome.originalWakeId ?? "none"} — drop is final`);
+        }
+        redriven = outcome.status === "redriven";
+      }
+      const dropWakeId = currentWakeId(bind);
+      const answeredThisWake = dropWakeId !== undefined && repliedWakesThisTurn(currentTurnId(bind)).includes(dropWakeId);
+      if (proseDropClosesWakeSession(answeredThisWake, redriven)) {
+        const dropOrigin = dropWakeId ? await resolveUnifiedWakeTarget(getOperationalStore(), org, dropWakeId).catch(() => null) : null;
+        if (dropOrigin && postArm(dropOrigin.platform)?.closeUnifiedSilently) {
+          try {
+            const answered = (await answeredContainerVia(org, currentTurnId(bind), dropWakeId, dropOrigin)) !== undefined;
+            if (await completeUnifiedSessionSilently(dropOrigin, {}, answered)) {
+              ulog(`final prose drop: closed the wake's open ${dropOrigin.platform} session with the host ack (answered elsewhere in this container: ${answered})`);
+            }
+          } catch (err) {
+            ulog(`final prose drop: FAILED to close the open ${dropOrigin.platform} session (spinner may persist until timeout): ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`);
+          }
         }
       }
     },

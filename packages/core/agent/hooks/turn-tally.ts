@@ -2,12 +2,14 @@ export interface TurnTally {
   readonly ran: readonly string[];
   readonly steps: number;
   readonly handPlaced: boolean;
+  readonly wakeId?: string;
 }
 
 interface MutableTally {
   ran: string[];
   steps: number;
   handPlaced: boolean;
+  wakeId?: string;
 }
 
 const MAX_LIVE_TALLIES = 64;
@@ -19,14 +21,14 @@ function tallyKey(sessionId: string, turnId: string): string | undefined {
   return `${sessionId.length}:${sessionId}:${turnId}`;
 }
 
-export function openTurnTally(sessionId: string, turnId: string): void {
+export function openTurnTally(sessionId: string, turnId: string, wakeId?: string): void {
   const key = tallyKey(sessionId, turnId);
   if (key === undefined) return;
   if (tallies.size >= MAX_LIVE_TALLIES) {
     const oldest = tallies.keys().next();
     if (oldest.done === false) tallies.delete(oldest.value);
   }
-  tallies.set(key, { ran: [], steps: 0, handPlaced: false });
+  tallies.set(key, { ran: [], steps: 0, handPlaced: false, ...(wakeId !== undefined ? { wakeId } : {}) });
 }
 
 function liveTally(sessionId: string, turnId: string): MutableTally | undefined {
@@ -51,7 +53,7 @@ export function recordTallyHand(sessionId: string, turnId: string, placed: boole
 
 export function readTurnTally(sessionId: string, turnId: string): TurnTally | null {
   const t = liveTally(sessionId, turnId);
-  return t ? { ran: [...t.ran], steps: t.steps, handPlaced: t.handPlaced } : null;
+  return t ? { ran: [...t.ran], steps: t.steps, handPlaced: t.handPlaced, ...(t.wakeId !== undefined ? { wakeId: t.wakeId } : {}) } : null;
 }
 
 export function closeTurnTally(sessionId: string, turnId: string): void {

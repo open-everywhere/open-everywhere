@@ -2590,9 +2590,9 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async getUnifiedWakeRecord(org, wakeId) {
     const row = getDb()
-      .prepare("SELECT target_json, created_at, window_token, answered_at, answered_turn_id, audited_at FROM unified_wake_target WHERE org_id = ? AND wake_id = ?")
+      .prepare("SELECT target_json, created_at, window_token, answered_at, answered_turn_id, audited_at, inbound FROM unified_wake_target WHERE org_id = ? AND wake_id = ?")
       .get(org, wakeId) as
-      | { target_json: string; created_at: string; window_token: string | null; answered_at: string | null; answered_turn_id: string | null; audited_at: string | null }
+      | { target_json: string; created_at: string; window_token: string | null; answered_at: string | null; answered_turn_id: string | null; audited_at: string | null; inbound: number | null }
       | undefined;
     if (!row) return null;
     return {
@@ -2602,6 +2602,7 @@ export const sqliteOperationalStore: OperationalStore = {
       ...(row.answered_at !== null ? { answeredAt: row.answered_at } : {}),
       ...(row.answered_turn_id !== null ? { answeredTurnId: row.answered_turn_id } : {}),
       ...(row.audited_at !== null ? { auditedAt: row.audited_at } : {}),
+      ...(row.inbound !== null ? { inbound: row.inbound === 1 } : {}),
     };
   },
 

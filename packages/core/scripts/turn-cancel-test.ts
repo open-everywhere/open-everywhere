@@ -508,6 +508,7 @@ const NO_REQUESTER_BASELINE =
     const { registerSurfaceMessageOps, surfaceMessageOps } = await import("../agent/channels/surface-message-ops.js");
     const { STOP_HAND_UNICODE } = await import("../agent/status/status.js");
     const { resetTurnTalliesForTest } = await import("../agent/hooks/turn-tally.js");
+  const { noteTurnBoundary, uningressedTurn } = await import("../agent/access/task-wake-signal.js");
     resetTurnTalliesForTest();
 
     const reactions: { channelId: string; messageId: string; emoji: string; on: boolean }[] = [];
@@ -1203,6 +1204,119 @@ ok(renderHelp().includes("/oe stop"), "…and help ADVERTISES stop — an afford
     ok(view.unpaired.length === 0 && view.requestsConsidered === 0, "an org with no rows of its own sees none of another org's unpaired stops");
     ok(view.org === "unpaired-f", "…and the result names the org it answered for");
   }
+}
+
+{
+  const ANCHOR_KEY = "open-everywhere.turn-anchor";
+  class Container {
+    readonly store = new Map<string, unknown>();
+    get<T>(key: { name: string }): T | undefined {
+      return this.store.get(key.name) as T | undefined;
+    }
+    has(key: { name: string }): boolean {
+      return this.store.has(key.name);
+    }
+    require<T>(key: { name: string }): T {
+      if (!this.has(key)) throw new Error(`missing ${key.name}`);
+      return this.get(key) as T;
+    }
+    set<T>(key: { name: string }, v: T | ((c: T | undefined) => T)): T {
+      const next = typeof v === "function" ? (v as (c: T | undefined) => T)(this.get(key)) : v;
+      this.store.set(key.name, next);
+      return next;
+    }
+    ensure<T>(key: { name: string }, create: () => T): T {
+      return this.has(key) ? this.require(key) : this.set(key, create());
+    }
+    clearVirtualContext(): void {}
+    setVirtualContext(): void {}
+    *entries(): Generator<readonly [unknown, unknown]> {}
+  }
+  const storage = (globalThis as Record<PropertyKey, unknown>)[Symbol.for("eve.context-storage")] as AsyncLocalStorage<unknown>;
+  const hook = (await import("../agent/hooks/turn-anchor.js")).default as unknown as {
+    events: Record<string, (e: unknown, ctx?: unknown) => Promise<void>>;
+  };
+  const { registerSlackFixtureCodec } = await import("./_slack-test-stubs.js");
+  const { registerUnifiedWakeTarget, isUnifiedWakeOrigin } = await import("../agent/channels/unified-window.js");
+  const { getOperationalStore } = await import("../agent/operational/provider.js");
+  const { deploymentOrg } = await import("../agent/identity/binding.js");
+  const { resetTurnTalliesForTest } = await import("../agent/hooks/turn-tally.js");
+  const { noteTurnBoundary, uningressedTurn } = await import("../agent/access/task-wake-signal.js");
+  resetTurnTalliesForTest();
+  registerSlackFixtureCodec();
+
+  const wakeStore = getOperationalStore();
+  const ORG_2051 = deploymentOrg();
+  const ORIGIN_2051 = { platform: "slack" as const, channelId: "C_2051" };
+  ok(isUnifiedWakeOrigin(ORIGIN_2051), "(fixture sanity) the origin codec is registered — without it every wake row below is unreadable and the whole block is vacuous");
+
+  const openWake = async (wakeId: string, inbound: boolean): Promise<void> => {
+    await registerUnifiedWakeTarget(wakeStore, ORG_2051, wakeId, ORIGIN_2051, new Date().toISOString(), "oe-dom:d2051:oe-sup:g1", inbound);
+  };
+  ok(
+    (await wakeStore.getUnifiedWakeRecord(ORG_2051, "wk-2051-probe").catch(() => null)) === null,
+    "(fixture sanity) an unregistered wake reads as NO row — the unknown case every assertion below treats as attended",
+  );
+  await openWake("wk-2051-probe", false);
+  ok(
+    (await wakeStore.getUnifiedWakeRecord(ORG_2051, "wk-2051-probe"))?.inbound === false,
+    "🔴 the wake row PROJECTS `inbound` — the fact the divert already wrote, now readable; without the projection the guard below can never see a self-minted turn",
+  );
+
+  const startTurn = async (turnId: string, wakeId: string): Promise<void> => {
+    const ctx = {
+      channel: { continuationToken: "w-2051" },
+      session: { id: "s-2051", auth: { current: { attributes: { oe_platform: "slack", oe_wake_id: wakeId, channel_id: "C_2051", team_id: "T_2051" } } } },
+    };
+    await hook.events["turn.started"]({ type: "turn.started", data: { turnId } }, ctx);
+  };
+
+  const container = new Container();
+  await storage.run(container, async () => {
+    await openWake("wk-2051-human-1", true);
+    await startTurn("t-2051-cancelled", "wk-2051-human-1");
+    await hook.events["action.result"]({ type: "action.result", data: { status: "completed", result: { kind: "tool-result", toolName: "create_ticket" } } });
+    await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-2051-cancelled" } });
+    ok(readPendingCancelNote() !== null, "(precondition) the cancelled turn armed the reconstruction");
+
+    await openWake("wk-2051-internal", false);
+    await startTurn("t-2051-internal", "wk-2051-internal");
+    await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-2051-internal" } });
+    ok(
+      readPendingCancelNote() !== null,
+      "🔴 a SELF-MINTED turn that ends between the cancel and the human's next message does NOT retire the reconstruction",
+    );
+
+    const note = renderPendingCancelNote();
+    ok(note !== null && note.includes("CANCELLED") && note.includes("create_ticket"), "🔴 …and the human's next turn still renders it, naming the call that ran");
+
+    await openWake("wk-2051-human-2", true);
+    await startTurn("t-2051-human", "wk-2051-human-2");
+    await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-2051-human" } });
+    ok(readPendingCancelNote() === null, "NEGATIVE CONTROL: a turn a person sent still retires the reconstruction");
+
+    await startTurn("t-2051-rearm", "wk-2051-human-2");
+    await hook.events["action.result"]({ type: "action.result", data: { status: "completed", result: { kind: "tool-result", toolName: "create_ticket" } } });
+    await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-2051-rearm" } });
+    ok(readPendingCancelNote() !== null, "(precondition) a second cancel re-arms the reconstruction");
+    await startTurn("t-2051-unknown", "wk-2051-never-registered");
+    await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-2051-unknown" } });
+    ok(readPendingCancelNote() === null, "🔴 NEGATIVE CONTROL: an UNKNOWN wake reads as attended and retires it — a per-surface deployment keeps the behaviour it had");
+
+    await startTurn("t-2051-rearm-2", "wk-2051-human-2");
+    await hook.events["action.result"]({ type: "action.result", data: { status: "completed", result: { kind: "tool-result", toolName: "create_ticket" } } });
+    await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-2051-rearm-2" } });
+    ok(readPendingCancelNote() !== null, "(precondition) a third cancel re-arms the reconstruction");
+    noteTurnBoundary("t-2051-rearm-2", "stamp-2051");
+    noteTurnBoundary("t-2051-settle", "stamp-2051");
+    ok(uningressedTurn("t-2051-settle"), "(precondition) the settlement turn reads as UNINGRESSED — without this the arm below proves nothing");
+    await hook.events["turn.started"]({ type: "turn.started", data: { turnId: "t-2051-settle" } }, { channel: { continuationToken: "w-2051" }, session: { id: "s-2051", auth: { current: { attributes: {} } } } });
+    await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-2051-settle" } });
+    ok(
+      readPendingCancelNote() !== null,
+      "🔴 a BACKGROUND TASK SETTLING does NOT retire the reconstruction — it brought no delivery of its own, so it is not a turn a person sent",
+    );
+  });
 }
 
 console.log(`✓ turn-cancel: ${passed} assertions passed (registry, cancel, note, /oe stop, stand_down registration, reader-side unpaired-stop join)`);

@@ -77,6 +77,7 @@ export interface UnifiedWakeRecord {
   readonly answeredAt?: string;
   readonly answeredTurnId?: string;
   readonly auditedAt?: string;
+  readonly inbound?: boolean;
 }
 
 export interface UnifiedWakeAuthority {

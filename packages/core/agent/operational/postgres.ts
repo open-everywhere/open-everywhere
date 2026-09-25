@@ -3182,7 +3182,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async getUnifiedWakeRecord(org, wakeId) {
       const { rows } = await client.query(
-        "SELECT target_json, created_at, window_token, answered_at, answered_turn_id, audited_at FROM unified_wake_target WHERE org_id = $1 AND wake_id = $2",
+        "SELECT target_json, created_at, window_token, answered_at, answered_turn_id, audited_at, inbound FROM unified_wake_target WHERE org_id = $1 AND wake_id = $2",
         [org, wakeId],
       );
       const r = (
@@ -3193,6 +3193,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
           answered_at: string | null;
           answered_turn_id: string | null;
           audited_at: string | null;
+          inbound: boolean | null;
         }[]
       )[0];
       if (!r) return null;
@@ -3203,6 +3204,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         ...(r.answered_at !== null ? { answeredAt: r.answered_at } : {}),
         ...(r.answered_turn_id !== null ? { answeredTurnId: r.answered_turn_id } : {}),
         ...(r.audited_at !== null ? { auditedAt: r.audited_at } : {}),
+        ...(r.inbound !== null ? { inbound: r.inbound } : {}),
       };
     },
 

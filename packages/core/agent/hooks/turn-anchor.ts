@@ -2,18 +2,19 @@ import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
 import { appendAudit, readAudit } from "../audit/audit.js";
 import { resolvePartition } from "../memory/partition.js";
-import { bindFrom, channelPlatform, type BindableContext } from "../identity/binding.js";
+import { bindFrom, channelPlatform, currentWakeId, deploymentOrg, type BindableContext } from "../identity/binding.js";
 import { STOP_HAND_SLACK_NAME, STOP_HAND_UNICODE } from "../status/status.js";
 import { setSurfaceReaction } from "../channels/surface-message-ops.js";
 import { postSurfaceText } from "../channels/surface-message-ops.js";
 import { clearTurnAnchor, recordTurnAnchor, turnAnchorAddress, turnAnchorKey, turnChannelKey } from "../channels/turn-registry.js";
-import { attachCancelNoteRequester, clearPendingCancelNoteAfter, setPendingCancelNote } from "../channels/cancel-note.js";
+import { attachCancelNoteRequester, clearPendingCancelNoteAfter, readPendingCancelNote, setPendingCancelNote } from "../channels/cancel-note.js";
 import { findCancelRequest, findCancelRequester, TURN_CANCELLED_ACTION, TURN_STOP_IGNORED_ACTION, type CancelRequestRecord } from "../channels/turn-cancel.js";
 import { forgetBridgedQuestion } from "../channels/question-bridge.js";
 import { bareTokenFromEveContext } from "../channels/window-key.js";
 import { seedTailWindow, tailWindowFor } from "../channels/session-tail-record.js";
 import { domainKeyOf } from "../memory/partition.js";
 import { getOperationalStore } from "../operational/provider.js";
+import { uningressedTurn } from "../access/task-wake-signal.js";
 import { closeTurnTally, openTurnTally, readTurnTally, recordTallyAction, recordTallyHand, recordTallyStep } from "./turn-tally.js";
 
 export { TURN_CANCELLED_ACTION, TURN_STOP_IGNORED_ACTION };
@@ -165,7 +166,7 @@ async function onTurnStarted(turnId: string, ctx: HookContext): Promise<void> {
     steps: 0,
   });
 
-  if (read()?.turnId === turnId) openTurnTally(ctx.session.id, turnId);
+  if (read()?.turnId === turnId) openTurnTally(ctx.session.id, turnId, currentWakeId(c));
 
   seedTailWindow(
     tailWindowFor({
@@ -365,12 +366,23 @@ async function writeIgnoredStop(s: TurnAnchorState, turnId: string, endedAs: "co
   }
 }
 
+async function endedTurnWasAttended(turnId: string, wakeId: string | undefined): Promise<boolean> {
+  if (readPendingCancelNote() === null) return true;
+  if (wakeId === undefined || wakeId.length === 0) return !uningressedTurn(turnId);
+  try {
+    const record = await getOperationalStore().getUnifiedWakeRecord(deploymentOrg(), wakeId);
+    return record?.inbound !== false;
+  } catch {
+    return true;
+  }
+}
+
 async function onTurnEnded(turnId: string, ctx: HookContext | undefined, endedAs: "completed" | "failed"): Promise<void> {
-  clearPendingCancelNoteAfter(turnId);
   const s = read();
   for (const id of new Set([s?.sessionId, ctx?.session.id])) if (id !== undefined) markTurnEnded(id, turnId);
   const sessionId = s?.sessionId ?? ctx?.session.id;
   const tally = sessionId === undefined ? null : readTurnTally(sessionId, turnId);
+  clearPendingCancelNoteAfter(turnId, await endedTurnWasAttended(turnId, tally?.wakeId));
   if (sessionId !== undefined) closeTurnTally(sessionId, turnId);
   const live = s && s.turnId === turnId ? s : null;
   if (live) {

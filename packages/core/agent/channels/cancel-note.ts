@@ -34,7 +34,8 @@ export function readPendingCancelNote(): PendingCancelNote | null {
   }
 }
 
-export function clearPendingCancelNoteAfter(endedTurnId: string): void {
+export function clearPendingCancelNoteAfter(endedTurnId: string, retires = true): void {
+  if (!retires) return;
   try {
     slot.update((prev) => (prev && prev.turnId !== endedTurnId ? null : prev));
   } catch {
