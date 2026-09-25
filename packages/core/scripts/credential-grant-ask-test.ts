@@ -289,8 +289,9 @@ console.log("3. the action-id grammar:");
   const longest = grantCardActionId("00000000-0000-0000-0000-000000000000", "standing");
   ok(longest.length <= 100, `the longest well-formed id is ${longest.length} characters, inside the 100-character component cap`);
 
-  const actions = grantCardActions({ id: "ask-uuid-1", requestedMode: "once" } as never);
+  const actions = grantCardActions({ domainScopeKey: "oe-grant-domain::ask-test", id: "ask-uuid-1", requestedMode: "once" } as never);
   eq(actions.length, 4, "the card carries four buttons");
+  eq(grantCardActions({ id: "ask-uuid-1", requestedMode: "once" } as never).length, 3, "🔴 …and THREE on an ask with no domain key, because no tap may name an answer the mint would refuse");
   eq(actions.filter((a) => a.intent === "reject").length, 1, "…and exactly one of them is the reject intent");
   eq(
     actions.map((a) => parseGrantCardActionId(a.id)?.answer),
@@ -470,6 +471,7 @@ console.log("6b. a failed tap names its reason on the audit row (OPE-1588):");
     frozen_args_unknown: false,
     mint_refused: false,
     owner_unresolvable: false,
+    standing_unavailable: false,
     tool_absent: false,
   };
 
@@ -593,6 +595,17 @@ console.log("6b. a failed tap names its reason on the audit row (OPE-1588):");
     await failedTap(askId, "mint_refused", "mint_refused", async () =>
       await withPatchedFetch(writeVendor.fetch as unknown as typeof globalThis.fetch, async () => await tap(askId, OWNER_CLICKER)),
     );
+  }
+
+  {
+    const askId = await craftAsk({ frozenArgs: { id: "reason-standing" }, id: "ask-standing-unavailable", requestedMode: "standing", scopeKey: "sess-reason-standing" });
+    const before = dmed.length;
+    await failedTap(askId, "standing_unavailable", "standing_unavailable", async () =>
+      await withPatchedFetch(vendor.fetch as unknown as typeof globalThis.fetch, async () => await resolveGrantCardClick({ answer: "standing", askId, clicker: OWNER_CLICKER, nowMs: clock, ...stamps })),
+    );
+    eq((await store.getCredentialGrantAsk(ORG, askId))?.status, "pending", "🔴 …and the ask stays PENDING, so the owner can still tap `once` or `this conversation`");
+    eq((await store.credentialGrantsForScope(ORG, "sess-reason-standing")).length, 0, "🔴 …and NO grant row was written — the refusal binds nothing, it does not bind something narrower");
+    eq(dmed.length, before, "…and nothing was sent to the owner beyond the tap's own private answer");
   }
 
   {

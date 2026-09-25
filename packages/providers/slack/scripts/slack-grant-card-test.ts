@@ -20,7 +20,7 @@ const eq = (a: unknown, b: unknown, label: string): void => {
 const FORM_CT = "application/x-www-form-urlencoded";
 const ASK_ID = "11111111-2222-3333-4444-555555555555";
 
-const ASK = { id: ASK_ID, requestedMode: "once" } as never;
+const ASK = { domainScopeKey: "oe-grant-domain::slack-card-test", id: ASK_ID, requestedMode: "once" } as never;
 
 async function deliver(actions?: readonly { id: string; label: string; intent: "affirm" | "reject" }[]): Promise<Record<string, string>[]> {
   const bodies: Record<string, string>[] = [];

@@ -1,3 +1,5 @@
+import type { CredentialGrantMode } from "../operational/credential-grant-rows.js";
+
 const CONNECTOR_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   notion: "Notion",
 };
@@ -102,6 +104,13 @@ export function grantExpiryPhrase(expiresAtIso: string, nowMs: number): string {
   if (remaining <= 0) return "until it expires (it already has)";
   return `for the next ${grantSpanWords(remaining)} (until ${grantClockWords(new Date(at), remaining)})`;
 }
+
+export function grantSpanPhrase(facts: { readonly mode: CredentialGrantMode; readonly conversationStable: boolean; readonly expiresAt: string; readonly nowMs: number }): string {
+  if (facts.mode === "standing" && !facts.conversationStable) return GRANT_SESSION_BOUND_SPAN;
+  return grantExpiryPhrase(facts.expiresAt, facts.nowMs);
+}
+
+export const GRANT_SESSION_BOUND_SPAN = "for as long as this conversation lasts, and no longer";
 
 function grantSpanWords(ms: number): string {
   const minutes = Math.round(ms / 60_000);

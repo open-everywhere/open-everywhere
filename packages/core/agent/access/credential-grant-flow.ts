@@ -32,6 +32,7 @@ import {
   type GrantCardDelivery,
 } from "./credential-grant-card.js";
 import { grantOwnerSubject } from "./credential-grant-owner.js";
+import { grantScopeKeyForMode } from "./credential-grant-scope.js";
 import { postGrantResolution, type GrantNoticeOutcome } from "./credential-grant-resolution.js";
 import { pinFrozenArgsIntoSchema } from "./grant-schema-pin.js";
 import {
@@ -222,6 +223,7 @@ export type ApproveGrantOutcome =
       readonly reason:
         | "not_pending_or_expired"
         | "mint_refused"
+        | "standing_unavailable"
         | "owner_unresolvable"
         | "consent_required"
         | "catalogue_unreachable"
@@ -246,6 +248,8 @@ export async function approveCredentialGrant(
 
   const pending = await store.getCredentialGrantAsk(stamps.org, askId);
   if (pending === null || pending.status !== "pending" || pending.expiresAt <= nowIso) return { approved: false, reason: "not_pending_or_expired" };
+
+  if (grantScopeKeyForMode(mode, pending.scopeKey, pending.domainScopeKey) === undefined) return { approved: false, reason: "standing_unavailable" };
 
   const catalogue = await readApprovedToolSchema(stamps, pending, borrowDeps);
   if (!catalogue.ok) {
@@ -277,6 +281,7 @@ export async function approveCredentialGrant(
     ownerSlug: ask.ownerSlug,
     tier: verdict.tier,
   });
+  if (grant === undefined) return { approved: false, reason: "mint_refused" };
   await store.addCredentialGrant(stamps.org, grant);
   await auditGrant(stamps, "grant.granted", approverPrincipalId, {
     askId: ask.id,

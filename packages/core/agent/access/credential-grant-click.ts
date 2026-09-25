@@ -4,7 +4,7 @@ import { deploymentOrg } from "../identity/binding.js";
 import { tryPrincipalKey } from "../identity/principal-key.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { approveCredentialGrant, declineCredentialGrant, type ApproveGrantOutcome, type GrantAuditStamps } from "./credential-grant-flow.js";
-import { parseGrantCardActionId, type GrantCardAnswer } from "./credential-grant-card.js";
+import { GRANT_MODE_WORDS, grantModePhrase, parseGrantCardActionId, type GrantCardAnswer } from "./credential-grant-card.js";
 import { connectorDisplayName, grantActionPhrase, grantExpiryPhrase } from "./credential-grant-copy.js";
 import { type CredentialGrantMode, type CredentialGrantRow } from "../operational/credential-grant-rows.js";
 
@@ -105,6 +105,12 @@ export function grantApproveFailureText(reason: GrantApproveFailure["reason"], p
       return "That request pins values the tool does not take, so the grant could never have been spent. Nothing was granted, this request is closed, and the person who asked has been told.";
     case "owner_unresolvable":
       return "This deployment cannot resolve your account for that connector, so nothing could ever be spent under the grant. Nothing was granted. An operator fixes this, not another tap.";
+    case "standing_unavailable":
+      return (
+        `A grant for ${GRANT_MODE_WORDS.standing} needs a room this deployment can name, and this request did not come from one — ` +
+        "so it would stop working the moment that conversation ends. Nothing was granted and nothing was spent. " +
+        `Approve ${grantModePhrase("once")} or ${grantModePhrase("session")} on the same card instead, or ask an operator to declare that room into a domain.`
+      );
     case "not_pending_or_expired":
     case "mint_refused":
       return "That could not be granted. Nothing changed, and nothing was granted. Ask them to raise it again.";

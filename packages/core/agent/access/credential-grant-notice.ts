@@ -13,7 +13,8 @@ import {
   registerCoreGrantRoomNotice,
 } from "./grant-room-notice-registry.internal.js";
 import { GRANT_MODE_WORDS, grantBorrowPhrase, grantOwnerDmAddress } from "./credential-grant-card.js";
-import { connectorDisplayName, grantClockPhrase, grantDisplayLabel, grantExpiryPhrase, grantOwnerPhrase } from "./credential-grant-copy.js";
+import { connectorDisplayName, grantClockPhrase, grantDisplayLabel, grantOwnerPhrase, grantSpanPhrase } from "./credential-grant-copy.js";
+import { grantScopeKeyIsConversationStable } from "./credential-grant-key-shape.js";
 import { auditGrant, type GrantAuditStamps } from "./credential-grant-flow.js";
 
 function log(line: string): void {
@@ -68,7 +69,7 @@ export function grantOwnerNoticeText(grant: CredentialGrantRow, requesterLabel: 
     "",
     grant.mode === "once"
       ? "That was a one-shot grant, so it is now spent. Nothing else can be run with it."
-      : `This is the FIRST use of that grant, and the only notice you get for it. It stays live ${grantExpiryPhrase(grant.expiresAt, nowMs)}. Tell me here to end it and I will end it now.`,
+      : `This is the FIRST use of that grant, and the only notice you get for it. It stays live ${grantSpanPhrase({ conversationStable: grantScopeKeyIsConversationStable(grant.scopeKey), expiresAt: grant.expiresAt, mode: grant.mode, nowMs })}. Tell me here to end it and I will end it now.`,
   ].join("\n");
 }
 

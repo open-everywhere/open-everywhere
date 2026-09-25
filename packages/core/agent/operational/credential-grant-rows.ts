@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { connectorDisplayName, grantActionIsReviewed, grantActionPhrase, grantExpiryPhrase, grantOwnerPhrase } from "../access/credential-grant-copy.js";
+import { connectorDisplayName, grantActionIsReviewed, grantActionPhrase, grantOwnerPhrase, grantSpanPhrase } from "../access/credential-grant-copy.js";
+import { grantScopeKeyIsConversationStable } from "../access/credential-grant-key-shape.js";
 
 export type CredentialGrantMode = "once" | "session" | "standing";
 
@@ -291,7 +292,7 @@ export function credentialGrantRefusalMessage(
 }
 
 export function credentialGrantDisclosureLine(
-  row: Pick<CredentialGrantRow, "ownerSlug" | "connector" | "mcpTool" | "resource" | "frozenArgs" | "expiresAt" | "purpose">,
+  row: Pick<CredentialGrantRow, "ownerSlug" | "connector" | "mcpTool" | "resource" | "frozenArgs" | "expiresAt" | "purpose" | "mode" | "scopeKey">,
   nowMs: number,
 ): string {
   const owner = grantOwnerPhrase(row.ownerSlug);
@@ -302,7 +303,8 @@ export function credentialGrantDisclosureLine(
   const why = reason.length === 0 ? "" : ` The reason given was "${reason}".`;
   return (
     `acting as ${owner} — used ${owner}'s ${connectorDisplayName(row.connector)} account to ` +
-    `${grantActionPhrase(row.connector, row.mcpTool)}${on}${vague}, ${grantExpiryPhrase(row.expiresAt, nowMs)}.${why}`
+    `${grantActionPhrase(row.connector, row.mcpTool)}${on}${vague}, ` +
+    `${grantSpanPhrase({ conversationStable: grantScopeKeyIsConversationStable(row.scopeKey), expiresAt: row.expiresAt, mode: row.mode, nowMs })}.${why}`
   );
 }
 

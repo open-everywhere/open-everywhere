@@ -193,7 +193,7 @@ console.log("3. the golden:");
       "Tap one button to answer:",
       "• *Approve once* — one call that actually reaches Notion. An attempt blocked before it is sent costs nothing and can be retried — at most 4 attempts in one turn.",
       "• *Approve for this conversation* — every call that conversation makes, until the grant expires.",
-      "• *Approve for 30 days* — this one conversation, for 30 days. Wider than the two above only in TIME: no other room and no thread gets it, and no scheduled run can spend it — a person has to be here asking.",
+      "• *30 days* is NOT offered for this request. A grant that long has to belong to a room this deployment can name, and this request did not come from one — so it would stop working as soon as this conversation ends, without telling anyone. An operator can declare that room into a domain if this should be lendable for longer.",
       "• *Decline* — nothing is granted.",
       "",
       "A button is the only thing that can answer this. If the buttons are missing, or a tap seems to do nothing, nothing has been granted — the request then lapses on its own and they can raise a fresh one.",
@@ -215,23 +215,25 @@ console.log("3. the golden:");
   );
 
   const buttons = grantCardText(ask, "Ada Lovelace", undefined, "#proj-chat").split("\n");
-  const standingLine = buttons.find((l) => l.startsWith("• *Approve for 30 days*")) ?? "";
   const sessionLine = buttons.find((l) => l.startsWith("• *Approve for this conversation*")) ?? "";
-  ok(!standingLine.includes("group"), "🔴 …and never as a \"group\", which names no configured thing an operator could check");
-  ok(!standingLine.includes("a standing grant, clamped to a fixed"), "🔴 …and no longer describes only its clock, which said nothing about what it reaches");
-  ok(standingLine.includes("Wider than the two above"), "🔴 …and says out loud that it is the widest button, which is the fact an owner is choosing between");
-  ok(standingLine.includes("this one conversation") && !standingLine.includes("domain"), "🔴 a KEYLESS ask's standing button promises ONE conversation and names no domain");
-  ok(standingLine.includes("no other room and no thread gets it"), "🔴 …and says so as an exclusion the owner can check, not only as a span of days");
+  const withheldLine = buttons.find((l) => l.startsWith("• *30 days* is NOT offered")) ?? "";
+  ok(!buttons.some((l) => l.startsWith("• *Approve for 30 days*")), "🔴 a KEYLESS ask's card carries NO standing button — a 30-day promise this row could not keep is not made");
+  ok(withheldLine.includes("has to belong to a room this deployment can name"), "🔴 …and the line in its place says WHY, so the owner is not hunting for a missing button");
+  ok(withheldLine.includes("stop working as soon as this conversation ends"), "🔴 …naming the exact failure the old button produced");
+  ok(!withheldLine.includes("Approve"), "🔴 …and it offers nothing: a withheld arm must never read as a fourth answer");
   const domainLine =
     grantCardText({ ...ask, domainScopeKey: "oe-grant-domain::payments" }, "Ada Lovelace", undefined, "#proj-chat")
       .split("\n")
       .find((l) => l.startsWith("• *Approve for 30 days*")) ?? "";
+  ok(!domainLine.includes("group"), "🔴 …and the KEYED button never says \"group\", which names no configured thing an operator could check");
+  ok(!domainLine.includes("a standing grant, clamped to a fixed"), "🔴 …and no longer describes only its clock, which said nothing about what it reaches");
+  ok(domainLine.includes("Wider than the two above"), "🔴 …and says out loud that it is the widest button, which is the fact an owner is choosing between");
   ok(
     domainLine.includes("the rooms declared into this room's domain") && domainLine.includes("those other rooms can spend it too"),
     `🔴 an ask that DOES carry a domain key names the domain it reaches, in plain words (read: ${JSON.stringify(domainLine)})`,
   );
   ok(domainLine.includes("does NOT reach a thread"), "🔴 …and only THAT arm may claim the thread exclusion, because only that arm's row has it");
-  ok(domainLine !== standingLine, "🔴 NEGATIVE CONTROL: the two arms really differ — a card that rendered one sentence for both is what this pair exists to catch");
+  ok(domainLine !== withheldLine && domainLine.length > 0, "🔴 NEGATIVE CONTROL: the keyed arm really is a different line from the withheld one — a card that rendered one sentence for both is what this pair exists to catch");
   const roomCard = grantCardText({ ...ask, domainScopeKey: "oe-grant-room::payments::slack/T1/C_PAY" }, "Ada Lovelace", undefined, "#proj-chat").split("\n");
   const roomLine = roomCard.find((l) => l.startsWith("• *Approve for 30 days*")) ?? "";
   ok(!roomLine.includes("domain") && !roomLine.includes("other rooms can spend it"), `🔴 a ROOM-keyed ask's standing button names NO domain and no sibling room (read: ${JSON.stringify(roomLine)})`);
@@ -239,7 +241,7 @@ console.log("3. the golden:");
   ok(!roomLine.includes("no thread gets it") && !roomLine.includes("does NOT reach a thread"), "🔴 …and never claims a thread exclusion, which this row has not got");
   ok(roomLine.includes("keeps working after this one ends"), "🔴 …and says the thing that makes it different from the session button: it outlives the conversation that asked");
   ok(roomLine.includes("No OTHER room gets it") && roomLine.includes("no scheduled run can spend it"), "🔴 …while carrying the two exclusions this row DOES have");
-  ok(roomLine !== standingLine && roomLine !== domainLine, "🔴 NEGATIVE CONTROL: the room arm is its own sentence — folding it into either neighbour is what this block exists to catch");
+  ok(roomLine !== withheldLine && roomLine !== domainLine, "🔴 NEGATIVE CONTROL: the room arm is its own sentence — folding it into either neighbour is what this block exists to catch");
   ok(
     (roomCard.at(-1) ?? "").includes("Only conversations in the asker's own room can spend it"),
     "🔴 …and the CLOSING line branches with it, because it has to hold for the widest button",
@@ -251,7 +253,7 @@ console.log("3. the golden:");
   );
   ok(domainTail.includes("only while somebody is there asking"), "🔴 …while BOTH arms carry the attendance bound, which holds for every mode");
   ok(
-    standingLine.includes("no scheduled run can spend it") && standingLine.includes("a person has to be here asking"),
+    domainLine.includes("no scheduled run can spend it") && domainLine.includes("a person has to be here asking"),
     "🔴 …and says no scheduled run can spend it, because a person has to be in the room asking",
   );
   ok(sessionLine.includes("that conversation") && !sessionLine.includes("domain"), "🔴 NEGATIVE CONTROL: the SESSION button still bounds itself to one conversation — the two buttons say different things");
@@ -274,9 +276,14 @@ console.log("3. the golden:");
   ok(!(openTail ?? "").includes("nothing else in Notion"), "NEGATIVE CONTROL: the unpinned arm carries none of the pinned arm's reassurance");
 
   eq(
-    grantCardActions(ask).map((a) => a.label),
+    grantCardActions({ ...ask, domainScopeKey: "oe-grant-domain::payments" }).map((a) => a.label),
     ["Approve once", "Approve for this conversation", "Approve for 30 days", "Decline"],
-    "the four button labels",
+    "the four button labels, on the ask that CAN carry a 30-day grant",
+  );
+  eq(
+    grantCardActions(ask).map((a) => a.label),
+    ["Approve once", "Approve for this conversation", "Decline"],
+    "🔴 …and THREE on the keyless ask, so no tap can name an answer the mint would refuse (OPE-2160)",
   );
 
   eq(
@@ -760,11 +767,28 @@ console.log("5. the negative controls:");
     "…and the owner arm names a DM, never \"here\": `revoke_credential_grant` refuses every non-DM conversation",
   );
 
-  for (const mode of ["session", "standing"] as const) {
-    const dm = grantOwnerNoticeText({ ...leakyRow, mode }, undefined, NOW);
+  for (const [mode, scopeKey] of [
+    ["session", "sess-1"],
+    ["standing", "oe-grant-domain::payments"],
+  ] as const) {
+    const dm = grantOwnerNoticeText({ ...leakyRow, mode, scopeKey }, undefined, NOW);
     ok(dm.includes("Tell me here to end it and I will end it now."), `the owner's first-use DM names the route that ends it (${mode})`);
-    ok(dm.includes("It stays live for the next"), `…beside the rendered expiry phrase, never the raw ISO column (${mode})`);
+    ok(dm.includes("It stays live for the next"), `…beside the rendered span phrase, never the raw ISO column (${mode})`);
     ok(!dm.includes("There is no way to revoke it yet"), `…and no longer says the control is absent, which OPE-1637 made false (${mode})`);
+  }
+  {
+    const orphaned = grantOwnerNoticeText({ ...leakyRow, expiresAt: STANDING_EXPIRY, mode: "standing", scopeKey: "wrun_asking_seat" }, undefined, NOW);
+    ok(orphaned.includes("It stays live for as long as this conversation lasts"), `🔴 a session-bound standing row's first-use DM states the honest span (read: ${JSON.stringify(orphaned.split("\n").at(-1))})`);
+    ok(!/It stays live for the next \d+ day/u.test(orphaned), "🔴 …and never a number of days, which is the promise the next seat rotation breaks");
+    const keyed = grantOwnerNoticeText({ ...leakyRow, expiresAt: STANDING_EXPIRY, mode: "standing", scopeKey: "oe-grant-domain::payments" }, undefined, NOW);
+    ok(/It stays live for the next \d+ days/u.test(keyed), "🔴 NEGATIVE CONTROL: the SAME row on a DOMAIN key still states the days — this key can carry them");
+  }
+  {
+    const orphaned = credentialGrantDisclosureLine({ ...leakyRow, expiresAt: STANDING_EXPIRY, mode: "standing", scopeKey: "wrun_asking_seat" }, NOW);
+    ok(orphaned.includes("for as long as this conversation lasts"), `🔴 a session-bound standing row's room line states the honest span (read: ${JSON.stringify(orphaned.slice(-120))})`);
+    ok(!/for the next \d+ day/u.test(orphaned), "🔴 …and never a number of days");
+    const keyed = credentialGrantDisclosureLine({ ...leakyRow, expiresAt: STANDING_EXPIRY, mode: "standing", scopeKey: "oe-grant-room::payments::slack/T1/C_PAY" }, NOW);
+    ok(/for the next \d+ days/u.test(keyed), "🔴 NEGATIVE CONTROL: a ROOM-keyed row still states the days");
   }
   const onceDm = grantOwnerNoticeText({ ...leakyRow, mode: "once" }, undefined, NOW);
   ok(!onceDm.includes("Tell me here to end it"), "…and a ONCE grant offers nothing to end: its first call already spent it");

@@ -137,6 +137,13 @@ console.log("1. the mount reads the row, not a registry:");
     "🔴 NEGATIVE CONTROL: the ISO instant and the code-shaped `resource` column are both gone — the two shapes a relaying model used to put in a room",
   );
 
+  const sessionBound = descriptionOf(grantToolEntry(borrowRow({ expiresAt: "2099-01-01T00:00:00.000Z", mode: "standing", scopeKey: "wrun_asking_seat" })));
+  ok(sessionBound.includes("runs for as long as this conversation lasts"), `🔴 a session-bound standing row's description states the honest span (read: ${JSON.stringify(sessionBound.slice(-160))})`);
+  ok(!/runs for the next \d+ day/u.test(sessionBound), "🔴 …and never a number of days, which is the promise the rotation breaks");
+  const keyBound = descriptionOf(grantToolEntry(borrowRow({ expiresAt: "2099-01-01T00:00:00.000Z", mode: "standing", scopeKey: "oe-grant-domain::payments" })));
+  ok(/runs for the next \d+ days/u.test(keyBound), "🔴 NEGATIVE CONTROL: the SAME row on a DOMAIN key still states the days — this key can carry them");
+  ok(!keyBound.includes("as long as this conversation lasts"), "…and carries none of the narrow sentence, so the two arms really differ");
+
   eq(grantToolEntry(borrowRow({ inputSchema: undefined })), undefined, "a row with NO schema snapshot is skipped: there is no honest schema to offer");
   eq(mountedGrantName(borrowRow({ toolName: "grant__a__b__c" })), undefined, "a pinned FOUR-segment name is skipped rather than mounted — S0 reads it as no verb at all");
   eq(mountedGrantName(borrowRow({ toolName: "grant__rowan" })), undefined, "…and so is a two-segment one");

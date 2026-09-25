@@ -484,7 +484,7 @@ console.log("8. one reader-facing word per mode, on every surface that names one
 
   for (const mode of MODES) {
     const word = GRANT_MODE_WORDS[mode];
-    const ask = { ...askRowFixture, requestedMode: mode } as never;
+    const ask = { ...askRowFixture, domainScopeKey: "oe-grant-domain::approve-test", requestedMode: mode } as never;
     const grant = { ...grantRowFixture, mode } as never;
 
     const card = grantCardText(ask, "Ada");
@@ -547,7 +547,7 @@ console.log("8b. a widened grant is reported to the room, and only a widened one
 
 console.log("8c. the card's answer list reads as options, and promises no reply:");
 {
-  const card = grantCardText(askRowFixture as never, "Ada");
+  const card = grantCardText({ ...askRowFixture, domainScopeKey: "oe-grant-domain::approve-test" } as never, "Ada");
   const options = card.split("\n").filter((l) => l.startsWith("• *Approve") || l.startsWith("• *Decline"));
   eq(options.length, 4, "each of the four answers reads as its OWN line — the old copy ran them together as `once`, `conversation`, `standing` or `no`");
   ok(
@@ -560,6 +560,21 @@ console.log("8c. the card's answer list reads as options, and promises no reply:
   );
   ok(card.includes("nothing has been granted"), "…and a card whose buttons are missing or dead says NOTHING was granted…");
   ok(card.includes("lapses on its own"), "…and that the request lapses by itself, which is true on every surface");
+}
+
+console.log("8d. an ask that cannot carry a 30-day grant is not offered one:");
+{
+  const keyless = grantCardText({ ...askRowFixture, requestedMode: "standing" } as never, "Ada");
+  const options = keyless.split("\n").filter((l) => l.startsWith("• *Approve") || l.startsWith("• *Decline"));
+  eq(options.length, 3, "🔴 the keyless card lists exactly THREE answers");
+  ok(!options.some((l) => l.includes(GRANT_MODE_WORDS.standing)), `🔴 …and none of them is the ${GRANT_MODE_WORDS.standing} arm`);
+  ok(keyless.includes(`• *${GRANT_MODE_WORDS.standing}* is NOT offered`), "…while the card says the arm is withheld, rather than leaving a silent gap");
+  ok(keyless.includes("That is not on offer here"), "…and answers the ask's OWN requested mode, which here WAS the standing one");
+  eq(
+    grantCardActions({ ...askRowFixture, requestedMode: "standing" } as never).length,
+    3,
+    "🔴 …and the BUTTONS agree with the copy: no tap can even name the answer the mint would refuse",
+  );
 }
 
 console.log("9. an approve or a decline rewrites the owner's card — it no longer says 'tap one button':");

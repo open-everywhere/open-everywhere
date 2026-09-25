@@ -12,10 +12,19 @@ import {
   quotedPurpose,
   type CredentialGrantRow,
 } from "../operational/credential-grant-rows.js";
-import { connectorDisplayName, grantActionIsReviewed, grantActionPhrase, grantExpiryPhrase, grantOwnerPhrase, grantPinnedTargetSentence, grantTargetIsPinned } from "../access/credential-grant-copy.js";
+import {
+  connectorDisplayName,
+  grantActionIsReviewed,
+  grantActionPhrase,
+  grantOwnerPhrase,
+  grantPinnedTargetSentence,
+  grantSpanPhrase,
+  grantTargetIsPinned,
+} from "../access/credential-grant-copy.js";
 import { noteBorrowedRecordRead } from "../channels/read-reach.js";
 import { credentialGrantsInReach, domainScopeKeyInReach, sessionScopeKeyInReach } from "../access/credential-grant-reach.js";
 import { conversationGrainOf, grantDomainScopeVerdict, type GrantDomainScopeVerdict } from "../access/credential-grant-scope.js";
+import { grantScopeKeyIsConversationStable } from "../access/credential-grant-key-shape.js";
 import { auditGrant } from "../access/credential-grant-flow.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { requesterThisTurn, type RequesterVerdict } from "../access/requester-identity.js";
@@ -76,7 +85,8 @@ function borrowOffer(grant: CredentialGrantRow, mcpTool: string, nowMs: number):
   return {
     description:
       `Uses ${owner}'s own ${vendor} account to ${grantActionPhrase(grant.connector, mcpTool)}${on}${vague}. ${pin}${frozen} ` +
-      `The grant runs ${grantExpiryPhrase(grant.expiresAt, nowMs)}. An error from ${vendor} is the vendor's own answer, not a refusal by this grant.`,
+      `The grant runs ${grantSpanPhrase({ conversationStable: grantScopeKeyIsConversationStable(grant.scopeKey), expiresAt: grant.expiresAt, mode: grant.mode, nowMs })}. ` +
+      `An error from ${vendor} is the vendor's own answer, not a refusal by this grant.`,
     inputSchema: grant.inputSchema,
   };
 }
@@ -134,7 +144,7 @@ const GRANT_ENTRIES = new Map<string, { readonly fingerprint: string; readonly e
 
 function cachedGrantToolEntry(grant: CredentialGrantRow): ReplayableToolEntry | undefined {
   const nowMs = Date.now();
-  const fingerprint = `${JSON.stringify(grant)}|${grantExpiryPhrase(grant.expiresAt, nowMs)}`;
+  const fingerprint = `${JSON.stringify(grant)}|${grantSpanPhrase({ conversationStable: grantScopeKeyIsConversationStable(grant.scopeKey), expiresAt: grant.expiresAt, mode: grant.mode, nowMs })}`;
   const held = GRANT_ENTRIES.get(grant.id);
   if (held !== undefined && held.fingerprint === fingerprint) return held.entry;
   const entry = grantToolEntry(grant, nowMs);

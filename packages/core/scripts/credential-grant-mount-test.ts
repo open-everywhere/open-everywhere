@@ -25,6 +25,7 @@ import { selectConnectorTransport } from "../agent/connections/connector-transpo
 import { grantMcpTransport } from "../agent/connections/grant-mcp-transport.js";
 import { fakeMcpServer } from "./_fake-mcp-server.js";
 import { approveCredentialGrant, askForCredentialGrant, revokeCredentialGrant } from "../agent/access/credential-grant-flow.js";
+import { GRANT_STANDING_MAX_MS } from "../agent/access/credential-grant.js";
 import { _resetDynamicVariantsForTest, mountedEntryCollisions, preRegisterDynamicEntry, registerDynamicVariant, type ReplayableToolEntry } from "../agent/access/window-gated.js";
 import { registerPostArm, type DirectMessageRequest } from "../agent/channels/post-arms.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
@@ -105,9 +106,12 @@ registerGrantRoomNotice(async (line) => {
   return { posted: true };
 }, "test:credential-grant-mount");
 
-const askInput = (scopeKey: string, mode: "once" | "session" | "standing") => ({
+const DOMAIN_KEY = "oe-grant-domain::mount-test";
+
+const askInput = (scopeKey: string, mode: "once" | "session" | "standing", domainScopeKey?: string) => ({
   ...stamps,
   connector: "notion",
+  ...(domainScopeKey === undefined ? {} : { domainScopeKey }),
   domainGrantsConnector: true,
   explicit: false,
   nowMs: NOW,
@@ -176,10 +180,10 @@ console.log("1. ask -> owner card -> approve -> mount -> compose -> audit:");
 const store = getOperationalStore();
 const grantIds: Record<string, string> = {};
 
-for (const mode of ["once", "session", "standing"] as const) {
+for (const mode of ["once", "session"] as const) {
   const scopeKey = `session-${mode}`;
   const before = delivered.length;
-  const ask = await askForCredentialGrant(askInput(scopeKey, mode));
+  const ask = await askForCredentialGrant(askInput(scopeKey, mode, DOMAIN_KEY));
   ok(ask.sent, `[${mode}] the ask is SENT, not blocked on the owner — the requester's turn must not wait on a human elsewhere`);
   eq(delivered.length, before + 1, `[${mode}] exactly one card was delivered`);
   const card = delivered[delivered.length - 1];
@@ -219,6 +223,35 @@ for (const mode of ["once", "session", "standing"] as const) {
   ok(/for the next \d+ (minute|hour|day)s? \(until/u.test(line), `[${mode}] …and how long is left as a span, never the row's ISO expiry`);
   ok(!/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/u.test(line), `[${mode}] NEGATIVE CONTROL: no ISO instant survives into the room's most-read line`);
   ok(roomLines[roomLines.length - 1] === result.disclosure, `[${mode}] …and the same line went to the room notice arm, so the room sees it independently of what the model relays`);
+}
+
+console.log("   the standing mode:");
+{
+  const keyed = await askForCredentialGrant(askInput("session-standing", "standing", DOMAIN_KEY));
+  ok(keyed.sent, "[standing] the ask is sent");
+  eq(delivered[delivered.length - 1].actions?.length, 4, "[standing] a DOMAIN-KEYED ask's card carries the four mode buttons");
+  const approved = await approveCredentialGrant(stamps, keyed.sent ? keyed.askId : "", "standing", "slack/W1/U-owner", NOW + 500, undefined, BORROW_DEPS);
+  ok(approved.approved, "[standing] the owner's approval mints a grant");
+  const grant = approved.approved ? approved.grant : undefined;
+  eq(grant?.scopeKey, DOMAIN_KEY, "🔴 [standing] …bound to the DOMAIN key, never to the asking session");
+  eq(Date.parse(grant?.expiresAt ?? "") - (NOW + 500), GRANT_STANDING_MAX_MS, "[standing] …for the full 30-day ceiling measured from the TAP, unchanged");
+  const spent = (await runGrantedCall(grant?.id ?? "", { id: "abc123", page_size: 10 }, { ...callCtx("session-standing"), domainScopeKey: DOMAIN_KEY })) as { ok: boolean; refused?: string };
+  ok(spent.ok, `🔴 [standing] …and the row is spendable from a seat that resolves the same domain key (got ${String(spent.ok ? "ok" : spent.refused)})`);
+  eq((await store.getCredentialGrant(ORG, grant?.id ?? ""))?.status, "active", "[standing] …and it did NOT burn, like the session mode and unlike once");
+
+  const keyless = await askForCredentialGrant(askInput("session-standing-keyless", "standing"));
+  ok(keyless.sent, "[standing/keyless] the ask is still SENT — the ask verb is unchanged, only the answers on offer are");
+  eq(delivered[delivered.length - 1].actions?.length, 3, "🔴 [standing/keyless] …and the card carries THREE buttons: no 30-day answer is offered");
+  ok(
+    !(delivered[delivered.length - 1].actions ?? []).some((a) => a.id.includes(":standing:")),
+    "🔴 [standing/keyless] …no button names the standing answer at all",
+  );
+  const refused = await approveCredentialGrant(stamps, keyless.sent ? keyless.askId : "", "standing", "slack/W1/U-owner", NOW + 500, undefined, BORROW_DEPS);
+  ok(!refused.approved && refused.reason === "standing_unavailable", `🔴 [standing/keyless] a tap that names it anyway is REFUSED by name (got ${String(refused.approved ? "approved" : refused.reason)})`);
+  eq((await store.credentialGrantsForScope(ORG, "session-standing-keyless")).length, 0, "🔴 [standing/keyless] …and NOTHING was bound — no row at all, rather than a narrower one");
+  eq((await store.getCredentialGrantAsk(ORG, keyless.sent ? keyless.askId : ""))?.status, "pending", "[standing/keyless] …while the ask stays PENDING, so the owner can still answer one of the arms it did offer");
+  const narrowed = await approveCredentialGrant(stamps, keyless.sent ? keyless.askId : "", "session", "slack/W1/U-owner", NOW + 600, undefined, BORROW_DEPS);
+  ok(narrowed.approved, "🔴 [standing/keyless] NEGATIVE CONTROL: the SAME ask still approves as `session` — the refusal is the standing mode's alone, not a broken ask");
 }
 
 {

@@ -9,7 +9,7 @@ import {
 import { editSurfaceText } from "../channels/surface-message-ops.js";
 import { GRANT_STANDING_MAX_MS } from "./credential-grant.js";
 import { connectorDisplayName, grantActionIsReviewed, grantActionPhrase, grantConversationPhrase, grantExpiryPhrase, grantRequesterPhrase } from "./credential-grant-copy.js";
-import { grantScopeReachOf, type GrantScopeReach } from "./credential-grant-scope.js";
+import { grantScopeReachOf, type GrantScopeReach } from "./credential-grant-key-shape.js";
 import {
   flatDisplayName,
   grantResourceTargetLabel,
@@ -60,11 +60,18 @@ export function grantModePhrase(mode: CredentialGrantMode): string {
   return mode === "once" ? GRANT_MODE_WORDS.once : `for ${GRANT_MODE_WORDS[mode]}`;
 }
 
+export function grantCardStandingReach(ask: Pick<CredentialGrantAskRow, "domainScopeKey">): Exclude<GrantScopeReach, "session"> | undefined {
+  const reach = grantScopeReachOf(ask.domainScopeKey);
+  return reach === "session" ? undefined : reach;
+}
+
 export function grantCardActions(ask: CredentialGrantAskRow): readonly DirectMessageAction[] {
+  const standing: readonly DirectMessageAction[] =
+    grantCardStandingReach(ask) === undefined ? [] : [{ id: grantCardActionId(ask.id, "standing"), intent: "affirm", label: `Approve ${grantModePhrase("standing")}` }];
   return [
     { id: grantCardActionId(ask.id, "once"), intent: "affirm", label: `Approve ${grantModePhrase("once")}` },
     { id: grantCardActionId(ask.id, "session"), intent: "affirm", label: `Approve ${grantModePhrase("session")}` },
-    { id: grantCardActionId(ask.id, "standing"), intent: "affirm", label: `Approve ${grantModePhrase("standing")}` },
+    ...standing,
     { id: grantCardActionId(ask.id, "decline"), intent: "reject", label: "Decline" },
   ];
 }
@@ -79,6 +86,7 @@ export function grantCardText(ask: CredentialGrantAskRow, requesterLabel: string
   const vendor = connectorDisplayName(ask.connector);
   const where = flatDisplayName(grantConversationPhrase(conversationLabel));
   const reach = grantScopeReachOf(ask.domainScopeKey);
+  const standingReach = grantCardStandingReach(ask);
   return [
     `*${seat ?? who}* asks to use your ${vendor} account, for ${where}.`,
     "",
@@ -94,12 +102,14 @@ export function grantCardText(ask: CredentialGrantAskRow, requesterLabel: string
     `Their reason: "${quotedPurpose(ask.purpose)}"`,
     ...unreviewedToolLines(ask),
     ...frozenLines(ask),
-    `They asked for: ${GRANT_MODE_WORDS[ask.requestedMode]}. You choose the answer.`,
+    standingReach !== undefined || ask.requestedMode !== "standing"
+      ? `They asked for: ${GRANT_MODE_WORDS[ask.requestedMode]}. You choose the answer.`
+      : `They asked for: ${GRANT_MODE_WORDS.standing}. That is not on offer here — see below. You choose from the answers that are.`,
     "",
     "Tap one button to answer:",
     `• *Approve ${GRANT_MODE_WORDS.once}* — one call that actually reaches ${vendor}. An attempt blocked before it is sent costs nothing and can be retried — at most ${String(GRANT_ONCE_MAX_ATTEMPTS_PER_TURN)} attempts in one turn.`,
     `• *Approve for ${GRANT_MODE_WORDS.session}* — every call that conversation makes, until the grant expires.`,
-    standingButtonLine(reach),
+    standingReach === undefined ? standingWithheldLine() : standingButtonLine(standingReach),
     "• *Decline* — nothing is granted.",
     "",
     "A button is the only thing that can answer this. If the buttons are missing, or a tap seems to do nothing, nothing has been granted — the request then lapses on its own and they can raise a fresh one.",
@@ -123,16 +133,21 @@ export function grantBorrowPhrase(row: {
   return target === undefined ? action : `${action} — "${quotedPurpose(target)}"`;
 }
 
-function standingButtonLine(reach: GrantScopeReach): string {
+function standingButtonLine(reach: Exclude<GrantScopeReach, "session">): string {
   const head = `• *Approve for ${GRANT_MODE_WORDS.standing}*`;
   const days = String(STANDING_DAYS);
   if (reach === "domain") {
     return `${head} — the main conversation of this room and of the rooms declared into this room's domain, for ${days} days. Wider than the two above: those other rooms can spend it too, for this one tool with the values below. It does NOT reach a thread of those rooms, and no scheduled run can spend it — a person has to be here asking.`;
   }
-  if (reach === "room") {
-    return `${head} — this room, for ${days} days: every conversation here, threads included, and it keeps working after this one ends and a new one takes its place. Wider than the two above: anyone talking to me in this room can spend it, for this one tool with the values below. No OTHER room gets it, and no scheduled run can spend it — a person has to be here asking.`;
-  }
-  return `${head} — this one conversation, for ${days} days. Wider than the two above only in TIME: no other room and no thread gets it, and no scheduled run can spend it — a person has to be here asking.`;
+  return `${head} — this room, for ${days} days: every conversation here, threads included, and it keeps working after this one ends and a new one takes its place. Wider than the two above: anyone talking to me in this room can spend it, for this one tool with the values below. No OTHER room gets it, and no scheduled run can spend it — a person has to be here asking.`;
+}
+
+function standingWithheldLine(): string {
+  return (
+    `• *${String(STANDING_DAYS)} days* is NOT offered for this request. A grant that long has to belong to a room this deployment can name, ` +
+    "and this request did not come from one — so it would stop working as soon as this conversation ends, without telling anyone. " +
+    "An operator can declare that room into a domain if this should be lendable for longer."
+  );
 }
 
 function closingReassurance(ask: CredentialGrantAskRow, where: string, vendor: string, reach: GrantScopeReach): string {

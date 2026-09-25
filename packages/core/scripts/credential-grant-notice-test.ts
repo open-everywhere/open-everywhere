@@ -211,7 +211,7 @@ console.log("1. the host-authored copy:");
 }
 
 console.log("2. a granted call through the mounted tool posts into the room:");
-const sessionGrant = await mintGrant("session-standing", "standing");
+const sessionGrant = await mintGrant("session-standing", "session");
 {
   const dmsAfterCard = dmed.length;
   const result = await callThroughMount("session-standing");
@@ -242,7 +242,7 @@ console.log("3. the SECOND use: the room sees it again, the owner is not paged a
   const postsBefore = posted.length;
   const dmsBefore = dmed.length;
   const result = await callThroughMount("session-standing");
-  ok(result.ok, "the second call on the same standing grant succeeded");
+  ok(result.ok, "the second call on the same non-burning grant succeeded");
   eq(posted.length, postsBefore + 1, "the room sees the SECOND use too — every granted call discloses, and the unarmed dedupe (§1's source pin) is what keeps postOnce from swallowing an identical body");
   eq(dmed.length, dmsBefore, "…and the owner is NOT DMed again: the notice is a first-use affordance, not a pager");
   eq(await store.noticeClaimed(ORG, grantUseNoticeKey(sessionGrant)), true, "…because the lifetime claim for this grant is already held");
@@ -258,13 +258,13 @@ console.log("4. once-mode — the burn notifies the owner and says the grant is 
   eq(posted.length, postsBefore + 1, "the room saw it");
   eq(dmed.length, dmsBefore + 1, "…and the owner was DMed on the burn");
   ok(dmed[dmed.length - 1].text.includes("one-shot grant, so it is now spent"), "…with copy that says the grant is spent, not that more calls may follow");
-  ok(!dmed[dmed.length - 1].text.includes("FIRST use"), "NEGATIVE CONTROL: the standing-grant sentence is NOT used for a burn — the branch really branches");
+  ok(!dmed[dmed.length - 1].text.includes("FIRST use"), "NEGATIVE CONTROL: the non-burning sentence is NOT used for a burn — the branch really branches");
   eq((await store.getCredentialGrant(ORG, onceGrant))?.status, "used", "…and the row is spent");
 }
 
 console.log("5. NEGATIVE CONTROL — a refused call posts nothing and DMs nobody:");
 {
-  eq(await revokeCredentialGrant(stamps, sessionGrant, "slack/T1/U-owner", "thread", NOW + 2000), true, "the owner revokes the standing grant");
+  eq(await revokeCredentialGrant(stamps, sessionGrant, "slack/T1/U-owner", "thread", NOW + 2000), true, "the owner revokes the lent grant");
   const postsBefore = posted.length;
   const dmsBefore = dmed.length;
   const sentBefore = sent.length;
@@ -277,7 +277,7 @@ console.log("5. NEGATIVE CONTROL — a refused call posts nothing and DMs nobody
 
 console.log("6. NEGATIVE CONTROL — the broker driven OUTSIDE the mount notices nothing:");
 {
-  const grantId = await mintGrant("session-bare", "standing");
+  const grantId = await mintGrant("session-bare", "session");
   const postsBefore = posted.length;
   const dmsBefore = dmed.length;
   const result = await runGrantedCall(grantId, {}, { ...stamps, nowMs: NOW + 1000, requesterPrincipalId: "slack/T1/U-req", scopeKey: "session-bare" });
@@ -289,7 +289,7 @@ console.log("6. NEGATIVE CONTROL — the broker driven OUTSIDE the mount notices
 
 console.log("7. an unaddressable room still DMs the owner:");
 {
-  const grantId = await mintGrant("session-noroom", "standing");
+  const grantId = await mintGrant("session-noroom", "session");
   const postsBefore = posted.length;
   const dmsBefore = dmed.length;
   await withGrantRoomContext({ ctx: seatCtx("session-noroom", false), ...stamps }, () =>
@@ -301,7 +301,7 @@ console.log("7. an unaddressable room still DMs the owner:");
 
 console.log("7b. no DM arm — the first-use claim survives:");
 {
-  const grantId = await mintGrant("session-nodm", "standing");
+  const grantId = await mintGrant("session-nodm", "session");
   registerPostArm({ ...slackArmMembers, platform: "slack" });
   const postsBefore = posted.length;
   const dmsBefore = dmed.length;
@@ -358,7 +358,7 @@ console.log("8. the audit log:");
 
 console.log("8b. the owner DM fails — and the failure is a row:");
 {
-  const grantId = await mintGrant("session-dmfail", "standing");
+  const grantId = await mintGrant("session-dmfail", "session");
   const notifiedBefore = (await readAudit({ org: ORG })).filter((r) => r.action === "grant.notified").length;
   const dmsBefore = dmed.length;
   registerPostArm({
@@ -416,7 +416,7 @@ console.log("10. a registered display-name arm resolves a label, and the princip
 
   registerAccountDisplayName("slack", async (nativeId) => (nativeId === "U-req" ? { handle: "rae", name: "Rae Chen" } : undefined));
 
-  await mintGrant("session-label", "standing");
+  await mintGrant("session-label", "session");
   const dmsBefore = dmed.length;
   const result = await callThroughMount("session-label");
   ok(result.ok, "the granted call succeeded");
@@ -432,7 +432,7 @@ console.log("10. a registered display-name arm resolves a label, and the princip
 
 console.log("11. NEGATIVE CONTROL — no display-name arm resolves ⇒ the notice falls back to the principal key alone:");
 {
-  await mintGrant("session-nolabel", "standing");
+  await mintGrant("session-nolabel", "session");
   const dmsBefore = dmed.length;
   const result = await callThroughMount("session-nolabel");
   ok(result.ok, "the granted call succeeded");

@@ -202,7 +202,9 @@ export function credentialGrantFromAsk(
     readonly expiresAt: string;
     readonly inputSchema?: GrantJsonObject;
   },
-): CredentialGrantRow {
+): CredentialGrantRow | undefined {
+  const scopeKey = grantScopeKeyForMode(fields.mode, ask.scopeKey, ask.domainScopeKey);
+  if (scopeKey === undefined) return undefined;
   return {
     id: fields.grantId,
     askId: ask.id,
@@ -216,7 +218,7 @@ export function credentialGrantFromAsk(
     ...(ask.frozenArgs === undefined ? {} : { frozenArgs: ask.frozenArgs }),
     ...(ask.toolName === undefined ? {} : { toolName: ask.toolName }),
     ...(fields.inputSchema === undefined ? {} : { inputSchema: fields.inputSchema }),
-    scopeKey: grantScopeKeyForMode(fields.mode, ask.scopeKey, ask.domainScopeKey),
+    scopeKey,
     mode: fields.mode,
     tier: fields.tier,
     status: "active",

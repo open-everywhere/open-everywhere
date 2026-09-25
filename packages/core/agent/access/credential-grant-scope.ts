@@ -3,25 +3,17 @@ import { domainForChannel, windowedSupervisorEnabled } from "../memory/domain.js
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import type { CredentialGrantMode, CredentialGrantRow } from "../operational/credential-grant-rows.js";
 import { getConfig } from "./config.js";
-
-const GRANT_DOMAIN_KEY_PREFIX = "oe-grant-domain::";
-
-const GRANT_ROOM_KEY_PREFIX = "oe-grant-room::";
-
-const GRANT_KEY_SEGMENT_SEPARATOR = "::";
+import {
+  GRANT_DOMAIN_KEY_PREFIX,
+  GRANT_KEY_SEGMENT_SEPARATOR,
+  GRANT_ROOM_KEY_PREFIX,
+} from "./credential-grant-key-shape.js";
 
 const GRANT_CONVERSATION_GRAIN: WindowGrain = "standing";
 
 const GRANT_ROOM_GRAIN: WindowGrain = "native";
 
 export type GrantDomainScopeGate = "unreadable" | "unresolved_mode" | "dm" | "no_domain" | "unattended" | "non_standing_grain" | "ambiguous_domain_name";
-
-export type GrantScopeReach = "session" | "room" | "domain";
-
-export function grantScopeReachOf(domainScopeKey: string | undefined): GrantScopeReach {
-  if (domainScopeKey === undefined || domainScopeKey.length === 0) return "session";
-  return domainScopeKey.startsWith(GRANT_ROOM_KEY_PREFIX) ? "room" : "domain";
-}
 
 export type GrantDomainScopeVerdict =
   | { readonly admitted: true; readonly scopeKey: string }
@@ -60,8 +52,9 @@ export function grantDomainScopeKey(ctx: BindableContext): string | undefined {
   return verdict.admitted ? verdict.scopeKey : undefined;
 }
 
-export function grantScopeKeyForMode(mode: CredentialGrantMode, sessionScopeKey: string, domainScopeKey: string | undefined): string {
-  return mode === "standing" && domainScopeKey !== undefined && domainScopeKey.length > 0 ? domainScopeKey : sessionScopeKey;
+export function grantScopeKeyForMode(mode: CredentialGrantMode, sessionScopeKey: string, domainScopeKey: string | undefined): string | undefined {
+  if (mode !== "standing") return sessionScopeKey;
+  return domainScopeKey !== undefined && domainScopeKey.length > 0 ? domainScopeKey : undefined;
 }
 
 export function grantScopeAdmits(

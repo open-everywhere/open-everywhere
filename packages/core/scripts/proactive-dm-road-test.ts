@@ -231,7 +231,7 @@ let grantScope = "";
   ok(!(await readDmAudience(ORG, BOB)).stopped, "Bob's stop is lifted");
 
   const before = dmed.length;
-  const ask = await askForCredentialGrant(askInput("session-live", "session"));
+  const ask = await askForCredentialGrant({ ...askInput("session-live", "session"), domainScopeKey: "oe-grant-domain::stop-test" });
   ok(ask.sent, `the SAME ask now goes out (got ${JSON.stringify(ask)})`);
   ok(dmed.length === before + 1, "exactly one card reached Bob's DM");
   const card = dmed[dmed.length - 1]!;

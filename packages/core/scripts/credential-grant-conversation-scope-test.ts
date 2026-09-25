@@ -12,7 +12,8 @@ delete process.env.OE_PLATFORM;
 
 const { registerConfig } = await import("../agent/access/config.js");
 const { registerIdentityMapper } = await import("../agent/identity/binding.js");
-const { grantDomainScopeKey, grantDomainScopeVerdict, grantScopeAdmits, grantScopeKeyForMode, grantScopeReachOf } = await import("../agent/access/credential-grant-scope.js");
+const { grantDomainScopeKey, grantDomainScopeVerdict, grantScopeAdmits, grantScopeKeyForMode } = await import("../agent/access/credential-grant-scope.js");
+const { grantScopeKeyIsConversationStable, grantScopeReachOf } = await import("../agent/access/credential-grant-key-shape.js");
 const { routineFireAttributes, webhookFireAttributes } = await import("../agent/routines/fire-auth.js");
 const { _setDeploymentIdentityForTest } = await import("../agent/identity/deployment-identity.js");
 const { windowedSupervisorEnabled } = await import("../agent/memory/domain.js");
@@ -276,6 +277,95 @@ try {
   }
 
   ok(!grantDomainScopeVerdict(liveCtx("task") as never).admitted, "§worker: control — a `task` session that is NOBODY'S CHILD is still refused, so the stamp is read only for a real delegated worker");
+}
+
+{
+  const { grantCardActions, grantCardStandingReach, grantCardText, GRANT_MODE_WORDS } = await import("../agent/access/credential-grant-card.js");
+  const { GRANT_SESSION_BOUND_SPAN, grantSpanPhrase } = await import("../agent/access/credential-grant-copy.js");
+  const { credentialGrantExpiry, credentialGrantFromAsk, GRANT_STANDING_MAX_MS } = await import("../agent/access/credential-grant.js");
+
+  const NOW = Date.parse("2026-09-25T00:00:00.000Z");
+  const ASK_SESSION = "wrun_asking_seat";
+
+  const askFor = (domainScopeKey: string | undefined): never =>
+    ({
+      connector: "notion",
+      createdAt: new Date(NOW).toISOString(),
+      ...(domainScopeKey === undefined ? {} : { domainScopeKey }),
+      expiresAt: new Date(NOW + 30 * 60_000).toISOString(),
+      frozenArgs: { id: "abc123" },
+      id: "ask-2160",
+      mcpTool: "notion-fetch",
+      ownerNativeId: "U-owner",
+      ownerPlatform: "slack",
+      ownerPrincipalId: "slack/W1/U-owner",
+      ownerSlug: "rowan_hale",
+      purpose: "read the launch page",
+      requestedMode: "standing",
+      requesterPrincipalId: "slack/W1/U-req",
+      resource: "Launch page",
+      scopeKey: ASK_SESSION,
+      status: "pending",
+      toolName: "grant__rowan_hale_notion__notion_fetch",
+      verb: "notion_fetch",
+    }) as never;
+
+  const MINT_FIELDS = { expiresAt: credentialGrantExpiry("standing", NOW), grantId: "g-2160", nowIso: new Date(NOW).toISOString(), ownerSlug: "rowan_hale", tier: "read" as const };
+
+  const refusedLeg = (label: string, ctx: unknown, gate: string): void => {
+    const verdict = grantDomainScopeVerdict(ctx as never);
+    ok(!verdict.admitted && verdict.gate === gate, `§promise/${label}: the gate under test really refuses (got ${String(verdict.admitted ? "admitted" : verdict.gate)})`);
+    const key = grantDomainScopeKey(ctx as never);
+    ok(key === undefined, `§promise/${label}: …so the ask records NO domain key`);
+    const ask = askFor(key);
+
+    ok(grantCardStandingReach(ask) === undefined, `§promise/${label}: 🔴 the card offers no standing arm`);
+    const ids = grantCardActions(ask).map((a) => a.id);
+    ok(!ids.some((id) => id.includes(":standing:")), `§promise/${label}: 🔴 …no button carries the standing answer, so no tap can even name it (got ${ids.join(", ")})`);
+    ok(ids.some((id) => id.includes(":once:")) && ids.some((id) => id.includes(":session:")) && ids.some((id) => id.includes(":decline:")), `§promise/${label}: …while the three answerable arms are all still there`);
+    const text = grantCardText(ask, "Alex");
+    ok(!text.includes(`*Approve for ${GRANT_MODE_WORDS.standing}*`), `§promise/${label}: 🔴 …and the body describes no standing button either`);
+    ok(text.includes(`*${String(Math.round(GRANT_STANDING_MAX_MS / 86_400_000))} days* is NOT offered`), `§promise/${label}: …it says so out loud, rather than leaving the owner hunting for a button`);
+    ok(text.includes("That is not on offer here"), `§promise/${label}: …and it answers the ask's OWN requested mode, which was the standing one`);
+
+    ok(grantScopeKeyForMode("standing", ASK_SESSION, key) === undefined, `§promise/${label}: 🔴 the mint refuses the standing mode rather than falling back to the asking session`);
+    ok(credentialGrantFromAsk(ask, { ...MINT_FIELDS, mode: "standing" }) === undefined, `§promise/${label}: 🔴 …and composes NO row, so nothing carries a 30-day clock on a session key`);
+    const stillSession = credentialGrantFromAsk(ask, { ...MINT_FIELDS, expiresAt: credentialGrantExpiry("session", NOW), mode: "session" });
+    ok(stillSession?.scopeKey === ASK_SESSION, `§promise/${label}: NEGATIVE CONTROL: the same ask still mints a \`session\` row on the asking session — the refusal is the standing mode's alone`);
+
+    const legacy = { conversationStable: grantScopeKeyIsConversationStable(ASK_SESSION), expiresAt: MINT_FIELDS.expiresAt, mode: "standing" as const, nowMs: NOW };
+    ok(grantSpanPhrase(legacy) === GRANT_SESSION_BOUND_SPAN, `§promise/${label}: 🔴 a standing row already bound to a session reads as this conversation, never as a number of days`);
+    ok(!grantSpanPhrase(legacy).includes("30 days"), `§promise/${label}: …so no surface repeats the 30-day promise the key cannot keep`);
+  };
+
+  refusedLeg("dm", dm, "dm");
+  refusedLeg("no_domain", liveCtx("standing", OUTSIDE), "no_domain");
+  refusedLeg("thread_grain", threadSeat, "non_standing_grain");
+  refusedLeg("unattended_fire", dispatchedFire, "unattended");
+  useDomains([{ name: `odd::name`, reach: [`${PLATFORM}/${WS}/${ROOM}`] }]);
+  refusedLeg("ambiguous_domain_name", liveCtx("native"), "ambiguous_domain_name");
+  useDomains(DECLARED);
+
+  {
+    const key = grantDomainScopeKey(standingSeat as never);
+    ok(key === KEY, "§promise: the admitted seat still answers the domain key");
+    const ask = askFor(key);
+    ok(grantCardStandingReach(ask) === "domain", "§promise: 🔴 the card DOES offer the standing arm on a declared domain");
+    ok(
+      grantCardActions(ask).some((a) => a.id.includes(":standing:")),
+      "§promise: …the 30-day button is rendered",
+    );
+    const text = grantCardText(ask, "Alex");
+    ok(text.includes(`*Approve for ${GRANT_MODE_WORDS.standing}*`), "§promise: …the body describes it");
+    ok(!text.includes("is NOT offered"), "§promise: …and says nothing about a withheld arm");
+    const grant = credentialGrantFromAsk(ask, { ...MINT_FIELDS, mode: "standing" });
+    ok(grant?.scopeKey === KEY, `§promise: 🔴 …and the mint binds the row to the DOMAIN key (got ${String(grant?.scopeKey)})`);
+    ok(Date.parse(grant?.expiresAt ?? "") - NOW === GRANT_STANDING_MAX_MS, "§promise: …for the full 30 days, unchanged");
+    ok(
+      grantSpanPhrase({ conversationStable: grantScopeKeyIsConversationStable(grant?.scopeKey ?? ""), expiresAt: grant?.expiresAt ?? "", mode: "standing", nowMs: NOW }).includes("30 days"),
+      "§promise: 🔴 …and the lent tool says 30 days, because this key can carry them",
+    );
+  }
 }
 
 console.log(`credential-grant-conversation-scope: ${String(n)} assertions passed`);

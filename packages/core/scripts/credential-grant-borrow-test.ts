@@ -567,20 +567,21 @@ console.log("6. the ask's borrow columns reach the grant:");
     ownerSlug: ask.ownerSlug,
     tier: "read",
   });
-  eq(grant.mcpTool, "notion-fetch", "the vendor tool the owner's card named is the one the grant carries");
-  eq(grant.frozenArgs, FROZEN, "…and so are the frozen arguments the card rendered");
-  eq(grant.toolName, "grant__rowan_long_notion__notion_fetch", "…and the mounted name the card promised, ordinal and all");
-  eq(grant.inputSchema, SCHEMA, "…while the schema snapshot comes from the APPROVE-time read, not from the ask");
+  eq(grant?.mcpTool, "notion-fetch", "the vendor tool the owner's card named is the one the grant carries");
+  eq(grant?.frozenArgs, FROZEN, "…and so are the frozen arguments the card rendered");
+  eq(grant?.toolName, "grant__rowan_hale_notion__notion_fetch", "…and the mounted name the card promised, ordinal and all");
+  eq(grant?.inputSchema, SCHEMA, "…while the schema snapshot comes from the APPROVE-time read, not from the ask");
 }
 {
   const legacy = credentialGrantFromAsk(
     { ...askRow("ask-legacy"), frozenArgs: undefined, mcpTool: undefined, toolName: undefined },
     { expiresAt: iso(NOW + 60 * 60_000), grantId: "g-carry-legacy", mode: "once", nowIso: iso(NOW), ownerSlug: "rowan_hale", tier: "read" },
   );
-  eq(legacy.mcpTool, undefined, "the carry copies an ABSENT vendor tool as absent — it never invents one");
-  eq(legacy.frozenArgs, undefined, "…and absent frozen arguments stay absent, never {}");
-  eq(legacy.toolName, undefined, "…and no pinned mounted name is composed in its place");
-  eq(legacy.inputSchema, undefined, "…and no schema snapshot");
+  ok(legacy !== undefined, "the once-mode carry mints a row — the mint refuses no mode here");
+  eq(legacy?.mcpTool, undefined, "the carry copies an ABSENT vendor tool as absent — it never invents one");
+  eq(legacy?.frozenArgs, undefined, "…and absent frozen arguments stay absent, never {}");
+  eq(legacy?.toolName, undefined, "…and no pinned mounted name is composed in its place");
+  eq(legacy?.inputSchema, undefined, "…and no schema snapshot");
 }
 
 console.log(`\n✅ credential-grant borrow rows + grammar: ${String(n)} assertions passed`);

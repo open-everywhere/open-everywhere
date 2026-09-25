@@ -142,6 +142,7 @@ const mintGrant = async (opts: {
   const ask = await askForCredentialGrant({
     ...stamps,
     connector: "notion",
+    domainScopeKey: "oe-grant-domain::revoke-test",
     domainGrantsConnector: true,
     explicit: false,
     frozenArgs: { id: opts.pageId ?? "abc123" },

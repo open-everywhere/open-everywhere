@@ -101,6 +101,7 @@ const store = getOperationalStore();
 async function raise(scope: string): Promise<string> {
   const outcome = await askForCredentialGrant({
     connector: "notion",
+    domainScopeKey: "oe-grant-domain::discord-click-test",
     domainGrantsConnector: true,
     explicit: false,
     frozenArgs: { id: `page-${scope}` },
