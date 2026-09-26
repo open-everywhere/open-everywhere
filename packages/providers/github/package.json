@@ -1,0 +1,151 @@
+{
+  "name": "@open-everywhere/provider-github",
+  "version": "0.1.0",
+  "description": "Open Everywhere GitHub provider — GitHub as a wake surface and source-control connector.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "homepage": "https://github.com/open-everywhere/open-everywhere/tree/main/packages/providers/github",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/open-everywhere/open-everywhere.git",
+    "directory": "packages/providers/github"
+  },
+  "bugs": {
+    "url": "https://github.com/open-everywhere/open-everywhere/issues"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "agent",
+    "dist",
+    "tsconfig.json",
+    "tsconfig.build.json",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "exports": {
+    "./package.json": "./package.json",
+    "./agent/channels/github-catch-up.js": {
+      "types": "./dist/agent/channels/github-catch-up.d.ts",
+      "default": "./dist/agent/channels/github-catch-up.js"
+    },
+    "./agent/channels/github-engagement.js": {
+      "types": "./dist/agent/channels/github-engagement.d.ts",
+      "default": "./dist/agent/channels/github-engagement.js"
+    },
+    "./agent/channels/github-identity.js": {
+      "types": "./dist/agent/channels/github-identity.d.ts",
+      "default": "./dist/agent/channels/github-identity.js"
+    },
+    "./agent/channels/github-installations.js": {
+      "types": "./dist/agent/channels/github-installations.d.ts",
+      "default": "./dist/agent/channels/github-installations.js"
+    },
+    "./agent/channels/github-message-ops.js": {
+      "types": "./dist/agent/channels/github-message-ops.d.ts",
+      "default": "./dist/agent/channels/github-message-ops.js"
+    },
+    "./agent/channels/github-origin-codec.js": {
+      "types": "./dist/agent/channels/github-origin-codec.d.ts",
+      "default": "./dist/agent/channels/github-origin-codec.js"
+    },
+    "./agent/channels/github-post-arm.js": {
+      "types": "./dist/agent/channels/github-post-arm.d.ts",
+      "default": "./dist/agent/channels/github-post-arm.js"
+    },
+    "./agent/channels/github-reaction-feedback.js": {
+      "types": "./dist/agent/channels/github-reaction-feedback.d.ts",
+      "default": "./dist/agent/channels/github-reaction-feedback.js"
+    },
+    "./agent/channels/github-reaction-scope.js": {
+      "types": "./dist/agent/channels/github-reaction-scope.d.ts",
+      "default": "./dist/agent/channels/github-reaction-scope.js"
+    },
+    "./agent/channels/github-read.js": {
+      "types": "./dist/agent/channels/github-read.d.ts",
+      "default": "./dist/agent/channels/github-read.js"
+    },
+    "./agent/channels/github-stop.js": {
+      "types": "./dist/agent/channels/github-stop.d.ts",
+      "default": "./dist/agent/channels/github-stop.js"
+    },
+    "./agent/channels/github-supervisor.js": {
+      "types": "./dist/agent/channels/github-supervisor.d.ts",
+      "default": "./dist/agent/channels/github-supervisor.js"
+    },
+    "./agent/channels/github-webhook-verifier.js": {
+      "types": "./dist/agent/channels/github-webhook-verifier.d.ts",
+      "default": "./dist/agent/channels/github-webhook-verifier.js"
+    },
+    "./agent/channels/github.js": {
+      "types": "./dist/agent/channels/github.d.ts",
+      "default": "./dist/agent/channels/github.js"
+    },
+    "./agent/contributions.js": {
+      "types": "./dist/agent/contributions.d.ts",
+      "default": "./dist/agent/contributions.js"
+    },
+    "./agent/docs-generated.js": {
+      "types": "./dist/agent/docs-generated.d.ts",
+      "default": "./dist/agent/docs-generated.js"
+    },
+    "./agent/memory/memory.js": {
+      "types": "./dist/agent/memory/memory.d.ts",
+      "default": "./dist/agent/memory/memory.js"
+    },
+    "./agent/ops.js": {
+      "types": "./dist/agent/ops.d.ts",
+      "default": "./dist/agent/ops.js"
+    },
+    "./agent/provider-events.js": {
+      "types": "./dist/agent/provider-events.d.ts",
+      "default": "./dist/agent/provider-events.js"
+    },
+    "./agent/register.js": {
+      "types": "./dist/agent/register.d.ts",
+      "default": "./dist/agent/register.js"
+    },
+    "./agent/surface-parity.js": {
+      "types": "./dist/agent/surface-parity.d.ts",
+      "default": "./dist/agent/surface-parity.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "npm run test:chain",
+    "test:chain": "npm run test:github-supervisor && npm run test:github-identity && npm run test:github-post-arm && npm run test:github-installations && npm run test:github-webhook-verifier && npm run test:github-memory && npm run test:github-stop && npm run test:github-engagement && npm run test:github-reaction-feedback && npm run test:github-read && npm run test:github-mint-scope && npm run test:github-message-ops && npm run test:github-wake-failure-audit && npm run test:github-rate-limit && npm run test:github-write-seam && npm run test:github-reaction-scope",
+    "test:github-wake-failure-audit": "NODE_NO_WARNINGS=1 tsx scripts/github-wake-failure-audit-test.ts",
+    "test:github-rate-limit": "NODE_NO_WARNINGS=1 tsx scripts/github-rate-limit-test.ts",
+    "test:github-write-seam": "NODE_NO_WARNINGS=1 tsx scripts/github-write-seam-test.ts",
+    "test:github-read": "NODE_NO_WARNINGS=1 tsx scripts/github-read-test.ts",
+    "test:github-message-ops": "NODE_NO_WARNINGS=1 tsx scripts/github-message-ops-test.ts",
+    "test:github-supervisor": "NODE_NO_WARNINGS=1 tsx scripts/github-supervisor-test.ts",
+    "test:github-identity": "NODE_NO_WARNINGS=1 tsx scripts/github-identity-test.ts",
+    "test:github-post-arm": "NODE_NO_WARNINGS=1 tsx scripts/github-post-arm-test.ts",
+    "test:github-installations": "NODE_NO_WARNINGS=1 tsx scripts/github-installations-test.ts",
+    "test:github-webhook-verifier": "NODE_NO_WARNINGS=1 tsx scripts/github-webhook-verifier-test.ts",
+    "test:github-memory": "NODE_NO_WARNINGS=1 tsx scripts/github-memory-test.ts",
+    "test:github-stop": "NODE_NO_WARNINGS=1 tsx scripts/github-stop-test.ts",
+    "test:github-reaction-feedback": "NODE_NO_WARNINGS=1 tsx scripts/github-reaction-feedback-test.ts",
+    "test:github-engagement": "NODE_NO_WARNINGS=1 tsx scripts/github-engagement-test.ts",
+    "test:github-mint-scope": "NODE_NO_WARNINGS=1 tsx scripts/github-mint-scope-test.ts",
+    "test:github-reaction-scope": "NODE_NO_WARNINGS=1 tsx scripts/github-reaction-scope-test.ts"
+  },
+  "dependencies": {
+    "@open-everywhere/core": "0.1.0",
+    "zod": "4.5.4"
+  },
+  "peerDependencies": {
+    "eve": "0.54.3"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "tsx": "latest",
+    "typescript": "latest"
+  }
+}

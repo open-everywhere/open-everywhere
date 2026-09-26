@@ -1,0 +1,45 @@
+{
+  "name": "create-open-everywhere",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "description": "npx-style install wizard for Open Everywhere — one setup engine, driven interactively or via --check.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/open-everywhere/open-everywhere.git",
+    "directory": "packages/create"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "create-open-everywhere": "./bin/create-open-everywhere.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "NOTICE",
+    "LICENSE"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "cli": "tsx src/cli.ts",
+    "test:engine": "tsx scripts/engine-test.ts",
+    "test:telemetry": "NODE_NO_WARNINGS=1 tsx scripts/telemetry-test.ts",
+    "test:cli": "tsx scripts/cli-check-test.ts",
+    "test": "npm run test:chain",
+    "test:chain": "npm run test:engine && npm run test:telemetry && npm run test:cli"
+  },
+  "dependencies": {
+    "@open-everywhere/core": "0.1.0",
+    "@open-everywhere/provider-slack": "0.1.0",
+    "tsx": "^4.23.9"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "typescript": "latest"
+  }
+}

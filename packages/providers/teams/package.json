@@ -1,0 +1,177 @@
+{
+  "name": "@open-everywhere/provider-teams",
+  "version": "0.1.0",
+  "description": "Open Everywhere Microsoft Teams provider — Teams channel and chat surfaces via Microsoft Graph.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "homepage": "https://github.com/open-everywhere/open-everywhere/tree/main/packages/providers/teams",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/open-everywhere/open-everywhere.git",
+    "directory": "packages/providers/teams"
+  },
+  "bugs": {
+    "url": "https://github.com/open-everywhere/open-everywhere/issues"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "agent",
+    "dist",
+    "tsconfig.json",
+    "tsconfig.build.json",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "exports": {
+    "./package.json": "./package.json",
+    "./agent/channels/teams-bot-name.js": {
+      "types": "./dist/agent/channels/teams-bot-name.d.ts",
+      "default": "./dist/agent/channels/teams-bot-name.js"
+    },
+    "./agent/channels/teams-catch-up.js": {
+      "types": "./dist/agent/channels/teams-catch-up.d.ts",
+      "default": "./dist/agent/channels/teams-catch-up.js"
+    },
+    "./agent/channels/teams-connector.js": {
+      "types": "./dist/agent/channels/teams-connector.d.ts",
+      "default": "./dist/agent/channels/teams-connector.js"
+    },
+    "./agent/channels/teams-conversation-ref.js": {
+      "types": "./dist/agent/channels/teams-conversation-ref.d.ts",
+      "default": "./dist/agent/channels/teams-conversation-ref.js"
+    },
+    "./agent/channels/teams-directory.js": {
+      "types": "./dist/agent/channels/teams-directory.d.ts",
+      "default": "./dist/agent/channels/teams-directory.js"
+    },
+    "./agent/channels/teams-engagement.js": {
+      "types": "./dist/agent/channels/teams-engagement.d.ts",
+      "default": "./dist/agent/channels/teams-engagement.js"
+    },
+    "./agent/channels/teams-fire-eligibility.js": {
+      "types": "./dist/agent/channels/teams-fire-eligibility.d.ts",
+      "default": "./dist/agent/channels/teams-fire-eligibility.js"
+    },
+    "./agent/channels/teams-front.js": {
+      "types": "./dist/agent/channels/teams-front.d.ts",
+      "default": "./dist/agent/channels/teams-front.js"
+    },
+    "./agent/channels/teams-graph-boundary.js": {
+      "types": "./dist/agent/channels/teams-graph-boundary.d.ts",
+      "default": "./dist/agent/channels/teams-graph-boundary.js"
+    },
+    "./agent/channels/teams-graph-team-id.js": {
+      "types": "./dist/agent/channels/teams-graph-team-id.d.ts",
+      "default": "./dist/agent/channels/teams-graph-team-id.js"
+    },
+    "./agent/channels/teams-id-restore.js": {
+      "types": "./dist/agent/channels/teams-id-restore.d.ts",
+      "default": "./dist/agent/channels/teams-id-restore.js"
+    },
+    "./agent/channels/teams-identity.js": {
+      "types": "./dist/agent/channels/teams-identity.d.ts",
+      "default": "./dist/agent/channels/teams-identity.js"
+    },
+    "./agent/channels/teams-input-response.js": {
+      "types": "./dist/agent/channels/teams-input-response.d.ts",
+      "default": "./dist/agent/channels/teams-input-response.js"
+    },
+    "./agent/channels/teams-message-ops.js": {
+      "types": "./dist/agent/channels/teams-message-ops.d.ts",
+      "default": "./dist/agent/channels/teams-message-ops.js"
+    },
+    "./agent/channels/teams-origin-codec.js": {
+      "types": "./dist/agent/channels/teams-origin-codec.d.ts",
+      "default": "./dist/agent/channels/teams-origin-codec.js"
+    },
+    "./agent/channels/teams-post-arm.js": {
+      "types": "./dist/agent/channels/teams-post-arm.d.ts",
+      "default": "./dist/agent/channels/teams-post-arm.js"
+    },
+    "./agent/channels/teams-reaction-feedback.js": {
+      "types": "./dist/agent/channels/teams-reaction-feedback.d.ts",
+      "default": "./dist/agent/channels/teams-reaction-feedback.js"
+    },
+    "./agent/channels/teams-read.js": {
+      "types": "./dist/agent/channels/teams-read.d.ts",
+      "default": "./dist/agent/channels/teams-read.js"
+    },
+    "./agent/channels/teams-roster.js": {
+      "types": "./dist/agent/channels/teams-roster.d.ts",
+      "default": "./dist/agent/channels/teams-roster.js"
+    },
+    "./agent/channels/teams-stop.js": {
+      "types": "./dist/agent/channels/teams-stop.d.ts",
+      "default": "./dist/agent/channels/teams-stop.js"
+    },
+    "./agent/channels/teams-supervisor.js": {
+      "types": "./dist/agent/channels/teams-supervisor.d.ts",
+      "default": "./dist/agent/channels/teams-supervisor.js"
+    },
+    "./agent/channels/teams.js": {
+      "types": "./dist/agent/channels/teams.d.ts",
+      "default": "./dist/agent/channels/teams.js"
+    },
+    "./agent/contributions.js": {
+      "types": "./dist/agent/contributions.d.ts",
+      "default": "./dist/agent/contributions.js"
+    },
+    "./agent/docs-generated.js": {
+      "types": "./dist/agent/docs-generated.d.ts",
+      "default": "./dist/agent/docs-generated.js"
+    },
+    "./agent/ops.js": {
+      "types": "./dist/agent/ops.d.ts",
+      "default": "./dist/agent/ops.js"
+    },
+    "./agent/provider-events.js": {
+      "types": "./dist/agent/provider-events.d.ts",
+      "default": "./dist/agent/provider-events.js"
+    },
+    "./agent/register.js": {
+      "types": "./dist/agent/register.d.ts",
+      "default": "./dist/agent/register.js"
+    },
+    "./agent/surface-parity.js": {
+      "types": "./dist/agent/surface-parity.d.ts",
+      "default": "./dist/agent/surface-parity.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "npm run test:chain",
+    "test:chain": "npm run test:teams && npm run test:teams-connector && npm run test:teams-connector-seam && npm run test:teams-read && npm run test:teams-graph-team-id && npm run test:teams-fire-eligibility && npm run test:teams-input-response && npm run test:teams-bot-name && npm run test:teams-stop && npm run test:teams-reaction-feedback && npm run test:teams-engagement && npm run test:teams-message-ops && npm run test:teams-id-restore && npm run test:teams-spend-attribution",
+    "test:teams": "NODE_NO_WARNINGS=1 tsx scripts/teams-test.ts",
+    "test:teams-connector": "NODE_NO_WARNINGS=1 tsx scripts/teams-connector-test.ts",
+    "test:teams-connector-seam": "NODE_NO_WARNINGS=1 tsx scripts/teams-connector-seam-test.ts",
+    "test:teams-read": "NODE_NO_WARNINGS=1 tsx scripts/teams-read-test.ts",
+    "test:teams-graph-team-id": "NODE_NO_WARNINGS=1 tsx scripts/teams-graph-team-id-test.ts",
+    "test:teams-fire-eligibility": "NODE_NO_WARNINGS=1 tsx scripts/teams-fire-eligibility-test.ts",
+    "test:teams-input-response": "NODE_NO_WARNINGS=1 tsx scripts/teams-input-response-test.ts",
+    "test:teams-bot-name": "NODE_NO_WARNINGS=1 tsx scripts/teams-bot-name-test.ts",
+    "test:teams-stop": "NODE_NO_WARNINGS=1 tsx scripts/teams-stop-test.ts",
+    "test:teams-reaction-feedback": "NODE_NO_WARNINGS=1 tsx scripts/teams-reaction-feedback-test.ts",
+    "test:teams-engagement": "NODE_NO_WARNINGS=1 tsx scripts/teams-engagement-test.ts",
+    "test:teams-message-ops": "NODE_NO_WARNINGS=1 tsx scripts/teams-message-ops-test.ts",
+    "test:teams-id-restore": "NODE_NO_WARNINGS=1 tsx scripts/teams-id-restore-test.ts",
+    "test:teams-spend-attribution": "NODE_NO_WARNINGS=1 tsx scripts/teams-spend-attribution-test.ts"
+  },
+  "dependencies": {
+    "@open-everywhere/core": "0.1.0",
+    "zod": "4.5.4"
+  },
+  "peerDependencies": {
+    "eve": "0.54.3"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "tsx": "latest",
+    "typescript": "latest"
+  }
+}

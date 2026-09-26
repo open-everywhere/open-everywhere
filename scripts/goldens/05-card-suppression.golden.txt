@@ -1,0 +1,17 @@
+IN  relay message M51 · guild G5 channel C5T (type 11) · from U_DEV5 · mention
+      | <@BOT> raise this channel's spend cap to $5/month
+  → GET /channels/C5T ⇒ 200 name="spend chat" type=11 parent=C5
+  → PUT /channels/C5T/messages/M51/reactions/👀/@me ⇒ 204
+  → POST /channels/C5T/typing ⇒ 204
+  → GET /channels/C5T/messages?limit=10&before=M51 ⇒ 200 (0 backscroll msgs)
+  ⇢ DISPATCH start discord:C5T · auth U_DEV5 @ G5/C5T type=11 parent=C5 · state {"channelId":"C5T","guildId":"G5"}
+      | <@BOT> raise this channel's spend cap to $5/month
+  ⇠ 200 ok
+EVT turn.started on discord:C5T
+  → POST /channels/C5T/typing ⇒ 204
+EVT actions.requested on discord:C5T
+  → POST /channels/C5T/typing ⇒ 204
+ACT propose tool posts an approval card on discord:C5T (card-signal armed)
+EVT action.result on discord:C5T
+EVT message.appended on discord:C5T
+EVT message.completed on discord:C5T {"finishReason":"stop","message":"I've posted an approval card proposing a $5/month cap — an admin needs to approve it."}

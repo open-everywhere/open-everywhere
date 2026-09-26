@@ -1,0 +1,28 @@
+IN  discord interaction · "/oe budget raise usd:5" by NON-admin U_PLEB8 in guild GS8
+      | {"type":2,"data":{"name":"oe","options":[{"name":"budget","options":[{"name":"raise","options":[{"name":"usd","value":5}]}]}]},"guild_id":"GS8","channel_id":"CS8","channel":{"type":0},"member":{"user":{"id":"U_PLEB8"},"permissions":"0"}}
+  → GET /channels/CS8 ⇒ 404 (unscripted — lookup fail-opens)
+  → POST /channels/CS8/messages ⇒ 200 message BM1 [buttons: Approve/Reject]
+      | **Approval requested: spend.set**
+      | Set spend limit — scope `discord/GS8/CS8` (surface)
+      | $: none (uncapped) → $5.00/mo
+      | ℹ pricing coverage: this scope ran no traffic in the 30 days before this card was posted, so nothing here shows whether this $ cap would meter it
+      | Reason: requested via "/oe budget raise" by <@U_PLEB8>
+      | -# Requested by <@U_PLEB8> · expires <iso-ts>
+  ⇠ 200
+      | {
+      |  "type": 4,
+      |  "data": {
+      |   "content": "Card posted in this channel — proposing $5.00/month on `discord/GS8/CS8` (pending `<uuid>`, expires <iso-ts>). An admin needs to Approve it.\n_No domain spend to show — an externally-shared or unconfirmed channel reports no domain spend._",
+      |   "flags": 64
+      |  }
+      | }
+IN  discord interaction · U_PLEB8 clicks APPROVE on their OWN card (self-approval attempt)
+      | {"type":3,"data":{"custom_id":"oe-approval:<uuid>:approve:default","component_type":2},"message":{"id":"900901"},"channel_id":"C_CLICK","guild_id":"GS8","member":{"user":{"id":"U_PLEB8"},"permissions":"0"}}
+  ⇠ 200
+      | {
+      |  "type": 4,
+      |  "data": {
+      |   "content": "Only a domain/org admin — or a server administrator, for this server's own scopes — can decide this request.",
+      |   "flags": 64
+      |  }
+      | }

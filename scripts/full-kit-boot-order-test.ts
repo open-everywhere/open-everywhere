@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-access-delegation-flag
+
 import { registerSettings, getSettings, overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 
 const problems: string[] = [];

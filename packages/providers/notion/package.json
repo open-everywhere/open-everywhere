@@ -1,0 +1,225 @@
+{
+  "name": "@open-everywhere/provider-notion",
+  "version": "0.1.0",
+  "description": "Open Everywhere Notion provider — Notion as a wake surface plus page and database tools.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "homepage": "https://github.com/open-everywhere/open-everywhere/tree/main/packages/providers/notion",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/open-everywhere/open-everywhere.git",
+    "directory": "packages/providers/notion"
+  },
+  "bugs": {
+    "url": "https://github.com/open-everywhere/open-everywhere/issues"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "agent",
+    "dist",
+    "tsconfig.json",
+    "tsconfig.build.json",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "exports": {
+    "./package.json": "./package.json",
+    "./agent/channels/notion-acting-identity.js": {
+      "types": "./dist/agent/channels/notion-acting-identity.d.ts",
+      "default": "./dist/agent/channels/notion-acting-identity.js"
+    },
+    "./agent/channels/notion-ancestry-trust.js": {
+      "types": "./dist/agent/channels/notion-ancestry-trust.d.ts",
+      "default": "./dist/agent/channels/notion-ancestry-trust.js"
+    },
+    "./agent/channels/notion-api.js": {
+      "types": "./dist/agent/channels/notion-api.d.ts",
+      "default": "./dist/agent/channels/notion-api.js"
+    },
+    "./agent/channels/notion-bot-user.js": {
+      "types": "./dist/agent/channels/notion-bot-user.d.ts",
+      "default": "./dist/agent/channels/notion-bot-user.js"
+    },
+    "./agent/channels/notion-catch-up.js": {
+      "types": "./dist/agent/channels/notion-catch-up.d.ts",
+      "default": "./dist/agent/channels/notion-catch-up.js"
+    },
+    "./agent/channels/notion-credentials.js": {
+      "types": "./dist/agent/channels/notion-credentials.d.ts",
+      "default": "./dist/agent/channels/notion-credentials.js"
+    },
+    "./agent/channels/notion-engagement.js": {
+      "types": "./dist/agent/channels/notion-engagement.d.ts",
+      "default": "./dist/agent/channels/notion-engagement.js"
+    },
+    "./agent/channels/notion-event-normalizer.js": {
+      "types": "./dist/agent/channels/notion-event-normalizer.d.ts",
+      "default": "./dist/agent/channels/notion-event-normalizer.js"
+    },
+    "./agent/channels/notion-identity.js": {
+      "types": "./dist/agent/channels/notion-identity.d.ts",
+      "default": "./dist/agent/channels/notion-identity.js"
+    },
+    "./agent/channels/notion-ingress-drain.js": {
+      "types": "./dist/agent/channels/notion-ingress-drain.d.ts",
+      "default": "./dist/agent/channels/notion-ingress-drain.js"
+    },
+    "./agent/channels/notion-ingress.js": {
+      "types": "./dist/agent/channels/notion-ingress.d.ts",
+      "default": "./dist/agent/channels/notion-ingress.js"
+    },
+    "./agent/channels/notion-message-ops.js": {
+      "types": "./dist/agent/channels/notion-message-ops.d.ts",
+      "default": "./dist/agent/channels/notion-message-ops.js"
+    },
+    "./agent/channels/notion-origin-codec.js": {
+      "types": "./dist/agent/channels/notion-origin-codec.d.ts",
+      "default": "./dist/agent/channels/notion-origin-codec.js"
+    },
+    "./agent/channels/notion-post-arm.js": {
+      "types": "./dist/agent/channels/notion-post-arm.d.ts",
+      "default": "./dist/agent/channels/notion-post-arm.js"
+    },
+    "./agent/channels/notion-question-return.js": {
+      "types": "./dist/agent/channels/notion-question-return.d.ts",
+      "default": "./dist/agent/channels/notion-question-return.js"
+    },
+    "./agent/channels/notion-read.js": {
+      "types": "./dist/agent/channels/notion-read.d.ts",
+      "default": "./dist/agent/channels/notion-read.js"
+    },
+    "./agent/channels/notion-scope.js": {
+      "types": "./dist/agent/channels/notion-scope.d.ts",
+      "default": "./dist/agent/channels/notion-scope.js"
+    },
+    "./agent/channels/notion-stop.js": {
+      "types": "./dist/agent/channels/notion-stop.d.ts",
+      "default": "./dist/agent/channels/notion-stop.js"
+    },
+    "./agent/channels/notion-supervisor.js": {
+      "types": "./dist/agent/channels/notion-supervisor.d.ts",
+      "default": "./dist/agent/channels/notion-supervisor.js"
+    },
+    "./agent/channels/notion-webhook-timing.js": {
+      "types": "./dist/agent/channels/notion-webhook-timing.d.ts",
+      "default": "./dist/agent/channels/notion-webhook-timing.js"
+    },
+    "./agent/channels/notion-webhook-verifier.js": {
+      "types": "./dist/agent/channels/notion-webhook-verifier.d.ts",
+      "default": "./dist/agent/channels/notion-webhook-verifier.js"
+    },
+    "./agent/channels/notion-webhook.js": {
+      "types": "./dist/agent/channels/notion-webhook.d.ts",
+      "default": "./dist/agent/channels/notion-webhook.js"
+    },
+    "./agent/channels/notion-work-search.js": {
+      "types": "./dist/agent/channels/notion-work-search.d.ts",
+      "default": "./dist/agent/channels/notion-work-search.js"
+    },
+    "./agent/channels/notion-work.js": {
+      "types": "./dist/agent/channels/notion-work.d.ts",
+      "default": "./dist/agent/channels/notion-work.js"
+    },
+    "./agent/channels/notion.js": {
+      "types": "./dist/agent/channels/notion.d.ts",
+      "default": "./dist/agent/channels/notion.js"
+    },
+    "./agent/contributions.js": {
+      "types": "./dist/agent/contributions.d.ts",
+      "default": "./dist/agent/contributions.js"
+    },
+    "./agent/docs-generated.js": {
+      "types": "./dist/agent/docs-generated.d.ts",
+      "default": "./dist/agent/docs-generated.js"
+    },
+    "./agent/memory/blocks.js": {
+      "types": "./dist/agent/memory/blocks.d.ts",
+      "default": "./dist/agent/memory/blocks.js"
+    },
+    "./agent/memory/memory.js": {
+      "types": "./dist/agent/memory/memory.d.ts",
+      "default": "./dist/agent/memory/memory.js"
+    },
+    "./agent/provider-events.js": {
+      "types": "./dist/agent/provider-events.d.ts",
+      "default": "./dist/agent/provider-events.js"
+    },
+    "./agent/register.js": {
+      "types": "./dist/agent/register.d.ts",
+      "default": "./dist/agent/register.js"
+    },
+    "./agent/schedules/notion-ingress.js": {
+      "types": "./dist/agent/schedules/notion-ingress.d.ts",
+      "default": "./dist/agent/schedules/notion-ingress.js"
+    },
+    "./agent/surface-parity.js": {
+      "types": "./dist/agent/surface-parity.d.ts",
+      "default": "./dist/agent/surface-parity.js"
+    },
+    "./agent/tools/notion_search.js": {
+      "types": "./dist/agent/tools/notion_search.d.ts",
+      "default": "./dist/agent/tools/notion_search.js"
+    },
+    "./agent/tools/read_notion_comments.js": {
+      "types": "./dist/agent/tools/read_notion_comments.d.ts",
+      "default": "./dist/agent/tools/read_notion_comments.js"
+    },
+    "./agent/tools/read_notion_page.js": {
+      "types": "./dist/agent/tools/read_notion_page.d.ts",
+      "default": "./dist/agent/tools/read_notion_page.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "npm run test:chain",
+    "test:chain": "npm run test:notion && npm run test:notion-ingress && npm run test:notion-ingress-drain && npm run test:notion-supervisor && npm run test:notion-identity && npm run test:notion-memory && npm run test:notion-memory-credential && npm run test:notion-memory-fence && npm run test:notion-tool-gate && npm run test:notion-read-scope && npm run test:notion-work-search && npm run test:notion-per-domain-credential && npm run test:notion-webhook-verifier && npm run test:notion-event-normalizer && npm run test:dynamic-replay && npm run test:notion-ancestry-trust && npm run test:notion-credential-fence && npm run test:notion-route-taint && npm run test:notion-post-arm && npm run test:notion-read && npm run test:notion-stop && npm run test:notion-engagement && npm run test:notion-reaction-parity && npm run test:notion-message-ops && npm run test:notion-file-upload && npm run test:notion-wake-heal && npm run test:notion-rate-limit && npm run test:notion-write-seam && npm run test:notion-question-return && npm run test:notion-turn-policy",
+    "test:notion": "NODE_NO_WARNINGS=1 tsx scripts/notion-test.ts",
+    "test:notion-ingress": "NODE_NO_WARNINGS=1 tsx scripts/notion-ingress-test.ts",
+    "test:notion-turn-policy": "NODE_NO_WARNINGS=1 tsx scripts/notion-turn-policy-test.ts",
+    "test:notion-rate-limit": "NODE_NO_WARNINGS=1 tsx scripts/notion-rate-limit-test.ts",
+    "test:notion-write-seam": "NODE_NO_WARNINGS=1 tsx scripts/notion-write-seam-test.ts",
+    "test:notion-wake-heal": "NODE_NO_WARNINGS=1 tsx scripts/notion-wake-heal-test.ts",
+    "test:notion-question-return": "NODE_NO_WARNINGS=1 tsx scripts/notion-question-return-test.ts",
+    "test:notion-read": "NODE_NO_WARNINGS=1 tsx scripts/notion-read-test.ts",
+    "test:notion-post-arm": "NODE_NO_WARNINGS=1 tsx scripts/notion-post-arm-test.ts",
+    "test:notion-supervisor": "NODE_NO_WARNINGS=1 tsx scripts/notion-supervisor-test.ts",
+    "test:notion-identity": "NODE_NO_WARNINGS=1 tsx scripts/notion-identity-test.ts",
+    "test:notion-memory": "NODE_NO_WARNINGS=1 tsx scripts/notion-memory-test.ts",
+    "test:notion-memory-credential": "NODE_NO_WARNINGS=1 tsx scripts/notion-memory-credential-test.ts",
+    "test:notion-memory-fence": "NODE_NO_WARNINGS=1 tsx scripts/notion-memory-fence-test.ts",
+    "test:notion-tool-gate": "NODE_NO_WARNINGS=1 tsx scripts/notion-tool-gate-test.ts",
+    "test:notion-per-domain-credential": "tsx scripts/notion-per-domain-credential-test.ts",
+    "test:notion-read-scope": "NODE_NO_WARNINGS=1 tsx scripts/notion-read-scope-test.ts",
+    "test:notion-work-search": "NODE_NO_WARNINGS=1 tsx scripts/notion-work-search-test.ts",
+    "test:notion-ancestry-trust": "NODE_NO_WARNINGS=1 tsx scripts/notion-ancestry-trust-test.ts",
+    "test:dynamic-replay": "NODE_NO_WARNINGS=1 tsx scripts/dynamic-replay-test.ts",
+    "test:notion-webhook-verifier": "NODE_NO_WARNINGS=1 tsx scripts/notion-webhook-verifier-test.ts",
+    "test:notion-event-normalizer": "NODE_NO_WARNINGS=1 tsx scripts/notion-event-normalizer-test.ts",
+    "test:notion-credential-fence": "NODE_NO_WARNINGS=1 tsx scripts/notion-credential-fence-test.ts",
+    "test:notion-route-taint": "NODE_NO_WARNINGS=1 tsx scripts/notion-route-taint-test.ts",
+    "test:notion-stop": "NODE_NO_WARNINGS=1 tsx scripts/notion-stop-test.ts",
+    "test:notion-reaction-parity": "NODE_NO_WARNINGS=1 tsx scripts/notion-reaction-parity-test.ts",
+    "test:notion-engagement": "NODE_NO_WARNINGS=1 tsx scripts/notion-engagement-test.ts",
+    "test:notion-message-ops": "NODE_NO_WARNINGS=1 tsx scripts/notion-message-ops-test.ts",
+    "test:notion-file-upload": "NODE_NO_WARNINGS=1 tsx scripts/notion-file-upload-test.ts",
+    "test:notion-ingress-drain": "NODE_NO_WARNINGS=1 tsx scripts/notion-ingress-drain-test.ts"
+  },
+  "dependencies": {
+    "@open-everywhere/core": "0.1.0",
+    "zod": "4.5.4"
+  },
+  "peerDependencies": {
+    "eve": "0.54.3"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "tsx": "latest",
+    "typescript": "latest"
+  }
+}

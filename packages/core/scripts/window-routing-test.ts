@@ -99,3 +99,5 @@ await turnStarted(null, {});
 ok(true, "an identity-less context is absorbed (observation must never fail a wake)");
 
 console.log(`window-routing: ${n} assertions passed`);
+
+// proves: AP-MOD-core-access-window-routing

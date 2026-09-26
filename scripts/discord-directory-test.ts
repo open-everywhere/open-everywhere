@@ -215,3 +215,5 @@ ok(canDeliverDirectMessage("discord") === true, "🔴 §1 REACHABILITY: register
 });
 
 console.log(`✓ discord directory + DM transport: ${passed} assertions passed`);
+
+// proves: AP-MOD-core-identity-account-directory

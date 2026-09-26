@@ -1,0 +1,22 @@
+{
+  // PUBLISH BUILD (OPE-406). See packages/core/tsconfig.build.json for the full rationale: the
+  // sibling tsconfig.json stays noEmit (it is the typecheck gate and covers scripts/** too); this
+  // config emits ONLY the published surface (agent/**) into dist/, because a registry install
+  // cannot execute raw TypeScript and "eve build" evaluates the authored agent modules.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    // Incremental: these run from every pre-hook (pretypecheck/pretest/prebuild), so a no-op
+    // rebuild has to be near-free or the gate chain pays a full tsc on every invocation.
+    "incremental": true,
+    // OUTSIDE outDir on purpose: a tsbuildinfo left in dist/ gets swept up by the files
+    // allowlist and PUBLISHED (caught by the tarball listing, 2026-08-12).
+    "tsBuildInfoFile": "./.tsbuildinfo",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "dist",
+    "rootDir": "."
+  },
+  "include": ["agent/**/*.ts"]
+}

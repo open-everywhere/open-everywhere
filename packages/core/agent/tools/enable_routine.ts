@@ -57,6 +57,7 @@ export default defineTool({
     }
 
     const binding = bindFrom(ctx);
+    // principal-gate: presence — a re-arm resurrects what the three-strike guard deliberately stopped; the
     const requestedBy = actingPrincipalIdOf(ctx);
     if (!requestedBy) {
       throw new Error("enable_routine needs a verified sender to gate the re-arm — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not propose restarting a routine the three-strike guard stopped. Ask a person in this conversation to re-arm it.");

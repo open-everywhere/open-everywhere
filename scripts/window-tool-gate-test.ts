@@ -1,3 +1,6 @@
+// proves: auditWindowToolGate
+// proves: SEAT-54
+
 import assert from "node:assert/strict";
 import { registerDiscordProvider as __regDiscord } from "@open-everywhere/provider-discord/agent/register.js";
 __regDiscord();

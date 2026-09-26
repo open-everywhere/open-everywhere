@@ -1,0 +1,53 @@
+# The REAL-Postgres store/migration test lane sidecar (OPE-385) — `npm run test:pg-real`.
+#
+# CI runs the operational store's gate suite (operational-test.ts, postgres-test.ts,
+# migrate-operational-test.ts) against embedded PGlite only. Prod runs on Neon (measured
+# PostgreSQL 17.10) through the @neondatabase/serverless driver. This compose file brings up
+# ONLY the two services those same test scripts need to run through the REAL driver instead —
+# a Postgres server matching the hosted-Neon major, and the neon-wsproxy bridge the driver
+# needs (it speaks WebSocket, not raw TCP — see agent/postgres/neon.ts and this repo's main
+# docker-compose.yml, whose `postgres` + `neon-wsproxy` services this mirrors).
+#
+# DELIBERATELY SEPARATE from docker-compose.yml (which also boots the app + egress proxy and
+# is internal-network-only by design): this file is for `scripts/test-pg-driver.ts`, invoked
+# from the HOST — not from inside compose's internal network — so both services publish a
+# loopback-only host port. Bring up with a dedicated project name so it never collides with
+# anything else running: `docker compose -p ope385-ci -f docker-compose.test-pg.yml up -d --wait`.
+#
+# Credentials below are throwaway, compose-local-only values for an ephemeral container — never
+# treat them as real secrets (see CLAUDE.md's open-source-repo rule).
+services:
+  postgres:
+    image: postgres:17-alpine # matches the hosted-Neon major (measured 17.10) — see docker-compose.yml's `postgres` service
+    environment:
+      POSTGRES_USER: openeverywhere
+      POSTGRES_PASSWORD: "${OE_TEST_PG_PASSWORD:-test-pg-local-only}"
+      POSTGRES_DB: openeverywhere
+    ports:
+      - "127.0.0.1:${OE_TEST_PG_PORT:-55432}:5432" # host-reachable for direct psql/debugging; the test driver itself goes through neon-wsproxy below, not this port
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openeverywhere -d openeverywhere"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  neon-wsproxy:
+    image: ghcr.io/neondatabase/wsproxy:latest
+    environment:
+      # NOT "postgres:5432" (see docker-compose.yml's own APPEND_PORT for the full story): wsproxy
+      # unconditionally CONCATENATES this onto whatever `address` the client sent
+      # (ExtractProxyDest: `addr := addressArg; if AppendPort != "" { addr += AppendPort }` —
+      # github.com/neondatabase/wsproxy/blob/master/main.go). The client here
+      # (packages/adapters/agent/postgres/neon.ts's `wsProxy` callback, mirrored in
+      # packages/core/scripts/test-pg-driver.ts) already sends the full `address=host:port`, so a
+      # non-empty APPEND_PORT doubles it to `postgres:5432postgres:5432` and every dial fails
+      # ("too many colons in address") — empty is the variable's own documented default; it exists
+      # for a client that sends a bare host with no port, which this driver never does.
+      APPEND_PORT: ""
+      ALLOW_ADDR_REGEX: "postgres:5432" # only permit forwarding to this compose's own postgres
+      LOG_TRAFFIC: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${OE_TEST_PG_WS_PORT:-55433}:80" # THIS is the transport the test driver actually uses (websocket → wsproxy → postgres), matching prod's Neon path byte-for-byte

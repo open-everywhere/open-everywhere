@@ -1,0 +1,26 @@
+{
+  "name": "oe-telemetry",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "description": "Open-source anonymous-telemetry collector for Open Everywhere: POST /v1/logs, Neon Postgres, no IP storage.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "migrate": "tsx scripts/migrate.ts",
+    "test": "tsx test/schema.test.ts && tsx test/validate.test.ts && tsx test/heartbeat.test.ts && tsx test/ratelimit.test.ts && tsx test/ip-limit.test.ts && tsx test/no-ip-storage.test.ts"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@vercel/node": "^5.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

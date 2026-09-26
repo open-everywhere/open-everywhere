@@ -1,0 +1,17 @@
+{
+  "name": "oe-discord-relay",
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "description": "Always-on Discord Gateway relay for Open Everywhere — forwards ambient MESSAGE_CREATE events to the serverless deploy's ingestion endpoint.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.0"
+  }
+}

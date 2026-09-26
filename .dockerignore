@@ -1,0 +1,51 @@
+# Docker build-context excludes for the Vercel-less app image (Dockerfile / docker-compose.yml).
+#
+# Two reasons this file is load-bearing, not cosmetic:
+#  1. CORRECTNESS — the Dockerfile runs `npm ci` (musl/alpine node_modules) and THEN `COPY . .`.
+#     Without excluding node_modules, the host's glibc-built native modules (esbuild, zstd, …)
+#     would overlay the freshly-installed musl ones and break the runtime image. node_modules
+#     MUST be built inside the image, never copied in.
+#  2. HYGIENE / SECURITY — this is an open-source repo built on developer machines. Never let a
+#     local secret (.env*, tokens), VCS history (.git), or editor/agent state leak into an image
+#     layer that might be pushed to a registry.
+
+# Dependencies — always installed inside the image (see reason 1 above).
+node_modules
+**/node_modules
+
+# Version control + agent/editor state.
+.git
+.gitignore
+.claude
+.vscode
+.idea
+
+# Vercel binding + build output (the image runs its OWN `eve build`).
+.vercel
+.output
+**/.output
+.nitro
+
+# Workspace package build output — the image runs its OWN `build:packages`. Exclude the tsc
+# incremental state WITH `dist`: a host `.tsbuildinfo` copied in without its `dist` makes tsc treat
+# the package as up to date, skip the emit, and the image then has no package `dist`.
+**/dist
+**/*.tsbuildinfo
+
+# Local secrets / env — MUST NEVER be baked into an image layer.
+.env
+.env.*
+*.pem
+*.key
+
+# Runtime data (created at run time, mounted as volumes in docker-compose.yml).
+.workflow-data
+.open-everywhere-memory
+.eve
+
+# Logs, caches, OS cruft.
+*.log
+npm-debug.log*
+.DS_Store
+coverage
+.turbo

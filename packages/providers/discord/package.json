@@ -1,0 +1,178 @@
+{
+  "name": "@open-everywhere/provider-discord",
+  "version": "0.1.0",
+  "description": "Open Everywhere Discord provider — Discord channel and DM surfaces, gateway wiring, identity mapping and approval cards.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "homepage": "https://github.com/open-everywhere/open-everywhere/tree/main/packages/providers/discord",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/open-everywhere/open-everywhere.git",
+    "directory": "packages/providers/discord"
+  },
+  "bugs": {
+    "url": "https://github.com/open-everywhere/open-everywhere/issues"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "agent",
+    "dist",
+    "tsconfig.json",
+    "tsconfig.build.json",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "exports": {
+    "./package.json": "./package.json",
+    "./agent/access/discord-grant-click.js": {
+      "types": "./dist/agent/access/discord-grant-click.d.ts",
+      "default": "./dist/agent/access/discord-grant-click.js"
+    },
+    "./agent/approvals/discord-admin.js": {
+      "types": "./dist/agent/approvals/discord-admin.d.ts",
+      "default": "./dist/agent/approvals/discord-admin.js"
+    },
+    "./agent/approvals/discord-card.js": {
+      "types": "./dist/agent/approvals/discord-card.d.ts",
+      "default": "./dist/agent/approvals/discord-card.js"
+    },
+    "./agent/approvals/discord-flow.js": {
+      "types": "./dist/agent/approvals/discord-flow.d.ts",
+      "default": "./dist/agent/approvals/discord-flow.js"
+    },
+    "./agent/approvals/discord-scope-label.js": {
+      "types": "./dist/agent/approvals/discord-scope-label.d.ts",
+      "default": "./dist/agent/approvals/discord-scope-label.js"
+    },
+    "./agent/channels/discord-approval-card.js": {
+      "types": "./dist/agent/channels/discord-approval-card.d.ts",
+      "default": "./dist/agent/channels/discord-approval-card.js"
+    },
+    "./agent/channels/discord-backscroll.js": {
+      "types": "./dist/agent/channels/discord-backscroll.d.ts",
+      "default": "./dist/agent/channels/discord-backscroll.js"
+    },
+    "./agent/channels/discord-bot-name.js": {
+      "types": "./dist/agent/channels/discord-bot-name.d.ts",
+      "default": "./dist/agent/channels/discord-bot-name.js"
+    },
+    "./agent/channels/discord-channel-info.js": {
+      "types": "./dist/agent/channels/discord-channel-info.d.ts",
+      "default": "./dist/agent/channels/discord-channel-info.js"
+    },
+    "./agent/channels/discord-directory.js": {
+      "types": "./dist/agent/channels/discord-directory.d.ts",
+      "default": "./dist/agent/channels/discord-directory.js"
+    },
+    "./agent/channels/discord-dispatch-target.js": {
+      "types": "./dist/agent/channels/discord-dispatch-target.d.ts",
+      "default": "./dist/agent/channels/discord-dispatch-target.js"
+    },
+    "./agent/channels/discord-events.js": {
+      "types": "./dist/agent/channels/discord-events.d.ts",
+      "default": "./dist/agent/channels/discord-events.js"
+    },
+    "./agent/channels/discord-front.js": {
+      "types": "./dist/agent/channels/discord-front.d.ts",
+      "default": "./dist/agent/channels/discord-front.js"
+    },
+    "./agent/channels/discord-gateway.js": {
+      "types": "./dist/agent/channels/discord-gateway.d.ts",
+      "default": "./dist/agent/channels/discord-gateway.js"
+    },
+    "./agent/channels/discord-identity.js": {
+      "types": "./dist/agent/channels/discord-identity.d.ts",
+      "default": "./dist/agent/channels/discord-identity.js"
+    },
+    "./agent/channels/discord-interaction-defer.js": {
+      "types": "./dist/agent/channels/discord-interaction-defer.d.ts",
+      "default": "./dist/agent/channels/discord-interaction-defer.js"
+    },
+    "./agent/channels/discord-message-ops.js": {
+      "types": "./dist/agent/channels/discord-message-ops.d.ts",
+      "default": "./dist/agent/channels/discord-message-ops.js"
+    },
+    "./agent/channels/discord-origin-codec.js": {
+      "types": "./dist/agent/channels/discord-origin-codec.d.ts",
+      "default": "./dist/agent/channels/discord-origin-codec.js"
+    },
+    "./agent/channels/discord-post-arm.js": {
+      "types": "./dist/agent/channels/discord-post-arm.d.ts",
+      "default": "./dist/agent/channels/discord-post-arm.js"
+    },
+    "./agent/channels/discord-post.js": {
+      "types": "./dist/agent/channels/discord-post.d.ts",
+      "default": "./dist/agent/channels/discord-post.js"
+    },
+    "./agent/channels/discord-read.js": {
+      "types": "./dist/agent/channels/discord-read.d.ts",
+      "default": "./dist/agent/channels/discord-read.js"
+    },
+    "./agent/channels/discord-rest.js": {
+      "types": "./dist/agent/channels/discord-rest.d.ts",
+      "default": "./dist/agent/channels/discord-rest.js"
+    },
+    "./agent/channels/discord.js": {
+      "types": "./dist/agent/channels/discord.d.ts",
+      "default": "./dist/agent/channels/discord.js"
+    },
+    "./agent/commands/discord-command-sync.js": {
+      "types": "./dist/agent/commands/discord-command-sync.d.ts",
+      "default": "./dist/agent/commands/discord-command-sync.js"
+    },
+    "./agent/commands/discord-commands.js": {
+      "types": "./dist/agent/commands/discord-commands.d.ts",
+      "default": "./dist/agent/commands/discord-commands.js"
+    },
+    "./agent/contributions.js": {
+      "types": "./dist/agent/contributions.d.ts",
+      "default": "./dist/agent/contributions.js"
+    },
+    "./agent/docs-generated.js": {
+      "types": "./dist/agent/docs-generated.d.ts",
+      "default": "./dist/agent/docs-generated.js"
+    },
+    "./agent/identity/discord-link-consent.js": {
+      "types": "./dist/agent/identity/discord-link-consent.d.ts",
+      "default": "./dist/agent/identity/discord-link-consent.js"
+    },
+    "./agent/ops.js": {
+      "types": "./dist/agent/ops.d.ts",
+      "default": "./dist/agent/ops.js"
+    },
+    "./agent/provider-events.js": {
+      "types": "./dist/agent/provider-events.d.ts",
+      "default": "./dist/agent/provider-events.js"
+    },
+    "./agent/register.js": {
+      "types": "./dist/agent/register.d.ts",
+      "default": "./dist/agent/register.js"
+    },
+    "./agent/surface-parity.js": {
+      "types": "./dist/agent/surface-parity.d.ts",
+      "default": "./dist/agent/surface-parity.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "echo 'provider-discord: its test suite runs at the APP TIER (root scripts/) because the discord surface composes deeply with core internals (a custom gateway, admin approval cards, guild-admin bypass, routine dispatch) — see the root test chain (test:discord*, test:scenarios*, test:oe-commands, and the read/dispatch/audit/wake integration tests). This keeps the core adapter-api barrel a small port surface rather than exporting test-only internals.'"
+  },
+  "dependencies": {
+    "@open-everywhere/core": "0.1.0",
+    "zod": "4.5.4"
+  },
+  "peerDependencies": {
+    "eve": "0.54.3"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "tsx": "latest",
+    "typescript": "latest"
+  }
+}

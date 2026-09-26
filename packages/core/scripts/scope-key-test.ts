@@ -113,3 +113,5 @@ for (const k of KEYS) {
 }
 
 console.log(`\n✓ scopeKey grammar: ${n} assertions passed (one parser; the pre-OPE-240 copies reproduced and differenced)\n`);
+
+// proves: AP-MOD-core-access-scope-key

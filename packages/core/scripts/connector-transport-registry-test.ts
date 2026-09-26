@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-connections-connector-transport
+
 import assert from "node:assert/strict";
 
 const {

@@ -1,0 +1,14 @@
+IN  relay message M81 · guild G8 channel C8 (type 0) · from U_DEV8 · mention
+      | <@BOT> run the weekly report
+  → POST /channels/C8/messages/M81/threads {"name":"run the weekly report","auto_archive_duration":1440} ⇒ 200 thread TH1
+  → PUT /channels/C8/messages/M81/reactions/👀/@me ⇒ 204
+  → POST /channels/TH1/typing ⇒ 204
+  → GET /channels/C8/messages?limit=10&before=M81 ⇒ 200 (0 backscroll msgs)
+  ⇢ DISPATCH start discord:TH1 · auth U_DEV8 @ G8/TH1 type=11 parent=C8 · state {"channelId":"TH1","guildId":"G8","originalChannelId":"C8","originalMessageId":"M81"}
+      | <@BOT> run the weekly report
+  ⇠ 200 ok
+EVT turn.started on discord:TH1
+  → POST /channels/TH1/typing ⇒ 204
+EVT turn.failed on discord:TH1 {"error":{"message":"model exploded"}}
+  → POST /channels/TH1/messages ⇒ 200 message BM1
+      | ⚠️ I hit an error while handling that and couldn't finish. Please try again — and if it keeps failing, check the deployment logs.

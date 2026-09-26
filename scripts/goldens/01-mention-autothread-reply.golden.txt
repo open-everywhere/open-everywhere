@@ -1,0 +1,16 @@
+IN  relay message M1 · guild G1 channel C1 (type 0) · from U_DEV1 · mention
+      | <@BOT> help me sort the deploy
+  → POST /channels/C1/messages/M1/threads {"name":"help me sort the deploy","auto_archive_duration":1440} ⇒ 200 thread TH1
+  → PUT /channels/C1/messages/M1/reactions/👀/@me ⇒ 204
+  → POST /channels/TH1/typing ⇒ 204
+  → GET /channels/C1/messages?limit=10&before=M1 ⇒ 200 (0 backscroll msgs)
+  ⇢ DISPATCH start discord:TH1 · auth U_DEV1 @ G1/TH1 type=11 parent=C1 · state {"channelId":"TH1","guildId":"G1","originalChannelId":"C1","originalMessageId":"M1"}
+      | <@BOT> help me sort the deploy
+  ⇠ 200 ok
+EVT turn.started on discord:TH1
+  → POST /channels/TH1/typing ⇒ 204
+EVT message.appended on discord:TH1
+  → POST /channels/TH1/typing ⇒ 204
+EVT message.appended on discord:TH1
+EVT message.completed on discord:TH1 {"finishReason":"stop","message":"Here's the answer: roll back to v42."}
+  → DELETE /channels/C1/messages/M1/reactions/👀/@me ⇒ 204

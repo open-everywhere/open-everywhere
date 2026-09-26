@@ -1,0 +1,41 @@
+{
+  // KNIP'S TSCONFIG — read by `npm run lint:dead` (`--tsConfig tsconfig.knip.json`) and by nothing
+  // else (OPE-1454). `tsc` never sees this file: no build, typecheck or editor config extends it.
+  //
+  // WHY IT EXISTS. knip resolves an `@open-everywhere/*` specifier through the target package's
+  // `exports` map, and every entry in those maps points into `dist/` — deliberately, because a
+  // registry install cannot run raw TypeScript (see `scripts/publish-exports-generate.ts`).
+  // `knip.json` ignores `**/dist/**`, so the resolved file left the graph and the SOURCE `.ts` file
+  // looked unused. On an earlier tree knip called 21 files unused; 12 of them had a plain importer, and
+  // the report was ~96% noise end to end (`scripts/tidy/dead-report-audit.mjs`). The `paths` below
+  // send knip to the source instead, and knip's resolver applies them BEFORE `node_modules`.
+  //
+  // WHY NOT IN THE REAL TSCONFIGS. The same `paths` in `tsconfig.json` would change what
+  // `typecheck:all` compiles: the root program would pull in each package's SOURCE instead of its
+  // built `.d.ts`. That is a different change with its own blast radius. Keeping the mapping in a
+  // file only knip reads buys the resolution with no effect on any gate.
+  //
+  // ONE SIDE EFFECT. knip resolves `--tsConfig` per workspace, so it now looks for
+  // `packages/<name>/tsconfig.knip.json`, finds none, and reads NO tsconfig for any package
+  // workspace. That costs nothing today — no package tsconfig sets `paths`, `outDir` or `rootDir`,
+  // and the resolver applies the `paths` below globally from this one file. But a `paths` or
+  // `outDir` added to a package's own `tsconfig.json` later will be invisible to knip.
+  //
+  // 🔴 A NEW WORKSPACE PACKAGE NEEDS A ROW HERE. Without one it resolves into `dist/` again, and
+  // only that package's files go quiet — a silent loss, not a red. `scripts/tidy/knip-resolution-test.ts`
+  // is the gate that turns it into a red.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@open-everywhere/core/*": ["./packages/core/*"],
+      "@open-everywhere/adapters/*": ["./packages/adapters/*"],
+      "create-open-everywhere/*": ["./packages/create/*"],
+      "@open-everywhere/provider-discord/*": ["./packages/providers/discord/*"],
+      "@open-everywhere/provider-github/*": ["./packages/providers/github/*"],
+      "@open-everywhere/provider-linear/*": ["./packages/providers/linear/*"],
+      "@open-everywhere/provider-notion/*": ["./packages/providers/notion/*"],
+      "@open-everywhere/provider-slack/*": ["./packages/providers/slack/*"],
+      "@open-everywhere/provider-teams/*": ["./packages/providers/teams/*"]
+    }
+  }
+}

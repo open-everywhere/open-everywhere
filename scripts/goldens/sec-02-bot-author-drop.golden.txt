@@ -1,0 +1,3 @@
+IN  relay message M_BOT2 · guild GB2 channel CB2 (type 0) · from U_OTHERBOT2 (BOT author) · mention
+      | <@BOT> hello from another bot
+  ⇠ 200 ignored (bot author)

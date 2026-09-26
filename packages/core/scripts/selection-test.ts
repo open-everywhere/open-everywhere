@@ -1,3 +1,5 @@
+// proves: MEM-10, MEM-11
+
 import { makeSelector, normalizeSelection, type MemorySelection } from "../agent/memory/selection.js";
 
 let passed = 0;

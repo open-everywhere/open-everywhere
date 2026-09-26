@@ -27,6 +27,7 @@ export interface ConnectorClearPlan {
 }
 
 export function planClearConnectorOverride(binding: SurfaceBinding, input: ClearConnectorOverrideInput, domain: string | null): ConnectorClearPlan {
+  // principal-gate: presence — this is the only WIDEN verb on the runtime connector lane (the file
   if (!actingPrincipalId(binding)) {
     throw new Error("clear_connector_override needs a verified sender on this turn — a triggered routine fire has no acting sender (only the creator it is attributed to), and restoring cut access is a person's decision. Ask someone in this conversation to propose it.");
   }

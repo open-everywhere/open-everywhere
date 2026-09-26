@@ -1,0 +1,13 @@
+This directory is eve's sandbox WORKSPACE SEED: eve copies its whole subtree into /workspace
+inside every sandbox, on every backend, before any code runs.
+
+WHY THIS FILE EXISTS. An EMPTY seed subtree makes eve's template plan `kind: "none"`, which mints
+no sandbox template at all — every session then starts cold, and the integration tier's own guard
+(tests/integration/global-setup.ts) fails because the template directory never appears. One entry
+is enough to keep the template. A dotfile keeps /workspace clean for the agent.
+
+WHAT MAY NOT GO HERE. Anything the running session is supposed to OWN. The seed is static: the
+same bytes reach every session, whatever domain or memory plan it resolves to. A `memory/`
+directory here used to pre-create tiers outside every session's plan — the root fence could not
+fence them and `persistMemoryNow` never read them, so writes there were dropped silently
+(OPE-1018). `scripts/sandbox-workspace-seed-lint.ts` keeps that one out.

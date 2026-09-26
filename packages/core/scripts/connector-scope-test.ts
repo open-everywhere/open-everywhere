@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-access-connector-scope
+
 import "./_register-test-config.js";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";

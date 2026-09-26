@@ -1,5 +1,7 @@
 process.env.OE_MODE = "dm";
 
+// proves: AP-MOD-core-connections-aws-sso-link
+
 import {
   registerAwsSsoLinkStore,
   resetAwsSsoLinkStore,

@@ -27,7 +27,7 @@ const eq = (a: unknown, b: unknown, label: string) => {
 console.log("notion rate limit (OPE-1233):");
 
 const API_KEY = "ntn_test_key";
-const COMMENT_ID = "00000000-0000-4000-8000-000000000013";
+const COMMENT_ID = "1b2c3d4e-5f60-4a1b-8c9d-0e1f2a3b4c5d";
 
 function rateLimited(retryAfter?: string): Response {
   const headers = new Headers();

@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-access-work-grant
+
 import assert from "node:assert/strict";
 import {
   callerWorkDomain,

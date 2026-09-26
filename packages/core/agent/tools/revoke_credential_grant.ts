@@ -45,6 +45,7 @@ export default defineTool({
           "and only in a 1:1 can this deployment be sure it is talking to them. Ask them to send me a direct message.",
       );
     }
+    // principal-gate: presence — a HUMAN must be here, acting. Their identity IS the authorisation:
     const actor = actingPrincipalIdOf(c);
     if (actor === undefined) {
       throw new Error("revoke_credential_grant needs a verified person on this turn — only the person whose credential a grant spends can end it.");

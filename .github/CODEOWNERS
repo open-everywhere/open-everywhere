@@ -1,0 +1,92 @@
+# CODEOWNERS — review routing for the security-sensitive config surfaces.
+#
+# The load-bearing line is the grants overlay: the access-request flow's bot-PRs edit
+# ONLY agent/access/grants.generated.ts, and with hundreds of people able to READ the
+# config repo, this line + branch protection ("require review from Code Owners") is what makes
+# GitHub's merge button the flow's real approval gate — only the owners below can put a
+# grant live. See docs/how-it-works/access-requests.md (runbook: branch protection must
+# be enabled by a repo admin; CODEOWNERS alone doesn't block a merge).
+#
+# All three overlay lines below name a `*.generated.ts` file (OPE-256): the overlays are
+# machine-owned DATA MODULES, not JSON. That change moved nothing about who gates them — it
+# is `npm run lint:overlays`, a leg of the deterministic test chain, that proves such a file
+# still contains only data and no executable code. This repo runs no GitHub Actions workflow,
+# so nothing here is a required check; the chain runs in the session that makes the change.
+#
+# Operators forking this repo: replace the owner with your own admin team/users.
+#
+# ── BASELINE: EVERYTHING IS OWNED ───────────────────────────────────────────────────────────────
+# GitHub CODEOWNERS is LAST-MATCH-WINS, so this catch-all must stay FIRST — every specific line
+# below overrides it for its own path. It exists because the question "why would anything not be
+# protected?" has no good answer: an unowned path is one a PR can change with no required review,
+# and the interesting attack is never on the file you remembered to list. The specific lines are
+# kept BELOW it and are not redundant — they are the record of WHICH paths are security-load-bearing
+# and WHY, which a catch-all cannot express. Keep both.
+#
+# Note the catch-all deliberately does NOT satisfy `test:codeowners`: that test asserts every
+# bot-PR target is SPECIFICALLY owned, and ignores this line when doing so. Otherwise adding a
+# catch-all would make the whole invariant vacuously true — the check would pass for a path nobody
+# had ever thought about, which is the opposite of what it is for.
+* @open-everywhere/maintainers
+
+/agent/access/grants.generated.ts @open-everywhere/maintainers
+
+# The credential-bindings overlay — the stage-5 binding flow's bot-PRs edit ONLY
+# agent/access/credential-bindings.generated.ts to re-stamp a provider credential's custody
+# (env → db). Same load-bearing property as the grants overlay: this line + branch protection
+# makes the PR merge the custody-flip's real gate (an unmerged binding PR re-points
+# nothing). See docs/security/credentials-and-planes.md and
+# packages/core/scripts/e2e/README-db-broker-flip.md.
+/agent/access/credential-bindings.generated.ts @open-everywhere/maintainers
+
+# The wider access config (bundles, providers, connections) — same reviewers.
+/agent/access/ @open-everywhere/maintainers
+
+# The memory-domain config — the RBAC roster (Domain.admins) AND the governance-venue
+# designation (governance: true) live here (OPE-110, admin-governance-design-2026-07-24.md
+# §8.2 CODEOWNERS-as-admin-registry). Same load-bearing property as the grants overlay: this line +
+# branch protection makes the PR merge the real gate for a role grant or a venue designation —
+# adding an admin, or flagging a channel as governance, requires an existing owner's merge
+# (self-governing quorum, git history = the role-grant audit trail; the IdP-sync-to-PR seam
+# lands on this protected path automatically). See docs/how-it-works/access-and-scoping.md.
+/agent/memory/config/domains.ts @open-everywhere/maintainers
+
+# The WEBHOOK-HOOKS overlay — the THIRD bot-PR target, and it was missing from this file
+# while the other two had explicit lines for exactly the reason stated above. `declare_webhook`
+# opens a bot-PR that edits ONLY agent/webhooks/hooks.generated.ts (webhooks/hooks-codemod.ts), and an
+# unmerged hook PR declares nothing and can authenticate nothing — so the merge is this flow's
+# real gate in precisely the same way. See docs/extending/webhook-ingress.md.
+#
+# ⚠️ CORRECTED: an earlier version of this comment claimed approving a webhook "hands the approver
+# a LIVE SIGNING SECRET" and was therefore a stricter bar than grants. That is FALSE for this flow.
+# `declare_webhook` mints nothing — approvals/webhook-declare.ts states it twice ("no secret is
+# minted, nothing capability-bearing is delivered"; "No secret is created or shown by this"), and
+# `WebhookHook` can only hold a `secretRef`, a pointer, so the value is not expressible in the diff
+# at all. A secret IS minted and shown once on a one-time link by the ROTATE flow — a different
+# path, not this one. The reason this line exists is the merge-is-the-gate property above, nothing
+# more.
+/agent/webhooks/ @open-everywhere/maintainers
+
+# The AGENTS overlay — the FOURTH bot-PR target. `create_agent`'s bot-PR edits ONLY
+# agent/memory/config/agents.generated.ts (approvals/agent-create.ts) to add an approved agent to the
+# merged config; an unmerged agent-create PR provisions nothing, so the merge is this flow's
+# real gate in precisely the same way as the three overlays above. See
+# packages/core/scripts/codeowners-coverage-test.ts BOT_PR_TARGETS.
+/agent/memory/config/agents.generated.ts @open-everywhere/maintainers
+
+# Role definitions — `applyRoleDefaults` fills in two of a domain's fields when the domain omits
+# them (roles/role.ts: `memory`, `sandbox`; the domain's own value always wins). So re-pointing a
+# role changes the effective configuration of every domain that leans on those defaults, WITHOUT
+# touching any path protected above. That is what this line is for.
+#
+# Both fields are live and both are consequential:
+#   • `memory` IS read (memory/domain.ts silo list → memory/resolve.ts) — a role re-point changes
+#     WHICH BRAIN a domain reads and writes, which is the memory-sharing boundary itself; and
+#   • `sandbox` IS read (roles/role.ts sandboxPresetFor) — it changes the execution preset.
+#
+# What a role can NOT do is grant capability. Neither a Role nor a Domain has an access field at
+# all, so the only way to widen what a domain reaches is a binding in
+# agent/access/bundles.ts — codeowned above, and the sole list resolveAccess reads. Likewise a role
+# cannot supply `admins` or `governance`: applyRoleDefaults passes only those two fields, so the
+# RBAC roster stays sole-sourced from the codeowned domains.ts above.
+/agent/roles/ @open-everywhere/maintainers

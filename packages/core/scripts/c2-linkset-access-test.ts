@@ -1,6 +1,8 @@
 process.env.OE_SQLITE_PATH = ":memory:";
 process.env.OE_OPERATIONAL_PROVIDER = "postgres";
 
+// proves: AP-MOD-core-access-access-referenced-link-sets
+
 import assert from "node:assert/strict";
 import { PGlite } from "@electric-sql/pglite";
 import { initOperationalSchema, makeOperationalPostgresStore, type PgClient } from "../agent/operational/postgres.js";
@@ -236,3 +238,5 @@ await db.close();
 }
 
 console.log(`✓ c2-linkset-access: ${passed} assertions passed`);
+
+// proves: AP-MOD-core-identity-link-set-ref

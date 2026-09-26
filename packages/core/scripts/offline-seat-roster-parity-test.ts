@@ -1,3 +1,5 @@
+// proves: AP-LEAN-edit_reply, AP-LEAN-set_dm_delivery
+
 import assert from "node:assert";
 import { LEAN_SEAT_TOOLS } from "../agent/access/lean-seat.js";
 import editReplyDynamic from "../agent/tools/edit_reply.js";

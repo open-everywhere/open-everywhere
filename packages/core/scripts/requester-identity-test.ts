@@ -334,3 +334,5 @@ const envelope = (author: { from: "human" | "system"; authorId?: string; text?: 
 }
 
 console.log(`✓ requester-identity: ${n} assertions passed`);
+
+// proves: AP-MOD-core-access-request, AP-MOD-core-access-requester-identity

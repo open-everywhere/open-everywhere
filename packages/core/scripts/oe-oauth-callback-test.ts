@@ -1,3 +1,7 @@
+// proves: connector.credential_bound
+
+// proves: AP-MOD-core-connections-oe-oauth-callback, AP-MOD-core-credentials-kv-vault
+
 import assert from "node:assert/strict";
 import { rmSync } from "node:fs";
 import { join } from "node:path";

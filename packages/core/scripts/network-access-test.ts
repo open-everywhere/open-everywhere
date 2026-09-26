@@ -226,3 +226,5 @@ const ok = (cond: boolean, label: string) => {
 }
 
 console.log(`\n✓ network-access: ${n} assertions passed (resolveNetworkAccessLevel narrowest-wins/org-default + assertNetworkAccessValid config-load checks + broad-grant warn-only OPE-524 + compileNetworkPolicy per-level compiled-output differences)\n`);
+
+// proves: AP-MOD-core-access-network-access

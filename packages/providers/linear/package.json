@@ -1,0 +1,191 @@
+{
+  "name": "@open-everywhere/provider-linear",
+  "version": "0.1.0",
+  "description": "Open Everywhere Linear provider — Linear as a wake surface plus issue-tracker tools.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "homepage": "https://github.com/open-everywhere/open-everywhere/tree/main/packages/providers/linear",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/open-everywhere/open-everywhere.git",
+    "directory": "packages/providers/linear"
+  },
+  "bugs": {
+    "url": "https://github.com/open-everywhere/open-everywhere/issues"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "agent",
+    "dist",
+    "tsconfig.json",
+    "tsconfig.build.json",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "exports": {
+    "./package.json": "./package.json",
+    "./agent/channels/linear-actions.js": {
+      "types": "./dist/agent/channels/linear-actions.d.ts",
+      "default": "./dist/agent/channels/linear-actions.js"
+    },
+    "./agent/channels/linear-api.js": {
+      "types": "./dist/agent/channels/linear-api.d.ts",
+      "default": "./dist/agent/channels/linear-api.js"
+    },
+    "./agent/channels/linear-catch-up.js": {
+      "types": "./dist/agent/channels/linear-catch-up.d.ts",
+      "default": "./dist/agent/channels/linear-catch-up.js"
+    },
+    "./agent/channels/linear-create.js": {
+      "types": "./dist/agent/channels/linear-create.d.ts",
+      "default": "./dist/agent/channels/linear-create.js"
+    },
+    "./agent/channels/linear-credentials.js": {
+      "types": "./dist/agent/channels/linear-credentials.d.ts",
+      "default": "./dist/agent/channels/linear-credentials.js"
+    },
+    "./agent/channels/linear-engagement.js": {
+      "types": "./dist/agent/channels/linear-engagement.d.ts",
+      "default": "./dist/agent/channels/linear-engagement.js"
+    },
+    "./agent/channels/linear-errors.js": {
+      "types": "./dist/agent/channels/linear-errors.d.ts",
+      "default": "./dist/agent/channels/linear-errors.js"
+    },
+    "./agent/channels/linear-event-normalizer.js": {
+      "types": "./dist/agent/channels/linear-event-normalizer.d.ts",
+      "default": "./dist/agent/channels/linear-event-normalizer.js"
+    },
+    "./agent/channels/linear-graphql.js": {
+      "types": "./dist/agent/channels/linear-graphql.d.ts",
+      "default": "./dist/agent/channels/linear-graphql.js"
+    },
+    "./agent/channels/linear-identity.js": {
+      "types": "./dist/agent/channels/linear-identity.d.ts",
+      "default": "./dist/agent/channels/linear-identity.js"
+    },
+    "./agent/channels/linear-message-ops.js": {
+      "types": "./dist/agent/channels/linear-message-ops.d.ts",
+      "default": "./dist/agent/channels/linear-message-ops.js"
+    },
+    "./agent/channels/linear-origin-codec.js": {
+      "types": "./dist/agent/channels/linear-origin-codec.d.ts",
+      "default": "./dist/agent/channels/linear-origin-codec.js"
+    },
+    "./agent/channels/linear-post-arm.js": {
+      "types": "./dist/agent/channels/linear-post-arm.d.ts",
+      "default": "./dist/agent/channels/linear-post-arm.js"
+    },
+    "./agent/channels/linear-reaction-feedback.js": {
+      "types": "./dist/agent/channels/linear-reaction-feedback.d.ts",
+      "default": "./dist/agent/channels/linear-reaction-feedback.js"
+    },
+    "./agent/channels/linear-read.js": {
+      "types": "./dist/agent/channels/linear-read.d.ts",
+      "default": "./dist/agent/channels/linear-read.js"
+    },
+    "./agent/channels/linear-scope.js": {
+      "types": "./dist/agent/channels/linear-scope.d.ts",
+      "default": "./dist/agent/channels/linear-scope.js"
+    },
+    "./agent/channels/linear-silence-ack.js": {
+      "types": "./dist/agent/channels/linear-silence-ack.d.ts",
+      "default": "./dist/agent/channels/linear-silence-ack.js"
+    },
+    "./agent/channels/linear-stop.js": {
+      "types": "./dist/agent/channels/linear-stop.d.ts",
+      "default": "./dist/agent/channels/linear-stop.js"
+    },
+    "./agent/channels/linear-supervisor.js": {
+      "types": "./dist/agent/channels/linear-supervisor.d.ts",
+      "default": "./dist/agent/channels/linear-supervisor.js"
+    },
+    "./agent/channels/linear-webhook-verify.js": {
+      "types": "./dist/agent/channels/linear-webhook-verify.d.ts",
+      "default": "./dist/agent/channels/linear-webhook-verify.js"
+    },
+    "./agent/channels/linear-work-search.js": {
+      "types": "./dist/agent/channels/linear-work-search.d.ts",
+      "default": "./dist/agent/channels/linear-work-search.js"
+    },
+    "./agent/channels/linear-work.js": {
+      "types": "./dist/agent/channels/linear-work.d.ts",
+      "default": "./dist/agent/channels/linear-work.js"
+    },
+    "./agent/channels/linear.js": {
+      "types": "./dist/agent/channels/linear.d.ts",
+      "default": "./dist/agent/channels/linear.js"
+    },
+    "./agent/contributions.js": {
+      "types": "./dist/agent/contributions.d.ts",
+      "default": "./dist/agent/contributions.js"
+    },
+    "./agent/docs-generated.js": {
+      "types": "./dist/agent/docs-generated.d.ts",
+      "default": "./dist/agent/docs-generated.js"
+    },
+    "./agent/provider-events.js": {
+      "types": "./dist/agent/provider-events.d.ts",
+      "default": "./dist/agent/provider-events.js"
+    },
+    "./agent/register.js": {
+      "types": "./dist/agent/register.d.ts",
+      "default": "./dist/agent/register.js"
+    },
+    "./agent/surface-parity.js": {
+      "types": "./dist/agent/surface-parity.d.ts",
+      "default": "./dist/agent/surface-parity.js"
+    },
+    "./agent/tools/read_linear_issue.js": {
+      "types": "./dist/agent/tools/read_linear_issue.d.ts",
+      "default": "./dist/agent/tools/read_linear_issue.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "npm run test:chain",
+    "test:chain": "npm run test:linear-actions && npm run test:linear-create && npm run test:linear-credentials && npm run test:linear-supervisor && npm run test:linear-silence-ack && npm run test:linear-identity && npm run test:linear-read-scope && npm run test:linear-write-scope && npm run test:linear-work-search && npm run test:linear-event-normalizer && npm run test:dynamic-replay && npm run test:linear-route-taint && npm run test:linear-post-arm && npm run test:linear-webhook-verify && npm run test:linear-multi-org-reply && npm run test:linear-multi-org-tools && npm run test:linear-stop && npm run test:linear-engagement && npm run test:linear-reaction-feedback && npm run test:linear-message-ops && npm run test:linear-read && npm run test:linear-wake-failure-audit && npm run test:linear-rate-limit && npm run test:linear-write-seam",
+    "test:linear-wake-failure-audit": "NODE_NO_WARNINGS=1 tsx scripts/linear-wake-failure-audit-test.ts",
+    "test:linear-actions": "NODE_NO_WARNINGS=1 tsx scripts/linear-actions-test.ts",
+    "test:linear-read": "NODE_NO_WARNINGS=1 tsx scripts/linear-read-test.ts",
+    "test:linear-post-arm": "NODE_NO_WARNINGS=1 tsx scripts/linear-post-arm-test.ts",
+    "test:linear-message-ops": "NODE_NO_WARNINGS=1 tsx scripts/linear-message-ops-test.ts",
+    "test:linear-credentials": "NODE_NO_WARNINGS=1 tsx scripts/linear-credentials-test.ts",
+    "test:linear-webhook-verify": "NODE_NO_WARNINGS=1 tsx scripts/linear-webhook-verify-test.ts",
+    "test:linear-multi-org-reply": "NODE_NO_WARNINGS=1 tsx scripts/linear-multi-org-reply-test.ts",
+    "test:linear-multi-org-tools": "NODE_NO_WARNINGS=1 tsx scripts/linear-multi-org-tools-test.ts",
+    "test:linear-supervisor": "NODE_NO_WARNINGS=1 tsx scripts/linear-supervisor-test.ts",
+    "test:linear-silence-ack": "NODE_NO_WARNINGS=1 tsx scripts/linear-silence-ack-test.ts",
+    "test:linear-identity": "NODE_NO_WARNINGS=1 tsx scripts/linear-identity-test.ts",
+    "test:linear-read-scope": "NODE_NO_WARNINGS=1 tsx scripts/linear-read-scope-test.ts",
+    "test:linear-write-scope": "NODE_NO_WARNINGS=1 tsx scripts/linear-write-scope-test.ts",
+    "test:linear-work-search": "NODE_NO_WARNINGS=1 tsx scripts/linear-work-search-test.ts",
+    "test:dynamic-replay": "NODE_NO_WARNINGS=1 tsx scripts/dynamic-replay-test.ts",
+    "test:linear-create": "NODE_NO_WARNINGS=1 tsx scripts/linear-create-test.ts",
+    "test:linear-event-normalizer": "NODE_NO_WARNINGS=1 tsx scripts/linear-event-normalizer-test.ts",
+    "test:linear-route-taint": "NODE_NO_WARNINGS=1 tsx scripts/linear-route-taint-test.ts",
+    "test:linear-stop": "NODE_NO_WARNINGS=1 tsx scripts/linear-stop-test.ts",
+    "test:linear-reaction-feedback": "NODE_NO_WARNINGS=1 tsx scripts/linear-reaction-feedback-test.ts",
+    "test:linear-engagement": "NODE_NO_WARNINGS=1 tsx scripts/linear-engagement-test.ts",
+    "test:linear-rate-limit": "NODE_NO_WARNINGS=1 tsx scripts/linear-rate-limit-test.ts",
+    "test:linear-write-seam": "NODE_NO_WARNINGS=1 tsx scripts/linear-write-seam-test.ts"
+  },
+  "dependencies": {
+    "@open-everywhere/core": "0.1.0",
+    "zod": "4.5.4"
+  },
+  "peerDependencies": {
+    "eve": "0.54.3"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "tsx": "latest",
+    "typescript": "latest"
+  }
+}

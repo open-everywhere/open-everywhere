@@ -1,3 +1,5 @@
+// proves: PAR-origin-placement-carry
+
 import assert from "node:assert/strict";
 import { assertCoreDistFresh } from "./core-dist-freshness.js";
 import { readFileSync } from "node:fs";

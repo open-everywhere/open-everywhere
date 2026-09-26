@@ -1,6 +1,9 @@
 process.env.OE_SQLITE_PATH = ":memory:";
 process.env.OE_OPERATIONAL_PROVIDER = "postgres";
 
+// proves: AP-MOD-core-connections-aws-sso-identity-binding
+// proves: aws.sso.link_refused
+
 import { PGlite } from "@electric-sql/pglite";
 import { initOperationalSchema, makeOperationalPostgresStore, type PgClient } from "../agent/operational/postgres.js";
 import { registerOperationalStore, getOperationalStore } from "../agent/operational/provider.js";

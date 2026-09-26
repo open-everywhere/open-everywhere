@@ -1,0 +1,407 @@
+# Credentials & the two planes
+
+How Open Everywhere holds a credential the agent uses but never sees. There are **two enforcement planes, separated by where the call originates** — and in neither one does the token reach the model.
+
+This page is for the operator about to hand a credential to an agent who wants to know exactly: what can it reach, where does my secret live, and how is it kept out of the agent's hands? For *how the credentials connect a domain to a vendor* — the provider/grant model — see [Connectors & providers](../capabilities/connectors-and-providers.md). For *how to write a credential broker*, see [Credential brokers](../extending/credential-brokers.md).
+
+## Two choices: credential × transport
+
+Connecting an integration is two independent decisions, and they're orthogonal:
+
+|  | **REST** (HTTP API) | **MCP** (tool server) |
+|---|---|---|
+| **Fixed API key** | bearer/header key → REST | static token → MCP server |
+| **OAuth** | OAuth → REST | OAuth → MCP server |
+
+- **Transport** is *how the call is made*: the agent `curl`s a REST API through the egress firewall, or the runtime invokes a host-side MCP tool.
+- **Credential** is *how the call is authorized*: a fixed key, or OAuth.
+
+The credential is a value that plugs into either transport — you're not forced into "OAuth means MCP" or "key means REST." The two transports differ only in *where* the credential is attached and in one practical limit (the firewall can't refresh an expired OAuth token mid-session, covered below).
+
+## The two planes, by where the call originates
+
+The token is invisible to the agent in **both** planes — but they achieve it differently.
+
+### The egress plane — the agent's own curl/git
+
+The agent's sandboxed code (`git`, `curl`) makes a REST call. The credential is injected **at the firewall boundary**, on the way out, keyed by destination host. The agent's code curls a *plain, unauthenticated* URL; the firewall stamps the auth header as the request leaves the sandbox. The sandboxed code never holds the token.
+
+This plane is deliberately **static-only**. Each supported credential type stamps a header from a resolved secret:
+
+- `bearer` → `Authorization: Bearer <secret>`
+- `basic` → `Authorization: Basic <base64(user:pass)>`
+- `github-app` → a pre-provisioned installation token, used as a bearer
+
+Custom headers (an `X-Api-Key`, a vendor-specific header with an optional prefix) resolve the same way. The dynamic credential types — anything needing a token exchange or refresh — are **not** on this plane; they belong on the connector plane.
+
+#### One credential per host per session
+
+The policy keys the credential on the **host** alone. Rules narrow method and path; they never change *which* key is stamped. So one host in one session reaches exactly one credential, and the rule is enforced twice.
+
+**At config time.** `lint:access` fails the tree when two connections claim the same host and can both be in one session's reach — inside one bundle, or across two bundles whose bindings resolve together. The comparison is **overlap**, not spelling: `*.vendor.com` and `api.vendor.com` are two ways of naming one destination, and the lint treats them as a clash. There is no escape hatch: whichever key won, the other grant would be dead config. Two keys for one vendor stay expressible — bind them to rooms that never resolve together, and each room reaches its own account.
+
+**At resolve time.** The resolver refuses to assemble such a session at all. It throws rather than overwriting, the firewall falls back to deny-all, and the `egress.policy` audit row names both connections and the host. This is what stops "accessing Notion B" from ever giving accidental access to Notion A because the two credentials share a subdomain.
+
+**Two hosts are reserved outright.** The git read-broker replaces the rules for `github.com` and `codeload.github.com` wholesale, mid-turn, with its installation token, so nothing else may claim them: a bundle connection is refused by `lint:access` and by the resolver, and a row in the [browser host declaration](../capabilities/browser-qa.md) is refused by that declaration's own lint and again when the policy is compiled. The reservation is unconditional — turning the broker off does not lift it — and `api.github.com` is not reserved, which is where a deployment's own GitHub credential belongs.
+
+#### An own-account ask is refused on this plane, not answered
+
+A member who asks to act with **their own account** at a vendor is asking for a second key on that vendor's host, which the rule above forbids. The session does not substitute the personal key and does not fall back to the team key. Instead the connections holding that vendor's credential are **withheld** from the reach, and the firewall denies the call.
+
+Every withholding writes an `egress.own_account_refusal` row, which records what this plane withheld and why. A withholding a **delegated worker's** own firewall pass compiles writes a second row: `connector.acting_identity`, the same row the connector tool road writes, from the same decision, recording which identity the read required and that it was refused. That second row is what lets the worker's REST road join the trail an auditor reads to answer "which account read this page" — the road reaches no connector tool, so without it a refusal there left no entry in that trail at all. It names the **route** in place of a tool (`egress:<connection>`, or the connections comma-joined where the vendor's key sits on more than one), because no tool call was ever made.
+
+A **seat's own ask turn** writes only the first row. Its firewall was compiled before the words existed, so the pass that would write the second one saw no ask; a later turn's pass does not adopt the stamp either. A seat's reads are gated at the connector tools instead, and those write the acting-identity row themselves.
+
+Three things about that are worth stating exactly, because each is a bound rather than a slogan:
+
+- **Which hosts.** A connection counts as the vendor's when its reach meets a host the connector's own credential catalogue declares (`endpoints.hosts`, `agent/access/connector-credentials.ts`); every host that connection reaches is then withheld, not only the ones the catalogue names. `lint:connections` requires those hosts on every connector that admits a credential grant, so the join cannot be left undeclared.
+- **Which sessions.** A **delegated worker** carries its requester's ask for its whole life, so its sandbox policy never holds the vendor host at all. A **seat** is covered from the moment the ask lands, which is after its turn's firewall was compiled: for the rest of that turn the host-side plane refuses the vendor, and a mid-turn policy re-apply drops it from the firewall too. The next turn recompiles without the ask and the host returns.
+- **What a delegating seat's worker actually meets.** The worker shares its seat's sandbox, and the seat's firewall still holds the vendor host for that turn. So the worker's narrower policy **diverges** from the one its seat published, and the identical-binding tripwire (`agent/hooks/egress.ts`) fails the worker rather than let it replace the seat's live firewall. That is the rule above doing its work, not a gap: narrowing the shared firewall would re-key the sandbox for the seat and every other worker in it. The worker is failed **with the refusal as its message** whenever the gate answers — the same verdict a direct seat's connector tool returns, from the same gate — so the divergence costs the delegation but not the answer. An unreadable gate, a store outage, or a verdict carrying no refusal falls back to the tripwire's own message. The `egress.policy` row records that this pass **also withheld** the vendor's hosts (`ownAccountWithheld`, and the connector), which is the first thing to check before chasing a binding bug; it is a fact about the pass, not a cause of the mismatch, so a stamped worker that is also genuinely mis-bound carries it too. `tests/integration/connectors/own-account-rest-road.test.ts` measures that the refusal reaches the seat's settlement notification.
+- **What the person is told.** On a **delegating** seat the words reach the seat. The runtime writes the failed worker's error into the seat's settlement notification, and that error **is** the gate's refusal — it names the vendor, says the shared integration would answer as the org, and points at the personal grant or at the DM — followed by a line telling the seat to say it in the room. The reply itself is the seat's own turn, not an enforced step. Everywhere else there is no chat reply generated from this: the agent meets it as a host-side refusal that names the ask and points at the DM, and a shelling worker reads the standing paragraph in the sandbox's own `egress/README.md`. In the DM a personal grant is minted, and the connector plane honours it.
+
+### The connector plane — the runtime's MCP tool calls
+
+The model invokes a tool by name. The runtime resolves the token through the connection's credential resolver and attaches it **host-side**, in the framework process, before the request leaves the host. **The call never enters the sandbox at all.** The model receives only the tool *result*, never the token.
+
+This is the key reframing: the credential resolver is **injection, not exposure**. It runs host-side, hands the token to the runtime, and the runtime attaches it host-side. It's the *stronger* isolation of the two planes — the sandbox isn't even in the loop. A token could only leak if a connection author deliberately put it in a tool's output; the built-in connections never do.
+
+#### Narrowing on this plane travels with the credential
+
+The stronger isolation costs it something, and the trade is worth naming. Because the call never enters the sandbox, **no firewall sees it** — so the egress plane's per-connection `allowedWebsites` / `pathPrefixes` / `methods` have nothing to enforce against here. A host-side credential goes wherever the calling code sends it.
+
+So the narrowing lives on the credential record instead. A `ConnectorCredential` may declare **endpoint rules**: the exact hosts it may be attached to, optional path prefixes, and optional HTTP methods.
+
+```ts
+{ id: "channel-key", type: "api-key", secretRef: "db:notion:channel-key", broker: "db",
+  endpoints: { hosts: ["api.notion.com"], pathPrefixes: ["/v1/"], methods: ["GET", "POST"] } }
+```
+
+Three things about it are deliberate:
+
+- **It answers a wrong-credential *bug*, not a hostile agent.** The model never chooses the destination on this plane; host-side code does. A mis-threaded credential id or a copy-pasted base URL sends key A to host B, and today that produces a successful request with the wrong key on it. With rules attached the same defect produces a refusal *before the request leaves the host* — a blocked request rather than a leaked key.
+- **Hosts are never wildcardable.** One entry is one exact hostname, with no `*.vendor.com` form and no implicit subdomain or parent match. Naming each host you need **is** the escape, exactly as naming each method is the escape on the egress plane. Ports are not part of the fence: the host is what decides who receives the token.
+- **Absent means unnarrowed, not denied.** A credential that declares no `endpoints` behaves exactly as it did before this existed. Unlike the egress plane's methods lint there is no floor requiring a declaration, because a connector credential's reachable surface is the vendor's whole API by default and there is no per-vendor path inventory to lint against.
+
+Malformed rules — a wildcard host, an empty host list, a bogus method — fail at **config load**, where the operator can still fix them. A rule nobody can parse is a fence nobody has, and in review a wildcard *reads* as narrowing while admitting a whole namespace.
+
+**A rule only binds where the credential and its rules travel together**, and this is the part that fails quietly if you get it wrong. The guard returns the *unwrapped* fetch when it is handed no rules, so a call site that resolves the bare token has no check on it and reports nothing — the fence fails **open** when it is mis-wired, not closed. The defence is to make the pair the only obtainable thing: each Notion resolver returns key-with-rules and there is **no key-only resolver**, so every path under that credential carries the fence, and a build-time assertion fails if a channel-plane call site ever passes a bare key. This covers all three of Notion's own host-side REST paths, each with its own resolver and its own declared rules: the channel credential (the webhook two-step, the supervisor reply, the post arm, both read tools), the **work-surface credential** (`team-key` — a work-granted domain's `read_notion_page`/`notion_search`), and the **memory backing** (the page-subtree pull, `packages/providers/notion/agent/memory/memory.ts`). The MCP **transport** gets a narrower check of the same kind: eve owns the individual HTTP calls once a connection is wired to a `directUrl`, so there is no per-request path/method to check — but before `appProviderToken` / `userAwareProviderToken` (`agent/connections/connector-auth.ts`) return a token, they check that the connection's `directUrl` host is inside the bound credential's `endpoints.hosts`, and refuse otherwise. This runs once per eve execution step (a boot/selection-time check, not a per-request one), and it is the same optional, absent-means-unnarrowed rule. `team-key` is also the one shipped credential that CAN be bound to an MCP connector grant (Notion's `directUrl` is `mcp.notion.com`, a different host than its REST rules allow), so declaring `endpoints` on it makes this transport check live for the first time on a shipped credential — narrowing an operator opts into everywhere else, structural here.
+
+**A denial here is always visible to us**, and that is a real difference from the egress plane's [tier split](#what-the-agent-can-see-about-its-own-policy) below. This refusal is Open Everywhere's own in-process check, on every tier including Vercel — there is no platform whose firewall might deny out of band where we never observe the attempt.
+
+> **One honest caveat, on the egress plane only.** "The sandbox can't read the env var" depends on the sandbox being spawned without inheriting host environment — it's verified on first live boot. The credential broker (below) closes this fully. The connector plane has no such caveat: resolution and the call are entirely host-side.
+
+### A write from a channel, path by path
+
+"Reads open, writes carded" is a rule about the **connector plane**. It says nothing about the egress plane, and the two planes reach the same vendor. So the honest answer to "what happens when the agent writes to Notion from a Slack channel?" depends entirely on which path carried the call, and the paths do not agree. All four are live in this tree today.
+
+Two flags decide the connector-plane rows, and they are not interchangeable. `connectors.dmOnly` (**shipped ON**) is the wall. `connectors.opTiering` (**shipped OFF**) is the per-op gate, and it is also what the wall's [work-surface carve-out](#why-a-grant-is-a-real-boundary) requires before it admits a channel at all.
+
+| path | what runs | the write control | what the audit trail records |
+| -- | -- | -- | -- |
+| **Connector plane, `dmOnly` ON + `opTiering` OFF** — *this is the shipped pair* | `notion__create_page` and its siblings | **Refused before a token exists.** A non-DM context reaches no credential, because with tiering off the connection falls back to a blanket approval that cannot tell a write from a read. | `connector.refused`, reason `dm_only` |
+| **Connector plane, `dmOnly` ON + `opTiering` ON** — *the recommended posture for channel work* | the same tools | **An approval card**, once per session per op — per call when the op is `destructive`. The wall stays up and admits the channel through the work-surface carve-out. | `connector.op` with the tier and the rungs that set it |
+| **Connector plane, `dmOnly: false`** | the same tools | Whatever `opTiering` says — the card above when it is armed, otherwise the framework's **blanket `once()`**: the session's *first* connector op prompts, and every op after it, read or write, rides that one approval. | `connector.op` | 
+| **Egress plane** — `bash`/`curl` in the sandbox, freehand or through a skill | any REST call the agent writes | **The bundle's own `Connection.methods` list**, declared in config and approved in a pull request. No card, ever. | one `egress.policy` row per non-skipped pass — and nothing per request |
+
+**Do not reach for `dmOnly: false` to get carded channel writes.** Arming `opTiering` alone already does that, and turning the wall off is strictly wider: it takes down the personal-credential tier too, for nothing you gain.
+
+The egress row is the one that surprises people, so state it plainly: **on the egress plane there is no per-call human in the loop, by design.** The reviewed declaration *is* the control. A connection that names `methods: ["GET", "POST", "PATCH"]` has said, once and in git, that the agent may write to those hosts unattended for as long as the binding stands. The access lint refuses a credentialed connection that declares no `methods` at all, so the declaration cannot be reached by omission — but `["GET", "HEAD"]` and `["GET", "POST", "PATCH"]` are both valid, and only the second one opens a write.
+
+Two things make this reachable from a channel that looks locked down, and both are working as designed:
+
+- **A conversational seat cannot shell, and delegating gives it one.** `bash`, `load_skill` and the connector tools are worker-only relative to a standing seat ([the agent loop](../how-it-works/agent-and-loop.md)). A seat that asks a one-shot worker to do the write hands that worker the shell — and the worker inherits the seat's egress policy, credential injection included.
+- **The connector grant and the egress connection are different names.** A surface whose `connector.grant` row reads `{"connectors":[]}` still reaches every host its bundle's `connections` open. The empty grant is true and is not a statement about egress.
+
+**Where the audit trail joins the two.** An `egress.policy` row names the hosts **the policy that pass compiled** left open to a mutating verb, each with the connection id whose credential the firewall stamps on it (`writeHosts`, whose entries carry the cross-plane row shape — `plane`, `unit`, `host`, `verb`, `credential`, `outcome` — described in [Audit & provenance § Outbound calls: two planes, one row shape](./audit-and-provenance.md#outbound-calls-two-planes-one-row-shape)), beside an exact count (`writeHostCount`, `0` included — a policy that opened nothing mutating says so rather than staying silent). The list is capped at 20 names and sets `writeHostsTruncated` when it cuts; the count stays exact either way. That field is the only place the join lives, because **on the sandbox plane an allowed egress request is audited on no tier** — only the self-host proxy lifts *denials* into `egress.denied`, and Vercel's firewall denies out of band. So the answer to "could this session have written to that vendor over its own `curl`, and under which rule?" comes from the policy rows; the answer to "did it?" comes from the session transcript, not from the audit log. The **host** plane is the other case and does audit each call — an `egress.hostside.allow` or `slack.attachment.allow` row per request, with its outcome — so a question about a call Open Everywhere dispatched itself is answered from the trail. Which plane a call took decides which answer you get; see [Audit & provenance § Outbound calls: two planes, one row shape](./audit-and-provenance.md#outbound-calls-two-planes-one-row-shape).
+
+**Read the rows, plural — one row is one pass, not one session and not one policy.** A session compiles its policy many times over, and every pass that is not skipped as unchanged writes a row, told apart by `phase` and `reason`. A row is not proof that a firewall call was made: under `egress.enforce: false` the pass is a dry run, which applies nothing and still rows, and the row's own `enforced` field is what separates the two. Two rows can also describe the same policy: `open_pull_request` lifts the read stamp off `github.com` for its staging push and then re-arms the brokered policy, and both applies are rowed, because the re-arm is the one an operator most needs to see happened. `session.started` and `turn.started` are the [per-turn re-apply](./revocation-latency.md); `scm.broker` is a mid-turn apply by `checkout_repo` or `open_pull_request`, which replaces the git hosts' rules with the read-broker's owner-scoped installation token (`agent/scm/broker.ts`). That last one matters to this join: the broker's rule declares no method, so it opens `github.com` and `codeload.github.com` to every verb for the length of the SCM call, and only its own row says so. `policyFingerprint` identifies the generation each row describes.
+
+**`credential` and `credentialed` answer different questions.** `credentialed` says whether the firewall stamped anything at all on that host — read off the compiled rule, not off the config. `credential` names the bundle connection whose credential it is, and is `null` whenever no bundle connection names it. So `{credentialed: false, credential: null}` is a bare allow: reach with no credential *injected by the firewall*. `{credentialed: true, credential: null}` is a stamp from outside the bundle — today, the git read-broker's installation token. Read `credentialed` first: `credential: null` on its own does not mean "nothing rode". The field was called `via` until OPE-1547 gave both planes one row shape; `via` now names nothing on an egress row, because on the host plane it used to name the dispatch route and one name may not carry two subjects in one store.
+
+🔴 **`credentialed: false` bounds the FIREWALL, not the request.** It says the firewall injected nothing, so a request out of that host carried only what the sandbox itself sent — and the sandbox can send a credential of its own. `open_pull_request`'s staging push is exactly that: it writes to `github.com` with a write-scoped token it holds, under a row the firewall reports as a bare allow. So `credentialed: false` never reads as "this host was reached unauthenticated". The field's own docblock carries this bound (`packages/core/agent/access/egress.ts`, `OpenWriteHost.credentialed`).
+
+A revoked connection does not appear as a `credential`. The revoke drops its rule, so nothing of that connection's is stamped, and a host the compiler re-adds as a bare allow is reported with no attribution at all. This holds because attribution is gated on the compiled rule rather than on the bundle's host list — and it is why a writer that swaps a host's rules for a credential of its own must drop that host from the attribution list before deriving the row (`brokerAttributionHosts`, `agent/scm/broker-audit.ts`). Attribution matches on the host name, so a list that still claimed a replaced host would name the wrong credential.
+
+## OAuth and the firewall
+
+A firewall injects *any* bearer string fine — including an OAuth **access token**. The one thing it can't do is the **refresh dance** when that token expires. The stance follows from that:
+
+- **A long-lived bearer is just a static credential.** If you have a long-lived OAuth access token, a JWT, or a PAT, provide it as a normal static-key credential and the firewall injects it like any other bearer. The egress plane does not implement the refresh-token flow; on expiry, you re-provision the token. Zero extra machinery, and it covers the common case.
+- **Refreshing OAuth belongs on the MCP plane.** Note the asymmetry: on the egress plane a `401` lands *inside the sandbox* (the agent's `curl` sees it), so the host can't passively catch it. On the connector (MCP) plane the `401` is host-side, so the runtime maps it to an "authorization required" signal and re-runs the credential resolver — the broker refreshes — automatically. So short-lived OAuth that needs refreshing runs as a connector; the egress plane is for static and long-lived bearers.
+
+Static keys have no expiry, so they're unconstrained on either plane.
+
+## Where the secret actually comes from: the broker
+
+No secret is ever inlined. Every static secret is referenced **by name** and resolved through one call against the active **credential broker** — the single chokepoint every static-secret consumer uses, on both planes, so nothing reads raw process environment:
+
+```ts
+getSecret(ref: string): Promise<string>
+```
+
+- **`env` (core)** — the built-in, zero-dependency broker: it reads the named environment variable. It's the guaranteed floor for self-host, local, and CI, and is always registered.
+- **`db` (core)** — a self-host store that encrypts pasted keys at rest; registered when its AES key (`OE_CREDENTIAL_ENCRYPTION_KEY`) is armed.
+- **Your own** — a KMS or Vault adapter registers the same way. (An earlier built-in managed-vault broker, Vercel Connect, was deleted; OAuth token minting now lives on the connector plane's own-rolled user-auth-flow, not this `getSecret` seam.)
+
+Every credential names its **one** home broker explicitly (`broker: "env" | "db" | …`); there is **no** global selection and no default. Resolution is **fail-closed**: a credential naming an unregistered broker — or reaching resolution with no broker at all — makes `getSecretVia` **throw** rather than silently substituting another broker. Quietly falling back could inject the wrong secret — a coincidentally-named env var, or a stale dev value — so it refuses. How brokers register, and how to write one, is on [Credential brokers](../extending/credential-brokers.md).
+
+### One credential per attempt: two fallbacks that sound alike
+
+"Fallback" means two different things here, and only one of them is allowed:
+
+- **Resolution-time fallback is allowed.** A surface with *no* provider credential bound (a raw `connectors: [...]` grant) resolves the connection's own `fallbackSecretRef` instead. Nothing has failed and nothing was chosen and then abandoned — this is simply how an un-providered grant works.
+- **Auth-failure fallback is forbidden.** Once a credential *is* resolved, a `401`/`403` under it — or any other failure — propagates. It **never** causes a second attempt under a different credential, and specifically never under the fallback secret. A retry under another key would turn *"this surface is not authorized"* into *"this surface authenticated as somebody else"*, which is the exact confused deputy the per-surface binding exists to prevent; it would also make the fallback secret reachable from every surface that has a binding, silently widening it.
+
+The invariant holds by **shape rather than by a guard**: the no-credential-bound branch is the only reader of the fallback ref, and there is no `catch` anywhere around a resolved credential's read. It is pinned by a test that watches *which refs the broker is asked for*, so adding such a `catch` turns the suite red rather than passing review.
+
+The same rule is why a per-domain credential override that names a missing credential **fails closed instead of falling back** to the org default — a domain bound away from the org key must not be handed the org key by a retry.
+
+### Getting a key into the `db` broker: the operator door (`oe secret`)
+
+**The `db` store is the default home for a secret; `env` is the on-ramp you can delete afterwards.** The operator door is a local command — `oe secret set <name>`, value on **stdin** — that encrypts through the same AES-256-GCM write path as every other intake and upserts the row itself. It authenticates with the environment the operator already holds to run the deployment (`DATABASE_URL` + `OE_CREDENTIAL_ENCRYPTION_KEY`; `--org` keys the rows under a non-default tenant, because the org is tracked config rather than an env var), so it needs **no chat surface, no admin token, and no deployed endpoint** — it is the day-0 door, usable before the agent has ever booted. `--from-file` takes a `.env`-shaped `KEY=VALUE` file for a bulk migration; the repo's ops MCP server exposes the identical functions as `secret_set` / `secret_list` / `secret_rm` so an operator-side *agent* can provision conversationally. Setup detail: [Setup runbook § Secrets](../deploy/setup-runbook.md#3-secrets).
+
+Three constraints hold on this door as hard as on the chat ones:
+
+- **Write-only.** No `oe secret get`, no read-back tool, no reveal verb. `oe secret list` returns names, who set them and when; a write confirms with a **byte count** and nothing else — a prefix of an API key is a real disclosure, so there isn't one.
+- **The deployed agent never holds the verb.** These are operator-side functions, not tools and not control-plane verbs: OE provisioning its own credentials is refused by construction.
+- **Not on the audit hash chain, deliberately.** The audit log is partitioned by **org**, and an operator process cannot learn the org by itself unless its entry loads the deployment's config. The three doors differ, so name yours: the `oe secret` CLI resolves the shipped `"default"` unless the operator passes `--org`; the shipped ops MCP entry (`scripts/ops-mcp.ts`, the `.mcp.json` server) DOES load `agent/identity/surfaces.ts`, so it answers the declared org; the core-only entry (`npm run ops`) loads nothing and its secret tools REFUSE rather than infer, until a call names `org`. A row filed into the wrong tenant's chain is worse than no row. So the write is recorded **unchained, on the row**: `created_by` carries `operator:cli` / `operator:ops-mcp` (plus an optional `--as` label) and `created_at` the time, both shown by `oe secret list`. The chat intakes keep their `credential.stored` audit row, because they run inside the agent, which knows its own org. (This used to be justified by a concurrency hazard — a second process appending would fork the chain. That hazard is closed: appends now serialise per org across processes, and the operator store takes the same lock. See [Audit & provenance](./audit-and-provenance.md).)
+
+At resolution, a stored secret **wins** over an environment variable of the same name, and a stored row that cannot be decrypted (a missing/rotated `OE_CREDENTIAL_ENCRYPTION_KEY`) **fails closed rather than falling back to that variable** — the env value may be exactly the credential you rotated away from. One trade-off to state plainly: an environment variable survives a database wipe and a stored secret does not; the store rides the database's backups (Neon PITR on the default hosted path).
+
+**A credential that resolves to nothing writes an audit row.** Resolution refuses in four cases, and each one appends `credential.unresolved` with a fixed `reason`:
+
+| `reason` | What happened | What you do about it |
+| --- | --- | --- |
+| `no-stored-row` | The `db` broker holds no row for the ref. | Store one through a chat intake or `oe secret set`. |
+| `reserved-namespace` | The ref names a namespace the outbound plane may not read. | Correct the credential's `secretRef`. |
+| `broker-unstamped` | The credential reached resolution naming no home broker. | Stamp its `broker` field. |
+| `broker-not-registered` | The credential names a home broker nobody registered at startup. | Register the broker. For `db` this means arming `OE_CREDENTIAL_ENCRYPTION_KEY`. |
+
+The first two refusals come from the `db` broker; the last two come one layer above it, at the shared resolution seam, and refuse **before any broker runs**. The distinction is what makes the reason worth reading: `broker-not-registered` on the `db` broker is the deployment-wide case — with `OE_CREDENTIAL_ENCRYPTION_KEY` dropped, the broker never registers, every `broker: "db"` credential fails at once, and no per-ref row can fire because no broker was ever called.
+
+Every row carries the broker, the **ref** and the reason — never the value, its length, a prefix, or a hash. The refusal itself is unchanged, and callers still degrade quietly rather than throw, so availability is unaffected. What changes is that the degradation is visible: a path that goes dead names the thing you must fix, instead of acking `200` in silence. `npm run deploy:census` proves a required row **exists**; these rows are what the deployment says when one does not.
+
+### Getting a key into the `db` broker: the chat intake front doors
+
+A pasted key never travels through chat itself — the agent is never in the loop, and a key typed into a message is treated as compromised. Instead the agent **couriers a capability**, and a human enters the value host-side through one of two front doors that converge on the *same* write seam (validate → single-use consume → encrypt → store; audit records only *that* a credential was stored — ref/provider/domain/who, **never** the value or its length):
+
+- **Slack — a native secret modal.** "Set API key" opens a `views.open` modal; the `view_submission` is handled host-side. The requester is re-verified at both the click and the submit. Best UX, so Slack keeps it.
+- **Everyone else — a one-shot intake page.** Discord, Teams, and the modal-less surfaces (Notion, GitHub, Linear) get a **link** instead: a signed, single-use, ~15-minute URL the requester opens in a browser to enter the key on a minimal, self-contained form served by the deployment itself (`GET`/`POST /connect/v1/intake`). The token is an HMAC-signed capability **bound to one intake request** (org + row id + requester + a hard expiry); it is **write-only** (the page can only store — never read back or list anything) and **single-use** (it consumes the *same* intake row the Slack modal would, so a request completes through the modal **or** the page, never both). Everything fails closed to one generic `404` — a bad, expired, consumed, or unknown token reveals nothing about what exists.
+
+The intake page and the secret-reveal page (`/connect/v1/reveal`) verify against the **same** signing key and write their rows into the **same** table. Two walls keep them apart, and both are needed. First, every token carries a required **audience** claim, and each route checks only its own. Second, every row carries a **class**: a reveal grant is stamped with a reserved `connector` label, both intake front doors refuse a row that carries one, and an intake can never be minted into that class. The second wall holds even if the first is defeated — without it, a token that reached the intake route while naming a reveal grant would overwrite the live webhook signing secret that grant's ref points at.
+
+The page is **armed** only when the credential vault holds (or can mint) a signing secret and a public base URL (`OE_PUBLIC_BASE_URL`, else the Vercel deployment URL) is set. The signing secret, `OE_INTAKE_PAGE_SIGNING_KEY`, is **self-shared** — this deployment both mints and verifies its own tokens, no counterparty ever needs the value — so it mints on first use (OPE-408 step 3) rather than requiring an operator to set it: a stored value wins, an env var of that name (if still set) is the announced-once on-ramp, and neither means a fresh value mints and stores itself. Unarmed (no `OE_CREDENTIAL_ENCRYPTION_KEY`), the routes `404` (the endpoint effectively does not exist) and the connector card degrades the api-key option to honest text rather than a dead link. The signing secret is deliberately **separate** from the `db` broker's outbound-credential namespace (it lives under the reserved `self:` prefix): the page is storage-home agnostic, so its token secret is not coupled to any one home.
+
+### Moving custody env → db: the binding PR
+
+A credential can start life in `env` (an env var name) and later move to `db` (a key pasted through the "Set API key" chat intake or the one-shot intake page, encrypted at rest). That move never happens silently. When a key lands in the `db` broker, the host opens a **deterministic config-repo PR** that re-stamps *that one credential* from `broker: "env"` to `broker: "db"` — a data-only override written to the **`agent/access/credential-bindings.generated.ts`** overlay (merged over the provider set at boot, `assertConnectorCredentialsValid` re-run on the MERGED result). The PR carries **references only** — provider/credential ids, the structured `db:<provider>:<credential>` ref, and the CITED `credential.stored` audit id — **never** the secret value.
+
+The **merge is the gate**: `agent/access/credential-bindings.generated.ts` carries a CODEOWNERS line and must sit behind branch protection ("require review from Code Owners"), exactly like the access-request grants overlay. An unmerged binding PR re-points nothing (the resolver never reads an unreferenced ref), so opening it pre-approval is safe by construction. Because a shared env var may have OTHER consumers (a key read by both a provider credential and a channel-plumbing path), the PR body flags that merging re-points THIS credential only. Runbook: [`README-db-broker-flip.md`](../../packages/core/scripts/e2e/README-db-broker-flip.md).
+
+## The host can change the policy; the agent can't
+
+Network policy is compiled and applied **host-side**. The sandboxed agent is the thing being constrained — it cannot reach in and widen its own egress policy or change its own credential injection. A policy with nothing reachable compiles to **deny-all** (fail-closed), not to "allow everything."
+
+**Scope, so the claim stays exact.** Eve 0.54.x ships a self-modification feature whose workspace sandbox runs at **`allow-all`** by design; the widening happens in eve's own session hook, before any tool body runs, and its five tools cannot name a policy value. Open Everywhere does not configure that feature, so those paths are unreachable here — enabling it is authored code and therefore a pull request, never a model action. `test:credential-isolation` pins the separation that carries this: the two eve modules that set a policy define no tool, and no self-modification tool module names one.
+
+There is also **no built-in allow-list**. Some agent platforms ship a default bypass for package registries so `npm install` works under an otherwise-closed policy; Open Everywhere deliberately does not, for a structural reason more than a cautious one: a compiled-in default would make the `deny-all` branch above unreachable, and the fail-closed floor is what every other claim on this plane rests on. It would also widen every deployment with no diff anywhere, on a plane where access is supposed to widen only through a merge.
+
+The affordance instead is a named constant, `PACKAGE_REGISTRY_HOSTS` (npm, jsr, PyPI, crates.io and the Go module proxy — each ecosystem's index *and* the host it redirects downloads to). A bundle that does repo work opts in with one reviewed, greppable line:
+
+```ts
+defineBundle({ name: "coding", repos: ["acme/web"], domains: [...PACKAGE_REGISTRY_HOSTS] })
+```
+
+Grant it on the bundle that clones repos, not on the org baseline: `registry.npmjs.org` is an arbitrary-code-download channel with a `postinstall` hook on the other end, and it has no business travelling with the org-wide default.
+
+The same set is also reachable as a named, per-scope, inheritable **network-access level** (OPE-509) — `defineNetworkAccess({ scope, level: "trusted" })`, resolved narrowest-wins like every other scoped grant on the [scope ladder](../how-it-works/access-and-scoping.md#network-access-levels-the-environment-apart-from-credentials). It compiles down to this SAME `PACKAGE_REGISTRY_HOSTS` set (plus `github.com`) through the SAME `compileNetworkPolicy` compiler — a legibility improvement over hand-copying the constant onto a bundle's `domains` list, not a second enforcement path. A `"full"` level is the reviewable escape hatch for the rare scope that genuinely needs unrestricted egress, in place of a bare `"*"` a reviewer would otherwise have to spot inside a bundle's host list.
+
+### What the agent can see about its own policy
+
+The agent cannot change the policy, but it *can* read a redacted account of it. Each time the policy is applied, two files are materialised into the sandbox beside the memory tree:
+
+- **`egress/STATUS.json`** — the enforcement state (`enforced` / `dry-run` / `unenforced`), every allowed host with its method and path narrowing, whether a credential is injected at that host (a boolean — never the header, never the value), and the `policyFingerprint` that also appears on the `egress.policy` audit row.
+- **`egress/README.md`** — the protocol on a denial: don't retry, don't route around it, report the host you needed. Both files are chmod'd read-only, so the agent cannot rewrite its own account of what it may reach.
+
+This exists because the denial itself explains nothing. The firewall blocks out of band, so the agent meets it as an unexplained connection failure — and the reflex for an unexplained failure is a retry, which on this plane is the one response that can never work.
+
+**Whether the blocked request itself leaves a row depends on who owns the firewall**, and the files are careful to say so rather than assert one tier's truth everywhere. On the **Vercel** tier it does not: the sandbox host denies out of band, Open Everywhere never observes the attempt, and the agent's own report is the only signal that it happened. On the **[self-host egress tier](../deploy/platforms/self-host-egress.md)** the proxy is ours, so each denial becomes an `egress.denied` audit row — the host, the same `policyFingerprint`, and a count, aggregated per poll window and carrying **no path, query string, method or client address** — which [permission homeostasis](./permission-homeostasis.md)'s widening loop reads as evidence to propose opening the host. The agent's report still matters there: a host and a count cannot say what the agent wanted the host *for*.
+
+## Why a grant is a real boundary
+
+Pulling it together: the token never touches the agent, and the grant that authorizes a connection is enforced — not hinted — at six layers:
+
+1. **Config-as-code grant.** A bundle grants a connector/credential by name, bound to a scope, versioned in git, changed by reviewed PR.
+2. **Per-surface hard gate.** The credential resolver asserts the calling surface was granted this connector *before* resolving any token. An ungranted or unidentifiable surface never reaches a credential, fail-closed. This is built into the credential builders so an author can't forget it.
+3. **DM-only context wall (v1, default on).** The framework injects discovered connector operation tools on every session — standing channel watchers included — so the same credential gate also requires a *positively-DM* calling context. Connector operations outside a DM seat (or a task worker spawned from one) are refused fail-closed before a token exists; every verdict is audited (`connector.use` / `connector.refused`). Deployment-wide opt-out: `connectors.dmOnly: false`.
+   **The member plane — the one designed way a *personal* credential resolves outside a DM** (`connectors.memberPlane`, default **off**). A domain may declare that its rooms admit the asker's own connector credential, by naming the connector's member role in its own `credentials` — the same field, and the same no-fallback rule, the work grant uses. It is a narrow arm rather than a relaxed resolver, and every gate below has to hold before a token exists:
+
+   - **both** flags are armed — `connectors.memberPlane` and `connectors.opTiering`. The second is load-bearing rather than a convenience: the read-only rule below is enforced inside the per-op policy, and with tiering off the connection falls back to the framework's blanket `once()` approval, which knows nothing about the member plane — so the refusal never runs at all and a member-plane write goes through on an ordinary approval. A deployment that has not armed the tiering the plane depends on does not get the plane.
+   - the caller's domain declared that exact `(connector, credential)` pair. Absence is a refusal, never the org default. A declaration names the member ROLE and the credential id it resolves to, and boot refuses an entry whose `use` repeats the role id — so the connector's catalogue has to carry a SECOND personal credential before any domain can hold the grant. That is the real cost of arming the plane, and today's Notion catalogue carries only one, on purpose.
+   - **exactly one verified person woke this turn.** A turn several people woke — a turn that merged queued deliveries — or a system wake, refuses rather than picking one. (On the pinned eve 0.54.3 the MULTI-ASKER case is unreachable: eve refuses to batch two senders' queued deliveries at all — it batches only when their full auth contexts match — and OE additionally stamps a fresh per-delivery `oe_delivery_id` into `auth.attributes`. 🔴 **The SYSTEM-WAKE refusal is live and load-bearing**: a routine fire, a task settlement or an ambient wake carries no verified human asker, and the plane refuses there every time.) This is what makes "another member cannot use your credential" structural rather than enforced: the token is minted for *that asker's* own OAuth vault subject, so a different person's ask addresses a different row, and an asker with no grant is simply invited to connect their account.
+   - **everybody whose words are in this conversation is vouched as a member.** Two things have to hold. No author may be *positively refuted* — by the platform's own roster, or by your author-trust register. And you must have **declared the room internal** in `agent/identity/surfaces.ts`. The second is the one that carries the weight, because a refutation is positive-only: where a platform cannot answer, its verdict is simply absent, and an absent verdict never refuted anybody. Your declaration is the vouch instead. A room you have not declared internal means "nobody here is vouched as a member", so the plane refuses there. **A deployment that has declared nothing internal therefore has no member plane at all, anywhere, until it declares something** — the refusal says so and names the line to add.
+
+     A declaration counts at **any rung you wrote it on**: the room itself, the container it sits in, its group, or the whole workspace. One `defineSurface({ key: "discord/<guild>", trust: "internal" })` line arms the plane for every channel in that guild — which is the same reach that line already has everywhere else trust is read, so it is one rule rather than two. What your declaration cannot do is *promote* a room the platform has positively reported as external: a Slack Connect channel that spans another organisation stays out of the plane even under a workspace-wide declaration. Uncertainty never resolves up.
+
+     It is deliberately **your** declaration, not the platform's own verdict about the room. A vendor reporting a room as internal is not enough on its own — a community workspace anyone may join reports exactly that about every channel in it, which is why the gate reads what you declared rather than what the platform concluded.
+
+     **A group DM is not a DM here.** The exemption below is for one-to-one DMs. A group DM is a shared room with several people in it, so it reaches this gate like every other shared room. Nobody declares its own per-conversation key, but a declaration on any rung above it vouches it — the tenant rung included — so a workspace-wide declaration admits the plane in a group DM. The refutation leg works there too: a guest or an outside person who **writes** in a group DM marks that turn, through the same per-author probe a channel uses. Presence marks nothing, in a group DM as in a channel — no roster is read.
+   - the operation is a **read**. A write under a personal credential carries that person's name at the provider, while an approval card in a shared room offers the button to the room — nothing binds a connector op's click to the asker. The framework does define a who-may-approve check, but it cannot be attached to a connection: its resolver keeps a connection's approval only in the bare request-policy shape, so the check never reaches the running agent. So writes are denied outside a DM.
+
+   **In a DM a personal-credential write is admitted, and takes the ordinary approval card.** The member plane is the *shared-room* arm; a DM never enters it. There the asker, the person who clicks Approve and the name the provider records are one person, so the objection above collapses and the write is gated exactly like any other write — once per operation, or per call when the operation is destructive. Updating your own Notion page from your own DM is a normal, approved action, not a refusal.
+
+   That DM is **proven, not assumed**. The approval seam reads the same is-DM predicate the credential mint reads, and it refuses a personal-credential write on any surface that does not positively resolve as a DM — an unreadable surface included. It also refuses when the person this turn serves and the person whose DM this is are not the same, so one member's name can never ride another member's approval.
+
+   There is no per-thread mount table and nothing to revoke per room. Disconnecting the account purges the vault row, and the credential stops resolving everywhere on the next turn. Mints are audited (`connector.mint` with `plane: "member"` and the requester), and each gate's refusal names itself.
+
+4. **Broad-grant lint.** Binding at org or tenant scope warns at preview time — broad blast radius is visible before you ship.
+5. **Break-glass revoke.** A [control-plane](./control-plane.md) override can *remove* a connector from a surface at runtime — narrow-only; it can never *add* access. Widening is exclusively a reviewed PR. It takes effect on the agent's **next connector call**: the resolver overlays the override every time, and refuses outright if the override store can't be read (falling back to the config grant would re-grant exactly what was just revoked).
+
+   **The egress counterpart, and where the override reaches too.** The firewall's own policy — the reachable hosts *and* the credential baked into each host's header transform — is recompiled **on every turn**, and re-applied whenever the recompiled policy differs from the one in force, so a bundle change, a rotated secret, or a `revoke_connector` lands on the session's next turn rather than surviving until it ends: the compiler consults the SAME live override store the credential gate does, keyed by the egress connection's own id. A `revoke_connector` stops the agent *calling* the connector immediately, and if a bundle's egress `connections` entry shares that same id, its host — and the credential injected there — drops out of the very next re-applied policy too. The two planes key their identifiers independently, though, so revoking the Eve connector name (`"notion"`) does not by itself narrow a differently-named egress connection (`"notion-rest"`) reaching the same vendor — name the connection's own id to close that route. Full per-plane latencies: [What revoke actually reaches](./revocation-latency.md).
+6. **Audience floor.** Before the credential resolves, the agent re-derives the *room's* privilege floor from live platform membership. A room whose floor resolves to `guest` does not hear org-internal connector data at all: the read is refused in place and redirected to the requester's DM ("I've sent it to you directly"), never partially rendered. This is the same floor computation that arms an admin/governance channel — one primitive, opposite ends of the range.
+
+   **Know its reach before you count on it.** Layer 6 is the *narrowest* of the six, and today it covers exactly one case: an **externally-shared Slack channel** (Slack Connect / shared / org-shared) in a deployment that has turned layer 3 off with `connectors.dmOnly: false`. Three limits stack up. Only the Slack surface reports membership at all, so on Discord, Teams, GitHub, Linear and Notion the floor is never resolvable and layer 6 is inert — layers 1–5 remain the whole boundary there. On Slack the guest signal is the *channel's* externally-shared flag, not a per-member check, so a single-channel or multi-channel guest sitting in an ordinary internal private channel does **not** lower the floor. And with layer 3 on (the default) every non-DM turn is already refused one layer earlier, so layer 6 adds enforcement only once connectors are opened up to channels. Treat it as defence in depth for shared Slack channels, not as a general "a guest is in the room" guarantee.
+
+The promise, in one line: **an app-layer fence over workspace-wide credentials, the secret never touches the agent, and the boundary is enforced in six places rather than trusted.**
+
+**A provider bundle cannot take the borrow transport away from core.** Core registers one fenced borrow transport per connector where the granted tools mount, and that registry is first-write-wins: a later registration for the same connector throws, and core's transport keeps every call. A bundle that registers *before* core does not win either — core's own registration then refuses, and the deployment fails to boot rather than sending granted calls through a bundle's transport.
+
+**A provider bundle cannot take the room notice away either.** The port that posts the host-authored "acting as `<owner>`" line into the room is first-write-wins by the same rule. Core arms it where the granted tools mount; a second registration throws, so a bundle can no longer replace the arm and stop the disclosure while granted calls keep running. A bundle that arms the port *before* core does not win either — core's own registration then throws where the granted tools mount, so the mount fails rather than running granted calls through a bundle's arm. The test reset for both registries sits off core's published export map, so a deep import cannot empty either one and register into it. Neither control answers code that goes around the module system — a bundle runs in the same process — and both answer the supported route, which is a deep import of a published subpath.
+
+**A call the room did not see says so in the audit log.** The rule above stops a *replacement*. Posting can still fail to land, and every way it can writes a `grant.undisclosed` row whose gate names the reason. `no_room_context` means the granted call ran outside the mount's room wrap, so no room could be addressed. `no_post_arm` means the surface takes no mid-turn post — GitHub today. `post_failed` means the post was addressed, attempted, and threw. Two more cover the port itself: `port_unarmed` when nothing is armed on it, and `arm_threw` when the arm rejects instead of reporting. The first three are what a running deployment produces; the last two are backstops, because the granted-tool mount arms the port before any call can run, and the shipped arm reports rather than rejects. None of them fails the call: the vendor call has already run and the credential is already spent, so evidence is the only fail-closed direction left at that point. The row carries the grant id, so it joins by eye to that call's own `grant.used` row.
+
+**Read that row in one direction only.** A `grant.undisclosed` row is evidence the room did *not* see the line. Its **absence is not evidence that the room did**, and it is worth being exact about why: `grant.used` is written *before* the vendor call, so that a crashed call still leaves a row, and a call whose transport throws exits on the refusal path — it never reaches the notice arm at all. Such a call leaves `grant.used` and no `grant.undisclosed`, and the room saw nothing. A once-mode grant additionally leaves a `grant.refused` row with gate `undispatched` (or `refund_capped` / `refund_unclaimed`), but a session or standing grant leaves no closing row at all. So the only sound reading is the positive one: a `grant.undisclosed` row names a room that was left out. Proving the converse — that a given granted call *was* disclosed — needs the platform's own record of the post, which this plane does not hold.
+
+### Personal credentials stay in DMs — and rooms get witnessing instead
+
+A recurring request is to let the agent act *as the asking human* inside a shared room — per-user OAuth on the connector plane, so a read is scoped to that person's entitlements and a write lands in the target system under their name. **Open Everywhere rejects this for rooms**, deliberately.
+
+The reasons are structural, not effort:
+
+- **A room's scoping key is its audience floor, not any individual's ceiling.** If the agent fetched data as user X and answered in the channel, X's private entitlements are broadcast to everyone else in it — per-user scoping becomes a leak amplifier, not a safeguard.
+- **The steering context is multi-principal.** In a channel the agent's context is authored by everyone (plus anything pasted into it). An agent holding X's credentials while steered by content authored by Y is a fresh confused-deputy variant, with X as the victim of record.
+- **Ambient turns have no requestor at all.** A channel-activity wake has nobody who asked, so there is no principled answer to "whose credentials?".
+
+What replaces it is the thing per-user credentials were really buying — accountability — delivered by the planes that already exist: every consequential action binds a **named, verified human** at the approval card (frozen args, verified clicker, audited), admin-grade work is **witnessed** in a uniformly-privileged governance channel rather than executed privately, and native attribution is recovered by convention (`Co-authored-by:` / "on behalf of @user (approved by @admin)" trailers stamped by code from the frozen card row). Open Everywhere binds **authorization** to a person; the credential stays the org's.
+
+Personal credentials therefore live only in the DM universe, and that is enforced by construction: the resolver refuses to attach a user-principal credential to any channel or domain binding. In a DM the credential plane and the audience coincide — your own token *is* the system of record's answer to "may you see this".
+
+#### "Acting as a human" is a second credential family, not a setting
+
+A related question — *can the agent post under my name in the target system?* — is worth separating from the DM rule above, because the answer is a property of the **vendor**, not of Open Everywhere's policy.
+
+Surveying the six surfaces OE supports, the pattern is uniform: **acting as a user is always a second, separately-minted credential — never a mode of the install credential.** Where it exists it has its own token shape and usually its own expiry rhythm; on at least one surface it does not exist at all (no scope combination lets an app post chat as a human). The install token cannot be talked into it.
+
+Open Everywhere therefore models acting identity as an **orthogonal, optional, per-connector grant family**, not a flag on the install credential:
+
+- A credential declares its **family** — `install` (the default) or `human-acting`. GitHub declares the one `human-acting` credential in this tree; every other credential is install-family.
+- A provider declares whether the vendor supports one **at all**, in three states that are kept deliberately distinct: *undeclared* (nobody has researched it), *vendor-incapable* (structurally impossible — with the reason recorded), and *supported* (naming which credential types can carry it). "We haven't set this up" and "this vendor cannot do this" are different facts and never collapse into one.
+- Each family carries its **own lifecycle** — expiry and refresh posture — because the two routinely differ on the same vendor (one surface's app token lives 30 days with no refresh token while its user token lives 24 hours with one).
+
+Two consequences follow, and both are enforced rather than documented. A human-acting credential is **user-principal whatever its shape** — including a plain static key, which is how several vendors issue theirs — so it lands under the DM-only rule above by construction rather than by remembering to. And absent an explicit human-acting grant, everything resolves to the install credential exactly as it always has; the default is fail-closed.
+
+**GitHub declares one, and nothing mints it yet.** `github`/`user-oauth` (`agent/access/connector-credentials.ts`) is the tree's only `human-acting` credential. GitHub's install identity is the App installation token, which lives on the SCM and egress planes rather than here, so this catalogue declares only the member's own account. The declaration does three things and no more: it moves GitHub from *undeclared* to *supported*, it makes the credential user-principal — and therefore DM-only by construction — and it declares endpoint rules of `api.github.com` with `GET` as the only method.
+
+**Nothing resolves this credential today, and both halves of that are worth stating.** No bundle grants the `github` connector, so `expandConnectorGrant` never expands it and no consent flow mints a token under it. The DM-only refusal is therefore *structural* rather than live traffic: it falls out of the family making the credential user-principal, and `scripts/github-personal-credential-test.ts` drives that refusal directly against the shipped catalogue. The endpoint rules bind nothing yet for the same reason — a rule binds only where a call site threads the credential — so they are the fence a future mint inherits, checked by the same test.
+
+**A member's own GitHub account stays out of every shared room, by two absences.** A member's own GitHub credential may surface reads from repositories the org cannot see **only in that member's DM**. Two planes could carry a personal credential into a shared room, and GitHub is on neither. The **member plane** does not name GitHub in `MEMBER_ROLES`, so no domain declaration admits one. The **credential-grant** plane does not name it in `CREDENTIAL_GRANT_ROLES`, and cannot today: a grant lends one of the owner's own MCP tools, and this tree mounts no GitHub MCP connection for a tool to come from. A member who asks a GitHub read to act as them gets a refusal that says so, rather than the org's answer under the App installation (`packages/core/agent/scm/github-acting-identity.ts`). The refusal names the absence that is true for GitHub — this deployment lends no personal GitHub account at all — rather than pointing at a domain declaration an operator could change for nothing.
+
+**That refusal covers every GitHub READ in the tree, and the list is the claim.** Seven call sites resolve the App installation token and return GitHub content, and all seven call the seam: the bundle's `read_channel` / `read_thread` and the worker's `read_work_channel` / `read_work_thread`, all admitted through one `admitContainer`; core's `check_pr_status`, `get_pr_feedback`, `walk_pr`, `subscribe_pr` and `checkout_repo`; and the GitHub arm of the federated `search`. The seam lives in core because all but one of those call sites do — the SCM plane stays in core by doctrine, so a seam inside the provider bundle could not reach them. **Writes are a different decision and stay outside**: `open_pull_request`, `post_pr_walkthrough` and the issue-write verbs resolve the same token to write, and the standing write residual covers them. So does the memory backing, which is an org-default subtree pull with no requester turn behind it. The list is enforced rather than reviewed, within a stated reach: `packages/core/scripts/github-acting-identity-test.ts` walks `packages/core/agent/**` and `packages/providers/github/agent/**` recursively, with the resolver names derived from the two modules that export them, and demands that every module naming one either call the seam or carry a written reason. A new read inside those trees reds on the day it is written. What it cannot see is a module outside them, or a token reached under a name neither exporting module declares — those stay reviewer work, and saying so is the point of naming the reach.
+
+A **delegated worker** is covered too: it reads no requester words of its own (a child's opening message is the parent model's text), so it depends on a stamp the seat writes, and the producer recognises every connector that declares a `human-acting` credential family as well as the credential-grant connectors. **The worker adopts that stamp for the whole delegated job**, and that bound is worth stating because it is now reachable for GitHub. A member who names their own account and is then delegated an unrelated job has every GitHub read in that worker refused for the rest of its life, including reads nobody asked to personalise. The bound is one delegated job rather than the seat's whole life, and the cost is a refusal rather than a silent substitution — the direction this control is deliberately wrong in.
+
+The refusal's reach through `search` is narrower than the others, and worth stating exactly. The federating `search` tool catches a per-connector failure and reports it as a named absence, so the sentence reaches the model as information inside that tool's untrusted-fenced output rather than as an instruction. The substitution itself is closed either way: the GitHub arm returns no results rather than the org's view of the member's own question.
+
+**A personal credential does not widen which repositories a read may name.** Every GitHub read is fenced on the repository it addresses, against the session's own repo grant — the `repos:` list on an access bundle, a tracked literal changed by pull request. That fence does not move when the acting identity does. What moves is the second half of the reach: "the declared repositories ∩ what the acting identity can see", where the second half is the vendor's own ACL. So a member's own credential can only ever *narrow or shift* the answer inside a repository list somebody already reviewed.
+
+Every other vendor's act-as-a-user flow is undeclared. This is the shape the broker holds so that adding one is a declaration and a mint, not a rework.
+
+**One escape hatch, off by default.** Regulated deployments that must enforce per-viewer reads can set `requestorEntitlementChecks: true` on the `org` domain. When on, a directly-addressed request must clear a requestor-entitlement pre-check against the system of record before the credential resolves; both verdicts are audited, and it **fails closed** — with no entitlement probe registered for the deployment, it refuses rather than silently allowing. It is off by default because per-user answers inside a shared room contradict membership-is-the-ACL; it exists for the one case where a compliance regime overrides that.
+
+## What sits around the credential plane
+
+**A connector read is refused when the room's audience floor positively resolves to guest.**
+`assertConnectorDisclosure` (`packages/core/agent/access/connector-disclosure.ts`) resolves the room's
+audience floor and classifies the disclosure from it. It is **inert** rather than refusing when the
+question cannot be asked: no loadable config, and an unresolvable surface key, both leave it silent —
+the grant gate has already run. Only a positive guest verdict refuses. Where the deployment turns on
+requestor entitlement checks, a directly addressed turn also consults the registered entitlement probe;
+an absent probe, an unverified requestor and a probe that throws each record their own reason rather
+than standing in for an answer.
+
+**A connector that answered `needsAuthorization` fails fast for the rest of the turn.**
+`markConnectorAuthRequired` (`packages/core/agent/connections/auth-retry-memo.ts`) memoises that
+connector for the turn, and the memo clears at the next turn start. With no session context it
+memoises nothing and the read answers false — fail-soft, so the retry simply happens.
+
+**Which credential options a requester may use is decided fail-closed by omission.**
+`resolveConnectorOptions` (`packages/core/agent/connections/connector-offer.ts`) walks the offer order
+and keeps a type only when the connection's own catalogue allows it **and** an offerable credential of
+that type is configured. Two further narrowings apply: a **user**-principal type is offered in a DM
+only, and an **app**-principal type needs admin standing. Anything not positively offered is simply
+absent.
+
+**The OAuth callback route is inert until an adapter arms it.** `handleOeOauthCallback`
+(`packages/core/agent/connections/oe-oauth-callback.ts`) answers `404` when no completer is
+registered, so the port exists with nothing behind it. The `state` parameter is opaque to the route and
+is never logged.
+
+**Where a pasted secret lands is a registry.** `registerCredentialHome`
+(`packages/core/agent/credentials/home.ts`) records each host-side home by name; an unregistered name
+resolves to `undefined` and the caller fails closed. The connector offer asks the same registry
+whether **any** home can take a pasted key right now, which is what decides whether a paste route is
+offered at all.
+
+**The host-served capability pages carry a security posture, not styling.** `securePageResponse`
+(`packages/core/agent/credentials/page-chrome.ts`) emits one HTML skeleton with `noindex,nofollow` and
+`no-referrer` meta tags, and three response headers: the content type, `cache-control: no-store`, and
+`referrer-policy: no-referrer`. A page that renders capability material must never be cached, indexed,
+or leak its own token through a referrer.
+
+**Two tenants share the stored-credential table, and the line between them is fail-closed.**
+`reservedRefNamespace` (`packages/core/agent/credentials/reserved-refs.ts`) matches a ref against the
+reserved prefixes — `hook:`, `oe-oauth:`, the Notion handshake namespace and the self-secret namespace
+— and a match refuses the resolve. Those refs hold secret material this deployment minted for
+**itself**, read internally by the vault and never handed to an outbound call. The list is
+additive-only, so adding a prefix can only make the resolver refuse more. The match is case-sensitive,
+so an operator's legitimately-named key is not refused by accident. The refusal names the ref, which is
+a pointer, and never a value.
+
+## The egress plane's own seams
+
+**Whether the firewall is genuinely enforced is stamped once per session.** `isEnforced`
+(`packages/core/agent/access/enforcement.ts`) reads that stamp and **answers `true` when it cannot be
+read** — fail-closed on the read side, so an unknown state is never reported as unenforced.
+
+**A capability may register extra egress hosts, and only add.** `registerExtraEgressHosts`
+(`packages/core/agent/access/extra-hosts.ts`) keeps a per-source set of trimmed, lower-cased hosts, and
+the merge adds only the hosts the declared list does not already carry — as **bare, credential-less
+allows**. A declared entry always wins, so this seam can never widen or replace a bundle's rule, and a
+credentialed entry keeps its connection id. The merge runs on every compile, so it survives a mid-turn
+recompile.
+
+**Some hosts may not be claimed by a declaration at all.** `reserved-hosts.ts` names the git
+read-broker's hosts, `github.com` and `codeload.github.com`. The broker replaces their egress rules
+mid-turn with an installation token, which would silently displace any credential or verb narrowing on
+them. **The reservation is unconditional**: turning the broker off does not lift it, and a deployment
+that needs its own credential claims a host the broker never touches — `api.github.com` is not
+reserved. The module imports nothing on purpose, because four rungs across three planes read the list
+and an import here would re-create a cycle.
+
+**The sandbox can diagnose its own egress.** `renderEgressStatus`
+(`packages/core/agent/access/egress-status.ts`) publishes a JSON file derived from the compiled policy:
+the enforcement state, the default action, the policy fingerprint, any compile error, the allow list,
+and a pointer to a static README. It carries **hosts only** — never a credential value and never a
+header name.
+
+## Credential scoping is the backstop; the consequence registry draws the line
+
+Credential and egress scoping bound *what a session can reach*. They are the outer wall — but a wall is not a policy about which reachable actions warrant a human. That line — "opening a PR needs a click, reading a PR's status doesn't" — is one no vendor sells you; Open Everywhere draws it itself in the [consequence registry](./security-model.md#4-approval-gates-are-governance-not-a-crutch), a single lint-pinned table assigning every tool a tier (`open` / `gate:member` / `gate:admin`). Scoping and the registry are complementary: scoping stops a compromised session reaching an ungranted host at all; the registry pauses a *granted* but consequential action for a human even when the reach is legitimate.
+
+Three config-lints keep the reviewed posture honest at preview time, all hard-failing the `test` chain:
+
+- **Method narrowing.** A credentialed egress connection must name its HTTP `methods` (the standard read shape is `["GET","HEAD"]`). There is deliberately *no* escape hatch — naming every method you need **is** the escape, so a write-capable credential is always visible as such in the diff.
+- **Broad-grant `allowBroad`.** Binding a credentialed bundle at org or tenant scope fails unless the binding declares `allowBroad: "<reason>"`, making a wide blast radius a conscious, reviewed decision rather than an accident.
+- **Same-scope credential collisions.** Provider grants merge *narrowest-wins*, which decides between two different scopes and says nothing about two grants at the **same** one. Two credentials for one provider at one scope resolve by declaration order — the surface authenticates with whichever the config happens to list last, which is not a decision anybody made. This lint has **no escape hatch**, unlike the broad-grant one: there is no version of it an operator wants, because whichever key wins the other grant is dead config.
+
+A corollary the registry encodes: destructive-capable vendor APIs should preferentially ride the **connector plane** (host-side, gated per-operation) rather than a broad egress credential the agent curls directly — the connector plane keeps the token out of the sandbox entirely, already gates every operation at the credential (the DM-only context wall above), and is where per-operation consequence tiers live (read / write / destructive, plus a bundle's raise-only `connectorOps` declaration).

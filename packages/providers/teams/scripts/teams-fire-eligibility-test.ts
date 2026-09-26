@@ -10,7 +10,7 @@ const ok = (cond: boolean, label: string) => {
 };
 
 const TEAM = "19:team1@thread.tacv2";
-const GRAPH_TEAM = "00000000-0000-4000-8000-000000000022";
+const GRAPH_TEAM = "2b8f1c40-9d3a-4f6e-8a11-5c7d0e2f3a4b";
 const CHAN = "19:abc@thread.tacv2";
 const CREATOR = "aad-0001-creator";
 const SERVICE_URL = "https://smba.trafficmanager.net/emea/";

@@ -121,6 +121,7 @@ export function planPurge(
   input: PurgeInput,
   domain: string | null,
 ): PurgePlan {
+  // principal-gate: accountability — the card's "asked by" line. The control on an erasure is the
   if (!binding.principalId) {
     throw new Error("purge_memory needs a verified sender on this turn — no principal id resolved, so there's no requester to show on the approval card.");
   }

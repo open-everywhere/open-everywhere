@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-access-bundle, AP-MOD-core-connections-aws-identity
+
 import {
   awsRoleSessionName,
   isAwsCommandAllowed,
@@ -503,3 +505,5 @@ try {
 }
 
 console.log(`✓ aws-identity: ${passed} assertions passed`);
+
+// proves: AP-MOD-core-access-aws-screen, AP-MOD-core-connections-aws-exec

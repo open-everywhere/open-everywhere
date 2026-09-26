@@ -57,3 +57,5 @@ _resetBotDisplayNamesForTest();
 }
 
 console.log(`bot-display-name-test: ${n} assertions passed`);
+
+// proves: AP-MOD-core-identity-bot-display-name

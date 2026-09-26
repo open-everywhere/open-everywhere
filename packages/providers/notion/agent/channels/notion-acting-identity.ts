@@ -4,6 +4,7 @@ import { NOTION_PROVIDER } from "./notion-credentials.js";
 const NOTION_OWN_ACCOUNT_VENDOR: OwnAccountVendor = ownAccountVendorFor(NOTION_PROVIDER);
 
 export async function assertNotionActingIdentity(ctx: BindableContext, tool: string): Promise<void> {
+  // own-account-gate: notion — the marker `npm run lint:own-account-gate` reads (OPE-1598). The
   const verdict = await connectorActingIdentityForTurn(ctx, NOTION_OWN_ACCOUNT_VENDOR, tool);
   if (verdict.refusal !== undefined) throw new Error(verdict.refusal);
   if (verdict.identity !== "install") {

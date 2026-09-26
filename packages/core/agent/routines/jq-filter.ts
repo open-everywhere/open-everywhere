@@ -131,6 +131,7 @@ export function assertFilterShape(expression: string): void {
       `A subscription filter is at most ${FILTER_MAX_LENGTH} characters (got ${expression.length}) — past that it stops being a predicate anyone can check on an approval card.`,
     );
   }
+  // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u001f\u007f]/.test(expression)) {
     throw new Error("A subscription filter must not contain control characters.");
   }

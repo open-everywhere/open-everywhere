@@ -1,3 +1,5 @@
+// proves: memory applyPolicyStatements, verifyMemoryIsolation, memoryIsolationCause
+
 import {
   _resetMemoryPolicySpanAtomicityWarnForTest,
   initPostgresSchema,

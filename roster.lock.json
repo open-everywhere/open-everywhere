@@ -1,0 +1,200 @@
+{
+  "schemaVersion": 1,
+  "generator": 1,
+  "framework": {
+    "bash": "disabled",
+    "read_file": "disabled",
+    "web_fetch": "disabled",
+    "write_file": "disabled"
+  },
+  "packages": {
+    "@open-everywhere/adapters": {
+      "version": "0.1.0",
+      "contributions": {
+        "hook/sandbox-lifecycle": "mounted",
+        "tool/extend_workspace_time": "mounted"
+      }
+    },
+    "@open-everywhere/core": {
+      "version": "0.1.0",
+      "contributions": {
+        "channel/aws-sso-callback": "mounted",
+        "channel/control-mcp": "mounted",
+        "channel/control-read": "mounted",
+        "channel/credential-intake-page": "mounted",
+        "channel/oe-oauth-callback": "mounted",
+        "channel/policy-pages": "mounted",
+        "channel/test-wake": "mounted",
+        "channel/transcript-relay": "mounted",
+        "channel/unified": "mounted",
+        "channel/webhook-reveal-page": "mounted",
+        "channel/webhooks": "mounted",
+        "connection/notion": "mounted",
+        "hook/approval-raised": "mounted",
+        "hook/approval-settlement": "mounted",
+        "hook/binding-bridge": "mounted",
+        "hook/connector-audit": "mounted",
+        "hook/egress": "mounted",
+        "hook/eve-patch-gate": "mounted",
+        "hook/fire-carriage": "mounted",
+        "hook/fire-toolset": "mounted",
+        "hook/job-posture": "mounted",
+        "hook/lean-seat": "mounted",
+        "hook/learn": "mounted",
+        "hook/link-claim": "mounted",
+        "hook/log-flush": "mounted",
+        "hook/loop-breaker": "mounted",
+        "hook/memory": "mounted",
+        "hook/native-input-audit": "mounted",
+        "hook/own-account-ask": "mounted",
+        "hook/requester-identity": "mounted",
+        "hook/requester-messages": "mounted",
+        "hook/routine-outcome": "mounted",
+        "hook/routine-silence": "mounted",
+        "hook/session-park": "mounted",
+        "hook/spawn-taint": "mounted",
+        "hook/spend": "mounted",
+        "hook/stall-guard": "mounted",
+        "hook/telemetry": "mounted",
+        "hook/turn-anchor": "mounted",
+        "hook/wake-accounting-turn": "mounted",
+        "hook/wake-turn-start": "mounted",
+        "hook/window-routing": "mounted",
+        "schedule/directory-sync": "mounted",
+        "schedule/dispatch": "mounted",
+        "schedule/dream-mode3": "mounted",
+        "schedule/tidy": "mounted",
+        "skill/scoped": "mounted",
+        "tool/add_label": "mounted",
+        "tool/add_routine_rule": "mounted",
+        "tool/agent_version": "mounted",
+        "tool/assign": "mounted",
+        "tool/aws": "mounted",
+        "tool/browser_tools": "mounted",
+        "tool/cancel_routine": "mounted",
+        "tool/capture_events": "mounted",
+        "tool/check_pr_status": "mounted",
+        "tool/checkout_repo": "mounted",
+        "tool/clear_connector_override": "mounted",
+        "tool/clear_spend_limit": "mounted",
+        "tool/complete_job": "mounted",
+        "tool/complete_thread": "mounted",
+        "tool/confirm_link": "mounted",
+        "tool/connector": "mounted",
+        "tool/create_agent": "mounted",
+        "tool/create_routine": "mounted",
+        "tool/create_skill": "mounted",
+        "tool/create_ticket": "mounted",
+        "tool/declare_webhook": "mounted",
+        "tool/delete_skill": "mounted",
+        "tool/describe_image": "mounted",
+        "tool/dm_person": "mounted",
+        "tool/edit_reply": "mounted",
+        "tool/edit_routine": "mounted",
+        "tool/enable_routine": "mounted",
+        "tool/explain_permission": "mounted",
+        "tool/get_pr_feedback": "mounted",
+        "tool/grant_tools": "mounted",
+        "tool/halt": "mounted",
+        "tool/link_identity": "mounted",
+        "tool/list_recent_events": "mounted",
+        "tool/list_repos": "mounted",
+        "tool/list_routines": "mounted",
+        "tool/list_skills": "mounted",
+        "tool/list_webhooks": "mounted",
+        "tool/memory_admin_list": "mounted",
+        "tool/memory_admin_read": "mounted",
+        "tool/message_thread_seat": "mounted",
+        "tool/no_reply": "mounted",
+        "tool/open_pull_request": "mounted",
+        "tool/permission_fit_report": "mounted",
+        "tool/post_file": "mounted",
+        "tool/post_message": "mounted",
+        "tool/post_pr_walkthrough": "mounted",
+        "tool/purge_memory": "mounted",
+        "tool/query_analytics": "mounted",
+        "tool/react": "mounted",
+        "tool/read_channel": "mounted",
+        "tool/read_docs": "mounted",
+        "tool/read_file_upload": "mounted",
+        "tool/read_routine_transcript": "mounted",
+        "tool/read_thread": "mounted",
+        "tool/read_thread_seat": "mounted",
+        "tool/read_webhook_history": "mounted",
+        "tool/read_work_channel": "mounted",
+        "tool/read_work_thread": "mounted",
+        "tool/record_follow_up": "mounted",
+        "tool/record_job_state": "mounted",
+        "tool/record_watch_state": "mounted",
+        "tool/remove_routine_rule": "mounted",
+        "tool/reply": "mounted",
+        "tool/report_run_failed": "mounted",
+        "tool/request_access": "mounted",
+        "tool/request_credential_grant": "mounted",
+        "tool/resume": "mounted",
+        "tool/revoke_connector": "mounted",
+        "tool/revoke_credential_grant": "mounted",
+        "tool/revoke_routine_permissions": "mounted",
+        "tool/rotate_webhook": "mounted",
+        "tool/run_routine_now": "mounted",
+        "tool/sandbox_tools": "mounted",
+        "tool/search": "mounted",
+        "tool/session_cost": "mounted",
+        "tool/set_dm_delivery": "mounted",
+        "tool/set_spend_limit": "mounted",
+        "tool/set_state": "mounted",
+        "tool/spawn_thread_session": "mounted",
+        "tool/spend_report": "mounted",
+        "tool/stand_down": "mounted",
+        "tool/subscribe_pr": "mounted",
+        "tool/unlink_identity": "mounted",
+        "tool/update_status": "mounted",
+        "tool/usage_report": "mounted",
+        "tool/walk_pr": "mounted"
+      }
+    },
+    "@open-everywhere/provider-discord": {
+      "version": "0.1.0",
+      "contributions": {
+        "channel/discord": "mounted",
+        "channel/discord-gateway": "mounted"
+      }
+    },
+    "@open-everywhere/provider-github": {
+      "version": "0.1.0",
+      "contributions": {
+        "channel/github": "mounted"
+      }
+    },
+    "@open-everywhere/provider-linear": {
+      "version": "0.1.0",
+      "contributions": {
+        "channel/linear": "mounted",
+        "tool/read_linear_issue": "mounted"
+      }
+    },
+    "@open-everywhere/provider-notion": {
+      "version": "0.1.0",
+      "contributions": {
+        "channel/notion": "mounted",
+        "schedule/notion-ingress": "mounted",
+        "tool/notion_search": "mounted",
+        "tool/read_notion_comments": "mounted",
+        "tool/read_notion_page": "mounted"
+      }
+    },
+    "@open-everywhere/provider-slack": {
+      "version": "0.1.0",
+      "contributions": {
+        "channel/slack": "mounted",
+        "channel/slack-commands": "mounted"
+      }
+    },
+    "@open-everywhere/provider-teams": {
+      "version": "0.1.0",
+      "contributions": {
+        "channel/teams": "mounted"
+      }
+    }
+  }
+}

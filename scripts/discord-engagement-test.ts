@@ -1,3 +1,5 @@
+// proves: SEAT-01
+
 process.env.OE_SQLITE_PATH = ":memory:";
 overrideSettingsForTest({ discord: { autoThread: false } });
 overrideSettingsForTest({ discord: { statusUx: false } });

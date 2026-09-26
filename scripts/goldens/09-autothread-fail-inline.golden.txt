@@ -1,0 +1,12 @@
+IN  relay message M91 · guild G9 channel C9 (type 0) · from U_DEV9 · mention
+      | <@BOT> what changed in last night's deploy?
+  → POST /channels/C9/messages/M91/threads {"name":"what changed in last night's deploy?","auto_archive_duration":1440} ⇒ 403 (scripted: missing Create Public Threads)
+  → PUT /channels/C9/messages/M91/reactions/👀/@me ⇒ 204
+  → POST /channels/C9/typing ⇒ 204
+  → GET /channels/C9/messages?limit=10&before=M91 ⇒ 200 (0 backscroll msgs)
+  ⇢ DISPATCH start discord:C9 · auth U_DEV9 @ G9/C9 type=0 · state {"channelId":"C9","guildId":"G9"}
+      | <@BOT> what changed in last night's deploy?
+  ⇠ 200 ok
+EVT turn.started on discord:C9
+  → POST /channels/C9/typing ⇒ 204
+EVT message.completed on discord:C9 {"finishReason":"stop","message":"Two changes: the cache fix and the new webhook route."}

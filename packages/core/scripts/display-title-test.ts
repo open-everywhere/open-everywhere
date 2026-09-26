@@ -48,3 +48,5 @@ ok(
 );
 
 console.log(`✓ display-title: ${n} assertions passed (name/title split + the domain scope-label render site)`);
+
+// proves: AP-MOD-core-approvals-scope-label, AP-MOD-core-identity-display-title

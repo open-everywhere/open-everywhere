@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-access-resource-grant-manifest, AP-RG-dm_person, AP-RG-post_message
+
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";

@@ -1,0 +1,24 @@
+{
+  // PUBLISH BUILD (OPE-406). `tsconfig.json` stays `noEmit` — it is the typecheck gate and it
+  // deliberately covers `scripts/**` too. This config emits ONLY the published surface (`agent/**`)
+  // into `dist/`, because a registry install cannot run raw TypeScript: Node disables type
+  // stripping for anything whose realpath is inside `node_modules`
+  // (ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING), and `eve build` EVALUATES the authored agent
+  // modules before bundling — so the failure lands at build time, not just at runtime.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    // Incremental: these run from every pre-hook (pretypecheck/pretest/prebuild), so a no-op
+    // rebuild has to be near-free or the gate chain pays a full tsc on every invocation.
+    "incremental": true,
+    // OUTSIDE outDir on purpose: a tsbuildinfo left in dist/ gets swept up by the files
+    // allowlist and PUBLISHED (caught by the tarball listing, 2026-08-12).
+    "tsBuildInfoFile": "./.tsbuildinfo",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "dist",
+    "rootDir": "."
+  },
+  "include": ["agent/**/*.ts"]
+}

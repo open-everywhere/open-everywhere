@@ -43,6 +43,7 @@ export default windowGated("delete_skill", defineTool({
     }
 
     const binding = bindFrom(ctx);
+    // principal-gate: presence — a delete removes standing trusted text the domain relies on, and the
     const requestedBy = actingPrincipalIdOf(ctx);
     if (!requestedBy) {
       throw new Error("delete_skill needs a verified sender on this turn — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not propose removing a guardrail the domain's later turns rely on. Ask a person in this conversation to propose it.");

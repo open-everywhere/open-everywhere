@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "claude-docs": {
+      "type": "http",
+      "url": "https://claude.com/docs/mcp"
+    },
+    "open-everywhere-ops": {
+      "command": "npx",
+      "args": ["tsx", "scripts/ops-mcp.ts"]
+    }
+  }
+}

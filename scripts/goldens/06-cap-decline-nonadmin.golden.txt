@@ -1,0 +1,7 @@
+SEED surface cap 50 tokens/month on discord/G6/C6; 205 tokens already recorded (real setSpendLimit + recordSpend)
+IN  relay message M61 · guild G6 channel C6 (type 0) · from U_RANDO6 · mention
+      | <@BOT> summarize this thread
+  → GET /guilds/G6 ⇒ 404 (unknown guild — REST admin probe fail-closes)
+  → POST /channels/C6/messages ⇒ 200 message BM1
+      | ⛔ I'm holding off here — this channel reached its monthly budget — the per-surface cap on `discord/G6/C6` (205 / 50 tokens). An admin can raise this permanently in the spend-budgets config, or DM me to propose a temporary override — an admin approves it on a card. Scope keys for the override: this channel = `discord/G6/C6`.
+  ⇠ 200 ok

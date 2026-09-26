@@ -258,3 +258,5 @@ registerConfig(config());
 }
 
 console.log(`✅ result-reduce arm: ${n} assertions passed`);
+
+// proves: AP-MOD-core-access-result-cap, AP-MOD-core-access-result-reduce, AP-MOD-core-access-result-reduce-model-arm

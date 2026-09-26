@@ -1,0 +1,38 @@
+{
+  "$schema": "./node_modules/knip/schema.json",
+  "ignoreExportsUsedInFile": true,
+  "workspaces": {
+    ".": {
+      "entry": [
+        "agent/agent.ts",
+        "agent/instrumentation.ts",
+        "agent/instructions/**/*.ts",
+        "scripts/**/*.{ts,mts,mjs}",
+        "tests/integration/**/*.ts",
+        "deploy/**/*.{ts,mjs}",
+        "roster.config.ts",
+        "vitest.config.ts",
+        "vitest.chain.config.ts"
+      ],
+      "project": ["agent/**/*.ts", "scripts/**/*.{ts,mts,mjs}", "tests/**/*.ts", "deploy/**/*.{ts,mjs}", "*.ts"]
+    },
+    "packages/core": {
+      "entry": ["agent/contributions.ts", "scripts/**/*.ts"],
+      "project": ["agent/**/*.ts", "scripts/**/*.ts"]
+    },
+    "packages/adapters": {
+      "entry": ["agent/contributions.ts", "scripts/**/*.ts"],
+      "project": ["agent/**/*.ts", "scripts/**/*.ts"]
+    },
+    "packages/create": {
+      "entry": ["bin/*.js", "scripts/**/*.ts"],
+      "project": ["bin/*.js", "src/**/*.ts", "scripts/**/*.ts"]
+    },
+    "packages/providers/*": {
+      "entry": ["agent/contributions.ts", "scripts/**/*.ts"],
+      "project": ["agent/**/*.ts", "scripts/**/*.ts"]
+    }
+  },
+  "ignore": ["**/dist/**", "**/*.generated.ts", "**/docs-generated.ts", "**/generated/**"],
+  "ignoreBinaries": ["eve", "oe"]
+}

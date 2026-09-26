@@ -1,0 +1,104 @@
+# Deploy-on-merge for the config repo — the piece that makes the access-request flow's
+# admin experience truly one-click (docs/how-it-works/access-requests.md): merging a
+# grants PR deploys the merged config, so "merge = grant goes live" holds without a
+# human remembering to deploy.
+#
+# 🔴 THIS FILE LIVES UNDER docs/ AND GITHUB NEVER RUNS IT. Open Everywhere's own repository
+# runs no GitHub Actions at all — it has no workflows, so this
+# template ships as documentation rather than as a disabled workflow file. It is a template
+# for YOUR fork or instance, and it costs this repository no Actions minutes.
+#
+# TO USE IT, on your own fork:
+#
+#   1. Copy this file to .github/workflows/deploy-on-merge.yml.
+#   2. Create a Vercel token (scoped to the project's team) and add it as the repo secret
+#      VERCEL_TOKEN (Settings → Secrets and variables → Actions). Add VERCEL_ORG_ID and
+#      VERCEL_PROJECT_ID as repo VARIABLES (`vercel link` prints both).
+#   3. Add three more repo secrets for the verify step below: OE_DEPLOY_SCOPE (the Vercel
+#      team/scope slug), OE_DEPLOY_ALIAS (the production alias the agent is served on, e.g.
+#      my-agent.vercel.app), and OE_DEPLOY_CONTROL_TOKEN (a control-plane read token — mint
+#      one with `npm run mint:control-token -w @open-everywhere/core -- <name>`). See
+#      `scripts/deploy/verify.ts` for the full env reference.
+#
+# 🔴 KEEP THIS JOB OFF `pull_request` EVENTS. It reads deployment secrets, and a workflow
+# that reaches them from a fork's pull request is the classic open-source RCE. The trigger
+# below is `push` to the base branch, which runs only on code a maintainer already merged.
+#
+# The team-scoped token from step 2 is all the verify step needs. It reads and moves the
+# alias through the Vercel REST API, which takes that token (OPE-1045). It does NOT run the
+# `vercel` CLI for those calls: the CLI resolves a USER identity before every command, a
+# team-scoped token has no user, and on a runner with no `vercel login` session every such
+# call fails with "User not found" — identically via VERCEL_TOKEN and via an explicit
+# --token flag. `vercel deploy` itself is unaffected.
+#
+# BUILD-THEN-PROMOTE (the deploy backstop, ring ④): `vercel deploy --prod` builds first and
+# only promotes a build that succeeded — combined with fail-loud config at boot, a
+# merged-but-broken config yields a red pipeline and the PREVIOUS deployment stays live; the
+# agent never goes down from a bad merge. Do not replace this with anything that promotes
+# before building. Build-then-promote alone does not cover a deployment that builds green,
+# promotes, and then dies at cold start — or one that promotes fine while every scheduled
+# cron tick still runs stale code. The VERIFY step below (rings ⑤ and ⑥: prove, then undo)
+# covers exactly that failure class: it probes the live agent, auto-rolls-back on a dead
+# probe, and checks the cron registration against this deployment (OPE-531).
+
+name: Deploy on merge
+
+on:
+  push:
+    branches: [main]
+    # Deliberately scoped to the config surfaces the access-request flow touches; widen
+    # to your taste (or remove `paths` to deploy every merge to main).
+    paths:
+      - "agent/access/grants.generated.ts"
+      - "agent/**"
+
+concurrency:
+  group: deploy-on-merge
+  cancel-in-progress: false # never cancel a deploy mid-flight
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 24 (build and deploy on the same major the runtime uses)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Gates (a deploy never outruns them — AGENTS.md § Build/test/typecheck)
+        run: npm run typecheck:all && npm test
+
+      - name: Build (must be green before any deploy — AGENTS.md deploy rule 2)
+        run: npm run build
+
+      - name: Deploy (build-then-promote)
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+        run: npx vercel deploy --prod --token "$VERCEL_TOKEN"
+
+      - name: Verify (probe, auto-rollback, cron check)
+        env:
+          OE_DEPLOY_SCOPE: ${{ secrets.OE_DEPLOY_SCOPE }}
+          OE_DEPLOY_ALIAS: ${{ secrets.OE_DEPLOY_ALIAS }}
+          OE_DEPLOY_CONTROL_TOKEN: ${{ secrets.OE_DEPLOY_CONTROL_TOKEN }}
+          # The env key is OE_VERCEL_API_TOKEN, not VERCEL_TOKEN. The vercel CLI
+          # auto-reads VERCEL_TOKEN and resolves a user identity before any call; a
+          # team-scoped token has no user identity, so VERCEL_TOKEN in this shell
+          # breaks the CLI with "User not found" (OPE-1031). scripts/deploy/lib.ts
+          # reads this differently-named variable for its own REST calls, which do
+          # not hit that identity check. See the note above for the CLI-side gap this
+          # does NOT fix.
+          OE_VERCEL_API_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+        # --record stamps the known-good rollback pointer on a passing probe, so a
+        # later `npm run rollback` is a one-hop undo rather than archaeology.
+        run: npm run deploy:verify -- --record

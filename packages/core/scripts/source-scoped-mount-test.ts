@@ -1,3 +1,9 @@
+// proves: AP-MOD-core-access-source-gate-manifest, AP-MOD-core-access-source-scoped-mount
+// proves: AP-SRC-read_linear_issue, AP-SRC-read_notion_comments, AP-SRC-read_notion_page
+// proves: AP-SRCARM-read_linear_issue, AP-SRCARM-read_notion_comments, AP-SRCARM-read_notion_page
+// proves: AP-SRCGEN-read_channel, AP-SRCGEN-read_thread, AP-SRCGEN-read_work_channel
+// proves: AP-SRCGEN-read_work_thread
+
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";

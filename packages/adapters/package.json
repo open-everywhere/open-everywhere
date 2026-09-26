@@ -1,0 +1,192 @@
+{
+  "name": "@open-everywhere/adapters",
+  "version": "0.1.0",
+  "description": "Open Everywhere adapters — the reference Vercel-hosted backends: AI Gateway models and pricing, Sandbox, Blob, Neon, OpenTelemetry, AWS and Okta.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "homepage": "https://github.com/open-everywhere/open-everywhere/tree/main/packages/adapters",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/open-everywhere/open-everywhere.git",
+    "directory": "packages/adapters"
+  },
+  "bugs": {
+    "url": "https://github.com/open-everywhere/open-everywhere/issues"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "agent",
+    "dist",
+    "tsconfig.json",
+    "tsconfig.build.json",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "exports": {
+    "./package.json": "./package.json",
+    "./agent/aws/cli.js": {
+      "types": "./dist/agent/aws/cli.d.ts",
+      "default": "./dist/agent/aws/cli.js"
+    },
+    "./agent/aws/config.js": {
+      "types": "./dist/agent/aws/config.d.ts",
+      "default": "./dist/agent/aws/config.js"
+    },
+    "./agent/aws/register.js": {
+      "types": "./dist/agent/aws/register.d.ts",
+      "default": "./dist/agent/aws/register.js"
+    },
+    "./agent/aws/sso.js": {
+      "types": "./dist/agent/aws/sso.d.ts",
+      "default": "./dist/agent/aws/sso.js"
+    },
+    "./agent/aws/sts.js": {
+      "types": "./dist/agent/aws/sts.d.ts",
+      "default": "./dist/agent/aws/sts.js"
+    },
+    "./agent/blob/hosting.js": {
+      "types": "./dist/agent/blob/hosting.d.ts",
+      "default": "./dist/agent/blob/hosting.js"
+    },
+    "./agent/browser/config.js": {
+      "types": "./dist/agent/browser/config.d.ts",
+      "default": "./dist/agent/browser/config.js"
+    },
+    "./agent/browser/register.js": {
+      "types": "./dist/agent/browser/register.d.ts",
+      "default": "./dist/agent/browser/register.js"
+    },
+    "./agent/browser/sandbox.js": {
+      "types": "./dist/agent/browser/sandbox.d.ts",
+      "default": "./dist/agent/browser/sandbox.js"
+    },
+    "./agent/contributions.js": {
+      "types": "./dist/agent/contributions.d.ts",
+      "default": "./dist/agent/contributions.js"
+    },
+    "./agent/directory/config.js": {
+      "types": "./dist/agent/directory/config.d.ts",
+      "default": "./dist/agent/directory/config.js"
+    },
+    "./agent/directory/okta.js": {
+      "types": "./dist/agent/directory/okta.d.ts",
+      "default": "./dist/agent/directory/okta.js"
+    },
+    "./agent/directory/register.js": {
+      "types": "./dist/agent/directory/register.d.ts",
+      "default": "./dist/agent/directory/register.js"
+    },
+    "./agent/instrumentation.js": {
+      "types": "./dist/agent/instrumentation.d.ts",
+      "default": "./dist/agent/instrumentation.js"
+    },
+    "./agent/model/approval-judge.js": {
+      "types": "./dist/agent/model/approval-judge.d.ts",
+      "default": "./dist/agent/model/approval-judge.js"
+    },
+    "./agent/model/dream-judge.js": {
+      "types": "./dist/agent/model/dream-judge.d.ts",
+      "default": "./dist/agent/model/dream-judge.js"
+    },
+    "./agent/model/gateway-vision.js": {
+      "types": "./dist/agent/model/gateway-vision.d.ts",
+      "default": "./dist/agent/model/gateway-vision.js"
+    },
+    "./agent/model/gateway.js": {
+      "types": "./dist/agent/model/gateway.d.ts",
+      "default": "./dist/agent/model/gateway.js"
+    },
+    "./agent/oe-oauth/config.js": {
+      "types": "./dist/agent/oe-oauth/config.d.ts",
+      "default": "./dist/agent/oe-oauth/config.js"
+    },
+    "./agent/oe-oauth/errors.js": {
+      "types": "./dist/agent/oe-oauth/errors.d.ts",
+      "default": "./dist/agent/oe-oauth/errors.js"
+    },
+    "./agent/oe-oauth/oauth-client.js": {
+      "types": "./dist/agent/oe-oauth/oauth-client.d.ts",
+      "default": "./dist/agent/oe-oauth/oauth-client.js"
+    },
+    "./agent/oe-oauth/pkce.js": {
+      "types": "./dist/agent/oe-oauth/pkce.d.ts",
+      "default": "./dist/agent/oe-oauth/pkce.js"
+    },
+    "./agent/oe-oauth/register.js": {
+      "types": "./dist/agent/oe-oauth/register.d.ts",
+      "default": "./dist/agent/oe-oauth/register.js"
+    },
+    "./agent/oe-oauth/token-vault.js": {
+      "types": "./dist/agent/oe-oauth/token-vault.d.ts",
+      "default": "./dist/agent/oe-oauth/token-vault.js"
+    },
+    "./agent/oe-oauth/user-auth-flow.js": {
+      "types": "./dist/agent/oe-oauth/user-auth-flow.d.ts",
+      "default": "./dist/agent/oe-oauth/user-auth-flow.js"
+    },
+    "./agent/postgres/neon.js": {
+      "types": "./dist/agent/postgres/neon.d.ts",
+      "default": "./dist/agent/postgres/neon.js"
+    },
+    "./agent/sandbox/backend-stop.js": {
+      "types": "./dist/agent/sandbox/backend-stop.d.ts",
+      "default": "./dist/agent/sandbox/backend-stop.js"
+    },
+    "./agent/sandbox/created-sandbox-registry.js": {
+      "types": "./dist/agent/sandbox/created-sandbox-registry.d.ts",
+      "default": "./dist/agent/sandbox/created-sandbox-registry.js"
+    },
+    "./agent/sandbox/extend-workspace-time.js": {
+      "types": "./dist/agent/sandbox/extend-workspace-time.d.ts",
+      "default": "./dist/agent/sandbox/extend-workspace-time.js"
+    },
+    "./agent/sandbox/vercel-lifecycle.js": {
+      "types": "./dist/agent/sandbox/vercel-lifecycle.d.ts",
+      "default": "./dist/agent/sandbox/vercel-lifecycle.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "npm run test:chain",
+    "test:chain": "npm run test:instrumentation && npm run test:sandbox-lifecycle && npm run test:sandbox-guard && npm run test:sandbox-extend && npm run test:model-gateway && npm run test:dream-judge-gateway && npm run test:approval-judge-gateway && npm run test:gateway-vision && npm run test:oe-oauth && npm run test:oe-oauth-static && npm run test:agent-browser && npm run test:neon-pool-error && npm run test:aws-adapter && npm run test:aws-sso && npm run test:okta-directory",
+    "test:aws-adapter": "tsx scripts/aws-adapter-test.ts",
+    "test:okta-directory": "tsx scripts/okta-directory-test.ts",
+    "test:aws-sso": "tsx scripts/aws-sso-test.ts",
+    "test:neon-pool-error": "tsx scripts/neon-pool-error-test.ts",
+    "test:agent-browser": "tsx scripts/agent-browser-test.ts",
+    "test:oe-oauth": "tsx scripts/oe-oauth-test.ts",
+    "test:oe-oauth-static": "tsx scripts/oe-oauth-static-client-test.ts",
+    "test:instrumentation": "tsx scripts/instrumentation-test.ts",
+    "test:sandbox-lifecycle": "tsx scripts/sandbox-lifecycle-test.ts",
+    "test:sandbox-guard": "tsx scripts/sandbox-live-guard-test.ts",
+    "test:sandbox-live": "tsx scripts/sandbox-live-test.ts",
+    "test:sandbox-extend": "tsx scripts/sandbox-extend-test.ts",
+    "test:model-gateway": "tsx scripts/model-gateway-test.ts",
+    "test:dream-judge-gateway": "tsx scripts/dream-judge-gateway-test.ts",
+    "test:approval-judge-gateway": "tsx scripts/approval-judge-gateway-test.ts",
+    "test:gateway-vision": "tsx scripts/gateway-vision-test.ts"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
+    "@open-everywhere/core": "0.1.0",
+    "@vercel/blob": "^2.6.1",
+    "@vercel/otel": "^2.1.3",
+    "@vercel/sandbox": "^3.2.1",
+    "ai": "^7.0.11"
+  },
+  "peerDependencies": {
+    "@agent-browser/eve": "0.32.4",
+    "eve": "0.54.3"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "tsx": "latest",
+    "typescript": "latest"
+  }
+}

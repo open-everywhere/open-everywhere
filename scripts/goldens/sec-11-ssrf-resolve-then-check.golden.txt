@@ -1,0 +1,6 @@
+SEED egress allowlist grants: rebind.attacker.test (reachable) — but it resolves to 169.254.169.254
+IN  oeFetch host-side {url} · allowlisted host that DNS-rebinds to the metadata IP
+      target
+      | https://rebind.attacker.test/latest/meta-data/iam/security-credentials/
+  ⇠ DENY post_file: "rebind.attacker.test" resolves to a blocked internal/loopback/link-local address (169.254.169.254) — refusing (DNS-rebinding guard).
+AUDIT egress.hostside.deny host=rebind.attacker.test reason=ssrf

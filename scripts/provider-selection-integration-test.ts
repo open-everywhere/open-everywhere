@@ -1,3 +1,6 @@
+// proves: provider.unselected_wake_refused
+// proves: SEAT-37
+
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";

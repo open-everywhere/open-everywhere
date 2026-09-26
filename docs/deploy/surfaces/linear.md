@@ -1,0 +1,503 @@
+# Linear
+
+Assign or mention Open Everywhere on a Linear issue and it acts as an autonomous teammate — it runs on the issue, does the work, posts its progress back as native Agent Activities, and remembers what it learned scoped per **team** (not per throwaway issue). Opt the team's memory **domain** into ambient mode and it also becomes a **quiet standing teammate on the whole team**: it reads every comment on the team's issues, judges each against the shared engagement bar, and replies in-thread only where it clearly adds something — every silence audited (see [Ambient mode](#ambient-mode--the-standing-team-supervisor-opt-in)).
+
+This page is the Linear-specific setup runbook. For the concept of a *surface* and how surfaces plug in, see [Surfaces](../../extending/surfaces.md). For how memory is scoped per organization and team, see [Memory](../../capabilities/memory.md).
+
+## How the silo model maps
+
+Open Everywhere's memory is [opt-in domains and silos](../../capabilities/memory.md), not an
+automatic per-organization tier stack. Linear is driven by the **Agent Session** protocol — a
+session runs *on an issue* — but an issue is too granular to be the surface: every issue would
+get its own throwaway partition with nothing reusable across the team's work. So the surface
+grain is the **team** that owns the issue; the agent accumulates durable context per team
+across many issues, with the issue only the invocation point and post-back anchor. A team gets
+shared (domain/org) memory the same opt-in way any surface does — see "Trust" below.
+
+| Open Everywhere concept | Linear thing |
+| --- | --- |
+| `org` (tenant) | your deployment (`deploymentIdentity.org` in `agent/identity/surfaces.ts`, one org per deploy today) |
+| `workspace` (identity key) | the Linear **organization** (`organization_id`) |
+| `surface` (partition key) | the **team** that owns the issue (`team_id`) |
+| invocation + post-back anchor | the **issue** / Agent Session (`issue_id`, `agent_session_id`) |
+| `mode` | `channel` (Linear has no 1:1 DM analog — sessions are always on a shared issue) |
+| `visibility` | enriched from the API (`team.private`): a non-private team is team-visible; ANY enrichment failure fails closed to `private` |
+
+This is a deliberate, distinctive choice: **surface = team, not issue.** Two issues in the same team share one memory silo, so the agent carries forward conventions, decisions, and context across that team's work instead of relearning per ticket. (A finer **project**- or **cycle**-grained silo is a planned future refinement; team is the launch grain.)
+
+**Visibility is enriched but isn't the memory gate.** The webhook doesn't carry team
+privacy, so it is enriched from the Linear API at dispatch time (`team(id){ private }` —
+`enrichTeamPrivacy`): a non-private team is team-visible; a private team, or ANY enrichment
+failure (missing token, API error, unknown team), fails closed to `private`. This bit is
+tracked but doesn't decide sharing — see trust, next.
+
+**Trust is unverified by default — every team starts `external`.** Open Everywhere has no
+Linear guest/external-member check yet, so `bindLinear` leaves `trust` undefined, which
+**fails closed to `external`**: a fresh team gets read-only `public` memory at most — never an
+explicit domain's silo, never the `org` brain — team-visible or not. A Linear organization is
+usually one team, but "usually" isn't a security guarantee, so nothing shares by default. To
+unlock domain/org memory, the operator explicitly **vouches** it: set `OE_TRUST=internal` for
+a single-tenant deployment where every Linear team is trusted, or vouch specific teams via a
+`linear/<organization_id>` (workspace-wide) or `linear/<organization_id>/<team_id>` entry in
+`agent/identity/surfaces.ts`. Unvouched, the agent still works the issue (chat-only, no
+shared memory); vouched, normal domain/org resolution applies exactly as it does for any other
+internal surface.
+
+## Prerequisites
+
+- **Admin** on the target Linear workspace, with the ability to register an OAuth application under **Settings → API**.
+- **No paid plan needed.** A third-party agent is free on every Linear plan — an installed agent does *not* count as a billable user. (Linear's paid "AI & Agents / Code Intelligence" product is a *different, unrelated* feature; you do not need it, and it is not what makes an OAuth app an agent.)
+- A reachable Open Everywhere instance — deployed (public HTTPS URL) or local with a tunnel. See the [docs index](../../README.md) to get the project and the [setup runbook](../setup-runbook.md) for the deployment steps.
+- Your instance's public base URL. The Linear webhook route is **`/eve/v1/linear`**, so Linear calls `https://<your-deploy-url>/eve/v1/linear`.
+
+## Step 1 — Register the agent (a standard OAuth application)
+
+There is **no separate "Agents" section** in Linear — an agent is just an OAuth application that (a) has the **Agent session events** webhook enabled and (b) requests the `app:` scopes. That's what turns a plain OAuth client into an agent.
+
+1. Go to **Linear → Settings → API → OAuth applications → New application** (`linear.app/settings/api/applications/new`; needs workspace admin). Name it (e.g. `Open Everywhere`).
+2. Set a **Callback URL** — this field is required, but you will **not** host a redirect flow (see Step 5 for how the token is minted instead), so any valid URL works, e.g. `https://<your-deploy-url>/eve/v1/linear`.
+3. Enable **Webhooks**, tick the **Agent session events** category, and set the webhook **URL** to:
+
+   ```
+   https://<your-deploy-url>/eve/v1/linear
+   ```
+
+   Copy the webhook **signing secret** — this is `LINEAR_WEBHOOK_SECRET` (used to verify every inbound webhook).
+4. Request scopes **`read`, `write`, `app:assignable`, `app:mentionable`** (the `app:` scopes are what let people @mention and delegate issues to the agent). Copy the **Client ID** and **Client Secret**.
+5. Mint the **app-actor access token** (`LINEAR_ACCESS_TOKEN`) — the agent uses it to post **Agent Activities** (progress / results) back onto the session. You do **not** need a redirect callback server; use the **client-credentials** grant:
+
+   ```bash
+   curl -X POST https://api.linear.app/oauth/token \
+     -d grant_type=client_credentials -d actor=app \
+     -d client_id=<CLIENT_ID> -d client_secret=<CLIENT_SECRET> \
+     -d scope='read write app:assignable app:mentionable'
+   ```
+
+   The `access_token` in the response is `LINEAR_ACCESS_TOKEN`.
+
+   > ⚠️ **This token expires in 30 days.** Fine for a build/demo — re-run the same curl to re-mint. For a durable production deploy, skip this manual mint entirely and use **Step 1.5b** below instead: OE mints (and caches) the same token itself, on demand, from the client id + secret alone.
+
+5b. **(Recommended for production) Skip the manual mint — let OE mint its own token.** Instead of running the curl above, just set `LINEAR_CLIENT_ID` / `LINEAR_CLIENT_SECRET` (Step 1.4's values) on your instance. OE mints an `actor=app` client-credentials token itself (the exact same grant the curl above performs), caches it in-process, and re-mints ahead of the 30-day expiry with a safety margin — no manual rotation, ever. See [Configuration reference § Linear token lifecycle](../configuration-reference.md#linear-token-lifecycle-mint-on-demand) for the precedence rule and failure behaviour.
+
+## Step 2 — Configure the environment
+
+Set these on your instance:
+
+```bash
+LINEAR_WEBHOOK_SECRET=…         # webhook signing secret from Step 1.3
+LINEAR_ACCESS_TOKEN=…           # app-actor token from Step 1.5 (posts Agent Activities back; re-mint every 30 days)
+```
+
+**Or, for a durable production deploy (recommended), skip `LINEAR_ACCESS_TOKEN` and set the client-credentials pair instead:**
+
+```bash
+LINEAR_WEBHOOK_SECRET=…         # webhook signing secret from Step 1.3
+LINEAR_CLIENT_ID=…              # OAuth application client id from Step 1.4
+LINEAR_CLIENT_SECRET=…          # OAuth application client secret from Step 1.4
+```
+
+OE mints and caches the access token itself (Step 1.5b) — no `LINEAR_ACCESS_TOKEN`, no monthly re-mint. If BOTH are set, `LINEAR_ACCESS_TOKEN` (or any of its static-token siblings) always wins and the client-credentials pair is ignored — see the configuration reference for the full precedence chain.
+
+Optional, but relevant to the silo model:
+
+```bash
+OE_MEMORY_PROVIDER=git          # memory backend — git | sqlite
+OE_MEMORY_DIR=/abs/path/to/store
+```
+
+**Identity binds automatically.** You do **not** set workspace, surface, mode, or visibility by hand. The Linear channel reads the **organization**, **team**, **issue**, and **actor** straight off each inbound Agent Session webhook into the session auth context, and `bindLinear` derives workspace = the organization, surface = the team, mode = `channel`, plus visibility. The `deploymentIdentity.workspace` / `.surface` declaration in `agent/identity/surfaces.ts` is only the `eve dev` (no-surface HTTP) gap-filler — once Linear is wired it is ignored.
+
+## Step 2b — A second Linear workspace (optional)
+
+One Open Everywhere deployment can serve more than one Linear workspace. It needs one OAuth
+application **per workspace**, for two reasons: a Linear access token is workspace-scoped, and an
+OAuth application is private to the workspace that created it unless you make it public.
+
+1. Repeat [Step 1](#step-1--register-the-agent-a-standard-oauth-application) **inside the second
+   workspace** — a new OAuth application, the same webhook URL
+   (`https://<your-deploy-url>/eve/v1/linear`), the same event categories, the same four scopes.
+   Both applications post to the ONE URL; OE tells their deliveries apart by the organization id
+   the payload carries.
+2. Find the second workspace's **organization id**. It is the `organizationId` on any webhook that
+   workspace sends, and it is also what a `query { organization { id } }` returns under that
+   application's own token.
+3. Set four variables on your instance. `<SLOT>` is a label you pick (`[A-Z0-9]+`, e.g. `SOAK`);
+   it groups the four values and means nothing else:
+
+   ```bash
+   LINEAR_APP_SOAK_ORG_ID=…          # the second workspace's organization id (Step 2b.2)
+   LINEAR_APP_SOAK_CLIENT_ID=…       # the second application's client id
+   LINEAR_APP_SOAK_CLIENT_SECRET=…   # the second application's client secret
+   LINEAR_APP_SOAK_WEBHOOK_SECRET=…  # the second application's webhook signing secret
+   ```
+
+   OE mints and caches an `actor=app` token per workspace from these pairs, exactly as it does for
+   the primary application. An entry missing its client id or client secret is dropped, so a
+   half-configured workspace never looks configured.
+4. **Optionally** set `LINEAR_ORGANIZATION_ID` to the PRIMARY application's own organization id.
+   It changes one thing: a delivery from an organization you never registered. Unset, the primary
+   credentials serve it (the single-workspace behaviour). Set, that stranger gets no token and no
+   webhook secret — its calls fail closed and its deliveries are refused.
+
+**Each application's signature is checked against its own secret.** OE reads the delivery's
+`organizationId`, selects that workspace's signing secret, and compares once. It never tries every
+configured secret in turn, because that would make one workspace's secret a valid signing key for
+another workspace's traffic.
+
+**Replies post under the workspace they answer.** Every reply, reaction and progress activity
+resolves the token of the workspace the wake came from — the agent-session `response`, the ambient
+issue comment, and the progress activities Linear renders while the agent works.
+
+**So do the agent's own Linear tools.** `read_linear_issue` and the `set_state` / `assign` /
+`add_label` / `create_ticket` verbs also resolve the token of the workspace the turn came from, not
+the primary application's — a session woken on the second workspace reads and changes issues under
+that workspace's own token, exactly as its replies do.
+
+**One thing stays on the primary application: an inbound IMAGE.** A Linear-hosted image attached to
+the triggering comment is downloaded inside the framework's own inbound path, which offers no way to
+name the workspace. On a second workspace that download fails and the framework drops the image
+from the turn — the text still arrives, and no reply path depends on it.
+
+## Step 3 — Invoke it
+
+1. Open any issue in a team where the agent is authorized.
+2. Trigger it the way Linear's Agent Session UX exposes — **assign** the agent to the issue, or **@mention** it in a comment (e.g. `@Open Everywhere draft the migration plan and list the risks`). Linear opens an Agent Session against your instance.
+3. Expected behaviour:
+   - Linear shows the session as active on the issue.
+   - The agent posts its progress and results as native **Agent Activities** on the session (thoughts, actions, and final response) — this is Linear's built-in agent progress UX, so there's no custom status emoji/message layer like Slack's.
+   - It does the work against the issue context and replies in the session.
+4. **Cross-issue memory.** Open a *second* issue **in the same team** and trigger the agent there. It shares the first issue's memory silo — context, conventions, and decisions learned on one issue are available on the other, because the silo is the team, not the issue. Issues in a *different* team get a separate silo.
+
+## Reply without re-tagging
+
+Linear's Agent Session is **one-shot**: the agent replies and Linear ends the session. So a
+follow-up cannot ride that flow at all — it arrives as an ordinary comment on the issue.
+
+Assigning or @mentioning the agent marks that **issue** engaged. A later plain comment on it then
+wakes the agent with no new mention, and with no domain opt-in: the invitation was the mention
+somebody already wrote. Three things to know:
+
+- **It is per issue, never per team.** Engaging one issue says nothing about the next.
+- **Asking it to stop works, and it is durable.** Say it in words — "leave this one to us" — and the
+  agent calls `stand_down`, which stores the stop against that issue. It then answers no further
+  comment on that issue until somebody assigns or @mentions it again. There is no timeout; an assign
+  or an @mention is the way back in, and it is the only thing that lifts the stop.
+  The stop covers both paths a follow-up arrives on today: a new **top-level comment** on the issue,
+  and a reply posted *inside the agent's own comment thread*, which reaches Linear's Agent Session
+  plane instead.
+  🔴 **A reply in the agent's own thread still gets one line back** (**OPE-1548**). That reply wakes
+  the agent's existing Agent Session, and Linear has no way to close a session invisibly — the
+  requester watches a spinner until an activity ends it. So the agent posts one fixed line,
+  *"Standing down on this issue — @mention me in a new comment to bring me back."*, and stops there.
+  It runs no turn and answers nothing. A top-level comment on a stood-down issue is silent, because
+  no session opens for it.
+  🔴 **@mention the app, and the stop lifts — in a new comment or in the agent's own thread**
+  (**OPE-1807**). The app reads the COMMENT, not the event shape Linear reports. A comment that names
+  the app is a fresh invitation, so the stop clears and the agent answers; a comment that names
+  nobody meets the stop and gets the fixed line above. Assigning the issue to the app lifts it the
+  same way. Write the mention as a real Linear mention — picked from the `@` autocomplete. That is
+  the shape Linear reports to the app; the app's name typed as plain text reaches no agent-session
+  event, so it lifts nothing.
+  The person who writes the mention must be one the deployment would answer anyway. A guest, or an
+  author the operator's external policy excludes, cannot lift a stop.
+  This used to key on the event action, and that was wrong. A later @mention does NOT always open a
+  new Agent Session: Linear delivers it as a `prompted` follow-up on the session that already exists,
+  and the old rule suppressed exactly that — it answered a member's @mention with the line telling
+  them to @mention. A live run measured it on a live issue.
+  One limit stays: the app must be able to READ the comment. Where the comment text cannot be
+  fetched, the stop stands and the fixed line is posted. The audit row
+  (`linear.stand_down_suppressed`) then records `reAddress: "unreadable"`, and its `commentId` names
+  the comment the delivery carried — or `null` where the delivery carried none, which is itself the
+  commonest reason the text could not be read.
+- **This needs the "Comment" data webhook** (the same one the ambient supervisor below needs — see
+  its first bullet). Without it Linear never delivers the follow-up comment, so nothing can wake on
+  it. Agent-session events alone are not enough.
+
+An issue nobody ever addressed the agent on is untouched by this. It wakes only through the ambient
+supervisor below, which is off until a domain opts in — and a stood-down issue is dropped on that
+leg too, which is what makes the stop a stop rather than a note.
+
+## Ambient mode — the standing team supervisor (opt-in)
+
+Beyond the assign/@mention Agent Session flow, the team can opt into the **ambient
+supervisor**: a standing per-team session (the same judge Slack channels, Notion docs, and
+GitHub repos use) that reads every comment on the team's issues and steps in only where it
+clearly adds something.
+
+- **Enable the "Comment" data webhook** on the SAME OAuth app (Step 1.3's webhook settings —
+  tick the generic **Comments** data category in addition to *Agent session events*). Without
+  it, no ambient signal ever arrives.
+- **Opt-in is per domain**: add the team to a memory domain (surface key
+  `linear/<organization_id>/<team_id>`) and set `ambientSupervisor: true`. Fail-closed off
+  until then. A domain can compose Linear teams **with** Slack channels, GitHub repos, and
+  Notion docs — one flag, one shared silo. Every team in the org at once is
+  `reach: ["linear/<organization_id>"]`.
+- **A team the supervisor was never asked about says so.** The first such delivery writes a
+  **`linear.ambient_skipped`** audit row naming the surface key, the reason (`no-domain` —
+  nothing routes this team — versus `domain-refused` — a domain does route it but hasn't
+  opted in) and the exact edit to make: `GET /control/v1/audit?since=<iso>&actions=linear.ambient_skipped`.
+  🔴 **Read it as a config verdict, never as the record of one comment.** The row is written once
+  per surface and reason per process — it carries `dedupe: "process"`, and it names no delivery and
+  no comment — so it cannot tell you whether a *particular* comment was skipped. A row timed beside
+  a mention you are investigating was very likely written for an earlier delivery, and the mention
+  may well have dispatched and replied. For one comment, read the unconditional log line.
+- **Judged, in-thread replies.** A kept comment is re-fetched via one GraphQL enrichment
+  (the webhook's data shape isn't contract-guaranteed), judged by the standing supervisor, and
+  the agent answers by calling the `reply` tool, which posts via `commentCreate` **into the
+  triggering comment's thread**. The turn's closing text is DROPPED and never posted. A turn
+  that delivered writes a `linear.replied` row carrying `route: "tool"`; judged silence writes a
+  `linear.no_reply` row (reason included) — cross-surface parity. A turn that wrote an answer as
+  its closing text and never called `reply` posts nothing and writes
+  `turn.supervisor_prose_dropped` — a defect signal, not judged silence.
+- **A dropped prose ending still ENDS an open Agent Session.** A @mention wake holds a session open,
+  and only a `response` Agent Activity closes it. A turn whose closing text is dropped gets one
+  corrective re-drive towards the `reply` tool; when that correction does not fire — it has already
+  been spent, no dispatch path is reachable, or a host refusal withheld the answer in the first place
+  — the host closes the session with the same fixed line a silent turn leaves. The agent's dropped text is never posted, so the drop stands; what the member
+  sees is the host line instead of a spinner that hangs until Linear ages the session out.
+- **The two legs never double-handle.** @mentions create Agent Sessions (the native leg owns
+  them), and a reply inside the app's *own* comment thread fires a `prompted` agent-session
+  event — so the ambient classifier **drops** both. Because that partition is name-based, an
+  **unresolved app identity drops everything** (fail closed): the app's own user id + display
+  name are resolved once via `viewer` under the app-actor token (or set `LINEAR_APP_USER_ID` /
+  `LINEAR_APP_NAME` to skip the call).
+- **Calibration**: Linear's platform default tier is `neutral`; tune per domain with
+  `engagementTier` (see the [configuration reference](../configuration-reference.md#memory-domain--silo)).
+
+**Status:** built, unit-tested, and driven by the `J-LIN` end-to-end scenario in
+`packages/core/scripts/e2e/scenarios.ts` (`suite: "core"`, non-optional, judged), with
+`J-ENGAGED-linear` covering the engaged-follow-up seam. `J-LIN` drives the mention reply with
+self-attribution, the self-loop guard, the assign wake, and reply-targeting across two issues. The
+repository holds the scenarios, not their results, so read live-verification status off those runs
+rather than off this page.
+
+## Event routines — firing on Linear issue changes
+
+Beyond conversing, a [routine](../../capabilities/proactivity-and-routines.md) can **subscribe to
+Linear issue events**: an issue created, updated or removed wakes the routine's own prompt in its own
+room. It rides the same `POST /eve/v1/linear` webhook you already configured — enable the generic
+**Issues** data category on the OAuth app's webhook settings (Step 1.3) alongside *Agent session
+events*, and no new URL, secret or scope is needed.
+
+- **`source: "linear"`.** A subscription must **narrow** — name a `team` (or a `project`, or an
+  issue) in its filter. Subscribing to every event in the whole workspace has to be spelled out
+  deliberately, and a filter naming only the organization is refused at creation.
+- **Only `Issue` deliveries route.** Agent Session deliveries belong to the @mention/assign leg and
+  `Comment` deliveries belong to the [ambient supervisor](#ambient-mode--the-standing-team-supervisor-opt-in)
+  above — neither can ever fire a routine, so the three legs never double-handle one delivery. Any
+  other Linear model (`Project`, `Cycle`, …) is **not** routed; that is deliberate, not an oversight.
+- **Matchable fields**: `event` (the Linear model, e.g. `Issue`), `action` (`create` / `update` /
+  `remove`), `organization`, `team`, `project`, `issue`. The issue's `identifier` (`ENG-42`),
+  `title` and `url` are carried for rendering but are **not** filterable.
+- **Scope path**: `tenant` = organization, `group` = **team**, `container` = project (when the issue
+  has one), `entity` = issue. A `.scope.group == "<team_id>"` filter is the idiomatic narrowing.
+
+**Authorization is the memory domain, not the token — the same rule as reads and writes.** The
+workspace token is one credential for the whole deployment and bounds the *workspace*, so it is not a
+domain boundary and this deliberately does not pretend otherwise. A Linear event may fire a routine
+only when the routine's own surface is in a domain the deployer put the affected **team** in:
+
+- Listed in `reach` as `linear/<organization_id>/<team_id>`, or covered by a
+  `reach: ["linear/<organization_id>"]`. A team named outright beats a container.
+- **Fail closed.** A team in no domain fires nothing anywhere; a delivery that does not identify a
+  team is refused rather than assumed; an organization-only delivery is refused, because it never
+  said *which* team it was about.
+- If a routine reports into a domain's `reportChannel`, **both** partitions must grant.
+
+A deployment that claims the whole org for one domain is unaffected — every team is in that domain by
+definition. This bites exactly where a deployer split teams across domains, which is where they asked
+for a line.
+
+**Status:** built and unit-tested (`npm run test:linear-event-normalizer --prefix
+packages/providers/linear`); the payload field probes are written against Linear's documented
+data-webhook envelope and are **not yet verified against a captured production delivery**. Being
+wrong about a probe fails *closed* — a delivery whose team cannot be read fires nothing.
+
+## Reading an issue
+
+`read_linear_issue` pulls an issue's description **and** its comment thread on demand, so the
+agent can answer about a ticket it wasn't tagged into — or catch up on the discussion before
+replying to a fresh mention on a long-running issue. The fetched body and comments arrive as
+untrusted external content, like any other surface text.
+
+**Who holds the tool.** A conversational Linear seat does not. It reads the issue it was woken on
+with the generic `read_channel` / `read_thread` verbs, which carry the issue's state and the same
+dated-read framing. `read_linear_issue` mounts on a **delegated worker**, which holds no generic
+chat read, and on any session whose domain declares the Linear **work credential** (below). So an
+ungranted seat that needs the whole issue delegates, and a granted one reads it directly.
+
+**The read is dated, and the comments are marked as history.** The rendered result carries the
+moment the read ran, and every comment carries its age at that moment ("27 minutes before this
+read"). The state field is what is true now; a comment is what somebody said earlier. Without that
+contrast the agent narrates an old comment as the present state — a soak run measured it reporting
+an approval as still pending, from the agent's own 27-minute-old comment, next to the state that
+proved the move had happened.
+
+**A reference the lookup cannot place is refused as a lookup failure, not as a scope decision.**
+When the workspace credential returns nothing for a reference, the refusal says so: the issue may
+not exist, or it may be on a team the credential cannot see. It does not tell you to change the
+memory domain, because the domain decided nothing.
+
+**It is fenced to the memory domain, not to the workspace token.** Open Everywhere holds exactly
+one Linear credential — a static app-actor token or a minted client-credentials one — and it is
+identical for every domain. That credential's own reach is not the boundary: it sees whatever the
+authorizing OAuth install can see, minus a team's own `private` flag, and it **cannot express
+anything narrower than that**, so it is not the domain boundary and OE does not present it as one.
+Before fetching anything, the tool resolves the target issue's **team** (the silo grain) and admits
+the read only when that team lands in the same memory domain as the surface the session was woken
+on:
+
+- **This turn's own issue** is always readable, with no extra lookup — it is where the agent
+  was engaged, and it is what the `issue` argument defaults to.
+- Otherwise the target's team must be in the caller's domain, either listed in `reach` as
+  `linear/<organization_id>/<team_id>` or covered by a container entry
+  `reach: ["linear/<organization_id>"]`. A team named outright beats a container, so reaching the
+  whole org never annexes a team another domain named.
+- **Fail closed.** An issue whose team can't be established (moved, deleted, never shared with
+  the token, lookup failed) is refused, as is a team that belongs to no domain. "We can't tell"
+  is never "yes".
+- Every refusal writes a **`read.refused`** audit row naming the issue, the reason, both domains
+  and the resolved team — never issue content, since the check runs before the fetch. Read them
+  with `GET /control/v1/audit?since=<iso>&actions=read.refused`.
+
+A deployment that claims the whole org for one domain is unaffected: caller and target land in
+the same domain by definition. The fence bites where a deployer split teams across domains —
+which is where they asked for a line.
+
+**These same three tiers work from any surface the domain is woken on**, on the same Linear work
+grant `create_ticket` and the ticket-action verbs use (see
+[Working from another surface](#working-from-another-surface-the-linear-work-grant) below). A
+Slack, Discord, Teams or GitHub caller resolves the target workspace from the domain's declared
+Linear work credential and reads under it. With no such declaration the tool does not even mount
+for that session — the same safe default the write verbs give.
+
+## Ticket actions
+
+Beyond conversing on an issue, the agent can mutate one with three **neutral, cross-surface**
+verbs — `set_state` (workflow state), `assign` (assignee), `add_label` — shared with GitHub (see
+[Source control § Ticket actions](../../capabilities/source-control.md#ticket-actions-set_state--assign--add_label)
+for the full doctrine: entity-gated presence, per-verb consequence, the `{ platform, id }` ref
+shape). Linear specifics:
+
+- **State/label are resolved by NAME, per-team.** Linear's workflow states and labels are typed
+  objects scoped to the issue's own team, not a free global enum — `set_state`/`add_label`
+  look them up (case-insensitive) against the issue's team and refuse, listing the real options,
+  on no match. This is Linear's **direct-set** model (`issueUpdate`), not a named transition.
+- **`assign` accepts an email, display name, or a Linear user id** — resolved against the
+  workspace's users; an ambiguous or unmatched name refuses rather than guessing.
+- **No extra scope needed.** The `write` scope already requested in
+  [Step 1](#step-1--register-the-agent-a-standard-oauth-application) covers `issueUpdate`/
+  `issueAddLabel` — nothing new to configure.
+- **`add_label` runs immediately** (trivially reversible, audited `ticket.add_label`);
+  `set_state`/`assign` **propose** — an approval card posts, and the change lands only on a
+  human's click. **You can propose from Linear itself.** Linear can't render an approval card, so
+  the card is routed to a card-capable Slack or Discord channel in the **same domain** and the
+  agent tells you which one — the same venue rule every other propose tool uses (see
+  [Control plane § Asking from a surface that can't host a card](../../security/control-plane.md#in-slack-approvals)).
+  Only the **card** moves: the issue acted on, and the domain fence below, are still resolved
+  from the conversation you asked in. If the domain has no card-capable channel, or the room is
+  in no explicit domain, you get a refusal naming the config to change.
+- **These three verbs work from any surface the domain is woken on**, on the same Linear work
+  grant `create_ticket` uses (see [Working from another surface](#working-from-another-surface-the-linear-work-grant)
+  below). A Slack, Discord, Teams or GitHub caller resolves the target workspace from the domain's
+  declared Linear work credential and acts under it. With no such declaration it is refused
+  `target-unresolvable`, which is the safe default.
+- **`create_ticket` files a NEW Linear issue** (see
+  [Source control § Filing new work](../../capabilities/source-control.md#filing-new-work-create_ticket)).
+  Its `target` is a **team** — a key (`ENG`), a team name, or a team UUID — resolved
+  case-insensitively against the workspace's teams at click time, refusing with the real keys
+  listed on no match. A turn already on an issue defaults to that issue's team (`ENG-42` ⇒
+  `ENG`). Same `write` scope as above (`issueCreate`); always proposes, never session-granted.
+
+**All four are fenced to the memory domain**, on the same reasoning as the read fence above and
+against the same grants: one workspace token bounds the *workspace*, never the domain. A
+**Linear-woken** session may only act on issues whose **team** is in the domain it was woken on —
+listed in `reach` as `linear/<organization_id>/<team_id>`, or covered by a container entry
+`reach: ["linear/<organization_id>"]`. This turn's own issue is always actionable, so
+the ordinary "close the ticket you were tagged in" case needs no extra grant. A session woken on
+another surface is fenced by the work grant instead — see
+[Working from another surface](#working-from-another-surface-the-linear-work-grant).
+
+- **The check runs before anything is proposed**, not just before the mutation — so an approval
+  card can never name an issue outside the asking room's domain, and `add_label` (which has no card
+  at all) is refused before it fires.
+- **`create_ticket` is fenced on its destination team**, resolved from whatever spelling you used.
+- **Fail closed**, exactly as for reads: an entity whose team can't be established, or a team in no
+  domain, is refused rather than assumed.
+- Every refusal writes a **`write.refused`** audit row — the target, the reason, both domains and
+  the resolved team. Read them with `GET /control/v1/audit?since=<iso>&actions=write.refused`. Keep these
+  separate from `read.refused` in any alerting: a refused read is a question that went unanswered,
+  a refused write is an **effect that was stopped**.
+
+Note that the approval card on `set_state`/`assign`/`create_ticket` is **not** the thing enforcing
+this. Member-tier approvals are self-approvable by design — the approval guards the model, not the
+member — so the domain fence is what bounds *which* issues can be reached at all.
+
+### Working from another surface: the Linear work grant
+
+Everything above compares a Linear caller with a Linear target. A session woken **somewhere else** —
+a member asking in Slack, Discord or Teams to raise a ticket, close one, reassign it, or read one —
+has no Linear workspace in its own address at all, so every write refuses `target-unresolvable`,
+and `read_linear_issue` does not even mount, with nothing configured. That is the safe default,
+not a bug.
+
+To allow it, declare the domain's Linear **work credential**. That declaration is the grant:
+
+```ts
+defineDomain({
+  name: "eng",
+  reach: ["slack/T0123ABC/C0BOARD", "linear/<organization_id>/<team_id>"],
+  credentials: [{ connector: "linear", credential: "workspace", use: "<organization_id>" }],
+})
+```
+
+The `use` value is the Linear **organization id** the domain does work in. Declare that
+organization in the connector catalogue too (`agent/access/connector-credentials.ts`), or the
+config is refused at boot.
+
+- **Declaring the work role IS the grant, and absence is a refusal.** This is the opposite rule to
+  the chat credential roles on the same field, where "no entry" means "use the deployment default".
+  A domain that declares nothing here may not do Linear work, ever.
+- **A chat-channel entry is deliberately not a work grant, in either direction.** Listing a Linear
+  team in a memory domain's `reach` routes wakes *on that team* into the domain, and that is all
+  it does. It does not let the domain's other rooms write into that team, and — since the work
+  destinations became grant-only — it does not let a session **woken on that team** file or mutate
+  a ticket either. Without the credential below, a Linear wake can converse and read the issue it
+  arrived on; it cannot file. Adding a room for conversation must never hand the domain a tracker.
+- **The grant names a workspace, not a team list.** A Linear access token is workspace-scoped, so
+  the reach of the grant is the reach of its credential: every team in that workspace. Open
+  Everywhere does not filter a vendor's own reach as a boundary. If you need a narrower reach, mint
+  a narrower Linear credential.
+- **The domain wall still stands.** A team that belongs to no memory domain passes the fence on the
+  grant alone. A team **another** domain owns is refused `cross-domain`, so a grant in one domain
+  can never annex someone else's tracker.
+- **Chat presence is neither a precondition nor a substitute.** The domain does **not** need a
+  Linear channel for any of this: a domain that tracks its work in Linear and talks in Slack is an
+  ordinary shape, and the work credential alone makes Linear an admissible destination for
+  `create_ticket`, an admissible target for `set_state` / `assign` / `add_label`, and an admissible
+  source for `read_linear_issue`. The reverse does not hold — a Linear channel with no credential
+  grants none of those. One mechanism decides work, and it is this declaration.
+- **It also picks the credential.** The organization id is the key that selects the Linear token
+  (`linearCredentialsForOrg`), so one declaration names both the destination and the identity the
+  write is made with. They cannot drift apart. A deployment serving two Linear workspaces gives
+  each domain its own declaration.
+- **The grant covers `read_linear_issue` too.** The tool mounts on a granted cross-surface session
+  and its per-turn origin fence admits a turn from that session's own surface OR one from a domain
+  holding the grant — so a granted domain reads exactly the issues it can write. An ungranted
+  cross-surface session still cannot call it at all; it reaches Linear content only through the
+  work verbs above and through whatever it was woken with. The grant is also the only thing that
+  puts the tool on a CONVERSATIONAL seat: without it the tool mounts on delegated workers alone.
+- **Refusals are audited the same way**: `write.refused` for the mutation verbs, `read.refused`
+  for `read_linear_issue`, each with the reason (`target-unresolvable`, `cross-domain`).
+
+## Gotchas
+
+- **Surface = team (cross-issue memory is intended).** All issues in one team share a single memory silo. That's the whole point — the agent builds durable per-team context instead of a throwaway memory per ticket. If you expect strict per-issue isolation, this is by design, not a bug. (A finer project/cycle silo is a planned future refinement.)
+- **`team_id` is dug from the raw webhook.** The typed issue ref omits the team, so the channel (`teamIdFromRaw`) best-effort extracts it from the raw payload (`agentSession.issue.team.id`, with a couple of shape fallbacks). If it's absent, the surface **falls back** to the issue id, then the issue identifier, then the Agent Session id — so a session always keys to a *stable* surface, but two issues whose webhooks lacked the team would not share a silo. A correctly-wired Agent Session webhook carries the team.
+- **Fail-closed visibility on any enrichment failure.** Team privacy is enriched from the API per dispatch; a private team or any failure (missing/invalid token — static or mint-on-demand, see [Configuration reference § Linear token lifecycle](../configuration-reference.md#linear-token-lifecycle-mint-on-demand) — API error, unknown team) binds `private`. This is tracked separately from trust and doesn't by itself block sharing — but every Linear team is `external` (no domain/org brain) until vouched anyway, see [Trust is unverified by default](#how-the-silo-model-maps) above. Conservative on purpose either way: nothing leaks across teams on uncertainty.
+- **One @mention gets ONE comment, and a multi-part answer is not expressible.** A Linear Agent Session ends the moment the agent posts a `response` Agent Activity — that activity is both the visible issue comment and the session's terminal signal. So when the agent answers in parts (it delegates the work, posts a hand-off note, then answers when the worker reports), only the LAST part can be a `response`. Every earlier part goes out as a **`thought`** Agent Activity: visible in the session's activity feed on the issue, but not a comment. This is Linear's own agent idiom — progress is a thought, the answer is the response — and it is the trade the surface has to make, because a second comment would cost the answer itself. Slack, Discord, Teams and GitHub have no session to spend, so every part is a real message there.
+- **A turn that judges silence leaves ONE fixed line, and the session ends.** The agent can decide a wake does not warrant an answer. On every other surface that decision posts nothing at all. On Linear's **native @mention route** it posts the fixed host line **"Noted — no response needed."** as a `response` Agent Activity. The reason is Linear's own model: a Linear Agent Session is a UI state, not an event, and the API offers no activity that terminates one invisibly. `signal: "stop"` is a human-to-agent signal the app may never send; a bare `thought` never terminates; an `error` terminates but reads as a failure. So the honest choice is one short host-authored line rather than a spinner that hangs until Linear ages the session out. The line is **fixed host copy** — the agent's own words never reach the issue on a silent turn. The silence is recorded as a `linear.no_reply` audit row with `route: "native"`, `rendering: "ack"` and the reason. If the turn ALREADY answered through the reply tool, no ack is posted: that reply spent the session itself, and the row carries no `rendering` field.
+- **A session whose ISSUE was already answered closes with a different line.** Two comments on one issue open two Agent Sessions, and the agent answers through one of them. The other session still has to close, or its spinner hangs. It closes with the fixed host line **"Answered in the comments."**, never with "Noted — no response needed.", because the answer is already on that issue. The host proves this itself — the agent never asserts it — and it holds whether the two comments run in ONE turn or in two consecutive turns. An answer on a DIFFERENT issue, or on another surface, does not count: that session gets the ordinary silence line. Nor does an OLD answer: the host only counts an answer posted at or after the member's own comment arrived, so a new ask is never told it was answered by a comment that predates it. The window is 30 minutes. The unified audit row (`unified.no_reply`) carries `answeredContainer` next to `linearClosed`, plus `answeredVia` (`turn` or `container`) naming which evidence decided it, so an operator can tell which line the member read and why.
+- **An externally-suppressed mention leaves ONE fixed line, and the session ends.** When `externalPolicy` silences the room or withholds the author, the wake is dropped before any model turn runs — no model, no ingestion, no spend. The member who @mentioned or delegated still gets an answer: the fixed host line **"I can't help with this request here."**, posted as a `response` Agent Activity, which is the only activity type that terminates the session. The reason (OPE-885): a member who addressed the app and gets nothing reads the agent as broken, and before this the requester watched a spinner until Linear aged the session out. The line is the SAME string for both grains and on every surface, so it announces neither the room's configuration nor the person's classification — the private sender notice, which does name the organisation, is never posted here. The AMBIENT comment leg has no session and stays fully dark. The `linear.external_policy_suppressed` audit row records the verdict and carries `rendering: "ack"` when the line landed.
+- **Progress UX is native.** Open Everywhere reports via Linear's built-in **Agent Activities**, not a custom status reaction/message. If you don't see updates, check that a Linear token is configured and valid — either `LINEAR_ACCESS_TOKEN` (static) or `LINEAR_CLIENT_ID`/`LINEAR_CLIENT_SECRET` (mint-on-demand) — without one the agent can't post activities back, even though it received the webhook. A mint FAILURE (bad client id/secret, network error) is logged AND appended to the audit log as `linear.token_mint_failed` — check `GET /control/v1/audit?since=<iso>&platform=linear&actions=linear.token_mint_failed` if activities silently stop.
+- **Signing-secret verification.** Every inbound webhook is verified against `LINEAR_WEBHOOK_SECRET`. If it's wrong or unset, Linear requests are rejected and the agent stays silent — check this first if assigning/mentioning does nothing. Running locally? Expose your instance with a tunnel (e.g. `ngrok`) and use that HTTPS URL as the webhook URL.

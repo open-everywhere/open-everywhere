@@ -1,3 +1,5 @@
+// proves: MEM-16, MEM-18
+
 import { initPostgresSchema, makePostgresProvider, setOrgContext, type PgClient } from "../agent/memory/postgres.js";
 import { WORKSPACE, SURFACE, siloTier } from "../agent/memory/store.js";
 import type { Partition } from "../agent/memory/partition.js";

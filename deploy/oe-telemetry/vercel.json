@@ -1,0 +1,20 @@
+{
+  "rewrites": [
+    { "source": "/v1/logs", "destination": "/api/v1/logs" }
+  ],
+  "functions": {
+    "api/v1/logs.ts": {
+      "maxDuration": 10
+    },
+    "api/cron/rollup.ts": {
+      "maxDuration": 30
+    },
+    "api/cron/prune.ts": {
+      "maxDuration": 30
+    }
+  },
+  "crons": [
+    { "path": "/api/cron/rollup", "schedule": "0 3 * * 0" },
+    { "path": "/api/cron/prune", "schedule": "0 4 * * 0" }
+  ]
+}

@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-access-member-grant
+
 import assert from "node:assert/strict";
 import {
   memberGrantCredential,

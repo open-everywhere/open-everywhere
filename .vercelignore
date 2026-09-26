@@ -1,0 +1,22 @@
+# Local-run state that must never ride a deploy upload. Vercel's CLI uploads the
+# working tree (it does NOT honour .gitignore), and a local `eve start` session
+# grows .workflow-data/ past the 15k-file upload cap.
+.workflow-data
+.output
+# The integration tier's second built target (OPE-666) — another 26 MB of build output that must
+# never ride a deploy upload, for the same reason `.output` must not.
+.output-rollown
+.playwright-mcp
+packages/core/scripts/eval/results
+packages/core/scripts/eval/seeds
+# Per-operator deploy pointer (scripts/deploy/*, OPE-376) — local state, never rides a deploy.
+.open-everywhere-deploy
+.worktrees
+
+# Local credentials and operator-only context must never ride a deploy upload.
+.env*
+!.env.example
+!.env.e2e.example
+/env-prod
+/env-*.local
+/.claude

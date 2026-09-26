@@ -129,6 +129,7 @@ export function planAwsIdentity(input: {
   const kind: AwsIdentityKind = opts.as ?? "domain-role";
   const domain = domains[0];
   if (kind === "user-sso") {
+    // principal-gate: presence — a fire may not assume a human's SSO identity in that person's name.
     if (!actingPrincipalId) {
       throw new Error(
         "acting as your AWS SSO identity needs a verified sender on this turn — a triggered routine " +

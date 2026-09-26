@@ -1,3 +1,5 @@
+// proves: DELG-29
+
 import assert from "node:assert/strict";
 import { registerConfig } from "../agent/access/config.js";
 import { hasWorkGrant } from "../agent/access/work-grant.js";

@@ -1,3 +1,6 @@
+// proves: PAR-seat-catch-up
+// proves: seat.catch_up
+
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

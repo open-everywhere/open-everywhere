@@ -58,6 +58,7 @@ export function withDuplicateApprovalGuard<TInput = Record<string, unknown>>(
   policy: Approval<TInput>,
   opts?: DuplicateApprovalGuardOptions,
 ): Approval<TInput>;
+// approval-chain: exempt — a PASS-THROUGH guard. It authors no verdict of its own: it forwards the
 export function withDuplicateApprovalGuard<TInput = Record<string, unknown>>(
   policy: Approval<TInput>,
   opts: DuplicateApprovalGuardOptions = {},

@@ -1,0 +1,8 @@
+IN  valid-shape relay body, NO signature header
+  ⇠ 401 invalid relay signature
+IN  same body, signed with the WRONG secret
+  ⇠ 401 invalid relay signature
+IN  MALFORMED JSON with a VALID signature (auth ≠ trust)
+  ⇠ 400 invalid json
+IN  valid signature, foreign envelope shape
+  ⇠ 400 unrecognized relay payload

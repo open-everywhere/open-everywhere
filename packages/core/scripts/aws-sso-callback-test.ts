@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-connections-aws-sso-callback
+
 import assert from "node:assert/strict";
 
 const cb = await import("../agent/connections/aws-sso-callback.js");

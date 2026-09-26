@@ -1,3 +1,5 @@
+// proves: const POLICY_STATEMENTS, applyPolicyStatements, auditIntegrityCause
+
 import { _resetPolicySpanAtomicityWarnForTest, auditIntegrityCause, initOperationalSchema, verifyAppendOnlyAudit, type PgClient } from "../agent/operational/postgres.js";
 import { closeAllTestPg, openTestPg } from "./test-pg-driver.js";
 

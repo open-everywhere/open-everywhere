@@ -1,0 +1,5 @@
+# The MITM CA is a real secret (its key can mint a cert for any host) — never commit it.
+ca/
+*.key
+*.crt
+*.pem

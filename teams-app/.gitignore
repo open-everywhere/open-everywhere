@@ -1,0 +1,7 @@
+# Built app packages carry a real app id / domain — never commit them.
+*.zip
+color.zip
+manifest.*.json
+manifest.filled.json
+manifest.json.tmp
+open-everywhere-teams.zip

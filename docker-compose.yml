@@ -1,0 +1,181 @@
+# Open Everywhere — self-hosted, Vercel-less stack with ENFORCED egress.
+#
+# Topology IS the security backstop (self-host-egress design §2/§3):
+#   - `oe-net-internal` is `internal: true` → NO WAN route. The app sits ONLY on it.
+#   - `oe-egress-proxy` sits on BOTH `oe-net-internal` and `oe-net-wan` — it is the SOLE
+#     container with a route to the internet. So even if the runtime policy push fails
+#     entirely, the app CANNOT reach the internet except by proxying through oe-egress-proxy,
+#     whose default is deny (fail-closed control service). The proxy is the enforcement; the
+#     internal-only network is the structural floor.
+#
+# Bring up:  docker compose up --build
+# Env:       put creds in .env (AI_GATEWAY_API_KEY, SLACK_*, etc) — including the REQUIRED
+#            OE_EGRESS_PROXY_TOKEN (`openssl rand -hex 32`), without which compose refuses to
+#            start the stack and the control service refuses to boot. The unenforced-egress
+#            escape hatch (`egress.allowUnenforced`) is NOT needed — the proxy applies the
+#            policy natively. See
+#            deploy/egress-proxy/README.md and docs/deploy/platforms/self-host-egress.md.
+
+services:
+  oe-egress-proxy:
+    build:
+      context: ./deploy/egress-proxy
+    networks: [oe-net-internal, oe-net-wan]
+    environment:
+      OE_EGRESS_MITM: "${OE_EGRESS_MITM:-0}"          # 1 = Tier B (MITM); default Tier A
+      # REQUIRED shared secret gating POST/DELETE /policy. `:?` = compose refuses to bring the
+      # stack up when it is unset or empty, matching the control service, which refuses to boot
+      # without it — a tokenless /policy lets any peer on oe-net-internal (i.e. a compromised
+      # sandbox) install itself an allow-all policy and defeat default-deny egress.
+      OE_EGRESS_PROXY_TOKEN: "${OE_EGRESS_PROXY_TOKEN:?set OE_EGRESS_PROXY_TOKEN in .env — the egress control plane refuses to start without it (generate: openssl rand -hex 32)}"
+      OE_EGRESS_CONTROL_PORT: "8080"
+      OE_EGRESS_CA_DIR: "/opt/oe-egress/ca"
+    volumes:
+      - oe-ca:/opt/oe-egress/ca                        # CA shared to the app (Tier B trust)
+      # The DENIAL LOG (OPE-314), written here and read (read-only) by the app. Squid writes a
+      # dedicated three-field format into it — timestamp, result tag, DOMAIN — never a path or a
+      # query string, so the bytes crossing this volume are minimal by construction rather than by
+      # the reader's good behaviour. See deploy/egress-proxy/squid.conf.
+      - oe-egress-log:/var/log/oe-egress
+    restart: unless-stopped
+    # No host port publishing — internal to the compose network only.
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      oe-egress-proxy:
+        condition: service_started
+      postgres:
+        condition: service_healthy       # don't boot the app until the op-store DB is accepting
+      neon-wsproxy:
+        condition: service_started
+    networks: [oe-net-internal]                        # internal ONLY — no direct WAN route
+    env_file:
+      - .env                                           # AI_GATEWAY_API_KEY, SLACK_*, etc
+    environment:
+      # VERCEL is intentionally UNSET → self-host sandbox backend + self-host egress push.
+      NODE_USE_ENV_PROXY: "1"                          # Node 24: route built-in fetch via *_PROXY
+      HTTP_PROXY: "http://oe-egress-proxy:3128"
+      HTTPS_PROXY: "http://oe-egress-proxy:3128"
+      NO_PROXY: "oe-egress-proxy,localhost,127.0.0.1"  # policy pushes/health stay direct
+      # This local egress DEV stack deliberately pins justbash (the app code default is docker,
+      # OPE-106). justbash shares this app process's filesystem → dev/testing only; set
+      # OE_SANDBOX_BACKEND=docker (+ the daemon socket below) to exercise real git/npm.
+      OE_SANDBOX_BACKEND: "${OE_SANDBOX_BACKEND:-justbash}"
+      OE_EGRESS_PROXY_URL: "http://oe-egress-proxy:8080"    # control endpoint for policy push
+      OE_EGRESS_PROXY_TOKEN: "${OE_EGRESS_PROXY_TOKEN:?set OE_EGRESS_PROXY_TOKEN in .env — the app's policy push is rejected without it (same value as the proxy)}"
+      # OPE-314: tail the proxy's denial log so a blocked host becomes an `egress.denied` audit row
+      # and `permission_fit_report` can propose widening it. No new port, no new credential — the
+      # app only ever READS this volume. Unset it to turn the poller off; a missing/unreadable file
+      # degrades to nothing (the plane goes dark, as it is on the Vercel tier) and says so once.
+      OE_EGRESS_DENIAL_LOG: "${OE_EGRESS_DENIAL_LOG:-/var/log/oe-egress/denied.log}"
+      OE_EGRESS_DENIAL_POLL_MS: "${OE_EGRESS_DENIAL_POLL_MS:-60000}"
+      # Tier B: the app must trust the MITM CA for git/npm/curl (no-op under Tier A).
+      NODE_EXTRA_CA_CERTS: "/opt/oe-egress/ca/oe-egress-ca.crt"
+      GIT_SSL_CAINFO: "/opt/oe-egress/ca/oe-egress-ca.crt"
+      OE_MEMORY_PROVIDER: "${OE_MEMORY_PROVIDER:-sqlite}"
+      # ── Operational store: a REAL Postgres SERVER (the `postgres` sidecar below), not the
+      #    in-process embedded-Postgres (PGlite) floor. Rationale (OPE-113 spike): a server
+      #    Postgres is far LIGHTER in RAM than in-process WASM (~137MB server-side vs ~660MB RSS
+      #    for PGlite at 200k rows) and it is the graduation-free path — the SAME Postgres dialect
+      #    as hosted Neon, so there is no engine change when you move to a managed DB. The bare
+      #    quickstart (no compose) uses the PGlite floor; the docker tier steps up to a server. ──
+      OE_OPERATIONAL_PROVIDER: "${OE_OPERATIONAL_PROVIDER:-postgres}"
+      # The connection string points at the `postgres` sidecar on the internal network. Credentials
+      # are compose-level env with a sane LOCAL default — CHANGE THEM for anything real (they are not
+      # a secret here, just a local bootstrap). Keep user/pass/db in sync with the `postgres` service.
+      DATABASE_URL: "postgres://openeverywhere:${POSTGRES_PASSWORD:-change-me-local-only}@postgres:5432/openeverywhere"
+      # The shipped operational Postgres adapter is @neondatabase/serverless (WebSocket/HTTPS
+      # transport — it does NOT speak raw TCP), so a vanilla postgres:17 is reached through the
+      # `neon-wsproxy` sidecar. This env turns that on; it is IGNORED on a hosted-Neon deploy.
+      OE_NEON_WS_PROXY: "${OE_NEON_WS_PROXY:-neon-wsproxy:80}"
+      # The deployment's org is NOT an env var (OPE-1545) — it is a tracked literal in
+      # `agent/identity/surfaces.ts`, changed by PR with the rest of config-as-code.
+      PORT: "3000"
+    volumes:
+      - oe-memory:/app/.open-everywhere-memory         # git/sqlite memory backing (op store is Postgres)
+      - oe-workflow:/app/.workflow-data                # durable sessions
+      - oe-ca:/opt/oe-egress/ca:ro                     # read the CA for Tier B trust
+      - oe-egress-log:/var/log/oe-egress:ro            # tail the proxy's denial log (READ-ONLY)
+      # docker() sandbox backend (OE_SANDBOX_BACKEND=docker) also needs the daemon socket —
+      # uncomment to grant it (DooD; only with a trusted runner):
+      # - /var/run/docker.sock:/var/run/docker.sock
+    # The app is only reachable via a reverse proxy you place in front of it (forward BOTH
+    # /eve/ and /.well-known/workflow/ — see docs/deploy/platforms/self-roll.md). To expose
+    # it directly for local testing, publish 3000:
+    # ports: ["3000:3000"]
+    restart: unless-stopped
+
+  # ── Operational store: real Postgres server (org_id + RLS isolation, real DELETE erasure, and
+  #    the two-role append-only hardening — all on the same dialect as hosted Neon). This is the
+  #    docker-tier default (see the app's OE_OPERATIONAL_PROVIDER above). To fall back to the
+  #    zero-wiring embedded-Postgres (PGlite) floor instead, set OE_OPERATIONAL_PROVIDER= (empty)
+  #    and drop DATABASE_URL/OE_NEON_WS_PROXY on the app. ──
+  postgres:
+    # 17 matches the hosted-Neon major (measured PostgreSQL 17.10, 2026-08-10) — keep this pin in
+    # step with prod so compose-tier testing runs the same major as a hosted deploy (OPE-385).
+    image: postgres:17-alpine
+    networks: [oe-net-internal]                          # internal only — no WAN, like the app
+    environment:
+      POSTGRES_USER: openeverywhere
+      # LOCAL default only — override POSTGRES_PASSWORD (and the app's DATABASE_URL) for real use.
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-change-me-local-only}"
+      POSTGRES_DB: openeverywhere
+    volumes:
+      - oe-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openeverywhere -d openeverywhere"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # ── neon-wsproxy: bridges @neondatabase/serverless (WebSocket transport) to the plain-TCP
+  #    postgres sidecar. Only needed for the compose/local server tier — a hosted Neon endpoint
+  #    speaks the driver's protocol natively and needs no proxy. Listens on :80; the app's
+  #    OE_NEON_WS_PROXY points here, and neon.ts forwards each connection to `address=host:port`. ──
+  neon-wsproxy:
+    image: ghcr.io/neondatabase/wsproxy:latest
+    networks: [oe-net-internal]
+    environment:
+      # EMPTY, not "postgres:5432" (OPE-385 — live-proven against a real driver, this compose
+      # sidecar had never been end-to-end tested before): wsproxy unconditionally CONCATENATES
+      # this onto whatever `address` the client sent (ExtractProxyDest in
+      # github.com/neondatabase/wsproxy/blob/master/main.go: `addr := addressArg; if AppendPort
+      # != "" { addr += AppendPort }`). neon.ts's `wsProxy` callback (referenced two lines up)
+      # already sends the full `address=host:port`, so a non-empty APPEND_PORT doubled it to
+      # `postgres:5432postgres:5432` and every dial failed ("too many colons in address"). Empty
+      # is the variable's own documented default — it exists for a client that sends a bare host
+      # with no port, which this driver never does.
+      APPEND_PORT: ""
+      ALLOW_ADDR_REGEX: "postgres:5432"                   # only permit forwarding to our sidecar
+      LOG_TRAFFIC: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Optional: the Discord Gateway relay (already at deploy/discord-relay). Self-host is
+  #    the one place ambient Discord needs no extra always-on host. It DOES need WAN (holds
+  #    an outbound WebSocket to Discord), so it sits on the wan net, not behind the proxy. ──
+  # discord-relay:
+  #   build:
+  #     context: ./deploy/discord-relay
+  #   networks: [oe-net-wan, oe-net-internal]
+  #   env_file: [.env]
+  #   restart: unless-stopped
+
+networks:
+  oe-net-internal:
+    internal: true      # ⚠ the structural backstop — NO route to the internet
+  oe-net-wan:
+    driver: bridge
+
+volumes:
+  oe-memory:
+  oe-workflow:
+  oe-ca:
+  oe-egress-log:
+  oe-pg:

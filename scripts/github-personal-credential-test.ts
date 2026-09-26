@@ -1,3 +1,5 @@
+// proves: AP-MOD-app-access-connector-credentials
+
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";

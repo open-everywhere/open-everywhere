@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-access-domain-credentials
+
 import assert from "node:assert/strict";
 import {
   assertDomainCredentialsResolvable,

@@ -269,7 +269,9 @@ const CREATED = { issueCreate: { success: true, issue: { id: "uuid-1", identifie
 {
   const tunable: LinearRetryPolicy = { maxAttempts: 2, capMs: 10, fallbackMs: 10, totalBudgetMs: 10, sleep: async () => {}, now: () => 0 };
   ok(tunable.maxAttempts === 2, "§11d every knob core calls tunable is still accepted by the Linear seam");
+  // @ts-expect-error retryAfterMs is funnel-fixed — a caller must not be able to install a delay source
   const bodyReader: LinearRetryPolicy = { retryAfterMs: () => 0 };
+  // @ts-expect-error retryForbiddenWithRetryAfter is funnel-fixed — a caller must not be able to retry a 403
   const forbidden: LinearRetryPolicy = { retryForbiddenWithRetryAfter: true };
   ok(bodyReader !== undefined && forbidden !== undefined, "🔴 §11d …and the two funnel-fixed fields are REFUSED (the @ts-expect-error rows above are the assertion — typecheck:all reds if either becomes settable)");
 }

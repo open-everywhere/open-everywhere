@@ -49,3 +49,5 @@ const defects = (src: string, file = F) => findPrincipalKeyDefects(file, src);
 }
 
 console.log(`principal-key-lint: ${n} assertions passed`);
+
+// proves: AP-MOD-core-identity-principal-key-rules

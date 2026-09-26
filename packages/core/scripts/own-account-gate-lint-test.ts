@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-access-own-account-gate-manifest
+
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";

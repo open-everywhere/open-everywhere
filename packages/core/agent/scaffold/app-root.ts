@@ -14,7 +14,7 @@ export function findUpward(start: string, isRoot: (dir: string) => boolean): str
   }
 }
 
-export function isAppRoot(dir: string): boolean {
+function isAppRoot(dir: string): boolean {
   return existsSync(join(dir, "package.json")) && existsSync(join(dir, "agent", "agent.ts"));
 }
 

@@ -221,3 +221,5 @@ ok((await statusOf(confirmed)) === "claimed", "§7 the §4 consent survived ever
 });
 
 console.log(`✓ discord identity-consent button: ${passed} assertions passed`);
+
+// proves: AP-MOD-core-identity-link-consent

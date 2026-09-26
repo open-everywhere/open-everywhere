@@ -1,0 +1,7 @@
+SEED surface cap 50 tokens/month on discord/GS6E/CS6E; 205 tokens recorded; guild GS6E's admin probe is scripted to THROW
+IN  relay message M61E · guild GS6E channel CS6E (type 0) · from U_RANDO6E · mention
+      | <@BOT> summarize this thread
+  → GET /guilds/GS6E ⇒ ✗ network error (scripted — admin probe explodes)
+  → POST /channels/CS6E/messages ⇒ 200 message BM1
+      | ⛔ I'm holding off here — this channel reached its monthly budget — the per-surface cap on `discord/GS6E/CS6E` (205 / 50 tokens). An admin can raise this permanently in the spend-budgets config, or DM me to propose a temporary override — an admin approves it on a card. Scope keys for the override: this channel = `discord/GS6E/CS6E`.
+  ⇠ 200 ok

@@ -1,3 +1,5 @@
+// proves: slack.attachment.allow, slack.attachment.deny
+
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";

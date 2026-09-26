@@ -1,3 +1,6 @@
+// proves: PAR-seat-context-admission
+// proves: SEAT-12
+
 import assert from "node:assert/strict";
 import { assertCoreDistFresh } from "./core-dist-freshness.js";
 import { readFileSync, readdirSync, statSync } from "node:fs";
