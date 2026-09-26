@@ -1,4 +1,4 @@
-import { STACKS, SHIPPED_STACK, stackModelIds } from "../../../../agent/model/stacks.js";
+import { importAppModule } from "../../agent/scaffold/app-root.js";
 
 export interface UsageSlice {
   readonly surfaceKey: string;
@@ -81,16 +81,20 @@ export async function fetchRunUsage(
   return { rows: parsed.rows, ...(parsed.excluded ? { excluded: parsed.excluded } : {}) };
 }
 
-export function defaultExpectedModels(): readonly string[] {
+export async function defaultExpectedModels(root?: string): Promise<readonly string[]> {
+  const { STACKS, SHIPPED_STACK, stackModelIds } = await importAppModule<typeof import("../../../../agent/model/stacks.js")>(
+    "agent/model/stacks.ts",
+    root,
+  );
   return stackModelIds(STACKS[SHIPPED_STACK]);
 }
 
-export function resolveExpectedModels(envValue: string | undefined): readonly string[] {
+export async function resolveExpectedModels(envValue: string | undefined): Promise<readonly string[]> {
   const explicit = (envValue ?? "")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-  return explicit.length > 0 ? explicit : defaultExpectedModels();
+  return explicit.length > 0 ? explicit : await defaultExpectedModels();
 }
 
 export function checkExpectedModels(

@@ -1,7 +1,7 @@
 import { adminControlRoles } from "../../agent/access/roles.js";
 import { domainForChannel, type Domain } from "../../agent/memory/domain.js";
 import { rosterStanding } from "../../agent/spend/bypass.js";
-import { loadDomains } from "../../../../agent/memory/config/domains.js";
+import { loadAppDomains } from "./app-config.js";
 
 export interface SlackFixtureIdentity {
   readonly userId: string;
@@ -56,9 +56,12 @@ export function spendRefusalDmPreflight(input: {
   return { ok: true, surfaceKey };
 }
 
-export function deployedSpendRefusalDmPreflight(input: Omit<Parameters<typeof spendRefusalDmPreflight>[0], "domains">): SpendRefusalDmPreflight {
+export async function deployedSpendRefusalDmPreflight(
+  input: Omit<Parameters<typeof spendRefusalDmPreflight>[0], "domains">,
+): Promise<SpendRefusalDmPreflight> {
+  const domains = await loadAppDomains();
   return spendRefusalDmPreflight({
     ...input,
-    domains: loadDomains(),
+    domains,
   });
 }

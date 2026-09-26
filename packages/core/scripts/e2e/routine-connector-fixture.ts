@@ -1,9 +1,7 @@
 import { connectorGrantCredential, connectorGrantName, type Binding, type Bundle } from "../../agent/access/bundle.js";
 import { vercelConnectorOf, type ConnectorCredentials } from "../../agent/access/connector-credentials.js";
 import { domainForChannel, type Domain } from "../../agent/memory/domain.js";
-import { loadDomains } from "../../../../agent/memory/config/domains.js";
-import { loadBundles, loadBindings } from "../../../../agent/access/bundles.js";
-import { loadConnectorCredentials } from "../../../../agent/access/connector-credentials.js";
+import { loadAppBindings, loadAppBundles, loadAppConnectorCredentials, loadAppDomains } from "./app-config.js";
 import type { Routine } from "../../agent/routines/routine.js";
 
 export const NOTION_MCP_HOST = "mcp.notion.com";
@@ -99,13 +97,13 @@ export function routineConnectorFixtureClaim(
   );
 }
 
-export function deployedRoutineConnectorFixture(input: { readonly surfaceKey: string; readonly connector: string; readonly op: string; readonly mcpHost: string }): RoutineConnectorFixture {
+export async function deployedRoutineConnectorFixture(input: { readonly surfaceKey: string; readonly connector: string; readonly op: string; readonly mcpHost: string }): Promise<RoutineConnectorFixture> {
   return routineConnectorFixture({
     ...input,
-    domains: loadDomains(),
-    bundles: loadBundles(),
-    bindings: loadBindings(),
-    credentials: loadConnectorCredentials(),
+    domains: await loadAppDomains(),
+    bundles: await loadAppBundles(),
+    bindings: await loadAppBindings(),
+    credentials: await loadAppConnectorCredentials(),
   });
 }
 

@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
 import {
   accessSideEffectFindings,
   diffConfigSnapshots,
@@ -30,7 +30,7 @@ function snapshotIn(cwd: string): { snapshot?: ConfigSnapshot; failure?: string 
     cwd,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
-    env: { ...process.env, NODE_NO_WARNINGS: "1" },
+    env: { ...process.env, NODE_NO_WARNINGS: "1", OE_APP_ROOT: resolvePath(cwd) },
   });
   if (r.error) return { failure: `could not run scripts/config-snapshot.ts in ${cwd}: ${r.error.message}` };
   if (r.status !== 0) {

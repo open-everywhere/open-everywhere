@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
-import { STACKS, STACK_ALIASES } from "../agent/model/stacks.js";
 import { estimateStackCostUsd, type RoleTokenUsage, type TokenProfile } from "@open-everywhere/core/agent/spend/stack-pricing.js";
+import { importAppModule, resolveAppRoot } from "@open-everywhere/core/agent/scaffold/app-root.js";
+
+const APP_ROOT = resolveAppRoot();
+const { STACKS, STACK_ALIASES } = await importAppModule<typeof import("../agent/model/stacks.js")>("agent/model/stacks.ts", APP_ROOT);
 
 const args = process.argv.slice(2);
 const flag = (name: string): string | undefined => {

@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { appPath } from "../../agent/scaffold/app-root.js";
 import { tool, type ToolSet } from "ai";
 import type { z } from "zod";
 import replyDynamic from "../../agent/tools/reply.js";
@@ -85,7 +86,7 @@ export function registerTicketingFixtureManifests(): void {
 }
 
 export function readBaseInstructions(): string {
-  return readFileSync(new URL("../../../../agent/instructions.md", import.meta.url), "utf8");
+  return readFileSync(appPath("agent/instructions.md"), "utf8");
 }
 
 export async function buildShippedSystemPrompt(

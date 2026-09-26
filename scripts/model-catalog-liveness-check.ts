@@ -1,4 +1,7 @@
-import { MODELS } from "../agent/model/models.js";
+import { importAppModule, resolveAppRoot } from "@open-everywhere/core/agent/scaffold/app-root.js";
+
+const APP_ROOT = resolveAppRoot();
+const { MODELS } = await importAppModule<typeof import("../agent/model/models.js")>("agent/model/models.ts", APP_ROOT);
 
 const CATALOG_URL = "https://ai-gateway.vercel.sh/v1/models";
 const FETCH_TIMEOUT_MS = 15_000;

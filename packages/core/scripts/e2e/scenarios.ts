@@ -2221,7 +2221,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const room = ctx.slack!;
 
       const reader = await room.identity();
-      const standing = deployedSpendReportReaderPreflight({ reader });
+      const standing = await deployedSpendReportReaderPreflight({ reader });
       if (!standing.ok) return ctx.fixtureMissing(`S-SPEND-DM-MASK: ${standing.reason}`);
 
       const targetUrl = ctx.targetUrl;
@@ -2324,7 +2324,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const primary = await ctx.slack!.identity();
       const secondary = await ctx.slackSecondary!.identity();
       const dmChannelId = await ctx.slackSecondary!.openDirectMessage(ctx.slack!.botUserId);
-      const preflight = deployedSpendRefusalDmPreflight({
+      const preflight = await deployedSpendRefusalDmPreflight({
         primary,
         secondary,
         expectedSecondaryUserId: ctx.slackSecondaryUserId!,
@@ -7665,7 +7665,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const OP = ROUTINE_CONNECTOR_WRITE_OP;
 
       const { teamId: connectorTeamId, userId: connectorUserId } = await connector.identity();
-      const fixture = deployedRoutineConnectorFixture({
+      const fixture = await deployedRoutineConnectorFixture({
         surfaceKey: `slack/${connectorTeamId}/${connector.channelId}`,
         connector: NOTION_CONNECTOR,
         op: OP,

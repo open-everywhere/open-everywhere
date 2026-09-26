@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { AuditWireEntry } from "../e2e/audit-read.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "../e2e/rotate-window-lib.js";
 import { isModelUsable, type ModelPolicy } from "../../agent/model/policy.js";
-import { modelAllowList, PRIMARY_MODEL } from "../../../../agent/model/models.js";
+import { importAppModule } from "../../agent/scaffold/app-root.js";
 import type { ModelReasoning } from "../../agent/memory/domain.js";
 import type { OperationalStore, DomainModelRow } from "../../agent/operational/store.js";
 import type { MemorySilo } from "../../agent/memory/silo.js";
@@ -21,6 +21,7 @@ import {
 import { scoreRecall, scoreAbstention, statedWithoutDisclaimer, terminalVerdict } from "./memory-eval.js";
 import { buildTopology, type Topology, type PlantedFact, type SiloSpec, type PlantEntry } from "./seed-silo.js";
 
+const { modelAllowList, PRIMARY_MODEL } = await importAppModule<typeof import("../../../../agent/model/models.js")>("agent/model/models.ts");
 const ALLOW_POLICY: ModelPolicy = { allow: modelAllowList(), reasoningCeiling: "high" };
 
 const REPLY_TIMEOUT_MS = 300_000;

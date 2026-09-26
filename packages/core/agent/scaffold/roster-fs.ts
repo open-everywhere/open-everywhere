@@ -1,21 +1,16 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join, resolve as resolvePath } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { serializeLock, type PlanFile, type ResolvedPackage, type DeclaredPackage } from "./roster-plan.js";
 import type { RosterLock } from "./roster-config.js";
+import { findUpward } from "./app-root.js";
 
 export const CONFIG_FILE = "roster.config.ts";
 const LOCK_FILE = "roster.lock.json";
 
 export function findRepoRoot(start: string): string | undefined {
-  let dir = resolvePath(start);
-  for (;;) {
-    if (existsSync(join(dir, CONFIG_FILE))) return dir;
-    const parent = dirname(dir);
-    if (parent === dir) return undefined;
-    dir = parent;
-  }
+  return findUpward(start, (dir) => existsSync(join(dir, CONFIG_FILE)));
 }
 
 export async function loadRosterConfig(repoRoot: string): Promise<{ raw?: unknown; error?: string }> {

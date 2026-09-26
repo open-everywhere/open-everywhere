@@ -1,6 +1,5 @@
 import { readdirSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
 import {
   censusResult,
@@ -34,15 +33,19 @@ import { getOperationalStore } from "../../packages/core/agent/operational/provi
 import { CONTROL_READ_RUNTIME_SIGNAL_PATH } from "../../packages/core/agent/control/read-route.js";
 import { assertStoreIdentity } from "../../packages/core/scripts/store-identity-guard.js";
 
-import { loadBundles } from "../../agent/access/bundles.js";
-import { loadConnectorCredentials } from "../../agent/access/connector-credentials.js";
-import { loadDomains } from "../../agent/memory/config/domains.js";
-import { loadWebhooks } from "../../agent/webhooks/hooks.js";
+import { importAppModule, resolveAppRoot } from "../../packages/core/agent/scaffold/app-root.js";
 import { openCensusStore } from "./census-store.js";
 import { DeployConfigError, parseArgs } from "./lib.js";
 
-const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const CHANNELS_DIR = join(REPO_ROOT, "agent", "channels");
+const APP_ROOT = resolveAppRoot();
+const { loadBundles } = await importAppModule<typeof import("../../agent/access/bundles.js")>("agent/access/bundles.ts", APP_ROOT);
+const { loadConnectorCredentials } = await importAppModule<typeof import("../../agent/access/connector-credentials.js")>(
+  "agent/access/connector-credentials.ts",
+  APP_ROOT,
+);
+const { loadDomains } = await importAppModule<typeof import("../../agent/memory/config/domains.js")>("agent/memory/config/domains.ts", APP_ROOT);
+const { loadWebhooks } = await importAppModule<typeof import("../../agent/webhooks/hooks.js")>("agent/webhooks/hooks.ts", APP_ROOT);
+const CHANNELS_DIR = join(APP_ROOT, "agent", "channels");
 
 const PLUMBING: Record<string, () => Promise<readonly PlumbingCredential[]>> = {
   "notion.ts": async () => {
@@ -96,7 +99,7 @@ function resolveDiscordRelayHeartbeatMs(): number {
 }
 
 async function planHeartbeats(): Promise<readonly RequiredHeartbeat[]> {
-  const dir = join(REPO_ROOT, "agent", "schedules");
+  const dir = join(APP_ROOT, "agent", "schedules");
   const out: RequiredHeartbeat[] = [];
   for (const s of GATED_SCHEDULES) {
     const mod = (await import(join(dir, s.file))) as { default?: { cron?: string } };

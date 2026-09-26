@@ -1,6 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 import {
@@ -36,14 +35,15 @@ import {
 import { DEFAULT_TEAMS_REFRESH_SINK, ENV, S24_DEFAULT_QUERY } from "./env.js";
 import { TeamsDriver } from "./teams-driver.js";
 import { notionFetch, parseNotionRetryAfterMs } from "./notion-driver.js";
-import { loadDomains } from "../../../../agent/memory/config/domains.js";
-import { loadBindings } from "../../../../agent/access/bundles.js";
+import { resolveAppRoot } from "../../agent/scaffold/app-root.js";
+import { loadAppBindings, loadAppDomains } from "./app-config.js";
 
 type Env = Record<string, string | undefined>;
 
-export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
 export const INVENTORY_DOC = join("docs", "dev", "e2e-fixtures.md");
-const ENV_E2E = join(REPO_ROOT, ".env.e2e");
+function envE2ePath(): string {
+  return join(resolveAppRoot(), ".env.e2e");
+}
 
 export const PROBE_TIMEOUT_MS = 15_000;
 
@@ -120,7 +120,7 @@ export function loadEnvFile(path: string): Record<string, string> {
 }
 
 function resolvedEnv(): Env {
-  return { ...loadEnvFile(ENV_E2E), ...process.env };
+  return { ...loadEnvFile(envE2ePath()), ...process.env };
 }
 
 function reason(err: unknown): string {
@@ -364,8 +364,10 @@ const RESOLVERS: Record<SurfaceKind, (ctx: ResolverContext, id: string) => Promi
   notion: resolveNotionRoom,
 };
 
-function configRooms(): { domains: readonly DomainLike[]; bindings: readonly BindingLike[] } {
-  return { domains: loadDomains() as readonly DomainLike[], bindings: loadBindings() as readonly BindingLike[] };
+export async function loadConfigRooms(root: string = resolveAppRoot()): Promise<{ domains: readonly DomainLike[]; bindings: readonly BindingLike[] }> {
+  const domains = await loadAppDomains(root);
+  const bindings = await loadAppBindings(root);
+  return { domains: domains as readonly DomainLike[], bindings: bindings as readonly BindingLike[] };
 }
 
 export interface InventoryOptions {
@@ -383,7 +385,7 @@ async function runInventory(env: Env, options: InventoryOptions): Promise<number
     return 0;
   }
   const { reachable, blind } = reachableSurfaces(env);
-  const { domains, bindings } = configRooms();
+  const { domains, bindings } = await loadConfigRooms();
   const declared = collectDeclaredRooms(domains, bindings);
 
   const ctx: ResolverContext = { env };
@@ -429,7 +431,7 @@ async function runInventory(env: Env, options: InventoryOptions): Promise<number
 
   const inventory = buildInventory({ envValues: env, declared, resolutions, unresolvableSurfaces: blind });
   const generated = renderInventoryDoc(inventory, { unresolvableSurfaces: blind });
-  const docPath = join(REPO_ROOT, INVENTORY_DOC);
+  const docPath = join(resolveAppRoot(), INVENTORY_DOC);
 
   if (!options.check) {
     if (blind.length > 0 && !options.partial) {
@@ -1042,7 +1044,7 @@ async function runProvision(env: Env, domain: string, dryRun: boolean): Promise<
   }
 
   if (toWrite.size > 0 && !dryRun) {
-    writeEnvE2e(ENV_E2E, toWrite);
+    writeEnvE2e(envE2ePath(), toWrite);
     console.log(`\n  wrote ${toWrite.size} var(s) to .env.e2e (gitignored).`);
     console.log("  For the deployment, run each of these and paste the value when prompted:");
     for (const name of toWrite.keys()) console.log(`    vercel env add ${name} production`);

@@ -1,14 +1,6 @@
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import "../agent/lib/register-config.js";
-import { loadBindings, loadBundles } from "../agent/access/bundles.js";
-import { loadConnectorCredentials } from "../agent/access/connector-credentials.js";
-import { PLUGIN_REGISTRY } from "../agent/plugins/registry.js";
-import { loadDomains, loadSilos, domainsForSurface } from "../agent/memory/config/domains.js";
-import { loadRoles } from "../agent/roles/roles.js";
-import { loadWebhooks } from "../agent/webhooks/hooks.js";
-import { loadPrincipals } from "../agent/identity/principals.js";
 import { resolveDomainForChannel, domainRoster, domainContainers } from "@open-everywhere/core/agent/memory/domain.js";
 import { classifyPrimitiveSource } from "@open-everywhere/core/agent/scaffold/tool-roster.js";
 import { mountedRowsFromLock } from "@open-everywhere/core/agent/scaffold/roster-plan.js";
@@ -21,6 +13,17 @@ import {
   type ConfigSnapshot,
   type SnapshotRow,
 } from "./config-snapshot-diff.js";
+import { importAppModule, resolveAppRoot } from "@open-everywhere/core/agent/scaffold/app-root.js";
+
+const APP_ROOT = resolveAppRoot();
+await importAppModule("agent/lib/register-config.ts", APP_ROOT);
+const { loadBindings, loadBundles } = await importAppModule<typeof import("../agent/access/bundles.js")>("agent/access/bundles.ts", APP_ROOT);
+const { loadConnectorCredentials } = await importAppModule<typeof import("../agent/access/connector-credentials.js")>("agent/access/connector-credentials.ts", APP_ROOT);
+const { PLUGIN_REGISTRY } = await importAppModule<typeof import("../agent/plugins/registry.js")>("agent/plugins/registry.ts", APP_ROOT);
+const { loadDomains, loadSilos, domainsForSurface } = await importAppModule<typeof import("../agent/memory/config/domains.js")>("agent/memory/config/domains.ts", APP_ROOT);
+const { loadRoles } = await importAppModule<typeof import("../agent/roles/roles.js")>("agent/roles/roles.ts", APP_ROOT);
+const { loadWebhooks } = await importAppModule<typeof import("../agent/webhooks/hooks.js")>("agent/webhooks/hooks.ts", APP_ROOT);
+const { loadPrincipals } = await importAppModule<typeof import("../agent/identity/principals.js")>("agent/identity/principals.ts", APP_ROOT);
 
 const sha256 = (s: string): string => createHash("sha256").update(s).digest("hex");
 
@@ -201,7 +204,7 @@ function accessRows(): SnapshotRow[] {
   return rows;
 }
 
-export function buildConfigSnapshot(agentDir = "agent"): ConfigSnapshot {
+export function buildConfigSnapshot(agentDir = join(APP_ROOT, "agent")): ConfigSnapshot {
   const rows: SnapshotRow[] = [
     ...accessRows(),
     ...entityRows("bindings", loadBindings(), (b: { bundle: string; scope: Record<string, unknown> }) =>

@@ -1,7 +1,7 @@
 import { wireNeonOperationalStore, rotateUnifiedWindow, parseRotateArgs, checkOrgAllowed, WindowTargetRefused } from "./rotate-window-lib.js";
 import { dmAnchorDomain } from "../../agent/channels/window-key.js";
 import { guardStoreIdentityBeforeWrite } from "../store-identity-guard.js";
-import { loadDomains } from "../../../../agent/memory/config/domains.js";
+import { loadAppDomains } from "./app-config.js";
 
 async function main() {
   const parsed = parseRotateArgs(process.argv.slice(2));
@@ -10,7 +10,7 @@ async function main() {
     process.exit(1);
   }
   const { target } = parsed;
-  const domains = loadDomains();
+  const domains = await loadAppDomains();
 
   const dbUrl = process.env.DATABASE_URL;
   if (!dbUrl) {

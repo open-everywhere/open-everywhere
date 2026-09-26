@@ -103,6 +103,7 @@ allow("connection", [
   ["OE_GITHUB_INSTALLATION_ID", "which GitHub App INSTALLATION this deployment acts through — a wiring target, per install."],
   ["OE_GITHUB_OWNER", "which owner that installation id belongs to; the pair builds the one-entry installation table."],
   ["OE_GITHUB_INSTALLATIONS", "the owner-to-installation-id table, for a deployment installed into several orgs — the multi-entry form of the pair above."],
+  ["OE_APP_ROOT", "the absolute path of the deployer's app checkout that operator scripts load the app config from (agent/scaffold/app-root.ts, OPE-2195). A path; no deployed function reads it."],
 ]);
 
 allow("identity", [
@@ -144,6 +145,7 @@ allow("platform", [
   ["OTEL_EXPORTER_OTLP_ENDPOINT", "the standard OTel endpoint var, read by the vendored exporter's own conventions."],
   ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "the standard OTel traces endpoint var, same convention."],
   ["CLAUDE_PROJECT_DIR", "injected by the Claude Code harness the ops server runs inside."],
+  ["INIT_CWD", "the directory where the operator ran npm, injected by npm into every script. The app-root resolver (agent/scaffold/app-root.ts, OPE-2195) starts its walk there for a workspace script."],
   ["VERCEL_URL", "the per-deployment hostname Vercel injects — the self-dispatch route builds its own callback origin from it. No operator sets it."],
   ["VERCEL_PROJECT_PRODUCTION_URL", "the project's production hostname, injected by Vercel and preferred over VERCEL_URL so a preview never dispatches to itself."],
 ]);

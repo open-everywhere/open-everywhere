@@ -12,12 +12,12 @@ import { registerConfig } from "../../agent/access/config.js";
 import { defineDomain } from "../../agent/memory/domain.js";
 import { registerSlackFixtureMapper, registerSlackTestBridge } from "../_slack-test-stubs.js";
 import { registerCapabilityManifest } from "../../agent/identity/capabilities.js";
+import { appPath } from "../../agent/scaffold/app-root.js";
 import { defaultAgentModelId } from "../../agent/model/default-model.js";
 import type { BindableContext } from "../../agent/identity/binding.js";
 
 const execFileP = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = join(__dirname, "../../../..");
 
 const N = Number.parseInt(process.argv.find((a) => a.startsWith("--n="))?.slice(4) ?? "8", 10);
 const MODEL_ID = process.env.OPE863_MODEL ?? defaultAgentModelId();
@@ -59,7 +59,7 @@ const workerCtx: BindableContext = {
 type Condition = "none" | "seat" | "worker";
 
 async function buildPrompts(): Promise<Record<Condition, string>> {
-  const staticInstructions = readFileSync(join(REPO_ROOT, "agent/instructions.md"), "utf8");
+  const staticInstructions = readFileSync(appPath("agent/instructions.md"), "utf8");
   const scopeMd = await renderScopeMarkdown(workerCtx);
   const workerPersona = renderWorkerPersona(true);
   const seatPersona = renderSeatPersona({ seatKind: "conversational", delivery: { kind: "dual-mode" } });

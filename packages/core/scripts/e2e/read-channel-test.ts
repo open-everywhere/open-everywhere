@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AuditWireEntry } from "./audit-read.js";
 import { deployedBuildCarries } from "./deployed-build.js";
+import { APP_ROOT_ENV, resolveAppRoot } from "../../agent/scaffold/app-root.js";
 import { awaitDelegatedAnswer, classifyDelegatedAnswer, classifyDelegatedReadEvidence, GENERIC_READ_VERBS_SHA, pollForDelegationSettlement, pollForFinalReply, pollForOwnWakeReply, shouldAssertShaAncestry, type DelegatedReadVerdict, type OwnWakeCandidate } from "./read-channel-lib.js";
 
 let n = 0;
@@ -56,7 +57,10 @@ const gitStdout = (args: readonly string[]): string => {
   const recordFile = join(recordDir, "known-good.json");
   const hadRecord = existsSync(recordFile);
   const backup = hadRecord ? readFileSync(recordFile, "utf8") : null;
+  const previousAppRoot = process.env[APP_ROOT_ENV];
+  process.env[APP_ROOT_ENV] = REPO_ROOT;
   try {
+    ok(resolveAppRoot() === REPO_ROOT, "the helper resolves the same root this test writes the record under");
     if (hadRecord) rmSync(recordFile);
 
     ok(deployedBuildCarries("HEAD") === false, "no known-good.json record ⇒ deployedBuildCarries reports false (never guesses armed)");
@@ -69,6 +73,8 @@ const gitStdout = (args: readonly string[]): string => {
     const unknownSha = "f".repeat(40);
     ok(deployedBuildCarries(unknownSha) === false, "checking for a sha git has never heard of ⇒ deployedBuildCarries reports false (deployed-build.ts's documented unknown-commit limit)");
   } finally {
+    if (previousAppRoot === undefined) delete process.env[APP_ROOT_ENV];
+    else process.env[APP_ROOT_ENV] = previousAppRoot;
     rmSync(recordFile, { force: true });
     if (hadRecord && backup !== null) {
       mkdirSync(recordDir, { recursive: true });

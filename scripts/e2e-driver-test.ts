@@ -5801,11 +5801,11 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   const { defaultExpectedModels, resolveExpectedModels } = await import("../packages/core/scripts/e2e/cost.js");
   const { STACKS, SHIPPED_STACK, stackModelIds } = await import("../agent/model/stacks.js");
   const shippedIds = stackModelIds(STACKS[SHIPPED_STACK]);
-  ok(JSON.stringify(defaultExpectedModels()) === JSON.stringify(shippedIds), "defaultExpectedModels() names exactly the shipped default stack's ids — a stack flip changes this with zero e2e-side edits");
-  ok(JSON.stringify(resolveExpectedModels(undefined)) === JSON.stringify(shippedIds), "resolveExpectedModels(undefined) — unset E2E_EXPECT_MODELS — falls back to the shipped stack, not 'off'");
-  ok(JSON.stringify(resolveExpectedModels("")) === JSON.stringify(shippedIds), "resolveExpectedModels('') — blank E2E_EXPECT_MODELS — same fallback as unset");
-  ok(JSON.stringify(resolveExpectedModels("  ,  ")) === JSON.stringify(shippedIds), "resolveExpectedModels ignores a whitespace/empty-entries-only override and falls back");
-  ok(JSON.stringify(resolveExpectedModels("deepseek/deepseek-v4-flash-0731, alibaba/qwen3-vl-instruct")) === JSON.stringify(["deepseek/deepseek-v4-flash-0731", "alibaba/qwen3-vl-instruct"]), "resolveExpectedModels honours an explicit operator override over the shipped default, trimmed (order preserved, same as the CSV it replaces)");
+  ok(JSON.stringify(await defaultExpectedModels()) === JSON.stringify(shippedIds), "defaultExpectedModels() names exactly the shipped default stack's ids — a stack flip changes this with zero e2e-side edits");
+  ok(JSON.stringify(await resolveExpectedModels(undefined)) === JSON.stringify(shippedIds), "resolveExpectedModels(undefined) — unset E2E_EXPECT_MODELS — falls back to the shipped stack, not 'off'");
+  ok(JSON.stringify(await resolveExpectedModels("")) === JSON.stringify(shippedIds), "resolveExpectedModels('') — blank E2E_EXPECT_MODELS — same fallback as unset");
+  ok(JSON.stringify(await resolveExpectedModels("  ,  ")) === JSON.stringify(shippedIds), "resolveExpectedModels ignores a whitespace/empty-entries-only override and falls back");
+  ok(JSON.stringify(await resolveExpectedModels("deepseek/deepseek-v4-flash-0731, alibaba/qwen3-vl-instruct")) === JSON.stringify(["deepseek/deepseek-v4-flash-0731", "alibaba/qwen3-vl-instruct"]), "resolveExpectedModels honours an explicit operator override over the shipped default, trimmed (order preserved, same as the CSV it replaces)");
   ok(shippedIds.length === 2, "the shipped default stack (american-closed) collapses five roles to exactly two ids (luna text + gemini vision) — dedup is real");
   ok(shippedIds.includes("google/gemini-3.7-flash"), "the shipped set carries the vision id — an F-ART run's describer rows are expected models, not a red");
 
@@ -5813,7 +5813,7 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   const unknownRow = { surfaceKey: "slack/T1/C1", model: UNKNOWN_MODEL, calls: 1, inputTokens: 1286, outputTokens: 152, cacheReadTokens: 0, cacheWriteTokens: 1283 };
   const ok6 = checkExpectedModels([...rows, unknownRow], ["test/model-a", "test/unpriced", "(unstamped)"]);
   ok(!ok6.ok && ok6.unexpected.includes(UNKNOWN_MODEL), "🔴 OPE-1878: checkExpectedModels reds on the UNKNOWN_MODEL sentinel — a token-bearing call nothing could name is a routing gap, never a pass");
-  ok(!defaultExpectedModels().includes(UNKNOWN_MODEL), "…and the DERIVED expected set never names the sentinel, so no stack flip can make an unnamed call acceptable");
+  ok(!(await defaultExpectedModels()).includes(UNKNOWN_MODEL), "…and the DERIVED expected set never names the sentinel, so no stack flip can make an unnamed call acceptable");
 }
 
 {

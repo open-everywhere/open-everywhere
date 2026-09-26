@@ -1,8 +1,12 @@
 import { spawnSync } from "node:child_process";
-import { STACKS, STACK_ALIASES, resolveStack, stackModelIds, type ModelRole, type StackAlias } from "../agent/model/stacks.js";
-import { allowListForStack } from "../agent/model/models.js";
 import { isModelUsable } from "@open-everywhere/core/agent/model/policy.js";
 import { wireNeonOperationalStore } from "../packages/core/scripts/e2e/rotate-window-lib.js";
+import type { ModelRole, StackAlias } from "../agent/model/stacks.js";
+import { importAppModule, resolveAppRoot } from "@open-everywhere/core/agent/scaffold/app-root.js";
+
+const APP_ROOT = resolveAppRoot();
+const { STACKS, STACK_ALIASES, resolveStack, stackModelIds } = await importAppModule<typeof import("../agent/model/stacks.js")>("agent/model/stacks.ts", APP_ROOT);
+const { allowListForStack } = await importAppModule<typeof import("../agent/model/models.js")>("agent/model/models.ts", APP_ROOT);
 
 const DEFAULT_SCENARIOS = ["S20", "J1", "F-ART"] as const;
 

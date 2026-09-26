@@ -627,7 +627,7 @@ async function main(): Promise<void> {
       const rows = usage.rows;
       for (const line of renderCostReport(buildCostReport(rows, usage.excluded))) console.log(line);
       const expectModelsOverride = (process.env.E2E_EXPECT_MODELS ?? "").trim();
-      const expectModels = resolveExpectedModels(process.env.E2E_EXPECT_MODELS);
+      const expectModels = await resolveExpectedModels(process.env.E2E_EXPECT_MODELS);
       console.log(
         `model routing: expecting [${expectModels.join(", ")}] (${expectModelsOverride ? "E2E_EXPECT_MODELS override" : "derived from the shipped default stack"})`,
       );

@@ -5,7 +5,10 @@ import { registerTeamsOps } from "@open-everywhere/provider-teams/agent/ops.js";
 import { registerDiscordOps } from "@open-everywhere/provider-discord/agent/ops.js";
 import { registerGithubOps } from "@open-everywhere/provider-github/agent/ops.js";
 import { registerSurfaceTrustPreflight } from "@open-everywhere/core/agent/identity/trust-preflight.js";
-import "../agent/identity/surfaces.js";
+import { importAppModule, resolveAppRoot } from "@open-everywhere/core/agent/scaffold/app-root.js";
+
+const APP_ROOT = resolveAppRoot();
+await importAppModule("agent/identity/surfaces.ts", APP_ROOT);
 
 registerSlackOps();
 registerTeamsOps();

@@ -1,14 +1,15 @@
 import { readdirSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import { loadBundles } from "../agent/access/bundles.js";
+import { join } from "node:path";
 import { bundleConnectorNames } from "@open-everywhere/core/agent/access/bundle.js";
 import { connectorGrantCredentialProblems, ownAccountWithholdingProblems } from "@open-everywhere/core/agent/access/lint.js";
 import { credentialGrantConnectors } from "@open-everywhere/core/agent/access/credential-grant.js";
-import { loadConnectorCredentials } from "../agent/access/connector-credentials.js";
+import { importAppModule, resolveAppRoot } from "@open-everywhere/core/agent/scaffold/app-root.js";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const connectionsDir = join(root, "agent", "connections");
+const APP_ROOT = resolveAppRoot();
+const { loadBundles } = await importAppModule<typeof import("../agent/access/bundles.js")>("agent/access/bundles.ts", APP_ROOT);
+const { loadConnectorCredentials } = await importAppModule<typeof import("../agent/access/connector-credentials.js")>("agent/access/connector-credentials.ts", APP_ROOT);
+
+const connectionsDir = join(APP_ROOT, "agent", "connections");
 
 let mounted: string[] = [];
 try {

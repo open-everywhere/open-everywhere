@@ -1,5 +1,9 @@
 import { gatewayImageDescriber } from "@open-everywhere/adapters/agent/model/gateway-vision.js";
-import { STACKS, STACK_ALIASES, type ModelRole, type StackAlias } from "../agent/model/stacks.js";
+import type { ModelRole, StackAlias } from "../agent/model/stacks.js";
+import { importAppModule, resolveAppRoot } from "@open-everywhere/core/agent/scaffold/app-root.js";
+
+const APP_ROOT = resolveAppRoot();
+const { STACKS, STACK_ALIASES } = await importAppModule<typeof import("../agent/model/stacks.js")>("agent/model/stacks.ts", APP_ROOT);
 
 const args = process.argv.slice(2);
 const flag = (name: string): string | undefined => {

@@ -1,8 +1,12 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { STACKS, type ModelStack } from "../agent/model/stacks.js";
+import type { ModelStack } from "../agent/model/stacks.js";
+import { importAppModule, resolveAppRoot } from "@open-everywhere/core/agent/scaffold/app-root.js";
 
-const REPO_ROOT = process.cwd();
+const APP_ROOT = resolveAppRoot();
+const { STACKS } = await importAppModule<typeof import("../agent/model/stacks.js")>("agent/model/stacks.ts", APP_ROOT);
+
+const REPO_ROOT = APP_ROOT;
 export const SNAPSHOT_PATH = join(REPO_ROOT, "agent", "model", "model-catalog-snapshot.json");
 export const CACHE_PATH = join(REPO_ROOT, ".eve", "cache", "model-catalog.json");
 export const CATALOG_URL = "https://ai-gateway.vercel.sh/v1/models/catalog";

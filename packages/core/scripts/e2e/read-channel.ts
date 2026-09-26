@@ -10,8 +10,8 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
 const READ = process.env.E2E_CONTROL_READ_TOKEN ?? "";
 const INJECT = process.env.E2E_CONTROL_INJECT_TOKEN ?? "";
-const DOMAIN = process.env.E2E_GRV_DOMAIN ?? "e2e-unified";
-const SLACK_SURFACE = process.env.E2E_GRV_SLACK_SURFACE ?? "slack/T0EXAMPLE/C0EXCHAN003";
+const DOMAIN = process.env.E2E_GRV_DOMAIN || "e2e-unified";
+const SLACK_SURFACE = process.env.E2E_GRV_SLACK_SURFACE || "slack/T0EXAMPLE/C0EXCHAN003";
 const DISCORD_SURFACE = process.env.E2E_GRV_DISCORD_SURFACE ?? "";
 const SLACK_CHANNEL_ID = SLACK_SURFACE.split("/").slice(2).join("/");
 const DISCORD_CHANNEL_ID = DISCORD_SURFACE.split("/").slice(2).join("/");

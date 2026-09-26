@@ -1,7 +1,7 @@
 import { adminControlRoles } from "../../agent/access/roles.js";
 import { dmBucketKey } from "../../agent/spend/dm-mask.js";
 import type { Domain } from "../../agent/memory/domain.js";
-import { loadDomains } from "../../../../agent/memory/config/domains.js";
+import { loadAppDomains } from "./app-config.js";
 
 export interface SlackFixtureIdentity {
   readonly userId: string;
@@ -34,8 +34,8 @@ export function spendReportReaderPreflight(input: {
   return { ok: true, principalKey };
 }
 
-export function deployedSpendReportReaderPreflight(input: { readonly reader: SlackFixtureIdentity }): SpendReportReaderPreflight {
-  return spendReportReaderPreflight({ ...input, domains: loadDomains() });
+export async function deployedSpendReportReaderPreflight(input: { readonly reader: SlackFixtureIdentity }): Promise<SpendReportReaderPreflight> {
+  return spendReportReaderPreflight({ ...input, domains: await loadAppDomains() });
 }
 
 export interface UsageRowLike {

@@ -132,9 +132,9 @@ function main(): void {
     const expected: Record<string, number> = {
       "settings-lever": 0,
       secret: 33,
-      connection: 37,
+      connection: 38,
       identity: 21,
-      platform: 13,
+      platform: 14,
       "pending-migration": 45,
     };
     for (const [klass, n] of Object.entries(expected)) {
@@ -143,7 +143,7 @@ function main(): void {
         `class ${klass} holds ${n} entries (found ${census.get(klass) ?? 0}) — if you meant to change this, say so here`,
       );
     }
-    ok(ENV_READ_ALLOWLIST.size === 149, `the allowlist holds 149 names (found ${ENV_READ_ALLOWLIST.size})`);
+    ok(ENV_READ_ALLOWLIST.size === 151, `the allowlist holds 151 names (found ${ENV_READ_ALLOWLIST.size})`);
   }
 
   {

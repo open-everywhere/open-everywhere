@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { AuditWireEntry } from "../e2e/audit-read.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "../e2e/rotate-window-lib.js";
 import { isModelUsable, clampReasoning, type ModelPolicy } from "../../agent/model/policy.js";
-import { modelAllowList, PRIMARY_MODEL } from "../../../../agent/model/models.js";
+import { importAppModule } from "../../agent/scaffold/app-root.js";
 import type { ModelReasoning } from "../../agent/memory/domain.js";
 import type { OperationalStore, DomainModelRow } from "../../agent/operational/store.js";
 import { controlPartition } from "../../agent/memory/partition.js";
@@ -21,6 +21,7 @@ import { deploymentOrg } from "../../agent/identity/deployment-identity.js";
 
 export const DOMAIN_REASONING_CEILING: ModelReasoning = "high";
 
+const { modelAllowList, PRIMARY_MODEL } = await importAppModule<typeof import("../../../../agent/model/models.js")>("agent/model/models.ts");
 const ALLOW_POLICY: ModelPolicy = { allow: modelAllowList(), reasoningCeiling: DOMAIN_REASONING_CEILING };
 const DOMAIN_CEILING: ModelReasoning = DOMAIN_REASONING_CEILING;
 

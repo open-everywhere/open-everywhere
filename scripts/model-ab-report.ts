@@ -6,9 +6,12 @@ import { registerModelPricing } from "@open-everywhere/core/agent/spend/pricing.
 import type { UsageEventEntry } from "@open-everywhere/core/agent/operational/store.js";
 import { MODEL_AB_ARM_ACTION, MODEL_AB_RATING_ACTION } from "@open-everywhere/core/agent/model/ab-test.js";
 import { ARMS, armedSessions, tallyModelAb } from "./model-ab-report-lib.js";
-import { loadModelPricing } from "../agent/spend/model-pricing.js";
-import { MODEL_AB_TEST } from "../agent/model/ab-test.js";
-import { PRIMARY_MODEL } from "../agent/model/models.js";
+import { importAppModule, resolveAppRoot } from "@open-everywhere/core/agent/scaffold/app-root.js";
+
+const APP_ROOT = resolveAppRoot();
+const { loadModelPricing } = await importAppModule<typeof import("../agent/spend/model-pricing.js")>("agent/spend/model-pricing.ts", APP_ROOT);
+const { MODEL_AB_TEST } = await importAppModule<typeof import("../agent/model/ab-test.js")>("agent/model/ab-test.ts", APP_ROOT);
+const { PRIMARY_MODEL } = await importAppModule<typeof import("../agent/model/models.js")>("agent/model/models.ts", APP_ROOT);
 
 function argOf(flag: string): string | undefined {
   const i = process.argv.indexOf(flag);

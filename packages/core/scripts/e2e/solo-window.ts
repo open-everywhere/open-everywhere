@@ -16,15 +16,15 @@ const INJECT = process.env.E2E_CONTROL_INJECT_TOKEN ?? "";
 const DB = process.env.DATABASE_URL ?? "";
 const ORG = process.env.E2E_ORG ?? "default";
 
-const DOMAIN = process.env.E2E_SOLO_DOMAIN ?? "e2e-solo";
-const SLACK_A = process.env.E2E_SOLO_SLACK_A ?? "slack/T0EXAMPLE/C0EXCHAN001";
-const SLACK_B = process.env.E2E_SOLO_SLACK_B ?? "slack/T0EXAMPLE/C0EXCHAN002";
+const DOMAIN = process.env.E2E_SOLO_DOMAIN || "e2e-solo";
+const SLACK_A = process.env.E2E_SOLO_SLACK_A || "slack/T0EXAMPLE/C0EXCHAN001";
+const SLACK_B = process.env.E2E_SOLO_SLACK_B || "slack/T0EXAMPLE/C0EXCHAN002";
 const DISCORD_C = process.env.E2E_SOLO_DISCORD ?? "";
 const SOLO_SURFACES = [SLACK_A, SLACK_B, DISCORD_C].filter(Boolean);
 
-const CTRL_DOMAIN = process.env.E2E_SOLO_CONTROL_DOMAIN ?? "e2e-unified";
-const CTRL_SLACK = process.env.E2E_SOLO_CONTROL_SLACK ?? "slack/T0EXAMPLE/C0EXCHAN003";
-const CTRL_GITHUB = process.env.E2E_SOLO_CONTROL_GITHUB ?? "github/example-owner/e2e-scratch";
+const CTRL_DOMAIN = process.env.E2E_SOLO_CONTROL_DOMAIN || "e2e-unified";
+const CTRL_SLACK = process.env.E2E_SOLO_CONTROL_SLACK || "slack/T0EXAMPLE/C0EXCHAN003";
+const CTRL_GITHUB = process.env.E2E_SOLO_CONTROL_GITHUB || "github/example-owner/e2e-scratch";
 
 const REPLY_TIMEOUT_MS = Number.parseInt(process.env.SOLO_REPLY_TIMEOUT_MS ?? "240000", 10);
 const GATE_TIMEOUT_MS = Number.parseInt(process.env.SOLO_GATED_TIMEOUT_MS ?? "90000", 10);
@@ -48,7 +48,7 @@ function originFor(surfaceKey: string): Record<string, unknown> {
   const surface = rest.join("/");
   if (platform === "discord") return { platform: "discord", channelId: surface, guildId: workspace };
   if (platform === "github") {
-    return { platform: "github", owner: workspace, repo: surface, issueNumber: Number.parseInt(process.env.E2E_SOLO_CONTROL_GITHUB_ISSUE ?? "1", 10) };
+    return { platform: "github", owner: workspace, repo: surface, issueNumber: Number.parseInt(process.env.E2E_SOLO_CONTROL_GITHUB_ISSUE || "1", 10) };
   }
   return { platform: "slack", channelId: surface };
 }
