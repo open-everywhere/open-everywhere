@@ -1,7 +1,7 @@
 import type { AuditWireEntry } from "./audit-read.js";
 import { WAKE_INGRESS_ACTION, WAKE_TURN_START_ACTION } from "../../agent/channels/wake-timing.js";
 
-export const GENERIC_READ_VERBS_SHA = "ea1b3c670d495466cb1bfc02c002c32a152e7f13";
+export const GENERIC_READ_VERBS_SHA = "ba911633854ed5eae373b59b02e54bada9b0f25e";
 
 export interface ShaAncestryProbe {
   objectPresent: boolean;
