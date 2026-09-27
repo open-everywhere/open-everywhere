@@ -1,89 +1,12 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { AuditWireEntry } from "./audit-read.js";
-import { deployedBuildCarries } from "./deployed-build.js";
-import { APP_ROOT_ENV, resolveAppRoot } from "../../agent/scaffold/app-root.js";
-import { awaitDelegatedAnswer, classifyDelegatedAnswer, classifyDelegatedReadEvidence, GENERIC_READ_VERBS_SHA, pollForDelegationSettlement, pollForFinalReply, pollForOwnWakeReply, shouldAssertShaAncestry, type DelegatedReadVerdict, type OwnWakeCandidate } from "./read-channel-lib.js";
+import { awaitDelegatedAnswer, classifyDelegatedAnswer, classifyDelegatedReadEvidence, pollForDelegationSettlement, pollForFinalReply, pollForOwnWakeReply, type DelegatedReadVerdict, type OwnWakeCandidate } from "./read-channel-lib.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
   assert.ok(cond, label);
   n++;
 };
-
-const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
-
-const runsClean = (args: readonly string[]): boolean => {
-  try {
-    execFileSync("git", [...args], { cwd: REPO_ROOT, stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-const gitStdout = (args: readonly string[]): string => {
-  try {
-    return execFileSync("git", [...args], { cwd: REPO_ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-  } catch {
-    return "";
-  }
-};
-
-{
-  ok(/^[0-9a-f]{40}$/.test(GENERIC_READ_VERBS_SHA), "GENERIC_READ_VERBS_SHA is a full 40-char sha (not a typo/abbreviation)");
-
-  const shaKnownLocally = runsClean(["cat-file", "-e", `${GENERIC_READ_VERBS_SHA}^{commit}`]);
-  const shallowClone = gitStdout(["rev-parse", "--is-shallow-repository"]) === "true";
-  if (shouldAssertShaAncestry({ objectPresent: shaKnownLocally, shallowClone })) {
-    const isAncestorOfHead = runsClean(["merge-base", "--is-ancestor", GENERIC_READ_VERBS_SHA, "HEAD"]);
-    ok(isAncestorOfHead, `GENERIC_READ_VERBS_SHA (${GENERIC_READ_VERBS_SHA.slice(0, 8)}) is a real ancestor of HEAD — the earliest build that mounts the generic read verbs, OPE-434`);
-  } else {
-    const why = shallowClone
-      ? "this checkout is a SHALLOW clone, so the ancestry chain to HEAD is not present locally"
-      : `${GENERIC_READ_VERBS_SHA.slice(0, 8)} is not present in this checkout's git history`;
-    console.log(`  (skipping the ancestor-of-HEAD sanity check — ${why}. The deployedBuildCarries controls below don't depend on it.)`);
-  }
-
-  ok(shouldAssertShaAncestry({ objectPresent: true, shallowClone: false }) === true, "full clone + object present → assert ancestry (the only state that proves the constant)");
-  ok(shouldAssertShaAncestry({ objectPresent: true, shallowClone: true }) === false, "SHALLOW clone + object present → skip (a graft boundary has no parent links; OPE-1111)");
-  ok(shouldAssertShaAncestry({ objectPresent: false, shallowClone: true }) === false, "shallow clone + object absent → skip (the CI runner's fetch-depth 1 shape)");
-  ok(shouldAssertShaAncestry({ objectPresent: false, shallowClone: false }) === false, "full clone + object absent → skip (nothing to probe)");
-
-  const recordDir = join(REPO_ROOT, ".open-everywhere-deploy");
-  const recordFile = join(recordDir, "known-good.json");
-  const hadRecord = existsSync(recordFile);
-  const backup = hadRecord ? readFileSync(recordFile, "utf8") : null;
-  const previousAppRoot = process.env[APP_ROOT_ENV];
-  process.env[APP_ROOT_ENV] = REPO_ROOT;
-  try {
-    ok(resolveAppRoot() === REPO_ROOT, "the helper resolves the same root this test writes the record under");
-    if (hadRecord) rmSync(recordFile);
-
-    ok(deployedBuildCarries("HEAD") === false, "no known-good.json record ⇒ deployedBuildCarries reports false (never guesses armed)");
-
-    mkdirSync(recordDir, { recursive: true });
-    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: REPO_ROOT }).toString().trim();
-    writeFileSync(recordFile, JSON.stringify({ lastGood: { commit: head } }));
-    ok(deployedBuildCarries(head) === true, "a known-good.json naming HEAD, checked for carrying HEAD itself ⇒ deployedBuildCarries reports true (self-ancestry)");
-
-    const unknownSha = "f".repeat(40);
-    ok(deployedBuildCarries(unknownSha) === false, "checking for a sha git has never heard of ⇒ deployedBuildCarries reports false (deployed-build.ts's documented unknown-commit limit)");
-  } finally {
-    if (previousAppRoot === undefined) delete process.env[APP_ROOT_ENV];
-    else process.env[APP_ROOT_ENV] = previousAppRoot;
-    rmSync(recordFile, { force: true });
-    if (hadRecord && backup !== null) {
-      mkdirSync(recordDir, { recursive: true });
-      writeFileSync(recordFile, backup);
-    } else {
-      rmSync(recordDir, { recursive: true, force: true });
-    }
-  }
-}
 
 {
   const row = (action: string, detail: Record<string, unknown>): AuditWireEntry => ({

@@ -1,6 +1,5 @@
 import { CAPABILITY_REMEDY, auditSilencesExpected, ENV, S24_DEFAULT_QUERY, type Capability, type EngagedRoomConfig, type SlackUser2Config } from "./env.js";
 import { capFixtureFor, roomIdFor } from "./fixture-inventory-lib.js";
-import { deployedBuildVerdict, pinSkipCause } from "./deployed-build.js";
 import { classifyAnswers, renderRepliesPerWake, repliesPerWake } from "./duplicate-post.js";
 import type { SkipKind } from "./skip-summary.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
@@ -618,7 +617,6 @@ const STAND_DOWN_ACK_CRITERIA =
   "restate, or describe the stopping. Only a refusal, a question that re-opens the request, or a " +
   "reply that ignores it and carries on with the thread's work fails.";
 const CAP_REFUSAL = "I'm holding off here";
-const OPE617_V2_SHA = "35d810120826cb0b2ddd1b451df3760fb35f7f99";
 const CAP_REFUSAL_MARKER = /holding off/i;
 const LINK_VENUE_REFUSAL_MARKER = /can't take a link code here/i;
 const NON_ADMIN_DENIAL = "only a domain/org admin can decide this request";
@@ -2629,14 +2627,6 @@ export const SCENARIOS: readonly Scenario[] = [
         );
       }
       ctx.log(`mint: parsed link code (${code!.length} symbols) from the host DM post; ${issuedRows.length} challenge_issued row(s) in the window`);
-
-      const v2Verdict = deployedBuildVerdict(OPE617_V2_SHA);
-      if (v2Verdict !== "carries") {
-        ctx.skip(
-          `${pinSkipCause(v2Verdict, OPE617_V2_SHA)} — ${OPE617_V2_SHA.slice(0, 8)} is OPE-617 v2. On a pre-v2 build a channel-addressed ` +
-            "claim is the correct behaviour, so the venue-refusal / own-DM-claim / code-back legs below do not apply.",
-        );
-      }
 
       const { ts: negativeTs } = await claimant.post(claimant.mention(`link ${code!}`));
       const refusalReply = await claimant.awaitAnyReply(negativeTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });

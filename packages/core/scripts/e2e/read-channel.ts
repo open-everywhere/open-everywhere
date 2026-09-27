@@ -1,10 +1,7 @@
 import { fetchAudit, type AuditWireEntry } from "./audit-read.js";
 import { fetchTranscript } from "./transcript-read.js";
-import { deployedBuildVerdict, pinSkipCause } from "./deployed-build.js";
 import { isWindowToken } from "../../agent/channels/window-key.js";
-import { GENERIC_READ_VERBS_SHA, REPLY_POST_ACTION, dS, classifyDelegatedReadEvidence, pollForDelegationSettlement, pollForFinalReply } from "./read-channel-lib.js";
-
-export { GENERIC_READ_VERBS_SHA };
+import { REPLY_POST_ACTION, dS, classifyDelegatedReadEvidence, pollForDelegationSettlement, pollForFinalReply } from "./read-channel-lib.js";
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
@@ -162,20 +159,6 @@ async function main(): Promise<void> {
   console.log(`target=${TARGET || "(unset)"} domain=${DOMAIN} slack=${SLACK_SURFACE} discord=${DISCORD_SURFACE || "(unset)"}`);
   if (!TARGET || !READ || !INJECT) {
     for (const id of ["G1", "G2"]) if (want(id)) record(id, "SKIP", "no E2E_TARGET_URL / E2E_CONTROL_READ_TOKEN / E2E_CONTROL_INJECT_TOKEN — cannot drive a live window.");
-    return summary();
-  }
-  const verdict = deployedBuildVerdict(GENERIC_READ_VERBS_SHA);
-  if (verdict !== "carries") {
-    for (const id of ["G1", "G2"]) {
-      if (want(id)) {
-        record(
-          id,
-          "SKIP",
-          `${pinSkipCause(verdict, GENERIC_READ_VERBS_SHA)} — ${GENERIC_READ_VERBS_SHA.slice(0, 8)} is the first build that mounted the generic read verbs for this app (OPE-434). ` +
-            "On an older build the per-surface Slack reader is the live one, so there is nothing for read_channel to exercise.",
-        );
-      }
-    }
     return summary();
   }
   for (const [id, fn] of [["G1", g1], ["G2", g2]] as [string, () => Promise<void>][]) {

@@ -1,5 +1,3 @@
-import type { PinResolution } from "../packages/core/scripts/e2e/deployed-build.js";
-
 export interface PinSite {
   readonly file: string;
   readonly line: number;
@@ -15,11 +13,4 @@ export function collectShaPins(source: string, file: string): PinSite[] {
     }
   }
   return sites;
-}
-
-export type PinVerdict = "ok" | "unreachable" | "unresolvable";
-
-export function pinVerdict(resolution: PinResolution, reachable: boolean): PinVerdict {
-  if (resolution !== "present" && resolution !== "deepened") return "unresolvable";
-  return reachable ? "ok" : "unreachable";
 }

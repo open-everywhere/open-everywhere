@@ -1,10 +1,9 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { collectShaPins, pinVerdict } from "./scenario-pin-lint-lib.js";
-import { pinObjectAction, pinSkipCause } from "../packages/core/scripts/e2e/deployed-build.js";
+import { collectShaPins } from "./scenario-pin-lint-lib.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const LINT = join(root, "scripts", "scenario-pin-lint.ts");
@@ -26,64 +25,67 @@ function lint(...args: string[]): { code: number; out: string } {
   return { code: r.status ?? -1, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
 }
 
-function fixtureDir(body: string): string {
+function fixtureDir(files: Record<string, string>): string {
   const dir = mkdtempSync(join(tmpdir(), "oe-scenario-pins-"));
-  writeFileSync(join(dir, "pinned.ts"), body, "utf8");
+  for (const [name, body] of Object.entries(files)) {
+    mkdirSync(dirname(join(dir, name)), { recursive: true });
+    writeFileSync(join(dir, name), body, "utf8");
+  }
   return dir;
-}
-
-function danglingCommit(): string {
-  const tree = execFileSync("git", ["rev-parse", "HEAD^{tree}"], { cwd: root, encoding: "utf8" }).trim();
-  return execFileSync("git", ["commit-tree", tree, "-m", "scenario-pin-lint fixture: unreachable by design"], {
-    cwd: root,
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      GIT_AUTHOR_NAME: "oe-test",
-      GIT_AUTHOR_EMAIL: "oe-test@example.invalid",
-      GIT_COMMITTER_NAME: "oe-test",
-      GIT_COMMITTER_EMAIL: "oe-test@example.invalid",
-    },
-  }).trim();
 }
 
 const NO_SUCH_OBJECT = "0123456789abcdef0123456789abcdef01234567";
 
 function main(): void {
   {
-    const dir = fixtureDir(`export const PIN = "${NO_SUCH_OBJECT}";\n`);
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+    ok(/^[0-9a-f]{40}$/.test(head), "HEAD resolved to a full 40-char sha");
+    const dir = fixtureDir({ "pinned.ts": `// a pin on the most reachable commit there is\nexport const PIN = "${head}";\n` });
     try {
       const r = lint("--dir", dir);
-      ok(r.code !== 0, `a pin naming no object fails the gate (exit ${r.code})`);
-      ok(r.out.includes(NO_SUCH_OBJECT.slice(0, 8)), "…naming the pin it refused");
-      ok(r.out.includes("pinned.ts:1"), "…naming the file and line the pin sits on");
-      ok(r.out.toLowerCase().includes("unshallow"), "…printing the remedy for the clone-depth case rather than blaming the deployment");
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  }
-
-  {
-    const sha = danglingCommit();
-    ok(/^[0-9a-f]{40}$/.test(sha), "the fixture commit-tree produced a full 40-char sha");
-    const dir = fixtureDir(`// a pin that exists but never landed\nexport const PIN = "${sha}";\n`);
-    try {
-      const r = lint("--dir", dir);
-      ok(r.code !== 0, `a real commit that is not an ancestor of main fails the gate (exit ${r.code})`);
-      ok(r.out.includes("NOT reachable"), "…saying the pin is unreachable, not that it names nothing");
+      ok(r.code === 1, `a pin on HEAD itself fails the gate (exit ${r.code}): ${r.out.trim().slice(0, 300)}`);
+      ok(r.out.includes(head.slice(0, 8)), "…naming the pin it refused");
       ok(r.out.includes("pinned.ts:2"), "…naming the file and line, counted from 1");
+      ok(r.out.includes("does not survive a rewrite of the history"), "…and saying WHY a sha pin is refused");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   }
 
   {
-    const good = execFileSync("git", ["rev-parse", "origin/main"], { cwd: root, encoding: "utf8" }).trim();
-    const dir = fixtureDir(`export const PIN = "${good}";\n`);
+    const dir = fixtureDir({ "clean.ts": "export const X = 1;\n", "nested/deeper/pinned.ts": `export const PIN = '${NO_SUCH_OBJECT}';\n` });
     try {
       const r = lint("--dir", dir);
-      ok(r.code === 0, `a pin reachable from main passes the gate (exit ${r.code}): ${r.out.trim().slice(0, 300)}`);
-      ok(r.out.includes(good.slice(0, 8)), "…and says which pin it cleared");
+      ok(r.code === 1, `a pin in a nested directory fails the gate (exit ${r.code})`);
+      ok(r.out.includes(join("nested", "deeper", "pinned.ts") + ":1"), "…naming the nested file");
+      ok(r.out.includes("1 commit-sha pin(s) refused"), "…and counting exactly the one pin");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  {
+    const dir = fixtureDir({
+      "prose.ts":
+        `// see ${NO_SUCH_OBJECT} for the history\n` +
+        `export const SHORT = "${NO_SUCH_OBJECT.slice(0, 39)}";\n` +
+        `export const UPPER = "${NO_SUCH_OBJECT.toUpperCase()}";\n`,
+    });
+    try {
+      const r = lint("--dir", dir);
+      ok(r.code === 0, `a tree with no pin passes the gate (exit ${r.code}): ${r.out.trim().slice(0, 300)}`);
+      ok(r.out.includes("none in"), "…and says it found none");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  {
+    const dir = mkdtempSync(join(tmpdir(), "oe-scenario-pins-empty-"));
+    try {
+      const r = lint("--dir", dir);
+      ok(r.code === 1, `a tree with no .ts files fails the gate (exit ${r.code})`);
+      ok(r.out.includes("wrong tree"), "…saying the gate is looking at the wrong tree");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -91,7 +93,7 @@ function main(): void {
 
   {
     const r = lint();
-    ok(r.code === 0, `the live e2e pack's own pins are all reachable from main (exit ${r.code}): ${r.out.trim().slice(-400)}`);
+    ok(r.code === 0, `the live e2e pack holds no commit-sha pin (exit ${r.code}): ${r.out.trim().slice(-400)}`);
   }
 
   {
@@ -104,35 +106,6 @@ function main(): void {
     ok(collectShaPins(`const a = "${NO_SUCH_OBJECT.toUpperCase()}";`, "f.ts").length === 0, "uppercase hex is not matched — git writes lowercase");
     const multi = collectShaPins(`a\nconst x = "${NO_SUCH_OBJECT}";\nb\nconst y = "${NO_SUCH_OBJECT}";\n`, "f.ts");
     ok(multi.length === 2 && multi[0]!.line === 2 && multi[1]!.line === 4, "line numbers are 1-based and per-occurrence");
-  }
-
-  {
-    ok(pinObjectAction({ objectPresent: true, shallowClone: false }) === "ready", "full clone + object present → ask the ancestry question");
-    ok(pinObjectAction({ objectPresent: true, shallowClone: true }) === "deepen", "SHALLOW clone + object present → deepen anyway (graft boundary, OPE-1111)");
-    ok(pinObjectAction({ objectPresent: false, shallowClone: true }) === "deepen", "shallow clone + object absent → deepen (the ship sandbox's shape, OPE-1715)");
-    ok(pinObjectAction({ objectPresent: false, shallowClone: false }) === "absent", "full clone + object absent → the pin names nothing here");
-  }
-
-  {
-    ok(pinVerdict("present", true) === "ok", "resolved + reachable → ok");
-    ok(pinVerdict("deepened", true) === "ok", "a pin that needed a deepen is just as good once it is here");
-    ok(pinVerdict("present", false) === "unreachable", "resolved + not an ancestor of main → unreachable");
-    ok(pinVerdict("deepen-failed", true) === "unresolvable", "a failed deepen is unresolvable even when the stale reachability probe said true");
-    ok(pinVerdict("deepen-failed", false) === "unresolvable", "…and when it said false");
-    ok(pinVerdict("absent", true) === "unresolvable", "an absent object is unresolvable whatever the probe answered");
-  }
-
-  {
-    const unresolvable = pinSkipCause("pin-unresolvable", NO_SUCH_OBJECT);
-    ok(unresolvable.includes("NOTHING was measured"), "pin-unresolvable says nothing was measured about the deployment");
-    ok(!/older|does not carry/i.test(unresolvable), "…and makes no claim about the deployed build being old");
-    ok(/older/i.test(pinSkipCause("older-build", NO_SUCH_OBJECT)), "older-build DOES say the deploy is behind the pin");
-    ok(pinSkipCause("no-record", NO_SUCH_OBJECT).includes("known-good.json"), "no-record names the pointer file the operator must write");
-    const deployUnresolvable = pinSkipCause("deploy-unresolvable", NO_SUCH_OBJECT);
-    ok(deployUnresolvable.includes("NOTHING was measured"), "deploy-unresolvable says nothing was measured about the deployed build");
-    ok(!/is OLDER than/.test(deployUnresolvable), "…and never claims the deploy is older than the pin");
-    ok(deployUnresolvable.includes("RECORDED DEPLOY COMMIT"), "…and names the recorded commit as the thing that could not be resolved");
-    ok(pinSkipCause("carries", NO_SUCH_OBJECT).includes(NO_SUCH_OBJECT.slice(0, 8)), "carries names the pin it cleared");
   }
 }
 

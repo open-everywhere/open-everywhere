@@ -1,25 +1,9 @@
-import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
-import { pinSkipCause, resolvePinObject } from "../packages/core/scripts/e2e/deployed-build.js";
-import { collectShaPins, pinVerdict, type PinSite } from "./scenario-pin-lint-lib.js";
+import { collectShaPins, type PinSite } from "./scenario-pin-lint-lib.js";
 
 const ROOT = process.cwd();
 const PACK_DIR = join("packages", "core", "scripts", "e2e");
-
-function gitOk(args: readonly string[]): boolean {
-  try {
-    execFileSync("git", [...args], { cwd: ROOT, stdio: "ignore", timeout: 120_000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function mainRef(): string | undefined {
-  for (const ref of ["origin/main", "main"]) if (gitOk(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`])) return ref;
-  return undefined;
-}
 
 const dirFlag = process.argv.indexOf("--dir");
 const scanRel = dirFlag >= 0 && process.argv[dirFlag + 1] !== undefined ? process.argv[dirFlag + 1]! : PACK_DIR;
@@ -40,40 +24,23 @@ function tsFilesUnder(dir: string, prefix = ""): string[] {
 
 const files = tsFilesUnder(scanDir);
 
+if (files.length === 0) {
+  console.error(`✗ scenario pins: no .ts files under ${scanRel}/ — the gate is looking at the wrong tree.`);
+  process.exit(1);
+}
+
 const sites: PinSite[] = [];
 for (const f of files) sites.push(...collectShaPins(readFileSync(join(scanDir, f), "utf8"), join(scanRel, f)));
 
-if (sites.length === 0) {
-  console.log(`✓ scenario pins: none found in ${scanRel}/ (${files.length} files scanned)`);
-  process.exit(0);
-}
-
-const ref = mainRef();
-if (ref === undefined) {
-  console.error(`✗ scenario pins: neither \`origin/main\` nor \`main\` resolves in this checkout, so "reachable from main" cannot be answered for ${sites.length} pin(s).`);
-  process.exit(1);
-}
-
-const problems: string[] = [];
-for (const site of sites) {
-  const resolution = resolvePinObject(site.sha);
-  const reachable = gitOk(["merge-base", "--is-ancestor", site.sha, ref]);
-  const verdict = pinVerdict(resolution, reachable);
-  if (verdict === "ok") {
-    console.log(`  ${site.file}:${site.line} — ${site.sha.slice(0, 8)} reachable from ${ref} (${resolution})`);
-    continue;
-  }
-  problems.push(
-    verdict === "unresolvable"
-      ? `${site.file}:${site.line} — ${pinSkipCause("pin-unresolvable", site.sha)}`
-      : `${site.file}:${site.line} — ${site.sha.slice(0, 8)} is NOT reachable from ${ref}. A scenario pinned to it can never arm on a deployed build: re-pin to the commit that landed the change on main.`,
+if (sites.length > 0) {
+  console.error(`✗ scenario pins: ${sites.length} commit-sha pin(s) refused.`);
+  for (const site of sites) console.error(`  - ${site.file}:${site.line} — ${site.sha.slice(0, 8)}`);
+  console.error(
+    "  A commit sha does not survive a rewrite of the history, and a fork or mirror shares no sha with this repository, " +
+      "so a scenario gated on one skips forever there. Make the scenario unconditional, or gate it on a fact the " +
+      "deployment itself reports (a route, a manifest entry, an audit row).",
   );
-}
-
-if (problems.length > 0) {
-  console.error(`✗ scenario pins: ${problems.length} of ${sites.length} pin(s) refused.`);
-  for (const p of problems) console.error(`  - ${p}`);
   process.exit(1);
 }
 
-console.log(`✓ scenario pins: ${sites.length} pin(s) reachable from ${ref}`);
+console.log(`✓ scenario pins: none in ${scanRel}/ (${files.length} files scanned)`);
