@@ -86,7 +86,7 @@ for (const name of ["reply", "no_reply", "react", "update_status"]) {
 for (const name of ["record_job_state", "complete_job", "record_watch_state"]) {
   ok(allowedOnRestrictedJobWake(name), `job kit keeps its own bookkeeping verb ${name} (own-row writes; complete_job can only RETIRE the job)`);
 }
-for (const name of ["read_channel", "read_thread", "read_notion_page", "read_linear_issue", "describe_image", "check_pr_status", "query_analytics"]) {
+for (const name of ["read_channel", "read_thread", "read_notion_page", "read_notion_comments", "read_linear_issue", "describe_image", "check_pr_status", "query_analytics"]) {
   ok(allowedOnRestrictedJobWake(name), `job kit keeps the read ${name}`);
 }
 ok(allowedOnRestrictedJobWake("final_output"), "job kit keeps eve's structured-output sink (a restricted turn must still be able to return)");

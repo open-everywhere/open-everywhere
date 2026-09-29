@@ -2,6 +2,12 @@
   "name": "@open-everywhere/provider-notion",
   "version": "0.1.0",
   "description": "Open Everywhere Notion provider — Notion as a wake surface plus page and database tools.",
+  "keywords": [
+    "agent",
+    "notion",
+    "notion-api",
+    "eve"
+  ],
   "license": "Apache-2.0",
   "type": "module",
   "homepage": "https://github.com/open-everywhere/open-everywhere/tree/main/packages/providers/notion",

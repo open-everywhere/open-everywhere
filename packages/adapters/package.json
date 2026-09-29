@@ -2,6 +2,18 @@
   "name": "@open-everywhere/adapters",
   "version": "0.1.0",
   "description": "Open Everywhere adapters — the reference Vercel-hosted backends: AI Gateway models and pricing, Sandbox, Blob, Neon, OpenTelemetry, AWS and Okta.",
+  "keywords": [
+    "agent",
+    "eve",
+    "vercel",
+    "neon",
+    "postgres",
+    "opentelemetry",
+    "sandbox",
+    "blob",
+    "okta",
+    "aws"
+  ],
   "license": "Apache-2.0",
   "type": "module",
   "homepage": "https://github.com/open-everywhere/open-everywhere/tree/main/packages/adapters",

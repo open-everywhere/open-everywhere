@@ -4,6 +4,15 @@
   "license": "Apache-2.0",
   "type": "module",
   "description": "npx-style install wizard for Open Everywhere — one setup engine, driven interactively or via --check.",
+  "keywords": [
+    "agent",
+    "cli",
+    "installer",
+    "wizard",
+    "slack",
+    "self-hosted",
+    "create"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/open-everywhere/open-everywhere.git",

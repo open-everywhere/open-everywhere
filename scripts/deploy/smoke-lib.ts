@@ -425,3 +425,74 @@ export function renderSmokeReport(result: SmokeResult): readonly string[] {
   );
   return lines;
 }
+
+export interface SkippedRung {
+  readonly rung: string;
+  readonly label: string;
+  readonly reason: string;
+  readonly launchSurface: boolean;
+}
+
+export const GITHUB_INSTALLATION_SKIP: SkippedRung = {
+  rung: "github",
+  label: "the github installation rung (signed delivery at /eve/v1/github)",
+  reason: "no E2E_GITHUB_WEBHOOK_SECRET/GITHUB_WEBHOOK_SECRET configured for this runner",
+  launchSurface: true,
+};
+
+export const LINEAR_EXTERNAL_POLICY_SKIP: SkippedRung = {
+  rung: "linear",
+  label: "the linear external-policy room-grain rung",
+  reason: "no E2E_LINEAR_WEBHOOK_SECRET/LINEAR_WEBHOOK_SECRET configured for this runner",
+  launchSurface: false,
+};
+
+export interface SmokeRunSummary {
+  readonly gatesOk: boolean;
+  readonly skipped: readonly SkippedRung[];
+  readonly optedOut: readonly SkippedRung[];
+  readonly unproven: readonly SkippedRung[];
+  readonly exitCode: number;
+}
+
+export function parseSkipOptOut(raw: string | undefined): ReadonlySet<string> {
+  return new Set(
+    (raw ?? "")
+      .split(",")
+      .map((r) => r.trim().toLowerCase())
+      .filter((r) => r !== ""),
+  );
+}
+
+export function resolveSkipOptOut(flagValue: string | undefined, envValue: string | undefined): ReadonlySet<string> {
+  return parseSkipOptOut(flagValue ?? envValue);
+}
+
+export function summariseSmokeRun(gatesOk: boolean, skipped: readonly SkippedRung[], allowSkip: ReadonlySet<string>): SmokeRunSummary {
+  const launch = skipped.filter((s) => s.launchSurface);
+  const optedOut = launch.filter((s) => allowSkip.has(s.rung.toLowerCase()));
+  const unproven = launch.filter((s) => !allowSkip.has(s.rung.toLowerCase()));
+  return { gatesOk, skipped, optedOut, unproven, exitCode: gatesOk && unproven.length === 0 ? 0 : 1 };
+}
+
+export function renderSkipSummary(summary: SmokeRunSummary): readonly string[] {
+  const lines = [`\n  ── what this run did not prove ──`];
+  if (summary.skipped.length === 0) {
+    lines.push("  0 rung(s) skipped — every rung in the ladder ran");
+    return lines;
+  }
+  for (const s of summary.skipped) {
+    const posture = !s.launchSurface
+      ? "opt-in rung, not a launch surface — reported, not gated"
+      : summary.optedOut.includes(s)
+        ? `🔴 LAUNCH SURFACE — waived by an explicit opt-out naming "${s.rung}"`
+        : `🔴 LAUNCH SURFACE — NOT waived, so this run is RED (pass --allow-skip ${s.rung} to waive it on purpose)`;
+    lines.push(`  SKIPPED (${s.reason}): ${s.label} — ${posture}`);
+  }
+  lines.push(
+    summary.unproven.length === 0
+      ? `  ${summary.skipped.length} rung(s) skipped, ${summary.optedOut.length} launch-surface waiver(s) — no unwaived launch-surface security rung`
+      : `✗ deploy:smoke: ${summary.unproven.length} LAUNCH-SURFACE security rung(s) skipped with no opt-out — this ship did not earn its green (OPE-2154)`,
+  );
+  return lines;
+}

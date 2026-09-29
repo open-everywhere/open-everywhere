@@ -2,6 +2,13 @@
   "name": "@open-everywhere/provider-slack",
   "version": "0.1.0",
   "description": "Open Everywhere Slack provider — Slack channel and DM surfaces, identity mapping, approval cards and slash commands.",
+  "keywords": [
+    "agent",
+    "slack",
+    "slack-bot",
+    "chatops",
+    "eve"
+  ],
   "license": "Apache-2.0",
   "type": "module",
   "homepage": "https://github.com/open-everywhere/open-everywhere/tree/main/packages/providers/slack",

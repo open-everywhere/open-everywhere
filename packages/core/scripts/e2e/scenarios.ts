@@ -4506,6 +4506,7 @@ export const SCENARIOS: readonly Scenario[] = [
     suite: "core",
     timeoutMs: 1_200_000,
     judged: false,
+    proves: ["github.dispatched"],
     run: async (ctx) => {
       if (!ctx.auditRead) {
         ctx.skip(

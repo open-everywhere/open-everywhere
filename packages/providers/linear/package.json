@@ -2,6 +2,12 @@
   "name": "@open-everywhere/provider-linear",
   "version": "0.1.0",
   "description": "Open Everywhere Linear provider — Linear as a wake surface plus issue-tracker tools.",
+  "keywords": [
+    "agent",
+    "linear",
+    "issue-tracker",
+    "eve"
+  ],
   "license": "Apache-2.0",
   "type": "module",
   "homepage": "https://github.com/open-everywhere/open-everywhere/tree/main/packages/providers/linear",

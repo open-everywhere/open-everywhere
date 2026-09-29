@@ -388,6 +388,35 @@ for (const [label, err] of [
   }
 
   {
+    const { markRepliedThisTurn, readAudit: readReplied, deploymentOrg } = await import("@open-everywhere/core/agent/adapter-api.js");
+    const state = supervisorState();
+    const posts: unknown[] = [];
+    const github = { request: async (input: unknown) => { posts.push(input); return { ok: true, status: 201, body: {} }; } };
+    const before = (await readReplied({ org: deploymentOrg(), action: "github.replied" })).length;
+    const c = new ContextContainer();
+    c.set(SessionKey, {
+      sessionId: "github-supervisor-test-replied",
+      auth: { current: { attributes: { owner: OWNER, repo: REPO, issue_number: "42" } }, initiator: null },
+      turn: { id: "turn-2141" },
+      parent: undefined,
+    });
+    await contextStorage.run(c, async () => {
+      markRepliedThisTurn("turn-2141");
+      await turnStarted({ state, github });
+      await completed("Done — the summary is in the comment above.", { state, github });
+    });
+    ok(posts.length === 0, "OPE-2141: the supervisor still posts NOTHING from the completion — the reply travelled the tool route");
+    const rows = (await readReplied({ org: deploymentOrg(), action: "github.replied" }));
+    ok(rows.length === before + 1, `🔴 OPE-2141: a supervisor turn that delivered through \`reply\` writes EXACTLY ONE github.replied row (got ${rows.length - before})`);
+    const row = rows[0]!;
+    ok(row.platform === "github", "OPE-2141: the row is on the github partition");
+    ok(row.surface === `github/${OWNER}/${REPO}`, "OPE-2141: …and names the repo it replied into");
+    ok(row.detail?.route === "tool", "🔴 OPE-2141: the row names the TOOL route — this is the `repliedViaTool` branch, not a completion-post fallback");
+    ok(row.detail?.issueNumber === 42, "OPE-2141: the row anchors on the issue the reply landed on");
+    ok(!JSON.stringify(row.detail).includes("summary is in the comment"), "OPE-2141: taint-clean — the dropped closing prose is not in the row");
+  }
+
+  {
     const state = supervisorState();
     const posts: unknown[] = [];
     const github = { request: async (input: unknown) => { posts.push(input); return { ok: true, status: 201, body: {} }; } };

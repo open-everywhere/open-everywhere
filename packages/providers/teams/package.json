@@ -2,6 +2,14 @@
   "name": "@open-everywhere/provider-teams",
   "version": "0.1.0",
   "description": "Open Everywhere Microsoft Teams provider — Teams channel and chat surfaces via Microsoft Graph.",
+  "keywords": [
+    "agent",
+    "microsoft-teams",
+    "teams",
+    "microsoft-graph",
+    "chatops",
+    "eve"
+  ],
   "license": "Apache-2.0",
   "type": "module",
   "homepage": "https://github.com/open-everywhere/open-everywhere/tree/main/packages/providers/teams",

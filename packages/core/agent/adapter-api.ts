@@ -270,6 +270,7 @@ export { ageAtRead } from "./access/dated-read.js";
 export type { IngestionSource, IngestionKind, IngestionTier, IngestionVerdict } from "./access/taint-tiers.js";
 export { classifyIngestion, INGESTION_KINDS } from "./access/taint-tiers.js";
 export { noteIngestionVerdict } from "./access/taint-enforcement.js";
+export { registerTaintVerdictSink, currentTaintVerdictSink } from "./access/taint-enforcement.js";
 export { taintMarkLands } from "./access/taint-signal.js";
 
 export { untrustedIngestedThisTurn, taintKindsThisTurn } from "./access/taint-signal.js";

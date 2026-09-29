@@ -15,6 +15,7 @@ import {
 } from "@open-everywhere/core/agent/publish/eve-patch-pack.js";
 import { ALL_PUBLISHABLE_PACKAGES, PUBLISHABLE_BIN_PACKAGES, exportsMapFor } from "./publish-exports-generate.js";
 import { LICENSE_FILE, checkPackageLicense, checkTarballLicense } from "./publish-license.js";
+import { checkPackageReadme, checkTarballReadme } from "./publish-readme.js";
 
 const FORBIDDEN_LIFECYCLE = ["preinstall", "install", "postinstall", "prepublish", "prepare"];
 
@@ -115,6 +116,7 @@ for (const pkgDir of targets) {
     files: (manifest.files ?? []) as readonly string[],
   };
   for (const problem of checkPackageLicense(licenseInputs)) fail(problem);
+  for (const problem of checkPackageReadme({ readme: readIfPresent("README.md") })) fail(problem);
   const shipsEveApplier = declaresEveApplier(manifest.bin);
   for (const problem of checkEveApplierPacking({ bin: manifest.bin, files: (manifest.files ?? []) as readonly string[] })) {
     fail(problem);
@@ -163,6 +165,7 @@ for (const pkgDir of targets) {
 
     if (!listing.includes("NOTICE")) fail("NOTICE is not in the tarball");
     for (const problem of checkTarballLicense(listing)) fail(problem);
+    for (const problem of checkTarballReadme(listing)) fail(problem);
     for (const t of binTargets) {
       if (!listing.includes(t)) {
         fail(`bin points at ${t}, which is NOT in the tarball`);

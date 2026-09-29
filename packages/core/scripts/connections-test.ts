@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-connections-notion
+
 import notion from "../agent/connections/notion.js";
 
 import { pinSuiteStore } from "./_suite-store.js";

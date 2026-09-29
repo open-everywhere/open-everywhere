@@ -1,6 +1,21 @@
 import assert from "node:assert/strict";
 
-import { renderSmokeReport, runGithubInstallationSmoke, runLinearSignedDeliverySmoke, runWebhookSmoke, rowDeliveryId, rowWakeId, type SmokeResult } from "./deploy/smoke-lib.js";
+import {
+  GITHUB_INSTALLATION_SKIP,
+  LINEAR_EXTERNAL_POLICY_SKIP,
+  parseSkipOptOut,
+  renderSkipSummary,
+  resolveSkipOptOut,
+  renderSmokeReport,
+  runGithubInstallationSmoke,
+  runLinearSignedDeliverySmoke,
+  runWebhookSmoke,
+  rowDeliveryId,
+  rowWakeId,
+  summariseSmokeRun,
+  type SkippedRung,
+  type SmokeResult,
+} from "./deploy/smoke-lib.js";
 import { WEBHOOK_ID_HEADER, WEBHOOK_SIGNATURE_HEADER, WEBHOOK_TIMESTAMP_HEADER, WebhookDriver } from "../packages/core/scripts/e2e/webhook.js";
 import type { AuditWireEntry } from "../packages/core/scripts/e2e/audit-read.js";
 
@@ -627,11 +642,104 @@ await check("an unreadable audit route THROWS rather than reporting a green or a
   await assert.rejects(() => linearSmoke({ auditStatus: 401 }), /control\/v1\/audit -> 401/);
 });
 
+const GITHUB_SKIP: SkippedRung = GITHUB_INSTALLATION_SKIP;
+const LINEAR_SKIP: SkippedRung = LINEAR_EXTERNAL_POLICY_SKIP;
+
+await check("🔴 the CLASSIFICATION itself is pinned: github is a launch surface, linear is not", () => {
+  assert.equal(GITHUB_INSTALLATION_SKIP.launchSurface, true, "the github installation rung is a LAUNCH-SURFACE security rung — flipping this is how the gate stops biting");
+  assert.equal(GITHUB_INSTALLATION_SKIP.rung, "github", "…and its opt-out name is the word an operator passes to --allow-skip");
+  assert.equal(LINEAR_EXTERNAL_POLICY_SKIP.launchSurface, false, "the linear rung is NOT a launch surface, so it reports and never gates (the OPE-783 posture)");
+  assert.equal(LINEAR_EXTERNAL_POLICY_SKIP.rung, "linear", "…under its own opt-out name");
+  for (const e of [GITHUB_INSTALLATION_SKIP, LINEAR_EXTERNAL_POLICY_SKIP]) {
+    assert.ok(e.reason.length > 0 && e.label.length > 0, "every ledger entry states a reason and a label — the summary prints both");
+    assert.doesNotMatch(e.reason, /=/u, "a reason names the missing INPUT, never a secret value");
+  }
+});
+
+await check("🔴 a skipped LAUNCH-SURFACE rung with NO opt-out exits NON-ZERO, even with every gate that ran green", () => {
+  const summary = summariseSmokeRun(true, [GITHUB_SKIP], parseSkipOptOut(undefined));
+  assert.equal(summary.gatesOk, true, "every gate that RAN passed — the ledger is the only reason for the red");
+  assert.equal(summary.exitCode, 1, "a launch-surface security rung nobody waived reds the ship");
+  assert.deepEqual(summary.unproven, [GITHUB_SKIP], "and the rung is named as unproven, not merely counted");
+  assert.deepEqual(summary.optedOut, [], "nothing was waived");
+  const text = renderSkipSummary(summary).join("\n");
+  assert.match(text, /SKIPPED \(no E2E_GITHUB_WEBHOOK_SECRET/u, "the summary states the skip in the SKIPPED (reason) vocabulary");
+  assert.match(text, /did not earn its green/u, "and says why the run is red");
+});
+
+await check("the SAME skip with an opt-out naming that rung exits 0, and the waiver is printed", () => {
+  const summary = summariseSmokeRun(true, [GITHUB_SKIP], parseSkipOptOut("github"));
+  assert.equal(summary.exitCode, 0, "an explicitly waived launch-surface skip does not red the ship");
+  assert.deepEqual(summary.optedOut, [GITHUB_SKIP], "the waiver is recorded against the rung");
+  assert.deepEqual(summary.unproven, [], "so nothing is unproven-and-unwaived");
+  const text = renderSkipSummary(summary).join("\n");
+  assert.match(text, /SKIPPED \(no E2E_GITHUB_WEBHOOK_SECRET/u, "the skip is STILL reported — a waiver is not a silence");
+  assert.match(text, /waived by an explicit opt-out naming "github"/u, "and the waiver itself is printed, so a ship record carries it");
+  assert.doesNotMatch(text, /did not earn its green/u, "no red verdict on a waived run");
+});
+
+await check("an opt-out naming a DIFFERENT rung waives nothing", () => {
+  const summary = summariseSmokeRun(true, [GITHUB_SKIP], parseSkipOptOut("linear,slack"));
+  assert.equal(summary.exitCode, 1, "waiving some other rung is not waiving this one");
+  assert.deepEqual(summary.unproven, [GITHUB_SKIP], "the github rung is still unproven");
+});
+
+await check("the LINEAR rung stays OPT-IN: its skip is reported and does NOT gate (OPE-783 posture kept)", () => {
+  const summary = summariseSmokeRun(true, [LINEAR_SKIP], parseSkipOptOut(undefined));
+  assert.equal(summary.exitCode, 0, "Linear is not a launch surface, so an absent secret must not red a ship");
+  assert.deepEqual(summary.unproven, [], "it is not a launch-surface rung, so it can never be unproven-and-gating");
+  const text = renderSkipSummary(summary).join("\n");
+  assert.match(text, /SKIPPED \(no E2E_LINEAR_WEBHOOK_SECRET/u, "🔴 but the skip IS in the summary — the reporting half applies to every rung");
+  assert.match(text, /not a launch surface — reported, not gated/u, "and the summary says which posture it is under");
+});
+
+await check("both rungs skipped, only the launch one waived ⇒ exit 0 and BOTH skips reported", () => {
+  const summary = summariseSmokeRun(true, [GITHUB_SKIP, LINEAR_SKIP], parseSkipOptOut("github"));
+  assert.equal(summary.exitCode, 0, "the waived launch rung and the opt-in rung both clear");
+  assert.equal(summary.skipped.length, 2, "the ledger keeps both, in ladder order");
+  const text = renderSkipSummary(summary).join("\n");
+  assert.match(text, /GITHUB_WEBHOOK_SECRET/u, "the github skip is reported");
+  assert.match(text, /LINEAR_WEBHOOK_SECRET/u, "the linear skip is reported");
+});
+
+await check("a REAL gate failure still reds the run, and an opt-out cannot waive it", () => {
+  const summary = summariseSmokeRun(false, [GITHUB_SKIP], parseSkipOptOut("github"));
+  assert.equal(summary.exitCode, 1, "🔴 --allow-skip waives a MISSING proof, never a FAILED one");
+  assert.equal(summary.gatesOk, false, "the gate verdict is carried through untouched");
+});
+
+await check("a clean run reports zero skips rather than printing nothing", () => {
+  const summary = summariseSmokeRun(true, [], parseSkipOptOut(undefined));
+  assert.equal(summary.exitCode, 0, "nothing skipped, every gate green");
+  const text = renderSkipSummary(summary).join("\n");
+  assert.match(text, /0 rung\(s\) skipped — every rung in the ladder ran/u, "the block always prints: its absence is what let a partial run read as finished");
+});
+
+await check("🔴 the flag/env PRECEDENCE the docs state, driven — not restated", () => {
+  const flagWins = resolveSkipOptOut("linear", "github");
+  assert.equal(flagWins.has("linear"), true, "a --allow-skip WITH a value decides");
+  assert.equal(flagWins.has("github"), false, "🔴 …and the env value is NOT merged in — one source decides, so a command line means what it says");
+  const envDecides = resolveSkipOptOut(undefined, "github");
+  assert.equal(envDecides.has("github"), true, "a VALUELESS --allow-skip is absent from parseArgs' `values`, so it defers to OE_SMOKE_ALLOW_SKIP");
+  assert.equal(resolveSkipOptOut(undefined, undefined).size, 0, "neither source set waives nothing");
+  assert.equal(resolveSkipOptOut("", "github").has("github"), false, "🔴 an EMPTY --allow-skip= is a value, so it decides — and it names no rung, so it waives none");
+});
+
+await check("parseSkipOptOut: a valueless or empty opt-out is NOT a blanket waiver", () => {
+  assert.equal(parseSkipOptOut(undefined).size, 0, "absent waives nothing");
+  assert.equal(parseSkipOptOut("").size, 0, "empty waives nothing");
+  assert.equal(parseSkipOptOut("   ").size, 0, "whitespace waives nothing");
+  assert.equal(parseSkipOptOut(",,").size, 0, "bare separators waive nothing");
+  const many = parseSkipOptOut(" GitHub , linear ");
+  assert.equal(many.has("github") && many.has("linear"), true, "a comma list is trimmed and case-folded");
+  assert.equal(many.size, 2, "and holds exactly the rungs it named");
+});
+
 if (failures.length > 0) {
   console.error(`✗ deploy-smoke: ${failures.length} of ${checks} check(s) FAILED`);
   for (const f of failures) console.error(`  ✗ ${f}`);
   process.exit(1);
 }
 console.log(
-  `✓ deploy-smoke: ${checks} check(s) passed (gate ladder, three reds, the exact delivery-id join, the github installation rung, the linear room-grain rung — all offline)`,
+  `✓ deploy-smoke: ${checks} check(s) passed (gate ladder, three reds, the exact delivery-id join, the github installation rung, the linear room-grain rung, the OPE-2154 skip ledger — all offline)`,
 );

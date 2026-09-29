@@ -355,6 +355,12 @@ firesWith(
   ]);
   const coreToolNames = new Set(tools.map((t) => t.name));
   const coreRegistry = Object.fromEntries(Object.entries(TOOL_CONSEQUENCE).filter(([name]) => coreToolNames.has(name) || !NON_CORE_TOOL_ROWS.has(name)));
+  for (const name of ["read_notion_page", "read_notion_comments", "notion_search"]) {
+    const row = TOOL_CONSEQUENCE[name];
+    ok(row !== undefined, `the non-core row ${name} is declared in TOOL_CONSEQUENCE`);
+    ok(row?.tier === "open", `${name} declares tier "open" — that table asks for no approval (got ${String(row?.tier)})`);
+    ok(typeof row?.reason === "string" && row.reason.length > 0, `${name} states a REASON for its tier — an undefended tier is the one nobody revisits`);
+  }
   const subagentDir = join(dirname(fileURLToPath(import.meta.url)), "../../../agent/subagents");
   const subagentNames = existsSync(subagentDir)
     ? readdirSync(subagentDir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name)

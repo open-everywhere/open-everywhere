@@ -1,7 +1,14 @@
 {
   "name": "@open-everywhere/provider-github",
   "version": "0.1.0",
-  "description": "Open Everywhere GitHub provider — GitHub as a wake surface and source-control connector.",
+  "description": "Open Everywhere GitHub provider — GitHub issues and pull requests as a conversational wake surface.",
+  "keywords": [
+    "agent",
+    "github",
+    "github-app",
+    "chatops",
+    "eve"
+  ],
   "license": "Apache-2.0",
   "type": "module",
   "homepage": "https://github.com/open-everywhere/open-everywhere/tree/main/packages/providers/github",

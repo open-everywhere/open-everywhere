@@ -102,6 +102,16 @@ const standDownDropRows = async (): Promise<readonly { readonly detail?: Record<
 
 const settleAudit = (): Promise<void> => new Promise((r) => setTimeout(r, 60));
 
+type SuppressionRow = { readonly seq: number; readonly workspace?: string | null; readonly surface?: string | null; readonly detail?: Record<string, unknown> | null };
+const externalPolicySuppressedRows = async (): Promise<readonly SuppressionRow[]> =>
+  (await getOperationalStore().readAudit({ org: "default", action: "slack.external_policy_suppressed" })) as readonly SuppressionRow[];
+
+const suppressionDelta = (seen: Set<number>) => async (): Promise<readonly SuppressionRow[]> => {
+  const fresh = (await externalPolicySuppressedRows()).filter((r) => !seen.has(r.seq));
+  for (const r of fresh) seen.add(r.seq);
+  return fresh;
+};
+
 const nameDropRows = async (action: string): Promise<readonly { readonly detail?: Record<string, unknown> | null }[]> =>
   (await getOperationalStore().readAudit({ org: "default", action })) as readonly { readonly detail?: Record<string, unknown> | null }[];
 
@@ -3026,6 +3036,8 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
 {
   const { AsyncLocalStorage } = await import("node:async_hooks");
   const { UNTRUSTED_OPEN, untrustedIngestedThisTurn, taintKindsThisTurn, taintMarkLands } = await import("@open-everywhere/core/agent/adapter-api.js");
+  const { registerTaintVerdictSink, currentTaintVerdictSink } = await import("@open-everywhere/core/agent/adapter-api.js");
+  type TaintVerdictRow = Parameters<NonNullable<ReturnType<typeof currentTaintVerdictSink>>>[0];
 
   class FakeSession {
     private readonly store = new Map<string, unknown>();
@@ -3054,12 +3066,24 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
     ok(untrustedIngestedThisTurn() === false, "channel-join intro: …and nothing is marked, so the seat this prompt opens does not start life tainted");
   }
 
-  await als.run(new FakeSession(), async () => {
-    ok(untrustedIngestedThisTurn() === false, "channel-join intro [drift]: the fresh turn starts clean (negative control — the reader is live here)");
-    render();
-    ok(untrustedIngestedThisTurn() === true, "channel-join intro [drift]: given a context the mark DOES land — 'ingress only' is a claim about the CALLER, not a property of the code");
-    ok(taintKindsThisTurn().length === 0, "🔴 channel-join intro [drift]: …with NO kind, because the site declares none. This route has no table-governed taint join, deliberately — see the block header");
-  });
+  const verdicts: TaintVerdictRow[] = [];
+  const restoreSink = currentTaintVerdictSink();
+  registerTaintVerdictSink((r) => verdicts.push(r));
+  try {
+    await als.run(new FakeSession(), async () => {
+      ok(untrustedIngestedThisTurn() === false, "channel-join intro [drift]: the fresh turn starts clean (negative control — the reader is live here)");
+      render();
+      ok(untrustedIngestedThisTurn() === true, "channel-join intro [drift]: given a context the mark DOES land — 'ingress only' is a claim about the CALLER, not a property of the code");
+      ok(taintKindsThisTurn().length === 0, "🔴 channel-join intro [drift]: …with NO kind, because the site declares none. This route has no table-governed taint join, deliberately — see the block header");
+    });
+  } finally {
+    registerTaintVerdictSink(restoreSink);
+  }
+  const joinVerdict = verdicts.find((r) => r.label === "slack:channel-join-intro");
+  ok(joinVerdict !== undefined, `🔴 channel-join intro [drift]: the route DECLARES itself to the verdict sink — delete \`noteIngestionVerdict\` from joinTranscriptFence and this is the assertion that reds (got labels: ${verdicts.map((r) => r.label ?? "<none>").join(",") || "none"})`);
+  ok(joinVerdict?.kind === "chat-message", `🔴 channel-join intro [drift]: …binding inbound content to ingestion kind \`chat-message\` — the inventory row's own claim (got ${String(joinVerdict?.kind)})`);
+  ok(joinVerdict?.divergence === "over-taint", "channel-join intro [drift]: …as an OVER-taint — the site taints, the table calls chat-message trusted");
+  ok(joinVerdict?.taintsToday === true && joinVerdict?.applied === false, "channel-join intro [drift]: …and the table's verdict did NOT decide this mark (applied false), so the fence stays unconditional");
 }
 
 {
@@ -3387,6 +3411,8 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
       ({ channelId: CHANNEL, ts, teamId: "T_ENG", userId: AUTHOR, channelType: "channel", text: "please help", isAppMention }) as never;
     const part = { org: "ORG885", surfaceKey: "slack/T_ENG/C_OPE885", workspace: "T_ENG" } as never;
     const facts = { trust: "unauth", refuted: true } as const;
+    const newSuppressions = suppressionDelta(new Set());
+    await newSuppressions();
 
     let calls: { method: string; body: string }[] = [];
     let dmOpenSucceeds = true;
@@ -3417,6 +3443,15 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
       ok(await applySlackExternalPolicy(ev(true, "111.1"), part, facts, "test") === "withheld-addressed", "OPE-885 site: an excluded author's @mention is withheld-addressed");
       ok(postsTo(DM).length === 1, "OPE-525 site: the private notice goes to the sender's 1:1");
       ok(postsTo(CHANNEL).length === 0, "🔴 OPE-885 site: a mention already answered PRIVATELY gets NO channel ack (=== 0)");
+      await settleAudit();
+      {
+        const fresh = await newSuppressions();
+        ok(fresh.length === 1, `OPE-2141: the withheld @mention writes EXACTLY ONE slack.external_policy_suppressed row (got ${fresh.length})`);
+        ok(fresh[0]!.workspace === "T_ENG" && fresh[0]!.surface === CHANNEL, "OPE-2141: …partitioned on the workspace and the channel it went quiet in");
+        ok(fresh[0]!.detail?.["verdict"] === "withheld-addressed", "OPE-2141: …and the row names the VERDICT the route returned");
+        ok(fresh[0]!.detail?.["channelId"] === CHANNEL, "OPE-2141: …and the channel the suppressed mention arrived on");
+        ok(fresh[0]!.detail?.["rendering"] === undefined, "🔴 OPE-2141: the private notice landed, so NO ack was posted and the row carries no `rendering` — absence is the honest record");
+      }
 
       calls = [];
       dmOpenSucceeds = false;
@@ -3426,6 +3461,13 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
       ok(acks[0]!.body.includes(new URLSearchParams({ text: EXTERNAL_MENTION_ACK }).toString()), "🔴 OPE-885 site: …and its text is the fixed host ack");
       ok(acks[0]!.body.includes("thread_ts=222.2"), "🔴 OPE-885 site: …threaded on the mention itself, so the answer lands where the member is looking");
       ok(!/outside\+?%?20?this/i.test(acks[0]!.body) && !acks[0]!.body.includes("organisation"), "🔴 OPE-885 site: it is NOT the private notice text — that names the organisation and must not reach the channel");
+      await settleAudit();
+      {
+        const fresh = await newSuppressions();
+        ok(fresh.length === 1, `OPE-2141: the un-DM-able mention writes its own suppression row (got ${fresh.length})`);
+        ok(fresh[0]!.detail?.["rendering"] === "ack", "🔴 OPE-2141: the posted channel ack stamps `rendering: \"ack\"` ON THE ROW — the pure predicate above is only half the claim");
+        ok(fresh[0]!.detail?.["verdict"] === "withheld-addressed", "OPE-2141: …with the same verdict, which the DM outcome must not change");
+      }
 
       overrideSettingsForTest({ externalPolicy: { authorGrain: "taint", roomGrain: "silent" } });
       calls = [];
@@ -3450,6 +3492,12 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
           postsTo(CHANNEL).length === 0 && postsTo(DM).length === 0,
           `🔴 OPE-885 site NEGATIVE CONTROL: an AMBIENT suppression posts NOTHING anywhere (dmOpenSucceeds=${String(dmOk)}) — only explicit addressing is owed an answer`,
         );
+      }
+      await settleAudit();
+      {
+        const ambient = (await newSuppressions()).filter((r) => r.detail?.["verdict"] === "withheld-ambient");
+        ok(ambient.length === 2, `OPE-2141: each dark AMBIENT suppression writes its own row (got ${ambient.length} for two passes)`);
+        ok(ambient.every((r) => r.detail?.["rendering"] === undefined), "OPE-2141: …and none carries a `rendering` — nothing was posted to render");
       }
     } finally {
       globalThis.fetch = realFetch;

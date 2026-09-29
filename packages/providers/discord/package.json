@@ -2,6 +2,13 @@
   "name": "@open-everywhere/provider-discord",
   "version": "0.1.0",
   "description": "Open Everywhere Discord provider — Discord channel and DM surfaces, gateway wiring, identity mapping and approval cards.",
+  "keywords": [
+    "agent",
+    "discord",
+    "discord-bot",
+    "chatops",
+    "eve"
+  ],
   "license": "Apache-2.0",
   "type": "module",
   "homepage": "https://github.com/open-everywhere/open-everywhere/tree/main/packages/providers/discord",

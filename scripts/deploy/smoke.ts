@@ -1,5 +1,16 @@
 import { resolveWebhook } from "../../packages/core/scripts/e2e/env.js";
-import { renderSmokeReport, runGithubInstallationSmoke, runLinearSignedDeliverySmoke, runWebhookSmoke } from "./smoke-lib.js";
+import {
+  GITHUB_INSTALLATION_SKIP,
+  LINEAR_EXTERNAL_POLICY_SKIP,
+  renderSkipSummary,
+  renderSmokeReport,
+  resolveSkipOptOut,
+  runGithubInstallationSmoke,
+  runLinearSignedDeliverySmoke,
+  runWebhookSmoke,
+  summariseSmokeRun,
+  type SkippedRung,
+} from "./smoke-lib.js";
 import { DeployConfigError, parseArgs } from "./lib.js";
 
 const args = parseArgs(process.argv.slice(2));
@@ -58,6 +69,8 @@ try {
 
   for (const line of renderSmokeReport(result)) console.log(line);
   let ok = result.ok;
+  const skipped: SkippedRung[] = [];
+  const allowSkip = resolveSkipOptOut(args.values.get("allow-skip"), process.env.OE_SMOKE_ALLOW_SKIP);
 
   const githubSecret = process.env.E2E_GITHUB_WEBHOOK_SECRET?.trim() || process.env.GITHUB_WEBHOOK_SECRET?.trim();
   if (githubSecret) {
@@ -76,7 +89,7 @@ try {
     for (const line of renderSmokeReport(githubResult)) console.log(line);
     ok = ok && githubResult.ok;
   } else {
-    console.log("\n  skipping the github installation rung — no E2E_GITHUB_WEBHOOK_SECRET/GITHUB_WEBHOOK_SECRET configured for this runner");
+    skipped.push(GITHUB_INSTALLATION_SKIP);
   }
 
   const linearSecret = process.env.E2E_LINEAR_WEBHOOK_SECRET?.trim() || process.env.LINEAR_WEBHOOK_SECRET?.trim();
@@ -96,10 +109,12 @@ try {
     for (const line of renderSmokeReport(linearResult)) console.log(line);
     ok = ok && linearResult.ok;
   } else {
-    console.log("\n  skipping the linear external-policy rung — no E2E_LINEAR_WEBHOOK_SECRET/LINEAR_WEBHOOK_SECRET configured for this runner");
+    skipped.push(LINEAR_EXTERNAL_POLICY_SKIP);
   }
 
-  process.exit(ok ? 0 : 1);
+  const summary = summariseSmokeRun(ok, skipped, allowSkip);
+  for (const line of renderSkipSummary(summary)) console.log(line);
+  process.exit(summary.exitCode);
 } catch (err) {
   if (err instanceof DeployConfigError) {
     console.error(`✗ deploy:smoke: ${err.message}`);
