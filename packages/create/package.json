@@ -1,6 +1,6 @@
 {
   "name": "create-open-everywhere",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "Apache-2.0",
   "type": "module",
   "description": "npx-style install wizard for Open Everywhere — one setup engine, driven interactively or via --check.",
@@ -30,6 +30,7 @@
   "files": [
     "bin",
     "src",
+    "template",
     "NOTICE",
     "LICENSE"
   ],
@@ -40,12 +41,13 @@
     "test:telemetry": "NODE_NO_WARNINGS=1 tsx scripts/telemetry-test.ts",
     "test:cli": "tsx scripts/cli-check-test.ts",
     "test": "npm run test:chain",
-    "test:chain": "npm run test:engine && npm run test:telemetry && npm run test:cli && npm run test:boot-free",
-    "test:boot-free": "tsx scripts/boot-free-test.ts"
+    "test:chain": "npm run test:engine && npm run test:telemetry && npm run test:scaffold && npm run test:cli && npm run test:boot-free",
+    "test:boot-free": "tsx scripts/boot-free-test.ts",
+    "test:scaffold": "tsx scripts/scaffold-test.ts"
   },
   "dependencies": {
-    "@open-everywhere/core": "0.1.1",
-    "@open-everywhere/provider-slack": "0.1.1",
+    "@open-everywhere/core": "0.1.2",
+    "@open-everywhere/provider-slack": "0.1.2",
     "tsx": "^4.23.9"
   },
   "devDependencies": {

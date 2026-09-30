@@ -1,0 +1,79 @@
+import { registerConfig } from "@open-everywhere/core/agent/access/config.js";
+import { registerSettings } from "@open-everywhere/core/agent/settings/settings.js";
+import { registerModelPricing } from "@open-everywhere/core/agent/spend/pricing.js";
+import { loadModelPricing } from "../spend/model-pricing.js";
+import { SETTINGS_OVERRIDES } from "../settings/settings.js";
+import { setRegisteredConnectorCredentials } from "@open-everywhere/core/agent/access/connector-credentials.js";
+import { assertRoutesWithinPolicy } from "@open-everywhere/core/agent/model/policy.js";
+import { assertDomainCredentialsResolvable } from "@open-everywhere/core/agent/access/domain-credentials.js";
+import {
+  assertWindowSourcesVouched,
+  assertGovernanceDomains,
+  assertComplianceDomains,
+  assertReportChannels,
+  warnSilentRoomGrainWithoutPublicSignal,
+} from "@open-everywhere/core/agent/memory/domain.js";
+import { isVouchedInternal, declaredTrustForKeys } from "@open-everywhere/core/agent/identity/trust.js";
+import { resolveExternalPolicy } from "@open-everywhere/core/agent/access/external-policy.js";
+import { loadBundles, loadBindings } from "../access/bundles.js";
+import { loadNetworkAccess } from "../access/network-access.js";
+import { loadConnectorCredentials } from "../access/connector-credentials.js";
+import { loadAccessRequests } from "../access/access-requests.js";
+import { PLUGIN_REGISTRY } from "../plugins/registry.js";
+import { SKILL_CONTENT } from "../plugins/skill-content.js";
+import { loadDomains, loadSilos, domainsForSurface } from "../memory/config/domains.js";
+import { loadRoles } from "../roles/roles.js";
+import { loadWebhooks } from "../webhooks/hooks.js";
+import { loadSpendBudgets } from "../spend/budgets.js";
+import { loadSpendCheckpoints } from "../spend/checkpoints.js";
+import { loadModelPolicy } from "../model/policy.js";
+import { loadBlobHosting } from "../blob/hosting.js";
+import { loadPrincipals } from "../identity/principals.js";
+import { loadGroups } from "../identity/groups.js";
+import "../identity/surfaces.js";
+import "../access/browser-hosts.js";
+import "../identity/authors.js";
+import "../routines/collectors.js";
+
+registerSettings(SETTINGS_OVERRIDES);
+
+registerModelPricing(loadModelPricing());
+
+registerConfig({
+  loadBundles,
+  loadBindings,
+  loadNetworkAccess,
+  loadConnectorCredentials,
+  pluginRegistry: PLUGIN_REGISTRY,
+  skillContent: SKILL_CONTENT,
+  loadDomains,
+  loadSilos,
+  loadRoles,
+  domainsForSurface,
+  loadWebhooks,
+  loadSpendBudgets,
+  loadSpendCheckpoints,
+  loadAccessRequests,
+  loadModelPolicy,
+  loadBlobHosting,
+  loadPrincipals,
+  loadGroups,
+});
+
+setRegisteredConnectorCredentials(loadConnectorCredentials());
+
+assertRoutesWithinPolicy(loadDomains(), loadRoles(), loadModelPolicy());
+
+assertWindowSourcesVouched(loadDomains(), isVouchedInternal);
+
+assertGovernanceDomains(loadDomains(), isVouchedInternal);
+
+assertReportChannels(loadDomains());
+
+assertComplianceDomains(loadDomains());
+
+assertDomainCredentialsResolvable(loadDomains(), loadConnectorCredentials());
+
+warnSilentRoomGrainWithoutPublicSignal(loadDomains(), resolveExternalPolicy().roomGrain, (workspaceKey, surfaceKey) =>
+  declaredTrustForKeys(workspaceKey, surfaceKey) === "public",
+);

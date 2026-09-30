@@ -7,6 +7,33 @@ config, your `roster.config.ts`, your Vercel project, your data.
 This page describes what those packages are, what your repo has to contain, and the three
 install-time properties that must hold or the deployment is quietly wrong.
 
+## Start here: scaffold the app
+
+```bash
+npx create-open-everywhere my-agent
+```
+
+This is the way in. It copies the quickstart app into `./my-agent`, a new or empty directory, and
+runs the setup wizard from inside it. The app it writes already holds everything on this page:
+
+- the eight packages and `create-open-everywhere`, all pinned to the wizard's own version, and
+  `eve` pinned exactly to core's peer pin;
+- the root `zod` override (§ 3 below) and `"postinstall": "oe-eve-patch"` (§ 2 below);
+- `oe build` as its `prebuild`, `predev` and `prestart`;
+- a `roster.config.ts` and a reviewed `roster.lock.json` that mount Slack, Notion and GitHub;
+- the minimal agent config under `agent/`, a `.env.example` with variable names only, and a
+  `.gitignore` that keeps the generated slot tree and every env file out of git;
+- the agent route: `AGENTS.md`, a `.mcp.json` that starts the `open-everywhere-ops` MCP server
+  (`scripts/ops-mcp.ts`), and the `quickstart-open-everywhere` skill, so a coding agent opened in
+  the app can drive the setup. `npx create-open-everywhere --check --json` reports the wizard's
+  steps as data, and the scaffold never waits on a prompt without a terminal.
+
+The app's own `README.md` carries the numbered steps to a deployed agent. `npm run
+test:quickstart` (`scripts/quickstart-test.ts`) proves the path from the packed tarballs: it
+scaffolds with the packed wizard, installs, and asserts that the eve patch probe reads `patched`,
+that `oe build --check` passes after `oe build`, that the ops MCP server lists its tools, that the
+app typechecks, and that `eve build` succeeds. The rest of this page explains what the scaffold wrote and why.
+
 ## The packages
 
 | Package | What it is |

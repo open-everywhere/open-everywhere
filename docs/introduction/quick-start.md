@@ -12,18 +12,25 @@ the per-platform app registration, see **[surface setup](../deploy/surfaces/)**.
 
 Open Everywhere ships a step-driven, resumable setup wizard — one engine, walked either
 interactively or checked non-interactively. It replaces following this whole page by hand.
-Run it straight from npm:
+Run it straight from npm, with a directory name, to scaffold a new app and set it up:
 
 ```bash
-npx create-open-everywhere@latest            # interactive
-npx create-open-everywhere@latest --check    # just report status, no prompts
+npx create-open-everywhere@latest my-agent   # scaffold ./my-agent, then run the wizard there
+npx create-open-everywhere@latest            # run the wizard in an existing app
+npx create-open-everywhere@latest --check    # just report status, no prompts (--json for data)
 ```
+
+The scaffold writes the quickstart app: a small repository of your own that depends on the
+`@open-everywhere/*` npm packages and holds only your configuration — a roster that mounts
+Slack, Notion and GitHub, and the agent config under `agent/`. The directory must be new or empty.
+The app's `README.md` carries the numbered steps from there to an agent that answers a Slack DM.
+Without a terminal, the scaffold writes the app, prints the next steps and exits: it never waits on a
+prompt. The app carries `AGENTS.md`, a `.mcp.json` and the setup skill, so a coding agent opened in
+it can drive the rest. [Consuming as packages](../deploy/consuming-as-packages.md) explains what it
+contains.
 
 `npm create open-everywhere` runs the same package. Inside a checkout you can also run the
 wizard from the tree itself: `node packages/create/bin/create-open-everywhere.js`.
-
-🔴 **The npm path works from the first publish.** `create-open-everywhere` is not on the registry
-yet, so `npx` returns a 404 today — use the clone under **Run locally** until it is.
 
 It walks ten steps, in order: prerequisites (Node 24, git), the repo checkout itself, the tool
 roster, a Vercel project link, the database, a Slack app (manifest included), an env-var presence
@@ -36,17 +43,15 @@ Ctrl-C and re-running is always safe.
 the `quickstart-open-everywhere` Claude skill drives when an agent is doing the setup for
 you (see below).
 
-🔴 **The wizard CONFIGURES an app. It does not CREATE one.** Its repo step checks whether the
-current directory is an Open Everywhere app. When it is not, that step reports unsatisfied and
-names the two ways to get one — the deploy button below, or the clone under **Run locally**. So
-`npx create-open-everywhere` in an empty directory gives you a status report and a route in, not a
-finished install. The clone stays the contributor path, and today it is also the route to a
-working tree.
+Without a directory name, the wizard **configures** the app in the current directory. Its repo
+step checks that the directory is an Open Everywhere app — a scaffolded one, or a clone under
+**Run locally** — and offers to run `npm install` when its dependencies are missing. In a
+directory that is not an app, that step reports unsatisfied and tells you to scaffold one.
 
-The wizard itself writes two files: `.env.local` and its own resume state. Two of its steps run
-commands that write more — the roster step runs `oe build` to materialise the slot tree, and the
-build step runs `npm run build`, which writes `.output/`. The build step asks first; the roster
-step does not. Neither can do anything in a directory that is not an Open Everywhere checkout.
+Beyond the scaffold, the wizard itself writes two files: `.env.local` and its own resume state.
+Three of its steps run commands that write more: the repo step runs `npm install`, the roster step
+runs `oe build` to materialise the slot tree, and the build step runs `npm run build`, which writes
+`.output/`. The repo and build steps ask first. The roster step does not.
 
 **Dependency cooldown (recommended for your project, not ours):** npm's `min-release-age`
 setting delays a dependency version from resolving until it has aged on the registry for a

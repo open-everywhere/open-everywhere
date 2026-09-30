@@ -154,12 +154,13 @@ can leave it behind. Read the pin from core's `peerDependencies.eve`, as that se
 
 ## The order of the checks
 
-Run all five. Each answers a different question, and the preview is the only one a human reads.
+Run all six. Each answers a different question, and the preview is the only one a human reads.
 
 ```bash
 npm run build:packages             # every library needs a fresh dist/ before it is packed
 npm run lint:publish               # the CLOSED question: does each manifest obey the rules?
 npm run test:publish-cold-install  # the CONSUMER question: does a cold install actually work?
+npm run test:quickstart            # the STRANGER question: does the scaffolded app install, patch and build?
 npm run publish:preview            # the OPEN question: is there anything in these bytes we would regret?
 npm publish --workspace <name>     # by hand, one package at a time, after reading the preview
 ```
@@ -300,6 +301,13 @@ public cut, together with whatever runs the build.
    there, and asserts every marker the committed patch adds is absent before and present after. It
    needs the network and measures in minutes, which is why it is off the test chain; the applier's own
    decisions run on every chain run as `test:eve-patch-applier`. `--keep` leaves the tree on disk.
-8. `npm publish --workspace <name>` per package. Publish `@open-everywhere/core` first: every
+8. `npm run test:quickstart` green — quote the exit code. It packs all nine packages, installs the
+   packed wizard on its own, scaffolds the quickstart app with it, points the app at the tarballs and
+   runs `npm install` with lifecycle scripts, so the app's `postinstall` applies the eve patch. It then
+   asserts that the eve patch probe reads `patched`, that `oe build --check` fails before `oe build`
+   and passes after it, that the app typechecks, and that `eve build` succeeds. It needs the network
+   and measures in minutes, so it is off the test chain; the scaffold and the template drift check run
+   on every chain run as `create-open-everywhere test:scaffold`. `--keep` leaves the app on disk.
+9. `npm publish --workspace <name>` per package. Publish `@open-everywhere/core` first: every
    other package pins it.
-9. Install the result somewhere clean and run it, before announcing anything.
+10. Install the result somewhere clean and run it, before announcing anything.

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "open-everywhere-ops": {
+      "command": "node",
+      "args": ["--import", "tsx", "scripts/ops-mcp.ts"]
+    }
+  }
+}

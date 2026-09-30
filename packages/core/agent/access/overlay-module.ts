@@ -49,10 +49,11 @@ export function overlayModuleHeader(what: string, codemodPath: string): string {
     `// The ${what}: DATA ONLY. Written exclusively by the deterministic codemod\n` +
     `// (${codemodPath}) on a bot-PR branch; the PR merge is the approval gate.\n` +
     `//\n` +
-    `// \`npm run lint:overlays\` (in the \`npm test\` chain) re-emits this file from its own parsed\n` +
-    `// content and FAILS on any byte difference, so a hand-edit — including one that adds executable\n` +
-    `// code — cannot merge green. That check is what makes it safe for this data to live in a module.\n` +
+    `// The codemod re-emits this file from its own parsed content and refuses to rewrite it when the\n` +
+    `// bytes differ, so a hand-edit stops the next machine PR. Before a merge, nothing checks that the\n` +
+    `// file is still data only unless the repository runs its own check: the person who merges the PR\n` +
+    `// is the gate. Read a PR to this file as code, because it is code.\n` +
     `//\n` +
-    `// To change it by hand: edit the data below, then run \`npm run overlays:normalize\`.\n`
+    `// To change it by hand, edit only the data below and keep the layout exactly as emitted.\n`
   );
 }

@@ -1,0 +1,6 @@
+This directory is eve's sandbox WORKSPACE SEED: eve copies its whole subtree into /workspace
+inside every sandbox before any code runs. An EMPTY seed mints no sandbox template, so every
+session starts cold. This one file keeps the template, and a dotfile keeps /workspace clean.
+
+Do not put anything here that a running session is supposed to own (memory in particular): the
+seed is static, and the same bytes reach every session.

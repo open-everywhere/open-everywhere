@@ -2,6 +2,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import type { StepContext, WizardIO, WizardStep } from "../engine.js";
+import { npmCommand } from "../npm.js";
 
 function nonEmptyDir(p: string): boolean {
   try {
@@ -31,7 +32,8 @@ export const buildDeployStep: WizardStep = {
   async automate(ctx: StepContext, io: WizardIO) {
     const wantsBuild = await io.confirm("Run `npm run build` now?");
     if (!wantsBuild) return { ran: false, ok: false, detail: "skipped" };
-    const result = spawnSync("npm", ["run", "build"], { cwd: ctx.cwd, stdio: "inherit" });
+    const [command, args] = npmCommand(["run", "build"], ctx.env);
+    const result = spawnSync(command, args, { cwd: ctx.cwd, stdio: "inherit", env: ctx.env });
     const ok = result.status === 0;
     return { ran: true, ok, detail: ok ? "build succeeded" : `build failed (exit ${result.status ?? "unknown"})` };
   },

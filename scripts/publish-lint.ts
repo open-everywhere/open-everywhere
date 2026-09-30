@@ -46,6 +46,8 @@ function resolveInside(from: string, spec: string): string {
   return spec.endsWith(".js") ? literal.replace(/\.js$/, ".ts") : literal;
 }
 
+const QUICKSTART_ENV_EXAMPLE = /^template\/\.env\.example$/;
+
 function runtimeUrlPaths(from: string, src: string): { spec: string; resolved: string }[] {
   return [...src.matchAll(/new URL\(\s*"(\.[^"]+)"\s*,\s*import\.meta\.url\s*\)/g)].map((m) => ({
     spec: m[1]!,
@@ -205,7 +207,16 @@ for (const pkgDir of targets) {
       if (!listing.some((f) => f.startsWith("agent/") && f.endsWith(".ts"))) fail("no .ts sources in the tarball");
     }
     for (const f of listing) {
-      if (/(^|\/)\.env/.test(f)) fail(`tarball contains an env file: ${f}`);
+      const quickstartEnvExample = isBin && QUICKSTART_ENV_EXAMPLE.test(f);
+      if (/(^|\/)\.env/.test(f) && !quickstartEnvExample) fail(`tarball contains an env file: ${f}`);
+      if (quickstartEnvExample) {
+        const valued = readFileSync(join(pkgDir, f), "utf8")
+          .split("\n")
+          .filter((line) => /^\s*[A-Za-z_][A-Za-z0-9_]*\s*=\s*\S/.test(line));
+        if (valued.length > 0) {
+          fail(`${f} sets a value — a shipped .env.example carries variable names only: ${valued.map((l) => l.split("=")[0]).join(", ")}`);
+        }
+      }
       if (f.startsWith("scripts/") && !(manifest.files as string[]).includes(f)) {
         fail(`tarball contains an unexpected script: ${f}`);
       }
@@ -219,7 +230,9 @@ for (const pkgDir of targets) {
       }
     }
 
-    const rawTs = listing.filter((l) => l.endsWith(".ts") && (isBin || l.startsWith("scripts/")));
+    const rawTs = listing.filter((l) => l.endsWith(".ts") && !l.startsWith("template/") && (isBin || l.startsWith("scripts/")));
+    const inListing = (resolved: string): boolean =>
+      listing.includes(resolved) || (resolved.endsWith("/") && listing.some((l) => l.startsWith(resolved)));
     for (const f of rawTs) {
       const src = readFileSync(join(pkgDir, f), "utf8");
       const specs = [...src.matchAll(/(?:from|import\()\s*"(\.[^"]+)"/g)].map((m) => m[1]!);
@@ -230,7 +243,7 @@ for (const pkgDir of targets) {
         }
       }
       for (const { spec, resolved } of runtimeUrlPaths(f, src)) {
-        if (!listing.includes(resolved)) {
+        if (!inListing(resolved)) {
           fail(`shipped script ${f} reads ${spec} at runtime, which resolves to ${resolved} — NOT in the tarball`);
         }
       }

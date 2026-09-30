@@ -36,8 +36,7 @@ supply the judgement and run the commands **with the user's consent**.
      (`.env.local` presence, with fix hints).
    - Also run the broader **install wizard's `--check` mode**. Inside a checkout that is
      `node packages/create/bin/create-open-everywhere.js --check`; with no checkout yet, the
-     same wizard runs from npm as `npx create-open-everywhere@latest --check` — which works only
-     once the package is published. It reports on
+     same wizard runs from npm as `npx create-open-everywhere@latest --check`. It reports on
      the SAME 10-step checklist a human running the wizard themselves would see
      (prerequisites, repo, tool roster, Vercel link, database, Slack app, env checklist,
      telemetry disclosure, build, final verification). It's read-only: no prompts,
@@ -81,10 +80,11 @@ supply the judgement and run the commands **with the user's consent**.
   themselves** (`node packages/create/bin/create-open-everywhere.js`, or
   `npx create-open-everywhere@latest` with no checkout, no flags, for the interactive
   version — it prompts and can write `.env.local` values, never echoing a secret back).
-  🔴 The wizard CONFIGURES an app; it does not CREATE one. Its repo step only checks whether
-  the current directory is an Open Everywhere app and, when it is not, names the ways to get
-  one. So never tell a user that `npx create-open-everywhere` alone will produce a working
-  tree. This skill only ever drives its `--check` mode (read-only);
+  With no checkout, the user creates the app with `npx create-open-everywhere@latest <dir>`:
+  it scaffolds the quickstart app (a small repo that depends on the npm packages) into a new or
+  empty `<dir>` and runs the wizard there. Without a `<dir>`, the wizard only CONFIGURES the app in
+  the current directory.
+  This skill only ever drives its `--check` mode (read-only);
   if the user wants the wizard to actually make changes (write env vars, run the
   build), tell them to run it directly themselves rather than relaying prompts
   through this agent — the wizard's own telemetry-consent step needs a human

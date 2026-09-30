@@ -256,6 +256,7 @@
     "test:publish-license": "NODE_NO_WARNINGS=1 tsx scripts/publish-license-test.ts",
     "test:publish-readme": "NODE_NO_WARNINGS=1 tsx scripts/publish-readme-test.ts",
     "test:publish-cold-install": "NODE_NO_WARNINGS=1 tsx scripts/publish-cold-install-test.ts",
+    "test:quickstart": "NODE_NO_WARNINGS=1 tsx scripts/quickstart-test.ts",
     "lint:subagent-template": "tsx scripts/subagent-template-lint.ts",
     "prepare": "npm run build:packages",
     "test:suites": "NODE_NO_WARNINGS=1 vitest run --config vitest.chain.config.ts",

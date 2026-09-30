@@ -7,6 +7,7 @@ import { npmCommand } from "./npm-command.js";
 
 import { evePatchFileName, evePatchTargets } from "@open-everywhere/core/agent/publish/eve-patch-pack.js";
 import { ALL_PUBLISHABLE_PACKAGES } from "./publish-exports-generate.js";
+import { packPublishablePackages } from "./publish-pack.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -45,15 +46,7 @@ ok(markers.length > 0, `the committed patches/${PATCH_FILE} adds at least one __
 const scratch = mkdtempSync(join(tmpdir(), "oe-cold-install-"));
 const consumer = join(scratch, "consumer");
 try {
-  const tarballs = join(scratch, "tarballs");
-  mkdirSync(tarballs, { recursive: true });
-  const packed: string[] = [];
-  for (const pkgDir of ALL_PUBLISHABLE_PACKAGES) {
-    const manifest = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8")) as { name: string };
-    const result = run(...npmCommand(["pack", "--workspace", manifest.name, "--pack-destination", tarballs, "--loglevel", "error"]), REPO_ROOT);
-    assert.equal(result.code, 0, `npm pack ${manifest.name} failed:\n${result.out}`);
-    packed.push(join(tarballs, result.out.trim().split("\n").pop() ?? ""));
-  }
+  const packed = packPublishablePackages(REPO_ROOT, join(scratch, "tarballs")).map((p) => p.tarball);
   n++;
   ok(packed.length === ALL_PUBLISHABLE_PACKAGES.length, `packed all ${ALL_PUBLISHABLE_PACKAGES.length} publishable packages`);
 

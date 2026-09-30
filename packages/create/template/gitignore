@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Secrets. Keep .env.example: it carries variable names only.
+.env
+.env.*
+!.env.example
+
+# The Vercel project link
+.vercel
+
+# eve build output and local durable state
+.eve/
+.output/
+.workflow-data/
+
+# Local stores: the embedded operational database, the memory store, the wizard state
+.open-everywhere-data/
+.open-everywhere-data.lock
+*.pglite.lock
+.open-everywhere-memory/
+.open-everywhere/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
+# The eve slot tree is `oe build` output, generated from roster.config.ts + roster.lock.json.
+# Commit those two files, never the tree.
+/agent/tools/
+/agent/channels/
+/agent/hooks/
+/agent/schedules/
+/agent/skills/
+/agent/connections/
+/agent/lib/providers.generated.ts
+
+# Misc
+*.log
+.DS_Store
+*.tsbuildinfo
+*.pem
+*.key

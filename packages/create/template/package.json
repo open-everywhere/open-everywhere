@@ -1,0 +1,47 @@
+{
+  "name": "{{APP_NAME}}",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "postinstall": "oe-eve-patch",
+    "oe:build": "oe build",
+    "predev": "oe build",
+    "dev": "eve dev",
+    "prebuild": "oe build",
+    "build": "eve build",
+    "prestart": "oe build",
+    "start": "eve start",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "check": "create-open-everywhere --check",
+    "ops": "node --import tsx scripts/ops-mcp.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@open-everywhere/adapters": "{{OE_VERSION}}",
+    "@open-everywhere/core": "{{OE_VERSION}}",
+    "@open-everywhere/provider-discord": "{{OE_VERSION}}",
+    "@open-everywhere/provider-github": "{{OE_VERSION}}",
+    "@open-everywhere/provider-linear": "{{OE_VERSION}}",
+    "@open-everywhere/provider-notion": "{{OE_VERSION}}",
+    "@open-everywhere/provider-slack": "{{OE_VERSION}}",
+    "@open-everywhere/provider-teams": "{{OE_VERSION}}",
+    "eve": "0.54.3",
+    "just-bash": "^3.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "create-open-everywhere": "{{OE_VERSION}}",
+    "tsx": "^4.23.9",
+    "typescript": "^7.0.2"
+  },
+  "overrides": {
+    "zod": "4.5.4",
+    "@agent-browser/eve": {
+      "zod": "4.5.4"
+    }
+  }
+}
