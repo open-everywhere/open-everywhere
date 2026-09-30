@@ -30,17 +30,27 @@ Slack's own shortcodes.
 ## Install
 
 ```sh
-npm install @open-everywhere/core
+npm i @open-everywhere/core eve@0.54.3
+npx oe-eve-patch
 ```
 
-`eve` is a peer dependency, pinned to an exact version, so npm refuses a conflicting install
-rather than nesting a second copy. Node 24 or newer.
+**Both commands are required.** Core refuses to boot on an unpatched `eve`. It reads one runtime
+marker for each patch part before the first wake is served, and it throws when a marker is missing.
+A registry `eve` carries no patch, so `npx oe-eve-patch` applies the copy in this tarball. The
+applier is idempotent: a second run on a patched tree changes nothing and exits 0.
+
+`eve` is a peer dependency, and the version above is the pin this package declares as
+`peerDependencies.eve`. Install that exact version yourself. npm can still nest a second `eve` for a
+package that asks for another version. `oe-eve-patch` patches only the copy at
+`<project root>/node_modules/eve`, and the boot check reads only the copy core itself resolves. A
+nested copy is therefore neither patched nor checked, so one resolved, pinned `eve` is your own
+step — run `npm ls eve` and confirm it prints one version. Node 24 or newer.
 
 ## Bins
 
 - `oe` — the roster build and the operator commands
 - `oe-eve-patch` — applies the `eve` patch this version pins, which a registry install of `eve`
-  does not carry
+  does not carry. It is a required install step, not an optional tool: see § Install.
 
 ## Docs
 

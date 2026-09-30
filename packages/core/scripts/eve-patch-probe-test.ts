@@ -65,6 +65,15 @@ for (const part of EVE_PATCH_PARTS) {
   ok(message.includes(EVE_RUNTIME_VERSION), `absent-${part.part}: the refusal names the PINNED eve version (${EVE_RUNTIME_VERSION})`);
   ok(message.includes("patch-package"), `absent-${part.part}: the refusal names the FIX`);
   ok(message.includes("docs/dev/publishing.md"), `absent-${part.part}: the refusal points at the document that explains it`);
+  ok(message.includes("npx oe-eve-patch"), `absent-${part.part}: the refusal names the one command that fixes it`);
+  ok(
+    !/NOT shipped in the published tarball/u.test(message),
+    `absent-${part.part}: 🔴 the refusal does NOT claim the patch is unshipped — core packs it (see its \`files\` allowlist)`,
+  );
+  ok(
+    !/from the Open Everywhere repository/u.test(message),
+    `absent-${part.part}: 🔴 the refusal does NOT send a consumer to the repository — the patch is in the tarball they already have`,
+  );
 
   await assert.rejects(
     async () => await assertEvePatched(defaultEvePackageRoot, bag),

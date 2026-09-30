@@ -15,7 +15,7 @@ import {
 } from "@open-everywhere/core/agent/publish/eve-patch-pack.js";
 import { ALL_PUBLISHABLE_PACKAGES, PUBLISHABLE_BIN_PACKAGES, exportsMapFor } from "./publish-exports-generate.js";
 import { LICENSE_FILE, checkPackageLicense, checkTarballLicense } from "./publish-license.js";
-import { checkPackageReadme, checkTarballReadme } from "./publish-readme.js";
+import { checkPackageReadme, checkReadmeEvePin, checkTarballReadme } from "./publish-readme.js";
 
 const FORBIDDEN_LIFECYCLE = ["preinstall", "install", "postinstall", "prepublish", "prepare"];
 
@@ -60,6 +60,15 @@ const PUBLISHED_VERSIONS = new Map<string, string>(
     return [m.name, m.version];
   }),
 );
+
+const CORE_EVE_PIN = String(
+  (JSON.parse(readFileSync(join("packages/core", "package.json"), "utf8")) as { peerDependencies?: Record<string, string> })
+    .peerDependencies?.eve ?? "",
+);
+if (CORE_EVE_PIN === "") {
+  console.error("✗ @open-everywhere/core declares no peerDependencies.eve — the README eve-pin arm has no reference pin");
+  process.exit(1);
+}
 
 for (const pkgDir of targets) {
   const manifest = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8")) as Record<string, any>;
@@ -117,6 +126,7 @@ for (const pkgDir of targets) {
   };
   for (const problem of checkPackageLicense(licenseInputs)) fail(problem);
   for (const problem of checkPackageReadme({ readme: readIfPresent("README.md") })) fail(problem);
+  for (const problem of checkReadmeEvePin({ readme: readIfPresent("README.md"), pin: CORE_EVE_PIN })) fail(problem);
   const shipsEveApplier = declaresEveApplier(manifest.bin);
   for (const problem of checkEveApplierPacking({ bin: manifest.bin, files: (manifest.files ?? []) as readonly string[] })) {
     fail(problem);

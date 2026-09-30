@@ -15,10 +15,15 @@ the Bot API host `discord.com/api`. Core's registries refuse a provider the depl
 ## Install
 
 ```sh
-npm install @open-everywhere/core @open-everywhere/provider-discord
+npm i @open-everywhere/core @open-everywhere/provider-discord eve@0.54.3
+npx oe-eve-patch
 ```
 
-`eve` is a peer dependency, pinned to an exact version. Node 24 or newer.
+**Both commands are required.** Core refuses to boot on an unpatched `eve`. A registry `eve` carries
+no patch, so `npx oe-eve-patch` applies the copy `@open-everywhere/core` ships.
+
+`eve` is a peer dependency, pinned to the exact version above, which is the pin
+`@open-everywhere/core` declares as `peerDependencies.eve`. Node 24 or newer.
 
 ## Use
 

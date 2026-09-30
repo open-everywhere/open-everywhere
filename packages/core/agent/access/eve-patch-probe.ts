@@ -90,12 +90,14 @@ export function evePatchRefusal(missing: readonly EvePatchPart[]): string {
     `bytes this process loaded:\n${parts}\n\n` +
     `Each one fails silently when absent, which is why this is a refusal and not a warning. ` +
     `The pinned eve version is ${EVE_RUNTIME_VERSION}.\n\n` +
-    `Fix — the patch is NOT shipped in the published tarball and @open-everywhere/core runs no ` +
-    `postinstall of its own, so applying it is your project's step:\n` +
-    `  1. copy \`patches/eve+${EVE_RUNTIME_VERSION}.patch\` from the Open Everywhere repository into ` +
-    `your own project's \`patches/\` directory;\n` +
-    `  2. add \`patch-package\` to your devDependencies;\n` +
-    `  3. add \`"postinstall": "patch-package"\` to your own package.json, then re-install.\n` +
+    `Fix — @open-everywhere/core ships both the patch and the applier, and it runs no postinstall of ` +
+    `its own, so applying the patch is your project's explicit step:\n` +
+    `  npm i eve@${EVE_RUNTIME_VERSION}\n` +
+    `  npx oe-eve-patch\n\n` +
+    `The applier is idempotent and refuses any eve version but the pin. To apply the patch by hand ` +
+    `instead, copy \`patches/eve+${EVE_RUNTIME_VERSION}.patch\` out of the installed ` +
+    `@open-everywhere/core package into your own \`patches/\` directory, add \`patch-package\` to your ` +
+    `devDependencies, and add \`"postinstall": "patch-package"\` to your own package.json.\n` +
     `See docs/dev/publishing.md.`
   );
 }

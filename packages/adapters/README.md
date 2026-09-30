@@ -20,10 +20,18 @@ package rather than a fork of the runtime.
 ## Install
 
 ```sh
-npm install @open-everywhere/core @open-everywhere/adapters
+npm i @open-everywhere/core @open-everywhere/adapters eve@0.54.3
+npx oe-eve-patch
 ```
 
-`eve` and `@agent-browser/eve` are peer dependencies, pinned to exact versions. Node 24 or newer.
+**Both commands are required.** Core refuses to boot on an unpatched `eve`. A registry `eve` carries
+no patch, so `npx oe-eve-patch` applies the copy `@open-everywhere/core` ships.
+
+`eve` and `@agent-browser/eve` are peer dependencies, pinned to exact versions. The `eve` version
+above is the pin `@open-everywhere/core` declares as `peerDependencies.eve`.
+
+`npx oe-eve-patch` applies the `eve` patch only. `@agent-browser/eve` installs unpatched, and
+`@open-everywhere/core` packs no patch for it. Node 24 or newer.
 
 ## Docs
 

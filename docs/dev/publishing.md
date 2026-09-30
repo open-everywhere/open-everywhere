@@ -5,7 +5,8 @@ How an Open Everywhere version reaches the public registry, and the checks that 
 This page is for the maintainer who publishes. A consumer who deploys the repository follows
 [the quick start](../introduction/quick-start.md) instead. The one consumer recipe that lives here is
 § *The eve patch reaches a consumer by one explicit command*: it belongs with the packaging decision
-that produced it, and the published package has no README to carry it yet (OPE-2166).
+that produced it. It is no longer the only copy — every library README states the same recipe in
+§ Install (OPE-2206), and a consumer reads that one on the npm page.
 
 > **The tarballs are the release surface.** A published version is permanent and diffable by
 > anyone. Treat every publish as a public, irreversible act.
@@ -135,8 +136,21 @@ guarantee — which is why the turn gate exists. `npm run test:publish-cold-inst
 control: it packs the workspaces, installs them into an empty directory, runs `npx oe-eve-patch` and
 asserts every marker the patch adds is absent before and present after.
 
-The published package carries no README (OPE-2166), so this page is the only place that states the
-consumer recipe — put it in the README as well the moment one exists.
+**This page is not the only place that states the recipe.** Each of the eight library packages
+carries it in its README § Install (OPE-2206), and `@open-everywhere/core`'s is the one an npm
+consumer reads first. `create-open-everywhere` carries no install recipe: it is run rather
+than imported, and its README documents `npx create-open-everywhere` instead.
+
+The publish gate holds the eight READMEs in step, and only those. `scripts/publish-readme.ts` fails a
+package README that names an `eve@<version>` other than core's `peerDependencies.eve`, so a pin
+re-roll cannot leave one of those pages behind. `npm run test:publish-readme` runs the same rule on
+the test chain, and it also asserts that each of the eight § Install sections still RUNS
+`npx oe-eve-patch` — a recipe that names the right version but drops the second command is the defect
+OPE-2206 closed.
+
+🔴 **This page's own recipe is NOT gated.** No script reads `docs/dev/publishing.md`, so the
+`eve@<version>` in § *Applying the patch is the consumer's step* above is hand-written and a re-roll
+can leave it behind. Read the pin from core's `peerDependencies.eve`, as that section already says.
 
 ## The order of the checks
 
@@ -155,7 +169,8 @@ npm publish --workspace <name>     # by hand, one package at a time, after readi
 `scripts/publish-lint.ts` packs each package and runs `publint` and
 `@arethetypeswrong/cli` over the tarball, plus the repo-specific assertions those two cannot
 know about: the `files` allowlist, the eve peer pin, a `NOTICE` and a `LICENSE` at the package
-root, sibling pins that match the version each sibling publishes, no consumer-run lifecycle
+root, a README whose every `eve@<version>` is core's peer pin, sibling pins that match the version
+each sibling publishes, no consumer-run lifecycle
 script, and — for every module that ships as raw TypeScript — that each path it reaches resolves
 *inside the tarball*, both the ones it imports and the ones it reads at runtime through
 `new URL(…, import.meta.url)`. Every `bin` target gets the same treatment, whatever kind of package
