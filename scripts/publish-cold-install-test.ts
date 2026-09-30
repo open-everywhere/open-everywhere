@@ -95,6 +95,12 @@ try {
     "the installed patch is byte-identical to the repository's own",
   );
 
+  const createVersion = (JSON.parse(readFileSync(join(REPO_ROOT, "packages", "create", "package.json"), "utf8")) as { version: string }).version;
+  const wizard = run(...npmCommand(["exec", "--no", "--", "create-open-everywhere", "--version"]), consumer);
+  assert.equal(wizard.code, 0, `create-open-everywhere --version failed on the unpatched cold tree:\n${wizard.out}`);
+  n++;
+  eq(wizard.out.trim().split("\n").pop()?.trim(), createVersion, "create-open-everywhere --version prints its own version on the unpatched tree");
+
   const applied = run(...npmCommand(["exec", "--no", "--", "oe-eve-patch"]), consumer);
   assert.equal(applied.code, 0, `npx oe-eve-patch failed in the cold tree:\n${applied.out}`);
   n++;

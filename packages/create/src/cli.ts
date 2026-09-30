@@ -4,6 +4,7 @@ import { WIZARD_STEPS } from "./steps/index.js";
 import { createRealIO, closeRealIO } from "./io.js";
 import { maybeEmitWizardCompleted } from "./telemetry.js";
 import { WIZARD_VERSION } from "./version.js";
+import { pathToFileURL } from "node:url";
 
 const USAGE = `create-open-everywhere [--check] [--version] [--help]
 
@@ -58,7 +59,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   return runInteractiveMode();
 }
 
-const isDirectRun = process.argv[1] && import.meta.url === new URL(process.argv[1], "file://").href;
+const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isDirectRun) {
   main(process.argv.slice(2)).then(
     (code) => process.exit(code),

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { AccessRequestsConfig } from "../agent/access/config.js";
 import { withPatchedFetch } from "./_fetch-test-utils.js";
+import { fileURLToPath } from "node:url";
 
 const dir = join(tmpdir(), `open-everywhere-config-repo-mint-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
@@ -224,7 +225,7 @@ await withPatchedFetch(fakeFetch, async () => {
 
 console.log("\n4. the source fence — one owner for the write set, and no implicit one:");
 {
-  const repoRoot = new URL("../../../", import.meta.url).pathname;
+  const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
   const walk = (d: string): string[] =>
     readdirSync(d, { withFileTypes: true }).flatMap((e) =>
       e.name === "dist" || e.name === "node_modules" ? [] : e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : [],

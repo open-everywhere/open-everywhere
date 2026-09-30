@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getOperationalStore } from "../operational/provider.js";
-import { getAppInfo } from "../commands/core.js";
+import { getAppInfo } from "../commands/app-info.js";
 import { getProvider as getMemoryProvider } from "../memory/provider.js";
 import { getConfig } from "../access/config.js";
 import { onVercel } from "../access/platform.js";

@@ -63,6 +63,7 @@ import {
 } from "./injection-corpus.js";
 import { buildWorkerSeatToolset, workerSeatCtx, workerSeatRoster } from "./_worker-seat.js";
 import type { BindableContext } from "../../agent/identity/binding.js";
+import { fileURLToPath } from "node:url";
 
 const argv = process.argv.slice(2);
 const flag = (f: string): string | undefined => {
@@ -95,7 +96,7 @@ const LEGS: readonly LegId[] = (() => {
   return [picked];
 })();
 
-const RESULTS_DIR = new URL("./results/", import.meta.url).pathname;
+const RESULTS_DIR = fileURLToPath(new URL("./results/", import.meta.url));
 
 export interface ScriptStep {
   readonly toolCalls?: readonly { readonly name: string; readonly input: unknown }[];

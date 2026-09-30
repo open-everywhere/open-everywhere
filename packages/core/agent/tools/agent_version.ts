@@ -1,7 +1,7 @@
 import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
-import { getAppInfo } from "../commands/core.js";
+import { getAppInfo } from "../commands/app-info.js";
 
 export default defineTool({
   description:

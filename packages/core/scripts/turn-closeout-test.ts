@@ -2,7 +2,7 @@ import { tmpdir } from "node:os";
 import { readFileSync, readdirSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 let passed = 0;
@@ -402,7 +402,7 @@ function authoredSourcesUnder(dir: URL): { readonly url: URL; readonly src: stri
   const copySources = authoredSourcesUnder(new URL("../../", import.meta.url));
   ok(copySources.length > 500, "§4/COPY: the source walk really read the tree — a walk that found nothing would pass the next assertion for free");
   const falseAckCopy = /acknowledgement\s+has\s+already\s+gone\s+out/i;
-  const selfPath = new URL(import.meta.url).pathname;
+  const selfPath = fileURLToPath(new URL(import.meta.url));
   const reintroduced = copySources.filter((f) => f.url.pathname !== selfPath && falseAckCopy.test(f.src));
   ok(reintroduced.length === 0, `§4/COPY: no authored source under packages/ carries the false acknowledgement sentence — found in ${reintroduced.map((f) => f.url.pathname).join(", ")}`);
   ok(posted.length === before + 1, "§4/ROOM: NOTHING further reached the room. This is the assertion the six live re-posts exist for");

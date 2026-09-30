@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { fileURLToPath } from "node:url";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-auto-approved-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
@@ -123,7 +124,7 @@ try {
 }
 
 {
-  const dir = new URL("../agent/tools/", import.meta.url).pathname;
+  const dir = fileURLToPath(new URL("../agent/tools/", import.meta.url));
   const proposers: string[] = [];
   for (const f of readdirSync(dir)) {
     if (!f.endsWith(".ts")) continue;
@@ -137,7 +138,7 @@ try {
   }
   ok(proposers.length >= 21, `the sweep saw every propose tool (${proposers.length} found)`);
 
-  const cmds = readFileSync(new URL("../agent/commands/core.ts", import.meta.url).pathname, "utf8");
+  const cmds = readFileSync(fileURLToPath(new URL("../agent/commands/core.ts", import.meta.url)), "utf8");
   ok((cmds.match(/posted\.autoApproved/g) ?? []).length >= 2, "commands/core.ts: both budget commands branch on the auto-approved result");
 }
 

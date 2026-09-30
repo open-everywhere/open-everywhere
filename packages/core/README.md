@@ -59,7 +59,7 @@ step — run `npm ls eve` and confirm it prints one version. Node 24 or newer.
 
 ## Status
 
-Version 0.1.0 is the planned first public version. It is pre-1.0: the API surface is expected to
+The 0.1 line is the first public release. It is pre-1.0: the API surface is expected to
 change, and a minor release may break you. Pin an exact version.
 
 ## Licence

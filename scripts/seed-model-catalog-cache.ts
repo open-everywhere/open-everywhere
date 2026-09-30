@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ModelStack } from "../agent/model/stacks.js";
 import { importAppModule, resolveAppRoot } from "@open-everywhere/core/agent/scaffold/app-root.js";
+import { pathToFileURL } from "node:url";
 
 const APP_ROOT = resolveAppRoot();
 const { STACKS } = await importAppModule<typeof import("../agent/model/stacks.js")>("agent/model/stacks.ts", APP_ROOT);
@@ -180,7 +181,7 @@ async function main(): Promise<void> {
   );
 }
 
-const isDirectRun = process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`;
+const isDirectRun = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isDirectRun) {
   main().catch((err) => {
     console.error("✗ seed-model-catalog-cache failed:", err instanceof Error ? err.message : err);

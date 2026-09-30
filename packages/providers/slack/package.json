@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/provider-slack",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Open Everywhere Slack provider — Slack channel and DM surfaces, identity mapping, approval cards and slash commands.",
   "keywords": [
     "agent",
@@ -194,7 +194,7 @@
     "test:slack-wake-drop-hold": "NODE_NO_WARNINGS=1 tsx scripts/slack-wake-drop-hold-test.ts"
   },
   "dependencies": {
-    "@open-everywhere/core": "0.1.0",
+    "@open-everywhere/core": "0.1.1",
     "undici": "^7.28.0",
     "zod": "4.5.4"
   },

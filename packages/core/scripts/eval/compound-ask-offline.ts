@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 import { generateText, stepCountIs, type ModelMessage } from "ai";
 import { createGateway } from "@ai-sdk/gateway";
 import { renderWake, type NormalizedWake } from "../../agent/channels/normalized-wake.js";
@@ -262,7 +262,7 @@ function reportScores(label: string, condition: Condition, arm: Arm, rows: reado
   }
 }
 
-const RESULTS_DIR = new URL("./results/", import.meta.url).pathname;
+const RESULTS_DIR = fileURLToPath(new URL("./results/", import.meta.url));
 
 export function rescoreRun(saved: { readonly rows: readonly { readonly outgoingText: string; readonly calls: readonly string[] }[] }): CompoundScore[] {
   return saved.rows.map((r) => scoreCompoundTurn(r.calls.map((name) => ({ name, input: {} })), r.outgoingText));

@@ -333,10 +333,12 @@ const OWNER = "postgres://neondb_owner:ownerpass@ep-x.us-east-2.aws.neon.tech/ne
     if (opts.config !== false) writeFileSync(join(dir, "roster.config.ts"), "export default {};\n");
     if (opts.lock !== false) writeFileSync(join(dir, "roster.lock.json"), "{}\n");
     if (opts.oe !== undefined) {
-      const bin = join(dir, "node_modules", ".bin");
+      const core = join(dir, "node_modules", "@open-everywhere", "core");
+      const bin = join(core, "bin");
       mkdirSync(bin, { recursive: true });
+      writeFileSync(join(core, "package.json"), JSON.stringify({ name: "@open-everywhere/core", bin: { oe: "bin/oe.js" } }));
       writeFileSync(
-        join(bin, "oe"),
+        join(bin, "oe.js"),
         opts.oe === "clean"
           ? "#!/usr/bin/env node\nconsole.log('ok');\n"
           : "#!/usr/bin/env node\nconsole.error('  - DRIFTED · agent/tools/reply.ts differs from the plan');\nprocess.exit(1);\n",

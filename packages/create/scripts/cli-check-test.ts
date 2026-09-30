@@ -14,11 +14,11 @@ const ok = (cond: boolean, label: string) => {
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
-const tsxBin = join(repoRoot, "node_modules", ".bin", "tsx");
+const tsxCli = join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs");
 const cliPath = join(packageRoot, "src", "cli.ts");
 
 function runCli(args: readonly string[], cwd: string): { status: number | null; stdout: string; stderr: string } {
-  const result = spawnSync(tsxBin, [cliPath, ...args], { cwd, encoding: "utf8", env: { ...process.env } });
+  const result = spawnSync(process.execPath, [tsxCli, cliPath, ...args], { cwd, encoding: "utf8", env: { ...process.env } });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 

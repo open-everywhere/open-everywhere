@@ -32,6 +32,7 @@ const NOTION_SCRIPT = `#!/usr/bin/env node
 
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
 const NOTION_VERSION = "2022-06-28";
 const API = "https://api.notion.com";
@@ -1197,7 +1198,7 @@ export async function main(argv, opts) {
 // Only run the CLI when this file is the process entry point — importing it (as the
 // test suite does, to exercise the exported pure functions against a mocked fetch)
 // must NOT trigger a real network call.
-const isMain = typeof process !== "undefined" && process.argv[1] && import.meta.url === "file://" + process.argv[1];
+const isMain = typeof process !== "undefined" && process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
   main(process.argv.slice(2)).catch((err) => {
     console.error(err && err.name === "NotOnANotionPage" ? err.message : JSON.stringify(errorReport(err)));

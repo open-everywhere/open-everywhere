@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { isCompiledDoc } from "@open-everywhere/core/agent/docs/source-map.js";
 
 export const AUDIT_PATH = "/control/v1/audit?";
@@ -63,7 +63,7 @@ export function docFiles(root: string): string[] {
   return out.filter(isCompiledDoc);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const root = join(dirname(fileURLToPath(import.meta.url)), "..");
   const files = new Map<string, string>();
   for (const f of docFiles(root)) files.set(f, readFileSync(join(root, f), "utf8"));

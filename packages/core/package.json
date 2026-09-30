@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Open Everywhere core — the portable, host-agnostic agent runtime: access and approvals, identity, memory, spend, routines, webhooks, connectors, the audit chain and the `oe` roster build.",
   "keywords": [
     "agent",
@@ -1203,6 +1203,10 @@
     "./agent/channels/work-search.js": {
       "types": "./dist/agent/channels/work-search.d.ts",
       "default": "./dist/agent/channels/work-search.js"
+    },
+    "./agent/commands/app-info.js": {
+      "types": "./dist/agent/commands/app-info.d.ts",
+      "default": "./dist/agent/commands/app-info.js"
     },
     "./agent/commands/core.js": {
       "types": "./dist/agent/commands/core.d.ts",

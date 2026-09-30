@@ -28,6 +28,7 @@ import { externalPolicyOverrideFor, warnSilentRoomGrainWithoutPublicSignal } fro
 import type { Domain } from "../agent/memory/domain.js";
 import type { NormalizedWake } from "../agent/channels/normalized-wake.js";
 import type { WakeMessageInput } from "../agent/channels/wake-envelope.js";
+import { fileURLToPath } from "node:url";
 
 let passed = 0;
 function ok(cond: boolean, msg: string): void {
@@ -512,7 +513,7 @@ console.log("7. silent-room-grain reachability signal:");
     ingestedAfterWithholding([{ trust: "peer", ungraded: true }, { trust: "peer" }], WITHHOLD).length === 1,
     "the withheld ungraded entry leaves the join too — its bytes did not enter, so the render and the join agree",
   );
-  const packagesRoot = new URL("../..", import.meta.url).pathname;
+  const packagesRoot = fileURLToPath(new URL("../..", import.meta.url));
   const producers: string[] = [];
   const walk = (dir: string): void => {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
