@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
+import { localBinCommand, npmCommand } from "./npm-command.js";
 import { EVE_PATCH_PARTS } from "@open-everywhere/core/agent/access/eve-patch-probe.js";
 import {
   EVE_APPLIER_BIN,
@@ -39,8 +40,6 @@ function run(cmd: string, args: string[], cwd = process.cwd()): { code: number; 
     return { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
   }
 }
-
-const bin = (name: string): string => join(process.cwd(), "node_modules", ".bin", name);
 
 function resolveInside(from: string, spec: string): string {
   const literal = join(dirname(from), spec).replace(/\\/g, "/");
@@ -165,13 +164,13 @@ for (const pkgDir of targets) {
 
   const dest = mkdtempSync(join(tmpdir(), "oe-publish-"));
   try {
-    const packed = run("npm", ["pack", "--workspace", name, "--pack-destination", dest, "--loglevel", "error"]);
+    const packed = run(...npmCommand(["pack", "--workspace", name, "--pack-destination", dest, "--loglevel", "error"]));
     if (packed.code !== 0) {
       fail(`npm pack failed:\n${packed.out}`);
       continue;
     }
     const tgz = join(dest, packed.out.trim().split("\n").pop() ?? "");
-    const listing = run("tar", ["-tzf", tgz]).out.split("\n").filter(Boolean).map((l) => l.replace(/^package\//, ""));
+    const listing = run("tar", ["-tzf", relative(dest, tgz)], dest).out.split("\n").filter(Boolean).map((l) => l.replace(/^package\//, ""));
 
     if (!listing.includes("NOTICE")) fail("NOTICE is not in the tarball");
     for (const problem of checkTarballLicense(listing)) fail(problem);
@@ -237,9 +236,9 @@ for (const pkgDir of targets) {
       }
     }
 
-    const pl = run(bin("publint"), ["--strict", pkgDir]);
+    const pl = run(...localBinCommand("publint", "publint", ["--strict", pkgDir]));
     if (pl.code !== 0) fail(`publint:\n${pl.out.trim()}`);
-    const at = isBin ? { code: 0, out: "" } : run(bin("attw"), ["--pack", pkgDir, "--profile", "esm-only"]);
+    const at = isBin ? { code: 0, out: "" } : run(...localBinCommand("@arethetypeswrong/cli", "attw", ["--pack", pkgDir, "--profile", "esm-only"]));
     if (at.code !== 0) fail(`attw:\n${at.out.trim()}`);
     console.log(`  ${at.code === 0 && pl.code === 0 && reds.length === 0 ? "✓" : "·"} ${name}: ${listing.length} file(s) packed`);
   } finally {

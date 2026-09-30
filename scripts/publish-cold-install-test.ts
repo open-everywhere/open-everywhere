@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { npmCommand } from "./npm-command.js";
 
 import { evePatchFileName, evePatchTargets } from "@open-everywhere/core/agent/publish/eve-patch-pack.js";
 import { ALL_PUBLISHABLE_PACKAGES } from "./publish-exports-generate.js";
@@ -49,7 +50,7 @@ try {
   const packed: string[] = [];
   for (const pkgDir of ALL_PUBLISHABLE_PACKAGES) {
     const manifest = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8")) as { name: string };
-    const result = run("npm", ["pack", "--workspace", manifest.name, "--pack-destination", tarballs, "--loglevel", "error"], REPO_ROOT);
+    const result = run(...npmCommand(["pack", "--workspace", manifest.name, "--pack-destination", tarballs, "--loglevel", "error"]), REPO_ROOT);
     assert.equal(result.code, 0, `npm pack ${manifest.name} failed:\n${result.out}`);
     packed.push(join(tarballs, result.out.trim().split("\n").pop() ?? ""));
   }
@@ -61,7 +62,7 @@ try {
     join(consumer, "package.json"),
     `${JSON.stringify({ name: "oe-cold-install-probe", version: "1.0.0", private: true, type: "module" }, null, 2)}\n`,
   );
-  const install = run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel", "error", `eve@${PIN}`, ...packed], consumer);
+  const install = run(...npmCommand(["install", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel", "error", `eve@${PIN}`, ...packed]), consumer);
   assert.equal(install.code, 0, `npm install into the cold tree failed:\n${install.out}`);
   n++;
 
@@ -94,7 +95,7 @@ try {
     "the installed patch is byte-identical to the repository's own",
   );
 
-  const applied = run(join(consumer, "node_modules", ".bin", "oe-eve-patch"), [], consumer);
+  const applied = run(...npmCommand(["exec", "--no", "--", "oe-eve-patch"]), consumer);
   assert.equal(applied.code, 0, `npx oe-eve-patch failed in the cold tree:\n${applied.out}`);
   n++;
   for (const marker of markers) {
@@ -107,7 +108,7 @@ try {
     .map((e) => e.name);
   ok(projectionCarriers.length > 0, `AFTER: eve/dist/src/harness carries __oeProjectToolSet (${projectionCarriers.join(", ")})`);
 
-  const again = run(join(consumer, "node_modules", ".bin", "oe-eve-patch"), [], consumer);
+  const again = run(...npmCommand(["exec", "--no", "--", "oe-eve-patch"]), consumer);
   assert.equal(again.code, 0, `a second npx oe-eve-patch failed:\n${again.out}`);
   n++;
   for (const marker of markers) {

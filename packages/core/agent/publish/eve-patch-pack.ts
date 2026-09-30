@@ -1,3 +1,5 @@
+import { isAbsolute, relative, sep } from "node:path";
+
 export interface EvePatchPart {
   readonly ticket: string;
   readonly title: string;
@@ -188,8 +190,8 @@ export function checkEveResolution(input: {
 }
 
 function isInside(parent: string, child: string): boolean {
-  const base = parent.endsWith("/") ? parent : `${parent}/`;
-  return child === parent || child.startsWith(base);
+  const rel = relative(parent, child);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
 export function evePatchSharedTargets(
@@ -218,7 +220,7 @@ export function patchDirArgument(input: {
         `Install @open-everywhere/core into this project rather than linking it from elsewhere`,
     };
   }
-  const value = packedPatchDir === consumerRoot ? "." : packedPatchDir.slice(consumerRoot.length).replace(/^\/+/, "");
+  const value = relative(consumerRoot, packedPatchDir).split(sep).join("/") || ".";
   return { ok: true, value };
 }
 

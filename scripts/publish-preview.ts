@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileS
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
+import { npmCommand } from "./npm-command.js";
 import { ALL_PUBLISHABLE_PACKAGES } from "./publish-exports-generate.js";
 
 export type Severity = "block" | "review";
@@ -176,13 +177,13 @@ function main(): void {
   for (const pkgDir of targets) {
     const manifest = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8")) as Record<string, any>;
     const name = manifest.name as string;
-    const packed = execFileSync("npm", ["pack", "--workspace", name, "--pack-destination", out, "--loglevel", "error"], {
+    const packed = execFileSync(...npmCommand(["pack", "--workspace", name, "--pack-destination", out, "--loglevel", "error"]), {
       encoding: "utf8",
     });
     const tgz = join(out, packed.trim().split("\n").pop()!);
     const unpacked = join(out, "unpacked", name.replace(/[@/]/g, "_"));
     mkdirSync(unpacked, { recursive: true });
-    execFileSync("tar", ["-xzf", tgz, "-C", unpacked, "--strip-components", "1"]);
+    execFileSync("tar", ["-xzf", relative(out, tgz), "-C", relative(out, unpacked), "--strip-components", "1"], { cwd: out });
 
     const files = walk(unpacked);
     const bytes = new Map(files.map((f) => [f, statSync(join(unpacked, f)).size]));
