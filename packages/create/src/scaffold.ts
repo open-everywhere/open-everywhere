@@ -52,6 +52,10 @@ export function listFiles(root: string, at = root): string[] {
   });
 }
 
+export function isScaffoldableDir(dir: string): boolean {
+  return readdirSync(dir).every((name) => name === ".git");
+}
+
 export function scaffoldApp(options: {
   readonly targetDir: string;
   readonly version: string;
@@ -68,7 +72,7 @@ export function scaffoldApp(options: {
   }
   if (existsSync(dir)) {
     if (!statSync(dir).isDirectory()) throw new ScaffoldRefusal(`refusing to scaffold: ${dir} exists and is not a directory`);
-    if (readdirSync(dir).length > 0) {
+    if (!isScaffoldableDir(dir)) {
       throw new ScaffoldRefusal(`refusing to scaffold: ${dir} is not empty — choose a new directory name, or empty this one first`);
     }
   }

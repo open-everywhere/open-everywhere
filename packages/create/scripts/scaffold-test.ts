@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   defaultTemplateDir,
+  isScaffoldableDir,
   listFiles,
   NAME_PLACEHOLDER,
   packageNameFor,
@@ -67,9 +68,20 @@ ok(
 );
 eq(tpl.dependencies?.eve, core.peerDependencies?.eve, "template package.json: eve is pinned exactly to core's peer pin");
 eq(tpl.overrides?.zod, core.dependencies?.zod, "template package.json: the zod override is the zod core pins (consuming-as-packages §3)");
-eq(tpl.name, NAME_PLACEHOLDER, "template package.json: the name is the placeholder the scaffold fills");
+const root = readJson<Manifest & { allowScripts?: Record<string, unknown> }>(join(PACKAGES, "..", "package.json"));
+eq(tpl.overrides, root.overrides, "template package.json: the overrides equal the repository root's");
+const undiciPin = (spec: unknown): number[] => String(spec).split(".").map(Number);
+const eveUndici = undiciPin((tpl.overrides?.eve as Record<string, unknown> | undefined)?.undici);
+const fetchUndici = undiciPin((tpl.overrides?.["guarded-fetch"] as Record<string, unknown> | undefined)?.undici);
+ok(eveUndici[0] === 8 && (eveUndici[1]! > 10 || (eveUndici[1] === 10 && eveUndici[2]! >= 2)), "template package.json: eve's undici override is a patched 8.x (>= 8.10.2)");
+ok(fetchUndici[0] === 7 && (fetchUndici[1]! > 29 || (fetchUndici[1] === 29 && fetchUndici[2]! >= 1)), "template package.json: guarded-fetch's undici override is a patched 7.x (>= 7.29.1)");
+const allowScripts = (tpl as { allowScripts?: Record<string, unknown> }).allowScripts ?? {};
+eq(allowScripts.esbuild, true, "template package.json: allowScripts allows esbuild (tsx needs its binary)");
+eq(allowScripts["@mongodb-js/zstd"], true, "template package.json: allowScripts allows @mongodb-js/zstd (just-bash's zstd command)");
+eq(allowScripts["left-pad"], undefined, "template package.json: allowScripts names nothing else it was not asked to (negative control)");
+eq(tpl.name, NAME_PLACEHOLDER,"template package.json: the name is the placeholder the scaffold fills");
 eq((tpl as { scripts?: Record<string, string> }).scripts?.postinstall, "oe-eve-patch", "template package.json: postinstall applies the eve patch");
-for (const hook of ["prebuild", "predev", "prestart"]) {
+for (const hook of ["prebuild", "predev", "prestart", "pretypecheck"]) {
   eq((tpl as { scripts?: Record<string, string> }).scripts?.[hook], "oe build", `template package.json: ${hook} runs \`oe build\``);
 }
 
@@ -172,6 +184,22 @@ try {
   const empty = join(scratch, "empty");
   mkdirSync(empty);
   ok(scaffoldApp({ targetDir: empty, version }).files.length === result.files.length, "scaffold: an existing EMPTY directory is accepted");
+
+  const clone = join(scratch, "fresh-clone");
+  mkdirSync(join(clone, ".git"), { recursive: true });
+  writeFileSync(join(clone, ".git", "HEAD"), "ref: refs/heads/main\n");
+  const cloned = scaffoldApp({ targetDir: clone, version });
+  eq(cloned.files, result.files, "scaffold: a directory that holds only `.git` is accepted, and gets every template file");
+  ok(!cloned.files.some((f) => f === ".git" || f.startsWith(".git/")), "scaffold: writes nothing under `.git/`");
+  eq(readFileSync(join(clone, ".git", "HEAD"), "utf8"), "ref: refs/heads/main\n", "scaffold: the clone's `.git` is left untouched");
+  ok(existsSync(join(clone, ".gitignore")), "scaffold: the clone gets its `.gitignore` next to `.git`");
+  const cloneBusy = join(scratch, "clone-busy");
+  mkdirSync(join(cloneBusy, ".git"), { recursive: true });
+  writeFileSync(join(cloneBusy, "README.md"), "mine\n");
+  refuses("scaffold: refuses a directory that holds `.git` and anything else", () => scaffoldApp({ targetDir: cloneBusy, version }), /not empty/);
+  eq(readdirSync(cloneBusy).sort(), [".git", "README.md"], "scaffold: a refused clone is left untouched");
+  eq(isScaffoldableDir(cloneBusy), false, "isScaffoldableDir: `.git` plus a file is not empty (negative control)");
+  eq(isScaffoldableDir(clone), false, "isScaffoldableDir: a scaffolded clone is no longer empty");
 
   const vercelAppends = (gitignore: string, line: string, osEol: string): boolean => {
     const split = gitignore.includes("\r\n") ? "\r\n" : osEol;

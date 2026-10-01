@@ -18,7 +18,9 @@ npx create-open-everywhere my-agent
 ```
 
 This scaffolds the quickstart app into `./my-agent` and runs the wizard from inside it. The
-directory must be new or empty: the wizard refuses one that holds anything. The app depends on the
+directory must be new or empty. A fresh clone of an empty repository holds only `.git`, and it
+counts as empty: run `npx create-open-everywhere .` inside it. The wizard refuses a directory that
+holds anything else. The app depends on the
 eight `@open-everywhere/*` packages at this wizard's own version, plus `eve` at the pin core
 declares, and its `postinstall` applies the eve patch. Its roster mounts the launch surfaces: Slack,
 Notion and GitHub. The app's own `README.md` carries the numbered steps from there to a deployed

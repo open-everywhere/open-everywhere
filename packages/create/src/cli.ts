@@ -5,6 +5,7 @@ import { createRealIO, closeRealIO } from "./io.js";
 import { declineTelemetry, maybeEmitWizardCompleted } from "./telemetry.js";
 import { WIZARD_VERSION } from "./version.js";
 import { initGitRepo, scaffoldApp, ScaffoldRefusal } from "./scaffold.js";
+import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { slackAppNameProblem } from "@open-everywhere/provider-slack/agent/app-manifest.js";
 
@@ -154,7 +155,7 @@ function runScaffold(target: string): string | undefined {
 function nextSteps(target: string, why: string): string {
   return [
     `The wizard did not run (${why}). Next, from the new app:`,
-    `  cd ${target}`,
+    ...(resolve(target) === process.cwd() ? [] : [`  cd ${target}`]),
     "  npm install                                   # its postinstall applies the eve patch",
     "  npx create-open-everywhere --check --json     # setup status, as data (add --goal local for npm run dev only)",
     "  npx create-open-everywhere                    # the interactive wizard (a person, in a terminal)",

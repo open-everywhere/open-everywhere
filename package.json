@@ -282,6 +282,15 @@
     "zod": "4.5.4",
     "@agent-browser/eve": {
       "zod": "4.5.4"
+    },
+    "eve": {
+      "undici": "8.11.2",
+      "@ai-sdk/provider-utils": {
+        "undici": "7.30.0"
+      }
+    },
+    "guarded-fetch": {
+      "undici": "7.30.0"
     }
   },
   "dependencies": {
@@ -306,8 +315,11 @@
     "publint": "^0.3.23",
     "tsx": "latest",
     "typescript": "latest",
-    "undici": "^7.29.0",
+    "undici": "^7.30.0",
     "vitest": "^4.1.10"
   },
-  "allowScripts": {}
+  "allowScripts": {
+    "esbuild": true,
+    "@mongodb-js/zstd": true
+  }
 }

@@ -15,12 +15,18 @@ npx create-open-everywhere my-agent
 
 This is the way in. It copies the quickstart app into `./my-agent`, a new or empty directory, runs
 `git init` there (unless git is absent or the directory is already inside a work tree), and runs the
-setup wizard from inside it. The app it writes already holds everything on this page:
+setup wizard from inside it. A directory that holds only `.git` counts as empty, so
+`npx create-open-everywhere .` works inside a fresh clone of an empty repository. The app it writes
+already holds everything on this page:
 
 - the eight packages and `create-open-everywhere`, all pinned to the wizard's own version, and
   `eve` pinned exactly to core's peer pin;
 - the root `zod` override (§ 3 below) and `"postinstall": "oe-eve-patch"` (§ 2 below);
-- `oe build` as its `prebuild`, `predev` and `prestart`;
+- `undici` overrides that lift `eve`'s exact `8.9.0` pin and `guarded-fetch`'s exact `7.29.0` pin
+  to patched releases (`eve` itself stays on its pin, and the AI SDK under `eve` keeps undici 7);
+- an `allowScripts` entry for `esbuild` and `@mongodb-js/zstd`, the two dependencies with install
+  scripts;
+- `oe build` as its `prebuild`, `predev`, `prestart` and `pretypecheck`;
 - a `roster.config.ts` and a reviewed `roster.lock.json` that mount Slack, Notion and GitHub;
 - the minimal agent config under `agent/`, a `.env.example` with variable names only, and a
   `.gitignore` that keeps the generated slot tree and every env file out of git;

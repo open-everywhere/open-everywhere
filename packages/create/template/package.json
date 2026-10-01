@@ -15,6 +15,7 @@
     "build": "eve build",
     "prestart": "oe build",
     "start": "eve start",
+    "pretypecheck": "oe build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "check": "create-open-everywhere --check",
     "ops": "node --import tsx scripts/ops-mcp.ts",
@@ -43,6 +44,19 @@
     "zod": "4.5.4",
     "@agent-browser/eve": {
       "zod": "4.5.4"
+    },
+    "eve": {
+      "undici": "8.11.2",
+      "@ai-sdk/provider-utils": {
+        "undici": "7.30.0"
+      }
+    },
+    "guarded-fetch": {
+      "undici": "7.30.0"
     }
+  },
+  "allowScripts": {
+    "esbuild": true,
+    "@mongodb-js/zstd": true
   }
 }

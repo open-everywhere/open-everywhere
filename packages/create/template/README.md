@@ -3,7 +3,8 @@
 This is an [Open Everywhere](https://github.com/open-everywhere/open-everywhere) app: an
 autonomous teammate you tag in Slack, Notion and GitHub. `npx create-open-everywhere` scaffolded
 it. The runtime comes from the `@open-everywhere/*` npm packages. This repository holds only your
-configuration.
+configuration. To scaffold into a fresh clone of an empty repository, run
+`npx create-open-everywhere .` inside the clone.
 
 A coding agent can do most of the setup. Open this directory in Claude Code and ask it to set up
 Open Everywhere: it reads `AGENTS.md`, and `.mcp.json` gives it the `open-everywhere-ops` server.

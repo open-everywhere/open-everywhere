@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -69,6 +69,14 @@ function runCli(args: readonly string[], cwd: string): { status: number | null; 
     const again = runCli(["my-app", "--skip-wizard"], dir);
     ok(again.status === 1, "<dir>: refuses a non-empty directory with exit 1");
     ok(again.stderr.includes("not empty"), "<dir>: the refusal says why");
+
+    const clone = join(dir, "fresh-clone");
+    mkdirSync(join(clone, ".git"), { recursive: true });
+    const inPlace = runCli([".", "--skip-wizard"], clone);
+    ok(inPlace.status === 0, `. in a fresh clone: exits 0 (stderr: ${inPlace.stderr.trim()})`);
+    ok(existsSync(join(clone, "agent", "agent.ts")), ". in a fresh clone: scaffolds the app in place");
+    ok(!inPlace.stdout.includes("cd ."), ". in a fresh clone: the next steps carry no `cd .` line");
+    ok(scaffolded.stdout.includes("cd my-app"), "<dir> --skip-wizard: the next steps carry `cd my-app` (negative control)");
 
     const checkScaffold = runCli(["other-app", "--check"], dir);
     ok(checkScaffold.status === 2, "<dir> --check: refused with exit 2 — --check changes nothing");
