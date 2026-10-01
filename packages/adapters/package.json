@@ -164,6 +164,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "npm run test:chain",
     "test:chain": "npm run test:instrumentation && npm run test:sandbox-lifecycle && npm run test:sandbox-guard && npm run test:sandbox-extend && npm run test:model-gateway && npm run test:dream-judge-gateway && npm run test:approval-judge-gateway && npm run test:gateway-vision && npm run test:oe-oauth && npm run test:oe-oauth-static && npm run test:agent-browser && npm run test:neon-pool-error && npm run test:aws-adapter && npm run test:aws-sso && npm run test:okta-directory",

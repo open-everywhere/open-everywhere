@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,7 +44,7 @@ function runCli(args: readonly string[], cwd: string): { status: number | null; 
     ok(result.stdout.includes("Slack app"), "--check: reports the Slack step");
     ok(result.stdout.includes("Roster ("), "--check: reports the roster step");
     ok(
-      new RegExp(String.raw`\d+/${WIZARD_STEPS.length} steps satisfied\.`).test(result.stdout),
+      new RegExp(String.raw`\d+/${WIZARD_STEPS.length} steps satisfied \(goal: hosted\)\.`).test(result.stdout),
       `--check: prints an N/${WIZARD_STEPS.length} summary line covering every registered step`,
     );
     ok(!existsSync(join(dir, ".open-everywhere", "wizard-state.json")), "--check: never writes wizard-state.json (no prompts, no side effects)");
@@ -138,6 +138,52 @@ function runCli(args: readonly string[], cwd: string): { status: number | null; 
   } finally {
     process.chdir(before);
     rmSync(parent, { recursive: true, force: true });
+  }
+}
+
+{
+  const { parseArgs } = await import("../src/cli.js");
+  const parsed = parseArgs(["--check", "--goal", "local", "--host=https://a.example", "--json"]);
+  ok(parsed.goal === "local" && parsed.host === "https://a.example" && parsed.dirs.length === 0, "parseArgs: `--goal v` and `--host=v` both parse, and a flag value is never a <dir>");
+  ok(parseArgs(["--goal", "staging"]).errors.length === 1, "parseArgs: an unknown goal is an error");
+  ok(parseArgs(["--host"]).errors.length === 1, "parseArgs: a value flag with no value is an error");
+  const named = parseArgs(["--app-name", " Acme Agent "]);
+  ok(named.appName === "Acme Agent" && named.errors.length === 0 && named.dirs.length === 0, "parseArgs: `--app-name v` takes the name, trimmed, and not as a dir");
+  ok(parseArgs([]).appName === undefined, "parseArgs: no --app-name means no name (negative control)");
+  ok(/at most 35/.test(parseArgs([`--app-name=${"x".repeat(36)}`]).errors.join(" ")), "parseArgs: a name over Slack's 35-character limit is an error");
+
+  const dir = mkdtempSync(join(tmpdir(), "oe-wizard-cli-goal-"));
+  try {
+    const bad = runCli(["--check", "--goal", "staging"], dir);
+    ok(bad.status === 2, "--goal staging: exits 2");
+
+    const hosted = runCli(["--check", "--json"], dir);
+    const report = JSON.parse(hosted.stdout) as { goal: string; steps: { id: string; satisfied: boolean; next?: string }[] };
+    ok(report.goal === "hosted", "--check --json: the default goal is hosted, and the report says so");
+    const unsatisfied = report.steps.filter((s) => !s.satisfied);
+    ok(unsatisfied.length > 0 && unsatisfied.every((s) => typeof s.next === "string" && s.next.length > 0), "--check --json: every unsatisfied step carries a `next` command");
+    ok(report.steps.find((s) => s.id === "database")?.satisfied === false, "--check --json: the hosted goal never reports the database as done without one");
+
+    const local = JSON.parse(runCli(["--check", "--json", "--goal", "local"], dir).stdout) as { goal: string; steps: { id: string; satisfied: boolean }[] };
+    ok(local.goal === "local" && local.steps.find((s) => s.id === "database")?.satisfied === true, "--check --goal local: the embedded floor satisfies the database step (negative control)");
+
+    const text = runCli(["--check"], dir);
+    ok(/\n {4}next: /.test(text.stdout), "--check (text): prints a `next:` line under an unsatisfied step");
+
+    const declined = runCli(["--decline-telemetry"], dir);
+    ok(declined.status === 0, "--decline-telemetry: exits 0 without a terminal");
+    const statePath = join(dir, ".open-everywhere", "wizard-state.json");
+    ok(existsSync(statePath), "--decline-telemetry: writes the wizard state");
+    const state = JSON.parse(readFileSync(statePath, "utf8")) as Record<string, unknown>;
+    ok(state.telemetryConsent === "declined", "--decline-telemetry: records consent = declined");
+    ok(state.wizardStartedEmitted === undefined, "--decline-telemetry: emits nothing (no started guard set)");
+    const after = JSON.parse(runCli(["--check", "--json"], dir).stdout) as { steps: { id: string; satisfied: boolean }[] };
+    ok(after.steps.find((s) => s.id === "telemetry-disclosure")?.satisfied === true, "--decline-telemetry: the telemetry step is then satisfied");
+
+    const hung = runCli([], dir);
+    ok(hung.status === 2 && /needs a terminal/.test(hung.stderr), "no flags and no terminal: exits 2 and says the wizard needs a terminal");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 }
 

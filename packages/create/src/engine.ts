@@ -1,11 +1,21 @@
+export type WizardGoal = "local" | "hosted";
+
 export interface StepContext {
   readonly cwd: string;
   readonly env: NodeJS.ProcessEnv;
+  readonly goal?: WizardGoal;
+  readonly host?: string;
+  readonly appName?: string;
+}
+
+export function goalOf(ctx: StepContext): WizardGoal {
+  return ctx.goal ?? "hosted";
 }
 
 export interface StepCheckResult {
   readonly satisfied: boolean;
   readonly detail: string;
+  readonly next?: string;
 }
 
 export interface StepGuide {

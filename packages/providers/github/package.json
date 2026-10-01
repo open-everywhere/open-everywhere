@@ -123,6 +123,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "npm run test:chain",
     "test:chain": "npm run test:github-supervisor && npm run test:github-identity && npm run test:github-post-arm && npm run test:github-installations && npm run test:github-webhook-verifier && npm run test:github-memory && npm run test:github-stop && npm run test:github-engagement && npm run test:github-reaction-feedback && npm run test:github-read && npm run test:github-mint-scope && npm run test:github-message-ops && npm run test:github-wake-failure-audit && npm run test:github-rate-limit && npm run test:github-write-seam && npm run test:github-reaction-scope",

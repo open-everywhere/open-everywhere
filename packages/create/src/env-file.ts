@@ -31,3 +31,6 @@ export function writeEnvLocal(cwd: string, values: Readonly<Record<string, strin
   const existing = existsSync(p) ? readFileSync(p, "utf8") : "";
   writeFileSync(p, mergeEnv(existing, values), "utf8");
 }
+
+export const HOSTED_MISS_NOTE =
+  "If you set these in the Vercel project instead, ignore this miss: the check reads only .env.local and this shell, never the project's env (`npx vercel env ls production` lists the names there)";

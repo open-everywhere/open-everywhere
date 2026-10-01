@@ -39,6 +39,19 @@ see [Telemetry](../deploy/telemetry.md)), `npm run build`, and a final go/no-go
 verification. **Resumable** — re-run any time; an already-satisfied step is skipped, so
 Ctrl-C and re-running is always safe.
 
+`--check` judges every step against the hosted goal (a Vercel deploy) and prints a `next` command
+under each unsatisfied one. `--goal local` judges against `npm run dev` instead. `--host <url>`
+probes a deployment: the build + deploy step is satisfied only when the deployed Slack route
+answers an unsigned request with its own `401 unauthorized`. That proves the function booted and
+the route is mounted. It does not prove the deployment holds `SLACK_SIGNING_SECRET`; Slack's Event
+Subscriptions **Verified** does. The first request to a fresh deployment boots the function, so a
+timeout or a 5xx gets one retry with a longer timeout, and a pass on the retry says "cold start".
+`--check` reads `.env.local` and the shell, never the Vercel project's own environment. A value
+you set only in the Vercel dashboard still reads as missing, and the miss says so.
+`--app-name <name>` names the Slack app in the printed manifest (default "Open Everywhere"). A
+second install in one workspace needs its own name. `--decline-telemetry` answers the telemetry
+question from a shell with no terminal; accepting needs the interactive prompt.
+
 `--check` is a pure status report (no prompts, no writes, no telemetry) — the same mode
 the `quickstart-open-everywhere` Claude skill drives when an agent is doing the setup for
 you (see below).

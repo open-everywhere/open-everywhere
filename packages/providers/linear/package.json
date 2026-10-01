@@ -154,6 +154,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "npm run test:chain",
     "test:chain": "npm run test:linear-actions && npm run test:linear-create && npm run test:linear-credentials && npm run test:linear-supervisor && npm run test:linear-silence-ack && npm run test:linear-identity && npm run test:linear-read-scope && npm run test:linear-write-scope && npm run test:linear-work-search && npm run test:linear-event-normalizer && npm run test:dynamic-replay && npm run test:linear-route-taint && npm run test:linear-post-arm && npm run test:linear-webhook-verify && npm run test:linear-multi-org-reply && npm run test:linear-multi-org-tools && npm run test:linear-stop && npm run test:linear-engagement && npm run test:linear-reaction-feedback && npm run test:linear-message-ops && npm run test:linear-read && npm run test:linear-wake-failure-audit && npm run test:linear-rate-limit && npm run test:linear-write-seam",

@@ -26,6 +26,8 @@ const CORE_PKG = /^@open-everywhere\/core(\/|$)/;
 
 const CORE_ADAPTER_BARREL = /^@open-everywhere\/core\/agent\/adapter-api\.(js|ts)$/;
 
+const CORE_OPS_BARREL = /^@open-everywhere\/core\/agent\/adapter-api-ops\.(js|ts)$/;
+
 const EVENT_PLANE_DEEP = /routines\/event-(model|authz)(\.[jt]s)?$/;
 
 function tsFiles(dir: string): string[] {
@@ -93,7 +95,7 @@ function climbsOutsideBundle(fileAbs: string, spec: string, bundleRoot: string):
 }
 
 function bundleCoreImportViolation(fileAbs: string, spec: string, bundleRoot: string): boolean {
-  if (CORE_PKG.test(spec)) return !CORE_ADAPTER_BARREL.test(spec);
+  if (CORE_PKG.test(spec)) return !CORE_ADAPTER_BARREL.test(spec) && !CORE_OPS_BARREL.test(spec);
   return climbsOutsideBundle(fileAbs, spec, bundleRoot);
 }
 
@@ -220,6 +222,17 @@ function firstStringPresent(text: string, strings: string[]): string | undefined
         `the event plane is reached ONLY via the adapter-api barrel: ${rel(f)} imports "${spec}"`,
       );
     }
+  }
+}
+
+{
+  const light = (await import("@open-everywhere/core/agent/adapter-api-ops.js")) as Record<string, unknown>;
+  const main = (await import("@open-everywhere/core/agent/adapter-api.js")) as Record<string, unknown>;
+  const names = Object.keys(light);
+  ok(names.length >= 4, `the light ops door exports its registrars (${names.length})`);
+  for (const name of names) {
+    ok(name in main, `adapter-api also exports "${name}" — the light ops door opens nothing new`);
+    ok(main[name] === light[name], `"${name}" is the same binding through both doors (one registry, not two)`);
   }
 }
 

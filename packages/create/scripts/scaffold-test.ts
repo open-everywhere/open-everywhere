@@ -11,7 +11,9 @@ import {
   scaffoldPathFor,
   scaffoldApp,
   ScaffoldRefusal,
+  VERCEL_GITIGNORE_LINES,
   VERSION_PLACEHOLDER,
+  withGitignoreEol,
 } from "../src/scaffold.js";
 
 let n = 0;
@@ -171,10 +173,63 @@ try {
   mkdirSync(empty);
   ok(scaffoldApp({ targetDir: empty, version }).files.length === result.files.length, "scaffold: an existing EMPTY directory is accepted");
 
+  const vercelAppends = (gitignore: string, line: string, osEol: string): boolean => {
+    const split = gitignore.includes("\r\n") ? "\r\n" : osEol;
+    return !gitignore.split(split).includes(line);
+  };
+  for (const platformEol of ["\n", "\r\n"]) {
+    const label = platformEol === "\n" ? "LF platform" : "CRLF platform (Windows)";
+    const app = join(scratch, `eol-${platformEol.length}`);
+    scaffoldApp({ targetDir: app, version, eol: platformEol });
+    const gitignore = readFileSync(join(app, ".gitignore"), "utf8");
+    for (const line of VERCEL_GITIGNORE_LINES) {
+      ok(!vercelAppends(gitignore, line, platformEol), `scaffold (${label}): the Vercel CLI finds "${line}" and appends nothing`);
+    }
+    ok(gitignore.split(platformEol).includes("!.env.example"), `scaffold (${label}): .env.example stays tracked after the .env* line`);
+  }
+  const lfTemplate = readFileSync(join(TEMPLATE, "gitignore"), "utf8");
+  ok(!lfTemplate.includes("\r\n") && vercelAppends(lfTemplate, ".vercel", "\r\n"), "negative control: an LF-only file on Windows makes the Vercel CLI append .vercel (the bug)");
+  ok(vercelAppends(withGitignoreEol(".env\n.env.*\n", "\n"), ".env*", "\n"), "negative control: `.env` + `.env.*` do not stop the CLI appending `.env*`");
+  ok(withGitignoreEol("a\r\nb\nc", "\r\n") === "a\r\nb\r\nc", "withGitignoreEol: every line ending becomes the one asked for");
+
   eq(packageNameFor("/x/.Hidden_App"), "hidden_app", "packageNameFor: strips a leading dot and lowercases");
   eq(packageNameFor("/x/---"), "open-everywhere-app", "packageNameFor: falls back when nothing usable is left");
 } finally {
   rmSync(scratch, { recursive: true, force: true });
+}
+
+{
+  const { initGitRepo } = await import("../src/scaffold.js");
+  const calls: string[][] = [];
+  const fake = (answers: Record<string, number | null | "spawn-fails">) => (args: readonly string[]) => {
+    calls.push([...args]);
+    const a = answers[args[0]!];
+    return a === "spawn-fails" ? undefined : { status: a ?? 0 };
+  };
+
+  calls.length = 0;
+  const absent = initGitRepo("/nowhere", fake({ "--version": "spawn-fails" }));
+  ok(!absent.initialized && /not on PATH/.test(absent.detail), "git init: git absent → skipped, and says so");
+  ok(!calls.some((c) => c[0] === "init"), "git init: …and never runs `git init`");
+
+  calls.length = 0;
+  const nested = initGitRepo("/nowhere", fake({ "--version": 0, "rev-parse": 0 }));
+  ok(!nested.initialized && /already inside a git work tree/.test(nested.detail), "git init: inside a work tree → skipped, and says so");
+  ok(!calls.some((c) => c[0] === "init"), "git init: …and never runs `git init` (no nested repository)");
+
+  calls.length = 0;
+  const fresh = initGitRepo("/nowhere", fake({ "--version": 0, "rev-parse": 128, init: 0 }));
+  ok(fresh.initialized, "git init: outside any work tree → initialised");
+  ok(calls.some((c) => c[0] === "init") && !calls.some((c) => c[0] === "commit"), "git init: …runs `git init` and never commits");
+
+  const real = mkdtempSync(join(tmpdir(), "oe-scaffold-git-"));
+  try {
+    const r = initGitRepo(real);
+    if (r.initialized) ok(existsSync(join(real, ".git")), "git init (real git): the app directory now holds .git");
+    else ok(/not on PATH|already inside/.test(r.detail), `git init (real git): skipped for a stated reason (${r.detail})`);
+  } finally {
+    rmSync(real, { recursive: true, force: true });
+  }
 }
 
 console.log(`✓ ${n} scaffold assertions passed`);

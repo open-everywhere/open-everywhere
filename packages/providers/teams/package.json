@@ -152,6 +152,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "npm run test:chain",
     "test:chain": "npm run test:teams && npm run test:teams-connector && npm run test:teams-connector-seam && npm run test:teams-read && npm run test:teams-graph-team-id && npm run test:teams-fire-eligibility && npm run test:teams-input-response && npm run test:teams-bot-name && npm run test:teams-stop && npm run test:teams-reaction-feedback && npm run test:teams-engagement && npm run test:teams-message-ops && npm run test:teams-id-restore && npm run test:teams-spend-attribution",

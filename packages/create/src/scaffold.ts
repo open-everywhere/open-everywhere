@@ -1,6 +1,8 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { EOL } from "node:os";
 import { basename, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 
 export const VERSION_PLACEHOLDER = "{{OE_VERSION}}";
 
@@ -15,6 +17,12 @@ export function scaffoldPathFor(rel: string): string {
     if (from.endsWith("/") && rel.startsWith(from)) return to + rel.slice(from.length);
   }
   return rel;
+}
+
+export const VERCEL_GITIGNORE_LINES: readonly string[] = [".vercel", ".env*"];
+
+export function withGitignoreEol(text: string, eol: string): string {
+  return text.replace(/\r?\n/g, eol);
 }
 
 export function defaultTemplateDir(): string {
@@ -44,7 +52,12 @@ export function listFiles(root: string, at = root): string[] {
   });
 }
 
-export function scaffoldApp(options: { readonly targetDir: string; readonly version: string; readonly templateDir?: string }): ScaffoldResult {
+export function scaffoldApp(options: {
+  readonly targetDir: string;
+  readonly version: string;
+  readonly templateDir?: string;
+  readonly eol?: string;
+}): ScaffoldResult {
   const dir = resolve(options.targetDir);
   const templateDir = options.templateDir ?? defaultTemplateDir();
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(options.version) || options.version === "0.0.0") {
@@ -70,7 +83,9 @@ export function scaffoldApp(options: { readonly targetDir: string; readonly vers
     const source = join(templateDir, ...rel.split("/"));
     const bytes = readFileSync(source);
     const text = bytes.toString("utf8");
-    if (text.includes(VERSION_PLACEHOLDER) || text.includes(NAME_PLACEHOLDER)) {
+    if (out === ".gitignore") {
+      writeFileSync(target, withGitignoreEol(text, options.eol ?? EOL));
+    } else if (text.includes(VERSION_PLACEHOLDER) || text.includes(NAME_PLACEHOLDER)) {
       writeFileSync(target, text.split(VERSION_PLACEHOLDER).join(options.version).split(NAME_PLACEHOLDER).join(name));
     } else {
       copyFileSync(source, target);
@@ -78,4 +93,27 @@ export function scaffoldApp(options: { readonly targetDir: string; readonly vers
     written.push(out);
   }
   return { dir, files: written.sort() };
+}
+
+export interface GitInitResult {
+  readonly initialized: boolean;
+  readonly detail: string;
+}
+
+export type GitRunner = (args: readonly string[], cwd: string) => { readonly status: number | null } | undefined;
+
+const realGit: GitRunner = (args, cwd) => {
+  const r = spawnSync("git", [...args], { cwd, stdio: "ignore" });
+  return r.error !== undefined ? undefined : { status: r.status };
+};
+
+export function initGitRepo(dir: string, git: GitRunner = realGit): GitInitResult {
+  const version = git(["--version"], dir);
+  if (version === undefined || version.status !== 0) return { initialized: false, detail: "git is not on PATH — run `git init` yourself once it is installed" };
+  const inside = git(["rev-parse", "--is-inside-work-tree"], dir);
+  if (inside !== undefined && inside.status === 0) return { initialized: false, detail: "the directory is already inside a git work tree, so no new repository was made" };
+  const init = git(["init", "-q"], dir);
+  return init !== undefined && init.status === 0
+    ? { initialized: true, detail: "initialised a git repository (nothing committed yet)" }
+    : { initialized: false, detail: "`git init` failed — run it yourself" };
 }

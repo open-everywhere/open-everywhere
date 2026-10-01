@@ -56,7 +56,7 @@ this inventory become a lint later. The sources, in the order a future lint woul
 | Tier and gating | `packages/core/agent/access/consequence.ts` `TOOL_CONSEQUENCE` | 106 |
 | Seat reach | `lean-seat.ts`, `window-gate-manifest.ts`, `worker-capability-index.generated.ts`, `job-posture.ts` | 106 |
 | Control MCP | `CONTROL_TOOL_NAMES` (`control/server.ts:63`) and `CONTROL_WRITE_TOOL_NAMES` (`control/writes.ts:76`) | 39 |
-| Ops MCP | `OPS_TOOL_NAMES` (`ops/server.ts:29`) | 8 |
+| Ops MCP | `OPS_TOOL_NAMES` (`ops/server.ts:31`) | 8 |
 | Doc coverage | `packages/core/agent/docs/capability-map.ts` `docCodeSpans()` over every `docs/**/*.md` | all |
 
 The 15 tool rows with no `summary` are eve's own framework tools, the four framework slots this
@@ -340,21 +340,21 @@ never holds a secret verb.
 
 | ID | Verb | Behaviour | Code | Documented by | Tested by |
 | --- | --- | --- | --- | --- | --- |
-| OPS-preflight | `preflight` | Check the prerequisites for running/deploying Open Everywhere (node, model key, providers, durable DB, control-plane auth) … | `packages/core/agent/ops/server.ts:203` | `docs/security/security-model.md#cross-domain-isolation-within-one-org` (+6) | ? |
-| OPS-quickstart | `quickstart` | Return the tailored, ordered zero→running plan for a goal, with each step marked done/todo from the current config. goal=local (eve dev), slack/github (add a surface), or deploy (hosted Vercel + Neon). | `packages/core/agent/ops/server.ts:213` | `docs/deploy/agent-driven-setup.md#what-you-are-driving` (+1) | ? |
-| OPS-surface_manifest | `surface_manifest` | Return the paste-ready app manifest for a chat surface (e.g. slack), with baseUrl substituted for the ${DEPLOY_HOST_PLACEHOLDER} | `packages/core/agent/ops/server.ts:229` | `docs/deploy/agent-driven-setup.md#what-you-are-driving` | ? |
-| OPS-scaffold_env | `scaffold_env` | Merge KEY=VALUE settings into the project's .env.local (updating in place, appending new keys, preserving comments). | `packages/core/agent/ops/server.ts:281` | `docs/deploy/agent-driven-setup.md#what-you-are-driving` (+1) | ? |
-| OPS-scaffold_credential_key | `scaffold_credential_key` | Generate the deployment's AES-256-GCM credential-store key (${CREDENTIAL_KEY_ENV_NAME}) straight into the project's .env.local. | `packages/core/agent/ops/server.ts:315` | `docs/deploy/agent-driven-setup.md#what-you-are-driving` | ? |
-| OPS-secret_set | `secret_set` | Encrypt one or more secrets into this deployment's own credential store (AES-256-GCM, keyed by OE_CREDENTIAL_ENCRYPTION_KEY) so channels and connectors resolve them WITHOUT env vars. | `packages/core/agent/ops/server.ts:396` | `docs/security/credentials-and-planes.md#getting-a-key-into-the-db-broker-the-operator-door-oe-secret` (+3) | ? |
-| OPS-secret_list | `secret_list` | Names, who set them and when — NEVER values or any part of one. | `packages/core/agent/ops/server.ts:426` | `docs/security/credentials-and-planes.md#getting-a-key-into-the-db-broker-the-operator-door-oe-secret` (+3) | ? |
-| OPS-secret_rm | `secret_rm` | Remove one secret from the credential store. The ciphertext row is DELETED, not retired — the name then fails closed UNLESS the process that resolves it holds an environment variable of the same name, which resolution falls back to by design. The reply reports `envFallbackPresent` for the ops process (presence only) and the org it acted on. | `packages/core/agent/ops/server.ts:447` | `docs/security/credentials-and-planes.md#getting-a-key-into-the-db-broker-the-operator-door-oe-secret` (+3) | ? |
+| OPS-preflight | `preflight` | Check the prerequisites for running/deploying Open Everywhere (node, model key, providers, durable DB, control-plane auth) … | `packages/core/agent/ops/server.ts:218` | `docs/security/security-model.md#cross-domain-isolation-within-one-org` (+6) | ? |
+| OPS-quickstart | `quickstart` | Return the tailored, ordered zero→running plan for a goal, with each step marked done/todo from the current config. goal=local (npm run dev), slack/github (add a surface to a local run), or deploy (the hosted path: Vercel + Neon + every registered surface, in order). | `packages/core/agent/ops/server.ts:231` | `docs/deploy/agent-driven-setup.md#what-you-are-driving` (+1) | ? |
+| OPS-surface_manifest | `surface_manifest` | Return the paste-ready app manifest for a chat surface (e.g. slack), with baseUrl substituted for the ${DEPLOY_HOST_PLACEHOLDER} | `packages/core/agent/ops/server.ts:247` | `docs/deploy/agent-driven-setup.md#what-you-are-driving` | ? |
+| OPS-scaffold_env | `scaffold_env` | Merge KEY=VALUE settings into the project's .env.local (updating in place, appending new keys, preserving comments). | `packages/core/agent/ops/server.ts:299` | `docs/deploy/agent-driven-setup.md#what-you-are-driving` (+1) | ? |
+| OPS-scaffold_credential_key | `scaffold_credential_key` | Generate the deployment's AES-256-GCM credential-store key (${CREDENTIAL_KEY_ENV_NAME}) straight into the project's .env.local. | `packages/core/agent/ops/server.ts:333` | `docs/deploy/agent-driven-setup.md#what-you-are-driving` | ? |
+| OPS-secret_set | `secret_set` | Encrypt one or more secrets into this deployment's own credential store (AES-256-GCM, keyed by OE_CREDENTIAL_ENCRYPTION_KEY) so channels and connectors resolve them WITHOUT env vars. | `packages/core/agent/ops/server.ts:414` | `docs/security/credentials-and-planes.md#getting-a-key-into-the-db-broker-the-operator-door-oe-secret` (+3) | ? |
+| OPS-secret_list | `secret_list` | Names, who set them and when — NEVER values or any part of one. | `packages/core/agent/ops/server.ts:444` | `docs/security/credentials-and-planes.md#getting-a-key-into-the-db-broker-the-operator-door-oe-secret` (+3) | ? |
+| OPS-secret_rm | `secret_rm` | Remove one secret from the credential store. The ciphertext row is DELETED, not retired — the name then fails closed UNLESS the process that resolves it holds an environment variable of the same name, which resolution falls back to by design. The reply reports `envFallbackPresent` for the ops process (presence only) and the org it acted on. | `packages/core/agent/ops/server.ts:465` | `docs/security/credentials-and-planes.md#getting-a-key-into-the-db-broker-the-operator-door-oe-secret` (+3) | ? |
 
 Two properties of this server are behaviours in their own right:
 
 | ID | Behaviour | Code | Documented by | Tested by |
 | --- | --- | --- | --- | --- |
-| OPS-env-confine | Every write in this server passes one gate: the target must resolve to the project root and must be named `.env`, `.env.local` or `.env.<name>.local`. The names are enumerated rather than prefix-tested, because `.gitignore` negates `.env.example` back into the tree. Reads are not confined — a read here returns a status, never a value. | `packages/core/agent/ops/server.ts:68` | `docs/deploy/agent-driven-setup.md#what-you-are-driving` (partial) | ? |
-| OPS-secret-write-only | The secret verbs are write-only by construction. There is no `secret_get`, and `secret_list` returns names and provenance only. | `packages/core/agent/ops/server.ts:22` | `docs/security/credentials-and-planes.md#getting-a-key-into-the-db-broker-the-operator-door-oe-secret` | ? |
+| OPS-env-confine | Every write in this server passes one gate: the target must resolve to the project root and must be named `.env`, `.env.local` or `.env.<name>.local`. The names are enumerated rather than prefix-tested, because `.gitignore` negates `.env.example` back into the tree. Reads are not confined — a read here returns a status, never a value. | `packages/core/agent/ops/server.ts:70` | `docs/deploy/agent-driven-setup.md#what-you-are-driving` (partial) | ? |
+| OPS-secret-write-only | The secret verbs are write-only by construction. There is no `secret_get`, and `secret_list` returns names and provenance only. | `packages/core/agent/ops/server.ts:24` | `docs/security/credentials-and-planes.md#getting-a-key-into-the-db-broker-the-operator-door-oe-secret` | ? |
 
 ## H. The `/oe` commands
 

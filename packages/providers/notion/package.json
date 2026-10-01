@@ -182,6 +182,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "npm run test:chain",
     "test:chain": "npm run test:notion && npm run test:notion-ingress && npm run test:notion-ingress-drain && npm run test:notion-supervisor && npm run test:notion-identity && npm run test:notion-memory && npm run test:notion-memory-credential && npm run test:notion-memory-fence && npm run test:notion-tool-gate && npm run test:notion-read-scope && npm run test:notion-work-search && npm run test:notion-per-domain-credential && npm run test:notion-webhook-verifier && npm run test:notion-event-normalizer && npm run test:dynamic-replay && npm run test:notion-ancestry-trust && npm run test:notion-credential-fence && npm run test:notion-route-taint && npm run test:notion-post-arm && npm run test:notion-read && npm run test:notion-stop && npm run test:notion-engagement && npm run test:notion-reaction-parity && npm run test:notion-message-ops && npm run test:notion-file-upload && npm run test:notion-wake-heal && npm run test:notion-rate-limit && npm run test:notion-write-seam && npm run test:notion-question-return && npm run test:notion-turn-policy",

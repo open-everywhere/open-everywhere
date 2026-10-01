@@ -96,6 +96,9 @@ for (const pkgDir of targets) {
     fail("a bin package declares an eve peer — it imports nothing from eve");
   }
   if (manifest.dependencies?.eve) fail("eve is also a regular dependency — it must be peer-only");
+  if (!isBin && !/\bnpm run build\b/.test(manifest.scripts?.prepack ?? "")) {
+    fail(`has no "prepack": "npm run build" — \`npm publish\` would ship whatever dist/ is on disk`);
+  }
   for (const [dep, range] of Object.entries(manifest.dependencies ?? {})) {
     if (!dep.startsWith("@open-everywhere/")) continue;
     if (!/^\d+\.\d+\.\d+$/.test(range as string)) {
@@ -166,7 +169,7 @@ for (const pkgDir of targets) {
 
   const dest = mkdtempSync(join(tmpdir(), "oe-publish-"));
   try {
-    const packed = run(...npmCommand(["pack", "--workspace", name, "--pack-destination", dest, "--loglevel", "error"]));
+    const packed = run(...npmCommand(["pack", "--workspace", name, "--pack-destination", dest, "--loglevel", "error", "--ignore-scripts"]));
     if (packed.code !== 0) {
       fail(`npm pack failed:\n${packed.out}`);
       continue;

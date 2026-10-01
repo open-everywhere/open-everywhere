@@ -783,9 +783,9 @@ export { registeredProjectionNames } from "./access/untrusted-projection.js";
 export { projectToolSet } from "./access/untrusted-projection.js";
 
 export { registerQuickstartSurfaceGoal } from "./ops/quickstart.js";
-export type { SurfaceGoalStep, PlanStep, Check } from "./ops/quickstart.js";
+export type { SurfaceGoalStep, SurfaceHostedPlan, PlanStep, Check } from "./ops/quickstart.js";
 export { registerSurfaceAppManifest, DEPLOY_HOST_PLACEHOLDER } from "./ops/surface-manifest.js";
-export { surfaceAppManifest, surfaceAppManifestSurfaces, normalizeDeployHost } from "./ops/surface-manifest.js";
+export { surfaceAppManifest, surfaceAppManifestSurfaces, surfaceAppNameProblem, normalizeDeployHost } from "./ops/surface-manifest.js";
 export type { SurfaceAppManifestSource, SurfaceAppManifest } from "./ops/surface-manifest.js";
 export { registerPreflightProbe } from "./ops/probes.js";
 export type { PreflightProbe } from "./ops/probes.js";

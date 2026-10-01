@@ -5,7 +5,8 @@ export interface SurfaceAppManifestSource {
   readonly consoleUrl: string;
   readonly steps: readonly string[];
   readonly collect: readonly string[];
-  readonly template: () => string;
+  readonly template: (opts: { readonly appName?: string }) => string;
+  readonly appNameMax?: number;
 }
 
 export interface SurfaceAppManifest {
@@ -16,6 +17,7 @@ export interface SurfaceAppManifest {
   readonly collect: readonly string[];
   readonly manifest: string;
   readonly host?: string;
+  readonly appName?: string;
   readonly placeholdersRemaining: number;
 }
 
@@ -42,10 +44,26 @@ export function normalizeDeployHost(raw: string): string | undefined {
   return trimmed;
 }
 
-export function surfaceAppManifest(surface: string, opts: { readonly host?: string } = {}): SurfaceAppManifest | undefined {
+export function surfaceAppNameProblem(surface: string, raw: string): string | undefined {
   const source = SOURCES[surface];
   if (source === undefined) return undefined;
-  const template = source.template();
+  if (source.appNameMax === undefined) return `the "${surface}" manifest takes no app name`;
+  const name = raw.trim();
+  if (name === "") return "the app name is empty";
+  if (name.length > source.appNameMax) return `the app name is ${name.length} characters; the "${surface}" console accepts at most ${source.appNameMax}`;
+  if (/[\x00-\x1f\x7f]/.test(name)) return "the app name holds a control character";
+  return undefined;
+}
+
+export function surfaceAppManifest(
+  surface: string,
+  opts: { readonly host?: string; readonly appName?: string } = {},
+): SurfaceAppManifest | undefined {
+  const source = SOURCES[surface];
+  if (source === undefined) return undefined;
+  const appName =
+    opts.appName === undefined || surfaceAppNameProblem(surface, opts.appName) !== undefined ? undefined : opts.appName.trim();
+  const template = source.template(appName === undefined ? {} : { appName });
   const manifest = opts.host === undefined ? template : template.split(DEPLOY_HOST_PLACEHOLDER).join(opts.host);
   return {
     surface,
@@ -55,6 +73,7 @@ export function surfaceAppManifest(surface: string, opts: { readonly host?: stri
     collect: source.collect,
     manifest,
     ...(opts.host === undefined ? {} : { host: opts.host }),
+    ...(appName === undefined ? {} : { appName }),
     placeholdersRemaining: manifest.split(DEPLOY_HOST_PLACEHOLDER).length - 1,
   };
 }

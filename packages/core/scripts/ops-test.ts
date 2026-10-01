@@ -19,6 +19,7 @@ import {
   registerSurfaceAppManifest,
   surfaceAppManifest,
   surfaceAppManifestSurfaces,
+  surfaceAppNameProblem,
   _resetSurfaceAppManifestsForTest,
 } from "../agent/ops/surface-manifest.js";
 import { buildOpsServer, OPS_TOOL_NAMES } from "../agent/ops/server.js";
@@ -66,7 +67,7 @@ const ok = (label: string, cond: boolean) => {
 
   const deploy = quickstartPlan("deploy", { AI_GATEWAY_API_KEY: "k" });
   ok("deploy goal includes the Neon DB step", deploy.steps.some((s) => s.id === "db"));
-  ok("deploy goal includes build + deploy commands", deploy.steps.some((s) => s.command === "vercel deploy --prod"));
+  ok("deploy goal includes build + deploy commands", deploy.steps.some((s) => s.command === "npx vercel deploy --prod"));
   ok("deploy is not ready-to-run until its todos are met", deploy.readyToRun === false);
 }
 
@@ -92,6 +93,8 @@ const ok = (label: string, cond: boolean) => {
   await server.connect(st);
   const client = new Client({ name: "ops-test", version: "0" });
   await client.connect(ct);
+  const coreVersion = (JSON.parse(readFileSync(join(import.meta.dirname, "..", "package.json"), "utf-8")) as { version: string }).version;
+  ok(`serverInfo.version is core's package version (${coreVersion})`, client.getServerVersion()?.version === coreVersion);
 
   const res = await client.callTool({ name: "scaffold_env", arguments: { values: { AI_GATEWAY_API_KEY: "new", OE_PUBLIC_BASE_URL: "https://example.test" }, path: file } });
   const out = JSON.parse((res.content as { type: string; text: string }[])[0].text);
@@ -449,6 +452,35 @@ const ok = (label: string, cond: boolean) => {
     ok("…and returns no document at all", refused.manifest === undefined);
   }
 
+  registerSurfaceAppManifest("named", {
+    format: "json",
+    consoleUrl: "https://console.example.test/apps",
+    steps: [],
+    collect: [],
+    template: (o) => JSON.stringify({ name: o.appName ?? "Default Name", url: `https://${DEPLOY_HOST_PLACEHOLDER}/x` }),
+    appNameMax: 12,
+  });
+  const nameOf = (m: { manifest: string } | undefined): unknown => (m === undefined ? undefined : (JSON.parse(m.manifest) as { name: unknown }).name);
+  ok("no appName keeps the template's default name", nameOf(surfaceAppManifest("named")) === "Default Name");
+  ok("…and reports no appName", surfaceAppManifest("named")?.appName === undefined);
+  const named = surfaceAppManifest("named", { appName: "  Acme Agent " });
+  ok("an appName reaches the template, trimmed", nameOf(named) === "Acme Agent");
+  ok("…and is reported back", named?.appName === "Acme Agent");
+  ok("a name within the limit has no problem", surfaceAppNameProblem("named", "Acme Agent") === undefined);
+  ok("a name over the limit is a problem", /at most 12/.test(surfaceAppNameProblem("named", "Thirteen char") ?? ""));
+  ok("an empty name is a problem", surfaceAppNameProblem("named", "   ") !== undefined);
+  ok("a control character is a problem", surfaceAppNameProblem("named", "Acme\nAgent") !== undefined);
+  ok("a surface with no appNameMax refuses a name", /takes no app name/.test(surfaceAppNameProblem("fake", "Acme") ?? ""));
+  ok("surfaceAppManifest drops a name that fails the check", nameOf(surfaceAppManifest("named", { appName: "Thirteen char" })) === "Default Name");
+
+  const servedNamed = await call({ surface: "named", appName: "Acme Agent" });
+  ok("surface_manifest serves the named manifest", servedNamed.ok === true && nameOf(servedNamed as { manifest: string }) === "Acme Agent");
+  const tooLong = await call({ surface: "named", appName: "Thirteen char" });
+  ok("surface_manifest refuses an appName over the limit", tooLong.ok === false && tooLong.manifest === undefined);
+  ok("…naming the limit", /at most 12/.test(String(tooLong.note)));
+  const unnameable = await call({ surface: "fake", appName: "Acme" });
+  ok("surface_manifest refuses an appName on a surface that takes none", unnameable.ok === false && unnameable.manifest === undefined);
+
   await client.close();
   _resetSurfaceAppManifestsForTest();
 }
@@ -575,6 +607,73 @@ const ok = (label: string, cond: boolean) => {
   if (outerProject === undefined) delete process.env.CLAUDE_PROJECT_DIR;
   else process.env.CLAUDE_PROJECT_DIR = outerProject;
   _resetDeploymentIdentityForTest();
+}
+
+{
+  const goodKey = randomBytes(CREDENTIAL_KEY_BYTES).toString("base64");
+
+  const old = preflight({ AI_GATEWAY_API_KEY: "k" }, { nodeVersion: "20.11.0", nodeRange: ">=24" });
+  const oldNode = old.checks.find((c) => c.name.startsWith("node "));
+  ok("preflight names the engines range in the node check", oldNode?.name === "node >=24");
+  ok("…and a Node below it is missing", oldNode?.status === "missing" && old.ready === false);
+  ok("…with a fix", /24/.test(oldNode?.fix ?? ""));
+  const cur = preflight({ AI_GATEWAY_API_KEY: "k" }, { nodeVersion: "24.19.0", nodeRange: ">=24" });
+  ok("a Node inside the range is ok (negative control)", cur.checks.find((c) => c.name.startsWith("node "))?.status === "ok");
+  const odd = preflight({ AI_GATEWAY_API_KEY: "k" }, { nodeVersion: "24.19.0", nodeRange: "lts/*" });
+  ok("an unparseable range is info, never a false ok", odd.checks.find((c) => c.name.startsWith("node "))?.status === "info");
+  const live = preflight({ AI_GATEWAY_API_KEY: "k" });
+  const coreRange = (JSON.parse(readFileSync(join(import.meta.dirname, "..", "package.json"), "utf-8")) as { engines: { node: string } }).engines.node;
+  ok(`by default the range is core's own engines.node (${coreRange})`, live.checks.some((c) => c.name === `node ${coreRange}`));
+
+  const opDetail = (env: NodeJS.ProcessEnv) => preflight(env).checks.find((c) => c.name === "operational provider")?.detail ?? "";
+  ok("no DATABASE_URL and no selector reads as embedded Postgres, not sqlite", /embedded Postgres/.test(opDetail({})) && !/sqlite/.test(opDetail({})));
+  ok("DATABASE_URL without a selector reads as the sqlite floor (negative control)", /sqlite/.test(opDetail({ DATABASE_URL: "postgres://u:p@h/db" })));
+
+  const bare = preflight({}, { target: "hosted" });
+  const model = bare.checks.find((c) => c.name.includes("AI_GATEWAY_API_KEY"));
+  ok("hosted: an absent gateway key is info (OIDC), not missing", model?.status === "info" && /OIDC/.test(model.detail));
+  for (const name of ["OE_OPERATIONAL_PROVIDER", "OE_MEMORY_PROVIDER"]) {
+    ok(`hosted: an unset ${name} blocks`, bare.checks.find((c) => c.name === `hosted store: ${name}=postgres`)?.status === "missing");
+  }
+  ok("hosted: DATABASE_URL is required", bare.checks.find((c) => c.name === "DATABASE_URL (Neon)")?.status === "missing");
+  ok("hosted: …and the fix names the Vercel Marketplace Neon integration", /Marketplace/.test(bare.checks.find((c) => c.name === "DATABASE_URL (Neon)")?.fix ?? ""));
+  ok("hosted: an absent credential key blocks", bare.checks.find((c) => c.name.includes(CREDENTIAL_KEY_ENV_NAME))?.status === "missing");
+  ok("hosted: the bare env is not ready", bare.ready === false);
+  const hostedEnv = { OE_OPERATIONAL_PROVIDER: "postgres", OE_MEMORY_PROVIDER: "postgres", DATABASE_URL: "postgres://u:p@h/db", [CREDENTIAL_KEY_ENV_NAME]: goodKey };
+  const full = preflight(hostedEnv, { target: "hosted", nodeVersion: "24.19.0", nodeRange: ">=24" });
+  ok("hosted: the full hosted env is ready with no gateway key (negative control)", full.ready === true);
+  ok("local: the same env without a gateway key is NOT ready (the target is what changed)", preflight(hostedEnv, { nodeVersion: "24.19.0", nodeRange: ">=24" }).ready === false);
+  ok("hosted: a selector set to another value still blocks", preflight({ ...hostedEnv, OE_MEMORY_PROVIDER: "git" }, { target: "hosted" }).ready === false);
+
+  registerQuickstartSurfaceGoal(
+    "slack",
+    (env) => ({ id: "slack", title: "Fake surface", status: env.FAKE_SURFACE_TOKEN ? "done" : "todo", detail: "test-registered surface goal" }),
+    { env: ["FAKE_SURFACE_TOKEN"], afterDeploy: () => [{ id: "fake-urls", title: "Point the fake app at the host", status: "todo", detail: "after deploy" }] },
+  );
+  const plan = quickstartPlan("deploy", {});
+  const ids = plan.steps.map((s) => s.id);
+  const order = ["vercel-link", "db", "credential-key", "slack", "trust", "build", "env-push", "deploy", "fake-urls", "verify"];
+  ok(`deploy plan carries every step of the hosted path (${ids.join(" → ")})`, order.every((id) => ids.includes(id)));
+  ok("…in the one documented order", order.every((id, i) => i === 0 || ids.indexOf(order[i - 1]!) < ids.indexOf(id)));
+  ok("the deploy plan never asks for a gateway key", !plan.steps.some((s) => s.id === "model") && !plan.steps.some((s) => /AI_GATEWAY_API_KEY=|env:pipe -- AI_GATEWAY_API_KEY/.test(s.command ?? "")));
+  const push = plan.steps.find((s) => s.id === "env-push")?.command ?? "";
+  ok("env-push sets both store selectors to postgres", push.includes("OE_OPERATIONAL_PROVIDER=postgres") && push.includes("OE_MEMORY_PROVIDER=postgres"));
+  ok("env-push pushes the credential key", push.includes(`env:pipe -- ${CREDENTIAL_KEY_ENV_NAME} | npx vercel env add ${CREDENTIAL_KEY_ENV_NAME} production`));
+  ok("env-push pushes the surface's own env names", push.includes("env add FAKE_SURFACE_TOKEN production"));
+  ok("every push targets Production", push.split("\n").every((line) => line.endsWith(" production")));
+  ok("no step names a script the quickstart app does not ship", !plan.steps.some((s) => /deploy:verify|OE_DEPLOY_|OE_VERCEL_API_TOKEN/.test(`${s.command ?? ""} ${s.detail}`)));
+  const verifyDetail = plan.steps.find((s) => s.id === "verify")?.detail ?? "";
+  ok("the proof text states the probe's exact pass (a 401 with body `unauthorized`), not \"401 or 403\"", /401 whose body is `unauthorized`/.test(verifyDetail) && !/401 or 403 means/.test(verifyDetail));
+  ok("…and says the pass does not prove the surface's signing secret, naming the vendor's own verification", /does NOT prove the deployment holds the surface's signing secret/.test(verifyDetail) && /URL verification proves that/.test(verifyDetail));
+  ok("the proof step runs the wizard's hosted check", /create-open-everywhere --check --goal hosted --host/.test(plan.steps.find((s) => s.id === "verify")?.command ?? ""));
+  ok("control-plane auth is optional, not a todo", plan.steps.find((s) => s.id === "admin-auth")?.status === "optional");
+  ok("an unlinked project's link step is todo with the command", plan.steps.find((s) => s.id === "vercel-link")?.command === "npx vercel link");
+  const linked = quickstartPlan("deploy", hostedEnv, { vercelLinked: true, internalSurfaces: 1 });
+  ok("the link step is done when the project is linked", linked.steps.find((s) => s.id === "vercel-link")?.status === "done");
+  ok("the db step is done when .env.local carries DATABASE_URL and both selectors", linked.steps.find((s) => s.id === "db")?.status === "done");
+  ok("…and todo with DATABASE_URL alone (negative control)", quickstartPlan("deploy", { DATABASE_URL: "postgres://u:p@h/db" }).steps.find((s) => s.id === "db")?.status === "todo");
+  ok("the trust step is done once a surface is vouched", linked.steps.find((s) => s.id === "trust")?.status === "done");
+  ok("…and todo with none", plan.steps.find((s) => s.id === "trust")?.status === "todo");
 }
 
 console.log(`\n✓ ops/quickstart: ${n} assertions passed (preflight, live probes, tailored plan, env merge, scaffold via MCP, credential-store key, two-role provisioning, chat-app manifest, secret org guard, secret_rm env fallback)\n`);

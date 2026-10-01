@@ -13,8 +13,9 @@ install-time properties that must hold or the deployment is quietly wrong.
 npx create-open-everywhere my-agent
 ```
 
-This is the way in. It copies the quickstart app into `./my-agent`, a new or empty directory, and
-runs the setup wizard from inside it. The app it writes already holds everything on this page:
+This is the way in. It copies the quickstart app into `./my-agent`, a new or empty directory, runs
+`git init` there (unless git is absent or the directory is already inside a work tree), and runs the
+setup wizard from inside it. The app it writes already holds everything on this page:
 
 - the eight packages and `create-open-everywhere`, all pinned to the wizard's own version, and
   `eve` pinned exactly to core's peer pin;
@@ -26,9 +27,13 @@ runs the setup wizard from inside it. The app it writes already holds everything
 - the agent route: `AGENTS.md`, a `.mcp.json` that starts the `open-everywhere-ops` MCP server
   (`scripts/ops-mcp.ts`), and the `quickstart-open-everywhere` skill, so a coding agent opened in
   the app can drive the setup. `npx create-open-everywhere --check --json` reports the wizard's
-  steps as data, and the scaffold never waits on a prompt without a terminal.
+  steps as data, each with a `next` command, judged against the hosted goal (`--goal local` for
+  `npm run dev` only; `--host <url>` probes a deployment). The scaffold never waits on a prompt
+  without a terminal, and `--decline-telemetry` answers the telemetry question from any shell.
 
-The app's own `README.md` carries the numbered steps to a deployed agent. `npm run
+The app's own `README.md` carries the one ordered hosted path (link → Neon → key → Slack app →
+trust → build → environment → deploy → Slack URLs → check). The ops server's `quickstart { goal:
+"deploy" }` plan and the app's skill walk the same steps in the same order. `npm run
 test:quickstart` (`scripts/quickstart-test.ts`) proves the path from the packed tarballs: it
 scaffolds with the packed wizard, installs, and asserts that the eve patch probe reads `patched`,
 that `oe build --check` passes after `oe build`, that the ops MCP server lists its tools, that the

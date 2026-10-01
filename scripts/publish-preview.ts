@@ -177,7 +177,7 @@ function main(): void {
   for (const pkgDir of targets) {
     const manifest = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8")) as Record<string, any>;
     const name = manifest.name as string;
-    const packed = execFileSync(...npmCommand(["pack", "--workspace", name, "--pack-destination", out, "--loglevel", "error"]), {
+    const packed = execFileSync(...npmCommand(["pack", "--workspace", name, "--pack-destination", out, "--loglevel", "error", "--ignore-scripts"]), {
       encoding: "utf8",
     });
     const tgz = join(out, packed.trim().split("\n").pop()!);

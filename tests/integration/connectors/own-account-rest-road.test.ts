@@ -3,6 +3,7 @@ import { afterAll, expect, test } from "vitest";
 import {
   armSettlement,
   auditCursor,
+  awaitWindowQuiet,
   bootAgent,
   consumeSettlement,
   disposeLater,
@@ -133,6 +134,7 @@ test(
     ownArmed.dispose();
     ownHandle.dispose();
 
+    await awaitWindowQuiet();
     const cursorPlain = await auditCursor();
     const plainHandle = armDelegation("plain");
     await discordMentionWake({

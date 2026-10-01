@@ -4,10 +4,13 @@ import { expect, test } from "vitest";
 import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
 import { getOperationalStore } from "@open-everywhere/core/agent/operational/provider.js";
 import { isGrantToolName, type CredentialGrantRow } from "@open-everywhere/core/agent/operational/credential-grant-rows.js";
+import { TASK_WAKE_ACTION } from "@open-everywhere/core/agent/channels/task-wake.js";
 
 import {
   armSettlement,
   auditCursor,
+  SETTLEMENT_DRAIN_SCRIPT,
+  awaitWindowQuiet,
   bootAgent,
   consumeSettlement,
   DISCORD_GUILD_ID,
@@ -67,9 +70,10 @@ const delegatingSeat = (message: string, callId: string) => ({
   child: [{ say: message }],
 });
 
-async function seedDivertedFire(org: string): Promise<void> {
+async function seedDivertedFire(org: string): Promise<string> {
   const { addRoutine } = await import("@open-everywhere/core/agent/routines/store.js");
   const dueAt = new Date(Date.now() - 60_000).toISOString();
+  const routineId = `r-ope1972-${randomBytes(4).toString("hex")}`;
   await addRoutine(
     {
       org,
@@ -82,7 +86,7 @@ async function seedDivertedFire(org: string): Promise<void> {
       key: FIRE_SURFACE_KEY,
     },
     {
-      id: `r-ope1972-${randomBytes(4).toString("hex")}`,
+      id: routineId,
       org,
       surfaceKey: FIRE_SURFACE_KEY,
       target: { channelId: DISCORD_LISTED_CHANNEL_ID, guildId: DISCORD_GUILD_ID, channelType: "0" },
@@ -96,18 +100,25 @@ async function seedDivertedFire(org: string): Promise<void> {
       consecutiveFailures: 0,
     },
   );
+  return routineId;
 }
 
 async function drainDelegation(dispatched: ScriptedHandle, label: string): Promise<RecordedRequest> {
+  const wakeCursor = await auditCursor();
   await waitFor(
     () => dispatched.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "agent")),
     `${label}: the resumed step carrying the delegation receipt`,
   );
   const taskId = taskIdOfDelegation(dispatched, label);
-  const armed = armSettlement(dispatched, { parent: [{ say: "acknowledged" }] });
+  const armed = armSettlement(dispatched, SETTLEMENT_DRAIN_SCRIPT);
   await waitForChildren(dispatched, { count: 1, lastStepIndex: 0, label: `${label}: the delegated worker to finish its own arm` });
   const worker = await waitFor(() => dispatched.requests.find((r) => r.role === "child" && r.stepIndex === 0), `${label}: the worker's own first model call`);
   await consumeSettlement({ armed, dispatched, taskId, label: `${label}: the delegation's settlement notification` });
+  await waitFor(async () => {
+    const rows = await rowsSinceCursor(wakeCursor, [TASK_WAKE_ACTION]);
+    return rows.some((r) => (r.detail as { task?: unknown } | undefined)?.task === taskId) ? true : undefined;
+  }, `${label}: the settlement edge's own ${TASK_WAKE_ACTION} row`);
+  await awaitWindowQuiet();
   expect([...dispatched.requests, ...armed.requests].filter((r) => r.fault !== undefined), `${label}: the script degraded`).toEqual([]);
   armed.dispose();
   return worker;
@@ -140,9 +151,13 @@ test("a standing grant reaches a WORKER of the domain's standing seat, never the
   expect(seatCall.tools, "the standing seat's offer carries no `agent` verb — the assertion above would then be vacuous").toContain("agent");
 
   const fireScript = disposeLater(registerScript(delegatingSeat("ope1972 fire", "ope1972-fire-delegate")));
-  await seedDivertedFire(org);
+  const fireRoutineId = await seedDivertedFire(org);
   await runRoutineDispatchTick();
   const fireCall = await waitFor(() => fireScript.requests.find((r) => r.role === "parent" && r.stepIndex === 0), "the routine fire's model call");
+  expect(
+    fireCall.messages.some((m) => m.text.includes(fireRoutineId)),
+    "the turn measured as the routine fire's does not name the seeded routine — an earlier leg's turn was served this script, so this measurement is that leg's and not the fire's",
+  ).toBe(true);
   expect(fireCall.tools, "the routine fire's seat carries no `agent` verb, so this leg can drive no worker").toContain("agent");
   const fireWorkerCall = await drainDelegation(fireScript, "the routine fire's delegation");
   expect(

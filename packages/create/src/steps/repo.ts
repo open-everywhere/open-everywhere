@@ -37,8 +37,8 @@ export const repoStep: WizardStep = {
   id: "repo",
   title: "Repo (app + install)",
   check(ctx: StepContext) {
-    const { ok, detail } = inspectApp(ctx.cwd);
-    return { satisfied: ok, detail };
+    const { ok, app, detail } = inspectApp(ctx.cwd);
+    return { satisfied: ok, detail, next: ok ? undefined : app ? "npm install" : "npx create-open-everywhere my-agent && cd my-agent" };
   },
   guide() {
     return {

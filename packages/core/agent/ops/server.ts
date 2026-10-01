@@ -3,10 +3,12 @@ import { randomBytes } from "node:crypto";
 import { join, resolve, dirname, basename } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { quickstartPlan, mergeEnv, credentialKeyStatus, CREDENTIAL_KEY_ENV_NAME, CREDENTIAL_KEY_BYTES } from "./quickstart.js";
+import { quickstartPlan, type PlanFacts, mergeEnv, credentialKeyStatus, CREDENTIAL_KEY_ENV_NAME, CREDENTIAL_KEY_BYTES } from "./quickstart.js";
 import { preflightAsync } from "./probes.js";
+import { corePackageVersion } from "./package-info.js";
+import { registeredSurfaces } from "../identity/trust.js";
 import { registeredDeploymentIdentity, deploymentOrg } from "../identity/deployment-identity.js";
-import { DEPLOY_HOST_PLACEHOLDER, normalizeDeployHost, surfaceAppManifest, surfaceAppManifestSurfaces } from "./surface-manifest.js";
+import { DEPLOY_HOST_PLACEHOLDER, normalizeDeployHost, surfaceAppManifest, surfaceAppManifestSurfaces, surfaceAppNameProblem } from "./surface-manifest.js";
 
 export const OPS_TOOL_NAMES = [
   "preflight",
@@ -43,6 +45,17 @@ function envTargetRefusal(file: string): string | undefined {
   return undefined;
 }
 
+function planFacts(): PlanFacts {
+  let vercelLinked = false;
+  try {
+    const linked = JSON.parse(readFileSync(join(projectDir(), ".vercel", "project.json"), "utf-8")) as { projectId?: unknown };
+    vercelLinked = typeof linked.projectId === "string" && linked.projectId.length > 0;
+  } catch {
+    vercelLinked = false;
+  }
+  return { vercelLinked, internalSurfaces: registeredSurfaces().filter((s) => s.trust === "internal").length };
+}
+
 function loadEnvFile(path: string): Record<string, string> {
   if (!existsSync(path)) return {};
   const out: Record<string, string> = {};
@@ -76,7 +89,7 @@ export interface OpsServerDeps {
 }
 
 export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
-  const server = new McpServer({ name: "open-everywhere-ops", version: "0.1.0" });
+  const server = new McpServer({ name: "open-everywhere-ops", version: corePackageVersion() ?? "unknown" });
   const identityDeclaredAtBoot = registeredDeploymentIdentity() !== undefined;
   const defaultOrgRefusal = (org: string | undefined): string | undefined => {
     if (org) return undefined;
@@ -96,19 +109,22 @@ export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
     {
       title: "Preflight check",
       description: "Check the prerequisites for running/deploying Open Everywhere (node, model key, providers, durable DB, control-plane auth), plus the LIVE posture of each configured provider that registers a probe (a check env alone cannot answer, so it asks the vendor). Reads the project's .env.local. Read-only — reports what's set and how to fix what's missing.",
-      inputSchema: { envPath: z.string().optional() },
+      inputSchema: {
+        target: z.enum(["local", "hosted"]).default("local").describe("local = npm run dev on this machine; hosted = a Vercel deploy (requires the postgres stores and the credential key, and does not require a gateway key)"),
+        envPath: z.string().optional(),
+      },
     },
-    async (a) => json(await preflightAsync(mergedEnv(a.envPath))),
+    async (a) => json(await preflightAsync(mergedEnv(a.envPath), { target: a.target })),
   );
 
   server.registerTool(
     "quickstart",
     {
       title: "Quickstart plan",
-      description: "Return the tailored, ordered zero→running plan for a goal, with each step marked done/todo from the current config. goal=local (eve dev), slack/github (add a surface), or deploy (hosted Vercel + Neon). Follow the steps — running commands with the user's consent (see the quickstart-open-everywhere skill).",
+      description: "Return the tailored, ordered zero→running plan for a goal, with each step marked done/todo from the current config. goal=local (npm run dev), slack/github (add a surface to a local run), or deploy (the hosted path: Vercel + Neon + every registered surface, in order). Follow the steps — running commands with the user's consent (see the quickstart-open-everywhere skill).",
       inputSchema: { goal: z.enum(["local", "slack", "github", "deploy"]).default("local"), envPath: z.string().optional() },
     },
-    (a) => json(quickstartPlan(a.goal, mergedEnv(a.envPath))),
+    (a) => json(quickstartPlan(a.goal, mergedEnv(a.envPath), planFacts())),
   );
 
   server.registerTool(
@@ -120,10 +136,12 @@ export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
         "placeholder in every request URL, plus the ordered clicks the operator makes in the vendor console and the values they " +
         "bring back. Read-only. Creating the app needs workspace-admin rights, so this is the hand-over for a step you cannot do. " +
         "Omit baseUrl before the first deploy: the manifest then keeps the placeholder, and placeholdersRemaining says how many " +
-        "the operator must still replace by hand.",
+        "the operator must still replace by hand. Pass appName to name the app (a second install in one workspace needs its own " +
+        "name); omit it for the default name.",
       inputSchema: {
         surface: z.string().describe("the surface goal, e.g. \"slack\""),
         baseUrl: z.string().optional().describe("this deployment's public origin, e.g. https://oe.example.com (scheme optional)"),
+        appName: z.string().optional().describe("the chat app's name, e.g. \"Acme Agent\" (default: the surface's own default name)"),
       },
     },
     (a) => {
@@ -142,7 +160,14 @@ export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
           });
         }
       }
-      const resolved = surfaceAppManifest(a.surface, host === undefined ? {} : { host });
+      if (a.appName !== undefined) {
+        const problem = surfaceAppNameProblem(a.surface, a.appName);
+        if (problem !== undefined) return json({ ok: false, surface: a.surface, note: `refusing the appName: ${problem}.` });
+      }
+      const resolved = surfaceAppManifest(a.surface, {
+        ...(host === undefined ? {} : { host }),
+        ...(a.appName === undefined ? {} : { appName: a.appName }),
+      });
       if (resolved === undefined) {
         return json({
           ok: false,

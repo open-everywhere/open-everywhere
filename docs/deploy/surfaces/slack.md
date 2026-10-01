@@ -270,6 +270,10 @@ arm the plane.
      reaction emits anonymous volume telemetry); reactions on *other* messages are counted but
      not stored. Needs the `reactions:read` scope from Step 2. Omit these and the feature is
      silently off — nothing else changes.
+   Then **App Home** → **Show Tabs** → turn the **Messages Tab** on, and tick *Allow users to send
+   Slash commands and messages from the messages tab*. Without it, a person who opens a DM with the
+   agent sees *"Sending messages to this app has been turned off"*, and `message.im` never fires.
+   The generated manifest sets both (`features.app_home`).
 8. **Interactivity & Shortcuts** → toggle **On**. Set the **Request URL** to the same
    `https://<your-deploy-url>/eve/v1/slack` — the same route Event Subscriptions uses. This is
    what makes the agent's **clickable buttons work**: Eve's own tool-approval prompts and

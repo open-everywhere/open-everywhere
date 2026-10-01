@@ -2,9 +2,15 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEPLOY_HOST_PLACEHOLDER, normalizeDeployHost, surfaceAppManifest, surfaceAppManifestSurfaces } from "@open-everywhere/core/agent/adapter-api.js";
+import {
+  DEPLOY_HOST_PLACEHOLDER,
+  normalizeDeployHost,
+  surfaceAppManifest,
+  surfaceAppManifestSurfaces,
+  surfaceAppNameProblem,
+} from "@open-everywhere/core/agent/adapter-api.js";
 import { registerSlackOps } from "../agent/ops.js";
-import { SLACK_DEPLOY_HOST_PLACEHOLDER, slackAppManifestTemplate } from "../agent/app-manifest.js";
+import { SLACK_APP_NAME_MAX, SLACK_DEFAULT_APP_NAME, SLACK_DEPLOY_HOST_PLACEHOLDER, slackAppManifestTemplate } from "../agent/app-manifest.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -21,7 +27,13 @@ ok(
 
 const template = slackAppManifestTemplate();
 interface SlackManifestShape {
-  features: { slash_commands: { url: string }[]; shortcuts: unknown[] };
+  display_information: { name: string };
+  features: {
+    app_home?: { home_tab_enabled?: boolean; messages_tab_enabled?: boolean; messages_tab_read_only_enabled?: boolean };
+    bot_user: { display_name: string };
+    slash_commands: { url: string }[];
+    shortcuts: unknown[];
+  };
   oauth_config: { scopes: { bot: string[] } };
   settings: { event_subscriptions: { request_url: string }; interactivity: { is_enabled: boolean; request_url: string } };
 }
@@ -33,6 +45,21 @@ ok(parsed.settings.interactivity.is_enabled === true, "interactivity is enabled 
 ok(parsed.settings.interactivity.request_url.includes(DEPLOY_HOST_PLACEHOLDER), "the interactivity request URL carries the placeholder");
 const templatePlaceholders = template.split(DEPLOY_HOST_PLACEHOLDER).length - 1;
 ok(templatePlaceholders === 3, `the template carries three placeholders — one per request URL (found ${templatePlaceholders})`);
+
+ok(parsed.features.app_home?.messages_tab_enabled === true, "the Messages tab is on — a DM is the primary wake");
+ok(parsed.features.app_home?.messages_tab_read_only_enabled === false, "…and writable (read-only blocks the person from sending)");
+ok(parsed.features.app_home?.home_tab_enabled === false, "…and the Home tab is off — the product routes no app_home_opened");
+
+ok(parsed.display_information.name === SLACK_DEFAULT_APP_NAME, "with no name the app is named the default");
+ok(parsed.features.bot_user.display_name === SLACK_DEFAULT_APP_NAME, "…and so is the bot user");
+const renamed = JSON.parse(slackAppManifestTemplate({ appName: "  Acme Agent  " })) as SlackManifestShape;
+ok(renamed.display_information.name === "Acme Agent", "a chosen name names the app, trimmed");
+ok(renamed.features.bot_user.display_name === "Acme Agent", "…and the bot user");
+ok(JSON.stringify(renamed.oauth_config) === JSON.stringify(parsed.oauth_config), "…and changes nothing else in the scopes");
+ok(
+  JSON.parse(slackAppManifestTemplate({ appName: "   " })).display_information.name === SLACK_DEFAULT_APP_NAME,
+  "a blank name falls back to the default (negative control: a blank never reaches Slack)",
+);
 
 ok(surfaceAppManifest("slack") === undefined, "before registerSlackOps() no slack manifest is registered — the registry fails closed");
 registerSlackOps();
@@ -63,6 +90,17 @@ ok(
 );
 ok(resolved.features.shortcuts.length === parsed.features.shortcuts.length, "…and both shortcuts survive");
 
+ok(surfaceAppNameProblem("slack", "Acme Agent") === undefined, "the slack registration accepts an app name");
+ok(
+  surfaceAppNameProblem("slack", "x".repeat(SLACK_APP_NAME_MAX + 1)) !== undefined,
+  `…and refuses one over Slack's ${SLACK_APP_NAME_MAX}-character limit`,
+);
+const servedNamed = surfaceAppManifest("slack", { appName: "Acme Agent" });
+ok(
+  (JSON.parse(String(servedNamed?.manifest)) as SlackManifestShape).display_information.name === "Acme Agent",
+  "the registry serves the slack manifest under the chosen name",
+);
+
 const bare = surfaceAppManifest("slack");
 ok(bare?.placeholdersRemaining === 3, "with no host all three placeholders remain, and are counted");
 ok(bare?.manifest === template, "…and the document is the template, byte for byte");
@@ -78,7 +116,7 @@ ok(
   wizard.includes("@open-everywhere/provider-slack/agent/app-manifest.js"),
   "the install wizard imports the manifest from this bundle rather than holding a copy",
 );
-ok(wizard.includes("slackAppManifestTemplate()"), "…and calls it to build its guide");
+ok(wizard.includes("slackAppManifestTemplate("), "…and calls it to build its guide");
 ok(!/oauth_config/.test(wizard), "…and no longer declares a manifest of its own");
 
 const opsEntry = readFileSync(join(REPO_ROOT, "scripts/ops-mcp.ts"), "utf8");

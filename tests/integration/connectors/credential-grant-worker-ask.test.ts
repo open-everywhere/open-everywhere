@@ -10,6 +10,7 @@ import type { CredentialGrantRow } from "@open-everywhere/core/agent/operational
 import {
   armSettlement,
   auditCursor,
+  awaitWindowQuiet,
   bootAgent,
   consumeSettlement,
   DISCORD_LISTED_CHANNEL_ID,
@@ -204,6 +205,7 @@ test("a delegated worker raises the grant ask, the ask is scoped to the SEAT's c
   const grant = grants[0] as CredentialGrantRow;
   expect(grant.toolName, "the grant mounted under a different name than the card showed the owner").toBe(grantTool);
 
+  await awaitWindowQuiet();
   const followUp = disposeLater(
     registerScript({
       parent: [{ calls: [{ tool: "agent", input: { message: "read the launch checklist" }, id: "ope2023-delegate" }] }, { say: "the tool is on the task" }],

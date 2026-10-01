@@ -167,6 +167,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "echo 'provider-discord: its test suite runs at the APP TIER (root scripts/) because the discord surface composes deeply with core internals (a custom gateway, admin approval cards, guild-admin bypass, routine dispatch) — see the root test chain (test:discord*, test:scenarios*, test:oe-commands, and the read/dispatch/audit/wake integration tests). This keeps the core adapter-api barrel a small port surface rather than exporting test-only internals.'"
   },

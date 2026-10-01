@@ -2,6 +2,9 @@ import { sqliteOperationalStore } from "./sqlite.js";
 import { makeOperationalPostgresStore, type PgClient } from "./postgres.js";
 import type { OperationalStore } from "./store.js";
 import { onVercel } from "../access/platform.js";
+import { resolveOperationalSelection } from "./selection.js";
+
+export { resolveOperationalSelection, type OperationalFloor } from "./selection.js";
 
 const REGISTRY: Record<string, OperationalStore> = {
   sqlite: sqliteOperationalStore,
@@ -11,15 +14,6 @@ let active: OperationalStore | null = null;
 let sqliteFloorNagged = false;
 let pgliteFloorNoticed = false;
 let requireArmedFloor = false;
-
-export type OperationalFloor = "pglite" | "sqlite" | "none";
-
-export function resolveOperationalSelection(env: NodeJS.ProcessEnv = process.env): { id: string; floor: OperationalFloor } {
-  const explicit = env.OE_OPERATIONAL_PROVIDER?.trim();
-  if (explicit) return { id: explicit, floor: explicit === "sqlite" ? "sqlite" : "none" };
-  if (!env.DATABASE_URL?.trim()) return { id: "postgres", floor: "pglite" };
-  return { id: "sqlite", floor: "sqlite" };
-}
 
 export function operationalSqliteFloorWarning(): string {
   return (

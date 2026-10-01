@@ -17,7 +17,7 @@ const eq = <T>(actual: T, expected: T, label: string): void => {
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = join(REPO, "packages/core/scripts/oe-cli.ts");
-const TSX = join(REPO, "node_modules/.bin/tsx");
+const TSX_CLI = join(REPO, "node_modules/tsx/dist/cli.mjs");
 
 const root = mkdtempSync(join(tmpdir(), "oe-roster-"));
 const write = (rel: string, body: string): void => {
@@ -29,7 +29,7 @@ const read = (rel: string): string => readFileSync(join(root, rel), "utf8");
 
 function oe(...args: string[]): { code: number; out: string } {
   try {
-    const out = execFileSync(TSX, [CLI, "build", ...args], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    const out = execFileSync(process.execPath, [TSX_CLI, CLI, "build", ...args], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
     return { code: 0, out };
   } catch (err) {
     const e = err as { status?: number; stdout?: string; stderr?: string };
@@ -129,6 +129,24 @@ write(
   write("agent/lib/authored.ts", "export const authored = true;\n");
   eq(oe().code, 0, "a build with an authored agent/lib sibling succeeds");
   ok(existsSync(join(root, "agent/lib/authored.ts")), "agent/lib is NOT an owned directory — authored files there survive");
+}
+
+{
+  rmSync(join(root, "agent/hooks/alpha-hook.ts"));
+  const one = oe("--check");
+  eq(one.code, 1, "an absent planned file fails --check");
+  ok(one.out.includes("NOT BUILT · agent/hooks/alpha-hook.ts"), "…naming it as NOT BUILT");
+  ok(!one.out.includes("DRIFTED · agent/hooks/alpha-hook.ts"), "…and never as DRIFTED");
+  ok(one.out.includes("npm run build"), "…with the command that builds it");
+
+  for (const dir of ["agent/tools", "agent/hooks", "agent/channels", "agent/connections"]) rmSync(join(root, dir), { recursive: true, force: true });
+  rmSync(join(root, "agent/lib/providers.generated.ts"), { force: true });
+  const none = oe("--check");
+  eq(none.code, 1, "a tree that was never built fails --check");
+  ok(/NOT BUILT · the slot tree is not built yet \(\d+ file\(s\)\)/.test(none.out), "…as ONE not-built line for the whole tree");
+  ok(!none.out.includes("DRIFTED"), "…with no DRIFTED line");
+  eq(oe().code, 0, "a plain build writes the tree");
+  eq(oe("--check").code, 0, "…and --check passes again");
 }
 
 {

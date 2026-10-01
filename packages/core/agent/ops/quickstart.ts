@@ -1,3 +1,6 @@
+import { resolveOperationalSelection } from "../operational/selection.js";
+import { coreNodeRange, nodeRangeSatisfied } from "./package-info.js";
+
 export type CheckStatus = "ok" | "missing" | "info";
 export interface Check {
   readonly name: string;
@@ -16,38 +19,105 @@ export function credentialKeyStatus(raw: string | undefined): CredentialKeyStatu
   return Buffer.from(raw, "base64").length === CREDENTIAL_KEY_BYTES ? "ok" : "malformed";
 }
 
-export function preflight(env: NodeJS.ProcessEnv = process.env): { checks: Check[]; ready: boolean } {
+export type PreflightTarget = "local" | "hosted";
+
+export interface PreflightOptions {
+  readonly target?: PreflightTarget;
+  readonly nodeVersion?: string;
+  readonly nodeRange?: string;
+}
+
+const HOSTED_STORE_ENV = {
+  OE_OPERATIONAL_PROVIDER: "postgres",
+  OE_MEMORY_PROVIDER: "postgres",
+} as const;
+
+function operationalStoreDetail(env: NodeJS.ProcessEnv): string {
+  const { id, floor } = resolveOperationalSelection(env);
+  if (floor === "pglite") return "embedded Postgres (PGlite) — the zero-wiring floor, local disk only";
+  if (floor === "sqlite") return "sqlite — the deprecated floor (DATABASE_URL is set, but OE_OPERATIONAL_PROVIDER is not)";
+  return id;
+}
+
+function adminAuthConfigured(env: NodeJS.ProcessEnv): boolean {
+  const set = (v: string | undefined) => v !== undefined && v !== "";
+  return (set(env.OE_ADMIN_OIDC_ISSUER) && set(env.OE_ADMIN_OIDC_AUDIENCE)) || env.OE_ADMIN_GITHUB === "1" || set(env.OE_ADMIN_STATIC_TOKEN);
+}
+
+export function docUrl(path: string): string {
+  return `https://github.com/open-everywhere/open-everywhere/blob/main/${path}`;
+}
+
+function vercelEnvPushCommand(nameOrPair: string): string {
+  const name = nameOrPair.split("=")[0];
+  return `npm run -s env:pipe -- ${nameOrPair} | npx vercel env add ${name} production`;
+}
+
+export function preflight(env: NodeJS.ProcessEnv = process.env, options: PreflightOptions = {}): { checks: Check[]; ready: boolean } {
+  const target = options.target ?? "local";
   const checks: Check[] = [];
   const set = (v: string | undefined) => v !== undefined && v !== "";
 
-  const nodeMajor = Number(process.versions.node.split(".")[0]);
+  const nodeVersion = options.nodeVersion ?? process.versions.node;
+  const nodeRange = options.nodeRange ?? coreNodeRange();
+  const nodeOk = nodeRange === undefined ? undefined : nodeRangeSatisfied(nodeRange, nodeVersion);
   checks.push({
-    name: "node >= 20",
-    status: nodeMajor >= 20 ? "ok" : "missing",
-    detail: `node ${process.versions.node}`,
-    fix: nodeMajor >= 20 ? undefined : "install Node 20+ (24 recommended)",
+    name: `node ${nodeRange ?? "(engines range unreadable)"}`,
+    status: nodeOk === true ? "ok" : nodeOk === false ? "missing" : "info",
+    detail:
+      nodeOk === undefined
+        ? `node ${nodeVersion} — this check cannot read or parse @open-everywhere/core's engines.node, so it cannot tell`
+        : `node ${nodeVersion}`,
+    fix: nodeOk === false ? `install a Node version that satisfies ${nodeRange} (for example \`nvm install 24 && nvm use 24\`)` : undefined,
   });
 
+  const keySet = set(env.AI_GATEWAY_API_KEY);
   checks.push({
     name: "model: AI_GATEWAY_API_KEY",
-    status: set(env.AI_GATEWAY_API_KEY) ? "ok" : "missing",
-    detail: set(env.AI_GATEWAY_API_KEY) ? "set" : "missing",
-    fix: "Vercel → AI Gateway → API Keys, or run `eve link`",
+    status: keySet ? "ok" : target === "hosted" ? "info" : "missing",
+    detail: keySet
+      ? "set"
+      : target === "hosted"
+        ? "not needed on Vercel: a deployed project authenticates to the AI Gateway with OIDC"
+        : "missing",
+    fix: keySet || target === "hosted" ? undefined : "Vercel → AI Gateway → API Keys, then set AI_GATEWAY_API_KEY in .env.local",
   });
 
   const memProvider = env.OE_MEMORY_PROVIDER ?? "git";
+  const op = resolveOperationalSelection(env);
   checks.push({ name: "memory provider", status: "info", detail: memProvider });
+  checks.push({ name: "operational provider", status: "info", detail: operationalStoreDetail(env) });
 
-  const opProvider = env.OE_OPERATIONAL_PROVIDER ?? "sqlite";
-  checks.push({ name: "operational provider", status: "info", detail: opProvider });
+  if (target === "hosted") {
+    const consequence: Record<string, string> = {
+      OE_OPERATIONAL_PROVIDER: "on Vercel core throws at the first operational-store use (audit, spend, approvals)",
+      OE_MEMORY_PROVIDER: "on Vercel core throws at the first DM or personal memory call",
+    };
+    const selectors: readonly [keyof typeof HOSTED_STORE_ENV, string | undefined][] = [
+      ["OE_OPERATIONAL_PROVIDER", env.OE_OPERATIONAL_PROVIDER],
+      ["OE_MEMORY_PROVIDER", env.OE_MEMORY_PROVIDER],
+    ];
+    for (const [name, actual] of selectors) {
+      const value = HOSTED_STORE_ENV[name];
+      const ok = actual?.trim() === value;
+      checks.push({
+        name: `hosted store: ${name}=${value}`,
+        status: ok ? "ok" : "missing",
+        detail: ok ? "set" : `${set(actual) ? `set to "${actual}"` : "unset"} — ${consequence[name]}`,
+        fix: ok ? undefined : `set ${name}=${value} in .env.local (scaffold_env), and set it for Production in the Vercel project`,
+      });
+    }
+  }
 
-  const needsDb = memProvider === "postgres" || opProvider === "postgres";
-  if (needsDb) {
+  const postgresSelected = memProvider === "postgres" || (op.id === "postgres" && op.floor === "none");
+  if (target === "hosted" || postgresSelected) {
     checks.push({
       name: "DATABASE_URL (Neon)",
       status: set(env.DATABASE_URL) ? "ok" : "missing",
       detail: set(env.DATABASE_URL) ? "set" : "missing",
-      fix: "create a Neon Postgres DB and set DATABASE_URL (register the client at startup)",
+      fix: set(env.DATABASE_URL)
+        ? undefined
+        : "add Neon from the Vercel Marketplace (Vercel project → Storage → Neon → Connect): it sets DATABASE_URL on the project. Copy the same value into .env.local for the operator tools.",
     });
     if (set(env.DATABASE_URL)) {
       const twoRole = set(env.OE_DB_OWNER_URL);
@@ -55,22 +125,22 @@ export function preflight(env: NodeJS.ProcessEnv = process.env): { checks: Check
         name: "append-only role posture",
         status: twoRole ? "ok" : "info",
         detail: twoRole ? "two-role (app runs as a non-owner runtime role)" : "single-role (owner-DDL escape open)",
-        fix: twoRole ? undefined : "harden: run the two-role split so the app's credential can't disable append-only — docs/extending/database.md",
+        fix: twoRole ? undefined : `harden: run the two-role split so the app's credential can't disable append-only — ${docUrl("docs/extending/database.md")}`,
       });
     }
   } else {
     checks.push({
       name: "state durability",
       status: "info",
-      detail: `${memProvider}/${opProvider} backings are process-local — a hosted deploy loses memory and operational state on every deploy`,
-      fix: "deploying to Vercel? set OE_MEMORY_PROVIDER=postgres, OE_OPERATIONAL_PROVIDER=postgres and DATABASE_URL first — docs/extending/database.md",
+      detail: `the ${memProvider} memory backing and the ${op.floor === "sqlite" ? "sqlite" : "embedded-Postgres"} operational store are process-local — a hosted deploy loses memory and operational state on every deploy`,
+      fix: 'deploying to Vercel? run preflight with target "hosted": it needs OE_MEMORY_PROVIDER=postgres, OE_OPERATIONAL_PROVIDER=postgres and DATABASE_URL',
     });
   }
 
   const keyStatus = credentialKeyStatus(env[CREDENTIAL_KEY_ENV_NAME]);
   checks.push({
     name: `credential store key (${CREDENTIAL_KEY_ENV_NAME})`,
-    status: keyStatus === "ok" ? "ok" : keyStatus === "malformed" ? "missing" : "info",
+    status: keyStatus === "ok" ? "ok" : keyStatus === "malformed" || target === "hosted" ? "missing" : "info",
     detail:
       keyStatus === "ok"
         ? "armed — the encrypted credential store accepts secrets"
@@ -83,15 +153,12 @@ export function preflight(env: NodeJS.ProcessEnv = process.env): { checks: Check
         : `set ${CREDENTIAL_KEY_ENV_NAME} to a base64-encoded ${CREDENTIAL_KEY_BYTES}-byte key — the ops MCP tool \`scaffold_credential_key\` mints one into .env.local without printing it`,
   });
 
-  const hasAdminAuth =
-    (set(env.OE_ADMIN_OIDC_ISSUER) && set(env.OE_ADMIN_OIDC_AUDIENCE)) ||
-    env.OE_ADMIN_GITHUB === "1" ||
-    set(env.OE_ADMIN_STATIC_TOKEN);
+  const hasAdminAuth = adminAuthConfigured(env);
   checks.push({
     name: "control-plane admin auth",
     status: hasAdminAuth ? "ok" : "info",
     detail: hasAdminAuth ? "configured" : "none — the REMOTE control plane will 401 until set (local stdio is fine)",
-    fix: hasAdminAuth ? undefined : "set OE_ADMIN_OIDC_ISSUER/_AUDIENCE (any OIDC provider) or OE_ADMIN_STATIC_TOKEN",
+    fix: hasAdminAuth ? undefined : "optional: set OE_ADMIN_OIDC_ISSUER/_AUDIENCE (any OIDC provider) or OE_ADMIN_STATIC_TOKEN",
   });
 
   const ready = checks.every((c) => c.status !== "missing");
@@ -110,91 +177,170 @@ export interface PlanStep {
 
 export type SurfaceGoalStep = (env: NodeJS.ProcessEnv) => PlanStep;
 
-const SURFACE_GOAL_STEPS: Record<string, SurfaceGoalStep> = {};
-
-export function registerQuickstartSurfaceGoal(goal: string, step: SurfaceGoalStep): void {
-  SURFACE_GOAL_STEPS[goal] = step;
+export interface SurfaceHostedPlan {
+  readonly env: readonly string[];
+  readonly afterDeploy?: (env: NodeJS.ProcessEnv) => readonly PlanStep[];
 }
 
-export function quickstartPlan(goal: Goal, env: NodeJS.ProcessEnv = process.env): { goal: Goal; steps: PlanStep[]; readyToRun: boolean } {
+const SURFACE_GOAL_STEPS: Record<string, { readonly step: SurfaceGoalStep; readonly hosted?: SurfaceHostedPlan }> = {};
+
+export function registerQuickstartSurfaceGoal(goal: string, step: SurfaceGoalStep, hosted?: SurfaceHostedPlan): void {
+  SURFACE_GOAL_STEPS[goal] = { step, hosted };
+}
+
+export interface PlanFacts {
+  readonly vercelLinked?: boolean;
+  readonly internalSurfaces?: number;
+}
+
+export function quickstartPlan(
+  goal: Goal,
+  env: NodeJS.ProcessEnv = process.env,
+  facts: PlanFacts = {},
+): { goal: Goal; steps: PlanStep[]; readyToRun: boolean } {
   const set = (v: string | undefined) => v !== undefined && v !== "";
   const steps: PlanStep[] = [];
 
-  steps.push({
-    id: "model",
-    title: "Model credentials",
-    status: set(env.AI_GATEWAY_API_KEY) ? "done" : "todo",
-    detail: "Open Everywhere runs GLM-5.2 via the Vercel AI Gateway.",
-    command: set(env.AI_GATEWAY_API_KEY) ? undefined : "set AI_GATEWAY_API_KEY in .env.local (or `eve link`)",
-  });
-
-  const surfaceStep = SURFACE_GOAL_STEPS[goal];
-  if (surfaceStep) {
-    steps.push(surfaceStep(env));
-  }
-  if (goal === "github") {
+  if (goal !== "deploy") {
     steps.push({
-      id: "github",
-      title: "GitHub access",
-      status: set(env.GITHUB_TOKEN) ? "done" : "todo",
-      detail: "A token (repo / PR scope) for the PR tool; optionally a webhook secret for event routines.",
-      command: set(env.GITHUB_TOKEN) ? undefined : "set GITHUB_TOKEN (+ optional GITHUB_WEBHOOK_SECRET)",
+      id: "model",
+      title: "Model credentials",
+      status: set(env.AI_GATEWAY_API_KEY) ? "done" : "todo",
+      detail: "The agent's models run through the Vercel AI Gateway (the stack is agent/model/stacks.ts). A local run needs a gateway key.",
+      command: set(env.AI_GATEWAY_API_KEY) ? undefined : "set AI_GATEWAY_API_KEY in .env.local (Vercel → AI Gateway → API Keys)",
     });
-  }
-
-  if (goal === "deploy") {
-    const dbOk = set(env.DATABASE_URL);
-    steps.push({
-      id: "db",
-      title: "Durable store (Neon)",
-      status: dbOk ? "done" : "todo",
-      detail: "A hosted deploy needs Postgres for memory + operational state (org_id + RLS).",
-      command: dbOk ? undefined : "create a Neon DB, set DATABASE_URL, OE_MEMORY_PROVIDER=postgres, OE_OPERATIONAL_PROVIDER=postgres",
-    });
-    const authOk =
-      (set(env.OE_ADMIN_OIDC_ISSUER) && set(env.OE_ADMIN_OIDC_AUDIENCE)) ||
-      env.OE_ADMIN_GITHUB === "1" ||
-      set(env.OE_ADMIN_STATIC_TOKEN);
-    steps.push({
-      id: "admin-auth",
-      title: "Control-plane auth",
-      status: authOk ? "done" : "todo",
-      detail: "The remote admin MCP is an OAuth resource server — point it at any OIDC provider, or use a static token.",
-      command: authOk ? undefined : "set OE_ADMIN_OIDC_ISSUER/_AUDIENCE or OE_ADMIN_STATIC_TOKEN",
-    });
-    const keyOk = credentialKeyStatus(env[CREDENTIAL_KEY_ENV_NAME]) === "ok";
-    steps.push({
-      id: "credential-key",
-      title: "Credential store key",
-      status: keyOk ? "done" : "todo",
-      detail: "Every secret past the root-of-trust pair lives in the deployment's encrypted store. This AES-256-GCM key arms it.",
-      command: keyOk ? undefined : "call the ops tool `scaffold_credential_key` — it mints the key into .env.local and never prints it",
-    });
-    steps.push({ id: "build", title: "Build", status: "todo", detail: "Compile the Eve app.", command: "npm run build" });
-    steps.push({
-      id: "env-push",
-      title: "Push the root-of-trust env to the deployment",
-      status: "todo",
-      detail: ".env.local is gitignored and never ships. The hosted functions read their own environment.",
-      command: `vercel env add DATABASE_URL production — repeat for ${CREDENTIAL_KEY_ENV_NAME}, AI_GATEWAY_API_KEY and OE_PUBLIC_BASE_URL`,
-    });
-    steps.push({ id: "deploy", title: "Deploy to Vercel", status: "todo", detail: "Ship it; wire the webhook URLs back to Slack/GitHub.", command: "vercel deploy --prod" });
-    steps.push({
-      id: "verify",
-      title: "Prove the agent answers",
-      status: "todo",
-      detail: "A moved alias is not proof: a deployment whose function dies at cold start still shows Ready. Only a request the agent itself serves is proof. Needs the OE_DEPLOY_* probe env plus OE_VERCEL_API_TOKEN.",
-      command: "npm run deploy:verify -- --no-rollback",
-    });
-  } else {
+    const surface = SURFACE_GOAL_STEPS[goal];
+    if (surface) steps.push(surface.step(env));
+    if (goal === "github") {
+      steps.push({
+        id: "github",
+        title: "GitHub access",
+        status: set(env.GITHUB_TOKEN) ? "done" : "todo",
+        detail: "A token (repo / PR scope) for the PR tool; optionally a webhook secret for event routines.",
+        command: set(env.GITHUB_TOKEN) ? undefined : "set GITHUB_TOKEN (+ optional GITHUB_WEBHOOK_SECRET)",
+      });
+    }
     steps.push({
       id: "run",
       title: "Run locally",
       status: "todo",
-      detail: "Start the dev server; mention the agent (or hit the local webhook) to try it.",
+      detail:
+        goal === "local"
+          ? "Start the dev server and talk to the agent in its terminal UI."
+          : "Start the dev server. A chat surface reaches a local server only through a public tunnel, so the surface app's URLs must name the tunnel host. To deploy instead, call quickstart with goal \"deploy\".",
       command: "npm run dev",
     });
+    const readyToRun = steps.filter((s) => s.status === "todo").length === 0;
+    return { goal, steps, readyToRun };
   }
+
+  const linked = facts.vercelLinked === true;
+  steps.push({
+    id: "vercel-link",
+    title: "Link a Vercel project",
+    status: linked ? "done" : "todo",
+    detail: "Every later `vercel` command acts on the linked project. Linking writes .vercel/project.json (gitignored).",
+    command: linked ? undefined : "npx vercel link",
+  });
+
+  const dbOk =
+    set(env.DATABASE_URL) &&
+    env.OE_OPERATIONAL_PROVIDER?.trim() === HOSTED_STORE_ENV.OE_OPERATIONAL_PROVIDER &&
+    env.OE_MEMORY_PROVIDER?.trim() === HOSTED_STORE_ENV.OE_MEMORY_PROVIDER;
+  steps.push({
+    id: "db",
+    title: "Durable store (Neon)",
+    status: dbOk ? "done" : "todo",
+    detail:
+      "A Vercel function's disk is ephemeral, so memory and operational state live in Postgres. Add Neon from the Vercel Marketplace: " +
+      "Vercel project → Storage → Neon → Connect. The integration sets DATABASE_URL on the project. Copy the same value into .env.local " +
+      "with the two provider selectors, so the operator tools (`secret_set`, `oe secret`) write the store the deployment reads. This step " +
+      "reads .env.local only, never the Vercel project.",
+    command: dbOk
+      ? undefined
+      : 'scaffold_env { values: { DATABASE_URL: "<the Neon connection string>", OE_OPERATIONAL_PROVIDER: "postgres", OE_MEMORY_PROVIDER: "postgres" } }',
+  });
+
+  const keyOk = credentialKeyStatus(env[CREDENTIAL_KEY_ENV_NAME]) === "ok";
+  steps.push({
+    id: "credential-key",
+    title: "Credential store key",
+    status: keyOk ? "done" : "todo",
+    detail:
+      "This AES-256-GCM key arms the deployment's encrypted credential store. The store holds the secrets the deployment mints for " +
+      "itself (the intake-page signing key among them) and every `broker: \"db\"` credential. The deployment and the operator tools need the same value.",
+    command: keyOk ? undefined : "call the ops tool `scaffold_credential_key` — it mints the key into .env.local and never prints it",
+  });
+
+  const surfaces = Object.keys(SURFACE_GOAL_STEPS).sort();
+  for (const name of surfaces) steps.push(SURFACE_GOAL_STEPS[name]!.step(env));
+
+  const vouched = (facts.internalSurfaces ?? 0) > 0;
+  steps.push({
+    id: "trust",
+    title: "Vouch your workspace and name an admin",
+    status: vouched ? "done" : "todo",
+    detail:
+      "Two code edits, committed with the app. Until a workspace is vouched `internal`, every room is `external` and gets no shared " +
+      "memory. An admin gets the control plane's org-wide tools and the approval cards. Both take effect on the next deploy, so make them " +
+      `before it. ${vouched ? "A surface is vouched. Confirm that `admins` names you." : "No surface is vouched yet."}`,
+    command: vouched
+      ? undefined
+      : 'agent/identity/surfaces.ts: add `defineSurface({ key: "slack/<team-id>", trust: "internal" })`. agent/memory/config/domains/org.ts: set `admins: ["slack/<team-id>/<member-id>"]`.',
+  });
+
+  steps.push({ id: "build", title: "Build", status: "todo", detail: "`oe build` writes the slot tree, then `eve build` compiles the app. It must pass before a deploy.", command: "npm run build" });
+
+  const push = [
+    `OE_OPERATIONAL_PROVIDER=${HOSTED_STORE_ENV.OE_OPERATIONAL_PROVIDER}`,
+    `OE_MEMORY_PROVIDER=${HOSTED_STORE_ENV.OE_MEMORY_PROVIDER}`,
+    CREDENTIAL_KEY_ENV_NAME,
+    ...surfaces.flatMap((name) => SURFACE_GOAL_STEPS[name]!.hosted?.env ?? []),
+  ];
+  steps.push({
+    id: "env-push",
+    title: "Set the deployment's environment (Production)",
+    status: "todo",
+    detail:
+      ".env.local is gitignored and never ships: the hosted functions read the Vercel project's environment. The Neon integration " +
+      "already set DATABASE_URL. Not needed on Vercel: AI_GATEWAY_API_KEY (OIDC authenticates the gateway), OE_PUBLIC_BASE_URL (the " +
+      "deployment reads its production host from VERCEL_PROJECT_PRODUCTION_URL; set it only for a custom domain) and " +
+      "OE_INTAKE_PAGE_SIGNING_KEY (the deployment mints it into the credential store). A variable added after a deploy reaches the " +
+      "functions only on the next deploy.",
+    command: push.map(vercelEnvPushCommand).join("\n"),
+  });
+
+  steps.push({
+    id: "deploy",
+    title: "Deploy to Vercel",
+    status: "todo",
+    detail: "The deploy prints the production host (https://<project>.vercel.app). A `git push` does not deploy.",
+    command: "npx vercel deploy --prod",
+  });
+
+  for (const name of surfaces) steps.push(...(SURFACE_GOAL_STEPS[name]!.hosted?.afterDeploy?.(env) ?? []));
+
+  steps.push({
+    id: "admin-auth",
+    title: "Control-plane auth (optional)",
+    status: adminAuthConfigured(env) ? "done" : "optional",
+    detail: "Only the REMOTE admin MCP needs it: it is an OAuth resource server — point it at any OIDC provider, or use a static token. The agent answers without it.",
+    command: adminAuthConfigured(env) ? undefined : "set OE_ADMIN_OIDC_ISSUER/_AUDIENCE or OE_ADMIN_STATIC_TOKEN, then push it like the other variables",
+  });
+
+  steps.push({
+    id: "verify",
+    title: "Prove the agent answers",
+    status: "todo",
+    detail:
+      "A moved alias is not proof: a function that dies at cold start still shows Ready. The check posts one unsigned request to " +
+      "the quickstart app's chat-surface route and passes only on a 401 whose body is `unauthorized`: that route's own refusal, so " +
+      "the function booted and the route is mounted. Any other 401 or a 403 (Vercel Deployment Protection, a proxy) fails, as do " +
+      "404 and 5xx. The pass does NOT prove the deployment holds the surface's signing secret: the route gives the same answer " +
+      "without it. The vendor console's own URL verification proves that (see the surface's after-deploy step). Then message the " +
+      "agent on the surface.",
+    command: "npx create-open-everywhere --check --goal hosted --host https://<host>",
+  });
 
   const readyToRun = steps.filter((s) => s.status === "todo").length === 0;
   return { goal, steps, readyToRun };

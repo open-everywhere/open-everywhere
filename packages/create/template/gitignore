@@ -2,8 +2,8 @@
 node_modules/
 
 # Secrets. Keep .env.example: it carries variable names only.
-.env
-.env.*
+# `.env*` and `.vercel` are the exact lines the Vercel CLI adds, so `vercel link` leaves this file alone.
+.env*
 !.env.example
 
 # The Vercel project link

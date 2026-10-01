@@ -2,12 +2,14 @@ import { flushTelemetry } from "@open-everywhere/core/agent/observability/teleme
 import { checkAll, runWizard, type StepContext, type WizardIO } from "./engine.js";
 import { WIZARD_STEPS } from "./steps/index.js";
 import { createRealIO, closeRealIO } from "./io.js";
-import { maybeEmitWizardCompleted } from "./telemetry.js";
+import { declineTelemetry, maybeEmitWizardCompleted } from "./telemetry.js";
 import { WIZARD_VERSION } from "./version.js";
-import { scaffoldApp, ScaffoldRefusal } from "./scaffold.js";
+import { initGitRepo, scaffoldApp, ScaffoldRefusal } from "./scaffold.js";
 import { pathToFileURL } from "node:url";
+import { slackAppNameProblem } from "@open-everywhere/provider-slack/agent/app-manifest.js";
 
-const USAGE = `create-open-everywhere [<dir>] [--skip-wizard] [--check [--json]] [--version] [--help]
+const USAGE = `create-open-everywhere [<dir>] [--skip-wizard] [--check [--json]] [--goal hosted|local] [--host <url>]
+                       [--app-name <name>] [--decline-telemetry] [--version] [--help]
 
   <dir>          Scaffold the quickstart app into <dir> (a new or empty
                  directory). On a terminal, then run the interactive wizard
@@ -22,37 +24,105 @@ const USAGE = `create-open-everywhere [<dir>] [--skip-wizard] [--check [--json]]
                  prompts, no changes, no telemetry. Exit code 0 if every step is
                  satisfied, else 1. It never scaffolds.
   --json         With --check: print the report as one JSON object.
+  --goal <g>     What the steps judge against: 'hosted' (default — a Vercel
+                 deploy) or 'local' (npm run dev on this machine).
+  --host <url>   The deployment's public origin. With the hosted goal, the
+                 build + deploy step probes its Slack route.
+  --app-name <name>
+                 The Slack app's name in the manifest the wizard prints
+                 (default "Open Everywhere"). A second install in one
+                 workspace needs its own name.
+  --decline-telemetry
+                 Record "declined" for the wizard's telemetry question, from any
+                 shell. Nothing is sent. Accepting needs the interactive prompt.
   --version      Print the wizard's own version.
   --help         Print this message.
 `;
 
-function buildContext(cwd: string = process.cwd()): StepContext {
-  return { cwd, env: process.env };
+export interface ParsedArgs {
+  readonly dirs: readonly string[];
+  readonly flags: ReadonlySet<string>;
+  readonly goal?: string;
+  readonly host?: string;
+  readonly appName?: string;
+  readonly errors: readonly string[];
 }
 
-async function runCheckMode(json: boolean): Promise<number> {
-  const summary = await checkAll(WIZARD_STEPS, buildContext());
+const VALUE_FLAGS = new Set(["--goal", "--host", "--app-name"]);
+
+export function parseArgs(argv: readonly string[]): ParsedArgs {
+  const dirs: string[] = [];
+  const flags = new Set<string>();
+  const values: Record<string, string> = {};
+  const errors: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (!arg.startsWith("-")) {
+      dirs.push(arg);
+      continue;
+    }
+    const eq = arg.indexOf("=");
+    const name = eq >= 0 ? arg.slice(0, eq) : arg;
+    if (VALUE_FLAGS.has(name)) {
+      const value = eq >= 0 ? arg.slice(eq + 1) : argv[++i];
+      if (value === undefined || value === "" || value.startsWith("--")) errors.push(`${name} needs a value`);
+      else values[name] = value;
+      continue;
+    }
+    flags.add(arg);
+  }
+  const goal = values["--goal"];
+  if (goal !== undefined && goal !== "hosted" && goal !== "local") errors.push(`--goal must be "hosted" or "local", got "${goal}"`);
+  const appName = values["--app-name"];
+  if (appName !== undefined) {
+    const problem = slackAppNameProblem(appName);
+    if (problem !== undefined) errors.push(`--app-name: ${problem}`);
+  }
+  return { dirs, flags, goal, host: values["--host"], ...(appName === undefined ? {} : { appName: appName.trim() }), errors };
+}
+
+function buildContext(cwd: string = process.cwd(), args?: ParsedArgs): StepContext {
+  return {
+    cwd,
+    env: process.env,
+    goal: args?.goal === "local" ? "local" : "hosted",
+    ...(args?.host !== undefined ? { host: args.host } : {}),
+    ...(args?.appName !== undefined ? { appName: args.appName } : {}),
+  };
+}
+
+async function runCheckMode(json: boolean, args: ParsedArgs): Promise<number> {
+  const ctx = buildContext(process.cwd(), args);
+  const summary = await checkAll(WIZARD_STEPS, ctx);
   if (json) {
     const report = {
       version: WIZARD_VERSION,
       cwd: process.cwd(),
+      goal: ctx.goal,
       satisfiedCount: summary.satisfiedCount,
       total: summary.total,
       allSatisfied: summary.allSatisfied,
-      steps: summary.results.map((r) => ({ id: r.step.id, title: r.step.title, satisfied: r.check.satisfied, detail: r.check.detail })),
+      steps: summary.results.map((r) => ({
+        id: r.step.id,
+        title: r.step.title,
+        satisfied: r.check.satisfied,
+        detail: r.check.detail,
+        ...(r.check.next !== undefined ? { next: r.check.next } : {}),
+      })),
     };
     console.log(JSON.stringify(report, null, 2));
     return summary.allSatisfied ? 0 : 1;
   }
   for (const r of summary.results) {
     console.log(`${r.check.satisfied ? "✓" : "✗"} ${r.step.title}: ${r.check.detail}`);
+    if (r.check.next !== undefined) console.log(`    next: ${r.check.next}`);
   }
-  console.log(`\n${summary.satisfiedCount}/${summary.total} steps satisfied.`);
+  console.log(`\n${summary.satisfiedCount}/${summary.total} steps satisfied (goal: ${ctx.goal}).`);
   return summary.allSatisfied ? 0 : 1;
 }
 
-async function runInteractiveMode(cwd?: string, createIO: () => WizardIO = createRealIO): Promise<number> {
-  const ctx = buildContext(cwd);
+async function runInteractiveMode(cwd: string | undefined, args: ParsedArgs, createIO: () => WizardIO = createRealIO): Promise<number> {
+  const ctx = buildContext(cwd, args);
   const io = createIO();
   try {
     const summary = await runWizard(WIZARD_STEPS, ctx, io);
@@ -66,14 +136,11 @@ async function runInteractiveMode(cwd?: string, createIO: () => WizardIO = creat
   }
 }
 
-function positionals(argv: readonly string[]): string[] {
-  return argv.filter((a) => !a.startsWith("-"));
-}
-
 function runScaffold(target: string): string | undefined {
   try {
     const result = scaffoldApp({ targetDir: target, version: WIZARD_VERSION });
     console.log(`Scaffolded the Open Everywhere quickstart app (${result.files.length} files, version ${WIZARD_VERSION}) into ${result.dir}`);
+    console.log(`git: ${initGitRepo(result.dir).detail}`);
     return result.dir;
   } catch (err) {
     if (err instanceof ScaffoldRefusal) {
@@ -89,8 +156,8 @@ function nextSteps(target: string, why: string): string {
     `The wizard did not run (${why}). Next, from the new app:`,
     `  cd ${target}`,
     "  npm install                                   # its postinstall applies the eve patch",
-    "  npx create-open-everywhere --check --json     # setup status, as data",
-    "  npx create-open-everywhere                    # the interactive wizard (needs a terminal)",
+    "  npx create-open-everywhere --check --json     # setup status, as data (add --goal local for npm run dev only)",
+    "  npx create-open-everywhere                    # the interactive wizard (a person, in a terminal)",
     "The app's README.md carries the numbered steps. A coding agent opened in the app reads AGENTS.md.",
   ].join("\n");
 }
@@ -109,31 +176,47 @@ export async function main(argv: readonly string[], options: MainOptions = { isT
     console.log(WIZARD_VERSION);
     return 0;
   }
-  const dirs = positionals(argv);
+  const args = parseArgs(argv);
+  if (args.errors.length > 0) {
+    for (const e of args.errors) console.error(e);
+    return 2;
+  }
+  const { dirs, flags } = args;
   if (dirs.length > 1) {
     console.error(`create-open-everywhere takes at most one directory, got ${dirs.length}: ${dirs.join(" ")}`);
     return 2;
   }
   const target = dirs[0];
   if (target === undefined) {
-    if (argv.includes("--skip-wizard")) {
+    if (flags.has("--skip-wizard")) {
       console.error("--skip-wizard needs a <dir> to scaffold into");
       return 2;
     }
-    if (argv.includes("--check")) return runCheckMode(argv.includes("--json"));
-    return runInteractiveMode();
+    if (flags.has("--decline-telemetry")) {
+      declineTelemetry(process.cwd());
+      console.log("Recorded: the wizard's telemetry is declined for this app. Nothing was sent, and nothing will be.");
+      if (!flags.has("--check")) return 0;
+    }
+    if (flags.has("--check")) return runCheckMode(flags.has("--json"), args);
+    if (!options.isTTY) {
+      console.error(
+        "The interactive wizard needs a terminal, and this shell has none. Run `npx create-open-everywhere --check --json` for the status as data, or ask the person to run `npx create-open-everywhere` in a terminal.",
+      );
+      return 2;
+    }
+    return runInteractiveMode(undefined, args, options.createIO);
   }
-  if (argv.includes("--check")) {
+  if (flags.has("--check")) {
     console.error("--check changes nothing, so it cannot scaffold. Scaffold first, then run --check from inside the app.");
     return 2;
   }
   const dir = runScaffold(target);
   if (dir === undefined) return 1;
-  if (argv.includes("--skip-wizard") || !options.isTTY) {
-    console.log(nextSteps(target, argv.includes("--skip-wizard") ? "--skip-wizard" : "no terminal"));
+  if (flags.has("--skip-wizard") || !options.isTTY) {
+    console.log(nextSteps(target, flags.has("--skip-wizard") ? "--skip-wizard" : "no terminal"));
     return 0;
   }
-  return runInteractiveMode(dir, options.createIO);
+  return runInteractiveMode(dir, args, options.createIO);
 }
 
 const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;

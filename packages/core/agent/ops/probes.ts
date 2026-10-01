@@ -1,4 +1,4 @@
-import { preflight, type Check } from "./quickstart.js";
+import { preflight, type Check, type PreflightOptions } from "./quickstart.js";
 
 export type PreflightProbe = (env: NodeJS.ProcessEnv) => Promise<readonly Check[]>;
 
@@ -32,8 +32,11 @@ export async function runPreflightProbes(env: NodeJS.ProcessEnv = process.env): 
   return settled.flat();
 }
 
-export async function preflightAsync(env: NodeJS.ProcessEnv = process.env): Promise<{ checks: Check[]; ready: boolean }> {
-  const base = preflight(env);
+export async function preflightAsync(
+  env: NodeJS.ProcessEnv = process.env,
+  options: PreflightOptions = {},
+): Promise<{ checks: Check[]; ready: boolean }> {
+  const base = preflight(env, options);
   const probed = await runPreflightProbes(env);
   const checks = [...base.checks, ...probed];
   return { checks, ready: checks.every((c) => c.status !== "missing") };

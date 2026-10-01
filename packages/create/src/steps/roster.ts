@@ -45,12 +45,20 @@ export function inspectRoster(cwd: string): RosterState {
   }
 }
 
+function rosterNext(detail: string): string {
+  if (/npm install/.test(detail)) return "npm install";
+  if (/UNREVIEWED|missing — nothing has been REVIEWED/.test(detail)) return "review the contribution in roster.config.ts, then `npx oe build --accept` and read the roster.lock.json diff";
+  if (/NOT BUILT/.test(detail)) return "npm run build";
+  return "npx oe build";
+}
+
 export const rosterStep: WizardStep = {
   id: "roster",
   title: "Roster (roster.config.ts → the eve slot tree)",
   check(ctx: StepContext) {
     const state = inspectRoster(ctx.cwd);
-    return { satisfied: state.kind === "known" && state.clean, detail: state.detail };
+    const satisfied = state.kind === "known" && state.clean;
+    return { satisfied, detail: state.detail, next: satisfied ? undefined : rosterNext(state.detail) };
   },
   guide() {
     return {

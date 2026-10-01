@@ -13,7 +13,7 @@ export function packPublishablePackages(repoRoot: string, destDir: string): Pack
   mkdirSync(destDir, { recursive: true });
   return ALL_PUBLISHABLE_PACKAGES.map((pkgDir) => {
     const { name } = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8")) as { name: string };
-    const [cmd, args] = npmCommand(["pack", "--workspace", name, "--pack-destination", destDir, "--loglevel", "error"]);
+    const [cmd, args] = npmCommand(["pack", "--workspace", name, "--pack-destination", destDir, "--loglevel", "error", "--ignore-scripts"]);
     let out: string;
     try {
       out = execFileSync(cmd, args, { cwd: repoRoot, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 });

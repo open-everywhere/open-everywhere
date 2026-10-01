@@ -106,7 +106,9 @@ trade this implies: a declined install is invisible to the funnel. That's
 considered correct, not a gap — an opt-out that still phones home to say so isn't
 really an opt-out. `DO_NOT_TRACK`/`OE_TELEMETRY=off` set ahead of time skips the
 prompt entirely and auto-records a decline, honouring the exact same signal the ten
-runtime events do. Consent (and a one-time-per-install guard for each event) is
+runtime events do. `npx create-open-everywhere --decline-telemetry` records the same decline from a
+shell with no terminal (a coding agent's, for one). It is the only answer a flag can give: a decline
+sends nothing, and an accept still needs the person at the prompt. Consent (and a one-time-per-install guard for each event) is
 persisted in `.open-everywhere/wizard-state.json` inside the target checkout —
 wizard-internal bookkeeping, not app config; gitignored, never shared.
 

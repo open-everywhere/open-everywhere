@@ -1,9 +1,6 @@
 import { execFileSync } from "node:child_process";
+import { coreNodeRange, nodeRangeSatisfied } from "@open-everywhere/core/agent/ops/package-info.js";
 import type { WizardStep } from "../engine.js";
-
-function nodeMajor(): number {
-  return Number(process.versions.node.split(".")[0]);
-}
 
 function gitAvailable(): boolean {
   try {
@@ -14,21 +11,27 @@ function gitAvailable(): boolean {
   }
 }
 
+export function nodeVerdict(version: string, range: string | undefined): { ok: boolean; detail: string } {
+  if (range === undefined) return { ok: false, detail: `node ${version} (cannot read @open-everywhere/core's engines.node — run \`npm install\`)` };
+  const ok = nodeRangeSatisfied(range, version);
+  if (ok === undefined) return { ok: false, detail: `node ${version} (cannot parse the engines range "${range}")` };
+  return { ok, detail: ok ? `node ${version}` : `node ${version} (need ${range})` };
+}
+
 export const prerequisitesStep: WizardStep = {
   id: "prerequisites",
   title: "Prerequisites (Node 24, git)",
   check() {
-    const major = nodeMajor();
+    const node = nodeVerdict(process.versions.node, coreNodeRange());
     const git = gitAvailable();
-    const satisfied = major >= 24 && git;
-    const detail = satisfied
-      ? `node ${process.versions.node}, git present`
-      : `node ${process.versions.node}${major >= 24 ? "" : " (need 24.x)"}${git ? "" : ", git NOT found on PATH"}`;
-    return { satisfied, detail };
+    const satisfied = node.ok && git;
+    const detail = `${node.detail}${git ? ", git present" : ", git NOT found on PATH"}`;
+    const next = !node.ok ? "nvm install 24 && nvm use 24" : !git ? "install git: https://git-scm.com/downloads" : undefined;
+    return { satisfied, detail, next };
   },
   guide() {
     return {
-      summary: "Open Everywhere pins Node 24.x (engines) and needs git for cloning/PRs.",
+      summary: "Open Everywhere needs the Node range @open-everywhere/core declares (24.x) and git.",
       instructions: [
         "Install Node 24: `nvm install 24 && nvm use 24` (or your platform's installer).",
         "Install git if `git --version` fails (https://git-scm.com/downloads).",

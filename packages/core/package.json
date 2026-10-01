@@ -604,6 +604,10 @@
       "types": "./dist/agent/access/worker-toolset-state.d.ts",
       "default": "./dist/agent/access/worker-toolset-state.js"
     },
+    "./agent/adapter-api-ops.js": {
+      "types": "./dist/agent/adapter-api-ops.d.ts",
+      "default": "./dist/agent/adapter-api-ops.js"
+    },
     "./agent/adapter-api.js": {
       "types": "./dist/agent/adapter-api.d.ts",
       "default": "./dist/agent/adapter-api.js"
@@ -1988,6 +1992,10 @@
       "types": "./dist/agent/operational/provider.d.ts",
       "default": "./dist/agent/operational/provider.js"
     },
+    "./agent/operational/selection.js": {
+      "types": "./dist/agent/operational/selection.d.ts",
+      "default": "./dist/agent/operational/selection.js"
+    },
     "./agent/operational/sqlite.js": {
       "types": "./dist/agent/operational/sqlite.d.ts",
       "default": "./dist/agent/operational/sqlite.js"
@@ -1999,6 +2007,10 @@
     "./agent/ops/census.js": {
       "types": "./dist/agent/ops/census.d.ts",
       "default": "./dist/agent/ops/census.js"
+    },
+    "./agent/ops/package-info.js": {
+      "types": "./dist/agent/ops/package-info.d.ts",
+      "default": "./dist/agent/ops/package-info.js"
     },
     "./agent/ops/probes.js": {
       "types": "./dist/agent/ops/probes.d.ts",
@@ -2907,6 +2919,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "routines": "tsx scripts/routines.ts",
     "spend": "tsx scripts/spend.ts",

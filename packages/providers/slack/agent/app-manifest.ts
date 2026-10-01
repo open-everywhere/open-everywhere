@@ -1,11 +1,28 @@
 export const SLACK_DEPLOY_HOST_PLACEHOLDER = "YOUR-DEPLOY-URL";
 
-export function slackAppManifestTemplate(): string {
+export const SLACK_DEFAULT_APP_NAME = "Open Everywhere";
+
+export const SLACK_APP_NAME_MAX = 35;
+
+export function slackAppNameProblem(raw: string): string | undefined {
+  const name = raw.trim();
+  if (name === "") return "the app name is empty";
+  if (name.length > SLACK_APP_NAME_MAX) return `the app name is ${name.length} characters; Slack accepts at most ${SLACK_APP_NAME_MAX}`;
+  return undefined;
+}
+
+export interface SlackAppManifestOptions {
+  readonly appName?: string;
+}
+
+export function slackAppManifestTemplate(opts: SlackAppManifestOptions = {}): string {
+  const appName = opts.appName?.trim() || SLACK_DEFAULT_APP_NAME;
   return JSON.stringify(
     {
-      display_information: { name: "Open Everywhere" },
+      display_information: { name: appName },
       features: {
-        bot_user: { display_name: "Open Everywhere", always_online: true },
+        app_home: { home_tab_enabled: false, messages_tab_enabled: true, messages_tab_read_only_enabled: false },
+        bot_user: { display_name: appName, always_online: true },
         slash_commands: [
           {
             command: "/oe",
@@ -79,9 +96,12 @@ export const SLACK_APP_MANIFEST_STEPS: readonly string[] = [
   "Pick the workspace, choose JSON, and paste the manifest below.",
   "Next → Create.",
   "Install to Workspace, and approve the scopes Slack lists.",
+  "Before the first deploy, Slack cannot verify the Event Subscriptions URL: it answers only once a deploy that holds SLACK_SIGNING_SECRET is up. After the deploy, paste the manifest again with the real host (App Manifest → Save Changes), then retry the verification under Event Subscriptions.",
 ];
 
 export const SLACK_APP_MANIFEST_COLLECT: readonly string[] = [
   "OAuth & Permissions → Bot User OAuth Token (xoxb-…) = SLACK_BOT_TOKEN",
   "Basic Information → App Credentials → Signing Secret = SLACK_SIGNING_SECRET",
+  "The workspace (team) id, T… — the segment after /client/ in the workspace URL at https://app.slack.com — for the vouch in agent/identity/surfaces.ts",
+  "Your own member id, U… — your Slack profile → ⋮ (More) → Copy member ID — for admins in agent/memory/config/domains/org.ts",
 ];

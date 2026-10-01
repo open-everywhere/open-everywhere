@@ -17,7 +17,8 @@
     "start": "eve start",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "check": "create-open-everywhere --check",
-    "ops": "node --import tsx scripts/ops-mcp.ts"
+    "ops": "node --import tsx scripts/ops-mcp.ts",
+    "env:pipe": "node scripts/env-pipe.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

@@ -1,8 +1,10 @@
 import { existsSync, readdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import type { StepContext, WizardIO, WizardStep } from "../engine.js";
+import { goalOf, type StepContext, type WizardIO, type WizardStep } from "../engine.js";
 import { npmCommand } from "../npm.js";
+import { mergedEnv } from "../env-file.js";
+import { normalizeHost, probeDeployment } from "../deploy-probe.js";
 
 function nonEmptyDir(p: string): boolean {
   try {
@@ -12,24 +14,50 @@ function nonEmptyDir(p: string): boolean {
   }
 }
 
+function buildOutputPresent(cwd: string): boolean {
+  return nonEmptyDir(join(cwd, ".output")) || nonEmptyDir(join(cwd, ".vercel", "output"));
+}
+
+function deployOrigin(ctx: StepContext): string | undefined {
+  if (ctx.host !== undefined) return normalizeHost(ctx.host);
+  const fromEnv = mergedEnv(ctx.cwd, ctx.env).OE_PUBLIC_BASE_URL;
+  return fromEnv ? normalizeHost(fromEnv) : undefined;
+}
+
 export const buildDeployStep: WizardStep = {
   id: "build-deploy",
   title: "Build + deploy",
-  check(ctx: StepContext) {
-    const built = nonEmptyDir(join(ctx.cwd, ".output")) || nonEmptyDir(join(ctx.cwd, ".vercel", "output"));
-    return { satisfied: built, detail: built ? "a build output directory exists (re-build after any source change!)" : "not built yet" };
+  async check(ctx: StepContext) {
+    if (goalOf(ctx) === "local") {
+      return { satisfied: true, detail: "not needed for a local run: `npm run dev` runs `oe build` itself" };
+    }
+    if (!buildOutputPresent(ctx.cwd)) return { satisfied: false, detail: "not built yet", next: "npm run build" };
+    const origin = deployOrigin(ctx);
+    if (origin === undefined) {
+      return {
+        satisfied: false,
+        detail: "built. The deploy is unproven: no host to probe",
+        next: "npx vercel deploy --prod, then re-run with --host https://<host> (the host the deploy prints)",
+      };
+    }
+    const probe = await probeDeployment(origin);
+    return probe.ok
+      ? { satisfied: true, detail: probe.detail }
+      : { satisfied: false, detail: probe.detail, next: "npx vercel deploy --prod, then re-run this check" };
   },
   guide() {
     return {
-      summary: "Build before you deploy — a broken build must never be promoted (AGENTS.md).",
+      summary: "Build before you deploy — a broken build must never be promoted.",
       instructions: [
-        "`npm run build` (= `eve build`) — must be green.",
-        "Deploy is a SEPARATE, explicit step this wizard will not run for you: `vercel deploy --prod` (confirm the scope/team first).",
+        "`npm run build` (= `oe build`, then `eve build`) — must be green.",
+        "Deploy is a SEPARATE, explicit step this wizard will not run for you: `npx vercel deploy --prod` (confirm the scope/team first).",
         "`git push` does NOT deploy — pushing only updates the repo.",
+        "Then re-run `npx create-open-everywhere --check --host https://<host>`: it probes the deployed Slack route.",
       ],
     };
   },
   async automate(ctx: StepContext, io: WizardIO) {
+    if (buildOutputPresent(ctx.cwd)) return { ran: false, ok: false, detail: "built — deploy with `npx vercel deploy --prod`, then re-run with --host" };
     const wantsBuild = await io.confirm("Run `npm run build` now?");
     if (!wantsBuild) return { ran: false, ok: false, detail: "skipped" };
     const [command, args] = npmCommand(["run", "build"], ctx.env);

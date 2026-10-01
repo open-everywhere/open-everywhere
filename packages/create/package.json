@@ -41,9 +41,10 @@
     "test:telemetry": "NODE_NO_WARNINGS=1 tsx scripts/telemetry-test.ts",
     "test:cli": "tsx scripts/cli-check-test.ts",
     "test": "npm run test:chain",
-    "test:chain": "npm run test:engine && npm run test:telemetry && npm run test:scaffold && npm run test:cli && npm run test:boot-free",
+    "test:chain": "npm run test:engine && npm run test:telemetry && npm run test:scaffold && npm run test:cli && npm run test:env-pipe && npm run test:boot-free",
     "test:boot-free": "tsx scripts/boot-free-test.ts",
-    "test:scaffold": "tsx scripts/scaffold-test.ts"
+    "test:scaffold": "tsx scripts/scaffold-test.ts",
+    "test:env-pipe": "tsx scripts/env-pipe-test.ts"
   },
   "dependencies": {
     "@open-everywhere/core": "0.1.2",

@@ -201,30 +201,41 @@ npm run build
 ```
 
 Now the step that is easy to miss and silently fatal: **`.env.local` is gitignored and never ships.**
-The hosted functions read the Vercel project's own environment. Push each root-of-trust value, with
+The hosted functions read the Vercel project's own environment. Set each value for Production, with
 the operator's consent:
 
-```bash
-vercel env add DATABASE_URL production
-vercel env add OE_CREDENTIAL_ENCRYPTION_KEY production
-vercel env add AI_GATEWAY_API_KEY production
-vercel env add OE_PUBLIC_BASE_URL production
-```
+| Variable | Why the deployment needs it |
+| --- | --- |
+| `DATABASE_URL` | The Neon Marketplace integration sets it on the project. Push it only for a database you created elsewhere. |
+| `OE_OPERATIONAL_PROVIDER=postgres`, `OE_MEMORY_PROVIDER=postgres` | Without them core selects an embedded store. On Vercel it then throws at the first operational-store use, and at the first DM or personal memory call. |
+| `OE_CREDENTIAL_ENCRYPTION_KEY` | The deployment and the operator tools must hold the same key. |
+
+Three variables a local run uses are not needed on Vercel:
+
+- `AI_GATEWAY_API_KEY` — a deployed project authenticates to the AI Gateway with OIDC.
+- `OE_PUBLIC_BASE_URL` — the deployment reads its production host from `VERCEL_PROJECT_PRODUCTION_URL`
+  (`packages/core/agent/channels/self-dispatch.ts`, `packages/core/agent/credentials/page-token.ts`). Set it only for a custom
+  domain.
+- `OE_INTAKE_PAGE_SIGNING_KEY` — the deployment mints it into the credential store on first use
+  (`packages/core/agent/credentials/self-secrets.ts`).
 
 Pipe each value out of the file rather than reading it into your own context. The CLI takes the
-value on standard input when it is not attached to a terminal:
+value on standard input when it is not attached to a terminal. A literal value goes the same way,
+with no trailing newline:
 
 ```bash
-grep '^OE_CREDENTIAL_ENCRYPTION_KEY=' .env.local | cut -d= -f2- \
-  | vercel env add OE_CREDENTIAL_ENCRYPTION_KEY production
+grep '^OE_CREDENTIAL_ENCRYPTION_KEY=' .env.local | cut -d= -f2- | tr -d '
+'   | vercel env add OE_CREDENTIAL_ENCRYPTION_KEY production
+printf %s postgres | vercel env add OE_OPERATIONAL_PROVIDER production
+printf %s postgres | vercel env add OE_MEMORY_PROVIDER production
 ```
+
+An app scaffolded by `npx create-open-everywhere` carries `npm run -s env:pipe -- <NAME>` for the same
+job, and its README lists the same variables in the same order.
 
 If the operator's `vercel` version prompts instead, ask them to paste the value at the prompt. Do
 not read the value back yourself to relay it — that puts the deployment's master key in your
 context for no gain.
-
-`OE_PUBLIC_BASE_URL` is this deployment's own public origin. Every callback URL is built from it,
-so the first deploy is a chicken-and-egg: deploy once, take the URL, set the variable, deploy again.
 
 ## Step 12 — Deploy
 
@@ -281,6 +292,11 @@ For Slack, the exact action:
    host — a full webhook URL, say — is refused rather than substituted, because Slack accepts the
    paste and only fails at request-URL verification.
 
+   The app is named "Open Everywhere" unless you pass `appName` (at most 35 characters). A second
+   install in one workspace needs its own name, or the two apps look the same. The manifest also
+   turns the App Home Messages tab on: without it, Slack refuses every DM to the bot with
+   *"Sending messages to this app has been turned off"*.
+
    The response also carries `steps` (the ordered clicks) and `collect` (the values to ask for).
    The rest of this step is what those two fields say.
 
@@ -296,7 +312,7 @@ Both are environment variables, not credential-store secrets — the Slack bundl
 scaffold_env { "values": { "SLACK_BOT_TOKEN": "<xoxb-…>", "SLACK_SIGNING_SECRET": "<the secret>" } }
 ```
 
-Then push both to the deployment with `vercel env add`, exactly as in step 11, and redeploy.
+Then push both to the deployment with `vercel env add`, exactly as in step 11, and redeploy. Slack verifies the Event Subscriptions URL with a signed challenge, so the verification fails until a deploy that holds `SLACK_SIGNING_SECRET` is up: after that redeploy, ask the operator to choose **Retry** under Event Subscriptions.
 
 The per-surface details, including the scopes each capability needs and the surface-specific traps,
 are in the surface guides: [Slack](./surfaces/slack.md), [Teams](./surfaces/teams.md),
