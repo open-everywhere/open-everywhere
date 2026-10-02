@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/provider-teams",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Open Everywhere Microsoft Teams provider — Teams channel and chat surfaces via Microsoft Graph.",
   "keywords": [
     "agent",
@@ -172,7 +172,7 @@
     "test:teams-spend-attribution": "NODE_NO_WARNINGS=1 tsx scripts/teams-spend-attribution-test.ts"
   },
   "dependencies": {
-    "@open-everywhere/core": "0.1.3",
+    "@open-everywhere/core": "0.1.4",
     "zod": "4.5.4"
   },
   "peerDependencies": {

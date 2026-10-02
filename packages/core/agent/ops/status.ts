@@ -38,7 +38,7 @@ export interface SurfaceStatus {
 
 export interface StatusVersions {
   readonly app: string | null;
-  readonly core: string | null;
+  readonly core: string;
   readonly eve: string | null;
 }
 
@@ -82,7 +82,7 @@ export function hostRoute(platform: string = platformName()): HostRoute {
 function liveVersions(): StatusVersions {
   const info = getAppInfo();
   const real = (v: string): string | null => (v === "unknown" || v.trim() === "" ? null : v);
-  return { app: real(info.version), core: corePackageVersion() ?? null, eve: real(info.evePin) };
+  return { app: real(info.version), core: corePackageVersion(), eve: real(info.evePin) };
 }
 
 function nodeStatus(version: string, range: string | undefined): RequirementStatus {

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { EVE_RUNTIME_VERSION } from "@open-everywhere/core/agent/channels/runtime-rotation.js";
+import { CORE_PACKAGE_VERSION } from "@open-everywhere/core/agent/ops/package-info.js";
 
 const ROOT = process.cwd();
 const BUNDLE_PATH = join(ROOT, ".output", "server", "index.mjs");
@@ -44,12 +45,25 @@ function extractFunctionBody(source: string, name: string): string | undefined {
 
 const RUNTIME_FS_PRIMITIVES = ["readFileSync", "require.resolve", "fileURLToPath", "createRequire"];
 
-for (const name of ["readAppVersion", "readEvePin"] as const) {
+function escapeForRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function bakedBindingName(body: string, read: RegExp): string | undefined {
+  return read.exec(body)?.[1];
+}
+
+function declaresBinding(bundle: string, name: string, literal: string): boolean {
+  return new RegExp(`(?:const|let|var)\\s+${escapeForRegExp(name)}\\s*=\\s*["']${escapeForRegExp(literal)}["']`, "u").test(bundle);
+}
+
+for (const name of ["readAppVersion", "readEvePin", "corePackageVersion"] as const) {
   const body = extractFunctionBody(bundle, name);
   if (body === undefined) {
     problems.push(
       `${name}: no \`function ${name}(\` found in ${BUNDLE_PATH}. Either the function was renamed/inlined ` +
-        `away (update this script to match), or agent.ts no longer defines it — check registerAppInfo's call site.`,
+        `away (update this script to match), or the module no longer defines it — check registerAppInfo's call ` +
+        `site for the two app-side readers, and \`ops/package-info.ts\` for corePackageVersion.`,
     );
     continue;
   }
@@ -66,21 +80,34 @@ for (const name of ["readAppVersion", "readEvePin"] as const) {
 
 const evePinBody = extractFunctionBody(bundle, "readEvePin");
 if (evePinBody !== undefined && !evePinBody.includes(EVE_RUNTIME_VERSION)) {
-  const readIdentifier = /\b([A-Za-z_$][\w$]*)\s*\.trim\(\)/u.exec(evePinBody)?.[1];
-  const pinBinding =
-    readIdentifier === undefined
-      ? undefined
-      : new RegExp(`\\b(?:const|let|var)\\s+${readIdentifier}\\s*=\\s*["']${EVE_RUNTIME_VERSION.replace(/\./gu, "\\.")}["']`, "u");
+  const readIdentifier = bakedBindingName(evePinBody, /\b([A-Za-z_$][\w$]*)\s*\.trim\(\)/u);
   if (readIdentifier === undefined) {
     problems.push(
       `readEvePin: the compiled body neither contains the pinned eve version ${JSON.stringify(EVE_RUNTIME_VERSION)} ` +
         `nor reads it off a module-scope binding this check can name. Body: ${evePinBody}`,
     );
-  } else if (pinBinding !== undefined && !pinBinding.test(bundle)) {
+  } else if (!declaresBinding(bundle, readIdentifier, EVE_RUNTIME_VERSION)) {
     problems.push(
       `readEvePin: the compiled body reads the pin off \`${readIdentifier}\`, but the bundle declares no ` +
         `\`${readIdentifier} = ${JSON.stringify(EVE_RUNTIME_VERSION)}\` — the value did not survive bundling. ` +
         `Body: ${evePinBody}`,
+    );
+  }
+}
+
+const coreVersionBody = extractFunctionBody(bundle, "corePackageVersion");
+if (coreVersionBody !== undefined && !coreVersionBody.includes(CORE_PACKAGE_VERSION)) {
+  const readIdentifier = bakedBindingName(coreVersionBody, /\breturn\s+([A-Za-z_$][\w$]*)\s*;/u);
+  if (readIdentifier === undefined) {
+    problems.push(
+      `corePackageVersion: the compiled body neither contains core's version ${JSON.stringify(CORE_PACKAGE_VERSION)} ` +
+        `nor reads it off a module-scope binding this check can name. Body: ${coreVersionBody}`,
+    );
+  } else if (!declaresBinding(bundle, readIdentifier, CORE_PACKAGE_VERSION)) {
+    problems.push(
+      `corePackageVersion: the compiled body reads the version off \`${readIdentifier}\`, but the bundle declares ` +
+        `no \`${readIdentifier} = ${JSON.stringify(CORE_PACKAGE_VERSION)}\` — the value did not survive bundling. ` +
+        `Body: ${coreVersionBody}`,
     );
   }
 }
@@ -90,13 +117,26 @@ const appVersion = (JSON.parse(readFileSync(appPackageJsonPath, "utf8")) as { ve
 if (typeof appVersion !== "string" || appVersion.length === 0) {
   problems.push(`could not read a string "version" from ${appPackageJsonPath} — nothing to check the bundle against.`);
 } else {
-  const versionBindingPattern = new RegExp(`\\bversion\\d*\\s*=\\s*["']?${appVersion.replace(/\./gu, "\\.")}["']?[;,)]`, "u");
-  if (!versionBindingPattern.test(bundle)) {
-    problems.push(
-      `the bundle contains no \`version = "${appVersion}"\`-shaped binding — the app's package.json version ` +
-        `did not survive bundling as a static value. Expected the static JSON import (\`appPackageJson\` in ` +
-        `agent.ts) to hoist it to a module-level binding.`,
+  const appVersionBody = extractFunctionBody(bundle, "readAppVersion");
+  if (appVersionBody === undefined) {
+  } else if (!appVersionBody.includes(appVersion)) {
+    const readIdentifier = bakedBindingName(
+      appVersionBody,
+      /(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*([A-Za-z_$][\w$]*)\s*;/u,
     );
+    if (readIdentifier === undefined) {
+      problems.push(
+        `readAppVersion: the compiled body neither contains the app version ${JSON.stringify(appVersion)} nor ` +
+          `reads it off a module-scope binding this check can name. Body: ${appVersionBody}`,
+      );
+    } else if (!declaresBinding(bundle, readIdentifier, appVersion)) {
+      problems.push(
+        `readAppVersion: the compiled body reads the version off \`${readIdentifier}\`, but the bundle declares ` +
+          `no \`${readIdentifier} = ${JSON.stringify(appVersion)}\` — the app's package.json version did not ` +
+          `survive bundling as a static value. Expected the static JSON import (\`appPackageJson\` in agent.ts) ` +
+          `to bake it in. Body: ${appVersionBody}`,
+      );
+    }
   }
 }
 
@@ -107,6 +147,6 @@ if (problems.length > 0) {
 }
 
 console.log(
-  "✓ agent-version-seam-bundle: readAppVersion/readEvePin compile with no runtime filesystem read, and both " +
-    "baked literals (eve pin, app version) survive bundling.",
+  "✓ agent-version-seam-bundle: readAppVersion/readEvePin/corePackageVersion compile with no runtime " +
+    "filesystem read, and all three baked literals (eve pin, app version, core version) survive bundling.",
 );

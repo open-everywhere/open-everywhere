@@ -5,7 +5,6 @@ import { fileURLToPath } from "node:url";
 const CORE_PACKAGE_NAME = "@open-everywhere/core";
 
 interface CoreManifest {
-  readonly version?: unknown;
   readonly engines?: { readonly node?: unknown };
 }
 
@@ -35,9 +34,10 @@ function coreManifest(): CoreManifest | null {
   return cached;
 }
 
-export function corePackageVersion(): string | undefined {
-  const v = coreManifest()?.version;
-  return typeof v === "string" && v.length > 0 ? v : undefined;
+export const CORE_PACKAGE_VERSION = "0.1.4";
+
+export function corePackageVersion(): string {
+  return CORE_PACKAGE_VERSION;
 }
 
 export function coreNodeRange(): string | undefined {

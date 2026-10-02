@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   HOST_ROUTES,
@@ -16,6 +17,7 @@ import {
 } from "../agent/ops/status.js";
 import { CONTRACT_NODE_RANGE, CONTRACT_REQUIREMENT_IDS, CONTRACT_ROUTES, CONTRACT_VERSION } from "../agent/ops/contract.js";
 import { registerAppInfo, resetAppInfo } from "../agent/commands/app-info.js";
+import { CORE_PACKAGE_VERSION } from "../agent/ops/package-info.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -65,6 +67,20 @@ const req = (doc: DeploymentStatus, id: string): RequirementStatus => {
   ok(!JSON.stringify(registered).includes("abc"), "🔴 the deployment commit sha is NOT in the public payload (no id)");
   ok(req(registered, "node-24").met === "yes", "node: the default range is the contract's own literal, which a bundled server still carries");
   ok(req(registered, "node-24").detail.includes(CONTRACT_NODE_RANGE), "node: …and the detail names it");
+
+  const serialised = JSON.parse(JSON.stringify(registered)) as { version: { core: unknown } };
+  ok(serialised.version.core !== null, "🔴 version.core is not null in the serialised payload — the field a deployed bundle published as null");
+  ok(
+    typeof serialised.version.core === "string" && serialised.version.core.length > 0,
+    "…it is a non-empty version string",
+  );
+  ok(serialised.version.core === CORE_PACKAGE_VERSION, "…and it is exactly the constant the bundle carries");
+
+  const coreManifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: unknown };
+  ok(
+    coreManifest.version === CORE_PACKAGE_VERSION,
+    `🔴 CORE_PACKAGE_VERSION (${CORE_PACKAGE_VERSION}) must equal packages/core/package.json's version (${String(coreManifest.version)}) — a release bumps both in the same commit`,
+  );
   resetAppInfo();
 }
 

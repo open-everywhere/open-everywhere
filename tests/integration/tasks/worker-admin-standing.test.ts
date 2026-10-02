@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 const INJECT_TOKEN = "ope673-inject-token";
 process.env.OE_TEST_WAKE = "1";
@@ -72,8 +72,15 @@ async function askThroughAWorker(
       child: [{ calls: [{ tool, input: toolInput, id: `ope673-${leg}-call` }] }, { say: "worker done" }],
     }),
   );
-  await injectWake(base, wake);
+  const marker = `ope673-leg-${leg}-${randomBytes(4).toString("hex")}`;
+  await injectWake(base, { ...wake, text: `${wake.text} [${marker}]` });
   await waitForChildren(dispatched, { count: 1, lastStepIndex: 1, label: `${leg}: the delegated worker to serve its whole arm` });
+  const dispatchTurn = dispatched.requests.find((r) => r.role === "parent" && r.stepIndex === 0);
+  expect(dispatchTurn, `${leg}: this leg's own dispatch turn reached the script`).toBeDefined();
+  expect(
+    dispatchTurn!.messages.some((m) => m.text.includes(marker)),
+    `${leg}: the turn measured as this leg's does not carry this leg's own wake marker — an earlier leg's straggler was served this script, so every assertion below is that leg's and not this one's`,
+  ).toBe(true);
   const taskId = taskIdOfDelegation(dispatched, `the ${leg} delegation`);
   const { handle: drain } = await awaitTaskSettlement({ dispatched, taskId, script: SETTLEMENT_DRAIN_CLOSING_SCRIPT, label: `${leg}: the settled worker's completion wake` });
   disposeLater(drain);

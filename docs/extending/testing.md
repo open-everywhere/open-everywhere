@@ -131,6 +131,29 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
   provider serializes — the prompt-prefix gate
   (`tests/integration/liveness/prompt-prefix-stability.test.ts`) compares it, because a re-worded
   description costs the prompt cache exactly as much as a new tool name does.
+- **A script belongs to ONE leg, and the harness enforces it.** A background delegation settles on
+  its own clock, so a leg's settlement turn — and the corrective re-drive behind it — can outlive the
+  leg that dispatched the worker and land on the NEXT leg's script. The FOREIGN-WAKE FENCE
+  (`agent/model/scripted-model.ts`) refuses that: a script registered under the wildcard key is never
+  served a **call-bearing** step for a PARENT turn whose wake id a **different** registration already
+  answered. Such a turn gets judged silence, spends no step, and is recorded as
+  `RecordedRequest.foreignWakeSilence` — assert that field when you want to prove a straggler was
+  absorbed. 🔴 **A test that MEANS to serve a later turn of an earlier wake registers on that
+  SESSION's own id**, which is what `armSettlement` does; the wildcard key is a catch-all, and a
+  catch-all must not catch another leg's turn. A `say`-only step is exempt, because absorbing an
+  unknown number of stragglers is exactly what a drain script
+  (`SETTLEMENT_DRAIN_SCRIPT`) is for. **The signal is the `wake-id` on the LAST `<wake …>` envelope
+  of the served prompt**, and that one fact is the whole of what the fence sees: a turn that renders
+  no envelope of its own — a settlement turn, the corrective re-drive, which re-stamps the original
+  id — resolves the PREVIOUS leg's wake, while a turn with its own envelope resolves a fresh id that
+  nothing owns, and a prompt with no envelope at all leaves the fence inert. Only a single-window
+  unified session renders a `wake-id` at all, and on that path a leg-opening delivery is always
+  judged, so a fresh leg can never be fenced. Why it matters: before
+  the fence, a straggler took the next leg's `agent` call and the leg's own turn then found a spent
+  script — which reads as a PRODUCT failure on whatever that leg was measuring, not as a harness
+  red.
+  `tests/integration/tasks/straggler-leg-isolation.test.ts` drives it, and
+  `scripts/scripted-wake-ownership-test.ts` pins the rule offline.
 - **A script step can also hold the call open and report its own token counts.**
   `{ delayMs }` keeps one MODEL CALL in flight, which is one of the two ways a turn lives long enough
   for a test to CANCEL it (`tests/integration/liveness/turn-cancel.test.ts`). The other is an `async`
@@ -290,6 +313,12 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
   to **2.6×** (3 workers) from parallelism is withheld — both measured against this config's own
   543.2 s, not against `main`. Raise `HARNESS_CONCURRENCY_CEILING` when OPE-2197 closes, against a
   re-measurement — never on the memory numbers alone, which is the inference this ticket got wrong.
+  🔴 **OPE-2240 has since closed the CALL-BEARING half of that window** — the foreign-wake fence in
+  the bullet above — and measured the full tier green twice at 4 workers through
+  `OE_IT_CI_MAX_WORKERS=4` (980.9 s / 1002.7 s against 2321.0 s / 2286.7 s at one worker, peak tree
+  RSS 6.9 GB). **The ceiling is still 1, deliberately.** Four runs do not establish a rate, and the
+  decision is this bullet's own: raise it here, against its own re-measurement, not off another
+  ticket's matrix.
 - **The tier SHARDS by default in a sandbox** (OPE-1814). One worker was not enough on its own: a
   single vitest PROCESS grew past the cgroup over the whole tier whatever its worker count — one run
   measured `exit=137` twice on one head, the second time alone at `OE_IT_CI_MAX_WORKERS=1`, and four

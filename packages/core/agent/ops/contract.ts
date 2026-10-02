@@ -105,7 +105,7 @@ export const DEPLOYMENT_CONTRACT: readonly ContractRequirement[] = [
     id: "secrets",
     title: "The root-of-trust secrets",
     requirement:
-      "The host holds two BOOTSTRAP values in its environment: `DATABASE_URL` and `OE_CREDENTIAL_ENCRYPTION_KEY` (a base64-encoded 32-byte AES-256 key). Every credential a bundle resolves through the broker plane then lives encrypted in the store that key arms. A surface whose bundle reads its credentials from the ENVIRONMENT instead is the exception, and some shipped surfaces are: the ops plane's `quickstart` plan lists the env names for the surfaces THIS deployment carries, and each surface runbook names them. Putting such a value in the credential store instead leaves the surface silent — every inbound delivery fails verification — with a green-looking store.",
+      "The host holds two BOOTSTRAP values in its environment: `DATABASE_URL` and `OE_CREDENTIAL_ENCRYPTION_KEY` (a base64-encoded 32-byte AES-256 key). Every credential a bundle resolves through the broker plane then lives encrypted in the store that key arms. A surface whose bundle reads its credentials from the ENVIRONMENT instead is the exception, and some shipped surfaces are: each surface runbook names them. Putting such a value in the credential store instead leaves the surface silent — every inbound delivery fails verification — with a green-looking store.",
     consequence:
       "Without the key the credential store fails closed on every read and write: `secret_set`, the `oe secret` CLI and every `broker: \"db\"` credential refuse, and only `broker: \"env\"` credentials resolve.",
     routes: {

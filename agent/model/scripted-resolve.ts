@@ -9,10 +9,13 @@ import {
   ANY_SESSION,
   SCRIPTED_MODEL_ENV,
   SCRIPTED_MODEL_ID,
+  claimWakeOwner,
   clearIncompleteParentTurn,
   fillReportWakePlaceholder,
   fillWakePlaceholder,
   incompleteParentTurnFor,
+  isForeignWakeStraggler,
+  noteForeignWakeSilence,
   noteStaleHoldExpiry,
   nextScriptedRequestSequence,
   scriptedModelArmed,
@@ -23,6 +26,7 @@ import {
   unresolvedWakePlaceholderFault,
   wakeIdFromPrompt,
   wakeIdFromReport,
+  wakeOwnerSeq,
   type RecordedRequest,
   type ResolveObservation,
   type ScriptedEntry,
@@ -133,7 +137,7 @@ export async function scriptedModelFor(event: unknown, ctx: unknown): Promise<Re
   }
 
   entry.resolves.push(observation);
-  return buildStepModel(entry, observation, seqAtResolve);
+  return buildStepModel(entry, observation, seqAtResolve, usedFallback);
 }
 
 function snapshotSchema(schema: unknown): unknown {
@@ -190,9 +194,16 @@ interface StepVerdict {
   readonly step: ScriptedStep;
   readonly stale: boolean;
   readonly redriveSilence?: boolean;
+  readonly foreignWakeSilence?: boolean;
 }
 
-function serveStep(entry: ScriptedEntry, at: ResolveObservation, toolResultCount: number, prompt: PromptFacts): StepVerdict {
+function serveStep(
+  entry: ScriptedEntry,
+  at: ResolveObservation,
+  toolResultCount: number,
+  prompt: PromptFacts,
+  wildcard: boolean,
+): StepVerdict {
   const arm = at.role === "child" ? entry.script.child : entry.script.parent;
   const baselineKey = `${at.sessionId ?? "?"}/${at.turnId ?? "?"}/${at.role}`;
   const baseline = (entry.baselines[baselineKey] ??= toolResultCount);
@@ -204,6 +215,29 @@ function serveStep(entry: ScriptedEntry, at: ResolveObservation, toolResultCount
 
   const candidate = arm[index];
   const turnKey = at.turnId ?? "?";
+
+  const wakeOwner = prompt.wakeId === undefined ? undefined : wakeOwnerSeq(prompt.wakeId);
+  if (
+    isForeignWakeStraggler({
+      role: at.role,
+      wildcard,
+      callBearing: candidate.calls !== undefined,
+      absorbsStragglers: entry.absorbsStragglers,
+      wakeId: prompt.wakeId,
+      ownerSeq: wakeOwner,
+      seq: entry.seq,
+    })
+  ) {
+    noteForeignWakeSilence({
+      sessionId: String(at.sessionId),
+      turnId: turnKey,
+      wakeId: String(prompt.wakeId),
+      ownerSeq: Number(wakeOwner),
+      registeredAt: entry.registeredAt,
+    });
+    return { served: -1, step: { say: NO_REPLY_SENTINEL }, stale: false, foreignWakeSilence: true };
+  }
+
   const firstCallTurn = entry.firstCallTurnByRole[at.role];
   if (candidate.calls !== undefined && firstCallTurn !== undefined && firstCallTurn !== turnKey) {
     const firstCallWake = entry.firstCallWakeByRole[at.role];
@@ -224,6 +258,7 @@ function serveStep(entry: ScriptedEntry, at: ResolveObservation, toolResultCount
     entry.firstCallTurnByRole[at.role] = turnKey;
     if (prompt.wakeId !== undefined) entry.firstCallWakeByRole[at.role] = prompt.wakeId;
   }
+  if (at.role === "parent" && prompt.wakeId !== undefined) claimWakeOwner(prompt.wakeId, entry.seq);
   return { served: index, step: candidate, stale: false };
 }
 
@@ -231,26 +266,31 @@ async function awaitScriptSwap(
   current: ScriptedEntry,
   sessionId: string | undefined,
   seqAtResolve: number,
-): Promise<{ readonly entry?: ScriptedEntry; readonly expired: boolean }> {
-  if (sessionId === undefined || sessionId === ANY_SESSION) return { expired: false };
+): Promise<{ readonly entry?: ScriptedEntry; readonly expired: boolean; readonly viaWildcard: boolean }> {
+  if (sessionId === undefined || sessionId === ANY_SESSION) return { expired: false, viaWildcard: false };
   const store = scriptedStore();
   const deadline = Date.now() + staleTurnParkMs();
   for (;;) {
     const keyed = store.get(sessionId);
-    if (keyed !== undefined && keyed !== current) return { entry: keyed, expired: false };
+    if (keyed !== undefined && keyed !== current) return { entry: keyed, expired: false, viaWildcard: false };
     const wildcard = store.get(ANY_SESSION);
     if (wildcard !== undefined && wildcard !== current && wildcard.epoch === current.epoch && wildcard.seq > seqAtResolve) {
-      return { entry: wildcard, expired: false };
+      return { entry: wildcard, expired: false, viaWildcard: true };
     }
     let stillRegistered = false;
     for (const live of store.values()) if (live === current) stillRegistered = true;
-    if (!stillRegistered) return { expired: false };
-    if (Date.now() >= deadline) return { expired: true };
+    if (!stillRegistered) return { expired: false, viaWildcard: false };
+    if (Date.now() >= deadline) return { expired: true, viaWildcard: false };
     await new Promise((r) => setTimeout(r, 100));
   }
 }
 
-function buildStepModel(entry: ScriptedEntry, at: ResolveObservation, seqAtResolve: number): ReturnType<typeof mockModel> {
+function buildStepModel(
+  entry: ScriptedEntry,
+  at: ResolveObservation,
+  seqAtResolve: number,
+  usedFallback: boolean,
+): ReturnType<typeof mockModel> {
   return mockModel({
     modelId: SCRIPTED_MODEL_ID,
     provider: "open-everywhere-scripted",
@@ -259,7 +299,7 @@ function buildStepModel(entry: ScriptedEntry, at: ResolveObservation, seqAtResol
       let observation = at;
       const promptWakeId = wakeIdFromPrompt(request.messages);
       const promptFacts: PromptFacts = { redriveCorrection: promptIsRedriveCorrection(request.messages), wakeId: promptWakeId };
-      let verdict = serveStep(target, observation, request.toolResults.length, promptFacts);
+      let verdict = serveStep(target, observation, request.toolResults.length, promptFacts, usedFallback);
 
       if (verdict.stale) {
         const swap = await awaitScriptSwap(target, observation.sessionId, seqAtResolve);
@@ -279,10 +319,10 @@ function buildStepModel(entry: ScriptedEntry, at: ResolveObservation, seqAtResol
           observation = { ...observation };
           next.resolves.push(observation);
           target = next;
-          verdict = serveStep(target, observation, request.toolResults.length, promptFacts);
+          verdict = serveStep(target, observation, request.toolResults.length, promptFacts, swap.viaWildcard);
         }
       }
-      const { fault: stepFault, served, step, redriveSilence } = verdict;
+      const { fault: stepFault, served, step, redriveSilence, foreignWakeSilence } = verdict;
 
       const filled = (step.calls ?? []).map((c) => {
         const envelope = fillWakePlaceholder(c.input, promptWakeId);
@@ -310,6 +350,7 @@ function buildStepModel(entry: ScriptedEntry, at: ResolveObservation, seqAtResol
         ...promptShapeFields(request),
         ...(fault !== undefined ? { fault } : {}),
         ...(redriveSilence === true ? { redriveSilence: true } : {}),
+        ...(foreignWakeSilence === true ? { foreignWakeSilence: true } : {}),
       });
 
       if (typeof step.delayMs === "number" && step.delayMs > 0) {

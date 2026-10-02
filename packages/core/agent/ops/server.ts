@@ -76,7 +76,7 @@ export interface OpsServerDeps {
 }
 
 export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
-  const server = new McpServer({ name: "open-everywhere-ops", version: corePackageVersion() ?? "unknown" });
+  const server = new McpServer({ name: "open-everywhere-ops", version: corePackageVersion() });
   const identityDeclaredAtBoot = registeredDeploymentIdentity() !== undefined;
   const defaultOrgRefusal = (org: string | undefined): string | undefined => {
     if (org) return undefined;

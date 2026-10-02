@@ -126,6 +126,7 @@ export interface RecordedRequest {
   readonly messages: readonly { readonly role: string; readonly text: string }[];
   readonly fault?: string;
   readonly redriveSilence?: boolean;
+  readonly foreignWakeSilence?: boolean;
 }
 
 export function nextScriptedRequestSequence(): number {
@@ -158,6 +159,7 @@ export interface ScriptedEntry {
   readonly registeredAt: string;
   readonly epoch: number;
   readonly seq: number;
+  readonly absorbsStragglers: boolean;
   readonly holds: { released: boolean; cutShort: number };
 }
 
@@ -282,6 +284,78 @@ export function staleHoldExpiryNote(): string {
   );
 }
 
+function wakeOwnerCell(): Map<string, number> {
+  return processRegistryMap<number>("scripted-model-wake-owner.v1");
+}
+
+export function wakeOwnerSeq(wakeId: string): number | undefined {
+  return wakeOwnerCell().get(wakeId);
+}
+
+export function claimWakeOwner(wakeId: string, seq: number): void {
+  const cell = wakeOwnerCell();
+  if (!cell.has(wakeId)) cell.set(wakeId, seq);
+}
+
+export function __resetWakeOwnersForTest(): void {
+  wakeOwnerCell().clear();
+}
+
+export interface ForeignWakeCheck {
+  readonly role: ScriptedRole;
+  readonly wildcard: boolean;
+  readonly callBearing: boolean;
+  readonly absorbsStragglers: boolean;
+  readonly wakeId: string | undefined;
+  readonly ownerSeq: number | undefined;
+  readonly seq: number;
+}
+
+export function isForeignWakeStraggler(check: ForeignWakeCheck): boolean {
+  if (check.role !== "parent") return false;
+  if (!check.wildcard) return false;
+  if (!check.callBearing) return false;
+  if (check.absorbsStragglers) return false;
+  if (check.wakeId === undefined) return false;
+  if (check.ownerSeq === undefined) return false;
+  return check.ownerSeq !== check.seq;
+}
+
+interface ForeignWakeSilence {
+  readonly sessionId: string;
+  readonly turnId: string;
+  readonly wakeId: string;
+  readonly ownerSeq: number;
+  readonly registeredAt: string;
+}
+
+function foreignWakeSilences(): Map<string, ForeignWakeSilence> {
+  return processRegistryMap<ForeignWakeSilence>("scripted-model-foreign-wake.v1");
+}
+
+export function noteForeignWakeSilence(silence: ForeignWakeSilence): void {
+  foreignWakeSilences().set(`${silence.sessionId}/${silence.turnId}`, silence);
+}
+
+export function __resetForeignWakeSilencesForTest(): void {
+  foreignWakeSilences().clear();
+}
+
+export function foreignWakeSilenceNote(): string {
+  const all = [...foreignWakeSilences().values()];
+  if (all.length === 0) return "";
+  const each = all
+    .map((s) => `session ${s.sessionId}, turn "${s.turnId}", wake "${s.wakeId}" owned by registration #${s.ownerSeq}`)
+    .join("; ");
+  return (
+    ` — ⚠️ ALSO: the OPE-2240 foreign-wake fence answered ${all.length} straggler turn(s) with judged ` +
+    `silence in this fork: ${each}. Each one carried a wake a DIFFERENT registration had already served, ` +
+    "and reached a later WILDCARD script's call-bearing step, so it spent no step of it. That is the " +
+    "intended outcome for a leg that is over. If the wait above wanted one of these turns, the script " +
+    "for it must be registered on that SESSION's own id (harness.ts's `armSettlement`), not on the wildcard."
+  );
+}
+
 export function scriptedStore(): Map<string, ScriptedEntry> {
   return processRegistryMap<ScriptedEntry>("scripted-model.v1");
 }
@@ -305,7 +379,11 @@ function callerFrame(): string {
   return "an unknown caller (no frame outside scripted-model.ts)";
 }
 
-export function registerScript(script: SeatScript, sessionId: string = ANY_SESSION): ScriptedHandle {
+export interface RegisterScriptOptions {
+  readonly absorbsStragglers?: boolean;
+}
+
+export function registerScript(script: SeatScript, sessionId: string = ANY_SESSION, opts: RegisterScriptOptions = {}): ScriptedHandle {
   if (!scriptedModelArmed()) {
     throw new Error(
       `open-everywhere: registerScript called without ${SCRIPTED_MODEL_ENV}=1. ` +
@@ -330,6 +408,7 @@ export function registerScript(script: SeatScript, sessionId: string = ANY_SESSI
     registeredAt: callerFrame(),
     epoch: scriptedEpoch(),
     seq: nextRegistrationSeq(),
+    absorbsStragglers: opts.absorbsStragglers === true,
     holds: { released: false, cutShort: 0 },
   };
   store.set(sessionId, entry);
@@ -343,7 +422,7 @@ export function registerScript(script: SeatScript, sessionId: string = ANY_SESSI
     dispose: () => {
       if (store.get(sessionId) === entry) {
         store.delete(sessionId);
-        noteIfParentTurnIncomplete(entry);
+        if (!entry.absorbsStragglers) noteIfParentTurnIncomplete(entry);
       }
     },
   };

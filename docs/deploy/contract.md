@@ -146,8 +146,9 @@ fails signature verification and every post throws. Follow each
 [surface runbook](./surfaces/slack.md) for which of its values go where.
 
 The machine-readable `contract.json` lists only the two bootstrap names. A surface's env names are
-its own bundle's, and `packages/core` carries none of them by design — ask the ops plane's
-`quickstart` tool, which lists the env names for the surfaces **this** deployment carries.
+its own bundle's, and `packages/core` carries none of them by design — read that surface's own
+runbook. No ops tool lists them: the `quickstart` plan that once did was withdrawn with the wizard
+(OPE-2233), and `OPS_TOOL_NAMES` in `packages/core/agent/ops/server.ts` is the live set.
 
 Do not hand-roll the key in a shell. The ops tool `scaffold_credential_key` mints it into
 `.env.local` and never prints the value.
@@ -214,10 +215,12 @@ reads `unknown`.
 a durable volume is a host fact no read from inside the process can settle, and answering `yes`
 because the directory is writable would be the lie the whole surface exists to avoid.
 
-`version.core` reads `null` in a deployed bundle. Core's version comes from its package manifest,
-and a bundled server has none to read; `version.app` and `version.eve` come from values the app
-registers at boot with literals the bundler baked in, so those two survive it. The deployment's
-commit sha is deliberately **not** in the payload — the route is public, and a sha is an id.
+`version.core` is always a string, a deployed bundle included. It reads a literal committed in
+core (`agent/ops/package-info.ts`), so the value travels inside the compiled bundle. It used to read
+`null` there, because core's version came from a manifest read and a bundled server has none —
+`version.app` and `version.eve` already avoided that by coming from values the app registers at
+boot with literals the bundler baked in. The deployment's commit sha is deliberately **not** in the
+payload — the route is public, and a sha is an id.
 
 The document is assembled at most once every 15 seconds **per server process**, concurrent callers
 included. The route is public, so one caller must not be able to drive a database round trip and a

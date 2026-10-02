@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/create",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "license": "Apache-2.0",
   "type": "module",
   "description": "npx scaffold and setup check for Open Everywhere — one step engine, reported by --check for an agent-led setup.",
@@ -46,8 +46,8 @@
     "test:env-pipe": "tsx scripts/env-pipe-test.ts"
   },
   "dependencies": {
-    "@open-everywhere/core": "0.1.3",
-    "@open-everywhere/provider-slack": "0.1.3",
+    "@open-everywhere/core": "0.1.4",
+    "@open-everywhere/provider-slack": "0.1.4",
     "tsx": "^4.23.9"
   },
   "devDependencies": {

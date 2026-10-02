@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/core",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Open Everywhere core — the portable, host-agnostic agent runtime: access and approvals, identity, memory, spend, routines, webhooks, connectors, the audit chain and the `oe` roster build.",
   "keywords": [
     "agent",

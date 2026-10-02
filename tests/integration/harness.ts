@@ -31,7 +31,9 @@ import {
   registerScript,
   scriptedStore,
   staleHoldExpiryNote,
+  foreignWakeSilenceNote,
   __resetStaleHoldExpiriesForTest,
+  __resetForeignWakeSilencesForTest,
   type RecordedRequest,
   type ScriptedHandle,
   type ScriptedStep,
@@ -76,7 +78,7 @@ async function drainOutstandingSettlements(): Promise<void> {
   let drain: ScriptedHandle | undefined;
   if (!hadWildcard) {
     try {
-      drain = registerScript(SETTLEMENT_DRAIN_CLOSING_SCRIPT);
+      drain = registerScript(SETTLEMENT_DRAIN_CLOSING_SCRIPT, undefined, { absorbsStragglers: true });
     } catch {
       return;
     }
@@ -117,6 +119,7 @@ afterEach(() => {
   for (const cleanup of oePerTestCleanups.splice(0)) cleanup();
   beginScriptedEpoch();
   __resetStaleHoldExpiriesForTest();
+  __resetForeignWakeSilencesForTest();
 });
 export function afterThisTest(cleanup: () => void): void {
   oePerTestCleanups.push(cleanup);
@@ -374,7 +377,9 @@ export async function waitFor<T>(probe: () => T | undefined | Promise<T | undefi
       );
     }
     if (Date.now() > deadline) {
-      throw new Error(`${WAIT_TIMEOUT_PREFIX} ${timeoutMs}ms waiting for: ${label}${staleHoldExpiryNote()}${redeliveryRecoveryNote()}`);
+      throw new Error(
+        `${WAIT_TIMEOUT_PREFIX} ${timeoutMs}ms waiting for: ${label}${staleHoldExpiryNote()}${foreignWakeSilenceNote()}${redeliveryRecoveryNote()}`,
+      );
     }
     await sleep(400);
   }

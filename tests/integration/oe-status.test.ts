@@ -49,6 +49,7 @@ test("the status route is mounted, answers every contract requirement, and leaks
   expect(byId.get("node-24")!.met).toBe("yes");
   expect(body.version.eve).toMatch(/^\d+\.\d+\.\d+/);
   expect(body.version.app).toBe("unversioned");
+  expect(body.version.core).toMatch(/^\d+\.\d+\.\d+/);
   expect(byId.get("workflow-storage")!.met).toBe("unknown");
 
   expect(Object.keys(body.surfaces)).toContain("slack");
