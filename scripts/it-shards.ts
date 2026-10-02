@@ -1,10 +1,10 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
-import { cgroupMemoryCapBytes, type MemoryProbe, HOST_MEMORY_PROBE } from "./ci-max-workers.js";
+import { cgroupMemoryCapBytes, type BoxProbe, HOST_BOX_PROBE } from "./ci-max-workers.js";
 
 export const SANDBOX_MIN_SHARDS = 4;
-export const SANDBOX_FILES_PER_SHARD = 12;
+export const SANDBOX_FILES_PER_SHARD = 32;
 export const LOCAL_SHARDS = 1;
 
 export const INTEGRATION_INCLUDE_GLOBS: readonly string[] = ["tests/integration/**/*.test.ts"];
@@ -73,7 +73,7 @@ export function itShardsOverride(env: NodeJS.ProcessEnv = process.env): number |
 
 export function itShardCount(
   env: NodeJS.ProcessEnv = process.env,
-  probe: MemoryProbe = HOST_MEMORY_PROBE,
+  probe: BoxProbe = HOST_BOX_PROBE,
   countFiles: () => number | undefined = () => countTierFiles(),
 ): number {
   const override = itShardsOverride(env);
@@ -128,8 +128,3 @@ export function tierProofLine(sha: string, exit: number): string {
   return `OE_PROOF sha=${sha} suite=${INTEGRATION_SUITE_NAME} exit=${exit}`;
 }
 
-export const IT_SKIP_BUILD_ENV = "OE_IT_SKIP_BUILD";
-
-export function shardReusesBuild(plan: ShardPlan, index: number): boolean {
-  return plan.wholeTier && plan.runs.length > 1 && index > 0;
-}

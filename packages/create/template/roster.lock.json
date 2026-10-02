@@ -23,6 +23,7 @@
         "channel/control-read": "mounted",
         "channel/credential-intake-page": "mounted",
         "channel/oe-oauth-callback": "mounted",
+        "channel/oe-status": "mounted",
         "channel/policy-pages": "mounted",
         "channel/test-wake": "mounted",
         "channel/transcript-relay": "mounted",
@@ -173,7 +174,8 @@
       "version": "{{OE_VERSION}}",
       "contributions": {
         "channel/slack": "mounted",
-        "channel/slack-commands": "mounted"
+        "channel/slack-commands": "mounted",
+        "channel/slack-setup-page": "mounted"
       }
     }
   }

@@ -8,8 +8,10 @@ agent/channels/github.ts	mounted @open-everywhere/provider-github
 agent/channels/linear.ts	mounted @open-everywhere/provider-linear
 agent/channels/notion.ts	mounted @open-everywhere/provider-notion
 agent/channels/oe-oauth-callback.ts	mounted @open-everywhere/core
+agent/channels/oe-status.ts	mounted @open-everywhere/core
 agent/channels/policy-pages.ts	mounted @open-everywhere/core
 agent/channels/slack-commands.ts	mounted @open-everywhere/provider-slack
+agent/channels/slack-setup-page.ts	mounted @open-everywhere/provider-slack
 agent/channels/slack.ts	mounted @open-everywhere/provider-slack
 agent/channels/teams.ts	mounted @open-everywhere/provider-teams
 agent/channels/test-wake.ts	mounted @open-everywhere/core

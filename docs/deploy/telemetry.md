@@ -23,11 +23,10 @@ proposal).
 
 ## What is collected — the complete vocabulary
 
-Twelve events, total: the ten runtime events below, plus two install-wizard funnel
-events (`wizard.started`/`wizard.completed` — see
-["The install wizard's events"](#the-install-wizards-events-a-different-consent-regime)
-below, which is a **different, stricter consent regime** from the ten). **These
-tables are the entire payload — nothing else is ever sent.** The code enforces this
+Twelve events, total: the ten runtime events below, plus two **retired** install-wizard
+funnel events (`wizard.started`/`wizard.completed` — see
+["The retired install-wizard events"](#the-retired-install-wizard-events) below).
+**These tables are the entire payload — nothing else is ever sent.** The code enforces this
 as a closed vocabulary (`packages/core/agent/observability/telemetry.ts`'s `EVENT_SCHEMA`): an
 event name or attribute outside these tables is dropped before it ever reaches the
 network.
@@ -77,40 +76,35 @@ error messages or stack traces · environment variable values · repo or domain 
 IP addresses (the collector discards these — see below) · precise token counts ·
 user or channel counts.
 
-## The install wizard's events — a different consent regime
+## The retired install-wizard events
 
-The `create-open-everywhere` install wizard (`packages/create`) can send two more
-events, completing the adoption funnel (npm downloads → `wizard.started` →
-`wizard.completed` → `oe.instance.first_boot` → heartbeat = conversion → activation
-→ retention):
+`wizard.started` and `wizard.completed` are **retired.** The emitter lived in the unscoped
+`create-open-everywhere` releases; `@open-everywhere/create` ships none of it, and no version of this
+product sends them from anywhere else.
 
-| Event | Attributes | Why each attribute cannot leak |
+| Event | Attributes | Status |
 |---|---|---|
-| `wizard.started` | `oe.wizard.version` (this package's own semver) · `oe.wizard.platform` (`darwin`\|`linux`\|`win32`\|`other`) | A version string and an OS-family enum. Fires **once per install**, immediately after the disclosure prompt below records an accept/redirect decision — never before, never speculatively. |
-| `wizard.completed` | `oe.wizard.version` · `oe.wizard.platform` · `oe.wizard.steps_completed` (bucketed count of the 10 v1 steps satisfied at run end: `0`\|`1-3`\|`4-6`\|`7+`) | Same as above, plus a coarse progress bucket — never the exact count, never which steps. Fires **once per install**, at the end of an interactive wizard run. |
+| `wizard.started` | `oe.wizard.version` (that package's own semver) · `oe.wizard.platform` (`darwin`\|`linux`\|`win32`\|`other`) | No longer emitted. |
+| `wizard.completed` | `oe.wizard.version` · `oe.wizard.platform` · `oe.wizard.steps_completed` (a bucketed step count) | No longer emitted. |
 
-**These two are gated differently from the other ten.** The ten runtime events
-above obey `OE_TELEMETRY`/`DO_NOT_TRACK` only — the org admin "consents by
-deploying, having read the boot line." The wizard events additionally require an
-**explicit accept / decline / redirect answer** to a prompt the wizard shows before
-either event can ever fire — the wizard itself *is* the disclosure surface, so a
-human is always at the keyboard when consent is captured (a stronger guarantee than
-a boot-line notice, which the wizard doesn't need to fall back on).
+**Why they went.** These two were gated differently from the other ten: they additionally required
+an explicit accept / decline / redirect answer to a prompt the interactive install wizard showed
+before either could fire — the wizard *was* the disclosure surface, so a person was always at the
+keyboard when consent was captured. OPE-2233 retired that wizard: setup is agent-led, the CLI
+scaffolds and reports status and nothing more, and a CLI with no terminal has nowhere to show a
+consent prompt. An accept could therefore never be recorded again, so the events could never fire
+again, and the emitter, the prompt and the `.open-everywhere/wizard-state.json` consent file went
+with it. The deliberate trade that was always stated here still holds, now absolutely: **a
+`@open-everywhere/create` run sends genuinely nothing — not a "declined" beacon, not a
+differently-shaped byte, nothing at all.**
 
-**Consent ordering, pinned by test:** nothing from these two events is ever queued
-or sent before that prompt records a decision (`packages/create/scripts/
-telemetry-test.ts` proves this directly, including the ordering itself, not just
-the outcome). **Declining sends genuinely nothing — not a "declined" beacon, not a
-differently-shaped byte, nothing at all — for this install, ever.** The deliberate
-trade this implies: a declined install is invisible to the funnel. That's
-considered correct, not a gap — an opt-out that still phones home to say so isn't
-really an opt-out. `DO_NOT_TRACK`/`OE_TELEMETRY=off` set ahead of time skips the
-prompt entirely and auto-records a decline, honouring the exact same signal the ten
-runtime events do. `npx create-open-everywhere --decline-telemetry` records the same decline from a
-shell with no terminal (a coding agent's, for one). It is the only answer a flag can give: a decline
-sends nothing, and an accept still needs the person at the prompt. Consent (and a one-time-per-install guard for each event) is
-persisted in `.open-everywhere/wizard-state.json` inside the target checkout —
-wizard-internal bookkeeping, not app config; gitignored, never shared.
+**The two names stay in the closed vocabulary** (`EVENT_SCHEMA` in
+`packages/core/agent/observability/telemetry.ts`) and in the collector's schema
+(`deploy/oe-telemetry/src/schema.ts`). That is not an oversight: already-published versions of
+`create-open-everywhere` — the unscoped name the scaffolder shipped under before OPE-2234 moved it
+to `@open-everywhere/create` — are on npm and still emit them under their own consent prompt, so
+removing the names would make the collector drop a payload a user explicitly agreed to send. The
+names are kept so those events are still accepted; nothing in this repository emits them.
 
 ## First-boot grace window
 
@@ -211,8 +205,10 @@ surface as present — a misbehaving probe must not break the heartbeat. The cen
 a set, so a platform registered twice cannot double-count.
 
 `telemetryStatusLine` renders the status line the slash command shows.
-`resetTelemetryConfigCache` forces a config re-read, which is what lets the install wizard change
-the endpoint mid-process and have the change take effect.
+`resetTelemetryConfigCache` drops the memoized config so the next read re-derives it from the
+current env. It is module-private: its one caller outside tests was the install wizard's "redirect
+to your own collector" answer, which went with the wizard (see above), and nothing else mutates
+`OE_TELEMETRY_OTLP_URL` after the first emit.
 
 ### The turn clock
 

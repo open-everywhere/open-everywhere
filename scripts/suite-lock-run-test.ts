@@ -5,12 +5,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { SIGKILL_EXIT_CODE, acquireLock, classifyExit, fencedSpawn, pidAlive, readHolder, reclaimDeadLock, releaseLock, runLocked, type LockHolder } from "./suite-lock-run.js";
+import { SIGKILL_EXIT_CODE, acquireLock, classifyExit, fencedSpawn, pidAlive, readHolder, reclaimDeadLock, releaseLock, runLocked, spawnPrepareStep, type LockHolder } from "./suite-lock-run.js";
 import { DAC_BYPASS_CAPS, assertWriteBitsBite, dacFenceScript, writeBitsBite } from "./dac-fence.js";
-import type { MemoryProbe } from "./ci-max-workers.js";
+import type { BoxProbe } from "./ci-max-workers.js";
 import {
   INTEGRATION_INCLUDE_GLOBS,
-  IT_SKIP_BUILD_ENV,
   LOCAL_SHARDS,
   SANDBOX_FILES_PER_SHARD,
   SANDBOX_MIN_SHARDS,
@@ -19,7 +18,6 @@ import {
   itShardsOverride,
   planShards,
   sandboxShardCount,
-  shardReusesBuild,
   tierProofLine,
   worstExit,
   type DirEntry,
@@ -338,22 +336,26 @@ async function main(): Promise<void> {
   });
 
   await check("shard policy: OE_IT_SHARDS wins, then the box decides (the file-count plan in a sandbox, 1 uncapped)", () => {
-    const capped: MemoryProbe = { readFile: (p) => (p === "/proc/self/cgroup" ? "0::/x\n" : "1000"), totalMemoryBytes: () => 16_000_000_000 };
-    const uncapped: MemoryProbe = {
+    const capped: BoxProbe = { readFile: (p) => (p === "/proc/self/cgroup" ? "0::/x\n" : "1000"), totalMemoryBytes: () => 16_000_000_000, cpuCount: () => 4 };
+    const uncapped: BoxProbe = {
       readFile: (p) => {
         if (p === "/proc/self/cgroup") return "0::/x\n";
         throw new Error("ENOENT");
       },
       totalMemoryBytes: () => 16_000_000_000,
+      cpuCount: () => 4,
     };
-    const files110 = () => 110;
+    const bigTier = () => 2 * SANDBOX_FILES_PER_SHARD + 1;
+    const bigTierShards = 3;
     const noCount = () => undefined;
-    assert.equal(itShardCount({ OE_IT_SHARDS: "7" }, capped, files110), 7, "an explicit OE_IT_SHARDS is honoured over the box read");
-    assert.equal(itShardCount({ OE_IT_SHARDS: "1" }, capped, files110), 1, "OE_IT_SHARDS=1 is how a caller forces the single-process tier back");
-    assert.equal(itShardCount({}, capped, files110), 10, "🔴 a cgroup-capped process plans ONE shard per ~12 files — 110 files is 10 shards, not the old 4");
-    assert.equal(itShardCount({}, uncapped, files110), LOCAL_SHARDS, "NEGATIVE CONTROL: an uncapped box keeps today's single process");
-    assert.equal(itShardCount({ CI: "1" }, uncapped, files110), 10, "a declared CI runner plans from the file count even where no cgroup cap is readable");
-    assert.equal(itShardCount({ CI: "false" }, uncapped, files110), LOCAL_SHARDS, "NEGATIVE CONTROL: CI=false is not a CI runner");
+    assert.equal(itShardCount({ OE_IT_SHARDS: "7" }, capped, bigTier), 7, "an explicit OE_IT_SHARDS is honoured over the box read");
+    assert.equal(itShardCount({ OE_IT_SHARDS: "1" }, capped, bigTier), 1, "OE_IT_SHARDS=1 is how a caller forces the single-process tier back");
+    assert.ok(bigTierShards < SANDBOX_MIN_SHARDS, "the fixture must sit BELOW the floor, or the row below proves the floor and not the cap");
+    assert.equal(itShardCount({}, capped, bigTier), SANDBOX_MIN_SHARDS, `🔴 a cgroup-capped process plans one shard per ${SANDBOX_FILES_PER_SHARD} files, never fewer than ${SANDBOX_MIN_SHARDS}`);
+    assert.equal(itShardCount({}, capped, () => 4 * SANDBOX_FILES_PER_SHARD + 1), 5, "🔴 …and PAST the floor the file cap is what decides — one file past four caps buys a fifth shard");
+    assert.equal(itShardCount({}, uncapped, bigTier), LOCAL_SHARDS, "NEGATIVE CONTROL: an uncapped box keeps today's single process");
+    assert.equal(itShardCount({ CI: "1" }, uncapped, () => 4 * SANDBOX_FILES_PER_SHARD + 1), 5, "a declared CI runner plans from the file count even where no cgroup cap is readable");
+    assert.equal(itShardCount({ CI: "false" }, uncapped, bigTier), LOCAL_SHARDS, "NEGATIVE CONTROL: CI=false is not a CI runner");
     assert.equal(itShardCount({}, capped, noCount), SANDBOX_MIN_SHARDS, "a tier count the tree cannot answer falls back to the floor, never to a guess");
     let counted = 0;
     const counting = (): number => {
@@ -368,13 +370,19 @@ async function main(): Promise<void> {
     }
   });
 
-  await check("shard sizing: the plan holds ~12 files per process, with the old 4 as a floor", () => {
-    assert.equal(sandboxShardCount(110), 10, "🔴 the measured tier: 110 files is 10 shards of at most 12, not 4 of 27");
-    assert.equal(sandboxShardCount(85), 8, "the tier the old pin was written for also gets ~12 per process, not ~21");
-    assert.equal(sandboxShardCount(120), 10, "an exact multiple of the target does not buy an extra shard");
-    assert.equal(sandboxShardCount(121), 11, "…and one file past it does");
+  await check(`shard sizing: the plan holds at most ${SANDBOX_FILES_PER_SHARD} files per process, with ${SANDBOX_MIN_SHARDS} as a floor`, () => {
+    assert.equal(SANDBOX_FILES_PER_SHARD, 32, "🔴 the per-shard file cap is 32 (OPE-2229's re-derivation) — restate the derivation above before moving it");
+    assert.equal(SANDBOX_MIN_SHARDS, 4, "🔴 the shard floor is 4 — the split that recovered the tier");
+    const floorCapacity = SANDBOX_MIN_SHARDS * SANDBOX_FILES_PER_SHARD;
+    assert.equal(sandboxShardCount(floorCapacity), SANDBOX_MIN_SHARDS, "an exact multiple of the floor's capacity does not buy an extra shard");
+    assert.equal(sandboxShardCount(floorCapacity + 1), SANDBOX_MIN_SHARDS + 1, "🔴 …and one file past it does — the cap, not the floor, is what grows the plan");
+    assert.equal(sandboxShardCount(5 * SANDBOX_FILES_PER_SHARD), SANDBOX_MIN_SHARDS + 1, "a tier of five caps is five shards");
     assert.equal(sandboxShardCount(400), Math.ceil(400 / SANDBOX_FILES_PER_SHARD), "🔴 NO CEILING: a much larger tier keeps the per-process count flat, or the pin is back");
-    assert.equal(sandboxShardCount(12), SANDBOX_MIN_SHARDS, "a tier that fits in one process still takes the floor the OOM was recovered on");
+    const realFiles = countTierFiles(repoRoot);
+    assert.ok(realFiles !== undefined, "the repository's own tier must be countable");
+    assert.ok(realFiles! <= SANDBOX_MIN_SHARDS * SANDBOX_FILES_PER_SHARD, `the tier (${String(realFiles)} files) is inside the floor's capacity of ${floorCapacity}`);
+    assert.equal(sandboxShardCount(realFiles), SANDBOX_MIN_SHARDS, "🔴 today's tier plans on the FLOOR. A red here means the tier outgrew the floor's capacity and the cap is now adding shards — re-read the sizing note above and re-measure, do not just move the number");
+    assert.equal(sandboxShardCount(SANDBOX_FILES_PER_SHARD), SANDBOX_MIN_SHARDS, "a tier that fits in one process still takes the floor the OOM was recovered on");
     assert.equal(sandboxShardCount(undefined), SANDBOX_MIN_SHARDS, "an unreadable count takes the floor");
     for (const files of [undefined, 0, -3, 1, 12, 13, 110, 4000]) {
       const n = sandboxShardCount(files);
@@ -416,25 +424,52 @@ async function main(): Promise<void> {
     const real = countTierFiles(repoRoot);
     assert.ok(real !== undefined && real > 50, `the repository's own integration tier is countable — got ${String(real)}`);
     assert.equal(
-      itShardCount({}, { readFile: (p) => (p === "/proc/self/cgroup" ? "0::/x\n" : "1000"), totalMemoryBytes: () => 16_000_000_000 }),
+      itShardCount({}, { readFile: (p) => (p === "/proc/self/cgroup" ? "0::/x\n" : "1000"), totalMemoryBytes: () => 16_000_000_000, cpuCount: () => 4 }),
       sandboxShardCount(countTierFiles()),
       "🔴 the default (no injected counter) reads the tier off the tree — the wiring, not just the arithmetic",
     );
   });
 
-  await check("build reuse: shard 1 builds, every later shard of a sharded tier reuses it", () => {
-    const tier = planShards("vitest", ["run"], 4);
-    assert.equal(shardReusesBuild(tier, 0), false, "🔴 shard 1 BUILDS — nothing exists for it to reuse, and a skip there is the cold red");
-    assert.deepEqual([1, 2, 3].map((i) => shardReusesBuild(tier, i)), [true, true, true], "every shard after the first reuses shard 1's build and prewarm");
-    const single = planShards("vitest", ["run"], 1);
-    assert.equal(shardReusesBuild(single, 0), false, "an unsharded tier builds for itself");
-    const targeted = planShards("vitest", ["run", "tests/integration/memory/fence.test.ts"], 4);
-    assert.equal(shardReusesBuild(targeted, 0), false, "🔴 a targeted leg builds for itself — it is one process and never a later shard");
-    const setupSource = readFileSync(join(repoRoot, "tests", "integration", "global-setup.ts"), "utf8");
-    assert.ok(
-      setupSource.includes(`process.env.${IT_SKIP_BUILD_ENV} === "1"`),
-      `tests/integration/global-setup.ts must still branch on \`process.env.${IT_SKIP_BUILD_ENV} === "1"\` — the wrapper sets exactly that name`,
-    );
+  await check("prepare: the step runs ONCE and BEFORE any shard, and a red there runs no shard at all", async () => {
+    const dir = mkdtempSync(join(scratch, "prepare-"));
+    const marker = join(dir, "prepared");
+    const asksIfPrepared = ["-e", `process.exit(require("node:fs").existsSync(${JSON.stringify(marker)}) ? 0 : 7)`];
+    let prepareCalls = 0;
+    const ok = await runLocked("node", asksIfPrepared, {
+      manual: true,
+      lockDir: join(dir, "lock"),
+      maxWaitMs: 1_000,
+      prepare: async () => {
+        prepareCalls++;
+        writeFileSync(marker, "1");
+        return 0;
+      },
+    });
+    assert.equal(ok, 0, "🔴 the shard ran AFTER the prepare step — ordering, not merely presence");
+    assert.equal(prepareCalls, 1, "once per run, never once per shard: that repeat is what OPE-2235 removed");
+
+    rmSync(marker, { force: true });
+    const unprepared = await runLocked("node", asksIfPrepared, { manual: true, lockDir: join(dir, "lock-2"), maxWaitMs: 1_000 });
+    assert.equal(unprepared, 7, "a non-vitest command is not prepared, and the fixture says so");
+
+    let ran = 0;
+    const red = await runLocked("node", ["-e", "process.exit(0)"], {
+      manual: true,
+      lockDir: join(dir, "lock-3"),
+      maxWaitMs: 1_000,
+      prepare: async () => {
+        ran++;
+        return 3;
+      },
+    });
+    assert.equal(red, 3, "the run reports the prepare step's exit, not a shard's");
+    assert.equal(ran, 1, "and it did not retry the step per shard");
+
+    assert.equal(typeof spawnPrepareStep, "function");
+    const wrapperSource = readFileSync(wrapperScript, "utf8");
+    assert.ok(wrapperSource.includes('spawn("npm", ["run", "test:integration:prepare"]'), "the wrapper spawns the documented npm script");
+    const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as { scripts: Record<string, string> };
+    assert.ok(pkg.scripts["test:integration:prepare"]?.includes("tests/integration/prepare.ts"), "and that script names the step's own file");
   });
 
   await check("shard plan: the unfiltered tier splits; a targeted leg and an unreadable call never do", () => {
@@ -500,16 +535,23 @@ async function main(): Promise<void> {
     let out: string[] = [];
     const logged = await captureStderr(async () => {
       out = await captureStdout(async () => {
-        const code = await runLocked(fake, ["run"], { manual: false, lockDir, maxWaitMs: 20_000, env: { OE_IT_SHARDS: "4" }, emitProof: true });
+        const code = await runLocked(fake, ["run"], {
+          manual: false,
+          lockDir,
+          maxWaitMs: 20_000,
+          env: { OE_IT_SHARDS: "4" },
+          emitProof: true,
+          prepare: async () => 0,
+        });
         assert.equal(code, 3, "the tier takes the worst shard's code");
       });
     });
     assert.deepEqual(
       readFileSync(marks, "utf8").trim().split("\n"),
-      ["run --shard=1/4 skip=unset", "run --shard=2/4 skip=1", "run --shard=3/4 skip=1", "run --shard=4/4 skip=1"],
+      ["run --shard=1/4 skip=unset", "run --shard=2/4 skip=unset", "run --shard=3/4 skip=unset", "run --shard=4/4 skip=unset"],
       "🔴 all four shards ran IN ORDER — the loop must not stop on the red, or the series is incomplete and proves nothing. " +
-        "And shard 1 BUILDS while shards 2-4 are handed OE_IT_SKIP_BUILD=1 (OPE-2050): a skip on shard 1 is the cold red, " +
-        "and no skip on the rest is four full builds.",
+        "And NO shard is handed OE_IT_SKIP_BUILD (OPE-2235): the prepare step built the target, so every shard starts on the " +
+        "same prepared tree and none of them differs from the first.",
     );
     const proof = out.filter((l) => l.startsWith("OE_PROOF "));
     assert.equal(proof.length, 1, `exactly ONE tier line, after every shard — got ${JSON.stringify(proof)}`);
@@ -521,13 +563,12 @@ async function main(): Promise<void> {
       `…as a human log label and never as an evidence line — got ${JSON.stringify(shardLabels)}`,
     );
     assert.ok(
-      shardLabels.every((l) => /exit=\d+ peak-tree-rss=\d+(\.\d+)? [A-Za-z]+ wall=\d+\.\d+s build=(1|reused)$/u.test(l)),
-      `each shard label carries its exit, peak tree RSS, wall clock and build mode — got ${JSON.stringify(shardLabels)}`,
+      shardLabels.every((l) => /exit=\d+ peak-tree-rss=\d+(\.\d+)? [A-Za-z]+ wall=\d+\.\d+s workers=\d+$/u.test(l)),
+      `each shard label carries its exit, peak tree RSS, wall clock and worker count — got ${JSON.stringify(shardLabels)}`,
     );
-    assert.deepEqual(
-      shardLabels.map((l) => (l.endsWith("build=reused") ? "reused" : "1")),
-      ["1", "reused", "reused", "reused"],
-      "…and the label agrees with what the children were actually handed",
+    assert.ok(
+      shardLabels.every((l) => !l.includes("build=")),
+      `🔴 …and no build field, because no shard builds — got ${JSON.stringify(shardLabels)}`,
     );
     const shardingLine = logged.find((l) => l.includes("sharding the integration tier"));
     assert.ok(shardingLine !== undefined, "the sharded tier announces itself");
@@ -535,36 +576,12 @@ async function main(): Promise<void> {
       !/test file\(s\)|file count could NOT be read/u.test(shardingLine),
       `🔴 an explicit OE_IT_SHARDS reads no file count, so it must report none — got ${JSON.stringify(shardingLine)}`,
     );
-    const staleWarnings = logged.filter((l) => l.includes("reuses its tree"));
-    assert.equal(staleWarnings.length, 1, `the stale-tree warning is printed exactly once — got ${JSON.stringify(staleWarnings)}`);
-    assert.ok(
-      logged.indexOf(staleWarnings[0]!) > logged.findIndex((l) => l.includes("--shard=2/4")),
-      "🔴 …and only AFTER the red shard — a warning on shard 2 would be claiming a red that had not happened",
+    assert.deepEqual(
+      logged.filter((l) => l.includes("reuses its tree")),
+      [],
+      "no shard reuses another shard's tree any more, so nothing may warn that one does",
     );
     assert.equal(existsSync(lockDir), false, "the lock is released after a sharded run like any other");
-    rmSync(fakeDir, { recursive: true, force: true });
-  });
-
-  await check("runLocked: an inherited OE_IT_SKIP_BUILD makes shard 1 report `reused`, not `1`", async () => {
-    const lockDir = join(scratch, "lock-inherited-skip");
-    const fakeDir = mkdtempSync(join(tmpdir(), "oe-fake-vitest-skip-"));
-    const fake = join(fakeDir, "vitest");
-    writeFileSync(fake, "#!/usr/bin/env node\nprocess.exit(0);\n", { mode: 0o755 });
-    const before = process.env.OE_IT_SKIP_BUILD;
-    process.env.OE_IT_SKIP_BUILD = "1";
-    try {
-      const logged = await captureStderr(async () => {
-        await runLocked(fake, ["run"], { manual: false, lockDir, maxWaitMs: 20_000, env: { OE_IT_SHARDS: "2" }, emitProof: false });
-      });
-      assert.deepEqual(
-        logged.filter((l) => l.includes("--shard=")).map((l) => (l.endsWith("build=reused") ? "reused" : "1")),
-        ["reused", "reused"],
-        "🔴 shard 1 reports the build it did NOT do as `reused` — the receipt may never claim a build that did not happen",
-      );
-    } finally {
-      if (before === undefined) delete process.env.OE_IT_SKIP_BUILD;
-      else process.env.OE_IT_SKIP_BUILD = before;
-    }
     rmSync(fakeDir, { recursive: true, force: true });
   });
 
@@ -580,6 +597,7 @@ async function main(): Promise<void> {
         maxWaitMs: 20_000,
         env: { OE_IT_SHARDS: "4" },
         emitProof: true,
+        prepare: async () => 0,
       });
       assert.equal(code, 0, "the targeted leg still reports its own code");
     });

@@ -1,4 +1,5 @@
 import { resolveMemoryPlan, surfaceProvider, type MemoryResolveConfig } from "../agent/memory/resolve.js";
+import { MEMORY_PROVIDER_FLOOR, resolveMemoryProviderId } from "../agent/memory/backing-selection.js";
 import { getProvider, providerById, registerProvider, resetProvider, type MemoryProvider } from "../agent/memory/provider.js";
 import {
   defineDomain,
@@ -15,6 +16,7 @@ import type { SessionMode } from "../agent/access/resolver.js";
 import type { Partition } from "../agent/memory/partition.js";
 
 delete process.env.OE_MEMORY_PROVIDER;
+delete process.env.DATABASE_URL;
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -306,6 +308,48 @@ throws(() => assertSilosValid([{ name: "empty" } as MemorySilo]), "validation: a
   ok(surfaceProvider(binding("channel", "internal")).id === getProvider().id, "surfaceProvider: a channel keeps the env-selected singleton (no plan pin exists for it)");
   ok(surfaceProvider(binding("mpim", "internal")).id === getProvider().id, "…and so does mpim");
   ok(surfaceProvider(binding("channel", "internal")).id !== "sqlite", "…which is NOT the DB provider (the negative control for the DM assertion above)");
+}
+
+{
+  const r = (env: NodeJS.ProcessEnv) => resolveMemoryProviderId(env);
+  ok(r({}) === MEMORY_PROVIDER_FLOOR, "backing: nothing set ⇒ the git floor");
+  ok(r({ DATABASE_URL: "postgres://x/y" }) === "postgres", "backing: a bare DATABASE_URL ⇒ postgres, with no selector set");
+  ok(r({ DATABASE_URL: "  " }) === MEMORY_PROVIDER_FLOOR, "backing: a blank DATABASE_URL is not a database");
+  ok(r({ OE_MEMORY_PROVIDER: "git", DATABASE_URL: "postgres://x/y" }) === "git", "backing: the selector WINS over the derived default");
+  ok(r({ OE_MEMORY_PROVIDER: "postgres" }) === "postgres", "backing: an explicit postgres selector needs no DATABASE_URL to be the answer");
+  ok(r({ OE_MEMORY_PROVIDER: " postgres " }) === "postgres", "backing: the selector is trimmed");
+}
+
+{
+  const prior = { url: process.env.DATABASE_URL, selector: process.env.OE_MEMORY_PROVIDER };
+  try {
+    delete process.env.OE_MEMORY_PROVIDER;
+    process.env.DATABASE_URL = "postgres://u:p@h/db";
+    resetProvider();
+    let message = "";
+    try {
+      getProvider();
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+    ok(message.includes("DATABASE_URL"), "derived backing + no client: the throw names DATABASE_URL as the cause");
+    ok(!message.includes("OE_MEMORY_PROVIDER"), "…and NOT a selector the operator never set");
+    process.env.OE_MEMORY_PROVIDER = "postgres";
+    resetProvider();
+    let explicitMessage = "";
+    try {
+      getProvider();
+    } catch (err) {
+      explicitMessage = err instanceof Error ? err.message : String(err);
+    }
+    ok(explicitMessage.includes('OE_MEMORY_PROVIDER="postgres"'), "an EXPLICIT selector + no client: the throw names the selector");
+  } finally {
+    if (prior.url === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = prior.url;
+    if (prior.selector === undefined) delete process.env.OE_MEMORY_PROVIDER;
+    else process.env.OE_MEMORY_PROVIDER = prior.selector;
+    resetProvider();
+  }
 }
 
 console.log(`✓ memory-resolve: ${passed} assertions passed`);

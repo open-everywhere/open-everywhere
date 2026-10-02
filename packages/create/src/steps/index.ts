@@ -1,4 +1,4 @@
-import type { WizardStep } from "../engine.js";
+import type { SetupStep } from "../engine.js";
 import { prerequisitesStep } from "./prerequisites.js";
 import { repoStep } from "./repo.js";
 import { rosterStep } from "./roster.js";
@@ -6,11 +6,10 @@ import { vercelStep } from "./vercel.js";
 import { databaseStep } from "./database.js";
 import { slackStep } from "./slack.js";
 import { envChecklistStep } from "./env-checklist.js";
-import { telemetryDisclosureStep } from "./telemetry-disclosure.js";
 import { buildDeployStep } from "./build-deploy.js";
 import { verifyStep } from "./verify.js";
 
-export const WIZARD_STEPS: readonly WizardStep[] = [
+export const SETUP_STEPS: readonly SetupStep[] = [
   prerequisitesStep,
   repoStep,
   rosterStep,
@@ -18,7 +17,6 @@ export const WIZARD_STEPS: readonly WizardStep[] = [
   databaseStep,
   slackStep,
   envChecklistStep,
-  telemetryDisclosureStep,
   buildDeployStep,
   verifyStep,
 ];
@@ -31,7 +29,6 @@ export {
   databaseStep,
   slackStep,
   envChecklistStep,
-  telemetryDisclosureStep,
   buildDeployStep,
   verifyStep,
 };

@@ -1,119 +1,65 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { goalOf, type StepContext, type WizardIO, type WizardStep } from "../engine.js";
-import { HOSTED_MISS_NOTE, isSet, mergedEnv, writeEnvLocal } from "../env-file.js";
-import {
-  RUNTIME_ROLE_NAME,
-  OWNER_URL_ENV,
-  generateRuntimePassword,
-  deriveRuntimeUrl,
-  twoRoleProvisioningSql,
-} from "@open-everywhere/core/agent/ops/two-role.js";
+import { isSet, mergedEnv, missNote } from "../env-file.js";
+import { routeOf, type SetupRoute, type SetupStep, type StepContext } from "../engine.js";
+import { resolveOperationalSelection } from "@open-everywhere/core/agent/operational/selection.js";
+import { resolveMemoryProviderId } from "@open-everywhere/core/agent/memory/backing-selection.js";
+import { OWNER_URL_ENV, RUNTIME_ROLE_NAME } from "@open-everywhere/core/agent/ops/two-role.js";
 
-const HOSTED_SELECTORS = ["OE_OPERATIONAL_PROVIDER", "OE_MEMORY_PROVIDER"] as const;
-
-const HOSTED_DB_NEXT =
-  "add Neon from the Vercel Marketplace (Vercel project → Storage → Neon → Connect; it sets DATABASE_URL on the project), then run `npx create-open-everywhere` in a terminal to paste the same DATABASE_URL into .env.local, or set DATABASE_URL, OE_OPERATIONAL_PROVIDER=postgres and OE_MEMORY_PROVIDER=postgres there yourself";
-
-function targetsHostedDeploy(cwd: string): boolean {
-  const p = join(cwd, ".vercel", "project.json");
-  if (!existsSync(p)) return false;
-  try {
-    return Boolean((JSON.parse(readFileSync(p, "utf8")) as { projectId?: string }).projectId);
-  } catch {
-    return false;
-  }
+function postgresResolution(env: NodeJS.ProcessEnv): { operational: boolean; memory: boolean } {
+  const op = resolveOperationalSelection(env);
+  return { operational: op.id === "postgres" && op.floor === "none", memory: resolveMemoryProviderId(env) === "postgres" };
 }
 
-function hostedJudged(ctx: StepContext): boolean {
-  return goalOf(ctx) === "hosted" || targetsHostedDeploy(ctx.cwd);
+function nextFor(route: SetupRoute): string {
+  const write = 'write it with the ops MCP tool `scaffold_env { values: { DATABASE_URL: "<the connection string>" } }` — it selects postgres for both stores on its own';
+  return route === "vercel"
+    ? `add Neon from the Vercel Marketplace (\`npx vercel install neon\`, or the project's Storage → Neon → Connect; either sets DATABASE_URL on the project), then ${write}`
+    : `provision a Postgres the container can reach (the deployment contract names it), then ${write}`;
 }
 
-export const databaseStep: WizardStep = {
+export const databaseStep: SetupStep = {
   id: "database",
-  title: "Database (Neon/Postgres)",
+  title: "Database (Postgres)",
   check(ctx: StepContext) {
-    const env = mergedEnv(ctx.cwd, ctx.env);
-    if (hostedJudged(ctx)) {
-      const missing = [
-        ...(isSet(env.DATABASE_URL) ? [] : ["DATABASE_URL"]),
-        ...HOSTED_SELECTORS.filter((k) => env[k]?.trim() !== "postgres").map((k) => `${k}=postgres`),
-      ];
-      if (missing.length === 0) {
-        return {
-          satisfied: true,
-          detail: "DATABASE_URL and both postgres selectors are set locally. This check cannot read the Vercel project: the Neon integration sets DATABASE_URL there, and the two selectors must be set for Production too",
-        };
-      }
+    const env = mergedEnv(ctx.cwd, ctx.env) as NodeJS.ProcessEnv;
+    const route = routeOf(ctx);
+    const resolved = postgresResolution(env);
+    if (isSet(env.DATABASE_URL) && resolved.operational && resolved.memory) {
       return {
-        satisfied: false,
-        detail: `a hosted deploy needs Postgres (Vercel discards local state). Missing from .env.local and this shell: ${missing.join(", ")}. ${HOSTED_MISS_NOTE}`,
-        next: HOSTED_DB_NEXT,
+        satisfied: true,
+        detail:
+          "DATABASE_URL is set locally and selects postgres for both stores. This check cannot read the deployment's own " +
+          "environment: the same connection string must reach it too",
       };
     }
-    const postgresSelected = env.OE_MEMORY_PROVIDER === "postgres" || env.OE_OPERATIONAL_PROVIDER?.trim() === "postgres";
-    if (postgresSelected && !isSet(env.DATABASE_URL)) {
-      return { satisfied: false, detail: "a postgres store is selected, but DATABASE_URL is missing", next: "set DATABASE_URL in .env.local, or unset the postgres selectors for the embedded floor" };
-    }
+    const pointedAway = [
+      ...(resolved.operational || !isSet(env.OE_OPERATIONAL_PROVIDER) ? [] : ["OE_OPERATIONAL_PROVIDER"]),
+      ...(resolved.memory || !isSet(env.OE_MEMORY_PROVIDER) ? [] : ["OE_MEMORY_PROVIDER"]),
+    ];
     return {
-      satisfied: true,
-      detail: postgresSelected ? "DATABASE_URL set (postgres selected)" : "local run: the embedded Postgres floor under .open-everywhere-data/ — no database to set up",
+      satisfied: false,
+      detail:
+        "a deployment needs Postgres on both routes. " +
+        (isSet(env.DATABASE_URL)
+          ? `DATABASE_URL is set, but a selector points away from postgres: ${pointedAway.join(", ")}. Remove it, or set it to postgres. `
+          : "Missing from .env.local and this shell: DATABASE_URL — it selects postgres for both stores on its own. ") +
+        missNote(route),
+      next: nextFor(route),
     };
   },
   guide(ctx: StepContext) {
-    const hosted = hostedJudged(ctx);
+    const vercel = routeOf(ctx) === "vercel";
     return {
-      summary: hosted
-        ? "A hosted deploy needs Postgres: Vercel's filesystem is ephemeral, so local stores are wiped on every deploy, and core throws on them there at first use."
-        : "A local run uses the embedded Postgres floor and needs no database.",
+      summary: "Both routes need Postgres: an ephemeral disk (Vercel) or a replaced container (Docker) loses every local store.",
       instructions: [
-        "Vercel project → Storage → Neon → Connect. The Marketplace integration sets DATABASE_URL on the project.",
-        "Copy the same DATABASE_URL into .env.local (this step can do it), with OE_MEMORY_PROVIDER=postgres and OE_OPERATIONAL_PROVIDER=postgres.",
-        hosted
-          ? "Only ever running locally? Re-run with `--goal local`, and unlink the Vercel project if one is linked."
-          : "To deploy, re-run without `--goal local`.",
+        vercel
+          ? "`npx vercel install neon` provisions Neon and connects it to the linked project, which sets DATABASE_URL there. The project's Storage → Neon → Connect does the same thing."
+          : "Provision a Postgres the container can reach (Neon, RDS, or your own server). The deployment contract states what it must satisfy.",
+        "Write the same connection string into .env.local with the ops tool `scaffold_env`. It selects postgres for the operational store and the memory backing on its own — no provider selector needed. Never paste a connection string into the chat.",
+        vercel
+          ? "The deployment needs it too: the Neon integration already set DATABASE_URL on the Vercel project."
+          : "The deployment needs it too: DATABASE_URL is part of the container's environment.",
+        `Harden later: the two-role split parks the owner credential as ${OWNER_URL_ENV} and runs the app as the non-owner "${RUNTIME_ROLE_NAME}" role, which the owner-DDL escape cannot reach. It is MANUAL — nothing provisions it for you. See https://github.com/open-everywhere/open-everywhere/blob/main/docs/extending/database.md.`,
       ],
     };
-  },
-  async automate(ctx: StepContext, io: WizardIO) {
-    const wantsHosted = await io.confirm("Set up hosted Postgres now? (say no if you're just running locally)");
-    if (!wantsHosted) return { ran: false, ok: false, detail: "skipped — local git/sqlite backing" };
-    const url = await io.askSecret("Paste your Neon/Postgres DATABASE_URL (the OWNER string — e.g. neondb_owner)");
-    if (!url) return { ran: true, ok: false, detail: "no value entered" };
-
-    const wantsTwoRole = await io.confirm(
-      "Harden append-only with the two-role split? (recommended — the app runs as a non-owner role the owner-DDL escape can't reach)",
-    );
-    if (wantsTwoRole) {
-      let runtimeUrl: string;
-      const password = generateRuntimePassword();
-      try {
-        runtimeUrl = deriveRuntimeUrl(url, RUNTIME_ROLE_NAME, password);
-      } catch (err) {
-        writeEnvLocal(ctx.cwd, { DATABASE_URL: url, OE_MEMORY_PROVIDER: "postgres", OE_OPERATIONAL_PROVIDER: "postgres" });
-        return { ran: true, ok: true, detail: `single-role (couldn't derive a runtime URL: ${err instanceof Error ? err.message : String(err)}). See docs/extending/database.md to adopt the split later.` };
-      }
-      io.print("");
-      io.print("── Two-role provisioning ────────────────────────────────────────────────");
-      io.print("1. Boot ONCE with the owner DATABASE_URL so the schema applies as the owner.");
-      io.print(`2. Then run this SQL AS THE OWNER (creates the "${RUNTIME_ROLE_NAME}" role + its grants):`);
-      io.print("");
-      for (const stmt of twoRoleProvisioningSql(RUNTIME_ROLE_NAME, password)) io.print(`   ${stmt};`);
-      io.print("");
-      io.print(`   Generated runtime-role password (shown ONCE, not stored): ${password}`);
-      io.print("   Re-run the GRANT statements after any upgrade that adds a table.");
-      io.print("─────────────────────────────────────────────────────────────────────────");
-      io.print("");
-      writeEnvLocal(ctx.cwd, {
-        DATABASE_URL: runtimeUrl,
-        [OWNER_URL_ENV]: url,
-        OE_MEMORY_PROVIDER: "postgres",
-        OE_OPERATIONAL_PROVIDER: "postgres",
-      });
-      return { ran: true, ok: true, detail: `two-role: DATABASE_URL = the ${RUNTIME_ROLE_NAME} runtime role; owner parked as ${OWNER_URL_ENV} (both in .env.local, never a tracked file)` };
-    }
-
-    writeEnvLocal(ctx.cwd, { DATABASE_URL: url, OE_MEMORY_PROVIDER: "postgres", OE_OPERATIONAL_PROVIDER: "postgres" });
-    return { ran: true, ok: true, detail: "single-role saved to .env.local (adopt the two-role split anytime — docs/extending/database.md)" };
   },
 };

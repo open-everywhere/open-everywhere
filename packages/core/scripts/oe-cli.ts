@@ -43,10 +43,13 @@ if (subcommand === "wrap-untrusted") {
     readStdin: readAllStdin,
   });
   process.exit(code);
+} else if (subcommand === "upgrade") {
+  const { runUpgradeCommand, realUpgradeIo } = await import("./oe-upgrade.js");
+  process.exit(await runUpgradeCommand(argv.slice(1), realUpgradeIo(), process.cwd()));
 } else if (subcommand === "build" || subcommand.startsWith("--")) {
   await runBuild(subcommand === "build" ? argv.slice(1) : argv);
 } else {
-  console.error(`oe: unknown subcommand "${subcommand}". Known: build, secret, wrap-untrusted.`);
+  console.error(`oe: unknown subcommand "${subcommand}". Known: build, upgrade, secret, wrap-untrusted.`);
   process.exit(2);
 }
 

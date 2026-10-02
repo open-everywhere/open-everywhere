@@ -9,6 +9,7 @@ import {
   ROOT_PKG_LABEL,
   ROOT_SUBPROCESS_LEGS,
   SHARD_COUNT,
+  SUBPROCESS_LEG_TIMEOUT_MS,
   SUITE_FILE_WITHOUT_SCRIPT,
   suiteFilesOnDisk,
   suiteFilesWithARunner,
@@ -247,5 +248,25 @@ describe("root chain parity", () => {
       expect(reason.length, `ROOT_SUBPROCESS_LEGS entry "${script}" carries no reason`).toBeGreaterThan(20);
       expect(needsSubprocess(leg!), `${legLabel(leg!)} should be routed to runLegInSubprocess`).toBe(true);
     }
+  });
+
+  test("a subprocess leg runs on SUBPROCESS_LEG_TIMEOUT_MS, which is larger than the batched testTimeout", () => {
+    const config = readFileSync(join(REPO_ROOT, "vitest.chain.config.ts"), "utf8");
+    const declared = /testTimeout:\s*([\d_]+)/.exec(config);
+    expect(declared, "vitest.chain.config.ts still declares a numeric testTimeout").not.toBeNull();
+    const batchedMs = Number(declared![1].replaceAll("_", ""));
+    expect(
+      SUBPROCESS_LEG_TIMEOUT_MS,
+      `SUBPROCESS_LEG_TIMEOUT_MS (${SUBPROCESS_LEG_TIMEOUT_MS}) must exceed the batched testTimeout ` +
+        `(${batchedMs}) \u2014 otherwise routing a leg to its own process gives it no more budget than the ` +
+        `shared worker it left, and a leg in ROOT_SUBPROCESS_LEGS for its runtime still dies`,
+    ).toBeGreaterThan(batchedMs);
+    const runner = readFileSync(join(HERE, "_run-shard.ts"), "utf8");
+    expect(
+      runner,
+      "scripts/chain/_run-shard.ts passes SUBPROCESS_LEG_TIMEOUT_MS as the per-test timeout for a " +
+        "subprocess leg. Without that third argument to `test()`, vitest applies the batched " +
+        "testTimeout and the constant above is decoration.",
+    ).toContain("inSubprocess ? SUBPROCESS_LEG_TIMEOUT_MS : undefined");
   });
 });

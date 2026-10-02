@@ -52,9 +52,45 @@ function withWarnTap<T>(run: (warns: string[]) => T): T {
   ok(r({ OE_OPERATIONAL_PROVIDER: "sqlite" }).id === "sqlite", "resolve: explicit sqlite ⇒ id sqlite");
   ok(r({ OE_OPERATIONAL_PROVIDER: "postgres" }).floor === "none", "resolve: explicit postgres ⇒ hosted (floor none)");
   const dbOnly = r({ DATABASE_URL: "postgres://x/y" });
-  ok(dbOnly.id === "sqlite" && dbOnly.floor === "sqlite", "resolve: DATABASE_URL only (no provider) ⇒ legacy sqlite default, UNTOUCHED (no pglite)");
+  ok(dbOnly.id === "postgres" && dbOnly.floor === "none", "resolve: DATABASE_URL only (no selector) ⇒ hosted postgres, no floor");
+  ok(r({ DATABASE_URL: "   " }).floor === "pglite", "resolve: a blank DATABASE_URL is not a database — still the embedded floor");
   const hosted = r({ OE_OPERATIONAL_PROVIDER: "postgres", DATABASE_URL: "postgres://x/y" });
   ok(hosted.id === "postgres" && hosted.floor === "none", "resolve: postgres + DATABASE_URL ⇒ hosted path untouched");
+  const pinnedSqlite = r({ OE_OPERATIONAL_PROVIDER: "sqlite", DATABASE_URL: "postgres://x/y" });
+  ok(pinnedSqlite.id === "sqlite" && pinnedSqlite.floor === "sqlite", "resolve: an explicit sqlite selector overrides a present DATABASE_URL");
+  ok(r({ OE_OPERATIONAL_PROVIDER: "sqlite" }).floor === "sqlite", "resolve: sqlite is now reachable ONLY by naming it");
+}
+
+{
+  const prior = { url: process.env.DATABASE_URL, selector: process.env.OE_OPERATIONAL_PROVIDER };
+  try {
+    delete process.env.OE_OPERATIONAL_PROVIDER;
+    process.env.DATABASE_URL = "postgres://u:p@h/db";
+    resetOperationalStore();
+    let message = "";
+    try {
+      getOperationalStore();
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+    ok(message.includes("DATABASE_URL"), "derived selection + no client: the throw names DATABASE_URL as the cause");
+    ok(!message.includes("OE_OPERATIONAL_PROVIDER"), "…and NOT a selector the operator never set");
+    process.env.OE_OPERATIONAL_PROVIDER = "postgres";
+    resetOperationalStore();
+    let explicitMessage = "";
+    try {
+      getOperationalStore();
+    } catch (err) {
+      explicitMessage = err instanceof Error ? err.message : String(err);
+    }
+    ok(explicitMessage.includes('OE_OPERATIONAL_PROVIDER="postgres"'), "an EXPLICIT selector + no client: the throw names the selector");
+  } finally {
+    if (prior.url === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = prior.url;
+    if (prior.selector === undefined) delete process.env.OE_OPERATIONAL_PROVIDER;
+    else process.env.OE_OPERATIONAL_PROVIDER = prior.selector;
+    resetOperationalStore();
+  }
 }
 
 {

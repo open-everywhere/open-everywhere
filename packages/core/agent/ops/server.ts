@@ -3,16 +3,14 @@ import { randomBytes } from "node:crypto";
 import { join, resolve, dirname, basename } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { quickstartPlan, type PlanFacts, mergeEnv, credentialKeyStatus, CREDENTIAL_KEY_ENV_NAME, CREDENTIAL_KEY_BYTES } from "./quickstart.js";
+import { mergeEnv, credentialKeyStatus, CREDENTIAL_KEY_ENV_NAME, CREDENTIAL_KEY_BYTES } from "./quickstart.js";
 import { preflightAsync } from "./probes.js";
 import { corePackageVersion } from "./package-info.js";
-import { registeredSurfaces } from "../identity/trust.js";
 import { registeredDeploymentIdentity, deploymentOrg } from "../identity/deployment-identity.js";
 import { DEPLOY_HOST_PLACEHOLDER, normalizeDeployHost, surfaceAppManifest, surfaceAppManifestSurfaces, surfaceAppNameProblem } from "./surface-manifest.js";
 
 export const OPS_TOOL_NAMES = [
   "preflight",
-  "quickstart",
   "surface_manifest",
   "scaffold_env",
   "scaffold_credential_key",
@@ -43,17 +41,6 @@ function envTargetRefusal(file: string): string | undefined {
     );
   }
   return undefined;
-}
-
-function planFacts(): PlanFacts {
-  let vercelLinked = false;
-  try {
-    const linked = JSON.parse(readFileSync(join(projectDir(), ".vercel", "project.json"), "utf-8")) as { projectId?: unknown };
-    vercelLinked = typeof linked.projectId === "string" && linked.projectId.length > 0;
-  } catch {
-    vercelLinked = false;
-  }
-  return { vercelLinked, internalSurfaces: registeredSurfaces().filter((s) => s.trust === "internal").length };
 }
 
 function loadEnvFile(path: string): Record<string, string> {
@@ -110,21 +97,19 @@ export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
       title: "Preflight check",
       description: "Check the prerequisites for running/deploying Open Everywhere (node, model key, providers, durable DB, control-plane auth), plus the LIVE posture of each configured provider that registers a probe (a check env alone cannot answer, so it asks the vendor). Reads the project's .env.local. Read-only — reports what's set and how to fix what's missing.",
       inputSchema: {
-        target: z.enum(["local", "hosted"]).default("local").describe("local = npm run dev on this machine; hosted = a Vercel deploy (requires the postgres stores and the credential key, and does not require a gateway key)"),
+        target: z
+          .enum(["local", "vercel", "docker"])
+          .default("local")
+          .describe(
+            "the route this check judges against: vercel = a Vercel deploy (OIDC covers the model route, so no gateway key); " +
+              "docker = a self-hosted container against the deployment contract (needs a gateway key; a different model backend is an adapter swap in app code); " +
+              "local = npm run dev on this machine, the development loop and never a setup route. Both deployment routes need " +
+              "the postgres stores and the credential key.",
+          ),
         envPath: z.string().optional(),
       },
     },
     async (a) => json(await preflightAsync(mergedEnv(a.envPath), { target: a.target })),
-  );
-
-  server.registerTool(
-    "quickstart",
-    {
-      title: "Quickstart plan",
-      description: "Return the tailored, ordered zero→running plan for a goal, with each step marked done/todo from the current config. goal=local (npm run dev), slack/github (add a surface to a local run), or deploy (the hosted path: Vercel + Neon + every registered surface, in order). Follow the steps — running commands with the user's consent (see the quickstart-open-everywhere skill).",
-      inputSchema: { goal: z.enum(["local", "slack", "github", "deploy"]).default("local"), envPath: z.string().optional() },
-    },
-    (a) => json(quickstartPlan(a.goal, mergedEnv(a.envPath), planFacts())),
   );
 
   server.registerTool(
@@ -189,7 +174,7 @@ export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
       title: "Write .env.local config",
       description:
         "Merge KEY=VALUE settings into the project's .env.local (updating in place, appending new keys, preserving comments). Use after " +
-        "gathering answers from preflight/quickstart. The target must sit at the project root and be named .env, .env.local or " +
+        "gathering answers from the preflight check. The target must sit at the project root and be named .env, .env.local or " +
         ".env.<name>.local — the names this repository never tracks; any other name is refused, because these values are secrets and a " +
         ".env.example is a tracked file.",
       inputSchema: {

@@ -47,17 +47,6 @@ export const AMBIENT_READ_MANIFEST: ReadonlyMap<string, DeclaredRead> = new Map(
     },
   ],
   [
-    declarationKey("packages/create/scripts/telemetry-test.ts", WHOLE_ENV),
-    {
-      klass: "deliberate",
-      why:
-        "`runTelemetryDisclosure(dir, env, io)` takes the environment as a parameter — this repo's " +
-        "testability convention — and the suite passes the real one after `clearTelemetryEnv()` has " +
-        "deleted every name the function consults. The five names that decide the outcome are " +
-        "therefore the suite's own; the rest of the host's environment reaches nothing.",
-    },
-  ],
-  [
     declarationKey("scripts/model-stack-policy-test.ts", WHOLE_ENV),
     {
       klass: "deliberate",

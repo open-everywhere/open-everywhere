@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createOwnedTempDir, removeTreeWithoutFollowingLinks, sweepAbandonedTempDirs } from "./owned-temp-dir";
+import { createOwnedTempDir, removeTreeWithoutFollowingLinks, sweepAbandonedTempDirs } from "./owned-temp-dir.js";
 
 export const ISOLATED_EVE_ENTRY = ".workflow-data";
 

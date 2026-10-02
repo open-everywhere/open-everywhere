@@ -96,11 +96,13 @@ model, or jump straight to a section. New here? Start with
 
 ## 6. Deploy & operate
 
+- [The deployment contract](./deploy/contract.md) — what a host must provide (Node 24, a public HTTPS URL, Postgres, a sandbox backend, egress control, a model route, two secrets, eve's durable run storage), the two proven routes, and the `GET /eve/v1/oe/status` route a running deployment answers them on.
 - [Hosting overview](./deploy/hosting-overview.md) — a platform is a curated set of adapters.
 - [Hosting comparison](./deploy/platforms/comparison.md) — Vercel vs KVM self-host vs Docker self-host vs container PaaS, capability by capability.
 - Platform guides: [Vercel](./deploy/platforms/vercel.md) · [Cloudflare](./deploy/platforms/cloudflare.md) · [AWS](./deploy/platforms/aws.md) · [Azure](./deploy/platforms/azure.md) · [GCP](./deploy/platforms/gcp.md) · [Self-roll](./deploy/platforms/self-roll.md)
 - [Setup runbook](./deploy/setup-runbook.md) — the full path beyond quick start.
 - [Agent-driven setup](./deploy/agent-driven-setup.md) — the same path written for an agent driving the `open-everywhere-ops` MCP server from the operator's own checkout: which tool each step calls, and the five steps a vendor console reserves for a human.
+- [Setup steps](./deploy/setup-steps.md) — the ordered step list a setup walks, generated from the setup engine itself so the page cannot drift from the status check; plus the expected build warnings and what "Develop locally" is for.
 - [Consuming as npm packages](./deploy/consuming-as-packages.md) — run Open Everywhere from your own repo instead of a fork: the eight packages, the exact-eve peer pin (and where it does *not* trip), and why nothing runs on install.
 - [Rollback, verify, record](./deploy/rollback.md) — the post-deploy health probe, one-command rollback, and the known-good pointer that makes it one hop.
 - [The `oe/cloud-proof` lane](./deploy/cloud-proof.md) — a cloud sandbox proof as an alternative to a paid Actions runner: the evidence format, the verify/post scripts, the deploy gate's acceptance rule, and the trust model stated honestly.

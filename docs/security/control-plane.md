@@ -81,11 +81,33 @@ Within the control MCP door there's a further split by *who's reaching in*:
 | `directory_sync_now` | run the identity-directory (Okta) sync for an org now, and return the plan it applied | proposal + eager narrow — see below |
 | `directory_sync_status` | the last sync's result: provider, policy, counts, and any ambiguity it refused to act on | org-admin read — see below |
 | `directory_groups_plan` | diff the IdP's group memberships against the person-group overlay and return the next overlay file, or (with `deliver: true`) open a bot-PR that writes it | **review mode either way — nothing applies until a human commits/merges**, see below |
+| `reopen_slack_setup` | reopen the `/setup` page after a Slack install has locked it, so setup can be run again | org-admin only — see below |
 
 The identity and directory verbs are **org-admin only, including the reads**: a link-set enumerates one
 human's accounts across every surface, which is exactly the read-across a `domain:<name>` role is
 scoped *not* to have (`memory_admin_list` takes the same line for the same reason). A link-set
 belongs to no surface and no domain, so there is no scope for a domain role to cover.
+
+`reopen_slack_setup` is the one key to the `/setup` lock, and the lock is what makes that page safe
+to serve. `/setup` (the agent-led Slack install, OPE-2231) closes for good at the first successful
+install. Without a key, a deployment could never be re-pointed at another workspace, nor re-run after
+an install that captured the wrong thing — recoverable only by someone with direct database access.
+
+**It is not the runtime *grant* the plane forbids**, and the difference is worth stating because the
+verb looks like one. Reopening grants nothing on its own: the reopened page still demands a one-time
+setup code that the deployment mints and logs *after* the reopen, and this verb cannot read it. So
+calling it converts no authority into Slack access by itself — it hands the next step to whoever can
+read the deployment's logs, which is a **platform** permission (`vercel logs`, `docker logs`) and
+emphatically not the same thing as the OE `admin` role this verb requires. The two sets may overlap at
+a small operator and may not overlap at all at a larger one; nothing here assumes either.
+
+What it risks is a second `/setup` run replacing a working install's credentials, which is why it is
+**org-admin only** and audited (`slack.setup_reopened`). It leaves every stored Slack credential in
+place, so the deployment keeps serving the workspace while an admin walks the page; only a completed
+second run replaces them. What the install before it destroyed is its own **claim** credentials — the
+one-time setup code and the cookie key — so no *claim* credential from the first run survives into the
+second, while the client secret, the bot token and the live signing secret all do, which is what the
+paragraph above means by leaving them in place.
 
 `revoke_link_set` is the offboarding lever and does not come back: it tombstones the accounts so a
 later proof-of-control challenge cannot re-link them to anyone, and it **purges the credentials

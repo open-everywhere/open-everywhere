@@ -1,8 +1,6 @@
 import { existsSync, readdirSync } from "node:fs";
-import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { goalOf, type StepContext, type WizardIO, type WizardStep } from "../engine.js";
-import { npmCommand } from "../npm.js";
+import { routeOf, type SetupStep, type StepContext } from "../engine.js";
 import { mergedEnv } from "../env-file.js";
 import { normalizeHost, probeDeployment } from "../deploy-probe.js";
 
@@ -24,45 +22,42 @@ function deployOrigin(ctx: StepContext): string | undefined {
   return fromEnv ? normalizeHost(fromEnv) : undefined;
 }
 
-export const buildDeployStep: WizardStep = {
+function deployCommand(ctx: StepContext): string {
+  return routeOf(ctx) === "docker"
+    ? "build the image and run it on your server (the deployment contract states what it must satisfy)"
+    : "npx vercel deploy --prod";
+}
+
+export const buildDeployStep: SetupStep = {
   id: "build-deploy",
   title: "Build + deploy",
   async check(ctx: StepContext) {
-    if (goalOf(ctx) === "local") {
-      return { satisfied: true, detail: "not needed for a local run: `npm run dev` runs `oe build` itself" };
-    }
     if (!buildOutputPresent(ctx.cwd)) return { satisfied: false, detail: "not built yet", next: "npm run build" };
     const origin = deployOrigin(ctx);
     if (origin === undefined) {
       return {
         satisfied: false,
         detail: "built. The deploy is unproven: no host to probe",
-        next: "npx vercel deploy --prod, then re-run with --host https://<host> (the host the deploy prints)",
+        next: `${deployCommand(ctx)}, then re-run with --host https://<host>`,
       };
     }
     const probe = await probeDeployment(origin);
     return probe.ok
       ? { satisfied: true, detail: probe.detail }
-      : { satisfied: false, detail: probe.detail, next: "npx vercel deploy --prod, then re-run this check" };
+      : { satisfied: false, detail: probe.detail, next: `${deployCommand(ctx)}, then re-run this check` };
   },
-  guide() {
+  guide(ctx: StepContext) {
+    const vercel = routeOf(ctx) === "vercel";
     return {
       summary: "Build before you deploy — a broken build must never be promoted.",
       instructions: [
         "`npm run build` (= `oe build`, then `eve build`) — must be green.",
-        "Deploy is a SEPARATE, explicit step this wizard will not run for you: `npx vercel deploy --prod` (confirm the scope/team first).",
-        "`git push` does NOT deploy — pushing only updates the repo.",
-        "Then re-run `npx create-open-everywhere --check --host https://<host>`: it probes the deployed Slack route.",
+        vercel
+          ? "Deploy is a SEPARATE, explicit step: `npx vercel deploy --prod` (confirm the scope and team first). A `git push` does NOT deploy."
+          : "Deploy is a SEPARATE, explicit step: build the image and run it on your server, with the contract's environment set. See https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/contract.md.",
+        "Then re-run `npx @open-everywhere/create --check --host https://<host>`: it probes the deployed Slack route.",
+        "The probe passes on the route's own `401 unauthorized`, which proves the function booted and the route is mounted. It does NOT prove the deployment holds SLACK_SIGNING_SECRET: the route answers the same without it. Only Event Subscriptions showing **Verified** in the Slack console proves that.",
       ],
     };
-  },
-  async automate(ctx: StepContext, io: WizardIO) {
-    if (buildOutputPresent(ctx.cwd)) return { ran: false, ok: false, detail: "built — deploy with `npx vercel deploy --prod`, then re-run with --host" };
-    const wantsBuild = await io.confirm("Run `npm run build` now?");
-    if (!wantsBuild) return { ran: false, ok: false, detail: "skipped" };
-    const [command, args] = npmCommand(["run", "build"], ctx.env);
-    const result = spawnSync(command, args, { cwd: ctx.cwd, stdio: "inherit", env: ctx.env });
-    const ok = result.status === 0;
-    return { ran: true, ok, detail: ok ? "build succeeded" : `build failed (exit ${result.status ?? "unknown"})` };
   },
 };

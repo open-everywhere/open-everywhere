@@ -48,7 +48,7 @@ export type { ExclusiveCredentialHome, CredentialHomeRef, ConnectorCredentialTyp
 export { grantFamilyOf, isHumanActing, principalOfCredential, humanActingSupport } from "./access/connector-credentials.js";
 export type { CredentialGrantFamily, CredentialLifecycle, CredentialRefreshPosture, HumanActingSupport } from "./access/connector-credentials.js";
 
-export { registerDbCredentialBroker, CREDENTIAL_KEY_ENV } from "./credentials/db-broker.js";
+export { registerDbCredentialBroker, CREDENTIAL_KEY_ENV, credentialKeyArmed } from "./credentials/db-broker.js";
 
 export { registerConfigPrProvider } from "./credentials/config-pr.js";
 export type { ConfigPrProvider, ConfigPrOutcome, ConfigFileContent, CommitIdentity } from "./credentials/config-pr.js";
@@ -81,6 +81,7 @@ export type { CredentialPurgeHook, CredentialPurgeOutcome } from "./credentials/
 export { captureHandshakeSecret, secretFingerprint, HANDSHAKE_REVEAL_PRINCIPAL } from "./webhooks/handshake-capture.js";
 export type { CaptureHandshakeSecretInput, CaptureHandshakeSecretDeps, CaptureHandshakeSecretOutcome } from "./webhooks/handshake-capture.js";
 export { NOTION_HANDSHAKE_REF_NAMESPACE } from "./credentials/reserved-refs.js";
+export { SLACK_APP_REF_NAMESPACE } from "./credentials/reserved-refs.js";
 
 export { registerOeOauthCallbackCompleter, OE_OAUTH_CALLBACK_PATH } from "./connections/oe-oauth-callback.js";
 export type { OeOauthCallbackArgs, OeOauthCallbackResult, OeOauthCallbackCompleter } from "./connections/oe-oauth-callback.js";
@@ -133,12 +134,15 @@ export { SETTINGS, getSettings, defineSettings, registerSettings, resetSettingsF
 export type { AgentSettings, AgentSettingsOverrides, SettingSpec, SettingDoc, TaintTierMode, ApprovalJudgeMode } from "./settings/settings.js";
 
 export { registerProvider, registerPostgres } from "./memory/provider.js";
+export { resolveMemoryProviderId, MEMORY_PROVIDER_FLOOR } from "./memory/provider.js";
 export type { MemoryProvider, MemoryAccess } from "./memory/provider.js";
 export { registerConnectorMemory, connectorMemoryFor, connectorMemoryCapabilities, assertConnectorMemoryGrants, resetConnectorMemoryForTest } from "./memory/connector-memory.js";
 export type { ConnectorMemoryCapability, ConnectorMemoryMode, DomainMemoryGrants } from "./memory/connector-memory.js";
 export { initPostgresSchema } from "./memory/postgres.js";
 export type { PgClient } from "./memory/postgres.js";
 export { registerOperationalPostgres, getOperationalStore, registerOperationalStore, resetOperationalStore } from "./operational/provider.js";
+export { resolveOperationalSelection } from "./operational/provider.js";
+export type { OperationalFloor } from "./operational/provider.js";
 export type {
   ProactiveAddress,
   OperationalStore,
@@ -179,6 +183,9 @@ export type { BindableContext } from "./identity/binding.js";
 
 export { installLogShipping } from "./observability/ship.js";
 export { initTelemetry, emitTelemetry, registerSurfaceCredentialProbe } from "./observability/telemetry.js";
+export { registerStatusProbe, registerSurfaceStatusReporter } from "./ops/status.js";
+export { unifiedDomainSessionKey } from "./channels/unified-supervisor.js";
+export type { StatusProbe, ProbeAnswer, SurfaceStatus, StatusVerdict } from "./ops/status.js";
 
 export { connectorActingIdentityForTurn, CONNECTOR_ACTING_IDENTITY_ACTION } from "./connections/own-account-gate.js";
 export type { ActingIdentityVerdict, OwnAccountVendor } from "./connections/own-account-ask.js";
@@ -546,6 +553,12 @@ export { verifyWebhookSignature, webhookMaxSkewSeconds } from "./webhooks/gate.j
 export { getOrMintSelfSecret, selfSecretsArmed } from "./credentials/self-secrets.js";
 export { readCappedBody, selfDispatchBaseUrl } from "./channels/self-dispatch.js";
 
+export { securePageResponse, escapeHtml, BUTTON_STYLE, CODE_BLOCK_STYLE } from "./credentials/page-chrome.js";
+export { pageBaseUrl } from "./credentials/page-token.js";
+
+export { registerBootNotice, runBootNotices } from "./boot/notices.js";
+export type { BootNotice } from "./boot/notices.js";
+
 export {
   registerWebhookVerifier,
   webhookVerifier,
@@ -782,8 +795,7 @@ export { classifyEmoji } from "./channels/reaction-ingest.js";
 export { registeredProjectionNames } from "./access/untrusted-projection.js";
 export { projectToolSet } from "./access/untrusted-projection.js";
 
-export { registerQuickstartSurfaceGoal } from "./ops/quickstart.js";
-export type { SurfaceGoalStep, SurfaceHostedPlan, PlanStep, Check } from "./ops/quickstart.js";
+export type { Check } from "./ops/quickstart.js";
 export { registerSurfaceAppManifest, DEPLOY_HOST_PLACEHOLDER } from "./ops/surface-manifest.js";
 export { surfaceAppManifest, surfaceAppManifestSurfaces, surfaceAppNameProblem, normalizeDeployHost } from "./ops/surface-manifest.js";
 export type { SurfaceAppManifestSource, SurfaceAppManifest } from "./ops/surface-manifest.js";

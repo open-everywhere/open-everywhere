@@ -1,6 +1,6 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { mergeEnv } from "@open-everywhere/core/agent/ops/quickstart.js";
+import type { SetupRoute } from "./engine.js";
 
 export function envLocalPath(cwd: string): string {
   return join(cwd, ".env.local");
@@ -26,11 +26,8 @@ export function isSet(v: string | undefined): boolean {
   return v !== undefined && v.trim() !== "";
 }
 
-export function writeEnvLocal(cwd: string, values: Readonly<Record<string, string>>): void {
-  const p = envLocalPath(cwd);
-  const existing = existsSync(p) ? readFileSync(p, "utf8") : "";
-  writeFileSync(p, mergeEnv(existing, values), "utf8");
+export function missNote(route: SetupRoute): string {
+  const where = route === "docker" ? "the container's environment" : "the Vercel project";
+  const list = route === "docker" ? "`docker inspect` lists the names there" : "`npx vercel env ls production` lists the names there";
+  return `Did you set these on ${where} instead? Then ignore this miss: the check reads only .env.local and this shell, never the deployment's own env (${list})`;
 }
-
-export const HOSTED_MISS_NOTE =
-  "If you set these in the Vercel project instead, ignore this miss: the check reads only .env.local and this shell, never the project's env (`npx vercel env ls production` lists the names there)";

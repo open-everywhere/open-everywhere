@@ -154,6 +154,8 @@ export function legLabel(leg: ChainLeg): string {
 
 const VARIABLE_DYNAMIC_IMPORT = /\bimport\(\s*`[^`]*\$\{/u;
 
+export const SUBPROCESS_LEG_TIMEOUT_MS = 900_000;
+
 export const ROOT_SUBPROCESS_LEGS: ReadonlyMap<string, string> = new Map([
   [
     "test:memory-eval-fixture",
@@ -161,6 +163,15 @@ export const ROOT_SUBPROCESS_LEGS: ReadonlyMap<string, string> = new Map([
       "OE_MEMORY_EVAL state. execArgv only carries tsx's loader flags when the leg itself was " +
       "launched by `npx tsx` — vitest's own worker process does not have them, so the self-respawn " +
       "cannot resolve a bare `.ts`-mapped import in-process.",
+  ],
+  [
+    "test:settings-boot-order-lint",
+    "the longest leg in the chain, and the batched runner makes it longer: it boots nine entries " +
+      "and evaluates ~12k scripts, which takes 294 s under `npx tsx` but 310-325 s through vite's " +
+      "SSR transform inside a shared worker (measured on OPE-2233, three runs). The leg PASSES " +
+      "every time — it prints its 86 assertions and is then killed by the shared `testTimeout`. " +
+      "A subprocess runs it at its own `tsx` speed, and `SUBPROCESS_LEG_TIMEOUT_MS` gives it a " +
+      "budget that is not the batched one. This is a runtime, not an order dependence.",
   ],
 ]);
 
@@ -184,6 +195,13 @@ export const OFF_CHAIN_BY_DESIGN: ReadonlyMap<string, string> = new Map([
     `${ROOT_PKG_LABEL} test:integration`,
     "its own TIER, not a chain leg: a separate vitest config behind `suite-lock-run.ts`, ~1450s at one " +
       "worker, and it boots a real agent host per worker. Run as its own gate (`npm run test:integration`).",
+  ],
+  [
+    `${ROOT_PKG_LABEL} test:integration:prepare`,
+    "the integration tier's own BUILD step (OPE-2235): `oe:build` + `eve build` + the just-bash prewarm + " +
+      "the PGlite template mint, minutes of work and 3 549 MB of app graph in one process. " +
+      "`scripts/suite-lock-run.ts` spawns it inside the suite lock before the first shard, so it runs WITH " +
+      "the tier above and never as a chain leg. Its own pure helpers are a chain leg: `test:it-prepare`.",
   ],
   [
     `${ROOT_PKG_LABEL} test:dynamic-closure-bundle`,
@@ -221,9 +239,9 @@ export const OFF_CHAIN_BY_DESIGN: ReadonlyMap<string, string> = new Map([
   [
     `${ROOT_PKG_LABEL} test:quickstart`,
     "a PRE-PUBLISH gate (OPE-2213): it packs all nine publishable packages, scaffolds the quickstart app " +
-      "with the packed wizard, runs a real `npm install` with lifecycle scripts, then `oe build` and a full " +
+      "with the packed scaffolder, runs a real `npm install` with lifecycle scripts, then `oe build` and a full " +
       "`eve build`. It needs the network and measures in minutes. Its fast half, the scaffold and the template " +
-      "drift check, IS on the chain as `create-open-everywhere test:scaffold`. Run it from " +
+      "drift check, IS on the chain as `@open-everywhere/create test:scaffold`. Run it from " +
       "`docs/dev/publishing.md` § Before you publish.",
   ],
 ]);

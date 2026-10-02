@@ -10,16 +10,16 @@ install-time properties that must hold or the deployment is quietly wrong.
 ## Start here: scaffold the app
 
 ```bash
-npx create-open-everywhere my-agent
+npx @open-everywhere/create my-agent
 ```
 
 This is the way in. It copies the quickstart app into `./my-agent`, a new or empty directory, runs
-`git init` there (unless git is absent or the directory is already inside a work tree), and runs the
-setup wizard from inside it. A directory that holds only `.git` counts as empty, so
-`npx create-open-everywhere .` works inside a fresh clone of an empty repository. The app it writes
-already holds everything on this page:
+`git init` there (unless git is absent or the directory is already inside a work tree), and prints
+the next steps. It never prompts: setup is agent-led (OPE-2233). A directory that holds only `.git`
+counts as empty, so `npx @open-everywhere/create .` works inside a fresh clone of an empty
+repository. The app it writes already holds everything on this page:
 
-- the eight packages and `create-open-everywhere`, all pinned to the wizard's own version, and
+- the eight packages and `@open-everywhere/create`, all pinned to that CLI's own version, and
   `eve` pinned exactly to core's peer pin;
 - the root `zod` override (§ 3 below) and `"postinstall": "oe-eve-patch"` (§ 2 below);
 - `undici` overrides that lift `eve`'s exact `8.9.0` pin and `guarded-fetch`'s exact `7.29.0` pin
@@ -32,16 +32,17 @@ already holds everything on this page:
   `.gitignore` that keeps the generated slot tree and every env file out of git;
 - the agent route: `AGENTS.md`, a `.mcp.json` that starts the `open-everywhere-ops` MCP server
   (`scripts/ops-mcp.ts`), and the `quickstart-open-everywhere` skill, so a coding agent opened in
-  the app can drive the setup. `npx create-open-everywhere --check --json` reports the wizard's
-  steps as data, each with a `next` command, judged against the hosted goal (`--goal local` for
-  `npm run dev` only; `--host <url>` probes a deployment). The scaffold never waits on a prompt
-  without a terminal, and `--decline-telemetry` answers the telemetry question from any shell.
+  the app can drive the setup. `npx @open-everywhere/create --check --json` reports the setup steps
+  as data, each with a `next` command, judged against the **vercel** route by default
+  (`--route docker` for the self-host route; `--host <url>` probes a deployment). The CLI has no
+  interactive mode and sends no telemetry: it scaffolds and it reports status.
 
-The app's own `README.md` carries the one ordered hosted path (link → Neon → key → Slack app →
-trust → build → environment → deploy → Slack URLs → check). The ops server's `quickstart { goal:
-"deploy" }` plan and the app's skill walk the same steps in the same order. `npm run
+The app's own `README.md` is one screen: it hands setup to the coding agent and names the two
+supported routes (Vercel and Docker). The ordered step list lives in ONE place —
+[Setup steps](./setup-steps.md), generated from the setup engine's own step list, which
+`--check` reports and the app's skill walks. `npm run
 test:quickstart` (`scripts/quickstart-test.ts`) proves the path from the packed tarballs: it
-scaffolds with the packed wizard, installs, and asserts that the eve patch probe reads `patched`,
+scaffolds with the packed CLI, installs, and asserts that the eve patch probe reads `patched`,
 that `oe build --check` passes after `oe build`, that the ops MCP server lists its tools, that the
 app typechecks, and that `eve build` succeeds. The rest of this page explains what the scaffold wrote and why.
 

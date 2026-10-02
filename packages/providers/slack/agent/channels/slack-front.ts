@@ -1,5 +1,6 @@
 import { POST, type Channel, type HttpRouteDefinition, type RouteHandlerArgs } from "eve/channels";
 import { SLACK_SIGNATURE_HEADER, SLACK_TIMESTAMP_HEADER, slackSignature, slackSignatureMatches } from "./slack-signature.js";
+import { slackSigningSecret } from "../setup/credentials.js";
 import { slackContinuationToken } from "eve/channels/slack";
 import { callSlackWebApi } from "./slack-web-api.js";
 import {
@@ -551,7 +552,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
   const fifo = opts.fifo ?? new ThreadFifo(recordWakeFailure);
   const getBotIdentity = opts.getBotIdentity ?? resolveBotIdentity;
   const now = opts.now ?? (() => Date.now());
-  const signingSecret = () => opts.signingSecret ?? process.env.SLACK_SIGNING_SECRET;
+  const resolveSigningSecret = async (): Promise<string | undefined> => opts.signingSecret ?? (await slackSigningSecret());
   const markEventSeen = opts.markEventSeen ?? liveMarkEventSeen;
   const handleApproval =
     opts.handleApprovalPayload ??
@@ -585,7 +586,8 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
 
   async function handleFrontRequest(req: Request, args: RouteHandlerArgs): Promise<Response> {
     const rawBody = await req.text();
-    if (!verifySlackSignature(rawBody, req.headers, signingSecret(), now())) {
+    const requestSigningSecret = await resolveSigningSecret();
+    if (!verifySlackSignature(rawBody, req.headers, requestSigningSecret, now())) {
       return new Response("unauthorized", { status: 401 });
     }
     const decision = classifyEnvelope(rawBody, req.headers.get("content-type") ?? "");
@@ -594,7 +596,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       withForwardedSlackEnvelope(forwardedEnvelopeOf(rawBody), () => {
         const fenced = stripUnfencedSlackAttachments(rawBody);
         const ts = req.headers.get(SLACK_TIMESTAMP_HEADER);
-        const secret = signingSecret();
+        const secret = requestSigningSecret;
         if (fenced === rawBody || !ts || !secret) {
           return innerHandler(new Request(req.url, { method: "POST", headers: req.headers, body: rawBody }), args);
         }

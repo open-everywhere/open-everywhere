@@ -1,0 +1,35 @@
+import { defineChannel, GET } from "eve/channels";
+
+import { OE_STATUS_PATH, STATUS_CACHE_MS, cachedDeploymentStatus, registerStatusProbe } from "../ops/status.js";
+import { getOperationalStore } from "../operational/provider.js";
+import { getSettings } from "../settings/settings.js";
+
+registerStatusProbe("postgres", async () => {
+  try {
+    await getOperationalStore().listAuditOrgs();
+    return { met: "yes", detail: "the store answered a read" };
+  } catch {
+    return { met: "no", detail: "the store did not answer a read" };
+  }
+});
+
+export default defineChannel({
+  routes: [
+    GET(OE_STATUS_PATH, async () => {
+      let allowUnenforced = false;
+      try {
+        allowUnenforced = getSettings().egress.allowUnenforced;
+      } catch {
+      }
+      const doc = await cachedDeploymentStatus({ allowUnenforced });
+      return new Response(`${JSON.stringify(doc, null, 2)}\n`, {
+        status: 200,
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "cache-control": "no-store",
+          "x-oe-status-ttl-ms": String(STATUS_CACHE_MS),
+        },
+      });
+    }),
+  ],
+});

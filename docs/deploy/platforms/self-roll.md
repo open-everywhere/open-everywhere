@@ -49,10 +49,10 @@ knob must name a *registered* adapter or the agent refuses to start.
 - The simplest self-roll: the default embedded-Postgres (PGlite) operational floor — leave
   `OE_OPERATIONAL_PROVIDER` unset and set no `DATABASE_URL` — plus `git` or `sqlite` memory, the
   `env` credential broker, and `eve start` as an always-on process (cron and single-node durable
-  sessions both come for free, per the table above). 🔴 Setting `DATABASE_URL` while leaving
-  `OE_OPERATIONAL_PROVIDER` unset does NOT select hosted Postgres — it falls to the deprecated
-  `sqlite` floor. Name the provider explicitly (`OE_OPERATIONAL_PROVIDER=postgres`) whenever a
-  `DATABASE_URL` is present. That runs single-operator with no
+  sessions both come for free, per the table above). Setting `DATABASE_URL` selects hosted Postgres
+  for the operational store AND the memory backing on its own (OPE-2230) — no selector needed.
+  It used to fall to the deprecated `sqlite` floor instead, so a deployment that set a connection
+  string and nothing else ran on a local file. That runs single-operator with no
   external services — but the egress firewall only *fully enforces natively* on Vercel
   Sandbox; Eve's `microsandbox` backend enforces only host-grain allow/deny natively
   (measured, OPE-917), and a plain (unwrapped) Docker or bare-metal executor gives coarse or

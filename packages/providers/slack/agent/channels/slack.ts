@@ -1,3 +1,4 @@
+import { SLACK_EVE_CREDENTIALS } from "../setup/eve-credentials.js";
 import {
   slackChannel,
   type SlackContext,
@@ -478,6 +479,7 @@ export async function admitInbound(
 
 const slackMentionChannel = slackChannel({
   route: INTERNAL_SLACK_ROUTE,
+  credentials: SLACK_EVE_CREDENTIALS,
   turnPolicy: "queue",
   onAppMention: (ctx, message) => admitInbound(ctx, message, false),
   onDirectMessage: (ctx, message) => admitInbound(ctx, message, true),

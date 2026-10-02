@@ -640,6 +640,7 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "skill.update",
   "slack.attachment.allow",
   "slack.attachment.deny",
+  "slack.setup_reopened",
   "soak.capture_gap",
   "stall.nudge",
   "surface.app_installed",

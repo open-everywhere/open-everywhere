@@ -14,8 +14,11 @@ import {
   registerSlackBridge,
   registerProviderDocs,
   registerWebhookVerifier,
+  registerBootNotice,
+  registerSurfaceStatusReporter,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { PROVIDER_DOCS } from "./docs-generated.js";
+import { slackSurfaceStatus } from "./status.js";
 import { SLACK_SURFACE_PARITY } from "./surface-parity.js";
 import { SLACK_PROVIDER_EVENTS } from "./provider-events.js";
 import { bindSlack, partnerFactsFromInfo } from "./channels/slack-identity.js";
@@ -37,6 +40,8 @@ import {
 import slackChannel from "./channels/slack.js";
 import { slackWebhookVerifier } from "./channels/slack-webhook-verifier.js";
 import { registerSlackOps } from "./ops.js";
+import { announceSlackSetupCode } from "./setup/claim.js";
+import { reopenSlackSetup, slackInstallState } from "./setup/install-state.js";
 
 export function registerSlackProvider(): void {
   registerIdentityMapper("slack", bindSlack);
@@ -62,8 +67,12 @@ export function registerSlackProvider(): void {
     confirmChannelInternal,
     partnerFactsFromInfo,
     channel: slackChannel,
+    installState: slackInstallState,
+    reopenSetup: reopenSlackSetup,
   });
   registerSlackOps();
+  registerSurfaceStatusReporter("slack", () => slackSurfaceStatus());
   registerWebhookVerifier(slackWebhookVerifier);
   registerProviderDocs("slack", PROVIDER_DOCS);
+  registerBootNotice("slack-setup-code", announceSlackSetupCode);
 }

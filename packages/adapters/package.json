@@ -105,6 +105,10 @@
       "types": "./dist/agent/model/dream-judge.d.ts",
       "default": "./dist/agent/model/dream-judge.js"
     },
+    "./agent/model/gateway-probe.js": {
+      "types": "./dist/agent/model/gateway-probe.d.ts",
+      "default": "./dist/agent/model/gateway-probe.js"
+    },
     "./agent/model/gateway-vision.js": {
       "types": "./dist/agent/model/gateway-vision.d.ts",
       "default": "./dist/agent/model/gateway-vision.js"
@@ -167,7 +171,7 @@
     "prepack": "npm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "npm run test:chain",
-    "test:chain": "npm run test:instrumentation && npm run test:sandbox-lifecycle && npm run test:sandbox-guard && npm run test:sandbox-extend && npm run test:model-gateway && npm run test:dream-judge-gateway && npm run test:approval-judge-gateway && npm run test:gateway-vision && npm run test:oe-oauth && npm run test:oe-oauth-static && npm run test:agent-browser && npm run test:neon-pool-error && npm run test:aws-adapter && npm run test:aws-sso && npm run test:okta-directory",
+    "test:chain": "npm run test:instrumentation && npm run test:sandbox-lifecycle && npm run test:sandbox-guard && npm run test:sandbox-extend && npm run test:model-gateway && npm run test:gateway-probe && npm run test:dream-judge-gateway && npm run test:approval-judge-gateway && npm run test:gateway-vision && npm run test:oe-oauth && npm run test:oe-oauth-static && npm run test:agent-browser && npm run test:neon-pool-error && npm run test:aws-adapter && npm run test:aws-sso && npm run test:okta-directory",
     "test:aws-adapter": "tsx scripts/aws-adapter-test.ts",
     "test:okta-directory": "tsx scripts/okta-directory-test.ts",
     "test:aws-sso": "tsx scripts/aws-sso-test.ts",
@@ -180,6 +184,7 @@
     "test:sandbox-guard": "tsx scripts/sandbox-live-guard-test.ts",
     "test:sandbox-live": "tsx scripts/sandbox-live-test.ts",
     "test:sandbox-extend": "tsx scripts/sandbox-extend-test.ts",
+    "test:gateway-probe": "NODE_NO_WARNINGS=1 tsx scripts/gateway-probe-test.ts",
     "test:model-gateway": "tsx scripts/model-gateway-test.ts",
     "test:dream-judge-gateway": "tsx scripts/dream-judge-gateway-test.ts",
     "test:approval-judge-gateway": "tsx scripts/approval-judge-gateway-test.ts",

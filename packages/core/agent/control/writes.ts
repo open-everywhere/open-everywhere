@@ -22,6 +22,7 @@ import { disarmApprovalJudge, rearmApprovalJudge } from "../approvals/judge-cont
 import { orgWideWhere, whereFromScope } from "../approvals/actions.js";
 import { haltAddressFields, haltAddressFromParts } from "../access/halt.js";
 import { supervisorGrainFor } from "../channels/unified-supervisor.js";
+import { reopenSlackSetupPage } from "../channels/slack-bridge.js";
 import { listLinkSetsWithIds, purgeLinkSetCredentials, revokeLinkSet, setLinkSetHold } from "../identity/link-store.js";
 import { directoryProvider } from "../identity/directory.js";
 import { lastDirectorySync, syncDirectoryOrg } from "../identity/directory-sync.js";
@@ -54,6 +55,7 @@ export const CONTROL_WRITE_TOOL_NAMES = [
   "directory_sync_now",
   "directory_sync_status",
   "directory_groups_plan",
+  "reopen_slack_setup",
 ] as const;
 
 const judgeOperatorScopeSchema = z
@@ -986,6 +988,40 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
         return jsonResult({ ok: true, deleted, org: a.org, silo: a.silo, relPath: a.relPath, commit });
       } catch (e) {
         return errorResult(`memory_delete_file failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  );
+  server.registerTool(
+    "reopen_slack_setup",
+    {
+      title: "Reopen Slack setup",
+      description:
+        "Reopen this deployment's /setup page after a Slack install has locked it, so setup can be run again (for example to install into a different workspace). Destroys only the install RECORD — every stored Slack credential stays, so the agent keeps working on Slack until a new run replaces them. The reopened page still requires the one-time setup code, which the deployment logs again on its next start. Returns reopened=false if setup was already open. Org-admin only.",
+      inputSchema: { org: z.string().min(1) },
+    },
+    async (a) => {
+      const denial =
+        foreignOrgDenial(a.org) ??
+        (roles.includes("admin")
+          ? null
+          : `forbidden: reopen_slack_setup requires the org-wide "admin" role — setup is a deployment-wide door, so no domain role covers it (have: ${roles.length ? roles.join(", ") : "none"}).`);
+      if (denial) return errorResult(denial);
+      try {
+        const reopened = await reopenSlackSetupPage();
+        if (reopened === undefined) {
+          return errorResult(
+            "reopen_slack_setup failed: no Slack provider is wired on this deployment, so there is no Slack setup page to reopen.",
+          );
+        }
+        await appendAudit({
+          ...orgWideWhere(a.org),
+          principalId: actor,
+          action: "slack.setup_reopened",
+          detail: { reopened },
+        });
+        return jsonResult({ ok: true, reopened, org: a.org });
+      } catch (e) {
+        return errorResult(`reopen_slack_setup failed: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
   );

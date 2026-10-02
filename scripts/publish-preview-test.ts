@@ -166,11 +166,11 @@ try {
   const cleanOut = outDir();
   const clean = preview(cleanOut, "--only", "packages/create", "--strict");
   ok(clean.code === 0, `a clean package previews green even under --strict (got ${clean.code})`);
-  ok(/create-open-everywhere@/.test(clean.out), "the report names the package and its version");
+  ok(/@open-everywhere\/create@/.test(clean.out), "the report names the package and its version");
   ok(/tarball .* KiB/.test(clean.out), "the report carries the tarball size — the number the PR quotes");
   ok(/never-ship scan: clean/.test(clean.out), "the clean package reports a clean scan");
   ok(
-    existsSync(join(cleanOut, "create-open-everywhere.files.txt")),
+    existsSync(join(cleanOut, "_open-everywhere_create.files.txt")),
     "the COMPLETE per-file listing is written to disk, not only summarised on stdout",
   );
 

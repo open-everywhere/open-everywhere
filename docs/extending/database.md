@@ -31,8 +31,8 @@ referenced by `secretRef`.
 
 ## Floor (embedded Postgres) vs server vs hosted
 
-The store is selected at startup by `OE_OPERATIONAL_PROVIDER` **and** whether a `DATABASE_URL` is
-present:
+The store is selected at startup by `OE_OPERATIONAL_PROVIDER` **or**, when that is unset, by
+whether a `DATABASE_URL` is present:
 
 - **Embedded Postgres (PGlite) — the zero-wiring floor, the default when nothing is set.** The
   *same* Postgres store (`operational/postgres.ts`) backed by an in-process, file-backed WASM
@@ -50,21 +50,28 @@ present:
   backups, or replication**, and append-only only *by contract* (no DB enforcement). Still works if
   you set `OE_OPERATIONAL_PROVIDER=sqlite`, but boot emits a loud deprecation nag. Move off it with
   `migrate-operational` — see [Graduating the operational store](../deploy/database-graduation.md).
-- **`postgres` — the hosted / server backend.** Neon (or any `PgClient`-shaped Postgres: RDS,
-  Cloud SQL, the docker-compose `postgres:17` sidecar). It isn't pre-registered: it needs a
-  deploy-supplied `PgClient` (a driver + connection string the app can't invent), so startup wiring
-  calls `registerOperationalPostgres(client)` after `initOperationalSchema(client)`. Select it with
-  `OE_OPERATIONAL_PROVIDER=postgres` + `DATABASE_URL`.
+- **`postgres` — the hosted / server backend, and what a `DATABASE_URL` selects on its own.** Neon
+  (or any `PgClient`-shaped Postgres: RDS, Cloud SQL, the docker-compose `postgres:17` sidecar). It
+  isn't pre-registered: it needs a deploy-supplied `PgClient` (a driver + connection string the app
+  can't invent), so startup wiring calls `registerOperationalPostgres(client)` after
+  `initOperationalSchema(client)`. **Setting `DATABASE_URL` is enough to select it** (OPE-2230);
+  `OE_OPERATIONAL_PROVIDER=postgres` is the explicit spelling and is no longer required.
 
 ```ts
-// packages/core/agent/operational/provider.ts — the pure resolution rule
+// packages/core/agent/operational/selection.ts — the pure resolution rule
 export function resolveOperationalSelection(env) {
   const explicit = env.OE_OPERATIONAL_PROVIDER?.trim();
   if (explicit) return { id: explicit, floor: explicit === "sqlite" ? "sqlite" : "none" };
-  if (!env.DATABASE_URL?.trim()) return { id: "postgres", floor: "pglite" }; // ← the embedded floor
-  return { id: "sqlite", floor: "sqlite" };                                   // legacy default, untouched
+  if (env.DATABASE_URL?.trim()) return { id: "postgres", floor: "none" };   // ← hosted, derived
+  return { id: "postgres", floor: "pglite" };                                // ← the embedded floor
 }
 ```
+
+A bare `DATABASE_URL` used to resolve to the deprecated `sqlite` floor. A deployment that had
+connected Neon and set no selector therefore ran on a local file while believing it was on
+Postgres. The memory backing follows the same rule in
+`packages/core/agent/memory/backing-selection.ts`: `OE_MEMORY_PROVIDER` wins, else a present
+`DATABASE_URL` selects `postgres`, else the `git` floor.
 
 The embedded floor is armed at boot by `registerOperationalPgliteLazy()` (from
 `agent/lib/register-adapters.ts`); the hosted path by the Neon adapter's
@@ -312,11 +319,16 @@ To adopt it:
    no grant, holds too few verbs for its own statements, or holds a verb no statement uses.
 4. Point `DATABASE_URL` at the runtime role, and park the owner/migration string under
    **`OE_DB_OWNER_URL`** (re-run the owner boot from it after a schema-changing upgrade). Boot
-   verifies the posture and serves. The **setup wizard defaults to this**: when you give it the
-   owner `DATABASE_URL` it generates the runtime password, prints these exact statements + the
-   password once (never to a tracked file), writes the runtime `DATABASE_URL` + `OE_DB_OWNER_URL`
-   to `.env.local`, and degrades to single-role only if you decline. `preflight` then reports the
-   posture (`OE_DB_OWNER_URL` present ⇒ two-role).
+   verifies the posture and serves. `preflight` then reports it (`OE_DB_OWNER_URL` present ⇒
+   two-role).
+
+   🔴 **The split is MANUAL, and single-role is the shipped default.** Nothing provisions this for
+   you: generate the runtime password yourself, run the statements above as the owner, and set the
+   two variables by hand. An earlier version of this page said the setup wizard defaulted to the
+   split — it did, and OPE-2233 retired that wizard with the rest of the interactive setup, so the
+   claim is gone with it. Until you do step 4, `DATABASE_URL` is the OWNER role and one
+   `DROP POLICY` from the app's own credential defeats append-only. `preflight` says so on every
+   run: `single-role (owner-DDL escape open)`.
 5. Optionally wire the per-request GUC (`SET LOCAL app.current_org = <org>` inside each
    transaction — not a pooled `set_config(..., false)`, which a multiplexing pool like Neon's can
    leak across sessions) to turn the GUC-keyed policies — the mutable tables' and `audit_entry`'s —

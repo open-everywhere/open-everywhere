@@ -3,15 +3,7 @@ import { tmpdir } from "node:os";
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join, basename } from "node:path";
-import {
-  preflight,
-  quickstartPlan,
-  mergeEnv,
-  registerQuickstartSurfaceGoal,
-  credentialKeyStatus,
-  CREDENTIAL_KEY_ENV_NAME,
-  CREDENTIAL_KEY_BYTES,
-} from "../agent/ops/quickstart.js";
+import { preflight, mergeEnv, credentialKeyStatus, CREDENTIAL_KEY_ENV_NAME, CREDENTIAL_KEY_BYTES } from "../agent/ops/quickstart.js";
 import { preflightAsync, registerPreflightProbe, _resetPreflightProbesForTest } from "../agent/ops/probes.js";
 import {
   DEPLOY_HOST_PLACEHOLDER,
@@ -27,6 +19,8 @@ import { registerDeploymentIdentity, deploymentOrg, seg, _resetDeploymentIdentit
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { pinSuiteStore } from "./_suite-store.js";
+
+delete process.env.DATABASE_URL;
 
 pinSuiteStore("ops");
 
@@ -47,28 +41,6 @@ const ok = (label: string, cond: boolean) => {
 
   const pg = preflight({ AI_GATEWAY_API_KEY: "k", OE_OPERATIONAL_PROVIDER: "postgres" });
   ok("postgres provider requires DATABASE_URL", pg.checks.some((c) => c.name.includes("DATABASE_URL") && c.status === "missing") && pg.ready === false);
-}
-
-{
-  const local = quickstartPlan("local", { AI_GATEWAY_API_KEY: "k" });
-  ok("local plan ends at `npm run dev`", local.steps.some((s) => s.command === "npm run dev"));
-  ok("a satisfied step is marked done", local.steps.find((s) => s.id === "model")?.status === "done");
-
-  const slackUnregistered = quickstartPlan("slack", { AI_GATEWAY_API_KEY: "k" });
-  ok("slack goal UNREGISTERED (core alone) contributes no surface step", !slackUnregistered.steps.some((s) => s.id === "slack"));
-  registerQuickstartSurfaceGoal("slack", (env) => ({
-    id: "slack",
-    title: "Fake surface",
-    status: env.FAKE_SURFACE_TOKEN ? "done" : "todo",
-    detail: "test-registered surface goal",
-  }));
-  const slack = quickstartPlan("slack", { AI_GATEWAY_API_KEY: "k" });
-  ok("a registered surface goal adds its step", slack.steps.some((s) => s.id === "slack" && s.status === "todo"));
-
-  const deploy = quickstartPlan("deploy", { AI_GATEWAY_API_KEY: "k" });
-  ok("deploy goal includes the Neon DB step", deploy.steps.some((s) => s.id === "db"));
-  ok("deploy goal includes build + deploy commands", deploy.steps.some((s) => s.command === "npx vercel deploy --prod"));
-  ok("deploy is not ready-to-run until its todos are met", deploy.readyToRun === false);
 }
 
 {
@@ -181,7 +153,8 @@ const ok = (label: string, cond: boolean) => {
   const durability = defaults.checks.find((c) => c.name === "state durability");
   ok("preflight warns that the default backings are process-local", durability !== undefined);
   ok("the durability warning names the consequence, not just the setting", /loses|process-local/.test(durability?.detail ?? ""));
-  ok("the durability warning carries a fix", /OE_MEMORY_PROVIDER=postgres/.test(durability?.fix ?? ""));
+  ok("the durability warning carries a fix", /DATABASE_URL/.test(durability?.fix ?? ""));
+  ok("…and the fix no longer names either store selector", !/OE_MEMORY_PROVIDER|OE_OPERATIONAL_PROVIDER/.test(durability?.fix ?? ""));
   ok("durability is advice, not a blocker — a purely local run is supported", durability?.status === "info" && defaults.ready === true);
 
   const durable = preflight({ AI_GATEWAY_API_KEY: "k", OE_MEMORY_PROVIDER: "postgres", OE_OPERATIONAL_PROVIDER: "postgres", DATABASE_URL: "postgres://u:p@h/db" });
@@ -262,19 +235,6 @@ const ok = (label: string, cond: boolean) => {
   ok("a MALFORMED key blocks — the store fails closed on every read and write", bad.checks.find((c) => c.name.includes(CREDENTIAL_KEY_ENV_NAME))?.status === "missing");
   ok("…and preflight is not ready", bad.ready === false);
 
-  const deploy = quickstartPlan("deploy", { AI_GATEWAY_API_KEY: "k" });
-  const ids = deploy.steps.map((s) => s.id);
-  ok("deploy plans the credential store key", ids.includes("credential-key"));
-  ok("deploy plans pushing the root-of-trust env to the deployment", ids.includes("env-push"));
-  ok("deploy plans proving the agent answers", ids.includes("verify"));
-  ok("the env-push step comes after the build and before the deploy", ids.indexOf("env-push") > ids.indexOf("build") && ids.indexOf("env-push") < ids.indexOf("deploy"));
-  ok("the verify step comes last", ids.indexOf("verify") === ids.length - 1);
-  const envPush = deploy.steps.find((s) => s.id === "env-push");
-  ok("the env-push step says WHY it exists (.env.local never ships)", /gitignored|never ships/.test(envPush?.detail ?? ""));
-  ok("…and names the command", /vercel env add/.test(envPush?.command ?? ""));
-  ok("env-push stays todo even with every local value set", quickstartPlan("deploy", { AI_GATEWAY_API_KEY: "k", DATABASE_URL: "postgres://u:p@h/db", [CREDENTIAL_KEY_ENV_NAME]: goodKey, OE_ADMIN_STATIC_TOKEN: "t" }).steps.find((s) => s.id === "env-push")?.status === "todo");
-  ok("the credential-key step IS done once the key is armed", quickstartPlan("deploy", { AI_GATEWAY_API_KEY: "k", [CREDENTIAL_KEY_ENV_NAME]: goodKey }).steps.find((s) => s.id === "credential-key")?.status === "done");
-  ok("…and todo when it is not", deploy.steps.find((s) => s.id === "credential-key")?.status === "todo");
 }
 
 {
@@ -627,53 +587,51 @@ const ok = (label: string, cond: boolean) => {
 
   const opDetail = (env: NodeJS.ProcessEnv) => preflight(env).checks.find((c) => c.name === "operational provider")?.detail ?? "";
   ok("no DATABASE_URL and no selector reads as embedded Postgres, not sqlite", /embedded Postgres/.test(opDetail({})) && !/sqlite/.test(opDetail({})));
-  ok("DATABASE_URL without a selector reads as the sqlite floor (negative control)", /sqlite/.test(opDetail({ DATABASE_URL: "postgres://u:p@h/db" })));
+  ok("DATABASE_URL without a selector reads as hosted postgres, derived", /postgres \(hosted\)/.test(opDetail({ DATABASE_URL: "postgres://u:p@h/db" })) && /derived from DATABASE_URL/.test(opDetail({ DATABASE_URL: "postgres://u:p@h/db" })));
+  ok("…and no longer reads as sqlite (the negative control for the OPE-2230 default)", !/sqlite/.test(opDetail({ DATABASE_URL: "postgres://u:p@h/db" })));
+  ok("an explicit sqlite selector still reads as the deprecated floor", /sqlite/.test(opDetail({ OE_OPERATIONAL_PROVIDER: "sqlite", DATABASE_URL: "postgres://u:p@h/db" })));
 
-  const bare = preflight({}, { target: "hosted" });
+  const pins = { nodeVersion: "24.19.0", nodeRange: ">=24" } as const;
+  const bare = preflight({}, { target: "vercel" });
   const model = bare.checks.find((c) => c.name.includes("AI_GATEWAY_API_KEY"));
-  ok("hosted: an absent gateway key is info (OIDC), not missing", model?.status === "info" && /OIDC/.test(model.detail));
-  for (const name of ["OE_OPERATIONAL_PROVIDER", "OE_MEMORY_PROVIDER"]) {
-    ok(`hosted: an unset ${name} blocks`, bare.checks.find((c) => c.name === `hosted store: ${name}=postgres`)?.status === "missing");
+  ok("vercel: an absent gateway key is info (OIDC), not missing", model?.status === "info" && /OIDC/.test(model.detail));
+  const dockerModel = preflight({}, { target: "docker" }).checks.find((c) => c.name.includes("AI_GATEWAY_API_KEY"));
+  ok("docker: an absent gateway key BLOCKS — off Vercel there is no OIDC", dockerModel?.status === "missing");
+  ok("docker: …and it never claims the key is not needed", !/not needed on Vercel/.test(dockerModel?.detail ?? "") && /no OIDC/.test(dockerModel?.detail ?? ""));
+  ok("docker: …and its fix names the adapter swap this check cannot see, rather than a config that does not exist",
+    /adapter-model/.test(dockerModel?.fix ?? "") && !/agent\/model\//.test(dockerModel?.fix ?? ""));
+  for (const store of ["operational", "memory"]) {
+    for (const target of ["vercel", "docker"] as const) {
+      ok(
+        `${target}: a ${store} store that does not resolve to postgres blocks`,
+        preflight({}, { target }).checks.find((c) => c.name === `deploy store: ${store} = postgres`)?.status === "missing",
+      );
+    }
   }
-  ok("hosted: DATABASE_URL is required", bare.checks.find((c) => c.name === "DATABASE_URL (Neon)")?.status === "missing");
-  ok("hosted: …and the fix names the Vercel Marketplace Neon integration", /Marketplace/.test(bare.checks.find((c) => c.name === "DATABASE_URL (Neon)")?.fix ?? ""));
-  ok("hosted: an absent credential key blocks", bare.checks.find((c) => c.name.includes(CREDENTIAL_KEY_ENV_NAME))?.status === "missing");
-  ok("hosted: the bare env is not ready", bare.ready === false);
-  const hostedEnv = { OE_OPERATIONAL_PROVIDER: "postgres", OE_MEMORY_PROVIDER: "postgres", DATABASE_URL: "postgres://u:p@h/db", [CREDENTIAL_KEY_ENV_NAME]: goodKey };
-  const full = preflight(hostedEnv, { target: "hosted", nodeVersion: "24.19.0", nodeRange: ">=24" });
-  ok("hosted: the full hosted env is ready with no gateway key (negative control)", full.ready === true);
-  ok("local: the same env without a gateway key is NOT ready (the target is what changed)", preflight(hostedEnv, { nodeVersion: "24.19.0", nodeRange: ">=24" }).ready === false);
-  ok("hosted: a selector set to another value still blocks", preflight({ ...hostedEnv, OE_MEMORY_PROVIDER: "git" }, { target: "hosted" }).ready === false);
-
-  registerQuickstartSurfaceGoal(
-    "slack",
-    (env) => ({ id: "slack", title: "Fake surface", status: env.FAKE_SURFACE_TOKEN ? "done" : "todo", detail: "test-registered surface goal" }),
-    { env: ["FAKE_SURFACE_TOKEN"], afterDeploy: () => [{ id: "fake-urls", title: "Point the fake app at the host", status: "todo", detail: "after deploy" }] },
-  );
-  const plan = quickstartPlan("deploy", {});
-  const ids = plan.steps.map((s) => s.id);
-  const order = ["vercel-link", "db", "credential-key", "slack", "trust", "build", "env-push", "deploy", "fake-urls", "verify"];
-  ok(`deploy plan carries every step of the hosted path (${ids.join(" → ")})`, order.every((id) => ids.includes(id)));
-  ok("…in the one documented order", order.every((id, i) => i === 0 || ids.indexOf(order[i - 1]!) < ids.indexOf(id)));
-  ok("the deploy plan never asks for a gateway key", !plan.steps.some((s) => s.id === "model") && !plan.steps.some((s) => /AI_GATEWAY_API_KEY=|env:pipe -- AI_GATEWAY_API_KEY/.test(s.command ?? "")));
-  const push = plan.steps.find((s) => s.id === "env-push")?.command ?? "";
-  ok("env-push sets both store selectors to postgres", push.includes("OE_OPERATIONAL_PROVIDER=postgres") && push.includes("OE_MEMORY_PROVIDER=postgres"));
-  ok("env-push pushes the credential key", push.includes(`env:pipe -- ${CREDENTIAL_KEY_ENV_NAME} | npx vercel env add ${CREDENTIAL_KEY_ENV_NAME} production`));
-  ok("env-push pushes the surface's own env names", push.includes("env add FAKE_SURFACE_TOKEN production"));
-  ok("every push targets Production", push.split("\n").every((line) => line.endsWith(" production")));
-  ok("no step names a script the quickstart app does not ship", !plan.steps.some((s) => /deploy:verify|OE_DEPLOY_|OE_VERCEL_API_TOKEN/.test(`${s.command ?? ""} ${s.detail}`)));
-  const verifyDetail = plan.steps.find((s) => s.id === "verify")?.detail ?? "";
-  ok("the proof text states the probe's exact pass (a 401 with body `unauthorized`), not \"401 or 403\"", /401 whose body is `unauthorized`/.test(verifyDetail) && !/401 or 403 means/.test(verifyDetail));
-  ok("…and says the pass does not prove the surface's signing secret, naming the vendor's own verification", /does NOT prove the deployment holds the surface's signing secret/.test(verifyDetail) && /URL verification proves that/.test(verifyDetail));
-  ok("the proof step runs the wizard's hosted check", /create-open-everywhere --check --goal hosted --host/.test(plan.steps.find((s) => s.id === "verify")?.command ?? ""));
-  ok("control-plane auth is optional, not a todo", plan.steps.find((s) => s.id === "admin-auth")?.status === "optional");
-  ok("an unlinked project's link step is todo with the command", plan.steps.find((s) => s.id === "vercel-link")?.command === "npx vercel link");
-  const linked = quickstartPlan("deploy", hostedEnv, { vercelLinked: true, internalSurfaces: 1 });
-  ok("the link step is done when the project is linked", linked.steps.find((s) => s.id === "vercel-link")?.status === "done");
-  ok("the db step is done when .env.local carries DATABASE_URL and both selectors", linked.steps.find((s) => s.id === "db")?.status === "done");
-  ok("…and todo with DATABASE_URL alone (negative control)", quickstartPlan("deploy", { DATABASE_URL: "postgres://u:p@h/db" }).steps.find((s) => s.id === "db")?.status === "todo");
-  ok("the trust step is done once a surface is vouched", linked.steps.find((s) => s.id === "trust")?.status === "done");
-  ok("…and todo with none", plan.steps.find((s) => s.id === "trust")?.status === "todo");
+  const derivedEnv = { DATABASE_URL: "postgres://u:p@h/db", [CREDENTIAL_KEY_ENV_NAME]: goodKey };
+  const derived = preflight(derivedEnv, { ...pins, target: "vercel" });
+  ok("vercel: DATABASE_URL alone is ready — no store selector needed", derived.ready === true);
+  for (const store of ["operational", "memory"]) {
+    const line = derived.checks.find((c) => c.name === `deploy store: ${store} = postgres`);
+    ok(`vercel: the ${store} line is ok and says it was derived`, line?.status === "ok" && /derived from DATABASE_URL/.test(line.detail));
+  }
+  ok("docker: the SAME env is NOT ready — the gateway key is the one difference", preflight(derivedEnv, { ...pins, target: "docker" }).ready === false);
+  ok("docker: …and it IS ready once the key is set", preflight({ ...derivedEnv, AI_GATEWAY_API_KEY: "k" }, { ...pins, target: "docker" }).ready === true);
+  ok("vercel: DATABASE_URL is required", bare.checks.find((c) => c.name === "DATABASE_URL (Postgres)")?.status === "missing");
+  ok("vercel: …and the fix names the Vercel Marketplace Neon integration", /Marketplace/.test(bare.checks.find((c) => c.name === "DATABASE_URL (Postgres)")?.fix ?? ""));
+  const dockerDb = preflight({}, { target: "docker" }).checks.find((c) => c.name === "DATABASE_URL (Postgres)");
+  ok("docker: DATABASE_URL is required, and its fix names no Vercel Marketplace", dockerDb?.status === "missing" && !/Marketplace/.test(dockerDb?.fix ?? ""));
+  ok("vercel: an absent credential key blocks", bare.checks.find((c) => c.name.includes(CREDENTIAL_KEY_ENV_NAME))?.status === "missing");
+  ok("docker: an absent credential key blocks too", preflight({}, { target: "docker" }).checks.find((c) => c.name.includes(CREDENTIAL_KEY_ENV_NAME))?.status === "missing");
+  ok("vercel: the bare env is not ready", bare.ready === false);
+  const pinnedEnv = { OE_OPERATIONAL_PROVIDER: "postgres", OE_MEMORY_PROVIDER: "postgres", DATABASE_URL: "postgres://u:p@h/db", [CREDENTIAL_KEY_ENV_NAME]: goodKey };
+  ok("vercel: the full deploy env is ready with no gateway key (negative control)", preflight(pinnedEnv, { ...pins, target: "vercel" }).ready === true);
+  for (const store of ["operational", "memory"]) {
+    const line = preflight(pinnedEnv, { ...pins, target: "vercel" }).checks.find((c) => c.name === `deploy store: ${store} = postgres`);
+    ok(`vercel: an explicit ${store} pin reads as set explicitly, not derived`, line?.status === "ok" && /set explicitly as OE_/.test(line.detail));
+  }
+  ok("local: the same env without a gateway key is NOT ready (the target is what changed)", preflight(pinnedEnv, pins).ready === false);
+  ok("vercel: a selector set to another value still blocks", preflight({ ...pinnedEnv, OE_MEMORY_PROVIDER: "git" }, { target: "vercel" }).ready === false);
 }
 
-console.log(`\n✓ ops/quickstart: ${n} assertions passed (preflight, live probes, tailored plan, env merge, scaffold via MCP, credential-store key, two-role provisioning, chat-app manifest, secret org guard, secret_rm env fallback)\n`);
+console.log(`\n✓ ops/setup: ${n} assertions passed (three-target preflight, live probes, env merge, scaffold via MCP, credential-store key, two-role provisioning, chat-app manifest, secret org guard, secret_rm env fallback)\n`);

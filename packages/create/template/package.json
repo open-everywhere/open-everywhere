@@ -35,8 +35,8 @@
     "just-bash": "^3.1.0"
   },
   "devDependencies": {
+    "@open-everywhere/create": "{{OE_VERSION}}",
     "@types/node": "^24.0.0",
-    "create-open-everywhere": "{{OE_VERSION}}",
     "tsx": "^4.23.9",
     "typescript": "^7.0.2"
   },

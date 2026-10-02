@@ -116,28 +116,28 @@ try {
   const tarballOf = new Map(packed.map((p) => [p.name, p.tarball]));
   const fileSpec = (name: string): string => `file:${(tarballOf.get(name) ?? "").split("\\").join("/")}`;
 
-  console.log("2. install the packed wizard and scaffold app/");
-  const wizardDir = join(scratch, "wizard");
-  mkdirSync(wizardDir);
-  writeFileSync(join(wizardDir, "package.json"), `${JSON.stringify({ name: "oe-quickstart-wizard", version: "1.0.0", private: true }, null, 2)}\n`);
-  const wizardInstall = npm(
+  console.log("2. install the packed CLI and scaffold app/");
+  const cliDir = join(scratch, "cli");
+  mkdirSync(cliDir);
+  writeFileSync(join(cliDir, "package.json"), `${JSON.stringify({ name: "oe-quickstart-host", version: "1.0.0", private: true }, null, 2)}\n`);
+  const cliInstall = npm(
     [
       "install",
       "--no-audit",
       "--no-fund",
       "--loglevel",
       "error",
-      fileSpec("create-open-everywhere"),
+      fileSpec("@open-everywhere/create"),
       fileSpec("@open-everywhere/core"),
       fileSpec("@open-everywhere/provider-slack"),
     ],
-    wizardDir,
+    cliDir,
   );
-  assert.equal(wizardInstall.code, 0, `installing the packed wizard failed:\n${tail(wizardInstall.out)}`);
-  const wizardBin = binOf(wizardDir, "create-open-everywhere", "create-open-everywhere");
-  const scaffold = run(process.execPath, [wizardBin, "app", "--skip-wizard"], scratch);
-  assert.equal(scaffold.code, 0, `create-open-everywhere app --skip-wizard failed:\n${tail(scaffold.out)}`);
-  ok(existsSync(join(app, "agent", "agent.ts")), "the packed wizard scaffolded app/ (agent/agent.ts present)");
+  assert.equal(cliInstall.code, 0, `installing the packed CLI failed:\n${tail(cliInstall.out)}`);
+  const cliBin = binOf(cliDir, "@open-everywhere/create", "create-open-everywhere");
+  const scaffold = run(process.execPath, [cliBin, "app"], scratch);
+  assert.equal(scaffold.code, 0, `@open-everywhere/create app failed:\n${tail(scaffold.out)}`);
+  ok(existsSync(join(app, "agent", "agent.ts")), "the packed CLI scaffolded app/ (agent/agent.ts present)");
   ok(existsSync(join(app, "roster.config.ts")) && existsSync(join(app, "roster.lock.json")), "app/ carries roster.config.ts and roster.lock.json");
   ok(existsSync(join(app, ".gitignore")) && !existsSync(join(app, "gitignore")), "the tarball carried the template's gitignore, renamed to .gitignore");
   ok(existsSync(join(app, ".env.example")), "the tarball carried .env.example");
@@ -151,7 +151,7 @@ try {
     scripts: Record<string, string>;
   };
   const pinned = packed.map(({ name }) => manifest.dependencies[name] ?? manifest.devDependencies[name]);
-  eq(pinned, packed.map(() => VERSION), `the scaffold pinned all nine lockstep packages to the wizard's version (${VERSION})`);
+  eq(pinned, packed.map(() => VERSION), `the scaffold pinned all nine lockstep packages to the CLI's version (${VERSION})`);
   eq(manifest.scripts.postinstall, "oe-eve-patch", "the app's postinstall is `oe-eve-patch`");
 
   console.log("3. npm install the app against the tarballs (postinstall runs)");
@@ -182,7 +182,7 @@ try {
   const installedCore = JSON.parse(readFileSync(join(app, "node_modules", "@open-everywhere", "core", "package.json"), "utf8")) as { version: string };
   eq(installedCore.version, VERSION, "the app resolved @open-everywhere/core at the packed version");
   const lockfile = JSON.parse(readFileSync(join(app, "package-lock.json"), "utf8")) as { packages: Record<string, { resolved?: string }> };
-  const oeEntries = Object.entries(lockfile.packages).filter(([path]) => /node_modules\/(@open-everywhere\/[^/]+|create-open-everywhere)$/.test(path));
+  const oeEntries = Object.entries(lockfile.packages).filter(([path]) => /node_modules\/@open-everywhere\/[^/]+$/.test(path));
   eq(
     oeEntries.map(([path]) => path).sort(),
     packed.map(({ name }) => `node_modules/${name}`).sort(),
@@ -220,9 +220,10 @@ try {
   assert.ok(ops, ".mcp.json registers open-everywhere-ops");
   eq(ops.command, "node", ".mcp.json starts the ops server with plain `node` (an npx or .cmd shim cannot be spawned everywhere)");
   const toolNames = await listMcpTools(app, ops.args);
-  for (const tool of ["preflight", "quickstart", "surface_manifest", "scaffold_env", "scaffold_credential_key", "secret_set", "secret_list"]) {
+  for (const tool of ["preflight", "surface_manifest", "scaffold_env", "scaffold_credential_key", "secret_set", "secret_list"]) {
     ok(toolNames.includes(tool), `the ops MCP server lists \`${tool}\``);
   }
+  ok(!toolNames.includes("quickstart"), "the ops MCP server does NOT list the retired `quickstart` plan tool");
 
   console.log("6. typecheck");
   const tsc = run(process.execPath, [binOf(app, "typescript", "tsc"), "--noEmit", "-p", "tsconfig.json"], app);
@@ -242,4 +243,4 @@ try {
   else rmSync(scratch, { recursive: true, force: true });
 }
 
-console.log(`\n✓ quickstart: ${n} assertions passed — the packed wizard scaffolds an app that installs, patches, builds its roster, typechecks and builds\n`);
+console.log(`\n✓ quickstart: ${n} assertions passed — the packed CLI scaffolds an app that installs, patches, builds its roster, typechecks and builds\n`);

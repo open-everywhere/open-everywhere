@@ -20,6 +20,7 @@ export type { AuditCursor } from "./audit-cursor";
 import { REDELIVERY_SIGNATURE, REDELIVERY_STORM_THRESHOLD, RedeliveryStormGuard } from "./redelivery-storm-guard";
 import { installHostFetchStub } from "./fetch-stub";
 import { INTEGRATION_SANDBOX_BACKEND } from "./global-setup-contract";
+import { copyPgliteTemplateInto } from "./pglite-template";
 import { createStateDir } from "./state-dir";
 import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 
@@ -217,6 +218,8 @@ let booted: { base: string } | undefined;
 let bootedWith: string | undefined;
 let bootedOutputDir: string | undefined;
 
+let seededFromPgliteTemplate: boolean | undefined;
+
 function bootedBuildDir(): string {
   if (bootedOutputDir === undefined) throw new Error("integration harness: the built tree was read before bootAgent.");
   return bootedOutputDir;
@@ -307,8 +310,11 @@ export async function bootAgent(opts: BootOptions = {}): Promise<{ base: string 
     process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
     process.env.OE_SQLITE_PATH = join(state, "ops.sqlite3");
     delete process.env.OE_PGLITE_DIR;
+    seededFromPgliteTemplate = false;
   } else {
-    process.env.OE_PGLITE_DIR = join(state, "pglite");
+    const pglite = join(state, "pglite");
+    seededFromPgliteTemplate = copyPgliteTemplateInto(pglite);
+    process.env.OE_PGLITE_DIR = pglite;
   }
   process.env.OE_MEMORY_DIR = join(state, "memory");
 
@@ -1351,4 +1357,8 @@ export async function runScheduleTask(logicalPath: string): Promise<unknown> {
       `(found: ${candidates.join(", ") || "none"}). "${logicalPath}" was renamed, removed, or eve ` +
       "changed its task-name derivation — fix scheduleTaskName() rather than skipping.",
   );
+}
+
+export function pgliteFloorSeededFromTemplateForTest(): boolean | undefined {
+  return seededFromPgliteTemplate;
 }

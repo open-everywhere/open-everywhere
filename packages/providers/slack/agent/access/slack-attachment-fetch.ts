@@ -6,6 +6,7 @@ import {
   type EgressDispatch,
   type EgressRefusalCause,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { slackBotToken } from "../setup/credentials.js";
 
 const SLACK_BOT_TOKEN_REF = "SLACK_BOT_TOKEN";
 
@@ -60,7 +61,7 @@ export async function fetchSlackAttachment(ctx: BindableContext, ref: TrustedSla
     });
     throw new Error(`describe_image: refusing to send the Slack bot token to non-Slack host "${safe.url.hostname}".`);
   }
-  const token = process.env.SLACK_BOT_TOKEN;
+  const token = await slackBotToken();
   if (!token) {
     throw new Error("describe_image: SLACK_BOT_TOKEN is not set — the bot token is required to download a Slack attachment.");
   }

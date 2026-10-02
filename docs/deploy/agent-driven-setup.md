@@ -18,12 +18,11 @@ The repository registers an MCP server in `.mcp.json`:
 | --- | --- | --- |
 | `open-everywhere-ops` | `npx tsx scripts/ops-mcp.ts` | The **outside-in** plane. It stands an instance up. |
 
-It exposes eight tools:
+It exposes seven tools:
 
 | Tool | What it does | Writes anything? |
 | --- | --- | --- |
 | `preflight` | Reports every prerequisite, plus each configured provider's live posture. | no |
-| `quickstart` | Returns the ordered plan for a goal (`local`, `slack`, `github`, `deploy`), each step marked `done`/`todo`. | no |
 | `surface_manifest` | Returns the chat app's paste-ready manifest for a surface, with your deploy host substituted. | no |
 | `scaffold_env` | Merges `KEY=VALUE` settings into the project's `.env.local`. | `.env.local` |
 | `scaffold_credential_key` | Mints the credential store's AES-256-GCM key into `.env.local`. Never returns the value. | `.env.local` |
@@ -61,27 +60,34 @@ Run both, from the repository root. They share one engine but answer different q
 
 1. The `preflight` MCP tool — the model key, the store providers, the durable database, the
    credential store's key, the control-plane auth, plus each provider's live posture.
-2. `node packages/create/bin/create-open-everywhere.js --check` — the install wizard's read-only
-   report over its ten steps, including two `preflight` cannot see: whether this checkout is linked
-   to a Vercel project, and whether the roster matches the built slot tree.
+2. `node packages/create/bin/create-open-everywhere.js --check` — the read-only report over the
+   setup engine's nine steps, including two `preflight` cannot see: whether this checkout is linked
+   to a Vercel project, and whether the roster matches the built slot tree. Add `--json` for the
+   report as data. Both checks take the route: `--route docker` here, `target: "docker"` for
+   `preflight`.
 
 Every `missing` line carries a `fix`. Treat the union of both reports as your checklist. Re-run
 `preflight` after each step that writes a value, and let it — not your memory — decide what is done.
 
-## Step 3 — Take the goal, and get the plan
+## Step 3 — Take the route
 
-Ask the operator what they want, and map the answer to one goal:
+**Ask the operator which route, before anything else.** Two are supported:
 
-| They said | Goal |
-| --- | --- |
-| "let me try it" | `local` |
-| "put it in our Slack" | `slack` |
-| "wire it to our repos" | `github` |
-| "host it" | `deploy` |
+| Route | What it is | The one difference |
+| --- | --- | --- |
+| `vercel` | The `vercel` CLI plus Marketplace Neon. | The deployment authenticates the AI Gateway with OIDC, so it needs no gateway key. |
+| `docker` | A self-hosted container that satisfies the [deployment contract](./contract.md). | Off Vercel there is no OIDC: the model route needs `AI_GATEWAY_API_KEY`. A different model backend is an [adapter swap](../extending/adapter-model.md) in app code, which `--check` cannot see. |
 
-Call `quickstart` with that goal. It returns ordered steps, each marked `done`, `todo` or
-`optional`, each naming its command. Walk it. Prefer `local` first: a working model loop before any
-cloud resource exists is the cheapest possible failure.
+Nothing beyond these two is supported. For any other host, read the contract and follow the Docker
+route; do not invent a recipe. Pass the answer to both checks from now on (`--route <r>` and
+`target: "<r>"`), and walk the steps `--check` reports.
+
+**There is no plan tool.** The `quickstart` tool that returned a second ordering of these same
+steps was retired in OPE-2233: `--check` is the one answer to "what is left to do", and
+[Setup steps](./setup-steps.md) is the same list written for a human, generated from the engine so
+it cannot drift.
+
+**Never offer a local run as the route.** `npm run dev` is the development loop AFTER the deploy.
 
 ## Step 4 — The model key
 
@@ -99,15 +105,17 @@ scaffold_env { "values": { "AI_GATEWAY_API_KEY": "<the key>" } }
 
 Then `preflight` again. The model line reads `ok`.
 
-## Step 5 — Run it locally
+## Step 5 — A local smoke check (optional, and never the finish line)
 
 ```bash
 npm run dev
 ```
 
 That is `eve dev` — a terminal UI on `http://127.0.0.1:3000`. It proves inference works with no
-surface and no access wiring. Stop here and let the operator talk to it. If the goal was `local`,
-the setup is finished.
+surface and no access wiring, which is worth a minute when the model key is in doubt. It is NOT
+setup, and it is never where you stop: a local run has no public HTTPS URL for a chat vendor to
+reach and keeps its state in a different store, so it proves little about the deployment. Carry on
+to step 6 either way.
 
 ## Step 6 — The durable store
 
@@ -119,12 +127,12 @@ Serverless hosting makes this mandatory, and `preflight` says so unconditionally
 every deploy and every cold start.
 
 ```
-scaffold_env { "values": {
-  "DATABASE_URL": "<the connection string>",
-  "OE_MEMORY_PROVIDER": "postgres",
-  "OE_OPERATIONAL_PROVIDER": "postgres"
-} }
+scaffold_env { "values": { "DATABASE_URL": "<the connection string>" } }
 ```
+
+That one value is the whole step. A present `DATABASE_URL` selects `postgres` for the operational
+store AND the memory backing (OPE-2230), so `OE_OPERATIONAL_PROVIDER` and `OE_MEMORY_PROVIDER` are
+no longer part of the hosted setup. Set either one only to override the derived default.
 
 `preflight` then adds an **append-only role posture** line. It reads `single-role` on a plain Neon
 setup, which is safe but leaves the owner-DDL escape open. Hardening it is the two-role split in
@@ -191,7 +199,7 @@ either side.
 
 **Human step.** `npx vercel link` is interactive: it authenticates through a browser. Ask the
 operator to run it themselves, in this directory. It writes `.vercel/project.json`, which is how
-the wizard's `--check` and every later `vercel` command find the project.
+the `--check` report and every later `vercel` command find the project.
 
 ## Step 11 — Build, then push the environment to the deployment
 
@@ -207,8 +215,10 @@ the operator's consent:
 | Variable | Why the deployment needs it |
 | --- | --- |
 | `DATABASE_URL` | The Neon Marketplace integration sets it on the project. Push it only for a database you created elsewhere. |
-| `OE_OPERATIONAL_PROVIDER=postgres`, `OE_MEMORY_PROVIDER=postgres` | Without them core selects an embedded store. On Vercel it then throws at the first operational-store use, and at the first DM or personal memory call. |
 | `OE_CREDENTIAL_ENCRYPTION_KEY` | The deployment and the operator tools must hold the same key. |
+
+The two store selectors are **not** on that list any more (OPE-2230): `DATABASE_URL` selects
+`postgres` for both stores on its own. Pushing them is harmless and redundant.
 
 Three variables a local run uses are not needed on Vercel:
 
@@ -226,12 +236,12 @@ with no trailing newline:
 ```bash
 grep '^OE_CREDENTIAL_ENCRYPTION_KEY=' .env.local | cut -d= -f2- | tr -d '
 '   | vercel env add OE_CREDENTIAL_ENCRYPTION_KEY production
-printf %s postgres | vercel env add OE_OPERATIONAL_PROVIDER production
-printf %s postgres | vercel env add OE_MEMORY_PROVIDER production
 ```
 
-An app scaffolded by `npx create-open-everywhere` carries `npm run -s env:pipe -- <NAME>` for the same
-job, and its README lists the same variables in the same order.
+An app scaffolded by `npx @open-everywhere/create` carries `npm run -s env:pipe -- <NAME>` for the same
+job. Its own setup skill (`.claude/skills/quickstart-open-everywhere/SKILL.md`, step 9 of the Vercel
+route) lists the same variables in the same order; its README does not — that README is one screen
+and hands setup to the agent.
 
 If the operator's `vercel` version prompts instead, ask them to paste the value at the prompt. Do
 not read the value back yourself to relay it — that puts the deployment's master key in your

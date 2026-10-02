@@ -49,11 +49,15 @@ const publishable = [
   .map((dir) => readJson<Manifest>(join(dir, "package.json")))
   .filter((m) => m.private !== true);
 const lockstepNames = publishable.map((m) => m.name).sort();
-const wizard = publishable.find((m) => m.name === "create-open-everywhere");
+const scaffolder = publishable.find((m) => m.name === "@open-everywhere/create");
 const core = publishable.find((m) => m.name === "@open-everywhere/core");
-assert.ok(wizard && core, "the repository's packages/ holds create-open-everywhere and @open-everywhere/core");
-eq(lockstepNames.length, 9, "the lockstep set is nine packages (eight libraries + this wizard)");
-ok(publishable.every((m) => m.version === wizard.version), "every lockstep package carries the wizard's version — the premise the placeholder rests on");
+assert.ok(scaffolder && core, "the repository's packages/ holds @open-everywhere/create and @open-everywhere/core");
+eq(lockstepNames.length, 9, "the lockstep set is nine packages (eight libraries + this scaffolder)");
+ok(
+  lockstepNames.every((name) => name.startsWith("@open-everywhere/")),
+  "🔴 every lockstep package is inside the scope, the scaffolder included (OPE-2234) — an unscoped package cannot belong to the npm org",
+);
+ok(publishable.every((m) => m.version === scaffolder.version), "every lockstep package carries the scaffolder's version — the premise the placeholder rests on");
 
 const tpl = readJson<Manifest>(join(TEMPLATE, "package.json"));
 const allDeps = { ...tpl.dependencies, ...tpl.devDependencies };
@@ -119,7 +123,33 @@ ok(
   "template: no path under `.claude/` (the publish preview's harness-tree rule refuses one in any tarball)",
 );
 ok(templateFiles.includes("claude/skills/quickstart-open-everywhere/SKILL.md"), "template: carries the setup skill under `claude/` for the scaffold to rename");
+ok(templateFiles.includes("claude/skills/upgrade-open-everywhere/SKILL.md"), "template: carries the upgrade skill too — the app's second standing procedure (OPE-2232)");
 ok(!templateFiles.some((f) => f === ".env" || f === ".env.local"), "template: carries no env file with values");
+
+{
+  const rel = "agent/lib/register-adapters.ts";
+  const wiring = readFileSync(join(TEMPLATE, ...rel.split("/")), "utf8");
+  for (const fn of ["resolveOperationalSelection", "resolveMemoryProviderId"]) {
+    ok(wiring.includes(fn), `template ${rel}: asks core's ${fn} instead of re-testing the env`);
+  }
+  ok(
+    /operationalSelection\.floor === "pglite"/.test(wiring),
+    `template ${rel}: the PGlite floor is armed from the resolved floor, not from an absent selector`,
+  );
+  for (const selector of ["OE_MEMORY_PROVIDER", "OE_OPERATIONAL_PROVIDER"]) {
+    const compared = new RegExp(`process\\.env\\.${selector}\\s*===`).test(wiring);
+    ok(!compared, `template ${rel}: does NOT gate on process.env.${selector} === … (OPE-2230: DATABASE_URL selects both stores)`);
+    const negated = new RegExp(`!process\\.env\\.${selector}\\b`).test(wiring);
+    ok(!negated, `template ${rel}: does NOT arm the floor on an absent ${selector} either`);
+  }
+  const appWiring = readFileSync(join(REFERENCE_APP, ...rel.split("/")), "utf8");
+  const decision = (text: string): string =>
+    text
+      .split("\n")
+      .filter((l) => /resolveOperationalSelection\(|resolveMemoryProviderId\(|postgresSelected|pgliteFloorArmed|registerNeon\(\)/.test(l) && !l.trimStart().startsWith("//"))
+      .join("\n");
+  eq(decision(wiring), decision(appWiring), `template ${rel}: its store-selection decision is byte-identical to the reference app's`);
+}
 
 const scratch = mkdtempSync(join(tmpdir(), "oe-scaffold-test-"));
 try {
@@ -134,6 +164,7 @@ try {
   ok(existsSync(join(target, ".gitignore")), "scaffold: .gitignore exists in the app");
   ok(!existsSync(join(target, "gitignore")), "scaffold: no stray `gitignore` is left in the app (negative control)");
   ok(existsSync(join(target, ".claude", "skills", "quickstart-open-everywhere", "SKILL.md")), "scaffold: claude/ is renamed to .claude/ (the skill lands where Claude Code reads it)");
+  ok(existsSync(join(target, ".claude", "skills", "upgrade-open-everywhere", "SKILL.md")), "scaffold: the upgrade skill lands beside it");
   ok(!existsSync(join(target, "claude")), "scaffold: no stray `claude/` is left in the app (negative control)");
 
   const app = readJson<Manifest>(join(target, "package.json"));
@@ -142,14 +173,14 @@ try {
   eq(
     lockstepNames.map((name) => appDeps[name]),
     lockstepNames.map(() => version),
-    "scaffold: every lockstep package is pinned to the wizard version",
+    "scaffold: every lockstep package is pinned to the scaffolder version",
   );
   for (const rel of result.files) {
     const text = readFileSync(join(target, ...rel.split("/")), "utf8");
     ok(!text.includes(VERSION_PLACEHOLDER) && !text.includes(NAME_PLACEHOLDER), `scaffold ${rel}: no placeholder survives`);
   }
   const appLock = readJson<{ packages: Record<string, { version: string }> }>(join(target, "roster.lock.json"));
-  ok(Object.values(appLock.packages).every((p) => p.version === version), "scaffold: roster.lock.json records the wizard version");
+  ok(Object.values(appLock.packages).every((p) => p.version === version), "scaffold: roster.lock.json records the scaffolder version");
   eq(
     readFileSync(join(target, "agent", "agent.ts"), "utf8"),
     readFileSync(join(TEMPLATE, "agent", "agent.ts"), "utf8"),

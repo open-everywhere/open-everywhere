@@ -8,8 +8,8 @@ agent, its database, its secrets, and its scheduler in one deploy.
 | Seam | Adapter | Status |
 |---|---|---|
 | Sandbox | Vercel Sandbox | Built |
-| Operational store | Neon Postgres (`OE_OPERATIONAL_PROVIDER=postgres`) | Built |
-| Memory backing | Neon Postgres (`OE_MEMORY_PROVIDER=postgres`) | Built |
+| Operational store | Neon Postgres (selected by `DATABASE_URL`) | Built |
+| Memory backing | Neon Postgres (selected by `DATABASE_URL`) | Built |
 | Credential brokers | `env` (always) + `db` (when `OE_CREDENTIAL_ENCRYPTION_KEY` armed); each credential names its home `broker`. OAuth connectors via the built-in own-rolled flow | Built |
 | Scheduler | Scheduled cron → the routine dispatcher | Built |
 | Model | Vercel AI Gateway (`american-closed` default; `chinese-open-weights` one config flip away) | Built |
@@ -20,8 +20,8 @@ agent, its database, its secrets, and its scheduler in one deploy.
 - **Deploy button.** One click forks the template and deploys it. The
   [quickstart skill](../../introduction/quick-start.md) drives the rest.
 - **Neon marketplace.** Provision a Neon database from the Vercel integrations
-  marketplace; `DATABASE_URL` is injected, and the operational + memory stores point at it
-  with `OE_OPERATIONAL_PROVIDER=postgres` / `OE_MEMORY_PROVIDER=postgres`.
+  marketplace. `DATABASE_URL` is injected, and that one value points the operational store AND
+  the memory backing at it (OPE-2230) — neither store selector is needed.
 - **Credential brokers** are the core `env` broker (always) and the core `db` broker (when
   `OE_CREDENTIAL_ENCRYPTION_KEY` is armed); OAuth connectors are minted host-side by the built-in
   own-rolled OAuth flow (`packages/adapters/agent/oe-oauth`). There is no Vercel-specific managed broker — the

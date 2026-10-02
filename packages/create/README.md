@@ -1,63 +1,61 @@
-# create-open-everywhere
+# @open-everywhere/create
 
-The install wizard for Open Everywhere.
+The scaffold and setup check for Open Everywhere.
 
 Part of [Open Everywhere](https://github.com/open-everywhere/open-everywhere) — an open, self-hostable autonomous teammate you tag where your
-team works. This package is the setup wizard. It is run, not imported.
+team works. This package is run, not imported, and it does two things: it scaffolds a new app from
+the quickstart template, and it reports an existing app's setup status without touching it.
 
-It scaffolds a new app from the quickstart template. It then walks one setup engine through the
-steps a new instance needs — the environment file, the credentials, the store and the first
-surface — and it can report on an existing instance without touching it.
+**Setup itself is agent-led.** There is no interactive wizard: you open the scaffolded app in your
+coding agent and ask it to set up Open Everywhere. The agent reads the app's `AGENTS.md`, drives the
+`open-everywhere-ops` MCP server, and reads this command's `--check` report. Two routes are
+supported, and the agent asks which first: **Vercel** (the `vercel` CLI plus Marketplace Neon) or
+**Docker** (a self-hosted container that satisfies the
+[deployment contract](https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/contract.md)).
 
 ## Use
 
 ### Start a new app
 
 ```sh
-npx create-open-everywhere my-agent
+npm create @open-everywhere my-agent
 ```
 
-This scaffolds the quickstart app into `./my-agent` and runs the wizard from inside it. The
-directory must be new or empty. A fresh clone of an empty repository holds only `.git`, and it
-counts as empty: run `npx create-open-everywhere .` inside it. The wizard refuses a directory that
-holds anything else. The app depends on the
-eight `@open-everywhere/*` packages at this wizard's own version, plus `eve` at the pin core
-declares, and its `postinstall` applies the eve patch. Its roster mounts the launch surfaces: Slack,
-Notion and GitHub. The app's own `README.md` carries the numbered steps from there to a deployed
-agent that answers a Slack DM.
+`npx @open-everywhere/create my-agent` does the same thing: npm maps a bare scope to
+`@scope/create`, so both reach this package.
 
-`--skip-wizard` scaffolds and stops. Without a terminal (a coding agent's shell, a script), the
-scaffold also stops after it writes the app: it prints the next steps and exits 0, and never waits on
-a prompt. The app carries `AGENTS.md`, a `.mcp.json` for the `open-everywhere-ops` MCP server and the
-`quickstart-open-everywhere` skill, so an agent opened in it can drive the setup.
+This scaffolds the quickstart app into `./my-agent`, prints the next steps and exits. It never
+prompts. The directory must be new or empty. A fresh clone of an empty repository holds only `.git`,
+and it counts as empty: run `npx @open-everywhere/create .` inside it. The scaffold refuses a
+directory that holds anything else. The app depends on the eight `@open-everywhere/*` libraries at
+this CLI's own version — plus this package itself, as a dev dependency, for its `check` script — and
+on `eve` at the pin core declares; its `postinstall` applies the eve patch. Its roster mounts the launch surfaces: Slack, Notion and GitHub. The app carries `AGENTS.md`,
+a `.mcp.json` for the `open-everywhere-ops` MCP server and the `quickstart-open-everywhere` skill,
+so the agent you open it in can drive the setup.
 
-### Configure an existing app
-
-Run it with no directory from inside an Open Everywhere app — a scaffolded one, or a clone of the
-repository:
+### The status report
 
 ```sh
-npx create-open-everywhere
+npx @open-everywhere/create --check
 ```
 
-The wizard **configures** the app: the environment file, the credentials, the store and the first
-surface. From a directory that is not an app, it reports an unsatisfied repo step and tells you to
-scaffold one.
+`--check` prompts for nothing, changes nothing, sends no telemetry and never scaffolds. It reports
+each setup step with what is missing and the next command for it. Add `--json` for the same report
+as one JSON object, which is what an agent-driven setup reads. `--route docker` judges against the
+Docker route (the default is `vercel`), and `--host https://<host>` probes a deployment.
 
-### Non-interactive status report
+Run it from inside an Open Everywhere app — a scaffolded one, or a clone of the repository. From a
+directory that is not an app, it reports an unsatisfied repo step and tells you to scaffold one.
 
-```sh
-npx create-open-everywhere --check
-```
+The same step list written out for a human is
+[Setup steps](https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/setup-steps.md).
+That page is generated from the step list this command reports, so the two cannot drift.
 
-`--check` prompts for nothing, changes nothing and never scaffolds. It reports what is configured and
-what is missing. Add `--json` to get the same report as one JSON object, which is what a scripted or
-agent-driven setup reads.
-
-The wizard starts on Node 18 or newer. The app it scaffolds needs Node 24.
+This CLI starts on Node 18 or newer. The app it scaffolds needs Node 24.
 
 ## Docs
 
+- [Setup steps](https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/setup-steps.md)
 - [Setup runbook](https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/setup-runbook.md)
 - [Documentation index](https://github.com/open-everywhere/open-everywhere/blob/main/docs/README.md)
 

@@ -100,7 +100,7 @@ export default defineRoster({
         "OPE-110 governance member supplier (core keeps the seam + the fail-closed default), the " +
         "slack BRIDGE core's generic spine consumes (approval/connector cards, credential intake, " +
         "dispatch channel, display names, the internal-channel gate), and the ops arms " +
-        "(quickstart step + telemetry probe).",
+        "(the paste-ready app manifest + telemetry probe).",
     },
     teams: {
       about:

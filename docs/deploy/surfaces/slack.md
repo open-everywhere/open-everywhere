@@ -140,6 +140,47 @@ arm the plane.
 - A reachable Open Everywhere instance — deployed (public HTTPS URL) or local with a tunnel. See the [docs index](../../README.md) to get the project and the [setup runbook](../setup-runbook.md) for the deployment steps (env, access config, safety rules).
 - Your instance's public base URL. The Slack webhook route is **`/eve/v1/slack`**, so Slack calls `https://<your-deploy-url>/eve/v1/slack`.
 
+## The short way: `/setup` on the deployment
+
+**If your deployment is already up, open `https://<your-deploy-url>/setup` and skip Steps 1 and 2.**
+That page does the whole install for you (OPE-2231):
+
+1. It asks for a **one-time setup code**. The deployment logs the code on every start while Slack is
+   not installed — read it with `vercel logs` or `docker logs`. This is the page's only
+   authentication, so whoever can read the deployment's logs can run setup.
+2. You paste **one Slack app configuration token** (<https://api.slack.com/apps> → *Your App
+   Configuration Tokens*; it needs `app_configurations:write` and lasts about 12 hours). The page
+   calls `apps.manifest.create` with the manifest below and your deployment's own host, so no URL is
+   typed by hand. The configuration token is used once and never stored.
+3. You click **Install to Slack**. The OAuth callback stores the bot token.
+4. The last screen gives you the **two config edits**, already filled in with your workspace and user
+   ids — the vouch in `agent/identity/surfaces.ts` and `admins` in
+   `agent/memory/config/domains/org.ts`. DM the bot and ask it to commit them, or make them by hand.
+
+Every credential Slack *issues* goes **browser → Slack → your deployment's encrypted credential
+store**: the client secret, the signing secret and the bot token are never seen by a human and never
+reach a clipboard or a hosting dashboard. The one value you do paste is the short-lived app
+configuration token, which `/setup` uses once and never stores. `SLACK_BOT_TOKEN` and
+`SLACK_SIGNING_SECRET` do not need to be set at all — Step 2 below becomes unnecessary.
+
+🔴 **The page locks for good at the first successful install**, and answers `404` from then on. An org
+admin reopens it with the `reopen_slack_setup` control call (see
+[the control plane](../../security/control-plane.md)); a reopen keeps every stored credential, so the
+agent stays on Slack while you walk the page again.
+
+🔴 **If `SLACK_BOT_TOKEN` or `SLACK_SIGNING_SECRET` is set in the environment, `/setup` answers 404.**
+The resolver is env-first — deliberately, so that landing this page cannot change which Slack app a
+working deployment speaks as — which means a run on such a deployment would store credentials nothing
+would ever read. Rather than let you complete a run that changes nothing, the page refuses. To move an
+existing deployment onto the credential store, unset both variables and redeploy; `/setup` then opens
+and the deployment logs a setup code on that start.
+
+This is also why an existing deployment does **not** get an open setup page when it upgrades: it is
+configured by environment variable, so the page is closed from the start.
+
+The rest of this page is the **manual path** — still fully supported, and the one to use before the
+first deploy (the page needs a running deployment to create an app that points at it).
+
 ## Step 1 — Create the Slack app
 
 1. Go to <https://api.slack.com/apps> → **Create New App** → **From scratch**. Name it (e.g. `Open Everywhere`) and pick the target workspace.
@@ -270,6 +311,8 @@ arm the plane.
      reaction emits anonymous volume telemetry); reactions on *other* messages are counted but
      not stored. Needs the `reactions:read` scope from Step 2. Omit these and the feature is
      silently off — nothing else changes.
+   The generated manifest (`/setup`, `surface_manifest`, `npx @open-everywhere/create`) subscribes
+   every event in this list and requests each event's scope.
    Then **App Home** → **Show Tabs** → turn the **Messages Tab** on, and tick *Allow users to send
    Slash commands and messages from the messages tab*. Without it, a person who opens a DM with the
    agent sees *"Sending messages to this app has been turned off"*, and `message.im` never fires.
@@ -635,7 +678,7 @@ for why that's a genuine, documented platform grammar difference, not an inconsi
    ```
 
 4. **Short Description**: `Open Everywhere control-plane commands (stop, status, budget) — no model turn.`
-5. **Usage Hint**: `stop | status | budget | budget raise <usd> | budget clear | help`.
+5. **Usage Hint**: `stop | status | budget [raise <usd> | clear] | rate <n> | help`.
 6. **Save**, then reinstall the app if Slack prompts you to (a new command is a scope-adjacent change).
 
 No extra env var is needed — the route reuses `SLACK_SIGNING_SECRET` from [Step 2](#step-2--configure-the-environment) to verify every request (the SAME `v0=` HMAC scheme Event Subscriptions uses), and `SLACK_BOT_TOKEN` to post the `raise`/`clear` approval card.

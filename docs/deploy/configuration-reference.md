@@ -1080,7 +1080,7 @@ fail-loud error at config load. See
 
 | Var | Default | Meaning |
 |---|---|---|
-| `OE_MEMORY_PROVIDER` | `git` | `git` / `sqlite` / `postgres`. Postgres needs a registered client at startup. |
+| `OE_MEMORY_PROVIDER` | `postgres` when `DATABASE_URL` is set, else `git` — ⚠️ a deployment that already held a `DATABASE_URL` and relied on the `git` default must now set `OE_MEMORY_PROVIDER=git` explicitly to keep its store, or migrate memory first ([upgrade note](./database-graduation.md#-upgrading-into-the-derived-default-your-memory-backing-may-move)) | `git` / `sqlite` / `postgres`. **Not required on a hosted deploy:** a present `DATABASE_URL` selects `postgres` on its own (OPE-2230), and this variable overrides that in either direction. Postgres needs a registered client at startup. |
 | `OE_MEMORY_DIR` | `./.open-everywhere-memory` | Durable host-side store location. |
 | `OE_SQLITE_PATH` | `<OE_MEMORY_DIR>/open-everywhere.sqlite3` | SQLite DB file (memory + operational stores). |
 | `OE_MEMORY_GIT_BRANCH` | `main` | Branch for the `github` Contents-API backing. |
@@ -1097,7 +1097,7 @@ hygiene: the dream cycle](../capabilities/memory.md#memory-hygiene-the-dream-cyc
 
 | Var | Default | Meaning |
 |---|---|---|
-| `OE_OPERATIONAL_PROVIDER` | `sqlite` | `sqlite` (local) or `postgres` (hosted; register a client at startup). Backs spend, routines, audit. |
+| `OE_OPERATIONAL_PROVIDER` | `postgres` — hosted when `DATABASE_URL` is set, else the embedded PGlite floor | `sqlite` (DEPRECATED, reachable only by naming it) or `postgres` (hosted; register a client at startup). **Not required on a hosted deploy:** a present `DATABASE_URL` selects hosted `postgres` on its own (OPE-2230), and this variable overrides that in either direction. Backs spend, routines, audit. |
 | `OE_ALLOW_EPHEMERAL_OPERATIONAL` | unset (**fail closed**) | On Vercel with the `sqlite` store, startup **throws** — audit, spend caps, and break-glass revocations would be per-instance and ephemeral. Set to `1` to accept that knowingly (dev/preview only). |
 | `OE_NEON_WS_PROXY` | unset (**hosted Neon, untouched**) | Local-dev-only: `host:port` of a local `wsproxy` (the Neon serverless driver replaces TCP with a WebSocket, which a vanilla `postgres:16` speaks neither side of) so `OE_MEMORY_PROVIDER=postgres`/`OE_OPERATIONAL_PROVIDER=postgres` can point at a plain Postgres over a docker-compose network instead of hosted Neon. No-op unless set. Never point this at a remote endpoint — it configures insecure WS with no TLS/connect pipelining, correct only for a same-network, non-TLS local proxy. |
 

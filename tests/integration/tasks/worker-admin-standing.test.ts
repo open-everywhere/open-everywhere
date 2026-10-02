@@ -4,6 +4,7 @@ const INJECT_TOKEN = "ope673-inject-token";
 process.env.OE_TEST_WAKE = "1";
 process.env.OE_CONTROL_INJECT_TOKENS = `it-ope673:${createHash("sha256").update(INJECT_TOKEN, "utf8").digest("hex")}`;
 
+import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import { beforeAll, expect, test } from "vitest";
 import {
   awaitTaskSettlement,
@@ -16,6 +17,7 @@ import {
   registerScript,
   SETTLEMENT_DRAIN_CLOSING_SCRIPT,
   taskIdOfDelegation,
+  waitFor,
   waitForChildren,
   type RecordedRequest,
   type ScriptedHandle,
@@ -66,7 +68,7 @@ async function askThroughAWorker(
 ) {
   const dispatched = disposeLater(
     registerScript({
-      parent: [{ calls: [{ tool: "agent", input: { message: "handle the ask for the person who asked" }, id: `ope673-${leg}` }] }, { say: "handed off" }],
+      parent: [{ calls: [{ tool: "agent", input: { message: "handle the ask for the person who asked" }, id: `ope673-${leg}` }] }, { say: NO_REPLY_SENTINEL }],
       child: [{ calls: [{ tool, input: toolInput, id: `ope673-${leg}-call` }] }, { say: "worker done" }],
     }),
   );
@@ -87,17 +89,12 @@ let BASE = "";
 beforeAll(async () => {
   const { base } = await bootAgent();
   BASE = base;
-  const opener = registerScript({ parent: [{ say: "hello, I am this channel's standing session" }] });
-  await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> hello", userId: NON_ADMIN_DISCORD_ID });
-  await new Promise<void>((resolve) => {
-    const started = Date.now();
-    const tick = (): void => {
-      if (opener.requests.length > 0 || Date.now() - started > 60_000) return resolve();
-      setTimeout(tick, 200);
-    };
-    tick();
+  const opener = registerScript({
+    parent: [{ calls: [{ tool: "no_reply", input: { reason: "nothing_to_add" }, id: "ope673-opener-silence" }] }, { say: NO_REPLY_SENTINEL }],
   });
-  expect(opener.requests.length, "the opening mention reached the seat").toBeGreaterThan(0);
+  await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> hello", userId: NON_ADMIN_DISCORD_ID });
+  await waitFor(() => opener.requests.find((r) => r.stepIndex === 1), "the opening mention to reach the seat and finish its arm", 120_000);
+  await awaitWindowQuiet();
   opener.dispose();
 }, 300_000);
 

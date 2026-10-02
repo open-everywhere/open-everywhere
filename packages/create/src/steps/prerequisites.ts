@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { coreNodeRange, nodeRangeSatisfied } from "@open-everywhere/core/agent/ops/package-info.js";
-import type { WizardStep } from "../engine.js";
+import type { SetupStep } from "../engine.js";
 
 function gitAvailable(): boolean {
   try {
@@ -18,7 +18,7 @@ export function nodeVerdict(version: string, range: string | undefined): { ok: b
   return { ok, detail: ok ? `node ${version}` : `node ${version} (need ${range})` };
 }
 
-export const prerequisitesStep: WizardStep = {
+export const prerequisitesStep: SetupStep = {
   id: "prerequisites",
   title: "Prerequisites (Node 24, git)",
   check() {
@@ -31,7 +31,7 @@ export const prerequisitesStep: WizardStep = {
   },
   guide() {
     return {
-      summary: "Open Everywhere needs the Node range @open-everywhere/core declares (24.x) and git.",
+      summary: `Open Everywhere needs the Node range @open-everywhere/core declares (${coreNodeRange() ?? "see its engines.node"}) and git.`,
       instructions: [
         "Install Node 24: `nvm install 24 && nvm use 24` (or your platform's installer).",
         "Install git if `git --version` fails (https://git-scm.com/downloads).",

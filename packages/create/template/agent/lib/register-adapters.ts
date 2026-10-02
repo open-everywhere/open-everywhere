@@ -16,6 +16,8 @@ import {
   bootVerifyAuditChainTail,
   bootBackfillLinkTenants,
   registerOperationalPgliteLazy,
+  resolveOperationalSelection,
+  resolveMemoryProviderId,
   onVercel,
   declareProviderSelection,
   assertConnectorMemoryGrants,
@@ -64,16 +66,16 @@ assertConnectorMemoryGrants(loadDomains(), loadSilos(), domainMemoryGrants);
 
 applySubtreeSurfaceClaims();
 
-if (
-  (process.env.OE_MEMORY_PROVIDER === "postgres" || process.env.OE_OPERATIONAL_PROVIDER === "postgres") &&
-  process.env.DATABASE_URL
-) {
+const operationalSelection = resolveOperationalSelection(process.env);
+const postgresSelected =
+  resolveMemoryProviderId(process.env) === "postgres" ||
+  (operationalSelection.id === "postgres" && operationalSelection.floor === "none");
+if (postgresSelected && process.env.DATABASE_URL) {
   await registerNeon();
 }
 
 const pgliteFloorArmed =
-  !process.env.OE_OPERATIONAL_PROVIDER &&
-  !process.env.DATABASE_URL &&
+  operationalSelection.floor === "pglite" &&
   (!onVercel() || process.env.OE_ALLOW_EPHEMERAL_OPERATIONAL === "1");
 if (pgliteFloorArmed) {
   registerOperationalPgliteLazy(undefined, runBootStoreChecks);

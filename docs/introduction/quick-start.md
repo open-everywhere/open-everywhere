@@ -8,63 +8,62 @@ bundle, an env-backed credential. For the full production runbook (real connecto
 enforcement, going live safely) see the **[setup runbook](../deploy/setup-runbook.md)**; for
 the per-platform app registration, see **[surface setup](../deploy/surfaces/)**.
 
-## Run the install wizard (recommended)
+## Scaffold the app, then let your coding agent set it up
 
-Open Everywhere ships a step-driven, resumable setup wizard — one engine, walked either
-interactively or checked non-interactively. It replaces following this whole page by hand.
-Run it straight from npm, with a directory name, to scaffold a new app and set it up:
+Setup is **agent-led**. `@open-everywhere/create` does two things — it scaffolds the app and it
+reports setup status — and your coding agent does the rest, with your consent at every command.
 
 ```bash
-npx create-open-everywhere@latest my-agent   # scaffold ./my-agent, then run the wizard there
-npx create-open-everywhere@latest            # run the wizard in an existing app
-npx create-open-everywhere@latest --check    # just report status, no prompts (--json for data)
+npm create @open-everywhere my-agent          # scaffold ./my-agent, then open it in your agent
+npx @open-everywhere/create@latest --check    # report setup status (--json for data)
 ```
 
 The scaffold writes the quickstart app: a small repository of your own that depends on the
-`@open-everywhere/*` npm packages and holds only your configuration — a roster that mounts
-Slack, Notion and GitHub, and the agent config under `agent/`. The directory must be new or empty.
-The app's `README.md` carries the numbered steps from there to an agent that answers a Slack DM.
-Without a terminal, the scaffold writes the app, prints the next steps and exits: it never waits on a
-prompt. The app carries `AGENTS.md`, a `.mcp.json` and the setup skill, so a coding agent opened in
-it can drive the rest. [Consuming as packages](../deploy/consuming-as-packages.md) explains what it
-contains.
+`@open-everywhere/*` npm packages and holds only your configuration — a roster that mounts Slack,
+Notion and GitHub, and the agent config under `agent/`. The directory must be new or empty. It
+never waits on a prompt: it writes the app, prints the next steps and exits. The app carries
+`AGENTS.md`, a `.mcp.json` that starts the `open-everywhere-ops` MCP server, and the
+`quickstart-open-everywhere` skill, so a coding agent opened in it drives the setup.
+[Consuming as packages](../deploy/consuming-as-packages.md) explains what the app contains.
 
-`npm create open-everywhere` runs the same package. Inside a checkout you can also run the
-wizard from the tree itself: `node packages/create/bin/create-open-everywhere.js`.
+`npm create @open-everywhere` and `npx @open-everywhere/create` are the same package: npm maps a
+bare scope to `@scope/create`. Inside a checkout you can also run it from the tree itself:
+`node packages/create/bin/create-open-everywhere.js`.
 
-It walks ten steps, in order: prerequisites (Node 24, git), the repo checkout itself, the tool
-roster, a Vercel project link, the database, a Slack app (manifest included), an env-var presence
-checklist (never prints a value), a telemetry-consent prompt (accept/decline/redirect —
-see [Telemetry](../deploy/telemetry.md)), `npm run build`, and a final go/no-go
-verification. **Resumable** — re-run any time; an already-satisfied step is skipped, so
-Ctrl-C and re-running is always safe.
+**Two routes are supported, and the agent asks which first:** **Vercel** (the `vercel` CLI plus
+Marketplace Neon — the deployment authenticates the AI Gateway with OIDC, so no gateway key) and
+**Docker** (a self-hosted container that satisfies the
+[deployment contract](../deploy/contract.md)). Nothing else is supported. A local run is the
+**development** loop after the deploy, never a setup route.
 
-`--check` judges every step against the hosted goal (a Vercel deploy) and prints a `next` command
-under each unsatisfied one. `--goal local` judges against `npm run dev` instead. `--host <url>`
-probes a deployment: the build + deploy step is satisfied only when the deployed Slack route
-answers an unsigned request with its own `401 unauthorized`. That proves the function booted and
-the route is mounted. It does not prove the deployment holds `SLACK_SIGNING_SECRET`; Slack's Event
-Subscriptions **Verified** does. The first request to a fresh deployment boots the function, so a
-timeout or a 5xx gets one retry with a longer timeout, and a pass on the retry says "cold start".
-`--check` reads `.env.local` and the shell, never the Vercel project's own environment. A value
-you set only in the Vercel dashboard still reads as missing, and the miss says so.
-`--app-name <name>` names the Slack app in the printed manifest (default "Open Everywhere"). A
-second install in one workspace needs its own name. `--decline-telemetry` answers the telemetry
-question from a shell with no terminal; accepting needs the interactive prompt.
+`--check` walks nine steps, in order: prerequisites (Node 24, git), the repo checkout itself, the
+tool roster, a Vercel project link, the database, a Slack app (manifest included), an env-var
+presence checklist (never prints a value), `npm run build` plus the deploy, and a final go/no-go
+verification. It prints a `next` command under each unsatisfied one. The same list written out for
+a human is **[Setup steps](../deploy/setup-steps.md)**, generated from the engine itself, so it
+cannot drift from what the check reports.
 
-`--check` is a pure status report (no prompts, no writes, no telemetry) — the same mode
-the `quickstart-open-everywhere` Claude skill drives when an agent is doing the setup for
-you (see below).
+`--route docker` judges against the Docker route (the default is `vercel`). `--host <url>` probes a
+deployment: the build + deploy step is satisfied only when the deployed Slack route answers an
+unsigned request with its own `401 unauthorized`. That proves the function booted and the route is
+mounted. It does not prove the deployment holds `SLACK_SIGNING_SECRET`; Slack's Event Subscriptions
+**Verified** does. The first request to a fresh deployment boots the function, so a timeout or a
+5xx gets one retry with a longer timeout, and a pass on the retry says "cold start". `--check`
+reads `.env.local` and the shell, never the deployment's own environment. A value you set only in
+the Vercel dashboard still reads as missing, and the miss says so. `--app-name <name>` names the
+Slack app in the printed manifest (default "Open Everywhere"); a second install in one workspace
+needs its own name.
 
-Without a directory name, the wizard **configures** the app in the current directory. Its repo
-step checks that the directory is an Open Everywhere app — a scaffolded one, or a clone under
-**Run locally** — and offers to run `npm install` when its dependencies are missing. In a
-directory that is not an app, that step reports unsatisfied and tells you to scaffold one.
+`--check` changes nothing: no prompts, no writes, no telemetry. **There is no interactive wizard,
+and this CLI sends no telemetry at all** — see [Telemetry](../deploy/telemetry.md) for the two
+retired install-wizard events and why their names are still accepted by the collector. The ops MCP
+server's tools are what write: `scaffold_env` writes `.env.local`, and
+`scaffold_credential_key` mints the credential-store key without printing it.
 
-Beyond the scaffold, the wizard itself writes two files: `.env.local` and its own resume state.
-Three of its steps run commands that write more: the repo step runs `npm install`, the roster step
-runs `oe build` to materialise the slot tree, and the build step runs `npm run build`, which writes
-`.output/`. The repo and build steps ask first. The roster step does not.
+Without a directory name, `--check` reports on the app in the current directory. Its repo step
+checks that the directory is an Open Everywhere app — a scaffolded one, or a clone under
+**Run locally** — and names `npm install` as the next command when its dependencies are missing.
+In a directory that is not an app, that step reports unsatisfied and tells you to scaffold one.
 
 **Dependency cooldown (recommended for your project, not ours):** npm's `min-release-age`
 setting delays a dependency version from resolving until it has aged on the registry for a
@@ -84,10 +83,10 @@ fits your update cadence) is worth adopting.
 1. **Click the deploy button.** It clones the repo into your GitHub account and creates a
    Vercel project from it.
 2. **Add a database.** In the Vercel dashboard → **Storage** → add **Neon** (Postgres) from
-   the Marketplace. The connection string is injected automatically. Then set
-   `OE_MEMORY_PROVIDER=postgres` and `OE_OPERATIONAL_PROVIDER=postgres` — Vercel's filesystem
-   is ephemeral, so the git/SQLite backings don't persist between invocations on managed
-   Vercel. Postgres is the deploy baseline, not an upgrade.
+   the Marketplace. The connection string is injected automatically, and that is the whole step:
+   a present `DATABASE_URL` selects Postgres for the memory backing and the operational store on
+   its own. Vercel's filesystem is ephemeral, so the local backings do not persist between
+   invocations. Postgres is the deploy baseline, not an upgrade.
 3. **Model auth is automatic.** On a linked Vercel project the AI Gateway authenticates via
    OIDC — no model key to paste. The agent runs the `american-closed` stack out of the box, one
    env var away from switching to `chinese-open-weights` (DeepSeek V4 Flash) or back — see
@@ -144,11 +143,10 @@ durable** (fine for dev / a small self-host); for real production org data, grad
 operational store to a Postgres server or hosted Postgres with the supported migration
 ([Graduating the operational store](../deploy/database-graduation.md)).
 
-Prefer to let an agent set it up for you? The repo ships an ops MCP server
-(`open-everywhere-ops`) and a `quickstart-open-everywhere` skill — clone the repo, boot Claude
-Code in the checkout, and say *"get Open Everywhere running locally."* The skill drives the
-same install wizard's `--check` mode above and walks you through whatever it reports as
-unsatisfied.
+Setting it up for real? That is the agent's job, not this page's: open the app in your coding
+agent and ask it to set up Open Everywhere. It reads the `quickstart-open-everywhere` skill, drives
+the `open-everywhere-ops` MCP server, asks you to pick a route — Vercel or Docker — and walks
+whatever `--check` reports as unsatisfied.
 
 ## The minimal config
 

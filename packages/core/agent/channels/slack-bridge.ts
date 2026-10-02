@@ -19,6 +19,18 @@ export interface SlackBridge {
   readonly confirmChannelInternal: (channelId: string) => Promise<boolean>;
   readonly partnerFactsFromInfo: (info: unknown, expectedTeamId?: string) => { dmPartnerTrust: "internal" | "external" };
   readonly channel: Channel<any, any, any>;
+  readonly installState?: () => Promise<SlackInstallFacts | undefined>;
+  readonly reopenSetup?: () => Promise<boolean>;
+}
+
+export interface SlackInstallFacts {
+  readonly v: 1;
+  readonly appId: string;
+  readonly clientId: string;
+  readonly teamId: string;
+  readonly teamName?: string;
+  readonly installerUserId: string;
+  readonly installedAt: string;
 }
 
 const bridgeSlot = processRegistrySlot<SlackBridge>("slack-bridge.v1");
@@ -33,6 +45,22 @@ export function _resetSlackBridgeForTest(): void {
 
 export function slackBridge(): SlackBridge | null {
   return bridgeSlot.get();
+}
+
+export async function slackInstallFacts(): Promise<SlackInstallFacts | undefined> {
+  const arm = slackBridge()?.installState;
+  if (!arm) return undefined;
+  try {
+    return await arm();
+  } catch {
+    return undefined;
+  }
+}
+
+export async function reopenSlackSetupPage(): Promise<boolean | undefined> {
+  const arm = slackBridge()?.reopenSetup;
+  if (!arm) return undefined;
+  return arm();
 }
 
 const SLACK_ROOM_WRITE_METHODS = new Set([

@@ -11,4 +11,4 @@ function readVersion(): string {
   }
 }
 
-export const WIZARD_VERSION = readVersion();
+export const CLI_VERSION = readVersion();

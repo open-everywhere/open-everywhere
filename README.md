@@ -67,8 +67,9 @@ platform-agnostic `SurfaceBinding`.
 
 1. **Click the button.** It clones the repo into your GitHub and creates a Vercel project.
 2. **Add a database.** From the Vercel dashboard → Storage → add **Neon** (Postgres) from the Marketplace.
-   The connection string is injected automatically. Set `OE_MEMORY_PROVIDER=postgres` and
-   `OE_OPERATIONAL_PROVIDER=postgres` (Vercel's filesystem is ephemeral — see the
+   The connection string is injected automatically, and that is the whole step: `DATABASE_URL`
+   selects Postgres for the memory backing and the operational store (Vercel's filesystem is
+   ephemeral — see the [deployment contract](./docs/deploy/contract.md) and the
    [setup runbook](./docs/deploy/setup-runbook.md)).
 3. **Model auth is automatic.** On a linked Vercel project the AI Gateway uses OIDC — no key needed.
 4. **Connect a surface.** The one manual step: create a Slack/Teams/Discord/Linear app and paste its

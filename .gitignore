@@ -73,11 +73,6 @@ packages/core/scripts/eval/seeds/
 # bytes from a soak fixture run, run-local, never tracked. Same posture as the eval results above.
 packages/core/scripts/soak/results/
 
-# Install-wizard package build output (packages/create) — compiled bin target,
-# never the source of truth; built via `npm run build --workspace
-# create-open-everywhere` before publish.
-packages/create/dist/
-
 # PUBLISH BUILD OUTPUT (OPE-406) — `tsc -p tsconfig.build.json` per publishable package, driven by
 # `npm run build:packages`. Compiled ESM + `.d.ts` (+ maps) is what a registry install actually
 # executes (Node refuses to type-strip anything under node_modules), but it is derived: the `.ts`
@@ -95,8 +90,9 @@ packages/providers/*/dist/
 # record, never a shared fact about the project. Relocate with OE_DEPLOY_STATE_FILE.
 .open-everywhere-deploy/
 
-# Install-wizard bookkeeping (packages/create/src/state.ts) — per-checkout
-# consent record + once-per-install telemetry guards. Never shared/committed.
+# App-state directory — per-checkout, never shared/committed. `oe upgrade` writes its resume
+# marker here (`upgrade-resume.json`, packages/core/scripts/oe-upgrade.ts). The install wizard's
+# consent record and telemetry guards also lived here until OPE-2233 retired them.
 .open-everywhere/
 
 # Windows WSL download metadata
@@ -146,3 +142,13 @@ packages/providers/*/dist/
 # Measured: one 8 MB `packages/core/open-everywhere-core-0.1.0.tgz` sat untracked and unignored while
 # the gate ran, so a `git add -A` in that window commits it into the repository.
 *.tgz
+# The integration tier's PREPARED-TREE marks (OPE-2235). `tests/integration/prepare.ts` writes
+# `.oe-it-prepared.json` — the cache key the artefacts on this tree were built from — and mints the
+# migrated PGlite template under `.oe-it-prepare/`. Both are build output, never source: the stamp names
+# one machine's tree and the template is a 41 MB PGlite data directory. The two `.tar.gz` names are the
+# cache archive's staging paths; each is deleted in a `finally`, and the glob is what keeps the orphan
+# from a killed run out of the next `git add -A`.
+/.oe-it-prepared.json
+/.oe-it-prepare/
+/.oe-it-prepare-restore.tar.gz
+/.oe-it-prepare-publish.tar.gz

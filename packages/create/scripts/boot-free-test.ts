@@ -39,14 +39,14 @@ function edges(file: string): string[] {
   return out;
 }
 
-function wizardSources(dir: string): string[] {
+function cliSources(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
     const p = join(dir, name);
-    return statSync(p).isDirectory() ? wizardSources(p) : p.endsWith(".ts") ? [normalize(p)] : [];
+    return statSync(p).isDirectory() ? cliSources(p) : p.endsWith(".ts") ? [normalize(p)] : [];
   });
 }
 
-const roots = wizardSources(join(CREATE, "src"));
+const roots = cliSources(join(CREATE, "src"));
 const parent = new Map<string, string | undefined>(roots.map((r) => [r, undefined]));
 const queue = [...roots];
 let hit: string | undefined;
@@ -66,11 +66,21 @@ while (queue.length > 0 && !hit) {
 if (hit) {
   const chain: string[] = [];
   for (let at: string | undefined = hit; at; at = parent.get(at)) chain.unshift(relative(join(CREATE, ".."), at).split("\\").join("/"));
-  console.error(`✗ boot-free: the wizard reaches the runtime boot path:\n  ${chain.join("\n  → ")}`);
+  console.error(`✗ boot-free: the CLI reaches the runtime boot path:\n  ${chain.join("\n  → ")}`);
   process.exit(1);
 }
 if (roots.length === 0 || parent.size <= roots.length) {
-  console.error("✗ boot-free: the walk found no wizard sources or no core imports — the test is not measuring anything");
+  console.error("✗ boot-free: the walk found no CLI sources or no core imports — the test is not measuring anything");
   process.exit(1);
 }
-console.log(`✓ boot-free: ${roots.length} wizard source(s), ${parent.size} module(s) walked, none reaches the eve boot probe`);
+const telemetryImporters = roots.filter((file) => /observability\/telemetry/.test(readFileSync(file, "utf8")));
+if (telemetryImporters.length > 0) {
+  console.error(
+    "✗ boot-free: these `src/` file(s) reach core's telemetry emitter, so the documented claim that a\n" +
+      "  `@open-everywhere/create` run sends NOTHING is false (docs/deploy/telemetry.md § The retired\n" +
+      `  install-wizard events):\n  ${telemetryImporters.join("\n  ")}`,
+  );
+  process.exit(1);
+}
+
+console.log(`✓ boot-free: ${roots.length} CLI source(s), ${parent.size} module(s) walked, none reaches the eve boot probe`);

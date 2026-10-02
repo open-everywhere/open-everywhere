@@ -1,5 +1,6 @@
 import { slackContinuationToken } from "eve/channels/slack";
 import { callSlackWebApi } from "./slack-web-api.js";
+import { slackBotToken } from "../setup/credentials.js";
 import { RateLimitExhaustedError } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   resolvePartition,
@@ -1607,11 +1608,12 @@ const TRANSCRIPT_MESSAGES = 50;
 const TRANSCRIPT_LINE_CHARS = 240;
 const TRANSCRIPT_TOTAL_CHARS = 4000;
 
-export async function slackForm(method: string, body: string, token: string | undefined = process.env.SLACK_BOT_TOKEN): Promise<Record<string, unknown> | undefined> {
-  if (!token) return undefined;
+export async function slackForm(method: string, body: string, token?: string): Promise<Record<string, unknown> | undefined> {
+  const resolved = token ?? (await slackBotToken());
+  if (!resolved) return undefined;
   try {
     return (await callSlackWebApi({
-      botToken: token,
+      botToken: resolved,
       operation: method,
       body: Object.fromEntries(new URLSearchParams(body)),
     })) as Record<string, unknown>;

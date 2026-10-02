@@ -33,7 +33,6 @@ export const KNOWN_UNREACHED_EXPORTS: ReadonlySet<string> = new Set([
   "packages/core/agent/connections/connector-auth.ts::userInteractiveOAuth",
   "packages/core/agent/control/auth.ts::INJECT_TOKEN_ENV",
   "packages/core/agent/control/http.ts::handleControlRequest",
-  "packages/core/agent/credentials/reserved-refs.ts::RESERVED_REF_NAMESPACES",
   "packages/core/agent/docs/source-map.ts::UNIVERSAL_SURFACE_DOCS",
   "packages/core/agent/hooks/link-claim.ts::claimBodyOf",
   "packages/core/agent/identity/principals.ts::accountRefKey",

@@ -4,6 +4,7 @@ import type { CredentialBoundDomain } from "../access/domain-credentials.js";
 import { sqliteProvider } from "./sqlite.js";
 import { makePostgresProvider, type PgClient } from "./postgres.js";
 import { onVercel } from "../access/platform.js";
+import { resolveMemoryProviderId } from "./backing-selection.js";
 import {
   deleteTier as gitDeleteTier,
   deleteFile as gitDeleteFile,
@@ -56,6 +57,8 @@ export const gitProvider: MemoryProvider = {
   root: gitStoreRoot,
 };
 
+export { resolveMemoryProviderId, MEMORY_PROVIDER_FLOOR } from "./backing-selection.js";
+
 const REGISTRY: Record<string, MemoryProvider> = {
   git: gitProvider,
   sqlite: sqliteProvider,
@@ -71,13 +74,15 @@ let active: MemoryProvider | null = null;
 
 export function getProvider(): MemoryProvider {
   if (active) return active;
-  const id = process.env.OE_MEMORY_PROVIDER ?? "git";
+  const id = resolveMemoryProviderId();
   const provider = REGISTRY[id];
   if (!provider) {
     if (id === "postgres") {
       throw new Error(
-        'OE_MEMORY_PROVIDER="postgres" but no client is registered — call ' +
-          "registerPostgres(client) at startup (see docs/setup.md).",
+        (process.env.OE_MEMORY_PROVIDER?.trim()
+          ? 'OE_MEMORY_PROVIDER="postgres"'
+          : "DATABASE_URL is set, so postgres is the selected memory backing (memory/backing-selection.ts)") +
+          " but no client is registered — call registerPostgres(client) at startup (see docs/setup.md).",
       );
     }
     throw new Error(
@@ -108,12 +113,12 @@ export function providerById(id: string | undefined): MemoryProvider {
 }
 
 export function dbProviderId(): string {
-  if (process.env.OE_MEMORY_PROVIDER === "postgres" && REGISTRY["postgres"]) return "postgres";
+  if (resolveMemoryProviderId() === "postgres" && REGISTRY["postgres"]) return "postgres";
   if (onVercel() && process.env.OE_ALLOW_EPHEMERAL_MEMORY !== "1") {
     throw new Error(
       "DM/personal memory has no durable backing on Vercel — sqlite is per-instance and ephemeral " +
         "(a memory write would report success but be lost on the next cold start). Set " +
-        "OE_MEMORY_PROVIDER=postgres and register a client (docs/deploy/setup-runbook.md), or " +
+        "DATABASE_URL (which selects postgres on its own) and register a client (docs/deploy/setup-runbook.md), or " +
         "OE_ALLOW_EPHEMERAL_MEMORY=1 to accept ephemeral personal memory on a single-instance host.",
     );
   }

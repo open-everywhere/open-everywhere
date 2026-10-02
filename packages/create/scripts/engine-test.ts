@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkAll, runWizard, type StepContext, type WizardIO, type WizardStep } from "../src/engine.js";
+import { checkAll, isSetupRoute, SETUP_ROUTES, type SetupStep, type StepContext } from "../src/engine.js";
+import { SETUP_STEPS } from "../src/steps/index.js";
 import { databaseStep } from "../src/steps/database.js";
 import { repoStep } from "../src/steps/repo.js";
 import { rosterStep } from "../src/steps/roster.js";
@@ -17,26 +18,27 @@ const ok = (cond: boolean, label: string) => {
 
 const ctx: StepContext = { cwd: "/fake", env: {} };
 
-function fakeIO(): WizardIO & { printed: string[] } {
-  const printed: string[] = [];
+function step(parts: Partial<SetupStep> & Pick<SetupStep, "id" | "check">): SetupStep {
   return {
-    printed,
-    print: (line: string) => {
-      printed.push(line);
-    },
-    ask: async () => "",
-    askSecret: async () => "",
-    confirm: async () => true,
-  };
+    title: parts.id,
+    guide: () => ({ summary: "", instructions: [] }),
+    ...parts,
+  } as SetupStep;
 }
 
-function step(overrides: Partial<WizardStep> & { id: string }): WizardStep {
-  return {
-    title: overrides.id,
-    check: () => ({ satisfied: false, detail: "unsatisfied" }),
-    guide: () => ({ summary: "guide", instructions: [] }),
-    ...overrides,
-  };
+{
+  ok(JSON.stringify([...SETUP_ROUTES]) === JSON.stringify(["vercel", "docker"]), "SETUP_ROUTES is exactly vercel and docker, in that order");
+  ok(isSetupRoute("vercel") && isSetupRoute("docker"), "isSetupRoute accepts both supported routes");
+  ok(!isSetupRoute("local") && !isSetupRoute("hosted") && !isSetupRoute("fly"), "isSetupRoute rejects the retired goals and any other host");
+
+  for (const s of SETUP_STEPS) {
+    ok(!("automate" in s), `step ${s.id} carries no automate() — the engine is read-only`);
+  }
+  const engine = await import("../src/engine.js");
+  for (const gone of ["runWizard", "goalOf"]) {
+    ok(!(gone in engine), `engine.ts exports no ${gone} (it went with the wizard)`);
+  }
+  ok(!SETUP_STEPS.some((s) => s.id === "telemetry-disclosure"), "the step list carries no telemetry-disclosure step");
 }
 
 {
@@ -56,201 +58,53 @@ function step(overrides: Partial<WizardStep> & { id: string }): WizardStep {
   ok(summary.total === 2, "checkAll: total is the step count");
   ok(!summary.allSatisfied, "checkAll: not all satisfied when one isn't");
   ok(guideCalls === 0, "checkAll: NEVER calls guide() — pure status only");
+
+  const thrower = step({ id: "boom", check: () => { throw new Error("kaboom"); } });
+  const withThrow = await checkAll([satisfiedStep, thrower], ctx);
+  ok(withThrow.total === 2 && withThrow.satisfiedCount === 1, "checkAll: a throwing check() is one unsatisfied step, not a crash");
+  ok(/check failed: kaboom/.test(withThrow.results[1]!.check.detail), "checkAll: …and the detail names the failure");
 }
 
 {
-  let guideCalled = false;
-  let automateCalled = false;
-  const satisfiedStep = step({
-    id: "satisfied",
-    check: () => ({ satisfied: true, detail: "already done" }),
-    guide: () => {
-      guideCalled = true;
-      return { summary: "should not print", instructions: [] };
-    },
-    automate: async () => {
-      automateCalled = true;
-      return { ran: true, ok: true, detail: "should not run" };
-    },
-  });
-
-  const io = fakeIO();
-  const summary = await runWizard([satisfiedStep], ctx, io);
-  ok(!guideCalled, "runWizard: a satisfied step's guide() is never called");
-  ok(!automateCalled, "runWizard: a satisfied step's automate() is never called");
-  ok(summary.results[0].outcome === "satisfied", 'runWizard: outcome is "satisfied"');
-  ok(io.printed.some((l) => l.includes("already done")), "runWizard: the satisfied detail is reported");
-}
-
-{
-  const guideOnlyStep = step({ id: "guide-only", guide: () => ({ summary: "do the thing", instructions: ["step 1"] }) });
-  const io = fakeIO();
-  const summary = await runWizard([guideOnlyStep], ctx, io);
-  ok(summary.results[0].outcome === "guided", 'runWizard: no automate() → outcome "guided"');
-  ok(io.printed.some((l) => l.includes("do the thing")), "runWizard: guide summary is printed");
-  ok(io.printed.some((l) => l.includes("step 1")), "runWizard: guide instructions are printed");
-}
-
-{
-  const declineStep = step({
-    id: "decline",
-    automate: async () => ({ ran: false, ok: false, detail: "user said no" }),
-  });
-  const summary = await runWizard([declineStep], ctx, fakeIO());
-  ok(summary.results[0].outcome === "declined", 'runWizard: automate() ran:false → outcome "declined"');
-}
-
-{
-  let satisfied = false;
-  const fixableStep = step({
-    id: "fixable",
-    check: () => ({ satisfied, detail: satisfied ? "fixed" : "broken" }),
-    automate: async () => {
-      satisfied = true;
-      return { ran: true, ok: true, detail: "fixed it" };
-    },
-  });
-  const summary = await runWizard([fixableStep], ctx, fakeIO());
-  ok(summary.results[0].outcome === "automated", 'runWizard: automate() fixes it → outcome "automated"');
-  ok(summary.results[0].check.satisfied, "runWizard: the re-check after automate() reflects the fix");
-  ok(summary.allSatisfied, "runWizard: summary reflects the post-automate state");
-}
-
-{
-  const stubbornStep = step({
-    id: "stubborn",
-    automate: async () => ({ ran: true, ok: false, detail: "tried, failed" }),
-  });
-  const summary = await runWizard([stubbornStep], ctx, fakeIO());
-  ok(summary.results[0].outcome === "guided", "runWizard: automate() ran but check() still fails → outcome stays guided, not automated");
-  ok(!summary.results[0].check.satisfied, "runWizard: an ineffective automate() leaves the step unsatisfied");
-}
-
-{
-  const throwingCheckStep = step({
-    id: "throws-check",
-    check: () => {
-      throw new Error("boom");
-    },
-    automate: async () => ({ ran: true, ok: true, detail: "n/a" }),
-  });
-  const throwingAutomateStep = step({
-    id: "throws-automate",
-    automate: async () => {
-      throw new Error("kaboom");
-    },
-  });
-  const summary = await runWizard([throwingCheckStep, throwingAutomateStep], ctx, fakeIO());
-  ok(summary.results.length === 2, "runWizard: a throwing step doesn't abort the rest of the run");
-  ok(!summary.results[0].check.satisfied, "runWizard: a throwing check() is reported as unsatisfied, not a crash");
-  ok(summary.results[1].outcome === "declined", "runWizard: a throwing automate() is treated as a failed/declined action, not a crash");
-  ok(!!summary.results[1].automate?.detail.includes("automation failed"), "runWizard: the throw's message is captured in the automate result");
-}
-
-{
-  let external = false;
-  let automateInvocations = 0;
-  const realWorldStep = step({
-    id: "real-world",
-    check: () => ({ satisfied: external, detail: external ? "present" : "absent" }),
-    automate: async () => {
-      automateInvocations++;
-      external = true;
-      return { ran: true, ok: true, detail: "set it" };
-    },
-  });
-
-  const first = await runWizard([realWorldStep], ctx, fakeIO());
-  ok(first.results[0].outcome === "automated", "resume: first run automates the missing piece");
-  ok(automateInvocations === 1, "resume: automate() ran exactly once on the first pass");
-
-  const second = await checkAll([realWorldStep], ctx);
-  ok(second.allSatisfied, "resume: a second, independent check() sees the real-world state as already satisfied");
-
-  const third = await runWizard([realWorldStep], ctx, fakeIO());
-  ok(third.results[0].outcome === "satisfied", "resume: re-running the wizard skips an already-satisfied step");
-  ok(automateInvocations === 1, "resume: automate() is NOT re-invoked once the step is satisfied");
-}
-
-function scriptedIO(confirms: boolean[], secret: string): WizardIO & { printed: string[] } {
-  const printed: string[] = [];
-  let ci = 0;
-  return {
-    printed,
-    print: (line: string) => void printed.push(line),
-    ask: async () => "",
-    askSecret: async () => secret,
-    confirm: async () => confirms[ci++] ?? false,
-  };
-}
-const OWNER = "postgres://neondb_owner:ownerpass@ep-x.us-east-2.aws.neon.tech/neondb?sslmode=require";
-{
-  const dir = mkdtempSync(join(tmpdir(), "oe-dbstep-tworole-"));
-  try {
-    const io = scriptedIO([true, true], OWNER);
-    const res = await databaseStep.automate!({ cwd: dir, env: {} }, io);
-    ok(res.ran && res.ok, "databaseStep two-role: reports ran+ok");
-    const envText = readFileSync(join(dir, ".env.local"), "utf-8");
-    ok(/DATABASE_URL=postgres:\/\/oe_runtime:/.test(envText), "databaseStep two-role: DATABASE_URL points at the oe_runtime runtime role");
-    ok(envText.includes("OE_DB_OWNER_URL=") && envText.includes("neondb_owner:ownerpass@"), "databaseStep two-role: the owner URL is parked as OE_DB_OWNER_URL");
-    ok(!envText.includes("neondb_owner:ownerpass@ep-x") || envText.split("neondb_owner:ownerpass@").length === 2, "databaseStep two-role: the owner credential appears only in the parked owner var, not DATABASE_URL");
-    ok(io.printed.some((l) => l.includes("CREATE ROLE oe_runtime LOGIN PASSWORD")), "databaseStep two-role: prints the CREATE ROLE provisioning SQL");
-    ok(io.printed.some((l) => l.includes("shown ONCE")), "databaseStep two-role: prints the generated password once");
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-
-  const dir2 = mkdtempSync(join(tmpdir(), "oe-dbstep-single-"));
-  try {
-    const res = await databaseStep.automate!({ cwd: dir2, env: {} }, scriptedIO([true, false], OWNER));
-    ok(res.ran && res.ok, "databaseStep single-role: reports ran+ok");
-    const envText = readFileSync(join(dir2, ".env.local"), "utf-8");
-    ok(envText.includes(`DATABASE_URL=${OWNER}`), "databaseStep single-role: DATABASE_URL is the owner string");
-    ok(!envText.includes("OE_DB_OWNER_URL"), "databaseStep single-role: no OE_DB_OWNER_URL parked (single-role posture)");
-  } finally {
-    rmSync(dir2, { recursive: true, force: true });
-  }
-
-  const dir3 = mkdtempSync(join(tmpdir(), "oe-dbstep-skip-"));
-  try {
-    const res = await databaseStep.automate!({ cwd: dir3, env: {} }, scriptedIO([false], ""));
-    ok(!res.ran, "databaseStep skip: hosted=no does nothing (local git/sqlite backing)");
-  } finally {
-    rmSync(dir3, { recursive: true, force: true });
-  }
-}
-
-{
-  const linked = (projectId: string | null) => {
-    const dir = mkdtempSync(join(tmpdir(), "oe-dbstep-hosted-"));
-    if (projectId !== null) {
+  const scratch = (projectId?: string) => {
+    const dir = mkdtempSync(join(tmpdir(), "oe-dbstep-"));
+    if (projectId !== undefined) {
       mkdirSync(join(dir, ".vercel"), { recursive: true });
       writeFileSync(join(dir, ".vercel", "project.json"), JSON.stringify({ projectId }));
     }
     return dir;
   };
 
-  const local = linked(null);
+  const unlinked = scratch();
   try {
-    const res = await databaseStep.check({ cwd: local, env: {}, goal: "local" });
-    ok(res.satisfied, "databaseStep: unlinked checkout on the local goal stays satisfied (local runs are legitimate)");
-    const hostedDefault = await databaseStep.check({ cwd: local, env: {} });
-    ok(!hostedDefault.satisfied, "databaseStep: the default (hosted) goal with no database is NOT satisfied, linked or not");
-    ok(/DATABASE_URL/.test(hostedDefault.detail) && /OE_OPERATIONAL_PROVIDER=postgres/.test(hostedDefault.detail), "databaseStep: …and it names each missing variable");
-    ok(/Marketplace/.test(hostedDefault.next ?? ""), "databaseStep: …and carries the next action (the Vercel Marketplace Neon integration)");
+    for (const route of SETUP_ROUTES) {
+      const res = await databaseStep.check({ cwd: unlinked, env: {}, route });
+      ok(!res.satisfied, `databaseStep: the ${route} route with no database is NOT satisfied`);
+      ok(/Missing from \.env\.local and this shell: DATABASE_URL/.test(res.detail), `databaseStep (${route}): …and it names the one missing variable`);
+      ok(!/OE_OPERATIONAL_PROVIDER=postgres|OE_MEMORY_PROVIDER=postgres/.test(res.detail), `databaseStep (${route}): …and demands neither store selector`);
+      ok(typeof res.next === "string" && res.next.length > 0, `databaseStep (${route}): …and carries a next action`);
+    }
+    for (const route of SETUP_ROUTES) {
+      const derived = await databaseStep.check({ cwd: unlinked, env: { DATABASE_URL: "postgres://u:p@h/db" }, route });
+      ok(derived.satisfied, `databaseStep: a bare DATABASE_URL satisfies the ${route} route (no selector needed)`);
+      ok(/selects postgres for both stores/.test(derived.detail), `databaseStep (${route}): …and the detail says why`);
+      const away = await databaseStep.check({ cwd: unlinked, env: { DATABASE_URL: "postgres://u:p@h/db", OE_MEMORY_PROVIDER: "git" }, route });
+      ok(!away.satisfied && /points away from postgres: OE_MEMORY_PROVIDER/.test(away.detail), `databaseStep (${route}): a selector pointed away from postgres blocks, and is named`);
+    }
+    ok(/Marketplace/.test((await databaseStep.check({ cwd: unlinked, env: {} })).next ?? ""), "databaseStep: the vercel route's next action names the Vercel Marketplace Neon integration");
+    const dockerNext = (await databaseStep.check({ cwd: unlinked, env: {}, route: "docker" })).next ?? "";
+    ok(!/Marketplace/.test(dockerNext) && /container can reach/.test(dockerNext), "databaseStep: the docker route's next action never names the Vercel Marketplace");
+    ok(/vercel env ls/.test((await databaseStep.check({ cwd: unlinked, env: {} })).detail), "databaseStep: a vercel-route miss says the value may be set on the Vercel project instead");
+    ok(/docker inspect/.test((await databaseStep.check({ cwd: unlinked, env: {}, route: "docker" })).detail), "databaseStep: a docker-route miss names the container's environment instead");
   } finally {
-    rmSync(local, { recursive: true, force: true });
+    rmSync(unlinked, { recursive: true, force: true });
   }
 
-  const hosted = linked("prj_abc123");
+  const linked = scratch("prj_abc123");
   try {
-    const res = await databaseStep.check({ cwd: hosted, env: {} });
-    ok(!res.satisfied, "databaseStep: Vercel-linked checkout on git/sqlite is NOT satisfied");
-    ok(/discards|ephemeral|state/i.test(res.detail), "databaseStep: the detail names the consequence, not just the missing var");
-    ok(/Missing from \.env\.local and this shell/.test(res.detail) && /vercel env ls/.test(res.detail), "databaseStep: a hosted miss says the value may be set in the Vercel project instead");
-
-    const guide = databaseStep.guide({ cwd: hosted, env: {} });
-    ok(/ephemeral|wiped/i.test(guide.summary), "databaseStep: the hosted guide is now reachable and states the ephemerality");
+    const res = await databaseStep.check({ cwd: linked, env: {} });
+    ok(!res.satisfied, "databaseStep: a Vercel-linked checkout on the embedded floor is NOT satisfied");
+    ok(/ephemeral|replaced container|loses/i.test(databaseStep.guide({ cwd: linked, env: {} }).summary), "databaseStep: the guide states the consequence, not just the missing var");
 
     const allButDb = { prereq: true, repo: true, slack: true, database: false, build: true };
     const verdict = verifyVerdict(allButDb);
@@ -258,21 +112,20 @@ const OWNER = "postgres://neondb_owner:ownerpass@ep-x.us-east-2.aws.neon.tech/ne
     ok(/durable state backing/.test(verdict.detail), "verifyVerdict: names the durable state backing among what is missing");
     ok(verifyVerdict({ ...allButDb, database: true }).satisfied, "verifyVerdict: flipping only the state backing makes it ready (the term is load-bearing)");
 
-    const wired = await verifyStep.check({ cwd: hosted, env: {} });
-    ok(/durable state backing/.test(wired.detail), "verifyStep: the wired check surfaces the state backing for a linked git/sqlite checkout");
+    const wired = await verifyStep.check({ cwd: linked, env: {} });
+    ok(/durable state backing/.test(wired.detail), "verifyStep: the wired check surfaces the state backing for a linked checkout with no Postgres");
   } finally {
-    rmSync(hosted, { recursive: true, force: true });
+    rmSync(linked, { recursive: true, force: true });
   }
 
-  const ok2 = linked("prj_abc123");
+  const full = scratch("prj_abc123");
   try {
-    const res = await databaseStep.check({
-      cwd: ok2,
-      env: { OE_MEMORY_PROVIDER: "postgres", OE_OPERATIONAL_PROVIDER: "postgres", DATABASE_URL: "postgres://u:p@h/db" },
-    });
-    ok(res.satisfied, "databaseStep: linked checkout with postgres + DATABASE_URL is satisfied");
+    const env = { OE_MEMORY_PROVIDER: "postgres", OE_OPERATIONAL_PROVIDER: "postgres", DATABASE_URL: "postgres://u:p@h/db" };
+    for (const route of SETUP_ROUTES) {
+      ok((await databaseStep.check({ cwd: full, env, route })).satisfied, `databaseStep: postgres + DATABASE_URL satisfies the ${route} route`);
+    }
   } finally {
-    rmSync(ok2, { recursive: true, force: true });
+    rmSync(full, { recursive: true, force: true });
   }
 }
 
@@ -367,8 +220,7 @@ const OWNER = "postgres://neondb_owner:ownerpass@ep-x.us-east-2.aws.neon.tech/ne
     const before = await rosterStep.check({ cwd: drifted, env: {} });
     ok(!before.satisfied, "rosterStep: a tree that differs from the declaration leaves the step unsatisfied");
     ok(/DRIFTED/.test(before.detail), "rosterStep: the detail carries the CLI's own red");
-    const auto = await rosterStep.automate!({ cwd: drifted, env: {} }, fakeIO());
-    ok(auto.ran && !auto.ok, "rosterStep: automate() ran the build and reported the still-failing re-check honestly");
+    ok(/oe build/.test(before.next ?? ""), "rosterStep: …and the next action is the command the operator runs");
   } finally {
     rmSync(drifted, { recursive: true, force: true });
   }
@@ -378,8 +230,6 @@ const OWNER = "postgres://neondb_owner:ownerpass@ep-x.us-east-2.aws.neon.tech/ne
     const res = await rosterStep.check({ cwd: noConfig, env: {} });
     ok(!res.satisfied, "rosterStep: a checkout with no roster.config.ts is UNSATISFIED, not vacuously clean");
     ok(/roster\.config\.ts/.test(res.detail), "rosterStep: says which file is missing");
-    const auto = await rosterStep.automate!({ cwd: noConfig, env: {} }, fakeIO());
-    ok(!auto.ran, "rosterStep: automate() refuses to run anything it cannot justify");
   } finally {
     rmSync(noConfig, { recursive: true, force: true });
   }
@@ -407,31 +257,34 @@ const OWNER = "postgres://neondb_owner:ownerpass@ep-x.us-east-2.aws.neon.tech/ne
   const { buildDeployStep } = await import("../src/steps/build-deploy.js");
   const { slackStep } = await import("../src/steps/slack.js");
   const { vercelStep } = await import("../src/steps/vercel.js");
-  const { telemetryDisclosureStep } = await import("../src/steps/telemetry-disclosure.js");
   const { envChecklistStep } = await import("../src/steps/env-checklist.js");
   const { nodeVerdict } = await import("../src/steps/prerequisites.js");
   const { probeDeployment, normalizeHost, DEPLOY_PROBE_PATH } = await import("../src/deploy-probe.js");
   const { createServer } = await import("node:http");
-  const { HOSTED_MISS_NOTE } = await import("../src/env-file.js");
-  const envLocalDetailHasNote = (r: { detail: string }): boolean => r.detail.includes(HOSTED_MISS_NOTE);
+  const { missNote } = await import("../src/env-file.js");
 
-  const dir = mkdtempSync(join(tmpdir(), "oe-goal-"));
+  const dir = mkdtempSync(join(tmpdir(), "oe-route-"));
   try {
-    const vHosted = await vercelStep.check({ cwd: dir, env: {} });
-    ok(!vHosted.satisfied && vHosted.next === "npx vercel link", "vercelStep: hosted + unlinked is unsatisfied, next = `npx vercel link`");
-    ok((await vercelStep.check({ cwd: dir, env: {}, goal: "local" })).satisfied, "vercelStep: the local goal needs no Vercel project (negative control)");
+    const vVercel = await vercelStep.check({ cwd: dir, env: {} });
+    ok(!vVercel.satisfied && vVercel.next === "npx vercel link", "vercelStep: the vercel route + unlinked is unsatisfied, next = `npx vercel link`");
+    const vDocker = await vercelStep.check({ cwd: dir, env: {}, route: "docker" });
+    ok(vDocker.satisfied && /Docker route/.test(vDocker.detail), "vercelStep: the docker route needs no Vercel project, and says so");
 
     const sNone = await slackStep.check({ cwd: dir, env: {} });
     ok(!sNone.satisfied && /SLACK_BOT_TOKEN/.test(sNone.detail) && /SLACK_SIGNING_SECRET/.test(sNone.detail), "slackStep: names both missing variables");
     const sOne = await slackStep.check({ cwd: dir, env: { SLACK_BOT_TOKEN: "x" } });
     ok(!sOne.satisfied && /SLACK_SIGNING_SECRET/.test(sOne.detail) && !/SLACK_BOT_TOKEN/.test(sOne.detail), "slackStep: …and only the one still missing");
     ok(typeof sOne.next === "string" && sOne.next.length > 0, "slackStep: …with a next action");
-    ok((await slackStep.check({ cwd: dir, env: {}, goal: "local" })).satisfied, "slackStep: optional on the local goal");
+    ok(!(await slackStep.check({ cwd: dir, env: {}, route: "docker" })).satisfied, "slackStep: the docker route does NOT exempt Slack");
     ok((await slackStep.check({ cwd: dir, env: { SLACK_BOT_TOKEN: "x", SLACK_SIGNING_SECRET: "y" } })).satisfied, "slackStep: satisfied once both are set (negative control)");
+    ok(/scaffold_env/.test(sNone.next ?? ""), "slackStep: the next action hands the write to the ops tool, not to a prompt");
+    ok(sNone.detail.includes(missNote("vercel")), "slackStep: a miss says the value may be set on the deployment instead");
 
-    ok(sNone.detail.includes(HOSTED_MISS_NOTE), "slackStep: a hosted miss says the value may be set in the Vercel project instead");
-    ok(!envLocalDetailHasNote(await envChecklistStep.check({ cwd: dir, env: {}, goal: "local" })), "envChecklist: a local miss carries no Vercel note");
-    ok(envLocalDetailHasNote(await envChecklistStep.check({ cwd: dir, env: {} })), "envChecklist: a hosted miss carries the Vercel note");
+    ok(/missing from \.env\.local and this shell/.test(sNone.detail), "slackStep: a miss names the two homes it READ, never a bare `missing`");
+    ok(/credential store/.test(sNone.detail) && /status endpoint/.test(sNone.detail), "slackStep: …and names the home it cannot read, plus what can see it");
+    ok(/\/setup/.test(sNone.next ?? ""), "slackStep: the next action offers /setup as the no-env-var path");
+    const sBoth = await slackStep.check({ cwd: dir, env: { SLACK_BOT_TOKEN: "x", SLACK_SIGNING_SECRET: "y" } });
+    ok(/IGNORE/.test(sBoth.detail) && /CLOSES \/setup/.test(sBoth.detail), "slackStep: a satisfied check warns that these two variables make a stored credential inert and close /setup");
 
     const manifestIn = (lines: readonly string[]): { display_information: { name: string } } =>
       JSON.parse(lines.find((l) => l.trimStart().startsWith("{")) ?? "{}");
@@ -441,25 +294,36 @@ const OWNER = "postgres://neondb_owner:ownerpass@ep-x.us-east-2.aws.neon.tech/ne
       "slackStep guide: --app-name names the app in the printed manifest",
     );
 
-    const tel = await telemetryDisclosureStep.check({ cwd: dir, env: {} });
-    ok(!tel.satisfied && /--decline-telemetry/.test(tel.next ?? "") && /terminal/.test(tel.next ?? ""), "telemetry step: next names the terminal prompt AND the --decline-telemetry flag");
+    const envVercel = await envChecklistStep.check({ cwd: dir, env: {} });
+    ok(!envVercel.satisfied && !/AI_GATEWAY_API_KEY/.test(envVercel.detail) && /deploy store: operational = postgres/.test(envVercel.detail), "envChecklist: the vercel route asks for the stores, not a gateway key");
+    const envDocker = await envChecklistStep.check({ cwd: dir, env: {}, route: "docker" });
+    ok(!envDocker.satisfied && /AI_GATEWAY_API_KEY/.test(envDocker.detail) && /deploy store: operational = postgres/.test(envDocker.detail), "envChecklist: the docker route asks for the stores AND a model route");
+    ok(envDocker.detail.includes(missNote("docker")), "envChecklist: a docker miss carries the container-environment note");
 
-    const envHosted = await envChecklistStep.check({ cwd: dir, env: {} });
-    ok(!envHosted.satisfied && !/AI_GATEWAY_API_KEY/.test(envHosted.detail) && /OE_OPERATIONAL_PROVIDER/.test(envHosted.detail), "envChecklist: hosted asks for the store selectors, not a gateway key");
-    const envLocal = await envChecklistStep.check({ cwd: dir, env: {}, goal: "local" });
-    ok(!envLocal.satisfied && /AI_GATEWAY_API_KEY/.test(envLocal.detail) && !/OE_OPERATIONAL_PROVIDER/.test(envLocal.detail), "envChecklist: local asks for the gateway key, not the selectors");
+    const LOADED_ENV = { DATABASE_URL: "postgres://u:p@h/db", AI_GATEWAY_API_KEY: "k", OE_MEMORY_PROVIDER: "postgres", OE_OPERATIONAL_PROVIDER: "postgres", SLACK_BOT_TOKEN: "x" };
+    for (const s of SETUP_STEPS) {
+      const a = JSON.stringify(s.guide({ cwd: dir, env: {} }));
+      ok(a === JSON.stringify(s.guide({ cwd: join(dir, "nowhere"), env: {} })), `step ${s.id}: guide() does not depend on cwd (the reference page is generated from it)`);
+      ok(a === JSON.stringify(s.guide({ cwd: dir, env: LOADED_ENV })), `step ${s.id}: guide() does not depend on the environment either`);
+      ok(!a.includes(process.versions.node), `step ${s.id}: guide() embeds no live Node version — the page would differ per machine`);
+    }
+
+    ok(!/OE_OPERATIONAL_PROVIDER|OE_MEMORY_PROVIDER/.test(envVercel.detail), "envChecklist: the route's miss names neither store selector");
 
     ok(!nodeVerdict("20.11.0", ">=24").ok && nodeVerdict("24.19.0", ">=24").ok, "prerequisites: Node is judged against the engines range");
     ok(!nodeVerdict("24.19.0", undefined).ok, "prerequisites: an unreadable range is never a pass");
 
-    ok((await buildDeployStep.check({ cwd: dir, env: {}, goal: "local" })).satisfied, "buildDeploy: satisfied on the local goal (npm run dev builds the tree)");
-    const unbuilt = await buildDeployStep.check({ cwd: dir, env: {} });
-    ok(!unbuilt.satisfied && unbuilt.next === "npm run build", "buildDeploy: hosted + no build → next = `npm run build`");
+    for (const route of SETUP_ROUTES) {
+      const unbuilt = await buildDeployStep.check({ cwd: dir, env: {}, route });
+      ok(!unbuilt.satisfied && unbuilt.next === "npm run build", `buildDeploy (${route}): no build → next = \`npm run build\``);
+    }
     mkdirSync(join(dir, ".output"), { recursive: true });
     writeFileSync(join(dir, ".output", "x"), "built");
     const noHost = await buildDeployStep.check({ cwd: dir, env: {} });
-    ok(!noHost.satisfied, "buildDeploy: a build directory alone NEVER satisfies the hosted goal");
-    ok(/--host/.test(noHost.next ?? "") && /vercel deploy --prod/.test(noHost.next ?? ""), "buildDeploy: …and next says deploy, then re-run with --host");
+    ok(!noHost.satisfied, "buildDeploy: a build directory alone NEVER satisfies the step");
+    ok(/--host/.test(noHost.next ?? "") && /vercel deploy --prod/.test(noHost.next ?? ""), "buildDeploy: …and the vercel route's next says deploy, then re-run with --host");
+    const noHostDocker = await buildDeployStep.check({ cwd: dir, env: {}, route: "docker" });
+    ok(/--host/.test(noHostDocker.next ?? "") && !/vercel deploy/.test(noHostDocker.next ?? ""), "buildDeploy: the docker route's next names the image, not `vercel deploy`");
 
     let mode: "slack" | "protected" | "missing" | "broken" = "slack";
     let seen: { method?: string; url?: string } = {};
@@ -535,34 +399,49 @@ const OWNER = "postgres://neondb_owner:ownerpass@ep-x.us-east-2.aws.neon.tech/ne
 }
 
 {
-  const { quickstartPlan } = await import("@open-everywhere/core/agent/ops/quickstart.js");
-  const { registerSlackOps } = await import("@open-everywhere/provider-slack/agent/ops.js");
-  registerSlackOps();
-  const plan = quickstartPlan("deploy", {});
-  const ids = plan.steps.map((s) => s.id);
-  ok(ids.includes("slack") && ids.indexOf("slack") < ids.indexOf("env-push"), "deploy plan (real Slack arm): the Slack app step comes before the env push");
-  ok(ids.indexOf("slack-urls") > ids.indexOf("deploy") && ids.indexOf("slack-urls") < ids.indexOf("verify"), "deploy plan (real Slack arm): pointing Slack at the host comes after the deploy, before the proof");
-  ok(/Retry/.test(plan.steps.find((s) => s.id === "slack-urls")?.detail ?? ""), "deploy plan: the Slack URL step says verification fails until the deploy is up, and to retry");
-  const slackStepDetail = plan.steps.find((s) => s.id === "slack")?.detail ?? "";
-  ok(/Missing: SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET/.test(slackStepDetail), "deploy plan: the Slack step names the missing variables");
-
-  const pushLines = (plan.steps.find((s) => s.id === "env-push")?.command ?? "").split("\n");
-  ok(pushLines.some((l) => l.includes("SLACK_BOT_TOKEN")) && pushLines.some((l) => l.includes("SLACK_SIGNING_SECRET")), "deploy plan: the env push carries the Slack variables");
   const templateDir = fileURLToPath(new URL("../template/", import.meta.url));
   const readme = readFileSync(join(templateDir, "README.md"), "utf8");
+  const agents = readFileSync(join(templateDir, "AGENTS.md"), "utf8");
   const skill = readFileSync(join(templateDir, "claude", "skills", "quickstart-open-everywhere", "SKILL.md"), "utf8");
-  for (const line of pushLines) {
-    ok(readme.includes(line), `README carries the plan's push command verbatim: ${line.split(" | ")[0]}`);
-    const name = /vercel env add (\S+) production/.exec(line)?.[1] ?? "";
-    ok(name.length > 0 && skill.includes(name), `the skill names ${name}`);
+
+  const setupSection = readme.slice(readme.indexOf("## Set it up"), readme.indexOf("## Check where you are"));
+  ok(/open this folder in your coding agent/i.test(setupSection), "template README: setup hands the work to the coding agent");
+  ok(/\*\*Vercel\*\*/.test(setupSection) && /\*\*Docker\*\*/.test(setupSection), "template README: setup names both routes");
+  ok(/docs\/deploy\/contract\.md/.test(setupSection), "template README: setup links the deployment contract");
+  ok(/docs\/deploy\/setup-steps\.md/.test(readme), "template README: links the generated setup-steps reference");
+  ok(!/^\s*4\. /mu.test(setupSection), "template README: the setup section carries no numbered step list (it cannot drift if it does not exist)");
+  ok(!/Deploy to Vercel with Slack/.test(readme), "template README: the retired 13-step section is gone");
+  ok(/## Develop locally/.test(readme) && /not a way to\s+set the app up/.test(readme), "template README: `Develop locally` exists and says what it is NOT for");
+  ok(!/interactive wizard|--goal |--decline-telemetry|--skip-wizard/.test(readme), "template README: names no retired flag or wizard");
+
+  ok(/Step 1 is to ask which route/.test(agents), "template AGENTS.md: step 1 is to ask which route");
+  ok(/Never propose a local run as a setup step/.test(agents), "template AGENTS.md: forbids proposing a local run as setup");
+  ok(/Never ask the user to paste a secret into the chat/.test(agents), "template AGENTS.md: forbids a secret in the chat");
+  ok(/--route docker/.test(agents) && /docs\/deploy\/setup-steps\.md/.test(agents), "template AGENTS.md: names the docker route and the reference page");
+  ok(!/--goal local|interactive wizard/.test(agents), "template AGENTS.md: names no retired flag");
+
+  ok(/## Step 1 — ask which route/.test(skill), "skill: step 1 is the route question");
+  ok(/## The Vercel route/.test(skill) && /## The Docker route/.test(skill), "skill: both routes have their own section");
+  ok(/Never propose a local run as a setup step/.test(skill), "skill: forbids proposing a local run as setup");
+  ok(/Never ask the user to paste a secret into the chat/.test(skill), "skill: forbids a secret in the chat");
+  ok(!/\bquickstart \{/.test(skill) && !/quickstart plan/i.test(skill), "skill: never calls the retired `quickstart` plan tool");
+  ok(/there is no plan\s+tool/.test(skill), "skill: says so outright, so a reader does not go looking for one");
+  ok(/target: "vercel"/.test(skill) && /target: "docker"/.test(skill), "skill: passes the route as the preflight target");
+  const envStep = skill.slice(skill.indexOf("9. **Deployment env.**"), skill.indexOf("10. **Deploy.**"));
+  for (const name of ["OE_CREDENTIAL_ENCRYPTION_KEY", "SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET", "OE_OPERATIONAL_PROVIDER", "OE_MEMORY_PROVIDER"]) {
+    ok(envStep.includes(name), `skill: the Vercel route's deployment-env step names ${name}`);
   }
-  for (const absent of ["AI_GATEWAY_API_KEY production", "deploy:verify", "OE_VERCEL_API_TOKEN"]) {
-    ok(!pushLines.join("\n").includes(absent) && !readme.includes(`vercel env add ${absent}`), `neither the plan nor the README pushes or runs "${absent}"`);
+  ok(/vercel env add/.test(envStep), "skill: …and names the command that sets each one");
+  ok(!/vercel env add AI_GATEWAY_API_KEY/.test(skill), "skill: never pushes AI_GATEWAY_API_KEY to a Vercel deployment (OIDC covers it)");
+  ok(!/deploy:verify|OE_VERCEL_API_TOKEN|OE_DEPLOY_/.test(skill), "skill: names no repo-only deploy script or variable the scaffolded app does not ship");
+  const templatePkg = JSON.parse(readFileSync(join(templateDir, "package.json"), "utf8")) as { scripts?: Record<string, string> };
+  const templateScripts = new Set(Object.keys(templatePkg.scripts ?? {}));
+  for (const named of [...skill.matchAll(/npm run (?:-s )?([a-z][a-z0-9:-]*)/gu)].map((m) => m[1]!)) {
+    ok(templateScripts.has(named), `skill: \`npm run ${named}\` is a script the scaffolded app actually ships`);
   }
-  const order = ["vercel link", "Storage → Neon", "OE_CREDENTIAL_ENCRYPTION_KEY=", "Create New App", "Vouch your workspace", "admins:", "npm run build", "env:pipe", "vercel deploy --prod", "App Manifest", "--check --host"];
-  const at = order.map((needle) => readme.indexOf(needle, readme.indexOf("## Deploy to Vercel with Slack")));
-  ok(at.every((i) => i > 0), "README: every hosted step is present");
-  ok(at.every((i, k) => k === 0 || at[k - 1]! < i), "README: …in the plan's order (link → Neon → key → Slack app → trust → build → env → deploy → Slack URLs → check)");
+  for (const line of skill.split("\n").filter((l) => l.includes("env:pipe --"))) {
+    ok(/\|/.test(line) || /Never run it bare/.test(line), `skill: every env:pipe line is piped or is the warning itself: ${line.trim().slice(0, 48)}`);
+  }
 }
 
 console.log(`✓ ${n} engine assertions passed`);

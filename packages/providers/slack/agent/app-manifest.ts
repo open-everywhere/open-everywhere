@@ -27,8 +27,8 @@ export function slackAppManifestTemplate(opts: SlackAppManifestOptions = {}): st
           {
             command: "/oe",
             url: `https://${SLACK_DEPLOY_HOST_PLACEHOLDER}/eve/v1/slack/commands`,
-            description: "Open Everywhere control commands — status, budget, stop.",
-            usage_hint: "stop | status | budget",
+            description: "Open Everywhere control-plane commands (stop, status, budget) — no model turn.",
+            usage_hint: "stop | status | budget [raise <usd> | clear] | rate <n> | help",
             should_escape: false,
           },
         ],
@@ -48,6 +48,7 @@ export function slackAppManifestTemplate(opts: SlackAppManifestOptions = {}): st
         ],
       },
       oauth_config: {
+        redirect_urls: [`https://${SLACK_DEPLOY_HOST_PLACEHOLDER}/setup/callback`],
         scopes: {
           bot: [
             "app_mentions:read",
@@ -60,7 +61,10 @@ export function slackAppManifestTemplate(opts: SlackAppManifestOptions = {}): st
             "im:read",
             "im:write",
             "groups:history",
+            "mpim:history",
             "mpim:read",
+            "files:write",
+            "files:read",
             "reactions:write",
             "reactions:read",
             "pins:read",
@@ -72,7 +76,16 @@ export function slackAppManifestTemplate(opts: SlackAppManifestOptions = {}): st
       settings: {
         event_subscriptions: {
           request_url: `https://${SLACK_DEPLOY_HOST_PLACEHOLDER}/eve/v1/slack`,
-          bot_events: ["app_mention", "message.im", "reaction_added", "reaction_removed"],
+          bot_events: [
+            "app_mention",
+            "message.im",
+            "message.channels",
+            "message.groups",
+            "message.mpim",
+            "member_joined_channel",
+            "reaction_added",
+            "reaction_removed",
+          ],
         },
         interactivity: {
           is_enabled: true,

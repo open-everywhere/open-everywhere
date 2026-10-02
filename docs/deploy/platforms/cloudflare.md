@@ -30,8 +30,9 @@ work the same here.
   (per-host allow/deny) — credential injection and `match` narrowing are measured gaps
   (OPE-917). Open Everywhere's own `docker()` deployment gets full parity instead with a
   [forced local egress proxy](./self-host-egress.md), which is the pattern to port here.
-- A registered operational-store client (`OE_OPERATIONAL_PROVIDER`) and memory provider
-  (`OE_MEMORY_PROVIDER`) — see [Database](../../extending/database.md).
+- A registered operational-store client and memory provider. A present `DATABASE_URL` selects
+  `postgres` for both; `OE_OPERATIONAL_PROVIDER` and `OE_MEMORY_PROVIDER` override it — see
+  [Database](../../extending/database.md).
 - A [credential broker](../../extending/credential-brokers.md) implementing `getSecret(ref)`.
 - A cron source that pings the routine dispatcher on a cadence — see
   [Scheduler & identity](../../extending/scheduler-and-identity.md).

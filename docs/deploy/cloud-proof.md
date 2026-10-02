@@ -74,11 +74,13 @@ characters, which pushed the description past GitHub's 140-character cap and cut
 
 Since OPE-1814 the split is no longer hand-made. `npm run test:integration` shards the tier itself
 in a sandbox — `scripts/it-shards.ts` reads `OE_IT_SHARDS`, and with no value plans one shard per
-~12 tier files (at least 4) under `CI` or a memory cgroup, and 1 on an uncapped box — runs the
+32 tier files (at least 4) under `CI` or a memory cgroup, and 1 on an uncapped box — runs the
 shards sequentially at one worker, takes the WORST shard's exit code as the tier's, and prints ONE
-`OE_PROOF … suite=test:integration exit=<code>` line after the last shard. Since OPE-2050 only
-shard 1 builds the target: the rest run with `OE_IT_SKIP_BUILD=1` and reuse its tree, which is what
-makes a split fine enough to hold the per-process file count flat affordable. So a run's evidence carries the tier's own line and needs no shard rule at all; the
+`OE_PROOF … suite=test:integration exit=<code>` line after the last shard. Since OPE-2235 NO shard
+builds the target: `suite-lock-run.ts` runs `npm run test:integration:prepare` once, inside the suite
+lock, before the first shard, which is what makes a split fine enough to hold the per-process file
+count flat affordable. A prepare step that fails runs no shard at all and the run reports its exit, so
+the tier's line still carries the exit the run really had. So a run's evidence carries the tier's own line and needs no shard rule at all; the
 `--shard=k/N` names above stay supported for a run that splits the tier by hand. A **targeted** leg
 (`npm run test:integration -- <file>`) prints no tier line: it is not the tier.
 
@@ -162,6 +164,17 @@ refuses — that tip needs its own proof run.
 The known assumption, stated rather than implied: the suites are a function of the tree. A suite
 that read the commit sha or the git history would sit outside it. The `OE_PROOF` line records a sha,
 but that is the evidence's own label, not an input to any assertion.
+
+🔴 **ONE INPUT COULD SIT OUTSIDE THAT ASSUMPTION, AND IT IS OPT-IN FOR EXACTLY THIS REASON** (OPE-2235).
+The integration tier's target is built by `npm run test:integration:prepare`, which can RESTORE `.output`
+and `.eve/sandbox-cache` from a cache branch on a git remote instead of building them — and every fork
+then `import()`s the restored bundle, so those bytes run. A restored tier is therefore a function of the
+tree AND of a mutable branch, whose only credential is a key blob in the same commit whoever pushed the
+archive wrote: the trust boundary is push access to that remote. So the remote half is **off by default**
+(`OE_IT_PREPARE_CACHE` is `local` unless a caller says `remote`), which keeps an ordinary tier run a
+function of the tree alone. A run that must be beyond question — a proof run for a deploy — either leaves
+the default or sets `OE_IT_PREPARE_CACHE=off`, which also ignores the local stamp and rebuilds from source.
+`tests/integration/prepare-cache.ts` carries the reasoning and the measurements.
 
 **It refuses to post — the status is never written — when:**
 

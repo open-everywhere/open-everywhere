@@ -54,9 +54,9 @@ export function getOperationalStore(): OperationalStore {
     throw new Error(
       `operational store is the ${floor === "pglite" ? "embedded-Postgres (PGlite)" : "sqlite"} floor on Vercel — ` +
         "audit, spend caps, and break-glass revocations would be per-instance and ephemeral (a revoke would " +
-        "report success but never take effect). Set OE_OPERATIONAL_PROVIDER=postgres and register a client " +
-        "(see docs/deploy/setup-runbook.md), or OE_ALLOW_EPHEMERAL_OPERATIONAL=1 to accept ephemeral " +
-        "operational state on a single-instance host.",
+        "report success but never take effect). Set DATABASE_URL — it selects postgres for both stores on its " +
+        "own — and register a client (see docs/deploy/setup-runbook.md), or OE_ALLOW_EPHEMERAL_OPERATIONAL=1 " +
+        "to accept ephemeral operational state on a single-instance host.",
     );
   }
 
@@ -83,8 +83,10 @@ export function getOperationalStore(): OperationalStore {
   if (!store) {
     if (id === "postgres") {
       throw new Error(
-        'OE_OPERATIONAL_PROVIDER="postgres" but no client is registered — call ' +
-          "registerOperationalPostgres(client) at startup (see docs/setup.md).",
+        (process.env.OE_OPERATIONAL_PROVIDER?.trim()
+          ? 'OE_OPERATIONAL_PROVIDER="postgres"'
+          : "DATABASE_URL is set, so postgres is the selected operational store (operational/selection.ts)") +
+          " but no client is registered — call registerOperationalPostgres(client) at startup (see docs/setup.md).",
       );
     }
     throw new Error(`unknown OE_OPERATIONAL_PROVIDER "${id}" (have: ${Object.keys(REGISTRY).join(", ")})`);

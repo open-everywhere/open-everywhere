@@ -29,7 +29,7 @@
     "paths": {
       "@open-everywhere/core/*": ["./packages/core/*"],
       "@open-everywhere/adapters/*": ["./packages/adapters/*"],
-      "create-open-everywhere/*": ["./packages/create/*"],
+      "@open-everywhere/create/*": ["./packages/create/*"],
       "@open-everywhere/provider-discord/*": ["./packages/providers/discord/*"],
       "@open-everywhere/provider-github/*": ["./packages/providers/github/*"],
       "@open-everywhere/provider-linear/*": ["./packages/providers/linear/*"],

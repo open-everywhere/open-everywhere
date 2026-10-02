@@ -204,4 +204,50 @@ function recorder() {
   }
 }
 
-console.log(`✓ slack-web-api: ${n} assertions passed (honoured Retry-After, named exhaustion, non-429 negative controls, the probe policy on all three PROBE_OPERATIONS members, ported encoding + token rules)`);
+{
+  const saved = process.env.SLACK_BOT_TOKEN;
+  try {
+    delete process.env.SLACK_BOT_TOKEN;
+
+    const stub = stubFetch([new Response("{\"ok\":true,\"access_token\":\"xoxb-minted\"}", { status: 200 })]);
+    const res = await callSlackWebApi(
+      { unauthenticated: true, operation: "oauth.v2.access", body: { client_id: "1111.2222", client_secret: "fake", code: "c", redirect_uri: "https://x/setup/callback" } },
+      { fetch: stub.fetchLike },
+    );
+    eq(res.ok, true, "unauthenticated: the call goes through with no token configured");
+    eq(stub.requests.length, 1, "unauthenticated: exactly one request left the host");
+    const headers = stub.requests[0].init.headers as Record<string, string>;
+    eq(headers.authorization, undefined, "🔴 unauthenticated: NO authorization header is sent");
+    eq(headers["content-type"], "application/x-www-form-urlencoded", "unauthenticated: the content type is unchanged");
+    eq(
+      String(stub.requests[0].init.body).includes("client_secret=fake"),
+      true,
+      "unauthenticated: the client credentials ride the form body",
+    );
+
+    const stub2 = stubFetch([new Response("{\"ok\":true}", { status: 200 })]);
+    let caught: unknown;
+    try {
+      await callSlackWebApi({ operation: "chat.postMessage", body: {} }, { fetch: stub2.fetchLike });
+    } catch (err) {
+      caught = err;
+    }
+    eq((caught as Error | undefined)?.message, "SLACK_BOT_TOKEN is required.", "unauthenticated absent: an ordinary call still fails loud with no token");
+    eq(stub2.requests.length, 0, "🔴 unauthenticated absent: nothing left the host unauthenticated");
+
+    const stub3 = stubFetch([new Response("{\"ok\":true}", { status: 200 })]);
+    caught = undefined;
+    try {
+      await callSlackWebApi({ unauthenticated: false, operation: "chat.postMessage", body: {} }, { fetch: stub3.fetchLike });
+    } catch (err) {
+      caught = err;
+    }
+    eq((caught as Error | undefined)?.message, "SLACK_BOT_TOKEN is required.", "unauthenticated:false is the DEFAULT path, not an opt-out");
+    eq(stub3.requests.length, 0, "…and it too sends nothing");
+  } finally {
+    if (saved === undefined) delete process.env.SLACK_BOT_TOKEN;
+    else process.env.SLACK_BOT_TOKEN = saved;
+  }
+}
+
+console.log(`✓ slack-web-api: ${n} assertions passed (honoured Retry-After, named exhaustion, non-429 negative controls, the probe policy on all three PROBE_OPERATIONS members, ported encoding + token rules, the unauthenticated arm)`);

@@ -9,20 +9,21 @@
   },
   "packages": {
     "@open-everywhere/adapters": {
-      "version": "0.1.0",
+      "version": "0.1.3",
       "contributions": {
         "hook/sandbox-lifecycle": "mounted",
         "tool/extend_workspace_time": "mounted"
       }
     },
     "@open-everywhere/core": {
-      "version": "0.1.0",
+      "version": "0.1.3",
       "contributions": {
         "channel/aws-sso-callback": "mounted",
         "channel/control-mcp": "mounted",
         "channel/control-read": "mounted",
         "channel/credential-intake-page": "mounted",
         "channel/oe-oauth-callback": "mounted",
+        "channel/oe-status": "mounted",
         "channel/policy-pages": "mounted",
         "channel/test-wake": "mounted",
         "channel/transcript-relay": "mounted",
@@ -154,27 +155,27 @@
       }
     },
     "@open-everywhere/provider-discord": {
-      "version": "0.1.0",
+      "version": "0.1.3",
       "contributions": {
         "channel/discord": "mounted",
         "channel/discord-gateway": "mounted"
       }
     },
     "@open-everywhere/provider-github": {
-      "version": "0.1.0",
+      "version": "0.1.3",
       "contributions": {
         "channel/github": "mounted"
       }
     },
     "@open-everywhere/provider-linear": {
-      "version": "0.1.0",
+      "version": "0.1.3",
       "contributions": {
         "channel/linear": "mounted",
         "tool/read_linear_issue": "mounted"
       }
     },
     "@open-everywhere/provider-notion": {
-      "version": "0.1.0",
+      "version": "0.1.3",
       "contributions": {
         "channel/notion": "mounted",
         "schedule/notion-ingress": "mounted",
@@ -184,14 +185,15 @@
       }
     },
     "@open-everywhere/provider-slack": {
-      "version": "0.1.0",
+      "version": "0.1.3",
       "contributions": {
         "channel/slack": "mounted",
-        "channel/slack-commands": "mounted"
+        "channel/slack-commands": "mounted",
+        "channel/slack-setup-page": "mounted"
       }
     },
     "@open-everywhere/provider-teams": {
-      "version": "0.1.0",
+      "version": "0.1.3",
       "contributions": {
         "channel/teams": "mounted"
       }

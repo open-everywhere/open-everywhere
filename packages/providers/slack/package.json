@@ -96,6 +96,10 @@
       "types": "./dist/agent/channels/slack-route-hold.d.ts",
       "default": "./dist/agent/channels/slack-route-hold.js"
     },
+    "./agent/channels/slack-setup-page.js": {
+      "types": "./dist/agent/channels/slack-setup-page.d.ts",
+      "default": "./dist/agent/channels/slack-setup-page.js"
+    },
     "./agent/channels/slack-shortcut.js": {
       "types": "./dist/agent/channels/slack-shortcut.d.ts",
       "default": "./dist/agent/channels/slack-shortcut.js"
@@ -148,6 +152,34 @@
       "types": "./dist/agent/register.d.ts",
       "default": "./dist/agent/register.js"
     },
+    "./agent/setup/claim.js": {
+      "types": "./dist/agent/setup/claim.d.ts",
+      "default": "./dist/agent/setup/claim.js"
+    },
+    "./agent/setup/credentials.js": {
+      "types": "./dist/agent/setup/credentials.d.ts",
+      "default": "./dist/agent/setup/credentials.js"
+    },
+    "./agent/setup/eve-credentials.js": {
+      "types": "./dist/agent/setup/eve-credentials.d.ts",
+      "default": "./dist/agent/setup/eve-credentials.js"
+    },
+    "./agent/setup/install-state.js": {
+      "types": "./dist/agent/setup/install-state.d.ts",
+      "default": "./dist/agent/setup/install-state.js"
+    },
+    "./agent/setup/page.js": {
+      "types": "./dist/agent/setup/page.d.ts",
+      "default": "./dist/agent/setup/page.js"
+    },
+    "./agent/setup/slack-api-setup.js": {
+      "types": "./dist/agent/setup/slack-api-setup.d.ts",
+      "default": "./dist/agent/setup/slack-api-setup.js"
+    },
+    "./agent/status.js": {
+      "types": "./dist/agent/status.d.ts",
+      "default": "./dist/agent/status.js"
+    },
     "./agent/surface-parity.js": {
       "types": "./dist/agent/surface-parity.d.ts",
       "default": "./dist/agent/surface-parity.js"
@@ -158,7 +190,7 @@
     "prepack": "npm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "npm run test:chain",
-    "test:chain": "npm run test:slack-e2e && npm run test:slack-context && npm run test:slack-wake-backscroll && npm run test:slack-identity && npm run test:slack-spend-gate && npm run test:slack-wake-mapping && npm run test:slack-tenant-fence && npm run test:slack-wake-drop-hold && npm run test:slack-engagement && npm run test:slack-grant-card &&npm run test:slack-supervisor-reply && npm run test:slack-replier-label && npm run test:slack-normalized-wake && npm run test:slack-wake-trust && npm run test:slack-nonmember-author && npm run test:slack-contextline-trust && npm run test:slack-dm-seat && npm run test:slack-dm-divert && npm run test:slack-shortcut && npm run test:slack-enterprise-rung && npm run test:slack-attachments && npm run test:slack-commands && npm run test:slack-reaction-ingest && npm run test:slack-chat-audit && npm run test:slack-scope-audit && npm run test:slack-app-manifest && npm run test:slack-workspace-roster && npm run test:slack-webhook-verifier && npm run test:slack-input-response && npm run test:slack-approval-card && npm run test:slack-mrkdwn && npm run test:slack-native-wake-heal && npm run test:slack-rate-limit && npm run test:slack-web-api-seam",
+    "test:chain": "npm run test:slack-e2e && npm run test:slack-context && npm run test:slack-wake-backscroll && npm run test:slack-identity && npm run test:slack-spend-gate && npm run test:slack-wake-mapping && npm run test:slack-tenant-fence && npm run test:slack-wake-drop-hold && npm run test:slack-engagement && npm run test:slack-grant-card &&npm run test:slack-supervisor-reply && npm run test:slack-replier-label && npm run test:slack-normalized-wake && npm run test:slack-wake-trust && npm run test:slack-nonmember-author && npm run test:slack-contextline-trust && npm run test:slack-dm-seat && npm run test:slack-dm-divert && npm run test:slack-shortcut && npm run test:slack-enterprise-rung && npm run test:slack-attachments && npm run test:slack-commands && npm run test:slack-reaction-ingest && npm run test:slack-chat-audit && npm run test:slack-scope-audit && npm run test:slack-app-manifest && npm run test:slack-workspace-roster && npm run test:slack-webhook-verifier && npm run test:slack-input-response && npm run test:slack-approval-card && npm run test:slack-mrkdwn && npm run test:slack-native-wake-heal && npm run test:slack-rate-limit && npm run test:slack-web-api-seam && npm run test:slack-setup",
     "test:slack-webhook-verifier": "NODE_NO_WARNINGS=1 tsx scripts/slack-webhook-verifier-test.ts",
     "test:slack-workspace-roster": "NODE_NO_WARNINGS=1 tsx scripts/slack-workspace-roster-test.ts",
     "test:slack-scope-audit": "NODE_NO_WARNINGS=1 tsx scripts/slack-scope-audit-test.ts",
@@ -192,6 +224,7 @@
     "test:slack-mrkdwn": "NODE_NO_WARNINGS=1 tsx scripts/slack-mrkdwn-test.ts",
     "test:slack-rate-limit": "NODE_NO_WARNINGS=1 tsx scripts/slack-rate-limit-test.ts",
     "test:slack-web-api-seam": "NODE_NO_WARNINGS=1 tsx scripts/slack-web-api-seam-test.ts",
+    "test:slack-setup": "NODE_NO_WARNINGS=1 tsx scripts/slack-setup-test.ts",
     "test:slack-wake-drop-hold": "NODE_NO_WARNINGS=1 tsx scripts/slack-wake-drop-hold-test.ts"
   },
   "dependencies": {

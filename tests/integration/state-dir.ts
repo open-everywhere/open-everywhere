@@ -1,6 +1,6 @@
 import { tmpdir } from "node:os";
 
-import { createOwnedTempDir, removeOwnedTempDirOnExit, sweepAbandonedTempDirs } from "./owned-temp-dir";
+import { createOwnedTempDir, removeOwnedTempDirOnExit, sweepAbandonedTempDirs } from "./owned-temp-dir.js";
 
 export const STATE_DIR_PREFIX = "oe-it-state-";
 

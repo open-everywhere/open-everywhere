@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "releases": [
+    {
+      "version": "0.1.3",
+      "date": "2026-10-03",
+      "summary": "Four first-install fixes: a pretypecheck build, pinned undici overrides, allowed install scripts, and a scaffold into a fresh clone.",
+      "evePeer": "0.54.3",
+      "breaking": [],
+      "configMigrations": [
+        {
+          "description": "package.json gains \"pretypecheck\": \"oe build\", so `npm run typecheck` passes on a fresh scaffold."
+        },
+        {
+          "description": "package.json `overrides` gain `eve > undici` 8.11.2 and `guarded-fetch > undici` 7.30.0, with a nested `@ai-sdk/provider-utils > undici` 7.30.0 so only eve's own undici changes. eve stays on 0.54.3."
+        },
+        {
+          "description": "package.json gains an `allowScripts` block naming `esbuild` and `@mongodb-js/zstd`, so the install prints no allow-scripts warning."
+        }
+      ],
+      "env": {
+        "added": [],
+        "removed": []
+      },
+      "manualSteps": []
+    },
+    {
+      "version": "0.1.2",
+      "date": "2026-10-01",
+      "summary": "`npx create-open-everywhere <dir>` scaffolds a quickstart app, and the hosted path has one order.",
+      "evePeer": "0.54.3",
+      "breaking": [],
+      "configMigrations": [],
+      "env": {
+        "added": [],
+        "removed": []
+      },
+      "manualSteps": [
+        "The ops deploy plan stops pushing AI_GATEWAY_API_KEY, OE_PUBLIC_BASE_URL and OE_INTAKE_PAGE_SIGNING_KEY to the Vercel project. All three are still read where they are set, so remove one only to take the default: OIDC for the gateway, VERCEL_PROJECT_PRODUCTION_URL for the base URL, and a deployment-minted intake page key."
+      ]
+    },
+    {
+      "version": "0.1.1",
+      "date": "2026-09-30",
+      "summary": "The install wizard starts on a fresh machine and on Windows.",
+      "evePeer": "0.54.3",
+      "breaking": [],
+      "configMigrations": [],
+      "env": {
+        "added": [],
+        "removed": []
+      },
+      "manualSteps": []
+    }
+  ]
+}

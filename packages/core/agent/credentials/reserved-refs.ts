@@ -2,7 +2,9 @@ export const NOTION_HANDSHAKE_REF_NAMESPACE = "notion-handshake:";
 
 export const SELF_SECRET_REF_NAMESPACE = "self:";
 
-export const RESERVED_REF_NAMESPACES: readonly string[] = ["hook:", "oe-oauth:", NOTION_HANDSHAKE_REF_NAMESPACE, SELF_SECRET_REF_NAMESPACE] as const;
+export const SLACK_APP_REF_NAMESPACE = "slack-app:";
+
+export const RESERVED_REF_NAMESPACES: readonly string[] = ["hook:", "oe-oauth:", NOTION_HANDSHAKE_REF_NAMESPACE, SELF_SECRET_REF_NAMESPACE, SLACK_APP_REF_NAMESPACE] as const;
 
 export function reservedRefNamespace(ref: string): string | undefined {
   return RESERVED_REF_NAMESPACES.find((ns) => ref.startsWith(ns));

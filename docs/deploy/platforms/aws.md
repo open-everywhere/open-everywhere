@@ -26,7 +26,7 @@ Platform-independent seams are unchanged: the [memory backing](../../extending/m
 - A sandbox adapter satisfying the [executor contract](../../extending/sandbox.md), with
   the egress firewall enforceable at its boundary.
 - A registered Postgres client for the operational + memory stores
-  (`OE_OPERATIONAL_PROVIDER=postgres` / `OE_MEMORY_PROVIDER=postgres`) — see
+  (selected by `DATABASE_URL`; the two provider selectors override it) — see
   [Database](../../extending/database.md). Aurora/RDS satisfies the `PgClient` shape.
 - A [credential broker](../../extending/credential-brokers.md) over Secrets Manager
   implementing `getSecret(ref)`, where `ref` is the secret name/ARN.

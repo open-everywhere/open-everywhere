@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { WIZARD_STEPS } from "../src/steps/index.js";
-import { main } from "../src/cli.js";
-import type { WizardIO } from "../src/engine.js";
+import { SETUP_STEPS } from "../src/steps/index.js";
+import { parseArgs } from "../src/cli.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -19,8 +18,12 @@ const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const tsxCli = join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs");
 const cliPath = join(packageRoot, "src", "cli.ts");
 
+const CONFIG_PREFIXES = /^(OE_|SLACK_|E2E_|EVAL_|AI_GATEWAY|DATABASE_URL)/;
+const CLEAN_ENV: NodeJS.ProcessEnv = { ...process.env };
+for (const key of Object.keys(CLEAN_ENV)) if (CONFIG_PREFIXES.test(key)) delete CLEAN_ENV[key];
+
 function runCli(args: readonly string[], cwd: string): { status: number | null; stdout: string; stderr: string } {
-  const result = spawnSync(process.execPath, [tsxCli, cliPath, ...args], { cwd, encoding: "utf8", env: { ...process.env }, input: "", timeout: 120_000 });
+  const result = spawnSync(process.execPath, [tsxCli, cliPath, ...args], { cwd, encoding: "utf8", env: { ...CLEAN_ENV }, input: "", timeout: 120_000 });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
@@ -31,11 +34,14 @@ function runCli(args: readonly string[], cwd: string): { status: number | null; 
 
   const help = runCli(["--help"], packageRoot);
   ok(help.status === 0, "--help: exits 0");
-  ok(help.stdout.includes("--check"), "--help: mentions --check");
+  ok(help.stdout.includes("--check") && help.stdout.includes("<dir>"), "--help: documents --check and <dir>");
+  ok(/--route <r>/.test(help.stdout) && /vercel/.test(help.stdout) && /docker/.test(help.stdout), "--help: documents --route and names both routes");
+  ok(/agent-led/.test(help.stdout), "--help: says setup is agent-led");
+  ok(!/--skip-wizard|--decline-telemetry|--goal /.test(help.stdout), "--help: documents no retired flag");
 }
 
 {
-  const dir = mkdtempSync(join(tmpdir(), "oe-wizard-cli-check-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "oe-cli-check-test-"));
   try {
     const result = runCli(["--check"], dir);
     ok(result.status === 1, "--check: exits 1 when the checklist isn't fully satisfied (a bare scratch dir never is)");
@@ -44,39 +50,41 @@ function runCli(args: readonly string[], cwd: string): { status: number | null; 
     ok(result.stdout.includes("Slack app"), "--check: reports the Slack step");
     ok(result.stdout.includes("Roster ("), "--check: reports the roster step");
     ok(
-      new RegExp(String.raw`\d+/${WIZARD_STEPS.length} steps satisfied \(goal: hosted\)\.`).test(result.stdout),
-      `--check: prints an N/${WIZARD_STEPS.length} summary line covering every registered step`,
+      new RegExp(String.raw`\d+/${SETUP_STEPS.length} steps satisfied \(route: vercel\)\.`).test(result.stdout),
+      `--check: prints an N/${SETUP_STEPS.length} summary line covering every registered step, naming the route`,
     );
-    ok(!existsSync(join(dir, ".open-everywhere", "wizard-state.json")), "--check: never writes wizard-state.json (no prompts, no side effects)");
+    ok(/\n {4}next: /.test(result.stdout), "--check (text): prints a `next:` line under an unsatisfied step");
+    ok(!existsSync(join(dir, ".open-everywhere")), "--check: writes no state directory");
+    ok(!existsSync(join(dir, ".env.local")), "--check: writes no .env.local");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 }
 
 {
-  const dir = mkdtempSync(join(tmpdir(), "oe-wizard-cli-scaffold-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "oe-cli-scaffold-test-"));
   try {
-    const help = runCli(["--help"], packageRoot);
-    ok(help.stdout.includes("<dir>") && help.stdout.includes("--skip-wizard"), "--help: documents <dir> and --skip-wizard");
+    const scaffolded = runCli(["my-app"], dir);
+    ok(scaffolded.status === 0, `<dir>: exits 0 (stderr: ${scaffolded.stderr.trim()})`);
+    ok(existsSync(join(dir, "my-app", "agent", "agent.ts")), "<dir>: scaffolds the app, relative to the working directory");
+    ok(existsSync(join(dir, "my-app", ".gitignore")), "<dir>: renames gitignore to .gitignore");
+    ok(!existsSync(join(dir, "my-app", "node_modules")), "<dir>: installs nothing");
+    ok(!existsSync(join(dir, "my-app", ".open-everywhere")), "<dir>: writes no state (there is no wizard to resume)");
+    ok(scaffolded.stdout.includes("cd my-app"), "<dir>: the next steps carry `cd my-app`");
+    ok(/coding agent/.test(scaffolded.stdout), "<dir>: the next steps hand setup to the coding agent");
+    ok(scaffolded.stdout.includes("--check --json"), "<dir>: …and name the machine-readable status command");
+    ok(!/— Prerequisites/.test(scaffolded.stdout), "<dir>: runs no interactive step (negative control)");
 
-    const scaffolded = runCli(["my-app", "--skip-wizard"], dir);
-    ok(scaffolded.status === 0, `<dir> --skip-wizard: exits 0 (stderr: ${scaffolded.stderr.trim()})`);
-    ok(existsSync(join(dir, "my-app", "agent", "agent.ts")), "<dir> --skip-wizard: scaffolds the app, relative to the working directory");
-    ok(existsSync(join(dir, "my-app", ".gitignore")), "<dir> --skip-wizard: renames gitignore to .gitignore");
-    ok(!existsSync(join(dir, "my-app", "node_modules")), "<dir> --skip-wizard: installs nothing");
-    ok(!existsSync(join(dir, "my-app", ".open-everywhere")), "<dir> --skip-wizard: runs no wizard step (no wizard state)");
-
-    const again = runCli(["my-app", "--skip-wizard"], dir);
+    const again = runCli(["my-app"], dir);
     ok(again.status === 1, "<dir>: refuses a non-empty directory with exit 1");
     ok(again.stderr.includes("not empty"), "<dir>: the refusal says why");
 
     const clone = join(dir, "fresh-clone");
     mkdirSync(join(clone, ".git"), { recursive: true });
-    const inPlace = runCli([".", "--skip-wizard"], clone);
+    const inPlace = runCli(["."], clone);
     ok(inPlace.status === 0, `. in a fresh clone: exits 0 (stderr: ${inPlace.stderr.trim()})`);
     ok(existsSync(join(clone, "agent", "agent.ts")), ". in a fresh clone: scaffolds the app in place");
     ok(!inPlace.stdout.includes("cd ."), ". in a fresh clone: the next steps carry no `cd .` line");
-    ok(scaffolded.stdout.includes("cd my-app"), "<dir> --skip-wizard: the next steps carry `cd my-app` (negative control)");
 
     const checkScaffold = runCli(["other-app", "--check"], dir);
     ok(checkScaffold.status === 2, "<dir> --check: refused with exit 2 — --check changes nothing");
@@ -85,114 +93,74 @@ function runCli(args: readonly string[], cwd: string): { status: number | null; 
     const two = runCli(["a", "b"], dir);
     ok(two.status === 2 && !existsSync(join(dir, "a")), "two <dir> arguments: refused with exit 2, nothing written");
 
-    const agentShell = runCli(["agent-app"], dir);
-    ok(agentShell.status === 0, `<dir> with no TTY: exits 0 without waiting on a prompt (status ${agentShell.status})`);
-    ok(existsSync(join(dir, "agent-app", "agent", "agent.ts")), "<dir> with no TTY: scaffolds the app");
-    ok(agentShell.stdout.includes("did not run (no terminal)"), "<dir> with no TTY: says the wizard did not run, and why");
-    ok(agentShell.stdout.includes("--check --json"), "<dir> with no TTY: names the machine-readable next step");
-    ok(!agentShell.stdout.includes("— Prerequisites"), "<dir> with no TTY: runs no interactive step (negative control)");
-    ok(!existsSync(join(dir, "agent-app", ".open-everywhere")), "<dir> with no TTY: writes no wizard state");
-
-    const report = runCli(["--check", "--json"], join(dir, "agent-app"));
+    const report = runCli(["--check", "--json"], join(dir, "my-app"));
     ok(report.status === 1, "--check --json: exits 1 while any step is unsatisfied");
-    const parsed = JSON.parse(report.stdout) as { total: number; steps: { id: string; satisfied: boolean; detail: string }[] };
-    ok(parsed.total === WIZARD_STEPS.length, "--check --json: total counts every registered step");
+    const parsed = JSON.parse(report.stdout) as { total: number; route: string; steps: { id: string; satisfied: boolean; detail: string; next?: string }[] };
+    ok(parsed.total === SETUP_STEPS.length, "--check --json: total counts every registered step");
     ok(
-      JSON.stringify(parsed.steps.map((st) => st.id)) === JSON.stringify(WIZARD_STEPS.map((st) => st.id)),
+      JSON.stringify(parsed.steps.map((st) => st.id)) === JSON.stringify(SETUP_STEPS.map((st) => st.id)),
       "--check --json: one entry per registered step, in order",
     );
+    ok(parsed.route === "vercel", "--check --json: the default route is vercel, and the report says so");
     const repo = parsed.steps.find((st) => st.id === "repo");
     ok(repo?.satisfied === false && /app found, but run .npm install./.test(repo.detail), "--check --json: the repo step recognises the scaffolded app and asks for npm install");
     ok(parsed.steps.every((st) => typeof st.satisfied === "boolean" && typeof st.detail === "string"), "--check --json: every step carries a boolean and a detail");
-
-    const skipAlone = runCli(["--skip-wizard"], dir);
-    ok(skipAlone.status === 2, "--skip-wizard with no <dir>: refused with exit 2");
+    const unsatisfied = parsed.steps.filter((s) => !s.satisfied);
+    ok(unsatisfied.length > 0 && unsatisfied.every((s) => typeof s.next === "string" && s.next.length > 0), "--check --json: every unsatisfied step carries a `next` command");
+    ok(parsed.steps.every((st) => st.id !== "telemetry-disclosure"), "--check --json: there is no telemetry-disclosure step (it went with the wizard)");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 }
 
 {
-  const parent = mkdtempSync(join(tmpdir(), "oe-wizard-cli-tty-test-"));
-  const printed: string[] = [];
-  const asked: string[] = [];
-  const scripted: WizardIO = {
-    print: (line) => void printed.push(line),
-    ask: async (q) => {
-      asked.push(q);
-      return "decline";
-    },
-    askSecret: async (q) => {
-      asked.push(q);
-      return "";
-    },
-    confirm: async (q) => {
-      asked.push(q);
-      return false;
-    },
-  };
-  const before = process.cwd();
-  try {
-    process.chdir(parent);
-    const code = await main(["tty-app"], { isTTY: true, createIO: () => scripted });
-    const appDir = join(parent, "tty-app");
-    ok(existsSync(join(appDir, "agent", "agent.ts")), "<dir> on a TTY: scaffolds the app first");
-    ok(printed.some((l) => l.includes("— Prerequisites")), "<dir> on a TTY: the interactive wizard runs (its first step is printed)");
-    ok(asked.some((q) => q.includes("npm install")), "<dir> on a TTY: the repo step offers `npm install` — it found the app, so the wizard ran in <dir>");
-    ok(!existsSync(join(appDir, "node_modules")), "<dir> on a TTY: a declined install installs nothing");
-    ok(existsSync(join(appDir, ".open-everywhere", "wizard-state.json")), "<dir> on a TTY: the wizard's state lands in <dir>, not the parent");
-    ok(!existsSync(join(parent, ".open-everywhere")), "<dir> on a TTY: nothing lands in the parent directory (negative control)");
-    ok(code === 1, "<dir> on a TTY: exits 1 while steps stay unsatisfied");
-  } finally {
-    process.chdir(before);
-    rmSync(parent, { recursive: true, force: true });
-  }
-}
-
-{
-  const { parseArgs } = await import("../src/cli.js");
-  const parsed = parseArgs(["--check", "--goal", "local", "--host=https://a.example", "--json"]);
-  ok(parsed.goal === "local" && parsed.host === "https://a.example" && parsed.dirs.length === 0, "parseArgs: `--goal v` and `--host=v` both parse, and a flag value is never a <dir>");
-  ok(parseArgs(["--goal", "staging"]).errors.length === 1, "parseArgs: an unknown goal is an error");
+  const parsed = parseArgs(["--check", "--route", "docker", "--host=https://a.example", "--json"]);
+  ok(parsed.route === "docker" && parsed.host === "https://a.example" && parsed.dirs.length === 0, "parseArgs: `--route v` and `--host=v` both parse, and a flag value is never a <dir>");
+  ok(parseArgs(["--check"]).route === undefined, "parseArgs: no --route leaves it unset (the context defaults it to vercel)");
+  ok(/vercel \| docker/.test(parseArgs(["--route", "fly"]).errors.join(" ")), "parseArgs: an unsupported route is an error that names both supported ones");
   ok(parseArgs(["--host"]).errors.length === 1, "parseArgs: a value flag with no value is an error");
+
+  ok(/--route vercel/.test(parseArgs(["--goal", "hosted"]).errors.join(" ")), "parseArgs: --goal is an error whose message names --route");
+  ok(/local run is the development loop/.test(parseArgs(["--goal", "local"]).errors.join(" ")), "parseArgs: …and says why the local goal is gone");
+  for (const flag of ["--skip-wizard", "--decline-telemetry"]) {
+    ok(/retired/.test(parseArgs([flag]).errors.join(" ")), `parseArgs: ${flag} is an error that says it is retired`);
+  }
+  ok(/unknown flag --nope/.test(parseArgs(["--nope"]).errors.join(" ")), "parseArgs: any other unknown flag is an error that names it");
+
   const named = parseArgs(["--app-name", " Acme Agent "]);
   ok(named.appName === "Acme Agent" && named.errors.length === 0 && named.dirs.length === 0, "parseArgs: `--app-name v` takes the name, trimmed, and not as a dir");
   ok(parseArgs([]).appName === undefined, "parseArgs: no --app-name means no name (negative control)");
   ok(/at most 35/.test(parseArgs([`--app-name=${"x".repeat(36)}`]).errors.join(" ")), "parseArgs: a name over Slack's 35-character limit is an error");
+}
 
-  const dir = mkdtempSync(join(tmpdir(), "oe-wizard-cli-goal-"));
+{
+  const dir = mkdtempSync(join(tmpdir(), "oe-cli-route-"));
   try {
-    const bad = runCli(["--check", "--goal", "staging"], dir);
-    ok(bad.status === 2, "--goal staging: exits 2");
+    for (const retired of [["--check", "--goal", "hosted"], ["--check", "--goal", "local"], ["--skip-wizard"], ["--decline-telemetry"]]) {
+      const res = runCli(retired, dir);
+      ok(res.status === 2, `${retired.join(" ")}: exits 2`);
+      ok(/retired/.test(res.stderr), `${retired.join(" ")}: …and stderr says it is retired`);
+    }
+    ok(!existsSync(join(dir, ".open-everywhere")), "a retired flag writes no state (the state file went with the wizard)");
 
-    const hosted = runCli(["--check", "--json"], dir);
-    const report = JSON.parse(hosted.stdout) as { goal: string; steps: { id: string; satisfied: boolean; next?: string }[] };
-    ok(report.goal === "hosted", "--check --json: the default goal is hosted, and the report says so");
-    const unsatisfied = report.steps.filter((s) => !s.satisfied);
-    ok(unsatisfied.length > 0 && unsatisfied.every((s) => typeof s.next === "string" && s.next.length > 0), "--check --json: every unsatisfied step carries a `next` command");
-    ok(report.steps.find((s) => s.id === "database")?.satisfied === false, "--check --json: the hosted goal never reports the database as done without one");
+    const docker = JSON.parse(runCli(["--check", "--json", "--route", "docker"], dir).stdout) as { route: string; steps: { id: string; satisfied: boolean; detail: string }[] };
+    ok(docker.route === "docker", "--check --route docker: the report names the docker route");
+    ok(docker.steps.find((s) => s.id === "vercel")?.satisfied === true, "--route docker: the Vercel-link step is satisfied (that route needs no project)");
+    ok(docker.steps.find((s) => s.id === "database")?.satisfied === false, "--route docker: the database step still blocks — both routes need Postgres");
+    const dockerEnv = docker.steps.find((s) => s.id === "env-checklist");
+    ok(/AI_GATEWAY_API_KEY/.test(dockerEnv?.detail ?? ""), "--route docker: the env checklist asks for a model route");
 
-    const local = JSON.parse(runCli(["--check", "--json", "--goal", "local"], dir).stdout) as { goal: string; steps: { id: string; satisfied: boolean }[] };
-    ok(local.goal === "local" && local.steps.find((s) => s.id === "database")?.satisfied === true, "--check --goal local: the embedded floor satisfies the database step (negative control)");
+    const vercel = JSON.parse(runCli(["--check", "--json"], dir).stdout) as { steps: { id: string; satisfied: boolean; detail: string }[] };
+    ok(vercel.steps.find((s) => s.id === "vercel")?.satisfied === false, "--route vercel: the Vercel-link step blocks (negative control)");
+    ok(!/AI_GATEWAY_API_KEY/.test(vercel.steps.find((s) => s.id === "env-checklist")?.detail ?? ""), "--route vercel: the env checklist asks for no gateway key (OIDC)");
 
-    const text = runCli(["--check"], dir);
-    ok(/\n {4}next: /.test(text.stdout), "--check (text): prints a `next:` line under an unsatisfied step");
-
-    const declined = runCli(["--decline-telemetry"], dir);
-    ok(declined.status === 0, "--decline-telemetry: exits 0 without a terminal");
-    const statePath = join(dir, ".open-everywhere", "wizard-state.json");
-    ok(existsSync(statePath), "--decline-telemetry: writes the wizard state");
-    const state = JSON.parse(readFileSync(statePath, "utf8")) as Record<string, unknown>;
-    ok(state.telemetryConsent === "declined", "--decline-telemetry: records consent = declined");
-    ok(state.wizardStartedEmitted === undefined, "--decline-telemetry: emits nothing (no started guard set)");
-    const after = JSON.parse(runCli(["--check", "--json"], dir).stdout) as { steps: { id: string; satisfied: boolean }[] };
-    ok(after.steps.find((s) => s.id === "telemetry-disclosure")?.satisfied === true, "--decline-telemetry: the telemetry step is then satisfied");
-
-    const hung = runCli([], dir);
-    ok(hung.status === 2 && /needs a terminal/.test(hung.stderr), "no flags and no terminal: exits 2 and says the wizard needs a terminal");
+    const bare = runCli([], dir);
+    ok(bare.status === 0, "no arguments: exits 0 without waiting on a prompt");
+    ok(/coding agent/.test(bare.stdout) && /--check --json/.test(bare.stdout), "no arguments: points at the agent-led setup and the status command");
+    ok(!existsSync(join(dir, ".open-everywhere")) && !existsSync(join(dir, ".env.local")), "no arguments: writes nothing");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 }
 
-console.log(`✓ ${n} CLI --check assertions passed`);
+console.log(`✓ ${n} CLI assertions passed`);

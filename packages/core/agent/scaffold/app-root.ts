@@ -60,5 +60,6 @@ export function appPath(relPath: string, root: string = resolveAppRoot()): strin
 }
 
 export async function importAppModule<T>(relPath: string, root: string = resolveAppRoot()): Promise<T> {
+  // hosted-inline-exempt: operator/test-time scripts load the deployer's app by path. This module
   return (await import(pathToFileURL(join(root, relPath)).href)) as T;
 }

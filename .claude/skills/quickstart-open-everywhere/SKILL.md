@@ -1,104 +1,167 @@
 ---
 name: quickstart-open-everywhere
-description: Stand up an Open Everywhere instance (local or deployed) from zero. Use when the user wants to set up, configure, or deploy Open Everywhere — e.g. "set up Open Everywhere for my Slack workspace" or "get Open Everywhere running locally". Drives the open-everywhere-ops MCP server (preflight, quickstart, scaffold_env, secret_set/list/rm).
+description: Set up, configure or deploy an Open Everywhere app — from a fresh scaffold to an agent that answers in Slack. Use when the user wants to set up Open Everywhere, deploy it, or connect Slack, Notion or GitHub. Two routes are supported, Vercel and Docker, and step 1 is to ask which. Drives the open-everywhere-ops MCP server (preflight, surface_manifest, scaffold_env, scaffold_credential_key, secret_set/list/rm) and the `@open-everywhere/create --check --json` status report.
 ---
 
 # Quickstart Open Everywhere
 
-You are helping the user stand up an **Open Everywhere** instance — a config-as-code agent
-that lives in Slack/GitHub/Linear with scoped memory, spend caps, routines, and an
-MCP control plane. The repo's `.mcp.json` gives you the `open-everywhere-ops` MCP server; you
-supply the judgement and run the commands **with the user's consent**.
+This directory is an **Open Everywhere app** — either a scaffolded app (it depends on the
+`@open-everywhere/*` npm packages and holds only configuration) or a clone of the Open Everywhere
+repository, which contains those packages and is itself an app. `AGENTS.md` describes which one you
+are in. Its `.mcp.json` gives you the `open-everywhere-ops` MCP server. You supply the judgement,
+and you run commands **with the user's consent**.
+
+🔴 **Two commands differ between the two homes.** In a scaffolded app, run
+`npx @open-everywhere/create --check --json` and `npm run -s env:pipe`. In a clone of the
+repository, run `node packages/create/bin/create-open-everywhere.js --check --json` (the checkout's
+own CLI, not the published one) and use the `grep`/`cut` form of the env push given in step 9 —
+that repository ships no `env:pipe` script. Everything else is the same.
 
 ## Golden rules
-- The ops MCP tools do checks + scaffolding. **You** run install/deploy commands in
-  the user's shell — show the command, get a yes, then run it. Never run `vercel
-  deploy`, create cloud resources, or write secrets without explicit confirmation.
-- **Secrets belong in the deployment's encrypted credential store, not in a file.** Once
-  `DATABASE_URL` + `OE_CREDENTIAL_ENCRYPTION_KEY` are set, load every other secret with
-  `secret_set` (`{ secrets: { NAME: "<value>" } }`) — it encrypts straight into the store the
-  deployment reads, and nothing can read it back out (there is no `secret_get`; `secret_list`
-  returns names only). `scaffold_env` stays for NON-secret config and for the root-of-trust vars
-  themselves; anything it writes lands in gitignored `.env.local`. Never echo a secret back or
-  commit one.
-- Prefer the **local** path first (`eve dev`) so the user sees it working before
-  committing to cloud infra.
 
-## Flow
+- The ops MCP tools check and scaffold. **You** run install, build and deploy commands in the
+  user's shell: show the command, get a yes, then run it. Never run a deploy, create a cloud
+  resource, or write a secret without explicit confirmation.
+- **Never ask the user to paste a secret into the chat, and never echo or commit one.** They paste
+  it where a tool reads it; you write it to the gitignored `.env.local` with `scaffold_env`, then
+  forget it. Mint the credential-store key with `scaffold_credential_key`, which never prints it.
+- **Never propose a local run as a setup step.** `npm run dev` is the development loop AFTER the
+  deploy. A local run has no public HTTPS URL for Slack to reach and keeps its state in a different
+  store, so it proves little about the deployment. See "Develop locally" below.
+- **Where each secret lives.** The deployment reads `DATABASE_URL`,
+  `OE_CREDENTIAL_ENCRYPTION_KEY`, `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET` and
+  `GITHUB_WEBHOOK_SECRET` from its **environment**: the Slack bundle and the GitHub webhook check
+  never read the credential store. So these go in `.env.local`, and then into the deployment's own
+  environment. `secret_set` is for a credential whose `broker` is `"db"` (and
+  `NOTION_WEBHOOK_SECRET`). It needs `DATABASE_URL` and the key in `.env.local` first. Nothing
+  reads a stored secret back out (`secret_list` returns names only).
+- Every command runs from the app root.
 
-1. **Clarify the goal.** Ask what they want: just try it **local**ly, add a **slack**
-   or **github** surface, or **deploy** a hosted instance. Map it to a goal:
-   `local` | `slack` | `github` | `deploy`.
+## Step 1 — ask which route
 
-2. **Preflight — TWO checks, same underlying engine.** Run BOTH, from the repo root
-   (not a subdirectory — the install wizard checks the real checkout at `cwd`):
-   - Call the `preflight` MCP tool for the model/DB/control-plane-auth facts
-     (`.env.local` presence, with fix hints).
-   - Also run the broader **install wizard's `--check` mode**. Inside a checkout that is
-     `node packages/create/bin/create-open-everywhere.js --check`; with no checkout yet, the
-     same wizard runs from npm as `npx create-open-everywhere@latest --check`. It reports on
-     the SAME 10-step checklist a human running the wizard themselves would see
-     (prerequisites, repo, tool roster, Vercel link, database, Slack app, env checklist,
-     telemetry disclosure, build, final verification). It's read-only: no prompts,
-     no writes, no telemetry. Use its unsatisfied steps as your walk-the-user-through
-     list — this skill is thin on purpose; the wizard engine (`packages/create/src/
-     engine.ts` + `src/steps/*.ts`) owns the actual step logic, this skill just reads
-     its report and talks the human through it in the surface they're in (Slack, a
-     terminal, wherever this agent is running).
-   Walk the user through anything `missing`/unsatisfied from either check.
+**Two routes are supported. Ask the user to pick one before anything else.**
 
-3. **Get the plan.** Call `quickstart` with the goal. It returns ordered steps, each
-   marked `done`/`todo`/`optional`, with the command to run. Use it as your checklist.
+- **Vercel** — on rails: the `vercel` CLI plus Marketplace Neon. The deployment authenticates to
+  the AI Gateway with OIDC, so it needs no gateway key.
+- **Docker** — self-host a container that satisfies the **deployment contract**
+  (`https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/contract.md`). Off
+  Vercel there is no OIDC, so the model route needs `AI_GATEWAY_API_KEY`. Running a different model
+  backend instead is an adapter swap in app code, not an env setting
+  (`https://github.com/open-everywhere/open-everywhere/blob/main/docs/extending/adapter-model.md`),
+  and `--check` cannot see it.
 
-4. **Gather + scaffold config.** For each `todo` that needs a value (model key, Slack
-   tokens, GitHub token, `DATABASE_URL`, admin-auth vars), ask the user, then write it
-   with `scaffold_env` (`{ values: { KEY: "..." } }`) — but put SECRETS in the credential store
-   with `secret_set` instead once the DB + encryption key exist (`secret_list` shows what is
-   already loaded). Re-run `preflight` to confirm.
+Nothing beyond these two is supported. For any other host, read the contract and follow the Docker
+route; do not invent a recipe.
 
-5. **Run it.**
-   - First time, ensure deps: `npm install` (in the project dir).
-   - **Local:** `npm run dev` (Eve dev server). Tell them how to exercise it (mention
-     the bot / hit the local webhook). For Slack/GitHub locally, they'll need a tunnel
-     for webhooks — mention it.
-   - **Deploy:** `npm run build`, then `vercel deploy --prod` (confirm first). For a
-     hosted instance they need **Neon** (`DATABASE_URL`, `OE_MEMORY_PROVIDER=postgres`,
-     `OE_OPERATIONAL_PROVIDER=postgres`) and **control-plane auth** (any OIDC
-     issuer via `OE_ADMIN_OIDC_ISSUER/_AUDIENCE`, or `OE_ADMIN_STATIC_TOKEN`).
-     After deploy, wire the webhook URLs back into the Slack app / GitHub repo.
-     For the Slack app itself, do not hand-build the manifest: call the ops MCP tool
-     `surface_manifest { surface: "slack", baseUrl: "<deploy host>" }` and paste what it
-     returns into the Slack app console (the same template the create wizard reads).
+## Status, at every step
 
-6. **Verify.** Local: confirm the dev server is up. Deployed: confirm the URL
-   responds. Then point them at the **control plane** (`npm run control`, the
-   `open-everywhere-control` MCP server) to inspect spend / routines / audit / access and,
-   as admin, set limits or grant connectors.
+- `npx @open-everywhere/create --check --json` — the step list as data: `satisfied`, `detail`, and a
+  `next` command per unsatisfied step. It changes nothing. Pass `--route docker` on the Docker
+  route, and `--host https://<host>` once a deployment exists. In a clone of the repository, run
+  `node packages/create/bin/create-open-everywhere.js --check --json` instead.
+- The `preflight` tool — the env verdict per name. Pass `target: "vercel"` or `target: "docker"`.
+
+Re-run both after each step. They are the only answer to "what is left to do": there is no plan
+tool. The same step list, written for a human, is
+`https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/setup-steps.md`.
+
+## The Vercel route
+
+1. **Install.** If `node_modules` is missing: `npm install`. Its `postinstall` runs `oe-eve-patch`,
+   which patches the installed `eve`. The app refuses to boot without the patch.
+2. **Link.** `npx vercel link` (interactive: the user signs in). Every later `vercel` command acts
+   on the linked project.
+3. **Database.** `npx vercel install neon` provisions a Neon database and connects it to the linked
+   project, which sets `DATABASE_URL` there. (`vercel install` is an alias of
+   `vercel integration add`; the Marketplace slug is `neon`.) The dashboard path — project →
+   **Storage → Neon → Connect** — does the same thing. Then get the same value into `.env.local`
+   for the operator tools, either with `npx vercel env pull` (it writes the project's environment
+   into `.env.local`, overwriting it, so pull before you add anything local) or by asking the user
+   for the connection string and writing it with `scaffold_env`. **That one value is the whole
+   step:** it resolves both the operational store and the memory backing to postgres on its own, so
+   set no provider selector. A selector pointing AWAY from postgres is the only thing that breaks
+   it.
+4. **Key.** `scaffold_credential_key`.
+5. **Slack app.** Call `surface_manifest { surface: "slack" }` and hand the user the manifest and
+   the steps it returns. Before the first deploy the manifest keeps `YOUR-DEPLOY-URL`. The user
+   creates and installs the app, then pastes `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET`: write
+   both with `scaffold_env`.
+6. **Vouch the workspace.** Ask for the team id (`T…`: the segment after `/client/` in the
+   workspace URL at app.slack.com). In `agent/identity/surfaces.ts` add
+   `defineSurface({ key: "slack/<team-id>", trust: "internal" })`.
+7. **Admin.** Ask for the user's member id (`U…`: Slack profile → ⋮ More → Copy member ID). In
+   `agent/memory/config/domains/org.ts` set `admins: ["slack/<team-id>/<member-id>"]`. Offer to
+   commit both edits. They take effect on the next deploy, so make them before it.
+8. **Build.** `npm run build`. It must pass.
+9. **Deployment env.** `.env.local` never ships, so the deployment reads only what you set ON it.
+   The names are `OE_CREDENTIAL_ENCRYPTION_KEY`, `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET`. The
+   Neon integration already set `DATABASE_URL` there, and that one value resolves both stores — so
+   there is no `OE_OPERATIONAL_PROVIDER` or `OE_MEMORY_PROVIDER` to push.
+   Confirm each command first, and **never let a value reach your own output.**
+   - **In a scaffolded app:** `npm run -s env:pipe -- <NAME> | npx vercel env add <NAME> production`.
+     Always pipe `env:pipe` straight into `vercel env add`, as written. Never run it bare: your
+     shell is never a terminal, so a bare run prints the secret into your output. `env:pipe`
+     refuses a file or a terminal, but it cannot tell a pipe into your own shell from a pipe into
+     `vercel`.
+   - **In a clone of the repository** (it ships no `env:pipe`):
+     `grep "^<NAME>=" .env.local | cut -d= -f2- | tr -d '\n' | npx vercel env add <NAME> production`.
+     Same rule: the value only ever crosses a pipe.
+   Do not push `AI_GATEWAY_API_KEY` (OIDC covers it), `OE_PUBLIC_BASE_URL` (only for a custom
+   domain) or `OE_INTAKE_PAGE_SIGNING_KEY` (the deployment mints it). A variable added after a
+   deploy reaches the functions only on the NEXT deploy.
+10. **Deploy.** `npx vercel deploy --prod` (confirm first). Note the production host it prints. A
+    `git push` does NOT deploy.
+11. **Slack URLs.** Call `surface_manifest { surface: "slack", baseUrl: "https://<host>" }`. The
+    user pastes it under the Slack app's **App Manifest** and saves. Slack verifies the Event
+    Subscriptions URL. If it fails, the user chooses **Retry** under Event Subscriptions.
+12. **Prove it.** `npx @open-everywhere/create --check --json --host https://<host>`. The
+    `build-deploy` step is satisfied only when the deployed Slack route answers an unsigned request
+    with its own `401 unauthorized`. That proves boot and routing, not `SLACK_SIGNING_SECRET`: ask
+    the user to confirm Event Subscriptions shows **Verified**.
+13. **Hello.** Ask the user to send the app a direct message in Slack.
+
+## The Docker route
+
+Read the deployment contract first: it states what a running Open Everywhere needs — Node 24, a
+public HTTPS URL, Postgres, a sandbox backend, egress control, a model route, and the secrets list.
+Then:
+
+1. **Install and build.** `npm install`, then `npm run build`.
+2. **Postgres.** Provision one the container can reach, and `scaffold_env` its `DATABASE_URL`. That
+   one value resolves both stores to postgres; set no provider selector.
+3. **Key.** `scaffold_credential_key`.
+4. **Model route.** There is no OIDC off Vercel, so the user supplies `AI_GATEWAY_API_KEY` (Vercel
+   → AI Gateway → API Keys issues one for any host). Running a different model backend instead is
+   an **adapter swap in app code**
+   (`https://github.com/open-everywhere/open-everywhere/blob/main/docs/extending/adapter-model.md`),
+   which `--check` cannot see: that step stays `missing` on the Docker route either way, so read it
+   and move on rather than chasing a green it cannot give.
+5. **Slack app.** Exactly as steps 5–7 of the Vercel route.
+6. **Run it.** Build the image and run it on the server, with the contract's environment set and a
+   public HTTPS URL in front. The Open Everywhere repository's own `Dockerfile` and
+   `docker-compose.yml` are the starting point
+   (`https://github.com/open-everywhere/open-everywhere`); a scaffolded app ships neither, so copy
+   them from there.
+7. **Prove it, then the Slack URLs and the hello.** As steps 11–13 of the Vercel route, with
+   `--route docker --host https://<host>`.
+
+## Develop locally
+
+Only when the user asks to change or debug the agent — never as a setup step. Write
+`AI_GATEWAY_API_KEY` with `scaffold_env` (the user creates it: Vercel → AI Gateway → API Keys),
+then `npm run dev`. A local run keeps its state in an embedded database under
+`.open-everywhere-data/`, and Slack cannot reach it without a public tunnel.
 
 ## Notes
-- **The install wizard (`packages/create`) is the same setup engine a human runs
-  themselves** (`node packages/create/bin/create-open-everywhere.js`, or
-  `npx create-open-everywhere@latest` with no checkout, no flags, for the interactive
-  version — it prompts and can write `.env.local` values, never echoing a secret back).
-  With no checkout, the user creates the app with `npx create-open-everywhere@latest <dir>`:
-  it scaffolds the quickstart app (a small repo that depends on the npm packages) into a new or
-  empty `<dir>` and runs the wizard there. Without a `<dir>`, the wizard only CONFIGURES the app in
-  the current directory.
-  This skill only ever drives its `--check` mode (read-only);
-  if the user wants the wizard to actually make changes (write env vars, run the
-  build), tell them to run it directly themselves rather than relaying prompts
-  through this agent — the wizard's own telemetry-consent step needs a human
-  actually at that keyboard, not a relayed answer.
-- `.env.example` documents every variable; read it when unsure what a key does.
-- Open Everywhere is **config-as-code**: access bundles (`agent/access/bundles.ts`) and spend
-  caps (`agent/spend/caps.ts`) are edited in-repo and reviewed by PR. Runtime tweaks
-  (set a spend limit, grant a connector) are done through the control plane, not here.
-- 🔴 **The deployment's own identity is config, not env.** Its tenant org, ambient workspace and
-  ambient surface live in `agent/identity/surfaces.ts` (the `deploymentIdentity` object, beside the
-  surface trust vouches) and change by PR. `OE_ORG`, `OE_WORKSPACE`, `OE_SURFACE` and `OE_CHANNEL`
-  are no longer read — never scaffold one into `.env.local`, and edit the file instead when the
-  user wants a different tenant or a different local room. Env keeps infrastructure only:
-  connection targets and the bootstrap credentials that reach a store.
-- These tools assume the Open Everywhere repo is the working directory (that's where the agent
-  was booted). If the user hasn't cloned it yet, help them clone it first, then
-  `npm install`.
+
+- `roster.config.ts` decides what the agent can do. After any change to it, or after a package
+  upgrade, run `npx oe build --accept` and show the user the `roster.lock.json` diff: accepting it
+  is their review decision.
+- `.env.example` names every variable this app reads. Read it when unsure what a key does.
+- The deployment's own identity (`deploymentIdentity`) is code in `agent/identity/surfaces.ts`, not
+  env.
+- `@open-everywhere/create` has no interactive wizard and sends no telemetry. It scaffolds
+  (`npx @open-everywhere/create <dir>`) and reports status (`--check`). Nothing else.
+- 🔴 **`--check` reads `.env.local` and your shell, never the deployment's own environment.** A
+  "9/9 satisfied" is not proof that the deployment holds the credential key or the Slack secrets:
+  step 9 is the only thing that puts them there, and nothing can observe it from here.

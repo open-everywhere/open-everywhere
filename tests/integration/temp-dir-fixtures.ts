@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 
 import { onTestFinished } from "vitest";
 
-import { createOwnedTempDir, removeTreeWithoutFollowingLinks, sweepAbandonedTempDirs } from "./owned-temp-dir";
+import { createOwnedTempDir, removeTreeWithoutFollowingLinks, sweepAbandonedTempDirs } from "./owned-temp-dir.js";
 
 export const FIXTURE_DIR_PREFIX = "oe-it-fixture-";
 

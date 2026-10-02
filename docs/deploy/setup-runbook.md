@@ -270,14 +270,16 @@ See [Spend & cost controls](../security/spend-and-cost.md).
 ### 9. Operational store and memory backend
 
 The operational stores (spend, routines, audit) and durable memory each sit behind a
-provider seam, selected by env var:
+provider seam. **`DATABASE_URL` selects both**: set it and each resolves to `postgres` (OPE-2230).
+Neither selector below is required on a hosted deploy; each one overrides the derived default.
 
-- `OE_OPERATIONAL_PROVIDER` — unset (default) resolves to the **embedded Postgres (PGlite)** floor
-  when there's no `DATABASE_URL` (zero-wiring, same dialect as prod); `postgres` (hosted /
-  multi-tenant on Neon or a Postgres server; register a client at startup); or `sqlite` (deprecated
-  legacy floor — boot nags).
-- `OE_MEMORY_PROVIDER` — `git` (default, single-operator dev), `sqlite` (real `DELETE`
-  erasure + `org_id` partitioning), or `postgres` (hosted / multi-tenant).
+- `OE_OPERATIONAL_PROVIDER` — unset with **no** `DATABASE_URL` resolves to the **embedded Postgres
+  (PGlite)** floor (zero-wiring, same dialect as prod); unset **with** a `DATABASE_URL` resolves to
+  hosted `postgres`. Name `postgres` to pin it, or `sqlite` for the deprecated legacy floor — which
+  boot nags about, and which is now reachable only by naming it.
+- `OE_MEMORY_PROVIDER` — unset with no `DATABASE_URL` is `git` (single-operator dev); unset with a
+  `DATABASE_URL` is `postgres`. Name `sqlite` for real `DELETE` erasure + `org_id` partitioning, or
+  `postgres` to pin the hosted backing.
 
 For Postgres, register the client once at startup and initialise the schema (tables + RLS
 policies are idempotent). **Tenant isolation** is the `org_id` column on every query, which

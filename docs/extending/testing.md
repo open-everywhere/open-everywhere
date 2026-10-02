@@ -108,11 +108,15 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
 `tests/integration/harness.ts`, which owns boot and every seam. The short version:
 
 - `await bootAgent()` boots the BUILT agent (`.output/server/index.mjs`) **in-process** in this
-  test file's own forked process. `globalSetup` builds once per suite run AND prewarms the
-  just-bash sandbox template — `eve build` cannot mint it (backend selection happens at serve
-  time) and a cold tree's turns die on `SandboxTemplateNotProvisionedError` without it.
-  `OE_IT_SKIP_BUILD=1` skips both for tight loops on a tree that already has both artifacts
-  (it refuses loudly when either is missing).
+  test file's own forked process. A **separate prepare step** builds that target —
+  `npm run test:integration:prepare` (`tests/integration/prepare.ts`) — and `npm run test:integration`
+  runs it for you, once, before the first shard. It does four things: `oe:build`, `eve build`, the
+  just-bash sandbox prewarm (`eve build` cannot mint that template, because backend selection happens
+  at serve time, and a cold tree's turns die on `SandboxTemplateNotProvisionedError` without it) and
+  the migrated PGlite template mint. `OE_IT_SKIP_BUILD=1` tells the step not to rebuild a tree that is
+  already built, and it refuses loudly when an artefact is missing. `globalSetup` builds NOTHING since
+  OPE-2235: it sweeps, hands the forks their environment and publishes the PGlite template. A bare
+  `vitest run <file>` on a tree that was never prepared is refused by name, with the remedy.
 - **There is ONE built target.** There used to be a second, `.output-rollown` — the same app with
   `delegation.nativeSubagent` disarmed — because that was the only way to reach OE's own roll-own
   delegation regime at this tier: half the disarm was a generated sentinel, which no runtime override
@@ -194,22 +198,110 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
   Discord provider both resolve a bare `fetch` at call time, so that patch is the only seam that
   reaches a vendor API call at all).
 - **Every file is its own process** (`pool: "forks"`), with its own PGlite dir, and files run in
-  PARALLEL (`fileParallelism: true`). The worker count is **not** a fixed pin: `scripts/ci-max-workers.ts`
-  reads `OE_IT_CI_MAX_WORKERS` when it is set, and otherwise answers **1** for a process a memory
-  cgroup caps below the machine's RAM and **2** for a box that runs under no cap. A booted agent host
-  per worker is what makes this a memory decision, and the three measurements behind it are these
-  (OPE-1369): two hosts charged **~10.8 GB anon-rss**; inside a cloud sandbox's **~13.3 GiB** memory
-  cgroup the charge went past the limit, the kernel killed the run, and vitest printed **no verdict at
-  all**; the 7 GB build box runs under **no cap** and survives at 2 workers — measured on that box,
-  2026-09-02, where the cgroup read answers `undefined` (OPE-1401). Do not read an arithmetic relation
-  between those numbers: a memcg charges more than anon-rss, and an uncapped box reclaims rather than
-  being killed. `scripts/suite-lock-run.ts` names such a kill by its exit code (137) so it can never
-  read as a product red.
-- **One worker is not enough on its own, so the tier SHARDS by default in a sandbox** (OPE-1814).
-  A single vitest PROCESS grows past the cgroup over the whole tier whatever its worker count:
-  one batch measured `exit=137` twice on one head, the second time alone at `OE_IT_CI_MAX_WORKERS=1`,
-  and four `--shard=k/4` passes at one worker recovered it. `scripts/it-shards.ts` reads
-  `OE_IT_SHARDS`; with no value it plans **one shard per ~12 test files, never fewer than 4**, when
+  PARALLEL (`fileParallelism: true`). The worker count is **not** a fixed pin:
+  `scripts/ci-max-workers.ts` reads `OE_IT_CI_MAX_WORKERS` when it is set; otherwise a process a
+  memory cgroup caps below the machine's RAM derives what that cap and the box's CORES fit —
+  `min(cores, floor((cap − 3 072 MB reserve − 1 280 MB base) / 450 MB per worker))`, never below 1 —
+  and then takes the **lower** of that and `HARNESS_CONCURRENCY_CEILING`. A box under no cap keeps
+  **2**. 🔴 **That ceiling is 1 today, and it is not a memory number** — see the next bullet. So a
+  capped sandbox still schedules ONE worker, exactly as before OPE-2229; what changed is that the
+  memory answer is now derived, measured and separately testable
+  (`cgroupMaxWorkersByMemoryAndCores`), ready for the day the ceiling lifts. A booted agent host per worker is what makes this a memory
+  decision, and the measurements behind it are these.
+  - **Why a capped box answered 1 until OPE-2229** (OPE-1369): two hosts charged **~10.8 GB
+    anon-rss**; inside a cloud sandbox's **~13.3 GiB** memory cgroup the charge went past the limit,
+    the kernel killed the run, and vitest printed **no verdict at all**. Do not read an arithmetic
+    relation between those numbers: a memcg charges more than anon-rss, and an uncapped box reclaims
+    rather than being killed. `scripts/suite-lock-run.ts` names such a kill by its exit code (137)
+    so it can never read as a product red.
+  - **Why MEMORY AND CORES now answer 4 there** (OPE-2229, measured 2026-10-01 on OPE-2227's A/B) —
+    while the tier still **schedules 1**, per the harness-ceiling bullet below. That `1` was
+    right for the config it was measured on. The old runner config pulled the built
+    `.output/server/index.mjs` bundle through a vite transform in the MAIN process, once per file,
+    and ONE worker already peaked at **7 858 MB of 13 680 MB (57 %)** — so a second projected to
+    ~12.9 GB, at the limit. The tier now loads the built artefacts natively (`server.deps.external`)
+    and caps each fork's V8 old space, which moves the whole shape: **main process 3 421 → 589 MB**,
+    **vite `transform` 51.9 → 2.1 s**, **cgroup peak 7 858 → 4 175 MB** at one worker, and
+    **5 833 MB of 13 680 at four workers with no OOM**. ⚠️ The arms ran **12 of the tier's files**
+    and changed no VERDICT on those 12 — two shell-fence tests in `memory.test.ts` failed in EVERY
+    arm, the baseline included, because the arms bypass `suite-lock-run.ts` and so never drop
+    `CAP_DAC_OVERRIDE`. "No test broken" is a claim about 12 files, not about the tier; the tier's
+    own verdict is OPE-2229's `test:integration` gate run. The per-worker cost is **FITTED** from
+    the only two arms that hold the file count constant (1 worker and 4 workers, both at 12 files):
+    **≈ 441 MB of anon per added worker over a ~1 280 MB base**, rounded to 450 and 1 280, which is
+    where the arithmetic above comes from. 🔴 Those are fitted parameters, not predictions: a
+    two-parameter line through two points reproduces both by construction, and no arm ran a worker
+    count other than 1 or 4. A one-worker arm at 6 files charged 1 359 MB against 1 718 MB at 12, so
+    the "base" is not independent of the file list either. 🔴 **Memory stopped being the binding constraint; the CORES became it.** Four
+    workers returned only **2.44×** on 12 files (225.4 s → 92.4 s) on a 4-core box, so the count is
+    capped at one worker per core even though the memory model would allow about twenty. (The A/B's
+    own extrapolation stopped at eight workers, ≈7.6 GB — a measured projection rather than this
+    model's answer, and the two are different kinds of number.)
+  - **The 3 072 MB reserve is absolute, not a fraction of the cap.** What it covers is absolute:
+    cgroup `file` (page cache) sat at **2 287–2 543 MB in every arm including the baseline**, plus
+    the spike a 2-second sampler cannot see. A proportional margin would under-reserve exactly where
+    the risk is worst — a small cgroup. So a 4 GB cgroup still answers **1**, which is the serial
+    behaviour every capped box had before this change. ⚠️ The reserve does **not** cover a RAM-backed
+    `os.tmpdir()`: the A/B falsified tmp-as-cgroup-memory for that sandbox only (`/tmp` was ext4 and
+    cgroup `shmem` was 0 in every sample). Where `/tmp` is tmpfs the harness's per-fork state dirs
+    become cgroup shmem, and `OE_IT_CI_MAX_WORKERS=<n>` is the answer.
+  - **The 7 GB shared build box keeps its 2.** It runs the suites directly, under no memory cgroup of its
+    own, so the cgroup read answers `undefined` — measured on that box, 2026-09-02 (OPE-1401).
+    OPE-2229 measured a 4-core 13.7 GB sandbox and does not move that pin. A local raise past 2 is
+    what crashed the box at 8 concurrent subagents (OPE-1095).
+  - 🔴 **The raise and the three settings are one change, and one suite holds them together.**
+    `scripts/it-memory-config-test.ts` asserts the heap cap, the native load and the console setting
+    beside the worker count, because a diff that drops a setting and leaves the count would red
+    nothing — it would make the tier die silently at a count it can no longer afford.
+- 🔴 **THE WORKER COUNT IS CAPPED BY THE HARNESS, NOT BY MEMORY (OPE-2229, measured 2026-10-03).**
+  OPE-2229 set out to run 4 workers per sandbox and the memory analysis behind it is sound — 4
+  workers peak at 4.3–4.6 GB of 13 680 MB with no OOM. It is not memory that stops it. More than one
+  concurrent agent host widens the OPE-2197 / OPE-2174 window where one leg's settlement turn is
+  served the NEXT leg's scripted-model entry, so the next leg measures the earlier leg's turn and
+  correct product code reports a red. Measured on shard 1 of the tier, the same 28 files every run,
+  build reused, worker count the only variable:
+
+  | config | workers | runs | red | wall (a green run) | peak tree RSS |
+  |---|---|---|---|---|---|
+  | clean `main` | 1 | 2 | 0 | 849.8 s / 823.5 s | 6.3 / 6.0 GB |
+  | this config | 1 | 1 | 0 | **543.2 s** | **1.8 GB** |
+  | this config | 2 | 2 | 1 | 287.8 s | 2.5 GB |
+  | this config | 3 | 2 | 1 | 210.2 s | 3.4 GB |
+  | this config | 4 | 2 | **2** | — | 4.6 GB |
+
+  Three files red: `tasks/worker-admin-standing.test.ts`,
+  `tasks/teams-turn-two-delegation-continuity.test.ts` and
+  `tasks/scripted-model-redrive-silence.test.ts`. 🔴 **What identifies ONE race is the shared
+  mechanism, not the count of files** — three different files reddening is equally consistent with
+  three independent timing-sensitive tests. The evidence is that all three sequence SEVERAL LEGS OR
+  TURNS ON ONE STANDING SEAT INSIDE ONE FORK, all three separate those legs only with the bounded
+  `awaitWindowQuiet()` barrier, and each already carries its own OPE-1982 / OPE-2197 note naming this
+  bleed. `drainDelegation` calls that barrier "a BOUNDED GRACE PERIOD, never a measurement", and CPU
+  contention from several forks on 4 cores defeats the bound. Forks are separate processes, so the
+  worker count changes the interleaving's TIMING, never its set — which is why OPE-2197's own
+  reproduction is "1 red in 12 single-file runs under CPU load". Every count above 1 red at least once, so there is no
+  larger green count to fall back to, and clean `main` is green at 1 worker, so this is not a
+  pre-existing serial flake. ⚠️ At one or two runs per setting the table cannot rank 2 against 3 and
+  does not prove 1 is immune; it supports two claims only — 4 reds reliably, and nothing above 1 was
+  green every time. **What the ceiling does NOT cost:** the three settings pay at ONE worker, against
+  clean `main` at the same worker count on the same files — **837 s** (the mean of two runs, 849.8 s
+  and 823.5 s) **→ 543 s** (one run), and **6.15 GB** (the mean of 6.3 and 6.0) **→ 1.8 GB**. That is
+  ~1.5× wall clock and ~3.4× memory with no concurrency at all. Only the further **1.9×** (2 workers)
+  to **2.6×** (3 workers) from parallelism is withheld — both measured against this config's own
+  543.2 s, not against `main`. Raise `HARNESS_CONCURRENCY_CEILING` when OPE-2197 closes, against a
+  re-measurement — never on the memory numbers alone, which is the inference this ticket got wrong.
+- **The tier SHARDS by default in a sandbox** (OPE-1814). One worker was not enough on its own: a
+  single vitest PROCESS grew past the cgroup over the whole tier whatever its worker count — one run
+  measured `exit=137` twice on one head, the second time alone at `OE_IT_CI_MAX_WORKERS=1`, and four
+  `--shard=k/4` passes at one worker recovered it. 🔴 **OPE-2229 removed that per-file growth and the
+  shards stay anyway**: the growth was the main process re-transforming the built bundle per file, and
+  the A/B measured that process flat against the file count. Three things still pay for the split —
+  the shard boundary is the only place a vitest process DIES, so it bounds any retention the A/B
+  could not measure (the arms ran 12 files, never 112); the per-shard peak-RSS series is how a leak
+  is told apart from a merely large tier; and no shard pays the build at all — the prepare step pays
+  it once, before the first shard (OPE-2235).
+  `scripts/it-shards.ts` reads `OE_IT_SHARDS`; with no value it plans **one shard per 32 test files,
+  never fewer than 4**, when
   `CI` is set or a memory cgroup caps this process, and **1** otherwise. Set `OE_IT_SHARDS=1` to
   force the single process back. The shards run sequentially, the tier's exit code is the WORST of
   them, and `suite-lock-run.ts` prints ONE `OE_PROOF … suite=test:integration exit=<code>` line
@@ -219,26 +311,76 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
   large tier. 🔴 A **targeted** leg (`npm run test:integration -- <file>`) is never sharded and
   never prints that line: it is not the tier, and a line claiming one nobody ran is what the lander
   believes.
-- **The shard count follows the tier's file count, and only shard 1 builds** (OPE-2050). A pinned
+- **The shard count follows the tier's file count, and no shard builds** (OPE-2050, OPE-2235). A pinned
   count sizes the split against the tier the pin was written for, so the memory margin erodes as the
   tier grows. It did: `SANDBOX_SHARDS = 4` was set at ~85 files and ran at 110, where two of the
   four shards were SIGKILLed — peaks **7.5 / 6.1 / 9.2 / 9.3 GB** on a 16 GB box, on a split that
   had passed six hours earlier. `scripts/it-shards.ts` now counts the files its own
   `INTEGRATION_INCLUDE_GLOBS` match — the same constant `vitest.config.ts` takes its `include` from,
-  so the count and the scheduled tier are one fact — and divides by `SANDBOX_FILES_PER_SHARD`. A
+  so the count and the scheduled tier are one fact — and divides by `SANDBOX_FILES_PER_SHARD`,
+  which OPE-2229 **re-derived from 12 to 32** once the per-file main-process growth the 12 defended
+  against was gone. Headroom for that growth at 4 workers inside the measured 13 680 MB cgroup is
+  7 528 MB, and the residual slope is below the measurement's own resolution (589 MB at 6 files
+  against 542 MB at 12); bounding it at ~10 MB per file leaves ~756 files of room. 32 is kept far
+  inside that bound on purpose, because the arms ran 12 files and never 112 — so today's 112-file
+  tier plans on the **floor of 4**, and the cap only starts adding shards past 128 files. A
   count the tree cannot answer falls back to the floor rather than to a guess. There is **no
   ceiling** on the count: a ceiling is the old pin under another name. What pays for the finer split
-  is the build reuse — vitest runs `globalSetup` once per PROCESS, so every shard used to pay
-  `oe:build` + `eve build` + the just-bash prewarm (~5 minutes of serial floor). `suite-lock-run.ts`
-  sets `OE_IT_SKIP_BUILD=1` in every shard after the first, and `tests/integration/global-setup.ts`
-  refuses that flag out loud when either artifact is **missing**, so an unbuilt tree cannot come
-  back. 🔴 That guard reads existence, never freshness. On a tree that already carried an earlier
-  build — the normal case for a second gate run in one sandbox session — a shard 1 whose own build
-  fails reds shard 1 alone, and shards 2..N run the rest of the tier against the older tree. The
-  tier's exit code is still the WORST shard's, so no gate is falsified, but the later shards' green
-  is not this sha's. `suite-lock-run.ts` prints a warning on the first shard that reuses after a red
-  one. Making the reuse conditional on shard 1's exit would pay a full build on every ordinary red,
-  which is the cost this change exists to remove.
+  is that **no shard builds** (OPE-2235) — the prepare step does, once, before the first shard, so a
+  shard costs vitest start-up and the sweeps rather than a five-minute floor. Until that ticket, shard
+  1 built and `suite-lock-run.ts` handed `OE_IT_SKIP_BUILD=1` to every shard after it; a shard 1 whose
+  build failed then left shards 2..N running against whatever older tree was there, which the wrapper
+  had to warn about. A prepare step that fails now runs **no shard at all** and the run reports its
+  exit, so that reading hazard is gone rather than announced.
+- **The fixed setup is a STEP, and it is cached** (OPE-2235). `npm run test:integration:prepare`
+  (`tests/integration/prepare.ts`) is what builds the tier's target, in a process that exits before
+  vitest starts. One cold receipt it printed itself, on a 4-core cloud sandbox (13.7 GB cgroup, Node
+  24.21.0, n=1, 2026-10-03): `oe:build` **7.2 s**, `eve build` **169.8 s**, the just-bash prewarm
+  **18.8 s**, the PGlite template mint **3.6 s**, `fixed-setup` **204.9 s** (the remainder is the
+  key read, the stamp and publishing an 8.1 MB archive; it is 5.5 s by the printed fields). On the same tree a stamp hit is **10.6 s** and a
+  remote hit **12.7 s** — `oe:build` and the mint run on every path, and what a hit skips is `eve build`
+  plus the prewarm, 189 of those 205 seconds. A restored tree is byte-identical to the build its archive
+  came from; against an independent build of the same source it differs only in `nitro.json`'s `date` and
+  one per-build id inside a chunk comment. Two of those numbers are
+  this ticket's:
+  - The prewarm was **147.7 s** and peaked at **3 549 MB** (a standalone measurement; the same leg inside
+    the step reports **18.8 s**, which is the figure the floor above quotes — `prewarm.ts` says why the two
+    differ). eve's own `prewarmBuiltAppSandboxes` needs
+    the compiled module map and builds it with `loadCompiledModuleMapFromAuthoredSource`, which
+    re-parses the authored source in rolldown — the parse `eve build` had just finished (47.2 s of
+    102 s in that parser alone, OPE-2227). The built bundle already carries that module map and eve
+    keeps its runtime session on `globalThis`, so `tests/integration/prewarm.ts` imports the bundle the
+    forks import and reads the artefacts back: **13.0 s, 391 MB**, and eve itself confirms the template
+    key is unchanged (`1 reused, 0 built` against a tree the authored path had just prewarmed). A
+    missing eve symbol falls back to the authored path with a named log line, never a silent one.
+  - The PGlite template was minted **once per shard** (~3.9 s × 4+ shards, OPE-2239) because
+    `globalSetup` runs per process. The step mints one under `.oe-it-prepare/` and every shard reads it.
+    `tests/integration/global-setup-env.test.ts` is what reds if a shard goes back to minting its own.
+  The step also **caches the prepared tree**, in two tiers with very different trust. A stamp
+  (`.oe-it-prepared.json`) skips `eve build` and the prewarm on a tree already prepared for the same key —
+  local, written by a prepare step that ran here, and **on by default**. One force-pushed branch on the dev
+  repo (`oe-it-cache/prepared-tree`) carries a gzipped tar of `.output` + `.eve/sandbox-cache` across runs —
+  and that half is **opt-in**. 🔴 A restore is not a read: it replaces those two trees on disk, and
+  `harness.ts` then `import()`s the restored `.output/server/index.mjs` in every fork, so the bytes are
+  EXECUTED and the trust boundary is push access to the cache remote rather than the reviewed tree. The
+  default therefore keeps the tier a function of the tree, which is what `docs/deploy/cloud-proof.md` rests
+  a run's proof on. `OE_IT_PREPARE_CACHE` takes `local` (the default, stamp only), `remote` (stamp plus the
+  restore) or `off` (neither — a real cold build, which is what a floor measurement needs).
+  The key is the digest of `git ls-tree -r HEAD` over `agent`, `packages`, `package.json`,
+  `package-lock.json`, `patches`, `roster.config.ts`, `roster.lock.json` and `tsconfig.json`, plus eve's
+  version, the Node major, the platform and the checkout path (`.output/server/index.mjs` embeds that path
+  178 times on this tree, so a bundle is not relocatable). The last four of those paths are there because the build really
+  reads them: `patches/` is what `node_modules/eve/dist` contains (a patch edit changes the bundle while
+  eve's version does not move), `roster.config.ts` + `roster.lock.json` are the committed source the eve
+  slot tree is generated from, and the root `tsconfig.json` decides what `oe:build` emits. ⚠️ The generated
+  slot tree under `agent/` is **gitignored**, so it is keyed only transitively, through those committed
+  inputs — never directly, because `git ls-tree` cannot see it. 🔴 **An uncommitted edit under any of
+  those paths refuses the key entirely**, because the key reads the COMMIT and a hit would otherwise
+  serve a bundle this tree did not build. An edit outside them — a test, a script, a doc — keeps it.
+  `OE_IT_PREPARE_CACHE_PUBLISH=1` plus `OE_IT_PREPARE_CACHE=remote` is what lets a run publish, and it is
+  off by default because a force-push to a shared repository is not something a test run should do unasked. Why a branch and not a release asset or a custom ref:
+  `tests/integration/prepare-cache.ts` records what the sandbox credential was measured to allow —
+  branch pushes yes, `refs/oe-it-cache/*` pushes 403, branch deletes refused, `gh`'s token rejected.
 - **The tier runs with the DAC bypass dropped, so a root runner measures real refusals**
   (OPE-1989 / OPE-1990). Some tests here prove that a write is REFUSED. They read that refusal out
   of the POSIX permission bits: the product chmods a directory read-only, and the kernel answers
@@ -262,8 +404,8 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
   The built server hard-wires its durable session store to `<cwd>/.eve/.workflow-data`, which the
   harness wipes at each boot — so that directory must be fork-private. The app root is a tree of
   symlinks back to the repository with exactly one real, empty directory: that store. The just-bash
-  template cache at `<cwd>/.eve/sandbox-cache` stays a symlink to the shared one, because only
-  `global-setup.ts` mints a template and a fork that cannot reach it dies on
+  template cache at `<cwd>/.eve/sandbox-cache` stays a symlink to the shared one, because only the
+  prepare step mints a template and a fork that cannot reach it dies on
   `SandboxTemplateNotProvisionedError`. Read `tests/integration/fork-app-root.ts` before you change
   anything that resolves a path off `process.cwd()`. Fixed costs are still per FILE — so grow the
   tier by adding tests to existing files, not by adding files.
@@ -290,10 +432,11 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
   that moment — `bootAgent()` re-pointing the variable afterwards changes nothing for it. So ASK
   THE MODULE what it resolved (`storeRoot()`), never rebuild the path from what you think the
   environment held. A wrong guess is silent: the fixture lands where the code under test never
-  looks. `globalSetup` restores every state-dir variable it sets AND pins `OE_SANDBOX_BACKEND` above
-  its `OE_IT_SKIP_BUILD` return, so the two run modes (full run, `OE_IT_SKIP_BUILD=1`) hand the forks
-  the same environment — a divergence there reads as a depth-dependent flake and is not one (OPE-582,
-  OPE-1363). `global-setup-env.test.ts` guards that contract from inside a real fork, and proves it is
+  looks. `globalSetup` leaks no state-dir variable at all and pins `OE_SANDBOX_BACKEND` for every
+  fork, and since OPE-2235 it has ONE path through it — the build that used to branch on
+  `OE_IT_SKIP_BUILD` is a separate step now, so the two run modes cannot hand the forks different
+  environments. That divergence reads as a depth-dependent flake and is not one (OPE-582, OPE-1363);
+  the prewarm's own state-dir pinning moved with it to `tests/integration/prewarm.ts`. `global-setup-env.test.ts` guards that contract from inside a real fork, and proves it is
   reading an INHERITED environment by matching the setup process's pid against its own `process.ppid`.
 - **Two lifecycle events never reach a hook on this build, so never write a test that waits on
   one.** `subagent.called` is not dispatched to hook handlers at all. `session.completed` is not
@@ -310,17 +453,28 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
   trips anything, so `waitFor` names it on an ordinary timeout instead. **Before you treat eve's
   "Re-executing inline steps" line in a suite log as a cause, check which file emitted it:
   `redelivery-storm-guard.test.ts` writes ~40 SYNTHETIC copies of that exact signature to stderr to
-  prove the guard, and it marks each one `[oe-test-fixture …] SYNTHETIC`.**
-- 🔴 **A booted host's `console.log` is INVISIBLE unless its own file fails.** Vitest intercepts
-  each fork's console, and the default reporter prints a file's console output only when that file
-  has a failing test. Measured 2026-08-18, two full-tier runs on one tree: the all-green run printed
-  no `[open-everywhere:…]` line from any fork, and a run with `--disable-console-intercept` printed
-  2884. So a host log line you find in a RED run's output is not new and is not evidence about the
-  failure — it was there in the green runs too, unprinted. Judge it on what the code does, never on
-  the fact that this run is where you saw it. That reading cost OPE-708 a ticket. To
-  read what a host really logged, add `--disable-console-intercept=true` before the file filter
-  (`npx vitest run --disable-console-intercept=true tests/integration/<file>`); the bare flag form
-  swallows the filter and runs the whole tier.
+  prove the guard, and it marks each one `[oe-test-fixture …] SYNTHETIC`.** Since OPE-2229 turned
+  console interception off, vitest prints no `stdout | <file>` header, so that fixture marker — not a
+  reporter header — is what tells you which file emitted a line.
+- **A booted host's `console.log` now PRINTS, and is no longer attributed to a file.** The tier runs
+  with `disableConsoleIntercept: true` (OPE-2229), so each fork writes straight to stdout. 🔴 **What
+  that costs:** a fork's lines INTERLEAVE with the main process's own output, and none of them carries the file it
+  came from. Pass `--disable-console-intercept=false` to get the per-file attribution back for one
+  debugging run. Nothing load-bearing reads the captured logs — this tier's evidence is the
+  `OE_PROOF` line `suite-lock-run.ts` prints from the MAIN process, which was never intercepted, and
+  the per-shard peak-RSS label beside it. Expect a bigger log: the A/B's lever runs were 210–302 KB
+  against the baseline's 33 KB — a like-for-like only for the 6-file arm, since the 210–302 KB range
+  spans arms that ran 12 files against the baseline's 6.
+- 🔴 **The history, because it still shapes how a log line reads as evidence.** Until OPE-2229 vitest
+  intercepted each fork's console, and the default reporter printed a file's output only when that
+  file had a failing test. Measured 2026-08-18, two full-tier runs on one tree: the all-green run
+  printed no `[open-everywhere:…]` line from any fork, and a run with `--disable-console-intercept`
+  printed 2884. ⚠️ That 2026-08-18 measurement has NOT been reproduced against vitest 4.1.10, whose
+  `BaseReporter.onUserConsoleLog` prints whenever `silent` is false, and this config never sets
+  `silent`; the measurement may predate the vitest 4 upgrade. **So a host log line is not evidence
+  about a failure merely because a red run is where you saw it** — under the old default it was in the green runs too, unprinted, and under the
+  new one it prints whatever the verdict. Judge it on what the code does. That reading cost OPE-708 a
+  ticket.
 
 ## Beside the ladder: the eval lane
 

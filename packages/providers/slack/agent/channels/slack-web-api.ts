@@ -1,4 +1,5 @@
 import { withRetryAfter, type RateLimitRetryOptions } from "@open-everywhere/core/agent/adapter-api.js";
+import { slackBotToken } from "../setup/credentials.js";
 
 const SLACK_API_BASE = "https://slack.com/api/";
 
@@ -50,23 +51,31 @@ const PROBE_OPERATIONS: ReadonlySet<string> = new Set(["auth.test", "conversatio
 const PROBE_MAX_ATTEMPTS = 2;
 const PROBE_CAP_MS = 2_000;
 
-function resolveBotToken(botToken: string | undefined): string {
-  const token = botToken ?? process.env.SLACK_BOT_TOKEN;
+async function resolveBotToken(botToken: string | undefined): Promise<string> {
+  const token = botToken ?? (await slackBotToken());
   if (!token) throw new Error("SLACK_BOT_TOKEN is required.");
   return token;
 }
 
 export async function callSlackWebApi(
-  input: { readonly botToken?: string; readonly operation: string; readonly body: unknown },
+  input: {
+    readonly botToken?: string;
+    readonly operation: string;
+    readonly body: unknown;
+    readonly unauthenticated?: boolean;
+  },
   deps: SlackWebApiDeps = {},
 ): Promise<SlackWebApiResponse> {
-  const token = resolveBotToken(input.botToken);
+  const token = input.unauthenticated === true ? undefined : await resolveBotToken(input.botToken);
   const encoded = encodeSlackForm(input.body);
   const url = new URL(input.operation, deps.apiBase ?? SLACK_API_BASE).toString();
   const send = (): Promise<Response> =>
     (deps.fetch ?? (globalThis.fetch as SlackFetchLike))(url, {
       body: encoded,
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/x-www-form-urlencoded" },
+      headers: {
+        ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
+        "content-type": "application/x-www-form-urlencoded",
+      },
       method: "POST",
     });
 

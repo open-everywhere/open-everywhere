@@ -180,7 +180,7 @@ function readTelemetryConfig(): TelemetryConfig {
   return config;
 }
 
-export function resetTelemetryConfigCache(): void {
+function resetTelemetryConfigCache(): void {
   config = undefined;
 }
 
@@ -234,7 +234,7 @@ export interface ResolvedInstance {
   readonly justMinted: boolean;
 }
 
-export async function resolveInstanceId(): Promise<ResolvedInstance> {
+async function resolveInstanceId(): Promise<ResolvedInstance> {
   try {
     const store = getOperationalStore();
     const existing = await store.getMeta(INSTANCE_ID_META_KEY);
@@ -513,7 +513,7 @@ export async function flushTelemetry(): Promise<void> {
 }
 
 export function __resetTelemetryForTest(overrides: { fetchImpl?: typeof fetch } = {}): void {
-  config = undefined;
+  resetTelemetryConfigCache();
   queue = [];
   if (flushTimer) {
     clearTimeout(flushTimer);

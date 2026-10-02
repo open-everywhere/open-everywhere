@@ -18,7 +18,7 @@ Nine packages publish, in two kinds.
 | Kind | Packages | What a consumer does with it |
 |---|---|---|
 | Library | `@open-everywhere/core`, `@open-everywhere/adapters`, and the six `@open-everywhere/provider-*` bundles | imports it — an enumerated `exports` map that points at `dist/` |
-| Bin | `create-open-everywhere` | runs it — `npx create-open-everywhere`, raw `src/**` through the bin's own `tsx` |
+| Bin | `@open-everywhere/create` | runs it — `npx @open-everywhere/create`, raw `src/**` through the bin's own `tsx` |
 
 `scripts/publish-exports-generate.ts` holds both lists. The publish gate and the publish preview
 read them, so a package added there is packed, linted and previewed with no other edit.
@@ -138,8 +138,8 @@ asserts every marker the patch adds is absent before and present after.
 
 **This page is not the only place that states the recipe.** Each of the eight library packages
 carries it in its README § Install (OPE-2206), and `@open-everywhere/core`'s is the one an npm
-consumer reads first. `create-open-everywhere` carries no install recipe: it is run rather
-than imported, and its README documents `npx create-open-everywhere` instead.
+consumer reads first. `@open-everywhere/create` carries no install recipe: it is run rather
+than imported, and its README documents `npx @open-everywhere/create` instead.
 
 The publish gate holds the eight READMEs in step, and only those. `scripts/publish-readme.ts` fails a
 package README that names an `eve@<version>` other than core's `peerDependencies.eve`, so a pin
@@ -187,7 +187,7 @@ re-roll or a pin bump, re-sync the copy with `cp patches/eve+<pin>.patch package
 🔴 **The tarball is the unit under test, not the working tree.** The workspace resolves every
 specifier through a symlink, so a module the allowlist drops stays green in every other gate and
 dies with `ERR_MODULE_NOT_FOUND` on a consumer's first run. That bug shipped once already
-(`oe secret`). It bites `create-open-everywhere` hardest, because that package ships no compiled
+(`oe secret`). It bites `@open-everywhere/create` hardest, because that package ships no compiled
 form at all.
 
 The gate is deliberately outside `npm test`, and the cost is not evenly spread. `attw` checks each
@@ -271,8 +271,32 @@ Claim both before the first publish. The npm scope and the GitHub org must match
 | npm | the `@open-everywhere` scope | every library publishes under it; a scope is first-come |
 | GitHub | the `open-everywhere` org | every manifest's `repository.url` already names `github.com/open-everywhere/open-everywhere` |
 
-`create-open-everywhere` is unscoped, because `npm create <name>` resolves `create-<name>` at the
-registry root. That name is first-come too, and it is claimed by the first publish.
+All nine packages publish under that one scope, the scaffolder included (OPE-2234). `npm create`
+reaches a scoped package through its own mapping, so the scaffolder needs no second name at the
+registry root:
+
+| What a user types | What npm resolves |
+|---|---|
+| `npm create @open-everywhere my-agent` | `@open-everywhere/create` |
+| `npx @open-everywhere/create my-agent` | the same package, run directly |
+
+`npm init` maps a bare `@scope` to `@scope/create`, exactly as it maps `foo` to `create-foo`
+(`lib/commands/init.js`). The package declares ONE bin, so `npm exec` runs it whatever that bin is
+named — `getBinFromManifest` takes the single entry before it looks for one matching the package
+name. The bin therefore stays `create-open-everywhere`, which is also the command the scaffolded
+app's `check` script runs.
+
+**The unscoped name is retired, not reused.** `create-open-everywhere` holds the releases up to and
+including 0.1.3. Those tarballs are permanent, so the name keeps pointing at them. After the first
+scoped publish, deprecate it so an old install is told where the package went:
+
+```bash
+npm deprecate create-open-everywhere "Renamed to @open-everywhere/create — run: npm create @open-everywhere"
+```
+
+Deprecating is the maintainer's step and it is not part of any gate. `oe upgrade` carries the other
+half: it RENAMES a `create-open-everywhere` dependency to `@open-everywhere/create` rather than
+bumping it, so an app scaffolded at 0.1.3 or earlier does not stay pinned to the retired name.
 
 Every publishable manifest sets `publishConfig.access: public`. A scoped package defaults to
 restricted, and a restricted publish on a free account fails rather than shipping privately.
@@ -307,7 +331,7 @@ public cut, together with whatever runs the build.
    asserts that the eve patch probe reads `patched`, that `oe build --check` fails before `oe build`
    and passes after it, that the app typechecks, and that `eve build` succeeds. It needs the network
    and measures in minutes, so it is off the test chain; the scaffold and the template drift check run
-   on every chain run as `create-open-everywhere test:scaffold`. `--keep` leaves the app on disk.
+   on every chain run as `@open-everywhere/create test:scaffold`. `--keep` leaves the app on disk.
 9. `npm publish --workspace <name>` per package. Publish `@open-everywhere/core` first: every
    other package pins it.
 10. Install the result somewhere clean and run it, before announcing anything.

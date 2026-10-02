@@ -7,10 +7,10 @@ is a gap in the manual, never a gap in the code. No row carries that mark today.
 
 217 rows, of which 0 are undocumented and 2 are reviewed exemptions. The plane covers five sub-planes: the agent tool roster
 (105 rows), the machinery that registers and checks that roster (20), per-seat tool availability
-(21), the two MCP servers — control with 39 verbs and 11 HTTP routes, ops with 8 verbs — and the
+(21), the two MCP servers — control with 40 verbs and 11 HTTP routes, ops with 7 verbs — and the
 `/oe` commands (7). Three sections carry rows beyond their verbs: the route section adds one for the token
 family that arms the read routes, the ops section two for server-wide properties, and the command
-section three for the parsing and registration rules. That is why those sections hold 12, 10 and
+section three for the parsing and registration rules. That is why those sections hold 12, 9 and
 10 rows. Connector operations (`<connection>__<operation>`) and the injected browser family are
 named at runtime. No static scan can produce them, so they are out of scope here — they are
 separate planes with their own gates.
@@ -309,6 +309,7 @@ Three do not: `delete_skill` writes `skill.delete`, `memory_write_file` writes `
 | CTRL-directory_sync_now | `directory_sync_now` | Run the identity-directory sync for an org immediately instead of waiting for the daily schedule, and return the plan it applied. | `packages/core/agent/control/writes.ts:1050` | `docs/security/control-plane.md#what-the-mcp-exposes` (+1) | ? |
 | CTRL-directory_sync_status | `directory_sync_status` | What the last identity-directory sync did for an org: when it ran, which provider, the auto-confirm policy in force, how many suggestions/confirmations/suspensions it planned and applied … | `packages/core/agent/control/writes.ts:1101` | `docs/security/control-plane.md#what-the-mcp-exposes` (+2) | ? |
 | CTRL-directory_groups_plan | `directory_groups_plan` | Diff the directory's (Okta's) GROUP memberships against this deployment's machine-owned person-group overlay, and with `deliver` open the bot-PR that applies it. | `packages/core/agent/control/writes.ts:1165` | `docs/security/control-plane.md#what-the-mcp-exposes` (+3) | ? |
+| CTRL-reopen_slack_setup | `reopen_slack_setup` | Reopen this deployment's `/setup` page after a Slack install has locked it, so setup can be run again. Destroys only the install RECORD — every stored Slack credential stays. Org-admin only. | `packages/core/agent/control/writes.ts:1451` | `docs/security/control-plane.md#what-the-mcp-exposes` (+1) | ? |
 | CTRL-memory_write_file | `memory_write_file` | Full-file replace of one file inside one memory silo (creates it if absent). | `packages/core/agent/control/writes.ts:1282` | `docs/security/control-plane.md#what-the-mcp-exposes` (+1) | ? |
 | CTRL-memory_delete_file | `memory_delete_file` | Delete one file from one memory silo. | `packages/core/agent/control/writes.ts:1319` | `docs/security/control-plane.md#what-the-mcp-exposes` (+2) | ? |
 
@@ -333,7 +334,7 @@ The routes the deployment mounts itself, beside the MCP server.
 
 ## G. Ops MCP verbs
 
-8 verbs, registered by `buildOpsServer()`. This server runs as a local process under the operator's
+7 verbs, registered by `buildOpsServer()`. This server runs as a local process under the operator's
 own environment, which is its whole trust root. It is deliberately not on the control plane: an
 operator-side agent can provision a deployment that has no comm surface yet, and the deployed agent
 never holds a secret verb.
@@ -341,7 +342,6 @@ never holds a secret verb.
 | ID | Verb | Behaviour | Code | Documented by | Tested by |
 | --- | --- | --- | --- | --- | --- |
 | OPS-preflight | `preflight` | Check the prerequisites for running/deploying Open Everywhere (node, model key, providers, durable DB, control-plane auth) … | `packages/core/agent/ops/server.ts:218` | `docs/security/security-model.md#cross-domain-isolation-within-one-org` (+6) | ? |
-| OPS-quickstart | `quickstart` | Return the tailored, ordered zero→running plan for a goal, with each step marked done/todo from the current config. goal=local (npm run dev), slack/github (add a surface to a local run), or deploy (the hosted path: Vercel + Neon + every registered surface, in order). | `packages/core/agent/ops/server.ts:231` | `docs/deploy/agent-driven-setup.md#what-you-are-driving` (+1) | ? |
 | OPS-surface_manifest | `surface_manifest` | Return the paste-ready app manifest for a chat surface (e.g. slack), with baseUrl substituted for the ${DEPLOY_HOST_PLACEHOLDER} | `packages/core/agent/ops/server.ts:247` | `docs/deploy/agent-driven-setup.md#what-you-are-driving` | ? |
 | OPS-scaffold_env | `scaffold_env` | Merge KEY=VALUE settings into the project's .env.local (updating in place, appending new keys, preserving comments). | `packages/core/agent/ops/server.ts:299` | `docs/deploy/agent-driven-setup.md#what-you-are-driving` (+1) | ? |
 | OPS-scaffold_credential_key | `scaffold_credential_key` | Generate the deployment's AES-256-GCM credential-store key (${CREDENTIAL_KEY_ENV_NAME}) straight into the project's .env.local. | `packages/core/agent/ops/server.ts:333` | `docs/deploy/agent-driven-setup.md#what-you-are-driving` | ? |

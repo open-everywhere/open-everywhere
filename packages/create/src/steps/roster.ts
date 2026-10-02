@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { AutomateResult, StepContext, WizardIO, WizardStep } from "../engine.js";
+import type { SetupStep, StepContext } from "../engine.js";
 
 type RosterState =
   | { readonly kind: "unknown"; readonly detail: string }
@@ -52,7 +52,7 @@ function rosterNext(detail: string): string {
   return "npx oe build";
 }
 
-export const rosterStep: WizardStep = {
+export const rosterStep: SetupStep = {
   id: "roster",
   title: "Roster (roster.config.ts → the eve slot tree)",
   check(ctx: StepContext) {
@@ -71,26 +71,5 @@ export const rosterStep: WizardStep = {
         "eve mounts NOTHING (and still boots) if the tree is missing — so never skip the build step.",
       ],
     };
-  },
-  async automate(ctx: StepContext, io: WizardIO): Promise<AutomateResult> {
-    const state = inspectRoster(ctx.cwd);
-    if (state.kind === "unknown") return { ran: false, ok: false, detail: state.detail };
-    if (state.clean) return { ran: false, ok: true, detail: "nothing to materialise" };
-    const bin = oeBin(ctx.cwd);
-    if (bin === undefined) return { ran: false, ok: false, detail: "the `oe` CLI vanished between check and run" };
-    io.print("Materialising the eve slot tree from roster.config.ts …");
-    try {
-      io.print(execFileSync(bin.command, [...bin.args, "build"], { cwd: ctx.cwd, encoding: "utf8" }).trimEnd());
-    } catch (err) {
-      const e = err as { stdout?: string; stderr?: string };
-      io.print(`${e.stderr ?? ""}${e.stdout ?? ""}`.trimEnd());
-      return {
-        ran: true,
-        ok: false,
-        detail: "`oe build` refused. If it names an UNREVIEWED contribution, decide about it in roster.config.ts, then run `npx oe build --accept` yourself — a wizard must not review a capability for you.",
-      };
-    }
-    const after = inspectRoster(ctx.cwd);
-    return { ran: true, ok: after.kind === "known" && after.clean, detail: after.detail };
   },
 };

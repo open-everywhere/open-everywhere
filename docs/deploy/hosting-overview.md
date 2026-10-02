@@ -13,8 +13,9 @@ depend on where the agent runs.
 
 - **Sandbox** — the isolated executor the agent's tools (and the egress firewall) run in.
 - **Operational store** — the database holding secrets, instant state, spend counters,
-  routines, and audit (`OE_OPERATIONAL_PROVIDER`). Defaults to an **embedded Postgres (PGlite)**
-  floor — the *same dialect* as production, zero wiring, single-process/local-disk durable (boot
+  routines, and audit. A present `DATABASE_URL` selects hosted Postgres on its own;
+  `OE_OPERATIONAL_PROVIDER` overrides that. With neither set it defaults to an
+  **embedded Postgres (PGlite)** floor — the *same dialect* as production, zero wiring, single-process/local-disk durable (boot
   emits an informational notice); step up to a Postgres server (the docker-compose sidecar) or
   hosted Postgres and graduate real production data with the supported migration
   ([Graduating the operational store](./database-graduation.md)). Legacy `sqlite` is deprecated.

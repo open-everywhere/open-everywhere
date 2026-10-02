@@ -2,7 +2,7 @@ import { test, vi } from "vitest";
 import { execFile } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { chainLegs, legLabel, legsForShard, needsSubprocess, type ChainLeg } from "./_legs.js";
+import { chainLegs, legLabel, legsForShard, needsSubprocess, SUBPROCESS_LEG_TIMEOUT_MS, type ChainLeg } from "./_legs.js";
 import { resetProcessGlobals } from "./_process-state.js";
 
 const execFileAsync = promisify(execFile);
@@ -65,6 +65,10 @@ export async function runLegInProcess(leg: ChainLeg): Promise<void> {
 export function runShard(index: number): void {
   for (const leg of legsForShard(index, chainLegs())) {
     const inSubprocess = needsSubprocess(leg);
-    test(legLabel(leg), () => (inSubprocess ? runLegInSubprocess(leg) : runLegInProcess(leg)));
+    test(
+      legLabel(leg),
+      () => (inSubprocess ? runLegInSubprocess(leg) : runLegInProcess(leg)),
+      inSubprocess ? SUBPROCESS_LEG_TIMEOUT_MS : undefined,
+    );
   }
 }

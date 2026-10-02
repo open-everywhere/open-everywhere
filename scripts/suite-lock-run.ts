@@ -4,8 +4,8 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { withoutDacOverride, writeBitsBite } from "./dac-fence.js";
-import { HOST_MEMORY_PROBE } from "./ci-max-workers.js";
-import { IT_SKIP_BUILD_ENV, countTierFiles, isVitestCommand, itShardCount, planShards, shardReusesBuild, tierProofLine, worstExit } from "./it-shards.js";
+import { HOST_BOX_PROBE, integrationMaxWorkers } from "./ci-max-workers.js";
+import { countTierFiles, isVitestCommand, itShardCount, planShards, tierProofLine, worstExit } from "./it-shards.js";
 import { fmtBytes, samplePeakRss } from "./proc-rss.js";
 
 const DEFAULT_LOCK_DIR = "/tmp/oe-suite-locks/full-suite.lock";
@@ -211,6 +211,14 @@ function spawnMeasured(
   });
 }
 
+export function spawnPrepareStep(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("npm", ["run", "test:integration:prepare"], { stdio: "inherit", shell: process.platform === "win32" });
+    child.on("error", reject);
+    child.on("exit", (code, signal) => resolve(classifyExit(code, signal, "test:integration:prepare")));
+  });
+}
+
 function headSha(): string | undefined {
   try {
     const out = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim().toLowerCase();
@@ -233,14 +241,21 @@ export function fencedSpawn(cmd: string, args: readonly string[]): { cmd: string
 export async function runLocked(
   cmd: string,
   args: string[],
-  options: { manual: boolean; lockDir: string; maxWaitMs: number; env?: NodeJS.ProcessEnv; emitProof?: boolean },
+  options: {
+    manual: boolean;
+    lockDir: string;
+    maxWaitMs: number;
+    env?: NodeJS.ProcessEnv;
+    emitProof?: boolean;
+    prepare?: () => Promise<number>;
+  },
 ): Promise<number> {
   let tierFiles: number | undefined;
   let counted = false;
   const plan = planShards(
     cmd,
     args,
-    itShardCount(options.env ?? process.env, HOST_MEMORY_PROBE, () => {
+    itShardCount(options.env ?? process.env, HOST_BOX_PROBE, () => {
       counted = true;
       tierFiles = countTierFiles();
       return tierFiles;
@@ -252,6 +267,21 @@ export async function runLocked(
     acquired = true;
   }
   try {
+    const prepare = options.prepare ?? (isVitestCommand(cmd) ? spawnPrepareStep : undefined);
+    if (prepare !== undefined) {
+      const prepared = await prepare();
+      if (prepared !== 0) {
+        console.error(
+          `suite-lock-run: the prepare step exited ${prepared}, so no shard ran — every shard would fail on the same ` +
+            "unprepared tree. See tests/integration/prepare.ts.",
+        );
+        if (options.emitProof === true && plan.wholeTier) {
+          const sha = headSha();
+          if (sha !== undefined) console.log(tierProofLine(sha, prepared));
+        }
+        return prepared;
+      }
+    }
     if (plan.runs.length > 1) {
       const sizing = !counted
         ? ""
@@ -261,32 +291,21 @@ export async function runLocked(
       console.error(
         `suite-lock-run: sharding the integration tier into ${plan.runs.length} sequential one-process passes (OE_IT_SHARDS). ` +
           "A single process runs the whole tier past a cloud sandbox's memory cgroup even at one worker (OPE-1814). " +
-          `Shard 1 builds the target; shards 2-${plan.runs.length} reuse it with ${IT_SKIP_BUILD_ENV}=1 (OPE-2050).${sizing}`,
+          `The target is built ONCE by the prepare step above, not by a shard (OPE-2235).${sizing}`,
       );
     } else if (plan.reason !== undefined) {
       console.error(`suite-lock-run: not sharding — ${plan.reason}.`);
     }
     const exits: number[] = [];
-    let staleTreeWarned = false;
-    for (const [index, run] of plan.runs.entries()) {
+    for (const run of plan.runs) {
       const label = [cmd, ...run.args].join(" ");
-      const reuseBuild = shardReusesBuild(plan, index);
-      const childEnv = reuseBuild ? { ...process.env, [IT_SKIP_BUILD_ENV]: "1" } : undefined;
-      if (reuseBuild && !staleTreeWarned && exits.some((code) => code !== 0)) {
-        staleTreeWarned = true;
-        console.error(
-          `suite-lock-run: ⚠️ a shard before this one exited non-zero, and this shard reuses its tree (${IT_SKIP_BUILD_ENV}=1). ` +
-            "If that red was the BUILD itself, the artifacts here are whatever was already on this tree, not this run's — " +
-            "so read the later shards' results as the older build's until shard 1 is green (OPE-2050).",
-        );
-      }
-      const builds = !reuseBuild && process.env[IT_SKIP_BUILD_ENV] !== "1";
       const spawnPair = fencedSpawn(cmd, run.args);
-      const { exit, peakRssBytes, wallMs } = await spawnMeasured(spawnPair.cmd, spawnPair.args, label, childEnv);
+      const { exit, peakRssBytes, wallMs } = await spawnMeasured(spawnPair.cmd, spawnPair.args, label);
       exits.push(exit);
       console.error(
         `suite-lock-run: ${plan.wholeTier ? run.suite : label} exit=${exit} peak-tree-rss=${fmtBytes(peakRssBytes)} ` +
-          `wall=${(wallMs / 1000).toFixed(1)}s build=${builds ? "1" : "reused"}`,
+          `wall=${(wallMs / 1000).toFixed(1)}s` +
+          (plan.wholeTier ? ` workers=${integrationMaxWorkers(options.env ?? process.env)}` : ""),
       );
     }
     const exit = worstExit(exits);

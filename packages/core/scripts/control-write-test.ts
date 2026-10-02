@@ -18,6 +18,7 @@ const { getOperationalStore } = await import("../agent/operational/provider.js")
 const { effectiveCaps, applyCapOverrides } = await import("../agent/spend/caps.js");
 const { applyConnectorOverrides } = await import("../agent/access/connector-scope.js");
 const { readAudit } = await import("../agent/audit/audit.js");
+const { registerSlackBridge, _resetSlackBridgeForTest } = await import("../agent/channels/slack-bridge.js");
 
 let n = 0;
 const ok = (label: string, cond: boolean) => {
@@ -176,6 +177,63 @@ await client.connect(clientT);
   ok("directory_groups_plan is cleanly-off with no directory adapter (plan mode)", planOnly.ok === true && planOnly.provider === null);
   const deliver = await callJson(client, "directory_groups_plan", { org: "default", deliver: true });
   ok("directory_groups_plan deliver:true is cleanly-off with no directory adapter (never reaches the repo gate)", deliver.ok === true && deliver.provider === null);
+}
+
+{
+  ok("CONTROL_WRITE_TOOL_NAMES lists reopen_slack_setup", (CONTROL_WRITE_TOOL_NAMES as readonly string[]).includes("reopen_slack_setup"));
+
+  const noArm = await client.callTool({ name: "reopen_slack_setup", arguments: { org: "default" } });
+  const noArmText = (noArm.content as { type: string; text: string }[])[0].text;
+  ok("reopen_slack_setup with no Slack provider wired reports an error", noArm.isError === true);
+  ok("…and the error says no Slack provider is wired", noArmText.includes("no Slack provider is wired"));
+  ok("…rather than reporting a reopen that did not happen", !noArmText.includes('"reopened": true'));
+
+  const foreign = await client.callTool({ name: "reopen_slack_setup", arguments: { org: "some-other-tenant" } });
+  ok("reopen_slack_setup refuses a foreign org", foreign.isError === true);
+  ok("…naming it as not this deployment's org", (foreign.content as { type: string; text: string }[])[0].text.includes("not this deployment's org"));
+
+  const domainServer = buildControlServer({ includeWrites: true, actor: "eng-admin@example.com", roles: ["domain:eng"] });
+  const [dClientT, dServerT] = InMemoryTransport.createLinkedPair();
+  await domainServer.connect(dServerT);
+  const domainClient = new Client({ name: "domain-role-test", version: "0" });
+  await domainClient.connect(dClientT);
+  const denied = await domainClient.callTool({ name: "reopen_slack_setup", arguments: { org: "default" } });
+  const deniedText = (denied.content as { type: string; text: string }[])[0].text;
+  ok("reopen_slack_setup refuses a domain role", denied.isError === true);
+  ok("…citing the org-wide admin requirement", deniedText.includes("requires the org-wide") && deniedText.includes("admin"));
+  await domainClient.close();
+
+  const beforeRows = await readAudit({ org: "default", limit: 200 });
+  ok("a refused reopen_slack_setup appends no audit row", !beforeRows.some((r) => r.action === "slack.setup_reopened"));
+
+  let reopenCalls = 0;
+  registerSlackBridge({
+    ...({} as unknown as Parameters<typeof registerSlackBridge>[0]),
+    reopenSetup: async () => {
+      reopenCalls++;
+      return true;
+    },
+  });
+  try {
+    const done = await callJson(client, "reopen_slack_setup", { org: "default" });
+    ok("reopen_slack_setup calls the registered Slack arm", reopenCalls === 1);
+    ok("reopen_slack_setup reports the arm's verdict", done.ok === true && done.reopened === true);
+
+    const rows = await readAudit({ org: "default", limit: 200 });
+    const row = rows.find((r) => r.action === "slack.setup_reopened");
+    ok("a successful reopen_slack_setup appends slack.setup_reopened", row !== undefined);
+    ok("…carrying the acting principal", row?.principalId === "admin@example.com");
+    ok("…and the verdict in its detail", JSON.stringify(row?.detail ?? {}).includes("true"));
+
+    registerSlackBridge({
+      ...({} as unknown as Parameters<typeof registerSlackBridge>[0]),
+      reopenSetup: async () => false,
+    });
+    const already = await callJson(client, "reopen_slack_setup", { org: "default" });
+    ok("reopen_slack_setup on an already-open page reports reopened:false, not an error", already.ok === true && already.reopened === false);
+  } finally {
+    _resetSlackBridgeForTest();
+  }
 }
 
 {

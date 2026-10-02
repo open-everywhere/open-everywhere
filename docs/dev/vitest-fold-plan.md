@@ -128,7 +128,7 @@ total; 5 of them also spawn a child, so the shape column shows 6 and the `bindsS
 | `@open-everywhere/provider-github` | 16 / 5,117 | — | — | — |
 | `@open-everywhere/adapters` | 14 / 4,359 | 1 / 68 | — | — |
 | `@open-everywhere/provider-teams` | 13 / 4,241 | — | — | — |
-| `create-open-everywhere` | 2 / 675 | 1 / 72 | — | — |
+| `@open-everywhere/create` | 2 / 675 | 1 / 72 | — | — |
 
 Counts are `files / lines`. The 5 `indirect` and `off-chain` files belong to no package row and are
 not in this table. `@open-everywhere/provider-discord` owns no runner: its suites live at the app
@@ -489,7 +489,7 @@ stage is one run: codemod, verify gate, four suites, one RED demo.
 
 | stage | scope | files | lines | package.json edits |
 |---|---|---|---|---|
-| **1** | The codemod, the verify gate, the config glob, and a pilot: `create-open-everywhere` plain-assert (2) + `provider-teams` (13) | 15 | 4,916 | delete 15 `test:*`; empty the teams `test:chain` (create keeps `test:cli`, deferred to stage 11) |
+| **1** | The codemod, the verify gate, the config glob, and a pilot: `@open-everywhere/create` plain-assert (2) + `provider-teams` (13) | 15 | 4,916 | delete 15 `test:*`; empty the teams `test:chain` (create keeps `test:cli`, deferred to stage 11) |
 | **2** | `provider-github` (16) + `adapters` plain-assert (14) | 30 | 9,476 | delete 30 `test:*` |
 | **3** | `provider-linear` (24) + `provider-notion` (28) | 52 | 17,650 | delete 52 `test:*` |
 | **4** | `provider-slack` (34), **plus** the `process.cwd()` fix in `slack-web-api-seam-test.ts` | 34 | 13,706 | delete 34 `test:*` |

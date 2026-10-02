@@ -14,6 +14,13 @@ export default defineConfig({
     testTimeout: 480_000,
     hookTimeout: 300_000,
     maxWorkers: integrationMaxWorkers(),
+    execArgv: ["--max-old-space-size=1536"],
+    disableConsoleIntercept: true,
+    server: {
+      deps: {
+        external: [/\.output\/server\//, /\/packages\/(?:[^/]+\/)*dist\//],
+      },
+    },
     globalSetup: ["tests/integration/global-setup.ts"],
     setupFiles: ["tests/integration/setup-fork-app-root.ts"],
     onUnhandledError(error: unknown): boolean | void {

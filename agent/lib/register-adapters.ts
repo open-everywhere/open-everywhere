@@ -15,7 +15,10 @@ import {
   getOperationalStore,
   bootVerifyAuditChainTail,
   bootBackfillLinkTenants,
+  runBootNotices,
   registerOperationalPgliteLazy,
+  resolveOperationalSelection,
+  resolveMemoryProviderId,
   onVercel,
   declareProviderSelection,
   assertConnectorMemoryGrants,
@@ -26,6 +29,7 @@ import { SELECTED_PROVIDERS, SELECTED_PROVIDER_IDS } from "./providers.generated
 import { loadDomains, loadSilos } from "../memory/config/domains.js";
 import { domainMemoryGrants } from "./memory-grants.js";
 import { registerNeon } from "@open-everywhere/adapters/agent/postgres/neon.js";
+import { registerGatewayRouteProbe } from "@open-everywhere/adapters/agent/model/gateway-probe.js";
 import { vercelBlobPutter } from "@open-everywhere/adapters/agent/blob/hosting.js";
 
 declareProviderSelection(SELECTED_PROVIDER_IDS);
@@ -64,20 +68,22 @@ assertConnectorMemoryGrants(loadDomains(), loadSilos(), domainMemoryGrants);
 
 applySubtreeSurfaceClaims();
 
-if (
-  (process.env.OE_MEMORY_PROVIDER === "postgres" || process.env.OE_OPERATIONAL_PROVIDER === "postgres") &&
-  process.env.DATABASE_URL
-) {
+const operationalSelection = resolveOperationalSelection(process.env);
+const postgresSelected =
+  resolveMemoryProviderId(process.env) === "postgres" ||
+  (operationalSelection.id === "postgres" && operationalSelection.floor === "none");
+if (postgresSelected && process.env.DATABASE_URL) {
   await registerNeon();
 }
 
 const pgliteFloorArmed =
-  !process.env.OE_OPERATIONAL_PROVIDER &&
-  !process.env.DATABASE_URL &&
+  operationalSelection.floor === "pglite" &&
   (!onVercel() || process.env.OE_ALLOW_EPHEMERAL_OPERATIONAL === "1");
 if (pgliteFloorArmed) {
   registerOperationalPgliteLazy(undefined, runBootStoreChecks);
 }
+
+registerGatewayRouteProbe();
 
 registerAuditDropCounter((action, platform) => emitTelemetry("oe.audit.dropped", { "oe.action": action, "oe.platform": platform }));
 
@@ -90,6 +96,10 @@ async function runBootStoreChecks(): Promise<void> {
   }
   try {
     await bootBackfillLinkTenants();
+  } catch {
+  }
+  try {
+    await runBootNotices();
   } catch {
   }
 }

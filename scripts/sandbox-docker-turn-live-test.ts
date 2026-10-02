@@ -103,7 +103,7 @@ async function main(): Promise<void> {
   } catch (err) {
     throw new Error(
       `sandbox-docker-turn-live-test: eve's sandbox prewarm module is gone from ${prewarmPath} — an eve bump moved it. ` +
-        "Find the new home of prewarmBuiltAppSandboxes under eve/dist (same fix tests/integration/global-setup.ts needs).",
+        "Find the new home of prewarmBuiltAppSandboxes under eve/dist (same fix tests/integration/prewarm.ts needs).",
       { cause: err },
     );
   }

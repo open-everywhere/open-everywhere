@@ -1,5 +1,6 @@
 import { defineChannel, POST } from "eve/channels";
 import { verifySlackSignature } from "./slack-front.js";
+import { slackSigningSecret } from "../setup/credentials.js";
 import {
   bindFrom,
   runOeCommand,
@@ -74,7 +75,7 @@ export default defineChannel({
   routes: [
     POST(SLACK_COMMANDS_ROUTE, async (req, { attachSession, waitUntil }) => {
       const rawBody = await req.text();
-      if (!verifySlackSignature(rawBody, req.headers, process.env.SLACK_SIGNING_SECRET)) {
+      if (!verifySlackSignature(rawBody, req.headers, await slackSigningSecret())) {
         return new Response("unauthorized", { status: 401 });
       }
 
