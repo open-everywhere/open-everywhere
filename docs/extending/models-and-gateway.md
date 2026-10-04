@@ -45,8 +45,9 @@ The org **allow-list** in `agent/model/policy.ts` is *derived* from the resolved
 route pins in `agent/memory/config/domains/<name>.ts` import the role consts. So re-pointing the whole
 deployment is one word, and `npm run lint:model-ids` reds the `test` chain on a bare model id in any other
 git-tracked file under `agent/`. Three things are out of its reach, by design: the price table
-`agent/spend/model-pricing.ts` (it is keyed by model id), the generated directories
-`agent/docs/generated/` and `agent/plugins/generated/`, and anything you have not `git add`ed yet.
+`agent/spend/model-pricing.ts` (it is keyed by model id), the compiled manual (generated into
+`@open-everywhere/core`, outside `agent/`), and anything you have not `git add`ed yet. The extracted
+plugin definitions under `agent/plugins/generated/` are **in** its reach: they are code, not prose.
 
 ### Picking a stack, and overriding one role
 

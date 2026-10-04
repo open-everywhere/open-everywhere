@@ -1,9 +1,10 @@
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { normalizeFenceNonce } from "../agent/access/untrusted.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -18,7 +19,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, "../../..");
 
 const dir = join(tmpdir(), `open-everywhere-webhook-disclosure-test-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: "acme" });
 
@@ -328,5 +329,5 @@ async function fire(h: FusedWebhookHook, facts: SlackFacts | "no-supplier" | "th
 
 _resetGovernanceMemberSupplierForTest();
 _resetAudienceFloorCacheForTest();
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`✓ webhook-disclosure: ${passed} assertions passed`);

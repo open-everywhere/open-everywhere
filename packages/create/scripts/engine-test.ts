@@ -187,7 +187,7 @@ function step(parts: Partial<SetupStep> & Pick<SetupStep, "id" | "check">): Setu
 }
 
 {
-  const scaffold = (opts: { readonly config?: boolean; readonly lock?: boolean; readonly oe?: "clean" | "drifted" }) => {
+  const scaffold = (opts: { readonly config?: boolean; readonly lock?: boolean; readonly oe?: "clean" | "drifted" | "overlay" }) => {
     const dir = mkdtempSync(join(tmpdir(), "oe-rosterstep-"));
     if (opts.config !== false) writeFileSync(join(dir, "roster.config.ts"), "export default {};\n");
     if (opts.lock !== false) writeFileSync(join(dir, "roster.lock.json"), "{}\n");
@@ -200,7 +200,9 @@ function step(parts: Partial<SetupStep> & Pick<SetupStep, "id" | "check">): Setu
         join(bin, "oe.js"),
         opts.oe === "clean"
           ? "#!/usr/bin/env node\nconsole.log('ok');\n"
-          : "#!/usr/bin/env node\nconsole.error('  - DRIFTED · agent/tools/reply.ts differs from the plan');\nprocess.exit(1);\n",
+          : opts.oe === "overlay"
+            ? "#!/usr/bin/env node\nconsole.error('  - OVERLAY · agent/access/grants.generated.ts: grants overlay module does not end with `satisfies GrantsFile;`');\nprocess.exit(1);\n"
+            : "#!/usr/bin/env node\nconsole.error('  - DRIFTED · agent/tools/reply.ts differs from the plan');\nprocess.exit(1);\n",
         { mode: 0o755 },
       );
     }
@@ -223,6 +225,16 @@ function step(parts: Partial<SetupStep> & Pick<SetupStep, "id" | "check">): Setu
     ok(/oe build/.test(before.next ?? ""), "rosterStep: …and the next action is the command the operator runs");
   } finally {
     rmSync(drifted, { recursive: true, force: true });
+  }
+
+  const overlayRed = scaffold({ oe: "overlay" });
+  try {
+    const res = await rosterStep.check({ cwd: overlayRed, env: {} });
+    ok(!res.satisfied, "rosterStep: an overlay red leaves the step unsatisfied");
+    ok(/OVERLAY ·/.test(res.detail), "rosterStep: the detail carries the overlay red");
+    ok(/npx oe overlays normalize/.test(res.next ?? "") && !/^npx oe build$/.test(res.next ?? ""), "rosterStep: …and the next action is `npx oe overlays normalize`, not `oe build`");
+  } finally {
+    rmSync(overlayRed, { recursive: true, force: true });
   }
 
   const noConfig = scaffold({ config: false, oe: "clean" });

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { LIVE_DELEGATED_TASKS_STATE_KEY, overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
@@ -27,6 +26,7 @@ import {
   type VercelListSdk,
 } from "../agent/sandbox/backend-stop.js";
 import { recordCreatedSandbox, clearRecordedSandboxesForTest } from "../agent/sandbox/created-sandbox-registry.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -137,7 +137,7 @@ function testStopper(parts: Partial<SandboxStopper>): SandboxStopper {
 
 {
   const dir = join(tmpdir(), `oe-sandbox-lifecycle-test-${process.pid}`);
-  rmSync(dir, { recursive: true, force: true });
+  await removeTempDir(dir);
   process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
   const { resolvePartition, domainKeyOf, spendTotals, periodOf, estimateSandboxCostUsd } = await import(
     "@open-everywhere/core/agent/adapter-api.js"
@@ -192,13 +192,13 @@ function testStopper(parts: Partial<SandboxStopper>): SandboxStopper {
   });
   ok(byRoutine.usdMicros === attributed.usdMicros, "OPE-275: …and on the ROUTINE's own dimension, so a routine's reported cost includes its compute");
 
-  rmSync(dir, { recursive: true, force: true });
+  await removeTempDir(dir);
   delete process.env.OE_SQLITE_PATH;
 }
 
 {
   const dir = join(tmpdir(), `oe-sandbox-lifecycle-delta-${process.pid}`);
-  rmSync(dir, { recursive: true, force: true });
+  await removeTempDir(dir);
   process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
   const { resolvePartition, domainKeyOf, spendTotals, periodOf, estimateSandboxCostUsd } = await import(
     "@open-everywhere/core/agent/adapter-api.js"
@@ -223,13 +223,13 @@ function testStopper(parts: Partial<SandboxStopper>): SandboxStopper {
   ok(totals.usdMicros < cumulativeBug, "…demonstrably below the pre-fix superlinear total (750s → 400s of billed runtime)");
   ok(totals.calls === 3, "…across three ledger writes (one delta per stop)");
 
-  rmSync(dir, { recursive: true, force: true });
+  await removeTempDir(dir);
   delete process.env.OE_SQLITE_PATH;
 }
 
 {
   const dir = join(tmpdir(), `oe-sandbox-lifecycle-writeorder-${process.pid}`);
-  rmSync(dir, { recursive: true, force: true });
+  await removeTempDir(dir);
   process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
   const {
     resolvePartition,
@@ -277,13 +277,13 @@ function testStopper(parts: Partial<SandboxStopper>): SandboxStopper {
   const eventsAfterRecovery = (await usageForSession(p.org, "sess-writeorder")).filter((e) => e.kind === "sandbox");
   ok(eventsAfterRecovery.length === 1 && eventsAfterRecovery[0].detail?.sandboxSeconds === 500, "…and the watermark row now carries the full 500s delta");
 
-  rmSync(dir, { recursive: true, force: true });
+  await removeTempDir(dir);
   delete process.env.OE_SQLITE_PATH;
 }
 
 {
   const dir = join(tmpdir(), `oe-sandbox-lifecycle-dedupe-${process.pid}`);
-  rmSync(dir, { recursive: true, force: true });
+  await removeTempDir(dir);
   process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
   const { resolvePartition, domainKeyOf, spendTotals, periodOf, estimateSandboxCostUsd } = await import(
     "@open-everywhere/core/agent/adapter-api.js"
@@ -306,7 +306,7 @@ function testStopper(parts: Partial<SandboxStopper>): SandboxStopper {
     `🔴 the fix: a duplicate sandbox name in one stop call bills ONCE, not twice (got ${totals.usdMicros} micros / ${totals.calls} calls, want ${expectedMicros} / 1)`,
   );
 
-  rmSync(dir, { recursive: true, force: true });
+  await removeTempDir(dir);
   delete process.env.OE_SQLITE_PATH;
 }
 
@@ -642,7 +642,7 @@ const parentCtx = {
 
 {
   const dir = join(tmpdir(), `oe-sandbox-lifecycle-metered-${process.pid}`);
-  rmSync(dir, { recursive: true, force: true });
+  await removeTempDir(dir);
   process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
   const { resolvePartition, domainKeyOf, spendTotals, periodOf } = await import("@open-everywhere/core/agent/adapter-api.js");
   const turnCompleted = (lifecycleHook.events ?? {})["turn.completed"] as (e: unknown, c: unknown) => Promise<void>;
@@ -661,7 +661,7 @@ const parentCtx = {
   ok(metered.calls === 1 && metered.usdMicros > 0, `the METERED backend's stop DOES book its runtime (got ${metered.calls} row(s), ${metered.usdMicros} micros)`);
 
   setSandboxStopperForTest(undefined);
-  rmSync(dir, { recursive: true, force: true });
+  await removeTempDir(dir);
   delete process.env.OE_SQLITE_PATH;
 }
 

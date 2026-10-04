@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,6 +6,7 @@ import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-iden
 import type { MemoryProvider } from "../agent/memory/provider.js";
 import type { MemoryFiles, Tier } from "../agent/memory/store.js";
 import type { Partition } from "../agent/memory/partition.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -348,5 +349,5 @@ const providerNamers = bundles.filter((b) => {
 });
 ok(providerNamers.length === 0, `PARITY: no provider bundle names it either — naming it: ${providerNamers.join(", ")}`);
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`memory write intent: ${passed} assertions passed`);

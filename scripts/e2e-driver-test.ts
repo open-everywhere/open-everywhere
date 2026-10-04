@@ -1,7 +1,7 @@
 import { tmpdir } from "node:os";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   allAtWriteTier,
   allAttributedToRoutine,
@@ -56,6 +56,7 @@ import {
 import type { HaltOwnershipHandle } from "../packages/core/scripts/e2e/control-write-driver.js";
 import { EGRESS_POLICY_ACTION, findCredentialedWriteHost, notionBlockPhrases, notionPageLinks, quotedPagePhrase } from "../packages/core/scripts/e2e/egress-evidence.js";
 import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
+import { removeTempDir } from "../packages/core/scripts/_temp-dir.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -73,7 +74,7 @@ function okShape(cond: boolean, label: string): void {
 }
 
 const dir = join(tmpdir(), `open-everywhere-e2e-driver-test-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 
 const {
@@ -205,7 +206,9 @@ const { standardWebhookVerifier, SW_ID_HEADER, SW_SIGNATURE_HEADER, SW_TIMESTAMP
 const eveRootDir = (await import("node:path")).dirname(
   (await import("node:module")).createRequire(import.meta.url).resolve("eve/package.json"),
 );
-const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/channels/slack/inbound.js`);
+const { parseAppMentionEvent } = await import(
+  (await import("node:url")).pathToFileURL(`${eveRootDir}/dist/src/public/channels/slack/inbound.js`).href
+);
 
 {
   const primary = { userId: "U_ADMIN", teamId: "T_FIXTURE" };
@@ -4207,7 +4210,7 @@ const { parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/cha
   ok(linForge.ok && linForge.cfg.webhookSecret === "lin-whsec", "linear cfg carries the optional forge secret when present");
 
   const { signLinearBody, buildAgentSessionEvent } = await import("../packages/core/scripts/e2e/linear-driver.js");
-  const { signLinearWebhookBody } = await import(`${eveRootDir}/dist/src/public/channels/linear/verify.js`);
+  const { signLinearWebhookBody } = await import(`${pathToFileURL(eveRootDir).href}/dist/src/public/channels/linear/verify.js`);
   const secret = "lin-e2e-secret";
   const raw = JSON.stringify({ type: "AgentSessionEvent", webhookTimestamp: 1_720_009_900_000 });
   ok(signLinearBody(secret, raw) === signLinearWebhookBody(raw, secret), "the linear forge signer matches eve's own signLinearWebhookBody (hex, no prefix)");
@@ -6030,7 +6033,7 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   }
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 {
   const grantRow = (action: string, detail: Record<string, unknown>): AuditWireEntry => ({
     ts: "2026-05-05T23:30:00.000Z",
@@ -6350,7 +6353,7 @@ rmSync(dir, { recursive: true, force: true });
   writeFileSync(sink, "{ half-writ");
   ok(readGrantThreadRecord(sink) === undefined, "OPE-1483: a corrupt sidecar degrades to no record — a live run must not die on scratch state or guess authority from a thread pin");
   ok(!writeGrantThreadRecord(join(sinkDir, "no-such-dir", "record.json"), record), "OPE-1483: an unwritable path reports FALSE rather than throwing — the run has already earned phase 1's gates and must keep them");
-  rmSync(sinkDir, { recursive: true, force: true });
+  await removeTempDir(sinkDir);
 }
 
 {
@@ -7117,6 +7120,21 @@ rmSync(dir, { recursive: true, force: true });
         !/the drive ran as the ADMIN driver \(E2E_SLACK_SECONDARY_TOKEN unset\)/.test(gatesSrc),
         "🔴 OPE-1925: no hand-derived admin-driver clause survives in the scenario table — the sentinel lives in cap-drive-outcome.ts, where the arms above can join it to the branch",
       );
+      ok(
+        gatesSrc.includes("resolveCapFixtureCap(capFixture, fixtureTeam, await loadAppSpendBudgets(), process.env)") &&
+          gatesSrc.includes("const capKey = capCap?.caps !== undefined ? capCap.key : undefined;") &&
+          gatesSrc.includes("droveTheFixture: capKey?.endsWith(`/${channel}`) === true"),
+        "🔴 OPE-2205: S10 decides `droveTheFixture` from the cap key the deployer's budgets declare for the driven workspace and room",
+      );
+      ok(
+        (capDriveOutcome({ droveTheFixture: false, droveAsNonAdmin: true, channel: "C_REAL", attemptedSurfaceKey: "slack/T_GRID/C_REAL" }) as { reason: string }).reason.includes("slack/T_GRID/C_REAL"),
+        "🔴 OPE-2205: a SKIP for an unmatched key names the key S10 TRIED, so a workspace-rung mismatch is visible rather than another silent SKIP",
+      );
+      ok(
+        (capDriveOutcome({ droveTheFixture: true, droveAsNonAdmin: true, channel: "C_REAL", capFixtureSurfaceKey: "slack/T/C_REAL", capFixtureCaps: { surfaceMonthlyUsd: 50 } }) as { message: string }).message.includes('"surfaceMonthlyUsd":50'),
+        "🔴 OPE-2205: the RED message prints the matched perSurface row — nothing checks its size, so a reader must see a wide row to tell it from a regression",
+      );
+      ok(!gatesSrc.includes("capFixture?.surfaceKey"), "🔴 OPE-2205: no tracked fixture surface key survives in S10 — that copy read the synthetic id on the test deployment");
 
       const { liveMeasurementVerdict } = await import("../packages/core/scripts/e2e/taint-context-line.js");
       const allMeasured = liveMeasurementVerdict(["ARM A (web, live context line)", "ARM D (linear) — the live `context:` line"], []);

@@ -1,8 +1,11 @@
-import { importAppModule } from "../../agent/scaffold/app-root.js";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { importAppModule, resolveAppRoot } from "../../agent/scaffold/app-root.js";
 
 type DomainsModule = typeof import("../../../../agent/memory/config/domains.js");
 type BundlesModule = typeof import("../../../../agent/access/bundles.js");
 type ConnectorCredentialsModule = typeof import("../../../../agent/access/connector-credentials.js");
+type SpendBudgetsModule = typeof import("../../../../agent/spend/budgets.js");
 
 export async function loadAppDomains(root?: string): Promise<ReturnType<DomainsModule["loadDomains"]>> {
   const { loadDomains } = await importAppModule<DomainsModule>("agent/memory/config/domains.ts", root);
@@ -22,4 +25,11 @@ export async function loadAppBindings(root?: string): Promise<ReturnType<Bundles
 export async function loadAppConnectorCredentials(root?: string): Promise<ReturnType<ConnectorCredentialsModule["loadConnectorCredentials"]>> {
   const { loadConnectorCredentials } = await importAppModule<ConnectorCredentialsModule>("agent/access/connector-credentials.ts", root);
   return loadConnectorCredentials();
+}
+
+export async function loadAppSpendBudgets(root?: string): Promise<ReturnType<SpendBudgetsModule["loadSpendBudgets"]>> {
+  const appRoot = root ?? resolveAppRoot();
+  if (!existsSync(join(appRoot, "agent", "spend", "budgets.ts"))) return {};
+  const { loadSpendBudgets } = await importAppModule<SpendBudgetsModule>("agent/spend/budgets.ts", appRoot);
+  return loadSpendBudgets();
 }

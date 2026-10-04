@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/provider-github",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Open Everywhere GitHub provider — GitHub issues and pull requests as a conversational wake surface.",
   "keywords": [
     "agent",
@@ -126,7 +126,7 @@
     "prepack": "npm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "npm run test:chain",
-    "test:chain": "npm run test:github-supervisor && npm run test:github-identity && npm run test:github-post-arm && npm run test:github-installations && npm run test:github-webhook-verifier && npm run test:github-memory && npm run test:github-stop && npm run test:github-engagement && npm run test:github-reaction-feedback && npm run test:github-read && npm run test:github-mint-scope && npm run test:github-message-ops && npm run test:github-wake-failure-audit && npm run test:github-rate-limit && npm run test:github-write-seam && npm run test:github-reaction-scope",
+    "test:chain": "tsx ../../../scripts/chain/run-chain.ts",
     "test:github-wake-failure-audit": "NODE_NO_WARNINGS=1 tsx scripts/github-wake-failure-audit-test.ts",
     "test:github-rate-limit": "NODE_NO_WARNINGS=1 tsx scripts/github-rate-limit-test.ts",
     "test:github-write-seam": "NODE_NO_WARNINGS=1 tsx scripts/github-write-seam-test.ts",
@@ -145,7 +145,7 @@
     "test:github-reaction-scope": "NODE_NO_WARNINGS=1 tsx scripts/github-reaction-scope-test.ts"
   },
   "dependencies": {
-    "@open-everywhere/core": "0.1.4",
+    "@open-everywhere/core": "0.1.5",
     "zod": "4.5.4"
   },
   "peerDependencies": {

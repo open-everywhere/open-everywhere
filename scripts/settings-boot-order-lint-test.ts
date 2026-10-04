@@ -14,6 +14,7 @@ const LINT = join(root, "scripts", "settings-boot-order-lint.ts");
 const TSX = join(root, "node_modules", "tsx", "dist", "cli.mjs");
 const EAGER_FIXTURE = "scripts/fixtures/settings-boot-order/eager-read.ts";
 const LAZY_FIXTURE = "scripts/fixtures/settings-boot-order/lazy-read.ts";
+const FIXTURE_ENTRY = "agent/lib/register-config.js";
 
 let passed = 0;
 
@@ -40,7 +41,7 @@ const read = (file: string, accessor: string, line = 1): EagerSettingsRead => ({
 
 function main(): void {
   {
-    const r = lint("--fixture", EAGER_FIXTURE);
+    const r = lint("--entry", FIXTURE_ENTRY, "--fixture", EAGER_FIXTURE);
     ok(r.code !== 0, `an eager module-level settings read fails the gate (exit ${r.code})`);
     ok(r.out.includes(EAGER_FIXTURE), "…naming the module that performed the read");
     ok(r.out.includes("oneshotAgentEnabled"), "…and the accessor it reached settings through");
@@ -49,7 +50,7 @@ function main(): void {
   }
 
   {
-    const r = lint("--fixture", LAZY_FIXTURE);
+    const r = lint("--entry", FIXTURE_ENTRY, "--fixture", LAZY_FIXTURE);
     ok(r.code === 0, `a module-level read that supplies its own overrides is silent (exit ${r.code}: ${r.out})`);
   }
 

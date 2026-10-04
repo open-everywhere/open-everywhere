@@ -43,8 +43,8 @@ each fail `npm run lint:publish`. The cheap half of the same rule runs on the te
 
 `@open-everywhere/core` runs on a PATCHED `eve`. The tree carries
 `patches/eve+<pinned version>.patch`, and `patch-package` applies it on `postinstall` **in this
-repository**. The patch holds seven live parts. Every one is a security or correctness control, and
-every one fails SILENTLY when the patch is absent — nothing throws, nothing logs, the behaviour is
+repository**. The patch holds seven live parts and one CLI-side part. Every live part is a
+security or correctness control, and every one fails SILENTLY when the patch is absent — nothing throws, nothing logs, the behaviour is
 simply not there. The worst of them is the connector fence: on an unpatched `eve`, every connector
 result and every MCP-server-authored tool description reaches the model unfenced.
 
@@ -54,11 +54,17 @@ scripts produces exactly that tree with a green install log. OPE-2168 measured i
 tree `grep -rl __oeProjectToolSet node_modules/eve/dist` found **zero** files, against one in this
 repository.
 
-**Core therefore refuses to boot on an unpatched `eve`.** Each part plants a runtime marker, and
-`agent/access/eve-patch-probe.ts` reads all seven before the first wake is served. A missing marker
+**Core therefore refuses to boot on an unpatched `eve`.** Each live part plants a runtime marker,
+and `agent/access/eve-patch-probe.ts` reads all seven before the first wake is served. A missing marker
 throws at module load. The message names the missing part, what that part silently costs, the pinned
 `eve` version and the fix. The refusal is fail-closed by design: no setting and no environment
 variable turns it into a warning.
+
+The CLI-side part is part 10 (OPE-2276). It keeps a built workspace package external while
+`eve build` evaluates the authored files, so the build evaluates the package graph once instead of
+once per file. It also serves the compile `eve dev` runs and `eve eval` discovery. Without it, those
+are slower and the deployed behaviour is the same. So it plants no marker, and core does not refuse
+to boot without it.
 
 ### Applying the patch is the consumer's step — and core ships both the patch and the applier
 
@@ -83,7 +89,7 @@ A consumer who wants it on every install puts it in **their own** manifest, wher
 ```
 
 `oe-eve-patch` is safe to run that way. It is idempotent — a second run on a patched tree is a no-op
-and exits 0 — it never writes outside the project, and it refuses rather than guesses:
+and exits 0 — it never patches bytes outside the project, and it refuses rather than guesses:
 
 | It refuses when | Because |
 |---|---|
@@ -92,6 +98,23 @@ and exits 0 — it never writes outside the project, and it refuses rather than 
 | nothing is installed at `<root>/node_modules/eve` | the patch spells its targets relative to the project root, and patch-package addresses no other path |
 | the installed eve is not the pinned version | the hunks derive from other bytes; patch-package would only warn |
 | a marker the patch adds is missing afterwards | patch-package reports a failed hunk as a **warning**, so nothing else would say so |
+
+**An eve that holds an older OE patch is restored, not refused (OPE-2294).** A release can re-roll
+the patch while the eve pin stays the same: 0.1.5 adds part 10 to `eve+0.54.3.patch`. `npm install`
+then keeps the eve that holds the old patch, because its version still matches the pin, and
+patch-package cannot apply the new patch over the old one. When that apply fails and eve already
+carries an `__oe` symbol, the applier runs `npm pack eve@<pin>`. npm reads the tarball from its cache,
+or from the registry when the cache does not hold it, and checks its integrity hash. The applier
+copies back every eve file whose bytes differ from the tarball, prints each path, then applies the
+patch again. The restore also discards any other change to those files, whatever made it. A failed
+fetch, unpack or copy leaves eve unchanged. A failed rename (a file that Windows holds open) can
+leave eve partly restored, and the refusal says so. The fetch writes only to npm's cache and a
+temporary directory. When the applier cannot restore eve, it exits 1 and prints the recovery
+commands. They delete `node_modules/eve` with a `node -e` call, which runs in every shell, and then
+run the install of the package manager that ran the applier. When the apply fails and eve carries
+no `__oe` symbol, something else changed eve, and the applier refuses as before.
+`scripts/eve-patch-upgrade-packed-test.ts` drives both routes against a packed core and a real eve
+that holds the verbatim 0.1.4 patch.
 
 🔴 **Under pnpm and bun the applier detaches each target from the shared store before patching, and
 this is not optional.** Both import a package's files from a content store by **hardlink**, so one
@@ -107,9 +130,10 @@ reaches it.
 The last refusal row is the one that matters. `--error-on-fail` is not enough on its own:
 patch-package's already-applied path is a reverse dry run, which is what makes a second run a no-op,
 and neither route reads the bytes afterwards. The applier reads them, and reports one line per patch
-part. Two of the five patched files carry no `__oe` marker — `context/dynamic-tool-lifecycle.js` wraps
-an existing call and `protocol/message.d.ts` is types-only — so those two rest on patch-package's own
-`--error-on-fail` verdict, and the applier prints a line for them saying so.
+part. One of the six patched files carries no `__oe` marker: `protocol/message.d.ts` is types-only.
+That file rests on patch-package's own `--error-on-fail` verdict, and the applier prints a line for it
+that says so. `context/dynamic-tool-lifecycle.js` carries no part header, but its one hunk writes the
+`__oeSessionToolScopePatched` marker, so the applier reads that marker in the installed bytes.
 
 **Copying the patch by hand still works**, and it is what a consumer who would rather not run our bin
 can do: take `patches/eve+<pinned version>.patch` from this repository into their own `patches/`,

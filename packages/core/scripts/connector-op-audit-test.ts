@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-connector-op-audit-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
@@ -92,5 +93,5 @@ await handler(ev({ kind: "tool-result", toolName: "acme__server__search", isErro
   ok(rows.some((r) => r.detail?.connection === "acme"), "...stamped with its real connection head");
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`✓ connector-op-audit: ${passed} assertions passed`);

@@ -689,6 +689,11 @@ function throwingFetch(): typeof fetch {
       await stepCompleted({ data: { usage: { outputTokens: 7 } } }, ctx);
       await flushTelemetry();
       ok(firstOutputRows(calls).length === 2, "🔴 first-output: the NEXT turn on the same session reports its own first output");
+
+      const { readTurnClock } = await import("../agent/observability/turn-clock.js");
+      await turnStarted({ data: { turnId: "turn_2" } }, ctx);
+      await stepCompleted({ data: { usage: { inputTokens: 9_000, outputTokens: 500, cacheReadTokens: 8_000, cacheWriteTokens: 500 } } }, ctx);
+      ok(readTurnClock()?.tokens === 9_500, `🔴 turn clock: a cache-heavy step counts inputTokens + outputTokens, never the cache subsets again (got ${readTurnClock()?.tokens})`);
     });
   } finally {
     clearTelemetryEnv();

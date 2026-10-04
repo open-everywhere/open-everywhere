@@ -16,3 +16,16 @@ export function localBinCommand(pkg: string, binName: string, args: readonly str
   if (!rel) throw new Error(`npm-command: ${pkg} declares no \`${binName}\` bin`);
   return [process.execPath, [join(dirname(manifestPath), rel), ...args]];
 }
+
+export function npxCommand(args: readonly string[]): [string, string[]] {
+  if (process.platform !== "win32") return ["npx", [...args]];
+  const [node, [npmCli]] = npmCommand([]);
+  const cli = join(dirname(npmCli!), "npx-cli.js");
+  if (!existsSync(cli)) throw new Error(`npm-command: cannot find npx-cli.js beside ${npmCli}`);
+  return [node, [cli, ...args]];
+}
+
+export function tsxCommand(repoRoot: string, args: readonly string[]): [string, string[]] {
+  if (process.platform !== "win32") return [join(repoRoot, "node_modules", ".bin", "tsx"), [...args]];
+  return [process.execPath, [join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs"), ...args]];
+}

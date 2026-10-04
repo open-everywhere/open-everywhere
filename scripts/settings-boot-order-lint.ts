@@ -3,7 +3,8 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { registerHooks } from "node:module";
 import { Session } from "node:inspector/promises";
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
+import { availableParallelism, totalmem } from "node:os";
 import { assertCoreDistFresh } from "./core-dist-freshness.js";
 import {
   EAGER_SETTINGS_READ_ALLOWLIST,
@@ -13,9 +14,10 @@ import {
   installSettingsReadProbe,
   type EagerSettingsRead,
 } from "./settings-read-probe.js";
+import { posixRelative } from "./posix-path.js";
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
-const SELF = relative(REPO_ROOT, fileURLToPath(import.meta.url));
+const SELF = posixRelative(REPO_ROOT, fileURLToPath(import.meta.url));
 
 interface BootEntry {
   readonly module: string;
@@ -275,8 +277,56 @@ let totalResolutions = 0;
 let totalEvaluated = 0;
 let eagerReadCount = 0;
 
+interface ChildRun {
+  readonly status: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+function bootChild(entry: BootEntry): Promise<ChildRun> {
+  const args = [TSX, fileURLToPath(import.meta.url), "--child", entry.module];
+  for (const fixture of fixtures) args.push("--fixture", fixture);
+  return new Promise((done) => {
+    const child = spawn(process.execPath, args, {
+      cwd: REPO_ROOT,
+      env: { ...process.env, NODE_NO_WARNINGS: "1" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
+    child.on("error", (err) => done({ status: null, stdout, stderr: `${stderr}${err.message}` }));
+    child.on("close", (status) => done({ status, stdout, stderr }));
+  });
+}
+
+const POOL_MIN_MEMORY_BYTES = 12 * 1024 ** 3;
+const CHILD_CONCURRENCY =
+  totalmem() < POOL_MIN_MEMORY_BYTES ? 1 : Math.max(1, Math.min(3, availableParallelism() - 1));
+
+async function inPool<T, R>(items: readonly T[], limit: number, boot: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array<R>(items.length);
+  let next = 0;
+  const lane = async (): Promise<void> => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await boot(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, lane));
+  return out;
+}
+
+const isAbsentSlotRoot = (entry: BootEntry): boolean =>
+  entry.slotRoot === true && !existsSync(resolve(REPO_ROOT, entry.module));
+const bootable = entries.filter((entry) => !isAbsentSlotRoot(entry));
+const runs = new Map<BootEntry, ChildRun>();
+(await inPool(bootable, CHILD_CONCURRENCY, bootChild)).forEach((run, i) => runs.set(bootable[i], run));
+
 for (const entry of entries) {
-  if (entry.slotRoot === true && !existsSync(resolve(REPO_ROOT, entry.module))) {
+  const run = runs.get(entry);
+  if (run === undefined) {
     problems.push(
       `the slot root ${entry.module} does not exist. \`oe build\` materialises it from roster.config.ts — run ` +
         "`npm run oe:build` (the test chain's pre-step does) and run this gate again. An absent slot root is " +
@@ -284,14 +334,6 @@ for (const entry of entries) {
     );
     continue;
   }
-  const args = [TSX, fileURLToPath(import.meta.url), "--child", entry.module];
-  for (const fixture of fixtures) args.push("--fixture", fixture);
-  const run = spawnSync(process.execPath, args, {
-    cwd: REPO_ROOT,
-    encoding: "utf8",
-    env: { ...process.env, NODE_NO_WARNINGS: "1" },
-    maxBuffer: 32 * 1024 * 1024,
-  });
 
   const line = `${run.stdout ?? ""}`.split("\n").find((l) => l.startsWith(RESULT_MARKER));
   if (line === undefined) {
@@ -304,6 +346,13 @@ for (const entry of entries) {
   }
 
   const result = JSON.parse(line.slice(RESULT_MARKER.length)) as ChildResult;
+  if (result.entry !== entry.module) {
+    problems.push(
+      `the result judged for ${entry.module} came from the child that booted ${result.entry}. The pool paired ` +
+        "a result with the wrong entry, so no arm below can be trusted for either one.",
+    );
+    continue;
+  }
   results.push(result);
   totalResolutions += result.resolutions;
   totalEvaluated += result.evaluated ?? 0;

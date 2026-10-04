@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AuditEntry } from "../agent/operational/store.js";
@@ -15,6 +15,7 @@ import {
   type FailureFacetJudge,
   type FailureCluster,
 } from "../agent/memory/dream/mode3.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -327,5 +328,5 @@ function baseConfig(adminChannel: string | undefined) {
   ok(mode3Schedule.default.cron !== (await import("../agent/schedules/tidy.js")).default.cron, "schedule: mode3's cron is distinct from tidy's daily cron");
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`✓ dream-mode3: ${passed} assertions passed`);

@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/provider-slack",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Open Everywhere Slack provider — Slack channel and DM surfaces, identity mapping, approval cards and slash commands.",
   "keywords": [
     "agent",
@@ -190,7 +190,7 @@
     "prepack": "npm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "npm run test:chain",
-    "test:chain": "npm run test:slack-e2e && npm run test:slack-context && npm run test:slack-wake-backscroll && npm run test:slack-identity && npm run test:slack-spend-gate && npm run test:slack-wake-mapping && npm run test:slack-tenant-fence && npm run test:slack-wake-drop-hold && npm run test:slack-engagement && npm run test:slack-grant-card &&npm run test:slack-supervisor-reply && npm run test:slack-replier-label && npm run test:slack-normalized-wake && npm run test:slack-wake-trust && npm run test:slack-nonmember-author && npm run test:slack-contextline-trust && npm run test:slack-dm-seat && npm run test:slack-dm-divert && npm run test:slack-shortcut && npm run test:slack-enterprise-rung && npm run test:slack-attachments && npm run test:slack-commands && npm run test:slack-reaction-ingest && npm run test:slack-chat-audit && npm run test:slack-scope-audit && npm run test:slack-app-manifest && npm run test:slack-workspace-roster && npm run test:slack-webhook-verifier && npm run test:slack-input-response && npm run test:slack-approval-card && npm run test:slack-mrkdwn && npm run test:slack-native-wake-heal && npm run test:slack-rate-limit && npm run test:slack-web-api-seam && npm run test:slack-setup",
+    "test:chain": "tsx ../../../scripts/chain/run-chain.ts",
     "test:slack-webhook-verifier": "NODE_NO_WARNINGS=1 tsx scripts/slack-webhook-verifier-test.ts",
     "test:slack-workspace-roster": "NODE_NO_WARNINGS=1 tsx scripts/slack-workspace-roster-test.ts",
     "test:slack-scope-audit": "NODE_NO_WARNINGS=1 tsx scripts/slack-scope-audit-test.ts",
@@ -225,10 +225,11 @@
     "test:slack-rate-limit": "NODE_NO_WARNINGS=1 tsx scripts/slack-rate-limit-test.ts",
     "test:slack-web-api-seam": "NODE_NO_WARNINGS=1 tsx scripts/slack-web-api-seam-test.ts",
     "test:slack-setup": "NODE_NO_WARNINGS=1 tsx scripts/slack-setup-test.ts",
-    "test:slack-wake-drop-hold": "NODE_NO_WARNINGS=1 tsx scripts/slack-wake-drop-hold-test.ts"
+    "test:slack-wake-drop-hold": "NODE_NO_WARNINGS=1 tsx scripts/slack-wake-drop-hold-test.ts",
+    "test:slack-surface-evidence": "NODE_NO_WARNINGS=1 tsx scripts/slack-surface-evidence-test.ts"
   },
   "dependencies": {
-    "@open-everywhere/core": "0.1.4",
+    "@open-everywhere/core": "0.1.5",
     "undici": "^7.28.0",
     "zod": "4.5.4"
   },

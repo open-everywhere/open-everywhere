@@ -1,10 +1,11 @@
 import type { AttachSessionFn } from "eve/channels";
 import { createHash } from "node:crypto";
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -16,7 +17,7 @@ function ok(cond: boolean, label: string): void {
 }
 
 const dir = join(tmpdir(), `open-everywhere-control-read-test-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: "acme" });
 delete process.env.OE_CONTROL_READ_TOKENS;
@@ -724,5 +725,5 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
 
 _resetModelPricingForTest();
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`✓ control-read route: ${passed} assertions passed (fail-closed 404 / 401 / 400 / priced 200 / runtime-signal presence-never-value / audited / structurally read-only)`);

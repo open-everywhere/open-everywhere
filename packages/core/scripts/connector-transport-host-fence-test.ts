@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -14,6 +14,7 @@ process.env.OE_PLATFORM = "slack";
 import type { CredentialEndpointRules } from "../agent/access/credential-endpoints.js";
 import type { CredentialBroker } from "../agent/access/credentials.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 const { credentialEndpointHostVerdict, assertCredentialEndpointHostAllowed, CredentialEndpointError } = await import(
   "../agent/access/credential-endpoints.js"
@@ -221,5 +222,5 @@ async function getUserToken(directUrl: string | undefined, minter: ReturnType<ty
 }
 
 resetSettingsForTest();
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`connector-transport-host-fence-test: ${n} assertions passed`);

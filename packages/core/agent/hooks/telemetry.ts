@@ -5,8 +5,8 @@ import { readModelStamp } from "../model/model-stamp.js";
 import { emitTelemetry, flushTelemetry, maybeHeartbeat, tokensBucket, stepsBucket, latencyBucket } from "../observability/telemetry.js";
 import { bumpTurnClock, readTurnClock, resetTurnClock } from "../observability/turn-clock.js";
 
-function bumpTurn(usage: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number } | undefined): void {
-  bumpTurnClock((usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0) + (usage?.cacheReadTokens ?? 0) + (usage?.cacheWriteTokens ?? 0));
+function bumpTurn(usage: { inputTokens?: number; outputTokens?: number } | undefined): void {
+  bumpTurnClock((usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0));
 }
 
 function isWebhookFire(ctx: BindableContext): boolean {

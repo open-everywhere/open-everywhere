@@ -29,8 +29,8 @@ check("isSkippablePath: agent/** is RUNTIME, never skippable", () => {
   assert.equal(isSkippablePath("agent/settings/settings.ts"), false);
 });
 
-check("isSkippablePath: agent/docs/generated/** is RUNTIME even though it is doc CONTENT — it is the compiled-in copy the agent serves", () => {
-  assert.equal(isSkippablePath("agent/docs/generated/deploy.ts"), false);
+check("isSkippablePath: packages/core/agent/docs/generated/** is RUNTIME even though it is doc CONTENT — it is the compiled-in copy the agent serves", () => {
+  assert.equal(isSkippablePath("packages/core/agent/docs/generated/deploy.ts"), false);
 });
 
 check("isSkippablePath: packages/** is RUNTIME", () => {
@@ -64,8 +64,8 @@ check("isSkippableDiff: an empty path list is NOT skippable", () => {
   assert.equal(isSkippableDiff([]), false);
 });
 
-check("isSkippableDiff: docs/** plus its regenerated agent/docs/generated/** copy is runtime overall", () => {
-  assert.equal(isSkippableDiff(["docs/deploy/rollback.md", "agent/docs/generated/deploy.ts"]), false);
+check("isSkippableDiff: docs/** plus its regenerated packages/core/agent/docs/generated/** copy is runtime overall", () => {
+  assert.equal(isSkippableDiff(["docs/deploy/rollback.md", "packages/core/agent/docs/generated/deploy.ts"]), false);
 });
 
 check("runtimePaths: returns only the non-skippable paths, in order", () => {
@@ -100,7 +100,7 @@ check("shipsInDeployedFunction: the shipped trees SHIP", () => {
   assert.equal(shipsInDeployedFunction("packages/core/agent/access/config.ts"), true);
   assert.equal(shipsInDeployedFunction("package.json"), true);
   assert.equal(shipsInDeployedFunction("vercel.json"), true);
-  assert.equal(shipsInDeployedFunction("agent/docs/generated/deploy.ts"), true);
+  assert.equal(shipsInDeployedFunction("packages/core/agent/docs/generated/deploy.ts"), true);
   assert.equal(shipsInDeployedFunction("brand-new-top-level/thing.ts"), true);
 });
 

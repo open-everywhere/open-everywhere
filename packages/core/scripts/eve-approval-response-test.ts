@@ -4,6 +4,7 @@ import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-eve-approval-response-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
@@ -361,5 +362,5 @@ console.log("4. settlement audit (adopt-part C):");
   eq(findChainBreak(chainRows), null, "…and the chain is intact after them (they are ordinary chained rows, not a side store)");
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`\n✓ eve-approval-response: ${passed} assertions passed`);

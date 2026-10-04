@@ -1,5 +1,6 @@
 import { CAPABILITY_REMEDY, auditSilencesExpected, ENV, S24_DEFAULT_QUERY, type Capability, type EngagedRoomConfig, type SlackUser2Config } from "./env.js";
-import { capFixtureFor, roomIdFor } from "./fixture-inventory-lib.js";
+import { capFixtureFor, resolveCapFixtureCap, roomIdFor } from "./fixture-inventory-lib.js";
+import { loadAppSpendBudgets } from "./app-config.js";
 import { classifyAnswers, renderRepliesPerWake, repliesPerWake } from "./duplicate-post.js";
 import type { SkipKind } from "./skip-summary.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
@@ -2195,11 +2196,22 @@ export const SCENARIOS: readonly Scenario[] = [
         }
       }
       const capFixture = capFixtureFor("channel");
+      const fixtureTeam = (await ctx.slack!.identity()).teamId;
+      if (ctx.slackSecondary) {
+        const secondaryTeam = (await ctx.slackSecondary.identity()).teamId;
+        if (secondaryTeam !== fixtureTeam) {
+          ctx.log(`S10: the secondary driver is in Slack workspace ${secondaryTeam}, not the fixture workspace ${fixtureTeam} — the cap key below uses ${fixtureTeam}`);
+        }
+      }
+      const capCap = capFixture ? resolveCapFixtureCap(capFixture, fixtureTeam, await loadAppSpendBudgets(), process.env) : undefined;
+      const capKey = capCap?.caps !== undefined ? capCap.key : undefined;
       const outcome = capDriveOutcome({
-        droveTheFixture: capFixture?.surfaceKey.endsWith(`/${channel}`) === true,
+        droveTheFixture: capKey?.endsWith(`/${channel}`) === true,
         droveAsNonAdmin: ctx.slackSecondary !== undefined,
         channel,
-        capFixtureSurfaceKey: capFixture?.surfaceKey,
+        capFixtureSurfaceKey: capKey,
+        capFixtureCaps: capCap?.caps,
+        attemptedSurfaceKey: capCap?.key,
       });
       if (outcome.kind === "skip") ctx.skip(outcome.reason);
       else ctx.gate(false, outcome.message);

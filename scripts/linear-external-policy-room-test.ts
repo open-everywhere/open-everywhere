@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { withPatchedFetch } from "../packages/core/scripts/_fetch-test-utils.js";
 import { readAudit, resolvePartition, defineSurface, registerSurfaces, _resetSurfacesForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import type { Domain } from "@open-everywhere/core/agent/memory/domain.js";
+import { removeTempDir } from "../packages/core/scripts/_temp-dir.js";
 
 const dir = join(tmpdir(), `open-everywhere-linear-external-policy-room-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
 process.env.LINEAR_API_KEY = "linear-test-key";
@@ -121,5 +121,5 @@ ok(
 
 });
 _resetSurfacesForTest();
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`\n✓ linear-external-policy-room: ${n} assertions passed (silent drop + audit on a declared-public team, undeclared-team and shipped-default negative controls)`);

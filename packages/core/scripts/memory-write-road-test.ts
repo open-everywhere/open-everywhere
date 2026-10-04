@@ -1,7 +1,10 @@
+// proves: memory.operational_write, memory.write
+
 import { mkdtempSync, rmSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { removeTempDir } from "./_temp-dir.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-write-road-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
@@ -163,5 +166,5 @@ const latest = rows[0]!.detail as Record<string, unknown>;
 ok(latest.silo === "team-brain" && latest.version === "sha-3", "a colliding extra key is DROPPED, never allowed to restate a canonical field");
 ok(latest.relPath === "MEMORY.md", "a non-colliding extra key still rides along");
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`memory write road: ${passed} assertions passed`);

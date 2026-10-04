@@ -1,7 +1,7 @@
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -22,7 +22,7 @@ async function refuses(fn: () => unknown, needle: RegExp, label: string): Promis
 }
 
 const dir = join(tmpdir(), `open-everywhere-routine-authoring-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: "acme" });
 
@@ -465,5 +465,5 @@ const enableTool = (await import("../agent/tools/enable_routine.js")).default;
   ok(DISPATCH_TICK_MINUTES > checkIn.CHECK_IN_START_MS / 60_000, "backoff: the dispatcher tick is COARSER than the deleted 1-min floor — which is why enforcing that floor in code enforced nothing");
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`✓ routine authoring (OPE-147): ${passed} assertions passed (preview + run-now + edit + permission invalidation + prompt revisions + re-arm)`);

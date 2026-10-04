@@ -4,10 +4,12 @@ import { availableParallelism, totalmem } from "node:os";
 export const UNCAPPED_MAX_WORKERS = 2;
 export const CGROUP_FLOOR_MAX_WORKERS = 1;
 
-export const HARNESS_CONCURRENCY_CEILING = 1;
+export const HARNESS_CONCURRENCY_CEILING = 6;
 
 export const WORKER_BASE_MB = 1280;
 export const WORKER_MARGINAL_MB = 450;
+export const CORE_OVERSUBSCRIPTION = 1.5;
+
 export const CGROUP_RESERVE_MB = 3072;
 
 export interface BoxProbe {
@@ -88,7 +90,7 @@ export function cgroupMaxWorkersByMemoryAndCores(capBytes: number, cores: number
   const fits = Math.floor((capMb - CGROUP_RESERVE_MB - WORKER_BASE_MB) / WORKER_MARGINAL_MB);
   const usableCores = Number.isInteger(cores) && cores >= 1 ? cores : CGROUP_FLOOR_MAX_WORKERS;
   if (!Number.isFinite(fits)) return CGROUP_FLOOR_MAX_WORKERS;
-  return Math.max(CGROUP_FLOOR_MAX_WORKERS, Math.min(usableCores, fits));
+  return Math.max(CGROUP_FLOOR_MAX_WORKERS, Math.min(Math.floor(usableCores * CORE_OVERSUBSCRIPTION), fits));
 }
 
 export function integrationMaxWorkers(env: NodeJS.ProcessEnv = process.env, probe: BoxProbe = HOST_BOX_PROBE): number {

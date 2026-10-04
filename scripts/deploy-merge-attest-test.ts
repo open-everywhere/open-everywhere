@@ -17,6 +17,7 @@ import {
   UPGRADE_FENCE_CONTEXT,
 } from "./deploy/merge-attest-lib.js";
 import { type FenceSubject, type MergeFenceDecision, runMergeFence } from "./deploy/merge-fence-lib.js";
+import { readChainList } from "./chain/_legs.js";
 import { ruleFor } from "./upgrade-fence/judge.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -533,7 +534,7 @@ check("package.json defines both the rung and its suite", () => {
 });
 
 check("the root test chain runs this suite — drop the leg and nothing else notices", () => {
-  assert.match(pkg.scripts["test:chain"] ?? "", /npm run test:deploy-merge-attest\b/);
+  assert.ok(readChainList(ROOT)?.includes("test:deploy-merge-attest"), "the root test-chain.txt names test:deploy-merge-attest");
 });
 
 check("the fence protects this suite by exact path — it sits at scripts/ root, outside scripts/deploy/", () => {

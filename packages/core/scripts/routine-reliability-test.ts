@@ -1,8 +1,8 @@
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -14,7 +14,7 @@ function ok(cond: boolean, label: string): void {
 }
 
 const dir = join(tmpdir(), `open-everywhere-routine-reliability-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: "acme" });
 overrideSettingsForTest({ delegation: { oneshotAgent: false } });
@@ -302,5 +302,5 @@ const okReceive = (() => ({ send: async () => undefined })) as never;
   await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, id);
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`✓ routine reliability + exposure (OPE-146): ${passed} assertions passed`);

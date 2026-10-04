@@ -11,14 +11,18 @@ import {
   disposeLater,
   registerScript,
   rowsSinceCursor,
+  sleep,
   waitFor,
+  waitForTurnCancelDelivered,
 } from "../harness";
 
 const BOT_MENTION = "<@9000000000000000001>";
 const HOLD_MS = 90_000;
 const STOPPER_ID = "9000000000000000079";
 const RAN_TOOL = "update_status";
-const SETTLE_WATCH_MS = 20_000;
+const PRODUCT_CANCEL_SETTLE_GRACE_MS = 10_000;
+const SETTLE_MARGIN_MS = 2_000;
+const SETTLE_CONFIRM_MS = 20_000;
 
 test("a stop the ingress accepted leaves exactly one evidence row — turn.cancelled when eve settled it, turn.stop_ignored when eve dropped it", async () => {
   await bootAgent({ sharedSqlite: true });
@@ -61,13 +65,23 @@ test("a stop the ingress accepted leaves exactly one evidence row — turn.cance
   expect(requested[0]!.detail?.sessionId).toBe(anchor.sessionId);
   expect(requested[0]!.principalId).toBe(STOPPER_ID);
 
+  await waitForTurnCancelDelivered(anchor.sessionId);
   handle.releaseHolds();
 
   const evidence = await waitFor(async () => {
     const rows = await rowsSinceCursor(cursor, ["turn.cancelled", "turn.stop_ignored"]);
     return rows.length > 0 ? rows : undefined;
   }, "the cancel evidence row — turn.cancelled if eve settled the cancel, turn.stop_ignored if it dropped it");
-  await new Promise((r) => setTimeout(r, SETTLE_WATCH_MS));
+  const observedAtMono = performance.now();
+  const ignoredObserved = evidence[0]!.action === "turn.stop_ignored";
+  const waitMs = ignoredObserved ? SETTLE_CONFIRM_MS : PRODUCT_CANCEL_SETTLE_GRACE_MS + SETTLE_MARGIN_MS;
+  await sleep(waitMs);
+  if (!ignoredObserved) {
+    expect(
+      performance.now() - observedAtMono,
+      "the read must sit past the ignored-stop arm's own deadline, measured from the evidence row's own arrival",
+    ).toBeGreaterThan(PRODUCT_CANCEL_SETTLE_GRACE_MS);
+  }
   const settled = await rowsSinceCursor(cursor, ["turn.cancelled", "turn.stop_ignored"]);
   expect(
     settled,

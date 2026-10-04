@@ -60,7 +60,8 @@ without a public tunnel.
 `agent/tools/`, `agent/channels/`, `agent/hooks/`, `agent/schedules/`, `agent/skills/`,
 `agent/connections/` and `agent/lib/providers.generated.ts` are `oe build` output. They are not
 committed. The `*.generated.ts` files are machine-owned overlays that the agent's own approval flows
-write by pull request. Do not edit them by hand.
+write by pull request. Do not edit them by hand. `npx oe build --check` (or `npx oe overlays check`)
+proves they hold only data. After a data edit, run `npx oe overlays normalize`.
 
 ## Add a surface
 

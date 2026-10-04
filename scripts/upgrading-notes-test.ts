@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import {
   NOTES_FILE,
   PAGE_FILE,
+  bootstrapCommands,
   codemodIdsIn,
   compareVersions,
   noteFor,
@@ -126,6 +127,15 @@ ok(rendered.includes("add `OE_NEW_NAME`") && rendered.includes("remove `OE_OLD_N
 ok(rendered.includes("re-paste the Slack manifest"), "a manual step reaches the page");
 ok(rendered.includes("No breaking change, no config migration, no env change and no manual step."), "a release that needs nothing says so, rather than rendering an empty section");
 ok(rendered.endsWith("\n") && !rendered.endsWith("\n\n"), "the page ends with exactly one newline");
+ok(
+  rendered.includes("## An app below 0.1.4\n") && rendered.includes(`\`\`\`sh\n${bootstrapCommands("0.3.0").join("\n")}\n\`\`\`\n`),
+  "🔴 the page carries the bootstrap for an app below 0.1.4 as one command block, naming the NEWEST release",
+);
+ok(!rendered.includes("@open-everywhere/core@0.2.0"), "…and never an older release in the record (the negative control)");
+ok(
+  bootstrapCommands("0.3.0")[0] === "npm install --prefix .open-everywhere/bootstrap @open-everywhere/core@0.3.0 tsx@4",
+  "🔴 the bootstrap installs tsx BESIDE the target core: the oe bin needs it, and core declares it only as a dev dependency",
+);
 
 const notesPath = join(CORE, NOTES_FILE);
 ok(existsSync(notesPath), `packages/core/${NOTES_FILE} exists`);

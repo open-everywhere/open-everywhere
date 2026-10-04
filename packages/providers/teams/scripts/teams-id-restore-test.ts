@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { surfaceKeySegment } from "@open-everywhere/core/agent/adapter-api.js";
 import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/adapter-api.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -12,7 +12,7 @@ const ok = (cond: boolean, label: string) => {
 };
 
 const dir = join(tmpdir(), `open-everywhere-teams-id-restore-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 _setDeploymentIdentityForTest({ org: "acme" });
 process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
@@ -176,5 +176,5 @@ try {
 
   console.log(`✓ teams-id-restore: ${n} assertions passed`);
 } finally {
-  rmSync(dir, { recursive: true, force: true });
+  await removeTempDir(dir);
 }

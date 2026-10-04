@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
@@ -23,6 +23,7 @@ import { readAudit } from "@open-everywhere/core/agent/audit/audit.js";
 import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
 import { WAKE_RETRY_ACTION } from "@open-everywhere/core/agent/channels/wake-timing.js";
 import type { RouteHandlerArgs } from "eve/channels";
+import { posixRelative } from "./posix-path.js";
 
 registerSlackProvider();
 registerDiscordProvider();
@@ -67,7 +68,7 @@ function sourceFiles(dir: string): string[] {
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) out.push(...sourceFiles(full));
-    else if (entry.endsWith(".ts") && !entry.endsWith(".d.ts")) out.push(relative(root, full));
+    else if (entry.endsWith(".ts") && !entry.endsWith(".d.ts")) out.push(posixRelative(root, full));
   }
   return out;
 }

@@ -1,3 +1,5 @@
+// proves: REPLY-41
+
 const sqlitePath = `${tmpdir()}/oe-stand-down-anchor-${process.pid}-${Date.now()}.sqlite3`;
 process.env.OE_SQLITE_PATH = sqlitePath;
 overrideSettingsForTest({ discord: { autoThread: false } });
@@ -5,6 +7,7 @@ overrideSettingsForTest({ discord: { statusUx: false } });
 
 import assert from "node:assert/strict";
 import { rmSync } from "node:fs";
+import { releaseStoreHandles } from "../packages/core/scripts/_temp-dir.js";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { PROMOTER_LIST_MAX } from "@open-everywhere/core/agent/operational/store.js";
@@ -638,6 +641,7 @@ const discordCtx = windowCtx("discord", discordAttrs, "U1");
   ok((unenrolledRows[0]!.detail as Record<string, unknown>).marked === false, "🔴 OPE-1885: …stamped `marked: false` — so a registry miss is a ROW, and an EMPTY window can only mean the verb was never called or its best-effort write was dropped");
 }
 
+await releaseStoreHandles(sqlitePath);
 for (const suffix of ["", "-journal", "-wal", "-shm"]) rmSync(`${sqlitePath}${suffix}`, { force: true });
 
 console.log(`✓ stand-down-anchor: ${n} assertions passed (discord key chain + real wake-gate round trip + re-invitation + slack regression pin + anchorless copy + DM refusal + unenrolled refusal + the Teams anchor and its group-chat stop + the room-grain fallback and the replay guard + the promoter list's bound and its legacy bare-id row on the sqlite statements + the GitHub/Linear/Notion anchors and their own seams' round trips + every refusal's own audit row)`);

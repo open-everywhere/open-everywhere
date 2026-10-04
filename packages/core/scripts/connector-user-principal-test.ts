@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 registerSlackFixtureMapper();
 
 
@@ -273,5 +274,5 @@ await eveContextStorage().run(new FakeSession(), async () => {
   resetSettingsForTest();
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`✓ connector-user-principal: ${passed} assertions passed`);

@@ -52,7 +52,7 @@ scenarios need credentials for real workspaces, so a pull request does not need 
 
 - **New behaviour needs a test.** Add a `scripts/<name>-test.ts` (follow the existing style:
   plain assertions, exit non-zero on failure), define a `test:<name>` script for it in that
-  package's `package.json`, and append `&& npm run test:<name>` to the package's `test:chain`.
+  package's `package.json`, and append one line, `test:<name>`, to the package's `test-chain.txt`.
   Bug fixes should add a regression test that fails before the fix.
 - **Keep it typed.** No `any`-escapes that defeat the resolver/identity types — those are
   load-bearing for the access model.

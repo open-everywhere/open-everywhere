@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { removeTempDir } from "./_temp-dir.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-claim-guard-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
@@ -177,5 +178,5 @@ ok(
   "the ack-before carve-out still sits on the FIRST pattern",
 );
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`memory claim guard: ${passed} assertions passed`);

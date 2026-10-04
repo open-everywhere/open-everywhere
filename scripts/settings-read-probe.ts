@@ -1,5 +1,6 @@
-import { relative } from "node:path";
+import { sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { posixRelative, toPosixPath } from "./posix-path.js";
 
 export const SETTINGS_SLOT_KEY = Symbol.for("open-everywhere.settings.registered.v1");
 
@@ -32,8 +33,13 @@ function parseFrames(stack: string): Frame[] {
 
 function splitLocation(location: string, repoRoot: string): { file: string; line: number } {
   const at = /^(.*?):(\d+):\d+$/.exec(location.replace(/^file:\/\//, ""));
-  const raw = at === null ? location : at[1];
-  const root = repoRoot.endsWith("/") ? repoRoot : `${repoRoot}/`;
+  let raw = at === null ? location : at[1];
+  let rootPath = repoRoot;
+  if (sep === "\\") {
+    raw = toPosixPath(raw).replace(/^\/(?=[A-Za-z]:\/)/, "");
+    rootPath = toPosixPath(repoRoot);
+  }
+  const root = rootPath.endsWith("/") ? rootPath : `${rootPath}/`;
   return { file: raw.startsWith(root) ? raw.slice(root.length) : raw, line: at === null ? 0 : Number(at[2]) };
 }
 
@@ -61,7 +67,7 @@ export interface SettingsReadProbe {
 
 export function installSettingsReadProbe(
   repoRoot: string,
-  probeFile: string = relative(repoRoot, fileURLToPath(import.meta.url)),
+  probeFile: string = posixRelative(repoRoot, fileURLToPath(import.meta.url)),
 ): SettingsReadProbe {
   const reads: EagerSettingsRead[] = [];
   const seen = new Set<string>();

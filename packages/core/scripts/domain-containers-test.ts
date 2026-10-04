@@ -25,6 +25,7 @@ import { readAudit } from "../agent/audit/audit.js";
 import { siloCoveringDomains } from "../agent/control/auth.js";
 import { adminControlRoles } from "../agent/access/roles.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -467,5 +468,5 @@ const throws = (fn: () => void, needle: string, label: string) => {
   n++;
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`\n✓ domain-containers: ${n} assertions passed (OPE-205 containers + the audited ambient skip; OPE-417 same-level globs + exclusions; OPE-490 the group-rung refusal; OPE-254 one reach list, most-specific-wins)\n`);

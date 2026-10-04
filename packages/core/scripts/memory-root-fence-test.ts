@@ -13,7 +13,7 @@ import {
   withMemoryRootWritable,
 } from "../agent/memory/root-fence.js";
 import { lockCommand } from "../agent/memory/readonly.js";
-import { withoutDacOverride, writeBitsBite } from "../../../scripts/dac-fence.js";
+import { posixWriteBitsAbsentReason, withoutDacOverride, writeBitsBite } from "../../../scripts/dac-fence.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -123,7 +123,10 @@ if (process.argv.includes(MEASURE_ONLY_FLAG)) {
   process.exit(0);
 }
 
-if (writeBitsBite()) {
+const noWriteBits = posixWriteBitsAbsentReason();
+if (noWriteBits !== null) {
+  console.log(`⏭ memory-root-fence: §1 SKIPPED on ${process.platform}, NOT proven here — ${noWriteBits}.`);
+} else if (writeBitsBite()) {
   await runMeasurement();
 } else {
   n += runMeasurementFenced();

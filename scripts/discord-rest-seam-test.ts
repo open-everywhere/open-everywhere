@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { posixRelative } from "./posix-path.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -88,7 +89,7 @@ const seamCode = stripComments(readFileSync(join(PKG_ROOT, SEAM_REL), "utf8"));
 
   const offenders: string[] = [];
   for (const file of AGENT_FILES) {
-    const rel = relative(PKG_ROOT, file);
+    const rel = posixRelative(PKG_ROOT, file);
     if (rel === SEAM_REL) continue;
     if (BARE_FETCH.test(stripComments(readFileSync(file, "utf8")))) offenders.push(rel);
   }

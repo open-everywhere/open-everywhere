@@ -154,9 +154,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      created_at         text    NOT NULL,
      last_wake_at       text    NOT NULL,
      turn_count         integer NOT NULL DEFAULT 0,
-     input_tokens_total bigint,               -- measured cumulative input+cacheRead for this generation (§2 #551); NULL = unknown ⇒ rotate
+     input_tokens_total bigint,               -- measured cumulative inputTokens (cache reads included, counted once) for this generation; NULL = unknown ⇒ rotate
      first_wake_at      text,                 -- ISO-8601 of the first delivered wake (H7c); NULL = none yet ⇒ still fresh
-     last_input_tokens  bigint,               -- OPE-794: measured input+cacheRead of the LATEST request (SET, not summed); NULL = none yet ⇒ rung skipped
+     last_input_tokens  bigint,               -- OPE-794: measured inputTokens (cache reads included) of the LATEST request (SET, not summed); NULL = none yet ⇒ rung skipped
      rotate_marked_at   text,                 -- OPE-820: ISO-8601 an operator marked this generation for retirement; NULL = unmarked. Set ONLY by the ops sweep; cleared by every rotation
      served_code_fingerprint   text,          -- OPE-1821: the runtime CODE hash this seat was last served with; NULL = never stamped. Written ONLY by stampChannelSessionRuntime, and deliberately NOT reset by a rotation
      served_domain_fingerprint text,          -- OPE-1821: the DOMAIN declaration hash this seat was last served with. Same writer, same NULL meaning — the pair moves together

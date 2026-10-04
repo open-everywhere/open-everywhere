@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { rmSync } from "node:fs";
 import type { ReplyTarget, ReplyAudit } from "../agent/channels/reply-post.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 const dir = join(tmpdir(), `open-everywhere-reply-dedupe-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 process.env.OE_EGRESS_SPOOF = "1";
 delete process.env.VERCEL;
@@ -86,7 +86,7 @@ const isSpoofId = (id: string) => id.startsWith("spoof-");
   ok(isSpoofId(a) && isSpoofId(b), "7. no audit/org supplied → fail-open (matches postOnce's own no-org fail-open contract)");
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(
   `✓ reply-dedupe (OPE-343) — ${n} assertions (byte-identical repost suppressed, distinct content/channel not over-deduped, one audit row per real post, per-spine key separation, fail-open with no org)`,
 );

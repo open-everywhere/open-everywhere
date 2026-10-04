@@ -479,7 +479,7 @@ export const SETTINGS = {
       shipped: 4_000_000,
       validate: positiveNumber,
       summary:
-        "Token BACKSTOP (demoted from primary by OPE-345, value unchanged): the measured cumulative `inputTokens + cacheReadTokens` on one generation. Also the route the session-park remedy uses — parking saturates this counter.",
+        "Token BACKSTOP (demoted from primary by OPE-345, value unchanged): the measured cumulative `inputTokens` on one generation. `inputTokens` is the whole prompt, so it already includes the cache reads, and each cached token counts once. Also the route the session-park remedy uses — parking saturates this counter.",
     } satisfies SettingSpec<number>,
     turnBudget: {
       path: "rotation.turnBudget",
@@ -493,7 +493,7 @@ export const SETTINGS = {
       shipped: 120_000,
       validate: positiveNumber,
       summary:
-        "Context-size BACKSTOP: the LAST request's measured `inputTokens + cacheReadTokens` — the same measure compaction reads, not the cumulative counter `rotation.tokenBudget` meters. It sits BELOW the compaction fire point on purpose, so a standing seat re-mints a fresh generation with a recorded tail instead of compacting into a summary. Compaction still owns delegated and worker runs, which never reach the rotation chain.",
+        "Context-size BACKSTOP: the LAST request's measured `inputTokens` (the whole prompt, cache reads included) — the same measure compaction reads, not the cumulative counter `rotation.tokenBudget` meters. It sits BELOW the compaction fire point on purpose, so a standing seat re-mints a fresh generation with a recorded tail instead of compacting into a summary. Compaction still owns delegated and worker runs, which never reach the rotation chain.",
     } satisfies SettingSpec<number>,
     tailTokenCap: {
       path: "rotation.tailTokenCap",

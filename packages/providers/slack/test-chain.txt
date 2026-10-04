@@ -1,0 +1,41 @@
+# The `test:chain` legs of @open-everywhere/provider-slack: one npm script name per line, in run order (OPE-2286).
+# To add a suite, define `test:<name>` in package.json, then append one line here: `test:<name>`.
+# `npm run test:chain` runs the list in order and stops at the first failure. `npm test` runs it
+# batched (scripts/chain/_legs.ts). `.gitattributes` merges this file by union, so two branches that
+# each append a line merge cleanly.
+test:slack-e2e
+test:slack-context
+test:slack-wake-backscroll
+test:slack-identity
+test:slack-spend-gate
+test:slack-wake-mapping
+test:slack-tenant-fence
+test:slack-wake-drop-hold
+test:slack-engagement
+test:slack-grant-card
+test:slack-supervisor-reply
+test:slack-replier-label
+test:slack-normalized-wake
+test:slack-wake-trust
+test:slack-nonmember-author
+test:slack-contextline-trust
+test:slack-dm-seat
+test:slack-dm-divert
+test:slack-shortcut
+test:slack-enterprise-rung
+test:slack-attachments
+test:slack-commands
+test:slack-reaction-ingest
+test:slack-chat-audit
+test:slack-scope-audit
+test:slack-app-manifest
+test:slack-workspace-roster
+test:slack-webhook-verifier
+test:slack-input-response
+test:slack-approval-card
+test:slack-mrkdwn
+test:slack-native-wake-heal
+test:slack-rate-limit
+test:slack-web-api-seam
+test:slack-setup
+test:slack-surface-evidence

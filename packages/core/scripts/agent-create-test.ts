@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
@@ -10,9 +9,10 @@ import type { Domain } from "../agent/memory/domain.js";
 import type { MemorySilo } from "../agent/memory/silo.js";
 import type { AccessRequestsConfig } from "../agent/access/config.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 const dir = join(tmpdir(), `open-everywhere-agent-create-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: "default" });
 
@@ -394,5 +394,5 @@ function fakeDeps(state: FakeState) {
   ok(update !== undefined && update.body.get("text")!.includes("dry-run —"), "e2e: member tap executed the kind (dry-run) and the card shows the outcome");
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`agent-create-test: ${n} assertions passed`);

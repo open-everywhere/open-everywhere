@@ -31,7 +31,8 @@ const eq = (a: unknown, b: unknown, label: string): void => {
 
 const require = createRequire(import.meta.url);
 const eveRoot = require.resolve("eve/package.json").replace(/package\.json$/, "");
-const eveSchema = (await import(`${eveRoot}dist/src/tools/schema.js`)) as {
+const eveRootUrl = pathToFileURL(eveRoot).href;
+const eveSchema = (await import(`${eveRootUrl}dist/src/tools/schema.js`)) as {
   isToolSchema(schema: unknown): boolean;
   serializeInputSchema(schema: unknown): unknown;
   toInputSchema(schema: unknown): unknown;

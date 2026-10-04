@@ -1,8 +1,12 @@
+import type { Caps } from "../../agent/spend/spend.js";
+
 export interface CapDriveFacts {
   readonly droveTheFixture: boolean;
   readonly droveAsNonAdmin: boolean;
   readonly channel: string;
   readonly capFixtureSurfaceKey?: string;
+  readonly capFixtureCaps?: Caps;
+  readonly attemptedSurfaceKey?: string;
 }
 
 export type CapDriveOutcome =
@@ -16,14 +20,17 @@ export function capDriveOutcome(f: CapDriveFacts): CapDriveOutcome {
     return {
       kind: "enforcement-regression",
       message:
-        `the declared channel cap fixture (${f.capFixtureSurfaceKey ?? "(none declared)"}, fixture-inventory-lib.ts CAP_FIXTURES) ` +
-        `refused nothing in 5 turns, driven by a non-admin identity — spend-cap enforcement regression`,
+        `the declared channel cap fixture (${f.capFixtureSurfaceKey ?? "(none declared)"}, the perSurface row in agent/spend/budgets.ts: ` +
+        `${f.capFixtureCaps ? JSON.stringify(f.capFixtureCaps) : "(row not given)"}) ` +
+        `refused nothing in 5 turns, driven by a non-admin identity — spend-cap enforcement regression, unless that row is too wide for 5 turns to reach`,
     };
   }
   if (!f.droveTheFixture) {
     const where = f.capFixtureSurfaceKey
       ? `is not the room the declared cap fixture names (${f.capFixtureSurfaceKey})`
-      : "no declared cap fixture names (fixture-inventory-lib.ts CAP_FIXTURES)";
+      : f.attemptedSurfaceKey
+        ? `no perSurface row in the deployer's agent/spend/budgets.ts caps (S10 looked for ${f.attemptedSurfaceKey} — check its workspace rung against the row)`
+        : "no perSurface cap in the deployer's agent/spend/budgets.ts names (the room fixture-inventory-lib.ts CAP_FIXTURES declares, keyed by the driven workspace)";
     return { kind: "skip", reason: `cap never tripped within the 5-turn budget — this drive ran against ${f.channel}, which ${where}, so there is no cap here to trip` };
   }
   return {

@@ -16,6 +16,7 @@ import {
   type RecordedRequest,
   type ScriptedHandle,
   type ScriptedStep,
+  awaitProseRedriveSettled,
   awaitWindowQuiet,
 } from "../harness";
 
@@ -99,9 +100,11 @@ test("a Teams seat's SECOND turn reads the first turn, its worker reads only the
   const jwks = installTeamsJwksStub();
   cleanups.push(() => jwks.uninstall());
 
+  const cursorOne = await auditCursor();
   const one = await driveTeamsTurn({ text: TURN_ONE_FACT, steps: [{ say: `noted: ${TURN_ONE_FACT}` }] });
   const seatOne = one.requests.filter((r) => r.role === "parent");
   const seatOneFirst = seatOne[0];
+  await awaitProseRedriveSettled(cursorOne, "turn 1");
   one.dispose();
   await awaitWindowQuiet();
 

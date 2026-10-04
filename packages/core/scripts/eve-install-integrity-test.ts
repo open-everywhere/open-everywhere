@@ -139,6 +139,7 @@ const TOOL_LOOP = join("dist", "src", "harness", "tool-loop.js");
 const COMPACTION = join("dist", "src", "harness", "compaction.js");
 const SESSION_TASK_INDEX = join("dist", "src", "tasks", "session-index.js");
 const DYNAMIC_TOOL_LIFECYCLE = join("dist", "src", "context", "dynamic-tool-lifecycle.js");
+const AUTHORED_PACKAGE_BOUNDARY = join("dist", "src", "internal", "authored-package-boundary.js");
 
 const RETIRED = [
   { symbol: "__oeCfg", why: "OPE-172" },
@@ -269,6 +270,26 @@ for (const eveDir of copies) {
   ok(
     /async function refreshDynamicSessionToolsForRuntimeRevision\(e\)\{[^]*?await contextStorage\.run\(e\.ctx,async\(\)=>await resolveToolsFromEvent\(e\.ctx,a,e\.event,e\.messages\)\);e\.ctx\.set\(SessionDynamicToolMetadataKey/.test(lifecycleSrc),
     `scope: ${where} carries patch part 9 (OPE-2106, the session-scoped resolver re-run inside contextStorage.run) — an unpatched copy re-runs every session.started resolver outside eve's context in a fresh process, so a delegated worker binds to subagent/…/unresolved, its gated tools do not re-register, and its next gated call fails "not registered in this process" (measured on board #238, S-PR-SESSION)`,
+  );
+  const boundaryFile = join(eveDir, AUTHORED_PACKAGE_BOUNDARY);
+  ok(
+    existsSync(boundaryFile),
+    `boundary: ${where}/${AUTHORED_PACKAGE_BOUNDARY} exists (if eve moved the authored-module boundary, patch part 10 and packages/core/scripts/eve-authored-boundary-test.ts are both stale)`,
+  );
+  const boundarySrc = existsSync(boundaryFile) ? readFileSync(boundaryFile, "utf8") : "";
+  const runtimeLoaderAt = boundarySrc.indexOf("function createRuntimeLoaderPackageBoundaryPlugin(");
+  const runtimeLoaderEnd = runtimeLoaderAt < 0 ? -1 : boundarySrc.indexOf("function ", runtimeLoaderAt + 1);
+  const runtimeLoaderSrc = runtimeLoaderAt < 0 ? "" : boundarySrc.slice(runtimeLoaderAt, runtimeLoaderEnd < 0 ? undefined : runtimeLoaderEnd);
+  const boundaryCalls = boundarySrc.split("__oeResolvesThroughInstalledPackage(").length - 1;
+  ok(
+    boundarySrc.includes("function __oeResolvesThroughInstalledPackage(") &&
+      boundaryCalls === 2 &&
+      /if\(isNodeModulesPath\([A-Za-z_$][A-Za-z_$0-9]*\.id\)\|\|__oeResolvesThroughInstalledPackage\(/.test(runtimeLoaderSrc),
+    `boundary: ${where} carries patch part 10 (OPE-2276, __oeResolvesThroughInstalledPackage, defined once and called ONLY from createRuntimeLoaderPackageBoundaryPlugin's node_modules route; found ${boundaryCalls} occurrence(s) of the call shape, want 2: the definition and one call). An unpatched copy makes a cold \`eve build\` evaluate the whole @open-everywhere graph once per authored file (31 evaluations on eve 0.54.3, about 140 s against 48 s, OPE-2276). A second call site, in the GENERATION plugin, would drop dynamic-tool callback stamps (OPE-2270)`,
+  );
+  ok(
+    !boundarySrc.includes("globalThis.__oe"),
+    `boundary: ${where}/${AUTHORED_PACKAGE_BOUNDARY} plants NO runtime marker — part 10 changes only eve's CLI-side evaluation of authored files, which the deployed server never runs, so its absence is not a reason for core to refuse a boot. A marker here needs an EVE_PATCH_PARTS row, and that row would turn a slow build into a refused wake`,
   );
   for (const part of EVE_PATCH_PARTS) {
     const carrierFile = join(eveDir, part.carrier);

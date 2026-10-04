@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let passed = 0;
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-routine-permission-card-"));
@@ -788,5 +789,5 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
   ok((await store.getPendingAction(ORG, ordinary.id))?.status === "pending", "🔴 §reap: and an ordinary pr.open card is still pending — the reap reads one kind and touches no other");
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`✓ routine permission card: ${passed} assertions passed`);

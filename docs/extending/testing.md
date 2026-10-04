@@ -35,9 +35,24 @@ exits non-zero on the first failure. Two steps put a new one on the gate:
 
 1. Add `"test:<name>": "NODE_NO_WARNINGS=1 tsx scripts/<name>-test.ts"` to the package's
    `package.json`.
-2. Append `&& npm run test:<name>` to that package's `test:chain` script.
+2. Append one line, `test:<name>`, to that package's `test-chain.txt` (beside its `package.json`).
 
-That is all. `npm test` picks the suite up from `test:chain` — no other list names it.
+That is all. `npm test` picks the suite up from `test-chain.txt` — no other list names it. Never edit
+the `test:chain` script itself: it is a fixed command that runs `scripts/chain/run-chain.ts` over the
+list.
+
+**Why a list file (OPE-2286).** `test:chain` used to be one `&&` line that named every leg. Two
+branches that each added a leg conflicted on that line, and each conflict cost a merge and a full
+re-prove. Now each leg is one line, and `.gitattributes` gives every `test-chain.txt` the built-in
+`merge=union` driver. When two branches each append a line at the same place, `git merge` keeps both
+lines instead of a conflict. Union has two failure shapes, and a gate refuses each one:
+
+- **A duplicate.** Two branches add the same leg at different places, and the merge keeps both
+  lines. `lint:script-chain` refuses the duplicate before any suite runs. (The same line at the same
+  place merges to one line.)
+- **A leg that comes back.** One side deleted a leg, and the merge keeps it. `lint:script-chain`
+  refuses it when its script is gone. When the script stays and the leg is declared off-chain, the
+  `scripts/chain/coverage.spec.ts` parity arms refuse it inside `test:suites`.
 
 **Driving the behaviour settings from a test.** `resetSettingsForTest()` drops the registered
 overrides back to the shipped defaults, so a fresh test never inherits another's posture.
@@ -46,22 +61,22 @@ varying another. Both are bootstrap seams: runtime code always reads the resolve
 `getSettings()`, and a test that reaches for the schema directly is reading a different store from the
 one the running agent resolves through.
 
-**How the tier runs.** Each package keeps its chain string as `test:chain`, and `npm run
-test:chain` still walks it serially, one `npm run` at a time. `npm test` does not: its last leg,
-`test:suites`, hands every package's chain to ONE vitest run
+**How the tier runs.** Each package keeps its chain as `test-chain.txt`, and `npm run test:chain`
+walks it serially, one `npm run` at a time, and stops at the first red. `npm test` does not: its
+last leg, `test:suites`, hands every package's chain to ONE vitest run
 (`vitest.chain.config.ts`, `scripts/chain/`) which spreads the ~360 workspace suites over a pool of
 forked workers. Batching cut the deterministic gate from 619 s to 166 s (measured 2026-08-17,
 OPE-703); most of what it removed was `npm run` process spawn, at ~0.54 s a leg.
 
-The root package.json keeps its own `test:chain` the same way (~90 legs — config lints, roster,
+The root package keeps its own `test-chain.txt` the same way (~90 legs — config lints, roster,
 boot, deploy-ops, per-surface script tests). `npm test` used to walk those serially before ever
 reaching `test:suites`; now `test:suites` batches them too, alongside the workspace legs, ~454
 suites total (measured 2026-08-18, OPE-709). The root `test` script keeps only `lint:script-chain`
 (the fail-fast resolver, which must run before the batched pool exists) and the provider-discord
-`test --workspace` echo outside the batched pool — everything else routes through root
-`test:chain`. A root-level script test joins the same way a workspace one does: add
-`"test:<name>"` to the root `package.json`, then append `&& npm run test:<name>` to the root
-`test:chain` script.
+`test --workspace` echo outside the batched pool — everything else routes through the root
+`test-chain.txt`. A root-level script test joins the same way a workspace one does: add
+`"test:<name>"` to the root `package.json`, then append one line, `test:<name>`, to the root
+`test-chain.txt`.
 
 **Every suite still runs alone.** `npm run test:<name> --workspace <pkg>` is unchanged, and it is
 the right way to reproduce a red — the batched runner names each failure by package and script for
@@ -73,6 +88,21 @@ plane, its package as cwd, and a restored `process.env`. It does NOT undo a file
 wrote outside a temp dir, or a fixture it left in a shared database. A suite that passes alone and
 fails in a shard has an order dependence — that is a real defect in the suite, not a batching
 problem.
+
+**Remove a temp dir that holds a store with `removeTempDir` (OPE-2212).** The SQLite stores keep
+their database file open for the life of the process. Linux deletes an open file, but Windows does
+not: a suite that points `OE_SQLITE_PATH` into its temp dir and then calls `rmSync` on that dir
+fails with `EPERM` after its assertions pass. Call `await removeTempDir(dir)` from
+`packages/core/scripts/_temp-dir.ts` instead. On Windows it closes each store handle that is open
+inside `dir` and then removes `dir` with retries. On every other host it is the same `rmSync` call.
+A root suite imports the same file. The adapters, GitHub and Teams packages carry their own copy in
+`scripts/_temp-dir.ts`, because the boundary lock lets them reach core only through the
+adapter-api barrel.
+
+**Spawn npm, npx and tsx through `scripts/npm-command.ts` (OPE-2212).** On Windows `npm` and `npx`
+are `.cmd` shims and `node_modules/.bin/tsx` is a shell script, and Node spawns neither without a
+shell. `npmCommand`, `npxCommand` and `tsxCommand` return the plain command off Windows and the
+tool's own JS entry, run with the current Node, on Windows.
 
 **And write it so it does not care what the HOST exported (OPE-1120).** A suite that reads an
 environment variable it did not set answers to the machine, not to the code — green on a laptop, red
@@ -154,6 +184,94 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
   red.
   `tests/integration/tasks/straggler-leg-isolation.test.ts` drives it, and
   `scripts/scripted-wake-ownership-test.ts` pins the rule offline.
+- **The TIER BARRIER separates tests, and since OPE-2265 its quiet window is CONDITIONAL.**
+  `harness.ts`'s `drainOutstandingSettlements` runs in the shared `afterEach`: it registers a closing
+  drain and waits for the audit log to go quiet, so a settlement turn a test left behind is answered
+  and closed before the next test registers anything. **It used to wait 1 500 ms after every test in a
+  file that had booted.** Measured on a 4-core 13 680 MB cloud sandbox, on `main`, the
+  whole tier at one worker: **265 barriers, 425.1 s, mean 1 604 ms each — and 245 of the 265 saw no
+  settlement row at all.** That is **27.3 % of the tier's 1 558.9 s of test wall clock** spent on a
+  window that almost never had anything to catch. **After the change, same box, same tier, at one
+  worker: 291.2 s and 291.3 s over 270 barriers across two runs — 114 and 113 of the 270 on the short
+  arm at a mean of ~300 ms, and 156 and 157 on the full arm at a mean of 1 637–1 647 ms, unchanged.**
+  So the barrier's own cost fell 425.1 s → 291.2 s: **133.9 s, or 8.6 % of the BEFORE tier's
+  1 558.9 s**, and that is this lever's own measured size.
+  - ⚠️ **The tier wall fell further, and it must not be read as this lever.** One worker went
+    1 558.9 s → **1 345.7 s / 1 341.9 s** (13.7 % / 13.9 %) — about 75 s more than the barrier
+    produced. L4's shorter `turn.cancelled` branch accounts for at most 8 s of that, on one test and
+    one fire; the rest is this box's run-to-run spread, measured **directly** at 41.5 s between two
+    whole-tier pairs whose barrier cost and 79/191 split were identical. The BEFORE tier is a single
+    run, so a tier-level delta cannot size a 134 s lever to better than that spread. OPE-2244's
+    12–14 % estimate for this lever is neither confirmed nor refuted by it; **8.6 %** is what this
+    change can claim.
+  - ⚠️ **42 % of barriers shorten, not all of them.** A turn is OWED after 58 % of this tier's tests,
+    because most of them end a turn in bare prose and the host re-drives that once. 🔴 **What the full
+    window actually catches, counted over four whole-tier runs on this head** (two at one worker, two
+    at four): of each run's ~157 full-arm barriers, **19, 18, 18 and 19** observed a settlement row
+    land and extended past the window's floor; the other ~138 waited and saw nothing. Of the **453**
+    short-arm barriers across those runs, **not one** saw a row. So the full arm earns its window
+    about one time in eight, and shortening the rest would mean betting on OPE-2240's fence to absorb
+    a re-drive instead of draining it, which is a different and larger change.
+  - **What decides the window is a store read, not the fixture.** `barrierDispatchWitness` asks
+    whether this test left a turn OWED to it, and reads the two mechanisms that leave a row at the
+    DISPATCH, before the turn they owe can be served: `delegation.task_started` (a worker was
+    dispatched, `hooks/spawn-taint.ts`) and a `turn.supervisor_prose_dropped` row the turn had **not**
+    already answered through the `reply` tool (a corrective re-drive is owed, `channels/unified.ts`,
+    which AWAITS that append before it builds the re-injection). A test with neither waits **250 ms**;
+    a test with either waits the full **1 500 ms**, unchanged. A settlement row arriving, or the
+    witness firing on a later poll, restores the full window for the rest of that barrier.
+  - ⚠️ **It is not an exhaustive read of the host's internal dispatches.** `channels/unified.ts`
+    enumerates five: a task spawn, a completion wake, an approval-decision wake, the auto-redrive, and
+    a routine fire. The completion wake is the task spawn's other edge, so three of the five are
+    covered; the **approval-decision wake** and the **routine fire** leave no row this witness reads,
+    and both are driven in this tier. What stands behind the short arm for those two is the loop's own
+    poll: it watches `unified.task_wake`, `reply.no_reply` and `reply.post`, so a straggler of any
+    class that has already written one of those restores the full window whatever the witness said.
+    The residual is one shape — a straggler whose dispatch left no witness row **and** which has
+    written no row of its own by the second poll. Over 453 short-arm barriers in four whole-tier runs,
+    none has been measured. 🔴 **And for both classes there is more than a rate, though both arguments
+    are about TODAY'S TIER rather than about the harness** — a new `schedules/` or `approvals/` file is
+    what has to re-check them. **A routine fire is never scheduled here**: the tier runs no cron timer,
+    so every fire is started synchronously by the test that calls `runRoutineDispatchTick()` or
+    `runScheduleTask()`. A fire's own turn can still outlive that test, and then the two instruments
+    apply. **An approval-decision wake has no onward barrier today**: `approvals/decision-wake.test.ts`
+    holds two tests, the first being the control that writes no wake row, and the one that wakes the
+    window is the file's last.
+  - 🔴 **It still takes TWO readings of a quiet store.** The short window is one poll interval, never
+    zero: the loop polls, finds nothing, sleeps, polls again, and only then returns. One reading
+    cannot tell "nothing was dispatched" from "nothing has landed yet", which is the distinction the
+    window exists for, and an exit on the first empty poll would reopen OPE-1982's bleed.
+  - 🔴 **The floor cursor HOLDS while a delegation is still open**, and that is a correctness rule
+    rather than a cost one. The witness reads the slice since the previous barrier's own cursor. If
+    that cursor advanced unconditionally, a test that dispatched a worker which has not settled would
+    hand the NEXT barrier an empty slice — "not owed" — and the next barrier would shorten over a
+    settlement turn that is still owed. So the advance waits until a `delegation.task_settled` or
+    `delegation.task_failed` row **naming that same task id** joins the spawn row. A dispatch a test
+    abandons pins the floor for the rest of the file, and every later barrier then pays the full
+    window. 🔴 **The join is on the id and never on a count.** `opened > closed` looks conservative
+    and is not: a FAILED settlement writes both close rows for one task, the `result` failure edge
+    writes one naming no task at all, and an unmatched close arrives whenever a spawn sits below the
+    floor — each inflation would release the floor over an open dispatch. `bootAgent` seeds the floor
+    from its own cursor read for the same reason: a worker the fork's FIRST test dispatches has to sit
+    inside the first barrier's slice. ⚠️ Two bounds on the pin: it releases one barrier late (the
+    witness is not re-read on the full arm), and a pinned slice past ~1 000 delegation rows loses its
+    oldest rows off the read's page.
+  - **The fail-closed directions are all the slow ones.** No floor cursor yet (a fork's first
+    barrier), an unreadable store, an open delegation, a drop the host refused, a drop with no
+    continuation token, and a drop row with no `replied` field at all — which is live, not
+    hypothetical: `channels/supervisor-complete.ts` writes that action for a ticketing surface with no
+    such field and no re-drive to owe. Every one of them answers "owed" and pays the full window.
+  - **The witness takes TWO reads, one per row family.** The audit route serves one page ordered
+    newest-first, so a single read could hide the one `delegation.task_started` row behind a page of
+    benign drop rows — the one fail-OPEN direction the function would otherwise have.
+  - **`liveness/settlement-barrier-window.test.ts` pins both arms** — the short window after a test
+    that dispatched nothing, and the full window after one that dispatched a worker. It reads
+    `lastBarrierSpend()`, and because the barrier runs BETWEEN tests the assertion for a given test's
+    barrier lives in the test AFTER it.
+  - **`OE_IT_BARRIER_TRACE=1` prints one line per barrier** — `ms`, `polls`, `rows`, `dispatched`,
+    `window` and the test name — so a before/after per-test cost is two env vars and a `grep`. It is
+    off by default: one line per test is about 270 lines a tier, in a log whose reader is hunting a
+    failure.
 - **A script step can also hold the call open and report its own token counts.**
   `{ delayMs }` keeps one MODEL CALL in flight, which is one of the two ways a turn lives long enough
   for a test to CANCEL it (`tests/integration/liveness/turn-cancel.test.ts`). The other is an `async`
@@ -162,10 +280,23 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
   the step the cancel ABORTS, because a step held at its model call has run no tools.
   🔴 **A cancel does not shorten a `delayMs` hold — call `handle.releaseHolds()` as soon as the hold
   has done its job.** eve carries an abort signal into a real provider call, but the mock-model shape
-  a scripted step answers exposes none, so the hold is a plain timer the fork pays in full. Release
-  it once the `turn.cancel_requested` audit row proves the ingress accepted the stop: the turn is
-  already marked cancelled there, so the released call's answer is discarded exactly as the held
-  one's would have been. `delayMs` is then only the BACKSTOP that bounds a missed release. Assert
+  a scripted step answers exposes none, so the hold is a plain timer the fork pays in full.
+  🔴 **Release it only after `await waitForTurnCancelDelivered(anchor.sessionId)`, never on the
+  `turn.cancel_requested` row alone (OPE-2281).** That row proves the ingress accepted the stop into
+  the session inbox. It does not prove the TURN has it: eve still forwards the cancel to the turn's
+  own cancellation hook, and a probe found that forward still pending when the row appeared in 9 of
+  12 loaded runs. A call released first can let the turn complete. eve then settles the cancel late,
+  with no turn tally (a `turn.cancelled` row with no `ran`), or after the ignored-stop grace (a
+  second, `turn.stop_ignored`, row). The barrier waits for the cancel's `hook_received` event in the
+  fork's workflow store, so the released call's result lands behind it. **Precondition:** hold a
+  step ≥ 1, after a tool step, so the held call runs in the turn workflow. eve's inline first step
+  takes a cancel straight from the session inbox and writes no hook event, so the barrier would
+  time out there.
+  🔴 **A turn that ends in prose with no `reply` call owes a corrective re-drive.** Before the next
+  turn in the same session, call `awaitProseRedriveSettled(cursor, label)` with the turn's handle
+  still registered, then dispose it. `awaitWindowQuiet()` alone is a bounded quiet window, and at 6
+  workers a re-drive outlived it and reached the next turn's script (OPE-2281).
+  `delayMs` is then only the BACKSTOP that bounds a missed release. Assert
   `handle.holdsCutShort()` so a release that stops crossing the seam fails the test instead of
   quietly restoring the full wait (OPE-1029: two files paid 116 s of dead timer on every CI run).
   `{ usage: { inputTokens } }`
@@ -224,13 +355,17 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
   PARALLEL (`fileParallelism: true`). The worker count is **not** a fixed pin:
   `scripts/ci-max-workers.ts` reads `OE_IT_CI_MAX_WORKERS` when it is set; otherwise a process a
   memory cgroup caps below the machine's RAM derives what that cap and the box's CORES fit —
-  `min(cores, floor((cap − 3 072 MB reserve − 1 280 MB base) / 450 MB per worker))`, never below 1 —
-  and then takes the **lower** of that and `HARNESS_CONCURRENCY_CEILING`. A box under no cap keeps
-  **2**. 🔴 **That ceiling is 1 today, and it is not a memory number** — see the next bullet. So a
-  capped sandbox still schedules ONE worker, exactly as before OPE-2229; what changed is that the
-  memory answer is now derived, measured and separately testable
-  (`cgroupMaxWorkersByMemoryAndCores`), ready for the day the ceiling lifts. A booted agent host per worker is what makes this a memory
-  decision, and the measurements behind it are these.
+  `min(floor(cores × 1.5), floor((cap − 3 072 MB reserve − 1 280 MB base) / 450 MB per worker))`,
+  never below 1 — and then takes the **lower** of that and `HARNESS_CONCURRENCY_CEILING`. A box under
+  no cap keeps **2**. 🔴 **That ceiling is 6 today, and it is not a memory number** — it was **1**
+  while the OPE-2197 turn/script race was open, OPE-2265 raised it to 4 once OPE-2240's foreign-wake
+  fence had closed that race's call-bearing half, and OPE-2281 raised it to 6 once the re-drive and
+  cancel-delivery barriers were in (3 of 3 whole-tier runs green at 6 and at 4; 6 was 10.4 % faster).
+  See the next bullet and `scripts/ci-max-workers.ts` for the measurements. So the measured 4-core
+  sandbox now schedules **SIX** workers: a fork is not CPU-bound for its whole life, so the cores
+  count at 1.5 workers each (`CORE_OVERSUBSCRIPTION`, measured on that box only). The ceiling still
+  binds on a box with more than four cores. A booted agent host per worker is
+  what makes this a memory decision, and the measurements behind it are these.
   - **Why a capped box answered 1 until OPE-2229** (OPE-1369): two hosts charged **~10.8 GB
     anon-rss**; inside a cloud sandbox's **~13.3 GiB** memory cgroup the charge went past the limit,
     the kernel killed the run, and vitest printed **no verdict at all**. Do not read an arithmetic
@@ -257,7 +392,7 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
     count other than 1 or 4. A one-worker arm at 6 files charged 1 359 MB against 1 718 MB at 12, so
     the "base" is not independent of the file list either. 🔴 **Memory stopped being the binding constraint; the CORES became it.** Four
     workers returned only **2.44×** on 12 files (225.4 s → 92.4 s) on a 4-core box, so the count is
-    capped at one worker per core even though the memory model would allow about twenty. (The A/B's
+    capped by the cores — one worker per core then, 1.5 per core since OPE-2281 (`CORE_OVERSUBSCRIPTION`) — even though the memory model would allow about twenty. (The A/B's
     own extrapolation stopped at eight workers, ≈7.6 GB — a measured projection rather than this
     model's answer, and the two are different kinds of number.)
   - **The 3 072 MB reserve is absolute, not a fraction of the cap.** What it covers is absolute:
@@ -311,14 +446,39 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
   and 823.5 s) **→ 543 s** (one run), and **6.15 GB** (the mean of 6.3 and 6.0) **→ 1.8 GB**. That is
   ~1.5× wall clock and ~3.4× memory with no concurrency at all. Only the further **1.9×** (2 workers)
   to **2.6×** (3 workers) from parallelism is withheld — both measured against this config's own
-  543.2 s, not against `main`. Raise `HARNESS_CONCURRENCY_CEILING` when OPE-2197 closes, against a
-  re-measurement — never on the memory numbers alone, which is the inference this ticket got wrong.
-  🔴 **OPE-2240 has since closed the CALL-BEARING half of that window** — the foreign-wake fence in
-  the bullet above — and measured the full tier green twice at 4 workers through
-  `OE_IT_CI_MAX_WORKERS=4` (980.9 s / 1002.7 s against 2321.0 s / 2286.7 s at one worker, peak tree
-  RSS 6.9 GB). **The ceiling is still 1, deliberately.** Four runs do not establish a rate, and the
-  decision is this bullet's own: raise it here, against its own re-measurement, not off another
-  ticket's matrix.
+  543.2 s, not against `main`.
+  - 🔴 **THE CEILING WAS RAISED TO 4 BY OPE-2265** (6 since OPE-2281, above) — raised here, against this bullet's own re-measurement,
+    and never on the memory numbers alone, which is the inference OPE-2229 got wrong. Two things
+    closed the mechanism above. **OPE-2240's foreign-wake fence** (the bullet above) refuses to serve
+    a wildcard script a call-bearing step for a parent turn whose wake a different registration
+    already answered, which is the bleed all three red files tripped; it measured the full tier green
+    twice at 4 workers through `OE_IT_CI_MAX_WORKERS=4` (980.9 s / 1002.7 s against 2321.0 s /
+    2286.7 s at one worker, peak tree RSS 6.9 GB). **OPE-2265's conditional barrier** shortens the
+    window only where nothing is owed, so the guard those three files lean on is untouched — every
+    between-leg `awaitWindowQuiet()` call in them still pays the full 1 500 ms, because each leg
+    dispatches a worker inside its own slice of the audit log.
+    **Measured 2026-10-03 on the raising head, the WHOLE tier** (120 files, 277 tests, 4 sequential
+    one-process shards) on the same 4-core 13 680 MB sandbox. Wall is the sum of the four shards' own
+    wall clocks; the build is the prepare step's and sits outside them:
+
+    | run | workers | shell exit | wall (sum of the 4 shards) | peak tree RSS |
+    |---|---|---|---|---|
+    | ① | 1 (`OE_IT_CI_MAX_WORKERS=1`) | 0 | 1 345.7 s | 1.5 GB |
+    | ② | 1 (`OE_IT_CI_MAX_WORKERS=1`) | 0 | 1 341.9 s | 1.5 GB |
+    | ③ | 4 (`OE_IT_CI_MAX_WORKERS=4`) | 0 | 429.1 s | 3.8 GB |
+    | ④ | 4 (**the default**, no override) | 0 | 427.0 s | 3.9 GB |
+
+    277 tests passed in all four and no shard exited non-zero in any of them. Four workers return
+    **3.14×** on the whole tier and peak at **3.9 GB of 13 680 MB** — 29 %, against 1.5 GB at one
+    worker. Run ④ is the one that licenses the constant: it took its count from
+    `integrationMaxWorkers()` with no override at all.
+  - ⚠️ **What the OPE-2265 runs do not establish.** Four green runs across two heads are **not a rate** —
+    OPE-2197's own reproduction was "1 red in 12 single-file runs under CPU load". They say nothing
+    about 2 or 3 workers, nothing about a box with more than 4 cores, and nothing about a tier that
+    grows new multi-leg files. 🔴 **What makes the raise reversible** is that `suite-lock-run.ts`
+    prints `workers=<n>` on every tier line and `OE_IT_CI_MAX_WORKERS=1` outranks the constant: a red
+    that goes away at one worker and returns above one is the ceiling's, not the product's. Lower it in
+    `ci-max-workers.ts`, against a re-measurement, exactly as the raise was made.
 - **The tier SHARDS by default in a sandbox** (OPE-1814). One worker was not enough on its own: a
   single vitest PROCESS grew past the cgroup over the whole tier whatever its worker count — one run
   measured `exit=137` twice on one head, the second time alone at `OE_IT_CI_MAX_WORKERS=1`, and four
@@ -340,6 +500,21 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
   large tier. 🔴 A **targeted** leg (`npm run test:integration -- <file>`) is never sharded and
   never prints that line: it is not the tier, and a line claiming one nobody ran is what the lander
   believes.
+- **One shard per sandbox, for a fan-out** (OPE-2282). `OE_IT_SHARD=k/N npm run test:integration`
+  runs the prepare step, then ONLY shard k of N, and prints ONE line that names the shard:
+  `OE_PROOF sha=<head> suite=test:integration--shard=k/N exit=<code>`. The run is the same
+  `--shard=k/N` pass the full series runs at position k, so N fanned runs schedule the same files as
+  one sequential run. The split is vitest's own and reads only the tier's file list: a sha1 of each
+  root-relative path, sorted, then cut into N runs that differ by at most one file. So one sha plans
+  one split in every CLEAN sandbox: the list is the working tree's, and a stray untracked
+  `*.test.ts` changes it. Each run logs the file count and a digest of the list; nothing compares
+  the digests across runs yet.
+  `npm run test:suite-lock` proves that N single-shard plans cover every tier file exactly once, and
+  checks `shardFiles` against vitest's real sequencer. Only a COMPLETE, all-green series on one sha
+  proves the tier: `deploy:cloud-proof-verify` refuses a partial series, two Ns, or two shas, and a
+  red shard is a `fail` (see [the cloud-proof lane](../deploy/cloud-proof.md)). A bad value, a
+  targeted leg, or an `OE_IT_SHARDS` that names another N exits 2 and runs nothing. With
+  `OE_IT_SHARD` unset the tier runs as before, and its output does not change.
 - **The shard count follows the tier's file count, and no shard builds** (OPE-2050, OPE-2235). A pinned
   count sizes the split against the tier the pin was written for, so the memory margin erodes as the
   tier grows. It did: `SANDBOX_SHARDS = 4` was set at ~85 files and ran at 110, where two of the
@@ -349,8 +524,8 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
   so the count and the scheduled tier are one fact — and divides by `SANDBOX_FILES_PER_SHARD`,
   which OPE-2229 **re-derived from 12 to 32** once the per-file main-process growth the 12 defended
   against was gone. Headroom for that growth at 4 workers inside the measured 13 680 MB cgroup is
-  7 528 MB, and the residual slope is below the measurement's own resolution (589 MB at 6 files
-  against 542 MB at 12); bounding it at ~10 MB per file leaves ~756 files of room. 32 is kept far
+  7 528 MB (6 628 MB at the 6 workers OPE-2281 schedules, by the 450 MB per-worker model), and the residual slope is below the measurement's own resolution (589 MB at 6 files
+  against 542 MB at 12); bounding it at ~10 MB per file leaves ~756 files of room (~662 at 6 workers). 32 is kept far
   inside that bound on purpose, because the arms ran 12 files and never 112 — so today's 112-file
   tier plans on the **floor of 4**, and the cap only starts adding shards past 128 files. A
   count the tree cannot answer falls back to the floor rather than to a guess. There is **no
@@ -395,6 +570,12 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
   default therefore keeps the tier a function of the tree, which is what `docs/deploy/cloud-proof.md` rests
   a run's proof on. `OE_IT_PREPARE_CACHE` takes `local` (the default, stamp only), `remote` (stamp plus the
   restore) or `off` (neither — a real cold build, which is what a floor measurement needs).
+  A second local stamp (OPE-2280), `.oe-it-built.json`, belongs to the root `build` gate:
+  `scripts/eve-build-stamp.ts` runs in `prebuild` and `postbuild` and records the key the gate's `.output`
+  was built from. A prepare step on the same key then skips its own `eve build` (receipt `mode=built`) and
+  still runs the prewarm and the mint, so a proof run builds eve once, not twice. The gate writes the stamp
+  only when the key did not move during the build. The prepare step accepts it only under its own current
+  key, so a keyed edit after the build (committed or not) makes it stale. `off` ignores it too.
   The key is the digest of `git ls-tree -r HEAD` over `agent`, `packages`, `package.json`,
   `package-lock.json`, `patches`, `roster.config.ts`, `roster.lock.json` and `tsconfig.json`, plus eve's
   version, the Node major, the platform and the checkout path (`.output/server/index.mjs` embeds that path
@@ -425,7 +606,10 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
   those checks and not in general. `CAP_FOWNER` stays, and the sweep's own `chmod` needs no
   capability anyway — the test owns the fixture it chmods. A host that cannot drop the capability
   fails the run rather than running the tier unfenced. Every test that
-  depends on this calls `assertWriteBitsBite` first, which fails BY NAME on an unfenced runner. The
+  depends on this calls `assertWriteBitsBite` first, which fails BY NAME on an unfenced runner.
+  Windows has no POSIX write bits at all, so no capability drop can make a fence refuse there.
+  `posixWriteBitsAbsentReason()` names that host, and a unit suite that measures the fence
+  (`memory-root-fence-test.ts`) prints a SKIPPED line with that reason and does not count the leg. The
   earlier remedy was a non-root `runner` user; a cloud sandbox refuses `useradd` and `chown`,
   so it is gone.
 - Two booted hosts can coexist because each
@@ -438,6 +622,47 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
   `SandboxTemplateNotProvisionedError`. Read `tests/integration/fork-app-root.ts` before you change
   anything that resolves a path off `process.cwd()`. Fixed costs are still per FILE — so grow the
   tier by adding tests to existing files, not by adding files.
+- 🔴 **WHICH FILE a new test may join, and the six conditions that decide it** (OPE-2266). The fixed
+  floor above is ~2.4 s of vitest import plus ~2.6 s of `bootAgent` per FILE, measured in
+  OPE-2244 (its evidence branch, not this tree). "Grow existing files" is therefore the rule, but
+  `bootAgent` is one-shot per fork and REFUSES a second boot with different options, so a test may
+  only join a file whose fork it can share. All six must hold, and the FIRST is the one most often
+  mistaken for the whole test:
+  1. **Identical `bootAgent` options.** `{ sharedSqlite: true }` and `{}` are different forks.
+  2. **No differing `process.env` seam written BEFORE the boot.** `bootAgent` assembles env once, so
+     a `GITHUB_APP_SLUG` or `DISCORD_PUBLIC_KEY` one section publishes is published for every
+     section. Same set, or no set.
+  3. **No differing global `fetch` stub or tool-execute wrap held for the file.** Both are
+     process-global. A stub a section installs and uninstalls per test composes; one installed at
+     module or `beforeAll` scope changes the host for every other section.
+  4. **No differing file-wide `overrideSettingsForTest` posture.** A per-test override with an
+     `afterThisTest` restore composes; one set for the whole file (`taint.mode`, `window.topology`,
+     `approvals.judgeMode`) is the fork's posture and every section inherits it.
+  5. 🔴 **At most ONE spec may hold a scripted-model handle past its own test, and it goes LAST.**
+     `registerScript` REFUSES a second script for the wildcard key `"*"` while one is live — "two
+     live scripts for one key means a test leaked". A spec that hands its handle to `afterAll`
+     (the `live` + `open` pattern) rather than closing it inside the test therefore makes every
+     LATER section fail at its own `registerScript`, before that section's first assertion. Two such
+     specs cannot share a file at all. A spec that uses `disposeLater`, `afterThisTest` or an
+     explicit `close()` composes freely and needs no ordering. This condition is the one that is
+     invisible until the tier runs: it costs nothing at typecheck and reds four tests at once.
+  6. **And the test must not need a seat with no history.** A shared fork means a shared standing
+     seat, so a later section runs against a seat that has already delegated. Most assertions do not
+     care. One measured counter-example: `tasks/worker-question-answer.test.ts` asserts
+     `requestId.startsWith(`${taskId}:`)` on the question bridge, which is false once an earlier
+     delegation has run in the same fork. A spec like that keeps a file of its own. There is no
+     static test for this one — it is why a fold is proved by running the tier, twice, not by
+     reading the diff. The sharpest MEASURED instance is `taskIdOfDelegation`: it answers the first
+     `agent` receipt in ANY prompt the handle was served, and a prompt is cumulative within a
+     session, so on a seat two sections drive in turn the later section's call answers the EARLIER
+     section's task (`tests/integration/harness.ts`'s own warning, measured in OPE-2174 — the wait
+     keyed on it burned its ceiling). A spec that calls `taskIdOfDelegation` can therefore only ever
+     be a file's FIRST delegating section.
+  Sharing a fork also means sharing the standing SEAT when two sections wake one channel. That is
+  ordinary — `approvals/clicker-floor.test.ts` runs nine tests and `memory/memory.test.ts` six
+  against one seat — but it means each test must take its own `auditCursor()` and join on its own
+  ids rather than on "the only row of this action". What a fold costs is blast radius: one failed
+  boot reds every section. Test NAMES are what keep that diagnosable, so a fold never renames one.
 - **Every temp directory the tier makes is MARKED with its owner's PID, and swept** (OPE-1165) —
   fork app roots, state directories, and the sweep suites' own scratch trees alike.
   A fork's app root and its **state directory** (the `OE_PGLITE_DIR` / `OE_MEMORY_DIR` /

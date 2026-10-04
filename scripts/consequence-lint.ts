@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, dirname, relative, sep } from "node:path";
+import { join, dirname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   checkActionKindCoverage,
@@ -19,6 +19,7 @@ import { readAuthoredTools, readFrameworkToolNames, readSubagentToolNames } from
 import { actionKind, registeredActionKinds } from "@open-everywhere/core/agent/approvals/actions.js";
 import "@open-everywhere/core/agent/approvals/flow.js";
 import "@open-everywhere/core/agent/approvals/session-checkpoint.js";
+import { posixRelative } from "./posix-path.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const tools = readAuthoredTools(root);
@@ -86,15 +87,15 @@ if (approvalFiles.length === 0) {
   console.error("✗ consequence-lint: found no non-tool sources to scan for eve-native approvals — refusing to report clean against an unread tree");
   process.exit(1);
 }
-const approvalSites: ApprovalSite[] = approvalFiles.flatMap((f) => findEveApprovalSites(relative(root, f), readFileSync(f, "utf8")));
+const approvalSites: ApprovalSite[] = approvalFiles.flatMap((f) => findEveApprovalSites(posixRelative(root, f), readFileSync(f, "utf8")));
 problems.push(...checkApprovalSites(approvalSites));
 
 const registrations: ActionKindRegistration[] = agentFiles.flatMap((f) =>
-  findActionKindRegistrations(relative(root, f), readFileSync(f, "utf8")),
+  findActionKindRegistrations(posixRelative(root, f), readFileSync(f, "utf8")),
 );
 problems.push(...checkActionKindCoverage(registrations, kinds));
 
-const writeSites: PostTurnWriteSite[] = agentFiles.flatMap((f) => findPostTurnWriteSites(relative(root, f), readFileSync(f, "utf8")));
+const writeSites: PostTurnWriteSite[] = agentFiles.flatMap((f) => findPostTurnWriteSites(posixRelative(root, f), readFileSync(f, "utf8")));
 if (writeSites.length === 0) {
   console.error("✗ consequence-lint: found no post-turn write sites in the agent tree — refusing to report clean against a scan that read nothing");
   process.exit(1);

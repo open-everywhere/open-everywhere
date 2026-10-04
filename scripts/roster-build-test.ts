@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -111,10 +111,21 @@ write(
 }
 
 {
+  const golden = join(root, "scripts/goldens/roster-plan.txt");
+  ok(existsSync(golden), "--accept wrote the golden plan");
+  const watched = [golden, join(root, "agent/tools/alpha_tool.ts"), join(root, "agent/lib/providers.generated.ts")];
+  const past = new Date("2020-01-01T00:00:00Z");
+  for (const path of watched) utimesSync(path, past, past);
+  eq(oe().code, 0, "a second build on a built tree succeeds");
+  for (const path of watched) eq(statSync(path).mtimeMs, past.getTime(), `…and leaves ${path.slice(root.length + 1)} untouched`);
+}
+
+{
   write("agent/tools/alpha_tool.ts", "export default 'tampered';\n");
   const check = oe("--check");
   eq(check.code, 1, "a hand-edited generated file fails --check");
   ok(check.out.includes("DRIFTED · agent/tools/alpha_tool.ts"), "…naming the exact path");
+  ok(check.out.includes("npm run oe:build"), "…and names the slot-tree fix (the positive control for the overlay-only absence check below)");
   eq(oe().code, 0, "a plain build reconciles it");
   ok(read("agent/tools/alpha_tool.ts").includes("@fixture/alpha/agent/tools/alpha_tool.js"), "…back to the planned content");
 }
@@ -147,6 +158,65 @@ write(
   ok(!none.out.includes("DRIFTED"), "…with no DRIFTED line");
   eq(oe().code, 0, "a plain build writes the tree");
   eq(oe("--check").code, 0, "…and --check passes again");
+}
+
+{
+  const overlays = (...args: string[]): { code: number; out: string } => {
+    try {
+      const out = execFileSync(process.execPath, [TSX_CLI, CLI, "overlays", ...args], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      return { code: 0, out };
+    } catch (err) {
+      const e = err as { status?: number; stdout?: string; stderr?: string };
+      return { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+    }
+  };
+  const GRANTS = "agent/access/grants.generated.ts";
+  const ALL = [
+    GRANTS,
+    "agent/access/credential-bindings.generated.ts",
+    "agent/webhooks/hooks.generated.ts",
+    "agent/memory/config/agents.generated.ts",
+    "agent/identity/groups.generated.ts",
+  ];
+
+  eq(oe("--check").code, 0, "overlays: `oe build --check` passes on a tree with no overlays");
+  const missing = overlays("check");
+  eq(missing.code, 1, "overlays: `oe overlays check` fails on a tree with no overlays");
+  ok(ALL.every((p) => missing.out.includes(`${p} is MISSING`)), "…naming all five as MISSING");
+  eq(overlays("bogus").code, 2, "overlays: an unknown action exits 2");
+
+  const norm = overlays("normalize");
+  eq(norm.code, 0, "overlays: `oe overlays normalize` writes the five canonical empty overlays");
+  ok(ALL.every((p) => existsSync(join(root, p))), "…and every one is on disk");
+  const canonical = read(GRANTS);
+  ok(canonical.includes("npx oe overlays normalize") && !canonical.includes("npm run overlays:normalize"), "…and its header names the `oe` command, not a repository-only script");
+  eq(overlays("check").code, 0, "overlays: `oe overlays check` passes on the canonical tree");
+  ok(overlays("normalize").out.includes("already canonical"), "overlays: normalize is a no-op on a canonical tree");
+  eq(oe("--check").code, 0, "overlays: `oe build --check` passes on the canonical tree");
+
+  write(GRANTS, `${canonical}console.log(process.env.SLACK_BOT_TOKEN);\n`);
+  const coded = oe("--check");
+  eq(coded.code, 1, "🔴 overlays: a hand-added line of code makes `oe build --check` RED");
+  ok(coded.out.includes(`OVERLAY · ${GRANTS}`), "…naming the overlay");
+  ok(coded.out.includes("npx oe overlays normalize"), "…and naming the `oe` recovery command");
+  ok(!coded.out.includes("npm run oe:build"), "…and does not send an overlay-only red to `oe build`, which never writes an overlay");
+  eq(overlays("check").code, 1, "🔴 overlays: …and `oe overlays check` RED");
+  eq(overlays("normalize").code, 1, "🔴 overlays: normalize REFUSES a code-bearing file");
+  ok(read(GRANTS).includes("console.log"), "…and leaves it untouched");
+
+  write(GRANTS, canonical.replace('  "bundles"', '    "bundles"'));
+  eq(oe("--check").code, 1, "overlays: a re-indented body makes `oe build --check` RED");
+  eq(overlays("normalize").code, 0, "overlays: normalize repairs data-only drift");
+  eq(read(GRANTS), canonical, "…back to the canonical bytes");
+
+  const older = canonical.replace(/\n\/\/ To change it by hand[^\n]*\n/, "\n// To change it by hand, edit only the data below and keep the layout exactly as emitted.\n");
+  ok(older !== canonical, "overlays: (fixture) the older-header edit changed the bytes");
+  write(GRANTS, older);
+  const olderCheck = oe("--check");
+  eq(olderCheck.code, 0, "overlays: an older header passes `oe build --check` (a header change is not a breaking upgrade)");
+  ok(olderCheck.out.includes(`${GRANTS}: older header text`), "…and says the header is older");
+  eq(overlays("normalize").code, 0, "overlays: normalize refreshes the older header");
+  eq(read(GRANTS), canonical, "…to the current words");
 }
 
 {

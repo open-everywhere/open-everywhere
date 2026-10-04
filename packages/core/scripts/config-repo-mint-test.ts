@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
-import { readFileSync, readdirSync, rmSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { toPosixPath } from "../../../scripts/posix-path.js";
 import { tmpdir } from "node:os";
 import type { AccessRequestsConfig } from "../agent/access/config.js";
 import { withPatchedFetch } from "./_fetch-test-utils.js";
 import { fileURLToPath } from "node:url";
+import { removeTempDir } from "./_temp-dir.js";
 
 const dir = join(tmpdir(), `open-everywhere-config-repo-mint-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 
 let n = 0;
@@ -231,7 +233,7 @@ console.log("\n4. the source fence — one owner for the write set, and no impli
       e.name === "dist" || e.name === "node_modules" ? [] : e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : [],
     );
   const sources = ["packages/core/agent", "packages/providers", "packages/adapters", "agent"].flatMap((d) => walk(join(repoRoot, d)));
-  const rel = (p: string): string => p.slice(repoRoot.length);
+  const rel = (p: string): string => toPosixPath(p.slice(repoRoot.length));
   ok(sources.length > 100, "fence: the walk found the agent tree (a walk that found nothing would pass every assertion below)");
   ok(sources.some((p) => rel(p) === "packages/core/agent/scm/write-token.ts"), "fence: …and it reaches the resolver the rules below are about");
   for (const d of ["packages/adapters/", "agent/"]) {
@@ -309,5 +311,5 @@ console.log("\n4. the source fence — one owner for the write set, and no impli
   ok(callers.length === 5, `fence: …and the tree still holds FIVE callers (found ${callers.length}) — the "five" this suite's prose claims is measured, not asserted by hand`);
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`\n✓ config-repo mint (OPE-1823): ${n} assertions passed (all five config-repo bot-PR flows mint one narrow body through one resolver)\n`);

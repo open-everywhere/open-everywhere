@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/adapters",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Open Everywhere adapters — the reference Vercel-hosted backends: AI Gateway models and pricing, Sandbox, Blob, Neon, OpenTelemetry, AWS and Okta.",
   "keywords": [
     "agent",
@@ -171,7 +171,7 @@
     "prepack": "npm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "npm run test:chain",
-    "test:chain": "npm run test:instrumentation && npm run test:sandbox-lifecycle && npm run test:sandbox-guard && npm run test:sandbox-extend && npm run test:model-gateway && npm run test:gateway-probe && npm run test:dream-judge-gateway && npm run test:approval-judge-gateway && npm run test:gateway-vision && npm run test:oe-oauth && npm run test:oe-oauth-static && npm run test:agent-browser && npm run test:neon-pool-error && npm run test:aws-adapter && npm run test:aws-sso && npm run test:okta-directory",
+    "test:chain": "tsx ../../scripts/chain/run-chain.ts",
     "test:aws-adapter": "tsx scripts/aws-adapter-test.ts",
     "test:okta-directory": "tsx scripts/okta-directory-test.ts",
     "test:aws-sso": "tsx scripts/aws-sso-test.ts",
@@ -192,7 +192,7 @@
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
-    "@open-everywhere/core": "0.1.4",
+    "@open-everywhere/core": "0.1.5",
     "@vercel/blob": "^2.6.1",
     "@vercel/otel": "^2.1.3",
     "@vercel/sandbox": "^3.2.1",

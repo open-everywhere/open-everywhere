@@ -1,4 +1,5 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
+import { toPosixPath } from "./posix-path.js";
 import { join } from "node:path";
 
 const ROOTS = ["agent", "packages", "scripts"];
@@ -19,7 +20,7 @@ function tsFilesUnder(dir: string): string[] {
       if (SKIP_DIRS.has(entry)) continue;
       out.push(...tsFilesUnder(p));
     } else if (entry.endsWith(".ts") && !entry.endsWith(".d.ts")) {
-      out.push(p);
+      out.push(toPosixPath(p));
     }
   }
   return out;

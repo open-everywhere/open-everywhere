@@ -1,8 +1,9 @@
 import { createRequire } from "node:module";
-import { mkdtempSync, rmSync, readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { removeTempDir } from "./_temp-dir.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-request-claim-guard-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
@@ -304,5 +305,5 @@ ok(/raised IN THE CHANNEL and never from a DM/.test(toolSrc), "EXPOSURE: and nam
 ok(/only a channel-scope ask has to move to the channel/.test(toolSrc), "EXPOSURE: only the CHANNEL universe is said to move");
 ok(!/is the only universe a DM can widen/.test(toolSrc), "EXPOSURE: and the description does not deny the group ask the code admits");
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`request claim guard: ${passed} assertions passed`);

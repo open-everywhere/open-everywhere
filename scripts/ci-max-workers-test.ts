@@ -1,6 +1,7 @@
 import {
   CGROUP_FLOOR_MAX_WORKERS,
   CGROUP_RESERVE_MB,
+  CORE_OVERSUBSCRIPTION,
   HARNESS_CONCURRENCY_CEILING,
   UNCAPPED_MAX_WORKERS,
   WORKER_BASE_MB,
@@ -62,11 +63,11 @@ const sandboxProbe = probe(
 ok(cgroupMemoryCapBytes(sandboxProbe) === 14327709696, "the sandbox's own memory cgroup limit is found, not the machine's RAM");
 ok(
   integrationMaxWorkers({}, sandboxProbe) === HARNESS_CONCURRENCY_CEILING,
-  "🔴 OPE-2229: the measured sandbox SCHEDULES the harness ceiling, not the memory answer — 4 concurrent agent hosts red the tier on the OPE-2197 turn/script race (2 of 2 runs, 3 different files), and clean `main` is green at 1 worker, so the raise is the trigger",
+  "🔴 OPE-2229/OPE-2265/OPE-2281: the measured sandbox SCHEDULES the harness ceiling — 6 since OPE-2281, the same number memory and cores (at 1.5 workers per core) answer there",
 );
 ok(
-  cgroupMaxWorkersByMemoryAndCores(14327709696, 4) === 4,
-  "🔴 …and MEMORY AND CORES would allow 4 there. This row is what the ceiling withholds, kept measurable so OPE-2197's fix has a number to re-measure against (A/B: 5 833 MB of 13 680, no OOM)",
+  cgroupMaxWorkersByMemoryAndCores(14327709696, 4) === 6,
+  "🔴 …and MEMORY AND CORES allow 6 there too (4 cores × 1.5), so on THIS box the ceiling withholds nothing. Kept as its own row because the two halves are different numbers on a box with more cores, and only this one tracks memory (A/B: 5 833 MB of 13 680, no OOM)",
 );
 
 const sharedBoxProbe = probe(
@@ -107,23 +108,28 @@ ok(integrationMaxWorkers({ OE_IT_CI_MAX_WORKERS: "bogus" }, sandboxProbe) === HA
 ok(integrationMaxWorkers({ OE_IT_CI_MAX_WORKERS: "4" }, sandboxProbe) === 4, "OE_IT_CI_MAX_WORKERS=4 overrides the harness ceiling — that is how OPE-2197's fix gets re-measured");
 
 ok(
-  HARNESS_CONCURRENCY_CEILING === 1,
-  "🔴 the harness concurrency ceiling is 1 — 4 workers red the tier in 2 of 2 runs on the OPE-2197 turn/script race (measured 2026-10-03, shard 1, 3 different files), 2 and 3 workers each red 1 of 2, and clean `main` is green at 1. Raise it only against a re-measurement, and restate that measurement here",
+  HARNESS_CONCURRENCY_CEILING === 6,
+  "🔴 the harness concurrency ceiling is 6 (OPE-2281): after the re-drive and cancel-delivery barriers, the whole tier ran 3 of 3 green at 6 workers and at 4, alternating on one head, and 6 was 10.4 % faster (shard sums 385.4 s against 430.0 s). Before that it was 4 (OPE-2265). It was 1 because 4 workers red the tier in 2 of 2 runs on the OPE-2197 turn/script race (OPE-2229, 2026-10-03, shard 1, 3 different files). OPE-2240's foreign-wake fence closed the call-bearing half of that window, and the whole tier then ran green FOUR times at 4 workers — twice on OPE-2240's head and twice on OPE-2265's. Four runs are not a rate: `OE_IT_CI_MAX_WORKERS=1` outranks this constant and is the bisect. Change it only against a re-measurement, and restate that measurement here",
 );
 
 const sandboxCapMb = 14327709696 / MB;
 const fitsInSandbox = Math.floor((sandboxCapMb - CGROUP_RESERVE_MB - WORKER_BASE_MB) / WORKER_MARGINAL_MB);
 ok(fitsInSandbox >= 8, `the measured sandbox cap fits far more workers than it has cores (${String(fitsInSandbox)}), which is why the cores are what bind it`);
-ok(cgroupMaxWorkersByMemoryAndCores(14327709696, 4) === 4, "🔴 CORES BIND THE SANDBOX by memory and cores: memory fits 20 workers and the box has 4, so 4 — the A/B measured 4 returning only 2.44× on 12 files, so a 5th would buy nothing");
-ok(cgroupMaxWorkersByMemoryAndCores(14327709696, 2) === 2, "…and a 2-core box with the same cap takes 2 — the minimum is a real minimum, not a cap read twice");
-ok(cgroupMaxWorkersByMemoryAndCores(14327709696, 8) === 8, "…and 8 cores under the same cap take 8, which the A/B's own extrapolation put at ≈7.6 GB of 13.7 GB");
+ok(CORE_OVERSUBSCRIPTION === 1.5, "🔴 the cores count at 1.5 workers each (OPE-2281) — pinned by value, so a change has to restate the measurement in ci-max-workers.ts");
+ok(cgroupMaxWorkersByMemoryAndCores(14327709696, 4) === 6, "🔴 CORES BIND THE SANDBOX by memory and cores: memory fits 20 workers and the box has 4 cores, so 6 — OPE-2281 measured 6 against 4 on the whole tier at −10.4 %");
+ok(cgroupMaxWorkersByMemoryAndCores(14327709696, 2) === 3, "…and a 2-core box with the same cap takes 3 — the minimum is a real minimum, not a cap read twice");
+ok(cgroupMaxWorkersByMemoryAndCores(14327709696, 8) === 12, "…and 8 cores under the same cap take 12 by memory and cores (the ceiling then schedules 6)");
+ok(cgroupMaxWorkersByMemoryAndCores(14327709696, 3) === 4, "…and 3 cores take 4 — the product FLOORS (4.5 → 4), so the cores half never answers a fractional worker");
 for (const cores of [2, 4, 8, 16]) {
-  ok(cgroupMaxWorkers(14327709696, cores) === HARNESS_CONCURRENCY_CEILING, `the scheduled count holds at the harness ceiling whatever the cores — ${cores} cores gave ${cgroupMaxWorkers(14327709696, cores)}`);
+  const want = Math.min(cgroupMaxWorkersByMemoryAndCores(14327709696, cores), HARNESS_CONCURRENCY_CEILING);
+  ok(cgroupMaxWorkers(14327709696, cores) === want, `the scheduled count is min(memory-and-cores, ceiling) — ${cores} cores wanted ${want} and gave ${cgroupMaxWorkers(14327709696, cores)}`);
 }
+ok(cgroupMaxWorkers(14327709696, 2) === 3, "🔴 the CORES bind below the ceiling — a 2-core box under this cap schedules 3, not 6");
+ok(cgroupMaxWorkers(14327709696, 16) === HARNESS_CONCURRENCY_CEILING, "🔴 the CEILING binds above the cores — a 16-core box under this cap schedules 6, which is what the ceiling still withholds");
 
 ok(
   cgroupMaxWorkersByMemoryAndCores(Math.round((CGROUP_RESERVE_MB + WORKER_BASE_MB + 2 * WORKER_MARGINAL_MB) * MB), 4) === 2,
-  "🔴 MEMORY BINDS A SMALL CGROUP: a cap holding exactly the reserve, the base and two workers' budget answers 2, not the 4 cores",
+  "🔴 MEMORY BINDS A SMALL CGROUP: a cap holding exactly the reserve, the base and two workers' budget answers 2, not the 6 the 4 cores allow",
 );
 ok(
   cgroupMaxWorkersByMemoryAndCores(Math.round((CGROUP_RESERVE_MB + WORKER_BASE_MB + 2 * WORKER_MARGINAL_MB) * MB) - 1, 4) === 1,
@@ -136,8 +142,15 @@ ok(cgroupMaxWorkersByMemoryAndCores(14327709696, -4) === CGROUP_FLOOR_MAX_WORKER
 ok(cgroupMaxWorkersByMemoryAndCores(14327709696, 2.5) === CGROUP_FLOOR_MAX_WORKERS, "a non-integer core count takes the floor rather than producing a fractional worker count");
 ok(cgroupMaxWorkersByMemoryAndCores(14327709696, Number.NaN) === CGROUP_FLOOR_MAX_WORKERS, "a NaN core count takes the floor, never becomes NaN workers");
 ok(cgroupMaxWorkersByMemoryAndCores(Number.NaN, 4) === CGROUP_FLOOR_MAX_WORKERS, "a NaN cap takes the floor");
+ok(cgroupMaxWorkers(256 * MB, 4) === CGROUP_FLOOR_MAX_WORKERS, "a cgroup smaller than the reserve schedules the floor");
+ok(cgroupMaxWorkers(Number.NaN, 4) === CGROUP_FLOOR_MAX_WORKERS, "a NaN cap schedules the floor");
+ok(cgroupMaxWorkers(14327709696, Number.NaN) === CGROUP_FLOOR_MAX_WORKERS, "a NaN core count schedules the floor");
 for (const [cap, cores] of [[14327709696, 4], [256 * MB, 4], [Number.NaN, 4], [14327709696, Number.NaN]] as [number, number][]) {
-  ok(cgroupMaxWorkers(cap, cores) === CGROUP_FLOOR_MAX_WORKERS, `the scheduled count is a whole worker count for every degenerate input — cap ${String(cap)}, cores ${String(cores)}`);
+  const got = cgroupMaxWorkers(cap, cores);
+  ok(
+    Number.isInteger(got) && got >= CGROUP_FLOOR_MAX_WORKERS && got <= HARNESS_CONCURRENCY_CEILING,
+    `the scheduled count is a whole worker count at or under the ceiling for every degenerate input — cap ${String(cap)}, cores ${String(cores)} gave ${String(got)}`,
+  );
 }
 
 const oneCoreSandbox = probe(
@@ -149,14 +162,15 @@ const oneCoreSandbox = probe(
   16 * GB,
   1,
 );
-ok(cgroupMaxWorkersByMemoryAndCores(14327709696, 1) === 1, "🔴 NEGATIVE CONTROL on the core read: the same cap with ONE core answers 1 — without this row `cpuCount()` could be ignored and the memory-and-cores rows above would still pass");
+ok(cgroupMaxWorkersByMemoryAndCores(14327709696, 1) === 1, "🔴 NEGATIVE CONTROL on the core read: the same cap with ONE core answers 1 (1 × 1.5 floors to 1) — without this row `cpuCount()` could be ignored and the memory-and-cores rows above would still pass");
 ok(integrationMaxWorkers({}, oneCoreSandbox) === 1, "a one-core capped sandbox schedules 1, by both the cores and the ceiling");
 ok(integrationMaxWorkers({}, probe({ "/proc/self/cgroup": "0::/\n", "/sys/fs/cgroup/memory.max": String(4 * GB) }, 16 * GB, 4)) === CGROUP_FLOOR_MAX_WORKERS, "🔴 NEGATIVE CONTROL on the memory read: a 4-core box under a 4 GB cap answers 1 — without this row the cores alone could decide and a small cgroup would be OOM-killed");
 
 console.log(
   `✓ ci-max-workers: ${passed} assertions passed (unset/blank falls back to the ceiling read, valid integers pass through, ` +
     `every malformed shape — 0, negative, non-integer, non-numeric — is rejected rather than coerced; a memory cgroup ` +
-    `capping the process below RAM derives min(cores, floor((cap − ${CGROUP_RESERVE_MB} − ${WORKER_BASE_MB}) / ${WORKER_MARGINAL_MB})) ` +
-    `= 4 on the measured 4-core 13.3 GiB sandbox, then SCHEDULES ${HARNESS_CONCURRENCY_CEILING} because the OPE-2197 turn/script ` +
-    `race reds the tier above that; an explicit OE_IT_CI_MAX_WORKERS still overrides, and an uncapped box answers ${UNCAPPED_MAX_WORKERS}).`,
+    `capping the process below RAM derives min(floor(cores × ${CORE_OVERSUBSCRIPTION}), floor((cap − ${CGROUP_RESERVE_MB} − ${WORKER_BASE_MB}) / ${WORKER_MARGINAL_MB})) ` +
+    `= 6 on the measured 4-core 13.3 GiB sandbox, then takes the lower of that and ` +
+    `HARNESS_CONCURRENCY_CEILING = ${HARNESS_CONCURRENCY_CEILING}, which on that box is also 6 since OPE-2281 settled the ` +
+    `re-drive and cancel-delivery races; an explicit OE_IT_CI_MAX_WORKERS still overrides, and an uncapped box answers ${UNCAPPED_MAX_WORKERS}).`,
 );

@@ -1,8 +1,8 @@
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -14,7 +14,7 @@ function ok(cond: boolean, label: string): void {
 }
 
 const dir = join(tmpdir(), `open-everywhere-triggered-fire-test-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: undefined });
 overrideSettingsForTest({ delegation: { oneshotAgent: false } });
@@ -854,5 +854,5 @@ function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
 }
 
 overrideSettingsForTest({ delegation: { oneshotAgent: false } });
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`✓ triggered-fire-window: ${passed} assertions passed`);

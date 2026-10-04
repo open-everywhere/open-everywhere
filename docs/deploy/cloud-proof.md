@@ -67,22 +67,39 @@ A run whose sandbox cannot hold a whole tier splits it across N one-worker runs 
 `suite=<tier>--shard=k/N`. A COMPLETE, all-green series — every k in 1..N, one N, every shard
 exit 0 — proves the tier itself, and the landing renders it `test:integration=0 (4 shards)`; an
 incomplete series, a mix of two Ns, or one red shard proves nothing about the tier. The rule lives
-in `collapseShardSeries` (`scripts/deploy/cloud-proof-verify-lib.ts`), which the `oe/cloud-proof`
-status description reads. The status
+in `collapseShardSeries` (`scripts/deploy/cloud-proof-verify-lib.ts`). `parseEvidence` reads it
+(OPE-2282): evidence whose shard lines are all green but do not form a complete series, with no line
+for the tier itself, is `unparseable`, so `deploy:cloud-proof-verify` exits 1 and
+`deploy:cloud-proof-post` refuses it. A red shard is a `fail`. The `oe/cloud-proof`
+status description reads the rule too. The status
 description collapses the series for the same reason: four literal shard names cost about 120
 characters, which pushed the description past GitHub's 140-character cap and cut it off mid-name.
 
 Since OPE-1814 the split is no longer hand-made. `npm run test:integration` shards the tier itself
 in a sandbox — `scripts/it-shards.ts` reads `OE_IT_SHARDS`, and with no value plans one shard per
 32 tier files (at least 4) under `CI` or a memory cgroup, and 1 on an uncapped box — runs the
-shards sequentially at one worker, takes the WORST shard's exit code as the tier's, and prints ONE
+shards sequentially, takes the WORST shard's exit code as the tier's, and prints ONE
 `OE_PROOF … suite=test:integration exit=<code>` line after the last shard. Since OPE-2235 NO shard
 builds the target: `suite-lock-run.ts` runs `npm run test:integration:prepare` once, inside the suite
 lock, before the first shard, which is what makes a split fine enough to hold the per-process file
 count flat affordable. A prepare step that fails runs no shard at all and the run reports its exit, so
 the tier's line still carries the exit the run really had. So a run's evidence carries the tier's own line and needs no shard rule at all; the
-`--shard=k/N` names above stay supported for a run that splits the tier by hand. A **targeted** leg
+`--shard=k/N` names above stay supported for a run that splits the tier by hand, and for single-shard
+mode below. A **targeted** leg
 (`npm run test:integration -- <file>`) prints no tier line: it is not the tier.
+
+**Single-shard mode fans the tier out (OPE-2282).** `OE_IT_SHARD=k/N npm run test:integration` runs
+the prepare step, then ONLY the `--shard=k/N` pass the full series runs at position k, and prints ONE
+`OE_PROOF … suite=test:integration--shard=k/N exit=<code>` line in place of the tier's. The
+orchestrator runs the N shards in N sandboxes on one sha and joins their lines with the main run's
+three. That file passes only when the series is complete and green, by the rule above. The split is
+vitest's own: a sha1 of each root-relative path, sorted, then cut into N runs that differ by at most
+one file. It reads nothing but the file list, so one sha plans one split in every clean sandbox (a
+stray untracked test file changes the list; each run logs the list's digest, and nothing compares
+the digests yet).
+`npm run test:suite-lock` proves that N single-shard plans cover every tier file exactly once. A value
+that is not `k/N` with 1 ≤ k ≤ N, a targeted leg, or an `OE_IT_SHARDS` that names another N exits 2
+before the run takes the lock. With `OE_IT_SHARD` unset, nothing changes.
 
 ### The tier proves its own write fences on a root runner
 
@@ -122,7 +139,8 @@ Parses the file into `{ sha, suites: [{ name, exit }], verdict }`, where `verdic
   A narrative claiming success elsewhere in the file changes nothing.
 - **`unparseable`** — no evidence lines found (empty, truncated, or unrelated file), or the
   evidence lines disagree with each other (two different shas, or the same suite reported with two
-  different exit codes). Ambiguous evidence is refused, never guessed at — this can never become a
+  different exit codes), or an all-green shard series is incomplete and the tier has no line of its
+  own (OPE-2282). Ambiguous evidence is refused, never guessed at — this can never become a
   `pass`.
 
 Exits `0` only on `pass`.
@@ -173,7 +191,11 @@ tree AND of a mutable branch, whose only credential is a key blob in the same co
 archive wrote: the trust boundary is push access to that remote. So the remote half is **off by default**
 (`OE_IT_PREPARE_CACHE` is `local` unless a caller says `remote`), which keeps an ordinary tier run a
 function of the tree alone. A run that must be beyond question — a proof run for a deploy — either leaves
-the default or sets `OE_IT_PREPARE_CACHE=off`, which also ignores the local stamp and rebuilds from source.
+the default or sets `OE_IT_PREPARE_CACHE=off`, which also ignores the local stamps and rebuilds from source.
+The default also reuses the `.output` that an earlier `npm run build` built from the same key in this
+checkout (`.oe-it-built.json`, OPE-2280). In a proof run, that build is the `build` gate just before
+the tier. Like the prepare stamp, it carries the hand-run-build residual that `tests/integration/prepare.ts`
+names.
 `tests/integration/prepare-cache.ts` carries the reasoning and the measurements.
 
 **It refuses to post — the status is never written — when:**

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,6 +18,7 @@ import { capResult, maxResultChars } from "../agent/access/result-cap.js";
 import { registerConfig } from "../agent/access/config.js";
 import { untrustedIngestedThisTurn } from "../agent/access/taint-signal.js";
 import type { BindableContext } from "../agent/identity/binding.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -248,5 +249,5 @@ function registerFakeGuarded(entries: Record<string, { mimeType?: string; name?:
   _resetAttachmentPlaneForTest();
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`✓ read-file-upload: ${n} assertions passed (durable cross-process resolve · allowlist/pdf/binary fail-closed · untrusted wrap+defang+taint · size-guarded plane: pre-check reject/happy/unknown/2nd-platform · the reducing arm meets a whole body)`);

@@ -1,0 +1,35 @@
+# The `test:chain` legs of @open-everywhere/provider-notion: one npm script name per line, in run order (OPE-2286).
+# To add a suite, define `test:<name>` in package.json, then append one line here: `test:<name>`.
+# `npm run test:chain` runs the list in order and stops at the first failure. `npm test` runs it
+# batched (scripts/chain/_legs.ts). `.gitattributes` merges this file by union, so two branches that
+# each append a line merge cleanly.
+test:notion
+test:notion-ingress
+test:notion-ingress-drain
+test:notion-supervisor
+test:notion-identity
+test:notion-memory
+test:notion-memory-credential
+test:notion-memory-fence
+test:notion-tool-gate
+test:notion-read-scope
+test:notion-work-search
+test:notion-per-domain-credential
+test:notion-webhook-verifier
+test:notion-event-normalizer
+test:dynamic-replay
+test:notion-ancestry-trust
+test:notion-credential-fence
+test:notion-route-taint
+test:notion-post-arm
+test:notion-read
+test:notion-stop
+test:notion-engagement
+test:notion-reaction-parity
+test:notion-message-ops
+test:notion-file-upload
+test:notion-wake-heal
+test:notion-rate-limit
+test:notion-write-seam
+test:notion-question-return
+test:notion-turn-policy

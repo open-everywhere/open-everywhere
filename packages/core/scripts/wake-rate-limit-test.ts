@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
@@ -86,7 +86,7 @@ async function retryRows(wakeId: string): Promise<Array<Record<string, unknown>>
 {
   const require = createRequire(import.meta.url);
   const evePkg = require.resolve("eve/package.json");
-  const world = `${evePkg.slice(0, evePkg.lastIndexOf("/"))}/dist/src/compiled/@workflow/world-vercel/index.js`;
+  const world = `${dirname(evePkg)}/dist/src/compiled/@workflow/world-vercel/index.js`;
   const haystack = readFileSync(world, "utf8");
   ok(
     haystack.includes("TooManyRequestsError"),

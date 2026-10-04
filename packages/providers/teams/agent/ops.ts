@@ -1,5 +1,5 @@
-import { registerPreflightProbe, registerSurfaceCredentialProbe, type Check } from "@open-everywhere/core/agent/adapter-api.js";
-import { boundaryOfGraphToken, TENANT_WIDE_CHANNEL_READ_ROLES, type TeamsReadBoundary } from "./channels/teams-graph-boundary.js";
+import { registerPreflightProbe, registerSurfaceCredentialProbe, type Check } from "@open-everywhere/core/agent/adapter-api-ops.js";
+import { boundaryOfGraphToken, TENANT_WIDE_CHANNEL_READ_ROLES, type TeamsReadBoundary } from "./channels/teams-graph-roles.js";
 
 const TOKEN_LOGIN_BASE = "https://login.microsoftonline.com";
 const GRAPH_TOKEN_SCOPE = "https://graph.microsoft.com/.default";

@@ -1,6 +1,6 @@
 import { deepStrictEqual } from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { periodOf, billableTokens, checkCap, assertSpendBudgetsValid, UNKNOWN_MODEL, type SpendBudgets } from "../agent/spend/spend.js";
 import { isSpendLimitActive, activeSpendLimits, applyCapOverrides } from "../agent/spend/caps.js";
@@ -251,6 +251,13 @@ ok(applyCapOverrides(baseline, activeSpendLimits([sticky], NOW), "p/w", "p/w/s")
 const dir = join(tmpdir(), `open-everywhere-spend-test-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
+
+function brokenStorePath(leaf: string): string {
+  if (process.platform !== "win32") return `/dev/null/${leaf}/ops.sqlite3`;
+  const blocker = join(dir, "not-a-directory");
+  writeFileSync(blocker, "");
+  return join(blocker, leaf, "ops.sqlite3");
+}
 const store = await import("../agent/spend/store.js");
 
 const pA = { org: "default", platform: "slack", workspace: "T1", surface: "C1", workspaceKey: "slack/T1", surfaceKey: "slack/T1/C1", key: "slack/T1/C1" };
@@ -892,7 +899,7 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   const { _resetOperationalDbForTest } = await import("../agent/operational/sqlite.js");
   const goodPath = process.env.OE_SQLITE_PATH;
   _resetOperationalDbForTest();
-  process.env.OE_SQLITE_PATH = "/dev/null/open-everywhere-nope/ops.sqlite3";
+  process.env.OE_SQLITE_PATH = brokenStorePath("open-everywhere-nope");
   budgets = {};
   ok(!(await scopeOverBudget(p as never, "channel", NOW_ISO)).over, "fast path: no caps -> not over, even with a broken store");
   budgets = { perSurface: { "slack/T9/C1": { surfaceMonthlyUsd: 2.5 } } };
@@ -1068,7 +1075,7 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   const { _resetOperationalDbForTest } = await import("../agent/operational/sqlite.js");
   const goodSpendPath = process.env.OE_SQLITE_PATH;
   _resetOperationalDbForTest();
-  process.env.OE_SQLITE_PATH = "/dev/null/open-everywhere-nope-2/ops.sqlite3";
+  process.env.OE_SQLITE_PATH = brokenStorePath("open-everywhere-nope-2");
   const softFailed = await activeSpendLimitsForOrg(org).then(
     (v) => v,
     () => "threw",
@@ -1098,6 +1105,35 @@ rmSync(dir, { recursive: true, force: true });
 
   ok(turnKind(chanCtx, "C:oe-sup:g3-ab12cd") === "supervisor", "OPE-58: a salted supervisor token (g<n>-<sha>) STILL tags kind 'supervisor'");
   ok(turnKind(chanCtx, "oe-dom:payments:oe-sup:g1-000000") === "supervisor", "OPE-58: a salted DOMAIN window token still tags kind 'supervisor'");
+}
+
+{
+  const spendHook = (await import("../agent/hooks/spend.js")).default;
+  const { getOperationalStore } = await import("../agent/operational/provider.js");
+  const { getOrCreateDmSeat } = await import("../agent/channels/dm-seat.js");
+  const { dmWindowRegistryKey } = await import("../agent/channels/unified-supervisor.js");
+  const { resolvePartition } = await import("../agent/memory/partition.js");
+
+  const SEAT_SURFACE = "slack/T1/D0CACHE2277";
+  const dmCtx = (token: string) =>
+    ({
+      channel: { kind: "slack", continuationToken: token },
+      session: { id: "sess-ope-2277", auth: { current: { attributes: { team_id: "T1", channel_id: "D0CACHE2277", channel_type: "im" }, principalId: "U1", principalType: "slack-user" } } },
+    }) as unknown as BindableContext;
+  const org = resolvePartition(dmCtx("probe")).org;
+  const seat = await getOrCreateDmSeat(org, { surfaceKey: SEAT_SURFACE }, new Date().toISOString(), { store: getOperationalStore() });
+  const rowOf = () => getOperationalStore().getChannelSession(org, dmWindowRegistryKey(SEAT_SURFACE));
+  eq((await rowOf())?.inputTokensTotal ?? null, 0, "fixture: the minted DM seat row starts with a zero counter");
+
+  const step = { data: { usage: { inputTokens: 60_000, outputTokens: 400, cacheReadTokens: 55_000, cacheWriteTokens: 1_000 } } };
+  await spendHook.events!["step.completed"]!(step as never, dmCtx(seat.token) as never);
+  const once = await rowOf();
+  eq(once?.lastInputTokens ?? null, 60_000, "🔴 OPE-2277: the context-size rung reads the step's prompt as `inputTokens` (60k), not inputTokens + cacheReadTokens (115k)");
+  eq(once?.inputTokensTotal ?? null, 60_000, "🔴 OPE-2277: the cumulative rung adds the step's `inputTokens` once — the cache reads are already inside it");
+
+  await spendHook.events!["step.completed"]!({ data: { usage: { inputTokens: 2_000, outputTokens: 10 } } } as never, dmCtx(seat.token) as never);
+  const twice = await rowOf();
+  eq([twice?.inputTokensTotal ?? null, twice?.lastInputTokens ?? null], [62_000, 2_000], "OPE-2277: an uncached step adds its full `inputTokens` to the running total and sets the per-step value");
 }
 
 {

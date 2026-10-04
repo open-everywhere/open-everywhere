@@ -1,10 +1,17 @@
-import { deploymentOrg, getOperationalStore, unifiedDomainSessionKey, type SurfaceStatus } from "@open-everywhere/core/agent/adapter-api.js";
+import {
+  deploymentOrg,
+  getOperationalStore,
+  surfaceEventVerifiedAt,
+  unifiedDomainSessionKey,
+  type SurfaceStatus,
+} from "@open-everywhere/core/agent/adapter-api.js";
 
 const set = (v: string | undefined): boolean => v !== undefined && v.trim() !== "";
 
 const SLACK_SESSION_PREFIXES = ["slack/", unifiedDomainSessionKey("slack/")] as const;
 
 async function eventsVerified(): Promise<SurfaceStatus["eventsVerified"]> {
+  if ((await surfaceEventVerifiedAt("slack")) !== null) return "yes";
   try {
     const store = getOperationalStore();
     const org = deploymentOrg();

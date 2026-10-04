@@ -26,11 +26,17 @@ import { planClearSpendLimit, type ClearSpendLimitInput } from "../tools/clear_s
 import { domainSpendWindow, reportDomainForBinding } from "../spend/reporting.js";
 import type { SkillDomainRefusal } from "../skills/domain-skills.js";
 import { parseRateTokens, runRate, RATE_HELP_LINE, type RateCommand } from "./rate.js";
-import { getAppInfo, hasRealAppVersion, type AppInfo } from "./app-info.js";
+import { getAppInfo, hasRealAppVersion, registerAppInfo as storeAppInfo, type AppInfo } from "./app-info.js";
+import { assertPostgresWiredAtBoot } from "../operational/postgres-wiring.js";
 
 export const OE_COMMAND_NAME = "oe";
 
-export { type AppInfo, APP_VERSION_UNVERSIONED, normalizeAppVersion, hasRealAppVersion, registerAppInfo, getAppInfo, resetAppInfo } from "./app-info.js";
+export { type AppInfo, APP_VERSION_UNVERSIONED, normalizeAppVersion, hasRealAppVersion, getAppInfo, resetAppInfo } from "./app-info.js";
+
+export function registerAppInfo(info: AppInfo): void {
+  assertPostgresWiredAtBoot();
+  storeAppInfo(info);
+}
 
 export type OeCommand =
   | { readonly kind: "help" }

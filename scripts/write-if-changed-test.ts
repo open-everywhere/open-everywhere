@@ -25,7 +25,7 @@ const mtimeOf = (abs: string): number => statSync(abs).mtimeMs;
 
 function generatedOutputs(root: string): string[] {
   const out: string[] = [];
-  const universalDir = join(root, "agent", "docs", "generated");
+  const universalDir = join(root, "packages", "core", "agent", "docs", "generated");
   for (const f of readdirSync(universalDir)) if (f.endsWith(".ts")) out.push(join(universalDir, f));
   const providersDir = join(root, "packages", "providers");
   for (const e of readdirSync(providersDir, { withFileTypes: true })) {
@@ -80,7 +80,7 @@ const trackedBytesAtStart = TRACKED.map((abs) => readFileSync(abs, "utf8"));
   process.on("exit", cleanup);
   try {
     cpSync(join(ROOT, "docs"), join(scratch, "docs"), { recursive: true });
-    cpSync(join(ROOT, "agent", "docs", "generated"), join(scratch, "agent", "docs", "generated"), { recursive: true });
+    cpSync(join(ROOT, "packages", "core", "agent", "docs", "generated"), join(scratch, "packages", "core", "agent", "docs", "generated"), { recursive: true });
     for (const e of readdirSync(join(ROOT, "packages", "providers"), { withFileTypes: true })) {
       if (!e.isDirectory()) continue;
       const from = join(ROOT, "packages", "providers", e.name, "agent");
@@ -114,7 +114,7 @@ const trackedBytesAtStart = TRACKED.map((abs) => readFileSync(abs, "utf8"));
     );
     ok(unchanged.stdout.includes(`0 written, ${outputs.length} already current`), `…and it says so: ${unchanged.stdout.trim().slice(0, 160)}`);
 
-    const victim = join(scratch, "agent", "docs", "generated", "index.ts");
+    const victim = join(scratch, "packages", "core", "agent", "docs", "generated", "index.ts");
     const correct = readFileSync(victim, "utf8");
     writeFileSync(victim, `${correct}\n// perturbation — the generator must overwrite this line.\n`);
     utimesSync(victim, aged, aged);
@@ -128,6 +128,17 @@ const trackedBytesAtStart = TRACKED.map((abs) => readFileSync(abs, "utf8"));
 
     const collateral = outputs.filter((abs) => abs !== victim && mtimeOf(abs) !== before.get(abs));
     ok(collateral.length === 0, `a single changed file does not drag the other ${outputs.length - 1} outputs with it (${collateral.length} moved)`);
+
+    const legacy = join(scratch, "agent", "docs", "generated", "security.ts");
+    mkdirSync(join(scratch, "agent", "docs", "generated"), { recursive: true });
+    writeFileSync(legacy, "export const SECTION_SECURITY = [];\n");
+    const legacyCheck = run(DOCS_GENERATE, ["--root", scratch, "--check"]);
+    ok(
+      legacyCheck.status !== 0 && legacyCheck.stderr.includes("agent/docs/generated/security.ts is stale"),
+      `--check reds a module left at the pre-OPE-2215 app-tree path (got ${legacyCheck.status}: ${legacyCheck.stderr.slice(0, 300)})`,
+    );
+    const legacyWrite = run(DOCS_GENERATE, ["--root", scratch]);
+    ok(legacyWrite.status === 0 && !existsSync(legacy), "…and a regeneration removes it");
   } finally {
     cleanup();
     process.off("exit", cleanup);

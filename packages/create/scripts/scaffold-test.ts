@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   defaultTemplateDir,
   isScaffoldableDir,
@@ -116,6 +116,60 @@ for (const rel of templateFiles.filter((f) => f.endsWith(".generated.ts") && !f.
     `template ${rel}: byte-identical to the reference app's canonical overlay`,
   );
 }
+const INSTRUCTIONS_ALLOWANCE: readonly { readonly reference: string; readonly template: string; readonly why: string }[] = [];
+{
+  const rel = "agent/instructions.md";
+  let expected = readFileSync(join(REFERENCE_APP, ...rel.split("/")), "utf8");
+  for (const a of INSTRUCTIONS_ALLOWANCE) {
+    ok(expected.includes(a.reference), `template ${rel}: allowance "${a.why}" still matches the reference prompt`);
+    expected = expected.replace(a.reference, a.template);
+  }
+  const actual = readFileSync(join(TEMPLATE, ...rel.split("/")), "utf8");
+  const firstDiff = actual.split("\n").findIndex((line, i) => line !== expected.split("\n")[i]);
+  ok(actual === expected, `template ${rel}: equal to the reference app's prompt, after the declared allowance (first different line: ${firstDiff + 1})`);
+}
+{
+  type StacksModule = { STACKS: Record<string, unknown> };
+  type PricingModule = { loadModelPricing: () => unknown };
+  const importFrom = async <T>(base: string, rel: string): Promise<T> => (await import(pathToFileURL(join(base, ...rel.split("/"))).href)) as T;
+  const stacksRel = "agent/model/stacks.ts";
+  const pricingRel = "agent/spend/model-pricing.ts";
+  eq(
+    (await importFrom<StacksModule>(TEMPLATE, stacksRel)).STACKS,
+    (await importFrom<StacksModule>(REFERENCE_APP, stacksRel)).STACKS,
+    `template ${stacksRel}: STACKS equal the reference app's (every stack, role, id, tier and window)`,
+  );
+  eq(
+    (await importFrom<PricingModule>(TEMPLATE, pricingRel)).loadModelPricing(),
+    (await importFrom<PricingModule>(REFERENCE_APP, pricingRel)).loadModelPricing(),
+    `template ${pricingRel}: the rate table equals the reference app's`,
+  );
+}
+
+{
+  const templateScripts = new Set(Object.keys((tpl as { scripts?: Record<string, string> }).scripts ?? {}));
+  const aboutTheRepository = (line: string): boolean => /Open Everywhere repository|clone of the repository/.test(line);
+  const exemptFile = (rel: string): boolean => rel.startsWith("claude/skills/");
+  const offenders: string[] = [];
+  for (const rel of templateFiles) {
+    if (exemptFile(rel) || !/\.(ts|md|json)$/.test(rel)) continue;
+    const lines = readFileSync(join(TEMPLATE, ...rel.split("/")), "utf8").split("\n");
+    lines.forEach((line, i) => {
+      if (aboutTheRepository(line)) return;
+      for (const m of line.matchAll(/npm run (?:-s )?([a-z][\w:-]*)/g)) {
+        if (!templateScripts.has(m[1]!)) offenders.push(`${rel}:${i + 1} names \`npm run ${m[1]}\`, which the template's package.json does not define`);
+      }
+      for (const m of line.matchAll(/\bpackages\/(?:core|adapters|providers|create)\/[\w./-]+/g)) {
+        offenders.push(`${rel}:${i + 1} names the repository path ${m[0]} (use the package specifier, e.g. @open-everywhere/core/…)`);
+      }
+      for (const m of line.matchAll(/(?<![\w@/.-])scripts\/[\w.-]+\.(?:ts|mjs|js)\b/g)) {
+        if (!templateFiles.includes(m[0])) offenders.push(`${rel}:${i + 1} names ${m[0]}, which the template does not ship`);
+      }
+    });
+  }
+  eq(offenders, [], "template: every npm script, repository path and script file it names exists in a scaffolded app");
+}
+
 ok(!templateFiles.includes(".gitignore"), "template: no `.gitignore` (npm never packs one) — it ships as `gitignore`");
 ok(templateFiles.includes("gitignore"), "template: carries `gitignore` for the scaffold to rename");
 ok(
@@ -149,6 +203,23 @@ ok(!templateFiles.some((f) => f === ".env" || f === ".env.local"), "template: ca
       .filter((l) => /resolveOperationalSelection\(|resolveMemoryProviderId\(|postgresSelected|pgliteFloorArmed|registerNeon\(\)/.test(l) && !l.trimStart().startsWith("//"))
       .join("\n");
   eq(decision(wiring), decision(appWiring), `template ${rel}: its store-selection decision is byte-identical to the reference app's`);
+}
+
+{
+  const docsRel = "agent/lib/register-docs.ts";
+  const docsWiring = readFileSync(join(TEMPLATE, ...docsRel.split("/")), "utf8");
+  ok(
+    /import\s*\{\s*UNIVERSAL_DOCS\s*\}\s*from\s*"@open-everywhere\/core\/agent\/docs\/generated\/index\.js"/.test(docsWiring),
+    `template ${docsRel}: imports UNIVERSAL_DOCS from core's shipped subpath`,
+  );
+  ok(/^registerDocs\(UNIVERSAL_DOCS\);$/m.test(docsWiring), `template ${docsRel}: registers UNIVERSAL_DOCS at import`);
+  const configRel = "agent/lib/register-config.ts";
+  const configWiring = readFileSync(join(TEMPLATE, ...configRel.split("/")), "utf8");
+  ok(/^import "\.\/register-docs\.js";$/m.test(configWiring), `template ${configRel}: imports ./register-docs.js for its side effect`);
+  ok(
+    !templateFiles.some((f) => /(^|\/)docs\/generated\//.test(f) || f.endsWith("docs-generated.ts")),
+    "template: carries no copy of the generated manual (it would freeze at scaffold time)",
+  );
 }
 
 const scratch = mkdtempSync(join(tmpdir(), "oe-scaffold-test-"));

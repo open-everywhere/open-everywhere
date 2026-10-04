@@ -1,6 +1,6 @@
 import { connectorGrantName, type Binding, type Bundle, type Connection, type HttpMethod, type Scope } from "./bundle.js";
 import { HTTP_METHODS, requestingScopeProblem, sameScope, type AccessDelta, type RequestingScope } from "./delta.js";
-import { overlayModuleHeader, unwrapOverlayModule, wrapOverlayModule, type OverlayModuleGrammar } from "./overlay-module.js";
+import { overlayModuleHeader, sameOverlayModuleAfterHeader, unwrapOverlayModule, wrapOverlayModule, type OverlayModuleGrammar } from "./overlay-module.js";
 
 export interface GrantsFile {
   readonly bundles: readonly Bundle[];
@@ -189,7 +189,7 @@ export function stringifyGrants(grants: GrantsFile): string {
 
 const GRANTS_MODULE: OverlayModuleGrammar = {
   what: "grants overlay",
-  header: overlayModuleHeader("grants overlay", "packages/core/agent/access/grants-codemod.ts"),
+  header: overlayModuleHeader("grants overlay", "@open-everywhere/core/agent/access/grants-codemod.js"),
   typeImport: 'import type { GrantsFile } from "@open-everywhere/core/agent/access/grants-codemod.js";',
   typeName: "GrantsFile",
 };
@@ -200,9 +200,9 @@ export function emitGrantsModule(grants: GrantsFile): string {
 
 export function parseGrantsModule(text: string): GrantsFile {
   const grants = parseGrantsFile(unwrapOverlayModule(GRANTS_MODULE, text, (m) => new GrantsCodemodError(m)));
-  if (emitGrantsModule(grants) !== text) {
+  if (!sameOverlayModuleAfterHeader(emitGrantsModule(grants), text)) {
     throw new GrantsCodemodError(
-      "grants overlay is not in canonical form — re-emitting its own data does not reproduce the file, so it has been hand-edited. Run `npm run overlays:normalize` and commit the result (the codemod refuses to rewrite a file it did not write).",
+      "grants overlay is not in canonical form — re-emitting its own data does not reproduce the file below its header, so it has been hand-edited. Run `npx oe overlays normalize` and commit the result (the codemod refuses to rewrite a file it did not write).",
     );
   }
   return grants;

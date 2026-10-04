@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 const dir = join(tmpdir(), `open-everywhere-control-memory-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_MEMORY_PROVIDER;
 _setDeploymentIdentityForTest({ org: "acme" });
@@ -315,5 +315,5 @@ await providerById("sqlite").ensureTier(controlPartition(org), siloTier("org-bra
   ok("audited detail carries the silo + relPath", actions.every((e) => typeof e.detail?.silo === "string" && typeof e.detail?.relPath === "string"));
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`\n✓ memory-admin control-plane MCP: ${n} assertions passed\n`);

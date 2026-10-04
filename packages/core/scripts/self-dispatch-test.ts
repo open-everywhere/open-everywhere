@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 const __slackStubs = await import("./_slack-test-stubs.js");
 __slackStubs.registerSlackFixtureCodec();
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -49,6 +49,7 @@ import {
 import type { RouteHandlerArgs } from "eve/channels";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -570,5 +571,5 @@ console.log("10. bounded body read: oversized rejected before parse, normal body
   eq(okDivert.length, 1, "the normal body reached the divert (bounded read is transparent for in-range bodies)");
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`\n✓ self-dispatch: ${n} assertions passed (route fail-closed + client + cold/warm caller fallback + loop-back + hop-dedupe + bounded read)\n`);

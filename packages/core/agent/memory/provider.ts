@@ -97,6 +97,10 @@ export function registerProvider(provider: MemoryProvider): void {
   REGISTRY[provider.id] = provider;
 }
 
+export function isMemoryProviderRegistered(id: string): boolean {
+  return REGISTRY[id] !== undefined;
+}
+
 export function providerById(id: string | undefined): MemoryProvider {
   if (!id) {
     throw new Error("memory provider requested for a silo with no provider — malformed silo (wiring bug).");

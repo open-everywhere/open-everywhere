@@ -76,6 +76,10 @@ function turnWindowToken(ctx: BindableContext): string | undefined {
   return bareTokenFromEveContext(ctx.channel?.continuationToken) ?? ctx.channel?.continuationToken;
 }
 
+function seatCounterDelta(usage: Usage): number {
+  return usage.inputTokens ?? 0;
+}
+
 export type SpendAttributionContext = DelegatableContext & { readonly session?: { readonly id?: string } };
 
 export interface AttributedModelCall {
@@ -207,7 +211,7 @@ export default defineHook({
 
       if (isSupervisorToken(token)) {
         try {
-          const delta = (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0);
+          const delta = seatCounterDelta(usage);
           const registryKey = standingSeatRegistryKey(token, domainKeyOf(p)) ?? domainKeyOf(p);
           if (delta > 0) {
             const matched = await getOperationalStore().bumpChannelSessionUsage(p.org, registryKey, token, delta);
@@ -227,7 +231,7 @@ export default defineHook({
       }
       if (dmSeat) {
         try {
-          const delta = (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0);
+          const delta = seatCounterDelta(usage);
           if (delta > 0) {
             const matched = await getOperationalStore().bumpChannelSessionUsage(p.org, dmSeatRegistryKey(dmSeat.channelId), token as string, delta);
             if (matched === 0) console.warn(`[open-everywhere:spend] dm-seat counter bump matched no row (org=${p.org} key=${dmSeatRegistryKey(dmSeat.channelId)} token=${token})`);

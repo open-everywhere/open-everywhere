@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
 import "./_register-test-config.js";
 
 const dir = join(tmpdir(), `open-everywhere-control-approvals-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: "default" });
 
@@ -18,6 +17,7 @@ const { effectiveCaps } = await import("../agent/spend/caps.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 import type { PendingActionRow } from "../agent/approvals/types.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let n = 0;
 const ok = (label: string, cond: boolean) => {
@@ -338,5 +338,5 @@ await client.connect(clientT);
 }
 
 await client.close();
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`\n✓ control approvals tools: ${n} assertions passed (decide reuses the CAS core + executes; list is redacted + role-filtered; RBAC + domain-cap carve-out hold; disarm_approval_judge disarms one domain off one RBAC-gated row and rearm_approval_judge restores it, both write-only and append-only; both also take the ORG-WIDE address, which needs \"admin\", governs the domain-less consults only, and is exclusive with \`domain\` in the schema; a decide during a break-glass halt is refused on this door too, in core's own words, editing no row — and succeeds once the halt is cleared)\n`);

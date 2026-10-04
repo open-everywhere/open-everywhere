@@ -1,6 +1,6 @@
 import { connectorGrantName } from "../access/bundle.js";
 import type { Binding, Bundle, Scope } from "../access/bundle.js";
-import { overlayModuleHeader, unwrapOverlayModule, wrapOverlayModule, type OverlayModuleGrammar } from "../access/overlay-module.js";
+import { overlayModuleHeader, sameOverlayModuleAfterHeader, unwrapOverlayModule, wrapOverlayModule, type OverlayModuleGrammar } from "../access/overlay-module.js";
 import type { Domain } from "./domain.js";
 import { memoryRefs } from "./domain.js";
 import type { MemorySilo } from "./silo.js";
@@ -305,7 +305,7 @@ export function stringifyAgents(file: AgentsFile): string {
 
 const AGENTS_MODULE: OverlayModuleGrammar = {
   what: "agents overlay",
-  header: overlayModuleHeader("agents overlay", "packages/core/agent/memory/agents-codemod.ts"),
+  header: overlayModuleHeader("agents overlay", "@open-everywhere/core/agent/memory/agents-codemod.js"),
   typeImport: 'import type { AgentsFile } from "@open-everywhere/core/agent/memory/agents-codemod.js";',
   typeName: "AgentsFile",
 };
@@ -316,9 +316,9 @@ export function emitAgentsModule(file: AgentsFile): string {
 
 export function parseAgentsModule(text: string): AgentsFile {
   const file = parseAgentsFile(unwrapOverlayModule(AGENTS_MODULE, text, (m) => new AgentsCodemodError(m)));
-  if (emitAgentsModule(file) !== text) {
+  if (!sameOverlayModuleAfterHeader(emitAgentsModule(file), text)) {
     throw new AgentsCodemodError(
-      "agents overlay is not in canonical form — re-emitting its own data does not reproduce the file, so it has been hand-edited. Run `npm run overlays:normalize` and commit the result (the codemod refuses to rewrite a file it did not write).",
+      "agents overlay is not in canonical form — re-emitting its own data does not reproduce the file below its header, so it has been hand-edited. Run `npx oe overlays normalize` and commit the result (the codemod refuses to rewrite a file it did not write).",
     );
   }
   return file;

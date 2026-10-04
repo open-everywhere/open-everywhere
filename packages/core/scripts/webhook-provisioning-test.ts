@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 const dir = join(tmpdir(), `oe-webhook-prov-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: undefined });
 const ORG = "default";
@@ -314,5 +314,5 @@ const rotateKind = actionKind("webhook.rotate")!;
   ok(/no longer|any more/.test(gone), "a hook whose declaration was removed while the card waited declines rather than throwing");
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`\n✅ webhook-provisioning: ${n} checks passed`);

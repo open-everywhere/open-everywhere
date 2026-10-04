@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHmac, generateKeyPairSync, sign } from "node:crypto";
@@ -56,6 +56,7 @@ import type { PendingActionRow } from "@open-everywhere/core/agent/approvals/typ
 import type { ScenarioDriver } from "./discord-scenario-harness.js";
 import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 import { _resetDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
+import { removeTempDir } from "../packages/core/scripts/_temp-dir.js";
 
 registerConfig({
   loadBundles: () => [],
@@ -528,7 +529,7 @@ class FakeSession {
   if (!checkGolden("sec-14-image-desc-wrapped", t)) toolFailures++;
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 if (toolFailures > 0) {
   console.error(`\n✗ tool-plane egress goldens: ${toolFailures} diverged/threw\n`);
   process.exitCode = 1;

@@ -46,10 +46,16 @@ if (subcommand === "wrap-untrusted") {
 } else if (subcommand === "upgrade") {
   const { runUpgradeCommand, realUpgradeIo } = await import("./oe-upgrade.js");
   process.exit(await runUpgradeCommand(argv.slice(1), realUpgradeIo(), process.cwd()));
+} else if (subcommand === "upgrade-codemods") {
+  const { runUpgradeCodemodsCommand } = await import("./oe-upgrade.js");
+  process.exit(runUpgradeCodemodsCommand(argv.slice(1), { out: (l) => console.log(l), err: (l) => console.error(l) }, process.cwd()));
+} else if (subcommand === "overlays") {
+  const { runOverlaysCommand } = await import("./oe-overlays.js");
+  process.exit(runOverlaysCommand(argv.slice(1), { out: (l) => console.log(l), err: (l) => console.error(l) }, process.cwd()));
 } else if (subcommand === "build" || subcommand.startsWith("--")) {
   await runBuild(subcommand === "build" ? argv.slice(1) : argv);
 } else {
-  console.error(`oe: unknown subcommand "${subcommand}". Known: build, upgrade, secret, wrap-untrusted.`);
+  console.error(`oe: unknown subcommand "${subcommand}". Known: build, overlays, upgrade, secret, wrap-untrusted.`);
   process.exit(2);
 }
 
@@ -157,9 +163,17 @@ async function runBuild(args: readonly string[]): Promise<void> {
     if (existsSync(goldenPath) && readFileSync(goldenPath, "utf8") !== `${goldenLines.join("\n")}\n`) {
       problems.push(`GOLDEN · ${GOLDEN} does not match the plan. Fix: \`npm run oe:build -- --accept\` and READ the diff — it is the roster review surface.`);
     }
+    const { overlayCheckLines } = await import("./oe-overlays.js");
+    const overlays = overlayCheckLines(repoRoot);
+    const treeProblems = problems.length;
+    problems.push(...overlays.problems);
     if (problems.length > 0) {
-      fail([`✗ oe build --check: ${problems.length} problem(s).`, ...problems.map((p) => `  - ${p}`), "", "  Fix: `npm run oe:build`."]);
+      const fixes = [""];
+      if (treeProblems > 0) fixes.push("  Fix: `npm run oe:build`.");
+      if (!overlays.ok) fixes.push("  Overlays: edit only the data, then `npx oe overlays normalize`.");
+      fail([`✗ oe build --check: ${problems.length} problem(s).`, ...problems.map((p) => `  - ${p}`), ...fixes]);
     }
+    for (const n of overlays.notes) console.log(n);
     printRollCall(plan, "check");
     if (againstSummary !== undefined) assertAgainstSummary(repoRoot, againstSummary, plan);
     process.exit(0);
@@ -172,9 +186,10 @@ async function runBuild(args: readonly string[]): Promise<void> {
 
   const applied = applyPlan(repoRoot, plan.files, owned);
   const goldenPath = join(repoRoot, GOLDEN);
-  if (existsSync(dirname(goldenPath)) || accept) {
+  const golden = `${goldenLines.join("\n")}\n`;
+  if ((existsSync(dirname(goldenPath)) || accept) && !(existsSync(goldenPath) && readFileSync(goldenPath, "utf8") === golden)) {
     mkdirSync(dirname(goldenPath), { recursive: true });
-    writeFileSync(goldenPath, `${goldenLines.join("\n")}\n`);
+    writeFileSync(goldenPath, golden);
   }
   for (const p of applied.skipped) console.log(`  · left alone (a directory, not a slot file): ${p}`);
   console.log(

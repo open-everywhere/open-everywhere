@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/provider-teams",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Open Everywhere Microsoft Teams provider — Teams channel and chat surfaces via Microsoft Graph.",
   "keywords": [
     "agent",
@@ -72,6 +72,10 @@
     "./agent/channels/teams-graph-boundary.js": {
       "types": "./dist/agent/channels/teams-graph-boundary.d.ts",
       "default": "./dist/agent/channels/teams-graph-boundary.js"
+    },
+    "./agent/channels/teams-graph-roles.js": {
+      "types": "./dist/agent/channels/teams-graph-roles.d.ts",
+      "default": "./dist/agent/channels/teams-graph-roles.js"
     },
     "./agent/channels/teams-graph-team-id.js": {
       "types": "./dist/agent/channels/teams-graph-team-id.d.ts",
@@ -155,7 +159,7 @@
     "prepack": "npm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "npm run test:chain",
-    "test:chain": "npm run test:teams && npm run test:teams-connector && npm run test:teams-connector-seam && npm run test:teams-read && npm run test:teams-graph-team-id && npm run test:teams-fire-eligibility && npm run test:teams-input-response && npm run test:teams-bot-name && npm run test:teams-stop && npm run test:teams-reaction-feedback && npm run test:teams-engagement && npm run test:teams-message-ops && npm run test:teams-id-restore && npm run test:teams-spend-attribution",
+    "test:chain": "tsx ../../../scripts/chain/run-chain.ts",
     "test:teams": "NODE_NO_WARNINGS=1 tsx scripts/teams-test.ts",
     "test:teams-connector": "NODE_NO_WARNINGS=1 tsx scripts/teams-connector-test.ts",
     "test:teams-connector-seam": "NODE_NO_WARNINGS=1 tsx scripts/teams-connector-seam-test.ts",
@@ -172,7 +176,7 @@
     "test:teams-spend-attribution": "NODE_NO_WARNINGS=1 tsx scripts/teams-spend-attribution-test.ts"
   },
   "dependencies": {
-    "@open-everywhere/core": "0.1.4",
+    "@open-everywhere/core": "0.1.5",
     "zod": "4.5.4"
   },
   "peerDependencies": {

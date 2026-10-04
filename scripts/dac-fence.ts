@@ -5,6 +5,11 @@ import { join } from "node:path";
 
 export const DAC_BYPASS_CAPS = ["cap_dac_override", "cap_dac_read_search"] as const;
 
+export function posixWriteBitsAbsentReason(platform: NodeJS.Platform = process.platform): string | null {
+  if (platform !== "win32") return null;
+  return "Windows ignores a directory's POSIX mode for new entries, so a chmod 0555 fence refuses nothing and no capability drop can make it refuse";
+}
+
 export function writeBitsBite(): boolean {
   const base = mkdtempSync(join(tmpdir(), "oe-dac-fence-probe-"));
   const fenced = join(base, "fenced");

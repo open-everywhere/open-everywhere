@@ -1,9 +1,10 @@
 import { tmpdir } from "node:os";
-import { readFileSync, readdirSync, rmSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -15,7 +16,7 @@ function ok(cond: boolean, label: string): void {
 }
 
 const dir = join(tmpdir(), `open-everywhere-turn-closeout-test-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: "acme" });
 
@@ -403,7 +404,7 @@ function authoredSourcesUnder(dir: URL): { readonly url: URL; readonly src: stri
   ok(copySources.length > 500, "§4/COPY: the source walk really read the tree — a walk that found nothing would pass the next assertion for free");
   const falseAckCopy = /acknowledgement\s+has\s+already\s+gone\s+out/i;
   const selfPath = fileURLToPath(new URL(import.meta.url));
-  const reintroduced = copySources.filter((f) => f.url.pathname !== selfPath && falseAckCopy.test(f.src));
+  const reintroduced = copySources.filter((f) => fileURLToPath(f.url) !== selfPath && falseAckCopy.test(f.src));
   ok(reintroduced.length === 0, `§4/COPY: no authored source under packages/ carries the false acknowledgement sentence — found in ${reintroduced.map((f) => f.url.pathname).join(", ")}`);
   ok(posted.length === before + 1, "§4/ROOM: NOTHING further reached the room. This is the assertion the six live re-posts exist for");
 
@@ -978,6 +979,6 @@ resetSettingsForTest();
   ok(row !== null && row.answeredAt === undefined, "§18: 🔴 the wake stays PENDING — ending the turn defers the rest of the answer, it does not drop it");
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 
 console.log(`✓ turn closeout boundary: ${passed} assertions passed (turn ends within one round-trip, budget-independent, open wake untouched, stand-down silences the rest of the turn, duplicate valve intact, redundant no_reply, one audit row naming the reason, session keying, fail-open, survives an instance change, the stand-down gate reads the CONVERSATION not the wake id, the valve survives an instance change, a sessionless turn has no durable half, a hung store never stalls a round-trip, an abandoned write cannot overtake its successor, a repeated forced override ends the turn without blocking its post)`);

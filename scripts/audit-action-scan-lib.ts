@@ -55,6 +55,10 @@ const SCAN_GLOBS: readonly string[] = ["packages/core/agent", "packages/provider
 
 export const SCAN_PATHSPECS: readonly string[] = SCAN_GLOBS.map((dir) => `:(glob)${dir}/**/*.ts`);
 
+export function isGeneratedManualModule(path: string): boolean {
+  return /(^|\/)docs\/generated\//.test(path) || path.endsWith("/docs-generated.ts");
+}
+
 function gitLines(repoRoot: string, args: readonly string[]): string[] {
   const out = execFileSync("git", [...args], {
     cwd: repoRoot,
@@ -64,7 +68,8 @@ function gitLines(repoRoot: string, args: readonly string[]): string[] {
   return out
     .split("\n")
     .filter(Boolean)
-    .filter((f) => !f.includes("/dist/") && !f.includes("/node_modules/"));
+    .filter((f) => !f.includes("/dist/") && !f.includes("/node_modules/"))
+    .filter((f) => !isGeneratedManualModule(f));
 }
 
 function sourceFiles(repoRoot: string): string[] {

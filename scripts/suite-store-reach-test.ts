@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { suiteStoreReach, resetStoreReachCache, resolveImportedTs } from "./suite-store-reach-lib.js";
+import { toPosixPath } from "./posix-path.js";
 
 let checks = 0;
 const failures: string[] = [];
@@ -130,7 +131,7 @@ try {
     "🔴 OPE-1922: a suite reaching the store through a `@open-everywhere/*` WORKSPACE specifier is flagged exactly as a relative one is — following only relative imports left two live suites unflagged, one of which really opens the ambient store",
   );
   ok(
-    resolveImportedTs(workspaceSuite, "@open-everywhere/core/agent/operational/store.js")?.endsWith("packages/core/agent/operational/store.ts") === true,
+    toPosixPath(resolveImportedTs(workspaceSuite, "@open-everywhere/core/agent/operational/store.js") ?? "").endsWith("packages/core/agent/operational/store.ts"),
     "🔴 OPE-1922: `@open-everywhere/<pkg>/<path>` resolves to the package's SOURCE `.ts`, never to the built `dist` its exports map points at — a reach walk over `dist` would answer from whatever was last built",
   );
   ok(

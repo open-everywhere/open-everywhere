@@ -26,6 +26,7 @@ registerSlackFixtureMapper();
 
 import type { ApprovalStatus } from "eve/tools/approval";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 const routineDispatch = await import("../agent/schedules/routine-dispatch.js");
 const { connectorApprovalPolicy, ASK_UNATTENDED_SENTENCE, TAINTED_ASK_UNATTENDED_SENTENCE } = await import("../agent/connections/connector-auth.js");
@@ -407,5 +408,5 @@ console.log("§timeout a stalled card post is dropped, not awaited:");
   ok(routinePermissionCardTimeoutMs() === 8000, "§timeout: and the test seam restored the shipped budget");
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`\n✓ connector permission card: ${passed} assertions passed`);

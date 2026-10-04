@@ -1,0 +1,21 @@
+# The `test:chain` legs of @open-everywhere/provider-github: one npm script name per line, in run order (OPE-2286).
+# To add a suite, define `test:<name>` in package.json, then append one line here: `test:<name>`.
+# `npm run test:chain` runs the list in order and stops at the first failure. `npm test` runs it
+# batched (scripts/chain/_legs.ts). `.gitattributes` merges this file by union, so two branches that
+# each append a line merge cleanly.
+test:github-supervisor
+test:github-identity
+test:github-post-arm
+test:github-installations
+test:github-webhook-verifier
+test:github-memory
+test:github-stop
+test:github-engagement
+test:github-reaction-feedback
+test:github-read
+test:github-mint-scope
+test:github-message-ops
+test:github-wake-failure-audit
+test:github-rate-limit
+test:github-write-seam
+test:github-reaction-scope

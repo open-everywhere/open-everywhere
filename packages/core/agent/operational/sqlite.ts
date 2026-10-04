@@ -175,9 +175,9 @@ function getDb(): DatabaseSync {
       created_at         TEXT    NOT NULL,          -- ISO-8601, reset on rotation
       last_wake_at       TEXT    NOT NULL,          -- ISO-8601, bumped by touchChannelSession, reset on rotation
       turn_count         INTEGER NOT NULL DEFAULT 0, -- bumped by touchChannelSession, reset to 0 on rotation (BACKSTOP trigger)
-      input_tokens_total INTEGER,                    -- measured cumulative input+cacheRead this generation (§2 #551); NULL = unknown ⇒ rotate
+      input_tokens_total INTEGER,                    -- measured cumulative inputTokens (cache reads included, counted once) this generation; NULL = unknown ⇒ rotate
       first_wake_at      TEXT,                        -- ISO-8601 of the first delivered wake (H7c); NULL = none yet ⇒ still fresh
-      last_input_tokens  INTEGER,                     -- OPE-794: measured input+cacheRead of the LATEST request (SET, not summed); NULL = none yet ⇒ rung skipped
+      last_input_tokens  INTEGER,                     -- OPE-794: measured inputTokens (cache reads included) of the LATEST request (SET, not summed); NULL = none yet ⇒ rung skipped
       rotate_marked_at   TEXT,                        -- OPE-820: ISO-8601 an operator marked this generation for retirement; NULL = unmarked. Set ONLY by the ops sweep; cleared by every rotation
       served_code_fingerprint   TEXT,                  -- OPE-1821: the runtime CODE hash this seat was last served with; NULL = never stamped. Written ONLY by stampChannelSessionRuntime, and deliberately NOT reset by a rotation
       served_domain_fingerprint TEXT,                  -- OPE-1821: the DOMAIN declaration hash this seat was last served with. Same writer, same NULL meaning — the pair moves together

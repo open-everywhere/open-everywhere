@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { withPatchedFetch } from "../packages/core/scripts/_fetch-test-utils.js";
 import { assertPackageDistFresh } from "./core-dist-freshness.js";
@@ -8,6 +7,7 @@ import { registerSlackProvider } from "@open-everywhere/provider-slack/agent/reg
 import { registerDiscordProvider } from "@open-everywhere/provider-discord/agent/register.js";
 import { registerTeamsProvider } from "@open-everywhere/provider-teams/agent/register.js";
 import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
+import { removeTempDir } from "../packages/core/scripts/_temp-dir.js";
 
 assertPackageDistFresh("packages/core", "@open-everywhere/core");
 for (const id of ["slack", "discord", "teams"]) {
@@ -21,7 +21,7 @@ process.env.MICROSOFT_APP_ID = "fixture-app-id-not-a-secret";
 process.env.MICROSOFT_APP_PASSWORD = "fixture-app-secret-not-a-secret";
 
 const dir = join(tmpdir(), `open-everywhere-resource-grant-parity-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 _setDeploymentIdentityForTest({ org: "parity-org" });
 process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
@@ -201,5 +201,5 @@ try {
 
   console.log(`resource-grant-transport-parity: ${n} assertions passed`);
 } finally {
-  rmSync(dir, { recursive: true, force: true });
+  await removeTempDir(dir);
 }

@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 const dir = join(tmpdir(), `oe-webhook-reveal-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: undefined });
 const ORG = "default";
@@ -543,5 +543,5 @@ async function freshGrant(opts: { to?: string } = {}): Promise<{ token: string; 
   ok(typeof (await store.getCredentialIntake(ORG, good.id))!.usedAt === "string", "…and its row is spent, exactly as before");
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`\n✅ webhook-reveal: ${n} checks passed`);

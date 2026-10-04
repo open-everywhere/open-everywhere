@@ -37,7 +37,9 @@ npx oe-eve-patch
 **Both commands are required.** Core refuses to boot on an unpatched `eve`. It reads one runtime
 marker for each patch part before the first wake is served, and it throws when a marker is missing.
 A registry `eve` carries no patch, so `npx oe-eve-patch` applies the copy in this tarball. The
-applier is idempotent: a second run on a patched tree changes nothing and exits 0.
+applier is idempotent: a second run on a patched tree changes nothing and exits 0. An `eve` that holds
+an older Open Everywhere patch under the same pin is restored from its registry tarball (`npm pack`)
+and patched again, so an upgrade needs no manual reinstall of `eve`.
 
 `eve` is a peer dependency, and the version above is the pin this package declares as
 `peerDependencies.eve`. Install that exact version yourself. npm can still nest a second `eve` for a

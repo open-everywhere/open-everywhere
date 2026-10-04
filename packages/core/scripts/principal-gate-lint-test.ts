@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   ATTENDEDNESS_DERIVATION,
@@ -18,6 +18,7 @@ import {
   findUnattendedDispatchSites,
   type PrincipalGate,
 } from "../agent/access/principal-gate-manifest.js";
+import { posixRelative } from "../../../scripts/posix-path.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -212,7 +213,7 @@ function tsFilesUnder(dir: string): string[] {
 {
   const files = tsFilesUnder(join(root, "agent"));
   ok(files.length > 100, `real: the scan actually read core's agent tree (${files.length} files) — a green over an empty file list is a green produced by blindness`);
-  const gates = files.flatMap((f) => findPrincipalGates(relative(root, f), readFileSync(f, "utf8")));
+  const gates = files.flatMap((f) => findPrincipalGates(posixRelative(root, f), readFileSync(f, "utf8")));
   ok(checkPrincipalGates(gates).length === 0, `real: every principal refusal gate in core declares its intent (${checkPrincipalGates(gates).map((d) => `${d.file}:${d.line} ${d.rule}`).join(", ")})`);
 
   const at = (needle: string) => gates.find((g) => g.file.endsWith(needle));
@@ -227,7 +228,7 @@ function tsFilesUnder(dir: string): string[] {
   const presence = gates.filter((g) => g.intent === "presence").length;
   ok(presence >= 14 && gates.length >= 24, `real: the inventory is the size the three sweeps left behind (${gates.length} gates, ${presence} presence) — a collapse here means the detector stopped seeing, not that the gates went away`);
 
-  const sites = files.flatMap((f) => findUnattendedDispatchSites(relative(root, f), readFileSync(f, "utf8")));
+  const sites = files.flatMap((f) => findUnattendedDispatchSites(posixRelative(root, f), readFileSync(f, "utf8")));
   ok(checkUnattendedDispatch(sites).length === 0, `real: every service-principal dispatch builds its bag through fire-auth (${checkUnattendedDispatch(sites).map((d) => `${d.file}:${d.line}`).join(", ")})`);
   const siteAt = (needle: string) => sites.find((s) => s.file.endsWith(needle));
   ok(siteAt("webhooks/dispatch.ts")?.viaFireAuth === true, "real: the webhook fire's dispatch is SEEN and builds through webhookFireAttributes — the site OPE-278 is about");
@@ -482,7 +483,7 @@ class Policies {
     }
     return out;
   };
-  const attended = walk(agentDir).flatMap((f) => findAttendednessSites(relative(root, f), readFileSync(f, "utf8")));
+  const attended = walk(agentDir).flatMap((f) => findAttendednessSites(posixRelative(root, f), readFileSync(f, "utf8")));
   const defects = checkAttendednessSites(attended);
   ok(defects.length === 0, `real-r5: every approval site derives attendedness through unattendedOf (${defects.map((d) => `${d.file}:${d.line}`).join(", ")})`);
   const proposes = attended.filter((a) => a.shape === "propose" && !a.exempt);
@@ -535,7 +536,7 @@ class Policies {
     }
     return out;
   };
-  const sites = walk(agentDir).flatMap((f) => findAttendednessSites(relative(root, f), readFileSync(f, "utf8"))).filter((site) => site.shape === "propose");
+  const sites = walk(agentDir).flatMap((f) => findAttendednessSites(posixRelative(root, f), readFileSync(f, "utf8"))).filter((site) => site.shape === "propose");
   const defects = checkApprovalAuthoritySites(sites);
   ok(defects.length === 0, `real-r6: every approvalPostDeps site carries proposal authority or states why it is headless (${defects.map((d) => `${d.file}:${d.line}`).join(", ")})`);
   ok(sites.filter((s) => !s.authorityExempt).length >= 20, `real-r6: model-turn approval inventory did not collapse (${sites.length})`);

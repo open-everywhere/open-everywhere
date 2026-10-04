@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-chain-flow-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
@@ -411,4 +412,4 @@ const rotateArgs = {
 }
 
 console.log(`✓ approver-chain-flow: ${passed} assertions — ask parity (card + chain row), operator deny (nothing minted), config lowering (frozen args executed, wedge row decided by the chain), unattended fail-fast, BYPASS-as-transform, deny-survives-bypass, DENY_ALL, the non-tool-kind carve-out, the OPE-310 beneficiary-clicker floor, the OPE-438 taint verdict shift (attended ⇒ card, unattended ⇒ deny naming taint, clean ⇒ unchanged), and the OPE-1348 one-row-per-authorisation-per-turn wedge`);
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);

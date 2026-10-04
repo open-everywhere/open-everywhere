@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
+import { tsxCommand } from "./npm-command.js";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { toPosixPath } from "./posix-path.js";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -77,7 +79,7 @@ check("resolveDeployEnv treats whitespace as unset", () => {
 check("resolveDeployEnv defaults baseUrl from the alias and resolves the state file", () => {
   const env = resolveDeployEnv({ OE_DEPLOY_SCOPE: "team", OE_DEPLOY_ALIAS: "a.vercel.app" }, "/repo");
   assert.equal(env.baseUrl, "https://a.vercel.app");
-  assert.equal(env.stateFile, "/repo/.open-everywhere-deploy/known-good.json");
+  assert.equal(env.stateFile, join("/repo", ".open-everywhere-deploy", "known-good.json"));
   assert.equal(env.project, undefined);
 });
 
@@ -832,7 +834,7 @@ check("resolveVercelApiToken: a bare VERCEL_TOKEN is NOT read — that name is t
 });
 
 check("resolveVercelApiToken: falls back to the CLI's stored login when unset", () => {
-  const token = resolveVercelApiToken({ env: {}, homeDir: "/home/op", readFile: (p) => (p.endsWith("com.vercel.cli/auth.json") ? JSON.stringify({ token: "cli-token" }) : undefined) });
+  const token = resolveVercelApiToken({ env: {}, homeDir: "/home/op", readFile: (p) => (toPosixPath(p).endsWith("com.vercel.cli/auth.json") ? JSON.stringify({ token: "cli-token" }) : undefined) });
   assert.equal(token, "cli-token");
 });
 
@@ -1148,7 +1150,7 @@ await check("runRecord: an unresolvable alias names the CALLING script and recor
 });
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
-const tsxBin = join(repoRoot, "node_modules", ".bin", "tsx");
+const tsx = (args: string[]): [string, string[]] => tsxCommand(repoRoot, args);
 const verifyScript = join(repoRoot, "scripts", "deploy", "verify.ts");
 const fakeHome = join(scratch, "fake-home");
 const bareCwd = join(scratch, "bare-runner-cwd");
@@ -1204,7 +1206,7 @@ async function runVerify(
   const port = (server.address() as { port: number }).port;
   try {
     return await new Promise<VerifyRun>((resolve) => {
-      const child = spawn(tsxBin, [verifyScript, ...argv, "--attempts", "1", "--delay-ms", "1"], {
+      const child = spawn(...tsx([verifyScript, ...argv, "--attempts", "1", "--delay-ms", "1"]), {
         cwd: options.cwd ?? bareCwd,
         env: {
           PATH: process.env.PATH ?? "",

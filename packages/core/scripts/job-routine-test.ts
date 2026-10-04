@@ -1,5 +1,4 @@
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { slackContinuationToken } from "eve/channels/slack";
 import { applyOutcome, completeJob } from "../agent/routines/lifecycle.js";
@@ -14,6 +13,7 @@ import { isJobRoutine, routineMarker, ROUTINE_MARKER, JOB_STATE_MAX_BYTES, type 
 import { jobFireStamped } from "../agent/access/job-posture.js";
 import { classifySessionId } from "../agent/channels/window-key.js";
 import { registerSlackBridge } from "../agent/channels/slack-bridge.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 registerSlackBridge({
   form: async () => undefined,
@@ -101,7 +101,7 @@ const resumedMsg = renderJobMessage({ ...baseJob, jobState: "goal: merge PR; don
 ok(resumedMsg.includes("goal: merge PR; done: pinged reviewer"), "a job message injects the prior ledger (the continuity note across session death)");
 
 const dir = join(tmpdir(), `open-everywhere-job-routine-test-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 
 const store = await import("../agent/routines/store.js");
@@ -276,5 +276,5 @@ await throwsAsync(
   );
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`✓ job-routine: ${passed} assertions passed`);

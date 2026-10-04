@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import {
   AMBIENT_READ_MANIFEST,
   AMBIENT_READ_REMEDY,
@@ -10,6 +10,7 @@ import {
   type LegSource,
 } from "./ambient-env-manifest.js";
 import { REPO_ROOT, chainLegs, legLabel } from "./chain/_legs.js";
+import { posixRelative } from "./posix-path.js";
 
 const argv = process.argv.slice(2);
 const listMode = argv.includes("--list");
@@ -24,7 +25,7 @@ if (onlyAt !== -1 && onlyFiles.length === 0) {
 function chainLegSources(): LegSource[] {
   const byFile = new Map<string, LegSource>();
   for (const leg of chainLegs()) {
-    const file = relative(REPO_ROOT, leg.file);
+    const file = posixRelative(REPO_ROOT, leg.file);
     if (byFile.has(file)) continue;
     byFile.set(file, { label: legLabel(leg), file, source: readFileSync(leg.file, "utf8") });
   }
@@ -34,7 +35,7 @@ function chainLegSources(): LegSource[] {
 function namedSources(paths: readonly string[]): LegSource[] {
   return paths.map((p) => {
     const abs = isAbsolute(p) ? p : resolve(process.cwd(), p);
-    const file = relative(REPO_ROOT, abs);
+    const file = posixRelative(REPO_ROOT, abs);
     return { label: `--only ${file}`, file, source: readFileSync(abs, "utf8") };
   });
 }

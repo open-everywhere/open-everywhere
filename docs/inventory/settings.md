@@ -56,7 +56,7 @@ nearest preceding heading as the anchor.
 is this page and its siblings: an inventory NAMES every variable in order to report which page
 documents it, so counting it makes every row documented by the page that reports it undocumented.
 `scripts/env-docs-lint.ts` excludes the directory for exactly this reason, with a guard that reds if
-the directory is renamed. `agent/docs/generated/**` is the compiled copy of `docs/`, so a hit there
+the directory is renamed. `packages/core/agent/docs/generated/**` is the compiled copy of `docs/`, so a hit there
 is the same page counted twice — and for the Code column it is worse, because a generated module is
 build output, not a read site.
 

@@ -761,7 +761,13 @@ seats without waiting for them to rotate.
 (`packages/core/agent/access/overlay-module.ts`) emits a generated header, `export default`, the
 canonical data and a fixed suffix — so a module's bytes are a pure function of its parsed structure and
 a drift lint can re-emit them. The matching unwrap **refuses** a file whose prefix or suffix does not
-match, which is exactly the case where something outside the data was touched.
+match, which is exactly the case where something outside the data was touched. The header is checked
+for SHAPE, not for bytes (OPE-2217): it must open with the fixed banner line and hold only `//` lines,
+none of which may contain a `\r`, U+2028 or U+2029 line terminator (each would end the comment early
+and run the rest of the line). The round-trip compares the bytes after the header, so a release that
+changes the header words does not refuse an existing app's overlays. The check and the re-emit ship in
+core (`packages/core/agent/scaffold/overlay-check.ts`) as `oe overlays check|normalize`, and
+`oe build --check` runs the check.
 
 **A read gets an age, not two timestamps.** `ageAtRead` (`packages/core/agent/access/dated-read.ts`)
 renders the gap between an item's own time and the time the read ran, in minutes, hours or days, so the

@@ -39,6 +39,7 @@ import type { ApprovalJudgeContext, JudgeCacheEntry } from "../agent/access/appr
 import type { PendingActionRow } from "../agent/approvals/types.js";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -1032,4 +1033,4 @@ overrideSettingsForTest({ approvals: { judgeMode: "off" } });
 console.log(
   `✓ approval-judge: ${passed} assertions — fail-closed arming (off/shadow/enforce, exact strings only), judge-off ≡ today, per-verb-default shadow eligibility, exemption predicate, two-pass flow with fail-closed defers, taint-invalidated (op, connection) verdict cache, shadow rows beside real cards — and PHASE 2: pass-1 allow short disabled under enforcement, session-or-nothing enforce cache refusing pass-1 entries, bounded timeout with no late cache back-fill, judge allow/ask/deny/degraded/unattended through the live propose plane with per-consult approval.judge.verdict rows — and OPE-965/OPE-1102: all three ledger producers on PRODUCER-WRITTEN rows (a click overrule on a real judge-lift wedge row, de-duplicated per row and refused without admin standing; the admin disarm off ONE marked row; its symmetric admin re-arm), FOUR overrules leaving the judge armed and still lifting (no contradiction breaker), the append-only ledger surviving a re-arm, latest-operator-row-wins in both directions, domain scoping on both verbs, and the disarm/re-arm state reaching the chain (a disarmed domain cards with the transport untouched; the re-armed domain lifts again) — and OPE-1130: the ORG-WIDE address, which governs the domain-less consults, fails closed on both branches, carries an explicit audit envelope, and is a STRICT PARTITION against the domain rows in both directions, on the reader and on the live chain — and the two malformed operator-row shapes (a BARE row honoured by neither lookup, an AMBIGUOUS one failing closed, restrictively and only for the planes it names) — and OPE-1368: the ORG is part of both addresses, so one org's newer re-arm cannot cancel another org's break-glass disarm on either the domained or the org-wide plane, an unscoped consult fails closed, and inside one org the two acts still compose as before — and OPE-1129: the DEDUPE read is scoped too, so a foreign org's row on the same wedge id cannot suppress this org's overrule`,
 );
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);

@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ENV_READ_ALLOWLIST, DYNAMIC_ENV_READ_SITES, auditDynamicEnvReads, auditEnvReads } from "./env-read-allowlist.js";
 import { collectExportedNameConstants, scanComputedEnvReads, type DynamicEnvRead } from "./env-read-scan.js";
+import { toPosixPath } from "./posix-path.js";
 
 const CODE_ROOTS = ["agent", "packages"];
 const DOC_ROOTS = ["docs"];
@@ -23,7 +24,7 @@ function filesUnder(dir: string, accept: (name: string) => boolean, out: string[
     if (entry === "node_modules" || entry === "dist" || entry === "generated") continue;
     const p = join(dir, entry);
     if (statSync(p).isDirectory()) filesUnder(p, accept, out);
-    else if (accept(entry)) out.push(p);
+    else if (accept(entry)) out.push(toPosixPath(p));
   }
   return out;
 }

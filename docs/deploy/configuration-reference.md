@@ -28,10 +28,20 @@ Each is a **data module**: a fixed header, one type-only import, and exactly one
 it on a bot-PR branch, the PR merge is the approval gate, and the bytes are a pure function of the
 data — which is what makes each PR a minimal, reviewable diff.
 
-**Don't hand-edit them.** `npm run lint:overlays` (a required check in the `npm test` chain)
-re-emits each file from its own parsed data and fails on any byte difference, so a hand-edit —
-including one that adds executable code — cannot merge. If you must change one by hand, edit only
-the data and then run `npm run overlays:normalize`. Hand-authored grants belong in `bundles.ts`,
+**Don't hand-edit them.** The overlay check re-emits each file from its own parsed data and fails
+on any byte difference below the header, so a hand-edit — including one that adds executable code —
+fails the check. The header must open with the fixed `GENERATED + MACHINE-OWNED` banner and hold only
+`//` lines; its other words may be older than the current emit, so a header change in a new release
+does not refuse an existing app's overlays. If you must change one by hand, edit only the data and
+then re-emit it.
+
+| | An npm app (`npx create-open-everywhere`) | This repository |
+| --- | --- | --- |
+| Check | `npx oe overlays check`, or `npx oe build --check`, which runs it | `npm run lint:overlays`, a required leg of the `npm test` chain |
+| Re-emit | `npx oe overlays normalize` | `npm run overlays:normalize` |
+
+The check runs only when something runs it. In an npm app, run `npx oe build --check` before you
+merge a pull request that changes an overlay; the merge is the approval gate. Hand-authored grants belong in `bundles.ts`,
 hand-authored hooks in `hooks.ts`.
 
 ### Bundle
@@ -543,11 +553,11 @@ The table below is **generated from the schema** — edit the schema, run `npm r
 | `models.stack` | `"american-closed"` | `OE_MODEL_STACK` | The named model stack this deployment runs — one alias picks a coherent model for all five roles (primary/utility/vision/supervisor/judge). Aliases are defined in `agent/model/stacks.ts`; an unknown one fails config load. Per-role overrides layer on top there, and `OE_FORCE_MODEL`/`OE_PRIMARY_MODEL` still override the primary role last. |
 | `policyPages.privacy` | ``` (unset — `/privacy` serves the placeholder page)` | — *(code-only)* | The operator's PRIVACY POLICY, served as `GET /privacy` — the URL `teams-app/manifest.json` declares as `privacyUrl`. Free text, rendered ESCAPED and as PLAIN TEXT with its line breaks kept: never as HTML and never as markdown, so the route cannot become a way to serve arbitrary markup from this deployment's origin. Empty (shipped) ⇒ the route answers 200 with a placeholder page saying no policy is published yet and naming this setting; it never 404s, because a manifest pointing at a 404 is the defect the route exists to remove. |
 | `policyPages.terms` | ``` (unset — `/terms` serves the placeholder page)` | — *(code-only)* | The operator's TERMS OF USE, served as `GET /terms` — the URL `teams-app/manifest.json` declares as `termsOfUseUrl`. Same rendering and same unset behaviour as `policyPages.privacy`. |
-| `rotation.contextSizeTokens` | `120000` | — *(code-only)* | Context-size BACKSTOP: the LAST request's measured `inputTokens + cacheReadTokens` — the same measure compaction reads, not the cumulative counter `rotation.tokenBudget` meters. It sits BELOW the compaction fire point on purpose, so a standing seat re-mints a fresh generation with a recorded tail instead of compacting into a summary. Compaction still owns delegated and worker runs, which never reach the rotation chain. |
+| `rotation.contextSizeTokens` | `120000` | — *(code-only)* | Context-size BACKSTOP: the LAST request's measured `inputTokens` (the whole prompt, cache reads included) — the same measure compaction reads, not the cumulative counter `rotation.tokenBudget` meters. It sits BELOW the compaction fire point on purpose, so a standing seat re-mints a fresh generation with a recorded tail instead of compacting into a summary. Compaction still owns delegated and worker runs, which never reach the rotation chain. |
 | `rotation.expiryDays` | `7 d` | — *(code-only)* | PRIMARY rotation trigger, in days: a standing generation older than this is retired for context freshness (measured from its own `created_at`, reset on every rotation). `0` or a negative value DISABLES the trigger. |
 | `rotation.quietGapHours` | `12 h` | — *(code-only)* | Idleness threshold, in hours: a standing generation not woken for this long rotates fresh on its NEXT wake rather than resuming a stale session. 12 hours holds a standing seat for a working day, so a morning question and an afternoon follow-up reach the same session. 🔴 What BOUNDS the longer gap is the rest of the chain, not this row: `rotation.expiryDays` still retires a generation on age, and the token, turn and context-size backstops still bound one generation's growth. `rotation.tailTokenCap` is NOT that bound — it caps what a rotation carries forward, so it makes each rotation cheap rather than making a long gap safe. Re-derive against the backstops before raising this. |
 | `rotation.tailTokenCap` | `5000` | — *(code-only)* | Token cap on the last-generation TAIL a fresh generation's first wake carries — the recorded wake messages and the seat's own posts, selected most-recent-first. Tight on purpose: the tail makes the seat conversational, and its read tools and memory cover everything older. |
-| `rotation.tokenBudget` | `4000000` | — *(code-only)* | Token BACKSTOP (demoted from primary by OPE-345, value unchanged): the measured cumulative `inputTokens + cacheReadTokens` on one generation. Also the route the session-park remedy uses — parking saturates this counter. |
+| `rotation.tokenBudget` | `4000000` | — *(code-only)* | Token BACKSTOP (demoted from primary by OPE-345, value unchanged): the measured cumulative `inputTokens` on one generation. `inputTokens` is the whole prompt, so it already includes the cache reads, and each cached token counts once. Also the route the session-park remedy uses — parking saturates this counter. |
 | `rotation.turnBudget` | `60` | — *(code-only)* | Turn BACKSTOP: turn count on one generation. 60 is derived from the substrate — a workflow run caps at 25,000 events and OE measures ~295 events/turn, so the wall binds near ~85 turns and this sits ~30% under it. It must ALSO satisfy the older invariant it was first derived against, C(budget) < 40M cumulative input on its own (C(60)≈4.9M ✓; the pre-OPE-345 150 was ✓ at 25.65M, 300 is ✗ at ~96M) — both bounds are pinned in `scripts/rotation-trigger-test.ts`. RE-DERIVE it (do not nudge it) if the events-per-turn measurement moves. |
 | `routines.eventMaxFanout` | `3` | — *(code-only)* | Max routines ONE inbound event may fan out to. Every over-cap match is a genuine drop, so it writes a throttled `routine.skip` audit row (reason `fanout_cap`) rather than silently not firing. |
 | `routines.jobMaxDays` | `7 d` | — *(code-only)* | Wall-clock grace minted onto a fresh durable-job bound, in days. Stretched so a slow cadence still gets a fair sample of runs. |

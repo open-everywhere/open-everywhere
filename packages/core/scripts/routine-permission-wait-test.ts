@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let passed = 0;
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-routine-permission-wait-"));
@@ -570,7 +571,7 @@ await inTurn("sess-card", "turn_0", async () => {
   await updateRoutine(ORG, SURFACE, "r-nightly", { promptGeneration: 1 });
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`✓ routine permission wait: ${passed} assertions passed`);
 
 async function allPendingActionIds(): Promise<string[]> {

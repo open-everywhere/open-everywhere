@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { defineTool } from "eve/tools";
 import type { ApprovalPolicy } from "eve/tools/approval";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-connector-approval-reach-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
@@ -222,5 +223,5 @@ console.log("4. eve's connection-search dynamic still reads the registry:");
 }
 
 resetSettingsForTest();
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`\nconnector-approval-reachability: ${passed} assertions passed.`);

@@ -95,6 +95,15 @@ function main(): void {
     ok(lint(["--check"]).code === 1, "🔴 deleting the DO-NOT-HAND-EDIT banner makes lint --check RED");
   });
 
+  withPerturbed(OVERLAYS[0], (t) => t.replace(/\n\/\/ To change it by hand[^\n]*\n/, "\n// To change it by hand, keep the layout exactly as emitted.\n"), (original) => {
+    const r = lint(["--check"]);
+    ok(r.code === 0, `an older header passes lint --check (exit ${r.code})`);
+    ok(r.out.includes(`${OVERLAYS[0]}: older header text`), "…and says the header is older");
+    const w = lint([]);
+    ok(w.code === 0 && w.out.includes("normalised 1 overlay"), "overlays:normalize refreshes an older header");
+    ok(readFileSync(join(scratchRoot, OVERLAYS[0]), "utf8") === original, "…to the current bytes");
+  });
+
   {
     const rel = OVERLAYS[0];
     withPerturbed(rel, (t) => t.replace('  "bundles"', '      "bundles"'), (original) => {
@@ -102,6 +111,7 @@ function main(): void {
       ok(r.code === 1, "a hand-re-indented body makes lint --check RED");
       ok(r.out.includes("not in canonical form"), "…and says the file is not canonical");
       ok(r.out.includes("overlays:normalize"), "…and names the recovery command");
+      ok(r.out.includes("npx oe overlays normalize"), "…and the codemod's refusal names the `oe` command an npm app has (OPE-2217)");
       const w = lint([]);
       ok(w.code === 0 && w.out.includes("normalised 1 overlay"), "overlays:normalize REPAIRS data-only drift");
       ok(readFileSync(join(scratchRoot, rel), "utf8") === original, "…restoring the exact canonical bytes");

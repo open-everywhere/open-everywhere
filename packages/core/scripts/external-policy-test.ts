@@ -29,6 +29,7 @@ import type { Domain } from "../agent/memory/domain.js";
 import type { NormalizedWake } from "../agent/channels/normalized-wake.js";
 import type { WakeMessageInput } from "../agent/channels/wake-envelope.js";
 import { fileURLToPath } from "node:url";
+import { toPosixPath } from "../../../scripts/posix-path.js";
 
 let passed = 0;
 function ok(cond: boolean, msg: string): void {
@@ -528,7 +529,7 @@ console.log("7. silent-room-grain reachability signal:");
         .split("\n")
         .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
         .join("\n");
-      if (/\bungraded: true\b/.test(code)) producers.push(p.slice(packagesRoot.length));
+      if (/\bungraded: true\b/.test(code)) producers.push(toPosixPath(p.slice(packagesRoot.length)));
     }
   };
   walk(packagesRoot);

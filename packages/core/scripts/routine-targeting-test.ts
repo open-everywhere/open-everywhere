@@ -1,6 +1,7 @@
 import { tmpdir } from "node:os";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
+import { removeTempDir } from "./_temp-dir.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -387,5 +388,5 @@ const ORG = "default";
   ok(dmOnce.pending === true, "dm: a ONE-SHOT in a DM is created — 'check back in an hour' is unchanged by any of this");
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`✓ routine targeting (OPE-148): ${passed} assertions passed (dispatch predicate + report model + card venue + config lint + REAL fires reaching their destination)`);

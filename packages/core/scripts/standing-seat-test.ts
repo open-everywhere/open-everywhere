@@ -18,6 +18,7 @@ import { mkMessageTrigger, renderWake } from "../agent/channels/normalized-wake.
 import type { WakeMessageInput } from "../agent/channels/wake-envelope.js";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { toPosixPath } from "../../../scripts/posix-path.js";
 import { fileURLToPath } from "node:url";
 import { fetchedBackscroll, seatCatchUpSinceMs, type NormalizedMessage } from "../agent/channels/backscroll-window.js";
 import { auditAmbientSkip, resetAmbientSkipSightings } from "../agent/channels/ambient-skip.js";
@@ -358,7 +359,8 @@ console.log("8 — hydrationSlices (the ORDER) + per-surface parity through rend
           walk(p);
         } else if (e.name.endsWith(".ts")) {
           const src = readFileSync(p, "utf8");
-          const rel = p.slice(p.indexOf("/providers/") + "/providers/".length);
+          const posix = toPosixPath(p);
+          const rel = posix.slice(posix.indexOf("/providers/") + "/providers/".length);
           for (const banned of ["capLines(", "contextLinesNotInEnvelope(", "renderContext("]) {
             if (!src.includes(banned)) continue;
             if (banned === "renderContext(" && ALLOWED.has(rel)) continue;

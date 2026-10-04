@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
 
 const dir = join(tmpdir(), `open-everywhere-domain-model-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: "acme" });
 
@@ -25,6 +24,7 @@ import type { RoutingDeps, ModelBackend } from "../agent/model/routing.js";
 import type { Domain, ModelReasoning } from "../agent/memory/domain.js";
 import type { ModelPolicy } from "../agent/model/policy.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let n = 0;
 const ok = (label: string, cond: boolean) => {
@@ -310,5 +310,5 @@ function deps(opts: {
   ok("resolver: domainModelPick is consulted for the supervisor role with the domain name", seen === "eng");
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`\n✓ domain model self-serve: ${n} assertions passed (RBAC + SET-time envelope clamp + pricing report + resolver slotting + fail-soft)\n`);

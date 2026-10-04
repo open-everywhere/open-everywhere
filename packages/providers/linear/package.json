@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/provider-linear",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Open Everywhere Linear provider — Linear as a wake surface plus issue-tracker tools.",
   "keywords": [
     "agent",
@@ -157,7 +157,7 @@
     "prepack": "npm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "npm run test:chain",
-    "test:chain": "npm run test:linear-actions && npm run test:linear-create && npm run test:linear-credentials && npm run test:linear-supervisor && npm run test:linear-silence-ack && npm run test:linear-identity && npm run test:linear-read-scope && npm run test:linear-write-scope && npm run test:linear-work-search && npm run test:linear-event-normalizer && npm run test:dynamic-replay && npm run test:linear-route-taint && npm run test:linear-post-arm && npm run test:linear-webhook-verify && npm run test:linear-multi-org-reply && npm run test:linear-multi-org-tools && npm run test:linear-stop && npm run test:linear-engagement && npm run test:linear-reaction-feedback && npm run test:linear-message-ops && npm run test:linear-read && npm run test:linear-wake-failure-audit && npm run test:linear-rate-limit && npm run test:linear-write-seam",
+    "test:chain": "tsx ../../../scripts/chain/run-chain.ts",
     "test:linear-wake-failure-audit": "NODE_NO_WARNINGS=1 tsx scripts/linear-wake-failure-audit-test.ts",
     "test:linear-actions": "NODE_NO_WARNINGS=1 tsx scripts/linear-actions-test.ts",
     "test:linear-read": "NODE_NO_WARNINGS=1 tsx scripts/linear-read-test.ts",
@@ -184,7 +184,7 @@
     "test:linear-write-seam": "NODE_NO_WARNINGS=1 tsx scripts/linear-write-seam-test.ts"
   },
   "dependencies": {
-    "@open-everywhere/core": "0.1.4",
+    "@open-everywhere/core": "0.1.5",
     "zod": "4.5.4"
   },
   "peerDependencies": {

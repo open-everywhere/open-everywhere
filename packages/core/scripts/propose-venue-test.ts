@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeTempDir } from "./_temp-dir.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "oe-propose-venue-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
@@ -786,7 +787,7 @@ const agentInput = (name: string) => ({ name, memory: newReadonlyMemory, exposed
   );
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(
   `✓ propose-venue: ${n} assertions passed (card-less redirect for all six OPE-303/312 propose tools, the nine OPE-325 tools, the three entity-gated OPE-326 tools and the two OPE-338 tools; spend pair matches its sibling, args-vs-card split incl. the entity/destination join and distinct scopeKeys under a shared venue, fail-closed refusals, own-room unchanged)`,
 );

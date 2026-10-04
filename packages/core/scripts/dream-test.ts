@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildGraph } from "../agent/memory/graph.js";
@@ -30,6 +30,7 @@ import { workflowSignature, inMemoryLedger, auditRecurrenceLedger } from "../age
 import { learnFromSession } from "../agent/memory/dream/learn.js";
 import { stampHumanEdit, isHumanEdited, humanEditedAt, humanEditedFiles } from "../agent/memory/provenance.js";
 import type { MemoryFiles } from "../agent/memory/store.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -567,5 +568,5 @@ const tidySchedule = await import("../agent/schedules/tidy.js");
   ok(heartbeats[0]!.detail?.["outcome"] === "no-op: nothing to tidy", "🔴 OPE-635: …and the outcome names the no-op explicitly");
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`✓ dream: ${passed} assertions passed`);

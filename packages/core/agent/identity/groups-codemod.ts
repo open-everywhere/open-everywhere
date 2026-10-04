@@ -1,4 +1,4 @@
-import { overlayModuleHeader, unwrapOverlayModule, wrapOverlayModule, type OverlayModuleGrammar } from "../access/overlay-module.js";
+import { overlayModuleHeader, sameOverlayModuleAfterHeader, unwrapOverlayModule, wrapOverlayModule, type OverlayModuleGrammar } from "../access/overlay-module.js";
 import { DIRECTORY_GROUP_PREFIX, isDirectoryGroupName, type Group } from "./groups.js";
 
 export interface GroupsFile {
@@ -70,7 +70,7 @@ export function stringifyGroups(file: GroupsFile): string {
 
 const GROUPS_MODULE: OverlayModuleGrammar = {
   what: "person-groups overlay",
-  header: overlayModuleHeader("person-groups overlay", "packages/core/agent/identity/groups-codemod.ts"),
+  header: overlayModuleHeader("person-groups overlay", "@open-everywhere/core/agent/identity/groups-codemod.js"),
   typeImport: 'import type { GroupsFile } from "@open-everywhere/core/agent/identity/groups-codemod.js";',
   typeName: "GroupsFile",
 };
@@ -81,9 +81,9 @@ export function emitGroupsModule(file: GroupsFile): string {
 
 export function parseGroupsModule(text: string): GroupsFile {
   const file = parseGroupsFile(unwrapOverlayModule(GROUPS_MODULE, text, (m) => new GroupsCodemodError(m)));
-  if (emitGroupsModule(file) !== text) {
+  if (!sameOverlayModuleAfterHeader(emitGroupsModule(file), text)) {
     throw new GroupsCodemodError(
-      "person-groups overlay is not in canonical form — re-emitting its own data does not reproduce the file, so it has been hand-edited. Run `npm run overlays:normalize` and commit the result (the codemod refuses to rewrite a file it did not write).",
+      "person-groups overlay is not in canonical form — re-emitting its own data does not reproduce the file below its header, so it has been hand-edited. Run `npx oe overlays normalize` and commit the result (the codemod refuses to rewrite a file it did not write).",
     );
   }
   return file;

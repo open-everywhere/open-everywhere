@@ -1,7 +1,7 @@
 import { readFileSync, mkdtempSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-stranded-seat-")), "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: undefined });
@@ -203,7 +203,7 @@ const NATIVE_TOKEN = "C0123456:oe-sup:g1";
 {
   const require = createRequire(import.meta.url);
   const evePkg = require.resolve("eve/package.json");
-  const world = `${evePkg.slice(0, evePkg.lastIndexOf("/"))}/dist/src/compiled/@workflow/world-vercel/index.js`;
+  const world = `${dirname(evePkg)}/dist/src/compiled/@workflow/world-vercel/index.js`;
   const haystack = readFileSync(world, "utf8");
   ok(
     haystack.includes(RUN_KEY_FETCH_MARKER),

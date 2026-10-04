@@ -14,6 +14,7 @@ import {
   rowsSinceCursor,
   seedNotionChannelKey,
   waitFor,
+  waitForTurnCancelDelivered,
   type NotionApiCall,
   type ScriptedHandle,
 } from "../harness";
@@ -139,6 +140,7 @@ test("a human's bare `stop` comment cancels an in-flight Notion turn; a bot-auth
   expect(requested[0]!.detail?.outcome).toBe("requested");
   expect(requested[0]!.detail?.turnId).toBe(cancelledTurnId);
 
+  await waitForTurnCancelDelivered(anchor.sessionId);
   handle.releaseHolds();
 
   const cancelled = await waitFor(async () => {

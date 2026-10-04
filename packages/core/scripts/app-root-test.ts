@@ -1,11 +1,14 @@
+// proves: ENV-150, ENV-151
+
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { APP_ROOT_ENV, resolveAppRoot } from "../agent/scaffold/app-root.js";
-import { loadAppDomains } from "./e2e/app-config.js";
+import { loadAppDomains, loadAppSpendBudgets } from "./e2e/app-config.js";
 import { loadConfigRooms } from "./e2e/fixture-inventory.js";
+import { CAP_FIXTURES, resolveCapFixtureCap } from "./e2e/fixture-inventory-lib.js";
 
 let passed = 0;
 function check(label: string, fn: () => void): void {
@@ -19,9 +22,12 @@ async function checkAsync(label: string, fn: () => Promise<void>): Promise<void>
   console.log(`  ✓ ${label}`);
 }
 
-function writeApp(dir: string, domainNames: readonly string[]): void {
+function writeApp(dir: string, domainNames: readonly string[], capKey = "slack/T0EXAMPLE/C0EXCHAN007"): void {
   mkdirSync(join(dir, "agent", "memory", "config"), { recursive: true });
   mkdirSync(join(dir, "agent", "access"), { recursive: true });
+  mkdirSync(join(dir, "agent", "spend"), { recursive: true });
+  const budgets = { perSurface: { [capKey]: { surfaceMonthlyTokens: 10_000 } } };
+  writeFileSync(join(dir, "agent", "spend", "budgets.ts"), `export function loadSpendBudgets() { return ${JSON.stringify(budgets)}; }\n`);
   writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "fixture-app", private: true, type: "module" }));
   writeFileSync(join(dir, "agent", "agent.ts"), "export default {};\n");
   const domains = domainNames.map((name) => ({ name, surfaces: [] }));
@@ -38,7 +44,7 @@ try {
   const productCore = join(product, "packages", "core");
   const elsewhere = join(tmp, "elsewhere");
   const noApp = join(tmp, "no-app", "deep");
-  writeApp(consumer, ["reference", "consumer-only"]);
+  writeApp(consumer, ["reference", "consumer-only"], "slack/T_REAL/C_REAL_CAP");
   writeApp(product, ["reference"]);
   mkdirSync(productCore, { recursive: true });
   writeFileSync(join(productCore, "package.json"), JSON.stringify({ name: "@open-everywhere/core", private: true }));
@@ -106,8 +112,32 @@ try {
     assert.equal(names(await loadAppDomains(root)).includes("consumer-only"), true);
     assert.equal(names(await loadAppDomains(product)).includes("consumer-only"), false);
   });
+
+  const [capFixture] = CAP_FIXTURES;
+  const testBedEnv = { E2E_SLACK_CAP_CHANNEL: "C_REAL_CAP" };
+  await checkAsync("🔴 OPE-2205: S10's cap key resolves from the CONSUMER's budgets to the real room the test deployment drives", async () => {
+    const root = resolveAppRoot({ env: workspaceEnv, cwd: productCore });
+    assert.deepEqual(resolveCapFixtureCap(capFixture!, "T_REAL", await loadAppSpendBudgets(root), testBedEnv)?.caps, { surfaceMonthlyTokens: 10_000 });
+  });
+  await checkAsync("🔴 OPE-2205 NEGATIVE CONTROL: the product's own budgets name only the synthetic key, so they cap nothing the test deployment drives", async () => {
+    assert.equal(resolveCapFixtureCap(capFixture!, "T_REAL", await loadAppSpendBudgets(product), testBedEnv)?.caps, undefined);
+  });
+  await checkAsync("an app with NO agent/spend/budgets.ts loads as empty budgets — the hook is optional, so S10 skips rather than crashing", async () => {
+    rmSync(join(elsewhere, "agent", "spend", "budgets.ts"));
+    assert.deepEqual(await loadAppSpendBudgets(elsewhere), {});
+  });
+  await checkAsync("NEGATIVE CONTROL: a budgets.ts that FAILS to load still throws — only the missing file maps to empty", async () => {
+    writeFileSync(join(elsewhere, "agent", "spend", "budgets.ts"), 'import "./no-such-helper.js";\nexport function loadSpendBudgets() { return {}; }\n');
+    await assert.rejects(loadAppSpendBudgets(elsewhere));
+  });
 } finally {
   rmSync(tmp, { recursive: true, force: true });
 }
+
+await checkAsync("the reference app's budgets.ts caps the reference cap channel under the key S10 resolves", async () => {
+  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+  const budgets = await loadAppSpendBudgets(repoRoot);
+  assert.notEqual(resolveCapFixtureCap(CAP_FIXTURES[0]!, "T0EXAMPLE", budgets, { E2E_SLACK_CAP_CHANNEL: "C0EXCHAN007" })?.caps, undefined);
+});
 
 console.log(`✓ app-root: ${passed} checks passed`);

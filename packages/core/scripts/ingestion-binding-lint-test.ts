@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   TODO_KIND,
@@ -8,6 +8,7 @@ import {
   routeKey,
   type IngestionSite,
 } from "../agent/access/ingestion-binding-manifest.js";
+import { posixRelative } from "../../../scripts/posix-path.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -128,7 +129,7 @@ function tsFilesUnder(dir: string): string[] {
   const files = [...tsFilesUnder(join(root, "agent")), ...providerDirs.flatMap(tsFilesUnder)];
   ok(files.length > 100, `real: the scan actually read core's + providers' agent trees (${files.length} files) — a green over an empty file list is a green produced by blindness`);
 
-  const sites = files.flatMap((f) => findIngestionSites(relative(root, f), readFileSync(f, "utf8")));
+  const sites = files.flatMap((f) => findIngestionSites(posixRelative(root, f), readFileSync(f, "utf8")));
   const defects = checkIngestionSites(sites);
   ok(defects.length === 0, `real: every ingestion declaration site in the shipped tree binds a literal known kind with a label (${defects.map((d) => `${d.file}:${d.line} ${d.rule}`).join(", ")})`);
 

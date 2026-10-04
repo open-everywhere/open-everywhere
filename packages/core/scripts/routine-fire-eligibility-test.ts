@@ -1,8 +1,9 @@
 import { tmpdir } from "node:os";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -748,5 +749,5 @@ const rejectingReceive = (() => ({
   ok(actingPrincipalId(bound) === undefined, "§6: 🔴 …and holds NO acting authority — an eligible fire runs on the room's own reach, never the creator's personal standing");
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`✓ routine fire eligibility + lifecycle (OPE-506): ${passed} assertions passed`);

@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { afterEach } from "vitest";
+import { afterEach, expect } from "vitest";
 
 import { reserveEphemeralPort } from "../../scripts/ephemeral-port.js";
 import { AUDIT_DUMP_LIMIT, formatAuditTimeoutDump, type AuditDumpRow, type AuditDumpPendingRow } from "./audit-timeout-dump";
@@ -23,6 +23,9 @@ import { INTEGRATION_SANDBOX_BACKEND } from "./global-setup-contract";
 import { copyPgliteTemplateInto } from "./pglite-template";
 import { createStateDir } from "./state-dir";
 import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
+import "@open-everywhere/core/agent/access/untrusted-projection.js";
+import "@open-everywhere/core/agent/access/worker-continuation.js";
+import "@open-everywhere/core/agent/channels/turn-terminal-actions.js";
 
 import {
   ANY_SESSION,
@@ -57,16 +60,115 @@ export function seatReply(text: string, id: string): ScriptedStep {
 
 const oePerTestCleanups: (() => void)[] = [];
 
-const BARRIER_QUIET_MS = 1_500;
+export const BARRIER_QUIET_MS = 1_500;
+export const BARRIER_QUIET_UNDISPATCHED_MS = 250;
 const BARRIER_CEILING_MS = 20_000;
+const BARRIER_POLL_MS = 250;
 const BARRIER_ACTIONS = ["unified.task_wake", "reply.no_reply", "reply.post"] as const;
+const CLOSING_PROSE_DROPPED_ACTION = "turn.supervisor_prose_dropped";
+const BARRIER_DISPATCH_OPEN_ACTION = "delegation.task_started";
+const BARRIER_DISPATCH_CLOSE_ACTIONS = ["delegation.task_settled", "delegation.task_failed"] as const;
+
+const BARRIER_TRACE = process.env["OE_IT_BARRIER_TRACE"] === "1";
+
+function barrierTrace(fields: Record<string, string | number | boolean>): void {
+  if (!BARRIER_TRACE) return;
+  const body = Object.entries(fields)
+    .map(([k, v]) => `${k}=${String(v)}`)
+    .join(" ");
+  let at = "?";
+  try {
+    at = expect.getState().currentTestName ?? "?";
+  } catch {
+  }
+  console.error(`[oe-barrier-trace] ${body} at="${at}"`);
+}
+
+export interface BarrierSpend {
+  readonly ms: number;
+  readonly polls: number;
+  readonly rows: number;
+  readonly dispatched: boolean;
+  readonly window: "fast" | "full";
+}
+
+let barrierSpend: BarrierSpend | undefined;
+
+export function lastBarrierSpend(): BarrierSpend | undefined {
+  return barrierSpend;
+}
+
+let barrierFloorCursor: AuditCursor | undefined;
 
 export async function awaitWindowQuiet(): Promise<void> {
   await drainOutstandingSettlements();
 }
 
+const PROSE_REDRIVE_ACTION = "unified.turn.redrive";
+
+export async function awaitProseRedriveSettled(cursor: AuditCursor, label: string): Promise<void> {
+  const actions = [CLOSING_PROSE_DROPPED_ACTION, PROSE_REDRIVE_ACTION];
+  const drops = async () => rowsSinceCursor(cursor, [CLOSING_PROSE_DROPPED_ACTION]);
+  const first = await waitForAuditRows({ probe: async () => (await drops()).at(-1), label: `${label}: the turn's ${CLOSING_PROSE_DROPPED_ACTION} row`, actions, cursor });
+  if (first.detail?.replied === true) return;
+  const wakeId = first.detail?.wakeId;
+  if (typeof wakeId !== "string" || wakeId.length === 0) {
+    throw new Error(`integration harness: ${label}: the ${CLOSING_PROSE_DROPPED_ACTION} row carries no wake id, so its re-drive cannot be told apart`);
+  }
+  await waitForAuditRows({
+    probe: async () => ((await rowsSinceCursor(cursor, [PROSE_REDRIVE_ACTION])).some((r) => r.detail?.originalWakeId === wakeId) ? true : undefined),
+    label: `${label}: the ${PROSE_REDRIVE_ACTION} row for wake ${wakeId}`,
+    actions,
+    cursor,
+  });
+  await waitForAuditRows({
+    probe: async () => ((await drops()).filter((r) => r.detail?.wakeId === wakeId).length >= 2 ? true : undefined),
+    label: `${label}: the re-driven turn's own final ${CLOSING_PROSE_DROPPED_ACTION} row for wake ${wakeId}`,
+    actions,
+    cursor,
+  });
+}
+
+interface BarrierWitness {
+  readonly owed: boolean;
+  readonly openDispatch: boolean;
+}
+
+const BARRIER_WITNESS_NO_FLOOR: BarrierWitness = { owed: true, openDispatch: false };
+const BARRIER_WITNESS_UNREAD: BarrierWitness = { owed: true, openDispatch: true };
+
+async function barrierDispatchWitness(floor: AuditCursor | undefined): Promise<BarrierWitness> {
+  if (floor === undefined) return BARRIER_WITNESS_NO_FLOOR;
+  let delegations: AuditRow[];
+  let drops: AuditRow[];
+  try {
+    delegations = await rowsSinceCursor(floor, [BARRIER_DISPATCH_OPEN_ACTION, ...BARRIER_DISPATCH_CLOSE_ACTIONS], {
+      limit: AUDIT_CURSOR_MARK_LIMIT,
+    });
+    drops = await rowsSinceCursor(floor, [CLOSING_PROSE_DROPPED_ACTION], { limit: AUDIT_CURSOR_MARK_LIMIT });
+  } catch {
+    return BARRIER_WITNESS_UNREAD;
+  }
+  const started = new Set<string>();
+  const closedIds = new Set<string>();
+  let unnamedOpen = false;
+  for (const row of delegations) {
+    const task = typeof row.detail?.["task"] === "string" ? row.detail["task"] : "";
+    if (row.action === BARRIER_DISPATCH_OPEN_ACTION) {
+      if (task.length === 0) unnamedOpen = true;
+      else started.add(task);
+    } else if (task.length > 0) {
+      closedIds.add(task);
+    }
+  }
+  const opened = started.size + (unnamedOpen ? 1 : 0);
+  const owedDrop = drops.some((row) => row.detail?.["replied"] !== true);
+  return { owed: opened > 0 || owedDrop, openDispatch: unnamedOpen || [...started].some((task) => !closedIds.has(task)) };
+}
+
 async function drainOutstandingSettlements(): Promise<void> {
   if (booted === undefined) return;
+  const openedAt = Date.now();
   let cursor: AuditCursor;
   try {
     cursor = await auditCursor();
@@ -83,24 +185,38 @@ async function drainOutstandingSettlements(): Promise<void> {
       return;
     }
   }
-  const deadline = Date.now() + BARRIER_CEILING_MS;
+  const floor = barrierFloorCursor;
+  const deadline = openedAt + BARRIER_CEILING_MS;
+  let witness = await barrierDispatchWitness(floor);
+  let dispatched = witness.owed;
+  let quietMs = dispatched ? BARRIER_QUIET_MS : BARRIER_QUIET_UNDISPATCHED_MS;
   let lastSeen = 0;
+  let polls = 0;
   let quietFrom = Date.now();
   try {
     while (Date.now() < deadline) {
       let seen = 0;
       try {
         seen = (await rowsSinceCursor(cursor, [...BARRIER_ACTIONS], { limit: 50 })).length;
+        polls++;
       } catch {
         break;
+      }
+      if (!dispatched) {
+        witness = await barrierDispatchWitness(floor);
+        if (witness.owed) {
+          dispatched = true;
+          quietMs = BARRIER_QUIET_MS;
+        }
       }
       if (seen > lastSeen) {
         lastSeen = seen;
         quietFrom = Date.now();
-      } else if (Date.now() - quietFrom >= BARRIER_QUIET_MS) {
+        quietMs = BARRIER_QUIET_MS;
+      } else if (Date.now() - quietFrom >= quietMs) {
         return;
       }
-      await sleep(250);
+      await sleep(BARRIER_POLL_MS);
     }
     console.warn(
       `[oe-barrier] ${BARRIER_CEILING_MS}ms expired with settlement rows still arriving (${lastSeen} since the barrier opened). ` +
@@ -108,6 +224,15 @@ async function drainOutstandingSettlements(): Promise<void> {
     );
   } finally {
     drain?.dispose();
+    if (!witness.openDispatch) barrierFloorCursor = cursor;
+    barrierSpend = {
+      ms: Date.now() - openedAt,
+      polls,
+      rows: lastSeen,
+      dispatched,
+      window: quietMs === BARRIER_QUIET_MS ? "full" : "fast",
+    };
+    barrierTrace({ ...barrierSpend });
   }
 }
 
@@ -129,7 +254,7 @@ export function disposeLater<T extends { dispose(): void }>(handle: T): T {
   return handle;
 }
 
-export { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "@open-everywhere/core/agent/adapter-api.js";
+export { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "@open-everywhere/core/agent/access/untrusted.js";
 
 const PRISTINE_ENV_DESCRIPTOR = Object.getOwnPropertyDescriptor(process, "env");
 
@@ -352,6 +477,10 @@ export async function bootAgent(opts: BootOptions = {}): Promise<{ base: string 
   settings.overrideSettingsForTest({ egress: { allowUnenforced: true } });
 
   booted = { base };
+  try {
+    barrierFloorCursor = await auditCursor();
+  } catch {
+  }
   return booted;
 }
 
@@ -383,6 +512,42 @@ export async function waitFor<T>(probe: () => T | undefined | Promise<T | undefi
     }
     await sleep(400);
   }
+}
+
+const workflowEventsDir = (): string => join(ROOT, ".eve", ".workflow-data", "events");
+
+export function isTurnCancelHookToken(token: unknown, sessionId: string): boolean {
+  if (typeof token !== "string") return false;
+  const prefix = `${sessionId}:turn-control:`;
+  if (!token.startsWith(prefix) || !token.endsWith(":cancel")) return false;
+  return /^\d+$/.test(token.slice(prefix.length, -":cancel".length));
+}
+
+export async function waitForTurnCancelDelivered(sessionId: string): Promise<void> {
+  const seen = new Set<string>();
+  await waitFor(
+    () => {
+      let names: string[];
+      try {
+        names = readdirSync(workflowEventsDir());
+      } catch {
+        return undefined;
+      }
+      for (const name of names) {
+        if (seen.has(name) || !name.endsWith(".json")) continue;
+        let event: { eventType?: unknown; eventData?: { token?: unknown } };
+        try {
+          event = JSON.parse(readFileSync(join(workflowEventsDir(), name), "utf8")) as typeof event;
+        } catch {
+          continue;
+        }
+        seen.add(name);
+        if (event.eventType === "hook_received" && isTurnCancelHookToken(event.eventData?.token, sessionId)) return true;
+      }
+      return undefined;
+    },
+    `eve's delivery of the stop to the turn of session ${sessionId} (a hook_received event on its "<sessionId>:turn-control:<n>:cancel" hook)`,
+  );
 }
 
 export async function waitForChildren(

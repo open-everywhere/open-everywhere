@@ -1,10 +1,12 @@
+// proves: DELG-36, DELG-37, DELG-38
+
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { removeTempDir } from "./_temp-dir.js";
 
 const dir = join(tmpdir(), `open-everywhere-supervisor-complete-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 
 const { completeSupervisorTurn, SUPERVISOR_REPLIED_ROUTE } = await import("../agent/channels/supervisor-complete.js");
@@ -114,5 +116,5 @@ const has = (o: Outcome, mark: string) => o.logs.some((l) => l.includes(mark));
   ok(has(wired, DROP_MARK) && !has(wired, NO_ROUTE_MARK), "§5d NEGATIVE CONTROL: with a post arm declared, the identical completion takes the drop branch");
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`supervisor-complete: ${n} assertions passed`);

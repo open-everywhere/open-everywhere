@@ -35,6 +35,7 @@ import type { BindableContext } from "../agent/identity/binding.js";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 registerSlackFixtureMapper();
 
 
@@ -455,5 +456,5 @@ function ctxFor(principalId: string, channelId: string, channelType: "channel" |
   }
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`\n✓ governance: ${n} assertions passed (OPE-110 governance venue + OPE-44 DM-delivery arm)\n`);

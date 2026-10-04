@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { removeTempDir } from "./_temp-dir.js";
 
 const dir = join(tmpdir(), `open-everywhere-own-account-egress-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 
 const { registerConfig } = await import("../agent/access/config.js");
@@ -258,5 +258,5 @@ ok(
   ok(after === before, `🔴 …and the ordinary read adds NO ${CONNECTOR_ACTING_IDENTITY_ACTION} row (before ${before}, after ${after})`);
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`✓ own-account-egress: ${n} assertions passed`);

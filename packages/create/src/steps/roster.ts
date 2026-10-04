@@ -49,6 +49,7 @@ function rosterNext(detail: string): string {
   if (/npm install/.test(detail)) return "npm install";
   if (/UNREVIEWED|missing — nothing has been REVIEWED/.test(detail)) return "review the contribution in roster.config.ts, then `npx oe build --accept` and read the roster.lock.json diff";
   if (/NOT BUILT/.test(detail)) return "npm run build";
+  if (/OVERLAY ·/.test(detail)) return "edit only the data in the named overlay, then `npx oe overlays normalize`";
   return "npx oe build";
 }
 

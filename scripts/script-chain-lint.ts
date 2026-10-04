@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join, relative } from "node:path";
+import { CHAIN_LIST_FILE, chainRunnerCommand, readChainList } from "./chain/_legs.js";
 
 const ROOT = process.cwd();
 
@@ -78,12 +79,47 @@ for (const pkg of packages) {
   }
 }
 
+for (const pkg of packages) {
+  let names: string[] | undefined;
+  try {
+    names = readChainList(pkg.dir);
+  } catch (err) {
+    problems.push((err as Error).message);
+    continue;
+  }
+  const chain = pkg.scripts["test:chain"];
+  if (names === undefined) {
+    if (chain !== undefined) {
+      problems.push(
+        `${pkg.label}: script "test:chain" is defined, but the package has no ${CHAIN_LIST_FILE} — the runner has no list to run.`,
+      );
+    }
+    continue;
+  }
+  const expected = chainRunnerCommand(pkg.dir);
+  if (chain !== expected) {
+    problems.push(
+      `${pkg.label}: ${CHAIN_LIST_FILE} exists, so "test:chain" must be exactly \`${expected}\`, but it is ` +
+        `${chain === undefined ? "not defined" : `\`${chain}\``}. Put the legs in ${CHAIN_LIST_FILE}, one per line, never in the script.`,
+    );
+  }
+  for (const name of names) {
+    checked++;
+    if (!(name in pkg.scripts)) {
+      problems.push(
+        `${pkg.label}: ${CHAIN_LIST_FILE} names "${name}", but ${pkg.label} defines no script by that name — the chain dies here mid-run.`,
+      );
+    }
+  }
+}
+
 const TSX_TARGET = /(?:^|\s)tsx\s+(\S+\.ts)(?=\s|$)/g;
 const MENTIONS_TSX = /(?:^|\s)tsx(?:\s|$)/;
 const byFile = new Map<string, string>();
 for (const pkg of packages) {
   for (const [name, command] of Object.entries(pkg.scripts)) {
     if (!name.startsWith("test:") && !name.startsWith("lint:")) continue;
+    if (name === "test:chain") continue;
     const targets = [...command.matchAll(TSX_TARGET)].map((m) => m[1]!);
     if (targets.length === 0) {
       if (MENTIONS_TSX.test(command)) {
@@ -119,6 +155,6 @@ if (problems.length > 0) {
 }
 
 console.log(
-  `✓ script-chain: ${checked} \`npm run\` leg(s) across ${packages.length} package(s) all resolve; ` +
+  `✓ script-chain: ${checked} \`npm run\` and chain-list leg(s) across ${packages.length} package(s) all resolve; ` +
     `${byFile.size} \`test:*\`/\`lint:*\` runner file(s) each named by exactly one script`,
 );

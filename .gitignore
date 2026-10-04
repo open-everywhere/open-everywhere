@@ -149,6 +149,9 @@ packages/providers/*/dist/
 # cache archive's staging paths; each is deleted in a `finally`, and the glob is what keeps the orphan
 # from a killed run out of the next `git add -A`.
 /.oe-it-prepared.json
+# OPE-2280 — the root `build` gate's stamp: the cache key its `.output` was built from
+# (`scripts/eve-build-stamp.ts`). Build output for one machine's tree, never source.
+/.oe-it-built.json
 /.oe-it-prepare/
 /.oe-it-prepare-restore.tar.gz
 /.oe-it-prepare-publish.tar.gz

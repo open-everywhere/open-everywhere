@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
-import { REPO_ROOT, chainLegs, needsSubprocess, type ChainLeg } from "../chain/_legs.js";
+import { REPO_ROOT, chainLegs, needsSubprocess, readChainList, type ChainLeg } from "../chain/_legs.js";
 
 const RUNNER_NAME = /(?:^|\/)[^/]+-test\.ts$/u;
 
@@ -411,7 +411,8 @@ export function unchainedRootScripts(root: string = REPO_ROOT): string[] {
     reached.add(name);
     for (const m of (scripts[name] ?? "").matchAll(/npm\s+run\s+([A-Za-z0-9:_-]+)/gu)) walk(m[1]!);
   };
-  walk("test:chain");
+  reached.add("test:chain");
+  for (const leg of readChainList(root) ?? []) walk(leg);
   return Object.keys(scripts)
     .filter((k) => k.startsWith("test:") && k !== "test:chain" && k !== "test:suites" && !reached.has(k))
     .sort();

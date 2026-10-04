@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import "./_register-test-config.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 const dir = join(tmpdir(), `open-everywhere-control-spend-scope-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: "home-org" });
 const FOREIGN_ORG = "other-tenant";
@@ -170,5 +170,5 @@ const report = async (args: Record<string, unknown>): Promise<{ view: SpendWire;
 }
 
 await client.close();
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`\n✓ control spend read is org-pinned: ${n} assertions passed\n`);

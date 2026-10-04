@@ -234,14 +234,28 @@ the instance count.
 | --- | --- |
 | `credentials` | the surface's credentials are present. Presence only — never which, never a value. |
 | `installed` | the deployment holds an install artefact for the surface. For Slack that is a bot token, which Slack issues only on an install. It is **not** evidence that the install is still live: a revoked app leaves a stale token in place. |
-| `eventsVerified` | this deployment has verified a **signed** event from the surface. `yes` is proof that one was verified at some point — not proof about the *current* signing secret, since a rotation or a restored database leaves the evidence behind. Absence reads `unknown`, never `no`: see the limit below. |
+| `eventsVerified` | this deployment has verified a **signed** event from the surface. `yes` is proof that one was verified at some point — not proof about the *current* signing secret, since a rotation or a restored database leaves the evidence behind. Absence reads `unknown`, never `no`: see below. |
 
-For Slack the evidence is a `channel_session` row, and that row is keyed by the supervisor grain's
-registry key rather than by the surface key. Two of the shapes carry the platform (`slack/…` with
-window topology off, and `oe-domain::slack/…` under the default `solo` mode), so `yes` is reachable
-there. A domain in `unified` mode, a **named window group**, and a DM-only deployment key their rows
-by the domain or group name, which carries no platform marker — those read `unknown` however much
-traffic they have verified.
+For Slack the evidence is a **stamp** that the `/eve/v1/slack` signature gate writes right after a
+`v0=` HMAC verify passes (`stampSurfaceEventVerified` in
+`packages/core/agent/operational/surface-evidence.ts`). The gate writes it on every accepted delivery
+and before any classification, so the install-time `url_verification` handshake counts as well. The
+stamp is one deployment-level row in the operational store's `instance_meta` table, so it reads the
+same for every domain topology: `solo` and `unified` mode, a named window group and a DM-only
+deployment. A forged or unsigned request is refused before the stamp, and writes nothing.
+
+A delivery that the gate forwards to eve, the handshake included, waits for the write before it
+answers. On the other deliveries the write rides the delivery's background work. There, a serverless
+instance that is reclaimed before the write lands can lose it, and the next verified delivery on a
+new instance writes it again.
+
+The stamp is refreshed at most once an hour per server process, so its stored instant is accurate to
+about an hour. The route publishes only the verdict, never the instant.
+
+A deployment whose Slack traffic all predates the stamp still reads `yes` from a `channel_session`
+row, in the two key shapes that carry the platform (`slack/…` and `oe-domain::slack/…`). Its first
+verified delivery after the upgrade writes the stamp. `unknown` therefore means no verified delivery
+since the upgrade, no legacy row, or a store the route could not read.
 
 ---
 

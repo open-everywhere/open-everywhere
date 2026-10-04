@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { posixJoin, toPosixPath } from "../../scripts/posix-path.js";
 
 export const KEYED_TREE_PATHS: readonly string[] = [
   "agent",
@@ -34,12 +35,12 @@ export function justBashTemplateDir(root: string): string {
   return join(root, ".eve", "sandbox-cache", "just-bash", "templates");
 }
 
-const JUST_BASH_TEMPLATES_RELPATH = justBashTemplateDir("");
+const JUST_BASH_TEMPLATES_RELPATH = toPosixPath(justBashTemplateDir(""));
 
 export const PREPARED_ARTIFACTS: readonly string[] = [
-  join(".output", "server", "index.mjs"),
+  posixJoin(".output", "server", "index.mjs"),
   JUST_BASH_TEMPLATES_RELPATH,
-  join("packages", "core", "dist"),
+  posixJoin("packages", "core", "dist"),
 ];
 
 export interface CacheKeyHost {
@@ -143,6 +144,68 @@ export function writeStamp(root: string, key: string): void {
   writeFileSync(join(root, STAMP_FILE), `${JSON.stringify({ format: CACHE_FORMAT, key }, null, 2)}\n`);
 }
 
+export const BUILD_STAMP_FILE = ".oe-it-built.json";
+
+export interface BuildStamp {
+  readonly state: "building" | "built";
+  readonly key: string;
+}
+
+export function readBuildStamp(root: string): BuildStamp | undefined {
+  const path = join(root, BUILD_STAMP_FILE);
+  if (!existsSync(path)) return undefined;
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as { format?: unknown; state?: unknown; key?: unknown };
+    if (parsed.format !== CACHE_FORMAT) return undefined;
+    if (parsed.state !== "building" && parsed.state !== "built") return undefined;
+    return typeof parsed.key === "string" && parsed.key.length > 0 ? { state: parsed.state, key: parsed.key } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeBuildStamp(root: string, stamp: BuildStamp): void {
+  writeFileSync(join(root, BUILD_STAMP_FILE), `${JSON.stringify({ format: CACHE_FORMAT, ...stamp }, null, 2)}\n`);
+}
+
+export function clearBuildStamp(root: string): void {
+  rmSync(join(root, BUILD_STAMP_FILE), { force: true });
+}
+
+export function beginBuildStamp(root: string, verdict: CacheKeyVerdict): string {
+  clearBuildStamp(root);
+  rmSync(join(root, STAMP_FILE), { force: true });
+  if (verdict.kind !== "key") return `no build stamp — ${verdict.reason}`;
+  writeBuildStamp(root, { state: "building", key: verdict.key });
+  return `building ${verdict.key}`;
+}
+
+export function finishBuildStamp(root: string, verdict: CacheKeyVerdict): string {
+  const begun = readBuildStamp(root);
+  if (begun?.state !== "building") {
+    clearBuildStamp(root);
+    return "no build stamp — `begin` recorded no key for this build";
+  }
+  if (verdict.kind !== "key" || verdict.key !== begun.key) {
+    clearBuildStamp(root);
+    return `no build stamp — the key moved during the build (${verdict.kind === "key" ? `now ${verdict.key}` : verdict.reason})`;
+  }
+  writeBuildStamp(root, { state: "built", key: verdict.key });
+  return `built ${verdict.key}`;
+}
+
+export function gateBuiltBundle(input: {
+  readonly state: "warm" | "cold";
+  readonly stampsTrusted: boolean;
+  readonly key: string | undefined;
+  readonly stamp: BuildStamp | undefined;
+  readonly bundlePresent: boolean;
+}): boolean {
+  if (input.state === "warm" || !input.stampsTrusted) return false;
+  if (input.key === undefined || input.stamp === undefined) return false;
+  return input.stamp.state === "built" && input.stamp.key === input.key && input.bundlePresent;
+}
+
 export function hostCacheKeyProbe(root: string): CacheKeyHost {
   const git = (args: readonly string[]): string =>
     execFileSync("git", [...args], {
@@ -228,7 +291,8 @@ export function restorePreparedTree(input: { readonly root: string; readonly key
   try {
     writeFileSync(archivePath, archive);
     for (const relative of CACHED_TREE_PATHS) rmSync(join(root, relative), { force: true, recursive: true });
-    execFileSync("tar", ["-xzf", archivePath, "-C", root, "--", ...CACHED_TREE_PATHS], {
+    execFileSync("tar", ["-xzf", basename(archivePath), "-C", ".", "--", ...CACHED_TREE_PATHS], {
+      cwd: root,
       stdio: ["ignore", "pipe", "pipe"],
       maxBuffer: 64 * 1024 * 1024,
       timeout: GIT_TRANSPORT_TIMEOUT_MS,
@@ -261,7 +325,8 @@ export function publishPreparedTree(input: { readonly root: string; readonly key
     }).trim();
   const archivePath = join(root, ".oe-it-prepare-publish.tar.gz");
   try {
-    execFileSync("tar", ["-czf", archivePath, "-C", root, ...CACHED_TREE_PATHS], {
+    execFileSync("tar", ["-czf", basename(archivePath), "-C", ".", ...CACHED_TREE_PATHS], {
+      cwd: root,
       stdio: ["ignore", "pipe", "pipe"],
       maxBuffer: 64 * 1024 * 1024,
       timeout: GIT_TRANSPORT_TIMEOUT_MS,

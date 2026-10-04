@@ -1,5 +1,5 @@
 import type { AuditEntry, AuditInput } from "../agent/operational/store.js";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -26,6 +26,7 @@ import {
 } from "../agent/memory/dream/mode3-last-mile.js";
 import type { ConfigPrProvider } from "../agent/credentials/config-pr.js";
 import { makeGitHubConfigPrProvider } from "../agent/credentials/config-pr-github.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -628,5 +629,5 @@ const spendingDeps = {
   ok(skipLine.includes("dream.mode3_last_mile"), "loop: …and points the reader at the audit rows that say what the earlier attempt did");
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`✓ dream-mode3-v2: ${passed} assertions passed`);

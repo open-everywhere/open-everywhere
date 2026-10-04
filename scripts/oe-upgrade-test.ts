@@ -99,7 +99,7 @@ function harness(options: { readonly registry?: Partial<UpgradeRegistry>; readon
       out: (l) => out.push(l),
       err: (l) => err.push(l),
       run: (command, args, cwd) => {
-        const call = { command, args, cwd };
+        const call = { command, args: args[0]?.endsWith("npm-cli.js") ? args.slice(1) : args, cwd };
         calls.push(call);
         return options.onRun?.(call) ?? 0;
       },
@@ -282,12 +282,13 @@ const manifestOf = (root: string): { dependencies: Record<string, string>; devDe
     }
     return 0;
   };
-  const first = harness({ onRun: onInstall });
-  ok((await runUpgradeCommand([], first.io, root)) === 1, "the first run refuses on the codemod the target introduces");
+  const refuse = (c: Call): number => (c.args.includes("upgrade-codemods") ? 1 : onInstall(c));
+  const first = harness({ onRun: refuse });
+  ok((await runUpgradeCommand([], first.io, root)) === 1, "the first run refuses on the codemod the target's registry does not hold");
   ok(existsSync(marker(root)), "…and leaves the marker");
   ok(JSON.parse(readFileSync(marker(root), "utf8")).from === INSTALLED, `🔴 …which records the version the run started FROM, got ${readFileSync(marker(root), "utf8").trim()}`);
 
-  const second = harness({ onRun: onInstall });
+  const second = harness({ onRun: refuse });
   ok((await runUpgradeCommand([], second.io, root)) === 1, "🔴 the retry refuses AGAIN — it does not forget the migration the operator still owes");
   ok(second.text().includes("arrives-with-the-target"), "…and names it again");
   ok(existsSync(marker(root)), "…and the marker stays, because the run still did not finish");
@@ -459,32 +460,98 @@ const manifestOf = (root: string): { dependencies: Record<string, string>; devDe
 
 {
   const root = fixtureApp({ notes: recordOf(note({ configMigrations: [{ description: "rewrite the overrides", codemod: "nobody-wrote-this" }] })) });
-  const before = readFileSync(join(root, "package.json"), "utf8");
-  const h = harness();
+  const install = installTargetNaming(root, "nobody-wrote-this");
+  const h = harness({ onRun: (c) => (install(c), 0) });
   const code = await runUpgradeCommand([], h.io, root);
-  ok(code === 1, "🔴 a codemod the registry does not hold refuses the upgrade");
-  ok(h.text().includes("nobody-wrote-this"), "…and names it");
-  ok(readFileSync(join(root, "package.json"), "utf8") === before && h.calls.length === 0, "…before a single byte is written");
+  ok(code === 0, `🔴 an id this CLI does not hold no longer refuses before the install — got ${code}: ${h.err.join(" | ")}`);
+  ok(h.text().includes("this CLI does not hold: nobody-wrote-this"), "…but the warning names it");
+  ok(h.text().includes(`${LATEST}'s registry resolves it`), "…and the plan says which registry resolves it");
+  ok(h.calls[1]?.args.includes("nobody-wrote-this") === true, "🔴 …and the TARGET's registry gets the id, so it can refuse it there");
 }
 
 {
-  const root = fixtureApp({ notes: recordOf(note({ version: INSTALLED })) });
+  const NEXT = "0.1.5";
+  const root = fixtureApp();
+  writeFileSync(join(root, "package.json"), readFileSync(join(root, "package.json"), "utf8").replace(new RegExp(INSTALLED, "gu"), LATEST));
+  writeFileSync(
+    join(root, "node_modules", "@open-everywhere", "core", "package.json"),
+    `${JSON.stringify({ name: CORE, version: LATEST, bin: { oe: "./bin/oe.js" } }, null, 2)}\n`,
+  );
+  const lateNote = note({ configMigrations: [{ description: "late migration", codemod: "late" }] });
+  writeFileSync(join(root, "node_modules", "@open-everywhere", "core", "upgrading.json"), recordOf(lateNote, note({ version: INSTALLED })));
+  mkdirSync(join(root, ".open-everywhere"), { recursive: true });
+  writeFileSync(marker(root), `${JSON.stringify({ from: INSTALLED, target: LATEST })}\n`);
   const h = harness({
     onRun: (c) => {
       if (c.args[0] === "install") {
         writeFileSync(
           join(root, "node_modules", "@open-everywhere", "core", "upgrading.json"),
-          recordOf(note({ configMigrations: [{ description: "late migration", codemod: "arrives-with-the-target" }] }), note({ version: INSTALLED })),
+          recordOf(note({ version: NEXT }), lateNote, note({ version: INSTALLED })),
         );
       }
       return 0;
     },
   });
+  const code = await runUpgradeCommand(["--to", NEXT], h.io, root);
+  ok(code === 0, `🔴 \`oe upgrade --to ${NEXT}\` gets past the refused release — got ${code}: ${h.err.join(" | ")}`);
+  ok(h.calls[0]?.args[0] === "install", "…by installing the later release");
+  ok(h.calls[1]?.args.includes("late") === true, "🔴 …and handing the refused release's codemod to the later release's registry");
+}
+
+function installTargetNaming(root: string, codemod: string): (c: Call) => void {
+  return (c: Call): void => {
+    if (c.args[0] !== "install") return;
+    writeFileSync(
+      join(root, "node_modules", "@open-everywhere", "core", "upgrading.json"),
+      recordOf(
+        note({
+          configMigrations: [
+            { description: "late migration", codemod },
+            { description: "edit the overrides by hand" },
+          ],
+        }),
+        note({ version: INSTALLED }),
+      ),
+    );
+  };
+}
+
+{
+  const root = fixtureApp({ notes: recordOf(note({ version: INSTALLED })) });
+  const install = installTargetNaming(root, "arrives-with-the-target");
+  const h = harness({ onRun: (c) => (install(c), 0) });
   const code = await runUpgradeCommand([], h.io, root);
-  ok(code === 1, "🔴 a codemod that only the TARGET's notes name still refuses — the second read is the authoritative one");
-  ok(h.text().includes("arrives-with-the-target"), "…and names it");
-  ok(h.calls.length === 1, "…and `oe build --accept` never ran, so no unreviewed roster lands");
-  ok(h.text().includes("Apply those migrations by hand"), "…and the refusal tells the operator what state the tree is in");
+  ok(code === 0, `🔴 a codemod that only the TARGET's notes name no longer refuses — got exit ${code}: ${h.err.join(" | ")}`);
+  const codemodCall = h.calls[1];
+  const bin = join(root, "node_modules", "@open-everywhere", "core", "bin", "oe.js");
+  ok(
+    codemodCall !== undefined &&
+      codemodCall.command === process.execPath &&
+      JSON.stringify(codemodCall.args) === JSON.stringify([bin, "upgrade-codemods", "arrives-with-the-target"]) &&
+      codemodCall.cwd === root,
+    `🔴 …because step 4 spawns the NEWLY INSTALLED bin's \`upgrade-codemods\` with the target's ids — got ${JSON.stringify(codemodCall)}`,
+  );
+  ok(h.calls[2]?.args.join(" ").endsWith("build --accept") === true, "…and `oe build --accept` runs only AFTER the codemods");
+  ok(h.calls.length === 5, `…and the procedure is install, codemods, build --accept, typecheck, build — got ${h.calls.length}`);
+  ok(h.text().includes("CONFIG (apply by hand): edit the overrides by hand"), "…and a migration with no codemod is still printed for the operator");
+}
+
+{
+  const root = fixtureApp({ notes: recordOf(note({ version: INSTALLED })) });
+  const install = installTargetNaming(root, "nobody-shipped-this");
+  const h = harness({ onRun: (c) => (install(c), c.args.includes("upgrade-codemods") ? 1 : 0) });
+  const code = await runUpgradeCommand([], h.io, root);
+  ok(code === 1, "🔴 a codemod step that exits non-zero stops the upgrade");
+  ok(h.text().includes("nobody-shipped-this"), "…and the failed step names the ids");
+  ok(h.calls.length === 2, "…and `oe build --accept` never ran, so no unreviewed roster lands");
+  ok(existsSync(marker(root)), "…and the marker stays, so the retry re-runs the codemods");
+}
+
+{
+  const root = fixtureApp({ notes: recordOf(note({ version: INSTALLED })) });
+  const h = harness();
+  ok((await runUpgradeCommand([], h.io, root)) === 0, "a window with no codemod completes");
+  ok(!h.calls.some((c) => c.args.includes("upgrade-codemods")), "…and spawns no codemod step");
 }
 
 {
@@ -511,6 +578,25 @@ const manifestOf = (root: string): { dependencies: Record<string, string>; devDe
   const code = await runUpgradeCommand([], h.io, root);
   ok(code === 0, "a target that ships no upgrading.json still upgrades — the record postdates some releases");
   ok(h.text().includes("predates the release record"), "…and the run says so rather than staying silent");
+}
+
+{
+  const root = fixtureApp({ notes: recordOf(note({ configMigrations: [{ description: "rewrite the overrides", codemod: "nobody-wrote-this" }] })) });
+  const h = harness({
+    onRun: (c) => {
+      if (c.args[0] === "install") rmSync(join(root, "node_modules", "@open-everywhere", "core", "upgrading.json"));
+      return 0;
+    },
+  });
+  const code = await runUpgradeCommand([], h.io, root);
+  ok(code === 1, "🔴 a target that ships NO record after an installed core that did refuses");
+  ok(h.calls.length === 1, "…and `oe build --accept` never ran");
+  ok(existsSync(marker(root)), "…and the marker stays for the retry");
+  ok(h.text().includes("cannot be read"), "…and the refusal says why");
+  const retry = harness();
+  ok((await runUpgradeCommand([], retry.io, root)) === 1, "🔴 the RETRY refuses too — the pre-install read is the broken target now");
+  ok(retry.calls.length === 1 && existsSync(marker(root)), "…and it runs no build and keeps the marker");
+  ok(retry.text().includes("left a resume marker") && !retry.text().includes("the installed core did"), "…and its message names the marker, not a record the installed core does not ship");
 }
 
 {
@@ -573,6 +659,24 @@ const manifestOf = (root: string): { dependencies: Record<string, string>; devDe
   }
   ok(status === 1, `🔴 \`oe upgrade\` is REACHABLE through the oe bin — exit 1 on the downgrade, got ${status}`);
   ok(output.includes("does not downgrade"), "…and the dispatcher's output is the command's own refusal");
+}
+
+{
+  const root = fixtureApp();
+  const runCli = (args: readonly string[]): { status: number; output: string } => {
+    try {
+      const output = execFileSync(process.execPath, [TSX_CLI, CLI, ...args], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      return { status: 0, output };
+    } catch (err) {
+      const e = err as { status?: number; stdout?: string; stderr?: string };
+      return { status: e.status ?? 1, output: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+    }
+  };
+  const unknown = runCli(["upgrade-codemods", "nobody-wrote-this"]);
+  ok(unknown.status === 1, `🔴 \`oe upgrade-codemods\` is REACHABLE and refuses an unknown id — got exit ${unknown.status}`);
+  ok(unknown.output.includes("nobody-wrote-this") && unknown.output.includes("no codemod ran"), "…and names it, and says no codemod ran");
+  const bare = runCli(["upgrade-codemods"]);
+  ok(bare.status === 2, `…and with no id it is a usage error — got exit ${bare.status}`);
 }
 
 console.log(`✓ oe upgrade: ${passed} assertions.`);

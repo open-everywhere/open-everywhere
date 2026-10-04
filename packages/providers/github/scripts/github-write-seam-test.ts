@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+
+const posixRelative = (from: string, to: string): string => relative(from, to).split(sep).join("/");
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -77,7 +79,7 @@ const seamCode = stripComments(readFileSync(SEAM, "utf8"));
 {
   const offenders: string[] = [];
   for (const file of AGENT_FILES) {
-    if (BARE_FETCH.test(stripComments(readFileSync(file, "utf8")))) offenders.push(relative(PKG_ROOT, file));
+    if (BARE_FETCH.test(stripComments(readFileSync(file, "utf8")))) offenders.push(posixRelative(PKG_ROOT, file));
   }
   eq(offenders, [], `🔴 §3 no file in the GitHub agent tree may call the global fetch directly — found ${offenders.length}: ${offenders.join(", ")}`);
 }
@@ -94,7 +96,7 @@ const seamCode = stripComments(readFileSync(SEAM, "utf8"));
 
   const found: string[] = [];
   for (const file of AGENT_FILES) {
-    if (OWN_TRANSPORT.test(stripComments(readFileSync(file, "utf8")))) found.push(relative(PKG_ROOT, file));
+    if (OWN_TRANSPORT.test(stripComments(readFileSync(file, "utf8")))) found.push(posixRelative(PKG_ROOT, file));
   }
   eq(
     found.slice().sort(),

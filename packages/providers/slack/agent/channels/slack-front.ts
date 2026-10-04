@@ -78,6 +78,7 @@ import {
   tailAuthorGrain,
   dmWindowRegistryKey,
   approvalCardRespondVia,
+  stampSurfaceEventVerified,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   renderWakeMessage,
@@ -359,6 +360,7 @@ export interface FrontOptions {
   readonly getBotIdentity?: () => Promise<{ readonly userId?: string; readonly botId?: string }>;
   readonly now?: () => number;
   readonly markEventSeen?: (org: string, key: string, atIso: string) => Promise<boolean>;
+  readonly stampEventVerified?: () => Promise<unknown>;
   readonly ambientEnabledFor?: (surfaceKey: string) => boolean;
   readonly seatedSurfaceFor?: (surfaceKey: string) => boolean;
   readonly handleApprovalPayload?: (payload: unknown, deps?: { waitUntil?: (p: Promise<unknown>) => void }) => Promise<boolean>;
@@ -554,6 +556,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
   const now = opts.now ?? (() => Date.now());
   const resolveSigningSecret = async (): Promise<string | undefined> => opts.signingSecret ?? (await slackSigningSecret());
   const markEventSeen = opts.markEventSeen ?? liveMarkEventSeen;
+  const stampEventVerified = opts.stampEventVerified ?? (() => stampSurfaceEventVerified("slack"));
   const handleApproval =
     opts.handleApprovalPayload ??
     ((payload: unknown, deps?: { waitUntil?: (p: Promise<unknown>) => void }) =>
@@ -590,9 +593,14 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     if (!verifySlackSignature(rawBody, req.headers, requestSigningSecret, now())) {
       return new Response("unauthorized", { status: 401 });
     }
+    const stamped = holdRouteWork(stampEventVerified().catch(() => undefined));
     const decision = classifyEnvelope(rawBody, req.headers.get("content-type") ?? "");
 
-    const forwardNative = (): Promise<Response> =>
+    const forwardNative = async (): Promise<Response> => {
+      await stamped;
+      return forwardNativeNow();
+    };
+    const forwardNativeNow = (): Promise<Response> =>
       withForwardedSlackEnvelope(forwardedEnvelopeOf(rawBody), () => {
         const fenced = stripUnfencedSlackAttachments(rawBody);
         const ts = req.headers.get(SLACK_TIMESTAMP_HEADER);

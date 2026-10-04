@@ -48,6 +48,10 @@ function getDb(): DatabaseSync {
   return handle;
 }
 
+export function _openedMemoryDbPathForTest(): string | null {
+  return openedPath;
+}
+
 export function _resetDbForTest(): void {
   if (db) db.close();
   db = null;

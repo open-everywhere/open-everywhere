@@ -1,8 +1,9 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { codeOnly } from "./ambient-env-manifest.js";
 import { ALL_PUBLISHABLE_PACKAGES, PUBLISHABLE_PACKAGES } from "./publish-exports-generate.js";
+import { posixRelative, toPosixPath } from "./posix-path.js";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -281,7 +282,7 @@ function walkSources(dir: string, out: string[] = []): string[] {
 export function isGenerated(file: string): boolean {
   const base = basename(file);
   return (
-    file.split(sep).includes("generated") ||
+    toPosixPath(file).split("/").includes("generated") ||
     base.endsWith(".generated.ts") ||
     base === "docs-generated.ts"
   );
@@ -402,7 +403,7 @@ export function auditExportReach(root: string, options: AuditOptions = {}): Reac
   let wholesaleSkipped = 0;
   for (const file of modules) {
     const masked = codeOnly(readFileSync(file, "utf8"));
-    const shown = relative(root, file);
+    const shown = posixRelative(root, file);
     if (reexportsStarFromMask(masked)) {
       reds.push(`${shown}: \`export *\` — its export set cannot be enumerated, so reach cannot be proven`);
       keepBaselineFor(shown);

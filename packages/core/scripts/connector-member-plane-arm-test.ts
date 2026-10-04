@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 registerSlackFixtureMapper();
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-member-arm-"));
@@ -335,5 +336,5 @@ await contextStorage.run(new ContextContainer(), async () => {
 
 resetSettingsForTest();
 _resetSurfacesForTest();
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`✓ connector-member-plane-arm: ${passed} assertions passed`);

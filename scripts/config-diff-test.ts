@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { npxCommand } from "./npm-command.js";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -300,7 +301,7 @@ ok(pin.section === "access", "SnapshotRow keeps its three-field shape");
 {
   const dir = mkdtempSync(join(tmpdir(), "oe-config-diff-publish-"));
   const jsonOut = join(dir, "config-diff.json");
-  const run = spawnSync("npx", ["tsx", join(here, "config-diff.ts"), "--base-dir", here, "--json", jsonOut, "--publish"], {
+  const run = spawnSync(...npxCommand(["tsx", join(here, "config-diff.ts"), "--base-dir", here, "--json", jsonOut, "--publish"]), {
     cwd: join(here, ".."),
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,

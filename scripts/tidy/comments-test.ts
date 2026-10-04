@@ -406,11 +406,15 @@ try {
     execFileSync("git", ["checkout", "--", "src/prose-only.ts"], { cwd: root });
     ok(verify().status === 0, "…and restoring it is green again");
 
-    execFileSync("chmod", ["+x", join(root, "src/kept.ts")]);
-    const mode = verify();
-    ok(mode.status !== 0, "🔴 a mode-only change fails verify rather than passing on an empty diff");
-    ok(mode.stderr.includes("src/kept.ts"), "…and the failure names it");
-    ok(mode.stderr.includes("byte-identical"), "…and says the change is not in the text");
+    if (process.platform === "win32") {
+      console.log("⏭ tidy-comments: ⑪ the mode-only leg is SKIPPED on win32, NOT proven here — Windows has no executable bit for git to see.");
+    } else {
+      execFileSync("chmod", ["+x", join(root, "src/kept.ts")]);
+      const mode = verify();
+      ok(mode.status !== 0, "🔴 a mode-only change fails verify rather than passing on an empty diff");
+      ok(mode.stderr.includes("src/kept.ts"), "…and the failure names it");
+      ok(mode.stderr.includes("byte-identical"), "…and says the change is not in the text");
+    }
   }
 
   {

@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 
+
 import { bootAgent } from "./harness";
 
 const CONTRACT_IDS = [
@@ -21,6 +22,39 @@ interface StatusBody {
   surfaces: Record<string, { credentials: string; installed: string; eventsVerified: string }>;
   checkedAt: string;
 }
+
+test("a signed Slack delivery at the mounted gate turns eventsVerified from unknown to yes (OPE-2242)", async () => {
+  const { base } = await bootAgent();
+  const { SYNTHETIC_SLACK_ROUTE, signSlackRequest } = await import("../../packages/core/scripts/e2e/synthetic");
+  const secret = process.env.SLACK_SIGNING_SECRET;
+  expect(secret, "the harness sets this fork's signing secret at boot").toBeTruthy();
+  const slackVerdict = async (): Promise<string | undefined> =>
+    ((await (await fetch(`${base}/eve/v1/oe/status`)).json()) as StatusBody).surfaces["slack"]?.eventsVerified;
+
+  const rawBody = JSON.stringify({
+    type: "event_callback",
+    team_id: "T0OESTATUS",
+    event_id: "EvOeStatusStamp1",
+    event: { type: "reaction_added", user: "U0OESTATUS", reaction: "eyes", item_user: "U0SOMEONE", item: { type: "message", channel: "C0OESTATUS", ts: "1.1" } },
+  });
+  const post = (signature: string, timestamp: string): Promise<Response> =>
+    fetch(`${base}${SYNTHETIC_SLACK_ROUTE}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-slack-request-timestamp": timestamp, "x-slack-signature": signature },
+      body: rawBody,
+      signal: AbortSignal.timeout(60_000),
+    });
+  const good = signSlackRequest(rawBody, secret!);
+
+  const forged = await post("v0=" + "0".repeat(64), good.timestamp);
+  expect(forged.status).toBe(401);
+  await new Promise((r) => setTimeout(r, 2_000));
+  expect(await slackVerdict()).toBe("unknown");
+
+  const accepted = await post(good.signature, good.timestamp);
+  expect(accepted.status).toBe(200);
+  await expect.poll(slackVerdict, { timeout: 25_000, interval: 1_000 }).toBe("yes");
+});
 
 test("the status route is mounted, answers every contract requirement, and leaks nothing", async () => {
   const { base } = await bootAgent();

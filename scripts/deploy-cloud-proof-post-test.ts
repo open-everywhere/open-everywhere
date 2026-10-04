@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 
 import type { ExecResult } from "./deploy/lib.js";
 import { buildPostDecision, CLOUD_PROOF_CONTEXT, DESCRIPTION_MAX_LENGTH, formatInvocation, postCommitStatus } from "./deploy/cloud-proof-post-lib.js";
-import type { ProofVerdict } from "./deploy/cloud-proof-verify-lib.js";
+import { parseEvidence, type ProofVerdict } from "./deploy/cloud-proof-verify-lib.js";
 
 let checks = 0;
 const check = (label: string, fn: () => void): void => {
@@ -128,6 +128,20 @@ check("buildPostDecision: an INCOMPLETE shard series keeps its literal shard nam
     assert.ok(!decision.description.includes("test:integration=0 (3 shards)"), decision.description);
     assert.ok(decision.description.includes("test:integration--shard=1/4=0"), decision.description);
   }
+});
+
+check("buildPostDecision: 🔴 a PARTIAL green series parsed from evidence is never posted (OPE-2282)", () => {
+  const text = [
+    `OE_PROOF sha=${SHA} suite=typecheck:all exit=0`,
+    `OE_PROOF sha=${SHA} suite=test exit=0`,
+    `OE_PROOF sha=${SHA} suite=build exit=0`,
+    `OE_PROOF sha=${SHA} suite=test:integration--shard=1/4 exit=0`,
+    `OE_PROOF sha=${SHA} suite=test:integration--shard=2/4 exit=0`,
+    `OE_PROOF sha=${SHA} suite=test:integration--shard=4/4 exit=0`,
+  ].join("\n");
+  const decision = buildPostDecision({ verdict: parseEvidence(text), expectedSha: SHA, sessionId: "session_9f2c" });
+  assert.equal(decision.kind, "refuse");
+  if (decision.kind === "refuse") assert.ok(/incomplete shard series/.test(decision.reason), decision.reason);
 });
 
 check("buildPostDecision: a RED shard posts 'failure' and keeps every literal shard name", () => {

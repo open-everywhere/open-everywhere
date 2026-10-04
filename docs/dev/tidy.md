@@ -178,7 +178,7 @@ Three measurements rank a page for reading. **A verdict comes from reading the p
 numbers only say which pages to read first and what to check.
 
 - **Reachability (`In`).** Tracked files outside the page that link to it. Markdown link targets are
-  resolved relative to the linking file, so a `./sibling.md` counts; `agent/docs/generated/**` is
+  resolved relative to the linking file, so a `./sibling.md` counts; `agent/docs/generated/**` (`packages/core/agent/docs/generated/**` since OPE-2215) is
   excluded, because it mirrors `docs/` and references nothing independently. **No page scores 0, so
   there are no orphans.** Two pages score 1 — `deploy/consuming-as-packages.md` and this page —
   reachable from the `docs/README.md` index alone. That index carries 73 of the other 74 pages; the
@@ -187,7 +187,7 @@ numbers only say which pages to read first and what to check.
 - **Identifier resolution (`Ids/absent`).** Backticked identifiers on the page — `OE_*` env vars,
   camelCase symbols, snake_case tool names — against **tracked code only**: `*.ts`, `*.tsx`,
   `*.mts`, `*.mjs`, `*.js`, `*.json`, `*.sql`. Every `.md` is out of the corpus, and so are
-  `agent/docs/generated/**` and `packages/providers/*/agent/docs-generated.ts`. One reason covers
+  `agent/docs/generated/**` (`packages/core/agent/docs/generated/**` since OPE-2215) and `packages/providers/*/agent/docs-generated.ts`. One reason covers
   all three: **prose mirrors prose.** The generated modules embed each page verbatim, so leaving
   them in confirms every name a page uses and scores a meaningless 0 absent — that is how the first
   sweep of this audit read 0 of 2,756. Other tracked markdown does the same job more quietly:

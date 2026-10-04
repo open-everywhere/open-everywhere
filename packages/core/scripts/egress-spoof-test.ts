@@ -12,6 +12,7 @@ delete process.env.OE_PLATFORM;
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
 import type { SurfaceMessageOps } from "../agent/channels/surface-message-ops.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 overrideSettingsForTest({ approvals: { judgeMode: "off" } });
 
@@ -192,5 +193,5 @@ async function autoApprovedRows(): Promise<unknown[]> {
   ok(readers.length === 1, "5b. …and the gate IS one of them (a moved or renamed gate would otherwise pass 5a vacuously)");
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`✓ egress-spoof (OPE-1132) — ${passed} assertions (the judge-lift notice and the reaction now take the shared exit; negative controls prove both really post without the flag)`);

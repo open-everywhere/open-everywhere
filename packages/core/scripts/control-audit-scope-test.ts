@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import "./_register-test-config.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 const dir = join(tmpdir(), `open-everywhere-control-audit-scope-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: "home-org" });
 const FOREIGN_ORG = "other-tenant";
@@ -226,5 +226,5 @@ const PAY_TRIPLE = { platform: HOME_PLATFORM, workspace: HOME_WORKSPACE, surface
 
 await domainClient.close();
 await client.close();
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`\n✓ control audit read is org-pinned and role-scoped: ${n} assertions passed\n`);

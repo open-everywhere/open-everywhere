@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
+import { npmCommand, npxCommand } from "./npm-command.js";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -26,7 +27,7 @@ if (!baseRef && !baseDirFlag) {
 }
 
 function snapshotIn(cwd: string): { snapshot?: ConfigSnapshot; failure?: string } {
-  const r = spawnSync("npx", ["tsx", "scripts/config-snapshot.ts"], {
+  const r = spawnSync(...npxCommand(["tsx", "scripts/config-snapshot.ts"]), {
     cwd,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
@@ -97,7 +98,7 @@ if (baseDir && !baseFailure) {
     baseFailure = `the base revision has no scripts/config-snapshot.ts (it predates this gate), so it cannot describe its own config`;
   } else {
     if (baseDirFlag === undefined) {
-      const ci = spawnSync("npm", ["ci", "--no-audit", "--no-fund"], { cwd: baseDir, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+      const ci = spawnSync(...npmCommand(["ci", "--no-audit", "--no-fund"]), { cwd: baseDir, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
       if (ci.status !== 0) {
         baseFailure = `\`npm ci\` failed in the base checkout — ${(ci.stderr ?? "").trim().split("\n").slice(-4).join(" / ")}`;
       }

@@ -81,7 +81,7 @@ for word: names, titles, tokens, times, the exact text to post or to schedule. "
 specified" or "the text they gave" points at nothing the worker can read. You never
 know the id of the page or channel you are on: the channel id is opaque, and a message
 id is not a page id. For a task about "this page", tell the worker to read the current
-page; never put an id you inferred
+page (`page markdown current` on the notion-rest skill); never put an id you inferred
 into the brief. Name an id only when the person named it. Say you have handed it off, and report it done only when the worker's own report says it is done.
 That report can arrive after this turn ends.
 

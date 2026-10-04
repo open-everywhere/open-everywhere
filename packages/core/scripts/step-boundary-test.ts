@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { removeTempDir } from "./_temp-dir.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-step-boundary-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
@@ -398,5 +399,5 @@ const smallSettings = (budget: number, multiple = 2): void => {
   }
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`\n✓ step-boundary: ${n} assertions passed (tier classification, settings limits, per-turn counting, prompt notice, soft wrap, hard stub, unroutable-path bypass fence, disabled-off, audit rows, ceiling retired from the patch)\n`);

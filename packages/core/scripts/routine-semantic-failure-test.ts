@@ -1,9 +1,10 @@
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -24,7 +25,7 @@ async function throwsAsync(fn: () => Promise<unknown>, match: RegExp, label: str
 }
 
 const dir = join(tmpdir(), `open-everywhere-routine-semantic-failure-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: "acme" });
 overrideSettingsForTest({ delegation: { oneshotAgent: false } });
@@ -387,5 +388,5 @@ async function runSession(fire: Fire, declare: string | undefined, sessionId: st
   await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, id);
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`✓ routine semantic failure (OPE-177): ${passed} assertions passed`);

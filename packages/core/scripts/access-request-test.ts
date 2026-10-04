@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
@@ -10,9 +9,10 @@ import type { Group } from "../agent/identity/groups.js";
 import type { Domain } from "../agent/memory/domain.js";
 import type { AccessRequestsConfig } from "../agent/access/config.js";
 import type { SurfaceBinding } from "../agent/identity/binding.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 const dir = join(tmpdir(), `open-everywhere-access-request-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 
 const { registerConfig } = await import("../agent/access/config.js");
@@ -895,5 +895,5 @@ function fakeDeps(state: FakeState) {
   }
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`access-request-test: ${n} assertions passed`);

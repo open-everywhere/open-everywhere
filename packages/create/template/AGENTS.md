@@ -35,7 +35,8 @@ Setup is yours to drive, with the user's consent at every command. Use the
   `agent/connections/` and `agent/lib/providers.generated.ts` — `oe build` output. Never edit or
   commit them.
 - `*.generated.ts` — machine-owned overlays that the agent's own approval flows write by pull
-  request. Never edit them by hand.
+  request. Never edit them by hand. `npx oe overlays check` proves each one holds only data, and
+  `npx oe overlays normalize` re-emits them after a data edit.
 - `scripts/ops-mcp.ts` — the ops MCP server. `scripts/env-pipe.mjs` — `npm run -s env:pipe`, which
   pipes one `.env.local` value into `vercel env add`. Always pipe it; never run it bare.
 
@@ -47,6 +48,8 @@ Setup is yours to drive, with the user's consent at every command. Use the
   `npm run dev` and `npm start` run `oe build` first too.
 - `oe build` refuses a contribution the lock has not reviewed. Decide about it in
   `roster.config.ts`, then run `npx oe build --accept`, and review the lock diff.
+- `npx oe build --check` verifies the slot tree without a write, and proves the overlays hold
+  only data. Run it before you merge a pull request that changes an overlay.
 - `npm run typecheck` type-checks the app.
 - Deploy is a separate, explicit step. On the Vercel route that is `npx vercel deploy --prod`; a
   `git push` does NOT deploy.

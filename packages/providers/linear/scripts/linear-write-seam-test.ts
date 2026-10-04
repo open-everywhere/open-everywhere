@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+
+const posixRelative = (from: string, to: string): string => relative(from, to).split(sep).join("/");
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -188,7 +190,7 @@ const AGENT_FILES = tsFiles(join(PKG_ROOT, "agent"));
 {
   const offenders: string[] = [];
   for (const file of AGENT_FILES) {
-    const rel = relative(PKG_ROOT, file);
+    const rel = posixRelative(PKG_ROOT, file);
     if (rel === SEAM_REL) continue;
     if (EVE_TRANSPORT.test(stripComments(readFileSync(file, "utf8")))) offenders.push(rel);
   }
@@ -211,7 +213,7 @@ const AGENT_FILES = tsFiles(join(PKG_ROOT, "agent"));
 
   const found: string[] = [];
   for (const file of AGENT_FILES) {
-    if (OWN_TRANSPORT.test(stripComments(readFileSync(file, "utf8")))) found.push(relative(PKG_ROOT, file));
+    if (OWN_TRANSPORT.test(stripComments(readFileSync(file, "utf8")))) found.push(posixRelative(PKG_ROOT, file));
   }
   eq(
     found.slice().sort(),
@@ -233,7 +235,7 @@ const AGENT_FILES = tsFiles(join(PKG_ROOT, "agent"));
 {
   const indirect: string[] = [];
   for (const file of AGENT_FILES) {
-    if ((stripComments(readFileSync(file, "utf8")).match(CHANNEL_CONFIG_INDIRECT)?.length ?? 0) > 0) indirect.push(relative(PKG_ROOT, file));
+    if ((stripComments(readFileSync(file, "utf8")).match(CHANNEL_CONFIG_INDIRECT)?.length ?? 0) > 0) indirect.push(posixRelative(PKG_ROOT, file));
   }
   eq(
     indirect,
@@ -249,7 +251,7 @@ const AGENT_FILES = tsFiles(join(PKG_ROOT, "agent"));
     eq(
       wired,
       configs,
-      `🔴 §4 every \`linearChannel({…})\` in \`${relative(PKG_ROOT, file)}\` must pass \`api: linearChannelApi()\` — eve threads \`config.api\` into its default events, its LinearHandle and the agent-session dispatch, so a config without one posts the mention route's terminal answer with a bare fetch and loses it on the first 429. ${wired} of ${configs} are wired`,
+      `🔴 §4 every \`linearChannel({…})\` in \`${posixRelative(PKG_ROOT, file)}\` must pass \`api: linearChannelApi()\` — eve threads \`config.api\` into its default events, its LinearHandle and the agent-session dispatch, so a config without one posts the mention route's terminal answer with a bare fetch and loses it on the first 429. ${wired} of ${configs} are wired`,
     );
   }
   const totalConfigs = AGENT_FILES.reduce((sum, f) => sum + (stripComments(readFileSync(f, "utf8")).match(CHANNEL_CONFIG)?.length ?? 0), 0);
@@ -259,7 +261,7 @@ const AGENT_FILES = tsFiles(join(PKG_ROOT, "agent"));
 {
   const offenders: string[] = [];
   for (const file of AGENT_FILES) {
-    if (BARE_FETCH.test(stripComments(readFileSync(file, "utf8")))) offenders.push(relative(PKG_ROOT, file));
+    if (BARE_FETCH.test(stripComments(readFileSync(file, "utf8")))) offenders.push(posixRelative(PKG_ROOT, file));
   }
   eq(offenders, [], `🔴 §5 no file in the Linear agent tree may call the global fetch directly — found ${offenders.length}: ${offenders.join(", ")}`);
 }

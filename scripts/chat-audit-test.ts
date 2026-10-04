@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { registerDiscordProvider as __regDiscord } from "@open-everywhere/provider-discord/agent/register.js";
 __regDiscord();
 import { tmpdir } from "node:os";
@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 import { _resetDeploymentIdentityForTest, deploymentOrg } from "@open-everywhere/core/agent/identity/deployment-identity.js";
+import { removeTempDir } from "../packages/core/scripts/_temp-dir.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "oe-chat-audit-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
@@ -77,5 +78,5 @@ async function replyPosts(platform: string): Promise<Array<{ detail?: Record<str
   ok((await readAudit({ org: deploymentOrg(), action: "discord.no_reply" })).length === 0, "discord gateway: an ambient judged silence writes NO discord.no_reply row (actions-only)");
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`chat-audit tests passed (${passed})`);

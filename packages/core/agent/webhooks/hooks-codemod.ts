@@ -1,6 +1,6 @@
 import type { WebhookHook } from "./config.js";
 import type { ReadableBy } from "../access/read-grant.js";
-import { overlayModuleHeader, unwrapOverlayModule, wrapOverlayModule, type OverlayModuleGrammar } from "../access/overlay-module.js";
+import { overlayModuleHeader, sameOverlayModuleAfterHeader, unwrapOverlayModule, wrapOverlayModule, type OverlayModuleGrammar } from "../access/overlay-module.js";
 
 export interface HooksFile {
   readonly hooks: readonly WebhookHook[];
@@ -92,7 +92,7 @@ export function stringifyHooks(file: HooksFile): string {
 
 const HOOKS_MODULE: OverlayModuleGrammar = {
   what: "hooks overlay",
-  header: overlayModuleHeader("webhook-hooks overlay", "packages/core/agent/webhooks/hooks-codemod.ts"),
+  header: overlayModuleHeader("webhook-hooks overlay", "@open-everywhere/core/agent/webhooks/hooks-codemod.js"),
   typeImport: 'import type { HooksFile } from "@open-everywhere/core/agent/webhooks/hooks-codemod.js";',
   typeName: "HooksFile",
 };
@@ -103,9 +103,9 @@ export function emitHooksModule(file: HooksFile): string {
 
 export function parseHooksModule(text: string): HooksFile {
   const file = parseHooksFile(unwrapOverlayModule(HOOKS_MODULE, text, (m) => new HooksCodemodError(m)));
-  if (emitHooksModule(file) !== text) {
+  if (!sameOverlayModuleAfterHeader(emitHooksModule(file), text)) {
     throw new HooksCodemodError(
-      "hooks overlay is not in canonical form — re-emitting its own data does not reproduce the file, so it has been hand-edited. Run `npm run overlays:normalize` and commit the result (the codemod refuses to rewrite a file it did not write).",
+      "hooks overlay is not in canonical form — re-emitting its own data does not reproduce the file below its header, so it has been hand-edited. Run `npx oe overlays normalize` and commit the result (the codemod refuses to rewrite a file it did not write).",
     );
   }
   return file;
@@ -132,7 +132,7 @@ export function applyHookDeclaration(file: HooksFile, decl: HookDeclaration, bas
       return { hooks: file, changed: false };
     }
     throw new HooksCodemodError(
-      `a webhook "${decl.id}" is already declared in the overlay with different settings — this codemod only ADDS. Changing a live hook redirects an already-authenticated sender, so it is an edit a human makes in the file (and reviews as its own PR), not something a chat request performs. Pick a new id, or edit agent/webhooks/hooks.generated.ts by hand and run \`npm run overlays:normalize\` (the file is machine-owned, so an un-normalised edit fails \`npm run lint:overlays\`).`,
+      `a webhook "${decl.id}" is already declared in the overlay with different settings — this codemod only ADDS. Changing a live hook redirects an already-authenticated sender, so it is an edit a human makes in the file (and reviews as its own PR), not something a chat request performs. Pick a new id, or edit agent/webhooks/hooks.generated.ts by hand and run \`npx oe overlays normalize\` (the file is machine-owned, so an un-normalised edit fails \`npx oe build --check\`).`,
     );
   }
   return { hooks: { hooks: [...file.hooks, decl] }, changed: true };

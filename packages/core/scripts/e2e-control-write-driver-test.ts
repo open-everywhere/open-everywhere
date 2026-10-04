@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeTempDir } from "./_temp-dir.js";
 
 const dir = mkdtempSync(join(tmpdir(), "oe-control-write-driver-"));
 const db = join(dir, "ops.sqlite3");
@@ -80,7 +81,7 @@ try {
   ok((await driver.clearOwnedSpendLimit(final.handle)) === "cleared", "the exact unchanged spend handle clears through stdio");
 } finally {
   await driver.close();
-  rmSync(dir, { recursive: true, force: true });
+  await removeTempDir(dir);
 }
 
 console.log(`✓ e2e control write driver: ${n} assertions passed`);

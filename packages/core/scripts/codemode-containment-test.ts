@@ -74,7 +74,15 @@ function declaresDispatchTool(source: string): boolean {
     `no package source calls experimental_workflow(...) (found: ${activators.map(rel).join(", ") || "none"})`,
   );
 
-  const rtaFiles = files.filter((f) => declaresDispatchTool(readFileSync(f, "utf8")));
+  const manualDir = join(packagesDir, "core", "agent", "docs", "generated");
+  const isManualPage = (f: string): boolean => dirname(f) === manualDir && !f.endsWith("index.ts");
+  const manualPages = files.filter(isManualPage);
+  ok(
+    manualPages.some((f) => declaresDispatchTool(readFileSync(f, "utf8"))),
+    "precondition: a universal manual page quotes the dispatch shape (without it the exclusion below is dead and must go)",
+  );
+  ok(files.includes(join(manualDir, "index.ts")), "the manual barrel index.ts stays in the dispatch scan");
+  const rtaFiles = files.filter((f) => !isManualPage(f)).filter((f) => declaresDispatchTool(readFileSync(f, "utf8")));
   ok(
     rtaFiles.length === 0,
     `no agent source in packages/** declares a workflow / dispatch tool (found: ${rtaFiles.map(rel).join(", ") || "none"})`,

@@ -1,5 +1,4 @@
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { registerDiscordProvider as __regDiscord } from "@open-everywhere/provider-discord/agent/register.js";
 __regDiscord();
@@ -12,6 +11,7 @@ import { registerConfig, getConfig } from "@open-everywhere/core/agent/access/co
 import { defineDomain, domainForChannel } from "@open-everywhere/core/agent/memory/domain.js";
 import { registerSlackBridge } from "@open-everywhere/core/agent/channels/slack-bridge.js";
 import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
+import { removeTempDir } from "../packages/core/scripts/_temp-dir.js";
 
 const SENTINEL_SLACK_CHANNEL = {} as never;
 registerSlackBridge({
@@ -50,7 +50,7 @@ function ok(cond: boolean, label: string): void {
 }
 
 const dir = join(tmpdir(), `open-everywhere-dispatch-test-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 overrideSettingsForTest({ routines: { maxConcurrency: 2 } });
 
@@ -577,5 +577,5 @@ await seed({ id: "r-linear", surfaceKey: "linear/W1/T1", target: { agentSessionI
   }
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`✓ dispatch: ${passed} assertions passed`);

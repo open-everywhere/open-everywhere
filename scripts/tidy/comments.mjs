@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { LanguageVariant, SyntaxKind, createScanner } from "typescript/unstable/ast";
@@ -298,7 +298,8 @@ function cmdApply(argv) {
 
   for (const [relPath, list] of [...byFile.entries()].sort()) {
     const abs = resolve(ROOT, relPath);
-    if (abs !== ROOT && !abs.startsWith(`${ROOT}/`)) fail(`refusing id for ${relPath} — it resolves outside ${ROOT}`);
+    const inside = relative(ROOT, abs);
+    if (inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside)) fail(`refusing id for ${relPath} — it resolves outside ${ROOT}`);
     if (!existsSync(abs)) fail(`unknown id — ${relPath} does not exist`);
     const original = readFileSync(abs, "utf8");
     const lines = original.split("\n");

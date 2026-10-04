@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 
 import { asSchema, generateText, stepCountIs, type LanguageModel, type ToolSet } from "ai";
 import { MockLanguageModelV3 } from "ai/test";
@@ -21,11 +22,12 @@ const eq = (a: unknown, b: unknown, label: string): void => {
 type Json = Record<string, unknown>;
 const require = createRequire(import.meta.url);
 const eveRoot = require.resolve("eve/package.json").replace(/package\.json$/, "");
-const eveSchema = (await import(`${eveRoot}dist/src/tools/schema.js`)) as {
+const eveRootUrl = pathToFileURL(eveRoot).href;
+const eveSchema = (await import(`${eveRootUrl}dist/src/tools/schema.js`)) as {
   serializeOutputSchema(schema: unknown): Json;
   toInputSchema(schema: unknown): unknown;
 };
-const eveFinal = (await import(`${eveRoot}dist/src/harness/final-output.js`)) as {
+const eveFinal = (await import(`${eveRootUrl}dist/src/harness/final-output.js`)) as {
   FINAL_OUTPUT_TOOL_NAME: string;
   buildFinalOutputTool(schema: Json): Record<string, unknown>;
 };
@@ -93,3 +95,5 @@ ok(parsed.success === true, "§4 a narration copied with `location: null` valida
 ok(parsed.success === true && !("location" in (parsed.value!.narration.findings[0] ?? {})), "🔴 §4 …and reaches the tool with `location` absent");
 
 console.log(`\nsubagent-output-nullable: ${n} assertions passed`);
+
+// proves: TOOL-fresh_eyes_review

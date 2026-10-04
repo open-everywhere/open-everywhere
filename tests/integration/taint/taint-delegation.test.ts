@@ -297,8 +297,11 @@ test("negative control: the same run without the upload — no refusal, no marki
   expect(parentTerminal!.tools).toContain("agent");
   expect(parentTerminal!.toolResults.some((t) => t.name === "agent" && !t.isError)).toBe(true);
 
-  const myTurns = new Set(handle.requests.map((r) => String(r.turnId)));
+  const turnKey = (session: unknown, turn: unknown): string => `${String(session)}\u0000${String(turn)}`;
+  const myTurns = new Set(handle.requests.map((r) => turnKey(r.sessionId, r.turnId)));
   expect(myTurns.size).toBeGreaterThanOrEqual(2);
-  const forwardRows = (await rowsSinceCursor(cursor, ["taint.forward"])).filter((r) => myTurns.has(String(r.detail?.turn)));
+  const forwardRows = (await rowsSinceCursor(cursor, ["taint.forward"])).filter(
+    (r) => myTurns.has(turnKey(r.detail?.session, r.detail?.turn)) || myTurns.has(turnKey(r.detail?.parentSession, r.detail?.parentTurn)),
+  );
   expect(forwardRows.map((r) => r.detail?.leg)).toEqual([]);
 });

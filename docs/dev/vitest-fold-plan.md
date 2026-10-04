@@ -6,7 +6,7 @@ helper. How that helper reports a failure splits the tree almost in half — **4
 `process.exit` at all**, because their helper delegates to `assert`, which throws, while 252 call it
 exactly once and 29 more than once (the report's histogram prints all three). A codemod written for
 either shape alone covers about half the repository. 683 of the 688 own an npm script that a
-`test:chain` names.
+package's `test-chain.txt` lists.
 
 Two files match the `*-test.ts` glob and are NOT runners: `agent/model/ab-test.ts` declares this
 deployment's champion/challenger model, and `packages/core/agent/model/ab-test.ts` is the A/B
@@ -20,8 +20,8 @@ makes, and how the four `OE_PROOF` lines stay byte-exact throughout.
 
 **Nothing here is converted yet.** Stage 0 (this page and
 [`scripts/tidy/test-runner-inventory.ts`](../../scripts/tidy/test-runner-inventory.ts)) is the
-inventory and the plan. Re-run the script rather than trusting the tables below — it reads the
-`test:chain` scripts live, so it cannot go stale the way this prose can. Every count on this page is
+inventory and the plan. Re-run the script rather than trusting the tables below — it reads each
+package's `test-chain.txt` live (OPE-2286), so it cannot go stale the way this prose can. Every count on this page is
 a row the script prints — the recipe's residue figures included, under `CODEMOD RESIDUE`. Two kinds
 are not: the LINE totals, summed from `--json`, and a handful of figures derived by one subtraction
 from a printed row (the 11 read-and-decide files that never convert, the 168 converting `compare`
@@ -66,7 +66,7 @@ So the fold is not an engine change. It changes two things:
 2. **The registry.** 673 npm scripts exist only to tell the shard runner what to run. Vitest finds
    spec files by glob, so those scripts and the shard machinery go.
 
-The `test:chain` strings themselves do **not** all go — see § Stage 12, which is the part of this
+The chain lists (`test-chain.txt`) themselves do **not** all go — see § Stage 12, which is the part of this
 plan most easily got wrong.
 
 Read `_run-shard.ts` before writing any conversion. Its six hygiene items are the exact price of
@@ -397,11 +397,11 @@ Three ways a stage could still break the proof, and the rule that prevents each:
    🔴 **Converted specs are named `*.spec.ts` and never live under `tests/integration/`.** The
    `.spec.ts` suffix cannot match that glob at all.
 2. **A gate silently dropping out of the run.** A `test:<name>` deleted without its spec landing in
-   the new glob, or — the far larger hazard — stage 12 deleting a `test:chain` that still carries
+   the new glob, or — the far larger hazard — stage 12 deleting a `test-chain.txt` that still lists
    legs the fold never converted. `exit=0` still prints, over a `test` suite that no longer runs
    them. § Stage 12 is written around this; its checked precondition is the guard.
-3. **`lint:script-chain` turning red on a half-edited chain.** Deleting `test:<name>` while `test:chain`
-   still names it fails the first leg of `npm test`. That is a correct red — `suite=test exit=1` —
+3. **`lint:script-chain` turning red on a half-edited chain.** Deleting `test:<name>` while that package's
+   `test-chain.txt` still lists it fails the first leg of `npm test`. That is a correct red — `suite=test exit=1` —
    not a proof-format problem. It is listed so a slice does not misread it as flaky.
 
 The one thing every stage must re-check before it emits its lines: `npm test` runs
@@ -418,8 +418,8 @@ Converting one suite is four edits, and **deleting its npm script IS the hand-ov
    codemod the body.
 2. Delete `"test:approvals": "NODE_NO_WARNINGS=1 tsx scripts/approvals-test.ts"` from
    `packages/core/package.json`.
-3. Delete `&& npm run test:approvals` from that package's `test:chain`.
-4. Nothing else. `_legs.ts` derives the shard's work from `test:chain`, so the shard stops running
+3. Delete the `test:approvals` line from that package's `test-chain.txt` (OPE-2286).
+4. Nothing else. `_legs.ts` derives the shard's work from `test-chain.txt`, so the shard stops running
    the suite the moment step 3 lands, and the new glob starts running the spec the moment step 1
    does. The two never overlap and never gap.
 
@@ -460,7 +460,7 @@ A 99-file codemod diff cannot be read line by line, so it must be machine-checka
    `wake-arm-test.ts`, `webhook-declare-test.ts`, `packages/create/scripts/engine-test.ts:318`,
    `suite-lock-run-test.ts:122` and `write-if-changed-test.ts`. A textual check false-reds on all
    nine — and `engine-test.ts` lands in **stage 1**, so the gate meets this on its first run.
-3. **The npm script is gone** and the package's `test:chain` no longer names it.
+3. **The npm script is gone** and the package's `test-chain.txt` no longer names it.
 4. **The spec is in the config's include glob**, resolved against the real config.
 
 Run it with `--base <ref>` the way `tidy verify` runs, so it reads the pre-image from git.
@@ -489,7 +489,7 @@ stage is one run: codemod, verify gate, four suites, one RED demo.
 
 | stage | scope | files | lines | package.json edits |
 |---|---|---|---|---|
-| **1** | The codemod, the verify gate, the config glob, and a pilot: `@open-everywhere/create` plain-assert (2) + `provider-teams` (13) | 15 | 4,916 | delete 15 `test:*`; empty the teams `test:chain` (create keeps `test:cli`, deferred to stage 11) |
+| **1** | The codemod, the verify gate, the config glob, and a pilot: `@open-everywhere/create` plain-assert (2) + `provider-teams` (13) | 15 | 4,916 | delete 15 `test:*`; empty `packages/providers/teams/test-chain.txt` (create keeps `test:cli`, deferred to stage 11) |
 | **2** | `provider-github` (16) + `adapters` plain-assert (14) | 30 | 9,476 | delete 30 `test:*` |
 | **3** | `provider-linear` (24) + `provider-notion` (28) | 52 | 17,650 | delete 52 `test:*` |
 | **4** | `provider-slack` (34), **plus** the `process.cwd()` fix in `slack-web-api-seam-test.ts` | 34 | 13,706 | delete 34 `test:*` |
@@ -519,15 +519,15 @@ whenever `main` lands a core suite: it was 362 files as 73+73+72+72+72 a few mer
 
 ### Stage 12 — teardown, and the 58 legs it must not drop
 
-🔴 **The root `test:chain` is not only a runner registry.** It carries **48 non-runner legs** — every
+🔴 **The root `test-chain.txt` is not only a runner registry.** It lists **48 non-runner legs** — every
 `lint:*`, `validate:config`, `lint:roster`, `lint:publish-exports`, `lint:invisible-bytes` and the
 rest — that this fold never converts and that nothing else runs. Ten more legs are the
 `subprocess-bound` runners, which stay `tsx` scripts. Deleting the chains would take all 58 out of
 `npm test` while `OE_PROOF suite=test exit=0` kept printing: exactly the hazard § How `OE_PROOF`
 stays byte-exact item 2 names.
 
-So the teardown's precondition is **not** "zero `test:chain` strings". It is: every `test:chain` leg
-that remains is either a non-runner gate or a `subprocess-bound` runner. Check it by running the
+So the teardown's precondition is **not** "zero `test-chain.txt` lists". It is: every leg that
+remains on a `test-chain.txt` is either a non-runner gate or a `subprocess-bound` runner. Check it by running the
 inventory script and confirming it reports zero `plain-assert`, `child-process` and `socket-binding`
 files with a non-null `script`.
 
@@ -544,7 +544,7 @@ run them, and `npm test` then prints `suite=test exit=0` over a suite that no lo
 That is § How `OE_PROOF` stays byte-exact item 2, exactly.
 
 - **Keep, and NAME THE EXECUTOR**: one surviving spec, `scripts/suites/legs.spec.ts`, that walks
-  whatever `test:chain` still names and runs each leg through `runLegInSubprocess` — which is
+  every leg that each package's `test-chain.txt` still lists and runs each leg through `runLegInSubprocess` — which is
   `npm run <script>` in its own process. That one file is what keeps the 58 legs in `npm test`.
   It needs `_legs.ts` (to resolve the chain) and `runLegInSubprocess`; move both, plus `_setup.ts`,
   to `scripts/suites/`. Keep `lint:script-chain`, which proves those legs still resolve by name.
@@ -555,11 +555,12 @@ That is § How `OE_PROOF` stays byte-exact item 2, exactly.
   `_process-state.ts`; `argv.spec.ts`. Re-home `sqlite-isolation.spec.ts`'s assertions before
   deleting the file — it pins `ensureShardMemoryDir`, which survives. Keep `coverage.spec.ts`,
   narrowed to the legs that remain.
-- **Delete** the four workspace `test:chain` strings that end up empty, and their `test` scripts with
-  them: teams, github, slack and create. Four packages keep a chain, for two different reasons:
+- **Delete** the four workspace chains that end up empty — each `test-chain.txt` together with its
+  `test:chain` script (`lint:script-chain` refuses one without the other) — and their `test` scripts
+  with them: teams, github, slack and create. Four packages keep a chain, for two different reasons:
   core, notion and linear each keep a `subprocess-bound` runner (6, 1 and 1); **adapters keeps its
-  chain even though every runner it owns converts**, because `coverage.spec.ts:167` requires a
-  `test:chain` from any workspace that defines a `test:*` script, and `test:sandbox-live` — the
+  chain even though every runner it owns converts**, because `coverage.spec.ts` requires a
+  `test-chain.txt` from any workspace that defines a `test:*` script, and `test:sandbox-live` — the
   `OFF_CHAIN_BY_DESIGN` live pack — is still defined.
 - **Rewrite**, do not annotate, the four places that then state a false rule:
   [`CONTRIBUTING.md`](../../CONTRIBUTING.md)'s "New behaviour needs a test" bullet, AGENTS.md's

@@ -1,4 +1,6 @@
-import { mkdtempSync, rmSync } from "node:fs";
+// proves: MEM-51, MEM-54, MEM-55, MEM-56
+
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { selectCandidates, DEFAULT_CANDIDATE_CAP, type CandidateCluster } from "../agent/memory/dream/candidates.js";
@@ -19,6 +21,7 @@ import { isSafe, SAFE_KINDS } from "../agent/memory/dream/ops.js";
 import { safeDistill, enrichmentBullets } from "../agent/memory/dream/learn.js";
 import { stampHumanEdit } from "../agent/memory/provenance.js";
 import type { MemoryFiles } from "../agent/memory/store.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -384,5 +387,5 @@ const p = { org: "judgeco", platform: "judgeco", workspace: "judgeco", surface: 
   ok(again.includes("[[deploys]]") && again.includes("recurring workflow — weekly report (seen 3×) [[MEMORY]]"), "enrich: second write is additive; v1-style fallback bullet lands beside distilled facts");
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`✓ dream-judge: ${passed} assertions passed`);

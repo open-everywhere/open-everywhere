@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -37,30 +37,61 @@ export function workspacePackages(): Pkg[] {
   return out;
 }
 
-export function chainLegNames(chain: string): string[] {
+export const CHAIN_LIST_FILE = "test-chain.txt";
+
+export const CHAIN_RUNNER = "scripts/chain/run-chain.ts";
+
+export function chainRunnerCommand(dir: string): string {
+  return `tsx ${relative(dir, join(REPO_ROOT, CHAIN_RUNNER)).split(sep).join("/")}`;
+}
+
+const LEG_NAME = /^[A-Za-z0-9:_-]+$/;
+
+export function parseChainList(text: string, label: string): string[] {
   const names: string[] = [];
-  const re = /npm\s+run\s+([A-Za-z0-9:_-]+)/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(chain)) !== null) names.push(m[1]!);
+  const seen = new Set<string>();
+  for (const [i, raw] of text.split(/\r?\n/).entries()) {
+    const line = raw.trim();
+    if (line === "" || line.startsWith("#")) continue;
+    if (!LEG_NAME.test(line)) {
+      throw new Error(
+        `${label}:${i + 1}: "${line}" is not a bare npm script name. Write one name per line, e.g. \`test:approvals\` ` +
+          `— no \`npm run\`, no \`&&\`.`,
+      );
+    }
+    if (seen.has(line)) {
+      throw new Error(
+        `${label}:${i + 1}: "${line}" is on the chain list twice. Two branches that each added it merged by union — delete one line.`,
+      );
+    }
+    seen.add(line);
+    names.push(line);
+  }
   return names;
+}
+
+export function readChainList(dir: string): string[] | undefined {
+  const file = join(dir, CHAIN_LIST_FILE);
+  if (!existsSync(file)) return undefined;
+  return parseChainList(readFileSync(file, "utf8"), relative(REPO_ROOT, file).split(sep).join("/") || CHAIN_LIST_FILE);
 }
 
 export function chainLegs(packages: Pkg[] = workspacePackages(), includeRoot = true): ChainLeg[] {
   const legs: ChainLeg[] = [];
   for (const pkg of packages) {
-    const chain = pkg.scripts["test:chain"];
-    if (!chain) continue;
-    for (const script of chainLegNames(chain)) {
+    const names = readChainList(pkg.dir);
+    if (!names) continue;
+    for (const script of names) {
       const command = pkg.scripts[script];
       if (!command) {
-        throw new Error(`${pkg.name}: test:chain names \`npm run ${script}\`, but the package defines no such script.`);
+        throw new Error(`${pkg.name}: ${CHAIN_LIST_FILE} names \`${script}\`, but the package defines no such script.`);
       }
       const m = /(?:^|\s)tsx\s+(\S+\.ts)(?:\s|$)/.exec(command);
       if (!m) {
         throw new Error(
-          `${pkg.name}: test:chain leg "${script}" runs \`${command}\`, which is not a plain \`tsx <file>.ts\` ` +
+          `${pkg.name}: chain leg "${script}" runs \`${command}\`, which is not a plain \`tsx <file>.ts\` ` +
             `command. The batched runner imports the file directly, so it cannot run this leg. Either make it a ` +
-            `plain tsx invocation, or move it off \`test:chain\` onto its own gate.`,
+            `plain tsx invocation, or move it off \`${CHAIN_LIST_FILE}\` onto its own gate.`,
         );
       }
       legs.push({ pkg: pkg.name, dir: pkg.dir, script, file: join(pkg.dir, m[1]!) });
@@ -116,7 +147,7 @@ function resolveRootScript(name: string, scripts: Record<string, string>, out: C
     throw new Error(
       `root test chain: "${name}" runs \`${command}\`, which is not a plain \`tsx <file>.ts [args...]\` command. ` +
         `The batched runner imports the file directly, so it cannot run this leg. Either make it a plain tsx ` +
-        `invocation, or move it off root \`test:chain\` onto its own gate in the root \`test\` script.`,
+        `invocation, or move it off the root \`${CHAIN_LIST_FILE}\` onto its own gate in the root \`test\` script.`,
     );
   }
   const args = m[2]!.trim();
@@ -136,11 +167,11 @@ export function rootLegs(): ChainLeg[] {
 function walkRootChain(): { legs: ChainLeg[]; reached: Set<string> } {
   const file = join(REPO_ROOT, "package.json");
   const scripts = (JSON.parse(readFileSync(file, "utf8")) as { scripts?: Record<string, string> }).scripts ?? {};
-  const chain = scripts["test:chain"];
-  if (!chain) throw new Error("root test chain: the root package.json defines no `test:chain` script.");
+  const names = readChainList(REPO_ROOT);
+  if (!names) throw new Error(`root test chain: the repo root has no \`${CHAIN_LIST_FILE}\`.`);
   const legs: ChainLeg[] = [];
   const reached = new Set<string>();
-  for (const name of chainLegNames(chain)) resolveRootScript(name, scripts, legs, reached);
+  for (const name of names) resolveRootScript(name, scripts, legs, reached);
   return { legs, reached };
 }
 
@@ -166,12 +197,14 @@ export const ROOT_SUBPROCESS_LEGS: ReadonlyMap<string, string> = new Map([
   ],
   [
     "test:settings-boot-order-lint",
-    "the longest leg in the chain, and the batched runner makes it longer: it boots nine entries " +
-      "and evaluates ~12k scripts, which takes 294 s under `npx tsx` but 310-325 s through vite's " +
-      "SSR transform inside a shared worker (measured on OPE-2233, three runs). The leg PASSES " +
-      "every time — it prints its 86 assertions and is then killed by the shared `testTimeout`. " +
-      "A subprocess runs it at its own `tsx` speed, and `SUBPROCESS_LEG_TIMEOUT_MS` gives it a " +
-      "budget that is not the batched one. This is a runtime, not an order dependence.",
+    "the longest leg in the chain, and the batched runner makes it longer: its full-gate run boots " +
+      "nine entries and evaluates ~12k scripts. Before OPE-2285 the leg took 294 s under `npx tsx` " +
+      "but 310-325 s through vite's SSR transform inside a shared worker (measured on OPE-2233, " +
+      "three runs), and the shared `testTimeout` killed it after it passed. OPE-2285 cut it to one " +
+      "full-gate run, with the children booted three at a time on a box with 12 GiB or more (~62 s " +
+      "under `tsx` on an idle 16 GB, 4-core sandbox), but it stays here: the vite transform still costs it time a subprocess does not, " +
+      "and `SUBPROCESS_LEG_TIMEOUT_MS` keeps a slow box from reading a pass as a red. This is a " +
+      "runtime, not an order dependence.",
   ],
 ]);
 

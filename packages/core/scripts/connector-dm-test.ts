@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 registerSlackFixtureMapper();
 
 
@@ -171,5 +172,5 @@ overrideSettingsForTest({ connectors: { dmOnly: true } });
   overrideSettingsForTest({ connectors: { dmOnly: true, opTiering: false } });
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`✓ connector-dm: ${passed} assertions passed`);

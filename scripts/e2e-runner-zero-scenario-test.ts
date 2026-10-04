@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { tsxCommand } from "./npm-command.js";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,11 +12,11 @@ const ok = (cond: boolean, label: string): void => {
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER = join(REPO, "packages/core/scripts/e2e/runner.ts");
-const TSX = join(REPO, "node_modules/.bin/tsx");
+const [TSX, TSX_ARGS] = tsxCommand(REPO, [RUNNER]);
 
 function run(env: Record<string, string>): { code: number; out: string } {
   try {
-    const out = execFileSync(TSX, [RUNNER], {
+    const out = execFileSync(TSX, TSX_ARGS, {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       env: { PATH: process.env.PATH ?? "", ...env },

@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
+import { removeTempDir } from "../packages/core/scripts/_temp-dir.js";
 
 const dir = join(tmpdir(), `open-everywhere-engaged-wake-contract-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
 process.env.GITHUB_APP_SLUG = "eve-bot";
@@ -350,5 +351,5 @@ const FOLLOW_UP = "and what's that plus 6?";
   });
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`✓ engaged-wake contract: ${n} assertions`);

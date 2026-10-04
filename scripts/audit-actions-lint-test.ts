@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { auditActionFindings } from "./audit-actions-lint.js";
-import { scanAuditActions, constantFiles, KNOWN_ROAD_NAMES, SCAN_PATHSPECS } from "./audit-action-scan-lib.js";
+import { scanAuditActions, constantFiles, isGeneratedManualModule, KNOWN_ROAD_NAMES, SCAN_PATHSPECS } from "./audit-action-scan-lib.js";
 import {
   CONSEQUENTIAL_AUDIT_ACTIONS,
   DYNAMIC_ACTION_SITES,
@@ -198,7 +198,8 @@ const rules = (findings: readonly { readonly rule: string }[]): string[] => [...
     "removing reply.post from the registry reds the real scan — the totality check is load-bearing");
 
   const realPath = process.env.PATH ?? "";
-  const gitDir = realPath.split(delimiter).find((dir) => dir.length > 0 && existsSync(join(dir, "git")));
+  const gitFile = process.platform === "win32" ? "git.exe" : "git";
+  const gitDir = realPath.split(delimiter).find((dir) => dir.length > 0 && existsSync(join(dir, gitFile)));
   ok(gitDir !== undefined, "the host resolves git on PATH — the scan's ONE external dependency");
   const shadow = mkdtempSync(join(tmpdir(), "audit-scan-path-"));
   try {
@@ -232,6 +233,20 @@ const rules = (findings: readonly { readonly rule: string }[]): string[] => [...
   const wholeWalk = constantFiles(process.cwd(), SCAN_PATHSPECS, real.filesScanned);
   ok(wholeWalk.length >= real.filesScanned,
     `…while the real pathspecs return a superset of the ${real.filesScanned} emission files (got ${wholeWalk.length})`);
+}
+
+{
+  const manualPage = "packages/core/agent/docs/generated/security.ts";
+  ok(existsSync(manualPage) && readFileSync(manualPage, "utf8").includes("appendAudit("),
+    `precondition: ${manualPage} quotes appendAudit( (without the quote the next arm could not fail)`);
+  ok(isGeneratedManualModule(manualPage), "a universal manual page is a generated manual module");
+  ok(isGeneratedManualModule("packages/providers/slack/agent/docs-generated.ts"), "…and so is a provider runbook module");
+  ok(!isGeneratedManualModule("packages/core/agent/docs/registry.ts"), "…but the docs registry beside them is code, and stays scanned");
+  ok(!isGeneratedManualModule("packages/core/agent/plugins/generated/index.ts"), "…and so is any other generated directory");
+  const walked = constantFiles(process.cwd(), SCAN_PATHSPECS, 1);
+  ok(!walked.some(isGeneratedManualModule), "the real walk reads no generated manual module");
+  const scan = scanAuditActions(process.cwd());
+  ok(!scan.unresolved.some((u) => isGeneratedManualModule(u.file)), "no unresolved site is reported from the manual");
 }
 
 console.log(`✓ audit-actions lint: ${n} assertions passed`);

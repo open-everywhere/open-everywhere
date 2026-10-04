@@ -24,7 +24,11 @@ function runGuard(overrides: Record<string, string | undefined>) {
     if (value === undefined) delete env[key];
     else env[key] = value;
   }
-  return spawnSync("npx", ["tsx", target], {
+  const [cmd, args] =
+    process.platform === "win32"
+      ? [process.execPath, [path.join(pkgRoot, "..", "..", "node_modules", "tsx", "dist", "cli.mjs"), target]]
+      : ["npx", ["tsx", target]];
+  return spawnSync(cmd, args, {
     cwd: pkgRoot,
     env,
     timeout: SPAWN_CEILING_MS,

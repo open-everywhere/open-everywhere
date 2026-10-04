@@ -1,0 +1,4 @@
+# Every package's chain list (OPE-2286): one test:chain leg per line. Two branches that each append a
+# leg would conflict on the same end-of-file hunk; the built-in union driver keeps both lines instead.
+# scripts/chain/_legs.ts names the two shapes a union merge can leave and the gates that refuse them.
+test-chain.txt merge=union

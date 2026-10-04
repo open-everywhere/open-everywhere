@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let passed = 0;
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-learn-memory-instruction-"));
@@ -229,5 +230,5 @@ async function recurringFile(): Promise<string> {
   ok(clean?.length === 1 && (seen[1]!.messages ?? []).length === 2, "control: a session with no instruction about memory reaches the judge with EVERY message — the filter drops nothing else");
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`\n✓ learn-memory-instruction: ${passed} assertions passed (the learn road declines a turn whose request is an instruction about memory; an ordinary request is unchanged)\n`);

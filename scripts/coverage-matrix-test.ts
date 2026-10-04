@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { npxCommand } from "./npm-command.js";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -249,7 +250,7 @@ const PAGE = [
   };
   const run = (root: string): { code: number; out: string } => {
     try {
-      const out = execFileSync("npx", ["tsx", MATRIX_CLI, "--root", root, "--check"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      const out = execFileSync(...npxCommand(["tsx", MATRIX_CLI, "--root", root, "--check"]), { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
       return { code: 0, out };
     } catch (err) {
       const e = err as { status?: number; stdout?: string; stderr?: string };

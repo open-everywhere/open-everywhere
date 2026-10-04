@@ -100,6 +100,7 @@ for (const name of RETIRED) {
   const SKIP_DIRS = new Set(["node_modules", "dist", ".eve", "generated"]);
   const { readFileSync: read, readdirSync: list, statSync: stat } = await import("node:fs");
   const { join } = await import("node:path");
+  const { toPosixPath } = await import("./posix-path.js");
 
   const tsFiles = (dir: string, out: string[] = []): string[] => {
     let entries: string[];
@@ -112,7 +113,7 @@ for (const name of RETIRED) {
       if (SKIP_DIRS.has(entry)) continue;
       const p = join(dir, entry);
       if (stat(p).isDirectory()) tsFiles(p, out);
-      else if (entry.endsWith(".ts") && !entry.endsWith(".d.ts")) out.push(p);
+      else if (entry.endsWith(".ts") && !entry.endsWith(".d.ts")) out.push(toPosixPath(p));
     }
     return out;
   };
@@ -144,3 +145,5 @@ for (const name of RETIRED) {
 }
 
 console.log(`\n${n} assertions passed`);
+
+// proves: AP-MOD-app-identity-surfaces, AP-MOD-core-identity-deployment-identity

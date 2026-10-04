@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
@@ -39,6 +39,7 @@ import { TOOL_CONSEQUENCE } from "../agent/access/consequence.js";
 import { WINDOW_UNGATED_TOOLS, WINDOW_GATED_TOOLS, JOB_WAKE_TOOLS } from "../agent/access/window-gate-manifest.js";
 import readRoutineTranscript from "../agent/tools/read_routine_transcript.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -573,5 +574,5 @@ const FIRE = {
   }
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`✓ transcript-tool: ${n} assertions (same-channel routine transcript read — fence proven through eve's real replay path)`);

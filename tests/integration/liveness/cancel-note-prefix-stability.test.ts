@@ -15,6 +15,7 @@ import {
   rowsSinceCursor,
   seatReply,
   waitFor,
+  waitForTurnCancelDelivered,
   type RecordedRequest,
 } from "../harness";
 
@@ -116,6 +117,7 @@ test("a cancelled turn's system-prompt reminder is one clean insertion at a fixe
   const stop = await discordOeCommandPost(discordOeStopInteraction({ channelId: DISCORD_LISTED_CHANNEL_ID, userId: STOPPER_ID }));
   expect(stop.status, `the stop command was refused: ${stop.body}`).toBe(200);
   expect(stop.body).toContain("Standing down");
+  await waitForTurnCancelDelivered(anchor.sessionId);
   b.releaseHolds();
   b.dispose();
 

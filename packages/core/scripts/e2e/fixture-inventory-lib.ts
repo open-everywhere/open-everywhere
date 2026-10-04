@@ -1,4 +1,5 @@
 import { seg } from "../../agent/identity/deployment-identity.js";
+import type { Caps, SpendBudgets } from "../../agent/spend/spend.js";
 
 export type SurfaceKind = "slack" | "discord" | "teams" | "github" | "linear" | "notion";
 
@@ -181,15 +182,33 @@ export type CapFixtureScope = "channel" | "dm";
 export interface CapFixture {
   readonly roomVar: string;
   readonly scope: CapFixtureScope;
-  readonly surfaceKey: string;
 }
 
 export const CAP_FIXTURES: readonly CapFixture[] = [
-  { roomVar: "E2E_SLACK_CAP_CHANNEL", scope: "channel", surfaceKey: "slack/T0EXAMPLE/C0EXCHAN007" },
+  { roomVar: "E2E_SLACK_CAP_CHANNEL", scope: "channel" },
 ];
 
 export function capFixtureFor(scope: CapFixtureScope, fixtures: readonly CapFixture[] = CAP_FIXTURES): CapFixture | undefined {
   return fixtures.find((f) => f.scope === scope);
+}
+
+export interface CapFixtureCap {
+  readonly key: string;
+  readonly caps: Caps | undefined;
+}
+
+export function resolveCapFixtureCap(
+  fixture: CapFixture,
+  tenant: string,
+  budgets: SpendBudgets,
+  envValues: Readonly<Record<string, string | undefined>>,
+  tracked: Readonly<Record<string, string>> = TRACKED_ROOM_IDS,
+): CapFixtureCap | undefined {
+  const surface = ROOM_VARS.find((r) => r.envVar === fixture.roomVar)?.surface;
+  const roomId = roomIdFor(fixture.roomVar, envValues, tracked);
+  if (surface === undefined || roomId === undefined || !tenant.trim()) return undefined;
+  const key = `${surface}/${tenant}/${roomId}`;
+  return { key, caps: budgets.perSurface?.[key] };
 }
 
 export function trackedRoomId(envVar: string, tracked: Readonly<Record<string, string>> = TRACKED_ROOM_IDS): string | undefined {

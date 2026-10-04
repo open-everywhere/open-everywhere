@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { readAudit, resolvePartition, _resetSurfacesForTest, EXTERNAL_MENTION_ACK } from "@open-everywhere/core/agent/adapter-api.js";
 import type { Domain } from "@open-everywhere/core/agent/memory/domain.js";
+import { removeTempDir } from "../packages/core/scripts/_temp-dir.js";
 
 const dir = join(tmpdir(), `open-everywhere-github-external-policy-author-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
 process.env.GITHUB_APP_SLUG = "eve-bot";
@@ -166,5 +166,5 @@ ok(
 );
 
 _resetSurfacesForTest();
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`\n✓ github-external-policy-author: ${n} assertions passed (author_association exclusion + guest-present room leg, with member/collaborator/absent/shipped-default negative controls)`);

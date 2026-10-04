@@ -1,10 +1,9 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { rmSync } from "node:fs";
 import type { Approval, ApprovalContext, ApprovalStatus } from "eve/tools/approval";
 
 const dir = join(tmpdir(), `open-everywhere-approval-dedupe-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 process.env.OE_PLATFORM = "slack";
 _setDeploymentIdentityForTest({ org: undefined });
@@ -26,6 +25,7 @@ const { withDuplicateApprovalGuard, recordApprovalRaised, DUPLICATE_APPROVAL_WIN
 );
 import type { HasEventSeen, MarkEventSeen } from "@open-everywhere/core/agent/access/approval-dedupe.js";
 import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
+import { removeTempDir } from "../packages/core/scripts/_temp-dir.js";
 
 const requestOf = (approval: Approval): ((ctx: ApprovalContext) => ApprovalStatus | Promise<ApprovalStatus>) =>
   typeof approval === "function" ? approval : approval.request;
@@ -426,7 +426,7 @@ ok(DUPLICATE_APPROVAL_KEY_PREFIX.length > 0, "6a. the guard's dedupe key carries
   );
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(
   `✓ approval-dedupe — ${passed} assertions (duplicate-card suppression, crash-recovery ordering, OPE-476 residual, no false dedup, fail-open, window expiry, string/object input convergence, live post_file + connector-auth wiring, both approval authoring shapes, the eve-0.47.3 follow-up re-propose)`,
 );

@@ -11,6 +11,7 @@ import {
   buildInventory,
   canonicalId,
   capFixtureFor,
+  resolveCapFixtureCap,
   teamsSegment,
   collectDeclaredRooms,
   compareInventory,
@@ -578,34 +579,58 @@ for (const envVar of Object.keys(TRACKED_ROOM_RESOLVERS)) {
 }
 
 {
-  const CHANNEL_ONLY: readonly CapFixture[] = [{ roomVar: "E2E_SLACK_CAP_CHANNEL", scope: "channel", surfaceKey: "slack/T1/C1" }];
-  const BOTH: readonly CapFixture[] = [...CHANNEL_ONLY, { roomVar: "E2E_SLACK_DM_CHANNEL", scope: "dm", surfaceKey: "slack/T1/D1" }];
+  const CHANNEL_ONLY: readonly CapFixture[] = [{ roomVar: "E2E_SLACK_CAP_CHANNEL", scope: "channel" }];
+  const BOTH: readonly CapFixture[] = [...CHANNEL_ONLY, { roomVar: "E2E_SLACK_DM_CHANNEL", scope: "dm" }];
 
-  ok(capFixtureFor("channel", CHANNEL_ONLY)?.surfaceKey === "slack/T1/C1", "a channel-scoped ask reads the channel fixture");
+  ok(capFixtureFor("channel", CHANNEL_ONLY)?.roomVar === "E2E_SLACK_CAP_CHANNEL", "a channel-scoped ask reads the channel fixture");
   ok(
     capFixtureFor("dm", CHANNEL_ONLY) === undefined,
     "🔴 a CHANNEL-scoped fixture never answers a DM ask — the cap it declares is keyed on a channel and is never consulted for a DM's surface key",
   );
-  ok(capFixtureFor("dm", BOTH)?.surfaceKey === "slack/T1/D1", "POSITIVE CONTROL: the same ask reads a real DM fixture when one is declared, so the arm above is not vacuous");
-  ok(capFixtureFor("channel", BOTH)?.surfaceKey === "slack/T1/C1", "…and the channel ask still reads the channel row rather than the first row of the table");
+  ok(capFixtureFor("dm", BOTH)?.roomVar === "E2E_SLACK_DM_CHANNEL", "POSITIVE CONTROL: the same ask reads a real DM fixture when one is declared, so the arm above is not vacuous");
+  ok(capFixtureFor("channel", BOTH)?.roomVar === "E2E_SLACK_CAP_CHANNEL", "…and the channel ask still reads the channel row rather than the first row of the table");
   ok(capFixtureFor("dm", []) === undefined, "an empty table answers no ask at all — 'no such fixture' is what keeps a leg's skip honest");
 
   const scopes = CAP_FIXTURES.map((f) => f.scope);
   ok(new Set(scopes).size === scopes.length, "no two shipped cap fixtures share a scope — `capFixtureFor` reads the first match, so a duplicate would be dead config");
   for (const f of CAP_FIXTURES) {
-    const spec = ROOM_VARS.find((r) => r.envVar === f.roomVar);
-    ok(spec !== undefined, `the cap fixture's room var ${f.roomVar} is a ROOM_VARS row — a cap fixture names a room the pack drives, never a knob`);
-    ok(
-      surfaceOfKey(f.surfaceKey) === spec!.surface,
-      `the cap fixture's surface key ${f.surfaceKey} names the same surface as its room var (${spec!.surface}) — a key on one platform and a room on another would cap nothing`,
-    );
-    const rungs = f.surfaceKey.split("/");
-    ok(
-      rungs.length === 3 && rungs.every((rung) => rung.length > 0),
-      `the cap fixture's surface key ${f.surfaceKey} carries all three rungs — the grain agent/spend/budgets.ts declares a perSurface cap on`,
-    );
+    ok(ROOM_VARS.some((r) => r.envVar === f.roomVar), `the cap fixture's room var ${f.roomVar} is a ROOM_VARS row — a cap fixture names a room the pack drives, never a knob`);
+    ok(!("surfaceKey" in f), `🔴 OPE-2205: the cap fixture for ${f.roomVar} carries no tracked surface key — the key comes from the deployer's budgets, and a second copy went stale under the release export`);
   }
-  ok(surfaceOfKey("slack/T1/C1") === "slack" && surfaceOfKey("nowhere/T1/C1") === null, "NEGATIVE CONTROL: surfaceOfKey really refuses an unknown surface, so the join above can fail");
+}
+
+{
+  const CAP: CapFixture = { roomVar: "E2E_SLACK_CAP_CHANNEL", scope: "channel" };
+  const ROW = { surfaceMonthlyTokens: 10_000 };
+  const capped = { perSurface: { "slack/T_REAL/C_REAL": ROW } };
+  const env = { E2E_SLACK_CAP_CHANNEL: "C_REAL" };
+  const row = (r: ReturnType<typeof resolveCapFixtureCap>) => r?.caps;
+
+  const hit = resolveCapFixtureCap(CAP, "T_REAL", capped, env, {});
+  ok(
+    hit?.key === "slack/T_REAL/C_REAL" && hit.caps === ROW,
+    "🔴 OPE-2205: the deployer's perSurface row on the fixture workspace and the room var's channel resolves — a REAL id matches, so S10's hard gate can fire",
+  );
+  const synthetic = resolveCapFixtureCap(CAP, "T_REAL", { perSurface: { "slack/T0EXAMPLE/C0EXCHAN007": ROW } }, env, {});
+  ok(
+    synthetic?.caps === undefined && synthetic?.key === "slack/T_REAL/C_REAL",
+    "🔴 OPE-2205 NEGATIVE CONTROL: budgets that cap only the SYNTHETIC key cap nothing the test deployment drives — no row, and the attempted key is still returned for the skip reason",
+  );
+  ok(row(resolveCapFixtureCap(CAP, "T_OTHER", capped, env, {})) === undefined, "a row on another workspace does not count — the deployed gate resolves the fixture workspace's key, and no other");
+  ok(resolveCapFixtureCap(CAP, "T_REAL", capped, {}, {}) === undefined, "no room id (env unset, nothing tracked) builds no key — the leg drives the shared room and must not claim the fixture");
+  ok(
+    row(resolveCapFixtureCap(CAP, "T_REAL", capped, {}, { E2E_SLACK_CAP_CHANNEL: "C_REAL" })) === ROW,
+    "…and a TRACKED room id serves when the env is unset, as roomIdFor gives every room var",
+  );
+  ok(resolveCapFixtureCap(CAP, " ", capped, env, {}) === undefined, "an empty tenant builds no key — never a key with a blank middle rung");
+  ok(
+    row(resolveCapFixtureCap(CAP, "T_REAL", { perDomain: { "e2e-cap": ROW }, default: { surfaceMonthlyUsd: 1 } }, env, {})) === undefined,
+    "a perDomain or default entry is not the fixture's cap — only an exact perSurface row counts",
+  );
+  ok(
+    resolveCapFixtureCap({ roomVar: "E2E_NOT_A_ROOM", scope: "channel" }, "T_REAL", capped, { E2E_NOT_A_ROOM: "C_REAL" }, {}) === undefined,
+    "a room var with no ROOM_VARS row names no surface, so it builds no key",
+  );
 }
 
 {

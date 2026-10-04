@@ -1,6 +1,9 @@
+// proves: AP-MOD-core-credentials-warm
+
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeTempDir } from "./_temp-dir.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-warm-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
@@ -295,5 +298,5 @@ try {
 
   console.log(`\n✓ warm-credential: ${passed} assertions passed`);
 } finally {
-  rmSync(tmp, { recursive: true, force: true });
+  await removeTempDir(tmp);
 }

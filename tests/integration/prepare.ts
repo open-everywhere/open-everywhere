@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -8,6 +8,9 @@ import { mintPgliteTemplate } from "./pglite-template.js";
 import {
   PREPARED_ARTIFACTS,
   cacheMode,
+  clearBuildStamp,
+  gateBuiltBundle,
+  readBuildStamp,
   cacheRemote,
   hostCacheKeyProbe,
   missingPreparedArtifacts,
@@ -27,7 +30,7 @@ import { createStateDir } from "./state-dir.js";
 
 export const IT_SKIP_BUILD_ENV = "OE_IT_SKIP_BUILD";
 
-export type PrepareMode = "warm" | "restored" | "cold" | "skip-build";
+export type PrepareMode = "warm" | "restored" | "built" | "cold" | "skip-build";
 
 export interface PrepareReport {
   readonly mode: PrepareMode;
@@ -113,13 +116,24 @@ export async function prepareIntegrationTree(
       stampKey: stampCacheEnabled(env) ? readStamp(root) : undefined,
       missingArtifacts: missingPreparedArtifacts(root),
     });
+    const gateBuilt = gateBuiltBundle({
+      state,
+      stampsTrusted: stampCacheEnabled(env),
+      key,
+      stamp: readBuildStamp(root),
+      bundlePresent: existsSync(join(root, ".output", "server", "index.mjs")),
+    });
+    if (!gateBuilt && state !== "warm" && key !== undefined && remoteRestoreEnabled(env)) clearBuildStamp(root);
     const restore =
-      state === "warm" || key === undefined || !remoteRestoreEnabled(env)
+      state === "warm" || gateBuilt || key === undefined || !remoteRestoreEnabled(env)
         ? undefined
         : restorePreparedTree({ root, key, remote: cacheRemote(env) });
     if (state === "warm") {
       mode = "warm";
       cacheNote = "hit (this tree, by stamp)";
+    } else if (gateBuilt) {
+      mode = "built";
+      cacheNote = "eve build reused (the `build` gate's bundle, by build stamp)";
     } else if (restore?.kind === "restored") {
       mode = "restored";
       cacheNote = `hit (${cacheRemote(env)}, ${(restore.bytes / 1048576).toFixed(1)} MB)`;
@@ -135,10 +149,13 @@ export async function prepareIntegrationTree(
     const oeStartedAt = Date.now();
     runOeBuild(root);
     oeBuildSeconds = seconds(oeStartedAt);
-    if (mode === "cold") {
-      const eveStartedAt = Date.now();
-      runEveBuild(root);
-      eveBuildSeconds = seconds(eveStartedAt);
+    if (mode === "cold" || mode === "built") {
+      if (mode === "cold") {
+        clearBuildStamp(root);
+        const eveStartedAt = Date.now();
+        runEveBuild(root);
+        eveBuildSeconds = seconds(eveStartedAt);
+      }
       process.env.OE_SANDBOX_BACKEND = INTEGRATION_SANDBOX_BACKEND;
       const prewarm = await prewarmJustBashTemplate(root, createStateDir(), log);
       prewarmSeconds = prewarm.seconds;
@@ -152,7 +169,7 @@ export async function prepareIntegrationTree(
       );
     }
     if (key !== undefined) writeStamp(root, key);
-    if (mode === "cold" && key !== undefined && remoteCachePublishEnabled(env)) {
+    if ((mode === "cold" || mode === "built") && key !== undefined && remoteCachePublishEnabled(env)) {
       const publishKey = republishKey(root, key, log);
       if (publishKey !== undefined) {
         const published = publishPreparedTree({ root, key: publishKey, remote: cacheRemote(env) });

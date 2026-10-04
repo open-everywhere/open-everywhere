@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import "./_register-test-config.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -195,5 +196,5 @@ async function setSpendLimit(scopeKey: string): Promise<{ isError: boolean; text
   );
 }
 
-rmSync(workDir, { recursive: true, force: true });
+await removeTempDir(workDir);
 console.log(`✓ control-mcp store wiring: ${n} assertions passed`);

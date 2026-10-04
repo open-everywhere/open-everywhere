@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { readAudit, resolvePartition } from "@open-everywhere/core/agent/adapter-api.js";
+import { removeTempDir } from "../packages/core/scripts/_temp-dir.js";
 
 const dir = join(tmpdir(), `open-everywhere-github-spend-gate-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
 process.env.GITHUB_APP_SLUG = "eve-bot";
@@ -74,5 +74,5 @@ ok(failOpen.res !== null && (failOpen.res as { auth?: unknown }).auth !== undefi
 provider.registerOperationalStore(live);
 provider.resetOperationalStore();
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`\n✓ github-spend-gate: ${n} assertions passed (over-budget decline + refusal + audit, under-budget dispatch, fail-open on throw)`);

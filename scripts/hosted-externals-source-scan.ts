@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { toPosixPath } from "./posix-path.js";
 
 const COMPUTED_IMPORT = /\bimport\s*\(\s*[^"'`\s)]/;
 
@@ -39,7 +40,7 @@ export function computedImportFailures(root: string): string[] {
   const failures: string[] = [];
   for (const dir of runtimeSourceDirs(root)) {
     for (const file of walkTs(join(root, dir))) {
-      const relative = file.slice(root.length + 1);
+      const relative = toPosixPath(file.slice(root.length + 1));
       if (isGeneratedDocsPage(relative)) continue;
       const lines = readFileSync(file, "utf8").split("\n");
       for (let i = 0; i < lines.length; i++) {

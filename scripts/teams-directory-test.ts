@@ -1,8 +1,8 @@
 import { withPatchedFetch } from "../packages/core/scripts/_fetch-test-utils.js";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
+import { removeTempDir } from "../packages/core/scripts/_temp-dir.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -15,7 +15,7 @@ function ok(cond: boolean, label: string): void {
 
 _setDeploymentIdentityForTest({ org: "acme" });
 const dir = join(tmpdir(), `open-everywhere-teams-directory-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 process.env.MICROSOFT_APP_ID = "fixture-app-id-not-a-secret";
@@ -350,5 +350,5 @@ const teamRow = (teamId: string) => store.proactiveAddress("acme", TEAMS_ADDRESS
 
 });
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`\n✓ teams-directory: ${passed} assertions passed (arm + write reachability, the capture rules and the wrong-hand oracle, the store, the warm/cold DM arm, refusal honesty, the paged Connector roster)`);

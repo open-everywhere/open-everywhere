@@ -1,13 +1,16 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { CONFIG_FILE, findRepoRoot } from "../agent/scaffold/roster-fs.js";
 import { codemodById, unknownCodemods } from "./upgrade-codemods.js";
+import { renderDriftReport, templateDrift } from "./template-drift.js";
 import { NOTES_FILE, codemodIdsIn, compareVersions, notesBetween, parseUpgradingNotes, type ReleaseNote, type UpgradingNotes } from "./upgrade-notes.js";
 
 export interface UpgradeRegistry {
   latestVersion(pkg: string): Promise<string | undefined>;
   evePeer(version: string): Promise<string | undefined>;
+  templateDir?(version: string): Promise<string | undefined>;
 }
 
 export interface UpgradeIo {
@@ -34,6 +37,9 @@ const USAGE = [
   "  retired create-open-everywhere to @open-everywhere/create), pin eve to the target core's",
   "  declared peer, npm install, run the config codemods the release notes name, then oe build",
   "  --accept, npm run typecheck, npm run build.",
+  "",
+  "  Both modes also list every scaffolded file that differs from the target's template (the",
+  "  template drift report). oe upgrade never overwrites one: you read each diff and copy the file.",
 ].join("\n");
 
 interface AppManifest {
@@ -130,12 +136,52 @@ function installedOeBin(appRoot: string): readonly [string, readonly string[]] |
   return existsSync(script) ? [process.execPath, [script]] : undefined;
 }
 
+function installedTemplateDir(appRoot: string, version: string): string | undefined {
+  const root = join(appRoot, "node_modules", SCOPE_DIR, "create");
+  try {
+    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version?: unknown };
+    if (pkg.version !== version) return undefined;
+  } catch {
+    return undefined;
+  }
+  const template = join(root, "template");
+  return existsSync(join(template, "package.json")) ? template : undefined;
+}
+
+async function reportTemplateDrift(io: UpgradeIo, appRoot: string, target: string, manifest: AppManifest): Promise<number | undefined> {
+  let templateDir: string | undefined;
+  try {
+    templateDir = installedTemplateDir(appRoot, target) ?? (await io.registry.templateDir?.(target));
+  } catch (err) {
+    io.out(`! the template drift check did not run: ${err instanceof Error ? err.message : String(err)}`);
+    return undefined;
+  }
+  if (templateDir === undefined) {
+    io.out(`! cannot read ${target}'s @open-everywhere/create template, so the template drift check did not run.`);
+    io.out(`  Compare agent/lib/register-adapters.ts and the other scaffolded files with that template by hand.`);
+    return undefined;
+  }
+  const appName = typeof manifest.json.name === "string" && manifest.json.name !== "" ? manifest.json.name : "open-everywhere-app";
+  let lines: readonly string[];
+  let owned: number;
+  try {
+    const report = templateDrift({ appRoot, templateDir, version: target, appName });
+    lines = renderDriftReport(report, target, templateDir);
+    owned = report.entries.filter((e) => e.kind === "owned").length;
+  } catch (err) {
+    io.out(`! the template drift check did not run: ${err instanceof Error ? err.message : String(err)}`);
+    return undefined;
+  }
+  for (const line of lines) io.out(line);
+  return owned;
+}
+
 function npmCommand(args: readonly string[]): readonly [string, readonly string[]] {
   if (process.platform !== "win32") return ["npm", [...args]];
   const cli = [process.env.npm_execpath, join(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js")].find(
     (p): p is string => typeof p === "string" && p.endsWith(".js") && existsSync(p),
   );
-  if (cli === undefined) throw new Error("oe upgrade: cannot find npm-cli.js beside this Node — run `npm install` yourself, then `oe upgrade` again.");
+  if (cli === undefined) throw new Error("oe upgrade: cannot find npm-cli.js beside this Node — run `npm install` yourself, then run the same command again.");
   return [process.execPath, [cli, ...args]];
 }
 
@@ -187,7 +233,7 @@ function step(io: UpgradeIo, appRoot: string, label: string, command: readonly [
   const code = io.run(command[0], command[1], appRoot);
   if (code === 0) return true;
   io.err(`✗ oe upgrade: ${label} exited ${code}. Nothing after this step ran.`);
-  io.err(`  Fix the cause, then run \`oe upgrade\` again: it resumes from here rather than reporting there is nothing to do.`);
+  io.err(`  Fix the cause, then run the same command again: it resumes from here rather than reporting there is nothing to do.`);
   return false;
 }
 
@@ -236,7 +282,7 @@ export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, 
   }
   if (!EXACT.test(core.range)) {
     io.err(`✗ oe upgrade: ${CORE} is pinned to "${core.range}", not an exact version.`);
-    io.err(`  The nine packages publish in lockstep, so an app pins each one exactly. Set it to the version you are on, then run \`oe upgrade\` again.`);
+    io.err(`  The nine packages publish in lockstep, so an app pins each one exactly. Set it to the version you are on, then run the same command again.`);
     return 1;
   }
   const pinned = core.range;
@@ -260,6 +306,7 @@ export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, 
   const installed = resumeBaseline ?? current;
   if (pinned === target && onDisk === target && marker.kind === "none" && !retiredScaffolder) {
     io.out(`✓ oe upgrade: already on ${installed}. Nothing to do.`);
+    await reportTemplateDrift(io, appRoot, target, manifest);
     return 0;
   }
   if (retiredScaffolder && pinned === target && onDisk === target && marker.kind === "none") {
@@ -290,9 +337,8 @@ export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, 
 
   const unknownBefore = unknownCodemods(windowBefore);
   if (unknownBefore.length > 0) {
-    io.err(`✗ oe upgrade: the release notes name ${unknownBefore.length} codemod(s) this CLI does not hold: ${unknownBefore.join(", ")}.`);
-    io.err(`  A newer ${CORE} ships them. Upgrade in one step to a version that does, or apply those migrations by hand.`);
-    return 1;
+    io.err(`! the release notes name ${unknownBefore.length} codemod(s) this CLI does not hold: ${unknownBefore.join(", ")}.`);
+    io.err(`  ${target}'s own registry decides after the install, and it refuses an id it does not hold before any codemod runs.`);
   }
 
   const pinChanges = applyPins({ ...manifest, json: structuredClone(manifest.json) }, target, evePeer);
@@ -301,12 +347,13 @@ export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, 
   io.out(`  run  npm install`);
   const planned = codemodIdsIn(windowBefore);
   if (planned.length === 0) io.out(`  run  the config codemods the target's notes name (the notes read so far name none)`);
-  for (const id of planned) io.out(`  run  codemod ${id} — ${codemodById(id)?.describe ?? "(no description)"}`);
+  for (const id of planned) io.out(`  run  codemod ${id} — ${codemodById(id)?.describe ?? `(not in this CLI's registry — ${target}'s registry resolves it)`}`);
   io.out(`  run  oe build --accept   (then READ the roster.lock.json diff — every line is a capability decision)`);
   io.out(`  run  npm run typecheck`);
   io.out(`  run  npm run build`);
 
   if (plan) {
+    await reportTemplateDrift(io, appRoot, target, manifest);
     io.out(`✓ oe upgrade --plan: nothing was written.`);
     return 0;
   }
@@ -330,6 +377,13 @@ export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, 
     io.err(`  The packages are bumped and installed. Read ${target}'s UPGRADING.md by hand, then run \`oe build --accept\`, \`npm run typecheck\` and \`npm run build\`.`);
     return 1;
   }
+  if (after.kind === "absent" && (before.kind !== "absent" || marker.kind !== "none")) {
+    const why = before.kind !== "absent" ? "the installed core did" : "an earlier `oe upgrade` left a resume marker, and every core that writes one ships the record";
+    io.err(`✗ oe upgrade: ${target} ships no ${NOTES_FILE}, but ${why}, so ${target}'s codemods, env names and manual steps cannot be read.`);
+    io.err(`  The packages are bumped and installed. Reinstall (\`rm -rf node_modules && npm ci\`), then run \`oe upgrade\` again: it resumes.`);
+    io.err(`  If ${target} still ships none, its package is broken: run \`oe upgrade --to <a release that ships one>\`.`);
+    return 1;
+  }
   const windowAfter = after.kind === "ok" ? notesBetween(after.notes, installed, target) : [];
   if (after.kind === "absent") io.out(`· ${target} ships no ${NOTES_FILE} — it predates the release record. There are no codemods to run.`);
   else if (windowAfter.length === 0) io.out(`· ${target}'s ${NOTES_FILE} holds no entry above ${installed}. There are no codemods to run.`);
@@ -337,33 +391,19 @@ export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, 
     io.out(`Release notes (${target}'s own copy):`);
     printWindow(io, windowAfter, installed, target);
   }
-  const unknownAfter = unknownCodemods(windowAfter);
-  if (unknownAfter.length > 0) {
-    io.err(`✗ oe upgrade: ${target}'s release notes name ${unknownAfter.length} codemod(s) this CLI does not hold: ${unknownAfter.join(", ")}.`);
-    io.err(`  The packages are bumped and installed. Apply those migrations by hand, then run \`oe build --accept\`, \`npm run typecheck\` and \`npm run build\`.`);
+  const staleOwned = await reportTemplateDrift(io, appRoot, target, manifest);
+  const oe = installedOeBin(appRoot);
+  if (oe === undefined) {
+    io.err(`✗ oe upgrade: the install left no \`oe\` bin under node_modules/${CORE}. The install did not complete.`);
     return 1;
   }
   for (const release of windowAfter) {
     for (const migration of release.configMigrations) {
-      if (migration.codemod === undefined) {
-        io.out(`! ${release.version} CONFIG (apply by hand): ${migration.description}`);
-        continue;
-      }
-      const codemod = codemodById(migration.codemod);
-      if (codemod === undefined) {
-        io.err(`✗ oe upgrade: codemod "${migration.codemod}" (${release.version}) vanished between the check and the run. Apply that migration by hand.`);
-        return 1;
-      }
-      io.out(`→ codemod ${codemod.id} (${release.version})`);
-      const changed = codemod.run(appRoot);
-      if (changed.length === 0) io.out(`  · nothing to change — the tree already satisfies it`);
-      for (const line of changed) io.out(`  · ${line}`);
+      if (migration.codemod === undefined) io.out(`! ${release.version} CONFIG (apply by hand): ${migration.description}`);
     }
   }
-
-  const oe = installedOeBin(appRoot);
-  if (oe === undefined) {
-    io.err(`✗ oe upgrade: the install left no \`oe\` bin under node_modules/${CORE}. The install did not complete.`);
+  const codemods = codemodIdsIn(windowAfter);
+  if (codemods.length > 0 && !step(io, appRoot, `codemods ${codemods.join(", ")} (${target}'s own registry)`, [oe[0], [...oe[1], "upgrade-codemods", ...codemods]])) {
     return 1;
   }
   if (!step(io, appRoot, "oe build --accept", [oe[0], [...oe[1], "build", "--accept"]])) return 1;
@@ -377,6 +417,42 @@ export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, 
     for (const name of release.env.added) io.out(`  ENV: add ${name} to the deployment's environment before the next deploy (${release.version}).`);
     for (const name of release.env.removed) io.out(`  ENV: ${name} is no longer read; remove it after the next deploy (${release.version}).`);
     for (const manual of release.manualSteps) io.out(`  MANUAL (${release.version}): ${manual}`);
+  }
+  if (staleOwned !== undefined && staleOwned > 0) {
+    io.out(`  SYNC: ${staleOwned} template-owned file(s) differ from ${target}'s template — see the drift report above. oe upgrade changed none of them.`);
+  }
+  return 0;
+}
+
+export function runUpgradeCodemodsCommand(ids: readonly string[], io: Pick<UpgradeIo, "out" | "err">, cwd: string): number {
+  if (ids.length === 0 || ids.some((id) => id.startsWith("-"))) {
+    io.err("✗ oe upgrade-codemods: usage: oe upgrade-codemods <codemod id>… — `oe upgrade` runs this; an operator does not.");
+    return 2;
+  }
+  const appRoot = findRepoRoot(cwd);
+  if (appRoot === undefined) {
+    io.err(`✗ oe upgrade-codemods: no ${CONFIG_FILE} found in ${cwd} or any parent directory.`);
+    return 1;
+  }
+  const unknown = ids.filter((id) => codemodById(id) === undefined);
+  if (unknown.length > 0) {
+    io.err(`✗ oe upgrade: the release notes name ${unknown.length} codemod(s) the installed core's registry does not hold: ${unknown.join(", ")}.`);
+    io.err("  The packages are bumped and installed, and no codemod ran. The release that names them does not ship them.");
+    io.err("  Run `oe upgrade --to <a later release that holds them>`. The resume marker keeps this release in that run's window, so it applies them.");
+    return 1;
+  }
+  for (const id of ids) {
+    const codemod = codemodById(id)!;
+    io.out(`→ codemod ${codemod.id} — ${codemod.describe}`);
+    let changed: readonly string[];
+    try {
+      changed = codemod.run(appRoot);
+    } catch (err) {
+      io.err(`✗ oe upgrade: codemod ${codemod.id} failed: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
+    if (changed.length === 0) io.out("  · nothing to change — the tree already satisfies it");
+    for (const line of changed) io.out(`  · ${line}`);
   }
   return 0;
 }
@@ -400,6 +476,22 @@ function npmViewRegistry(): UpgradeRegistry {
     evePeer: async (version) => {
       const v = view([`${CORE}@${version}`, "peerDependencies.eve"]);
       return typeof v === "string" && v.trim() !== "" ? v : undefined;
+    },
+    templateDir: async (version) => {
+      const dir = mkdtempSync(join(tmpdir(), "oe-upgrade-template-"));
+      const [command, argv] = npmCommand(["pack", `${SCAFFOLDER}@${version}`, "--pack-destination", dir, "--json"]);
+      const packed = spawnSync(command, [...argv], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      if (packed.status !== 0 || typeof packed.stdout !== "string") return undefined;
+      let file: unknown;
+      try {
+        file = (JSON.parse(packed.stdout) as { filename?: unknown }[])[0]?.filename;
+      } catch {
+        return undefined;
+      }
+      if (typeof file !== "string") return undefined;
+      const untar = spawnSync("tar", ["-xzf", file, "-C", dir], { cwd: dir, stdio: "ignore" });
+      const template = join(dir, "package", "template");
+      return untar.status === 0 && existsSync(join(template, "package.json")) ? template : undefined;
     },
   };
 }

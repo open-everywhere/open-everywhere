@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
 import type { AccessRequestsConfig } from "../agent/access/config.js";
 import type { WebhookHook } from "../agent/webhooks/config.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 const dir = join(tmpdir(), `oe-webhook-declare-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: undefined });
 
@@ -491,5 +491,5 @@ function rejectsWithSync(fn: () => unknown, fragment: string, label: string): vo
   ok(false, `${label} (did not throw)`);
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`\n✅ webhook-declare (OPE-208): ${n} checks passed`);

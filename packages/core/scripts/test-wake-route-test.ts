@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
-import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -15,7 +15,7 @@ function ok(cond: boolean, label: string): void {
 }
 
 const dir = join(tmpdir(), `open-everywhere-test-wake-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: "acme" });
 overrideSettingsForTest({ window: { topology: true } });
@@ -418,5 +418,5 @@ function soloBody(over: Record<string, unknown> = {}): Record<string, unknown> {
   ok(rows.some((e) => (e.detail as { addressing?: string })?.addressing === "direct-mention"), "audit detail records the injected addressing");
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`\n✓ test-wake route: ${passed} assertions passed (triple fail-closed gate + INJECT-vs-READ credential separation + validation + render+divert + self-audit)\n`);

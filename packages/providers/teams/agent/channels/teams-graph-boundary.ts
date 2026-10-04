@@ -1,8 +1,13 @@
 import { appendAudit, deploymentOrg } from "@open-everywhere/core/agent/adapter-api.js";
+import { boundaryFromRoles, decodeJwtRoles, tenantWideRolesIn, type TeamsReadBoundary } from "./teams-graph-roles.js";
 
-export type TeamsReadBoundary = "per-team" | "tenant-wide" | "unknown";
-
-export const TENANT_WIDE_CHANNEL_READ_ROLES: readonly string[] = ["ChannelMessage.Read.All", "Group.Read.All", "Group.ReadWrite.All"];
+export {
+  boundaryFromRoles,
+  boundaryOfGraphToken,
+  decodeJwtRoles,
+  TENANT_WIDE_CHANNEL_READ_ROLES,
+  type TeamsReadBoundary,
+} from "./teams-graph-roles.js";
 
 export const TEAMS_READ_BOUNDARY_SOURCES: readonly string[] = [
   "https://learn.microsoft.com/en-us/graph/api/channel-list-messages",
@@ -11,35 +16,6 @@ export const TEAMS_READ_BOUNDARY_SOURCES: readonly string[] = [
 ];
 
 const TEAMS_READ_BOUNDARY_ACTION = "teams.read_boundary";
-
-export function decodeJwtRoles(token: string): readonly string[] | undefined {
-  const parts = token.split(".");
-  if (parts.length !== 3 || parts[1].length === 0) return undefined;
-  let payload: unknown;
-  try {
-    payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf-8"));
-  } catch {
-    return undefined;
-  }
-  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return undefined;
-  const roles = (payload as { roles?: unknown }).roles;
-  if (roles === undefined) return [];
-  if (!Array.isArray(roles)) return undefined;
-  return roles.filter((r): r is string => typeof r === "string");
-}
-
-function tenantWideRolesIn(roles: readonly string[]): readonly string[] {
-  return TENANT_WIDE_CHANNEL_READ_ROLES.filter((r) => roles.includes(r));
-}
-
-export function boundaryFromRoles(roles: readonly string[] | undefined): TeamsReadBoundary {
-  if (roles === undefined) return "unknown";
-  return tenantWideRolesIn(roles).length > 0 ? "tenant-wide" : "per-team";
-}
-
-export function boundaryOfGraphToken(token: string): TeamsReadBoundary {
-  return boundaryFromRoles(decodeJwtRoles(token));
-}
 
 let held: TeamsReadBoundary = "unknown";
 let heldRoles: readonly string[] = [];

@@ -120,16 +120,17 @@ function withWarnTap<T>(run: (warns: string[]) => T): T {
 
   const dir2 = join(mkdtempSync(join(tmpdir(), "oe-pglite-lock-")), "data");
   const lock2 = pgliteLockPath(dir2);
+  const livePid = process.platform === "win32" ? process.ppid : 1;
   rmSync(dir2, { recursive: true, force: true });
-  writeFileSync(lock2, JSON.stringify({ pid: 1, acquiredAt: new Date().toISOString() }));
+  writeFileSync(lock2, JSON.stringify({ pid: livePid, acquiredAt: new Date().toISOString() }));
   let refused = false;
   try {
     acquirePgliteLock(dir2);
   } catch (e) {
-    refused = /LOCKED by a LIVE process/.test(String(e)) && String(e).includes("PID 1");
+    refused = /LOCKED by a LIVE process/.test(String(e)) && String(e).includes(`PID ${livePid}`);
   }
   ok(refused, "lock: a LIVE-PID lock is refused (fail-closed), naming the PID");
-  ok(JSON.parse(readFileSync(lock2, "utf8")).pid === 1, "lock: a refused acquire does NOT overwrite the live lock");
+  ok(JSON.parse(readFileSync(lock2, "utf8")).pid === livePid, "lock: a refused acquire does NOT overwrite the live lock");
 
   const child = spawnSync(process.execPath, ["-e", ""], { stdio: "ignore" });
   const deadPid = child.pid ?? 2147483000;

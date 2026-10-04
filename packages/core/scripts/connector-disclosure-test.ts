@@ -40,6 +40,7 @@ import type { BindableContext } from "../agent/identity/binding.js";
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 registerSlackFixtureMapper();
 
 let n = 0;
@@ -440,5 +441,5 @@ const rowsFor = async (action: string) => (await readAudit({ org: "disc-test", a
 _resetGovernanceMemberSupplierForTest();
 _resetAudienceFloorCacheForTest();
 _resetConnectorEntitlementProbeForTest();
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`✓ connector-disclosure: ${n} assertions passed`);

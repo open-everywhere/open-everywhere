@@ -1,7 +1,8 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -248,5 +249,5 @@ async function deliver(container: InstanceType<typeof FakeEveContext>, ctx: neve
   ok(rows.length === 1 && rows[0]!.detail?.["pr"] === 99, "…the attempt left its audit row, which is what a later crossing reads corrections back from");
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`✓ learn-hook-edge: ${passed} assertions passed`);

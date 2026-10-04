@@ -203,7 +203,16 @@ export function codemodIdsIn(releases: readonly ReleaseNote[]): readonly string[
   return out;
 }
 
-const PREAMBLE = [
+export const BOOTSTRAP_PREFIX = ".open-everywhere/bootstrap";
+
+export function bootstrapCommands(target: string): readonly [install: string, run: string] {
+  return [
+    `npm install --prefix ${BOOTSTRAP_PREFIX} @open-everywhere/core@${target} tsx@4`,
+    `node ${BOOTSTRAP_PREFIX}/node_modules/@open-everywhere/core/bin/oe.js upgrade --to ${target}`,
+  ];
+}
+
+const preamble = (newest: string): readonly string[] => [
   "# Upgrading Open Everywhere",
   "",
   "This page is GENERATED from `upgrading.json` beside it. A hand edit here is lost at the next",
@@ -216,11 +225,43 @@ const PREAMBLE = [
   "then `oe build --accept`, `npm run typecheck` and `npm run build`. `npx oe upgrade --plan` prints",
   "the plan and writes nothing.",
   "",
+  "The codemods run from the TARGET release's own registry, so a release can ship a codemod for its",
+  "own upgrade. A core at 0.1.4 runs them from its OWN registry instead: after the install, it",
+  "refuses a codemod a later release introduces. Run `npx oe upgrade` again: the target's own `oe`",
+  "is installed by then, and it runs the codemod.",
+  "",
   "A `devDependencies` key that still reads `create-open-everywhere` is RENAMED to",
   "`@open-everywhere/create`, not bumped. Every app scaffolded at 0.1.3 or earlier carries the old",
   "key, and the unscoped name is retired: it publishes no further version.",
   "",
+  "A core that carries the template drift report prints it in `npx oe upgrade` and in `--plan`:",
+  "every scaffolded file that differs from the target release's `@open-everywhere/create` template,",
+  "with a one-line size of its diff. An upgrade never overwrites an app file. `npx oe upgrade` runs",
+  "the INSTALLED core's code, so an upgrade from a core without the report prints none. Run",
+  "`npx oe upgrade --plan --to <target>` once more after it: the target's own code then prints the",
+  "report, even when there is nothing left to install. A stale template-owned file can typecheck and build and",
+  "still break the deployment, so read each SYNC line and copy the target's file after you read the",
+  "diff.",
+  "",
   "Read the entries between your installed version and your target, oldest first.",
+  "",
+  "## An app below 0.1.4",
+  "",
+  "An app scaffolded at 0.1.3 or earlier has no `oe upgrade`. The subcommand first shipped in 0.1.4,",
+  "and the installed core ships no `upgrading.json`. Install the target core beside the app, in its",
+  "gitignored `.open-everywhere/` directory, and run that core's `oe` from the app root:",
+  "",
+  "```sh",
+  ...bootstrapCommands(newest),
+  "```",
+  "",
+  "The run renames `create-open-everywhere`, bumps every pin, installs, and then reads the target's",
+  "own record for every entry above your version. If the run stops at any step, run the second",
+  "command again. The run resumes, and it keeps the version you started from. After a green run,",
+  "delete `.open-everywhere/bootstrap`. From then on, `npx oe upgrade` is the command.",
+  "",
+  "Do not use `npx -p @open-everywhere/core@<version> oe upgrade`. The `oe` bin needs `tsx`, which",
+  "core does not install, so that command fails before `oe upgrade` starts.",
   "",
 ];
 
@@ -238,7 +279,7 @@ function envLines(env: ReleaseEnvChange): readonly string[] {
 }
 
 export function renderUpgradingMarkdown(notes: UpgradingNotes): string {
-  const lines: string[] = [...PREAMBLE];
+  const lines: string[] = [...preamble(notes.releases[0]!.version)];
   for (const release of notes.releases) {
     lines.push(`## ${release.version} — ${release.date}`, "", release.summary, "", `eve peer: \`${release.evePeer}\``, "");
     lines.push(...section("Breaking", release.breaking));

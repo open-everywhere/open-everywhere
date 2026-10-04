@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeTempDir } from "./_temp-dir.js";
 
 const DIR = mkdtempSync(join(tmpdir(), "oe-teams-spend-"));
 process.env.OE_SQLITE_PATH = join(DIR, "ops.sqlite3");
@@ -133,5 +134,5 @@ async function driveTurn(input: {
   ok(channel[0]!.surfaceMode === "channel", "🔴 OPE-1867 NEGATIVE CONTROL: a positively-identified team channel is stamped 'channel', so its spend is still reported by name");
 }
 
-rmSync(DIR, { recursive: true, force: true });
+await removeTempDir(DIR);
 console.log(`✓ teams spend attribution: ${passed} assertions passed`);

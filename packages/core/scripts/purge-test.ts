@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeTempDir } from "./_temp-dir.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-purge-"));
 process.env.OE_SQLITE_PATH = join(tmp, "mem.sqlite3");
@@ -462,4 +463,4 @@ function tiersOf(eng: Record<string, string | undefined>, org: Record<string, st
 
 assert.ok(n > 0);
 console.log(`\n✓ purge: ${n} assertions passed (planPurge sweep/multi-bullet/refusals, redacted memory.purge execute + audit, capture-seam deletion digests, GDPR round-trip sweep, OPE-582 re-execution idempotence)\n`);
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);

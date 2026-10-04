@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { removeTempDir } from "./_temp-dir.js";
 
 const dir = join(tmpdir(), `open-everywhere-github-scope-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
 process.env.OE_TELEMETRY = "off";
@@ -165,5 +165,5 @@ const NEXT_HOUR = "2026-09-08T05:00:00.000Z";
   ok(rows[0]!.workspace === OWNER, "…on the repo owner's workspace, like every other github row");
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`✓ github reaction-poll scope: ${n} assertions`);

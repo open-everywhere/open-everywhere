@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
 
 const dir = join(tmpdir(), `open-everywhere-memory-admin-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_MEMORY_PROVIDER;
 _setDeploymentIdentityForTest({ org: "acme" });
@@ -29,6 +28,7 @@ import memoryAdminListTool from "../agent/tools/memory_admin_list.js";
 import memoryAdminReadTool from "../agent/tools/memory_admin_read.js";
 import { execTool } from "./_tool-exec.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -329,5 +329,5 @@ const read = (ctx: BindableContext, silo: string, relPath: string) => execTool(m
 
 _resetGovernanceMemberSupplierForTest();
 _resetGovernanceFloorCacheForTest();
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`\n✓ memory-admin (in-Slack bridge): ${n} assertions passed\n`);

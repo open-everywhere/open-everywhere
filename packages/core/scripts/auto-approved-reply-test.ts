@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { fileURLToPath } from "node:url";
+import { removeTempDir } from "./_temp-dir.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-auto-approved-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
@@ -143,7 +144,7 @@ try {
 }
 
 console.log(`✓ auto-approved-reply: ${passed} assertions — two real tools replying under a config-lowered verb (named element, no card claim, the kind's own outcome, the mutation actually applied), the unchanged ask-path control, the helper's shape, and the all-propose-tools sweep`);
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 } finally {
   globalThis.fetch = realFetch;
 }

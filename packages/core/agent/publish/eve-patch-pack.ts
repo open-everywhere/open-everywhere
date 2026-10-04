@@ -253,3 +253,38 @@ export function missingEveMarkers(
   }
   return problems;
 }
+
+export function evePatchedFilesInstalled(contents: ReadonlyMap<string, string | undefined>): string[] {
+  const found: string[] = [];
+  for (const [path, src] of contents) {
+    if (src !== undefined && /__oe[A-Za-z0-9_]/.test(src)) found.push(path);
+  }
+  return found.sort();
+}
+
+export function checkPristineEve(input: {
+  readonly name: string | undefined;
+  readonly version: string | undefined;
+  readonly pin: string;
+}): string[] {
+  const { name, version, pin } = input;
+  if (name === "eve" && version === pin) return [];
+  return [
+    `the tarball npm returned for eve@${pin} holds ${name ?? "no package name"}@${version ?? "no version"}, so the ` +
+      `applier did not copy it over the installed eve`,
+  ];
+}
+
+export function packageManagerOf(userAgent: string | undefined): "npm" | "pnpm" | "bun" | "yarn" {
+  const name = userAgent?.split("/")[0]?.trim();
+  return name === "pnpm" || name === "bun" || name === "yarn" ? name : "npm";
+}
+
+export function evePatchRecovery(pin: string, manager: "npm" | "pnpm" | "bun" | "yarn" = "npm"): string {
+  return (
+    `Recover with two commands in the project root: ` +
+    `\`node -e "require('fs').rmSync('node_modules/eve',{recursive:true,force:true})"\`, then \`${manager} install\`. ` +
+    `If the project's postinstall does not run oe-eve-patch, run \`npx oe-eve-patch\` after them. The install must ` +
+    `resolve eve@${pin}`
+  );
+}

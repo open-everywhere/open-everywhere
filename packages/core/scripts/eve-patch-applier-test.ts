@@ -14,9 +14,13 @@ import {
   checkEvePatchPartTable,
   checkEveResolution,
   checkPackedEvePatchDir,
+  checkPristineEve,
   declaresEveApplier,
   evePatchFileName,
   evePatchPartMarkers,
+  evePatchRecovery,
+  evePatchedFilesInstalled,
+  packageManagerOf,
   evePatchSharedTargets,
   evePatchTargets,
   missingEveMarkers,
@@ -326,6 +330,37 @@ eq(
   "§5 a packed directory outside the root has no argument to pass",
 );
 
+eq(
+  evePatchedFilesInstalled(new Map([["dist/b.js", "x;function __oeHelper(){}"], ["dist/a.js", "globalThis.__oeAPatched=1"], ["dist/c.js", "plain"]])),
+  ["dist/a.js", "dist/b.js"],
+  "§5c the files that carry an `__oe` symbol are named, sorted",
+);
+eq(
+  evePatchedFilesInstalled(new Map([["dist/a.js", "plain"], ["dist/b.js", undefined], ["dist/c.js", "__oe"]])),
+  [],
+  "§5c pristine bytes, an absent file and a bare `__oe` with no name carry no OE patch — the applier refuses, not restores",
+);
+eq(checkPristineEve({ name: "eve", version: PIN, pin: PIN }), [], "§5c the tarball for the pin is accepted");
+ok(checkPristineEve({ name: "eve", version: "0.1.0", pin: PIN }).length === 1, "§5c a tarball at another version is refused");
+ok(checkPristineEve({ name: "not-eve", version: PIN, pin: PIN }).length === 1, "§5c a tarball of another package is refused");
+ok(checkPristineEve({ name: undefined, version: undefined, pin: PIN }).length === 1, "§5c an unreadable manifest is refused");
+const RM_EVE = `node -e "require('fs').rmSync('node_modules/eve',{recursive:true,force:true})"`;
+ok(
+  evePatchRecovery(PIN).includes(RM_EVE) && evePatchRecovery(PIN).includes("`npm install`") && evePatchRecovery(PIN).includes(`eve@${PIN}`),
+  "§5c the recovery text carries the portable delete, the npm install and the pin",
+);
+ok(!/rm -rf|&&/.test(evePatchRecovery(PIN)), "§5c the recovery text uses no POSIX-only `rm -rf` or `&&`");
+ok(evePatchRecovery(PIN, "pnpm").includes("`pnpm install`"), "§5c a pnpm project is told to run pnpm install");
+eq(packageManagerOf("npm/10.9.0 node/v24.21.0 linux x64 workspaces/false"), "npm", "§5c the npm user agent reads as npm");
+eq(packageManagerOf("pnpm/9.12.0 npm/? node/v24.21.0 linux x64"), "pnpm", "§5c the pnpm user agent reads as pnpm");
+eq(packageManagerOf("bun/1.1.30 npm/? node/v22.6.0 linux x64"), "bun", "§5c the bun user agent reads as bun");
+eq(packageManagerOf(undefined), "npm", "§5c no user agent (a direct run) defaults to npm");
+eq(packageManagerOf("cnpm/9.0.0"), "npm", "§5c an unknown tool defaults to npm");
+ok(
+  evePatchedFilesInstalled(new Map(realTargets.map((t) => [t.insidePackage, PATCH_BODY]))).length === realTargets.length,
+  "§5c the committed patch's bytes carry the `__oe` signature the restore rule looks for",
+);
+
 const require_ = createRequire(import.meta.url);
 const installedEve = dirname(require_.resolve("eve/package.json"));
 const patchPackageBin = join(dirname(require_.resolve("patch-package/package.json")), "index.js");
@@ -379,6 +414,11 @@ try {
 
   reverse();
   eq(markerCount(), 0, "§6a the unpatched fixture carries NONE of the patch's markers");
+  eq(
+    evePatchedFilesInstalled(new Map(realTargets.map((t) => [t.insidePackage, readFileSync(join(eveDir, t.insidePackage), "utf8")]))),
+    [],
+    "§6a the unpatched fixture carries no `__oe` symbol, so a failed apply on it would refuse rather than restore",
+  );
   const contentsBefore = new Map(realTargets.map((t) => [t.insidePackage, readFileSync(join(eveDir, t.insidePackage), "utf8")]));
   ok(
     missingEveMarkers(realTargets, contentsBefore).length === totalMarkers,

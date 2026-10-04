@@ -1,5 +1,4 @@
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
 import {
   parseCron,
@@ -30,6 +29,7 @@ import {
   CHECK_IN_CAP_MS,
   CHECK_IN_DOCTRINE,
 } from "../agent/routines/check-in.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -191,7 +191,7 @@ ok(routineMarker(undefined) === null, "routineMarker is null when no attributes"
 ok(routineMarker({ [ROUTINE_MARKER.id]: ["r-9"], [ROUTINE_MARKER.surface]: ["s"] })?.id === "r-9", "routineMarker collapses string[] attributes");
 
 const dir = join(tmpdir(), `open-everywhere-routines-test-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 
 const store = await import("../agent/routines/store.js");
@@ -306,7 +306,7 @@ ok((await store.removeRoutine(p as never, made.id)) === false, "store: removing 
   }
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 
 {
   const MIN = 60_000;

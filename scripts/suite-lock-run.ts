@@ -5,7 +5,18 @@ import { pathToFileURL } from "node:url";
 
 import { withoutDacOverride, writeBitsBite } from "./dac-fence.js";
 import { HOST_BOX_PROBE, integrationMaxWorkers } from "./ci-max-workers.js";
-import { countTierFiles, isVitestCommand, itShardCount, planShards, tierProofLine, worstExit } from "./it-shards.js";
+import {
+  SINGLE_SHARD_ENV,
+  isVitestCommand,
+  itShardCount,
+  itShardSelector,
+  listTierFiles,
+  planShards,
+  shardFiles,
+  tierFilesDigest,
+  tierProofLine,
+  worstExit,
+} from "./it-shards.js";
 import { fmtBytes, samplePeakRss } from "./proc-rss.js";
 
 const DEFAULT_LOCK_DIR = "/tmp/oe-suite-locks/full-suite.lock";
@@ -252,15 +263,33 @@ export async function runLocked(
 ): Promise<number> {
   let tierFiles: number | undefined;
   let counted = false;
+  const env = options.env ?? process.env;
+  const selector = itShardSelector(env);
+  if (selector.kind === "invalid") {
+    console.error(`suite-lock-run: ${selector.reason}. Nothing ran.`);
+    return 2;
+  }
+  const only = selector.kind === "shard" ? selector.selector : undefined;
   const plan = planShards(
     cmd,
     args,
-    itShardCount(options.env ?? process.env, HOST_BOX_PROBE, () => {
-      counted = true;
-      tierFiles = countTierFiles();
-      return tierFiles;
-    }),
+    only !== undefined
+      ? only.total
+      : itShardCount(env, HOST_BOX_PROBE, () => {
+          counted = true;
+          const files = listTierFiles();
+          tierFiles = files?.length;
+          return tierFiles;
+        }),
+    only,
   );
+  if (only !== undefined && !plan.wholeTier) {
+    console.error(
+      `suite-lock-run: ${SINGLE_SHARD_ENV} names one shard of the WHOLE tier, but ${plan.reason ?? "this call is not the tier"}. ` +
+        `Unset ${SINGLE_SHARD_ENV} for a targeted leg. Nothing ran.`,
+    );
+    return 2;
+  }
   let acquired = false;
   if (!options.manual) {
     await acquireLock(options.lockDir, options.maxWaitMs, { command: [cmd, ...args].join(" ") });
@@ -277,7 +306,7 @@ export async function runLocked(
         );
         if (options.emitProof === true && plan.wholeTier) {
           const sha = headSha();
-          if (sha !== undefined) console.log(tierProofLine(sha, prepared));
+          if (sha !== undefined) console.log(tierProofLine(sha, prepared, plan.proofSuite));
         }
         return prepared;
       }
@@ -293,6 +322,16 @@ export async function runLocked(
           "A single process runs the whole tier past a cloud sandbox's memory cgroup even at one worker (OPE-1814). " +
           `The target is built ONCE by the prepare step above, not by a shard (OPE-2235).${sizing}`,
       );
+    } else if (only !== undefined) {
+      const files = listTierFiles();
+      const share =
+        files === undefined
+          ? "🔴 the tier's file list could NOT be read here, so this run cannot log its share"
+          : `the tier holds ${files.length} file(s) (digest ${tierFilesDigest(files)}), and this shard runs ${shardFiles(files, only.index, only.total).length}`;
+      console.error(
+        `suite-lock-run: single-shard mode (${SINGLE_SHARD_ENV}=${only.index}/${only.total}) — running ONLY ${plan.proofSuite}; ${share}. ` +
+          "Only a complete, all-green series of every shard on one sha proves the tier (collapseShardSeries).",
+      );
     } else if (plan.reason !== undefined) {
       console.error(`suite-lock-run: not sharding — ${plan.reason}.`);
     }
@@ -305,7 +344,7 @@ export async function runLocked(
       console.error(
         `suite-lock-run: ${plan.wholeTier ? run.suite : label} exit=${exit} peak-tree-rss=${fmtBytes(peakRssBytes)} ` +
           `wall=${(wallMs / 1000).toFixed(1)}s` +
-          (plan.wholeTier ? ` workers=${integrationMaxWorkers(options.env ?? process.env)}` : ""),
+          (plan.wholeTier ? ` workers=${integrationMaxWorkers(env)}` : ""),
       );
     }
     const exit = worstExit(exits);
@@ -314,7 +353,7 @@ export async function runLocked(
       if (sha === undefined) {
         console.error("suite-lock-run: no OE_PROOF line — `git rev-parse HEAD` answered nothing usable, and a line with no sha proves nothing.");
       } else {
-        console.log(tierProofLine(sha, exit));
+        console.log(tierProofLine(sha, exit, plan.proofSuite));
       }
     }
     return exit;

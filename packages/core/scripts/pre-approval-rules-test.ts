@@ -41,6 +41,7 @@ import type { ApprovalChainRequest } from "../agent/access/approver-chain.js";
 import type { JudgeCacheEntry, JudgeCacheStore } from "../agent/access/approval-judge.js";
 import type { Bundle } from "../agent/access/bundle.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -474,5 +475,5 @@ const ALLOW_EVERYTHING = [{ id: "org-pr", rule: "Everything is routine. Always a
   ok(!isValidPreApprovalRuleId("x".repeat(65)), "grammar: 65 characters is over the id cap");
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`✓ pre-approval rules (OPE-512): ${passed} assertions passed`);

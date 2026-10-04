@@ -52,6 +52,19 @@ second mechanism:
 An unknown doc and a doc belonging to a bundle you don't run get the **same** refusal. Distinguishing
 them would disclose that a Notion manual exists to a deployment that deliberately carries no Notion.
 
+## Where the manual ships
+
+The universal manual ships inside the `@open-everywhere/core` package, at the subpath
+`@open-everywhere/core/agent/docs/generated/index.js`. Each provider package carries its own
+runbook. The app registers the universal manual once at boot, from its own
+`agent/lib/register-docs.ts`, which `agent/lib/register-config.ts` imports.
+
+An app scaffolded with `npx @open-everywhere/create` carries the same `register-docs.ts`. So its
+agent serves the same pages as this repository's reference app, at the version of core it installed.
+The scaffold copies no page into your app, so an upgrade of core also upgrades the manual. To add a
+page of your own, call `registerDocs` again with more entries. An entry with the same `path` as a
+shipped page replaces that page.
+
 ## It cannot drift
 
 "The exact docs we ship" only means something if drift is impossible, so it is a build gate.
@@ -66,8 +79,9 @@ chain — fails the build if:
 - a bundle stops handing its docs to the runtime,
 - a generated module is left behind for a doc that no longer exists.
 
-So the manual the agent quotes is the manual in the repo, at the commit that was deployed. If you
-change a doc, regenerate and commit — see the contributor guide (`AGENTS.md`).
+So the manual the agent quotes is the manual in the repo, at the commit that was deployed. In an app
+that installs Open Everywhere from npm, it is the manual of the installed core version. If you change
+a doc, regenerate and commit — see the contributor guide (`AGENTS.md`).
 
 ### …and it cannot be silently incomplete
 

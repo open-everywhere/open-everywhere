@@ -24,13 +24,14 @@ const eq = (a: unknown, b: unknown, label: string) => {
 
 const require = createRequire(import.meta.url);
 const eveRoot = require.resolve("eve/package.json").replace(/package\.json$/, "");
-const agentContract = (await import(`${eveRoot}dist/src/tools/framework/agent-contract.js`)) as {
+const eveRootUrl = pathToFileURL(eveRoot).href;
+const agentContract = (await import(`${eveRootUrl}dist/src/tools/framework/agent-contract.js`)) as {
   SUBAGENT_TOOL_INPUT_SCHEMA: unknown;
 };
-const askQuestion = (await import(`${eveRoot}dist/src/tools/framework/ask-question.js`)) as {
+const askQuestion = (await import(`${eveRootUrl}dist/src/tools/framework/ask-question.js`)) as {
   ASK_QUESTION_INPUT_SCHEMA: unknown;
 };
-const toolSchema = (await import(`${eveRoot}dist/src/tools/schema.js`)) as {
+const toolSchema = (await import(`${eveRootUrl}dist/src/tools/schema.js`)) as {
   serializeInputSchema(schema: unknown): unknown;
   toInputSchema(schema: unknown): unknown;
 };

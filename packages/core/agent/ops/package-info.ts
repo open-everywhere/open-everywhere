@@ -34,7 +34,7 @@ function coreManifest(): CoreManifest | null {
   return cached;
 }
 
-export const CORE_PACKAGE_VERSION = "0.1.4";
+export const CORE_PACKAGE_VERSION = "0.1.5";
 
 export function corePackageVersion(): string {
   return CORE_PACKAGE_VERSION;

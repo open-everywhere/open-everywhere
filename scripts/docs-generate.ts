@@ -20,6 +20,10 @@ const root =
 const check = process.argv.includes("--check");
 
 const DOC_ENTRY_IMPORT = 'import type { DocEntry } from "@open-everywhere/core/agent/adapter-api.js";';
+const CORE_DOC_ENTRY_IMPORT = 'import type { DocEntry } from "../registry.js";';
+
+const UNIVERSAL_DIR = "packages/core/agent/docs/generated";
+const LEGACY_UNIVERSAL_DIR = "agent/docs/generated";
 
 function banner(what: string): string {
   return (
@@ -61,10 +65,10 @@ function renderEntry(path: string, markdown: string): string {
   );
 }
 
-function renderModule(what: string, exportName: string, paths: readonly string[], read: (p: string) => string): string {
+function renderModule(what: string, exportName: string, paths: readonly string[], read: (p: string) => string, entryImport: string): string {
   let body = "";
   for (const p of paths) body += renderEntry(p, read(p));
-  return `${banner(what)}\n${DOC_ENTRY_IMPORT}\n\nexport const ${exportName}: readonly DocEntry[] = [\n${body}];\n`;
+  return `${banner(what)}\n${entryImport}\n\nexport const ${exportName}: readonly DocEntry[] = [\n${body}];\n`;
 }
 
 function renderIndex(sections: readonly string[]): string {
@@ -73,7 +77,7 @@ function renderIndex(sections: readonly string[]): string {
   const spreads = sections.map((s) => `  ...${id(s)},`).join("\n");
   return (
     `${banner("the docs/ tree")}\n` +
-    `${DOC_ENTRY_IMPORT}\n${imports}\n\n` +
+    `${CORE_DOC_ENTRY_IMPORT}\n${imports}\n\n` +
     `/** Every doc that is NOT one provider bundle's setup runbook — see scripts/docs-generate.ts. */\n` +
     `export const UNIVERSAL_DOCS: readonly DocEntry[] = [\n${spreads}\n];\n`
   );
@@ -107,13 +111,19 @@ const files = new Map<string, string>();
 const sections = [...universal.keys()].sort();
 for (const s of sections) {
   files.set(
-    `agent/docs/generated/${s}.ts`,
-    renderModule(`docs/${s === "root" ? "*.md" : `${s}/`}`, `SECTION_${s.replace(/[^A-Za-z0-9]+/gu, "_").toUpperCase()}`, universal.get(s)!, read),
+    `${UNIVERSAL_DIR}/${s}.ts`,
+    renderModule(
+      `docs/${s === "root" ? "*.md" : `${s}/`}`,
+      `SECTION_${s.replace(/[^A-Za-z0-9]+/gu, "_").toUpperCase()}`,
+      universal.get(s)!,
+      read,
+      CORE_DOC_ENTRY_IMPORT,
+    ),
   );
 }
-files.set("agent/docs/generated/index.ts", renderIndex(sections));
+files.set(`${UNIVERSAL_DIR}/index.ts`, renderIndex(sections));
 for (const [id, list] of [...perProvider.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
-  files.set(`packages/providers/${id}/agent/docs-generated.ts`, renderModule(list.join(", "), "PROVIDER_DOCS", list, read));
+  files.set(`packages/providers/${id}/agent/docs-generated.ts`, renderModule(list.join(", "), "PROVIDER_DOCS", list, read, DOC_ENTRY_IMPORT));
 }
 
 for (const id of bundles) {
@@ -127,11 +137,11 @@ for (const id of bundles) {
   }
 }
 
-const generatedDir = join(root, "agent", "docs", "generated");
 const stale: string[] = [];
-if (existsSync(generatedDir)) {
-  for (const f of readdirSync(generatedDir)) {
-    const rel = `agent/docs/generated/${f}`;
+for (const dir of [UNIVERSAL_DIR, LEGACY_UNIVERSAL_DIR]) {
+  if (!existsSync(join(root, dir))) continue;
+  for (const f of readdirSync(join(root, dir))) {
+    const rel = `${dir}/${f}`;
     if (!files.has(rel)) stale.push(rel);
   }
 }

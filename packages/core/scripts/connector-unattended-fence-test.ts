@@ -30,6 +30,7 @@ import { declaredPermissionKinds, armDeclaredRoutinePermissions } from "../agent
 import { overrideSettingsForTest, registerSettings } from "../agent/settings/settings.js";
 import { effectiveConnectorOpTier } from "../agent/access/connector-op-gating.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 const { registerConfig } = await import("../agent/access/config.js");
 registerConfig({
@@ -552,5 +553,5 @@ console.log("§18 an arm cannot lift an op on an unattended fire:");
   ok(isDenied(await ask(openedPolicy(), fireAuth(), EMPTY_CONNECTION_OP)) === false, "no arm: the `__<verb>` name stands the fence down again — the refusal above was the arm and nothing else");
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`✓ connector-unattended-fence: ${passed} assertions passed (refuse + lift + attended/read untouched + destructive-never + TAINTED-never + per-tool keying + legacy refused + ordering + fail-soft + bag selection + the OPE-1321 arm floor)`);

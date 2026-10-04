@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { withPatchedFetch } from "../packages/core/scripts/_fetch-test-utils.js";
 import {
@@ -10,9 +9,10 @@ import {
   _resetSurfacesForTest,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import type { Domain } from "@open-everywhere/core/agent/memory/domain.js";
+import { removeTempDir } from "../packages/core/scripts/_temp-dir.js";
 
 const dir = join(tmpdir(), `open-everywhere-linear-chat-nonmember-taint-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
 process.env.LINEAR_API_KEY = "linear-test-key";
@@ -118,5 +118,5 @@ ok(
 
 });
 _resetSurfacesForTest();
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`\n✓ linear-chat-nonmember-taint: ${n} assertions passed (author leg + room leg on the REAL ingress handler, with member/unresolved/internal-room negative controls)`);

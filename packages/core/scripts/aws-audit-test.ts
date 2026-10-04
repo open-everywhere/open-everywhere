@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-aws-audit-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
@@ -176,4 +177,4 @@ try {
 }
 
 console.log(`✓ ${passed} aws-audit assertions passed`);
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);

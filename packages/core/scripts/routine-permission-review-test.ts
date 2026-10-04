@@ -2,6 +2,7 @@ import { tmpdir } from "node:os";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let passed = 0;
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-routine-permission-review-"));
@@ -271,5 +272,5 @@ const edited = await makeRoutine("r-edited", SURFACE, "C1");
   ok(dark.routines.length === out.routines.length, "§tool: and the listing itself still answers — the schedule view never fails on a grant-store blip");
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`✓ routine permission review: ${passed} assertions passed`);

@@ -1,6 +1,6 @@
 import { availableParallelism } from "node:os";
 
-import { HARNESS_CONCURRENCY_CEILING, HOST_BOX_PROBE, cgroupMaxWorkersByMemoryAndCores, integrationMaxWorkers, type BoxProbe } from "./ci-max-workers.js";
+import { CORE_OVERSUBSCRIPTION, HARNESS_CONCURRENCY_CEILING, HOST_BOX_PROBE, cgroupMaxWorkersByMemoryAndCores, integrationMaxWorkers, type BoxProbe } from "./ci-max-workers.js";
 import config from "../vitest.config.js";
 
 let passed = 0;
@@ -60,11 +60,11 @@ const sandboxProbe: BoxProbe = {
   cpuCount: () => 4,
 };
 const sandboxWorkers = integrationMaxWorkers({}, sandboxProbe);
-ok(sandboxWorkers === HARNESS_CONCURRENCY_CEILING, `🔴 the measured sandbox SCHEDULES the harness ceiling — 4 concurrent hosts red the tier on the OPE-2197 turn/script race — got ${sandboxWorkers}`);
-ok(sandboxWorkers <= sandboxProbe.cpuCount(), "the scheduled count never exceeds the cores");
+ok(sandboxWorkers === HARNESS_CONCURRENCY_CEILING, `🔴 the measured sandbox SCHEDULES the harness ceiling, which OPE-2281 raised to 6 — got ${sandboxWorkers}`);
+ok(sandboxWorkers <= Math.floor(sandboxProbe.cpuCount() * CORE_OVERSUBSCRIPTION), "the scheduled count never exceeds the cores times the oversubscription");
 ok(
-  cgroupMaxWorkersByMemoryAndCores(14327709696, 4) === 4,
-  "🔴 memory and cores allow FOUR on the measured sandbox, which is what the three levers above bought and what a post-OPE-2197 re-measurement starts from",
+  cgroupMaxWorkersByMemoryAndCores(14327709696, 4) === 6,
+  "🔴 memory and cores allow SIX on the measured sandbox, which is what the three levers above bought and what the tier now really schedules",
 );
 
 const here = integrationMaxWorkers({}, HOST_BOX_PROBE);
@@ -74,6 +74,6 @@ ok(cgroupMaxWorkersByMemoryAndCores(14327709696, availableParallelism()) >= 1, "
 console.log(
   `✓ it-memory-config: ${passed} assertions passed (each fork's V8 old space is capped at ${heapMb} MB, console interception is off, ` +
     `the built server bundle and the built package dists load natively while the tier's own sources still transform; ` +
-    `memory and cores would allow 4 workers on the measured 4-core 13.3 GiB sandbox, and the harness ceiling schedules ` +
-    `${sandboxWorkers} until OPE-2197's turn/script race is fixed).`,
+    `memory and cores allow 6 workers (1.5 per core) on the measured 4-core 13.3 GiB sandbox, and the harness ceiling schedules ` +
+    `${sandboxWorkers} there since OPE-2281 settled the re-drive and cancel-delivery races).`,
 );

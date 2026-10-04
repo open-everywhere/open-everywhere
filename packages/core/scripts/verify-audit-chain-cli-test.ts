@@ -1,10 +1,13 @@
+// proves: walkAuditChain` (genesis)
+
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import { removeTempDir } from "./_temp-dir.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -461,5 +464,5 @@ const deletedSeqs = seqsOf("deleted");
   ok(afterControl.actions.at(-1) === "audit.chain_epoch", "floor control: the --go run also appended its epoch marker");
 }
 
-rmSync(workDir, { recursive: true, force: true });
+await removeTempDir(workDir);
 console.log(`✓ verify-audit-chain CLI: ${n} assertions passed`);

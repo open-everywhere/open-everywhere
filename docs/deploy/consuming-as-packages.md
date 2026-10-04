@@ -168,10 +168,35 @@ packages quote their own module paths in comments.)
 
 ## Upgrading
 
-Bump all eight together, reinstall, then `oe build --accept` and review the `roster.lock.json`
-diff before deploying.
+Run `npx oe upgrade` from the app root. It bumps every `@open-everywhere/*` package together and
+pins `eve` to the target core's declared peer. Then it installs and runs the config codemods the
+release notes name. Last, it runs `oe build --accept`, `npm run typecheck` and `npm run build`.
+`npx oe upgrade --plan` prints the plan and writes nothing. Review the `roster.lock.json` diff before you deploy.
+`UPGRADING.md` in `@open-everywhere/core` holds the release notes the command reads.
 
 One honest caveat about that diff: the lock compares **contribution keys**, not versions. A
 version bump that changes an existing capability's behaviour without adding or removing a
 contribution produces *no* lock diff — only a new or vanished capability turns the lock red.
 Read the release notes as well as the lock.
+
+**An app below 0.1.4 has no `oe upgrade`.** The subcommand first shipped in 0.1.4, and the
+installed core ships no release record. Install the target core beside the app, in its gitignored
+`.open-everywhere/` directory, and run that core's `oe` from the app root:
+
+```sh
+npm install --prefix .open-everywhere/bootstrap @open-everywhere/core@0.1.4 tsx@4
+node .open-everywhere/bootstrap/node_modules/@open-everywhere/core/bin/oe.js upgrade --to 0.1.4
+```
+
+Put the newest release in place of `0.1.4`. The section "An app below 0.1.4" in `UPGRADING.md`
+carries the same block with the newest release filled in. The run renames the retired
+`create-open-everywhere` dependency to `@open-everywhere/create`, and reads the target's own
+release record after the install. If the run stops at any step, run the second command again: it
+resumes. After a green run, delete `.open-everywhere/bootstrap`. From then on, `npx oe upgrade` is
+the command.
+
+Do not use `npx -p @open-everywhere/core@<version> oe upgrade`. The `oe` bin needs `tsx`. Core
+declares `tsx` only as a development dependency, so the npx cache has no `tsx`. That command fails
+before `oe upgrade` starts. `scripts/oe-upgrade-packed-test.ts` runs the second command above, as
+`UPGRADING.md` renders it, against an app shaped like a 0.1.3 scaffold. It also proves that the
+npx-cache layout fails. It does not run `npm install` against the registry.

@@ -1,5 +1,5 @@
 import type { ConnectorCredentials, ConnectorCredential } from "./connector-credentials.js";
-import { overlayModuleHeader, unwrapOverlayModule, wrapOverlayModule, type OverlayModuleGrammar } from "./overlay-module.js";
+import { overlayModuleHeader, sameOverlayModuleAfterHeader, unwrapOverlayModule, wrapOverlayModule, type OverlayModuleGrammar } from "./overlay-module.js";
 
 export interface CredentialBindingOverride {
   readonly connector: string;
@@ -125,7 +125,7 @@ export function stringifyCredentialBindings(file: CredentialBindingsFile): strin
 
 const CREDENTIAL_BINDINGS_MODULE: OverlayModuleGrammar = {
   what: "credential-bindings overlay",
-  header: overlayModuleHeader("credential-bindings overlay", "packages/core/agent/access/credential-bindings-codemod.ts"),
+  header: overlayModuleHeader("credential-bindings overlay", "@open-everywhere/core/agent/access/credential-bindings-codemod.js"),
   typeImport: 'import type { CredentialBindingsFile } from "@open-everywhere/core/agent/access/credential-bindings-codemod.js";',
   typeName: "CredentialBindingsFile",
 };
@@ -138,9 +138,9 @@ export function parseCredentialBindingsModule(text: string): CredentialBindingsF
   const file = parseCredentialBindingsFile(
     unwrapOverlayModule(CREDENTIAL_BINDINGS_MODULE, text, (m) => new CredentialBindingsCodemodError(m)),
   );
-  if (emitCredentialBindingsModule(file) !== text) {
+  if (!sameOverlayModuleAfterHeader(emitCredentialBindingsModule(file), text)) {
     throw new CredentialBindingsCodemodError(
-      "credential-bindings overlay is not in canonical form — re-emitting its own data does not reproduce the file, so it has been hand-edited. Run `npm run overlays:normalize` and commit the result (the codemod refuses to rewrite a file it did not write).",
+      "credential-bindings overlay is not in canonical form — re-emitting its own data does not reproduce the file below its header, so it has been hand-edited. Run `npx oe overlays normalize` and commit the result (the codemod refuses to rewrite a file it did not write).",
     );
   }
   return file;

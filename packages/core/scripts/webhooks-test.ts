@@ -1,9 +1,10 @@
 import { createHmac } from "node:crypto";
 import { tmpdir } from "node:os";
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { _setDeploymentIdentityForTest, registeredDeploymentIdentity } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -15,7 +16,7 @@ function ok(cond: boolean, label: string): void {
 }
 
 const dir = join(tmpdir(), `open-everywhere-webhooks-test-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: "acme" });
 
@@ -721,5 +722,5 @@ await opStore.recordSpend("acme", { surfaceKey: "slack/T1/C1", period: "2026-07"
   ok((await postUnsigned()) === 401, "negative control: dropping the override puts the wall straight back up (401)");
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`✓ webhooks: ${passed} assertions passed`);

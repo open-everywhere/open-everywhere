@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
+  BUILD_STAMP_FILE,
   CACHED_TREE_PATHS,
   CACHE_ARCHIVE_NAME,
   CACHE_BRANCH,
@@ -13,13 +14,18 @@ import {
   GIT_TRANSPORT_TIMEOUT_MS,
   KEYED_TREE_PATHS,
   PREPARED_ARTIFACTS,
+  beginBuildStamp,
   cacheRemote,
   composeCacheKey,
+  finishBuildStamp,
+  gateBuiltBundle,
+  hostCacheKeyProbe,
   missingPreparedArtifacts,
   prepareCacheKey,
   preparedTreeState,
   publishPreparedTree,
   cacheMode,
+  readBuildStamp,
   readStamp,
   remoteCachePublishEnabled,
   remoteRestoreEnabled,
@@ -39,6 +45,7 @@ import {
 import { PREPARED_PGLITE_TEMPLATE_PARENT } from "../tests/integration/global-setup-contract.js";
 import { unpreparedTreeRefusal } from "../tests/integration/global-setup.js";
 import { loadFastPathSymbols } from "../tests/integration/prewarm.js";
+import { runBuildStamp } from "./eve-build-stamp.js";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const failures: string[] = [];
@@ -162,6 +169,84 @@ await test("the stamp round-trips, and an unreadable or older-format stamp reads
   assert.equal(readStamp(root), undefined, "a stamp from another artefact shape must rebuild");
 });
 
+await test("🔴 the build stamp vouches for the gate's bundle ONLY when begin and end agree and the key still matches", () => {
+  const root = mkdtempSync(join(scratch, "build-stamp-"));
+  const key = { kind: "key", key: "it-prepared-v3-aaaa" } as const;
+  const trusted = { state: "cold", stampsTrusted: true } as const;
+  writeStamp(root, "it-prepared-v3-old");
+  writeFileSync(join(root, BUILD_STAMP_FILE), JSON.stringify({ format: CACHE_FORMAT, state: "built", key: "it-prepared-v3-old" }));
+  beginBuildStamp(root, key);
+  assert.equal(readStamp(root), undefined, "begin deletes the PREPARE stamp: its prewarm came from the bundle being replaced");
+  assert.deepEqual(readBuildStamp(root), { state: "building", key: key.key }, "begin replaces an old `built` stamp with `building`");
+  assert.equal(gateBuiltBundle({ ...trusted, key: key.key, stamp: readBuildStamp(root), bundlePresent: true }), false, "a build that never ended vouches for nothing");
+  finishBuildStamp(root, key);
+  assert.deepEqual(readBuildStamp(root), { state: "built", key: key.key }, "end with the same key marks it built");
+  assert.equal(gateBuiltBundle({ ...trusted, key: key.key, stamp: readBuildStamp(root), bundlePresent: true }), true, "the POSITIVE control: a finished build under this key is reused");
+  assert.equal(gateBuiltBundle({ ...trusted, key: "it-prepared-v3-bbbb", stamp: readBuildStamp(root), bundlePresent: true }), false, "another key is never reused");
+  assert.equal(gateBuiltBundle({ ...trusted, key: undefined, stamp: readBuildStamp(root), bundlePresent: true }), false, "no key (a dirty tree) is never reused");
+  assert.equal(gateBuiltBundle({ ...trusted, key: key.key, stamp: readBuildStamp(root), bundlePresent: false }), false, "a missing bundle is never reused");
+  assert.equal(gateBuiltBundle({ ...trusted, key: key.key, stamp: undefined, bundlePresent: true }), false, "no stamp is never reused");
+  assert.equal(
+    gateBuiltBundle({ state: "cold", stampsTrusted: false, key: key.key, stamp: readBuildStamp(root), bundlePresent: true }),
+    false,
+    "🔴 OE_IT_PREPARE_CACHE=off ignores the build stamp: a cold measurement or a beyond-question proof run builds eve",
+  );
+  assert.equal(
+    gateBuiltBundle({ state: "warm", stampsTrusted: true, key: key.key, stamp: readBuildStamp(root), bundlePresent: true }),
+    false,
+    "a WARM tree takes the warm path, which skips the prewarm too",
+  );
+
+  beginBuildStamp(root, key);
+  finishBuildStamp(root, { kind: "key", key: "it-prepared-v3-moved" });
+  assert.equal(readBuildStamp(root), undefined, "🔴 a key that MOVED during the build leaves no stamp");
+  beginBuildStamp(root, key);
+  finishBuildStamp(root, { kind: "refused", reason: "dirty" });
+  assert.equal(readBuildStamp(root), undefined, "🔴 a key REFUSED at the end leaves no stamp");
+  beginBuildStamp(root, { kind: "refused", reason: "dirty" });
+  assert.equal(readBuildStamp(root), undefined, "a refused key at begin writes no stamp");
+  finishBuildStamp(root, key);
+  assert.equal(readBuildStamp(root), undefined, "and an end with no begun stamp writes none");
+  writeFileSync(join(root, BUILD_STAMP_FILE), "{not json");
+  assert.equal(readBuildStamp(root), undefined, "an unparseable build stamp reads as absent");
+  writeFileSync(join(root, BUILD_STAMP_FILE), JSON.stringify({ format: CACHE_FORMAT + 1, state: "built", key: "k" }));
+  assert.equal(readBuildStamp(root), undefined, "a build stamp from another format reads as absent");
+});
+
+await test("🔴 REAL GIT: the gate's stamp goes STALE the moment the tree changes after the build", () => {
+  const root = join(scratch, "build-stamp-git");
+  gitRepoFixture(root);
+  mkdirSync(join(root, "agent"), { recursive: true });
+  mkdirSync(join(root, "node_modules", "eve"), { recursive: true });
+  writeFileSync(join(root, "node_modules", "eve", "package.json"), '{"version":"0.0.0-fixture"}\n');
+  writeFileSync(join(root, ".gitignore"), "node_modules/\n.oe-it-built.json\n");
+  writeFileSync(join(root, "agent", "agent.ts"), "export const a = 1;\n");
+  const git = (...args: string[]): void => void execFileSync("git", ["-C", root, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+  git("add", "-A");
+  git("commit", "--quiet", "-m", "base");
+  const keyNow = (): string | undefined => {
+    const verdict = prepareCacheKey(hostCacheKeyProbe(root));
+    return verdict.kind === "key" ? verdict.key : undefined;
+  };
+  const trusted = { state: "cold", stampsTrusted: true } as const;
+  const reused = (): boolean => gateBuiltBundle({ ...trusted, key: keyNow(), stamp: readBuildStamp(root), bundlePresent: true });
+
+  assert.match(runBuildStamp("begin", root), /^building /u);
+  assert.match(runBuildStamp("end", root), /^built /u);
+  assert.equal(reused(), true, "the POSITIVE control: right after the gate, the prepare step reuses its bundle");
+
+  writeFileSync(join(root, "agent", "agent.ts"), "export const a = 2;\n");
+  assert.equal(reused(), false, "🔴 an UNCOMMITTED keyed edit after the build makes the stamp stale");
+  git("commit", "--quiet", "-am", "edit");
+  assert.equal(reused(), false, "🔴 and so does the same edit COMMITTED");
+
+  assert.match(runBuildStamp("begin", root), /^building /u);
+  writeFileSync(join(root, "agent", "agent.ts"), "export const a = 3;\n");
+  assert.match(runBuildStamp("end", root), /^no build stamp — the key moved/u, "🔴 a keyed edit DURING the build leaves no stamp");
+  assert.equal(reused(), false);
+  assert.throws(() => runBuildStamp("finish", root), /"begin" or "end"/u, "an unknown phase is refused by name");
+});
+
 await test("🔴 the artefact paths are the LITERAL ones a fork needs, not whatever a derivation produced", () => {
   assert.deepEqual(
     [...PREPARED_ARTIFACTS],
@@ -233,7 +318,7 @@ await test("🔴 a key that MOVED during the build publishes nothing, and says w
   const key = stable.kind === "key" ? stable.key : "";
   assert.equal(republishKey("/repo", key, log, host()), key, "an unchanged key publishes under itself");
   assert.equal(lines.length, 0, "…and says nothing");
-  assert.equal(republishKey("/repo", key, log, host({ porcelain: () => " M agent/docs/generated/extending.ts\n" })), undefined);
+  assert.equal(republishKey("/repo", key, log, host({ porcelain: () => " M packages/core/agent/docs/generated/extending.ts\n" })), undefined);
   assert.equal(republishKey("/repo", key, log, host({ lsTree: () => "100644 blob 3333333333333333333333333333333333333333\tagent/agent.ts\n" })), undefined);
   assert.equal(lines.length, 2, "each refusal is announced, so a run that published nothing says so");
   assert.ok(lines.every((l) => l.includes("nothing is published")), `…and names the consequence — got ${JSON.stringify(lines)}`);
@@ -367,7 +452,8 @@ await test("🔴 a crafted archive cannot write outside the two cached trees", (
   mkdirSync(join(producer, ".git", "hooks"), { recursive: true });
   writeFileSync(join(producer, ".git", "hooks", "post-checkout"), "#!/bin/sh\nexit 0\n");
   const archive = join(scratch, "poison.tar.gz");
-  execFileSync("tar", ["-czf", archive, "-C", producer, ".output", ".eve/sandbox-cache", "package.json", ".git/hooks/post-checkout"], {
+  execFileSync("tar", ["-czf", basename(archive), "-C", producer, ".output", ".eve/sandbox-cache", "package.json", ".git/hooks/post-checkout"], {
+    cwd: dirname(archive),
     stdio: ["ignore", "pipe", "pipe"],
   });
   const git = (args: readonly string[], input?: Buffer): string =>
@@ -415,7 +501,7 @@ await test("🔴 EVE CANARY: the fast prewarm's own symbol loader still finds ev
 
 await test("🔴 this file still has every test row it had — the blunt limb, which no deletion escapes", () => {
   const source = readFileSync(fileURLToPath(import.meta.url), "utf8");
-  assert.equal(source.match(/^await test\(/gmu)?.length, 29, "a deleted or added test row changes this count — if you added one, bump it here");
+  assert.equal(source.match(/^await test\(/gmu)?.length, 32, "a deleted or added test row changes this count — if you added one, bump it here");
 });
 
 await test("🔴 every import in this file is USED — the finer limb, which names what a deletion took", () => {
@@ -443,6 +529,17 @@ await test("🔴 SOURCE JOIN: scripts/suite-lock-run.ts still runs the prepare s
   assert.ok(source.includes('"test:integration:prepare"'), "the wrapper names the prepare npm script");
   assert.ok(source.includes("options.prepare ?? (isVitestCommand(cmd)"), "and runs it for a vitest command only");
   assert.ok(!source.includes("shardReusesBuild"), "no shard builds any more, so no shard may be handed a build-reuse flag");
+});
+
+await test("🔴 SOURCE JOIN: `npm run build` writes the build stamp, and the prepare step reads it and clears it", () => {
+  const scripts = (JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as { scripts: Record<string, string> }).scripts;
+  assert.ok(/^npm run oe:build && tsx scripts\/eve-build-stamp\.ts begin$/u.test(scripts.prebuild ?? ""), `prebuild ends with begin — got ${scripts.prebuild}`);
+  assert.ok((scripts.postbuild ?? "").startsWith("tsx scripts/eve-build-stamp.ts end && "), `postbuild starts with end — got ${scripts.postbuild}`);
+  const source = readFileSync(join(repoRoot, "tests", "integration", "prepare.ts"), "utf8");
+  assert.ok(/gateBuiltBundle\(\{\s*state,\s*stampsTrusted: stampCacheEnabled\(env\),\s*key,\s*stamp: readBuildStamp\(root\),/u.test(source), "the prepare step decides `built` from the tree state, the cache posture and the build stamp");
+  assert.equal(source.match(/clearBuildStamp\(root\)/gu)?.length, 2, "the cold build and the restore both clear the build stamp");
+  const ignore = readFileSync(join(repoRoot, ".gitignore"), "utf8");
+  assert.ok(ignore.includes(`/${BUILD_STAMP_FILE}\n`), "the build stamp is gitignored");
 });
 
 await test("🔴 SOURCE JOIN: the prepare step still branches on the documented OE_IT_SKIP_BUILD name", () => {

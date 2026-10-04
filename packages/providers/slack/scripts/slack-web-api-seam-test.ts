@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
+
+const posixRelative = (from: string, to: string): string => relative(from, to).split(sep).join("/");
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -29,7 +31,7 @@ function tsFiles(dir: string): string[] {
   const offenders: string[] = [];
   for (const file of tsFiles(join(PKG_ROOT, "agent"))) {
     if (file === SEAM) continue;
-    if (evePrimitiveImport.test(readFileSync(file, "utf8"))) offenders.push(relative(PKG_ROOT, file));
+    if (evePrimitiveImport.test(readFileSync(file, "utf8"))) offenders.push(posixRelative(PKG_ROOT, file));
   }
   ok(
     offenders.length === 0,
@@ -48,7 +50,7 @@ function tsFiles(dir: string): string[] {
   const found: string[] = [];
   for (const file of tsFiles(join(PKG_ROOT, "agent"))) {
     if (file === SEAM) continue;
-    if (bindingCall.test(readFileSync(file, "utf8"))) found.push(relative(PKG_ROOT, file));
+    if (bindingCall.test(readFileSync(file, "utf8"))) found.push(posixRelative(PKG_ROOT, file));
   }
   const expected = KNOWN_UNCOVERED.map((e) => e.file).sort();
   const unexpected = found.filter((f) => !expected.includes(f)).sort();

@@ -8,10 +8,40 @@ This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 Built on Vercel Eve (https://github.com/vercel/eve), licensed under the
 Apache License, Version 2.0.
 
-@open-everywhere/core also ships a patch that modifies Vercel Eve (the file in
-its patches/ directory), with the oe-eve-patch command that applies it to a
-consumer's own installed copy. The patch is licensed under the Apache License,
-Version 2.0. No modified Vercel Eve files are distributed.
+---
+
+Modifications to eve
+
+The @open-everywhere/core package distributes patches/eve+0.54.3.patch. That
+patch file is a modification of eve 0.54.3. Vercel licenses eve 0.54.3 under the
+Apache License, Version 2.0. The copyright notice of eve 0.54.3 reads
+"Copyright 2026 Vercel, Inc. and contributors". The Open Everywhere authors made
+the changes in the patch file.
+
+The patch modifies six files of eve 0.54.3:
+
+  dist/src/context/dynamic-tool-lifecycle.js
+  dist/src/execution/web-fetch/request.js
+  dist/src/harness/tool-loop.js
+  dist/src/internal/authored-package-boundary.js
+  dist/src/protocol/message.d.ts
+  dist/src/tasks/session-index.js
+
+Open Everywhere does not ship the eve package. eve is a peer dependency, so the
+consumer installs eve 0.54.3 from the registry. The patch file carries the
+modified portions of eve. The oe-eve-patch command, which
+@open-everywhere/core ships, applies them to the eve that the consumer
+installed. The command writes no file outside the consumer's own project.
+
+The attribution notice of eve 0.54.3 follows, as section 4(d) of the Apache
+License, Version 2.0 requires. The notices for eve's bundled code-mode runtime
+are not reproduced, because the patch modifies no part of that runtime.
+
+eve
+Copyright 2026 Vercel, Inc. and contributors
+
+This product includes software developed at Vercel, Inc.
+(https://vercel.com/).
 
 ---
 

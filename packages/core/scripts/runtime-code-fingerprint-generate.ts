@@ -21,7 +21,7 @@ const RUNTIME_CODE_ROOTS: readonly string[] = [
 
 const RUNTIME_CODE_EXCLUDED_DIRS: readonly string[] = [
   "agent/memory/config/domains",
-  "agent/docs/generated",
+  "packages/core/agent/docs/generated",
   "agent/tools",
   "agent/channels",
   "agent/hooks",

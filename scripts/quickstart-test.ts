@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { npmCommand } from "./npm-command.js";
 import { packPublishablePackages } from "./publish-pack.js";
+import { UNIVERSAL_DOCS } from "@open-everywhere/core/agent/docs/generated/index.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -200,19 +201,106 @@ try {
   );
   eq([...zodVersions], [(JSON.parse(readFileSync(join(REPO_ROOT, "packages", "core", "package.json"), "utf8")) as { dependencies: { zod: string } }).dependencies.zod], "one zod version in the tree, and it is the version core pins");
 
+  console.log("4b. the scaffolded app registers the shipped manual from the installed core");
+  const SAMPLE_PAGES = ["docs/security/security-model.md", "docs/how-it-works/config-as-code.md", "docs/introduction/quick-start.md"];
+  const docsProbe = join(app, "probe-docs.ts");
+  writeFileSync(
+    docsProbe,
+    'import { docIndex, readDoc } from "@open-everywhere/core/agent/adapter-api.js";\n' +
+      "const before = docIndex().map((d) => d.path);\n" +
+      'await import("./agent/lib/register-docs.js");\n' +
+      "const after = docIndex().map((d) => d.path);\n" +
+      `const pages = Object.fromEntries(${JSON.stringify(SAMPLE_PAGES)}.map((p) => {\n` +
+      "  const r = readDoc(p);\n" +
+      "  return [p, r.ok ? { path: r.doc.path, markdown: r.doc.markdown } : { refused: r.message }];\n" +
+      "}));\n" +
+      "console.log(JSON.stringify({ before, after, pages }));\n",
+  );
+  const docsRun = run(process.execPath, ["--import", "tsx", docsProbe], app);
+  rmSync(docsProbe);
+  assert.equal(docsRun.code, 0, `the shipped-manual probe failed to run:\n${tail(docsRun.out)}`);
+  const docsResult = JSON.parse(docsRun.out.trim().split("\n").pop() ?? "{}") as {
+    before: string[];
+    after: string[];
+    pages: Record<string, { path?: string; markdown?: string; refused?: string }>;
+  };
+  eq(docsResult.before, [], "NEGATIVE CONTROL: the installed core serves no doc before the app's register-docs module runs");
+  eq(
+    docsResult.after,
+    UNIVERSAL_DOCS.map((d) => d.path).sort((a, b) => a.localeCompare(b)),
+    `after register-docs, read_docs's index is the whole universal manual (${UNIVERSAL_DOCS.length} pages) — no page missing, none extra`,
+  );
+  for (const page of SAMPLE_PAGES) {
+    eq(
+      docsResult.pages[page],
+      { path: page, markdown: readFileSync(join(REPO_ROOT, ...page.split("/")), "utf8") },
+      `read_docs serves ${page} from the installed tarball, byte-identical to docs/`,
+    );
+  }
+
   console.log("5. oe build");
   const oe = binOf(app, "@open-everywhere/core", "oe");
   const before = run(process.execPath, [oe, "build", "--check"], app);
   ok(before.code !== 0, "NEGATIVE CONTROL: `oe build --check` fails before `oe build` (no slot tree yet)");
+  ok(before.out.includes("npm run oe:build"), "…and names the slot-tree fix (the positive control for the overlay-only check in step 5c)");
   const build = run(process.execPath, [oe, "build"], app);
   assert.equal(build.code, 0, `oe build failed — the template's roster.lock.json no longer matches the packed manifests?\n${tail(build.out)}`);
   n++;
   const after = run(process.execPath, [oe, "build", "--check"], app);
-  eq(after.code, 0, "`oe build --check` passes after `oe build`");
+  eq(after.code, 0, `\`oe build --check\` passes after \`oe build\`${after.code === 0 ? "" : `:\n${tail(after.out)}`}`);
   ok(existsSync(join(app, "agent", "lib", "providers.generated.ts")), "oe build wrote agent/lib/providers.generated.ts");
   const providers = readFileSync(join(app, "agent", "lib", "providers.generated.ts"), "utf8");
   ok(["provider-slack", "provider-notion", "provider-github"].every((p) => providers.includes(`@open-everywhere/${p}`)), "the roster selects slack, notion and github");
   ok(!["provider-discord", "provider-teams", "provider-linear"].some((p) => providers.includes(`@open-everywhere/${p}`)), "the roster selects no other provider (negative control)");
+
+  console.log("5c. overlays and template copies (OPE-2216, OPE-2217)");
+  const OVERLAY_PATHS = [
+    "agent/access/grants.generated.ts",
+    "agent/access/credential-bindings.generated.ts",
+    "agent/webhooks/hooks.generated.ts",
+    "agent/memory/config/agents.generated.ts",
+    "agent/identity/groups.generated.ts",
+  ];
+  const appFile = (rel: string): string => join(app, ...rel.split("/"));
+  for (const rel of OVERLAY_PATHS) {
+    const text = readFileSync(appFile(rel), "utf8");
+    ok(text.includes("npx oe overlays normalize") && !/npm run (?:lint:overlays|overlays:normalize)/.test(text), `${rel}: the header names the \`oe\` command, not a repository-only script`);
+    ok(!text.includes("packages/core/"), `${rel}: the header names no repository path`);
+  }
+  const overlayCheck = run(process.execPath, [oe, "overlays", "check"], app);
+  eq(overlayCheck.code, 0, `\`oe overlays check\` passes on the scaffolded overlays${overlayCheck.code === 0 ? "" : `:\n${tail(overlayCheck.out)}`}`);
+  ok(!overlayCheck.out.includes("older header"), "…and no scaffolded overlay carries an older header");
+  ok(run(process.execPath, [oe, "overlays", "normalize"], app).out.includes("already canonical"), "`oe overlays normalize` is a no-op on the scaffolded overlays");
+  const grantsRel = OVERLAY_PATHS[0]!;
+  const grantsCanonical = readFileSync(appFile(grantsRel), "utf8");
+  try {
+    writeFileSync(appFile(grantsRel), `${grantsCanonical}console.log(process.env.SLACK_BOT_TOKEN);\n`);
+    const coded = run(process.execPath, [oe, "build", "--check"], app);
+    ok(coded.code !== 0 && coded.out.includes(`OVERLAY · ${grantsRel}`), "🔴 a hand-added line of code in an overlay makes the app's `oe build --check` RED");
+    ok(coded.out.includes("npx oe overlays normalize"), "…and the refusal names `npx oe overlays normalize`");
+    ok(!coded.out.includes("npm run oe:build"), "…and does not send an overlay-only red to `oe build`");
+    ok(run(process.execPath, [oe, "overlays", "normalize"], app).code !== 0, "…and `oe overlays normalize` refuses to strip the code");
+    writeFileSync(appFile(grantsRel), grantsCanonical.replace(/\n\/\/ To change it by hand[^\n]*\n/, "\n// To change it by hand, keep the layout exactly as emitted.\n"));
+    const older = run(process.execPath, [oe, "build", "--check"], app);
+    ok(older.code === 0 && older.out.includes(`${grantsRel}: older header text`), "an overlay with an older header passes the app's `oe build --check`, with a note");
+    eq(run(process.execPath, [oe, "overlays", "normalize"], app).code, 0, "`oe overlays normalize` refreshes the older header");
+    eq(readFileSync(appFile(grantsRel), "utf8"), grantsCanonical, "…back to the canonical bytes");
+  } finally {
+    writeFileSync(appFile(grantsRel), grantsCanonical);
+  }
+  eq(
+    readFileSync(appFile("agent/instructions.md"), "utf8"),
+    readFileSync(join(REPO_ROOT, "agent", "instructions.md"), "utf8"),
+    "the scaffolded agent/instructions.md equals the reference app's prompt",
+  );
+  const appScripts = new Set(Object.keys(manifest.scripts));
+  const strayScripts: string[] = [];
+  for (const file of walk(join(app, "agent")).filter((f) => f.endsWith(".ts") || f.endsWith(".md"))) {
+    for (const m of readFileSync(file, "utf8").matchAll(/npm run (?:-s )?([a-z][\w:-]*)/g)) {
+      if (!appScripts.has(m[1]!)) strayScripts.push(`${file.slice(app.length + 1)}: npm run ${m[1]}`);
+    }
+  }
+  eq(strayScripts, [], "no file under the scaffolded agent/ names an npm script the app does not define");
 
   console.log("5b. the ops MCP server answers initialize and tools/list");
   const mcp = JSON.parse(readFileSync(join(app, ".mcp.json"), "utf8")) as { mcpServers: Record<string, { command: string; args: string[] }> };
@@ -238,9 +326,14 @@ try {
   ok(serverModules.length > 0, `.output/server holds compiled modules (${serverModules.length} .mjs file(s))`);
   const bareImports = serverModules.filter((f) => /from\s*"@open-everywhere\//.test(readFileSync(f, "utf8")));
   eq(bareImports, [], "no bare `@open-everywhere/*` import survives into .output/server (consuming-as-packages § Verifying an install)");
+  const MANUAL_MARKER = "docs/security/revocation-latency.md";
+  ok(
+    serverModules.some((f) => readFileSync(f, "utf8").includes(MANUAL_MARKER)),
+    `the universal manual rides into .output/server (${MANUAL_MARKER} is in the built bundle)`,
+  );
 } finally {
   if (keep) console.log(`\n(--keep) the scaffolded app is at ${app}`);
   else rmSync(scratch, { recursive: true, force: true });
 }
 
-console.log(`\n✓ quickstart: ${n} assertions passed — the packed CLI scaffolds an app that installs, patches, builds its roster, typechecks and builds\n`);
+console.log(`\n✓ quickstart: ${n} assertions passed — the packed CLI scaffolds an app that installs, patches, serves its manual, builds its roster, typechecks and builds\n`);

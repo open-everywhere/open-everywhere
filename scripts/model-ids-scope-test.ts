@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { npxCommand } from "./npm-command.js";
 import { mkdtempSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -62,13 +63,8 @@ const trackedGenerated = execFileSync("git", ["ls-files", "--", "agent/docs/gene
   encoding: "utf8",
 }).split("\n").filter((l) => l.length > 0);
 ok(
-  trackedGenerated.length > 0,
-  "this repo tracks agent/docs/generated/*.ts (without them the next assertion could not fail)",
-);
-const docsGeneratedInSet = realFiles.filter((f) => f.startsWith("agent/docs/generated/"));
-ok(
-  docsGeneratedInSet.length === 0,
-  `RULE 1 reads no file under agent/docs/generated/ — found: ${docsGeneratedInSet.join(", ")}`,
+  trackedGenerated.length === 0,
+  `OPE-2215: this repo tracks no agent/docs/generated/*.ts (the manual moved into core) — found: ${trackedGenerated.join(", ")}`,
 );
 
 const trackedPluginGenerated = execFileSync("git", ["ls-files", "--", "agent/plugins/generated/*.ts"], {
@@ -210,7 +206,7 @@ console.log(
 let lintOut = "";
 let lintFailed: string | undefined;
 try {
-  lintOut = execFileSync("npx", ["tsx", "scripts/model-ids-lint.ts"], {
+  lintOut = execFileSync(...npxCommand(["tsx", "scripts/model-ids-lint.ts"]), {
     cwd: REPO_ROOT,
     encoding: "utf8",
     env: { ...process.env, NODE_NO_WARNINGS: "1" },

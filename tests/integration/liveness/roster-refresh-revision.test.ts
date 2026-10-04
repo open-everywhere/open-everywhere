@@ -1,14 +1,36 @@
 import { expect, test } from "vitest";
-import { disposeLater, bootAgent, discordMentionWake, DISCORD_LISTED_CHANNEL_ID, registerScript, setEnvForRunningAgent, waitFor, type ScriptedHandle } from "../harness";
+import {
+  auditCursor,
+  awaitProseRedriveSettled,
+  awaitWindowQuiet,
+  bootAgent,
+  discordMentionWake,
+  disposeLater,
+  DISCORD_LISTED_CHANNEL_ID,
+  registerScript,
+  setEnvForRunningAgent,
+  waitFor,
+  type ScriptedHandle,
+} from "../harness";
 
 const TARGET_TOOL = "spawn_thread_session";
 
+const PROSE_DROPPED_ACTION = "turn.supervisor_prose_dropped";
+
+function lastUserText(request: ScriptedHandle["requests"][number]): string {
+  return request.messages.filter((m) => m.role === "user").at(-1)?.text ?? "";
+}
+
 async function driveTurn(text: string, messageId: string) {
+  const cursor = await auditCursor();
   const handle = disposeLater(registerScript({ parent: [{ say: text }] }));
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `<@9000000000000000001> ${text}`, messageId });
   const request = await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 0), `the "${text}" turn's model call`);
   expect(request.fault).toBeUndefined();
+  expect(lastUserText(request), `the "${text}" handle served a different wake — a previous turn had not settled`).toContain(text);
+  await awaitProseRedriveSettled(cursor, `the "${text}" turn`);
   handle.dispose();
+  await awaitWindowQuiet();
   return request;
 }
 

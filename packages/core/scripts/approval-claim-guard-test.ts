@@ -1,7 +1,8 @@
-import { mkdtempSync, rmSync, readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { removeTempDir } from "./_temp-dir.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-approval-claim-guard-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
@@ -255,5 +256,5 @@ ok(unguarded.length === 0, `PARITY: every reply door that foots provenance also 
 const unaudited = doors.filter((n) => !readFileSync(join(chanDir, n), "utf-8").includes("auditWithheldApprovalClaim("));
 ok(unaudited.length === 0, `PARITY: and every one of them writes the row — unaudited: ${unaudited.join(", ")}`);
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`approval claim guard: ${passed} assertions passed`);

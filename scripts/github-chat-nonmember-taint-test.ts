@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
 import {
   OE_CHAT_NONMEMBER_ATTR,
@@ -9,9 +8,10 @@ import {
   _resetSurfacesForTest,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import type { Domain } from "@open-everywhere/core/agent/memory/domain.js";
+import { removeTempDir } from "../packages/core/scripts/_temp-dir.js";
 
 const dir = join(tmpdir(), `open-everywhere-github-chat-nonmember-taint-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
 process.env.GITHUB_APP_SLUG = "eve-bot";
@@ -114,5 +114,5 @@ ok(
 );
 
 _resetSurfacesForTest();
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`\n✓ github-chat-nonmember-taint: ${n} assertions passed (author leg + room leg on the REAL ingress handler, with member/collaborator/absent/unrecognised/internal-room negative controls)`);

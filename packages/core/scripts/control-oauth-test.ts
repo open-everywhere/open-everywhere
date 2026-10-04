@@ -1,10 +1,11 @@
 import { createHash, randomBytes } from "node:crypto";
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import type { ControlOAuthClient } from "../agent/control/oauth-clients.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -16,7 +17,7 @@ function ok(cond: boolean, label: string): void {
 }
 
 const dir = join(tmpdir(), `open-everywhere-control-oauth-test-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: "acme" });
 delete process.env.OE_CONTROL_OAUTH_SIGNING_SECRET;
@@ -497,5 +498,5 @@ let code = "";
   }
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`✓ control OAuth plane: ${passed} assertions passed (fail-closed 404 / client_credentials / PKCE round trip + replay / expired-audience-issuer-signature-scope refusals / audited / eve-parity pinned)`);

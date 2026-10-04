@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { chainLegs, legLabel, legsForShard, needsSubprocess, SUBPROCESS_LEG_TIMEOUT_MS, type ChainLeg } from "./_legs.js";
 import { resetProcessGlobals } from "./_process-state.js";
+import { npmCommand } from "../npm-command.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -22,10 +23,12 @@ function isSuccessExit(code: number | string | null | undefined): boolean {
 
 async function runLegInSubprocess(leg: ChainLeg): Promise<void> {
   try {
-    await execFileAsync("npm", ["run", leg.script], { cwd: leg.dir, maxBuffer: 32 * 1024 * 1024 });
+    const [cmd, args] = npmCommand(["run", leg.script]);
+    await execFileAsync(cmd, args, { cwd: leg.dir, maxBuffer: 32 * 1024 * 1024 });
   } catch (error) {
     const e = error as { stdout?: string; stderr?: string };
-    throw new Error(`\`npm run ${leg.script}\` failed in its own process:\n${e.stdout ?? ""}${e.stderr ?? ""}`);
+    const output = `${e.stdout ?? ""}${e.stderr ?? ""}`;
+    throw new Error(`\`npm run ${leg.script}\` failed in its own process:\n${output === "" ? String(error) : output}`);
   }
 }
 
@@ -45,7 +48,7 @@ export async function runLegInProcess(leg: ChainLeg): Promise<void> {
   process.argv = [process.execPath, leg.file, ...(leg.args ?? [])];
   try {
     try {
-      await import(pathToFileURL(leg.file).href);
+      await import(/* @vite-ignore */ pathToFileURL(leg.file).href);
     } catch (error) {
       if (!(error instanceof SuiteCalledProcessExit) || !isSuccessExit(error.code)) throw error;
     }

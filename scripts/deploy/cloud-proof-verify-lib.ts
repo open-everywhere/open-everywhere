@@ -59,6 +59,17 @@ export function parseEvidence(text: string): ProofVerdict {
   if (failing.length > 0) {
     return { verdict: "fail", sha, suites, failing };
   }
+  const partial = incompleteShardTiers(suites);
+  if (partial.length > 0) {
+    return {
+      verdict: "unparseable",
+      sha,
+      suites,
+      reason:
+        `incomplete shard series for ${partial.join(", ")} — the evidence carries some --shard=k/N lines of a tier but not ` +
+        "every k in 1..N under one N, and no line for the tier itself. Part of a tier proves nothing about the tier.",
+    };
+  }
   return { verdict: "pass", sha, suites };
 }
 
@@ -117,4 +128,17 @@ export function collapseShardSeries(suites: readonly SuiteResult[]): ProofCovera
     rendered.push(`${suite.name}=${suite.exit}`);
   }
   return { names, series, summary: rendered.join(", ") };
+}
+
+export function incompleteShardTiers(suites: readonly SuiteResult[]): string[] {
+  const coverage = collapseShardSeries(suites);
+  const red = new Set<string>();
+  const seen: string[] = [];
+  for (const suite of suites) {
+    const tier = SHARD_SUITE_RE.exec(suite.name)?.[1];
+    if (tier === undefined) continue;
+    if (!seen.includes(tier)) seen.push(tier);
+    if (suite.exit !== 0) red.add(tier);
+  }
+  return seen.filter((tier) => !red.has(tier) && !coverage.names.has(tier));
 }

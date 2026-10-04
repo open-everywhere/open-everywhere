@@ -1,15 +1,31 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, readFileSync, readdirSync, realpathSync, renameSync, statSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   checkEveResolution,
+  checkPristineEve,
+  evePatchedFilesInstalled,
   evePatchFileName,
+  evePatchRecovery,
   evePatchSharedTargets,
+  packageManagerOf,
   evePatchTargets,
   missingEveMarkers,
   patchDirArgument,
@@ -124,27 +140,166 @@ if (shared.length > 0) {
   );
 }
 
-const applied = spawnSync(process.execPath, [patchPackageBin, "--patch-dir", patchDir.value, "--error-on-fail"], {
-  cwd: consumerRoot,
-  stdio: ["ignore", "inherit", "inherit"],
-});
-if (applied.error !== undefined) {
-  refuse([`patch-package could not be started: ${applied.error.message}`]);
-}
-if (applied.status !== 0) {
-  refuse([
-    `patch-package exited ${applied.status ?? `on signal ${applied.signal}`} — the patch did not apply. Its output above ` +
-      `names the hunk. An eve whose bytes were already modified is the usual cause: reinstall eve@${pin} and try again`,
-  ]);
+function applyPatch() {
+  const run = spawnSync(process.execPath, [patchPackageBin, "--patch-dir", patchDir.value, "--error-on-fail"], {
+    cwd: consumerRoot,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (run.error !== undefined) refuse([`patch-package could not be started: ${run.error.message}`]);
+  return run;
 }
 
-const contents = new Map();
-for (const target of targets) {
-  if (target.insidePackage === "") continue;
-  const file = join(eveRoot, target.insidePackage);
-  contents.set(target.insidePackage, existsSync(file) ? readFileSync(file, "utf8") : undefined);
+function echo(run) {
+  if (run.stdout) process.stdout.write(run.stdout);
+  if (run.stderr) process.stderr.write(run.stderr);
 }
-const missing = missingEveMarkers(targets, contents);
+
+function readTargets() {
+  const contents = new Map();
+  for (const target of targets) {
+    if (target.insidePackage === "") continue;
+    const file = join(eveRoot, target.insidePackage);
+    contents.set(target.insidePackage, existsSync(file) ? readFileSync(file, "utf8") : undefined);
+  }
+  return contents;
+}
+
+function npmCommand(args) {
+  const cli = [process.env.npm_execpath, join(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js")].find(
+    (p) => typeof p === "string" && /npm-cli\.js$/.test(p) && existsSync(p),
+  );
+  if (cli !== undefined) return [process.execPath, [cli, ...args]];
+  return ["npm", args];
+}
+
+function listFiles(dir, prefix = "") {
+  const files = [];
+  const entries = readdirSync(join(dir, prefix), { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  for (const entry of entries) {
+    const rel = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+    if (entry.isDirectory()) files.push(...listFiles(dir, rel));
+    else if (entry.isFile()) files.push(rel);
+  }
+  return files;
+}
+
+function discard(copy) {
+  try {
+    rmSync(copy, { force: true });
+  } catch {
+  }
+}
+
+function restorePristineEve() {
+  let work;
+  try {
+    work = mkdtempSync(join(tmpdir(), "oe-eve-pristine-"));
+    const [command, args] = npmCommand(["pack", `eve@${pin}`, "--prefer-offline", "--pack-destination", work]);
+    const packed = spawnSync(command, args, { cwd: consumerRoot, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    const tarball = packed.status === 0 ? readdirSync(work).find((f) => f.endsWith(".tgz")) : undefined;
+    if (tarball === undefined) {
+      const why = packed.error?.message ?? (packed.stderr ?? "").trim().split("\n").slice(-3).join(" | ");
+      return { ok: false, problem: `npm could not fetch the pristine eve@${pin} tarball (${why || `exit ${packed.status}`})` };
+    }
+    const unpacked = join(work, "unpacked");
+    mkdirSync(unpacked);
+    const extracted = spawnSync("tar", ["-xzf", tarball, "-C", "unpacked"], { cwd: work, encoding: "utf8" });
+    if (extracted.status !== 0) {
+      const why = extracted.error?.message ?? (extracted.stderr ?? "").trim();
+      return { ok: false, problem: `tar could not unpack the pristine eve@${pin} tarball (${why || `exit ${extracted.status}`})` };
+    }
+    const pristineRoot = join(unpacked, "package");
+    let pristineManifest;
+    try {
+      pristineManifest = JSON.parse(readFileSync(join(pristineRoot, "package.json"), "utf8"));
+    } catch {
+      pristineManifest = {};
+    }
+    const wrong = checkPristineEve({ name: pristineManifest.name, version: pristineManifest.version, pin });
+    if (wrong.length > 0) return { ok: false, problem: wrong[0] };
+
+    const changed = listFiles(pristineRoot).filter((rel) => {
+      const installed = join(eveRoot, rel);
+      return !existsSync(installed) || !readFileSync(installed).equals(readFileSync(join(pristineRoot, rel)));
+    });
+    const staged = [];
+    try {
+      for (const rel of changed) {
+        mkdirSync(dirname(join(eveRoot, rel)), { recursive: true });
+        const copy = `${join(eveRoot, rel)}.oe-restore`;
+        copyFileSync(join(pristineRoot, rel), copy);
+        staged.push(copy);
+      }
+    } catch (err) {
+      for (const copy of staged) discard(copy);
+      return { ok: false, problem: `the applier could not stage the pristine eve@${pin} files (${err instanceof Error ? err.message : String(err)})` };
+    }
+    let renamed = 0;
+    try {
+      for (const rel of changed) {
+        renameSync(`${join(eveRoot, rel)}.oe-restore`, join(eveRoot, rel));
+        renamed++;
+      }
+    } catch (err) {
+      for (const copy of staged.slice(renamed)) discard(copy);
+      return {
+        ok: false,
+        partial: true,
+        problem:
+          `the applier restored ${renamed} of ${changed.length} eve file(s) and then could not replace ` +
+          `${changed[renamed]} (${err instanceof Error ? err.message : String(err)})`,
+      };
+    }
+    return { ok: true, restored: changed };
+  } catch (err) {
+    return { ok: false, problem: `the applier could not prepare the pristine eve@${pin} (${err instanceof Error ? err.message : String(err)})` };
+  } finally {
+    if (work !== undefined) rmSync(work, { recursive: true, force: true });
+  }
+}
+
+const packageManager = packageManagerOf(process.env.npm_config_user_agent);
+
+let applied = applyPatch();
+if (applied.status !== 0) {
+  const carrying = evePatchedFilesInstalled(readTargets());
+  if (carrying.length === 0) {
+    echo(applied);
+    refuse([
+      `patch-package exited ${applied.status ?? `on signal ${applied.signal}`} — the patch did not apply. Its output above ` +
+        `names the hunk. An eve whose bytes were already modified is the usual cause: reinstall eve@${pin} and try again`,
+      evePatchRecovery(pin, packageManager),
+    ]);
+  }
+  console.log(
+    `  · eve@${installedVersion} already carries an older OE patch (${carrying.length} file(s)), so ${patchFile} cannot ` +
+      `apply over it — restoring eve@${pin}'s pristine bytes from the npm cache or registry, then applying again`,
+  );
+  const restore = restorePristineEve();
+  if (!restore.ok) {
+    echo(applied);
+    const state = restore.partial
+      ? "The installed eve is PARTLY restored: it carries neither patch whole, and the boot probe refuses it"
+      : "The installed eve is unchanged and still carries the older OE patch";
+    refuse([`${restore.problem}. ${state}`, evePatchRecovery(pin, packageManager)]);
+  }
+  console.log(`  · restored ${restore.restored.length} file(s) of eve@${pin} to their pristine bytes:`);
+  for (const rel of restore.restored) console.log(`      ${rel}`);
+  applied = applyPatch();
+  echo(applied);
+  if (applied.status !== 0) {
+    refuse([
+      `patch-package exited ${applied.status ?? `on signal ${applied.signal}`} on the RESTORED, pristine eve@${pin} — the ` +
+        `packed ${patchFile} does not apply to eve's registry bytes. eve now carries no OE patch; the boot probe refuses it`,
+      evePatchRecovery(pin, packageManager),
+    ]);
+  }
+} else {
+  echo(applied);
+}
+
+const missing = missingEveMarkers(targets, readTargets());
 if (missing.length > 0) refuse(missing);
 
 for (const target of targets) {

@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { expect, test } from "vitest";
 import {
   auditCursor,
+  awaitProseRedriveSettled,
   bootAgent,
   disposeLater,
   registerScript,
@@ -85,6 +86,8 @@ test("a replayed delivery id is refused 409 on the second POST, and only the fir
     return matching.length > 0 ? matching : undefined;
   }, "the first delivery's webhook.fired row");
   expect(fired.length).toBe(1);
+
+  await awaitProseRedriveSettled(cursor, "the replayed delivery's turn");
 });
 
 test("a content-bearing hook's raw body reaches the model FENCED inside the untrusted envelope, and the operator instruction sits outside it", async () => {
@@ -93,11 +96,13 @@ test("a content-bearing hook's raw body reaches the model FENCED inside the untr
   const marker = `oe-it-webhook-body-${nonce}`;
   const handle = disposeLater(registerScript({ parent: [{ say: "ack" }] }));
 
-  await webhookDeliveryPost({ note: marker });
+  const cursor = await auditCursor();
+  const res = await webhookDeliveryPost({ note: marker });
+  expect(res.status).toBe(200);
 
   const firstReq = await waitFor(() => handle.requests.find((r) => r.role === "parent"), "the parent's first request");
   const carrier = firstReq.messages.find((m) => m.text.includes(marker));
-  expect(carrier).toBeDefined();
+  expect(carrier, "the parent's first request carries no message with this delivery's marker — the handle served a different wake, so a previous turn had not settled").toBeDefined();
   const text = carrier!.text;
   const open = text.indexOf(UNTRUSTED_OPEN);
   const bodyIdx = text.indexOf(marker);
@@ -113,4 +118,6 @@ test("a content-bearing hook's raw body reaches the model FENCED inside the untr
   expect(instructionIdx).toBeLessThan(open);
   expect(text.lastIndexOf("<system-note>", instructionIdx)).toBeGreaterThanOrEqual(0);
   expect(text.indexOf("</system-note>", instructionIdx)).toBeLessThan(open);
+
+  await awaitProseRedriveSettled(cursor, "the fenced delivery's turn");
 });

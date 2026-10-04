@@ -1,10 +1,10 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { rmSync } from "node:fs";
 import type { MarkEventSeen } from "../agent/operational/post-once.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 const dir = join(tmpdir(), `open-everywhere-post-once-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 
 const { postOnce, outboundKey, OUTBOUND_DEDUPE_TTL_MS, OUTBOUND_KEY_PREFIX } = await import(
@@ -207,7 +207,7 @@ const K = (payload: string, over: Partial<{ action: string; channel: string; thr
   }
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(
   `✓ post-once — ${passed} assertions (exactly-once replay, no false dedup, fail-open, short-TTL repost, key namespacing, failed-post claim release, live sqlite wiring)`,
 );

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { dirname } from "node:path";
 import {
   isUnresumableSessionError,
   unresumableAuditDetail,
@@ -79,7 +80,7 @@ const REAL_MESSAGE =
 {
   const require = createRequire(import.meta.url);
   const evePkg = require.resolve("eve/package.json");
-  const chunkDir = `${evePkg.slice(0, evePkg.lastIndexOf("/"))}/dist/src/compiled/_chunks/workflow`;
+  const chunkDir = `${dirname(evePkg)}/dist/src/compiled/_chunks/workflow`;
   const { readdirSync } = require("node:fs") as typeof import("node:fs");
   const files = readdirSync(chunkDir).filter((f: string) => f.endsWith(".js"));
   ok(files.length > 0, "pin: the installed eve dist has compiled workflow chunks to search");

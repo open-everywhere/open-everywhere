@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { gunzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeTempDir } from "./_temp-dir.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-model-call-capture-"));
 process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
@@ -472,5 +473,5 @@ function armed(on: boolean): void {
 }
 
 ok(deploymentOrg().length > 0, "sanity: the deployment org resolves (the org the read route scopes to)");
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`✓ model-call capture: ${n} assertions passed`);

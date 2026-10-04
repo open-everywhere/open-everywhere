@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { removeTempDir } from "./_temp-dir.js";
 
 const dir = join(tmpdir(), `open-everywhere-chat-dm-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 
 const {
@@ -459,5 +459,5 @@ const ORG = "default";
   ok(actionKind("chat.dm")?.policy === "member", "the chat.dm ActionKind is registered through flow.ts at policy member");
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`✓ chat-dm-grant: ${n} assertions`);

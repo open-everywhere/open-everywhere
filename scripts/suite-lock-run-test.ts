@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tsxCommand } from "./npm-command.js";
+import { mkdtempSync, mkdirSync, existsSync, globSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { BaseSequencer } from "vitest/node";
+
 import { SIGKILL_EXIT_CODE, acquireLock, classifyExit, fencedSpawn, pidAlive, readHolder, reclaimDeadLock, releaseLock, runLocked, spawnPrepareStep, type LockHolder } from "./suite-lock-run.js";
-import { DAC_BYPASS_CAPS, assertWriteBitsBite, dacFenceScript, writeBitsBite } from "./dac-fence.js";
+import { DAC_BYPASS_CAPS, assertWriteBitsBite, dacFenceScript, posixWriteBitsAbsentReason, writeBitsBite } from "./dac-fence.js";
 import type { BoxProbe } from "./ci-max-workers.js";
 import {
   INTEGRATION_INCLUDE_GLOBS,
@@ -15,9 +18,13 @@ import {
   SANDBOX_MIN_SHARDS,
   countTierFiles,
   itShardCount,
+  itShardSelector,
   itShardsOverride,
+  listTierFiles,
   planShards,
   sandboxShardCount,
+  shardFiles,
+  tierFilesDigest,
   tierProofLine,
   worstExit,
   type DirEntry,
@@ -26,7 +33,7 @@ import {
 import { fmtBytes, ppidOf, rssBytesOf, treeRssBytes, type ProcProbe } from "./proc-rss.js";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
-const tsxBin = join(repoRoot, "node_modules", ".bin", "tsx");
+const tsx = (args: string[]): [string, string[]] => tsxCommand(repoRoot, args);
 const wrapperScript = join(repoRoot, "scripts", "suite-lock-run.ts");
 
 const scratch = mkdtempSync(join(tmpdir(), "oe-suite-lock-test-"));
@@ -56,7 +63,7 @@ function markerArgs(logFile: string, id: string, sleepMs: number): string[] {
 
 function spawnWrapper(args: string[], env: Record<string, string>): Promise<number> {
   return new Promise((resolve, reject) => {
-    const child = spawn(tsxBin, [wrapperScript, "--", "node", ...args], {
+    const child = spawn(...tsx([wrapperScript, "--", "node", ...args]), {
       cwd: repoRoot,
       env: { PATH: process.env.PATH ?? "", ...env },
     });
@@ -585,6 +592,162 @@ async function main(): Promise<void> {
     rmSync(fakeDir, { recursive: true, force: true });
   });
 
+  await check("shard selector: OE_IT_SHARD reads k/N, and a value it cannot read is REFUSED, never ignored", () => {
+    assert.deepEqual(itShardSelector({}), { kind: "none" }, "unset is the full tier");
+    assert.deepEqual(itShardSelector({ OE_IT_SHARD: "  " }), { kind: "none" }, "blank is the full tier");
+    assert.deepEqual(itShardSelector({ OE_IT_SHARD: "2/4" }), { kind: "shard", selector: { index: 2, total: 4 } });
+    assert.deepEqual(itShardSelector({ OE_IT_SHARD: "1/1" }), { kind: "shard", selector: { index: 1, total: 1 } }, "a one-shard series is a valid series");
+    assert.deepEqual(itShardSelector({ OE_IT_SHARD: "3/4", OE_IT_SHARDS: "4" }), { kind: "shard", selector: { index: 3, total: 4 } }, "an agreeing OE_IT_SHARDS is fine");
+    for (const bad of ["0/4", "5/4", "2/0", "2", "2/4/1", "a/b", "-1/4", "2 / 4", "1.5/4"]) {
+      assert.equal(itShardSelector({ OE_IT_SHARD: bad }).kind, "invalid", `OE_IT_SHARD=${JSON.stringify(bad)} is refused`);
+    }
+    assert.equal(itShardSelector({ OE_IT_SHARD: "2/4", OE_IT_SHARDS: "3" }).kind, "invalid", "an OE_IT_SHARDS that names another N is refused");
+  });
+
+  await check("shard plan: single-shard mode runs the full series' k-th pass, and names the SHARD as its proof suite", () => {
+    const full = planShards("vitest", ["run"], 4);
+    assert.equal(full.proofSuite, "test:integration", "the full mode's proof line names the tier, as before");
+    const one = planShards("vitest", ["run"], 99, { index: 2, total: 4 });
+    assert.equal(one.wholeTier, true, "one shard of the unfiltered tier still owes a proof line");
+    assert.deepEqual(one.runs, [full.runs[1]], "🔴 the single run IS the full series' second pass — same argv, same suite name — whatever OE_IT_SHARDS planned");
+    assert.equal(one.proofSuite, "test:integration--shard=2/4", "…and its proof line names the shard, never the tier");
+    const targeted = planShards("vitest", ["run", "tests/integration/memory/fence.test.ts"], 4, { index: 2, total: 4 });
+    assert.equal(targeted.wholeTier, false, "a targeted leg is never one shard of the tier");
+    assert.equal(targeted.runs[0]!.args.some((a) => a.startsWith("--shard")), false, "…and it is not handed a --shard");
+  });
+
+  await check("shard plan: N single-shard plans cover every tier file EXACTLY once, on one deterministic split", async () => {
+    const files = listTierFiles(repoRoot);
+    assert.ok(files !== undefined && files.length > 0, "the live tier's file list reads");
+    const globbed = INTEGRATION_INCLUDE_GLOBS.flatMap((g) => globSync(g, { cwd: repoRoot })).map((f) => f.split("\\").join("/")).sort();
+    assert.deepEqual(files, globbed, `the walk names the same ${globbed.length} files the include glob matches`);
+    assert.equal(files.length, countTierFiles(repoRoot), "and the count the shard plan sizes from is that list's length");
+
+    const planned = sandboxShardCount(files.length);
+    const counts = new Set([1, 2, 3, planned, planned + 1, 7, files.length, files.length + 3]);
+    for (const total of counts) {
+      const seen = new Map<string, number>();
+      let sum = 0;
+      const sizes: number[] = [];
+      for (let k = 1; k <= total; k++) {
+        const share = shardFiles(files, k, total);
+        sizes.push(share.length);
+        sum += share.length;
+        for (const f of share) seen.set(f, (seen.get(f) ?? 0) + 1);
+      }
+      assert.equal(sum, files.length, `N=${total}: the shards hold ${sum} files in all, and the tier holds ${files.length}`);
+      assert.deepEqual([...seen.keys()].sort(), files, `N=${total}: no tier file is missed`);
+      assert.ok([...seen.values()].every((n) => n === 1), `N=${total}: no tier file runs twice`);
+      assert.ok(Math.max(...sizes) - Math.min(...sizes) <= 1, `N=${total}: shard sizes differ by at most one file — got ${sizes.join(",")}`);
+    }
+
+    const shuffled = [...files].reverse();
+    for (let k = 1; k <= planned; k++) {
+      assert.deepEqual(shardFiles(shuffled, k, planned), shardFiles(files, k, planned), `shard ${k}/${planned} ignores the input order`);
+    }
+    assert.equal(tierFilesDigest(files), tierFilesDigest([...files]), "the logged digest is a function of the list");
+
+    for (const root of [repoRoot, "/some/other/checkout"]) {
+      for (let k = 1; k <= planned; k++) {
+        const sequencer = new BaseSequencer({ config: { root, shard: { index: k, count: planned } } } as unknown as ConstructorParameters<typeof BaseSequencer>[0]);
+        const specs = files.map((f) => ({ moduleId: `${root}/${f}` }));
+        const picked = (await sequencer.shard(specs as unknown as Parameters<BaseSequencer["shard"]>[0])) as unknown as { moduleId: string }[];
+        assert.deepEqual(
+          picked.map((spec) => spec.moduleId.slice(root.length + 1)),
+          shardFiles(files, k, planned),
+          `vitest's own --shard=${k}/${planned} at root ${root} picks exactly the files shardFiles names`,
+        );
+      }
+    }
+  });
+
+  await check("runLocked: OE_IT_SHARD=k/N runs ONLY shard k and prints ONE line that names the shard", async () => {
+    const lockDir = join(scratch, "lock-single-shard");
+    const marks = join(scratch, "single-shard-marks.txt");
+    const fakeDir = mkdtempSync(join(tmpdir(), "oe-fake-vitest-"));
+    const fake = join(fakeDir, "vitest");
+    writeFileSync(
+      fake,
+      `#!/usr/bin/env node\nrequire("node:fs").appendFileSync(${JSON.stringify(marks)}, process.argv.slice(2).join(" ") + "\\n");\n` +
+        `process.exit(process.argv.includes("--shard=2/4") ? 3 : 0);\n`,
+      { mode: 0o755 },
+    );
+    let prepared = 0;
+    let out: string[] = [];
+    const logged = await captureStderr(async () => {
+      out = await captureStdout(async () => {
+        const code = await runLocked(fake, ["run"], {
+          manual: false,
+          lockDir,
+          maxWaitMs: 20_000,
+          env: { OE_IT_SHARD: "2/4", OE_IT_SHARDS: "4" },
+          emitProof: true,
+          prepare: async () => {
+            prepared++;
+            return 0;
+          },
+        });
+        assert.equal(code, 3, "the run reports its one shard's exit");
+      });
+    });
+    assert.equal(prepared, 1, "the prepare step runs once, before the shard");
+    assert.deepEqual(readFileSync(marks, "utf8").trim().split("\n"), ["run --shard=2/4"], "🔴 ONLY shard 2 of 4 ran — no other shard, no unsharded tier");
+    const proof = out.filter((l) => l.startsWith("OE_PROOF "));
+    assert.equal(proof.length, 1, `exactly ONE evidence line — got ${JSON.stringify(proof)}`);
+    assert.ok(
+      /^OE_PROOF sha=[0-9a-f]{40} suite=test:integration--shard=2\/4 exit=3$/.test(proof[0]!),
+      `🔴 the line names the SHARD with its exit, never the tier — got ${proof[0]}`,
+    );
+    const mode = logged.find((l) => l.includes("single-shard mode"));
+    assert.ok(mode !== undefined && /holds \d+ file\(s\) \(digest [0-9a-f]{12}\), and this shard runs \d+/.test(mode), `the run logs its share of the plan — got ${mode}`);
+    assert.equal(existsSync(lockDir), false, "the lock is released");
+
+    writeFileSync(marks, "");
+    const redOut = await captureStdout(async () => {
+      await captureStderr(async () => {
+        const code = await runLocked(fake, ["run"], { manual: true, lockDir, maxWaitMs: 1_000, env: { OE_IT_SHARD: "4/4" }, emitProof: true, prepare: async () => 5 });
+        assert.equal(code, 5);
+      });
+    });
+    assert.equal(readFileSync(marks, "utf8"), "", "a red prepare runs no shard");
+    assert.ok(/^OE_PROOF sha=[0-9a-f]{40} suite=test:integration--shard=4\/4 exit=5$/.test(redOut.find((l) => l.startsWith("OE_PROOF ")) ?? ""), `got ${JSON.stringify(redOut)}`);
+
+    mkdirSync(lockDir);
+    const foreign: LockHolder = { pid: process.ppid, startedAt: new Date().toISOString(), command: "a foreign holder" };
+    writeFileSync(join(lockDir, "holder.json"), JSON.stringify(foreign));
+    for (const [env, args, why] of [
+      [{ OE_IT_SHARD: "5/4" }, ["run"], "an out-of-range shard"],
+      [{ OE_IT_SHARD: "2/4", OE_IT_SHARDS: "3" }, ["run"], "a disagreeing OE_IT_SHARDS"],
+      [{ OE_IT_SHARD: "1/4" }, ["run", "tests/integration/oe-status.test.ts"], "a targeted leg"],
+    ] as const) {
+      let refusedPrepare = 0;
+      let refusedOut: string[] = [];
+      const refusedLog = await captureStderr(async () => {
+        refusedOut = await captureStdout(async () => {
+          const code = await runLocked(fake, [...args], {
+            manual: false,
+            lockDir,
+            maxWaitMs: 1_000,
+            env: { ...env },
+            emitProof: true,
+            prepare: async () => {
+              refusedPrepare++;
+              return 0;
+            },
+          });
+          assert.equal(code, 2, `${why} exits 2`);
+        });
+      });
+      assert.equal(refusedPrepare, 0, `${why}: the prepare step never ran`);
+      assert.equal(readFileSync(marks, "utf8"), "", `${why}: vitest never ran`);
+      assert.deepEqual(refusedOut.filter((l) => l.startsWith("OE_PROOF ")), [], `${why}: no evidence line`);
+      assert.ok(refusedLog.some((l) => l.includes("Nothing ran")), `${why}: the refusal says so — got ${JSON.stringify(refusedLog)}`);
+      assert.equal(readHolder(lockDir)?.pid, process.ppid, `${why}: the lock was never taken — its foreign holder is unchanged`);
+    }
+    rmSync(lockDir, { recursive: true, force: true });
+    rmSync(fakeDir, { recursive: true, force: true });
+  });
+
   await check("runLocked: a targeted leg runs once and prints NO tier proof line", async () => {
     const lockDir = join(scratch, "lock-targeted");
     const fakeDir = mkdtempSync(join(tmpdir(), "oe-fake-vitest-t-"));
@@ -663,6 +826,13 @@ async function main(): Promise<void> {
     const script = dacFenceScript("/opt/my tools/vitest", ["run", "--reporter=it's-fine"]);
     assert.ok(script.includes(`'/opt/my tools/vitest'`), "a command path with a space is quoted whole");
     assert.ok(script.includes(`'--reporter=it'\\''s-fine'`), "…and an embedded single quote is escaped rather than ending the quoting");
+  });
+
+  await check("posixWriteBitsAbsentReason names Windows, and only Windows", () => {
+    assert.equal(posixWriteBitsAbsentReason("linux"), null, "Linux has POSIX write bits, so it gets no skip reason");
+    assert.equal(posixWriteBitsAbsentReason("darwin"), null, "macOS has POSIX write bits, so it gets no skip reason");
+    const win = posixWriteBitsAbsentReason("win32");
+    assert.ok(typeof win === "string" && /Windows/u.test(win), "Windows gets a reason that names the host");
   });
 
   await check("assertWriteBitsBite names the runner it refuses, and passes once the bits bite", () => {

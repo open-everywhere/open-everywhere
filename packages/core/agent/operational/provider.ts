@@ -102,6 +102,10 @@ export function registerOperationalPostgres(client: PgClient): OperationalStore 
   return store;
 }
 
+export function isOperationalStoreRegistered(id: string): boolean {
+  return REGISTRY[id] !== undefined;
+}
+
 export function registerOperationalStore(store: OperationalStore): void {
   REGISTRY[store.id] = store;
 }

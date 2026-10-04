@@ -42,17 +42,35 @@ function tsFiles(dir: string): string[] {
 }
 
 function specifiers(file: string): string[] {
-  let src = readFileSync(file, "utf-8");
+  return specifiersOfSource(readFileSync(file, "utf-8"));
+}
+
+function runtimeSpecifiers(file: string): string[] {
+  const src = stripComments(readFileSync(file, "utf-8")).replace(
+    /^\s*(?:import|export)\s+type\s+(?:\{[^}]*\}|\*(?:\s+as\s+[\w$]+)?|[\w$]+)\s+from\s+["'][^"']+["']/gm,
+    "",
+  );
+  return specifiersOfSource(src);
+}
+
+function stripComments(source: string): string {
+  let src = source;
   src = src.replace(/\/\*[\s\S]*?\*\//g, "");
   src = src
     .split("\n")
     .filter((line) => !/^\s*\/\//.test(line))
     .join("\n");
+  return src;
+}
+
+function specifiersOfSource(source: string): string[] {
+  const src = stripComments(source);
   const specs: string[] = [];
   const patterns = [
     /\bfrom\s+["']([^"']+)["']/g,
     /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
     /\brequire\(\s*["']([^"']+)["']\s*\)/g,
+    /\bimport\s+["']([^"']+)["']/g,
   ];
   for (const re of patterns) for (const m of src.matchAll(re)) specs.push(m[1]);
   return specs;
@@ -105,6 +123,29 @@ function bundleForeignImportViolation(spec: string, bundleName: string): boolean
   if (ADAPTERS_PKG.test(spec)) return true;
   if (!spec.startsWith(".") && /(^|\/)agent\/(tools|channels|hooks)\//.test(spec)) return true;
   return false;
+}
+
+function opsArmMainBarrelChain(opsFile: string, bundleRoot: string, bundleName: string): string[] | undefined {
+  const ownPkg = `@open-everywhere/provider-${bundleName}/`;
+  const parent = new Map<string, string | undefined>([[opsFile, undefined]]);
+  const queue = [opsFile];
+  for (let file = queue.shift(); file !== undefined; file = queue.shift()) {
+    for (const spec of runtimeSpecifiers(file)) {
+      if (CORE_ADAPTER_BARREL.test(spec)) {
+        const chain: string[] = [];
+        for (let f: string | undefined = file; f !== undefined; f = parent.get(f)) chain.unshift(relative(bundleRoot, f).replaceAll("\\", "/"));
+        return chain;
+      }
+      let target: string;
+      if (spec.startsWith(ownPkg)) target = join(bundleRoot, spec.slice(ownPkg.length).replace(/\.js$/, ".ts"));
+      else if (spec.startsWith(".") && !climbsOutsideBundle(file, spec, bundleRoot)) target = resolve(dirname(file), spec.replace(/\.js$/, ".ts"));
+      else continue;
+      if (!target.endsWith(".ts") || !existsSync(target) || parent.has(target)) continue;
+      parent.set(target, file);
+      queue.push(target);
+    }
+  }
+  return undefined;
 }
 
 function firstStringPresent(text: string, strings: string[]): string | undefined {
@@ -238,6 +279,24 @@ function firstStringPresent(text: string, strings: string[]): string | undefined
 
 {
   const bundles = discoverBundles();
+  let arms = 0;
+  for (const name of bundles) {
+    const bundleRoot = join(REPO_ROOT, "packages/providers", name);
+    const opsFile = join(bundleRoot, "agent", "ops.ts");
+    if (!existsSync(opsFile)) continue;
+    arms++;
+    const chain = opsArmMainBarrelChain(opsFile, bundleRoot, name);
+    ok(
+      chain === undefined,
+      `provider "${name}"'s ops arm never loads the main adapter-api barrel` +
+        (chain ? ` — ${chain.join(" → ")} imports it; use adapter-api-ops.js, or move the pure part out` : ""),
+    );
+  }
+  ok(bundles.length === 0 || arms > 0, `rule 4d found the bundles' ops arms (${arms})`);
+}
+
+{
+  const bundles = discoverBundles();
   for (const name of bundles) {
     const bundleRoot = join(REPO_ROOT, "packages/providers", name);
     for (const f of bundleSourceFiles(bundleRoot)) {
@@ -253,9 +312,20 @@ function firstStringPresent(text: string, strings: string[]): string | undefined
 
 {
   const bundles = discoverBundles();
+  const manualDir = join(REPO_ROOT, "packages/core/agent/docs/generated");
+  const isManualPage = (f: string): boolean => dirname(f) === manualDir && !f.endsWith("index.ts");
+  const coreAgentFiles = tsFiles(join(REPO_ROOT, "packages/core/agent"));
+  if (bundles.length > 0) {
+    const manualText = coreAgentFiles.filter(isManualPage).map((f) => readFileSync(f, "utf-8")).join("\n");
+    ok(
+      bundles.some((name) => (PROVIDER_VENDOR_STRINGS[name] ?? []).some((s) => manualText.includes(s))),
+      "precondition: a universal manual page names a provider fingerprint (without it the exclusion below is dead and must go)",
+    );
+  }
   const coreAgentText =
     bundles.length > 0
-      ? tsFiles(join(REPO_ROOT, "packages/core/agent"))
+      ? coreAgentFiles
+          .filter((f) => !isManualPage(f))
           .map((f) => readFileSync(f, "utf-8"))
           .join("\n")
       : "";
@@ -368,6 +438,64 @@ function firstStringPresent(text: string, strings: string[]): string | undefined
     ok(
       EVENT_PLANE_DEEP.test("../../../core/agent/routines/event-authz.js"),
       "self-test: the event-plane matcher is path-shaped, so a RELATIVE climb to event-authz is caught too",
+    );
+
+    const opsDir = join(agentDir, "channels");
+    mkdirSync(opsDir, { recursive: true });
+    const opsArm = join(agentDir, "ops.ts");
+    const heavy = join(opsDir, "heavy.ts");
+    writeFileSync(opsArm, importLine("@open-everywhere/core/agent/adapter-api-ops.js") + importLine("./channels/heavy.js"));
+    writeFileSync(heavy, importLine("@open-everywhere/core/agent/adapter-api.js"));
+    ok(
+      opsArmMainBarrelChain(opsArm, bundleRoot, bundleName)?.join(" → ") === "agent/ops.ts → agent/channels/heavy.ts",
+      "self-test: rule 4d flags an ops arm that reaches the main barrel through a relative import",
+    );
+    writeFileSync(heavy, `import type { x } from ${Q}@open-everywhere/core/agent/adapter-api.js${Q};\n`);
+    ok(
+      opsArmMainBarrelChain(opsArm, bundleRoot, bundleName) === undefined,
+      "self-test: rule 4d passes a TYPE-ONLY import of the main barrel (TypeScript erases it)",
+    );
+    writeFileSync(
+      heavy,
+      `// we import type names only from the light door\n` + importLine("@open-everywhere/core/agent/adapter-api.js"),
+    );
+    ok(
+      opsArmMainBarrelChain(opsArm, bundleRoot, bundleName)?.join(" → ") === "agent/ops.ts → agent/channels/heavy.ts",
+      "self-test: rule 4d is not masked by comment prose that reads like a type-only import",
+    );
+    writeFileSync(
+      heavy,
+      `const n = 1; // we import type names only from the light door\n` + importLine("@open-everywhere/core/agent/adapter-api.js"),
+    );
+    ok(
+      opsArmMainBarrelChain(opsArm, bundleRoot, bundleName)?.join(" → ") === "agent/ops.ts → agent/channels/heavy.ts",
+      "self-test: rule 4d is not masked by the same prose in a TRAILING comment",
+    );
+    writeFileSync(heavy, `export type Opts = {\n  a: string,\n}\n` + importLine("@open-everywhere/core/agent/adapter-api.js"));
+    ok(
+      opsArmMainBarrelChain(opsArm, bundleRoot, bundleName)?.join(" → ") === "agent/ops.ts → agent/channels/heavy.ts",
+      "self-test: rule 4d is not masked by a type alias with no semicolon",
+    );
+    writeFileSync(heavy, `import type {\n  x,\n  y,\n} from ${Q}@open-everywhere/core/agent/adapter-api.js${Q};\n`);
+    ok(
+      opsArmMainBarrelChain(opsArm, bundleRoot, bundleName) === undefined,
+      "self-test: rule 4d passes a MULTI-LINE type-only import of the main barrel",
+    );
+    writeFileSync(heavy, importLine("@open-everywhere/core/agent/adapter-api.js"));
+    writeFileSync(opsArm, `import ${Q}./channels/heavy.js${Q};\n`);
+    ok(
+      opsArmMainBarrelChain(opsArm, bundleRoot, bundleName)?.join(" → ") === "agent/ops.ts → agent/channels/heavy.ts",
+      "self-test: rule 4d follows a side-effect import",
+    );
+    writeFileSync(opsArm, importLine(`@open-everywhere/provider-${bundleName}/agent/channels/heavy.js`));
+    ok(
+      opsArmMainBarrelChain(opsArm, bundleRoot, bundleName)?.join(" → ") === "agent/ops.ts → agent/channels/heavy.ts",
+      "self-test: rule 4d follows an import through the bundle's own package name",
+    );
+    writeFileSync(opsArm, importLine("@open-everywhere/core/agent/adapter-api.js"));
+    ok(
+      opsArmMainBarrelChain(opsArm, bundleRoot, bundleName)?.join(" → ") === "agent/ops.ts",
+      "self-test: rule 4d flags an ops arm that imports the main barrel directly",
     );
 
     ok(

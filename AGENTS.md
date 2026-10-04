@@ -228,8 +228,8 @@ must land atomically.
 | *(`postbuild`, chained after `npm run build`)* | Two gates that read the just-built `.output/server/index.mjs`, because no `tsx`-tier test can see what the bundler does. `agent-version-seam-bundle-test.ts` (OPE-1041) asserts the eve pin and app version resolve with no runtime filesystem read, and both baked literals survive bundling. `dynamic-callback-closure-bundle-test.ts` (OPE-1063, also `npm run test:dynamic-closure-bundle`) asserts no `defineTool` callback carries an undeclared capture into eve's durable descriptor — a capture that does not serialize makes eve drop the whole resolver's result, so the tools vanish from the seat with no red. Both run wherever `npm run build` runs, including a proof run's `build` suite — no separate deploy-checklist step |
 | `npm run typecheck` | `tsc --noEmit` on the root app |
 | `npm run typecheck:all` | root + `@open-everywhere/core` + `@open-everywhere/adapters` + every `@open-everywhere/provider-*` + the scaffolder |
-| `npm test` | full deterministic suite: `lint:script-chain` (fail-fast, serial), the provider-discord echo, then `test:suites` — every package's script-test chain PLUS the root package's own `test:chain` (config lints, roster, boot, deploy-ops, …), batched together (no live model, no secrets). ~97 s on a 4-core box (OPE-709; was ~166 s after OPE-703, ~619 s before it) |
-| `npm run test:suites` | the batched script-test tier (OPE-703, extended OPE-709): ONE vitest run over `scripts/chain/`, spreading the ~454 suites named by each package's `test:chain` — including the root package's own — across forked workers. It replaced a serial `&&` walk that spent ~0.54 s of `npm run` spawn per leg. Every suite still runs alone (`npm run test:<name>`, `--workspace <pkg>` for a workspace one), and each package's `test:chain` (root included) still walks serially |
+| `npm test` | full deterministic suite: `lint:script-chain` (fail-fast, serial), the provider-discord echo, then `test:suites` — every package's script-test chain PLUS the root package's own chain (the root `test-chain.txt`) (config lints, roster, boot, deploy-ops, …), batched together (no live model, no secrets). ~97 s on a 4-core box (OPE-709; was ~166 s after OPE-703, ~619 s before it) |
+| `npm run test:suites` | the batched script-test tier (OPE-703, extended OPE-709): ONE vitest run over `scripts/chain/`, spreading the ~454 suites named by each package's chain list (`test-chain.txt`) — including the root package's own — across forked workers. It replaced a serial `&&` walk that spent ~0.54 s of `npm run` spawn per leg. Every suite still runs alone (`npm run test:<name>`, `--workspace <pkg>` for a workspace one), and each package's `test:chain` (root included) still walks serially |
 | `npm run lint:hosted-externals` | checks built deploy output (`.vercel/output`) for imports that would be missing at cold start. Not part of `npm test` — there is nothing to check until you have built. |
 | `npm run test:boot` | **cold-start gate** — boots the whole agent graph (every module under `agent/`, against a throwaway state dir) and fails on a module-load throw, a duplicate channel route, a malformed schedule cron, or a dynamic model bound off `step.started`. In the `test` chain; nothing else in the deterministic tier ever loads `agent/agent.ts` |
 | `npm run test:integration` | **integration tier (OPE-442)** — vitest over `tests/integration/**`: boots the BUILT agent in-process per test file (own fork, own PGlite), drives real signed wakes through a SCRIPTED model (no inference, no credentials, no docker) and asserts on real toolsets, approval-chain audit rows and the reply choke point. Includes the offline first-wake gate (`wake-smoke.test.ts`, OPE-456) — a real HMAC-signed Discord relay mention through the NATIVE dispatch path, asserting the turn woke, ran and reached the audit trail. **Not in the `test` chain** (it runs `oe:build` + `eve build` first; `OE_IT_SKIP_BUILD=1` skips that on an already-built tree). See [Testing](./docs/extending/testing.md) for which tier a new test belongs to |
@@ -256,7 +256,8 @@ must land atomically.
 **Edited something under `docs/`? Run `npm run docs:generate` and commit the result.** The agent
 serves its own manual through the `read_docs` tool, and `docs/` does **not** exist on disk in a
 hosted deployment (`eve build` emits JS; no `.md` rides along), so the manual is compiled into
-generated TS modules — `agent/docs/generated/*.ts` for the deployment-wide docs and
+generated TS modules — `packages/core/agent/docs/generated/*.ts` for the deployment-wide docs (inside
+core, so the npm package ships them; the app registers them from `agent/lib/register-docs.ts`) and
 `packages/providers/<id>/agent/docs-generated.ts` for each bundle's own surface runbook. `lint:docs`
 fails the build if they drift, if a provider bundle has no `docs/deploy/surfaces/<id>.md`, if a file
 in that directory maps to no bundle, or if a bundle stops registering its docs. Never hand-edit a
@@ -286,8 +287,9 @@ Operational CLIs also live in core scripts: `npm run spend`, `npm run audit`, `n
 
 **Adding behaviour = adding a test.** Unit-level behaviour gets a plain-assertion
 `scripts/<name>-test.ts` that exits non-zero on failure. Define a `test:<name>` script for it in
-that package's `package.json` and append `&& npm run test:<name>` to that package's `test:chain`.
-`npm test` reads the chain, so nothing else names the suite. Behaviour that spans seams — toolset assembly, delegation, taint,
+that package's `package.json` and append one line, `test:<name>`, to that package's `test-chain.txt`.
+`npm test` reads the list, so nothing else names the suite. Never edit the `test:chain` script: it only
+runs `scripts/chain/run-chain.ts` over the list (OPE-2286). Behaviour that spans seams — toolset assembly, delegation, taint,
 approvals, audit, the reply path — gets a vitest test in `tests/integration/` instead
 ([Testing](./docs/extending/testing.md) has the decision rule). Bug fixes add a regression test
 that fails before the fix.
@@ -490,7 +492,7 @@ specific guide:
   surface, its identity/visibility interpretation lives in **one tested place** (its
   `*-identity.ts`), not scattered across the code.
 - **Test alongside code.** Every behavioural change ships with a `scripts/*-test.ts` appended to
-  its package's `test:chain`. Keep the suite deterministic and secret-free.
+  its package's `test-chain.txt`. Keep the suite deterministic and secret-free.
 - **Keep the load-bearing types honest.** No `any`-escapes that defeat the resolver/identity
   types — the access model depends on them.
 - **Match the surrounding code.** Comment density, naming, and idiom follow the file you're in.

@@ -64,6 +64,23 @@ step 3, after the install puts the target's own copy on disk. The same text is i
 **Stop and ask the user** when the window holds a breaking change, an env change or a manual step.
 Those are decisions, not steps.
 
+`--plan` also prints a **template drift** report. It compares every file the scaffold copied into
+this app with the TARGET release's `@open-everywhere/create` template, and lists each one that
+differs, with a one-line size of its diff. An upgrade changes only `package.json`, so a scaffolded
+file stays as the old template wrote it. A stale copy can typecheck and build and still break the
+deployment: the 0.1.2 `agent/lib/register-adapters.ts` registers no Postgres client on a bare
+`DATABASE_URL`, so a Vercel+Neon deployment of 0.1.4 fails at its first write.
+
+| Line | What to do |
+| --- | --- |
+| SYNC | a template-owned file — wiring, a script, `AGENTS.md`, `README.md`, `.env.example`, a skill. Plan to copy the target's file over this one, after you read the diff. |
+| config | the app's own config-as-code. A difference is normal once the app is configured. Merge the template's change by hand only if the user wants it. |
+
+The report never writes a file. If it says the drift check did not run, compare the files with the
+target's template by hand. An installed core without the report prints none: `oe upgrade` runs the
+INSTALLED core's code. So when `--plan` prints no "Template drift" heading, run
+`npx oe upgrade --to <target> --plan` once more after step 3. The target's own code prints the report then.
+
 ## 3. Run the upgrade
 
 ```
@@ -95,10 +112,18 @@ survives `rm -rf node_modules && npm ci`.
 Never delete the marker to make `oe upgrade` say there is nothing to do. It is the only record
 that a run began taking the target and never proved the tree.
 
-**If it refuses with "the release notes name codemods this CLI does not hold":** the codemod ships
-in a newer core than the one you are running. Upgrade in ONE step to a version that holds it, or
-apply those migrations by hand. Do not work around the refusal — it exists because a half-applied
-migration that reports success is worse than a stop.
+**If it refuses with "the release notes name codemods this CLI does not hold":** the running core
+is 0.1.4, and it runs codemods from its own registry. When it stops after the install, the
+target's own `oe` is installed now. Run `oe upgrade` again: the resume marker keeps the window, and
+the target's registry applies the codemod. Apply the migration by hand only if that run refuses
+too. Do not work around the refusal — it exists because a half-applied migration that reports
+success is worse than a stop. A later core only WARNS with that text before the install, because
+the target's own registry decides.
+
+**If it refuses with "the installed core's registry does not hold":** the target release names a
+codemod that it does not ship, and no codemod ran. Run `oe upgrade --to <a later release that holds
+it>`. The resume marker keeps the refused release in that run's window, so that run applies the
+codemod. Do not delete the marker to get past this refusal.
 
 ## 4. Review the diff
 
@@ -115,6 +140,18 @@ is the review surface, and it is the only one.
 Then run the app's own checks once more if anything above was fixed by hand:
 `npm run typecheck && npm run build`.
 
+Then act on the template drift report. A core that carries it prints it again after the install;
+if this run printed no "Template drift" heading, run `npx oe upgrade --to <target> --plan` now to get it. For
+each SYNC line, read the diff against the installed template, for example
+`diff node_modules/@open-everywhere/create/template/agent/lib/register-adapters.ts agent/lib/register-adapters.ts`.
+Keep any edit the user made on purpose, and copy the template's file otherwise. A file under the
+template's `claude/` directory lands in the app's `.claude/`, and the template's `gitignore` is the
+app's `.gitignore`. Name every synced file in the pull request.
+
+Run `npx oe build --check`. It also proves the machine-owned `*.generated.ts` overlays hold only
+data. If it says an overlay has older header text, that is not a failure: run
+`npx oe overlays normalize` and commit the header change with the upgrade.
+
 ## 5. Open a pull request
 
 Commit on a branch, never on the default branch. The body carries:
@@ -124,6 +161,7 @@ Commit on a branch, never on the default branch. The body carries:
 - what changed in `roster.lock.json`, in your own words;
 - **the env names the deployment needs before this merges**, names only;
 - the manual steps, and who does each one.
+- the template files you synced, and each SYNC line you left as it is, with the reason.
 
 Then stop. The admin reviews the lock diff and merges. The merge deploys.
 

@@ -143,6 +143,7 @@ export type { PgClient } from "./memory/postgres.js";
 export { registerOperationalPostgres, getOperationalStore, registerOperationalStore, resetOperationalStore } from "./operational/provider.js";
 export { resolveOperationalSelection } from "./operational/provider.js";
 export type { OperationalFloor } from "./operational/provider.js";
+export { stampSurfaceEventVerified, surfaceEventVerifiedAt, _resetSurfaceEventStampMemoForTest } from "./operational/surface-evidence.js";
 export type {
   ProactiveAddress,
   OperationalStore,

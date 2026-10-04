@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -42,18 +43,26 @@ function collectFiles(probe: TierFileProbe, root: string, rel: string, suffix: s
   return true;
 }
 
-export function countTierFiles(
+export function listTierFiles(
   root: string = process.cwd(),
   globs: readonly string[] = INTEGRATION_INCLUDE_GLOBS,
   probe: TierFileProbe = HOST_TIER_FILE_PROBE,
-): number | undefined {
+): string[] | undefined {
   const seen = new Set<string>();
   for (const glob of globs) {
     const match = TIER_GLOB_RE.exec(glob);
     if (match === null) return undefined;
     if (!collectFiles(probe, root, match[1]!, match[2]!, seen)) return undefined;
   }
-  return seen.size;
+  return [...seen].map((file) => file.split("\\").join("/")).sort();
+}
+
+export function countTierFiles(
+  root: string = process.cwd(),
+  globs: readonly string[] = INTEGRATION_INCLUDE_GLOBS,
+  probe: TierFileProbe = HOST_TIER_FILE_PROBE,
+): number | undefined {
+  return listTierFiles(root, globs, probe)?.length;
 }
 
 export function sandboxShardCount(files: number | undefined): number {
@@ -69,6 +78,35 @@ export function itShardsOverride(env: NodeJS.ProcessEnv = process.env): number |
   const n = Number(raw);
   if (!Number.isInteger(n) || n < 1) return undefined;
   return n;
+}
+
+export const SINGLE_SHARD_ENV = "OE_IT_SHARD";
+
+export interface ShardSelector {
+  readonly index: number;
+  readonly total: number;
+}
+
+export type ShardSelectorRead =
+  | { readonly kind: "none" }
+  | { readonly kind: "shard"; readonly selector: ShardSelector }
+  | { readonly kind: "invalid"; readonly reason: string };
+
+export function itShardSelector(env: NodeJS.ProcessEnv = process.env): ShardSelectorRead {
+  const raw = env[SINGLE_SHARD_ENV];
+  if (raw === undefined || raw.trim() === "") return { kind: "none" };
+  const match = /^(\d+)\/(\d+)$/u.exec(raw.trim());
+  if (match === null) return { kind: "invalid", reason: `${SINGLE_SHARD_ENV}=${raw} is not of the form k/N` };
+  const index = Number(match[1]);
+  const total = Number(match[2]);
+  if (total < 1 || index < 1 || index > total) {
+    return { kind: "invalid", reason: `${SINGLE_SHARD_ENV}=${raw} needs 1 <= k <= N` };
+  }
+  const override = itShardsOverride(env);
+  if (override !== undefined && override !== total) {
+    return { kind: "invalid", reason: `${SINGLE_SHARD_ENV}=${raw} names N=${total}, but OE_IT_SHARDS=${override} names another split` };
+  }
+  return { kind: "shard", selector: { index, total } };
 }
 
 export function itShardCount(
@@ -93,6 +131,7 @@ export interface ShardRun {
 
 export interface ShardPlan {
   readonly wholeTier: boolean;
+  readonly proofSuite: string;
   readonly reason?: string;
   readonly runs: readonly ShardRun[];
 }
@@ -101,9 +140,14 @@ export function isVitestCommand(cmd: string): boolean {
   return /(^|[\\/])vitest(\.cmd|\.js)?$/u.test(cmd);
 }
 
-export function planShards(cmd: string, args: readonly string[], shards: number): ShardPlan {
+export function planShards(cmd: string, args: readonly string[], shards: number, only?: ShardSelector): ShardPlan {
   const single: ShardRun[] = [{ args: [...args], suite: INTEGRATION_SUITE_NAME }];
-  const unsharded = (reason: string): ShardPlan => ({ wholeTier: false, reason, runs: [{ args: [...args], suite: INTEGRATION_SUITE_NAME }] });
+  const unsharded = (reason: string): ShardPlan => ({
+    wholeTier: false,
+    proofSuite: INTEGRATION_SUITE_NAME,
+    reason,
+    runs: [{ args: [...args], suite: INTEGRATION_SUITE_NAME }],
+  });
 
   if (!isVitestCommand(cmd)) return unsharded(`the wrapped command is \`${cmd}\`, not vitest`);
   if (args[0] !== "run") return unsharded("the wrapped vitest call is not `vitest run`");
@@ -112,19 +156,41 @@ export function planShards(cmd: string, args: readonly string[], shards: number)
   if (rest.some((a) => FILTER_FLAG_RE.test(a))) return unsharded("the call carries a filter flag, so it is a targeted leg and not the tier");
   if (rest.some((a) => !a.startsWith("-"))) return unsharded("the call carries a file filter, so it is a targeted leg and not the tier");
 
-  if (shards <= 1) return { wholeTier: true, runs: single };
-  const runs: ShardRun[] = [];
-  for (let k = 1; k <= shards; k++) {
-    runs.push({ args: [...args, `--shard=${k}/${shards}`], suite: `${INTEGRATION_SUITE_NAME}--shard=${k}/${shards}` });
+  if (only !== undefined) {
+    const run = shardRun(args, only.index, only.total);
+    return { wholeTier: true, proofSuite: run.suite, runs: [run] };
   }
-  return { wholeTier: true, runs };
+  if (shards <= 1) return { wholeTier: true, proofSuite: INTEGRATION_SUITE_NAME, runs: single };
+  const runs: ShardRun[] = [];
+  for (let k = 1; k <= shards; k++) runs.push(shardRun(args, k, shards));
+  return { wholeTier: true, proofSuite: INTEGRATION_SUITE_NAME, runs };
+}
+
+function shardRun(args: readonly string[], index: number, total: number): ShardRun {
+  return { args: [...args, `--shard=${index}/${total}`], suite: `${INTEGRATION_SUITE_NAME}--shard=${index}/${total}` };
+}
+
+export function shardFiles(files: readonly string[], index: number, total: number): string[] {
+  const base = Math.floor(files.length / total);
+  const remainder = files.length % total;
+  const start = index <= remainder ? (base + 1) * (index - 1) : remainder * (base + 1) + (index - remainder - 1) * base;
+  const size = index <= remainder ? base + 1 : base;
+  return files
+    .map((file) => ({ file, hash: createHash("sha1").update(`/${file}`).digest("hex") }))
+    .sort((a, b) => (a.hash < b.hash ? -1 : a.hash > b.hash ? 1 : 0))
+    .slice(start, start + size)
+    .map(({ file }) => file);
+}
+
+export function tierFilesDigest(files: readonly string[]): string {
+  return createHash("sha1").update(files.join("\n")).digest("hex").slice(0, 12);
 }
 
 export function worstExit(codes: readonly number[]): number {
   return codes.reduce((worst, code) => (code > worst ? code : worst), 0);
 }
 
-export function tierProofLine(sha: string, exit: number): string {
-  return `OE_PROOF sha=${sha} suite=${INTEGRATION_SUITE_NAME} exit=${exit}`;
+export function tierProofLine(sha: string, exit: number, suite: string = INTEGRATION_SUITE_NAME): string {
+  return `OE_PROOF sha=${sha} suite=${suite} exit=${exit}`;
 }
 

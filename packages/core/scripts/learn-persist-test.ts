@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MemoryFiles } from "../agent/memory/store.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -104,5 +105,5 @@ async function sessionEnd(sandboxSnapshot: MemoryFiles, bullet: string, sid: str
   ok(merged.conflicts.length === 0, "host-owned RECURRING.md is never reported as a conflict");
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`\n✓ learn-persist: ${n} assertions passed (RECURRING.md enrichment survives the same-session persist across repeated session ends; cross-session conflict detection on normal files unchanged)\n`);

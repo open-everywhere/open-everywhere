@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ConfigPrFeedback, ConfigPrProvider } from "../agent/credentials/config-pr.js";
 import type { Proposal } from "../agent/memory/dream/proposal.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -386,5 +387,5 @@ async function crossing(occurrences: number): Promise<Proposal | null> {
   ok(provider.opened.length === 0, "no config repo: the provider is never asked to open anything");
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`✓ skill-proposal-pr: ${passed} assertions passed`);

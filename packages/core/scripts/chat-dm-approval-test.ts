@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { removeTempDir } from "./_temp-dir.js";
 
 const dir = join(tmpdir(), `open-everywhere-chat-dm-approval-${process.pid}`);
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 
 const { readAudit } = await import("../agent/audit/audit.js");
@@ -149,5 +149,5 @@ function args(over: Partial<ChatDmArgs> = {}): ChatDmArgs {
   ok(sent[sent.length - 1]!.text.endsWith(FOOTER), "the flowing arm appends the same host footer");
 }
 
-rmSync(dir, { recursive: true, force: true });
+await removeTempDir(dir);
 console.log(`✓ chat-dm-approval: ${n} assertions`);

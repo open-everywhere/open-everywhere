@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _resetDeploymentIdentityForTest, _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-audit-"));
 const dbFile = join(tmp, "ops.sqlite3");
@@ -210,5 +211,5 @@ ok(!("deleteAudit" in await import("../agent/audit/audit.js")), "no delete API e
   ok(findChainBreak(afterDel, { expectGenesis: true })?.action === "d.three", "chain: a deleted middle row is detected at the next surviving row");
 }
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 console.log(`✓ audit: ${passed} assertions passed`);

@@ -13,11 +13,13 @@ import {
   SUITE_FILE_WITHOUT_SCRIPT,
   suiteFilesOnDisk,
   suiteFilesWithARunner,
-  chainLegNames,
+  CHAIN_LIST_FILE,
   chainLegs,
+  chainRunnerCommand,
   legLabel,
   legsForShard,
   needsSubprocess,
+  readChainList,
   rootLegs,
   rootChainScriptNames,
   workspacePackages,
@@ -53,14 +55,14 @@ describe("batched chain parity", () => {
 
   test("every `test:*` script a package defines is on that package's chain", () => {
     for (const pkg of workspacePackages()) {
-      const chain = pkg.scripts["test:chain"];
-      if (!chain) continue;
+      const names = readChainList(pkg.dir);
+      if (!names) continue;
       const defined = Object.keys(pkg.scripts)
         .filter((k) => k.startsWith("test:") && k !== "test:chain")
         .filter((k) => !OFF_CHAIN_BY_DESIGN.has(`${pkg.name} ${k}`))
         .sort();
-      const onChain = [...chainLegNames(chain)].sort();
-      expect(onChain, `${pkg.name}: test:chain and the defined test:* scripts disagree`).toEqual(defined);
+      const onChain = [...names].sort();
+      expect(onChain, `${pkg.name}: ${CHAIN_LIST_FILE} and the defined test:* scripts disagree`).toEqual(defined);
     }
   });
 
@@ -87,10 +89,9 @@ describe("batched chain parity", () => {
 
   test("no package chains a leg twice", () => {
     for (const pkg of workspacePackages()) {
-      const chain = pkg.scripts["test:chain"];
-      if (!chain) continue;
-      const names = chainLegNames(chain);
-      expect(new Set(names).size, `${pkg.name}: test:chain names a leg more than once`).toBe(names.length);
+      const names = readChainList(pkg.dir);
+      if (!names) continue;
+      expect(new Set(names).size, `${pkg.name}: ${CHAIN_LIST_FILE} names a leg more than once`).toBe(names.length);
     }
   });
 
@@ -131,10 +132,47 @@ describe("batched chain parity", () => {
       const hasSuites = Object.keys(pkg.scripts).some((k) => k.startsWith("test:") && k !== "test:chain");
       if (!hasSuites) continue;
       expect(
-        pkg.scripts["test:chain"] !== undefined || WITHOUT_CHAIN.has(pkg.name),
-        `${pkg.name} defines test:* scripts but no test:chain — nothing runs them`,
+        readChainList(pkg.dir) !== undefined || WITHOUT_CHAIN.has(pkg.name),
+        `${pkg.name} defines test:* scripts but no ${CHAIN_LIST_FILE} — nothing runs them`,
       ).toBe(true);
     }
+  });
+});
+
+describe("chain list and package.json agree", () => {
+  const everyPackage = (): { name: string; dir: string; scripts: Record<string, string> }[] => [
+    { name: ROOT_PKG_LABEL, dir: REPO_ROOT, scripts: rootScripts() },
+    ...workspacePackages(),
+  ];
+
+  test("a package has a chain list exactly when its `test:chain` is the fixed runner command", () => {
+    let lists = 0;
+    for (const pkg of everyPackage()) {
+      const names = readChainList(pkg.dir);
+      const chain = pkg.scripts["test:chain"];
+      if (names === undefined) {
+        expect(chain, `${pkg.name} defines test:chain but has no ${CHAIN_LIST_FILE}`).toBeUndefined();
+        continue;
+      }
+      lists++;
+      expect(chain, `${pkg.name}: test:chain must only run the chain runner over ${CHAIN_LIST_FILE}`).toBe(
+        chainRunnerCommand(pkg.dir),
+      );
+    }
+    expect(lists).toBeGreaterThanOrEqual(9);
+  });
+
+  test("no `test:chain` script names a leg — the old one-line `&&` shape is gone", () => {
+    for (const pkg of everyPackage()) {
+      expect(pkg.scripts["test:chain"] ?? "", `${pkg.name}: test:chain names a leg; move it to ${CHAIN_LIST_FILE}`).not.toMatch(
+        /npm\s+run/,
+      );
+    }
+  });
+
+  test("`.gitattributes` merges every chain list by union", () => {
+    const attributes = readFileSync(join(REPO_ROOT, ".gitattributes"), "utf8");
+    expect(attributes.split(/\r?\n/).map((l) => l.trim())).toContain(`${CHAIN_LIST_FILE} merge=union`);
   });
 });
 
@@ -268,5 +306,20 @@ describe("root chain parity", () => {
         "subprocess leg. Without that third argument to `test()`, vitest applies the batched " +
         "testTimeout and the constant above is decoration.",
     ).toContain("inSubprocess ? SUBPROCESS_LEG_TIMEOUT_MS : undefined");
+  });
+
+  test("the settings boot-order gate runs on the chain through its suite's full-gate run", () => {
+    const reached = rootChainScriptNames();
+    expect(reached.has("test:settings-boot-order-lint"), "the boot-order suite is on the root chain").toBe(true);
+    expect(
+      reached.has("lint:settings-boot-order"),
+      "lint:settings-boot-order is back on the root chain — it repeats the suite's full-gate run, so take it off again",
+    ).toBe(false);
+    const suite = readFileSync(join(REPO_ROOT, "scripts", "settings-boot-order-lint-test.ts"), "utf8");
+    expect(
+      suite,
+      "scripts/settings-boot-order-lint-test.ts no longer runs the full gate with `lint(\"--list\")` — that run IS " +
+        "the chain's only run of lint:settings-boot-order, so put lint:settings-boot-order back on the root chain",
+    ).toContain('const fullGate = lint("--list");');
   });
 });

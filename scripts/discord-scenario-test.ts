@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -32,6 +32,7 @@ import type { BindableContext } from "@open-everywhere/core/agent/identity/bindi
 import type { Partition } from "@open-everywhere/core/agent/memory/partition.js";
 import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 import { _resetDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
+import { removeTempDir } from "../packages/core/scripts/_temp-dir.js";
 
 registerConfig({
   loadBundles: () => [],
@@ -350,5 +351,5 @@ for (const [label, part] of [
 if (auditFailures > 0) console.error(`\n✗ durable-write assertions: ${auditFailures} assertion(s) failed\n`);
 else console.log(`✓ durable-write assertions: ${auditAssertions} passed (spend.gate door/bypass/negative control · engagement promotes on DELIVERY, not on a dropped turn)`);
 
-rmSync(tmp, { recursive: true, force: true });
+await removeTempDir(tmp);
 runner.finish("scenarios (discord-gateway sequencing)", auditFailures);

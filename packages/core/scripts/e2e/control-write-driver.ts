@@ -1,3 +1,4 @@
+import { devNull } from "node:os";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -90,7 +91,7 @@ export class ControlWriteDriver {
     if (!config.org.trim() || !surfaceKey.trim()) throw new Error("control writer needs a non-blank org and exact surfaceKey");
     const transport = new StdioClientTransport({
       command: process.execPath,
-      args: ["--import", "tsx", CONTROL_ENTRY, "--root-env", "/dev/null", "--org", config.org],
+      args: ["--import", "tsx", CONTROL_ENTRY, "--root-env", devNull, "--org", config.org],
       cwd: CORE_DIR,
       env: { ...config.storeEnv, NODE_NO_WARNINGS: "1" },
       stderr: "pipe",

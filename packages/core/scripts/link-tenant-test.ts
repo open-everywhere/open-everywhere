@@ -3,7 +3,7 @@ process.env.OE_OPERATIONAL_PROVIDER = "postgres";
 
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
@@ -17,6 +17,7 @@ import { LINK_TENANT_NONE, linkTenantOf, linkTenantUnresolvableMessage, tryLinkT
 import { backfillLinkTenants, bootBackfillLinkTenants, linkTenantBackfillWarning } from "../agent/identity/link-tenant-backfill.js";
 import { claimLinkChallenge, issueLinkChallenge, ratifyLinkChallenge, resolveLinkSet } from "../agent/identity/link-store.js";
 import type { LinkChallengeRow, LinkedIdRow, OperationalStore } from "../agent/operational/store.js";
+import { removeTempDir } from "./_temp-dir.js";
 
 async function issueCode(input: Parameters<typeof issueLinkChallenge>[0]): Promise<{ challenge: LinkChallengeRow; code: string }> {
   const issued = await issueLinkChallenge(input);
@@ -264,5 +265,5 @@ const OLD_SQLITE_DDL = OLD_PG_DDL.replace(/text/g, "TEXT");
   ok((await claimLinkChallenge({ org: ORG, code: own.code, claimant: { platform: "slack", tenant: WS_A, nativeId: "U_SELF" } })) === null, "property 7: a TRUE self-claim (same workspace, same id) is still refused — the fence narrowed, it did not open");
 }
 
-rmSync(TMP, { recursive: true, force: true });
+await removeTempDir(TMP);
 console.log(`✓ link-tenant: ${n} assertions (vocabulary, the widened PK on both engines, the in-place migration from the pre-phase-2 shape, the backfill + its fail-loud/fail-closed edge, the tenant-qualified challenge flow)`);

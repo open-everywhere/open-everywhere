@@ -15,6 +15,7 @@ import {
   rowsSinceCursor,
   seatReply,
   waitFor,
+  waitForTurnCancelDelivered,
   type ScriptedHandle,
 } from "../harness";
 
@@ -95,6 +96,7 @@ test("a human stops an in-flight turn, and the turn's own process cleans up and 
   expect(requested[0]!.detail?.outcome).toBe("requested");
   expect(requested[0]!.detail?.turnId).toBe(cancelledTurnId);
 
+  await waitForTurnCancelDelivered(anchor.sessionId);
   handle.releaseHolds();
 
   const cancelled = await waitFor(async () => {
