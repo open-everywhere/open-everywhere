@@ -108,6 +108,20 @@ for (const rel of templateFiles) {
   ok(!hasPlaceholder || allowed, `template ${rel}: a placeholder appears only in package.json and roster.lock.json`);
   ok(!text.includes("\r\n"), `template ${rel}: LF line endings`);
 }
+for (const ext of [".ts", ".mts", ".js", ".mjs"]) {
+  const removed = `agent/instrumentation${ext}`;
+  ok(!templateFiles.includes(removed), `template ${removed}: absent — eve 0.69.0 and later refuse it in \`eve build\``);
+}
+for (const rel of ["agent/instrumentation/otel.ts", "agent/instrumentation/otlp.ts"]) {
+  ok(templateFiles.includes(rel), `template ${rel}: present — a provider slot of eve's instrumentation directory`);
+  if (templateFiles.includes(rel)) {
+    eq(
+      readFileSync(join(TEMPLATE, ...rel.split("/")), "utf8"),
+      readFileSync(join(PACKAGES, "..", ...rel.split("/")), "utf8"),
+      `template ${rel}: byte-identical to the reference app's`,
+    );
+  }
+}
 const REFERENCE_APP = join(PACKAGES, "..");
 for (const rel of templateFiles.filter((f) => f.endsWith(".generated.ts") && !f.startsWith("agent/plugins/"))) {
   eq(
@@ -147,6 +161,30 @@ const INSTRUCTIONS_ALLOWANCE: readonly { readonly reference: string; readonly te
 }
 
 {
+  type RulesModule = { PRE_APPROVAL_RULES: readonly { id: string; rule: string }[] };
+  const rulesRel = "agent/access/pre-approval-rules.ts";
+  ok(templateFiles.includes(rulesRel), `template ${rulesRel}: present — the starter pre-approval rules`);
+  const load = async (base: string): Promise<RulesModule> => (await import(pathToFileURL(join(base, ...rulesRel.split("/"))).href)) as RulesModule;
+  const rules = (await load(TEMPLATE)).PRE_APPROVAL_RULES;
+  ok(rules.length >= 4, `template ${rulesRel}: ships at least four starter rules`);
+  const ids = rules.map((r) => r.id);
+  eq(new Set(ids).size, ids.length, `template ${rulesRel}: every starter rule id is unique`);
+  for (const want of ["pr-asked-for-here", "routine-reports-here", "access-request-asked-for", "connector-write-asked-for-here"]) {
+    ok(ids.includes(want), `template ${rulesRel}: ships the "${want}" rule`);
+  }
+  ok(rules.every((r) => r.rule.trim().length > 0), `template ${rulesRel}: every starter rule has prose`);
+  eq(rules, (await load(REFERENCE_APP)).PRE_APPROVAL_RULES, `template ${rulesRel}: the starter rules equal the reference app's`);
+
+  const bundlesRel = "agent/access/bundles.ts";
+  const bundlesSrc = readFileSync(join(TEMPLATE, ...bundlesRel.split("/")), "utf8");
+  ok(/^import \{ PRE_APPROVAL_RULES \} from "\.\/pre-approval-rules\.js";$/m.test(bundlesSrc), `template ${bundlesRel}: imports the starter rules`);
+  ok(/preApprovalRules: PRE_APPROVAL_RULES,/.test(bundlesSrc), `template ${bundlesRel}: a bundle carries them`);
+  ok(/^\s*defineBinding\(\{ bundle: "approval-policy", scope: \{ level: "org" \} \}\),$/m.test(bundlesSrc), `template ${bundlesRel}: the rules bundle is bound at org scope`);
+  const settingsSrc = readFileSync(join(TEMPLATE, "agent", "settings", "settings.ts"), "utf8");
+  ok(!/judgeMode\s*:/.test(settingsSrc.replace(/^\s*\/\/.*$/gm, "")), "template agent/settings/settings.ts: sets no judgeMode, so a fresh app runs the shipped enforce");
+}
+
+{
   const templateScripts = new Set(Object.keys((tpl as { scripts?: Record<string, string> }).scripts ?? {}));
   const aboutTheRepository = (line: string): boolean => /Open Everywhere repository|clone of the repository/.test(line);
   const exemptFile = (rel: string): boolean => rel.startsWith("claude/skills/");
@@ -183,26 +221,43 @@ ok(!templateFiles.some((f) => f === ".env" || f === ".env.local"), "template: ca
 {
   const rel = "agent/lib/register-adapters.ts";
   const wiring = readFileSync(join(TEMPLATE, ...rel.split("/")), "utf8");
-  for (const fn of ["resolveOperationalSelection", "resolveMemoryProviderId"]) {
-    ok(wiring.includes(fn), `template ${rel}: asks core's ${fn} instead of re-testing the env`);
-  }
   ok(
-    /operationalSelection\.floor === "pglite"/.test(wiring),
-    `template ${rel}: the PGlite floor is armed from the resolved floor, not from an absent selector`,
+    /^import \{ registerDefaultAdapters \} from "@open-everywhere\/adapters\/agent\/register-defaults\.js";$/m.test(wiring),
+    `template ${rel}: imports registerDefaultAdapters from the adapters package`,
   );
-  for (const selector of ["OE_MEMORY_PROVIDER", "OE_OPERATIONAL_PROVIDER"]) {
-    const compared = new RegExp(`process\\.env\\.${selector}\\s*===`).test(wiring);
-    ok(!compared, `template ${rel}: does NOT gate on process.env.${selector} === … (OPE-2230: DATABASE_URL selects both stores)`);
-    const negated = new RegExp(`!process\\.env\\.${selector}\\b`).test(wiring);
-    ok(!negated, `template ${rel}: does NOT arm the floor on an absent ${selector} either`);
+  ok(/^await registerDefaultAdapters\(\{$/m.test(wiring), `template ${rel}: awaits registerDefaultAdapters at module top level`);
+  const code = wiring
+    .split("\n")
+    .filter((l) => !l.trimStart().startsWith("//"))
+    .join("\n");
+  for (const owned of [
+    "resolveOperationalSelection",
+    "resolveMemoryProviderId",
+    "registerNeon",
+    "registerOperationalPgliteLazy",
+    "declareProviderSelection",
+    "OE_MEMORY_PROVIDER",
+    "OE_OPERATIONAL_PROVIDER",
+    "DATABASE_URL",
+    ".register()",
+  ]) {
+    ok(!code.includes(owned), `template ${rel}: carries no ${owned} — the product's registerDefaultAdapters owns it`);
   }
-  const appWiring = readFileSync(join(REFERENCE_APP, ...rel.split("/")), "utf8");
-  const decision = (text: string): string =>
-    text
-      .split("\n")
-      .filter((l) => /resolveOperationalSelection\(|resolveMemoryProviderId\(|postgresSelected|pgliteFloorArmed|registerNeon\(\)/.test(l) && !l.trimStart().startsWith("//"))
-      .join("\n");
-  eq(decision(wiring), decision(appWiring), `template ${rel}: its store-selection decision is byte-identical to the reference app's`);
+  eq(wiring, readFileSync(join(REFERENCE_APP, ...rel.split("/")), "utf8"), `template ${rel}: byte-identical to the reference app's`);
+
+  const productRel = "adapters/agent/register-defaults.ts";
+  const product = readFileSync(join(PACKAGES, ...productRel.split("/")), "utf8")
+    .split("\n")
+    .filter((l) => !/^\s*(\/\/|\*|\/\*\*)/.test(l))
+    .join("\n");
+  for (const fn of ["resolveOperationalSelection", "resolveMemoryProviderId"]) {
+    ok(product.includes(`${fn}(env)`), `${productRel}: asks core's ${fn} instead of re-testing the env`);
+  }
+  ok(/operational\.floor === "pglite"/.test(product), `${productRel}: the PGlite floor is armed from the resolved floor, not from an absent selector`);
+  for (const selector of ["OE_MEMORY_PROVIDER", "OE_OPERATIONAL_PROVIDER"]) {
+    ok(!new RegExp(`\\b${selector}\\b\\s*===`).test(product), `${productRel}: does NOT gate on ${selector} === … (OPE-2230: DATABASE_URL selects both stores)`);
+    ok(!new RegExp(`!\\s*(process\\.)?env\\.${selector}\\b`).test(product), `${productRel}: does NOT arm the floor on an absent ${selector} either`);
+  }
 }
 
 {

@@ -125,7 +125,7 @@ export const SCORED_TOOL_FIELDS: Readonly<Record<string, readonly string[]>> = {
   reply: ["text"],
   edit_reply: ["text"],
   no_reply: ["reason", "explanation"],
-  ask_question: ["prompt"],
+  ask_question: ["question"],
   agent: ["message"],
   spawn_thread_session: ["brief"],
   update_status: ["summary"],

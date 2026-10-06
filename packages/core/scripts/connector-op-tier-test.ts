@@ -22,6 +22,9 @@ import { pinSuiteStore } from "./_suite-store.js";
 pinSuiteStore("connector-op-tier");
 
 let passed = 0;
+function isDeniedStatus(d: unknown): boolean {
+  return typeof d === "object" && d !== null && (d as { type?: string }).type === "denied";
+}
 function ok(cond: boolean, label: string): void {
   if (!cond) {
     console.error(`✗ ${label}`);
@@ -71,7 +74,7 @@ registerSettings({ connectors: { opTiering: true } });
 {
   const on = connectorApprovalPolicy();
   ok((await on({ toolName: "notion__search", approvedTools: new Set<string>() } as never)) === "not-applicable", "flag ON → tiered: a READ is auto-allowed");
-  ok((await on({ toolName: "notion__create_page", approvedTools: new Set<string>() } as never)) === "user-approval", "flag ON → tiered: a WRITE prompts");
+  ok(isDeniedStatus(await on({ toolName: "notion__create_page", approvedTools: new Set<string>() } as never)), "flag ON → tiered: a WRITE is denied, never prompted (OE card plane)");
 }
 resetSettingsForTest();
 
@@ -84,8 +87,8 @@ resetSettingsForTest();
     "a policy BUILT before registerSettings() still honours the deployment's opTiering (OPE-1450)",
   );
   ok(
-    (await builtBeforeRegistration({ toolName: "notion__create_page", approvedTools: new Set<string>() } as never)) === "user-approval",
-    "negative control: the same deferred policy still PROMPTS on a write",
+    isDeniedStatus(await builtBeforeRegistration({ toolName: "notion__create_page", approvedTools: new Set<string>() } as never)),
+    "negative control: the same deferred policy still GATES a write (denied with no card plane — OPE-2340)",
   );
   resetSettingsForTest();
 }

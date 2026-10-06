@@ -31,7 +31,6 @@ const store = await import("../agent/routines/store.js");
 const routineMod = await import("../agent/routines/routine.js");
 const { describeTrigger, routinePermissionGeneration, routinePermissionKey, routineManualStamped, ROUTINE_MARKER } = routineMod;
 const { renderFireMessage } = await import("../agent/routines/fire-message.js");
-const { jobFireSeatKey } = await import("../agent/routines/fire-window.js");
 const { routineFireAttributes } = await import("../agent/routines/fire-auth.js");
 const { ROUTINE_AUDIT } = await import("../agent/routines/fire-audit.js");
 const { readAudit } = await import("../agent/audit/audit.js");
@@ -328,11 +327,6 @@ const enableTool = (await import("../agent/tools/enable_routine.js")).default;
   ok(g2.includes("r-edit") && /:g2$/.test(g2), "invalidate: the key names the routine AND its generation (the shape a session grant already uses for window rotation)");
   ok(routinePermissionKey({ id: "r-edit" }) === g1, "invalidate: an absent generation reads as 1 — every pre-OPE-147 row keeps the key it already had, no migration");
   ok(routinePermissionKey({ id: "r-x", promptGeneration: 0 }) === routinePermissionKey({ id: "r-x", promptGeneration: 1 }), "invalidate: a zero/garbage generation floors to 1 rather than minting a key that collides with another generation's");
-
-  ok(jobFireSeatKey("r-edit", 1) !== jobFireSeatKey("r-edit", 2), "invalidate: an edited JOB rotates onto a FRESH eve seat — a long-lived seat answers from its own backscroll, so keeping it would keep the pre-edit behaviour");
-  ok(jobFireSeatKey("r-edit", 1) === jobFireSeatKey("r-edit"), "invalidate: generation 1 is the default seat — every job created before OPE-147 keeps the seat it already has");
-  ok(jobFireSeatKey("r-edit", 2) === jobFireSeatKey("r-edit", 2), "invalidate: the rotated seat is STABLE across fires within a generation (the OPE-55 durable-job join survives)");
-  ok(!jobFireSeatKey("a:b", 3).includes(":"), "invalidate: the seat key stays colon-free at any generation (a windowId is `[^:]+`)");
 
   const enableKind = actionKind("routine.enable")!;
   await store.addRoutine(partition, routine({ id: "r-gen", promptGeneration: 4, status: "disabled", disabledReason: "auto-disabled after 3 consecutive failures", consecutiveFailures: 3 }));

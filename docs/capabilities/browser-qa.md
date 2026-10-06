@@ -187,8 +187,11 @@ The browser stack (agent-browser CLI + Chromium + system libraries) is installed
 sandbox-template bootstrap** — sessions start warm. Nothing downloads inside a live session:
 the runtime firewall wouldn't allow it, and the vendor's install-on-first-use path is bound
 off (`autoInstall: false`), so a missing bake fails loud instead of pulling hundreds of MB
-mid-turn. A version bump changes the template revalidation key and rebuilds the template on
-the next deploy.
+mid-turn. Since eve 0.69.0 the template key is a hash of the sandbox environment's options, and
+the hash reads a function by its source text. So arming or disarming the bake, or an edit to its
+`prepare` body, rebuilds the template on the next deploy. A bump of the agent-browser version alone
+does NOT: the pin sits inside the vendor installer, where the hash cannot see it, so the warm
+template stays on the old version until something the hash reads changes.
 
 ### Posture
 

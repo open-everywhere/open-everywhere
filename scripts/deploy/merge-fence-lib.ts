@@ -7,12 +7,11 @@ import {
   fetchGithubApi,
   type GithubApiFetchLike,
   realGithubApiFetch,
-  resolveGithubOwnerRepoFromEnv,
   resolveGithubOwnerRepoFromGit,
   resolveGithubRestToken,
 } from "./ci-gate-lib.js";
 import { runDcoRung } from "./dco-lib.js";
-import { type Env, type Exec, realExec, resolveGithubApiBase } from "./lib.js";
+import { type Env, type Exec, realExec, resolveGithubApiBase, resolveGithubOwnerRepoFromEnv } from "./lib.js";
 
 const OVERRIDE_REMEDY = "protected path — requires orchestrator review-and-override";
 

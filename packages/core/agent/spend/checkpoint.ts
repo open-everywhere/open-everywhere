@@ -15,7 +15,7 @@ import { approvalPostDeps, hasApprovalCardPath } from "../tools/set_spend_limit.
 import { routineMarker } from "../routines/routine.js";
 import { recordCheckpointStall } from "../routines/outcome-fold.js";
 import "../approvals/session-checkpoint.js";
-import { CHECKPOINT_KIND, CHECKPOINT_GRANT_MEMO, CHECKPOINT_ASK_MEMO, DURABLE_GRANT_DISCLOSURE, checkpointTtlHours } from "../approvals/session-checkpoint.js";
+import { CHECKPOINT_KIND, CHECKPOINT_GRANT_MEMO, CHECKPOINT_ASK_MEMO, DURABLE_GRANT_DISCLOSURE, checkpointTtlHours, liveGrantDisclosure } from "../approvals/session-checkpoint.js";
 import { ROUTINE_PERMISSION_NO_EXPIRY } from "../routines/declared-permissions.js";
 
 export interface Checkpoint {
@@ -240,7 +240,7 @@ export function checkpointCardLines(plan: Extract<CheckpointPlan, { decision: "b
   if (cp.sessionUsd != null) limits.push(`$${cp.sessionUsd.toFixed(2)}`);
   if (limits.length) lines.push(rebased ? `The checkpoint is another ${limits.join(" or ")}.` : `The checkpoint is ${limits.join(" or ")}.`);
   lines.push("Approve to let the agent do consequential work again — pull requests, memory writes and the like. Decline to keep that paused. Reading and replying carry on either way.");
-  if (plan.durable) lines.push(DURABLE_GRANT_DISCLOSURE);
+  lines.push(plan.durable ? DURABLE_GRANT_DISCLOSURE : liveGrantDisclosure());
   return lines;
 }
 

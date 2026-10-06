@@ -1,19 +1,21 @@
 import { expect, test } from "vitest";
+
+import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
+
 import {
   afterThisTest,
+  armSettlement,
   auditCursor,
+  awaitWorkResult,
   bootAgent,
   DISCORD_LISTED_CHANNEL_ID,
-  discordAmbientWake,
   discordMentionWake,
   disposeLater,
   registerScript,
-  rowsSinceCursor,
-  taskIdOfDelegation,
   waitFor,
+  workTaskIdOfCall,
   wrapToolExecute,
 } from "../harness";
-
 const READER = "read_notion_page";
 const FIXED_MESSAGE_TEXT = "nothing new in the doc";
 const NUDGE_MARKER = "LOOP BREAKER";
@@ -22,9 +24,8 @@ function readChannelCall(id: string): { tool: string; input: unknown; id: string
   return { tool: READER, input: { page: "11111111-2222-3333-4444-555555555555" }, id };
 }
 
-test("a worker's identical read repeats trip the loop breaker within a turn, and a RESUMED turn starts fresh", async () => {
+test("a worker's identical read repeats trip the loop breaker within a turn, and the worker's NEXT turn starts fresh", async () => {
   await bootAgent();
-  const cursor = await auditCursor();
 
   afterThisTest(
     wrapToolExecute(READER, async () => ({
@@ -35,78 +36,87 @@ test("a worker's identical read repeats trip the loop breaker within a turn, and
     })),
   );
 
-  const asking = disposeLater(
+  const cursor = await auditCursor();
+  const opening = disposeLater(
     registerScript({
-      parent: [{ calls: [{ tool: "agent", input: { message: "read the doc a few times and ask if unsure" }, id: "lb-delegate" }] }, { say: "handing this off" }],
+      parent: [
+        { calls: [{ tool: "work", input: { message: "read the doc a few times" }, id: "lb-delegate" }] },
+        { say: "handing this off" },
+      ],
       child: [
-        { calls: [readChannelCall("lb-read-1")] },
+        { delayMs: 120_000, calls: [readChannelCall("lb-read-1")] },
         { calls: [readChannelCall("lb-read-2")] },
         { calls: [readChannelCall("lb-read-3")] },
-        {
-          calls: [
-            {
-              tool: "ask_question",
-              input: { prompt: "the channel looks quiet three times running — should I stop checking?", options: [{ id: "stop", label: "Stop checking" }, { id: "keep", label: "Keep checking" }] },
-              id: "lb-ask",
-            },
-          ],
-        },
+        { say: "read it three times, still quiet" },
       ],
     }),
   );
 
-  await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> keep reading the channel until something changes" });
+  await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> keep reading the doc until something changes" });
 
   await waitFor(
-    () => asking.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "agent")),
-    "the parent's resumed step carrying the delegation receipt",
+    () => opening.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "work")),
+    "the parent's resumed step carrying the forward receipt",
   );
-  const taskId = taskIdOfDelegation(asking, "the loop-breaker probe delegation");
+  const firstResult = disposeLater(armSettlement(opening, { parent: [{ say: NO_REPLY_SENTINEL }] }));
+  const taskId = await workTaskIdOfCall(cursor, opening, "lb-delegate", "the loop-breaker probe forward");
+  opening.releaseHolds();
 
-  const childRoster = await waitFor(() => asking.requests.find((r) => r.role === "child" && r.stepIndex === 0), "the worker's own first model call");
+  const childRoster = await waitFor(() => opening.requests.find((r) => r.role === "child" && r.stepIndex === 0), "the worker's own first model call");
   expect(childRoster.tools).toContain(READER);
-  expect(childRoster.tools).toContain("ask_question");
+  const worker = String(childRoster.sessionId);
 
   const stepAfterThird = await waitFor(
-    () => asking.requests.find((r) => r.role === "child" && r.stepIndex === 3),
+    () => opening.requests.find((r) => r.role === "child" && r.stepIndex === 3),
     "the worker's fourth call (step 3) — its prompt carries the third read's result",
   );
-  expect(asking.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   const thirdReadCarriers = stepAfterThird.messages.filter((m) => m.text.includes(FIXED_MESSAGE_TEXT));
   expect(thirdReadCarriers.length, "no prompt message carried the third read's body").toBeGreaterThan(0);
   const thirdReadCarrier = thirdReadCarriers[thirdReadCarriers.length - 1]!;
   expect(thirdReadCarrier.text).toContain(NUDGE_MARKER);
 
-  const bridged = await waitFor(async () => {
-    const rows = await rowsSinceCursor(cursor, ["turn.question_bridged"]);
-    return rows.length > 0 ? rows : undefined;
-  }, "the question bridge's turn.question_bridged row — the worker parked on ask_question");
-  expect(String(bridged[0]!.detail?.requestId ?? "").startsWith(`${taskId}:`)).toBe(true);
+  const resultStep = await awaitWorkResult({ handle: firstResult, taskId, label: "the seat's step that read the worker's turn-1 result" });
+  expect(resultStep.fault).toBeUndefined();
+  expect(resultStep.stepIndex).toBe(0);
+  expect(opening.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  expect(firstResult.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  firstResult.dispose();
+  opening.dispose();
 
-  asking.dispose();
-  const answering = disposeLater(
+  const continuing = disposeLater(
     registerScript({
-      parent: [{ say: "acknowledged" }],
-      child: [{ calls: [readChannelCall("lb-read-4")] }, { say: "checked once more, still quiet" }],
+      parent: [
+        { calls: [{ tool: "work", input: { message: "check the doc once more", taskId }, id: "lb-continue" }] },
+        { say: "asked it to check again" },
+      ],
     }),
   );
+  const runTwo = disposeLater(
+    registerScript({ parent: [], child: [{ delayMs: 120_000, calls: [readChannelCall("lb-read-4")] }, { say: "checked once more, still quiet" }] }, worker),
+  );
 
-  await discordAmbientWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "stop checking" });
-
-  const routed = await waitFor(async () => {
-    const rows = await rowsSinceCursor(cursor, ["input_response.routed"]);
-    return rows.length > 0 ? rows : undefined;
-  }, "the input_response.routed row — the room's message delivered as the answer");
-  expect(routed[0]!.detail?.taskId).toBe(taskId);
+  await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> check the doc once more" });
+  await waitFor(() => continuing.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the continuing turn's receipt step");
+  const secondResultWake = disposeLater(armSettlement(continuing, { parent: [{ say: NO_REPLY_SENTINEL }] }));
+  runTwo.releaseHolds();
 
   const resumedNext = await waitFor(
-    () => answering.requests.find((r) => r.role === "child" && r.stepIndex === 1),
-    "the resumed worker's step after its fourth (post-reset) read",
+    () => runTwo.requests.find((r) => r.role === "child" && r.stepIndex === 1),
+    "the worker's turn-2 step after its fourth read",
   );
-  expect(answering.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  expect(resumedNext.sessionId).toBe(worker);
+  expect(resumedNext.turnId).not.toBe(stepAfterThird.turnId);
   const fourthReadCarriers = resumedNext.messages.filter((m) => m.text.includes(FIXED_MESSAGE_TEXT));
-  expect(fourthReadCarriers.length, "no prompt message carried the fourth (resumed-turn) read's body").toBeGreaterThan(0);
+  expect(fourthReadCarriers.length, "no prompt message carried the fourth (turn-2) read's body").toBeGreaterThan(0);
   const fourthReadCarrier = fourthReadCarriers[fourthReadCarriers.length - 1]!;
 
   expect(fourthReadCarrier.text).not.toContain(NUDGE_MARKER);
+
+  const secondResult = await awaitWorkResult({ handle: secondResultWake, taskId, label: "the seat's step that read the worker's turn-2 result" });
+  expect(secondResult.stepIndex).toBe(0);
+  expect(secondResult.messages.some((m) => m.text.includes("checked once more, still quiet"))).toBe(true);
+  expect(secondResult.fault).toBeUndefined();
+  expect(continuing.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  expect(secondResultWake.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  expect(runTwo.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 });

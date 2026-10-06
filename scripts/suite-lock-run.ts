@@ -12,6 +12,7 @@ import {
   itShardSelector,
   listTierFiles,
   planShards,
+  readTierTimings,
   shardFiles,
   tierFilesDigest,
   tierProofLine,
@@ -327,7 +328,7 @@ export async function runLocked(
       const share =
         files === undefined
           ? "🔴 the tier's file list could NOT be read here, so this run cannot log its share"
-          : `the tier holds ${files.length} file(s) (digest ${tierFilesDigest(files)}), and this shard runs ${shardFiles(files, only.index, only.total).length}`;
+          : `the tier holds ${files.length} file(s) (digest ${tierFilesDigest(files)}), and this shard runs ${shardFiles(files, only.index, only.total, readTierTimings()).length}`;
       console.error(
         `suite-lock-run: single-shard mode (${SINGLE_SHARD_ENV}=${only.index}/${only.total}) — running ONLY ${plan.proofSuite}; ${share}. ` +
           "Only a complete, all-green series of every shard on one sha proves the tier (collapseShardSeries).",

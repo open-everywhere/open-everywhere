@@ -1,5 +1,5 @@
 import { backoffDelayMs, sleep } from "./poll.js";
-import { seatFenceStep, tsAfter, type SeatFenceResult, type SeatFenceVerdict, type SeatFenceState, type SlackMessage } from "./slack-driver.js";
+import { seatFenceStep, seatMessageSettles, tsAfter, type SeatFenceResult, type SeatFenceVerdict, type SeatFenceState, type SlackMessage } from "./slack-driver.js";
 
 export const ADMIN_UNVERIFIED_MARKER = "needs to know who asked";
 
@@ -77,7 +77,7 @@ export async function awaitChannelSeatQuiet(
     const newest = newestSeatMessage(topLevel, threadMsgs);
     const step = seatFenceStep({
       prev: state,
-      newest: newest ? { ts: newest.ts, settles: probe.isBotReply(newest) && !(opts.isInterim?.(newest) ?? false) } : undefined,
+      newest: newest ? { ts: newest.ts, settles: seatMessageSettles(newest, (m) => probe.isBotReply(m), opts.isInterim) } : undefined,
       nowMs: now(),
       quietMs: opts.quietMs,
       owedGraceMs: opts.owedGraceMs,

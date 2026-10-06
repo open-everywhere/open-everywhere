@@ -7,6 +7,7 @@ import {
   type Bundle,
 } from "@open-everywhere/core/agent/access/bundle.js";
 import { loadGrantsOverlay } from "./grants.js";
+import { PRE_APPROVAL_RULES } from "./pre-approval-rules.js";
 import { loadAgentsOverlay } from "../memory/config/agents-overlay.js";
 import { loadGroups } from "../identity/groups.js";
 
@@ -16,10 +17,15 @@ const bundles: Bundle[] = [
     domains: ["raw.githubusercontent.com"],
     instructions: "Never act outside the access granted to this room.",
   }),
+  defineBundle({
+    name: "approval-policy",
+    preApprovalRules: PRE_APPROVAL_RULES,
+  }),
 ];
 
 const bindings: Binding[] = [
   defineBinding({ bundle: "org-default", scope: { level: "org" } }),
+  defineBinding({ bundle: "approval-policy", scope: { level: "org" } }),
 ];
 
 const overlay = loadGrantsOverlay();

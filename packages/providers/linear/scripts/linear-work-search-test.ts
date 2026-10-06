@@ -82,6 +82,8 @@ try {
     "insideDomain:true DROPS the issue on the other team",
   );
   ok(scoped[0]!.title === "Our own issue" && scoped[0]!.connector === "linear" && scoped[0]!.url === "https://linear.app/x/issue/OWN-1", "the surviving hit carries identifier, title, url and connector — never a description/body");
+  assert.deepEqual(scoped[0]!.readWith, { tool: "read_linear_issue", args: { issue: "OWN-1" } }, "🔴 a Linear hit names `read_linear_issue` with its identifier");
+  passed++;
 
   await assert.rejects(
     linearWorkSearchAdapter.search(ctxIn("CROOM"), defineDomain({ name: "lws-nogrant", reach: [`${PLATFORM}/W1/CBARE`] }), "bug", { limit: 10, insideDomain: false }),

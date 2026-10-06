@@ -87,3 +87,31 @@ export function getConfig(): AppConfig {
   }
   return registered;
 }
+
+export class ConfigLoadRefusalError extends Error {
+  readonly gate: string;
+  constructor(gate: string, cause: unknown) {
+    super(
+      `open-everywhere: ${gate} refused — the app config is registered but failed to load (${String(cause).slice(0, 200)}). ` +
+        "The gate fails closed rather than run on an empty config. Fix the config repo and retry.",
+    );
+    this.name = "ConfigLoadRefusalError";
+    this.gate = gate;
+  }
+}
+
+const configRefusalsLogged = new Set<string>();
+
+export function configOrRefuse<T>(gate: string, read: (config: AppConfig) => T): T | undefined {
+  if (!registered) return undefined;
+  try {
+    return read(registered);
+  } catch (err) {
+    const refusal = new ConfigLoadRefusalError(gate, err);
+    if (!configRefusalsLogged.has(gate)) {
+      configRefusalsLogged.add(gate);
+      console.error(`[open-everywhere:config] ${refusal.message}`);
+    }
+    throw refusal;
+  }
+}

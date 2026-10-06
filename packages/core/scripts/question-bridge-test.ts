@@ -15,9 +15,11 @@ import {
   forgetBridgedQuestion,
   readBridgedQuestion,
   rememberBridgedQuestion,
+  ordinaryWakeSendOptions,
+  bridgedQuestionMayBeOpen,
+  EVE_INPUT_TEXT_KEY,
   resolveInboundAnswerRouting,
   isAddressedMentionWake,
-  taskIdOfBridgedRequestId,
   approvalOptionIds,
   resolveApprovalOptionId,
   APPROVAL_ANSWER_HINT,
@@ -276,17 +278,12 @@ for (const [label, resolveOrigin] of [
     },
   };
 
-  ok(taskIdOfBridgedRequestId(TASK_REQUEST_ID) === "task_abc123", "6: a task-namespaced request id yields its owning task (eve's `<taskId>:<childRequestId>`)");
-  ok(taskIdOfBridgedRequestId(OWN_REQUEST_ID) === undefined, "6: the window's OWN question has no task — a bare call id yields undefined");
-  ok(taskIdOfBridgedRequestId("agent_x:call_1") === undefined, "6: a colon alone is not enough — the head must be `task_`-prefixed, so this stays a derivation and not a guess");
-  ok(taskIdOfBridgedRequestId(":call_1") === undefined, "6: a leading colon is not a task id");
-
   {
     const store = makeStore();
     ok(await rememberBridgedQuestion(store, "o1", TOKEN, { requestId: TASK_REQUEST_ID, wakeId: "w1" }), "6: a bridged question is remembered");
     const got = await readBridgedQuestion(store, "o1", TOKEN);
     ok(got?.requestId === TASK_REQUEST_ID, "6: …and reads back the PARENT-VISIBLE request id, which is the only value that can route");
-    ok(got?.wakeId === "w1" && got?.taskId === "task_abc123", "6: …with the wake it was raised on and the derived task, for the audit join");
+    ok(got?.wakeId === "w1", "6: …with the wake it was raised on, for the audit join");
     ok(JSON.stringify(store.rows.get(bridgedQuestionKey(TOKEN))).includes(TASK_REQUEST_ID), "6: the row is keyed by WINDOW TOKEN — that is what the next inbound message is matched on");
     ok(await readBridgedQuestion(store, "o1", "some-other-token") === undefined, "6: …and a DIFFERENT window has no outstanding question (one row per token, never global)");
     ok(await forgetBridgedQuestion(store, "o1", TOKEN), "6: forget removes the row");
@@ -315,13 +312,13 @@ for (const [label, resolveOrigin] of [
 
   const ROOM_A = "slack:C_ASKED";
   const ROOM_B = "slack:C_ELSEWHERE";
-  const outstanding = { requestId: TASK_REQUEST_ID, containerKey: ROOM_A, wakeId: "w1", taskId: "task_abc123", at: "2026-08-15T00:00:00.000Z" };
+  const outstanding = { requestId: TASK_REQUEST_ID, containerKey: ROOM_A, wakeId: "w1", at: "2026-08-15T00:00:00.000Z" };
   const allow = async (): Promise<{ ok: true; floor: string }> => ({ ok: true, floor: "member" });
   {
     const routed = await resolveInboundAnswerRouting({ internalDispatch: false, containerKey: ROOM_A }, { read: async () => outstanding, admit: allow });
     ok(routed.kind === "answer", "6: ⭐ an attended message IN THE ASKING ROOM with an outstanding question is an ANSWER");
     ok(routed.kind === "answer" && routed.requestId === TASK_REQUEST_ID, "6: …addressed to the exact request id eve's proxy map is keyed on");
-    ok(routed.kind === "answer" && routed.floor === "member" && routed.taskId === "task_abc123", "6: …carrying the resolved floor and the derived task for the routed audit row");
+    ok(routed.kind === "answer" && routed.floor === "member", "6: …carrying the resolved floor for the routed audit row");
   }
   {
     let admits = 0;
@@ -606,6 +603,68 @@ for (const [label, resolveOrigin] of [
     ok(/isWakeEnvelopeShaped\(input\.message\) \? triggerMessageBody\(input\.message\)/.test(unifiedSrc), "8e: 🔴 …and it matches the trigger BODY of the rendered wake, never the raw delivery");
     ok(/\.\.\.\(roomText !== undefined \? \{ text: roomText \} : \{\}\)/.test(unifiedSrc), "8e: …and that derived body is what reaches the routing decision, which is what selects the option");
   }
+}
+
+{
+  const { createRequire } = await import("node:module");
+  const { readFileSync } = await import("node:fs");
+  const { dirname, join } = await import("node:path");
+  const { pathToFileURL } = await import("node:url");
+  const eveRoot = dirname(createRequire(import.meta.url).resolve("eve/package.json"));
+  const eveFile = (rel: string): string => join(eveRoot, "dist", "src", rel);
+
+  ok(readFileSync(eveFile("internal/input-text.js"), "utf8").includes(`inputTextKey=\`${EVE_INPUT_TEXT_KEY}\``), "9a: 🔴 EVE_INPUT_TEXT_KEY is the installed eve's own typed-text key");
+  ok(
+    /async send\(e,t\)\{return await n\.deliver\(attachInputText\(\{[^}]*message:e[^}]*\},readInputText\(t\)\),t\)/.test(readFileSync(eveFile("channel/channel-operations.js"), "utf8")),
+    "9a: …and eve's channel `send` copies that key from the send options onto the delivered payload",
+  );
+
+  const inputText = (await import(pathToFileURL(eveFile("internal/input-text.js")).href)) as { readAnswerText(p: unknown): string | undefined };
+  const resolveText = (await import(pathToFileURL(eveFile("channel/resolve-text.js")).href)) as { resolveTextToResponse(text: string, q: unknown): unknown };
+  const proxied = { requestId: "run-1-ask-1", allowFreeform: true, options: [{ id: "Use staging", label: "Use staging" }] };
+  const mention = "<wake …>separately, what is on the roadmap this week?</wake>";
+  ok(resolveText.resolveTextToResponse(inputText.readAnswerText({ message: mention })!, proxied) !== undefined, "9b: 🔴 the defect, reproduced on the installed eve: a plain message with no override IS resolved as the open question's answer");
+  const withOverride = { message: mention, ...ordinaryWakeSendOptions(true) };
+  ok(inputText.readAnswerText(withOverride) === "", "9b: with the override, eve's answer text is the EMPTY string, not the message");
+  ok(resolveText.resolveTextToResponse(inputText.readAnswerText(withOverride)!, proxied) === undefined, "9b: 🔴 …and eve resolves NOTHING on it, so the message stays the seat's wake");
+
+  ok(Object.keys(ordinaryWakeSendOptions(false)).length === 0, "9c: no bridged question ⇒ no override, eve's default is untouched");
+  ok(JSON.stringify(ordinaryWakeSendOptions(true)) === JSON.stringify({ [EVE_INPUT_TEXT_KEY]: "" }), "9c: a bridged question ⇒ exactly the one empty override, nothing else");
+  {
+    const raw = new Map<string, string>([[bridgedQuestionKey("tok-c"), "{not json"]]);
+    const st: BridgedQuestionStore = {
+      putTaskResult: async () => undefined,
+      getTaskResult: async (_o, k) => raw.get(k) ?? null,
+      deleteTaskResult: async () => false,
+    };
+    const down: BridgedQuestionStore = { ...st, getTaskResult: async () => { throw new Error("store down"); } };
+    ok((await readBridgedQuestion(st, "o", "tok-c")) === undefined, "9c: the fixture row really is unreadable to readBridgedQuestion (else the next line asserts nothing)");
+    ok((await bridgedQuestionMayBeOpen(st, "o", "tok-c")) === true, "9c: 🔴 …and the override still treats it as OPEN");
+    ok((await bridgedQuestionMayBeOpen(down, "o", "tok-c")) === true, "9c: 🔴 a store that throws counts as open too");
+    ok((await bridgedQuestionMayBeOpen(st, "o", "tok-none")) === false, "9c: no row ⇒ not open");
+    ok((await bridgedQuestionMayBeOpen(st, "o", "")) === false, "9c: no token ⇒ not open");
+  }
+
+  const rows = new Map<string, string>();
+  const store: BridgedQuestionStore = {
+    putTaskResult: async (_o, k, v) => {
+      rows.set(k, v);
+    },
+    getTaskResult: async (_o, k) => rows.get(k) ?? null,
+    deleteTaskResult: async (_o, k) => rows.delete(k),
+  };
+  rows.set(bridgedQuestionKey("tok-9"), JSON.stringify({ requestId: "wrun_X-ask-1", taskId: "agent-ab12cd", at: "2026-10-06T00:00:00.000Z" }));
+  const legacy = await readBridgedQuestion(store, "o9", "tok-9");
+  ok(legacy?.requestId === "wrun_X-ask-1" && !("taskId" in (legacy ?? {})), "9d: an earlier build's row still routes on its request id, and its task id is not read");
+  const s9 = sink();
+  await bridgeQuestionToSurface(scope, question, { resolveOrigin: async () => slackOrigin, post: async () => "m9", audit: s9.audit });
+  ok(!("taskId" in (s9.rows[0]!.detail as Record<string, unknown>)), "9d: …and a bridged row names no task");
+
+  const unifiedSrc = readFileSync(new URL("../agent/channels/unified.ts", import.meta.url), "utf8").replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
+  ok(/return from\(t\.token\)\.send\(input\.message, \{[\s\S]{0,300}?\.\.\.ordinaryWakeSendOptions\(questionMayBeOpen\),\s*\}\);/.test(unifiedSrc), "9f: 🔴 the ordinary send really carries the override");
+  ok(/const questionMayBeOpen = await bridgedQuestionMayBeOpen\(store, org, /.test(unifiedSrc), "9f: …computed from THIS window's bridged-question row, by the fail-closed read");
+  ok(/detail: \{ reason: "work-session", requestId: question\.requestId, \.\.\.\(taskId \? \{ taskId \} : \{\}\) \}/.test(unifiedSrc), "9f: the event's taskId reaches the work session's drop row");
+  ok((unifiedSrc.match(/\.\.\.\(taskId \? \{ taskId \} : \{\}\)/g) ?? []).length === 1, "9f: 🔴 …and no other row: a question this channel bridges is the session's own (OPE-2351)");
 }
 
 console.log(`question-bridge: ${n} assertions passed`);

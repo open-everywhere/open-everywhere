@@ -1,8 +1,8 @@
-import { agentBrowserRevalidationKey, installAgentBrowser } from "@agent-browser/eve/sandbox";
+import { agentBrowserRevalidationKey, installAgentBrowser, type EveSandboxSession } from "@agent-browser/eve/sandbox";
 import { agentBrowserEnabled, loadAgentBrowserConfig } from "./config.js";
 
 export interface BakeableSandbox {
-  readonly id: string;
+  readonly id?: string;
   run(options: { readonly command: string }): PromiseLike<{ readonly exitCode?: number; readonly stderr?: string; readonly stdout?: string }>;
 }
 
@@ -12,7 +12,7 @@ export interface AgentBrowserSandboxHooks {
 }
 
 export function agentBrowserSandboxHooks(
-  install: (sandbox: BakeableSandbox) => Promise<unknown> = (sandbox) => installAgentBrowser(sandbox),
+  install: (sandbox: BakeableSandbox) => Promise<unknown> = (sandbox) => installAgentBrowser(sandbox as EveSandboxSession),
 ): AgentBrowserSandboxHooks | Record<string, never> {
   if (!agentBrowserEnabled()) return {};
   const cfg = loadAgentBrowserConfig();

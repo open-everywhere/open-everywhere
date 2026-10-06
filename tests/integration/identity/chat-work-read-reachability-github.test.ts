@@ -1,17 +1,18 @@
 import { randomBytes } from "node:crypto";
 import { expect, test } from "vitest";
+import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import {
   armSettlement,
+  auditCursor,
+  awaitWorkResult,
   bootAgent,
-  consumeSettlement,
   disposeLater,
   GITHUB_BOT_SLUG,
   githubIssueCommentPost,
   registerScript,
-  SETTLEMENT_DRAIN_SCRIPT,
-  taskIdOfDelegation,
   waitFor,
   waitForChildren,
+  workTaskIdOfCall,
   type ScriptedHandle,
 } from "../harness";
 
@@ -79,7 +80,7 @@ function assertWorkerHoldsWorkReads(handle: ScriptedHandle): void {
     ).toContain(verb);
   }
   const seat = handle.requests.find((r) => r.role === "parent")!;
-  expect(seat.tools, "the seat's roster was not recorded at all — the absence assertions below would be vacuous").toContain("agent");
+  expect(seat.tools, "the seat's roster was not recorded at all — the absence assertions below would be vacuous").toContain("work");
   for (const verb of ["read_work_channel", "read_work_thread"]) {
     expect(seat.tools, `🔴 github: the SEAT was offered ${verb} — the work plane is not the worker's any more`).not.toContain(verb);
   }
@@ -88,11 +89,15 @@ function assertWorkerHoldsWorkReads(handle: ScriptedHandle): void {
 test("GitHub: a delegated worker woken by a real issue_comment holds read_work_channel/read_work_thread", async () => {
   await bootAgent();
   await pinShippedFixture();
+  const cursor = await auditCursor();
 
   const handle = disposeLater(
     registerScript({
-      parent: [{ calls: [{ tool: "agent", input: { message: "take it from here" }, id: "ope1119-delegate" }] }, { say: "handed off" }],
-      child: [{ calls: [{ tool: "read_work_channel", input: { limit: 5 }, id: "ope1119-work-read" }] }, { say: "reported" }],
+      parent: [
+        { calls: [{ tool: "work", input: { message: "take it from here" }, id: "ope1119-delegate" }] },
+        { say: NO_REPLY_SENTINEL },
+      ],
+      child: [{ delayMs: 120_000, calls: [{ tool: "read_work_channel", input: { limit: 5 }, id: "ope1119-work-read" }] }, { say: "reported" }],
     }),
   );
 
@@ -105,17 +110,19 @@ test("GitHub: a delegated worker woken by a real issue_comment holds read_work_c
   });
   expect(res.status, `the GitHub front refused the signed delivery: ${res.body.slice(0, 300)}`).toBe(200);
 
-  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "github: the dispatch turn's own terminal step");
-
-  const taskId = taskIdOfDelegation(handle, "the ope1119 delegation");
-  const drainHandle = disposeLater(armSettlement(handle, SETTLEMENT_DRAIN_SCRIPT));
+  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "github: the dispatch turn's receipt step");
+  const settlement = disposeLater(armSettlement(handle, { parent: [{ say: NO_REPLY_SENTINEL }] }));
+  const taskId = await workTaskIdOfCall(cursor, handle, "ope1119-delegate", "the ope1119 delegation");
+  handle.releaseHolds();
 
   await waitForChildren(handle, { count: 1, lastStepIndex: 1, label: "github: the worker's terminal step" });
-  expect(handle.requests.filter((r) => r.fault !== undefined), "github: the scripted model reported a fault").toEqual([]);
-
-  await consumeSettlement({ armed: drainHandle, dispatched: handle, taskId, label: "github: the worker's settlement wake" });
-  expect(drainHandle.requests.filter((r) => r.fault !== undefined), "github: a straggling worker crossed into the drain").toEqual([]);
-  drainHandle.dispose();
+  const resultStep = await awaitWorkResult({ handle: settlement, taskId, label: "github: the seat step that read the worker's result" });
+  expect(resultStep.stepIndex, "github: the result arrives as step 0 of the seat's own result-wake turn").toBe(0);
+  expect(handle.holdsCutShort(), "github: the worker's hold ended on the release, not on its 120 s backstop").toBe(1);
+  for (const h of [handle, settlement]) {
+    expect(h.requests.filter((r) => r.fault !== undefined), "github: the scripted model reported a fault").toEqual([]);
+    expect(h.resolves.filter((r) => r.fault !== undefined), "github: the scripted model reported a fault").toEqual([]);
+  }
 
   assertWorkerHoldsWorkReads(handle);
 

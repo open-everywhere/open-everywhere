@@ -21,7 +21,6 @@ import {
   isDmAnchoredTaskToken,
   isTaskWindowToken,
   parseWindowToken,
-  sessionGrantKeyFromToken,
   taskWindowId,
 } from "../agent/channels/window-key.js";
 import { assertDomainsValid, defineDomain, domainForChannel } from "../agent/memory/domain.js";
@@ -106,8 +105,6 @@ console.log("1. token grammar (dm anchor pseudo-domain):");
   ok(!isDmAnchoredTaskToken(anchorStanding), "a STANDING window on an anchor domain is NOT a DM-anchored TASK token — the predicate is grain-specific, so a DM's seat can never be mistaken for one of its workers");
   ok(!isDmAnchoredTaskToken("D_ASKER:oe-dm:g2"), "a DM-SEAT token is not a DM-anchored worker token");
   ok(!isDmAnchoredTaskToken(undefined), "fail-soft on a non-string");
-
-  eq(sessionGrantKeyFromToken(workerToken), anchorStanding, "a DM-anchored worker's session-grant key collapses to the ANCHOR (per-DM grant scope, not per-worker)");
 }
 
 console.log("2. reserved-namespace exclusivity:");
@@ -219,9 +216,6 @@ console.log("6. OPE-351 fences (capacity only — nothing mints a DM window toke
   const named = [defineDomain({ name: "payments", reach: ["slack/T1/C_PAY"], mode: "unified" })];
   eq(domainForChannel(parseWindowToken(dmWindow)!.domain, named), undefined, "a DM SEAT window's domain matches no configured domain — the seat inherits the DM's partition, never a named domain's grants");
   eq(domainForChannel(DM_SURFACE_KEY, named), undefined, "…and the DM surface it names is in no roster either (both halves of the fence)");
-
-  ok(sessionGrantKeyFromToken(dmWorker).startsWith(`oe-dom:${dmAnchorDomain(DM_SURFACE_KEY)}:`), "a DM worker's session-grant key still collapses onto the DM's own pseudo-domain");
-  eq(sessionGrantKeyFromToken(dmWindow), dmWindow, "…and a DM SEAT window keys as itself, so its grants rotate with its generation like any standing seat's");
 }
 
 console.log("7. OPE-351 stage 4 — a group DM on a window token:");

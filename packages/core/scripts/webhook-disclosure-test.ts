@@ -40,12 +40,17 @@ const PAYLOAD = JSON.stringify({ note: "deploy 42 finished", who: "ci" });
 interface SlackFacts {
   readonly trustChecked: boolean;
   readonly isExternal: boolean;
-  readonly membersOk: boolean;
+  readonly members: "one-page" | "multi-page" | "failed";
   readonly isPrivate: boolean;
 }
 
 function rosterFrom(f: SlackFacts): RoomRoster {
-  if (!f.trustChecked || !f.membersOk) return { humanMemberIds: [], resolved: false, isPrivate: false, hasGuest: false };
+  if (!f.trustChecked || f.members === "failed") return { humanMemberIds: [], resolved: false, isPrivate: false, hasGuest: false };
+  if (f.members === "multi-page") {
+    return f.isExternal
+      ? { humanMemberIds: [], resolved: true, isPrivate: f.isPrivate, hasGuest: true }
+      : { humanMemberIds: [], resolved: false, isPrivate: false, hasGuest: false };
+  }
   return { humanMemberIds: ["U1", "U2"], resolved: true, isPrivate: f.isPrivate, hasGuest: f.isExternal };
 }
 
@@ -53,11 +58,12 @@ function internalFrom(f: SlackFacts): boolean {
   return f.trustChecked && !f.isExternal;
 }
 
-const INTERNAL: SlackFacts = { trustChecked: true, isExternal: false, membersOk: true, isPrivate: false };
-const INTERNAL_PRIVATE: SlackFacts = { trustChecked: true, isExternal: false, membersOk: true, isPrivate: true };
-const OBSERVED_EXTERNAL: SlackFacts = { trustChecked: true, isExternal: true, membersOk: true, isPrivate: true };
-const UNOBSERVABLE: SlackFacts = { trustChecked: false, isExternal: false, membersOk: false, isPrivate: false };
-const BIG_INTERNAL_CHANNEL: SlackFacts = { trustChecked: true, isExternal: false, membersOk: false, isPrivate: false };
+const INTERNAL: SlackFacts = { trustChecked: true, isExternal: false, members: "one-page", isPrivate: false };
+const INTERNAL_PRIVATE: SlackFacts = { trustChecked: true, isExternal: false, members: "one-page", isPrivate: true };
+const OBSERVED_EXTERNAL: SlackFacts = { trustChecked: true, isExternal: true, members: "one-page", isPrivate: true };
+const BIG_EXTERNAL_CHANNEL: SlackFacts = { trustChecked: true, isExternal: true, members: "multi-page", isPrivate: false };
+const UNOBSERVABLE: SlackFacts = { trustChecked: false, isExternal: false, members: "failed", isPrivate: false };
+const BIG_INTERNAL_CHANNEL: SlackFacts = { trustChecked: true, isExternal: false, members: "multi-page", isPrivate: false };
 
 function arm(facts: SlackFacts | "no-supplier" | "throws"): void {
   _resetGovernanceMemberSupplierForTest();
@@ -114,6 +120,8 @@ async function fire(h: FusedWebhookHook, facts: SlackFacts | "no-supplier" | "th
   ok(r.reason === WEBHOOK_AUDIENCE_FLOOR_REASON, "refuse: the decline carries the audience-floor reason verbatim (the string that lands in `webhook.declined`)");
   ok(/audience floor/i.test(r.reason ?? "") && /internal channel/i.test(r.reason ?? ""), "refuse: the reason names the CONDITION and the FIX, so the audit row is actionable");
   ok((r.reason ?? "").includes(PAYLOAD) === false && (r.reason ?? "").includes("deploy 42") === false, "refuse: the reason copies NO payload bytes into the hash-chained audit table");
+  const big = await fire(hook, BIG_EXTERNAL_CHANNEL);
+  ok(big.fired === false && big.calls.length === 0, "🔴 refuse: a shared target with MORE THAN ONE PAGE of members does not fire either (OPE-2311)");
 }
 
 {
@@ -180,22 +188,22 @@ async function fire(h: FusedWebhookHook, facts: SlackFacts | "no-supplier" | "th
   let internals = 0;
   for (const trustChecked of [false, true]) {
     for (const isExternal of [false, true]) {
-      for (const membersOk of [false, true]) {
-        const facts: SlackFacts = { trustChecked, isExternal, membersOk, isPrivate: false };
+      for (const members of ["failed", "multi-page", "one-page"] as const) {
+        const facts: SlackFacts = { trustChecked, isExternal, members, isPrivate: false };
         const r = await fire(hook, facts);
         if (internalFrom(facts)) {
           internals++;
-          ok(r.fired === true, `🔴 blast radius: a target Slack POSITIVELY confirms internal always fires (trustChecked=${trustChecked}, isExternal=${isExternal}, membersOk=${membersOk})`);
+          ok(r.fired === true, `🔴 blast radius: a target Slack POSITIVELY confirms internal always fires (trustChecked=${trustChecked}, isExternal=${isExternal}, members=${members})`);
         }
         if (!r.fired) {
           refusals++;
-          ok(trustChecked && membersOk && isExternal, `blast radius: the ONLY refusing shape is a fully-observed externally-shared channel (got trustChecked=${trustChecked}, isExternal=${isExternal}, membersOk=${membersOk})`);
+          ok(trustChecked && members !== "failed" && isExternal, `blast radius: the ONLY refusing shape is an externally-shared channel whose members read answered (got trustChecked=${trustChecked}, isExternal=${isExternal}, members=${members})`);
         }
       }
     }
   }
-  ok(internals === 2, `blast radius: the implication is not vacuous — ${internals} of the 8 fact combinations confirm internal (trustChecked ∧ ¬isExternal, either membersOk)`);
-  ok(refusals === 1, `blast radius: exactly ONE of the 8 combinations refuses (got ${refusals}) — so the gate is neither dead nor broad`);
+  ok(internals === 3, `blast radius: the implication is not vacuous — ${internals} of the 12 fact combinations confirm internal (trustChecked ∧ ¬isExternal, any members answer)`);
+  ok(refusals === 2, `blast radius: exactly TWO of the 12 combinations refuse (got ${refusals}): a shared channel with one members page or more — so the gate is neither dead nor broad`);
 
   const slackSrc = readFileSync(join(REPO, "packages/providers/slack/agent/channels/slack-events.ts"), "utf8");
   ok(/resolved:\s*facts\.trustChecked === true/.test(slackSrc), "pin: the live supplier really derives `resolved` from conversations.info's trustChecked");
@@ -204,9 +212,14 @@ async function fire(h: FusedWebhookHook, facts: SlackFacts | "no-supplier" | "th
     /const internal = facts\.trustChecked === true && facts\.isExternal === false/.test(slackSrc),
     "pin: …and the fire's own confirmInternal is the complement of the guest bit, off the same call",
   );
+  const pagedBranch = /if \(cursor && cursor\.length > 0\) \{([\s\S]*?)\n    \}\n/.exec(slackSrc)?.[1] ?? "";
   ok(
-    /if \(cursor && cursor\.length > 0\)[\s\S]{0,600}?resolved: false/.test(slackSrc),
-    "🔴 pin: a channel with MORE THAN ONE PAGE of members really does report `resolved: false` — this is why fail-open here is load-bearing and not an inherited default",
+    /if \(facts\.trustChecked === true && facts\.isExternal === true\) \{\s*return \{[^}]*resolved: true[^}]*hasGuest: true/.test(pagedBranch),
+    "pin: a SHARED channel with MORE THAN ONE PAGE of members resolves with hasGuest — the mirror above refuses it (OPE-2311)",
+  );
+  ok(
+    /return \{[^}]*resolved: false, unresolvedState: "unobservable"[^}]*hasGuest: false/.test(pagedBranch),
+    "🔴 pin: a NON-SHARED channel with MORE THAN ONE PAGE of members really does report `resolved: false` — this is why fail-open here is load-bearing and not an inherited default",
   );
 }
 

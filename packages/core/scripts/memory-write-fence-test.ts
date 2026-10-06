@@ -186,9 +186,11 @@ function planWith(silos: readonly MemorySilo[], memory: readonly string[]): Memo
   ok(shapeOf(fencedOk) === shapeOf(okTool), "the wrap replaces execute and nothing else (name/description/inputSchema survive)");
 
   const { writeFile } = await import("eve/tools/write_file");
-  const schema = (writeFile as unknown as { inputSchema: { safeParse(v: unknown): { success: boolean } } }).inputSchema;
-  ok(schema.safeParse({ filePath: "/workspace/a.md", content: "x" }).success, "🔴 eve's write_file still takes `filePath` — the field the fence reads. A rename here disarms the fence silently.");
-  ok(!schema.safeParse({ path: "/workspace/a.md", content: "x" }).success, "…and the schema is strict, so the field name above is the ONLY one a validated call can carry");
+  type Validated = { readonly value?: unknown; readonly issues?: readonly unknown[] };
+  const std = (writeFile as unknown as { inputSchema: { "~standard": { validate(v: unknown): Validated | Promise<Validated> } } }).inputSchema["~standard"];
+  const accepts = async (v: unknown): Promise<boolean> => ((await std.validate(v)).issues ?? []).length === 0;
+  ok(await accepts({ filePath: "/workspace/a.md", content: "x" }), "🔴 eve's write_file still takes `filePath` — the field the fence reads. A rename here disarms the fence silently.");
+  ok(!(await accepts({ path: "/workspace/a.md", content: "x" })), "…and the schema is strict, so the field name above is the ONLY one a validated call can carry");
 }
 
 {

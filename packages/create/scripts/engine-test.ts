@@ -306,6 +306,44 @@ function step(parts: Partial<SetupStep> & Pick<SetupStep, "id" | "check">): Setu
       "slackStep guide: --app-name names the app in the printed manifest",
     );
 
+    type NamedManifest = {
+      display_information: { name: string };
+      features: { bot_user: { display_name: string }; slash_commands: { command: string }[]; shortcuts: { name: string }[] };
+    };
+    const namedIn = (lines: readonly string[]): NamedManifest => JSON.parse(lines.find((l) => l.trimStart().startsWith("{")) ?? "{}");
+    const { readAppNaming, namingFromIdentity } = await import("../src/app-naming.js");
+    ok(Object.keys(await readAppNaming(dir)).length === 0, "readAppNaming: an app with no settings file configures no name");
+    mkdirSync(join(dir, "agent", "settings"), { recursive: true });
+    writeFileSync(
+      join(dir, "agent", "settings", "settings.ts"),
+      'export const SETTINGS_OVERRIDES = { identity: { name: "  Aria  ", commandName: "aria" } };\n',
+    );
+    const naming = await readAppNaming(dir);
+    ok(naming.agentName === "Aria" && naming.commandName === "aria", `readAppNaming: reads identity.name (trimmed) and identity.commandName (${JSON.stringify(naming)})`);
+    const named = namedIn(slackStep.guide({ cwd: dir, env: {}, ...naming }).instructions);
+    ok(named.display_information.name === "Aria" && named.features.bot_user.display_name === "Aria", "🔴 slackStep guide: the configured identity.name names the app and the bot user");
+    ok(named.features.slash_commands[0]?.command === "/aria", "🔴 slackStep guide: the configured identity.commandName names the slash command");
+    ok(named.features.shortcuts.every((sc) => sc.name.includes("Aria")), "slackStep guide: …and both shortcuts name the agent");
+    ok(
+      slackStep.guide({ cwd: dir, env: {}, ...naming }).instructions.some((l) => l.includes('The app is named "Aria" (from the app\'s identity.name setting)')),
+      "slackStep guide: the prose names the app it printed, and credits the setting",
+    );
+    ok(
+      slackStep.guide({ cwd: dir, env: {} }).instructions.some((l) => l.includes('The app is named "Open Everywhere" (the default')),
+      "slackStep guide: with no name configured the prose says the name is the DEFAULT, never the operator's setting",
+    );
+    ok(
+      namedIn(slackStep.guide({ cwd: dir, env: {}, ...naming, appName: "Acme Agent" }).instructions).display_information.name === "Acme Agent",
+      "slackStep guide: an explicit --app-name still OVERRIDES the configured name",
+    );
+    const broken = mkdtempSync(join(tmpdir(), "oe-naming-broken-"));
+    mkdirSync(join(broken, "agent", "settings"), { recursive: true });
+    writeFileSync(join(broken, "agent", "settings", "settings.ts"), 'throw new Error("deps not installed");\n');
+    ok(Object.keys(await readAppNaming(broken)).length === 0, "readAppNaming: a settings file that throws reads as no name — the check never crashes");
+    rmSync(broken, { recursive: true, force: true });
+    ok(Object.keys(namingFromIdentity({ name: 7, commandName: "  " })).length === 0, "namingFromIdentity: a non-string or blank value configures nothing");
+    rmSync(join(dir, "agent"), { recursive: true, force: true });
+
     const envVercel = await envChecklistStep.check({ cwd: dir, env: {} });
     ok(!envVercel.satisfied && !/AI_GATEWAY_API_KEY/.test(envVercel.detail) && /deploy store: operational = postgres/.test(envVercel.detail), "envChecklist: the vercel route asks for the stores, not a gateway key");
     const envDocker = await envChecklistStep.check({ cwd: dir, env: {}, route: "docker" });

@@ -131,12 +131,21 @@ for (const [file, label] of [
     .split("\n")
     .filter((line) => !line.trimStart().startsWith("//"))
     .join("\n");
-  ok(gateCode.includes("assertEvePatchedAtTurn()"), "wiring: the turn gate hook CALLS assertEvePatchedAtTurn — a hook that reads nothing refuses nothing");
+  ok(gateCode.includes("evePatchTurnRefusal()"), "wiring: the turn gate hook READS evePatchTurnRefusal — a hook that reads nothing refuses nothing");
+  ok(gateCode.includes("refuseTurn("), "🔴 wiring: the turn gate CALLS refuseTurn — reading the verdict and not acting on it is the fail-open shape this ticket removes");
+  ok(!gateCode.includes("assertEvePatchedAtTurn"), "🔴 wiring: the gate no longer calls the THROWING face of the probe — eve swallows a hook throw, so it would refuse nothing");
   ok(/"turn\.started"/.test(gateCode), "wiring: the turn gate binds `turn.started`");
   ok(
     !/try\s*\{/.test(gateCode),
-    "wiring: the turn gate's CODE contains no try/catch — a swallowed throw is warn-and-continue, which is the behaviour this ticket removes",
+    "wiring: the turn gate's CODE contains no try/catch — a swallowed throw is warn-and-continue, which is the behaviour this ticket removes. It reads the verdict as a value precisely so there is no catch here",
   );
+}
+{
+  const helper = readFileSync(join(coreRoot, "agent/hooks/control-refusal.ts"), "utf8")
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("//"))
+    .join("\n");
+  ok(/ctx\.cancel\(\)/.test(helper), "wiring: refuseTurn calls ctx.cancel() — without that line every OE hook refusal is a log line and nothing else");
 }
 
 const fullBag = (): MarkerGlobals => Object.fromEntries(EVE_PATCH_PARTS.map((p) => [p.marker, true]));

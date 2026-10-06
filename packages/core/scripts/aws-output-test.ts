@@ -144,8 +144,9 @@ console.log("4. disclosure:");
   ok(disclosed.includes("REDACTED"), "🔴 a redaction is DISCLOSED — a silent deletion makes the model report the marker as the account's own data");
   ok(disclosed.includes("access-key-id×2"), "…naming the rule and the count");
   const notice = disclosed.slice(disclosed.lastIndexOf(UNTRUSTED_CLOSE));
-  ok(notice.includes("REDACTED"), "🔴 …and the notice sits OUTSIDE the last envelope — it is Open Everywhere's own statement, not the account's data");
-  ok(disclosed.includes("Open Everywhere"), "…attributed to OE, not to the AWS CLI");
+  ok(notice.includes("REDACTED"), "🔴 …and the notice sits OUTSIDE the last envelope — it is the agent's own statement, not the account's data");
+  ok(disclosed.includes("the agent's own redaction, not the AWS CLI"), "…attributed to the agent, not to the AWS CLI");
+  ok(!disclosed.includes("Open Everywhere"), "…and the model-visible note names no brand (OPE-2334)");
 }
 
 console.log("5. the tier row:");

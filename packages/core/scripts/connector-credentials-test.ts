@@ -18,14 +18,25 @@ function ok(cond: boolean, label: string): void {
   }
   passed++;
 }
-function throws(fn: () => void, label: string): void {
+function throwsWith(fn: () => unknown, fragment: string, label: string): void {
   let threw = false;
+  let error: unknown;
   try {
     fn();
-  } catch {
+  } catch (err) {
     threw = true;
+    error = err;
   }
-  ok(threw, label);
+  if (!threw) {
+    console.error(`✗ ${label} (expected a throw, got none)`);
+    process.exit(1);
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (!message.includes(fragment)) {
+    console.error(`✗ ${label} (threw, but not the refusal under test — expected "${fragment}", got: ${message})`);
+    process.exit(1);
+  }
+  passed++;
 }
 
 const notion: ConnectorCredentials = defineConnectorCredentials({
@@ -44,25 +55,30 @@ ok(principalOf("user-oauth") === "user", "user-oauth is user principal (DM unive
 
 assertConnectorCredentialsValid([notion]);
 passed++;
-throws(() => assertConnectorCredentialsValid([notion, notion]), "duplicate provider name throws");
-throws(
+throwsWith(() => assertConnectorCredentialsValid([notion, notion]), 'connector "notion": a second credential catalogue names the same connector', "duplicate provider name throws");
+throwsWith(
   () => assertConnectorCredentialsValid([{ connector: "x", allows: ["api-key"], credentials: [{ id: "k", type: "api-key" }] }]),
+  'connector "x" credential "k": api-key needs a secretRef',
   "api-key credential without secretRef throws",
 );
-throws(
+throwsWith(
   () => assertConnectorCredentialsValid([{ connector: "x", allows: ["api-key"], credentials: [{ id: "k", type: "api-key", secretRef: "K" }] }]),
+  'connector "x" credential "k": api-key needs an explicit broker stamp',
   "api-key credential without an explicit broker stamp throws (a credential has exactly one home)",
 );
-throws(
+throwsWith(
   () => assertConnectorCredentialsValid([{ connector: "x", allows: ["service-oauth"], credentials: [{ id: "o", type: "service-oauth" }] }]),
+  'connector "x" credential "o": service-oauth needs a home',
   "service-oauth credential without vercelConnector throws",
 );
-throws(
+throwsWith(
   () => assertConnectorCredentialsValid([{ connector: "", allows: ["api-key"], credentials: [] }]),
+  "connector credentials: missing connector slug",
   "a catalogue with no connector slug throws",
 );
-throws(
+throwsWith(
   () => assertConnectorCredentialsValid([{ connector: "x", allows: [], credentials: [] }]),
+  'connector "x": empty credential allowlist',
   "a catalogue with an empty allowlist throws",
 );
 

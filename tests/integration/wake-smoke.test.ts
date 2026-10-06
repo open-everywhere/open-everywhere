@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { expect, test } from "vitest";
 import {
+  awaitWindowQuiet,
   auditCursor,
   bootAgent,
   DISCORD_GUILD_ID,
@@ -50,7 +51,7 @@ test("a signed Discord relay mention wakes the channel's STANDING SEAT and its r
   const nonce = randomBytes(4 + Math.floor(Math.random() * 9)).toString("hex");
   const replyText = `oe-wake-smoke-ok ${nonce}`;
 
-  const handle = disposeLater(registerScript({ parent: [seatReply(replyText, "wake-smoke-reply"), { say: "done" }] }));
+  const handle = disposeLater(registerScript({ parent: [seatReply(replyText, "wake-smoke-reply")] }));
 
   const cursor = await auditCursor();
   await discordMentionWake({ channelId, text: `<@9000000000000000001> ${nonce} please answer` });
@@ -74,5 +75,6 @@ test("a signed Discord relay mention wakes the channel's STANDING SEAT and its r
   expect((detail.sessionId as string).length).toBeGreaterThan(0);
   expect(detail.chars).toBe(replyText.length);
 
-  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the turn's last step");
+  await awaitWindowQuiet();
+  expect(handle.requests.some((r) => r.role === "parent" && r.stepIndex >= 1), "a step after the reply was requested").toBe(false);
 });

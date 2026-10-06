@@ -22,6 +22,7 @@ const { readAudit } = await import("../agent/audit/audit.js");
 const { SESSION_GRANT_RELEASED_ACTION } = await import("../agent/approvals/flow.js");
 const { parseApprovalAction, requestApproval, handleApprovalPayload, resolveApprovalClick, clickerMayDecide, OE_APPROVAL_PREFIX, sweepExpiredPendings, MAX_SESSION_GRANT_RELEASES } = await import("../agent/approvals/flow.js");
 const { pendingCardBlocks, decidedCardBlocks, judgeLiftNoticeBlocks, judgeLiftNoticeText } = await import("../agent/approvals/card.js");
+const { ROUTINE_PERMISSION_NO_EXPIRY } = await import("../agent/routines/declared-permissions.js");
 const { registerActionKind, actionKind } = await import("../agent/approvals/actions.js");
 const { effectiveCaps } = await import("../agent/spend/caps.js");
 const { applyConnectorOverrides } = await import("../agent/access/connector-scope.js");
@@ -66,6 +67,9 @@ registerActionKind({
     return `executed by ${decidedBy}`;
   },
 });
+
+const threadKey = (thread: string): string => `oe-grant:slack/T1/C1:thread:${thread}`;
+const routineKey = (routine: string): string => `oe-routine:${routine}:g1`;
 
 function row(over: Partial<PendingActionRow> = {}): PendingActionRow {
   return {
@@ -112,17 +116,32 @@ function row(over: Partial<PendingActionRow> = {}): PendingActionRow {
   ok(ids.includes(`${OE_APPROVAL_PREFIX}reject:p-1`), "pendingCardBlocks' reject button carries the id-scoped action_id");
   ok(parseApprovalAction(ids[0]) !== null && parseApprovalAction(ids[1]) !== null, "both card action_ids round-trip through parseApprovalAction");
   ok(actionsBlock!.elements.every((e) => e.value === "default"), "both buttons carry the org as their value");
-  ok(ids.length === 2 && !ids.some((i) => i.includes("approve_session")), "a non-pr.open card has NO 'Approve for session' button (session skip is pr.open-only)");
+  ok(ids.length === 2 && !ids.some((i) => i.includes("approve_session")), "a non-pr.open card has NO 'Approve for this routine' button (session skip is pr.open-only)");
 
-  const prCard = pendingCardBlocks(row({ id: "p-pr", kind: "pr.open" }), ["open PR"]);
+  const prCard = pendingCardBlocks(row({ id: "p-pr", kind: "pr.open", argsJson: JSON.stringify({ sessionId: routineKey("r-card") }) }), ["open PR"]);
   const prActions = prCard.blocks.find((b) => b.type === "actions") as unknown as { elements: { action_id: string; text: { text: string } }[] } | undefined;
   const prIds = prActions!.elements.map((e) => e.action_id);
-  ok(prIds.length === 3, "a pr.open card renders three buttons");
-  ok(prIds.includes(`${OE_APPROVAL_PREFIX}approve_session:p-pr`), "a pr.open card carries the id-scoped approve_session action_id");
+  ok(prIds.length === 3, "a routine's pr.open card renders three buttons");
+  ok(prIds.includes(`${OE_APPROVAL_PREFIX}approve_session:p-pr`), "a routine's pr.open card carries the id-scoped approve_session action_id");
   ok(parseApprovalAction(prIds.find((i) => i.includes("approve_session"))!) !== null, "the pr.open approve_session action_id round-trips through parseApprovalAction");
-  ok(prActions!.elements.some((e) => e.text.text === "Approve for session"), "the middle button is labelled 'Approve for session'");
+  ok(prActions!.elements.some((e) => e.text.text === "Approve for this routine (up to 24 h)"), "the middle button is labelled 'Approve for this routine (up to 24 h)'");
+  for (const [what, sessionId] of [
+    ["a thread", threadKey("1700159720.000100")],
+    ["a DM", "oe-grant:slack/T1/D1:dm"],
+    ["a work-session token", "oe-dom:eng:win:w/eng:oe-sup:g7"],
+  ] as const) {
+    const card = pendingCardBlocks(row({ id: `p-pr-${what}`, kind: "pr.open", argsJson: JSON.stringify({ sessionId }) }), ["open PR"]);
+    const ids2 = (card.blocks.find((b) => b.type === "actions") as unknown as { elements: { action_id: string }[] }).elements.map((e) => e.action_id);
+    ok(ids2.length === 2 && !ids2.some((i) => i.includes("approve_session")), `🔴 OPE-2363: a pr.open card frozen in ${what} has NO middle button`);
+  }
   ok(text.includes("<@U_REQUESTER>") || blocks.some((b) => JSON.stringify(b).includes("<@U_REQUESTER>")), "the requester is @-mentioned somewhere on the card");
   ok(JSON.stringify(blocks).includes(`expires ${r.expiresAt}`), "the card shows the expiry timestamp");
+  const noClock = pendingCardBlocks(row({ id: "p-rp", kind: "routine.permission", expiresAt: ROUTINE_PERMISSION_NO_EXPIRY }), ["permission"]);
+  ok(!JSON.stringify(noClock.blocks).includes("9999"), "🔴 OPE-2162: a no-clock card's footer never prints the 9999 sentinel");
+  ok(
+    JSON.stringify(noClock.blocks).includes("Requested by <@U_REQUESTER> · no expiry — ends when the routine's instruction is edited or the routine is deleted"),
+    "🔴 OPE-2162: …it names the routine generation as the card's bound instead",
+  );
 
   const decided = decidedCardBlocks({ ...r, status: "approved", decidedBy: "U_ORG_ADMIN" }, ["line one"], "spend limit set");
   ok(!decided.blocks.some((b) => b.type === "actions"), "decidedCardBlocks has NO actions block (buttons are gone once decided)");
@@ -202,7 +221,7 @@ function row(over: Partial<PendingActionRow> = {}): PendingActionRow {
   ok((await store.getSessionApproval("default", "sess-exp", "pr.open", now)) === null, "an expired memo reads as null");
 
   const post = async () => ({ ok: true, ts: "1.1" });
-  const sid = "oe-dom:eng:oe-sup:g7";
+  const sid = routineKey("prsess");
   await store.addPendingAction(row({
     id: "p-prsess",
     kind: "pr.open",
@@ -210,14 +229,32 @@ function row(over: Partial<PendingActionRow> = {}): PendingActionRow {
     argsJson: JSON.stringify({ org: "default", scopeKey: "slack/T1/C1", repo: "acme/web", head: "fix/x", base: "main", title: "t", body: "b", headSha: "a".repeat(40), requestedBy: "U_REQUESTER", sessionId: sid }),
   }));
   ok((await handleApprovalPayload(payloadFor("oe_approval:approve_session:p-prsess"), { post })) === true, "approve_session click is owned by the handler");
-  ok((await store.getSessionApproval("default", sid, "pr.open", new Date().toISOString()))?.grantedBy === "U_ORG_ADMIN", "approve_session on a pr.open card sets the session memo, attributed to the clicker");
-  ok((await readAudit({ org: "default", action: "approval.session_granted" })).some((e) => e.detail?.id === "p-prsess"), "the session grant is audited (approval.session_granted)");
+  const routineMemo = await store.getSessionApproval("default", sid, "pr.open", new Date().toISOString());
+  ok(routineMemo?.grantedBy === "U_ORG_ADMIN", "approve_session on a routine's pr.open card sets the routine's memo, attributed to the clicker");
+  ok(routineMemo !== null && routineMemo.expiresAt !== ROUTINE_PERMISSION_NO_EXPIRY && Date.parse(routineMemo.expiresAt) - Date.parse(routineMemo.createdAt) === getSettings().approvals.routineGrantTtlHours * 3_600_000, "🔴 OPE-2363: …and the routine grant ends at `approvals.routineGrantTtlHours`, as its label says");
+  ok((await readAudit({ org: "default", action: "approval.session_granted" })).some((e) => e.detail?.id === "p-prsess"), "the routine grant is audited (approval.session_granted)");
+  for (const [n, key] of [
+    ["t", threadKey("prsess")],
+    ["d", "oe-grant:slack/T1/D1:dm"],
+    ["w", "oe-dom:eng:win:w/eng:oe-sup:g7"],
+  ] as const) {
+    await store.addPendingAction(row({
+      id: `p-prsess-${n}`,
+      kind: "pr.open",
+      domain: null,
+      argsJson: JSON.stringify({ org: "default", scopeKey: "slack/T1/C1", repo: "acme/web", head: `fix/${n}`, base: "main", title: "t", body: "b", headSha: "a".repeat(40), requestedBy: "U_REQUESTER", sessionId: key }),
+    }));
+    await handleApprovalPayload(payloadFor(`oe_approval:approve_session:p-prsess-${n}`), { post });
+    ok((await store.getSessionApproval("default", key, "pr.open", new Date().toISOString())) === null, `🔴 OPE-2363: approve_session on a conversation card (${key}) writes NO memo`);
+    ok((await store.getPendingAction("default", `p-prsess-${n}`))?.status === "approved", `…and it degrades to a one-off approve (${key})`);
+    ok(!(await readAudit({ org: "default", action: "approval.session_granted" })).some((e) => e.detail?.id === `p-prsess-${n}`), `…and audits NO approval.session_granted (${key})`);
+  }
 
   const beforeExec = memberExecuted.length;
-  await store.addPendingAction(row({ id: "p-membersess", kind: "test.member", domain: null, argsJson: JSON.stringify({ sessionId: "sess-member" }) }));
+  await store.addPendingAction(row({ id: "p-membersess", kind: "test.member", domain: null, argsJson: JSON.stringify({ sessionId: threadKey("member") }) }));
   await handleApprovalPayload(payloadFor("oe_approval:approve_session:p-membersess", { user: "U_ORG_ADMIN" }), { post });
-  ok((await store.getSessionApproval("default", "sess-member", "test.member", new Date().toISOString())) === null, "approve_session on a non-pr.open kind sets NO memo (kind-scoped enforcement)");
-  ok((await store.getSessionApproval("default", "sess-member", "pr.open", new Date().toISOString())) === null, "…and none under pr.open either");
+  ok((await store.getSessionApproval("default", threadKey("member"), "test.member", new Date().toISOString())) === null, "approve_session on a non-pr.open kind sets NO memo (kind-scoped enforcement)");
+  ok((await store.getSessionApproval("default", threadKey("member"), "pr.open", new Date().toISOString())) === null, "…and none under pr.open either");
   ok(memberExecuted.length > beforeExec, "the non-pr.open kind still EXECUTED as an ordinary one-off approve");
 }
 
@@ -2126,7 +2163,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
 
   const fanOut = ["worker-a", "worker-b", "worker-c"].map((what) => ({
     what,
-    args: { sessionId: "sess-fanout", what },
+    args: { sessionId: routineKey("fanout"), what },
   }));
 
   const posted = await Promise.all(
@@ -2153,13 +2190,13 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
 
   const stranger = await inSession(() =>
     requestApproval(
-      { org: "default", kind: "pr.open", args: { sessionId: "sess-OTHER", what: "not this session" }, scopeKey: "slack/T1/C1", domain: null, requestedBy: "U_REQUESTER", channelId: "C1", threadTs: null, chain: { unattended: false } },
+      { org: "default", kind: "pr.open", args: { sessionId: routineKey("OTHER"), what: "not this session" }, scopeKey: "slack/T1/C1", domain: null, requestedBy: "U_REQUESTER", channelId: "C1", threadTs: null, chain: { unattended: false } },
       { post: async () => ({ ok: true, ts: "999.000" }) as never },
     ),
   );
   const tainted = await inSession(() =>
     requestApproval(
-      { org: "default", kind: "pr.open", args: { sessionId: "sess-fanout", what: "read a hostile page first", tainted: true }, scopeKey: "slack/T1/C1", domain: null, requestedBy: "U_REQUESTER", channelId: "C1", threadTs: null, chain: { unattended: false } },
+      { org: "default", kind: "pr.open", args: { sessionId: routineKey("fanout"), what: "read a hostile page first", tainted: true }, scopeKey: "slack/T1/C1", domain: null, requestedBy: "U_REQUESTER", channelId: "C1", threadTs: null, chain: { unattended: false } },
       { post: async () => ({ ok: true, ts: "999.000" }) as never },
     ),
   );
@@ -2180,7 +2217,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   ok(first.outcome === "decided", "OPE-251: the clicked card is decided");
   ok(
     prExecuted.length === fanOut.length && new Set(prExecuted).size === fanOut.length,
-    `🔴 OPE-251: ONE "approve for session" click executes EVERY worker of the concurrent fan-out — the grant reaches the workers already carded, not only the next one (saw: ${JSON.stringify(prExecuted)})`,
+    `🔴 OPE-251: ONE "approve for this routine" click executes EVERY worker of the concurrent fan-out — the grant reaches the workers already carded, not only the next one (saw: ${JSON.stringify(prExecuted)})`,
   );
   const rest = await Promise.all(posted.slice(1).map(async (p) => (await store.getPendingAction("default", p.id))?.status));
   ok(rest.every((s) => s === "approved"), "🔴 OPE-251: …and their cards are DECIDED, so nobody is left clicking a card for a session that was already granted");
@@ -2204,7 +2241,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   );
 
   ok(
-    (await store.getSessionApproval("default", "sess-fanout", "pr.open", new Date().toISOString()))?.grantedBy === "U_RANDOM_MEMBER",
+    (await store.getSessionApproval("default", routineKey("fanout"), "pr.open", new Date().toISOString()))?.grantedBy === "U_RANDOM_MEMBER",
     "OPE-251: the session memo is written too, so the NEXT worker skips its card as it always did",
   );
 
@@ -2215,7 +2252,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
     "OPE-251: …naming every card it released, and only those",
   );
 
-  const reachSession = "sess-reach";
+  const reachSession = routineKey("reach");
   const sameRoom = await inSession(() =>
     requestApproval(
       { org: "default", kind: "pr.open", args: { sessionId: reachSession, what: "the clicked one" }, scopeKey: "slack/T1/C1", domain: null, requestedBy: "U_REQUESTER", channelId: "C1", threadTs: null, chain: { unattended: false } },
@@ -2247,7 +2284,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
     ["m-a", "m-b"].map((what) =>
       inSession(() =>
         requestApproval(
-          { org: "default", kind: "test.member", args: { sessionId: "sess-nongrant", what }, scopeKey: "slack/T1/C1", domain: null, requestedBy: "U_REQUESTER", channelId: "C1", threadTs: null, chain: { unattended: false } },
+          { org: "default", kind: "test.member", args: { sessionId: routineKey("nongrant"), what }, scopeKey: "slack/T1/C1", domain: null, requestedBy: "U_REQUESTER", channelId: "C1", threadTs: null, chain: { unattended: false } },
           { post: async () => ({ ok: true, ts: "999.000" }) as never },
         ),
       ),
@@ -2260,9 +2297,28 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
     "🔴 OPE-251: …and its sibling is STILL PENDING — no grant was written, so there is nothing to release",
   );
   ok(
-    (await store.getSessionApproval("default", "sess-nongrant", "test.member", new Date().toISOString())) === null,
+    (await store.getSessionApproval("default", routineKey("nongrant"), "test.member", new Date().toISOString())) === null,
     "🔴 OPE-251: `approve_session` on a non-grantable kind writes NO memo — the release fires exactly where a memo does",
   );
+
+  const inThread = threadKey("no-grant");
+  const proposeInThread = (what: string) =>
+    inSession(() =>
+      requestApproval(
+        { org: "default", kind: "pr.open", args: { sessionId: inThread, what }, scopeKey: "slack/T1/C1", domain: null, requestedBy: "U_REQUESTER", channelId: "C1", threadTs: null, chain: { unattended: false } },
+        { post: async () => ({ ok: true, ts: "999.000" }) as never },
+      ),
+    );
+  const firstInThread = await proposeInThread("same act");
+  const siblingInThread = await proposeInThread("a sibling in the same thread");
+  const beforeThread = prExecuted.length;
+  await resolveApprovalClick({ org: "default", id: firstInThread.id, decision: "approve_session", clickerId: "U_RANDOM_MEMBER", clickContext: { surfaceKey: "slack/T1/C1" } });
+  ok(prExecuted.length === beforeThread + 1, "OPE-2363 PREMISE: the clicked thread card itself executes");
+  ok((await store.getSessionApproval("default", inThread, "pr.open", new Date().toISOString())) === null, "🔴 OPE-2363: the click in a thread writes NO grant");
+  ok((await store.getPendingAction("default", siblingInThread.id))?.status === "pending", "🔴 OPE-2363: …so its sibling card in the same thread is NOT released");
+  const secondInThread = await proposeInThread("same act");
+  ok(secondInThread.id !== firstInThread.id, "🔴 OPE-2363: a SECOND IDENTICAL proposal in the same thread mints a card of its own");
+  ok((await store.getPendingAction("default", secondInThread.id))?.status === "pending", "…and that card is pending: it waits for a person, not for a grant");
 }
 
 {
@@ -2302,7 +2358,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   const propose = (sessionId: string, what: string): Promise<{ id: string }> =>
     inSession(() =>
       requestApproval(
-        { org: "default", kind: "pr.open", args: { sessionId, what }, scopeKey: "slack/T1/C1", domain: null, requestedBy: "U_REQUESTER", channelId: "C1", threadTs: null, postedTo: "slack/T1/C1", chain: { unattended: false } },
+        { org: "default", kind: "pr.open", args: { sessionId: routineKey(sessionId), what }, scopeKey: "slack/T1/C1", domain: null, requestedBy: "U_REQUESTER", channelId: "C1", threadTs: null, postedTo: "slack/T1/C1", chain: { unattended: false } },
         { post: async () => ({ ok: true, ts: "999.000" }) as never },
       ),
     );

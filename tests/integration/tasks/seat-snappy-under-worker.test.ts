@@ -16,9 +16,10 @@ import {
   SLACK_TEAM_ID,
   slackMentionWake,
   slackTs,
-  taskIdOfDelegation,
+  taskIdOfWorkDelegation,
   waitFor,
   WAKE_FROM_ENVELOPE,
+  workTaskIdOfCall,
   type AuditCursor,
   type AuditRow,
   type RecordedRequest,
@@ -41,6 +42,8 @@ const A_PENDING = "ope2269: I have started a worker for you.";
 const B_REPLY = "ope2269: answering you now, while the other worker is still running.";
 const CHILD_RESULT = "ope2269 worker result";
 const WORKER_QUESTION = "ope2269 probe: the connector write needs a decision — approve it?";
+const CHILD_WAITING = "ope2269: I asked the room; the job waits for that answer.";
+
 const B_ASK = "a quick question from someone else";
 function bAskFor(micros: number): string {
   return `${B_ASK} ${micros}`;
@@ -62,6 +65,7 @@ function armSlack(): void {
       const name = id === SLACK_BOT ? "ottobot" : `ope2269-${id.slice(-3).toLowerCase()}`;
       return { ok: true, user: { id, team_id: SLACK_TEAM_ID, name, real_name: name, profile: { display_name: name, real_name: name } } };
     }
+    if (method === "conversations.members") return { ok: true, members: [], response_metadata: { next_cursor: "" } };
     if (method === "conversations.info") {
       return {
         ok: true,
@@ -107,7 +111,7 @@ async function mention(input: { readonly userId: string; readonly text: string; 
 
 function seatStepsForA(callIdPrefix: string): SeatScript["parent"] {
   return [
-    { calls: [{ tool: "agent", input: { message: A_BRIEF }, id: `${callIdPrefix}-dispatch` }] },
+    { calls: [{ tool: "work", input: { message: A_BRIEF }, id: `${callIdPrefix}-dispatch` }] },
     { calls: [{ tool: "reply", input: { wake: WAKE_FROM_ENVELOPE, text: A_PENDING, done: false }, id: `${callIdPrefix}-a-reply` }] },
     { say: NO_REPLY_SENTINEL },
   ];
@@ -200,7 +204,7 @@ function assertNoFault(handle: ScriptedHandle, label: string): void {
 async function driveAAndAwaitTurnEnd(handle: ScriptedHandle, label: string, micros: number): Promise<void> {
   await mention({ userId: MEMBER_A, text: "ope2269 please delegate this", micros });
   await waitFor(
-    () => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 2),
+    () => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1),
     `${label}: A's dispatch turn to serve its last step. 🔴 A seat that HOLDS ITS TURN OPEN while the worker works never ` +
       "gets here — which is the eve 0.69/0.70 behaviour OPE-2246 measured and OPE-2267 must answer, not a defect in this test",
     A_TURN_END_CEILING_MS,
@@ -262,9 +266,9 @@ test("the domain seat answers a second principal while the first one's worker ho
 
   assertNoFault(forB, label);
 
-  const taskId = taskIdOfDelegation(forA, "arm ①'s worker");
+  const taskId = await taskIdOfWorkDelegation(cursor, "arm ①'s worker");
   await waitFor(
-    () => forB.requests.find((r) => r.role === "parent" && r.stepIndex === 1),
+    () => forB.requests.find((r) => r.role === "parent" && r.stepIndex === 0),
     `${label}: B's own turn to serve its LAST step before the key is swapped`,
     A_TURN_END_CEILING_MS,
   );
@@ -278,32 +282,53 @@ test("the domain seat answers a second principal while the first one's worker ho
   await awaitWindowQuiet();
 }, 600_000);
 
-test("the domain seat answers a second principal while an approval card raised inside the first one's worker is pending", async () => {
+test("a worker's pending question card holds no turn, and the domain seat still answers a second principal", async () => {
   assertBoundsAreUnderTheHold();
   armSlack();
   await bootAgent();
   const cursor = await auditCursor();
-  const label = "arm ② approval pending";
+  const label = "arm ② question card pending";
 
   const forA = disposeLater(
     registerScript({
       parent: seatStepsForA("ope2269-card"),
-      child: [{ calls: [{ tool: "ask_question", input: { prompt: WORKER_QUESTION }, id: "ope2269-ask" }] }],
+      child: [
+        { delayMs: WORKER_HOLD_MS, calls: [{ tool: "ask_room", input: { question: WORKER_QUESTION }, id: "ope2269-ask" }] },
+        { say: CHILD_WAITING },
+      ],
     }),
   );
+  afterThisTest(() => forA.releaseHolds());
 
   await driveAAndAwaitTurnEnd(forA, label, 22693);
+  const taskId = await workTaskIdOfCall(cursor, forA, "ope2269-card-dispatch", "arm ②'s worker");
+  const closing = disposeLater(armSettlement(forA, SETTLEMENT_DRAIN_CLOSING_SCRIPT));
+  forA.releaseHolds();
 
-  const bridged = await waitFor(async () => {
-    const rows = await rowsSinceCursor(cursor, ["turn.question_bridged"], { limit: 50 });
+  const asked = await waitFor(async () => {
+    const rows = await rowsSinceCursor(cursor, ["work.question_posted"], { limit: 50 });
     return rows.length > 0 ? rows : undefined;
-  }, `${label}: the turn.question_bridged row for the worker's request`);
-  expect(bridged).toHaveLength(1);
-  expect(JSON.stringify(bridged), `${label}: the worker's model-authored prompt reached the audit plane`).not.toContain(WORKER_QUESTION);
+  }, `${label}: the work.question_posted row for the worker's card`);
+  expect(asked).toHaveLength(1);
+  expect(JSON.stringify(asked), `${label}: the worker's model-authored question reached the audit plane`).not.toContain(WORKER_QUESTION);
+  const cardResult = await waitFor(
+    () => forA.requests.find((r) => r.role === "child" && r.toolResults.some((t) => t.name === "ask_room"))?.toolResults.find((t) => t.name === "ask_room"),
+    `${label}: the worker's step that read the ask_room result`,
+  );
+  expect(cardResult.isError, `${label}: ask_room failed: ${JSON.stringify(cardResult.output)}`).toBe(false);
+  const askingStep = forA.requests.find((r) => r.role === "child" && r.stepIndex === 0);
+  expect(askingStep?.tools, `${label}: the work-session child still holds ask_question`).not.toContain("ask_question");
+  expect(askingStep?.tools, `${label}: the work-session child does not hold ask_room`).toContain("ask_room");
 
-  forA.dispose();
+  await consumeSettlement({ armed: closing, dispatched: forA, taskId, label: `${label}: the worker's result wake, keyed on its own task id` });
+  await waitFor(() => closing.requests.find((r) => r.role === "parent" && r.stepIndex === 1), `${label}: the closing drain's second no_reply`, 60_000);
+  assertNoFault(closing, `${label}: the closing drain`);
+  const settled = await rowsSinceCursor(cursor, ["delegation.task_settled"], { limit: 50 });
+  expect(settled.length, `${label}: the worker did not settle while its card was pending, so a turn still holds on the question`).toBeGreaterThan(0);
+  closing.dispose();
+  await awaitWindowQuiet();
+
   const forB = disposeLater(registerScript({ parent: seatStepsForB("ope2269-card") }));
-
   const bAsk = bAskFor(22694);
   await mention({ userId: MEMBER_B, text: `ope2269 ${bAsk}`, micros: 22694 });
 
@@ -312,12 +337,10 @@ test("the domain seat answers a second principal while an approval card raised i
 
   expect(
     forA.requests.filter((r) => r.role === "child").map((r) => r.stepIndex),
-    `${label}: the worker resumed, so B's mention was taken as the card's answer and this arm measured the wrong thing`,
-  ).toEqual([0]);
-  expect(
-    await rowsSinceCursor(cursor, ["delegation.task_settled", "delegation.task_failed"], { limit: 50 }),
-    `${label}: A's worker had already settled when B was answered, so this run never measured a seat under a pending card`,
-  ).toEqual([]);
+    `${label}: the worker resumed, so the card was answered and this arm measured the wrong thing`,
+  ).toEqual([0, 1]);
+  expect((await rowsSinceCursor(cursor, ["work.forwarded"], { limit: 50 })).length, `${label}: a second job was forwarded — B's mention was taken as the card's answer`).toBe(1);
+  expect(await rowsSinceCursor(cursor, ["input_response.routed"], { limit: 50 }), `${label}: a room message was routed as an answer`).toEqual([]);
 
   expect(bAnswer.reply.principalId, `${label}: B's reply row names someone else as the asker`).toBe(MEMBER_B);
   assertSnappy(bAnswer, aAnswer, label);

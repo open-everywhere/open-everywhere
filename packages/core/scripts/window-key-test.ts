@@ -12,7 +12,6 @@ import {
   isThreadSeatWindowToken,
   mintGenerationSalt,
   saltSupervisorGeneration,
-  sessionGrantKeyFromToken,
   dmAnchorDomain,
   dmAnchorSurfaceForToken,
   dmAnchorWindowKey,
@@ -164,24 +163,6 @@ ok(mintGenerationSalt() !== mintGenerationSalt(), "mintGenerationSalt: two calls
 eq(parseWindowToken("oe-dom:payments:oe-sup:g3-"), undefined, "trailing bare dash, no hex → not a window token");
 eq(parseWindowToken("oe-dom:payments:oe-sup:g3-ABCDEF"), undefined, "uppercase hex salt → not a window token (lowercase-only)");
 eq(parseWindowToken("oe-dom:payments:oe-sup:g3-zz"), undefined, "non-hex salt chars → not a window token");
-
-eq(
-  sessionGrantKeyFromToken("oe-dom:e2e-unified:win:t/slack/C1/C1/abc123:oe-sup:g1784940129230-9f2c"),
-  "oe-dom:e2e-unified:oe-sup:g1784940129230-9f2c",
-  "task-grain window token collapses to the parent domain window token, rotation salt preserved verbatim",
-);
-eq(
-  sessionGrantKeyFromToken("oe-dom:payments:oe-sup:g3"),
-  "oe-dom:payments:oe-sup:g3",
-  "bare unified window token keys as itself",
-);
-eq(
-  sessionGrantKeyFromToken("oe-dom:e2e:win:slack/T0EXAMPLE/C0EXCHAN006:oe-sup:g7"),
-  "oe-dom:e2e:win:slack/T0EXAMPLE/C0EXCHAN006:oe-sup:g7",
-  "solo per-channel window token keys as itself (surfaceKey windowId is never t/-prefixed)",
-);
-eq(sessionGrantKeyFromToken("C123:oe-sup:g1"), "C123:oe-sup:g1", "non-window supervisor token keys as itself");
-eq(sessionGrantKeyFromToken("1234.5678"), "1234.5678", "a thread-ts native token keys as itself");
 
 {
   const DM_SURFACE = "slack/T1/D999";

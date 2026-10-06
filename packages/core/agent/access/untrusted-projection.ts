@@ -1,9 +1,22 @@
 import { hostAuthoredModelOutput, ingestUntrustedModelOutput, UNTRUSTED_OPEN } from "./untrusted.js";
-import { declaredContentOriginForConnectionSearch, declaredContentOriginForToolName } from "./connector-content-origin-state.js";
+import { declaredContentOriginForConnectionSearch, declaredContentOriginForExecuteTarget, declaredContentOriginForToolName } from "./connector-content-origin-state.js";
+import {
+  CONNECTION_EXECUTE_TOOL_NAME,
+  CONNECTION_SEARCH_TOOL_NAME,
+  connectionExecuteTargetForCall,
+  qualifiedConnectorToolName,
+  readConnectionExecuteTarget,
+  rememberConnectionExecuteTarget,
+  type ConnectionExecuteTarget,
+} from "./connection-execute-target.js";
 import { restrictToolsetForJobWake } from "./job-posture.js";
 import { currentJobWakePosture } from "./job-session-state.js";
-import { restrictToolsetForLeanSeat } from "./lean-seat.js";
-import { currentLeanSeatIsDm, currentLeanSeatPosture } from "./lean-seat-state.js";
+import { fenceWorkSessionCancel } from "./work-cancel-fence.js";
+import { restrictToolsetForLeanSeat, restrictToolsetForWorkSession, WORK_CANCEL_TOOL, WORK_FORWARD_TOOL } from "./lean-seat.js";
+import { currentLeanSeatIsDm, currentLeanSeatPosture, currentWorkTier } from "./lean-seat-state.js";
+
+const NATIVE_QUESTION_TOOL = "ask_question";
+const WORK_QUESTION_TOOL = "ask_room";
 import { restrictToolsetForWorkerSeat } from "./worker-seat.js";
 import { currentHaltStamp } from "./halt-state.js";
 import { currentWorkerWake } from "./worker-seat-state.js";
@@ -11,7 +24,7 @@ import { restrictToolsetForInvokerPosture } from "./invoker-posture.js";
 import { currentInvokerPosture } from "./invoker-posture-state.js";
 import { nativeAgentAllowedNow } from "./native-delegation-state.js";
 import { TASK_PARENT_TOOL_NAMES } from "./background-tasks.js";
-import { refuseAgentContinuation } from "./worker-continuation.js";
+import { guardTaskContinuations } from "./worker-continuation.js";
 import { nullableOptionalToolSet } from "./nullable-optional-fields.js";
 import { claimWorkerToolsetEvidence, currentWorkerToolsetIdentity } from "./worker-toolset-state.js";
 import { auditWorkerToolset } from "../audit/worker-toolset.js";
@@ -30,7 +43,7 @@ interface ToolModelOutputShape {
 
 interface AiSdkToolLike {
   execute?: (...args: unknown[]) => unknown;
-  toModelOutput?: (args: { output: unknown; toolCallId: string }) => ToolModelOutputShape | Promise<ToolModelOutputShape>;
+  toModelOutput?: (args: { output: unknown; toolCallId: string; input?: unknown }) => ToolModelOutputShape | Promise<ToolModelOutputShape>;
 }
 
 const authoredProjectionNames = new Set<string>();
@@ -55,7 +68,8 @@ export function variantProjectedNameList(): readonly string[] {
 }
 
 function isConnectorExternalName(name: string): boolean {
-  return (name.includes("__") || name === "connection_search") && !authoredProjectionNames.has(name);
+  const reserved = name === CONNECTION_SEARCH_TOOL_NAME || name === CONNECTION_EXECUTE_TOOL_NAME;
+  return (name.includes("__") || reserved) && !authoredProjectionNames.has(name);
 }
 
 function isStatusOnlyConnectionSearch(output: unknown): boolean {
@@ -122,6 +136,16 @@ export function connectorExecutedFact(toolName: string, output: unknown): string
   return `${head}${named} The connector's own output follows, as data.`;
 }
 
+function connectorFactToolName(name: string, args: { toolCallId?: unknown; input?: unknown } | undefined): string {
+  if (name !== CONNECTION_EXECUTE_TOOL_NAME) return name;
+  const target = executeTargetFor(args);
+  return target === undefined ? name : qualifiedConnectorToolName(target);
+}
+
+function executeTargetFor(args: { toolCallId?: unknown; input?: unknown } | undefined): ConnectionExecuteTarget | undefined {
+  return readConnectionExecuteTarget(args?.input) ?? connectionExecuteTargetForCall(args?.toolCallId);
+}
+
 export function recordWorkerToolset(tools: readonly string[], withheld: readonly string[]): void {
   try {
     const who = currentWorkerToolsetIdentity();
@@ -136,8 +160,22 @@ export function recordWorkerToolset(tools: readonly string[], withheld: readonly
 export const HALTED_WITHHELD_TOOLS: readonly string[] = ["web_search", "web_fetch"];
 
 export function projectToolSet(toolset: Record<string, unknown>): void {
-  if (currentJobWakePosture() === "restricted") restrictToolsetForJobWake(toolset);
+  const workTier = currentWorkTier();
+  if (workTier === "work") {
+    restrictToolsetForWorkSession(toolset);
+    fenceWorkSessionCancel(toolset);
+  }
+  else if (currentJobWakePosture() === "restricted") restrictToolsetForJobWake(toolset);
   else if (currentLeanSeatPosture() === "lean") restrictToolsetForLeanSeat(toolset, currentLeanSeatIsDm());
+  if (workTier !== "forwards") {
+    if (toolset[WORK_FORWARD_TOOL] !== undefined) delete toolset[WORK_FORWARD_TOOL];
+    if (toolset[WORK_CANCEL_TOOL] !== undefined) delete toolset[WORK_CANCEL_TOOL];
+  }
+  if (workTier === "child") {
+    if (toolset[NATIVE_QUESTION_TOOL] !== undefined) delete toolset[NATIVE_QUESTION_TOOL];
+  } else if (toolset[WORK_QUESTION_TOOL] !== undefined) {
+    delete toolset[WORK_QUESTION_TOOL];
+  }
 
   const workerWake = currentWorkerWake();
   const workerWithheld = workerWake ? restrictToolsetForWorkerSeat(toolset) : [];
@@ -158,7 +196,7 @@ export function projectToolSet(toolset: Record<string, unknown>): void {
     }
   }
 
-  refuseAgentContinuation(toolset);
+  guardTaskContinuations(toolset);
 
   nullableOptionalToolSet(toolset);
 
@@ -169,8 +207,16 @@ export function projectToolSet(toolset: Record<string, unknown>): void {
     const tool = raw as AiSdkToolLike;
 
     if (isConnectorExternalName(name) && typeof tool.execute === "function") {
+      if (name === CONNECTION_EXECUTE_TOOL_NAME) {
+        const innerExecute = tool.execute.bind(tool);
+        tool.execute = (...args: unknown[]) => {
+          const options = args[1] as { toolCallId?: unknown } | undefined;
+          rememberConnectionExecuteTarget(options?.toolCallId, args[0]);
+          return innerExecute(...args);
+        };
+      }
       const prev = tool.toModelOutput?.bind(tool);
-      const fenced = async (args: { output: unknown; toolCallId: string }): Promise<ToolModelOutputShape> => {
+      const fenced = async (args: { output: unknown; toolCallId: string; input?: unknown }): Promise<ToolModelOutputShape> => {
         const output = args?.output;
         if (isAuthPendingOutput(output)) {
           if (prev !== undefined) return prev(args);
@@ -187,18 +233,27 @@ export function projectToolSet(toolset: Record<string, unknown>): void {
         if (base !== undefined && base.type === "text" && variantProjectedNames.has(name) && text.startsWith(`${UNTRUSTED_OPEN} `)) {
           return base;
         }
-        if (name === "connection_search" && isStatusOnlyConnectionSearch(output)) {
+        if (name === CONNECTION_SEARCH_TOOL_NAME && isStatusOnlyConnectionSearch(output)) {
           return hostAuthoredModelOutput(text, { source: `connector ${name}` });
         }
-        const grantContentOrigin = name === "connection_search" ? declaredContentOriginForConnectionSearch(output) : declaredContentOriginForToolName(name);
+        const target = name === CONNECTION_EXECUTE_TOOL_NAME ? executeTargetFor(args) : undefined;
+        const ingestionLabel = target === undefined ? name : qualifiedConnectorToolName(target);
+        const grantContentOrigin =
+          name === CONNECTION_SEARCH_TOOL_NAME
+            ? declaredContentOriginForConnectionSearch(output)
+            : target !== undefined
+              ? declaredContentOriginForExecuteTarget(target)
+              : name === CONNECTION_EXECUTE_TOOL_NAME
+                ? undefined
+                : declaredContentOriginForToolName(name);
         return ingestUntrustedModelOutput(text, {
-          source: `connector ${name}`,
-          ingestion: { kind: "connector", label: name, ...(grantContentOrigin !== undefined ? { grantContentOrigin } : {}) },
+          source: `connector ${ingestionLabel}`,
+          ingestion: { kind: "connector", label: ingestionLabel, ...(grantContentOrigin !== undefined ? { grantContentOrigin } : {}) },
         });
       };
       tool.toModelOutput = async (args) => {
         const projected = await fenced(args);
-        const fact = connectorExecutedFact(name, args?.output);
+        const fact = connectorExecutedFact(connectorFactToolName(name, args), args?.output);
         if (fact === undefined) return projected;
         const value = projected.type === "text" ? String(projected.value) : JSON.stringify(projected.value ?? null);
         return { type: "text", value: `${fact}\n\n${value}` };

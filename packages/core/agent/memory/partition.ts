@@ -1,4 +1,4 @@
-import { bindFrom, type BindableContext } from "../identity/binding.js";
+import { bindFrom, type BindableContext, type SurfaceBinding } from "../identity/binding.js";
 
 export interface Partition {
   readonly org: string;
@@ -16,7 +16,10 @@ export function domainKeyOf(p: Pick<Partition, "domainKey" | "surfaceKey">): str
 }
 
 export function resolvePartition(ctx: BindableContext): Partition {
-  const b = bindFrom(ctx);
+  return partitionOfBinding(bindFrom(ctx));
+}
+
+export function partitionOfBinding(b: SurfaceBinding): Partition {
   const workspaceKey = `${b.platform}/${b.workspace}`;
   const surfaceKey = `${workspaceKey}/${b.surface}`;
   return {

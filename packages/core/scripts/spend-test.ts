@@ -493,6 +493,98 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   }
 
   {
+    const ledgerStore = (await import("../agent/operational/provider.js")).getOperationalStore();
+    const ledgerPeriod = periodOf(new Date().toISOString());
+    type Ev = { readonly type: string; readonly data: Record<string, unknown> };
+    type Usage2256 = { inputTokens: number; outputTokens: number };
+    const sum = (us: readonly Usage2256[]) =>
+      us.reduce((a, u) => ({ inputTokens: a.inputTokens + u.inputTokens, outputTokens: a.outputTokens + u.outputTokens }), { inputTokens: 0, outputTokens: 0 });
+    const seatSteps: Usage2256[] = [10, 10, 100, 100, 100, 100].map((inputTokens) => ({ inputTokens, outputTokens: 5 }));
+    const workerSteps: Usage2256[] = [300, 310].map((inputTokens) => ({ inputTokens, outputTokens: 7 }));
+
+    const dispatch = async (ev: Ev, ctx: unknown): Promise<void> => {
+      const handlers = spendHook.events as Record<string, ((e: unknown, c: unknown) => unknown) | undefined>;
+      await handlers[ev.type]?.(ev, ctx);
+      await handlers["*"]?.(ev, ctx);
+    };
+    const stepEvents = (steps: readonly Usage2256[], turnId: string): Ev[] =>
+      steps.flatMap((usage, stepIndex) => [
+        { type: "step.started", data: { modelId: PRICED_MODEL, sequence: 0, stepIndex, turnId } },
+        { type: "step.completed", data: { finishReason: "stop", sequence: 0, stepIndex, turnId, usage } },
+      ]);
+    const aggregateEvents = (usage: Usage2256, turnId: string): Ev[] => [
+      { type: "turn.waiting", data: { on: "tasks", sequence: 0, turnId, usage } },
+      { type: "turn.completed", data: { sequence: 0, turnId } },
+      { type: "session.waiting", data: { continuationToken: "seat-token", usage, wait: "next-user-message" } },
+      { type: "session.completed", data: { usage } },
+      { type: "session.failed", data: { code: "X", message: "x", sessionId: "s", usage } },
+    ];
+
+    const driveTurn = async (channelId: string, seatSessionId: string, delegate: boolean) => {
+      const workerSessionId = `${seatSessionId}-worker`;
+      const seatCtx = {
+        channel: { kind: "slack" },
+        session: { id: seatSessionId, auth: { current: { attributes: { team_id: "T1", channel_id: channelId }, principalId: "U1", principalType: "slack-user" } } },
+      };
+      const workerCtx = {
+        channel: { kind: "slack" },
+        session: {
+          id: workerSessionId,
+          parent: { sessionId: seatSessionId, callId: "call-ope2256", rootSessionId: seatSessionId },
+          auth: { current: { attributes: { team_id: "T1", channel_id: channelId }, principalId: "U1", principalType: "slack-user" } },
+        },
+      };
+      const inclusive = sum(delegate ? [...seatSteps, ...workerSteps] : seatSteps);
+      await contextStorage.run(new ContextContainer(), async () => {
+        stampModelCall(PRICED_MODEL);
+        for (const ev of stepEvents(seatSteps, "turn_0")) await dispatch(ev, seatCtx);
+      });
+      if (delegate) {
+        await contextStorage.run(new ContextContainer(), async () => {
+          adoptSlackWorkerAuthority(channelId);
+          stampModelCall(PRICED_MODEL);
+          for (const ev of stepEvents(workerSteps, "turn_0")) await dispatch(ev, workerCtx);
+          for (const ev of aggregateEvents(sum(workerSteps), "turn_0")) await dispatch(ev, workerCtx);
+        });
+      }
+      await contextStorage.run(new ContextContainer(), async () => {
+        for (const ev of aggregateEvents(inclusive, "turn_0")) await dispatch(ev, seatCtx);
+      });
+      const rows = await usageEvents.usageForSession("default", seatSessionId);
+      const workerOwnRows = await usageEvents.usageForSession("default", workerSessionId);
+      const ledger = await ledgerStore.listSpendLedger("default", { surfaceKey: `slack/T1/${channelId}`, period: ledgerPeriod });
+      return { rows, workerOwnRows, ledger, inclusive, workerSessionId };
+    };
+
+    const { subagentRunOf } = await import("../agent/spend/subagent-runs.js");
+    const delegated = await driveTurn("C_OPE2256", "sess-ope2256-seat", true);
+    const rowSum = sum(delegated.rows.map((r) => ({ inputTokens: r.inputTokens ?? 0, outputTokens: r.outputTokens ?? 0 })));
+    const ledgerSum = sum(delegated.ledger.map((r) => ({ inputTokens: r.inputTokens, outputTokens: r.outputTokens })));
+    ok(delegated.inclusive.inputTokens === 1030, "control: the replayed turn is the spike's q6share shape — seat 420 + worker 610 = 1030 input tokens, the figure eve's inclusive aggregate reports");
+    ok(delegated.rows.length === seatSteps.length + workerSteps.length, "🔴 OPE-2256: one delegation turn writes ONE usage row per model call — the seat's six and the worker's two — and none for eve's inclusive aggregate events");
+    eq(rowSum, delegated.inclusive, "🔴 OPE-2256: the usage rows' total EQUALS the provider-reported usage of seat plus worker — no token counted twice, none dropped");
+    eq(ledgerSum, delegated.inclusive, "🔴 OPE-2256: the CAP ledger's total for the surface equals the same seat-plus-worker usage — the store every cap sums counts each token once");
+    ok(delegated.ledger.reduce((a, r) => a + r.calls, 0) === seatSteps.length + workerSteps.length, "…and its call count is the model calls, not the calls plus the aggregates");
+    const workerRows = delegated.rows.filter((r) => r.kind === "subagent");
+    eq(
+      sum(workerRows.map((r) => ({ inputTokens: r.inputTokens ?? 0, outputTokens: r.outputTokens ?? 0 }))),
+      sum(workerSteps),
+      "🔴 OPE-2256: the worker's spend is attributed to the WORKER — its rows are tagged `subagent` and carry exactly the worker's own tokens",
+    );
+    ok(workerRows.every((r) => subagentRunOf(r)?.sessionId === delegated.workerSessionId), "…each worker row's stamp names the worker session that spent it");
+    eq(
+      sum(delegated.rows.filter((r) => r.kind !== "subagent").map((r) => ({ inputTokens: r.inputTokens ?? 0, outputTokens: r.outputTokens ?? 0 }))),
+      sum(seatSteps),
+      "…and the seat's rows carry exactly the seat's own tokens, never the worker's",
+    );
+    ok(delegated.workerOwnRows.length === 0, "control: the worker's rows file under the seat (OPE-263), so the total above is the whole turn");
+
+    const solo = await driveTurn("C_OPE2256_SOLO", "sess-ope2256-solo", false);
+    ok(solo.rows.length === seatSteps.length && solo.rows.every((r) => r.kind !== "subagent"), "🔴 OPE-2256 negative control: a turn with no delegation writes only seat rows");
+    eq(sum(solo.rows.map((r) => ({ inputTokens: r.inputTokens ?? 0, outputTokens: r.outputTokens ?? 0 }))), sum(seatSteps), "…whose total is the seat's own usage alone");
+  }
+
+  {
     const { usdMicrosAtWrite } = await import("../agent/spend/pricing.js");
     const big = { inputTokens: 5_000_000, outputTokens: 5_000_000 };
     ok(usdMicrosAtWrite(big) > 0, "control: a STAMPLESS write still prices at the deploy's sole configured model — the legacy fallback is intact and is what a legacy row still gets");
@@ -663,6 +755,14 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   );
   eq(attestSubagentRuns(await usageEvents.usageForSession("default", "sess-stamped")).kind, "absent", "a session that delegated NOTHING attests nothing — no false positive from ordinary turns");
   eq(turnKind(runCtx("x", { parent: { sessionId: "p", callId: "c" } }) as never, undefined), "subagent", "turnKind classifies from the SAME parent seam the stamp uses, so the tag and the stamp cannot disagree");
+  {
+    const { subagentParentOf } = await import("../agent/hooks/spend.js");
+    eq(
+      subagentParentOf(runCtx("wrun_WORKER", { parent: { sessionId: "wrun_SEAT", callId: "call_1" }, token: "subagent:wrun_example67:0" }) as never, "subagent:wrun_example67:0"),
+      { parentSessionId: "wrun_SEAT", callId: "call_1", rootSessionId: "wrun_SEAT" },
+      "🔴 an eve 0.70+ worker carrying BOTH sources parents to the SEAT from the typed linkage, never to the runId its token names",
+    );
+  }
 
   {
     const { spendTotals } = await import("../agent/spend/store.js");
@@ -1146,8 +1246,10 @@ rmSync(dir, { recursive: true, force: true });
   }
   const gate = readFileSync(new URL("../agent/spend/ingress-gate.ts", import.meta.url), "utf8");
   ok(/\?\?\s*capBypassFor\b/.test(gate) && /from\s+"\.\/bypass\.js"/.test(gate), "OPE-267: the ATTENDED ingress gate does consult capBypassFor (its live default) — the escape exists, it is just unreachable from a fire");
-  const fireWindow = readFileSync(new URL("../agent/routines/fire-window.ts", import.meta.url), "utf8");
-  ok(/internalDispatch:\s*true/.test(fireWindow), "OPE-267: fire-window.ts marks its divert `internalDispatch` — a fire never reaches the attended gate, so it never reaches the admin escape");
+  const fireWork = readFileSync(new URL("../agent/routines/fire-work.ts", import.meta.url), "utf8");
+  const unifiedSrc = readFileSync(new URL("../agent/channels/unified.ts", import.meta.url), "utf8");
+  ok(/dispatch: dispatchWorkRequest,/.test(fireWork), "OPE-267: fire-work.ts delivers a fire through dispatchWorkRequest");
+  ok(/if \(receive !== undefined\) await divertToUnifiedWindow\(receive, \{ \.\.\.payload, internalDispatch: true \}\);/.test(unifiedSrc), "OPE-267: dispatchWorkRequest marks a fire's divert `internalDispatch` — a fire never reaches the attended gate, so it never reaches the admin escape");
 }
 
 {

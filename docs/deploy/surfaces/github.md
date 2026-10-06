@@ -230,6 +230,10 @@ Three things worth knowing:
   which GitHub serves for both, so nothing is PR-only here. `get_pr_feedback` remains the richer
   read for a PR under review — reviews, inline comments and check runs, which a conversation read
   does not carry.
+- **Another issue reads by target.** `read_channel` and `read_work_channel` read only this
+  conversation. `read_github_issue` takes `repo` and `number` and reads another issue's opening
+  post and newest comments, inside the session's repo grant. A `search` hit for such an issue names
+  it as the road.
 - **Only a comment on the diff has a thread.** An issue comment and a PR timeline comment are at the
   top level of their conversation, so `read_thread` on one says so rather than reading the timeline
   under a thread read's name.

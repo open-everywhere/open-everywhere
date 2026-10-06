@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-connections-auth-retry-memo
+
 import {
   markInSet,
   hasInSet,
@@ -6,9 +8,11 @@ import {
   connectorAuthRequiredError,
   markConnectorAuthRequired,
   connectorAuthRequiredThisTurn,
+  connectorAuthUrlThisTurn,
   clearConnectorAuthRequired,
   resetConnectorAuthMemo,
 } from "../agent/connections/auth-retry-memo.js";
+import { runEveStep, type SavedEveContext } from "./_eve-step-delta.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -80,5 +84,29 @@ try {
   clearThrew = true;
 }
 ok(!clearThrew, "fail-soft: clearConnectorAuthRequired never throws with no session context");
+
+{
+  let saved: SavedEveContext = {};
+  saved = (await runEveStep(saved, () => resetConnectorAuthMemo())).saved;
+  saved = (await runEveStep(saved, () => markConnectorAuthRequired("notion", "https://auth.example/notion"))).saved;
+  saved = (await runEveStep(saved, () => markConnectorAuthRequired("linear", "https://auth.example/linear"))).saved;
+  const flagged = await runEveStep(saved, () => ({
+    notion: connectorAuthRequiredThisTurn("notion"),
+    linear: connectorAuthRequiredThisTurn("linear"),
+    linearUrl: connectorAuthUrlThisTurn("linear"),
+  }));
+  ok(flagged.result.notion, "step delta: the first connector flagged stays flagged");
+  ok(flagged.result.linear, "step delta: a SECOND connector flagged in a later step stays flagged");
+  ok(flagged.result.linearUrl === "https://auth.example/linear", "step delta: the second connector's cached URL survives");
+  saved = (await runEveStep(saved, () => clearConnectorAuthRequired("notion"))).saved;
+  const healed = await runEveStep(saved, () => ({
+    notion: connectorAuthRequiredThisTurn("notion"),
+    notionUrl: connectorAuthUrlThisTurn("notion"),
+    linear: connectorAuthRequiredThisTurn("linear"),
+  }));
+  ok(!healed.result.notion, "step delta: a targeted clear in an earlier step stays cleared");
+  ok(healed.result.notionUrl === undefined, "step delta: the cleared connector's cached URL stays gone");
+  ok(healed.result.linear, "step delta: the targeted clear leaves a different connector flagged");
+}
 
 console.log(`connector-auth-retry-test: ${passed} assertions passed`);

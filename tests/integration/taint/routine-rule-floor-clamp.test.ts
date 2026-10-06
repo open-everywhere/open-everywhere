@@ -1,21 +1,21 @@
 import { randomBytes } from "node:crypto";
 
 import { afterAll, beforeAll, expect, test } from "vitest";
+import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import {
+  armSettlement,
   auditCursor,
+  awaitWorkResult,
   disposeLater,
   bootAgent,
   slackMentionWake,
-  armSettlement,
-  consumeSettlement,
   registerScript,
   rowsSinceCursor,
-  SETTLEMENT_DRAIN_SCRIPT,
   SLACK_TEAM_ID,
-  taskIdOfDelegation,
   waitFor,
   waitForAuditRows,
   waitForChildren,
+  workTaskIdOfCall,
   wrapToolExecute,
   type AuditCursor,
   type AuditRow,
@@ -66,15 +66,17 @@ async function driveChild(input: {
   childCalls: readonly { tool: string; input: Record<string, unknown> }[];
 }): Promise<Driven> {
   const child: ScriptedStep[] = input.childCalls.map((c, i) => ({
+    ...(i === 0 ? { delayMs: 120_000 } : {}),
     calls: [{ tool: c.tool, input: c.input, id: `${input.ids}-${i}` }],
   }));
   child.push({ say: "proposed" });
 
+  const callId = `${input.ids}-delegate`;
   const handle = disposeLater(
     registerScript({
       parent: [
-        { calls: [{ tool: "agent", input: { message: input.delegateMessage }, id: `${input.ids}-delegate` }] },
-        { say: "the worker reported back" },
+        { calls: [{ tool: "work", input: { message: input.delegateMessage }, id: callId }] },
+        { say: NO_REPLY_SENTINEL },
       ],
       child,
     }),
@@ -82,14 +84,20 @@ async function driveChild(input: {
 
   const cursor = await auditCursor();
   await injectWake(input.delegateMessage);
-  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
-  const taskId = taskIdOfDelegation(handle, `the ${input.ids} delegation`);
-  const drained = disposeLater(armSettlement(handle, SETTLEMENT_DRAIN_SCRIPT));
+  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's receipt step to be served");
+  await waitForChildren(handle, { count: 1, lastStepIndex: 0, label: `the ${input.ids} worker to enter its hold` });
+  const settlement = disposeLater(armSettlement(handle, { parent: [{ say: NO_REPLY_SENTINEL }] }));
+  const taskId = await workTaskIdOfCall(cursor, handle, callId, `the ${input.ids} forward`);
+  handle.releaseHolds();
   await waitForChildren(handle, { count: 1, lastStepIndex: child.length - 1, label: `the ${input.ids} worker's own terminal step` });
-  expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-  await consumeSettlement({ armed: drained, dispatched: handle, taskId, label: `the ${input.ids} worker's settlement wake` });
-  expect(drained.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-  drained.dispose();
+  const resultStep = await awaitWorkResult({ handle: settlement, taskId, label: `the ${input.ids} seat step that read the worker's result` });
+  expect(resultStep.stepIndex).toBe(0);
+  expect(handle.holdsCutShort(), "the worker's hold ended on the release, not on its 120 s backstop").toBe(1);
+  for (const h of [handle, settlement]) {
+    expect(h.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+    expect(h.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
+  }
+  settlement.dispose();
   return { handle, cursor };
 }
 
@@ -147,6 +155,7 @@ beforeAll(async () => {
       id: params.get("user"), team_id: SLACK_TEAM_ID, name: "floor-fixture",
       is_bot: params.get("user") === BOT_USER_ID, is_restricted: false, is_ultra_restricted: false,
     } };
+    if (method === "conversations.members") return { ok: true, members: [], response_metadata: { next_cursor: "" } };
     if (method === "conversations.info") return { ok: true, channel: {
       id: FIXTURE_CHANNEL_ID, is_channel: true, is_private: false,
       is_ext_shared: false, is_org_shared: false, is_shared: false, is_pending_ext_shared: false,

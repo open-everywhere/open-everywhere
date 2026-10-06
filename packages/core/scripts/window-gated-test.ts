@@ -87,7 +87,9 @@ ok(WINDOW_GATED_TOOLS.return_result === undefined && WINDOW_GATED_TOOLS.stop_tas
 eq(WINDOW_GATED_TOOLS.agent, ["standing", "thread"], "agent is grain-gated to the conversational-root seats (standing+thread) — absent on native, and NEVER on a task worker leaf");
 eq(WINDOW_GATED_TOOLS.read_thread_seat, ["standing"], "read_thread_seat is standing-only (the seat that opened the thread reads it)");
 eq(WINDOW_GATED_TOOLS.message_thread_seat, ["standing"], "message_thread_seat is standing-only (no seat-to-seat mesh, no worker)");
-eq(Object.keys(WINDOW_GATED_TOOLS).length, WIDE_HANDS.length + 5, "the gated table is EXACTLY the 11 wide-hands tools + the 5 delegation/lifecycle/coordinator tools (agent/spawn_thread_session/complete_thread/read_thread_seat/message_thread_seat) — nothing else narrows.");
+eq(WINDOW_GATED_TOOLS.work, ["standing", "thread"], "work is on the conversation seats (standing+thread): each forwards to its own work session; never a worker leaf");
+eq([...(WINDOW_GATED_TOOLS.cancel_work ?? [])], ["standing", "thread"], "cancel_work is on the same seats as `work` (OPE-2338, D15): the seat that forwarded a job stops it");
+eq(Object.keys(WINDOW_GATED_TOOLS).length, WIDE_HANDS.length + 7, "the gated table is EXACTLY the 11 wide-hands tools + the 7 delegation/lifecycle/coordinator tools (agent/work/cancel_work/spawn_thread_session/complete_thread/read_thread_seat/message_thread_seat) — nothing else narrows.");
 eq([...withheldFromGrain("standing")].sort(), [...WIDE_HANDS, "complete_thread"].sort(), "standing withholds the 11 wide-hands tools + complete_thread (it KEEPS agent and the spawner — a standing seat is what delegates)");
 
 {
@@ -121,18 +123,18 @@ eq([...withheldFromGrain("standing")].sort(), [...WIDE_HANDS, "complete_thread"]
 }
 eq(
   [...withheldFromGrain("task")].sort(),
-  ["agent", "complete_thread", "message_thread_seat", "read_thread_seat", "spawn_thread_session"].sort(),
-  "task (the worker) withholds agent, the standing-only spawner, complete_thread and the two coordinator verbs (it has its own wide hands; a worker leaf holds no threads and must not delegate recursively)",
+  ["agent", "cancel_work", "complete_thread", "message_thread_seat", "read_thread_seat", "spawn_thread_session", "work"].sort(),
+  "task (the worker) withholds agent, the standing-only spawner, forward verb and its stop (OPE-2338, D15), complete_thread and the two coordinator verbs (it has its own wide hands; a worker leaf holds no threads and must not delegate recursively)",
 );
 eq(
   [...withheldFromGrain("native")].sort(),
-  [...WIDE_HANDS, "agent", "complete_thread", "message_thread_seat", "read_thread_seat", "spawn_thread_session"].sort(),
-  "native withholds agent, the rest of the delegation/lifecycle/coordinator set AND the wide hands — the T2 narrowing, which since OPE-370 is the shipped default",
+  [...WIDE_HANDS, "agent", "cancel_work", "complete_thread", "message_thread_seat", "read_thread_seat", "spawn_thread_session", "work"].sort(),
+  "native withholds agent, the forward verb `work` and its stop `cancel_work` (OPE-2338, D15), the rest of the delegation/lifecycle/coordinator set AND the wide hands — the T2 narrowing, which since OPE-370 is the shipped default",
 );
 eq(
   [...withheldFromGrain("thread")].sort(),
   [...WIDE_HANDS, "message_thread_seat", "read_thread_seat", "spawn_thread_session"].sort(),
-  "a thread seat withholds the wide hands, the spawner and the two coordinator verbs (it keeps the conversational kit and can delegate, but never reaches a sibling seat)",
+  "a thread seat withholds the wide hands, the spawner and the two coordinator verbs (it keeps the conversational kit and the forward verb `work` with its stop `cancel_work`, OPE-2350, but never reaches a sibling seat)",
 );
 
 console.log("1. presence/absence matrix (windowGated):");
@@ -303,10 +305,11 @@ console.log("5. replay alias + eve's own replay path (eve step registry):");
 
   const require2 = createRequire(import.meta.url);
   const eveRoot = dirname(require2.resolve("eve/package.json"));
-  const lifecycle = (await import(pathToFileURL(join(eveRoot, "dist/src/context/dynamic-tool-lifecycle.js")).href)) as {
-    replayDynamicSessionTools(meta: readonly unknown[], resolvers: readonly unknown[], sessionId: string): { name: string; execute: unknown }[];
+  const lifecycle = (await import(pathToFileURL(join(eveRoot, "dist/src/context/build-dynamic-tools.js")).href)) as {
+    replayDynamicTools(meta: readonly unknown[], scope: { sessionId: string; scope: string }): { name: string; execute: unknown }[];
   };
-  const replayed = lifecycle.replayDynamicSessionTools(
+  const REPLAY_SCOPE = { scope: "session", sessionId: "sess-window-gated-replay" };
+  const replayed = lifecycle.replayDynamicTools(
     [
       {
         name: "bash",
@@ -317,8 +320,7 @@ console.log("5. replay alias + eve's own replay path (eve step registry):");
         callbacks: { execute: { closure: {} } },
       },
     ],
-    [],
-    "sess-window-gated-replay",
+    REPLAY_SCOPE,
   );
   eq(replayed.length, 1, "eve's replay path finds the pre-registered step fn (no skip) — the seam name is pinned against the installed eve");
   eq(replayed[0]?.name, "bash", "the replayed tool carries its mounted name");
@@ -336,7 +338,7 @@ console.log("5. replay alias + eve's own replay path (eve step registry):");
   ok(!("__executeStepFn" in rawEntry), "RETIRED (OPE-867): the entry carries NO __executeStepFn stamp — eve derives its own step id, not OURS");
   ok(!("__closureVars" in rawEntry), "RETIRED (OPE-867): the entry carries NO __closureVars stamp either");
   ok(reg.get(customNames.approval) === undefined, "an approval-less entry registers NO approval step (absent approval === never() on both paths)");
-  const replayedCustom = lifecycle.replayDynamicSessionTools(
+  const replayedCustom = lifecycle.replayDynamicTools(
     [
       {
         name: "reply",
@@ -347,8 +349,7 @@ console.log("5. replay alias + eve's own replay path (eve step registry):");
         callbacks: { execute: { closure: {} } },
       },
     ],
-    [],
-    "sess-window-gated-replay",
+    REPLAY_SCOPE,
   );
   eq(replayedCustom.length, 1, "eve replays the alias name fed to it directly (still a valid, functioning step-registry entry)");
   const armedBash = (await resolveWindowGated(windowGated("bash", stubEntry("bash")), grainCtx.task())) as unknown as Record<string, unknown>;
@@ -386,7 +387,7 @@ console.log("6. mount refresh on a deployment change (OPE-632):");
     dispatchDynamicToolEvent(i: unknown): Promise<void>;
     refreshDynamicSessionToolsForRuntimeRevision(i: unknown): Promise<void>;
   };
-  for (const k of ["SessionIdKey", "ContinuationTokenKey", "AuthKey", "SessionDynamicToolMetadataKey", "SessionDynamicToolRuntimeRevisionKey"]) {
+  for (const k of ["SessionIdKey", "ContinuationTokenKey", "AuthKey", "StaticModelReferenceKey", "SessionDynamicToolMetadataKey", "SessionDynamicToolRuntimeRevisionKey"]) {
     ok(keys[k] !== undefined, `eve still exports ${k} from context/keys.js (the refresh reads and writes these)`);
   }
   ok(typeof life.refreshDynamicSessionToolsForRuntimeRevision === "function", "eve still exports refreshDynamicSessionToolsForRuntimeRevision — the ONLY thing that re-derives a live seat's roster");
@@ -417,6 +418,7 @@ console.log("6. mount refresh on a deployment change (OPE-632):");
   ctx6.set(keys.SessionIdKey, "sess-refresh");
   ctx6.set(keys.ContinuationTokenKey, TASK_TOKEN);
   ctx6.set(keys.AuthKey, { attributes: { oe_grain: "task" } });
+  ctx6.set(keys.StaticModelReferenceKey, null);
   const event6 = { type: "session.started", data: {} };
   const meta = () => (ctx6.get(keys.SessionDynamicToolMetadataKey) as { name: string; description?: string }[] | undefined) ?? [];
   const names = () => meta().map((m) => m.name).sort();
@@ -442,13 +444,13 @@ console.log("6. mount refresh on a deployment change (OPE-632):");
   await refresh(kitV3, "deployment:dep_C");
   eq(names(), ["bash", "glob"], "a deploy that ADDS a gated tool reaches a live seat on its next turn");
 
-  const steps6 = readFileSync(join(eveRoot3, "dist", "src", "execution", "workflow-steps.js"), "utf8");
+  const steps6 = readFileSync(join(eveRoot3, "dist", "src", "execution", "session", "turn-step.js"), "utf8");
   ok(
     /let (\w+)=process\.env\.VERCEL_DEPLOYMENT_ID\?\.trim\(\),(\w+)=\1\?`deployment:\$\{\1\}`:await resolveRuntimeCompiledArtifactsVersionedCacheKey\(/.test(steps6),
     "the runtime revision is the VERCEL DEPLOYMENT ID (falling back to the compiled-artifacts cache key) — this is what ties the refresh to a DEPLOY",
   );
   ok(
-    /if\(!(\w+)\.sessionStarted\)(\w+)\.set\(SessionDynamicSubagentRuntimeRevisionKey,(\w+)\),\2\.set\(SessionDynamicToolRuntimeRevisionKey,\3\);else\{/.test(steps6),
+    /(\w+)=\w+\.sessionStarted;[\s\S]{0,400}?,!\1\)(\w+)\.set\(SessionDynamicSubagentRuntimeRevisionKey,(\w+)\),\2\.set\(SessionDynamicToolRuntimeRevisionKey,\3\);else\{/.test(steps6),
     "a session's FIRST turn seeds the revision key; every later turn takes the refresh branch",
   );
   ok(
@@ -457,12 +459,12 @@ console.log("6. mount refresh on a deployment change (OPE-632):");
   );
   const life6 = readFileSync(join(eveRoot3, "dist", "src", "context", "build-dynamic-tools.js"), "utf8");
   ok(
-    /\{description:(\w+)\.description,execute:\1\.execution===`background`\?createToolExecuteWithAuth\(\{execution:`background`,scope:\1\.name,[\s\S]{0,300}?\}\):createToolExecuteWithAuth\(\{scope:\1\.name,[\s\S]{0,300}?\}\),inputSchema:toInputSchema\(\1\.inputSchema\),name:\1\.name/.test(life6),
+    /description:(\w+)\.description,[\s\S]{0,40}?execute:createToolExecuteWithAuth\(\{scope:\1\.name,[\s\S]{0,300}?\}\),inputSchema:replayDynamicToolSchema\(\1,\w+,`inputSchema`\),name:\1\.name/.test(life6),
     "replay serves the DESCRIPTION and INPUT SCHEMA from the durable metadata — which is exactly why the refresh is load-bearing and not a nicety",
   );
   ok(
-    /,name:(\w+)\.name,execution:\1\.execution,/.test(life6),
-    "…and replay carries the tool's own `execution` mode through from that metadata too, so a background dynamic tool stays background across a replay",
+    !/execution:\w+\.execution/.test(life6),
+    "eve 0.71 replay carries NO `execution` mode: eve removed background dynamic tools",
   );
   ok(
     /bindDynamicCallback\((\w+),(\w+),`toModelOutput`,\1\.callbacks\.toModelOutput\)/.test(life6),
@@ -503,6 +505,95 @@ console.log("6. mount refresh on a deployment change (OPE-632):");
   } finally {
     overrideSettingsForTest({ delegation: { oneshotAgent: before } });
   }
+}
+
+console.log("7. the sandbox kit mounts through eve's real resolver (OPE-2304):");
+{
+  const require7 = createRequire(import.meta.url);
+  const eveRoot7 = dirname(require7.resolve("eve/package.json"));
+  const abs7 = (rel: string) => pathToFileURL(join(eveRoot7, "dist", "src", rel)).href;
+  const keys7 = (await import(abs7("context/keys.js"))) as Record<string, unknown>;
+  const life7 = (await import(abs7("context/dynamic-tool-lifecycle.js"))) as { dispatchDynamicToolEvent(i: unknown): Promise<void> };
+  const build7 = (await import(abs7("context/build-dynamic-tools.js"))) as {
+    replayDynamicTools(meta: readonly unknown[], scope: { sessionId: string; scope: string }): {
+      name: string;
+      inputSchema?: { "~standard": { validate(v: unknown): Promise<{ issues?: unknown }> | { issues?: unknown } } };
+    }[];
+  };
+  const { default: sandboxKit } = (await import("../agent/tools/sandbox_tools.js")) as { default: { events: Record<string, unknown> } };
+
+  type Row = { name: string; callbacks: Record<string, unknown> };
+  const resolve7 = async (slug: string, events: Record<string, unknown>, sessionId: string): Promise<{ rows: Row[]; failures: string[] }> => {
+    const store = new Map<unknown, unknown>([
+      [keys7.SessionIdKey, sessionId],
+      [keys7.ContinuationTokenKey, TASK_TOKEN],
+      [keys7.AuthKey, { attributes: { oe_grain: "task" } }],
+      [keys7.StaticModelReferenceKey, null],
+    ]);
+    const ctx = {
+      get: (k: unknown) => store.get(k),
+      set: (k: unknown, v: unknown) => void store.set(k, v),
+      require: (k: unknown) => {
+        if (!store.has(k)) throw new Error(`ctx.require: missing key ${String(k)}`);
+        return store.get(k);
+      },
+    };
+    const failures: string[] = [];
+    const realError = console.error;
+    console.error = (...args: unknown[]) => {
+      const line = JSON.stringify(args);
+      if (line.includes("Dynamic tool resolver")) failures.push(line);
+      else realError(...args);
+    };
+    try {
+      await life7.dispatchDynamicToolEvent({ ctx, resolvers: [{ slug, eventNames: ["session.started"], events }], event: { type: "session.started" }, messages: [] });
+    } finally {
+      console.error = realError;
+    }
+    return { failures, rows: (store.get(keys7.SessionDynamicToolMetadataKey) as Row[] | undefined) ?? [] };
+  };
+
+  const SANDBOX_SIX = ["bash", "glob", "grep", "read_file", "write_file", "web_fetch"];
+  const kit = await resolve7("sandbox_tools", sandboxKit.events, "sess-ope2304-kit");
+  eq(kit.failures, [], "eve logs NO resolver failure for the sandbox kit on a task grain");
+  eq(kit.rows.map((r) => r.name).sort(), [...SANDBOX_SIX].sort(), "…and all SIX sandbox tools mount: the kit is not dropped whole");
+  for (const row of kit.rows) {
+    ok(row.callbacks.inputSchema !== undefined, `${row.name}: the durable row carries an inputSchema descriptor`);
+    ok(row.callbacks.outputSchema !== undefined, `${row.name}: …and an outputSchema descriptor (eve 0.71 requires both for a validator schema)`);
+  }
+
+  const writeRow = kit.rows.find((r) => r.name === "write_file");
+  const [replayedWrite] = build7.replayDynamicTools(writeRow === undefined ? [] : [writeRow], { scope: "session", sessionId: "sess-ope2304-kit" });
+  const validate = replayedWrite?.inputSchema?.["~standard"].validate;
+  ok(typeof validate === "function", "eve's replay rebuilds write_file's input schema from its durable descriptor");
+  const good = await validate?.({ filePath: "/workspace/a.md", content: "x" });
+  const bad = await validate?.({ path: "/workspace/a.md", content: "x" });
+  ok(good !== undefined && good.issues === undefined, "…and the replayed schema ACCEPTS a well-formed write_file input");
+  ok(bad !== undefined && bad.issues !== undefined, "…and REJECTS a malformed one");
+  const durable7 = (await import(abs7("tools/durable-callbacks.js"))) as { clearDurableDynamicCallbacks(sessionId: string): void };
+  durable7.clearDurableDynamicCallbacks("sess-ope2304-kit");
+  const [coldWrite] = build7.replayDynamicTools(writeRow === undefined ? [] : [writeRow], { scope: "session", sessionId: "sess-ope2304-kit" });
+  await assert.rejects(
+    async () => coldWrite?.inputSchema?.["~standard"].validate({ filePath: "/workspace/a.md", content: "x" }),
+    /inputSchema/,
+    "with the binding cleared, the replayed schema THROWS on validate: replay calls the bound descriptor, not a JSON fallback",
+  );
+  n++;
+
+  const bare = defineTool({
+    description: "bare-schema probe",
+    inputSchema: z.object({ v: z.string().optional() }),
+    async execute() {
+      return { ran: "bare" };
+    },
+  }) as unknown as GatedToolEntry;
+  preRegisterDynamicEntry("bare_schema_probe", "_single", bare);
+  const refused = await resolve7("bare_schema_probe", { "session.started": async () => bare }, "sess-ope2304-bare");
+  eq(refused.rows, [], "NEGATIVE CONTROL: an entry whose validator schema has no descriptor mounts NOTHING");
+  ok(
+    refused.failures.some((f) => f.includes('callback \\"inputSchema\\" does not have a durable descriptor')),
+    "…and eve logs the exact OPE-2304 refusal, so this section reds on the real failure mode and not on a stand-in",
+  );
 }
 
 console.log(`\nwindow-gated: ${n} assertions passed.`);

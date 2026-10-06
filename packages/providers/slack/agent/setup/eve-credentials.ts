@@ -3,7 +3,7 @@ import { slackBotToken, slackSigningSecret } from "./credentials.js";
 
 const MAX_SKEW_SECONDS = 60 * 5;
 
-export async function verifySlackInboundForEve(request: Request, body: string): Promise<void> {
+export async function verifySlackInboundForEve(request: Request, body: string): Promise<true> {
   const secret = await slackSigningSecret();
   if (!secret) {
     throw new Error(
@@ -19,6 +19,7 @@ export async function verifySlackInboundForEve(request: Request, body: string): 
   if (!Number.isFinite(skew) || skew > MAX_SKEW_SECONDS) throw new Error("slack inbound: the signed timestamp is outside the accepted window.");
 
   if (!slackSignatureMatches(secret, timestamp, body, signature)) throw new Error("slack inbound: the signature does not match.");
+  return true;
 }
 
 export async function slackBotTokenForEve(): Promise<string> {

@@ -9,10 +9,11 @@ import type { CredentialGrantRow } from "@open-everywhere/core/agent/operational
 
 import {
   armSettlement,
+  awaitWorkResult,
+  workTaskIdOfCall,
   auditCursor,
   awaitWindowQuiet,
   bootAgent,
-  consumeSettlement,
   DISCORD_LISTED_CHANNEL_ID,
   discordMentionWake,
   disposeLater,
@@ -21,7 +22,6 @@ import {
   rowsSinceCursor,
   SLACK_TEAM_ID,
   slackInteractivityPost,
-  taskIdOfDelegation,
   waitFor,
   waitForChildren,
 } from "../harness";
@@ -104,9 +104,13 @@ test("a delegated worker raises the grant ask, the ask is scoped to the SEAT's c
 
   const dispatched = disposeLater(
     registerScript({
-      parent: [{ calls: [{ tool: "agent", input: { message: "summarise the launch checklist" }, id: "ope1343-delegate" }] }, { say: "handing this off" }],
+      parent: [
+        { calls: [{ tool: "work", input: { message: "summarise the launch checklist" }, id: "ope1343-delegate" }] },
+        { say: "NO_REPLY" },
+      ],
       child: [
         {
+          delayMs: 120_000,
           calls: [
             {
               tool: "request_credential_grant",
@@ -132,9 +136,10 @@ test("a delegated worker raises the grant ask, the ask is scoped to the SEAT's c
 
   const seatCall = await waitFor(() => dispatched.requests.find((r) => r.role === "parent" && r.stepIndex === 0), "the seat's own first model call");
   const seatSessionId = String(seatCall.sessionId);
-  await waitFor(() => dispatched.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "agent")), "the seat's resumed step carrying the delegation receipt");
-  const taskId = taskIdOfDelegation(dispatched, "the OPE-1343 worker-ask delegation");
-  const armed = armSettlement(dispatched, { parent: [{ say: "acknowledged" }] });
+  const taskId = await workTaskIdOfCall(cursor, dispatched, "ope1343-delegate", "the turn-1 forward receipt");
+  await waitFor(() => dispatched.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the turn-1 dispatch turn's last step");
+  const settled1 = disposeLater(armSettlement(dispatched, { parent: [{ say: "NO_REPLY" }] }));
+  dispatched.releaseHolds();
   await waitForChildren(dispatched, { count: 1, lastStepIndex: 1, label: "the delegated worker to finish its own arm" });
 
   const workerCall = await waitFor(() => dispatched.requests.find((r) => r.role === "child" && r.stepIndex === 0), "the worker's own first model call");
@@ -144,8 +149,13 @@ test("a delegated worker raises the grant ask, the ask is scoped to the SEAT's c
   expect(dispatched.requests.filter((r) => r.fault !== undefined), "the turn-1 script degraded").toEqual([]);
   expect(String(workerCall.sessionId), "the worker ran on the SEAT's own session, so nothing here measures a delegation").not.toBe(seatSessionId);
 
-  await consumeSettlement({ armed, dispatched, taskId, label: "the delegation's settlement notification" });
-  armed.dispose();
+  const resultStep = await awaitWorkResult({ handle: settled1, taskId, label: "the seat's step that read the worker's result" });
+  expect(seatCall.turnId, "the seat's request carries no eve turn id, so the turn check below is vacuous").toBeDefined();
+  expect(resultStep.turnId, "the worker's result arrived in the dispatch turn — the forwarding seat's turn was held").not.toBe(seatCall.turnId);
+  expect(dispatched.requests.filter((r) => r.fault !== undefined), "the turn-1 script degraded").toEqual([]);
+  expect(settled1.requests.filter((r) => r.fault !== undefined), "the turn-1 result-wake script degraded").toEqual([]);
+  dispatched.dispose();
+  settled1.dispose();
 
   const asked = await waitFor(async () => {
     const rows = await rowsSinceCursor(cursor, ["grant.asked"]);
@@ -208,8 +218,11 @@ test("a delegated worker raises the grant ask, the ask is scoped to the SEAT's c
   await awaitWindowQuiet();
   const followUp = disposeLater(
     registerScript({
-      parent: [{ calls: [{ tool: "agent", input: { message: "read the launch checklist" }, id: "ope2023-delegate" }] }, { say: "the tool is on the task" }],
-      child: [{ say: "read it" }],
+      parent: [
+        { calls: [{ tool: "work", input: { message: "read the launch checklist" }, id: "ope2023-delegate" }] },
+        { say: "NO_REPLY" },
+      ],
+      child: [{ delayMs: 120_000, say: "read it" }],
     }),
   );
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> anything back yet", messageId: "ope1343-t2" });
@@ -218,15 +231,20 @@ test("a delegated worker raises the grant ask, the ask is scoped to the SEAT's c
   expect(seatTurn2.tools, `🔴 the SEAT was offered ${grantTool} — a lent tool belongs on the conversation's workers, and the seat is meant to delegate to reach it`).not.toContain(
     grantTool,
   );
-  expect(seatTurn2.tools, "the seat's turn-2 offer carries no `agent` verb — the assertion above would then be vacuous").toContain("agent");
+  expect(seatTurn2.tools, "the seat's turn-2 offer carries no `work` verb — the assertion above would then be vacuous").toContain("work");
 
-  const armed2 = armSettlement(followUp, { parent: [{ say: "done" }] });
+  await waitFor(() => followUp.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the turn-2 dispatch turn's last step");
+  const settled2 = disposeLater(armSettlement(followUp, { parent: [{ say: "NO_REPLY" }] }));
+  followUp.releaseHolds();
   await waitForChildren(followUp, { count: 1, lastStepIndex: 0, label: "the second delegated worker to finish its own arm" });
   const workerTurn2 = await waitFor(() => followUp.requests.find((r) => r.role === "child" && r.stepIndex === 0), "the second worker's own first model call");
   expect(String(workerTurn2.sessionId), "the second worker ran on the SEAT's session, so nothing here measures a worker mount").not.toBe(seatSessionId);
   expect(workerTurn2.tools, `🔴 the conversation's own WORKER was never offered ${grantTool} — the owner approved a grant nothing in the deployment can now spend`).toContain(
     grantTool,
   );
-  armed2.dispose();
+  const taskId2 = await workTaskIdOfCall(cursor, followUp, "ope2023-delegate", "the turn-2 forward receipt");
+  expect(taskId2, "turn 2's receipt names turn 1's task, so the wait below would measure turn 1").not.toBe(taskId);
+  await awaitWorkResult({ handle: settled2, taskId: taskId2, label: "the turn-2 seat's step that read the worker's result" });
   expect(followUp.requests.filter((r) => r.fault !== undefined), "the turn-2 script degraded").toEqual([]);
+  expect(settled2.requests.filter((r) => r.fault !== undefined), "the turn-2 result-wake script degraded").toEqual([]);
 }, 360_000);

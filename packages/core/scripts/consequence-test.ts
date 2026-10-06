@@ -165,13 +165,23 @@ firesWith(
 }
 
 firesWith(
+  chk([{ name: "t", source: "  approval: always()," }], policyOf, { t: { tier: "gate:member", via: { kind: "eve-hitl" }, reason: "x", taint: "gate" } }),
+  "OE cards only",
+  "eve-hitl with a gate:* tier FAILS (banned, OPE-2340)",
+);
+firesWith(
+  chk([{ name: "t", source: "  approval: once()," }], policyOf, { t: { tier: "open", via: { kind: "eve-hitl" }, reason: "x" } }),
+  "OE cards only",
+  "eve-hitl on an OPEN row FAILS too — the old session-confirm exception is gone (OPE-2340)",
+);
+firesWith(
   chk(
-    [{ name: "t", source: "  approval: always()," }],
+    [{ name: "t", source: 'requestApproval({ kind: "memory.purge" });\n  approval: once(),' }],
     policyOf,
-    { t: { tier: "gate:member", via: { kind: "eve-hitl" }, reason: "x" } },
+    { t: { tier: "gate:member", via: { kind: "action-kind", action: "memory.purge" }, reason: "x", taint: "gate" } },
   ),
-  "cannot carry a gate:* tier",
-  "eve-hitl with a gate:* tier FAILS (no approver-standing check — design §7.2)",
+  "OE cards only",
+  "a stray native `approval:` in an action-kind tool FAILS — the row cannot make eve's wait stop holding the turn",
 );
 
 {

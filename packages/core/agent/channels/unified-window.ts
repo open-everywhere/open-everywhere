@@ -7,6 +7,7 @@ import type { SurfaceBinding } from "../identity/binding.js";
 import { isFrozenSurfaceBinding } from "../identity/frozen-surface-binding.internal.js";
 import { seg } from "../identity/deployment-identity.js";
 import { isRequesterVerdict, type RequesterVerdict } from "../access/requester-identity.js";
+import { deliveryChangedThisTurn } from "../access/task-wake-signal.js";
 
 export type UnifiedWakeOrigin =
   | {
@@ -413,7 +414,9 @@ export function sameUnifiedContainer(a: UnifiedWakeOrigin, b: UnifiedWakeOrigin)
 
 export type AnswerableReplyResolution =
   | { readonly ok: true; readonly origin: UnifiedWakeOrigin; readonly via: "turn" | "same-conversation" | "pending" }
-  | { readonly ok: false; readonly reason: "mismatch" | "expired" | "answered" };
+  | { readonly ok: false; readonly reason: "mismatch" | "expired" | "answered" | typeof ANSWER_DELIVERED_REFUSAL_REASON };
+
+export const ANSWER_DELIVERED_REFUSAL_REASON = "answer-delivered";
 
 function answeredBody(named: string): string {
   return `reply: you already replied to wake-id "${named}" and marked it done — NOTHING was posted this time. If that conversation has moved on, the newer message there carries its own wake-id; answer that one. (If you knew a follow-up was coming, \`done:false\` on the first reply keeps a wake answerable.)`;
@@ -424,13 +427,16 @@ export function answeredThisTurnRefusalMessage(inputWake: string): string {
 }
 
 export function replyRefusalMessage(
-  reason: "mismatch" | "expired" | "answered",
+  reason: "mismatch" | "expired" | "answered" | typeof ANSWER_DELIVERED_REFUSAL_REASON,
   inputWake: string,
   opts: { readonly turnWake?: string; readonly silent?: boolean } = {},
 ): string {
   const named = inputWake.slice(0, 64);
   if (reason === "expired") {
     return `reply couldn't resolve wake-id "${named}" — the wake's reply target is no longer on record (expired). It can't be answered now.`;
+  }
+  if (reason === ANSWER_DELIVERED_REFUSAL_REASON) {
+    return `reply: wake-id "${named}" carried an answer to an open question, so it takes no reply of its own — NOTHING was posted. Reply to the wake-id of the conversation that asked the question.`;
   }
   if (reason === "answered") {
     return answeredBody(named);
@@ -481,6 +487,17 @@ async function resolveWindowWakeTarget(
 ): Promise<AnswerableReplyResolution> {
   if (!turnWake) return { ok: false, reason: "mismatch" };
   if (inputWake === turnWake) {
+    if (use === "reply" && deliveryChangedThisTurn(turnId)) {
+      let row: UnifiedWakeRecord | null;
+      try {
+        row = await store.getUnifiedWakeRecord(org, inputWake);
+      } catch {
+        return { ok: false, reason: "mismatch" };
+      }
+      if (row && row.answeredAt !== undefined && row.answeredTurnId !== turnId) {
+        return { ok: false, reason: row.answeredTurnId === undefined ? ANSWER_DELIVERED_REFUSAL_REASON : "answered" };
+      }
+    }
     const origin = await resolveUnifiedWakeTarget(store, org, inputWake);
     return origin ? { ok: true, origin, via: "turn" } : { ok: false, reason: "expired" };
   }
@@ -581,7 +598,7 @@ export function stampUnifiedWindowAuth<A extends { attributes?: Record<string, u
   };
 }
 
-export const PROSE_BLOCKING_REFUSALS: readonly string[] = ["stale-conversation", "should-be-edit", "declined-this-turn", "answered-this-turn", "stopped"];
+export const PROSE_BLOCKING_REFUSALS: readonly string[] = ["stale-conversation", "should-be-edit", "declined-this-turn", "answered-this-turn", "stopped", ANSWER_DELIVERED_REFUSAL_REASON];
 
 export function proseBlockingRefusal(reasons: readonly string[]): string | undefined {
   return reasons.find((r) => PROSE_BLOCKING_REFUSALS.includes(r));

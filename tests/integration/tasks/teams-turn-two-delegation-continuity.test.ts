@@ -1,18 +1,19 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, expect, test } from "vitest";
+import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import {
+  armSettlement,
   auditCursor,
-  awaitTaskSettlement,
+  awaitWorkResult,
   bootAgent,
   disposeLater,
   installTeamsJwksStub,
   registerScript,
   rowsSinceCursor,
-  SETTLEMENT_DRAIN_SCRIPT,
-  taskIdOfDelegation,
   teamsActivityPost,
   waitFor,
   waitForChildren,
+  workTaskIdOfCall,
   type RecordedRequest,
   type ScriptedHandle,
   type ScriptedStep,
@@ -68,6 +69,7 @@ async function driveTeamsTurn(input: {
   readonly text: string;
   readonly steps: readonly ScriptedStep[];
   readonly child?: readonly ScriptedStep[];
+  readonly childHeld?: boolean;
 }): Promise<ScriptedHandle> {
   const handle = disposeLater(
     input.child === undefined ? registerScript({ parent: [...input.steps] }) : registerScript({ parent: [...input.steps], child: [...input.child] }),
@@ -80,7 +82,7 @@ async function driveTeamsTurn(input: {
     `the "${input.text}" turn's last scripted step`,
   );
   if (input.child !== undefined) {
-    await waitForChildren(handle, { count: 1, lastStepIndex: input.child.length - 1, label: `the "${input.text}" turn's delegated worker` });
+    await waitForChildren(handle, { count: 1, lastStepIndex: input.childHeld === true ? 0 : input.child.length - 1, label: `the "${input.text}" turn's delegated worker` });
   }
   expect(handle.requests.filter((r) => r.fault !== undefined), `the "${input.text}" turn's script degraded`).toEqual([]);
   return handle;
@@ -111,9 +113,16 @@ test("a Teams seat's SECOND turn reads the first turn, its worker reads only the
   const cursor = await auditCursor();
   const two = await driveTeamsTurn({
     text: TURN_TWO_ASK,
-    steps: [{ calls: [{ tool: "agent", input: { message: DELEGATION_BRIEF }, id: "ope1646-delegate" }] }, { say: "handed off" }],
-    child: [{ say: "reported" }],
+    steps: [
+      { calls: [{ tool: "work", input: { message: DELEGATION_BRIEF }, id: "ope1646-delegate" }] },
+      { say: NO_REPLY_SENTINEL },
+    ],
+    child: [{ delayMs: 120_000, say: "reported" }],
+    childHeld: true,
   });
+  const settlement = disposeLater(armSettlement(two, { parent: [{ say: NO_REPLY_SENTINEL }] }));
+  const taskId = await workTaskIdOfCall(cursor, two, "ope1646-delegate", "the OPE-1646 turn-2 forward");
+  two.releaseHolds();
 
   const seatTwo = two.requests.filter((r) => r.role === "parent");
   const worker = two.requests.filter((r) => r.role === "child");
@@ -135,25 +144,26 @@ test("a Teams seat's SECOND turn reads the first turn, its worker reads only the
 
   const workerPrompt = promptText(worker[0]!);
   expect(workerPrompt, "the worker did not read its own brief, so the arm below would pass on an empty prompt").toContain(DELEGATION_BRIEF);
-  expect(workerPrompt, "the worker read the parent's turn-1 message — the single-turn worker posture is leaking the seat's history").not.toContain(TURN_ONE_FACT);
+  expect(workerPrompt, "the worker read the parent's turn-1 message — the worker posture is leaking the seat's history").not.toContain(TURN_ONE_FACT);
   expect(worker[0]!.sessionId, "the worker ran on the seat's own session, so it is not a delegated child at all").not.toBe(seatTwo[0]!.sessionId);
 
-  const taskId = taskIdOfDelegation(two, "the OPE-1646 turn-2 delegation");
   const started = await waitFor(
     async () => (await rowsSinceCursor(cursor, ["delegation.task_started"])).find((r) => r.detail?.task === taskId),
     "turn 2's delegation.task_started row",
   );
-  expect(started.detail?.session, "the row is not this seat's dispatch, so its `continuation` says nothing about turn 2").toBe(seatTwo[0]!.sessionId);
+  expect(started.detail?.session, "the row names no session").toBeTypeOf("string");
+  expect(started.detail?.session, "the task started on the SEAT's session — a forwarding seat runs no child").not.toBe(seatTwo[0]!.sessionId);
   expect(String(started.detail?.call ?? ""), "the row carries no call id, so it is not a dispatch record").not.toBe("");
   expect(
     started.detail?.continuation,
-    "`continuation` is not `false` on a first dispatch — worker continuation stopped being refused (access/worker-continuation.ts)",
+    "`continuation` is not `false` on a first dispatch — a fresh dispatch was recorded as a continuation (hooks/spawn-taint.ts `noteTaskStarted`)",
   ).toBe(false);
   expect(JSON.stringify(started.detail), "the delegation audit row carries the brief's text").not.toContain(DELEGATION_BRIEF);
 
-  const drained = await awaitTaskSettlement({ dispatched: two, taskId, script: SETTLEMENT_DRAIN_SCRIPT, label: "the OPE-1646 worker's settlement wake" });
-  disposeLater(drained.handle);
-  expect(drained.handle.requests.filter((r) => r.fault !== undefined), "a straggling worker crossed into the drain").toEqual([]);
-  drained.handle.dispose();
+  const resultStep = await awaitWorkResult({ handle: settlement, taskId, label: "the OPE-1646 seat step that read the worker's result" });
+  expect(resultStep.fault).toBeUndefined();
+  for (const h of [two, settlement]) {
+    expect(h.requests.filter((r) => r.fault !== undefined), "a straggling call faulted on turn 2's handles").toEqual([]);
+  }
   two.dispose();
 }, 420_000);

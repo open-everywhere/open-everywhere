@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 import { rmSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { registerTeamsProvider, resolveTeamsTarget } from "@open-everywhere/provider-teams/agent/register.js";
+import { TEAMS_APP_NAME_MAX, TEAMS_DEFAULT_APP_NAME, TEAMS_DEPLOY_HOST_PLACEHOLDER, teamsAppManifestTemplate } from "@open-everywhere/provider-teams/agent/app-manifest.js";
+import { DEPLOY_HOST_PLACEHOLDER, surfaceAppManifest, surfaceAppManifestSurfaces, surfaceAppNameProblem } from "@open-everywhere/core/agent/ops/surface-manifest.js";
+import { PRIVACY_PAGE_PATH, TERMS_PAGE_PATH } from "@open-everywhere/core/agent/pages/policy-pages.js";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 import { registerSlackProvider } from "@open-everywhere/provider-slack/agent/register.js";
 import { teamsReadAdapter } from "@open-everywhere/provider-teams/agent/channels/teams-read.js";
 import {
@@ -242,8 +247,8 @@ function seedRoutine(id: string, surfaceKey: string, target: Record<string, unkn
 
   ok(resolveTeamsTarget(seedRoutine("r-teams-noref", "teams/TEN1/19-x", { conversationId: "19:x@thread.tacv2" })) === null, "routine: a teams routine with no serviceUrl resolves null (dry-run, fail-closed)");
 
-  const { planFireWindow } = await import("@open-everywhere/core/agent/routines/fire-window.js");
-  const { isThreadSeatWindowToken } = await import("@open-everywhere/core/agent/channels/window-key.js");
+  const { planFireWork } = await import("@open-everywhere/core/agent/routines/fire-work.js");
+  const { classifySessionId } = await import("@open-everywhere/core/agent/channels/window-key.js");
   const { defineDomain } = await import("@open-everywhere/core/agent/memory/domain.js");
   const { overrideSettingsForTest } = await import("@open-everywhere/core/agent/settings/settings.js");
   overrideSettingsForTest({ window: { topology: true } });
@@ -258,18 +263,17 @@ function seedRoutine(id: string, surfaceKey: string, target: Record<string, unkn
   );
 
   const windowedDomain = defineDomain({ name: "teams-win", reach: ["teams/TEN1/19-eng-thread.tacv2"], ambientSupervisor: true, mode: "unified" });
-  const teamsPlan = planFireWindow({ surfaceKey: "teams/TEN1/19-eng-thread.tacv2", origin: chTarget!.origin!, seatKey: "run/tm-1", domains: [windowedDomain], generation: 1, armed: true });
+  const teamsPlan = planFireWork({ surfaceKey: "teams/TEN1/19-eng-thread.tacv2", origin: chTarget!.origin!, domains: [windowedDomain], seatRowToken: undefined, armed: true });
   ok(teamsPlan !== null, "OPE-486/teams: a channel fire's origin is enough to take the divert path — pre-fix it never was");
-  ok(isThreadSeatWindowToken(teamsPlan!.token), "OPE-486/teams: the diverted fire's window token is a thread-seat token, same shape a Slack fire's divert mints");
+  ok(classifySessionId(teamsPlan!.workToken).kind === "work", "OPE-486/teams: the fire is forwarded to the domain's WORK SESSION, same shape a Slack fire takes (OPE-2342; the thread-seat fire is retired, OPE-2350)");
 
-  const noOriginPlan = planFireWindow({ surfaceKey: "teams/TEN1/19-eng-thread.tacv2", origin: undefined as never, seatKey: "run/tm-1", domains: [windowedDomain], generation: 1, armed: true });
+  const noOriginPlan = planFireWork({ surfaceKey: "teams/TEN1/19-eng-thread.tacv2", origin: undefined as never, domains: [windowedDomain], seatRowToken: undefined, armed: true });
   ok(noOriginPlan === null, "OPE-486/teams NEGATIVE CONTROL: with no origin (the pre-fix state) the divert never applies, even on an otherwise-windowed surface");
   overrideSettingsForTest({ window: { topology: false } });
 }
 
 {
-  const manifestPath = join(dirname(fileURLToPath(import.meta.url)), "..", "teams-app", "manifest.json");
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+  const manifest = JSON.parse(teamsAppManifestTemplate()) as {
     version: string;
     bots: { scopes: string[] }[];
     webApplicationInfo?: unknown;
@@ -285,6 +289,51 @@ function seedRoutine(id: string, surfaceKey: string, target: Record<string, unkn
   ok(manifest.bots.some((b) => b.scopes.includes("groupChat")), "manifest: the bot is installable in groupChat scope (what the chat RSC grant applies to)");
   ok(manifest.version !== "1.0.1", "manifest: version was bumped past 1.0.1 — RSC consent is install-time only, so an unbumped package can't re-consent");
   ok(manifest.version !== "1.0.2", "manifest: version was bumped past 1.0.2 — the ChannelMember.Read.Group grant needs its own install-time re-consent");
+}
+
+{
+  type TeamsManifest = {
+    developer: { privacyUrl: string; termsOfUseUrl: string; websiteUrl: string };
+    name: { short: string; full: string };
+    description: { full: string };
+    validDomains: string[];
+  };
+  const tracked = execFileSync("git", ["ls-files", "--", "teams-app/manifest.json"], {
+    cwd: join(dirname(fileURLToPath(import.meta.url)), ".."),
+    encoding: "utf8",
+  }).trim();
+  ok(tracked === "", "the static teams-app/manifest.json is no longer tracked — one rendered definition, no second copy to drift");
+
+  ok(TEAMS_DEPLOY_HOST_PLACEHOLDER === DEPLOY_HOST_PLACEHOLDER, "the Teams bundle's host placeholder is the one core substitutes");
+  const unnamed = JSON.parse(teamsAppManifestTemplate()) as TeamsManifest;
+  ok(unnamed.developer.privacyUrl.endsWith(PRIVACY_PAGE_PATH), `manifest: privacyUrl ends at the mounted path (got "${unnamed.developer.privacyUrl}")`);
+  ok(unnamed.developer.termsOfUseUrl.endsWith(TERMS_PAGE_PATH), `manifest: termsOfUseUrl ends at the mounted path (got "${unnamed.developer.termsOfUseUrl}")`);
+  ok(!unnamed.description.full.includes("on your behalf"), "manifest: the description does not claim it acts on your behalf");
+  ok(unnamed.description.full.includes("one bot identity shared by this deployment"), "manifest: the description says what the shared bot credential is");
+  ok(unnamed.name.short === TEAMS_DEFAULT_APP_NAME, "manifest: with no name configured the app carries the default name");
+
+  ok(surfaceAppManifestSurfaces().includes("teams"), "🔴 registerTeamsOps() registers a Teams app manifest — surface_manifest serves Teams");
+  const served = surfaceAppManifest("teams", { host: "my-agent.example.com" });
+  const servedJson = JSON.parse(String(served?.manifest)) as TeamsManifest;
+  ok(servedJson.validDomains[0] === "my-agent.example.com" && servedJson.developer.websiteUrl === "https://my-agent.example.com", "the served Teams manifest carries the substituted host");
+  ok(served?.placeholdersRemaining === 0, "…and no host placeholder is left");
+
+  overrideSettingsForTest({ identity: { name: "Aria" } });
+  try {
+    const named = JSON.parse(String(surfaceAppManifest("teams")?.manifest)) as TeamsManifest;
+    ok(named.name.short === "Aria", "🔴 the served Teams manifest's name.short is the configured identity.name");
+    ok(named.name.full.startsWith("Aria"), "…and name.full");
+    ok(named.description.full.startsWith("Aria runs as a Teams bot"), "…and description.full");
+    ok(!JSON.stringify(named).includes("Open Everywhere"), "🔴 a named deployment's Teams manifest carries no brand at all");
+    const explicit = JSON.parse(String(surfaceAppManifest("teams", { appName: "Acme Agent" })?.manifest)) as TeamsManifest;
+    ok(explicit.name.short === "Acme Agent", "an explicit appName still OVERRIDES the configured name");
+    ok(surfaceAppNameProblem("teams", "x".repeat(TEAMS_APP_NAME_MAX + 1)) !== undefined, `an explicit name over Teams' ${TEAMS_APP_NAME_MAX}-character limit is refused`);
+    overrideSettingsForTest({ identity: { name: "An Extremely Long Configured Agent Name" } });
+    const long = JSON.parse(String(surfaceAppManifest("teams")?.manifest)) as TeamsManifest;
+    ok(long.name.short.length <= TEAMS_APP_NAME_MAX, "a long configured name is cut to Teams' limit rather than failing the upload");
+  } finally {
+    overrideSettingsForTest({ identity: { name: "" } });
+  }
 }
 
 {

@@ -9,6 +9,7 @@ import {
   PREPARED_ARTIFACTS,
   cacheMode,
   clearBuildStamp,
+  clearStamp,
   gateBuiltBundle,
   readBuildStamp,
   cacheRemote,
@@ -18,6 +19,7 @@ import {
   preparedTreeState,
   publishPreparedTree,
   readStamp,
+  remoteCacheKey,
   remoteCachePublishEnabled,
   remoteRestoreEnabled,
   stampCacheEnabled,
@@ -25,7 +27,7 @@ import {
   writeStamp,
   type CacheKeyHost,
 } from "./prepare-cache.js";
-import { prewarmJustBashTemplate, type PrewarmVia } from "./prewarm.js";
+import { prewarmJustBashTemplate, type PrewarmResult, type PrewarmVia } from "./prewarm.js";
 import { createStateDir } from "./state-dir.js";
 
 export const IT_SKIP_BUILD_ENV = "OE_IT_SKIP_BUILD";
@@ -86,12 +88,35 @@ async function mintTemplateForShards(root: string): Promise<string> {
   return await mintPgliteTemplate(parent);
 }
 
+export interface PrepareLegs {
+  readonly oeBuild: (root: string) => void;
+  readonly eveBuild: (root: string) => void;
+  readonly prewarm: (root: string, log: (message: string) => void) => Promise<PrewarmResult>;
+  readonly mint: (root: string) => Promise<string>;
+}
+
+const HOST_PREPARE_LEGS: PrepareLegs = {
+  oeBuild: runOeBuild,
+  eveBuild: runEveBuild,
+  prewarm: async (root, log) => {
+    process.env.OE_SANDBOX_BACKEND = INTEGRATION_SANDBOX_BACKEND;
+    return await prewarmJustBashTemplate(root, createStateDir(), log);
+  },
+  mint: mintTemplateForShards,
+};
+
 export async function prepareIntegrationTree(
-  options: { readonly root?: string; readonly env?: NodeJS.ProcessEnv; readonly log?: (message: string) => void } = {},
+  options: {
+    readonly root?: string;
+    readonly env?: NodeJS.ProcessEnv;
+    readonly log?: (message: string) => void;
+    readonly legs?: PrepareLegs;
+  } = {},
 ): Promise<PrepareReport> {
   const root = options.root ?? process.cwd();
   const env = options.env ?? process.env;
   const log = options.log ?? ((message: string) => console.log(message));
+  const legs = options.legs ?? HOST_PREPARE_LEGS;
   if (env.VITEST !== undefined) throw new Error(PREPARE_INSIDE_VITEST_MESSAGE);
   const startedAt = Date.now();
 
@@ -111,6 +136,7 @@ export async function prepareIntegrationTree(
   } else {
     const verdict = prepareCacheKey(hostCacheKeyProbe(root));
     key = verdict.kind === "key" ? verdict.key : undefined;
+    const remoteKey = remoteCacheKey(verdict);
     const state = preparedTreeState({
       key,
       stampKey: stampCacheEnabled(env) ? readStamp(root) : undefined,
@@ -123,11 +149,12 @@ export async function prepareIntegrationTree(
       stamp: readBuildStamp(root),
       bundlePresent: existsSync(join(root, ".output", "server", "index.mjs")),
     });
-    if (!gateBuilt && state !== "warm" && key !== undefined && remoteRestoreEnabled(env)) clearBuildStamp(root);
+    if (state !== "warm") clearStamp(root);
+    if (!gateBuilt && state !== "warm" && remoteKey !== undefined && remoteRestoreEnabled(env)) clearBuildStamp(root);
     const restore =
-      state === "warm" || gateBuilt || key === undefined || !remoteRestoreEnabled(env)
+      state === "warm" || gateBuilt || remoteKey === undefined || !remoteRestoreEnabled(env)
         ? undefined
-        : restorePreparedTree({ root, key, remote: cacheRemote(env) });
+        : restorePreparedTree({ root, key: remoteKey, remote: cacheRemote(env) });
     if (state === "warm") {
       mode = "warm";
       cacheNote = "hit (this tree, by stamp)";
@@ -143,21 +170,22 @@ export async function prepareIntegrationTree(
         verdict.kind === "refused"
           ? `no key — ${verdict.reason}`
           : restore === undefined
-            ? `${cacheMode(env)} (OE_IT_PREPARE_CACHE), so no remote lookup`
+            ? verdict.worktree && remoteRestoreEnabled(env)
+              ? "the key reads uncommitted edits, so no remote lookup"
+              : `${cacheMode(env)} (OE_IT_PREPARE_CACHE), so no remote lookup`
             : `miss — ${restore.reason}`;
     }
     const oeStartedAt = Date.now();
-    runOeBuild(root);
+    legs.oeBuild(root);
     oeBuildSeconds = seconds(oeStartedAt);
     if (mode === "cold" || mode === "built") {
       if (mode === "cold") {
         clearBuildStamp(root);
         const eveStartedAt = Date.now();
-        runEveBuild(root);
+        legs.eveBuild(root);
         eveBuildSeconds = seconds(eveStartedAt);
       }
-      process.env.OE_SANDBOX_BACKEND = INTEGRATION_SANDBOX_BACKEND;
-      const prewarm = await prewarmJustBashTemplate(root, createStateDir(), log);
+      const prewarm = await legs.prewarm(root, log);
       prewarmSeconds = prewarm.seconds;
       prewarmVia = prewarm.via;
     }
@@ -168,9 +196,20 @@ export async function prepareIntegrationTree(
           `Every one of ${PREPARED_ARTIFACTS.join(", ")} must exist before a fork can boot.`,
       );
     }
-    if (key !== undefined) writeStamp(root, key);
-    if ((mode === "cold" || mode === "built") && key !== undefined && remoteCachePublishEnabled(env)) {
-      const publishKey = republishKey(root, key, log);
+    if (key !== undefined) {
+      const settled = prepareCacheKey(hostCacheKeyProbe(root));
+      if (settled.kind === "key" && settled.key === key) {
+        writeStamp(root, key);
+      } else {
+        log(
+          "integration prepare: the cache key changed while this step ran, so no stamp is written and the next run builds — " +
+            (settled.kind === "key" ? `it is now ${settled.key}, not ${key}` : settled.reason) +
+            ".",
+        );
+      }
+    }
+    if ((mode === "cold" || mode === "built") && remoteKey !== undefined && remoteCachePublishEnabled(env)) {
+      const publishKey = republishKey(root, remoteKey, log);
       if (publishKey !== undefined) {
         const published = publishPreparedTree({ root, key: publishKey, remote: cacheRemote(env) });
         cacheNote =
@@ -184,7 +223,7 @@ export async function prepareIntegrationTree(
   }
 
   const mintStartedAt = Date.now();
-  const template = await mintTemplateForShards(root);
+  const template = await legs.mint(root);
   const pgliteMintSeconds = seconds(mintStartedAt);
 
   const report: PrepareReport = {

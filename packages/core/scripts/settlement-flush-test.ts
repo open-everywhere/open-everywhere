@@ -1,15 +1,15 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-settlement-flush-")), "ops.sqlite3");
+delete process.env.DATABASE_URL;
 _setDeploymentIdentityForTest({ org: undefined });
 
 import assert from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createRequire } from "node:module";
 import { dirname } from "node:path";
-import { pathToFileURL } from "node:url";
 import memoryHook from "../agent/hooks/memory.js";
 import spawnTaintHook from "../agent/hooks/spawn-taint.js";
 import { conflictName } from "../agent/hooks/memory.js";
@@ -24,7 +24,7 @@ import { siloTier, tierId, type MemoryFiles, type Tier } from "../agent/memory/s
 import { type Partition } from "../agent/memory/partition.js";
 import { readAudit, type AuditEntry } from "../agent/audit/audit.js";
 import { deploymentOrg } from "../agent/identity/binding.js";
-import { formatWindowToken } from "../agent/channels/window-key.js";
+import { formatWindowToken, workWindowId } from "../agent/channels/window-key.js";
 import type { HookContext } from "eve/hooks";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
@@ -183,7 +183,7 @@ const memory = memoryHook as unknown as { events: Record<string, (event: unknown
 const taint = spawnTaintHook as unknown as { events: Record<string, (event: unknown, ctx: HookContext) => void | Promise<void>> };
 
 const ORG = deploymentOrg();
-const WINDOW = formatWindowToken({ domain: "payments", windowId: "payments", generation: 3 });
+const WINDOW = formatWindowToken({ domain: "payments", windowId: workWindowId("slack_T1_C1"), generation: 3 });
 const SLACK_ATTRS: Record<string, string> = {
   team_id: "T1",
   channel_id: "C1",
@@ -254,6 +254,24 @@ async function fireResult(s: Seat, result: unknown): Promise<void> {
   });
 }
 
+async function fireStarted(s: Seat, taskId: string, callId: string): Promise<void> {
+  await inSession(s, async () => {
+    await taint.events["task.started"](
+      { type: "task.started", data: { callId, kind: "agent", name: "worker", taskId, turnId: "turn_flush" } } as unknown as Parameters<(typeof taint.events)["task.started"]>[0],
+      s.ctx,
+    );
+  });
+}
+
+async function fireSettled(s: Seat, taskId: string, status = "completed"): Promise<void> {
+  await inSession(s, async () => {
+    await taint.events["task.settled"](
+      { type: "task.settled", data: { callId: `call_${taskId}`, kind: "agent", name: "worker", status, taskId, turnId: "turn_flush" } } as unknown as Parameters<(typeof taint.events)["task.settled"]>[0],
+      s.ctx,
+    );
+  });
+}
+
 async function fireTurnEnd(s: Seat): Promise<void> {
   await inSession(s, async () => {
     await taint.events["turn.completed"]({ type: "turn.completed" } as unknown as Parameters<(typeof taint.events)["turn.completed"]>[0], s.ctx);
@@ -299,13 +317,13 @@ async function flushRows(): Promise<AuditEntry[]> {
 
 eq(ORG, deploymentOrg(), "harness: the org is the deployment default");
 
-console.log("1. a terminal task view flushes the parent's tree to the host store:");
+console.log("1. a terminal task settlement flushes the parent's tree to the host store:");
 {
   const s = makeSeat("seat-settle");
   await fireMemory(s, "session.started");
   eq(s.sandbox.read("MEMORY.md"), SEEDED, "session.started materialises the silo into the parent's sandbox");
 
-  await fireResult(s, receipt("task_A", "call_A"));
+  await fireStarted(s, "task_A", "call_A");
 
   const LEARNED = "# payments brain\n- pricing is reviewed MONTHLY (the worker corrected this)\n";
   s.sandbox.childEdit("MEMORY.md", LEARNED);
@@ -313,16 +331,19 @@ console.log("1. a terminal task view flushes the parent's tree to the host store
   eq(stored()["MEMORY.md"], SEEDED, "NEGATIVE CONTROL: the child's edit has NOT reached the store yet — the sandbox is not the store");
   eq((await memoryWrites(s.sessionId)).length, 0, "…and no memory.write row exists yet");
 
-  await fireResult(s, peek([{ taskId: "task_A", status: "completed" }]));
+  await fireSettled(s, "task_A", "completed");
+  eq(stored()["MEMORY.md"], SEEDED, "the settlement edge itself writes nothing — the persist belongs to the open-turn end (OPE-2258)");
+  eq((await memoryWrites(s.sessionId)).length, 0, "…and emits no memory.write row");
 
-  eq(stored()["MEMORY.md"], LEARNED, "🔴 THE FIX: the child's edit is IN THE STORE at settlement — not hours later at rotation");
+  await fireTurnEnd(s);
+  eq(stored()["MEMORY.md"], LEARNED, "🔴 THE FIX: the child's edit is IN THE STORE at the settling turn's end — not hours later at rotation");
   const writes = await memoryWrites(s.sessionId);
   eq(writes.length, 1, "the settlement flush emits exactly ONE memory.write row");
   eq((writes[0].detail as { outcome?: string }).outcome, "settled", '…stamped outcome:"settled" — the row distinguishes this flush from session end and from return_result');
   eq((writes[0].detail as { silo?: string }).silo, SILO, "…naming the silo it wrote (names + counts, never content)");
 
-  const rows = (await flushRows()).filter((r) => (r.detail as { edge?: string }).edge === "task-settled");
-  ok(rows.length >= 1, "the settlement flush writes its own audit row");
+  const rows = (await flushRows()).filter((r) => (r.detail as { edge?: string }).edge === "turn-backstop");
+  ok(rows.length >= 1, "the turn-end flush writes its own audit row");
   eq((rows[rows.length - 1].detail as { outcome?: string }).outcome, "flushed", "…recording that the flush RAN (not that the guard held it)");
   eq((rows[rows.length - 1].detail as { flush?: { changed?: number } }).flush?.changed, 1, "…and carrying the persist COUNTS — one silo genuinely changed");
   eq((rows[rows.length - 1].detail as { liveTaskIds?: string[] }).liveTaskIds, undefined, "…and NO liveTaskIds — nothing held the tree, so there is nothing to name");
@@ -334,13 +355,14 @@ console.log("2. the fan-out guard skips the flush while another delegated task s
   await fireMemory(s, "session.started");
   const HOST_BEFORE = stored()["MEMORY.md"];
 
-  await fireResult(s, receipt("task_B1", "call_B1"));
-  await fireResult(s, receipt("task_B2", "call_B2"));
+  await fireStarted(s, "task_B1", "call_B1");
+  await fireStarted(s, "task_B2", "call_B2");
 
   const HALF_WRITTEN = `${HOST_BEFORE}- a line child B2 is only halfway through writ`;
   s.sandbox.childEdit("MEMORY.md", HALF_WRITTEN);
 
-  await fireResult(s, peek([{ taskId: "task_B1", status: "completed" }]));
+  await fireSettled(s, "task_B1", "completed");
+  await fireTurnEnd(s);
 
   eq(stored()["MEMORY.md"], HOST_BEFORE, "🔴 THE GUARD: the half-written file did NOT reach the store — a live sibling holds the tree");
   eq((await memoryWrites(s.sessionId)).length, 0, "…so no memory.write row was emitted");
@@ -353,7 +375,8 @@ console.log("2. the fan-out guard skips the flush while another delegated task s
 
   const WHOLE = `${HOST_BEFORE}- a line child B2 finished writing\n`;
   s.sandbox.childEdit("MEMORY.md", WHOLE);
-  await fireResult(s, peek([{ taskId: "task_B2", status: "completed" }]));
+  await fireSettled(s, "task_B2", "completed");
+  await fireTurnEnd(s);
 
   eq(stored()["MEMORY.md"], WHOLE, "…and once the LAST task settles the flush runs, landing the WHOLE file");
   const writes = await memoryWrites(s.sessionId);
@@ -361,7 +384,7 @@ console.log("2. the fan-out guard skips the flush while another delegated task s
   eq((writes[0].detail as { outcome?: string }).outcome, "settled", "…stamped settled");
 }
 
-console.log("3. a non-terminal view in the same peek arms the guard:");
+console.log("3. a second LIVE dispatch holds the flush closed until it too settles:");
 {
   const s = makeSeat("seat-working");
   await fireMemory(s, "session.started");
@@ -369,19 +392,19 @@ console.log("3. a non-terminal view in the same peek arms the guard:");
   const EDIT = `${HOST_BEFORE}- something a child wrote\n`;
   s.sandbox.childEdit("MEMORY.md", EDIT);
 
-  await fireResult(s, peek([{ taskId: "task_C1", status: "completed" }, { taskId: "task_C2", status: "working" }]));
+  await fireSettled(s, "task_C1", "completed");
+  await fireStarted(s, "task_C2", "call_task_C2");
+  await fireTurnEnd(s);
 
-  eq(stored()["MEMORY.md"], HOST_BEFORE, "🔴 the `working` sibling in the same payload held the flush closed");
+  eq(stored()["MEMORY.md"], HOST_BEFORE, "🔴 a second dispatch that has not settled holds the flush closed — that child may still be mid-write in this tree");
   eq((await memoryWrites(s.sessionId)).length, 0, "…and nothing was written");
 
-  await fireResult(s, peek([{ taskId: "task_C2", status: "input_required" }]));
-  eq(stored()["MEMORY.md"], HOST_BEFORE, "…and an input_required view keeps it closed — that child can still be released");
-
-  await fireResult(s, peek([{ taskId: "task_C2", status: "completed" }]));
-  eq(stored()["MEMORY.md"], EDIT, "…and the terminal view releases the guard and flushes");
+  await fireSettled(s, "task_C2", "completed");
+  await fireTurnEnd(s);
+  eq(stored()["MEMORY.md"], EDIT, "…and the turn end after the last settlement flushes");
 }
 
-console.log("4. a sync delegation return flushes the same way (the shipped path):");
+console.log("4. a sync delegation return flushes the same way (a belt on eve 0.71):");
 {
   const s = makeSeat("seat-sync");
   await fireMemory(s, "session.started");
@@ -437,7 +460,7 @@ console.log("6. a dispatch receipt flushes nothing:");
   const BEFORE = stored()["MEMORY.md"];
   s.sandbox.childEdit("MEMORY.md", `${BEFORE}- an edit that must NOT be flushed at dispatch\n`);
 
-  await fireResult(s, receipt("task_G", "call_G"));
+  await fireStarted(s, "task_G", "call_G");
 
   eq(stored()["MEMORY.md"], BEFORE, "the dispatch edge wrote nothing to the store");
   eq((await memoryWrites(s.sessionId)).length, 0, "…and emitted no memory.write row");
@@ -452,7 +475,7 @@ console.log("6B. an eve 0.43.0+ dispatch receipt flushes nothing, and arms the g
   const BEFORE = stored()["MEMORY.md"];
   s.sandbox.childEdit("MEMORY.md", `${BEFORE}- an edit that must NOT be flushed at dispatch\n`);
 
-  await fireResult(s, receiptV2("task_G943", "call_G943"));
+  await fireStarted(s, "task_G943", "call_G943");
 
   eq(stored()["MEMORY.md"], BEFORE, "🔴 P6B: the ENVELOPE B dispatch edge wrote nothing to the store — it took BRANCH 1, not the sync BRANCH 3 that flushes");
   eq((await memoryWrites(s.sessionId)).length, 0, "…and emitted no memory.write row");
@@ -519,13 +542,14 @@ console.log("8. a dispatched task the seat never peeks releases the tree after a
   await fireMemory(s, "session.started");
   const BEFORE = stored()["MEMORY.md"] as string;
 
-  await fireResult(s, receipt("task_W1", "call_W1"));
-  await fireResult(s, receipt("task_W2", "call_W2"));
+  await fireStarted(s, "task_W1", "call_W1");
+  await fireStarted(s, "task_W2", "call_W2");
   const EDIT = `${BEFORE}- the worker's note, which must reach the store\n`;
   s.sandbox.childEdit("MEMORY.md", EDIT);
 
-  await fireResult(s, peek([{ taskId: "task_W1", status: "completed" }]));
-  eq(stored()["MEMORY.md"], BEFORE, "attempt 1: the un-peeked sibling holds the flush closed — this much is the guard working as designed");
+  await fireSettled(s, "task_W1", "completed");
+  await fireTurnEnd(s);
+  eq(stored()["MEMORY.md"], BEFORE, "attempt 1: the un-settled sibling holds the flush closed — this much is the guard working as designed");
   const first = (await flushRows()).filter((r) => (r.detail as { outcome?: string }).outcome === "skipped");
   eq(
     JSON.stringify((first[0].detail as { liveTaskIds?: string[] }).liveTaskIds),
@@ -558,7 +582,7 @@ console.log("8. a dispatched task the seat never peeks releases the tree after a
 
   const AFTER = `${EDIT}- a second note\n`;
   s.sandbox.childEdit("MEMORY.md", AFTER);
-  await fireResult(s, receipt("task_W3", "call_W3"));
+  await fireStarted(s, "task_W3", "call_W3");
   await fireTurnEnd(s);
   eq(stored()["MEMORY.md"], EDIT, "🔴 NEGATIVE CONTROL: a fresh dispatch closes the guard again — the bound retires evidence, it does not remove the guard");
 }
@@ -609,15 +633,16 @@ console.log("9. the OPE-719 discriminator — the delete survives the awaits, an
   const TURN3 = (s3.ctx as unknown as { session: { turn: { id: string } } }).session.turn.id;
   s3.sandbox.childEdit("MEMORY.md", `${BEFORE3}- an edit the wedge would strand\n`);
 
-  await fireResult(s3, receipt("task_T1", "call_T1"));
+  await fireStarted(s3, "task_T1", "call_T1");
   await inSession(s3, async () => {
     eq(pendingDelegationOwing(TURN3, "wake-x", undefined), "task_T1", "harness: the first dispatch is on the ledger for this turn");
   });
 
-  await fireResult(s3, receipt("task_T2", "call_T2"));
-  await fireResult(s3, peek([{ taskId: "task_T1", status: "completed" }]));
+  await fireStarted(s3, "task_T2", "call_T2");
+  await fireSettled(s3, "task_T1", "completed");
+  await fireTurnEnd(s3);
 
-  eq(stored()["MEMORY.md"], BEFORE3, "the settlement SKIPPED — the store is untouched, as the red run's was");
+  eq(stored()["MEMORY.md"], BEFORE3, "the turn-end flush SKIPPED — the store is untouched, as the red run's was");
   const skips3 = (await flushRows()).filter((r) => (r.detail as { outcome?: string }).outcome === "skipped");
   const last3 = skips3[0].detail as { liveTasks?: number; liveTaskIds?: string[] };
   eq(last3.liveTasks, 1, "🔴 SIGNAL 1 REPRODUCED: `SKIPPED — 1` on a settlement whose peek carried the only task the seat had peeked");
@@ -633,111 +658,25 @@ console.log("9. the OPE-719 discriminator — the delete survives the awaits, an
   const TURN4 = (s4.ctx as unknown as { session: { turn: { id: string } } }).session.turn.id;
   const EDIT4 = `${BEFORE4}- the single worker's note\n`;
   s4.sandbox.childEdit("MEMORY.md", EDIT4);
-  await fireResult(s4, receipt("task_U1", "call_U1"));
-  await fireResult(s4, peek([{ taskId: "task_U1", status: "completed" }]));
-  eq(stored()["MEMORY.md"], EDIT4, "CONTROL: with ONE dispatch the settlement FLUSHES — the wedge needs the second id");
+  await fireStarted(s4, "task_U1", "call_U1");
+  await fireSettled(s4, "task_U1", "completed");
+  await fireTurnEnd(s4);
+  eq(stored()["MEMORY.md"], EDIT4, "CONTROL: with ONE dispatch the turn end after the settlement FLUSHES — the wedge needs the second id");
   await inSession(s4, async () => {
     eq(pendingDelegationOwing(TURN4, "wake-x", undefined), undefined, "CONTROL: …and the ledger owes NOTHING, so the red run's second signal is not a property of every settlement");
   });
 }
 
-interface EveActionResultEvent {
-  readonly type: string;
-  readonly data: { readonly result: unknown };
-}
-
-interface EveCoordination {
-  setPendingCoordinationBatch(input: {
-    readonly runtimeActions: readonly unknown[];
-    readonly tasks: readonly unknown[];
-    readonly event: { readonly sequence: number; readonly stepIndex: number; readonly turnId: string };
-    readonly responseMessages: readonly unknown[];
-    readonly session: unknown;
-  }): unknown;
-  resolvePendingCoordination(input: {
-    readonly emit: (event: EveActionResultEvent) => Promise<void>;
-    readonly session: unknown;
-    readonly stepInput: { readonly runtimeActionResults: readonly unknown[] };
-  }): Promise<{ readonly outcome: string }>;
-}
-
-console.log("10. the blocking arm's batch rule — a partial dispatch batch emits NO action.result (OPE-621):");
+console.log("10. the installed eve carries no child-origin subagent-result, so the sync arm has no child producer (OPE-621):");
 {
   const require = createRequire(import.meta.url);
   const eveRoot = dirname(require.resolve("eve/package.json"));
-  const evePath = (rel: string) => pathToFileURL(join(eveRoot, "dist/src", rel)).href;
-  const coordination = (await import(evePath("harness/coordination.js"))) as EveCoordination;
-  const { AGENT_HANDLES_STATE_KEY } = (await import(evePath("subagents/handles/state-key.js"))) as { AGENT_HANDLES_STATE_KEY: string };
-
-  const NAME = "worker";
-  const call = (id: string): unknown => ({
-    callId: id,
-    description: "delegate",
-    input: {},
-    toolName: NAME,
-    target: { kind: "subagent-call", nodeId: "node", subagentName: NAME },
-  });
-  const handle = (id: string): unknown => ({
-    phase: "running",
-    identity: { id: `ag_${NAME}:${id}`, name: NAME, nodeId: "node" },
-    operation: { kind: "start", id: `op_${id}`, callId: id, parentTurnId: "turn_1" },
-    address: { kind: "agent/local", sessionId: `child_${id}`, continuationToken: `tok_${id}` },
-  });
-  const childResult = (id: string, output: string): unknown => ({
-    kind: "subagent-result",
-    origin: "child",
-    callId: id,
-    subagentName: NAME,
-    output,
-    outcome: { kind: "terminal", result: { kind: "succeeded", output }, usageDelta: { cacheReadTokens: 0, cacheWriteTokens: 0, inputTokens: 0, outputTokens: 0 } },
-  });
-
-  const parked = coordination.setPendingCoordinationBatch({
-    runtimeActions: [call("call_A"), call("call_B")],
-    tasks: [],
-    event: { sequence: 3, stepIndex: 0, turnId: "turn_1" },
-    responseMessages: [{ role: "assistant", content: [] }],
-    session: { sessionId: "parent-seat", history: [], state: { [AGENT_HANDLES_STATE_KEY]: { handles: [handle("call_A"), handle("call_B")] } } },
-  });
-
-  async function resolveWith(results: readonly unknown[]): Promise<{ outcome: string; events: EveActionResultEvent[] }> {
-    const events: EveActionResultEvent[] = [];
-    const out = await coordination.resolvePendingCoordination({
-      emit: async (e) => {
-        events.push(e);
-      },
-      session: parked,
-      stepInput: { runtimeActionResults: results },
-    });
-    return { outcome: out.outcome, events };
-  }
-
-  const partial = await resolveWith([childResult("call_A", "A answered")]);
-  eq(partial.outcome, "unresolved", "🔴 ONE of two children back ⇒ eve leaves the batch UNRESOLVED — the parent's turn stays parked");
-  eq(
-    partial.events.filter((e) => e.type === "action.result").length,
-    0,
-    "🔴 …and emits NO action.result at all, so BRANCH 3's flush never runs while child B holds the tree",
-  );
-
-  const full = await resolveWith([childResult("call_A", "A answered"), childResult("call_B", "B answered")]);
-  eq(full.outcome, "resolved", "NEGATIVE CONTROL: with BOTH children back the batch resolves");
-  const emitted = full.events.filter((e) => e.type === "action.result").map((e) => e.data.result as { callId: string });
-  eq(
-    emitted.map((r) => r.callId),
-    ["call_A", "call_B"],
-    "NEGATIVE CONTROL: …and BOTH action.result rows are emitted, in pending-key order",
-  );
-
-  const s5 = makeSeat("seat-blocking-fanout");
-  await fireMemory(s5, "session.started");
-  const BEFORE5 = stored()["MEMORY.md"] as string;
-  const EDIT5 = `${BEFORE5}- both blocking workers wrote before either result arrived\n`;
-  s5.sandbox.childEdit("MEMORY.md", EDIT5);
-  await fireResult(s5, emitted[0]);
-  eq(stored()["MEMORY.md"], EDIT5, "the FIRST eve-emitted sync result flushes the shared tree — no sibling can still be writing it");
-  await fireResult(s5, emitted[1]);
-  eq(stored()["MEMORY.md"], EDIT5, "…and the second is a diff-based no-op, exactly as P5 pins for the settlement label");
+  const actionTypes = readFileSync(join(eveRoot, "dist/src/shared/action-types.js"), "utf8");
+  const arms = actionTypes.split("z.object({").filter((chunk) => chunk.includes("kind:z.literal(`subagent-result`)"));
+  ok(actionTypes.includes("kind:z.literal(`tool-result`)"), "NEGATIVE CONTROL: the installed action-types.js still declares the `tool-result` arm, so the reader below reads the right union");
+  eq(arms.length, 1, "🔴 TRIPWIRE: the installed eve declares exactly ONE `subagent-result` result arm");
+  ok(arms[0]!.includes("origin:z.literal(`dispatch`)"), "🔴 …and it is a DISPATCH-origin arm — no child-origin result exists for BRANCH 3 to flush on");
+  ok(arms[0]!.includes("isError:z.literal(!0)"), "…and it is always an error: a call no child ever ran for");
 }
 
-console.log(`\n✓ settlement-flush: ${n} assertions passed (a terminal task view and a sync delegation return each persist the parent's tree with outcome:"settled"; the fan-out guard skips — and audits the skip — while any delegated task is non-terminal, including one seen only as a working/input_required view; a dispatch receipt flushes nothing; the session-end backstop stays a silent, conflict-free no-op; N concurrent children share ONE tree with the parent as its only writer; a task the seat never peeks releases the tree after a bounded number of held attempts; the OPE-719 second live id is a SECOND DISPATCH, not a lost delete; and the installed eve emits no action.result until every child of a dispatch batch has returned, which is why the blocking arm needs no guard)\n`);
+console.log(`\n✓ settlement-flush: ${n} assertions passed (a settled task's edit reaches the store at the same turn's end, and a sync delegation return persists too, each with outcome:"settled"; the settlement edge itself writes nothing; the fan-out guard skips — and audits the skip — while any delegated task is live; a dispatch flushes nothing; the session-end backstop stays a silent, conflict-free no-op; N concurrent children share ONE tree with the parent as its only writer; a task that never settles releases the tree after a bounded number of held attempts; the OPE-719 second live id is a SECOND DISPATCH, not a lost delete; and the installed eve carries no child-origin subagent-result, so the sync arm has no child producer)\n`);

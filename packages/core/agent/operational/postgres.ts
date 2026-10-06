@@ -3698,6 +3698,12 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       return (rows as unknown[]).length;
     },
 
+    async revokeSessionApprovalsByPrefix(org, prefix) {
+      if (prefix.length === 0) throw new Error("revokeSessionApprovalsByPrefix: an empty prefix would revoke every memo of the org");
+      const { rows } = await client.query("DELETE FROM pr_session_approval WHERE org_id = $1 AND left(session_id, $2) = $3 RETURNING kind", [org, prefix.length, prefix]);
+      return (rows as unknown[]).length;
+    },
+
     async sweepLegacyConnectorOpRows(org: string) {
       const { rows } = await client.query(
         "DELETE FROM pr_session_approval WHERE org_id = $1 AND session_id LIKE $2 AND kind LIKE $3 RETURNING kind",

@@ -1,51 +1,130 @@
-export const TASK_TOOL_NAMES: readonly string[] = ["task_peek", "task_cancel", "task_sleep"];
+export const TASK_TOOL_NAMES: readonly string[] = ["task_wait", "task_cancel"];
 
-export const TASK_PARENT_TOOL_NAMES: readonly string[] = ["task_peek", "task_cancel", "task_sleep"];
+export const TASK_PARENT_TOOL_NAMES: readonly string[] = ["task_wait", "task_cancel"];
 
-const TASK_PEEK_TOOL = "task_peek";
-const TASK_CANCEL_TOOL = "task_cancel";
-const TASK_VIEW_TOOLS: ReadonlySet<string> = new Set([TASK_PEEK_TOOL, TASK_CANCEL_TOOL]);
+export const TERMINAL_TASK_STATUSES: readonly string[] = ["completed", "failed", "cancelled"];
 
-export type TaskReceipt = {
+const TASK_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+
+const TASK_KINDS: ReadonlySet<string> = new Set(["agent", "tool"]);
+
+export type TaskStarted = {
   readonly taskId: string;
   readonly callId: string;
-  readonly agentId: string | null;
+  readonly turnId: string;
+  readonly kind: "agent" | "tool";
   readonly tool: string;
 };
 
-const TASK_ID_PREFIX = "task_";
-
-export function readTaskReceipt(result: unknown): TaskReceipt | null {
+export function readTaskStarted(data: unknown): TaskStarted | null {
   try {
-    const r = result as
-      | { kind?: unknown; callId?: unknown; backgroundTask?: { taskId?: unknown }; output?: unknown; subagentName?: unknown; toolName?: unknown }
-      | null;
-    if (r === null || typeof r !== "object") return null;
-    const callId = r.callId;
+    const d = data as { callId?: unknown; kind?: unknown; name?: unknown; taskId?: unknown; turnId?: unknown } | null;
+    if (d === null || typeof d !== "object") return null;
+    const taskId = d.taskId;
+    if (typeof taskId !== "string" || !TASK_ID_RE.test(taskId)) return null;
+    const callId = d.callId;
     if (typeof callId !== "string" || callId.length === 0) return null;
-    const agentId = (r.output as { agentId?: unknown } | null | undefined)?.agentId;
-    const handle = typeof agentId === "string" && agentId.length > 0 ? agentId : null;
-
-    if (r.kind === "subagent-result") {
-      const taskId = r.backgroundTask?.taskId;
-      if (typeof taskId !== "string" || taskId.length === 0) return null;
-      return { taskId, callId, agentId: handle, tool: typeof r.subagentName === "string" ? r.subagentName : "" };
-    }
-
-    if (r.kind === "tool-result") {
-      const output = r.output as { status?: unknown; taskId?: unknown } | null | undefined;
-      if (output === null || typeof output !== "object") return null;
-      if (output.status !== "working") return null;
-      const taskId = output.taskId;
-      if (typeof taskId !== "string" || !taskId.startsWith(TASK_ID_PREFIX) || taskId.length <= TASK_ID_PREFIX.length) return null;
-      if (handle === null) return null;
-      return { taskId, callId, agentId: handle, tool: typeof r.toolName === "string" ? r.toolName : "" };
-    }
-
-    return null;
+    const kind = d.kind;
+    if (typeof kind !== "string" || !TASK_KINDS.has(kind)) return null;
+    return {
+      taskId,
+      callId,
+      turnId: typeof d.turnId === "string" ? d.turnId : "",
+      kind: kind as "agent" | "tool",
+      tool: typeof d.name === "string" ? d.name : "",
+    };
   } catch {
     return null;
   }
+}
+
+export type TaskSettled = {
+  readonly taskId: string;
+  readonly callId: string;
+  readonly turnId: string;
+  readonly status: string;
+  readonly kind: "agent" | "tool" | null;
+  readonly tool: string;
+  readonly cancelReason: string;
+  readonly errorText: string;
+};
+
+export function readTaskSettled(data: unknown): TaskSettled | null {
+  try {
+    const d = data as
+      | {
+          callId?: unknown;
+          cancel?: { reason?: unknown } | null;
+          error?: { message?: unknown } | null;
+          kind?: unknown;
+          name?: unknown;
+          status?: unknown;
+          taskId?: unknown;
+          turnId?: unknown;
+        }
+      | null;
+    if (d === null || typeof d !== "object") return null;
+    const taskId = d.taskId;
+    if (typeof taskId !== "string" || !TASK_ID_RE.test(taskId)) return null;
+    const callId = d.callId;
+    if (typeof callId !== "string" || callId.length === 0) return null;
+    const status = d.status;
+    if (typeof status !== "string" || !TERMINAL_TASK_STATUSES.includes(status)) return null;
+    const kind = typeof d.kind === "string" && TASK_KINDS.has(d.kind) ? (d.kind as "agent" | "tool") : null;
+    const reason = d.cancel?.reason;
+    const message = d.error?.message;
+    return {
+      taskId,
+      callId,
+      turnId: typeof d.turnId === "string" ? d.turnId : "",
+      status,
+      kind,
+      tool: typeof d.name === "string" ? d.name : "",
+      cancelReason: typeof reason === "string" ? reason : "",
+      errorText: typeof message === "string" ? message : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+export type AgentStarted = {
+  readonly callId: string;
+  readonly turnId: string;
+  readonly taskId: string | null;
+  readonly sessionId: string;
+  readonly tool: string;
+};
+
+export function readAgentStarted(data: unknown): AgentStarted | null {
+  try {
+    const d = data as { callId?: unknown; name?: unknown; sessionId?: unknown; taskId?: unknown; turnId?: unknown } | null;
+    if (d === null || typeof d !== "object") return null;
+    const sessionId = d.sessionId;
+    if (typeof sessionId !== "string" || sessionId.length === 0) return null;
+    const callId = d.callId;
+    if (typeof callId !== "string" || callId.length === 0) return null;
+    const taskId = d.taskId;
+    return {
+      callId,
+      turnId: typeof d.turnId === "string" ? d.turnId : "",
+      taskId: typeof taskId === "string" && TASK_ID_RE.test(taskId) ? taskId : null,
+      sessionId,
+      tool: typeof d.name === "string" ? d.name : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+export type TaskSummary = {
+  readonly taskId: string;
+  readonly status: string;
+  readonly agentId: string | null;
+};
+
+export function settledTaskSummary(settled: TaskSettled): TaskSummary {
+  return { taskId: settled.taskId, status: settled.status, agentId: null };
 }
 
 export type DelegationFailure = {
@@ -90,160 +169,24 @@ export function readDelegationFailure(result: unknown): DelegationFailure | null
   }
 }
 
-export const TERMINAL_TASK_STATUSES: readonly string[] = ["completed", "failed", "cancelled"];
+const FAILURE_TEXT_MAX_CHARS = 600;
 
-export type TaskSummary = {
-  readonly taskId: string;
-  readonly status: string;
-  readonly agentId: string | null;
-};
-
-export function taskViewsOf(result: unknown): readonly TaskSummary[] {
-  try {
-    const r = result as { kind?: unknown; toolName?: unknown; output?: { tasks?: unknown } } | null;
-    if (r === null || typeof r !== "object") return [];
-    if (r.kind !== "tool-result" || typeof r.toolName !== "string" || !TASK_VIEW_TOOLS.has(r.toolName)) return [];
-    const tasks = r.output?.tasks;
-    if (!Array.isArray(tasks)) return [];
-    const out: TaskSummary[] = [];
-    for (const raw of tasks) {
-      const t = raw as { taskId?: unknown; status?: unknown; metadata?: { agentId?: unknown } } | null;
-      if (t === null || typeof t !== "object") continue;
-      if (typeof t.taskId !== "string" || t.taskId.length === 0) continue;
-      if (typeof t.status !== "string" || t.status.length === 0) continue;
-      const agentId = t.metadata?.agentId;
-      out.push({ taskId: t.taskId, status: t.status, agentId: typeof agentId === "string" && agentId.length > 0 ? agentId : null });
-    }
-    return out;
-  } catch {
-    return [];
-  }
-}
-
-export function terminalTaskViewsOf(result: unknown): readonly TaskSummary[] {
-  return taskViewsOf(result).filter((v) => TERMINAL_TASK_STATUSES.includes(v.status));
-}
-
-export type TaskNotification = {
-  readonly taskId: string;
-  readonly status: string;
-};
-
-const TASK_NOTIFICATION_RE =
-  /^Background task (\S+) \([^)]*\) (?:needs input\.|(?:is )?([a-z_]+)\.)/m;
-const TASK_NOTIFICATION_START_RE =
-  /^Background task (\S+) \([^)]*\) (?:needs input\.|(?:is )?([a-z_]+)\.)/;
-const TASK_NOTIFICATION_GLOBAL_RE =
-  /^Background task (\S+) \([^)]*\) (?:needs input\.|(?:is )?([a-z_]+)\.)/gm;
-
-const TASK_ID_RE = /^task_[A-Za-z0-9_-]{8,}$/;
-
-export function readTaskNotification(message: unknown): TaskNotification | null {
-  try {
-    if (typeof message !== "string" || message.length === 0) return null;
-    const m = TASK_NOTIFICATION_RE.exec(message.trimStart());
-    if (m === null) return null;
-    const taskId = m[1] ?? "";
-    if (!TASK_ID_RE.test(taskId)) return null;
-    const status = m[2] ?? "input_required";
-    return { taskId, status };
-  } catch {
-    return null;
-  }
-}
-
-export function readTaskNotifications(message: unknown): readonly TaskNotification[] {
-  try {
-    if (typeof message !== "string" || message.length === 0) return [];
-    const out: TaskNotification[] = [];
-    TASK_NOTIFICATION_GLOBAL_RE.lastIndex = 0;
-    for (const match of message.trimStart().matchAll(TASK_NOTIFICATION_GLOBAL_RE)) {
-      const taskId = match[1] ?? "";
-      if (!TASK_ID_RE.test(taskId)) continue;
-      out.push({ taskId, status: match[2] ?? "input_required" });
-    }
-    TASK_NOTIFICATION_GLOBAL_RE.lastIndex = 0;
-    return out;
-  } catch {
-    TASK_NOTIFICATION_GLOBAL_RE.lastIndex = 0;
-    return [];
-  }
-}
-
-export function taskNotificationStartsWithTerminal(message: unknown): boolean {
-  try {
-    if (typeof message !== "string" || message.length === 0) return false;
-    const match = TASK_NOTIFICATION_START_RE.exec(message.trimStart());
-    if (match === null || !TASK_ID_RE.test(match[1] ?? "")) return false;
-    return TERMINAL_TASK_STATUSES.includes(match[2] ?? "input_required");
-  } catch {
-    return false;
-  }
-}
-
-const TASK_FAILURE_ERROR_LABEL = "\n\nError:\n";
-
-const RAW_NOTIFICATION_MAX_CHARS = 600;
-
-export type TaskNotificationFailure = {
+export type TaskSettledFailure = {
   readonly errorClass: string;
   readonly errorText: string;
-  readonly parse: "json" | "text" | "raw" | "none";
+  readonly parse: "event" | "status" | "none";
 };
 
-const NO_NOTIFICATION_FAILURE: TaskNotificationFailure = { errorClass: "", errorText: "", parse: "none" };
+const NO_SETTLED_FAILURE: TaskSettledFailure = { errorClass: "", errorText: "", parse: "none" };
 
-export function taskNotificationFailure(message: unknown): TaskNotificationFailure {
-  try {
-    if (typeof message !== "string" || message.length === 0) return NO_NOTIFICATION_FAILURE;
-    const text = message.trimStart();
-    const m = TASK_NOTIFICATION_RE.exec(text);
-    if (m === null) return NO_NOTIFICATION_FAILURE;
-    if (m[2] !== "failed") return NO_NOTIFICATION_FAILURE;
-    if (!TASK_ID_RE.test(m[1] ?? "")) return NO_NOTIFICATION_FAILURE;
-    const raw = rawFailureNotification(text, m.index);
-    const tail = text.slice(m.index + m[0].length);
-    if (!tail.startsWith(TASK_FAILURE_ERROR_LABEL)) return raw;
-    const body = tail.slice(TASK_FAILURE_ERROR_LABEL.length);
-    const end = body.indexOf("\n\n");
-    const payload = end < 0 ? body : body.slice(0, end);
-    if (payload.length === 0) return raw;
-    return splitFailurePayload(payload);
-  } catch {
-    return NO_NOTIFICATION_FAILURE;
+export function taskSettledFailure(settled: TaskSettled | null): TaskSettledFailure {
+  if (settled === null || settled.status === "completed") return NO_SETTLED_FAILURE;
+  const cap = (s: string): string => (s.length <= FAILURE_TEXT_MAX_CHARS ? s : `${s.slice(0, FAILURE_TEXT_MAX_CHARS)}…`);
+  if (settled.status === "failed" && settled.errorText.length > 0) {
+    return { errorClass: "", errorText: cap(settled.errorText), parse: "event" };
   }
-}
-
-function rawFailureNotification(text: string, at: number): TaskNotificationFailure {
-  const rest = text.slice(at);
-  const end = rest.indexOf("\n\n");
-  const bounded = (end < 0 ? rest : rest.slice(0, end)).trimEnd();
-  const capped = bounded.length <= RAW_NOTIFICATION_MAX_CHARS ? bounded : `${bounded.slice(0, RAW_NOTIFICATION_MAX_CHARS)}…`;
-  return { errorClass: "", errorText: capped, parse: "raw" };
-}
-
-function splitFailurePayload(payload: string): TaskNotificationFailure {
-  const whole: TaskNotificationFailure = { errorClass: "", errorText: payload, parse: "text" };
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(payload);
-  } catch {
-    return whole;
+  if (settled.status === "cancelled" && settled.cancelReason.length > 0) {
+    return { errorClass: settled.cancelReason, errorText: settled.cancelReason, parse: "event" };
   }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return whole;
-  const o = parsed as { code?: unknown; message?: unknown };
-  const errorClass = typeof o.code === "string" ? o.code : "";
-  const errorText = typeof o.message === "string" ? o.message : "";
-  if (errorText.length === 0) return { ...whole, errorClass };
-  return { errorClass, errorText, parse: "json" };
-}
-
-export function terminalTaskNotification(message: unknown): TaskSummary | null {
-  return terminalTaskNotifications(message)[0] ?? null;
-}
-
-export function terminalTaskNotifications(message: unknown): readonly TaskSummary[] {
-  return readTaskNotifications(message)
-    .filter((note) => TERMINAL_TASK_STATUSES.includes(note.status))
-    .map((note) => ({ taskId: note.taskId, status: note.status, agentId: null }));
+  return { errorClass: "", errorText: settled.status, parse: "status" };
 }

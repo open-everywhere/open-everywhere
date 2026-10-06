@@ -18,6 +18,7 @@ export const WORK_TOOL_MOUNTS: Readonly<Record<string, WorkMountRule>> = {
   open_pull_request: { connector: "github", via: "grant" },
   check_pr_status: { connector: "github", via: "grant" },
   get_pr_feedback: { connector: "github", via: "grant" },
+  read_github_issue: { connector: "github", via: "grant" },
   walk_pr: { connector: "github", via: "grant" },
   post_pr_walkthrough: { connector: "github", via: "grant" },
   subscribe_pr: { connector: "github", via: "grant" },

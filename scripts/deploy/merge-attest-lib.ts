@@ -10,11 +10,10 @@ import {
   fetchGithubApi,
   type GithubApiFetchLike,
   realGithubApiFetch,
-  resolveGithubOwnerRepoFromEnv,
   resolveGithubOwnerRepoFromGit,
   resolveGithubRestToken,
 } from "./ci-gate-lib.js";
-import { type Env, type Exec, realExec } from "./lib.js";
+import { type Env, type Exec, realExec, resolveGithubOwnerRepoFromEnv } from "./lib.js";
 import { type MergeFenceDecision, parsePullRequestSubject } from "./merge-fence-lib.js";
 
 export const UPGRADE_FENCE_CONTEXT = "oe/upgrade-fence";

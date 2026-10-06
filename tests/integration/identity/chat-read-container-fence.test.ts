@@ -1,17 +1,19 @@
 import { afterAll, expect, test } from "vitest";
+import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import {
-  awaitTaskSettlement,
+  armSettlement,
+  auditCursor,
+  awaitWorkResult,
   bootAgent,
   disposeLater,
   installSlackWebApiStub,
   registerScript,
-  SETTLEMENT_DRAIN_SCRIPT,
   SLACK_TEAM_ID,
   slackMentionWake,
   slackTs,
-  taskIdOfDelegation,
   waitFor,
   waitForChildren,
+  workTaskIdOfCall,
   type ScriptedHandle,
   type SlackWebApiStub,
 } from "../harness";
@@ -66,6 +68,8 @@ async function armSeams(): Promise<void> {
         if (user === MEMBER_USER_ID) return userInfo(MEMBER_USER_ID, "ope929-member");
         return undefined;
       }
+      case "conversations.members":
+        return { ok: true, members: [], response_metadata: { next_cursor: "" } };
       case "conversations.info":
         return {
           ok: true,
@@ -104,6 +108,7 @@ interface Driven {
 
 async function driveOnce(): Promise<Driven> {
   await armSeams();
+  const cursor = await auditCursor();
   const handle = disposeLater(
     registerScript({
       parent: [
@@ -116,10 +121,10 @@ async function driveOnce(): Promise<Driven> {
             },
           ],
         },
-        { calls: [{ tool: "agent", input: { message: "take it from here" }, id: "ope929-fence-delegate" }] },
-        { say: "the worker reported back" },
+        { calls: [{ tool: "work", input: { message: "take it from here" }, id: "ope929-fence-delegate" }] },
+        { say: NO_REPLY_SENTINEL },
       ],
-      child: [{ say: "reported" }],
+      child: [{ delayMs: 120_000, say: "reported" }],
     }),
   );
 
@@ -133,23 +138,22 @@ async function driveOnce(): Promise<Driven> {
   });
   expect(res.status, `the Slack front refused the mention: ${res.body.slice(0, 200)}`).toBe(200);
 
-  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 2), "the seat's terminal step");
-  await waitForChildren(handle, { count: 1, lastStepIndex: 0, label: "the worker's terminal step" });
-  expect(handle.requests.filter((r) => r.fault !== undefined), "the scripted model reported a fault").toEqual([]);
+  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 2), "the seat's receipt step");
+  await waitForChildren(handle, { count: 1, lastStepIndex: 0, label: "the worker to enter its hold" });
+  const settlement = disposeLater(armSettlement(handle, { parent: [{ say: NO_REPLY_SENTINEL }] }));
+  const taskId = await workTaskIdOfCall(cursor, handle, "ope929-fence-delegate", "the ope929 delegation");
+  handle.releaseHolds();
+  const resultStep = await awaitWorkResult({ handle: settlement, taskId, label: "the seat's step that read the worker's result" });
+  expect(resultStep.stepIndex, "the result arrives as step 0 of the seat's own result-wake turn").toBe(0);
+  expect(handle.holdsCutShort(), "the worker's hold ended on the release, not on its 120 s backstop").toBe(1);
+  for (const h of [handle, settlement]) {
+    expect(h.requests.filter((r) => r.fault !== undefined), "the scripted model reported a fault").toEqual([]);
+    expect(h.resolves.filter((r) => r.fault !== undefined), "the scripted model reported a fault").toEqual([]);
+  }
 
   let read: { readonly name: string; readonly isError: boolean; readonly output: unknown } | undefined;
   for (const r of handle.requests) for (const t of r.toolResults) if (t.name === "read_channel") read = t;
   expect(read, "the seat never got a read_channel result at all").toBeDefined();
-
-  const drained = await awaitTaskSettlement({
-    dispatched: handle,
-    taskId: taskIdOfDelegation(handle, "the ope929 delegation"),
-    script: SETTLEMENT_DRAIN_SCRIPT,
-    label: "the worker's settlement wake",
-  });
-  disposeLater(drained.handle);
-  expect(drained.handle.requests.filter((r) => r.fault !== undefined), "a straggling worker crossed into the drain").toEqual([]);
-  drained.handle.dispose();
 
   return { handle, read: { isError: read!.isError, output: read!.output } };
 }

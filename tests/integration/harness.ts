@@ -22,10 +22,10 @@ import { installHostFetchStub } from "./fetch-stub";
 import { INTEGRATION_SANDBOX_BACKEND } from "./global-setup-contract";
 import { copyPgliteTemplateInto } from "./pglite-template";
 import { createStateDir } from "./state-dir";
+
 import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import "@open-everywhere/core/agent/access/untrusted-projection.js";
 import "@open-everywhere/core/agent/access/worker-continuation.js";
-import "@open-everywhere/core/agent/channels/turn-terminal-actions.js";
 
 import {
   ANY_SESSION,
@@ -37,6 +37,9 @@ import {
   foreignWakeSilenceNote,
   __resetStaleHoldExpiriesForTest,
   __resetForeignWakeSilencesForTest,
+  taskIdFromReceipt,
+  taskResultsInPrompt,
+  TASK_FROM_RECEIPT,
   type RecordedRequest,
   type ScriptedHandle,
   type ScriptedStep,
@@ -46,6 +49,13 @@ export {
   registerScript,
   WAKE_FROM_ENVELOPE,
   WAKE_FROM_REPORT,
+  workSessionCalls,
+  type WorkSessionCall,
+  taskIdFromReceipt,
+  taskResultsInPrompt,
+  taskResultDeliveryCount,
+  TASK_FROM_RECEIPT,
+  type TaskResultBlock,
   type RecordedRequest,
   type ResolveObservation,
   type ScriptedHandle,
@@ -514,42 +524,6 @@ export async function waitFor<T>(probe: () => T | undefined | Promise<T | undefi
   }
 }
 
-const workflowEventsDir = (): string => join(ROOT, ".eve", ".workflow-data", "events");
-
-export function isTurnCancelHookToken(token: unknown, sessionId: string): boolean {
-  if (typeof token !== "string") return false;
-  const prefix = `${sessionId}:turn-control:`;
-  if (!token.startsWith(prefix) || !token.endsWith(":cancel")) return false;
-  return /^\d+$/.test(token.slice(prefix.length, -":cancel".length));
-}
-
-export async function waitForTurnCancelDelivered(sessionId: string): Promise<void> {
-  const seen = new Set<string>();
-  await waitFor(
-    () => {
-      let names: string[];
-      try {
-        names = readdirSync(workflowEventsDir());
-      } catch {
-        return undefined;
-      }
-      for (const name of names) {
-        if (seen.has(name) || !name.endsWith(".json")) continue;
-        let event: { eventType?: unknown; eventData?: { token?: unknown } };
-        try {
-          event = JSON.parse(readFileSync(join(workflowEventsDir(), name), "utf8")) as typeof event;
-        } catch {
-          continue;
-        }
-        seen.add(name);
-        if (event.eventType === "hook_received" && isTurnCancelHookToken(event.eventData?.token, sessionId)) return true;
-      }
-      return undefined;
-    },
-    `eve's delivery of the stop to the turn of session ${sessionId} (a hook_received event on its "<sessionId>:turn-control:<n>:cancel" hook)`,
-  );
-}
-
 export async function waitForChildren(
   handle: ScriptedHandle,
   input: { readonly count: number; readonly lastStepIndex: number; readonly label: string },
@@ -564,8 +538,8 @@ export async function waitForChildren(
 
 export function taskIdOfDelegation(handle: ScriptedHandle, callLabel: string): string {
   const delegation = handle.requests.flatMap((r) => r.toolResults).find((t) => t.name === "agent");
-  const taskId = (delegation?.output as { taskId?: unknown } | undefined)?.taskId;
-  if (typeof taskId !== "string" || taskId.length === 0) {
+  const taskId = taskIdFromReceipt(delegation?.output);
+  if (taskId === undefined) {
     throw new Error(
       `integration harness: no background-task receipt on the "agent" result for ${callLabel} — ` +
         `got ${JSON.stringify(delegation?.output)}. The delegation never happened, or it returned no receipt ` +
@@ -576,27 +550,11 @@ export function taskIdOfDelegation(handle: ScriptedHandle, callLabel: string): s
 }
 
 export function armSettlement(dispatched: ScriptedHandle, script: SeatScript): ScriptedHandle {
-  const sessionId = dispatched.requests.find((r) => r.role === "parent")?.sessionId;
+  const sessionId = dispatched.requests.find((r) => r.role === "parent" && typeof r.sessionId === "string")?.sessionId;
   if (sessionId === undefined) {
-    throw new Error(
-      "integration harness: armSettlement could not read the dispatch turn's own session id off its " +
-        "parent request — wait for the dispatch turn's own terminal step before calling this.",
-    );
+    throw new Error("integration harness: armSettlement before the dispatch handle served any seat step — there is no seat session to arm the result wake on.");
   }
-  if (scriptedStore().get(sessionId)?.requests === dispatched.requests) dispatched.dispose();
-  const primary = registerScript(script, sessionId);
-  return {
-    requests: primary.requests,
-    resolves: primary.resolves,
-    releaseHolds: () => primary.releaseHolds(),
-    holdsCutShort: () => primary.holdsCutShort(),
-    dispose: () => {
-      const store = scriptedStore();
-      const mine = store.get(sessionId);
-      if (mine !== undefined && store.get(ANY_SESSION) === mine) store.delete(ANY_SESSION);
-      primary.dispose();
-    },
-  };
+  return registerScript(script, sessionId);
 }
 
 export async function consumeSettlement(input: {
@@ -605,15 +563,48 @@ export async function consumeSettlement(input: {
   readonly taskId: string;
   readonly label: string;
 }): Promise<RecordedRequest> {
-  const sessionId = input.dispatched.requests.find((r) => r.role === "parent")?.sessionId;
+  const read = await awaitWorkResult({ handle: input.armed, taskId: input.taskId, label: input.label });
   input.dispatched.dispose();
-  if (sessionId !== undefined) {
-    const store = scriptedStore();
-    const entry = store.get(sessionId);
-    if (entry !== undefined && !store.has(ANY_SESSION)) store.set(ANY_SESSION, entry);
+  return read;
+}
+
+export async function awaitWorkResult(input: { readonly handle: ScriptedHandle; readonly taskId: string; readonly label: string }): Promise<RecordedRequest> {
+  const marker = `work-result-${input.taskId}`;
+  const read = await waitFor(() => input.handle.requests.find((r) => r.role === "parent" && r.messages.some((m) => m.text.includes(marker))), input.label);
+  if (typeof read.turnId !== "string" || read.turnId.length === 0) {
+    throw new Error(`integration harness: ${input.label}: the result-wake step carries no turn id, so a same-turn check against it would be vacuous`);
   }
+  return read;
+}
+
+export async function workTaskIdOfCall(cursor: AuditCursor, handle: ScriptedHandle | readonly ScriptedHandle[], callId: string, label: string): Promise<string> {
+  const handles: readonly ScriptedHandle[] = Array.isArray(handle) ? handle : [handle as ScriptedHandle];
+  const requestId = await waitFor(() => {
+    const result = handles.flatMap((h) => h.requests).flatMap((r) => r.toolResults).find((t) => t.name === "work" && t.id === callId);
+    if (result === undefined) return undefined;
+    const raw = result.output;
+    const id = /"requestId"\s*:\s*"([^"]+)"/.exec(typeof raw === "string" ? raw : JSON.stringify(raw) ?? "")?.[1];
+    if (typeof id !== "string") throw new Error(`integration harness: ${label}: the \`work\` call ${callId} returned no receipt — got ${JSON.stringify(raw).slice(0, 300)}`);
+    return id;
+  }, `${label}: the seat's \`work\` receipt for call ${callId}`);
+  return await waitFor(async () => {
+    const rows = await rowsSinceCursor(cursor, ["delegation.task_started"], { limit: 200 });
+    const row = rows.find((r) => (r.detail as { request?: unknown } | undefined)?.request === requestId);
+    const task = (row?.detail as { task?: unknown } | undefined)?.task;
+    return typeof task === "string" ? task : undefined;
+  }, `${label}: the work session's delegation.task_started row for request ${requestId}`);
+}
+
+export async function awaitTaskResult(input: {
+  readonly handle: ScriptedHandle;
+  readonly taskId: string;
+  readonly label: string;
+}): Promise<RecordedRequest> {
   return await waitFor(
-    () => input.armed.requests.find((r) => r.role === "parent" && r.messages.some((m) => m.text.includes(input.taskId))),
+    () =>
+      input.handle.requests.find(
+        (r) => r.role === "parent" && taskResultsInPrompt(r.messages).some((b) => b.taskId === input.taskId),
+      ),
     input.label,
   );
 }
@@ -627,6 +618,13 @@ export async function awaitTaskSettlement(input: {
   const handle = armSettlement(input.dispatched, input.script);
   const notification = await consumeSettlement({ armed: handle, dispatched: input.dispatched, taskId: input.taskId, label: input.label });
   return { handle, notification };
+}
+
+export async function taskIdOfWorkDelegation(cursor: AuditCursor, label: string): Promise<string> {
+  const rows = await rowsSinceCursor(cursor, ["delegation.task_started"], { limit: 50 });
+  const ids = rows.map((r) => (r.detail as { task?: unknown } | undefined)?.task).filter((t): t is string => typeof t === "string");
+  if (ids.length !== 1) throw new Error(`integration harness: ${label}: expected ONE delegation.task_started row since the cursor, got ${ids.length}`);
+  return ids[0] as string;
 }
 
 export const SETTLEMENT_DRAIN_SCRIPT: SeatScript = { parent: [{ say: NO_REPLY_SENTINEL }] };

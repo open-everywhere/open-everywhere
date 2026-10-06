@@ -37,6 +37,7 @@ export const notionWorkSearchAdapter: WorkSearchAdapter = {
       id: h.id,
       title: h.title || "(untitled)",
       ...(h.url ? { url: h.url } : {}),
+      ...(h.object === "page" ? { readWith: { tool: "read_notion_page", args: { page: h.id } } } : {}),
     }));
   },
 };

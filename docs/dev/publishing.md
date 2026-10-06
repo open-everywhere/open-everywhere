@@ -43,7 +43,11 @@ each fail `npm run lint:publish`. The cheap half of the same rule runs on the te
 
 `@open-everywhere/core` runs on a PATCHED `eve`. The tree carries
 `patches/eve+<pinned version>.patch`, and `patch-package` applies it on `postinstall` **in this
-repository**. The patch holds seven live parts and one CLI-side part. Every live part is a
+repository**. On the eve 0.71.0 pin the patch holds four parts. Three are live at runtime: part 1, the
+untrusted output projection (OPE-73); part 4, the compaction event contract (OPE-697); and part 7,
+the per-hop `web_fetch` egress fence (OPE-1568). Part 10 (OPE-2276) changes only eve's CLI-side
+evaluation of authored files (`eve build`, `eve dev`, `eve eval`), so the deployed server never runs
+it. Parts 5 and 6 are retired (OPE-2252, OPE-2251). Every live part is a
 security or correctness control, and every one fails SILENTLY when the patch is absent — nothing throws, nothing logs, the behaviour is
 simply not there. The worst of them is the connector fence: on an unpatched `eve`, every connector
 result and every MCP-server-authored tool description reaches the model unfenced.
@@ -55,16 +59,11 @@ tree `grep -rl __oeProjectToolSet node_modules/eve/dist` found **zero** files, a
 repository.
 
 **Core therefore refuses to boot on an unpatched `eve`.** Each live part plants a runtime marker,
-and `agent/access/eve-patch-probe.ts` reads all seven before the first wake is served. A missing marker
+and `agent/access/eve-patch-probe.ts` reads all three before the first wake is served. Part 10
+plants no marker, because a slow build is no reason to refuse a wake. A missing marker
 throws at module load. The message names the missing part, what that part silently costs, the pinned
 `eve` version and the fix. The refusal is fail-closed by design: no setting and no environment
 variable turns it into a warning.
-
-The CLI-side part is part 10 (OPE-2276). It keeps a built workspace package external while
-`eve build` evaluates the authored files, so the build evaluates the package graph once instead of
-once per file. It also serves the compile `eve dev` runs and `eve eval` discovery. Without it, those
-are slower and the deployed behaviour is the same. So it plants no marker, and core does not refuse
-to boot without it.
 
 ### Applying the patch is the consumer's step — and core ships both the patch and the applier
 
@@ -75,7 +74,7 @@ exactly what a consumer has to be able to refuse, and
 property. So the patch travels **in the tarball** and a consumer applies it with one explicit command:
 
 ```bash
-npm i @open-everywhere/core eve@0.54.3
+npm i @open-everywhere/core eve@0.71.0
 npx oe-eve-patch
 ```
 
@@ -100,7 +99,7 @@ and exits 0 — it never patches bytes outside the project, and it refuses rathe
 | a marker the patch adds is missing afterwards | patch-package reports a failed hunk as a **warning**, so nothing else would say so |
 
 **An eve that holds an older OE patch is restored, not refused (OPE-2294).** A release can re-roll
-the patch while the eve pin stays the same: 0.1.5 adds part 10 to `eve+0.54.3.patch`. `npm install`
+the patch while the eve pin stays the same: on the 0.1 line, 0.1.5 added part 10 to `eve+0.54.3.patch`. `npm install`
 then keeps the eve that holds the old patch, because its version still matches the pin, and
 patch-package cannot apply the new patch over the old one. When that apply fails and eve already
 carries an `__oe` symbol, the applier runs `npm pack eve@<pin>`. npm reads the tarball from its cache,
@@ -114,7 +113,10 @@ commands. They delete `node_modules/eve` with a `node -e` call, which runs in ev
 run the install of the package manager that ran the applier. When the apply fails and eve carries
 no `__oe` symbol, something else changed eve, and the applier refuses as before.
 `scripts/eve-patch-upgrade-packed-test.ts` drives both routes against a packed core and a real eve
-that holds the verbatim 0.1.4 patch.
+that holds the newest released OE patch for the current pin (on the 0.54.3 pin, the verbatim 0.1.4
+patch). When no release shipped a patch for the pin, no app can hold an older OE patch on that eve
+version. The leg then drives neither route: it says so and passes, so the restore route and the
+refusal route have no test on that pin.
 
 🔴 **Under pnpm and bun the applier detaches each target from the shared store before patching, and
 this is not optional.** Both import a package's files from a content store by **hardlink**, so one
@@ -130,10 +132,9 @@ reaches it.
 The last refusal row is the one that matters. `--error-on-fail` is not enough on its own:
 patch-package's already-applied path is a reverse dry run, which is what makes a second run a no-op,
 and neither route reads the bytes afterwards. The applier reads them, and reports one line per patch
-part. One of the six patched files carries no `__oe` marker: `protocol/message.d.ts` is types-only.
+part. One of the four patched files carries no `__oe` marker: `protocol/message.d.ts` is types-only.
 That file rests on patch-package's own `--error-on-fail` verdict, and the applier prints a line for it
-that says so. `context/dynamic-tool-lifecycle.js` carries no part header, but its one hunk writes the
-`__oeSessionToolScopePatched` marker, so the applier reads that marker in the installed bytes.
+that says so. It is also the only patched file with no part header.
 
 **Copying the patch by hand still works**, and it is what a consumer who would rather not run our bin
 can do: take `patches/eve+<pinned version>.patch` from this repository into their own `patches/`,
@@ -144,7 +145,7 @@ manifest. The applier exists so that is not the only route.
 
 | Check | Where | What it decides |
 |---|---|---|
-| Boot probe (`access/eve-patch-probe.ts`) | module load | Resolves the `eve` package root, loads the four carrier files, reads the markers. Refuses on any absence. |
+| Boot probe (`access/eve-patch-probe.ts`) | module load | Resolves the `eve` package root, loads the two carrier files of the live parts, reads the markers. Refuses on any absence. |
 | Turn gate (`hooks/eve-patch-gate.ts`) | `turn.started` | Reads the markers only. Running a turn has already evaluated every carrier, so no path is needed. Refuses on any absence. |
 
 The boot probe alone is not enough. A hosted build inlines `eve` and ships no `node_modules/eve`, so

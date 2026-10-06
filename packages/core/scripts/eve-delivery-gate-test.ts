@@ -50,8 +50,13 @@ const localNameOf = (clause: string, sourceName: string): string | undefined => 
 const chunkExportName = (shimText: string, publicName: string): string | undefined => {
   const shimLocal = new RegExp(`(?:export\\{|,)\\s*(\\w+)\\s+as\\s+${publicName}\\s*[,}]`).exec(shimText)?.[1];
   if (shimLocal === undefined) return undefined;
-  return sourceNameOf(importClause(shimText, "private"), shimLocal);
+  const viaChunk = sourceNameOf(importClause(shimText, "private"), shimLocal);
+  if (viaChunk !== undefined) return viaChunk;
+  return declaresLocal(shimText, shimLocal) ? publicName : undefined;
 };
+
+const declaresLocal = (moduleText: string, local: string): boolean =>
+  new RegExp(`(?:function\\s+${local}\\s*\\(|(?:const|let|var)\\s+(?:[^;]*?,\\s*)?${local}\\s*=)`).test(moduleText);
 
 const wiresRealDeliveryIdle = (runtimeText: string, local: string): boolean => {
   const holder = /isDeliveryIdle:\(\)=>(\w+)\.current\(\)/.exec(runtimeText)?.[1];
@@ -91,6 +96,15 @@ ok(idleChunkName !== undefined, "alias: the private chunk still exports `isDeliv
 ok(
   chunkExportName(privateJs, "hasParkedCommittedDelivery") !== undefined,
   "alias: the private chunk still exports `hasParkedCommittedDelivery`, the termination rule the idle wait rests on",
+);
+
+ok(
+  chunkExportName("export{w as isDeliveryIdle};", "isDeliveryIdle") === undefined,
+  "alias control: an exported local that the module neither imports nor declares resolves nothing",
+);
+ok(
+  chunkExportName("function w(){return!0}export{w as isDeliveryIdle};", "isDeliveryIdle") === "isDeliveryIdle",
+  "alias control: a local the module declares itself resolves to the PUBLIC name its consumers import",
 );
 
 const idleLocal = idleChunkName === undefined ? undefined : localNameOf(importClause(runtimeJs, "private"), idleChunkName);

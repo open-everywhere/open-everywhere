@@ -1,27 +1,24 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { expect, test } from "vitest";
 
 import { assertWriteBitsBite } from "../../../scripts/dac-fence.js";
-import { __setStaleTurnParkMsForTest } from "../../../agent/model/scripted-model";
 
 import {
   afterThisTest,
+  armSettlement,
   auditCursor,
   disposeLater,
-  awaitTaskSettlement,
+  awaitWorkResult,
   bootAgent,
   discordMentionWake,
-  DISCORD_LISTED_CHANNEL_ID,
   registerScript,
   rowsSinceCursor,
-  SETTLEMENT_DRAIN_SCRIPT,
+  workTaskIdOfCall,
   wrapToolExecute,
+  type AuditCursor,
   type ScriptedStep,
   type ScriptedHandle,
-  taskIdOfDelegation,
-  armSettlement,
-  consumeSettlement,
   waitFor,
   waitForAuditRows,
   waitForChildren,
@@ -70,6 +67,20 @@ async function frozenSiloFilePath(silo: string, rel: string): Promise<string> {
   return join(storeRoot(), ORG, "@silos", silo, rel);
 }
 
+async function forwardAndRelease(input: {
+  readonly handle: ScriptedHandle;
+  readonly cursor: AuditCursor;
+  readonly callId: string;
+  readonly label: string;
+  readonly heldStep: number;
+}): Promise<{ readonly taskId: string; readonly settlement: ScriptedHandle }> {
+  await waitFor(() => input.handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), `${input.label}: the seat's receipt step`);
+  await waitForChildren(input.handle, { count: 1, lastStepIndex: input.heldStep, label: `${input.label}: the worker to enter its held step` });
+  const settlement = disposeLater(armSettlement(input.handle, { parent: [{ say: "NO_REPLY" }] }));
+  const taskId = await workTaskIdOfCall(input.cursor, input.handle, input.callId, input.label);
+  return { taskId, settlement };
+}
+
 test("session.started seeds the domain's own silo at the expected path and body, never a sibling domain's silo, and both write fences hold for write_file and for bash", async () => {
   await bootAgent({ sharedSqlite: true });
 
@@ -81,11 +92,12 @@ test("session.started seeds the domain's own silo at the expected path and body,
   const handle = disposeLater(
     registerScript({
       parent: [
-        { calls: [{ tool: "agent", input: { message: "note this down" }, id: "m1-delegate" }] },
-        { say: "the worker reported back" },
+        { calls: [{ tool: "work", input: { message: "note this down" }, id: "m1-delegate" }] },
+        { say: "NO_REPLY" },
       ],
       child: [
         {
+          delayMs: 120_000,
           calls: [
             { tool: "write_file", input: { filePath: "/workspace/memory/it-memory-brain/notes.md", content }, id: "m1-write" },
             { tool: "write_file", input: { filePath: "/workspace/memory/it-memory-b-brain/stolen.md", content }, id: "m1-write-unowned" },
@@ -130,8 +142,11 @@ test("session.started seeds the domain's own silo at the expected path and body,
   );
 
   await discordMentionWake({ channelId: IT_MEMORY_CHANNEL_ID, text: `<@${DISCORD_BOT_ID}> please note this` });
-  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
+  const { taskId, settlement } = await forwardAndRelease({ handle, cursor, callId: "m1-delegate", label: "the note-taking forward", heldStep: 0 });
+  handle.releaseHolds();
   await waitForChildren(handle, { count: 1, lastStepIndex: 4, label: "the delegated worker's own terminal step" });
+  const resultStep = await awaitWorkResult({ handle: settlement, taskId, label: "the seat's result-wake step" });
+  expect(resultStep.stepIndex, "the result arrives as step 0 of the seat's own result-wake turn").toBe(0);
 
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   expect(handle.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
@@ -143,7 +158,7 @@ test("session.started seeds the domain's own silo at the expected path and body,
   const writes = childResults.filter((t) => t.name === "write_file");
   expect(writes.length).toBe(2);
   const owned = writes.filter((t) => !t.isError);
-  expect(owned.length).toBe(1);
+  expect(owned.length, `write_file results: ${JSON.stringify(writes.map((t) => t.output))}`).toBe(1);
 
   const refused = writes.filter((t) => t.isError);
   expect(refused.length).toBe(1);
@@ -172,25 +187,8 @@ test("session.started seeds the domain's own silo at the expected path and body,
   expect(`${surfaceShell.stderr}${surfaceShell.stdout}`).toMatch(/Permission denied|EACCES/i);
   expect(existsSync(surfaceFilePath(IT_MEMORY_CHANNEL_ID, "stolen-surface.md"))).toBe(false);
 
-  const taskId = taskIdOfDelegation(handle, "the note-taking delegation");
-  const settlement = await awaitTaskSettlement({
-    dispatched: handle,
-    taskId,
-    script: {
-      parent: [{ calls: [{ tool: "task_cancel", input: { taskIds: [taskId] }, id: "m1-peek" }] }, { say: "noted" }],
-    },
-    label: "the worker's completion, delivered as a new message naming the task id",
-  });
-  afterThisTest(() => settlement.handle.dispose());
-  const peeked = await waitFor(
-    () => settlement.handle.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "task_cancel")),
-    "the parent's step carrying the task_cancel result — the edge the settlement flush hangs off",
-  );
-  expect(peeked.toolResults.find((t) => t.name === "task_cancel")!.isError).toBe(false);
-  expect(settlement.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-
   const notesPath = siloFilePath("it-memory-brain", "notes.md");
-  await waitFor(() => (existsSync(notesPath) ? true : undefined), "the delegated child's write_file to land on the DURABLE store via the settlement flush");
+  await waitFor(() => (existsSync(notesPath) ? true : undefined), "the delegated child's write_file to land on the DURABLE store via the work session's persist");
   expect(readFileSync(notesPath, "utf-8")).toContain(marker);
 
   const shellNotePath = siloFilePath("it-memory-brain", "shell-note.md");
@@ -198,8 +196,11 @@ test("session.started seeds the domain's own silo at the expected path and body,
   expect(readFileSync(shellNotePath, "utf-8")).toContain(shellMarker);
 
   const writeRows = await rowsSinceCursor(cursor, ["memory.write"]);
-  const settled = writeRows.filter((r) => (r.detail as { outcome?: string; silo?: string }).outcome === "settled" && (r.detail as { silo?: string }).silo === "it-memory-brain");
-  expect(settled.length).toBeGreaterThan(0);
+  const turnEnd = writeRows.filter((r) => {
+    const d = r.detail as { outcome?: string; silo?: string };
+    return d.silo === "it-memory-brain" && (d.outcome === "edited" || d.outcome === "settled");
+  });
+  expect(turnEnd.length).toBeGreaterThan(0);
 
   const seedPath = siloFilePath("it-memory-brain", "MEMORY.md");
   await waitFor(() => (existsSync(seedPath) ? true : undefined), "the it-memory-brain silo's seed to land on the durable store");
@@ -210,21 +211,22 @@ test("session.started seeds the domain's own silo at the expected path and body,
   const bDir = siloFilePath("it-memory-b-brain", "");
   expect(existsSync(bDir)).toBe(false);
 
-  expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  for (const h of [handle, settlement]) expect(h.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 });
 
 test("OPE-999 — update_status still writes STATUS.md against the fenced memory root, and re-locks it afterwards", async () => {
   await bootAgent({ sharedSqlite: true });
   const summary = `IT-STATUS-${Date.now()}`;
 
+  const cursor = await auditCursor();
   const handle = disposeLater(
     registerScript({
       parent: [
-        { calls: [{ tool: "update_status", input: { state: "working", summary }, id: "m1b-status" }] },
-        { calls: [{ tool: "agent", input: { message: "try the shell" }, id: "m1b-delegate" }] },
-        { say: "the worker reported back" },
+        { calls: [{ tool: "work", input: { message: "try the shell" }, id: "m1b-delegate" }] },
+        { say: "NO_REPLY" },
       ],
       child: [
+        { delayMs: 120_000, calls: [{ tool: "update_status", input: { state: "working", summary }, id: "m1b-status" }] },
         {
           calls: [
             {
@@ -240,7 +242,9 @@ test("OPE-999 — update_status still writes STATUS.md against the fenced memory
   );
 
   await discordMentionWake({ channelId: IT_MEMORY_STATUS_CHANNEL_ID, text: `<@${DISCORD_BOT_ID}> status please` });
-  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 2), "the parent's terminal step to be served");
+  const { taskId: shellTaskId, settlement } = await forwardAndRelease({ handle, cursor, callId: "m1b-delegate", label: "the shell-try forward", heldStep: 0 });
+  handle.releaseHolds();
+  await waitForChildren(handle, { count: 1, lastStepIndex: 2, label: "the delegated worker's own terminal step" });
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 
   const status = handle.requests.flatMap((r) => r.toolResults).find((t) => t.name === "update_status");
@@ -250,26 +254,19 @@ test("OPE-999 — update_status still writes STATUS.md against the fenced memory
   await waitFor(() => (existsSync(statusPath) ? true : undefined), "update_status's STATUS.md to reach the durable surface tier");
   expect(readFileSync(statusPath, "utf-8")).toContain(summary);
 
-  await waitForChildren(handle, { count: 1, lastStepIndex: 1, label: "the delegated worker's own terminal step" });
   const childTerminal = handle.requests.filter((r) => r.role === "child").at(-1);
   if (!childTerminal) throw new Error("memory test: no child request recorded — the delegation never ran");
   const shell = childTerminal.toolResults.find((t) => t.name === "bash")?.output as { exitCode: number; stdout: string; stderr: string } | undefined;
-  expect(shell).toBeDefined();
+  expect(shell, `bash result: ${JSON.stringify(childTerminal.toolResults.find((t) => t.name === "bash"))}`).toBeDefined();
   assertWriteBitsBite("TEST 1b's re-lock leg");
-  expect(shell!.exitCode).not.toBe(0);
+  expect(shell!.exitCode, `bash result: ${JSON.stringify(shell)}`).not.toBe(0);
   expect(`${shell!.stderr}${shell!.stdout}`).toMatch(/Permission denied|EACCES/i);
   expect(existsSync(siloFilePath("it-memory-b-brain", "after-status.md"))).toBe(false);
 
-  const drained = await awaitTaskSettlement({
-    dispatched: handle,
-    taskId: taskIdOfDelegation(handle, "the shell-try delegation"),
-    script: SETTLEMENT_DRAIN_SCRIPT,
-    label: "the shell-trying worker's settlement wake",
-  });
-  expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-  drained.handle.dispose();
+  const shellResult = await awaitWorkResult({ handle: settlement, taskId: shellTaskId, label: "the seat's result-wake step for the shell-trying worker" });
+  expect(shellResult.stepIndex, "the result arrives as step 0 of the seat's own result-wake turn").toBe(0);
 
-  expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  for (const h of [handle, settlement]) expect(h.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 });
 
 test("purge_memory proposes a card under the egress spoof and redacts the fact on the approval-equivalent decide path, leaving only digests behind", async () => {
@@ -288,23 +285,27 @@ test("purge_memory proposes a card under the egress spoof and redacts the fact o
   const frozenHostPath = await frozenSiloFilePath("it-memory-brain", "purge-fixture.md");
   mkdirSync(dirname(frozenHostPath), { recursive: true });
   writeFileSync(frozenHostPath, fixture, "utf-8");
+  expect(frozenHostPath, "the decide and the booted host must share one store for the OPE-2297 leg to test anything").toBe(hostPath);
 
   const handle = disposeLater(
     registerScript({
       parent: [
-        { calls: [{ tool: "agent", input: { message: "erase that test fact" }, id: "m2-delegate" }] },
-        { say: "the worker reported back" },
+        { calls: [{ tool: "work", input: { message: "erase that test fact" }, id: "m2-delegate" }] },
+        { say: "NO_REPLY" },
       ],
-      child: [{ calls: [{ tool: "purge_memory", input: { match: "PURGE-TARGET-p1" }, id: "m2-purge" }] }, { say: "purge requested" }],
+      child: [
+        { calls: [{ tool: "purge_memory", input: { match: "PURGE-TARGET-p1" }, id: "m2-purge" }] },
+        { delayMs: 120_000, say: "purge requested" },
+      ],
     }),
   );
 
   const purgeCursor = await auditCursor();
   await discordMentionWake({ channelId: IT_MEMORY_PURGE_CHANNEL_ID, text: `<@${DISCORD_BOT_ID}> please erase that test fact` });
-  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
-  await waitForChildren(handle, { count: 1, lastStepIndex: 1, label: "the purging worker's own terminal step" });
+  const { taskId: purgeTaskId, settlement } = await forwardAndRelease({ handle, cursor: purgeCursor, callId: "m2-delegate", label: "the purge forward", heldStep: 1 });
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   expect(handle.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
+  expect(settlement.requests).toEqual([]);
 
   const purgeResult = handle.requests.flatMap((r) => r.toolResults).find((t) => t.name === "purge_memory");
   expect(purgeResult).toBeDefined();
@@ -314,17 +315,6 @@ test("purge_memory proposes a card under the egress spoof and redacts the fact o
   expect(output["autoApproved"]).toBeUndefined();
   const pendingId = output["pendingId"];
   expect(typeof pendingId).toBe("string");
-
-  const drained = await awaitTaskSettlement({
-    dispatched: handle,
-    taskId: taskIdOfDelegation(handle, "the purge delegation"),
-    script: SETTLEMENT_DRAIN_SCRIPT,
-    label: "the purging worker's settlement wake",
-  });
-  expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-  drained.handle.dispose();
-
-  expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 
   const requested = await waitForAuditRows({
     probe: async () => {
@@ -353,10 +343,28 @@ test("purge_memory proposes a card under the egress spoof and redacts the fact o
   expect(resolution.outcomeLine).toContain("purged 1 line(s)");
   expect(resolution.outcomeLine).toContain("silo:it-memory-brain/purge-fixture.md");
 
+  const flushCursor = await auditCursor();
+  handle.releaseHolds();
+  const purgeResultStep = await awaitWorkResult({ handle: settlement, taskId: purgeTaskId, label: "the seat's result-wake step for the purging worker" });
+  expect(purgeResultStep.stepIndex, "the result arrives as step 0 of the seat's own result-wake turn").toBe(0);
+  const purgeSurfaceKey = `discord/${DISCORD_TEST_GUILD_ID}/${IT_MEMORY_PURGE_CHANNEL_ID}`;
+  await waitForAuditRows({
+    probe: async () =>
+      (await rowsSinceCursor(flushCursor, ["memory.settlement_flush"], { limit: 50 })).find(
+        (r) => r.detail?.outcome === "flushed" && r.detail?.surfaceKey === purgeSurfaceKey,
+      ),
+    label: "the work session's own flush, AFTER the decide",
+    actions: ["memory.settlement_flush"],
+    cursor: flushCursor,
+  });
+  expect(handle.holdsCutShort(), "the worker stayed held until the release, so the decide really landed inside the open turn").toBe(1);
+  expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+
   const afterPurge = readFileSync(frozenHostPath, "utf-8");
   expect(afterPurge).not.toContain("PURGE-TARGET-p1");
   expect(afterPurge).not.toContain(bullet);
   expect(afterPurge).toContain("# Purge fixture");
+  expect(readdirSync(dirname(frozenHostPath)).filter((f) => f.includes(".conflict-"))).toEqual([]);
 
   const thisTurn = await rowsSinceCursor(purgeCursor, ["memory.purge", "approval.approved"], { limit: 50 });
   expect(thisTurn.length).toBeGreaterThan(0);
@@ -370,90 +378,6 @@ test("purge_memory proposes a card under the egress spoof and redacts the fact o
       expect(typeof bullets?.[0]?.sha256).toBe("string");
     }
   }
-});
-
-test("OPE-727 — a dispatch handle left registered past its own turn FAULTS a second, different turn's call, never mints a phantom dispatch", async () => {
-  await bootAgent({ sharedSqlite: true });
-
-  const handle = registerScript({
-    parent: [{ calls: [{ tool: "agent", input: { message: "do the thing" }, id: "stale-delegate" }] }, { calls: [{ tool: "no_reply", input: { reason: "nothing_to_add" }, id: "stale-silence" }] }, { say: "NO_REPLY" }],
-    child: [{ say: "done" }],
-  });
-
-  await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `<@${DISCORD_BOT_ID}> please do the thing` });
-  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the dispatch turn's own terminal step to be served");
-  await waitForChildren(handle, { count: 1, lastStepIndex: 0, label: "the delegated worker's own (single) step" });
-
-  expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-
-  const dispatchTurnId = handle.requests[0]?.turnId;
-  const taskId = taskIdOfDelegation(handle, "the dispatch");
-
-  __setStaleTurnParkMsForTest(3_000);
-  afterThisTest(() => __setStaleTurnParkMsForTest(undefined));
-  const phantom = await waitFor(
-    () => handle.requests.find((r) => r.role === "parent" && r.turnId !== dispatchTurnId && r.messages.some((m) => m.text.includes(taskId))),
-    "a settlement-turn request to land on the still-registered dispatch handle",
-    90_000,
-  );
-
-  expect(phantom.fault).toBeDefined();
-  expect(phantom.fault).toContain("stale script");
-  expect(phantom.fault).toContain(`turn "${dispatchTurnId}"`);
-  expect(phantom.fault).toContain(`turn "${phantom.turnId}"`);
-  expect(phantom.stepIndex).toBe(-1);
-
-  const phantomResolve = handle.resolves.find((r) => r.role === "parent" && r.turnId === phantom.turnId);
-  expect(phantomResolve?.fault).toBeDefined();
-  expect(phantomResolve?.fault).toContain("stale script");
-
-  const agentTaskIds = new Set(
-    handle.requests
-      .flatMap((r) => r.toolResults)
-      .filter((t) => t.name === "agent")
-      .map((t) => (t.output as { taskId?: unknown } | undefined)?.taskId),
-  );
-  expect(agentTaskIds).toEqual(new Set([taskId]));
-  expect(handle.requests.filter((r) => r.turnId === phantom.turnId)).toHaveLength(1);
-
-  handle.dispose();
-});
-
-test("OPE-727 negative control — the documented dispose-and-re-register pattern (awaitTaskSettlement's own shape) is unaffected by the guard", async () => {
-  await bootAgent({ sharedSqlite: true });
-
-  const dispatched = registerScript({
-    parent: [{ calls: [{ tool: "agent", input: { message: "do the thing" }, id: "proper-delegate" }] }, { calls: [{ tool: "no_reply", input: { reason: "nothing_to_add" }, id: "proper-silence" }] }, { say: "NO_REPLY" }],
-    child: [{ say: "done" }],
-  });
-
-  await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `<@${DISCORD_BOT_ID}> please do the thing, properly this time` });
-  await waitFor(() => dispatched.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the dispatch turn's own terminal step to be served");
-  const taskId = taskIdOfDelegation(dispatched, "the dispatch");
-
-  const settlement = armSettlement(dispatched, {
-    parent: [{ calls: [{ tool: "task_cancel", input: { taskIds: [taskId] }, id: "proper-peek" }] }, { say: "noted" }],
-  });
-
-  await waitForChildren(dispatched, { count: 1, lastStepIndex: 0, label: "the delegated worker's own (single) step" });
-  expect(dispatched.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-
-  const settled = await consumeSettlement({
-    armed: settlement,
-    dispatched,
-    taskId,
-    label: "the settlement notification to be served by the freshly-registered entry",
-  });
-  expect(settled.fault).toBeUndefined();
-  expect(settled.stepIndex).toBe(0);
-
-  await waitFor(
-    () => settlement.requests.find((r) => r.role === "parent" && r.stepIndex === 1),
-    "the settlement turn's OWN terminal step, so this session makes no further call after the dispose below",
-  );
-  expect(settlement.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-
-  settlement.dispose();
 });
 
 test("OPE-426/OPE-1162/OPE-1210 — a worker turn that ingests a hostile plant lands its bullets CLAIM-SHAPED and marked in the durable store, a clean worker turn's bullet reaches it untouched, and only bullets are marked", async () => {
@@ -497,23 +421,25 @@ test("OPE-426/OPE-1162/OPE-1210 — a worker turn that ingests a hostile plant l
   ].join("\n");
 
   async function drivePass(input: { ids: string; ask: string; child: readonly ScriptedStep[] }): Promise<ScriptedHandle> {
+    const cursor = await auditCursor();
     const handle = disposeLater(
       registerScript({
-        parent: [{ calls: [{ tool: "agent", input: { message: input.ask }, id: `${input.ids}-delegate` }] }, { say: "the worker reported back" }],
-        child: [...input.child, { say: "noted" }],
+        parent: [{ calls: [{ tool: "work", input: { message: input.ask }, id: `${input.ids}-delegate` }] }, { say: "NO_REPLY" }],
+        child: [...input.child.map((step, i) => (i === 0 ? { ...step, delayMs: 120_000 } : step)), { say: "noted" }],
       }),
     );
     await discordMentionWake({ channelId: IT_MEMORY_PROVENANCE_CHANNEL_ID, text: `<@${DISCORD_BOT_ID}> ${input.ask}` });
-    await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), `the ${input.ids} parent terminal step`);
-    const taskId = taskIdOfDelegation(handle, `the ${input.ids} delegation`);
-    const armed = armSettlement(handle, SETTLEMENT_DRAIN_SCRIPT);
+    const { taskId, settlement } = await forwardAndRelease({ handle, cursor, callId: `${input.ids}-delegate`, label: `the ${input.ids} forward`, heldStep: 0 });
+    handle.releaseHolds();
     await waitForChildren(handle, { count: 1, lastStepIndex: input.child.length, label: `the ${input.ids} worker's own terminal step` });
     expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
     expect(handle.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
-    await consumeSettlement({ armed, dispatched: handle, taskId, label: `the ${input.ids} worker's completion notification` });
-    expect(armed.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-    armed.dispose();
+    const resultStep = await awaitWorkResult({ handle: settlement, taskId, label: `the ${input.ids} seat's result-wake step` });
+    expect(resultStep.fault).toBeUndefined();
+    expect(resultStep.stepIndex, "the result arrives as step 0 of the seat's own result-wake turn").toBe(0);
+    settlement.dispose();
     await awaitWindowQuiet();
+    handle.dispose();
     return handle;
   }
 
@@ -527,7 +453,7 @@ test("OPE-426/OPE-1162/OPE-1210 — a worker turn that ingests a hostile plant l
   });
   const taintedResults = tainted.requests.flatMap((r) => r.toolResults);
   expect(taintedResults.find((t) => t.name === "read_file_upload")?.isError).toBe(false);
-  expect(taintedResults.find((t) => t.name === "write_file")?.isError).toBe(false);
+  expect(taintedResults.find((t) => t.name === "write_file")?.isError, `write_file result: ${JSON.stringify(taintedResults.find((t) => t.name === "write_file")?.output)}`).toBe(false);
 
   const rows = await waitForAuditRows({
     probe: async () => {
@@ -614,4 +540,95 @@ test("OPE-426/OPE-1162/OPE-1210 — a worker turn that ingests a hostile plant l
   expect(storedClean).not.toContain(EXTERNAL_PROVENANCE_PREFIX);
   expect(storedClean).not.toContain(EXTERNAL_CLAIM_PREFIX);
   expect(storedClean.split("\n").find((l) => l.includes(`PROV-CLEAN-FACT-${stamp}`))).toBe(cleanBullet);
+});
+
+test("OPE-2258 — a worker's edit reaches the memory store exactly once, after its task settles, and a delegating turn whose worker edits nothing writes no tree change", async () => {
+  await bootAgent({ sharedSqlite: true });
+  const stamp = Date.now();
+  const SILO = "it-memory-brain";
+
+  type Row = Awaited<ReturnType<typeof rowsSinceCursor>>[number];
+  async function delegate(ids: string, child: readonly ScriptedStep[]): Promise<{ readonly settledRow: Row; readonly backstopRow: Row; readonly cursor: Awaited<ReturnType<typeof auditCursor>> }> {
+    const cursor = await auditCursor();
+    const handle = disposeLater(
+      registerScript({
+        parent: [{ calls: [{ tool: "work", input: { message: `${ids}: handle this` }, id: `${ids}-delegate` }] }, { say: "NO_REPLY" }],
+        child: [...child.map((step, i) => (i === 0 ? { ...step, delayMs: 120_000 } : step)), { say: `${ids} done` }],
+      }),
+    );
+    await discordMentionWake({ channelId: IT_MEMORY_CHANNEL_ID, text: `<@${DISCORD_BOT_ID}> ${ids}: please handle this` });
+    const { taskId, settlement } = await forwardAndRelease({ handle, cursor, callId: `${ids}-delegate`, label: `the ${ids} forward`, heldStep: 0 });
+    handle.releaseHolds();
+    await waitForChildren(handle, { count: 1, lastStepIndex: child.length, label: `the ${ids} worker's own terminal step` });
+    const resultStep = await awaitWorkResult({ handle: settlement, taskId, label: `the ${ids} seat's result-wake step` });
+    expect(resultStep.fault).toBeUndefined();
+    expect(resultStep.stepIndex, "the result arrives as step 0 of the seat's own result-wake turn").toBe(0);
+    settlement.dispose();
+    const settledRow = await waitFor(
+      async () => (await rowsSinceCursor(cursor, ["delegation.task_settled"], { limit: 50 })).find((r) => (r.detail as { task?: string }).task === taskId),
+      `the ${ids} task's delegation.task_settled row`,
+    );
+    const backstopRow = await waitFor(
+      async () =>
+        (await rowsSinceCursor(cursor, ["memory.settlement_flush"], { limit: 50 })).find((r) => {
+          const d = r.detail as { edge?: string; outcome?: string };
+          return (d.edge === "task-settled" || d.edge === "turn-backstop") && d.outcome === "flushed" && r.seq > settledRow.seq;
+        }),
+      `the ${ids} job's memory.settlement_flush row`,
+    );
+    expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+    handle.dispose();
+    await awaitWindowQuiet();
+    return { settledRow, backstopRow, cursor };
+  }
+
+  function siloSnapshot(): Record<string, string> {
+    const root = siloFilePath(SILO, "");
+    const out: Record<string, string> = {};
+    const walk = (dir: string, rel: string): void => {
+      if (!existsSync(dir)) return;
+      for (const name of readdirSync(dir).sort()) {
+        const full = join(dir, name);
+        const key = rel ? `${rel}/${name}` : name;
+        if (statSync(full).isDirectory()) walk(full, key);
+        else out[key] = readFileSync(full, "utf-8");
+      }
+    };
+    walk(root, "");
+    return out;
+  }
+
+  async function persistRows(cursor: Awaited<ReturnType<typeof auditCursor>>): Promise<Row[]> {
+    return (await rowsSinceCursor(cursor, ["memory.write"], { limit: 200 })).filter((r) => {
+      const d = r.detail as { silo?: string; road?: string };
+      return d.silo === SILO && d.road === "session-persist";
+    });
+  }
+
+  const file = `once-${stamp}.md`;
+  const marker = `IT-MEMORY-ONCE-${stamp}`;
+  const edit = await delegate("m6a", [
+    { calls: [{ tool: "write_file", input: { filePath: `/workspace/memory/${SILO}/${file}`, content: `# Once\n\n- ${marker}\n` }, id: "m6a-write" }] },
+  ]);
+  const filePath = siloFilePath(SILO, file);
+  await waitFor(() => (existsSync(filePath) ? true : undefined), "the worker's file in the DURABLE store");
+  expect(readFileSync(filePath, "utf-8")).toContain(marker);
+  const editRows = await persistRows(edit.cursor);
+  expect(editRows, `session-persist rows for ${SILO}: ${JSON.stringify(editRows.map((r) => r.detail))}`).toHaveLength(1);
+  const row = editRows[0]!;
+  const outcome = (row.detail as { outcome?: string }).outcome;
+  expect(["edited", "settled"]).toContain(outcome);
+  const editBackstop = edit.backstopRow.detail as { outcome?: string; flush?: { changed?: number } };
+  expect(editBackstop.outcome).toBe("flushed");
+  expect(row.seq).toBeGreaterThan(edit.settledRow.seq);
+
+  const before = siloSnapshot();
+  expect(before[file], "the snapshot really reads the silo ① wrote into").toContain(marker);
+  const quiet = await delegate("m6b", [{ calls: [{ tool: "bash", input: { command: `ls /workspace/memory/${SILO}` }, id: "m6b-read" }] }]);
+  const backstop = quiet.backstopRow.detail as { outcome?: string; flush?: { changed?: number; failed?: number } };
+  expect(backstop.outcome).toBe("flushed");
+  expect(backstop.flush?.changed).toBe(0);
+  expect(backstop.flush?.failed).toBe(0);
+  expect(await persistRows(quiet.cursor)).toEqual([]);
+  expect(siloSnapshot()).toEqual(before);
 });

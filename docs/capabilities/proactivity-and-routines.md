@@ -138,11 +138,12 @@ waits: the approvals plane turns a gate into a refusal (`ask-unattended`), and a
 delete now does the same. The fire ends and says what would have lifted the gate, instead of hanging
 on a card.
 
-**`post_file` refuses too, and it is a third gate rather than an exception.** Its approval arm fires
-when the org has opted in to Blob hosting and the post carries an HTML page, because publishing a
-world-readable URL is the one outward-facing branch that tool has. On a fire that arm reads the turn
-as unattended and **denies** the call outright — it never parks it on a card. Read the rest of this
-section as being about **connector ops**, the gate this page describes in detail.
+**`post_file` refuses too, and it is a third gate rather than an exception.** Its publish card
+applies when the org has opted in to Blob hosting and the post carries an HTML page, because
+publishing a world-readable URL is the one outward-facing branch that tool has. On a fire the tool
+reads the turn as unattended and **refuses** the publish before it reads the page — it never posts a
+card that nobody can click. Read the rest of this section as being about **connector ops**, the gate
+this page describes in detail.
 
 **This includes a fire you asked for yourself.** `run_routine_now` does not run the routine in your
 conversation — it moves the schedule forward, and the dispatcher fires it exactly as the clock would.
@@ -181,7 +182,7 @@ what lifts the gate on every later fire:
   declared permission lifts a poisoned turn, on either gate. A connector's reads are untrusted while
   its grant declares `contentOrigin: "external"` **or declares nothing** — the shipped Notion grants
   declare `external` — so a read-then-write routine over it **refuses every night**. On an MCP
-  connection, the `connection_search` that mounts the operation is such a read too: it answers with
+  connection, the `connection_search` that lists the operation is such a read too: it answers with
   the declaration of each connection it finds. The e2e fixture's org Notion connection declares
   `internal`, because only org members write in that test workspace. A grant may
   also declare the origin **per tool**, as `{ default, except: { <bareToolName>: "internal" } }`, so
@@ -231,14 +232,11 @@ mounted as `acme__API_post` is declarable as `tool:acme__API_post`. The comparis
 case-sensitive throughout, so that row lifts that name and no other — `tool:acme__api_post` is a
 different row for a different tool.
 
-Two cases still park a **connector op** on a card, and both are narrow. `post_file` above is a
-third gate, and it denies rather than parks. A connector
-**read** parks, but only on a deployment that has not armed `connectors.opTiering` — armed, a read
-never prompts at all. And a turn whose surface the host cannot resolve parks, because the fire is
-then refused a credential a moment later anyway. On a scheduled fire that card has nobody to click
-it. On a `run_routine_now` fire the person who asked can click it, so the work does land — which is
-the one place the two kinds of fire behave differently, and it is a side effect of the residual
-rather than a designed route.
+**Nothing parks on a card any more** (OPE-2340). Every approval is an OE card that posts and
+returns; no turn waits on a click. A connector **read** on a deployment that has not armed
+`connectors.opTiering` needs one approval per conversation, and on a fire there is nobody to name on
+the card, so the read is refused like a write. A turn whose surface the host cannot resolve is
+refused the same way. A `run_routine_now` fire is unattended too, so it refuses on the same terms.
 
 Because a declared permission is standing and fires with nobody watching, three things hold:
 
@@ -486,25 +484,39 @@ block**. It exists because a fire that mis-reads its own reach reports a refusal
 nobody is there to ask "did you look?".
 
 For an ordinary fire the block says: *a tool you cannot see is not a tool you do not have.* A
-connector operation is not a static tool. The agent always mounts `connection_search`, and it mounts
-the `<connection>__<operation>` tools only once that search **finds** them. So an operation the
-routine did not declare is absent from the session's opening tool list by construction, and present
-one call later. The block therefore tells the fire to search for the operation, then call it, and to
-do both **before** reporting that a connector is unavailable.
+connector operation is not a static tool. The agent mounts two fixed connector tools:
+`connection_search` lists a connection's operations, and `connection_execute` runs one by its
+`connection` and `tool` names. So no operation appears by name in the session's opening tool list.
+The block therefore tells the fire to search for the operation, then call it, and to do both
+**before** reporting that a connector is unavailable.
 
-**A DECLARED operation is already in the opening list.** Where the routine's
+**A DECLARED operation needs no search.** Where the routine's
 [declared permission](#what-a-routine-may-do-on-its-own) names one — `tool:notion__notion-create-pages`
-— the fire resolves that operation from the connection when it starts and puts it in the session's
-tool list, so the thing the routine exists to do needs no search hop. This is not a widening: the
-declaration **is** the permission, a human read it on the arming card and clicked it, and the tool
-the fire holds is the same one the same search would have handed it one call later. Every gate an
-attempt then meets — the connector hard gate, the unattended connector fence, the effective tier, the
-egress firewall — decides exactly as it did before. A declaration the connection does not advertise,
-or one two connections could both compose, mounts nothing and the fire searches as it did before.
-The `routine.declared_ops_mounted` audit row names what mounted and what resolved to nothing.
-The reason for the hop removal is measured: on ship #243 a fire searched, was handed the operation it
-had declared, and then reported that it had not made the call. Every extra hop is a place a model
-stops.
+— the fire resolves that operation when each turn starts. The resolution reads the connection's
+catalogue and confirms that exactly one connection advertises the operation. The turn's instructions
+then carry a second reach block. It names the operation as the `connection` and `tool` that
+`connection_execute` takes (connection `notion`, tool `notion-create-pages`), and it tells the fire to
+call `connection_execute` directly, with no `connection_search` first. The reason is measured: in
+a live run a fire searched, was handed the operation it had declared, and then reported that it had
+not made the call. Every extra hop is a place a model stops.
+
+This is not a widening. The declaration **is** the permission: a human read it on the arming card
+and clicked it, on the creation card or on a later permission card. The block names only declared operations, and only while their permission rows are
+live, so a revoked permission drops out of the next turn's block. Every gate a call meets — the
+connector hard gate, the unattended connector fence, the effective tier, the egress firewall —
+decides exactly as it did before. The framework re-keys a `connection_execute` call to its
+`<connection>__<op>` name. On an unattended fire, the unattended fence refuses a write or
+destructive operation that the routine did not declare. A read-tier operation stays open, as it
+is on every turn: the block does not confine a fire to its declared reads. The block carries names
+only: no description or schema that a connector wrote is copied
+into it.
+
+A declaration that no connection advertises, one that two connections can both compose, or one whose
+catalogue does not answer within three seconds resolves to nothing. That fire searches, as an
+ordinary fire does. A delegated worker and a durable job's fire resolve nothing. The
+`routine.declared_ops_resolved` audit row names, per fire, which declared operations resolved and
+which resolved to nothing. It replaces `routine.declared_ops_mounted`, which claimed a mounted tool
+that the current framework (eve 0.69 and later) never mounts.
 
 **A durable job's fire is told the opposite, and that is deliberate.** A job fires on a
 [restricted wake](#durable-jobs-persistent-multi-step-work): it holds no `connection_search` and no
@@ -1077,9 +1089,10 @@ rather than failing the run.
 
 ## The follow-ups ledger
 
-An ordinary routine is stateless: every fire starts a fresh session, so a `todo` dies with the
-turn. The `jobState` ledger is job-only — `record_job_state` refuses a routine that is not a
-durable job. So the commonest routine shape had nowhere to leave a note for its next run.
+An ordinary routine is stateless: every fire starts a fresh session, so anything the model noted in
+its own context dies with the turn. The `jobState` ledger is job-only — `record_job_state` refuses a
+routine that is not a durable job. So the commonest routine shape had nowhere to leave a note for its
+next run.
 
 `record_follow_up` is that place. A run leaves a named note; the next run of the **same**
 routine reads it in its opening message:
@@ -1347,7 +1360,7 @@ into a **config pull request**.
 | `routine.permission_declined_stale` | The ask was **already stale** when the click landed, so nothing was remembered. | The same four fields. The separate action name is what keeps "declined" and "arrived too late" countable apart. |
 | `routine.permission_never_lifts` | A routine declares a permission this deployment's config raises out of reach, so the ask can never lift. | The routine id, the declaration string, the generation, and the reason. It makes a standing widening countable. It is **not** written on a tainted arm, where nothing armed and the cause is taint rather than the raise. |
 | `routine.expire` | A pull-request subscription stops watching — the pull request settled, or the chain spent its check budget. | The `repo#number` it watched and the stop reason. 🔴 It is written only when a chain **was already running**, cap-exhausted stops included. A first `subscribe_pr` against an already-settled pull request answers a question rather than expiring a subscription, so it writes nothing. |
-| `routine.fire_attrs_seen` | A fired session records the carriage attribute **key names** that arrived on its turn. | The sorted key names, and never a value. It pairs with the `routine.fire_attrs_sent` row the fire itself wrote, so the two ends of one carriage are comparable. |
+| `routine.fire_attrs_seen` | A session that eve's own schedule auth woke records the carriage attribute **key names** that arrived on its turn. | The sorted key names, and never a value. It pairs with the `routine.fire_attrs_sent` row the fire itself wrote, so the two ends of one carriage are comparable. A fire that is forwarded into the work session (every fire with a surface) writes **no** such row: no session receives the schedule auth there. Only the thread-seat fallback writes it. |
 
 🔴 **`routine.grant` and `routine.grants_revoked` are named for a vocabulary this plane has since
 renamed.** The plane calls the thing a *declared permission*, and the code's own constants say so.
@@ -1737,7 +1750,7 @@ to a per-hook one:
   that channel's full access. The
   check reads the **target**, never the payload — so it needs no understanding of the sender's
   format. It is deliberately *inert* when the platform cannot answer (a failed membership
-  lookup, a channel with more than one page of members, or a deployment with no Slack
+  lookup, a non-shared channel with more than one page of members, or a deployment with no Slack
   provider): a delivery is acknowledged and fired in the background, so refusing on "we could
   not ask" would silently drop a notification the sender believes it delivered. Move the hook
   to an internal channel — or remove the external members — and it resumes by itself.
@@ -2299,9 +2312,25 @@ refused first, with the document shape spelled out.
 
 ## How a triggered fire is seated and scoped
 
-**Every triggered fire joins the unified window at thread grain** (`TRIGGERED_FIRE_GRAIN`,
-`routines/fire-window.ts`), so its work sits in a thread of its own rather than in the standing seat's
-own context.
+**A triggered fire on a windowed domain is a work request** (`routines/fire-work.ts`). The host
+forwards the fire straight into the domain's work session, and no seat turn runs for it. The work
+session starts a worker, and the worker runs the routine (see
+[The three tiers](../how-it-works/agent-and-loop.md#the-three-tiers-seat-work-session-worker)). The
+fire's own auth rides to the worker whole: the routine marker, the unattended stamp and the routine's
+declared-permission key. The job is attributed to nobody (`oe/unverified`), so a fire's reach is the
+routine's declared permission and never a person's. When the job settles, the result wakes the
+domain's seat only when the routine owes the room output, and the seat posts it under the fire's own
+wake id. A **silent** routine wakes no seat. Either way the run folds onto the routine at the job's
+settlement, because the work session never ends and no session end would fold it. A domain with no
+seat yet still takes the fire: the work session keys on the seat's registry key, which config alone
+derives. A fire that the work session cannot start under its own stamp, after the host's one re-send,
+is lost: its run folds as failed, and no seat is told to forward it again. A fire lost to a work
+session rotation folds as failed too.
+
+**A fire whose auth names no surface keeps the native cross-channel send** (`divertTriggeredFire`,
+`routines/fire-window.ts`). It has no binding to key a work request on. The thread-seat fire that once
+carried it (one session per fire, which delegated with `agent`) is retired (OPE-2350). A fire on a
+surface that no domain windows, or on a deployment with delegation disarmed, takes the same native send.
 
 **A routine's partition is derived from its stored `surfaceKey` alone** (`routinePartition`), by
 splitting it into platform, workspace and surface. There is no live session binding to read: a routine

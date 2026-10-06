@@ -1,5 +1,7 @@
 import { appendAudit, readAudit } from "../audit/audit.js";
 import { resolveTurnAnchor, TURN_ANCHOR_TTL_MS, type TurnAnchorQuery } from "./turn-registry.js";
+import { isWorkWindowToken } from "./window-key.js";
+import { stopAnchoredWorkJobsLive } from "./work-cancel.js";
 
 export const TURN_CANCEL_ACTION = "turn.cancel_requested";
 
@@ -22,7 +24,8 @@ export type CancelOutcome =
   | "requested"
   | "no_active_turn"
   | "no_turn_found"
-  | "error";
+  | "error"
+  | "refused";
 
 export interface CancelResult {
   readonly outcome: CancelOutcome;
@@ -39,13 +42,62 @@ export interface CancelAnchoredTurnInput {
   readonly via: "reaction" | "command";
   readonly query: TurnAnchorQuery;
   readonly attachSession: AttachSessionForCancel;
+  readonly stopForwardedJobs?: (input: ForwardedJobStopInput) => Promise<ForwardedJobStopResult>;
+}
+
+export interface ForwardedJobStopInput {
+  readonly org: string;
+  readonly anchorKey: string;
+  readonly actor: { readonly requester: { readonly kind: "requester"; readonly principalId: string }; readonly binding: { readonly platform: string; readonly workspace: string } };
+  readonly clickId: string;
+}
+
+export interface ForwardedJobStopResult {
+  readonly listed: number;
+  readonly relayed: number;
+  readonly refused: number;
+  readonly repeated?: number;
+}
+
+const JOB_STOP_REQUESTED = "Standing down — I've asked the work session to stop that job. Its result will say how it ended.";
+const JOB_STOP_REPEATED = "I've already asked the work session to stop that job. Its result will say how it ended.";
+const WORK_TURN_REFUSED = "That message's work runs in this conversation's work session, and a stop there would stop every job. Nothing was stopped — ask me to cancel the job, or use ✋ on the message that asked for it.";
+const JOB_STOP_REFUSED = "Only the person who asked for that job, or an admin, can stop it. Nothing was stopped.";
+
+async function stopForwardedJobsOnAnchor(input: CancelAnchoredTurnInput): Promise<CancelResult | undefined> {
+  const anchorKey = input.query.anchorKey;
+  if (input.via !== "reaction" || anchorKey === undefined || input.requestedBy === undefined || input.requestedBy.length === 0) return undefined;
+  const click: ForwardedJobStopInput = {
+    org: input.org,
+    anchorKey,
+    actor: { requester: { kind: "requester", principalId: input.requestedBy }, binding: { platform: input.platform, workspace: input.workspace } },
+    clickId: `${anchorKey}:${input.platform}:${input.workspace}:${input.requestedBy}`,
+  };
+  let result: ForwardedJobStopResult;
+  try {
+    result = input.stopForwardedJobs !== undefined ? await input.stopForwardedJobs(click) : await stopAnchoredWorkJobsLive(click);
+  } catch (err) {
+    console.warn(`[open-everywhere:turn-cancel] the forwarded-job stop failed on ${anchorKey}: ${String(err)}`);
+    return undefined;
+  }
+  if (result.listed === 0) return undefined;
+  if (result.relayed > 0) return { outcome: "requested", message: JOB_STOP_REQUESTED };
+  if ((result.repeated ?? 0) > 0) return { outcome: "requested", message: JOB_STOP_REPEATED };
+  if (result.refused > 0) return { outcome: "refused", message: JOB_STOP_REFUSED };
+  return { outcome: "error", message: "Couldn't reach the work session to stop that job — try again in a moment." };
 }
 
 export async function cancelAnchoredTurn(input: CancelAnchoredTurnInput): Promise<CancelResult> {
+  const jobStop = await stopForwardedJobsOnAnchor(input);
+  if (jobStop !== undefined) return jobStop;
   const anchor = await resolveTurnAnchor(input.org, input.query);
   if (!anchor) {
     await auditCancel(input, { outcome: "no_turn_found" });
     return { outcome: "no_turn_found", message: NOTHING_RUNNING };
+  }
+  if (isWorkWindowToken(anchor.windowKey)) {
+    await auditCancel(input, { outcome: "refused", anchorSurfaceKey: anchor.surfaceKey, note: "work-session-turn", sessionId: anchor.sessionId, turnId: anchor.turnId });
+    return { outcome: "refused", message: WORK_TURN_REFUSED, sessionId: anchor.sessionId, turnId: anchor.turnId };
   }
 
   let status: string | undefined;

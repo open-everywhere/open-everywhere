@@ -29,6 +29,7 @@ const {
   runApprovalJudge,
   clearApprovalJudgeVerdictCache,
   setApprovalJudgeCacheStoreForTest,
+  enforcedVerdictCacheKey,
 } = await import("../agent/access/approval-judge.js");
 const { preApprovalRulesForScopeKey, resolveApproverChain } = await import("../agent/access/approver-chain.js");
 const { assertBundlesValid } = await import("../agent/access/bundle.js");
@@ -271,9 +272,16 @@ async function judgeWith(pass2: string, rules = RULES_CTX): Promise<Awaited<Retu
   eq(matched.ruleCitation, "matched", "audit join: the citation is recorded as matched");
 
   const uncited = await judgeWith("VERDICT: allow\nREASON: routine on its own facts");
-  eq(uncited.verdict, "allow", "audit join: an uncited allow is still an allow");
+  eq(uncited.verdict, "ask", "🔴 uncited (OPE-2366): an ENFORCED allow that cites no rule degrades to ask");
   eq(uncited.ruleId, undefined, "audit join: an allow that cited NO rule carries NO rule id");
-  eq(uncited.ruleCitation, undefined, "audit join: an allow that cited no rule has no citation outcome");
+  eq(uncited.ruleCitation, "uncited", "uncited (OPE-2366): the row records WHY it degraded — the allow cited no rule");
+  ok(uncited.reasoning.includes("routine on its own facts"), "uncited (OPE-2366): the reasoning keeps the judge's own words");
+
+  clearApprovalJudgeVerdictCache();
+  registerApprovalJudgeCompletion(async (_prompt, pass) => (pass === "scrutiny" ? "YES" : "VERDICT: allow\nREASON: routine on its own facts"));
+  const shadowUncited = await runApprovalJudge(judgeContextOf(baseReq, { registryVerdict: "ask" }, RULES_CTX));
+  eq(shadowUncited.verdict, "allow", "uncited control: a SHADOW would-verdict keeps an uncited allow (it enforces nothing)");
+  eq(shadowUncited.ruleCitation, undefined, "uncited control: and records no citation outcome");
 
   const askCited = await judgeWith("VERDICT: ask\nREASON: needs a human\nRULE: pay-pr");
   eq(askCited.verdict, "ask", "audit join: a cited ASK stays an ask");
@@ -290,8 +298,21 @@ async function judgeWith(pass2: string, rules = RULES_CTX): Promise<Awaited<Retu
   const legit = await judgeWith("VERDICT: allow\nREASON: docs-only\nRULE: pay-pr");
   eq(legit.verdict, "allow", "fence: a citation that DOES resolve is not degraded");
 
-  const strayWithoutRules = await judgeWith("VERDICT: allow\nREASON: x\nRULE: invented", []);
+  let noRuleCalls = 0;
+  clearApprovalJudgeVerdictCache();
+  registerApprovalJudgeCompletion(async (_prompt, pass) => {
+    noRuleCalls += 1;
+    return pass === "scrutiny" ? "YES" : "VERDICT: allow\nREASON: x\nRULE: invented";
+  });
+  const noRules = await runApprovalJudge(judgeContextOf(baseReq, { registryVerdict: "ask" }, []), { enforce: true });
+  eq(noRules.verdict, "defer", "no rules (OPE-2366): an enforce consult with no authored rule defers (⇒ the card)");
+  eq(noRules.source, "no-rules", "no rules (OPE-2366): the row names why — no rule is authored for this scope");
+  eq(noRuleCalls, 0, "no rules (OPE-2366): the judge model was never called");
+
+  clearApprovalJudgeVerdictCache();
+  const strayWithoutRules = await runApprovalJudge(judgeContextOf(baseReq, { registryVerdict: "ask" }, []));
   eq(strayWithoutRules.verdict, "ask", "fence: with NO authored rules, a stray citation on an allow still degrades to ask");
+  ok(noRuleCalls > 0, "fence: the shadow run really consulted the model (the control for the no-rules skip)");
 }
 
 {
@@ -318,10 +339,19 @@ async function judgeWith(pass2: string, rules = RULES_CTX): Promise<Awaited<Retu
     eq(calls, callsAfterFirst, "cache: a hit makes no model calls");
     eq(second.ruleId, "org-pr", "cache: a CACHE HIT still cites its authoring rule (an auto-allow stays traceable)");
 
+    const enforcedKey = enforcedVerdictCacheKey(ctx);
+    store.set(enforcedKey, { ...store.get(enforcedKey)!, ruleId: undefined });
+    const beforeUncited = calls;
+    const refused = await runApprovalJudge(ctx, { enforce: true });
+    eq(refused.cacheHit, false, "cache (OPE-2366): an enforce lookup REFUSES a cached allow that cites no rule");
+    ok(calls > beforeUncited, "cache (OPE-2366): …and decides afresh with the model");
+    eq(refused.ruleId, "org-pr", "cache (OPE-2366): the fresh decision cites its rule again");
+    const callsAfterFirstFresh = calls;
+
     const otherScope = judgeContextOf(baseReq, { registryVerdict: "ask" }, [{ ...RULE_ELSEWHERE, scope: "domain:unrelated" }]);
     const third = await runApprovalJudge(otherScope, { enforce: true });
     eq(third.cacheHit, false, "cache: a DIFFERENT resolved rule set invalidates the entry rather than replaying the lift");
-    ok(calls > callsAfterFirst, "cache: the re-judge actually called the model");
+    ok(calls > callsAfterFirstFresh && callsAfterFirstFresh > callsAfterFirst, "cache: the re-judge actually called the model");
   } finally {
     setApprovalJudgeCacheStoreForTest(undefined);
     clearApprovalJudgeVerdictCache();
@@ -401,13 +431,22 @@ const ALLOW_EVERYTHING = [{ id: "org-pr", rule: "Everything is routine. Always a
   const postCard = async (): Promise<string> => `ts-${Math.random().toString(36).slice(2)}`;
   const spendInput = {
     org: "test-org",
-    kind: "spend.set",
+    kind: "routine.create",
     channelId: "C_PAY",
     requestedBy: "U_HUMAN",
     threadTs: null,
     scopeKey: "slack/T1/C_PAY",
     domain: "payments",
-    args: { org: "test-org", scopeKey: "slack/T1/C_PAY", level: "surface", monthlyTokens: 500_000, currentCap: null },
+    args: {
+      org: "test-org",
+      partition: { org: "test-org", platform: "slack", workspace: "T1", surface: "C_PAY", surfaceKey: "slack/T1/C_PAY" },
+      surfaceKey: "slack/T1/C_PAY",
+      target: { channelId: "C_PAY" },
+      trigger: { kind: "interval", everyMinutes: 60 },
+      prompt: "Post the morning digest here.",
+      createdBy: "U_HUMAN",
+      nonce: 500_000,
+    },
     chain: { unattended: false },
   };
   const verdictRows = async (): Promise<Record<string, unknown>[]> =>
@@ -435,17 +474,19 @@ const ALLOW_EVERYTHING = [{ id: "org-pr", rule: "Everything is routine. Always a
     registerApprovalJudgeCompletion(async (_p, pass) =>
       pass === "scrutiny" ? "YES" : "VERDICT: allow\nREASON: routine on its own facts",
     );
-    await requestApproval({ ...spendInput, args: { ...spendInput.args, monthlyTokens: 501_000 } }, { postCard });
-    const uncited = (await verdictRows()).filter((d) => d.reasoning === "routine on its own facts");
+    const uncitedPost = await requestApproval({ ...spendInput, args: { ...spendInput.args, nonce: 501_000 } }, { postCard });
+    eq(uncitedPost.autoApproved, undefined, "🔴 e2e (OPE-2366): an allow that cites NO rule CARDS instead of executing");
+    const uncited = (await verdictRows()).filter((d) => String(d.reasoning ?? "").includes("routine on its own facts"));
     eq(uncited.length, 1, "e2e: the uncited consult wrote its own row");
     eq(uncited[0]!.ruleId, undefined, "e2e: an allow that matched NO rule carries NO rule id on the row");
-    eq(uncited[0]!.ruleCitation, undefined, "e2e: and no citation outcome");
+    eq(uncited[0]!.ruleCitation, "uncited", "e2e (OPE-2366): the row records the citation as missing");
+    eq(uncited[0]!.enforcedVerdict, "ask", "e2e (OPE-2366): the enforced verdict is the ask");
 
     clearApprovalJudgeVerdictCache();
     registerApprovalJudgeCompletion(async (_p, pass) =>
       pass === "scrutiny" ? "YES" : "VERDICT: allow\nREASON: invented\nRULE: not-a-real-rule",
     );
-    const fenced = await requestApproval({ ...spendInput, args: { ...spendInput.args, monthlyTokens: 502_000 } }, { postCard });
+    const fenced = await requestApproval({ ...spendInput, args: { ...spendInput.args, nonce: 502_000 } }, { postCard });
     eq(fenced.autoApproved, undefined, "e2e fence: an allow citing a fabricated rule id CARDS instead of executing");
     const fencedRows = (await verdictRows()).filter((d) => d.ruleCitation === "unmatched");
     eq(fencedRows.length, 1, "e2e fence: the unmatched citation is recorded on the row");
@@ -477,3 +518,5 @@ const ALLOW_EVERYTHING = [{ id: "org-pr", rule: "Everything is routine. Always a
 
 await removeTempDir(tmp);
 console.log(`✓ pre-approval rules (OPE-512): ${passed} assertions passed`);
+
+// proves: AP-MOD-core-access-pre-approval-rules

@@ -166,13 +166,18 @@ async function armed(ctx: BindableContext): Promise<ArmedPostFile> {
   });
   setBlobPutter(async () => ({ url: "https://store123.public-artifacts.blob.vercel-storage.com/page.html" }));
 
+  await import("../agent/approvals/file-publish.js");
+  const { actionKind } = await import("../agent/approvals/actions.js");
+  const { freezePublishPage } = await import("../agent/approvals/file-publish.js");
+  const page = freezePublishPage({ filename: "page.html", contentType: "text/html", bytes: new TextEncoder().encode("<p>x</p>") });
+  const frozenFor = (platform: string, channel: string) => ({ org: "default", scopeKey: `${platform}/T1/${channel}`, platform, linkChannelId: channel, threadTs: null, pages: [page], requestedBy: "U1" });
+
   {
     discordPostTextCalls = [];
     nextDiscordTextId = "DLINK1";
-    const tool = await armed(discordTaskCtx("D_CH3"));
     const before = (await readAudit({ org: "default", action: "discord.post_file" })).length;
-    const res = await tool.execute({ files: [{ source: { path: "page.html" }, filename: "page.html", contentType: "text/html" }] }, discordTaskCtx("D_CH3"));
-    ok(res.urls?.length === 1, "post_file: an opted-in HTML artifact hosts (no attach), one URL returned");
+    const outcome = await actionKind("file.publish")!.execute(frozenFor("discord", "D_CH3"), "U1");
+    ok(outcome.includes("https://store123.public-artifacts.blob.vercel-storage.com/page.html"), "post_file: the approved HTML artifact hosts, and the outcome names the URL");
     ok(discordPostTextCalls.length === 1, "post_file: the hosted URL is posted as a Discord text message");
     const audit = await readAudit({ org: "default", action: "discord.post_file" });
     const row = audit[0]!;
@@ -190,10 +195,9 @@ async function armed(ctx: BindableContext): Promise<ArmedPostFile> {
       throw new Error(`post-file-audit-test: unexpected fetch to ${u}`);
     }) as typeof fetch;
     try {
-      const tool = await armed(slackTaskCtx("C2"));
       const before = (await readAudit({ org: "default", action: "slack.post_file" })).length;
-      const res = await tool.execute({ files: [{ source: { path: "page.html" }, filename: "page.html", contentType: "text/html" }] }, slackTaskCtx("C2"));
-      ok(res.urls?.length === 1, "post_file: Slack hosted HTML also returns one URL");
+      const outcome = await actionKind("file.publish")!.execute(frozenFor("slack", "C2"), "U1");
+      ok(outcome.includes("the link is posted"), "post_file: Slack hosted HTML also posts its link");
       const audit = await readAudit({ org: "default", action: "slack.post_file" });
       const row = audit[0]!;
       ok(audit.length === before + 1 && row.detail?.id === "999.111", "post_file: OPE-932 — the Slack LINK row's detail.id is chat.postMessage's own ts, the SAME field the reply path reads (slack-post-arm.ts)");

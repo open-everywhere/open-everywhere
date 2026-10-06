@@ -5,6 +5,7 @@ import { resolveTurnAnchor, turnChannelKey } from "@open-everywhere/core/agent/c
 import { CONTROL_WRITE_TOOL_NAMES, registerControlWriteTools } from "@open-everywhere/core/agent/control/writes.js";
 import {
   auditCursor,
+  awaitWindowQuiet,
   bootAgent,
   DISCORD_LISTED_CHANNEL_ID,
   discordMentionWake,
@@ -15,7 +16,6 @@ import {
   rowsSinceCursor,
   seatReply,
   waitFor,
-  waitForTurnCancelDelivered,
   type RecordedRequest,
 } from "../harness";
 
@@ -71,11 +71,12 @@ test("a cancelled turn's system-prompt reminder is one clean insertion at a fixe
   const channelKey = turnChannelKey("discord", DISCORD_LISTED_CHANNEL_ID)!;
   const cursor = await auditCursor();
 
-  const a = disposeLater(registerScript({ parent: [seatReply("ack ope693a", "ope693-a-reply"), { say: NO_REPLY_SENTINEL }] }));
+  const a = disposeLater(registerScript({ parent: [seatReply("ack ope693a", "ope693-a-reply")] }));
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `${BOT_MENTION} ope693a`, messageId: "ope693-a" });
   const requestA = await waitFor(() => a.requests.find((r) => r.role === "parent" && r.stepIndex === 0), "turn A's model call");
   expect(requestA.fault).toBeUndefined();
-  await waitFor(() => a.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "turn A's closing step");
+  await awaitWindowQuiet();
+  expect(a.requests.some((r) => r.role === "parent" && r.stepIndex >= 1), "a step after turn A's reply was requested").toBe(false);
   a.dispose();
 
   const controlDescriptions = controlWriteDescriptions();
@@ -99,7 +100,7 @@ test("a cancelled turn's system-prompt reminder is one clean insertion at a fixe
     registerScript({
       parent: [
         { calls: [{ tool: "update_status", input: { state: "working", summary: "ope-693 in-flight work" }, id: "ope693-ran" }] },
-        { say: NO_REPLY_SENTINEL, delayMs: HOLD_MS },
+        { say: NO_REPLY_SENTINEL, delayMs: HOLD_MS, holdUntilCancelled: true },
       ],
     }),
   );
@@ -117,7 +118,6 @@ test("a cancelled turn's system-prompt reminder is one clean insertion at a fixe
   const stop = await discordOeCommandPost(discordOeStopInteraction({ channelId: DISCORD_LISTED_CHANNEL_ID, userId: STOPPER_ID }));
   expect(stop.status, `the stop command was refused: ${stop.body}`).toBe(200);
   expect(stop.body).toContain("Standing down");
-  await waitForTurnCancelDelivered(anchor.sessionId);
   b.releaseHolds();
   b.dispose();
 
@@ -128,7 +128,10 @@ test("a cancelled turn's system-prompt reminder is one clean insertion at a fixe
       throw new Error(
         `eve DROPPED this cancel (OPE-1190): a turn.stop_ignored row for turn ${String(ignored.detail?.turnId)} says the stop was accepted and the turn then ` +
           `ended as "${String(ignored.detail?.endedAs)}" with no cancellation settled. No reconstruction was written, so turn C below could never carry one. ` +
-          `This is the cancel-path race, not a slow box and not this file's own defect — tests/integration/liveness/stop-evidence.test.ts is the leg that passes on both branches.`,
+          `This is the cancel-path race, not a slow box and not this file's own defect — tests/integration/liveness/stop-evidence.test.ts is the leg that passes on both branches. ` +
+          (b.holdsCancelDelivered() === 0
+            ? "On eve 0.71 the harness's holdUntilCancelled barrier did not hold (OPE-2310): the held call returned with no abort (holdsCancelDelivered=0)."
+            : `The held call returned AFTER eve aborted it (holdsCancelDelivered=${b.holdsCancelDelivered()}), so the harness barrier held and eve itself ignored the abort.`),
       );
     }
     return rows.length > 0 ? rows : undefined;
@@ -136,22 +139,25 @@ test("a cancelled turn's system-prompt reminder is one clean insertion at a fixe
   const anchorAfterCancel = await resolveTurnAnchor(org, { channelKey });
   expect(anchorAfterCancel?.turnId, `the cancelled turn's anchor row is still live: ${JSON.stringify(anchorAfterCancel)}`).not.toBe(cancelledTurnId);
   expect(b.holdsCutShort()).toBe(1);
+  expect(b.holdsCancelDelivered()).toBe(1);
 
-  const c = disposeLater(registerScript({ parent: [seatReply("ack ope693c", "ope693-c-reply"), { say: NO_REPLY_SENTINEL }] }));
+  const c = disposeLater(registerScript({ parent: [seatReply("ack ope693c", "ope693-c-reply")] }));
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `${BOT_MENTION} ope693c`, messageId: "ope693-c" });
   const requestC = await waitFor(
     () => c.requests.find((r) => r.role === "parent" && r.messages.some((m) => m.text.includes("was CANCELLED"))),
     "turn C's model call, carrying the cancel reminder",
   );
   expect(requestC.fault).toBeUndefined();
-  await waitFor(() => c.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "turn C's closing step");
+  await awaitWindowQuiet();
+  expect(c.requests.some((r) => r.role === "parent" && r.stepIndex >= 1), "a step after turn C's reply was requested").toBe(false);
   c.dispose();
 
-  const d = disposeLater(registerScript({ parent: [seatReply("ack ope693d", "ope693-d-reply"), { say: NO_REPLY_SENTINEL }] }));
+  const d = disposeLater(registerScript({ parent: [seatReply("ack ope693d", "ope693-d-reply")] }));
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `${BOT_MENTION} ope693d`, messageId: "ope693-d" });
   const requestD = await waitFor(() => d.requests.find((r) => r.role === "parent" && r.stepIndex === 0), "turn D's model call");
   expect(requestD.fault).toBeUndefined();
-  await waitFor(() => d.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "turn D's closing step");
+  await awaitWindowQuiet();
+  expect(d.requests.some((r) => r.role === "parent" && r.stepIndex >= 1), "a step after turn D's reply was requested").toBe(false);
   d.dispose();
 
   expect(new Set([requestA.sessionId, requestC.sessionId, requestD.sessionId]).size).toBe(1);

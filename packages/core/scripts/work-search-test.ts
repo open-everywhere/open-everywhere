@@ -177,4 +177,35 @@ ok(resScoped.hits.every((h) => h.connector === "notion") && resScoped.absent.len
 await assert.rejects(exec({ query: "q" }, ctxIn(BARE_ROOM)), /holds no work grant/u, "a domain with no grant at all REFUSES the call rather than returning an empty result");
 await assert.rejects(exec({ query: "q", scope: "slack" }, bothCtx), /holds no "slack" work grant/u, "scoping to a connector the domain does NOT hold a grant on refuses, naming the connectors it DOES hold");
 
+{
+  const roadNotion: WorkSearchAdapter = {
+    connector: "notion",
+    async search(): Promise<readonly WorkSearchHit[]> {
+      return [
+        { connector: "notion", id: "page-1", title: "Spec", readWith: { tool: "read_notion_page", args: { page: "page-1" } } },
+        { connector: "notion", id: "db-1", title: "Tracker" },
+      ];
+    },
+  };
+  _resetWorkSearchRegistryForTest([roadNotion, fakeGithub]);
+  const roads = await exec({ query: "spec", scope: "notion" }, bothCtx);
+  assert.deepEqual(
+    roads.hits.find((h) => h.id === "page-1")!.readWith,
+    { tool: "read_notion_page", args: { page: "page-1" } },
+    "an adapter's `readWith` reaches the tool's output unchanged",
+  );
+  passed++;
+  ok(roads.hits.find((h) => h.id === "db-1")!.readWith === undefined, "a hit with no road carries no `readWith` — the tool layer invents none");
+
+  const toModel = (searchEntry as unknown as { toModelOutput: (o: typeof roads) => Promise<{ value: string }> }).toModelOutput;
+  const rendered = (await toModel(roads)).value;
+  ok(rendered.includes('read with: read_notion_page({"page":"page-1"})'), "🔴 the model READS the road: the render names the tool and its arguments under the hit");
+  ok(rendered.includes("read with: no tool takes this item as a target."), "🔴 a hit with no road SAYS so in the render, rather than leave the model to guess");
+  ok(
+    (searchEntry as unknown as { description: string }).description.includes("Read the item before you say anything about its body"),
+    "the tool description tells the model a hit is a pointer it must read",
+  );
+  _resetWorkSearchRegistryForTest([fakeNotion, fakeGithub]);
+}
+
 console.log(`✓ work-search: ${passed} assertions passed`);

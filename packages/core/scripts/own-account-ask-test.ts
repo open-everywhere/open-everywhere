@@ -233,6 +233,51 @@ ok(adoptedOwnAccountAsk(tokenOnlyChildCtx(renderOwnAccountStamp("other-seat", "t
 ok(adoptedOwnAccountAsk(ctxWith(seatStamp, "seat-1"), [{ connector: "linear" }]) === undefined, "🔴 a stamp for ANOTHER vendor is not adopted");
 ok(adoptedOwnAccountAsk({} as BindableContext, VENDORS) === undefined, "an empty context adopts nothing");
 
+{
+  const { createRequire } = await import("node:module");
+  const { dirname, join } = await import("node:path");
+  const { pathToFileURL } = await import("node:url");
+  const eveRoot = dirname(createRequire(import.meta.url).resolve("eve/package.json"));
+  const { ContextContainer, contextStorage } = (await import(pathToFileURL(join(eveRoot, "dist/src/context/container.js")).href)) as {
+    ContextContainer: new () => unknown;
+    contextStorage: { run<T>(store: unknown, fn: () => T): T };
+  };
+  const { adoptDelegatedRootSession } = await import("../agent/identity/delegated-binding.js");
+  const inSession = <T>(fn: () => T): T => contextStorage.run(new ContextContainer(), fn);
+  const runIdResolverCtx = (stamp: string): BindableContext =>
+    ({
+      channel: { continuationToken: "subagent:wrun_example67:0", kind: "subagent" },
+      session: { auth: { current: { attributes: { oe_own_account_ask: stamp } } }, id: "wrun_WORKER" },
+    }) as unknown as BindableContext;
+
+  ok(
+    inSession(() => {
+      ok(adoptDelegatedRootSession("seat-1"), "the worker records its root seat in a fresh eve context");
+      return adoptedOwnAccountAsk(runIdResolverCtx(seatStamp), VENDORS)?.connector === "notion";
+    }),
+    "🔴 an eve 0.70+ resolver context adopts its seat's stamp through the recorded root seat (adoptableSessions reads delegationRootSessionId)",
+  );
+  ok(
+    inSession(() => adoptedOwnAccountAsk(runIdResolverCtx(seatStamp), VENDORS)) === undefined,
+    "🔴 …and a worker that recorded NO root seat adopts nothing: its runId token names no session (negative control for the arm above)",
+  );
+  ok(
+    inSession(() => {
+      adoptDelegatedRootSession("other-seat");
+      return adoptedOwnAccountAsk(runIdResolverCtx(seatStamp), VENDORS);
+    }) === undefined,
+    "🔴 …and a worker whose recorded root is ANOTHER seat does not adopt this seat's stamp",
+  );
+  ok(
+    inSession(() => {
+      adoptDelegatedRootSession("seat-1");
+      const seatCtx = { channel: { kind: "slack" }, session: { auth: { current: { attributes: { oe_own_account_ask: seatStamp } } }, id: "seat-2" } };
+      return adoptedOwnAccountAsk(seatCtx as unknown as BindableContext, VENDORS);
+    }) === undefined,
+    "🔴 …and a record answers only a CHILD: a seat that is nobody's child never adopts another seat's stamp off it",
+  );
+}
+
 console.log("§3b the turn half");
 
 ok(adoptedOwnAccountAsk(ctxWith(seatStamp, "seat-1", undefined, "turn_4"), VENDORS)?.connector === "notion", "the stamping seat adopts its own stamp on the SAME turn");

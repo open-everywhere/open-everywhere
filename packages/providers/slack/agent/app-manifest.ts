@@ -2,6 +2,10 @@ export const SLACK_DEPLOY_HOST_PLACEHOLDER = "YOUR-DEPLOY-URL";
 
 export const SLACK_DEFAULT_APP_NAME = "Open Everywhere";
 
+const SLACK_DEFAULT_COMMAND_NAME = "oe";
+
+export const SLACK_SHORTCUT_NAME_MAX = 24;
+
 export const SLACK_APP_NAME_MAX = 35;
 
 export function slackAppNameProblem(raw: string): string | undefined {
@@ -13,10 +17,26 @@ export function slackAppNameProblem(raw: string): string | undefined {
 
 export interface SlackAppManifestOptions {
   readonly appName?: string;
+  readonly agentName?: string;
+  readonly commandName?: string;
+}
+
+export function slackManifestAppName(opts: SlackAppManifestOptions = {}): string {
+  const explicit = opts.appName?.trim();
+  if (explicit) return explicit;
+  const configured = opts.agentName?.trim();
+  if (configured) return configured.slice(0, SLACK_APP_NAME_MAX).trim();
+  return SLACK_DEFAULT_APP_NAME;
+}
+
+function shortcutName(prefix: string, appName: string, neutral: string): string {
+  const named = `${prefix} ${appName}`;
+  return named.length <= SLACK_SHORTCUT_NAME_MAX ? named : neutral;
 }
 
 export function slackAppManifestTemplate(opts: SlackAppManifestOptions = {}): string {
-  const appName = opts.appName?.trim() || SLACK_DEFAULT_APP_NAME;
+  const appName = slackManifestAppName(opts);
+  const commandName = opts.commandName?.trim() || SLACK_DEFAULT_COMMAND_NAME;
   return JSON.stringify(
     {
       display_information: { name: appName },
@@ -25,22 +45,22 @@ export function slackAppManifestTemplate(opts: SlackAppManifestOptions = {}): st
         bot_user: { display_name: appName, always_online: true },
         slash_commands: [
           {
-            command: "/oe",
+            command: `/${commandName}`,
             url: `https://${SLACK_DEPLOY_HOST_PLACEHOLDER}/eve/v1/slack/commands`,
-            description: "Open Everywhere control-plane commands (stop, status, budget) — no model turn.",
+            description: `${appName} control-plane commands (stop, status, budget) — no model turn.`,
             usage_hint: "stop | status | budget [raise <usd> | clear] | rate <n> | help",
             should_escape: false,
           },
         ],
         shortcuts: [
           {
-            name: "Send to Open Everywhere",
+            name: shortcutName("Send to", appName, "Send to the agent"),
             type: "message",
             callback_id: "oe_message_shortcut",
             description: "Wake the agent on this message.",
           },
           {
-            name: "Ask Open Everywhere",
+            name: shortcutName("Ask", appName, "Ask the agent"),
             type: "global",
             callback_id: "oe_global_shortcut",
             description: "Wake the agent in a DM.",

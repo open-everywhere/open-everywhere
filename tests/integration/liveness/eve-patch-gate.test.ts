@@ -68,5 +68,5 @@ test("§2 the gate passes on THIS host because eve's own installed bytes publish
   await bootAgent({ sharedSqlite: true });
   const missing = EVE_PATCH_PARTS.filter((p) => (globalThis as Record<string, unknown>)[p.marker] !== true);
   expect(missing.map((p) => `part ${p.part}/${p.marker}`), "every live patch part publishes its marker on this host").toEqual([]);
-  expect(EVE_PATCH_PARTS.length, "all seven live parts are declared").toBe(7);
+  expect(EVE_PATCH_PARTS.length, "all three live parts are declared").toBe(3);
 });

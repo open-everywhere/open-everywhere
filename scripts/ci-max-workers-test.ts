@@ -109,7 +109,7 @@ ok(integrationMaxWorkers({ OE_IT_CI_MAX_WORKERS: "4" }, sandboxProbe) === 4, "OE
 
 ok(
   HARNESS_CONCURRENCY_CEILING === 6,
-  "🔴 the harness concurrency ceiling is 6 (OPE-2281): after the re-drive and cancel-delivery barriers, the whole tier ran 3 of 3 green at 6 workers and at 4, alternating on one head, and 6 was 10.4 % faster (shard sums 385.4 s against 430.0 s). Before that it was 4 (OPE-2265). It was 1 because 4 workers red the tier in 2 of 2 runs on the OPE-2197 turn/script race (OPE-2229, 2026-10-03, shard 1, 3 different files). OPE-2240's foreign-wake fence closed the call-bearing half of that window, and the whole tier then ran green FOUR times at 4 workers — twice on OPE-2240's head and twice on OPE-2265's. Four runs are not a rate: `OE_IT_CI_MAX_WORKERS=1` outranks this constant and is the bisect. Change it only against a re-measurement, and restate that measurement here",
+  "🔴 the harness concurrency ceiling is 6 (OPE-2281): after the re-drive and cancel-delivery barriers, the whole tier ran 3 of 3 green at 6 workers and at 4, alternating on one head, and 6 was 10.4 % faster (shard sums 385.4 s against 430.0 s). Those runs were on eve 0.54.3; on eve 0.71 the cancel-delivery barrier does not apply and 6 is not yet measured. Before that it was 4 (OPE-2265). It was 1 because 4 workers red the tier in 2 of 2 runs on the OPE-2197 turn/script race (OPE-2229, 2026-10-03, shard 1, 3 different files). OPE-2240's foreign-wake fence closed the call-bearing half of that window, and the whole tier then ran green FOUR times at 4 workers — twice on OPE-2240's head and twice on OPE-2265's. Four runs are not a rate: `OE_IT_CI_MAX_WORKERS=1` outranks this constant and is the bisect. Change it only against a re-measurement, and restate that measurement here",
 );
 
 const sandboxCapMb = 14327709696 / MB;
@@ -172,5 +172,5 @@ console.log(
     `capping the process below RAM derives min(floor(cores × ${CORE_OVERSUBSCRIPTION}), floor((cap − ${CGROUP_RESERVE_MB} − ${WORKER_BASE_MB}) / ${WORKER_MARGINAL_MB})) ` +
     `= 6 on the measured 4-core 13.3 GiB sandbox, then takes the lower of that and ` +
     `HARNESS_CONCURRENCY_CEILING = ${HARNESS_CONCURRENCY_CEILING}, which on that box is also 6 since OPE-2281 settled the ` +
-    `re-drive and cancel-delivery races; an explicit OE_IT_CI_MAX_WORKERS still overrides, and an uncapped box answers ${UNCAPPED_MAX_WORKERS}).`,
+    `re-drive race (the cancel-delivery half is open on eve 0.71); an explicit OE_IT_CI_MAX_WORKERS still overrides, and an uncapped box answers ${UNCAPPED_MAX_WORKERS}).`,
 );

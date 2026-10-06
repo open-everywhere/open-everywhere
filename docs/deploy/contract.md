@@ -172,7 +172,7 @@ not move it. A second server started over the same directory recovers the first 
   self-deployed `eve start` process, eve uses the SDK's local world by default; that world persists
   workflow runs on disk under `.eve/.workflow-data`… On Vercel, the same workflow code runs against
   Vercel Workflow instead"*
-  (`eve/docs/concepts/execution-model-and-durability.mdx`, eve 0.54.3).
+  (`eve/docs/concepts/execution-model-and-durability.mdx`, re-read at eve 0.71.0).
 - **Docker:** mount a durable volume at the app's working directory (or at `<workdir>/.eve`), and
   run **one** server process against it.
 
@@ -185,7 +185,7 @@ A running deployment answers `GET /eve/v1/oe/status` with one verdict per requir
 ```json
 {
   "contract": 1,
-  "version": { "app": "unversioned", "core": "0.1.2", "eve": "0.54.3" },
+  "version": { "app": "unversioned", "core": "0.2.0", "eve": "0.71.0" },
   "host": "vercel",
   "requirements": [
     { "id": "node-24", "met": "yes", "detail": "running node 24.21.0, which satisfies 24.x" }

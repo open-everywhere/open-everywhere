@@ -71,7 +71,7 @@ function main(): void {
     ok(r.out.includes("agent/agent.js:"), "the default entry list boots the agent definition");
     ok(r.out.includes("agent/sandbox/sandbox.js:"), "…and the sandbox definition, whose pre-register imports nothing else reaches");
     ok(
-      r.out.includes("agent/instrumentation.js:"),
+      r.out.includes("agent/instrumentation/otel.js:"),
       "…and the instrumentation entry, which never registers at all, so its whole graph is pre-registration",
     );
     for (const slot of ["agent/tools:", "agent/hooks:", "agent/channels:"]) {

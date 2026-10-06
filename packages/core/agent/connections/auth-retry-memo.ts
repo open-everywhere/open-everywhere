@@ -36,11 +36,11 @@ const urlSlot = defineState<Map<string, string> | null>("open-everywhere.connect
 
 export function markConnectorAuthRequired(connector: string, url?: string): void {
   try {
-    const set = slot.get() ?? new Set<string>();
+    const set = new Set<string>(slot.get() ?? []);
     markInSet(set, connector);
     slot.update(() => set);
     if (url) {
-      const map = urlSlot.get() ?? new Map<string, string>();
+      const map = new Map<string, string>(urlSlot.get() ?? []);
       map.set(connector, url);
       urlSlot.update(() => map);
     }
@@ -75,13 +75,15 @@ export function resetConnectorAuthMemo(): void {
 
 export function clearConnectorAuthRequired(connector: string): void {
   try {
-    const set = slot.get();
-    if (set) {
+    const stored = slot.get();
+    if (stored) {
+      const set = new Set<string>(stored);
       clearFromSet(set, connector);
       slot.update(() => set);
     }
-    const map = urlSlot.get();
-    if (map) {
+    const storedUrls = urlSlot.get();
+    if (storedUrls) {
+      const map = new Map<string, string>(storedUrls);
       map.delete(connector);
       urlSlot.update(() => map);
     }

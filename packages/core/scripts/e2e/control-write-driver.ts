@@ -38,6 +38,13 @@ export type HaltOwnershipHandle = Readonly<{
   setRef?: string;
 }>;
 
+export type OrgHaltOwnershipHandle = Readonly<{
+  orgWide: true;
+  setAt: string;
+  setBy?: string;
+  setRef?: string;
+}>;
+
 export type SpendOwnershipHandle = Readonly<{
   level: "surface";
   scopeKey: string;
@@ -53,7 +60,7 @@ export type OwnedClearResult = "cleared" | "missing" | "changed";
 interface OverridesWire {
   readonly org: string;
   readonly spend: readonly SpendOwnershipHandle[];
-  readonly halts: readonly HaltOwnershipHandle[];
+  readonly halts: readonly (HaltOwnershipHandle | OrgHaltOwnershipHandle)[];
 }
 
 export function resolveControlWriteConfig(env: NodeJS.ProcessEnv = process.env):
@@ -136,7 +143,22 @@ export class ControlWriteDriver {
   }
 
   async inspectHalt(): Promise<HaltOwnershipHandle | undefined> {
-    return (await this.overrides()).halts.find((h) => !h.orgWide && h.level === "surface" && h.scopeKey === this.surfaceKey);
+    return (await this.overrides()).halts.find((h): h is HaltOwnershipHandle => !h.orgWide && h.level === "surface" && h.scopeKey === this.surfaceKey);
+  }
+
+  async inspectOrgHalt(): Promise<OrgHaltOwnershipHandle | undefined> {
+    return (await this.overrides()).halts.find((h): h is OrgHaltOwnershipHandle => h.orgWide === true);
+  }
+
+  async clearOwnedOrgHalt(handle: OrgHaltOwnershipHandle): Promise<OwnedClearResult> {
+    if (handle.orgWide !== true || !handle.setAt) throw new Error("org halt ownership handle is not an org-wide halt row");
+    const result = await this.callJson("resume", {
+      org: this.org,
+      orgWide: true,
+      expected: { setAt: handle.setAt, ...(handle.setBy ? { setBy: handle.setBy } : {}), ...(handle.setRef ? { setRef: handle.setRef } : {}) },
+    });
+    if (result.cleared === true) return "cleared";
+    return (await this.inspectOrgHalt()) === undefined ? "missing" : "changed";
   }
 
   async clearOwnedHalt(handle: HaltOwnershipHandle): Promise<OwnedClearResult> {

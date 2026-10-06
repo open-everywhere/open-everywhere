@@ -47,7 +47,7 @@ export default defineTool({
     identity: z.enum(["domain-role", "user-sso"]).describe("Which identity mode the call ran under."),
     redactions: z
       .array(z.object({ rule: z.string(), count: z.number().int() }))
-      .describe("Credential-shaped values Open Everywhere removed from stdout/stderr before returning them — rule names and counts, never the removed values. Empty on an ordinary call."),
+      .describe("Credential-shaped values the agent removed from stdout/stderr before returning them — rule names and counts, never the removed values. Empty on an ordinary call."),
   }),
   approval: never(),
   async execute(input, ctx) {

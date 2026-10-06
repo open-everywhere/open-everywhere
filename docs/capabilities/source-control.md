@@ -92,14 +92,17 @@ rights:
   is the authority for the copy, not just the commits).
 
   The card offers three buttons: **Approve** publishes this one proposal; **Reject**
-  declines it (the agent may re-propose, which posts a fresh card); **Approve for
-  session** publishes this one *and* remembers the approval for the rest of that
-  agent session — later PR opens/updates from the **same session** publish immediately
-  (no card), posting a short channel note like *"PR #12 updated — session-approved by
-  @you"* so the action stays visible. That click also **releases up to 32 sibling cards** of the
-  same kind already pending in the same session, and executes each. The session grant covers
-  `open_pull_request` only (never skill/memory/routine gates, which stay per-click). It dies with
-  the session or at `approvals.sessionTtlHours`, whichever comes first; a
+  declines it (the agent may re-propose, which posts a fresh card). A card in a
+  conversation has no third button: each click approves one PR, and a second identical
+  proposal gets a card again (repeated approvals are the approval judge's job). Only a
+  card that a **routine** raised has **Approve for this routine (up to N h)**: it publishes
+  this one *and* remembers the approval for that routine, so its later fires publish
+  immediately (no card), posting a short note like *"PR #12 updated — approved for this
+  routine by @you"* so the action stays visible. That click also **releases up to 32
+  sibling cards** of the same kind the routine has pending, and executes each. The grant
+  covers `open_pull_request` only (never skill/memory/routine gates, which stay per-click).
+  It ends when it expires (`approvals.routineGrantTtlHours`, 24 h by default), when the
+  routine's instruction is edited, or at a `revoke_session_grants` with the routine's key; a
   turn that reads external content always gets a fresh card regardless.
 
 This is lazy-clone-on-name: **tell your team to name the repository in the first message
@@ -126,10 +129,19 @@ close that loop:
   refused, fail-closed. It is **PR-only**: it opens on `/repos/{repo}/pulls/{number}`, which
   GitHub 404s on a plain issue. The conversation read that serves both is `read_channel`
   ([GitHub § Reading the conversation](../deploy/surfaces/github.md#reading-the-conversation)).
+- **`read_github_issue`** reads ONE issue by target: its title, state, author, opening body
+  and newest 30 comments (OPE-2305). It opens on `/repos/{repo}/issues/{number}`, so it
+  serves a pull request's opening description too. A `search` hit for an issue that is not
+  this conversation names it as the read road. It mounts on the same repo grant, takes the
+  same `repoAllowed` check, and passes the acting-identity gate. It uses the
+  **conversation-read** credential (`issues` + `pull_requests`), because the PR-read set
+  has no `issues` family and GitHub refuses a plain issue under it. Each body is capped,
+  each title and body is fenced as untrusted text, and the result says what it dropped.
 
 The whole read loop is host-side with the **read-scoped** credential. A repo grant never opens
-`api.github.com` on the sandbox's compiled policy; only a declared connection naming that host, or
-a `full` network-access level, does. The loop: **mention-wake → `get_pr_feedback` → fix in the sandbox →
+`api.github.com` on the sandbox's compiled policy. An operator declaration that names the host
+opens it: a bundle connection or `domains` entry, or a declared browser host. So does the `full`
+network-access level. The loop: **mention-wake → `get_pr_feedback` → fix in the sandbox →
 `open_pull_request`**, where the follow-up push rides the same approval card as the
 original PR.
 
@@ -269,9 +281,17 @@ minted **separately**, with different rights and different delivery:
   checkout integration uses. The clone command itself carries no token at all: nothing
   rides in the git command, nothing is written to `.git/config`. The rule is recompiled
   and reapplied on **every** `checkout_repo` call, which is what keeps it fresh (tokens
-  live ~1 hour) and what makes later fetches of *other* granted repos in the same session
-  work without a fresh clone. Because the token never enters the sandbox process, there's
-  nothing there to leak or replay.
+  live ~1 hour) and what makes later fetches of *other* granted repos in the same turn
+  work without a fresh clone. The brokered policy lasts until the next turn's
+  [egress re-apply](../security/revocation-latency.md#egress-is-turn-grained) replaces it
+  with the session's base policy, which has no broker rule. The apply records the brokered
+  policy as the one in force (OPE-2303), so that next turn re-applies rather than skipping
+  as unchanged. A `git fetch` in a later turn therefore carries no firewall credential; call
+  `checkout_repo` again in that turn. This bound holds for a root session. A subagent
+  child shares its parent's firewall but not its parent's applied record, so after a child's
+  checkout the parent's next turn can skip as unchanged, and the brokered policy can stay in
+  force until the parent's base policy changes. Because the token never enters the sandbox process,
+  there's nothing there to leak or replay.
 - **The PR *read* verbs mint their own set, and it is deliberately not the checkout one.**
   `check_pr_status`, `get_pr_feedback`, `walk_pr`, `subscribe_pr` and `post_pr_walkthrough`
   all begin at `GET /repos/{owner}/{repo}/pulls/{number}`, which GitHub refuses to a token

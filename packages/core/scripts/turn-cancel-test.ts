@@ -531,9 +531,10 @@ const NO_REQUESTER_BASELINE =
       readonly turnId: string;
       readonly session: string;
       readonly window: string;
-      readonly delegates: boolean;
+      readonly delegates: false | "subagent" | "agent";
+      readonly childOfWork?: true;
     }): Promise<void> => {
-      const ctx = { channel: { continuationToken: input.window }, session: { id: input.session } };
+      const ctx = { channel: { ...(input.childOfWork ? { kind: "subagent" } : {}), continuationToken: input.window }, session: { id: input.session } };
       const container = new SeededSession();
       await storage.run(container, async () => {
         await hook.events["turn.started"]({ type: "turn.started", data: { turnId: input.turnId } }, ctx);
@@ -542,8 +543,10 @@ const NO_REQUESTER_BASELINE =
         await hook.events["step.completed"]({ type: "step.completed", data: {} });
         const committed = JSON.parse(JSON.stringify(container.get({ name: ANCHOR_KEY }))) as Record<string, unknown>;
 
-        if (input.delegates) {
-          await hook.events["actions.requested"]({ type: "actions.requested", data: { actions: [{ kind: "tool-call", toolName: "agent" }] } });
+        if (input.delegates === "subagent") {
+          await hook.events["actions.requested"]({ type: "actions.requested", data: { actions: [{ kind: "subagent-call", subagentName: "fresh_eyes_review" }] } }, ctx);
+        } else if (input.delegates === "agent") {
+          await hook.events["actions.requested"]({ type: "actions.requested", data: { actions: [{ kind: "tool-call", toolName: "agent" }] } }, ctx);
         }
         await hook.events["action.result"]({ type: "action.result", data: { status: "completed", result: { kind: "tool-result", toolName: "create_ticket" } } });
 
@@ -554,7 +557,7 @@ const NO_REQUESTER_BASELINE =
 
     const driveOrg = resolvePartition({ channel: { continuationToken: "w-764" }, session: { id: "s-764" } } as never).org;
     const before = (await readAudit({ org: driveOrg, action: TURN_CANCELLED_ACTION })).length;
-    await drive({ turnId: "t-764", session: "s-764", window: "w-764", delegates: true });
+    await drive({ turnId: "t-764", session: "s-764", window: "w-764", delegates: "subagent" });
     const row = (await readAudit({ org: driveOrg, action: TURN_CANCELLED_ACTION, limit: 1 }))[0]!;
     ok((await readAudit({ org: driveOrg, action: TURN_CANCELLED_ACTION })).length === before + 1, "(precondition) the cancelled arm wrote exactly one new row to read");
     ok(row.detail?.["accounted"] === true, "a cancel whose turn this process started is ACCOUNTED — the tally saw the whole turn");
@@ -576,6 +579,26 @@ const NO_REQUESTER_BASELINE =
     const second = (await readAudit({ org: driveOrg, action: TURN_CANCELLED_ACTION, limit: 1 }))[0]!;
     ok(second.detail?.["accounted"] === true, "…and that turn's row is still accounted for");
     ok(JSON.stringify(second.detail?.["ran"]) === JSON.stringify(["read_thread", "create_ticket"]), "…with the aborted step's tool named there too");
+
+    reactions.length = 0;
+    await drive({ turnId: "t-2351-agent", session: "s-2351-agent", window: "w-2351-agent", delegates: "agent" });
+    ok(reactions.filter((r) => r.emoji === STOP_HAND_UNICODE).length === 0, `🔴 OPE-2351: an \`agent\` call places no turn ✋ — got ${JSON.stringify(reactions)}`);
+
+    {
+      const { formatWindowToken, workWindowId } = await import("../agent/channels/window-key.js");
+      const wToken = formatWindowToken({ domain: "acme", windowId: workWindowId("acme"), generation: 1 });
+      reactions.length = 0;
+      await drive({ turnId: "t-2351-child", session: "s-2351-child", window: wToken, delegates: "subagent", childOfWork: true });
+      ok(reactions.filter((r) => r.emoji === STOP_HAND_UNICODE).length === 0, `🔴 OPE-2351: a child of the work session places no turn ✋ — got ${JSON.stringify(reactions)}`);
+    }
+
+    {
+      const { formatWindowToken, workWindowId } = await import("../agent/channels/window-key.js");
+      const wToken = formatWindowToken({ domain: "acme", windowId: workWindowId("acme"), generation: 1 });
+      reactions.length = 0;
+      await drive({ turnId: "t-2351-w", session: "s-2351-w", window: wToken, delegates: "subagent" });
+      ok(reactions.filter((r) => r.emoji === STOP_HAND_UNICODE).length === 0, `🔴 D17: the work session's turn places no turn ✋ — got ${JSON.stringify(reactions)}`);
+    }
 
     resetTurnTalliesForTest();
   }
@@ -821,6 +844,63 @@ const NO_REQUESTER_BASELINE =
       ok(posts.filter((post) => post.text === IGNORED_STOP_NOTE).length === 1, `🔴 …and the room is told exactly once (delivery ${delivery})`);
     }
 
+    posts.length = 0;
+    __clearSettledCancelsForTest();
+    const ctxL = { channel: { continuationToken: "w-2283a" }, session: { id: "s-2283a" } };
+    const orgL = resolvePartition(ctxL as never).org;
+    const slotL = { turnId: "t-2283a", sessionId: "s-2283a", org: orgL, windowKey: "w-2283a", workspace: "G1", surfaceKey: "discord/G1/C-1190", platform: "discord", channelId: CHANNEL, messageId: ROOT, handPlaced: false, ran: [], steps: 0 };
+    await recordTurnAnchor(orgL, { windowKey: "w-2283a", sessionId: "s-2283a", turnId: "t-2283a", surfaceKey: "discord/G1/C-1190" }, new Date().toISOString());
+    await cancelAnchoredTurn({ org: orgL, platform: "discord", workspace: "G1", requestedBy: STOPPER, via: "command", query: { windowKey: "w-2283a" }, attachSession: droppingDoor });
+    __setCancelSettleGraceForTest(1);
+    const realSetTimeout = globalThis.setTimeout;
+    let swallowed = 0;
+    globalThis.setTimeout = ((fn: (...a: unknown[]) => void, ms?: number, ...rest: unknown[]) => {
+      if (ms === 1) {
+        swallowed += 1;
+        return realSetTimeout(() => {}, 0);
+      }
+      return realSetTimeout(fn, ms, ...rest);
+    }) as typeof setTimeout;
+    const endedL = new SeededSession();
+    endedL.set({ name: ANCHOR_KEY }, { ...slotL });
+    try {
+      await storage.run(endedL, async () => {
+        await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-2283a" } }, ctxL);
+      });
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+    }
+    ok(swallowed === 1, `(precondition) the ordinary arm scheduled exactly one check, and its timer was swallowed — got ${swallowed}`);
+    await new Promise((r) => realSetTimeout(r, 20));
+    ok(__pendingIgnoredStopCountForTest() === 1, `(precondition) the check is DUE and still unresolved — nothing but a drain can answer it now (got ${__pendingIgnoredStopCountForTest()})`);
+    ok((await rowsFor(orgL, TURN_STOP_IGNORED_ACTION)).filter((r) => r["turnId"] === "t-2283a").length === 0, "(precondition) …and no ignored-stop row exists yet");
+    const parkedM = new SeededSession();
+    await storage.run(parkedM, async () => {
+      await hook.events["session.waiting"]!({ type: "session.waiting", data: {} }, { channel: { continuationToken: "w-2283b" }, session: { id: "s-2283b" } });
+    });
+    ok(__pendingIgnoredStopCountForTest() === 0, "🔴 `session.waiting` DRAINS the due check — a parked session is an awaited drain point");
+    const parkedRow = (await rowsFor(orgL, TURN_STOP_IGNORED_ACTION)).filter((r) => r["turnId"] === "t-2283a");
+    ok(parkedRow.length === 1, `🔴 …and the drain writes the ignored-stop row the swallowed timer never would — got ${parkedRow.length}`);
+    ok(posts.filter((post) => post.text === IGNORED_STOP_NOTE).length === 1, `🔴 …and tells the room once — got ${JSON.stringify(posts.map((p) => p.text))}`);
+
+    posts.length = 0;
+    __setCancelSettleGraceForTest(600_000);
+    const ctxN = { channel: { continuationToken: "w-2283c" }, session: { id: "s-2283c" } };
+    const orgN = resolvePartition(ctxN as never).org;
+    const slotN = { ...slotL, turnId: "t-2283c", sessionId: "s-2283c", org: orgN, windowKey: "w-2283c" };
+    await recordTurnAnchor(orgN, { windowKey: "w-2283c", sessionId: "s-2283c", turnId: "t-2283c", surfaceKey: "discord/G1/C-1190" }, new Date().toISOString());
+    await cancelAnchoredTurn({ org: orgN, platform: "discord", workspace: "G1", requestedBy: STOPPER, via: "command", query: { windowKey: "w-2283c" }, attachSession: droppingDoor });
+    const endedN = new SeededSession();
+    endedN.set({ name: ANCHOR_KEY }, { ...slotN });
+    await storage.run(endedN, async () => {
+      await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-2283c" } }, ctxN);
+      await hook.events["session.waiting"]!({ type: "session.waiting", data: {} }, ctxN);
+    });
+    ok(__pendingIgnoredStopCountForTest() === 1, `🔴 NEGATIVE CONTROL: the turn's OWN park leaves a check inside its grace alone — got ${__pendingIgnoredStopCountForTest()}`);
+    ok((await rowsFor(orgN, TURN_STOP_IGNORED_ACTION)).filter((r) => r["turnId"] === "t-2283c").length === 0, "…and writes no row for it");
+    await flush();
+    ok((await rowsFor(orgN, TURN_STOP_IGNORED_ACTION)).filter((r) => r["turnId"] === "t-2283c").length === 1, "(positive control) the same check, flushed, does write its row — the park's silence was the grace, not a dead check");
+
     __setCancelSettleGraceForTest();
   }
 
@@ -954,17 +1034,36 @@ const NO_REQUESTER_BASELINE =
 {
   const eveRoot = dirname(createRequire(import.meta.url).resolve("eve/package.json"));
   const eveDist = (rel: string): string => readFileSync(join(eveRoot, "dist", "src", rel), "utf8");
+  const pin = (src: string, re: RegExp, cut: string, label: string): void => {
+    ok(re.test(src), label);
+    ok(src.includes(cut) && !re.test(src.replaceAll(cut, "")), `negative control: the pin "${label}" fails once \`${cut}\` is cut`);
+  };
 
   const settle = eveDist("execution/settle-cancelled-turn-step.js");
-  ok(/clearAllProxyInputRequests/.test(settle), "eve's settleCancelledTurnStep still calls clearAllProxyInputRequests (the wipe the header describes)");
+  const publish = eveDist("execution/publish-session-events.js");
 
-  ok(/dispatchStreamEventHooks\(\{ctx:\w+,event:\w+,registry:/.test(settle), "🔴 (1) authored hooks STILL fire on eve's cancel path — no dispatch, no reconstruction is ever written");
-  ok(/withContextScope\(/.test(settle), "🔴 (2) …inside a context scope, which is what makes the defineState slot resolvable from the hook");
-  ok(/serializedContext:serializeContext\(/.test(settle), "🔴 (3) …and the context is RE-SERIALIZED out of the cancel step — this is what carries the slot into the NEXT turn while history rolls back");
+  pin(settle, /async function settleCancelledTurnStep\(\w+\)\{"use step";return await withSessionStateDelta\(/, "withSessionStateDelta(", "(0) eve's cancel step still returns its session state as a delta");
+  pin(settle, /publishFromSessionStep\(\w+,\{origin:`own`,async publish\((\w+)\)\{[^]*?await emitCancelledTurn\(\1,/, "emitCancelledTurn(", "(0) …and emits `turn.cancelled` through the shared session-step publisher");
+  pin(eveDist("harness/cancelled-turn-emission.js"), /await (\w+)\(createTurnCancelledEvent\(/, "createTurnCancelledEvent(", "(0) …which hands that publisher a real `turn.cancelled` event");
 
-  const proxy = eveDist("harness/proxy-input-requests.js");
-  ok(/function clearAllProxyInputRequests\(\w+\)\{return hasProxyInputRequests/.test(proxy), "clearAllProxyInputRequests still wipes the WHOLE map, not one child's entries");
-  ok(/clearProxyInputRequestsForChild/.test(proxy) && !/clearProxyInputRequestsForChild/.test(settle), "…and the cancel path still does NOT use eve's per-child clear");
+  pin(publish, /async publish\(\w+\)\{await \w+\.runHooks\(await emit\(\w+\)\)\}/, ".runHooks(await emit(", "🔴 (1) every event the publisher emits runs the hooks");
+  pin(publish, /async runHooks\(\w+,\w+\)\{await dispatchStreamEventHooks\(\{cancelTurn:\w+,ctx:\w+,event:\w+,registry:/, "dispatchStreamEventHooks(", "🔴 (1) …and runHooks dispatches the authored hooks — no dispatch, no reconstruction is ever written");
+
+  pin(publish, /return await withContextScope\(\w+,\w+,async \w+=>\{let (\w+)=\w+\?\.createHandleEvent\(\{handleEvent:\w+\.publish,[^;]*\?\?\w+\.publish;return\{result:await \w+\.publish\(\1,\w+\),session:\w+\}\}\)/, "withContextScope(", "🔴 (2) …and the publish (so every hook) runs inside a context scope, which is what makes the defineState slot resolvable from the hook");
+  pin(eveDist("context/run-step.js"), /async function withContextScope\(\w+,\w+,\w+\)\{[^]*?contextStorage\.run\(/, "contextStorage.run(", "🔴 (2) …and the scope makes that context current");
+  pin(eveDist("public/definitions/state.js"), /update\(\w+\)\{let \w+=loadContext\(\)/, "loadContext()", "🔴 (2) …and a defineState update writes to the current context");
+
+  pin(publish, /let\{ctx:(\w+)\}=\w+,\w+=await publishInSessionScope\([^]*?published:\{serializedContext:serializeContext\(\1\)/, "serializeContext(", "🔴 (3) …and the context is RE-SERIALIZED out of the cancel step");
+  pin(settle, /\{published:(\w+),result:(\w+)\}=await publishFromSessionStep\([^]*?return \2===void 0\?\1:/, "publishFromSessionStep(", "🔴 (3) …and the cancel step returns that re-serialized context as its result");
+  pin(eveDist("execution/session/state-delta.js"), /SESSION_VALUE_KEYS=\[`serializedContext`/, "`serializedContext`", "🔴 (3) …and the step delta keeps serializedContext");
+  pin(eveDist("execution/session/state-cursor.js"), /let (\w+)=applySessionStateDelta\(\w+,\w+\.stateDelta\)[^]*?this\.values=\1/, "applySessionStateDelta(", "🔴 (3) …and the session cursor applies that delta to the next step's input");
+  pin(eveDist("execution/session/program.js"), /advanceWithHistory\(\w+=>settleCancelledTurnStep\(/, "settleCancelledTurnStep(", "🔴 (3) …and the cancel step runs through that cursor");
+
+  pin(settle, /let (\w+)=await relayWithdrawnRequests\(\w+,\(\)=>!0\),\w+=\{\.\.\.await restoreSessionStep\(\{\.\.\.\1,/, "()=>!0", "eve's cancel step still withdraws EVERY proxied request (an always-true filter), and builds on the wiped state");
+  const withdraw = eveDist("execution/tools/workflow/withdraw-step.js");
+  pin(withdraw, /async function relayWithdrawnRequests\(\w+,(\w+)\)\{let \w+=withdrawProxyInputRequests\(readDurableSession\(\w+\.sessionState\),\1\)/, "withdrawProxyInputRequests(", "…and relayWithdrawnRequests removes what the filter matches from the proxy map");
+  pin(eveDist("harness/proxy-input-requests.js"), /function withdrawProxyInputRequests\(\w+,\w+\)\{[^]*?return\{events:\w+,session:retireProxyInputRequests\(\w+,\w+\)\}\}/, "retireProxyInputRequests(", "…and the withdraw really retires the matched entries");
+  ok(/relayWithdrawnRequests\(\w+,\(\w+,\w+\)=>\w+\.runId===/.test(withdraw) && !/relayWithdrawnRequests\(\w+,\(\w+,\w+\)=>/.test(settle), "…and a scoped withdraw exists, and the cancel path does NOT use one");
 
   const hitl = eveDist("subagents/hitl-proxy.js");
   ok(/payload:\{inputResponses:/.test(hitl), "eve still routes a child's answer ONLY through payload.inputResponses");

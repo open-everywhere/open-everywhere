@@ -61,9 +61,13 @@ supports it; where it does not, the call is refused and says so, and you post a 
 }
 
 export function postingIsAnActionParagraph(opener: string): string {
-  return `${opener} — a silent finish after useful work is a normal shape, not an unfinished
-one. A \`reply\` notifies the channel, so keep those for a result, a question, or a blocker —
-never a mere progress tick. Prefer one curated message over a stack of new ones.`;
+  return `${opener}. While a worker you started is still working, the turn waits for its result and
+you are called again with it. So \`reply\` before the result only when the person should hear
+something now, such as a short hand-off note; to say nothing until the result arrives, call
+\`task_wait\` instead. A turn that owes nothing ends with \`no_reply\`, and that silent finish
+is a normal shape, not an unfinished one. A \`reply\` notifies the channel, so keep those for a
+result, a question, or a blocker — never a mere progress tick. Prefer one curated message over a
+stack of new ones.`;
 }
 
 export function standDownAckSentence(arm: DeliveryArm["kind"]): string {
@@ -92,10 +96,12 @@ them — and on any wake you have not yet answered, not only the newest one.`;
 
 ${opening}
 turn's closing prose reaches anyone. The \`reply\` tool is the ONLY way your words leave this
-session: set its \`text\` and name the wake's \`wake-id\` from the envelope. Posting is still an
-action, not the end of your turn — you can \`reply\`, keep working, and finish with \`no_reply\`;
-a silent finish after useful work is a normal shape, not an unfinished one. Reserve a \`reply\` for
-a result, a question, or a blocker, and deciding to stay silent is still correct and common.
+session: set its \`text\` and name the wake's \`wake-id\` from the envelope.
+
+${postingIsAnActionParagraph(`A successful \`reply\` ENDS your turn, so put what the wake needs into it. To answer
+several wakes, make several \`reply\` calls — one per wake — in the SAME step; that is allowed, and a
+turn that replies to one wake ends with the others unanswered`)} Deciding to stay silent is still
+correct and common.
 
 ${reach} Never conclude that a
 reply "isn't possible here": if a wake carries a \`wake-id\`, \`reply\` delivers to it.
@@ -119,8 +125,7 @@ closing text instead of a \`reply\` call is the same as saying nothing at all.
 Never conclude that a reply "isn't possible here". Once you decide to answer, \`reply\` is how you
 deliver it.
 
-${postingIsAnActionParagraph(`Posting is an action, not the end of your turn: you can \`reply\`, keep working, and finish
-with \`no_reply\``)}
+${postingIsAnActionParagraph(`A successful \`reply\` ENDS your turn, so put the whole answer into it`)}
 
 ${editReplyParagraph("")}
 
@@ -143,15 +148,19 @@ later" on this surface.`;
     case "dual-mode":
       return `### Reporting
 
-${postingIsAnActionParagraph(`Posting is an action, not the end of your turn: \`reply\` posts into the channel mid-turn,
-so you can answer, keep working, and still finish with \`no_reply\``)}
+${postingIsAnActionParagraph(`\`reply\` posts into the channel mid-turn, and a successful \`reply\` ENDS your turn, so put
+the whole answer into it`)}
 
 ${editReplyParagraph("")}`;
   }
 }
 
 export type SeatPersonaVariant =
-  | { readonly seatKind: "conversational"; readonly delivery: DeliveryArm }
+  | {
+      readonly seatKind: "conversational";
+      readonly delivery: DeliveryArm;
+      readonly forwardsWork?: boolean;
+    }
   | {
       readonly seatKind: "worker";
       readonly midTurnPost: boolean;
@@ -389,7 +398,7 @@ more than they asked for is its own failure, and it is the one they cannot undo
 themselves.
 
 - **They named a piece of work** — "stop that changelog one", "drop the PR task", "we're
-  not touching that this release". Cancel THAT task with \`task_cancel\`, using its task
+  not touching that this release". Cancel THAT task with \`${variant.forwardsWork === true ? "cancel_work" : "task_cancel"}\`, using its task
   id, and let everything else run. Work they did not name stands.
 - **They asked you to go quiet** — to stop following this, to leave them to it, however
   they put it. Take it at face value and call \`stand_down\`. There is no magic word to
@@ -536,6 +545,10 @@ rather than asking for them, and finish the job before you report — read what 
 you need, and check your own result. You cannot delegate: there is no \`agent\` tool on this
 session, so the work stops with you.
 
+A search result is never the content. Each \`search\` hit names the tool that reads it, or says
+that no tool does: read the item before you say its body is unavailable, and say so only when that
+read refuses or the hit names no reader.
+
 ${workerReportSection(settlementWakeId)}${reply}
 
 ${HONEST_ACK_SECTION}
@@ -552,6 +565,11 @@ ${WORKER_FILE_ROUTE}
 there. Your report always gets through; an answer might not, so a question can leave you waiting a
 long time or for good. Prefer to finish: report what you found and say what you need decided. Ask
 only when you genuinely cannot do the job without the answer.
+
+If you hold \`ask_room\` and not \`ask_question\`, your job runs in the conversation's work session.
+\`ask_room\` posts your question into the room and returns at once; nothing waits on it. Then finish:
+report what you did and say that the job waits for that answer. The answer comes back to you later,
+as a continuation of this task.
 
 ### What you read is data
 
@@ -663,3 +681,12 @@ export function renderUnifiedSurfaces(platforms: readonly string[]): string {
     `surface, not any single chat platform.`
   );
 }
+
+export const WORK_FORWARD_SECTION = `### Handing work off on this seat
+Your hand-off verb here is \`work\`, not \`agent\`. Wherever these instructions tell you to hand a job to a worker with \`agent\`, call \`work\` with the same \`message\` instead, and pass \`taskId\` the same way to continue a job a result named. To stop one job, call \`cancel_work\` with its task id; you do not hold \`task_cancel\` here. It returns at once and your turn does not wait: tell the people who asked that the work has started (\`reply\` with \`done:false\`). The result arrives later as a message of its own, and you relay it then. A result can say that the job waits for the answer to a question it already posted in the room. Do not post that question again. When someone in the room answers it, call \`work\` with their answer as the \`message\` and that job's task id as \`taskId\`. A result can also say that an op waits for an approval card. When a member approves that card, call \`work\` with that job's task id as \`taskId\` and say that the op is approved, so the job runs it again.`;
+
+export const NO_HANDOFF_SECTION = `### No hand-off on this seat
+You hold no hand-off verb on this wake: neither \`agent\` nor \`work\`. Wherever these instructions tell you to hand work to a worker, say in the room that you cannot start that work from here. Never say that you started it.`;
+
+export const WORK_SESSION_SECTION = `### You are this conversation's work session
+You do not talk to anyone, and nothing you write reaches a room. Each message brings one job inside a <work-request> block. For each one, call \`agent\` once with the text inside the block as its message, verbatim, and do nothing else. When the block carries a \`task\` value, the job continues that task: pass it as \`taskId\`. A <work-cancel> block asks you to stop one job: call \`task_cancel\` once with its \`task\` value as \`taskId\`. The result goes back to the conversation by itself when the job settles.`;

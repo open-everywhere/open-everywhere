@@ -23,8 +23,10 @@ const { defineTool } = (await import(u("public/tools/index.js"))) as {
 };
 const lifecycle = (await import(u("context/dynamic-tool-lifecycle.js"))) as {
   dispatchDynamicToolEvent(e: unknown): Promise<void>;
-  replayDynamicSessionTools(meta: readonly unknown[], resolvers: readonly unknown[], sessionId: string): { name: string; approval?: unknown }[];
   refreshDynamicSessionToolsForRuntimeRevision?(i: unknown): Promise<void>;
+};
+const { replayDynamicTools } = (await import(u("context/build-dynamic-tools.js"))) as {
+  replayDynamicTools(meta: readonly unknown[], scope: { sessionId: string; scope: string }): { name: string; approval?: unknown }[];
 };
 type ReplayFn = (closure: Record<string, unknown>, ...a: unknown[]) => unknown;
 const durable = (await import(u("tools/durable-callbacks.js"))) as {
@@ -32,11 +34,11 @@ const durable = (await import(u("tools/durable-callbacks.js"))) as {
   lookupDurableDynamicCallback(owner: Record<string, unknown>, phase: string): ReplayFn | undefined;
   hasUnregisteredDurableDynamicCallbacks(meta: readonly { callbacks: Record<string, unknown>; name: string }[], scope: Record<string, unknown>): boolean;
 };
-const keys = (await import(u("context/keys.js"))) as { SessionIdKey: unknown; SessionDynamicToolMetadataKey: unknown };
-const { dispatchDynamicToolEvent, replayDynamicSessionTools } = lifecycle;
+const keys = (await import(u("context/keys.js"))) as { SessionIdKey: unknown; StaticModelReferenceKey: unknown; SessionDynamicToolMetadataKey: unknown };
+const { dispatchDynamicToolEvent } = lifecycle;
 
 const ownerOf = (row: { name: string }, sessionId: string): Record<string, unknown> => ({ ...row, sessionId, scope: "session" });
-const { SessionIdKey, SessionDynamicToolMetadataKey } = keys;
+const { SessionIdKey, StaticModelReferenceKey, SessionDynamicToolMetadataKey } = keys;
 
 ok(!("hydrateDynamicSessionTools" in lifecycle), "eve no longer exports hydrateDynamicSessionTools — the durable descriptor replaced it");
 ok(
@@ -65,6 +67,7 @@ interface FakeCtx {
 function makeCtx(sessionId: string): FakeCtx {
   const store = new Map<unknown, unknown>();
   store.set(SessionIdKey, sessionId);
+  store.set(StaticModelReferenceKey, null);
   return {
     get: (k) => store.get(k),
     set: (k, v) => {
@@ -164,7 +167,7 @@ console.log("1. execute-only synthetic tool (durable descriptor contract):");
 
   (globalThis as Record<symbol, unknown>)[REG_SYMBOL] = new Map();
   ok(registry().size === 0, "registry wiped (cold-start simulation)");
-  const cold = replayDynamicSessionTools([row], [], "sess-ope867-native-heal-1");
+  const cold = replayDynamicTools([row], { sessionId: "sess-ope867-native-heal-1", scope: "session" });
   eq(cold.length, 1, "RED: a cold-resumed replay still MOUNTS the tool (eve does not drop it silently)");
   ok(
     durable.lookupDurableDynamicCallback(ownerOf(row, "sess-ope867-native-heal-1"), "execute") === undefined,
@@ -185,7 +188,7 @@ console.log("1. execute-only synthetic tool (durable descriptor contract):");
     !durable.hasUnregisteredDurableDynamicCallbacks([row as unknown as { callbacks: Record<string, unknown>; name: string }], { sessionId: "sess-ope867-native-heal-1-resumed", scope: "session" }),
     "…and eve's detector agrees the row is bound again",
   );
-  const replayed = replayDynamicSessionTools([row], [], "sess-ope867-native-heal-1-resumed");
+  const replayed = replayDynamicTools([row], { sessionId: "sess-ope867-native-heal-1-resumed", scope: "session" });
   eq(replayed.length === 1 && replayed[0]!.name, TOOL, "post-heal replay returns the tool under its mounted name");
 
   const bound = durable.lookupDurableDynamicCallback(ownerOf(row, "sess-ope867-native-heal-1-resumed"), "execute")!;
@@ -215,12 +218,12 @@ console.log("2. approval-bearing synthetic tool (OPE-575 response-half):");
   ok(typeof durable.lookupDurableDynamicCallback(ownerOf(row, "sess-ope867-native-heal-2"), "approvalResponse") === "function", "…and resolve bound the response phase under its own (toolName, phase)");
 
   type ApprovalPair = { request(a: unknown): Promise<unknown>; response(a: unknown): Promise<{ status: string; reason?: string }> };
-  const healthy = replayDynamicSessionTools([row], [], "sess-ope867-native-heal-2")[0]!.approval as ApprovalPair;
+  const healthy = replayDynamicTools([row], { sessionId: "sess-ope867-native-heal-2", scope: "session" })[0]!.approval as ApprovalPair;
   eq(await healthy.request({}), "user-approval", "replay serves the REAL approval request policy");
   eq(await healthy.response({}), { status: "approved", reason: "probe" }, "replay serves the REAL approval response authorizer");
 
   registry().get("sess-ope867-native-heal-2")!.delete(keyOf(row as unknown as Record<string, unknown>, "approvalResponse"));
-  const degraded = replayDynamicSessionTools([row], [], "sess-ope867-native-heal-2")[0]!.approval as ApprovalPair;
+  const degraded = replayDynamicTools([row], { sessionId: "sess-ope867-native-heal-2", scope: "session" })[0]!.approval as ApprovalPair;
   const verdict = await degraded.response({});
   eq(verdict.status, "rejected", "RED: a MISSING approval-response binding degrades to reject-everything (OPE-575's hazard, stated by eve itself)");
   ok(String(verdict.reason).includes(APPROVAL_TOOL), "…and the refusal names the tool whose binding went missing, so the cause is countable");
@@ -228,7 +231,7 @@ console.log("2. approval-bearing synthetic tool (OPE-575 response-half):");
 
   const ctxAgain = makeCtx("sess-ope867-native-heal-2-resumed");
   await dispatchDynamicToolEvent({ ctx: ctxAgain, resolvers: [resolverDescriptor], event, messages: [] });
-  const restored = replayDynamicSessionTools([row], [], "sess-ope867-native-heal-2-resumed")[0]!.approval as ApprovalPair;
+  const restored = replayDynamicTools([row], { sessionId: "sess-ope867-native-heal-2-resumed", scope: "session" })[0]!.approval as ApprovalPair;
   eq(await restored.response({}), { status: "approved", reason: "probe" }, "GREEN: re-resolving restores the real authorizer");
 }
 
@@ -343,8 +346,8 @@ console.log("4. variant-dispatched toModelOutput across ONE mounted name (OPE-10
   );
 
   type Replayed = { name: string; toModelOutput?: (output: unknown) => { type: string; value: string } };
-  const replayedAlpha = replayDynamicSessionTools([rowAlpha], [], "sess-ope1068-variant-alpha")[0]! as Replayed;
-  const replayedBeta = replayDynamicSessionTools([rowBeta], [], "sess-ope1068-variant-beta")[0]! as Replayed;
+  const replayedAlpha = replayDynamicTools([rowAlpha], { sessionId: "sess-ope1068-variant-alpha", scope: "session" })[0]! as Replayed;
+  const replayedBeta = replayDynamicTools([rowBeta], { sessionId: "sess-ope1068-variant-beta", scope: "session" })[0]! as Replayed;
   ok(typeof replayedAlpha.toModelOutput === "function", "eve REPLAYS the authored projection onto the rebuilt tool (the OPE-73 drop is closed at 0.44.0)");
   eq(replayedAlpha.toModelOutput!({ n: 1 }), { type: "text", value: 'alpha|{"n":1}' }, "alpha's replayed tool runs ALPHA's projection — the closure re-selected the variant the session mounted");
   eq(replayedBeta.toModelOutput!({ n: 1 }), { type: "text", value: 'beta|{"n":1}' }, "…and beta's runs BETA's, from the same shared callback — one name, two projections, no collision");
@@ -353,7 +356,7 @@ console.log("4. variant-dispatched toModelOutput across ONE mounted name (OPE-10
   ok(rowPlain.callbacks.toModelOutput === undefined, "NEGATIVE CONTROL: a variant with no authored projection persists NO toModelOutput phase");
   ok(rowPlain.callbacks.execute !== undefined, "…while still carrying its execute descriptor, so it mounts normally");
   ok(
-    (replayDynamicSessionTools([rowPlain], [], "sess-ope1068-variant-plain")[0]! as Replayed).toModelOutput === undefined,
+    (replayDynamicTools([rowPlain], { sessionId: "sess-ope1068-variant-plain", scope: "session" })[0]! as Replayed).toModelOutput === undefined,
     "…and its replayed tool carries no projection — the raw output reaches eve's own default rendering",
   );
 

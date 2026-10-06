@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readTaskSettled, readTaskStarted } from "../../agent/access/background-tasks.js";
 import { extractMemoryPathReads, normaliseMemoryPath, scoreNavigation, siloOfPath } from "./memory-reads.js";
 import type { TranscriptWireEvent } from "./transcript-read.js";
 
@@ -108,15 +109,40 @@ const result = (index: number, toolName: string, output: string): TranscriptWire
   const threaded = extractMemoryPathReads([call(1, "spawn_thread_session", { brief, thread: "1769606529.675000" })]);
   ok(threaded.length === 0, `\`spawn_thread_session\`'s brief — under \`brief\` — is never a read either (got ${threaded.join(", ")})`);
 
+  const taskId = "agent-8af998";
+  const report = `I read memory/${SILO}/MEMORY.md and the OPE121 canary is obsidian-50302`;
+  const started: TranscriptWireEvent = {
+    index: 2,
+    at: "2026-01-23T01:00:02.000Z",
+    type: "task.started",
+    data: { callId: "c1", kind: "agent", name: "agent", taskId, turnId: "t1" },
+  };
+  const settled: TranscriptWireEvent = {
+    index: 4,
+    at: "2026-01-23T01:00:04.000Z",
+    type: "task.settled",
+    data: { callId: "c1", kind: "agent", name: "agent", output: report, status: "completed", taskId, turnId: "t1" },
+  };
+  ok(readTaskStarted(started.data)?.taskId === taskId, "the task.started fixture is a shape access/background-tasks.ts admits");
+  ok(readTaskSettled(settled.data)?.status === "completed", "the task.settled fixture is a shape access/background-tasks.ts admits");
+
   const receipt = extractMemoryPathReads([
+    started,
     {
-      index: 2,
+      index: 3,
       at: "2026-01-23T01:00:02.500Z",
       type: "action.result",
-      data: { status: "completed", result: { callId: "c1", kind: "tool-result", toolName: "agent", output: { agentId: "memory-reader", status: "working", taskId: "task_8af998d8b8f50a52f693316e" } } },
+      data: { status: "completed", result: { callId: "c1", kind: "tool-result", toolName: "agent", output: `Started task ${taskId}. Its result will arrive later.` } },
     },
   ]);
-  ok(receipt.length === 0, `a dispatch receipt carries no path, so it scores nothing (got ${receipt.join(", ")})`);
+  ok(receipt.length === 0, `a dispatch receipt and its task.started carry no path, so they score nothing (got ${receipt.join(", ")})`);
+
+  const reported = extractMemoryPathReads([settled]);
+  ok(reported.length === 0, `🔴 the worker's REPORT on task.settled is never the seat's read (got ${reported.join(", ")})`);
+  const reportedObject = extractMemoryPathReads([{ ...settled, data: { ...(settled.data as object), output: { text: report } } }]);
+  ok(reportedObject.length === 0, `…and neither is the report when the output is an object (got ${reportedObject.join(", ")})`);
+  const asToolResult = extractMemoryPathReads([result(5, "bash", report)]);
+  ok(asToolResult.length === 1 && asToolResult[0] === `memory/${SILO}/MEMORY.md`, `…while the same text as a tool RESULT counts (got ${asToolResult.join(", ")})`);
 
   const echoed = extractMemoryPathReads([
     {

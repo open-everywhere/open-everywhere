@@ -9,7 +9,10 @@ import { readDeclaredSubagents } from "./read-subagents.js";
 const eveFrameworkTools = await readEveFrameworkTools();
 if (eveFrameworkTools.optInDrift !== undefined) console.warn(`  ! eve mount sets: ${eveFrameworkTools.optInDrift}`);
 const frameworkToolNames = eveFrameworkTools.all;
-const frameworkTools = classifyFrameworkTools(frameworkToolNames, eveFrameworkTools.defaultMounted, eveFrameworkTools.optIn);
+const frameworkTools = classifyFrameworkTools(frameworkToolNames, eveFrameworkTools.defaultMounted, eveFrameworkTools.optIn, [
+  ...eveFrameworkTools.reserved,
+  ...eveFrameworkTools.taskTools,
+]);
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const coreToolsDir = join(root, "packages", "core", "agent", "tools");

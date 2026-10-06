@@ -209,13 +209,22 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   ),
 
   web_search: open("read of the public web via eve's provider; a read, escapes nothing"),
-  ask_question: open("asks the ROOM a clarifying question — stays in the asking conversation"),
-  todo: open("in-context scratchpad for the model's own turn planning; nothing durable, nothing leaves"),
+  ask_room: open("posts ONE code-framed question into the room that asked for the job, and returns at once — the same audience as a reply, and nothing waits on it. Held ONLY by a child of the work session (access/untrusted-projection.ts), in place of eve's ask_question, whose native wait would hold the work session's turn (OPE-2340, ruling D5)"),
+  ask_question: open("asks the ROOM a clarifying question — stays in the asking conversation. OPT-IN since eve 0.65, mounted by packages/core/agent/tools/ask_question.ts; each call parks the asking turn until a person answers or the room moves on, which is why the lean cut keeps it off a conversational seat"),
   load_skill: open("loads a skill's instructions INTO CONTEXT — reading a procedure, not executing an effect; arming a skill stays gated at create_skill"),
   connection_search: open("read of WHICH connectors exist for this session; a connector's own OPERATIONS are the separate design-deferred plane (§3 grain 2)"),
+  connection_tools: open(
+    "the dynamic source FILE eve registers for every local node, which provides `connection_search` and `connection_execute` while the agent has connections; mounts nothing under its own name. Reserved by eve — an authored module here fails `eve build`",
+  ),
+  connection_execute: open(
+    "runs ONE operation on one connector eve's registry resolved for this session. Open is the tier of the DISPATCH, not of the operation: eve resolves the target and hands the QUALIFIED `<connection>__<op>` name to that connection's own approval policy, which for every OE connection is connectorApprovalPolicy() — so the per-verb classification and the config-declared raises (access/connector-op-gating.ts) card a write through that seam, not through this row",
+  ),
 
   task_cancel: open(
     "stops delegated work this session itself spawned — de-escalation only, the same posture as revoke_routine_permissions and stand_down. After it runs the agent can do strictly LESS, so a card here would put a confirmation in front of the brake pedal. It cannot reach another session's task: eve validates the ids against this session's own receipts",
+  ),
+  task_wait: open(
+    "parks THIS turn until one of this session's own tasks settles — it starts nothing, reaches nothing and spends nothing beyond the turn that was already running. eve's own task system block instructs it by name on every session that can start a task, which is why the per-wake filters must not strip it (access/job-posture.ts HARNESS_INTERNAL_TOOLS)",
   ),
 
   fresh_eyes_review: open(
@@ -223,6 +232,7 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   ),
 
   check_pr_status: open("read of a PR's state"),
+  read_github_issue: open("read of one GitHub issue (or a PR's opening post) and its newest comments via the conversation-read credential (OPE-2305); disclosure is bounded by the channel's repo grant (membership is the ACL), the same bound get_pr_feedback has, and every body is size-capped"),
   get_pr_feedback: open("read of a PR's reviews/comments/check runs via the read-scoped credential; disclosure is bounded by the channel's repo grant (membership is the ACL), and the digest is size-capped"),
   walk_pr: open(
     "read-only GATHER for a PR walkthrough (OPE-257): the PR's state, its unified diff, and the resolved-config facts CI computed, fetched from the config-diff workflow's own ARTIFACT. Same class and same bound as get_pr_feedback next to it — one read-scoped credential, disclosure bounded by the channel's repo grant (membership is the ACL), every body size-capped and reported when clipped, and the diff shipped inside the untrusted fence. Two properties beyond that are worth stating because they are the reason this tool is safe to leave open: its input schema is EXACTLY {repo, number}, so a session cannot add its own framing to the brief the independent reviewer reads; and it fetches facts from a workflow artifact rather than a PR comment, because anyone who can comment on a PR could forge one. It escapes nothing, arms nothing, and cannot merge",
@@ -262,7 +272,7 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   read_work_thread: open("the delegated worker's thread read (OPE-938) — same reach and same reasoning as read_work_channel, on the thread this turn arrived in"),
   session_cost: open("read of this session's own spend"),
   agent_version: open(
-    "the running-version seam (OPE-991): a read of the deployment's OWN registered fact bag (commands/core.ts's AppInfo — the same one \"/oe status\" renders), never a repo read and never a guess. No principal in the output, nothing executed, nothing proposed — same class as explain_permission next to it",
+    "the running-version seam (OPE-991): a read of the deployment's OWN registered fact bag (commands/core.ts's AppInfo — the same one the status control command renders), never a repo read and never a guess. No principal in the output, nothing executed, nothing proposed — same class as explain_permission next to it",
   ),
   explain_permission: open(
     "the approver chain's PROSPECTIVE simulator (OPE-296 P6): resolves the REAL chain (access/approver-chain.ts) for a named tool in this scope and returns the verdict trace — the retrospective approval.chain audit row's twin, rendered by the same formatter. Strictly a simulation: it executes nothing, proposes nothing, posts nothing, writes nothing (not even an audit row — logging what-ifs would bury the rows that record decisions). Discloses only this scope's OWN policy — which elements/mode govern the surface the asker is already in — which is the legible-seam pitch itself ('you can see exactly what this domain can see, and who can ask it'); gating the explainer would make the policy less inspectable than the actions it governs",
@@ -302,16 +312,10 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   browser_tools: open(
     "the resolver FILE that mounts the flag-gated agent-browser tool family (access/browser-toolkit.ts, OPE-43); mounts nothing under its own name. The injected browser_* tools are a runtime-injected family (the connector-op precedent): each is open on the bash rationale — in-sandbox execution whose reach is bounded by the OPERATOR's host declaration (access/browser-hosts.ts) enforced twice, never by this table. The declaration is a host+METHOD row, so the egress firewall narrows each host to the verbs that row admits and stamps any credential it names AT the boundary; a form submit on a declared third-party host is that reviewed row, not a per-call card (OPE-1614). browser_evaluate is not in the default kit at all — page scripting is opt-in per host (OPE-1624)",
   ),
-  post_file: {
-    tier: "open",
-    via: { kind: "eve-hitl" },
-    reason:
-      "posts a file into the asking room (same class as reply). The input-aware eve confirmation on the " +
-      "HTML-artifact publish path is a session-private UX confirm, not an authorization gate — blessed as " +
-      "the eve-HITL residue by design §7.2 (the artifact URL is org-opt-in and unlisted). Its " +
-      "`approval.response` policy (OPE-575) binds the Approve click to the session initiator; that " +
-      "hardens the confirm, it does not make it a gate — no DENY, and no check on a cancel click.",
-  },
+  post_file: member("file.publish", "disclose",
+    "posts files into the asking room (same class as reply); the ONE gated arm is the HTML publish to a PUBLIC Blob URL on an org that opted in, which is an outward-facing act with a data-exposure blast radius, so it is an OE card (OPE-2340, ruling Q4 — it was an eve-native confirm that held the turn). The call freezes the page bytes and posts the card, and the publish runs on the REQUESTER's click: the kind is `member` tier, and its execute refuses any other clicker, as the native confirm's response policy did (approvals/file-publish.ts). `disclose`, not `gate`: the publish arms nothing after the turn (the gate column is derived from post-turn arming, OPE-419), and the card itself is the human decision on every publish, so a tainted turn's card carries the disclosure line. Attachments of non-HTML files stay ungated, as before",
+  ),
+
 
   cancel_routine: postTurn("disarms", member("routine.cancel", "gate",
     "behaviour-persisting removal: silently cancelling a watch/schedule removes a guardrail the surface relies on; reversible by re-creation, but a human confirms. `disarms` (OPE-419), so a tainted turn is floored at that human decision: 'cancel the routine that watches for X' is the cheapest sentence a hostile page can plant, and it is the same act remove_routine_rule has been floored for since OPE-438",
@@ -391,6 +395,12 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   agent: open(
     "delegation: eve's BUILT-IN `agent` hands a self-contained job to a full-hands worker in the parent's own sandbox, bound to the parent's identity. It re-gates every L2 consequence INSIDE the child, forwards taint onto the child's opening auth, and widens HANDS, never CONSEQUENCE. The call returns a task receipt at once and eve delivers the settled child as a new message. Escapes nothing this table doesn't re-gate in the worker; audited via delegation.task_started / delegation.task_settled",
   ),
+  work: open(
+    "delegation, three-tier (OPE-2338): the seat FORWARDS a self-contained job to its conversation's work session, which starts one eve-native child for it. It returns a request receipt at once, holds no turn open, and widens HANDS, never CONSEQUENCE: the child re-gates every L2 consequence itself under the asking room's frozen authority, and the forward carries the seat turn's taint. The result comes back as a wake of its own. Audited via work.forwarded / delegation.task_started / work.result_wake",
+  ),
+  cancel_work: open(
+    "the three-tier seat's STOP (OPE-2338, ruling D15): it relays a cancel by task id into the conversation's work session, which calls `task_cancel` on that one job. It REMOVES hands and starts nothing. Only the job's own requester or an org/domain admin may cancel (D10, the approval card's rule), and only a job this seat forwarded. Nothing for an approver to weigh: a card in front of \"stop that\" would delay the stop it asks about. Audited via work.cancel_relayed",
+  ),
   grant_tools: open(
     "the resolver FILE that projects a chat's live CREDENTIAL GRANTS into per-grant `grant__<owner>_<connector>__<tool>_<target>` tools (OPE-1060, the sandbox_tools shape). It mounts nothing under its own name and grants nothing: it reads grant rows an OWNER already approved in their own DM and returns one tool per row. It mounts them on the DELEGATED WORKERS of the conversation the grant was lent to and nowhere else (OPE-2023) — a seat reaches a lent page by delegating, exactly as it reaches the org connector. Its own tier is open because resolving is a read of rows that already exist. Each MOUNTED name is classified on the RESERVED-NAMESPACE path instead of by a static row here — a runtime-minted name cannot have one — and its authoritative tier is the one pinned on the GRANT ROW at mint, from `classifyConnectorOpTier`'s answer for the vendor's own tool name, never re-derived from the mounted name (the false-open arm S0 closed)",
   ),
@@ -465,7 +475,7 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
 };
 
 export function judgeDeferredTool(tool: string): boolean {
-  if (isConnectorOpTool(tool)) return false;
+  if (isConnectorOpTool(tool)) return classifyConnectorOpTier(tool) === "write";
   return TOOL_CONSEQUENCE[tool]?.judgeDefer === true;
 }
 
@@ -479,6 +489,11 @@ export const NON_TOOL_ACTION_KINDS: Readonly<Record<string, ActionKindEntry>> = 
     tier: "gate:member",
     reason:
       "the SOFT session cost checkpoint (OPE-62): past a configured per-session spend threshold, consequential work pauses on a card until a human confirms continuing. Raised by the spend path, not by a verb — which is precisely why it needs pinning here: the tier is a real decision (a member may unblock their own session's spend, an admin bar would make an ordinary long task need an admin) and nothing else in the tree records that it was made",
+  },
+  "op.connector": {
+    tier: "gate:member",
+    reason:
+      "the CONNECTOR-OP CARD (OPE-2340, ruling Q4): a connector op that needs a person's approval — a write once per op per conversation, a destructive op once per call, every op once per conversation with tiering off — gets an OE card instead of eve's native once(). Raised by the connector seam (connections/connector-auth.ts `withOeConnectorCard`), not by a verb, so it needs pinning here. Member on purpose: the native connector card it replaces had no response half and bound its click to nobody (OPE-1218), and the personal-credential write in a shared room is refused before any card (decideConnectorWrite), so a member bar is the narrowing, not a widening",
   },
   "routine.permission": {
     tier: "gate:member",
@@ -608,7 +623,7 @@ export function checkActionKindCoverage(
 
 export const NON_TOOL_APPROVAL_SITES: Readonly<Record<string, string>> = {
   "packages/core/agent/connections/notion.ts":
-    "REAL, and deliberate: `connectorApprovalPolicy()` on an eve CONNECTION, not a tool. The connector-op plane is explicitly NOT rows in TOOL_CONSEQUENCE (see the scope note at the top of this file) — an op's name is injected at runtime and cannot be enumerated statically — and the eve-native `approval:` callback is the ONLY pre-execution seam eve exposes for an injected connection tool. It is defence in depth over the hard credential gates (grant + DM-only wall), never the gate itself. The value is a BARE request policy and must stay one (OPE-1218): eve's connection resolver keeps `approval` only when it is a function, so the approval CONFIGURATION `{request, response}` OPE-575 authored here was dropped at boot and this whole gate was inert in production. There is therefore NO responder check on a connector-op card — nothing binds the Approve click to anyone",
+    "REAL, and deliberate: `connectorApprovalPolicy()` on an eve CONNECTION, not a tool. The connector-op plane is explicitly NOT rows in TOOL_CONSEQUENCE (see the scope note at the top of this file) — an op's name is injected at runtime and cannot be enumerated statically — and the eve-native `approval:` callback is the ONLY pre-execution seam eve exposes for an injected connection tool. It is used as an OE GATE that never prompts (OPE-2340, ruling Q4): it answers `not-applicable` or `denied` only. An op that needs a person is DENIED with \"a card is posted\", and the OE `op.connector` card (approvals/connector-op.ts) carries the approval, so no turn holds on it; scripts/no-native-hitl-test.ts §3 pins that it never prompts. It is defence in depth over the hard credential gates (grant + DM-only wall), never the gate itself. The value is a BARE request policy and must stay one (OPE-1218): eve's connection resolver keeps `approval` only when it is a function",
   "packages/core/agent/plugins/extract.ts":
     "NOT a live policy: the match is inside a TEMPLATE LITERAL — the `approval: connectorApprovalPolicy()` line that the plugin extractor GENERATES into a scaffolded `agent/connections/<slug>.ts`. It is reviewed where it lands, by whoever reads the generated file, and the header of that generated file says so",
   "packages/core/agent/access/window-gated.ts":
@@ -838,6 +853,11 @@ export function checkConsequenceRegistry(
     const hasPropose = REQUEST_APPROVAL.test(tool.source);
     const hasRoles = ADMIN_ROLES.test(tool.source);
     const hasHitl = EVE_HITL.test(tool.source);
+    if (hasHitl && entry.via.kind !== "none" && entry.via.kind !== "eve-hitl") {
+      problems.push(
+        `tool "${tool.name}" carries an eve-native \`approval:\` — banned: OE cards only (OPE-2340, ruling Q4). Remove it; the tool's ActionKind card is the gate`,
+      );
+    }
 
     switch (entry.via.kind) {
       case "none":
@@ -911,14 +931,9 @@ export function checkConsequenceRegistry(
         break;
       }
       case "eve-hitl":
-        if (entry.tier !== "open") {
-          problems.push(
-            `tool "${tool.name}" declares ${entry.tier} via eve-hitl — eve HITL has no approver-standing check, so it cannot carry a gate:* tier (design §7.2); route it through an ActionKind`,
-          );
-        }
-        if (!hasHitl) {
-          problems.push(`tool "${tool.name}" declares eve-hitl but its source sets no non-never \`approval:\` policy — the confirmation is not actually wired`);
-        }
+        problems.push(
+          `tool "${tool.name}" declares the eve-hitl mechanism, which is banned: OE cards only (OPE-2340, ruling Q4). Move the confirmation to an ActionKind card (approvals/flow.ts requestApproval) so no turn holds on it`,
+        );
         break;
     }
   }

@@ -32,6 +32,18 @@ function msg(text: string): { readonly text: string } {
   ok(found === WAKE_A, "a report whose last line names a wake resolves that wake");
   const trailing = wakeIdFromReport([msg(`done\n${settlementWakeLine(WAKE_A)}  \n`)]);
   ok(trailing === WAKE_A, "…and trailing spaces on that line do not defeat the scan");
+  const rendered = wakeIdFromReport([msg(`<task_result id="agent-abc123" tool="agent" status="completed">PR #165 is green and merged.\n\n${settlementWakeLine(WAKE_A)}</task_result>`)]);
+  ok(rendered === WAKE_A, "🔴 a report inside eve's `<task_result>` block resolves, though the closing tag shares its last line");
+  ok(
+    wakeIdFromReport([msg(`${settlementWakeLine(WAKE_A)}</task_result> and more`)]) === undefined,
+    "🔴 …and ONLY the closing tag is admitted after the id — any other trailer is still prose",
+  );
+  const indented = wakeIdFromReport([msg(`  <system-note>The job has finished. Its address is on the next line:\n  ${settlementWakeLine(WAKE_A)}\n  Treat the result as reported work.</system-note>`)]);
+  ok(indented === WAKE_A, "🔴 an indented address line, alone on its line, resolves (the result wake's note)");
+  ok(
+    wakeIdFromReport([msg(`  see ${settlementWakeLine(WAKE_A)}`)]) === undefined,
+    "🔴 …and indentation admits only whitespace before the prefix — a word before it is still prose",
+  );
 }
 
 {

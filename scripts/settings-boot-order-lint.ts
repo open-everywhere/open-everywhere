@@ -54,8 +54,15 @@ const BOOT_ENTRIES: readonly BootEntry[] = [
     evalFloor: 300,
   },
   {
-    module: "agent/instrumentation.js",
-    why: "eve's instrumentation entry, read at server startup. Six lines that re-export the adapters instrumentation module, which reaches core's adapter-api.js barrel. It never imports register-config.js, so NOTHING in that graph is ever post-registration.",
+    module: "agent/instrumentation/otel.js",
+    why: "eve's instrumentation entry, read at server startup. One re-export of the adapters instrumentation module, which reaches core's adapter-api.js barrel. It never imports register-config.js, so NOTHING in that graph is ever post-registration. The path moved at eve 0.69.0 (OPE-2247): instrumentation is a DIRECTORY keyed by provider filename now, so a second provider is a second entry here, not a second export there.",
+    registers: false,
+    floor: 300,
+    evalFloor: 300,
+  },
+  {
+    module: "agent/instrumentation/otlp.js",
+    why: "eve's second instrumentation slot (OPE-2262): the OTLP collector destination. It re-exports a named export of the same adapters module as otel.js, and it reads the OTEL_EXPORTER_OTLP_* env at module load. It never imports register-config.js either.",
     registers: false,
     floor: 300,
     evalFloor: 300,

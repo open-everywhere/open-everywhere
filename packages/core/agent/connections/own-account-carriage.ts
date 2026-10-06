@@ -52,6 +52,19 @@ function turnHalfAdmits(ctx: BindableContext, stamp: { readonly sessionId: strin
   return now === stamp.turnId;
 }
 
+export function ownAccountStampToForward(ctx: BindableContext): string | undefined {
+  try {
+    const raw = readOwnAccountAttr(ctx);
+    const stamp = parseOwnAccountStamp(raw);
+    if (raw === undefined || stamp === undefined) return undefined;
+    const own = (ctx as { session?: { id?: string } }).session?.id;
+    if (typeof own !== "string" || own !== stamp.sessionId) return undefined;
+    return turnHalfAdmits(ctx, stamp) ? raw : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function adoptedOwnAccountAsk(ctx: BindableContext, vendors: readonly { readonly connector: string }[]): OwnAccountAsk | undefined {
   try {
     const stamp = parseOwnAccountStamp(readOwnAccountAttr(ctx));

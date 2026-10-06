@@ -1,13 +1,21 @@
 import assert from "node:assert/strict";
 
 import type { ExecResult } from "./deploy/lib.js";
-import { buildPostDecision, CLOUD_PROOF_CONTEXT, DESCRIPTION_MAX_LENGTH, formatInvocation, postCommitStatus } from "./deploy/cloud-proof-post-lib.js";
+import { buildPostDecision, CLOUD_PROOF_CONTEXT, DESCRIPTION_MAX_LENGTH, formatInvocation, pinInvocationToRepo, postCommitStatus } from "./deploy/cloud-proof-post-lib.js";
 import { parseEvidence, type ProofVerdict } from "./deploy/cloud-proof-verify-lib.js";
 
 let checks = 0;
-const check = (label: string, fn: () => void): void => {
+const pending: Promise<void>[] = [];
+const check = (label: string, fn: () => void | Promise<void>): void => {
   checks++;
-  fn();
+  const result = fn();
+  if (result) {
+    pending.push(
+      result.catch((err: unknown) => {
+        throw new Error(`${label}: ${err instanceof Error ? err.message : String(err)}`);
+      }),
+    );
+  }
 };
 
 const SHA = "abc1234";
@@ -198,5 +206,35 @@ check("postCommitStatus: a clean exit reports ok with the stdout detail", async 
   assert.equal(result.ok, true);
   if (result.ok) assert.match(result.detail, /"id": 1/);
 });
+
+const STATUS_ARGS = ["api", `repos/{owner}/{repo}/statuses/${SHA}`, "--method", "POST", "-f", "state=success", "-f", "description=see {repo}"];
+
+check("postCommitStatus: GITHUB_REPOSITORY set — the spawned `gh` names THAT repository, with no placeholder left", async () => {
+  const seen: string[][] = [];
+  const result = await postCommitStatus({ command: "gh", args: STATUS_ARGS }, async (_command, args) => {
+    seen.push([...args]);
+    return { code: 0, stdout: "{}", stderr: "" };
+  }, { GITHUB_REPOSITORY: "open-everywhere/open-everywhere" });
+  assert.equal(result.ok, true);
+  assert.deepEqual(seen, [["api", `repos/open-everywhere/open-everywhere/statuses/${SHA}`, "--method", "POST", "-f", "state=success", "-f", "description=see {repo}"]]);
+});
+
+check("postCommitStatus: GITHUB_REPOSITORY UNSET — the spawned `gh` keeps the placeholder", async () => {
+  const seen: string[][] = [];
+  const result = await postCommitStatus({ command: "gh", args: STATUS_ARGS }, async (_command, args) => {
+    seen.push([...args]);
+    return { code: 0, stdout: "{}", stderr: "" };
+  }, {});
+  assert.equal(result.ok, true);
+  assert.deepEqual(seen, [STATUS_ARGS]);
+});
+
+check("pinInvocationToRepo: the `--dry-run` rendering is the command a real run spawns", () => {
+  const pinned = pinInvocationToRepo({ command: "gh", args: STATUS_ARGS }, { GITHUB_REPOSITORY: "acme/oe" });
+  assert.equal(formatInvocation(pinned), `gh api repos/acme/oe/statuses/${SHA} --method POST -f state=success -f 'description=see {repo}'`);
+  assert.deepEqual(STATUS_ARGS[1], `repos/{owner}/{repo}/statuses/${SHA}`, "the decision's invocation must not change");
+});
+
+await Promise.all(pending);
 
 console.log(`✓ deploy-cloud-proof-post: ${checks} check(s) passed (fail-closed refusals, state mapping, dry-run rendering, spawn-trap seam — all offline, nothing posted)`);

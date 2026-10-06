@@ -1,21 +1,22 @@
 import { generateKeyPairSync, randomUUID, sign, type KeyObject } from "node:crypto";
 import { afterAll, expect, test } from "vitest";
 
+import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import {
-  awaitTaskSettlement,
+  armSettlement,
   auditCursor,
+  awaitWorkResult,
   bootAgent,
-  discordMentionWake,
-  disposeLater,
   DISCORD_GUILD_ID,
   DISCORD_LISTED_CHANNEL_ID,
+  discordMentionWake,
+  disposeLater,
   registerScript,
   rowsSinceCursor,
-  SETTLEMENT_DRAIN_SCRIPT,
-  taskIdOfDelegation,
   waitFor,
   waitForAuditRows,
   waitForChildren,
+  workTaskIdOfCall,
   type AuditCursor,
   type AuditRow,
   type ScriptedHandle,
@@ -126,11 +127,11 @@ const TRIGGER = { kind: "scheduled", cron: "0 9 * * 1-5", postPolicy: "every-run
 async function proposeRoutine(ids: string, prompt: string): Promise<string> {
   const handle: ScriptedHandle = registerScript({
     parent: [
-      { calls: [{ tool: "agent", input: { message: "set up the routine I asked for" }, id: `${ids}-delegate` }] },
-      { say: "the worker reported back" },
+      { calls: [{ tool: "work", input: { message: "set up the routine I asked for" }, id: `${ids}-delegate` }] },
+      { say: NO_REPLY_SENTINEL },
     ],
     child: [
-      { calls: [{ tool: "create_routine", input: { prompt, trigger: TRIGGER }, id: `${ids}-routine` }] },
+      { delayMs: 120_000, calls: [{ tool: "create_routine", input: { prompt, trigger: TRIGGER }, id: `${ids}-routine` }] },
       { say: "proposed" },
     ],
   });
@@ -138,19 +139,24 @@ async function proposeRoutine(ids: string, prompt: string): Promise<string> {
 
   const wakeCursor = await auditCursor();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please set up the routine" });
-  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
+  const receiptStep = await waitFor(
+    () => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1),
+    `the ${ids} receipt step to be served`,
+  );
+  const settlement = disposeLater(armSettlement(handle, { parent: [{ say: NO_REPLY_SENTINEL }] }));
+  const taskId = await workTaskIdOfCall(wakeCursor, handle, `${ids}-delegate`, `${ids} forward receipt`);
+  handle.releaseHolds();
   await waitForChildren(handle, { count: 1, lastStepIndex: 1, label: `the ${ids} worker's own terminal step` });
+  expect(handle.holdsCutShort(), "the worker's hold ended on the release, not on its 120 s backstop").toBe(1);
+  const resultStep = await awaitWorkResult({ handle: settlement, taskId, label: `the ${ids} seat step that read the worker's result` });
+  expect(resultStep.stepIndex).toBe(0);
+  expect(typeof receiptStep.turnId, "the recorder stamps eve's turn id").toBe("string");
+  expect(resultStep.turnId, "the result arrives in a seat turn of its own, never the proposal turn (OPE-2338)").not.toBe(receiptStep.turnId);
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   expect(handle.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
-  const drained = await awaitTaskSettlement({
-    dispatched: handle,
-    taskId: taskIdOfDelegation(handle, `the ${ids} delegation`),
-    script: SETTLEMENT_DRAIN_SCRIPT,
-    label: `the ${ids} worker's settlement wake`,
-  });
-  disposeLater(drained.handle);
-  expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-  drained.handle.dispose();
+  expect(settlement.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  expect(settlement.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
+  settlement.dispose();
 
   const requested = await waitForAuditRows({
     probe: async () => {
@@ -299,54 +305,137 @@ test("🔴 a verdict is final: an approve click on the row test ② REJECTED fli
   expect((await armedRoutines()).some((r) => r.prompt === PROMPT)).toBe(false);
 });
 
-test("approve_session on a pr.open row writes the session memo and approval.session_granted BEFORE execute — the grant survives a failing execute", async () => {
-  await armAgent();
-  const sessionId = `it-session-${randomUUID()}`;
-  const id = await seedPending({
-    kind: "pr.open",
-    args: {
-      org,
-      scopeKey: SCOPE_KEY,
-      repo: "open-everywhere-it/never-reached",
-      head: "oe/it-556",
-      base: "main",
-      title: "an integration-tier proposal",
-      body: "the frozen body",
-      headSha: "0".repeat(40),
-      requestedBy: CLICKER_ID,
-      sessionId,
-    },
+function prOpenArgs(sessionId: string, title: string): Record<string, unknown> {
+  return {
+    org,
+    scopeKey: SCOPE_KEY,
+    repo: "open-everywhere-it/never-reached",
+    head: "oe/it-556",
+    base: "main",
+    title,
+    body: "the frozen body",
+    headSha: "0".repeat(40),
+    requestedBy: CLICKER_ID,
+    sessionId,
+  };
+}
+
+async function discordThreadKey(threadId: string): Promise<string> {
+  const { conversationGrantKey } = await import("@open-everywhere/core/agent/approvals/session-grant.js");
+  const key = conversationGrantKey({
+    platform: "discord",
+    workspace: DISCORD_GUILD_ID,
+    domainSurface: DISCORD_LISTED_CHANNEL_ID,
+    surface: threadId,
+    mode: "channel",
   });
+  expect(key, "a Discord thread has a conversation key").toBeDefined();
+  return key!;
+}
+
+async function controlWrite(name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+  const { buildControlServer } = await import("@open-everywhere/core/agent/control/server.js");
+  const server = buildControlServer({ includeWrites: true, actor: "it-admin@example.com" });
+  const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverT);
+  const client = new Client({ name: "approval-click-it", version: "0" });
+  await client.connect(clientT);
+  try {
+    const res = (await client.callTool({ name, arguments: args })) as { isError?: boolean; content?: { type: string; text?: string }[] };
+    const text = res.content?.find((c) => c.type === "text")?.text ?? "";
+    expect(res.isError, `${name} answered an error: ${text}`).not.toBe(true);
+    return JSON.parse(text) as Record<string, unknown>;
+  } finally {
+    await client.close();
+  }
+}
+
+test("🔴 approve_session on a pr.open card in a THREAD grants NOTHING (OPE-2363): no memo, no grant row, and a second identical card in the same thread stays pending", async () => {
+  await armAgent();
+  const run = randomUUID().slice(0, 8);
+  const keyA = await discordThreadKey(`91${String(Date.now())}1`);
+
+  const clicked = await seedPending({ kind: "pr.open", args: prOpenArgs(keyA, `thread A (${run})`) });
+  const second = await seedPending({ kind: "pr.open", args: prOpenArgs(keyA, `thread A (${run})`) });
+
+  const clickCursor = await auditCursor();
+  const ok = await postClick({ customId: await customIdFor(clicked, "approve_session") });
+  expect(ok.status).toBe(200);
+  const rows = await decideRows(clickCursor, clicked);
+
+  expect(rows.filter((r) => r.action === "approval.session_granted").map((r) => r.detail?.id)).toEqual([]);
+  const s = await getStore();
+  expect(await s.getSessionApproval(org, keyA, "pr.open", new Date().toISOString())).toBeNull();
+  expect((await s.getPendingAction(org, clicked))?.status).toBe("approved");
+  expect(rows.some((r) => r.action === "approval.failed" && r.detail?.id === clicked)).toBe(true);
+  expect((await s.getPendingAction(org, second))?.status).toBe("pending");
+});
+
+test("approve_session on a ROUTINE's pr.open card writes the STANDING grant before execute, releases the routine's sibling card, and revoke_session_grants by the routine key deletes it", async () => {
+  await armAgent();
+  const run = randomUUID().slice(0, 8);
+  const routineKey = `oe-routine:it-${run}:g1`;
+  await (await getStore()).addRoutine({ id: `it-${run}`, org, surfaceKey: SCOPE_KEY, trigger: { kind: "interval", everyMinutes: 60 }, prompt: "x", createdAt: new Date().toISOString(), status: "active", consecutiveFailures: 0 });
+  const clicked = await seedPending({ kind: "pr.open", args: prOpenArgs(routineKey, `routine, clicked (${run})`) });
+  const sibling = await seedPending({ kind: "pr.open", args: prOpenArgs(routineKey, `routine, sibling (${run})`) });
+  const threadCard = await seedPending({ kind: "pr.open", args: prOpenArgs(await discordThreadKey(`93${String(Date.now())}1`), `a thread (${run})`) });
 
   const s = await getStore();
-  expect(await s.getSessionApproval(org, sessionId, "pr.open", new Date().toISOString())).toBeNull();
+  expect(await s.getSessionApproval(org, routineKey, "pr.open", new Date().toISOString())).toBeNull();
+
+  const clickCursor = await auditCursor();
+  const ok = await postClick({ customId: await customIdFor(clicked, "approve_session") });
+  expect(ok.status).toBe(200);
+  const rows = await decideRows(clickCursor, clicked);
+
+  const granted = rows.find((r) => r.action === "approval.session_granted" && r.detail?.id === clicked);
+  expect(granted).toBeDefined();
+  expect(granted!.detail?.memoKind).toBe("pr.open");
+  expect(granted!.detail?.reach).toBe("routine");
+  expect(granted!.principalId).toBe(CLICKER_ID);
+  const memo = await s.getSessionApproval(org, routineKey, "pr.open", new Date().toISOString());
+  expect(memo).not.toBeNull();
+  expect(memo!.grantedBy).toBe(CLICKER_ID);
+  const ttlMs = Date.parse(memo!.expiresAt) - Date.parse(memo!.createdAt);
+  expect(ttlMs, "the routine grant carries the 24 h clock, never the no-expiry sentinel").toBe(24 * 3_600_000);
+  expect(rows.some((r) => r.action === "approval.failed" && r.detail?.id === clicked)).toBe(true);
+
+  await waitFor(
+    async () => ((await s.getPendingAction(org, sibling))?.status === "approved" ? true : undefined),
+    "the routine's sibling card to be released by the grant",
+    60_000,
+  );
+  expect((await s.getPendingAction(org, threadCard))?.status).toBe("pending");
+
+  const revoke = await controlWrite("revoke_session_grants", { org, surfaceKey: SCOPE_KEY, sessionId: routineKey, reason: "OPE-2363 integration leg" });
+  expect(Number(revoke.revoked)).toBeGreaterThanOrEqual(1);
+  expect(await s.getSessionApproval(org, routineKey, "pr.open", new Date().toISOString())).toBeNull();
+  const again = await controlWrite("revoke_session_grants", { org, surfaceKey: SCOPE_KEY, sessionId: routineKey });
+  expect(Number(again.revoked)).toBe(0);
+});
+
+test("🔴 approve_session on a pr.open row frozen with a WORK-SESSION token grants NOTHING and degrades to a one-off approve (OPE-2363)", async () => {
+  await armAgent();
+  const workToken = `oe-dom:e2e-unified:win:w/e2e-unified:oe-sup:it-${randomUUID().slice(0, 8)}`;
+  const id = await seedPending({ kind: "pr.open", args: prOpenArgs(workToken, "a legacy work-session card") });
 
   const clickCursor = await auditCursor();
   const ok = await postClick({ customId: await customIdFor(id, "approve_session") });
   expect(ok.status).toBe(200);
   const rows = await decideRows(clickCursor, id);
 
-  const granted = rows.find((r) => r.action === "approval.session_granted" && r.detail?.id === id);
-  expect(granted).toBeDefined();
-  expect(granted!.detail?.memoKind).toBe("pr.open");
-  expect(granted!.detail?.kind).toBe("pr.open");
-  expect(granted!.principalId).toBe(CLICKER_ID);
-
-  const memo = await s.getSessionApproval(org, sessionId, "pr.open", new Date().toISOString());
-  expect(memo).not.toBeNull();
-  expect(memo!.grantedBy).toBe(CLICKER_ID);
-  expect(Date.parse(memo!.expiresAt)).toBeGreaterThan(Date.now());
-
-  const failed = rows.find((r) => r.action === "approval.failed" && r.detail?.id === id);
-  expect(failed).toBeDefined();
-  expect(String(failed!.detail?.error)).toContain("no GitHub credential");
-  expect(rows.filter((r) => r.action === "approval.approved" && r.detail?.id === id).map((r) => r.action)).toEqual([]);
+  expect(rows.filter((r) => r.action === "approval.session_granted").map((r) => r.detail?.id)).toEqual([]);
+  const s = await getStore();
+  expect(await s.getSessionApproval(org, workToken, "pr.open", new Date().toISOString())).toBeNull();
   expect((await s.getPendingAction(org, id))?.status).toBe("approved");
+  expect(rows.some((r) => r.action === "approval.failed" && r.detail?.id === id)).toBe(true);
 });
 
-test("approve_session on a routine.create row grants NOTHING and degrades to a one-off approve — the control test ④ rests on", async () => {
+test("approve_session on a routine.create row grants NOTHING and degrades to a one-off approve — the control test ④c rests on", async () => {
   await armAgent();
-  const sessionId = `it-session-${randomUUID()}`;
+  const sessionId = `oe-routine:it-c5-${randomUUID().slice(0, 8)}:g1`;
   const PROMPT = "summarise the numbers every weekday morning (c5, seeded)";
   const id = await seedPending({
     kind: "routine.create",

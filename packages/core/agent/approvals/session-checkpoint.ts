@@ -13,6 +13,10 @@ export const CHECKPOINT_ASK_MEMO = "session.checkpoint.asked";
 export const DURABLE_GRANT_DISCLOSURE =
   "This job keeps one running total, so approving sets a mark rather than a timer: it asks again once it has spent that much again, and the approval does not lapse on its own.";
 
+export function liveGrantDisclosure(): string {
+  return `Approving lets it continue in this session for up to ${checkpointTtlHours()} h.`;
+}
+
 export function checkpointTtlHours(): number {
   return getSettings().approvals.checkpointTtlHours;
 }
@@ -33,7 +37,7 @@ const sessionCheckpoint: ActionKind<SessionCheckpointArgs> = {
       "Keep this session going past its cost checkpoint?",
       `In ${args.scopeLabel ?? args.scopeKey}.`,
       "Approve to let the agent do consequential work again — pull requests, memory writes and the like. Decline to keep that paused. Reading and replying carry on either way.",
-      ...(args.durableSession ? [DURABLE_GRANT_DISCLOSURE] : []),
+      ...(args.durableSession ? [DURABLE_GRANT_DISCLOSURE] : [liveGrantDisclosure()]),
     ];
   },
   async execute(args, decidedBy) {
@@ -56,7 +60,7 @@ const sessionCheckpoint: ActionKind<SessionCheckpointArgs> = {
     emitTelemetry("oe.feature.used", { "oe.feature": "spend_checkpoint", "oe.outcome": "continued" });
     return args.durableSession
       ? "cost checkpoint cleared — the agent may do consequential work again, and asks again only once it has spent as much a second time"
-      : "cost checkpoint cleared — the agent may do consequential work again for the rest of this session";
+      : `cost checkpoint cleared — the agent may do consequential work again in this session for up to ${checkpointTtlHours()} h`;
   },
 };
 

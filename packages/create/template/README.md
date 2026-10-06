@@ -45,7 +45,7 @@ without a public tunnel.
 | `roster.config.ts` | What the agent can do: which packages contribute, and which eve built-ins it takes away. |
 | `roster.lock.json` | The reviewed roll-call of every contribution. `npx oe build --accept` updates it. Review its diff. |
 | `agent/agent.ts` | The eve agent definition. |
-| `agent/access/` | Bundles and bindings (what the agent may reach, and where), connector credentials, browser hosts. |
+| `agent/access/` | Bundles and bindings (what the agent may reach, and where), connector credentials, browser hosts, and the pre-approval rules (what runs with no approval card). |
 | `agent/identity/` | Trusted surfaces, principals and groups. |
 | `agent/memory/config/` | Memory domains and silos. |
 | `agent/model/` | Model stacks and the org model policy. |
@@ -62,6 +62,24 @@ without a public tunnel.
 committed. The `*.generated.ts` files are machine-owned overlays that the agent's own approval flows
 write by pull request. Do not edit them by hand. `npx oe build --check` (or `npx oe overlays check`)
 proves they hold only data. After a data edit, run `npx oe overlays normalize`.
+
+## Approvals
+
+The agent asks a person before a gated act: it posts a card, and a person approves or rejects it.
+The approval judge skips the card for routine acts. It runs in `enforce` mode by default, and it
+runs an act with no card only when one of the rules in `agent/access/pre-approval-rules.ts` covers
+that act. The audit row (`approval.judge.verdict`) records which rule. The app ships four starter
+rules: a pull request, a routine, an access request and a connector write (a Notion page, a Linear
+issue), each only when a person in the conversation asked for it. Edit the rules in that file and
+deploy the change.
+
+Every admin act and every memory erasure always posts a card, whatever the rules say. So does a destructive connector op
+(a delete, an archive) and a connector op on a person's own account. A judge allow of a connector
+write runs that one call only. When the judge model cannot be
+reached or does not answer in time, the card is posted. A consult costs up to two calls to the
+`judge` model role. To turn the judge off, set `approvals: { judgeMode: "off" }` in
+`agent/settings/settings.ts`. See the
+[pre-approval rules guide](https://github.com/open-everywhere/open-everywhere/blob/main/docs/how-it-works/pre-approval-rules.md).
 
 ## Add a surface
 

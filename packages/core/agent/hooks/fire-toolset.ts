@@ -2,26 +2,25 @@ import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
 import { appendAudit } from "../audit/audit.js";
 import { isScheduleOriginatedAuth, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
+import { jobFireStamped } from "../access/job-posture.js";
 import { resolvePartition } from "../memory/partition.js";
 import { permissionKindsUnderKey } from "../routines/declared-permissions.js";
 import { routineMarker, routinePermissionKeyStamped } from "../routines/routine.js";
 import {
   candidateConnectionsForDeclarations,
   declaredConnectorToolNames,
-  projectDeclaredConnectorOps,
-  ROUTINE_DECLARED_OPS_MOUNTED_ACTION,
+  resolveDeclaredConnectorOps,
+  ROUTINE_DECLARED_OPS_RESOLVED_ACTION,
   type ConnectionCatalogue,
+  type DeclaredConnectorOp,
 } from "../routines/fire-toolset.js";
 
 const EVE_CONTEXT_STORAGE = Symbol.for("eve.context-storage");
 
 export const CONNECTION_REGISTRY_KEY_NAME = "eve.connectionRegistry";
 
-export const CONNECTION_SEARCH_RESULTS_KEY_NAME = "eve.connectionSearchResults";
-
 interface EveContextContainer {
   get(key: { readonly name: string }): unknown;
-  set(key: { readonly name: string }, value: unknown): unknown;
 }
 
 interface EveConnectionRegistry {
@@ -37,7 +36,7 @@ function eveContext(): EveContextContainer | undefined {
     const store = storage?.getStore?.();
     if (store === null || typeof store !== "object") return undefined;
     const container = store as Partial<EveContextContainer>;
-    return typeof container.get === "function" && typeof container.set === "function" ? (store as EveContextContainer) : undefined;
+    return typeof container.get === "function" ? (store as EveContextContainer) : undefined;
   } catch {
     return undefined;
   }
@@ -52,16 +51,21 @@ function connectionRegistry(container: EveContextContainer): EveConnectionRegist
     : undefined;
 }
 
-function projectedRows(container: EveContextContainer): readonly unknown[] {
-  const value = container.get({ name: CONNECTION_SEARCH_RESULTS_KEY_NAME });
-  return Array.isArray(value) ? (value as readonly unknown[]) : [];
+const declaredOpsSlot = defineState<{ ops?: readonly DeclaredConnectorOp[] }>("open-everywhere.fire-declared-ops", () => ({}));
+
+export function declaredOpsForReach(): readonly DeclaredConnectorOp[] {
+  try {
+    return declaredOpsSlot.get().ops ?? [];
+  } catch {
+    return [];
+  }
 }
 
-function projectedNames(rows: readonly unknown[]): string[] {
-  return rows.flatMap((row) => {
-    const name = row !== null && typeof row === "object" ? (row as { qualifiedName?: unknown }).qualifiedName : undefined;
-    return typeof name === "string" && name.length > 0 ? [name] : [];
-  });
+function keepDeclaredOps(ops: readonly DeclaredConnectorOp[]): void {
+  try {
+    declaredOpsSlot.update(() => ({ ops }));
+  } catch {
+  }
 }
 
 export const CATALOGUE_READ_BUDGET_MS = 3_000;
@@ -82,16 +86,8 @@ async function readCatalogue(
     if (!Array.isArray(metadata)) return { connection, ops: [] };
     const ops = metadata.flatMap((entry) => {
       if (entry === null || typeof entry !== "object") return [];
-      const row = entry as { name?: unknown; description?: unknown; inputSchema?: unknown; outputSchema?: unknown };
-      if (typeof row.name !== "string" || row.name.length === 0) return [];
-      return [
-        {
-          name: row.name,
-          description: typeof row.description === "string" ? row.description : "",
-          ...(row.inputSchema !== undefined ? { inputSchema: row.inputSchema } : {}),
-          ...(row.outputSchema !== undefined ? { outputSchema: row.outputSchema } : {}),
-        },
-      ];
+      const name = (entry as { name?: unknown }).name;
+      return typeof name === "string" && name.length > 0 ? [{ name }] : [];
     });
     return { connection, ops };
   } catch {
@@ -101,13 +97,13 @@ async function readCatalogue(
   }
 }
 
-export interface DeclaredOpMountOutcome {
+export interface DeclaredOpResolutionOutcome {
   readonly org: string;
-  readonly mounted: readonly string[];
+  readonly resolved: readonly string[];
   readonly unresolved: readonly string[];
 }
 
-export async function mountDeclaredOps(ctx: HookContext, budgetMs: number = CATALOGUE_READ_BUDGET_MS): Promise<DeclaredOpMountOutcome | undefined> {
+export async function resolveDeclaredOps(ctx: HookContext, budgetMs: number = CATALOGUE_READ_BUDGET_MS): Promise<DeclaredOpResolutionOutcome | undefined> {
   if (isSubagentChildContext(ctx as unknown as BindableContext)) return undefined;
   const slots = ctx as unknown as {
     readonly session?: { readonly auth?: { readonly current?: unknown; readonly initiator?: unknown } | null };
@@ -116,11 +112,15 @@ export async function mountDeclaredOps(ctx: HookContext, budgetMs: number = CATA
     | { authenticator?: unknown; principalId?: unknown; principalType?: unknown; attributes?: Record<string, string | readonly string[]> }
     | null;
   if (!isScheduleOriginatedAuth(auth)) return undefined;
+  if (jobFireStamped(auth?.attributes ?? {})) return undefined;
   const permissionKey = routinePermissionKeyStamped(auth?.attributes);
   if (permissionKey === undefined) return undefined;
 
   const org = orgOf(ctx, auth?.attributes);
   const declared = declaredConnectorToolNames(await permissionKindsUnderKey(org, permissionKey, new Date().toISOString()));
+  const held = declaredOpsForReach();
+  const kept = held.filter((op) => declared.includes(op.qualifiedName));
+  if (kept.length !== held.length) keepDeclaredOps(kept);
   if (declared.length === 0) return undefined;
 
   const container = eveContext();
@@ -128,16 +128,13 @@ export async function mountDeclaredOps(ctx: HookContext, budgetMs: number = CATA
   const registry = connectionRegistry(container);
   if (registry === undefined) return undefined;
 
-  const candidates = candidateConnectionsForDeclarations(declared, registry.getConnectionNames());
-  if (candidates.length === 0) return { org, mounted: [], unresolved: declared };
+  const already = kept.map((op) => op.qualifiedName);
+  const pending = declared.filter((name) => !already.includes(name));
+  const candidates = candidateConnectionsForDeclarations(pending, registry.getConnectionNames());
   const catalogues = await Promise.all(candidates.map((connection) => readCatalogue(registry, connection, budgetMs)));
-
-  const already = projectedRows(container);
-  const projection = projectDeclaredConnectorOps({ declared, catalogues, alreadyProjected: projectedNames(already) });
-  if (projection.mount.length > 0) {
-    container.set({ name: CONNECTION_SEARCH_RESULTS_KEY_NAME }, [...already, ...projection.mount]);
-  }
-  return { org, mounted: projection.mount.map((row) => row.qualifiedName), unresolved: projection.unresolved };
+  const resolution = resolveDeclaredConnectorOps({ declared, catalogues, alreadyResolved: already });
+  keepDeclaredOps([...kept, ...resolution.resolved]);
+  return { org, resolved: resolution.resolved.map((op) => op.qualifiedName), unresolved: resolution.unresolved };
 }
 
 function orgOf(ctx: HookContext, attributes: Readonly<Record<string, string | readonly string[]>> | undefined): string {
@@ -150,14 +147,14 @@ function orgOf(ctx: HookContext, attributes: Readonly<Record<string, string | re
   }
 }
 
-const auditedMount = defineState<{ key?: string }>("open-everywhere.fire-declared-ops-audited", () => ({}));
+const auditedResolution = defineState<{ key?: string }>("open-everywhere.fire-declared-ops-audited", () => ({}));
 
-async function auditMount(ctx: HookContext, org: string, outcome: DeclaredOpMountOutcome): Promise<void> {
-  if (outcome.mounted.length === 0 && outcome.unresolved.length === 0) return;
-  const key = JSON.stringify([outcome.mounted, outcome.unresolved]);
+async function auditResolution(ctx: HookContext, org: string, outcome: DeclaredOpResolutionOutcome): Promise<void> {
+  if (outcome.resolved.length === 0 && outcome.unresolved.length === 0) return;
+  const key = JSON.stringify([declaredOpsForReach().map((op) => op.qualifiedName), outcome.unresolved]);
   try {
-    if (auditedMount.get().key === key) return;
-    auditedMount.update(() => ({ key }));
+    if (auditedResolution.get().key === key) return;
+    auditedResolution.update(() => ({ key }));
   } catch {
   }
   try {
@@ -167,9 +164,9 @@ async function auditMount(ctx: HookContext, org: string, outcome: DeclaredOpMoun
       platform: p.platform,
       workspace: p.workspace,
       surface: p.surface,
-      action: ROUTINE_DECLARED_OPS_MOUNTED_ACTION,
+      action: ROUTINE_DECLARED_OPS_RESOLVED_ACTION,
       detail: {
-        mounted: outcome.mounted,
+        resolved: outcome.resolved,
         ...(outcome.unresolved.length > 0 ? { unresolved: outcome.unresolved } : {}),
       },
     });
@@ -181,8 +178,8 @@ export default defineHook({
   events: {
     "turn.started": async (_event, ctx) => {
       try {
-        const outcome = await mountDeclaredOps(ctx);
-        if (outcome !== undefined) await auditMount(ctx, outcome.org, outcome);
+        const outcome = await resolveDeclaredOps(ctx);
+        if (outcome !== undefined) await auditResolution(ctx, outcome.org, outcome);
       } catch {
       }
     },

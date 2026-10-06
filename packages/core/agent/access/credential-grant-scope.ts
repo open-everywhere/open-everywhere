@@ -3,6 +3,8 @@ import { domainForChannel, windowedSupervisorEnabled } from "../memory/domain.js
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import type { CredentialGrantMode, CredentialGrantRow } from "../operational/credential-grant-rows.js";
 import { getConfig } from "./config.js";
+import { resolveOwnWindowToken } from "./delegation-mount.js";
+import { isThreadSeatWindowId, isWorkWindowId, parseWindowToken } from "../channels/window-key.js";
 import {
   GRANT_DOMAIN_KEY_PREFIX,
   GRANT_KEY_SEGMENT_SEPARATOR,
@@ -21,6 +23,7 @@ export type GrantDomainScopeVerdict =
 
 export function conversationGrainOf(ctx: BindableContext): WindowGrain {
   if (!isSubagentChildContext(ctx)) return windowGrainOf(ctx);
+  if (isThreadSeatWorkSessionToken(resolveOwnWindowToken(ctx))) return "thread";
   return stampedWindowGrainOf(ctx) ?? GRANT_ROOM_GRAIN;
 }
 
@@ -64,4 +67,10 @@ export function grantScopeAdmits(
 ): boolean {
   if (sessionScopeKey.length > 0 && grant.scopeKey === sessionScopeKey) return true;
   return grant.mode === "standing" && domainScopeKey !== undefined && domainScopeKey.length > 0 && grant.scopeKey === domainScopeKey;
+}
+
+function isThreadSeatWorkSessionToken(token: string | undefined): boolean {
+  if (token === undefined) return false;
+  const key = parseWindowToken(token.startsWith("unified:") ? token.slice("unified:".length) : token);
+  return key !== undefined && isWorkWindowId(key.windowId) && isThreadSeatWindowId(key.windowId.slice("w/".length));
 }

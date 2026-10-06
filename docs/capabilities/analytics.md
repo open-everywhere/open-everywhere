@@ -20,8 +20,8 @@ Three datasets ship (all already recorded — no new storage):
 | dataset | one row is… | dimensions | measures |
 |---|---|---|---|
 | `audit`  | one recorded **action** (append-only) | `ts`, `platform`, `workspace`, `surface`, `action`, `principal`, `domain` | `rows` |
-| `usage`  | one **model call** (~90-day retention on self-host) | `ts`, `surface`, `principal`, `kind`, `model`, `session`, `routine`, `depth`, `root_session`, `cost_source`, `domain` | `events`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `reasoning_tokens`, `reasoning_reported_calls`, `cache_reported_calls`, `sessions`, `est_usd`, `measured_usd` |
-| `spend`  | one **monthly** ledger row, keyed by surface, principal, routine, model and cost source | `period`, `surface`, `principal`, `routine`, `model`, `cost_source`, `domain` | `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `reasoning_tokens`, `calls`, `usd`, `usd_measured` |
+| `usage`  | one **model call** (append-only; the default store deletes none — see [retention](../security/spend-and-cost.md#per-event-usage-capture)) | `ts`, `surface`, `principal`, `kind`, `model`, `session`, `routine`, `depth`, `root_session`, `cost_source`, `domain` | `events`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `reasoning_tokens`, `reasoning_reported_calls`, `cache_reported_calls`, `sessions`, `est_usd`, `measured_usd` |
+| `spend`  | one **monthly** ledger row, keyed by surface, principal, routine, model and cost source (the app deletes none) | `period`, `surface`, `principal`, `routine`, `model`, `cost_source`, `domain` | `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `reasoning_tokens`, `calls`, `usd`, `usd_measured` |
 
 The registry `packages/core/agent/analytics/registry.ts` holds this vocabulary. The model picks
 names from it. A name the registry does not list fails schema validation before the host compiles
@@ -57,7 +57,9 @@ Rows written before that stamp existed therefore report as `(unclassified)` when
 aggregate query may only group by a column that cannot split one session's rows, or the distinct
 session count would double. A `spend_report` or `usage_report` line reads the older tag and so masks
 a few of those rows more precisely. Both answers hide the surface; they differ only in which bucket
-an old row lands in, and both heal as rows age out.
+an old row lands in. 🔴 **The bucket does not shrink by itself.** The default store deletes no usage
+or spend row, so an `(unclassified)` row stays until your own retention job on the database removes
+it. Only the deprecated SQLite floor prunes usage rows, after 90 days.
 
 **Every dataset carries the full property, `audit` included.** The audit record was the last
 exception: its row carried no conversation mode, so the mask fell back to a Slack id shape and a

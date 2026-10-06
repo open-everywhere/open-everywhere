@@ -252,6 +252,41 @@ for (const pkgDir of targets) {
       }
     }
 
+    const compiledCli = listing.filter((l) => l.startsWith("dist/scripts/") && l.endsWith(".js"));
+    for (const f of compiledCli) {
+      const src = readFileSync(join(pkgDir, f), "utf8");
+      for (const spec of [...src.matchAll(/(?:\bfrom|\bimport\s*\(?)\s*"(\.[^"]+)"/g)].map((m) => m[1]!)) {
+        const literal = join(dirname(f), spec).replace(/\\/g, "/");
+        if (!listing.includes(literal)) fail(`compiled CLI module ${f} imports ${spec}, which resolves to ${literal} — NOT in the tarball`);
+      }
+      for (const { spec, resolved } of runtimeUrlPaths(f, src)) {
+        if (!inListing(resolved)) fail(`compiled CLI module ${f} reads ${spec} at runtime, which resolves to ${resolved} — NOT in the tarball`);
+      }
+    }
+
+    const declared = new Set([name, ...Object.keys(manifest.dependencies ?? {}), ...Object.keys(manifest.peerDependencies ?? {})]);
+    const reach = [...binTargets.filter((t) => listing.includes(t)), ...compiledCli];
+    const reached = new Set<string>();
+    while (reach.length > 0) {
+      const f = reach.pop()!;
+      if (reached.has(f)) continue;
+      reached.add(f);
+      const src = readFileSync(join(pkgDir, f), "utf8");
+      for (const spec of [...src.matchAll(/(?:\bfrom|\bimport\s*\(?)\s*"([.@a-z0-9][\w./@:-]*)"/g)].map((m) => m[1]!)) {
+        if (spec.startsWith(".")) {
+          const next = join(dirname(f), spec).replace(/\\/g, "/");
+          if (next.endsWith(".js") && listing.includes(next)) reach.push(next);
+          continue;
+        }
+        if (spec.startsWith("node:")) continue;
+        const parts = spec.split("/");
+        const pkg = spec.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0]!;
+        if (!declared.has(pkg)) {
+          fail(`${f} imports "${spec}", but ${pkg} is not in dependencies or peerDependencies — a consumer's install does not carry it`);
+        }
+      }
+    }
+
     const pl = run(...localBinCommand("publint", "publint", ["--strict", pkgDir]));
     if (pl.code !== 0) fail(`publint:\n${pl.out.trim()}`);
     const at = isBin ? { code: 0, out: "" } : run(...localBinCommand("@arethetypeswrong/cli", "attw", ["--pack", pkgDir, "--profile", "esm-only"]));

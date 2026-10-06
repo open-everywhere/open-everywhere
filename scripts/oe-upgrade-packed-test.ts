@@ -54,20 +54,20 @@ function makeNew(pkg: string, options: { readonly codemodId?: string; readonly n
   manifest.version = NEW;
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
-  const notesPath = join(pkg, "scripts", "upgrade-notes.ts");
+  const notesPath = join(pkg, "dist", "scripts", "upgrade-notes.js");
   writeFileSync(notesPath, `${readFileSync(notesPath, "utf8")}\nexport const OPE_2238_STAMP = ${JSON.stringify(STAMP)};\n`);
 
   if (options.codemodId !== undefined) {
-    const registryPath = join(pkg, "scripts", "upgrade-codemods.ts");
+    const registryPath = join(pkg, "dist", "scripts", "upgrade-codemods.js");
     const before = readFileSync(registryPath, "utf8");
-    const empty = "export const CODEMODS: readonly Codemod[] = [];";
+    const empty = "export const CODEMODS = [];";
     assert.ok(before.includes(empty), `the packed registry still declares \`${empty}\` — update this test's fixture`);
     const entry = [
-      "export const CODEMODS: readonly Codemod[] = [",
+      "export const CODEMODS = [",
       "  {",
       `    id: ${JSON.stringify(options.codemodId)},`,
       '    describe: "the OPE-2238 proof codemod, registered only in the NEW core",',
-      "    run: (appRoot: string) => {",
+      "    run: (appRoot) => {",
       `      __writeFileSync(__join(appRoot, "codemod-proof.json"), JSON.stringify({ stamp: OPE_2238_STAMP, version: ${JSON.stringify(NEW)} }));`,
       '      return ["wrote codemod-proof.json"];',
       "    },",
@@ -99,15 +99,13 @@ function makeNew(pkg: string, options: { readonly codemodId?: string; readonly n
 }
 
 const DRIVER = `
-const { register } = await import("tsx/esm/api");
-register();
 const { spawnSync } = await import("node:child_process");
 const { cpSync, rmSync } = await import("node:fs");
 const { join } = await import("node:path");
 const [newPkg, target, eve] = process.argv.slice(2);
 const core = join(process.cwd(), "node_modules", "@open-everywhere", "core");
-const oldUpgrade = await import("./node_modules/@open-everywhere/core/scripts/oe-upgrade.ts");
-const oldRegistry = await import("./node_modules/@open-everywhere/core/scripts/upgrade-codemods.ts");
+const oldUpgrade = await import("./node_modules/@open-everywhere/core/dist/scripts/oe-upgrade.js");
+const oldRegistry = await import("./node_modules/@open-everywhere/core/dist/scripts/upgrade-codemods.js");
 console.log("DRIVER old-registry-holds-${CODEMOD}=" + String(oldRegistry.codemodById("${CODEMOD}") !== undefined));
 const io = {
   out: (l) => console.log(l),
@@ -146,10 +144,10 @@ function appOn(oldPkg: string, name: string): string {
   writeFileSync(join(app, "roster.config.ts"), "export default {};\n");
   writeFileSync(
     join(app, "package.json"),
-    `${JSON.stringify({ name, private: true, type: "module", dependencies: { "@open-everywhere/core": OLD, eve: EVE }, devDependencies: { tsx: "^4" } }, null, 2)}\n`,
+    `${JSON.stringify({ name, private: true, type: "module", dependencies: { "@open-everywhere/core": OLD, eve: EVE } }, null, 2)}\n`,
   );
   cpSync(oldPkg, join(app, "node_modules", "@open-everywhere", "core"), { recursive: true });
-  linkDeps(app);
+  linkDeps(app, CORE_RUNTIME);
   writeFileSync(join(app, "drive.mjs"), DRIVER);
   return app;
 }
@@ -186,7 +184,7 @@ try {
   makeNew(brokenPkg, { noteIds: ["ope-2238-nobody-shipped-this"] });
   const mixedPkg = extract(tarball, join(scratch, "new-mixed"));
   makeNew(mixedPkg, { codemodId: CODEMOD, noteIds: [CODEMOD, "ope-2238-nobody-shipped-this"] });
-  for (const rel of ["bin/oe.js", "scripts/oe-cli.ts", "scripts/oe-upgrade.ts", "scripts/upgrade-codemods.ts", "scripts/upgrade-notes.ts", "upgrading.json"]) {
+  for (const rel of ["bin/oe.js", "dist/scripts/oe-cli.js", "dist/scripts/oe-upgrade.js", "dist/scripts/upgrade-codemods.js", "dist/scripts/upgrade-notes.js", "upgrading.json"]) {
     ok(existsSync(join(oldPkg, ...rel.split("/"))), `the tarball ships ${rel}`);
   }
 
@@ -202,7 +200,7 @@ try {
   const proofPath = join(app, "codemod-proof.json");
   ok(existsSync(proofPath), `🔴 …and it changed the app${say}`);
   const proof = JSON.parse(readFileSync(proofPath, "utf8")) as { stamp?: string; version?: string };
-  ok(proof.stamp === STAMP && proof.version === NEW, `🔴 …with the NEW core's module graph (stamp from the new upgrade-notes.ts) — got ${JSON.stringify(proof)}`);
+  ok(proof.stamp === STAMP && proof.version === NEW, `🔴 …with the NEW core's module graph (stamp from the new upgrade-notes.js) — got ${JSON.stringify(proof)}`);
   const skipped = up.output.split("\n").filter((l) => l.startsWith("DRIVER skipped: ")).map((l) => l.slice("DRIVER skipped: ".length));
   ok(
     skipped.length === 3 && skipped[0]!.endsWith("build --accept") && up.output.indexOf(`→ codemod ${CODEMOD}`) < up.output.indexOf("DRIVER skipped: "),
@@ -298,10 +296,11 @@ try {
     };
     const viaNpx = run(process.execPath, [join(cachedCore, "bin", "oe.js"), "upgrade", "--plan", "--to", OLD], app, env);
     ok(
-      viaNpx.status !== 0 && viaNpx.output.includes("Cannot find package 'tsx'"),
-      `🔴 the CONTROL: from the npx-cache layout the bin fails on the missing tsx — got ${viaNpx.status}\n${viaNpx.output}`,
+      viaNpx.status === 0 && viaNpx.output.includes("✓ oe upgrade --plan: nothing was written."),
+      `🔴 from the npx-cache layout (no tsx) the compiled bin plans the upgrade — got ${viaNpx.status}\n${viaNpx.output}`,
     );
-    ok(readFileSync(log, "utf8") === "", "…and it reached no npm call");
+    ok(!readFileSync(log, "utf8").includes("npm install"), "…and it installed nothing");
+    writeFileSync(log, "");
 
     const argv = runLine.split(" ");
     ok(argv[0] === "node", `the rendered run line starts with node — got ${runLine}`);

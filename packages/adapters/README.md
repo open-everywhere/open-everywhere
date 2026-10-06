@@ -17,10 +17,18 @@ It implements core's host seams against concrete services:
 Core defines these seams and ships no host of its own, so a different host is a different adapters
 package rather than a fork of the runtime.
 
+## Boot wiring
+
+`registerDefaultAdapters()` (`@open-everywhere/adapters/agent/register-defaults.js`) wires every
+default adapter, the app's selected provider bundles and the operational store, with the store
+selection rules and the floors. An app's `agent/lib/register-adapters.ts` calls it once and adds
+its own adapters in the `customAdapters` hook. See
+[the app's adapter wiring](https://github.com/open-everywhere/open-everywhere/blob/main/docs/extending/adapter-model.md#the-apps-adapter-wiring).
+
 ## Install
 
 ```sh
-npm i @open-everywhere/core @open-everywhere/adapters eve@0.54.3
+npm i @open-everywhere/core @open-everywhere/adapters eve@0.71.0
 npx oe-eve-patch
 ```
 

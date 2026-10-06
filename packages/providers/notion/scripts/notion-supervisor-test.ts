@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { overrideSettingsForTest, resetSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   notionSupervisorToken,
   notionSupervisorSentinel,
@@ -86,30 +87,36 @@ ok(notionNameDrop("anything?", "a") === false, "a 1-char botName is ignored (too
 ok(notionNameDrop("") === false, "empty text never matches");
 
 {
-  const savedShort = process.env.OE_AGENT_SHORT_NAME;
-  const savedFull = process.env.OE_AGENT_NAME;
   try {
-    delete process.env.OE_AGENT_SHORT_NAME;
-    delete process.env.OE_AGENT_NAME;
-    ok(notionNameDrop("oe what's the status?") === true, "unset env: the default short name 'oe' still matches");
-    ok(notionNameDrop("hey open everywhere") === true, "unset env: the default full name 'open everywhere' still matches");
+    resetSettingsForTest();
+    ok(notionNameDrop("oe what's the status?") === true, "no name configured: the default short name 'oe' matches");
+    ok(notionNameDrop("hey open everywhere") === true, "no name configured: the default full name 'open everywhere' matches");
 
-    process.env.OE_AGENT_SHORT_NAME = "ari";
-    ok(notionNameDrop("ari can you look at this?") === true, "OE_AGENT_SHORT_NAME configured: the new short name matches");
-    ok(notionNameDrop("oe can you look at this?") === false, "OE_AGENT_SHORT_NAME REPLACES 'oe' — the old default no longer fires");
+    overrideSettingsForTest({ identity: { shortName: "ari" } });
+    ok(notionNameDrop("ari can you look at this?") === true, "identity.shortName configured: the short name matches");
+    ok(notionNameDrop("oe can you look at this?") === false, "🔴 identity.shortName configured: the brand 'oe' no longer fires");
     ok(notionNameDrop("mariana said hi") === false, "configured short name is word-boundary matched (not inside 'mariana')");
     ok(notionNameDrop("ARI thoughts?") === true, "configured short name is case-insensitive");
 
-    process.env.OE_AGENT_NAME = "Acme Helper";
-    ok(notionNameDrop("can Acme Helper summarise this") === true, "OE_AGENT_NAME configured: the new full name matches");
-    ok(notionNameDrop("hey open everywhere") === false, "OE_AGENT_NAME REPLACES 'open everywhere' — the old brand no longer fires");
+    overrideSettingsForTest({ identity: { name: "Acme Helper" } });
+    ok(notionNameDrop("can Acme Helper summarise this") === true, "identity.name configured: the configured name matches");
+    ok(notionNameDrop("hey open everywhere") === false, "🔴 identity.name configured: the brand 'open everywhere' no longer fires");
+    ok(notionNameDrop("oe what's the status?") === false, "🔴 identity.name configured: …nor the brand 'oe'");
 
-    process.env.OE_AGENT_SHORT_NAME = "x";
-    ok(notionNameDrop("the fox is quick") === false, "a 1-char OE_AGENT_SHORT_NAME is dropped (never fires inside 'fox')");
-    ok(notionNameDrop("ping Zephyr about this", "Zephyr") === true, "the platform-resolved integration name matches regardless of env");
+    resetSettingsForTest();
+    const savedShort = process.env.OE_AGENT_SHORT_NAME;
+    process.env.OE_AGENT_SHORT_NAME = "ari";
+    try {
+      ok(notionNameDrop("ari can you look at this?") === false, "the retired OE_AGENT_SHORT_NAME env var adds no token");
+      ok(notionNameDrop("oe what's the status?") === true, "…and does not displace the brand default");
+    } finally {
+      if (savedShort === undefined) delete process.env.OE_AGENT_SHORT_NAME;
+      else process.env.OE_AGENT_SHORT_NAME = savedShort;
+    }
+    overrideSettingsForTest({ identity: { name: "Acme Helper" } });
+    ok(notionNameDrop("ping Zephyr about this", "Zephyr") === true, "the platform-resolved integration name matches beside a configured name");
   } finally {
-    if (savedShort === undefined) delete process.env.OE_AGENT_SHORT_NAME; else process.env.OE_AGENT_SHORT_NAME = savedShort;
-    if (savedFull === undefined) delete process.env.OE_AGENT_NAME; else process.env.OE_AGENT_NAME = savedFull;
+    resetSettingsForTest();
   }
 }
 ok(classifyNotionComment(base, own(undefined)).addressing === "drop", "unresolved bot user id -> DROP (fail-closed loop guard — the critical hardening)");

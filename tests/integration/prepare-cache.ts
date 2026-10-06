@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { posixJoin, toPosixPath } from "../../scripts/posix-path.js";
 
@@ -45,14 +45,17 @@ export const PREPARED_ARTIFACTS: readonly string[] = [
 
 export interface CacheKeyHost {
   readonly lsTree: (paths: readonly string[]) => string;
-  readonly porcelain: (paths: readonly string[]) => string;
+  readonly dirtyPaths: (paths: readonly string[]) => readonly string[];
+  readonly fingerprint: (path: string) => string;
   readonly eveVersion: () => string;
   readonly nodeMajor: () => string;
   readonly platform: () => string;
   readonly root: () => string;
 }
 
-export type CacheKeyVerdict = { readonly kind: "key"; readonly key: string } | { readonly kind: "refused"; readonly reason: string };
+export type CacheKeyVerdict =
+  | { readonly kind: "key"; readonly key: string; readonly worktree: boolean }
+  | { readonly kind: "refused"; readonly reason: string };
 
 export function composeCacheKey(input: {
   readonly treeDigest: string;
@@ -60,30 +63,39 @@ export function composeCacheKey(input: {
   readonly nodeMajor: string;
   readonly platform: string;
   readonly root: string;
+  readonly worktree?: boolean;
 }): string {
   const safe = (value: string): string => value.replace(/[^A-Za-z0-9._-]/gu, "_");
   const rootDigest = createHash("sha256").update(input.root).digest("hex").slice(0, 8);
   return (
     `it-prepared-v${CACHE_FORMAT}-${input.treeDigest.slice(0, 16)}-eve${safe(input.eveVersion)}` +
-    `-node${safe(input.nodeMajor)}-${safe(input.platform)}-at${rootDigest}`
+    `-node${safe(input.nodeMajor)}-${safe(input.platform)}-at${rootDigest}${input.worktree === true ? "-wt" : ""}`
   );
 }
 
+export function parseDirtyPaths(raw: string): string[] {
+  const records = raw.split("\0");
+  const paths: string[] = [];
+  for (let i = 0; i < records.length; i++) {
+    const record = records[i] ?? "";
+    if (record.length < 4) continue;
+    const status = record.slice(0, 2);
+    paths.push(record.slice(3));
+    if (/[RC]/u.test(status)) {
+      const original = records[i + 1];
+      if (original !== undefined && original !== "") paths.push(original);
+      i += 1;
+    }
+  }
+  return paths;
+}
+
 export function prepareCacheKey(host: CacheKeyHost): CacheKeyVerdict {
-  let dirty: string;
+  let dirty: readonly string[];
   try {
-    dirty = host.porcelain(KEYED_TREE_PATHS);
+    dirty = host.dirtyPaths(KEYED_TREE_PATHS);
   } catch (err) {
     return { kind: "refused", reason: `git could not report whether the keyed paths are clean (${describe(err)})` };
-  }
-  if (dirty.trim() !== "") {
-    const first = dirty.trim().split("\n")[0] ?? "";
-    return {
-      kind: "refused",
-      reason:
-        `the working tree carries uncommitted changes under ${KEYED_TREE_PATHS.join(", ")} (for example "${first.trim()}"), ` +
-        "and the key is read from the COMMIT — a key for the committed state would serve a bundle this tree did not build",
-    };
   }
   let listing: string;
   try {
@@ -92,6 +104,12 @@ export function prepareCacheKey(host: CacheKeyHost): CacheKeyVerdict {
     return { kind: "refused", reason: `git could not list the keyed paths (${describe(err)})` };
   }
   if (listing.trim() === "") return { kind: "refused", reason: "git listed no tracked file under the keyed paths" };
+  let overlay = "";
+  try {
+    for (const path of [...new Set(dirty)].sort()) overlay += `${path}\t${host.fingerprint(path)}\n`;
+  } catch (err) {
+    return { kind: "refused", reason: `a working-tree file under the keyed paths could not be read (${describe(err)})` };
+  }
   let eveVersion: string;
   let nodeMajor: string;
   let platform: string;
@@ -110,8 +128,15 @@ export function prepareCacheKey(host: CacheKeyHost): CacheKeyVerdict {
       reason: "one of the eve version, the Node major, the platform or the root read as empty, and a key missing one would survive a change",
     };
   }
-  const treeDigest = createHash("sha256").update(listing).digest("hex");
-  return { kind: "key", key: composeCacheKey({ treeDigest, eveVersion, nodeMajor, platform, root }) };
+  const worktree = overlay !== "";
+  const digest = createHash("sha256").update(listing);
+  if (worktree) digest.update("\0worktree\0").update(overlay);
+  const treeDigest = digest.digest("hex");
+  return { kind: "key", key: composeCacheKey({ treeDigest, eveVersion, nodeMajor, platform, root, worktree }), worktree };
+}
+
+export function remoteCacheKey(verdict: CacheKeyVerdict): string | undefined {
+  return verdict.kind === "key" && !verdict.worktree ? verdict.key : undefined;
 }
 
 export function preparedTreeState(input: {
@@ -144,6 +169,10 @@ export function writeStamp(root: string, key: string): void {
   writeFileSync(join(root, STAMP_FILE), `${JSON.stringify({ format: CACHE_FORMAT, key }, null, 2)}\n`);
 }
 
+export function clearStamp(root: string): void {
+  rmSync(join(root, STAMP_FILE), { force: true });
+}
+
 export const BUILD_STAMP_FILE = ".oe-it-built.json";
 
 export interface BuildStamp {
@@ -174,7 +203,7 @@ export function clearBuildStamp(root: string): void {
 
 export function beginBuildStamp(root: string, verdict: CacheKeyVerdict): string {
   clearBuildStamp(root);
-  rmSync(join(root, STAMP_FILE), { force: true });
+  clearStamp(root);
   if (verdict.kind !== "key") return `no build stamp — ${verdict.reason}`;
   writeBuildStamp(root, { state: "building", key: verdict.key });
   return `building ${verdict.key}`;
@@ -217,12 +246,30 @@ export function hostCacheKeyProbe(root: string): CacheKeyHost {
     });
   return {
     lsTree: (paths) => git(["ls-tree", "-r", "HEAD", "--", ...paths]),
-    porcelain: (paths) => git(["status", "--porcelain", "--", ...paths]),
+    dirtyPaths: (paths) => parseDirtyPaths(git(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ...paths])),
+    fingerprint: (path) => worktreeFingerprint(root, path),
     eveVersion: () => (JSON.parse(readFileSync(join(root, "node_modules", "eve", "package.json"), "utf8")) as { version: string }).version,
     nodeMajor: () => process.versions.node.split(".")[0] ?? "",
     platform: () => process.platform,
     root: () => root,
   };
+}
+
+export function worktreeFingerprint(root: string, path: string): string {
+  let stat;
+  try {
+    stat = lstatSync(join(root, path));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return "absent";
+    throw err;
+  }
+  if (!stat.isFile()) {
+    throw new Error(
+      `${path} is a ${stat.isSymbolicLink() ? "symlink" : "directory or other non-file"}, and the key reads only a regular file's bytes`,
+    );
+  }
+  const executable = (stat.mode & 0o111) !== 0 ? "x" : "-";
+  return `file ${executable} ${createHash("sha256").update(readFileSync(join(root, path))).digest("hex")}`;
 }
 
 function describe(err: unknown): string {

@@ -4,6 +4,7 @@ import type { OperationalStore } from "../operational/store.js";
 import { supervisorRotateTokenBudget } from "./turn-delivery.js";
 import { DM_SEAT_ROTATE_TOKEN_BUDGET } from "./dm-seat.js";
 import { standingSeatRegistryKey } from "./unified-supervisor.js";
+import { isWorkWindowToken } from "./window-key.js";
 
 export const SESSION_LIMIT_CONTINUATION_TOOL_NAME = "session_limit_continuation";
 
@@ -79,6 +80,7 @@ export type ParkRemedy =
 
 export interface ParkOutcome {
   readonly remedy: ParkRemedy;
+  readonly tier: "work" | "seat";
   readonly registryKey?: string;
   readonly audited: boolean;
 }
@@ -107,6 +109,7 @@ export async function handleSessionLimitPark(scope: ParkScope, park: SessionLimi
   const store = deps.store ?? getOperationalStore();
   const registryKey = standingSeatRegistryKey(scope.token, scope.domainKey);
   const token = typeof scope.token === "string" ? scope.token : undefined;
+  const tier: "work" | "seat" = isWorkWindowToken(token) ? "work" : "seat";
 
   let remedy: ParkRemedy = "none";
   if (registryKey !== undefined && token !== undefined) {
@@ -127,7 +130,7 @@ export async function handleSessionLimitPark(scope: ParkScope, park: SessionLimi
   } catch {
     first = true;
   }
-  if (!first) return { remedy, ...(registryKey !== undefined ? { registryKey } : {}), audited: false };
+  if (!first) return { remedy, tier, ...(registryKey !== undefined ? { registryKey } : {}), audited: false };
 
   await (deps.audit ?? appendAudit)({
     org: scope.org,
@@ -138,6 +141,7 @@ export async function handleSessionLimitPark(scope: ParkScope, park: SessionLimi
     action: SESSION_PARK_AUDIT_ACTION,
     detail: {
       remedy,
+      tier,
       kind: park.kind,
       requestId: park.requestId,
       ...(park.limit !== undefined ? { limit: park.limit } : {}),
@@ -148,7 +152,9 @@ export async function handleSessionLimitPark(scope: ParkScope, park: SessionLimi
       ...(registryKey !== undefined ? { registryKey } : {}),
       ...(token !== undefined ? { token } : {}),
       note:
-        remedy === "rotate_on_next_wake"
+        remedy === "rotate_on_next_wake" && tier === "work"
+          ? "the work session's generation was retired — the next forward rotates it to a fresh session with a fresh sandbox; the seat's generation is untouched, and every job the parked work session still owed is reported to the room as lost"
+          : remedy === "rotate_on_next_wake"
           ? "the seat's generation was retired — the next wake rotates to a fresh session; the parked message was NOT redelivered"
           : remedy === "already_rotated"
             ? "no live registry row matched this token — the generation had already been retired/rotated"
@@ -156,5 +162,5 @@ export async function handleSessionLimitPark(scope: ParkScope, park: SessionLimi
     },
   }).catch(() => undefined);
 
-  return { remedy, ...(registryKey !== undefined ? { registryKey } : {}), audited: true };
+  return { remedy, tier, ...(registryKey !== undefined ? { registryKey } : {}), audited: true };
 }

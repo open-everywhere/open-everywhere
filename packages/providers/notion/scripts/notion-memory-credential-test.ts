@@ -27,15 +27,25 @@ function ok(cond: boolean, label: string): void {
   }
   passed++;
 }
-async function throwsAsync(fn: () => Promise<unknown>, label: string): Promise<void> {
+async function rejectsWith(fn: () => Promise<unknown>, fragment: string, label: string): Promise<void> {
+  let threw = false;
+  let error: unknown;
   try {
     await fn();
-  } catch {
-    passed++;
-    return;
+  } catch (err) {
+    threw = true;
+    error = err;
   }
-  console.error(`✗ ${label} (expected a throw)`);
-  process.exit(1);
+  if (!threw) {
+    console.error(`✗ ${label} (expected a throw, got none)`);
+    process.exit(1);
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (!message.includes(fragment)) {
+    console.error(`✗ ${label} (threw, but not the refusal under test — expected "${fragment}", got: ${message})`);
+    process.exit(1);
+  }
+  passed++;
 }
 
 const ORG_REF = "db:notion:memory";
@@ -81,7 +91,7 @@ setRegisteredConnectorCredentials([
   ok((await resolveNotionMemoryCredential(PAY_CRED, BROKER, ORG_REF)).token === PAY_TOKEN, "a BOUND domain's credential resolves a DIFFERENT token — the whole point");
   ok((await resolveNotionMemoryCredential(PAY_CRED, BROKER, ORG_REF)).token !== ORG_TOKEN, "negative control: the bound token is genuinely not the org token");
 
-  await throwsAsync(() => resolveNotionMemoryCredential("no-such-credential", BROKER, ORG_REF), "a NAMED-BUT-MISSING credential THROWS — it never retries under the org default");
+  await rejectsWith(() => resolveNotionMemoryCredential("no-such-credential", BROKER, ORG_REF), 'domain credential "no-such-credential" is not a declared notion credential with a secretRef', "a NAMED-BUT-MISSING credential THROWS — it never retries under the org default");
 
   ok(domainCredentialId(BOUND.domain, NOTION_PROVIDER, NOTION_MEMORY_CREDENTIAL) === PAY_CRED, "the bound domain resolves its own credential id");
   ok(domainCredentialId(UNBOUND.domain, NOTION_PROVIDER, NOTION_MEMORY_CREDENTIAL) === NOTION_MEMORY_CREDENTIAL, "the unbound domain resolves the org-default role");
@@ -163,8 +173,9 @@ function recordingFetch(): { fetchFn: HttpFetch; auth: string[] } {
     credentials: [{ connector: NOTION_PROVIDER, credential: NOTION_MEMORY_CREDENTIAL, use: "never-declared" }],
   });
   const provider = makeNotionProvider(notionMemoryDeps(ORG_REF, BROKER, fetchFn));
-  await throwsAsync(
+  await rejectsWith(
     () => provider.readTier(P, TIER, { name: "bad-brain", provider: "notion", container: "page-bad", readOnly: true }, { domain: broken }),
+    'domain credential "never-declared" is not a declared notion credential with a secretRef',
     "a bound domain naming an UNDECLARED credential fails the read",
   );
   ok(auth.length === 0, "🔴 negative control: the failed read sent NOTHING — the org token never reached the wire");

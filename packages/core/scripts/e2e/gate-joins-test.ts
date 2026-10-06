@@ -5,6 +5,7 @@ import type { AuditWireEntry } from "./audit-read.js";
 import type { HaltLiveEvidenceKey } from "./scenarios.js";
 import {
   APPROVAL_JUDGE_VERDICT_ACTION,
+  approvalPlaneRowsOn,
   AUDIT_SINCE_SKEW_MS,
   auditSinceForDriverClock,
   auditSinceForVendorInstant,
@@ -1527,6 +1528,17 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
   );
   ok(judgeDeniedRoutineCreation([row("approval.chain", deny.ts, DENY_Rg)]) === undefined, "a row of another action with the same detail is not PATH B");
 
+  const on = (r: AuditWireEntry, surface: string): AuditWireEntry => ({ ...r, surface });
+  const prVerdict = on(row(APPROVAL_JUDGE_VERDICT_ACTION, deny.ts, { tool: "open_pull_request", verdict: "allow", enforcedVerdict: "allow" }), "C0ROOM");
+  const prOpen = on(row("pr.open", deny.ts, { number: 7 }), "C0ROOM");
+  const boundary = { tool: "open_pull_request", actAction: "pr.open", surface: "C0ROOM" } as const;
+  ok(approvalPlaneRowsOn([prVerdict, prOpen], boundary).length === 2, "🔴 OPE-2367: a judge verdict for open_pull_request AND a pr.open row on the room both count");
+  ok(approvalPlaneRowsOn([prVerdict], boundary)[0] === prVerdict, "…a verdict row alone counts (an allow, a deferral or an ask all mean the act reached the plane)");
+  ok(approvalPlaneRowsOn([], boundary).length === 0, "no rows ⇒ nothing reached the plane");
+  ok(approvalPlaneRowsOn([on(prVerdict, "C0OTHER"), on(prOpen, "C0OTHER")], boundary).length === 0, "rows on ANOTHER room never count");
+  ok(approvalPlaneRowsOn([row(APPROVAL_JUDGE_VERDICT_ACTION, deny.ts, { tool: "open_pull_request" })], boundary).length === 0, "a row with no surface never counts");
+  ok(approvalPlaneRowsOn([on(row(APPROVAL_JUDGE_VERDICT_ACTION, deny.ts, { tool: "create_routine" }), "C0ROOM")], boundary).length === 0, "a verdict for ANOTHER tool never counts");
+
   const scenarioSource = readFileSync(new URL("./scenarios.ts", import.meta.url), "utf8");
   const legStart = scenarioSource.indexOf('id: "S-TAINT-UNATTENDED-DENY"');
   const pathB = scenarioSource.indexOf("judgeDeniedRoutineCreation(", legStart);
@@ -1724,7 +1736,7 @@ console.log("25. the rewritten e2e asks carry no test scaffolding:");
   ok(SCAFFOLDING.test("(fresh check — even if a similar question was answered before, this one needs its own answer)"), "…and the old anti-dedupe clause");
   const discordAsk = asks[0]![1];
   ok(discordAsk.includes("ref dgrant-x") && discordAsk.includes("page-1") && discordAsk.includes("discord/1") && discordAsk.includes("<@1>"), "the grant ask keeps the mention, ref, page and owner key");
-  ok(asks[2]![1].includes("${marker}") && asks[4]![1].includes("${fireWord}") && asks[3]![1].includes("${fireWord}"), "the inline asks keep their ref and confirmation-word tokens");
+  ok(asks[2]![1].includes("${marker}") && asks[4]![1].includes("routineConnectorReportLine(fireWord)") && asks[3]![1].includes("${fireWord}"), "the inline asks keep their ref and confirmation-word tokens");
 }
 
 console.log(`✓ ${n} gate-joins assertions passed`);

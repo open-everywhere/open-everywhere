@@ -26,39 +26,11 @@ export const EVE_PATCH_PARTS: readonly EvePatchPart[] = [
       "the compaction event contract (OPE-697) — `compaction.completed` carries no `reduced` field, so a pass that returned its input is indistinguishable from a real summary",
   },
   {
-    part: 5,
-    marker: "__oeEmptyStepTerminalPatched",
-    carrier: "dist/src/harness/tool-loop.js",
-    lost:
-      "the empty-step terminal guard (OPE-762) — a correctly silent turn is reissued with an answer-now nudge, so the seat replies to the wake it just declined",
-  },
-  {
-    part: 6,
-    marker: "__oeProjectModelMessagesPatched",
-    carrier: "dist/src/harness/tool-loop.js",
-    lost:
-      "the model-message projection (OPE-1396) — the `[Agents]` subtraction (OPE-593) leaves the model call, and the seat learns a live worker's agentId from the listing",
-  },
-  {
     part: 7,
     marker: "__oeWebFetchHopPatched",
     carrier: "dist/src/execution/web-fetch/request.js",
     lost:
       "the per-hop web_fetch egress fence (OPE-1568) — an allow-listed host can redirect the fetch to a host the session never declared. This part alone already refuses at the tool (access/web-fetch-fence.ts); the probe makes it refuse at boot instead",
-  },
-  {
-    part: 8,
-    marker: "__oeTaskCohortJoinPatched",
-    carrier: "dist/src/tasks/session-index.js",
-    lost:
-      "the bounded task-cohort join (OPE-1856) — one worker parked on an unanswered question captures every later task, and eve delivers no later completion for the life of the session",
-  },
-  {
-    part: 9,
-    marker: "__oeSessionToolScopePatched",
-    carrier: "dist/src/context/dynamic-tool-lifecycle.js",
-    lost:
-      "the delegated-binding refresh (OPE-2106) — a worker whose turn continues in a fresh process binds to the `subagent/…/unresolved` sentinel and its gated tools do not re-register",
   },
 ];
 
@@ -148,9 +120,15 @@ export function evePatchTurnCheckHasPassed(): boolean {
   return memo[MEMO_KEY] === true;
 }
 
-export function assertEvePatchedAtTurn(globals: MarkerGlobals = globalThis as MarkerGlobals): void {
-  if (memo[MEMO_KEY] === true) return;
+export function evePatchTurnRefusal(globals: MarkerGlobals = globalThis as MarkerGlobals): string | undefined {
+  if (memo[MEMO_KEY] === true) return undefined;
   const missing = missingEvePatchParts(globals);
-  if (missing.length > 0) throw new Error(evePatchRefusal(missing));
+  if (missing.length > 0) return evePatchRefusal(missing);
   memo[MEMO_KEY] = true;
+  return undefined;
+}
+
+export function assertEvePatchedAtTurn(globals: MarkerGlobals = globalThis as MarkerGlobals): void {
+  const refusal = evePatchTurnRefusal(globals);
+  if (refusal !== undefined) throw new Error(refusal);
 }

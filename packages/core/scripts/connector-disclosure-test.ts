@@ -8,7 +8,7 @@ process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: "disc-test" });
 
 import assert from "node:assert/strict";
-import { registerConfig } from "../agent/access/config.js";
+import { ConfigLoadRefusalError, registerConfig } from "../agent/access/config.js";
 import {
   assertComplianceDomains,
   defineDomain,
@@ -17,28 +17,36 @@ import {
 } from "../agent/memory/domain.js";
 import {
   attestGovernanceChannel,
+  attestGovernanceFloor,
   computeAudienceFloor,
   registerGovernanceMemberSupplier,
   resolveAudienceFloor,
   resolveRoomRoster,
+  rosterState,
+  UNRESOLVED_ROSTER_TTL_MS,
   _resetAudienceFloorCacheForTest,
   _resetGovernanceMemberSupplierForTest,
+  type AudienceFloor,
   type RoomRoster,
 } from "../agent/access/audience-floor.js";
 import {
   assertConnectorDisclosure,
   classifyConnectorDisclosure,
+  ConnectorAudienceUnverifiedError,
   ConnectorEntitlementError,
   registerConnectorEntitlementProbe,
   _resetConnectorEntitlementProbeForTest,
 } from "../agent/access/connector-disclosure.js";
 import { connectorDmOnlyEnabled } from "../agent/access/connector-scope.js";
+import { classifyCardDisclosure } from "../agent/approvals/card-disclosure.js";
+import { classifyClickerFloor } from "../agent/approvals/clicker-floor.js";
+import { classifyFireDisclosure } from "../agent/routines/fire-disclosure.js";
 import { PaneRedirectError } from "../agent/access/pane-venue.js";
 import { readAudit } from "../agent/audit/audit.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
-import { overrideSettingsForTest } from "../agent/settings/settings.js";
+import { getSettings, overrideSettingsForTest } from "../agent/settings/settings.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { removeTempDir } from "./_temp-dir.js";
 registerSlackFixtureMapper();
@@ -114,6 +122,50 @@ const REPO = resolve(HERE, "../../..");
 
   _resetGovernanceMemberSupplierForTest();
   _resetAudienceFloorCacheForTest();
+}
+
+{
+  _resetGovernanceMemberSupplierForTest();
+  _resetAudienceFloorCacheForTest();
+  const realNow = Date.now;
+  let now = realNow();
+  Date.now = () => now;
+  try {
+    const unresolved: RoomRoster = { humanMemberIds: [], resolved: false, isPrivate: false, hasGuest: false };
+    const shared: RoomRoster = { humanMemberIds: ["U_A", "U_EXT"], resolved: true, isPrivate: false, hasGuest: true };
+    const answers: (RoomRoster | undefined)[] = [unresolved, undefined, shared];
+    let fetches = 0;
+    registerGovernanceMemberSupplier(async () => answers[fetches++]);
+    const key = "slack/T1/C_SHARED";
+    const verdict = (r: { floor: AudienceFloor; roster: RoomRoster }) =>
+      classifyConnectorDisclosure({ floor: r.floor, roster: r.roster, complianceMode: false, directAddressed: true });
+
+    ok(UNRESOLVED_ROSTER_TTL_MS < getSettings().governance.floorTtlMs, "the unresolved memo is SHORTER than the resolved one");
+    const first = await resolveAudienceFloor(key, new Set());
+    ok(first.roster.resolved === false && verdict(first).ok, "an unresolved roster with no state (unobservable) is inert (the polarity rule)");
+    now += UNRESOLVED_ROSTER_TTL_MS - 1;
+    await resolveAudienceFloor(key, new Set());
+    ok(fetches === 1, "inside the short window an unresolved roster is served from the memo (no Slack call per consumer)");
+    now += 1;
+    const second = await resolveAudienceFloor(key, new Set());
+    ok(fetches === 2, "an unresolved roster EXPIRES after UNRESOLVED_ROSTER_TTL_MS, not after the full floor TTL");
+    ok(second.roster.resolved === false, "an absent supplier answer (undefined ⇒ UNRESOLVED_ROSTER) is returned as unresolved");
+    now += UNRESOLVED_ROSTER_TTL_MS;
+    const third = await resolveAudienceFloor(key, new Set());
+    ok(fetches === 3, "an absent supplier answer gets the short memo too");
+    const thirdVerdict = verdict(third);
+    ok(
+      !thirdVerdict.ok && thirdVerdict.reason === "audience-floor",
+      "the first good read after a failure observes the guest and leg 1 refuses (no TTL-long disarm)",
+    );
+    now += getSettings().governance.floorTtlMs - 1;
+    await resolveAudienceFloor(key, new Set());
+    ok(fetches === 3, "a RESOLVED roster is still memoized for the full floor TTL");
+  } finally {
+    Date.now = realNow;
+    _resetGovernanceMemberSupplierForTest();
+    _resetAudienceFloorCacheForTest();
+  }
 }
 
 {
@@ -325,6 +377,102 @@ const rowsFor = async (action: string) => (await readAudit({ org: "disc-test", a
 }
 
 {
+  const failed: RoomRoster = { humanMemberIds: [], resolved: false, unresolvedState: "failed", isPrivate: false, hasGuest: false };
+  const unobservable: RoomRoster = { humanMemberIds: [], resolved: false, unresolvedState: "unobservable", isPrivate: false, hasGuest: false };
+  const internal: RoomRoster = { humanMemberIds: ["U_A"], resolved: true, isPrivate: false, hasGuest: false };
+
+  ok(rosterState(failed) === "failed", "rosterState: a roster marked failed is failed");
+  ok(rosterState(unobservable) === "unobservable", "rosterState: a roster marked unobservable is unobservable");
+  ok(rosterState({ ...unobservable, unresolvedState: undefined }) === "unobservable", "rosterState: an unresolved roster with NO state is unobservable");
+  ok(rosterState({ ...internal, unresolvedState: "failed" }) === "resolved", "rosterState: a RESOLVED roster ignores a stray state");
+
+  const failedVerdict = classifyConnectorDisclosure({ floor: "guest", roster: failed, complianceMode: false, directAddressed: true });
+  ok(!failedVerdict.ok && failedVerdict.reason === "audience-unverified", "🔴 a FAILED roster read refuses connector disclosure (audience-unverified)");
+  ok(
+    classifyConnectorDisclosure({ floor: "guest", roster: unobservable, complianceMode: false, directAddressed: true }).ok,
+    "an UNOBSERVABLE roster stays INERT for connector disclosure",
+  );
+
+  registerConfig(baseConfig(plainDomains) as never);
+  _resetGovernanceMemberSupplierForTest();
+  _resetAudienceFloorCacheForTest();
+  _resetConnectorEntitlementProbeForTest();
+  const realNow = Date.now;
+  let now = realNow();
+  Date.now = () => now;
+  try {
+    let slackAnswer: RoomRoster = failed;
+    let fetches = 0;
+    registerGovernanceMemberSupplier(async (channelKey) => {
+      if (!channelKey.startsWith("slack/")) return undefined;
+      fetches++;
+      return slackAnswer;
+    });
+    const refusedRows = async () =>
+      ((await readAudit({ org: "disc-test", action: "connector.refused" })) as { detail?: Record<string, unknown> }[]).filter(
+        (r) => r.detail?.reason === "audience_unverified",
+      );
+
+    let thrown: unknown;
+    try {
+      await assertConnectorDisclosure("notion", ctxFor("U_A", "C_FLAKY", "channel"));
+    } catch (err) {
+      thrown = err;
+    }
+    ok(thrown instanceof ConnectorAudienceUnverifiedError, "🔴 runtime: a FAILED Slack roster read REFUSES the connector call (ConnectorAudienceUnverifiedError)");
+    ok(!(thrown instanceof PaneRedirectError), "runtime: the failed-read refusal is NOT a redirect to the requester's DM (it can land in that DM)");
+    ok(/ask again in about 30 seconds/.test(String((thrown as Error | undefined)?.message)), "runtime: the refusal tells the requester when to retry");
+    const rows = await refusedRows();
+    ok(rows.length === 1 && rows[0].detail?.from === "slack/T1/C_FLAKY", "runtime: one connector.refused row, reason audience_unverified, naming the room");
+
+    await assert.rejects(
+      () => assertConnectorDisclosure("notion", ctxFor("U_A", "D_FLAKY", "im")),
+      (err: unknown) => err instanceof ConnectorAudienceUnverifiedError,
+      "runtime: a FAILED read refuses in a Slack DM too",
+    );
+    n++;
+
+    const before = (await refusedRows()).length;
+    await assertConnectorDisclosure("notion", {
+      channel: { kind: "notion" },
+      session: { auth: { current: { principalId: "U_A", principalType: "notion-user", attributes: {} } } },
+    } as unknown as BindableContext);
+    ok((await refusedRows()).length === before, "negative control: a non-Slack key (unobservable) stays INERT under the same supplier");
+
+    slackAnswer = internal;
+    const fetchesBefore = fetches;
+    now += UNRESOLVED_ROSTER_TTL_MS - 1;
+    await assert.rejects(
+      () => assertConnectorDisclosure("notion", ctxFor("U_A", "C_FLAKY", "channel")),
+      (err: unknown) => err instanceof ConnectorAudienceUnverifiedError,
+      "hold: inside the 30 s window the memoized FAILED read still refuses",
+    );
+    n++;
+    ok(fetches === fetchesBefore, "hold: inside the window the roster is served from the memo (no Slack call)");
+    now += 1;
+    await assertConnectorDisclosure("notion", ctxFor("U_A", "C_FLAKY", "channel"));
+    ok(fetches === fetchesBefore + 1, "hold: at 30 s the memo expires, the roster is read again, it resolves, and the call is allowed");
+  } finally {
+    Date.now = realNow;
+    _resetGovernanceMemberSupplierForTest();
+    _resetAudienceFloorCacheForTest();
+  }
+}
+
+{
+  const sharedPartial: RoomRoster = { humanMemberIds: [], resolved: true, isPrivate: true, hasGuest: true };
+  const floor = computeAudienceFloor(sharedPartial, new Set(["U_ADMIN"]));
+  ok(floor === "guest", "OPE-2311: a shared roster with an empty member list floors to guest");
+  const attest = attestGovernanceFloor(sharedPartial, new Set(["U_ADMIN"]));
+  ok(!attest.armed && attest.breach?.reason === "guest-present", "OPE-2311: #1 the governance channel does not arm (guest-present)");
+  const conn = classifyConnectorDisclosure({ floor, roster: sharedPartial, complianceMode: false, directAddressed: true });
+  ok(!conn.ok && conn.reason === "audience-floor", "OPE-2311: #2 connector disclosure refuses (audience-floor)");
+  ok(!classifyFireDisclosure({ floor, roster: sharedPartial }).ok, "OPE-2311: #3 the triggered-fire disclosure floor refuses");
+  ok(!classifyClickerFloor({ floor, roster: sharedPartial, beneficiaryClicker: false }).ok, "OPE-2311: #4 the clicker floor refuses");
+  ok(!classifyCardDisclosure({ floor, roster: sharedPartial }).ok, "OPE-2311: #5 the card-disclosure floor refuses");
+}
+
+{
   assert.doesNotThrow(() => assertComplianceDomains(complianceDomains), "requestorEntitlementChecks on the org domain passes the lint");
   n++;
   assert.doesNotThrow(() => assertComplianceDomains(plainDomains), "an unset flag passes the lint");
@@ -436,6 +584,31 @@ const rowsFor = async (action: string) => (await readAudit({ org: "disc-test", a
     /externally-shared Slack channel/.test(planesDoc) && planesDoc.includes("connectors.dmOnly"),
     "claim: the shipped manual's audience-floor layer states the Slack-only, externally-shared, DM-wall-off reach",
   );
+}
+
+{
+  _resetGovernanceMemberSupplierForTest();
+  _resetAudienceFloorCacheForTest();
+  _resetConnectorEntitlementProbeForTest();
+  registerGovernanceMemberSupplier(async () => ({ humanMemberIds: ["U_A", "U_GUEST"], resolved: true, isPrivate: false, hasGuest: true }));
+  registerConfig({
+    ...baseConfig(plainDomains),
+    loadDomains: () => {
+      throw new Error("malformed bundle: eng.yaml line 3");
+    },
+  } as never);
+  const refusedBefore = await rowsFor("connector.refused");
+  let thrown: unknown;
+  try {
+    await assertConnectorDisclosure("notion", ctxFor("U_A", "C_SHARED", "channel"));
+  } catch (err) {
+    thrown = err;
+  }
+  ok(thrown instanceof ConfigLoadRefusalError, "OPE-2156: 🔴 a registered config whose loadDomains() throws REFUSES the connector call — it no longer disarms the gate");
+  ok((await rowsFor("connector.refused")) === refusedBefore + 1, "OPE-2156: …and the refusal writes one connector.refused row");
+  const rows = (await readAudit({ org: "disc-test", action: "connector.refused" })) as { detail?: Record<string, unknown> }[];
+  ok(rows.filter((r) => r.detail?.reason === "config_unavailable").length === 1, "OPE-2156: …whose reason names the config failure");
+  registerConfig(baseConfig(plainDomains) as never);
 }
 
 _resetGovernanceMemberSupplierForTest();

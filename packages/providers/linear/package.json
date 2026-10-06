@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/provider-linear",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Open Everywhere Linear provider — Linear as a wake surface plus issue-tracker tools.",
   "keywords": [
     "agent",
@@ -184,11 +184,11 @@
     "test:linear-write-seam": "NODE_NO_WARNINGS=1 tsx scripts/linear-write-seam-test.ts"
   },
   "dependencies": {
-    "@open-everywhere/core": "0.1.5",
+    "@open-everywhere/core": "0.2.0",
     "zod": "4.5.4"
   },
   "peerDependencies": {
-    "eve": "0.54.3"
+    "eve": "0.71.0"
   },
   "devDependencies": {
     "@types/node": "latest",

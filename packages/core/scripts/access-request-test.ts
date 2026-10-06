@@ -770,7 +770,7 @@ function fakeDeps(state: FakeState) {
     ok(text.includes('This lands in the "Payments" domain, which lists 2 rooms on Slack and Microsoft Teams.'), `exposure: names how far the domain reaches, in surface names not keys (${text})`);
     ok(text.includes("share one memory"), "exposure: says the rooms share one memory when the domain declares a silo");
     ok(text.includes("No room in this domain can reach the Notion connector today, so this widens the domain itself."), "exposure: flags an addition no room in the domain holds");
-    ok(text.includes("Open Everywhere cannot list who else can read Notion"), "exposure: states the audience it CANNOT enumerate — the honest half");
+    ok(text.includes("The agent cannot list who else can read Notion"), "exposure: states the audience it CANNOT enumerate — the honest half");
     ok(!/slack\/T1\/C1|teams\/W1/u.test(text), "exposure: no raw surface keys reach the card copy");
     undo();
   }
@@ -842,7 +842,7 @@ function fakeDeps(state: FakeState) {
   {
     const text = (await domainExposureLines({ org: "default", domain: "no-such-domain", subject: connectorSubject, reachOf: noReach })).join("\n");
     ok(text.includes("could not read the rooms"), `exposure: an unreadable domain states that plainly (${text})`);
-    ok(text.includes("Open Everywhere cannot list who else can read Notion"), "exposure: the not-enumerable statement survives a failed read");
+    ok(text.includes("The agent cannot list who else can read Notion"), "exposure: the not-enumerable statement survives a failed read");
   }
   {
     const undo = withDomain();

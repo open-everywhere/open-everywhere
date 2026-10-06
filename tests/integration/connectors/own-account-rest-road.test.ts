@@ -3,18 +3,17 @@ import { afterAll, expect, test } from "vitest";
 import {
   armSettlement,
   auditCursor,
+  awaitWorkResult,
   awaitWindowQuiet,
   bootAgent,
-  consumeSettlement,
   disposeLater,
   discordMentionWake,
   DISCORD_LISTED_CHANNEL_ID,
   registerScript,
   rowsSinceCursor,
-  SETTLEMENT_DRAIN_SCRIPT,
-  taskIdOfDelegation,
   waitFor,
   waitForChildren,
+  workTaskIdOfCall,
   type AuditCursor,
   type AuditRow,
   type RecordedRequest,
@@ -27,6 +26,7 @@ const PAGE_URL = "https://api.notion.com/v1/pages/6f7ea678-1947-4000-8000-000000
 const ACTING_IDENTITY = "connector.acting_identity";
 const EGRESS_REFUSAL = "egress.own_account_refusal";
 const EGRESS_POLICY = "egress.policy";
+const WORK_RESULT_WAKE = "work.result_wake";
 
 afterAll(async () => {
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
@@ -42,16 +42,37 @@ async function pinVendorHostIsCredentialed(): Promise<void> {
   expect(connection?.secretRef, `the "notion-rest" connection carries no credential — nothing would be stamped`).toBeTruthy();
 }
 
+const delegateId = (tag: string): string => `ope1947-${tag}-delegate`;
+
 function armDelegation(tag: string): ScriptedHandle {
   return disposeLater(
     registerScript({
       parent: [
-        { calls: [{ tool: "agent", input: { message: `read ${PAGE_URL} and quote it` }, id: `ope1947-${tag}-delegate` }] },
-        { say: "NO_REPLY" },
+        { calls: [{ tool: "work", input: { message: `read ${PAGE_URL} and quote it` }, id: delegateId(tag) }] },
+        { delayMs: 120_000, say: "NO_REPLY" },
       ],
       child: [{ say: "reported" }],
     }),
   );
+}
+
+async function settleArm(handle: ScriptedHandle, tag: string): Promise<ScriptedHandle> {
+  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), `${tag}: the seat's held receipt step`);
+  const armed = disposeLater(armSettlement(handle, { parent: [{ say: "NO_REPLY" }] }));
+  handle.releaseHolds();
+  return armed;
+}
+
+async function taskIdOfArm(cursor: AuditCursor, handle: ScriptedHandle, tag: string): Promise<string> {
+  return await workTaskIdOfCall(cursor, handle, delegateId(tag), tag);
+}
+
+function unescapeXml(s: string): string {
+  return s.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", '"').replaceAll("&apos;", "'").replaceAll("&amp;", "&");
+}
+
+function hostNotes(text: string): string {
+  return [...text.matchAll(/<system-note>([\s\S]*?)<\/system-note>/g)].map((m) => unescapeXml(m[1] ?? "")).join("\n");
 }
 
 function notionActingRows(rows: readonly AuditRow[]): { refused: unknown; tool: unknown; askRecognised: unknown; requiredIdentity: unknown; identity: unknown }[] {
@@ -75,8 +96,8 @@ async function routeIndependentRefusalOpening(): Promise<string> {
 }
 
 function settlementNotificationText(request: RecordedRequest, taskId: string): string {
-  const own = request.messages.filter((m) => m.text.includes(taskId));
-  expect(own.length, `no settlement notification naming ${taskId} in the turn the seat was woken with`).toBeGreaterThan(0);
+  const own = request.messages.filter((m) => m.text.includes(`work-result-${taskId}`));
+  expect(own.length, `no result wake for ${taskId} in the turn the seat was woken with`).toBeGreaterThan(0);
   return own.map((m) => m.text).join("\n");
 }
 
@@ -105,8 +126,8 @@ test(
       text: `${BOT_MENTION} read this page using my own Notion account, and quote one sentence from it`,
       messageId: "ope1947-own",
     });
-    await waitFor(() => ownHandle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "own: the dispatch turn's own terminal step");
-    const ownArmed = disposeLater(armSettlement(ownHandle, SETTLEMENT_DRAIN_SCRIPT));
+    const ownSettle = await settleArm(ownHandle, "own");
+    const ownTaskId = await taskIdOfArm(cursorOwn, ownHandle, "own");
 
     const ownRows = notionActingRows(await waitForRows(cursorOwn, ACTING_IDENTITY, `own: a ${ACTING_IDENTITY} row for the withheld REST road`));
     expect(ownRows.length, `own: the window held ${ACTING_IDENTITY} rows, but none for notion`).toBeGreaterThan(0);
@@ -126,12 +147,16 @@ test(
 
     expect(ownHandle.requests.filter((r) => r.role === "child"), "own: the failed worker still reached a model call — this arm's rows are no longer the whole story").toEqual([]);
 
-    const ownTaskId = taskIdOfDelegation(ownHandle, "the own-account delegation");
-    const settlement = await consumeSettlement({ armed: ownArmed, dispatched: ownHandle, taskId: ownTaskId, label: "own: the failed worker's settlement wake" });
+    const settlement = await awaitWorkResult({ handle: ownSettle, taskId: ownTaskId, label: "own: the seat's result-wake step for the stopped worker" });
     const settlementText = settlementNotificationText(settlement, ownTaskId);
-    expect(settlementText, `🔴 own: the settlement report does not carry the refusal — the member still gets a dead delegation. Saw ${JSON.stringify(settlementText.slice(0, 600))}`).toContain(await routeIndependentRefusalOpening());
+    const opening = await routeIndependentRefusalOpening();
+    expect(hostNotes(settlementText), `🔴 own: the result wake's host note does not carry the refusal — the member still gets a dead delegation. Saw ${JSON.stringify(settlementText.slice(0, 900))}`).toContain(opening);
     expect(settlementText, "🔴 own: the settlement report carries the bare tripwire message instead of the refusal").not.toContain("identical-binding invariant VIOLATED");
-    ownArmed.dispose();
+    const ownWakes = (await rowsSinceCursor(cursorOwn, [WORK_RESULT_WAKE])).filter((r) => (r.detail ?? {})["taskId"] === ownTaskId);
+    expect(ownWakes.map((r) => [(r.detail ?? {})["outcome"], (r.detail ?? {})["stoppedBy"], (r.detail ?? {})["connector"]]), "own: W's result-wake row does not name the egress stop").toEqual([["delivered", "egress-own-account", "notion"]]);
+    expect(ownHandle.requests.filter((r) => r.fault !== undefined), "own: the scripted model reported a fault").toEqual([]);
+    expect(ownSettle.requests.filter((r) => r.fault !== undefined), "own: the result-wake script reported a fault").toEqual([]);
+    ownSettle.dispose();
     ownHandle.dispose();
 
     await awaitWindowQuiet();
@@ -142,8 +167,8 @@ test(
       text: `${BOT_MENTION} read this page and quote one sentence from it`,
       messageId: "ope1947-plain",
     });
-    await waitFor(() => plainHandle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "plain: the dispatch turn's own terminal step");
-    const plainArmed = disposeLater(armSettlement(plainHandle, SETTLEMENT_DRAIN_SCRIPT));
+    const plainSettle = await settleArm(plainHandle, "plain");
+    const plainTaskId = await taskIdOfArm(cursorPlain, plainHandle, "plain");
 
     await waitForChildren(plainHandle, { count: 1, lastStepIndex: 0, label: "plain: the worker's terminal step" });
     expect(plainHandle.requests.filter((r) => r.fault !== undefined), "plain: the scripted model reported a fault").toEqual([]);
@@ -155,7 +180,11 @@ test(
       "🔴 plain: the ordinary delegation's worker diverged from its seat too — arm 1's divergence is not about the ask",
     ).toEqual([]);
 
-    await consumeSettlement({ armed: plainArmed, dispatched: plainHandle, taskId: taskIdOfDelegation(plainHandle, "the ordinary delegation"), label: "plain: the worker's settlement wake" });
-    plainArmed.dispose();
+    const plainSettlement = await awaitWorkResult({ handle: plainSettle, taskId: plainTaskId, label: "plain: the seat's result-wake step for the worker" });
+    expect(hostNotes(settlementNotificationText(plainSettlement, plainTaskId)), "🔴 plain: the ordinary job's result wake says it was stopped").not.toContain("was STOPPED by the host");
+    const plainWakes = (await rowsSinceCursor(cursorPlain, [WORK_RESULT_WAKE])).filter((r) => (r.detail ?? {})["taskId"] === plainTaskId);
+    expect(plainWakes.map((r) => [(r.detail ?? {})["outcome"], (r.detail ?? {})["stoppedBy"]]), "🔴 plain: W's result-wake row names a stop for a job the host did not stop").toEqual([["delivered", undefined]]);
+    expect(plainHandle.requests.filter((r) => r.fault !== undefined), "plain: the scripted model reported a fault after the result step").toEqual([]);
+    expect(plainSettle.requests.filter((r) => r.fault !== undefined), "plain: the result-wake script reported a fault").toEqual([]);
   },
 );

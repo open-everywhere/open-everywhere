@@ -1,19 +1,24 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { tsxCommand } from "./npm-command.js";
 import { mkdtempSync, mkdirSync, existsSync, globSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { BaseSequencer } from "vitest/node";
 
+import vitestConfig from "../vitest.config.js";
+import { DurationShardSequencer } from "./it-shard-sequencer.js";
+import { mergeTimings, timingsFileText } from "./it-timings-generate.js";
 import { SIGKILL_EXIT_CODE, acquireLock, classifyExit, fencedSpawn, pidAlive, readHolder, reclaimDeadLock, releaseLock, runLocked, spawnPrepareStep, type LockHolder } from "./suite-lock-run.js";
 import { DAC_BYPASS_CAPS, assertWriteBitsBite, dacFenceScript, posixWriteBitsAbsentReason, writeBitsBite } from "./dac-fence.js";
 import type { BoxProbe } from "./ci-max-workers.js";
 import {
   INTEGRATION_INCLUDE_GLOBS,
   LOCAL_SHARDS,
+  TIER_TIMINGS_PATH,
+  balanceShards,
   SANDBOX_FILES_PER_SHARD,
   SANDBOX_MIN_SHARDS,
   countTierFiles,
@@ -21,9 +26,12 @@ import {
   itShardSelector,
   itShardsOverride,
   listTierFiles,
+  parseTierTimings,
   planShards,
+  readTierTimings,
   sandboxShardCount,
   shardFiles,
+  shardWeights,
   tierFilesDigest,
   tierProofLine,
   worstExit,
@@ -37,6 +45,61 @@ const tsx = (args: string[]): [string, string[]] => tsxCommand(repoRoot, args);
 const wrapperScript = join(repoRoot, "scripts", "suite-lock-run.ts");
 
 const scratch = mkdtempSync(join(tmpdir(), "oe-suite-lock-test-"));
+
+function vitestCountSplit(files: readonly string[], index: number, total: number): string[] {
+  const base = Math.floor(files.length / total);
+  const remainder = files.length % total;
+  const start = index <= remainder ? (base + 1) * (index - 1) : remainder * (base + 1) + (index - remainder - 1) * base;
+  const size = index <= remainder ? base + 1 : base;
+  return files
+    .map((file) => ({ file, hash: createHash("sha1").update(`/${file}`).digest("hex") }))
+    .sort((a, b) => (a.hash < b.hash ? -1 : a.hash > b.hash ? 1 : 0))
+    .slice(start, start + size)
+    .map(({ file }) => file);
+}
+
+const BALANCE_FIXTURE: readonly (readonly [string, number])[] = [
+  ["tests/integration/f00.test.ts", 360_000],
+  ["tests/integration/f01.test.ts", 360_000],
+  ["tests/integration/f02.test.ts", 49_000],
+  ["tests/integration/f03.test.ts", 49_000],
+  ["tests/integration/f04.test.ts", 34_000],
+  ["tests/integration/f05.test.ts", 32_000],
+  ["tests/integration/f06.test.ts", 28_000],
+  ["tests/integration/f07.test.ts", 21_000],
+  ["tests/integration/f08.test.ts", 21_000],
+  ["tests/integration/f09.test.ts", 18_000],
+  ["tests/integration/f10.test.ts", 18_000],
+  ["tests/integration/f11.test.ts", 17_000],
+  ["tests/integration/f12.test.ts", 16_000],
+  ["tests/integration/f13.test.ts", 16_000],
+  ["tests/integration/f14.test.ts", 13_000],
+  ["tests/integration/f15.test.ts", 13_000],
+  ["tests/integration/f16.test.ts", 12_000],
+  ["tests/integration/f17.test.ts", 11_000],
+  ["tests/integration/f18.test.ts", 11_000],
+  ["tests/integration/f19.test.ts", 11_000],
+  ["tests/integration/f20.test.ts", 10_000],
+  ["tests/integration/f21.test.ts", 10_000],
+  ["tests/integration/f22.test.ts", 9_000],
+  ["tests/integration/f23.test.ts", 9_000],
+  ["tests/integration/f24.test.ts", 8_000],
+  ["tests/integration/f25.test.ts", 8_000],
+  ["tests/integration/f26.test.ts", 7_000],
+  ["tests/integration/f27.test.ts", 7_000],
+  ["tests/integration/f28.test.ts", 6_000],
+  ["tests/integration/f29.test.ts", 5_000],
+  ["tests/integration/f30.test.ts", 5_000],
+  ["tests/integration/f31.test.ts", 4_000],
+  ["tests/integration/f32.test.ts", 4_000],
+  ["tests/integration/f33.test.ts", 4_000],
+  ["tests/integration/f34.test.ts", 3_000],
+  ["tests/integration/f35.test.ts", 3_000],
+  ["tests/integration/f36.test.ts", 3_000],
+  ["tests/integration/f37.test.ts", 2_000],
+  ["tests/integration/f38.test.ts", 2_000],
+  ["tests/integration/f39.test.ts", 1_000],
+];
 let failures = 0;
 
 function check(name: string, fn: () => void | Promise<void>): Promise<void> {
@@ -385,10 +448,16 @@ async function main(): Promise<void> {
     assert.equal(sandboxShardCount(floorCapacity + 1), SANDBOX_MIN_SHARDS + 1, "🔴 …and one file past it does — the cap, not the floor, is what grows the plan");
     assert.equal(sandboxShardCount(5 * SANDBOX_FILES_PER_SHARD), SANDBOX_MIN_SHARDS + 1, "a tier of five caps is five shards");
     assert.equal(sandboxShardCount(400), Math.ceil(400 / SANDBOX_FILES_PER_SHARD), "🔴 NO CEILING: a much larger tier keeps the per-process count flat, or the pin is back");
-    const realFiles = countTierFiles(repoRoot);
-    assert.ok(realFiles !== undefined, "the repository's own tier must be countable");
-    assert.ok(realFiles! <= SANDBOX_MIN_SHARDS * SANDBOX_FILES_PER_SHARD, `the tier (${String(realFiles)} files) is inside the floor's capacity of ${floorCapacity}`);
-    assert.equal(sandboxShardCount(realFiles), SANDBOX_MIN_SHARDS, "🔴 today's tier plans on the FLOOR. A red here means the tier outgrew the floor's capacity and the cap is now adding shards — re-read the sizing note above and re-measure, do not just move the number");
+    const realList = listTierFiles(repoRoot);
+    assert.ok(realList !== undefined, "the repository's own tier must be countable");
+    const realFiles = realList!.length;
+    const realPlan = sandboxShardCount(realFiles);
+    assert.equal(realPlan, Math.max(SANDBOX_MIN_SHARDS, Math.ceil(realFiles / SANDBOX_FILES_PER_SHARD)), `🔴 the tier (${realFiles} files) plans the floor or one shard per ${SANDBOX_FILES_PER_SHARD} files, whichever is more`);
+    const realShards = balanceShards(realList!, realPlan, readTierTimings(repoRoot));
+    assert.ok(
+      realShards.every((shard) => shard.length <= SANDBOX_FILES_PER_SHARD),
+      `🔴 a shard of the real ${realPlan}-shard plan holds more than ${SANDBOX_FILES_PER_SHARD} files (${realShards.map((shard) => shard.length).join("/")}) — re-read the sizing note above and re-measure, do not just move the number`,
+    );
     assert.equal(sandboxShardCount(SANDBOX_FILES_PER_SHARD), SANDBOX_MIN_SHARDS, "a tier that fits in one process still takes the floor the OOM was recovered on");
     assert.equal(sandboxShardCount(undefined), SANDBOX_MIN_SHARDS, "an unreadable count takes the floor");
     for (const files of [undefined, 0, -3, 1, 12, 13, 110, 4000]) {
@@ -622,43 +691,124 @@ async function main(): Promise<void> {
     const globbed = INTEGRATION_INCLUDE_GLOBS.flatMap((g) => globSync(g, { cwd: repoRoot })).map((f) => f.split("\\").join("/")).sort();
     assert.deepEqual(files, globbed, `the walk names the same ${globbed.length} files the include glob matches`);
     assert.equal(files.length, countTierFiles(repoRoot), "and the count the shard plan sizes from is that list's length");
+    const timings = readTierTimings(repoRoot);
+    assert.ok(timings.size > 0, `the checked-in ${TIER_TIMINGS_PATH} reads and holds measurements`);
 
     const planned = sandboxShardCount(files.length);
     const counts = new Set([1, 2, 3, planned, planned + 1, 7, files.length, files.length + 3]);
     for (const total of counts) {
       const seen = new Map<string, number>();
       let sum = 0;
-      const sizes: number[] = [];
       for (let k = 1; k <= total; k++) {
-        const share = shardFiles(files, k, total);
-        sizes.push(share.length);
+        const share = shardFiles(files, k, total, timings);
         sum += share.length;
+        if (total <= files.length) assert.ok(share.length > 0, `N=${total}: shard ${k} is not empty while N does not exceed the tier`);
         for (const f of share) seen.set(f, (seen.get(f) ?? 0) + 1);
       }
       assert.equal(sum, files.length, `N=${total}: the shards hold ${sum} files in all, and the tier holds ${files.length}`);
       assert.deepEqual([...seen.keys()].sort(), files, `N=${total}: no tier file is missed`);
       assert.ok([...seen.values()].every((n) => n === 1), `N=${total}: no tier file runs twice`);
-      assert.ok(Math.max(...sizes) - Math.min(...sizes) <= 1, `N=${total}: shard sizes differ by at most one file — got ${sizes.join(",")}`);
     }
 
     const shuffled = [...files].reverse();
     for (let k = 1; k <= planned; k++) {
-      assert.deepEqual(shardFiles(shuffled, k, planned), shardFiles(files, k, planned), `shard ${k}/${planned} ignores the input order`);
+      assert.deepEqual(shardFiles(shuffled, k, planned, timings), shardFiles(files, k, planned, timings), `shard ${k}/${planned} ignores the input order`);
     }
     assert.equal(tierFilesDigest(files), tierFilesDigest([...files]), "the logged digest is a function of the list");
 
-    for (const root of [repoRoot, "/some/other/checkout"]) {
+    assert.equal(vitestConfig.test?.sequence?.sequencer, DurationShardSequencer, "vitest.config.ts installs DurationShardSequencer, so --shard=k/N runs the balanced split");
+
+    const otherRoot = mkdtempSync(join(tmpdir(), "oe-other-checkout-"));
+    mkdirSync(join(otherRoot, dirname(TIER_TIMINGS_PATH)), { recursive: true });
+    writeFileSync(join(otherRoot, TIER_TIMINGS_PATH), readFileSync(join(repoRoot, TIER_TIMINGS_PATH)));
+    for (const root of [repoRoot, otherRoot]) {
       for (let k = 1; k <= planned; k++) {
-        const sequencer = new BaseSequencer({ config: { root, shard: { index: k, count: planned } } } as unknown as ConstructorParameters<typeof BaseSequencer>[0]);
-        const specs = files.map((f) => ({ moduleId: `${root}/${f}` }));
-        const picked = (await sequencer.shard(specs as unknown as Parameters<BaseSequencer["shard"]>[0])) as unknown as { moduleId: string }[];
+        const sequencer = new DurationShardSequencer({ config: { root, shard: { index: k, count: planned } } } as unknown as ConstructorParameters<typeof DurationShardSequencer>[0]);
+        const specs = shuffled.map((f) => ({ moduleId: `${root}/${f}` }));
+        const picked = (await sequencer.shard(specs as unknown as Parameters<DurationShardSequencer["shard"]>[0])) as unknown as { moduleId: string }[];
         assert.deepEqual(
-          picked.map((spec) => spec.moduleId.slice(root.length + 1)),
-          shardFiles(files, k, planned),
-          `vitest's own --shard=${k}/${planned} at root ${root} picks exactly the files shardFiles names`,
+          picked.map((spec) => spec.moduleId.slice(root.length + 1)).sort(),
+          shardFiles(files, k, planned, timings),
+          `the sequencer's --shard=${k}/${planned} at root ${root} picks exactly the files shardFiles names`,
         );
       }
     }
+    rmSync(otherRoot, { recursive: true, force: true });
+  });
+
+  await check("balanced split: on a fixed timings fixture the slowest shard is within 1.3x of the mean", () => {
+    const fixture = new Map<string, number>(BALANCE_FIXTURE.map(([file, ms]) => [file, ms]));
+    const files = [...fixture.keys()].sort();
+    const total = 4;
+    const loads = balanceShards(files, total, fixture).map((share) => share.reduce((sum, f) => sum + fixture.get(f)!, 0));
+    const mean = loads.reduce((a, b) => a + b, 0) / total;
+    const ratio = Math.max(...loads) / mean;
+    assert.ok(ratio <= 1.3, `🔴 the slowest shard is ${ratio.toFixed(2)}x the mean — loads ${loads.map((l) => Math.round(l / 1000)).join("/")} s`);
+    const countLoads = Array.from({ length: total }, (_, i) => vitestCountSplit(files, i + 1, total).reduce((sum, f) => sum + fixture.get(f)!, 0));
+    const countRatio = Math.max(...countLoads) / mean;
+    assert.ok(countRatio > 1.3, `the fixture must unbalance the count split — got ${countRatio.toFixed(2)}x (loads ${countLoads.map((l) => Math.round(l / 1000)).join("/")} s)`);
+  });
+
+  await check("balanced split: a file with no measurement weighs the MEDIAN, and the plan stays deterministic", () => {
+    const timings = new Map([
+      ["a.test.ts", 10],
+      ["b.test.ts", 30],
+      ["c.test.ts", 50],
+      ["gone.test.ts", 999_999],
+    ]);
+    const weights = shardWeights(["a.test.ts", "b.test.ts", "c.test.ts", "new.test.ts"], timings);
+    assert.equal(weights.get("new.test.ts"), 30, "an unmeasured file weighs the median of the tier's MEASURED files — a deleted spec's entry does not count");
+    assert.equal(shardWeights(["a.test.ts", "b.test.ts", "x.test.ts"], timings).get("x.test.ts"), 20, "an even count takes the mean of the two middle values");
+    assert.equal(shardWeights(["x.test.ts", "y.test.ts"], new Map()).get("x.test.ts"), 1, "a tier with no measurement at all weighs every file the same");
+    const even = balanceShards(["d", "c", "b", "a", "e"], 2, new Map());
+    assert.deepEqual(even.map((s) => s.length).sort(), [2, 3], "equal weights split by count");
+    assert.deepEqual(balanceShards(["a", "b", "c"], 3, new Map([["a", 0], ["b", 0], ["c", 0]])).map((s) => s.length), [1, 1, 1], "a zero weight still fills every shard");
+    assert.deepEqual(balanceShards(["c", "a", "b"], 2, timings), balanceShards(["b", "c", "a"], 2, timings), "the input order never moves a file");
+    assert.deepEqual(balanceShards(["a.test.ts", "b.test.ts", "c.test.ts"], 2, timings), [["c.test.ts"], ["a.test.ts", "b.test.ts"]], "longest first, each into the least-loaded shard");
+    const heavy = new Map<string, number>([["heavy.test.ts", 1_000_000]]);
+    const many = ["heavy.test.ts", ...Array.from({ length: 63 }, (_, i) => `cheap-${String(i).padStart(2, "0")}.test.ts`)];
+    for (const f of many.slice(1)) heavy.set(f, 1);
+    const capped = balanceShards(many, 2, heavy).map((s) => s.length);
+    assert.ok(capped.every((n) => n <= SANDBOX_FILES_PER_SHARD), `🔴 no shard passes the ${SANDBOX_FILES_PER_SHARD}-file cap under a skewed duration (${capped.join("/")})`);
+    assert.equal(capped.reduce((a, b) => a + b, 0), many.length, "…and every file still lands in a shard");
+    const past = Array.from({ length: 70 }, (_, i) => `p-${String(i).padStart(2, "0")}.test.ts`);
+    const pastSplit = balanceShards(past, 2, new Map()).map((s) => s.length);
+    assert.deepEqual(pastSplit, [35, 35], `a fixed total past the cap splits evenly (${pastSplit.join("/")})`);
+    assert.equal(pastSplit.reduce((a, b) => a + b, 0), 70, "…and places every file");
+  });
+
+  await check("timings file: a malformed file throws, a missing one is empty, and a regeneration merges by rule", () => {
+    assert.deepEqual([...parseTierTimings('{"files":{"a.test.ts":12}}')], [["a.test.ts", 12]]);
+    for (const bad of ["{}", '{"files":[]}', '{"files":{"a":-1}}', '{"files":{"a":"5"}}', "not json"]) {
+      assert.throws(() => parseTierTimings(bad), `🔴 ${bad} is refused, never half-read`);
+    }
+    const empty = mkdtempSync(join(tmpdir(), "oe-no-timings-"));
+    assert.equal(readTierTimings(empty).size, 0, "a tree with no timings file weighs every file the same");
+    rmSync(empty, { recursive: true, force: true });
+
+    const root = "/r";
+    const report = (entries: [string, number, number][]) => ({ testResults: entries.map(([name, startTime, endTime]) => ({ name, startTime, endTime })) });
+    const merge = mergeTimings(
+      [report([["/r/tests/integration/a.test.ts", 100, 1_100], ["/r/tests/integration/b.test.ts", 0, 400]]), report([["/r/tests/integration/a.test.ts", 0, 3_000], ["/r/tests/integration/other.test.ts", 0, 5]])],
+      root,
+      ["tests/integration/a.test.ts", "tests/integration/b.test.ts", "tests/integration/c.test.ts", "tests/integration/d.test.ts"],
+      new Map([["tests/integration/c.test.ts", 77], ["tests/integration/b.test.ts", 1], ["tests/integration/deleted.test.ts", 9]]),
+    );
+    assert.deepEqual(
+      merge.files,
+      { "tests/integration/a.test.ts": 3_000, "tests/integration/b.test.ts": 400, "tests/integration/c.test.ts": 77 },
+      "a file measured twice takes the LONGEST; a fresh measurement replaces the old one; an unmeasured tier file keeps its entry",
+    );
+    assert.deepEqual(merge.dropped, ["tests/integration/deleted.test.ts"], "an entry for a file outside the tier is dropped");
+    assert.deepEqual(merge.unmeasured, ["tests/integration/d.test.ts"], "a tier file with no entry is named, so the median is visible");
+    assert.equal(merge.kept, 1);
+    assert.deepEqual([...parseTierTimings(timingsFileText(merge.files))], Object.entries(merge.files), "the written text reads back as the same timings");
+    assert.throws(() => mergeTimings([{ testResults: [{ name: "/r/x", startTime: 5 }] }], root, [], new Map()), "an entry with no end time is refused, never skipped");
+    assert.throws(
+      () => mergeTimings([{ testResults: [{ name: "/r/tests/integration/a.test.ts", status: "failed", startTime: 5, endTime: 5 }] }], root, ["tests/integration/a.test.ts"], new Map()),
+      /green runs only/,
+      "🔴 a failed file is refused: a beforeAll that failed would otherwise record ~0 ms for the slowest file",
+    );
   });
 
   await check("runLocked: OE_IT_SHARD=k/N runs ONLY shard k and prints ONE line that names the shard", async () => {
@@ -856,7 +1006,9 @@ async function main(): Promise<void> {
   console.log("\nAll suite-lock-run tests passed.");
 }
 
-main().catch((err) => {
+try {
+  await main();
+} catch (err) {
   console.error(err);
   process.exit(1);
-});
+}

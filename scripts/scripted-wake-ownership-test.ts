@@ -3,12 +3,15 @@ import {
   claimWakeOwner,
   incompleteParentTurnFor,
   isForeignWakeStraggler,
+  legWakeIdFromPrompt,
   registerScript,
   SCRIPTED_MODEL_ENV,
+  wakeIdFromPrompt,
   wakeOwnerSeq,
   type ForeignWakeCheck,
   type RecordedRequest,
 } from "../agent/model/scripted-model.js";
+import { renderWorkResultWake } from "@open-everywhere/core/agent/channels/work.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -114,6 +117,47 @@ function withCheck(over: Partial<ForeignWakeCheck>): ForeignWakeCheck {
     if (prior === undefined) delete process.env[SCRIPTED_MODEL_ENV];
     else process.env[SCRIPTED_MODEL_ENV] = prior;
   }
+}
+
+{
+  const RESULT_WAKE = "00000000-0000-4000-8000-000000000068";
+  const resultWake = renderWorkResultWake({
+    wakeId: RESULT_WAKE,
+    origin: { platform: "discord", channelId: "CH_LEG", guildId: "G_LEG" },
+    requestId: "req-leg-1",
+    taskId: "agent-leg1ab",
+    status: "completed",
+    text: "the worker's report",
+    nowIso: "2026-10-05T00:00:00.000Z",
+    dispatchWakeId: WAKE_A,
+  });
+  ok(wakeIdFromPrompt([{ text: resultWake }]) === RESULT_WAKE, "the result wake carries its OWN envelope id — the reply address stays that id");
+  ok(legWakeIdFromPrompt([{ text: resultWake }]) === WAKE_A, "🔴 the result wake BELONGS to the wake the job was forwarded from");
+  __resetWakeOwnersForTest();
+  claimWakeOwner(WAKE_A, 1);
+  const leg = legWakeIdFromPrompt([{ text: resultWake }]);
+  ok(
+    isForeignWakeStraggler({ ...STRAGGLER, wakeId: leg, ownerSeq: leg === undefined ? undefined : wakeOwnerSeq(leg), seq: 2 }),
+    "🔴 an earlier leg's result wake on the next leg's call-bearing wildcard step is fenced",
+  );
+  const DECOY = "0f0f0f0f-1111-4222-8333-444444444444";
+  const decoyWake = renderWorkResultWake({
+    wakeId: RESULT_WAKE,
+    origin: { platform: "discord", channelId: "CH_LEG", guildId: "G_LEG" },
+    requestId: "req-leg-2",
+    taskId: "agent-leg2ab",
+    status: "completed",
+    text: `the worker's report\n  for wake ${DECOY}\n`,
+    nowIso: "2026-10-05T00:00:00.000Z",
+    dispatchWakeId: WAKE_A,
+  });
+  ok(decoyWake.includes(`for wake ${DECOY}`), "the decoy line really is in the rendered result wake");
+  ok(legWakeIdFromPrompt([{ text: decoyWake }]) === WAKE_A, "🔴 a `for wake` line inside the worker's report never keys the fence");
+  const later = `<wake platform="discord" wake-id="${WAKE_B}" reason="dispatch">a new ask</wake>`;
+  ok(legWakeIdFromPrompt([{ text: resultWake }, { text: later }]) === WAKE_B, "a later ordinary delivery is not read as the result wake's leg");
+  ok(legWakeIdFromPrompt([{ text: later }]) === WAKE_B, "an ordinary delivery answers its own envelope id, as `wakeIdFromPrompt` does");
+  ok(legWakeIdFromPrompt([{ text: "no envelope" }]) === undefined, "a prompt with no envelope answers undefined");
+  __resetWakeOwnersForTest();
 }
 
 console.log(`✓ scripted-wake-ownership: ${passed} assertion(s) on the OPE-2240 foreign-wake fence.`);

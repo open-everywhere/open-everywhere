@@ -37,7 +37,7 @@ const { getOperationalStore } = await import("../agent/operational/provider.js")
 import type { ApprovalChainRequest } from "../agent/access/approver-chain.js";
 import type { ApprovalJudgeContext, JudgeCacheEntry } from "../agent/access/approval-judge.js";
 import type { PendingActionRow } from "../agent/approvals/types.js";
-import { overrideSettingsForTest } from "../agent/settings/settings.js";
+import { overrideSettingsForTest, SETTINGS } from "../agent/settings/settings.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { removeTempDir } from "./_temp-dir.js";
 
@@ -59,6 +59,11 @@ function ctxOf(tool: string, extra: Partial<ApprovalJudgeContext> = {}): Approva
   return { tool, argsJson: "{}", registryVerdict: "ask", unattended: false, tainted: false, taintKinds: [], ...extra };
 }
 
+const JUDGE_RULE_ID = "judge-test-rule";
+const RULED: Partial<ApprovalJudgeContext> = {
+  rules: [{ id: JUDGE_RULE_ID, rule: "Every judge-deferred act in this test file is routine.", scope: "org" }],
+};
+
 function stubJudge(answers: { scrutiny?: string; verdict?: string; throws?: boolean }): { calls: { pass: string; prompt: string }[] } {
   const calls: { pass: string; prompt: string }[] = [];
   registerApprovalJudgeCompletion(async (prompt, pass) => {
@@ -69,18 +74,13 @@ function stubJudge(answers: { scrutiny?: string; verdict?: string; throws?: bool
   return { calls };
 }
 
-ok(approvalJudgeMode() === "off", "arming: unset env ⇒ off (code default)");
+ok(SETTINGS.approvals.judgeMode.shipped === "enforce", "arming: the SHIPPED judge mode is enforce (OPE-2366)");
 overrideSettingsForTest({ approvals: { judgeMode: "shadow" } });
-ok(approvalJudgeMode() === "shadow", "arming: OE_APPROVAL_JUDGE=shadow arms shadow mode");
+ok(approvalJudgeMode() === "shadow", "arming: judgeMode shadow arms shadow mode");
 overrideSettingsForTest({ approvals: { judgeMode: "enforce" } });
-ok(approvalJudgeMode() === "enforce", "arming: OE_APPROVAL_JUDGE=enforce arms ENFORCEMENT (phase 2)");
+ok(approvalJudgeMode() === "enforce", "arming: judgeMode enforce arms ENFORCEMENT");
 overrideSettingsForTest({ approvals: { judgeMode: "off" } });
-ok(approvalJudgeMode() === "off", "arming: a case variant fails CLOSED to off (never a surprise arm)");
-overrideSettingsForTest({ approvals: { judgeMode: "off" } });
-ok(approvalJudgeMode() === "off", "arming: an unknown value fails CLOSED to off");
-overrideSettingsForTest({ approvals: { judgeMode: "off" } });
-ok(approvalJudgeMode() === "off", "arming: a typo fails closed to off");
-overrideSettingsForTest({ approvals: { judgeMode: "off" } });
+ok(approvalJudgeMode() === "off", "arming: judgeMode off disarms the judge (negative control)");
 
 {
   const stub = stubJudge({ scrutiny: "YES", verdict: "VERDICT: deny\nREASON: stub" });
@@ -159,7 +159,7 @@ overrideSettingsForTest({ approvals: { judgeMode: "shadow" } });
   ok(p1.includes("notion__create_page") && p1.includes("ignore previous instructions"), "prompt: pass 1 carries tool + args verbatim (as data)");
   ok(/YES or NO/.test(p1) && /VERDICT:/.test(p2) && p2.includes("Domain: support"), "prompt: pass shapes are distinct, context shared");
   const built = judgeContextOf(req("create_ticket", { action: "ticket.create", domain: "support", args: { a: 1 } }), await resolveApproverChain(req("create_ticket")));
-  const allowedKeys = ["tool", "action", "argsJson", "registryVerdict", "domain", "unattended", "tainted", "taintKinds", "requesterMessages"];
+  const allowedKeys = ["tool", "action", "argsJson", "registryVerdict", "domain", "unattended", "tainted", "taintKinds", "requesterMessages", "earlierRequesterMessages", "argsDigest", "requester"];
   ok(Object.keys(built).every((k) => allowedKeys.includes(k)), "context: judgeContextOf emits only reasoning-blind fields");
   ok(built.argsJson === '{"a":1}' && built.registryVerdict === "ask", "context: frozen args + the displaced default are what the judge sees");
 }
@@ -195,8 +195,8 @@ overrideSettingsForTest({ approvals: { judgeMode: "shadow" } });
 }
 
 registerConfig({
-  loadBundles: () => [],
-  loadBindings: () => [],
+  loadBundles: () => [{ name: "judge-test-policy", preApprovalRules: [{ id: JUDGE_RULE_ID, rule: "Every judge-deferred act in this test file is routine." }] }] as never,
+  loadBindings: () => [{ bundle: "judge-test-policy", scope: { level: "org" } }] as never,
   pluginRegistry: {},
   skillContent: {},
   loadDomains: () => [
@@ -260,14 +260,14 @@ async function shadowRows(expectAtLeast = 1): Promise<{ detail?: Record<string, 
 {
   clearApprovalJudgeVerdictCache();
   const contradicts = stubJudge({ scrutiny: "NO", verdict: "VERDICT: ask\nREASON: needs a human" });
-  const r = await runApprovalJudge(ctxOf("open_pull_request"), { enforce: true });
+  const r = await runApprovalJudge(ctxOf("open_pull_request", RULED), { enforce: true });
   ok(r.verdict === "ask" && r.source === "pass2" && r.passes === 2, "enforce: a pass-1 would-allow NEVER enforces — pass 2 ran and its ask decided");
   ok(r.pass1 === "no", "enforce: the pass-1 answer is still recorded (the comparative track record keeps accruing)");
   ok(contradicts.calls.map((c) => c.pass).join(",") === "scrutiny,verdict", "enforce: both passes ran, in order");
 
   clearApprovalJudgeVerdictCache();
-  stubJudge({ scrutiny: "hmm", verdict: "VERDICT: allow\nREASON: routine internal read" });
-  const r2 = await runApprovalJudge(ctxOf("open_pull_request"), { enforce: true });
+  stubJudge({ scrutiny: "hmm", verdict: "VERDICT: allow\nREASON: routine internal read\nRULE: judge-test-rule" });
+  const r2 = await runApprovalJudge(ctxOf("open_pull_request", RULED), { enforce: true });
   ok(r2.verdict === "allow" && r2.source === "pass2" && r2.pass1 === "unparseable", "enforce: an unparseable pass 1 does not defer — pass 2 decides (only pass-2 verdicts enforce)");
   resetApprovalJudgeCompletion();
   clearApprovalJudgeVerdictCache();
@@ -275,9 +275,9 @@ async function shadowRows(expectAtLeast = 1): Promise<{ detail?: Record<string, 
 
 {
   clearApprovalJudgeVerdictCache();
-  const uncached = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: fine" });
-  await runApprovalJudge(ctxOf("open_pull_request"), { enforce: true });
-  const again = await runApprovalJudge(ctxOf("open_pull_request"), { enforce: true });
+  const uncached = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: fine\nRULE: judge-test-rule" });
+  await runApprovalJudge(ctxOf("open_pull_request", RULED), { enforce: true });
+  const again = await runApprovalJudge(ctxOf("open_pull_request", RULED), { enforce: true });
   ok(!again.cacheHit && uncached.calls.length === 4, "enforce: with no session slot there is NO cache — an enforced allow never rides a per-process store (both runs paid both passes)");
 
   const entries = new Map<string, JudgeCacheEntry>();
@@ -286,17 +286,17 @@ async function shadowRows(expectAtLeast = 1): Promise<{ detail?: Record<string, 
     set: (k, e) => void entries.set(k, e),
     delete: (k) => void entries.delete(k),
   });
-  const cachedStub = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: fine" });
-  const first = await runApprovalJudge(ctxOf("open_pull_request"), { enforce: true });
+  const cachedStub = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: fine\nRULE: judge-test-rule" });
+  const first = await runApprovalJudge(ctxOf("open_pull_request", RULED), { enforce: true });
   ok(first.verdict === "allow" && !first.cacheHit && first.passes === 2, "enforce: a session-scoped store caches the pass-2 allow");
-  const hit = await runApprovalJudge(ctxOf("open_pull_request"), { enforce: true });
+  const hit = await runApprovalJudge(ctxOf("open_pull_request", RULED), { enforce: true });
   ok(hit.cacheHit && hit.source === "cache" && hit.passes === 0 && cachedStub.calls.length === 2, "enforce: the second run is a zero-call cache hit");
 
   entries.clear();
   const shadowStub = stubJudge({ scrutiny: "NO", verdict: "VERDICT: ask\nREASON: needs a human" });
-  const shadowRun = await runApprovalJudge(ctxOf("create_routine"));
+  const shadowRun = await runApprovalJudge(ctxOf("create_routine", RULED));
   ok(shadowRun.verdict === "allow" && shadowRun.source === "pass1", "enforce-cache setup: a shadow pass-1 allow landed in the shared session store");
-  const enforceAfterShadow = await runApprovalJudge(ctxOf("create_routine"), { enforce: true });
+  const enforceAfterShadow = await runApprovalJudge(ctxOf("create_routine", RULED), { enforce: true });
   ok(!enforceAfterShadow.cacheHit && enforceAfterShadow.verdict === "ask", "enforce: a pass-1-sourced cache entry NEVER enforces — the run re-judged and pass 2 decided");
   ok(shadowStub.calls.length === 3, "enforce: …by really consulting the transport again (1 shadow + 2 enforce calls)");
   setApprovalJudgeCacheStoreForTest(undefined);
@@ -319,9 +319,9 @@ async function shadowRows(expectAtLeast = 1): Promise<{ detail?: Record<string, 
         ? new Promise<string>((resolve) => {
             releaseScrutiny = resolve;
           })
-        : Promise.resolve("VERDICT: allow\nREASON: late"),
+        : Promise.resolve("VERDICT: allow\nREASON: late\nRULE: judge-test-rule"),
   );
-  const timed = await runApprovalJudge(ctxOf("purge_memory"), { enforce: true, timeoutMs: 40 });
+  const timed = await runApprovalJudge(ctxOf("purge_memory", RULED), { enforce: true, timeoutMs: 40 });
   ok(timed.verdict === "defer" && timed.source === "timeout", "timeout: a hung transport defers (⇒ the last-resort ask) instead of wedging the turn");
   releaseScrutiny?.("YES");
   await new Promise((r) => setTimeout(r, 20));
@@ -332,15 +332,24 @@ async function shadowRows(expectAtLeast = 1): Promise<{ detail?: Record<string, 
 }
 
 overrideSettingsForTest({ approvals: { judgeMode: "enforce" } });
-const spendInput = {
+const liftInput = {
   org: "test-org",
-  kind: "spend.set",
+  kind: "routine.create",
   channelId: "C_PLAIN",
   requestedBy: "U_HUMAN",
   threadTs: null,
   scopeKey: "slack/T1/C_PLAIN",
   domain: "plain",
-  args: { org: "test-org", scopeKey: "slack/T1/C_PLAIN", level: "surface", monthlyTokens: 500_000, currentCap: null },
+  args: {
+    org: "test-org",
+    partition: { org: "test-org", platform: "slack", workspace: "T1", surface: "C_PLAIN", surfaceKey: "slack/T1/C_PLAIN" },
+    surfaceKey: "slack/T1/C_PLAIN",
+    target: { channelId: "C_PLAIN" },
+    trigger: { kind: "interval", everyMinutes: 60 },
+    prompt: "Post the morning digest here.",
+    createdBy: "U_HUMAN",
+    nonce: 500_000,
+  },
   chain: { unattended: false },
 };
 
@@ -356,8 +365,8 @@ async function judgeDetailWhere(want: (d: Record<string, unknown>) => boolean, l
 
 {
   clearApprovalJudgeVerdictCache();
-  stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest cap, attended, clean turn" });
-  const allowed = await requestApproval(spendInput, { postCard });
+  stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest cap, attended, clean turn\nRULE: judge-test-rule" });
+  const allowed = await requestApproval(liftInput, { postCard });
   ok(allowed.autoApproved !== undefined && allowed.autoApproved.resolvedBy === "judge", "enforce/allow: a judge allow auto-approves — no card, the frozen args ran");
   const row = await getOperationalStore().getPendingAction("test-org", allowed.id);
   ok(row != null && row.status === "approved" && row.decidedBy === "chain:judge", "enforce/allow: the wedge row is decided by chain:judge, never a human's id");
@@ -365,12 +374,12 @@ async function judgeDetailWhere(want: (d: Record<string, unknown>) => boolean, l
   ok(vRows.length === 1, "enforce/allow: exactly one approval.judge.verdict row was written");
   const d = vRows[0]!.detail ?? {};
   ok(d.verdict === "allow" && d.enforcedVerdict === "allow" && d.mode === "enforce", "enforce/allow: the row records the enforced verdict as enforced");
-  ok(d.registryVerdict === "ask" && d.tool === "set_spend_limit" && d.action === "spend.set", "enforce/allow: the displaced per-verb default and the verb are on the row");
+  ok(d.registryVerdict === "ask" && d.tool === "create_routine" && d.action === "routine.create", "enforce/allow: the displaced per-verb default and the verb are on the row");
   ok(d.passes === 2 && typeof d.pass1 === "string" && typeof d.reasoning === "string", "enforce/allow: pass count, pass-1 answer and reasoning summary are on the row");
 
   clearApprovalJudgeVerdictCache();
   stubJudge({ scrutiny: "YES", verdict: "VERDICT: ask\nREASON: large raise, wants a human" });
-  const asked = await requestApproval({ ...spendInput, args: { ...spendInput.args, monthlyTokens: 900_000 } }, { postCard });
+  const asked = await requestApproval({ ...liftInput, args: { ...liftInput.args, nonce: 900_000 } }, { postCard });
   ok(asked.autoApproved === undefined && typeof asked.id === "string", "enforce/ask: a judge ask cards exactly as before the flip");
   const askedRow = (await getOperationalStore().listPendingActions("test-org")).find((r) => r.id === asked.id);
   ok(askedRow !== undefined && askedRow.status === "pending", "enforce/ask: the pending row awaits a human click");
@@ -381,7 +390,7 @@ async function judgeDetailWhere(want: (d: Record<string, unknown>) => boolean, l
   stubJudge({ scrutiny: "YES", verdict: "VERDICT: deny\nREASON: outside standing policy" });
   let denied: Error | undefined;
   try {
-    await requestApproval({ ...spendInput, args: { ...spendInput.args, monthlyTokens: 999_999_999 } }, { postCard });
+    await requestApproval({ ...liftInput, args: { ...liftInput.args, nonce: 999_999_999 } }, { postCard });
   } catch (e) {
     denied = e as Error;
   }
@@ -391,13 +400,13 @@ async function judgeDetailWhere(want: (d: Record<string, unknown>) => boolean, l
 
   resetApprovalJudgeCompletion();
   clearApprovalJudgeVerdictCache();
-  const degraded = await requestApproval({ ...spendInput, args: { ...spendInput.args, monthlyTokens: 750_000 } }, { postCard });
+  const degraded = await requestApproval({ ...liftInput, args: { ...liftInput.args, nonce: 750_000 } }, { postCard });
   ok(degraded.autoApproved === undefined, "enforce/degraded: no transport ⇒ the card path, exactly the pre-flip behaviour");
   const degradedDetail = await judgeDetailWhere((d) => d.source === "unavailable", "enforce/degraded");
   ok(degradedDetail.verdict === "defer" && degradedDetail.enforcedVerdict === "ask", "enforce/degraded: the consult row still lands — a consult that changed nothing is still evidence");
 
   const before = (await judgeVerdictRows()).length;
-  const control = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: n/a" });
+  const control = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: n/a\nRULE: judge-test-rule" });
   const unflipped = await requestApproval(baseInput, { postCard });
   ok(unflipped.autoApproved === undefined, "enforce/control: an unflipped kind (skill.delete) still cards");
   ok((await judgeVerdictRows()).length === before && control.calls.length === 0, "enforce/control: no consult, no row, transport untouched");
@@ -407,15 +416,15 @@ async function judgeDetailWhere(want: (d: Record<string, unknown>) => boolean, l
 
 {
   clearApprovalJudgeVerdictCache();
-  stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: routine's own standing work" });
-  const fireAllowed = await requestApproval({ ...spendInput, args: { ...spendInput.args, monthlyTokens: 100_000 }, chain: { unattended: true } }, { postCard });
+  stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: routine's own standing work\nRULE: judge-test-rule" });
+  const fireAllowed = await requestApproval({ ...liftInput, args: { ...liftInput.args, nonce: 100_000 }, chain: { unattended: true } }, { postCard });
   ok(fireAllowed.autoApproved !== undefined && fireAllowed.autoApproved.resolvedBy === "judge", "enforce/unattended: a judge allow lets the fire proceed — no ask ever reached the unattended clamp");
 
   clearApprovalJudgeVerdictCache();
   stubJudge({ scrutiny: "YES", verdict: "VERDICT: ask\nREASON: wants a human" });
   let fireDenied: Error | undefined;
   try {
-    await requestApproval({ ...spendInput, args: { ...spendInput.args, monthlyTokens: 800_000 }, chain: { unattended: true } }, { postCard });
+    await requestApproval({ ...liftInput, args: { ...liftInput.args, nonce: 800_000 }, chain: { unattended: true } }, { postCard });
   } catch (e) {
     fireDenied = e as Error;
   }
@@ -432,8 +441,8 @@ const contradictionRowsFor = async (org: string): Promise<{ principalId?: string
 
 async function liftedWedgeRow(tokens: number): Promise<string> {
   clearApprovalJudgeVerdictCache();
-  stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest cap, attended, clean turn" });
-  const lifted = await requestApproval({ ...spendInput, args: { ...spendInput.args, monthlyTokens: tokens } }, { postCard });
+  stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest cap, attended, clean turn\nRULE: judge-test-rule" });
+  const lifted = await requestApproval({ ...liftInput, args: { ...liftInput.args, nonce: tokens } }, { postCard });
   ok(lifted.autoApproved?.resolvedBy === "judge", `wedge ${tokens}: the judge lifted the gate, so a wedge row exists to overrule`);
   resetApprovalJudgeCompletion();
   return lifted.id;
@@ -449,7 +458,7 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
 
   clearApprovalJudgeVerdictCache();
   stubJudge({ scrutiny: "YES", verdict: "VERDICT: ask\nREASON: large raise, wants a human" });
-  const carded = await requestApproval({ ...spendInput, args: { ...spendInput.args, monthlyTokens: 901_000 } }, { postCard });
+  const carded = await requestApproval({ ...liftInput, args: { ...liftInput.args, nonce: 901_000 } }, { postCard });
   resetApprovalJudgeCompletion();
   const approved = await resolveApprovalClick({ org: "test-org", id: carded.id, decision: "approve", clickerId: "U_ADMIN", platformAdmin: () => true });
   ok(approved.outcome === "decided", "negative control: the ordinary approve click still decides normally");
@@ -457,7 +466,7 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
 
   clearApprovalJudgeVerdictCache();
   stubJudge({ scrutiny: "YES", verdict: "VERDICT: ask\nREASON: wants a human" });
-  const stillPending = await requestApproval({ ...spendInput, args: { ...spendInput.args, monthlyTokens: 902_000 } }, { postCard });
+  const stillPending = await requestApproval({ ...liftInput, args: { ...liftInput.args, nonce: 902_000 } }, { postCard });
   resetApprovalJudgeCompletion();
   const onPending = await resolveApprovalClick({ org: "test-org", id: stillPending.id, decision: "contradict", clickerId: "U_ADMIN", platformAdmin: () => true });
   ok(onPending.outcome === "contradicted" && onPending.contradiction === "not-judge-lift", "negative control: contradicting a still-pending card is refused");
@@ -465,7 +474,7 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
   clearApprovalJudgeVerdictCache();
   stubJudge({ scrutiny: "YES", verdict: "VERDICT: ask\nREASON: the judge wants a human — only CONFIG lifts this" });
   const configLift = await requestApproval(
-    { ...spendInput, domain: "bypassdomain", args: { ...spendInput.args, monthlyTokens: 903_000 } },
+    { ...liftInput, domain: "bypassdomain", args: { ...liftInput.args, nonce: 903_000 } },
     { postCard },
   );
   resetApprovalJudgeCompletion();
@@ -480,8 +489,8 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
   ok(onConfigLift.outcome === "contradicted" && onConfigLift.contradiction === "not-judge-lift", "negative control: contradicting a CONFIG lift is refused — only a judge verdict is overrulable");
   ok((await contradictionRows()).length === 0, "negative control: neither refused contradict click wrote a row");
 
-  const noStanding = await resolveApprovalClick({ org: "test-org", id: wedgeId, decision: "contradict", clickerId: "U_RANDOM" });
-  ok(noStanding.outcome === "denied", "negative control: a clicker with no admin standing cannot overrule the judge");
+  const noStanding = await resolveApprovalClick({ org: "test-org", id: wedgeId, decision: "contradict", clickerId: "U_RANDOM", clickContext: { surfaceKey: "slack/T1/C_ELSEWHERE" } });
+  ok(noStanding.outcome === "clicker-denied", "negative control: a click from a foreign room cannot overrule the judge");
   ok((await contradictionRows()).length === 0, "negative control: the refused overrule wrote no row");
 
   const overruled = await resolveApprovalClick({ org: "test-org", id: wedgeId, decision: "contradict", clickerId: "U_ADMIN", platformAdmin: () => true });
@@ -489,8 +498,8 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
   const clickRows = await contradictionRows();
   ok(clickRows.length === 1, "click surface: exactly one contradiction row");
   const cd = clickRows[0]!.detail ?? {};
-  ok(cd.id === wedgeId && cd.kind === "spend.set", "click surface: the row names WHICH approval (id + kind) — the join to the wedge row");
-  ok(cd.tool === "set_spend_limit" && cd.judgeVerdict === "allow", "click surface: the row names WHICH judge verdict it overrules");
+  ok(cd.id === wedgeId && cd.kind === "routine.create", "click surface: the row names WHICH approval (id + kind) — the join to the wedge row");
+  ok(cd.tool === "create_routine" && cd.judgeVerdict === "allow", "click surface: the row names WHICH judge verdict it overrules");
   ok(clickRows[0]!.principalId === "U_ADMIN", "click surface: the row names WHO contradicted");
   ok(cd.route === "click" && cd.humanAction === "overrule", "click surface: the row names the ROUTE the overrule came through");
   ok(cd.domain === "plain", "click surface: the row is domain-scoped, so it counts only against its own domain");
@@ -510,8 +519,8 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
   ok((await approvalJudgeAdminDisarmed("plain", "test-org")) === false, "🔴 OPE-1102: FOUR human overrules — past the removed breaker's threshold of 3 — still leave the judge ARMED");
 
   clearApprovalJudgeVerdictCache();
-  const overruledDomain = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest cap, attended, clean turn" });
-  const stillLifts = await requestApproval({ ...spendInput, args: { ...spendInput.args, monthlyTokens: 250_000 } }, { postCard });
+  const overruledDomain = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest cap, attended, clean turn\nRULE: judge-test-rule" });
+  const stillLifts = await requestApproval({ ...liftInput, args: { ...liftInput.args, nonce: 250_000 } }, { postCard });
   ok(stillLifts.autoApproved?.resolvedBy === "judge", "🔴 OPE-1102: the propose plane still LIFTS in a domain with four overrules against it");
   ok(overruledDomain.calls.length === 2, "OPE-1102: the transport really ran both passes — the lift is a live verdict, not a skipped consult");
   resetApprovalJudgeCompletion();
@@ -655,8 +664,8 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
   const DOMAIN = "chaindomain";
   clearApprovalJudgeVerdictCache();
   await disarmApprovalJudge({ org: "test-org", domain: DOMAIN, principalId: "U_OPS" });
-  const disarmedRun = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: would have lifted" });
-  const carded = await requestApproval({ ...spendInput, domain: DOMAIN, args: { ...spendInput.args, monthlyTokens: 131_000 } }, { postCard });
+  const disarmedRun = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: would have lifted\nRULE: judge-test-rule" });
+  const carded = await requestApproval({ ...liftInput, domain: DOMAIN, args: { ...liftInput.args, nonce: 131_000 } }, { postCard });
   ok(carded.autoApproved === undefined, "chain: a disarmed domain CARDS — no lift while the operator's disarm stands");
   ok(disarmedRun.calls.length === 0, "chain: the transport was never consulted in a disarmed domain");
   const disarmDetail = await judgeDetailWhere((d) => d.source === "admin-disarm", "admin-disarm");
@@ -665,8 +674,8 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
 
   clearApprovalJudgeVerdictCache();
   await rearmApprovalJudge({ org: "test-org", domain: DOMAIN, principalId: "U_OPS2" });
-  const rearmedRun = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest cap, attended, clean turn" });
-  const lifted = await requestApproval({ ...spendInput, domain: DOMAIN, args: { ...spendInput.args, monthlyTokens: 132_000 } }, { postCard });
+  const rearmedRun = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest cap, attended, clean turn\nRULE: judge-test-rule" });
+  const lifted = await requestApproval({ ...liftInput, domain: DOMAIN, args: { ...liftInput.args, nonce: 132_000 } }, { postCard });
   ok(lifted.autoApproved?.resolvedBy === "judge", "🔴 chain: the RE-ARMED domain lifts again — the judge is consulted and its verdict enforces");
   ok(rearmedRun.calls.length === 2, "chain: the re-armed consult really ran both passes");
   resetApprovalJudgeCompletion();
@@ -675,16 +684,16 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
 
 {
   clearApprovalJudgeVerdictCache();
-  const armedRun = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest cap, attended, clean turn" });
-  const liftedOrg = await requestApproval({ ...spendInput, domain: null, args: { ...spendInput.args, monthlyTokens: 141_000 } }, { postCard });
+  const armedRun = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest cap, attended, clean turn\nRULE: judge-test-rule" });
+  const liftedOrg = await requestApproval({ ...liftInput, domain: null, args: { ...liftInput.args, nonce: 141_000 } }, { postCard });
   ok(liftedOrg.autoApproved?.resolvedBy === "judge", "chain org-wide premise: a DOMAIN-LESS propose lifts while the org plane is armed");
   ok(armedRun.calls.length === 2, "chain org-wide premise: the consult really ran");
   resetApprovalJudgeCompletion();
 
   clearApprovalJudgeVerdictCache();
   await disarmApprovalJudge({ org: "test-org", orgWide: true, principalId: "U_OPS" });
-  const disarmedRun = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: would have lifted" });
-  const cardedOrg = await requestApproval({ ...spendInput, domain: null, args: { ...spendInput.args, monthlyTokens: 142_000 } }, { postCard });
+  const disarmedRun = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: would have lifted\nRULE: judge-test-rule" });
+  const cardedOrg = await requestApproval({ ...liftInput, domain: null, args: { ...liftInput.args, nonce: 142_000 } }, { postCard });
   ok(cardedOrg.autoApproved === undefined, "🔴 chain org-wide: the domain-less propose CARDS under an org-wide disarm — break-glass now reaches `pr.open` and `create_routine`");
   ok(disarmedRun.calls.length === 0, "chain org-wide: the transport was never consulted");
   const disarmConsults = (await judgeVerdictRows()).map((r) => r.detail ?? {}).filter((d) => d.source === "admin-disarm");
@@ -697,16 +706,16 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
   resetApprovalJudgeCompletion();
 
   clearApprovalJudgeVerdictCache();
-  const domainedRun = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest cap, attended, clean turn" });
-  const stillLiftsDomained = await requestApproval({ ...spendInput, domain: "orgpartition", args: { ...spendInput.args, monthlyTokens: 143_000 } }, { postCard });
+  const domainedRun = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest cap, attended, clean turn\nRULE: judge-test-rule" });
+  const stillLiftsDomained = await requestApproval({ ...liftInput, domain: "orgpartition", args: { ...liftInput.args, nonce: 143_000 } }, { postCard });
   ok(stillLiftsDomained.autoApproved?.resolvedBy === "judge", "🔴 chain partition: a DOMAINED propose still lifts under a standing org-wide disarm — no kill switch was shipped");
   ok(domainedRun.calls.length === 2, "chain partition: that domained consult really ran both passes");
   resetApprovalJudgeCompletion();
 
   clearApprovalJudgeVerdictCache();
   await rearmApprovalJudge({ org: "test-org", orgWide: true, principalId: "U_OPS2" });
-  const restoredRun = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest cap, attended, clean turn" });
-  const liftsAgain = await requestApproval({ ...spendInput, domain: null, args: { ...spendInput.args, monthlyTokens: 144_000 } }, { postCard });
+  const restoredRun = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest cap, attended, clean turn\nRULE: judge-test-rule" });
+  const liftsAgain = await requestApproval({ ...liftInput, domain: null, args: { ...liftInput.args, nonce: 144_000 } }, { postCard });
   ok(liftsAgain.autoApproved?.resolvedBy === "judge", "🔴 chain org-wide: the RE-ARMED domain-less plane lifts again");
   ok(restoredRun.calls.length === 2, "chain org-wide: the restored consult really ran both passes");
   resetApprovalJudgeCompletion();
@@ -720,9 +729,9 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
     return { ok: true, ts: "9.9" };
   };
   clearApprovalJudgeVerdictCache();
-  stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest" });
+  stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest\nRULE: judge-test-rule" });
   const noticed = await requestApproval(
-    { ...spendInput, domain: "noticedomain", args: { ...spendInput.args, monthlyTokens: 121_000 }, postedTo: "slack/T1/C_PLAIN" },
+    { ...liftInput, domain: "noticedomain", args: { ...liftInput.args, nonce: 121_000 }, postedTo: "slack/T1/C_PLAIN" },
     { post },
   );
   ok(noticed.autoApproved?.resolvedBy === "judge", "notice: the judge lifted, so the room gets its notice");
@@ -737,9 +746,9 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
   _resetAudienceFloorCacheForTest();
   registerGovernanceMemberSupplier(async () => ({ humanMemberIds: ["U_MEMBER", "U_GUEST"], resolved: true, isPrivate: false, hasGuest: true }));
   clearApprovalJudgeVerdictCache();
-  stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest" });
+  stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest\nRULE: judge-test-rule" });
   const guestLift = await requestApproval(
-    { ...spendInput, domain: "noticedomain", args: { ...spendInput.args, monthlyTokens: 121_500 }, postedTo: "slack/T1/C_GUEST" },
+    { ...liftInput, domain: "noticedomain", args: { ...liftInput.args, nonce: 121_500 }, postedTo: "slack/T1/C_GUEST" },
     { post },
   );
   ok(guestLift.autoApproved?.resolvedBy === "judge", "notice disclosure: the judge-lifted action still runs successfully in an observed-guest room");
@@ -750,8 +759,8 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
 
   posts.length = 0;
   clearApprovalJudgeVerdictCache();
-  stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest" });
-  const silent = await requestApproval({ ...spendInput, domain: "noticedomain", args: { ...spendInput.args, monthlyTokens: 122_000 } }, { post });
+  stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest\nRULE: judge-test-rule" });
+  const silent = await requestApproval({ ...liftInput, domain: "noticedomain", args: { ...liftInput.args, nonce: 122_000 } }, { post });
   ok(silent.autoApproved?.resolvedBy === "judge", "notice: the control lift happened too");
   ok(posts.length === 0, "notice: a lift with no postedTo posts nothing — never a guessed room");
   resetApprovalJudgeCompletion();
@@ -763,9 +772,9 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
   });
   posts.length = 0;
   clearApprovalJudgeVerdictCache();
-  stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest" });
+  stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest\nRULE: judge-test-rule" });
   const routed = await requestApproval(
-    { ...spendInput, domain: "noticedomain", args: { ...spendInput.args, monthlyTokens: 123_000 }, postedTo: "testsurface/W1/C_ROOM" },
+    { ...liftInput, domain: "noticedomain", args: { ...liftInput.args, nonce: 123_000 }, postedTo: "testsurface/W1/C_ROOM" },
     { post },
   );
   ok(routed.autoApproved?.resolvedBy === "judge", "router: the judge lifted on the non-Slack surface too");
@@ -777,9 +786,9 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
   posts.length = 0;
   noticed2.length = 0;
   clearApprovalJudgeVerdictCache();
-  stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest" });
+  stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest\nRULE: judge-test-rule" });
   const unregistered = await requestApproval(
-    { ...spendInput, domain: "noticedomain", args: { ...spendInput.args, monthlyTokens: 124_000 }, postedTo: "nosuchsurface/W1/C_ROOM" },
+    { ...liftInput, domain: "noticedomain", args: { ...liftInput.args, nonce: 124_000 }, postedTo: "nosuchsurface/W1/C_ROOM" },
     { post },
   );
   ok(unregistered.autoApproved?.resolvedBy === "judge", "router: the control lift happened too");
@@ -801,15 +810,15 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
   posts.length = 0;
   noticed2.length = 0;
   clearApprovalJudgeVerdictCache();
-  stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest" });
+  stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest\nRULE: judge-test-rule" });
   const texted = await requestApproval(
-    { ...spendInput, domain: "noticedomain", args: { ...spendInput.args, monthlyTokens: 127_000 }, postedTo: "textsurface/W1/C_ROOM" },
+    { ...liftInput, domain: "noticedomain", args: { ...liftInput.args, nonce: 127_000 }, postedTo: "textsurface/W1/C_ROOM" },
     { post },
   );
   ok(texted.autoApproved?.resolvedBy === "judge", "text arm: the judge lifted on the text-only surface too");
   ok(textPosts.length === 1, "text arm: the shared road posts ONE notice through the surface's own text transport");
-  ok(textPosts[0]!.channelId === spendInput.channelId, "text arm: it lands in the room the card would have gone to, never a guessed one");
-  ok(textPosts[0]!.text.includes(`Ran without asking: ${spendInput.kind}`), "text arm: it says the act ran without asking, naming the kind");
+  ok(textPosts[0]!.channelId === liftInput.channelId, "text arm: it lands in the room the card would have gone to, never a guessed one");
+  ok(textPosts[0]!.text.includes(`Ran without asking: ${liftInput.kind}`), "text arm: it says the act ran without asking, naming the kind");
   ok(textPosts[0]!.text.includes("already run"), "text arm: it never implies the act is still pending");
   ok(textPosts[0]!.text.includes(texted.id), "text arm: 🔴 it quotes THIS wedge row's id — the join a reviewer needs, and the contradict instruction's only handle");
   ok(/cannot carry the "This should not have run" button/.test(textPosts[0]!.text), "text arm: 🔴 the overrule is spelled out in words, because no button can render here");
@@ -822,7 +831,7 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
   clearApprovalJudgeVerdictCache();
   stubJudge({ scrutiny: "YES", verdict: "VERDICT: ask\nREASON: the judge wants a human — only CONFIG lifts this" });
   const textConfigLift = await requestApproval(
-    { ...spendInput, domain: "bypassdomain", args: { ...spendInput.args, monthlyTokens: 128_000 }, postedTo: "textsurface/W1/C_ROOM" },
+    { ...liftInput, domain: "bypassdomain", args: { ...liftInput.args, nonce: 128_000 }, postedTo: "textsurface/W1/C_ROOM" },
     { post },
   );
   ok(textConfigLift.autoApproved?.resolvedBy === "registry", "text arm control: a CONFIG lift lowered the same verb through the same branch");
@@ -842,7 +851,7 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
   for (const { label, postedTo, tokens } of bypassLegs) {
     clearApprovalJudgeVerdictCache();
     const configLift = await requestApproval(
-      { ...spendInput, domain: "bypassdomain", args: { ...spendInput.args, monthlyTokens: tokens }, postedTo },
+      { ...liftInput, domain: "bypassdomain", args: { ...liftInput.args, nonce: tokens }, postedTo },
       { post },
     );
     ok(configLift.autoApproved !== undefined, `config lift (${label}): the gate really was lowered, so the notice branch really was reached`);
@@ -923,7 +932,7 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
     id: "wedge-cross-org",
     org,
     kind: "spend.set",
-    argsJson: JSON.stringify({ scopeKey: "plain", monthlyTokens: 500_000 }),
+    argsJson: JSON.stringify({ scopeKey: "plain", nonce: 500_000 }),
     scopeKey: "plain",
     domain: "plain",
     requestedBy: "U_PROPOSER",
@@ -962,11 +971,13 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
   ok(classifyConnectorOpTier("notion__search") === "read", "human-only premise: the read declaration's tool classifies read");
   ok(classifyConnectorOpTier("notion__create_pages") === "write", "human-only premise: the write declaration's tool classifies write");
 
-  ok(String(judgeHumanOnlyReason({ action: "routine.create", args: { permissions: [WRITE] } })).includes(WRITE), "🔴 human-only: a declared connector WRITE names the class and the declaration");
-  ok(judgeHumanOnlyReason({ action: "routine.create", args: { permissions: [READ] } }) === undefined, "human-only negative control: a read-only declaration keeps the judge path");
-  ok(String(judgeHumanOnlyReason({ action: "routine.create", args: { permissions: ["pr.open"] } })).includes("pr.open"), "🔴 human-only (OPE-2103): a declared `pr.open` names the class and the declaration");
-  ok(judgeHumanOnlyReason({ action: "routine.create", args: {} }) === undefined, "human-only negative control: a routine that declares nothing keeps the judge path");
-  ok(judgeHumanOnlyReason({ action: "spend.set", args: { permissions: [WRITE] } }) === undefined, "human-only negative control: the class is routine.create's declaration shape, not any `permissions` field");
+  ok(String(judgeHumanOnlyReason({ tool: "create_routine", action: "routine.create", args: { permissions: [WRITE] } })).includes(WRITE), "🔴 human-only: a declared connector WRITE names the class and the declaration");
+  ok(judgeHumanOnlyReason({ tool: "create_routine", action: "routine.create", args: { permissions: [READ] } }) === undefined, "human-only negative control: a read-only declaration keeps the judge path");
+  ok(String(judgeHumanOnlyReason({ tool: "create_routine", action: "routine.create", args: { permissions: ["pr.open"] } })).includes("pr.open"), "🔴 human-only (OPE-2103): a declared `pr.open` names the class and the declaration");
+  ok(judgeHumanOnlyReason({ tool: "create_routine", action: "routine.create", args: {} }) === undefined, "human-only negative control: a routine that declares nothing keeps the judge path");
+  ok(judgeHumanOnlyReason({ tool: "request_access", action: "access.request", args: { permissions: [WRITE] } }) === undefined, "human-only negative control: the routine class is routine.create's declaration shape, not any `permissions` field");
+  ok(String(judgeHumanOnlyReason({ tool: "set_spend_limit", action: "spend.set", args: {} })).includes("admin act"), "🔴 human-only (OPE-2366): a `gate:admin` row (set_spend_limit) is in the class");
+  ok(judgeHumanOnlyReason({ tool: "open_pull_request", action: "pr.open", args: {} }) === undefined, "human-only negative control (OPE-2366): a `gate:member` defer row (open_pull_request) keeps the judge path");
 
   const routineInput = (permissions: readonly string[], n: number) => ({
     org: "test-org",
@@ -992,7 +1003,7 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
     (await readAudit({ org: "test-org" })).filter((r) => r.action === "routine.grant").map((r) => (r.detail ?? {}) as Record<string, unknown>);
 
   clearApprovalJudgeVerdictCache();
-  const readRun = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: a read-only digest, attended, clean turn" });
+  const readRun = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: a read-only digest, attended, clean turn\nRULE: judge-test-rule" });
   const lifted = await requestApproval(routineInput([READ], 1), { postCard });
   ok(lifted.autoApproved?.resolvedBy === "judge", "human-only premise: a READ-only declaration is judge-lifted through the real propose plane");
   ok(readRun.calls.length === 2, "human-only premise: the consult really ran both passes");
@@ -1002,7 +1013,7 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
 
   clearApprovalJudgeVerdictCache();
   const grantsBefore = (await grantRows()).length;
-  const writeRun = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: would have lifted" });
+  const writeRun = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: would have lifted\nRULE: judge-test-rule" });
   const carded = await requestApproval(routineInput([READ, WRITE], 2), { postCard });
   ok(carded.autoApproved === undefined, "🔴 human-only: a declared connector WRITE CARDS — the judge cannot lift it");
   ok(writeRun.calls.length === 0, "🔴 human-only: the judge transport was never called");
@@ -1017,13 +1028,43 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
   clearApprovalJudgeVerdictCache();
 
   const prGrantsBefore = (await grantRows()).length;
-  const prRun = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: would have lifted" });
+  const prRun = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: would have lifted\nRULE: judge-test-rule" });
   const prCarded = await requestApproval(routineInput([READ, "pr.open"], 3), { postCard });
   ok(prCarded.autoApproved === undefined, "🔴 human-only (OPE-2103): a declared `pr.open` CARDS — the judge cannot lift it");
   ok(prRun.calls.length === 0, "🔴 human-only (OPE-2103): the judge transport was never called for `pr.open`");
   ok((await grantRows()).length === prGrantsBefore, "🔴 human-only (OPE-2103): no routine.grant row was written for `pr.open` without the click");
   const prHumanOnly = await judgeDetailWhere((d) => d.source === "human-only" && String(d.reasoning ?? "").includes("pr.open"), "human-only pr.open");
   ok(prHumanOnly.verdict === "defer" && prHumanOnly.source === "human-only" && prHumanOnly.passes === 0, "🔴 human-only (OPE-2103): the `pr.open` consult row records a human-only defer with no model pass");
+  resetApprovalJudgeCompletion();
+  clearApprovalJudgeVerdictCache();
+}
+
+{
+  overrideSettingsForTest({ approvals: { judgeMode: "enforce" } });
+  clearApprovalJudgeVerdictCache();
+  const adminRun = stubJudge({ scrutiny: "YES", verdict: `VERDICT: allow\nREASON: the rule covers it\nRULE: ${JUDGE_RULE_ID}` });
+  const spend = await requestApproval(
+    {
+      org: "test-org",
+      kind: "spend.set",
+      channelId: "C_PLAIN",
+      requestedBy: "U_HUMAN",
+      threadTs: null,
+      scopeKey: "slack/T1/C_PLAIN",
+      domain: "plain",
+      args: { org: "test-org", scopeKey: "slack/T1/C_PLAIN", level: "surface", monthlyTokens: 500_000, currentCap: null },
+      chain: { unattended: false },
+    },
+    { postCard },
+  );
+  ok(spend.autoApproved === undefined, "🔴 human-only (OPE-2366): an admin act (spend.set) CARDS although an authored rule seems to cover it");
+  ok(adminRun.calls.length === 0, "🔴 human-only (OPE-2366): the judge transport was never called for the admin act");
+  const adminRow = await judgeDetailWhere((d) => d.source === "human-only" && d.action === "spend.set", "human-only admin");
+  ok(adminRow.verdict === "defer" && adminRow.enforcedVerdict === "ask" && adminRow.ruleId === undefined, "🔴 human-only (OPE-2366): the consult row is a defer that stayed an ask, citing no rule");
+  clearApprovalJudgeVerdictCache();
+  const memberRun = stubJudge({ scrutiny: "YES", verdict: `VERDICT: allow\nREASON: the rule covers it\nRULE: ${JUDGE_RULE_ID}` });
+  const member = await requestApproval({ ...liftInput, args: { ...liftInput.args, nonce: 77_000 } }, { postCard });
+  ok(member.autoApproved?.resolvedBy === "judge" && memberRun.calls.length === 2, "human-only negative control (OPE-2366): the member act under the same rule IS judge-lifted");
   resetApprovalJudgeCompletion();
   clearApprovalJudgeVerdictCache();
 }

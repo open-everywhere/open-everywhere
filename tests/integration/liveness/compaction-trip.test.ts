@@ -43,7 +43,6 @@ async function driveOneToolCallTurn(note: string, replyText: string): Promise<{ 
       parent: [
         { calls: [{ tool: "update_status", input: { state: "working", summary: "oe-670 compaction probe" }, id: "oe670-cost" }] },
         seatReply(replyText, "oe670-reply"),
-        { say: "done" },
       ],
     }),
   );
@@ -53,7 +52,6 @@ async function driveOneToolCallTurn(note: string, replyText: string): Promise<{ 
   await discordMentionWake({ channelId, text: `<@9000000000000000001> what has this conversation cost` });
 
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the step after the compaction trip");
-  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 2), "the turn's last step");
   return { handle, channelId, cursor };
 }
 

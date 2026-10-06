@@ -95,40 +95,6 @@ try {
   reds.push(`MISSING: ${WEB_FETCH_REQUEST} is not installed — run \`npm install\`.`);
 }
 
-const EVE_TASK_INDEX = "node_modules/eve/dist/src/tasks/session-index.js";
-const COHORT_JOIN_IN_NEW_BRANCH = /else\{let [A-Za-z_$][A-Za-z_$0-9]*=__oeTaskCohortJoin\([A-Za-z_$][A-Za-z_$0-9]*,[A-Za-z_$][A-Za-z_$0-9]*\);/;
-try {
-  const bytes = readFileSync(EVE_TASK_INDEX, "utf8");
-  if (!COHORT_JOIN_IN_NEW_BRANCH.test(bytes)) {
-    reds.push(
-      `COHORT JOIN NOT IN THE NEW-ENTRY BRANCH: ${EVE_TASK_INDEX} does not match ${String(COHORT_JOIN_IN_NEW_BRANCH)}. ` +
-        `recordSessionTask must choose a new task's cohort through __oeTaskCohortJoin, which bounds the join to the ` +
-        `dispatching turn (OPE-1856). Without it a worker parked on an unanswered question captures every later task ` +
-        `into its cohort and eve delivers none of their completions for the life of the session. ` +
-        `Re-derive the session-index hunk of patches/ against the installed eve and re-run this lint.`,
-    );
-  }
-} catch {
-  reds.push(`MISSING: ${EVE_TASK_INDEX} is not installed — run \`npm install\`.`);
-}
-
-const EVE_DYNAMIC_TOOL_LIFECYCLE = "node_modules/eve/dist/src/context/dynamic-tool-lifecycle.js";
-const SESSION_RERUN_IN_SCOPE =
-  "{metadata:o}=a.length===0?{metadata:[]}:await contextStorage.run(e.ctx,async()=>await resolveToolsFromEvent(e.ctx,a,e.event,e.messages));e.ctx.set(SessionDynamicToolMetadataKey";
-try {
-  const bytes = readFileSync(EVE_DYNAMIC_TOOL_LIFECYCLE, "utf8");
-  if (!bytes.includes(SESSION_RERUN_IN_SCOPE)) {
-    reds.push(
-      `SESSION RE-RUN OUTSIDE THE CONTEXT SCOPE: ${EVE_DYNAMIC_TOOL_LIFECYCLE} does not contain "${SESSION_RERUN_IN_SCOPE}". ` +
-        `refreshDynamicSessionToolsForRuntimeRevision must run its resolvers inside contextStorage.run(e.ctx, …), or a ` +
-        `delegated worker whose turn continues in a new process loses its dispatch binding and its gated tools (OPE-2106). ` +
-        `Re-derive the dynamic-tool-lifecycle hunk of patches/ against the installed eve and re-run this lint.`,
-    );
-  }
-} catch {
-  reds.push(`MISSING: ${EVE_DYNAMIC_TOOL_LIFECYCLE} is not installed — run \`npm install\`.`);
-}
-
 function packageJsonPaths(): string[] {
   const out = ["package.json"];
   for (const group of ["packages", join("packages", "providers")]) {

@@ -73,9 +73,9 @@ function claimSentence(d: Domain): string | undefined {
 function opaqueSentence(sources: readonly string[]): string {
   const named = sources.filter((s) => s.trim().length > 0);
   if (named.length === 0) {
-    return "Open Everywhere cannot list who else can read the source itself. Check that where the source lives.";
+    return "The agent cannot list who else can read the source itself. Check that where the source lives.";
   }
-  return `Open Everywhere cannot list who else can read ${joinWords(named)}. Check that there before you send.`;
+  return `The agent cannot list who else can read ${joinWords(named)}. Check that there before you send.`;
 }
 
 export async function domainExposureLines(input: DomainExposureInput): Promise<readonly string[]> {
@@ -96,7 +96,7 @@ export async function domainExposureLines(input: DomainExposureInput): Promise<r
     if (!domain) throw new Error("domain not loaded");
     rooms = enumerableRooms(domain);
   } catch {
-    return [`Open Everywhere could not read the rooms of the "${input.domain}" domain, so it cannot show what this would expose.`, opaque];
+    return [`The agent could not read the rooms of the "${input.domain}" domain, so it cannot show what this would expose.`, opaque];
   }
 
   const label = domainLabel(domain, input.domain);
@@ -108,8 +108,8 @@ export async function domainExposureLines(input: DomainExposureInput): Promise<r
   if (rooms.length === 0) {
     lines.push(
       claims
-        ? `The "${label}" domain lists no rooms — it admits ${claims} by a rule — so Open Everywhere cannot show how far this reaches inside it.`
-        : `The "${label}" domain does not list its rooms, so Open Everywhere cannot show how far this reaches inside it.`,
+        ? `The "${label}" domain lists no rooms — it admits ${claims} by a rule — so the agent cannot show how far this reaches inside it.`
+        : `The "${label}" domain does not list its rooms, so the agent cannot show how far this reaches inside it.`,
     );
     if (sharesMemory) lines.push("Every room it admits shares one memory, so what the agent reads through this can come back in any of them.");
     lines.push(opaque);
@@ -119,7 +119,7 @@ export async function domainExposureLines(input: DomainExposureInput): Promise<r
   const platforms = [...new Set(rooms.map((r) => r.split("/")[0] ?? ""))].sort();
   const where = surfaceSentence(platforms);
   lines.push(`This lands in the "${label}" domain, which lists ${roomCount(rooms.length)}${where ? ` on ${where}` : ""}.`);
-  if (claims) lines.push(`It also admits ${claims} by a rule, and Open Everywhere cannot name those rooms — so the count above is a floor.`);
+  if (claims) lines.push(`It also admits ${claims} by a rule, and the agent cannot name those rooms — so the count above is a floor.`);
 
   if (sharesMemory) {
     lines.push("Those rooms share one memory, so what the agent reads through this can come back in any of them.");
@@ -144,7 +144,7 @@ export async function domainExposureLines(input: DomainExposureInput): Promise<r
             : `${roomCount(holders)} in this domain can already reach ${input.subject.label}.`,
       );
     } catch {
-      lines.push(`Open Everywhere could not check which rooms already reach ${input.subject.label}.`);
+      lines.push(`The agent could not check which rooms already reach ${input.subject.label}.`);
     }
   }
 

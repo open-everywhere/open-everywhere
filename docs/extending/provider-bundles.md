@@ -9,7 +9,8 @@
 > front door, channel, supervisor/engagement pipeline, identity mapper, read tools, attachment
 > plane, slash commands, the governance roster arm, and the `slack-bridge` seam core's generic
 > spine consumes). Each is an `@open-everywhere/provider-<name>` workspace package registered by
-> one `register<X>Provider()` boot call from `agent/lib/register-adapters.ts`; core registers NO
+> one `register<X>Provider()` boot call, which `registerDefaultAdapters()` makes from the app's
+> generated selection table (the app's `agent/lib/register-adapters.ts` calls it); core registers NO
 > provider inline. See [§ status](#status--whats-actually-extracted) for exactly what moved and
 > the findings future bundles inherit.
 
@@ -173,11 +174,12 @@ parts:
    export { default } from "@open-everywhere/provider-notion/agent/channels/notion.js";
    ```
 3. **One `registerXProvider()` boot call** — a single function (e.g. `registerNotionProvider()`)
-   that calls every register seam the bundle implements, invoked once from
-   `agent/lib/register-adapters.ts` as a **static import**. Not a dynamic `import()`: Eve bundles
+   that calls every register seam the bundle implements. The generated selection table
+   (`agent/lib/providers.generated.ts`) imports it **statically**, and `registerDefaultAdapters()`
+   calls it once at boot. Not a dynamic `import()`: Eve bundles
    the agent definition and its whole import graph into one rolldown chunk, and a literal dynamic
    import code-splits into a second chunk, tripping Eve's "expected one authored module"
-   invariant — the same reason `register-adapters.ts` already keeps every adapter wire-up static.
+   invariant — the same reason the boot wiring keeps every adapter wire-up static.
 
 Eve's native extension packaging (tools/connections/skills/instructions/hooks, mounted at build
 time) is **deliberately not used** for any of this — an extension's tools and instructions sit in
@@ -216,9 +218,10 @@ De-selecting is deleting that one row (or setting it to `false`) and rebuilding 
 disappear with it. Only the workspace **dependency** in `package.json` is still yours to keep in
 step, and `npm run lint:provider-selection` fails the build if it drifts.
 
-`agent/lib/register-adapters.ts` hands the ids to `declareProviderSelection()` **before anything
-registers**, then drives the table. That is the only provider knowledge in the app's wiring — there
-is no second call list to fall out of step with the selection.
+`registerDefaultAdapters()` (which the app's `agent/lib/register-adapters.ts` calls with the table)
+hands the ids to `declareProviderSelection()` **before anything registers**, then drives the table.
+That is the only provider knowledge in the boot wiring — there is no second call list to fall out of
+step with the selection.
 
 **An unselected provider is structurally absent, not merely inert**, at three layers:
 
@@ -308,7 +311,7 @@ the boundary-test bundle rules (self-activating, fixture-proven).
 channel + supervisor + webhook core + REST layer + identity (mapper included), the post arm, the
 wake-origin codec, the two read tools, and the memory backing — all three planes in one bundle
 ("pick Notion" = one package). `registerNotionProvider()` (`agent/register.ts`) performs every
-registration and is called statically from `agent/lib/register-adapters.ts`. The bundle owns its
+registration and is called once at boot from the generated selection table. The bundle owns its
 vendor strings (`api.notion.com`, `NOTION_CHANNEL_API_KEY` — zero residue under
 `packages/core/agent`, boundary rule 6), ships its own test suite (`scripts/`, on the bundle's own
 `test:chain`, which `npm test` batches), and every remaining platform stays exactly where it was: real
@@ -320,7 +323,7 @@ provider ships in the fork.
 supervisor + identity (mapper included) + post arm + wake-origin codec (which also owns the
 Bot-Connector `serviceUrl` allowlist `isTrustedTeamsServiceUrl`) + the **Microsoft Graph read
 adapter** + the **proactive routine dispatcher**. `registerTeamsProvider()` (`agent/register.ts`)
-performs every registration and is called statically from `agent/lib/register-adapters.ts`. The
+performs every registration and is called once at boot from the generated selection table. The
 bundle owns its vendor strings (`graph.microsoft.com`, `smba.trafficmanager.net` — zero residue under
 `packages/core/agent`). Teams surfaced **two seams notion did not need**, both now part of the
 contract every later read/routine surface inherits:

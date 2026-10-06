@@ -1,6 +1,7 @@
 import {
   BUTTON_STYLE,
   CODE_BLOCK_STYLE,
+  agentDisplayName,
   appendAudit,
   credentialKeyArmed,
   deploymentOrg,
@@ -12,7 +13,8 @@ import {
   type EncryptedKvVault,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { SLACK_DEPLOY_HOST_PLACEHOLDER, slackAppManifestTemplate, slackAppNameProblem } from "../app-manifest.js";
+import { SLACK_DEPLOY_HOST_PLACEHOLDER, slackAppManifestTemplate, slackAppNameProblem, slackManifestAppName } from "../app-manifest.js";
+import { slackManifestOptionsFromSettings } from "../ops.js";
 import {
   SETUP_COOKIE_NAME,
   mintSetupCookie,
@@ -92,7 +94,7 @@ function baseUrl(deps: SlackSetupPageDeps): string | undefined {
 }
 
 function manifestForHost(host: string, appName: string | undefined): string {
-  const template = slackAppManifestTemplate(appName ? { appName } : {});
+  const template = slackAppManifestTemplate(slackManifestOptionsFromSettings(appName ? { appName } : {}));
   return template.split(SLACK_DEPLOY_HOST_PLACEHOLDER).join(host);
 }
 
@@ -103,7 +105,7 @@ function manifestHost(base: string): string {
 function claimScreen(retry: boolean): Response {
   return securePageResponse(
     200,
-    "Set up Open Everywhere",
+    `Set up ${agentDisplayName()}`,
     (retry ? `<p style="color:#b91c1c">That code did not match. Check the deployment's logs and try again.</p>` : "") +
       `<p>This deployment logged a one-time setup code when it started. Find it in the deployment's logs ` +
       `(<code>vercel logs</code>, <code>docker logs</code>) and paste it here.</p>` +
@@ -123,14 +125,14 @@ function createScreen(host: string): Response {
     `<p>Open <code>api.slack.com/apps</code>, scroll to <strong>Your App Configuration Tokens</strong>, ` +
       `and generate one for the workspace that will host the agent. Paste it below. It needs the ` +
       `<code>app_configurations:write</code> scope and lasts about 12 hours.</p>` +
-      `<p>Open Everywhere will create the Slack app for <code>${escapeHtml(host)}</code> and keep its ` +
+      `<p>This page will create the Slack app for <code>${escapeHtml(host)}</code> and keep its ` +
       `credentials in this deployment's own encrypted store. The configuration token is used once and never stored.</p>` +
       `<form method="post" action="${escapeHtml(SLACK_SETUP_PATH)}">` +
       `<input type="hidden" name="${FIELD_ACTION}" value="create">` +
       `<p><input name="${FIELD_CONFIG_TOKEN}" type="password" autocomplete="off" required style="width:100%;padding:.5rem;font:inherit" ` +
       `placeholder="xoxe.xoxp-… (app configuration token)"></p>` +
       `<p><label>App name (optional)<br><input name="${FIELD_APP_NAME}" type="text" autocomplete="off" ` +
-      `style="width:100%;padding:.5rem;font:inherit" placeholder="Open Everywhere"></label></p>` +
+      `style="width:100%;padding:.5rem;font:inherit" placeholder="${escapeHtml(slackManifestAppName(slackManifestOptionsFromSettings()))}"></label></p>` +
       `<button type="submit" style="${BUTTON_STYLE}">Create the Slack app</button>` +
       `</form>`,
   );
@@ -140,7 +142,7 @@ function installScreen(authorizeUrl: string): Response {
   return securePageResponse(
     200,
     "Install to your workspace",
-    `<p>The Slack app exists. Installing it is the step that gives Open Everywhere a bot token for ` +
+    `<p>The Slack app exists. Installing it is the step that gives ${escapeHtml(agentDisplayName())} a bot token for ` +
       `your workspace, and it has to be done by someone who can approve an app there.</p>` +
       `<p><a href="${escapeHtml(authorizeUrl)}" style="${BUTTON_STYLE};display:inline-block;text-decoration:none">` +
       `Install to Slack</a></p>` +
@@ -154,7 +156,7 @@ function doneScreen(state: SlackInstallState): Response {
   return securePageResponse(
     200,
     "Slack is installed",
-    `<p>Open Everywhere is installed in <strong>${escapeHtml(state.teamName ?? state.teamId)}</strong>. ` +
+    `<p>${escapeHtml(agentDisplayName())} is installed in <strong>${escapeHtml(state.teamName ?? state.teamId)}</strong>. ` +
       `Its credentials are in this deployment's encrypted store; nothing else needs setting.</p>` +
       `<p>Two config edits are left. They are not secrets — they say which workspace this deployment ` +
       `trusts, and who administers it — so they belong in your git repo and deploy with it.</p>` +
@@ -224,7 +226,7 @@ export async function handleSlackSetupGet(req: Request, deps: SlackSetupPageDeps
     return securePageResponse(
       500,
       "This deployment does not know its own URL",
-      `<p>Open Everywhere could not work out the public URL to put in the Slack app, so it will not ` +
+      `<p>This deployment could not work out the public URL to put in the Slack app, so it will not ` +
         `create one that points at the wrong place.</p>` +
         `<p>Set <code>OE_PUBLIC_BASE_URL</code> to this deployment's public URL and redeploy.</p>`,
     );

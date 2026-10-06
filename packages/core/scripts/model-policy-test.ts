@@ -23,14 +23,27 @@ function ok(cond: boolean, label: string): void {
   }
   passed++;
 }
-function throws(fn: () => unknown, label: string): void {
+function throwsWith(fn: () => unknown, fragment: string, label: string): void {
+  let threw = false;
+  let error: unknown;
   try {
     fn();
-    console.error(`✗ ${label} (expected throw, got none)`);
-    process.exitCode = 1;
-  } catch {
-    passed++;
+  } catch (err) {
+    threw = true;
+    error = err;
   }
+  if (!threw) {
+    console.error(`✗ ${label} (expected a throw, got none)`);
+    process.exitCode = 1;
+    return;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (!message.includes(fragment)) {
+    console.error(`✗ ${label} (threw, but not the refusal under test — expected "${fragment}", got: ${message})`);
+    process.exitCode = 1;
+    return;
+  }
+  passed++;
 }
 
 const POLICY: ModelPolicy = defineModelPolicy({
@@ -44,13 +57,13 @@ const POLICY: ModelPolicy = defineModelPolicy({
 
 assertModelPolicyValid(POLICY);
 passed++;
-throws(() => assertModelPolicyValid({ allow: [{ id: "a/b", tier: "high" }, { id: "a/b", tier: "low" }] }), "validator: duplicate allow-list id throws");
-throws(() => assertModelPolicyValid({ allow: [{ id: "a/b", tier: "mega" as never }] }), "validator: unknown tier throws");
-throws(() => assertModelPolicyValid({ reasoningCeiling: "ludicrous" as never }), "validator: bad reasoningCeiling throws");
-throws(() => assertModelPolicyValid({ allow: [{ id: "zai/glm-5.2", tier: "high" }], providerDeny: ["zai"] }), "validator: allow-listed model whose own vendor is denied throws (contradiction)");
-throws(() => assertModelPolicyValid({ allow: [{ id: "  ", tier: "low" }] }), "validator: blank id throws");
-throws(() => assertModelPolicyValid({ allow: [{ id: "zai/glm-5.2", tier: "high" }], deny: ["zai/glm-5.2"] }), "validator: a model both allow-listed AND denied throws (contradiction)");
-throws(() => assertModelPolicyValid({ deny: ["  "] }), "validator: blank deny id throws");
+throwsWith(() => assertModelPolicyValid({ allow: [{ id: "a/b", tier: "high" }, { id: "a/b", tier: "low" }] }), 'model "a/b" is allow-listed more than once', "validator: duplicate allow-list id throws");
+throwsWith(() => assertModelPolicyValid({ allow: [{ id: "a/b", tier: "mega" as never }] }), 'unknown tier "mega"', "validator: unknown tier throws");
+throwsWith(() => assertModelPolicyValid({ reasoningCeiling: "ludicrous" as never }), 'reasoningCeiling "ludicrous" is not a known reasoning level', "validator: bad reasoningCeiling throws");
+throwsWith(() => assertModelPolicyValid({ allow: [{ id: "zai/glm-5.2", tier: "high" }], providerDeny: ["zai"] }), 'its vendor ("zai") is also in providerDeny', "validator: allow-listed model whose own vendor is denied throws (contradiction)");
+throwsWith(() => assertModelPolicyValid({ allow: [{ id: "  ", tier: "low" }] }), "an allow-list entry has a blank/missing model id", "validator: blank id throws");
+throwsWith(() => assertModelPolicyValid({ allow: [{ id: "zai/glm-5.2", tier: "high" }], deny: ["zai/glm-5.2"] }), 'model "zai/glm-5.2" is both allow-listed and in deny', "validator: a model both allow-listed AND denied throws (contradiction)");
+throwsWith(() => assertModelPolicyValid({ deny: ["  "] }), "deny has a blank/missing model id", "validator: blank deny id throws");
 
 ok(isModelUsable("zai/glm-5.2", POLICY), "usable: allow-listed id passes");
 ok(!isModelUsable("openai/gpt-6", POLICY), "usable: non-allow-listed id fails");
@@ -158,17 +171,17 @@ ok(clampReasoning("high", "xhigh") === "high", "clamp: request at/under a raised
   assertRoutesWithinPolicy(good, [], POLICY);
   passed++;
   const badId: Domain[] = [defineDomain({ name: "b", reach: ["slack/T1/Cb"], models: { primary: { id: "openai/gpt-6" } } })];
-  throws(() => assertRoutesWithinPolicy(badId, [], POLICY), "routes: a domain naming a non-allow-listed concrete model throws at config load");
+  throwsWith(() => assertRoutesWithinPolicy(badId, [], POLICY), 'domain "b" primary route: model "openai/gpt-6" is not in the org allow-list', "routes: a domain naming a non-allow-listed concrete model throws at config load");
   const badTier: Domain[] = [defineDomain({ name: "c", reach: ["slack/T1/Cc"], models: { primary: { tier: "high" } } })];
   const noHighPolicy: ModelPolicy = defineModelPolicy({ allow: [{ id: "deepseek/deepseek-v4-flash", tier: "low" }] });
-  throws(() => assertRoutesWithinPolicy(badTier, [], noHighPolicy), "routes: a domain asking a tier the allow-list can't fulfil throws");
+  throwsWith(() => assertRoutesWithinPolicy(badTier, [], noHighPolicy), 'domain "c" primary route: tier "high" has no usable allow-listed model', "routes: a domain asking a tier the allow-list can't fulfil throws");
   assertRoutesWithinPolicy(badId, [], undefined);
   passed++;
   const badRole: NamedKnobLayer[] = [{ name: "r", models: { primary: { id: "openai/gpt-6" } } }];
-  throws(() => assertRoutesWithinPolicy([], badRole, POLICY), "routes: a ROLE naming a non-allow-listed model throws too");
+  throwsWith(() => assertRoutesWithinPolicy([], badRole, POLICY), 'role "r" primary route: model "openai/gpt-6" is not in the org allow-list', "routes: a ROLE naming a non-allow-listed model throws too");
   const denyPolicy: ModelPolicy = defineModelPolicy({ deny: ["zai/glm-5.2"] });
   const denied: Domain[] = [defineDomain({ name: "d", reach: ["slack/T1/Cd"], models: { primary: { id: "zai/glm-5.2" } } })];
-  throws(() => assertRoutesWithinPolicy(denied, [], denyPolicy), "routes: a domain naming a per-model-denied id throws at config load");
+  throwsWith(() => assertRoutesWithinPolicy(denied, [], denyPolicy), 'domain "d" primary route: model "zai/glm-5.2" is on the org deny list', "routes: a domain naming a per-model-denied id throws at config load");
 }
 
 console.log(`model-policy: ${passed} assertions passed`);

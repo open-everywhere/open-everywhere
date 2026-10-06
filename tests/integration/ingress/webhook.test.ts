@@ -94,15 +94,15 @@ test("a content-bearing hook's raw body reaches the model FENCED inside the untr
   await bootAgent();
   const nonce = randomBytes(6).toString("hex");
   const marker = `oe-it-webhook-body-${nonce}`;
-  const handle = disposeLater(registerScript({ parent: [{ say: "ack" }] }));
+  const handle = disposeLater(registerScript({ parent: [{ say: "ack" }], child: [{ say: "ack" }] }));
 
   const cursor = await auditCursor();
   const res = await webhookDeliveryPost({ note: marker });
   expect(res.status).toBe(200);
 
-  const firstReq = await waitFor(() => handle.requests.find((r) => r.role === "parent"), "the parent's first request");
+  const firstReq = await waitFor(() => handle.requests.find((r) => r.role === "child"), "the worker's first request");
   const carrier = firstReq.messages.find((m) => m.text.includes(marker));
-  expect(carrier, "the parent's first request carries no message with this delivery's marker — the handle served a different wake, so a previous turn had not settled").toBeDefined();
+  expect(carrier, "the worker's first request carries no message with this delivery's marker — the handle served a different job, so a previous turn had not settled").toBeDefined();
   const text = carrier!.text;
   const open = text.indexOf(UNTRUSTED_OPEN);
   const bodyIdx = text.indexOf(marker);

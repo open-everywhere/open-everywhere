@@ -7,12 +7,15 @@ import noReplyTool from "../../agent/tools/no_reply.js";
 import updateStatusTool from "../../agent/tools/update_status.js";
 import standDownTool from "../../agent/tools/stand_down.js";
 import haltTool from "../../agent/tools/halt.js";
+import askQuestionTool from "../../agent/tools/ask_question.js";
 import reactDynamic from "../../agent/tools/react.js";
 import spawnThreadSessionDynamic from "../../agent/tools/spawn_thread_session.js";
 import readChannelDynamic from "../../agent/tools/read_channel.js";
 import readThreadDynamic from "../../agent/tools/read_thread.js";
 import editReplyDynamic from "../../agent/tools/edit_reply.js";
 import completeThreadDynamic from "../../agent/tools/complete_thread.js";
+import workDynamic from "../../agent/tools/work.js";
+import cancelWorkDynamic from "../../agent/tools/cancel_work.js";
 import setDmDeliveryDynamic from "../../agent/tools/set_dm_delivery.js";
 import requestCredentialGrantDynamic from "../../agent/tools/request_credential_grant.js";
 import { renderScopeMarkdown } from "../../agent/instructions/access.js";
@@ -164,6 +167,30 @@ export async function eveFrameworkToolDefinition(distRelativePath: string): Prom
   return definition as MountableEntry;
 }
 
+export async function evePublicTool(subpath: string): Promise<MountableEntry> {
+  const mod = (await import(subpath)) as { default?: unknown };
+  if (mod.default === undefined) {
+    throw new Error(
+      `eve's public \`${subpath}\` default-exports nothing — the probe cannot mount the tool it ships. ` +
+        `eve changed the entry's shape; read its \`exports\` map rather than skipping the mount.`,
+    );
+  }
+  return mod.default as MountableEntry;
+}
+
+export async function eveNamedTool(distRelativePath: string, exportName: string): Promise<MountableEntry> {
+  const mod = await eveFrameworkTool(distRelativePath);
+  const definition = mod[exportName];
+  if (definition === undefined) {
+    throw new Error(
+      `eve's ${distRelativePath} exports no \`${exportName}\` — the probe cannot mount the tool it ships. ` +
+        `eve moved or renamed it; find the new home rather than skipping the mount. There is no public subpath ` +
+        `for the task verbs, which is why this read is a dist read at all.`,
+    );
+  }
+  return definition as MountableEntry;
+}
+
 export async function replyEntryForSeat(ctx: BindableContext): Promise<MountableEntry> {
   const entry = await resolveDynamicEntry(replyDynamic, ctx);
   if (entry === null) throw new Error("the reply dynamic mounts NOTHING on this seat (no mid-turn post primitive) — every offline criterion reads reply calls, so this run would score zeros that mean nothing");
@@ -209,15 +236,24 @@ export async function buildLeanSeatToolset(opts: {
     ["complete_thread", completeThreadDynamic],
     ["set_dm_delivery", setDmDeliveryDynamic],
     ["request_credential_grant", requestCredentialGrantDynamic],
+    ["work", workDynamic],
+    ["cancel_work", cancelWorkDynamic],
   ] as const) {
     const entry = await resolveDynamicEntry(mod, opts.ctx);
     if (entry !== null) set[name] = rec(name, entry);
     else skip(name);
   }
-  set.agent = rec("agent", await eveFrameworkToolDefinition("tools/framework/agent.js"));
-  set.ask_question = rec("ask_question", await eveFrameworkToolDefinition("tools/framework/ask-question.js"));
-  set.todo = rec("todo", await eveFrameworkToolDefinition("tools/provided/todo.js"));
-  set.task_cancel = rec("task_cancel", await eveFrameworkToolDefinition("tools/framework/task-cancel.js"));
+  set.agent = rec("agent", await evePublicTool("eve/tools/agent"));
+  set.ask_question = rec("ask_question", askQuestionTool as MountableEntry);
+  set.task_cancel = rec("task_cancel", await eveNamedTool("tools/provided/task-cancel.js", "taskCancelTool"));
+  set.task_wait = rec("task_wait", await eveNamedTool("tools/provided/task-wait.js", "taskWaitTool"));
+  if (set.work !== undefined) {
+    for (const name of ["agent", "task_cancel"] as const) {
+      delete set[name];
+      skip(name);
+    }
+    delete set.task_wait;
+  }
   const accountedFor = new Set([...Object.keys(set), ...skipped]);
   const unaccounted = [...LEAN_SEAT_TOOLS].filter((name) => !accountedFor.has(name));
   if (unaccounted.length > 0) {

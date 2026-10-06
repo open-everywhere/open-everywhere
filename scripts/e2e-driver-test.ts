@@ -500,7 +500,7 @@ const { parseAppMentionEvent } = await import(
   );
   const { judgeHumanOnlyReason } = await import("../packages/core/agent/access/approver-chain.js");
   ok(
-    judgeHumanOnlyReason({ action: "routine.create", args: { permissions: [`tool:${OP}`] } }) !== undefined,
+    judgeHumanOnlyReason({ tool: "create_routine", action: "routine.create", args: { permissions: [`tool:${OP}`] } }) !== undefined,
     "🔴 arm B's declaration `tool:<OP>` is in the human-only class — the judge is never consulted for it, so the click is the only lift the leg's gate names",
   );
   ok(body.includes("ROUTINE_CONNECTOR_WRITE_OP"), "🔴 the leg reads OP from the one constant");
@@ -586,16 +586,44 @@ const { parseAppMentionEvent } = await import(
     steps.includes(`"Call \`connection_search\` for the Notion page-creation operation, then call \`${OP}\` with `),
     "🔴 OPE-2097: the quoted instruction names connection_search and then the op, as a fact",
   );
-  ok(steps.includes("Do not load any skill and do not use the notion-rest scripts."), "🔴 the quoted instruction forbids every skill and the notion-rest scripts");
+  const FORBIDS_SKILL = /do not (load|use) (any|the) skill|do not use the notion-rest/iu;
+  ok(FORBIDS_SKILL.exec(steps) === null, `🔴 OPE-2177: the quoted instruction forbids no skill (got: ${steps})`);
+  ok(FORBIDS_SKILL.test("Do not load any skill and do not use the notion-rest scripts."), "NEGATIVE CONTROL: the regex matches the live-run sentence the seat cancelled on");
+  ok(steps.includes("The Notion skill and its notion-rest scripts are not needed for this one call."), "OPE-2177: the quoted instruction says the skill is not needed for this one call");
   ok(
     steps.includes("Report exactly what the operation returned. A refusal is what a call returned, never something concluded without making one.\" Then report the worker's answer."),
     "🔴 OPE-2110: the worker reports what the call returned, and the fire reports the worker's answer",
   );
   ok(steps.includes("titled 'OE e2e rcwa-1'") && steps.includes("exact token rcwa-1"), "the page token rides the worker's instruction");
   ok(
-    flat.includes("endingthatreportwiththeword${fireWord}"),
+    flat.includes("${routineConnectorReportLine(fireWord)}Confirmyou'vescheduledit."),
     "the confirmation word stays in the ask around the steps — the fire, not the worker, posts the report",
   );
+  ok(!/starts with the word/u.test(steps), "the report line is not inside the worker's quoted steps");
+
+  const { routineConnectorReportLine, routineFireReportMatch } = await import("../packages/core/scripts/e2e/routine-connector-fixture.js");
+  const line = routineConnectorReportLine("rcwfxb-28318");
+  ok(line.includes("starts with the word rcwfxb-28318") && line.includes("(do not use this word anywhere else)"), `the report line asks for the word FIRST (got: ${line})`);
+  ok(!/ending that report with the word/u.test(line), "NEGATIVE: the report line no longer asks to END with the word");
+  const m = { fireWord: "rcwfxb-28318", note: "rcwb-28317" };
+  const ask = "1759301500.000100";
+  const card = "1759301510.000200";
+  const ack = "1759301520.000300";
+  const floor = [ask, card, ack];
+  const reportRk = { ts: "1759301800.000400", text: "The Notion page was created: OE e2e rcwb-28317" };
+  ok(routineFireReportMatch(reportRk, { ...m, preFireTs: floor }) === "note", "🔴 the measured arm B report (page token only, top level, after the floor) counts as the fire's report");
+  ok(routineFireReportMatch({ ...reportRk, threadTs: ask }, { ...m, preFireTs: floor }) === undefined, "🔴 NEGATIVE: the same text in the ask's thread never counts — that is where the card and the ack sit");
+  ok(routineFireReportMatch({ ...reportRk, threadTs: reportRk.ts }, { ...m, preFireTs: floor }) === "note", "a thread ROOT (threadTs === ts) is a top-level post");
+  ok(routineFireReportMatch({ ...reportRk, ts: "1759301515.000000" }, { ...m, preFireTs: floor }) === undefined, "🔴 NEGATIVE: a top-level page-token post before the ack never counts");
+  ok(routineFireReportMatch({ ...reportRk, ts: ack }, { ...m, preFireTs: floor }) === undefined, "🔴 NEGATIVE: a post at the floor's own ts never counts (strictly after)");
+  ok(routineFireReportMatch({ ...reportRk, ts: "1759301520.0003" }, { ...m, preFireTs: floor }) === undefined, "NEGATIVE: the ts compare is digit-exact — a shorter fraction of the same instant is not later");
+  ok(routineFireReportMatch({ ...reportRk, ts: "999999999.900000" }, { ...m, preFireTs: ["1000000000.000000"] }) === undefined, "NEGATIVE: a ts with fewer integer digits is earlier, never compared as text");
+  ok(routineFireReportMatch(reportRk, { ...m, preFireTs: [] }) === undefined, "🔴 NEGATIVE: with an empty floor a page-token post never counts");
+  ok(routineFireReportMatch({ ts: "1759301500.000050", threadTs: ask, text: "rcwfxb-28318 tried the write" }, { ...m, preFireTs: floor }) === "fireWord", "the confirmation word counts anywhere, as before");
+  ok(routineFireReportMatch({ ts: reportRk.ts, text: "nothing to see" }, { ...m, preFireTs: floor }) === undefined, "NEGATIVE: a post with neither token never counts");
+  ok(flat.includes('awaitFire("B",askTs,note,fireWord,[askTs,cardTs,ack.ts])'), "🔴 WIRING: arm B's floor is its ask, its card and the seat's ack");
+  ok(flat.includes('awaitFire("A",seedTs,note,fireWord,[seedTs])'), "🔴 WIRING: arm A's floor is the seed instant");
+  ok(flat.includes("routineFireReportMatch(m,{fireWord,note,preFireTs})"), "🔴 WIRING: awaitFire matches posts through routineFireReportMatch");
   ok(!/not available|say so and stop/iu.test(steps), "🔴 NEGATIVE CONTROL: the instruction carries no escape hatch");
   ok(flat.includes("routineConnectorWriteSteps(OP,note)"), "🔴 WIRING: arm B's ask builds its instruction from routineConnectorWriteSteps");
   ok(flat.includes("routineConnectorFirePrompt(OP,note,fireWord)"), "🔴 WIRING: arm A's seeded routine builds its instruction from routineConnectorFirePrompt, which wraps the same steps (OPE-2130)");
@@ -1722,6 +1750,8 @@ const { parseAppMentionEvent } = await import(
         clears.push(candidate);
         return "cleared";
       },
+      inspectOrgHalt: async () => undefined,
+      clearOwnedOrgHalt: async () => "missing",
     });
     cleanupStatus = cleanup.status;
   }
@@ -1736,6 +1766,8 @@ const { parseAppMentionEvent } = await import(
     auditRead: async () => [ingressRow],
     inspectHalt: async () => ({ ...handle, setRef: "wake-foreign" }),
     clearOwnedHalt: async () => { foreignClears++; return "cleared"; },
+    inspectOrgHalt: async () => undefined,
+    clearOwnedOrgHalt: async () => { foreignClears++; return "cleared"; },
   });
   ok(foreignCleanup.status === "residue" && foreignCleanup.reason === "halt-not-owned" && foreignClears === 0, "S-HALT reply-failure cleanup leaves a foreign same-scope halt untouched");
 }
@@ -4837,6 +4869,97 @@ const { parseAppMentionEvent } = await import(
     const found = await driver.awaitAnyReply("782.0", { timeoutMs: 3_000, skip: (m) => isFillerAck(m.text) });
     ok(found.ts === folded.ts, "awaitAnyReply: resolves to the folded-into-edit message despite `skip` still matching its text (the OPE-1067 override reaches the real poll loop)");
   });
+}
+
+{
+  const {
+    toMessage,
+    isEveTaskCardBlocks,
+    isSettledTaskCard,
+    seatMessageSettles,
+    passesSkip,
+    endsOwnWakeWait,
+    SlackDriver,
+    EVE_TASK_CARD_BLOCK_ID_PREFIX,
+  } = await import("../packages/core/scripts/e2e/slack-driver.js");
+  const { withPatchedFetch } = await import("../packages/core/scripts/_fetch-test-utils.js");
+  const token = "tok-2259-a1";
+  const cardOne = {
+    ts: "900.0",
+    bot_id: "B-OE",
+    text: `Working on 1 task: Find the page named ${token}`,
+    blocks: [{ block_id: `${EVE_TASK_CARD_BLOCK_ID_PREFIX}turn_1`, type: "task_card" }],
+    edited: { ts: "905.0" },
+  };
+  const cardPlan = {
+    ts: "900.5",
+    bot_id: "B-OE",
+    text: "Finished 2 tasks in 8s: Researcher, Writer",
+    blocks: [{ block_id: `${EVE_TASK_CARD_BLOCK_ID_PREFIX}turn_2`, type: "plan" }],
+  };
+  const reply = { ts: "910.0", bot_id: "B-OE", text: `Found it: the page ${token} is in Projects.` };
+  const ack = { ts: "901.0", bot_id: "B-OE", text: "On it, looking now." };
+
+  ok(toMessage(cardOne).taskCard === true, "task card: a `task_card` block flags the message as eve's task card");
+  ok(toMessage(cardPlan).taskCard === true, "task card: a `plan` block (several tasks) flags it too");
+  ok(isEveTaskCardBlocks([{ block_id: `${EVE_TASK_CARD_BLOCK_ID_PREFIX}turn_9`, type: "section" }]), "task card: eve's block id prefix alone is enough");
+  ok(toMessage(reply).taskCard === undefined, "negative control: a plain reply carries no task-card flag");
+  ok(
+    toMessage({ ts: "1.0", bot_id: "B-OE", text: "Working on 1 task: a reply that only LOOKS like a card", blocks: [{ type: "section" }, { type: "actions", block_id: "approve" }] }).taskCard === undefined,
+    "negative control: card-like TEXT on ordinary blocks is not a card (the rule is structural)",
+  );
+
+  ok(!passesSkip(toMessage(cardOne), undefined), "passesSkip: a task card never passes, even with no skip");
+  ok(!passesSkip(toMessage(cardOne), () => true), "passesSkip: …and the OPE-1067 edit override does not lift it");
+  ok(!endsOwnWakeWait(toMessage(cardOne), undefined, (m) => m.text.includes(token)), "endsOwnWakeWait: a card that quotes the leg's token does not end an own-wake wait");
+  ok(passesSkip(toMessage(reply), undefined), "negative control: a plain reply still passes");
+
+  const anyBot = (): boolean => true;
+  ok(!seatMessageSettles(toMessage(cardOne), anyBot, undefined), "seat fence: a WORKING task card does not settle the seat (its turn still owes the answer)");
+  ok(isSettledTaskCard(toMessage(cardPlan)) && seatMessageSettles(toMessage(cardPlan), anyBot, undefined), "seat fence: a FINISHED task card settles the seat");
+  const finishedReply = toMessage({ ts: "911.0", bot_id: "B-OE", text: "Finished 1 task in 4s: but this is a plain reply" });
+  ok(!isSettledTaskCard(finishedReply), "negative control: a plain reply whose text starts with \"Finished\" is not a settled card");
+  ok(!seatMessageSettles(finishedReply, () => false, undefined), "negative control: …and it settles the seat only by the reply rule, never by the card rule");
+  ok(seatMessageSettles(toMessage(reply), anyBot, undefined), "seat fence: a plain bot reply still settles");
+  ok(!seatMessageSettles(toMessage(ack), anyBot, () => true), "seat fence: an interim ack still does not settle");
+
+  const jsonResp = (body: unknown): Response => ({ ok: true, status: 200, json: async () => body }) as unknown as Response;
+  const root = { ts: "899.0", user: "U-HUMAN", text: "find it" };
+  const fake = (async (url: unknown) => {
+    const u = String(url);
+    if (u.includes("conversations.replies")) return jsonResp({ ok: true, messages: [root, cardOne, reply] });
+    if (u.includes("conversations.history")) return jsonResp({ ok: true, messages: [cardPlan] });
+    return jsonResp({ ok: true });
+  }) as typeof fetch;
+  await withPatchedFetch(fake, async () => {
+    const driver = new SlackDriver({ token: "xoxb-test", channel: "C-DM", botUserId: "B-OE" });
+    const threaded = await driver.awaitThreadReply("899.0", { timeoutMs: 3_000 });
+    ok(threaded.ts === reply.ts, `awaitThreadReply: steps over the task card to the reply (got ${threaded.ts})`);
+    const any = await driver.awaitAnyReply("899.0", { timeoutMs: 3_000, skip: () => false });
+    ok(any.ts === reply.ts, `awaitAnyReply: steps over the task card to the reply (got ${any.ts})`);
+    const answers = await driver.collectBotMessagesAfter("899.0", "899.0");
+    ok(answers.map((m) => m.ts).join(",") === reply.ts, `collectBotMessagesAfter: an answer read leaves out both cards (got ${answers.map((m) => m.ts).join(",")})`);
+    const silence = await driver.collectBotMessagesAfter("899.0", "899.0", { includeTaskCards: true });
+    ok(silence.length === 3, `collectBotMessagesAfter: a SILENCE read counts the cards too (got ${silence.length})`);
+    const during = await driver.collectRepliesDuring("899.0", "899.0", 0);
+    ok(during.some((m) => m.taskCard === true), "collectRepliesDuring: a silence read counts a task card as a stray");
+    ok(driver.isBotMessage(toMessage(cardOne)) && !driver.isBotReply(toMessage(cardOne)), "isBotMessage / isBotReply: a card is bot output but never a reply");
+  });
+
+  const scenariosSrc = readFileSync(fileURLToPath(new URL("../packages/core/scripts/e2e/scenarios.ts", import.meta.url)), "utf-8");
+  for (const needle of [
+    "const afterControl = (await slack.replies(controlTs)).filter((m) => slack.isBotMessage(m));",
+    "const afterDrop = (await slack.replies(dropTs)).filter((m) => slack.isBotMessage(m));",
+    "const stray = (await slack.history(badAnchorTs)).filter((m) => slack.isBotMessage(m) && m.text.includes(badNote));",
+    "const strayInSlack = (await a.history(ack.ts)).filter((m) => a.isBotMessage(m) && m.ts !== ack.ts);",
+    "const afterReply = (await sup.collectBotMessagesAfter(askTs, reply.ts, { includeTaskCards: true }))",
+    "const noiseReplies = (await sup.collectBotMessagesAfter(noiseTs, noiseTs, { includeTaskCards: true }))",
+    "const noiseReplies = await b.collectBotMessagesAfter(noiseTs, noiseTs, { includeTaskCards: true });",
+    "for (const m of await room.collectBotMessagesAfter(askTs, askTs, { includeTaskCards: true }))",
+  ]) {
+    ok(scenariosSrc.includes(needle), `silence gate counts eve's task card: ${needle.slice(0, 70)}…`);
+  }
+  ok(scenariosSrc.split("const strayInA = (await a.history(askTs)).filter((m) => a.isBotMessage(m));").length === 3, "silence gate counts eve's task card: both reply-targeting raw-history fallbacks");
 }
 
 {
@@ -8174,7 +8297,7 @@ await removeTempDir(dir);
 
   const firePrompt = routineConnectorFirePrompt(OP, "rcwa-1", "rcwfxa-2");
   ok(firePrompt.startsWith(routineConnectorWriteSteps(OP, "rcwa-1")), "🔴 arm A's fire runs the SAME delegated steps arm B's ask quotes");
-  ok(firePrompt.includes("ending that report with the word rcwfxa-2 (do not use this word anywhere else)."), "the fire prompt asks for the confirmation word the leg waits on");
+  ok(firePrompt.includes("the one report back here starts with the word rcwfxa-2 and then says"), "the fire prompt asks for the confirmation word the leg waits on, first in the report (OPE-2177)");
   ok(!/permission|declar/iu.test(firePrompt), `🔴 the fire prompt carries NO permission language — the fence reads the missing row, not the prompt (got: ${firePrompt})`);
   ok(/permission|declar/iu.test('Declare the standing permission "tool:x"'), "NEGATIVE CONTROL: the permission regex matches arm B's declaration clause");
 

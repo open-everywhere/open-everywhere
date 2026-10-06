@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 
 import type { Env, Exec, ExecResult } from "./deploy/lib.js";
-import { EXEC_TIMEOUT_MS, GITHUB_API_BASE, REAL_EXEC_TIMEOUT_MS, resolveGithubApiBase, withExecDeadline } from "./deploy/lib.js";
+import {
+  EXEC_TIMEOUT_MS,
+  GITHUB_API_BASE,
+  pinGhRepoPlaceholders,
+  REAL_EXEC_TIMEOUT_MS,
+  resolveGithubApiBase,
+  resolveGithubOwnerRepoFromEnv,
+  withExecDeadline,
+} from "./deploy/lib.js";
 import {
   classifyCheckRuns,
   classifyCloudProofStatus,
@@ -16,7 +24,6 @@ import {
   listFirstParentAncestors,
   parseGithubOwnerRepo,
   realGithubApiFetch,
-  resolveGithubOwnerRepoFromEnv,
   resolveGithubRestToken,
   runCiGate,
   walkBackForCloudProof,
@@ -779,6 +786,85 @@ await check("fetchGithubApi: the same tiny exec bound with a `gh` that ANSWERS p
   });
   assert.equal(result.ok, true);
   if (result.ok) assert.deepEqual((result.body as { check_runs: unknown }).check_runs, GREEN);
+});
+
+function recordingGhExec(spawns: { command: string; args: string[] }[]): Exec {
+  return async (command, args) => {
+    spawns.push({ command, args: [...args] });
+    if (command !== "gh") throw new Error(`unexpected exec(${command}, ${JSON.stringify(args)}) — the repository pin must not spawn anything`);
+    return { code: 0, stdout: JSON.stringify({ total_count: 2, check_runs: GREEN }), stderr: "" };
+  };
+}
+
+const NO_REST: GithubApiFetchLike = async () => {
+  throw new Error("the REST fallback must not be reached when `gh` answers");
+};
+
+await check("fetchGithubApi: GITHUB_REPOSITORY set — the `gh` arguments name THAT repository, with no placeholder left", async () => {
+  const spawns: { command: string; args: string[] }[] = [];
+  const result = await fetchGithubApi({
+    ghArgs: ["api", `repos/{owner}/{repo}/commits/${SHA}/check-runs`, "--method", "GET", "-F", "owner={owner}", "-f", "note={owner}/{repo}"],
+    restPathSuffix: `commits/${SHA}/check-runs`,
+    exec: recordingGhExec(spawns),
+    fetchImpl: NO_REST,
+    env: { GITHUB_REPOSITORY: "open-everywhere/open-everywhere" },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(spawns.length, 1, "exactly one spawn: `gh` — no `git remote get-url`");
+  assert.deepEqual(spawns[0], {
+    command: "gh",
+    args: ["api", `repos/open-everywhere/open-everywhere/commits/${SHA}/check-runs`, "--method", "GET", "-F", "owner=open-everywhere", "-f", "note={owner}/{repo}"],
+  });
+  assert.ok(!spawns[0].args[1].includes("{owner}") && !spawns[0].args[1].includes("{repo}"), "no placeholder may survive in the endpoint");
+});
+
+await check("fetchGithubApi: GITHUB_REPOSITORY UNSET — the `gh` arguments are unchanged, so `gh` keeps resolving from `GH_REPO` or the checkout", async () => {
+  const spawns: { command: string; args: string[] }[] = [];
+  const ghArgs = ["api", `repos/{owner}/{repo}/commits/${SHA}/check-runs`, "--method", "GET"];
+  const result = await fetchGithubApi({
+    ghArgs,
+    restPathSuffix: `commits/${SHA}/check-runs`,
+    exec: recordingGhExec(spawns),
+    fetchImpl: NO_REST,
+    env: NO_TOKEN_ENV,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(spawns.length, 1, "exactly one spawn: `gh` — the unset case must not look the remote up either");
+  assert.deepEqual(spawns[0], { command: "gh", args: ["api", `repos/{owner}/{repo}/commits/${SHA}/check-runs`, "--method", "GET"] });
+});
+
+await check("fetchCheckRunsForSha: GITHUB_REPOSITORY set — every paged `gh` read is pinned, and the REST fallback names the SAME repository", async () => {
+  const spawns: { command: string; args: string[] }[] = [];
+  const viaGh = await fetchCheckRunsForSha({ sha: SHA, exec: recordingGhExec(spawns), fetchImpl: NO_REST, env: TOKEN_ENV });
+  assert.equal(viaGh.ok, true);
+  assert.ok(spawns.length >= 1);
+  for (const s of spawns) assert.equal(s.args[1], `repos/acme/oe/commits/${SHA}/check-runs`);
+
+  const calls: { url: string; headers: Record<string, string> }[] = [];
+  const viaRest = await fetchCheckRunsForSha({
+    sha: SHA,
+    exec: NO_GH_EXEC,
+    fetchImpl: routedRestFetch({ "/check-runs": { status: 200, body: { total_count: 2, check_runs: GREEN } } }, calls),
+    env: TOKEN_ENV,
+  });
+  assert.equal(viaRest.ok, true);
+  assert.ok(calls.length >= 1);
+  for (const c of calls) assert.ok(new URL(c.url).pathname.startsWith(`/repos/acme/oe/commits/${SHA}/check-runs`), c.url);
+});
+
+check("pinGhRepoPlaceholders: a malformed GITHUB_REPOSITORY leaves the arguments unchanged, the input is never mutated, and a `-f` value stays verbatim", () => {
+  const args = ["api", "repos/{owner}/{repo}/pulls/7"];
+  assert.deepEqual(pinGhRepoPlaceholders(args, { GITHUB_REPOSITORY: "no-slash" }), args);
+  assert.deepEqual(pinGhRepoPlaceholders(args, { GITHUB_REPOSITORY: "  " }), args);
+  assert.deepEqual(pinGhRepoPlaceholders(args, { GITHUB_REPOSITORY: " acme/oe " }), ["api", "repos/acme/oe/pulls/7"]);
+  assert.deepEqual(args, ["api", "repos/{owner}/{repo}/pulls/7"], "the caller's array must not change");
+  assert.deepEqual(pinGhRepoPlaceholders(["api", "repos/{owner}/{repo}", "--field=r={repo}", "-f", "description=see {repo}"], { GITHUB_REPOSITORY: "acme/oe" }), [
+    "api",
+    "repos/acme/oe",
+    "--field=r=oe",
+    "-f",
+    "description=see {repo}",
+  ]);
 });
 
 await check("runCiGate: a `gh` that never settles REFUSES in bounded time — the whole gate, not just the fetch edge", async () => {

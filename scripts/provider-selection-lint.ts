@@ -11,7 +11,8 @@ if (!existsSync(manifestPath)) {
   process.exit(1);
 }
 const manifestSource = readFileSync(manifestPath, "utf8");
-const wiringSource = readFileSync(join(root, "agent/lib/register-adapters.ts"), "utf8");
+const wiringSource = readFileSync(join(root, "packages/adapters/agent/register-defaults.ts"), "utf8");
+const appWiringSource = readFileSync(join(root, "agent/lib/register-adapters.ts"), "utf8");
 
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
   dependencies?: Record<string, string>;
@@ -32,7 +33,7 @@ const coreSeams: CoreSeamSource[] = tsFiles(coreAgentRoot).map((f) => ({
   source: readFileSync(f, "utf8"),
 }));
 
-const problems = checkProviderSelection({ manifestSource, wiringSource, appDependencies, coreSeams, fullCoreSweep: true });
+const problems = checkProviderSelection({ manifestSource, wiringSource, appWiringSource, appDependencies, coreSeams, fullCoreSweep: true });
 
 if (problems.length > 0) {
   console.error(`✗ provider-selection-lint: ${problems.length} problem(s):\n` + problems.map((p) => `  - ${p}`).join("\n"));

@@ -1,5 +1,5 @@
 import { collapseShardSeries, type ProofVerdict } from "./cloud-proof-verify-lib.js";
-import { type Exec, realExec } from "./lib.js";
+import { type Env, type Exec, pinGhRepoPlaceholders, realExec } from "./lib.js";
 
 export const CLOUD_PROOF_CONTEXT = "oe/cloud-proof";
 
@@ -70,8 +70,13 @@ export function formatInvocation(invocation: GhInvocation): string {
 
 export type PostResult = { ok: true; detail: string } | { ok: false; reason: string };
 
-export async function postCommitStatus(invocation: GhInvocation, exec: Exec = realExec): Promise<PostResult> {
-  const res = await exec(invocation.command, invocation.args);
+export function pinInvocationToRepo(invocation: GhInvocation, env: Env): GhInvocation {
+  return { command: invocation.command, args: pinGhRepoPlaceholders(invocation.args, env) };
+}
+
+export async function postCommitStatus(invocation: GhInvocation, exec: Exec = realExec, env: Env = process.env): Promise<PostResult> {
+  const pinned = pinInvocationToRepo(invocation, env);
+  const res = await exec(pinned.command, pinned.args);
   if (res.spawnError) {
     return { ok: false, reason: `could not run \`gh\` (${res.spawnError}) — is the GitHub CLI installed, on PATH, and authenticated?` };
   }

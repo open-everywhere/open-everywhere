@@ -11,8 +11,8 @@ import { isGrantToolName, type CredentialGrantRow } from "@open-everywhere/core/
 import {
   armSettlement,
   auditCursor,
+  awaitWorkResult,
   bootAgent,
-  consumeSettlement,
   DISCORD_LISTED_CHANNEL_ID,
   discordMentionWake,
   disposeLater,
@@ -22,13 +22,12 @@ import {
   setEnvForRunningAgent,
   SLACK_TEAM_ID,
   slackInteractivityPost,
-  taskIdOfDelegation,
   waitFor,
   waitForChildren,
+  workTaskIdOfCall,
   type RecordedRequest,
   type ScriptedStep,
   awaitWindowQuiet,
-  SETTLEMENT_DRAIN_SCRIPT,
 } from "../harness";
 import { installHostFetchStub } from "../fetch-stub";
 
@@ -153,28 +152,32 @@ async function driveWorkerTurn(input: {
   readonly callId: string;
   readonly steps: readonly ScriptedStep[];
 }): Promise<DelegatedTurn> {
+  const [first, ...rest] = input.steps;
   const dispatched = disposeLater(
     registerScript({
-      parent: [{ calls: [{ tool: "agent", input: { message: input.text }, id: input.callId }] }, { say: "NO_REPLY" }],
-      child: [...input.steps],
+      parent: [{ calls: [{ tool: "work", input: { message: input.text }, id: input.callId }] }, { say: "NO_REPLY" }],
+      child: first === undefined ? [] : [{ ...first, delayMs: 120_000 }, ...rest],
     }),
   );
+  const cursor = await auditCursor();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `<@9000000000000000001> ${input.text}`, messageId: input.messageId });
   const seat = await waitFor(() => dispatched.requests.find((r) => r.role === "parent" && r.stepIndex === 0), `the "${input.text}" turn's seat model call`);
-  await waitFor(
-    () => dispatched.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "agent")),
-    `the "${input.text}" turn's resumed step carrying the delegation receipt`,
-  );
-  const taskId = taskIdOfDelegation(dispatched, `the "${input.text}" delegation`);
-  const armed = armSettlement(dispatched, SETTLEMENT_DRAIN_SCRIPT);
-  await waitForChildren(dispatched, { count: 1, lastStepIndex: input.steps.length - 1, label: `the "${input.text}" worker to finish its own arm` });
+  const taskId = await workTaskIdOfCall(cursor, dispatched, input.callId, `the "${input.text}" turn's forward receipt`);
+  await waitFor(() => dispatched.requests.find((r) => r.role === "parent" && r.stepIndex === 1), `the "${input.text}" dispatch turn's last step`);
   const worker = await waitFor(() => dispatched.requests.find((r) => r.role === "child" && r.stepIndex === 0), `the "${input.text}" worker's own first model call`);
-  const requests = [...dispatched.requests];
-  await consumeSettlement({ armed, dispatched, taskId, label: `the "${input.text}" delegation's settlement notification` });
-  expect([...dispatched.requests, ...armed.requests].filter((r) => r.fault !== undefined), `the "${input.text}" turn's script degraded`).toEqual([]);
-  armed.dispose();
+  const settlement = armSettlement(dispatched, { parent: [{ say: "NO_REPLY" }] });
+  dispatched.releaseHolds();
+  await waitForChildren(dispatched, { count: 1, lastStepIndex: input.steps.length - 1, label: `the "${input.text}" worker to finish its own arm` });
+  const resultStep = await awaitWorkResult({ handle: settlement, taskId, label: `the "${input.text}" seat step that read the worker's result` });
+  expect(seat.turnId, "the seat's request carries no eve turn id, so the turn check below is vacuous").toBeDefined();
+  expect(resultStep.turnId, `the "${input.text}" worker's result arrived in the dispatch turn — the forwarding seat's turn was held`).not.toBe(seat.turnId);
   expect(String(worker.sessionId), `the "${input.text}" worker ran on the SEAT's own session, so nothing here measures a delegation`).not.toBe(String(seat.sessionId));
   await awaitWindowQuiet();
+  const requests = [...dispatched.requests, ...settlement.requests];
+  expect(dispatched.requests.filter((r) => r.fault !== undefined), `the "${input.text}" turn's script degraded`).toEqual([]);
+  expect(settlement.requests.filter((r) => r.fault !== undefined), `the "${input.text}" result-wake script degraded`).toEqual([]);
+  dispatched.dispose();
+  settlement.dispose();
   return { requests, seat, worker };
 }
 
@@ -241,7 +244,7 @@ test("a delegated worker reaches the grant ask, an owner's tap mints the borrow,
   expect(turn1.seat.tools, "the conversational SEAT was offered request_credential_grant — the ask verb belongs to the workers alone").not.toContain(
     "request_credential_grant",
   );
-  expect(turn1.seat.tools, "the seat's offer carries no `agent` verb — the assertion above would then be vacuous").toContain("agent");
+  expect(turn1.seat.tools, "the seat's offer carries no `work` verb — the assertion above would then be vacuous").toContain("work");
 
   const asked = await waitFor(async () => {
     const rows = await rowsSinceCursor(cursor, ["grant.asked"]);
@@ -321,7 +324,7 @@ test("a delegated worker reaches the grant ask, an owner's tap mints the borrow,
 
   expect(turn2.worker.tools, `the conversation's own WORKER was never offered ${grantTool} on the turn after the owner approved`).toContain(grantTool);
   expect(turn2.seat.tools, `🔴 the SEAT was offered ${grantTool} — a lent tool belongs on the conversation's workers`).not.toContain(grantTool);
-  expect(turn2.seat.tools, "the seat's turn-2 offer carries no `agent` verb — the assertion above would then be vacuous").toContain("agent");
+  expect(turn2.seat.tools, "the seat's turn-2 offer carries no `work` verb — the assertion above would then be vacuous").toContain("work");
   const definition = turn2.worker.toolDefinitions.find((d) => d.name === grantTool);
   expect(definition?.description, "the mounted description does not name the owner whose credential pays").toContain(grant.ownerSlug);
   const offeredProps = ((definition?.inputSchema as { properties?: unknown } | undefined)?.properties ?? {}) as Record<string, { const?: unknown }>;

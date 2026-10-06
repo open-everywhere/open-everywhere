@@ -1,8 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { expect, test } from "vitest";
+import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import {
   afterThisTest,
-  awaitTaskSettlement,
+  armSettlement,
+  auditCursor,
+  awaitWorkResult,
   bootAgent,
   disposeLater,
   discordMentionWake,
@@ -13,11 +16,10 @@ import {
   LINEAR_UNIFIED_ORG_ID,
   LINEAR_UNIFIED_TEAM_ID,
   registerScript,
-  SETTLEMENT_DRAIN_SCRIPT,
-  taskIdOfDelegation,
   teamsActivityPost,
   waitFor,
   waitForChildren,
+  workTaskIdOfCall,
   type ScriptedHandle,
 } from "../harness";
 
@@ -43,27 +45,37 @@ async function pinFixtureDomainGrant(domainName: string, connector: "discord" | 
 }
 
 async function driveDelegationAndReadWorker(wake: () => Promise<void>, label: string): Promise<ScriptedHandle> {
+  return await driveForwardAndReadWorker(wake, label);
+}
+
+async function driveForwardAndReadWorker(wake: () => Promise<void>, label: string): Promise<ScriptedHandle> {
+  const cursor = await auditCursor();
+  const callId = `ope1064-${label}-delegate`;
   const handle = disposeLater(
     registerScript({
       parent: [
-        { calls: [{ tool: "agent", input: { message: "take it from here" }, id: `ope1064-${label}-delegate` }] },
-        { say: "handed off" },
+        { calls: [{ tool: "work", input: { message: "take it from here" }, id: callId }] },
+        { say: NO_REPLY_SENTINEL },
       ],
-      child: [{ say: "reported" }],
+      child: [{ delayMs: 120_000, say: "reported" }],
     }),
   );
 
   await wake();
 
-  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), `${label}: the dispatch turn's own terminal step`);
-  await waitForChildren(handle, { count: 1, lastStepIndex: 0, label: `${label}: the worker's terminal step` });
-  expect(handle.requests.filter((r) => r.fault !== undefined), `${label}: the scripted model reported a fault`).toEqual([]);
+  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), `${label}: the dispatch turn's receipt step`);
+  await waitForChildren(handle, { count: 1, lastStepIndex: 0, label: `${label}: the worker to enter its hold` });
+  const settlement = disposeLater(armSettlement(handle, { parent: [{ say: NO_REPLY_SENTINEL }] }));
+  const taskId = await workTaskIdOfCall(cursor, handle, callId, `the ${label} delegation`);
+  handle.releaseHolds();
 
-  const taskId = taskIdOfDelegation(handle, `the ${label} delegation`);
-  const drained = await awaitTaskSettlement({ dispatched: handle, taskId, script: SETTLEMENT_DRAIN_SCRIPT, label: `${label}: the worker's settlement wake` });
-  disposeLater(drained.handle);
-  expect(drained.handle.requests.filter((r) => r.fault !== undefined), `${label}: a straggling worker crossed into the drain`).toEqual([]);
-  drained.handle.dispose();
+  const resultStep = await awaitWorkResult({ handle: settlement, taskId, label: `${label}: the seat step that read the worker's result` });
+  expect(resultStep.stepIndex, `${label}: the result arrives as step 0 of the seat's own result-wake turn`).toBe(0);
+  expect(handle.holdsCutShort(), `${label}: the worker's hold ended on the release, not on its 120 s backstop`).toBe(1);
+  for (const h of [handle, settlement]) {
+    expect(h.requests.filter((r) => r.fault !== undefined), `${label}: the scripted model reported a fault`).toEqual([]);
+    expect(h.resolves.filter((r) => r.fault !== undefined), `${label}: the scripted model reported a fault`).toEqual([]);
+  }
 
   return handle;
 }

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { deriveRegistryMountSets, readEveFrameworkTools, readRequiredFrameworkToolSlots } from "./eve-framework-tools.js";
+import { deriveRegistryMountSets, readEveFrameworkTools, readReservedFrameworkToolSlots, readTaskToolNames } from "./eve-framework-tools.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -19,6 +19,17 @@ function throwsWith(fn: () => unknown, needle: string, label: string): void {
   let message: string | undefined;
   try {
     fn();
+  } catch (err) {
+    message = err instanceof Error ? err.message : String(err);
+  }
+  ok(message !== undefined, `${label} — it must THROW, and it did not`);
+  ok(message?.includes(needle) === true, `${label} — the message names the drift (${JSON.stringify(needle)}); got ${JSON.stringify(message)}`);
+}
+
+async function throwsAsyncWith(fn: () => Promise<unknown>, needle: string, label: string): Promise<void> {
+  let message: string | undefined;
+  try {
+    await fn();
   } catch (err) {
     message = err instanceof Error ? err.message : String(err);
   }
@@ -137,25 +148,43 @@ throwsWith(() => deriveRegistryMountSets([]), "0 default-mounted", "🔴 an empt
   ok(live.rootOnly.length > 0, "…and a non-empty root-only set");
   ok(live.defaultMounted.includes("bash"), "`bash` is default-mounted — the premise sandbox_tools.ts's sentinels rest on");
   ok(
-    live.defaultMounted.includes("connection_search"),
-    "🔴 `connection_search` is DEFAULT-MOUNTED — eve 0.44.3 omitted it from every accessor, which is why the declared subagent mounted it unfenced until OPE-1258",
+    live.defaultMounted.includes("connection_tools"),
+    "🔴 `connection_tools` is DEFAULT-MOUNTED — it is the dynamic source that provides the connector verbs, and the slot the subagent lint must NOT demand a sentinel for",
+  );
+  ok(
+    !live.defaultMounted.includes("connection_search") && !live.defaultMounted.includes("connection_execute"),
+    "…and neither verb it provides is registered on its own (the negative control on that split: a sentinel for either would disable a slot with no lower-precedence source)",
   );
   ok(live.rootOnly.includes("agent"), "the delegation verb is ROOT-ONLY — a declared subagent never receives it");
   ok(!live.defaultMounted.includes("agent"), "…and it is therefore NOT default-mounted (the negative control on the split)");
-  eq(live.optIn, ["glob", "grep"], "the committed opt-in snapshot still matches the installed dist");
+  eq(live.optIn, ["ask_question", "glob", "grep"], "the committed opt-in snapshot still matches the installed dist — `ask_question` joined it at eve 0.65, which is why OE mounts the name itself");
+  ok(!live.defaultMounted.includes("ask_question"), "…and `ask_question` really is absent from the registry, so an app that authors nothing mounts nothing under the name");
   eq(live.optInDrift, undefined, "…so nothing is degraded to `unknown`");
   for (const name of [...live.defaultMounted, ...live.rootOnly, ...(live.optIn ?? [])]) {
     ok(live.all.includes(name), `\`all\` carries every classified name — missing ${name} would make every lint blind to it`);
   }
   ok(!live.all.includes("sleep"), "🔴 `sleep` is NOT a framework tool — eve exports `./tools/sleep` and always has, but its own accessors never counted it, so the exports map is not a substitute for the registry");
   eq(
-    live.required,
-    ["connection_search"],
-    "🔴 the installed eve REQUIRES exactly `connection_search` — the slot a `disableTool()` sentinel throws at build on (OPE-1537). A second name here means a second subagent slot needs an authored no-op replacement",
+    live.reserved,
+    ["connection_execute", "connection_search", "connection_tools"],
+    "🔴 the installed eve RESERVES exactly the three connector slots — an authored module at any of them fails `eve build`, a sentinel included (OPE-2247/OPE-2254). A fourth name here is a fourth slot no app may fill",
   );
-  for (const name of live.required) {
-    ok(live.defaultMounted.includes(name), `every REQUIRED name is also default-mounted — ${name} would otherwise be a demand for a file in a slot eve never mounts`);
+  ok(
+    live.reserved.some((name) => live.defaultMounted.includes(name)),
+    "…and at least one reserved slot is DEFAULT-MOUNTED, which is what makes the exemption load-bearing: without it the zero-hands gates demand a sentinel eve throws on",
+  );
+  eq(
+    live.taskTools,
+    ["task_cancel", "task_wait"],
+    "🔴 the installed eve reserves exactly these task verbs — the pair its session injects per model call. A membership change must land in the SAME commit that moves the pin, because OE's two posture tables carry a row each",
+  );
+  for (const name of [...live.reserved, ...live.taskTools]) {
+    ok(live.all.includes(name), `\`all\` carries the reserved name ${name} — it is model-visible with no slot, so a lint that could not see it would call its posture row stale`);
   }
+  ok(
+    live.taskTools.every((name) => !live.defaultMounted.includes(name) && !live.rootOnly.includes(name)),
+    "…and no task verb is in either registry scope (the negative control on the third class: they come from the session, not the source graph)",
+  );
 }
 
 {
@@ -164,24 +193,73 @@ throwsWith(() => deriveRegistryMountSets([]), "0 default-mounted", "🔴 an empt
   mkdirSync(policyDir, { recursive: true });
   const policy = join(policyDir, "default-tool-policy.js");
 
-  eq(readRequiredFrameworkToolSlots(dir), [], "an eve that ships NO default-tool policy requires nothing — every slot stays disableable, which is what such an eve accepts");
+  eq(readReservedFrameworkToolSlots(dir), [], "an eve that ships NO default-tool policy reserves nothing — every slot stays authorable, which is what such an eve accepts");
 
-  writeFileSync(policy, "const REQUIRED_FRAMEWORK_TOOL_SLOTS=new Set([`tools/connection_search`]);");
-  eq(readRequiredFrameworkToolSlots(dir), ["connection_search"], "one required slot is read off the declaration, with the `tools/` prefix stripped");
+  writeFileSync(policy, "const CONNECTION_TOOL_SLOTS=new Set([`tools/connection_search`]);");
+  eq(readReservedFrameworkToolSlots(dir), ["connection_search"], "one reserved slot is read off the declaration, with the `tools/` prefix stripped");
 
-  writeFileSync(policy, 'const REQUIRED_FRAMEWORK_TOOL_SLOTS=new Set(["tools/connection_search","tools/read_file"]);');
-  eq(readRequiredFrameworkToolSlots(dir), ["connection_search", "read_file"], "…and several are read, sorted — the case that arms the lint before eve's build throws");
+  writeFileSync(policy, 'const CONNECTION_TOOL_SLOTS=new Set(["tools/connection_search","tools/connection_execute"]);');
+  eq(readReservedFrameworkToolSlots(dir), ["connection_execute", "connection_search"], "…and several are read, sorted — the case that arms the lint before eve's build throws");
 
-  writeFileSync(policy, "const REQUIRED_FRAMEWORK_TOOL_SLOTS=new Set([]);");
-  eq(readRequiredFrameworkToolSlots(dir), [], "an explicitly EMPTY policy requires nothing — a retired policy is not a parse failure");
+  writeFileSync(
+    policy,
+    "const CONNECTION_TOOLS_SLOT=`tools/connection_tools`,CONNECTION_TOOL_SLOTS=new Set([CONNECTION_TOOLS_SLOT,`tools/connection_search`]);",
+  );
+  eq(
+    readReservedFrameworkToolSlots(dir),
+    ["connection_search", "connection_tools"],
+    "a `tools/<name>` CONSTANT in the set resolves — eve spells its own declaration this way, so a literal-only parse would silently under-report",
+  );
+
+  writeFileSync(policy, "const CONNECTION_TOOL_SLOTS=new Set([]);");
+  eq(readReservedFrameworkToolSlots(dir), [], "an explicitly EMPTY policy reserves nothing — a retired policy is not a parse failure");
 
   writeFileSync(policy, "const SOMETHING_ELSE_ENTIRELY=new Set([`tools/connection_search`]);");
-  throwsWith(() => readRequiredFrameworkToolSlots(dir), "default-tool-policy.js", "🔴 a policy module whose declaration was renamed THROWS rather than reporting `nothing required`");
+  throwsWith(() => readReservedFrameworkToolSlots(dir), "default-tool-policy.js", "🔴 a policy module whose declaration was renamed THROWS rather than reporting `nothing reserved`");
 
-  writeFileSync(policy, "const REQUIRED_FRAMEWORK_TOOL_SLOTS=new Set([SOME_CONSTANT]);");
-  throwsWith(() => readRequiredFrameworkToolSlots(dir), "cannot parse", "🔴 …and so does a declaration whose entries are not slot literals");
+  writeFileSync(policy, "const CONNECTION_TOOL_SLOTS=new Set([SOME_UNRESOLVABLE_CONSTANT]);");
+  throwsWith(() => readReservedFrameworkToolSlots(dir), "cannot resolve", "🔴 …and so does an entry that resolves to no `tools/<name>` slot — the under-report direction, which must never pass silently");
 
   rmSync(dir, { recursive: true, force: true });
 }
 
-console.log(`\n✓ eve-framework-tools: ${n} assertions passed (grammar, union totality, unknown-scope guard, empty-scope guards, required-slot reader, live premise)\n`);
+{
+  const fixtures: string[] = [];
+  const fakeEve = (body: string | undefined): string => {
+    const dir = mkdtempSync(join(tmpdir(), "oe-eve-tasktools-"));
+    fixtures.push(dir);
+    if (body === undefined) return dir;
+    const protoDir = join(dir, "dist", "src", "protocol");
+    mkdirSync(protoDir, { recursive: true });
+    writeFileSync(join(protoDir, "task-tools.js"), body);
+    return dir;
+  };
+
+  await throwsAsyncWith(
+    () => readTaskToolNames(fakeEve(undefined)),
+    "cannot read",
+    "🔴 an eve with no task-tools module THROWS — an empty answer would take `task_wait` and `task_cancel` off every lint's surface and read as two stale rows",
+  );
+
+  eq(
+    await readTaskToolNames(fakeEve("const TASK_TOOL_NAMES=[`task_wait`,`task_cancel`];export{TASK_TOOL_NAMES};")),
+    ["task_cancel", "task_wait"],
+    "the names are read off eve's own export, sorted",
+  );
+
+  await throwsAsyncWith(
+    () => readTaskToolNames(fakeEve("const TASK_TOOL_NAMES=[];export{TASK_TOOL_NAMES};")),
+    "non-empty",
+    "🔴 an EMPTY array throws too — it is the fail-silent shape, not a release with no task verbs",
+  );
+
+  await throwsAsyncWith(
+    () => readTaskToolNames(fakeEve("const SOMETHING_ELSE=[`task_wait`];export{SOMETHING_ELSE};")),
+    "non-empty",
+    "🔴 …and so does a module that exports no `TASK_TOOL_NAMES` at all",
+  );
+
+  for (const dir of fixtures) rmSync(dir, { recursive: true, force: true });
+}
+
+console.log(`\n✓ eve-framework-tools: ${n} assertions passed (grammar, union totality, unknown-scope guard, empty-scope guards, reserved-slot reader, task-verb reader, live premise)\n`);

@@ -1,4 +1,4 @@
-import { SLACK_DEFAULT_APP_NAME, slackAppManifestTemplate } from "@open-everywhere/provider-slack/agent/app-manifest.js";
+import { slackAppManifestTemplate, slackManifestAppName, type SlackAppManifestOptions } from "@open-everywhere/provider-slack/agent/app-manifest.js";
 import { docUrl } from "@open-everywhere/core/agent/ops/quickstart.js";
 import { routeOf, type SetupStep, type StepContext } from "../engine.js";
 import { isSet, mergedEnv, missNote } from "../env-file.js";
@@ -33,12 +33,23 @@ export const slackStep: SetupStep = {
     };
   },
   guide(ctx: StepContext) {
+    const opts: SlackAppManifestOptions = {
+      ...(ctx.appName === undefined ? {} : { appName: ctx.appName }),
+      ...(ctx.agentName === undefined ? {} : { agentName: ctx.agentName }),
+      ...(ctx.commandName === undefined ? {} : { commandName: ctx.commandName }),
+    };
     return {
       summary: "Create a Slack app from the manifest below, then copy its bot token and signing secret.",
       instructions: [
         "https://api.slack.com/apps → Create New App → From an app manifest → pick the workspace → JSON → paste:",
-        slackAppManifestTemplate(ctx.appName === undefined ? {} : { appName: ctx.appName }),
-        `The app is named "${ctx.appName ?? SLACK_DEFAULT_APP_NAME}". A second install in one workspace needs its own name: re-run with --app-name "<name>".`,
+        slackAppManifestTemplate(opts),
+        `The app is named "${slackManifestAppName(opts)}" (${
+          ctx.appName !== undefined
+            ? "from --app-name"
+            : ctx.agentName !== undefined
+              ? "from the app's identity.name setting"
+              : "the default — set identity.name in agent/settings/settings.ts to name it"
+        }). A second install in one workspace needs its own name: re-run with --app-name "<name>".`,
         "Install to Workspace, then OAuth & Permissions → copy the Bot User OAuth Token (xoxb-…) = SLACK_BOT_TOKEN.",
         "Basic Information → App Credentials → copy the Signing Secret = SLACK_SIGNING_SECRET.",
         "Write both with the ops tool `scaffold_env`. Never paste a secret into the chat: the person pastes it where the tool reads it.",

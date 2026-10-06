@@ -4,7 +4,7 @@ import { getConfig } from "../access/config.js";
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import { classifyWindowRouting, WINDOW_ROUTING_DEGRADED_ACTION } from "../access/window-routing.js";
 import { memoryRecallRouteFor } from "../access/window-gate-manifest.js";
-import { canDelegateFromSeat } from "../access/delegation-mount.js";
+import { seatHoldsDelegationVerb } from "../access/work-session.js";
 import { currentWakeId, deploymentOrg, windowGrainOf, type BindableContext } from "../identity/binding.js";
 
 async function auditRoutingPosture(ctx: HookContext): Promise<void> {
@@ -25,7 +25,7 @@ async function auditRoutingPosture(ctx: HookContext): Promise<void> {
         domainKey,
         surfaceKey: partition.surfaceKey,
         grain,
-        recall: memoryRecallRouteFor(grain, undefined, undefined, canDelegateFromSeat(c)),
+        recall: memoryRecallRouteFor(grain, undefined, undefined, seatHoldsDelegationVerb(c)),
         wakeId: currentWakeId(c) ?? null,
       },
     });

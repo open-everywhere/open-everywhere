@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { expect, test } from "vitest";
 import {
+  awaitWindowQuiet,
   auditCursor,
   bootAgent,
   CONTROL_SERVICE_PRINCIPAL,
@@ -35,7 +36,7 @@ async function turnOnce(): Promise<DrivenTurn> {
   const channelId = freshUnlistedChannelId();
   const nonce = randomBytes(6).toString("hex");
   const replyText = `oe-audit-forensics-ok ${nonce}`;
-  const handle = disposeLater(registerScript({ parent: [seatReply(replyText, "forensics-reply"), { say: "done" }] }));
+  const handle = disposeLater(registerScript({ parent: [seatReply(replyText, "forensics-reply")] }));
   const cursor = await auditCursor();
 
   await discordMentionWake({ channelId, text: `<@9000000000000000001> ${nonce} please answer` });
@@ -44,7 +45,8 @@ async function turnOnce(): Promise<DrivenTurn> {
     const rows = await rowsSinceCursor(cursor, ["reply.post"]);
     return rows.find((r) => r.surface === channelId);
   }, `a reply.post audit row for channel ${channelId}`);
-  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the turn's last step");
+  await awaitWindowQuiet();
+  expect(handle.requests.some((r) => r.role === "parent" && r.stepIndex >= 1), "a step after the reply was requested").toBe(false);
 
   expect(reply.detail?.chars).toBe(replyText.length);
   driven = { channelId, nonce, replyChars: replyText.length, cursor, reply };

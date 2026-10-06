@@ -1,6 +1,8 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { resolveLeanSeatPosture, withheldFromLeanSeat } from "../access/lean-seat.js";
-import { setLeanSeatWake } from "../access/lean-seat-state.js";
+import { setLeanSeatWake, setWorkSessionToken, setWorkTierWake } from "../access/lean-seat-state.js";
+import { resolveOwnWindowToken } from "../access/delegation-mount.js";
+import { forwardsToWorkSession, isWorkSessionChildContext, isWorkSessionContext } from "../access/work-session.js";
 import { setNativeDelegationSeat } from "../access/native-delegation-state.js";
 import { setWorkerWake } from "../access/worker-seat-state.js";
 import { setWorkerToolsetIdentity, type WorkerToolsetIdentity } from "../access/worker-toolset-state.js";
@@ -77,6 +79,10 @@ function classifyNativeDelegationSeat(ctx: HookContext): void {
       setNativeDelegationSeat("leaf");
       return;
     }
+    if (!isWorkSessionContext(c)) {
+      setNativeDelegationSeat("no-seat");
+      return;
+    }
     const grain = grainOf(c);
     const admitted = WINDOW_GATED_TOOLS["agent"]?.includes(grain) === true;
     setNativeDelegationSeat(admitted && oneshotAgentEnabled() && canDelegateFromSeat(c) ? "allow" : "no-seat");
@@ -137,7 +143,22 @@ function classifyInvokerPosture(ctx: HookContext, attrs: Attrs): void {
   }
 }
 
+function classifyWorkTier(ctx: HookContext): void {
+  const c = ctx as unknown as BindableContext;
+  try {
+    const work = isWorkSessionContext(c);
+    const workChild = !work && isWorkSessionChildContext(c);
+    setWorkTierWake(work ? "work" : workChild ? "child" : forwardsToWorkSession(c) ? "forwards" : "none");
+    setWorkSessionToken(work && !isSubagentChildContext(c) ? resolveOwnWindowToken(c) : undefined);
+  } catch {
+    setWorkTierWake("none");
+    setWorkSessionToken(undefined);
+  }
+}
+
 async function classifyWake(ctx: HookContext): Promise<void> {
+  setWorkTierWake("none");
+  classifyWorkTier(ctx);
   setInvokerPosture("untrusted-remote");
   setNativeDelegationSeat("unclassified");
   classifyNativeDelegationSeat(ctx);
@@ -170,6 +191,7 @@ export default defineHook({
     },
     "turn.completed": () => {
       setLeanSeatWake(false);
+      setWorkTierWake("none");
       setNativeDelegationSeat("unclassified");
       setWorkerWake(false);
       setWorkerToolsetIdentity(null);
@@ -177,6 +199,7 @@ export default defineHook({
     },
     "turn.failed": () => {
       setLeanSeatWake(false);
+      setWorkTierWake("none");
       setNativeDelegationSeat("unclassified");
       setWorkerWake(false);
       setWorkerToolsetIdentity(null);

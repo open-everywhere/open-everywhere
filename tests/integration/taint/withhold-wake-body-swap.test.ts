@@ -112,6 +112,8 @@ async function armSeams(): Promise<void> {
         }
         return undefined;
       }
+      case "conversations.members":
+        return { ok: true, members: [], response_metadata: { next_cursor: "" } };
       case "conversations.info":
         return {
           ok: true,

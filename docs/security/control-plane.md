@@ -62,7 +62,7 @@ Within the control MCP door there's a further split by *who's reaching in*:
 |---|---|---|
 | `revoke_connector` | break-glass: revoke a connector from a surface — takes effect at the next token resolve (see [Revocation latency](./revocation-latency.md)) | canonical narrow |
 | `clear_connector_override` | revert a revoke to the config grant | reconcile |
-| `revoke_session_grants` | break-glass: withdraw a live session's "Approve for session" grants, so the next PR-open in it gets a card again | narrow (discretion, not access) |
+| `revoke_session_grants` | break-glass: withdraw a routine's standing grants ("Approve for this routine (up to N h)" and its declared permissions), or every unspent one-call connector-op approval in a room | narrow (discretion, not access) |
 | `cancel_routine` | stop a misfiring routine now | break-glass narrow |
 | `delete_skill` | break-glass: kill a poisoned runtime domain skill | canonical narrow |
 | `disarm_approval_judge` | break-glass: turn the LLM approval judge off for one domain, so every defer-flipped verb falls back to its approval card | canonical narrow |
@@ -243,25 +243,27 @@ its audit envelope is `{platform: "org", workspace: <org>}` — never a made-up 
 
 There is **deliberately no runtime connector *grant*.** Access widens only through a reviewed PR; the overlay is narrow-only at the point of effect, so a runtime override can never open access. `clear_connector_override` — whether called here or approved via the in-Slack path below — only ever reverts a revoke back to the **config-granted** state; it cannot grant a connector the config baseline never gave.
 
-`revoke_session_grants` is the same narrow lane one layer in. When someone clicks **Approve for
-session** on a card, that grant is remembered against the proposing session so later proposals of
-the same kind in it skip the card. Exactly one kind is grantable — `pr.open` — so
-`revoke_session_grants` taking the whole set back for a surface's live session means the next
-PR-open in it gets a card again. Two things to hold straight about it:
+`revoke_session_grants` is the same narrow lane one layer in. A click in a conversation approves one
+act and keeps nothing (OPE-2363), so a conversation never holds a standing grant. The memos left for
+this verb are a routine's standing grant — **Approve for this routine (up to N h)** on a routine's
+card, plus the routine's declared permissions — and a connector-op approval a click gave that the
+agent has not spent yet. Pass `sessionId` set to the routine's grant key to withdraw the first; pass
+only `surfaceKey` to withdraw every unspent one in the room. Two things to hold straight about it:
 
 - **It narrows discretion, not access.** A session grant only ever skipped the *human card*; every
   capability gate still ran underneath it. So this verb cannot cut a capability — `revoke_connector`
-  is the lever for that. Reach for this one when a session was granted too widely, or when a seat is
-  behaving oddly and you want its standing discretion gone without cancelling the work.
+  is the lever for that. Reach for this one when a routine was granted too widely, or when you want a
+  room's unspent approvals gone without cancelling the work.
 - **It is not folded into `revoke_connector`.** A revoked connector already fails closed at the
-  credential wall on the next call, and no connector op is session-grantable in the first place, so
-  a connector revoke has no memo of its own to sweep. Making it sweep memos anyway would take out
-  that session's PR-open grant as a side effect of a single-connector revoke. An admin who wants
-  that says so explicitly, here.
+  credential wall on the next call, so an approval left behind skips no card that matters. Sweeping
+  memos from a connector revoke would take out every other connector's approvals as a side effect of
+  a single-connector revoke. An admin who wants that says so explicitly, here.
 
-The live session is resolved from the channel-session registry (a windowed domain resolves to its
-window). A per-thread, task or native session has no registry row; pass its `sessionId` directly and
-the verb refuses rather than reporting a misleading zero.
+The room is the `surfaceKey` you pass. A Discord thread or a Teams reply chain is reached through its
+parent channel's surface key. A `sessionId` must be a key of that room. A conversation key names its
+room in the key. A routine's grant key does not, so the verb loads the routine and refuses the key
+unless the routine is stored under that `surfaceKey`. A routine of another room, or one that no longer
+exists, is refused too. So the verb never deletes another room's approval.
 
 ## Skill revision history
 
@@ -509,7 +511,7 @@ A halt stops **the consequential acts the seven arrows below reach** at one addr
 
 **The HOST announces the halt, not the turn.** The chat `halt` posts the host-authored confirmation into the room itself, through the reply path, and the `admin.halt.set` row carries `announced` either way. It used to hand that sentence back as the tool's *result* and trust the turn to repeat it: in the soak run of 2026-09-12 the turn did not, the room heard only that one task was cancelled, and the halt stood 50 minutes. "Loud" is the argument for an uncarded brake, so it cannot be left to the model — and when the post fails, `announced: false` is what makes the silence findable.
 
-**A stop that names one thing is not this verb.** The chat `halt` reaches the whole deployment by default (`scope: "org"`); `scope: "surface"` brakes this room alone. A member asking to stop one piece of work — "stop that changelog one" — is asking for `task_cancel` on that task, and a member asking the seat to go quiet is asking for `stand_down`; both leave the brake alone. The seat persona (`agent/instructions/seat-prompt.ts`) and the tool description say so in the same three branches, because the same soak run shows the escalation going the other way: the widest answer is the cheapest one to justify, and it is the one the room cannot undo.
+**A stop that names one thing is not this verb.** The chat `halt` reaches the whole deployment by default (`scope: "org"`); `scope: "surface"` brakes this room alone. A member asking to stop one piece of work — "stop that changelog one" — is asking for `cancel_work` on that job, and a member asking the seat to go quiet is asking for `stand_down`; both leave the brake alone. The seat persona (`agent/instructions/seat-prompt.ts`) and the tool description say so in the same three branches, because the same soak run shows the escalation going the other way: the widest answer is the cheapest one to justify, and it is the one the room cannot undo.
 
 ### The safety argument: fail-closed at the arrows, fail-open on the lift
 
@@ -538,7 +540,7 @@ While halted, both names are **subtracted** from the toolset at `projectToolSet`
 
 ### The other two bounds, stated because a doc that overclaims is worse than one that admits
 
-- **Work already dispatched finishes its step.** A halt skips a routine **fire**; a turn a fire already started keeps running until its next consequential act meets an arrow. It cannot abort a delegated worker either — OE owns no abort signal — though a worker is single-turn and its toolset is recomputed per model call, so absence lands there on its next call. **Do not describe a halt as instantaneous.**
+- **Work already dispatched finishes its step.** A halt skips a routine **fire**; a turn a fire already started keeps running until its next consequential act meets an arrow. It cannot abort a delegated worker either — OE owns no abort signal — though a worker's toolset is recomputed per model call, so absence lands there on its next call — including a later turn a `taskId` continuation opens. **Do not describe a halt as instantaneous.**
 - **OE's own first-party transports are not egress arrows.** Posting a Slack or Discord card, a GitHub App call, a Linear call: these are host-side fetches OE dispatches that `assertEgressReach` never sees. That is what lets the control plane keep working under its own halt — and it is also why "a halt cuts all outbound HTTP" is false.
 - 🔴 **A HALT PAUSES ACTS, NOT READING — and telling a seat otherwise stops work nobody stopped.** The authorization doctrine defines a consequential act as one whose effect **escapes the conversation** (`agent/access/consequence.ts`), and almost no arrow above touches a read. So under a halt the seat still reads, still replies, still delegates a read to a worker, still puts a file into the asking room (`post_file` is `open` — "same class as reply"), and the host still persists that room's memory. None of those escapes the conversation the halt still admits.
 
@@ -714,7 +716,7 @@ registered against two servers behind one redirect URI can tell which answered. 
 registration is deliberately **not** advertised — an unauthenticated caller must not be able to
 create a client.
 
-**What is eve's and what is ours.** The whole resource-server arm is eve 0.54.3's: `jwtHmac`
+**What is eve's and what is ours.** The whole resource-server arm is eve's (re-read at the 0.71.0 pin): `jwtHmac`
 verifies the signature, `exp`, `aud` and `iss`; `oauthResource` carries the RFC 9728 metadata;
 `routeAuth` walks the strategies and produces the 401. eve ships **no** authorization server at
 all — no token endpoint, no PKCE, no client registry — so that half is ours, and a parity test pins
@@ -1245,9 +1247,20 @@ already existed — so no act is ever missing from the trail. Two identical auth
 turn of one session share a row; anything in a different turn, or a different session, does not.
 
 **Card.** The card is rendered by **code**, from the frozen args — never by the model. It shows
-the action, the scope, current → proposed value where relevant, who asked, and an expiry.
+the action, the scope, current → proposed value where relevant, who asked, and an expiry. A
+`routine.permission` card has no clock, so its footer names the bound that ends it instead: the
+card ends when the routine's instruction is edited or the routine is deleted.
 Pending actions lapse after 24 hours by default (`approvals.ttlHours`) and can no longer be
 approved or rejected once expired.
+
+🔴 **The expiry NOTICE covers only the orgs in `OE_TIDY_ORGS`.** A click on a lapsed card is
+refused in every org, because the click path reads the clock off the row. That late click also
+writes the `approval.expired` row. But the daily sweep is what rewrites an UNCLICKED card and writes
+its row, and the sweep walks only the orgs that `OE_TIDY_ORGS` names (default: the single org
+`default`). In any other org, a lapsed card keeps its buttons until someone clicks it, and no
+`approval.expired` row is written until that click. A multi-tenant deployment must
+list every org in `OE_TIDY_ORGS` — see the
+[configuration reference](../deploy/configuration-reference.md#approvals).
 
 **Click.** The approve/reject click lands on Slack's own interactivity endpoint — the same
 signature-verified public route events already use (see the
@@ -1292,6 +1305,14 @@ Not every action kind needs the same tier. The split is a **rule**, not a list o
   authoring: being able to click is already being in the channel, which is the same trust tier
   whose delegated worker can already edit that silo's files. The card exists to defeat injection
   here, not to gate privilege.
+  - Two member kinds are cards that replaced eve-native confirms (OPE-2340): `file.publish` (a
+    `post_file` HTML page published to a public URL) and `op.connector` (one connector op that needs a
+    person: a write once per op per conversation, a destructive op once per call). Neither is in the
+    `connector.` admin family, which is the connector **overrides**, an org config mutation. The
+    native connector confirm had no response half and bound its click to nobody, so a member bar on
+    `op.connector` is a narrowing. The native `post_file` confirm bound its click to the requester,
+    so `file.publish` keeps that bind: its execute refuses any clicker who is not the person who
+    asked, and nothing goes public. Each card posts and returns, so no turn waits on it.
 
 The admin kinds are the **carve-out**; the member kinds are everything the rule leaves. The table
 below is generated from each kind's registered `ApproverPolicy`
@@ -1310,8 +1331,10 @@ rule.
 | `chat.post` | `post_message` | member |
 | `connector.clear` | `clear_connector_override` | admin |
 | `connector.revoke` | `revoke_connector` | admin |
+| `file.publish` | `post_file` | member |
 | `halt.resume` | `resume` | admin |
 | `memory.purge` | `purge_memory` | member |
+| `op.connector` | — *(no propose tool)* | member |
 | `pr.open` | `open_pull_request` | member |
 | `routine.cancel` | `cancel_routine` | member |
 | `routine.create` | `create_routine` | member |
@@ -1378,20 +1401,55 @@ the registry verdict, collecting every mismatch as a failure line. Running judge
 
 **The turn's requester-visible messages reach the judge as quoted data.**
 `requesterMessagesThisTurn` (`packages/core/agent/access/requester-messages.ts`) holds the current
-turn's received message text, rendered quoted and under review. Three deliveries are **deliberately
-never captured**: one inside a native delegation child, one whose auth carries a taint-seed stamp, and
-one of unattended origin. A turn that captures nothing leaves the previous turn's messages standing as
+turn's received message text, rendered quoted and under review. Four deliveries are **deliberately
+never captured**: one inside a native delegation child, one inside the work session (its every
+delivery wraps the seat model's brief), one whose auth carries a taint-seed stamp, and one of
+unattended origin. A turn that captures nothing leaves the previous turn's messages standing as
 backscroll, and the reader answers empty outside a session context.
+
+**A person's ask reaches the judge of the work-session child that proposes the act.** Under the three
+tiers the person asks on the seat, and the act is proposed in a child of the work session, which
+captures nothing. So the ask crosses the forward on host rows only:
+
+- The capture hook also reduces each delivered envelope to ONE person's own ask: the body of its one
+  `trigger="true"` message, its author and its wake (`requesterAskOf`,
+  `packages/core/agent/hooks/requester-messages.ts`). No backscroll sibling rides, and a fenced body
+  comes back unfenced, as the own-account gate reads it.
+- The `work` forward copies the asks for its OWN wake, its OWN verified requester and its OWN turn into
+  the work request row (`requesterAsks`). It never copies the brief. An unverified requester, a wake
+  the host proved came from a non-member, and an earlier turn carry none. A routine fire writes no
+  asks.
+- At the child's `turn.started`, `adoptForwardedRequesterAsks`
+  (`packages/core/agent/access/forwarded-asks.ts`) finds the child's own request. On the opening
+  turn it reads the call row the work session wrote for the child's own `agent` call. On a later turn
+  it reads the continuing wake the provenance fence admitted for a continuation by `taskId`
+  (`readContinuationWake`, `packages/core/agent/channels/task-provenance.ts`). The work session's
+  `task.started` advances the child's authority row to a new task wake, but it never writes either of
+  these two rows, and both exist before the child's turn runs. A later turn on a request the child
+  already adopted (an approval resume) adopts nothing, so that ask reads as earlier context.
+  Adoption is idempotent per turn.
+- The child records the row's asks as its own turn's messages only when the row is not a fire, names
+  a verified requester equal to the child's own dispatch requester, and belongs to the child's own
+  work session. The judge then reads them as this turn's requester messages, as on the seat.
+- One residual stays open. With one job open, every `agent` call in the work session's turn joins
+  that job (`packages/core/agent/access/work-request-turn.ts`). So a second child that the work
+  session starts in that turn also carries the person's ask. It stays inside the same conversation
+  and the same requester.
+
+The `work.forwarded` audit row counts the asks it carried (`askCount`) and never holds their text.
 
 **The deciding card crosses an approval click on `AsyncLocalStorage`.** `armingApproval`
 (`packages/core/agent/approvals/arming-context.ts`) reads it, because a click executes outside any eve
 session and the executing code still needs to know which card armed it. **It is never an authorisation
 input**: the click's own authorisation is decided before the arming context exists.
 
-**A foreign responder is refused on the approve leg only.** `decideResponder`
-(`packages/core/agent/approvals/eve-response-policy.ts`) allows a response when the session has no
-recorded initiator and when the responder is that same initiator, and rejects every other responder.
-Binding the click to the session initiator is why an eve-native confirmation stays legal at open tier.
+**A foreign responder is refused on both legs, Approve and Cancel.** `decideResponder`
+(`packages/core/agent/approvals/eve-response-policy.ts`) binds a response to the REQUESTER: eve's
+`request.principal`, the caller whose turn made the tool call. It falls back to the session initiator
+only when eve records no requester, and it allows when neither exists. Every other responder is
+rejected, and the request stays pending. eve 0.69.0 runs the policy for Cancel as well as Approve, and
+OE applies the same rule to both (OPE-2255): a bystander can no longer cancel another person's pending
+action. eve's Slack channel posts the refusal privately to the refused responder.
 🔴 Authoring that response policy is also the **switch** that routes the request onto eve's candidate
 path: a call site that forgets it silently keeps the older "any authenticated clicker may approve"
 behaviour.

@@ -52,7 +52,7 @@ eq(PATCH_FILE, `eve+${PIN}.patch`, "§1 the packed patch is named for the eve pe
 const realTargets = evePatchTargets(PATCH_BODY);
 ok(realTargets.length > 0, "§2 the committed patch declares at least one target file");
 const realParts = realTargets.flatMap((t) => t.parts);
-ok(realParts.length >= 5, `§2 the committed patch declares at least five named parts (found ${realParts.length})`);
+ok(realParts.length >= 3, `§2 the committed patch declares at least three named parts (found ${realParts.length}; parts 5 and 6 retired at OPE-2252 and OPE-2251)`);
 const tickets = realParts.map((p) => p.ticket);
 eq(new Set(tickets).size, tickets.length, "§2 no part is reported twice");
 for (const part of realParts) {

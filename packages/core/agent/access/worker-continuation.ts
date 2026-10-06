@@ -1,45 +1,31 @@
+import { claimWorkCall, releaseWorkCall, retireWorkRequest, workCallClaimed, WORK_REQUEST_UNJOINABLE_MESSAGE } from "./work-request-turn.js";
+import { gateWorkCallStamp, liveWorkRequestStamp, workStampVerdict, WORK_CALL_NEEDS_REISSUE_MESSAGE } from "./work-step-stamp.js";
 import { asSchema, jsonSchema } from "ai";
 import { defineState } from "eve/context";
 import { parseWakeAttachments, withDelegatedAttachments, type BriefAttachment } from "../channels/attachments.js";
 import { isWakeEnvelopeShaped } from "../channels/wake-envelope.js";
+import { auditTaskContinuation, checkTaskContinuation, commitTaskContinuation, TASK_CONTINUATION_REFUSAL_MESSAGE, taskContinuationRefusalMessage, type TaskContinuationVerdict } from "../channels/task-provenance.js";
+import { deploymentOrg } from "../identity/binding.js";
+import { currentContinuationTurn, type ContinuationTurn } from "./continuation-turn-state.js";
+import { settlementDispatchAuthorityThisTurn } from "./settlement-dispatch-signal.js";
+import { taskWakeThisTurn, uningressedTurn } from "./task-wake-signal.js";
+import { addressedWakeThisTurn, exactDispatchWakeThisTurn } from "./dispatch-origin-signal.js";
 
 const DELEGATION_TOOL_NAME = "agent";
 
-const CONTINUATION_FIELD = "agentId";
+const TASK_ID_FIELD = "taskId";
+
+const STOP_ONLY_TASK_TOOLS: ReadonlySet<string> = new Set(["task_cancel", "cancel_work"]);
+
+const SELF_FENCED_TASK_TOOLS: ReadonlySet<string> = new Set(["work"]);
 
 const CALLER_OUTPUT_SCHEMA_FIELD = "outputSchema";
 
-export const CONTINUATION_REFUSAL_MESSAGE =
-  "Worker continuation is disabled on this deployment: `agentId` is not accepted. Start a fresh delegation and pass the context it needs in the brief.";
-
-const AGENTS_NOTE_PREFIX = "[Agents]\n<agents>";
+export { TASK_CONTINUATION_REFUSAL_MESSAGE };
 
 interface MessageLike {
   role?: unknown;
   content?: unknown;
-}
-
-function isAgentsNote(message: unknown): boolean {
-  if (message === null || typeof message !== "object") return false;
-  const m = message as MessageLike;
-  if (m.role !== "user") return false;
-  return typeof m.content === "string" && m.content.startsWith(AGENTS_NOTE_PREFIX);
-}
-
-export function suppressAgentsListing(messages: unknown): number {
-  try {
-    if (!Array.isArray(messages)) return 0;
-    let removed = 0;
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (!isAgentsNote(messages[i])) continue;
-      messages.splice(i, 1);
-      removed++;
-    }
-    noteWakeAttachments(messages);
-    return removed;
-  } catch {
-    return 0;
-  }
 }
 
 const wakeAttachmentSlot = defineState<readonly BriefAttachment[]>("open-everywhere.wake-attachments", () => []);
@@ -62,10 +48,10 @@ function lastUserText(messages: readonly unknown[]): string | undefined {
   return undefined;
 }
 
-function noteWakeAttachments(messages: readonly unknown[]): void {
+export function noteWakeAttachments(messages: unknown): number {
   let found: readonly BriefAttachment[] = [];
   try {
-    const text = lastUserText(messages);
+    const text = Array.isArray(messages) ? lastUserText(messages) : undefined;
     if (text !== undefined && isWakeEnvelopeShaped(text)) found = parseWakeAttachments(text);
   } catch {
     found = [];
@@ -74,6 +60,7 @@ function noteWakeAttachments(messages: readonly unknown[]): void {
     wakeAttachmentSlot.update(() => found);
   } catch {
   }
+  return found.length;
 }
 
 function currentWakeAttachments(): readonly BriefAttachment[] {
@@ -97,6 +84,34 @@ function carryAttachmentsIntoBrief(candidate: unknown): unknown {
   }
 }
 
+function continuingWakeForTurn(turnId: string): string | undefined {
+  const settlement = settlementDispatchAuthorityThisTurn(turnId);
+  const settlementTurn = uningressedTurn(turnId) && (settlement.kind !== "none" || taskWakeThisTurn(turnId) !== undefined);
+  if (settlementTurn) return settlement.kind === "single" ? settlement.authority.wakeId : undefined;
+  return addressedWakeThisTurn(turnId) ?? exactDispatchWakeThisTurn(turnId);
+}
+
+export async function decideTaskContinuation(
+  turn: ContinuationTurn | null,
+  taskId: string,
+  toolName: string = DELEGATION_TOOL_NAME,
+  org: string = deploymentOrg(),
+  validated: () => Promise<boolean> = async () => true,
+): Promise<TaskContinuationVerdict | { readonly admit: false; readonly reason: "eve-refused" }> {
+  if (turn === null) return { admit: false, reason: "no-turn" };
+  if (!turn.unified) return { admit: false, reason: "not-unified" };
+  const checked = await checkTaskContinuation({ org, parentSessionId: turn.sessionId, taskId, toolName, continuingWakeId: continuingWakeForTurn(turn.turnId), continuingTurnId: turn.turnId });
+  if (!checked.admit) return checked;
+  if (!(await validated())) return { admit: false, reason: "eve-refused" };
+  return await commitTaskContinuation({ org, parentSessionId: turn.sessionId, taskId, continuingTurnId: turn.turnId, check: checked.check });
+}
+
+function continuationTaskId(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? undefined : value;
+}
+
 interface ToolWithInputSchema {
   inputSchema?: unknown;
 }
@@ -109,15 +124,9 @@ type JsonSchemaObject = {
 
 const replacements = new WeakMap<object, unknown>();
 
-function isBlankContinuationId(value: unknown): boolean {
-  if (value === null || value === undefined) return true;
-  return typeof value === "string" && value.trim().length === 0;
-}
+const unguardable = new WeakSet<object>();
 
-export function refuseAgentContinuation(toolset: Record<string, unknown>): boolean {
-  const raw = toolset[DELEGATION_TOOL_NAME];
-  if (raw === null || typeof raw !== "object") return false;
-  const tool = raw as ToolWithInputSchema;
+function guardTool(tool: ToolWithInputSchema, name: string, delegation: boolean): boolean {
   const current = tool.inputSchema;
   if (current === null || typeof current !== "object") return false;
 
@@ -126,48 +135,79 @@ export function refuseAgentContinuation(toolset: Record<string, unknown>): boole
     tool.inputSchema = cached;
     return true;
   }
+  if (unguardable.has(current as object)) return false;
 
   const original = asSchema(current as never);
   const source = original.jsonSchema as JsonSchemaObject | undefined;
   const properties = source?.properties;
-  if (source === undefined || properties === undefined || !(CONTINUATION_FIELD in properties)) return false;
-
-  const { [CONTINUATION_FIELD]: _dropped, [CALLER_OUTPUT_SCHEMA_FIELD]: _shape, ...keptProperties } = properties;
-  const stripped: JsonSchemaObject = { ...source, properties: keptProperties };
-  if (Array.isArray(source.required)) {
-    stripped.required = source.required.filter((name) => name !== CONTINUATION_FIELD && name !== CALLER_OUTPUT_SCHEMA_FIELD);
+  if (source === undefined || properties === undefined || !(TASK_ID_FIELD in properties)) {
+    unguardable.add(current as object);
+    return false;
   }
 
-  const replacement = jsonSchema(stripped as never, {
+  const replacement = jsonSchema(source as never, {
     validate: async (value: unknown) => {
+      const turnId = currentContinuationTurn()?.turnId;
+      const message = value !== null && typeof value === "object" ? (value as Record<string, unknown>)["message"] : undefined;
+      const heldBefore = delegation && workCallClaimed(turnId, message);
+      const outcome = await validateGuarded(value);
+      if (delegation && !heldBefore && outcome.success === false) releaseWorkCall(turnId, message);
+      return outcome;
+    },
+  });
+
+  async function validateGuarded(value: unknown) {
       let candidate = value;
-      if (candidate !== null && typeof candidate === "object" && CONTINUATION_FIELD in candidate) {
-        const id = (candidate as Record<string, unknown>)[CONTINUATION_FIELD];
-        if (!isBlankContinuationId(id)) {
-          return { success: false as const, error: new Error(CONTINUATION_REFUSAL_MESSAGE) };
-        }
-        const { [CONTINUATION_FIELD]: _blank, ...rest } = candidate as Record<string, unknown>;
-        candidate = rest;
-      }
-      if (candidate !== null && typeof candidate === "object" && CALLER_OUTPUT_SCHEMA_FIELD in candidate) {
+      if (delegation && candidate !== null && typeof candidate === "object" && CALLER_OUTPUT_SCHEMA_FIELD in candidate) {
         const { [CALLER_OUTPUT_SCHEMA_FIELD]: _shape, ...rest } = candidate as Record<string, unknown>;
         candidate = rest;
       }
-      candidate = carryAttachmentsIntoBrief(candidate);
-      if (typeof original.validate !== "function") return { success: true as const, value: candidate };
-      return await original.validate(candidate);
-    },
-  });
+      const taskId = candidate !== null && typeof candidate === "object" ? continuationTaskId((candidate as Record<string, unknown>)[TASK_ID_FIELD]) : undefined;
+      if (delegation) {
+        const turnNow = currentContinuationTurn();
+        const callMessage = candidate !== null && typeof candidate === "object" ? (candidate as Record<string, unknown>)["message"] : undefined;
+        const stamp = liveWorkRequestStamp();
+        const repeat = workCallClaimed(turnNow?.turnId, callMessage);
+        const join = claimWorkCall(turnNow?.turnId, callMessage, stamp);
+        if (join.kind === "refused") return { success: false as const, error: new Error(WORK_REQUEST_UNJOINABLE_MESSAGE) };
+        if (join.kind === "joined") {
+          if (repeat && workStampVerdict(join.requestId, stamp).kind === "needs-reissue") {
+            return { success: false as const, error: new Error(WORK_REQUEST_UNJOINABLE_MESSAGE) };
+          }
+          const verdict = await gateWorkCallStamp(join.requestId, stamp);
+          if (verdict.kind === "needs-reissue") {
+            retireWorkRequest(turnNow?.turnId, join.requestId);
+            return { success: false as const, error: new Error(WORK_CALL_NEEDS_REISSUE_MESSAGE) };
+          }
+        }
+      }
+      if (delegation) candidate = carryAttachmentsIntoBrief(candidate);
+      const evesOwn = async (input: unknown) =>
+        typeof original.validate !== "function" ? { success: true as const, value: input } : await original.validate(input);
+      if (taskId === undefined) return await evesOwn(candidate);
+      const turn = currentContinuationTurn();
+      let eveResult: Awaited<ReturnType<typeof evesOwn>> | undefined;
+      const verdict = await decideTaskContinuation(turn, taskId, name, deploymentOrg(), async () => {
+        eveResult = await evesOwn(candidate);
+        return eveResult.success === true;
+      });
+      if (!verdict.admit && verdict.reason === "eve-refused" && eveResult !== undefined) return eveResult;
+      auditTaskContinuation({ org: deploymentOrg(), parentSessionId: turn?.sessionId ?? "", turnId: turn?.turnId, taskId, verdict: verdict as TaskContinuationVerdict });
+      if (!verdict.admit) return { success: false as const, error: new Error(taskContinuationRefusalMessage(verdict.reason as Exclude<typeof verdict.reason, "eve-refused">)) };
+      return eveResult ?? (await evesOwn(candidate));
+  }
 
   replacements.set(current as object, replacement);
   tool.inputSchema = replacement;
   return true;
 }
 
-const MODEL_MESSAGE_HOOK_KEY = "__oeModelMessageProjection";
-
-function installAgentsListingProjectionHook(): void {
-  (globalThis as Record<string, unknown>)[MODEL_MESSAGE_HOOK_KEY] = suppressAgentsListing;
+export function guardTaskContinuations(toolset: Record<string, unknown>): string[] {
+  const guarded: string[] = [];
+  for (const [name, raw] of Object.entries(toolset)) {
+    if (raw === null || typeof raw !== "object") continue;
+    if (STOP_ONLY_TASK_TOOLS.has(name) || SELF_FENCED_TASK_TOOLS.has(name)) continue;
+    if (guardTool(raw as ToolWithInputSchema, name, name === DELEGATION_TOOL_NAME)) guarded.push(name);
+  }
+  return guarded.sort();
 }
-
-installAgentsListingProjectionHook();

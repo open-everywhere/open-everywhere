@@ -16,8 +16,8 @@ import {
   WAKE_TARGET_TTL_MS,
   type ResolvedUnifiedWakeAuthority,
 } from "./unified-window.js";
-import { adoptDelegatedAuthority, delegatedBindingAdopted, pinDelegatedBindingToTurn, type DelegatedDispatchAuthority } from "../identity/delegated-binding.js";
-import { currentTurnId, deploymentOrg, isSubagentChildContext, subagentParentSessionId, type BindableContext, type SurfaceBinding } from "../identity/binding.js";
+import { adoptDelegatedAuthority, adoptDelegatedRootSession, delegatedAuthorityResolvedFor, delegatedBindingAdopted, pinDelegatedBindingToTurn, refreshDelegatedAuthority, type DelegatedDispatchAuthority } from "../identity/delegated-binding.js";
+import { currentTurnId, delegationRootSessionId, deploymentOrg, isSubagentChildContext, subagentParentSessionId, type BindableContext, type SurfaceBinding } from "../identity/binding.js";
 import { isRequesterVerdict, type RequesterVerdict } from "../access/requester-identity.js";
 import type { SettlementDispatchAuthority } from "../access/settlement-dispatch-signal.js";
 
@@ -171,31 +171,40 @@ export async function advanceDelegatedTaskWake(
   );
 }
 
-async function restoreDelegatedTaskBinding(input: {
-  readonly org: string;
-  readonly parentSessionId: string;
-  readonly callId: string;
-  readonly turnId: string | undefined;
-}): Promise<"adopted" | "already" | "no-row" | "no-binding"> {
-  if (delegatedBindingAdopted()) {
-    pinDelegatedBindingToTurn(input.turnId);
-    return "already";
-  }
-  const authority = await readDelegatedTaskAuthority(input.org, input.parentSessionId, input.callId);
+async function readDelegatedSnapshot(org: string, parentSessionId: string, callId: string): Promise<DelegatedDispatchAuthority | "no-row" | "no-binding"> {
+  const authority = await readDelegatedTaskAuthority(org, parentSessionId, callId);
   if (authority === undefined) return "no-row";
-  const resolved = "wakeId" in authority ? await resolveUnifiedWakeAuthority(getOperationalStore(), input.org, authority.wakeId) : undefined;
+  const resolved = "wakeId" in authority ? await resolveUnifiedWakeAuthority(getOperationalStore(), org, authority.wakeId) : undefined;
   if (
     resolved !== undefined &&
     (JSON.stringify(resolved.requester) !== JSON.stringify(authority.requester) || resolved.nonMemberWake !== authority.nonMemberWake)
   ) return "no-binding";
   const binding = "binding" in authority ? authority.binding : resolved?.binding;
   if (binding === undefined) return "no-binding";
-  const snapshot: DelegatedDispatchAuthority = {
+  return {
     binding,
     requester: authority.requester,
     nonMemberWake: authority.nonMemberWake,
     ...("wakeId" in authority ? { wakeId: authority.wakeId } : {}),
   };
+}
+
+async function restoreDelegatedTaskBinding(input: {
+  readonly org: string;
+  readonly parentSessionId: string;
+  readonly callId: string;
+  readonly turnId: string | undefined;
+  readonly laterTurn: boolean;
+}): Promise<"adopted" | "already" | "refreshed" | "no-row" | "no-binding"> {
+  if (delegatedBindingAdopted()) {
+    pinDelegatedBindingToTurn(input.turnId);
+    if (!input.laterTurn || input.turnId === undefined || delegatedAuthorityResolvedFor(input.turnId)) return "already";
+    const refreshed = await readDelegatedSnapshot(input.org, input.parentSessionId, input.callId);
+    if (typeof refreshed === "string") return refreshed;
+    return refreshDelegatedAuthority(refreshed, input.turnId) ? "refreshed" : "no-binding";
+  }
+  const snapshot = await readDelegatedSnapshot(input.org, input.parentSessionId, input.callId);
+  if (typeof snapshot === "string") return snapshot;
   return adoptDelegatedAuthority(snapshot, input.turnId) ? "adopted" : "no-binding";
 }
 
@@ -214,8 +223,12 @@ export async function ensureDelegatedTaskBinding(ctx: BindableContext): Promise<
   const parentSessionId = subagentParentSessionId(ctx);
   const callId = ctx.session?.parent?.callId;
   if (parentSessionId === undefined || typeof callId !== "string" || callId.length === 0) return;
-  const outcome = await restoreDelegatedTaskBinding({ org: deploymentOrg(), parentSessionId, callId, turnId: currentTurnId(ctx) });
+  const sequence = (ctx as { session?: { turn?: { sequence?: unknown } } }).session?.turn?.sequence;
+  const laterTurn = typeof sequence === "number" && sequence > 0;
+  const outcome = await restoreDelegatedTaskBinding({ org: deploymentOrg(), parentSessionId, callId, turnId: currentTurnId(ctx), laterTurn });
   if (outcome === "no-row" || outcome === "no-binding") throw new DelegatedTaskBindingUnavailableError(outcome);
+  const root = delegationRootSessionId(ctx);
+  if (root !== undefined) adoptDelegatedRootSession(root);
 }
 
 export async function openTaskWake(input: {
@@ -361,6 +374,7 @@ export async function taskWakeId(org: string, taskId: string): Promise<string | 
 export type TaskWakeInstall = {
   readonly outcome: "installed" | "already" | "no-row" | "no-turn" | "ingressed" | "wrong-session";
   readonly wakeId: string | null;
+  readonly sameSession?: boolean;
   readonly dispatchAuthority?: SettlementDispatchAuthority;
 };
 
@@ -383,7 +397,7 @@ export async function installTaskWake(input: {
     } else if (input.turnId === undefined || input.turnId.length === 0) {
       result = { outcome: "no-turn", wakeId };
     } else if (!(input.uningressed ?? uningressedTurn)(input.turnId)) {
-      result = { outcome: "ingressed", wakeId };
+      result = { outcome: "ingressed", wakeId, sameSession: record.parentSessionId === undefined || record.parentSessionId === input.sessionId };
     } else if (record.parentSessionId !== undefined && record.parentSessionId !== input.sessionId) {
       result = { outcome: "wrong-session", wakeId };
     } else {

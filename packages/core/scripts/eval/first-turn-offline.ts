@@ -4,7 +4,6 @@ import { pathToFileURL } from "node:url";
 import { generateText, stepCountIs, type ModelMessage, type ToolSet } from "ai";
 import { createGateway } from "@ai-sdk/gateway";
 import { renderWake, type NormalizedWake } from "../../agent/channels/normalized-wake.js";
-import { turnHasTerminalAction } from "../../agent/channels/turn-terminal-actions.js";
 import { renderScopeMarkdown, renderReadingAWake, renderSupervisorPersona } from "../../agent/instructions/access.js";
 import { unifiedReplyEntry } from "../../agent/tools/reply.js";
 import {
@@ -445,14 +444,23 @@ function eveEmptyResponseNudge(): string {
   return m[1];
 }
 
-export function eveWouldReissue(
-  finalCallEmpty: boolean,
-  messagesAtEmptyStep: readonly unknown[],
-  stock = false,
-): boolean {
-  if (!finalCallEmpty) return false;
-  if (stock) return true;
-  return !turnHasTerminalAction(messagesAtEmptyStep);
+const ENDS_TURN_TOOLS: ReadonlySet<string> = new Set(
+  (
+    [
+      ["reply", unifiedReplyEntry],
+      ["no_reply", noReplyTool],
+    ] as const
+  )
+    .filter(([, def]) => (def as { endsTurn?: unknown }).endsTurn === true)
+    .map(([name]) => name),
+);
+
+export function stepEndsTurnNatively(toolNames: readonly string[]): boolean {
+  return toolNames.length > 0 && toolNames.every((name) => ENDS_TURN_TOOLS.has(name));
+}
+
+export function eveWouldReissue(finalCallEmpty: boolean, _messagesAtEmptyStep: readonly unknown[], _stock = false): boolean {
+  return finalCallEmpty;
 }
 
 interface ReplayCall { readonly calls: readonly ToolCall[]; readonly text: string }
@@ -488,6 +496,7 @@ async function runReissueProbe(
   let hitCallCeiling = false;
   perCall.push({ calls: [...calls], text: last.text });
   for (let k = 1; last.toolCalls.length > 0; k++) {
+    if (stepEndsTurnNatively(last.toolCalls.map((c) => c.toolName))) break;
     if (k >= MAX_REPLAY_CALLS) { hitCallCeiling = true; break; }
     messages = [...messages, ...last.response.messages];
     messagesAtFinalCall = messages;
@@ -496,7 +505,8 @@ async function runReissueProbe(
     perCall.push({ calls: calls.slice(before), text: last.text });
   }
   const step1 = [...perCall[0].calls];
-  const finalCallEmpty = !hitCallCeiling && last.text.trim() === "" && last.toolCalls.length === 0;
+  const endedNatively = stepEndsTurnNatively(last.toolCalls.map((c) => c.toolName));
+  const finalCallEmpty = !hitCallCeiling && !endedNatively && last.text.trim() === "" && last.toolCalls.length === 0;
 
   const reissue = eveWouldReissue(finalCallEmpty, messagesAtFinalCall, STOCK_REISSUE);
   const suppressedByTerminalGuard = finalCallEmpty && !reissue;

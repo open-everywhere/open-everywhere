@@ -18,7 +18,10 @@ import type { WindowGrain } from "../agent/identity/binding.js";
 
 const eveFrameworkTools = await readEveFrameworkTools();
 const FRAMEWORK_TOOL_NAMES = [...eveFrameworkTools.all];
-const FRAMEWORK_TOOLS = classifyFrameworkTools(FRAMEWORK_TOOL_NAMES, eveFrameworkTools.defaultMounted, eveFrameworkTools.optIn);
+const FRAMEWORK_TOOLS = classifyFrameworkTools(FRAMEWORK_TOOL_NAMES, eveFrameworkTools.defaultMounted, eveFrameworkTools.optIn, [
+  ...eveFrameworkTools.reserved,
+  ...eveFrameworkTools.taskTools,
+]);
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -194,6 +197,21 @@ for (const [surfaceSpelling, label] of [
   );
 }
 
+for (const name of ["connection_tools", "task_wait"]) {
+  firesWith(
+    checkWindowGateManifest(OPTIN_KIT, new Map([["sandbox_tools", KIT_SHIM]]), fw({ [name]: "reserved" }), g({ [name]: fullKit() }), u("sandbox_tools")),
+    "Move the row to WINDOW_UNGATED_TOOLS",
+    `a RESERVED framework tool with a GATED row FAILS, and the fix it names is the row — "${name}" can carry neither a sentinel nor a kit key`,
+  );
+  const clean = checkWindowGateManifest(OPTIN_KIT, new Map([["sandbox_tools", KIT_SHIM]]), fw({ [name]: "reserved" }), g({}), u("sandbox_tools", name));
+  ok(clean.length === 0, `…and the SAME name as an UNGATED row is clean, with no sentinel and no kit (got: ${JSON.stringify(clean)})`);
+}
+firesWith(
+  checkWindowGateManifest(OPTIN_KIT, new Map([["sandbox_tools", KIT_SHIM]]), fw({ connection_tools: "default" }), g({ connection_tools: fullKit() }), u("sandbox_tools")),
+  "is not a `disableTool()` sentinel",
+  "…while the same name classified DEFAULT gets the ordinary sentinel demand — so (e) measures the class, not the spelling",
+);
+
 {
   const m = classifyFrameworkTools(["bash", "glob", "agent"], ["bash"], ["glob"]);
   ok(m.get("bash") === "default", 'classifyFrameworkTools: a name eve mounts by default classifies "default"');
@@ -210,6 +228,14 @@ for (const [surfaceSpelling, label] of [
     "classifyFrameworkTools: an eve that exports no getOptInFrameworkToolNames classifies EVERY name unknown (fail closed)",
   );
   ok(classifyFrameworkTools(["x"], ["x"], ["x"]).get("x") === "default", 'classifyFrameworkTools: a name in BOTH eve sets classifies "default" — the stricter answer');
+  const withReserved = classifyFrameworkTools(["bash", "glob", "connection_tools"], ["bash", "connection_tools"], ["glob"], ["connection_tools"]);
+  ok(withReserved.get("connection_tools") === "reserved", 'classifyFrameworkTools: a RESERVED name classifies "reserved" even though eve also default-mounts it');
+  ok(withReserved.get("bash") === "default" && withReserved.get("glob") === "opt-in", "…and the other two classes are untouched (the negative control on the new arm)");
+  const driftedReserved = classifyFrameworkTools(["bash", "connection_tools"], ["bash", "connection_tools"], undefined, ["connection_tools"]);
+  ok(
+    driftedReserved.get("connection_tools") === "reserved" && driftedReserved.get("bash") === "unknown",
+    "classifyFrameworkTools: a drifted opt-in snapshot degrades every OTHER name to unknown and leaves a reserved name reserved — stricter where strictness is reachable, never where it is impossible",
+  );
 }
 
 firesWith(
@@ -239,8 +265,8 @@ ok(
   "a standing seat withholds the wide-hands set + complete_thread",
 );
 ok(
-  withheldFromGrain("native").length === 16,
-  `under the ARMED shipped default (OPE-370) a native seat withholds the delegation/lifecycle/coordinator set (agent/spawn_thread_session/complete_thread and, since OPE-1696, read_thread_seat/message_thread_seat) AND the 11 wide-hands tools — 16 of them. The T2 narrowing is the default posture (flag-off, native regains wide hands: the Stage-C byte-identical state, exercised via the injected crafted case above). Got ${withheldFromGrain("native").length}: ${JSON.stringify(withheldFromGrain("native"))}`,
+  withheldFromGrain("native").length === 18,
+  `under the ARMED shipped default (OPE-370) a native seat withholds the delegation/lifecycle/coordinator set (agent/spawn_thread_session/complete_thread, since OPE-1696 read_thread_seat/message_thread_seat, and since OPE-2338 work and cancel_work) AND the 11 wide-hands tools — 18 of them. The T2 narrowing is the default posture (flag-off, native regains wide hands: the Stage-C byte-identical state, exercised via the injected crafted case above). Got ${withheldFromGrain("native").length}: ${JSON.stringify(withheldFromGrain("native"))}`,
 );
 
 firesWith(

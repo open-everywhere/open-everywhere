@@ -132,10 +132,6 @@ const REVERSE_EXEMPT = new Map<string, string>([
     "read by eve's own bundled Teams channel handler (node_modules/eve/dist/src/public/channels/teams/api.js).",
   ],
   [
-    "OTEL_EXPORTER_OTLP_HEADERS",
-    "the standard OTel var, read by eve's bundled @vercel/otel exporter — same class as the Host-injected AWS_REGION/NODE_ENV rows above, just via a vendored dependency instead of the platform.",
-  ],
-  [
     "OE_EGRESS_MITM",
     "read by deploy/egress-proxy/entrypoint.sh, a shell provisioning script outside every .ts/.js scan root, not by application code.",
   ],

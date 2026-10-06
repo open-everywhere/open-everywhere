@@ -92,11 +92,12 @@ mode below. A **targeted** leg
 the prepare step, then ONLY the `--shard=k/N` pass the full series runs at position k, and prints ONE
 `OE_PROOF … suite=test:integration--shard=k/N exit=<code>` line in place of the tier's. The
 orchestrator runs the N shards in N sandboxes on one sha and joins their lines with the main run's
-three. That file passes only when the series is complete and green, by the rule above. The split is
-vitest's own: a sha1 of each root-relative path, sorted, then cut into N runs that differ by at most
-one file. It reads nothing but the file list, so one sha plans one split in every clean sandbox (a
-stray untracked test file changes the list; each run logs the list's digest, and nothing compares
-the digests yet).
+three. That file passes only when the series is complete and green, by the rule above. The split
+balances measured file duration (OPE-2344): the longest file first, each into the least-loaded shard,
+from the tracked `scripts/it-timings.json` (see
+[the testing guide](../extending/testing.md)). It reads nothing but the file list and that tracked
+file, so one sha plans one split in every clean sandbox (a stray untracked test file changes the
+list; each run logs the list's digest, and nothing compares the digests yet).
 `npm run test:suite-lock` proves that N single-shard plans cover every tier file exactly once. A value
 that is not `k/N` with 1 ≤ k ≤ N, a targeted leg, or an `OE_IT_SHARDS` that names another N exits 2
 before the run takes the lock. With `OE_IT_SHARD` unset, nothing changes.

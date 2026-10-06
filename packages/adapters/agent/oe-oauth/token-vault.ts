@@ -1,5 +1,5 @@
 import type { EncryptedKvVault } from "@open-everywhere/core/agent/adapter-api.js";
-import { encryptedKvVault, getSecretVia, OE_OAUTH_CALLBACK_PATH } from "@open-everywhere/core/agent/adapter-api.js";
+import { agentDisplayName, encryptedKvVault, getSecretVia, OE_OAUTH_CALLBACK_PATH } from "@open-everywhere/core/agent/adapter-api.js";
 import { isStaticConfidential, OE_OAUTH_MODE_STATIC, type OeOauthProviderConfig, type OeOauthStaticProviderConfig } from "./config.js";
 import {
   discoverEndpoints,
@@ -182,7 +182,7 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
       const endpoints = await discoverEndpoints(cfg.resource, doFetch);
       const { clientId } = await registerClient(
         endpoints.registrationEndpoint,
-        { clientName: cfg.clientName ?? "Open Everywhere", redirectUri, ...(cfg.scopes ? { scopes: cfg.scopes } : {}) },
+        { clientName: cfg.clientName ?? agentDisplayName(), redirectUri, ...(cfg.scopes ? { scopes: cfg.scopes } : {}) },
         doFetch,
       );
       const record: DcrClientRecord = {

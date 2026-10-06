@@ -1,3 +1,5 @@
+// proves: wake.turn_start
+
 import { afterAll, expect, test } from "vitest";
 import {
   auditCursor,
@@ -47,6 +49,8 @@ async function armSeams(): Promise<void> {
         const user = params.get("user") ?? "";
         return user === BOT_USER_ID ? userInfo(BOT_USER_ID, "open-everywhere") : userInfo(user, "member");
       }
+      case "conversations.members":
+        return { ok: true, members: [], response_metadata: { next_cursor: "" } };
       case "conversations.info":
         return {
           ok: true,

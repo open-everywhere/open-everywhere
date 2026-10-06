@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { filesContainingAll } from "./eve-dist-search.js";
+import { filesContainingAll, filesMatching } from "./eve-dist-search.js";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-native-subagent-")), "ops.sqlite3");
 _setDeploymentIdentityForTest({ workspace: "dev" });
@@ -20,7 +20,7 @@ import {
   currentTurnAddressing,
   currentWakeId,
   isSubagentChildContext,
-  proposingSessionId,
+  proposingGrantKey,
   subagentParentSessionId,
   windowGrainOf,
   SUBAGENT_CHANNEL_KIND,
@@ -330,12 +330,11 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
   const makeTaskToolset = () => ({
     agent: { execute: () => undefined },
     reply: { execute: () => undefined },
-    task_peek: { execute: () => undefined },
+    task_wait: { execute: () => undefined },
     task_cancel: { execute: () => undefined },
-    task_sleep: { execute: () => undefined },
   });
 
-  eq([...TASK_PARENT_TOOL_NAMES], ["task_peek", "task_cancel", "task_sleep"], "🔴 D6 TASKS: the PARENT list is eve's own root-only set — `shouldHideTool` (`harness/advertised-tools.js`) hides a `root-session` tool wherever a rootSessionId exists");
+  eq([...TASK_PARENT_TOOL_NAMES], ["task_wait", "task_cancel"], "🔴 D6 TASKS: the PARENT list is eve 0.70's mounted set, in eve's order. This leg asserts a LITERAL and reads no eve bytes, so it pins the list against an accidental edit only — `scripts/background-task-taint-test.ts` PART 0B is the leg that reads `protocol/task-tools.js` and reds when eve moves");
 
   inSession(() => {
     setNativeDelegationSeat("allow");
@@ -344,8 +343,8 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
     projectToolSet(toolset as unknown as Record<string, unknown>);
     eq(
       Object.keys(toolset).sort(),
-      ["agent", "reply", "task_cancel", "task_peek", "task_sleep"],
-      "🔴 D6 TASKS, DELEGATING SEAT: it keeps `agent` and all three parent lifecycle verbs — the verbs that read back and stop work THIS seat started",
+      ["agent", "reply", "task_cancel", "task_wait"],
+      "🔴 D6 TASKS, DELEGATING SEAT: it keeps `agent` and both parent lifecycle verbs — the verbs that wait on and stop work THIS seat started",
     );
   });
 
@@ -357,7 +356,7 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
     eq(
       Object.keys(toolset).sort(),
       ["reply"],
-      "🔴 D6 TASKS, NON-DELEGATING SEAT: `agent` and all three `task_*` verbs go — read-back and cancel of work this seat could never have started are dead weight, and dead weight on an unclassified seat is the OPE-421 inversion",
+      "🔴 D6 TASKS, NON-DELEGATING SEAT: `agent` and both `task_*` verbs go — waiting on and cancelling work this seat could never have started are dead weight, and dead weight on an unclassified seat is the OPE-421 inversion",
     );
   });
 
@@ -655,15 +654,30 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
       "🔴 D9 TRIPWIRE 4/4b: …and puts it into the child's `runInput.auth` verbatim, with no filtering of the attributes bag",
     );
 
-    const steps = dist("execution/workflow-steps.js");
+    const turnStepFiles = filesMatching(/export\{turnStep\}/);
+    eq(turnStepFiles.length, 1, "🔴 D9 TURN SCOPING: exactly one eve module exports `turnStep` — the module whose `AuthKey` writers this leg counts");
+    const steps = dist(turnStepFiles[0]!);
     eq(
       steps.split("set(AuthKey,").length - 1,
-      1,
-      "🔴 D9 TRIPWIRE, TURN SCOPING: `AuthKey` is written in exactly ONE place in the turn step, the `deliver` arm. A second writer would mean the bag can be replaced mid-turn and the stamp could vanish before dispatch",
+      3,
+      "🔴 D9 TURN SCOPING: the turn step writes `AuthKey` in exactly THREE places at eve 0.70 — the delivery writer, the authorization-resume writer and the no-input rollback. A fourth writer is a new road for the bag to be replaced before a dispatch reads it",
+    );
+    const w1 = /let (\w+)=(\w+)\.get\(AuthKey\);(\w+)\?\.auth!==void 0&&\(\2\.set\(AuthKey,\3\.auth\?\?null\)/.exec(steps);
+    ok(
+      w1 !== null,
+      "🔴 D9 TURN SCOPING W1: the delivery writer fires on EVERY delivery that carries auth, mid-turn included, and the step captures the previous value before it writes",
     );
     ok(
-      /kind===`deliver`&&[^;]*auth!==void 0&&\w+\.set\(AuthKey,/.test(steps),
-      "…and that one writer fires only on a delivery that CARRIES auth — which is why a new turn gets a fresh bag and last turn's stamp does not survive it (measured on the real host, OPE-471)",
+      w1 !== null &&
+        new RegExp(
+          `let (\\w+)=${w1[3]}===void 0\\?[^;]*\\.challenge\\.requester:void 0;\\1!==void 0&&${w1[2]}\\.set\\(AuthKey,\\1\\)`,
+        ).test(steps),
+      "🔴 D9 TURN SCOPING W2: the authorization-resume writer fires only when no delivery is left, and writes the pending challenge's recorded requester",
+    );
+    ok(
+      w1 !== null &&
+        new RegExp(`${w1[1]}===void 0\\?${w1[2]}\\.delete\\(AuthKey\\):${w1[2]}\\.set\\(AuthKey,${w1[1]}\\)`).test(steps),
+      "🔴 D9 TURN SCOPING W3: the rollback writer restores exactly the value captured before W1 — the same bag by reference, never a new one",
     );
   }
 
@@ -860,23 +874,24 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
       id: "sess-fwd-persistent",
       turn: { id: "turn_3", sequence: 3 },
       parent: { sessionId: "sess-fwd-parent", callId: "call_f3", turn: { id: "turn_7", sequence: 7 } },
-      attributes: { [ATTR]: "sess-fwd-parent|turn_9|web" },
+      attributes: { [ATTR]: "sess-fwd-parent|turn_9|web", [PIN]: "sess-fwd-parent|turn_9" },
     });
     await turnStarted(later);
     eq(
       untrustedIngestedThisTurn(),
       true,
-      "🔴 D9 CONTINUATION: a persistent child's LATER turn ADOPTS a stamp it has not seen — the stamp names the parent's turn_9, the stale pin names turn_7, and the pin is not what decides",
+      "🔴 D9 CONTINUATION: a persistent child's LATER turn ADOPTS a stamp it has not seen — the stamp and the dispatch pin the continuation carries both name the parent's turn_9; eve's own `session.parent.turn` (turn_7) is not what decides",
     );
 
     const again = fwdCtx({
       id: "sess-fwd-persistent",
       turn: { id: "turn_4", sequence: 4 },
       parent: { sessionId: "sess-fwd-parent", callId: "call_f3", turn: { id: "turn_7", sequence: 7 } },
-      attributes: { [ATTR]: "sess-fwd-parent|turn_9|web" },
+      attributes: { [ATTR]: "sess-fwd-parent|turn_9|web", [PIN]: "sess-fwd-parent|turn_9" },
     });
     await turnStarted(again);
-    eq(untrustedIngestedThisTurn(), false, "🔴 D9 THE MEMO: the SAME stamp arriving on the next turn of the SAME child adopts NOTHING — a value that outlived its delivery cannot re-taint forever");
+    eq(spawnTaint.adoptedParentTurnTaintThisTurn(again as never), false, "🔴 D9 THE MEMO: the SAME stamp arriving on the next turn of the SAME child is NOT adopted again — a value that outlived its delivery cannot re-adopt forever");
+    eq(untrustedIngestedThisTurn(), true, "🔴 D9 OPE-2251 STICKY: …while the child stays tainted, because it adopted a taint on its previous turn");
   });
 
   await contextStorage.run(new ContextContainer(), async () => {
@@ -1029,18 +1044,31 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
   }
 }
 
-ok(proposingSessionId(parentCtx) !== undefined, "the parent resolves a session-approval key (it has a window token)");
-eq(
-  proposingSessionId(childCtx),
-  proposingSessionId(parentCtx),
-  "🔴 D8: a native child keys the SAME session-approval memo as its parent — session grants are INHERITED, deliberately. One memo, so one revoke takes it back on both sides",
-);
-eq(proposingSessionId(childToolCtx), proposingSessionId(parentCtx), "…in a tool context too, which is where a card is actually consulted (open_pull_request, the connector write path)");
-eq(
-  proposingSessionId(childResolverCtx),
-  proposingSessionId(parentCtx),
-  "🔴 D8, and this one was a LIVE FIND: the answer is the same in EVERY context surface. Without the explicit subagent arm, a hook/resolver context's own `subagent:<parent>:<callId>` token won and the child keyed a DIFFERENT memo, while a tool context fell back to the inherited stamp and keyed the parent's — two answers for one session decided by who is asking",
-);
+{
+  const { adoptDelegatedAuthority } = await import("../agent/identity/delegated-binding.js");
+  const { proposingGrantScope } = await import("../agent/identity/binding.js");
+  const THREAD_TS = "1769312300.000100";
+  const threadAttrs = { ...PARENT_ATTRS, thread_ts: THREAD_TS };
+  const withAttrs = <T extends object>(ctx: T): T => {
+    const c = ctx as unknown as { session: { auth: { current: Record<string, unknown> } } };
+    return { ...ctx, session: { ...c.session, auth: { current: { ...c.session.auth.current, attributes: { ...threadAttrs } } } } } as T;
+  };
+  const threadedParent = withAttrs(parentCtx);
+  eq(proposingGrantKey(threadedParent), undefined, "🔴 OPE-2363: the parent in a THREAD has NO grant key — a click there keeps no grant");
+  const parentScope = proposingGrantScope(threadedParent);
+  ok(parentScope?.reach === "call" && parentScope.key.endsWith(`:thread:${THREAD_TS}`), "the parent's one-call approval waits under its THREAD's key");
+  ok(!parentScope!.key.startsWith("oe-dom:"), "🔴 OPE-2363: …and that key is never a session or window token");
+  inSession(() => {
+    ok(adoptDelegatedAuthority({ binding: bindFrom(threadedParent), requester: { kind: "requester", principalId: "UPROBE393" }, nonMemberWake: false }, "turn_child"), "precondition: the child adopted the dispatch binding");
+    eq(proposingGrantKey(withAttrs(childCtx)), undefined, "🔴 D8: the native child has NO grant key either");
+    eq(proposingGrantScope(withAttrs(childCtx))?.key, parentScope!.key, "🔴 D8: the child's one-call approval waits under the SAME thread key as its parent's");
+    eq(proposingGrantScope(withAttrs(childToolCtx))?.key, parentScope!.key, "…in a tool context too, which is where a card is actually consulted (the connector write path)");
+    eq(proposingGrantScope(withAttrs(childResolverCtx))?.key, parentScope!.key, "🔴 D8: the answer is the same in EVERY context surface — the child reads its dispatch binding, never whichever token the context happens to carry");
+  });
+  inSession(() => {
+    eq(proposingGrantScope(withAttrs(childToolCtx)), undefined, "🔴 a child with NO adopted dispatch binding keeps no approval (fail closed)");
+  });
+}
 
 {
   const memoryHook = (await import("../agent/hooks/memory.js")).default;
@@ -1106,11 +1134,18 @@ eq(
     calls.writeTier = 0;
   };
 
+  const { formatWindowToken: fmt, workWindowId: workId } = await import("../agent/channels/window-key.js");
+  const ROOT_TOKEN = fmt({ domain: "e2e-unified", windowId: workId("slack_T0EXAMPLE_C0EXCHAN003"), generation: 1 });
+  const rootCtx = {
+    channel: { kind: "channel:slack", continuationToken: `unified:${ROOT_TOKEN}` },
+    session: { id: "sess-root", turn: { id: "turn_root", sequence: 1 }, auth: { current: { attributes: { ...PARENT_ATTRS, oe_grain: "standing", oe_window_token: ROOT_TOKEN }, principalId: "UPROBE393", principalType: "slack-user" } } },
+  } as unknown as BindableContext;
+
   {
     reset();
     const sandbox = new FakeSandbox();
     await contextStorage.run(new ContextContainer(), async () => {
-      await hook.events["session.started"]({ type: "session.started" }, withSandbox(parentCtx, sandbox) as never);
+      await hook.events["session.started"]({ type: "session.started" }, withSandbox(rootCtx, sandbox) as never);
     });
     ok(calls.readTier + calls.ensureTier > 0 && sandbox.writes > 0, `the negative control works: a ROOT session DOES materialise (reads=${calls.readTier + calls.ensureTier}, sandbox writes=${sandbox.writes})`);
   }
@@ -1118,7 +1153,7 @@ eq(
     reset();
     const sandbox = new FakeSandbox();
     await contextStorage.run(new ContextContainer(), async () => {
-      await hook.events["session.completed"]({ type: "session.completed" }, withSandbox(parentCtx, sandbox) as never);
+      await hook.events["session.completed"]({ type: "session.completed" }, withSandbox(rootCtx, sandbox) as never);
     });
     ok(calls.writeTier > 0, `…and a ROOT session DOES persist at session end (writeTier=${calls.writeTier})`);
   }

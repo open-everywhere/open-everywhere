@@ -14,7 +14,6 @@ import {
   rowsSinceCursor,
   seedNotionChannelKey,
   waitFor,
-  waitForTurnCancelDelivered,
   type NotionApiCall,
   type ScriptedHandle,
 } from "../harness";
@@ -90,7 +89,7 @@ test("a human's bare `stop` comment cancels an in-flight Notion turn; a bot-auth
     registerScript({
       parent: [
         { calls: [{ tool: RAN_TOOL, input: { state: "working", summary: "ope-989 in-flight work" }, id: "ope989-ran" }] },
-        { say: "this sentence is never posted — the turn is cancelled inside this call", delayMs: HOLD_MS },
+        { say: "this sentence is never posted — the turn is cancelled inside this call", delayMs: HOLD_MS, holdUntilCancelled: true },
       ],
     }),
   );
@@ -140,7 +139,6 @@ test("a human's bare `stop` comment cancels an in-flight Notion turn; a bot-auth
   expect(requested[0]!.detail?.outcome).toBe("requested");
   expect(requested[0]!.detail?.turnId).toBe(cancelledTurnId);
 
-  await waitForTurnCancelDelivered(anchor.sessionId);
   handle.releaseHolds();
 
   const cancelled = await waitFor(async () => {
@@ -152,6 +150,7 @@ test("a human's bare `stop` comment cancels an in-flight Notion turn; a bot-auth
   expect(cancelled[0]!.detail?.ran).toEqual([RAN_TOOL]);
   expect(Number(cancelled[0]!.detail?.steps)).toBeGreaterThanOrEqual(1);
   expect(handle.holdsCutShort()).toBe(1);
+  expect(handle.holdsCancelDelivered()).toBe(1);
 
   expect(warnings.some((w) => w.includes("swallowed a notion surface-text post")), "the cancelled arm attempted the acknowledgement post for this Notion turn").toBe(true);
   warnSpy.mockRestore();

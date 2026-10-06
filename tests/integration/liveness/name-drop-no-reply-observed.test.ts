@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, expect, test } from "vitest";
 import {
+  awaitWindowQuiet,
   auditCursor,
   bootAgent,
   installSlackWebApiStub,
@@ -46,6 +47,8 @@ async function armSeams(): Promise<void> {
         if (user === TRIGGER_USER_ID) return userInfo(TRIGGER_USER_ID, "trigger-member-649");
         return undefined;
       }
+      case "conversations.members":
+        return { ok: true, members: [], response_metadata: { next_cursor: "" } };
       case "conversations.info":
         return {
           ok: true,
@@ -94,20 +97,21 @@ test("Slack NAME-DROP wake that ends in no_reply writes an UNGATED reply.no_repl
     });
     expect(res.status, `the Slack front refused the message event: ${res.body.slice(0, 200)}`).toBe(200);
 
-    await waitFor(() => handle.requests.find((r) => r.stepIndex === 1), "the name-drop wake's trailing step", 180_000);
-    let last: { readonly name: string; readonly isError: boolean; readonly output: unknown } | undefined;
-    for (const r of handle.requests) for (const t of r.toolResults) if (t.name === "no_reply") last = t;
-    expect(last, "the name-drop wake's model never got a no_reply result at all").toBeDefined();
-    expect(last?.isError, `the name-drop wake's no_reply TOOL was refused: ${JSON.stringify(last?.output)}`).toBe(false);
-
-    const observed = await waitFor(
+    const outcome = await waitFor(
       async () => {
+        const refusedStep = handle.requests.find((r) => r.stepIndex === 1);
+        if (refusedStep !== undefined) return { refused: refusedStep.toolResults.find((t) => t.id === callId) } as const;
         const rows = await rowsSinceCursor(cursor, ["reply.no_reply_observed"], { limit: 50 });
-        return rows.find((r) => r.platform === "slack" && r.surface === SLACK_NAME_DROP_CHANNEL_ID);
+        const row = rows.find((r) => r.platform === "slack" && r.surface === SLACK_NAME_DROP_CHANNEL_ID);
+        return row === undefined ? undefined : ({ row } as const);
       },
-      "a reply.no_reply_observed row for the name-drop wake's silence",
-      120_000,
+      "a reply.no_reply_observed row for the name-drop wake's silence (or the step a refusal would serve)",
+      180_000,
     );
+    expect("refused" in outcome ? `the name-drop wake's no_reply TOOL was refused: ${JSON.stringify(outcome.refused?.output)}` : "accepted").toBe("accepted");
+    const observed = (outcome as { readonly row: Awaited<ReturnType<typeof rowsSinceCursor>>[number] }).row;
+    await awaitWindowQuiet();
+    expect(handle.requests.some((r) => r.stepIndex >= 1), "a step after the accepted no_reply was requested").toBe(false);
     expect(observed.workspace, "the row names the real Slack team, not an env stand-in").toBe(SLACK_TEAM_ID);
     expect(observed.detail?.reason).toBe("not_relevant");
     expect(observed.detail?.explanation, "the minimal row carries no free-text explanation").toBeUndefined();

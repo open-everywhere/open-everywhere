@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   mergePreservingConflicts,
+  baselineAfterPersist,
   hashFiles,
   conflictName,
   guardDestructiveWrites,
@@ -47,6 +48,39 @@ const ok = (cond: boolean, label: string) => {
   const cname = conflictName("MEMORY.md", "sessABC12345");
   ok(files[cname] === "v1\n- other session bullet", "the concurrent version is preserved as a conflict sibling (NOT silently lost)");
   ok(cname === "MEMORY.conflict-sessABC1.md", "conflict sibling is named next to the file, sid truncated to 8 chars");
+}
+
+{
+  const start = { "purge-fixture.md": "# Purge fixture\n\n- the purged fact\n" };
+  const baseline = hashFiles(start);
+  const hostCurrent = { "purge-fixture.md": "# Purge fixture\n" };
+  const sandbox = { ...start };
+  const { files, conflicts } = mergePreservingConflicts(hostCurrent, sandbox, baseline, "sessPURGE123");
+  ok(files["purge-fixture.md"] === "# Purge fixture\n", "a file this session never edited keeps the host's newer version — the stale snapshot does not undo it");
+  ok(conflicts.length === 0, "no conflict is reported for a file only ONE side changed");
+  ok(files[conflictName("purge-fixture.md", "sessPURGE123")] === undefined, "the host's version is not parked as a conflict sibling of a stale snapshot");
+}
+
+{
+  const stale = "# Purge fixture\n\n- the purged fact\n";
+  const purged = "# Purge fixture\n";
+  const sandbox = { "purge-fixture.md": stale, "notes.md": "n1" };
+  const first = mergePreservingConflicts({ "purge-fixture.md": purged, "notes.md": "n1" }, sandbox, hashFiles(sandbox), "sessTWO1");
+  ok(first.hostKept.length === 1 && first.hostKept[0] === "purge-fixture.md", "the first persist reports the file it kept from the host");
+  const advanced = baselineAfterPersist(first.files, first.hostKept, sandbox);
+  ok(advanced["notes.md"] === hashFiles({ x: "n1" })["x"], "an ordinary file's baseline advances to what was persisted");
+  const again = mergePreservingConflicts({ ...first.files }, { ...sandbox, "notes.md": "n2" }, advanced, "sessTWO1");
+  ok(again.files["purge-fixture.md"] === purged, "🔴 the second persist keeps the purged copy — the stale snapshot does not come back one persist late");
+  ok(again.files["notes.md"] === "n2" && again.conflicts.length === 0, "…while the session's real edit still lands, with no conflict");
+}
+
+{
+  const baseline = hashFiles({});
+  const hostCurrent = { "MEMORY.md": "v2-from-host" };
+  const sandbox = { "MEMORY.md": "v1-in-sandbox" };
+  const { files, conflicts } = mergePreservingConflicts(hostCurrent, sandbox, baseline, "sessNOBASE1");
+  ok(files["MEMORY.md"] === "v1-in-sandbox" && conflicts.length === 1, "no baseline entry: the sandbox lands and the host version is parked, as before");
+  ok(files[conflictName("MEMORY.md", "sessNOBASE1")] === "v2-from-host", "…and the host version survives as the conflict sibling");
 }
 
 {
@@ -155,4 +189,4 @@ const BRAIN = [
   ok(rejected.length === 0, "the host-minted `.rejected-`/`.conflict-` siblings are never guarded (no rejection-of-a-rejection)");
 }
 
-console.log(`\n✓ memory-merge: ${n} assertions passed (cross-file preserve, same-file conflict sibling, no silent loss; OPE-245 destructive-write floor: truncation + wholesale overwrite refused and parked, append/reorder/edit land, delete unreachable, fail-closed verdict)\n`);
+console.log(`\n✓ memory-merge: ${n} assertions passed (cross-file preserve, same-file conflict sibling, a stale snapshot never undoes a host-only change, no silent loss; OPE-245 destructive-write floor: truncation + wholesale overwrite refused and parked, append/reorder/edit land, delete unreachable, fail-closed verdict)\n`);

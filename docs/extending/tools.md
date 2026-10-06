@@ -181,25 +181,34 @@ export default disableTool();
 
 This is how the shipped app takes away four Eve **framework** tools — `bash`, `read_file`,
 `write_file` and `web_fetch`. A framework tool is mounted by Eve itself, not by a
-file, so a sentinel is the way to remove one — but not for every slot. Since eve 0.52.0
-`compiler/default-tool-policy.js` declares a set of **required** slots, and it refuses a sentinel for
-`connection_search` BY NAME — the declaration and the refusal are two different bytes, so a name in
-the set does not by itself mean a sentinel throws there (see
-`packages/core/scripts/eve-framework-tools.ts`). `connection_search` is the only member today, and a
-`framework.disable` entry for it in `roster.config.ts` reaches that throw through the sentinel this
-section renders. OE's own
-roster declares none, so nothing is broken today. A required slot takes an authored replacement
-instead — see [zero hands](../capabilities/skills-and-plugins.md#declared-subagents-the-specialist-unit)
-for the one OE ships. Several of the four are then re-provided per **session
+file, so a sentinel is the way to remove one — but not for every slot. Since eve 0.69.0
+`compiler/default-tool-policy.js` declares a set of **reserved** slots —
+`tools/connection_tools`, `tools/connection_search` and `tools/connection_execute` — and
+`assertFrameworkToolPolicy` throws on **any** authored module at one of them: a `disableTool()`
+sentinel and an authored replacement alike ("is reserved … cannot be replaced or disabled"). The
+declaration and the refusal are one mechanism here, which is what makes the set safe to act on (see
+`packages/core/scripts/eve-framework-tools.ts`). So a `framework.disable` entry for any of the three
+in `roster.config.ts` would fail `eve build` through the sentinel this section renders. OE's own
+roster declares none, so nothing is broken today.
+
+Through 0.68.x the regime was different and the advice was the opposite: the same module declared a
+set of **required** slots, refused a sentinel for `connection_search` by name, and took an authored
+no-op **replacement** instead — the declaration and the refusal really were two different bytes then.
+🔴 **That route is gone.** The no-op replacement OE used to ship was deleted with it; see
+[zero hands](../capabilities/skills-and-plugins.md#declared-subagents-the-specialist-unit)
+for what holds the invariant now. Several of the four are then re-provided per **session
 grain** by a resolver file, so a task session gets a shell and a standing seat does not (see
 [the agent & the loop](../how-it-works/agent-and-loop.md)). For most of these four, the sentinel
 makes the per-grain provision authoritative: a dynamic tool can *shadow* a static built-in when
 it resolves, but cannot remove it.
 
-`glob` and `grep` are Eve framework tools too, but eve only mounts either by default when a
-deployment opts in — OE never does, so no sentinel is needed to keep them out
-(`scripts/window-gate-lint.ts` reads the mount class off the installed eve and
-would fail the build if a future eve release moved either back into the default set).
+`glob`, `grep` and — since eve 0.65 — `ask_question` are Eve framework tools too, but eve mounts them
+by default only when a deployment opts in. OE never opts into `glob` or `grep`, so no sentinel is
+needed to keep them out (`scripts/window-gate-lint.ts` reads the mount class off the installed eve and
+would fail the build if a future eve release moved either back into the default set). `ask_question` is
+the one OE **does** opt into, and the opt-in is an ordinary core tool re-exporting eve's own
+definition — `packages/core/agent/tools/ask_question.ts`, with a `contributions.ts` row so the roster
+plans its shim. Opting in is what makes the name mount at all: without that file no session holds it.
 
 The framework-named `agent` tool is a fifth case, and it is the one name that must carry **no
 sentinel at all**. eve's built-in `agent` is this deployment's delegation route, and nothing
@@ -348,9 +357,10 @@ Two limits are worth stating, because they are the cases the refresh does not co
 `packages/core/scripts/window-gated-test.ts` §6 drives eve's own lifecycle functions to hold this, so an eve
 upgrade that drops the refresh fails the tree instead of the deployment.
 
-Static enumeration has a floor worth knowing about: connector operations
-(`<connection>__<operation>`) and the injected browser family are named at runtime and no file
-scan can produce them. They are separate planes with their own gates —
+Static enumeration has a floor worth knowing about: connector operations and the injected browser
+family are named at runtime, and no file scan can produce them. A connector operation is not a
+mounted tool: the agent calls it through `connection_execute` by its `connection` and `tool`, and
+the gates read it as `<connection>__<operation>`. They are separate planes with their own gates —
 [connectors](./connectors.md) and [browser QA](../capabilities/browser-qa.md).
 
 ## Every mounted name must be documented — and the one escape hatch
@@ -396,20 +406,26 @@ schedules are root-only and eve refuses a subagent that declares them.
 subagent must carry its own file under `tools/`. An absent file falls back to eve's **framework
 default**, not to the root's narrowed version, and the root's egress and spend hooks are not inherited
 either — so the tool would mount **unfenced**. An optional slot must export the `disableTool()`
-sentinel; a slot eve marks required must export a no-op replacement tool instead, because eve throws
-at build on a sentinel there. Deleting a required slot's file is not the fix: it re-mounts the
-framework default. An **authored** tool in that directory is refused as well, because a subagent
+sentinel. 🔴 Do **not** author anything at `connection_search`, `connection_execute` or
+`connection_tools`: eve 0.69.0 and later RESERVE those slots and throw on any module there, sentinel or
+replacement. (Through eve 0.68.x a required slot took a no-op replacement instead, because eve threw
+on a sentinel there; that route no longer exists.) Deleting an ordinary slot's file is never the fix
+either: it re-mounts the framework default. An **authored** tool in that directory is refused as well, because a subagent
 session carries no surface binding and any tool there would have to invent or trust a scope.
 
 **A missing `hooks/spend.ts` is a lint failure.** Hooks are not inherited from the root, so a
 delegated child's model calls would never reach the ledger or the monthly cap. The file re-exports the
 core spend hook.
 
-**`agent.ts` must declare both a `description` and an `outputSchema`**, and `instructions.md` must
-exist. The description is what the parent reads to decide whether to delegate. The output schema is
-what makes a declared subagent return a typed result. The lint also requires the binding
-`outputSchema: modelFacingOutputSchema(<contract>)`: eve builds the `final_output` tool after OE's
-tool-set hook, so only the wrapper shows the contract's optional fields as nullable. A subagent inherits no instructions from the
+**`agent.ts` must declare a `description`**, and `instructions.md` must exist. The description is what
+the parent reads to decide whether to delegate.
+
+🔴 **It must NOT declare an `outputSchema`, and the lint refuses one.** eve 0.67.0 removed the field
+from `defineAgent`, so authoring it is a typecheck error against `never` that names no cause — the
+lint exists to name it. The task-mode default that used to apply an authored schema went with `mode`
+(0.67.0) and `execution/workflow-steps.js`, so a declared subagent's result is prose until OPE-2250
+re-derives the typed verdict on eve's native task surface. The contracts stay in
+`packages/core/agent/subagents/contracts.ts` for that work. A subagent inherits no instructions from the
 root — that is eve's isolation boundary — so without its own file it would run on the framework
 default prompt.
 
@@ -435,8 +451,9 @@ recording the small things. Categories are a closed set too, so findings group a
 
 - [Skills & plugins](../capabilities/skills-and-plugins.md) — the lighter alternative, and the
   declared-subagent unit, whose `tools/` directory is still **authored** (a subagent's empty slot
-  falls back to the framework default, not to the root roster's decision, so its sentinels are
-  pinned file-by-file by `lint:subagents`)
+  falls back to the framework default, not to the root roster's decision, so its sentinels are pinned
+  file-by-file — by `test:subagent-zero-hands` on this pin, because `lint:subagents` cannot run
+  there; OPE-2254)
 - [Core/app separation](../core-app-separation.md) — why the app tree is thin re-exports at all
 - [Provider bundles](./provider-bundles.md) — mounting a tool that lives in a vendor bundle
 - [Access & scoping](../how-it-works/access-and-scoping.md) — mounted is not the same as permitted

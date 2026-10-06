@@ -30,7 +30,6 @@ import { tailWindow } from "../channels/session-tail-record.js";
 import { replierLabelFor, PENDING_WORK_INSTRUCTION } from "../channels/turn-delivery.js";
 import { withRunRefusalBlock } from "../routines/report.js";
 import { consumeRoutineRunPermissionRefusals } from "../approvals/card-signal.js";
-import { noteTerminalCallGrain } from "../channels/turn-terminal-actions.js";
 import {
   markRepliedThisTurn,
   markWakeDoneThisTurn,
@@ -148,18 +147,21 @@ async function spendStoppedAck(bind: BindableContext, turnId: string | undefined
 }
 
 export const unifiedReplyEntry = defineTool({
+    endsTurn: true,
     description:
-      "Post a reply into the conversation a specific wake came from, without ending your turn. " +
-      "You are a cross-surface session: each wake envelope carries a `wake-id` naming where it " +
-      "came from — pass the wake-id of the wake you are answering, this turn's or any earlier " +
-      "wake in this session you have not yet answered, and your reply is posted into exactly " +
-      "that conversation (its Slack thread, its GitHub issue, …). You cannot target anywhere " +
-      "else. Posting is an action, not turn-completion: reply, keep working, and finish with " +
-      "`no_reply` when you're done — your terminal text is never posted. One answer is ONE " +
+      "Post a reply into the conversation a specific wake came from. A successful reply ENDS " +
+      "your turn, so put what this wake needs into it. You are a cross-surface session: each " +
+      "wake envelope carries a `wake-id` naming where it came from — pass the wake-id of the " +
+      "wake you are answering, this turn's or any earlier wake in this session you have not yet " +
+      "answered, and your reply is posted into exactly that conversation (its Slack thread, its " +
+      "GitHub issue, …). You cannot target anywhere else. Your terminal text is never posted, so " +
+      "this tool is the only way your words reach anyone. To answer several wakes, call `reply` " +
+      "once per wake in the same step. If a worker you started is still working, the turn waits " +
+      "for its result after your reply and you are called again with it. One answer is ONE " +
       "reply: once you answer a wake with `done: true`, replying to that same wake again in " +
       "this turn is refused. Wherever the conversation can still take one, a second message is " +
-      "discouraged rather than blocked. When you plan a multi-part answer, pass `done: false` on " +
-      "the earlier parts.",
+      "discouraged rather than blocked. For a hand-off note whose full answer comes later, pass " +
+      "`done: false`.",
     inputSchema: z.object({
       text: z.string().min(1).describe("The message to post (the target surface's markdown). One curated message, not a stack."),
       wake: z.string().min(1).describe("The `wake-id` from the envelope of the wake you are answering — your reply posts into that wake's conversation."),
@@ -288,7 +290,6 @@ export const unifiedReplyEntry = defineTool({
       markRepliedThisTurn(turnId);
       if (standDown.stopped) await spendStoppedAck(bind, turnId, "unified");
       markWakeRepliedThisTurn(turnId, input.wake);
-      noteTerminalCallGrain(bind);
 
       if (owingTask !== undefined) {
         for (const task of pendingDelegationsOwing(turnId, input.wake, addressedWakeThisTurn(turnId))) notePromisedReport(task);
@@ -324,7 +325,10 @@ export const unifiedReplyEntry = defineTool({
             ? ` You have now overridden the same host verdict ${overrides} times in this turn, so this turn ENDS after your next step. Post nothing further here: to correct what you said, call ${editSteer}.`
             : ` You overrode a host verdict, so this landed as a SECOND message beside your own last one. Prefer ${editSteer} over a third message here, and finish with \`no_reply\` when you are done.`;
       const tailNote =
-        overrides >= FORCED_OVERRIDE_TURN_LIMIT ? " Your terminal prose is still discarded." : " Keep working if needed; your terminal prose is still discarded.";
+        overrides >= FORCED_OVERRIDE_TURN_LIMIT
+          ? " Your terminal prose is still discarded."
+          :
+            ` Keep working if needed; your terminal prose is still discarded. If nothing is left to do: ${END_TURN_WITH_SENTINEL_INSTRUCTION}`;
       const pendingNote = owingTask !== undefined ? PENDING_WORK_INSTRUCTION : "";
       return {
         posted: true,
@@ -335,10 +339,11 @@ export const unifiedReplyEntry = defineTool({
 });
 
 export const baseReplyEntry = defineTool({
+        endsTurn: true,
         description:
-          "Post a message into this conversation NOW, without ending your turn. Posting is an " +
-          "action, not turn-completion: reply, keep working, and finish with `no_reply` when " +
-          "you're done. A reply NOTIFIES the channel — use it for an answer, a question, a " +
+          "Post a message into this conversation NOW. A successful post ENDS your turn, so put " +
+          "the whole answer into it; if a worker you started is still working, the turn waits for " +
+          "its result and you are called again with it. A reply NOTIFIES the channel — use it for an answer, a question, a " +
           "result, or a blocker, never for a mere progress tick. Send fewer, curated messages " +
           "rather than a running status: to correct one you already sent, call `edit_reply` with " +
           "the id this tool returned instead of posting again. Posts into the conversation that " +
@@ -378,7 +383,6 @@ export const baseReplyEntry = defineTool({
           const id = await postReply(target, input.text, replyAuditFor(bindBase, "tool"), replierFor(bindBase));
           markRepliedThisTurn(baseTurnId);
           if (standDownBase.stopped) await spendStoppedAck(bindBase, baseTurnId, "per-surface");
-          noteTerminalCallGrain(bindBase);
           return {
             posted: true,
             id,

@@ -1,3 +1,5 @@
+// proves: DELG-01, DELG-05, DELG-06, DELG-07
+
 import assert from "node:assert/strict";
 import { classifySessionId, parseSubagentToken, isSubagentSessionToken, isSupervisorShapedToken, bareTokenFromEveContext, formatDmSeatToken, formatWindowToken } from "../agent/channels/window-key.js";
 import { subagentParentOf, turnKind } from "../agent/hooks/spend.js";
@@ -91,7 +93,7 @@ function withMode<T>(mode: string, fn: () => T): T {
     { parentSessionId: "ses_01ABCDEF", callId: "call_7" },
     "…and from the continuation token with no projection at all — the two sources agree on the same child, though the TOKEN encodes no root (so none is invented)",
   );
-  eq(subagentParentOf(ctx, "cse_example5"), undefined, "an ordinary root turn has no parent — the fail-closed answer");
+  eq(subagentParentOf(ctx, "cse_ordinary"), undefined, "an ordinary root turn has no parent — the fail-closed answer");
   for (const junk of [undefined, null, 42, {}, { session: null }, { session: { parent: { sessionId: "" } } }, { session: { parent: { sessionId: "p" } } }]) {
     eq(subagentParentOf(junk as never, undefined), undefined, `subagentParentOf is fail-soft and never half-reads ${JSON.stringify(junk)}`);
   }
@@ -113,7 +115,7 @@ const DISABLED = "import { disableTool } from \"eve/tools\";\nexport default dis
 function goodSubagent(overrides: Partial<DeclaredSubagentSource> = {}): DeclaredSubagentSource {
   return {
     name: "fresh_eyes_review",
-    agentSource: "export default defineAgent({ description: \"x\", model: m(), outputSchema: modelFacingOutputSchema(S) });",
+    agentSource: "export default defineAgent({ description: \"x\", model: m() });",
     hasInstructions: true,
     toolFiles: new Map(FRAMEWORK.map((t) => [t, DISABLED])),
     hookFiles: new Set(["spend"]),
@@ -156,26 +158,36 @@ function expectProblem(subject: DeclaredSubagentSource, needle: string, label: s
     goodSubagent({ toolFiles: new Map(FRAMEWORK.map((t) => [t, t === name ? src : DISABLED])) });
 
   eq(
-    checkDeclaredSubagents([withTool("bash", REPLACEMENT)], FRAMEWORK, [], ["bash"]),
+    checkDeclaredSubagents([goodSubagent({ toolFiles: new Map(FRAMEWORK.filter((t) => t !== "bash").map((t) => [t, DISABLED])) })], FRAMEWORK, [], ["bash"]),
     [],
-    "a REQUIRED slot filled by an authored replacement passes clean — that is eve's own sanctioned route",
+    "a RESERVED slot with NO FILE passes clean — eve itself refuses to let the subagent fill it, so an absent file is the only legal state",
   );
   ok(
-    checkDeclaredSubagents([goodSubagent()], FRAMEWORK, [], ["bash"]).some((p) => p.includes("REQUIRED framework tool slot and throws at build")),
-    "…and a `disableTool()` sentinel in a REQUIRED slot is caught, with the reason named — instead of eve's build throwing after every gate went green",
+    checkDeclaredSubagents([goodSubagent()], FRAMEWORK, [], ["bash"]).some((p) => p.includes("eve RESERVES") && p.includes("Delete it")),
+    "…and a `disableTool()` sentinel at a RESERVED slot is caught, with the reason named — instead of eve's build throwing after every gate went green",
+  );
+  ok(
+    checkDeclaredSubagents([withTool("bash", REPLACEMENT)], FRAMEWORK, [], ["bash"]).some((p) => p.includes("eve RESERVES") && p.includes("Delete it")),
+    "…and so is a no-op REPLACEMENT there: eve 0.69.0 refuses every authored layer, so the route OPE-1537 took is gone and the message must not offer it",
+  );
+  ok(
+    checkDeclaredSubagents([goodSubagent({ toolFiles: new Map(FRAMEWORK.filter((t) => t !== "bash").map((t) => [t, DISABLED])) })], FRAMEWORK, [], []).some((p) =>
+      p.includes("tools/bash.ts is missing"),
+    ),
+    "negative control: the SAME absent file at a NON-reserved slot is still a hole — the exemption is per-slot, not blanket",
   );
   ok(
     checkDeclaredSubagents([withTool("bash", REPLACEMENT)], FRAMEWORK, [], []).some((p) => p.includes("is not a `disableTool()` sentinel")),
-    "negative control: the SAME replacement in a NON-required slot is still a posture change — the exemption is per-slot, not blanket",
+    "…and the same replacement at a NON-reserved slot is still a posture change",
   );
   ok(
-    checkDeclaredSubagents([goodSubagent({ toolFiles: new Map(FRAMEWORK.filter((t) => t !== "bash").map((t) => [t, DISABLED])) })], FRAMEWORK, [], ["bash"])
-      .some((p) => p.includes("tools/bash.ts is missing") && p.includes("Author a no-op replacement tool")),
-    "a MISSING required slot is still a hole, and the remedy it names is the replacement, not a sentinel",
-  );
-  ok(
-    checkDeclaredSubagents([goodSubagent()], FRAMEWORK, [], ["connection_search"]).some((p) => p.includes("is not in the default-mounted set")),
-    "a slot declared REQUIRED but not MOUNTED is a contradiction between two reads of eve, and says so rather than demanding a file for a slot eve never mounts",
+    checkDeclaredSubagents(
+      [goodSubagent({ toolFiles: new Map([...FRAMEWORK.map((t) => [t, DISABLED] as const), ["connection_search", DISABLED]]) })],
+      FRAMEWORK,
+      [],
+      ["connection_search"],
+    ).some((p) => p.includes("eve RESERVES") && p.includes("no posture change that makes this file legal")),
+    "a file at a reserved slot eve does NOT default-mount is caught too, and gets the reserved message rather than \"re-tier it and update this lint\"",
   );
   ok(
     checkDeclaredSubagents([withTool("bash", `// this slot used to be a disableTool() sentinel\n${REPLACEMENT}`)], FRAMEWORK, [], []).some((p) =>
@@ -190,9 +202,12 @@ function expectProblem(subject: DeclaredSubagentSource, needle: string, label: s
   );
 
   expectProblem(goodSubagent({ agentSource: undefined }), "agent.ts is missing", "a missing config module is caught");
-  expectProblem(goodSubagent({ agentSource: "export default defineAgent({ model: m(), outputSchema: S });" }), "no `description`", "a missing description is caught (eve fails the build on it too)");
-  expectProblem(goodSubagent({ agentSource: "export default defineAgent({ description: \"x\", model: m() });" }), "no `outputSchema`", "an UNTYPED subagent is caught — a prose result is not actionable by the caller or the audit trail");
-  expectProblem(goodSubagent({ agentSource: "export default defineAgent({ description: \"x\", model: m(), outputSchema: S });" }), "without `modelFacingOutputSchema(...)`", "OPE-2070: a contract bound RAW is caught — eve's final_output tool would show its optional fields as non-nullable");
+  expectProblem(goodSubagent({ agentSource: "export default defineAgent({ model: m() });" }), "no `description`", "a missing description is caught (eve fails the build on it too)");
+  expectProblem(
+    goodSubagent({ agentSource: "export default defineAgent({ description: \"x\", model: m(), outputSchema: modelFacingOutputSchema(S) });" }),
+    "binds `outputSchema`",
+    "a re-added outputSchema is caught — eve 0.69.0 removed the field, so it applies to nothing and fails the typecheck with no cause named",
+  );
   expectProblem(goodSubagent({ hasInstructions: false }), "instructions.md is missing", "missing instructions are caught — a subagent inherits none from the root");
 
   expectProblem(goodSubagent({ hookFiles: new Set() }), "hooks/spend.ts is missing", "a missing spend hook is caught — hooks are NOT inherited, so the child would burn tokens off the ledger");

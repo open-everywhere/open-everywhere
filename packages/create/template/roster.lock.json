@@ -39,6 +39,7 @@
         "hook/eve-patch-gate": "mounted",
         "hook/fire-carriage": "mounted",
         "hook/fire-toolset": "mounted",
+        "hook/held-question": "mounted",
         "hook/job-posture": "mounted",
         "hook/lean-seat": "mounted",
         "hook/learn": "mounted",
@@ -69,10 +70,13 @@
         "tool/add_label": "mounted",
         "tool/add_routine_rule": "mounted",
         "tool/agent_version": "mounted",
+        "tool/ask_question": "mounted",
+        "tool/ask_room": "mounted",
         "tool/assign": "mounted",
         "tool/aws": "mounted",
         "tool/browser_tools": "mounted",
         "tool/cancel_routine": "mounted",
+        "tool/cancel_work": "mounted",
         "tool/capture_events": "mounted",
         "tool/check_pr_status": "mounted",
         "tool/checkout_repo": "mounted",
@@ -118,6 +122,7 @@
         "tool/read_channel": "mounted",
         "tool/read_docs": "mounted",
         "tool/read_file_upload": "mounted",
+        "tool/read_github_issue": "mounted",
         "tool/read_routine_transcript": "mounted",
         "tool/read_thread": "mounted",
         "tool/read_thread_seat": "mounted",
@@ -151,7 +156,8 @@
         "tool/unlink_identity": "mounted",
         "tool/update_status": "mounted",
         "tool/usage_report": "mounted",
-        "tool/walk_pr": "mounted"
+        "tool/walk_pr": "mounted",
+        "tool/work": "mounted"
       }
     },
     "@open-everywhere/provider-github": {

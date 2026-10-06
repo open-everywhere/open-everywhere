@@ -46,6 +46,8 @@ async function armSeams(): Promise<void> {
         if (user === TRIGGER_USER_ID) return userInfo(TRIGGER_USER_ID, "trigger-member-890");
         return undefined;
       }
+      case "conversations.members":
+        return { ok: true, members: [], response_metadata: { next_cursor: "" } };
       case "conversations.info":
         return {
           ok: true,

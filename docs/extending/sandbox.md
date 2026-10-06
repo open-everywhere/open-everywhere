@@ -172,7 +172,7 @@ the hook names the owner in the log at the first turn end of each process:
 
 | Backend | What the stop does | Runtime billed per second? |
 | --- | --- | --- |
-| Vercel | `Sandbox.list` by session tag, augmented by a direct `Sandbox.get` for a sandbox this turn opened (a same-turn creation race reported in OPE-722), then `stop()` on each running VM. The stop auto-snapshots and the next turn auto-resumes. | Yes — each stop writes a priced spend-ledger row, so USD caps count runtime. |
+| Vercel | `Sandbox.list` by session tag, then `stop()` on each running VM. (The direct `Sandbox.get` for a sandbox this turn opened, OPE-722, no longer runs: eve 0.69.0 exposes no sandbox name to authored code, so nothing records one, and the narrow create-then-stop race is open again.) The stop auto-snapshots and the next turn auto-resumes. | Yes — each stop writes a priced spend-ledger row, so USD caps count runtime. |
 | `docker` | `docker ps` by Eve's per-session container label, then `docker stop -t 0`. The container is stopped, never removed, and Eve restarts it by name with the filesystem intact. | No — the box is yours. No spend row is written; pricing it at Vercel's GB-hour rate would invent a charge that the caps then enforce. |
 | `justbash` | Nothing. The just-bash executor runs inside the app process — there is no VM or container to stop. | No. |
 
@@ -181,14 +181,22 @@ that. Eve's own `ctx.getSandbox().stop()` is not usable here, because `getSandbo
 on a session that never touched a sandbox it would create one just to stop it, on every chat-only
 turn.
 
+**On a work session the stop waits until the work session is idle.** Every conversation seat (a
+domain seat, a thread seat and a DM seat) runs its jobs through the conversation's work session
+([three tiers](../how-it-works/agent-and-loop.md#the-three-tiers-seat-work-session-worker)), and the
+work session owns the conversation's sandbox and runs every job in it. Its turn end stops the sandbox
+only when the work session owes nothing: no task it started is still unsettled, and no job the seat
+forwarded is still waiting to start. The hook reads the work session's durable ledger for this, and
+an unreadable ledger reads as busy, so the sandbox then idles to its `timeoutMs` fuse instead of
+stopping under a job. On a work session `timeoutMs` is therefore the longest a job may hold the
+sandbox, not the longest turn. Every other session keeps the stop after its turn.
+
 A **delegated child does not stop the sandbox.** Eve's built-in `agent` tool runs its child on the
 parent's sandbox, and re-tags that sandbox with the child's session id on attach. So a child turn
 skips the stop and restores the parent's tag, handing ownership straight back. Without that, the
 parent's own sweep would find nothing and the shared VM would idle out its full fuse.
 
-**Nor does the parent, while a background child still holds that VM.** A background task ends the
-parent's turn at the dispatch receipt and lets the child run on. The parent's own turn-end sweep would then stop the shared VM out from under a live child — it
-kills anything mid-`bash` and bills a resume cycle. So the parent skips its stop while it believes a
-delegated task is still live, and sweeps at the first turn end that finds none. The skip is bounded:
-a task the seat never looks at stops holding the stop closed after a few turns, and a VM the hook
-never stops still falls back to its own `timeout` fuse.
+**Nor does the parent, while a child still holds that VM.** Since OPE-2350 the only session that
+starts a child is a work session, so the idle rule above is what keeps the parent's sweep off a
+live child: the work session's turn end skips the stop while a task it started is unsettled. A VM
+the hook never stops still falls back to its own `timeout` fuse.

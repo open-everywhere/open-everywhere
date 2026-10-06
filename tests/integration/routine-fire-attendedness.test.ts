@@ -20,10 +20,10 @@ const CREATOR = "U0FIRECREATOR";
 const TEAM = "T0ITFIRE";
 const CHANNEL = "C0ITFIRE";
 const DISCORD_UNLISTED = "9000000000000000777";
-const BRIDGE_CHANNEL = "C0EXCHAN003";
+const BRIDGE_CHANNEL = "C0EXFIRE001";
 
-function isBridgeSurfaceFor(surface: string | undefined, channel: string): boolean {
-  return typeof surface === "string" && surface.includes(channel);
+function fireWakeOn(rows: readonly AuditRow[], channel: string): unknown {
+  return rows.find((r) => r.action === "work.forwarded" && String(r.surface ?? "").endsWith(`/${channel}`))?.detail?.wakeId;
 }
 
 function proposeSpendLimit(): SeatScript {
@@ -32,6 +32,13 @@ function proposeSpendLimit(): SeatScript {
       { calls: [{ tool: "set_spend_limit", input: { monthlyUsd: 12.5, reason: "OPE-483 carriage probe" } }] },
       { say: "ok" },
     ],
+  };
+}
+
+function fireProposesSpendLimit(): SeatScript {
+  return {
+    parent: [{ say: "NO_REPLY" }],
+    child: [{ calls: [{ tool: "set_spend_limit", input: { monthlyUsd: 12.5, reason: "OPE-483 carriage probe" } }] }, { say: "ok" }],
   };
 }
 
@@ -49,7 +56,7 @@ function chainRowFor(rows: readonly AuditRow[], tool: string): AuditRow | undefi
 
 test("a REAL routine fire arrives with NO acting sender — the presence fence refuses its proposal", async () => {
   await bootAgent({ sharedSqlite: true });
-  const handle = disposeLater(registerScript(proposeSpendLimit()));
+  const handle = disposeLater(registerScript(fireProposesSpendLimit()));
   const cursor = await auditCursor();
 
   const routineId = await seedDueRoutine({
@@ -74,7 +81,7 @@ test("a REAL routine fire arrives with NO acting sender — the presence fence r
 
 test("the fired session binds as its routine's ATTESTED creator", async () => {
   await bootAgent({ sharedSqlite: true });
-  disposeLater(registerScript({ parent: [{ say: "nothing to report" }] }));
+  disposeLater(registerScript({ parent: [{ say: "NO_REPLY" }], child: [{ say: "nothing to report" }] }));
   const cursor = await auditCursor();
 
   await seedDueRoutine({
@@ -126,7 +133,7 @@ test("a routine fire that ends in PROSE on the per-surface path is DROPPED — n
 test("a routine fire's reply.post row keeps the schedule app as AUTHOR and adds the creator to DETAIL — tool route on a windowed seat", async () => {
   await bootAgent({ sharedSqlite: true });
   const sayText = "oe-660 windowed fire reply through the tool, deliberately longer";
-  disposeLater(registerScript({ parent: [seatReply(sayText, "oe660-window"), { say: "NO_REPLY" }] }));
+  disposeLater(registerScript({ parent: [seatReply(sayText, "oe660-window"), { say: "NO_REPLY" }], child: [{ say: "the digest" }] }));
   const cursor = await auditCursor();
 
   await seedDueRoutine({
@@ -138,12 +145,14 @@ test("a routine fire's reply.post row keeps the schedule app as AUTHOR and adds 
   expect((await runRoutineDispatchTick()).length).toBeGreaterThan(0);
 
   const reply = await waitFor(async () => {
-    const rows = await rowsSinceCursor(cursor, ["reply.post"]);
-    return rows.find((r) => r.detail?.chars === sayText.length && isBridgeSurfaceFor(r.surface, BRIDGE_CHANNEL));
-  }, "the routine fire's reply.post row (tool route, on the windowed channel)", 150_000);
+    const rows = await rowsSinceCursor(cursor, ["reply.post", "work.forwarded"]);
+    const wake = fireWakeOn(rows, BRIDGE_CHANNEL);
+    return wake === undefined ? undefined : rows.find((r) => r.action === "reply.post" && r.detail?.chars === sayText.length && r.detail?.wakeId === wake);
+  }, "the routine fire's reply.post row (tool route, answering the fire's own wake)", 150_000);
 
   expect(reply.detail?.route).toBe("tool");
   expect(reply.principalId).toBe("eve:app");
+  expect(reply.surface).toBe(BRIDGE_CHANNEL);
   expect(reply.detail?.creatorId).toBe(CREATOR);
 });
 
@@ -158,17 +167,18 @@ test("OPE-702 — a chars-only reply.post match is ambiguous across channels; su
   const realText = realCore.padEnd(padLen, ".");
   expect(decoyText.length).toBe(realText.length);
 
-  const decoyHandle = registerScript({ parent: [seatReply(decoyText, "oe702-decoy"), { say: "NO_REPLY" }] });
+  const decoyHandle = registerScript({ parent: [seatReply(decoyText, "oe702-decoy"), { say: "NO_REPLY" }], child: [{ say: "decoy result" }] });
   await seedDueRoutine({ surfaceKey: `slack/${TEAM}/${CHANNEL}`, channelId: CHANNEL, prompt: "say something", createdBy: CREATOR });
   expect((await runRoutineDispatchTick()).length).toBeGreaterThan(0);
   const decoyRow = await waitFor(async () => {
-    const rows = await rowsSinceCursor(cursor, ["reply.post"]);
-    return rows.find((r) => isBridgeSurfaceFor(r.surface, CHANNEL) && r.detail?.chars === decoyText.length);
-  }, "the decoy fire's reply.post row on its own channel", 150_000);
+    const rows = await rowsSinceCursor(cursor, ["reply.post", "work.forwarded"]);
+    const wake = fireWakeOn(rows, CHANNEL);
+    return wake === undefined ? undefined : rows.find((r) => r.action === "reply.post" && r.detail?.wakeId === wake && r.detail?.chars === decoyText.length);
+  }, "the decoy fire's reply.post row, answering its own fire's wake", 150_000);
   expect(decoyRow.detail?.route).toBe("tool");
   decoyHandle.dispose();
 
-  disposeLater(registerScript({ parent: [seatReply(realText, "oe702-real"), { say: "NO_REPLY" }] }));
+  disposeLater(registerScript({ parent: [seatReply(realText, "oe702-real"), { say: "NO_REPLY" }], child: [{ say: "real result" }] }));
   await seedDueRoutine({
     surfaceKey: `slack/T0EXAMPLE/${BRIDGE_CHANNEL}`,
     channelId: BRIDGE_CHANNEL,
@@ -177,19 +187,21 @@ test("OPE-702 — a chars-only reply.post match is ambiguous across channels; su
   });
   expect((await runRoutineDispatchTick()).length).toBeGreaterThan(0);
   const realRow = await waitFor(async () => {
-    const rows = await rowsSinceCursor(cursor, ["reply.post"]);
-    return rows.find((r) => isBridgeSurfaceFor(r.surface, BRIDGE_CHANNEL) && r.detail?.chars === realText.length);
+    const rows = await rowsSinceCursor(cursor, ["reply.post", "work.forwarded"]);
+    const wake = fireWakeOn(rows, BRIDGE_CHANNEL);
+    return wake === undefined ? undefined : rows.find((r) => r.action === "reply.post" && r.detail?.wakeId === wake && r.detail?.chars === realText.length);
   }, "the real windowed fire's reply.post row", 150_000);
   expect(realRow.detail?.route).toBe("tool");
 
-  const allRows = await rowsSinceCursor(cursor, ["reply.post"]);
-  const chansOnlyMatches = allRows.filter((r) => r.detail?.chars === realText.length);
+  const allRows = await rowsSinceCursor(cursor, ["reply.post", "work.forwarded"]);
+  const chansOnlyMatches = allRows.filter((r) => r.action === "reply.post" && r.detail?.chars === realText.length);
   expect(chansOnlyMatches.length).toBeGreaterThanOrEqual(2);
-  expect(chansOnlyMatches.some((r) => isBridgeSurfaceFor(r.surface, CHANNEL) && r.detail?.route === "tool")).toBe(true);
-  expect(chansOnlyMatches.some((r) => isBridgeSurfaceFor(r.surface, BRIDGE_CHANNEL) && r.detail?.route === "tool")).toBe(true);
+  expect(chansOnlyMatches.some((r) => r.detail?.wakeId === decoyRow.detail?.wakeId && r.detail?.route === "tool")).toBe(true);
+  expect(chansOnlyMatches.some((r) => r.detail?.wakeId === realRow.detail?.wakeId && r.detail?.route === "tool")).toBe(true);
 
-  const scoped = allRows.find((r) => isBridgeSurfaceFor(r.surface, BRIDGE_CHANNEL) && r.detail?.chars === realText.length);
+  const scoped = allRows.find((r) => r.action === "reply.post" && r.detail?.wakeId === fireWakeOn(allRows, BRIDGE_CHANNEL) && r.detail?.chars === realText.length);
   expect(scoped?.detail?.route).toBe("tool");
+  expect(decoyRow.detail?.wakeId).not.toBe(realRow.detail?.wakeId);
 });
 
 test("NEGATIVE CONTROL — an ATTENDED wake proposing the same verb passes the fence and cards, unattended:false", async () => {
@@ -215,65 +227,25 @@ test("NEGATIVE CONTROL — an ATTENDED wake proposing the same verb passes the f
   expect((detail.transforms ?? []).map((t) => t.reason)).not.toContain("ask-unattended");
 });
 
-const FIRE_STAMPS = ["oe_fire_unattended", "oe_fire_principal"] as const;
-
-function keysOf(row: AuditRow): readonly string[] {
-  return ((row.detail as { attrKeys?: readonly string[] }).attrKeys ?? []) as readonly string[];
-}
-
-test("the carriage probe records the SAME key set on both sides of the session hop", async () => {
-  await bootAgent({ sharedSqlite: true });
-  disposeLater(registerScript({ parent: [{ say: "carriage probe" }] }));
-  const cursor = await auditCursor();
-
-  const routineId = await seedDueRoutine({
-    surfaceKey: `slack/${TEAM}/${CHANNEL}`,
-    channelId: CHANNEL,
-    prompt: "say something short",
-    createdBy: CREATOR,
-  });
-  expect((await runRoutineDispatchTick()).length).toBeGreaterThan(0);
-
-  const sent = await waitFor(
-    async () =>
-      (await rowsSinceCursor(cursor, ["routine.fire_attrs_sent"])).find(
-        (r) => (r.detail as { routineId?: string }).routineId === routineId,
-      ),
-    `a routine.fire_attrs_sent row for ${routineId}`,
-    150_000,
-  );
-  const seen = await waitFor(
-    async () => (await rowsSinceCursor(cursor, ["routine.fire_attrs_seen"])).find((r) => r.surface === CHANNEL),
-    "a routine.fire_attrs_seen row for the fired session",
-    150_000,
-  );
-
-  for (const stamp of FIRE_STAMPS) expect(keysOf(sent)).toContain(stamp);
-
-  for (const k of keysOf(sent)) expect(keysOf(seen)).toContain(k);
-
-  const TURN_BOUNDARY_ATTRS = ["oe_dispatch_turn", "oe_parent_turn_tainted"];
-  const DIVERT_ATTRS = ["oe_addressing", "oe_delivery_id", "oe_grain", "oe_platform", "oe_requester", "oe_sources", "oe_wake_id", "oe_window_token"];
-  const unexplained = keysOf(seen).filter((k) => !keysOf(sent).includes(k) && !TURN_BOUNDARY_ATTRS.includes(k) && !DIVERT_ATTRS.includes(k));
-  expect(unexplained, "the fired session's auth bag grew a key neither the fire nor the host boundary explains").toEqual([]);
-
-  for (const row of [sent, seen]) {
-    expect(keysOf(row)).not.toContain(CREATOR);
-    expect(keysOf(row)).not.toContain(CHANNEL);
-    expect(keysOf(row)).not.toContain(TEAM);
-    expect(JSON.stringify(row.detail)).not.toContain(CREATOR);
-  }
-});
-
-test("the schedule-auth constants the SEEN row keys on still match eve's own", async () => {
-  const { readFileSync } = await import("node:fs");
-  const { join } = await import("node:path");
-  const src = readFileSync(join(process.cwd(), "node_modules", "eve", "dist", "src", "channel", "schedule-auth.js"), "utf8");
-  const { SCHEDULE_APP_AUTHENTICATOR, SCHEDULE_APP_PRINCIPAL_ID, SCHEDULE_APP_PRINCIPAL_TYPE } = await import(
+test("the schedule-auth decision is eve's own isScheduleAuth, and the fixture constants satisfy it", async () => {
+  const { isScheduleAuth } = await import("eve/schedules");
+  const { isScheduleOriginatedAuth, SCHEDULE_APP_AUTHENTICATOR, SCHEDULE_APP_PRINCIPAL_ID, SCHEDULE_APP_PRINCIPAL_TYPE } = await import(
     "@open-everywhere/core/agent/identity/binding.js"
   );
-  expect(src).toContain("SCHEDULE_APP_AUTH");
-  for (const literal of [SCHEDULE_APP_AUTHENTICATOR, SCHEDULE_APP_PRINCIPAL_ID, SCHEDULE_APP_PRINCIPAL_TYPE]) {
-    expect(src).toContain(`\`${literal}\``);
+  const fire = { authenticator: SCHEDULE_APP_AUTHENTICATOR, principalId: SCHEDULE_APP_PRINCIPAL_ID, principalType: SCHEDULE_APP_PRINCIPAL_TYPE, attributes: {} };
+  expect(isScheduleAuth(fire as never), "eve no longer accepts the fixture's schedule auth slot").toBe(true);
+  const cases: readonly unknown[] = [
+    fire,
+    { ...fire, attributes: { oe_fire_principal: "discord:1" } },
+    { ...fire, principalId: "discord:9000000000000000042" },
+    { ...fire, authenticator: "slack" },
+    { ...fire, principalType: "user" },
+    { attributes: {} },
+    null,
+    undefined,
+  ];
+  for (const auth of cases) {
+    expect(isScheduleOriginatedAuth(auth as never), `OE and eve disagree on ${JSON.stringify(auth)}`).toBe(isScheduleAuth(auth as never));
   }
+  expect(cases.map((a) => isScheduleAuth(a as never))).toContain(false);
 });

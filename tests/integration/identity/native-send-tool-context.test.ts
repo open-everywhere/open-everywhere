@@ -67,6 +67,8 @@ async function armSeams(): Promise<void> {
         if (user === TRIGGER_USER_ID) return userInfo(TRIGGER_USER_ID, "trigger-member");
         return undefined;
       }
+      case "conversations.members":
+        return { ok: true, members: [], response_metadata: { next_cursor: "" } };
       case "conversations.info":
         return {
           ok: true,
@@ -100,12 +102,22 @@ function replyThen(text: string, id: string): ScriptedHandle {
 
 const REFUSAL = "couldn't resolve this conversation";
 
-async function expectToolAccepted(handle: ScriptedHandle, label: string): Promise<void> {
-  await waitFor(() => handle.requests.find((r) => r.stepIndex === 1), `the ${label} wake's trailing step`, 180_000);
-  let last: { readonly name: string; readonly isError: boolean; readonly output: unknown } | undefined;
-  for (const r of handle.requests) for (const t of r.toolResults) if (t.name === "reply") last = t;
-  expect(last, `the ${label} wake's model never got a reply result at all`).toBeDefined();
-  expect(last?.isError, `🔴 the ${label} wake's reply TOOL was refused: ${JSON.stringify(last?.output)}`).toBe(false);
+async function expectToolAccepted(handle: ScriptedHandle, label: string, cursor: AuditCursor, text: string): Promise<void> {
+  const outcome = await waitFor(
+    async () => {
+      const refusedStep = handle.requests.find((r) => r.stepIndex === 1);
+      if (refusedStep !== undefined) {
+        let last: { readonly isError: boolean; readonly output: unknown } | undefined;
+        for (const t of refusedStep.toolResults) if (t.name === "reply") last = t;
+        return { refused: last } as const;
+      }
+      const rows = await rowsSinceCursor(cursor, ["reply.post"], { limit: 200 });
+      return rows.some((r) => r.detail?.route === "tool" && r.detail?.chars === text.length) ? ({ accepted: true } as const) : undefined;
+    },
+    `the ${label} wake's reply outcome`,
+    180_000,
+  );
+  expect("refused" in outcome ? `🔴 the ${label} wake's reply TOOL was refused: ${JSON.stringify(outcome.refused?.output)}` : "accepted").toBe("accepted");
 }
 
 async function toolReplyRow(cursor: AuditCursor, text: string): Promise<AuditRow> {
@@ -140,7 +152,7 @@ test("① NAME-DROP WAKE — the reply TOOL resolves the real Slack surface", as
       eventId: `EvND717${ts.replace(".", "")}`,
     });
     expect(res.status, `the Slack front refused the message event: ${res.body.slice(0, 200)}`).toBe(200);
-    await expectToolAccepted(handle, "name-drop");
+    await expectToolAccepted(handle, "name-drop", cursor, NAME_DROP_TEXT);
     const row = await toolReplyRow(cursor, NAME_DROP_TEXT);
     expectBoundTo(row, SLACK_NAME_DROP_CHANNEL_ID, "name-drop");
   } finally {
@@ -162,7 +174,7 @@ test("② ENGAGED-THREAD DELIVER — the reply TOOL resolves the real Slack surf
       eventId: `EvSeed717${rootTs.replace(".", "")}`,
     });
     expect(seedRes.status, `the Slack front refused the seed event: ${seedRes.body.slice(0, 200)}`).toBe(200);
-    await expectToolAccepted(seed, "engage-seed");
+    await expectToolAccepted(seed, "engage-seed", seedCursor, ENGAGE_SEED_TEXT);
     await toolReplyRow(seedCursor, ENGAGE_SEED_TEXT);
   } finally {
     seed.dispose();
@@ -182,7 +194,7 @@ test("② ENGAGED-THREAD DELIVER — the reply TOOL resolves the real Slack surf
       eventId: `EvEng717${ts.replace(".", "")}`,
     });
     expect(res.status, `the Slack front refused the in-thread event: ${res.body.slice(0, 200)}`).toBe(200);
-    await expectToolAccepted(handle, "engaged-thread");
+    await expectToolAccepted(handle, "engaged-thread", cursor, ENGAGED_TEXT);
     const row = await toolReplyRow(cursor, ENGAGED_TEXT);
     expectBoundTo(row, SLACK_NAME_DROP_CHANNEL_ID, "engaged-thread");
   } finally {
@@ -205,7 +217,7 @@ test("③ CHANNEL-JOIN INTRO — the reply TOOL resolves the real Slack surface"
       eventId: `EvJoin717${ts.replace(".", "")}`,
     });
     expect(res.status, `the Slack front refused the join event: ${res.body.slice(0, 200)}`).toBe(200);
-    await expectToolAccepted(handle, "channel-join intro");
+    await expectToolAccepted(handle, "channel-join intro", cursor, JOIN_TEXT);
     const row = await toolReplyRow(cursor, JOIN_TEXT);
     expectBoundTo(row, JOIN_CHANNEL_ID, "channel-join intro");
     expect(row.surface, "the join intro must NOT bind the name-drop channel").not.toBe(SLACK_NAME_DROP_CHANNEL_ID);

@@ -8,7 +8,7 @@ process.env.OE_SQLITE_PATH = join(tmp, "mem.sqlite3");
 
 const { gitProvider } = await import("../agent/memory/provider.js");
 const { sqliteProvider, _resetDbForTest } = await import("../agent/memory/sqlite.js");
-const { WORKSPACE, SURFACE, siloTier } = await import("../agent/memory/store.js");
+const { WORKSPACE, SURFACE, siloTier, __resetStagingSweepForTest } = await import("../agent/memory/store.js");
 import type { Partition } from "../agent/memory/partition.js";
 import type { MemoryProvider } from "../agent/memory/provider.js";
 
@@ -166,6 +166,72 @@ for (const provider of [gitProvider, sqliteProvider]) {
     process.env.OE_SQLITE_PATH = pinned;
     _resetDbForTest();
   }
+}
+
+{
+  const { readdirSync, readFileSync } = await import("node:fs");
+  const p = partition("atomic", "general");
+  const body = "# Atomic\n\n- a fact that must never read back empty\n";
+  await gitProvider.writeTier(p, SURFACE, { "MEMORY.md": body }, "seed");
+  const find = (dir: string): string | undefined => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (e.name === ".git") continue;
+      const child = join(dir, e.name);
+      if (e.isDirectory()) {
+        const hit = find(child);
+        if (hit) return hit;
+      } else if (e.name === "MEMORY.md" && readFileSync(child, "utf8") === body) return child;
+    }
+    return undefined;
+  };
+  const file = find(gitProvider.root!());
+  ok(file !== undefined, "OPE-2297: the probe found the file it just wrote");
+  let reads = 0;
+  let torn = 0;
+  let done = false;
+  const poll = (): void => {
+    if (done) return;
+    reads++;
+    if (readFileSync(file!, "utf8") !== body) torn++;
+    setImmediate(poll);
+  };
+  poll();
+  for (let i = 0; i < 300; i++) await gitProvider.writeTier(p, SURFACE, { "MEMORY.md": body }, `rewrite ${i}`);
+  done = true;
+  ok(reads > 300, `OPE-2297: the reader really ran between the writes (${reads} reads)`);
+  ok(torn === 0, `🔴 OPE-2297: no concurrent read saw a truncated or partial file (${torn} of ${reads} reads did)`);
+  ok(!readdirSync(join(gitProvider.root!(), ".oe-staging")).length, "OPE-2297: every staged write was renamed into place — nothing is left in the staging dir");
+
+  const { writeFileSync, existsSync } = await import("node:fs");
+  const staging = join(gitProvider.root!(), ".oe-staging");
+  const dead = join(staging, `${2 ** 31 - 2}-1`);
+  const live = join(staging, `${process.ppid}-1`);
+  writeFileSync(dead, "- a fact a crashed persist left behind\n");
+  writeFileSync(live, "- another live process's in-flight write\n");
+  __resetStagingSweepForTest();
+  await gitProvider.writeTier(p, SURFACE, { "MEMORY.md": body }, "after a crash");
+  ok(!existsSync(dead), "🔴 OPE-2297: a staged file whose writer is gone is swept — a purge could never reach it otherwise");
+  ok(existsSync(live), "OPE-2297: a staged file whose writer is still live is left alone");
+
+  const { mkdirSync } = await import("node:fs");
+  const stuck = join(staging, `${2 ** 31 - 3}-1`);
+  mkdirSync(join(stuck, "stuck"), { recursive: true });
+  __resetStagingSweepForTest();
+  const quiet = console.error;
+  const logged: string[] = [];
+  console.error = (...args: unknown[]) => void logged.push(args.map(String).join(" "));
+  let threw: unknown;
+  try {
+    await gitProvider.writeTier(p, SURFACE, { "MEMORY.md": "# Atomic\n\n- written past a failed sweep\n" }, "past a failed sweep");
+  } catch (err) {
+    threw = err;
+  } finally {
+    console.error = quiet;
+  }
+  ok(threw === undefined, `🔴 OPE-2297: a failed staging sweep does not fail the write (${String(threw)})`);
+  ok((await gitProvider.readTier(p, SURFACE))["MEMORY.md"]?.includes("written past a failed sweep") === true, "OPE-2297: …and the write landed");
+  ok(logged.some((l) => l.includes("staging sweep skipped")), "OPE-2297: the sweep's failure was logged, so the catch really ran");
+  ok(existsSync(stuck), "OPE-2297: the entry the sweep could not remove is still there");
 }
 
 _resetDbForTest();

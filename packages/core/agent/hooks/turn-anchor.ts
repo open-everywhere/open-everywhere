@@ -3,6 +3,7 @@ import { defineState } from "eve/context";
 import { appendAudit, readAudit } from "../audit/audit.js";
 import { resolvePartition } from "../memory/partition.js";
 import { bindFrom, channelPlatform, currentWakeId, deploymentOrg, type BindableContext } from "../identity/binding.js";
+import { isWorkSessionChildContext, isWorkSessionContext } from "../access/work-session.js";
 import { STOP_HAND_SLACK_NAME, STOP_HAND_UNICODE } from "../status/status.js";
 import { setSurfaceReaction } from "../channels/surface-message-ops.js";
 import { postSurfaceText } from "../channels/surface-message-ops.js";
@@ -138,8 +139,8 @@ function mutate(fn: (s: TurnAnchorState) => void): void {
   }
 }
 
-function isDelegation(action: { readonly kind: string; readonly toolName?: string }): boolean {
-  return action.kind === "subagent-call" || (action.kind === "tool-call" && action.toolName === "agent");
+function isDelegation(action: { readonly kind: string }): boolean {
+  return action.kind === "subagent-call";
 }
 
 const STOP_HAND = { slackName: STOP_HAND_SLACK_NAME, unicode: STOP_HAND_UNICODE } as const;
@@ -178,6 +179,7 @@ async function onTurnStarted(turnId: string, ctx: HookContext): Promise<void> {
     }),
   );
 
+  if (!turnAnchorRecordable(c)) return;
   await recordTurnAnchor(
     partition.org,
     {
@@ -190,6 +192,10 @@ async function onTurnStarted(turnId: string, ctx: HookContext): Promise<void> {
     },
     new Date().toISOString(),
   );
+}
+
+export function turnAnchorRecordable(ctx: BindableContext): boolean {
+  return !isWorkSessionChildContext(ctx);
 }
 
 async function placeStopHand(): Promise<void> {
@@ -416,9 +422,11 @@ export default defineHook({
         console.warn(`[open-everywhere:turn-anchor] ignored-stop drain failed: ${String(err)}`);
       }
     },
-    "actions.requested": async (event) => {
+    "actions.requested": async (event, ctx) => {
       try {
-        if (event.data.actions.some((a) => isDelegation(a as { kind: string; toolName?: string }))) await placeStopHand();
+        if (!turnAnchorRecordable(ctx as unknown as BindableContext)) return;
+        if (isWorkSessionContext(ctx as unknown as BindableContext)) return;
+        if (event.data.actions.some((a) => isDelegation(a as { kind: string }))) await placeStopHand();
       } catch (err) {
         console.warn(`[open-everywhere:turn-anchor] actions.requested failed: ${String(err)}`);
       }
@@ -466,6 +474,13 @@ export default defineHook({
         await onTurnCancelled(event.data.turnId, ctx);
       } catch (err) {
         console.warn(`[open-everywhere:turn-anchor] turn.cancelled failed: ${String(err)}`);
+      }
+    },
+    "session.waiting": async () => {
+      try {
+        await drainDueIgnoredStops();
+      } catch (err) {
+        console.warn(`[open-everywhere:turn-anchor] ignored-stop drain failed: ${String(err)}`);
       }
     },
     "session.completed": async () => {

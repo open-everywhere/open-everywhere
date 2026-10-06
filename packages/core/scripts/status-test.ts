@@ -2,6 +2,7 @@ import {
   STATUS_REACTION,
   ALL_STATUS_REACTIONS,
   PINNED_HEADER,
+  isPinnedStatusMessage,
   statusItemLine,
   upsertStatusItem,
   statusItems,
@@ -43,5 +44,12 @@ ok(renderPinned(md).startsWith(PINNED_HEADER), "pinned message leads with the fi
 ok(renderPinned(md).includes("`sess-2`"), "pinned message lists active items");
 ok(renderPinned(statusSeed("x")).includes("_(idle)_"), "no items -> idle marker");
 ok(renderPinned(undefined).startsWith(PINNED_HEADER), "render is defensive on empty body");
+
+ok(!/open ?everywhere/iu.test(PINNED_HEADER), "the pinned header names no brand — a deployment is locally namable");
+ok(!/open ?everywhere/iu.test(statusSeed("x")), "…and neither does the STATUS.md seed");
+ok(isPinnedStatusMessage("*Open Everywhere — current work*\n- ⏳ a thing"), "🔴 a pin under the old branded header is still recognised as ours");
+ok(isPinnedStatusMessage("*OpenEverywhere — current work*\n_(idle)_"), "…and so is the older no-space header");
+ok(isPinnedStatusMessage(renderPinned(undefined)), "…and so is a pin under the current header");
+ok(!isPinnedStatusMessage("*Our team — current work*"), "NEGATIVE: a human pin with a similar shape is not ours");
 
 console.log(`✓ status: ${passed} assertions passed`);

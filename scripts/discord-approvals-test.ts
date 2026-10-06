@@ -21,6 +21,7 @@ const { readAudit } = await import("@open-everywhere/core/agent/audit/audit.js")
 const { requestApproval, resolveApprovalClick } = await import("@open-everywhere/core/agent/approvals/flow.js");
 const { registerActionKind, actionKind } = await import("@open-everywhere/core/agent/approvals/actions.js");
 const { effectiveCaps } = await import("@open-everywhere/core/agent/spend/caps.js");
+const { ROUTINE_PERMISSION_NO_EXPIRY } = await import("@open-everywhere/core/agent/routines/declared-permissions.js");
 const {
   OE_DISCORD_APPROVAL_PREFIX,
   DISCORD_CUSTOM_ID_MAX,
@@ -162,17 +163,28 @@ function clickPayload(
   ok(card.content.includes("line one") && card.content.includes("line two"), "pending card carries the summary lines");
   ok(card.content.includes(`<@${r.requestedBy}>`), "pending card @-mentions the requester");
   ok(card.content.includes(`expires ${r.expiresAt}`), "pending card shows the expiry timestamp");
+  const noClock = pendingDiscordCard(row({ kind: "routine.permission", expiresAt: ROUTINE_PERMISSION_NO_EXPIRY }), ["permission"]);
+  ok(!noClock.content.includes("9999"), "🔴 OPE-2162: a no-clock card's footer never prints the 9999 sentinel");
+  ok(
+    noClock.content.includes(`-# Requested by <@${r.requestedBy}> · no expiry — ends when the routine's instruction is edited or the routine is deleted`),
+    "🔴 OPE-2162: …it names the routine generation as the card's bound instead",
+  );
   ok(card.content.length < 2000, "pending card content is under Discord's 2000-char message cap");
   ok(card.components.length === 1 && card.components[0].type === 1, "pending card has ONE action row");
   const buttons = (card.components[0] as unknown as { components: { type: number; style: number; label: string; custom_id: string }[] }).components;
-  ok(buttons.length === 2 && buttons.every((b) => b.type === 2), "a non-pr.open action row holds two buttons (no 'Approve for session')");
+  ok(buttons.length === 2 && buttons.every((b) => b.type === 2), "a non-pr.open action row holds two buttons (no 'Approve for this routine')");
   ok(buttons[0].label === "Approve" && buttons[0].style === 3, "Approve is a green (success) button");
   ok(buttons[1].label === "Reject" && buttons[1].style === 4, "Reject is a red (danger) button");
-  ok(!buttons.some((b) => b.label === "Approve for session"), "a non-pr.open card has NO 'Approve for session' button (session skip is pr.open-only)");
+  ok(!buttons.some((b) => b.label.startsWith("Approve for this")), "a non-pr.open card has NO middle grant button (the grant is pr.open-only)");
 
-  const prButtons = ((pendingDiscordCard(row({ kind: "pr.open" }), ["open PR"]).components[0]) as unknown as { components: { style: number; label: string; custom_id: string }[] }).components;
-  ok(prButtons.length === 3, "a pr.open card holds three buttons");
-  ok(prButtons[1].label === "Approve for session" && prButtons[1].style === 2, "the middle button is a grey (secondary) 'Approve for session'");
+  const routineArgs = JSON.stringify({ sessionId: "oe-routine:r-1:g1" });
+  const prButtons = ((pendingDiscordCard(row({ kind: "pr.open", argsJson: routineArgs }), ["open PR"]).components[0]) as unknown as { components: { style: number; label: string; custom_id: string }[] }).components;
+  ok(prButtons.length === 3, "a routine's pr.open card holds three buttons");
+  ok(prButtons[1].label === "Approve for this routine (up to 24 h)" && prButtons[1].style === 2, "the middle button is a grey (secondary) 'Approve for this routine (up to 24 h)'");
+  for (const sessionId of ["oe-grant:discord/G1/CH1:thread:TH1", "oe-grant:discord/U9/DM1:dm", "oe-dom:eng:win:w/eng:oe-sup:g7"]) {
+    const two = ((pendingDiscordCard(row({ kind: "pr.open", argsJson: JSON.stringify({ sessionId }) }), ["open PR"]).components[0]) as unknown as { components: { label: string }[] }).components;
+    ok(two.length === 2 && !two.some((b) => b.label.startsWith("Approve for this")), `🔴 OPE-2363: a pr.open card frozen with ${sessionId} holds two buttons, no middle button`);
+  }
   ok(parseDiscordApprovalCustomId(prButtons[1].custom_id)?.decision === "approve_session", "the middle button's custom_id round-trips as approve_session");
   ok(
     buttons.every((b) => parseDiscordApprovalCustomId(b.custom_id) !== null),
@@ -721,7 +733,7 @@ const store = getOperationalStore();
             kind: "pr.open",
             scopeKey: "discord/G1/C_WIN",
             channelId: "C_WIN",
-            argsJson: JSON.stringify({ sessionId: "sess-1709-discord", what }),
+            argsJson: JSON.stringify({ sessionId: "oe-routine:sess-1709-discord:g1", what }),
           });
         await store.addPendingAction(grantRow("dw-grant-clicked", "clicked"));
         await store.addPendingAction(grantRow("dw-grant-sib", "sib"));

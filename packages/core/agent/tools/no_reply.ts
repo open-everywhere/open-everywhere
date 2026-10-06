@@ -1,9 +1,7 @@
 import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
-import "../channels/turn-terminal-actions.js";
 import { markNoReplyThisTurn, peekNoReplyThisTurn, type NoReplyReason } from "../channels/no-reply-signal.js";
-import { noteTerminalCallGrain } from "../channels/turn-terminal-actions.js";
 import { END_TURN_WITH_SENTINEL_INSTRUCTION, NO_REPLY_SENTINEL } from "../channels/normalized-wake.js";
 import {
   markWakeDeclinedThisTurn,
@@ -47,6 +45,7 @@ export const NO_REPLY_NOTE =
   `${END_TURN_WITH_SENTINEL_INSTRUCTION} Do not call another tool.`;
 
 export default defineTool({
+  endsTurn: true,
   description:
     "End this turn without posting a reply. Call it, then stop — text after it is discarded. " +
     "`addressed_to_other` — multi-party thread, message is for someone else; " +
@@ -126,7 +125,6 @@ export default defineTool({
         throw new Error(NO_REPLY_ADDRESSED_TO_OTHER_REFUSAL);
       }
     }
-    noteTerminalCallGrain(ctx as BindableContext);
     const already = peekNoReplyThisTurn();
     if (already !== null) {
       await noteTurnCloseoutRefusal(ctx as BindableContext, NO_REPLY_REDUNDANT_CLOSEOUT_REASON);

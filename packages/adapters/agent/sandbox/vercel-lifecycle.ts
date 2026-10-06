@@ -1,5 +1,5 @@
 import { defineHook, type HookContext } from "eve/hooks";
-import { bindFrom, domainKeyOf, resolvePartition, appendUsageEvent, usageForSession, recordSpend, periodOf, estimateSandboxCostUsd, routineIdOf, turnSurfaceMode, getSettings, isSubagentChildContext, liveTaskIds, subagentParentSessionId, type BindableContext } from "@open-everywhere/core/agent/adapter-api.js";
+import { bindFrom, domainKeyOf, resolvePartition, appendUsageEvent, usageForSession, recordSpend, periodOf, estimateSandboxCostUsd, routineIdOf, turnSurfaceMode, getSettings, isSubagentChildContext, liveTaskIds, subagentParentSessionId, workSessionSandboxState, type BindableContext } from "@open-everywhere/core/agent/adapter-api.js";
 import { resolveSandboxStopper, shouldStop, type SandboxListing, type SandboxStopper } from "./backend-stop.js";
 
 export { shouldStop, type SandboxListing, type SandboxStopper };
@@ -88,6 +88,15 @@ async function onTurnEnd(ctx: HookContext, outcome: string): Promise<void> {
       log(
         `turn.${outcome}: SKIPPED the stop — ${holding.length} delegated background task(s) still hold this session's sandbox ` +
           `[${holding.join(", ")}]; the next turn end that finds none sweeps it`,
+      );
+      return;
+    }
+    const work = await workSessionSandboxState(ctx as unknown as BindableContext);
+    if (work.work && !work.idle) {
+      log(
+        `turn.${outcome}: SKIPPED the stop — this work session is not idle` +
+          (work.owed.length > 0 ? `: it still owes ${work.owed.length} job(s) or task(s) [${work.owed.join(", ")}]` : ": its ledger could not be read") +
+          "; the turn end that finds it idle sweeps it",
       );
       return;
     }

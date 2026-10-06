@@ -68,6 +68,37 @@ function durableMemoryWritesThisTurn(turnId: string | undefined): readonly Durab
   return state.writes ?? [];
 }
 
+export const OE_WORK_RESULT_WRITES_ATTR = "oe_work_result_writes";
+
+export function factWritesThisTurn(turnId: string | undefined): readonly DurableMemoryWrite[] {
+  return durableMemoryWritesThisTurn(turnId).filter((w) => w.kind === "memory");
+}
+
+export function encodeCarriedWrites(writes: readonly DurableMemoryWrite[]): string | undefined {
+  const facts = writes.filter((w) => w.kind === "memory").slice(0, MAX_WRITES);
+  return facts.length === 0 ? undefined : JSON.stringify(facts.map((w) => ({ road: w.road, ...(w.silo !== undefined ? { silo: w.silo } : {}), version: w.version })));
+}
+
+export function adoptCarriedWrites(turnId: string | undefined, raw: unknown): number {
+  if (typeof raw !== "string" || raw.length === 0) return 0;
+  let list: unknown;
+  try {
+    list = JSON.parse(raw);
+  } catch {
+    return 0;
+  }
+  if (!Array.isArray(list)) return 0;
+  let n = 0;
+  for (const w of list.slice(0, MAX_WRITES)) {
+    if (typeof w !== "object" || w === null) continue;
+    const e = w as { road?: unknown; silo?: unknown; version?: unknown };
+    if (typeof e.road !== "string" || e.road.length === 0 || typeof e.version !== "string" || e.version.length === 0) continue;
+    noteDurableMemoryWrite(turnId, { kind: "memory", road: `work-session:${e.road}`, ...(typeof e.silo === "string" && e.silo.length > 0 ? { silo: e.silo } : {}), version: e.version });
+    n++;
+  }
+  return n;
+}
+
 export function factStoredThisTurn(turnId: string | undefined): boolean {
   return durableMemoryWritesThisTurn(turnId).some((w) => w.kind === "memory");
 }

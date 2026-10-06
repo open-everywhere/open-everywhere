@@ -22,11 +22,17 @@ function safeDomains(): readonly Domain[] {
   }
 }
 
+function renderReadRoad(road: { readonly tool: string; readonly args: Readonly<Record<string, string | number>> } | undefined): string {
+  if (!road) return "read with: no tool takes this item as a target.";
+  return `read with: ${road.tool}(${JSON.stringify(road.args)})`;
+}
+
 export const searchEntry = defineTool({
   description:
     "Search this domain's connected work surfaces (GitHub, Notion, Linear, ...) by keyword, and get " +
-    "back ids + titles — a pointer, not an answer. A result names its connector; read the actual " +
-    "item with the matching read tool (read_notion_page, read_linear_issue, check_pr_status, ...). " +
+    "back ids + titles — a pointer, not an answer. Each hit's `read with:` line names the tool and " +
+    "arguments that read the item, or says no tool takes it. The named tool runs its own access " +
+    "check and can refuse. Read the item before you say anything about its body. " +
     "Omit `scope` to search every surface this domain holds a work grant on; a surface with no " +
     "search-capable credential is reported absent, not silently skipped.",
   inputSchema: z.object({
@@ -43,7 +49,15 @@ export const searchEntry = defineTool({
   outputSchema: z.object({
     query: z.string(),
     insideDomain: z.boolean(),
-    hits: z.array(z.object({ connector: z.string(), id: z.string(), title: z.string(), url: z.string().optional() })),
+    hits: z.array(
+      z.object({
+        connector: z.string(),
+        id: z.string(),
+        title: z.string(),
+        url: z.string().optional(),
+        readWith: z.object({ tool: z.string(), args: z.record(z.string(), z.union([z.string(), z.number()])) }).optional(),
+      }),
+    ),
     absent: z.array(z.object({ connector: z.string(), reason: z.string() })),
   }),
   async execute(input, ctx) {
@@ -86,7 +100,7 @@ export const searchEntry = defineTool({
       lines.push(`Search for "${output.query}" matched nothing across the surfaces this domain can reach.`);
     } else {
       lines.push(`Search for "${output.query}" — ${output.hits.length} result(s):`);
-      for (const h of output.hits) lines.push(`- [${h.connector}] ${h.id}: ${h.title}${h.url ? ` (${h.url})` : ""}`);
+      for (const h of output.hits) lines.push(`- [${h.connector}] ${h.id}: ${h.title}${h.url ? ` (${h.url})` : ""}\n  ${renderReadRoad(h.readWith)}`);
     }
     if (output.absent.length > 0) {
       lines.push(`Not searched: ${output.absent.map((a) => `${a.connector} (${a.reason})`).join("; ")}.`);

@@ -104,6 +104,14 @@ are `.cmd` shims and `node_modules/.bin/tsx` is a shell script, and Node spawns 
 shell. `npmCommand`, `npxCommand` and `tsxCommand` return the plain command off Windows and the
 tool's own JS entry, run with the current Node, on Windows.
 
+**Two root legs skip on Windows only (OPE-2287).** On native Windows a Node/libuv defect aborts a
+spawned child at `process.exit` with `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING),
+src\win\async.c:94`. `test:deploy` and `test:egress-proxy-boot` spawn such children, so on win32
+each leg prints a `⏭ SKIP` line that names the defect and the ticket, and then stops. On every other
+platform both legs run and gate. `scripts/win32-exit-abort.ts` holds the predicate, and
+`test:win32-exit-abort` proves that it answers `null` off win32 and that only these two legs call
+it. No product exit path changed. Delete the skip when a fixed Node ships.
+
 **And write it so it does not care what the HOST exported (OPE-1120).** A suite that reads an
 environment variable it did not set answers to the machine, not to the code — green on a laptop, red
 in a cloud sandbox, or the reverse. Two suites in this chain were doing exactly that: one asserted
@@ -161,22 +169,45 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
   provider serializes — the prompt-prefix gate
   (`tests/integration/liveness/prompt-prefix-stability.test.ts`) compares it, because a re-worded
   description costs the prompt cache exactly as much as a new tool name does.
-- **A script belongs to ONE leg, and the harness enforces it.** A background delegation settles on
-  its own clock, so a leg's settlement turn — and the corrective re-drive behind it — can outlive the
-  leg that dispatched the worker and land on the NEXT leg's script. The FOREIGN-WAKE FENCE
+- 🔴 **A SEAT THAT FORWARDS ENDS ITS TURN, AND THE JOB'S RESULT IS A NEW TURN OF THE SEAT**
+  (OPE-2338, OPE-2350). Every conversation seat forwards a job with `work`, and `work` returns a
+  receipt at once, so the seat's dispatch turn ends there. The work session starts the worker with
+  eve's `agent`. It needs no script: `agent/model/scripted-resolve.ts`'s `defaultWorkStepModel`
+  serves its steps. The worker answers from the `child` arm of the dispatch script, which is
+  registered under `ANY_SESSION`. The result comes back as a **result wake**: a new turn of the
+  seat's own session, whose one trigger message has the id `work-result-<taskId>`. So a test arms the
+  result-wake script on the SEAT's own session id with `armSettlement(dispatched, script)`, then
+  waits for that turn with `consumeSettlement({ armed, dispatched, taskId, label })` or
+  `awaitWorkResult`. `workTaskIdOfCall` reads the task id that the work session started for one
+  `work` call, from the host's own `delegation.task_started` row. The measured sequence is in
+  `tests/integration/harness.ts`'s delegation choreography seam.
+- **Inside the work session, eve holds the turn open while its tasks work** (OPE-2248). eve holds the
+  work session's turn at `turn.waiting` and calls the model again with each result, which arrives as
+  a `task.result` message inside the same turn. So the step that reads a worker's output inside that
+  turn is a LATER step of the same arm, and `awaitTaskResult({ handle, taskId, label })` waits for
+  it. Write a task id that a step needs with the `TASK_FROM_RECEIPT` placeholder, because the whole
+  arm is registered before the wake and eve mints the id at dispatch. A turn whose text is dropped
+  is corrected only once it ENDS, which is after its tasks settle: release a held worker BEFORE you
+  measure a correction.
+- **A script belongs to ONE leg, and the harness enforces it.** A forwarded job settles on its own
+  clock, so a leg's result wake — and the corrective re-drive behind it — can outlive the leg that
+  dispatched the worker and land on the NEXT leg's script. The FOREIGN-WAKE FENCE
   (`agent/model/scripted-model.ts`) refuses that: a script registered under the wildcard key is never
   served a **call-bearing** step for a PARENT turn whose wake id a **different** registration already
   answered. Such a turn gets judged silence, spends no step, and is recorded as
   `RecordedRequest.foreignWakeSilence` — assert that field when you want to prove a straggler was
   absorbed. 🔴 **A test that MEANS to serve a later turn of an earlier wake registers on that
-  SESSION's own id**, which is what `armSettlement` does; the wildcard key is a catch-all, and a
+  SESSION's own id** — `registerScript(script, sessionId)`; the wildcard key is a catch-all, and a
   catch-all must not catch another leg's turn. A `say`-only step is exempt, because absorbing an
   unknown number of stragglers is exactly what a drain script
   (`SETTLEMENT_DRAIN_SCRIPT`) is for. **The signal is the `wake-id` on the LAST `<wake …>` envelope
   of the served prompt**, and that one fact is the whole of what the fence sees: a turn that renders
-  no envelope of its own — a settlement turn, the corrective re-drive, which re-stamps the original
-  id — resolves the PREVIOUS leg's wake, while a turn with its own envelope resolves a fresh id that
-  nothing owns, and a prompt with no envelope at all leaves the fence inert. Only a single-window
+  no envelope of its own — the corrective re-drive, which re-stamps the original id — resolves the
+  PREVIOUS leg's wake, while a turn with its own envelope resolves a fresh id that nothing owns. A
+  result wake for a person's job is such a turn: the host mints a fresh wake id for it, so the fence
+  does not catch it,
+  and `armSettlement` keys its script on the seat's session id instead. A prompt with no envelope at
+  all leaves the fence inert. Only a single-window
   unified session renders a `wake-id` at all, and on that path a leg-opening delivery is always
   judged, so a fresh leg can never be fenced. Why it matters: before
   the fence, a straggler took the next leg's `agent` call and the leg's own turn then found a spent
@@ -186,7 +217,7 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
   `scripts/scripted-wake-ownership-test.ts` pins the rule offline.
 - **The TIER BARRIER separates tests, and since OPE-2265 its quiet window is CONDITIONAL.**
   `harness.ts`'s `drainOutstandingSettlements` runs in the shared `afterEach`: it registers a closing
-  drain and waits for the audit log to go quiet, so a settlement turn a test left behind is answered
+  drain and waits for the audit log to go quiet, so a result wake a test left behind is answered
   and closed before the next test registers anything. **It used to wait 1 500 ms after every test in a
   file that had booted.** Measured on a 4-core 13 680 MB cloud sandbox, on `main`, the
   whole tier at one worker: **265 barriers, 425.1 s, mean 1 604 ms each — and 245 of the 265 saw no
@@ -245,7 +276,7 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
     rather than a cost one. The witness reads the slice since the previous barrier's own cursor. If
     that cursor advanced unconditionally, a test that dispatched a worker which has not settled would
     hand the NEXT barrier an empty slice — "not owed" — and the next barrier would shorten over a
-    settlement turn that is still owed. So the advance waits until a `delegation.task_settled` or
+    result wake that is still owed. So the advance waits until a `delegation.task_settled` or
     `delegation.task_failed` row **naming that same task id** joins the spawn row. A dispatch a test
     abandons pins the floor for the rest of the file, and every later barrier then pays the full
     window. 🔴 **The join is on the id and never on a count.** `opened > closed` looks conservative
@@ -279,19 +310,16 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
   (`tests/integration/liveness/turn-cancel-tool-hold.test.ts`); use that one when the claim is about
   the step the cancel ABORTS, because a step held at its model call has run no tools.
   🔴 **A cancel does not shorten a `delayMs` hold — call `handle.releaseHolds()` as soon as the hold
-  has done its job.** eve carries an abort signal into a real provider call, but the mock-model shape
-  a scripted step answers exposes none, so the hold is a plain timer the fork pays in full.
-  🔴 **Release it only after `await waitForTurnCancelDelivered(anchor.sessionId)`, never on the
-  `turn.cancel_requested` row alone (OPE-2281).** That row proves the ingress accepted the stop into
-  the session inbox. It does not prove the TURN has it: eve still forwards the cancel to the turn's
-  own cancellation hook, and a probe found that forward still pending when the row appeared in 9 of
-  12 loaded runs. A call released first can let the turn complete. eve then settles the cancel late,
-  with no turn tally (a `turn.cancelled` row with no `ran`), or after the ignored-stop grace (a
-  second, `turn.stop_ignored`, row). The barrier waits for the cancel's `hook_received` event in the
-  fork's workflow store, so the released call's result lands behind it. **Precondition:** hold a
-  step ≥ 1, after a tool step, so the held call runs in the turn workflow. eve's inline first step
-  takes a cancel straight from the session inbox and writes no hook event, so the barrier would
-  time out there.
+  has done its job.** A cancel does not end the hold, so the hold is a timer the fork pays in full.
+  🔴 **A cancel test sets `holdUntilCancelled: true` on the held step (OPE-2310).** On eve 0.71 a stop
+  reaches the active turn as an in-process abort, and the turn reads it only when the held call
+  returns. A release on the `turn.cancel_requested` row alone can let the call return first, and the
+  turn then completes instead of cancelling. With `holdUntilCancelled`, the release does not end the
+  hold until eve has aborted that model call. eve passes the abort signal to the model call, and the
+  scripted model reads it off the call options. Assert `handle.holdsCancelDelivered()` is 1 beside
+  `holdsCutShort()`. `tests/integration/turn-cancel-barrier.test.ts` pins the barrier without a
+  boot. (On `main`, eve 0.54.3, the barrier is OPE-2281's `waitForTurnCancelDelivered`, which reads
+  a turn-control hook token that eve 0.71 does not write.)
   🔴 **A turn that ends in prose with no `reply` call owes a corrective re-drive.** Before the next
   turn in the same session, call `awaitProseRedriveSettled(cursor, label)` with the turn's handle
   still registered, then dispose it. `awaitWindowQuiet()` alone is a bounded quiet window, and at 6
@@ -361,6 +389,8 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
   while the OPE-2197 turn/script race was open, OPE-2265 raised it to 4 once OPE-2240's foreign-wake
   fence had closed that race's call-bearing half, and OPE-2281 raised it to 6 once the re-drive and
   cancel-delivery barriers were in (3 of 3 whole-tier runs green at 6 and at 4; 6 was 10.4 % faster).
+  Those runs were on eve 0.54.3. On eve 0.71 the cancel-delivery barrier does not apply, and 6
+  workers is not yet measured on eve 0.71.
   See the next bullet and `scripts/ci-max-workers.ts` for the measurements. So the measured 4-core
   sandbox now schedules **SIX** workers: a fork is not CPU-bound for its whole life, so the cores
   count at 1.5 workers each (`CORE_OVERSUBSCRIPTION`, measured on that box only). The ceiling still
@@ -500,17 +530,59 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
   large tier. 🔴 A **targeted** leg (`npm run test:integration -- <file>`) is never sharded and
   never prints that line: it is not the tier, and a line claiming one nobody ran is what the lander
   believes.
+- **Run a LIST of spec files in ONE invocation, not a serial loop** (OPE-2345). Give every file as a
+  vitest file argument: `npm run test:integration -- tests/integration/a.test.ts tests/integration/b.test.ts …`.
+  The wrapper runs the prepare step once, then ONE vitest process for the whole list, at the tier's
+  worker count (`integrationMaxWorkers()`, the same value the tier lines print as `workers=`). A serial
+  loop of N single-file legs pays N prepare steps and N vitest start-ups, and runs one file at a time. Four
+  rules apply. (1) Give the full repository-relative path: vitest reads each argument as a SUBSTRING
+  filter, so `memory` alone selects every file whose path holds that word. (2) Keep one list to at most
+  32 files (`SANDBOX_FILES_PER_SHARD`, the per-process count the tier's own shards are sized to), and
+  split a longer list across invocations. A list is one process and the wrapper does not shard it. (3) Do
+  not set `OE_IT_SHARD`: a list is a targeted leg, so the wrapper exits 2 and runs nothing. (4) A list
+  prints no `OE_PROOF` line, because it is not the tier. Set `OE_IT_CI_MAX_WORKERS=1` only to bisect a
+  red that you suspect is the worker count's.
 - **One shard per sandbox, for a fan-out** (OPE-2282). `OE_IT_SHARD=k/N npm run test:integration`
   runs the prepare step, then ONLY shard k of N, and prints ONE line that names the shard:
   `OE_PROOF sha=<head> suite=test:integration--shard=k/N exit=<code>`. The run is the same
   `--shard=k/N` pass the full series runs at position k, so N fanned runs schedule the same files as
-  one sequential run. The split is vitest's own and reads only the tier's file list: a sha1 of each
-  root-relative path, sorted, then cut into N runs that differ by at most one file. So one sha plans
-  one split in every CLEAN sandbox: the list is the working tree's, and a stray untracked
-  `*.test.ts` changes it. Each run logs the file count and a digest of the list; nothing compares
-  the digests across runs yet.
+  one sequential run. The split reads only the tier's file list and the tracked timings file (next
+  item). So one sha plans one split in every CLEAN sandbox: the list is the working tree's, and a
+  stray untracked `*.test.ts` changes it. Each run logs the file count and a digest of the list;
+  nothing compares the digests across runs yet.
   `npm run test:suite-lock` proves that N single-shard plans cover every tier file exactly once, and
-  checks `shardFiles` against vitest's real sequencer. Only a COMPLETE, all-green series on one sha
+  checks `shardFiles` against the sequencer vitest really runs.
+- **The shards are balanced by measured duration, not by file count** (OPE-2344). vitest's own
+  `--shard=k/N` cuts N runs of equal FILE COUNT, ordered by a sha1 of each path. One file's cost is
+  not another's: on `eve-0.69` (121 files, 6 workers) shard 1 walled 368 s against 78–154 s for the
+  other three, and the slowest shard sets the fan-out's proof time. `vitest.config.ts` now installs
+  `DurationShardSequencer` (`scripts/it-shard-sequencer.ts`). Its `shard()` calls `balanceShards`
+  (`scripts/it-shards.ts`): the longest file first, each into the least-loaded shard. The weights
+  come from the checked-in `scripts/it-timings.json`, in wall milliseconds per file. A file with no
+  entry weighs the median of the tier's measured files. Ties break on the path, then on the shard
+  with fewer files, then on the lower index, so the split is deterministic for one file list and one
+  timings file. The argv, the shard names and every log line stay `--shard=k/N`.
+  🔴 Balance cannot beat one slow file. A shard's wall is at least its slowest file, so a spec that
+  waits out `harness.ts`'s 360 s `waitFor` holds its shard at about 360 s however the rest is split.
+  `eve-0.69`'s shard 1 fits that shape, but no run has proved it: 368 s is the 360 s ceiling plus
+  about 8 s, both `own-account-rest-road` and `cancel-note-prefix-stability` hash into that shard
+  there, and the same two files pass in 16 s and 12 s on `main`. Fix a red spec; do not re-split
+  around it.
+  **Regenerate the timings** after the tier changes shape. Run each shard with the JSON reporter
+  beside the default one, one report file per shard, then merge them:
+
+  ```sh
+  OE_IT_SHARD=1/4 npm run test:integration -- --reporter=default --reporter=json --outputFile.json=/tmp/it-1.json
+  # …the same for 2/4, 3/4 and 4/4…
+  npm run integration:timings -- /tmp/it-1.json /tmp/it-2.json /tmp/it-3.json /tmp/it-4.json
+  ```
+
+  A file's duration is `endTime - startTime` in the report: from the first test's start to the last
+  test's end. It does not hold the import, collection, `setupFiles` or `beforeAll`/`afterAll`. A file
+  whose `beforeAll` fails measures about 0 ms, so the script refuses a report entry with status
+  `failed`: regenerate from green runs only. A file in two reports takes the longest. An entry for a tier file that no report measured stays, so one shard's report
+  refreshes one shard's files. An entry for a file outside the tier is dropped. A new spec needs no
+  regeneration to run: it weighs the median until the next one. Only a COMPLETE, all-green series on one sha
   proves the tier: `deploy:cloud-proof-verify` refuses a partial series, two Ns, or two shas, and a
   red shard is a `fail` (see [the cloud-proof lane](../deploy/cloud-proof.md)). A bad value, a
   targeted leg, or an `OE_IT_SHARDS` that names another N exits 2 and runs nothing. With
@@ -549,7 +621,7 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
   this ticket's:
   - The prewarm was **147.7 s** and peaked at **3 549 MB** (a standalone measurement; the same leg inside
     the step reports **18.8 s**, which is the figure the floor above quotes — `prewarm.ts` says why the two
-    differ). eve's own `prewarmBuiltAppSandboxes` needs
+    differ). eve's own graph load needs
     the compiled module map and builds it with `loadCompiledModuleMapFromAuthoredSource`, which
     re-parses the authored source in rolldown — the parse `eve build` had just finished (47.2 s of
     102 s in that parser alone, OPE-2227). The built bundle already carries that module map and eve
@@ -557,12 +629,18 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
     forks import and reads the artefacts back: **13.0 s, 391 MB**, and eve itself confirms the template
     key is unchanged (`1 reused, 0 built` against a tree the authored path had just prewarmed). A
     missing eve symbol falls back to the authored path with a named log line, never a silent one.
+    On eve 0.69.0+ both roads enter through eve's one remaining export, `prewarmAppSandboxes`, and the
+    fast road is its `loadAgentGraph` hook (OPE-2248).
   - The PGlite template was minted **once per shard** (~3.9 s × 4+ shards, OPE-2239) because
     `globalSetup` runs per process. The step mints one under `.oe-it-prepare/` and every shard reads it.
     `tests/integration/global-setup-env.test.ts` is what reds if a shard goes back to minting its own.
   The step also **caches the prepared tree**, in two tiers with very different trust. A stamp
   (`.oe-it-prepared.json`) skips `eve build` and the prewarm on a tree already prepared for the same key —
-  local, written by a prepare step that ran here, and **on by default**. One force-pushed branch on the dev
+  local, written by a prepare step that ran here, and **on by default**. A prepare that is not warm
+  deletes the stamp before it writes an artefact, and writes it again only under its own key (OPE-2324). A
+  dirty tree's key reads its working-tree content (OPE-2345, below), so it is never the clean tree's key. The
+  next run on the restored clean tree is then not warm: it builds again, or restores when the remote cache
+  is on, and never boots the dirty bundle. One force-pushed branch on the dev
   repo (`oe-it-cache/prepared-tree`) carries a gzipped tar of `.output` + `.eve/sandbox-cache` across runs —
   and that half is **opt-in**. 🔴 A restore is not a read: it replaces those two trees on disk, and
   `harness.ts` then `import()`s the restored `.output/server/index.mjs` in every fork, so the bytes are
@@ -585,8 +663,18 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
   slot tree is generated from, and the root `tsconfig.json` decides what `oe:build` emits. ⚠️ The generated
   slot tree under `agent/` is **gitignored**, so it is keyed only transitively, through those committed
   inputs — never directly, because `git ls-tree` cannot see it. 🔴 **An uncommitted edit under any of
-  those paths refuses the key entirely**, because the key reads the COMMIT and a hit would otherwise
-  serve a bundle this tree did not build. An edit outside them — a test, a script, a doc — keeps it.
+  those paths is keyed on its working-tree content** (OPE-2345). The key adds one fingerprint for each
+  path that `git status --porcelain -uall` reports there: a SHA-256 of the file's bytes plus its
+  executable bit, or `absent` for a deleted file. The next edit to the same file moves the key. `git
+  status` reports every non-ignored path whose content differs from HEAD, except a path marked
+  `skip-worktree` or `assume-unchanged`. A reported symlink or directory (a nested repository or a
+  submodule) REFUSES the key, so that run builds: a link's target can sit outside the keyed paths, and
+  `git status` reports a nested repository as one line, never the files inside it. A key that reads working-tree content ends in `-wt`. It serves the two
+  local stamps only, never the remote cache: no restore and no publish. The key of a clean tree did not
+  change, so an archive published before OPE-2345 still matches. An edit outside the keyed paths — a
+  test, a script, a doc — keeps the clean key. Before OPE-2345 an uncommitted keyed edit refused the key,
+  so every prepare on a dirty tree was cold: OPE-2338 ran 17 single-file legs on one dirty tree and paid
+  about 100 s of cold prepare on each. A second single-file run on the same dirty tree is now `mode=warm`.
   `OE_IT_PREPARE_CACHE_PUBLISH=1` plus `OE_IT_PREPARE_CACHE=remote` is what lets a run publish, and it is
   off by default because a force-push to a shared repository is not something a test run should do unasked. Why a branch and not a release asset or a custom ref:
   `tests/integration/prepare-cache.ts` records what the sandbox credential was measured to allow —

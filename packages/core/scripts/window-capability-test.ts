@@ -229,7 +229,7 @@ const NATIVE_DM_CAPABILITY_GOLDEN: Readonly<Record<string, ConsequenceTier>> = {
   bash: "open",
   web_fetch: "open",
   write_file: "open",
-  post_file: "open",
+  post_file: "gate:member",
   open_pull_request: "gate:member",
   create_skill: "gate:member",
   create_routine: "gate:member",

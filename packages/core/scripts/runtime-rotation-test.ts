@@ -409,16 +409,14 @@ registerConfig({
 }
 
 {
-  const rel = "packages/core/agent/routines/fire-window.ts";
-  const src = readFileSync(join(REPO_ROOT, rel), "utf8");
-  const claimAt = src.indexOf("const runtimeChanged");
-  const healAt = src.indexOf("const healed");
-  const planAt = src.indexOf("const plan = planFor(");
-  ok(src.includes("claimRuntimeRotation"), `🔴 ${rel} claims the runtime rotation — without it a cron fire after an eve bump dies in a stranded session, silently`);
-  ok(claimAt >= 0 && healAt > claimAt, `🔴 ${rel} resolves the verdict into a \`runtimeChanged\` binding and consumes it (a claim whose boolean is dropped heals nothing)`);
-  ok(planAt > healAt, `🔴 ${rel} heals BEFORE it mints the fire's token — a heal after that mint cannot change the session the fire is dispatched into`);
-  ok(/planFor\(healed \?\?/.test(src), `🔴 ${rel} builds the token from the HEALED generation, so the fire cannot ride back onto the generation it is healing away from`);
-  ok(/domainName: grain\.domainName/.test(src), `🔴 ${rel} passes the SEAT's grain too — a fire and a human wake reach ONE parent row, and two fingerprints on it would rotate it on every tick`);
+  const relW = "packages/core/agent/channels/work-generation.ts";
+  const w = readFileSync(join(REPO_ROOT, relW), "utf8");
+  ok(w.includes("claimRuntimeRotation"), `🔴 ${relW} claims the runtime rotation — without it a fire after an eve bump dies in a stranded work session, silently`);
+  ok(/const runtimeChanged = await/.test(w), `🔴 ${relW} resolves the verdict into a \`runtimeChanged\` binding (a claim whose boolean is dropped heals nothing)`);
+  const relF = "packages/core/agent/routines/fire-work.ts";
+  const f = readFileSync(join(REPO_ROOT, relF), "utf8");
+  ok(/resolveWork: \(input\) => resolveWorkGeneration\(input\)/.test(f), `🔴 ${relF}'s live deps resolve W's generation through resolveWorkGeneration — the fire reaches the heal above`);
+  ok(/const generation = await deps\.resolveWork\(/.test(f) && f.indexOf("const generation = await deps.resolveWork(") < f.indexOf("token: generation.token"), `🔴 ${relF} resolves W's generation BEFORE it addresses the forward, so the fire is delivered to the healed generation`);
 }
 
 {

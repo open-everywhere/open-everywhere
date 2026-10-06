@@ -133,8 +133,8 @@ function main(): void {
       "settings-lever": 0,
       secret: 33,
       connection: 38,
-      identity: 21,
-      platform: 14,
+      identity: 19,
+      platform: 18,
       "pending-migration": 45,
     };
     for (const [klass, n] of Object.entries(expected)) {
@@ -143,7 +143,7 @@ function main(): void {
         `class ${klass} holds ${n} entries (found ${census.get(klass) ?? 0}) — if you meant to change this, say so here`,
       );
     }
-    ok(ENV_READ_ALLOWLIST.size === 151, `the allowlist holds 151 names (found ${ENV_READ_ALLOWLIST.size})`);
+    ok(ENV_READ_ALLOWLIST.size === 153, `the allowlist holds 153 names (found ${ENV_READ_ALLOWLIST.size})`);
   }
 
   {
@@ -181,19 +181,19 @@ function main(): void {
     const use = `if (process.env[CREDENTIAL_KEY_ENV]) register();`;
     const exported = collectExportedNameConstants([
       ["packages/core/agent/credentials/db-broker.ts", decl],
-      ["agent/lib/register-adapters.ts", use],
+      ["packages/adapters/agent/register-defaults.ts", use],
     ]);
-    const scan = scanComputedEnvReads("agent/lib/register-adapters.ts", use, exported);
+    const scan = scanComputedEnvReads("packages/adapters/agent/register-defaults.ts", use, exported);
     ok(scan.resolved[0]?.name === "OE_CREDENTIAL_ENCRYPTION_KEY", "an imported key constant resolves across modules");
 
-    ok(scanComputedEnvReads("agent/lib/register-adapters.ts", use).dynamic.length === 1, "…and does not resolve without it");
+    ok(scanComputedEnvReads("packages/adapters/agent/register-defaults.ts", use).dynamic.length === 1, "…and does not resolve without it");
 
     const clash = collectExportedNameConstants([
       ["a.ts", decl],
       ["b.ts", `export const CREDENTIAL_KEY_ENV = "OE_SOMETHING_ELSE";`],
     ]);
     ok(clash.get("CREDENTIAL_KEY_ENV") === null, "a name exported with two values is ambiguous");
-    ok(scanComputedEnvReads("agent/lib/register-adapters.ts", use, clash).dynamic.length === 1, "…so the read stays dynamic");
+    ok(scanComputedEnvReads("packages/adapters/agent/register-defaults.ts", use, clash).dynamic.length === 1, "…so the read stays dynamic");
   }
 
   {

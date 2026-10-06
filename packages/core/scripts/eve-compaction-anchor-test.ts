@@ -107,7 +107,7 @@ function mockModel(): { model: MockLanguageModelV4; calls: () => number } {
     threshold: THRESHOLD,
   };
 
-  ok(estimated + OVERHEAD <= THRESHOLD, "premise: the JSON.stringify/4 estimate reads the fixture as WITHIN the threshold");
+  ok(estimated + OVERHEAD <= THRESHOLD, "premise: the UTF-8 bytes/4 estimate reads the fixture as WITHIN the threshold");
   ok(
     compaction.getInputTokenCount(messages, config) + OVERHEAD > THRESHOLD,
     "premise: the reported input-token count reads the same fixture as OVER the threshold",
@@ -317,11 +317,13 @@ function driveMaybeCompact(work: WorkStep, onCompaction?: () => Msg[], opts: Dri
     "canonicalizeMemoryRecords",
     "resolveCompactionModel",
     "requireSessionModelReference",
-    "mergeProviderSafetyIdentifier",
+    "resolveCallProviderOptions",
+    "resolveConversationId",
     "createCompactionRequestedEvent",
     "createCompactionCompletedEvent",
     "formatLanguageModelGatewayId",
     "getInputTokenCount",
+    "getRequestEnvelopeTokens",
     "compactMessages",
     "buildGatewayAttributionHeaders",
     "contextStorage",
@@ -343,11 +345,13 @@ function driveMaybeCompact(work: WorkStep, onCompaction?: () => Msg[], opts: Dri
     }),
     async () => ({ model: { modelId: "stub" }, providerOptions: undefined }),
     () => ({ modelId: "stub" }),
-    (_ref: unknown, providerOptions: unknown) => providerOptions,
+    (input: { providerOptions: unknown }) => input.providerOptions,
+    (sessionId: string) => sessionId,
     createCompactionRequestedEvent,
     createCompactionCompletedEvent,
     () => "stub/model",
     () => 999,
+    () => undefined,
     async (messages: Msg[]) => work(messages),
     () => undefined,
     { getStore: () => undefined },

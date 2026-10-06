@@ -1,19 +1,14 @@
 import { defineState } from "eve/context";
 import type { InvokerPosture } from "./invoker-posture.js";
+import { readWakeSlot, writeWakeSlot } from "./wake-slot.js";
 
-const slot = defineState<InvokerPosture>("open-everywhere.invoker-posture", () => "interactive");
+const SLOT = "open-everywhere.invoker-posture";
+const slot = defineState<InvokerPosture>(SLOT, () => "interactive");
 
 export function setInvokerPosture(posture: InvokerPosture): void {
-  try {
-    slot.update(() => posture);
-  } catch {
-  }
+  writeWakeSlot(SLOT, () => slot.update(() => posture));
 }
 
 export function currentInvokerPosture(): InvokerPosture {
-  try {
-    return slot.get();
-  } catch {
-    return "interactive";
-  }
+  return readWakeSlot<InvokerPosture>(SLOT, () => slot.get(), { contextless: "interactive", restricting: "untrusted-remote" });
 }

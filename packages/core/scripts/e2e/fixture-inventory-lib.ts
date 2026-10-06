@@ -640,6 +640,26 @@ export function buildInventory(input: InventoryInput): Inventory {
   return { rows, flags };
 }
 
+export interface InventoryOptions {
+  readonly check: boolean;
+  readonly warnOnly: boolean;
+  readonly partial: boolean;
+  readonly ifArmed: boolean;
+}
+
+export function inventoryOptions(args: readonly string[]): InventoryOptions {
+  return {
+    check: args.includes("--check"),
+    warnOnly: args.includes("--warn-only"),
+    partial: args.includes("--partial"),
+    ifArmed: args.includes("--if-armed"),
+  };
+}
+
+export function staleCheckExitCode(options: Pick<InventoryOptions, "warnOnly">): 0 | 1 {
+  return options.warnOnly ? 0 : 1;
+}
+
 function cell(text: string): string {
   return text.replaceAll("|", "\\|");
 }
@@ -663,7 +683,8 @@ the shipped manual, so the two commits together. \`-- inventory --check\` compar
 rows against a fresh resolution and exits non-zero when a room this run can see has changed,
 arrived or gone. It compares ROWS rather than text, so an operator holding part of the fixture set
 is not told the file is stale over rooms their credentials never named. The check calls six
-vendors, so the \`test\` chain runs it as a WARNING rung, inert unless \`E2E_FIXTURE_TABLE_CHECK=1\`.
+vendors, so the \`test\` chain's rung (\`npm run lint:e2e-fixtures\`) is inert unless
+\`E2E_FIXTURE_TABLE_CHECK=1\`. Armed, it gates: a stale table fails the \`test\` chain.
 
 A write REFUSES twice over, because a wrong name here is the defect this file exists to remove:
 when a surface has no driver credential at all, and when a room that already carries a name in this

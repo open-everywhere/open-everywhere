@@ -46,16 +46,20 @@ const { registerConfig } = await import("@open-everywhere/core/agent/access/conf
 const { defineBundle, defineBinding } = await import("@open-everywhere/core/agent/access/bundle.js");
 const { setBlobPutter, assertBlobUrl, hostHtmlArtifact } = await import("@open-everywhere/core/agent/blob/hosting.js");
 
-const approvalOf = (postFile as unknown as { approval: { request: (ctx: { toolInput: unknown; session?: { auth: unknown } }) => unknown } }).approval.request;
+const { actionKind } = await import("@open-everywhere/core/agent/approvals/actions.js");
+const { getOperationalStore } = await import("@open-everywhere/core/agent/operational/provider.js");
+async function pendingPublishes(): Promise<{ id: string; argsJson: string; status: string; channelId: string }[]> {
+  return ((await getOperationalStore().listPendingActions("default")) as unknown as { id: string; kind: string; argsJson: string; status: string; channelId: string }[]).filter((r) => r.kind === "file.publish");
+}
 
-function registerBlobConfig(enabled: boolean, publicPrefix?: string): void {
+function registerBlobConfig(enabled: boolean, publicPrefix?: string, domains: readonly unknown[] = []): void {
   registerConfig({
     loadBundles: () => [defineBundle({ name: "org-default", instructions: "test" })],
     loadBindings: () => [defineBinding({ bundle: "org-default", scope: { level: "org" } })],
     pluginRegistry: {},
     skillContent: {},
-    loadDomains: () => [],
-    loadSilos: () => [],
+    loadDomains: () => domains as never,
+    loadSilos: () => (domains.length > 0 ? [{ name: "pf-brain", provider: "sqlite" }] : []) as never,
     domainsForSurface: () => [],
     loadBlobHosting: () => ({ enabled, ...(publicPrefix ? { publicPrefix } : {}) }),
   });
@@ -174,6 +178,7 @@ function fakeNet(): void {
       return { ok: true, status: 200, json: async () => ({ ok: true }) } as Response;
     }
     if (u === UPLOAD_URL) return { ok: true, status: 200, text: async () => "OK" } as Response;
+    if (u.endsWith("/api/chat.postMessage")) return { ok: true, status: 200, json: async () => ({ ok: true, ts: "1700159720.000100" }) } as Response;
     if (u.includes("discord.com/api")) return { ok: true, status: 200, json: async () => ({ id: "M1" }) } as Response;
     if (u === "https://api.notion.com/v1/file_uploads") {
       notionUploadCount += 1;
@@ -367,7 +372,7 @@ await inSession(async () => {
   ok(!!getUrl, "post_file(html, opt-out): the .html is uploaded as a file (getUploadURLExternal called)");
   ok(new URLSearchParams(getUrl!.body).get("filename") === "page.html", "post_file(html, opt-out): the attachment keeps the .html filename");
   ok(!calls.some((c) => c.url.endsWith("/api/chat.postMessage")), "post_file(html, opt-out): no link message posted (nothing hosted)");
-  ok((await approvalOf({ toolInput: { files: [{ source: { path: "page.html" }, filename: "page.html" }] } })) === "not-applicable", "approval(html, opt-out): not-applicable (attach path is ungated)");
+  ok((await pendingPublishes()).length === 0, "post_file(html, opt-out): no publish card is proposed (the attach path is ungated)");
 });
 } finally {
   restoreFetch();
@@ -385,22 +390,47 @@ setBlobPutter(async (args: { pathname: string; body: Uint8Array; contentType: st
 fakeNet();
 try {
 await inSession(async () => {
-  const res = await postFile.execute(
+  const res = (await postFile.execute(
     { files: [{ source: { path: "page.html" }, filename: "page.html" }], comment: "rendered page" },
     slackCtx("111.222"),
-  );
-  ok(res.posted === true && JSON.stringify((res as { urls?: string[] }).urls) === JSON.stringify([BLOB_URL]), "post_file(html, opt-in): returns the hosted Blob URL");
-  ok(!!putArgs && putArgs.pathname.startsWith("public-artifacts/") && putArgs.contentType === "text/html", "post_file(html, opt-in): writes under the reserved public prefix with text/html");
+  )) as { posted: boolean; pending?: boolean; pendingId?: string; urls?: string[]; message?: string };
+  ok(res.pending === true && typeof res.pendingId === "string", "post_file(html, opt-in): proposes a file.publish card and returns at once (OPE-2340)");
+  ok(res.urls === undefined && putArgs === undefined, "post_file(html, opt-in): nothing is published before a member approves");
+  ok((res.message ?? "").includes("Nothing is public yet"), "post_file(html, opt-in): the result tells the model the page is not public yet");
   ok(!calls.some((c) => c.url.endsWith("/api/files.getUploadURLExternal")), "post_file(html, opt-in): the HTML is NOT raw-uploaded as a file");
+  const card = calls.find((c) => c.url.endsWith("/api/chat.postMessage"));
+  ok(!!card && (new URLSearchParams(card.body).get("blocks") ?? "").includes("PUBLIC URL"), "post_file(html, opt-in): the card is posted into the room and says the page goes public");
+  const rows = await pendingPublishes();
+  ok(rows.length === 1 && rows[0]!.id === res.pendingId && rows[0]!.status === "pending", "post_file(html, opt-in): one pending file.publish row, frozen");
+  const frozen = JSON.parse(rows[0]!.argsJson) as { pages: { filename: string; sha256: string; contentBase64: string }[]; linkChannelId: string; threadTs: string | null; comment?: string; requestedBy: string };
+  ok(frozen.pages.length === 1 && frozen.pages[0]!.filename === "page.html" && frozen.pages[0]!.sha256.length === 64, "the card froze the page with its digest");
+  ok(frozen.linkChannelId === "C1" && frozen.threadTs === "111.222" && frozen.comment === "rendered page" && frozen.requestedBy === "U1", "the card froze the room, thread, comment and asker the click needs");
+
+  calls = [];
+  await assert.rejects(() => actionKind("file.publish")!.execute(frozen, "U0OTHER"), /only the person who asked/, "a member who did not ask cannot publish someone else's page");
+  ok(putArgs === undefined && calls.length === 0, "…and nothing was published or posted");
+
+  calls = [];
+  const outcome = await actionKind("file.publish")!.execute(frozen, "U1");
+  ok(outcome.includes(BLOB_URL), "the click publishes and its outcome line names the URL");
+  ok(!!putArgs && putArgs.pathname.startsWith("public-artifacts/") && putArgs.contentType === "text/html", "the click writes under the reserved public prefix with text/html");
   const msg = calls.find((c) => c.url.endsWith("/api/chat.postMessage"));
-  ok(!!msg, "post_file(html, opt-in): posts a text message with the URL");
+  ok(!!msg, "the click posts a text message with the URL");
   const text = new URLSearchParams(msg!.body).get("text") ?? "";
-  ok(text.includes(BLOB_URL) && text.includes("rendered page"), "post_file(html, opt-in): the message carries the Blob URL + the comment");
-  ok(new URLSearchParams(msg!.body).get("thread_ts") === "111.222", "post_file(html, opt-in): the link posts into the current thread");
-  ok((await approvalOf({ toolInput: { files: [{ source: { path: "page.html" }, filename: "page.html" }] } })) === "user-approval", "approval(html, opt-in): user-approval (the public Blob write is gated)");
-  ok((await approvalOf({ toolInput: { files: [{ source: { path: "shot.png" }, filename: "shot.png" }] } })) === "not-applicable", "approval(image, opt-in): not-applicable (only the public HTML publish is gated)");
+  ok(text.includes(BLOB_URL) && text.includes("rendered page"), "the link message carries the Blob URL + the comment");
+  ok(new URLSearchParams(msg!.body).get("thread_ts") === "111.222", "the link posts into the thread that asked");
   const newest = (await readAudit({ org: "default", action: "slack.post_file" }))[0];
-  ok(newest?.detail?.hosted === 1 && newest?.detail?.attached === 0, "post_file(html, opt-in): audit row records hosted=1, attached=0");
+  ok(newest?.detail?.hosted === 1 && newest?.detail?.attached === 0 && newest?.detail?.viaCard === true, "the click's audit row records hosted=1, attached=0, via the card");
+  ok(newest?.principalId === "U1", "…attributed to the member who approved — the asker");
+
+  calls = [];
+  putArgs = undefined;
+  const mixed = (await postFile.execute(
+    { files: [{ source: { path: "shot.png" }, filename: "shot.png" }, { source: { path: "other.html" }, filename: "other.html" }] },
+    slackCtx("111.222"),
+  )) as { posted: boolean; pending?: boolean };
+  ok(mixed.pending === true && mixed.posted === true, "a mixed call attaches the image and cards the page");
+  ok(calls.some((c) => c.url.endsWith("/api/files.getUploadURLExternal")) && putArgs === undefined, "…the image is uploaded at once, nothing is published");
 
   const POST_FILE_ROUTINE: Routine = {
     id: "r-postfile",
@@ -413,39 +443,55 @@ await inSession(async () => {
     status: "active",
     consecutiveFailures: 0,
   };
-  const fireAuth = {
-    current: { attributes: routineFireAttributes(POST_FILE_ROUTINE, { team_id: "T0PF", channel_id: "C0PF", channel_type: "channel" }, "channel", true) },
-  };
-  const HTML_INPUT = { files: [{ source: { path: "page.html" }, filename: "page.html" }] };
-  const fired = await approvalOf({ toolInput: HTML_INPUT, session: { auth: fireAuth } });
-  ok(
-    typeof fired === "object" && fired !== null && (fired as { type?: string }).type === "denied",
-    "🔴 approval(html, opt-in, UNATTENDED FIRE): DENIED — the publish refuses instead of parking the fire on a card nobody can click",
+  const fireCtx = withSandbox(
+    {
+      channel: { kind: "slack" },
+      session: { auth: { current: { attributes: { ...routineFireAttributes(POST_FILE_ROUTINE, { team_id: "T0PF", channel_id: "C0PF", channel_type: "channel" }, "channel", true), oe_grain: "task" } } } },
+    },
+    undefined,
   );
-  ok(
-    ((fired as { reason?: string }).reason ?? "").includes("nobody is attending this run"),
-    "…and the refusal says why, so the fire's report names the reason rather than ending in silence",
+  const before = (await pendingPublishes()).length;
+  calls = [];
+  await assert.rejects(
+    () => postFile.execute({ files: [{ source: { path: "page.html" }, filename: "page.html" }] }, fireCtx),
+    /nobody is attending this run/,
+    "🔴 post_file(html, opt-in, UNATTENDED FIRE): REFUSED — no card nobody can click",
   );
-  const humanAuth = {
-    current: { principalId: "U0HUMAN", attributes: { team_id: "T0PF", channel_id: "C0PF", channel_type: "channel", user_id: "U0HUMAN", trust_checked: "true" } },
-  };
-  ok(
-    (await approvalOf({ toolInput: HTML_INPUT, session: { auth: humanAuth } })) === "user-approval",
-    "🔴 control: a live human's publish STILL raises the card — the refusal is attendedness, not the tool",
-  );
-  ok(
-    (await approvalOf({ toolInput: { files: [{ source: { path: "shot.png" }, filename: "shot.png" }] }, session: { auth: fireAuth } })) === "not-applicable",
-    "control: an IMAGE on the same unattended fire is still ungated — the arm gates only the public publish",
-  );
-  ok(
-    (await approvalOf({ toolInput: HTML_INPUT, session: { auth: null } })) === "user-approval",
-    "control: an UNREADABLE bag stands the arm down — the card is still raised, so nothing is granted by standing down",
-  );
+  ok((await pendingPublishes()).length === before && calls.length === 0, "…and nothing was proposed or posted");
+  const firedImage = await postFile.execute({ files: [{ source: { path: "shot.png" }, filename: "shot.png" }] }, fireCtx);
+  ok(firedImage.posted === true, "control: an IMAGE on the same unattended fire still attaches — the arm refuses only the public publish");
 });
 } finally {
   restoreFetch();
 }
 setBlobPutter(undefined);
+
+{
+  const { defineDomain } = await import("@open-everywhere/core/agent/memory/domain.js");
+  calls = [];
+  registerBlobConfig(true, undefined, [
+    defineDomain({ name: "pf-mixed", reach: [`notion/${NOTION_WORKSPACE}/${NOTION_PAGE}`, "slack/T1/C_OPS"], memory: "pf-brain" }),
+  ]);
+  fakeNet();
+  try {
+    await inSession(async () => {
+      const before = (await pendingPublishes()).length;
+      await assert.rejects(
+        () => {
+          const c = notionCtx() as { session: { auth: { current: Record<string, unknown> } } };
+          c.session.auth.current = { ...c.session.auth.current, principalId: "notion-user-1", principalType: "notion-user" };
+          return postFile.execute({ files: [{ source: { path: "page.html" }, filename: "page.html" }] }, c);
+        },
+        /only the person who asked can approve a publish/,
+        "post_file(html, opt-in, notion): a card redirected to another platform's room is refused before it posts",
+      );
+      ok((await pendingPublishes()).length === before, "…and no card was proposed");
+    });
+  } finally {
+    restoreFetch();
+  }
+  registerBlobConfig(false);
+}
 
 calls = [];
 registerBlobConfig(true);
@@ -455,12 +501,17 @@ setBlobPutter(async () => {
 fakeNet();
 try {
 await inSession(async () => {
+  const proposed = (await postFile.execute({ files: [{ source: { path: "page3.html" }, filename: "page3.html" }] }, slackCtx("111.222"))) as { pendingId?: string };
+  const row = (await pendingPublishes()).find((r) => r.id === proposed.pendingId);
+  ok(!!row, "post_file(html, opt-in, write fails): the card is proposed");
+  calls = [];
   await assert.rejects(
-    () => postFile.execute({ files: [{ source: { path: "page.html" }, filename: "page.html" }] }, slackCtx("111.222")),
+    () => actionKind("file.publish")!.execute(JSON.parse(row!.argsJson), "U1"),
     /blob store exploded/,
-    "post_file(html, opt-in, write fails): fails loud (no silent attach fallback)",
+    "post_file(html, opt-in, write fails): the click fails loud (no silent attach fallback)",
   );
   ok(!calls.some((c) => c.url.endsWith("/api/files.getUploadURLExternal")), "post_file(html, opt-in, write fails): did not silently fall back to a raw upload");
+  ok(!calls.some((c) => c.url.endsWith("/api/chat.postMessage")), "post_file(html, opt-in, write fails): no link message for a page that was never published");
 });
 } finally {
   restoreFetch();
@@ -483,7 +534,7 @@ registerBlobConfig(false);
 const { loadBlobHosting: shippedBlobHosting } = await import("../agent/blob/hosting.js");
 ok(
   shippedBlobHosting().enabled === false,
-  "the SHIPPED org config keeps Blob hosting OFF (agent/blob/hosting.ts) — the fail-closed default, and the reason post_file's eve-native approval card cannot be raised on this tree",
+  "the SHIPPED org config keeps Blob hosting OFF (agent/blob/hosting.ts) — the fail-closed default, and the reason post_file's file.publish card cannot be raised on this tree",
 );
 
 console.log(`\n✓ post_file: ${n} assertions passed (validation, content-type, sandbox-path resolution+guards, surface dispatch, blob-hosting opt-in, the shipped org config, audit)\n`);

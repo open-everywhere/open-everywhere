@@ -45,7 +45,10 @@ import {
   seatCatchUp,
   dispatchNativeWakeWithRetry,
   readCappedBody,
+  OE_CHAT_NONMEMBER_ATTR,
+  rememberNonMemberAnswer,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { withEndsTurnFinalChannel } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   forgetNotionQuestion,
   rememberNotionQuestion,
@@ -202,7 +205,7 @@ export function liveNotionSupervisorDeps(
       if (respond !== undefined) {
         const answer = await resolveNotionInboundAnswer({ org, bareToken: token, auth });
         if (answer) {
-          const deliverAnswer = () => deliverNotionAnswer({ answerOrg: org, token, auth, message, context, answer, respond, surfaceKey });
+          const deliverAnswer = () => deliverNotionAnswer({ answerOrg: org, token, message, context, answer, respond, surfaceKey, auth });
           if (timing ? await timing.measure("eveSend", deliverAnswer) : await deliverAnswer()) return;
         }
       }
@@ -245,14 +248,13 @@ function notionSendFrom(from: RouteHandlerArgs<NotionState>["from"]): SendFn {
   };
 }
 
-type RespondFn = (input: { requestId: string; text: string }, opts: { auth: unknown; continuationToken: string; context?: readonly string[] }) => Promise<void>;
+type RespondFn = (input: { requestId: string; text: string }, opts: { continuationToken: string; context?: readonly string[] }) => Promise<void>;
 
 function notionRespondFrom(from: RouteHandlerArgs<NotionState>["from"]): RespondFn {
   return async (input, opts) => {
     await (from(opts.continuationToken) as unknown as { respond: (r: readonly { requestId: string; text: string }[], o: unknown) => Promise<unknown> }).respond(
       [{ requestId: input.requestId, text: input.text }],
       {
-        auth: opts.auth,
         ...(opts.context && opts.context.length > 0 ? { context: [...opts.context] } : {}),
       },
     );
@@ -293,12 +295,12 @@ function timedNotionWebhookRoute(
 async function deliverNotionAnswer(input: {
   readonly answerOrg: string;
   readonly token: string;
-  readonly auth: unknown;
   readonly message: string;
   readonly context: readonly string[];
   readonly answer: NotionInboundAnswer;
   readonly respond: RespondFn;
   readonly surfaceKey: string;
+  readonly auth?: { readonly attributes?: Readonly<Record<string, unknown>> } | null;
 }): Promise<boolean> {
   const detail = {
     requestId: input.answer.requestId,
@@ -306,14 +308,18 @@ async function deliverNotionAnswer(input: {
     chars: input.message.length,
     surfaceKey: input.surfaceKey,
     route: "native",
-    ...(input.answer.taskId !== undefined ? { taskId: input.answer.taskId } : {}),
     ...(input.answer.wakeId !== undefined ? { wakeId: input.answer.wakeId } : {}),
   };
   const [, workspace = "unknown", surface = "unknown"] = input.surfaceKey.split("/");
   try {
+    const stamp = input.auth?.attributes?.[OE_CHAT_NONMEMBER_ATTR];
+    const nonMember = (Array.isArray(stamp) ? stamp[0] : stamp) === "true";
+    if (nonMember && !(await rememberNonMemberAnswer(getOperationalStore(), input.answerOrg, input.answer.requestId))) {
+      throw new Error("the answerer is a non-member and the stamp could not be recorded — an unmarked guest answer is never delivered");
+    }
     await input.respond(
       { requestId: input.answer.requestId, text: input.message },
-      { auth: input.auth, continuationToken: input.token, context: input.context },
+      { continuationToken: input.token, context: input.context },
     );
   } catch (err) {
     const error = (err instanceof Error ? err.message : String(err)).slice(0, 300);
@@ -642,7 +648,7 @@ const notionWebhookRouteHandler = timedNotionWebhookRoute(
   },
 );
 
-export default defineChannel<NotionState, { state: NotionState }>({
+export default withEndsTurnFinalChannel(defineChannel<NotionState, { state: NotionState }>({
   kindHint: "notion",
   turnPolicy: "queue",
   state: { discussionId: null, pageId: null, workspaceId: null },
@@ -687,7 +693,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
       log(
         remembered
           ? `question bridge: posted ${question.toolName} (${question.kind}) into discussion ${target.discussionId} — answerable there (${question.requestId})`
-          : `question bridge: posted ${question.toolName} (${question.kind}) into discussion ${target.discussionId} — NOT answerable (no outstanding-question row); a delegated worker's question will stay parked`,
+          : `question bridge: posted ${question.toolName} (${question.kind}) into discussion ${target.discussionId} — NOT answerable by request id (no outstanding-question row)`,
       );
     },
     async "message.completed"(data, channel, ctx) {
@@ -715,7 +721,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
       });
     },
   },
-});
+}));
 
 function handshakeToken(rawBody: string): string {
   try {

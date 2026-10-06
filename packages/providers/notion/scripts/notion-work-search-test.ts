@@ -74,6 +74,7 @@ globalThis.fetch = (async () =>
       results: [
         { id: OWN_PAGE, object: "page", url: `https://notion.so/${OWN_PAGE}`, properties: { title: { type: "title", title: [{ plain_text: "Our own spec" }] } } },
         { id: OTHER_PAGE, object: "page", url: `https://notion.so/${OTHER_PAGE}`, properties: { title: { type: "title", title: [{ plain_text: "Someone else's page" }] } } },
+        { id: "db-tracker", object: "database", url: "https://notion.so/db-tracker", title: [{ plain_text: "Tracker" }] },
       ],
       has_more: false,
     }),
@@ -82,7 +83,14 @@ globalThis.fetch = (async () =>
 
 try {
   const unscoped = await notionWorkSearchAdapter.search(ctxIn("CROOM"), domain, "spec", { limit: 10, insideDomain: false });
-  ok(unscoped.length === 2, "unscoped: BOTH hits come back — reach is the credential's own reach, never filtered by default");
+  ok(unscoped.length === 3, "unscoped: EVERY hit comes back — reach is the credential's own reach, never filtered by default");
+  assert.deepEqual(
+    unscoped.find((h) => h.id === OWN_PAGE)!.readWith,
+    { tool: "read_notion_page", args: { page: OWN_PAGE } },
+    "🔴 a PAGE hit names `read_notion_page` with the page id that reads it",
+  );
+  passed++;
+  ok(unscoped.find((h) => h.id === "db-tracker")!.readWith === undefined, "NEGATIVE CONTROL: a DATABASE hit names no read road — `read_notion_page` cannot serve it");
   ok(
     unscoped.some((h) => h.id === OTHER_PAGE),
     "unscoped INCLUDES a page outside this domain's own roster — the load-bearing negative control for 'no filter as a boundary'",

@@ -56,14 +56,14 @@ console.log("1. eve dist pins:");
   );
 
   const coordBody = coord.slice(coord.indexOf("async function coordinateApprovalDelivery("), authStart);
-  const cancelIdx = coordBody.indexOf("optionId===`cancel`");
-  const candidateIdx = coordBody.indexOf("createApprovalCandidate(");
-  ok(cancelIdx >= 0 && candidateIdx > cancelIdx, "the cancel branch is still reached BEFORE createApprovalCandidate");
-  const betweenCancelAndCandidate = coordBody.slice(cancelIdx, candidateIdx);
   ok(
-    /settleDirectApprovalResponse\(\{actor:[^}]*outcome:`cancelled`/.test(betweenCancelAndCandidate),
-    "a cancel click still settles the request DIRECTLY with the raw clicker auth — the response policy is never consulted",
+    /function toCandidateDecision\((\w)\)\{if\(\1===`approve`\)return`approve`;if\(\1===`cancel`\|\|\1===`deny`\)return`cancel`\}/.test(coord),
+    "(i) a `cancel`/`deny` option still becomes the candidate decision `cancel`",
   );
+  ok(coordBody.indexOf("optionId===`cancel`") < 0, "(ii) 🔴 no cancel click settles the request directly — a cancel rides the response policy");
+  ok(/createApprovalCandidate\(\{[^}]*decision:\w+/.test(coordBody), "(ii) …the candidate carries its decision");
+  ok(/response:\{decision:\w+\.decision,principal:\w+\.responder\}/.test(authorize), "(iii) the policy receives `response.decision` and the responder as `response.principal`");
+  ok(/request:\{[^}]*principal:pendingInputRequester\(/.test(authorize), "(iii) …and the requester as `request.principal`");
 
   const timeoutStart = coord.indexOf("async function withAuthorizerTimeout(");
   ok(timeoutStart >= 0, "withAuthorizerTimeout is still the wrapper around the response policy call");
@@ -132,7 +132,7 @@ console.log("1. eve dist pins:");
 }
 
 console.log("2. response policy (adopt-part A):");
-const { decideResponder, sameResponder, initiatorBoundResponsePolicy, FOREIGN_RESPONDER_REASON } = await import(
+const { decideResponder, sameResponder, requesterBoundResponsePolicy, FOREIGN_RESPONDER_REASON, FOREIGN_CANCEL_REASON } = await import(
   "../agent/approvals/eve-response-policy.js"
 );
 
@@ -142,7 +142,7 @@ const aliceElsewhere = { authenticator: "teams", principalId: "U_alice", princip
 const aliceIssued = { ...alice, issuer: "https://slack.example" };
 
 {
-  eq(decideResponder(alice, alice), { status: "allowed" }, "the session initiator may approve their own request");
+  eq(decideResponder(alice, alice), { status: "allowed" }, "the requester may approve their own request");
   eq(
     decideResponder(bob, alice),
     { reason: FOREIGN_RESPONDER_REASON, status: "rejected" },
@@ -153,18 +153,43 @@ const aliceIssued = { ...alice, issuer: "https://slack.example" };
   ok(sameResponder(alice, aliceElsewhere) === false, "the same principal id on a DIFFERENT authenticator is not the same responder");
   ok(sameResponder(alice, aliceIssued) === false, "a differing `issuer` makes it a different responder (eve's own candidate-id grain)");
   ok(sameResponder(null, alice) === false, "a null responder never matches");
-  ok(sameResponder(alice, undefined) === false, "an undefined initiator never matches through sameResponder");
+  ok(sameResponder(alice, undefined) === false, "an undefined bound principal never matches through sameResponder");
 
-  eq(decideResponder(bob, null), { status: "allowed" }, "with NO session initiator the policy allows (pre-adopt behaviour; a reject would deadlock the card)");
-  eq(decideResponder(bob, undefined), { status: "allowed" }, "…same for an absent initiator");
+  eq(decideResponder(bob, null), { status: "allowed" }, "with NO bound principal the policy allows (pre-adopt behaviour; a reject would deadlock the card)");
+  eq(decideResponder(bob, undefined), { status: "allowed" }, "…same for an absent bound principal");
 
-  const policy = initiatorBoundResponsePolicy();
-  const ctxOf = (responder: unknown, initiator: unknown): never =>
-    ({ auth: {}, request: { callId: "c", requestId: "r", toolName: "post_file" }, response: { decision: "approve" }, responder, session: { id: "s", initiator, turn: {} } }) as never;
-  eq(policy(ctxOf(alice, alice)), { status: "allowed" }, "the policy allows the initiator's own click through eve's ApprovalResponseContext");
-  eq(policy(ctxOf(bob, alice)), { reason: FOREIGN_RESPONDER_REASON, status: "rejected" }, "…and rejects a bystander's click");
+  eq(decideResponder(bob, alice, "cancel"), { reason: FOREIGN_CANCEL_REASON, status: "rejected" }, "🔴 a foreign responder's CANCEL is refused — a bystander cannot kill the requester's pending action");
+  eq(decideResponder(alice, alice, "cancel"), { status: "allowed" }, "the requester's own CANCEL is allowed (negative control)");
+  eq(decideResponder(bob, null, "cancel"), { status: "allowed" }, "with NO bound principal a cancel is allowed too, on the same deadlock reasoning");
+  ok((FOREIGN_CANCEL_REASON as string) !== FOREIGN_RESPONDER_REASON && /cancel/.test(FOREIGN_CANCEL_REASON), "the cancel refusal names the cancel leg");
 
-  ok(!(policy(ctxOf(alice, alice)) instanceof Promise), "the policy returns SYNCHRONOUSLY — nothing behind it can block against eve's 10s hard timeout");
+  const policy = requesterBoundResponsePolicy();
+  const ctxOf = (responder: unknown, requester: unknown, initiator: unknown, decision: "approve" | "cancel" = "approve"): never =>
+    ({
+      auth: {},
+      request: { callId: "c", requestId: "r", toolName: "post_file", principal: requester },
+      response: { decision, principal: responder },
+      session: { id: "s", initiator, turn: {} },
+    }) as never;
+  eq(policy(ctxOf(alice, alice, alice)), { status: "allowed" }, "the policy allows the requester's own click through eve's ApprovalResponseContext");
+  eq(policy(ctxOf(bob, alice, alice)), { reason: FOREIGN_RESPONDER_REASON, status: "rejected" }, "…and rejects a bystander's click");
+  eq(policy(ctxOf(bob, alice, alice, "cancel")), { reason: FOREIGN_CANCEL_REASON, status: "rejected" }, "🔴 …and rejects a bystander's CANCEL through the real context shape");
+  eq(policy(ctxOf(alice, alice, alice, "cancel")), { status: "allowed" }, "…and allows the requester's own CANCEL");
+
+  eq(policy(ctxOf(bob, bob, alice)), { status: "allowed" }, "🔴 the REQUESTER (request.principal) may answer in a session somebody else initiated");
+  eq(policy(ctxOf(alice, bob, alice)), { reason: FOREIGN_RESPONDER_REASON, status: "rejected" }, "🔴 the session INITIATOR cannot answer a request somebody else made");
+  eq(policy(ctxOf(alice, bob, alice, "cancel")), { reason: FOREIGN_CANCEL_REASON, status: "rejected" }, "…and cannot cancel it either");
+  eq(policy(ctxOf(bob, null, alice)), { reason: FOREIGN_RESPONDER_REASON, status: "rejected" }, "no requester ⇒ the session initiator binds the click (the fallback never widens)");
+  eq(policy(ctxOf(alice, null, alice)), { status: "allowed" }, "no requester ⇒ the initiator may answer");
+  eq(policy(ctxOf(bob, null, null)), { status: "allowed" }, "no requester and no initiator ⇒ allowed (the deadlock leg)");
+
+  ok(!(policy(ctxOf(alice, alice, alice)) instanceof Promise), "the policy returns SYNCHRONOUSLY — nothing behind it can block against eve's 10s hard timeout");
+}
+
+{
+  const def = read("approval/definition.d.ts");
+  ok(/readonly decision: "approve" \| "cancel";/.test(def), "eve's ApprovalResponse still carries `decision: \"approve\" | \"cancel\"`");
+  ok(/interface ApprovalRequest[\s\S]{0,600}readonly principal: SessionAuthContext \| null;/.test(def), "eve's ApprovalRequest still carries the requester as `principal`");
 }
 
 {
@@ -195,7 +220,7 @@ console.log("3. replay registration (the unapprovable-card trap):");
     inputSchema: { type: "object", properties: {} },
     approval: {
       request: () => "user-approval",
-      response: (c: { responder?: unknown; session?: { initiator?: unknown } }) => decideResponder(c.responder as never, c.session?.initiator as never),
+      response: (c: { response?: { principal?: unknown }; request?: { principal?: unknown } }) => decideResponder(c.response?.principal as never, c.request?.principal as never),
     },
     execute: () => ({ ok: true }),
   };
@@ -242,12 +267,12 @@ console.log("3. replay registration (the unapprovable-card trap):");
   ok(typeof replayedApproval === "object" && replayedApproval !== null, "eve rebuilt an approval CONFIGURATION on replay");
   ok(typeof replayedApproval?.response === "function", "…with a response policy");
   eq(
-    await (replayedApproval?.response as (c: unknown) => Promise<unknown>)({ responder: alice, session: { initiator: alice } }),
+    await (replayedApproval?.response as (c: unknown) => Promise<unknown>)({ request: { principal: alice }, response: { decision: "approve", principal: alice } }),
     { status: "allowed" },
-    "the REPLAYED response policy is OURS and ALLOWS the initiator — not eve's reject-everything fallback",
+    "the REPLAYED response policy is OURS and ALLOWS the requester — not eve's reject-everything fallback",
   );
   eq(
-    await (replayedApproval?.response as (c: unknown) => Promise<unknown>)({ responder: bob, session: { initiator: alice } }),
+    await (replayedApproval?.response as (c: unknown) => Promise<unknown>)({ request: { principal: alice }, response: { decision: "approve", principal: bob } }),
     { reason: FOREIGN_RESPONDER_REASON, status: "rejected" },
     "…and rejects a bystander with OUR reason (eve's fallback reason would differ)",
   );

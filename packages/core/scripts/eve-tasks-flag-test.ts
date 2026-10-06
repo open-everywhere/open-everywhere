@@ -29,6 +29,14 @@ const READ_SHAPES: readonly { readonly name: string; readonly build: (field: str
 
 const NITRO_OPTION_RECEIVER = /(?:\?\.|\.)\s*options\s*(?:\?\.|\.)\s*$/u;
 
+function inProse(src: string, anchor: number): boolean {
+  if (src[anchor - 1] !== " ") return false;
+  const open = src.lastIndexOf("`", anchor - 1);
+  if (open === -1 || anchor - open > 600) return false;
+  const sentence = src.slice(open + 1, anchor);
+  return /^[A-Z]/u.test(sentence) && !/[;{}=()]/u.test(sentence) && sentence.trim().split(/\s+/u).length >= 6;
+}
+
 interface Read {
   readonly shape: string;
   readonly excerpt: string;
@@ -37,11 +45,13 @@ interface Read {
 interface Scan {
   readonly reads: readonly Read[];
   readonly excluded: number;
+  readonly prose: number;
 }
 
 function scanForFlagReads(src: string, field: string): Scan {
   const reads: Read[] = [];
   let excluded = 0;
+  let prose = 0;
   for (const { name, build } of READ_SHAPES) {
     const scan = build(field);
     let m: RegExpExecArray | null;
@@ -56,10 +66,14 @@ function scanForFlagReads(src: string, field: string): Scan {
         excluded++;
         continue;
       }
+      if (inProse(src, anchor)) {
+        prose++;
+        continue;
+      }
       reads.push({ shape: name, excerpt: src.slice(Math.max(0, m.index - 60), m.index + m[0].length + 20) });
     }
   }
-  return { reads, excluded };
+  return { reads, excluded, prose };
 }
 
 console.log(`eve-tasks-flag: pinning against installed eve ${eveVersion}`);
@@ -76,6 +90,8 @@ console.log(`eve-tasks-flag: pinning against installed eve ${eveVersion}`);
     ["`in` presence test", 'if("tasks" in e.definition.experimental){}'],
     ["`hasOwn` presence test", 'if(Object.hasOwn(e.experimental,"tasks")){}'],
     ["minified member access", "return e.experimental.tasks===!0?`background`:`sync`"],
+    ["bare read after `return`", "let t=1;return experimental.tasks"],
+    ["bare read after a template literal", "let m=`Unknown key`;if(t)return experimental.tasks;"],
   ];
   for (const [label, src] of mustMatch) {
     ok(scanForFlagReads(src, "tasks").reads.length > 0, `PIN 1: the matcher sees a ${label} read of the flag — it can fail`);
@@ -87,6 +103,7 @@ console.log(`eve-tasks-flag: pinning against installed eve ${eveVersion}`);
     ["a sibling experimental field", "if(t.experimental.workflow){}"],
     ["an unrelated `tasks` owner", "for(const x of session.tasks){}"],
     ["a name that merely contains both words", "const experimentalTasksEnabled=!1;"],
+    ["a release-note sentence that names the flag", "21:`Background task execution was removed: subagent results no longer carry backgroundTask, and experimental.tasks is gone.`"],
   ];
   for (const [label, src] of mustNotMatch) {
     ok(scanForFlagReads(src, "tasks").reads.length === 0, `PIN 1: the matcher does NOT fire on ${label}`);
@@ -94,6 +111,10 @@ console.log(`eve-tasks-flag: pinning against installed eve ${eveVersion}`);
   ok(
     scanForFlagReads("e.options.experimental.tasks=!0;", "tasks").excluded === 1,
     "PIN 1: the nitro exclusion is what drops the option write — it is doing the work, not a shape gap",
+  );
+  ok(
+    scanForFlagReads("`Background task execution was removed: and experimental.tasks is gone.`", "tasks").prose === 1,
+    "PIN 1: the prose exclusion is what drops the release-note sentence — it is doing the work, not a shape gap",
   );
 }
 
@@ -116,10 +137,12 @@ const carriesExperimental = filesMatching(/experimental/u);
 {
   const offenders: string[] = [];
   const excludedIn: string[] = [];
+  const proseIn: string[] = [];
   for (const rel of carriesExperimental) {
-    const { reads, excluded } = scanForFlagReads(readEveDist(rel), "tasks");
+    const { reads, excluded, prose } = scanForFlagReads(readEveDist(rel), "tasks");
     for (const read of reads) offenders.push(`${rel} (${read.shape}): ${read.excerpt.replaceAll("\n", " ")}`);
     if (excluded > 0) excludedIn.push(`${rel} ×${String(excluded)}`);
+    if (prose > 0) proseIn.push(`${rel} ×${String(prose)}`);
   }
   ok(
     offenders.length === 0,
@@ -128,6 +151,10 @@ const carriesExperimental = filesMatching(/experimental/u);
   ok(
     excludedIn.length === 1 && excludedIn[0]!.endsWith("×1"),
     `PIN 3 OPE-1491: the \`.options.\` exclusion no longer drops exactly one match. It exists for ONE site — nitro's \`<app>.options.experimental.tasks=!0\` in \`internal/nitro/host/schedule-task-routes.js\`, which arms nitro's schedule-task routes and is not the agent definition. Read each site below and decide whether it is nitro's option bag or a real read the exclusion is now hiding: ${excludedIn.join(", ") || "(none — the nitro write is gone, so the exclusion is dead and should go)"}`,
+  );
+  ok(
+    proseIn.length === 1 && proseIn[0]!.startsWith("compiler/extension-compatibility.js") && proseIn[0]!.endsWith("×1"),
+    `PIN 3: the prose exclusion no longer drops exactly one match in \`compiler/extension-compatibility.js\`. It exists for ONE sentence — eve's note "…and experimental.tasks is gone." Read each site below and decide whether it is prose or a real read the rule is now hiding: ${proseIn.join(", ") || "(none — the note is gone, so the exclusion is dead and should go)"}`,
   );
 }
 
@@ -148,8 +175,8 @@ const carriesExperimental = filesMatching(/experimental/u);
   );
   for (const list of allowLists) {
     ok(
-      list.includes("instrumentationProviders"),
-      `PIN 4: the parsed allow-list still names \`instrumentationProviders\`, so the capture is the real list and not an empty match (got: ${list})`,
+      /\bworkflow\b/u.test(list),
+      `PIN 4: the parsed allow-list still names \`workflow\`, so the capture is the real list and not an empty match (got: ${list})`,
     );
     ok(
       !/\btasks\b/u.test(list),
@@ -165,9 +192,18 @@ const carriesExperimental = filesMatching(/experimental/u);
   } catch {
     declaration = "";
   }
+  const body = /export interface AgentExperimentalDefinition \{([\s\S]*?)\n\}/u.exec(declaration)?.[1];
   ok(
-    declaration.includes("readonly tasks?: boolean"),
-    "PIN 5 OPE-1491: `AgentExperimentalDefinition` no longer declares `tasks?: boolean` at `shared/agent-definition.d.ts` — either the module moved or eve really has REMOVED the field. Read the release: if the field is gone, the repo's prose may say `removed` again, and this file's premise (the field exists, only the read is gone) needs rewriting rather than re-homing",
+    body !== undefined,
+    "PIN 5 OPE-2321: `shared/agent-definition.d.ts` no longer declares `AgentExperimentalDefinition` — the module moved. Re-home this path pin before reading the field list",
+  );
+  ok(
+    /readonly workflow\?:/u.test(body ?? ""),
+    `PIN 5: the interface body is the real one — it declares \`workflow?\` (got: ${JSON.stringify(body)})`,
+  );
+  ok(
+    !/\btasks\b/u.test(body ?? ""),
+    `PIN 5 🔴 OPE-2321: \`AgentExperimentalDefinition\` declares \`tasks\` again at eve ${eveVersion}. eve 0.71.0 removed it. A type that accepts the key again is the first half of a re-arm: re-read the release, then re-run PINs 3 and 4 before trusting OE's "\`agent\` does NOT block" seat copy`,
   );
 }
 

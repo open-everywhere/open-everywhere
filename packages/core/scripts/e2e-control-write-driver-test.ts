@@ -66,6 +66,17 @@ try {
   ok(currentHalt?.setBy === "U-operator", "the concurrent operator halt remains active after the stale clear");
   ok((await driver.clearOwnedHalt(currentHalt!)) === "cleared", "the exact unchanged halt handle clears through stdio");
 
+  ok((await driver.inspectOrgHalt()) === undefined, "the org-wide read sees no halt on a clean store");
+  await sqliteOperationalStore.setHalt(org, { orgWide: true }, { setBy: "U-driver", setAt: "2026-02-11T10:42:05.000Z", setRef: "wake-org" });
+  ok((await driver.inspectHalt()) === undefined, "the surface read does NOT see the org-wide row — the blind spot OPE-2191 names");
+  const orgHalt = await driver.inspectOrgHalt();
+  ok(orgHalt?.orgWide === true && orgHalt.setBy === "U-driver" && orgHalt.setAt === "2026-02-11T10:42:05.000Z" && orgHalt.setRef === "wake-org", "the org-wide read returns the exact ownership facts from the stdio store");
+  await sqliteOperationalStore.setHalt(org, { orgWide: true }, { setBy: "U-operator" });
+  ok((await driver.clearOwnedOrgHalt(orgHalt!)) === "changed", "a stale org-wide handle cannot clear a concurrent operator restamp");
+  const currentOrg = await driver.inspectOrgHalt();
+  ok(currentOrg?.setBy === "U-operator", "the operator's org-wide halt remains active after the stale clear");
+  ok((await driver.clearOwnedOrgHalt(currentOrg!)) === "cleared" && (await driver.inspectOrgHalt()) === undefined, "the exact unchanged org-wide handle clears through stdio");
+
   const first = await driver.setTemporarySpendLimit({ monthlyTokens: 1, ttlSeconds: 1800, reason: "run-owned" });
   ok(first.outcome === "created" && first.handle.scopeKey === surfaceKey && first.handle.setBy === "local-operator", "temporary spend insert returns an exact ownership handle");
   const occupied = await driver.setTemporarySpendLimit({ monthlyTokens: 99, ttlSeconds: 1800, reason: "must-not-replace" });

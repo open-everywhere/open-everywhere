@@ -360,7 +360,7 @@ function getDb(): DatabaseSync {
       PRIMARY KEY (org_id, owner)
     );
     -- pr_session_approval (OPE-53): the "Approve for session" grant on a pr.open card. Keyed by the
-    -- bare session/window token (embeds the generation ⇒ the memo dies with the session). Scoped to
+    -- bare session/window token (embeds the generation ⇒ the memo dies with the generation or its TTL). Scoped to
     -- kind="pr.open" by the callers. NEVER holds PR content — only who granted the skip + when.
     CREATE TABLE IF NOT EXISTS pr_session_approval (
       org_id     TEXT NOT NULL,
@@ -368,7 +368,7 @@ function getDb(): DatabaseSync {
       kind       TEXT NOT NULL,               -- always "pr.open" (the only session-skippable kind)
       granted_by TEXT NOT NULL,               -- the member who clicked "Approve for session"
       created_at TEXT NOT NULL,               -- ISO-8601
-      expires_at TEXT NOT NULL,               -- ISO-8601 GC bound (prune-on-write); death is via session_id
+      expires_at TEXT NOT NULL,               -- ISO-8601 TTL, a real bound: reads filter expires_at > now (OPE-2161)
       PRIMARY KEY (org_id, session_id, kind)
     );
     CREATE TABLE IF NOT EXISTS pending_actions (
@@ -3077,6 +3077,13 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async revokeSessionApprovals(org, sessionId) {
     return Number(getDb().prepare("DELETE FROM pr_session_approval WHERE org_id = ? AND session_id = ?").run(org, sessionId).changes);
+  },
+
+  async revokeSessionApprovalsByPrefix(org, prefix) {
+    if (prefix.length === 0) throw new Error("revokeSessionApprovalsByPrefix: an empty prefix would revoke every memo of the org");
+    return Number(
+      getDb().prepare("DELETE FROM pr_session_approval WHERE org_id = ? AND substr(session_id, 1, ?) = ?").run(org, prefix.length, prefix).changes,
+    );
   },
 
   async sweepLegacyConnectorOpRows(org) {

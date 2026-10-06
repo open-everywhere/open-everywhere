@@ -10,11 +10,12 @@ export interface IngestionRoute {
 export const INGESTION_ROUTES: readonly IngestionRoute[] = [
   { key: "packages/core/agent/access/aws-output.ts#aws", file: "packages/core/agent/access/aws-output.ts", form: "ingestion-const", kind: "aws", label: "aws", pending: false },
   { key: "packages/core/agent/access/browser-toolkit.ts#browser_${op}", file: "packages/core/agent/access/browser-toolkit.ts", form: "ingestion-property", kind: "web", label: "browser_${op}", pending: false },
-  { key: "packages/core/agent/access/untrusted-projection.ts#name", file: "packages/core/agent/access/untrusted-projection.ts", form: "ingestion-property", kind: "connector", label: "name", pending: false },
+  { key: "packages/core/agent/access/untrusted-projection.ts#ingestionLabel", file: "packages/core/agent/access/untrusted-projection.ts", form: "ingestion-property", kind: "connector", label: "ingestionLabel", pending: false },
   { key: "packages/core/agent/channels/context-render.ts#context-render", file: "packages/core/agent/channels/context-render.ts", form: "noteIngestionVerdict", kind: "chat-message", label: "context-render", pending: false },
   { key: "packages/core/agent/channels/wake-envelope.ts#wake-envelope:${sourcePlatform}", file: "packages/core/agent/channels/wake-envelope.ts", form: "noteIngestionVerdict", kind: "chat-message", label: "wake-envelope:${sourcePlatform}", pending: false },
   { key: "packages/core/agent/review/pr-walkthrough.ts#walk_pr:${pr.repo}", file: "packages/core/agent/review/pr-walkthrough.ts", form: "noteIngestionVerdict", kind: "github", label: "walk_pr:${pr.repo}", pending: false },
   { key: "packages/core/agent/routines/events.ts#github-event", file: "packages/core/agent/routines/events.ts", form: "ingestion-property", kind: "routine-event", label: "github-event", pending: false },
+  { key: "packages/core/agent/scm/issue-read.ts#read_github_issue:${d.repo}", file: "packages/core/agent/scm/issue-read.ts", form: "ingestion-const", kind: "github", label: "read_github_issue:${d.repo}", pending: false },
   { key: "packages/core/agent/scm/pr-feedback.ts#get_pr_feedback:${d.repo}", file: "packages/core/agent/scm/pr-feedback.ts", form: "ingestion-const", kind: "github", label: "get_pr_feedback:${d.repo}", pending: false },
   { key: "packages/core/agent/tools/describe_image.ts#describe_image", file: "packages/core/agent/tools/describe_image.ts", form: "ingestion-property", kind: "image-description", label: "describe_image", pending: false },
   { key: "packages/core/agent/tools/grant_tools.ts#<ingestion-property>", file: "packages/core/agent/tools/grant_tools.ts", form: "ingestion-property", kind: "connector", label: null, pending: false },

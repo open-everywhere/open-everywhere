@@ -1,6 +1,10 @@
 import { expect, test } from "vitest";
 
 import {
+  armSettlement,
+  auditCursor,
+  awaitWindowQuiet,
+  awaitWorkResult,
   bootAgent,
   discordMentionWake,
   disposeLater,
@@ -8,6 +12,7 @@ import {
   registerScript,
   waitFor,
   waitForChildren,
+  workTaskIdOfCall,
   type ScriptedHandle,
 } from "../harness";
 
@@ -26,16 +31,17 @@ function captureConsole(sink: string[]): () => void {
   };
 }
 
-test("one delegating wake logs the single-writer skip EXACTLY once — for the child, never for the seat", async () => {
+test("one forwarding wake has ONE memory writer — the work session; the forwarding seat and the child each skip exactly once", async () => {
   await bootAgent();
 
+  const cursor = await auditCursor();
   const handle: ScriptedHandle = disposeLater(
     registerScript({
       parent: [
-        { calls: [{ tool: "agent", input: { message: "look something up for me" }, id: "ope1065-delegate" }] },
-        { say: "the worker reported back" },
+        { calls: [{ tool: "work", input: { message: "look something up for me" }, id: "ope1065-delegate" }] },
+        { say: "NO_REPLY" },
       ],
-      child: [{ say: "child done" }],
+      child: [{ delayMs: 120_000, say: "child done" }],
     }),
   );
 
@@ -48,20 +54,30 @@ test("one delegating wake logs the single-writer skip EXACTLY once — for the c
     });
     await waitFor(
       () => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1),
-      "the parent's terminal step",
+      "the parent's pre-wait step",
     );
     await waitForChildren(handle, { count: 1, lastStepIndex: 0, label: "the delegated child's terminal step" });
+    const taskId = await workTaskIdOfCall(cursor, handle, "ope1065-delegate", "the forward receipt");
+    const settlement = disposeLater(armSettlement(handle, { parent: [{ say: "NO_REPLY" }] }));
+    handle.releaseHolds();
+    const resultStep = await awaitWorkResult({ handle: settlement, taskId, label: "the seat's step with the worker's result" });
+    expect(resultStep.stepIndex, "the result-wake turn's one step").toBe(0);
+    expect(settlement.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+    await awaitWindowQuiet();
   } finally {
     restore();
   }
 
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  expect(handle.requests.some((r) => r.role === "parent" && r.stepIndex >= 2), "a parent step after the dispatch turn's last step was requested").toBe(false);
 
-  const { SUBAGENT_SKIP_MARKER } = await import("@open-everywhere/core/agent/hooks/memory.js");
+  const { SUBAGENT_SKIP_MARKER, FORWARDING_SEAT_SKIP_MARKER } = await import("@open-everywhere/core/agent/hooks/memory.js");
   const memoryLines = lines.filter((l) => l.includes(MEMORY_LOG_PREFIX));
-  const skips = memoryLines.filter((l) => l.includes("session.started:") && l.includes(SUBAGENT_SKIP_MARKER));
+  const startedLines = memoryLines.filter((l) => l.includes("session.started:"));
 
-  expect(skips).toHaveLength(1);
+  expect(startedLines.filter((l) => l.includes(SUBAGENT_SKIP_MARKER))).toHaveLength(1);
+
+  expect(startedLines.filter((l) => l.includes(FORWARDING_SEAT_SKIP_MARKER))).toHaveLength(1);
 
   const pastTheGate = memoryLines.filter(
     (l) => l.includes("session.started: no memory synced") || /synced \d+ file\(s\)/.test(l),

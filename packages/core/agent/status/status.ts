@@ -17,9 +17,9 @@ const ICON: Record<WorkState, string> = {
   blocked: "🛑",
 };
 
-export const PINNED_HEADER = "*Open Everywhere — current work*";
+export const PINNED_HEADER = "*Agent status — current work*";
 
-export const PINNED_HEADERS: readonly string[] = [PINNED_HEADER, "*OpenEverywhere — current work*"];
+export const PINNED_HEADERS: readonly string[] = [PINNED_HEADER, "*Open Everywhere — current work*", "*OpenEverywhere — current work*"];
 
 export function isPinnedStatusMessage(text: string): boolean {
   return PINNED_HEADERS.some((h) => text.startsWith(h));
@@ -68,5 +68,5 @@ export function renderPinned(body: string | undefined): string {
 }
 
 export function statusSeed(surfaceKey: string): string {
-  return `# Status — ${surfaceKey}\n\nOpen Everywhere's in-flight work on this surface (one line per thread). Maintained by the \`update_status\` tool; mirrored to a pinned Slack message.\n`;
+  return `# Status — ${surfaceKey}\n\nThis agent's in-flight work on this surface (one line per thread). Maintained by the \`update_status\` tool; mirrored to a pinned Slack message.\n`;
 }

@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { builtTreeArtifactsSource } from "../tests/integration/prewarm.js";
+
 const ROOT = process.cwd();
 const RELAY_SECRET = randomBytes(32).toString("hex");
 
@@ -97,20 +99,34 @@ async function main(): Promise<void> {
 
   console.log("-- prewarming the docker sandbox template (real daemon; reuses the shared image cache) --");
   const prewarmPath = join(ROOT, "node_modules", "eve", "dist", "src", "execution", "sandbox", "prewarm.js");
-  let prewarmMod: { prewarmBuiltAppSandboxes?: (input: { appRoot: string; log?: (m: string) => void }) => Promise<void> };
+  let prewarmMod: {
+    prewarmAppSandboxes?: (input: {
+      readonly appRoot: string;
+      readonly compiledArtifactsSource?: unknown;
+      readonly log?: (m: string) => void;
+    }) => Promise<void>;
+  };
   try {
     prewarmMod = (await import(pathToFileURL(prewarmPath).href)) as typeof prewarmMod;
   } catch (err) {
     throw new Error(
       `sandbox-docker-turn-live-test: eve's sandbox prewarm module is gone from ${prewarmPath} — an eve bump moved it. ` +
-        "Find the new home of prewarmBuiltAppSandboxes under eve/dist (same fix tests/integration/prewarm.ts needs).",
+        "Find the new home of prewarmAppSandboxes under eve/dist (same fix tests/integration/prewarm.ts needs).",
       { cause: err },
     );
   }
-  if (typeof prewarmMod.prewarmBuiltAppSandboxes !== "function") {
-    throw new Error(`sandbox-docker-turn-live-test: ${prewarmPath} no longer exports prewarmBuiltAppSandboxes — an eve bump renamed it.`);
+  if (typeof prewarmMod.prewarmAppSandboxes !== "function") {
+    throw new Error(
+      `sandbox-docker-turn-live-test: ${prewarmPath} no longer exports prewarmAppSandboxes — an eve bump renamed it. ` +
+        "eve 0.69.0 removed prewarmBuiltAppSandboxes and made prewarmSandboxes module-private, leaving this one " +
+        "export (OPE-2248); see tests/integration/prewarm.ts for the same fix.",
+    );
   }
-  await prewarmMod.prewarmBuiltAppSandboxes({ appRoot: ROOT, log: (m) => console.log(`  ${m}`) });
+  await prewarmMod.prewarmAppSandboxes({
+    appRoot: ROOT,
+    compiledArtifactsSource: builtTreeArtifactsSource(ROOT),
+    log: (m) => console.log(`  ${m}`),
+  });
 
   console.log(`-- booting the built agent in-process on port ${port} (docker sandbox backend) --`);
   await import(pathToFileURL(entry).href);

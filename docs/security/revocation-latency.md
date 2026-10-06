@@ -30,7 +30,7 @@ The contract, in one sentence:
 | **Runtime domain skills** | the skill store, per session's skill resolve | per session | next session | `delete_skill` |
 | **Egress firewall** (reachable hosts + the credential injected at the boundary) | compiled and applied to the sandbox | **every turn** | next turn of that session | ship the config change, rotate the credential, or `revoke_connector` (narrows any egress connection whose id it names, same as it narrows the Eve connector plane) — all land on the next turn by itself |
 | **Memory materialised into the sandbox** | the plan, resolved per session | session start; **plus every turn for a standing seat** | next turn (standing seat) / **session end** (thread seat) | narrow the plan, then wait a turn — or start a fresh thread |
-| **Approval "for session" grants** | the session-grant memo, per proposal | every proposal | immediate, once revoked | `revoke_session_grants` |
+| **Routine standing grants, unspent one-call approvals** | the session-grant memo, per proposal | every proposal | immediate, once revoked | `revoke_session_grants` |
 | **Warm minted credentials** (AWS session creds, both GitHub installation tokens, the Teams Graph token, the Linear actor token) | an in-process cache | when the cached copy nears expiry | **≤ 59 min**, or ≤ 30 days for the Linear actor token | *no lever* — see [The one thing you cannot flush](#the-one-thing-you-cannot-flush) |
 
 ---
@@ -111,17 +111,54 @@ Two properties worth knowing:
   a bundle naming a secret that is no longer set, say — the result is `deny-all`, applied. It never
   coasts on the policy it compiled an hour ago, and it never falls through to the runtime's
   allow-everything default.
+- **A mid-turn apply updates the record.** `checkout_repo` and `open_pull_request` replace the
+  whole policy inside a turn with one that carries the git read-broker's token. They apply it
+  through `applyAndRecordEgressPolicy` (`agent/hooks/egress.ts`), which records its fingerprint
+  and shape as the policy in force (OPE-2303). The next turn's recompile therefore differs from
+  the record, and the hook re-applies the base policy, which drops the broker's token. A failed
+  re-apply then compares the base policy with the brokered shape. The base policy does not cover
+  it, so the turn is refused, as the last item in this list describes. This holds for a root
+  session. A subagent child shares its parent's firewall but not its parent's applied record, so
+  a brokered apply that a child makes is not on the parent's record. The parent's next turn can
+  skip as unchanged, and the brokered policy can stay in force until the parent's base policy
+  changes.
 - **The session can see that it moved.** A turn that re-applies also regenerates the sandbox's
   `egress/STATUS.json` under a new `policyFingerprint`, so an agent that finds a host it used
   yesterday is now unreachable can read what it is on today rather than guessing. Same skip gate: an
   unchanged turn rewrites nothing. (The redaction rules and the protocol that file carries are in
   [Credentials & the two planes](./credentials-and-planes.md#what-the-agent-can-see-about-its-own-policy).)
-- **A failed re-apply does not kill the session.** At session start a failed apply aborts, because
-  there the alternative is running with no firewall at all. Mid-session the previously-applied policy
-  is still in force, so a transient failure is audited (`reapplyFailed` on the `egress.policy` row)
-  and the turn continues; the next turn retries. The residual is named rather than hidden: between a
-  failed re-apply and a successful one, the session is enforcing an *older* policy than its config
-  says it should.
+- **A failed re-apply that narrows refuses the turn.** At session start a failed apply aborts,
+  because there the alternative is running with no firewall at all. Mid-session the
+  previously-applied policy is still in force. The hook compares the new policy with that one by a
+  shape: per host, a keyed HMAC-SHA256 of the host's rules, never the values
+  (`egressPolicyCovers`, `agent/hooks/egress.ts`). The shape rides the serialized session state. The
+  key is an HKDF-SHA256 subkey of `OE_CREDENTIAL_ENCRYPTION_KEY`, label `egress-state-digest`
+  (OPE-2302), and it is not in that state. So a reader of the state cannot test a guess at a
+  low-entropy credential offline against the shape. The same state still carries the unkeyed policy
+  fingerprint ([Credentials & the two
+  planes](./credentials-and-planes.md#what-the-agent-can-see-about-its-own-policy) names that
+  limit). So a reader who also knows every other byte of the policy can still test a guess against
+  that fingerprint. The keyed shape removes only the per-host digest as an oracle. The deployment
+  adds no new secret. A rotation of the credential key changes every digest. The next turn then
+  re-applies the unchanged policy once (reason `digest-key-rotated`), so the shape on record is
+  under the current key again. A failure of that re-apply does not refuse the turn. The plan picks
+  this reason only when the recompiled fingerprint equals the one on record. That is the condition
+  under which an unchanged turn skips the apply, so the failure leaves the turn no worse off than an
+  unchanged turn. Without `OE_CREDENTIAL_ENCRYPTION_KEY` the key is random per process. Then a shape
+  that another process recorded never matches, and a failed re-apply refuses unless the new policy is allow-all. The turn continues
+  only when the
+  new policy opens everything the old one opens, with identical rules on every shared host. Then the
+  failure is staleness: it is audited (`reapplyFailed` on the `egress.policy` row) and the next turn
+  retries. In every other case the turn is REFUSED (OPE-2158), and the row also carries `aborted:
+  true`. That covers a removed host, a revoked or rotated credential, a compile-error `deny-all`,
+  and, without `egress.allowUnenforced`, a session whose enforced shape is unknown. The comparison
+  is conservative: a changed rule counts as a narrowing, because the code cannot rank two rules.
+  `egress.allowUnenforced` follows the session-start rule: it keeps warn-and-continue for a backend
+  that cannot enforce, which means no enforced policy is on record for the session (just-bash
+  rejects every apply). It does not lift the refusal once the session has an enforced policy on
+  record. In a task-mode session a refused turn ends the session. The residual is named rather than
+  hidden: between a failed widening re-apply and a successful one, the session enforces an *older*,
+  narrower policy than its config says.
 
 ---
 
@@ -149,42 +186,43 @@ you need memory gone from one of those *now*, the session has to end — start a
 
 ## Session approval grants are revocable
 
-Clicking **Approve for session** on a card writes a memo against the proposing session, so later
-proposals of the same kind in it skip the card. Those memos used to have no off switch: they died
-with the session's generation, or with a 24-hour garbage-collection TTL, whichever came first.
+A click in a conversation approves **one act** and keeps nothing (OPE-2363). A `pr.open` card or a
+connector-op card in a thread, a DM or at the top level of a channel offers Approve and Reject only,
+and a second identical proposal gets a card again. Repeated approvals there are the approval judge's
+job. Two kinds of approval memo outlive a click, and `revoke_session_grants` reaches both:
 
-The click also releases the cards the grant *already* covers: a parent that fans out several workers
-in one turn has all of them carded before any click exists, so one "Approve for session" decides that
+- **A routine's standing grant.** The only card with a middle button is a routine's `pr.open` card:
+  **Approve for this routine (up to N h)**. It writes a memo keyed on the routine, so later fires of
+  that routine skip the card for the same kind. It ends at the first of three things: it expires after
+  `approvals.routineGrantTtlHours` (24 by default); `revoke_session_grants` deletes it, with
+  `sessionId` set to the routine's grant key; or an `edit_routine` moves the routine's key, which
+  carries its generation. The same revoke deletes the routine's declared permissions too (the
+  `connector.tool:` rows).
+- **An unspent one-call connector-op approval.** A click on a connector-op card writes a memo keyed on
+  the input's digest, under the key of the thread or DM that asked. The agent's next identical call
+  spends it. Until then it waits, for at most 24 hours. `revoke_session_grants` with only `surfaceKey`
+  deletes every unspent one in that room. A Discord thread or a Teams reply chain is reached through
+  its parent channel's surface key.
+
+The click on a routine's card also releases the cards the grant *already* covers: a routine fire that
+fans out several workers has all of them carded before any click exists, so one click decides that
 whole fan-out rather than leaving stale buttons behind. That release runs **off the click's response
 path** and is capped at 32 sibling cards (`MAX_SESSION_GRANT_RELEASES`) — a chat vendor answers a
 click in about three seconds, and each released card runs a real action. Cards past the cap stay
 pending and clickable.
 
-`revoke_session_grants` takes the whole set back for a surface's live session. Exactly one kind is
-grantable — `pr.open` — so the next PR-open in that session gets a card again. Keep two things
-straight:
+Keep two things straight:
 
-- It narrows **discretion, not access**. A session grant only ever skipped the human card; every
-  capability gate ran underneath it regardless. To cut access, use `revoke_connector`.
+- It narrows **discretion, not access**. A grant only ever skipped the human card; every capability
+  gate ran underneath it regardless. To cut access, use `revoke_connector`.
 - It is **not** a side effect of `revoke_connector`, deliberately. A revoked connector already fails
-  closed at the credential wall, and no connector op is session-grantable, so the revoke has no memo
-  of its own to sweep; making it sweep memos anyway would take out that session's PR-open grant as
-  collateral. See [The control plane](./control-plane.md).
+  closed at the credential wall, so an approval left behind can skip no card that matters. Sweeping
+  memos from `revoke_connector` would take out every other connector's approvals as collateral. See
+  [The control plane](./control-plane.md).
 
-A per-thread, task or native session has no channel-session registry row, so pass its `sessionId`
-explicitly; the verb refuses rather than reporting a misleading zero.
-
-**A grant reaches the work the conversation delegates, and that is a decision, not an accident.** On a
-deployment running [native delegation](../how-it-works/agent-and-loop.md#native-delegation-eves-built-in-agent),
-a child of a conversation is keyed to the *same* session for approval purposes, so "Approve for
-session" covers what the seat hands to a child as well as what it does itself. That is the intended
-reading of the grant: you approved the work in this room, and delegating a piece of it is not a way
-to escape the card — nor a reason to be asked again for something you have already said yes to.
-Revoking with `revoke_session_grants` takes it back on both sides at once, because there is only one
-memo. Open Everywhere's own workers behave differently: each is a genuinely separate session with its
-own grants, so a card there is asked once per worker.
-
----
+A `sessionId` must be a key of the named room: a conversation key of that room, or the grant key of
+a routine stored under that `surfaceKey`. Any other key is refused, so the verb never deletes another
+room's approval. `revoked` counts the memos deleted.
 
 ## The one thing you cannot flush
 

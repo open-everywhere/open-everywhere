@@ -1,9 +1,12 @@
 import { generateKeyPairSync, randomUUID, sign, type KeyObject } from "node:crypto";
 import { expect, test } from "vitest";
 
+import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import {
+  armSettlement,
   auditCursor,
-  awaitTaskSettlement,
+  awaitWindowQuiet,
+  awaitWorkResult,
   bootAgent,
   discordMentionWake,
   disposeLater,
@@ -11,11 +14,10 @@ import {
   DISCORD_LISTED_CHANNEL_ID,
   registerScript,
   rowsSinceCursor,
-  SETTLEMENT_DRAIN_SCRIPT,
-  taskIdOfDelegation,
   waitFor,
   waitForAuditRows,
   waitForChildren,
+  workTaskIdOfCall,
   type AuditCursor,
   type ScriptedHandle,
 } from "../harness";
@@ -95,15 +97,15 @@ async function customIdFor(rowId: string, decision: "approve" | "reject"): Promi
 
 const TRIGGER = { kind: "scheduled", cron: "0 9 * * 1-5", postPolicy: "every-run" } as const;
 
-async function proposeRoutine(ids: string, prompt: string): Promise<{ id: string; handle: ScriptedHandle }> {
+async function proposeRoutine(ids: string, prompt: string): Promise<{ id: string; handle: ScriptedHandle; taskId: string }> {
   const handle: ScriptedHandle = disposeLater(
     registerScript({
       parent: [
-        { calls: [{ tool: "agent", input: { message: "set up the routine I asked for" }, id: `${ids}-delegate` }] },
-        { say: "the worker reported back" },
+        { calls: [{ tool: "work", input: { message: "set up the routine I asked for" }, id: `${ids}-delegate` }] },
+        { say: NO_REPLY_SENTINEL },
       ],
       child: [
-        { calls: [{ tool: "create_routine", input: { prompt, trigger: TRIGGER }, id: `${ids}-routine` }] },
+        { delayMs: 120_000, calls: [{ tool: "create_routine", input: { prompt, trigger: TRIGGER }, id: `${ids}-routine` }] },
         { say: "proposed" },
       ],
     }),
@@ -111,21 +113,24 @@ async function proposeRoutine(ids: string, prompt: string): Promise<{ id: string
 
   const wakeCursor = await auditCursor();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please set up the routine" });
-  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
+  const receiptStep = await waitFor(
+    () => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1),
+    `the ${ids} receipt step to be served`,
+  );
+  const settlement = disposeLater(armSettlement(handle, { parent: [{ say: NO_REPLY_SENTINEL }] }));
+  const taskId = await workTaskIdOfCall(wakeCursor, handle, `${ids}-delegate`, `the ${ids} delegation`);
+  handle.releaseHolds();
   await waitForChildren(handle, { count: 1, lastStepIndex: 1, label: `the ${ids} worker's own terminal step` });
-  expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-  expect(handle.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
-  const drained = await awaitTaskSettlement({
-    dispatched: handle,
-    taskId: taskIdOfDelegation(handle, `the ${ids} delegation`),
-    script: SETTLEMENT_DRAIN_SCRIPT,
-    label: `the ${ids} worker's settlement wake`,
-  });
-  disposeLater(drained.handle);
-  expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-  drained.handle.dispose();
-
-  expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  expect(handle.holdsCutShort(), "the worker's hold ended on the release, not on its 120 s backstop").toBe(1);
+  const resultStep = await awaitWorkResult({ handle: settlement, taskId, label: `the ${ids} seat step that read the worker's result` });
+  expect(resultStep.stepIndex).toBe(0);
+  expect(typeof receiptStep.turnId, "the recorder stamps eve's turn id").toBe("string");
+  expect(resultStep.turnId, "the result arrives in a seat turn of its own, never the proposal turn").not.toBe(receiptStep.turnId);
+  for (const h of [handle, settlement]) {
+    expect(h.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+    expect(h.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
+  }
+  settlement.dispose();
 
   const requested = await waitForAuditRows({
     probe: async () => {
@@ -140,7 +145,7 @@ async function proposeRoutine(ids: string, prompt: string): Promise<{ id: string
   });
   const id = requested.detail?.id;
   expect(typeof id).toBe("string");
-  return { id: id as string, handle };
+  return { id: id as string, handle, taskId };
 }
 
 async function waitForDecided(clickCursor: AuditCursor, id: string): Promise<void> {
@@ -172,19 +177,23 @@ test("🔴 the control: a click with NO guild_id decides the card and writes NO 
 
   const s = await getStore();
   expect((await s.getPendingAction(org, id))?.status).toBe("approved");
+
+  expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 });
 
 test("a guild-context click wakes the proposing window session with the decision, and audits the delivery", async () => {
   await armAgent();
-  const { id, handle: proposal } = await proposeRoutine("w2", `decision wake subject (w2) ${randomUUID()}`);
+  const { id, handle: proposal, taskId: workerTaskId } = await proposeRoutine("w2", `decision wake subject (w2) ${randomUUID()}`);
   disposeLater(proposal);
   const customId = await customIdFor(id, "approve");
 
   expect(proposal.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   proposal.dispose();
 
+  const brakeCallId = `w2-brake-${randomUUID()}`;
   const wake: ScriptedHandle = registerScript({
     parent: [
+      { calls: [{ tool: "cancel_work", input: { taskId: workerTaskId }, id: brakeCallId }] },
       { calls: [{ tool: "no_reply", input: { reason: "nothing_to_add" }, id: `w2-silent-${randomUUID()}` }] },
       { say: "belief updated" },
     ],
@@ -221,6 +230,33 @@ test("a guild-context click wakes the proposing window session with the decision
   const prompt = served.messages.map((m) => m.text).join("\n");
   expect(prompt).toContain(wakeId as string);
   expect(prompt).toContain(id);
+
+  const brakeStep = await waitFor(
+    () => wake.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.id === brakeCallId)),
+    "the wake turn's cancel_work result",
+  );
+  const brake = brakeStep.toolResults.find((t) => t.id === brakeCallId)!;
+  const brakeText = JSON.stringify(brake.output);
+  expect(brake.isError, `the brake's cancel_work was refused: ${brakeText}`).toBe(false);
+  expect(brakeText).not.toContain("cannot be continued here");
+  expect(brakeText).toContain(workerTaskId);
+  const relayed = await waitFor(
+    async () => (await rowsSinceCursor(clickCursor, ["work.cancel_relayed"])).find((r) => r.detail?.taskId === workerTaskId),
+    "the work.cancel_relayed row for the braked task",
+  );
+  expect(relayed.detail?.outcome, "the seat's stop was refused under D10").toBe("relayed");
+  const ticketKey = `oe-work-cancel:${String(relayed.detail?.workToken)}:${workerTaskId}`;
+  await waitFor(async () => {
+    const raw = await (await getStore()).getTaskResult(org, ticketKey);
+    return raw !== null && (JSON.parse(raw) as { spent?: unknown }).spent === true ? true : undefined;
+  }, "the work session's task_cancel to redeem the seat's cancel ticket");
+  await waitFor(
+    async () => ((await rowsSinceCursor(clickCursor, ["work.cancel_redeemed"])).some((r) => r.detail?.taskId === workerTaskId && r.detail?.outcome === "admitted") ? true : undefined),
+    "the work session's fenced task_cancel to be ADMITTED for the braked task",
+  );
+  await awaitWindowQuiet();
+  const forTask = (await rowsSinceCursor(clickCursor, ["work.cancel_redeemed"])).filter((r) => r.detail?.taskId === workerTaskId);
+  expect(forTask.map((r) => r.detail?.outcome), "the work session's task_cancel was REFUSED by the fence on some validation").not.toContain("refused");
   expect(prompt).toContain(`<system-note>A pending approval you were waiting on (id ${id})`);
   expect(prompt).not.toContain(`approval-decision-${id}`);
 });

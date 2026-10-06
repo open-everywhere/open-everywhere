@@ -112,8 +112,10 @@ async function main(): Promise<void> {
 
 const invokedDirectly = process.argv[1]?.endsWith("audit-actions-lint.ts") === true;
 if (invokedDirectly) {
-  main().catch((err: unknown) => {
+  try {
+    await main();
+  } catch (err: unknown) {
     console.error(`✗ lint:audit-actions failed: ${err instanceof Error ? err.stack : String(err)}`);
     process.exit(1);
-  });
+  }
 }

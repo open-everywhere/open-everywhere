@@ -45,7 +45,9 @@ async function main(): Promise<void> {
   console.log(`✓ ephemeral-port: ${passed} assertions passed (distinct ports under concurrency, held-until-release exclusivity, no leak)`);
 }
 
-main().catch((err) => {
+try {
+  await main();
+} catch (err) {
   console.error(err);
   process.exit(1);
-});
+}

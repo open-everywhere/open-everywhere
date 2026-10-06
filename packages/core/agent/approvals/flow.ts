@@ -5,6 +5,7 @@ import { getConfig } from "../access/config.js";
 import { swallowRoomOp, swallowRoomPost } from "../channels/egress-spoof.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 import { criteriaDomain } from "../memory/domain.js";
+import { seatTokenForwardsWork } from "../access/work-session.js";
 import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 import { grainUsesUnifiedWindow, supervisorGrainFor } from "../channels/unified-supervisor.js";
@@ -25,6 +26,7 @@ import {
   preApprovalRulesForScopeKey,
   resolveApproverChain,
   toolForActionKind,
+  judgedConnectorOpTool,
   type ApprovalChainRequest,
 } from "../access/approver-chain.js";
 import { shadowJudgeAuditDetail } from "../access/approval-judge.js";
@@ -36,7 +38,7 @@ import { checkClickerFloor, clickRoomMatches, clickerFloorRefusalNotice, type Cl
 import { checkCardDisclosure, cardDisclosureRefusalNotice } from "./card-disclosure.js";
 import { pendingCardBlocks, decidedCardBlocks, judgeLiftNoticeBlocks, judgeLiftNoticeText, type RenderedCard } from "./card.js";
 import { contradictJudgeAllow, judgeContradictionNotice, type ContradictJudgeAllowOutcome } from "./judge-contradiction.js";
-import { describeDeclaredPermissionKind, sessionGrantKind } from "./session-grant.js";
+import { describeDeclaredPermissionKind, grantableFrozenKey, grantReach, sessionGrantKind } from "./session-grant.js";
 import {
   consumeCardPostedThisTurn,
   markCardPostedThisTurn,
@@ -63,6 +65,8 @@ import "./agent-create.js";
 import "./ticket-actions.js";
 import "./ticket-create.js";
 import "./chat-post.js";
+import "./file-publish.js";
+import "./connector-op.js";
 import "./chat-dm.js";
 import "./session-checkpoint.js";
 import { ROUTINE_PERMISSION_KIND, parseRoutinePermissionArgs, routineCardGenerationState } from "./routine-permission.js";
@@ -102,10 +106,6 @@ export function parseApprovalAction(actionId: string): { decision: ApprovalDecis
   const id = rest.slice(sep + 1);
   if (!APPROVAL_DECISIONS.includes(decision) || id.length === 0) return null;
   return { decision, id };
-}
-
-function sessionApprovalTtlHours(): number {
-  return getSettings().approvals.sessionTtlHours;
 }
 
 function sessionIdFromFrozenArgs(argsJson: string): string | undefined {
@@ -165,6 +165,7 @@ export interface RequestApprovalInput {
   readonly chain?: {
     readonly unattended: boolean;
     readonly tainted?: boolean;
+    readonly domain?: string;
   };
   readonly noClockExpiry?: true;
 }
@@ -335,25 +336,27 @@ export async function requestApproval(
     throw new Error(`requestApproval: no registered ActionKind for "${input.kind}"`);
   }
 
-  const chainTool = toolForActionKind(input.kind);
+  const connectorChainTool = judgedConnectorOpTool(input.kind, input.args, input.chain);
+  const chainTool = toolForActionKind(input.kind) ?? connectorChainTool;
   if (chainTool !== undefined) {
+    const chainDomain = input.domain ?? input.chain?.domain ?? null;
     const chainReq: ApprovalChainRequest = {
       tool: chainTool,
       action: input.kind,
       args: input.args,
       scopeKey: input.scopeKey,
-      ...(input.domain != null ? { domain: input.domain } : {}),
+      ...(chainDomain != null ? { domain: chainDomain } : {}),
       org: input.org,
       principalId: input.requestedBy,
       unattended: input.chain?.unattended ?? true,
       ...(input.chain?.tainted !== undefined ? { tainted: input.chain.tainted } : {}),
-      ...(input.domain != null ? { mode: approvalModeForDomain(input.domain) } : {}),
-      halted: (await resolveHalt(haltScopeFor({ org: input.org, scopeKey: input.scopeKey, domain: input.domain, ...(input.requestedBy !== undefined ? { principalId: input.requestedBy } : {}) }))).halted,
+      ...(chainDomain != null ? { mode: approvalModeForDomain(chainDomain) } : {}),
+      halted: (await resolveHalt(haltScopeFor({ org: input.org, scopeKey: input.scopeKey, domain: chainDomain, ...(input.requestedBy !== undefined ? { principalId: input.requestedBy } : {}) }))).halted,
       ...(kindDef.beneficiaryClicker === true ? { beneficiaryClicker: true } : {}),
     };
     const resolution = await resolveApproverChain(chainReq, {
-      approvers: approversForScopeKey(input.scopeKey, input.domain ?? undefined),
-      rules: preApprovalRulesForScopeKey(input.scopeKey, input.domain ?? undefined),
+      approvers: approversForScopeKey(input.scopeKey, chainDomain ?? undefined),
+      rules: preApprovalRulesForScopeKey(input.scopeKey, chainDomain ?? undefined),
       judge: true,
     });
     await appendAudit({
@@ -385,7 +388,7 @@ export async function requestApproval(
           cacheKey: resolution.judge.cacheKey,
           cacheHit: resolution.judge.cacheHit,
           unattended: chainReq.unattended,
-          ...(input.domain != null ? { domain: input.domain } : {}),
+          ...(chainDomain != null ? { domain: chainDomain } : {}),
         },
       }).catch(() => undefined);
     }
@@ -483,7 +486,7 @@ export async function requestApproval(
       );
     }
 
-    if (resolution.verdict === "allow" && resolution.registryVerdict === "ask") {
+    if (resolution.verdict === "allow" && resolution.registryVerdict === "ask" && (connectorChainTool === undefined || resolution.resolvedBy === "judge")) {
       const store = getOperationalStore();
       const now = new Date();
       const decidedBy = `chain:${resolution.resolvedBy}`;
@@ -1232,11 +1235,11 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
 
   if (input.decision === "approve_session") {
     const memoKind = sessionGrantKind(row);
-    const sessionId = sessionIdFromFrozenArgs(row.argsJson);
+    const sessionId = grantableFrozenKey(row);
     if (memoKind && sessionId) {
-      const expiresAt = new Date(Date.now() + sessionApprovalTtlHours() * 3_600_000).toISOString();
+      const expiresAt = new Date(Date.parse(nowIso) + getSettings().approvals.routineGrantTtlHours * 3_600_000).toISOString();
       await store.setSessionApproval({ org: input.org, sessionId, kind: memoKind, grantedBy: input.clickerId, createdAt: nowIso, expiresAt }).catch(() => {});
-      await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.session_granted", detail: { id: row.id, kind: row.kind, memoKind, ...venue } }).catch(() => undefined);
+      await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.session_granted", detail: { id: row.id, kind: row.kind, memoKind, reach: grantReach(sessionId), ...venue } }).catch(() => undefined);
       releaseTail = () => releaseSessionGrantedPendings({ sessionId, memoKind, grantedOn: row, click: input });
     }
   }
@@ -1398,6 +1401,7 @@ export async function wakeWindowOnDecision(
       ...(input.clickerId ? { clickerId: input.clickerId } : {}),
       ...(input.execution ? { execution: input.execution } : {}),
       pendingId: input.row.id,
+      ...(seatTokenForwardsWork(session.token) ? { forwardsWork: true } : {}),
     },
     nowIso,
   );

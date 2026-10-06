@@ -21,7 +21,8 @@ import { resolveApprovalClick, isOrgAdminOnlySpendCap } from "../approvals/flow.
 import { disarmApprovalJudge, rearmApprovalJudge } from "../approvals/judge-contradiction.js";
 import { orgWideWhere, whereFromScope } from "../approvals/actions.js";
 import { haltAddressFields, haltAddressFromParts } from "../access/halt.js";
-import { supervisorGrainFor } from "../channels/unified-supervisor.js";
+import { conversationGrantRoomPrefix, grantReach } from "../approvals/session-grant.js";
+import { routinePermissionKeyParts } from "../routines/permission-key.js";
 import { reopenSlackSetupPage } from "../channels/slack-bridge.js";
 import { listLinkSetsWithIds, purgeLinkSetCredentials, revokeLinkSet, setLinkSetHold } from "../identity/link-store.js";
 import { directoryProvider } from "../identity/directory.js";
@@ -277,9 +278,9 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
   server.registerTool(
     "revoke_session_grants",
     {
-      title: "Revoke a session's standing approval grants (break-glass)",
+      title: "Revoke a routine's standing grants or a room's unspent approvals (break-glass)",
       description:
-        "Break-glass: withdraw every \"Approve for session\" grant held by a surface's LIVE session, so the next PR-open in it gets a fresh approval card again. On a LIVE SESSION that is the whole effect: PR-open is the only kind an \"Approve for session\" click ever wrote, so no other verb changes. The delete is WHOLE-KEY, though — passed a ROUTINE grant key it also removes that routine's DECLARED permissions (the `connector.tool:` rows), so the routine's next unattended connector write is refused and asks again. Use when a session was granted too widely, or when a seat is behaving oddly and you want its standing discretion gone without cancelling the work. Narrowing only — it can never grant. Note what it does NOT do: a session grant only skips the human card, so this does not remove any capability; to cut ACCESS use revoke_connector. surfaceKey is 'platform/workspace/surface'; the live session is resolved from the channel-session registry (a windowed domain resolves to its window). Pass sessionId to target a session that has no registry row (a thread seat, a routine grant key) directly. reason is recorded in the audit row.",
+        "Break-glass. A click in a conversation approves one act and keeps no grant, so a conversation never holds a standing grant. Pass sessionId = the grant key of a routine of this room (surfaceKey is the routine's own room) to withdraw that routine's standing grants: its \"Approve for this routine (up to N h)\" grant and its DECLARED permissions (the `connector.tool:` rows), so the routine's next PR-open or unattended connector write gets a card or is refused and asks again. Without sessionId it withdraws every connector-op approval a click gave in the room that the agent has not spent yet (one call each). surfaceKey is 'platform/workspace/surface' of the ROOM: a Discord thread or a Teams reply chain is reached through its parent channel. Narrowing only — it can never grant. Note what it does NOT do: a grant only skips the human card, so this does not remove any capability; to cut ACCESS use revoke_connector. revoked counts the memos deleted; 0 means there were none. reason is recorded in the audit row.",
       inputSchema: {
         org: z.string().min(1),
         surfaceKey: z.string().min(1),
@@ -291,31 +292,44 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
       const denial = scopeDenial(roles, { org: a.org, surfaceKey: a.surfaceKey });
       if (denial) return errorResult(denial);
       try {
-        let sessionId = a.sessionId;
-        if (!sessionId) {
-          const registryKey = supervisorGrainFor(a.surfaceKey, getConfig().loadDomains()).registryKey;
-          const row = await store().getChannelSession(a.org, registryKey);
-          if (!row) {
+        let revoked: number;
+        let target: string;
+        if (a.sessionId) {
+          const reach = grantReach(a.sessionId);
+          if (reach === "routine") {
+            const parts = routinePermissionKeyParts(a.sessionId);
+            const routine = parts === undefined ? null : await store().getRoutine(a.org, a.surfaceKey, parts.routineId);
+            if (routine === null || routine.surfaceKey !== a.surfaceKey) {
+              return errorResult(
+                `revoke_session_grants: sessionId "${a.sessionId}" is not the grant key of a routine of "${a.surfaceKey}". ` +
+                  `Pass the surfaceKey of the room that owns the routine (routines_list shows it).`,
+              );
+            }
+          } else if (!a.sessionId.startsWith(conversationGrantRoomPrefix(a.surfaceKey))) {
             return errorResult(
-              `revoke_session_grants: no live session registered for "${a.surfaceKey}" (registry key "${registryKey}"). ` +
-                `A per-thread, task or native session has no registry row — pass its sessionId explicitly.`,
+              `revoke_session_grants: sessionId "${a.sessionId}" is not a grant key of "${a.surfaceKey}". ` +
+                `Pass a routine grant key of this room, a key that starts with "${conversationGrantRoomPrefix(a.surfaceKey)}", or omit sessionId to revoke every unspent approval in the room.`,
             );
           }
-          sessionId = row.token;
+          target = a.sessionId;
+          revoked = await store().revokeSessionApprovals(a.org, a.sessionId);
+        } else {
+          target = conversationGrantRoomPrefix(a.surfaceKey);
+          revoked = await store().revokeSessionApprovalsByPrefix(a.org, target);
         }
-        const revoked = await store().revokeSessionApprovals(a.org, sessionId);
         await appendAudit({
           ...whereFromScope(a.org, a.surfaceKey),
           principalId: actor,
           action: "admin.session_grants.revoke",
-          detail: { surfaceKey: a.surfaceKey, sessionId, revoked, ...(a.reason ? { reason: a.reason } : {}) },
+          detail: { surfaceKey: a.surfaceKey, ...(a.sessionId ? { sessionId: a.sessionId } : { prefix: target }), revoked, ...(a.reason ? { reason: a.reason } : {}) },
         });
-        return jsonResult({ ok: true, org: a.org, surfaceKey: a.surfaceKey, sessionId, revoked });
+        return jsonResult({ ok: true, org: a.org, surfaceKey: a.surfaceKey, ...(a.sessionId ? { sessionId: a.sessionId } : { prefix: target }), revoked });
       } catch (e) {
         return errorResult(`revoke_session_grants failed: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
   );
+
 
   server.registerTool(
     "cancel_routine",

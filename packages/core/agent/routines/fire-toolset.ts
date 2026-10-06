@@ -1,21 +1,16 @@
 import { declarationForPermissionKind } from "../approvals/session-grant.js";
+import { readConnectionExecuteTarget } from "../access/connection-execute-target.js";
 
 const TOOL_DECLARATION_PREFIX = "tool:";
 
-export interface ProjectedConnectorOp {
+export interface DeclaredConnectorOp {
   readonly connection: string;
-  readonly description: string;
-  readonly qualifiedName: string;
   readonly tool: string;
-  readonly inputSchema?: unknown;
-  readonly outputSchema?: unknown;
+  readonly qualifiedName: string;
 }
 
 export interface ConnectionOperation {
   readonly name: string;
-  readonly description: string;
-  readonly inputSchema?: unknown;
-  readonly outputSchema?: unknown;
 }
 
 export interface ConnectionCatalogue {
@@ -23,8 +18,8 @@ export interface ConnectionCatalogue {
   readonly ops: readonly ConnectionOperation[];
 }
 
-export interface DeclaredOpProjection {
-  readonly mount: readonly ProjectedConnectorOp[];
+export interface DeclaredOpResolution {
+  readonly resolved: readonly DeclaredConnectorOp[];
   readonly unresolved: readonly string[];
 }
 
@@ -39,34 +34,28 @@ export function declaredConnectorToolNames(kinds: readonly string[]): string[] {
   return out;
 }
 
-export function projectDeclaredConnectorOps(input: {
+export function resolveDeclaredConnectorOps(input: {
   readonly declared: readonly string[];
   readonly catalogues: readonly ConnectionCatalogue[];
-  readonly alreadyProjected?: readonly string[];
-}): DeclaredOpProjection {
-  const already = new Set(input.alreadyProjected ?? []);
-  const mount: ProjectedConnectorOp[] = [];
+  readonly alreadyResolved?: readonly string[];
+}): DeclaredOpResolution {
+  const already = new Set(input.alreadyResolved ?? []);
+  const resolved: DeclaredConnectorOp[] = [];
   const unresolved: string[] = [];
   for (const qualifiedName of input.declared) {
     if (already.has(qualifiedName)) continue;
-    const matches: ProjectedConnectorOp[] = [];
+    const matches: DeclaredConnectorOp[] = [];
     for (const catalogue of input.catalogues) {
       for (const op of catalogue.ops) {
         if (`${catalogue.connection}__${op.name}` !== qualifiedName) continue;
-        matches.push({
-          connection: catalogue.connection,
-          description: op.description,
-          qualifiedName,
-          tool: op.name,
-          ...(op.inputSchema !== undefined ? { inputSchema: op.inputSchema } : {}),
-          ...(op.outputSchema !== undefined ? { outputSchema: op.outputSchema } : {}),
-        });
+        matches.push({ connection: catalogue.connection, tool: op.name, qualifiedName });
       }
     }
-    if (matches.length === 1) mount.push(matches[0]!);
+    const only = matches.length === 1 ? matches[0]! : undefined;
+    if (only !== undefined && readConnectionExecuteTarget({ connection: only.connection, tool: only.tool }) !== undefined) resolved.push(only);
     else unresolved.push(qualifiedName);
   }
-  return { mount, unresolved };
+  return { resolved, unresolved };
 }
 
 export function candidateConnectionsForDeclarations(declared: readonly string[], connections: readonly string[]): string[] {
@@ -78,4 +67,4 @@ export function candidateConnectionsForDeclarations(declared: readonly string[],
   return out;
 }
 
-export const ROUTINE_DECLARED_OPS_MOUNTED_ACTION = "routine.declared_ops_mounted";
+export const ROUTINE_DECLARED_OPS_RESOLVED_ACTION = "routine.declared_ops_resolved";

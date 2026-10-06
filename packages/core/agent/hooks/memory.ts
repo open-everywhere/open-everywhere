@@ -26,6 +26,7 @@ import type { MemorySilo } from "../memory/silo.js";
 import { appendAudit } from "../audit/audit.js";
 import { isSupervisorSession } from "../model/routing.js";
 import { windowTopologyEnabled } from "../access/capabilities.js";
+import { forwardsToWorkSession, isWorkSessionContext } from "../access/work-session.js";
 import { getConfig } from "../access/config.js";
 import { HOST_OWNED_FILES } from "../memory/host-owned-files.js";
 
@@ -98,9 +99,10 @@ export function mergePreservingConflicts(
   fromSandbox: MemoryFiles,
   baseline: Record<string, string>,
   sessionId: string,
-): { files: MemoryFiles; conflicts: string[] } {
+): { files: MemoryFiles; conflicts: string[]; hostKept: string[] } {
   const merged: MemoryFiles = { ...hostCurrent, ...fromSandbox };
   const conflicts: string[] = [];
+  const hostKept: string[] = [];
   for (const [rel, sandboxContent] of Object.entries(fromSandbox)) {
     if (rel.includes(".conflict-")) continue;
     if (isHostOwnedFile(rel)) {
@@ -110,13 +112,27 @@ export function mergePreservingConflicts(
     const hostContent = hostCurrent[rel];
     if (hostContent === undefined) continue;
     const hostChangedSinceStart = hashContent(hostContent) !== baseline[rel];
+    if (hostChangedSinceStart && baseline[rel] !== undefined && hashContent(sandboxContent) === baseline[rel]) {
+      merged[rel] = hostContent;
+      hostKept.push(rel);
+      continue;
+    }
     const weChangedIt = sandboxContent !== hostContent;
     if (hostChangedSinceStart && weChangedIt) {
       merged[conflictName(rel, sessionId)] = hostContent;
       conflicts.push(rel);
     }
   }
-  return { files: merged, conflicts };
+  return { files: merged, conflicts, hostKept };
+}
+
+export function baselineAfterPersist(files: MemoryFiles, hostKept: readonly string[], fromSandbox: MemoryFiles): Record<string, string> {
+  const next = hashFiles(files);
+  for (const rel of hostKept) {
+    const snapshot = fromSandbox[rel];
+    if (snapshot !== undefined) next[rel] = hashContent(snapshot);
+  }
+  return next;
 }
 
 export const MEMORY_DROP_RATIO_FLOOR = 0.5;
@@ -151,11 +167,9 @@ function destructionVerdict(host: string, next: string): { hostLines: number; dr
   return { hostLines: before.length, droppedLines: dropped };
 }
 
-export function guardDestructiveWrites(
-  hostCurrent: MemoryFiles,
-  merged: MemoryFiles,
-  sessionId: string,
-): { files: MemoryFiles; rejected: RejectedWrite[] } {
+export type GuardedWrites = { files: MemoryFiles; rejected: RejectedWrite[] };
+
+export function guardDestructiveWrites(hostCurrent: MemoryFiles, merged: MemoryFiles, sessionId: string): GuardedWrites {
   const files: MemoryFiles = { ...merged };
   const rejected: RejectedWrite[] = [];
   for (const [rel, hostContent] of Object.entries(hostCurrent)) {
@@ -230,7 +244,21 @@ function skipAsSubagentChild(ctx: HookContext, phase: string): boolean {
     child = false;
   }
   if (child) log(`${phase}: ${SUBAGENT_SKIP_MARKER}; the parent owns the shared sandbox's memory tree`);
-  return child;
+  return child || skipAsForwardingSeat(ctx, phase);
+}
+
+export const FORWARDING_SEAT_SKIP_MARKER = "SKIPPED — this seat forwards its work, and its work session is the room's memory writer";
+
+function skipAsForwardingSeat(ctx: HookContext, phase: string): boolean {
+  let forwarding = false;
+  try {
+    const bindable = ctx as unknown as BindableContext;
+    forwarding = !isWorkSessionContext(bindable) && forwardsToWorkSession(bindable);
+  } catch {
+    forwarding = false;
+  }
+  if (forwarding) log(`${phase}: ${FORWARDING_SEAT_SKIP_MARKER}`);
+  return forwarding;
 }
 
 type MemorySandbox = Awaited<ReturnType<HookContext["getSandbox"]>>;
@@ -294,12 +322,15 @@ export async function persistMemoryNow(ctx: MemoryPersistContext, outcome: Memor
       let files = hostCurrent;
       let conflicts: string[] = [];
       let rejected: RejectedWrite[] = [];
+      let hostKept: readonly string[] = [];
+      let fromSandbox: MemoryFiles = {};
       if (sandbox) {
-        const fromSandbox = await readTierFromSandbox(sandbox, rm.tier);
+        fromSandbox = await readTierFromSandbox(sandbox, rm.tier);
         if (Object.keys(fromSandbox).length > 0) {
           const baseline = baselines[tierId(rm.tier)] ?? {};
           const merged = mergePreservingConflicts(hostCurrent, fromSandbox, baseline, sessionId);
           conflicts = merged.conflicts;
+          hostKept = merged.hostKept;
           ({ files, rejected } = guardDestructiveWrites(hostCurrent, merged.files, sessionId));
         }
       }
@@ -356,7 +387,7 @@ export async function persistMemoryNow(ctx: MemoryPersistContext, outcome: Memor
       persisted += Object.keys(files).length;
       if (sha) changed++;
       try {
-        writeBaseline.update((b) => ({ ...b, [tierId(rm.tier)]: hashFiles(files) }));
+        writeBaseline.update((b) => ({ ...b, [tierId(rm.tier)]: baselineAfterPersist(files, hostKept, fromSandbox) }));
       } catch (err) {
         log(`write-baseline advance skipped for ${tierId(rm.tier)} (the persist itself landed; a later pass may re-file our own write as a conflict): ${String(err)}`);
       }
@@ -403,6 +434,7 @@ async function lock(sandbox: Awaited<ReturnType<HookContext["getSandbox"]>>, pat
 function resyncArmed(ctx: HookContext): boolean {
   try {
     if (isSubagentChildContext(ctx as unknown as BindableContext)) return false;
+    if (!isWorkSessionContext(ctx as unknown as BindableContext) && forwardsToWorkSession(ctx as unknown as BindableContext)) return false;
     if (!isSupervisorSession(ctx)) return false;
     return windowTopologyEnabled();
   } catch {

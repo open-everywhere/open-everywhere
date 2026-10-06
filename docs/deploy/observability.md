@@ -23,8 +23,13 @@ exists and roughly how it's used (never what it did or said). See
   grants, consequential actions) in the operational store. Queryable any time via the
   [control plane](../security/control-plane.md) and the in-Slack admin tools. See
   [Audit & provenance](../security/audit-and-provenance.md).
-- **Usage rows** — per-model-call token/cost events (90-day TTL) behind
-  `usage_report`/`session_cost`. See [Spend & cost controls](../security/spend-and-cost.md).
+- **Usage rows** — per-model-call token/cost events behind `usage_report`/`session_cost`.
+  🔴 **The default store never deletes them.** On the embedded-Postgres (PGlite) floor and on hosted
+  Postgres, the app writes `usage_events` append-only and its prune issues no SQL. No code path
+  deletes a monthly spend ledger row, on any store. Retention is your own control: a maintenance job
+  on the database (on hosted Postgres, outside the app role). Only the deprecated SQLite floor
+  prunes usage rows (90 days). See
+  [Per-event usage capture](../security/spend-and-cost.md#per-event-usage-capture).
 - **Tracing: a graceful no-op.** The OTel instrumentation module registers no provider
   unless a collector is configured, so spans flow to OpenTelemetry's no-op tracer at
   zero cost. (On Vercel itself, spans additionally feed Vercel's own Session Tracing
@@ -199,25 +204,33 @@ rather than a guess.
 
 ## Signal 2 — traces (standard OTel env vars)
 
-Span export for every model call (run → turn → step/tool-call; no model I/O attached —
-see below) is already wired through `agent/instrumentation.ts` and turns on when the
-**standard** OTel env vars are present — any OTLP/HTTP collector works:
+eve owns the OpenTelemetry pipeline. It registers one tracer provider for the process, from the
+files in `agent/instrumentation/`, and it creates the spans for every model call (run → turn →
+step/tool-call). Nothing in the app calls `registerOTel`: a second registration stops the boot.
+Two destinations can receive the spans:
+
+- **Vercel Agent Runs.** On Vercel preview and production, eve exports to Agent Runs by default.
+  See eve's Agent Runs guide to configure it with `agent/instrumentation/agent-runs.ts`, or to
+  turn it off.
+- **Your OTLP collector.** `agent/instrumentation/otlp.ts` adds one when the **standard** OTel
+  env vars name an endpoint. Any OTLP/HTTP collector works (`http/protobuf` by default,
+  `http/json` with `OTEL_EXPORTER_OTLP_PROTOCOL`):
 
 ```bash
 OTEL_EXPORTER_OTLP_ENDPOINT=https://api.axiom.co        # or your collector
-OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer xaat-…,X-Axiom-Dataset=<dataset>"
+OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer%20xaat-…,X-Axiom-Dataset=<dataset>"
 ```
 
-On Vercel this exports directly from the function (plan-independent — it's just
-outbound HTTP) and is flushed via `waitUntil` before the instance suspends.
+Each header value is percent-decoded, so write a space as `%20`. With no endpoint set, the OTLP
+destination is disabled. The [configuration reference](configuration-reference.md#observability)
+lists every variable.
 
-**Spans carry no model inputs or outputs here.** eve's `defineInstrumentation` accepts
-`recordInputs` and `recordOutputs`, and both default to `false`. Open Everywhere's adapter
-(`packages/adapters/agent/instrumentation.ts`) sets neither, so model content never reaches a
-span on this deployment. A fork that sets them true still meets eve's audience ceiling
-(`applyAudienceCeiling`, eve `shared/instrumentation-content.js`), which forces both off for
-every channel whose audience is not `public` — an `unknown` audience records only inside eve's
-own dev environment.
+**Spans carry no model inputs or outputs.** `agent/instrumentation/otel.ts` declares eve's
+process-wide `otel()` trace policy, and the policy records neither content direction, for every
+audience in every environment. This policy is a ceiling for every OpenTelemetry destination, so
+no destination can add the content back. Without it, eve's default records content for a public
+conversation and in development. `npm run test:instrumentation-hosted-boot` boots the app's
+instrumentation through eve's registration path with Vercel's env and checks this policy.
 
 ## Signal 3 — errors & alerting
 

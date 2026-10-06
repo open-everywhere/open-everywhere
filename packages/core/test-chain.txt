@@ -26,6 +26,8 @@ test:fire-principal
 test:job-toolset
 test:browser-hosts
 test:egress
+test:hook-fail-closed
+test:sandbox-firewall
 test:network-access
 test:identity
 test:tenant-admission
@@ -103,6 +105,7 @@ test:selection
 test:readonly
 test:postgres
 test:audit
+test:audit-error-frames
 test:audit-scrub-arm
 test:result-reduce-arm
 test:wake-arm
@@ -115,7 +118,6 @@ test:event-disclosure
 test:trigger-ingress
 test:event-strike
 test:triggered-fire-window
-test:fire-wake-decoy
 test:webhooks
 test:capture-window
 test:webhook-reveal
@@ -201,6 +203,7 @@ test:ticket-create
 test:work-destinations
 test:github-work-grant
 test:github-search
+test:issue-read
 test:create-ticket-tool
 test:boundary
 test:adapter-api-surface
@@ -211,14 +214,11 @@ test:session-tail
 test:untrusted
 test:untrusted-projection
 test:untrusted-projection-patch
-test:empty-step-terminal-guard
 test:response-behaviour-scoring
 test:compound-ask-scoring
 test:eve-compaction-anchor
 test:eve-framework-tools
 test:eve-delivery-gate
-test:task-cohort-starvation
-test:delegated-binding-refresh
 test:eve-tool-schema-strip
 test:eve-tasks-flag
 test:eve-turn-concurrency
@@ -291,9 +291,11 @@ test:native-subagent
 test:background-task-taint
 test:parked-child-lifecycle
 test:task-wake-identity
+test:in-turn-auth-swap
+test:held-answer-principal
+test:held-question
 test:coalesced-turn-scope
 test:coalesced-delivery-merge-assumption
-test:task-notification
 test:pr-walkthrough
 test:dm-seat
 test:window-sources
@@ -328,6 +330,13 @@ test:solo-window-scoring
 test:approval-preview
 test:worker-capabilities
 test:worker-continuation
+test:work-forward
+test:forwarded-asks
+test:fire-work
+test:no-native-hitl
+test:work-status
+test:work-task-key
+test:work-generation
 test:nullable-optional-fields
 test:subagent-output-nullable
 test:eve-approval-response
@@ -402,6 +411,7 @@ test:delegation-worker-failure
 test:worker-stream-drop-retry
 test:approval-judge
 test:pre-approval-rules
+test:starter-approval-policy
 test:verify-audit-chain-cli
 test:supervisor-complete
 test:fabrication-bench
@@ -460,7 +470,9 @@ test:boot-notices
 test:reserved-refs
 test:deploy-contract
 test:oe-status
+test:connection-execute-fence
 test:eve-authored-boundary
+test:browser-durable-schema
 test:surface-evidence
 test:temp-dir
 test:postgres-wiring-boot

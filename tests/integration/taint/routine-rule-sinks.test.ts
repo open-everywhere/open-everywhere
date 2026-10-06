@@ -1,20 +1,21 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, expect, test } from "vitest";
+import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import {
+  armSettlement,
   auditCursor,
   disposeLater,
-  awaitTaskSettlement,
+  awaitWorkResult,
   bootAgent,
   discordMentionWake,
   DISCORD_GUILD_ID,
   DISCORD_LISTED_CHANNEL_ID,
   registerScript,
   rowsSinceCursor,
-  SETTLEMENT_DRAIN_SCRIPT,
-  taskIdOfDelegation,
   waitFor,
   waitForAuditRows,
   waitForChildren,
+  workTaskIdOfCall,
   wrapToolExecute,
   type AuditCursor,
   type AuditRow,
@@ -56,6 +57,7 @@ async function driveChild(input: {
   childCalls: readonly { tool: string; input: Record<string, unknown> }[];
 }): Promise<Driven> {
   const child: ScriptedStep[] = input.childCalls.map((c, i) => ({
+    ...(i === 0 ? { delayMs: 120_000 } : {}),
     calls: [{ tool: c.tool, input: c.input, id: `${input.ids}-${i}` }],
   }));
   child.push({ say: "proposed" });
@@ -63,8 +65,8 @@ async function driveChild(input: {
   const handle = disposeLater(
     registerScript({
       parent: [
-        { calls: [{ tool: "agent", input: { message: input.delegateMessage }, id: `${input.ids}-delegate` }] },
-        { say: "the worker reported back" },
+        { calls: [{ tool: "work", input: { message: input.delegateMessage }, id: `${input.ids}-delegate` }] },
+        { say: NO_REPLY_SENTINEL },
       ],
       child,
     }),
@@ -72,19 +74,19 @@ async function driveChild(input: {
 
   const cursor = await auditCursor();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `<@9000000000000000001> ${input.delegateMessage}` });
-  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
+  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's receipt step to be served");
+  const settlement = disposeLater(armSettlement(handle, { parent: [{ say: NO_REPLY_SENTINEL }] }));
+  const taskId = await workTaskIdOfCall(cursor, handle, `${input.ids}-delegate`, `the ${input.ids} delegation`);
+  handle.releaseHolds();
   await waitForChildren(handle, { count: 1, lastStepIndex: child.length - 1, label: `the ${input.ids} worker's own terminal step` });
-  expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-  expect(handle.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
-
-  const drained = await awaitTaskSettlement({
-    dispatched: handle,
-    taskId: taskIdOfDelegation(handle, `the ${input.ids} delegation`),
-    script: SETTLEMENT_DRAIN_SCRIPT,
-    label: `the ${input.ids} worker's settlement wake`,
-  });
-  expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-  drained.handle.dispose();
+  const resultStep = await awaitWorkResult({ handle: settlement, taskId, label: `the ${input.ids} seat step that read the worker's result` });
+  expect(resultStep.stepIndex).toBe(0);
+  expect(handle.holdsCutShort(), "the worker's hold ended on the release, not on its 120 s backstop").toBe(1);
+  for (const h of [handle, settlement]) {
+    expect(h.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+    expect(h.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
+  }
+  settlement.dispose();
   return { handle, cursor };
 }
 

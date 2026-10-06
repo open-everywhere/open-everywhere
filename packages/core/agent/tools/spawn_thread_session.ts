@@ -3,7 +3,9 @@ import { z } from "zod";
 import { windowGated } from "../access/window-gated.js";
 import { oneshotAgentEnabled } from "../access/delegation-flag.js";
 import { currentTurnId, currentWakeId, deploymentOrg, type BindableContext } from "../identity/binding.js";
-import { resolveUnifiedWakeTarget, mintWakeId, unifiedThreadRef, isThreadScopedWakeOrigin } from "../channels/unified-window.js";
+import { resolveUnifiedWakeTarget, mintWakeId, unifiedThreadRef, isThreadScopedWakeOrigin, type UnifiedWakeOrigin } from "../channels/unified-window.js";
+import { renderWake } from "../channels/normalized-wake.js";
+import { postArm } from "../channels/post-arms.js";
 import { dispatchTaskWindow } from "../channels/unified.js";
 import { getOperationalStore } from "../operational/provider.js";
 import {
@@ -18,6 +20,7 @@ import { recordThreadOwner, resolveThreadOwner } from "../channels/thread-owners
 import { recordThreadSeatOpen } from "../channels/thread-seat-state.js";
 import { unifiedDomainSessionKey } from "../channels/unified-supervisor.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
+import { liveAuthIsAnotherPrincipal } from "../access/turn-opening-principal.js";
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { postOnce, outboundKey } from "../operational/post-once.js";
 import { appendAudit } from "../audit/audit.js";
@@ -48,11 +51,29 @@ export function canSpawnThreadFromWindow(ctx: BindableContext): boolean {
 function renderThreadSeatBrief(brief: string): string {
   return (
     "You are a thread seat: a persistent conversational presence that OWNS this one thread and stays " +
-    "live across turns. You have the conversational kit — reply/react/read — and you DELEGATE any real " +
-    "work to a worker via `agent` (you have no sandbox yourself). Call `complete_thread` when the thread " +
+    "live across turns. You have the conversational kit — reply/react/read — and you FORWARD any real " +
+    "work to this thread's own work session via `work` (you have no sandbox yourself). Call `complete_thread` when the thread " +
     "is finished and hand it back to the channel watcher.\n\n" +
     brief
   );
+}
+
+function renderThreadSeatOpening(input: { readonly wakeId: string; readonly origin: UnifiedWakeOrigin; readonly brief: string; readonly nowIso: string }): string {
+  const arm = postArm(input.origin.platform);
+  const containerId = arm?.redriveContainerId ? arm.redriveContainerId(input.origin) : input.origin.platform;
+  const envelope = renderWake(
+    {
+      platform: input.origin.platform,
+      reason: "dispatch",
+      addressing: "direct-mention",
+      wakeId: input.wakeId,
+      locus: { channel: { id: containerId } },
+      trigger: { kind: "notice" },
+      systemNote: "The channel seat opened this thread seat for you. Your brief follows below this envelope.",
+    },
+    () => input.nowIso,
+  ).message;
+  return `${envelope}\n${renderThreadSeatBrief(input.brief)}`;
 }
 
 export default windowGated("spawn_thread_session", defineTool({
@@ -73,7 +94,7 @@ export default windowGated("spawn_thread_session", defineTool({
       throw new Error("spawn_thread_session: delegation (delegation.oneshotAgent) is disarmed on this deployment — no new thread seats can be opened.");
     }
     if (isOwnTokenTaskOrThread(c)) {
-      throw new Error("spawn_thread_session: a worker or thread seat cannot open another thread seat — no recursive thread trees. Delegate work with `agent`, or ask the channel watcher to open one.");
+      throw new Error("spawn_thread_session: a worker or thread seat cannot open another thread seat — no recursive thread trees. Forward work with `work`, or ask the channel watcher to open one.");
     }
     const own = ownWindowKey(c);
     if (!own) {
@@ -107,13 +128,16 @@ export default windowGated("spawn_thread_session", defineTool({
       return { seatId: existing, thread: threadKey, note: "This thread already has a running thread seat — reusing it (no second seat opened)." };
     }
 
+    if (liveAuthIsAnotherPrincipal(c)) {
+      throw new Error("spawn_thread_session: a later message inside this turn carried a different person's identity than the message that started it, so this turn cannot say whose thread seat to open. Ask for it again in a message of your own.");
+    }
     const tainted = untrustedIngestedThisTurn();
     const callId = typeof (ctx as { callId?: unknown }).callId === "string" ? (ctx as { callId: string }).callId : undefined;
     const childWakeId = callId ? deterministicChildWakeId(callId) : mintWakeId();
     const doDispatch = () =>
       dispatchTaskWindow({
         token: seatToken,
-        message: renderThreadSeatBrief(input.brief),
+        message: renderThreadSeatOpening({ wakeId: childWakeId, origin, brief: input.brief, nowIso: new Date().toISOString() }),
         wakeId: childWakeId,
         domain: own.domain,
         origin,
@@ -164,7 +188,7 @@ export default windowGated("spawn_thread_session", defineTool({
     return {
       seatId: seatToken,
       thread: threadKey,
-      note: `Opened a thread seat to own this thread — it stays live across messages and delegates real work with \`agent\`. You keep watching the channel${tainted ? " (the brief carries this turn's untrusted-content taint forward)" : ""}.`,
+      note: `Opened a thread seat to own this thread — it stays live across messages and forwards real work to its own work session with \`work\`. You keep watching the channel${tainted ? " (the brief carries this turn's untrusted-content taint forward)" : ""}.`,
     };
   },
 }), canSpawnThreadFromWindow);

@@ -51,7 +51,7 @@ const { eventPrompt } = await import("../agent/routines/events.js");
 const { ROUTINE_MARKER } = await import("../agent/routines/routine.js");
 const { TOOL_CONSEQUENCE } = await import("../agent/access/consequence.js");
 const { JOB_WAKE_TOOLS, WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS } = await import("../agent/access/window-gate-manifest.js");
-const { restrictToolsetForJobWake, withheldFromJobWake } = await import("../agent/access/job-posture.js");
+const { restrictToolsetForJobWake, withheldFromRestrictedJobWake } = await import("../agent/access/job-posture.js");
 
 type Routine = import("../agent/routines/routine.js").Routine;
 type RoutinePolicyRule = import("../agent/routines/policy.js").RoutinePolicyRule;
@@ -223,7 +223,7 @@ for (const name of ["add_routine_rule", "remove_routine_rule"] as const) {
   ok(!(name in toolset), `mounts/${name}: a restricted job wake's toolset does NOT contain it — a run cannot amend its own doctrine with nobody in the room`);
   ok(stripped.includes(name), `mounts/${name}: the restriction reports it as stripped`);
   ok("reply" in toolset, `mounts/${name}: …and the restriction is selective — a job-kit verb next to it survives`);
-  ok(withheldFromJobWake().includes(name), `mounts/${name}: the withheld list names it, so the audit row is the proof`);
+  ok(withheldFromRestrictedJobWake().includes(name), `mounts/${name}: the withheld list names it, so the audit row is the proof`);
 
   ok(
     ROSTER_LOCK.packages["@open-everywhere/core"]?.contributions[`tool/${name}`] === "mounted",

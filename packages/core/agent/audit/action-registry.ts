@@ -302,8 +302,8 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
     fields: ["id"],
     proves: "the hash-chained link for a decided approval — the row that makes the decision tamper-evident",
   },
-  { action: "approval.session_granted", fields: [], proves: "a session-scoped standing grant was issued" },
-  { action: "approval.session_grant_released", fields: [], proves: "a session-scoped standing grant ended", notExercised: "RED-until-leg: S-PR-SESSION — that leg drives the approve-for-session grant and asserts the grant, never its RELEASE." },
+  { action: "approval.session_granted", fields: [], proves: "a routine's standing grant was issued (the card's middle button; a conversation keeps none, OPE-2363)" },
+  { action: "approval.session_grant_released", fields: [], proves: "a session-scoped standing grant ended", notExercised: "RED-until-leg: no live leg clicks a routine's standing grant. S-PR-SESSION asserts that a conversation's click writes NO grant (OPE-2363)." },
   {
     action: "approval.autoapproved",
     fields: [],
@@ -315,7 +315,7 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
     fields: [],
     proves: "the framework terminally rejected, failed, timed out or marked stale a native approval candidate",
     notExercised:
-      "RED-until-fixture: S-EVE-CARD and S-EVE-BRIDGE exercise request-only connector approvals; the only shipped response-policy site is post_file HTML publishing, which this deployment disables, so the pack has no live candidate it can legitimately reject.",
+      "RED-until-fixture: S-EVE-CARD and S-EVE-BRIDGE exercise request-only connector approvals; since OPE-2340 no shipped tool carries a native approval or a response-policy site at all (OE cards only, ruling Q4), so the pack has no live candidate it can legitimately reject.",
   },
   {
     action: "approval.eve_settled",
@@ -325,11 +325,98 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
 
   { action: "delegation.task_started", fields: ["task"], proves: "a background worker was dispatched, under which task id" },
   {
+    action: "work.forwarded",
+    fields: ["requestId", "wakeId", "workToken"],
+    proves: "a seat forwarded a job to its conversation's work session (OPE-2338), joined to the room wake that asked",
+    notExercised:
+      "RED-until-leg: the e2e board has no work-session journey yet. Its proof is the integration tier (tasks/seat-snappy-under-worker, tasks/parallel-jobs-one-conversation). Extend J-UNI-X with a forwarded job.",
+  },
+  {
+    action: "work.cancel_relayed",
+    fields: ["taskId", "request", "outcome"],
+    proves: "a seat relayed a cancel for one forwarded job into its work session, or why the cancel was refused (OPE-2338, ruling D15)",
+    notExercised:
+      "RED-until-leg: beside work.forwarded — no deployed domain runs the work session in slice A.",
+  },
+  {
+    action: "work.question_posted",
+    fields: ["chars", "options"],
+    proves: "a work-session child posted its question into its job's room as an OE card and did not wait (OPE-2340, ruling D5) — counts only, never the question",
+    notExercised:
+      "RED-until-leg: no e2e domain runs the work session yet; tests/integration/tasks/seat-snappy-under-worker.test.ts arm ② reads this row on the integration tier.",
+  },
+  {
+    action: "connector.op_approved",
+    fields: ["connection", "op", "grain", "requestedBy"],
+    proves: "a member's click on an op.connector card approved one connector op for this conversation (a write, or the flag-off blanket) or for one call (a destructive op) — the OE card that replaced eve's native once() (OPE-2340, ruling Q4)",
+    notExercised:
+      "RED-until-leg: no e2e leg clicks a connector-op card yet; scripts/no-native-hitl-test.ts drives the seam with an injected card plane, never this row.",
+  },
+  {
+    action: "work.cancel_redeemed",
+    fields: ["taskId", "outcome"],
+    proves: "the work session's fenced task_cancel redeemed the seat's cancel ticket for one job, or was refused (OPE-2338, ruling D15 under D10)",
+    notExercised:
+      "RED-until-leg: beside work.forwarded — no deployed domain runs the work session in slice A.",
+  },
+  {
+    action: "work.result_wake",
+    fields: ["taskId", "status", "outcome"],
+    proves: "a work-session job's result was delivered to the seat that forwarded it, or why it was not (OPE-2338)",
+    notExercised:
+      "RED-until-leg: beside work.forwarded — no deployed domain runs the work session in slice A.",
+  },
+  {
+    action: "work.request_lost",
+    fields: ["requestId", "reason", "outcome"],
+    proves: "a forwarded job was lost because its work session rotated, parked or failed, and the seat was told with a failed result (OPE-2341, placement §2.18 and D9)",
+    notExercised:
+      "RED-until-leg: beside work.forwarded — no deployed domain runs the work session yet; the integration tier drives it (liveness/work-session-park).",
+  },
+  {
+    action: "work.session_rotated",
+    fields: ["registryKey", "from", "to", "trigger"],
+    proves: "a conversation's work session rotated to a fresh generation, losing its sandbox, and why (OPE-2341, ruling Q6)",
+    notExercised:
+      "RED-until-leg: beside work.forwarded — no deployed domain runs the work session yet; the integration tier drives it (liveness/work-session-park).",
+  },
+  {
+    action: "work.session_failed",
+    fields: ["registryKey", "token", "retired"],
+    proves: "a work session failed (on eve 0.69+ an empty compaction summary is fatal) and its generation was retired (OPE-2341, design point D9)",
+    notExercised:
+      "RED-until-leg: no journey and no integration spec yet drives a work session to a fatal failure; the unit tier pins the remedy (packages/core/scripts/work-generation-test.ts ⑥).",
+  },
+  {
     action: "delegation.task_settled",
     fields: ["task", "status", "agent"],
     proves: "a worker finished and its verdict was carried back — the row a delegated reply must sit beside",
   },
+  {
+    action: "delegation.continuation_admitted",
+    fields: ["task", "session", "openingCall"],
+    proves: "a seat continued an idle worker by taskId from the room that opened the task (OPE-2251), and the worker's authority row was re-pointed at the continuing wake",
+  },
+  {
+    action: "delegation.continuation_refused",
+    fields: ["task", "session", "reason"],
+    proves: "a taskId continuation was refused by the provenance fence (OPE-2251) — `reason: cross-room` is a task opened in another room of the same seat, `task-working` a task that has not reported back yet",
+  },
   { action: "delegation.task_failed", fields: ["task"], proves: "a worker failed rather than quietly producing nothing", notExercised: "needs a worker that FAILS rather than settles; the pack has no fixture that makes one fail on demand." },
+  {
+    action: "delegation.task_unreadable",
+    fields: ["edge", "marker", "adopted", "status", "task"],
+    proves: "eve sent an event on a task edge that OE's reader REFUSED, so it reached no edge and adopted no taint — the fail-OPEN arm, made countable instead of silent",
+    notExercised:
+      "needs eve to send a task event OE's reader refuses, which on a real host means an eve release that moved a shape. `scripts/background-task-taint-test.ts` T4 drives it at the unit tier with a hand-built unreadable payload.",
+  },
+  {
+    action: "delegation.dispatch_unauthorized",
+    fields: ["edge", "reason", "marker", "adopted", "call"],
+    proves: "a delegated dispatch got NO exact dispatch authority, so no task wake is minted and its settlement installs no reply address — the reply fence refuses it under `task-wake-unread`. The state the old throw claimed to prevent, now counted instead of silently passed",
+    notExercised:
+      "needs a unified seat delegating on a turn that reaches no exact wake. `scripts/background-task-taint-test.ts` PART 4D covers THREE of the five reasons through the real handlers: it asserts the row for `unified-turn-no-wake` and `settlement-turn-ambiguous-authority` on `actions.requested` (with a non-delegating action as the negative control), and drives `authority-row-absent-at-task-started` on `task.started`, asserting both its row and the absent task wake. NOT covered: `settlement-turn-no-authority`, which needs no fault and is simply not driven; and `dispatch-wake-not-durable`, which needs `rememberDelegatedTaskWake` to throw and so needs a store fault this tier cannot provoke.",
+  },
   {
     action: "delegation.provenance_carried",
     fields: [],
@@ -540,6 +627,7 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "linear.supervisor_session_failed",
   "linear.supervisor_turn_failed",
   "session.generation_retire_skipped",
+  "work.session_rotation_deferred",
   "session.generation_retired",
   "surface.wake_admitted",
   "credential.binding_opened",
@@ -574,10 +662,13 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "governance.redirected",
   "grant.mount_refused",
   "grant.mount_withheld",
+  "hook.refused",
   "input_response.card_refused",
   "input_response.card_settled",
   "input_response.dropped",
+  "input_response.nonmember_marked",
   "input_response.routed",
+  "turn.question_dropped",
   "linear.dispatched",
   "linear.mention_divert_failed",
   "linear.no_reply",
@@ -625,7 +716,7 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "routine.cancel",
   "routine.complete",
   "routine.create",
-  "routine.declared_ops_mounted",
+  "routine.declared_ops_resolved",
   "routine.edit",
   "routine.enable",
   "routine.expire",
@@ -699,6 +790,11 @@ export const DYNAMIC_ACTION_SITES: readonly DynamicActionSite[] = [
       "notion.ambient_skipped",
       "unified.ambient_skipped",
     ],
+  },
+  {
+    file: "packages/core/agent/approvals/file-publish.ts",
+    expression: "`${args.platform}.post_file`",
+    emits: ["slack.post_file", "discord.post_file", "notion.post_file"],
   },
   {
     file: "packages/core/agent/tools/post_file.ts",

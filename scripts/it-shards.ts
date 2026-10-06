@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { cgroupMemoryCapBytes, type BoxProbe, HOST_BOX_PROBE } from "./ci-max-workers.js";
@@ -170,16 +170,70 @@ function shardRun(args: readonly string[], index: number, total: number): ShardR
   return { args: [...args, `--shard=${index}/${total}`], suite: `${INTEGRATION_SUITE_NAME}--shard=${index}/${total}` };
 }
 
-export function shardFiles(files: readonly string[], index: number, total: number): string[] {
-  const base = Math.floor(files.length / total);
-  const remainder = files.length % total;
-  const start = index <= remainder ? (base + 1) * (index - 1) : remainder * (base + 1) + (index - remainder - 1) * base;
-  const size = index <= remainder ? base + 1 : base;
-  return files
-    .map((file) => ({ file, hash: createHash("sha1").update(`/${file}`).digest("hex") }))
-    .sort((a, b) => (a.hash < b.hash ? -1 : a.hash > b.hash ? 1 : 0))
-    .slice(start, start + size)
-    .map(({ file }) => file);
+export const TIER_TIMINGS_PATH = "scripts/it-timings.json";
+
+export type TierTimings = ReadonlyMap<string, number>;
+
+export function readTierTimings(root: string = process.cwd(), path: string = TIER_TIMINGS_PATH): TierTimings {
+  let raw: string;
+  try {
+    raw = readFileSync(join(root, path), "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return new Map();
+    throw err;
+  }
+  return parseTierTimings(raw, path);
+}
+
+export function parseTierTimings(raw: string, label: string = TIER_TIMINGS_PATH): TierTimings {
+  const doc = JSON.parse(raw) as { files?: unknown };
+  if (typeof doc !== "object" || doc === null || typeof doc.files !== "object" || doc.files === null || Array.isArray(doc.files)) {
+    throw new Error(`${label}: expected an object with a "files" object of path → milliseconds`);
+  }
+  const timings = new Map<string, number>();
+  for (const [file, ms] of Object.entries(doc.files as Record<string, unknown>)) {
+    if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) {
+      throw new Error(`${label}: ${file} has ${JSON.stringify(ms)}, not a non-negative number of milliseconds`);
+    }
+    timings.set(file, ms);
+  }
+  return timings;
+}
+
+export function shardWeights(files: readonly string[], timings: TierTimings): Map<string, number> {
+  const measured = files
+    .map((file) => timings.get(file))
+    .filter((ms): ms is number => ms !== undefined)
+    .sort((a, b) => a - b);
+  const mid = Math.floor(measured.length / 2);
+  const median = measured.length === 0 ? 1 : measured.length % 2 === 1 ? measured[mid]! : (measured[mid - 1]! + measured[mid]!) / 2;
+  return new Map(files.map((file) => [file, timings.get(file) ?? median]));
+}
+
+export function balanceShards(files: readonly string[], total: number, timings: TierTimings): string[][] {
+  const weights = shardWeights(files, timings);
+  const order = [...new Set(files)].sort((a, b) => {
+    const diff = weights.get(b)! - weights.get(a)!;
+    if (diff !== 0) return diff;
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
+  const shards = Array.from({ length: total }, () => ({ load: 0, files: [] as string[] }));
+  const cap = Math.max(SANDBOX_FILES_PER_SHARD, Math.ceil(order.length / Math.max(total, 1)));
+  for (const file of order) {
+    let best: (typeof shards)[number] | undefined;
+    for (const shard of shards) {
+      if (shard.files.length >= cap) continue;
+      if (best === undefined || shard.load < best.load || (shard.load === best.load && shard.files.length < best.files.length)) best = shard;
+    }
+    if (best === undefined) best = shards[0]!;
+    best.files.push(file);
+    best.load += Math.max(weights.get(file)!, Number.EPSILON);
+  }
+  return shards.map((shard) => shard.files.sort());
+}
+
+export function shardFiles(files: readonly string[], index: number, total: number, timings: TierTimings): string[] {
+  return balanceShards(files, total, timings)[index - 1] ?? [];
 }
 
 export function tierFilesDigest(files: readonly string[]): string {

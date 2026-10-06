@@ -21,8 +21,10 @@ const queueContract = flat(read("compiled/@workflow/world/queue.d.ts"));
 const worldCapabilities = flat(read("compiled/@workflow/world/interfaces.d.ts"));
 const stepOwnership = flat(read("compiled/@workflow/core/runtime/step-ownership.d.ts"));
 const singleFlight = flat(read("compiled/@workflow/core/runtime/step-single-flight.d.ts"));
-const dispatchTurn = flat(read("execution/dispatch-turn-step.d.ts"));
-const turnDispatch = flat(read("execution/turn-dispatch.d.ts"));
+const sessionTurn = flat(read("execution/session/turn.d.ts"));
+const turnStepContract = flat(read("execution/session/turn-step.d.ts"));
+const sessionEntry = flat(read("execution/session/entry.d.ts"));
+const sessionTurnJs = read("execution/session/turn.js");
 
 {
   const IN_FLIGHT_WARNING = "Step execution already in flight in this process";
@@ -102,13 +104,27 @@ const turnDispatch = flat(read("execution/turn-dispatch.d.ts"));
 
 {
   ok(
-    dispatchTurn.includes("Starts a per-turn child workflow for the current driver session"),
-    "4: each turn is dispatched as its OWN child workflow run — two turns of one session are two different (run, step) pairs",
+    sessionTurn.includes("Executes conversational turns inside the owning session workflow") && sessionTurn.includes("There is no child run"),
+    "4: eve runs each turn INSIDE the owning session workflow, with no child run — two turns of one session are steps of ONE run",
   );
   ok(
-    turnDispatch.includes("Dispatches one turn and services its private-inbox control protocol until it terminates"),
-    "4: the driver awaits one turn to termination — the HAPPY path is sequential, which is why this residual is about redelivery and not about ordinary dispatch",
+    sessionEntry.includes("The current owner directly executes every turn"),
+    "4: …and the session entrypoint says the same: the owner executes every turn directly",
   );
+  ok(
+    turnStepContract.includes("Runs a bounded batch of harness model steps inside one durable `\"use step\"` boundary"),
+    "4: a turn's model work runs in `turnStep`, ONE durable step per batch — so two turns are two DIFFERENT steps, outside §1's (run, step) key",
+  );
+  ok(
+    /for\(;;\)\{[^]{0,200}?await \w+\.advanceWithHistory\(\w+=>turnStep\(/u.test(sessionTurnJs),
+    "4: the session loop AWAITS each turnStep before the next — the HAPPY path is sequential, which is why this residual is about redelivery and not about ordinary dispatch",
+  );
+  for (const nearMiss of ["one turn at a time", "turns never overlap", "exclusive owner"]) {
+    ok(
+      !sessionTurn.includes(nearMiss) && !sessionEntry.includes(nearMiss) && !turnStepContract.includes(nearMiss),
+      `4: the session contracts do NOT state "${nearMiss}"`,
+    );
+  }
   ok(
     workflowRuntime.includes("Re-executing inline steps owned by this queue message"),
     "🔴 4: the redelivery-recovery path is real and shipped — a previous delivery that crashed mid-body has its inline step bodies RE-EXECUTED (<repo root>/tests/integration/redelivery-storm-guard.ts watches for its storm)",
@@ -146,11 +162,11 @@ const turnDispatch = flat(read("execution/turn-dispatch.d.ts"));
   );
 
   ok(
-    dispatchTurn.includes("for the current driver session"),
-    "5: a turn is dispatched FOR ONE driver session — the ordinal this section pins counts turns within that session, never across sessions",
+    sessionTurn.includes("inside the owning session workflow"),
+    "5: a turn runs inside ONE session's workflow — the ordinal this section pins counts turns within that session, never across sessions",
   );
 }
 
 console.log(
-  `✓ eve-turn-concurrency — ${passed} assertions (eve 0.54.3 states no at-most-one-turn-per-session guarantee in the runtime, queue, world-capability, step-ownership and turn-dispatch contracts read here: in-process single-flight keyed on one step, an exclusivity bounded by a lease that expires, per-run serialization gated OFF on an env var, turns as separate child runs; §5 pins the advancing turn_<n> ordinal the OPE-1281 claim key rests on)`,
+  `✓ eve-turn-concurrency — ${passed} assertions (eve 0.71.0 states no at-most-one-turn-per-session guarantee in the runtime, queue, world-capability, step-ownership and session-turn contracts read here: in-process single-flight keyed on one step, an exclusivity bounded by a lease that expires, per-run serialization gated OFF on an env var, turns as separate steps of the session's run; §5 pins the advancing turn_<n> ordinal the OPE-1281 claim key rests on)`,
 );

@@ -203,6 +203,57 @@ await eveContextStorage().run(new FakeSession(), async () => {
   ok(m.calls.length === 1, "memo: the token mint was NOT re-hit on the short-circuited retry");
 });
 
+await eveContextStorage().run(new FakeSession(), async () => {
+  const m = makeMinter("auth-required");
+  const s = makeStarter("ok", "https://connect.vercel.com/auth/CHILD-LINK");
+  const cards: { recipientId: string; connector: string; url: string }[] = [];
+  const resolver = userAwareProviderToken(
+    { connector: "notion", fallbackSecretRef: "NOTION_API_KEY", fallbackBroker: "env" },
+    {
+      mintUser: m.mint,
+      startAuth: s.start as never,
+      workChild: () => true,
+      deliverSignIn: async (o) => {
+        cards.push({ recipientId: o.recipientId, connector: o.connector, url: o.url });
+        return true;
+      },
+    },
+  );
+  const provider = await resolver({ session: { auth: dmAuth } } as never);
+  const call = async (): Promise<string> => {
+    try {
+      await (provider.getToken as (o: unknown) => Promise<unknown>)(undefined);
+      return "";
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e);
+    }
+  };
+  const first = await call();
+  ok(first.startsWith("needs-sign-in:"), `OPE-2340: a work-session child's auth-required call settles needs-sign-in (got: ${first.slice(0, 80)})`);
+  ok(!/https?:\/\//.test(first), "🔴 OPE-2340: the needs-sign-in error carries NO link — the child's words reach the room");
+  ok(/went to that person directly/.test(first) && /nothing waits/.test(first), "OPE-2340: the error says the card went privately and nothing waits");
+  ok(cards.length === 1 && cards[0]!.url === "https://connect.vercel.com/auth/CHILD-LINK" && cards[0]!.recipientId === "U_caller", "OPE-2340: the link went to the asking person's own sign-in card");
+  const retry = await call();
+  ok(!/https?:\/\//.test(retry), "🔴 OPE-2340: a same-turn retry repeats NO link either (the memo holds no URL)");
+  ok(s.calls.length === 1 && cards.length === 1, "OPE-2340: one link mint and one card per connector per turn");
+});
+{
+  const m = makeMinter("auth-required");
+  const s = makeStarter("ok", "https://connect.vercel.com/auth/CHILD-LINK-2");
+  const resolver = userAwareProviderToken(
+    { connector: "notion", fallbackSecretRef: "NOTION_API_KEY", fallbackBroker: "env" },
+    { mintUser: m.mint, startAuth: s.start as never, workChild: () => true, deliverSignIn: async () => false },
+  );
+  const provider = await resolver({ session: { auth: dmAuth } } as never);
+  let err = "";
+  try {
+    await (provider.getToken as (o: unknown) => Promise<unknown>)(undefined);
+  } catch (e) {
+    err = e instanceof Error ? e.message : String(e);
+  }
+  ok(err.startsWith("needs-sign-in:") && /could not be delivered privately/.test(err) && !/https?:\/\//.test(err), "OPE-2340: an undelivered card is reported as such, with no link");
+}
+
 {
   const m = makeMinter("ok");
   const r = await getToken(channelAuth, m);

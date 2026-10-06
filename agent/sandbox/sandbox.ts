@@ -1,15 +1,16 @@
-import { defineSandbox } from "eve/sandbox";
-import { vercel } from "eve/sandbox/vercel";
-import { justbash } from "eve/sandbox/just-bash";
-import { docker } from "eve/sandbox/docker";
+import { defineSandbox, type RuntimeSandboxSession, type SandboxEnvironment, type SandboxSession } from "eve/sandbox";
+import { VercelSandbox } from "eve/sandbox/vercel";
+import { JustBashSandbox } from "eve/sandbox/just-bash";
+import { DockerSandbox } from "eve/sandbox/docker";
 import { bindFrom, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import { resolvePartition } from "@open-everywhere/core/agent/memory/partition.js";
 import { sandboxPresetFor } from "@open-everywhere/core/agent/roles/role.js";
 import { getConfig } from "@open-everywhere/core/agent/access/config.js";
 import { onVercel } from "@open-everywhere/core/agent/access/platform.js";
-import { agentBrowserSandboxHooks } from "@open-everywhere/adapters/agent/browser/sandbox.js";
-import { recordCreatedSandbox } from "@open-everywhere/adapters/agent/sandbox/created-sandbox-registry.js";
+import { agentBrowserSandboxHooks, type BakeableSandbox } from "@open-everywhere/adapters/agent/browser/sandbox.js";
+import { registerSandboxFirewall } from "@open-everywhere/core/agent/sandbox/network-policy.js";
 import { resolveSelfHostBackendKind, selfHostBackendBootLog } from "./backend-select.js";
+import type { SelfHostBackendKind } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   resolveSandboxRegionPlan,
   vercelSandboxCreateOptions,
@@ -38,7 +39,26 @@ const VERCEL_CREATE_OPTIONS = vercelSandboxCreateOptions({
 
 const AGENT_BROWSER_BAKE = agentBrowserSandboxHooks();
 
-function selfHostBackend() {
+const AGENT_BROWSER_PREPARE =
+  AGENT_BROWSER_BAKE.bootstrap === undefined
+    ? {}
+    : {
+        prepare: async (sandbox: SandboxSession): Promise<void> => {
+          const bootstrap = AGENT_BROWSER_BAKE.bootstrap;
+          if (bootstrap === undefined) return;
+          await bootstrap({ use: async () => sandbox satisfies BakeableSandbox });
+        },
+      };
+
+const VERCEL_ENVIRONMENT = VercelSandbox.environment({ ...VERCEL_CREATE_OPTIONS, ...AGENT_BROWSER_PREPARE });
+
+interface SelfHostSandbox {
+  readonly kind: SelfHostBackendKind;
+  readonly environment: SandboxEnvironment<object | undefined, SandboxSession>;
+  readonly open: () => Promise<RuntimeSandboxSession>;
+}
+
+function selfHostEnvironment(): SelfHostSandbox {
   const kind = resolveSelfHostBackendKind();
   const bootLog = selfHostBackendBootLog(kind);
   if (bootLog.warn !== undefined) console.warn(bootLog.warn);
@@ -47,38 +67,41 @@ function selfHostBackend() {
   if (egressLog.warn !== undefined) console.warn(egressLog.warn);
   console.info(egressLog.info);
   startEgressDenialPoller();
-  if (kind === "justbash") return justbash();
+  if (kind === "justbash") {
+    const environment = JustBashSandbox.environment({});
+    registerSandboxFirewall({ carries: "none", backend: "justbash" });
+    return { kind, environment, open: async () => await environment.open() };
+  }
   const image = getSettings().sandbox.image;
-  return docker(image ? { image } : {});
+  const environment = image ? DockerSandbox.environment({ image }) : DockerSandbox.environment({});
+  registerSandboxFirewall({ carries: "coarse", environment });
+  return { kind, environment, open: async () => await environment.open() };
 }
 
-export default defineSandbox({
-  backend: ON_VERCEL ? vercel(VERCEL_CREATE_OPTIONS) : selfHostBackend(),
-  ...AGENT_BROWSER_BAKE,
-  onSession: async ({ ctx, use }) => {
-    if (!ON_VERCEL) {
-      await use();
-      return;
+const SELF_HOST = ON_VERCEL ? undefined : selfHostEnvironment();
+if (ON_VERCEL) registerSandboxFirewall({ carries: "full", environment: VERCEL_ENVIRONMENT });
+
+export const environment: SandboxEnvironment<object | undefined, SandboxSession> =
+  SELF_HOST === undefined ? (VERCEL_ENVIRONMENT as SandboxEnvironment<object | undefined, SandboxSession>) : SELF_HOST.environment;
+
+export default defineSandbox(async (context) => {
+  if (SELF_HOST !== undefined) return await SELF_HOST.open();
+  let options: { resources: { vcpus: number } } | undefined;
+  try {
+    const bindable = context as unknown as BindableContext;
+    const preset = sandboxPresetFor(bindFrom(bindable), resolvePartition(bindable), getConfig().loadDomains());
+    const vcpus = preset?.vcpus;
+    if (typeof vcpus === "number" && Number.isFinite(vcpus) && vcpus > 0) {
+      options = { resources: { vcpus: Math.floor(vcpus) } };
     }
-    const useSized = use as unknown as (options?: { resources: { vcpus: number } }) => Promise<{ id: string }>;
-    let options: { resources: { vcpus: number } } | undefined;
-    try {
-      const bindable = ctx as BindableContext;
-      const preset = sandboxPresetFor(bindFrom(bindable), resolvePartition(bindable), getConfig().loadDomains());
-      const vcpus = preset?.vcpus;
-      if (typeof vcpus === "number" && Number.isFinite(vcpus) && vcpus > 0) {
-        options = { resources: { vcpus: Math.floor(vcpus) } };
-      }
-    } catch (err) {
-      console.warn(`[open-everywhere:sandbox] vcpus preset resolution failed — using default size (${String(err)})`);
-    }
-    const record = (session: { id: string }): void => recordCreatedSandbox(ctx.session.id, session.id);
-    try {
-      record(await useSized(options));
-    } catch (err) {
-      if (options === undefined) throw err;
-      console.warn(`[open-everywhere:sandbox] applying vcpus=${options.resources.vcpus} failed — retrying default size (${String(err)})`);
-      record(await useSized());
-    }
-  },
+  } catch (err) {
+    console.warn(`[open-everywhere:sandbox] vcpus preset resolution failed — using default size (${String(err)})`);
+  }
+  if (options === undefined) return await VERCEL_ENVIRONMENT.open();
+  try {
+    return await VERCEL_ENVIRONMENT.open(options);
+  } catch (err) {
+    console.warn(`[open-everywhere:sandbox] applying vcpus=${options.resources.vcpus} failed — retrying default size (${String(err)})`);
+    return await VERCEL_ENVIRONMENT.open();
+  }
 });

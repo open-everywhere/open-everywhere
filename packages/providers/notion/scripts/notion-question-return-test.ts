@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -46,19 +46,23 @@ const authFor = (discussionId: string): { attributes: Record<string, string>; pr
   attributes: { workspace_id: "workspace_acme", page_id: PAGE, discussion_id: discussionId },
 });
 
-async function wake(discussionId: string, message: string, opts: { respondThrows?: boolean } = {}): Promise<{ sent: string[]; responded: { requestId: string; text: string }[] }> {
+async function wake(discussionId: string, message: string, opts: { respondThrows?: boolean; nonMember?: true } = {}): Promise<{ sent: string[]; responded: { requestId: string; text: string }[]; respondOptions: Record<string, unknown>[] }> {
   const sent: string[] = [];
   const responded: { requestId: string; text: string }[] = [];
+  const respondOptions: Record<string, unknown>[] = [];
   const send = (async (payload: { message: string }) => {
     sent.push(payload.message);
   }) as unknown as Parameters<typeof liveNotionSupervisorDeps>[0];
-  const respond = (async (input: { requestId: string; text: string }) => {
+  const respond = (async (input: { requestId: string; text: string }, options: Record<string, unknown>) => {
     if (opts.respondThrows) throw new Error("eve refused the respond — the request id is not in the proxy map");
     responded.push(input);
+    respondOptions.push(options);
   }) as unknown as NonNullable<Parameters<typeof liveNotionSupervisorDeps>[3]>;
   const deps = liveNotionSupervisorDeps(send, SURFACE, undefined, respond);
-  await deps.wake({ token: BARE_TOKEN, auth: authFor(discussionId) as never, message, context: [], state: STATE });
-  return { sent, responded };
+  const auth = authFor(discussionId);
+  if (opts.nonMember) auth.attributes.oe_chat_nonmember = "true";
+  await deps.wake({ token: BARE_TOKEN, auth: auth as never, message, context: [], state: STATE });
+  return { sent, responded, respondOptions };
 }
 
 const rowNow = (): Promise<unknown> => readBridgedQuestion(getOperationalStore(), ORG, BARE_TOKEN);
@@ -90,13 +94,20 @@ const rowNow = (): Promise<unknown> => readBridgedQuestion(getOperationalStore()
   const row = (await rowNow()) as { requestId: string; containerKey?: string; taskId?: string } | undefined;
   eq(row?.requestId, REQUEST_ID, "…under the request id eve's proxy map is keyed on — the only value that can route an answer");
   eq(row?.containerKey, `notion:${DISCUSSION}`, "…bound to the discussion it is showing in");
-  eq(row?.taskId, "task_abc123", "…with the owning task DERIVED for the audit join (never for routing)");
+  eq(row?.taskId, undefined, "…and with no task: only the work session has children that can ask, and they never reach this road (OPE-2351)");
 
   const answered = await wake(DISCUSSION, "<wake>yes, go ahead</wake>");
   eq(answered.sent.length, 0, "🔴 §2 the answering comment is NOT delivered as an ordinary send — that is what the parent eats");
   eq(answered.responded.length, 1, "🔴 §2 …it is delivered as `respond`, the ONE primitive that reaches a delegated worker");
   eq(answered.responded[0]?.requestId, REQUEST_ID, "…addressed to the request the worker is parked on");
   eq(answered.responded[0]?.text, "<wake>yes, go ahead</wake>", "…carrying the rendered wake verbatim, exactly what eve consumed before this leg existed");
+  eq(answered.respondOptions.length, 1, "OPE-2336: the answer's respond options were captured");
+  ok(!Object.prototype.hasOwnProperty.call(answered.respondOptions[0], "auth"), "🔴 OPE-2336: the answer hands its respond edge NO auth — the commenter's identity never reaches the held turn");
+  {
+    const src = readFileSync(new URL("../agent/channels/notion.ts", import.meta.url), "utf8");
+    const edge = /function notionRespondFrom\([^]*?\.respond\(\s*\[[^]*?\],\s*\{([^]*?)\}\s*,?\s*\);/u.exec(src)?.[1];
+    ok(edge !== undefined && !/\bauth\b/u.test(edge.replace(/\/\/.*$/gmu, "")), "🔴 OPE-2336: …and the eve `respond` call itself carries no `auth` key, in any form");
+  }
 
   const rows = (await readAudit({ org: ORG, limit: 200 })).filter((r) => r.action === QUESTION_ANSWERED_AUDIT_ACTION);
   eq(rows.length, 1, "…and one row records the routing");
@@ -132,6 +143,40 @@ const rowNow = (): Promise<unknown> => readBridgedQuestion(getOperationalStore()
 }
 
 {
+  const stampRow = (): Promise<string | null> => getOperationalStore().getTaskResult(ORG, `oe-held-question-nonmember:${REQUEST_ID}`);
+  await getOperationalStore().deleteTaskResult(ORG, `oe-held-question-nonmember:${REQUEST_ID}`);
+  await rememberNotionQuestion({ org: ORG, namespacedToken: NAMESPACED_TOKEN, requestId: REQUEST_ID, discussionId: DISCUSSION });
+  const member = await wake(DISCUSSION, "<wake>a member's answer</wake>");
+  eq(member.responded.length, 1, "§5b precondition: the member's comment was delivered as the answer");
+  eq(await stampRow(), null, "§5b NEGATIVE CONTROL: a member's answer records no stamp");
+
+  await rememberNotionQuestion({ org: ORG, namespacedToken: NAMESPACED_TOKEN, requestId: REQUEST_ID, discussionId: DISCUSSION });
+  const guest = await wake(DISCUSSION, "<wake>a guest's answer</wake>", { nonMember: true });
+  eq(guest.responded.length, 1, "§5b precondition: the guest's comment was delivered as the answer");
+  ok(!Object.prototype.hasOwnProperty.call(guest.respondOptions[0], "auth"), "§5b …and it still rides NO auth (OPE-2336 kept)");
+  ok((await stampRow()) !== null, "🔴 §5b THE FIX: the guest's nonmember stamp is recorded on the held-question row");
+
+  await getOperationalStore().deleteTaskResult(ORG, `oe-held-question-nonmember:${REQUEST_ID}`);
+  await rememberNotionQuestion({ org: ORG, namespacedToken: NAMESPACED_TOKEN, requestId: REQUEST_ID, discussionId: DISCUSSION });
+  const store = getOperationalStore() as { putTaskResult: (...a: unknown[]) => Promise<void> };
+  const real = store.putTaskResult.bind(store);
+  store.putTaskResult = async (...a: unknown[]) => {
+    if (String(a[1]).startsWith("oe-held-question-nonmember:")) throw new Error("store blip");
+    return real(...a);
+  };
+  let blip: Awaited<ReturnType<typeof wake>>;
+  try {
+    blip = await wake(DISCUSSION, "<wake>a guest's answer during a store blip</wake>", { nonMember: true });
+  } finally {
+    store.putTaskResult = real;
+  }
+  eq(blip.responded.length, 0, "🔴 §5b FAIL CLOSED: a guest's answer whose stamp could not be recorded is never delivered as an answer");
+  eq(blip.sent.length, 1, "§5b …it falls through to the ordinary send, which carries the guest's own stamped bag");
+  ok((await rowNow()) !== undefined, "§5b …with the question row left in place");
+  await getOperationalStore().deleteTaskResult(ORG, `oe-question-bridge:${BARE_TOKEN}`);
+}
+
+{
   await getOperationalStore().deleteTaskResult(ORG, `oe-question-bridge:${BARE_TOKEN}`);
   eq(await rowNow(), undefined, "wiring precondition: no row before the handler runs");
 
@@ -163,7 +208,7 @@ const rowNow = (): Promise<unknown> => readBridgedQuestion(getOperationalStore()
 
   const channel = {
     state: { oeReplyTarget: { discussionId: DISCUSSION, pageId: PAGE, workspaceId: "workspace_acme" } },
-    session: { continuation: { token: NAMESPACED_TOKEN, rekey: () => {} } },
+    session: { continuation: { token: NAMESPACED_TOKEN, alias: () => {} } },
   };
   await handler(
     { requests: [{ requestId: REQUEST_ID, kind: "question", prompt: "Ship it?", options: [], action: { toolName: "ask_question" } }] },

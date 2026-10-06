@@ -33,7 +33,14 @@ import { jobBoundMaxDays, jobBoundMaxFires, DEFAULT_JOB_MAX_DAYS, DEFAULT_JOB_MA
 import { dreamCandidateCap } from "../agent/schedules/tidy.js";
 import { DEFAULT_CANDIDATE_CAP } from "../agent/memory/dream/candidates.js";
 import { dmTrustTtlMs } from "../agent/identity/trust.js";
-import { agentNameTokens, configuredAgentName, matchesAgentName } from "../agent/identity/bot-name.js";
+import {
+  agentCommandName,
+  agentDisplayName,
+  agentNameTokens,
+  configuredAgentName,
+  configuredAgentShortName,
+  matchesAgentName,
+} from "../agent/identity/bot-name.js";
 import { nameDropPattern, wakeNameDropTokens } from "../agent/channels/turn-delivery.js";
 
 let n = 0;
@@ -294,7 +301,7 @@ console.log("6 — the public resolvers are schema-backed, with their names and 
   ok(!windowTopologyEnabled(), "[6] windowTopologyEnabled() ⇒ shipped OFF");
   ok(oneshotAgentEnabled(), "[6] oneshotAgentEnabled() ⇒ shipped ON");
   eq(taintTierMode(), "enforced", "[6] taintTierMode() ⇒ shipped enforced");
-  eq(approvalJudgeMode(), "off", "[6] approvalJudgeMode() ⇒ shipped off");
+  eq(approvalJudgeMode(), "enforce", "[6] approvalJudgeMode() ⇒ shipped enforce (OPE-2366)");
   ok(connectorDmOnlyEnabled(), "[6] connectorDmOnlyEnabled() ⇒ shipped ON (the wall is up)");
   ok(!connectorUserPrincipalEnabled(), "[6] connectorUserPrincipalEnabled() ⇒ shipped OFF");
   ok(!connectorOpTieringEnabled(), "[6] connectorOpTieringEnabled() ⇒ shipped OFF");
@@ -412,31 +419,51 @@ console.log("\n9 — identity.name (OPE-569): the canonical agent name:");
 {
   const savedFull = process.env.OE_AGENT_NAME;
   const savedShort = process.env.OE_AGENT_SHORT_NAME;
-  delete process.env.OE_AGENT_NAME;
-  delete process.env.OE_AGENT_SHORT_NAME;
+  process.env.OE_AGENT_NAME = "Env Leftover";
+  process.env.OE_AGENT_SHORT_NAME = "envy";
 
   resetSettingsForTest();
   eq(at({}).identity.name, "", "[9] the shipped default is UNSET — a self-hoster gets today's behaviour and no invented brand");
+  eq(at({}).identity.shortName, "", "[9] the short name ships UNSET too");
+  eq(at({}).identity.commandName, "oe", "[9] the command name ships as `oe`, so an unconfigured deployment keeps `/oe`");
   eq(configuredAgentName(), undefined, "[9] configuredAgentName() reads unset as undefined, so callers have one answer to test");
 
-  eq(agentNameTokens(), ["open everywhere", "oe"], "[9] unset ⇒ the name-drop token set is byte-identical to today (brand + short name)");
+  eq(agentNameTokens(), ["open everywhere", "oe"], "[9] unset ⇒ the name-drop token set is the brand + short name, and the retired env vars add nothing");
+  eq(agentDisplayName(), "Open Everywhere", "[9] unset ⇒ the display name is the brand default");
+  eq(agentCommandName(), "oe", "[9] unset ⇒ the command name is `oe`");
 
   registerSettings(defineSettings({ identity: { name: "  Aria  " } }));
   eq(configuredAgentName(), "Aria", "[9] a configured name is trimmed");
-  eq(agentNameTokens(), ["Aria", "open everywhere", "oe"], "[9] 🔴 the configured name JOINS the token set, most-specific first — and is ADDITIVE (the brand tokens survive)");
+  eq(agentDisplayName(), "Aria", "[9] …and it is the display name every install artifact and string reads");
+  eq(agentNameTokens(), ["Aria"], "[9] 🔴 the configured name REPLACES the brand tokens — it does not join them");
   ok(matchesAgentName("hey Aria, can you look at this?"), "[9] …so the agent answers to the name it introduces itself by");
-  ok(matchesAgentName("open everywhere: ping"), "[9] …and still answers to the brand token (nothing was displaced)");
+  ok(!matchesAgentName("open everywhere: ping"), "[9] 🔴 …and NOT to the brand phrase once a name is configured");
+  ok(!matchesAgentName("oe link ABC123"), "[9] 🔴 …nor to the brand short token `oe`");
   ok(!matchesAgentName("the arias sang"), "[9] NEGATIVE: still word-boundary matched — a name inside a longer word does not fire");
 
+  registerSettings(defineSettings({ identity: { name: "Aria", shortName: "ari" } }));
+  eq(configuredAgentShortName(), "ari", "[9] the configured short name reads back");
+  eq(agentNameTokens(), ["Aria", "ari"], "[9] the short name joins the configured name — and only those two");
+  ok(matchesAgentName("ari, can you look?"), "[9] …so the short name wakes the agent");
+
+  registerSettings(defineSettings({ identity: { shortName: "ari" } }));
+  eq(agentNameTokens(), ["ari"], "[9] 🔴 a short name ALONE is a configured name too — the brand tokens stop matching");
+
+  registerSettings(defineSettings({ identity: { commandName: "aria" } }));
+  eq(agentCommandName(), "aria", "[9] the command name reads from `identity.commandName`");
+
+  registerSettings(defineSettings({ identity: { name: "Aria" } }));
   ok(nameDropPattern("Test Slack Bot").test("did Test Slack Bot see this?"), "[9] the per-surface name-drop matcher still matches the live display name with a canonical name configured");
 
-  eq(agentNameTokens("Notionaut")[0], "Notionaut", "[9] a platform-RESOLVED integration name still leads the set");
+  eq(agentNameTokens("Notionaut"), ["Notionaut", "Aria"], "[9] a platform-RESOLVED integration name still leads the set, beside the configured name");
 
   resetSettingsForTest();
   eq(agentNameTokens(), ["open everywhere", "oe"], "[9] …and clearing the override restores today's set exactly");
 
-  if (savedFull !== undefined) process.env.OE_AGENT_NAME = savedFull;
-  if (savedShort !== undefined) process.env.OE_AGENT_SHORT_NAME = savedShort;
+  if (savedFull === undefined) delete process.env.OE_AGENT_NAME;
+  else process.env.OE_AGENT_NAME = savedFull;
+  if (savedShort === undefined) delete process.env.OE_AGENT_SHORT_NAME;
+  else process.env.OE_AGENT_SHORT_NAME = savedShort;
 }
 
 {
@@ -452,6 +479,24 @@ console.log("\n9 — identity.name (OPE-569): the canonical agent name:");
   refusesName("Ari\na", "line break", "[9/5] a name with a line break is refused — one prompt line, one matcher token");
   refusesName("x".repeat(65), "at most 64", "[9/5] a pasted paragraph is refused rather than becoming the agent's name");
   eq(defineSettings({ identity: { name: "x".repeat(64) } }).identity?.name?.length, 64, "[9/5] …and the boundary value itself is accepted");
+
+  const refuses = (overrides: Parameters<typeof defineSettings>[0], needle: string, label: string): void => {
+    let message = "";
+    try {
+      defineSettings(overrides);
+    } catch (e) {
+      message = e instanceof Error ? e.message : String(e);
+    }
+    ok(message.includes(needle), `${label} (got: ${message.slice(0, 120) || "NO THROW"})`);
+  };
+  refuses({ identity: { shortName: "a" } }, "at least 2 characters", "[9/5] a one-character short name is refused — the matcher would drop it silently");
+  refuses({ identity: { shortName: "x".repeat(33) } }, "at most 32", "[9/5] an over-long short name is refused");
+  eq(defineSettings({ identity: { shortName: "ari" } }).identity?.shortName, "ari", "[9/5] …and a real short name is accepted");
+  refuses({ identity: { commandName: "/aria" } }, "no slash", "[9/5] a command name WITH its slash is refused — the slash is the vendor's, not the name's");
+  refuses({ identity: { commandName: "Aria" } }, "lowercase", "[9/5] an upper-case command name is refused — Slack and Discord both require lowercase");
+  refuses({ identity: { commandName: "my agent" } }, "lowercase", "[9/5] a command name with a space is refused");
+  refuses({ identity: { commandName: "x".repeat(32) } }, "1-31", "[9/5] a command name past Slack's 32-with-slash limit is refused");
+  eq(defineSettings({ identity: { commandName: "aria-ops" } }).identity?.commandName, "aria-ops", "[9/5] …and a valid command name is accepted");
 }
 
 console.log("\n10 — wake.nameDrop.include / wake.nameDrop.exclude (OPE-571):");

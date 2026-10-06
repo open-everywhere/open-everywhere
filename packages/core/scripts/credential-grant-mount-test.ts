@@ -782,12 +782,45 @@ console.log("10. a granted call records its pinned target on the turn's provenan
   eq(await resolve(unplaceableChild), [], "🔴 a delegated child this host cannot place mounted a grant — it fell back to its own session id instead of failing closed");
 
   const tokenOnlyWorker = { channel: { kind: "subagent", continuationToken: `subagent:${LENT_TO}:call-3` }, session: { auth: { current: { attributes: { oe_grain: "standing" } } }, id: "worker-token-only" } };
-  eq(await resolve(tokenOnlyWorker), [GRANT_NAME], "🔴 a worker that can only be placed by its continuation token holds nothing — this is the shape the LIVE mount runs on, since a resolver context carries no `session.parent`");
+  eq(await resolve(tokenOnlyWorker), [GRANT_NAME], "🔴 a worker that can only be placed by its continuation token holds nothing — this is the pre-0.70 token shape, the LAST fallback after the recorded root of leg (h)");
   const tokenOtherRoom = { channel: { kind: "subagent", continuationToken: `subagent:${OTHER_ROOM}:call-4` }, session: { auth: { current: { attributes: { oe_grain: "standing" } } }, id: "worker-token-other" } };
   eq(await resolve(tokenOtherRoom), [], "…and the token arm discriminates: a token naming ANOTHER conversation mounts nothing");
 
   const unstamped = { channel: { kind: "unified", continuationToken: "unified:oe-dom:payments:oe-sup:g3" }, session: { id: "worker-unstamped", parent: { callId: "call-7", sessionId: LENT_TO } } };
   eq(await resolve(unstamped), [GRANT_NAME], "🔴 a worker carrying NO grain stamp does not hold its conversation's lent tool — that is every worker an unseated deployment spawns");
+
+  const eveRoot = dirname(createRequire(import.meta.url).resolve("eve/package.json"));
+  const { ContextContainer, contextStorage } = (await import(pathToFileURL(join(eveRoot, "dist/src/context/container.js")).href)) as {
+    ContextContainer: new () => unknown;
+    contextStorage: { run<T>(store: unknown, fn: () => Promise<T>): Promise<T> };
+  };
+  const { adoptDelegatedRootSession } = await import("../agent/identity/delegated-binding.js");
+  const inWorker = <T>(fn: () => Promise<T>): Promise<T> => contextStorage.run(new ContextContainer(), fn);
+  const runIdWorker = { channel: { kind: "subagent", continuationToken: "subagent:wrun_example67:0" }, session: { auth: { current: { attributes: { oe_grain: "standing" } } }, id: "worker-run-id" } };
+  eq(
+    await inWorker(async () => {
+      ok(adoptDelegatedRootSession(LENT_TO), "the worker records its root seat in a fresh eve context");
+      return await resolve(runIdWorker);
+    }),
+    [GRANT_NAME],
+    "🔴 an eve 0.70+ worker of the lent conversation holds nothing — its token names the dispatching runId, and the mount did not read the root seat the worker recorded",
+  );
+  eq(await inWorker(async () => await resolve(runIdWorker)), [], "🔴 a worker that recorded NO root seat mounted a grant off its runId token — it must fail closed");
+  eq(
+    await inWorker(async () => {
+      adoptDelegatedRootSession(OTHER_ROOM);
+      return await resolve(runIdWorker);
+    }),
+    [],
+    "🔴 a worker whose recorded root is ANOTHER conversation mounted this conversation's grant — the record does not discriminate",
+  );
+  ok(
+    await inWorker(async () => {
+      adoptDelegatedRootSession(LENT_TO);
+      return !adoptDelegatedRootSession(OTHER_ROOM);
+    }),
+    "🔴 a worker's recorded root seat was replaced by a second, different id — first write must win",
+  );
 }
 
 console.log(`\ncredential-grant-mount: ${n} assertions passed.`);

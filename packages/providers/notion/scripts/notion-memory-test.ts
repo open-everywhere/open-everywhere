@@ -127,11 +127,17 @@ const callsAfterFirst = calls;
 await provider.readTier(p, TIER, silo);
 ok(calls === callsAfterFirst, "second read is served from cache (no extra API calls)");
 
-try {
-  await provider.readTier(p, TIER, { name: "x", provider: "notion" });
-  ok(false, "missing container should throw");
-} catch {
-  ok(true, "missing container → throws");
+{
+  let refusal: unknown;
+  try {
+    await provider.readTier(p, TIER, { name: "x", provider: "notion" });
+  } catch (err) {
+    refusal = err;
+  }
+  ok(
+    refusal instanceof Error && refusal.message.includes("needs a silo with container = the root page id"),
+    `missing container → throws, and the error names the missing root page container (got: ${String(refusal)})`,
+  );
 }
 
 {
@@ -368,12 +374,16 @@ const WRITABLE = { name: "brain", provider: "notion", container: "wroot" };
     pathPrefixes: ["/v1/blocks/"],
     methods: ["GET"],
   });
+  let refusal: unknown;
   try {
     await fenced.appendChildren("wroot", blocksFromMarkdown(["- x"]));
-    ok(false, "a GET-only credential must refuse the append");
-  } catch {
-    ok(true, "endpoint fence: a GET-only credential refuses the block-append PATCH");
+  } catch (err) {
+    refusal = err;
   }
+  ok(
+    refusal instanceof Error && refusal.message.includes("method PATCH is not in this credential's allowed methods"),
+    `endpoint fence: a GET-only credential refuses the block-append PATCH, by the method rule (got: ${String(refusal)})`,
+  );
   ok(reached === 0, "endpoint fence: the refusal happens BEFORE the request is dispatched");
 }
 

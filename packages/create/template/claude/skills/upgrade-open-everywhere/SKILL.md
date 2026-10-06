@@ -71,6 +71,13 @@ file stays as the old template wrote it. A stale copy can typecheck and build an
 deployment: the 0.1.2 `agent/lib/register-adapters.ts` registers no Postgres client on a bare
 `DATABASE_URL`, so a Vercel+Neon deployment of 0.1.4 fails at its first write.
 
+`agent/lib/register-adapters.ts` is the exception once it is current. The current template's copy
+is ONE call, `registerDefaultAdapters()` from `@open-everywhere/adapters`, plus a `customAdapters`
+hook. The adapter wiring, the store selection rules and the floors live in that package, so the
+package upgrade carries them, and the file needs no hand-merge. Sync it ONCE, from a copy that wires
+the adapters by hand to the one-call copy: move any adapter the user registered by hand into the
+`customAdapters` hook. After that, a SYNC line for this file is a comment or hook difference only.
+
 | Line | What to do |
 | --- | --- |
 | SYNC | a template-owned file — wiring, a script, `AGENTS.md`, `README.md`, `.env.example`, a skill. Plan to copy the target's file over this one, after you read the diff. |
@@ -144,7 +151,10 @@ Then act on the template drift report. A core that carries it prints it again af
 if this run printed no "Template drift" heading, run `npx oe upgrade --to <target> --plan` now to get it. For
 each SYNC line, read the diff against the installed template, for example
 `diff node_modules/@open-everywhere/create/template/agent/lib/register-adapters.ts agent/lib/register-adapters.ts`.
-Keep any edit the user made on purpose, and copy the template's file otherwise. A file under the
+Keep any edit the user made on purpose, and copy the template's file otherwise. For
+`agent/lib/register-adapters.ts`, the user's edits belong in the `customAdapters` hook of the
+template's one-call copy, never in a hand-wired copy: a hand-wired copy does not get the product's
+wiring changes on the next upgrade. A file under the
 template's `claude/` directory lands in the app's `.claude/`, and the template's `gitignore` is the
 app's `.gitignore`. Name every synced file in the pull request.
 

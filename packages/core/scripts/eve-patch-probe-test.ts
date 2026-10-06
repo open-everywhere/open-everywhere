@@ -26,7 +26,9 @@ const unresolvableRoot = (): string => {
   throw new Error("Cannot find module 'eve/package.json'");
 };
 
-ok(EVE_PATCH_PARTS.length === 7, `parts: seven live patch parts are declared (got ${EVE_PATCH_PARTS.length})`);
+ok(EVE_PATCH_PARTS.length === 3, `parts: three live patch parts are declared (got ${EVE_PATCH_PARTS.length})`);
+ok(!EVE_PATCH_PARTS.some((p) => p.part === 5), "parts: part 5 (the empty-step terminal guard) is RETIRED onto native `endsTurn` (OPE-2252) and must not come back");
+ok(!EVE_PATCH_PARTS.some((p) => p.part === 6), "parts: part 6 (the model-message projection) is RETIRED (OPE-2251) and must not come back");
 ok(
   new Set(EVE_PATCH_PARTS.map((p) => p.marker)).size === EVE_PATCH_PARTS.length,
   "parts: every part declares a DISTINCT marker — two parts sharing one marker would let either hunk vouch for the other",
@@ -40,11 +42,11 @@ ok(
   "parts: every marker follows the `__oe<Part>Patched` shape part 7 established",
 );
 ok(
-  EVE_PATCH_CARRIERS.length === 4 && EVE_PATCH_CARRIERS.every((c) => c.startsWith("dist/src/")),
-  `parts: the parts collapse to the four eve dist carriers the patch edits (got ${EVE_PATCH_CARRIERS.join(", ")})`,
+  EVE_PATCH_CARRIERS.length === 2 && EVE_PATCH_CARRIERS.every((c) => c.startsWith("dist/src/")),
+  `parts: the parts collapse to the two eve dist carriers the probe loads (got ${EVE_PATCH_CARRIERS.join(", ")})`,
 );
 
-ok(missingEvePatchParts(bagWithout()).length === 0, "full: a bag carrying all seven markers reports NOTHING missing (negative control)");
+ok(missingEvePatchParts(bagWithout()).length === 0, "full: a bag carrying every live marker reports NOTHING missing (negative control)");
 {
   const result = await probeEvePatch(unresolvableRoot, bagWithout());
   ok(result.status === "patched", "full: a complete bag probes `patched` without reaching for the eve root at all");
@@ -107,7 +109,7 @@ for (const part of EVE_PATCH_PARTS) {
   const live = await probeEvePatch();
   ok(
     live.status === "patched",
-    `live: this tree's installed eve publishes all seven markers (got ${live.status}` +
+    `live: this tree's installed eve publishes every live marker (got ${live.status}` +
       `${live.missing.length > 0 ? `, missing ${live.missing.map((m) => `part ${m.part}/${m.marker}`).join(", ")}` : ""}` +
       `). Run \`npm ci\` from the repo root — postinstall applies patches/eve+${EVE_RUNTIME_VERSION}.patch`,
   );

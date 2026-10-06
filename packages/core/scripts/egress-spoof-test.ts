@@ -33,8 +33,8 @@ function ok(cond: boolean, label: string): void {
 }
 
 registerConfig({
-  loadBundles: () => [],
-  loadBindings: () => [],
+  loadBundles: () => [{ name: "spoof-test-policy", preApprovalRules: [{ id: "spoof-test-rule", rule: "Every judge-deferred act in this test is routine." }] }] as never,
+  loadBindings: () => [{ bundle: "spoof-test-policy", scope: { level: "org" } }] as never,
   pluginRegistry: {},
   skillContent: {},
   loadDomains: () => [{ name: "plain", reach: ["discord/G1/C1"] }],
@@ -62,7 +62,7 @@ registerSurfaceMessageOps(countingOps);
 
 function armAllowingJudge(): void {
   clearApprovalJudgeVerdictCache();
-  registerApprovalJudgeCompletion(async (_prompt, pass) => (pass === "scrutiny" ? "YES" : "VERDICT: allow\nREASON: modest cap, attended, clean turn"));
+  registerApprovalJudgeCompletion(async (_prompt, pass) => (pass === "scrutiny" ? "YES" : "VERDICT: allow\nREASON: routine, attended, clean turn\nRULE: spoof-test-rule"));
 }
 
 overrideSettingsForTest({ approvals: { judgeMode: "enforce" } });
@@ -72,14 +72,23 @@ function liftInput(): Record<string, unknown> {
   cap += 1_000;
   return {
     org: "test-org",
-    kind: "spend.set",
+    kind: "routine.create",
     channelId: "C1",
     requestedBy: "U_HUMAN",
     threadTs: null,
     scopeKey: "discord/G1/C1",
     postedTo: "discord/G1/C1",
     domain: "plain",
-    args: { org: "test-org", scopeKey: "discord/G1/C1", level: "surface", monthlyTokens: cap, currentCap: null },
+    args: {
+      org: "test-org",
+      partition: { org: "test-org", platform: "discord", workspace: "G1", surface: "C1", surfaceKey: "discord/G1/C1" },
+      surfaceKey: "discord/G1/C1",
+      target: { channelId: "C1" },
+      trigger: { kind: "interval", everyMinutes: 60 },
+      prompt: "Post the morning digest here.",
+      createdBy: "U_HUMAN",
+      nonce: cap,
+    },
     chain: { unattended: false },
   };
 }

@@ -1,14 +1,23 @@
 import { afterAll, expect, test } from "vitest";
 
+import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import {
+  afterThisTest,
+  armSettlement,
+  auditCursor,
+  awaitWorkResult,
   bootAgent,
   discordMentionWake,
   DISCORD_GUILD_ID,
   DISCORD_LISTED_CHANNEL_ID,
   readUsageWindow,
   registerScript,
+  rowsSinceCursor,
+  taskResultsInPrompt,
   waitFor,
-  type RecordedRequest,
+  workSessionCalls,
+  waitForChildren,
+  workTaskIdOfCall,
   type ScriptedHandle,
 } from "../harness";
 
@@ -22,88 +31,88 @@ function open(handle: ScriptedHandle): ScriptedHandle {
   live.add(handle);
   return handle;
 }
-function close(handle: ScriptedHandle): void {
-  handle.dispose();
-  live.delete(handle);
-}
 
 const CHILD_ANSWER = "the worker finished the background job";
 
-test("a background delegation ends the parent's turn, comes back as a message, and bills the parent", async () => {
+test("a forwarded job returns a receipt at once, ends the seat's turn, comes back as a message of its own, and bills the seat's surface", async () => {
   await bootAgent();
 
+  const cursor = await auditCursor();
   const first = open(
     registerScript({
-      parent: [{ calls: [{ tool: "agent", input: { message: "do the long job" }, id: "t3-delegate" }] }, { say: "handing this off" }],
-      child: [{ say: CHILD_ANSWER }],
+      parent: [{ calls: [{ tool: "work", input: { message: "do the long job" }, id: "t3-delegate" }] }, { say: NO_REPLY_SENTINEL }],
+      child: [{ delayMs: 120_000, say: CHILD_ANSWER }],
     }),
   );
+  afterThisTest(() => first.releaseHolds());
 
   const sinceIso = new Date(Date.now() - 10_000).toISOString();
+  const workMark = workSessionCalls().length;
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please delegate the long job" });
 
   const resumed = await waitFor(
-    () => first.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "agent")),
-    "the parent's resumed step carrying the delegation result",
+    () => first.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "work")),
+    "the seat's step carrying the forward receipt",
   );
   expect(first.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-  const delegation = resumed.toolResults.find((t) => t.name === "agent")!;
+  const delegation = resumed.toolResults.find((t) => t.name === "work")!;
   expect(delegation.isError).toBe(false);
 
-  await waitFor(() => first.requests.find((r) => r.role === "child"), "the child's own model call");
-
-  const output = delegation.output as { taskId?: unknown; status?: unknown; agentId?: unknown };
-  expect(typeof output?.taskId).toBe("string");
+  const taskId = await workTaskIdOfCall(cursor, first, "t3-delegate", "the t3 forward");
+  const settlement = open(armSettlement(first, { parent: [{ say: NO_REPLY_SENTINEL }] }));
 
   const dispatchStep = first.requests.find((r) => r.role === "parent" && r.stepIndex === 0)!;
   const offered = new Set(dispatchStep.tools);
-  expect(offered.has("agent")).toBe(true);
+  expect(offered.has("work")).toBe(true);
+  expect(offered.has("agent")).toBe(false);
 
   {
-    expect(offered.has("task_cancel")).toBe(true);
+    expect(offered.has("cancel_work")).toBe(true);
+    expect(offered.has("task_cancel")).toBe(false);
     expect(offered.has("task_update")).toBe(false);
     expect(offered.has("task_sleep")).toBe(false);
     expect(offered.has("task_peek")).toBe(false);
   }
 
-  expect(String(output.taskId)).toMatch(/^task_/);
-  expect(output.status).toBe("working");
-  expect(String(output.agentId)).toMatch(/^ag_/);
+  const receipt = (typeof delegation.output === "string" ? JSON.parse(delegation.output) : delegation.output) as { requestId?: unknown };
+  expect(typeof receipt.requestId).toBe("string");
+  const started = (await rowsSinceCursor(cursor, ["delegation.task_started"])).find((r) => r.detail?.task === taskId);
+  expect(started?.detail?.request, "W's task_started row does not name the forward's request").toBe(receipt.requestId);
   expect(JSON.stringify(delegation.output)).not.toContain(CHILD_ANSWER);
 
-  await waitFor(() => first.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step — the turn really ended");
+  expect(resumed.stepIndex).toBe(1);
+  expect(taskResultsInPrompt(resumed.messages)).toEqual([]);
+  first.releaseHolds();
+  await waitForChildren(first, { count: 1, lastStepIndex: 0, label: "the child's own model call" });
+  await waitFor(() => (first.holdsCutShort() === 1 ? true : undefined), "the worker's hold ended on the release, not on its 120 s backstop");
 
-  const taskId = String(output.taskId);
-  const firstRequests: readonly RecordedRequest[] = [...first.requests];
-  close(first);
-  const second = open(
-    registerScript({
-      parent: [{ say: "the worker is done" }],
-      child: [{ say: "nothing to do" }],
-    }),
-  );
+  const resultStep = await awaitWorkResult({ handle: settlement, taskId, label: "the settled worker's result, delivered as a result wake naming the task id" });
+  expect(resultStep.fault).toBeUndefined();
+  expect(resultStep.stepIndex).toBe(0);
+  expect(resultStep.turnId, "the result arrives in a seat turn of its own").not.toBe(resumed.turnId);
 
-  {
-    const notification = await waitFor(
-      () => second.requests.find((r) => r.role === "parent" && r.messages.some((m) => m.text.includes(taskId))),
-      "the settled worker's completion, delivered as a new message naming the task id",
-    );
-    expect(notification.fault).toBeUndefined();
+  const resultText = resultStep.messages.map((m) => m.text).join("\n");
+  expect(resultText).toContain(CHILD_ANSWER);
+  const arc = [...first.requests, ...settlement.requests];
+  expect(arc.flatMap((r) => r.toolResults.map((t) => t.name)).filter((t) => t.startsWith("task_"))).toEqual([]);
 
-    const notificationText = notification.messages.map((m) => m.text).join("\n");
-    expect(notificationText).toContain(CHILD_ANSWER);
-    expect(second.requests.flatMap((r) => r.toolResults.map((t) => t.name)).filter((t) => t.startsWith("task_"))).toEqual([]);
-
-    const cancels = [...firstRequests, ...second.requests].flatMap((r) => r.toolResults.filter((t) => t.name === "task_cancel"));
-    expect(cancels).toEqual([]);
-  }
+  const cancels = arc.flatMap((r) => r.toolResults.filter((t) => t.name === "task_cancel" || t.name === "cancel_work"));
+  expect(cancels).toEqual([]);
+  expect(arc.filter((r) => r.fault !== undefined)).toEqual([]);
+  expect([...first.resolves, ...settlement.resolves].filter((r) => r.fault !== undefined)).toEqual([]);
 
   const parentSurfaceKey = `discord/${DISCORD_GUILD_ID}/${DISCORD_LISTED_CHANNEL_ID}`;
+  const workStarted = (await rowsSinceCursor(cursor, ["delegation.task_started"], { limit: 200 })).find((r) => r.detail?.task === taskId);
+  const workSession = workStarted?.detail?.session;
+  expect(typeof workSession, "W's task_started row for this task").toBe("string");
   const usage = await waitFor(async () => {
-    const parentOwnCalls = [...firstRequests, ...second.requests].filter((r) => r.role === "parent").length;
+    const seatOwnCalls = [...first.requests, ...settlement.requests].filter((r) => r.role === "parent").length;
+    const workCalls = workSessionCalls()
+      .slice(workMark)
+      .filter((c) => c.sessionId === workSession).length;
     const got = await readUsageWindow({ sinceIso, workspaceKeys: [`discord/${DISCORD_GUILD_ID}`] });
-    return got.rows.reduce((sum, r) => sum + r.calls, 0) > parentOwnCalls ? got : undefined;
-  }, "the usage window to account for MORE calls than the parent made on its own — the surplus is the child's");
+    return workCalls > 0 && got.rows.reduce((sum, r) => sum + r.calls, 0) > seatOwnCalls + workCalls ? got : undefined;
+  }, "the usage window to account for MORE calls than the seat and the work session made — the surplus is the worker's");
 
   expect([...new Set(usage.rows.map((r) => r.surfaceKey))]).toEqual([parentSurfaceKey]);
 });

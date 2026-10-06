@@ -24,6 +24,7 @@ import { resetGitHubApp } from "../agent/scm/provider.js";
 import { githubWorkSearchAdapter } from "../agent/scm/github-search.js";
 import { checkPrStatusEntry } from "../agent/tools/check_pr_status.js";
 import { getPrFeedbackEntry } from "../agent/tools/get_pr_feedback.js";
+import { readGithubIssueEntry } from "../agent/tools/read_github_issue.js";
 import { walkPrEntry } from "../agent/tools/walk_pr.js";
 
 let passed = 0;
@@ -286,6 +287,7 @@ registerIdentityMapper(PLATFORM, (c) => {
   const VERBS: readonly { name: string; run: (ctx: BindableContext) => Promise<unknown> }[] = [
     { name: "check_pr_status", run: (ctx) => checkPrStatusEntry.execute!({ repo: "acme/api", number: 7 }, ctx as never) as Promise<unknown> },
     { name: "get_pr_feedback", run: (ctx) => getPrFeedbackEntry.execute!({ repo: "acme/api", number: 7 }, ctx as never) as Promise<unknown> },
+    { name: "read_github_issue", run: (ctx) => readGithubIssueEntry.execute!({ repo: "acme/api", number: 7 }, ctx as never) as Promise<unknown> },
     { name: "search", run: (ctx) => githubWorkSearchAdapter.search(ctx, undefined, "q", { limit: 5, insideDomain: false }) },
     { name: "walk_pr", run: (ctx) => walkPrEntry.execute!({ repo: "acme/api", number: 7 }, ctx as never) as Promise<unknown> },
   ];
@@ -421,8 +423,8 @@ registerIdentityMapper(PLATFORM, (c) => {
   }
   const gatedReads = resolvers.filter((rel) => /assertGithubActingIdentity\(/u.test(readFileSync(join(repoRoot, rel), "utf8")));
   const blindReads = derivedBlindSpots.length;
-  ok(gatedReads.length === 7, `🔴 §9 SEVEN reads call the seam (found ${gatedReads.length}) — connectors-and-providers.md states that number`);
-  ok(gatedReads.length + blindReads === 8, `🔴 §9 the tree holds EIGHT GitHub reads (${gatedReads.length} gated + ${blindReads} the scan cannot see) — connectors-and-providers.md states that number`);
+  ok(gatedReads.length === 8, `🔴 §9 EIGHT reads call the seam (found ${gatedReads.length}) — connectors-and-providers.md states that number`);
+  ok(gatedReads.length + blindReads === 9, `🔴 §9 the tree holds NINE GitHub reads (${gatedReads.length} gated + ${blindReads} the scan cannot see) — connectors-and-providers.md states that number`);
   assert.ok(true);
 }
 

@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { toPosixPath } from "./posix-path.js";
 import { fileURLToPath } from "node:url";
+import { win32ExitAbortSkipLine } from "./win32-exit-abort.js";
 
 import {
   checkCronDefinitionCount,
@@ -50,6 +51,12 @@ import {
   type VercelApi,
   type VercelProjectRef,
 } from "./deploy/lib.js";
+
+const win32Skip = win32ExitAbortSkipLine("test:deploy");
+if (win32Skip) {
+  console.log(win32Skip);
+  process.exit(0);
+}
 
 const scratch = mkdtempSync(join(tmpdir(), "oe-deploy-test-"));
 let checks = 0;

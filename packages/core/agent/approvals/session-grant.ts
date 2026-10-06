@@ -64,18 +64,89 @@ export function sessionGrantKind(row: Pick<PendingActionRow, "kind" | "argsJson"
 
 export const ROUTINE_PERMISSION_PREFIX = "oe-routine:";
 
-export function permissionLifetime(memoSessionId: string | undefined): "routine" | "session" {
-  return memoSessionId !== undefined && memoSessionId.startsWith(ROUTINE_PERMISSION_PREFIX) ? "routine" : "session";
+const CONVERSATION_GRANT_PREFIX = "oe-grant:";
+
+const ROOM_CALL_SUFFIX = ":call";
+
+export interface GrantableBinding {
+  readonly platform: string;
+  readonly workspace: string;
+  readonly surface: string;
+  readonly domainSurface?: string;
+  readonly mode: string;
+  readonly threadTs?: string;
+  readonly anchorChannelId?: string;
 }
 
-export function grantButtonLabel(row: Pick<PendingActionRow, "argsJson">): string {
-  let sessionId: string | undefined;
+export type GrantReach = "routine" | "thread" | "dm" | "call";
+
+function nonEmpty(v: string | undefined): v is string {
+  return typeof v === "string" && v.length > 0;
+}
+
+function conversationGrantRoom(b: GrantableBinding): string {
+  return `${b.platform}/${b.workspace}/${nonEmpty(b.domainSurface) ? b.domainSurface : b.surface}`;
+}
+
+function conversationThreadId(b: GrantableBinding): string | undefined {
+  if (nonEmpty(b.threadTs)) return b.threadTs;
+  if (b.mode !== "mpim" && nonEmpty(b.anchorChannelId)) return b.anchorChannelId;
+  if (nonEmpty(b.domainSurface) && b.domainSurface !== b.surface) return b.surface;
+  return undefined;
+}
+
+export function conversationGrantKey(b: GrantableBinding): string | undefined {
+  const room = conversationGrantRoom(b);
+  if (b.mode === "dm") return `${CONVERSATION_GRANT_PREFIX}${room}:dm`;
+  const thread = conversationThreadId(b);
+  return thread === undefined ? undefined : `${CONVERSATION_GRANT_PREFIX}${room}:thread:${thread}`;
+}
+
+export function roomCallGrantKey(b: GrantableBinding): string {
+  return `${CONVERSATION_GRANT_PREFIX}${conversationGrantRoom(b)}${ROOM_CALL_SUFFIX}`;
+}
+
+export function conversationGrantRoomPrefix(surfaceKey: string): string {
+  return `${CONVERSATION_GRANT_PREFIX}${surfaceKey}:`;
+}
+
+export function grantReach(key: string | undefined): GrantReach | undefined {
+  if (!nonEmpty(key)) return undefined;
+  if (key.startsWith(ROUTINE_PERMISSION_PREFIX)) return "routine";
+  if (!key.startsWith(CONVERSATION_GRANT_PREFIX)) return undefined;
+  const rest = key.slice(CONVERSATION_GRANT_PREFIX.length);
+  const colon = rest.indexOf(":");
+  if (colon <= 0) return undefined;
+  const tail = rest.slice(colon);
+  if (tail === ":dm") return "dm";
+  if (tail === ROOM_CALL_SUFFIX) return "call";
+  return tail.startsWith(":thread:") && tail.length > ":thread:".length ? "thread" : undefined;
+}
+
+function frozenGrantKey(row: Pick<PendingActionRow, "argsJson">): string | undefined {
   try {
     const parsed = JSON.parse(row.argsJson) as { sessionId?: unknown };
-    if (typeof parsed.sessionId === "string") sessionId = parsed.sessionId;
+    return typeof parsed.sessionId === "string" ? parsed.sessionId : undefined;
   } catch {
+    return undefined;
   }
-  return permissionLifetime(sessionId) === "routine" ? "Approve for this routine (standing)" : "Approve for session";
+}
+
+export function grantableFrozenKey(row: Pick<PendingActionRow, "argsJson">): string | undefined {
+  const key = frozenGrantKey(row);
+  return grantReach(key) === "routine" ? key : undefined;
+}
+
+export function grantButtonLabel(row: Pick<PendingActionRow, "argsJson">, routineGrantTtlHours: number): string | undefined {
+  return grantableFrozenKey(row) === undefined ? undefined : `Approve for this routine (up to ${routineGrantTtlHours} h)`;
+}
+
+export const ROUTINE_PERMISSION_NO_EXPIRY = "9999-12-31T23:59:59.999Z";
+
+export function pendingCardExpiryClause(expiresAt: string): string {
+  return expiresAt === ROUTINE_PERMISSION_NO_EXPIRY
+    ? "no expiry — ends when the routine's instruction is edited or the routine is deleted"
+    : `expires ${expiresAt}`;
 }
 
 const CONNECTOR_TOOL_DECLARATION_PREFIX = "tool:";

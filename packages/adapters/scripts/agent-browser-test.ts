@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { agentBrowserEnabled, loadAgentBrowserConfig, resetAgentBrowserConfigForTest } from "../agent/browser/config.js";
 import { registerAgentBrowser } from "../agent/browser/register.js";
 import { agentBrowserSandboxHooks, type BakeableSandbox } from "../agent/browser/sandbox.js";
-import { installAgentBrowser } from "@agent-browser/eve/sandbox";
+import { installAgentBrowser, type EveSandboxSession } from "@agent-browser/eve/sandbox";
 import {
   registeredBrowserToolkit,
   resetBrowserToolkitForTest,
@@ -187,7 +187,7 @@ function setEnv(values: { enabled?: boolean; hosts?: BrowserHostDeclaration[]; p
   setEnv({ enabled: true, hosts: [ro("localhost")], platform: "vercel" });
   const installed: string[] = [];
   const hooks = agentBrowserSandboxHooks(async (sb) => {
-    installed.push(sb.id);
+    installed.push(sb.id ?? "(no id — eve 0.69.0 sessions carry none)");
   });
   ok("bootstrap" in hooks && "revalidationKey" in hooks, "armed on Vercel ⇒ bootstrap + revalidationKey present");
   if ("revalidationKey" in hooks) {
@@ -195,17 +195,21 @@ function setEnv(values: { enabled?: boolean; hosts?: BrowserHostDeclaration[]; p
     ok(typeof key === "string" && key.includes("agent-browser"), `revalidationKey pins the bake (${key})`);
     await hooks.bootstrap({ use: async () => ({ id: "tpl-1", run: async () => ({ exitCode: 0, stdout: "", stderr: "" }) }) });
     ok(installed.length === 1 && installed[0] === "tpl-1", "bootstrap opens the template session and runs the installer exactly once");
+    await hooks.bootstrap({ use: async () => ({ run: async () => ({ exitCode: 0, stdout: "", stderr: "" }) }) });
+    ok(
+      installed.length === 2 && installed[1] === "(no id — eve 0.69.0 sessions carry none)",
+      "🔴 a session with NO id still reaches the installer — the optional `BakeableSandbox.id` is not a field the bake depends on, which is what makes the app's `satisfies BakeableSandbox` honest rather than a cast over a missing field",
+    );
   }
 
   const commands: string[] = [];
   const recorder: BakeableSandbox = {
-    id: "rec",
     run: async ({ command }) => {
       commands.push(command);
       return { exitCode: 0, stdout: "", stderr: "" };
     },
   };
-  await installAgentBrowser(recorder);
+  await installAgentBrowser(recorder as EveSandboxSession);
   ok(commands.length === 3, `default install issues 3 commands (got ${commands.length})`);
   ok(/apt-get|dnf/.test(commands[0] ?? ""), "install 1/3: Chromium system dependencies (apt/dnf)");
   ok(/npm.*install -g.*agent-browser@\d/.test(commands[1] ?? ""), "install 2/3: agent-browser CLI pinned to the package-matched version");

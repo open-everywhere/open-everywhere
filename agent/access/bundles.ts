@@ -8,6 +8,7 @@ import {
   type Bundle,
 } from "@open-everywhere/core/agent/access/bundle.js";
 import { loadGrantsOverlay } from "./grants.js";
+import { PRE_APPROVAL_RULES } from "./pre-approval-rules.js";
 import { loadAgentsOverlay } from "../memory/config/agents-overlay.js";
 import { loadGroups } from "../identity/groups.js";
 
@@ -119,10 +120,15 @@ const bundles: Bundle[] = [
     ],
   }),
 
+  defineBundle({
+    name: "approval-policy",
+    preApprovalRules: PRE_APPROVAL_RULES,
+  }),
 ];
 
 const bindings: Binding[] = [
   defineBinding({ bundle: "org-default", scope: { level: "org" } }),
+  defineBinding({ bundle: "approval-policy", scope: { level: "org" } }),
 
   defineBinding({ bundle: "coding", scope: { level: "domain", domain: "e2e-connector" } }),
 

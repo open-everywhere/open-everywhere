@@ -778,7 +778,10 @@ for an item dated **after** the read — a negative age is never rendered as a p
 (`packages/core/agent/access/loop-breaker.ts`) counts identical tool-source and result-body pairs
 inside one turn. At **three** it appends an advisory warning, and at **five** a stop-now directive. It
 only ever appends text to the result: the result itself is never withheld. With no session context it
-tracks nothing and appends nothing, and the counters reset at each turn start.
+tracks nothing and appends nothing, and the counters reset at each turn start. A worker that parks
+on `ask_question` and resumes on the answer stays in the same turn, so its count carries across the
+answer. Each write stores a fresh map, because eve's step delta drops an in-place change to a stored
+`Map`.
 
 ## Work destinations — where a work verb may land
 

@@ -1758,18 +1758,39 @@ export function fetchChannelDisplayName(channelId: string): Promise<string | und
   return p;
 }
 
+const SLACK_ROSTER_UNOBSERVABLE_ERRORS: ReadonlySet<string> = new Set([
+  "missing_scope",
+  "channel_not_found",
+  "not_in_channel",
+  "method_not_supported_for_channel_type",
+  "no_permission",
+  "team_access_not_granted",
+]);
+
+function slackRosterFailureState(res: Record<string, unknown> | undefined): "unobservable" | "failed" {
+  return typeof res?.error === "string" && SLACK_ROSTER_UNOBSERVABLE_ERRORS.has(res.error) ? "unobservable" : "failed";
+}
+
 export async function slackGovernanceRoster(channelId: string): Promise<RoomRoster | undefined> {
   try {
     const info = await slackForm("conversations.info", `channel=${encodeURIComponent(channelId)}`);
-    if (info?.ok !== true) return { humanMemberIds: [], resolved: false, isPrivate: false, hasGuest: false };
+    if (info?.ok !== true) {
+      return { humanMemberIds: [], resolved: false, unresolvedState: slackRosterFailureState(info), isPrivate: false, hasGuest: false };
+    }
     const facts = channelFactsFromInfo(info);
     const members = await slackForm("conversations.members", `channel=${encodeURIComponent(channelId)}&limit=200`);
     if (members?.ok !== true || !Array.isArray(members.members)) {
-      return { humanMemberIds: [], resolved: false, isPrivate: false, hasGuest: false };
+      return { humanMemberIds: [], resolved: false, unresolvedState: slackRosterFailureState(members), isPrivate: false, hasGuest: false };
     }
     const cursor = (members.response_metadata as { next_cursor?: string } | undefined)?.next_cursor;
     if (cursor && cursor.length > 0) {
-      return { humanMemberIds: [], resolved: false, isPrivate: false, hasGuest: false };
+      if (facts.trustChecked === true && facts.isExternal === true) {
+        return { humanMemberIds: [], resolved: true, isPrivate: facts.isPrivate === true, hasGuest: true };
+      }
+      if (facts.trustChecked !== true) {
+        return { humanMemberIds: [], resolved: false, unresolvedState: "failed", isPrivate: false, hasGuest: false };
+      }
+      return { humanMemberIds: [], resolved: false, unresolvedState: "unobservable", isPrivate: false, hasGuest: false };
     }
     const auth = await slackForm("auth.test", "");
     const botId = auth?.ok === true && typeof auth.user_id === "string" ? auth.user_id : undefined;
@@ -1779,11 +1800,12 @@ export async function slackGovernanceRoster(channelId: string): Promise<RoomRost
     return {
       humanMemberIds,
       resolved: facts.trustChecked === true,
+      ...(facts.trustChecked === true ? {} : { unresolvedState: "failed" as const }),
       isPrivate: facts.isPrivate === true,
       hasGuest: facts.isExternal === true,
     };
   } catch {
-    return { humanMemberIds: [], resolved: false, isPrivate: false, hasGuest: false };
+    return { humanMemberIds: [], resolved: false, unresolvedState: "failed", isPrivate: false, hasGuest: false };
   }
 }
 

@@ -36,14 +36,25 @@ function ok(cond: boolean, label: string): void {
   }
   passed++;
 }
-async function throwsAsync(fn: () => Promise<unknown>, label: string): Promise<void> {
+async function rejectsWith(fn: () => Promise<unknown>, fragment: string, label: string): Promise<void> {
   let threw = false;
+  let error: unknown;
   try {
     await fn();
-  } catch {
+  } catch (err) {
     threw = true;
+    error = err;
   }
-  ok(threw, label);
+  if (!threw) {
+    console.error(`✗ ${label} (expected a throw, got none)`);
+    process.exit(1);
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (!message.includes(fragment)) {
+    console.error(`✗ ${label} (threw, but not the refusal under test — expected "${fragment}", got: ${message})`);
+    process.exit(1);
+  }
+  passed++;
 }
 
 const at = new Date("2026-07-11T09:00:00.000Z");
@@ -207,12 +218,14 @@ ok(fires.length === firesBefore || !fires.slice(firesBefore).some((f) => f.marke
 const plainFire = fires.slice(firesBefore).find((f) => f.markerId === "r-plain1");
 ok(plainFire !== undefined && plainFire.authThreadTs === undefined, "a plain routine does not inherit a durable-job thread binding");
 
-await throwsAsync(
+await rejectsWith(
   async () => completeJobTool.execute({ reason: "x" }, jobMarkerCtx("r-plain1") as never),
+  "Routine r-plain1 is an ordinary routine, not a durable job — there is no job to complete",
   "complete_job on a NON-job routine throws (structured not-a-job error)",
 );
-await throwsAsync(
+await rejectsWith(
   async () => completeJobTool.execute({ reason: "x" }, { channel: { kind: "slack" }, session: { auth: { current: { attributes: {}, principalId: "", principalType: "slack-user" } } } } as never),
+  "complete_job only works inside a job routine's own run — this session has no routine attached",
   "complete_job with no routine marker throws",
 );
 
@@ -220,12 +233,14 @@ await store.addRoutine({} as never, { ...baseJob, id: "r-job2", nextRunAt: null,
 const recRes = (await recordJobStateTool.execute({ state: "goal: X; done: A,B; next: C" }, jobMarkerCtx("r-job2") as never)) as { recorded: boolean; bytes: number };
 ok(recRes.recorded === true && recRes.bytes > 0, "record_job_state records the ledger");
 ok((await store.getRoutine("default", "slack/T1/C1", "r-job2"))?.jobState === "goal: X; done: A,B; next: C", "record_job_state persists the ledger onto the job's own row");
-await throwsAsync(
+await rejectsWith(
   async () => recordJobStateTool.execute({ state: "x".repeat(JOB_STATE_MAX_BYTES + 1) }, jobMarkerCtx("r-job2") as never),
+  "the job ledger cap is 16384",
   "record_job_state rejects an oversize ledger",
 );
-await throwsAsync(
+await rejectsWith(
   async () => recordJobStateTool.execute({ state: "y" }, jobMarkerCtx("r-plain1") as never),
+  "Routine r-plain1 is not a durable job — there is no job ledger to write",
   "record_job_state on a NON-job routine throws",
 );
 

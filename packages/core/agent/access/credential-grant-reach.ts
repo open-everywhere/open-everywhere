@@ -1,6 +1,6 @@
 import { getOperationalStore } from "../operational/provider.js";
-import type { CredentialGrantRow } from "../operational/credential-grant-rows.js";
 import { classifySessionId } from "../channels/window-key.js";
+import type { CredentialGrantRow } from "../operational/credential-grant-rows.js";
 import { currentSessionId, delegationRootSessionId, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
 import { grantDomainScopeKey } from "./credential-grant-scope.js";
 

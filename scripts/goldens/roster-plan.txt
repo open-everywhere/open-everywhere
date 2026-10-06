@@ -28,6 +28,7 @@ agent/hooks/egress.ts	mounted @open-everywhere/core
 agent/hooks/eve-patch-gate.ts	mounted @open-everywhere/core
 agent/hooks/fire-carriage.ts	mounted @open-everywhere/core
 agent/hooks/fire-toolset.ts	mounted @open-everywhere/core
+agent/hooks/held-question.ts	mounted @open-everywhere/core
 agent/hooks/job-posture.ts	mounted @open-everywhere/core
 agent/hooks/lean-seat.ts	mounted @open-everywhere/core
 agent/hooks/learn.ts	mounted @open-everywhere/core
@@ -61,11 +62,14 @@ agent/skills/scoped.ts	mounted @open-everywhere/core
 agent/tools/add_label.ts	mounted @open-everywhere/core
 agent/tools/add_routine_rule.ts	mounted @open-everywhere/core
 agent/tools/agent_version.ts	mounted @open-everywhere/core
+agent/tools/ask_question.ts	mounted @open-everywhere/core
+agent/tools/ask_room.ts	mounted @open-everywhere/core
 agent/tools/assign.ts	mounted @open-everywhere/core
 agent/tools/aws.ts	mounted @open-everywhere/core
 agent/tools/bash.ts	framework-disabled
 agent/tools/browser_tools.ts	mounted @open-everywhere/core
 agent/tools/cancel_routine.ts	mounted @open-everywhere/core
+agent/tools/cancel_work.ts	mounted @open-everywhere/core
 agent/tools/capture_events.ts	mounted @open-everywhere/core
 agent/tools/check_pr_status.ts	mounted @open-everywhere/core
 agent/tools/checkout_repo.ts	mounted @open-everywhere/core
@@ -114,6 +118,7 @@ agent/tools/read_channel.ts	mounted @open-everywhere/core
 agent/tools/read_docs.ts	mounted @open-everywhere/core
 agent/tools/read_file_upload.ts	mounted @open-everywhere/core
 agent/tools/read_file.ts	framework-disabled
+agent/tools/read_github_issue.ts	mounted @open-everywhere/core
 agent/tools/read_linear_issue.ts	mounted @open-everywhere/provider-linear
 agent/tools/read_notion_comments.ts	mounted @open-everywhere/provider-notion
 agent/tools/read_notion_page.ts	mounted @open-everywhere/provider-notion
@@ -152,4 +157,5 @@ agent/tools/update_status.ts	mounted @open-everywhere/core
 agent/tools/usage_report.ts	mounted @open-everywhere/core
 agent/tools/walk_pr.ts	mounted @open-everywhere/core
 agent/tools/web_fetch.ts	framework-disabled
+agent/tools/work.ts	mounted @open-everywhere/core
 agent/tools/write_file.ts	framework-disabled

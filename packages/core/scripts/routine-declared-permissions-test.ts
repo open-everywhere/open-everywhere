@@ -28,7 +28,8 @@ import {
   describeDeclaredPermissionKind,
   describeLegacyConnectorOpKind,
   grantButtonLabel,
-  permissionLifetime,
+  pendingCardExpiryClause,
+  grantReach,
   routinePermissionKind,
   sessionGrantKind,
 } from "../agent/approvals/session-grant.js";
@@ -36,7 +37,7 @@ import { isReservedNamespaceTool } from "../agent/access/consequence.js";
 import { permissionLines, type RoutineCreateArgs } from "../agent/approvals/routine-create.js";
 import { actionKind } from "../agent/approvals/actions.js";
 import { routineFireAttributes } from "../agent/routines/fire-auth.js";
-import { proposingSessionId } from "../agent/identity/binding.js";
+import { proposingGrantKey } from "../agent/identity/binding.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
 import { addRoutine, getRoutine } from "../agent/routines/store.js";
 import type { Partition } from "../agent/memory/partition.js";
@@ -89,9 +90,9 @@ const NOW = "2026-03-30T11:30:00.000Z";
     seen.add(next);
     r = { promptGeneration: next };
   }
-  ok(permissionLifetime(routinePermissionKey(ROUTINE)) === "routine", "session-grant.ts recognises a real routine key as standing");
-  ok(permissionLifetime("oe-dom:eng:win:slack/T1/C1:oe-sup:g1") === "session", "a window token is NOT read as a routine key");
-  ok(permissionLifetime(undefined) === "session", "an unknown key falls back to the session (pre-OPE-152) meaning");
+  ok(grantReach(routinePermissionKey(ROUTINE)) === "routine", "session-grant.ts recognises a real routine key as standing");
+  ok(grantReach("oe-dom:eng:win:slack/T1/C1:oe-sup:g1") === undefined, "a window token is NOT read as a routine key, and grants nothing (OPE-2363)");
+  ok(grantReach(undefined) === undefined, "an absent key reaches nothing");
 }
 
 {
@@ -275,17 +276,25 @@ const NOW = "2026-03-30T11:30:00.000Z";
     session: { auth: { current: { principalId: "", attributes } } },
     channel: { continuationToken: "oe-dom:eng:win:slack/T1/C1:oe-sup:g1" },
   });
-  ok(proposingSessionId(ctxWith(attrs) as never) === routinePermissionKey(ROUTINE), "a FIRE proposes under the ROUTINE's key, not its throwaway session — the one swap both consult sites and the click path ride");
-  ok(proposingSessionId(ctxWith({}) as never) === "oe-dom:eng:win:slack/T1/C1:oe-sup:g1", "an ordinary human turn is untouched: it still keys on its window token");
-  ok(proposingSessionId(ctxWith({ [ROUTINE_MARKER.permissionKey]: "slack/T1/C1" }) as never) === "oe-dom:eng:win:slack/T1/C1:oe-sup:g1", "a stamp WITHOUT the routine namespace is ignored — the key cannot be redirected at an arbitrary session");
+  ok(proposingGrantKey(ctxWith(attrs) as never) === routinePermissionKey(ROUTINE), "a FIRE proposes under the ROUTINE's key, not its throwaway session — the one swap both consult sites and the click path ride");
+  ok(proposingGrantKey(ctxWith({}) as never) === undefined, "a turn with no fire stamp and no acting person keeps no grant — it never keys on its window token");
+  ok(proposingGrantKey(ctxWith({ [ROUTINE_MARKER.permissionKey]: "slack/T1/C1" }) as never) === undefined, "a stamp WITHOUT the routine namespace is ignored — the key cannot be redirected at an arbitrary session");
   ok(routinePermissionKeyStamped({ [ROUTINE_MARKER.permissionKey]: "nonsense" }) === undefined, "…and the reader itself refuses a non-namespaced value");
 }
 
 {
-  ok(grantButtonLabel({ argsJson: JSON.stringify({ sessionId: routinePermissionKey(ROUTINE) }) }) === "Approve for this routine (standing)", "a ROUTINE-keyed frozen arg maps to the STANDING wording (the label rule, not a live card)");
-  ok(grantButtonLabel({ argsJson: JSON.stringify({ sessionId: "oe-dom:eng:win:slack/T1/C1:oe-sup:g1" }) }) === "Approve for session", "a human turn's card is unchanged");
-  ok(grantButtonLabel({ argsJson: "{" }) === "Approve for session", "unparseable frozen args fall back to the conservative wording");
-  ok(grantButtonLabel({ argsJson: "{}" }) === "Approve for session", "so does an args bag with no session at all");
+  ok(grantButtonLabel({ argsJson: JSON.stringify({ sessionId: routinePermissionKey(ROUTINE) }) }, 24) === "Approve for this routine (up to 24 h)", "a ROUTINE-keyed frozen arg maps to the STANDING wording (the label rule, not a live card)");
+  for (const [what, argsJson] of [
+    ["a thread key", JSON.stringify({ sessionId: "oe-grant:slack/T1/C1:thread:1718884080.000100" })],
+    ["a DM key", JSON.stringify({ sessionId: "oe-grant:slack/T1/D1:dm" })],
+    ["a legacy window-token key", JSON.stringify({ sessionId: "oe-dom:eng:win:slack/T1/C1:oe-sup:g1" })],
+    ["unparseable frozen args", "{"],
+    ["an args bag with no key", "{}"],
+  ] as const) {
+    ok(grantButtonLabel({ argsJson }, 24) === undefined, `🔴 OPE-2363: ${what} offers NO middle button`);
+  }
+  ok(pendingCardExpiryClause(ROUTINE_PERMISSION_NO_EXPIRY) === "no expiry — ends when the routine's instruction is edited or the routine is deleted", "a no-clock row's footer names the routine generation, not the year 9999");
+  ok(pendingCardExpiryClause("2026-01-28T17:16:00Z") === "expires 2026-01-28T17:16:00Z", "a clocked row's footer is unchanged");
 }
 
 {

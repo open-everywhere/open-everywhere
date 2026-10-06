@@ -4,11 +4,17 @@ import { callerWorkDomain, workGrantedConnectors } from "../access/work-grant.js
 import { resolveAccessFor } from "../access/request.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 
+export interface WorkSearchReadRoad {
+  readonly tool: string;
+  readonly args: Readonly<Record<string, string | number>>;
+}
+
 export interface WorkSearchHit {
   readonly connector: string;
   readonly id: string;
   readonly title: string;
   readonly url?: string;
+  readonly readWith?: WorkSearchReadRoad;
 }
 
 export interface WorkSearchAbsence {

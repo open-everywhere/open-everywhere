@@ -68,6 +68,25 @@ export function renderReachBlock(reach: FireReach): string {
   );
 }
 
+export const CONNECTION_EXECUTE_TOOL = "connection_execute";
+
+export interface DeclaredReachOp {
+  readonly connection: string;
+  readonly tool: string;
+}
+
+export function renderDeclaredReachBlock(ops: readonly DeclaredReachOp[]): string {
+  if (ops.length === 0) return "";
+  const lines = ops.map((op) => `- \`${CONNECTION_EXECUTE_TOOL}\` with connection \`${op.connection}\` and tool \`${op.tool}\``);
+  return [
+    `[reach] This routine DECLARED the connector operations below, and a human armed each one for ` +
+      `this routine. You need no \`${CONNECTION_SEARCH_TOOL}\` for them: call \`${CONNECTION_EXECUTE_TOOL}\` ` +
+      `directly, with the operation's arguments in \`input\`. If an argument is wrong, the call ` +
+      `returns what was wrong; correct it and call again. Report what came back.`,
+    ...lines,
+  ].join("\n");
+}
+
 function fireMessage(
   head: string,
   silent: string,

@@ -1,6 +1,10 @@
 import type { WindowGrain } from "../identity/binding.js";
 import { HARNESS_INTERNAL_TOOLS } from "./job-posture.js";
 
+export const WORK_FORWARD_TOOL = "work";
+
+export const WORK_CANCEL_TOOL = "cancel_work";
+
 export const LEAN_SEAT_TOOLS: ReadonlySet<string> = new Set([
   "reply",
   "edit_reply",
@@ -11,6 +15,8 @@ export const LEAN_SEAT_TOOLS: ReadonlySet<string> = new Set([
   "halt",
   "set_dm_delivery",
   "agent",
+  "work",
+  "cancel_work",
   "spawn_thread_session",
   "complete_thread",
   "task_cancel",
@@ -50,4 +56,16 @@ export function restrictToolsetForLeanSeat(toolset: Record<string, unknown>, dmS
 
 export function withheldFromLeanSeat(gated: Readonly<Record<string, readonly string[]>>, ungated: ReadonlySet<string>, dmSeat = false): string[] {
   return [...new Set([...Object.keys(gated), ...ungated])].filter((name) => !allowedOnLeanSeat(name, dmSeat)).sort();
+}
+
+export const WORK_SESSION_TOOLS: ReadonlySet<string> = new Set(["agent", "task_cancel"]);
+
+export function restrictToolsetForWorkSession(toolset: Record<string, unknown>): string[] {
+  const removed: string[] = [];
+  for (const name of Object.keys(toolset)) {
+    if (WORK_SESSION_TOOLS.has(name) || HARNESS_INTERNAL_TOOLS.has(name)) continue;
+    delete toolset[name];
+    removed.push(name);
+  }
+  return removed.sort();
 }

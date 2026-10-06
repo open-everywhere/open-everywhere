@@ -86,6 +86,7 @@ type BindableContext = import("../agent/identity/binding.js").BindableContext;
 
   const hooks = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
   const dispatchHook = hooks["action.result"]!;
+  const startedHook = hooks["task.started"]!;
   const turnStarted = hooks["turn.started"]!;
 
   const ctxFor = (turnId: string): BindableContext =>
@@ -115,11 +116,11 @@ type BindableContext = import("../agent/identity/binding.js").BindableContext;
     check("🔴 §3 a turn that answered with ONE call of its own leaves NO `delegation.*` row — the assertion OPE-1766 asks for", (await delegationRows()) === 0);
 
     await turnStarted({}, ctxFor("turn_floor_b"));
-    await dispatchHook(
-      { data: { result: { callId: "call_b", kind: "tool-result", toolName: DELEGATION_TOOL_NAME, output: { agentId: "ag_agent:6666", status: "working", taskId: "task_floorbbbbcccc" } } } },
+    await startedHook(
+      { data: { callId: "call_b", kind: "agent", name: DELEGATION_TOOL_NAME, taskId: "agent-floorbbbbcccc", turnId: "turn_floor_b" } },
       ctxFor("turn_floor_b"),
     );
-    check("🔴 §3/CONTROL: an `agent` receipt through the SAME hook DOES write one — so the leg above measures the floor, not a dead hook", (await delegationRows()) > 0);
+    check("🔴 §3/CONTROL: a real `agent` dispatch through `task.started` DOES write one — so the leg above measures the floor, not a dead hook", (await delegationRows()) > 0);
   });
 }
 

@@ -4,6 +4,7 @@ import { slackSigningSecret } from "../setup/credentials.js";
 import {
   bindFrom,
   runOeCommand,
+  oeSlash,
   parseSlackCommandText,
   resolvePartition,
   getOperationalStore,
@@ -90,9 +91,10 @@ export default defineChannel({
       }
 
       const command = formField(params, "command");
-      if (command !== "/oe") {
-        log(`unexpected slash command "${command ?? "?"}" hit the /oe route — check the Slack app's Slash Command config`);
-        return ephemeralResponse('This endpoint only handles "/oe" — check your Slack app\'s Slash Command configuration.');
+      const expected = oeSlash();
+      if (command !== expected) {
+        log(`unexpected slash command "${command ?? "?"}" hit the ${expected} route — check the Slack app's Slash Command config`);
+        return ephemeralResponse(`This endpoint only handles "${expected}" — check your Slack app's Slash Command configuration.`);
       }
 
       const cmd = parseSlackCommandText(formField(params, "text"));
@@ -101,7 +103,7 @@ export default defineChannel({
         const reply = await runOeCommand(cmd, binding, { attachSession });
         return ephemeralResponse(reply);
       } catch (err) {
-        log(`"/oe" command failed softly: ${String(err)}`);
+        log(`"${expected}" command failed softly: ${String(err)}`);
         return ephemeralResponse(`Couldn't complete that: ${err instanceof Error ? err.message : String(err)}`);
       }
     }),

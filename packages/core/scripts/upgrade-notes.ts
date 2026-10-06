@@ -260,8 +260,14 @@ const preamble = (newest: string): readonly string[] => [
   "command again. The run resumes, and it keeps the version you started from. After a green run,",
   "delete `.open-everywhere/bootstrap`. From then on, `npx oe upgrade` is the command.",
   "",
-  "Do not use `npx -p @open-everywhere/core@<version> oe upgrade`. The `oe` bin needs `tsx`, which",
-  "core does not install, so that command fails before `oe upgrade` starts.",
+  "Up to 0.1.5, the `oe` bin needs `tsx`. `npx -p` installs core into its own cache, where no `tsx`",
+  "resolves, so `npx -p @open-everywhere/core@<version> oe upgrade` fails with 0.1.5 or earlier as",
+  "the target. The first release after 0.1.5 ships a compiled `oe` bin that needs no `tsx`. With",
+  "that release or a later one as the target, this one-liner is the bootstrap too:",
+  "",
+  "```sh",
+  "npx -p @open-everywhere/core@<version> oe upgrade --to <version>",
+  "```",
   "",
 ];
 

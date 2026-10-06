@@ -12,14 +12,25 @@ function ok(cond: boolean, label: string): void {
   }
   passed++;
 }
-function throws(fn: () => unknown, label: string): void {
+function throwsWith(fn: () => unknown, fragment: string, label: string): void {
   let threw = false;
+  let error: unknown;
   try {
     fn();
-  } catch {
+  } catch (err) {
     threw = true;
+    error = err;
   }
-  ok(threw, label);
+  if (!threw) {
+    console.error(`✗ ${label} (expected a throw, got none)`);
+    process.exit(1);
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (!message.includes(fragment)) {
+    console.error(`✗ ${label} (threw, but not the refusal under test — expected "${fragment}", got: ${message})`);
+    process.exit(1);
+  }
+  passed++;
 }
 
 ok(resolveSelfHostBackendKind({}) === "docker", "unset OE_SANDBOX_BACKEND → docker (new default)");
@@ -31,8 +42,8 @@ ok(resolveSelfHostBackendKind({ OE_SANDBOX_BACKEND: " DOCKER " }) === "docker", 
 ok(resolveSelfHostBackendKind({ OE_SANDBOX_BACKEND: "justbash" }) === "justbash", "explicit justbash → justbash");
 ok(resolveSelfHostBackendKind({ OE_SANDBOX_BACKEND: "JustBash " }) === "justbash", "justbash is trimmed + case-insensitive");
 
-throws(() => resolveSelfHostBackendKind({ OE_SANDBOX_BACKEND: "podman" }), "unknown value throws (no silent fallback)");
-throws(() => resolveSelfHostBackendKind({ OE_SANDBOX_BACKEND: "vercel" }), "'vercel' is not a self-host backend → throws");
+throwsWith(() => resolveSelfHostBackendKind({ OE_SANDBOX_BACKEND: "podman" }), 'unknown OE_SANDBOX_BACKEND="podman"', "unknown value throws (no silent fallback)");
+throwsWith(() => resolveSelfHostBackendKind({ OE_SANDBOX_BACKEND: "vercel" }), 'unknown OE_SANDBOX_BACKEND="vercel"', "'vercel' is not a self-host backend → throws");
 
 const jb = selfHostBackendBootLog("justbash");
 ok(jb.warn === JUSTBASH_BOOT_WARNING, "justbash boot log carries the loud shared-filesystem warning");

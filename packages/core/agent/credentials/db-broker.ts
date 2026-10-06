@@ -1,4 +1,4 @@
-import { randomBytes, createCipheriv, createDecipheriv } from "node:crypto";
+import { randomBytes, createCipheriv, createDecipheriv, hkdfSync } from "node:crypto";
 import {
   CredentialError,
   registerBroker,
@@ -51,6 +51,10 @@ export function credentialKeyArmed(): boolean {
   } catch {
     return false;
   }
+}
+
+export function deriveCredentialSubkey(label: string): Buffer {
+  return Buffer.from(hkdfSync("sha256", loadKey(), Buffer.alloc(0), label, KEY_BYTES));
 }
 
 export function encryptCredential(plaintext: string): string {

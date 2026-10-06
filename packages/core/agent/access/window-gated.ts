@@ -1,4 +1,4 @@
-import { defineDynamic, defineTool, type ToolDefinition } from "eve/tools";
+import { defineDurableSchema, defineDynamic, defineTool, type ToolDefinition } from "eve/tools";
 
 export interface GatedToolEntry {
   readonly description: string;
@@ -53,7 +53,7 @@ export function domainLabelOf(ctx: BindableContext): string {
   try {
     const raw = ctx.channel?.continuationToken ?? currentWindowToken(ctx);
     const sid = classifySessionId(raw);
-    if (sid.kind === "window" || sid.kind === "task" || sid.kind === "thread-seat") return sid.key.domain;
+    if (sid.kind === "window" || sid.kind === "task" || sid.kind === "thread-seat" || sid.kind === "work") return sid.key.domain;
     if (sid.kind === "container-supervisor") return sid.containerKey.length > 0 ? sid.containerKey : "unknown";
     if (typeof raw !== "string") return "unknown";
     const token = raw.startsWith("unified:") ? raw.slice("unified:".length) : raw;
@@ -211,6 +211,26 @@ export function replayStepNames(slug: string, entryKey: string): { execute: stri
 }
 
 const DURABLE_TOOL_CALLBACKS = Symbol.for("eve:durable-dynamic-tool-callbacks");
+
+const DURABLE_SCHEMA = Symbol.for("eve:durable-dynamic-schema");
+
+function isSchemaValidator(schema: unknown): schema is object {
+  if (typeof schema !== "object" || schema === null || !("~standard" in schema)) return false;
+  const std = (schema as { "~standard"?: { validate?: unknown } })["~standard"];
+  return typeof std === "object" && std !== null && typeof std.validate === "function";
+}
+
+function durableSchemaOf(schema: unknown): unknown {
+  if (!isSchemaValidator(schema) || Reflect.get(schema, DURABLE_SCHEMA) !== undefined) return schema;
+  return defineDurableSchema({ closure: {} as Record<string, never>, schema: () => schema as never });
+}
+
+function withDurableSchemas<T extends { readonly inputSchema?: unknown; readonly outputSchema?: unknown }>(tool: T): T {
+  const out: Record<string, unknown> = { ...tool };
+  if (tool.inputSchema !== undefined) out.inputSchema = durableSchemaOf(tool.inputSchema);
+  if (tool.outputSchema !== undefined) out.outputSchema = durableSchemaOf(tool.outputSchema);
+  return out as T;
+}
 
 type ReplayCallback = (closure: Record<string, never>, ...args: never[]) => unknown;
 
@@ -436,7 +456,7 @@ export function preRegisterDynamicEntry(slug: string, entryKey: string, entry: R
 }
 
 function armEntry(name: string, entry: GatedToolEntry): GatedToolEntry {
-  return defineTool({ ...entry, execute: gatedExecute(name, entry) } as unknown as ToolDefinition) as unknown as GatedToolEntry;
+  return defineTool({ ...withDurableSchemas(entry), execute: gatedExecute(name, entry) } as unknown as ToolDefinition) as unknown as GatedToolEntry;
 }
 
 export function windowGated(name: string, entry: GatedToolEntry, mountGate?: (ctx: BindableContext) => boolean): unknown {

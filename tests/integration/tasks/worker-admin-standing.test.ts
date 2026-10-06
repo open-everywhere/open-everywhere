@@ -7,7 +7,9 @@ process.env.OE_CONTROL_INJECT_TOKENS = `it-ope673:${createHash("sha256").update(
 import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import { beforeAll, expect, test } from "vitest";
 import {
-  awaitTaskSettlement,
+  armSettlement,
+  auditCursor,
+  awaitWorkResult,
   bootAgent,
   discordMentionWake,
   disposeLater,
@@ -15,10 +17,10 @@ import {
   DISCORD_LISTED_CHANNEL_ID,
   DISCORD_USER_ID,
   registerScript,
-  SETTLEMENT_DRAIN_CLOSING_SCRIPT,
-  taskIdOfDelegation,
+  rowsSinceCursor,
   waitFor,
   waitForChildren,
+  workTaskIdOfCall,
   type RecordedRequest,
   type ScriptedHandle,
   awaitWindowQuiet,
@@ -66,26 +68,41 @@ async function askThroughAWorker(
   tool: "memory_admin_list" | "memory_admin_read" | "connector" = "memory_admin_list",
   toolInput: Record<string, unknown> = {},
 ) {
+  const callId = `ope673-${leg}`;
+  const cursor = await auditCursor();
   const dispatched = disposeLater(
     registerScript({
-      parent: [{ calls: [{ tool: "agent", input: { message: "handle the ask for the person who asked" }, id: `ope673-${leg}` }] }, { say: NO_REPLY_SENTINEL }],
-      child: [{ calls: [{ tool, input: toolInput, id: `ope673-${leg}-call` }] }, { say: "worker done" }],
+      parent: [{ calls: [{ tool: "work", input: { message: "handle the ask for the person who asked" }, id: callId }] }, { say: NO_REPLY_SENTINEL }],
+      child: [{ delayMs: 120_000, calls: [{ tool, input: toolInput, id: `ope673-${leg}-call` }] }, { say: "worker done" }],
     }),
   );
   const marker = `ope673-leg-${leg}-${randomBytes(4).toString("hex")}`;
-  await injectWake(base, { ...wake, text: `${wake.text} [${marker}]` });
+  const injected = injectWake(base, { ...wake, text: `${wake.text} [${marker}]` });
+  const receiptStep = await waitFor(
+    () => dispatched.requests.find((r) => r.role === "parent" && r.stepIndex === 1),
+    `${leg}: the dispatch turn's receipt step to be served`,
+  );
+  const settlement = disposeLater(armSettlement(dispatched, { parent: [{ say: NO_REPLY_SENTINEL }] }));
+  dispatched.releaseHolds();
   await waitForChildren(dispatched, { count: 1, lastStepIndex: 1, label: `${leg}: the delegated worker to serve its whole arm` });
+  await waitFor(() => (dispatched.holdsCutShort() === 1 ? true : undefined), `${leg}: the worker's hold ended on the release, not on its 120 s backstop`);
   const dispatchTurn = dispatched.requests.find((r) => r.role === "parent" && r.stepIndex === 0);
   expect(dispatchTurn, `${leg}: this leg's own dispatch turn reached the script`).toBeDefined();
   expect(
     dispatchTurn!.messages.some((m) => m.text.includes(marker)),
     `${leg}: the turn measured as this leg's does not carry this leg's own wake marker — an earlier leg's straggler was served this script, so every assertion below is that leg's and not this one's`,
   ).toBe(true);
-  const taskId = taskIdOfDelegation(dispatched, `the ${leg} delegation`);
-  const { handle: drain } = await awaitTaskSettlement({ dispatched, taskId, script: SETTLEMENT_DRAIN_CLOSING_SCRIPT, label: `${leg}: the settled worker's completion wake` });
-  disposeLater(drain);
-  expect(drain.requests.filter((r) => r.fault !== undefined), `${leg}: no straggling model call`).toEqual([]);
-  drain.dispose();
+  const taskId = await workTaskIdOfCall(cursor, dispatched, callId, leg);
+  const resultStep = await awaitWorkResult({ handle: settlement, taskId, label: `${leg}: the seat step that read the worker's result` });
+  expect(resultStep.stepIndex).toBe(0);
+  expect(resultStep.turnId, `${leg}: the result arrives in its OWN seat turn, never the dispatch turn`).not.toBe(receiptStep.turnId);
+  await injected;
+  for (const h of [dispatched, settlement]) {
+    expect(h.requests.filter((r) => r.fault !== undefined), `${leg}: no straggling model call`).toEqual([]);
+    expect(h.resolves.filter((r) => r.fault !== undefined), `${leg}: no straggling model call`).toEqual([]);
+  }
+  settlement.dispose();
+  dispatched.dispose();
   const result = workerGateResult(dispatched, tool);
   expect(result, `${leg}: the worker really called ${tool}`).toBeDefined();
   await awaitWindowQuiet();
@@ -99,8 +116,14 @@ beforeAll(async () => {
   const opener = registerScript({
     parent: [{ calls: [{ tool: "no_reply", input: { reason: "nothing_to_add" }, id: "ope673-opener-silence" }] }, { say: NO_REPLY_SENTINEL }],
   });
+  const openerCursor = await auditCursor();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> hello", userId: NON_ADMIN_DISCORD_ID });
-  await waitFor(() => opener.requests.find((r) => r.stepIndex === 1), "the opening mention to reach the seat and finish its arm", 120_000);
+  await waitFor(() => opener.requests.find((r) => r.stepIndex === 0), "the opening mention to reach the seat", 120_000);
+  await waitFor(
+    async () => (await rowsSinceCursor(openerCursor, ["reply.no_reply_observed"])).find((r) => r.detail?.reason === "nothing_to_add"),
+    "the opener's no_reply tool to run",
+    120_000,
+  );
   await awaitWindowQuiet();
   opener.dispose();
 }, 300_000);

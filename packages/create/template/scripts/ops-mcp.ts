@@ -4,9 +4,19 @@ import { registerSlackOps } from "@open-everywhere/provider-slack/agent/ops.js";
 import { registerGithubOps } from "@open-everywhere/provider-github/agent/ops.js";
 import { registerSurfaceTrustPreflight } from "@open-everywhere/core/agent/identity/trust-preflight.js";
 import { importAppModule, resolveAppRoot } from "@open-everywhere/core/agent/scaffold/app-root.js";
+import { registerSettings, type AgentSettingsOverrides } from "@open-everywhere/core/agent/settings/settings.js";
 
 const APP_ROOT = resolveAppRoot();
 await importAppModule("agent/identity/surfaces.ts", APP_ROOT);
+try {
+  const { SETTINGS_OVERRIDES } = await importAppModule<{ SETTINGS_OVERRIDES: AgentSettingsOverrides }>("agent/settings/settings.ts", APP_ROOT);
+  registerSettings(SETTINGS_OVERRIDES);
+} catch (err) {
+  process.stderr.write(
+    `open-everywhere-ops: agent/settings/settings.ts did not load (${err instanceof Error ? err.message : String(err)}) — ` +
+      "surface_manifest renders the shipped default names until it does\n",
+  );
+}
 
 registerSlackOps();
 registerGithubOps();

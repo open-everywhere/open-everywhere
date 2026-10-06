@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { disposeLater, bootAgent, registerScript, runRoutineDispatchTick, waitFor, type ScriptedHandle, type SeatScript } from "./harness";
+import { auditCursor, disposeLater, bootAgent, registerScript, rowsSinceCursor, runRoutineDispatchTick, waitFor, type ScriptedHandle, type SeatScript } from "./harness";
 
 const TEAM = "T0FCFIRE";
 const CHANNEL = "C0FCFIRE";
@@ -43,7 +43,8 @@ async function seedCreatorlessDueRoutine(surfaceKey: string, channelId: string, 
 
 function proposeSpendLimit(): SeatScript {
   return {
-    parent: [
+    parent: [{ say: "NO_REPLY" }],
+    child: [
       { calls: [{ tool: "set_spend_limit", input: { monthlyUsd: 12.5, reason: "OPE-497 fail-closed probe" } }] },
       { say: "ok" },
     ],
@@ -58,9 +59,10 @@ function spendLimitResult(handle: ScriptedHandle): { isError: boolean; output: u
   return undefined;
 }
 
-test("a CREATOR-LESS routine fire on the native path still has no acting sender", async () => {
+test("a CREATOR-LESS routine fire, forwarded to the work session, still has no acting sender in its worker", async () => {
   await bootAgent({ sharedSqlite: true });
   const handle = disposeLater(registerScript(proposeSpendLimit()));
+  const cursor = await auditCursor();
 
   const routineId = await seedCreatorlessDueRoutine(
     `slack/${TEAM}/${CHANNEL}`,
@@ -72,7 +74,14 @@ test("a CREATOR-LESS routine fire on the native path still has no acting sender"
   const sessionIds = await runRoutineDispatchTick();
   expect(sessionIds.length).toBeGreaterThan(0);
 
-  const result = await waitFor(() => spendLimitResult(handle), "the fire's set_spend_limit call to return", 150_000);
+  const forwarded = await waitFor(
+    async () => (await rowsSinceCursor(cursor, ["work.forwarded"])).find((r) => String(r.surface ?? "").endsWith(`/${CHANNEL}`)),
+    "the creator-less fire's work.forwarded row",
+    150_000,
+  );
+  expect(forwarded.action).toBe("work.forwarded");
+
+  const result = await waitFor(() => spendLimitResult(handle), "the worker's set_spend_limit call to return", 150_000);
 
   expect(result.isError).toBe(true);
   expect(JSON.stringify(result.output)).toContain("no acting sender");

@@ -7,7 +7,7 @@ import { auditToolAction } from "../audit/tool-action.js";
 
 export default defineTool({
   description:
-    "Read Open Everywhere's own shipped documentation — how this agent works, what it can do, how a capability is set up and governed. Call with no path to list the manual this deployment ships, then again with a path to read one doc. Use it before answering any question about the agent itself rather than assuming; only the docs for the surfaces this deployment actually carries are present.",
+    "Read this agent's own shipped documentation — how this agent works, what it can do, how a capability is set up and governed. Call with no path to list the manual this deployment ships, then again with a path to read one doc. Use it before answering any question about the agent itself rather than assuming; only the docs for the surfaces this deployment actually carries are present.",
   inputSchema: z.object({
     path: z
       .string()

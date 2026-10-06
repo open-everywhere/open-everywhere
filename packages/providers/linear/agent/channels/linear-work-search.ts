@@ -59,6 +59,7 @@ export const linearWorkSearchAdapter: WorkSearchAdapter = {
         id: n.identifier,
         title: n.title && n.title.length > 0 ? n.title : "(untitled)",
         ...(n.url ? { url: n.url } : {}),
+        readWith: { tool: "read_linear_issue", args: { issue: n.identifier } },
       });
     }
     return hits.slice(0, opts.limit);

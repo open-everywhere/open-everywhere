@@ -35,9 +35,11 @@ const harnessTools = (await import(u("harness/tools.js"))) as {
 const toolSchema = (await import(u("tools/schema.js"))) as { toInputSchema(s: unknown): unknown };
 const lifecycle = (await import(u("context/dynamic-tool-lifecycle.js"))) as {
   dispatchDynamicToolEvent(e: unknown): Promise<void>;
-  replayDynamicSessionTools(meta: readonly unknown[], resolvers: readonly unknown[], sessionId: string): Replayed[];
 };
-const keys = (await import(u("context/keys.js"))) as { SessionIdKey: unknown; SessionDynamicToolMetadataKey: unknown };
+const { replayDynamicTools } = (await import(u("context/build-dynamic-tools.js"))) as {
+  replayDynamicTools(meta: readonly unknown[], scope: { sessionId: string; scope: string }): Replayed[];
+};
+const keys = (await import(u("context/keys.js"))) as { SessionIdKey: unknown; StaticModelReferenceKey: unknown; SessionDynamicToolMetadataKey: unknown };
 
 interface BuiltTool {
   execute?: (...a: unknown[]) => unknown;
@@ -237,6 +239,7 @@ console.log("4. eve replays THIS grant's projection from the persisted closure:"
   const makeCtx = (sessionId: string) => {
     const store = new Map<unknown, unknown>();
     store.set(keys.SessionIdKey, sessionId);
+    store.set(keys.StaticModelReferenceKey, null);
     return {
       get: (k: unknown) => store.get(k),
       require: (k: unknown) => {
@@ -268,8 +271,8 @@ console.log("4. eve replays THIS grant's projection from the persisted closure:"
   eq(rowThis.callbacks.toModelOutput, { closure: { entryKey: GRANT.id } }, "the persisted toModelOutput phase names THIS grant id — the closure is the only thing that tells two grants apart");
   eq(rowOther.callbacks.toModelOutput, { closure: { entryKey: other.id } }, "…and the other session's row names the other grant");
 
-  const replayedThis = lifecycle.replayDynamicSessionTools([rowThis], [], "sess-grant-this")[0]!;
-  const replayedOther = lifecycle.replayDynamicSessionTools([rowOther], [], "sess-grant-other")[0]!;
+  const replayedThis = replayDynamicTools([rowThis], { sessionId: "sess-grant-this", scope: "session" })[0]!;
+  const replayedOther = replayDynamicTools([rowOther], { sessionId: "sess-grant-other", scope: "session" })[0]!;
   ok(typeof replayedThis.toModelOutput === "function", "🔴 eve REBUILDS the authored projection onto the replayed grant tool — the envelope is reachable, not merely correct");
   const renderedThis = await inTurn(async () => String((await replayedThis.toModelOutput!(OK_OUTPUT)).value));
   const renderedOther = await inTurn(async () => String((await replayedOther.toModelOutput!(OK_OUTPUT)).value));

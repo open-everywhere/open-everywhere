@@ -48,6 +48,7 @@ test("a Slack seat's delegation keeps the worker brief out of the room, and post
         },
       };
     }
+    if (method === "conversations.members") return { ok: true, members: [], response_metadata: { next_cursor: "" } };
     if (method === "conversations.info") {
       return {
         ok: true,
@@ -76,9 +77,8 @@ test("a Slack seat's delegation keeps the worker brief out of the room, and post
   const handle = disposeLater(
     registerScript({
       parent: [
-        { calls: [{ tool: "agent", input: { message: BRIEF }, id: DISPATCH_CALL }] },
+        { calls: [{ tool: "work", input: { message: BRIEF }, id: DISPATCH_CALL }] },
         { calls: [{ tool: "reply", input: { wake: WAKE_FROM_ENVELOPE, text: PENDING_REPLY, done: false }, id: "ope2263-pending" }] },
-        { say: "done" },
       ],
       child: [{ delayMs: 120_000, say: CHILD_RESULT }],
     }),
@@ -94,7 +94,7 @@ test("a Slack seat's delegation keeps the worker brief out of the room, and post
   });
   expect(res.status, res.body).toBe(200);
 
-  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 2), "the dispatch turn to reach its terminal step");
+  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the dispatch turn to reach its terminal step");
 
   expect(
     handle.requests.filter((r) => r.fault !== undefined),

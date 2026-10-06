@@ -52,6 +52,8 @@ const NOT_SLACK_METHODS: Record<string, string> = {
   "files.pythonhosted.org": "a PyPI host (access/bundle.ts)",
   "api.github.com": "a GitHub host",
   "api.vendor.com": "an example host in a doc string (access/credential-endpoints.ts)",
+  "api.apiBaseUrl": "eve's channel-config option path in an error label (eve transport.js), not a Web API method",
+  "api.fileBaseUrl": "eve's channel-config option path in an error label (eve transport.js), not a Web API method",
 };
 
 function tsFiles(dir: string): string[] {

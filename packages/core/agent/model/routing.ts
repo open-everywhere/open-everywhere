@@ -4,6 +4,7 @@ import { getConfig } from "../access/config.js";
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import { bindFrom, deploymentOrg, type BindableContext } from "../identity/binding.js";
 import { currentWorkerWake } from "../access/worker-seat-state.js";
+import { noteWakeAttachments } from "../access/worker-continuation.js";
 import { stampModelCall } from "./model-stamp.js";
 import { noteTurnStep, reportStepBoundary, withWrapUpNotice, turnBackstopModel, wrapUpNotice, boundaryStopReply } from "./step-boundary.js";
 import type { ModelPolicy } from "./policy.js";
@@ -310,6 +311,7 @@ export async function resolvePrimaryModel<TModel extends RoutableModel>(
   deps: RoutingDeps<TModel>,
   event?: unknown,
 ): Promise<TModel> {
+  noteWakeAttachments((ctx as { messages?: unknown }).messages);
   const boundary = await noteTurnStep(ctx, event);
   const captureSite = captureArmed() ? captureSiteFrom(ctx, event) : undefined;
   const capturingDeps = withCapture(deps, captureSite);

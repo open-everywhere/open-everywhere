@@ -24,6 +24,26 @@ export function adoptDelegatedAuthority(authority: DelegatedDispatchAuthority, _
   }
 }
 
+const resolvedTurn = defineState<string | null>("open-everywhere.delegated-binding.resolved-turn", () => null);
+
+export function delegatedAuthorityResolvedFor(turnId: string): boolean {
+  try {
+    return resolvedTurn.get() === turnId;
+  } catch {
+    return false;
+  }
+}
+
+export function refreshDelegatedAuthority(authority: DelegatedDispatchAuthority, turnId: string): boolean {
+  try {
+    slot.update(() => authority);
+    resolvedTurn.update(() => turnId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function pinDelegatedBindingToTurn(_turnId: string | undefined): boolean {
   try {
     return slot.get() !== null;
@@ -76,6 +96,30 @@ export function delegatedWakeThisTurn(): string | undefined {
 export function delegatedNonMemberWakeThisTurn(_turnId: string | undefined): boolean | undefined {
   try {
     return slot.get()?.nonMemberWake;
+  } catch {
+    return undefined;
+  }
+}
+
+const rootSessionSlot = defineState<string | null>("open-everywhere.delegated-binding.root-session", () => null);
+
+export function adoptDelegatedRootSession(rootSessionId: string): boolean {
+  try {
+    if (rootSessionId.length === 0) return false;
+    const current = rootSessionSlot.get();
+    if (current === null) {
+      rootSessionSlot.update(() => rootSessionId);
+      return true;
+    }
+    return current === rootSessionId;
+  } catch {
+    return false;
+  }
+}
+
+export function delegatedRootSessionId(): string | undefined {
+  try {
+    return rootSessionSlot.get() ?? undefined;
   } catch {
     return undefined;
   }

@@ -49,7 +49,7 @@ const slot = defineState<Map<string, number> | null>("open-everywhere.loop-break
 
 export function noteToolResultLoop(source: string | undefined, body: string): string | null {
   try {
-    const counts = slot.get() ?? new Map<string, number>();
+    const counts = new Map<string, number>(slot.get() ?? []);
     const count = recordAndCount(counts, source, body);
     slot.update(() => counts);
     return nudgeForCount(source, count);

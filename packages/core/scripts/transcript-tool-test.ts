@@ -40,6 +40,7 @@ import { WINDOW_UNGATED_TOOLS, WINDOW_GATED_TOOLS, JOB_WAKE_TOOLS } from "../age
 import readRoutineTranscript from "../agent/tools/read_routine_transcript.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { removeTempDir } from "./_temp-dir.js";
+import { withTransformSchemaDescriptors } from "./_eve-schema-stand-in.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -102,6 +103,7 @@ const FIRE = {
   const toolSchema = await import(pathToFileURL(join(eveRoot, "dist/src/tools/schema.js")).href);
   const contextKeys = (await import(pathToFileURL(join(eveRoot, "dist/src/context/keys.js")).href)) as {
     SessionIdKey: unknown;
+    StaticModelReferenceKey: unknown;
   };
   const SESSION_ID = "s-transcript-tool";
 
@@ -109,6 +111,7 @@ const FIRE = {
     const durable = new Map<unknown, unknown>();
     const virtual = new Map<unknown, unknown>();
     durable.set(contextKeys.SessionIdKey, SESSION_ID);
+    durable.set(contextKeys.StaticModelReferenceKey, null);
     return {
       get: (k: unknown) => (virtual.has(k) ? virtual.get(k) : durable.get(k)),
       set: (k: unknown, v: unknown) => durable.set(k, v),
@@ -126,6 +129,8 @@ const FIRE = {
   ok(entry !== null && typeof entry === "object", "tool MOUNTS once the relay secret + base URL are configured");
   ok(typeof entry.toModelOutput === "function", "the mounted entry authors a toModelOutput (the fence)");
 
+  const mounted = withTransformSchemaDescriptors(entry);
+
   const ctx = makeCtx();
   await lifecycle.dispatchDynamicToolEvent({
     ctx,
@@ -134,7 +139,7 @@ const FIRE = {
         slug: "read_routine_transcript",
         eventNames: ["session.started"],
         sourceId: "oe",
-        events: { "session.started": () => entry },
+        events: { "session.started": () => mounted },
       },
     ],
     event: { type: "session.started" },

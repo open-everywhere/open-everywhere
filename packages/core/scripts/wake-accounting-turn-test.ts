@@ -99,7 +99,7 @@ const questionRequest = { requests: [{ requestId: "req-1", action: { toolName: "
 const parkRequest = { requests: [{ requestId: "s-limit:input:900000", action: { toolName: SESSION_LIMIT_CONTINUATION_TOOL_NAME, input: { kind: "input" } } }] };
 
 {
-  for (const e of ["turn.started", "input.requested", "authorization.required", "turn.completed", "turn.cancelled", "session.failed"]) {
+  for (const e of ["turn.started", "input.requested", "authorization.required", "turn.completed", "turn.cancelled", "turn.failed", "session.failed"]) {
     ok(typeof EVENTS[e] === "function", `§1: the hook binds ${e}`);
   }
   eq(EVENTS["session.completed"], undefined, "🔴 §1/NEGATIVE CONTROL: session.completed is NOT bound — it never reaches an authored hook on a conversation-mode session");
@@ -186,7 +186,7 @@ const parkRequest = { requests: [{ requestId: "s-limit:input:900000", action: { 
 }
 
 {
-  for (const [label, event] of [["cancelled", "turn.cancelled"] as const, ["failed", "session.failed"] as const]) {
+  for (const [label, event] of [["cancelled", "turn.cancelled"] as const, ["turn-failed", "turn.failed"] as const, ["failed", "session.failed"] as const]) {
     const TOKEN = unifiedSupervisorToken(DOMAIN, 6);
     const turnId = `turn_600_${label}`;
     await wakeAt(TOKEN, `C_TURN6_${label}`, t(-3000));
@@ -251,6 +251,48 @@ const parkRequest = { requests: [{ requestId: "s-limit:input:900000", action: { 
   eq(requestsHoldTheWorkerOpen([{}]), true, "§8 FAIL-SOFT: a request with no `action` holds — an unrecognised shape is not a park");
   eq(requestsHoldTheWorkerOpen([null]), true, "§8 FAIL-SOFT: a null ENTRY holds");
   eq(requestsHoldTheWorkerOpen([{ action: { toolName: 42 } }]), true, "§8 FAIL-SOFT: a non-string toolName holds");
+}
+
+{
+  const { markNoReplyThisTurn, peekNoReplyThisTurn } = await import("../agent/channels/no-reply-signal.js");
+  const { markReactedThisTurn, consumeReactedThisTurn } = await import("../agent/channels/react-signal.js");
+  const TOKEN = unifiedSupervisorToken(DOMAIN, 9);
+  await inSession(async () => {
+    markNoReplyThisTurn("nothing_to_add");
+    markReactedThisTurn();
+    ok(peekNoReplyThisTurn() === "nothing_to_add", "§9 (precondition) the previous turn's silence reason is still set");
+    await fire("turn.started", hookCtx(TOKEN, "turn_900", undefined));
+    eq(peekNoReplyThisTurn(), null, "§9 🔴 turn.started clears a silence reason the previous turn never consumed");
+    eq(consumeReactedThisTurn(), false, "§9 🔴 …and the react signal too");
+    markNoReplyThisTurn("duplicate");
+    eq(peekNoReplyThisTurn(), "duplicate", "§9 NEGATIVE CONTROL: this turn's own silence reason is untouched");
+  });
+}
+
+{
+  const noWindowCtx = (turnId: string): unknown => ({
+    channel: { kind: "unified" },
+    session: { id: `sess-${turnId}`, turn: { id: turnId }, auth: { current: { attributes: {} } } },
+  });
+  const skipCount = async (): Promise<number> =>
+    (await readAudit({ org: ORG, action: WAKE_ACCOUNTING_SKIPPED_AUDIT_ACTION })).filter((r) => r.detail?.reason === "no-window-token").length;
+
+  const before = await skipCount();
+  await inSession(async () => {
+    await fire("turn.started", noWindowCtx("turn_1000"));
+    await fire("turn.failed", noWindowCtx("turn_1000"));
+    await fire("session.failed", noWindowCtx("turn_1000"));
+  });
+  eq((await skipCount()) - before, 1, "🔴 §10: turn.failed then session.failed for ONE turn writes ONE skip row — the pass ran once");
+
+  const mid = await skipCount();
+  await inSession(async () => {
+    await fire("turn.started", noWindowCtx("turn_1001"));
+    await fire("turn.failed", noWindowCtx("turn_1001"));
+    await fire("turn.started", noWindowCtx("turn_1002"));
+    await fire("turn.failed", noWindowCtx("turn_1002"));
+  });
+  eq((await skipCount()) - mid, 2, "§10 NEGATIVE CONTROL: two turns in one session write one skip row EACH — turn.started clears the guard");
 }
 
 console.log(`✓ wake-accounting-turn: ${passed} assertions passed`);

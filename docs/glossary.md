@@ -36,33 +36,49 @@ A channel agent is not an object. `create_agent` composes it from four existing 
 
 ## 1. Seat, grain, posture
 
-**seat** — the conversational session. It talks, it delegates, and it may read a little to find out
-what it was asked. It is the **NARROW** surface. A delegating standing or thread seat holds 14 tools
-and nothing else — not even the credential grants this chat's own scopes carry, which mount on the
+**seat** — the conversational session. It talks, it forwards jobs, and it may read a little to find
+out what it was asked. It is the **NARROW** surface. A delegating standing or thread seat holds 16 tools at
+most, the **lean roster** (a conversation seat holds `work` and `cancel_work` from it, never `agent`
+and `task_cancel`), and nothing else — not even the credential grants this chat's own scopes carry, which mount on the
 chat's workers instead (OPE-2023).
 Source: `packages/core/agent/access/lean-seat.ts#LEAN_SEAT_TOOLS`.
 Not to be confused with: **worker** (the wide surface — see the inversion note below); **grain**
 (the seat's hands are set by grain plus this filter, not by grain alone).
 
-**the lean roster** — the 14 names a lean seat may hold, exactly:
+**conversation seat** — a seat that owns one conversation and forwards that conversation's jobs to its
+own **work session**: a domain seat (a `window` token), a thread seat (an `s/` token) or a DM seat (a
+window on the `oe-dm/` pseudo-domain). Never the work session itself, and never a worker. A
+per-container standing root is a seat but no conversation seat, because it cannot delegate at all.
+Source: `packages/core/agent/access/work-session.ts#seatTokenForwardsWork`.
+Not to be confused with: the **work session**, which runs the jobs and talks to nobody.
+
+**the lean roster** — the 16 names a lean seat may hold, exactly:
 `reply`, `edit_reply`, `no_reply`, `react`, `update_status`, `stand_down`, `halt`, `set_dm_delivery`,
-`agent`, `spawn_thread_session`, `complete_thread`,
+`agent`, `work`, `cancel_work`, `spawn_thread_session`, `complete_thread`,
 `task_cancel`, `read_channel`, `read_thread`.
 Five speak verbs, one stop-following verb, one break-glass **halt** (OPE-1602 — the brake pedal is
 on the seat because a brake reached through a dispatch is not a brake; its `resume` partner is not,
 because resuming widens and is a carded admin decision the seat routes), one recipient-stop verb
 (OPE-1064), two delegation
-verbs, one thread-lifecycle verb, two eve conversational tools, one `task_*` lifecycle
+verbs, the work-session pair `work` and `cancel_work` (OPE-2338, OPE-2350: every conversation seat
+forwards to its own work session, so it holds these two instead of `agent` and `task_cancel`), one thread-lifecycle verb, one `task_*` lifecycle
 verb (OPE-583) for stopping the seat's own delegated work — and the two **recovery reads**
 (OPE-829). The filter is DEFAULT-DENY: an unknown name is withheld.
 
-`ask_question` and `todo` are NOT on it (OPE-2023 addendum, the maintainer: "Parking a turn feels
-bad for a standing seat, doesn't it? If To Do is a scratch pad for its own planning, should we ever
-have it in a standing seat?"). Both are a WORKER's turn plumbing. `ask_question` blocks a turn until
+One further name survives the filter without being a roster row: `task_wait`. eve injects it beside
+`task_cancel` on every session whose toolset can start a task, and eve's own task prompt instructs it
+by name — so a filter that removed it would make eve's instruction false. It is exempted as
+HARNESS-INTERNAL (`access/job-posture.ts`), the same class as `final_output`, because it starts
+nothing, reaches nothing and only parks a turn that was already running. `task_cancel` is a roster row
+rather than an exemption, so a restricted job wake — which starts no task — does not inherit it.
+
+`ask_question` is NOT on the roster (OPE-2023 addendum: parking a turn is
+bad for a standing seat). It is a WORKER's turn plumbing: it blocks a turn until
 a person answers, and a standing seat that blocks stops answering everybody else in the room — it
-replies and lets the room carry on instead. `todo` is a scratch pad for planning work the seat does
-not do. Both stay mounted on workers, and the worker-capability index names them, so a seat meeting
-a job that needs either routes it rather than refusing. The **question bridge**
+replies and lets the room carry on instead. It stays mounted on workers, and the worker-capability
+index names it, so a seat meeting a job that needs it routes it rather than refusing. (`todo`, the
+in-context scratch pad, was named here beside it until eve 0.65 deleted the tool; no session mounts
+the name now, so there is no roster decision left to record.) The **question bridge**
 (`channels/question-bridge.ts`) is unaffected: it routes eve's input requests by KIND, not by which
 seat holds the tool, so a delegated worker's question still reaches the room and its answer still
 comes back.
@@ -154,17 +170,36 @@ Source: `packages/core/agent/access/lean-seat.ts#DM_SEAT_CARVE_IN`,
 `packages/core/agent/access/worker-seat.ts#WORKER_SEAT_RESERVED_TOOLS`.
 Not to be confused with: the roster itself. The carve-in is a property of the SEAT, not of the tool.
 
-**worker** (also **delegated child**) — a `task`-grain session a seat spawns. It is the **WIDE**
-surface: the seat's kit plus **82** further tools, including `bash`, `aws`, `write_file`,
-`open_pull_request`, `checkout_repo`, `web_fetch`, `request_credential_grant`, `ask_question`, `todo`
+**worker** (also **delegated child**) — a `task`-grain child of a conversation's work session. It is
+the **WIDE** surface: the seat's kit plus **84** further tools, with two exact exceptions. It holds
+exactly one of `ask_question` or `ask_room` (`ask_room` on a work-session job), so 83 of the 84, and
+it does not hold the whole seat kit (see the worker withheld set). The 84 include `bash`, `aws`, `write_file`,
+`open_pull_request`, `checkout_repo`, `web_fetch`, `request_credential_grant`, `ask_question`
 and every read tool the seat does not hold. It also holds this conversation's own lent `grant__…` tools, which are minted per
 grant row and so appear in no static count. The count is identical for a standing parent and a thread
 parent.
-Source: `packages/core/agent/access/worker-capability-index.generated.ts#WORKER_ONLY_TOOLS_STANDING` (82 entries) and `packages/core/agent/access/worker-capability-index.generated.ts#WORKER_ONLY_TOOLS_THREAD` (82 entries).
+Source: `packages/core/agent/access/worker-capability-index.generated.ts#WORKER_ONLY_TOOLS_STANDING` (84 entries) and `packages/core/agent/access/worker-capability-index.generated.ts#WORKER_ONLY_TOOLS_THREAD` (84 entries).
 Not to be confused with: the **seat**. 🔴 **A top-level session does its real work by DELEGATING.
 The parent does NOT hold the wide toolset.** Any claim that the parent is wide and the child is
 narrow is backwards. Also not to be confused with a **Claude Code subagent**, which is repo
 tooling.
+
+**work session** (also **W**) — the ONE eve session per conversation that runs the conversation's
+jobs. Every conversation seat (a domain seat, a thread seat and a DM seat) forwards each job to its
+own work session with `work`, and the work session starts the job's worker with eve's `agent`. A
+spawned thread seat's work session is its own fresh one, never the channel seat's (ruling Q2). It holds `agent` and `task_cancel`, plus the harness-internal `final_output` and
+`task_wait`, and nothing else. It owns the conversation's sandbox, and it
+outlives the seat's generations. Its token is the seat's window id with a `w/` prefix.
+Source: `packages/core/agent/channels/work.ts`, `packages/core/agent/access/work-session.ts`.
+Not to be confused with: the **seat**, which talks and never waits; a **worker**, which is a child
+of the work session.
+
+**forward** (also **work request**) — one job a seat (`work`) or the host (a routine fire) hands to
+the work session. It carries a **request id**; the seat's request row records who asked, from which
+wake and room. Its result comes back as one **result wake** of the seat per settled task.
+Source: `packages/core/agent/tools/work.ts`, `packages/core/agent/routines/fire-work.ts`,
+`packages/core/agent/hooks/spawn-taint.ts`.
+Not to be confused with: an `agent` call, which runs the child inside the calling session's own turn (since OPE-2350, only the work session makes one).
 
 **worker withheld set** — names a worker may not hold that a seat may. It holds four: `no_reply`,
 `stand_down`, `read_channel` and `read_thread`. A name belongs here only
@@ -190,8 +225,14 @@ message is delivered back as the answer, addressed to the request the question w
 message that @-mentions the agent is the seat's wake and never the answer; the question stays open. A
 DM, and a Linear reply in the app's own agent session that names no mention, are addressed by
 construction, so a plain reply there still answers. A **delegated
-worker** has no other way to be answered: the framework routes an answer to a worker only through a
-response addressed to its own pending request, and a plain message reaches the parent instead.
+worker** is answered only through a response addressed to its own pending request. The framework
+also has a rule of its own: with exactly one question open, it takes any plain message as that
+question's answer. So while a bridged question may be open, every message the agent delivers as
+an ordinary wake carries an empty answer text, and the framework resolves nothing on it. Where the
+agent holds no row (a failed post or row write, or a row past its 6-hour life), the framework's
+rule still applies. The bridge carries no question from a worker of a **work session** (OPE-2340): a worker
+there asks with `ask_room`, an OE card that posts and returns, and the seat forwards the room's answer
+as a continuation of the task.
 Source: `packages/core/agent/channels/question-bridge.ts`, `packages/core/agent/channels/unified.ts`
 (`receive`).
 Not to be confused with: the **session-limit park**, which is never posted to a room and is retired
@@ -264,8 +305,10 @@ worker exemption at `packages/core/agent/access/invoker-posture.ts#withheldForIn
 ## 2. Delegation
 
 **native delegation** — the ONLY delegation route. eve's built-in `agent` tool runs a subagent child
-inside the parent's own sandbox. There is ONE return shape: the call returns a parked receipt and the
-seat's turn ENDS (see **background-task return leg** below). No setting changes it — eve 0.51.0 no
+inside the parent's own sandbox. Since OPE-2350 the only session that calls it is a conversation's
+**work session**: a seat forwards with `work` instead. There is ONE return shape: the call returns a
+task receipt at once, the parent's turn stays open at `turn.waiting` while the task works, and the
+child's result arrives in that same turn (see **background-task return leg** below). No setting changes it — eve 0.51.0 no
 longer READS `experimental.tasks`, so no build returns the child's result inline. The flag name is
 still in eve's TypeScript surface, but its compiler refuses the key, so a build that sets it fails
 instead of taking the old shape. The `test:eve-tasks-flag` pin
@@ -281,24 +324,32 @@ grain only.
 Source: `packages/core/agent/access/window-gate-manifest.ts#spawn_thread_session`,
 `packages/core/agent/tools/spawn_thread_session.ts#default`.
 
-**one-shot** — a delegated run that does the job once and tears down. Every delegation is one-shot:
-a seat cannot continue a previous one (see **persistent continuation** below).
+**one-shot** — a delegated run started by a fresh `agent` call, with no `taskId`. Every delegation
+opens this way; a seat may then continue it from the same room (see **task continuation** below).
 
-**persistent continuation (`agentId`)** — eve puts an `agentId` field on the subagent tool schema, so
-a model can continue a previous delegation. **OE cannot turn it off, so OE REFUSES it.** eve carries
-the field unconditionally and offers no opt-out; OE strips `agentId` off the advertised schema, keeps eve's `[Agents]`
-listing out of the seat's context, and refuses a call that names an `agentId` anyway. A worker stays
-single-turn by construction, because its untrusted-content mark is turn-scoped and a second turn
-would open clean over the first turn's content.
-Source: `packages/core/agent/access/worker-continuation.ts`.
-Not to be confused with: **task_cancel**, which stops a task by `taskId` and — on an already-settled
-one — returns its full view, and is mounted. `agentId` would re-open a settled worker, and that is
-the half OE refuses.
+**task continuation (`taskId`)** — eve 0.70 makes every agent tool a resumable task, so a correction
+or a follow-up can reach an idle worker by its `taskId`. A conversation seat sends one with `work`
+and the task id that the job's result named, and the work session continues the task. **OE
+allows it** (OPE-2251, ruling C). The worker's taint is session-sticky, so a continuation of a
+worker that read untrusted content stays tainted, and the worker re-resolves its requester and reply
+address for each later turn from the admitted continuation. The one OE rule on top is the **provenance
+fence**: a `taskId` call is admitted only from the same room (channel, issue or DM) that opened the
+task, and only once the task has reported back; every other continuation is refused. The fence
+does not wrap `task_cancel` (OPE-2290): a stop sends no input and returns no content, and the
+approval decision wake depends on it.
+It replaces the retired `agentId` refusal (OPE-593), whose field eve 0.70 no longer has.
+Source: `packages/core/agent/access/worker-continuation.ts`, `packages/core/agent/channels/task-provenance.ts`.
+Not to be confused with: **task_cancel**, which stops a task's current work by `taskId` and leaves an
+idle resumable task available for its next call.
 
 **parked worker** — a background worker whose task has settled. Its session does not end; it stays
 durable and inert, one per background delegation, until its parent generation is retired. eve's own
-reaper runs only when the PARENT session ends. No OE seam can end ONE named worker — eve strips the
-worker's session id out of every task view an authored hook can read. Retiring the parent SEAT
+reaper runs only when the PARENT session ends. No OE seam can end ONE named worker today.
+🔴 **The reason for that changed at eve 0.70, and OPE-566 is re-opened by it.** Through 0.54 it was
+that eve stripped the worker's session id out of every task view an authored hook could read. eve
+0.70 PUBLISHES it, on `agent.started` (`protocol/message.d.ts`: "The opened session's id"), and OE
+records it on the dispatch join row. Having an id is not having a mechanism, so no per-worker reaper
+exists yet — but the premise that one is impossible is gone. Retiring the parent SEAT
 GENERATION runs that reaper over the whole generation's children in one act, and OE does that at
 every window and DM seat **rotation** (OPE-627), from the single-window channel, guarded against a
 live turn. That guard reads a best-effort turn anchor with a 45-minute TTL, so a lost anchor write —
@@ -313,8 +364,10 @@ session expires, which is the price of never cancelling work somebody is waiting
 store failure).
 Source: `packages/core/scripts/parked-child-lifecycle-test.ts` (the pinned eve facts),
 `packages/core/agent/channels/generation-retirement.ts` (the retirement).
-Not to be confused with: a **cancelled** task. Cancelling a settled task is refused by eve, and
-cancelling a task was never the act that ends a worker session.
+Not to be confused with: a **cancelled** task. At eve 0.70, cancelling a settled task answers that
+there was no work to stop and sends nothing. Cancelling a task is not the act that ends a worker
+session. The one exception is eve's own 30-second escalation: a cancelled worker that does not stop
+its current call in time is ended by eve.
 
 **leaf** — a session that holds no delegation verb, so the chain cannot recurse. `agent` mounts on
 `standing` and `thread` only; `spawn_thread_session` on `standing` only. A `task`
@@ -338,12 +391,14 @@ Source: `packages/core/agent/access/delegation-mount.ts#canDelegateFromSeat`, co
 
 ## 3. Taint
 
-**taint** (a **tainted turn**) — this TURN ingested untrusted external content. The flag is
-per-turn and monotonic within the turn. The turn boundary clears it, but only on positive proof of a
+**taint** (a **tainted turn**) — this TURN ingested untrusted external content. On a root session the
+flag is per-turn and monotonic within the turn. A worker's taint is session-sticky (OPE-2251): once a
+worker turn is tainted, every later turn of that worker session starts tainted
+(`hooks/spawn-taint.ts`, `reseedStickyChildTaint`). The turn boundary clears it, but only on positive proof of a
 new eve turn id; an unreadable turn id KEEPS the old value.
 Source: `packages/core/agent/access/taint-signal.ts#beginTaintTurn`, `packages/core/agent/access/taint-signal.ts#markUntrustedIngestedThisTurn`, `packages/core/agent/access/taint-signal.ts#untrustedIngestedThisTurn`.
-Not to be confused with: a session-durable or generation-durable mark. 🔴 **OE never marks a session
-or a generation as tainted.** Storage is a durable eve slot, which is why the reset is explicit.
+Not to be confused with: a session-durable or generation-durable mark. 🔴 **OE never marks a seat
+session or a generation as tainted**; the worker's sticky slot above is the one session-scoped mark. Storage is a durable eve slot, which is why the reset is explicit.
 
 **envelope** (also **wrapping**) — the instruction-resistant fence around external content.
 `wrapUntrusted` caps the body, defangs any delimiter inside it, closes it with a nonce-matched tag,
@@ -404,9 +459,10 @@ Source: `packages/core/agent/channels/unified.ts#OE_SPAWN_TAINTED_ATTR`, stamped
 🔴 **The native stamp names a specific parent turn; it is never a bare `true`.** Its value is
 `<parentSessionId>|<parentTurnId>`. The child adopts it only when the SESSION half equals the parent
 its own context names, and — on its own `turn.sequence === 0` — when the TURN half equals the turn
-that dispatched it. That discrimination is what scopes the fact to one turn: the seat's own later
-turn, a persistent child's later turns and a clean child's grandchild all carry a non-matching value
-and stay clean, with no clearing pass. It is therefore NOT in
+that dispatched it. That discrimination is what scopes the fact to one turn: a stale stamp from an earlier
+tainted parent turn is not adopted, with no clearing pass. At eve 0.70 every message to a child carries
+the sending call's auth, so a continuation sent from a tainted parent turn adopts that turn's stamp
+(the forward carriage). A child that was ever tainted stays tainted (see **taint**). It is therefore NOT in
 `TAINT_SEED_ATTRS`, which means "the value is the string `true`".
 🔴 **The dispatching turn is named by OE's own `oe_dispatch_turn`, never by eve's
 `session.parent.turn`.** Every turn writes `<sessionId>|<turnId>` into the same auth bag it writes the
@@ -438,8 +494,8 @@ drops the gate goes red instead of silently making the knob matter again (OPE-46
 result, so both of the child's writes have settled and the value cannot change under it. The
 constraint above — no store read in a turn preamble — does not apply to it. The reasoning lives at
 `packages/core/agent/access/subagent-taint.ts`'s OPE-437 note.
-🔴 **A BACKGROUND child settles on a different edge, and the read is only safe on that one.** eve
-resolves the `agent` call at DISPATCH with a parked receipt that carries a real `callId` — so the
+🔴 **A child settles on a different edge, and the read is only safe on that one.** eve
+returns the `agent` call's receipt at DISPATCH, with a real `callId` — so the
 read above would run before the child exists, find no marker, and
 fail closed on every clean delegation. Measured on the real host
 (OPE-555 T1): one delegation that read nothing untrusted wrote a `taint.forward` `mark` row against
@@ -499,13 +555,16 @@ Source: `packages/core/agent/access/subagent-taint.ts` (call-keyed marker key, c
 write, and the parent-side read that answers `undefined` on loss).
 
 **background-task return leg** (child ⇒ parent, async) — the same fact as the **return leg** above,
-carried across the two edges every delegation gets. eve runs the `agent` call as a durable
-background task: the call resolves immediately with a parked receipt,
-and the child's own output reaches the parent on a later turn — through eve's SETTLEMENT
-NOTIFICATION, which carries the worker's output and arrives on every settlement, and through a task
-VIEW as well: a `task_cancel` of an already-terminal task returns the full view (`lastOutput`
-included). The taint adoption keys on both. (eve 0.40.0 deleted `task_peek`, which was the other
-view-bearing tool, so the notification is now the edge that covers an ordinary settlement.)
+carried across the two edges every delegation gets. eve runs the `agent` call as a durable task
+inside the parent's open turn: the call returns a receipt at once, the turn waits at
+`turn.waiting`, and the child's output reaches the parent as a `task.result` message in that same
+turn. OE adopts on eve's SETTLEMENT `task.settled` EVENT, which eve emits once per settled call and
+which no member can author.
+🔴 **At eve 0.70 that is the ONLY settlement edge** (OPE-2250). The two the 0.54 plane used are both
+gone: eve sends no task NOTIFICATIONS, and there is no task VIEW — `task_peek` is deleted and
+`task_cancel` answers one rendered sentence (`execution/tasks/render.js` `renderTaskCancelResult`)
+with no `tasks` array and no `lastOutput`, so the `task_cancel` output path that used to carry the
+child's prose is CLOSED rather than merely unread.
 Source: `packages/core/agent/access/background-tasks.ts` (the ONE module allowed to PARSE the task
 shapes — the receipt discriminator and the view payload; the bare tool names also appear in the
 access registries, which is membership, not shape-coupling); `packages/core/agent/hooks/spawn-taint.ts`
@@ -513,40 +572,41 @@ access registries, which is membership, not shape-coupling); `packages/core/agen
 🔴 **A dispatch is not a settlement, and reading the marker on the dispatch taints every clean
 delegation.** The receipt carries a real `callId`, so the sync branch matched it and ran the
 fail-closed read before any child had started. The fix RELOCATES that read; it never weakens it. The
-receipt branch remembers the join and adopts nothing; a TERMINAL settlement — a terminal task view,
-or the settlement notification — adopts, fail-closed branch included.
-🔴 **eve produces the receipt in TWO envelopes, and the reader takes both (OPE-943).** Up to eve
-0.42.x it is a `subagent-result` with a `backgroundTask: {status, taskId}` envelope. From eve 0.43.0
-the subagent tools are ordinary background `defineTool` definitions, so the receipt is a plain
-`tool-result` whose `output` is `{agentId, status: "working", taskId}` and which carries no
-`backgroundTask`, no `outcome` and no `subagentName`. `readTaskReceipt` is a version union keyed on
-STRUCTURE, never on an eve version and never on the tool name — eve names a subagent tool after the
-subagent, so a name list would go blind and take the taint adoption fail-OPEN. When the reader went
-blind on the 0.43.0 envelope, OE minted no dispatch row and every settlement resolved `no-row`: no
-reply address, no taint adoption, no memory flush.
+receipt branch remembers the join and adopts nothing; a TERMINAL settlement adopts, fail-closed branch included. At eve 0.70 the only terminal settlement
+is eve's `task.settled` event; the dispatch edge is the `task.started` event, which
+`readTaskStarted` (`access/background-tasks.ts`) parses.
+(History, OPE-943: through eve 0.54 OE parsed the dispatch receipt itself, in two envelope shapes, and
+a reader that went blind on one minted no dispatch row, so every settlement resolved `no-row`. At eve
+0.70 the dispatch edge is the `task.started` event, parsed by `readTaskStarted`.)
 🔴 **Terminal is eve's own `isTerminalTaskStatus`: `completed`, `failed`, `cancelled`.** `working`
 and `input_required` adopt nothing — such a child can still read untrusted content. `failed` and
 `cancelled` DO adopt: a child that read a hostile page and then died has already written its marker.
 🔴 **The join is remembered because neither edge carries the other's id.** The receipt names the
-child by `callId`, the view names it by `taskId`, and the marker is keyed by `callId`. Two rows in
-the task-result slice hold the join: `oe-task-call:<taskId>` per continuation, and
-`oe-task-agent:<parentSessionId>:<agentId>` put-if-absent for the LIFE-STABLE child token. The
-second row exists because eve mints a child's continuation token once and a continuation reuses the
-child session without re-minting — so the child goes on writing its marker under the FIRST `callId`
-while the parent sees a new one on every continuation receipt.
+child by `callId` while the settlement names it by `taskId`, and the marker is keyed by `callId`.
+ONE row in the task-result slice holds the join: `oe-task-call:<taskId>`.
+🔴 **The second row is retired (OPE-2250).** `oe-task-agent:<parentSessionId>:<agentId>` existed
+because a 0.54 continuation minted a NEW taskId against one child, so the join had to be pinned to a
+life-stable handle. At eve 0.70 a resumable task IS its `taskId` — a continuation reaches it by that
+same id — so the task-keyed row is already the life-stable one.
+🔴 **And that id is NOT org-unique.** `createTaskId` mints `<toolName>-<6 random base32>` and checks
+for a clash only against the CALLING SESSION's table, so two parents in one org can collide inside
+the row's TTL. The dispatching session is RECORDED on the row and a settlement that reads another
+session's row treats it as a LOST record and marks — fail-closed, by design.
 🔴 **This plane is LIVE on every build.** Background delegation is unconditional since eve 0.51.0
 stopped READING `experimental.tasks` (the flag name survives in eve's TypeScript surface, but its
 compiler refuses the key; the `test:eve-tasks-flag` pin guards both halves), so the receipt-safe leg
 above is the code every delegation takes on every deployment.
 
 **background-task wake identity** — the host-minted wake id one background task settles under. eve
-wakes a delegating parent through the session's own command hook, with no auth
-(`wakeTaskParentStep` calls `resumeHook(token, {kind:"send", …})`), and eve writes a turn's auth only
-when a delivery brings one. So a task-woken turn inherits the PREVIOUS delivery's `oe_wake_id` — and
+wakes a delegating parent through the session's own command hook, with no auth, and eve writes a
+turn's auth only when a delivery brings one. (Through 0.54 the carrier was `wakeTaskParentStep`
+calling `resumeHook(token, {kind:"send", …})`; that symbol does not exist in the eve 0.70 dist, and a
+0.70 task settles inside the turn that started it.) So a task-woken turn inherits the PREVIOUS delivery's `oe_wake_id` — and
 that stamp IS the reply address. The identity closes the gap: the dispatch edge mints a wake id for
 the task and registers it against the origin of the conversation the DISPATCHING TURN is working
-for, plus the seat's window token; the settlement edge (a TERMINAL task view) names the turn with
-it, and `currentWakeId` answers with it from then on.
+for, plus the seat's window token; the settlement edge (eve's `task.settled` event at 0.70, a
+TERMINAL task view through 0.54) names the turn with it, and `currentWakeId` answers with it from
+then on.
 Source: `packages/core/agent/channels/task-wake.ts` (mint, register, re-point, install, audit);
 `packages/core/agent/access/task-wake-signal.ts` (the per-turn settlement slot);
 `packages/core/agent/access/dispatch-origin-signal.ts` (the per-turn dispatch slot);
@@ -565,8 +625,8 @@ wake the turn ADDRESSES — the `wake` argument the `reply` tool's authority fen
 back to `currentWakeId` only while the turn has said nothing. A task dispatched before the turn's
 first reply is re-pointed by that reply, which is safe in time because eve runs one turn at a time
 per continuation token. Each move writes a `unified.task_wake_retarget` audit row.
-🔴 **The AUTH-CARRYING merge is unreachable on the pinned eve 0.54.3, so the MERGE road into the
-defect is closed. The INTERNAL-WAKE road above is not, so the guards stay LOAD-BEARING.** eve 0.52.5
+🔴 **The AUTH-CARRYING merge is unreachable since eve 0.52.5 (no later changelog entry up to the 0.71.0
+pin changes the rule), so the MERGE road into the defect is closed. The INTERNAL-WAKE road above is not, so the guards stay LOAD-BEARING.** eve 0.52.5
 narrowed its batching rule to adjacent queued deliveries whose full auth contexts match, and OE
 stamps `oe_wake_id` plus a fresh per-delivery `oe_delivery_id` into `auth.attributes` — so two
 auth-carrying deliveries on one unified window never compare equal. Only eve's OTHER arm still
@@ -582,8 +642,8 @@ road's impossibility offline and reds the day it stops holding.
 🔴 **The residual, stated: a turn that dispatches for its own wake and then answers a DIFFERENT
 pending wake first moves that task's answer to the wrong conversation.** Both wakes sit on the same
 window token, so this is never a cross-window leak, and the audit row makes it countable.
-🔴 **The identity lands only on an UNINGRESSED turn.** A terminal task view is not proof that a task
-woke the turn: a human can ask "is that job done?" in one thread while the task was dispatched from
+🔴 **The identity lands only on an UNINGRESSED turn.** A settlement is not proof that a task woke
+the turn: a human can ask "is that job done?" in one thread while the task was dispatched from
 another. The divert stamps a NONCE unique to every delivery (`oe_delivery_id`), so a turn whose stamp
 is byte-identical to the previous turn's brought no delivery of its own. That comparison is recorded
 once per turn at the turn boundary, off the context, with no store read. Every failure of the
@@ -599,17 +659,20 @@ answer for any other turn, so eve's durable state cannot hand a stale address to
 unreadable turn id installs nothing and reads as absent — the turn keeps the inherited stamp.
 🔴 **A task-settlement wake does NOT re-run OE's ingress gates, and that is the ruling.** The
 window-topology gate admits a SURFACE into a shared window, and a settlement enters no surface.
-Wake-origin classification and attendedness describe a HUMAN's message, and a framework notification
+Wake-origin classification and attendedness describe a HUMAN's message, and a framework settlement
 has no author. Ingestion taint seeding is the one gate with content behind it, and the taint plane's
 own settlement branch already covers it. What was missing was IDENTITY, and identity is what this
 adds.
-🔴 **A settlement turn installs its address from the NOTIFICATION, not from a tool call.** eve gives
-authored code no STRUCTURED signal on the wake — `taskDeliveryId` never leaves the hook payload,
-`payload.task` is stripped before the channel adapter runs, the delivery carries no
-`deliveryMetadata` so eve's own channel-delivery instrumentation publishes nothing, and no `task.*`
-stream event exists. What DOES reach authored code is the notification text, on the public
-`message.received` hook event. OE reads the task id off it and keys every consequence on rows it
-minted itself, so a drifted format or a forged message finds no row rather than moving an answer.
+🔴 **A settlement step installs its address from eve's EVENT, not from a tool call.** Through 0.54
+eve gave authored code no STRUCTURED signal on the wake — `taskDeliveryId` never left the hook
+payload, `payload.task` was stripped before the channel adapter ran, the delivery carried no
+`deliveryMetadata`, and no `task.*` stream event existed — so the only thing that reached authored
+code was the notification TEXT. 🔴 **eve 0.70 inverted that**: `task.started`, `task.settled` and
+`agent.started` are all in eve's public `HookEventMap` (`public/definitions/hook.d.ts`), the
+notification is gone, and OE no longer subscribes to the public `message.received` hook event at
+all. OE reads the task id off eve's event and keys every consequence on rows it minted itself, so a
+drifted shape finds no row rather than moving an answer — and because an event is eve-authored, the
+forged-message case the text edge had to fence has no way in.
 **A turn that still holds no address is one whose wake row is missing or expired.** `currentWakeId`
 answers `undefined` for every uningressed turn that has adopted nothing: `reply` refuses under its
 own `task-wake-unread` reason and names `no_reply`, and the turn's closing prose is dropped and
@@ -837,7 +900,11 @@ POINT, so it may be a model consult — which is exactly why it must not be call
 Also not an **adapter**: an adapter swaps a backing, an arm extends a judgement.
 
 **approval judge** — the ONE model in the approval plane. It runs only on rows an operator has
-flipped `ask → defer`, only when the deployment arms it, and every judge failure resolves to `ask`.
+flipped `ask → defer`, only in `enforce` mode (the shipped `approvals.judgeMode`), and every judge
+failure resolves to `ask`. An enforced allow must cite one of the scope's authored pre-approval
+rules; an uncited allow resolves to `ask`. Admin acts and memory erasure never reach it. A cached allow
+answers only for the same arguments, requester and attendance. Of the connector ops, only a
+write on the domain's credential in an attended, clean turn reaches it, and an allow covers that one call.
 Source: `packages/core/agent/access/approval-judge.ts#approvalJudgeMode`;
 `packages/core/agent/access/consequence.ts#judgeDeferredTool`.
 
@@ -852,7 +919,7 @@ fixed order: `mode` → `taint` → `floor` → `unattended`. A `deny` skips the
 `unattended` runs LAST on purpose: it turns any surviving `ask` into a `deny`, including one the
 taint floor or the beneficiary-clicker floor has just produced, so no run without a human can be left
 holding a card nobody can click.
-Source: `packages/core/agent/access/approver-chain.ts#TransformStage`, `packages/core/agent/access/approver-chain.ts#TRANSFORM_STAGE_ORDER`, `packages/core/agent/access/approver-chain.ts#L233` (the order, in prose), `packages/core/agent/access/approver-chain.ts#TRANSFORM_TABLE`.
+Source: `packages/core/agent/access/approver-chain.ts#TransformStage`, `packages/core/agent/access/approver-chain.ts#TRANSFORM_STAGE_ORDER` (the order, and its doc comment says it in prose), `packages/core/agent/access/approver-chain.ts#TRANSFORM_TABLE`.
 Not to be confused with: an **element**. An element holds an opinion at a level; a transform edits
 the resolved answer.
 
@@ -880,10 +947,16 @@ Not to be confused with: **invoker posture**, which splits the unattended world 
 `untrusted-remote`, `unattended-fire` and `attended-fire`. An `attended-fire` still has no acting
 principal in the chain's sense.
 
-**session grant** — "Approve for session": one memo that covers future calls of one kind for the
-life of the window. Today exactly one kind is grantable, `pr.open`. Every injection-gate kind stays
-strictly per-call.
-Source: `packages/core/agent/approvals/session-grant.ts#sessionGrantKind`.
+**session grant** — the routine's standing grant: the memo that the middle button of a routine's
+`pr.open` card writes, "Approve for this routine (up to N h)". A human gives it by clicking ONE card a
+fire raised. It covers later fires of THAT ROUTINE for `pr.open`, and it ends when it expires
+(`approvals.routineGrantTtlHours`, 24 h by default), when `revoke_session_grants` deletes it, or when
+an `edit_routine` moves the routine's key. Only a routine's `pr.open` card has the middle button. A
+card in a conversation (a thread, a DM, the top level of a channel) offers Approve and Reject only,
+and its click approves one act and keeps nothing (OPE-2363). Repeated approvals in a conversation are
+the approval judge's job. Every injection-gate kind stays strictly per-call.
+Source: `packages/core/agent/approvals/session-grant.ts#sessionGrantKind`,
+`packages/core/agent/approvals/session-grant.ts#grantableFrozenKey` (only a routine key grants).
 
 **declared permission** — the same predicate keyed on a ROUTINE instead of a session. ONE declared
 permission names ONE MCP tool, or the `pr.open` shape — `routinePermissionKind` admits that one bare
@@ -897,8 +970,12 @@ Source: `packages/core/agent/approvals/session-grant.ts#routinePermissionKind`,
 🔴 **Never call it a grant.** The word belongs to the two planes below, and the overload produced
 cross-plane confusion in review twice in one day (OPE-1303). Nothing is
 lent to a routine: it holds what a human wrote on its card, not somebody else's authority.
-Not to be confused with: a **session grant** — the difference is lifetime, and mislabelling it on a
-card is what the shared label function (`packages/core/agent/approvals/session-grant.ts#permissionLifetime`) exists to prevent; or a **credential grant**
+Not to be confused with: a **session grant** — the routine's standing grant. That one is given by a
+click on the middle button of one `pr.open` card a fire raised, and it expires on a clock. A declared
+permission is written on the routine's creation card (or a later permission card), names one tool or
+the `pr.open` shape, and has no clock. The middle-button label
+(`packages/core/agent/approvals/session-grant.ts#grantButtonLabel`) belongs to the session grant
+alone and labels only the `pr.open` middle button; or a **credential grant**
 (section 6) — the difference is whose authority is spent.
 
 ---
@@ -1034,8 +1111,9 @@ WHOSE credential: the owner's OAuth vault subject, derived by the same composer 
 authorization wrote through.
 Every successful call posts a host-authored `acting as <owner>` line into the room itself, and the
 FIRST call on a grant DMs the owner — the model authors neither and can suppress neither.
-The mount answers `session.started` AND `turn.started`, so an approved grant is CALLABLE on the next
-turn of the chat that asked for it — no deploy, no rotation, no new session (OPE-1089). The session
+The mount answers `session.started` AND `turn.started`, so an approved grant is CALLABLE by the next
+worker that the chat that asked for it hands work to (OPE-2023). The seat itself never holds the
+tool. No deploy, no rotation and no new session is needed (OPE-1089). The session
 arm stays because eve's cold-heal check reads the session-scoped tool metadata alone.
 Source: `packages/core/agent/operational/credential-grant-rows.ts`,
 `packages/core/agent/access/credential-grant.ts`,

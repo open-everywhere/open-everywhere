@@ -893,7 +893,8 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
     ok(reporting.includes("The `reply` tool is the ONLY way your own words leave this turn"), `🔴 …and names \`reply\` as the only route out on ${label}`);
     ok(!reporting.includes("mounts no working `reply` tool"), `🔴 …and NEVER renders the retired OPE-786 no-working-reply copy on ${label}`);
     ok(!reporting.includes("what gets posted as the comment"), `…nor tells the ${label} seat its closing text is the delivery`);
-    ok(reporting.includes("finish with `no_reply`"), `the ${label} arm still teaches the reply-then-silence shape`);
+    ok(reporting.includes("A successful `reply` ENDS your turn"), `the ${label} arm teaches that a reply ends the turn`);
+    ok(reporting.includes("A turn that owes nothing ends with `no_reply`"), `…and that a turn owing nothing ends with \`no_reply\` on ${label}`);
     ok(reporting === slackReporting, `🔴 OPE-811 — the ${label} supervisor's delivery section is BYTE-IDENTICAL to Slack's: one section, every surface`);
   }
 
@@ -908,7 +909,8 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
   const threadReporting = flatten(renderSupervisorPersona(threadSeat));
   ok(threadReporting.includes("Your turn-final text is DISCARDED"), "🔴 OPE-2006: a THREAD seat on a drop surface reads the drop too — the arm keys on the manifest, not on the grain");
   ok(!threadReporting.includes("reply` posts into the channel mid-turn"), "🔴 OPE-2006: …and never reads the dual-mode claim that its closing text posts");
-  ok(threadReporting === slackReporting, "🔴 OPE-2006: …and its delivery section is BYTE-IDENTICAL to the container supervisor's — one section, every seat on a drop surface");
+  ok(threadReporting.includes("`cancel_work`") && !threadReporting.includes("`task_cancel`"), "OPE-2350: the thread seat stops a job with `cancel_work` — it forwards, so it holds no `task_cancel`");
+  ok(threadReporting === slackReporting.replaceAll("`task_cancel`", "`cancel_work`"), "🔴 OPE-2006: …and apart from that verb its delivery section is BYTE-IDENTICAL to the container supervisor's — one section, every seat on a drop surface");
 }
 
 {

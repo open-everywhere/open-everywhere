@@ -14,7 +14,7 @@ import { routineFireHalted } from "./fire-halt.js";
 import { scopeOverBudget } from "../spend/check.js";
 import { getSettings } from "../settings/settings.js";
 import type { Trust } from "../identity/binding.js";
-import { divertTriggeredFire, runFireSeatKey, type FireWindowDeps } from "./fire-window.js";
+import { divertTriggeredFire, type FireWindowDeps } from "./fire-window.js";
 import { auditRoutineFireLost, auditRoutineSkip, type RoutineAuditDeps } from "./fire-audit.js";
 import { foldRoutineOutcome } from "./outcome-fold.js";
 import { eventPrompt } from "./events.js";
@@ -344,7 +344,7 @@ async function fanOut(ev: NormalizedEvent, deps: TriggerAdmitDeps): Promise<FanO
       if (dest.origin) {
         const diverted = await divertTriggeredFire(
           deps.to,
-          { message, surfaceKey: r.surfaceKey, origin: dest.origin, seatKey: runFireSeatKey(fireWakeId), auth, wakeId: fireWakeId },
+          { message, surfaceKey: r.surfaceKey, origin: dest.origin, auth, wakeId: fireWakeId },
           deps.fireWindow ?? {},
         );
         if (diverted) return;

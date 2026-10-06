@@ -213,15 +213,21 @@ try {
 
   const subagentRoster = readToolRoster(join(repoRoot, "agent", "subagents", "fresh_eyes_review", "tools"));
   ok(subagentRoster.length > 0, "the fresh_eyes_review subagent carries its own tools/ roster");
-  const required = [...(await readEveFrameworkTools()).required].sort();
+  const reserved = [...(await readEveFrameworkTools()).reserved].sort();
+  ok(reserved.length > 0, `eve reserves at least one framework tool slot (read ${JSON.stringify(reserved)}) — an empty read would make the no-file assertion below vacuous`);
   const mounted = subagentRoster.filter((e) => e.classification !== PRIMITIVE_DISABLED).map((e) => e.name).sort();
   ok(
-    JSON.stringify(mounted) === JSON.stringify(required),
-    `every file in a declared subagent's tools/ is a sentinel EXCEPT the slots eve refuses to let an app disable — a subagent that holds no tool cannot widen access (mounted ${JSON.stringify(mounted)} vs eve-required ${JSON.stringify(required)})`,
+    mounted.length === 0,
+    `every file in a declared subagent's tools/ is a sentinel — a subagent that holds no tool cannot widen access (mounted ${JSON.stringify(mounted)})`,
+  );
+  const atReserved = subagentRoster.map((e) => e.name).filter((name) => reserved.includes(name)).sort();
+  ok(
+    atReserved.length === 0,
+    `the subagent authors NO file at a slot eve RESERVES — a sentinel there fails \`eve build\` outright ("is reserved … cannot be replaced or disabled"), so an absent file is the only legal state and its containment rests on the subagent declaring no connections (${JSON.stringify(atReserved)} should be empty)`,
   );
   ok(
-    subagentRoster.filter((e) => e.classification === PRIMITIVE_DISABLED).length === subagentRoster.length - required.length,
-    "…and every other file is classified declined, not merely absent from the mounted list",
+    subagentRoster.every((e) => e.classification === PRIMITIVE_DISABLED),
+    "…and every file is classified declined, not merely absent from the mounted list",
   );
 }
 

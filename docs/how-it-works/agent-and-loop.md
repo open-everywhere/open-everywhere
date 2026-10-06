@@ -96,9 +96,10 @@ answer from the web, and why the allow-list settles only *where* page content ca
 *what it says*: a page from an allow-listed host is still untrusted content, fenced as such.
 
 **Turn-shaping verbs** that never leave the conversation, and since the OPE-2023 addendum live on
-WORKERS rather than on a conversational seat: `todo` (the model's own
-scratchpad for planning a multi-step job), `ask_question` (put a clarifying question back
-to the room rather than guess — **a delegated worker can use it too**, see below),
+WORKERS rather than on a conversational seat: `ask_question` (put a clarifying question back
+to the room rather than guess — **a delegated worker can use it too**, see below; the framework made
+it opt-in at 0.65, so this deployment mounts it on purpose, and the framework's own `todo`
+scratchpad, which used to head this list, is deleted),
 `update_status` (an ephemeral progress line the model can
 post into the room mid-job — distinct from the code-driven "seen it" reaction and typing
 indicator, which it does not control), `load_skill` (pull a
@@ -134,9 +135,12 @@ way and the reason is structural rather than stylistic: the agent is the thing t
 mid-turn message queues behind the very turn it would stop. That decision has to be taken in the
 ingress process, before any model call — so it is an **affordance**, not an inference:
 
-- **a ✋ reaction** on the thread, which the host places when a turn actually kicks work off (its
-  first delegation) and removes when the turn ends — so it is present and clickable exactly while
-  a stop is meaningful, and never appears on a message the agent merely read;
+- **a ✋ reaction**, which the host places only where work is running, so it is present and
+  clickable exactly while a stop is meaningful, and never appears on a message the agent merely
+  read. A job that a seat forwarded to its work session gets a ✋ on the message that asked for it,
+  from the job's start to its settlement, and a click stops that job (see
+  [Stopping one job](#stopping-one-job)). A turn that calls a declared subagent (for example
+  `fresh_eyes_review`) gets a ✋ on its anchor message until the turn ends;
 - **`/oe stop`**, which needs no reaction support and takes no arguments.
 
 Both are **free**: no session is minted and no model is called, so stop keeps working when the
@@ -338,10 +342,13 @@ verbs below and the two
 bounded recovery reads below — and is narrowed to it per wake, at the model call. The three less
 obvious names are all seat-side controls: `halt` is the deployment brake (a brake reached through a
 dispatch is not a brake), `set_dm_delivery` is the recipient's own stop on the agent's direct
-messages, and `task_cancel` stops this seat's own delegated work. Everything else,
+messages, and `task_cancel` stops this seat's own delegated work. One more name survives the cut
+without being on that roster: `task_wait`, the framework's own park verb, which it injects beside
+`task_cancel` and instructs by name in its own task prompt. The seat holds it because removing half
+of the framework's task plumbing would make the framework's own instruction false; Open Everywhere's
+own copy still tells the seat not to wait, because the turn ends at the receipt. Everything else,
 including eve's turn plumbing — `ask_question` parks a turn until a person answers, which a standing
-seat must never do, and `todo` is a scratch pad for planning work the seat does not do (OPE-2023
-addendum) — and `request_credential_grant` and every lent `grant__…` tool (OPE-2023 — a person who asks
+seat must never do (OPE-2023 addendum) — and `request_credential_grant` and every lent `grant__…` tool (OPE-2023 — a person who asks
 the agent to use their own account gets the job handed to a task),
 including every other read, the memory erasure (`purge_memory`), the ticket verbs, `describe_image`,
 `load_skill` and `web_search`, lives on workers: the seat routes the ask and relays the result, and
@@ -396,9 +403,10 @@ reads, `read_channel` and `read_thread`: each reads the room the worker was dele
 chat credential, while a worker reads its own work surface natively under the domain's work grant. A
 worker still posts with `reply` and still shows progress with `update_status`. The subtraction is not
 the only cut a worker takes. The same seam withdraws the delegation verb `agent` from every worker —
-the framework classifies a subagent child as a leaf — and the `task_peek` / `task_cancel` /
-`task_sleep` verbs follow it, because a seat that cannot delegate has dispatched nothing to read
-back. So a worker cannot delegate again.
+the framework classifies a subagent child as a leaf — and the `task_cancel` / `task_wait` verbs
+follow it, because a seat that cannot delegate has dispatched nothing to wait on or stop. (The
+framework once shipped `task_peek`, `task_update` and `task_sleep` beside them; all three are
+deleted, so there is nothing else in the family to withdraw.) So a worker cannot delegate again.
 
 **The deployment records what each worker mounted.** A `worker.toolset` audit row is written each
 time a worker's toolset is assembled and differs from the last one recorded for it — never from
@@ -407,8 +415,8 @@ dispatched it. It lists the tool names the worker holds at that moment, up to a 
 (`MAX_RECORDED_NAMES`, 256 names). The true count sits beside the list, with a truncation flag when
 the cap cuts it. The withheld list carries what the worker subtraction removed — those of the
 eight unmounted verbs above that the framework had mounted. It does not carry the seam's other cuts on a
-worker: the withdrawal of the delegation verb `agent`, and the `task_peek` / `task_cancel` /
-`task_sleep` removal that follows it. The write is best effort. The audit append retries once and
+worker: the withdrawal of the delegation verb `agent`, and the `task_cancel` / `task_wait` removal
+that follows it. The write is best effort. The audit append retries once and
 then drops the row, and the emitter cannot see the drop — it has already marked that roster as
 recorded, so it never writes the roster again. A store failure therefore costs a worker's evidence
 for as long as its roster holds. Most workers write exactly one row, at their first model call. A
@@ -424,9 +432,18 @@ The question could only be settled by reading the framework's source for the ver
 deployed. The framework
 proxies a worker's `ask_question` up through the delegating seat's channel, and it is posted
 into the conversation that delegated the work. The next message **in that same conversation** is
-then delivered back to that worker as its answer, addressed to the request it is parked on — which
-is the only shape the framework routes to a worker at all. A plain message with no such address
-reaches the *parent* instead, which is why the answer needs an explicit route rather than a reply.
+then delivered back to that worker as its answer, addressed to the request it is parked on.
+
+The framework (eve 0.71.0) also has a rule of its own. With exactly one worker question open, it
+takes ANY plain message to the delegating seat as that question's answer. Left alone, that rule
+overrides every decision below: an @-mention, a message from another room and a refused answer all
+reached the worker as its answer. So while a bridged question is open, every message the agent
+delivers as an ordinary wake carries an empty answer text, and the framework resolves nothing on
+it (`ordinaryWakeSendOptions` in `channels/question-bridge.ts`). A row the agent cannot read counts
+as open. The framework's own rule still applies wherever the agent holds no row at all: a question
+whose post failed, whose row write failed, or whose row expired (rows last 6 hours) while the
+framework still holds the question open. Whether a message can arrive between the framework raising
+a question and the row being written is not proven either way.
 
 The conversation is checked, not assumed. One window spans every room and surface in a domain, so
 the agent records the room it posted the question into and compares it against the room each message
@@ -475,14 +492,21 @@ Microsoft Teams DMs run on a first-class DM window too. Every windowed DM family
 and Teams — therefore gets the seat's own answer, and the worker posts nothing itself.
 
 **Delegation verbs**, which spawn more agent rather than doing the work in this turn. A
-standing seat's job is largely to hand work off: `agent` delegates a piece of work to a
-full-hands worker, and `spawn_thread_session` opens a persistent conversational seat for a
-thread. `complete_thread` releases a thread's ownership so the next message wakes the standing
+seat's job is largely to hand work off: `work` (on every conversation seat: a domain seat, a thread
+seat or a DM seat) hands a piece of work to a full-hands worker, and `spawn_thread_session` opens a
+persistent conversational seat for a thread. `complete_thread` releases a thread's ownership so the next message wakes the standing
 seat again, and `task_cancel` stands a worker down mid-flight (see
 [Stopping a turn](#stopping-a-turn)). A worker's answer needs no verb at all: the framework carries
 the child's last message back as the task's output. Delegation widens *hands*, never *authority*: every consequential
 action a child attempts re-gates inside the child, and untrusted-content taint follows it across
 the boundary.
+
+**A conversation seat forwards instead of delegating.** Every conversation seat (a domain seat, a
+thread seat and a DM seat) runs its jobs through its own conversation's **work session**: it holds
+`work` and `cancel_work`, and not `agent`. The seat's turn ends at the `work` receipt, and the result
+comes back as a new wake. The one session that still delegates with eve's `agent` is the work
+session itself, which starts each job with it. See
+[The three tiers](#the-three-tiers-seat-work-session-worker).
 
 A deployment that **disarms** delegation ([`delegation.oneshotAgent`](../deploy/configuration-reference.md#delegation))
 gets **no delegation at all**: `agent` and `spawn_thread_session` go absent and
@@ -634,8 +658,15 @@ row naming its class, and a failed reaction writes a platform-named row —
 
 **This is the only delegation route.** The framework underneath ships a built-in tool called `agent`
 which starts a *child of this session* — same tools, same **sandbox**, fresh history — and Open
-Everywhere uses it as its delegation route. The verbs above are the same verbs; this section is
-about what a child actually is.
+Everywhere uses it as its delegation route. This section is about what a child actually is.
+
+**Only a work session calls `agent`** (OPE-2338, OPE-2350). Every conversation seat forwards a job
+with `work`, and the conversation's work session starts the job's worker with `agent` (see
+[The three tiers](#the-three-tiers-seat-work-session-worker)). So the child's parent is the work
+session, never the seat. The seat still writes the brief, and `work` carries it to the work
+session. Where a paragraph below says "the seat" for the session that delegates, it means the
+session whose turn holds the `agent` call, which is now the work session. The brief rules and the
+delegation floor are the seat's, because the seat decides whether to forward and writes the brief.
 
 There is no second route and no switch between routes. Open Everywhere once shipped its own
 `agent` beside the built-in — a *new session* that worked, called `return_result` and tore down,
@@ -673,7 +704,7 @@ person named it.
 message.** When a seat says "I've started that", it owes that conversation the worker's result, and
 the host holds it to that. One policy used to get in the way: the should-be-edit fold, which asks a
 seat not to stack a second message when its own last post is still the newest thing in the room. On a
-settlement turn that condition is true by construction — the hand-off note IS the seat's own last
+settlement step that condition is true by construction — the hand-off note IS the seat's own last
 post, and a task completion enters no surface — so the fold fired on every delegated step and steered
 the report into an edit of the hand-off note. An edit notifies nobody, so that is a silent drop: the
 person who delegated never learns the work finished. The fold's premise is also simply false there,
@@ -681,7 +712,7 @@ because somebody did speak — the worker.
 
 So the policy does not apply **to that post**. The exemption is exactly one post wide: it is spent
 when the report reaches the conversation it was owed to, and every later post on the same turn meets
-the fold again. Two cases therefore still meet it — a settlement turn that answers something else in
+the fold again. Two cases therefore still meet it — a settlement step that answers something else in
 that conversation first, and a report the host cannot match to the conversation it is owed to (an
 unresolvable wake, a store error, or a duty armed for a different thread in the same channel). Those
 are the conservative direction, not the intended one. Everywhere else the fold is unchanged.
@@ -721,9 +752,11 @@ What it means to be on the native route:
   Open Everywhere keeps the shared sandbox on purpose. A sandbox per worker would bill a live machine
   each, make every worker re-pay its own checkout and install, and break the single-writer memory rule
   above.
-- **Approvals you granted for the conversation carry into its children.** "Approve for this session"
-  is inherited by anything the seat delegates, deliberately: the grant is about the room and the
-  work, and a child is that work. Revoking the conversation's grants revokes them for children too.
+- **A conversation keeps no approval grant, for the seat or for its children.** A click on a card in
+  a thread or a DM approves one act. A connector-op approval waits for the next identical call under
+  the key of the conversation that asked, and a child reads that key off the binding of the
+  conversation it works for, never off the work session's token. So an approval given in one thread
+  is never spent by a child working for another thread.
 - **A turn that has read untrusted content still delegates, and the mark travels with the work.**
   Open Everywhere marks a turn that has ingested outside content — a fetched page, a connector
   result, an inbound webhook body. The parent stamps that mark onto its own auth attributes, the
@@ -738,19 +771,24 @@ What it means to be on the native route:
 
 ### Background delegation
 
-A delegation does not block the seat's turn. The framework runs every delegation as a durable
-background task, and there is no setting that changes this. There is still only one delegation verb:
-`agent`. Every delegation therefore works like this:
+This section describes eve's `agent` on the session that holds it. Since OPE-2350 that is only the
+work session: every conversation seat forwards with `work` instead (see
+[The three tiers](#the-three-tiers-seat-work-session-worker)), and the reason is the first bullet
+below. The bullets were written when a seat held `agent`, and they still say "seat" for the session
+whose turn holds the call. The framework runs every delegation as a durable task, and there is no
+setting that changes this. There is only one delegation verb, `agent`:
 
-- the `agent` call returns a **task receipt** at once, and the seat's turn ends. The room stays
-  answerable while the worker runs. The seat posts a hand-off note only on a wake that owes an
-  answer; on a channel-watch wake nobody asked anything on, it delegates silently, and because no
-  hand-off note armed a report, the settlement ends in silence too;
-- the worker keeps running after that turn is over. When it settles, the framework delivers the
-  completion as a **new message** to the same seat. That message is the edge Open Everywhere hangs
-  the whole settlement on: it gives the woken turn its own reply address, adopts whatever the worker
-  read, and persists the worker's memory edits — with no tool call from the seat at all;
-- **the report names the wake it answers, because the settlement turn can see no other address.**
+- the `agent` call returns a **task receipt** at once, but the seat's turn does **not** end. Since
+  eve 0.70 a task lives inside the turn that started it, and the turn waits at `turn.waiting` until
+  the task settles. So every other person who wakes that seat queues behind the job. That hold is
+  the reason a standing seat forwards to a work session. The seat posts a hand-off note only on a
+  wake that owes an answer; on a channel-watch wake nobody asked anything on, it delegates silently,
+  and because no hand-off note armed a report, the settlement ends in silence too;
+- when the worker settles, the framework resumes the **same turn** with the worker's result. That
+  result is the edge Open Everywhere hangs the settlement on: it gives the seat the result to relay,
+  adopts whatever the worker read, and persists the worker's memory edits — with no tool call from
+  the seat at all;
+- **the report names the wake it answers, because the settlement step can see no other address.**
   That turn renders no wake envelope of its own, so the host holds the task's address but the model
   never reads it — the only `wake-id`s in front of the model belong to OTHER conversations, and a
   seat holding a newer open wake answered that one instead. The dispatcher is the one party that
@@ -764,22 +802,52 @@ background task, and there is no setting that changes this. There is still only 
   the line is told to answer the conversation it promised the report to, and never to invent an id —
   an invented `wake-id` is refused by the reply fence, which posts nothing at all;
 - lifecycle tools appear. A delegating seat holds `task_cancel` (stop a worker; on a worker that has
-  already settled it returns that worker's full result instead). Open Everywhere withdraws it from
-  any seat that could not have delegated in the first place. There is no progress verb and no
+  already settled it returns that worker's full result instead) and `task_wait` (park this turn until
+  one of this seat's own workers settles). Open Everywhere withdraws both from any seat that could not
+  have delegated in the first place, and its own copy tells a seat not to wait — the turn ends at the
+  receipt and the room stays answerable. There is no progress verb and no
   read-back verb: the framework removed the worker's own `task_update` at 0.54.1 and ships no
   replacement, so the worker's output arrives in the settlement message described above;
-- children become **persistent sessions** in the framework's eyes, and Open Everywhere **refuses to
-  use that.** A worker still does one job. The framework's `agent` verb grows an `agentId` field for
-  continuing a parked worker, and its own agent listing advertises which workers are parked; Open
-  Everywhere takes the field off the tool, keeps the listing out of the seat's context, and refuses
-  a call that names an `agentId` anyway. The seat is told to start a fresh worker and put the context
-  in the brief.
+- children become **persistent sessions** in the framework's eyes, and since the eve 0.70 reshape
+  Open Everywhere **uses that.** The framework's `agent` verb takes a `taskId`, and a call that
+  passes one sends a correction or a follow-up to the same worker, which keeps what it already read
+  and found. The seat is taught this in its delegation copy.
 
-The refusal is a security decision, not a simplification. A worker's untrusted-content mark is
-scoped to its turn, which was sound while a worker had exactly one. A second turn on the same worker
-opens with a clean mark over the first turn's content, and the framework's continuation delivery
-carries no authorization for the parent's own mark to travel on — so a continued worker would run
-with wide hands and a clean signal. Continuation comes back when the mark outlives the turn.
+Continuation is safe because the properties the old refusal protected now travel with it:
+
+- **The worker's taint is session-sticky.** A worker's untrusted-content mark is scoped to its turn,
+  and a continuation is a second turn on the same worker. So a worker that was ever tainted re-marks
+  every later turn, with every class it read, before its first model call. A worker that read
+  nothing untrusted stays clean.
+- **A tainted continuing turn taints the worker.** The framework sends each message to a worker with
+  the authorization of the call that sends it, so the parent turn's taint stamp rides into the
+  worker's next turn exactly as it rides into a fresh worker's first turn.
+- **The worker runs as the continuing caller.** A worker restores its binding, requester and reply
+  address from the dispatch row of the call that opened it. An admitted continuation re-points that
+  row at the continuing turn's wake before the call runs, and the worker re-reads it at the start of
+  each later turn. A later turn whose row is unreadable is refused, never run as the opener.
+- **One continuation at a time.** The framework would forward a `taskId` call to a worker that is
+  still busy, and two callers in flight could then share one row. So Open Everywhere admits a
+  continuation only after the task has reported back, and refuses one sent while it works. The seat
+  waits for the result, then continues. Open Everywhere takes its claim only after the framework
+  accepts the call, and a claim whose call the framework never dispatched is released at the next
+  turn, so a malformed or mistargeted call does not lock the task. A `taskId` passed to a different
+  agent tool from the one that started the task is refused.
+- **A stop is not a continuation.** `task_cancel` takes a `taskId` too, but it only stops the task's
+  current work: it sends no input, re-points no row and takes no claim, and its result names only
+  the task id and the tool that started it. So the fence does not wrap it, from any room. The
+  approval decision notice depends on this: it tells the proposing seat to cancel a worker that
+  still runs toward a decided act. The cost is that a seat turn in one room can stop a task that
+  another room opened. Nothing from that task reaches the stopping room.
+- **A task stays in the room that opened it.** A unified seat serves many conversations from one
+  session, and the framework does not check which caller started a task. So Open Everywhere admits a
+  `taskId` call only when the continuing turn's conversation is in the same room (the same channel,
+  issue or DM) as the task's opening conversation. Every other case is refused with a message that
+  tells the seat to start a fresh task, and both verdicts write an audit row
+  (`delegation.continuation_admitted`, `delegation.continuation_refused`). A session that is not a
+  unified seat refuses every continuation, because nothing there can name the continuing room. A
+  task opened in a public channel is not continued from another room either: no wake origin carries
+  a positive public signal yet, so that case is refused rather than guessed.
 
 Two consequences worth planning for. The first is the **window** the shared filesystem is open for. The
 sharing itself is not new — it is native delegation's own behaviour, described above, and it applies
@@ -805,10 +873,21 @@ clock. A seat is a long-lived conversational session with no wall-clock deadline
 session lifetime here is governed by generation rotation, which carries the outgoing generation's
 recorded tail and an audit row, not by a framework timer that would end a session silently.
 
-`task_cancel` is not the lever: a task that has already settled refuses a cancel, and cancelling a
-task was never the act that ends a worker. Open Everywhere cannot end **one named worker** either —
-the framework strips the worker's session id out of every task view an authored hook can read, so no
-seam can address a single child at all.
+`task_cancel` is not the lever: on a task that has already settled it answers that there was no work
+to stop, and sends nothing. On a working worker it stops the current call only, and the worker stays
+parked. There is one exception: if the worker does not stop its current call within 30 seconds, the
+framework ends the worker itself. Cancelling a task was never the designed act that ends a worker.
+
+Open Everywhere does not end **one named worker** today. Since eve 0.70 that is a gap in what Open
+Everywhere builds, not a limit of the framework. The framework now publishes each worker's own
+session id on the `agent.started` event, which an authored hook receives. The session-id retirement
+door reaches a worker session too. A hook holds the id and no retirement door. The routes that hold
+that door call only cancel, respond and stream reads on it, and no Open Everywhere code calls reset on
+a worker id. That is a fact about the code, not an enforced fence: every route receives the
+framework's full session handle, which can reset. Open Everywhere narrows it only where a route
+passes it to the core cancel and approval-response functions. Whether to build a per-worker reaper is an open
+design choice. The pinned framework facts are
+in `packages/core/scripts/parked-child-lifecycle-test.ts`.
 
 What the framework does allow is retiring the whole **parent generation**, and that is what a
 rotation now does. When a standing window seat or a DM seat rotates, the outgoing generation is
@@ -862,7 +941,7 @@ rows key on the eve session id of the dispatching session, and Open Everywhere h
 a seat generation. The owed-delegation ledger is keyed on the generation's own continuation token
 instead, which is the handle both the dispatch edge and the rotation hold.
 
-A parked worker is **inert**: nothing wakes it (continuation is refused, above), it calls no model,
+A parked worker is **inert** until a `taskId` call continues it (above): it calls no model,
 it costs no tokens, and it holds no filesystem of its own. What it holds is one durable session per
 background delegation, until its parent generation rotates. Both delegation audit rows —
 `delegation.task_started` and `delegation.task_settled` — name the worker under the same key, so the
@@ -876,6 +955,188 @@ cannot ask for the blocking shape. The flag name survives in eve's TypeScript su
 build fails rather than running with the old shape. The `test:eve-tasks-flag` pin holds both halves:
 it reds if `tasks` returns to eve's `experimental` allow-list, and on a direct read of the field
 under eve's `dist/src`.
+
+## The three tiers: seat, work session, worker
+
+Open Everywhere runs each conversation on three tiers. The seat talks, the work session runs the
+jobs, and a worker does each job. The point of the split is one property: **the seat never waits**.
+A job can run for minutes, and the next person in the room still gets an answer in their own turn.
+
+| Tier | What it is | What it holds |
+| --- | --- | --- |
+| **Seat** | The conversation's own eve session. It reads the room and answers it. | The lean conversational kit, plus `work` and `cancel_work`. |
+| **Work session** | ONE eve session per conversation, beside the seat. It starts and stops jobs, and does nothing else. | eve's `agent` and `task_cancel`, plus the harness-internal `final_output` and `task_wait`. Nothing else. |
+| **Worker** | An eve child of the work session, one per job. It does the job and reports. | The full worker kit. It shares the work session's sandbox. |
+
+**Every conversation has its own work session, and every conversation seat forwards.** There is no
+setting for it. Three seat kinds forward, each to a work session of its own:
+
+- a **domain seat** (a seat on a `window` token), on every domain. Its work session is
+  `w/<seat window>`.
+- a **thread seat** (`spawn_thread_session`). Its work session is its own fresh one, `w/s/…`, and
+  never the channel seat's: one work session never serves two conversation seats with different
+  scopes (ruling Q2). The thread seat's opening delivery renders a wake of its own, so the seat can
+  reply and forward on its very first turn.
+- a **DM seat**. It is a window on the reserved `oe-dm/` pseudo-domain, and its work session sits on
+  the same DM anchor (`w/oe-dm/…`). So the DM's worker binds the DM's own room. It reaches the DM
+  owner's own-account connectors on the per-user plane, and nothing wider: turns run as rooms, and in a
+  DM the room is its owner's. The DM carve-in verbs (`link_identity` and the rest) stay on the DM
+  seat, because each one needs an answer the person gives on that seat.
+
+A **per-container standing root** cannot delegate at all.
+
+**Authority belongs to the seat, never to the person.** A domain seat acts with the domain's
+permissions. The person who asked is data on each job: who asked, who may click a card, which member
+tier they hold. So a job's reach is the seat's reach, whoever asked for it, and the person-scoped
+gates (an own-account connector, an admin action, an approval decision) read the person from the job.
+
+### Forwarding a job
+
+1. The seat calls `work` with a self-contained brief. To follow up on a job that already ran, it adds
+   the task id that the job's result named.
+2. The host writes a **request row** before it sends anything. The row names the request id, the
+   person who asked (the requester stamp and its candidate set), their member tier, whether the
+   seat's turn read untrusted content, and the wake and room the ask came from.
+3. The host delivers the job to the work session once per request id, so a replayed forward sends
+   nothing new.
+4. `work` returns a receipt with the request id at once, and the seat's turn ends.
+
+The seat is the ONE caller into the work session, and the work session steers. So a second job
+joins the work session's open turn and runs beside the first one. Two people in one conversation get
+two parallel jobs, not a queue.
+
+**Each job keeps its own requester.** The work session starts a job's worker with `agent`, and the
+worker inherits the auth of the step that started it. The host checks that the step's stamp names the
+job the call joins (`hooks/work-task-key.ts`):
+
+- When exactly one request is open, every `agent` call joins it. When two or more are open, the brief
+  must match exactly one of them, and a call that matches none, or two, is refused.
+- A call whose step carries another job's stamp is **refused before the worker starts**. The host
+  re-sends the forward once. If that is refused too, the seat gets a `needs-reissue` result and
+  forwards the job again.
+- A worker that starts under the wrong stamp anyway is caught at `task.started`. That edge cannot stop
+  it, so the host withholds its output, and the seat is told that the job ran and may have acted.
+
+### Results
+
+Each settled task wakes the seat once with a **result wake**: a host note plus the worker's output.
+eve can deliver a settlement more than once, and the host posts the wake once per settlement. The
+seat resolves who asked, and which wake to answer, from its own request row, never from the work
+session's words. It answers under the wake that asked. The seat wakes on results only: no progress
+wake costs a seat turn. A result whose job read untrusted content marks the turn that adopts it.
+
+The result wake carries two more host facts:
+
+- **The memory writes the job landed.** The work session persists the job's memory edits before the
+  result leaves. The seat's own turn wrote nothing, so the result wake carries the work session's
+  landed fact writes, and the seat's turn records them as its own write evidence. A seat that says
+  "it is in memory" therefore keeps that sentence when the write really landed
+  (`memory/write-evidence.ts`). The bound: the evidence is per work-session turn, so a write that a
+  sibling job of the same conversation landed earlier in that turn can ride along.
+- **A fire's creator**, for the reply's audit row only (`detail.creatorId`). It changes nothing the
+  seat's turn binds as.
+
+### Status and the ✋
+
+The host writes a job's status from the work session's own task events, with no model turn and no
+brief text (`hooks/work-status.ts`):
+
+- At `task.started` the job's status row says `working`, and at `task.settled` it says `completed`,
+  `failed` or `cancelled`. Each write also lands one `work.status` audit row.
+- While the job works, a ✋ sits on the message that asked for it. Several jobs can share one asking
+  message, and the ✋ comes off when the last of them settles.
+
+The room sees the ✋. The seat sees the receipt and the result. There is no seat verb that lists the
+jobs that are running.
+
+### Stopping one job
+
+The seat stops a job with `cancel_work`. It names the request id from the `work` receipt or the task
+id from a result, exactly one of the two. A request id resolves to its task through the job's status
+row, and a job that already settled is reported as settled. A person can also click the ✋ on the
+asking message: the click stops each running job on that message that the clicker may stop.
+
+**Who may stop a job:** the person who asked for it, an org admin, or an admin of the job's domain —
+the rule an approval card applies to its clicker. For `cancel_work` the actor is the person the
+turn's own wake names, and for a click it is the person who clicked. Anyone else is refused, and
+nothing is cancelled.
+
+The stop is a relay. The host writes a cancel ticket and sends one cancel block into the work
+session, and the work session's `task_cancel` runs only by redeeming that ticket. So the same rule
+binds the work session's own stop. eve can report a cancelled worker as `completed`; the host reads
+the redeemed ticket and reports the job as `cancelled`.
+
+**No turn stop reaches the work session's own turn.** A ✋ on a seat turn and `/oe stop` stop a
+seat's turn, never the work session's: that turn holds every job of the conversation, so stopping it
+would stop all of them.
+
+### Routine fires are work requests
+
+A routine fire is a job that the **host** forwards, not the seat (`routines/fire-work.ts`). No seat
+turn runs for it:
+
+- The job carries the fire's own host-built auth whole: the routine marker, the unattended stamp and
+  the routine's declared permission. Its requester names nobody. So a fire's reach is the routine's
+  declared permission, never a person's.
+- The result wakes the seat only when the routine owes the room output, and the seat posts it under
+  the fire's own wake id. A **silent** routine wakes nobody.
+- The run folds onto the routine when the job settles, because the work session never ends. A fire
+  that is lost — refused twice by the stamp check, or owed by a work session that rotated — folds
+  `failed` and wakes no seat.
+- A domain that nobody has talked in yet still takes the fire. The work session keys on the seat's
+  registry key, which config alone derives, so the host creates the work session without a seat.
+
+One fire takes a different road: a fire whose auth names no surface has no binding to key a request
+on, so it joins the window as a thread seat. See
+[Routines](../capabilities/proactivity-and-routines.md#how-a-triggered-fire-is-seated-and-scoped).
+
+### One workspace per conversation
+
+The work session owns the conversation's sandbox, and every worker in it shares that sandbox. That
+is by design: one job checks out a repository, and the next one works in it. It also means that the
+jobs of different people in one conversation share one workspace, and content one job read is
+visible to the next. One conversation's sandbox never reaches another conversation's.
+
+### The work session's lifetime
+
+The work session has its own lifetime, apart from the seat's:
+
+- **It outlives the seat.** The work session keys on the seat's registry row, not on the seat's
+  generation. A seat that rotates keeps the same work session, its workspace and its running jobs.
+  A job's result goes to the seat generation that is live when the job settles.
+- **It carries the work budget.** The work session's model calls, and its workers', count against
+  the work session's own session limit (`agent.sessionInputTokenBudget`). A long job can no longer
+  park the seat. The seat's limit covers its chat only.
+- **Its token, turn and context-size thresholds rotate it only when it is idle.** While it owes a
+  job, such a rotation waits. It takes no expiry and no quiet-gap rotation, so an idle workspace
+  stays. Four cases rotate it at once, whatever it holds: the work session parked at its session
+  limit, it failed (on eve 0.69+ an empty compaction summary is fatal), the eve runtime changed, or an
+  operator marked it for rotation.
+  A rotation loses the sandbox. Each job the old work session still owed is reported to the room as
+  a failed result, once per job. After a runtime change the old work session is not dead, so a real
+  result for such a job can still follow the notice.
+- **It is the room's one memory writer.** The forwarding seat skips the memory sync. When a job
+  settles and no other job is running, the work session persists the job's memory edits before the
+  result reaches the seat. When another job is still running, it waits, and its own turn end persists
+  the edits after the result.
+- **It owns the sandbox**, and the sandbox stops only when the work session is idle (see
+  [Sandbox](../extending/sandbox.md#who-stops-the-sandbox-at-turn-end)).
+### Nothing waits on a person
+
+**Nothing waits on a person in the work session** (OPE-2340). A worker there does not hold
+`ask_question`, whose native wait would hold the work session's turn and every other job of the
+conversation. It holds `ask_room` instead: the question is posted into the job's own room, the call
+returns at once, and the worker finishes its task and says that it waits for the answer. When
+someone answers in the room, the seat forwards the answer with `work` and the job's task id, and the
+same worker continues. Approvals work the same way: a `post_file` publish and a connector op that
+needs a person each post an OE approval card and return, and the call runs again after a member
+approves.
+
+A **sign-in** works the same way. When a worker in the work session needs the asking person's own
+account and it is not connected, the call settles `needs-sign-in` at once. The personal sign-in link
+goes to that person privately, as a direct message, and never into the worker's report, because the
+report reaches the room. The worker says that the job waits for the sign-in, and the seat runs it
+again when the person says they connected.
 
 ## A wake, a dispatch, a turn
 
@@ -1111,6 +1372,7 @@ transcript), not whether the wrap happens:
 | Notion | the triggering comment plus sibling backscroll on the same page |
 | Browser (agent-browser) | every browser tool's page content — snapshot DOM text, read markdown, console output, network-request detail, JS-eval results, tab titles, and navigation results — fenced with `browser <op> <domain>` provenance. Only the binary screenshot **path** ref and the `close` teardown are left unfenced (no page-derived text) |
 | GitHub PR feedback | in a `get_pr_feedback` digest, each third-party review/comment body and each failing-check CI output excerpt is fenced individually; the host-derived structure around them (counts, review states, check names/SHAs, comment paths/lines) stays trusted so the model can still tell which item is which |
+| GitHub issue by target | in a `read_github_issue` result, the title, the opening body and each comment body are fenced individually; the header (repo, number, kind, state, author) and the comment counts stay trusted. One extra `GET /repos/{repo}` reads the repository's visibility: a private org repo does not taint, a public one does, and a failed read falls closed to untrusted |
 | AWS CLI | both `aws` output streams are fenced individually (`aws cli stdout` / `aws cli stderr` provenance); the host-derived scaffold around them — exit code, the role actually assumed, the identity mode — stays trusted. An AWS account is a *substrate*, not an authoring surface: nothing gates who writes a CloudWatch log line, a DynamoDB item or an S3 object body, so org ownership of the account says nothing about who wrote the bytes |
 | Any surface | connector/MCP tool results, and any `web_fetch`-style page content |
 
@@ -1124,7 +1386,15 @@ URL as provenance, and the agent-browser family fences every content-bearing op
 A gated connector op (a write or destructive tier op) gets one more line, and it comes
 **before** the fence. The line is host text: it says that the call ran, that it does not wait
 for approval, and it names the UUID-shaped object ids the result returned. When the connector
-reports an error, the line says that instead and names no id. The line exists because eve
+reports an error, the line says that instead and names no id.
+
+🔴 **That line does not print on the current framework pin.** The framework collapsed its
+per-operation connector tools into one `connection_execute` verb at 0.69.0, and the host line is
+selected by the old `<connection>__<operation>` naming, which the single verb does not carry — so
+the fence arrives with no trusted line above it, and the stale "have not executed" note below is
+exactly the confusion the line was written to end. The payload is still fenced, still capped and
+still marks the turn; only the reassurance is missing. Restoring it needs the call's own
+`{connection, operation}` target at a seam that is handed the result alone, which is a follow-up. The line exists because eve
 writes a durable "[Pending approvals] … awaiting approval and have not executed" note when a
 call parks, and eve does not remove that note after the approval. Without the line, that note
 was the only trusted text about the call, and a worker reported an approved and executed
@@ -1188,8 +1458,10 @@ on — a task window is task-grain, a thread seat is thread-grain, a plain windo
 **dm-seat token is excluded**, so a DM seat routes to the primary model rather than the supervisor
 model.
 
-`sessionGrantKeyFromToken` collapses a task-grain window token to its parent domain token. A session
-grant therefore survives every wake of that window, instead of expiring with one task's leaf session.
+No approval memo is keyed on a window token. A routine's standing grant is keyed on the routine, and a
+one-call connector-op approval waits under the thread or DM that asked (`conversationGrantKey`,
+`packages/core/agent/approvals/session-grant.ts`). That key is the same for the seat, the work session
+and every child, and it never names a second thread of the domain.
 
 **A DM delegation anchor always carries generation 0** (`DM_ANCHOR_GENERATION`). No rotation ever
 mints generation 0 — `rotateChannelSession` starts at 1 — so an anchor token can never collide with a
@@ -1380,9 +1652,17 @@ in `no_reply` with the answer still undelivered.
 
 **The approval-decision notice uses the same note, and carries no message at all.**
 `buildApprovalDecisionWake` (`packages/core/agent/approvals/decision-wake.ts`) builds a `notice`
-wake: no message caused it, so its envelope has no `<message>` element, no untrusted fence and no
-`source` label. The notice text — the outcome, the pending's own summary line, what the approved act
-reported, and the silence-biased default — is the wake's `systemNote`. The wake keeps its host-minted
+wake: no message caused it, so its envelope has no `<message>` element. The note — the pending id,
+the outcome, the clicker, whether the approved act ran or failed, and the silence-biased default — is
+the wake's `systemNote`, and it carries fixed wording and ids only. Two texts are composed at run
+time, and no person reviewed them: the pending's summary line, which can quote the model's frozen tool
+arguments verbatim, and the line the approved act returned, which can carry vendor text. They go in
+untrusted fences after `</wake>`, with the fixed `source` labels `approval-decision:request` and
+`approval-decision:result`. The note names those labels and never quotes the fenced text. Both texts
+are XML-escaped before the fence, so neither can forge a `<message>` element for the wake parsers.
+Escaping alone did not make the old shape safe: it stops a structural break-out, not prose inside a
+note the model trusts. The fences do not taint the woken seat's turn, because the notice renders
+outside any turn and sets no taint stamp. The wake keeps its host-minted
 `wake-id`, `reason="dispatch"` and `addressing="channel-watch"`, so a `reply` that names the wake still
 reaches the anchor thread. OE's own instruction is envelope skeleton, never a message body: as a fenced
 `relay` body, the "stay silent" instruction read to an instruction-following model as an injection.

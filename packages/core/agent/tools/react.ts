@@ -1,6 +1,6 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { bindFrom, isUnifiedWindowContext, turnOriginPlatform, type BindableContext } from "../identity/binding.js";
+import { bindFrom, currentTurnAddressed, isUnifiedWindowContext, turnOriginPlatform, type BindableContext } from "../identity/binding.js";
 import { capabilitiesFor, capabilitiesForPlatform } from "../identity/capabilities.js";
 import { bridgeSlackReadCall } from "../channels/slack-bridge.js";
 import { swallowRoomOp } from "../channels/egress-spoof.js";
@@ -8,10 +8,22 @@ import { postArm, type TargetResolveBag } from "../channels/post-arms.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { markReactedThisTurn } from "../channels/react-signal.js";
 import { carryFailureSignals, platformFailureClass, platformFailureStatus } from "../channels/platform-failure.js";
-import { noteReactCallAddressed, noteTerminalCallGrain } from "../channels/turn-terminal-actions.js";
+import { END_TURN_WITH_SENTINEL_INSTRUCTION } from "../channels/normalized-wake.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
 const EMOJI_NAME_PATTERN = /^[a-z0-9_+-]{1,100}$/;
+
+export function reactResultNote(ctx: BindableContext): string {
+  let addressed = false;
+  try {
+    addressed = currentTurnAddressed(ctx);
+  } catch {
+    addressed = false;
+  }
+  return addressed
+    ? "The reaction acknowledges only: this message addressed you, so post one short `reply` now. The turn ends when the reply lands."
+    : `Turn reply requirement satisfied — the reaction stands as this turn's acknowledgement. ${END_TURN_WITH_SENTINEL_INSTRUCTION}`;
+}
 
 const REACT_REASONS = ["ack", "noise"] as const;
 
@@ -95,14 +107,12 @@ const reactEntry = defineTool({
               throw carryFailureSignals(err, new Error(`react failed — ${msg}`));
             }
             markReactedThisTurn();
-            noteTerminalCallGrain(ctx as BindableContext);
-            noteReactCallAddressed(ctx as BindableContext);
             await auditToolAction(ctx, `${binding.platform}.react`, { emoji: input.emoji, reason: input.reason ?? "ack" });
             return {
               reacted: true,
               emoji: input.emoji,
               ts: "",
-              note: "Turn reply requirement satisfied — the reaction stands as this turn's acknowledgement.",
+              note: reactResultNote(ctx as BindableContext),
             };
           }
 
@@ -133,14 +143,12 @@ const reactEntry = defineTool({
             }
           }
           markReactedThisTurn();
-          noteTerminalCallGrain(ctx as BindableContext);
-          noteReactCallAddressed(ctx as BindableContext);
           await auditToolAction(ctx, "slack.react", { emoji: input.emoji, ts, reason: input.reason ?? "ack" });
           return {
             reacted: true,
             emoji: input.emoji,
             ts,
-            note: "Turn reply requirement satisfied — the reaction stands as this turn's acknowledgement.",
+            note: reactResultNote(ctx as BindableContext),
           };
         },
 });

@@ -40,7 +40,7 @@ export function grantResolutionText(ask: CredentialGrantAskRow, resolution: Gran
       return [
         `${ownerLead} approved the credential grant — ${what}.`,
         `The grant is ${grantModePhrase(resolution.grant.mode)}, ${grantExpiryPhrase(resolution.grant.expiresAt, nowMs)}.`,
-        ...(mounts ? ["The tool is in this conversation's tool list from the next turn."] : []),
+        ...(mounts ? ["This conversation reaches the tool through the next task it hands work to."] : []),
         ...breadthLines(resolution.grant, resolution.askedMode, owner),
         credentialGrantDisclosureLine(resolution.grant, nowMs),
       ].join("\n");

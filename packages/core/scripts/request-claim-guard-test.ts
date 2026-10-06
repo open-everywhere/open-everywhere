@@ -84,7 +84,7 @@ for (const line of UNTOUCHED) {
 }
 
 const SIBLING_NOTES: readonly string[] = [
-  "(No card was raised on this turn. A gated notion write ran on it, which means an approval already stood for this session — not that the write is ungated.)",
+  "(No card was raised on this turn. A gated notion write ran on it, which means an approval already stood for this call — not that the write is ungated.)",
   "(No durable memory write is recorded for this turn, so I cannot say the note is stored.)",
 ];
 for (const note of SIBLING_NOTES) {

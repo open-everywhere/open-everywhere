@@ -161,24 +161,25 @@ console.log("4 — the judge's allow cache is invalidated by taint arriving mid-
   let calls = 0;
   registerApprovalJudgeCompletion(async (_p, pass) => {
     calls++;
-    return pass === "scrutiny" ? "YES" : "VERDICT: allow\nREASON: routine";
+    return pass === "scrutiny" ? "YES" : "VERDICT: allow\nREASON: routine\nRULE: taint-test-rule";
   });
+  const rules = [{ id: "taint-test-rule", rule: "Opening a pull request is routine in this test.", scope: "org" }];
   try {
     await inSession(async () => {
       clearApprovalJudgeVerdictCache();
       const req = { tool: "open_pull_request", unattended: false } as const;
 
-      const first = await runApprovalJudge(judgeContextOf(req, { registryVerdict: "ask" }), { enforce: true });
+      const first = await runApprovalJudge(judgeContextOf(req, { registryVerdict: "ask" }, rules), { enforce: true });
       eq(first.verdict, "allow", "[4] precondition: the judge allows on the clean turn");
       eq(first.cacheHit, false, "[4] precondition: …and that was a real consult, not a cache read");
       const afterFirst = calls;
 
-      const second = await runApprovalJudge(judgeContextOf(req, { registryVerdict: "ask" }), { enforce: true });
+      const second = await runApprovalJudge(judgeContextOf(req, { registryVerdict: "ask" }, rules), { enforce: true });
       eq(second.cacheHit, true, "[4] precondition: an identical clean-turn consult IS served from cache — otherwise the invalidation below proves nothing");
       eq(calls, afterFirst, "[4] …and cost no model calls");
 
       markUntrustedIngestedThisTurn("web");
-      const third = await runApprovalJudge(judgeContextOf(req, { registryVerdict: "ask" }), { enforce: true });
+      const third = await runApprovalJudge(judgeContextOf(req, { registryVerdict: "ask" }, rules), { enforce: true });
       eq(third.cacheHit, false, "[4] 🔴 taint arriving MID-TURN drops the cached allow — the key is the taint SIGNATURE, so a verdict earned on clean content can never be spent on tainted content");
       ok(calls > afterFirst, "[4] …and the judge genuinely re-ran, asserted on the completion call count rather than on the returned flag alone");
     });

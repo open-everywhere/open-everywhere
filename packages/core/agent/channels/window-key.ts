@@ -57,10 +57,6 @@ export function taskWindowId(channelKey: string, threadTs: string, nonce?: strin
   return `t/${parts.join("/")}`;
 }
 
-export function sessionGrantKeyFromToken(token: string): string {
-  const m = /^(oe-dom:[^:]+):win:t\/[^:]+(:oe-sup:g[^:]*)$/.exec(token);
-  return m ? `${m[1]}${m[2]}` : token;
-}
 export function isTaskWindowId(windowId: string): boolean {
   return TASK_WINDOW_ID_RE.test(windowId);
 }
@@ -91,6 +87,28 @@ export function isThreadSeatWindowId(windowId: string): boolean {
 export function isThreadSeatWindowToken(token: unknown): boolean {
   const key = parseWindowToken(token);
   return key !== undefined && isThreadSeatWindowId(key.windowId);
+}
+
+const WORK_WINDOW_ID_RE = /^w\//;
+
+export function workWindowId(seatWindowId: string): string {
+  if (seatWindowId.length === 0) throw new Error("workWindowId: the seat windowId must be non-empty");
+  if (seatWindowId.includes(":")) {
+    throw new Error(`workWindowId: a windowId is colon-free ([^:]+) — got seatWindowId="${seatWindowId}"`);
+  }
+  if (WORK_WINDOW_ID_RE.test(seatWindowId)) throw new Error("workWindowId: a work session has no work session of its own");
+  return `w/${seatWindowId}`;
+}
+
+export function isWorkWindowId(windowId: string): boolean {
+  return WORK_WINDOW_ID_RE.test(windowId);
+}
+
+export function isWorkWindowToken(token: unknown): boolean {
+  if (typeof token !== "string") return false;
+  const raw = token.startsWith(UNIFIED_SEND_PREFIX) ? token.slice(UNIFIED_SEND_PREFIX.length) : token;
+  const key = parseWindowToken(raw);
+  return key !== undefined && isWorkWindowId(key.windowId);
 }
 
 const DM_SEAT_TOKEN_RE = /^(.+):oe-dm:g(\d+)$/;
@@ -152,7 +170,7 @@ export function dmWindowKey(dmSurfaceKey: string, generation: number): WindowKey
 
 export function isDmAnchorWindowToken(token: unknown): boolean {
   const key = parseWindowToken(stripUnifiedPrefix(token));
-  return key !== undefined && isDmAnchorDomain(key.domain) && !isTaskWindowId(key.windowId) && !isThreadSeatWindowId(key.windowId);
+  return key !== undefined && isDmAnchorDomain(key.domain) && !isTaskWindowId(key.windowId) && !isThreadSeatWindowId(key.windowId) && !isWorkWindowId(key.windowId);
 }
 
 export function dmAnchorSurfaceForToken(token: unknown): string | undefined {
@@ -193,6 +211,7 @@ export type SessionId =
   | { kind: "window"; grain: "standing"; key: WindowKey }
   | { kind: "task"; grain: "task"; key: WindowKey; nonce?: string }
   | { kind: "thread-seat"; grain: "thread"; key: WindowKey }
+  | { kind: "work"; grain: "standing"; key: WindowKey }
   | { kind: "container-supervisor"; grain: "standing"; containerKey: string; generation: number }
   | { kind: "dm-seat"; grain: "native"; channelId: string; generation: number }
   | { kind: "subagent"; grain: "native"; parentSessionId: string; callId: string }
@@ -205,6 +224,7 @@ export function classifySessionId(token: unknown): SessionId {
   if (key) {
     if (isTaskWindowId(key.windowId)) return { kind: "task", grain: "task", key };
     if (isThreadSeatWindowId(key.windowId)) return { kind: "thread-seat", grain: "thread", key };
+    if (isWorkWindowId(key.windowId)) return { kind: "work", grain: "standing", key };
     return { kind: "window", grain: "standing", key };
   }
   const dm = parseDmSeatToken(raw);

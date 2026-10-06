@@ -11,6 +11,10 @@ const SUBAGENT_NAME_RE = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
 
 const SUPPORTED_SUBAGENT_DIRS = new Set(["tools", "skills", "hooks", "connections", "sandbox", "lib", "subagents"]);
 
+function withoutComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/gu, (m) => m.replace(/[^\n]/gu, " "));
+}
+
 export function listDeclaredSubagents(subagents: readonly DeclaredSubagentSource[]): string[] {
   return subagents.map((s) => s.name).sort();
 }
@@ -19,20 +23,11 @@ export function checkDeclaredSubagents(
   subagents: readonly DeclaredSubagentSource[],
   frameworkToolNames: readonly string[],
   toolNames: readonly string[],
-  requiredFrameworkToolNames: readonly string[] = [],
+  reservedFrameworkToolNames: readonly string[] = [],
 ): string[] {
   const problems: string[] = [];
   const tools = new Set(toolNames);
-  const required = new Set(requiredFrameworkToolNames);
-
-  const mounted = new Set(frameworkToolNames);
-  for (const name of [...required].sort()) {
-    if (!mounted.has(name)) {
-      problems.push(
-        `"${name}" is declared a REQUIRED framework tool slot but is not in the default-mounted set — one of the two reads of the installed eve is stale, and until that is resolved this lint cannot say whether the slot takes a replacement tool or a disableTool() sentinel`,
-      );
-    }
-  }
+  const reserved = new Set(reservedFrameworkToolNames);
 
   for (const s of subagents) {
     const at = `agent/subagents/${s.name}`;
@@ -51,16 +46,13 @@ export function checkDeclaredSubagents(
     if (s.agentSource === undefined) {
       problems.push(`${at}/agent.ts is missing — every declared subagent needs a defineAgent() config module (eve fails the build without one)`);
     } else {
-      if (!/\bdescription\s*:/u.test(s.agentSource)) {
+      const agentCode = withoutComments(s.agentSource);
+      if (!/\bdescription\s*:/u.test(agentCode)) {
         problems.push(`${at}/agent.ts has no \`description\` — it is the tool description the parent reads to decide whether to delegate, and eve rejects the build without it`);
       }
-      if (!/\boutputSchema\s*:/u.test(s.agentSource)) {
+      if (/\boutputSchema\s*:/u.test(agentCode)) {
         problems.push(
-          `${at}/agent.ts has no \`outputSchema\` — a declared subagent must return a TYPED result (eve applies the authored schema in task mode when the caller passes none); declare it in packages/core/agent/subagents/contracts.ts and bind it here`,
-        );
-      } else if (!/\boutputSchema\s*:\s*modelFacingOutputSchema\(/u.test(s.agentSource)) {
-        problems.push(
-          `${at}/agent.ts binds \`outputSchema\` without \`modelFacingOutputSchema(...)\` — eve builds the final_output tool after OE's tool-set hook, so an optional field stays non-nullable and the model fills it with an invented value (OPE-2070); bind \`outputSchema: modelFacingOutputSchema(<contract>)\``,
+          `${at}/agent.ts binds \`outputSchema\` — eve 0.69.0 removed it from \`defineAgent\` (there is no \`mode: "task"\` and no \`resolveEffectiveOutputSchema\` any more), so the field is a typecheck error against \`never\` and applies to nothing. A schema is requested PER TURN by the caller, as JSON Schema on the send. Remove the binding; the contract stays in packages/core/agent/subagents/contracts.ts for the re-derive (OPE-2250)`,
         );
       }
     }
@@ -71,33 +63,38 @@ export function checkDeclaredSubagents(
 
     for (const fw of frameworkToolNames) {
       const src = s.toolFiles.get(fw);
-      const isRequired = required.has(fw);
-      const fill = isRequired
-        ? "Author a no-op replacement tool that reaches nothing — eve REQUIRES this slot and refuses `disableTool()` for it."
-        : "Add `export default disableTool();`";
+      if (reserved.has(fw)) {
+        if (src !== undefined) {
+          problems.push(
+            `${at}/tools/${fw}.ts exists, but eve RESERVES "tools/${fw}" and throws on any authored module there — a sentinel and a no-op replacement alike ("is reserved … cannot be replaced or disabled"), so this file fails \`eve build\` outright. Delete it. The slot needs no file: eve itself refuses to let the subagent fill it, and the family it belongs to mounts only while the agent has connections, which this subagent declares none of.`,
+          );
+        }
+        continue;
+      }
       if (src === undefined) {
         problems.push(
-          `${at}/tools/${fw}.ts is missing — an absent slot falls back to eve's FRAMEWORK default, not to the root's narrowed version, and the root's egress/spend hooks are not inherited either, so ${fw} would mount UNFENCED here. ${fill}`,
+          `${at}/tools/${fw}.ts is missing — an absent slot falls back to eve's FRAMEWORK default, not to the root's narrowed version, and the root's egress/spend hooks are not inherited either, so ${fw} would mount UNFENCED here. Add \`export default disableTool();\``,
         );
         continue;
       }
       const isSentinel = /^\s*export\s+default\s+disableTool\s*\(\s*\)\s*;?\s*$/mu.test(src);
-      if (isRequired && isSentinel) {
-        problems.push(
-          `${at}/tools/${fw}.ts is a \`disableTool()\` sentinel, but eve declares "${fw}" a REQUIRED framework tool slot and throws at build on a sentinel for it. Export a no-op replacement tool from this file instead — one that reaches nothing, so the slot is filled and the subagent still holds no hands. Deleting the file is NOT the fix: it re-mounts eve's framework default unfenced.`,
-        );
-      } else if (!isRequired && !isSentinel) {
+      if (!isSentinel) {
         problems.push(
           `${at}/tools/${fw}.ts is not a \`disableTool()\` sentinel — a declared subagent is a zero-hands reasoning pass; giving it a real tool is a posture change that must also move its rows in access/consequence.ts and access/window-gate-manifest.ts`,
         );
       }
     }
     for (const authored of s.toolFiles.keys()) {
-      if (!frameworkToolNames.includes(authored)) {
+      if (frameworkToolNames.includes(authored)) continue;
+      if (reserved.has(authored)) {
         problems.push(
-          `${at}/tools/${authored}.ts is an authored tool — declared subagents are zero-hands by convention (a subagent session carries no surface binding, so any tool there must invent or trust a scope). If this is deliberate, re-tier "${s.name}" in access/consequence.ts and give it a grain matrix in access/window-gate-manifest.ts first, then update this lint.`,
+          `${at}/tools/${authored}.ts exists, but eve RESERVES "tools/${authored}" and throws on any authored module there, a sentinel included. Delete it — there is no posture change that makes this file legal.`,
         );
+        continue;
       }
+      problems.push(
+        `${at}/tools/${authored}.ts is an authored tool — declared subagents are zero-hands by convention (a subagent session carries no surface binding, so any tool there must invent or trust a scope). If this is deliberate, re-tier "${s.name}" in access/consequence.ts and give it a grain matrix in access/window-gate-manifest.ts first, then update this lint.`,
+      );
     }
 
     if (!s.hookFiles.has("spend")) {

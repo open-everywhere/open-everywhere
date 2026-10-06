@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, expect, test } from "vitest";
-import { auditCursor, bootAgent, discordMentionWake, registerScript, rowsSinceCursor, waitFor, type ScriptedHandle } from "../harness";
+import { afterThisTest, auditCursor, awaitWindowQuiet, bootAgent, discordMentionWake, registerScript, rowsSinceCursor, waitFor, wrapToolExecute, type ScriptedHandle } from "../harness";
 
 const BOT_MENTION = "<@9000000000000000001>";
 
@@ -26,27 +26,38 @@ test("Discord: no_reply TOOL call + the taught trailing sentinel writes ONE row,
   const channelId = freshUnlistedChannelId();
   const at = Date.now();
   const callId = `ope890-tool-${at}`;
+  afterThisTest(wrapToolExecute("list_routines", async () => ({ routines: [] })));
   const handle: ScriptedHandle = registerScript({
-    parent: [{ calls: [{ tool: "no_reply", input: { reason: "not_relevant" }, id: callId }] }, { say: NO_REPLY_SENTINEL }],
+    parent: [
+      {
+        calls: [
+          { tool: "no_reply", input: { reason: "not_relevant" }, id: callId },
+          { tool: "list_routines", input: {}, id: `${callId}-list` },
+        ],
+      },
+      { say: NO_REPLY_SENTINEL },
+    ],
   });
   try {
     const cursor = await auditCursor();
     await discordMentionWake({ channelId, text: `${BOT_MENTION} ope890 stay quiet on this one`, messageId: `ope890tool${at}` });
 
-    await waitFor(() => handle.requests.find((r) => r.stepIndex === 1), "the mention wake's trailing step", 180_000);
-    const last = handle.requests.flatMap((r) => r.toolResults).find((t) => t.name === "no_reply");
-    expect(last, "the wake's model never got a no_reply result at all").toBeDefined();
-    expect(last?.isError, "the wake's no_reply TOOL call was refused").toBe(false);
+    const sentinelStep = await waitFor(() => handle.requests.find((r) => r.stepIndex === 1), "the mention wake's trailing sentinel step", 180_000);
+    const noReplyResult = sentinelStep.toolResults.find((t) => t.id === callId);
+    expect(noReplyResult, "the sentinel step's prompt carries the no_reply result").toBeDefined();
+    expect(noReplyResult?.isError, `the wake's no_reply TOOL call was refused: ${JSON.stringify(noReplyResult?.output)}`).toBe(false);
 
-    const rows = await waitFor(
+    await waitFor(
       async () => {
         const found = await rowsSinceCursor(cursor, ["reply.no_reply_observed"], { limit: 50 });
         const mine = found.filter((r) => r.platform === "discord" && r.surface === channelId);
         return mine.length > 0 ? mine : undefined;
       },
       "a reply.no_reply_observed row for the tool-called wake",
-      120_000,
+      180_000,
     );
+    await awaitWindowQuiet();
+    const rows = (await rowsSinceCursor(cursor, ["reply.no_reply_observed"], { limit: 50 })).filter((r) => r.platform === "discord" && r.surface === channelId);
     expect(rows, "the tool call's OWN row must land (OPE-649) — one row minimum").toHaveLength(1);
     expect(rows[0]!.detail?.reason, "the surviving row is the TOOL route's own — it carries `reason`, not `route`").toBe("not_relevant");
     expect(rows[0]!.detail?.route, "the tool route's row has no `route` field — that's the sentinel row's marker").toBeUndefined();

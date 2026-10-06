@@ -1,5 +1,5 @@
 import { defineHook, type HookContext } from "eve/hooks";
-import { jobFireStamped, withheldFromJobWake } from "../access/job-posture.js";
+import { jobFireStamped, withheldFromRestrictedJobWake } from "../access/job-posture.js";
 import { markJobSession, setJobWakeEscalated, isJobSession } from "../access/job-session-state.js";
 import { auditWindowToolGate } from "../audit/window-tool-gate.js";
 import { currentTurnAddressing, currentWakeId, deploymentOrg, windowGrainOf, type BindableContext } from "../identity/binding.js";
@@ -29,7 +29,7 @@ async function auditRestrictedJobWake(ctx: HookContext): Promise<void> {
       org: marker?.org ?? deploymentOrg(),
       domain: marker?.surfaceKey ?? "unknown",
       grain: windowGrainOf(c),
-      withheld: withheldFromJobWake(),
+      withheld: withheldFromRestrictedJobWake(),
       wakeId: currentWakeId(c) ?? null,
       sessionId: null,
       reason: "job-wake",

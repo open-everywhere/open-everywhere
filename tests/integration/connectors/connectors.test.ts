@@ -1,22 +1,23 @@
 import { randomBytes } from "node:crypto";
 import { expect, test } from "vitest";
+import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import {
   afterThisTest,
+  armSettlement,
   auditCursor,
-  disposeLater,
-  awaitTaskSettlement,
+  awaitWorkResult,
   bootAgent,
-  discordMentionWake,
   DISCORD_LISTED_CHANNEL_ID,
+  discordMentionWake,
+  disposeLater,
   registerScript,
   rowsSinceCursor,
-  SETTLEMENT_DRAIN_SCRIPT,
-  taskIdOfDelegation,
   UNTRUSTED_CLOSE,
   UNTRUSTED_OPEN,
   waitFor,
   waitForAuditRows,
   waitForChildren,
+  workTaskIdOfCall,
   wrapToolExecute,
   type AuditCursor,
   type AuditRow,
@@ -27,27 +28,54 @@ function freshUnlistedChannelId(): string {
   return `9${randomBytes(8).readBigUInt64BE().toString().padStart(18, "0").slice(0, 18)}`;
 }
 
+function delegatingParent(message: string, callId: string) {
+  return [{ calls: [{ tool: "work", input: { message }, id: callId }] }, { say: NO_REPLY_SENTINEL }];
+}
+
+const WORKER_HOLD_MS = 120_000;
+
+interface Forwarded {
+  readonly settlement: ScriptedHandle;
+  readonly taskId: string;
+}
+
+async function forwardJob(handle: ScriptedHandle, input: { readonly callId: string; readonly label: string; readonly cursor: AuditCursor }): Promise<Forwarded> {
+  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), `${input.label}: the receipt step`);
+  const settlement = disposeLater(armSettlement(handle, { parent: [{ say: NO_REPLY_SENTINEL }] }));
+  const taskId = await workTaskIdOfCall(input.cursor, handle, input.callId, `${input.label}: the forward receipt`);
+  handle.releaseHolds();
+  return { settlement, taskId };
+}
+
+async function awaitDelegationResult(handle: ScriptedHandle, forwarded: Forwarded, label: string): Promise<void> {
+  const resultStep = await awaitWorkResult({ handle: forwarded.settlement, taskId: forwarded.taskId, label: `${label}: the seat step that read the worker's result` });
+  expect(resultStep.fault).toBeUndefined();
+  expect(resultStep.stepIndex).toBe(0);
+  expect(handle.requests.filter((r) => r.fault !== undefined), `${label}: the scripted model reported a fault`).toEqual([]);
+  expect(forwarded.settlement.requests.filter((r) => r.fault !== undefined), `${label}: the result-wake script reported a fault`).toEqual([]);
+  forwarded.settlement.dispose();
+}
+
 test("connection_search mounts on the delegated worker; the lean conversational seat never sees it (or any qualified op name)", async () => {
   await bootAgent();
 
   const handle = registerScript({
-    parent: [
-      { calls: [{ tool: "agent", input: { message: "search notion for the handbook" }, id: "mt-delegate" }] },
-      { say: "the worker reported back" },
-    ],
+    parent: delegatingParent("search notion for the handbook", "mt-delegate"),
     child: [
-      { calls: [{ tool: "connection_search", input: { keywords: "handbook" }, id: "mt-search" }] },
+      { delayMs: WORKER_HOLD_MS, calls: [{ tool: "connection_search", input: { query: "handbook" }, id: "mt-search" }] },
       { say: "found the handbook" },
     ],
   });
+  disposeLater(handle);
 
+  const cursor = await auditCursor();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please search notion for the handbook" });
-  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
+  const forwarded = await forwardJob(handle, { callId: "mt-delegate", label: "the mount-tiering delegation", cursor });
   await waitForChildren(handle, { count: 1, lastStepIndex: 1, label: "the delegated worker's own terminal step" });
-  expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  await awaitDelegationResult(handle, forwarded, "the mount-tiering delegation");
 
-  const parentRequests = handle.requests.filter((r) => r.role === "parent");
-  expect(parentRequests.length).toBeGreaterThanOrEqual(2);
+  const parentRequests = [...handle.requests, ...forwarded.settlement.requests].filter((r) => r.role === "parent");
+  expect(parentRequests.length).toBeGreaterThanOrEqual(3);
   for (const r of parentRequests) {
     expect(r.tools).not.toContain("connection_search");
     expect(r.tools.some((t) => t.includes("__"))).toBe(false);
@@ -57,14 +85,7 @@ test("connection_search mounts on the delegated worker; the lean conversational 
   expect(childRequests.length).toBeGreaterThanOrEqual(1);
   expect(childRequests[0].tools).toContain("connection_search");
 
-  const drained = await awaitTaskSettlement({
-    dispatched: handle,
-    taskId: taskIdOfDelegation(handle, "the mount-tiering delegation"),
-    script: SETTLEMENT_DRAIN_SCRIPT,
-    label: "the worker's settlement wake on the standing window",
-  });
-  expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-  drained.handle.dispose();
+  handle.dispose();
 
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   const topologyBefore = settings.getSettings().window.topology;
@@ -75,7 +96,7 @@ test("connection_search mounts on the delegated worker; the lean conversational 
   const nativeHandle = disposeLater(
     registerScript({
       parent: [
-        { calls: [{ tool: "connection_search", input: { keywords: "handbook" }, id: "mt-native-search" }] },
+        { calls: [{ tool: "connection_search", input: { query: "handbook" }, id: "mt-native-search" }] },
         { say: "native seat found it" },
       ],
     }),
@@ -94,12 +115,9 @@ async function driveConnectionSearchThenPropose(input: {
 
   const handle = disposeLater(
     registerScript({
-      parent: [
-        { calls: [{ tool: "agent", input: { message: "search notion, then set up a summary routine" }, id: `${input.ids}-delegate` }] },
-        { say: "the worker reported back" },
-      ],
+      parent: delegatingParent("search notion, then set up a summary routine", `${input.ids}-delegate`),
       child: [
-        { calls: [{ tool: "connection_search", input: { keywords: "handbook" }, id: `${input.ids}-search` }] },
+        { delayMs: WORKER_HOLD_MS, calls: [{ tool: "connection_search", input: { query: "handbook" }, id: `${input.ids}-search` }] },
         {
           calls: [
             {
@@ -119,18 +137,11 @@ async function driveConnectionSearchThenPropose(input: {
 
   const cursor = await auditCursor();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please search notion then set up the routine" });
-  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
+  const forwarded = await forwardJob(handle, { callId: `${input.ids}-delegate`, label: `the ${input.ids} delegation`, cursor });
   await waitForChildren(handle, { count: 1, lastStepIndex: 2, label: `the ${input.ids} worker's own terminal step` });
-  expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 
-  const drained = await awaitTaskSettlement({
-    dispatched: handle,
-    taskId: taskIdOfDelegation(handle, `the ${input.ids} delegation`),
-    script: SETTLEMENT_DRAIN_SCRIPT,
-    label: `the ${input.ids} worker's settlement wake`,
-  });
-  expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-  drained.handle.dispose();
+  await awaitDelegationResult(handle, forwarded, `the ${input.ids} delegation`);
+  handle.dispose();
   return { handle, cursor };
 }
 
@@ -200,44 +211,36 @@ test("D — request_access grant-connector for an ungranted connector mints a re
 
   await bootAgent();
 
-  const handle = registerScript({
-    parent: [
-      { calls: [{ tool: "agent", input: { message: "ask for the notion connector to be enabled here" }, id: "d1-delegate" }] },
-      { say: "the worker reported back" },
-    ],
-    child: [
-      {
-        calls: [
-          {
-            tool: "request_access",
-            input: {
-              kind: "grant-connector",
-              connector: "notion",
-              credential: "team-key",
-              reason: "need Notion search for the weekly summary",
+  const handle = disposeLater(
+    registerScript({
+      parent: delegatingParent("ask for the notion connector to be enabled here", "d1-delegate"),
+      child: [
+        {
+          delayMs: WORKER_HOLD_MS,
+          calls: [
+            {
+              tool: "request_access",
+              input: {
+                kind: "grant-connector",
+                connector: "notion",
+                credential: "team-key",
+                reason: "need Notion search for the weekly summary",
+              },
+              id: "d1-request",
             },
-            id: "d1-request",
-          },
-        ],
-      },
-      { say: "requested" },
-    ],
-  });
+          ],
+        },
+        { say: "requested" },
+      ],
+    }),
+  );
 
   const cursor = await auditCursor();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please request the notion connector here" });
-  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
+  const forwarded = await forwardJob(handle, { callId: "d1-delegate", label: "the grant-connector delegation", cursor });
   await waitForChildren(handle, { count: 1, lastStepIndex: 1, label: "the requesting worker's own terminal step" });
-  expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-
-  const drained = await awaitTaskSettlement({
-    dispatched: handle,
-    taskId: taskIdOfDelegation(handle, "the grant-connector delegation"),
-    script: SETTLEMENT_DRAIN_SCRIPT,
-    label: "the requesting worker's settlement wake",
-  });
-  expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-  drained.handle.dispose();
+  await awaitDelegationResult(handle, forwarded, "the grant-connector delegation");
+  handle.dispose();
 
   const found = handle.requests.flatMap((r) => r.toolResults).find((t) => t.name === "request_access");
   expect(found).toBeDefined();
@@ -264,12 +267,10 @@ test("D — request_access grant-connector for an ungranted connector mints a re
 
   const negHandle = disposeLater(
     registerScript({
-      parent: [
-        { calls: [{ tool: "agent", input: { message: "ask for a connector that does not exist" }, id: "d1-neg-delegate" }] },
-        { say: "the worker reported back" },
-      ],
+      parent: delegatingParent("ask for a connector that does not exist", "d1-neg-delegate"),
       child: [
         {
+          delayMs: WORKER_HOLD_MS,
           calls: [
             { tool: "request_access", input: { kind: "grant-connector", connector: "not-a-real-connector-xyz" }, id: "d1-neg-request" },
           ],
@@ -278,20 +279,14 @@ test("D — request_access grant-connector for an ungranted connector mints a re
       ],
     }),
   );
+  const negCursor = await auditCursor();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please request a connector that does not exist" });
-  await waitFor(() => negHandle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the negative control's terminal step");
+  const negForwarded = await forwardJob(negHandle, { callId: "d1-neg-delegate", label: "the negative control delegation", cursor: negCursor });
   await waitForChildren(negHandle, { count: 1, lastStepIndex: 1, label: "the negative control worker's own terminal step" });
   const negFound = negHandle.requests.flatMap((r) => r.toolResults).find((t) => t.name === "request_access");
   expect(negFound).toBeDefined();
   expect(negFound!.isError).toBe(true);
   expect(JSON.stringify(negFound!.output)).toContain("isn't defined in this deployment's config");
 
-  const negDrained = await awaitTaskSettlement({
-    dispatched: negHandle,
-    taskId: taskIdOfDelegation(negHandle, "the negative control delegation"),
-    script: SETTLEMENT_DRAIN_SCRIPT,
-    label: "the negative control worker's settlement wake",
-  });
-  expect(negDrained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-  negDrained.handle.dispose();
+  await awaitDelegationResult(negHandle, negForwarded, "the negative control delegation");
 });

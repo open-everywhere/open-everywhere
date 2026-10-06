@@ -4,8 +4,9 @@ import { expect, test } from "vitest";
 import {
   armSettlement,
   auditCursor,
+  awaitWindowQuiet,
+  awaitWorkResult,
   bootAgent,
-  consumeSettlement,
   DISCORD_LISTED_CHANNEL_ID,
   DISCORD_USER_ID,
   discordMentionWake,
@@ -14,10 +15,12 @@ import {
   rowsSinceCursor,
   seatReply,
   WAKE_FROM_ENVELOPE,
-  taskIdOfDelegation,
   waitFor,
   waitForChildren,
+  workTaskIdOfCall,
   type AuditRow,
+  type RecordedRequest,
+  type ScriptedHandle,
   type ScriptedStep,
 } from "../harness";
 
@@ -38,7 +41,7 @@ async function replyRowFor(input: { channelId: string; say: string; route: "tool
     expect(settings.getSettings().window.topology, "the dropped arm needs the per-surface path — see this function's header").toBe(false);
   }
   const handle = registerScript(
-    input.route === "tool" ? { parent: [seatReply(input.say, `oe659-${input.say.length}`), { say: "NO_REPLY" }] } : { parent: [{ say: input.say }] },
+    input.route === "tool" ? { parent: [seatReply(input.say, `oe659-${input.say.length}`)] } : { parent: [{ say: input.say }] },
   );
   try {
     await discordMentionWake({ channelId: input.channelId, text: `<@9000000000000000001> please answer` });
@@ -52,7 +55,11 @@ async function replyRowFor(input: { channelId: string; say: string; route: "tool
       const posts = (await rowsSinceCursor(cursor, ["reply.post"])).filter((r) => r.detail?.chars === input.say.length);
       expect(posts, "a dropped turn writes NO reply.post row").toEqual([]);
     }
-    if (input.route === "tool") await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the turn's last step");
+    if (input.route === "tool") {
+      await awaitWindowQuiet();
+      expect(handle.requests.some((r) => r.role === "parent" && r.stepIndex !== 0), "a step after the reply was requested").toBe(false);
+      expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+    }
     return row;
   } finally {
     handle.dispose();
@@ -139,43 +146,65 @@ const REGRESSION_SETTLEMENT_SAY = "oe-734 regression settlement reply, a fifth l
   }
 }
 
-test("a HOST-WOKEN settlement reply names the human whose seat it is — the auth the turn inherits (OPE-659)", async () => {
+function delegatingArm(ids: string): ScriptedStep[] {
+  return [
+    { calls: [{ tool: "work", input: { message: "look something up" }, id: `${ids}-delegate` }] },
+    delegatorReply(`${ids}-delegator-reply`),
+  ];
+}
+
+function resultWakeArm(ids: string, resultSay: string): ScriptedStep[] {
+  return [seatReply(resultSay, `${ids}-settlement-reply`)];
+}
+
+const HELD_WORKER: ScriptedStep[] = [{ delayMs: 120_000, say: "the worker's own prose, which never leaves the parent's session" }];
+
+async function driveHeldDelegation(input: {
+  readonly handle: ScriptedHandle;
+  readonly ids: string;
+  readonly resultSay: string;
+  readonly cursor: Awaited<ReturnType<typeof auditCursor>>;
+}): Promise<{ readonly dispatchStep: RecordedRequest; readonly resultStep: RecordedRequest; readonly taskId: string; readonly settlement: ScriptedHandle }> {
+  const { handle, ids, cursor } = input;
+  await waitFor(async () => {
+    const rows = (await rowsSinceCursor(cursor, ["reply.post"])).filter((r) => r.detail?.route === "tool");
+    return rows.find((r) => r.detail?.chars === DELEGATOR_SAY.length);
+  }, `the ${ids} hand-off reply's reply.post row`);
+  const settlement = disposeLater(armSettlement(handle, { parent: resultWakeArm(ids, input.resultSay) }));
+  const taskId = await workTaskIdOfCall(cursor, handle, `${ids}-delegate`, `the ${ids} forward receipt`);
+  await waitForChildren(handle, { count: 1, lastStepIndex: 0, label: `the ${ids} worker to enter its hold` });
+  handle.releaseHolds();
+  const resultStep = await awaitWorkResult({ handle: settlement, taskId, label: `the ${ids} seat step that read the worker's result` });
+  await awaitWindowQuiet();
+  expect(handle.holdsCutShort(), "the worker's hold ended on the release, not on its 120 s backstop").toBe(1);
+  const dispatchStep = handle.requests.find((r) => r.role === "parent" && r.stepIndex === 0);
+  expect(dispatchStep, `the ${ids} dispatch step`).toBeDefined();
+  expect(resultStep.stepIndex).toBe(0);
+  const parentSteps = new Set(handle.requests.filter((r) => r.role === "parent").map((r) => r.stepIndex));
+  expect([...parentSteps].sort((a, b) => a - b)).toEqual([0, 1]);
+  const resultSteps = new Set(settlement.requests.filter((r) => r.role === "parent").map((r) => r.stepIndex));
+  expect([...resultSteps]).toEqual([0]);
+  return { dispatchStep: dispatchStep!, resultStep, taskId, settlement };
+}
+
+test("the reply after a worker's result names the human who asked — the held turn keeps that delivery's auth (OPE-659, re-derived for eve 0.71 by OPE-2314 and for the work session by OPE-2338)", async () => {
   await bootAgent();
   const cursor = await auditCursor();
 
-  const handle = disposeLater(
-    registerScript({
-      parent: [{ calls: [{ tool: "agent", input: { message: "look something up" }, id: "oe659-delegate" }] }, delegatorReply("oe659-delegator-reply"), { say: "NO_REPLY" }],
-      child: [{ say: "the worker's own prose, which never leaves the parent's session" }],
-    }),
-  );
+  const handle = disposeLater(registerScript({ parent: delegatingArm("oe659"), child: HELD_WORKER }));
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `<@9000000000000000001> please delegate this` });
-  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 2), "the delegating turn's terminal step");
 
-  const taskId = taskIdOfDelegation(handle, "the OPE-659 delegation");
-
-  const settlementHandle = disposeLater(
-    armSettlement(handle, {
-      parent: [seatReply(SETTLEMENT_SAY, "oe659-settlement-reply"), { say: "NO_REPLY" }],
-    }),
-  );
-  await waitForChildren(handle, { count: 1, lastStepIndex: 0, label: "the worker's own model call" });
-
-  const notification = await consumeSettlement({
-    armed: settlementHandle,
-    dispatched: handle,
-    taskId,
-    label: "the settled worker's completion, delivered as a new message naming the task id",
-  });
-  expect(notification.fault).toBeUndefined();
-  await waitFor(() => settlementHandle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the settlement turn's terminal step");
+  const { dispatchStep, resultStep, taskId, settlement } = await driveHeldDelegation({ handle, ids: "oe659", resultSay: SETTLEMENT_SAY, cursor });
+  expect(resultStep.fault).toBeUndefined();
+  expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  expect(settlement.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 
   const rows = await waitFor(
     async () => {
       const got = (await rowsSinceCursor(cursor, ["reply.post"])).filter((r) => r.detail?.route === "tool");
       return got.some((r) => r.detail?.chars === SETTLEMENT_SAY.length) ? got : undefined;
     },
-    "the settlement turn's reply row",
+    "the result half's reply row",
     120_000,
   );
 
@@ -188,47 +217,47 @@ test("a HOST-WOKEN settlement reply names the human whose seat it is — the aut
 
   expect(settled!.detail?.sessionId).toBe(delegator!.detail?.sessionId);
   expect(typeof settled!.detail?.sessionId).toBe("string");
+  expect(typeof dispatchStep.turnId, "the recorder stamps eve's turn id").toBe("string");
+  expect(resultStep.turnId, "the result arrives in a seat turn of its own (OPE-2338)").not.toBe(dispatchStep.turnId);
+  await waitFor(
+    async () => (await rowsSinceCursor(cursor, ["work.result_wake"])).find((r) => r.detail?.taskId === taskId && r.detail?.outcome === "delivered"),
+    "the work.result_wake row for this task",
+  );
+  const wakeRows = await waitFor(async () => {
+    const got = (await rowsSinceCursor(cursor, ["unified.task_wake"])).filter((r) => String(r.detail?.task) === taskId);
+    return got.length > 0 ? got : undefined;
+  }, "the settlement edge's unified.task_wake row for this task");
+  const outcomes = wakeRows.map((r) => String(r.detail?.outcome));
+  expect(outcomes).toContain("ingressed");
+  expect(outcomes).not.toContain("installed");
 });
 
-test("OPE-734 — arming the settlement script under the dispatch turn's session id wins even if the stale ANY_SESSION entry is never disposed", async () => {
+test("OPE-734 — with the dispatch script never disposed, the result wake is served by its own session-keyed script, with no fault", async () => {
   await bootAgent();
   const cursor = await auditCursor();
 
-  const handle = disposeLater(
-    registerScript({
-      parent: [{ calls: [{ tool: "agent", input: { message: "look something up" }, id: "ope734-delegate" }] }, delegatorReply("ope734-delegator-reply"), { say: "NO_REPLY" }],
-      child: [{ say: "the worker's own prose, which never leaves the parent's session" }],
-    }),
-  );
+  const handle = disposeLater(registerScript({ parent: delegatingArm("ope734"), child: HELD_WORKER }));
   const say = REGRESSION_SETTLEMENT_SAY;
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `<@9000000000000000001> please delegate this too` });
-  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 2), "the delegating turn's terminal step");
-  const taskId = taskIdOfDelegation(handle, "the OPE-734 delegation");
 
-  const settlementHandle = disposeLater(
-    armSettlement(handle, {
-      parent: [seatReply(say, "ope734-settlement-reply"), { say: "NO_REPLY" }],
-    }),
-  );
+  const { dispatchStep, resultStep, settlement } = await driveHeldDelegation({ handle, ids: "ope734", resultSay: say, cursor });
 
-  await waitForChildren(handle, { count: 1, lastStepIndex: 0, label: "the worker's own model call" });
-  const notification = await waitFor(
-    () => settlementHandle.requests.find((r) => r.role === "parent" && r.messages.some((m) => m.text.includes(taskId))),
-    "the settlement turn to land on the armed, session-scoped entry",
-  );
-
-  expect(notification.fault).toBeUndefined();
+  expect(resultStep.fault).toBeUndefined();
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-  expect(settlementHandle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-  expect(handle.requests.some((r) => r.turnId === notification.turnId)).toBe(false);
+  expect(handle.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
+  expect(settlement.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  expect(settlement.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
+  expect(typeof dispatchStep.turnId, "the recorder stamps eve's turn id").toBe("string");
+  const parentTurns = new Set(handle.requests.filter((r) => r.role === "parent").map((r) => r.turnId));
+  expect([...parentTurns]).toEqual([dispatchStep.turnId]);
+  expect(resultStep.turnId).not.toBe(dispatchStep.turnId);
 
-  await waitFor(() => settlementHandle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the settlement turn's terminal step");
   const rows = await waitFor(
     async () => {
       const got = (await rowsSinceCursor(cursor, ["reply.post"])).filter((r) => r.detail?.route === "tool");
       return got.some((r) => r.detail?.chars === say.length) ? got : undefined;
     },
-    "the settlement turn's reply row",
+    "the result half's reply row",
   );
   expect(rows.some((r) => r.detail?.chars === say.length)).toBe(true);
 });

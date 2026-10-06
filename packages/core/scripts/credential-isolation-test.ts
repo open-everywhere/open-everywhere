@@ -98,7 +98,7 @@ pinMatchSet(
 
 pinMatchSet(
   /\bcreateAuthorizationExecution\b/g,
-  ["execution/tools/connection-search.js", "runtime/authorization-context.js", "runtime/connections/scoped-authorization.js"],
+  ["execution/tools/connection-tools.js", "runtime/authorization-context.js", "runtime/connections/scoped-authorization.js"],
   "modules holding an authorization EXECUTION (createAuthorizationExecution — its getToken resolves a bearer)",
   "Each holder is a candidate bearer-holder. Read the new site: if it calls `.getToken` on the execution it is a\n" +
     "  FOURTH place the raw bearer flows, and §1c below must be extended with it BEFORE this list is widened.",
@@ -106,8 +106,13 @@ pinMatchSet(
 
 {
   ok(
-    !/\bgetToken\b/.test(read("execution/tools/connection-search.js")),
-    "connection-search.js still never calls getToken — it holds an authorization execution for complete/handleError only",
+    !/\bgetToken\b/.test(read("execution/tools/connection-tools.js")),
+    "connection-tools.js never calls getToken — it holds an authorization execution for complete/handleError only",
+  );
+  ok(
+    /\w+\.complete\(\w+\)/.test(read("execution/tools/connection-tools.js")) &&
+      /\w+\.handleError\(\w+,\w+\)/.test(read("execution/tools/connection-tools.js")),
+    "…and it still CALLS complete and handleError on that execution (the two uses this classification rests on)",
   );
   ok(
     /await \w+\.getToken\(/.test(read("runtime/authorization-context.js")),
@@ -128,11 +133,12 @@ pinNormalisedMatchSet(
     "compiled/@photon-ai/chat-adapter-imessage/index.js",
     "compiled/@workflow/world-vercel/index.js",
     "public/models/openai/chatgpt/transport.js",
-    "node_modules:openai/client.js",
-    "node_modules:openai/auth/workload-identity-auth.js",
+    "internal/model-auth/available-models.js",
+    "internal/model-auth/development-broker-server.js",
 
     "compiled/jsonc-parser/index.js",
     "compiled/shadcn-registry/index.js",
+    "compiled/_chunks/workflow/run-DYKeqbob.js",
   ],
   "modules CALLING .getToken( anywhere in the dist",
   "Read the new site before widening this list. If it calls `.getToken` on an authorization EXECUTION it is a\n" +
@@ -310,23 +316,25 @@ ok(OE_SOURCES.length > 200, `the OE agent-source sweep found ${OE_SOURCES.length
 
 {
   const session = read("execution/sandbox/session.js");
+  const builder = /function buildSandboxSession\(\w+,(\w+)\)\{/.exec(session);
+  ok(builder !== null, "buildSandboxSession still takes the network-policy setter as a host-side CLOSURE argument");
+  const setter = builder?.[1] ?? "";
   ok(
-    /function buildSandboxSession\(\w+,\w+=async\(\)=>\{\}\)\{/.test(session),
-    "buildSandboxSession still takes the network-policy setter as a host-side CLOSURE argument (defaulting to a no-op)",
+    new RegExp(`return ${setter}===void 0\\?\\w+:\\{\\.\\.\\.\\w+,setNetworkPolicy:${setter}\\}`).test(session),
+    "the public SandboxSession carries THAT closure as its setNetworkPolicy method, and no member at all when the binding passed none",
   );
-  ok(/setNetworkPolicy:\w+\}/.test(session), "the public SandboxSession still carries that closure as its setNetworkPolicy method");
 }
 
 const EVE_POLICY_SITES = [
-  "execution/sandbox/bindings/just-bash-runtime.js",
   "execution/sandbox/bindings/microsandbox-lifecycle.js",
   "execution/sandbox/bindings/microsandbox-runtime.js",
-  "execution/sandbox/logging-session.js",
   "execution/sandbox/session.js",
   "public/channels/github/checkout.js",
-  "context/build-callback-context.js",
   "self-modification/git.js",
   "self-modification/sandbox.js",
+  "public/channels/github/defaults.js",
+  "compiler/extension-compatibility.js",
+  "extensions/code/extension/lib/credentials.js",
 ];
 pinMatchSet(
   /setNetworkPolicy/g,
@@ -342,11 +350,33 @@ pinMatchSet(
       !f.startsWith("execution/sandbox/") &&
       !f.startsWith("public/channels/") &&
       !f.startsWith("self-modification/") &&
-      f !== "context/build-callback-context.js",
+      f !== "compiler/extension-compatibility.js" &&
+      f !== "extensions/code/extension/lib/credentials.js",
   );
   ok(
     offSandbox.length === 0,
     "no module outside execution/sandbox/**, public/channels/** or self-modification/** names setNetworkPolicy (never on the model tool surface)",
+  );
+  const compat = readFileSync(join(distSrc, "compiler/extension-compatibility.js"), "utf8");
+  const compatMentions = compat.match(/.{0,40}setNetworkPolicy.{0,2}/g) ?? [];
+  ok(compatMentions.length > 0, "the reviewed 0.71.0 compiler site still exists (drop the exemption when eve removes it)");
+  ok(
+    compatMentions.every((m) => m.endsWith("`SandboxSession no longer exposes setNetworkPolicy; ")),
+    `compiler/extension-compatibility.js names setNetworkPolicy only inside its migration message (got: ${compatMentions.join(" | ")})`,
+  );
+  const eveCodePolicy = readFileSync(join(distSrc, "extensions/code/extension/lib/credentials.js"), "utf8");
+  ok(!/\b(?:defineTool|createTool|inputSchema)\b/.test(eveCodePolicy), "eve-code's policy site defines NO tool — the header broker stays host-decided");
+  const eveCodeTools = distFiles("extensions/code/extension/tools");
+  ok(eveCodeTools.length > 0, "eve-code still ships tool modules (the sweep below is not vacuous)");
+  const eveCodeToolPolicies = eveCodeTools.filter((f) => /etworkPolicy/.test(readFileSync(join(distSrc, f), "utf8")));
+  ok(
+    eveCodeToolPolicies.length === 0,
+    `no eve-code TOOL module names a network policy (got: ${eveCodeToolPolicies.join(", ")}) — a model holding these tools cannot name a policy value`,
+  );
+  const eveCodeImporters = OE_SOURCES.filter((rel) => /["']eve\/extensions\/code\b/.test(codeOf(rel)));
+  ok(
+    eveCodeImporters.length === 0,
+    `this tree never imports eve/extensions/code (got: ${eveCodeImporters.join(", ")}) — its per-turn firewall hook is not mounted here`,
   );
   const selfModPolicySites = distFiles("self-modification").filter((f) => /setNetworkPolicy/.test(readFileSync(join(distSrc, f), "utf8")));
   const selfModPolicyTools = selfModPolicySites.filter((f) =>
@@ -363,46 +393,65 @@ pinMatchSet(
     selfModToolPolicies.length === 0,
     `no self-modification TOOL module names a network policy (got: ${selfModToolPolicies.join(", ")}) — a model holding these tools cannot name a policy value`,
   );
-  const cbctx = readFileSync(join(distSrc, "context/build-callback-context.js"), "utf8");
-  const mentions = cbctx.match(/setNetworkPolicy[^,}]*/g) ?? [];
-  ok(mentions.length > 0, "the reviewed 0.32.0 site still exists (drop the exemption when eve removes it)");
   ok(
-    mentions.every((m) => /^setNetworkPolicy:[A-Za-z_$]{1,3}=>[A-Za-z_$]{1,3}\.setNetworkPolicy\([A-Za-z_$]{1,3}\)$/.test(m)),
-    `context/build-callback-context.js setNetworkPolicy mentions are all verbatim pass-throughs (got: ${mentions.join(" | ")})`,
+    !/setNetworkPolicy/.test(readFileSync(join(distSrc, "context/build-callback-context.js"), "utf8")),
+    "context/build-callback-context.js no longer names setNetworkPolicy (eve 0.71.0 retired the pass-through)",
   );
   const toolSurface = distFiles("public/tools").filter((f) => /etworkPolicy/.test(readFileSync(join(distSrc, f), "utf8")));
   ok(toolSurface.length === 0, "eve's built-in TOOL definitions (public/tools/**) never mention a network policy — there is no model tool for it");
 }
 
-const OE_POLICY_CALLERS = [
-  "packages/core/agent/hooks/egress.ts",
+const OE_POLICY_SEAM = "packages/core/agent/sandbox/network-policy.ts";
+const OE_POLICY_CALLERS = ["packages/core/agent/hooks/egress.ts"];
+const OE_MID_TURN_APPLIERS = [
   "packages/core/agent/tools/checkout_repo.ts",
   "packages/core/agent/tools/open_pull_request.ts",
 ];
 {
-  const callers = OE_SOURCES.filter((rel) => /\.setNetworkPolicy\s*\(/.test(codeOf(rel)));
-  const unexpected = callers.filter((c) => !OE_POLICY_CALLERS.includes(c));
+  const direct = OE_SOURCES.filter((rel) => /\.setNetworkPolicy\s*\(/.test(codeOf(rel)));
+  const unexpected = direct.filter((c) => c !== OE_POLICY_SEAM);
   if (unexpected.length > 0) {
     console.error(
       `✗ new sandbox.setNetworkPolicy call site(s): ${unexpected.join(", ")}\n` +
-        `  Each one re-points the egress firewall mid-session. Confirm the policy it applies is HOST-COMPUTED (no\n` +
-        `  model-supplied host, path or header can reach a transform) before widening this list.`,
+        `  Each one re-points the egress firewall mid-session. Route it through applyAndRecordEgressPolicy\n` +
+        `  (hooks/egress.ts), so the hook's applied record names the policy in force (OPE-2303), and confirm the\n` +
+        `  policy it applies is HOST-COMPUTED (no model-supplied host, path or header can reach a transform).`,
     );
     process.exit(1);
   }
   passed++;
-  for (const c of OE_POLICY_CALLERS) ok(callers.includes(c), `${c} still applies the policy host-side (the site is not gone/renamed)`);
+  ok(direct.includes(OE_POLICY_SEAM), `${OE_POLICY_SEAM} still applies the policy host-side (the seam is not gone/renamed)`);
+
+  const callers = OE_SOURCES.filter(
+    (rel) => rel !== OE_POLICY_SEAM && (/\bapplySessionNetworkPolicy\s*\(/.test(codeOf(rel)) || /(?<!function\s)\bpushEgressPolicy\s*\(/.test(codeOf(rel))),
+  );
+  const unexpectedCallers = callers.filter((c) => !OE_POLICY_CALLERS.includes(c));
+  if (unexpectedCallers.length > 0) {
+    console.error(
+      `✗ new applySessionNetworkPolicy / pushEgressPolicy caller(s): ${unexpectedCallers.join(", ")}\n` +
+        `  Each one re-points the egress firewall mid-session. Route it through applyAndRecordEgressPolicy\n` +
+        `  (hooks/egress.ts), so the hook's applied record names the policy in force (OPE-2303), and confirm the\n` +
+        `  policy it applies is HOST-COMPUTED before widening this list.`,
+    );
+    process.exit(1);
+  }
+  passed++;
+  for (const c of OE_POLICY_CALLERS) ok(callers.includes(c), `${c} still applies the policy host-side through the seam (the site is not gone/renamed)`);
+  for (const c of OE_MID_TURN_APPLIERS) {
+    ok(/\bapplyAndRecordEgressPolicy\s*\(/.test(codeOf(c)), `${c} applies its brokered policy through applyAndRecordEgressPolicy (OPE-2303)`);
+  }
 }
 
 {
   const logging = read("execution/sandbox/logging-session.js");
+  ok(/function createLoggingSandboxSession\(/.test(logging), "eve's bootstrap session wrapper is still present (the pins below are not vacuous)");
   ok(
-    /set network policy: \$\{formatNetworkPolicy\(\w+\)\}/.test(logging),
-    "eve's bootstrap session wrapper still LOGS the network policy it is handed",
+    !/etworkPolicy|network policy/.test(logging),
+    "eve's bootstrap session wrapper no longer names or LOGS a network policy (eve 0.71.0 removed the sink)",
   );
   ok(
-    /function formatNetworkPolicy\(\w+\)\{return truncateOneLine\(typeof \w+==`string`\?\w+:JSON\.stringify\(\w+,\(\w+,\w+\)=>\w+===`transform`\?`\[redacted\]`:\w+\)\)\}/.test(logging),
-    "that log REDACTS the whole `transform` key (eve 0.44.0) — a bootstrap-time credential header can no longer reach it verbatim",
+    distFilesMatching(/formatNetworkPolicy|set network policy: \$\{/g).size === 0,
+    "no module in eve's dist formats a network policy into a log line",
   );
   const wrapperUsers = [...distFilesMatching(/createLoggingSandboxSession\(/g)].filter((f) => !f.startsWith("execution/sandbox/logging-session"));
   ok(wrapperUsers.length > 0, "eve's sandbox bindings still install the policy-logging wrapper somewhere (the confinement check below is not vacuous)");

@@ -1,5 +1,6 @@
 import { actingPrincipalId, currentTurnId, type BindableContext, type SurfaceBinding } from "../identity/binding.js";
 import { requesterThisTurn, seatServesManyAskers } from "./requester-identity.js";
+import { liveAuthIsAnotherPrincipal } from "./turn-opening-principal.js";
 import { rosterHasPrincipal } from "../identity/principal-key.js";
 import { criteriaDomain } from "../memory/domain.js";
 import { getConfig } from "./config.js";
@@ -11,6 +12,11 @@ const ADMIN_NO_ACTING_MESSAGE =
 
 const ADMIN_NO_RECORD_REASON =
   "nothing on this turn recorded who asked, and this seat can be woken by more than one person, so the only id left is whichever delivery's auth the turn happens to carry";
+
+const ADMIN_SWAPPED_REASON =
+  "a later message inside this turn (for example an answer to a question the agent asked) carried a different person's identity than the message that started it, and admin standing is never taken from whoever answered";
+
+const OWN_ASK_TAIL = "Ask for the admin action in a message of your own.";
 
 const COALESCED_TAIL = "Ask again on its own — in a thread, or once the other work in this room has settled.";
 
@@ -27,6 +33,9 @@ function adminUnverifiedMessage(reason: string, tail: string = COALESCED_TAIL): 
 export function adminStandingSubject(binding: SurfaceBinding, ctx?: BindableContext): AdminSubject {
   const acting = actingPrincipalId(binding);
   if (!acting) return { ok: false, message: ADMIN_NO_ACTING_MESSAGE };
+  if (ctx !== undefined && liveAuthIsAnotherPrincipal(ctx)) {
+    return { ok: false, message: adminUnverifiedMessage(ADMIN_SWAPPED_REASON, OWN_ASK_TAIL) };
+  }
   const requester = requesterThisTurn(ctx === undefined ? undefined : currentTurnId(ctx));
   if (requester.kind === "requester") return { ok: true, principalId: requester.principalId };
   if (requester.kind === "unverified") {

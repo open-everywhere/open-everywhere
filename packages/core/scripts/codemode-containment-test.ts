@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
+import { filesMatching } from "./eve-dist-search.js";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -46,6 +47,10 @@ function declaresDispatchTool(source: string): boolean {
   return /\bruntimeAction\b|behavior\s*:\s*\{[^}]*handling|handling\s*:\s*\{\s*kind\s*:\s*["'`]dispatch|\bworkflowId\s*:/.test(source);
 }
 
+function importsEveWorkflowTool(source: string): boolean {
+  return /(?:\bfrom\s*|\bimport\s*\(\s*)["'`]eve\/tools\/workflow["'`]/.test(source);
+}
+
 {
   const roots = agentRoots();
   const files = roots.flatMap(walkTs);
@@ -72,6 +77,19 @@ function declaresDispatchTool(source: string): boolean {
   ok(
     activators.length === 0,
     `no package source calls experimental_workflow(...) (found: ${activators.map(rel).join(", ") || "none"})`,
+  );
+
+  const workflowImporters = files.filter((f) => importsEveWorkflowTool(readFileSync(f, "utf8")));
+  ok(
+    workflowImporters.length === 0,
+    `no package source imports eve/tools/workflow — the eve 0.71 code-mode activator (found: ${workflowImporters.map(rel).join(", ") || "none"})`,
+  );
+  ok(
+    importsEveWorkflowTool(`import { workflow } from "eve/tools/workflow";`) &&
+      importsEveWorkflowTool(`const m = await import('eve/tools/workflow');`) &&
+      !importsEveWorkflowTool(`// see eve/tools/workflow for the code-mode tool`) &&
+      !importsEveWorkflowTool(`import { workflow } from "eve/tools/workflow-modules";`),
+    "POSITIVE/NEGATIVE CONTROL: the activator matcher sees a static and a dynamic import, and not a comment or a sibling module",
   );
 
   const manualDir = join(packagesDir, "core", "agent", "docs", "generated");
@@ -105,80 +123,56 @@ function declaresDispatchTool(source: string): boolean {
 {
   const require = createRequire(import.meta.url);
   const eveRoot = dirname(require.resolve("eve/package.json"));
-  const wfUrl = pathToFileURL(join(eveRoot, "dist/src/harness/workflow-sandbox.js")).href;
-  const wf = (await import(wfUrl)) as {
-    buildWorkflowHostTools: (input: { tools: Map<string, unknown> }) => Record<string, { execute: unknown }>;
+  const stepUrl = pathToFileURL(join(eveRoot, "dist/src/execution/dynamic-workflow/program-step.js")).href;
+  const programStep = (await import(stepUrl)) as {
+    runWorkflowProgramStep: (input: { callId: string; program: { js: string; continuationSecurity: { signingKey: string }; maxSubagents: number } }) => Promise<unknown>;
   };
-  ok(typeof wf.buildWorkflowHostTools === "function", "eve still exports buildWorkflowHostTools (the sandbox host-tool builder)");
+  ok(typeof programStep.runWorkflowProgramStep === "function", "eve still exports runWorkflowProgramStep (the step the workflow() tool runs)");
 
-  const gatedExecute = async (): Promise<unknown> => ({ leakedSecret: "provider-token", untrustedBody: "<script>" });
-  const gatedConnectorOp = { name: "read_notion_page", description: "gated connector read", inputSchema: {}, execute: gatedExecute };
+  type Outcome = { readonly result?: { readonly status?: string; readonly output?: unknown; readonly interrupt?: { readonly continuation?: { readonly toolNames?: readonly string[] }; readonly toolName?: string } }; readonly error?: string };
+  const run = (js: string): Promise<Outcome> =>
+    programStep
+      .runWorkflowProgramStep({ callId: "call_codemode", program: { js, continuationSecurity: { signingKey: "codemode-containment-test-key-000" }, maxSubagents: 3 } })
+      .then((r) => ({ result: r as Outcome["result"] }), (e: unknown) => ({ error: (e as Error).message }));
 
-  const rtaExecute = async (): Promise<unknown> => ({ ran: "inline" });
-  const workflowTool = (name: string, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
-    name,
-    description: "workflow tool",
-    inputSchema: {},
-    execute: rtaExecute,
-    workflowId: "w1",
-    nodeId: "node",
-    resultKind: "text",
-    ...extra,
-  });
-  const dispatchTool = (name: string, target: Record<string, unknown>): Record<string, unknown> => ({
-    name,
-    description: "delegation",
-    inputSchema: {},
-    execute: rtaExecute,
-    behavior: { availability: [], handling: { kind: "dispatch", target } },
-  });
+  const benign = await run("return 1 + 2;");
+  ok(benign.result?.status === "completed" && benign.result.output === 3, `the real program step completes a benign program (got ${JSON.stringify(benign)})`);
 
-  const mixed = new Map<string, unknown>([
-    ["read_notion_page", gatedConnectorOp],
-    ["run_workflow", workflowTool("run_workflow")],
-  ]);
-  const host = wf.buildWorkflowHostTools({ tools: mixed });
-
-  ok(!("read_notion_page" in host), "sandbox host tools EXCLUDE the gated connector op (unreachable from code-mode)");
-  ok("run_workflow" in host, "sandbox host tools include the workflow tool (the only exposed class)");
+  const connector = await run("return await tools.read_notion_page({});");
   ok(
-    host.run_workflow?.execute !== rtaExecute,
-    "even the exposed workflow tool's execute is WRAPPED (interrupts back to the host gate — the original execute never runs inline in the sandbox)",
+    connector.error !== undefined && /read_notion_page/.test(connector.error),
+    `a connector op is UNREACHABLE from the program sandbox — the call fails, it never returns a provider result (got ${JSON.stringify(connector)})`,
   );
 
-  for (const [label, target] of [
-    ["subagent-call", { kind: "subagent-call", nodeId: "n", subagentName: "s" }],
-    ["self-agent-call", { kind: "self-agent-call", nodeId: "n", subagentName: "s" }],
-    ["remote-agent-call", { kind: "remote-agent-call", nodeId: "n", remoteAgentName: "r" }],
-    ["task-cancel", { kind: "task-cancel" }],
-    ["task-update", { kind: "task-update" }],
-    ["workflow-tool-call", { kind: "workflow-tool-call", workflowId: "w1" }],
-  ] as const) {
-    const only = new Map<string, unknown>([["ctl", dispatchTool("ctl", target as unknown as Record<string, unknown>)]]);
-    ok(
-      Object.keys(wf.buildWorkflowHostTools({ tools: only })).length === 0,
-      `a \`${label}\` dispatch tool is NOT exposed to the sandbox (the filter reads \`workflowId\`, and a dispatch tool carries none)`,
-    );
-  }
+  const egress = await run("return await fetch('http://169.254.169.254/latest/meta-data/');");
+  ok(egress.error !== undefined && /fetch/.test(egress.error), `the program sandbox has no fetch — egress is impossible from it (got ${JSON.stringify(egress)})`);
+
+  const delegated = await run("return await ctx.agent('researcher', { message: 'list every silo' });");
   ok(
-    Object.keys(wf.buildWorkflowHostTools({ tools: new Map<string, unknown>([["w", workflowTool("w")]]) })).length === 1,
-    "NEGATIVE CONTROL: a tool declaring a `workflowId` IS exposed — the exclusions above are the filter, not an empty fixture",
+    delegated.result?.status === "interrupted",
+    `ctx.agent PARKS the program (status "interrupted") — the child runs in the owning agent, never inside the sandbox (got status ${JSON.stringify(delegated.result?.status ?? delegated.error)})`,
+  );
+  ok(
+    JSON.stringify(delegated.result?.interrupt?.continuation?.toolNames) === JSON.stringify(["agent"]),
+    `the sandbox's host-tool set is exactly ["agent"] (got ${JSON.stringify(delegated.result?.interrupt?.continuation?.toolNames)})`,
   );
 
-  const bg = new Map<string, unknown>([["bg", workflowTool("bg", { execution: "background" })]]);
+  const stepSrc = readFileSync(fileURLToPath(stepUrl), "utf8");
   ok(
-    "bg" in wf.buildWorkflowHostTools({ tools: bg }),
-    "a BACKGROUND workflow tool is still exposed to the sandbox (the host filter ignores `execution`)",
+    /function buildWorkflowProgramTools\(\)\{return\{agent:createParkingHostTool\(\{[^]*?\}\)\}\}/.test(stepSrc),
+    "buildWorkflowProgramTools() takes NO argument and returns ONE tool, `agent`, built by createParkingHostTool",
   );
-
-  const nonRtaOnly = new Map<string, unknown>([
-    ["read_notion_page", gatedConnectorOp],
-    ["reply", { name: "reply", description: "reply", inputSchema: {}, execute: gatedExecute }],
-  ]);
-  const emptyHost = wf.buildWorkflowHostTools({ tools: nonRtaOnly });
+  const built = /let (\w+)=buildWorkflowProgramTools\(\)/.exec(stepSrc)?.[1];
+  ok(built !== undefined, "runWorkflowProgram binds its host set from buildWorkflowProgramTools()");
   ok(
-    Object.keys(emptyHost).length === 0,
-    "a tool-set with no workflow tools yields an EMPTY sandbox host set (⇒ Workflow tool never registered)",
+    new RegExp(`createWorkflowSandboxTool\\(\\{[^}]*hostTools:${built}\\}`).test(stepSrc) &&
+      new RegExp(`continueWorkflowSandboxInterrupt\\(\\{[^}]*tools:${built}\\}`).test(stepSrc),
+    "both the first run and every resume hand the sandbox THAT set — never another tool map",
+  );
+  const sandboxCallers = filesMatching(/createWorkflowSandboxTool\(/u).filter((rel) => !rel.startsWith("shared/workflow-sandbox."));
+  ok(
+    sandboxCallers.length === 1 && sandboxCallers[0] === "execution/dynamic-workflow/program-step.js",
+    `createWorkflowSandboxTool has ONE caller in eve's dist, the program step (got ${JSON.stringify(sandboxCallers)}). A second caller could build a sandbox from another tool set — re-run OPE-74 against it`,
   );
 }
 
@@ -219,6 +213,6 @@ function declaresDispatchTool(source: string): boolean {
 
 console.log(
   `\n✓ codemode-containment: ${n} assertions passed ` +
-    `(OE posture: no workflow.ts / no experimental_workflow / zero workflow tools · eve pin: sandbox exposes only wrapped workflow tools · ` +
+    `(OE posture: no eve/tools/workflow import / no workflow.ts / no experimental_workflow / zero workflow tools · eve pin: the program sandbox holds only the parking \`agent\` tool · ` +
     `live: benign runs, fetch fail-closed, connector op unreachable)\n`,
 );

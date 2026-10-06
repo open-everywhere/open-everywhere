@@ -1,7 +1,16 @@
 import { fetchChangedPaths } from "../ci/changed-paths.js";
 import { isSkippableDiff, runtimePaths } from "../ci/skippable-paths.js";
 import { CLOUD_PROOF_CONTEXT } from "./cloud-proof-post-lib.js";
-import { EXEC_TIMEOUT_MS, type Env, type Exec, realExec, resolveGithubApiBase, withExecDeadline } from "./lib.js";
+import {
+  EXEC_TIMEOUT_MS,
+  type Env,
+  type Exec,
+  pinGhRepoPlaceholders,
+  realExec,
+  resolveGithubApiBase,
+  resolveGithubOwnerRepoFromEnv,
+  withExecDeadline,
+} from "./lib.js";
 import { ensureProxyDispatcher } from "./proxy-dispatcher.js";
 
 export type CheckRun = {
@@ -105,14 +114,6 @@ export function resolveGithubRestToken(env: Env): string | undefined {
   return env.GH_TOKEN?.trim() || env.GITHUB_TOKEN?.trim() || undefined;
 }
 
-export function resolveGithubOwnerRepoFromEnv(env: Env): { owner: string; repo: string } | undefined {
-  const raw = env.GITHUB_REPOSITORY?.trim();
-  if (!raw) return undefined;
-  const slash = raw.indexOf("/");
-  if (slash <= 0 || slash === raw.length - 1) return undefined;
-  return { owner: raw.slice(0, slash), repo: raw.slice(slash + 1) };
-}
-
 export function parseGithubOwnerRepo(remoteUrl: string): { owner: string; repo: string } | undefined {
   const m = /github\.com[:/]([^/]+)\/(.+?)(?:\.git)?\/?$/.exec(remoteUrl.trim());
   if (!m) return undefined;
@@ -144,10 +145,11 @@ export async function fetchGithubApi(input: {
   timeoutMs?: number;
   execTimeoutMs?: number;
 }): Promise<GithubApiBody> {
-  const res = await withExecDeadline(input.exec, input.execTimeoutMs)("gh", input.ghArgs);
+  const ghArgs = pinGhRepoPlaceholders(input.ghArgs, input.env);
+  const res = await withExecDeadline(input.exec, input.execTimeoutMs)("gh", ghArgs);
 
   if (res.timedOutMs !== undefined) {
-    return { ok: false, reason: `\`gh ${input.ghArgs.join(" ")}\` timed out after ${res.timedOutMs}ms — refusing rather than waiting.` };
+    return { ok: false, reason: `\`gh ${ghArgs.join(" ")}\` timed out after ${res.timedOutMs}ms — refusing rather than waiting.` };
   }
 
   if (!res.spawnError) {

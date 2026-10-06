@@ -4,7 +4,7 @@ import type { GitHubApp } from "./app.js";
 import { CONVERSATION_READ_PERMISSIONS } from "./mint.js";
 import { prApiHeaders, type PrFetchFn } from "./pr.js";
 import { resolveAccessFor } from "../access/request.js";
-import type { BindableContext } from "../identity/binding.js";
+import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { registerCoreWorkSearchAdapter, type WorkSearchAdapter, type WorkSearchHit } from "../channels/work-search.js";
 import type { Domain } from "../memory/domain.js";
 
@@ -19,6 +19,7 @@ interface RawSearchItem {
   readonly title?: unknown;
   readonly html_url?: unknown;
   readonly repository_url?: unknown;
+  readonly pull_request?: unknown;
 }
 
 export async function searchGithubIssues(
@@ -63,11 +64,13 @@ export async function searchGithubIssues(
       const repoMatch = /\/repos\/(.+)$/.exec(item.repository_url);
       const repo = repoMatch ? repoMatch[1] : `${owner}/?`;
       if (!repoAllowed(repo, repos)) continue;
+      const isPull = typeof item.pull_request === "object" && item.pull_request !== null;
       hits.push({
         connector: "github",
         id: `${repo}#${item.number}`,
         title: typeof item.title === "string" && item.title.length > 0 ? item.title : "(untitled)",
         ...(typeof item.html_url === "string" ? { url: item.html_url } : {}),
+        readWith: { tool: isPull ? "get_pr_feedback" : "read_github_issue", args: { repo, number: item.number } },
       });
     }
   }
@@ -80,9 +83,21 @@ export const githubWorkSearchAdapter: WorkSearchAdapter = {
     const repos = resolveAccessFor(ctx).repos;
     if (repos.length === 0) throw new Error("this domain holds no GitHub repo grant.");
     await assertGithubActingIdentity(ctx, "search");
-    return searchGithubIssues(repos, query, opts.limit);
+    return withOwnConversationRoad(ctx, await searchGithubIssues(repos, query, opts.limit));
   },
 };
+
+export function withOwnConversationRoad(ctx: BindableContext, hits: readonly WorkSearchHit[]): readonly WorkSearchHit[] {
+  let own: string | undefined;
+  try {
+    const binding = bindFrom(ctx);
+    own = binding.anchorChannelId?.toLowerCase();
+  } catch {
+    own = undefined;
+  }
+  if (!own) return hits;
+  return hits.map((h) => (h.id.toLowerCase() === own ? { ...h, readWith: { tool: "read_work_channel", args: {} } } : h));
+}
 
 let registered = false;
 

@@ -19,7 +19,7 @@ webhook signature header rather than the API host.
 ## Install
 
 ```sh
-npm i @open-everywhere/core @open-everywhere/provider-github eve@0.54.3
+npm i @open-everywhere/core @open-everywhere/provider-github eve@0.71.0
 npx oe-eve-patch
 ```
 

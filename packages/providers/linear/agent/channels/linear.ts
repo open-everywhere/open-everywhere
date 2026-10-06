@@ -91,6 +91,7 @@ import {
   OE_ADDRESSED_ATTR,
   dispatchNativeWakeWithRetry,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { withEndsTurnFinalChannel } from "@open-everywhere/core/agent/adapter-api.js";
 
 const ROUTE = "/eve/v1/linear";
 
@@ -720,7 +721,7 @@ const LINEAR_MENTION_HANDOFF_TEXT =
   "Working on it — the org's cross-surface agent is answering; the reply will land here in a moment.";
 
 const LINEAR_MENTION_DIVERT_FAILED_TEXT =
-  "Open Everywhere couldn't route this mention to the org's cross-surface agent — please mention me again to retry.";
+  "I couldn't route this mention to the org's cross-surface agent — please mention me again to retry.";
 
 interface MentionRoutingVerdict {
   readonly routing: ReturnType<typeof routeLinearAgentSession>;
@@ -1229,4 +1230,4 @@ const routes: LinearChannel["routes"] = native.routes.map((r) =>
 
 const channel: LinearChannel = { ...native, routes };
 
-export default channel;
+export default withEndsTurnFinalChannel(channel);

@@ -2,13 +2,16 @@ import { appendAudit, readAudit } from "../audit/audit.js";
 import { defaultScopeKey } from "../tools/set_spend_limit.js";
 import type { SurfaceBinding } from "../identity/binding.js";
 import { MODEL_AB_ARM_ACTION, MODEL_AB_RATING_ACTION, MODEL_AB_RATING_MAX, MODEL_AB_RATING_MIN, type ModelArm } from "../model/ab-test.js";
+import { agentCommandName } from "../identity/bot-name.js";
 
 export interface RateCommand {
   readonly kind: "rate";
   readonly score: number;
 }
 
-export const RATE_HELP_LINE = `• \`/oe rate <${MODEL_AB_RATING_MIN}-${MODEL_AB_RATING_MAX}>\` — mark the model A/B test: rate the last answer in this channel.`;
+export function rateHelpLine(): string {
+  return `• \`/${agentCommandName()} rate <${MODEL_AB_RATING_MIN}-${MODEL_AB_RATING_MAX}>\` — mark the model A/B test: rate the last answer in this channel.`;
+}
 
 export function parseRateTokens(rest: readonly string[]): RateCommand | { readonly kind: "error"; readonly message: string } {
   const raw = rest[0];
@@ -17,8 +20,8 @@ export function parseRateTokens(rest: readonly string[]): RateCommand | { readon
     return {
       kind: "error",
       message:
-        `"/oe rate" needs a whole number from ${MODEL_AB_RATING_MIN} to ${MODEL_AB_RATING_MAX}, ` +
-        `e.g. "/oe rate 4" (got ${JSON.stringify(raw ?? "")}).`,
+        `"/${agentCommandName()} rate" needs a whole number from ${MODEL_AB_RATING_MIN} to ${MODEL_AB_RATING_MAX}, ` +
+        `e.g. "/${agentCommandName()} rate 4" (got ${JSON.stringify(raw ?? "")}).`,
     };
   }
   return { kind: "rate", score };
@@ -72,7 +75,7 @@ export async function runRate(binding: SurfaceBinding, score: number, deps: Rate
   const turn = await lastArmedTurn(binding.org, surfaceKey, deps);
   if (!turn) {
     return (
-      "Nothing to rate here yet — `/oe rate` marks a model A/B test, and this channel has no recorded " +
+      `Nothing to rate here yet — \`/${agentCommandName()} rate\` marks a model A/B test, and this channel has no recorded ` +
       "A/B turn. That is the normal answer when the test is off, when this room's model is pinned, or " +
       "when the room's last turn ran on a worker or supervisor seat."
     );

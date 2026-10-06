@@ -92,7 +92,7 @@ export interface WakeEnvelopeInput {
   readonly systemNote?: string;
 }
 
-function escapeXml(s: string): string {
+export function escapeXml(s: string): string {
   return s
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")

@@ -510,7 +510,13 @@ Open Everywhere wakes on an `@mention` in a channel, or on any message in a DM.
 1. In any channel, invite the bot: `/invite @Open Everywhere`.
 2. Mention it: `@Open Everywhere summarise the last 20 messages and post the action items`.
 3. Expected behaviour:
-   - It reacts to the thread root with 👀 (seen it, working on it) and shows a rotating status verb as its typing indicator (`Tinkering…`).
+   - It reacts to the thread root with 👀 (seen it, working on it) and shows a rotating status verb as its typing indicator (`Tinkering…`). eve's own `Thinking...` status comes first, while the mention is admitted.
+   - A turn that starts a task also posts eve's **task card**: one message per turn, one row per
+     task, updated in place. Outside a 1:1 DM a row shows the task's name only (`Researcher`), never
+     the brief the agent wrote for it, because a brief can carry content from another conversation.
+     Outside a 1:1 DM, a row that waits on a person says only what it waits for (`Waiting for approval`).
+     In a 1:1 DM with you, a row shows the brief. In no room does a row show the task's result: the
+     answer arrives as the agent's reply.
    - On the **first** mention in a channel it posts a short intro and adopts any pinned messages as standing instructions for that surface.
    - It does the work, replies in-thread, and **removes** the 👀 — absence is the done signal; the posted reply is the result. On a failure it flips to 🛑 (blocked) instead. (✅ is deliberately left to humans — react ✅ yourself to mark something done.)
    - **Every channel reply lands in a thread.** A message that is already in a thread is answered
@@ -689,9 +695,9 @@ Two different things, two different mechanisms — and the split is not stylisti
 
 **Stop the turn it is running now.** Either react **✋** on the thread, or run **`/oe stop`**. Both
 are decided at ingress, before any model call, so both are free and both keep working when the
-channel is over its spend cap. The ✋ is placed by the agent's host when a turn actually kicks work
-off — its first delegation — and removed when the turn ends, so it is present and clickable exactly
-while a stop is meaningful, and never appears on a message the agent merely read. Inference cannot
+channel is over its spend cap. The agent's host places the ✋ only where work is running, for example on the
+message that asked for a job, from the job's start to its settlement. So it is present and
+clickable exactly while a stop is meaningful, and never appears on a message the agent merely read. Inference cannot
 do this job at all: the agent is the thing that is busy, so a message saying "stop!" queues behind
 the very turn it would stop.
 

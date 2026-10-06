@@ -9,10 +9,12 @@ import type { BindableContext } from "../agent/identity/binding.js";
 import { GitHubApp } from "../agent/scm/app.js";
 import type { FetchFn } from "../agent/scm/mint.js";
 import { resetGitHubApp } from "../agent/scm/provider.js";
+import { registerSandboxFirewall } from "../agent/sandbox/network-policy.js";
 import { checkoutCommandBrokered, CHECKOUT_OK } from "../agent/scm/git.js";
 import { brokerAuthHeader, mintGitReadBroker, mergeGitReadBroker, withBareAllowHost, GIT_BROKER_HOSTS } from "../agent/scm/broker.js";
 import { stampEnforcement, isEnforced } from "../agent/access/enforcement.js";
 import checkoutRepoGated from "../agent/tools/checkout_repo.js";
+import { applyAndRecordEgressPolicy, egressPolicyCovers, egressPolicyFingerprint, egressPolicyShape, planEgressApply, readEgressAppliedRecord } from "../agent/hooks/egress.js";
 import { resolveWindowGated } from "../agent/access/window-gated.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
 
@@ -177,6 +179,8 @@ const { ContextContainer, contextStorage } = await import(abs("dist/src/context/
   }) as typeof fetch;
   try {
 
+  registerSandboxFirewall({ carries: "full", environment: {} as never });
+
   const ctxFor = (getSandbox: () => Promise<unknown>) =>
     ({
       channel: { kind: "slack" },
@@ -201,10 +205,17 @@ const { ContextContainer, contextStorage } = await import(abs("dist/src/context/
       policyCallsA.push(policy);
     },
   };
+  const basePolicy = { allow: { "api.acme.test": [] } };
+  const BASE_FINGERPRINT = egressPolicyFingerprint(basePolicy);
+  const seedBaseRecord = () => applyAndRecordEgressPolicy(basePolicy, { ctx: { getSandbox: async () => ({ setNetworkPolicy: async () => undefined }) } as never });
+  let recordA: ReturnType<typeof readEgressAppliedRecord> = {};
   await contextStorage.run(new ContextContainer(), async () => {
     stampEnforcement(true);
+    await seedBaseRecord();
+    eq(readEgressAppliedRecord().fingerprint, BASE_FINGERPRINT, "positive control: the seeded record names the base policy before the checkout");
     const result = await checkoutRepoTool.execute({ repo: "acme/web" }, ctxFor(async () => sandboxA) as never);
     ok((result as { ok: boolean }).ok === true, "checkout_repo (enforced): succeeds");
+    recordA = readEgressAppliedRecord();
   });
   ok(policyCallsA.length === 1, "checkout_repo (enforced): setNetworkPolicy is called once, applying the merged firewall policy");
   const appliedPolicy = policyCallsA[0] as { allow: Record<string, { match?: { path?: { startsWith?: string } } }[]> };
@@ -212,6 +223,46 @@ const { ContextContainer, contextStorage } = await import(abs("dist/src/context/
   ok(runCallsA.length === 1 && !runCallsA[0].includes("http.extraheader"), "checkout_repo (enforced): the clone command carries NO token — it stayed at the firewall");
   ok(mintCalls.length === 1 && mintCalls[0].repositories.length === 2 && mintCalls[0].repositories.includes("web") && mintCalls[0].repositories.includes("api"), "checkout_repo (enforced): mints the UNION of the session's granted repos, not just the one being checked out");
   ok(mintCalls[0].permissions.contents === "read", "checkout_repo (enforced): the broker mint is READ-ONLY");
+
+  {
+    eq(recordA.fingerprint, egressPolicyFingerprint(appliedPolicy as never), "🔴 checkout_repo (enforced): the record's fingerprint is the APPLIED brokered policy's, not the base's");
+    assert.deepEqual(recordA.enforcedShape, egressPolicyShape(appliedPolicy as never), "🔴 checkout_repo (enforced): the record's enforced shape is the APPLIED brokered policy's");
+    n++;
+    ok(
+      planEgressApply({ phase: "turn.started", fingerprint: BASE_FINGERPRINT, lastApplied: recordA.fingerprint }).reapply,
+      "…so the next turn RE-APPLIES the base policy rather than skipping it as unchanged, which drops the broker's token",
+    );
+    ok(
+      !egressPolicyCovers(recordA.enforcedShape, egressPolicyShape(basePolicy)),
+      "…and a failed re-apply of the base policy reads as a NARROWING of the brokered one, so the turn is refused (OPE-2158)",
+    );
+  }
+
+  {
+    let recordFail: ReturnType<typeof readEgressAppliedRecord> = {};
+    let failApplyCalls = 0;
+    const sandboxFail = {
+      run: async () => ({ stdout: CHECKOUT_OK, stderr: "", exitCode: 0 }),
+      setNetworkPolicy: async () => {
+        failApplyCalls++;
+        throw new Error("backend rejected setNetworkPolicy");
+      },
+    };
+    let threw: unknown;
+    await contextStorage.run(new ContextContainer(), async () => {
+      stampEnforcement(true);
+      await seedBaseRecord();
+      try {
+        await checkoutRepoTool.execute({ repo: "acme/web" }, ctxFor(async () => sandboxFail) as never);
+      } catch (err) {
+        threw = err;
+      }
+      recordFail = readEgressAppliedRecord();
+    });
+    eq(failApplyCalls, 1, "checkout_repo (enforced, apply rejected): the apply was reached exactly once");
+    ok(threw instanceof Error && threw.message.includes("backend rejected setNetworkPolicy"), "…and the checkout fails closed with the apply's own rejection");
+    eq(recordFail.fingerprint, BASE_FINGERPRINT, "…and the record still names the policy that stayed in force");
+  }
 
   {
     eq(await brokerRowCount(), brokerRowsBefore + 1, "checkout_repo (enforced): the brokered re-apply appends exactly ONE egress.policy row");

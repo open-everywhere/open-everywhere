@@ -53,7 +53,7 @@ test("a lean standing seat holds read_channel, spends a bounded budget in one tu
 
   const firstStep = await waitFor(() => overspending.requests.find((r) => r.role === "parent" && r.stepIndex === 0), "the seat's own first model call");
   expect(firstStep.tools).toContain(READER);
-  expect(firstStep.tools).toContain("agent");
+  expect(firstStep.tools).toContain("work");
   expect(firstStep.tools).not.toContain("bash");
   expect(firstStep.tools).not.toContain("purge_memory");
 
@@ -70,7 +70,7 @@ test("a lean standing seat holds read_channel, spends a bounded budget in one tu
   const refusalCarriers = afterOverspend.messages.filter((m) => m.text.includes(REFUSAL_MARKER));
   expect(refusalCarriers.length, "no prompt message carried the budget refusal").toBeGreaterThan(0);
   expect(refusalCarriers[refusalCarriers.length - 1]!.text).toContain("delegate a worker");
-  const beforeOverspend = overspending.requests.filter((r) => r.role === "parent" && r.stepIndex <= SEAT_RECOVERY_READ_BUDGET);
+  const beforeOverspend = overspending.requests.filter((r) => r.role === "parent" && r.redriveSilence !== true && r.stepIndex <= SEAT_RECOVERY_READ_BUDGET);
   expect(beforeOverspend.every((r) => r.messages.every((m) => !m.text.includes(REFUSAL_MARKER)))).toBe(true);
 
   overspending.dispose();

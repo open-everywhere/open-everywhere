@@ -138,8 +138,8 @@ its AES key (`OE_CREDENTIAL_ENCRYPTION_KEY`) is armed; a vendor broker registers
    convention to a vault lookup (an AWS Secrets Manager ARN, a Vault path, a GCP Secret
    Manager resource name). Ignore `authorizationDetails` unless your vault has an
    analogous down-scoping mechanism.
-2. Register it at startup: `registerBroker("my-vault", myBroker)` (typically from your app's
-   `agent/lib/register-adapters.ts`).
+2. Register it at startup: `registerBroker("my-vault", myBroker)`, from the `customAdapters`
+   hook in your app's `agent/lib/register-adapters.ts`.
 3. Stamp the credentials that live in it: `broker: "my-vault"` on each `ConnectorCredential` /
    `Connection` whose `secretRef` your vault owns.
 

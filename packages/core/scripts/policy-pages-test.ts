@@ -1,7 +1,3 @@
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-
 import {
   PRIVACY_PAGE_PATH,
   TERMS_PAGE_PATH,
@@ -101,24 +97,6 @@ ok((headers.get("cache-control") ?? "").includes("public"), "headers: cacheable 
 ok(!(headers.get("cache-control") ?? "").includes("no-store"), "headers: NOT no-store (the deliberate contrast with page-chrome.ts)");
 ok(headers.get("referrer-policy") === null, "headers: no no-referrer — this page's URL carries no token");
 ok(!publicBody.includes("noindex"), "headers: not noindex — an admin and an index are meant to find these");
-
-const manifestPath = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "teams-app", "manifest.json");
-const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
-  developer: { privacyUrl: string; termsOfUseUrl: string };
-  description: { full: string };
-};
-
-ok(
-  manifest.developer.privacyUrl.endsWith(PRIVACY_PAGE_PATH),
-  `manifest: privacyUrl ends at the mounted path (got "${manifest.developer.privacyUrl}")`,
-);
-ok(
-  manifest.developer.termsOfUseUrl.endsWith(TERMS_PAGE_PATH),
-  `manifest: termsOfUseUrl ends at the mounted path (got "${manifest.developer.termsOfUseUrl}")`,
-);
-
-ok(!manifest.description.full.includes("on your behalf"), "manifest: the description does not claim it acts on your behalf");
-ok(manifest.description.full.includes("one bot identity shared by this deployment"), "manifest: the description says what the shared bot credential is");
 
 resetSettingsForTest();
 console.log(`✓ policy-pages: ${passed} assertions passed`);

@@ -22,7 +22,7 @@ export interface AgentSettings {
   readonly approvals: {
     readonly judgeMode: ApprovalJudgeMode;
     readonly ttlHours: number;
-    readonly sessionTtlHours: number;
+    readonly routineGrantTtlHours: number;
     readonly checkpointTtlHours: number;
     readonly routineCardWaitSeconds: number;
   };
@@ -70,6 +70,8 @@ export interface AgentSettings {
   readonly identity: {
     readonly dmTrustTtlMs: number;
     readonly name: string;
+    readonly shortName: string;
+    readonly commandName: string;
   };
   readonly memory: {
     readonly dreamCandidateCap: number;
@@ -178,7 +180,7 @@ export const SETTINGS = {
       shipped: 30_000_000,
       validate: positiveNumber,
       summary:
-        "eve's `limits.maxInputTokensPerSession`, set BELOW the hosted 40M hard kill so the graceful park/fail fires first. KEEP IT UNDER 40M — above that the hosted wall wins and the session dies ungracefully instead of parking. Read at BOOT (it is a `defineAgent` argument).",
+        "eve's `limits.maxInputTokensPerSession`, set BELOW the hosted 40M hard kill so the graceful park/fail fires first. KEEP IT UNDER 40M — above that the hosted wall wins and the session dies ungracefully instead of parking. ONE SHARED BUDGET: every delegated worker's input counts toward its seat's total, and a worker starts with only the seat's remaining share. Read at BOOT (it is a `defineAgent` argument).",
     } satisfies SettingSpec<number>,
     compactionThresholdPercent: {
       path: "agent.compactionThresholdPercent",
@@ -192,10 +194,10 @@ export const SETTINGS = {
   approvals: {
     judgeMode: {
       path: "approvals.judgeMode",
-      shipped: "off",
+      shipped: "enforce",
       validate: (v) => (v === "off" || v === "shadow" || v === "enforce" ? undefined : 'must be "off", "shadow" or "enforce"'),
       summary:
-        "LLM approval judge arming. `shadow` logs a would-be verdict beside every real card; `enforce` applies the judge's verdict for defer-flipped rows. `off` (shipped) runs no judge at all.",
+        "The LLM approval judge. `enforce` (shipped): for a judge-deferred act, the judge allows it with no card ONLY when it cites one of the scope's authored pre-approval rules (`preApprovalRules` on a bundle); every other answer, an unreachable judge model and a timeout all post the card. Admin acts never reach the judge. A consult costs up to two model calls on the `judge` model role, and a scope with no authored rule costs none. `shadow` decides nothing and logs a would-be verdict beside every real card. `off` runs no judge, so every gated act posts a card.",
     } satisfies SettingSpec<ApprovalJudgeMode>,
     ttlHours: {
       path: "approvals.ttlHours",
@@ -204,12 +206,12 @@ export const SETTINGS = {
       summary: "TTL before a pending approval action lazily expires, in hours.",
       format: (v) => `${v} h`,
     } satisfies SettingSpec<number>,
-    sessionTtlHours: {
-      path: "approvals.sessionTtlHours",
+    routineGrantTtlHours: {
+      path: "approvals.routineGrantTtlHours",
       shipped: 24,
       validate: positiveNumber,
       summary:
-        "TTL for a `pr.open` session-approval memo (the `approve_session` third click verb), in hours. A GC bound only — the memo's frozen session id embeds the window generation, so a rotation stops it matching regardless.",
+        "TTL for a routine's standing grant, in hours: the grant the middle button of a routine's `pr.open` card writes (\"Approve for this routine\", the `approve_session` click verb). Later fires of that routine skip the card for that kind until the grant expires, a break-glass `revoke_session_grants` deletes it, or an `edit_routine` moves the routine's key. A card in a conversation has no middle button and keeps no grant (OPE-2363), so this clock never applies to one. Was `approvals.sessionTtlHours` before 0.2.0.",
       format: (v) => `${v} h`,
     } satisfies SettingSpec<number>,
     checkpointTtlHours: {
@@ -217,7 +219,7 @@ export const SETTINGS = {
       shipped: 24,
       validate: positiveNumber,
       summary:
-        "TTL for the session-checkpoint memos of a LIVE session, in hours. A GC bound, not the death mechanism — the memo's session id embeds the window generation, so a rotation drops it regardless. It does NOT bound a ROUTINE fire's continue grant, which carries no expiry: approving a durable job's checkpoint records the cost at that moment as the approved mark, and the next card fires only once the session spends a fresh threshold's worth on top of it. It still bounds that fire's \"asked\" marker, which is what lets a declined job be asked again.",
+        "TTL for the session-checkpoint memos of a LIVE session, in hours. A REAL bound, not only a GC bound (OPE-2161). The memo's session id embeds the window generation, so a rotation can drop it first. But one generation can live for days, and then this clock ends the grant. The card and the click answer name this value. It does NOT bound a ROUTINE fire's continue grant, which carries no expiry: approving a durable job's checkpoint records the cost at that moment as the approved mark, and the next card fires only once the session spends a fresh threshold's worth on top of it. It still bounds that fire's \"asked\" marker, which is what lets a declined job be asked again.",
       format: (v) => `${v} h`,
     } satisfies SettingSpec<number>,
     routineCardWaitSeconds: {
@@ -284,7 +286,7 @@ export const SETTINGS = {
       path: "connectors.opTiering",
       shipped: false,
       summary:
-        "The per-op consequence gate (A2): each `<connection>__<op>` call is classified individually (reads open, writes gated) instead of a blanket `once()`.",
+        "The per-op consequence gate (A2): each `<connection>__<op>` call is classified individually (reads open, a write needs one approval per conversation, a destructive op one per call) instead of the blanket grain, where every op needs one approval per conversation. Either way the approval is an OE card that posts and returns, never a native wait (OPE-2340).",
     } satisfies SettingSpec<boolean>,
     memberPlane: {
       path: "connectors.memberPlane",
@@ -306,7 +308,7 @@ export const SETTINGS = {
       path: "delegation.oneshotAgent",
       shipped: true,
       summary:
-        "Whether this deployment DELEGATES at all. Armed, a conversational seat may hand a self-contained job to a full-hands worker through eve's built-in `agent`, and `spawn_thread_session` may mint a persistent thread seat. Disarming makes the whole delegation machinery inert: no seat holds `agent`, `spawn_thread_session` never mounts, and the wide-hands kit widens back to the task and native grains. There is no switch between delegation ROUTES — the built-in is the only one — so the only posture this expresses is LESS delegation.",
+        "Whether this deployment DELEGATES at all. Armed, a conversational seat may forward a self-contained job with `work` to its own conversation's work session, which hands it to a full-hands worker through eve's built-in `agent`, and `spawn_thread_session` may mint a persistent thread seat. Disarming makes the whole delegation machinery inert: no session holds `work` or `agent`, `spawn_thread_session` never mounts, and the wide-hands kit widens back to the task and native grains. There is no switch between delegation ROUTES — the built-in is the only one — so the only posture this expresses is LESS delegation.",
     } satisfies SettingSpec<boolean>,
   },
   models: {
@@ -373,7 +375,7 @@ export const SETTINGS = {
       shipped: 15 * 60_000,
       validate: positiveNumber,
       summary:
-        "Memoisation TTL for the room roster and the governance attestation behind the audience floor — the one computation shared by the admin-governance floor, the connector-disclosure floor, the triggered-fire disclosure floor, the approval-card clicker floor and the card-disclosure floor.",
+        "Memoisation TTL for the room roster and the governance attestation behind the audience floor — the one computation shared by the admin-governance floor, the connector-disclosure floor, the triggered-fire disclosure floor, the approval-card clicker floor and the card-disclosure floor. It applies in full to a RESOLVED roster only. An unresolved answer (a failed or rate-limited membership read, a non-shared room larger than one members page, a room the app cannot read) is memoised for at most 30 s (`UNRESOLVED_ROSTER_TTL_MS` in access/audience-floor.ts), because the observed-guest legs of the four non-governance floors are inert on it, and a memoised failure disarms them for as long as it is held (OPE-2150). Two legs refuse instead, and for them the 30 s memo bounds a refusal window: the clicker floor's beneficiary leg on any unresolved roster, and the connector-disclosure floor on a FAILED one (a transient read failure on an askable surface, Slack today, OPE-2306). An UNOBSERVABLE roster (a surface that cannot be asked, or a steady-state non-answer) leaves the connector-disclosure floor inert. The governance attestation memo still holds a disarmed attestation for the TTL — that direction is closed.",
       format: (v) => `${v} ms`,
     } satisfies SettingSpec<number>,
   },
@@ -392,8 +394,34 @@ export const SETTINGS = {
       validate: (v) =>
         /[\n\r]/u.test(v) ? "must not contain a line break" : v.length > 64 ? "must be at most 64 characters" : undefined,
       summary:
-        "The deployment's CANONICAL agent name — the ONLY name the agent calls itself, on every surface (OPE-610). Unset (the shipped `\"\"`) renders the generic identity line (\"Identify as this team's agent\") even where a surface has a live display-name arm: a per-surface app's own name is a HANDLE/address, never a substitute identity, so it never feeds the identity line. Each provider bundle registers that arm (`agent/identity/bot-display-name.ts`); Slack, Microsoft Teams and Discord ship one, rendered as a separate handle line (\"your mention/handle on X appears as Y\") for self-recognition of mentions/backscroll — the other surfaces resolve no handle. Configuring this setting matters most for a CROSS-SURFACE session, which speaks on several surfaces from one standing block: before this setting existed, a Teams delivery introduced the agent by the SLACK workspace display name (OPE-569). Set it and one name answers everywhere, on the per-surface path and the cross-surface path alike. It ALSO joins the name-drop token set (`agent/identity/bot-name.ts`) that the Notion synthetic-mention recogniser and the addressed link-claim hook match on, so the agent answers to the name it introduces itself by. It is ADDITIVE there — the brand and short-name tokens still match. It ALSO joins the SLACK and DISCORD ambient name-drop wake trigger set (OPE-571), alongside those surfaces' own live display names — see `wake.nameDrop.include`/`wake.nameDrop.exclude` to extend or narrow that set further.",
+        "The deployment's CANONICAL agent name — the ONLY name the agent calls itself, on every surface (OPE-610). Unset (the shipped `\"\"`) renders the generic identity line (\"Identify as this team's agent\") even where a surface has a live display-name arm: a per-surface app's own name is a HANDLE/address, never a substitute identity, so it never feeds the identity line. Each provider bundle registers that arm (`agent/identity/bot-display-name.ts`); Slack, Microsoft Teams and Discord ship one, rendered as a separate handle line (\"your mention/handle on X appears as Y\") for self-recognition of mentions/backscroll — the other surfaces resolve no handle. Configuring this setting matters most for a CROSS-SURFACE session, which speaks on several surfaces from one standing block: before this setting existed, a Teams delivery introduced the agent by the SLACK workspace display name (OPE-569). Set it and one name answers everywhere, on the per-surface path and the cross-surface path alike. It ALSO joins the name-drop token set (`agent/identity/bot-name.ts`) that the Notion synthetic-mention recogniser and the addressed link-claim hook match on, so the agent answers to the name it introduces itself by. 🔴 It REPLACES the brand there (the maintainer's ruling, OPE-2334): with this setting or `identity.shortName` set, ONLY the configured names (and a surface's platform-resolved integration name) match, and the brand tokens \"open everywhere\" and \"oe\" match only on a deployment that configures no name. The same name also renders every install artifact (the Slack and Teams app manifests) and every user-facing and model-facing string that used to spell the brand; unset, those fall back to the brand default \"Open Everywhere\" or a neutral phrase. It ALSO joins the SLACK and DISCORD ambient name-drop wake trigger set (OPE-571), alongside those surfaces' own live display names — see `wake.nameDrop.include`/`wake.nameDrop.exclude` to extend or narrow that set further.",
       format: (v) => (v === "" ? "`` (unset — generic identity line; per-surface handle still shown separately where resolved)" : v),
+    } satisfies SettingSpec<string>,
+    shortName: {
+      path: "identity.shortName",
+      shipped: "",
+      validate: (v) =>
+        /[\n\r]/u.test(v)
+          ? "must not contain a line break"
+          : v.length > 32
+            ? "must be at most 32 characters"
+            : v !== "" && v.trim().length < 2
+              ? "must be at least 2 characters (a shorter token is never matched)"
+              : undefined,
+      summary:
+        "The agent's SHORT name (OPE-2334) — a second name token beside `identity.name`, for the abbreviation people type (\"ari\" for \"Aria\"). It joins the name-drop token set (`agent/identity/bot-name.ts`) that the Notion synthetic-mention recogniser and the addressed link-claim hook match on. Setting it, like setting `identity.name`, makes the CONFIGURED names the only wake tokens: the brand tokens \"open everywhere\" and \"oe\" stop matching. It does NOT join the Slack/Discord ambient name-drop set, which stays narrow on purpose — add it to `wake.nameDrop.include` to widen that set. Unset (the shipped `\"\"`) adds no token.",
+      format: (v) => (v === "" ? "`` (unset — no short-name token)" : v),
+    } satisfies SettingSpec<string>,
+    commandName: {
+      path: "identity.commandName",
+      shipped: "oe",
+      validate: (v) =>
+        /^[a-z0-9][a-z0-9_-]{0,30}$/u.test(v)
+          ? undefined
+          : "must be 1-31 lowercase letters, digits, `-` or `_`, starting with a letter or digit, with no slash",
+      summary:
+        "The name of the zero-inference control-plane slash command, without its slash (OPE-2334). Shipped `oe`, so the command is `/oe`. It reaches every place the command name lives: the Slack app manifest's `slash_commands` entry, the Slack command route's own name check, Discord's command registration and interaction-router match, and the help, acknowledgement and error text the commands render. ⚠️ CHANGING IT IS AN INSTALL STEP, NOT ONLY A DIFF: Slack registers the command from the manifest, so paste the re-rendered manifest (`surface_manifest`) into the Slack app; Discord registers it at boot under the new name, and the old command stays listed until it is deleted in the Discord developer portal.",
+      format: (v) => `/${v}`,
     } satisfies SettingSpec<string>,
   },
   memory: {
@@ -416,7 +444,7 @@ export const SETTINGS = {
       shipped: "",
       validate: policyTextProblem,
       summary:
-        "The operator's PRIVACY POLICY, served as `GET /privacy` — the URL `teams-app/manifest.json` declares as `privacyUrl`. Free text, rendered ESCAPED and as PLAIN TEXT with its line breaks kept: never as HTML and never as markdown, so the route cannot become a way to serve arbitrary markup from this deployment's origin. Empty (shipped) ⇒ the route answers 200 with a placeholder page saying no policy is published yet and naming this setting; it never 404s, because a manifest pointing at a 404 is the defect the route exists to remove.",
+        "The operator's PRIVACY POLICY, served as `GET /privacy` — the URL the rendered Teams app manifest (`packages/providers/teams/agent/app-manifest.ts`, served by `surface_manifest`) declares as `privacyUrl`. Free text, rendered ESCAPED and as PLAIN TEXT with its line breaks kept: never as HTML and never as markdown, so the route cannot become a way to serve arbitrary markup from this deployment's origin. Empty (shipped) ⇒ the route answers 200 with a placeholder page saying no policy is published yet and naming this setting; it never 404s, because a manifest pointing at a 404 is the defect the route exists to remove.",
       format: (v) => (v === "" ? "`` (unset — `/privacy` serves the placeholder page)" : "the operator's own text"),
     } satisfies SettingSpec<string>,
     terms: {
@@ -424,7 +452,7 @@ export const SETTINGS = {
       shipped: "",
       validate: policyTextProblem,
       summary:
-        "The operator's TERMS OF USE, served as `GET /terms` — the URL `teams-app/manifest.json` declares as `termsOfUseUrl`. Same rendering and same unset behaviour as `policyPages.privacy`.",
+        "The operator's TERMS OF USE, served as `GET /terms` — the URL the rendered Teams app manifest (`packages/providers/teams/agent/app-manifest.ts`, served by `surface_manifest`) declares as `termsOfUseUrl`. Same rendering and same unset behaviour as `policyPages.privacy`.",
       format: (v) => (v === "" ? "`` (unset — `/terms` serves the placeholder page)" : "the operator's own text"),
     } satisfies SettingSpec<string>,
   },
@@ -508,7 +536,7 @@ export const SETTINGS = {
       path: "sandbox.stopAfterTurn",
       shipped: true,
       summary:
-        "Stop the sandbox compute the moment each turn's reply is sent rather than letting it idle out the timeout window. On Vercel the stop auto-snapshots and the next turn auto-resumes; on the docker backend the session container is stopped (never removed) and restarted on next use. The just-bash backend has no compute to stop — it runs inside the app process — so this setting is inert there and the hook logs which backend owns the stop at the first turn end.",
+        "Stop the sandbox compute the moment each turn's reply is sent rather than letting it idle out the timeout window. On a WORK SESSION, which owns the conversation's sandbox, the stop waits until the work session is idle: it owes no unsettled task and no forwarded job. On Vercel the stop auto-snapshots and the next turn auto-resumes; on the docker backend the session container is stopped (never removed) and restarted on next use. The just-bash backend has no compute to stop — it runs inside the app process — so this setting is inert there and the hook logs which backend owns the stop at the first turn end.",
     } satisfies SettingSpec<boolean>,
     extendMaxMinutes: {
       path: "sandbox.extendMaxMinutes",
@@ -522,7 +550,7 @@ export const SETTINGS = {
       shipped: 30 * 60 * 1000,
       validate: positiveInt,
       summary:
-        "The per-session sandbox window, in ms. With stop-after-turn owning idle cost this is a BACKSTOP fuse — it binds only when the turn-end hook cannot run — and the max continuous work one session may do. **Applied at sandbox CREATE and persisted on the sandbox, so a change only affects NEW conversations.**",
+        "The per-session sandbox window, in ms. With stop-after-turn owning idle cost this is a BACKSTOP fuse — it binds only when the turn-end hook cannot run — and the max continuous work one session may do. On a work session, whose stop waits until it is idle, this is the longest one job may hold the sandbox. **Applied at sandbox CREATE and persisted on the sandbox, so a change only affects NEW conversations.**",
       format: (v) => `${v} ms`,
     } satisfies SettingSpec<number>,
     snapshotExpirationMs: {
@@ -839,7 +867,7 @@ export function getSettings(
     approvals: {
       judgeMode: resolve(SETTINGS.approvals.judgeMode, o.approvals?.judgeMode, env),
       ttlHours: resolve(SETTINGS.approvals.ttlHours, o.approvals?.ttlHours, env),
-      sessionTtlHours: resolve(SETTINGS.approvals.sessionTtlHours, o.approvals?.sessionTtlHours, env),
+      routineGrantTtlHours: resolve(SETTINGS.approvals.routineGrantTtlHours, o.approvals?.routineGrantTtlHours, env),
       checkpointTtlHours: resolve(SETTINGS.approvals.checkpointTtlHours, o.approvals?.checkpointTtlHours, env),
       routineCardWaitSeconds: resolve(SETTINGS.approvals.routineCardWaitSeconds, o.approvals?.routineCardWaitSeconds, env),
     },
@@ -887,6 +915,8 @@ export function getSettings(
     identity: {
       dmTrustTtlMs: resolve(SETTINGS.identity.dmTrustTtlMs, o.identity?.dmTrustTtlMs, env),
       name: resolve(SETTINGS.identity.name, o.identity?.name, env),
+      shortName: resolve(SETTINGS.identity.shortName, o.identity?.shortName, env),
+      commandName: resolve(SETTINGS.identity.commandName, o.identity?.commandName, env),
     },
     memory: {
       dreamCandidateCap: resolve(SETTINGS.memory.dreamCandidateCap, o.memory?.dreamCandidateCap, env),

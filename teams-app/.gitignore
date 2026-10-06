@@ -4,4 +4,6 @@ color.zip
 manifest.*.json
 manifest.filled.json
 manifest.json.tmp
+# The rendered manifest an operator saves here (OPE-2334) carries their app id and host once filled.
+manifest.json
 open-everywhere-teams.zip

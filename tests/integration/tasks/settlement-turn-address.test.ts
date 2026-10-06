@@ -1,8 +1,9 @@
 import { expect, test } from "vitest";
 
 import {
+  armSettlement,
   auditCursor,
-  awaitTaskSettlement,
+  awaitWorkResult,
   bootAgent,
   DISCORD_LISTED_CHANNEL_ID,
   discordMentionWake,
@@ -11,9 +12,9 @@ import {
   WAKE_FROM_ENVELOPE,
   rowsSinceCursor,
   sleep,
-  taskIdOfDelegation,
   waitFor,
   waitForChildren,
+  workTaskIdOfCall,
   type RecordedRequest,
 } from "../harness";
 
@@ -35,97 +36,93 @@ function disclosedTurnWake(text: string): string | undefined {
   return /delivered under is .([0-9a-f-]{36})./.exec(text)?.[1];
 }
 
-test("a settlement turn holds the task's own address from the notification, before it reads anything", async () => {
+test("after the worker's result, the seat's result-wake turn holds the address of the conversation that asked, and the settlement edge records it", async () => {
   await bootAgent();
 
+  const cursor = await auditCursor();
   const dispatched = disposeLater(
     registerScript({
       parent: [
-        { calls: [{ tool: "agent", input: { message: "do the long job" }, id: "t597-delegate" }] },
+        { calls: [{ tool: "work", input: { message: "do the long job" }, id: "t597-delegate" }] },
         { calls: [{ tool: "reply", input: { wake: MADE_UP_WAKE, text: "control" }, id: "t597-reply-ingressed" }] },
         { calls: [{ tool: "reply", input: { wake: WAKE_FROM_ENVELOPE, text: "handing this off", done: false }, id: "t597-dispatch-post" }] },
-        { say: "NO_REPLY" },
       ],
-      child: [{ say: CHILD_ANSWER }],
+      child: [{ delayMs: 120_000, say: CHILD_ANSWER }],
     }),
   );
 
-  const cursor = await auditCursor();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please delegate the long job" });
-
-  const resumed = await waitFor(
-    () => dispatched.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "agent")),
-    "the parent's resumed step carrying the delegation result",
-  );
-  expect(dispatched.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-  expect(resumed.toolResults.find((t) => t.name === "agent")!.isError).toBe(false);
-
-  const dispatchStep = dispatched.requests.find((r) => r.role === "parent" && r.stepIndex === 0)!;
-  expect(new Set(dispatchStep.tools).has("reply")).toBe(true);
-
-  const output = resumed.toolResults.find((t) => t.name === "agent")!.output as { taskId?: unknown };
-  expect(typeof output?.taskId).toBe("string");
 
   const ingressedReply = await waitFor(
     () => replyResultById(dispatched.requests, "t597-reply-ingressed"),
     "the dispatch turn's `t597-reply-ingressed` result",
   );
+  expect(dispatched.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   expect(ingressedReply.isError).toBe(true);
   expect(ingressedReply.text).not.toContain(NO_ADDRESS_COPY);
   const dispatchWake = disclosedTurnWake(ingressedReply.text);
   expect(dispatchWake).toBeDefined();
 
-  await waitFor(
-    () => dispatched.requests.find((r) => r.role === "parent" && r.stepIndex === 3),
-    "the dispatch turn's own terminal step",
-  );
+  const dispatchStep = dispatched.requests.find((r) => r.role === "parent" && r.stepIndex === 0)!;
+  expect(new Set(dispatchStep.tools).has("reply")).toBe(true);
 
-  await waitForChildren(dispatched, { count: 1, lastStepIndex: 0, label: "the delegated child's last step" });
-  const taskId = taskIdOfDelegation(dispatched, "t597-delegate");
-  const dispatchedRequests: readonly RecordedRequest[] = [...dispatched.requests];
+  await waitFor(async () => {
+    const rows = (await rowsSinceCursor(cursor, ["reply.post"])).filter((r) => r.detail?.route === "tool");
+    return rows.find((r) => r.detail?.chars === "handing this off".length);
+  }, "the dispatch turn's hand-off note's reply.post row");
+  const taskId = await workTaskIdOfCall(cursor, dispatched, "t597-delegate", "the t597 forward receipt");
 
-  const { handle: settlement } = await awaitTaskSettlement({
-    dispatched,
-    taskId,
-    script: {
+  const resultWake = disposeLater(
+    armSettlement(dispatched, {
       parent: [
         { calls: [{ tool: "reply", input: { wake: MADE_UP_WAKE, text: "too early" }, id: "t597-reply-unread" }] },
-        { calls: [{ tool: "task_cancel", input: { taskIds: [taskId] }, id: "t597-view" }] },
+        { calls: [{ tool: "cancel_work", input: { taskId }, id: "t597-view" }] },
         { calls: [{ tool: "reply", input: { wake: MADE_UP_WAKE, text: "too late" }, id: "t597-reply-recovered" }] },
         { say: "NO_REPLY" },
       ],
-    },
-    label: "the settled worker's completion, delivered as a new message naming the task id",
-  });
-  disposeLater(settlement);
+    }),
+  );
+  await waitForChildren(dispatched, { count: 1, lastStepIndex: 0, label: "the delegated worker to enter its hold" });
+  dispatched.releaseHolds();
+  const resultStep = await awaitWorkResult({ handle: resultWake, taskId, label: "the seat step that read the worker's result" });
+  expect(resultStep.fault).toBeUndefined();
+  expect(resultStep.turnId, "the result arrives in a seat turn of its own (OPE-2338)").not.toBe(dispatchStep.turnId);
+  expect(replyResultById(resultWake.requests, "t597-dispatch-post")?.isError).toBe(false);
 
   const early = await waitFor(
-    () => replyResultById(settlement.requests, "t597-reply-unread"),
-    "the settlement turn's `t597-reply-unread` result — the call made before any task view",
+    () => replyResultById(resultWake.requests, "t597-reply-unread"),
+    "the result-wake turn's `t597-reply-unread` result — the call made before any task call",
   );
   expect(early.isError).toBe(true);
   expect(early.text).not.toContain(NO_ADDRESS_COPY);
   const earlyWake = disclosedTurnWake(early.text);
   expect(earlyWake).toBeDefined();
-  expect(earlyWake).not.toBe(dispatchWake);
+  expect(earlyWake, "the result-wake turn holds the dispatch delivery's wake — the 0.54 inheritance").not.toBe(dispatchWake);
+  const resultWakeRow = await waitFor(
+    async () => (await rowsSinceCursor(cursor, ["work.result_wake"])).find((r) => r.detail?.taskId === taskId && r.detail?.outcome === "delivered"),
+    "the work.result_wake row for this task",
+  );
+  expect(earlyWake).toBe(String(resultWakeRow.detail?.wakeId));
+  expect(resultStep.messages.map((m) => m.text).join("\n")).toMatch(new RegExp(`^[ \\t]*for wake ${dispatchWake}$`, "m"));
 
   const viewStep = await waitFor(
-    () => settlement.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "task_cancel")),
-    "the settlement turn's task_cancel result — the surviving view edge",
+    () => resultWake.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.id === "t597-view")),
+    "the result-wake turn's cancel_work result",
   );
-  const view = viewStep.toolResults.find((t) => t.name === "task_cancel")!;
-  expect(view.isError).toBe(false);
-  expect(JSON.stringify(view.output)).toContain(CHILD_ANSWER);
+  const view = viewStep.toolResults.find((t) => t.id === "t597-view")!;
+  expect(view.isError, `cancel_work was refused: ${JSON.stringify(view.output)}`).toBe(false);
+  expect(JSON.stringify(view.output)).not.toContain("cannot be continued here");
+  expect(JSON.stringify(view.output)).toContain(taskId);
+  expect(resultWake.requests.some((r) => r.role === "parent" && r.messages.some((m) => m.text.includes(CHILD_ANSWER)))).toBe(true);
+  expect(JSON.stringify(view.output)).not.toContain(CHILD_ANSWER);
 
   const recovered = await waitFor(
-    () => replyResultById(settlement.requests, "t597-reply-recovered"),
-    "the settlement turn's `t597-reply-recovered` result — the call made after the task view",
+    () => replyResultById(resultWake.requests, "t597-reply-recovered"),
+    "the result-wake turn's `t597-reply-recovered` result — the call made after the task call",
   );
   expect(recovered.isError).toBe(true);
   expect(recovered.text).not.toContain(NO_ADDRESS_COPY);
   const recoveredWake = disclosedTurnWake(recovered.text);
-  expect(recoveredWake).toBeDefined();
-  expect(recoveredWake).not.toBe(dispatchWake);
   expect(recoveredWake).toBe(earlyWake);
 
   await sleep(1_500);
@@ -138,15 +135,17 @@ test("a settlement turn holds the task's own address from the notification, befo
   const postWakes = [...new Set(posts.map((r) => String(r.detail?.wakeId)))].sort();
   expect(postWakes).toEqual([dispatchWake!]);
   expect(posts).toHaveLength(1);
-  expect(earlyWake).not.toBe(dispatchWake);
   expect(posts.map((r) => String(r.detail?.id)).filter((id) => !id.startsWith("spoof-unified-"))).toEqual([]);
 
-  const wakeRows = await rowsSinceCursor(cursor, ["unified.task_wake"]);
-  const mine = wakeRows.filter((r) => String(r.detail?.task) === taskId);
-  expect(mine.length).toBeGreaterThanOrEqual(1);
-  expect(mine.map((r) => String(r.detail?.outcome))).toContain("installed");
-  expect(String(mine.find((r) => String(r.detail?.outcome) === "installed")?.detail?.wakeId)).toBe(earlyWake);
+  const wakeRows = await waitFor(async () => {
+    const rows = (await rowsSinceCursor(cursor, ["unified.task_wake"])).filter((r) => String(r.detail?.task) === taskId);
+    return rows.length > 0 ? rows : undefined;
+  }, "the settlement edge's unified.task_wake row for this task");
+  const outcomes = wakeRows.map((r) => String(r.detail?.outcome));
+  expect(outcomes).toContain("ingressed");
+  expect(outcomes).not.toContain("installed");
 
-  expect(dispatchedRequests.filter((r) => r.fault !== undefined)).toEqual([]);
-  expect(settlement.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  expect(dispatched.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  expect(resultWake.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  expect(dispatched.requests.some((r) => r.role === "parent" && r.stepIndex === 3)).toBe(false);
 });

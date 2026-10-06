@@ -44,58 +44,88 @@ const goodHook: FusedWebhookHook = defineWebhook({
   instruction: "A deploy just finished. Summarise it.",
 });
 
-function throws(fn: () => void): boolean {
+function throwsWith(fn: () => unknown, fragment: string, label: string): void {
+  let threw = false;
+  let error: unknown;
   try {
     fn();
-    return false;
-  } catch {
-    return true;
+  } catch (err) {
+    threw = true;
+    error = err;
   }
+  if (!threw) {
+    console.error(`✗ ${label} (expected a throw, got none)`);
+    process.exit(1);
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (!message.includes(fragment)) {
+    console.error(`✗ ${label} (threw, but not the refusal under test — expected "${fragment}", got: ${message})`);
+    process.exit(1);
+  }
+  passed++;
+}
+function doesNotThrow(fn: () => unknown, label: string): void {
+  let threw = false;
+  let error: unknown;
+  try {
+    fn();
+  } catch (err) {
+    threw = true;
+    error = err;
+  }
+  if (threw) {
+    console.error(`✗ ${label} (expected no throw, got: ${error instanceof Error ? error.message : String(error)})`);
+    process.exit(1);
+  }
+  passed++;
 }
 
-ok(!throws(() => assertWebhooksValid([goodHook])), "a well-formed hook passes validation");
-ok(throws(() => assertWebhooksValid([goodHook, goodHook])), "duplicate hook id is rejected");
-ok(throws(() => assertWebhooksValid([{ ...goodHook, id: "" }])), "empty id is rejected");
-ok(throws(() => assertWebhooksValid([{ ...goodHook, id: "bad id!" }])), "non-url-safe id is rejected");
-ok(throws(() => assertWebhooksValid([{ ...goodHook, source: "" }])), "a missing source is rejected — every hook names the scheme its sender signs with, there is no default");
-ok(throws(() => assertWebhooksValid([{ ...goodHook, source: "   " }])), "a blank source is rejected");
-ok(!throws(() => assertWebhooksValid([{ ...goodHook, source: "github" }])), "a VENDOR source is valid config — whether it RESOLVES is checked at delivery, not at import (verifiers register at startup)");
-ok(throws(() => assertWebhooksValid([{ ...goodHook, secretRef: "" }])), "a blank secretRef string is rejected");
-ok(throws(() => assertWebhooksValid([{ ...goodHook, secretRef: [] }])), "an EMPTY secretRef list is rejected (a hook with no key can never authenticate anything)");
-ok(throws(() => assertWebhooksValid([{ ...goodHook, secretRef: ["A", "  "] }])), "a blank entry INSIDE a secretRef list is rejected");
-ok(throws(() => assertWebhooksValid([{ ...goodHook, secretRef: ["A", "A"] }])), "a repeated secretRef is rejected (a rotation overlap lists DISTINCT refs)");
-ok(!throws(() => assertWebhooksValid([{ ...goodHook, secretRef: ["NEW", "OLD"] }])), "a two-ref rotation overlap is valid (current first)");
-ok(throws(() => assertWebhooksValid([{ ...goodHook, broker: "" }])), "a missing broker is rejected — every hook names its ONE home, there is no default");
+doesNotThrow(() => assertWebhooksValid([goodHook]), "a well-formed hook passes validation");
+throwsWith(() => assertWebhooksValid([goodHook, goodHook]), 'duplicate webhook hook id "deploy-status"', "duplicate hook id is rejected");
+throwsWith(() => assertWebhooksValid([{ ...goodHook, id: "" }]), 'webhook hook id "" must be a non-empty url-safe token', "empty id is rejected");
+throwsWith(() => assertWebhooksValid([{ ...goodHook, id: "bad id!" }]), 'webhook hook id "bad id!" must be a non-empty url-safe token', "non-url-safe id is rejected");
+throwsWith(() => assertWebhooksValid([{ ...goodHook, source: "" }]), 'webhook "deploy-status" is missing source', "a missing source is rejected — every hook names the scheme its sender signs with, there is no default");
+throwsWith(() => assertWebhooksValid([{ ...goodHook, source: "   " }]), 'webhook "deploy-status" is missing source', "a blank source is rejected");
+doesNotThrow(() => assertWebhooksValid([{ ...goodHook, source: "github" }]), "a VENDOR source is valid config — whether it RESOLVES is checked at delivery, not at import (verifiers register at startup)");
+throwsWith(() => assertWebhooksValid([{ ...goodHook, secretRef: "" }]), 'webhook "deploy-status" secretRef[0] is blank', "a blank secretRef string is rejected");
+throwsWith(() => assertWebhooksValid([{ ...goodHook, secretRef: [] }]), 'webhook "deploy-status" has an empty secretRef list', "an EMPTY secretRef list is rejected (a hook with no key can never authenticate anything)");
+throwsWith(() => assertWebhooksValid([{ ...goodHook, secretRef: ["A", "  "] }]), 'webhook "deploy-status" secretRef[1] is blank', "a blank entry INSIDE a secretRef list is rejected");
+throwsWith(() => assertWebhooksValid([{ ...goodHook, secretRef: ["A", "A"] }]), 'webhook "deploy-status" repeats a secretRef', "a repeated secretRef is rejected (a rotation overlap lists DISTINCT refs)");
+doesNotThrow(() => assertWebhooksValid([{ ...goodHook, secretRef: ["NEW", "OLD"] }]), "a two-ref rotation overlap is valid (current first)");
+throwsWith(() => assertWebhooksValid([{ ...goodHook, broker: "" }]), 'webhook "deploy-status" is missing broker', "a missing broker is rejected — every hook names its ONE home, there is no default");
 ok(hookSecretRefs(goodHook).length === 1 && hookSecretRefs(goodHook)[0] === "DEPLOY_STATUS_WEBHOOK_SECRET", "hookSecretRefs normalises the single-string form to a one-entry list");
 ok(
   hookSecretRefs({ ...goodHook, secretRef: ["NEW", "OLD"] }).join(",") === "NEW,OLD",
   "hookSecretRefs preserves declaration order (current key first)",
 );
-ok(throws(() => assertWebhooksValid([{ ...goodHook, target: "github/owner/repo" }])), "a non-slack target is rejected");
-ok(throws(() => assertWebhooksValid([{ ...goodHook, target: "slack/T1" }])), "a target missing the channel segment is rejected");
-ok(throws(() => assertWebhooksValid([{ ...goodHook, instruction: "  " }])), "a blank instruction is rejected");
-ok(!throws(() => assertWebhooksValid([])), "an empty registry is valid (the safe default)");
-ok(!throws(() => assertWebhooksValid([{ ...goodHook, authFloor: "signed-fresh" }])), "a hook declaring a grade ON the ladder validates");
-ok(!throws(() => assertWebhooksValid([goodHook])), "…and omitting it validates too — absence is NO FLOOR, which is what every hook already had");
-ok(throws(() => assertWebhooksValid([{ ...goodHook, authFloor: "signed_fresh" as never }])), "🔴 an authFloor OUTSIDE the ladder is rejected — a typo must not read as 'no floor'");
-ok(throws(() => assertWebhooksValid([{ ...goodHook, authFloor: "" as never }])), "…and neither may a blank one");
+throwsWith(() => assertWebhooksValid([{ ...goodHook, target: "github/owner/repo" }]), 'target must be a fully-qualified "slack/TEAM/CHANNEL" surface, got "github/owner/repo"', "a non-slack target is rejected");
+throwsWith(() => assertWebhooksValid([{ ...goodHook, target: "slack/T1" }]), 'target must be a fully-qualified "slack/TEAM/CHANNEL" surface, got "slack/T1"', "a target missing the channel segment is rejected");
+throwsWith(() => assertWebhooksValid([{ ...goodHook, instruction: "  " }]), 'declares a target ("slack/T1/C1") but no instruction', "a blank instruction is rejected");
+doesNotThrow(() => assertWebhooksValid([]), "an empty registry is valid (the safe default)");
+doesNotThrow(() => assertWebhooksValid([{ ...goodHook, authFloor: "signed-fresh" }]), "a hook declaring a grade ON the ladder validates");
+doesNotThrow(() => assertWebhooksValid([goodHook]), "…and omitting it validates too — absence is NO FLOOR, which is what every hook already had");
+throwsWith(() => assertWebhooksValid([{ ...goodHook, authFloor: "signed_fresh" as never }]), 'has an unknown authFloor "signed_fresh"', "🔴 an authFloor OUTSIDE the ladder is rejected — a typo must not read as 'no floor'");
+throwsWith(() => assertWebhooksValid([{ ...goodHook, authFloor: "" as never }]), 'has an unknown authFloor ""', "…and neither may a blank one");
 
 {
   const { target: _t, instruction: _i, ...emitOnly } = goodHook;
-  ok(!throws(() => assertWebhooksValid([emitOnly])), "🔴 a hook with NEITHER target nor instruction is VALID — that is the emit-only shape, and it is the point of the whole change");
-  ok(
-    throws(() => assertWebhooksValid([{ ...emitOnly, target: "slack/T1/C1" }])),
+  doesNotThrow(() => assertWebhooksValid([emitOnly]), "🔴 a hook with NEITHER target nor instruction is VALID — that is the emit-only shape, and it is the point of the whole change");
+  throwsWith(
+    () => assertWebhooksValid([{ ...emitOnly, target: "slack/T1/C1" }]),
+    'declares a target ("slack/T1/C1") but no instruction',
     "🔴 a target with NO instruction is REFUSED, not defaulted — it would fire a channel with nothing to say, and nothing about watching it work would reveal that",
   );
-  ok(
-    throws(() => assertWebhooksValid([{ ...emitOnly, instruction: "do a thing" }])),
+  throwsWith(
+    () => assertWebhooksValid([{ ...emitOnly, instruction: "do a thing" }]),
+    "declares an instruction but no target",
     "🔴 an instruction with NO target is REFUSED for the mirror reason — there is nowhere for it to run",
   );
-  ok(
-    throws(() => assertWebhooksValid([{ ...emitOnly, target: "slack/T1/C1", instruction: "   " }])),
+  throwsWith(
+    () => assertWebhooksValid([{ ...emitOnly, target: "slack/T1/C1", instruction: "   " }]),
+    'declares a target ("slack/T1/C1") but no instruction',
     "a BLANK instruction beside a target is the half-declared case too, not the emit-only one — whitespace must not smuggle a hook past the pair rule",
   );
-  ok(throws(() => assertWebhooksValid([{ ...goodHook, target: "slack/T1" }])), "a present-but-malformed target is still refused");
+  throwsWith(() => assertWebhooksValid([{ ...goodHook, target: "slack/T1" }]), 'target must be a fully-qualified "slack/TEAM/CHANNEL" surface, got "slack/T1"', "a present-but-malformed target is still refused");
 
   ok(isFusedHook(goodHook) === true, "isFusedHook: both halves present ⇒ fused");
   ok(isFusedHook(emitOnly) === false, "isFusedHook: neither half ⇒ not fused (no declared fire to run)");
@@ -416,14 +446,14 @@ ok((attackMsg.split(UNTRUSTED_CLOSE).length - 1) === 1, "an injected close-tag i
   ok(JSON.stringify(disclosures[2]!.project) === JSON.stringify(["note"]), "projection declares its key list");
   ok(configHookDisclosure({ posture: "projection", project: [] }).redactPayload === true, "🔴 a keyless projection WITHHOLDS — it never widens to the whole body");
 
-  ok(throws(() => assertWebhooksValid([{ ...goodHook, posture: "trigger_only" as never }])), "a typo'd posture is REFUSED, never silently defaulted to content-bearing (that inversion is the bug this field prevents)");
-  ok(throws(() => assertWebhooksValid([{ ...goodHook, posture: "projection" }])), "posture projection with no `project` keys is refused — a projection that renders nothing is trigger-only under another name");
-  ok(throws(() => assertWebhooksValid([{ ...goodHook, project: ["note"] }])), "`project` on a content-bearing hook is refused — it narrows nothing, so the declaration claims something false");
-  ok(throws(() => assertWebhooksValid([{ ...goodHook, posture: "trigger-only", project: ["note"] }])), "`project` on a trigger-only hook is refused for the same reason");
-  ok(throws(() => assertWebhooksValid([{ ...goodHook, posture: "projection", project: ["a", "a"] }])), "a repeated project key is refused — the list is rendered in order, so a repeat prints one field twice");
-  ok(throws(() => assertWebhooksValid([{ ...goodHook, posture: "projection", project: [" "] }])), "a blank project key is refused");
-  ok(!throws(() => assertWebhooksValid([{ ...goodHook, posture: "projection", project: ["note"] }])), "a coherent projection declaration passes");
-  ok(!throws(() => assertWebhooksValid([{ ...goodHook, posture: "trigger-only" }])), "a trigger-only declaration passes");
+  throwsWith(() => assertWebhooksValid([{ ...goodHook, posture: "trigger_only" as never }]), 'has an unknown posture "trigger_only"', "a typo'd posture is REFUSED, never silently defaulted to content-bearing (that inversion is the bug this field prevents)");
+  throwsWith(() => assertWebhooksValid([{ ...goodHook, posture: "projection" }]), 'declares posture "projection" but no `project` keys', "posture projection with no `project` keys is refused — a projection that renders nothing is trigger-only under another name");
+  throwsWith(() => assertWebhooksValid([{ ...goodHook, project: ["note"] }]), 'sets `project` but its posture is "content-bearing"', "`project` on a content-bearing hook is refused — it narrows nothing, so the declaration claims something false");
+  throwsWith(() => assertWebhooksValid([{ ...goodHook, posture: "trigger-only", project: ["note"] }]), 'sets `project` but its posture is "trigger-only"', "`project` on a trigger-only hook is refused for the same reason");
+  throwsWith(() => assertWebhooksValid([{ ...goodHook, posture: "projection", project: ["a", "a"] }]), "repeats a `project` key", "a repeated project key is refused — the list is rendered in order, so a repeat prints one field twice");
+  throwsWith(() => assertWebhooksValid([{ ...goodHook, posture: "projection", project: [" "] }]), 'webhook "deploy-status" project[0] is blank', "a blank project key is refused");
+  doesNotThrow(() => assertWebhooksValid([{ ...goodHook, posture: "projection", project: ["note"] }]), "a coherent projection declaration passes");
+  doesNotThrow(() => assertWebhooksValid([{ ...goodHook, posture: "trigger-only" }]), "a trigger-only declaration passes");
 
   const secret = "SENSITIVE-CUSTOMER-ROW-9f2a";
   const triggerOnly = renderWebhookMessage({ ...goodHook, posture: "trigger-only" }, secret);

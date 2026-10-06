@@ -5,7 +5,7 @@ import { assembleAccessInstructions } from "../access/instructions.js";
 import { resolveAccess } from "../access/resolver.js";
 import { getConfig } from "../access/config.js";
 import { resolvePartition, type Partition } from "../memory/partition.js";
-import { bindFrom } from "../identity/binding.js";
+import { bindFrom, workSeatWakeOf } from "../identity/binding.js";
 import { delegatedWakeThisTurn } from "../identity/delegated-binding.js";
 import { capabilitiesFor, capabilitiesForPlatform } from "../identity/capabilities.js";
 import { configuredAgentName } from "../identity/bot-name.js";
@@ -14,13 +14,14 @@ import { planFor, resolveMemoryPlan } from "../memory/resolve.js";
 import { effectiveRoleFor, renderRoleInstructions } from "../roles/role.js";
 import { renderMemoryIndex } from "../memory/listing.js";
 import { CONVERSATIONAL_ROOT_GRAINS, memoryRecallRouteFor, type MemoryRecallRoute } from "../access/window-gate-manifest.js";
-import { canDelegateFromSeat } from "../access/delegation-mount.js";
 import { renderApprovalPreviewFor } from "../access/approval-preview.js";
 import { resolveLeanSeatPosture } from "../access/lean-seat.js";
 import { SEAT_RECOVERY_READ_BUDGET } from "../access/seat-read-budget.js";
 import { renderWorkerCapabilityIndex } from "../access/worker-capabilities.js";
 import { WORKER_ONLY_TOOLS_STANDING, WORKER_ONLY_TOOLS_THREAD } from "../access/worker-capability-index.generated.js";
 import { renderPendingCancelNote } from "../channels/cancel-note.js";
+import { declaredOpsForReach } from "../hooks/fire-toolset.js";
+import { renderDeclaredReachBlock } from "../routines/watch.js";
 import { NOT_HALTED, haltScopeForCtx, haltSeatParagraph, resolveHalt } from "../access/halt.js";
 import { partialHaltPrefix, resolveTurnHaltReach } from "../channels/halt-per-wake.js";
 import { markDeliveryArm } from "../channels/reply-signal.js";
@@ -40,7 +41,12 @@ import {
   renderUnifiedSurfaces,
   type DeliveryArm,
   type SeatKind,
+  NO_HANDOFF_SECTION,
+  WORK_FORWARD_SECTION,
+  WORK_SESSION_SECTION,
 } from "./seat-prompt.js";
+import { forwardsToWorkSession, isWorkSessionContext, seatHoldsDelegationVerb } from "../access/work-session.js";
+import { canDelegateFromSeat } from "../access/delegation-mount.js";
 import { domainRoster, type Domain } from "../memory/domain.js";
 import {
   channelPlatform,
@@ -76,6 +82,12 @@ export function renderRecoveryReadDoctrine(lean: boolean): string {
     'and I cannot find a 16:00 reference — which message do you mean?" is a good answer, because you',
     "checked. The same sentence without the checking is a guess.",
   ].join("\n");
+}
+
+export function workTierSectionFor(ctx: BindableContext): string {
+  if (isWorkSessionContext(ctx)) return WORK_SESSION_SECTION;
+  if (forwardsToWorkSession(ctx)) return WORK_FORWARD_SECTION;
+  return isLeanSeat(ctx) && !seatHoldsDelegationVerb(ctx) ? NO_HANDOFF_SECTION : "";
 }
 
 function isLeanSeat(ctx: BindableContext): boolean {
@@ -177,12 +189,12 @@ export function renderSupervisorPersona(
   }
   if (!isSupervisorSession(ctx)) return "";
   const sid = classifySessionId(ctx.channel?.continuationToken);
-  return renderSeatPersona({ seatKind: "conversational", delivery: resolveDeliveryArm(ctx, sid, opts) });
+  return renderSeatPersona({ seatKind: "conversational", delivery: resolveDeliveryArm(ctx, sid, opts), ...(forwardsToWorkSession(ctx) ? { forwardsWork: true } : {}) });
 }
 
 function settlementWakeIdFor(ctx: BindableContext): string | undefined {
   if (!isWorkerSession(ctx)) return undefined;
-  return delegatedWakeThisTurn();
+  return workSeatWakeOf(ctx) ?? delegatedWakeThisTurn();
 }
 
 export function renderGrantsSlot(ctx: BindableContext): string {
@@ -394,7 +406,7 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
   let accessMd = "";
   let memoryMd = "";
   let roleMd = "";
-  const recall = memoryRecallRouteFor(windowGrainOf(ctx), undefined, undefined, canDelegateFromSeat(ctx));
+  const recall = memoryRecallRouteFor(windowGrainOf(ctx), undefined, undefined, seatHoldsDelegationVerb(ctx));
   if (domain && anchor) {
     try {
       const access = resolveAccess(
@@ -442,7 +454,7 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
     role: roleMd,
     access: accessMd,
     approvalPreview: renderApprovalPreviewFor(windowGrainOf(ctx), recall),
-    workerCapabilities: renderWorkerCapabilitiesFor(ctx, recall),
+    workerCapabilities: [renderWorkerCapabilitiesFor(ctx, recall), workTierSectionFor(ctx)].filter((b) => b.length > 0).join("\n\n"),
     recoveryRead: renderRecoveryReadDoctrine(isLeanSeat(ctx)),
     memoryIndex: memoryMd,
     noiseDoctrine: soloMode ? renderNoiseDoctrine(ctx) : "",
@@ -463,7 +475,7 @@ async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
   for (const w of access.warnings) console.log(`[open-everywhere:access] warning: ${w}`);
   const binding = bindFrom(ctx);
   const plan = planFor(binding, resolvePartition(ctx));
-  const recall = memoryRecallRouteFor(windowGrainOf(ctx), undefined, undefined, canDelegateFromSeat(ctx));
+  const recall = memoryRecallRouteFor(windowGrainOf(ctx), undefined, undefined, seatHoldsDelegationVerb(ctx));
   const memoryMd = plan.reads.length > 0 ? renderMemoryIndex(plan.reads, [], recall) : "";
   const handleInfo = await surfaceHandleFor(ctx);
   const settlementWakeId = settlementWakeIdFor(ctx);
@@ -500,7 +512,8 @@ export async function renderScopeMarkdown(ctx: BindableContext): Promise<string>
   })();
   const reach = await resolveTurnHaltReach(ctx, turnState, org);
   const haltNote = reach.kind === "none" ? null : [partialHaltPrefix(reach), haltSeatParagraph(reach.state)].filter((n) => n !== null && n.length > 0).join("\n\n");
-  const appended = [cancelNote, haltNote].filter((n): n is string => n !== null && n !== undefined && n.length > 0);
+  const declaredReach = renderDeclaredReachBlock(declaredOpsForReach());
+  const appended = [cancelNote, haltNote, declaredReach].filter((n): n is string => n !== null && n !== undefined && n.length > 0);
   if (appended.length === 0) return scope;
   return [...(scope.length > 0 ? [scope] : []), ...appended].join("\n\n");
 }

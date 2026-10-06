@@ -24,6 +24,7 @@ test:slack-dm-divert
 test:slack-shortcut
 test:slack-enterprise-rung
 test:slack-attachments
+test:slack-governance-roster
 test:slack-commands
 test:slack-reaction-ingest
 test:slack-chat-audit
@@ -33,9 +34,11 @@ test:slack-workspace-roster
 test:slack-webhook-verifier
 test:slack-input-response
 test:slack-approval-card
+test:slack-task-card
 test:slack-mrkdwn
 test:slack-native-wake-heal
 test:slack-rate-limit
 test:slack-web-api-seam
 test:slack-setup
+test:slack-reasoning-fence
 test:slack-surface-evidence

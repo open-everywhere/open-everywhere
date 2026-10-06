@@ -56,10 +56,10 @@ console.log(`session-park: pinning against installed eve ${eveVersion}`);
   const emitVar = /\{emit:(\w+)\}=/.exec(enforce)?.[1];
   ok(param !== undefined && emitVar !== undefined, "enforceSessionUsageLimit still takes one input object and destructures its `emit`");
   const branch = new RegExp(
-    `${emitVar as string}!==void 0&&\\(${param as string}\\.config\\.mode===\`conversation\`\\|\\|` +
-      `${param as string}\\.config\\.capabilities\\?\\.requestInput===!0\\)\\?parkOnSessionUsageLimit\\(`,
+    `${emitVar as string}!==void 0&&` + `${param as string}\\.config\\.capabilities\\?\\.requestInput===!0\\?parkOnSessionUsageLimit\\(`,
   );
-  ok(branch.test(enforce), "enforceSessionUsageLimit still PARKS when an emitter exists AND (mode===`conversation` || capabilities?.requestInput===true)");
+  ok(branch.test(enforce), "enforceSessionUsageLimit still PARKS when an emitter exists AND capabilities?.requestInput===true");
+  ok(!/\.config\.mode\b/.test(enforce), "…and no `mode` arm survives — eve 0.67 removed it, so a session without the capability FAILS at the bound");
   ok(/:failSessionUsageLimit\(/.test(enforce), "…and only the ELSE arm reaches failSessionUsageLimit");
 
   ok(/createSessionLimitContinuationRequest\(\{/.test(park), "parkOnSessionUsageLimit still builds a createSessionLimitContinuationRequest");
@@ -72,7 +72,7 @@ console.log(`session-park: pinning against installed eve ${eveVersion}`);
 
   ok(/`SESSION_TOKEN_COST_LIMIT_REACHED`/.test(fail), "the fail arm also mints SESSION_TOKEN_COST_LIMIT_REACHED for the token-COST bound");
   ok(/`token-cost`/.test(enforce) === false, "the park-vs-fail branch does NOT discriminate on the violation kind — a cost park is still a park");
-  ok(/violationWindow\(\w+\)>0/.test(enforce), "…the branch's only extra guard is a positive violation window, which both kinds carry");
+  ok(/violationWindow\(\w+\)>0/.test(enforce), "…the branch's only extra guard is a positive violation window, which both kinds carry for a seat — a delegated worker with a zero budget share has a zero window and takes the fail arm (OPE-2256)");
 
   const producers = ["harness/session-limit-enforcement.js"];
   ok(producers.every((f) => read(f).includes("SESSION_TOKEN_LIMIT_REACHED")), "session-limit-enforcement.js is a producer of SESSION_TOKEN_LIMIT_REACHED");
@@ -87,15 +87,10 @@ console.log(`session-park: pinning against installed eve ${eveVersion}`);
 
 {
   const send = read("channel/channel-address.js");
-  const modeVar = /mode:(\w+)\.mode\?\?`conversation`/.exec(send)?.[1];
-  ok(modeVar !== undefined, "channel-address.js still defaults an unspecified `mode` to `conversation`");
-  const capabilitiesTernary = `${modeVar as string}\\.mode===\`task\`\\?void 0:\\{requestInput:!0\\}`;
-  const inlinePlacement = new RegExp(`capabilities:${capabilitiesTernary}`).test(send);
-  const hoistedLocal = new RegExp(`(\\w+)=${capabilitiesTernary}`).exec(send)?.[1];
-  const hoistedPlacement = hoistedLocal !== undefined && new RegExp(`capabilities:${hoistedLocal}[,}]`).test(send);
+  ok(!/mode\?\?`conversation`/.test(send), "channel-address.js no longer defaults a `mode` — eve 0.67 removed the run mode");
   ok(
-    inlinePlacement || hoistedPlacement,
-    "channel-address.js still declares `capabilities: { requestInput: true }` for every non-task run (⊇ conversation — OE's seats), written inline or through a hoisted local",
+    /capabilities:\{requestInput:!0\}/.test(send),
+    "channel-address.js declares `capabilities: { requestInput: true }` unconditionally — every OE seat and fire can park at the bound",
   );
   ok(
     /=await \w+\.runtime\.dispatchContinuation\(\{command:\w+,continuationToken:\w+\}\)/.test(send),
@@ -113,10 +108,10 @@ console.log(`session-park: pinning against installed eve ${eveVersion}`);
 {
   const cont = read("harness/session-limit-continuation.js");
   ok(
-    cont.includes("SESSION_LIMIT_CONTINUATION_TOOL_NAME=`session_limit_continuation`"),
-    "eve still names the continuation prompt's synthetic tool `session_limit_continuation`",
+    cont.includes("toolName:`session_limit_continuation`"),
+    "eve still stamps the continuation prompt's action.toolName as `session_limit_continuation`",
   );
-  ok(new RegExp(`toolName:SESSION_LIMIT_CONTINUATION_TOOL_NAME`).test(cont), "…and stamps it as the request's action.toolName");
+  ok(cont.includes("kind:`session-limit`"), "…and the request carries eve's own `kind: \"session-limit\"`");
   ok(/kind:\w+\.kind,limit:\w+\.limit,usedTokens:\w+\.usedTokens\}/.test(cont), "a token-count violation still carries {kind, limit, usedTokens} as the action input");
   ok(/kind:\w+\.kind,limitUsd:\w+\.limitUsd,usedCostUsd:\w+\.usedCostUsd\}/.test(cont), "…and a token-COST violation carries {kind, limitUsd, usedCostUsd} instead");
   ok(/isSessionLimitContinuationRequestId[\s\S]{0,140}?\/:limit:\(\?:input\|output\):\\d\+\$\/u/.test(cont), "eve's requestId grammar still carries the token-count pattern OE's SESSION_LIMIT_REQUEST_ID_RE mirrors");
@@ -143,9 +138,11 @@ console.log(`session-park: pinning against installed eve ${eveVersion}`);
 
 {
   const proto = read("protocol/message.js");
+  const inlineData = /function createInputRequestedEvent\((\w+)\)\{return\{data:\{requests:\1\.requests[\s\S]{0,120}?type:`input\.requested`\}\}/.test(proto);
+  const hoisted = /function createInputRequestedEvent\((\w+)\)\{let (\w+)=\{requests:\1\.requests[\s\S]{0,200}?return[\s\S]{0,80}?\{data:\2,type:`input\.requested`\}\}/.test(proto);
   ok(
-    /function createInputRequestedEvent\((\w+)\)\{return\{data:\{requests:\1\.requests[\s\S]{0,120}?type:`input\.requested`\}\}/.test(proto),
-    "createInputRequestedEvent still emits a `input.requested` event carrying `requests`",
+    inlineData || hoisted,
+    "createInputRequestedEvent still emits a `input.requested` event carrying `requests`, inline or through a hoisted local",
   );
 
   const hookMap = readFileSync(join(distSrc, "public", "definitions", "hook.d.ts"), "utf8");
@@ -154,13 +151,21 @@ console.log(`session-park: pinning against installed eve ${eveVersion}`);
     "`input.requested` is still in eve's PUBLIC HookEventMap (authored hooks may subscribe)",
   );
 
-  const steps = read("execution/workflow-steps.js");
-  const hookDispatch =
-    /handleEvent=async\((\w+),\w+\)=>\{(?:[^;{}]*;)*?let (\w+)=[^;]*?await emit\(\1\)[^;]*;[^;]*?await dispatchStreamEventHooks\(\{[^}]*event:\2\}\)/u.exec(steps);
-  ok(hookDispatch !== null, "workflow-steps.js still wraps `emit` in a `handleEvent` that dispatches authored stream-event hooks");
+  const handler = read("execution/session/turn-event-handler.js");
   ok(
-    /createExecutionNodeStep\(\{[\s\S]{0,400}?handleEvent[,}]/.test(steps),
-    "…and hands THAT wrapper to createExecutionNodeStep as the harness's emitter (so harness-emitted events reach hooks)",
+    /function createTurnEventHandler\(\w+\)\{[\s\S]{0,200}?return async\((\w+),\w+\)=>\{let (\w+)=await \w+\.emit\(\1\)[\s\S]{0,600}?await \w+\.dispatcher\.runHooks\(\2,/.test(handler),
+    "turn-event-handler.js still publishes each harness event and then runs authored hooks on the SAME published event",
+  );
+  const turnStep = read("execution/session/turn-step.js");
+  const handlerVar = /(\w+)=createTurnEventHandler\(\{/.exec(turnStep)?.[1];
+  ok(handlerVar !== undefined, "turn-step.js still builds its emitter with createTurnEventHandler");
+  ok(
+    new RegExp(`handleEvent:${handlerVar as string}[,}]`).test(turnStep) ||
+      (new RegExp(
+        `[,{]handleEvent=async\\((\\w+),(\\w+)\\)=>\\{\\1\\.type===\`compaction\\.completed\`&&\\(\\w+=!0\\),await ${handlerVar as string}\\(\\1,\\2\\)\\}`,
+      ).test(turnStep) &&
+        /createExecutionNodeStep\(\{[^{}]*?[,{]handleEvent,/.test(turnStep)),
+    "…and hands THAT handler to the harness as `handleEvent` (so harness-emitted events, input.requested included, reach hooks)",
   );
 
   const loop = read("harness/tool-loop.js");

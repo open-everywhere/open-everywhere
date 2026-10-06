@@ -173,7 +173,6 @@ export interface OutstandingQuestion {
   readonly requestId: string;
   readonly containerKey?: string;
   readonly wakeId?: string;
-  readonly taskId?: string;
   readonly optionIds?: readonly string[];
   readonly at: string;
 }
@@ -182,13 +181,6 @@ export interface BridgedQuestionStore {
   putTaskResult(org: string, key: string, resultJson: string, at: string, ttlMs: number): Promise<void>;
   getTaskResult(org: string, key: string): Promise<string | null>;
   deleteTaskResult(org: string, key: string): Promise<boolean>;
-}
-
-export function taskIdOfBridgedRequestId(requestId: string): string | undefined {
-  const cut = requestId.indexOf(":");
-  if (cut <= 0) return undefined;
-  const head = requestId.slice(0, cut);
-  return head.startsWith("task_") ? head : undefined;
 }
 
 export async function rememberBridgedQuestion(
@@ -206,13 +198,11 @@ export async function rememberBridgedQuestion(
   try {
     if (bareToken.length === 0 || input.requestId.length === 0) return false;
     const at = input.at ?? new Date().toISOString();
-    const taskId = taskIdOfBridgedRequestId(input.requestId);
     const optionIds = (input.optionIds ?? []).filter((id) => id.length > 0);
     const row: OutstandingQuestion = {
       requestId: input.requestId,
       ...(input.containerKey !== undefined && input.containerKey.length > 0 ? { containerKey: input.containerKey } : {}),
       ...(input.wakeId !== undefined && input.wakeId.length > 0 ? { wakeId: input.wakeId } : {}),
-      ...(taskId !== undefined ? { taskId } : {}),
       ...(optionIds.length > 0 ? { optionIds } : {}),
       at,
     };
@@ -238,12 +228,26 @@ export async function readBridgedQuestion(store: BridgedQuestionStore, org: stri
       requestId,
       ...(typeof parsed?.containerKey === "string" && parsed.containerKey.length > 0 ? { containerKey: parsed.containerKey } : {}),
       ...(typeof parsed?.wakeId === "string" && parsed.wakeId.length > 0 ? { wakeId: parsed.wakeId } : {}),
-      ...(typeof parsed?.taskId === "string" && parsed.taskId.length > 0 ? { taskId: parsed.taskId } : {}),
       ...(optionIds.length > 0 ? { optionIds } : {}),
       at: typeof parsed?.at === "string" ? parsed.at : "",
     };
   } catch {
     return undefined;
+  }
+}
+
+export const EVE_INPUT_TEXT_KEY = "__eveInputText";
+
+export function ordinaryWakeSendOptions(questionMayBeOpen: boolean): { readonly [EVE_INPUT_TEXT_KEY]?: "" } {
+  return questionMayBeOpen ? { [EVE_INPUT_TEXT_KEY]: "" } : {};
+}
+
+export async function bridgedQuestionMayBeOpen(store: BridgedQuestionStore, org: string, bareToken: string): Promise<boolean> {
+  if (bareToken.length === 0) return false;
+  try {
+    return (await store.getTaskResult(org, bridgedQuestionKey(bareToken))) !== null;
+  } catch {
+    return true;
   }
 }
 
@@ -276,7 +280,6 @@ export type InboundAnswerRouting =
       readonly requestId: string;
       readonly floor: string;
       readonly wakeId?: string;
-      readonly taskId?: string;
       readonly optionId?: string;
     }
   | { readonly kind: "wake"; readonly reason: "internal-dispatch" | "no-question" | "addressed-mention" | "foreign-room" | "refused" | "unmatched-option" };
@@ -321,7 +324,6 @@ export async function resolveInboundAnswerRouting(
     requestId: outstanding.requestId,
     floor: verdict.floor,
     ...(outstanding.wakeId !== undefined ? { wakeId: outstanding.wakeId } : {}),
-    ...(outstanding.taskId !== undefined ? { taskId: outstanding.taskId } : {}),
     ...(optionId !== undefined ? { optionId } : {}),
   };
 }

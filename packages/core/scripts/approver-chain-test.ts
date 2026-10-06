@@ -258,7 +258,8 @@ ok(!ELEMENT_CLAMPS.registry.includes("defer"), "pin4: the registry may not defer
       `pin5: exactly the five shadow-evidenced rows carry the defer flip (got ${flipped.join(", ")})`,
     );
     ok(judgeDeferredTool("open_pull_request") && !judgeDeferredTool("create_ticket"), "pin5: judgeDeferredTool reads the flip, and an unflipped gated row stays plain ask");
-    ok(!judgeDeferredTool("notion__create_page"), "pin5: connector ops carry NO flip — the class-policy half is a seam, not an implementation (no evidence yet)");
+    ok(judgeDeferredTool("notion__create_page"), "pin5: a connector WRITE carries the flip (OPE-2368)");
+    ok(!judgeDeferredTool("notion__delete_block") && !judgeDeferredTool("notion__get_page"), "pin5: a destructive and a read connector op carry NO flip");
 
     overrideSettingsForTest({ approvals: { judgeMode: "enforce" } });
     const noOptIn = await resolveApproverChain(req("open_pull_request"));
@@ -505,6 +506,33 @@ ok(registryVerdictOf("session.checkpoint") === "ask", "kind map: the fallback na
   for (let i = 0; i < N; i++) await resolveApproverChain(request, { approvers });
   const perResolution = (performance.now() - t0) / N;
   console.log(`  P0 latency: evaluate-all over a ${2 + 5}-element chain ≈ ${(perResolution * 1000).toFixed(1)}µs/resolution`);
+}
+
+{
+  const { approversForScopeKey, preApprovalRulesForScopeKey, approvalModeForDomain } = await import("../agent/access/approver-chain.js");
+  const { registerConfig, ConfigLoadRefusalError } = await import("../agent/access/config.js");
+  const KEY = "slack/T1/C1";
+
+  ok(approversForScopeKey(KEY, "eng").length === 0, "OPE-2156 negative control: no config registered ⇒ the empty approver band, no throw");
+  ok(preApprovalRulesForScopeKey(KEY, "eng").length === 0, "OPE-2156 negative control: no config registered ⇒ no rules, no throw");
+  ok(approvalModeForDomain("eng") === undefined, "OPE-2156 negative control: no config registered ⇒ no mode, no throw");
+
+  const broken = (): never => {
+    throw new Error("malformed bundle: eng.yaml line 3");
+  };
+  registerConfig({ loadDomains: broken, loadBundles: broken, loadBindings: broken, domainsForSurface: broken, pluginRegistry: {} } as never);
+  const refuses = (fn: () => unknown): boolean => {
+    try {
+      fn();
+      return false;
+    } catch (err) {
+      return err instanceof ConfigLoadRefusalError;
+    }
+  };
+  ok(refuses(() => approversForScopeKey(KEY, "eng")), "OPE-2156: 🔴 a registered config that fails to load REFUSES approver resolution — the empty band would let a verb pinned to ask/deny resolve on the built-in default");
+  ok(refuses(() => approversForScopeKey(KEY, undefined)), "OPE-2156: …on the domain-less path too (domainsForSurface throws)");
+  ok(refuses(() => preApprovalRulesForScopeKey(KEY, "eng")), "OPE-2156: a registered config that fails to load refuses pre-approval rule resolution through the same seam");
+  ok(refuses(() => approvalModeForDomain("eng")), "OPE-2156 (also fixed): a registered config that fails to load refuses the approval MODE — a dropped DENY_ALL would otherwise resolve to no mode");
 }
 
 console.log(`✓ approver-chain: ${passed} assertions — six pins held (deny-invariant fuzzed, level order pinned, transform table honoured, clamps fail closed, judge consult triple-gated, audit rows complete), registry parity exact, all eight worked examples green (incl. the OPE-310 beneficiary-clicker floor)`);

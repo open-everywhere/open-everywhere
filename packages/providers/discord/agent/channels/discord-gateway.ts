@@ -4,6 +4,7 @@ import { threadParentChannelId } from "./discord-channel-info.js";
 import { splitForDiscord } from "./discord-post.js";
 import { discordFetch, type DiscordFetchDeps } from "./discord-rest.js";
 import { RateLimitExhaustedError, type RetryPolicy } from "@open-everywhere/core/agent/adapter-api.js";
+import { withEndsTurnFinalChannel } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   finalMessageAction,
   nameDropPattern,
@@ -1560,7 +1561,7 @@ export async function maybeShedWarmSurface(state: DiscordGatewayState): Promise<
   }
 }
 
-export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
+export default withEndsTurnFinalChannel(defineChannel<DiscordGatewayState, DiscordGatewayContext>({
   kindHint: "discord",
   turnPolicy: "queue",
   state: { channelId: "" },
@@ -1725,4 +1726,4 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
       }
     },
   },
-});
+}));

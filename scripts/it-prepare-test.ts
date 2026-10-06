@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -21,16 +21,19 @@ import {
   gateBuiltBundle,
   hostCacheKeyProbe,
   missingPreparedArtifacts,
+  parseDirtyPaths,
   prepareCacheKey,
   preparedTreeState,
   publishPreparedTree,
   cacheMode,
   readBuildStamp,
   readStamp,
+  remoteCacheKey,
   remoteCachePublishEnabled,
   remoteRestoreEnabled,
   restorePreparedTree,
   stampCacheEnabled,
+  worktreeFingerprint,
   writeStamp,
   type CacheKeyHost,
 } from "../tests/integration/prepare-cache.js";
@@ -73,7 +76,8 @@ function test(name: string, body: () => void | Promise<void>): Promise<void> {
 function host(overrides: Partial<CacheKeyHost> = {}): CacheKeyHost {
   return {
     lsTree: () => "100644 blob 1111111111111111111111111111111111111111\tagent/agent.ts\n",
-    porcelain: () => "",
+    dirtyPaths: () => [],
+    fingerprint: (path) => `file - fingerprint-of-${path}`,
     eveVersion: () => "0.54.3",
     nodeMajor: () => "24",
     platform: () => "linux",
@@ -88,24 +92,62 @@ await test("the POSITIVE control — a clean tree gets a key, so the refusals be
   const verdict = prepareCacheKey(host());
   assert.equal(verdict.kind, "key");
   assert.match(verdict.kind === "key" ? verdict.key : "", /^it-prepared-v\d+-[0-9a-f]{16}-eve0\.54\.3-node24-linux-at[0-9a-f]{8}$/u);
+  assert.equal(verdict.kind === "key" ? verdict.worktree : undefined, false, "a clean key does not read the working tree");
+  assert.equal(remoteCacheKey(verdict), verdict.kind === "key" ? verdict.key : "", "…so the remote cache may use it");
 });
 
-await test("🔴 an uncommitted edit under a keyed path REFUSES a key — the key is read from the commit", () => {
-  const verdict = prepareCacheKey(host({ porcelain: () => " M packages/core/agent/operational/postgres.ts\n" }));
-  assert.equal(verdict.kind, "refused");
-  assert.match(verdict.kind === "refused" ? verdict.reason : "", /uncommitted/u);
-  for (const path of KEYED_TREE_PATHS) assert.ok((verdict.kind === "refused" ? verdict.reason : "").includes(path), `names ${path}`);
+await test("🔴 OPE-2345: a dirty keyed path is keyed on its WORKING-TREE content, and that key stays local", () => {
+  const clean = prepareCacheKey(host());
+  const edited = (content: string): CacheKeyHost =>
+    host({ dirtyPaths: () => ["packages/core/agent/operational/postgres.ts"], fingerprint: () => `file - ${content}` });
+  const first = prepareCacheKey(edited("aaaa"));
+  assert.equal(first.kind, "key", "a dirty tree gets a key, so a second run on it can be warm");
+  const keyOf = (verdict: ReturnType<typeof prepareCacheKey>): string => (verdict.kind === "key" ? verdict.key : "refused");
+  assert.match(keyOf(first), /-wt$/u, "the key says it reads the working tree");
+  assert.notEqual(keyOf(first), keyOf(clean), "🔴 the dirty key is never the clean key — that is the OPE-2324 false green");
+  assert.equal(keyOf(prepareCacheKey(edited("aaaa"))), keyOf(first), "the same bytes give the same key");
+  assert.notEqual(keyOf(prepareCacheKey(edited("bbbb"))), keyOf(first), "🔴 a second edit to the same file MOVES the key");
+  assert.equal(remoteCacheKey(first), undefined, "🔴 a working-tree key never reaches the remote cache");
+  const added = prepareCacheKey(host({ dirtyPaths: () => ["agent/channels/new-channel.ts"] }));
+  assert.match(keyOf(added), /-wt$/u);
+  assert.notEqual(keyOf(added), keyOf(clean));
+  const ab = prepareCacheKey(host({ dirtyPaths: () => ["agent/a.ts", "agent/b.ts", "agent/a.ts"] }));
+  const ba = prepareCacheKey(host({ dirtyPaths: () => ["agent/b.ts", "agent/a.ts"] }));
+  assert.equal(keyOf(ab), keyOf(ba));
 });
 
-await test("an UNTRACKED file under a keyed path refuses too — a new module is not in HEAD's tree", () => {
-  assert.equal(prepareCacheKey(host({ porcelain: () => "?? agent/channels/new-channel.ts\n" })).kind, "refused");
+await test("parseDirtyPaths reads `git status --porcelain -z`, including BOTH sides of a rename", () => {
+  assert.deepEqual(parseDirtyPaths(""), []);
+  assert.deepEqual(
+    parseDirtyPaths(" M agent/agent.ts\0?? agent/new file.ts\0R  agent/to.ts\0agent/from.ts\0 D packages/x.ts\0"),
+    ["agent/agent.ts", "agent/new file.ts", "agent/to.ts", "agent/from.ts", "packages/x.ts"],
+  );
+});
+
+await test("worktreeFingerprint tells content, the executable bit and a deleted file apart — and REFUSES a symlink or a directory", () => {
+  const root = mkdtempSync(join(scratch, "fingerprint-"));
+  writeFileSync(join(root, "a.ts"), "one\n");
+  const one = worktreeFingerprint(root, "a.ts");
+  writeFileSync(join(root, "a.ts"), "two\n");
+  const two = worktreeFingerprint(root, "a.ts");
+  assert.notEqual(one, two, "the content is in the fingerprint");
+  if (process.platform !== "win32") {
+    execFileSync("chmod", ["+x", join(root, "a.ts")]);
+    assert.notEqual(worktreeFingerprint(root, "a.ts"), two, "the executable bit is in the fingerprint");
+    symlinkSync("a.ts", join(root, "link.ts"));
+    assert.throws(() => worktreeFingerprint(root, "link.ts"), /symlink/u, "a dirty symlink refuses the key");
+  }
+  mkdirSync(join(root, "nested"));
+  assert.throws(() => worktreeFingerprint(root, "nested"), /directory/u, "a reported directory refuses the key");
+  assert.equal(worktreeFingerprint(root, "gone.ts"), "absent");
 });
 
 await test("a git read that THROWS refuses rather than keying on nothing", () => {
   const thrower = (): never => {
     throw new Error("fatal: not a git repository");
   };
-  assert.equal(prepareCacheKey(host({ porcelain: thrower })).kind, "refused");
+  assert.equal(prepareCacheKey(host({ dirtyPaths: thrower })).kind, "refused");
+  assert.equal(prepareCacheKey(host({ dirtyPaths: () => ["agent/a.ts"], fingerprint: thrower })).kind, "refused", "an unreadable working-tree file refuses");
   assert.equal(prepareCacheKey(host({ lsTree: thrower })).kind, "refused");
   assert.equal(prepareCacheKey(host({ eveVersion: thrower })).kind, "refused");
 });
@@ -171,7 +213,7 @@ await test("the stamp round-trips, and an unreadable or older-format stamp reads
 
 await test("🔴 the build stamp vouches for the gate's bundle ONLY when begin and end agree and the key still matches", () => {
   const root = mkdtempSync(join(scratch, "build-stamp-"));
-  const key = { kind: "key", key: "it-prepared-v3-aaaa" } as const;
+  const key = { kind: "key", key: "it-prepared-v3-aaaa", worktree: false } as const;
   const trusted = { state: "cold", stampsTrusted: true } as const;
   writeStamp(root, "it-prepared-v3-old");
   writeFileSync(join(root, BUILD_STAMP_FILE), JSON.stringify({ format: CACHE_FORMAT, state: "built", key: "it-prepared-v3-old" }));
@@ -198,7 +240,7 @@ await test("🔴 the build stamp vouches for the gate's bundle ONLY when begin a
   );
 
   beginBuildStamp(root, key);
-  finishBuildStamp(root, { kind: "key", key: "it-prepared-v3-moved" });
+  finishBuildStamp(root, { kind: "key", key: "it-prepared-v3-moved", worktree: false });
   assert.equal(readBuildStamp(root), undefined, "🔴 a key that MOVED during the build leaves no stamp");
   beginBuildStamp(root, key);
   finishBuildStamp(root, { kind: "refused", reason: "dirty" });
@@ -237,6 +279,12 @@ await test("🔴 REAL GIT: the gate's stamp goes STALE the moment the tree chang
 
   writeFileSync(join(root, "agent", "agent.ts"), "export const a = 2;\n");
   assert.equal(reused(), false, "🔴 an UNCOMMITTED keyed edit after the build makes the stamp stale");
+  assert.match(runBuildStamp("begin", root), /^building .*-wt$/u, "a dirty tree has a key now, so the gate records it");
+  assert.match(runBuildStamp("end", root), /^built .*-wt$/u);
+  assert.equal(reused(), true, "the gate's bundle of the DIRTY tree is reused on that same dirty tree");
+  writeFileSync(join(root, "agent", "agent.ts"), "export const a = 22;\n");
+  assert.equal(reused(), false, "🔴 a second uncommitted edit to the same file makes it stale again");
+  writeFileSync(join(root, "agent", "agent.ts"), "export const a = 2;\n");
   git("commit", "--quiet", "-am", "edit");
   assert.equal(reused(), false, "🔴 and so does the same edit COMMITTED");
 
@@ -245,6 +293,165 @@ await test("🔴 REAL GIT: the gate's stamp goes STALE the moment the tree chang
   assert.match(runBuildStamp("end", root), /^no build stamp — the key moved/u, "🔴 a keyed edit DURING the build leaves no stamp");
   assert.equal(reused(), false);
   assert.throws(() => runBuildStamp("finish", root), /"begin" or "end"/u, "an unknown phase is refused by name");
+});
+
+await test("🔴 REAL STEP: break → prepare → restore → prepare is COLD — a dirty build never inherits the clean stamp", async () => {
+  const root = join(scratch, "dirty-cold-prepare");
+  gitRepoFixture(root);
+  mkdirSync(join(root, "agent"), { recursive: true });
+  mkdirSync(join(root, "node_modules", "eve"), { recursive: true });
+  writeFileSync(join(root, "node_modules", "eve", "package.json"), '{"version":"0.0.0-fixture"}\n');
+  writeFileSync(
+    join(root, ".gitignore"),
+    ["node_modules/", ".output/", ".eve/", ".oe-it-prepare/", "packages/core/dist/", ".oe-it-prepared.json", ".oe-it-built.json", ""].join("\n"),
+  );
+  const clean = "export const connectorOpApproval = true;\n";
+  writeFileSync(join(root, "agent", "agent.ts"), clean);
+  execFileSync("git", ["-C", root, "add", "-A"], { stdio: ["ignore", "pipe", "pipe"] });
+  execFileSync("git", ["-C", root, "commit", "--quiet", "-m", "base"], { stdio: ["ignore", "pipe", "pipe"] });
+
+  let eveBuilds = 0;
+  const bundle = join(root, ".output", "server", "index.mjs");
+  const legs = {
+    oeBuild: (at: string): void => void mkdirSync(join(at, "packages", "core", "dist"), { recursive: true }),
+    eveBuild: (at: string): void => {
+      eveBuilds += 1;
+      mkdirSync(dirname(bundle), { recursive: true });
+      writeFileSync(bundle, readFileSync(join(at, "agent", "agent.ts"), "utf8"));
+    },
+    prewarm: async (at: string) => {
+      mkdirSync(join(at, ".eve", "sandbox-cache", "just-bash", "templates"), { recursive: true });
+      return { via: "built-bundle", seconds: 0 } as const;
+    },
+    mint: async (at: string): Promise<string> => join(at, ".oe-it-prepare", "pglite-template"),
+  };
+  const prepare = (): ReturnType<typeof prepareIntegrationTree> => prepareIntegrationTree({ root, env: {}, log: () => {}, legs });
+
+  const first = await prepare();
+  assert.equal(first.mode, "cold", "the first prepare on a clean tree builds");
+  assert.notEqual(first.key, undefined, "…under a key, and stamps it");
+  assert.equal((await prepare()).mode, "warm", "the POSITIVE control: an unchanged clean tree is warm, so the row below is not vacuous");
+  assert.equal(eveBuilds, 1);
+
+  writeFileSync(join(root, "agent", "agent.ts"), "export const connectorOpApproval = false; // BROKEN\n");
+  const dirty = await prepare();
+  assert.equal(dirty.mode, "cold", "a dirty tree is a new key, so it builds");
+  assert.match(dirty.key ?? "", /-wt$/u, "…under its working-tree key (OPE-2345)");
+  assert.notEqual(dirty.key, first.key);
+  assert.equal(eveBuilds, 2);
+  assert.match(readFileSync(bundle, "utf8"), /BROKEN/u, "the dirty build is on disk now");
+
+  writeFileSync(join(root, "agent", "agent.ts"), clean);
+  const restored = await prepare();
+  assert.equal(restored.mode, "cold", `🔴 the second clean prepare must be COLD, not boot the dirty bundle — got mode=${restored.mode} cache=[${restored.cacheNote}]`);
+  assert.equal(eveBuilds, 3, "…and it rebuilt eve");
+  assert.equal(readFileSync(bundle, "utf8"), clean, "…so the bundle on disk is the clean tree's again");
+  assert.equal((await prepare()).mode, "warm", "and once rebuilt, the clean tree is warm again");
+});
+
+await test("🔴 REAL STEP: a second prepare on the SAME dirty tree is WARM, and a further edit makes it cold", async () => {
+  const root = join(scratch, "dirty-warm-prepare");
+  gitRepoFixture(root);
+  mkdirSync(join(root, "agent"), { recursive: true });
+  mkdirSync(join(root, "node_modules", "eve"), { recursive: true });
+  writeFileSync(join(root, "node_modules", "eve", "package.json"), '{"version":"0.0.0-fixture"}\n');
+  writeFileSync(
+    join(root, ".gitignore"),
+    ["node_modules/", ".output/", ".eve/", ".oe-it-prepare/", "packages/core/dist/", ".oe-it-prepared.json", ".oe-it-built.json", ""].join("\n"),
+  );
+  writeFileSync(join(root, "agent", "agent.ts"), "export const v = 0;\n");
+  execFileSync("git", ["-C", root, "add", "-A"], { stdio: ["ignore", "pipe", "pipe"] });
+  execFileSync("git", ["-C", root, "commit", "--quiet", "-m", "base"], { stdio: ["ignore", "pipe", "pipe"] });
+
+  let eveBuilds = 0;
+  const bundle = join(root, ".output", "server", "index.mjs");
+  const legs = {
+    oeBuild: (at: string): void => void mkdirSync(join(at, "packages", "core", "dist"), { recursive: true }),
+    eveBuild: (at: string): void => {
+      eveBuilds += 1;
+      mkdirSync(dirname(bundle), { recursive: true });
+      writeFileSync(bundle, readFileSync(join(at, "agent", "agent.ts"), "utf8"));
+    },
+    prewarm: async (at: string) => {
+      mkdirSync(join(at, ".eve", "sandbox-cache", "just-bash", "templates"), { recursive: true });
+      return { via: "built-bundle", seconds: 0 } as const;
+    },
+    mint: async (at: string): Promise<string> => join(at, ".oe-it-prepare", "pglite-template"),
+  };
+  const prepare = (env: NodeJS.ProcessEnv = {}): ReturnType<typeof prepareIntegrationTree> =>
+    prepareIntegrationTree({ root, env, log: () => {}, legs });
+
+  writeFileSync(join(root, "agent", "agent.ts"), "export const v = 1;\n");
+  writeFileSync(join(root, "agent", "added.ts"), "export const added = true;\n");
+  const first = await prepare();
+  assert.equal(first.mode, "cold", "the first prepare on the dirty tree builds");
+  assert.equal(eveBuilds, 1);
+  const second = await prepare();
+  assert.equal(second.mode, "warm", `🔴 the SECOND prepare on the same dirty tree must be warm — got mode=${second.mode} cache=[${second.cacheNote}]`);
+  assert.equal(second.key, first.key);
+  assert.equal(eveBuilds, 1, "…so it did not build eve again");
+
+  writeFileSync(join(root, "agent", "agent.ts"), "export const v = 2;\n");
+  const edited = await prepare();
+  assert.equal(edited.mode, "cold", "🔴 a further edit to a dirty file makes the tree cold again");
+  assert.equal(eveBuilds, 2);
+  assert.equal(readFileSync(bundle, "utf8"), "export const v = 2;\n", "…and the bundle on disk is the new edit's");
+  writeFileSync(join(root, "agent", "added.ts"), "export const added = false;\n");
+  assert.equal((await prepare()).mode, "cold", "🔴 so does an edit to an UNTRACKED keyed file");
+  assert.equal(eveBuilds, 3);
+
+  writeFileSync(join(root, "agent", "agent.ts"), "export const v = 3;\n");
+  const remote = await prepare({ OE_IT_PREPARE_CACHE: "remote", OE_IT_PREPARE_CACHE_PUBLISH: "1", OE_IT_PREPARE_CACHE_REMOTE: "no-such-remote" });
+  assert.equal(remote.mode, "cold");
+  assert.equal(remote.cacheNote, "the key reads uncommitted edits, so no remote lookup", "no restore was tried, and no publish");
+});
+
+await test("🔴 REAL STEP: a keyed edit DURING the build writes no stamp, so the next run builds", async () => {
+  const root = join(scratch, "edit-during-build");
+  gitRepoFixture(root);
+  mkdirSync(join(root, "agent"), { recursive: true });
+  mkdirSync(join(root, "node_modules", "eve"), { recursive: true });
+  writeFileSync(join(root, "node_modules", "eve", "package.json"), '{"version":"0.0.0-fixture"}\n');
+  writeFileSync(
+    join(root, ".gitignore"),
+    ["node_modules/", ".output/", ".eve/", ".oe-it-prepare/", "packages/core/dist/", ".oe-it-prepared.json", ".oe-it-built.json", ""].join("\n"),
+  );
+  writeFileSync(join(root, "agent", "agent.ts"), "export const v = 0;\n");
+  execFileSync("git", ["-C", root, "add", "-A"], { stdio: ["ignore", "pipe", "pipe"] });
+  execFileSync("git", ["-C", root, "commit", "--quiet", "-m", "base"], { stdio: ["ignore", "pipe", "pipe"] });
+
+  let editDuringBuild = false;
+  const bundle = join(root, ".output", "server", "index.mjs");
+  const legs = {
+    oeBuild: (at: string): void => void mkdirSync(join(at, "packages", "core", "dist"), { recursive: true }),
+    eveBuild: (at: string): void => {
+      if (editDuringBuild) writeFileSync(join(at, "agent", "agent.ts"), "export const v = 2; // edited during the build\n");
+      mkdirSync(dirname(bundle), { recursive: true });
+      writeFileSync(bundle, readFileSync(join(at, "agent", "agent.ts"), "utf8"));
+    },
+    prewarm: async (at: string) => {
+      mkdirSync(join(at, ".eve", "sandbox-cache", "just-bash", "templates"), { recursive: true });
+      return { via: "built-bundle", seconds: 0 } as const;
+    },
+    mint: async (at: string): Promise<string> => join(at, ".oe-it-prepare", "pglite-template"),
+  };
+  const lines: string[] = [];
+  const prepare = (): ReturnType<typeof prepareIntegrationTree> => prepareIntegrationTree({ root, env: {}, log: (m) => void lines.push(m), legs });
+
+  writeFileSync(join(root, "agent", "agent.ts"), "export const v = 1;\n");
+  assert.equal((await prepare()).mode, "cold");
+  assert.notEqual(readStamp(root), undefined, "the POSITIVE control: a build with no edit during it stamps its key");
+
+  writeFileSync(join(root, "agent", "agent.ts"), "export const v = 3;\n");
+  editDuringBuild = true;
+  const raced = await prepare();
+  editDuringBuild = false;
+  assert.equal(raced.mode, "cold");
+  assert.equal(readStamp(root), undefined, "🔴 the key moved during the build, so no stamp vouches for the bundle");
+  assert.ok(lines.some((l) => l.includes("no stamp is written")), `…and the step says so — got ${JSON.stringify(lines)}`);
+  writeFileSync(join(root, "agent", "agent.ts"), "export const v = 3;\n");
+  assert.equal((await prepare()).mode, "cold", "🔴 the tree back at the starting bytes builds, and never boots the edited bundle as warm");
+  assert.equal(readFileSync(bundle, "utf8"), "export const v = 3;\n");
 });
 
 await test("🔴 the artefact paths are the LITERAL ones a fork needs, not whatever a derivation produced", () => {
@@ -318,7 +525,7 @@ await test("🔴 a key that MOVED during the build publishes nothing, and says w
   const key = stable.kind === "key" ? stable.key : "";
   assert.equal(republishKey("/repo", key, log, host()), key, "an unchanged key publishes under itself");
   assert.equal(lines.length, 0, "…and says nothing");
-  assert.equal(republishKey("/repo", key, log, host({ porcelain: () => " M packages/core/agent/docs/generated/extending.ts\n" })), undefined);
+  assert.equal(republishKey("/repo", key, log, host({ dirtyPaths: () => ["packages/core/agent/docs/generated/extending.ts"] })), undefined);
   assert.equal(republishKey("/repo", key, log, host({ lsTree: () => "100644 blob 3333333333333333333333333333333333333333\tagent/agent.ts\n" })), undefined);
   assert.equal(lines.length, 2, "each refusal is announced, so a run that published nothing says so");
   assert.ok(lines.every((l) => l.includes("nothing is published")), `…and names the consequence — got ${JSON.stringify(lines)}`);
@@ -490,7 +697,7 @@ await test("🔴 EVE CANARY: the fast prewarm's own symbol loader still finds ev
     string,
     unknown
   >;
-  assert.equal(typeof prewarmModule.prewarmBuiltAppSandboxes, "function", "eve still exports the authored-source prewarm, which is the only fallback");
+  assert.equal(typeof prewarmModule.prewarmAppSandboxes, "function", "eve still exports prewarmAppSandboxes, the only prewarm road either path can take");
   const session = readFileSync(join(repoRoot, "node_modules", "eve", "dist", "src", "runtime", "sessions", "runtime-session.js"), "utf8");
   assert.ok(
     session.includes("Symbol.for(`eve.runtime-session-storage`)") || session.includes('Symbol.for("eve.runtime-session-storage")'),
@@ -501,7 +708,7 @@ await test("🔴 EVE CANARY: the fast prewarm's own symbol loader still finds ev
 
 await test("🔴 this file still has every test row it had — the blunt limb, which no deletion escapes", () => {
   const source = readFileSync(fileURLToPath(import.meta.url), "utf8");
-  assert.equal(source.match(/^await test\(/gmu)?.length, 32, "a deleted or added test row changes this count — if you added one, bump it here");
+  assert.equal(source.match(/^await test\(/gmu)?.length, 36, "a deleted or added test row changes this count — if you added one, bump it here");
 });
 
 await test("🔴 every import in this file is USED — the finer limb, which names what a deletion took", () => {

@@ -39,21 +39,52 @@ function ok(cond: boolean, label: string): void {
   }
   passed++;
 }
-function throws(fn: () => unknown, label: string): void {
+function throwsWith(fn: () => unknown, fragment: string, label: string): void {
   let threw = false;
+  let error: unknown;
   try {
     fn();
-  } catch {
+  } catch (err) {
     threw = true;
+    error = err;
   }
-  ok(threw, label);
+  if (!threw) {
+    console.error(`✗ ${label} (expected a throw, got none)`);
+    process.exit(1);
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (!message.includes(fragment)) {
+    console.error(`✗ ${label} (threw, but not the refusal under test — expected "${fragment}", got: ${message})`);
+    process.exit(1);
+  }
+  passed++;
+}
+async function rejectsWith(fn: () => Promise<unknown> | unknown, fragment: string, label: string): Promise<void> {
+  let threw = false;
+  let error: unknown;
+  try {
+    await fn();
+  } catch (err) {
+    threw = true;
+    error = err;
+  }
+  if (!threw) {
+    console.error(`✗ ${label} (expected a throw, got none)`);
+    process.exit(1);
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (!message.includes(fragment)) {
+    console.error(`✗ ${label} (threw, but not the refusal under test — expected "${fragment}", got: ${message})`);
+    process.exit(1);
+  }
+  passed++;
 }
 
 const U = (iso: string) => new Date(iso);
 
-throws(() => parseCron("* * * *"), "cron with 4 fields is rejected");
-throws(() => parseCron("99 * * * *"), "out-of-range minute is rejected");
-throws(() => parseCron("0 9 * * 1-9"), "out-of-range dow is rejected");
+throwsWith(() => parseCron("* * * *"), 'cron must have 5 fields (min hour dom mon dow), got 4: "* * * *"', "cron with 4 fields is rejected");
+throwsWith(() => parseCron("99 * * * *"), 'out-of-range field "99" (allowed 0-59)', "out-of-range minute is rejected");
+throwsWith(() => parseCron("0 9 * * 1-9"), 'out-of-range field "1-9" (allowed 0-6)', "out-of-range dow is rejected");
 
 const weekday9 = parseCron("0 9 * * 1-5");
 ok(cronMatches(weekday9, U("2026-06-25T09:00:00Z")), "weekday 9am matches Thursday 09:00");
@@ -93,21 +124,18 @@ ok(computeNextRun({ kind: "once", at: "2026-07-08T09:00:00.000Z" }, from) === nu
   ok(JSON.stringify(st({ kind: "scheduled", cron: "0 9 * * *", postPolicy: "only-on-change" })) === '{"kind":"watch","expr":"0 9 * * *"}', "cron + only-on-change → cron-scheduled watch (new expressiveness)");
   ok(JSON.stringify(st({ kind: "scheduled", at: "2027-03-01T09:00:00Z" })) === '{"kind":"once","at":"2026-07-08T09:00:00.000Z"}', "at → once (postPolicy omitted entirely — ignored for a one-shot)");
   ok(JSON.stringify(st({ kind: "scheduled", at: "2027-03-01T09:00:00Z", postPolicy: "every-run" })) === '{"kind":"once","at":"2026-07-08T09:00:00.000Z"}', "at → once EVEN when postPolicy is also given (ignored, not an error)");
-  let threw = 0;
-  try { st({ kind: "scheduled", postPolicy: "every-run" }); } catch { threw++; }
-  try { st({ kind: "scheduled", cron: "0 9 * * *", everyMinutes: 5, postPolicy: "every-run" }); } catch { threw++; }
-  try { st({ kind: "scheduled", cron: "0 9 * * *", at: "2027-03-01T09:00:00Z" }); } catch { threw++; }
-  try { st({ kind: "scheduled", at: "not-a-real-timestamp" }); } catch { threw++; }
-  try { st({ kind: "scheduled", cron: "0 9 * * *" }); } catch { threw++; }
-  ok(threw === 5, "neither / both / all-three of cron+everyMinutes+at, an invalid `at`, and a missing postPolicy are all refused");
+  const ONE_OF = "A scheduled routine needs exactly ONE of `cron`, `everyMinutes`, or `at`.";
+  throwsWith(() => st({ kind: "scheduled", postPolicy: "every-run" }), ONE_OF, "neither of cron/everyMinutes/at is refused");
+  throwsWith(() => st({ kind: "scheduled", cron: "0 9 * * *", everyMinutes: 5, postPolicy: "every-run" }), ONE_OF, "both cron and everyMinutes are refused");
+  throwsWith(() => st({ kind: "scheduled", cron: "0 9 * * *", at: "2027-03-01T09:00:00Z" }), ONE_OF, "both cron and at are refused");
+  throwsWith(() => st({ kind: "scheduled", at: "not-a-real-timestamp" }), '`at` must be a valid ISO 8601 timestamp, got "not-a-real-timestamp"', "an invalid `at` is refused");
+  throwsWith(() => st({ kind: "scheduled", cron: "0 9 * * *" }), "A cron/everyMinutes routine needs `postPolicy`", "a missing postPolicy is refused");
   const ev = st({ kind: "event", source: "github", jq: '.fields.repo == "me/proj" and (.fields.event | IN("push"))' });
   ok(ev.kind === "event", "event maps to the stored event kind");
   ok(ev.kind === "event" && ev.jq?.includes(".fields.repo") === true, "OPE-210: the jq expression is stored verbatim on the trigger");
   ok(ev.kind === "event" && (ev as { filter?: unknown; match?: unknown }).filter === undefined && (ev as { match?: unknown }).match === undefined, "OPE-210: neither legacy shape is ever written");
-  let evThrew = 0;
-  try { st({ kind: "event", source: "typo-hub", jq: '.fields.repo == "me/proj"' }); } catch { evThrew++; }
-  try { st({ kind: "event", source: "github", jq: '(.fields.event | IN("push"))' }); } catch { evThrew++; }
-  ok(evThrew === 2, "OPE-163: a typo'd source and an unnarrowed subscription are both refused at CREATE (they used to arm a routine that could never match)");
+  throwsWith(() => st({ kind: "event", source: "typo-hub", jq: '.fields.repo == "me/proj"' }), 'Unknown event source "typo-hub"', "OPE-163: a typo'd source is refused at CREATE");
+  throwsWith(() => st({ kind: "event", source: "github", jq: '(.fields.event | IN("push"))' }), 'A "github" subscription must narrow its scope', "OPE-163: an unnarrowed subscription is refused at CREATE");
 }
 
 ok(describeTrigger({ kind: "interval", everyMinutes: 60 }) === "every 60 min (posts every run)", "interval description states the policy");
@@ -269,9 +297,7 @@ ok((await store.removeRoutine(p as never, made.id)) === false, "store: removing 
   const cancelId = store.newRoutineId();
   await store.addRoutine(cp as never, { ...base, id: cancelId, org: cp.org, surfaceKey: cp.surfaceKey, trigger: { kind: "interval", everyMinutes: 30 } });
 
-  let threwMissing = false;
-  try { await cancelRoutineTool.execute({ id: "r-nope" } as never, ctx); } catch { threwMissing = true; }
-  ok(threwMissing, "cancel_routine: refuses a nonexistent id up front (no card wasted)");
+  await rejectsWith(() => cancelRoutineTool.execute({ id: "r-nope" } as never, ctx), "No routine 'r-nope' on this surface", "cancel_routine: refuses a nonexistent id up front (no card wasted)");
 
   const { registerSlackBridge, _resetSlackBridgeForTest } = await import("../agent/channels/slack-bridge.js");
   registerSlackBridge({

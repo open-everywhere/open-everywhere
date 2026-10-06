@@ -423,26 +423,34 @@ lighter path.) See [Skills & plugins](./skills-and-plugins.md).
 
 Two tools bracket the connector plane, and neither of them is the connector itself.
 
-`connection_search` is how the agent finds out **which** connectors this session has at
-all — a read of its own capability list, nothing more. The connector's actual *operations*
-(`notion__search`, `linear__create_issue`, …) are injected by the framework at runtime
-under `<connection>__<op>` names, so they never appear as a fixed list anywhere; each one
-is tiered by its verb when it is called (reads run, writes draw an approval) **once
-`connectors.opTiering` is armed** — see the note below — and each call is audited individually.
+`connection_search` is how the agent finds a connector's *operations* — a read of the
+connected catalogues, nothing more. `connection_execute` runs one operation, named by its
+`connection` and `tool` (for example connection `notion` and tool `search`). The operations are
+not tools of their own, so they never appear as a fixed list anywhere. The framework re-keys each
+call to its `<connection>__<op>` name (`notion__search`, `linear__create_issue`, …), and every OE
+gate reads that name. Each operation is tiered by its verb when it is called (reads run, writes
+draw an approval) **once `connectors.opTiering` is armed** — see the note below — and each call is
+audited individually.
 
 ### Raising an operation's tier
 
 The verb classifier is the default, not the last word. It reads `search`/`get`/`list` as
 **read**, a recognised mutation as **write**, an irreversible one as **destructive** — and
 anything it doesn't recognise as **destructive**, so a novel verb fails closed rather than
-sailing through. A `read` runs with no prompt; a `write` draws an approval that an "Approve
-for session" grant can cover; a `destructive` op draws one **per call**, always.
+sailing through. A `read` runs with no prompt; a `write` needs one approval per operation per
+conversation; a `destructive` op needs one **per call**, always, for exactly the input the card
+showed.
 
-**This ladder needs `connectors.opTiering`, and that setting ships OFF.** Without it a
-connection falls back to the framework's own blanket approval, which prompts once per
-operation name and knows nothing about the verb — so a read prompts too, and a destructive
-op is silenced by its own first approval instead of asking again. Arm the setting in your
-deployment's `agent/settings.ts` to get the ladder described above.
+**Every approval here is an OE card, never a wait** (OPE-2340). A call that needs a person is
+refused with "an approval card is posted", and the card goes into the room. Nothing holds a turn
+on it, so the room and every other job of the conversation carry on. When a member approves, the
+agent calls the operation again and it runs. The card shows the operation, its connection and its
+input, rendered as data.
+
+**This ladder needs `connectors.opTiering`, and that setting ships OFF.** Without it every
+operation needs one approval per conversation and the verb is not read — so a read needs a card
+too, and a destructive op is covered by its first approval instead of asking again. Arm the
+setting in your deployment's `agent/settings.ts` to get the ladder described above.
 
 It reads the **operation** half of the name and nothing else. A connection slug can itself
 contain `__` — a plugin-minted connector is named `<plugin>__<server>` — so the operation is
@@ -510,10 +518,17 @@ org-owned, VPN-only support desk is a system you trust completely, and its ticke
 still typed by strangers — that connector is `"external"`. The name deliberately does not
 say "trusted": nothing here is about how the connection is reached.
 
-That table is **enforced**, so this one word has an effect: an `"internal"` connector's
-results are still fenced as data but no longer mark the turn, which changes what a later
-approval card discloses. A declared `"external"` connector, and an undeclared one, both
+That table is **enforced** for the connector-discovery list, so the word has an effect there: an
+`"internal"` connector's rows are still fenced as data but no longer mark the turn, which changes
+what a later approval card discloses. A declared `"external"` connector, and an undeclared one, both
 still mark it.
+
+**The word also applies to an operation's own result.** Since eve 0.69.0 the model reaches every
+operation through one `connection_execute` verb. OE reads each call's `{connection, tool}` target
+(`access/untrusted-projection.ts`, `declaredContentOriginForExecuteTarget` in
+`access/connector-content-origin-state.ts`), and the connection's declared `contentOrigin` for that
+tool then applies to the result. So an `"internal"` declaration leaves the turn clean, and a declared
+`"external"` connector, or an undeclared one, marks it.
 
 `connection_search` belongs to no one connection, so its name matches no declaration. Its
 **result** answers instead: each discovered tool answers with its own connection's declaration
@@ -599,9 +614,9 @@ Granting a connector is enforced at eight layers:
    terminal and fail-closed, if that surface wasn't granted this connector. An ungranted
    or unresolvable surface never reaches a credential. This is built into the credential
    builders, so an author can't forget it.
-4. **DM-only context wall (v1, default on).** The framework injects a discovered
-   connector's operation tools (`notion__search`, …) on *every* session — standing
-   channel watchers included — so the same `getToken` gate also requires the calling
+4. **DM-only context wall (v1, default on).** The framework gives *every* session that
+   has connections `connection_search` and `connection_execute`, and each call names one
+   operation (`notion` / `search`, …) — standing channel watchers included — so the same `getToken` gate also requires the calling
    surface to resolve a *positively-DM* context. Connector operations outside a DM seat
    (or a task worker spawned from one) are refused fail-closed before any token exists,
    and every verdict is audited (`connector.use` / `connector.refused`). **Two settings take this
@@ -719,8 +734,8 @@ What the grant buys, and what it does not:
   unchanged: the schema is still baked, the tier still rides the grant row, the broker still
   re-checks the row on every call, and the room still gets its notice.
 - The mount runs at `session.started` **and at `turn.started`**, so an approved grant is
-  callable on the **next turn** of the chat that asked for it. No deploy, no rotation and no
-  new session. The cost is one grant read per turn on a delegated worker — two where the worker's
+  callable by the **next worker** that the chat that asked for it hands work to. The seat itself
+  never holds the tool (OPE-2023). No deploy, no rotation and no new session. The cost is one grant read per turn on a delegated worker — two where the worker's
   root seat resolves a domain-grained key, because the standing rows bound to that room are a second
   read. A conversational seat pays neither: the resolver refuses it before any store call.
 - Every argument the grant fixed is **pinned and visible** in the tool's input schema — the
@@ -813,7 +828,7 @@ What the grant buys, and what it does not:
   answer, so it cannot be reached — and it never undoes the revoke. The owner's confirmation
   therefore names the rooms it could not reach rather than claiming all of them were told.
   **What ends is the grant, not the tool.** The mount projects rows that EXIST and the broker refuses on STATE, so the borrowed
-  tool may still appear in that conversation's tool list and every call on it is refused — the
+  tool may still appear in the tool list of that conversation's workers and every call on it is refused — the
   room's notice says exactly that, so a seat does not read the refusal as a fault.
 - The **first successful** call on a grant DMs the owner, in the same 1:1 the approval card
   lives in. Later calls on a live grant do not DM again: the notice is how the owner learns their
@@ -1230,16 +1245,16 @@ for comments since its last wake. It fires from a webhook route with no turn, ov
 the wake itself already admitted, and `lint:own-account-gate` cannot catch it: that lint reds only
 when a connector has *no* gated call site at all.
 
-On **GitHub**, the tree holds EIGHT reads and SEVEN of them call the seam: the
+On **GitHub**, the tree holds NINE reads and EIGHT of them call the seam: the
 bundle's conversation reads — `read_channel` / `read_thread` and the worker's
 `read_work_channel` / `read_work_thread`, all four admitted through one `admitContainer` —
-plus core's `check_pr_status`, `get_pr_feedback`, `walk_pr`, `subscribe_pr`, `checkout_repo`
-and the GitHub arm of `search`. The seam lives in core
+plus core's `check_pr_status`, `get_pr_feedback`, `read_github_issue`, `walk_pr`,
+`subscribe_pr`, `checkout_repo` and the GitHub arm of `search`. The seam lives in core
 (`agent/scm/github-acting-identity.ts`) because all but one of those call sites do: the SCM
 plane stays in core by doctrine, and a seam inside the bundle could not reach them. GitHub's
 write verbs stay outside, under the write residual below.
 
-**The EIGHTH read is the reaction-feedback poll, and it is ungated by decision**
+**The NINTH read is the reaction-feedback poll, and it is ungated by decision**
 (`packages/providers/github/agent/channels/github-reaction-feedback.ts`). It reads the
 reactions on a comment the agent itself posted, so it is an INGRESS with no requester turn
 behind it — the same shape as the memory backing above, and there is no own-account ask to
@@ -1253,7 +1268,7 @@ itself, and refuses unless the result equals the set it declares — so a second
 starts minting this way reds there rather than passing in silence, and the count above moves
 with it.
 
-**That EIGHT is the gated set plus the scan's blind spot — it is not every read in the
+**That NINE is the gated set plus the scan's blind spot — it is not every read in the
 tree.** Two more reads resolve an installation token and are ungated by decision, both
 INGRESS: the standing seat's since-last-wake catch-up
 (`packages/providers/github/agent/channels/github-catch-up.ts`) and a routine's entity
@@ -1580,6 +1595,15 @@ never on its own as evidence that the prompt rule is failing.
 🔴 **`grant.expired` is stamped on a marker partition**, with `grant` as the platform and `sweep` as
 the workspace. The ask row carries no requester partition to reuse, so the sweep names its own
 instead of borrowing one that would be wrong.
+
+🔴 **The lapse notices cover only the orgs in `OE_TIDY_ORGS`.** The daily sweep sends the
+requester's lapse notice, rewrites the owner's card to expired and writes `grant.expired`. It walks
+only the orgs that `OE_TIDY_ORGS` names (default: the single org `default`). A lapsed ask grants
+nothing in ANY org, because every read and every approve checks the clock on the row. But in an
+org the variable does not list, the owner's card keeps a live Approve button, the requester gets no
+lapse notice, and no `grant.expired` row is written. A Decline click does not check the clock, so a
+Decline on such a lapsed ask still records `declined` and tells the requester. A multi-tenant deployment must list every org
+in `OE_TIDY_ORGS` — see the [configuration reference](../deploy/configuration-reference.md#approvals).
 
 ## Reaching AWS (host-side, identity-bound)
 

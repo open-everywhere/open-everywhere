@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { SpendCheckpoints } from "../agent/spend/checkpoint.js";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+import { getSettings, overrideSettingsForTest } from "../agent/settings/settings.js";
 registerSlackFixtureMapper();
 
 
@@ -16,15 +17,25 @@ function ok(cond: boolean, label: string): void {
   }
   passed++;
 }
-async function throws(fn: () => Promise<unknown> | unknown, label: string): Promise<void> {
+async function rejectsWith(fn: () => Promise<unknown> | unknown, fragment: string, label: string): Promise<void> {
+  let threw = false;
+  let error: unknown;
   try {
     await fn();
-  } catch {
-    passed++;
-    return;
+  } catch (err) {
+    threw = true;
+    error = err;
   }
-  console.error(`✗ ${label} (expected a throw)`);
-  process.exit(1);
+  if (!threw) {
+    console.error(`✗ ${label} (expected a throw, got none)`);
+    process.exit(1);
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (!message.includes(fragment)) {
+    console.error(`✗ ${label} (threw, but not the refusal under test — expected "${fragment}", got: ${message})`);
+    process.exit(1);
+  }
+  passed++;
 }
 
 const dir = join(tmpdir(), `open-everywhere-checkpoint-test-${process.pid}`);
@@ -51,12 +62,12 @@ const {
 assertSpendCheckpointsValid({});
 assertSpendCheckpointsValid(defineSpendCheckpoints({ default: { sessionTokens: 1000, sessionUsd: 5 }, perSurface: { "slack/T1/C1": { sessionModelCalls: 50 } } }));
 passed += 2;
-await throws(() => assertSpendCheckpointsValid({ default: {} as never }), "validator: an empty entry (no threshold) is rejected");
-await throws(() => assertSpendCheckpointsValid({ default: { sessionTokensX: 1 } as never }), "validator: an unknown field is rejected");
-await throws(() => assertSpendCheckpointsValid({ default: { sessionTokens: 0 } }), "validator: a non-positive amount is rejected");
-await throws(() => assertSpendCheckpointsValid({ default: { sessionTokens: 1.5 } }), "validator: a non-integer count is rejected");
-await throws(() => assertSpendCheckpointsValid({ perWorkspace: { "bad-key": { sessionTokens: 1 } } }), "validator: a malformed perWorkspace key is rejected");
-await throws(() => assertSpendCheckpointsValid({ perSurface: { "slack/T1": { sessionTokens: 1 } } }), "validator: a perSurface key missing the surface segment is rejected");
+await rejectsWith(() => assertSpendCheckpointsValid({ default: {} as never }), "spend checkpoint default sets no threshold at all", "validator: an empty entry (no threshold) is rejected");
+await rejectsWith(() => assertSpendCheckpointsValid({ default: { sessionTokensX: 1 } as never }), 'spend checkpoint default has unknown field "sessionTokensX"', "validator: an unknown field is rejected");
+await rejectsWith(() => assertSpendCheckpointsValid({ default: { sessionTokens: 0 } }), "spend checkpoint default.sessionTokens must be a finite number > 0, got 0", "validator: a non-positive amount is rejected");
+await rejectsWith(() => assertSpendCheckpointsValid({ default: { sessionTokens: 1.5 } }), "spend checkpoint default.sessionTokens must be an integer count, got 1.5", "validator: a non-integer count is rejected");
+await rejectsWith(() => assertSpendCheckpointsValid({ perWorkspace: { "bad-key": { sessionTokens: 1 } } }), 'spend checkpoint perWorkspace key must be "platform/workspace", got "bad-key"', "validator: a malformed perWorkspace key is rejected");
+await rejectsWith(() => assertSpendCheckpointsValid({ perSurface: { "slack/T1": { sessionTokens: 1 } } }), 'spend checkpoint perSurface key must be "platform/workspace/surface", got "slack/T1"', "validator: a perSurface key missing the surface segment is rejected");
 
 ok(!checkCheckpoint({ tokens: 999, modelCalls: 5 }, { sessionTokens: 1000 }).crossed, "checkCheckpoint: under the token threshold -> not crossed");
 {
@@ -137,7 +148,22 @@ ok(checkpointConfigured({ sessionUsd: 1 }), "checkpointConfigured: any component
   const memoKey = "win-grant-1";
   const before = await store.getSessionApproval("default", memoKey, CHECKPOINT_GRANT_MEMO, new Date().toISOString());
   ok(before === null, "session.checkpoint: no grant memo before approval");
-  await kind!.execute({ org: "default", scopeKey: "slack/T1/C1", sessionId: memoKey }, "U-APPROVER");
+  const answer = await kind!.execute({ org: "default", scopeKey: "slack/T1/C1", sessionId: memoKey }, "U-APPROVER");
+  ok(
+    answer === "cost checkpoint cleared — the agent may do consequential work again in this session for up to 24 h",
+    "session.checkpoint execute: the answer names the 24 h clock the grant carries (OPE-2161)",
+  );
+  ok(
+    kind!.summarize({ org: "default", scopeKey: "slack/T1/C1", sessionId: memoKey }).includes("Approving lets it continue in this session for up to 24 h."),
+    "session.checkpoint card: a LIVE session's card names the clock BEFORE the click (OPE-2161)",
+  );
+  const shippedCheckpointTtl = getSettings().approvals.checkpointTtlHours;
+  overrideSettingsForTest({ approvals: { checkpointTtlHours: 6 } });
+  const answer6 = await kind!.execute({ org: "default", scopeKey: "slack/T1/C1", sessionId: "win-grant-6h" }, "U-APPROVER");
+  const lines6 = kind!.summarize({ org: "default", scopeKey: "slack/T1/C1", sessionId: "win-grant-6h" });
+  overrideSettingsForTest({ approvals: { checkpointTtlHours: shippedCheckpointTtl } });
+  ok(String(answer6).endsWith("for up to 6 h"), "session.checkpoint execute: a 6-hour deployment's answer says 6 h — it reads the setting");
+  ok(lines6.includes("Approving lets it continue in this session for up to 6 h."), "session.checkpoint card: …and so does the card");
   const after = await store.getSessionApproval("default", memoKey, CHECKPOINT_GRANT_MEMO, new Date().toISOString());
   ok(after !== null && after.grantedBy === "U-APPROVER", "session.checkpoint execute: writes the continue grant memo attributed to the approver");
   const { readAudit } = await import("../agent/audit/audit.js");
@@ -186,7 +212,7 @@ passed++;
   const sid = "sess-over";
   await seed(sid, 2000);
   const pendingBefore = (await store.listPendingActions("default")).filter((r) => r.kind === "session.checkpoint").length;
-  await throws(() => requireSessionContinuation(ctxFor(sid), "open_pull_request"), "guard: over threshold + no grant -> blocks (throws)");
+  await rejectsWith(() => requireSessionContinuation(ctxFor(sid), "open_pull_request"), "Paused: this session reached its cost checkpoint", "guard: over threshold + no grant -> blocks (throws)");
   const pendingAfter = (await store.listPendingActions("default")).filter((r) => r.kind === "session.checkpoint").length;
   ok(pendingAfter === pendingBefore + 1, "guard: a session.checkpoint card was posted once on the trip");
   const asked = await store.getSessionApproval("default", sid, CHECKPOINT_ASK_MEMO, new Date().toISOString());
@@ -194,7 +220,7 @@ passed++;
   const audit = await readAudit({ org: "default" });
   ok(audit.some((a) => a.action === "checkpoint.trip"), "guard: the trip is audited (checkpoint.trip)");
 
-  await throws(() => requireSessionContinuation(ctxFor(sid), "create_skill"), "guard: a second consequential call stays blocked");
+  await rejectsWith(() => requireSessionContinuation(ctxFor(sid), "create_skill"), "Paused: this session reached its cost checkpoint", "guard: a second consequential call stays blocked");
   const pendingSecond = (await store.listPendingActions("default")).filter((r) => r.kind === "session.checkpoint").length;
   ok(pendingSecond === pendingAfter, "guard: no second card on a repeat call (card once, not per-call spam)");
 }
@@ -202,7 +228,7 @@ passed++;
 {
   const sid = "sess-grant";
   await seed(sid, 2000);
-  await throws(() => requireSessionContinuation(ctxFor(sid), "open_pull_request"), "guard: crossed session blocks before a grant");
+  await rejectsWith(() => requireSessionContinuation(ctxFor(sid), "open_pull_request"), "Paused: this session reached its cost checkpoint", "guard: crossed session blocks before a grant");
   const now = new Date();
   await store.setSessionApproval({ org: "default", sessionId: sid, kind: CHECKPOINT_GRANT_MEMO, grantedBy: "U-OK", createdAt: now.toISOString(), expiresAt: new Date(now.getTime() + 3_600_000).toISOString() });
   await requireSessionContinuation(ctxFor(sid), "open_pull_request");
@@ -212,14 +238,14 @@ passed++;
 {
   const sid = "sess-deny";
   await seed(sid, 2000);
-  await throws(() => requireSessionContinuation(ctxFor(sid), "open_pull_request"), "guard: crossed session blocks (deny scenario, first trip)");
+  await rejectsWith(() => requireSessionContinuation(ctxFor(sid), "open_pull_request"), "Paused: this session reached its cost checkpoint", "guard: crossed session blocks (deny scenario, first trip)");
   const pending = (await store.listPendingActions("default")).find((r) => r.kind === "session.checkpoint" && r.argsJson.includes(sid));
   ok(pending !== undefined, "guard: a pending checkpoint card exists to decide");
   await store.decidePendingAction("default", pending!.id, "rejected", "U-NO", new Date().toISOString());
   const grant = await store.getSessionApproval("default", sid, CHECKPOINT_GRANT_MEMO, new Date().toISOString());
   ok(grant === null, "guard: a rejected card writes NO continue grant");
   const pendingBefore = (await store.listPendingActions("default")).filter((r) => r.kind === "session.checkpoint").length;
-  await throws(() => requireSessionContinuation(ctxFor(sid), "purge_memory"), "guard: after a deny the session stays soft-blocked");
+  await rejectsWith(() => requireSessionContinuation(ctxFor(sid), "purge_memory"), "Paused: this session reached its cost checkpoint", "guard: after a deny the session stays soft-blocked");
   const pendingAfter = (await store.listPendingActions("default")).filter((r) => r.kind === "session.checkpoint").length;
   ok(pendingAfter === pendingBefore, "guard: after a deny no fresh card is posted (deny keeps the block quietly)");
 }
@@ -252,7 +278,7 @@ passed++;
 
   const sid = "sess-job";
   await seed(sid, 2000);
-  await throws(() => requireSessionContinuation(jobCtx(sid), "open_pull_request"), "OPE-261: a job's first crossing blocks and cards");
+  await rejectsWith(() => requireSessionContinuation(jobCtx(sid), "open_pull_request"), "Paused: this session reached its cost checkpoint", "OPE-261: a job's first crossing blocks and cards");
   const pending = (await store.listPendingActions("default")).find((r) => r.kind === CHECKPOINT_KIND && r.argsJson.includes(sid));
   ok(pending !== undefined, "OPE-261: the job's crossing posted a card to decide");
   const frozen = JSON.parse(pending!.argsJson) as { durableSession?: true };
@@ -276,6 +302,15 @@ passed++;
   const firstDurable = checkpointCardLines(planOf({ durable: true }), "#proj-chat").join("\n");
   ok(firstDurable.includes(DURABLE_GRANT_DISCLOSURE), `OPE-261: the FIRST durable card discloses that the approval does not lapse (${firstDurable})`);
   ok(checkpointCardLines(planOf({ durable: true, approvedAt: new Date().toISOString() }), "#proj-chat").join("\n").includes(DURABLE_GRANT_DISCLOSURE), "OPE-261: so does the rebased durable card");
+  ok(checkpointCardLines(planOf({}), "#proj-chat").includes("Approving lets it continue in this session for up to 24 h."), "OPE-2161: a LIVE session's posted card names the grant's clock before the click");
+  {
+    const shipped = getSettings().approvals.checkpointTtlHours;
+    overrideSettingsForTest({ approvals: { checkpointTtlHours: 6 } });
+    const posted6 = checkpointCardLines(planOf({}), "#proj-chat");
+    overrideSettingsForTest({ approvals: { checkpointTtlHours: shipped } });
+    ok(posted6.includes("Approving lets it continue in this session for up to 6 h."), "OPE-2161: a 6-hour deployment's POSTED card says 6 h — it reads the setting");
+  }
+  ok(!checkpointCardLines(planOf({ durable: true }), "#proj-chat").join("\n").includes("for up to"), "OPE-2161 control: a DURABLE session's card names no clock — its grant has none");
   ok(!checkpointCardLines(planOf({}), "#proj-chat").join("\n").includes(DURABLE_GRANT_DISCLOSURE), "OPE-261 control: a LIVE session's card carries no no-expiry disclosure — it grants nothing that lasts");
   ok(firstDurable.includes("In #proj-chat.") && !firstDurable.includes("slack/T1/C1"), "checkpoint card: the room's NAME, never the raw scope key, when a label resolved");
   ok(checkpointCardLines(planOf({ durable: true })).join("\n").includes("In slack/T1/C1."), "checkpoint card: the raw key is the fail-open fallback when no label resolved");
@@ -298,7 +333,7 @@ passed++;
   );
 
   await seed(sid, 2000);
-  await throws(() => requireSessionContinuation(ctxFor(sid), "open_pull_request"), "OPE-261: a fresh increment blocks again — and a NON-routine turn on the job's memo key is held to the same rebase");
+  await rejectsWith(() => requireSessionContinuation(ctxFor(sid), "open_pull_request"), "Paused: this session spent another checkpoint's worth since a member approved it", "OPE-261: a fresh increment blocks again — and a NON-routine turn on the job's memo key is held to the same rebase");
   const cardsAfterSecondCrossing = (await store.listPendingActions("default")).filter((r) => r.kind === CHECKPOINT_KIND).length;
   ok(cardsAfterSecondCrossing === cardsAfterApproval + 1, "OPE-261: the fresh crossing posts a NEW card rather than stalling silently");
   const reCard = (await store.listPendingActions("default")).find((r) => r.kind === CHECKPOINT_KIND && r.argsJson.includes(sid));
@@ -306,7 +341,7 @@ passed++;
 
   const liveSid = "sess-live-grant";
   await seed(liveSid, 2000);
-  await throws(() => requireSessionContinuation(ctxFor(liveSid), "open_pull_request"), "OPE-261 control: a live session's first crossing blocks");
+  await rejectsWith(() => requireSessionContinuation(ctxFor(liveSid), "open_pull_request"), "Paused: this session reached its cost checkpoint", "OPE-261 control: a live session's first crossing blocks");
   const livePending = (await store.listPendingActions("default")).find((r) => r.kind === CHECKPOINT_KIND && r.argsJson.includes(liveSid));
   const liveArgs = JSON.parse(livePending!.argsJson) as { durableSession?: true };
   ok(liveArgs.durableSession === undefined, "OPE-261 control: a live session's frozen args carry no durable mark");
@@ -408,7 +443,7 @@ passed++;
     await addJob(id);
     await seed(sid, 5000);
     const pendingBefore = (await store.listPendingActions("default")).filter((r) => r.kind === "session.checkpoint").length;
-    await throws(() => requireSessionContinuation(fireCtx(sid, id), "purge_memory"), "fire: a crossed routine fire is still BLOCKED — the stop is the right direction and OPE-253 did not change it");
+    await rejectsWith(() => requireSessionContinuation(fireCtx(sid, id), "purge_memory"), "Paused: this session reached its cost checkpoint", "fire: a crossed routine fire is still BLOCKED — the stop is the right direction and OPE-253 did not change it");
     const pendingAfter = (await store.listPendingActions("default")).filter((r) => r.kind === "session.checkpoint").length;
     ok(pendingAfter === pendingBefore + 1, "fire: THE CARD STILL POSTS — whether an unattended fire should card at all is a doctrine question about the approvals plane, deliberately left alone");
 
@@ -421,7 +456,7 @@ passed++;
     ok(rows.length === 1, "🔴 THE ROW: one routine.stalled forensic row, written at the MOMENT of the block — checkpoint.trip is once per SESSION, and a durable job's session spans every fire, so without this the 2nd..200th blocked fire wrote nothing at all");
     ok((rows[0]?.detail as { tool?: string }).tool === "purge_memory", "fire: the row names the tool that was refused");
 
-    await throws(() => requireSessionContinuation(fireCtx(sid, id), "open_pull_request"), "fire: a second consequential call in the same fire is still blocked");
+    await rejectsWith(() => requireSessionContinuation(fireCtx(sid, id), "open_pull_request"), "Paused: this session reached its cost checkpoint", "fire: a second consequential call in the same fire is still blocked");
     const after = (await readAudit({ org: "default", limit: 1000 })).filter((a) => a.action === ROUTINE_AUDIT.stalled && (a.detail as { routineId?: string } | undefined)?.routineId === id);
     ok(after.length === 1, "fire: …and records nothing extra — one stalled FIRE, not one per refused tool");
   }
@@ -461,7 +496,7 @@ passed++;
     const sid = "sess-human";
     await seed(sid, 5000);
     const beforeRows = (await readAudit({ org: "default", limit: 1000 })).filter((a) => a.action === ROUTINE_AUDIT.stalled).length;
-    await throws(() => requireSessionContinuation(ctxFor(sid), "purge_memory"), "parity: a live human session over threshold blocks exactly as before");
+    await rejectsWith(() => requireSessionContinuation(ctxFor(sid), "purge_memory"), "Paused: this session reached its cost checkpoint", "parity: a live human session over threshold blocks exactly as before");
     const afterRows = (await readAudit({ org: "default", limit: 1000 })).filter((a) => a.action === ROUTINE_AUDIT.stalled).length;
     ok(afterRows === beforeRows, "parity: …and records no stall — a stall is a property of an UNATTENDED fire, and a human who is right there can answer the card");
   }
@@ -469,7 +504,7 @@ passed++;
   {
     const sid = "sess-fire-gone";
     await seed(sid, 5000);
-    await throws(() => requireSessionContinuation(fireCtx(sid, "r-does-not-exist"), "purge_memory"), "fail-soft: a marker with no surviving routine still produces the guard's own block, not a store error");
+    await rejectsWith(() => requireSessionContinuation(fireCtx(sid, "r-does-not-exist"), "purge_memory"), "Paused: this session reached its cost checkpoint", "fail-soft: a marker with no surviving routine still produces the guard's own block, not a store error");
   }
 }
 

@@ -224,6 +224,14 @@ console.log("admitSlackInputResponse:");
 }
 
 {
+  const src = readFileSync(fileURLToPath(new URL("../agent/channels/slack.ts", import.meta.url)), "utf8");
+  ok(
+    /renderers:\s*\[\s*(?:\/\/[^\n]*\n\s*)*taskCardConfidentiality,/.test(src),
+    "🔴 slack.ts's renderer chain starts with taskCardConfidentiality — deleting it restores eve's unredacted card, which posts a worker brief and its result excerpt into the room",
+  );
+}
+
+{
   const src = readFileSync(fileURLToPath(new URL("../agent/channels/slack-input-response.ts", import.meta.url)), "utf8");
   ok(
     /deps\.guestVerdict\s*\?\?\s*slackClickerIsGuest/.test(src),

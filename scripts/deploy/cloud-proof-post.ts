@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 
-import { buildPostDecision, formatInvocation, postCommitStatus } from "./cloud-proof-post-lib.js";
+import { buildPostDecision, formatInvocation, pinInvocationToRepo, postCommitStatus } from "./cloud-proof-post-lib.js";
 import { parseEvidence } from "./cloud-proof-verify-lib.js";
 import { parseArgs } from "./lib.js";
 
@@ -35,7 +35,7 @@ if (decision.kind === "refuse") {
 }
 
 if (dryRun) {
-  console.log(`(dry run, nothing posted) ${formatInvocation(decision.invocation)}`);
+  console.log(`(dry run, nothing posted) ${formatInvocation(pinInvocationToRepo(decision.invocation, process.env))}`);
   process.exit(0);
 }
 

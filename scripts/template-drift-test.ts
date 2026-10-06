@@ -35,9 +35,10 @@ ok(lineDiffSummary("a\nb\n", "a\nb\nc\n") === "the template adds 1 and drops 0 l
 ok(lineDiffSummary("a\nold\nc\n", "a\nnew\nnew2\nc\n") === "the template adds 2 and drops 1 line(s), first at line 2", "a changed line counts as one removed and its replacements as added");
 ok(lineDiffSummary("a\r\nb\r\n", "a\nb\n").startsWith("the template adds 0 and drops 0"), "a CRLF checkout does not read as a rewrite");
 
-const GATE_014_START = "const operationalSelection = resolveOperationalSelection(process.env);";
-const GATE_014_END = "  await registerNeon();\n}\n";
-const GATE_012 = [
+const WIRING_012 = [
+  "// Adapter selection — the app's choice of vendor implementations, wired at startup.",
+  'import { registerNeon } from "@open-everywhere/adapters/agent/postgres/neon.js";',
+  "",
   "// Neon (hosted Postgres) is LIVE-ONLY — only wire it when a Postgres provider is",
   "// actually selected AND a DATABASE_URL exists.",
   "if (",
@@ -53,11 +54,8 @@ function app012(): string {
   const parent = mkdtempSync(join(tmpdir(), "oe-drift-"));
   const { dir } = scaffoldApp({ targetDir: join(parent, "upgraded-app"), version: FROM, eol: "\n" });
   const adapters = join(dir, "agent/lib/register-adapters.ts");
-  const src = readFileSync(adapters, "utf8");
-  const start = src.indexOf(GATE_014_START);
-  const end = src.indexOf(GATE_014_END, start);
-  assert.ok(start > 0 && end > start, "fixture: the template still carries the 0.1.4 Neon gate this suite swaps out");
-  writeFileSync(adapters, src.slice(0, start) + GATE_012 + src.slice(end + GATE_014_END.length));
+  assert.ok(readFileSync(adapters, "utf8").includes("registerDefaultAdapters("), "fixture: the template's wiring is the one-call file this suite replaces");
+  writeFileSync(adapters, WIRING_012);
   rmSync(join(dir, "agent/lib/register-docs.ts"));
   writeFileSync(join(dir, "agent/instructions.md"), `${readFileSync(join(dir, "agent/instructions.md"), "utf8")}\nOur team's own rule.\n`);
   const core = join(dir, "node_modules/@open-everywhere/core");

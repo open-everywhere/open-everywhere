@@ -194,11 +194,17 @@ await provider.deleteTier(p, tier, silo);
 ok(Object.keys(await provider.readTier(p, tier, silo)).length === 0, "deleteTier erases the tier");
 ok(!repoFiles("acme/brain").has("memory/default/@silos/txn/MEMORY.md"), "delete removed the repo files");
 
-try {
-  await provider.readTier(p, tier, { name: "x", provider: "github" });
-  ok(false, "missing container should throw");
-} catch {
-  ok(true, "missing container → throws");
+{
+  let refusal: unknown;
+  try {
+    await provider.readTier(p, tier, { name: "x", provider: "github" });
+  } catch (err) {
+    refusal = err;
+  }
+  ok(
+    refusal instanceof Error && refusal.message.includes('needs a silo with container "owner/repo"'),
+    `missing container → throws, and the error names the missing owner/repo container (got: ${String(refusal)})`,
+  );
 }
 
 {

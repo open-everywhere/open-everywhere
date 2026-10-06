@@ -2,6 +2,7 @@ import { getOperationalStore } from "../operational/provider.js";
 import { classifyConnectorOpTier } from "../access/consequence.js";
 import { connectorOpTierParts } from "../access/connector-op-gating.js";
 import {
+  ROUTINE_PERMISSION_NO_EXPIRY,
   describeDeclaredPermissionKind,
   isLegacyConnectorOpKind,
   isRoutinePermissionMemoKind,
@@ -12,7 +13,7 @@ import { routinePermissionKey, type Routine } from "./routine.js";
 
 type PermissionedRoutine = Pick<Routine, "id" | "promptGeneration">;
 
-export const ROUTINE_PERMISSION_NO_EXPIRY = "9999-12-31T23:59:59.999Z";
+export { ROUTINE_PERMISSION_NO_EXPIRY };
 
 export const MAX_DECLARED_PERMISSIONS = 6;
 

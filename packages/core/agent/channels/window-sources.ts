@@ -1,4 +1,4 @@
-import { dmSurfaceKeyFromAnchorDomain, isTaskWindowId } from "./window-key.js";
+import { dmSurfaceKeyFromAnchorDomain, isTaskWindowId, isWorkWindowId } from "./window-key.js";
 import { domainRoster, type Domain } from "../memory/domain.js";
 
 function platformOf(surfaceKey: string): string {
@@ -19,6 +19,7 @@ function distinctPlatforms(channels: readonly string[]): readonly string[] {
 }
 
 export function sourcesForWindow(windowId: string, domain: string, domains: readonly Domain[]): readonly string[] {
+  if (isWorkWindowId(windowId)) return sourcesForWindow(windowId.slice("w/".length), domain, domains);
   if (isTaskWindowId(windowId)) {
     const p = platformOf(windowId.slice("t/".length));
     return p.length > 0 ? [p] : [];
@@ -43,6 +44,7 @@ export function sourcesForWindow(windowId: string, domain: string, domains: read
 }
 
 export function windowSourcesNeedConfig(windowId: string, domain: string): boolean {
+  if (isWorkWindowId(windowId)) return windowSourcesNeedConfig(windowId.slice("w/".length), domain);
   if (isTaskWindowId(windowId)) return false;
   if (dmSurfaceKeyFromAnchorDomain(domain) !== undefined) return false;
   return windowId === domain || !windowId.includes("/");

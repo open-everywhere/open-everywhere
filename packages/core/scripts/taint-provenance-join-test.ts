@@ -18,7 +18,7 @@ import { registerProvider, type MemoryProvider } from "../agent/memory/provider.
 import { siloTier, tierId, type MemoryFiles, type Tier } from "../agent/memory/store.js";
 import { type Partition } from "../agent/memory/partition.js";
 import { resolvePartition } from "../agent/memory/partition.js";
-import { formatWindowToken } from "../agent/channels/window-key.js";
+import { formatWindowToken, workWindowId } from "../agent/channels/window-key.js";
 import { registerUnifiedWakeTarget } from "../agent/channels/unified-window.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
 import { bindFrom, currentTurnId, type BindableContext } from "../agent/identity/binding.js";
@@ -149,7 +149,7 @@ tiers.set(tierId(BRAIN), { files: { "MEMORY.md": SEEDED }, version: 1 });
 const memory = memoryHook as unknown as { events: Record<string, (event: unknown, ctx: HookContext) => void | Promise<void>> };
 const taint = spawnTaintHook as unknown as { events: Record<string, (event: unknown, ctx: HookContext) => void | Promise<void>> };
 
-const WINDOW = formatWindowToken({ domain: "payments", windowId: "payments", generation: 3 });
+const WINDOW = formatWindowToken({ domain: "payments", windowId: workWindowId("slack_T1_C1"), generation: 3 });
 const SLACK_ATTRS: Record<string, string> = {
   team_id: "T1",
   channel_id: "C1",
@@ -388,7 +388,8 @@ console.log("B — a CONTINUATION of the same child, from the parent's SECOND ta
     MARKED(bullet),
     "[B] 🔴 THE CONTINUATION GAP IS CLOSED: the child's SECOND turn, from a still-tainted parent, adopts and its bullet is MARKED (RED before: `turn.sequence > 0` refused it, and the pinned parent turn never matched the new stamp)",
   );
-  ok(bullet.includes("ingested notion]"), "[B] …and it names the SECOND turn's kind, not the first's — the stamp, not the pin, is what was read");
+  ok(/ingested [^\]]*notion/.test(bullet), "[B] …and it names the SECOND turn's kind, from the parent's fresh stamp");
+  ok(/ingested [^\]]*web/.test(bullet), "[B] 🔴 …and the FIRST turn's kind too, from the child's sticky taint — its second turn still holds the first turn's history");
 }
 {
   const parent = makeSeat("stale-parent", "standing");
@@ -406,9 +407,29 @@ console.log("B — a CONTINUATION of the same child, from the parent's SECOND ta
   await turnThatWrites(child, () => {
     parent.sandbox.put("MEMORY.md", `${SEEDED}- 2026-08-27: Dee runs the ledger\n`);
   });
+  const dee = lineWith(child, "Dee runs the ledger");
+  ok(MARKED(dee), "[B] 🔴 OPE-2251 STICKY: a child that adopted a taint on its first turn writes a MARKED bullet on its second — its history still holds what the first turn read");
+  ok(/ingested [^\]]*web/.test(dee), "[B] …naming the class it adopted on the first turn");
+}
+{
+  const parent = makeSeat("stale2-parent", "standing");
+  parent.sandbox.put("MEMORY.md", SEEDED);
+  await cleanParentTurn(parent, 1);
+  const child = await makeChild(parent, "stale2-child", 0, "stale2-parent-turn-1", "call_b5");
+  await inSession(child, async () => {
+    await startTaintTurn(child);
+    eq(untrustedIngestedThisTurn(), false, "[B] precondition: a child of a clean parent turn starts clean");
+  });
+
+  child.bag[OE_PARENT_TURN_TAINTED_ATTR] = "stale2-parent|stale2-parent-turn-2|web";
+  child.bag["oe_dispatch_turn"] = "stale2-parent|stale2-parent-turn-3";
+  child.ctx = childCtx(child, parent, 1, "stale2-parent-turn-1", "call_b6");
+  await turnThatWrites(child, () => {
+    parent.sandbox.put("MEMORY.md", `${SEEDED}- 2026-08-27: Eve signs the cheques\n`);
+  });
   ok(
-    !MARKED(lineWith(child, "Dee runs the ledger")),
-    "[B] 🔴 NEGATIVE CONTROL: a stamp this child ALREADY adopted cannot re-taint a later turn — the memo keeps the one property the sequence gate carried",
+    !MARKED(lineWith(child, "Eve signs the cheques")),
+    "[B] 🔴 NEGATIVE CONTROL: a STALE stamp from parent turn 2, carried by a continuation the CLEAN turn 3 sent, does not taint the child",
   );
 }
 

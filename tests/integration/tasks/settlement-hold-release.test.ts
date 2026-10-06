@@ -9,78 +9,59 @@ import {
   discordMentionWake,
   DISCORD_LISTED_CHANNEL_ID,
   registerScript,
-  taskIdOfDelegation,
+  rowsSinceCursor,
+  auditCursor,
   waitFor,
-  waitForChildren,
-  wrapToolExecute,
   type ScriptedHandle,
-  type SeatScript,
 } from "../harness";
 
-function dispatchScript(tag: string): SeatScript {
-  return {
-    parent: [
-      { calls: [{ tool: "agent", input: { message: `write ${tag}.txt and post it here` }, id: `${tag}-delegate` }] },
-      { say: "NO_REPLY" },
-    ],
-    child: [
-      {
-        calls: [
-          {
-            tool: "post_file",
-            input: { files: [{ source: { path: `${tag}.txt` }, filename: `${tag}.txt` }], comment: "here it is" },
-            id: `${tag}-post`,
-          },
-        ],
-      },
-      { say: "posted the file" },
-    ],
-  };
+async function serveTurnOne(tag: string): Promise<{ handle: ScriptedHandle; turnOneId: string }> {
+  const cursor = await auditCursor();
+  const handle = disposeLater(
+    registerScript({
+      parent: [
+        { calls: [{ tool: "react", input: { emoji: "eyes" }, id: `${tag}-react` }] },
+        { calls: [{ tool: "no_reply", input: { reason: "reacted_instead" }, id: `${tag}-quiet` }] },
+      ],
+    }),
+  );
+  await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `<@9000000000000000001> ${tag} first message` });
+  await waitFor(async () => (await rowsSinceCursor(cursor, ["reply.no_reply_observed"])).at(0), `turn 1 of ${tag} to end in silence`);
+  const turnOneId = handle.requests.find((r) => r.role === "parent")?.turnId;
+  expect(turnOneId).toBeDefined();
+  expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  return { handle, turnOneId: String(turnOneId) };
 }
 
-async function dispatchOneWorker(tag: string): Promise<{ handle: ScriptedHandle; dispatchTurnId: string | undefined }> {
-  const dispatched = disposeLater(registerScript(dispatchScript(tag)));
-  await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> write a file and post it" });
-  await waitForChildren(dispatched, { count: 1, lastStepIndex: 1, label: "the delegated worker to serve its whole arm" });
-  const dispatchTurnId = dispatched.requests.find((r) => r.role === "parent")?.turnId;
-  expect(dispatchTurnId).toBeDefined();
-  return { handle: dispatched, dispatchTurnId };
-}
-
-test("a WILDCARD swap made by the same test serves the held settlement turn", async () => {
+test("a WILDCARD swap made by the same test serves the held later turn", async () => {
   await bootAgent();
-  afterThisTest(wrapToolExecute("post_file", async () => ({ posted: true, count: 1 })));
+  const { handle: first, turnOneId } = await serveTurnOne("ope777a");
 
-  const { handle: dispatched, dispatchTurnId } = await dispatchOneWorker("ope777a");
+  await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> ope777a second message" });
 
   const held = await waitFor(
-    () => dispatched.resolves.find((r) => r.role === "parent" && r.turnId !== dispatchTurnId),
-    "the settlement turn's model call to reach the still-registered dispatch entry",
+    () => first.resolves.find((r) => r.role === "parent" && r.turnId !== turnOneId),
+    "turn 2's model call to reach the still-registered turn-1 entry",
   );
   expect(held.fault).toBeUndefined();
-  expect(dispatched.requests.some((r) => r.turnId === held.turnId)).toBe(false);
+  expect(first.requests.some((r) => r.turnId === held.turnId)).toBe(false);
 
-  const taskId = taskIdOfDelegation(dispatched, "the OPE-777 delegation");
+  first.dispose();
+  const second = disposeLater(registerScript({ parent: [{ calls: [{ tool: "no_reply", input: { reason: "nothing_to_add" }, id: "ope777a-second-quiet" }] }] }));
 
-  dispatched.dispose();
-  const settlement = disposeLater(registerScript({ parent: [{ say: "acknowledged" }] }));
-
-  const notification = await waitFor(
-    () => settlement.requests.find((r) => r.role === "parent" && r.messages.some((m) => m.text.includes(taskId))),
-    "the settled worker's completion, served by the same test's WILDCARD swap",
+  const served = await waitFor(
+    () => second.requests.find((r) => r.role === "parent" && r.turnId === held.turnId),
+    "the held turn 2, served by the same test's WILDCARD swap",
     90_000,
   );
-  expect(notification.fault).toBeUndefined();
-  expect(notification.role).toBe("parent");
-  expect(notification.stepIndex).toBe(0);
-  expect(notification.turnId).toBe(held.turnId);
-  expect(dispatched.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-  expect(settlement.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  expect(served.fault).toBeUndefined();
+  expect(served.stepIndex).toBe(0);
+  expect(first.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  expect(second.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 });
 
 test("an EXPIRED hold names itself in every later waitFor timeout", async () => {
   await bootAgent();
-  afterThisTest(wrapToolExecute("post_file", async () => ({ posted: true, count: 1 })));
 
   await expect(waitFor<string>(() => undefined, "a thing that never arrives", 500)).rejects.toThrow(/timed out after 500ms/);
   await expect(waitFor<string>(() => undefined, "a thing that never arrives", 500)).rejects.not.toThrow(/STALE-TURN HOLD/);
@@ -88,10 +69,11 @@ test("an EXPIRED hold names itself in every later waitFor timeout", async () => 
   __setStaleTurnParkMsForTest(1_000);
   afterThisTest(() => __setStaleTurnParkMsForTest(undefined));
 
-  const { handle: dispatched, dispatchTurnId } = await dispatchOneWorker("ope629b");
+  const { handle: first, turnOneId } = await serveTurnOne("ope629b");
+  await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> ope629b second message" });
   const faulted = await waitFor(
-    () => dispatched.requests.find((r) => r.fault !== undefined && r.turnId !== dispatchTurnId),
-    "the held settlement call to give up and record its stale fault",
+    () => first.requests.find((r) => r.fault !== undefined && r.turnId !== turnOneId),
+    "the held turn-2 call to give up and record its stale fault",
     60_000,
   );
   expect(faulted.fault).toContain("stale script");

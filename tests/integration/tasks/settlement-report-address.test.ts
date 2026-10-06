@@ -2,10 +2,10 @@ import { expect, test } from "vitest";
 
 import {
   afterThisTest,
-  armSettlement,
   auditCursor,
+  awaitWorkResult,
+  awaitWindowQuiet,
   bootAgent,
-  consumeSettlement,
   disposeLater,
   installNotionApiStub,
   installSlackWebApiStub,
@@ -16,7 +16,7 @@ import {
   SLACK_TEAM_ID,
   slackMentionWake,
   slackTs,
-  taskIdOfDelegation,
+  workTaskIdOfCall,
   waitFor,
   waitForChildren,
   WAKE_FROM_ENVELOPE,
@@ -49,7 +49,6 @@ function systemText(request: RecordedRequest): string {
 test("a settlement report is posted on the dispatching wake while a newer wake stays open", async () => {
   const slackThreadTs = slackTs(Date.now() - 1_000, 21330);
   const slackMessageTs = slackTs(Date.now(), 21331);
-  let laterSeat: ReturnType<typeof registerScript> | undefined;
 
   const slack = installSlackWebApiStub((method, params) => {
     if (method === "auth.test") return { ok: true, user_id: SLACK_BOT, bot_id: "B0OPE2133BOT", team_id: SLACK_TEAM_ID };
@@ -66,6 +65,7 @@ test("a settlement report is posted on the dispatching wake while a newer wake s
         },
       };
     }
+    if (method === "conversations.members") return { ok: true, members: [], response_metadata: { next_cursor: "" } };
     if (method === "conversations.info") {
       return {
         ok: true,
@@ -111,13 +111,13 @@ test("a settlement report is posted on the dispatching wake while a newer wake s
   await bootAgent({ sharedSqlite: true, selfBaseUrl: true, stubbedProviderTransport: true });
   await seedNotionChannelKey();
   const cursor = await auditCursor();
+  const { NO_REPLY_SENTINEL } = await import("@open-everywhere/core/agent/channels/normalized-wake.js");
 
   const dispatched = disposeLater(
     registerScript({
       parent: [
-        { calls: [{ tool: "agent", input: { message: "check whether PR #165 is green and report back" }, id: "ope2133-delegate" }] },
+        { calls: [{ tool: "work", input: { message: "check whether PR #165 is green and report back" }, id: "ope2133-delegate" }] },
         { calls: [{ tool: "reply", input: { wake: WAKE_FROM_ENVELOPE, text: HANDOFF, done: false }, id: "ope2133-handoff" }] },
-        { say: "handed off" },
       ],
       child: [{ delayMs: 120_000, say: CHILD_REPORT }],
     }),
@@ -132,11 +132,13 @@ test("a settlement report is posted on the dispatching wake while a newer wake s
     eventId: `EvOPE2133Slack${slackMessageTs.replace(".", "")}`,
   });
   expect(slackResult.status, slackResult.body).toBe(200);
-  const dispatchTerminal = await waitFor(
-    () => dispatched.requests.find((request) => request.role === "parent" && request.stepIndex === 2),
-    "the Slack dispatch turn to finish after its hand-off note",
+  await waitFor(
+    () => (slack.calls.some((call) => call.method === "chat.postMessage" && (call.params.get("text") ?? "").includes(HANDOFF)) ? true : undefined),
+    "the Slack hand-off note to reach the transport",
   );
-  const seatSessionId = String(dispatchTerminal.sessionId);
+  const dispatchStep = dispatched.requests.find((request) => request.role === "parent" && request.stepIndex === 0)!;
+  const seatSessionId = String(dispatchStep.sessionId);
+  const handoffStep = await waitFor(() => dispatched.requests.find((request) => request.role === "parent" && request.stepIndex === 1), "the dispatch turn's hand-off step");
 
   const childStart = await waitFor(
     () => dispatched.requests.find((request) => request.role === "child" && request.stepIndex === 0),
@@ -145,21 +147,33 @@ test("a settlement report is posted on the dispatching wake while a newer wake s
   expect(childStart.sessionId).not.toBe(seatSessionId);
   expect(dispatched.holdsCutShort()).toBe(0);
 
-  const { NO_REPLY_SENTINEL } = await import("@open-everywhere/core/agent/channels/normalized-wake.js");
-  laterSeat = disposeLater(registerScript({ parent: [{ say: NO_REPLY_SENTINEL }] }, seatSessionId));
+  const laterSeat = disposeLater(registerScript({ parent: [{ say: NO_REPLY_SENTINEL }] }, seatSessionId));
   const notionResult = await notionCommentEventPost({
     workspaceId: NOTION_WORKSPACE,
     commentId: NOTION_TRIGGER,
     eventId: "ev-it-ope-2133-notion",
   });
   expect(notionResult.status, notionResult.body).toBe(200);
-
   const notionTurn = await waitFor(
-    () => laterSeat?.requests.find((request) => request.role === "parent" && promptOf(request).includes(NOTION_MARKER)),
-    "the later Notion turn to run on the same standing parent while the worker is pending",
+    () => laterSeat.requests.find((request) => request.role === "parent" && promptOf(request).includes(NOTION_MARKER)),
+    "the Notion turn to run on the same standing parent while the worker is held",
   );
   expect(notionTurn.sessionId, "Slack and Notion did not share one standing parent session").toBe(seatSessionId);
-  expect(promptOf(notionTurn), "the pending worker's report leaked into the intervening Notion turn").not.toContain(FINAL_REPLY);
+  expect(notionTurn.turnId, "the Notion message did not open a turn of its own").not.toBe(dispatchStep.turnId);
+  expect(dispatched.holdsCutShort(), "the Notion turn ran while the worker was still held").toBe(0);
+  await awaitWindowQuiet();
+  laterSeat.dispose();
+  const settlement = disposeLater(
+    registerScript(
+      {
+        parent: [
+          { calls: [{ tool: "reply", input: { wake: WAKE_FROM_REPORT, text: FINAL_REPLY, done: true }, id: "ope2133-settlement-reply" }] },
+          { say: "reported" },
+        ],
+      },
+      seatSessionId,
+    ),
+  );
 
   const slackKey = `slack/${SLACK_TEAM_ID}/${SLACK_CHANNEL}`;
   const notionKey = `notion/${NOTION_WORKSPACE}/${NOTION_PAGE}`;
@@ -181,44 +195,34 @@ test("a settlement report is posted on the dispatching wake while a newer wake s
   expect(addressed, "the worker persona must render the settlement address on its own line").not.toBeNull();
   const reportWakeId = addressed![1]!;
 
-  const taskId = taskIdOfDelegation(dispatched, "the OPE-2133 delegation");
-  laterSeat.dispose();
-  const settlement = disposeLater(
-    armSettlement(dispatched, {
-      parent: [
-        { calls: [{ tool: "reply", input: { wake: WAKE_FROM_REPORT, text: FINAL_REPLY, done: true }, id: "ope2133-settlement-reply" }] },
-        { say: "reported" },
-      ],
-    }),
-  );
+  const taskId = await workTaskIdOfCall(cursor, dispatched, "ope2133-delegate", "the OPE-2133 delegation");
+  const requestId = String((await rowsSinceCursor(cursor, ["delegation.task_started"])).find((row) => row.detail?.task === taskId)?.detail?.request);
 
   dispatched.releaseHolds();
   await waitFor(() => (dispatched.holdsCutShort() === 1 ? true : undefined), "the worker hold to release through the control barrier");
   await waitForChildren(dispatched, { count: 1, lastStepIndex: 0, label: "the released worker to return its report" });
-  const notification = await consumeSettlement({
-    armed: settlement,
-    dispatched,
-    taskId,
-    label: "the released worker's settlement notification",
-  });
+  const notification = await awaitWorkResult({ handle: settlement, taskId, label: "the seat's step that read the worker's result" });
   expect(notification.sessionId).toBe(seatSessionId);
+  expect(notification.turnId, "the result arrives in a seat turn of its own, never the dispatch turn").not.toBe(handoffStep.turnId);
+  expect(notification.turnId, "…and never the Notion turn").not.toBe(notionTurn.turnId);
+  expect(notionTurn.sequence, "the Notion turn ran before the result wake — the seat did not wait on its worker").toBeLessThan(notification.sequence);
 
   const taskWake = await waitFor(async () => {
     const rows = await rowsSinceCursor(cursor, ["unified.task_wake"]);
     return rows.find((row) => row.detail?.task === taskId && typeof row.detail?.wakeId === "string");
   }, "the unified.task_wake row naming the wake this task settles under");
-  expect(
-    [slackWakeId, String(taskWake.detail?.wakeId)],
-    "the worker was handed an address that is neither the dispatching wake nor this task's own wake",
-  ).toContain(reportWakeId);
-  expect(promptOf(notification), "the settlement notification must carry the report's address line").toMatch(
-    new RegExp(`^for wake ${reportWakeId}$`, "m"),
-  );
+  expect(String(taskWake.detail?.wakeId), "fixture guard: W's task wake is not the Slack wake, so the next assertion picks one").not.toBe(slackWakeId);
+  expect(String(taskWake.detail?.outcome), "the settlement edge did not answer `ingressed`").toBe("ingressed");
+  expect(reportWakeId, "the worker was handed an address that is not the seat's dispatching wake").toBe(slackWakeId);
+  expect(reportWakeId, "the worker was handed one of the work session's own wake ids").not.toBe(requestId);
+  expect(promptOf(notification), "the result wake must carry the report's address line").toMatch(new RegExp(`^[ \\t]*for wake ${reportWakeId}(?:<\\/[a-z_]+>)*$`, "m"));
 
   await waitFor(
-    () => slack.calls.some((call) => call.method === "chat.postMessage" && (call.params.get("text") ?? "").includes(FINAL_REPLY)),
+    () => (slack.calls.some((call) => call.method === "chat.postMessage" && (call.params.get("text") ?? "").includes(FINAL_REPLY)) ? true : undefined),
     "the settlement report to reach the Slack transport",
   );
+
+  await awaitWindowQuiet();
   const posts = await waitFor(async () => {
     const rows = await rowsSinceCursor(cursor, ["reply.post"]);
     return rows.length >= 2 ? rows : undefined;
@@ -226,6 +230,8 @@ test("a settlement report is posted on the dispatching wake while a newer wake s
   const refused = await rowsSinceCursor(cursor, ["reply.refused"]);
   expect(refused.map((row) => String(row.detail?.reason)), "a reply in this arc was refused").toEqual([]);
   expect(posts).toHaveLength(2);
+  const reported = await rowsSinceCursor(cursor, ["delegation.settlement_report_posted"]);
+  expect(reported.map((row) => row.detail?.task), "the owed-report duty never armed, so the report was not the settlement report").toContain(`work:${requestId}`);
 
   const postWakes = [...new Set(posts.map((row) => String(row.detail?.wakeId)))];
   expect(postWakes, "a post landed on the later wake — this is the live-run defect").not.toContain(notionWakeId);

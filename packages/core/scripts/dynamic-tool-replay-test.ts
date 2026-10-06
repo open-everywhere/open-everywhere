@@ -20,6 +20,7 @@ import { openBrowserEgressHosts, registerBrowserToolkit } from "../agent/access/
 import { extraEgressHosts, resetExtraEgressHostsForTest } from "../agent/access/extra-hosts.js";
 
 import { registerSlackFixtureMapper, registerSlackFixtureManifest } from "./_slack-test-stubs.js";
+import { withTransformSchemaStandIn } from "./_eve-schema-stand-in.js";
 import { overrideSettingsForTest, resetSettingsForTest, type AgentSettingsOverrides } from "../agent/settings/settings.js";
 import { registerConfig } from "../agent/access/config.js";
 import { defineBinding, defineBundle } from "../agent/access/bundle.js";
@@ -127,6 +128,7 @@ const CASES: readonly ToolCase[] = [
   { slug: "read_work_thread", entryKey: "_single", ctx: slackCtx },
   { slug: "check_pr_status", entryKey: "_single", ctx: slackCtx },
   { slug: "get_pr_feedback", entryKey: "_single", ctx: slackCtx },
+  { slug: "read_github_issue", entryKey: "_single", ctx: slackCtx },
   { slug: "walk_pr", entryKey: "_single", ctx: slackCtx },
   { slug: "post_pr_walkthrough", entryKey: "_single", ctx: slackCtx },
   { slug: "subscribe_pr", entryKey: "_single", ctx: slackCtx },
@@ -244,8 +246,8 @@ console.log("4. installed-eve replay (no skip):");
 {
   const require2 = createRequire(import.meta.url);
   const eveRoot = dirname(require2.resolve("eve/package.json"));
-  const lifecycle = (await import(pathToFileURL(join(eveRoot, "dist/src/context/dynamic-tool-lifecycle.js")).href)) as {
-    replayDynamicSessionTools(meta: readonly unknown[], resolvers: readonly unknown[], sessionId: string): { name: string; execute: unknown }[];
+  const lifecycle = (await import(pathToFileURL(join(eveRoot, "dist/src/context/build-dynamic-tools.js")).href)) as {
+    replayDynamicTools(meta: readonly unknown[], scope: { sessionId: string; scope: string }): { name: string; execute: unknown }[];
   };
   const REPLAY_SESSION_ID = "sess-dynamic-tool-replay";
   const meta = CASES.map((c) => ({
@@ -256,7 +258,7 @@ console.log("4. installed-eve replay (no skip):");
     entryKey: c.entryKey,
     callbacks: { execute: { closure: {} } },
   }));
-  const replayed = lifecycle.replayDynamicSessionTools(meta, [], REPLAY_SESSION_ID);
+  const replayed = lifecycle.replayDynamicTools(meta, { sessionId: REPLAY_SESSION_ID, scope: "session" });
   eq(replayed.length, CASES.length, `eve's replay path mounts ALL ${CASES.length} durable rows back into tools`);
 }
 
@@ -268,10 +270,13 @@ console.log("5. durable callback descriptors across the REAL tool inventory (OPE
   const distUrl = (rel: string): string => pathToFileURL(join(distSrc, rel)).href;
   const nativeLifecycle = (await import(distUrl("context/dynamic-tool-lifecycle.js"))) as {
     dispatchDynamicToolEvent(e: unknown): Promise<void>;
-    replayDynamicSessionTools(meta: readonly unknown[], resolvers: readonly unknown[], sessionId: string): { name: string; execute: unknown }[];
+  };
+  const nativeBuild = (await import(distUrl("context/build-dynamic-tools.js"))) as {
+    replayDynamicTools(meta: readonly unknown[], scope: { sessionId: string; scope: string }): { name: string; execute: unknown }[];
   };
   const nativeKeys = (await import(distUrl("context/keys.js"))) as {
     SessionIdKey: unknown;
+    StaticModelReferenceKey: unknown;
     SessionDynamicToolMetadataKey: unknown;
     AuthKey: unknown;
     InitiatorAuthKey: unknown;
@@ -289,6 +294,7 @@ console.log("5. durable callback descriptors across the REAL tool inventory (OPE
   function nativeCtxFor(fixture: FixtureCtx, sessionId: string): { get(k: unknown): unknown; set(k: unknown, v: unknown): void; require(k: unknown): unknown } {
     const store = new Map<unknown, unknown>();
     store.set(nativeKeys.SessionIdKey, sessionId);
+    store.set(nativeKeys.StaticModelReferenceKey, null);
     if (fixture.channel?.kind !== undefined) store.set(ChannelKey, { kind: fixture.channel.kind });
     if (fixture.channel?.continuationToken !== undefined) store.set(nativeKeys.ContinuationTokenKey, fixture.channel.continuationToken);
     if (fixture.session?.auth?.current !== undefined) store.set(nativeKeys.AuthKey, fixture.session.auth.current);
@@ -307,6 +313,37 @@ console.log("5. durable callback descriptors across the REAL tool inventory (OPE
 
   const ctxFromNative = (fixture: FixtureCtx): unknown => ({ channel: fixture.channel, session: { id: "sess-unbound", auth: fixture.session?.auth } });
 
+  const TRANSFORM_STAMPED: ReadonlySet<string> = new Set<string>([
+    "reply",
+    "edit_reply",
+    "react",
+    "read_channel",
+    "read_thread",
+    "add_label",
+    "set_state",
+    "assign",
+    "create_ticket",
+    "post_message",
+    "dm_person",
+    "set_dm_delivery",
+    "request_access",
+    "connector",
+    "purge_memory",
+    "clear_connector_override",
+    "clear_spend_limit",
+    "read_routine_transcript",
+    "read_work_channel",
+    "read_work_thread",
+    "check_pr_status",
+    "get_pr_feedback",
+    "walk_pr",
+    "post_pr_walkthrough",
+    "subscribe_pr",
+    "search",
+    "read_github_issue",
+  ]);
+  for (const slug of TRANSFORM_STAMPED) ok(CASES.some((c) => c.slug === slug), `TRANSFORM_STAMPED names ${slug}, a slug this section drives`);
+
   for (const c of CASES) {
     const saved: Record<string, string | undefined> = {};
     for (const [k, v] of Object.entries(c.env ?? {})) {
@@ -315,7 +352,14 @@ console.log("5. durable callback descriptors across the REAL tool inventory (OPE
     }
     if (c.settings) overrideSettingsForTest(c.settings);
     try {
-      const resolverDescriptor = { slug: c.slug, eventNames: ["session.started"], events: { "session.started": resolvers.get(c.slug)! } };
+      const stamped: string[] = [];
+      const resolve = resolvers.get(c.slug)!;
+      const standIn = TRANSFORM_STAMPED.has(c.slug);
+      const resolverDescriptor = {
+        slug: c.slug,
+        eventNames: ["session.started"],
+        events: { "session.started": standIn ? async (e: unknown, x: unknown) => withTransformSchemaStandIn(await resolve(e, x), stamped) : resolve },
+      };
       const sessionId = `sess-native-heal-${c.slug}-${c.entryKey}`;
       const ctx = nativeCtxFor(c.ctx as FixtureCtx, sessionId);
       const event = { type: "session.started" };
@@ -329,6 +373,7 @@ console.log("5. durable callback descriptors across the REAL tool inventory (OPE
       const metadata = ctx.get(nativeKeys.SessionDynamicToolMetadataKey) as { name: string; entryKey: string; callbacks: { execute: Record<string, unknown> } }[];
       const row = metadata?.length === 1 ? metadata[0] : metadata?.find((r) => r.entryKey === c.entryKey);
       ok(row !== undefined, `${c.slug}:${c.entryKey} durable metadata row exists after native resolve`);
+      if (standIn) ok(stamped.length > 0, `${c.slug}:${c.entryKey} is on TRANSFORM_STAMPED, so it carries a validator schema that only the build transform describes (a stale list entry reds here)`);
       if (row === undefined) continue;
       eq(
         row.callbacks.execute,
@@ -342,7 +387,7 @@ console.log("5. durable callback descriptors across the REAL tool inventory (OPE
         typeof nativeDurable.lookupDurableDynamicCallback(owner, "execute") === "function",
         `${c.slug}:${c.entryKey} …and resolve BOUND the live callback under (${row.name}, execute) in this session — the second half eve validates`,
       );
-      const replayedRow = nativeLifecycle.replayDynamicSessionTools([row], [], sessionId);
+      const replayedRow = nativeBuild.replayDynamicTools([row], { sessionId, scope: "session" });
       eq(replayedRow.length, 1, `${c.slug}:${c.entryKey} eve replays the durable row back into a mounted tool`);
     } finally {
       for (const [k, v] of Object.entries(saved)) {

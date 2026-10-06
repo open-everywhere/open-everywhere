@@ -94,6 +94,24 @@ function ok(cond: boolean, label: string): void {
     ok(json.text.includes("/oe"), "the response explains this endpoint only handles /oe");
   }
 
+  {
+    const { overrideSettingsForTest, resetSettingsForTest } = await import("@open-everywhere/core/agent/adapter-api.js");
+    overrideSettingsForTest({ identity: { name: "Aria", commandName: "aria" } });
+    try {
+      const ariaBody = "command=%2Faria&text=help&team_id=T1&channel_id=C1&user_id=U1";
+      const timestamp = String(Math.floor(Date.now() / 1000));
+      const res = await call(slackRequest(ariaBody, { timestamp, signature: slackSignature(secret, timestamp, ariaBody) }));
+      const json = (await res.json()) as { text: string };
+      ok(json.text.includes("/aria help") && !json.text.includes("only handles"), "🔴 configured: the route ANSWERS the configured /aria command with the help");
+      const oldTs = String(Math.floor(Date.now() / 1000));
+      const oldRes = await call(slackRequest(helpBody, { timestamp: oldTs, signature: slackSignature(secret, oldTs, helpBody) }));
+      const oldJson = (await oldRes.json()) as { text: string };
+      ok(oldJson.text.includes('only handles "/aria"'), "configured: the old /oe now gets the corrective note naming /aria");
+    } finally {
+      resetSettingsForTest();
+    }
+  }
+
   if (prevSecret === undefined) delete process.env.SLACK_SIGNING_SECRET;
   else process.env.SLACK_SIGNING_SECRET = prevSecret;
 }

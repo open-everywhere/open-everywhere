@@ -114,8 +114,23 @@ async function ask(policy: ApprovalPolicy, auth: unknown, toolName: string, appr
   return await policy(approvalCtx(auth, toolName, approvedTools));
 }
 
-function isDenied(decision: ApprovalStatus): decision is { readonly type: "denied"; readonly reason?: string } {
+function isDeniedRaw(decision: ApprovalStatus): decision is { readonly type: "denied"; readonly reason?: string } {
   return typeof decision === "object" && decision !== null && decision.type === "denied";
+}
+
+const CARD_PROBE_ID = "card-probe";
+function cardProbePolicy(): ApprovalPolicy {
+  return connectorApprovalPolicy({
+    store: { getSessionApproval: async () => null, markEventSeen: async () => true } as never,
+    grantScope: () => ({ key: "oe-grant:slack/T1/C1:thread:probe", reach: "thread" }),
+    offer: async () => ({ outcome: "carded", pendingId: CARD_PROBE_ID, where: "in this conversation" }),
+  });
+}
+function carded(decision: ApprovalStatus): boolean {
+  return isDeniedRaw(decision) && (decision.reason ?? "").includes(`pending ${CARD_PROBE_ID}`);
+}
+function isDenied(decision: ApprovalStatus): decision is { readonly type: "denied"; readonly reason?: string } {
+  return isDeniedRaw(decision) && !carded(decision);
 }
 
 function fixedPolicy(answer: ApprovalStatus): ApprovalPolicy {
@@ -165,7 +180,7 @@ overrideSettingsForTest({ connectors: { opTiering: true } });
 
 console.log("§2 an unattended write with no grant is refused:");
 {
-  const policy = connectorApprovalPolicy();
+  const policy = cardProbePolicy();
   const unfenced = await ask(fixedPolicy("user-approval"), fireAuth(), WRITE_OP);
   ok(unfenced === "user-approval", "control: the wrapped policy answers user-approval — a card nobody can click");
 
@@ -204,7 +219,7 @@ console.log("§3 the routine's declared per-tool permission lifts the op:");
   );
 
   const before = (await liftRows()).length;
-  const decision = await ask(connectorApprovalPolicy(), fireAuth(), WRITE_OP);
+  const decision = await ask(cardProbePolicy(), fireAuth(), WRITE_OP);
   ok(decision === "not-applicable", "…and the same unattended write now proceeds with NO card");
 
   const rows = await liftRows();
@@ -218,27 +233,30 @@ console.log("§3 the routine's declared per-tool permission lifts the op:");
 
 console.log("§4 an attended human still gets the card:");
 {
-  ok((await ask(connectorApprovalPolicy(), HUMAN_AUTH, WRITE_OP)) === "user-approval", "an attended WRITE still raises the card");
-  ok((await ask(connectorApprovalPolicy(), HUMAN_AUTH, DESTRUCTIVE_OP)) === "user-approval", "an attended DESTRUCTIVE op still raises the card");
+  ok(carded(await ask(cardProbePolicy(), HUMAN_AUTH, WRITE_OP)), "an attended WRITE still raises the card (an OE card, OPE-2340)");
+  ok(carded(await ask(cardProbePolicy(), HUMAN_AUTH, DESTRUCTIVE_OP)), "an attended DESTRUCTIVE op still raises the card (an OE card, OPE-2340)");
   ok(
-    (await ask(connectorApprovalPolicy(), HUMAN_AUTH, WRITE_OP, new Set([WRITE_OP]))) === "not-applicable",
+    (await ask(cardProbePolicy(), HUMAN_AUTH, WRITE_OP, new Set([WRITE_OP]))) === "not-applicable",
     "an attended write already approved this session is still silenced by the once-per-op memo",
   );
 }
 
 console.log("§5 reads are untouched under either flag state:");
 {
-  ok((await ask(connectorApprovalPolicy(), fireAuth(), READ_OP)) === "not-applicable", "opTiering ON: an unattended READ never prompts and is never refused");
+  ok((await ask(cardProbePolicy(), fireAuth(), READ_OP)) === "not-applicable", "opTiering ON: an unattended READ never prompts and is never refused");
 
   overrideSettingsForTest({ connectors: { opTiering: false } });
-  ok((await ask(connectorApprovalPolicy(), fireAuth(), READ_OP)) === "user-approval", "opTiering OFF: an unattended read still parks (the ruled residual)");
-  ok(isDenied(await ask(connectorApprovalPolicy(), fireAuth(OTHER_ROUTINE_KEY), WRITE_OP)), "opTiering OFF: an unattended, ungranted WRITE is still refused (the fence is not flag-gated)");
+  {
+    const residual = await ask(connectorApprovalPolicy(), fireAuth(), READ_OP);
+    ok(isDeniedRaw(residual) && !carded(residual), "opTiering OFF: an unattended read is denied, never parked (the residual is closed, OPE-2340)");
+  }
+  ok(isDenied(await ask(cardProbePolicy(), fireAuth(OTHER_ROUTINE_KEY), WRITE_OP)), "opTiering OFF: an unattended, ungranted WRITE is still refused (the fence is not flag-gated)");
   overrideSettingsForTest({ connectors: { opTiering: true } });
 }
 
 console.log("§6 no declared permission lifts a destructive op:");
 {
-  const decision = await ask(connectorApprovalPolicy(), fireAuth(), DESTRUCTIVE_OP);
+  const decision = await ask(cardProbePolicy(), fireAuth(), DESTRUCTIVE_OP);
   ok(isDenied(decision), "an unattended DESTRUCTIVE op is refused with the write tool's row live");
   ok(rowFor(await refusedRows(), DESTRUCTIVE_OP)?.detail?.["tier"] === "destructive", "…and its refusal row records the destructive tier");
   const rowAlwaysExists = withUnattendedConnectorFence(fixedPolicy("user-approval"), { grantExists: async () => true });
@@ -263,7 +281,7 @@ console.log("§6 no declared permission lifts a destructive op:");
     nowIso: new Date().toISOString(),
   });
   ok(armed.length === 0, "…and arming writes no row for it, without throwing the click away");
-  ok(isDenied(await ask(connectorApprovalPolicy(), fireAuth(), DESTRUCTIVE_OP)), "…so the delete is still refused after that arming attempt");
+  ok(isDenied(await ask(cardProbePolicy(), fireAuth(), DESTRUCTIVE_OP)), "…so the delete is still refused after that arming attempt");
 }
 
 console.log("§7 the fence only ever replaces a park:");
@@ -277,10 +295,10 @@ console.log("§7 the fence only ever replaces a park:");
 
 console.log("§8 the row read is keyed, not merely present:");
 {
-  ok(isDenied(await ask(connectorApprovalPolicy(), fireAuth(OTHER_GENERATION_KEY), WRITE_OP)), "a fire on a LATER prompt generation misses the row (edit_routine invalidates it)");
-  ok(isDenied(await ask(connectorApprovalPolicy(), fireAuth(OTHER_ROUTINE_KEY), WRITE_OP)), "another ROUTINE's key does not see this routine's row");
-  ok(isDenied(await ask(connectorApprovalPolicy(), fireAuth(), "linear__create_issue")), "a notion tool's row does not lift a write on linear");
-  ok((await ask(connectorApprovalPolicy(), fireAuth(), WRITE_OP)) === "not-applicable", "control: the correct key + connector still lifts");
+  ok(isDenied(await ask(cardProbePolicy(), fireAuth(OTHER_GENERATION_KEY), WRITE_OP)), "a fire on a LATER prompt generation misses the row (edit_routine invalidates it)");
+  ok(isDenied(await ask(cardProbePolicy(), fireAuth(OTHER_ROUTINE_KEY), WRITE_OP)), "another ROUTINE's key does not see this routine's row");
+  ok(isDenied(await ask(cardProbePolicy(), fireAuth(), "linear__create_issue")), "a notion tool's row does not lift a write on linear");
+  ok((await ask(cardProbePolicy(), fireAuth(), WRITE_OP)) === "not-applicable", "control: the correct key + connector still lifts");
 }
 
 console.log("§9 an unreadable bag stands the fence down:");
@@ -361,7 +379,7 @@ console.log("§11b a poisoned fire is told the one remedy a fire can act on:");
 console.log("§12 a <plugin>__<server> connection keys on its whole tool name:");
 {
   const PLUGIN_OP = "acme__notes__create_page";
-  ok(isDenied(await ask(connectorApprovalPolicy(), fireAuth(), PLUGIN_OP)), "an undeclared write on `acme__notes` is refused");
+  ok(isDenied(await ask(cardProbePolicy(), fireAuth(), PLUGIN_OP)), "an undeclared write on `acme__notes` is refused");
   const row = rowFor(await refusedRows(), PLUGIN_OP);
   ok(row?.detail?.["connection"] === "acme__notes", "…and the audit row names the WHOLE slug, not its head segment");
   ok(row?.detail?.["grant"] === connectorToolPermissionKind(PLUGIN_OP), "…and the kind it looked for is the whole TOOL's, with nothing parsed out of it");
@@ -373,8 +391,8 @@ console.log("§12 a <plugin>__<server> connection keys on its whole tool name:")
     tainted: false,
     nowIso: new Date().toISOString(),
   });
-  ok((await ask(connectorApprovalPolicy(), fireAuth(), PLUGIN_OP)) === "not-applicable", "control: a `tool:acme__notes__create_page` row DOES lift it");
-  ok(isDenied(await ask(connectorApprovalPolicy(), fireAuth(), "acme__notes__share_page")), "…and nothing else on `acme__notes` rides it");
+  ok((await ask(cardProbePolicy(), fireAuth(), PLUGIN_OP)) === "not-applicable", "control: a `tool:acme__notes__create_page` row DOES lift it");
+  ok(isDenied(await ask(cardProbePolicy(), fireAuth(), "acme__notes__share_page")), "…and nothing else on `acme__notes` rides it");
   ok((await ask(withUnattendedConnectorFence(fixedPolicy("user-approval")), fireAuth(), "grant__U0OWNER__create_page")) === "user-approval", "a reserved `grant__` name is passed through untouched");
 }
 
@@ -388,9 +406,9 @@ console.log("§13 one declared row lifts one tool, and a legacy row lifts nothin
     tainted: false,
     nowIso: new Date().toISOString(),
   });
-  ok((await ask(connectorApprovalPolicy(), fireAuth(), SHARE_OP)) === "not-applicable", "control: the declared tool `notion__share_page` lifts");
+  ok((await ask(cardProbePolicy(), fireAuth(), SHARE_OP)) === "not-applicable", "control: the declared tool `notion__share_page` lifts");
   ok(
-    isDenied(await ask(connectorApprovalPolicy(), fireAuth(), INVITE_OP)),
+    isDenied(await ask(cardProbePolicy(), fireAuth(), INVITE_OP)),
     "🔴 a declared permission for `notion__share_page` does NOT lift `notion__invite_user` — same connection, same tier, one row",
   );
   ok(rowFor(await refusedRows(), INVITE_OP)?.detail?.["tier"] === "write", "…and it is refused as a WRITE, so the leg is not passing on a tier misread");
@@ -405,11 +423,11 @@ console.log("§13 one declared row lifts one tool, and a legacy row lifts nothin
     expiresAt: "9999-12-31T23:59:59.999Z",
   });
   ok(
-    isDenied(await ask(connectorApprovalPolicy(), fireAuth(OTHER_ROUTINE_KEY), WRITE_OP)),
+    isDenied(await ask(cardProbePolicy(), fireAuth(OTHER_ROUTINE_KEY), WRITE_OP)),
     "🔴 a legacy `connector.op:notion` row lifts NOTHING — refused, never widened into the connection's write class",
   );
   ok(
-    isDenied(await ask(connectorApprovalPolicy(), fireAuth(OTHER_ROUTINE_KEY), SHARE_OP)),
+    isDenied(await ask(cardProbePolicy(), fireAuth(OTHER_ROUTINE_KEY), SHARE_OP)),
     "…on any tool of that connection",
   );
   const stored = await getOperationalStore().getSessionApproval("default", OTHER_ROUTINE_KEY, connectorSessionKind("notion"), new Date().toISOString());
@@ -431,11 +449,11 @@ console.log("§14 the permission key is read off the same bag the plane would pi
   ok(stored !== null, "control: the declared row for this tool really is live under the routine key");
 
   ok(
-    isDenied(await ask(connectorApprovalPolicy(), splitBag, WRITE_OP)),
+    isDenied(await ask(cardProbePolicy(), splitBag, WRITE_OP)),
     "🔴 a `current` with no attributes does NOT fall through to the initiator's permission key — refused",
   );
   ok(
-    (await ask(connectorApprovalPolicy(), { current: { attributes }, initiator: { attributes } }, WRITE_OP)) === "not-applicable",
+    (await ask(cardProbePolicy(), { current: { attributes }, initiator: { attributes } }, WRITE_OP)) === "not-applicable",
     "control: the identical stamp on `current` DOES lift, so the refusal above is the bag choice and nothing else",
   );
 }
@@ -457,7 +475,7 @@ console.log("§18 an arm cannot lift an op on an unattended fire:");
   ok(classifyConnectorOpTier(NOUN_COLLISION_OP) === "destructive", "fixture: the built-in reads get_delete_marker as a delete");
 
   registerConfig(armed(undefined));
-  ok(isDenied(await ask(connectorApprovalPolicy(), fireAuth(), UNKNOWN_OP)), "control: with no arm, an unrecognised op is refused on an unattended fire");
+  ok(isDenied(await ask(cardProbePolicy(), fireAuth(), UNKNOWN_OP)), "control: with no arm, an unrecognised op is refused on an unattended fire");
 
   registerConfig(armed("read"));
   ok(effectiveConnectorOpTier(UNKNOWN_OP) === "write", "the arm lowered the unrecognised op to `write` — floored, not opened");
@@ -465,30 +483,30 @@ console.log("§18 an arm cannot lift an op on an unattended fire:");
 
   const memo = new Set([NOUN_COLLISION_OP]);
   ok(
-    (await ask(connectorApprovalPolicy(), HUMAN_AUTH, NOUN_COLLISION_OP, memo)) === "not-applicable",
+    (await ask(cardProbePolicy(), HUMAN_AUTH, NOUN_COLLISION_OP, memo)) === "not-applicable",
     "🔴 an attended human who already approved the arm-lowered op for the session is not asked again",
   );
   registerConfig(armed(undefined));
   ok(
-    (await ask(connectorApprovalPolicy(), HUMAN_AUTH, NOUN_COLLISION_OP, memo)) === "user-approval",
+    carded(await ask(cardProbePolicy(), HUMAN_AUTH, NOUN_COLLISION_OP, memo)),
     "🔴 NEGATIVE CONTROL: with no arm the SAME memo does not cover it — destructive prompts per call, so the leg above measured the arm",
   );
   registerConfig(armed("read"));
 
-  const memoedFire = await ask(connectorApprovalPolicy(), fireAuth(), NOUN_COLLISION_OP, memo);
+  const memoedFire = await ask(cardProbePolicy(), fireAuth(), NOUN_COLLISION_OP, memo);
   ok(isDenied(memoedFire), "🔴 an unattended fire holding the session memo for an arm-lowered DELETE is REFUSED, not executed");
   ok(isDenied(memoedFire) && (memoedFire.reason ?? "").includes(ASK_UNATTENDED_SENTENCE), "…with the plane's own ask-unattended sentence");
   ok(isDenied(memoedFire) && (memoedFire.reason ?? "").includes("destructive-tier"), "…naming the BUILT-IN's tier, which is the tier the arm could not lower");
   registerConfig(armed(undefined));
   ok(
-    (await ask(connectorApprovalPolicy(), HUMAN_AUTH, NOUN_COLLISION_OP, memo)) === "user-approval",
+    carded(await ask(cardProbePolicy(), HUMAN_AUTH, NOUN_COLLISION_OP, memo)),
     "control: the refusal above is the FIRE and not the memo — the same memo on a human turn is unaffected with no arm",
   );
   registerConfig(armed("read"));
 
-  ok(isDenied(await ask(connectorApprovalPolicy(), fireAuth(), UNKNOWN_OP)), "🔴 an everything-is-read arm does NOT open an unrecognised op on an unattended fire");
+  ok(isDenied(await ask(cardProbePolicy(), fireAuth(), UNKNOWN_OP)), "🔴 an everything-is-read arm does NOT open an unrecognised op on an unattended fire");
   ok(rowFor(await refusedRows(), UNKNOWN_OP)?.detail?.["tier"] === "destructive", "…and it is refused at the BUILT-IN's tier, not the arm's");
-  ok(isDenied(await ask(connectorApprovalPolicy(), fireAuth(), NOUN_COLLISION_OP)), "🔴 …and the arm-LOWERED recognised destructive is refused on the same fire");
+  ok(isDenied(await ask(cardProbePolicy(), fireAuth(), NOUN_COLLISION_OP)), "🔴 …and the arm-LOWERED recognised destructive is refused on the same fire");
   ok(rowFor(await refusedRows(), NOUN_COLLISION_OP)?.detail?.["tier"] === "destructive", "🔴 …also at the built-in's tier: the JOIN is what this fence gates on, not the seam");
 
   registerConfig(armed("write"));
@@ -512,11 +530,11 @@ console.log("§18 an arm cannot lift an op on an unattended fire:");
     tainted: false,
     nowIso: new Date().toISOString(),
   });
-  ok(isDenied(await ask(connectorApprovalPolicy(), fireAuth(), UNKNOWN_OP)), "🔴 …so arming that declaration lifts nothing, and the fire is still refused");
+  ok(isDenied(await ask(cardProbePolicy(), fireAuth(), UNKNOWN_OP)), "🔴 …so arming that declaration lifts nothing, and the fire is still refused");
 
   registerConfig(armed("read"));
   ok(effectiveConnectorOpTier(INVITE_OP) === "write", "a recognised write is already at the floor, so an everything-is-read arm leaves it there");
-  ok(isDenied(await ask(connectorApprovalPolicy(), fireAuth(), INVITE_OP)), "…and it is still refused on an unattended fire with no covering row");
+  ok(isDenied(await ask(cardProbePolicy(), fireAuth(), INVITE_OP)), "…and it is still refused on an unattended fire with no covering row");
 
   registerConfig(armed("read"));
   const openedPolicy = (deps: Parameters<typeof withUnattendedConnectorFence>[1] = {}) =>

@@ -1,14 +1,15 @@
 import { appendAudit } from "../audit/audit.js";
 import { bindFrom, currentTurnAddressing, deploymentOrg, type BindableContext } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
-import { getConfig } from "./config.js";
+import { ConfigLoadRefusalError, configOrRefuse } from "./config.js";
 import { requestorEntitlementChecksEnabled, type Domain } from "../memory/domain.js";
-import { governanceAdminSet, resolveAudienceFloor, type AudienceFloor, type RoomRoster } from "./audience-floor.js";
+import { governanceAdminSet, resolveAudienceFloor, rosterState, type AudienceFloor, type RoomRoster } from "./audience-floor.js";
 import { PaneRedirectError } from "./pane-venue.js";
 
 export type ConnectorDisclosureVerdict =
   | { readonly ok: true }
   | { readonly ok: false; readonly reason: "audience-floor"; readonly floor: AudienceFloor }
+  | { readonly ok: false; readonly reason: "audience-unverified" }
   | { readonly ok: false; readonly reason: "requestor-unentitled" }
   | { readonly ok: false; readonly reason: "entitlement-unavailable"; readonly detail: string };
 
@@ -26,6 +27,7 @@ export function classifyConnectorDisclosure(input: ConnectorDisclosureInput): Co
   if (input.roster.resolved && input.floor === "guest") {
     return { ok: false, reason: "audience-floor", floor: input.floor };
   }
+  if (rosterState(input.roster) === "failed") return { ok: false, reason: "audience-unverified" };
   if (!input.complianceMode || !input.directAddressed) return { ok: true };
   if (input.entitled === true) return { ok: true };
   if (input.entitled === false) return { ok: false, reason: "requestor-unentitled" };
@@ -66,11 +68,7 @@ export class ConnectorEntitlementError extends Error {
 }
 
 function domainsOrNull(): readonly Domain[] | null {
-  try {
-    return getConfig().loadDomains();
-  } catch {
-    return null;
-  }
+  return configOrRefuse("connector disclosure", (config) => config.loadDomains()) ?? null;
 }
 
 function isDirectAddressed(ctx: BindableContext, mode: string | undefined): boolean {
@@ -101,8 +99,24 @@ async function auditDisclosure(
   await appendAudit({ org, platform, workspace, surface, principalId, action, detail });
 }
 
+export class ConnectorAudienceUnverifiedError extends Error {
+  readonly reason = "audience-unverified" as const;
+  constructor(message: string) {
+    super(message);
+    this.name = "ConnectorAudienceUnverifiedError";
+  }
+}
+
 export async function assertConnectorDisclosure(connection: string, ctx: BindableContext): Promise<void> {
-  const domains = domainsOrNull();
+  let domains: readonly Domain[] | null;
+  try {
+    domains = domainsOrNull();
+  } catch (err) {
+    if (err instanceof ConfigLoadRefusalError) {
+      await auditDisclosure(ctx, "connector.refused", { connection, reason: "config_unavailable" }).catch(() => undefined);
+    }
+    throw err;
+  }
   if (!domains) return;
 
   let mode: string | undefined;
@@ -182,6 +196,20 @@ export async function assertConnectorDisclosure(connection: string, ctx: Bindabl
         `only with a pointer ("I've sent it to you directly"). Do NOT render any of the substance in this ` +
         `channel — partial disclosure is still disclosure.`,
       "requester-dm",
+    );
+  }
+
+  if (verdict.reason === "audience-unverified") {
+    await auditDisclosure(ctx, "connector.refused", {
+      connection,
+      reason: "audience_unverified",
+      ...(channelKey ? { from: channelKey } : {}),
+    });
+    throw new ConnectorAudienceUnverifiedError(
+      `connection "${connection}": refused — I couldn't read who is in this room just now (the platform's ` +
+        `membership read failed), so I can't confirm the room is not externally shared. Org-internal ` +
+        `connector data stays withheld until the membership read succeeds. Tell the requester to ask again ` +
+        `in about 30 seconds. Do NOT answer from earlier connector results in the meantime.`,
     );
   }
 

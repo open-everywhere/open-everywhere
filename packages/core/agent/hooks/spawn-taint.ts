@@ -1,6 +1,17 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
-import { OE_SPAWN_TAINTED_ATTR } from "../channels/unified.js";
+import { OE_SPAWN_TAINTED_ATTR, OE_SPAWN_TAINT_KINDS_ATTR, dispatchWorkResult } from "../channels/unified.js";
+import { OE_WORK_REQUEST_ATTR, OE_WORK_RESULT_ATTR, OE_WORK_RESULT_READS_ATTR, WORK_RESULT_WAKE_ACTION, postWorkResultOnce, readWorkCall, readWorkRequest, rememberWorkCall, workLedgerId, readWorkTaskRequest, rememberWorkTask, renderWorkResultWake, workResultText, workTokenForSeat, workCancelRedeemed, type WorkRequestRow } from "../channels/work.js";
+import { fireFoldOutcome, foldWorkFire } from "../routines/fire-work-fold.js";
+import { noteWorkJobSettled, noteWorkJobStarted, settledWorkJobStateFor } from "./work-status.js";
+import { currentWorkSessionToken } from "../access/lean-seat-state.js";
+import { forgetWorkStop, readWorkStop } from "../channels/work-stop-note.js";
+import { claimWorkCall, workRequestsThisTurn } from "../access/work-request-turn.js";
+import { keyWorkTask, readWorkTaskKey, wakeSeatNeedsReissue } from "./work-task-key.js";
+import { bareTokenFromEveContext } from "../channels/window-key.js";
+import { isWorkSessionContext } from "../access/work-session.js";
+import { getOperationalStore } from "../operational/provider.js";
+import { mintWakeId } from "../channels/unified-window.js";
 import {
   beginTaintTurn,
   markUntrustedIngestedThisTurn,
@@ -18,22 +29,21 @@ import {
   markSubagentCallTainted,
   subagentCallTaintRecord,
   rememberTaskCall,
-  rememberTaskAgent,
   taskCallLink,
-  taskAgentLink,
   type TaskCallLink,
 } from "../access/subagent-taint.js";
 import {
+  readAgentStarted,
   readDelegationFailure,
-  readTaskReceipt,
-  taskNotificationFailure,
-  taskNotificationStartsWithTerminal,
-  taskViewsOf,
-  terminalTaskNotifications,
-  terminalTaskViewsOf,
+  readTaskSettled,
+  readTaskStarted,
+  settledTaskSummary,
+  taskSettledFailure,
+  type AgentStarted,
   type DelegationFailure,
-  type TaskNotificationFailure,
-  type TaskReceipt,
+  type TaskSettled,
+  type TaskSettledFailure,
+  type TaskStarted,
   type TaskSummary,
 } from "../access/background-tasks.js";
 import { JOB_TAINT_ATTR } from "../access/job-posture.js";
@@ -44,6 +54,7 @@ import {
   bindFrom,
   currentSessionId,
   currentTurnId,
+  currentWakeId,
   deliveryStampOf,
   deploymentOrg,
   inheritedWakeStampOf,
@@ -53,17 +64,23 @@ import {
 } from "../identity/binding.js";
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { advanceDelegatedTaskWake, delegatedTaskDispatchAuthority, installTaskWake, openTaskWake, rememberDelegatedTaskBinding, rememberDelegatedTaskWake } from "../channels/task-wake.js";
-import { noteTurnBoundary, taskWakeThisTurn, uningressedTurn } from "../access/task-wake-signal.js";
+import { noteStepDelivery, noteTurnBoundary, taskWakeThisTurn, uningressedTurn } from "../access/task-wake-signal.js";
+import { liveAuthIsAnotherPrincipal, noteTurnOpeningPrincipal } from "../access/turn-opening-principal.js";
+import { noteContinuationTurn } from "../access/continuation-turn-state.js";
+import { noteTaskClaimDispatched, noteTaskProvenanceSettled, readTaskOpening, recordTaskOpening } from "../channels/task-provenance.js";
 import { clearStreamDropRetries, streamDropRetriesThisTurn } from "../model/stream-drop-retry.js";
 import { addressedWakeThisTurn, exactDispatchWakeThisTurn, noteTaskDispatchedThisTurn } from "../access/dispatch-origin-signal.js";
 import { requesterThisTurn } from "../access/requester-identity.js";
 import { noteSettlementDispatchAuthority, settlementDispatchAuthorityThisTurn } from "../access/settlement-dispatch-signal.js";
-import { claimPromisedReport, notePendingDelegation, noteDelegationSettled, noteSettlementReportOwed } from "../access/pending-delegation-signal.js";
+import { claimPromisedReport, notePendingDelegation, noteDelegationSettled, noteSettlementReportOwed, settlementReportOwedOn } from "../access/pending-delegation-signal.js";
 import { clearGenerationDelegation, noteGenerationDelegation } from "../channels/generation-retirement.js";
-import { delegatedSecondAddress, delegatingParentLink, settleDelegatedReads } from "../channels/delegated-provenance.js";
+import { delegatedSecondAddress, delegatingParentLink, heldTurnWakeProvable, settleDelegatedReads } from "../channels/delegated-provenance.js";
 import { stampReadReach } from "../channels/read-reach.js";
 import { resolvePartition } from "../memory/partition.js";
-import { flushDirtyTreeAtTurnEnd, flushSettledMemory, noteTaskDispatched, noteTaskSettled, noteTaskViews } from "./settlement-flush.js";
+import { adoptCarriedWrites, factWritesThisTurn, OE_WORK_RESULT_WRITES_ATTR } from "../memory/write-evidence.js";
+import { flushDirtyTreeAtTurnEnd, flushSettledMemory, noteTaskDispatched, noteTaskSettled } from "./settlement-flush.js";
+import { flushWorkSettlement } from "./work-flush.js";
+import { currentSeatToken, isSameWorkSession, workSessionLedgerId, workTokenHoldingTask } from "../channels/work-generation.js";
 import type { MemoryPersistContext } from "./memory.js";
 
 const TAINT_VERDICT_ACTION = "taint.verdict";
@@ -119,7 +136,10 @@ export function seedIfTainted(ctx: HookContext): void {
     const attrs = currentAttrs(ctx);
     for (const name of TAINT_SEED_ATTRS) {
       if (stampedTrue(attrs?.[name])) {
-        markUntrustedIngestedThisTurn();
+        const raw = attrs?.[OE_SPAWN_TAINT_KINDS_ATTR];
+        const first = Array.isArray(raw) ? raw[0] : raw;
+        const kinds = typeof first === "string" ? first.split(",").filter((k): k is IngestionKind => (INGESTION_KINDS as readonly string[]).includes(k)) : [];
+        adoptKinds(kinds);
         return;
       }
     }
@@ -138,8 +158,9 @@ export function openTaintTurn(ctx: HookContext): void {
   }
   beginTaintTurn(turnId);
   beginTaintVerdictTurn(turnId);
-  seedIfTainted(ctx);
   adoptParentTurnTaint(ctx);
+  seedIfTainted(ctx);
+  reseedStickyChildTaint();
   recordDispatchTurnForChildren();
   announceTaintOff(ctx);
 }
@@ -205,6 +226,35 @@ function rememberSubagentIdentity(ctx: HookContext): void {
   }
 }
 
+const stickyChildTaint = defineState<readonly string[] | null>("open-everywhere.subagent-taint.sticky", () => null);
+
+function recordStickyChildTaint(): void {
+  try {
+    if (subagentIdentity.get() === null) return;
+    let kinds: readonly string[] = [];
+    try {
+      kinds = taintKindsThisTurn();
+    } catch {
+      kinds = [];
+    }
+    stickyChildTaint.update((cur) => [...new Set([...(cur ?? []), ...kinds])]);
+  } catch {
+  }
+}
+
+export function reseedStickyChildTaint(): boolean {
+  if (!taintEnabled()) return false;
+  try {
+    if (subagentIdentity.get() === null) return false;
+    const sticky = stickyChildTaint.get();
+    if (sticky === null) return false;
+    adoptKinds(sticky.filter((k): k is IngestionKind => (INGESTION_KINDS as readonly string[]).includes(k)));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 registerTaintFlipObserver(() => {
   recordTurnTaintForChildren();
 
@@ -215,6 +265,7 @@ registerTaintFlipObserver(() => {
     who = null;
   }
   if (who === null) return;
+  recordStickyChildTaint();
   void markSubagentTainted(who.org, who.sessionId);
   writeCallTaintMarker();
 });
@@ -242,6 +293,7 @@ function writeCallTaintMarker(): void {
 
 registerTaintKindObserver(() => {
   recordTurnTaintForChildren();
+  recordStickyChildTaint();
   writeCallTaintMarker();
 });
 
@@ -309,6 +361,15 @@ function rememberTurnIdentity(ctx: HookContext): void {
   }
 }
 
+function refreshTurnIdentity(ctx: HookContext): void {
+  try {
+    const attrs = writableAuthAttrs(ctx);
+    if (attrs === null) return;
+    turnIdentity.update((cur) => (cur === null ? cur : { ...cur, attrs }));
+  } catch {
+  }
+}
+
 export function recordTurnTaintForChildren(): boolean {
   try {
     if (!untrustedIngestedThisTurn()) return false;
@@ -344,11 +405,6 @@ function readParentSession(ctx: HookContext): string | null {
   return readParentLink(ctx)?.sessionId ?? null;
 }
 
-function laterTurnOfSameChild(ctx: HookContext): boolean {
-  const seq = (ctx as { session?: { turn?: { sequence?: unknown } } }).session?.turn?.sequence;
-  return typeof seq === "number" && seq > 0;
-}
-
 const adoptedForwardStamps = defineState<readonly string[]>("open-everywhere.taint-forward.adopted-stamps", () => []);
 
 function memoKey(raw: string, turnId: string | undefined): string {
@@ -364,7 +420,7 @@ function matchingForwardStamp(ctx: HookContext): ForwardStamp | null {
     const raw = currentAttrs(ctx)?.[OE_PARENT_TURN_TAINTED_ATTR];
     const stamp = parseForwardStamp(Array.isArray(raw) ? raw[0] : raw);
     if (stamp === null || stamp.sessionId !== parentSession) return null;
-    if (!laterTurnOfSameChild(ctx)) {
+    {
       const rawPin = currentAttrs(ctx)?.[OE_DISPATCH_TURN_ATTR];
       const pin = parseForwardStamp(Array.isArray(rawPin) ? rawPin[0] : rawPin);
       if (pin === null || pin.sessionId !== parentSession || pin.turnId !== stamp.turnId) return null;
@@ -473,13 +529,15 @@ export const TASK_STARTED_ACTION = "delegation.task_started";
 
 export const TASK_SETTLED_ACTION = "delegation.task_settled";
 
+export const TASK_UNREADABLE_ACTION = "delegation.task_unreadable";
+
 export const DELEGATED_PROVENANCE_ACTION = "delegation.provenance_carried";
 
 export const TASK_FAILED_ACTION = "delegation.task_failed";
 
-type DelegationFailureEdge = "notification" | "settlement" | "result";
+type DelegationFailureEdge = "task-settled" | "settlement" | "result";
 
-type DelegationFailureParse = TaskNotificationFailure["parse"] | "result";
+type DelegationFailureParse = TaskSettledFailure["parse"] | "result";
 
 async function noteDelegationFailure(
   failure: Partial<DelegationFailure> & { readonly status: string },
@@ -517,12 +575,11 @@ interface TurnFailedData {
   readonly details?: unknown;
 }
 
-function parentSessionOfChildToken(childToken: string): string | undefined {
-  const m = /^subagent:([^:]+):([^:]+)$/.exec(childToken);
-  return m === null ? undefined : m[1]!;
+function dispatchingParentSession(link: TaskCallLink, ownSessionId: string): string {
+  return link.parentSessionId !== undefined && link.parentSessionId.length > 0 ? link.parentSessionId : ownSessionId;
 }
 
-export async function noteTaskReceipt(receipt: TaskReceipt, ownSessionId: string): Promise<TaskCallLink | null> {
+export async function noteTaskStarted(receipt: TaskStarted, ownSessionId: string, workRequestId?: string): Promise<TaskCallLink | null> {
   const org = deploymentOrg();
   let link: TaskCallLink | null = null;
   let continuation = false;
@@ -531,20 +588,17 @@ export async function noteTaskReceipt(receipt: TaskReceipt, ownSessionId: string
     if (taintEnabled() && ownSessionId.length > 0) {
       const already = await taskCallLink(org, receipt.taskId);
       if (already !== undefined) {
-        replay = true;
+        replay = already.callId === receipt.callId;
+        continuation = !replay;
         link = already;
       } else {
-        const pinned = receipt.agentId === null ? undefined : await taskAgentLink(org, ownSessionId, receipt.agentId);
-        continuation = pinned !== undefined && pinned.callId !== receipt.callId;
-        const fresh: TaskCallLink = {
+        link = {
           callId: receipt.callId,
           childToken: `subagent:${ownSessionId}:${receipt.callId}`,
+          parentSessionId: ownSessionId,
+          kind: receipt.kind,
           ...(receipt.tool.length > 0 ? { tool: receipt.tool } : {}),
         };
-        link = pinned ?? fresh;
-        if (link.agentId === undefined && receipt.agentId !== null) link = { ...link, agentId: receipt.agentId };
-        if (link.tool === undefined && receipt.tool.length > 0) link = { ...link, tool: receipt.tool };
-        if (receipt.agentId !== null && !continuation) await rememberTaskAgent(org, ownSessionId, receipt.agentId, link);
         await rememberTaskCall(org, receipt.taskId, link);
       }
     }
@@ -559,12 +613,78 @@ export async function noteTaskReceipt(receipt: TaskReceipt, ownSessionId: string
     detail: {
       task: receipt.taskId,
       call: receipt.callId,
-      agent: receipt.agentId ?? "",
+      kind: receipt.kind,
+      tool: receipt.tool,
       ...(ownSessionId.length > 0 ? { session: ownSessionId } : {}),
       continuation,
+      ...(workRequestId !== undefined ? { request: workRequestId } : {}),
     },
   }).catch(() => undefined);
   return link;
+}
+
+export async function noteAgentStarted(opened: AgentStarted, ownSessionId: string): Promise<void> {
+  try {
+    if (!taintEnabled() || ownSessionId.length === 0 || opened.taskId === null) return;
+    const org = deploymentOrg();
+    const link = await taskCallLink(org, opened.taskId);
+    if (link === undefined || link.agentId !== undefined) return;
+    await rememberTaskCall(org, opened.taskId, { ...link, agentId: opened.sessionId });
+  } catch {
+  }
+}
+
+function noteUnreadableTaskEvent(edge: "task.started" | "task.settled", data: unknown, ownSessionId: string): void {
+  const raw = data as { taskId?: unknown; status?: unknown; kind?: unknown } | null;
+  const bounded = (v: unknown): string => (typeof v === "string" ? auditErrorDetail(v).error : "");
+  void appendAudit({
+    org: deploymentOrg(),
+    platform: "ingest",
+    workspace: "delegation",
+    action: TASK_UNREADABLE_ACTION,
+    detail: {
+      edge,
+      marker: "unreadable",
+      adopted: false,
+      task: bounded(raw?.taskId),
+      status: bounded(raw?.status),
+      kind: bounded(raw?.kind),
+      ...(ownSessionId.length > 0 ? { session: ownSessionId } : {}),
+    },
+  }).catch(() => undefined);
+}
+
+export const DISPATCH_UNAUTHORIZED_ACTION = "delegation.dispatch_unauthorized";
+
+function noteDispatchAuthorityLost(
+  edge: "actions.requested" | "task.started",
+  taskId: string,
+  callId: string,
+  ownSessionId: string,
+  reason: string,
+): void {
+  console.warn(
+    `[open-everywhere:spawn-taint] delegated dispatch has NO exact wake at ${edge} (${reason}) — ` +
+      `no dispatch-authority row is written, so no task wake is minted and this settlement will ` +
+      `install no reply address: the reply fence refuses it under \`task-wake-unread\`. Taint is ` +
+      `unaffected and still carries on the call-keyed marker. The child still launches: eve 0.70 ` +
+      `offers this seat no edge that can refuse it.`,
+  );
+  void appendAudit({
+    org: deploymentOrg(),
+    platform: "ingest",
+    workspace: "delegation",
+    action: DISPATCH_UNAUTHORIZED_ACTION,
+    detail: {
+      edge,
+      reason,
+      marker: "unauthorized",
+      adopted: false,
+      ...(taskId.length > 0 ? { task: taskId } : {}),
+      call: callId,
+      ...(ownSessionId.length > 0 ? { session: ownSessionId } : {}),
+    },
+  }).catch(() => undefined);
 }
 
 export async function adoptTaskTaint(view: TaskSummary, ownSessionId: string): Promise<boolean> {
@@ -578,10 +698,15 @@ export async function adoptTaskTaint(view: TaskSummary, ownSessionId: string): P
       if (link === undefined) {
         marker = "lost";
       } else {
-        const parentSession = parentSessionOfChildToken(link.childToken) ?? ownSessionId;
-        const record = await subagentCallTaintRecord(org, parentSession, link.callId);
-        marker = record === undefined ? "lost" : record.tainted ? "tainted" : "clean";
-        if (record?.tainted === true) kinds = record.kinds;
+        const recorded = link.parentSessionId;
+        if (recorded !== undefined && recorded.length > 0 && recorded !== ownSessionId) {
+          marker = "lost";
+        } else {
+          const parentSession = dispatchingParentSession(link, ownSessionId);
+          const record = await subagentCallTaintRecord(org, parentSession, link.callId);
+          marker = record === undefined ? "lost" : record.tainted ? "tainted" : "clean";
+          if (record?.tainted === true) kinds = record.kinds;
+        }
       }
       if (marker !== "clean") {
         adoptKinds(kinds);
@@ -612,11 +737,11 @@ export async function adoptTaskTaint(view: TaskSummary, ownSessionId: string): P
   return adopted;
 }
 
-export type SettlementFromNotification = {
-  readonly failure?: TaskNotificationFailure;
+export type SettlementFromEvent = {
+  readonly failure?: TaskSettledFailure;
   readonly link?: TaskCallLink;
   readonly links?: ReadonlyMap<string, TaskCallLink | undefined>;
-  readonly notification?: boolean;
+  readonly taskSettled?: boolean;
   readonly authorizeRedispatch?: boolean;
 };
 
@@ -624,11 +749,11 @@ export async function applyTaskSettlement(
   views: readonly TaskSummary[],
   ownSessionId: string,
   ctx: HookContext,
-  settlement: SettlementFromNotification = {},
+  settlement: SettlementFromEvent = {},
 ): Promise<boolean> {
   if (views.length === 0) return false;
   const failure = views.length === 1 ? settlement.failure : undefined;
-  const edge: DelegationFailureEdge = settlement.notification === true || failure !== undefined ? "notification" : "settlement";
+  const edge: DelegationFailureEdge = settlement.taskSettled === true || failure !== undefined ? "task-settled" : "settlement";
   const settlementLink = views.length === 1 ? settlement.link : undefined;
   const bind = ctx as unknown as BindableContext;
   const inheritedWakeId = inheritedWakeStampOf(bind);
@@ -655,19 +780,32 @@ export async function applyTaskSettlement(
       turnId: wakeTurnId,
       inheritedWakeId,
     });
-    if (edge === "notification" && settlement.authorizeRedispatch === true) {
+    if (edge === "task-settled" && settlement.authorizeRedispatch === true) {
       noteSettlementDispatchAuthority(
         wakeTurnId,
         view.taskId,
         install.outcome === "installed" || install.outcome === "already" ? install.dispatchAuthority : undefined,
       );
     }
-    if (install.outcome === "installed" && claimPromisedReport(view.taskId)) {
+    const armsReport =
+      install.outcome === "installed" ||
+      (install.outcome === "ingressed" && install.sameSession === true && settlementReportOwedOn(wakeTurnId) === undefined);
+    if (armsReport && claimPromisedReport(view.taskId)) {
       noteSettlementReportOwed(wakeTurnId, view.taskId, install.wakeId ?? undefined);
     }
-    if (link !== undefined) {
+    const carriedBySeat = view.status === "completed" && isWorkSessionContext(bind);
+    if (link !== undefined && !carriedBySeat) {
       const reach = stampReadReach(bind, wakeTurnId, seatSurfaceKey);
-      const wakeProvable = reach.proof !== "wake" || (install.wakeId !== null && reach.wakeId === install.wakeId);
+      const wakeProvable =
+        reach.proof !== "wake" ||
+        (install.wakeId !== null && reach.wakeId === install.wakeId) ||
+        (await heldTurnWakeProvable({
+          org: deploymentOrg(),
+          outcome: install.outcome,
+          sameSession: install.sameSession,
+          taskWakeId: install.wakeId,
+          turnWakeId: reach.wakeId,
+        }));
       const provable = view.status === "completed" && wakeProvable;
       const alsoWakeId =
         provable && reach.proof === "wake"
@@ -726,48 +864,310 @@ export async function applyTaskSettlement(
   return any;
 }
 
-export async function settleFromTaskNotification(message: unknown, ownSessionId: string, ctx: HookContext): Promise<boolean> {
-  const views = terminalTaskNotifications(message);
-  if (views.length === 0) return false;
-  const settled: TaskSummary[] = [];
+export async function settleFromTaskSettled(settled: TaskSettled, ownSessionId: string, ctx: HookContext): Promise<boolean> {
+  let view = settledTaskSummary(settled);
   const links = new Map<string, TaskCallLink | undefined>();
-  for (const view of views) {
-    let next = view;
-    if (!links.has(view.taskId)) {
-      try {
-        links.set(view.taskId, await taskCallLink(deploymentOrg(), view.taskId));
-      } catch {
-        links.set(view.taskId, undefined);
-      }
-    }
-    const link = links.get(view.taskId);
-    if (link?.agentId !== undefined) next = { ...view, agentId: link.agentId };
-    noteTaskSettled(next);
-    settled.push(next);
+  try {
+    links.set(view.taskId, await taskCallLink(deploymentOrg(), view.taskId));
+  } catch {
+    links.set(view.taskId, undefined);
   }
-  return applyTaskSettlement(settled, ownSessionId, ctx, {
-    notification: true,
+  const link = links.get(view.taskId);
+  if (link?.agentId !== undefined) view = { ...view, agentId: link.agentId };
+  noteTaskSettled(view);
+  return applyTaskSettlement([view], ownSessionId, ctx, {
+    taskSettled: true,
     links,
-    authorizeRedispatch: taskNotificationStartsWithTerminal(message),
-    ...(settled.length === 1 ? { failure: taskNotificationFailure(message) } : {}),
+    authorizeRedispatch: true,
+    failure: taskSettledFailure(settled),
   });
+}
+
+function deliveryAttr(ctx: BindableContext, key: string): string | undefined {
+  const v = (ctx as { session?: { auth?: { current?: { attributes?: Record<string, unknown> } } } }).session?.auth?.current?.attributes?.[key];
+  const first = Array.isArray(v) ? v[0] : v;
+  return typeof first === "string" && first.length > 0 ? first : undefined;
+}
+
+function adoptWorkResultWrites(bind: BindableContext): void {
+  try {
+    if (isSubagentChildContext(bind) || isWorkSessionContext(bind)) return;
+    if (deliveryAttr(bind, OE_WORK_RESULT_ATTR) === undefined) return;
+    adoptCarriedWrites(currentTurnId(bind), deliveryAttr(bind, OE_WORK_RESULT_WRITES_ATTR));
+  } catch {
+  }
+}
+
+function noteWorkResultReportOwed(bind: BindableContext): void {
+  try {
+    if (isSubagentChildContext(bind) || isWorkSessionContext(bind)) return;
+    const requestId = deliveryAttr(bind, OE_WORK_RESULT_ATTR);
+    if (requestId === undefined) return;
+    if (claimPromisedReport(workLedgerId(requestId))) noteSettlementReportOwed(currentTurnId(bind), workLedgerId(requestId), currentWakeId(bind));
+  } catch {
+  }
+}
+
+async function spendWorkResultReads(bind: BindableContext, childToken: string, requestId: string): Promise<void> {
+  const org = deploymentOrg();
+  if (!/^subagent:[^:]+:[^:]+$/.test(childToken)) return;
+  const turnId = currentTurnId(bind);
+  const row = await readWorkRequest(getOperationalStore(), org, requestId).catch(() => undefined);
+  if (row === undefined) return;
+  const ownToken = resolveOwnWindowToken(bind);
+  const ownWork = ownToken === undefined ? undefined : workTokenForSeat(ownToken);
+  if (ownWork === undefined || workTokenForSeat(row.seatToken) !== ownWork) return;
+  const reach = stampReadReach(bind, turnId, undefined);
+  const alsoWakeId = reach.proof === "wake" && reach.wakeId !== row.wakeId ? row.wakeId : undefined;
+  const sessionId = currentSessionId(bind);
+  const spend = await settleDelegatedReads({
+    org,
+    childToken,
+    sessionId,
+    turnId,
+    reach: reach.proof === "none" ? undefined : { ...reach, ...(alsoWakeId !== undefined ? { alsoWakeId } : {}) },
+    ...(sessionId !== undefined && turnId !== undefined && turnId.length > 0 ? { replayKey: `${sessionId}:${turnId}` } : {}),
+  });
+  if (spend.found > 0) {
+    void appendAudit({
+      org,
+      platform: "ingest",
+      workspace: "delegation",
+      action: DELEGATED_PROVENANCE_ACTION,
+      detail: {
+        request: requestId,
+        reads: spend.carried,
+        found: spend.found,
+        outcome: spend.carried > 0 ? "carried" : "wake-unprovable",
+        proof: reach.proof,
+        ...(turnId !== undefined && turnId.length > 0 ? { turn: turnId } : {}),
+      },
+    }).catch(() => undefined);
+  }
+}
+
+async function settleWorkJobStatus(settled: TaskSettled): Promise<void> {
+  try {
+    const org = deploymentOrg();
+    const store = getOperationalStore();
+    const requestId = await readWorkTaskRequest(store, org, settled.taskId);
+    if (requestId === undefined) return;
+    const row = await readWorkRequest(store, org, requestId).catch(() => undefined);
+    const redeemed = await workCancelTicketRedeemed(org, store, row, settled);
+    await noteWorkJobSettled({ requestId, taskId: settled.taskId, status: settledWorkJobStateFor(settled.status, redeemed) });
+  } catch {
+  }
+}
+
+async function workCancelTicketRedeemed(org: string, store: ReturnType<typeof getOperationalStore>, row: WorkRequestRow | undefined, settled: TaskSettled): Promise<boolean> {
+  if (settled.status !== "completed") return false;
+  const holding = row === undefined ? undefined : await workTokenHoldingTask(org, row.seatToken, settled.taskId, store).catch(() => undefined);
+  const tokens = [...new Set([currentWorkSessionToken(), holding, row === undefined ? undefined : workTokenForSeat(row.seatToken)])].filter((t): t is string => t !== undefined);
+  for (const t of tokens) if (await workCancelRedeemed(store, org, t, settled.taskId)) return true;
+  return false;
+}
+
+async function wakeSeatWithWorkResult(settled: TaskSettled, event: unknown, ctx: HookContext): Promise<void> {
+  const org = deploymentOrg();
+  const store = getOperationalStore();
+  const requestId = await readWorkTaskRequest(store, org, settled.taskId);
+  const row = requestId === undefined ? undefined : await readWorkRequest(store, org, requestId);
+  const audit = (detail: Record<string, unknown>) =>
+    appendAudit({ org, platform: "unified", workspace: "delegation", action: WORK_RESULT_WAKE_ACTION, detail: { taskId: settled.taskId, ...(requestId !== undefined ? { requestId } : {}), status: settled.status, ...detail } }).catch(() => undefined);
+  if (requestId === undefined || row === undefined) {
+    await audit({ outcome: "skipped", reason: requestId === undefined ? "no-request-for-task" : "request-row-missing" });
+    return;
+  }
+  const key = await readWorkTaskKey(store, org, settled.taskId);
+  if (key === undefined || key.verdict !== "keyed" || key.requestId !== requestId) {
+    await flushWorkSettlement(ctx, settled.taskId);
+    await wakeSeatNeedsReissue({ requestId, edge: "task.started", reason: key?.reason ?? "stamp-absent", taskId: settled.taskId });
+    await clearGenerationDelegation(org, workSessionLedgerId(requestId), store).catch(() => undefined);
+    await audit({ outcome: "withheld", reason: key === undefined ? "task-unkeyed" : (key.reason ?? "key-mismatch") });
+    return;
+  }
+  const status = settled.status === "completed" ? "completed" : settled.status === "cancelled" ? "cancelled" : "failed";
+  console.log(`[open-everywhere:work] task ${settled.taskId} settled ${settled.status}${settled.cancelReason ? ` (cancel: ${settled.cancelReason})` : ""}${settled.errorText ? ` — ${settled.errorText.slice(0, 160)}` : ""} → result wake for request ${requestId}`);
+  const output = (event as { data?: { output?: unknown } } | undefined)?.data?.output;
+  const sequence = (event as { sequence?: unknown } | undefined)?.sequence;
+  const settlementSeq = `${settled.callId}:${typeof sequence === "number" || typeof sequence === "string" ? String(sequence) : "0"}`;
+  const tainted = row.tainted || untrustedIngestedThisTurn();
+  const childToken = (await taskCallLink(org, settled.taskId).catch(() => undefined))?.childToken;
+  const stop = childToken === undefined ? undefined : await readWorkStop(org, childToken, settled.callId);
+  const readsToken = status === "completed" && stop === undefined ? childToken : undefined;
+  const wakeId = row.fire !== undefined ? row.wakeId : mintWakeId();
+  const seatToken = await currentSeatToken(org, row.seatToken, store);
+  await flushWorkSettlement(ctx, settled.taskId);
+  const memoryWrites = factWritesThisTurn(currentTurnId(ctx as unknown as BindableContext));
+  const silentFire = row.fire !== undefined && !row.fire.owesRoom;
+  let delivered = false;
+  const ran = await postWorkResultOnce({
+    org,
+    taskId: settled.taskId,
+    settlementSeq,
+    requestId,
+    run: async () => {
+      const foldAs = row.fire === undefined ? undefined : fireFoldOutcome(status, stop !== undefined, await workCancelTicketRedeemed(org, store, row, settled));
+      if (foldAs !== undefined) await foldWorkFire(row, foldAs, { org, sessionId: (ctx as { session?: { id?: string } }).session?.id ?? "" });
+      if (silentFire) return;
+      delivered = await dispatchWorkResult({
+        seatToken,
+        wakeId,
+        message: renderWorkResultWake({
+          wakeId,
+          origin: row.origin,
+          requestId,
+          taskId: settled.taskId,
+          status,
+          text: stop === undefined ? workResultText(output, settled.errorText) : "[the host stopped the worker before it ran, so it reported nothing]",
+          nowIso: new Date().toISOString(),
+          dispatchWakeId: row.wakeId,
+          ...(stop !== undefined ? { stopRefusal: stop.refusal } : {}),
+          ...(row.fire !== undefined ? { fire: true as const } : {}),
+        }),
+        origin: row.origin,
+        surfaceKey: row.surfaceKey,
+        binding: row.binding,
+        requester: row.requester,
+        nonMemberWake: row.nonMemberWake,
+        requestId,
+        tainted,
+        ...(tainted ? { taintKinds: taintKindsThisTurn() } : {}),
+        ...(readsToken !== undefined && readsToken.length > 0 ? { readsToken } : {}),
+        ...(row.fire?.posture !== undefined ? { invokerPosture: row.fire.posture } : {}),
+        ...(row.fire?.creator !== undefined ? { fireCreator: row.fire.creator } : {}),
+        ...(memoryWrites.length > 0 ? { memoryWrites } : {}),
+      });
+    },
+  });
+  if (ran && delivered) await clearGenerationDelegation(org, workLedgerId(requestId), store);
+  if (ran) await clearGenerationDelegation(org, workSessionLedgerId(requestId), store);
+  if (ran && delivered && stop !== undefined && childToken !== undefined) await forgetWorkStop(org, childToken);
+  await audit(
+    !ran
+      ? { outcome: "replay-skipped" }
+      : silentFire
+        ? { outcome: "silent-fire", fire: true }
+        : { outcome: delivered ? "delivered" : "failed", wakeId, tainted, ...(row.fire !== undefined ? { fire: true } : {}), ...(stop !== undefined ? { stoppedBy: "egress-own-account", connector: stop.connector } : {}) },
+  );
 }
 
 export default defineHook({
   events: {
     "turn.started": (_event, ctx) => {
       openTaintTurn(ctx);
+      noteContinuationTurn(ctx as unknown as BindableContext);
       const bind = ctx as unknown as BindableContext;
       noteTurnBoundary(currentTurnId(bind), deliveryStampOf(bind));
+      noteTurnOpeningPrincipal(bind);
+      noteWorkResultReportOwed(bind);
+      adoptWorkResultWrites(bind);
       clearStreamDropRetries();
     },
 
-    "message.received": async (event, ctx) => {
+    "step.started": (_event, ctx) => {
+      try {
+        refreshTurnIdentity(ctx);
+        recordDispatchTurnForChildren();
+        recordTurnTaintForChildren();
+      } catch {
+      }
+      try {
+        const bind = ctx as unknown as BindableContext;
+        noteStepDelivery(currentTurnId(bind), deliveryStampOf(bind));
+      } catch {
+      }
+    },
+
+    "task.started": async (event, ctx) => {
       try {
         if (isSubagentChildContext(ctx as unknown as BindableContext)) return;
         const ownSessionId = (ctx as { session?: { id?: string } }).session?.id;
         if (typeof ownSessionId !== "string" || ownSessionId.length === 0) return;
-        await settleFromTaskNotification((event as { data?: { message?: unknown } }).data?.message, ownSessionId, ctx);
+        const started = readTaskStarted((event as { data?: unknown }).data);
+        if (started === null) {
+          noteUnreadableTaskEvent("task.started", (event as { data?: unknown }).data, ownSessionId);
+          return;
+        }
+        const workCtx = isWorkSessionContext(ctx as unknown as BindableContext);
+        const joinedRequest = workCtx ? await readWorkCall(getOperationalStore(), deploymentOrg(), ownSessionId, started.callId) : undefined;
+        const workRequestId = workCtx
+          ? (joinedRequest ?? (workRequestsThisTurn(currentTurnId(ctx as unknown as BindableContext)).length === 0 ? deliveryAttr(ctx as unknown as BindableContext, OE_WORK_REQUEST_ATTR) : undefined))
+          : undefined;
+        await noteTaskStarted(started, ownSessionId, workRequestId);
+        if (workRequestId !== undefined) {
+          await rememberWorkTask(getOperationalStore(), deploymentOrg(), started.taskId, workRequestId, new Date().toISOString());
+          await keyWorkTask({ taskId: started.taskId, callId: started.callId, workSessionId: ownSessionId, joined: workRequestId, stamped: deliveryAttr(ctx as unknown as BindableContext, OE_WORK_REQUEST_ATTR) });
+          await noteWorkJobStarted({ requestId: workRequestId, taskId: started.taskId });
+        }
+        const bind = ctx as unknown as BindableContext;
+        const dispatchTurnId = currentTurnId(bind);
+        const prelaunchAuthority = await delegatedTaskDispatchAuthority(deploymentOrg(), ownSessionId, started.callId);
+        if (isUnifiedWindowContext(bind) && prelaunchAuthority === undefined) {
+          noteDispatchAuthorityLost("task.started", started.taskId, started.callId, ownSessionId, "authority-row-absent-at-task-started");
+          return;
+        }
+        const dispatchWakeId = prelaunchAuthority?.wakeId;
+        await recordTaskOpening({ org: deploymentOrg(), parentSessionId: ownSessionId, taskId: started.taskId, callId: started.callId, tool: started.tool, wakeId: dispatchWakeId });
+        const ownWindowToken = resolveOwnWindowToken(bind);
+        const minted = await openTaskWake({
+          org: deploymentOrg(),
+          taskId: started.taskId,
+          parentWakeId: dispatchWakeId,
+          windowToken: ownWindowToken,
+        });
+        if (minted !== null && prelaunchAuthority !== undefined) {
+          await advanceDelegatedTaskWake(deploymentOrg(), ownSessionId, started.callId, started.taskId, minted, prelaunchAuthority);
+          const opening = await readTaskOpening(deploymentOrg(), ownSessionId, started.taskId);
+          if (opening !== undefined && opening.openingCallId !== started.callId) {
+            await rememberDelegatedTaskWake(deploymentOrg(), ownSessionId, opening.openingCallId, minted);
+          }
+        }
+        {
+          const opening = await readTaskOpening(deploymentOrg(), ownSessionId, started.taskId);
+          if (opening !== undefined && opening.openingCallId !== started.callId) {
+            await noteTaskClaimDispatched(deploymentOrg(), ownSessionId, started.taskId, started.callId, dispatchTurnId);
+          }
+        }
+        await noteGenerationDelegation(deploymentOrg(), ownWindowToken, started.taskId);
+        if (minted !== null) noteTaskDispatchedThisTurn(dispatchTurnId, started.taskId, minted);
+        notePendingDelegation(dispatchTurnId, started.taskId, dispatchWakeId);
+        noteTaskDispatched(started.taskId);
+      } catch {
+      }
+    },
+
+    "agent.started": async (event, ctx) => {
+      try {
+        if (isSubagentChildContext(ctx as unknown as BindableContext)) return;
+        const ownSessionId = (ctx as { session?: { id?: string } }).session?.id;
+        if (typeof ownSessionId !== "string" || ownSessionId.length === 0) return;
+        const opened = readAgentStarted((event as { data?: unknown }).data);
+        if (opened === null || opened.taskId === null) return;
+        await noteAgentStarted(opened, ownSessionId);
+      } catch {
+      }
+    },
+
+    "task.settled": async (event, ctx) => {
+      try {
+        if (isSubagentChildContext(ctx as unknown as BindableContext)) return;
+        const ownSessionId = (ctx as { session?: { id?: string } }).session?.id;
+        if (typeof ownSessionId !== "string" || ownSessionId.length === 0) return;
+        const settled = readTaskSettled((event as { data?: unknown }).data);
+        if (settled === null) {
+          noteUnreadableTaskEvent("task.settled", (event as { data?: unknown }).data, ownSessionId);
+          return;
+        }
+        await noteTaskProvenanceSettled(deploymentOrg(), ownSessionId, settled.taskId);
+        await settleFromTaskSettled(settled, ownSessionId, ctx);
+        if (isWorkSessionContext(ctx as unknown as BindableContext)) {
+          try {
+            await wakeSeatWithWorkResult(settled, event, ctx);
+          } finally {
+            await settleWorkJobStatus(settled);
+          }
+        }
       } catch {
       }
     },
@@ -810,16 +1210,49 @@ export default defineHook({
       if (typeof ownSessionId !== "string" || ownSessionId.length === 0) return;
       const bind = ctx as unknown as BindableContext;
       const turnId = currentTurnId(bind);
-      const actions = (event.data as { actions?: readonly { kind?: unknown; callId?: unknown; toolName?: unknown }[] } | undefined)?.actions ?? [];
+      if (!isWorkSessionContext(bind)) {
+        const readsToken = deliveryAttr(bind, OE_WORK_RESULT_READS_ATTR);
+        const resultRequest = deliveryAttr(bind, OE_WORK_RESULT_ATTR);
+        if (readsToken !== undefined && resultRequest !== undefined) {
+          await spendWorkResultReads(bind, readsToken, resultRequest).catch(() => undefined);
+        }
+      }
+      const actions = (event.data as { actions?: readonly { kind?: unknown; callId?: unknown; toolName?: unknown; input?: unknown }[] } | undefined)?.actions ?? [];
       for (const action of actions) {
         const delegated = action.kind === "subagent-call" || (action.kind === "tool-call" && action.toolName === "agent");
+        if (delegated && typeof action.callId === "string" && action.callId.length > 0 && isWorkSessionContext(bind)) {
+          const open = workRequestsThisTurn(turnId);
+          if (open.length > 0) {
+            const message = action.input !== null && typeof action.input === "object" ? (action.input as Record<string, unknown>)["message"] : undefined;
+            const join = claimWorkCall(turnId, message, deliveryAttr(bind, OE_WORK_REQUEST_ATTR));
+            if (join.kind !== "joined") {
+              noteDispatchAuthorityLost("actions.requested", "", action.callId, ownSessionId, "work-request-unjoinable");
+              continue;
+            }
+            const ownWorkToken = resolveOwnWindowToken(bind);
+            const ownWorkBare = ownWorkToken === undefined ? undefined : (bareTokenFromEveContext(ownWorkToken) ?? ownWorkToken);
+            const owned = await readWorkRequest(getOperationalStore(), deploymentOrg(), join.requestId).catch(() => undefined);
+            if (owned === undefined || ownWorkBare === undefined || !isSameWorkSession(workTokenForSeat(owned.seatToken), ownWorkBare)) {
+              noteDispatchAuthorityLost("actions.requested", "", action.callId, ownSessionId, "work-request-unowned");
+              continue;
+            }
+            try {
+              await rememberDelegatedTaskWake(deploymentOrg(), ownSessionId, action.callId, join.requestId);
+              await rememberWorkCall(getOperationalStore(), deploymentOrg(), ownSessionId, action.callId, join.requestId, new Date().toISOString());
+            } catch {
+              noteDispatchAuthorityLost("actions.requested", "", action.callId, ownSessionId, "dispatch-wake-not-durable");
+            }
+            continue;
+          }
+        }
         if (delegated && typeof action.callId === "string" && action.callId.length > 0) {
           const settlement = settlementDispatchAuthorityThisTurn(turnId);
           const uningressedUnifiedTurn = isUnifiedWindowContext(bind) && uningressedTurn(turnId);
           const settlementTurn =
             uningressedUnifiedTurn && (settlement.kind !== "none" || taskWakeThisTurn(turnId) !== undefined);
           if (settlementTurn && settlement.kind !== "single") {
-            throw new Error("delegated task dispatch authority is missing or ambiguous — refusing child launch before an exact wake is addressed");
+            noteDispatchAuthorityLost("actions.requested", "", action.callId, ownSessionId, settlement.kind === "none" ? "settlement-turn-no-authority" : "settlement-turn-ambiguous-authority");
+            continue;
           }
           const settlementAuthority = settlement.kind === "single" ? settlement.authority : undefined;
           const wakeId = settlementTurn
@@ -829,15 +1262,23 @@ export default defineHook({
             try {
               await rememberDelegatedTaskWake(deploymentOrg(), ownSessionId, action.callId, wakeId);
             } catch {
-              throw new Error("delegated task dispatch authority is missing or ambiguous — refusing child launch before an exact wake is addressed");
+              noteDispatchAuthorityLost("actions.requested", "", action.callId, ownSessionId, "dispatch-wake-not-durable");
+              continue;
             }
           }
           else if (!isUnifiedWindowContext(bind)) {
+            if (liveAuthIsAnotherPrincipal(bind)) {
+              noteDispatchAuthorityLost("actions.requested", "", action.callId, ownSessionId, "in-turn-principal-swap");
+              continue;
+            }
             const requester = requesterThisTurn(turnId);
             const nonMemberWake = (bind as { session?: { auth?: { current?: { attributes?: Record<string, unknown> } } } }).session?.auth?.current?.attributes?.[OE_CHAT_NONMEMBER_ATTR] === "true";
             await rememberDelegatedTaskBinding(deploymentOrg(), ownSessionId, action.callId, bindFrom(bind), requester, nonMemberWake);
           }
-          else throw new Error("delegated task dispatch authority is missing or ambiguous — refusing child launch before an exact wake is addressed");
+          else {
+            noteDispatchAuthorityLost("actions.requested", "", action.callId, ownSessionId, "unified-turn-no-wake");
+            continue;
+          }
         }
       }
     },
@@ -848,42 +1289,6 @@ export default defineHook({
         const result = (event.data as { result?: { kind?: unknown; callId?: unknown } } | undefined)?.result;
         const ownSessionId = (ctx as { session?: { id?: string } }).session?.id;
         if (typeof ownSessionId !== "string" || ownSessionId.length === 0) return;
-
-        const receipt = readTaskReceipt(result);
-        if (receipt !== null) {
-          await noteTaskReceipt(receipt, ownSessionId);
-          const bind = ctx as unknown as BindableContext;
-          const dispatchTurnId = currentTurnId(bind);
-          const prelaunchAuthority = await delegatedTaskDispatchAuthority(deploymentOrg(), ownSessionId, receipt.callId);
-          if (isUnifiedWindowContext(bind) && prelaunchAuthority === undefined) {
-            throw new Error("delegated task authority disappeared before receipt");
-          }
-          const dispatchWakeId = prelaunchAuthority?.wakeId;
-          const ownWindowToken = resolveOwnWindowToken(bind);
-          const minted = await openTaskWake({
-            org: deploymentOrg(),
-            taskId: receipt.taskId,
-            parentWakeId: dispatchWakeId,
-            windowToken: ownWindowToken,
-          });
-          if (minted !== null) {
-            if (prelaunchAuthority === undefined) throw new Error("delegated task authority disappeared before receipt");
-            await advanceDelegatedTaskWake(deploymentOrg(), ownSessionId, receipt.callId, receipt.taskId, minted, prelaunchAuthority);
-          }
-          await noteGenerationDelegation(deploymentOrg(), ownWindowToken, receipt.taskId);
-          if (minted !== null) noteTaskDispatchedThisTurn(dispatchTurnId, receipt.taskId, minted);
-          notePendingDelegation(dispatchTurnId, receipt.taskId, dispatchWakeId);
-          noteTaskDispatched(receipt.taskId);
-          return;
-        }
-
-        noteTaskViews(taskViewsOf(result));
-        const terminal = terminalTaskViewsOf(result);
-        if (terminal.length > 0) {
-          await applyTaskSettlement(terminal, ownSessionId, ctx);
-          await flushSettledMemory(ctx as unknown as MemoryPersistContext, "task-settled");
-          return;
-        }
 
         const failure = readDelegationFailure(result);
         if (failure !== null) {

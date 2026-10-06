@@ -181,7 +181,7 @@ Create a Slack app from the manifest below, then copy its bot token and signing 
 }
 ```
 
-- The app is named "Open Everywhere". A second install in one workspace needs its own name: re-run with --app-name "<name>".
+- The app is named "Open Everywhere" (the default — set identity.name in agent/settings/settings.ts to name it). A second install in one workspace needs its own name: re-run with --app-name "<name>".
 - Install to Workspace, then OAuth & Permissions → copy the Bot User OAuth Token (xoxb-…) = SLACK_BOT_TOKEN.
 - Basic Information → App Credentials → copy the Signing Secret = SLACK_SIGNING_SECRET.
 - Write both with the ops tool `scaffold_env`. Never paste a secret into the chat: the person pastes it where the tool reads it.

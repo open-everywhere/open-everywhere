@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import type { AuditQueryOpts, AuditWireEntry } from "./audit-read.js";
-import type { HaltOwnershipHandle } from "./control-write-driver.js";
+import type { HaltOwnershipHandle, OrgHaltOwnershipHandle } from "./control-write-driver.js";
 
 process.env.OE_SQLITE_PATH = join("/tmp", `oe-halt-cleanup-test-${process.pid}.sqlite3`);
 
-const { cleanupExactHalt } = await import("./scenarios.js");
+const { cleanupExactHalt, preexistingHaltNote } = await import("./scenarios.js");
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -48,9 +48,22 @@ async function run(opts: {
   readonly auditThrows?: boolean;
   readonly standing?: HaltOwnershipHandle;
   readonly clearResult?: "cleared" | "missing" | "changed";
-}): Promise<{ result: Awaited<ReturnType<typeof cleanupExactHalt>>; cleared: HaltOwnershipHandle[]; inspects: number; read?: AuditQueryOpts }> {
+  readonly clearThrows?: boolean;
+  readonly orgStanding?: OrgHaltOwnershipHandle;
+  readonly orgClearResult?: "cleared" | "missing" | "changed";
+  readonly orgClearThrows?: boolean;
+}): Promise<{
+  result: Awaited<ReturnType<typeof cleanupExactHalt>>;
+  cleared: HaltOwnershipHandle[];
+  orgCleared: OrgHaltOwnershipHandle[];
+  inspects: number;
+  orgInspects: number;
+  read?: AuditQueryOpts;
+}> {
   const cleared: HaltOwnershipHandle[] = [];
+  const orgCleared: OrgHaltOwnershipHandle[] = [];
   let inspects = 0;
+  let orgInspects = 0;
   let read: AuditQueryOpts | undefined;
   const result = await cleanupExactHalt({
     key: KEY,
@@ -68,11 +81,21 @@ async function run(opts: {
       return opts.standing;
     },
     clearOwnedHalt: async (h) => {
+      if (opts.clearThrows) throw new Error("control resume transport failed");
       cleared.push(h);
       return opts.clearResult ?? "cleared";
     },
+    inspectOrgHalt: async () => {
+      orgInspects++;
+      return opts.orgStanding;
+    },
+    clearOwnedOrgHalt: async (h) => {
+      if (opts.orgClearThrows) throw new Error("control resume transport failed");
+      orgCleared.push(h);
+      return opts.orgClearResult ?? "cleared";
+    },
   });
-  return { result, cleared, inspects, ...(read !== undefined ? { read } : {}) };
+  return { result, cleared, orgCleared, inspects, orgInspects, ...(read !== undefined ? { read } : {}) };
 }
 
 {
@@ -141,6 +164,91 @@ async function run(opts: {
 
   const clearRefused = await run({ anchorTs: ANCHOR_TS, rows: [], standing: halt(), clearResult: "changed" });
   ok(clearRefused.result.status === "residue" && clearRefused.result.reason === "cleanup-changed", "a control plane that refuses the clear is reported as residue, never as a clear that did not happen");
+}
+
+{
+  const orgHalt = (over: Partial<OrgHaltOwnershipHandle> = {}): OrgHaltOwnershipHandle =>
+    ({ orgWide: true, setAt: "2026-01-29T07:59:41.000Z", setBy: KEY.driverUserId, setRef: WAKE, ...over }) as OrgHaltOwnershipHandle;
+
+  const pass = await run({ anchorTs: ANCHOR_TS, anchorWakeId: WAKE, alreadyCleared: true, orgStanding: orgHalt() });
+  ok(
+    pass.result.status === "already-cleared" && pass.result.orgWide.status === "cleared" && pass.orgCleared.length === 1,
+    "🔴 THE FIX: on the PASS path the teardown still reads the org-wide row and clears the halt this run set there",
+  );
+  ok(pass.result.orgWide.status === "cleared" && pass.result.orgWide.via === "wake", "…by the wake-keyed join, because the anchor wake is known");
+
+  const fail = await run({ anchorTs: ANCHOR_TS, rows: [ingressRow()], standing: undefined, orgStanding: orgHalt() });
+  ok(
+    fail.result.orgWide.status === "cleared" && fail.orgCleared[0]?.setAt === orgHalt().setAt,
+    "🔴 THE FIX: on the FAIL path the org-wide halt this run's wake set is cleared, with the exact row as the expected guard",
+  );
+  ok(
+    fail.result.status === "already-cleared",
+    "with no surface halt standing, the wake road reports already-cleared — not a false `halt-not-owned` residue line",
+  );
+
+  const unresolved = await run({ anchorTs: ANCHOR_TS, rows: [], orgStanding: orgHalt({ setRef: "some-wake" }) });
+  ok(
+    unresolved.result.orgWide.status === "cleared" && unresolved.result.orgWide.via === "run-scoped",
+    "an UNRESOLVED anchor wake takes the run-scoped road for the org-wide row too: driver actor + run start",
+  );
+
+  const surfaceThrew = await run({ anchorTs: ANCHOR_TS, anchorWakeId: WAKE, owned: halt(), clearThrows: true, orgStanding: orgHalt() });
+  ok(
+    surfaceThrew.result.status === "residue" && surfaceThrew.result.reason === "cleanup-threw" && surfaceThrew.result.orgWide.status === "cleared",
+    "🔴 a surface clear that THROWS is residue, and the org-wide road still runs and clears",
+  );
+
+  const none = await run({ anchorTs: ANCHOR_TS, anchorWakeId: WAKE, alreadyCleared: true });
+  ok(none.result.orgWide.status === "none" && none.orgInspects === 1 && none.orgCleared.length === 0, "with no org-wide halt standing the road reads once and clears nothing");
+
+  const operator = await run({ anchorTs: ANCHOR_TS, anchorWakeId: WAKE, alreadyCleared: true, orgStanding: orgHalt({ setBy: "U-SOMEONE-ELSE" }) });
+  ok(
+    operator.result.orgWide.status === "residue" &&
+      operator.result.orgWide.reason === "halt-not-owned" &&
+      operator.result.orgWide.setBy === "U-SOMEONE-ELSE" &&
+      operator.orgCleared.length === 0,
+    "🔴 an OPERATOR's org-wide halt is LEFT ALONE on the wake road, and the residue names its setBy",
+  );
+
+  const operatorRunScoped = await run({ anchorTs: ANCHOR_TS, rows: [], orgStanding: orgHalt({ setBy: "U-SOMEONE-ELSE" }) });
+  ok(
+    operatorRunScoped.result.orgWide.status === "residue" &&
+      operatorRunScoped.result.orgWide.reason === "halt-not-owned" &&
+      operatorRunScoped.orgCleared.length === 0,
+    "🔴 on the run-scoped road an org-wide halt that differs ONLY in setBy is left alone",
+  );
+
+  const older = await run({ anchorTs: ANCHOR_TS, rows: [], orgStanding: orgHalt({ setAt: "2026-01-29T00:28:00.000Z" }) });
+  ok(older.result.orgWide.status === "residue" && older.orgCleared.length === 0, "🔴 an org-wide halt the same driver set BEFORE this run began is not this run's to clear");
+
+  const otherWake = await run({ anchorTs: ANCHOR_TS, rows: [ingressRow()], orgStanding: orgHalt({ setRef: "another-wake" }) });
+  ok(
+    otherWake.result.orgWide.status === "residue" && otherWake.result.orgWide.reason === "halt-not-owned" && otherWake.orgCleared.length === 0,
+    "🔴 once the anchor wake RESOLVED, an org-wide halt naming another wake is refused — the same ruling as the surface row",
+  );
+
+  const neverPosted = await run({ anchorTs: undefined, orgStanding: orgHalt() });
+  ok(
+    neverPosted.result.orgWide.status === "not-posted" && neverPosted.orgInspects === 0 && neverPosted.orgCleared.length === 0,
+    "🔴 a run that never POSTED set nothing, so the org-wide road does not even look",
+  );
+
+  const changed = await run({ anchorTs: ANCHOR_TS, anchorWakeId: WAKE, alreadyCleared: true, orgStanding: orgHalt(), orgClearResult: "changed" });
+  ok(changed.result.orgWide.status === "residue" && changed.result.orgWide.reason === "cleanup-changed", "a control plane that refuses the org-wide clear is residue, never a clear that did not happen");
+
+  const orgThrew = await run({ anchorTs: ANCHOR_TS, anchorWakeId: WAKE, alreadyCleared: true, orgStanding: orgHalt(), orgClearThrows: true });
+  ok(
+    orgThrew.result.orgWide.status === "residue" && orgThrew.result.orgWide.reason === "cleanup-threw",
+    "an org-wide clear that THROWS is `cleanup-threw` residue — the read worked, so it is never reported as a failed read",
+  );
+
+  ok(preexistingHaltNote(undefined, undefined) === "", "with no halt standing the gate label is unchanged");
+  const note = preexistingHaltNote(halt({ setBy: "U-OP" }), orgHalt({ setAt: "2026-01-31T06:19:05.000Z" }));
+  ok(
+    note.includes(`surface ${KEY.surfaceKey} setAt=`) && note.includes("setBy=U-OP") && note.includes("org-wide setAt=2026-01-31T06:19:05.000Z") && note.includes(`setBy=${KEY.driverUserId}`),
+    "the pre-existing note names each standing halt's address, setAt and setBy",
+  );
 }
 
 console.log(`✓ ${n} S-HALT teardown assertions passed`);

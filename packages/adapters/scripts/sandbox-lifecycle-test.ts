@@ -665,4 +665,65 @@ const parentCtx = {
   delete process.env.OE_SQLITE_PATH;
 }
 
-console.log(`\n✓ sandbox-lifecycle: ${n} assertions passed (hook shape, stop decisions, fail-soft, enable flag, runtime-seconds, spend-ledger $ record + principal/routine attribution + delta billing, write-ordering safety, duplicate-name dedupe, backend selection + docker stop + the subagent-child guard, the OPE-595 live-background-task stop guard, OPE-722 id-record augmentation of Sandbox.list)\n`);
+{
+  const dir = join(tmpdir(), `oe-sandbox-lifecycle-w-${process.pid}`);
+  await removeTempDir(dir);
+  process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
+  const { getOperationalStore, deploymentOrg } = await import("@open-everywhere/core/agent/adapter-api.js");
+  const owes = async (token: string, tasks: readonly string[]) => {
+    const key = `oe-gen-owes:${token}`;
+    if (tasks.length === 0) await getOperationalStore().deleteTaskResult(deploymentOrg(), key);
+    else await getOperationalStore().putTaskResult(deploymentOrg(), key, JSON.stringify({ tasks }), new Date().toISOString(), 60_000);
+  };
+
+  overrideSettingsForTest({ sandbox: { stopAfterTurn: true } });
+  const stops: string[] = [];
+  setSandboxStopperForTest(
+    testStopper({
+      backend: "vercel",
+      metered: false,
+      ownership: "stop owner = vercel — test",
+      list: async () => [{ name: "sbx-work", status: "running", createdAt: 1_000 }],
+      stop: async (name) => {
+        stops.push(name);
+      },
+    }),
+  );
+  const turnCompleted = (lifecycleHook.events ?? {})["turn.completed"] as (e: unknown, c: unknown) => Promise<void>;
+  const W = "oe-dom:e2e-unified:win:w/discord/111/222:oe-sup:g2-a1b2c3";
+  const workCtx = { agent: { name: "oe" }, channel: { kind: "unified", continuationToken: `unified:${W}` }, session: { id: "sess-work" } };
+  const seatCtx = { agent: { name: "oe" }, channel: { kind: "unified", continuationToken: "unified:oe-dom:e2e-unified:win:discord/111/222:oe-sup:g5" }, session: { id: "sess-seat" } };
+  const logLines: string[] = [];
+  const realLog = console.log;
+  console.log = (...args: unknown[]) => {
+    logLines.push(args.map(String).join(" "));
+  };
+  try {
+    ok(liveDelegatedTasksHoldingSandbox().length === 0, "OPE-2341 precondition: the session-local live set names no task, so the OLD rule would stop");
+
+    await owes(W, ["work-session:req-pending"]);
+    await turnCompleted({}, workCtx);
+    ok(stops.length === 0, "🔴 OPE-2341: a W turn end issues NO stop while W still owes a job — the old stop-after-turn rule stopped the VM here");
+    ok(logLines.some((l) => l.includes("not idle") && l.includes("req-pending")), "OPE-2341: …and the skip names what W still owes");
+
+    await owes(W, []);
+    await turnCompleted({}, workCtx);
+    ok(stops.includes("sbx-work"), "🔴 OPE-2341 negative control: an IDLE W's turn end DOES stop its sandbox — the rule delays the stop, it never deletes it");
+
+    stops.length = 0;
+    await owes(W, ["agent-live-task"]);
+    await turnCompleted({}, workCtx);
+    ok(stops.length === 0, "OPE-2341: a task W started and that has not settled also keeps W busy");
+
+    await turnCompleted({}, seatCtx);
+    ok(stops.includes("sbx-work"), "OPE-2341: a non-W session keeps the stop-after-turn rule — W's ledger never holds another session's stop");
+    await owes(W, []);
+  } finally {
+    console.log = realLog;
+    setSandboxStopperForTest(undefined);
+    await removeTempDir(dir);
+    delete process.env.OE_SQLITE_PATH;
+  }
+}
+
+console.log(`\n✓ sandbox-lifecycle: ${n} assertions passed (hook shape, stop decisions, fail-soft, enable flag, runtime-seconds, spend-ledger $ record + principal/routine attribution + delta billing, write-ordering safety, duplicate-name dedupe, backend selection + docker stop + the subagent-child guard, the OPE-595 live-background-task stop guard, the OPE-2341 work-session idle rule, OPE-722 id-record augmentation of Sandbox.list)\n`);

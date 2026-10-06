@@ -18,6 +18,7 @@ import {
   createGuardRefusal,
   engagedVarMismatches,
   idOfKey,
+  inventoryOptions,
   inventoryVars,
   isSyntheticDomain,
   namesLost,
@@ -28,6 +29,7 @@ import {
   redactId,
   renderInventoryDoc,
   rowKey,
+  staleCheckExitCode,
   resolutionKey,
   roomIdFor,
   roomName,
@@ -656,6 +658,21 @@ for (const envVar of Object.keys(TRACKED_ROOM_RESOLVERS)) {
   const committed = readFileSync(new URL("../../../docs/dev/e2e-fixtures.md", import.meta.url), "utf-8");
   ok(!committed.includes("mpdm-"), "🔴 `docs/dev/e2e-fixtures.md` names no Slack group DM by its members — no `mpdm-` handle list is tracked");
   ok(committed.includes("| (group DM) |"), "NEGATIVE CONTROL: the group-DM row is present and masked, so the assertion above is not passing over an absent row");
+}
+
+{
+  const rootScripts = (JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf-8")) as { scripts: Record<string, string> }).scripts;
+  const rung = rootScripts["lint:e2e-fixtures"] ?? "";
+  const marker = "-- inventory ";
+  ok(rung.includes(marker), `the root \`lint:e2e-fixtures\` rung still runs \`e2e:fixtures -- inventory\` (got: ${rung})`);
+  const rungOptions = inventoryOptions(rung.slice(rung.indexOf(marker) + marker.length).split(/\s+/).filter(Boolean));
+  ok(rungOptions.check && rungOptions.ifArmed, "the rung is a CHECK, and it is inert unless armed — the chain stays \"no secrets\" by default");
+  ok(staleCheckExitCode(rungOptions) === 1, "🔴 ARMED, the rung's stale-table verdict exits 1 — it fails the `test` chain, it does not warn");
+  ok(
+    staleCheckExitCode(inventoryOptions(["--check", "--warn-only", "--if-armed"])) === 0,
+    "NEGATIVE CONTROL: with `--warn-only` the same verdict exits 0 — so the assertion above can fail, and does if the flag returns",
+  );
+  ok(staleCheckExitCode(inventoryOptions(["--check"])) === 1, "the by-hand check (no flags) exits 1 on a stale table too");
 }
 
 console.log(`✓ fixture-inventory-lib: ${passed} assertions passed`);

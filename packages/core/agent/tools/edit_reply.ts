@@ -14,7 +14,7 @@ import {
 import { platformFailureClass } from "../channels/platform-failure.js";
 import type { ReplyAudit } from "../channels/reply-post.js";
 import { resolveEditableWakeTarget, replyRefusalMessage } from "../channels/unified-window.js";
-import { noteTerminalCallGrain } from "../channels/turn-terminal-actions.js";
+import { END_TURN_WITH_SENTINEL_INSTRUCTION } from "../channels/normalized-wake.js";
 import { editPostTail } from "../channels/session-tail-record.js";
 import { markWakeRepliedThisTurn } from "../channels/reply-signal.js";
 import { pendingDelegationOwing, pendingDelegationThisTurn } from "../access/pending-delegation-signal.js";
@@ -26,16 +26,14 @@ import { getOperationalStore } from "../operational/provider.js";
 import { preRegisterDynamicVariants } from "../access/window-gated.js";
 
 const editedNote = (platform: string): string =>
-  `Message updated on ${platform}. Nobody was notified — an edit changes what is already there, so anything NEW to say still needs a \`reply\`.`;
+  `Message updated on ${platform}. Nobody was notified — an edit changes what is already there, so anything NEW to say still needs a \`reply\`. If nothing new is left to say: ${END_TURN_WITH_SENTINEL_INSTRUCTION}`;
 
 async function editOrReportAmbiguous(
   locus: EditLocus,
   messageId: string,
   text: string,
   audit: ReplyAudit,
-  bind: BindableContext,
 ): Promise<{ edited: boolean; id: string; note: string }> {
-  noteTerminalCallGrain(bind);
   try {
     await editPostedMessage(locus, messageId, text, audit);
   } catch (err) {
@@ -93,7 +91,7 @@ export const unifiedEditReplyEntry = defineTool({
     }
 
     const owingTask = pendingDelegationOwing(turnId, input.wake, addressedWakeThisTurn(turnId));
-    const result = await editOrReportAmbiguous(locus, input.message_id, input.text, replyAuditFor(bind, "tool", input.wake), bind);
+    const result = await editOrReportAmbiguous(locus, input.message_id, input.text, replyAuditFor(bind, "tool", input.wake));
     markWakeRepliedThisTurn(turnId, input.wake);
     return owingTask === undefined ? result : { ...result, note: `${result.note}${PENDING_WORK_INSTRUCTION}` };
   },
@@ -125,7 +123,7 @@ const baseEditReplyEntry = defineTool({
     }
     const turnId = currentTurnId(bind);
     const owingTask = pendingDelegationThisTurn(turnId);
-    const result = await editOrReportAmbiguous(locus, input.message_id, input.text, replyAuditFor(bind, "tool"), bind);
+    const result = await editOrReportAmbiguous(locus, input.message_id, input.text, replyAuditFor(bind, "tool"));
     return owingTask === undefined ? result : { ...result, note: `${result.note}${PENDING_WORK_INSTRUCTION}` };
   },
 });

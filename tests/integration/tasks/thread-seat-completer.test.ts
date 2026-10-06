@@ -56,6 +56,8 @@ async function armSeams(): Promise<void> {
           if (user === MEMBER_USER_ID) return userInfo(MEMBER_USER_ID, "ope738-member");
           return undefined;
         }
+        case "conversations.members":
+          return { ok: true, members: [], response_metadata: { next_cursor: "" } };
         case "conversations.info":
           return {
             ok: true,

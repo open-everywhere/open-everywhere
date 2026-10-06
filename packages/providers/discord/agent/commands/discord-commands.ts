@@ -2,7 +2,9 @@ import {
   bindFrom,
   MODEL_AB_RATING_MAX,
   MODEL_AB_RATING_MIN,
-  OE_COMMAND_NAME,
+  agentDisplayName,
+  oeCommandName,
+  oeSlash,
   runOeCommand,
   type AttachSessionForCancel,
   type BindableContext,
@@ -70,7 +72,7 @@ export function parseDiscordOeCommandOptions(rawOptions: unknown): OeCommand {
     if (score === undefined || !Number.isInteger(score) || score < MODEL_AB_RATING_MIN || score > MODEL_AB_RATING_MAX) {
       return {
         kind: "error",
-        message: `"/oe rate" needs a whole "score" from ${MODEL_AB_RATING_MIN} to ${MODEL_AB_RATING_MAX} (got ${JSON.stringify(scoreOpt?.value)}).`,
+        message: `"${oeSlash("rate")}" needs a whole "score" from ${MODEL_AB_RATING_MIN} to ${MODEL_AB_RATING_MAX} (got ${JSON.stringify(scoreOpt?.value)}).`,
       };
     }
     return { kind: "rate", score };
@@ -86,14 +88,14 @@ export function parseDiscordOeCommandOptions(rawOptions: unknown): OeCommand {
       if (usd === undefined || usd <= 0) {
         return {
           kind: "error",
-          message: `"/oe budget raise" needs a positive "usd" amount (got ${JSON.stringify(usdOpt?.value)}).`,
+          message: `"${oeSlash("budget raise")}" needs a positive "usd" amount (got ${JSON.stringify(usdOpt?.value)}).`,
         };
       }
       return { kind: "budget-raise", usd };
     }
     return { kind: "error", message: `Unknown "budget" subcommand "${subName}".` };
   }
-  return { kind: "error", message: `Unknown "/oe" subcommand "${name ?? "?"}" — try "/oe help".` };
+  return { kind: "error", message: `Unknown "${oeSlash()}" subcommand "${name ?? "?"}" — try "${oeSlash("help")}".` };
 }
 
 interface ParsedOeInvocation {
@@ -104,7 +106,7 @@ interface ParsedOeInvocation {
 export function parseOeCommandInteraction(raw: unknown): ParsedOeInvocation | { readonly error: string } | null {
   if (!isObject(raw) || raw["type"] !== 2) return null;
   const data = isObject(raw["data"]) ? raw["data"] : undefined;
-  if (!data || data["name"] !== OE_COMMAND_NAME) return null;
+  if (!data || data["name"] !== oeCommandName()) return null;
 
   const member = isObject(raw["member"]) ? raw["member"] : undefined;
   const memberUser = member && isObject(member["user"]) ? member["user"] : undefined;
@@ -139,7 +141,7 @@ export async function handleDiscordOeCommandInteraction(
     const text = await runOeCommand(parsed.command, binding, attachSession ? { attachSession } : {});
     return ephemeral(text);
   } catch (err) {
-    console.error(`[open-everywhere:discord-commands] "/oe" command failed softly: ${String(err)}`);
+    console.error(`[open-everywhere:discord-commands] "${oeSlash()}" command failed softly: ${String(err)}`);
     return ephemeral(`Couldn't complete that: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
@@ -150,11 +152,18 @@ const OPTION_INTEGER = 4;
 const OPTION_NUMBER = 10;
 const CHAT_INPUT = 1;
 
+export const DISCORD_COMMAND_DESCRIPTION_MAX = 100;
+
+function discordCommandDescription(name: string): string {
+  const named = `${name} control-plane commands (status, budget) — no model turn.`;
+  return named.length <= DISCORD_COMMAND_DESCRIPTION_MAX ? named : "Control-plane commands (status, budget) — no model turn.";
+}
+
 export function buildOeDiscordCommandDefinition(): Record<string, unknown> {
   return {
-    name: OE_COMMAND_NAME,
+    name: oeCommandName(),
     type: CHAT_INPUT,
-    description: "Open Everywhere control-plane commands (status, budget) — no model turn.",
+    description: discordCommandDescription(agentDisplayName()),
     options: [
       {
         name: "budget",
@@ -196,7 +205,7 @@ export function buildOeDiscordCommandDefinition(): Record<string, unknown> {
           },
         ],
       },
-      { name: "help", description: "List the /oe commands.", type: SUB_COMMAND },
+      { name: "help", description: `List the ${oeSlash()} commands.`, type: SUB_COMMAND },
     ],
   };
 }

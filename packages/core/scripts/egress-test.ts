@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { compileNetworkPolicy, openWriteHosts } from "../agent/access/egress.js";
 import { computeEgressPolicy, applyEgressPolicy } from "../agent/hooks/egress.js";
 import { EgressHostCollisionError, type EffectiveAccess, type ReachableHost } from "../agent/access/resolver.js";
@@ -295,7 +296,10 @@ const allowOfPolicy = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>): Rec
 }
 
 {
-  const { enforceEgress, planEgressApply, egressPolicyFingerprint } = await import("../agent/hooks/egress.js");
+  const { enforceEgress, planEgressApply, egressPolicyFingerprint, EgressReapplyRefusedError, egressPolicyShape, egressPolicyCovers, isTurnEdgeAbort, handleTurnEdgeFailure, EgressBindingDivergenceError, NEVER_ENFORCED } =
+    await import("../agent/hooks/egress.js");
+  const { WakeSlotWriteError } = await import("../agent/access/wake-slot.js");
+  const { DelegatedTaskBindingUnavailableError } = await import("../agent/channels/task-wake.js");
   const hook = (await import("../agent/hooks/egress.js")).default as unknown as {
     events: Record<string, unknown>;
   };
@@ -315,11 +319,12 @@ const allowOfPolicy = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>): Rec
   ok(egressPolicyFingerprint("deny-all") !== egressPolicyFingerprint("deny-all", "boom"), "G1: a compile-error deny-all never fingerprints the same as a deliberate deny-all");
 
   const SCOPE = { org: "acme", platform: "slack", workspace: "T1", surface: "C1", principalId: "U7" };
-  function rig(compile: () => Promise<unknown>) {
+  function rig(compile: () => Promise<unknown>, opts: { trackShape?: boolean } = {}) {
     const applied: unknown[] = [];
     const audits: { action: string; detail: Record<string, unknown> }[] = [];
     const stamps: boolean[] = [];
     let fingerprint: string | undefined;
+    let shape: unknown;
     let connectors: string | undefined;
     let failNext = false;
     const deps = {
@@ -333,6 +338,14 @@ const allowOfPolicy = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>): Rec
       rememberApplied: (f: string) => {
         fingerprint = f;
       },
+      ...(opts.trackShape === false
+        ? {}
+        : {
+            lastEnforcedShape: () => shape,
+            rememberEnforcedShape: (v: unknown) => {
+              shape = v;
+            },
+          }),
       lastConnectors: () => connectors,
       rememberConnectors: (c: string) => {
         connectors = c;
@@ -380,6 +393,21 @@ const allowOfPolicy = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>): Rec
   }
 
   {
+    const one = { allow: { "a.test": [] } } as never;
+    const two = { allow: { "a.test": [], "b.test": [] } } as never;
+    const cred = (v: string) => ({ allow: { "a.test": [{ transform: [{ headers: { authorization: `Bearer ${v}` } }] }] } }) as never;
+    ok(egressPolicyCovers(egressPolicyShape(one), egressPolicyShape(two)), "OPE-2158: a policy that ADDS a host covers the one in force (a failed widening is staleness)");
+    ok(!egressPolicyCovers(egressPolicyShape(two), egressPolicyShape(one)), "OPE-2158: a policy that REMOVES a host does not cover the one in force");
+    ok(!egressPolicyCovers(egressPolicyShape(cred("OLD")), egressPolicyShape(cred("NEW"))), "OPE-2158: a changed credential on a shared host does not cover (the code cannot rank two rules)");
+    ok(!egressPolicyCovers(egressPolicyShape(one), "deny-all"), "OPE-2158: deny-all never covers an open policy");
+    ok(egressPolicyCovers("deny-all", egressPolicyShape(one)), "OPE-2158: anything covers deny-all");
+    ok(!egressPolicyCovers(undefined, egressPolicyShape(two)), "OPE-2158: an UNKNOWN in-force shape is never covered");
+    ok(!egressPolicyCovers(NEVER_ENFORCED, egressPolicyShape(two)), "OPE-2158: the never-enforced record is not a shape that covers anything");
+    ok(!egressPolicyCovers(egressPolicyShape({ allow: { "a.test": [] }, subnets: { allow: ["10.0.0.0/8"] } } as never), egressPolicyShape(two)), "OPE-2158: a changed subnet block does not cover");
+    ok(!JSON.stringify(egressPolicyShape(cred("SECRETVALUE"))).includes("SECRETVALUE"), "OPE-2158: the shape holds digests only, never a credential");
+  }
+
+  {
     let secret = "OLD";
     const r = rig(async () => ({ allow: { "api.acme.test": [{ transform: [{ headers: { authorization: `Bearer ${secret}` } }] }] } }));
     await enforceEgress("session.started", r.deps as never);
@@ -388,21 +416,225 @@ const allowOfPolicy = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>): Rec
     secret = "R1";
     r.breakApply(true);
     const failed = await enforceEgress("turn.started", r.deps as never);
-    ok(failed.enforceError !== undefined && failed.abortError === undefined, "G1: a turn-level apply failure is reported, NOT thrown (the session-start policy is still in force)");
+    ok(failed.enforceError !== undefined, "G1: a turn-level apply failure is reported");
+    ok(failed.abortError instanceof EgressReapplyRefusedError, "OPE-2158: 🔴 a failed re-apply whose new policy does NOT cover the one in force REFUSES the turn — the old credential would otherwise stay live");
+    ok(isTurnEdgeAbort(failed.abortError), "OPE-2158: …and the turn-edge predicate classes that refusal as an abort");
+    ok(String(failed.abortError?.message).includes("sandbox.update blipped") && !String(failed.abortError?.message).includes("aborting the session"), "OPE-2158: the refusal names the RAW backend error, not the session-start abort sentence");
     const failRow = r.audits.filter((a) => a.action === "egress.policy").at(-1)!;
     ok(failRow.detail.reapplyFailed === true, "G1: the failed re-apply audits reapplyFailed — the row an incident reader needs (the session is running an OLDER policy than its config says)");
+    ok(failRow.detail.aborted === true, "OPE-2158: …and the row records that the turn was refused");
     ok(r.stamps.length === stampsAfterStart, "G1: 🔴 a failed turn re-apply never stamps enforcement FALSE — downgrading it would move checkout_repo onto an in-sandbox token because sandbox.update blipped");
 
     r.breakApply(false);
     const appliesBefore = r.applied.length;
     const retried = await enforceEgress("turn.started", r.deps as never);
     ok(retried.applied && r.applied.length === appliesBefore + 1, "G1: the next turn RETRIES the same policy (a failed apply deliberately records no fingerprint, so the skip-unchanged gate cannot swallow it)");
-    ok(retried.enforced === true && retried.enforceError === undefined, "G1: the retry succeeds and the session catches back up to its config");
+    ok(retried.enforced === true && retried.enforceError === undefined && retried.abortError === undefined, "G1: the retry succeeds and the session catches back up to its config");
 
     secret = "OLD";
     const backToOld = await enforceEgress("turn.started", r.deps as never);
     ok(backToOld.reason === "policy-changed", "G1: reverting to the previously-applied value still re-applies (the last SUCCESS was 'R1', not 'OLD')");
   }
+
+  {
+    let hosts: Record<string, unknown[]> = { "api.acme.test": [] };
+    const r = rig(async () => ({ allow: hosts }));
+    await enforceEgress("session.started", r.deps as never);
+    hosts = { "api.acme.test": [], "new.acme.test": [] };
+    r.breakApply(true);
+    const widened = await enforceEgress("turn.started", r.deps as never);
+    ok(widened.enforceError !== undefined && widened.abortError === undefined, "OPE-2158 negative control: a failed re-apply that only ADDS a host continues — the policy in force is narrower, so keeping it is staleness");
+  }
+
+  {
+    let hosts: Record<string, unknown[]> = { "api.acme.test": [], "revoked.acme.test": [] };
+    const r = rig(async () => ({ allow: hosts }));
+    await enforceEgress("session.started", r.deps as never);
+    hosts = { "api.acme.test": [] };
+    r.breakApply(true);
+    const narrowed = await enforceEgress("turn.started", r.deps as never);
+    ok(narrowed.abortError instanceof EgressReapplyRefusedError, "OPE-2158: 🔴 a REMOVED host whose re-apply fails refuses the turn — the revoked host would otherwise stay open");
+  }
+
+  {
+    let breakCompile = false;
+    const r = rig(async () => {
+      if (breakCompile) throw new Error("secretRef ACME_KEY is not set");
+      return { allow: { "api.acme.test": [] } };
+    });
+    await enforceEgress("session.started", r.deps as never);
+    breakCompile = true;
+    r.breakApply(true);
+    const turn = await enforceEgress("turn.started", r.deps as never);
+    ok(turn.compileError !== undefined && turn.abortError instanceof EgressReapplyRefusedError, "OPE-2158: a mid-session compile-error deny-all whose apply fails refuses the turn — the open policy would otherwise coast");
+  }
+
+  {
+    let hosts: Record<string, unknown[]> = { "api.acme.test": [] };
+    const r = rig(async () => ({ allow: hosts }), { trackShape: false });
+    await enforceEgress("session.started", r.deps as never);
+    hosts = { "api.acme.test": [], "new.acme.test": [] };
+    r.breakApply(true);
+    const unknown = await enforceEgress("turn.started", r.deps as never);
+    ok(unknown.abortError instanceof EgressReapplyRefusedError, "OPE-2158: with no recorded in-force shape a failed re-apply cannot be proved staleness, so it refuses");
+  }
+
+  {
+    overrideSettingsForTest({ egress: { allowUnenforced: true } });
+    try {
+      let hosts: Record<string, unknown[]> = { "api.acme.test": [], "revoked.acme.test": [] };
+      const r = rig(async () => ({ allow: hosts }));
+      await enforceEgress("session.started", r.deps as never);
+      hosts = { "api.acme.test": [] };
+      r.breakApply(true);
+      const narrowed = await enforceEgress("turn.started", r.deps as never);
+      ok(narrowed.enforced === false && narrowed.abortError instanceof EgressReapplyRefusedError, "OPE-2158: 🔴 egress.allowUnenforced does NOT keep an enforced, wider policy in force after a failed narrowing");
+
+      let hosts2: Record<string, unknown[]> = { "api.acme.test": [], "b.acme.test": [] };
+      const never = rig(async () => ({ allow: hosts2 }));
+      never.breakApply(true);
+      const start = await enforceEgress("session.started", never.deps as never);
+      ok(start.enforced === false && start.abortError === undefined, "allowUnenforced: an unenforceable session start still warns and continues");
+      hosts2 = { "api.acme.test": [] };
+      const turn = await enforceEgress("turn.started", never.deps as never);
+      ok(turn.enforced === false && turn.abortError === undefined, "OPE-2158 negative control: a session that NEVER enforced a policy keeps warn-and-continue — refusing would buy nothing");
+
+      let hosts3: Record<string, unknown[]> = { "api.acme.test": [], "revoked.acme.test": [] };
+      const justBash = rig(async () => ({ allow: hosts3 }), { trackShape: false });
+      justBash.breakApply(true);
+      await enforceEgress("session.started", justBash.deps as never);
+      hosts3 = { "api.acme.test": [] };
+      const unknownTurn = await enforceEgress("turn.started", justBash.deps as never);
+      ok(unknownTurn.enforced === false && unknownTurn.abortError === undefined, "OPE-2158: 🔴 under allowUnenforced an unenforcing backend with NO enforced shape on record passes the re-apply (the integration harness's just-bash case)");
+    } finally {
+      overrideSettingsForTest({ egress: { allowUnenforced: false } });
+    }
+  }
+
+  {
+    const { createHash, createHmac, hkdfSync, randomBytes } = await import("node:crypto");
+    const { egressStateDigestKey, egressDigestKeyRotated, EGRESS_STATE_DIGEST_LABEL } = await import("../agent/hooks/egress.js");
+    const ENV = "OE_CREDENTIAL_ENCRYPTION_KEY";
+    const saved = process.env[ENV];
+    const keyA = randomBytes(32);
+    const keyB = randomBytes(32);
+    const credRules = (v: string) => [{ transform: [{ headers: { authorization: `Bearer ${v}` } }] }];
+    const credPolicy = (v: string) => ({ allow: { "api.acme.test": credRules(v) } }) as never;
+    const shapeHosts = (s: unknown) => (s as { hosts: Record<string, string> }).hosts;
+    const shapeKey = (s: unknown) => (s as { key: string }).key;
+    try {
+      process.env[ENV] = keyA.toString("base64");
+
+      const shapeA = egressPolicyShape(credPolicy("4711"));
+      const unkeyed = createHash("sha256").update(JSON.stringify(credRules("4711"))).digest("hex");
+      ok(shapeHosts(shapeA)["api.acme.test"] !== unkeyed, "OPE-2302: 🔴 the per-host digest is NOT the unkeyed sha-256 of the host's rules — the state alone cannot confirm a guess");
+      const guesses = Array.from({ length: 10_000 }, (_, i) => String(i).padStart(4, "0"));
+      const hit = guesses.find((g) => createHash("sha256").update(JSON.stringify(credRules(g))).digest("hex") === shapeHosts(shapeA)["api.acme.test"]);
+      ok(hit === undefined, "OPE-2302: 🔴 an offline dictionary over every 4-digit credential finds NO match without the key");
+      ok(egressPolicyShape(credPolicy("4711")) !== undefined && shapeHosts(egressPolicyShape(credPolicy("4711")))["api.acme.test"] === shapeHosts(shapeA)["api.acme.test"], "OPE-2302: the keyed digest is stable under one key, so the coverage comparison still works");
+
+      const subA = Buffer.from(hkdfSync("sha256", keyA, Buffer.alloc(0), "egress-state-digest", 32));
+      const expected = createHmac("sha256", subA).update(JSON.stringify(credRules("4711"))).digest("hex");
+      ok(EGRESS_STATE_DIGEST_LABEL === "egress-state-digest", "OPE-2302: the HKDF label is `egress-state-digest`");
+      ok(shapeHosts(shapeA)["api.acme.test"] === expected, "OPE-2302: the digest is HMAC-SHA256 under HKDF-SHA256(OE_CREDENTIAL_ENCRYPTION_KEY, info=`egress-state-digest`)");
+      ok(!subA.equals(keyA), "OPE-2302: the subkey is not the credential key itself");
+      ok(egressStateDigestKey().durable && /^[0-9a-f]{16}$/u.test(shapeKey(shapeA)), "OPE-2302: an armed credential key gives a DURABLE digest key, named in the record by a 16-hex id");
+      ok(!JSON.stringify(shapeA).includes(keyA.toString("base64")) && !JSON.stringify(shapeA).includes(subA.toString("hex")), "OPE-2302: the record carries neither the credential key nor the subkey");
+
+      process.env[ENV] = keyB.toString("base64");
+      const shapeB = egressPolicyShape(credPolicy("4711"));
+      ok(shapeHosts(shapeB)["api.acme.test"] !== shapeHosts(shapeA)["api.acme.test"] && shapeKey(shapeB) !== shapeKey(shapeA), "OPE-2302: a rotated credential key changes every digest and the key id");
+      ok(!egressPolicyCovers(shapeA, shapeB), "OPE-2302: a shape taken under the OLD key never covers one under the new key — the two cannot be compared");
+      ok(egressDigestKeyRotated(shapeA, egressStateDigestKey()), "OPE-2302: the record under the old key reads as ROTATED against the current durable key");
+      ok(!egressDigestKeyRotated(shapeB, egressStateDigestKey()), "OPE-2302 negative control: a record under the current key is not rotated");
+      ok(!egressDigestKeyRotated("deny-all", egressStateDigestKey()) && !egressDigestKeyRotated(NEVER_ENFORCED, egressStateDigestKey()) && !egressDigestKeyRotated(undefined, egressStateDigestKey()), "OPE-2302: a key-free record (deny-all, never-enforced, unknown) is never rotated");
+      const { key: _legacyKey, ...legacy } = shapeB as { key: string };
+      ok(egressDigestKeyRotated(legacy as never, egressStateDigestKey()) && !egressPolicyCovers(legacy as never, shapeB), "OPE-2302: a record from before OPE-2302 (no key id) re-applies once and never covers");
+
+      process.env[ENV] = keyA.toString("base64");
+      const r = rig(async () => credPolicy("STABLE"));
+      await enforceEgress("session.started", r.deps as never);
+      const steady = await enforceEgress("turn.started", r.deps as never);
+      ok(steady.reason === "unchanged" && r.applied.length === 1, "OPE-2302 negative control: an UNCHANGED key and policy skip the firewall call");
+
+      process.env[ENV] = keyB.toString("base64");
+      const rotated = await enforceEgress("turn.started", r.deps as never);
+      ok(rotated.reason === "digest-key-rotated" && rotated.applied && r.applied.length === 2, "OPE-2302: 🔴 after a credential-key rotation the hook RE-APPLIES the unchanged policy once");
+      const rotRow = r.audits.filter((a) => a.action === "egress.policy").at(-1)!;
+      ok(rotRow.detail.reason === "digest-key-rotated", "OPE-2302: …and the audit row names the reason");
+      const again = await enforceEgress("turn.started", r.deps as never);
+      ok(again.reason === "unchanged" && r.applied.length === 2, "OPE-2302: …exactly ONCE: the next turn skips, because the record is now under the new key");
+
+      process.env[ENV] = keyA.toString("base64");
+      r.breakApply(true);
+      const failedRot = await enforceEgress("turn.started", r.deps as never);
+      ok(failedRot.reason === "digest-key-rotated" && failedRot.enforceError !== undefined && failedRot.abortError === undefined, "OPE-2302: a FAILED rotation re-apply does not refuse the turn — the plan picks it only when the fingerprint equals the one on record, so the turn is no worse off than an unchanged turn");
+      r.breakApply(false);
+      const retriedRot = await enforceEgress("turn.started", r.deps as never);
+      ok(retriedRot.reason === "digest-key-rotated" && retriedRot.enforced === true, "OPE-2302: …and the next turn retries the rotation re-apply");
+
+      process.env[ENV] = keyA.toString("base64");
+      const dr = rig(async () => credPolicy("STABLE"));
+      await enforceEgress("session.started", dr.deps as never);
+      overrideSettingsForTest({ egress: { enforce: false } });
+      try {
+        process.env[ENV] = keyB.toString("base64");
+        const rowsBefore = dr.audits.filter((a) => a.action === "egress.policy").length;
+        const d1 = await enforceEgress("turn.started", dr.deps as never);
+        const d2 = await enforceEgress("turn.started", dr.deps as never);
+        ok(d1.reason === "unchanged" && d2.reason === "unchanged" && dr.audits.filter((a) => a.action === "egress.policy").length === rowsBefore, "OPE-2302 negative control: a rotation in dry-run plans NO re-apply and writes no row, turn after turn");
+      } finally {
+        overrideSettingsForTest({ egress: { enforce: true } });
+      }
+
+      let narrowHosts: Record<string, unknown[]> = { "api.acme.test": [], "revoked.acme.test": [] };
+      const n = rig(async () => ({ allow: narrowHosts }));
+      await enforceEgress("session.started", n.deps as never);
+      process.env[ENV] = keyB.toString("base64");
+      narrowHosts = { "api.acme.test": [] };
+      n.breakApply(true);
+      const narrowRot = await enforceEgress("turn.started", n.deps as never);
+      ok(narrowRot.reason === "policy-changed" && narrowRot.abortError instanceof EgressReapplyRefusedError, "OPE-2302: 🔴 a rotation does not soften a failed NARROWING — the turn is still refused");
+
+      delete process.env[ENV];
+      const proc = egressStateDigestKey();
+      ok(!proc.durable && proc.id.startsWith("process:"), "OPE-2302: with no credential key the digest key is per-PROCESS, and its id says so");
+      const shapeP = egressPolicyShape(credPolicy("4711"));
+      ok(shapeHosts(shapeP)["api.acme.test"] !== unkeyed, "OPE-2302: 🔴 an unarmed deployment still never records the unkeyed digest");
+      const otherProcess = { ...(shapeP as object), key: "process:0000000000000000" } as never;
+      ok(!egressDigestKeyRotated(otherProcess, proc), "OPE-2302 negative control: a per-process key never asks for a re-apply (it would repeat on every cold process)");
+      ok(!egressPolicyCovers(otherProcess, shapeP), "OPE-2302: …but another process's shape never covers, so a failed narrowing re-apply refuses (fail-closed)");
+      const u = rig(async () => credPolicy("STABLE"));
+      await enforceEgress("session.started", u.deps as never);
+      const uTurn = await enforceEgress("turn.started", u.deps as never);
+      ok(uTurn.reason === "unchanged" && u.applied.length === 1, "OPE-2302 negative control: an unarmed deployment's unchanged turn skips as before");
+    } finally {
+      if (saved === undefined) delete process.env[ENV];
+      else process.env[ENV] = saved;
+    }
+  }
+
+  {
+    const refusalAtEdge = (err: unknown, inForce = true): string | undefined => {
+      try {
+        return handleTurnEdgeFailure(err, inForce)?.reason;
+      } catch {
+        return "THREW";
+      }
+    };
+    ok(refusalAtEdge(new EgressReapplyRefusedError("x")) === "reapply-narrows-policy-in-force", "OPE-2158: 🔴 the turn.started edge REFUSES a re-apply refusal (and never rethrows it)");
+    ok(refusalAtEdge(new WakeSlotWriteError("open-everywhere.halted", new Error("x"))) === "wake-slot-write-failed", "OPE-2157: 🔴 the turn.started edge REFUSES a failed halt-slot write (and never rethrows it)");
+    ok(refusalAtEdge(new EgressBindingDivergenceError("x")) === "subagent-binding-divergence", "the turn.started edge still refuses a binding divergence");
+    ok(refusalAtEdge(new DelegatedTaskBindingUnavailableError("no-row")) === "delegated-binding-unavailable", "the turn.started edge refuses a delegated binding that did not restore");
+    ok(refusalAtEdge(new Error("sandbox.update blipped")) === undefined, "negative control: the turn.started edge swallows a plain plumbing failure while a policy is in force");
+    ok(refusalAtEdge(new Error("sandbox.update blipped"), false) === "unenforced-no-policy-in-force", "OPE-2249: 🔴 …but refuses it when NO policy is in force");
+    const hookSrc = readFileSync(new URL("../agent/hooks/egress.ts", import.meta.url), "utf8");
+    ok(/catch \(err\) \{[\s\S]{0,2000}?const refusal = handleTurnEdgeFailure\(err, inForce\);\s*if \(refusal !== undefined\) await refuseTurn\(/u.test(hookSrc), "the turn.started catch delegates to handleTurnEdgeFailure and cancels on its refusal (the tested body is the wired one)");
+  }
+  ok(isTurnEdgeAbort(new EgressReapplyRefusedError("x")), "OPE-2158: the turn edge refuses a re-apply refusal");
+  ok(isTurnEdgeAbort(new WakeSlotWriteError("open-everywhere.halted", new Error("x"))), "OPE-2157: the turn edge refuses a failed halt-slot write");
+  ok(isTurnEdgeAbort(new EgressBindingDivergenceError("x")), "the turn edge still refuses a binding divergence");
+  ok(!isTurnEdgeAbort(new Error("sandbox.update blipped")), "negative control: the turn edge swallows a plain plumbing failure");
 
   {
     const broken = rig(async () => {

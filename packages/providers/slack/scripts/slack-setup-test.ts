@@ -391,6 +391,48 @@ const MANIFEST_OK = {
 }
 
 {
+  const { overrideSettingsForTest, resetSettingsForTest } = await import("@open-everywhere/core/agent/adapter-api.js");
+  overrideSettingsForTest({ identity: { name: "Aria", commandName: "aria" } });
+  try {
+    type Sent = {
+      display_information: { name: string };
+      features: { bot_user: { display_name: string }; slash_commands: { command: string }[]; shortcuts: { name: string }[] };
+    };
+    const createVia = async (fields: Record<string, string>): Promise<Sent> => {
+      const vault = memoryVault();
+      const cookie = await mintSetupCookie(claimDeps(vault));
+      let sent = "";
+      await handleSlackSetupPost(
+        post(fields, cookie),
+        depsFor(vault, {
+          createApp: async (input: { manifest: string }) => {
+            sent = input.manifest;
+            return {
+              appId: "A0FAKEAPP",
+              clientId: "1111.2222",
+              clientSecret: "fake-client-secret",
+              signingSecret: "fake-signing-secret",
+              oauthAuthorizeUrl: "https://slack.com/oauth/v2/authorize?client_id=1111.2222",
+            };
+          },
+        }),
+      );
+      return JSON.parse(sent) as Sent;
+    };
+    const named = await createVia({ a: "create", t: "xoxe-fake-config-token" });
+    ok(named.display_information.name === "Aria" && named.features.bot_user.display_name === "Aria", "🔴 /setup: the created app is named with the configured identity.name");
+    ok(named.features.slash_commands[0]?.command === "/aria", "🔴 /setup: the created app's slash command is the configured identity.commandName");
+    ok(named.features.shortcuts.every((sc) => sc.name.includes("Aria")), "/setup: …and both shortcuts name the agent");
+    const explicit = await createVia({ a: "create", t: "xoxe-fake-config-token", n: "Acme Agent" });
+    ok(explicit.display_information.name === "Acme Agent", "/setup: the form's explicit app name still OVERRIDES the configured name");
+    const claim = await (await handleSlackSetupGet(get(SLACK_SETUP_PATH), depsFor(memoryVault()))).text();
+    ok(claim.includes("Set up Aria") && !claim.includes("Open Everywhere"), "/setup: the page names the configured agent, not the brand");
+  } finally {
+    resetSettingsForTest();
+  }
+}
+
+{
   const vault = memoryVault();
   const cookie = await mintSetupCookie(claimDeps(vault));
   const res = await handleSlackSetupPost(
@@ -978,8 +1020,9 @@ console.log("  7. eve's credential arms");
     process.env.SLACK_SIGNING_SECRET = "stored-signing-secret";
     resetSlackCredentialMemo();
     let threw: unknown;
-    await verifySlackInboundForEve(req, body).catch((e: unknown) => void (threw = e));
+    const accepted = await verifySlackInboundForEve(req, body).catch((e: unknown) => void (threw = e));
     ok(threw === undefined, "eve's verifier ACCEPTS a correctly-signed request through the resolver");
+    ok(accepted === true, "🔴 the accept RETURNS true — eve 0.71.0 rejects a request whose verifier returns nothing");
 
     const badReq = new Request("https://oe.example.com/eve/v1/slack", {
       method: "POST",

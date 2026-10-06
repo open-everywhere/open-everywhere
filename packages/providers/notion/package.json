@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/provider-notion",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Open Everywhere Notion provider — Notion as a wake surface plus page and database tools.",
   "keywords": [
     "agent",
@@ -218,11 +218,11 @@
     "test:notion-ingress-drain": "NODE_NO_WARNINGS=1 tsx scripts/notion-ingress-drain-test.ts"
   },
   "dependencies": {
-    "@open-everywhere/core": "0.1.5",
+    "@open-everywhere/core": "0.2.0",
     "zod": "4.5.4"
   },
   "peerDependencies": {
-    "eve": "0.54.3"
+    "eve": "0.71.0"
   },
   "devDependencies": {
     "@types/node": "latest",

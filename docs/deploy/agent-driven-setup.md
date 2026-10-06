@@ -302,8 +302,11 @@ For Slack, the exact action:
    host — a full webhook URL, say — is refused rather than substituted, because Slack accepts the
    paste and only fails at request-URL verification.
 
-   The app is named "Open Everywhere" unless you pass `appName` (at most 35 characters). A second
-   install in one workspace needs its own name, or the two apps look the same. The manifest also
+   The manifest is rendered from the deployment's settings. The `identity.name` setting names the
+   app, the bot user, both shortcuts and the command description, and `identity.commandName` names
+   the slash command (`/oe` when unset). With no name configured the app is named "Open
+   Everywhere". An explicit `appName` (at most 35 characters) overrides the configured name. A
+   second install in one workspace needs its own name, or the two apps look the same. The manifest also
    turns the App Home Messages tab on: without it, Slack refuses every DM to the bot with
    *"Sending messages to this app has been turned off"*.
 

@@ -70,6 +70,9 @@ profile, which is how that choice is stated in machine-readable form rather than
 Each package ships compiled ESM and `.d.ts` under `dist/`, **and** the original `.ts` sources
 beside it. The sources are there to be read — this codebase's comments carry most of its
 reasoning — and the declaration maps point at them, so go-to-definition lands on the real file.
+That holds for `agent/**`. Core's `oe` CLI is the exception: it ships compiled under
+`dist/scripts/`, and its `scripts/*.ts` sources stay in the repository, so its maps point at files
+the tarball does not carry.
 
 The compiled output is not a nicety. Node refuses to type-strip anything whose realpath is
 inside `node_modules` (`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`), and `eve build`
@@ -127,30 +130,37 @@ patch markers are absent (`agent/access/eve-patch-probe.ts`, `agent/hooks/eve-pa
 unpatched tree fails loudly instead of serving wakes with the connector fence inert.
 [Publishing](../dev/publishing.md) carries the recipe and what each refusal means.
 
-### 3. The root `zod` must be the version eve vendors
+### 3. The root `zod` must be ONE version
 
-eve bundles its own copy of zod inside its `dist` and rehydrates every MCP tool `inputSchema` with
-it. The AI SDK then converts that same schema back with the **root-resolved** zod. The two
-instances split one traversal: the caller builds the context, and the schema owns the per-node
-processors. A version skew therefore runs one version's driver against the other version's
-processors.
-
-That is not a warning — it is a hard failure. On the 4.4.3-root / 4.5.4-eve pair it threw
+The rule exists because of an incident (OPE-1751). Through eve 0.65, eve rehydrated every MCP tool
+`inputSchema` with the zod it bundles in its own `dist`, and the AI SDK then converted that schema
+back with the **root-resolved** zod. The two instances split one traversal: the caller builds the
+context, and the schema owns the per-node processors. On the 4.4.3-root / 4.5.4-eve pair it threw
 `TypeError: Cannot read properties of undefined (reading 'push')` inside the model-call
 preparation, so **every session that mounted a connector tool with an `allOf` failed its turn**.
-One `allOf` in one tool is enough. Both versions install, typecheck and build cleanly, so nothing
-else sees the skew.
+Both versions installed, typechecked and built cleanly, so nothing else saw the skew.
 
-So this repository pins zod **exactly**, to the version eve vendors: an exact version in every
-`package.json` that declares zod, plus a root `overrides.zod` entry. `ai`, `@ai-sdk/*` and
-`@modelcontextprotocol/sdk` declare zod as a peer **range** that already admits the pinned version,
-so they need no override. The override exists for the two packages that pin zod **exactly** —
-`@agent-browser/eve` (4.4.3) and `@vercel/cli-config` (4.1.11). Without it npm installs each of
-those a nested copy of its own, and a nested copy is a second instance.
+**On eve 0.71.0 the tool path no longer meets the two instances** (re-derived at OPE-2247 and
+OPE-2321). eve 0.66.0 and later pass a tool schema as JSON Schema only. eve 0.71.0's `toInputSchema`
+wraps it in eve's own standard schema and calls no `z.fromJSONSchema`. So the tool path builds no
+schema with eve's bundled zod for the root zod to process. eve 0.69.0 also ships that bundle as
+compiled bytes with no version in them, so "root zod equals eve's zod" is no longer readable.
 
-Two repo-side gates hold the pin. `npm run test:eve-install` compares the root version with the
-version eve vendors, and `npm run test:zod-seam` drives the real crossing. On a consumer tree, run
-`npm ls zod` and confirm it prints one version and exits 0.
+**The rule stays, and it is weaker than the one it replaced.** The proof covers eve's own tool path
+only. Nobody has yet run the retirement test OPE-1751 asks for: an `allOf` connector schema that
+round-trips cleanly with a root zod that differs from eve's. So this repository still pins ONE zod
+**exactly**: an exact version in every `package.json` that declares zod, plus a root `overrides.zod`
+entry. `ai`, `@ai-sdk/*` and `@modelcontextprotocol/sdk` declare zod as a peer **range** that
+already admits the pinned version, so they need no override. The override exists for the two
+packages that pin zod **exactly** — `@agent-browser/eve` (4.4.3) and `@vercel/cli-config`
+(4.1.11). Without it npm installs a nested copy for each of them, and a nested copy is a second
+instance.
+
+Two repo-side gates hold the rule. `npm run test:eve-install` asserts that no eve module outside
+`dist/src/compiled/` calls `fromJSONSchema` and that the root zod is a v4. It reds if eve goes back
+to rehydrating with its bundled zod, and the version-equality rule must then come back.
+`npm run test:zod-seam` drives the real crossing through eve's `toInputSchema` and the AI SDK's
+`asSchema()`. On a consumer tree, run `npm ls zod` and confirm it prints one version and exits 0.
 
 ## Verifying an install
 
@@ -195,8 +205,23 @@ release record after the install. If the run stops at any step, run the second c
 resumes. After a green run, delete `.open-everywhere/bootstrap`. From then on, `npx oe upgrade` is
 the command.
 
-Do not use `npx -p @open-everywhere/core@<version> oe upgrade`. The `oe` bin needs `tsx`. Core
-declares `tsx` only as a development dependency, so the npx cache has no `tsx`. That command fails
-before `oe upgrade` starts. `scripts/oe-upgrade-packed-test.ts` runs the second command above, as
-`UPGRADING.md` renders it, against an app shaped like a 0.1.3 scaffold. It also proves that the
-npx-cache layout fails. It does not run `npm install` against the registry.
+**The `npx` one-liner, from the first release after 0.1.5.** Up to 0.1.5, the `oe` bin registers
+`tsx`. Core declares `tsx` only as a development dependency, and `npx -p` installs core into its own
+cache, where no `tsx` resolves. So `npx -p @open-everywhere/core@<version> oe upgrade` fails with
+0.1.5 or earlier as the target. Since OPE-2296 the bin runs compiled JavaScript
+(`dist/scripts/oe-cli.js`) and needs no `tsx`. With the first release after 0.1.5, or a later one,
+as the target, this is the bootstrap too:
+
+```sh
+npx -p @open-everywhere/core@<version> oe upgrade --plan
+npx -p @open-everywhere/core@<version> oe upgrade --to <version>
+```
+
+With no `tsx`, `oe build` loads the app's `roster.config.ts` through Node's own type stripping, so
+that file must use erasable syntax only, as its header says.
+
+`scripts/oe-upgrade-packed-test.ts` runs the second prefix command above, as `UPGRADING.md` renders
+it, against an app shaped like a 0.1.3 scaffold, and it starts the compiled bin from the npx-cache
+layout. `scripts/oe-bin-packed-test.ts` runs `oe upgrade --plan` from a packed core with no `tsx`
+on its resolution path, and shows that the old `tsx` shim fails in the same layout. Neither test
+runs `npm install` against the registry.

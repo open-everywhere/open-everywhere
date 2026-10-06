@@ -82,7 +82,7 @@ export function standingAuthorityNote(view: StandingAuthorityView): string | und
     const connections = [...new Set(view.gatedWrites.map((w) => w.connection))].join(", ");
     return (
       `${NO_CARD_NOTE_OPENING} A gated ${connections} write ran on it, ` +
-      `which means an approval already stood for this session — not that the write is ungated.)`
+      `which means an approval already stood for this call — not that the write is ungated.)`
     );
   }
   if (view.grants.length > 0) {

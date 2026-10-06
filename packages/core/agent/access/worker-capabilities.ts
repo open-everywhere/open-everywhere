@@ -9,17 +9,18 @@ export interface WorkerCapabilityGroup {
   readonly tools: readonly string[];
 }
 
-export const WORKER_INDEX_MACHINERY: ReadonlySet<string> = new Set(["sandbox_tools", "browser_tools", "grant_tools"]);
+export const WORKER_INDEX_MACHINERY: ReadonlySet<string> = new Set(["sandbox_tools", "browser_tools", "grant_tools", "connection_tools"]);
 
 export const WORKER_INDEX_LIFECYCLE: ReadonlySet<string> = new Set([
   "agent",
+  "work",
+  "cancel_work",
   "spawn_thread_session",
   "complete_thread",
   "read_thread_seat",
   "message_thread_seat",
-  "task_peek",
   "task_cancel",
-  "task_sleep",
+  "task_wait",
 ]);
 
 export const WORKER_INDEX_SEAT_VERBS: ReadonlySet<string> = new Set([
@@ -51,8 +52,8 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
   },
   {
     id: "external-reach",
-    headline: "Reach the open web and the connected services — fetch a page, search, discover and offer connectors",
-    tools: ["web_fetch", "web_search", "connection_search", "connector", "revoke_connector", "clear_connector_override"],
+    headline: "Reach the open web and the connected services — fetch a page, search, discover and offer connectors, and run an operation on one",
+    tools: ["web_fetch", "web_search", "connection_search", "connection_execute", "connector", "revoke_connector", "clear_connector_override"],
   },
   {
     id: "work-surfaces",
@@ -64,6 +65,7 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
       "notion_search",
       "search",
       "read_linear_issue",
+      "read_github_issue",
       "read_work_channel",
       "read_work_thread",
       "create_ticket",
@@ -141,8 +143,8 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
   },
   {
     id: "turn-plumbing",
-    headline: "Work through something long enough to need a plan of its own, and come back mid-way to ask you a question before carrying on",
-    tools: ["ask_question", "todo"],
+    headline: "Come back to you mid-job to ask a question, then carry on once you answer — work long enough to need that",
+    tools: ["ask_question", "ask_room"],
   },
   {
     id: "second-opinion",
@@ -245,12 +247,12 @@ function delegationReturnShape(route: "agent", asyncVerb: "spawn_thread_session"
     `If nobody asked you anything (a channel-watch wake you are only listening to), delegate silently and call \`no_reply\`: the worker's settlement then ends in silence too, unless it turns up something the room asked for.`,
     `When the worker settles, its completion arrives as a NEW message on a later turn, and that message tells you how to read its output. Stop work you no longer need with \`task_cancel\`, using the task id from the receipt.`,
     `Say which request the result answers. Another message can arrive in this room while a worker runs, and an answer posted against the wrong one reads as a non-sequitur.`,
-    `A worker does ONE job. You cannot send more work to a worker that has already run: \`agentId\` is refused. Start a fresh \`${route}\` call and put everything the new worker needs in its brief, including whatever the last one found.`,
+    `To correct a worker or give it a follow-up, call \`${route}\` again with the \`taskId\` from its receipt: it keeps what it already read and found. Only continue a task from the room that opened it, and only once it has reported back. A task opened in another room is refused, so start a fresh \`${route}\` call there and put everything the new worker needs in its brief.`,
     SHARED_FILESYSTEM_LINE,
   ];
   if (asyncVerb !== undefined) {
     lines.push(
-      `\`${asyncVerb}\` is a different move and still worth knowing: it mints a durable SEAT that joins the room and keeps talking, where a worker does one job and reports back.`,
+      `\`${asyncVerb}\` is a different move and still worth knowing: it mints a durable SEAT that joins the room and keeps talking, where a worker reports back on its task and takes a follow-up only by \`taskId\`.`,
     );
   }
   return lines.join(" ");

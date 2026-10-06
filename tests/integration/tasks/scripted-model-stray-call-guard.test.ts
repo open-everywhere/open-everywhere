@@ -3,73 +3,74 @@ import { expect, test } from "vitest";
 import {
   afterThisTest,
   armSettlement,
+  auditCursor,
+  awaitWorkResult,
   bootAgent,
-  consumeSettlement,
   disposeLater,
   discordMentionWake,
   DISCORD_LISTED_CHANNEL_ID,
   registerScript,
-  taskIdOfDelegation,
   waitFor,
   waitForChildren,
+  workTaskIdOfCall,
   type ScriptedHandle,
+  type SeatScript,
 } from "../harness";
+import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 
-async function dispatchOneWorker(tag: string): Promise<{ dispatched: ScriptedHandle; taskId: string }> {
+async function dispatchOneWorker(tag: string, afterResult: readonly SeatScript["parent"][number][]): Promise<{ dispatched: ScriptedHandle; resultTurn: ScriptedHandle; taskId: string }> {
+  const cursor = await auditCursor();
   const dispatched = disposeLater(
     registerScript({
-      parent: [{ calls: [{ tool: "agent", input: { message: `do the ${tag} thing` }, id: `${tag}-delegate` }] }, { say: "dispatched" }],
-      child: [{ say: "done" }],
+      parent: [{ calls: [{ tool: "work", input: { message: `do the ${tag} thing` }, id: `${tag}-delegate` }] }, { say: NO_REPLY_SENTINEL }],
+      child: [{ delayMs: 120_000, say: "done" }],
     }),
   );
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `<@9000000000000000001> ${tag}, please` });
-
   await waitFor(() => dispatched.requests.find((r) => r.role === "parent" && r.stepIndex === 1), `the ${tag} dispatch turn's own terminal step to be served`);
+  const taskId = await workTaskIdOfCall(cursor, dispatched, `${tag}-delegate`, `the ${tag} forward receipt`);
+  const resultTurn = disposeLater(armSettlement(dispatched, { parent: [...afterResult] }));
+  dispatched.releaseHolds();
   await waitForChildren(dispatched, { count: 1, lastStepIndex: 0, label: `the ${tag} delegated worker's own step` });
-  const taskId = taskIdOfDelegation(dispatched, `the ${tag} delegation`);
-  return { dispatched, taskId };
+  return { dispatched, resultTurn, taskId };
 }
 
 test("OPE-995 — a session's own straggler is faulted, never served from the next registration's script", async () => {
   await bootAgent();
 
-  const { dispatched, taskId } = await dispatchOneWorker("ope995a");
+  const { dispatched, resultTurn, taskId } = await dispatchOneWorker("ope995a", [
+    { calls: [{ tool: "react", input: { emoji: "eyes" }, id: "ope995-peek" }], delayMs: 60_000 },
+    { say: "noted" },
+  ]);
+  afterThisTest(() => resultTurn.releaseHolds());
 
-  const settlement = armSettlement(dispatched, {
-    parent: [
-      { calls: [{ tool: "task_cancel", input: { taskIds: [taskId] }, id: "ope995-peek" }], delayMs: 60_000 },
-      { say: "noted" },
-    ],
-  });
-  afterThisTest(() => settlement.releaseHolds());
-
-  const notification = await consumeSettlement({
-    armed: settlement,
-    dispatched,
+  const resultStep = await awaitWorkResult({
+    handle: resultTurn,
     taskId,
-    label: "the settlement turn's own step 0 to arrive (held open by delayMs)",
+    label: "the step that read the worker's result (held open by delayMs)",
   });
-  expect(notification.fault).toBeUndefined();
-  expect(notification.stepIndex).toBe(0);
-  const sessionId = notification.sessionId;
+  expect(resultStep.fault).toBeUndefined();
+  expect(resultStep.stepIndex).toBe(0);
+  const sessionId = resultStep.sessionId;
   expect(sessionId).toBeDefined();
 
-  settlement.dispose();
+  dispatched.dispose();
+  resultTurn.dispose();
 
   const next = disposeLater(
     registerScript({
-      parent: [{ calls: [{ tool: "task_cancel", input: { taskIds: [taskId] }, id: "next-peek" }] }, { say: "next done" }],
+      parent: [{ calls: [{ tool: "react", input: { emoji: "eyes" }, id: "next-peek" }] }, { say: "next done" }],
     }),
   );
 
-  settlement.releaseHolds();
+  resultTurn.releaseHolds();
 
   const strayFault = await waitFor(
     () => next.requests.find((r) => r.fault?.includes("OPE-995") === true),
     "the straggler to be faulted on the entry it fell through to, instead of silently served",
   );
   expect(strayFault.fault).toContain(`session "${String(sessionId)}"`);
-  expect(strayFault.fault).toContain(String(notification.turnId));
+  expect(strayFault.fault).toContain(String(resultStep.turnId));
   expect(strayFault.stepIndex).toBe(-1);
 
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> a brand new message" });
@@ -78,7 +79,7 @@ test("OPE-995 — a session's own straggler is faulted, never served from the ne
     "next's own real wake to be served step 0 cleanly, unaffected by the earlier straggler",
   );
   expect(served.sessionId).toBe(sessionId);
-  expect(served.turnId).not.toBe(notification.turnId);
+  expect(served.turnId).not.toBe(resultStep.turnId);
 
   expect(next.requests.filter((r) => r.fault !== undefined)).toHaveLength(1);
 });
@@ -86,16 +87,11 @@ test("OPE-995 — a session's own straggler is faulted, never served from the ne
 test("OPE-995 negative control — a genuinely new wake on a reused session, with NO incomplete turn behind it, is unaffected", async () => {
   await bootAgent();
 
-  const { dispatched, taskId } = await dispatchOneWorker("ope995c");
-  const settlement = armSettlement(dispatched, { parent: [{ say: "acknowledged" }] });
-  const notification = await consumeSettlement({
-    armed: settlement,
-    dispatched,
-    taskId,
-    label: "the settlement turn's own (single) step",
-  });
-  expect(notification.fault).toBeUndefined();
-  settlement.dispose();
+  const { dispatched, resultTurn, taskId } = await dispatchOneWorker("ope995c", [{ say: NO_REPLY_SENTINEL }]);
+  const resultStep = await awaitWorkResult({ handle: resultTurn, taskId, label: "the step that read the worker's result" });
+  expect(resultStep.fault).toBeUndefined();
+  dispatched.dispose();
+  resultTurn.dispose();
 
   const next = disposeLater(registerScript({ parent: [{ say: "clean" }] }));
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> another new message" });

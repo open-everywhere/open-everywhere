@@ -1,3 +1,5 @@
+// proves: turn.supervisor_prose_dropped
+
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
@@ -22,6 +24,7 @@ const { registerPostArm } = await import("../agent/channels/post-arms.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { markRepliedThisTurn, markWakeRepliedThisTurn } = await import("../agent/channels/reply-signal.js");
+const { markNoReplyThisTurn, peekNoReplyThisTurn } = await import("../agent/channels/no-reply-signal.js");
 const unified = (await import("../agent/channels/unified.js")).default as unknown as {
   readonly adapter: Record<string, (data: unknown, channel: unknown, ctx?: unknown) => Promise<void>>;
 };
@@ -55,6 +58,7 @@ const registerClosingArm = (): void =>
 registerClosingArm();
 
 const onCompleted = unified.adapter["message.completed"]!;
+const onTurnCompleted = unified.adapter["turn.completed"]!;
 const windowChannel = { continuation: { token: WINDOW_TOKEN }, state: {} };
 
 const inWindowTurn = (sessionId: string, wakeId: string, turnId: string) => {
@@ -143,6 +147,57 @@ ok(isUnifiedWakeOrigin(originFor("C_ANY")), "(fixture sanity) the origin codec i
     "🔴 the one corrective re-drive FIRED ⇒ a turn is still coming that can answer this wake, so the session stays open",
   );
   ok(proseDropClosesWakeSession(true, true) === false, "…and both at once still closes nothing");
+}
+
+{
+  await openWake("wake-ends-turn-6a", "C_CLOSE_6A");
+  const before = closes.length;
+  await inWindowTurn("wrun_ends", "wake-ends-turn-6a", "turn-ends-6a")(async () => {
+    markNoReplyThisTurn("nothing_to_add");
+    await onTurnCompleted({ turnId: "turn-ends-6a", sequence: 1 }, windowChannel);
+    ok(peekNoReplyThisTurn() === null, "🔴 the turn's silence reason was CONSUMED — it cannot leak into the next turn");
+    await onTurnCompleted({ turnId: "turn-ends-6a", sequence: 1 }, windowChannel);
+  });
+  ok(closes.length === before + 1, `🔴 an endsTurn silent turn closes the wake's session EXACTLY ONCE at turn.completed — got ${closes.length - before}`);
+  ok(closes[closes.length - 1]?.channelId === "C_CLOSE_6A", "…on that wake's own origin");
+  ok(posts.length === 0, "…and nothing of the model's was posted");
+}
+{
+  await openWake("wake-ends-turn-6c", "C_CLOSE_6C");
+  const before = closes.length;
+  await inWindowTurn("wrun_ends_c", "wake-ends-turn-6c", "turn-ends-6c")(async () => {
+    await onCompleted({ finishReason: "stop", message: "NO_REPLY", turnId: "turn-ends-6c" }, windowChannel);
+    await onTurnCompleted({ turnId: "turn-ends-6c", sequence: 1 }, windowChannel);
+  });
+  ok(closes.length === before + 1, `NEGATIVE CONTROL: message.completed decided the turn, so turn.completed adds no second close — got ${closes.length - before}`);
+}
+
+{
+  const { notePendingDelegation, noteDelegationSettled } = await import("../agent/access/pending-delegation-signal.js");
+  await openWake("wake-prewait-7", "C_CLOSE_7");
+  const before = closes.length;
+  await inWindowTurn("wrun_prewait", "wake-prewait-7", "turn-prewait-7")(async () => {
+    const drops = (await readAudit({ org: ORG, action: "turn.supervisor_prose_dropped" })).length;
+    notePendingDelegation("turn-prewait-7", "agent-prewait7", "wake-prewait-7");
+    await onCompleted({ finishReason: "stop", message: "let me check with a worker", turnId: "turn-prewait-7" }, windowChannel);
+    ok((await readAudit({ org: ORG, action: "turn.supervisor_prose_dropped" })).length === drops, "🔴 pre-wait text while a worker owes the wake is NOT dropped as an ending");
+    ok(closes.length === before, "🔴 …and closes no session under the answer still coming");
+    noteDelegationSettled("turn-prewait-7", "agent-prewait7");
+    markNoReplyThisTurn("nothing_to_add");
+    await onTurnCompleted({ turnId: "turn-prewait-7", sequence: 1 }, windowChannel);
+  });
+  ok(closes.length === before + 1, `🔴 the turn stayed undecided, so turn.completed decided it and closed once — got ${closes.length - before}`);
+}
+{
+  const { notePendingDelegation } = await import("../agent/access/pending-delegation-signal.js");
+  await openWake("wake-prewait-7b", "C_CLOSE_7B");
+  const before = closes.length;
+  await inWindowTurn("wrun_prewait_b", "wake-prewait-7b", "turn-prewait-7b")(async () => {
+    notePendingDelegation("turn-prewait-7b", "agent-prewait7b", "wake-prewait-7b");
+    markNoReplyThisTurn("nothing_to_add");
+    await onTurnCompleted({ turnId: "turn-prewait-7b", sequence: 1 }, windowChannel);
+  });
+  ok(closes.length === before + 1, `🔴 a stale pending entry never leaves an ENDED turn undecided — turn.completed closed once, got ${closes.length - before}`);
 }
 
 console.log(`✓ unified prose-drop close: ${passed} assertions passed`);

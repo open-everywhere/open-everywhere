@@ -1,5 +1,5 @@
 import { defineTool } from "eve/tools";
-import { bash } from "eve/tools/bash";
+import { bash, type BashToolOutput } from "eve/tools/bash";
 import { glob } from "eve/tools/glob";
 import { grep } from "eve/tools/grep";
 import { readFile } from "eve/tools/read_file";
@@ -20,12 +20,7 @@ interface WebFetchOutput {
   url: string;
 }
 
-interface BashOutput {
-  exitCode: number;
-  stderr: string;
-  stdout: string;
-  truncated: boolean;
-}
+type BashOutput = BashToolOutput;
 
 export function bashModelOutput(output: unknown): { type: "json"; value: unknown } {
   const o = output as BashOutput;

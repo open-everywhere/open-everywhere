@@ -1,18 +1,13 @@
 import { defineState } from "eve/context";
+import { readWakeSlot, writeWakeSlot } from "./wake-slot.js";
 
-const slot = defineState<boolean | null>("open-everywhere.halted", () => null);
+const SLOT = "open-everywhere.halted";
+const slot = defineState<boolean | null>(SLOT, () => null);
 
 export function stampHalted(halted: boolean): void {
-  try {
-    slot.update(() => halted);
-  } catch {
-  }
+  writeWakeSlot(SLOT, () => slot.update(() => halted));
 }
 
 export function currentHaltStamp(): boolean | null {
-  try {
-    return slot.get();
-  } catch {
-    return null;
-  }
+  return readWakeSlot<boolean | null>(SLOT, () => slot.get(), { contextless: null, restricting: true });
 }

@@ -18,8 +18,9 @@ registerConfig({
   domainsForSurface: () => [],
 });
 
+const { overrideSettingsForTest, resetSettingsForTest } = await import("@open-everywhere/core/agent/settings/settings.js");
 const {
-  OE_COMMAND_NAME,
+  oeCommandName,
   parseOeCommandTokens,
   parseSlackCommandText,
   renderHelp,
@@ -36,7 +37,7 @@ const {
   hasRealAppVersion,
   APP_VERSION_UNVERSIONED,
 } = await import("@open-everywhere/core/agent/commands/core.js");
-const { parseDiscordOeCommandOptions, parseOeCommandInteraction, handleDiscordOeCommandInteraction, buildOeDiscordCommandDefinition } = await import(
+const { parseDiscordOeCommandOptions, parseOeCommandInteraction, handleDiscordOeCommandInteraction, buildOeDiscordCommandDefinition, DISCORD_COMMAND_DESCRIPTION_MAX } = await import(
   "@open-everywhere/provider-discord/agent/commands/discord-commands.js"
 );
 const { classifyDiscordInteraction } = await import("@open-everywhere/provider-discord/agent/channels/discord-front.js");
@@ -287,7 +288,7 @@ function discordBinding(overrides: Partial<SurfaceBinding> = {}): SurfaceBinding
     type: number;
     options: { name: string; type: number; options?: { name: string; type: number; options?: { name: string; type: number; required?: boolean; min_value?: number }[] }[] }[];
   };
-  ok(def.name === OE_COMMAND_NAME, 'registration JSON name is "oe"');
+  ok(def.name === oeCommandName() && def.name === "oe", 'registration JSON name is "oe" with no `identity.commandName` configured');
   ok(def.type === 1, "registration JSON type is CHAT_INPUT (1)");
   const topNames = def.options.map((o) => o.name);
   ok(topNames.includes("budget") && topNames.includes("status") && topNames.includes("help"), "top-level options are budget/status/help");
@@ -518,6 +519,51 @@ function discordOeInteraction(opts: {
   } as never);
   ok(brokenReply.includes("pending-scan"), "budget raise: a failed scan still returns the working proposal ack — the read is fail-soft");
   ok(/NOT shown/.test(brokenReply) && !brokenReply.includes("$0.00"), "budget raise: a failed scan says the ledger could not be read, never a $0.00 that would read as a clean bill");
+}
+
+{
+  overrideSettingsForTest({ identity: { name: "Aria", commandName: "aria" } });
+  try {
+    ok(oeCommandName() === "aria", "configured: oeCommandName() resolves the setting");
+    const def = buildOeDiscordCommandDefinition() as { name: string; description: string; options: { name: string; description: string }[] };
+    ok(def.name === "aria", "🔴 configured: Discord REGISTERS the command under the configured name");
+    ok(def.description.startsWith("Aria "), `configured: the registration description names the agent (got "${def.description}")`);
+    ok(!def.description.includes("Open Everywhere"), "configured: …and not the brand");
+    ok(def.options.find((o) => o.name === "help")!.description.includes("/aria"), "configured: the help subcommand's description spells /aria");
+    ok(
+      classifyDiscordInteraction(JSON.stringify({ type: 2, data: { name: "aria" } })).kind === "oe-command",
+      "🔴 configured: the Discord router MATCHES the configured name — the command it registered is answered, not forwarded",
+    );
+    ok(
+      classifyDiscordInteraction(JSON.stringify({ type: 2, data: { name: "oe" } })).kind === "forward",
+      "configured: the old `oe` name is no longer ours — it forwards like any other command",
+    );
+    ok(parseOeCommandInteraction(discordOeInteraction({ name: "aria" })) !== null, "configured: the interaction parser accepts the configured name");
+    ok(parseOeCommandInteraction(discordOeInteraction({ name: "oe" })) === null, "configured: …and refuses the old one");
+    const help = renderHelp();
+    ok(help.includes("/aria status") && help.includes("/aria rate") && help.includes("/aria help"), "🔴 configured: the help text spells the configured command");
+    ok(!/\/oe\b/.test(help), "configured: …and never `/oe`");
+    const unknown = parseOeCommandTokens(["frobnicate"]);
+    ok(unknown.kind === "error" && unknown.message.includes('"/aria help"'), "configured: the unknown-command error points at /aria help");
+    const badRaise = parseOeCommandTokens(["budget", "raise", "x"]);
+    ok(badRaise.kind === "error" && badRaise.message.includes("/aria budget raise"), "configured: the budget-raise error spells /aria");
+    const discordBad = parseDiscordOeCommandOptions([{ name: "nope" }]);
+    ok(discordBad.kind === "error" && discordBad.message.includes('"/aria"') && discordBad.message.includes("/aria help"), "configured: Discord's unknown-subcommand error spells /aria");
+    const status = renderStatus({ version: "1.2.3", primaryModel: "m", utilityModel: "u", deploymentSha: "abc", evePin: "0.71.0" }, "sqlite");
+    overrideSettingsForTest({ identity: { name: "A Very Long Configured Agent Name That Fills The Whole Setting Width!" } });
+    const longDef = buildOeDiscordCommandDefinition() as { description: string };
+    ok(longDef.description.length <= DISCORD_COMMAND_DESCRIPTION_MAX, `configured: a long name never pushes the description past Discord's ${DISCORD_COMMAND_DESCRIPTION_MAX}-character limit`);
+    overrideSettingsForTest({ identity: { name: "Aria" } });
+    ok(status.startsWith("*Aria* v1.2.3"), `🔴 configured: the status header carries the configured name (got "${status.split("\n")[0]}")`);
+    ok(!status.includes("Open Everywhere"), "configured: …and not the brand");
+  } finally {
+    resetSettingsForTest();
+  }
+  ok(oeCommandName() === "oe" && renderHelp().includes("/oe status"), "unconfigured: the command is /oe again");
+  ok(
+    renderStatus({ version: "1.2.3", primaryModel: "m", utilityModel: "u", deploymentSha: "abc", evePin: "0.71.0" }, "sqlite").startsWith("*Open Everywhere* v1.2.3"),
+    "unconfigured: the status header falls back to the brand default",
+  );
 }
 
 console.log(`\n✓ oe-commands: ${n} assertions passed (parsing, renderers, registration JSON, classification, ephemeral responses, budget glue — the Slack signature gate moved to @open-everywhere/provider-slack)\n`);

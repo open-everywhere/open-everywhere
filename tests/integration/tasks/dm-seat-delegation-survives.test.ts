@@ -1,18 +1,18 @@
 import { expect, test } from "vitest";
+import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import {
-  afterThisTest,
+  armSettlement,
   auditCursor,
-  awaitTaskSettlement,
+  awaitWorkResult,
   bootAgent,
   disposeLater,
   registerScript,
   rowsSinceCursor,
-  SETTLEMENT_DRAIN_SCRIPT,
   slackDmWake,
   slackTs,
-  taskIdOfDelegation,
   waitFor,
   waitForChildren,
+  workTaskIdOfCall,
 } from "../harness";
 
 const OPERATOR_ID = "U0EXOWNER";
@@ -28,8 +28,11 @@ test("a DM seat's delegated worker settles completed, with no delegation.task_fa
 
   const dispatched = disposeLater(
     registerScript({
-      parent: [{ calls: [{ tool: "agent", input: { message: "ope1751 look this up for me" }, id: "ope1751-delegate" }] }, { say: "handed it to a worker" }],
-      child: [{ say: CHILD_ANSWER }],
+      parent: [
+        { calls: [{ tool: "work", input: { message: "ope1751 look this up for me" }, id: "ope1751-delegate" }] },
+        { say: NO_REPLY_SENTINEL },
+      ],
+      child: [{ delayMs: 120_000, say: CHILD_ANSWER }],
     }),
   );
 
@@ -43,21 +46,17 @@ test("a DM seat's delegated worker settles completed, with no delegation.task_fa
   });
   expect(res.status, `the DM wake POST was not accepted at all — a signature or route failure: ${res.body.slice(0, 200)}`).toBe(200);
 
-  await waitFor(() => dispatched.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the DM seat's dispatch turn to serve its own terminal step");
+  await waitFor(() => dispatched.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the DM seat's forwarding turn to serve its own terminal step");
 
   await waitForChildren(dispatched, { count: 1, lastStepIndex: 0, label: "the DM seat's delegated worker to serve its arm" });
+  const taskId = await workTaskIdOfCall(cursor, dispatched, "ope1751-delegate", "the OPE-1751 DM forward");
+  const closing = disposeLater(armSettlement(dispatched, { parent: [{ say: NO_REPLY_SENTINEL }, { say: NO_REPLY_SENTINEL }] }));
+  dispatched.releaseHolds();
 
   expect(dispatched.requests.filter((r) => r.fault !== undefined), "the scripted model faulted on the DM seat's own handle").toEqual([]);
-
-  const taskId = taskIdOfDelegation(dispatched, "the OPE-1751 DM delegation");
-  const { handle: drain } = await awaitTaskSettlement({
-    dispatched,
-    taskId,
-    script: SETTLEMENT_DRAIN_SCRIPT,
-    label: "the settled DM worker's completion wake",
-  });
-  afterThisTest(() => drain.dispose());
-  expect(drain.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  const resultStep = await awaitWorkResult({ handle: closing, taskId, label: "the DM seat's step that read the worker's result" });
+  expect(resultStep.fault).toBeUndefined();
+  expect(closing.requests.filter((r) => r.fault !== undefined), "the scripted model faulted on the DM seat's result turn").toEqual([]);
 
   await waitFor(
     async () => (await rowsSinceCursor(cursor, ["delegation.task_started"])).find((r) => r.detail?.task === taskId),

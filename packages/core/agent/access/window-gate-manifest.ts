@@ -23,6 +23,8 @@ export const WINDOW_GATED_TOOLS: Readonly<Record<string, readonly WindowGrain[]>
   get create_skill() { return fullKit(); },
   get delete_skill() { return fullKit(); },
   agent: ["standing", "thread"],
+  work: ["standing", "thread"],
+  cancel_work: ["standing", "thread"],
   spawn_thread_session: ["standing"],
   complete_thread: ["thread"],
   read_thread_seat: ["standing"],
@@ -40,6 +42,7 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "resume",
   "check_pr_status",
   "get_pr_feedback",
+  "read_github_issue",
   "walk_pr",
   "post_pr_walkthrough",
   "describe_image",
@@ -114,10 +117,13 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "grant_tools",
   "web_search",
   "ask_question",
-  "todo",
+  "ask_room",
   "load_skill",
+  "connection_tools",
   "connection_search",
+  "connection_execute",
   "task_cancel",
+  "task_wait",
   "fresh_eyes_review",
 ]);
 
@@ -158,6 +164,7 @@ export const JOB_WAKE_TOOLS: ReadonlySet<string> = new Set([
   "describe_image",
   "check_pr_status",
   "get_pr_feedback",
+  "read_github_issue",
   "list_repos",
   "list_routines",
   "list_skills",
@@ -168,7 +175,6 @@ export const JOB_WAKE_TOOLS: ReadonlySet<string> = new Set([
   "query_analytics",
   "permission_fit_report",
   "agent_version",
-  "todo",
   "load_skill",
 ]);
 
@@ -176,8 +182,9 @@ export function withheldFromJobWake(
   gated: Readonly<Record<string, readonly WindowGrain[]>> = WINDOW_GATED_TOOLS,
   ungated: ReadonlySet<string> = WINDOW_UNGATED_TOOLS,
   jobKit: ReadonlySet<string> = JOB_WAKE_TOOLS,
+  harnessInternal: ReadonlySet<string> = new Set(),
 ): string[] {
-  return [...new Set([...Object.keys(gated), ...ungated])].filter((name) => !jobKit.has(name)).sort();
+  return [...new Set([...Object.keys(gated), ...ungated])].filter((name) => !jobKit.has(name) && !harnessInternal.has(name)).sort();
 }
 
 export interface WindowToolSource {
@@ -185,22 +192,24 @@ export interface WindowToolSource {
   readonly source: string;
 }
 
-export type FrameworkToolMount = "default" | "opt-in" | "unknown";
+export type FrameworkToolMount = "default" | "opt-in" | "reserved" | "unknown";
 
 export function classifyFrameworkTools(
   allNames: Iterable<string>,
   defaultMountedNames: Iterable<string> | undefined,
   optInNames: Iterable<string> | undefined,
+  reservedNames: Iterable<string> = [],
 ): Map<string, FrameworkToolMount> {
   const out = new Map<string, FrameworkToolMount>();
+  const reserved = new Set(reservedNames);
   if (defaultMountedNames === undefined || optInNames === undefined) {
-    for (const name of allNames) out.set(name, "unknown");
+    for (const name of allNames) out.set(name, reserved.has(name) ? "reserved" : "unknown");
     return out;
   }
   const mountedByDefault = new Set(defaultMountedNames);
   const optIn = new Set(optInNames);
   for (const name of allNames) {
-    out.set(name, mountedByDefault.has(name) ? "default" : optIn.has(name) ? "opt-in" : "unknown");
+    out.set(name, reserved.has(name) ? "reserved" : mountedByDefault.has(name) ? "default" : optIn.has(name) ? "opt-in" : "unknown");
   }
   return out;
 }
@@ -268,6 +277,14 @@ export function checkWindowGateManifest(
       if (grainKey(grains) !== grainKey(["standing", "thread"])) {
         problems.push(`WINDOW_GATED_TOOLS["agent"] must be exactly ["standing", "thread"] (the conversational-root seats delegate; NEVER task — a worker leaf holds the wide hands already and must not spawn recursively) — got [${grains.join(", ")}]`);
       }
+    } else if (name === "cancel_work") {
+      if (grainKey(grains) !== grainKey(["standing", "thread"])) {
+        problems.push(`WINDOW_GATED_TOOLS["cancel_work"] must be exactly ["standing", "thread"] (the conversation seat that forwarded a job stops it; never a worker leaf) — got [${grains.join(", ")}]`);
+      }
+    } else if (name === "work") {
+      if (grainKey(grains) !== grainKey(["standing", "thread"])) {
+        problems.push(`WINDOW_GATED_TOOLS["work"] must be exactly ["standing", "thread"] (a conversation seat forwards to its own work session; never a worker leaf) — got [${grains.join(", ")}]`);
+      }
     } else if (name === "complete_thread") {
       if (grainKey(grains) !== "thread") {
         problems.push(`WINDOW_GATED_TOOLS["complete_thread"] must be exactly ["thread"] (only a thread seat owns a thread) — got [${grains.join(", ")}]`);
@@ -290,7 +307,11 @@ export function checkWindowGateManifest(
     if (coreSrc === undefined) {
       const shim = appShims.get(name);
       const isSentinel = shim !== undefined && /\bdisableTool\s*\(\s*\)/.test(shim);
-      if (name === "agent") {
+      if (mountOf(name) === "reserved") {
+        problems.push(
+          `framework tool "${name}" is in WINDOW_GATED_TOOLS, but the installed eve RESERVES the name: it throws on any authored module at that slot and provides the tool itself at runtime. So neither half of the gate exists — a \`disableTool()\` sentinel fails \`eve build\` and a windowGatedKit(...) key collides with eve's own provision. Move the row to WINDOW_UNGATED_TOOLS; its real gate is eve's own (a connector tool mounts only while the agent has connections, a task verb only while the toolset offers a task-starting tool).`,
+        );
+      } else if (name === "agent") {
         if (kitKeyProviders.has(name)) {
           problems.push(
             `"agent" is re-provided by a windowGatedKit(...) — it must NOT be: eve's built-in \`agent\` is this deployment's delegation route, and a dynamic tool of that name COLLIDES with it (eve harness/tool-loop.js throws and kills the model call). Delete the kit key; the gate is access/untrusted-projection.ts.`,

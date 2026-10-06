@@ -115,8 +115,18 @@ test("a turn that closes its reply obligation and keeps stepping is ended by the
   const handle = disposeLater(
     registerScript({
       parent: [
-        { calls: [{ tool: "no_reply", input: { reason: "not_relevant" }, id: "c1" }] },
-        { calls: [{ tool: "no_reply", input: { reason: "not_relevant" }, id: "c2" }] },
+        {
+          calls: [
+            { tool: "no_reply", input: { reason: "not_relevant" }, id: "c1" },
+            { tool: "list_routines", input: {}, id: "c1b" },
+          ],
+        },
+        {
+          calls: [
+            { tool: "no_reply", input: { reason: "not_relevant" }, id: "c2" },
+            { tool: "list_routines", input: {}, id: "c2b" },
+          ],
+        },
         { calls: [{ tool: "list_routines", input: {}, id: "c3" }] },
         { say: "should never be reached — the closeout boundary ends the turn first" },
       ],

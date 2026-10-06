@@ -1,7 +1,8 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
 import { resolvePartition } from "../memory/partition.js";
-import { bindFrom, deliveryStampOf, isSubagentChildContext, isScheduleOriginatedAuth, type BindableContext } from "../identity/binding.js";
+import { bindFrom, currentTurnId, deliveryStampOf, isSubagentChildContext, isScheduleOriginatedAuth, type BindableContext } from "../identity/binding.js";
+import { deliveryChangedThisTurn } from "../access/task-wake-signal.js";
 import { planFor } from "../memory/resolve.js";
 import { auditRecurrenceLedger, signatureDigest } from "../memory/dream/recurrence.js";
 import { learnFromSession, safeDistill, enrichmentBullets, writeEnrichment } from "../memory/dream/learn.js";
@@ -58,6 +59,7 @@ async function consolidate(ctx: HookContext): Promise<void> {
   if (!consolidatableTurn(ctx)) return;
   const captured = consumeTurnRequest();
   if (!captured) return;
+  if (deliveryChangedThisTurn(currentTurnId(ctx as unknown as BindableContext))) return;
   const { request, messages } = captured;
 
   const p = resolvePartition(ctx);

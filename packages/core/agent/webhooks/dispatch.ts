@@ -8,7 +8,7 @@ import { taintedFireAttrs } from "../access/taint-signal.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 import { webhookFireAttributes } from "../routines/fire-auth.js";
 import { checkFireDisclosure } from "../routines/fire-disclosure.js";
-import { divertTriggeredFire, runFireSeatKey, type FireWindowDeps } from "../routines/fire-window.js";
+import { divertTriggeredFire, type FireWindowDeps } from "../routines/fire-window.js";
 import { mintWakeId } from "../channels/unified-window.js";
 import { renderWakeEnvelope } from "../channels/wake-envelope.js";
 import { normalizeDelivery } from "../routines/event-model.js";
@@ -139,7 +139,6 @@ export async function fireWebhook(
       message,
       surfaceKey,
       origin: { platform: "slack", channelId },
-      seatKey: runFireSeatKey(fireWakeId),
       auth,
       wakeId: fireWakeId,
     },

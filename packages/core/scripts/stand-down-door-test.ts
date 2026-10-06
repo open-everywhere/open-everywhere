@@ -1,3 +1,5 @@
+// proves: REPLY-43, SEAT-02
+
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { readFileSync, rmSync } from "node:fs";
@@ -42,7 +44,7 @@ const standDownSilence = await import("../agent/channels/stand-down-silence.js")
 const { durableTurnKey, writeTurnState, noteStoppedAck, stoppedAckSpent } = await import("../agent/model/turn-state.js");
 const replyPost = await import("../agent/channels/reply-post.js");
 const { dropClosingProse, CLOSING_PROSE_DROPPED_ACTION } = await import("../agent/channels/closing-prose-drop.js");
-const { proseBlockingRefusal, PROSE_BLOCKING_REFUSALS } = await import("../agent/channels/unified-window.js");
+const { proseBlockingRefusal, PROSE_BLOCKING_REFUSALS, ANSWER_DELIVERED_REFUSAL_REASON } = await import("../agent/channels/unified-window.js");
 const { REPLY_STOPPED_REFUSAL_REASON, WAKE_DECLINED_REFUSAL_REASON, WAKE_DONE_REFUSAL_REASON } = await import("../agent/channels/reply-signal.js");
 const { REPLY_STALE_REFUSAL_REASON } = await import("../agent/channels/reply-freshness.js");
 const { REPLY_FOLD_REFUSAL_REASON } = await import("../agent/channels/reply-fold.js");
@@ -166,6 +168,7 @@ const AT = "2026-02-25T04:40:00Z";
     [WAKE_DECLINED_REFUSAL_REASON, "reply-signal.ts WAKE_DECLINED_REFUSAL_REASON"],
     [WAKE_DONE_REFUSAL_REASON, "reply-signal.ts WAKE_DONE_REFUSAL_REASON"],
     [REPLY_STOPPED_REFUSAL_REASON, "reply-signal.ts REPLY_STOPPED_REFUSAL_REASON"],
+    [ANSWER_DELIVERED_REFUSAL_REASON, "unified-window.ts ANSWER_DELIVERED_REFUSAL_REASON"],
   ];
   for (const [value, where] of pinned) {
     ok(PROSE_BLOCKING_REFUSALS.includes(value), `§6/PIN: a drop is withheld by ${where} — a rename of that constant fails HERE rather than silently re-arming the redrive`);

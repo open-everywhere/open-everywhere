@@ -1,5 +1,5 @@
 import type { PendingActionRow } from "@open-everywhere/core/agent/adapter-api.js";
-import { grantButtonLabel, sessionGrantKind } from "@open-everywhere/core/agent/adapter-api.js";
+import { getSettings, grantButtonLabel, pendingCardExpiryClause, sessionGrantKind } from "@open-everywhere/core/agent/adapter-api.js";
 
 export const OE_DISCORD_APPROVAL_PREFIX = "oe-approval:";
 
@@ -54,7 +54,7 @@ function cardBody(row: PendingActionRow, summaryLines: readonly string[], footer
 }
 
 export function pendingDiscordCard(row: PendingActionRow, summaryLines: readonly string[]): DiscordCardMessage {
-  const content = cardBody(row, summaryLines, `-# Requested by <@${row.requestedBy}> · expires ${row.expiresAt}`);
+  const content = cardBody(row, summaryLines, `-# Requested by <@${row.requestedBy}> · ${pendingCardExpiryClause(row.expiresAt)}`);
   const buttons: DiscordComponent[] = [
     {
       type: COMPONENT_BUTTON,
@@ -63,11 +63,12 @@ export function pendingDiscordCard(row: PendingActionRow, summaryLines: readonly
       custom_id: buildDiscordApprovalCustomId(row, "approve"),
     },
   ];
-  if (sessionGrantKind(row) !== null) {
+  const grantLabel = sessionGrantKind(row) !== null ? grantButtonLabel(row, getSettings().approvals.routineGrantTtlHours) : undefined;
+  if (grantLabel !== undefined) {
     buttons.push({
       type: COMPONENT_BUTTON,
       style: BUTTON_STYLE_SECONDARY,
-      label: grantButtonLabel(row),
+      label: grantLabel,
       custom_id: buildDiscordApprovalCustomId(row, "approve_session"),
     });
   }

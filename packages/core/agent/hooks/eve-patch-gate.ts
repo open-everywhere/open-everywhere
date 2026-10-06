@@ -1,10 +1,18 @@
 import { defineHook } from "eve/hooks";
-import { assertEvePatchedAtTurn } from "../access/eve-patch-probe.js";
+import { evePatchTurnRefusal } from "../access/eve-patch-probe.js";
+import { refuseTurn, type RefusableContext } from "./control-refusal.js";
 
 export default defineHook({
   events: {
-    "turn.started": (_event, _ctx) => {
-      assertEvePatchedAtTurn();
+    "turn.started": async (_event, ctx) => {
+      const refusal = evePatchTurnRefusal();
+      if (refusal === undefined) return;
+      await refuseTurn(ctx as RefusableContext, {
+        hook: "eve-patch-gate",
+        phase: "turn.started",
+        reason: "eve-unpatched",
+        message: refusal,
+      });
     },
   },
 });

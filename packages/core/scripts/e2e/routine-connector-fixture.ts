@@ -3,6 +3,7 @@ import { vercelConnectorOf, type ConnectorCredentials } from "../../agent/access
 import { domainForChannel, type Domain } from "../../agent/memory/domain.js";
 import { loadAppBindings, loadAppBundles, loadAppConnectorCredentials, loadAppDomains } from "./app-config.js";
 import type { Routine } from "../../agent/routines/routine.js";
+import { carriesFactToken } from "./journey.js";
 
 export const NOTION_MCP_HOST = "mcp.notion.com";
 
@@ -111,16 +112,41 @@ export function routineConnectorWriteSteps(op: string, note: string): string {
   return (
     "Delegate this to a worker with the `agent` tool and pass it these instructions verbatim: " +
     `"Call \`connection_search\` for the Notion page-creation operation, then call \`${op}\` with a new page titled 'OE e2e ${note}' whose one-line body contains the exact token ${note}. ` +
-    "Do not load any skill and do not use the notion-rest scripts. " +
+    "The Notion skill and its notion-rest scripts are not needed for this one call. " +
     'Report exactly what the operation returned. A refusal is what a call returned, never something concluded without making one." ' +
     "Then report the worker's answer."
   );
 }
 
+export function routineConnectorReportLine(fireWord: string): string {
+  return `Whether the page is created or the write is refused, the one report back here starts with the word ${fireWord} and then says what was tried and what the system said (do not use this word anywhere else).`;
+}
+
+function slackTsAfter(a: string, b: string): boolean {
+  const [ai = "", af = ""] = a.split(".");
+  const [bi = "", bf = ""] = b.split(".");
+  if (ai.length !== bi.length) return ai.length > bi.length;
+  if (ai !== bi) return ai > bi;
+  const w = Math.max(af.length, bf.length);
+  return af.padEnd(w, "0") > bf.padEnd(w, "0");
+}
+
+export function routineFireReportMatch(
+  post: { readonly ts: string; readonly threadTs?: string; readonly text: string },
+  opts: { readonly fireWord: string; readonly note: string; readonly preFireTs: readonly string[] },
+): "fireWord" | "note" | undefined {
+  if (carriesFactToken(post.text, opts.fireWord)) return "fireWord";
+  if (opts.preFireTs.length === 0) return undefined;
+  const topLevel = post.threadTs === undefined || post.threadTs === post.ts;
+  if (!topLevel) return undefined;
+  if (!opts.preFireTs.every((floor) => slackTsAfter(post.ts, floor))) return undefined;
+  return carriesFactToken(post.text, opts.note) ? "note" : undefined;
+}
+
 export function routineConnectorFirePrompt(op: string, note: string, fireWord: string): string {
   return (
     `${routineConnectorWriteSteps(op, note)} ` +
-    `Whether the page is created or the write is refused, report back here what was tried and what the system said, ending that report with the word ${fireWord} (do not use this word anywhere else).`
+    routineConnectorReportLine(fireWord)
   );
 }
 

@@ -149,8 +149,9 @@ reach them*.
 The recipe is the same for every seam:
 
 1. Implement the core interface (e.g. `CredentialBroker.getSecret(ref)`).
-2. Call the register seam at startup (`registerBroker("my-vault", myBroker)`), typically from
-   a side-effect import in your app's `agent/lib/register-adapters.ts`.
+2. Call the register seam at startup (`registerBroker("my-vault", myBroker)`), from the
+   `customAdapters` hook in your app's `agent/lib/register-adapters.ts` (see
+   [the app's adapter wiring](#the-apps-adapter-wiring) below).
 3. Point config at it — for a credential broker, stamp the credentials it owns `broker: "my-vault"`
    (there is no global selection); for other seams, name it in per-bundle / env config.
 
@@ -175,6 +176,42 @@ contribute a new chat surface without a core PR. The doctrine and the exception 
 they answer different questions — "has this seam earned an abstraction?" (no, for PR/SCM verbs)
 versus "should this vendor's code ship to everyone regardless of whether they use it?" (no, for
 every chat/work/connector provider, which is why the packaging split doesn't wait).
+
+### The app's adapter wiring
+
+An app's `agent/lib/register-adapters.ts` is one call (OPE-2301):
+
+```ts
+import { registerDefaultAdapters } from "@open-everywhere/adapters/agent/register-defaults.js";
+import { SELECTED_PROVIDERS } from "./providers.generated.js";
+import { loadDomains, loadSilos } from "../memory/config/domains.js";
+import { domainMemoryGrants } from "./memory-grants.js";
+
+await registerDefaultAdapters({
+  providers: SELECTED_PROVIDERS,
+  memory: { domains: loadDomains, silos: loadSilos, grants: domainMemoryGrants },
+  customAdapters: () => {
+    registerBroker("my-vault", myBroker);
+  },
+});
+```
+
+`registerDefaultAdapters()` is product code. It declares the provider selection, registers the
+default adapters and every selected provider bundle, and wires the operational store with the
+product's rules: the Neon gate asks core's `resolveOperationalSelection` and
+`resolveMemoryProviderId`, and the PGlite floor arms from the resolved floor. An upgrade of
+`@open-everywhere/adapters` upgrades all of it, so the app's file needs no merge on upgrade.
+
+`customAdapters` is the app's hook. It runs once, after every default adapter and provider bundle
+registers, and before the boot checks that read those registries (the connector memory grants, the
+subtree claims), the store wiring and the slash-command reconcile. A registration in the hook
+therefore replaces a default one, and the same boot checks see it. The store selection is not a
+hook point: the Neon gate and the PGlite floor are product rules. Keep the hook's imports static,
+for the one-chunk reason above. `registerDefaultAdapters()` wires once per process. A second
+call in the same process returns the first call's result and runs nothing again, because eve 0.71
+evaluates `agent/agent.ts` more than once in one build process. A second run would declare the
+provider selection again, which clears the gate's records, and run every bundle's `register()`,
+the boot checks and the slash-command reconcile again.
 
 ### Import the ports from one door: the adapter-api barrel
 

@@ -25,7 +25,7 @@ export default defineTool({
       .number()
       .optional()
       .describe(
-        "The absolute token count at which compaction fires: the context window times the configured threshold percent. ABSENT when this deployment registered no window. This is the same number `/oe status` prints.",
+        "The absolute token count at which compaction fires: the context window times the configured threshold percent. ABSENT when this deployment registered no window. This is the same number the status control command prints.",
       ),
   }),
   approval: never(),

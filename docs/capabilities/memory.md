@@ -403,33 +403,36 @@ buys is that a *confused* write fails in the turn instead of being accepted and 
 capture's own drop-and-log stays as the backstop behind both.
 
 **When the capture runs.** Delegated work is the common way memory gets written, so the capture
-keys on the moment that work comes back — not on the session ending. There are five points, and
-they are all the same diff-based persist. A sixth, the in-turn
+keys on the moment that work comes back — not on the session ending. There are four points, and
+they are all the same diff-based persist. A fifth, the in-turn
 [explicit remember-ask](#an-explicit-remember-ask-writes-inside-the-turn), runs that same persist
 before the reply is posted rather than at an edge:
 
-- **A worker hands its result back.** The host records the settlement first, then persists, so the
-  store can lag the seat's own notice by one step.
-- **A delegation returns to the seat that asked for it.** A worker that runs inside the seat's own
-  sandbox writes into the *seat's* memory tree, so the seat is the one that persists it, at the
-  moment the answer arrives. This covers both a normal delegation and one that ran in the
-  background. Without it, such a worker's edits would sit in the sandbox until the seat's session
-  ended — for a standing seat, that can be hours or days, during which every other conversation
-  reads the old bytes. If a delegated worker still holds the tree, the persist **skips** rather
-  than capture a half-written file, and a later persist point carries the edit. Each skip spends
-  one hold from every task it names and writes a `memory.settlement_flush` audit row. One task may
-  hold four attempts closed; after that the host drops it and persists anyway, because a task the
-  seat never peeked at would otherwise hold the flush shut for the session's life.
-- **A turn ends, on a conversation that has delegated.** The backstop. A seat that delegates and
-  then never looks at the result reaches neither point above, so its worker's edits would otherwise
-  wait for the seat's session to end. It runs at most once per delegation rather than once per
-  turn, skips on a still-running worker exactly as the point above does, and a conversation that
-  has never delegated does no work here at all.
+- **A worker's task settles, and the turn that dispatched it ends.** This is the point that carries a
+  delegated worker's edits. A worker runs inside the seat's own sandbox and writes into the *seat's*
+  memory tree, so the seat is the one that persists it. The framework holds the dispatching turn
+  open while the worker runs, and the worker's result arrives inside that turn. The settlement
+  itself writes nothing: it drops the task from the set of tasks that hold the tree and marks the
+  tree dirty. The persist runs at the end of that same turn, so the store can lag the worker's own
+  report by the rest of the turn — never by hours. Without it, such a worker's edits would sit in
+  the sandbox until the seat's session ended — for a standing seat, that can be hours or days,
+  during which every other conversation reads the old bytes. It runs only on a conversation that
+  has delegated, and a conversation that has never delegated does no work here at all.
+- **A still-running worker holds the persist closed.** If another delegated worker still holds the
+  tree, the persist **skips** rather than capture a half-written file, and a later turn end carries
+  the edit. Each skip spends one hold from every task it names and writes a
+  `memory.settlement_flush` audit row. One task may hold four attempts closed; after that the host
+  drops it and persists anyway, because a task whose settlement never arrived would otherwise hold
+  the flush shut for the session's life.
+- **A delegation call fails to dispatch.** The framework reports that as a direct result, and the
+  host runs the same persist there. No worker ran, so this point carries the seat's own tree only.
 - **A turn ends, on a conversation that edited memory itself**, when provenance marking is armed. A
   conversation whose seat holds the sandbox file tools can write its own memory tree without
-  delegating anything, and the four points above would never carry that edit. So the turn's own
+  delegating anything, and the delegation points above would never carry that edit. So the turn's own
   diff — the one that already marks bullets added on a turn that read outside content — reports
-  which memory areas *changed*, and the persist runs on that report. A turn that changed nothing
+  which memory areas *changed*, and the persist runs on that report. It runs at the same turn end
+  as the delegated persist above, so it can also be the one that carries a worker's edit: whichever
+  of the two runs first lands the bytes, and the other then finds nothing to write. A turn that changed nothing
   does no work here. A still-running delegated worker **defers** this persist rather than killing
   it: the provenance baseline has already advanced, so no later turn re-reports that edit, and the
   skipped tier is therefore REMEMBERED (`unflushedEdits`, `packages/core/agent/hooks/memory.ts`)
@@ -452,9 +455,10 @@ before the reply is posted rather than at an edge:
 Each persist is a diff against what the store holds by then, so a repeat pass writes and audits
 nothing. Every write row names one of five outcomes (`MemoryPersistOutcome`,
 `packages/core/agent/hooks/memory.ts`) — `completed`, `failed`, `settled`, `edited` or
-`write-intent`. The three delegation points all stamp `settled`; a turn-end tree edit stamps
-`edited`; an [explicit remember-ask](#an-explicit-remember-ask-writes-inside-the-turn) stamps
-`write-intent`. The separate `memory.settlement_flush` row names which of those edges ran.
+`write-intent`. The delegated persist stamps `settled` and a turn-end tree edit stamps `edited`.
+Both run at the same turn end, so a worker's edit can carry either label: which one depends on the
+order the hooks run in and on `taint.mode` (the `edited` route needs the provenance baseline). An
+[explicit remember-ask](#an-explicit-remember-ask-writes-inside-the-turn) stamps `write-intent`. The separate `memory.settlement_flush` row names which of those edges ran.
 
 > **Why no verb.** Open Everywhere shipped dedicated `remember`/`forget` tools until OPE-389.
 > They were justified as governance, but the capture seam already carried the audit half for
@@ -571,6 +575,24 @@ silo commits the rewritten file, so the line leaves the agent's memory but stays
 commit. A **`notion` silo removes nothing at all**: that backing is append-only, the write throws,
 and the fact stays live — see
 [Opting a Notion silo into write-back](#opting-a-notion-silo-into-write-back) below.
+
+**A session that only held the file does not bring the line back.** A session that holds the silo
+keeps a snapshot of it in its sandbox, and each persist merges that snapshot over the store. The
+merge keeps the store's copy of every file the session did not edit, and the session's baseline for
+that file stays at its snapshot, so every later persist keeps the store's copy too. The next turn's
+re-sync then replaces the snapshot with the purged file.
+
+Three cases still restore the line, so do not read a purge as final while a session is live:
+
+- **The session edited the same file.** That is a real conflict: the session's version lands, and the
+  purged version is parked as a `.conflict-` sibling.
+- **The session has no write baseline for the silo.** The baseline read at session start failed
+  (logged as `write-baseline FAILED`), so the merge counts every file as edited: the snapshot lands,
+  and the purged version is parked as a `.conflict-` sibling.
+- **A persist overlaps the purge.** A persist that reads the store just before the purge writes, and
+  writes just after it, lands its older copy.
+
+The git store writes each file atomically, so a reader never sees a half-written file.
 
 The approval card states which case applies to each silo it will touch, so the person asking to be
 forgotten reads the honest answer before anyone clicks. True erasure on a retention request needs
@@ -1041,8 +1063,8 @@ Ask "remember this", "save that to memory" or "don't forget the door code", and
 ordinary `session-persist` road before the post, so the `memory.write` row exists by the time the
 claim guard above reads the turn. The reply can then confirm the save, and the confirmation is true.
 Two doors run it: the two `reply` tool variants. They are the only doors that run this flush, and
-they are the only doors a seat's words leave by. A delegated write reaches the store inside the turn
-by a different road — the settlement flush named below.
+they are the only doors a seat's words leave by. A delegated write reaches the store by a different
+road — the persist at the dispatching turn's own end, named below.
 
 A live run measured what the absence of this cost. A member asked, the agent wrote the note, and the
 reply said "(No durable memory write is recorded for this turn, so I cannot say the note is stored.)"
@@ -1058,7 +1080,9 @@ earlier moment. Three things follow from that, and they are the deliberate bound
   `turn.completed`, because a persist on every reply would cost a sandbox read and a provider read on
   every turn of every session.
 - **A live delegated task holds it closed.** Persisting while a worker may be mid-write would publish
-  a torn file to every other session on the silo, so the ask waits for the settlement flush instead.
+  a torn file to every other session on the silo, so the ask stays armed until the task settles. The
+  framework holds the dispatching turn open while the worker runs and delivers the worker's result
+  inside that turn, so the next post in the same turn re-offers the persist.
 - **The arm never permits a claim.** The guard reads the host's write ledger, never the ask, so a
   turn that armed the persist and wrote nothing still gets the honest denial.
 
@@ -1077,10 +1101,15 @@ door already delivered, put into a thread seat — runs no flush, so a claim mir
 the honest denial.
 
 What counts as evidence is the host's own observation and nothing else. A **delegated** write lands
-inside the turn — the worker edits the tree, the settlement edge flushes it, the row is written
-before the seat composes its answer — so an honest delegated ack keeps its sentence byte for byte. A
-seat's **own** sandbox edit persists at turn end, after the reply has left, so a seat claiming
-completed storage before its own persist has run is claiming something that has not happened. The
+inside the dispatching turn: the framework holds that turn open until the worker settles, and the
+worker's edit persists at that turn's end (`packages/core/agent/hooks/memory.ts` states the edge). The
+row exists before the seat's report only when a remember-ask armed the in-turn persist above. Then the
+report's `reply` persists first, and an honest delegated ack keeps its sentence byte for byte
+(`tests/integration/memory/write-intent-settlement-relay.test.ts`). Without that ask, the report
+leaves before the turn-end persist, and a completed-storage claim in it is struck although the save
+lands moments later. A seat's **own** sandbox edit also persists at turn end, after the reply has
+left, so a seat claiming completed storage before its own persist has run is claiming something that
+has not happened. The
 honest sentence is still available, and the guard leaves every future and conditional form alone:
 "I'll save this", "I'm writing it down now", "that will be stored at the end of the turn".
 

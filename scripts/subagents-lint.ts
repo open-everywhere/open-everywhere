@@ -7,7 +7,7 @@ import { readDeclaredSubagents, subagentsDir } from "./read-subagents.js";
 
 const eveFrameworkTools = await readEveFrameworkTools();
 const disableableFrameworkTools = [...eveFrameworkTools.defaultMounted].sort();
-const requiredFrameworkTools = [...eveFrameworkTools.required].sort();
+const reservedFrameworkTools = [...eveFrameworkTools.reserved].sort();
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const coreToolsDir = join(root, "packages", "core", "agent", "tools");
@@ -21,7 +21,7 @@ const toolNames = [
 ];
 
 const subagents = readDeclaredSubagents(root);
-const problems = checkDeclaredSubagents(subagents, disableableFrameworkTools, toolNames, requiredFrameworkTools);
+const problems = checkDeclaredSubagents(subagents, disableableFrameworkTools, toolNames, reservedFrameworkTools);
 
 if (problems.length > 0) {
   console.error(`✗ subagents-lint: ${problems.length} problem(s):\n` + problems.map((p) => `  - ${p}`).join("\n"));
@@ -30,5 +30,5 @@ if (problems.length > 0) {
 console.log(
   subagents.length === 0
     ? `✓ subagents-lint: no declared subagents under ${subagentsDir(root)} (nothing to check).`
-    : `✓ subagents-lint: ${subagents.length} declared subagent(s) (${subagents.map((s) => s.name).join(", ")}) — typed outputSchema, own instructions, zero hands (${disableableFrameworkTools.length - requiredFrameworkTools.length} framework tools disabled each${requiredFrameworkTools.length === 0 ? "" : `, ${requiredFrameworkTools.length} eve-required slot(s) filled by a no-op replacement: ${requiredFrameworkTools.join(", ")}`}), own spend hook.`,
+    : `✓ subagents-lint: ${subagents.length} declared subagent(s) (${subagents.map((s) => s.name).join(", ")}) — no authored outputSchema, own instructions, zero hands (${disableableFrameworkTools.filter((n) => !reservedFrameworkTools.includes(n)).length} framework tools disabled each${reservedFrameworkTools.length === 0 ? "" : `; eve reserves ${reservedFrameworkTools.join(", ")}, which take no file at all`}), own spend hook.`,
 );

@@ -261,7 +261,7 @@ function createArgs(over: Partial<TicketCreateArgs> = {}): TicketCreateArgs {
 
 {
   const row = (tainted: boolean) => ({ kind: "ticket.create", argsJson: JSON.stringify(createArgs({ tainted })) });
-  ok(sessionGrantKind(row(false)) === null, "ticket.create is NOT session-grantable even untainted — an 'approve for session' click can never arm standing issue-filing");
+  ok(sessionGrantKind(row(false)) === null, "ticket.create is NOT session-grantable even untainted — an 'approve for this routine' click can never arm standing issue-filing");
   ok(sessionGrantKind(row(true)) === null, "…and a tainted one certainly isn't");
   ok(sessionGrantKind({ kind: "pr.open", argsJson: "{}" }) === "pr.open", "control: pr.open IS the session-grantable kind (so the null above is a real property, not a broken call)");
 }

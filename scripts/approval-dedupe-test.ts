@@ -206,49 +206,13 @@ ok(DUPLICATE_APPROVAL_KEY_PREFIX.length > 0, "6a. the guard's dedupe key carries
     (await import("@open-everywhere/core/agent/tools/post_file.js")).default,
     { channel: { kind: "slack" }, session: { auth: { current: { attributes: { oe_grain: "task" } } } } } as never,
   );
-  const approvalOf = approvalRequestOf(postFile as unknown as { approval?: never }) as unknown as (
-    ctx: ApprovalContext,
-  ) => Promise<ApprovalStatus> | ApprovalStatus;
-
-  const htmlOptIn = ctx({
-    sessionId: "live-session-post-file",
-    toolName: "post_file",
-    toolInput: { files: [{ source: { path: "page.html" }, filename: "page.html" }] },
-  });
-  const first = await approvalOf(htmlOptIn);
-  ok(first === "user-approval", "8a. post_file's live approval prompts on the first HTML-publish ask (org opted in to Blob hosting)");
-
-  const repeatBeforeRaise = await approvalOf(htmlOptIn);
-  ok(repeatBeforeRaise === "user-approval", "8b. against the REAL store, a repeat ask before recordApprovalRaised still prompts (no silent denial)");
-
-  await recordApprovalRaised(htmlOptIn.session.id, htmlOptIn.toolName, htmlOptIn.toolInput);
-  const second = await approvalOf(htmlOptIn);
-  ok(
-    typeof second === "object" && second !== null && second.type === "denied",
-    "8c. post_file's live approval denies a second identical publish ask once the raise is recorded",
-  );
-  const image = ctx({
-    sessionId: "live-session-post-file",
-    toolName: "post_file",
-    toolInput: { files: [{ source: { path: "shot.png" }, filename: "shot.png" }] },
-  });
-  ok((await approvalOf(image)) === "not-applicable", "8d. an ungated post_file call (image, not HTML) stays not-applicable — the guard never widens a gate");
-
+  ok(approvalRequestOf(postFile as unknown as { approval?: never }) === undefined, "8a. post_file carries no eve approval policy — its publish is an OE card (OPE-2340)");
   const { connectorApprovalPolicy } = await import("@open-everywhere/core/agent/connections/connector-auth.js");
   const policy = connectorApprovalPolicy();
-  const writeCtx = ctx({ sessionId: "live-session-notion", toolName: "notion__create_page", toolInput: { title: "hello" } });
-  const firstWrite = await policy(writeCtx);
-  ok(firstWrite === "user-approval", "8f. connectorApprovalPolicy() (opTiering off → once()) prompts on the first write ask");
-
-  await recordApprovalRaised(writeCtx.session.id, writeCtx.toolName, writeCtx.toolInput);
-  const secondWrite = await policy(writeCtx);
-  ok(
-    typeof secondWrite === "object" && secondWrite !== null && secondWrite.type === "denied",
-    "8g. connectorApprovalPolicy() denies a second identical write ask once the raise is recorded (the default-deployment path — opTiering ships OFF)",
-  );
-
-  const readCtx = ctx({ sessionId: "live-session-notion", toolName: "notion__search", toolInput: { query: "x" } });
-  ok((await policy(readCtx)) === "user-approval", "8h. a DIFFERENT op in the same live session still prompts on its own first ask (per-fingerprint isolation, not per-session)");
+  for (const toolName of ["notion__create_page", "notion__search", "notion__delete_page"]) {
+    const d = await policy(ctx({ sessionId: "live-session-notion", toolName, toolInput: { title: "hello" } }));
+    ok(d !== "user-approval" && d !== true, `8b. connectorApprovalPolicy() never prompts — ${toolName} (OPE-2340)`);
+  }
 }
 
 {
@@ -276,7 +240,8 @@ ok(DUPLICATE_APPROVAL_KEY_PREFIX.length > 0, "6a. the guard's dedupe key carries
   };
   await inputRequestedHandler(hookEvent, hookCtx as never);
 
-  const policy = connectorApprovalPolicy();
+  const policy = withDuplicateApprovalGuard(async (): Promise<ApprovalStatus> => "user-approval");
+  void connectorApprovalPolicy;
   const askCtx = ctx({ sessionId, toolName, toolInput: objectForm });
   const decision = await policy(askCtx);
   ok(
@@ -364,14 +329,7 @@ ok(DUPLICATE_APPROVAL_KEY_PREFIX.length > 0, "6a. the guard's dedupe key carries
 }
 
 {
-  const { registerDiscordProvider } = await import("@open-everywhere/provider-discord/agent/register.js");
-  registerDiscordProvider();
-  const { resolveWindowGated, approvalRequestOf } = await import("@open-everywhere/core/agent/access/window-gated.js");
-  const postFile = await resolveWindowGated(
-    (await import("@open-everywhere/core/agent/tools/post_file.js")).default,
-    { channel: { kind: "slack" }, session: { auth: { current: { attributes: { oe_grain: "task" } } } } } as never,
-  );
-  const approvalOf = approvalRequestOf(postFile as unknown as { approval?: never }) as unknown as (
+  const approvalOf = withDuplicateApprovalGuard(async (): Promise<ApprovalStatus> => "user-approval") as unknown as (
     c: ApprovalContext,
   ) => Promise<ApprovalStatus> | ApprovalStatus;
 
@@ -428,5 +386,5 @@ ok(DUPLICATE_APPROVAL_KEY_PREFIX.length > 0, "6a. the guard's dedupe key carries
 
 await removeTempDir(dir);
 console.log(
-  `✓ approval-dedupe — ${passed} assertions (duplicate-card suppression, crash-recovery ordering, OPE-476 residual, no false dedup, fail-open, window expiry, string/object input convergence, live post_file + connector-auth wiring, both approval authoring shapes, the eve-0.47.3 follow-up re-propose)`,
+  `✓ approval-dedupe — ${passed} assertions (duplicate-card suppression, crash-recovery ordering, OPE-476 residual, no false dedup, fail-open, window expiry, string/object input convergence, retired live sites (OPE-2340), both approval authoring shapes, the eve-0.47.3 follow-up re-propose)`,
 );

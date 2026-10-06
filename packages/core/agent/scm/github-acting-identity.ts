@@ -8,6 +8,7 @@ export const GITHUB_CONNECTOR = "github";
 export const GITHUB_OWN_ACCOUNT_VENDOR: OwnAccountVendor = ownAccountVendorFor(GITHUB_CONNECTOR);
 
 export async function assertGithubActingIdentity(ctx: BindableContext, tool: string): Promise<void> {
+  // own-account-gate: github — the marker `npm run lint:own-account-gate` reads (OPE-1598). The
   const verdict = await connectorActingIdentityForTurn(ctx, GITHUB_OWN_ACCOUNT_VENDOR, tool);
   if (verdict.refusal !== undefined) throw new Error(verdict.refusal);
   if (verdict.identity !== "install") {

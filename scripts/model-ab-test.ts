@@ -41,7 +41,7 @@ const { resolveRoute } = await import("@open-everywhere/core/agent/model/routing
 const { formatWindowToken } = await import("@open-everywhere/core/agent/channels/window-key.js");
 const { recordModelCall } = await import("@open-everywhere/core/agent/hooks/spend.js");
 const { usageForSession } = await import("@open-everywhere/core/agent/spend/usage-events.js");
-const { lastArmedTurn, parseRateTokens, runRate, RATE_HELP_LINE } = await import("@open-everywhere/core/agent/commands/rate.js");
+const { lastArmedTurn, parseRateTokens, runRate, rateHelpLine } = await import("@open-everywhere/core/agent/commands/rate.js");
 const { parseOeCommandTokens, renderHelp } = await import("@open-everywhere/core/agent/commands/core.js");
 const { defaultScopeKey } = await import("@open-everywhere/core/agent/tools/set_spend_limit.js");
 const { parseDiscordOeCommandOptions, buildOeDiscordCommandDefinition } = await import(
@@ -254,7 +254,7 @@ registerIdentityMapper("slack", () => ({
   }
   ok(parseRateTokens(["1"]).kind === "rate" && parseRateTokens(["5"]).kind === "rate", "both ends of the scale are accepted");
   ok(renderHelp().includes("/oe rate"), "the help lists /oe rate");
-  ok(RATE_HELP_LINE.includes("1-5"), "the help line states the scale");
+  ok(rateHelpLine().includes("1-5"), "the help line states the scale");
   ok(parseDiscordOeCommandOptions([{ name: "rate", options: [{ name: "score", value: 4 }] }]).kind === "rate", "Discord's option tree parses rate");
   ok(parseDiscordOeCommandOptions([{ name: "rate", options: [{ name: "score", value: 9 }] }]).kind === "error", "Discord refuses an out-of-range score");
   const def = buildOeDiscordCommandDefinition() as { options: { name: string }[] };
@@ -415,3 +415,6 @@ registerIdentityMapper("slack", () => ({
 }
 
 console.log(`✓ model-ab: ${n} assertion(s)`);
+
+// proves: MOD-20, MOD-21, MOD-22
+// proves: CLI-rate

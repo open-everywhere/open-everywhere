@@ -26,14 +26,25 @@ function ok(cond: boolean, label: string): void {
   }
   passed++;
 }
-function throws(fn: () => unknown, label: string): void {
+function throwsWith(fn: () => unknown, fragment: string, label: string): void {
+  let threw = false;
+  let error: unknown;
   try {
     fn();
-    console.error(`✗ ${label} (expected throw)`);
-    process.exit(1);
-  } catch {
-    passed++;
+  } catch (err) {
+    threw = true;
+    error = err;
   }
+  if (!threw) {
+    console.error(`✗ ${label} (expected a throw, got none)`);
+    process.exit(1);
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (!message.includes(fragment)) {
+    console.error(`✗ ${label} (threw, but not the refusal under test — expected "${fragment}", got: ${message})`);
+    process.exit(1);
+  }
+  passed++;
 }
 
 function binding(mode: SessionMode, trust: Trust): SurfaceBinding {
@@ -145,8 +156,9 @@ ok(orgless.reads.length === 0 && orgless.writes.length === 0, "unassigned + no o
   ok(names(noParent.reads).join(",") === ["org-base", "org-rw"].join(","), "thread grain: no domainKey → falls back to surfaceKey (unassigned → org), today's behaviour");
 }
 
-throws(
+throwsWith(
   () => resolveMemoryPlan(binding("channel", "internal"), partition("C_TXN"), { domains: cfg.domains, silos: [] }),
+  'memory silo "txn" referenced by domain "transactions" is not defined',
   "referencing an undefined silo throws",
 );
 
@@ -157,46 +169,54 @@ ok(criteriaDomain("dm", [])  === undefined, "criteriaDomain → undefined when a
 
 assertChannelExclusivity(cfg.domains);
 ok(true, "exclusivity: disjoint domains pass (criteria domains skipped)");
-throws(
+throwsWith(
   () => assertChannelExclusivity([defineDomain({ name: "a", reach: ["slack/T/C1"] }), defineDomain({ name: "b", reach: ["slack/T/C1"] })]),
+  '"slack/T/C1" is in the reach of both "a" and "b"',
   "exclusivity: a channel in two domains throws",
 );
 
 assertDomainsValid(cfg.domains);
 ok(true, "validation: a valid domain set passes");
-throws(() => assertDomainsValid([{ name: "both", reach: [], match: "org" } as never]), "validation: reach AND match → throws");
-throws(() => assertDomainsValid([{ name: "neither" } as never]), "validation: neither channels nor match → throws");
-throws(
+throwsWith(() => assertDomainsValid([{ name: "both", reach: [], match: "org" } as never]), '"both" must have EITHER a reach list OR match (criteria), not both', "validation: reach AND match → throws");
+throwsWith(() => assertDomainsValid([{ name: "neither" } as never]), '"neither" must have EITHER a reach list OR match (criteria), not neither', "validation: neither channels nor match → throws");
+throwsWith(
   () => assertDomainsValid([defineDomain({ name: "o1", match: "org" }), defineDomain({ name: "o2", match: "org" })]),
+  'match "org" is claimed by both "o1" and "o2"',
   "validation: two domains with the same match → throws",
 );
-throws(
+throwsWith(
   () => assertDomainsValid([defineDomain({ name: "d", reach: ["slack/T/C"], includeOrg: "readonly" })]),
+  '"d" sets includeOrg but no { match: "org" } domain is defined',
   "validation: includeOrg with no org domain → throws",
 );
-throws(
+throwsWith(
   () => assertDomainsValid([defineDomain({ name: "org", match: "org" }), defineDomain({ name: "public", match: "public", includeOrg: "readonly" })]),
+  '"public" (match "public") must not set includeOrg',
   "validation: includeOrg on the public pseudo-domain → throws",
 );
-throws(
+throwsWith(
   () => assertDomainsValid([defineDomain({ name: "org", match: "org", includeOrg: "readonly" })]),
+  '"org" (match "org") must not set includeOrg (self-reference)',
   "validation: includeOrg on the org pseudo-domain (self-ref) → throws",
 );
 
 assertDomainsValid([defineDomain({ name: "org", match: "org", admins: ["slack/T/U_ADMIN", "discord/300000000000000104"] })]);
 ok(true, "validation: qualified admin keys on one roster (two platforms, one human) pass");
-throws(
+throwsWith(
   () => assertDomainsValid([defineDomain({ name: "org", match: "org", admins: ["U_ADMIN"] })]),
+  'lists admin "U_ADMIN", which is not a well-formed principal key',
   "validation: a BARE admin id → throws at config load (it can never match, so it must never load quietly)",
 );
-throws(
+throwsWith(
   () => assertDomainsValid([defineDomain({ name: "org", match: "org", admins: ["300000000000000104"] })]),
+  'lists admin "300000000000000104", which is not a well-formed principal key',
   "validation: a bare DIGIT-STRING admin id → throws (the exact shape a cross-platform digit-id collision needs)",
 );
 assertDomainsValid([defineDomain({ name: "eng", reach: ["slack/T/C"], admins: ["slack/T/U_ADMIN"] })]);
 ok(true, "validation: a three-segment admin key on a TENANT-SCOPED platform validates (OPE-309 — it is the person, not a surface)");
-throws(
+throwsWith(
   () => assertDomainsValid([defineDomain({ name: "eng", reach: ["slack/T/C"], admins: ["slack/U_ADMIN"] })]),
+  'lists admin "slack/U_ADMIN", which is not a well-formed principal key',
   "validation: a PRE-RUNG two-segment slack admin key → throws (it names no workspace, so it can never match)",
 );
 
@@ -297,7 +317,7 @@ ok(!noneIndex.includes("`agent`"), "recall/none: names no delegation verb it doe
 
 assertSilosValid(cfg.silos);
 ok(true, "validation: a valid silo set passes");
-throws(() => assertSilosValid([{ name: "empty" } as MemorySilo]), "validation: a silo with no provider throws");
+throwsWith(() => assertSilosValid([{ name: "empty" } as MemorySilo]), '"empty" has no provider', "validation: a silo with no provider throws");
 
 {
   const fakeDb: MemoryProvider = { id: "sqlite", async readTier() { return {}; }, async ensureTier() { return {}; }, async writeTier() { return null; }, async deleteTier() {} };

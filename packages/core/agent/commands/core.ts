@@ -25,11 +25,18 @@ import {
 import { planClearSpendLimit, type ClearSpendLimitInput } from "../tools/clear_spend_limit.js";
 import { domainSpendWindow, reportDomainForBinding } from "../spend/reporting.js";
 import type { SkillDomainRefusal } from "../skills/domain-skills.js";
-import { parseRateTokens, runRate, RATE_HELP_LINE, type RateCommand } from "./rate.js";
+import { parseRateTokens, runRate, rateHelpLine, type RateCommand } from "./rate.js";
+import { agentCommandName, agentDisplayName } from "../identity/bot-name.js";
 import { getAppInfo, hasRealAppVersion, registerAppInfo as storeAppInfo, type AppInfo } from "./app-info.js";
 import { assertPostgresWiredAtBoot } from "../operational/postgres-wiring.js";
 
-export const OE_COMMAND_NAME = "oe";
+export function oeCommandName(): string {
+  return agentCommandName();
+}
+
+export function oeSlash(sub?: string): string {
+  return sub === undefined ? `/${oeCommandName()}` : `/${oeCommandName()} ${sub}`;
+}
 
 export { type AppInfo, APP_VERSION_UNVERSIONED, normalizeAppVersion, hasRealAppVersion, getAppInfo, resetAppInfo } from "./app-info.js";
 
@@ -57,7 +64,7 @@ function parseBudgetTokens(rest: readonly string[]): OeCommand {
     if (!amountRaw || !Number.isFinite(usd) || usd <= 0) {
       return {
         kind: "error",
-        message: `"/oe budget raise" needs a positive USD amount, e.g. "/oe budget raise 25" (got ${JSON.stringify(amountRaw ?? "")}).`,
+        message: `"${oeSlash("budget raise")}" needs a positive USD amount, e.g. "${oeSlash("budget raise 25")}" (got ${JSON.stringify(amountRaw ?? "")}).`,
       };
     }
     return { kind: "budget-raise", usd };
@@ -72,7 +79,7 @@ export function parseOeCommandTokens(tokens: readonly string[]): OeCommand {
   if (sub === "stop") return { kind: "stop" };
   if (sub === "rate") return parseRateTokens(rest);
   if (sub === "budget") return parseBudgetTokens(rest);
-  return { kind: "error", message: `Unknown command "${sub}" — try "/oe help" to see what's available.` };
+  return { kind: "error", message: `Unknown command "${sub}" — try "${oeSlash("help")}" to see what's available.` };
 }
 
 export function parseSlackCommandText(text: string | undefined): OeCommand {
@@ -85,15 +92,15 @@ export function parseSlackCommandText(text: string | undefined): OeCommand {
 
 export function renderHelp(): string {
   return [
-    "*/oe* — zero-inference control-plane commands (pure logic, code-rendered, no model turn — " +
+    `*${oeSlash()}* — zero-inference control-plane commands (pure logic, code-rendered, no model turn — ` +
       "these work even during a spend-cap decline or a model/gateway outage):",
-    "• `/oe status` — deploy sanity: deployment sha, eve pin, model config, memory provider, telemetry — plus the app version and the context window with its compaction threshold, each where this deployment carries one.",
-    "• `/oe stop` — stand down the turn running in this channel (free, instant, works over a spend cap).",
-    "• `/oe budget` — this channel's and workspace's effective spend caps + current-month spend.",
-    "• `/oe budget raise <usd>` — propose a new monthly USD cap for this channel (posts an approval card; an admin decides).",
-    "• `/oe budget clear` — propose clearing this channel's spend-limit override back to config (posts an approval card).",
-    RATE_HELP_LINE,
-    "• `/oe help` — this message.",
+    `• \`${oeSlash("status")}\` — deploy sanity: deployment sha, eve pin, model config, memory provider, telemetry — plus the app version and the context window with its compaction threshold, each where this deployment carries one.`,
+    `• \`${oeSlash("stop")}\` — stand down the turn running in this channel (free, instant, works over a spend cap).`,
+    `• \`${oeSlash("budget")}\` — this channel's and workspace's effective spend caps + current-month spend.`,
+    `• \`${oeSlash("budget raise <usd>")}\` — propose a new monthly USD cap for this channel (posts an approval card; an admin decides).`,
+    `• \`${oeSlash("budget clear")}\` — propose clearing this channel's spend-limit override back to config (posts an approval card).`,
+    rateHelpLine(),
+    `• \`${oeSlash("help")}\` — this message.`,
   ].join("\n");
 }
 
@@ -104,7 +111,7 @@ function fmtTokenCount(n: number): string {
 export function renderStatus(info: AppInfo, memoryProviderId: string, telemetryStatus = "unknown"): string {
   const { contextWindowTokens: windowTokens, compactionThresholdTokens: thresholdTokens } = info;
   return [
-    hasRealAppVersion(info) ? `*Open Everywhere* v${info.version}` : "*Open Everywhere*",
+    hasRealAppVersion(info) ? `*${agentDisplayName()}* v${info.version}` : `*${agentDisplayName()}*`,
     `• deployment sha: \`${info.deploymentSha}\``,
     `• eve: \`${info.evePin}\``,
     `• primary model: \`${info.primaryModel}\``,
@@ -142,7 +149,7 @@ export function renderBudgetStatus(f: BudgetStatusFacts): string {
       `~$${f.surfaceUsd.toFixed(2)} / ${fmtCap(f.caps.surfaceMonthlyUsd, "usd")}`,
     `• whole workspace (\`${f.workspaceKey}\`): ${fmtTokenCount(f.workspaceTokens)} / ${fmtCap(f.caps.workspaceMonthlyTokens, "tokens")} tokens · ` +
       `~$${f.workspaceUsd.toFixed(2)} / ${fmtCap(f.caps.workspaceMonthlyUsd, "usd")}`,
-    "_propose a change with `/oe budget raise <usd>` or `/oe budget clear`._",
+    `_propose a change with \`${oeSlash("budget raise <usd>")}\` or \`${oeSlash("budget clear")}\`._`,
   ].join("\n");
 }
 
@@ -231,7 +238,7 @@ async function budgetRaiseSpendSentence(binding: SurfaceBinding, deps: OeApprova
     );
   } catch (e) {
     const why = e instanceof Error ? e.message : String(e);
-    console.warn(`[open-everywhere:spend] "/oe budget raise" could not scan domain "${resolved.domain}" spend: ${why}`);
+    console.warn(`[open-everywhere:spend] "${oeSlash("budget raise")}" could not scan domain "${resolved.domain}" spend: ${why}`);
     return `\n_Domain spend NOT shown — the spend ledger could not be read on this turn._`;
   }
 }
@@ -245,7 +252,7 @@ function requireChannelId(binding: SurfaceBinding): string {
 }
 
 export async function runBudgetRaise(binding: SurfaceBinding, usd: number, deps: OeApprovalDeps = {}): Promise<string> {
-  requireCardPathHere('"/oe budget raise"', binding.platform);
+  requireCardPathHere(`"${oeSlash("budget raise")}"`, binding.platform);
   const effectiveCapsFn = deps.effectiveCaps ?? effectiveCaps;
   const requestApprovalFn = deps.requestApproval ?? requestApproval;
   const friendlyScopeLabelFn = deps.friendlyScopeLabel ?? friendlyScopeLabel;
@@ -259,7 +266,7 @@ export async function runBudgetRaise(binding: SurfaceBinding, usd: number, deps:
 
   const input: SetSpendLimitInput = {
     monthlyUsd: usd,
-    reason: `requested via "/oe budget raise" by ${mentionFor(binding)}`,
+    reason: `requested via "${oeSlash("budget raise")}" by ${mentionFor(binding)}`,
   };
   const plan = planSetSpendLimit(binding, input, current, domain);
 
@@ -297,7 +304,7 @@ export async function runBudgetRaise(binding: SurfaceBinding, usd: number, deps:
 }
 
 export async function runBudgetClear(binding: SurfaceBinding, deps: OeApprovalDeps = {}): Promise<string> {
-  requireCardPathHere('"/oe budget clear"', binding.platform);
+  requireCardPathHere(`"${oeSlash("budget clear")}"`, binding.platform);
   const effectiveCapsFn = deps.effectiveCaps ?? effectiveCaps;
   const requestApprovalFn = deps.requestApproval ?? requestApproval;
   const friendlyScopeLabelFn = deps.friendlyScopeLabel ?? friendlyScopeLabel;
@@ -351,7 +358,7 @@ export async function runStop(binding: SurfaceBinding, attachSession: AttachSess
   const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
   const channelKey = turnChannelKey(binding.platform, channelId);
   if (!channelKey) {
-    return "Couldn't resolve this channel — try `/oe stop` from a real channel or DM, not a synthetic context.";
+    return `Couldn't resolve this channel — try \`${oeSlash("stop")}\` from a real channel or DM, not a synthetic context.`;
   }
   const result = await cancelAnchoredTurn({
     org: binding.org,

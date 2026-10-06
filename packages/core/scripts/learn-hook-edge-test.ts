@@ -249,5 +249,37 @@ async function deliver(container: InstanceType<typeof FakeEveContext>, ctx: neve
   ok(rows.length === 1 && rows[0]!.detail?.["pr"] === 99, "…the attempt left its audit row, which is what a later crossing reads corrections back from");
 }
 
+{
+  const { noteTurnBoundary, noteStepDelivery } = await import("../agent/access/task-wake-signal.js");
+  const turnCtx = (turnId: string, principalId: string, deliveryId: string): never =>
+    ({
+      channel: { kind: "slack", continuationToken: "slack:sess-swap" },
+      session: {
+        id: "sess-swap",
+        turn: { id: turnId, sequence: 1 },
+        auth: { current: { principalId, principalType: "slack-user", attributes: { ...SLACK_ATTRS, oe_delivery_id: deliveryId } } },
+      },
+    }) as never;
+  const runTurn = async (container: InstanceType<typeof FakeEveContext>, turnId: string, request: string, swapTo?: string): Promise<void> => {
+    const start = turnCtx(turnId, "U_A", `dlv-${turnId}-A`);
+    const end = swapTo === undefined ? start : turnCtx(turnId, swapTo, `dlv-${turnId}-B`);
+    await inEveContext(container, async () => {
+      noteTurnBoundary(turnId, `dlv-${turnId}-A`);
+      await learnHook.events!["turn.started"]!({} as never, start);
+      await learnHook.events!["message.received"]!({ data: { message: wake(request) } } as never, start);
+      if (swapTo !== undefined) noteStepDelivery(turnId, `dlv-${turnId}-B`);
+      await learnHook.events!["turn.completed"]!({} as never, end);
+    });
+  };
+
+  const kept = "migrate the billing exports to the new warehouse";
+  await runTurn(new FakeEveContext(), "turn_swap_ctl", kept);
+  ok(await observed(kept), "swap control: a turn with ONE delivery and a readable turn id is still observed");
+
+  const swapped = "decommission the legacy invoicing queue in dublin";
+  await runTurn(new FakeEveContext(), "turn_swap", swapped, "U_B");
+  ok(!(await observed(swapped)), "🔴 swap: a turn whose bag changed to ANOTHER principal mid-turn learns NOTHING — A's words are never filed under B's bag");
+}
+
 await removeTempDir(tmp);
 console.log(`✓ learn-hook-edge: ${passed} assertions passed`);

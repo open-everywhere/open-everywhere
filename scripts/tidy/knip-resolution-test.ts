@@ -91,7 +91,7 @@ const unused = unusedFiles(true);
 
 const crossPackage = [
   "packages/core/agent/adapter-api.ts",
-  "packages/adapters/agent/aws/register.ts",
+  "packages/providers/discord/agent/register.ts",
   "packages/core/agent/access/wake-mapping.ts",
 ];
 for (const file of crossPackage) {

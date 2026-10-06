@@ -296,10 +296,10 @@ async function rowsFor(action: string): Promise<readonly { detail?: Record<strin
     "…BEFORE the tail read, so a store failure that loses the tail does not also lose the retirement",
   );
 
-  const fire = readFileSync(join(REPO_ROOT, "packages/core/agent/routines/fire-window.ts"), "utf8");
+  const work = readFileSync(join(REPO_ROOT, "packages/core/agent/channels/work-generation.ts"), "utf8");
   ok(
-    /noteGenerationForRetirement\(\{ org, registryKey: grain\.registryKey, token: existing\.token \}\);/.test(fire),
-    "🔴 the fire-window parent heal — the ONE rotate leg that carries no tail — notes it too",
+    /noteGenerationForRetirement\(\{ org: input\.org, registryKey, token: existing\.token \}\);/.test(work),
+    "🔴 the work session's rotation — the rotate leg a fire meets since OPE-2350 — notes the outgoing generation too",
   );
 
   const unified = readFileSync(join(REPO_ROOT, "packages/core/agent/channels/unified.ts"), "utf8");
@@ -408,16 +408,16 @@ async function rawOwedRow(store: Pick<OperationalStore, "getTaskResult">, token:
 
   const taint = readFileSync(join(REPO_ROOT, "packages/core/agent/hooks/spawn-taint.ts"), "utf8");
   ok(
-    /await noteGenerationDelegation\(deploymentOrg\(\), ownWindowToken, receipt\.taskId\);/.test(taint),
-    "🔴 §13: the DISPATCH edge (BRANCH 1) records the owed delegation against the seat's own window token",
+    /await noteGenerationDelegation\(deploymentOrg\(\), ownWindowToken, started\.taskId\);/.test(taint),
+    "🔴 §13: the DISPATCH edge (the `task.started` handler at eve 0.70) records the owed delegation against the seat's own window token",
   );
   ok(
     /await clearGenerationDelegation\(deploymentOrg\(\), view\.taskId\);/.test(taint),
     "🔴 §13: …and the SETTLEMENT edge clears it, so a settled task stops blocking its generation's reap",
   );
   ok(
-    taint.indexOf("await noteGenerationDelegation(") < taint.indexOf("noteTaskDispatched(receipt.taskId);"),
-    "§13: the record is written on the dispatch branch, beside the session-local one it makes durable",
+    taint.indexOf("await noteGenerationDelegation(") < taint.indexOf("noteTaskDispatched(started.taskId);"),
+    "§13: the record is written on the dispatch edge, beside the session-local one it makes durable",
   );
 }
 

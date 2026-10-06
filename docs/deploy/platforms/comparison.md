@@ -121,21 +121,21 @@ runs — see [below](#what-has-actually-been-run-where). Caveats, faithfully car
   Eve's default (Vercel Workflow on Vercel, local world off it) today. Wiring the Postgres
   world is a config change (`experimental.workflow.world` in `agent/agent.ts`), not new
   engineering, but it hasn't been done or tested here.
-- **Eve names the `@workflow/*` line it needs — match it, and take the `beta` dist-tag.**
-  Eve 0.54.3 declares `@workflow/core` 5.0.0-beta.50 and `@workflow/world` 5.0.0-beta.34 in
-  the `devDependencies` block of its own `node_modules/eve/package.json`. At startup
+- **Eve names the `@workflow/*` line it needs — match it.**
+  Eve 0.71.0 declares `@workflow/core` 5.0.1 and `@workflow/world` 5.0.1 in the
+  `devDependencies` block of its own `node_modules/eve/package.json`. At startup
   `assertConfiguredWorldCompatibility` reads that line and refuses a configured world whose
   `@workflow/core` or `@workflow/world` dependency sits on a different major or a different
-  prerelease tag. Re-measured on 2026-09-14 at the 0.52.2 → 0.54.3 bump:
-  `@workflow/world-postgres` `latest` (4.3.6) is on the 4.x line and this check refuses it. The
-  `beta` tag (5.0.0-beta.42) depends on `@workflow/world` 5.0.0-beta.35 — one build ahead of
-  Eve's own pin, on the same major and the same `beta` tag — and passes, because the check
-  compares the major and the prerelease tag, not the build number. Re-measure on any Eve bump;
-  both the tag and the pinned line move.
+  prerelease tag. Re-measured on 2026-10-06 at the 0.71.0 pin: the `@workflow/*` line is no
+  longer a prerelease, and `@workflow/world-postgres` `latest` (5.0.1) depends on
+  `@workflow/world` 5.0.1, the same line as eve's own. Under eve 0.54.3 the line was
+  `5.0.0-beta.*`, so only the `beta` dist-tag of the world passed; that advice no longer applies.
+  Re-measure on any Eve bump, because the pinned line moves.
 - **A second startup check reads the world's spec version.** Eve admits a world whose
   declared `specVersion` falls in the range `[SPEC_VERSION_SUPPORTS_SLOT_IDENTITY,
   SPEC_VERSION_MAX_SUPPORTED]`, and refuses anything else through
-  `assertWorldSupportsRuntimeProtocol`. Under Eve 0.54.3 that range is still `[6, 7]` (re-read at the bump). A world on
+  `assertWorldSupportsRuntimeProtocol`. Under Eve 0.54.3 that range was `[6, 7]`; it was not
+  re-read at the 0.71.0 pin. A world on
   the wrong `@workflow/*` line never reaches this check, because the package-line check
   above refuses it first.
 - **Passing both startup checks does not prove replay works.** The world validates every

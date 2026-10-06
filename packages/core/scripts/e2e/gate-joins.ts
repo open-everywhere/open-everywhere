@@ -1278,6 +1278,17 @@ export function judgeDeniedRoutineCreation(rows: readonly AuditWireEntry[]): Aud
   );
 }
 
+export function approvalPlaneRowsOn(
+  rows: readonly AuditWireEntry[],
+  opts: { readonly tool: string; readonly actAction: string; readonly surface: string },
+): readonly AuditWireEntry[] {
+  return rows.filter(
+    (r) =>
+      r.surface === opts.surface &&
+      ((r.action === APPROVAL_JUDGE_VERDICT_ACTION && dstr(r, "tool") === opts.tool) || r.action === opts.actAction),
+  );
+}
+
 export interface SpendCardComponents {
   readonly tokens: string | undefined;
   readonly usd: string | undefined;

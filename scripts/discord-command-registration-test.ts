@@ -265,4 +265,14 @@ const CREDS = { applicationId: "1410000000000000002", botToken: "not-a-real-toke
   eq((await reconcileSurfaceCommands({ log: () => {} })).length, 0, "§5 …and a deployment that declares nothing runs nothing");
 }
 
+{
+  const { readFileSync } = await import("node:fs");
+  const script = readFileSync(new URL("./register-discord-commands.ts", import.meta.url), "utf8");
+  const settingsAt = script.indexOf("registerSettings(");
+  const buildAt = script.indexOf("buildOeDiscordCommandDefinition()", script.indexOf("async function main"));
+  ok(script.includes('"agent/settings/settings.ts"') && settingsAt >= 0, "register-discord-commands loads and registers the app's settings");
+  ok(settingsAt < buildAt, "…BEFORE it builds the command definition");
+  ok(/exitCode = 1;\s*return;/u.test(script.slice(settingsAt, buildAt)), "…and refuses to register when the settings do not load");
+}
+
 console.log(`discord-command-registration-test: ${n} assertions passed`);

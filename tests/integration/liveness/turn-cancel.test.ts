@@ -6,6 +6,7 @@ import { resolveTurnAnchor, turnChannelKey } from "@open-everywhere/core/agent/c
 
 import {
   auditCursor,
+  awaitWindowQuiet,
   bootAgent,
   DISCORD_LISTED_CHANNEL_ID,
   discordMentionWake,
@@ -15,7 +16,6 @@ import {
   rowsSinceCursor,
   seatReply,
   waitFor,
-  waitForTurnCancelDelivered,
   type ScriptedHandle,
 } from "../harness";
 
@@ -45,7 +45,7 @@ test("a human stops an in-flight turn, and the turn's own process cleans up and 
     registerScript({
       parent: [
         { calls: [{ tool: RAN_TOOL, input: { state: "working", summary: "ope-634 in-flight work" }, id: "ope634-ran" }] },
-        { say: NO_REPLY_SENTINEL, delayMs: HOLD_MS },
+        { say: NO_REPLY_SENTINEL, delayMs: HOLD_MS, holdUntilCancelled: true },
       ],
     }),
   );
@@ -96,7 +96,6 @@ test("a human stops an in-flight turn, and the turn's own process cleans up and 
   expect(requested[0]!.detail?.outcome).toBe("requested");
   expect(requested[0]!.detail?.turnId).toBe(cancelledTurnId);
 
-  await waitForTurnCancelDelivered(anchor.sessionId);
   handle.releaseHolds();
 
   const cancelled = await waitFor(async () => {
@@ -108,6 +107,7 @@ test("a human stops an in-flight turn, and the turn's own process cleans up and 
   expect(cancelled[0]!.detail?.ran).toEqual([RAN_TOOL]);
   expect(Number(cancelled[0]!.detail?.steps)).toBeGreaterThanOrEqual(1);
   expect(handle.holdsCutShort()).toBe(1);
+  expect(handle.holdsCancelDelivered()).toBe(1);
 
   const cleared = await waitFor(
     async () => ((await resolveTurnAnchor(org, { channelKey })) === null ? true : undefined),
@@ -117,7 +117,7 @@ test("a human stops an in-flight turn, and the turn's own process cleans up and 
 
   handle.dispose();
   live.delete(handle);
-  const after = open(registerScript({ parent: [seatReply("understood — I will not redo that", "ope634-followup-reply"), { say: NO_REPLY_SENTINEL }] }));
+  const after = open(registerScript({ parent: [seatReply("understood — I will not redo that", "ope634-followup-reply")] }));
   await discordMentionWake({
     channelId: DISCORD_LISTED_CHANNEL_ID,
     text: "<@9000000000000000001> what happened?",
@@ -132,6 +132,7 @@ test("a human stops an in-flight turn, and the turn's own process cleans up and 
   expect(prompt).not.toContain("was CANCELLED by a person");
   expect(prompt).toContain(`\`${RAN_TOOL}\``);
 
-  await waitFor(() => after.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the follow-up turn's closing step");
+  await awaitWindowQuiet();
+  expect(after.requests.some((r) => r.role === "parent" && r.stepIndex >= 1), "a step after the follow-up's reply was requested").toBe(false);
   expect(after.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 });

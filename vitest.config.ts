@@ -1,6 +1,7 @@
 import { defineConfig } from "vitest/config";
 
 import { integrationMaxWorkers } from "./scripts/ci-max-workers.js";
+import { DurationShardSequencer } from "./scripts/it-shard-sequencer.js";
 import { INTEGRATION_INCLUDE_GLOBS } from "./scripts/it-shards.js";
 
 export default defineConfig({
@@ -10,7 +11,7 @@ export default defineConfig({
     fileParallelism: true,
     isolate: true,
     env: { NODE_ENV: "" },
-    sequence: { concurrent: false },
+    sequence: { concurrent: false, sequencer: DurationShardSequencer },
     testTimeout: 480_000,
     hookTimeout: 300_000,
     maxWorkers: integrationMaxWorkers(),

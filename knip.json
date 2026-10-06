@@ -5,7 +5,8 @@
     ".": {
       "entry": [
         "agent/agent.ts",
-        "agent/instrumentation.ts",
+        "agent/instrumentation/otel.ts",
+        "agent/instrumentation/otlp.ts",
         "agent/instructions/**/*.ts",
         "scripts/**/*.{ts,mts,mjs}",
         "tests/integration/**/*.ts",

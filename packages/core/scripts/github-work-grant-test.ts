@@ -91,7 +91,7 @@ async function resolveDynamic(slug: string, ctx: BindableContext): Promise<unkno
   return resolver({}, ctx);
 }
 
-const UNGATED_GITHUB_TOOLS = ["check_pr_status", "get_pr_feedback", "walk_pr", "post_pr_walkthrough", "subscribe_pr"] as const;
+const UNGATED_GITHUB_TOOLS = ["check_pr_status", "get_pr_feedback", "read_github_issue", "walk_pr", "post_pr_walkthrough", "subscribe_pr"] as const;
 
 for (const slug of UNGATED_GITHUB_TOOLS) {
   ok((await resolveDynamic(slug, chatCtx("CPAY"))) !== null, `${slug} MOUNTS for a seat whose scope grants a repo`);

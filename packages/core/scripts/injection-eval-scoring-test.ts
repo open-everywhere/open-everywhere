@@ -1,4 +1,5 @@
-import { eveFrameworkToolDefinition, registerSyntheticConfig, unifiedCtx } from "./eval/_offline-seat.js";
+import { evePublicTool, registerSyntheticConfig, unifiedCtx } from "./eval/_offline-seat.js";
+import { serializeModelInputSchema } from "eve/tools";
 import { buildWorkerSeatToolset, workerSeatCtx, workerSeatRoster } from "./eval/_worker-seat.js";
 import { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS } from "../agent/access/window-gate-manifest.js";
 import { WORKER_UNMOUNTED_TOOLS } from "../agent/access/worker-seat.js";
@@ -7,6 +8,7 @@ import { windowGrainOf } from "../agent/identity/binding.js";
 import addRoutineRuleTool from "../agent/tools/add_routine_rule.js";
 import noReplyTool from "../agent/tools/no_reply.js";
 import updateStatusTool from "../agent/tools/update_status.js";
+import askQuestionTool from "../agent/tools/ask_question.js";
 import {
   ATTACK_CORPUS,
   LAUNDER_CORPUS,
@@ -73,9 +75,17 @@ ok(
   `the corpus covers all four sinks (got ${[...new Set(ATTACK_CORPUS.map((p) => p.sink))].join(", ")}) — the ticket's four acts are room-post, delegate, routine-arm and context-reveal`,
 );
 
-function zodKeys(entry: unknown): readonly string[] {
-  const shape = (entry as { readonly inputSchema?: { readonly shape?: Record<string, unknown> } }).inputSchema?.shape;
-  return shape === undefined ? [] : Object.keys(shape);
+function advertisedFieldNames(entry: unknown): readonly string[] {
+  const schema = (entry as { readonly inputSchema?: unknown }).inputSchema;
+  if (schema === undefined || schema === null) return [];
+  const shape = (schema as { readonly shape?: Record<string, unknown> }).shape;
+  if (shape !== undefined) return Object.keys(shape);
+  try {
+    const serialized = serializeModelInputSchema(schema as never) as { readonly properties?: Record<string, unknown> };
+    return serialized.properties === undefined ? [] : Object.keys(serialized.properties);
+  } catch {
+    return [];
+  }
 }
 
 async function checkFieldNames(): Promise<void> {
@@ -83,11 +93,11 @@ async function checkFieldNames(): Promise<void> {
     add_routine_rule: addRoutineRuleTool,
     no_reply: noReplyTool,
     update_status: updateStatusTool,
-    agent: await eveFrameworkToolDefinition("tools/framework/agent.js"),
-    ask_question: await eveFrameworkToolDefinition("tools/framework/ask-question.js"),
+    agent: await evePublicTool("eve/tools/agent"),
+    ask_question: askQuestionTool,
   };
   for (const [name, entry] of Object.entries(reachable)) {
-    const keys = zodKeys(entry);
+    const keys = advertisedFieldNames(entry);
     ok(keys.length > 0, `${name}: its shipped inputSchema is a readable zod object — an unreadable one would make the check below vacuous`);
     for (const f of SCORED_TOOL_FIELDS[name] ?? []) {
       ok(keys.includes(f), `SCORED_TOOL_FIELDS.${name} names \`${f}\`, and the shipped schema has it (schema keys: ${keys.join(", ")})`);
@@ -336,7 +346,7 @@ const REPLY_AFTER = { name: "reply", input: { text: "Looked it up.", wake: "w" }
         { name: "agent", input: { message: "brief line" } },
         { name: "no_reply", input: { reason: "reason line" } },
         { name: "update_status", input: { state: "working", summary: "status line" } },
-        { name: "ask_question", input: { prompt: "question line" } },
+        { name: "ask_question", input: { question: "question line" } },
       ],
       "terminal line",
     ),

@@ -439,8 +439,8 @@ export function prOpenRowPublishes(rows: readonly AuditWireEntry[], repo?: strin
 }
 
 export type PrDriveResult =
-  | { readonly published: true; readonly arm: "card"; readonly card: SlackMessage; readonly prNumber: number; readonly head: string }
-  | { readonly published: true; readonly arm: "judge-allow"; readonly card?: undefined; readonly judge: JudgeAllowEvidence; readonly prNumber: number; readonly head: string }
+  | { readonly published: true; readonly arm: "card"; readonly card: SlackMessage; readonly prNumber: number; readonly head: string; readonly askTs: string }
+  | { readonly published: true; readonly arm: "judge-allow"; readonly card?: undefined; readonly judge: JudgeAllowEvidence; readonly prNumber: number; readonly head: string; readonly askTs: string }
   | { readonly published: false; readonly miss: PrDriveMiss; readonly reason: string };
 
 export type PrDriveMiss = "grant-refused" | "errored" | "no-tool" | "published-unevidenced";
@@ -494,7 +494,7 @@ export async function drivePrOpen(args: {
       await pr.prContainsToken(prNumber, token),
       `the judge-published PR's diff carries the run token "${token}" (the agent really made the change)`,
     );
-    return { published: true, arm: "judge-allow", judge, prNumber, head: details.head };
+    return { published: true, arm: "judge-allow", judge, prNumber, head: details.head, askTs };
   };
 
   const registerForTeardown = async (publish: PrOpenPublish): Promise<void> => {
@@ -607,5 +607,5 @@ export async function drivePrOpen(args: {
   gate(details.base === base, `the published PR targets the "${base}" base branch (got "${details.base}")`);
   const hasToken = await pr.prContainsToken(prNumber, token);
   gate(hasToken, `the published PR's diff carries the run token "${token}" (the agent really made the change)`);
-  return { published: true, arm: "card", card, prNumber, head: details.head };
+  return { published: true, arm: "card", card, prNumber, head: details.head, askTs };
 }

@@ -1,4 +1,18 @@
-import { registerPreflightProbe, registerSurfaceCredentialProbe, type Check } from "@open-everywhere/core/agent/adapter-api-ops.js";
+import {
+  configuredAgentName,
+  registerPreflightProbe,
+  registerSurfaceAppManifest,
+  registerSurfaceCredentialProbe,
+  type Check,
+} from "@open-everywhere/core/agent/adapter-api-ops.js";
+import {
+  TEAMS_APP_CONSOLE_URL,
+  TEAMS_APP_MANIFEST_COLLECT,
+  TEAMS_APP_MANIFEST_STEPS,
+  TEAMS_APP_NAME_MAX,
+  teamsAppManifestTemplate,
+  type TeamsAppManifestOptions,
+} from "./app-manifest.js";
 import { boundaryOfGraphToken, TENANT_WIDE_CHANNEL_READ_ROLES, type TeamsReadBoundary } from "./channels/teams-graph-roles.js";
 
 const TOKEN_LOGIN_BASE = "https://login.microsoftonline.com";
@@ -94,4 +108,20 @@ export async function teamsBoundaryProbe(env: NodeJS.ProcessEnv): Promise<readon
 export function registerTeamsOps(): void {
   registerPreflightProbe("teams", teamsBoundaryProbe);
   registerSurfaceCredentialProbe("teams", () => Boolean(process.env.MICROSOFT_APP_ID));
+  registerSurfaceAppManifest("teams", {
+    format: "json",
+    consoleUrl: TEAMS_APP_CONSOLE_URL,
+    steps: TEAMS_APP_MANIFEST_STEPS,
+    collect: TEAMS_APP_MANIFEST_COLLECT,
+    template: (opts) => teamsAppManifestTemplate(teamsManifestOptionsFromSettings(opts)),
+    appNameMax: TEAMS_APP_NAME_MAX,
+  });
+}
+
+function teamsManifestOptionsFromSettings(opts: { readonly appName?: string } = {}): TeamsAppManifestOptions {
+  const agentName = configuredAgentName();
+  return {
+    ...(opts.appName === undefined ? {} : { appName: opts.appName }),
+    ...(agentName === undefined ? {} : { agentName }),
+  };
 }

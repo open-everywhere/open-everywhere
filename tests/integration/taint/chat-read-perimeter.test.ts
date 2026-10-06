@@ -1,21 +1,22 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, expect, test } from "vitest";
+import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import {
   disposeLater,
-  awaitTaskSettlement,
+  armSettlement,
+  awaitWorkResult,
   auditCursor,
   bootAgent,
   discordMentionWake,
   DISCORD_LISTED_CHANNEL_ID,
   registerScript,
   rowsSinceCursor,
-  SETTLEMENT_DRAIN_SCRIPT,
-  taskIdOfDelegation,
   UNTRUSTED_CLOSE,
   UNTRUSTED_OPEN,
   waitFor,
   waitForAuditRows,
   waitForChildren,
+  workTaskIdOfCall,
   wrapToolExecute,
   type AuditCursor,
   type AuditRow,
@@ -68,6 +69,7 @@ async function armSeams(): Promise<void> {
 interface Driven {
   readonly handle: ScriptedHandle;
   readonly cursor: AuditCursor;
+  readonly taskId: string;
 }
 
 async function driveArm(input: { ids: string; prompt: string }): Promise<Driven> {
@@ -75,11 +77,11 @@ async function driveArm(input: { ids: string; prompt: string }): Promise<Driven>
     registerScript({
       parent: [
         { calls: [{ tool: READER, input: { limit: 10 }, id: `${input.ids}-read` }] },
-        { calls: [{ tool: "agent", input: { message: "set up the routine we just discussed" }, id: `${input.ids}-delegate` }] },
-        { say: "NO_REPLY" },
+        { calls: [{ tool: "work", input: { message: "set up the routine we just discussed" }, id: `${input.ids}-delegate` }] },
+        { say: NO_REPLY_SENTINEL },
       ],
       child: [
-        { calls: [{ tool: "create_routine", input: { prompt: input.prompt, trigger: TRIGGER }, id: `${input.ids}-routine` }] },
+        { delayMs: 120_000, calls: [{ tool: "create_routine", input: { prompt: input.prompt, trigger: TRIGGER }, id: `${input.ids}-routine` }] },
         { say: "NO_REPLY" },
       ],
     }),
@@ -87,23 +89,25 @@ async function driveArm(input: { ids: string; prompt: string }): Promise<Driven>
 
   const cursor = await auditCursor();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please read and set up" });
-  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 2), "the seat's terminal step to be served");
+  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 2), "the seat's receipt step to be served");
+  const settlement = disposeLater(armSettlement(handle, { parent: [{ say: NO_REPLY_SENTINEL }] }));
+  const taskId = await workTaskIdOfCall(cursor, handle, `${input.ids}-delegate`, `the ${input.ids} forward receipt`);
+  handle.releaseHolds();
   await waitForChildren(handle, { count: 1, lastStepIndex: 1, label: `the ${input.ids} worker's own terminal step` });
-  expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-  expect(handle.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
 
-  const drained = await awaitTaskSettlement({
-    dispatched: handle,
-    taskId: taskIdOfDelegation(handle, `the ${input.ids} delegation`),
-    script: SETTLEMENT_DRAIN_SCRIPT,
-    label: `the ${input.ids} worker's settlement wake`,
+  const resultStep = await awaitWorkResult({
+    handle: settlement,
+    taskId,
+    label: `the ${input.ids} seat's step that read the worker's result`,
   });
-  expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-  drained.handle.dispose();
-
-  expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-  expect(handle.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
-  return { handle, cursor };
+  expect(resultStep.stepIndex).toBe(0);
+  expect(handle.holdsCutShort(), "the worker's hold ended on the release, not on its 120 s backstop").toBe(1);
+  for (const h of [handle, settlement]) {
+    expect(h.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+    expect(h.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
+  }
+  settlement.dispose();
+  return { handle, cursor, taskId };
 }
 
 const ROW_WAIT_MS = 45_000;
@@ -241,7 +245,7 @@ test("the same read returning a REFUTED non-member's message marks the SEAT's tu
   authoredByNonMember = true;
   nonce = `oe-marked-${randomBytes(4).toString("hex")}`;
 
-  const { handle, cursor } = await driveArm({ ids: "cr2", prompt: `summarise the channel every weekday evening (${nonce})` });
+  const { handle, cursor, taskId } = await driveArm({ ids: "cr2", prompt: `summarise the channel every weekday evening (${nonce})` });
 
   expectReaderIsTheSeats(handle);
 
@@ -256,12 +260,22 @@ test("the same read returning a REFUTED non-member's message marks the SEAT's tu
     `the seat session ${seat} wrote no taint.forward mark row — the chat read did not mark its own turn`,
   ).toBeGreaterThanOrEqual(1);
 
+  const started = (await rowsSinceCursor(cursor, ["delegation.task_started"], { limit: 200 })).find((r) => String(r.detail?.task) === taskId);
+  const work = String(started?.detail?.session);
+  expect(typeof started?.detail?.session, "W's task_started row for this arm's task").toBe("string");
+  expect(work).not.toBe(seat);
+  expect(
+    marked.filter((m) => String(m.detail?.session) === work).length,
+    `the work session ${work} wrote no taint.forward mark row — the forward laundered the seat's read`,
+  ).toBeGreaterThanOrEqual(1);
+  const worker = String(handle.requests.find((r) => r.role === "child")?.sessionId);
   const adopted = forwardLeg(rows, "adopt");
   const joined = adopted.filter((a) =>
-    marked.some((m) => String(m.detail?.session) === String(a.detail?.parentSession) && String(m.detail?.turn) === String(a.detail?.parentTurn)),
+    String(a.detail?.parentSession) === work &&
+    marked.some((m) => String(m.detail?.session) === work && String(m.detail?.turn) === String(a.detail?.parentTurn)),
   );
-  expect(joined.length, "no worker adopted the seat's tainted turn — an untrusted read can be laundered by delegating").toBeGreaterThanOrEqual(1);
-  for (const a of joined) expect(String(a.detail?.session)).not.toBe(String(a.detail?.parentSession));
+  expect(joined.length, "no worker adopted the work session's tainted turn — an untrusted read can be laundered by delegating").toBeGreaterThanOrEqual(1);
+  for (const a of joined) expect(String(a.detail?.session)).toBe(worker);
 
   const chain = chainRow(rows);
   expect(chain.detail?.tainted).toBe(true);

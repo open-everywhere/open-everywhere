@@ -1,5 +1,6 @@
 import type { PendingActionRow } from "./types.js";
-import { grantButtonLabel, sessionGrantKind } from "./session-grant.js";
+import { grantButtonLabel, pendingCardExpiryClause, sessionGrantKind } from "./session-grant.js";
+import { getSettings } from "../settings/settings.js";
 
 const APPROVAL_PREFIX = "oe_approval:";
 
@@ -26,7 +27,7 @@ function contextBlock(text: string): SlackBlock {
 }
 
 export function pendingCardBlocks(row: PendingActionRow, summaryLines: readonly string[]): RenderedCard {
-  const requestedContext = `Requested by <@${row.requestedBy}> · expires ${row.expiresAt}`;
+  const requestedContext = `Requested by <@${row.requestedBy}> · ${pendingCardExpiryClause(row.expiresAt)}`;
   const elements: SlackBlock[] = [
     {
       type: "button",
@@ -36,10 +37,11 @@ export function pendingCardBlocks(row: PendingActionRow, summaryLines: readonly 
       value: row.org,
     },
   ];
-  if (sessionGrantKind(row) !== null) {
+  const grantLabel = sessionGrantKind(row) !== null ? grantButtonLabel(row, getSettings().approvals.routineGrantTtlHours) : undefined;
+  if (grantLabel !== undefined) {
     elements.push({
       type: "button",
-      text: { type: "plain_text", text: grantButtonLabel(row), emoji: true },
+      text: { type: "plain_text", text: grantLabel, emoji: true },
       action_id: `${APPROVAL_PREFIX}approve_session:${row.id}`,
       value: row.org,
     });

@@ -49,7 +49,6 @@ export interface NotionInboundAnswer {
   readonly requestId: string;
   readonly floor: string;
   readonly wakeId?: string;
-  readonly taskId?: string;
 }
 
 export async function resolveNotionInboundAnswer(input: {
@@ -91,7 +90,6 @@ export async function resolveNotionInboundAnswer(input: {
       requestId: routing.requestId,
       floor: routing.floor,
       ...(routing.wakeId !== undefined ? { wakeId: routing.wakeId } : {}),
-      ...(routing.taskId !== undefined ? { taskId: routing.taskId } : {}),
     };
   } catch {
     return undefined;

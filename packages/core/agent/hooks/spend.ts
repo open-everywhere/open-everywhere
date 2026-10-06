@@ -13,7 +13,6 @@ import type { SurfaceMode } from "../operational/store.js";
 import { isSupervisorToken, standingSeatRegistryKey, unifiedWindowFromToken } from "../channels/unified-supervisor.js";
 import { parseDmSeatToken, dmSeatRegistryKey, bareTokenFromEveContext, parseSubagentToken } from "../channels/window-key.js";
 import { delegationDepthOf, stampSubagentRun } from "../spend/subagent-runs.js";
-import { isRunFireSeatWindowId } from "../routines/fire-window.js";
 
 export function routineIdOf(ctx: BindableContext): string | undefined {
   try {
@@ -215,8 +214,7 @@ export default defineHook({
           const registryKey = standingSeatRegistryKey(token, domainKeyOf(p)) ?? domainKeyOf(p);
           if (delta > 0) {
             const matched = await getOperationalStore().bumpChannelSessionUsage(p.org, registryKey, token, delta);
-            const windowId = unifiedWindowFromToken(token);
-            if (matched === 0 && !(windowId !== undefined && isRunFireSeatWindowId(windowId))) {
+            if (matched === 0) {
               console.warn(`[open-everywhere:spend] supervisor counter bump matched no row (org=${p.org} key=${registryKey} token=${token})`);
             }
           }

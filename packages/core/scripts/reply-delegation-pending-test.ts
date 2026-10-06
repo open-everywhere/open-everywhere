@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { z } from "zod";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { filesMatching } from "./eve-dist-search.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -84,31 +85,27 @@ const arm = (ctx: unknown): Armed | null => (replyTool as unknown as { events: R
 
 const hooks = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
 const hook = hooks["action.result"]!;
+const startedHook = hooks["task.started"]!;
 const requestedHook = hooks["actions.requested"]!;
+const settledHook = hooks["task.settled"]!;
 
-const receiptResult = (callId: string, taskId: string, agentId = "ag_agent:6666") => ({
-  backgroundTask: { status: "working", taskId },
+const receiptResult = (callId: string, taskId: string, _agentId = "ag_agent:6666") => ({
   callId,
-  kind: "subagent-result",
-  origin: "child",
-  outcome: { kind: "parked", result: { kind: "succeeded", output: `Delegated as background task ${taskId} (working).` } },
-  output: { agentId, status: "working", taskId },
-  subagentName: "agent",
+  kind: "agent",
+  name: "agent",
+  taskId,
+  turnId: "turn_dispatch",
 });
 
 const receiptResultV2 = (callId: string, taskId: string) => ({
   callId,
-  kind: "tool-result",
-  toolName: "agent",
-  output: { agentId: "ag_agent:6666", status: "working", taskId },
+  kind: "tool",
+  name: "agent",
+  taskId,
+  turnId: "turn_dispatch",
 });
 
-const peekResult = (taskId: string, status: string) => ({
-  callId: `call_peek_${taskId}`,
-  kind: "tool-result",
-  toolName: "task_peek",
-  output: { tasks: [{ taskId, status, metadata: { agentId: "ag_agent:6666", kind: "agent", mode: "background", name: "agent" } }] },
-});
+const settledEvent = (callId: string, taskId: string, status: string) => ({ callId, kind: "agent", name: "agent", output: "", status, taskId, turnId: "turn_settle" });
 
 function ctxFor(turnWake: string, turnId: string): BindableContext {
   return {
@@ -141,7 +138,7 @@ async function dispatchReceipt(
     recordRequesterIdentity(ctx, turnId, envelope);
   }
   await requestedHook({ data: { actions: [{ kind: "subagent-call", callId, subagentName: "agent" }] } }, ctx);
-  await hook({ data: { result } }, ctx);
+  await startedHook({ data: result }, ctx);
 }
 
 const nodeRequire = createRequire(import.meta.url);
@@ -253,7 +250,7 @@ const roomHas = (needle: string): boolean => posted.some((m) => m.text.includes(
       "§1/NOTE: the success note states the worker has not reported, so the contract is taught at the moment of compliance rather than only by the refusal",
     );
 
-    await hook({ data: { result: peekResult("task_696a", "completed") } }, ctxFor(wAsk, "turn_696"));
+    await settledHook({ data: settledEvent("call_696a", "task_696a", "completed") }, ctxFor(wAsk, "turn_696"));
 
     const real = await callReply(wAsk, "turn_696", wAsk, REAL_REFUSAL, true);
     ok(real.posted === true, "🔴 §1 THE FIX, END TO END: once the worker's terminal view is in hand the turn CAN close the wake — the guard is a wait, not a wall");
@@ -283,7 +280,7 @@ const roomHas = (needle: string): boolean => posted.some((m) => m.text.includes(
     const ack = await callReply(wAsk, "turn_943", wAsk, "I've handed this to a worker and will report back.", false);
     ok(ack.posted === true, "§1B: the `done:false` hand-off note still POSTS");
 
-    await hook({ data: { result: peekResult("task_943a", "completed") } }, ctxFor(wAsk, "turn_943"));
+    await settledHook({ data: settledEvent("call_943a", "task_943a", "completed") }, ctxFor(wAsk, "turn_943"));
     const real = await callReply(wAsk, "turn_943", wAsk, REAL_REFUSAL, true);
     ok(real.posted === true, "🔴 §1B END TO END: once the ENVELOPE B worker settles the turn CAN close the wake — the guard is a wait, not a wall, on both envelopes");
     ok(posted.length === before + 2, "§1B/ROOM: two messages — the ack and the real answer, and not the fabrication");
@@ -476,9 +473,8 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
 
     const dropped9a = (await readAudit({ org: ORG, action: "turn.supervisor_prose_dropped" })).map((r) => (r.detail ?? {}) as Record<string, unknown>);
     const mine9a = dropped9a.filter((d) => d["wakeId"] === wBridge);
-    ok(mine9a.length === 1, `🔴 §9a/AUDIT: the withheld answer is a ROW (expected 1 for this wake, saw ${mine9a.length})`);
-    ok(mine9a[0]?.["addressing"] === "direct-mention", "🔴 §9a/AUDIT: …and it names the addressing, so an OWED answer that nobody received stays countable apart from an ambient drop");
-    ok(!JSON.stringify(mine9a).includes("RECURRING.md"), "🔴 §9a/AUDIT: the prose never reaches the audit detail — the row records the decision, not the text");
+    ok(mine9a.length === 0, `🔴 §9a/AUDIT: pre-wait text is NOT decided as a dropped ending while the worker owes the wake (expected 0 drop rows for this wake, saw ${mine9a.length})`);
+    ok(!JSON.stringify(await readAudit({ org: ORG })).includes("RECURRING.md"), "🔴 §9a/AUDIT: the fabricated prose reaches no audit row at all");
 
     const wLater = await wake("C_LATER", "902.2");
     const landed = await proseSession(wLater, "turn_701_later")(() => callReply(wLater, "turn_701_later", wBridge, REAL_REFUSAL, true));
@@ -697,7 +693,7 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
       ok(pending.posted === true, "§10c precondition: the hand-off posts while the worker runs");
       ok(typeof pending.note === "string" && pending.note.includes("has NOT reported yet"), "§10c precondition: …and the model was instructed that its worker still owes the answer");
 
-      await hook({ data: { result: peekResult("task_699c", "completed") } }, ctxFor(w, "turn_699c"));
+      await settledHook({ data: settledEvent("call_699c", "task_699c", "completed") }, ctxFor(w, "turn_699c"));
 
       const real = await callReply(w, "turn_699c", w, REAL, true);
       ok(real.posted === true, "§10c precondition: the settled answer posts");
@@ -1006,10 +1002,30 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
       dynamicToolBuild.includes("toOutputSchema") && dynamicToolBuild.includes("execute"),
       "🔴 §12e/CONTROL: eve's dynamic-tool REBUILD path still both attaches the output schema (`toOutputSchema`) and wires the tool's `execute` — so this reader is looking at the live code the tripwire below asserts about, not at a moved, split or emptied file",
     );
+    const SEAMS = /~standard|\.validate\(|safeParse|\.parse\(/;
+    const fnBody = (src: string, name: string): string => {
+      const at = src.indexOf(`function ${name}(`);
+      if (at === -1) return "";
+      const next = src.indexOf("function ", at + name.length + 10);
+      return src.slice(at, next === -1 ? undefined : next);
+    };
+    const rebuiltExecute = fnBody(dynamicToolBuild, "bindDynamicCallback");
+    ok(rebuiltExecute.includes("callDurableDynamicCallback("), "§12e/CONTROL: the rebuilt `execute` (bindDynamicCallback) was read whole — it calls the durable callback");
     ok(
-      !/~standard|\.validate\(|safeParse|\.parse\(/.test(dynamicToolBuild),
-      "🔴 §12e/TRIPWIRE: eve's dynamic-tool rebuild path names NO validation seam (`~standard`, `.validate(`, `safeParse`, `.parse(`), so the strict schema it attaches is never applied to a tool RESULT. This is the only reason the strict replay schema above is harmless — when it goes red, adding a key to a live tool's output schema is a breaking change for every in-flight session",
+      !SEAMS.test(rebuiltExecute),
+      "🔴 §12e/TRIPWIRE: the rebuilt `execute` returns the durable callback's value with NO validation seam (`~standard`, `.validate(`, `safeParse`, `.parse(`) — so the strict schema attached beside it is never applied to a tool RESULT. When this goes red, adding a key to a live tool's output schema is a breaking change for every in-flight session",
     );
+    const harnessTools = eveSrc("dist/src/harness/tools.js");
+    const wrapper = fnBody(harnessTools, "wrapToolExecute") + fnBody(harnessTools, "normalizeToolExecuteOutput");
+    ok(wrapper.includes("normalizeToolJsonOutput("), "§12e/CONTROL: the harness execute wrapper was read whole");
+    ok(!SEAMS.test(wrapper), "🔴 §12e/TRIPWIRE: …and eve's harness execute wrapper validates no result either");
+    const UI_VALIDATE = /\b(?:safeV|v)alidateUIMessages\(/u;
+    ok(
+      UI_VALIDATE.test("await safeValidateUIMessages({") && UI_VALIDATE.test("validateUIMessages({") && !UI_VALIDATE.test("validateUIMessage({"),
+      "§12e/CONTROL: the matcher sees both AI SDK validators and not a near name",
+    );
+    const uiValidators = filesMatching(UI_VALIDATE);
+    ok(uiValidators.length === 0, `🔴 §12e/TRIPWIRE: no eve module calls the AI SDK's validateUIMessages, which applies \`outputSchema\` to a tool output (saw ${JSON.stringify(uiValidators)})`);
   }
 
   {
@@ -1078,7 +1094,7 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
 {
   const events = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
   const turnStarted = events["turn.started"]!;
-  const settlementWake = events["message.received"]!;
+  const settlementWake = events["task.settled"]!;
   const noReply = (await import("../agent/tools/no_reply.js")).default as unknown as {
     readonly execute: (i: Record<string, unknown>, c: unknown) => Promise<{ acknowledged?: boolean }>;
   };
@@ -1086,7 +1102,14 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
     "../agent/access/pending-delegation-signal.js"
   );
 
-  const settledNote = (taskId: string, result: string) => `Background task ${taskId} (agent) is completed.\n\nResult:\n${result}`;
+  const SETTLE_CALLS: Readonly<Record<string, string>> = {
+    task_1655aaaabbbb: "call_1655a",
+    task_1655eeeeffff: "call_1655e",
+    task_1655hhhhiiii: "call_1655h",
+    task_1655ffffgggg: "call_1655f",
+    task_1655gggghhhh: "call_1655g",
+  };
+  const settledNote = (taskId: string, result: string) => ({ ...settledEvent(SETTLE_CALLS[taskId] ?? `call_${taskId}`, taskId, "completed"), output: result });
 
   const callNoReply = async (turnWake: string, turnId: string): Promise<{ acknowledged?: boolean; error?: string }> =>
     noReply.execute({ reason: "nothing_to_add" }, ctxFor(turnWake, turnId)).catch((e: unknown) => ({ error: String(e) }));
@@ -1112,7 +1135,7 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
       ok(posted.length === before + 1, "§13a/ROOM: one message so far — the note");
 
       await turnStarted({}, ctxFor(wAsk, "turn_1655_b"));
-      await settlementWake({ data: { message: settledNote(TASK, WORKER_RESULT) } }, ctxFor(wAsk, "turn_1655_b"));
+      await settlementWake({ data: settledNote(TASK, WORKER_RESULT) }, ctxFor(wAsk, "turn_1655_b"));
       const wakeRows = await rowsFor("unified.task_wake");
       ok(
         wakeRows.some((d) => d.task === TASK && d.outcome === "installed"),
@@ -1159,7 +1182,7 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
       const ack = await callReply(wAsk, "turn_1655_e1", wAsk, "On it — I'll report what the worker finds.", false);
       ok(ack.posted === true, "§13e/SETUP: the hand-off note posted, so a report is promised");
       await turnStarted({}, ctxFor(wAsk, "turn_1655_e2"));
-      await settlementWake({ data: { message: settledNote(TASK, WORKER_RESULT) } }, ctxFor(wAsk, "turn_1655_e2"));
+      await settlementWake({ data: settledNote(TASK, WORKER_RESULT) }, ctxFor(wAsk, "turn_1655_e2"));
       const report = await callReply(wAsk, "turn_1655_e2", wAsk, WORKER_RESULT, true);
       ok(report.posted === true, "§13e/SETUP: …and the report posted on the settlement turn");
       const quiet = await callNoReply(wAsk, "turn_1655_e2");
@@ -1181,7 +1204,7 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
       const ack = await callReply(wAsk, "turn_1655_h1", wAsk, "I've started it; I'll report back here.", false);
       ok(ack.posted === true, "§13h/SETUP: the hand-off note posted into conversation A");
       await turnStarted({}, ctxFor(wAsk, "turn_1655_h2"));
-      await settlementWake({ data: { message: settledNote(TASK, WORKER_RESULT) } }, ctxFor(wAsk, "turn_1655_h2"));
+      await settlementWake({ data: settledNote(TASK, WORKER_RESULT) }, ctxFor(wAsk, "turn_1655_h2"));
 
       const linkBefore = (await rowsFor(SETTLEMENT_REPORT_POSTED_ACTION)).length;
       const sibling = await callReply(wAsk, "turn_1655_h2", wOther, "Answering your other question first.", true);
@@ -1208,7 +1231,7 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
       const ack = await callReply(wAsk, "turn_1655_f1", wAsk, "Started it — I'll report back.", false);
       ok(ack.posted === true, "§13f/SETUP: the hand-off note posted, so a report is promised");
       await turnStarted({}, ctxFor(wAsk, "turn_1655_f2"));
-      await settlementWake({ data: { message: settledNote(TASK, "nothing to report") } }, ctxFor(wAsk, "turn_1655_f2"));
+      await settlementWake({ data: settledNote(TASK, "nothing to report") }, ctxFor(wAsk, "turn_1655_f2"));
       const first = await callNoReply(wAsk, "turn_1655_f2");
       ok(typeof first.error === "string", "§13f: the first silence is refused");
       const second = await callNoReply(wAsk, "turn_1655_f2");
@@ -1227,7 +1250,7 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
       await turnStarted({}, ctxFor(wAsk, "turn_1655_g1"));
       await dispatchReceipt(wAsk, "turn_1655_g1", "call_1655g", receiptResult("call_1655g", TASK), ctxFor(wAsk, "turn_1655_g1"));
       await turnStarted({}, ctxFor(wAsk, "turn_1655_g2"));
-      await settlementWake({ data: { message: settledNote(TASK, "a chore finished") } }, ctxFor(wAsk, "turn_1655_g2"));
+      await settlementWake({ data: settledNote(TASK, "a chore finished") }, ctxFor(wAsk, "turn_1655_g2"));
       const wakeRows = await rowsFor("unified.task_wake");
       ok(
         wakeRows.some((d) => d.task === TASK && d.outcome === "installed"),
@@ -1295,11 +1318,12 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
   {
     const events = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
     const turnStarted = events["turn.started"]!;
-    const settlementWake = events["message.received"]!;
+    const settlementWake = events["task.settled"]!;
 
-    const failedNote = (taskId: string, payload: string) => `Background task ${taskId} (agent) failed.\n\nError:\n${payload}`;
-
-    const evePayload = (message: string, code = "SUBAGENT_EXECUTION_FAILED") => JSON.stringify({ code, message });
+    const failedEvent = (callId: string, taskId: string, extra: Record<string, unknown> = {}) => ({
+      ...settledEvent(callId, taskId, "failed"),
+      ...extra,
+    });
 
     const LIVE_ERROR = "Cannot read properties of undefined (reading 'push')";
 
@@ -1312,35 +1336,33 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
       await dispatchReceipt(wSettle, "turn_1737_d1", "call_1737d", receiptResult("call_1737d", TASK, "ag_agent:1737d"), ctxFor(wSettle, "turn_1737_d1"));
       const before = (await failedRows()).length;
       await turnStarted({}, ctxFor(wSettle, "turn_1737_d2"));
-      await settlementWake({ data: { message: failedNote(TASK, evePayload(LIVE_ERROR)) } }, ctxFor(wSettle, "turn_1737_d2"));
+      await settlementWake({ data: failedEvent("call_1737d", TASK, { error: { message: LIVE_ERROR } }) }, ctxFor(wSettle, "turn_1737_d2"));
       const rows = await failedRows();
-      ok(rows.length === before + 1, "§14d/REACHABILITY: the REAL notification handler wrote exactly one failure row for the settled-then-died task");
+      ok(rows.length === before + 1, "§14d/REACHABILITY: the REAL `task.settled` handler wrote exactly one failure row for the settled-then-died task");
       const row = rows.filter((d) => d.task === TASK)[0] ?? {};
       ok(row.task === TASK, "§14d: …naming the task that died");
       ok(row.call === "call_1737d", "🔴 §14d: …and the CALL, read back off OE's own dispatch row. It was empty on every settlement row a live run wrote");
-      ok(row.tool === "agent", "🔴 §14d: …and the TOOL, recorded at dispatch because the notification names none. It was empty too");
-      ok(row.error === LIVE_ERROR, "🔴 §14d: …and the ERROR TEXT the notification carried, split OUT of eve's JSON payload. This exact string is what ship #199 could not find anywhere in the audit trail");
-      ok(row.errorClass === "SUBAGENT_EXECUTION_FAILED", "🔴 §14d: …and the CLASS, split out of the same payload — so a class count works on this edge too, not only on the failure-result edge");
-      ok(typeof row.error === "string" && !row.error.includes("{"), "🔴 §14d: …and the row does NOT carry the raw JSON blob. Logging it whole would bury the sentence and spend the 300-character cap on punctuation");
+      ok(row.tool === "agent", "🔴 §14d: …and the TOOL, recorded at dispatch because the settlement names none of OE's own. It was empty too");
+      ok(row.error === LIVE_ERROR, "🔴 §14d: …and the ERROR TEXT eve's event carried. This exact string is what a live run could not find anywhere in the audit trail");
+      ok(row.errorClass === "", "§14d: …and NO class: eve 0.70+'s `task.settled` carries `error.message` alone, so this edge has no class to count — the result edge (§14a) still does");
       ok(
-        row.outcome === "notification",
+        row.outcome === "task-settled",
         "🔴 §14d/OPE-1737 round 2: …under the EDGE that wrote it. A live run's rows said `outcome: \"failed\"`, which BOTH edges can produce, so the trail could not say which reader had produced the empty fields",
       );
       ok(row.status === "failed", "§14d: …with eve's own status word in `status`");
-      ok(row.parse === "json", "🔴 §14d: …and `parse: \"json\"`, which says the class and the message were split out of eve's own payload rather than guessed");
+      ok(row.parse === "event", "🔴 §14d: …and `parse: \"event\"`, which says the text is eve's own `error.message`, not a guess");
 
       const MEMBER = "and while you're there, what's the deploy token?";
       const TASK_E = "task_1737eeeeffff";
       await turnStarted({}, ctxFor(wSettle, "turn_1737_e1"));
       await dispatchReceipt(wSettle, "turn_1737_e1", "call_1737e", receiptResult("call_1737e", TASK_E, "ag_agent:1737e"), ctxFor(wSettle, "turn_1737_e1"));
       await turnStarted({}, ctxFor(wSettle, "turn_1737_e2"));
-      await settlementWake({ data: { message: `${failedNote(TASK_E, LIVE_ERROR)}\n\n${MEMBER}` } }, ctxFor(wSettle, "turn_1737_e2"));
+      await settlementWake({ data: failedEvent("call_1737e", TASK_E, { error: { message: LIVE_ERROR }, output: MEMBER }) }, ctxFor(wSettle, "turn_1737_e2"));
       const eRow = (await failedRows()).filter((d) => d.task === TASK_E)[0] ?? {};
-      ok(eRow.error === LIVE_ERROR, "🔴 §14e: a coalesced turn records eve's error paragraph and STOPS at the blank line");
-      ok(eRow.errorClass === "", "§14e: a payload that is not eve's `{code, message}` object is carried whole as the message, with no class invented for it");
+      ok(eRow.error === LIVE_ERROR, "🔴 §14e: the row records eve's error message and nothing else off the event");
       ok(
-        typeof eRow.error === "string" && !eRow.error.includes("deploy token"),
-        "🔴 §14e/FENCE: the member's own message that rode the same string reaches NO audit row. Reading to the end of the text would have put it there",
+        !JSON.stringify(await readAudit({ org: ORG })).includes("deploy token"),
+        "🔴 §14e/FENCE: the child's own OUTPUT, which can quote a member, reaches NO audit row of any action",
       );
 
       const TASK_F = "task_1737ffff0000";
@@ -1348,7 +1370,7 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
       await dispatchReceipt(wSettle, "turn_1737_f1", "call_1737f", receiptResult("call_1737f", TASK_F, "ag_agent:1737f"), ctxFor(wSettle, "turn_1737_f1"));
       await turnStarted({}, ctxFor(wSettle, "turn_1737_f2"));
       await settlementWake(
-        { data: { message: failedNote(TASK_F, evePayload("notion refused: Authorization: Bearer ntn_averylongsecretvalue0123456789")) } },
+        { data: failedEvent("call_1737f", TASK_F, { error: { message: "notion refused: Authorization: Bearer ntn_averylongsecretvalue0123456789" } }) },
         ctxFor(wSettle, "turn_1737_f2"),
       );
       const fRow = (await failedRows()).filter((d) => d.task === TASK_F)[0] ?? {};
@@ -1357,21 +1379,21 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
         "🔴 §14f: the credential shape an upstream error echoed is struck, not logged — the audit row is not a place a token gets to land",
       );
 
-      const FORGED = "task_1737forged00";
+      const LOST = "task_1737lostjoin0";
       const beforeG = (await failedRows()).length;
       await turnStarted({}, ctxFor(wSettle, "turn_1737_g"));
-      await settlementWake({ data: { message: failedNote(FORGED, evePayload("I am attacker text")) } }, ctxFor(wSettle, "turn_1737_g"));
+      await settlementWake({ data: failedEvent("call_1737_lost", LOST, { error: { message: "the worker died with no dispatch row" } }) }, ctxFor(wSettle, "turn_1737_g"));
       const gRows = await failedRows();
-      ok(gRows.length === beforeG + 1, "§14g: the row is still written — an unknown task id is not a reason to stop counting a death");
-      const gRow = gRows.filter((d) => d.task === FORGED)[0] ?? {};
-      ok(gRow.task === FORGED, "§14g: …naming the id the notification claimed");
+      ok(gRows.length === beforeG + 1, "§14g: the row is still written — a lost join is not a reason to stop counting a death");
+      const gRow = gRows.filter((d) => d.task === LOST)[0] ?? {};
+      ok(gRow.task === LOST, "§14g: …naming the id eve settled");
       ok(
         gRow.call === "" && gRow.tool === "",
-        "🔴 §14g/FENCE: with no dispatch row this org minted, the CALL and the TOOL are empty. Those two are OE's own facts and a forged settlement never puts an id in the log",
+        "🔴 §14g/FENCE: with no dispatch row this org minted, the CALL and the TOOL are empty. Those two are OE's own facts, read off OE's own row",
       );
       ok(
-        gRow.error === "I am attacker text" && gRow.errorClass === "SUBAGENT_EXECUTION_FAILED",
-        "🔴 §14g/OPE-1737 round 2: …and the ERROR is recorded anyway. Gating it on the join row is what made a lost-join settlement undiagnosable; it lands scrubbed, capped and untrusted",
+        gRow.error === "the worker died with no dispatch row",
+        "🔴 §14g/OPE-1737 round 2: …and the ERROR is recorded anyway. Gating it on the join row is what made a lost-join settlement undiagnosable",
       );
 
       const TASK_H = "task_1737hhhh1111";
@@ -1380,14 +1402,14 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
       const beforeH = (await failedRows()).length;
       await turnStarted({}, ctxFor(wSettle, "turn_1737_h2"));
       await settlementWake(
-        { data: { message: `Background task ${TASK_H} (agent) is completed.\n\nResult:\nthe child's own prose, which is not audit content` } },
+        { data: { ...settledEvent("call_1737h", TASK_H, "completed"), output: "the child's own prose, which is not audit content" } },
         ctxFor(wSettle, "turn_1737_h2"),
       );
       const afterCompleted = await failedRows();
-      ok(afterCompleted.length === beforeH, "🔴 §14h/CONTROL: a COMPLETED settlement writes no failure row, so its `Result:` payload reaches no audit row either");
+      ok(afterCompleted.length === beforeH, "🔴 §14h/CONTROL: a COMPLETED settlement writes no failure row");
       ok(
-        !afterCompleted.some((d) => typeof d.error === "string" && d.error.includes("the child's own prose")),
-        "🔴 §14h/CONTROL: …and the child's prose appears in no failure row this file has written. The reader takes the FAILED arm alone",
+        !JSON.stringify(await readAudit({ org: ORG })).includes("the child's own prose"),
+        "🔴 §14h/CONTROL: …and the child's output appears in no audit row of any action",
       );
 
       const TASK_I = "task_1737iiii2222";
@@ -1395,7 +1417,7 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
       await dispatchReceipt(wSettle, "turn_1737_i1", "call_1737i", receiptResult("call_1737i", TASK_I, "ag_agent:1737i"), ctxFor(wSettle, "turn_1737_i1"));
       const beforeI = (await failedRows()).length;
       await turnStarted({}, ctxFor(wSettle, "turn_1737_i2"));
-      await settlementWake({ data: { message: `Background task ${TASK_I} (agent) is cancelled.` } }, ctxFor(wSettle, "turn_1737_i2"));
+      await settlementWake({ data: { ...settledEvent("call_1737i", TASK_I, "cancelled"), cancel: { reason: "turn_ended" } } }, ctxFor(wSettle, "turn_1737_i2"));
       ok((await failedRows()).length === beforeI, "🔴 §14h/CONTROL: a CANCELLED settlement is the deployment's own reaper, not a dead read — still no failure row");
 
       const TASK_J = "task_1737jjjj3333";
@@ -1403,51 +1425,38 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
       await dispatchReceipt(wSettle, "turn_1737_j1", "call_1737j", receiptResult("call_1737j", TASK_J, "ag_agent:1737j"), ctxFor(wSettle, "turn_1737_j1"));
       const beforeJ = (await failedRows()).length;
       await turnStarted({}, ctxFor(wSettle, "turn_1737_j2"));
-      await settlementWake({ data: { message: `Background task ${TASK_J} (agent) failed.` } }, ctxFor(wSettle, "turn_1737_j2"));
-      ok((await failedRows()).length === beforeJ + 1, "§14j/REACHABILITY: the real notification handler still wrote the failure row for a payload-less settlement");
+      await settlementWake({ data: failedEvent("call_1737j", TASK_J) }, ctxFor(wSettle, "turn_1737_j2"));
+      ok((await failedRows()).length === beforeJ + 1, "§14j/REACHABILITY: the real handler still wrote the failure row for an error-less settlement");
       const jRow = (await failedRows()).filter((d) => d.task === TASK_J)[0] ?? {};
-      ok(
-        jRow.error === `Background task ${TASK_J} (agent) failed.`,
-        `🔴 §14j: with no readable payload the row carries the NOTIFICATION ITSELF, never "". This is the field ship #201 found empty three times — got ${JSON.stringify(jRow.error)}`,
-      );
-      ok(jRow.parse === "raw", "🔴 §14j: …under `parse: \"raw\"`, which tells an operator the notification carried no readable payload rather than that the worker died quietly");
-      ok(jRow.outcome === "notification", "§14j: …and `outcome` still names the notification edge, so the two facts are read together");
-      ok(jRow.call === "call_1737j" && jRow.tool === "agent", "§14j: …while the call and the tool still come off OE's own dispatch row, which the missing payload does not touch");
+      ok(jRow.error === "failed", `🔴 §14j: with no error half the row carries eve's own STATUS word, never "". This is the field a live run found empty three times — got ${JSON.stringify(jRow.error)}`);
+      ok(jRow.parse === "status", "🔴 §14j: …under `parse: \"status\"`, which tells an operator eve sent no reason rather than that the worker died quietly");
+      ok(jRow.outcome === "task-settled", "§14j: …and `outcome` still names the settlement edge, so the two facts are read together");
+      ok(jRow.call === "call_1737j" && jRow.tool === "agent", "§14j: …while the call and the tool still come off OE's own dispatch row, which the missing reason does not touch");
 
       const TASK_K = "task_1737kkkk4444";
       await turnStarted({}, ctxFor(wSettle, "turn_1737_k1"));
       await dispatchReceipt(wSettle, "turn_1737_k1", "call_1737k", receiptResult("call_1737k", TASK_K, "ag_agent:1737k"), ctxFor(wSettle, "turn_1737_k1"));
       await turnStarted({}, ctxFor(wSettle, "turn_1737_k2"));
-      await settlementWake({ data: { message: failedNote(TASK_K, JSON.stringify({ code: "ETIMEDOUT" })) } }, ctxFor(wSettle, "turn_1737_k2"));
+      await settlementWake({ data: failedEvent("call_1737k", TASK_K, { error: { message: "" } }) }, ctxFor(wSettle, "turn_1737_k2"));
       const kRow = (await failedRows()).filter((d) => d.task === TASK_K)[0] ?? {};
-      ok(kRow.error === '{"code":"ETIMEDOUT"}', `🔴 §14k: a class-only payload still writes a non-empty \`error\` — got ${JSON.stringify(kRow.error)}`);
-      ok(kRow.errorClass === "ETIMEDOUT", "§14k: …with the child's own class beside it");
-      ok(kRow.parse === "text", "🔴 §14k: …under `parse: \"text\"`, never `json` — a `json` row claims BOTH halves read, and this one has no message");
+      ok(kRow.error === "failed" && kRow.parse === "status", `🔴 §14k: an EMPTY error message takes the status arm, so the row still names a reason — got ${JSON.stringify([kRow.error, kRow.parse])}`);
 
       const TASK_L = "task_1737llll5555";
       await turnStarted({}, ctxFor(wSettle, "turn_1737_l1"));
       await dispatchReceipt(wSettle, "turn_1737_l1", "call_1737l", receiptResult("call_1737l", TASK_L, "ag_agent:1737l"), ctxFor(wSettle, "turn_1737_l1"));
       await turnStarted({}, ctxFor(wSettle, "turn_1737_l2"));
-      await settlementWake(
-        { data: { message: `Background task ${TASK_L} (agent) failed.\nAuthorization: Bearer ntn_averylongsecretvalue0123456789` } },
-        ctxFor(wSettle, "turn_1737_l2"),
-      );
+      await settlementWake({ data: failedEvent("call_1737l", TASK_L, { error: { message: "x".repeat(5000) } }) }, ctxFor(wSettle, "turn_1737_l2"));
       const lRow = (await failedRows()).filter((d) => d.task === TASK_L)[0] ?? {};
-      ok(lRow.parse === "raw", "§14l: the payload-less notification takes the raw arm");
       ok(
-        typeof lRow.error === "string" && lRow.error.includes("[redacted]") && !lRow.error.includes("ntn_averylongsecretvalue0123456789"),
-        `🔴 §14l: …and the raw text is struck by the SAME audit redaction the JSON arm gets. The fallback is not a way past the scrub — got ${JSON.stringify(lRow.error)}`,
+        typeof lRow.error === "string" && lRow.error.length === 301 && lRow.error.endsWith("…"),
+        `🔴 §14l: a 5000-character child error lands CAPPED at the audit bound, 300 characters and "…" (got ${typeof lRow.error === "string" ? lRow.error.length : "no"} characters)`,
       );
 
-      const TASK_M = "task_1737mmmm6666";
-      await turnStarted({}, ctxFor(wSettle, "turn_1737_m1"));
-      await dispatchReceipt(wSettle, "turn_1737_m1", "call_1737m", receiptResult("call_1737m", TASK_M, "ag_agent:1737m"), ctxFor(wSettle, "turn_1737_m1"));
-      await turnStarted({}, ctxFor(wSettle, "turn_1737_m2"));
-      await settlementWake(
-        { data: { message: failedNote(TASK_M, JSON.stringify({ code: "Authorization: Bearer ntn_averylongsecretvalue0123456789", message: "the worker died" })) } },
-        ctxFor(wSettle, "turn_1737_m2"),
+      await hook(
+        { data: { result: failureResult("call_1737m", "Authorization: Bearer ntn_averylongsecretvalue0123456789", "failed", "the worker died") } },
+        ctxFor(wSettle, "turn_1737_m"),
       );
-      const mRow = (await failedRows()).filter((d) => d.task === TASK_M)[0] ?? {};
+      const mRow = (await failedRows()).filter((d) => d.call === "call_1737m")[0] ?? {};
       ok(mRow.error === "the worker died", "§14m: the message half is unaffected");
       ok(
         typeof mRow.errorClass === "string" && mRow.errorClass.includes("[redacted]") && !mRow.errorClass.includes("ntn_averylongsecretvalue0123456789"),

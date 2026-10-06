@@ -1,24 +1,27 @@
 import { generateKeyPairSync, randomUUID, sign, type KeyObject } from "node:crypto";
 import { afterAll, expect, test } from "vitest";
 
+import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import {
+  armSettlement,
   auditCursor,
-  awaitTaskSettlement,
+  awaitWorkResult,
   bootAgent,
+  DISCORD_LISTED_CHANNEL_ID,
   discordMentionWake,
   disposeLater,
-  DISCORD_LISTED_CHANNEL_ID,
   registerScript,
   rowsSinceCursor,
-  SETTLEMENT_DRAIN_SCRIPT,
-  taskIdOfDelegation,
   waitFor,
   waitForAuditRows,
   waitForChildren,
+  workTaskIdOfCall,
   type AuditCursor,
   type ScriptedHandle,
 } from "../harness";
 import { installDiscordWebApiStub, type DiscordCreateMessageCall } from "../discord-web-api";
+
+const STARTER_ROUTINE_RULE = "routine-reports-here";
 
 const TRUSTED = generateKeyPairSync("ed25519");
 process.env.DISCORD_PUBLIC_KEY = Buffer.from((TRUSTED.publicKey.export({ format: "jwk" }) as { x: string }).x, "base64url").toString("hex");
@@ -52,7 +55,7 @@ async function armSeams(): Promise<void> {
     if (pass === "scrutiny") return "YES";
     const reason = `consult ${reasons.length + 1}`;
     reasons.push(reason);
-    return `VERDICT: ${VERDICT_WORD}\nREASON: ${reason}`;
+    return `VERDICT: ${VERDICT_WORD}\nREASON: ${reason}\nRULE: ${STARTER_ROUTINE_RULE}`;
   });
   cleanups.push(() => judge.resetApprovalJudgeCompletion());
 }
@@ -95,27 +98,35 @@ async function proposeRoutine(ids: string, prompt: string): Promise<AuditCursor>
   const handle: ScriptedHandle = disposeLater(
     registerScript({
       parent: [
-        { calls: [{ tool: "agent", input: { message: "set up the routine I asked for" }, id: `${ids}-delegate` }] },
-        { say: "the worker reported back" },
+        { calls: [{ tool: "work", input: { message: "set up the routine I asked for" }, id: `${ids}-delegate` }] },
+        { say: NO_REPLY_SENTINEL },
       ],
-      child: [{ calls: [{ tool: "create_routine", input: { prompt, trigger: TRIGGER }, id: `${ids}-routine` }] }, { say: "proposed" }],
+      child: [
+        { delayMs: 120_000, calls: [{ tool: "create_routine", input: { prompt, trigger: TRIGGER }, id: `${ids}-routine` }] },
+        { say: "proposed" },
+      ],
     }),
   );
 
   const wakeCursor = await auditCursor();
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: "<@9000000000000000001> please set up the routine" });
-  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the parent's terminal step to be served");
+  const receiptStep = await waitFor(
+    () => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1),
+    `the ${ids} receipt step to be served`,
+  );
+  const settlement = disposeLater(armSettlement(handle, { parent: [{ say: NO_REPLY_SENTINEL }] }));
+  const taskId = await workTaskIdOfCall(wakeCursor, handle, `${ids}-delegate`, `${ids} forward receipt`);
+  handle.releaseHolds();
   await waitForChildren(handle, { count: 1, lastStepIndex: 1, label: `the ${ids} worker's own terminal step` });
+  expect(handle.holdsCutShort(), "the worker's hold ended on the release, not on its 120 s backstop").toBe(1);
+  const resultStep = await awaitWorkResult({ handle: settlement, taskId, label: `the ${ids} seat step that read the worker's result` });
+  expect(resultStep.stepIndex).toBe(0);
+  expect(typeof receiptStep.turnId, "the recorder stamps eve's turn id").toBe("string");
+  expect(resultStep.turnId, "the result arrives in a seat turn of its own, never the proposal turn (OPE-2338)").not.toBe(receiptStep.turnId);
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-
-  const drained = await awaitTaskSettlement({
-    dispatched: handle,
-    taskId: taskIdOfDelegation(handle, `the ${ids} delegation`),
-    script: SETTLEMENT_DRAIN_SCRIPT,
-    label: `the ${ids} worker's settlement wake`,
-  });
-  expect(drained.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-  drained.handle.dispose();
+  expect(settlement.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  expect(settlement.resolves.filter((r) => r.fault !== undefined)).toEqual([]);
+  settlement.dispose();
   return wakeCursor;
 }
 

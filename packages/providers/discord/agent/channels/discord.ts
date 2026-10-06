@@ -15,6 +15,7 @@ import {
   authPrincipalId,
   type ChatAuditPartition,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { withEndsTurnFinalChannel } from "@open-everywhere/core/agent/adapter-api.js";
 import { frontDiscordChannel, INTERNAL_DISCORD_ROUTE } from "./discord-front.js";
 import { withDiscordEventsRoute } from "./discord-events.js";
 
@@ -115,4 +116,4 @@ const discordInteractionChannel = discordChannel({
   },
 });
 
-export default withDiscordEventsRoute(frontDiscordChannel(discordInteractionChannel));
+export default withEndsTurnFinalChannel(withDiscordEventsRoute(frontDiscordChannel(discordInteractionChannel)));

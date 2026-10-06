@@ -275,50 +275,85 @@ await client.connect(clientT);
   ok("CONTROL_WRITE_TOOL_NAMES lists revoke_session_grants", (CONTROL_WRITE_TOOL_NAMES as readonly string[]).includes("revoke_session_grants"));
 
   {
-    const { sessionGrantKind } = await import("../agent/approvals/session-grant.js");
     const desc = (await client.listTools()).tools.find((t) => t.name === "revoke_session_grants")?.description ?? "";
-    ok("sessionGrantKind accepts pr.open", sessionGrantKind({ kind: "pr.open", argsJson: "{}" }) === "pr.open");
-    ok("…and accepts NO connector kind — the negative control", sessionGrantKind({ kind: "connector.op:notion", argsJson: "{}" }) === null);
-    ok("🔴 OPE-1778: …so the description never claims a connector write gets a fresh card on a live session", !/next PR-open or connector write/i.test(desc));
-    ok("🔴 OPE-1778: …and it names PR-open as the only kind a session click ever wrote", desc.includes("PR-open is the only kind an \"Approve for session\" click ever wrote"));
-    ok("🔴 OPE-1778: …while stating the whole-key effect on a ROUTINE grant key", desc.includes("connector.tool:") && /whole-key/i.test(desc));
+    ok("🔴 OPE-2363: the description says a conversation keeps no standing grant", desc.includes("keeps no grant") && !desc.includes("Approve for this thread") && !desc.includes("Approve for this DM"));
+    ok("🔴 OPE-2363: …names the routine's standing grant as what sessionId withdraws", desc.includes("Approve for this routine (up to N h)"));
+    ok("🔴 OPE-2363: …and names the room delete as the UNSPENT one-call approvals", desc.includes("has not spent yet"));
+    ok("🔴 OPE-2363: …and says a Discord thread or Teams reply chain is reached through its parent channel", desc.includes("parent channel"));
+    ok("…while stating the effect on a ROUTINE grant key", desc.includes("connector.tool:"));
     ok("…while still pointing at revoke_connector as the ACCESS remedy", desc.includes("revoke_connector"));
   }
 
+  const { conversationGrantKey } = await import("../agent/approvals/session-grant.js");
   const store = getOperationalStore();
   const now = new Date();
   const future = new Date(now.getTime() + 3_600_000).toISOString();
-  await store.rotateChannelSession("default", "slack/T1/C1", "tok-C1-g1", now.toISOString());
-  await store.rotateChannelSession("default", "slack/T1/C2", "tok-C2-g1", now.toISOString());
+  const room = { platform: "slack", workspace: "T1", surface: "C1", mode: "channel" } as const;
+  const threadA = conversationGrantKey({ ...room, threadTs: "1718884080.000100" })!;
+  const threadB = conversationGrantKey({ ...room, threadTs: "1718884080.000200" })!;
+  const otherRoom = conversationGrantKey({ ...room, surface: "C2", threadTs: "1718884080.000100" })!;
+  const dm = conversationGrantKey({ platform: "slack", workspace: "T1", surface: "C1", mode: "dm" })!;
+  ok("precondition: thread A, thread B and the DM are three different keys of one room", new Set([threadA, threadB, dm]).size === 3 && threadA.startsWith("oe-grant:slack/T1/C1:"));
   for (const [sid, kind] of [
-    ["tok-C1-g1", "pr.open"],
-    ["tok-C1-g1", "connector.op:notion"],
-    ["tok-C2-g1", "pr.open"],
+    [threadA, "pr.open"],
+    [threadA, "connector.approved:notion__create_page"],
+    [threadB, "pr.open"],
+    [dm, "pr.open"],
+    [otherRoom, "pr.open"],
   ] as const) {
     await store.setSessionApproval({ org: "default", sessionId: sid, kind, grantedBy: "U_ADMIN", createdAt: now.toISOString(), expiresAt: future });
   }
 
   const r = await callJson(client, "revoke_session_grants", { org: "default", surfaceKey: "slack/T1/C1", reason: "granted too widely" });
-  ok("revoke_session_grants resolves the live session off the registry and revokes its whole grant set", r.ok === true && r.revoked === 2 && r.sessionId === "tok-C1-g1");
-  ok("…so the next pr.open in that session gets a card again", (await store.getSessionApproval("default", "tok-C1-g1", "pr.open", new Date().toISOString())) === null);
-  ok("…and its connector write-session grant is gone too", (await store.getSessionApproval("default", "tok-C1-g1", "connector.op:notion", new Date().toISOString())) === null);
+  ok("🔴 revoke_session_grants by surface key deletes every grant in the room: two threads, the DM, and the approved connector op", r.ok === true && r.revoked === 4 && r.prefix === "oe-grant:slack/T1/C1:");
+  ok("…so the next pr.open in thread A gets a card again", (await store.getSessionApproval("default", threadA, "pr.open", new Date().toISOString())) === null);
+  ok("…and in thread B", (await store.getSessionApproval("default", threadB, "pr.open", new Date().toISOString())) === null);
+  ok("…and the approved connector op in thread A is gone too", (await store.getSessionApproval("default", threadA, "connector.approved:notion__create_page", new Date().toISOString())) === null);
   ok(
-    "🔴 SCOPED: another surface's live session keeps its grants (revoking one seat is not a blast radius)",
-    (await store.getSessionApproval("default", "tok-C2-g1", "pr.open", new Date().toISOString()))?.grantedBy === "U_ADMIN",
+    "🔴 SCOPED: another room keeps its grants (revoking one room is not a blast radius)",
+    (await store.getSessionApproval("default", otherRoom, "pr.open", new Date().toISOString()))?.grantedBy === "U_ADMIN",
   );
 
-  const missing = await client.callTool({ name: "revoke_session_grants", arguments: { org: "default", surfaceKey: "slack/T1/C_NONE" } });
-  const missingText = (missing.content as { type: string; text: string }[])[0].text;
-  ok("a surface with no live session REFUSES with the reason + the way out (pass sessionId)", missing.isError === true && missingText.includes("no live session registered") && missingText.includes("sessionId"));
+  const empty = await callJson(client, "revoke_session_grants", { org: "default", surfaceKey: "slack/T1/C_NONE" });
+  ok("a room that holds no grant answers ok with revoked 0", empty.ok === true && empty.revoked === 0);
 
-  await store.setSessionApproval({ org: "default", sessionId: "thread-1719000000.1", kind: "pr.open", grantedBy: "U_ADMIN", createdAt: now.toISOString(), expiresAt: future });
-  const direct = await callJson(client, "revoke_session_grants", { org: "default", surfaceKey: "slack/T1/C1", sessionId: "thread-1719000000.1" });
-  ok("an explicit sessionId revokes a session with no registry row (thread seat / routine grant key)", direct.ok === true && direct.revoked === 1);
+  await store.setSessionApproval({ org: "default", sessionId: threadA, kind: "pr.open", grantedBy: "U_ADMIN", createdAt: now.toISOString(), expiresAt: future });
+  await store.setSessionApproval({ org: "default", sessionId: threadB, kind: "pr.open", grantedBy: "U_ADMIN", createdAt: now.toISOString(), expiresAt: future });
+  const direct = await callJson(client, "revoke_session_grants", { org: "default", surfaceKey: "slack/T1/C1", sessionId: threadA });
+  ok("an explicit sessionId revokes exactly that thread", direct.ok === true && direct.revoked === 1);
+  ok("…and the other thread of the room keeps its grant", (await store.getSessionApproval("default", threadB, "pr.open", new Date().toISOString())) !== null);
+  const foreign = await client.callTool({ name: "revoke_session_grants", arguments: { org: "default", surfaceKey: "slack/T1/C1", sessionId: otherRoom } });
+  ok("🔴 an explicit sessionId of another room is REFUSED", foreign.isError === true && (foreign.content as { text: string }[])[0].text.includes("is not a grant key of"));
+  ok("…and that room's grant is untouched", (await store.getSessionApproval("default", otherRoom, "pr.open", new Date().toISOString())) !== null);
+  await store.setSessionApproval({ org: "default", sessionId: "oe-grant:slack/T1/CX:dm", kind: "pr.open", grantedBy: "U_ADMIN", createdAt: now.toISOString(), expiresAt: future });
+  ok("🔴 a LIKE metacharacter in the prefix widens nothing", (await store.revokeSessionApprovalsByPrefix("default", "oe-grant:slack/T1/C_:")) === 0);
+  ok("…and the row it would have matched as a pattern is still there", (await store.getSessionApproval("default", "oe-grant:slack/T1/CX:dm", "pr.open", new Date().toISOString())) !== null);
+
+  {
+    const { routinePermissionKey } = await import("../agent/routines/routine.js");
+    await store.addRoutine({ id: "r-room-a", org: "default", surfaceKey: "slack/T1/C_ROOM_A", trigger: { kind: "interval", everyMinutes: 60 }, prompt: "x", createdAt: "2026-06-25T00:00:00Z", status: "active", consecutiveFailures: 0 });
+    await store.addRoutine({ id: "r-room-b", org: "default", surfaceKey: "slack/T1/C_ROOM_B", trigger: { kind: "interval", everyMinutes: 60 }, prompt: "x", createdAt: "2026-06-25T00:00:00Z", status: "active", consecutiveFailures: 0 });
+    const keyA = routinePermissionKey({ id: "r-room-a" });
+    const keyB = routinePermissionKey({ id: "r-room-b" });
+    for (const sid of [keyA, keyB]) {
+      await store.setSessionApproval({ org: "default", sessionId: sid, kind: "pr.open", grantedBy: "U_ADMIN", createdAt: now.toISOString(), expiresAt: future });
+    }
+    const roomAClient = client;
+    const crossRoom = await roomAClient.callTool({ name: "revoke_session_grants", arguments: { org: "default", surfaceKey: "slack/T1/C_ROOM_A", sessionId: keyB } });
+    ok("🔴 a call on room A's surfaceKey cannot revoke room B's routine grant", crossRoom.isError === true && (crossRoom.content as { text: string }[])[0].text.includes("is not the grant key of a routine of"));
+    ok("…and room B's routine grant is untouched", (await store.getSessionApproval("default", keyB, "pr.open", new Date().toISOString())) !== null);
+    const gone = await roomAClient.callTool({ name: "revoke_session_grants", arguments: { org: "default", surfaceKey: "slack/T1/C_ROOM_A", sessionId: "oe-routine:r-deleted:g1" } });
+    ok("…and a routine key whose routine no longer exists is refused the same way", gone.isError === true);
+    const own = await roomAClient.callTool({ name: "revoke_session_grants", arguments: { org: "default", surfaceKey: "slack/T1/C_ROOM_A", sessionId: keyA } });
+    const ownJson = JSON.parse((own.content as { text: string }[])[0].text) as { ok?: boolean; revoked?: number };
+    ok("negative control: the same call shape revokes room A's OWN routine grant", own.isError !== true && ownJson.ok === true && ownJson.revoked === 1);
+    ok("…and room A's routine grant is gone", (await store.getSessionApproval("default", keyA, "pr.open", new Date().toISOString())) === null);
+  }
 
   const rows = await readAudit({ org: "default", action: "admin.session_grants.revoke" });
-  const row = rows.find((e) => (e.detail as { sessionId?: string })?.sessionId === "tok-C1-g1");
-  ok("revoke_session_grants is audited with the actor, the resolved session and the count", row?.principalId === "admin@example.com" && (row?.detail as { revoked?: number })?.revoked === 2 && (row?.detail as { reason?: string })?.reason === "granted too widely");
-  ok("both revokes wrote their own row (the explicit-sessionId path is audited too)", rows.length === 2);
+  const row = rows.find((e) => (e.detail as { prefix?: string })?.prefix === "oe-grant:slack/T1/C1:" && (e.detail as { reason?: string })?.reason === "granted too widely");
+  ok("revoke_session_grants is audited with the actor, the prefix and the count", row?.principalId === "admin@example.com" && (row?.detail as { revoked?: number })?.revoked === 4);
+  ok("every allowed revoke wrote its own row (the explicit-sessionId path is audited too); a refused one wrote none", rows.length === 4);
 }
 
 {

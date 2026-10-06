@@ -118,9 +118,9 @@ A role (or a domain directly) may preset the sandbox size for its sessions:
 defineRole({ name: "engineer", instructions: "…", sandbox: { vcpus: 4 } })
 ```
 
-On the Vercel backend this is applied per session via the sandbox `onSession` hook
-(`Sandbox.update` under the hood). It is fail-open end to end: if the resolution or the
-resize fails, the session opens at the default size and the turn proceeds.
+On the Vercel backend the app's `defineSandbox` selector applies it per session: it opens the
+sandbox environment with `resources.vcpus`, which eve forwards to the Vercel SDK. It is fail-open end to end: if the resolution or the
+sized open fails, the session opens at the default size and the turn proceeds.
 
 ## The starter library
 

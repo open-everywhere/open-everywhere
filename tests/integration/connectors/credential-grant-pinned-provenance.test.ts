@@ -9,18 +9,19 @@ import { PROVENANCE_FOOTER_PREFIX } from "@open-everywhere/core/agent/channels/r
 
 import {
   armSettlement,
+  auditCursor,
+  awaitWorkResult,
   bootAgent,
-  consumeSettlement,
   DISCORD_LISTED_CHANNEL_ID,
   DISCORD_USER_ID,
   discordMentionWake,
   disposeLater,
   registerScript,
   SLACK_TEAM_ID,
-  taskIdOfDelegation,
   WAKE_FROM_ENVELOPE,
   waitFor,
   waitForChildren,
+  workTaskIdOfCall,
 } from "../harness";
 import { installDiscordWebApiStub } from "../discord-web-api";
 import { installHostFetchStub } from "../fetch-stub";
@@ -119,39 +120,39 @@ test("a pinned lent tool states its pin to the WORKER's model, and the seat's re
   const live = await store.liveStandingCredentialGrantsForScope(org, DOMAIN_SCOPE_KEY, new Date().toISOString());
   expect(live.map((g) => g.id), `the seeded standing grant is not live for ${DOMAIN_SCOPE_KEY} — the fixture, not the claim, is broken`).toContain("g-ope2018-pinned");
 
+  const cursor = await auditCursor();
   const script = disposeLater(
     registerScript({
-      parent: [{ calls: [{ tool: "agent", input: { message: `quote a sentence from page ${ASKED_ABOUT_PAGE_ID}` }, id: "ope2018-delegate" }] }, { say: "NO_REPLY" }],
-      child: [{ calls: [{ tool: GRANT_TOOL_NAME, input: { id: PINNED_PAGE_ID }, id: "ope2018-granted-call" }] }, { say: "read it" }],
+      parent: [
+        { calls: [{ tool: "work", input: { message: `quote a sentence from page ${ASKED_ABOUT_PAGE_ID}` }, id: "ope2018-delegate" }] },
+        { say: "NO_REPLY" },
+      ],
+      child: [{ delayMs: 120_000, calls: [{ tool: GRANT_TOOL_NAME, input: { id: PINNED_PAGE_ID }, id: "ope2018-granted-call" }] }, { say: "read it" }],
     }),
   );
   await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `<@9000000000000000001> quote one full sentence from page ${ASKED_ABOUT_PAGE_ID}`, messageId: "ope2018-ask" });
   const seatCall = await waitFor(() => script.requests.find((r) => r.role === "parent" && r.stepIndex === 0), "the standing seat's model call");
-  await waitFor(
-    () => script.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "agent")),
-    "the seat's resumed step carrying the delegation receipt",
-  );
-  const taskId = taskIdOfDelegation(script, "the OPE-2018 pinned-read delegation");
-  const armed = armSettlement(script, {
-    parent: [
-      { calls: [{ tool: "reply", input: { force: true, text: MISATTRIBUTED_ANSWER, wake: WAKE_FROM_ENVELOPE }, id: "ope2018-reply" }] },
-      { say: "done" },
-    ],
+  const taskId = await workTaskIdOfCall(cursor, script, "ope2018-delegate", "the seat's forward receipt");
+  await waitFor(() => script.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the dispatch turn's last step");
+  const settlement = armSettlement(script, {
+    parent: [{ calls: [{ tool: "reply", input: { force: true, text: MISATTRIBUTED_ANSWER, wake: WAKE_FROM_ENVELOPE }, id: "ope2018-reply" }] }],
   });
+  script.releaseHolds();
   await waitForChildren(script, { count: 1, lastStepIndex: 1, label: "the delegated worker to finish its own arm" });
   const workerCall = await waitFor(() => script.requests.find((r) => r.role === "child" && r.stepIndex === 0), "the delegated worker's own first model call");
   expect(String(workerCall.sessionId), "the worker ran on the SEAT's own session, so nothing here measures a delegation").not.toBe(String(seatCall.sessionId));
   const workerRequests = [...script.requests];
-  await consumeSettlement({ armed, dispatched: script, taskId, label: "the delegation's settlement notification" });
-  await waitFor(() => armed.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the seat's last scripted step on the settlement turn");
-  expect([...script.requests, ...armed.requests].filter((r) => r.fault !== undefined), "the seat's script degraded").toEqual([]);
+  const resultStep = await awaitWorkResult({ handle: settlement, taskId, label: "the seat's step that read the worker's result" });
+  expect(seatCall.turnId, "the seat's request carries no eve turn id, so the turn check below is vacuous").toBeDefined();
+  expect(resultStep.turnId, "the worker's result arrived in the dispatch turn — the forwarding seat's turn was held").not.toBe(seatCall.turnId);
+  expect(script.requests.filter((r) => r.fault !== undefined), "the seat's script degraded").toEqual([]);
 
   const definition = workerCall.toolDefinitions.find((d) => d.name === GRANT_TOOL_NAME);
   expect(definition, `the delegated worker was never offered ${GRANT_TOOL_NAME}, so nothing here is about a lent tool`).toBeDefined();
   expect(seatCall.tools, `the standing SEAT was offered ${GRANT_TOOL_NAME} — a lent tool mounts on the conversation's workers, never on the seat`).not.toContain(
     GRANT_TOOL_NAME,
   );
-  expect(seatCall.tools, "the standing seat's offer carries no `agent` verb — the assertion above would then be vacuous").toContain("agent");
+  expect(seatCall.tools, "the standing seat's offer carries no `work` verb — the assertion above would then be vacuous").toContain("work");
   expect(
     definition?.description,
     "the lent tool's description does not name the page it is pinned to — the model reads a general Notion reader and calls it for whatever it is asked about",
@@ -184,5 +185,6 @@ test("a pinned lent tool states its pin to the WORKER's model, and the seat's re
     VENDOR_BODY_MARKER,
   );
   expect(reply.content, "the host rewrote the model's answer instead of adding to it").toContain(MISATTRIBUTED_ANSWER);
-  armed.dispose();
+  expect(script.requests.filter((r) => r.fault !== undefined), "the seat's script degraded after the result step").toEqual([]);
+  expect(settlement.requests.filter((r) => r.fault !== undefined), "the seat's result-wake script degraded after the reply").toEqual([]);
 });

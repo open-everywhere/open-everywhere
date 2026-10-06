@@ -75,5 +75,5 @@ console.log(
   `✓ it-memory-config: ${passed} assertions passed (each fork's V8 old space is capped at ${heapMb} MB, console interception is off, ` +
     `the built server bundle and the built package dists load natively while the tier's own sources still transform; ` +
     `memory and cores allow 6 workers (1.5 per core) on the measured 4-core 13.3 GiB sandbox, and the harness ceiling schedules ` +
-    `${sandboxWorkers} there since OPE-2281 settled the re-drive and cancel-delivery races).`,
+    `${sandboxWorkers} there since OPE-2281 settled the re-drive race (the cancel-delivery half is open on eve 0.71)).`,
 );

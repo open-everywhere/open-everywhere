@@ -6,6 +6,7 @@ export interface CoreSeamSource {
 export interface ProviderSelectionInput {
   readonly manifestSource: string;
   readonly wiringSource: string;
+  readonly appWiringSource?: string;
   readonly appDependencies: readonly string[];
   readonly coreSeams: readonly CoreSeamSource[];
   readonly fullCoreSweep?: boolean;
@@ -66,7 +67,7 @@ export function checkProviderSelection(input: ProviderSelectionInput): string[] 
 
   if (!/declareProviderSelection\s*\(/u.test(input.wiringSource)) {
     problems.push(
-      `agent/lib/register-adapters.ts never calls declareProviderSelection(...) — without the declaration core stays in library mode and the boot gate admits EVERY provider`,
+      `the boot wiring (registerDefaultAdapters) never calls declareProviderSelection(...) — without the declaration core stays in library mode and the boot gate admits EVERY provider`,
     );
   }
   {
@@ -74,14 +75,27 @@ export function checkProviderSelection(input: ProviderSelectionInput): string[] 
     const firstRegisterAt = input.wiringSource.search(/\.register\(\)/u);
     if (declareAt >= 0 && firstRegisterAt >= 0 && firstRegisterAt < declareAt) {
       problems.push(
-        `agent/lib/register-adapters.ts registers a provider BEFORE declareProviderSelection(...) — rows that land ahead of the declaration predate the gate and cannot be retracted; declare first`,
+        `the boot wiring (registerDefaultAdapters) registers a provider BEFORE declareProviderSelection(...) — rows that land ahead of the declaration predate the gate and cannot be retracted; declare first`,
       );
     }
   }
   for (const m of input.wiringSource.matchAll(PROVIDER_PKG)) {
     problems.push(
-      `agent/lib/register-adapters.ts references @open-everywhere/provider-${m[1]} directly — provider selection lives in roster.config.ts alone, so there is exactly ONE list to prune`,
+      `the boot wiring (registerDefaultAdapters) references @open-everywhere/provider-${m[1]} directly — provider selection lives in roster.config.ts alone, so there is exactly ONE list to prune`,
     );
+  }
+
+  if (input.appWiringSource !== undefined) {
+    if (!/\bregisterDefaultAdapters\s*\(/u.test(input.appWiringSource)) {
+      problems.push(
+        `agent/lib/register-adapters.ts never calls registerDefaultAdapters(...) — the app's copy wires the adapters by hand, and an upgrade of @open-everywhere/adapters no longer reaches it`,
+      );
+    }
+    for (const m of input.appWiringSource.matchAll(PROVIDER_PKG)) {
+      problems.push(
+        `agent/lib/register-adapters.ts references @open-everywhere/provider-${m[1]} directly — provider selection lives in roster.config.ts alone, so there is exactly ONE list to prune`,
+      );
+    }
   }
 
   for (const { path, source } of input.coreSeams) {

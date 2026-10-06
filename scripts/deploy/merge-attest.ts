@@ -1,4 +1,4 @@
-import { formatInvocation, postCommitStatus } from "./cloud-proof-post-lib.js";
+import { formatInvocation, pinInvocationToRepo, postCommitStatus } from "./cloud-proof-post-lib.js";
 import { parseArgs } from "./lib.js";
 import {
   type AttestPlan,
@@ -86,7 +86,7 @@ if (plan.kind === "refuse") {
 console.log(`  ${plan.note}`);
 
 if (dryRun) {
-  console.log(`${plan.state === "success" ? "✓" : "✗"} deploy:merge-attest (dry run, nothing posted): ${formatInvocation(plan.invocation)}`);
+  console.log(`${plan.state === "success" ? "✓" : "✗"} deploy:merge-attest (dry run, nothing posted): ${formatInvocation(pinInvocationToRepo(plan.invocation, process.env))}`);
   process.exit(plan.state === "success" ? 0 : 1);
 }
 

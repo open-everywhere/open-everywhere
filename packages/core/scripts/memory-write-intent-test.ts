@@ -34,7 +34,7 @@ const { registerProvider } = await import("../agent/memory/provider.js");
 const { siloTier, tierId } = await import("../agent/memory/store.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { deploymentOrg } = await import("../agent/identity/binding.js");
-const { formatWindowToken } = await import("../agent/channels/window-key.js");
+const { formatWindowToken, workWindowId } = await import("../agent/channels/window-key.js");
 const { MEMORY_WRITE_ACTION } = await import("../agent/memory/write-road.js");
 const { factStoredThisTurn } = await import("../agent/memory/write-evidence.js");
 const { applyMemoryClaimGuard } = await import("../agent/channels/memory-claim-guard.js");
@@ -182,7 +182,7 @@ registerConfig({
 tiers.set(tierId(BRAIN), { files: { "MEMORY.md": `# ${SILO}\n` }, version: 1 });
 
 const ORG = deploymentOrg();
-const WINDOW = formatWindowToken({ domain: "payments", windowId: "payments", generation: 3 });
+const WINDOW = formatWindowToken({ domain: "payments", windowId: workWindowId("slack_T1_C1"), generation: 3 });
 const SLACK_ATTRS: Record<string, string> = {
   team_id: "T1",
   channel_id: "C1",
@@ -348,6 +348,30 @@ const providerNamers = bundles.filter((b) => {
   return readdirSync(dir).some((n) => n.endsWith(".ts") && readFileSync(join(dir, n), "utf-8").includes("write-intent.js"));
 });
 ok(providerNamers.length === 0, `PARITY: no provider bundle names it either — naming it: ${providerNamers.join(", ")}`);
+
+{
+  const { noteDurableMemoryWrite, factWritesThisTurn, adoptCarriedWrites, OE_WORK_RESULT_WRITES_ATTR } = await import("../agent/memory/write-evidence.js");
+  const { workResultAttributes } = await import("../agent/channels/unified.js");
+  const CLAIM = "It's now in durable notes and the curated memory index.";
+  let carried: unknown;
+  await inEveContext(new FakeEveContext(), async () => {
+    noteDurableMemoryWrite("turn_w", { kind: "memory", road: "session-persist", silo: "it-memory-brain", version: "v-1" });
+    noteDurableMemoryWrite("turn_w", { kind: "operational", road: "status-board", version: "v-2" });
+    const facts = factWritesThisTurn("turn_w");
+    ok(facts.length === 1 && facts[0]!.silo === "it-memory-brain", "OPE-2343: the work session reads its own FACT writes, and only those");
+    carried = workResultAttributes({ requestId: "q-w", requester: { kind: "unverified", reason: "t" }, nonMemberWake: false, tainted: false, memoryWrites: facts })[OE_WORK_RESULT_WRITES_ATTR];
+    ok(typeof carried === "string", "OPE-2343: the result wake carries them");
+    ok(!(OE_WORK_RESULT_WRITES_ATTR in workResultAttributes({ requestId: "q-w", requester: { kind: "unverified", reason: "t" }, nonMemberWake: false, tainted: false })), "OPE-2343: a result wake with no writes carries no attribute");
+  });
+  await inEveContext(new FakeEveContext(), async () => {
+    ok(applyMemoryClaimGuard(CLAIM, factStoredThisTurn("turn_seat")).withheld.length === 1, "OPE-2343 NEGATIVE CONTROL: before adoption the seat's guard strikes the claim — the measured defect");
+    ok(adoptCarriedWrites("turn_seat", carried) === 1, "OPE-2343: the seat's turn adopts the one carried write");
+    ok(factStoredThisTurn("turn_seat"), "OPE-2343: 🔴 the seat's turn now holds the work session's write as evidence");
+    ok(applyMemoryClaimGuard(CLAIM, factStoredThisTurn("turn_seat")).withheld.length === 0, "OPE-2343: 🔴 so the guard keeps the seat's true claim");
+    ok(!factStoredThisTurn("turn_other"), "OPE-2343: and it backs THAT turn only");
+    ok(adoptCarriedWrites("turn_bad", "not json") === 0 && adoptCarriedWrites("turn_bad", JSON.stringify([{ road: "x" }])) === 0 && !factStoredThisTurn("turn_bad"), "OPE-2343: a malformed carriage records nothing (fail closed)");
+  });
+}
 
 await removeTempDir(tmp);
 console.log(`memory write intent: ${passed} assertions passed`);

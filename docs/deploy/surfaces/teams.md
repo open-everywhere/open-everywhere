@@ -149,11 +149,11 @@ which vouches every unverifiable surface on every platform at once.
 
 ## Step 2 — Package the Teams app
 
-The Azure Bot exists, but Teams needs an **app package** (a manifest + icons) to surface the bot inside Teams. A ready-made, templated package ships in the repo at [`teams-app/`](../../../teams-app/) — a `manifest.json` (already scoped for `team` + `groupChat` + `personal`) plus placeholder icons and a build/install README.
+The Azure Bot exists, but Teams needs an **app package** (a manifest + icons) to surface the bot inside Teams. The manifest is **rendered**, not static (OPE-2334): the Teams bundle renders it from this deployment's settings, so the app carries the configured [`identity.name`](../configuration-reference.md) in `name.short`, `name.full` and `description.full` ("Open Everywhere" when no name is configured). Get it from the ops MCP tool — `surface_manifest { "surface": "teams", "baseUrl": "https://<the deployment's host>" }` — which also substitutes your deploy host. An explicit `appName` (at most 30 characters) overrides the configured name. The placeholder icons and a build/install README ship at [`teams-app/`](../../../teams-app/). The manifest is already scoped for `team` + `groupChat` + `personal`.
 
-1. Fill the package: replace `{{MICROSOFT_APP_ID}}` (your `MICROSOFT_APP_ID`, used for both `id` and `bots[].botId`), `{{DEPLOY_DOMAIN}}` (your deploy host), and `{{DEVELOPER_NAME}}`, then zip it flat — the `teams-app/README.md` has a one-liner. Replace the placeholder `color.png` / `outline.png` with real brand icons before any org-wide install.
+1. Fill the package: save the rendered manifest as `teams-app/manifest.json`, replace `{{MICROSOFT_APP_ID}}` (your `MICROSOFT_APP_ID`, used for both `id` and `bots[].botId`) and `{{DEVELOPER_NAME}}`, then zip it flat — the `teams-app/README.md` has a one-liner. Replace the placeholder `color.png` / `outline.png` with real brand icons before any org-wide install.
    - Prefer a GUI? The [Developer Portal for Teams](https://dev.teams.microsoft.com/) (formerly *App Studio*) → **Apps → New app** → **App features → Bot** → select the bot by its app ID does the same thing interactively.
-   - The manifest's `privacyUrl` and `termsOfUseUrl` are **not** placeholders: they point at `/privacy` and `/terms` on your own deploy host, and **the deployment serves both**. Filling `{{DEPLOY_DOMAIN}}` is all they need. The TEXT of both is yours — declare it as `policyPages.privacy` and `policyPages.terms` in `agent/settings/settings.ts` (see [the configuration reference](../configuration-reference.md#agent-settings-behaviour-config-as-code)). Undeclared, each route still answers `200` with a short page saying no document is published yet, so a sideload never breaks; publish real text before an **org-wide** upload, where a reviewer reads them.
+   - The manifest's `privacyUrl` and `termsOfUseUrl` are **not** placeholders: they point at `/privacy` and `/terms` on your own deploy host, and **the deployment serves both**. The host `surface_manifest` substitutes is all they need. The TEXT of both is yours — declare it as `policyPages.privacy` and `policyPages.terms` in `agent/settings/settings.ts` (see [the configuration reference](../configuration-reference.md#agent-settings-behaviour-config-as-code)). Undeclared, each route still answers `200` with a short page saying no document is published yet, so a sideload never breaks; publish real text before an **org-wide** upload, where a reviewer reads them.
 2. The package already declares the three **scopes** — `team` (channel surfaces), `groupChat` (mpim surfaces), `personal` (dm surfaces). Trim them in `manifest.json` if you want a narrower install.
 3. The package declares three **RSC (resource-specific consent) permissions** (all Application), under `authorization.permissions.resourceSpecific`, paired with a `webApplicationInfo` block (`id` = your app id, `resource` = any URI):
    - **`ChannelMessage.Read.Group`** — read a **team's channel** messages, and receive *every* channel message activity rather than only @mentions. Granted by a **team owner** at install time.
@@ -210,7 +210,7 @@ Separately, the session also carries a HANDLE line — "your mention/handle here
 the agent recognises its own mentions and backscroll lines under the app's real Teams name. Two
 Graph reads feed it, tried in this order:
 
-1. **The Teams app-catalog name** — the `teams-app/manifest.json` `name.short` the Teams client
+1. **The Teams app-catalog name** — the app manifest's `name.short` the Teams client
    renders beside a message. The agent reads it from Microsoft Graph
    (`GET /appCatalogs/teamsApps?$filter=externalId eq '…'&$expand=appDefinitions`). This call needs
    a tenant-admin-consented `AppCatalog.Read.All`. Without that consent, or if the call fails for
@@ -223,7 +223,7 @@ Graph reads feed it, tried in this order:
    multi-tenant install is reasoned to behave the same (the service principal exists in each
    consenting tenant) but is not measured.
 
-If your `teams-app/manifest.json` `name.short` and the app registration's display name are the
+If your app manifest's `name.short` and the app registration's display name are the
 same string, both options answer identically and there is nothing to think about. They can differ
 in case or spacing (`open-everywhere` vs `Open Everywhere` is a real example) — grant
 `AppCatalog.Read.All` if you want the exact catalog string; otherwise the registration name is

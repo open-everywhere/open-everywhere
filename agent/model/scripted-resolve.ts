@@ -1,29 +1,40 @@
-import { mockModel, type MockModelRequest } from "eve/evals";
+import { mockModel, type MockModelRequest, type MockModelResponse } from "eve/evals";
 import { onVercel } from "@open-everywhere/core/agent/access/platform.js";
 import { isSubagentChildContext, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
+import { isWorkSessionContext } from "@open-everywhere/core/agent/access/work-session.js";
+import { parseWorkCancels, parseWorkRequests } from "@open-everywhere/core/agent/channels/work.js";
 import { classifySessionId } from "@open-everywhere/core/agent/channels/window-key.js";
 import { NO_REPLY_SENTINEL, REDRIVE_TRIGGER_ID_PREFIX } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import { stampModelCall } from "@open-everywhere/core/agent/model/model-stamp.js";
+import { noteWakeAttachments } from "@open-everywhere/core/agent/access/worker-continuation.js";
 import { boundaryStopReply, noteTurnStep, reportStepBoundary } from "@open-everywhere/core/agent/model/step-boundary.js";
 import {
+  isEmptyResponseReissue,
   ANY_SESSION,
   SCRIPTED_MODEL_ENV,
   SCRIPTED_MODEL_ID,
   claimWakeOwner,
   clearIncompleteParentTurn,
   fillReportWakePlaceholder,
+  fillTaskPlaceholder,
   fillWakePlaceholder,
+  holdScriptedCall,
   incompleteParentTurnFor,
   isForeignWakeStraggler,
   noteForeignWakeSilence,
+  noteWorkSessionCall,
   noteStaleHoldExpiry,
   nextScriptedRequestSequence,
   scriptedModelArmed,
   scriptedRegistrationSeq,
   scriptedStore,
   staleTurnParkMs,
+  taskIdFromPrompt,
+  taskResultDeliveryCount,
   unresolvedReportWakePlaceholderFault,
+  unresolvedTaskPlaceholderFault,
   unresolvedWakePlaceholderFault,
+  legWakeIdFromPrompt,
   wakeIdFromPrompt,
   wakeIdFromReport,
   wakeOwnerSeq,
@@ -64,8 +75,16 @@ export async function scriptedModelFor(event: unknown, ctx: unknown): Promise<Re
   stampModelCall(SCRIPTED_MODEL_ID);
 
   const boundary = await noteTurnStep(bindable, event);
+  noteWakeAttachments((ctx as { messages?: unknown } | undefined)?.messages);
   if (boundary.tier === "hard" || boundary.tier === "closed") {
     reportStepBoundary(bindable, boundary);
+    if (isWorkSessionContext(bindable)) {
+      const wSession = (ctx as { session?: { id?: unknown } } | undefined)?.session?.id;
+      const wId = typeof wSession === "string" ? wSession : undefined;
+      const wStore = scriptedStore();
+      const named = (wId !== undefined ? wStore.get(wId) : undefined)?.script.work !== undefined || wStore.get(ANY_SESSION)?.script.work !== undefined;
+      if (!named) noteWorkSessionCall({ sessionId: wId, turnId: eventData(event).turnId });
+    }
     return mockModel({
       modelId: SCRIPTED_MODEL_ID,
       provider: "open-everywhere-scripted",
@@ -79,6 +98,13 @@ export async function scriptedModelFor(event: unknown, ctx: unknown): Promise<Re
   const store = scriptedStore();
   const ownEntry = sessionId !== undefined ? store.get(sessionId) : undefined;
   const usedFallback = ownEntry === undefined;
+  if (isWorkSessionContext(bindable)) {
+    const named = ownEntry?.script.work !== undefined ? ownEntry : store.get(ANY_SESSION)?.script.work !== undefined ? store.get(ANY_SESSION) : undefined;
+    if (named === undefined) {
+      noteWorkSessionCall({ sessionId, turnId: eventData(event).turnId });
+      return defaultWorkStepModel();
+    }
+  }
   const entry = ownEntry ?? store.get(ANY_SESSION);
   if (entry === undefined) {
     throw new Error(
@@ -90,7 +116,7 @@ export async function scriptedModelFor(event: unknown, ctx: unknown): Promise<Re
   const seqAtResolve = scriptedRegistrationSeq();
 
   const { turnId, stepIndex } = eventData(event);
-  const role: ScriptedRole = isSubagentChildContext(bindable) ? "child" : "parent";
+  const role: ScriptedRole = isSubagentChildContext(bindable) ? "child" : isWorkSessionContext(bindable) ? "work" : "parent";
 
   const observation: ResolveObservation = {
     role,
@@ -140,6 +166,33 @@ export async function scriptedModelFor(event: unknown, ctx: unknown): Promise<Re
   return buildStepModel(entry, observation, seqAtResolve, usedFallback);
 }
 
+function defaultWorkStepModel(): ReturnType<typeof mockModel> {
+  return signalAwareMockModel({
+    respond: async (request) => {
+      const prompt = request.messages.map((m) => m.text).join("\n");
+      const cancelledCount = request.toolResults.filter((r) => r.name === "task_cancel").length;
+      const cancel = parseWorkCancels(prompt)[cancelledCount];
+      if (cancel !== undefined) return { toolCalls: [{ name: "task_cancel", input: { taskId: cancel.taskId }, id: `work-${cancel.cancelId}` }] };
+      const blocks = parseWorkRequests(prompt);
+      const results = request.toolResults.filter((r) => r.name === "agent");
+      const resultsFor = (requestId: string) => results.filter((r) => r.id === workCallId(requestId) || r.id.startsWith(`${workCallId(requestId)}-`));
+      for (let i = blocks.length - 1; i >= 0; i--) {
+        const next = blocks[i]!;
+        const tried = resultsFor(next.requestId);
+        if (tried.some((r) => !r.isError)) continue;
+        const delivered = blocks.filter((b) => b.requestId === next.requestId).length;
+        if (tried.length >= delivered) continue;
+        return { toolCalls: [{ name: "agent", input: { message: next.brief, ...(next.taskId !== undefined ? { taskId: next.taskId } : {}) }, id: `${workCallId(next.requestId)}-${tried.length + 1}` }] };
+      }
+      return { text: "Started the forwarded job; its result goes back to the conversation when it settles." };
+    },
+  });
+}
+
+function workCallId(requestId: string): string {
+  return `work-${requestId}`;
+}
+
 function snapshotSchema(schema: unknown): unknown {
   try {
     return JSON.parse(JSON.stringify(schema)) as unknown;
@@ -167,10 +220,11 @@ function stepIndexFor(arm: readonly ScriptedStep[], answered: number): number | 
   let before = 0;
   for (let i = 0; i < arm.length; i++) {
     if (before === answered) return i;
-    before += arm[i].calls?.length ?? 0;
+    const calls = arm[i].calls?.length ?? 0;
+    before += calls > 0 ? calls : 1;
   }
   if (before === answered) return `script exhausted: all ${arm.length} step(s) already served`;
-  return `unmappable tool-result count ${answered} (script emits ${before} call(s) in total)`;
+  return `unmappable answered-step count ${answered} (script accounts for ${before})`;
 }
 
 function promptIsRedriveCorrection(messages: readonly { readonly text: string }[]): boolean {
@@ -186,6 +240,8 @@ function promptIsRedriveCorrection(messages: readonly { readonly text: string }[
 interface PromptFacts {
   readonly redriveCorrection: boolean;
   readonly wakeId: string | undefined;
+  readonly legWakeId: string | undefined;
+  readonly taskResultDeliveries: number;
 }
 
 interface StepVerdict {
@@ -204,26 +260,28 @@ function serveStep(
   prompt: PromptFacts,
   wildcard: boolean,
 ): StepVerdict {
-  const arm = at.role === "child" ? entry.script.child : entry.script.parent;
+  const arm = at.role === "child" ? entry.script.child : at.role === "work" ? entry.script.work : entry.script.parent;
   const baselineKey = `${at.sessionId ?? "?"}/${at.turnId ?? "?"}/${at.role}`;
   const baseline = (entry.baselines[baselineKey] ??= toolResultCount);
+  const deliveryBaseline = (entry.deliveryBaselines[baselineKey] ??= prompt.taskResultDeliveries);
   const nothing: ScriptedStep = { say: "scripted-model fault: see the record" };
 
   if (arm === undefined) return { fault: "no child script registered", served: -1, step: nothing, stale: false };
-  const index = stepIndexFor(arm, toolResultCount - baseline);
+  const answered = toolResultCount - baseline + (prompt.taskResultDeliveries - deliveryBaseline);
+  const index = stepIndexFor(arm, answered);
   if (typeof index === "string") return { fault: index, served: -1, step: nothing, stale: false };
 
   const candidate = arm[index];
   const turnKey = at.turnId ?? "?";
 
-  const wakeOwner = prompt.wakeId === undefined ? undefined : wakeOwnerSeq(prompt.wakeId);
+  const wakeOwner = prompt.legWakeId === undefined ? undefined : wakeOwnerSeq(prompt.legWakeId);
   if (
     isForeignWakeStraggler({
       role: at.role,
       wildcard,
       callBearing: candidate.calls !== undefined,
       absorbsStragglers: entry.absorbsStragglers,
-      wakeId: prompt.wakeId,
+      wakeId: prompt.legWakeId,
       ownerSeq: wakeOwner,
       seq: entry.seq,
     })
@@ -231,7 +289,7 @@ function serveStep(
     noteForeignWakeSilence({
       sessionId: String(at.sessionId),
       turnId: turnKey,
-      wakeId: String(prompt.wakeId),
+      wakeId: String(prompt.legWakeId),
       ownerSeq: Number(wakeOwner),
       registeredAt: entry.registeredAt,
     });
@@ -248,7 +306,7 @@ function serveStep(
       fault:
         `stale script: role "${at.role}" already served a call-bearing step for turn "${firstCallTurn}"; ` +
         `turn "${turnKey}" is a DIFFERENT turn hitting the same still-registered entry — dispose and ` +
-        "re-register a fresh script per turn (see harness.ts's awaitTaskSettlement doc).",
+        "re-register a fresh script per turn (see the delegation choreography seam in harness.ts).",
       served: -1,
       step: nothing,
       stale: true,
@@ -258,7 +316,7 @@ function serveStep(
     entry.firstCallTurnByRole[at.role] = turnKey;
     if (prompt.wakeId !== undefined) entry.firstCallWakeByRole[at.role] = prompt.wakeId;
   }
-  if (at.role === "parent" && prompt.wakeId !== undefined) claimWakeOwner(prompt.wakeId, entry.seq);
+  if (at.role === "parent" && prompt.legWakeId !== undefined) claimWakeOwner(prompt.legWakeId, entry.seq);
   return { served: index, step: candidate, stale: false };
 }
 
@@ -291,14 +349,17 @@ function buildStepModel(
   seqAtResolve: number,
   usedFallback: boolean,
 ): ReturnType<typeof mockModel> {
-  return mockModel({
-    modelId: SCRIPTED_MODEL_ID,
-    provider: "open-everywhere-scripted",
-    respond: async (request) => {
+  return signalAwareMockModel({
+    respond: async (request, signal) => {
       let target = entry;
       let observation = at;
       const promptWakeId = wakeIdFromPrompt(request.messages);
-      const promptFacts: PromptFacts = { redriveCorrection: promptIsRedriveCorrection(request.messages), wakeId: promptWakeId };
+      const promptFacts: PromptFacts = {
+        redriveCorrection: promptIsRedriveCorrection(request.messages),
+        wakeId: promptWakeId,
+        legWakeId: legWakeIdFromPrompt(request.messages),
+        taskResultDeliveries: taskResultDeliveryCount(request.messages),
+      };
       let verdict = serveStep(target, observation, request.toolResults.length, promptFacts, usedFallback);
 
       if (verdict.stale) {
@@ -322,17 +383,31 @@ function buildStepModel(
           verdict = serveStep(target, observation, request.toolResults.length, promptFacts, swap.viaWildcard);
         }
       }
-      const { fault: stepFault, served, step, redriveSilence, foreignWakeSilence } = verdict;
+      const { fault: stepFault, served, redriveSilence, foreignWakeSilence } = verdict;
+      const emptyReissue = isEmptyResponseReissue(request.messages);
+      const step = emptyReissue && verdict.step.onEmptyReissue !== undefined ? verdict.step.onEmptyReissue : verdict.step;
 
+      const promptTaskId = taskIdFromPrompt(request.messages);
       const filled = (step.calls ?? []).map((c) => {
         const envelope = fillWakePlaceholder(c.input, promptWakeId);
         const report = fillReportWakePlaceholder(envelope.value, wakeIdFromReport(request.messages));
-        return { call: c, value: report.value, unresolved: envelope.unresolved || report.unresolved, reportUnresolved: report.unresolved };
+        const task = fillTaskPlaceholder(report.value, promptTaskId);
+        return {
+          call: c,
+          value: task.value,
+          unresolved: envelope.unresolved || report.unresolved || task.unresolved,
+          reportUnresolved: report.unresolved,
+          taskUnresolved: task.unresolved,
+        };
       });
       const unresolvedCall = filled.find((f) => f.unresolved);
       const saidReport = fillReportWakePlaceholder(step.say, wakeIdFromReport(request.messages));
       const wakeFault = unresolvedCall
-        ? (unresolvedCall.reportUnresolved ? unresolvedReportWakePlaceholderFault : unresolvedWakePlaceholderFault)(unresolvedCall.call.tool)
+        ? (unresolvedCall.taskUnresolved
+            ? unresolvedTaskPlaceholderFault
+            : unresolvedCall.reportUnresolved
+              ? unresolvedReportWakePlaceholderFault
+              : unresolvedWakePlaceholderFault)(unresolvedCall.call.tool)
         : saidReport.unresolved
           ? unresolvedReportWakePlaceholderFault("say")
           : undefined;
@@ -351,16 +426,14 @@ function buildStepModel(
         ...(fault !== undefined ? { fault } : {}),
         ...(redriveSilence === true ? { redriveSilence: true } : {}),
         ...(foreignWakeSilence === true ? { foreignWakeSilence: true } : {}),
+        ...(emptyReissue ? { emptyReissue: true } : {}),
       });
 
-      if (typeof step.delayMs === "number" && step.delayMs > 0) {
-        const deadline = Date.now() + step.delayMs;
-        while (!target.holds.released && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
-        if (target.holds.released) target.holds.cutShort += 1;
-      }
+      await holdScriptedCall(target.holds, step, signal);
 
       if (wakeFault !== undefined) return { text: wakeFault };
 
+      if (step.say === undefined && step.calls === undefined) return { text: "", ...(step.usage !== undefined ? { usage: step.usage } : {}) };
       return {
         ...(step.say !== undefined ? { text: typeof saidReport.value === "string" ? saidReport.value : step.say } : {}),
         ...(step.calls !== undefined
@@ -370,4 +443,40 @@ function buildStepModel(
       };
     },
   });
+}
+
+export function signalAwareMockModel(opts: {
+  readonly respond: (request: MockModelRequest, signal: AbortSignal | undefined) => Promise<MockModelResponse>;
+}): ReturnType<typeof mockModel> {
+  let callSignal: AbortSignal | undefined;
+  const model = mockModel({
+    modelId: SCRIPTED_MODEL_ID,
+    provider: "open-everywhere-scripted",
+    respond: (request) => opts.respond(request, callSignal),
+  });
+  const calls = callableModel(model);
+  const doStream = calls.doStream.bind(calls);
+  const doGenerate = calls.doGenerate.bind(calls);
+  calls.doStream = (options) => {
+    callSignal = options.abortSignal;
+    return doStream(options);
+  };
+  calls.doGenerate = (options) => {
+    callSignal = options.abortSignal;
+    return doGenerate(options);
+  };
+  return model;
+}
+
+interface CallableModel {
+  doStream: (options: { readonly abortSignal?: AbortSignal }) => unknown;
+  doGenerate: (options: { readonly abortSignal?: AbortSignal }) => unknown;
+}
+
+function callableModel(model: unknown): CallableModel {
+  const m = model as Partial<CallableModel> | null;
+  if (typeof m !== "object" || m === null || typeof m.doStream !== "function" || typeof m.doGenerate !== "function") {
+    throw new Error("open-everywhere: eve's mockModel no longer returns a model object with doStream/doGenerate (OPE-2310).");
+  }
+  return m as CallableModel;
 }

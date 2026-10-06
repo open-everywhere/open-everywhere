@@ -1,8 +1,9 @@
 import { defineChannel, GET, POST } from "eve/channels";
-import type { Session, RouteHandlerArgs } from "eve/channels";
+import type { ChannelEvents, Session, RouteHandlerArgs } from "eve/channels";
+import { defineState } from "eve/context";
 import { SELF_DISPATCH_PATH, handleSelfDispatch, postSelfDispatch, selfDispatchConfigured, type UnifiedDispatchPayload } from "./self-dispatch.js";
 import { appendAudit, auditSilencesEnabled } from "../audit/audit.js";
-import { deploymentOrg, currentWakeId, currentTurnId, currentTurnAddressing, currentTurnAddressed, bindFrom, carriesPlatformIdentity, type BindableContext, type SurfaceBinding } from "../identity/binding.js";
+import { deploymentOrg, currentWakeId, currentTurnId, currentTurnAddressing, currentTurnAddressed, bindFrom, carriesPlatformIdentity, WORK_FIRE_CREATOR_ATTR, type BindableContext, type SurfaceBinding } from "../identity/binding.js";
 import { isFrozenSurfaceBinding, OE_FROZEN_SURFACE_BINDING_ATTR } from "../identity/frozen-surface-binding.internal.js";
 import { getConfig } from "../access/config.js";
 import "../access/eve-patch-probe-boot.js";
@@ -29,21 +30,26 @@ import {
   forgetBridgedQuestion,
   settleAnsweredWake,
   readBridgedQuestion,
+  ordinaryWakeSendOptions,
+  bridgedQuestionMayBeOpen,
   rememberBridgedQuestion,
   resolveInboundAnswerRouting,
   isAddressedMentionWake,
   approvalOptionIds,
   QUESTION_ANSWERED_AUDIT_ACTION,
   QUESTION_ANSWER_DROPPED_AUDIT_ACTION,
+  QUESTION_DROPPED_AUDIT_ACTION,
 } from "./question-bridge.js";
 import { admitInputResponse } from "../approvals/input-response-floor.js";
 import { resolvePartition } from "../memory/partition.js";
+import { encodeCarriedWrites, OE_WORK_RESULT_WRITES_ATTR, type DurableMemoryWrite } from "../memory/write-evidence.js";
 import { unifiedDomainFromToken, unifiedDomainSessionKey, isUnifiedSupervisorToken } from "./unified-supervisor.js";
-import { parseWindowToken, isTaskWindowId, isThreadSeatWindowId, isThreadSeatWindowToken, dmAnchorSurfaceForToken, dmSurfaceKeyFromAnchorDomain, bareTokenFromEveContext } from "./window-key.js";
+import { parseWindowToken, isTaskWindowId, isThreadSeatWindowId, isThreadSeatWindowToken, isWorkWindowToken, dmAnchorSurfaceForToken, dmSurfaceKeyFromAnchorDomain, bareTokenFromEveContext } from "./window-key.js";
 import { resolveThreadOwner, clearThreadOwner, routeThreadMessage } from "./thread-ownership.js";
 import { drainGenerationRetirements } from "./generation-retirement.js";
 import { oneshotAgentEnabled } from "../access/delegation-flag.js";
-import { INVOKER_POSTURE_ATTR } from "../access/invoker-posture.js";
+import { INGESTION_KINDS } from "../access/taint-tiers.js";
+import { INVOKER_POSTURE_ATTR, narrowerInvokerPosture, type InvokerPosture } from "../access/invoker-posture.js";
 import { currentInvokerPosture } from "../access/invoker-posture-state.js";
 import {
   OE_REQUESTER_ATTR,
@@ -55,8 +61,13 @@ import {
   type RequesterVerdict,
 } from "../access/requester-identity.js";
 import { OE_CHAT_NONMEMBER_ATTR } from "../access/taint-signal.js";
+import { rememberNonMemberAnswer } from "../access/held-question.js";
 import { carryRunRefusalsToRedrive, dropCarriedRunRefusals } from "../approvals/card-signal.js";
-import { DELEGATION_PENDING_REFUSAL_REASON } from "../access/pending-delegation-signal.js";
+import { DELEGATION_PENDING_REFUSAL_REASON, pendingDelegationOwing } from "../access/pending-delegation-signal.js";
+import { addressedWakeThisTurn } from "../access/dispatch-origin-signal.js";
+import { OE_WORK_REQUEST_ATTR, OE_WORK_RESULT_ATTR, OE_WORK_RESULT_READS_ATTR, OE_WORK_SEAT_SESSION_ATTR, OE_WORK_SEAT_WAKE_ATTR } from "./work.js";
+import { OE_OWN_ACCOUNT_ASK_ATTR } from "../connections/own-account-carriage.js";
+import { deliveryChangedThisTurn } from "../access/task-wake-signal.js";
 import { sourcesForWindow, windowSourcesNeedConfig } from "./window-sources.js";
 import { finalMessageActionForTurn, isBareStop, NO_REPLY_SENTINEL_REASON } from "./turn-delivery.js";
 import { auditNoReplySentinelObserved } from "./chat-turn-audit.js";
@@ -140,8 +151,8 @@ export interface UnifiedReceiveTarget {
   readonly answer?: {
     readonly requestId: string;
     readonly floor: string;
-    readonly taskId?: string;
     readonly optionId?: string;
+    readonly nonMember?: true;
   };
   readonly inbound?: boolean;
   readonly addressing?: string;
@@ -197,9 +208,15 @@ export function proseDropClosesWakeSession(answeredThisWake: boolean, redriven: 
 
 export const NO_SUBSTANCE_DROP_REASON = "no-substance";
 
+export function proseDropMayRedrive(input: { readonly replied: boolean; readonly blockingRefusal: string | undefined; readonly token: string | undefined; readonly turnId: string | undefined }): boolean {
+  if (input.replied || input.blockingRefusal !== undefined || input.token === undefined) return false;
+  return !deliveryChangedThisTurn(input.turnId);
+}
+
 export async function answeredSameContainerThisTurn(org: string, turnId: string | undefined, wakeId: string | undefined, origin: UnifiedWakeOrigin): Promise<boolean> {
   const replied = repliedWakesThisTurn(turnId).filter((w) => w !== wakeId);
   if (replied.length === 0) return false;
+  if (deliveryChangedThisTurn(turnId)) return false;
   const store = getOperationalStore();
   for (const w of replied) {
     const other = await resolveUnifiedWakeTarget(store, org, w).catch(() => null);
@@ -227,6 +244,7 @@ export async function auditUnaccountedWakesForTurn(
   turnWake: string | undefined,
   reacted: boolean,
 ): Promise<void> {
+  if (isWorkWindowToken(windowToken)) return;
   if (!windowToken || !turnId || !turnWake) {
     const reason = !windowToken ? "no-window-token" : !turnId ? "no-turn-id" : "no-turn-wake";
     await appendAudit({
@@ -327,6 +345,7 @@ async function resolveInboundAnswer(
     }
     const roomText =
       typeof input.message !== "string" ? undefined : isWakeEnvelopeShaped(input.message) ? triggerMessageBody(input.message) : input.message;
+    const readOwnedQuestion = async () => await readBridgedQuestion(getOperationalStore(), org, bareToken);
     const routing = await resolveInboundAnswerRouting(
       {
         internalDispatch: input.internalDispatch === true,
@@ -335,7 +354,7 @@ async function resolveInboundAnswer(
         addressedMention: isAddressedMentionWake(input.window, bareToken),
       },
       {
-        read: () => readBridgedQuestion(getOperationalStore(), org, bareToken),
+        read: readOwnedQuestion,
         admit: async () => {
           const bindable = {
             channel: { kind: input.window.origin.platform },
@@ -369,7 +388,6 @@ async function resolveInboundAnswer(
     return {
       requestId: routing.requestId,
       floor: routing.floor,
-      ...(routing.taskId !== undefined ? { taskId: routing.taskId } : {}),
       ...(routing.optionId !== undefined ? { optionId: routing.optionId } : {}),
     };
   } catch (err) {
@@ -377,6 +395,183 @@ async function resolveInboundAnswer(
     return undefined;
   }
 }
+
+type UnifiedFinalMessageHandler = NonNullable<ChannelEvents<void>["message.completed"]>;
+type UnifiedTurnCompletedHandler = NonNullable<ChannelEvents<void>["turn.completed"]>;
+
+const finalMessageHandled = defineState<string | null>("open-everywhere.unified.final-message-handled", () => null);
+
+function markFinalMessageHandled(turnId: string | undefined): void {
+  if (turnId === undefined || turnId.length === 0) return;
+  try {
+    finalMessageHandled.update(() => turnId);
+  } catch {
+  }
+}
+
+function finalMessageHandledFor(turnId: string | undefined): boolean {
+  if (turnId === undefined || turnId.length === 0) return false;
+  try {
+    return finalMessageHandled.get() === turnId;
+  } catch {
+    return false;
+  }
+}
+
+const onUnifiedFinalMessage: UnifiedFinalMessageHandler = async (data, channel, ctx) => {
+  const sessionId = ctx?.session?.id;
+  const finalBind = { session: ctx.session } as unknown as BindableContext;
+  const finalTurnId = data.turnId ?? currentTurnId(finalBind);
+  if (data.finishReason === "stop" && typeof data.message === "string" && data.message.length > 0) {
+    const wakeForPending = currentWakeId(finalBind);
+    const owing = wakeForPending === undefined ? undefined : pendingDelegationOwing(finalTurnId, wakeForPending, addressedWakeThisTurn(finalTurnId));
+    if (owing !== undefined) {
+      ulog(`pre-wait text (${data.message.length} chars) while worker task ${owing} still owes wake ${wakeForPending} — not this turn's final message; nothing posted, nothing re-driven`);
+      return;
+    }
+  }
+  const action = finalMessageActionForTurn(data.finishReason, data.message);
+  if (action.kind === "buffer-tool-status") return;
+  markFinalMessageHandled(finalTurnId);
+  if (isWorkWindowToken(bareTokenFromEveContext(channel.continuation?.token))) {
+    consumeRepliedThisTurn(finalTurnId);
+    consumeReactedThisTurn();
+    return;
+  }
+  const replied = consumeRepliedThisTurn(currentTurnId({ session: ctx.session } as unknown as BindableContext));
+  const org = deploymentOrg();
+  const { workspace, surface } = auditLabels(channel.continuation?.token);
+  const accountingBind = { session: ctx.session } as unknown as BindableContext;
+  const reacted = consumeReactedThisTurn();
+  await auditUnaccountedWakesForTurn(
+    org,
+    workspace,
+    surface,
+    bareTokenFromEveContext(channel.continuation?.token),
+    currentTurnId(accountingBind),
+    currentWakeId(accountingBind),
+    reacted,
+  ).catch(() => undefined);
+  if (action.kind === "silent") {
+    const bind = { session: ctx.session } as unknown as BindableContext;
+    const wakeId = currentWakeId(bind);
+    const silentTurnId = currentTurnId(bind);
+    const answeredThisWake = wakeId !== undefined && repliedWakesThisTurn(silentTurnId).includes(wakeId);
+    const silentOrigin = !answeredThisWake && wakeId ? await resolveUnifiedWakeTarget(getOperationalStore(), org, wakeId).catch(() => null) : null;
+    const answeredVia = silentOrigin ? await answeredContainerVia(org, silentTurnId, wakeId, silentOrigin) : undefined;
+    const answeredContainer = answeredVia !== undefined;
+    let linearClosed: boolean | undefined;
+    if (silentOrigin) {
+      try {
+        if (await completeUnifiedSessionSilently(silentOrigin, {}, answeredContainer)) {
+          linearClosed = true;
+          ulog(`silent turn: closed the wake's open ${silentOrigin.platform} session without posting model prose (answered elsewhere in this container: ${answeredContainer})`);
+        }
+      } catch (err) {
+        linearClosed = false;
+        ulog(`silent turn: FAILED to close the open ${silentOrigin.platform} session (spinner may persist until timeout): ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`);
+      }
+    }
+    if (action.reason === NO_REPLY_SENTINEL_REASON) {
+      await auditNoReplySentinelObserved({ org, platform: "unified", workspace, surface: surface ?? "unknown" }, sessionId, wakeId).catch(() => undefined);
+    }
+    if (isBareStop(action, replied || reacted)) {
+      ulog(
+        `BARE STOP — turn ended with no reply, no react and no no_reply (wake ${wakeId ?? "none"}) — ` +
+          `this usually means a judgement went missing, not that one was made.`,
+      );
+      await appendAudit({
+        org,
+        platform: "unified",
+        workspace,
+        surface,
+        action: "turn.bare_stop",
+        detail: { wakeId: wakeId ?? null, ...(sessionId ? { sessionId } : {}) },
+      }).catch(() => undefined);
+    }
+    if (auditSilencesEnabled()) {
+      await appendAudit({
+        org,
+        platform: "unified",
+        workspace,
+        surface,
+        action: "unified.no_reply",
+        detail: { reason: action.reason, replied, wakeId: wakeId ?? null, ...(linearClosed !== undefined ? { linearClosed, answeredContainer, ...(answeredVia ? { answeredVia } : {}) } : {}), ...(sessionId ? { sessionId } : {}) },
+      }).catch(() => undefined);
+    }
+    return;
+  }
+  const bind = { session: ctx.session } as unknown as BindableContext;
+  const blockingRefusal = proseBlockingRefusal(refusalsForWakeThisTurn(currentTurnId(bind), currentWakeId(bind)));
+  const proseCarriesSubstance = replyCarriesSubstance(action.text);
+  const { addressing: addressingKind, reason: dropReason } = ambientProseDropDetail(
+    currentTurnAddressing(bind),
+    currentTurnAddressed(bind),
+    replied,
+    blockingRefusal,
+    proseCarriesSubstance,
+  );
+  ulog(`message-tool-only: DROPPED terminal prose (${action.text.length} chars; replied=${replied}; addressing=${addressingKind}; reason=${dropReason}) — replies must come from the reply tool`);
+  await appendAudit({
+    org,
+    platform: "unified",
+    workspace,
+    surface,
+    action: "turn.supervisor_prose_dropped",
+    detail: {
+      chars: action.text.length,
+      replied,
+      addressing: addressingKind,
+      reason: dropReason,
+      wakeId: currentWakeId(bind) ?? null,
+      ...(sessionId ? { sessionId } : {}),
+    },
+  }).catch(() => undefined);
+
+  let redriven = false;
+  if (proseDropMayRedrive({ replied, blockingRefusal, token: channel.continuation?.token, turnId: currentTurnId(bind) }) && channel.continuation?.token !== undefined) {
+    const wakeId = currentWakeId(bind);
+    const rawToken = channel.continuation.token;
+    const domain = unifiedDomainFromToken(rawToken);
+    const baseAttrs: Record<string, unknown> = { ...(bind.session?.auth?.current?.attributes ?? {}) };
+    delete baseAttrs[OE_ADDRESSING_ATTR];
+    const reinject: RedriveReinject = buildRedriveReinject(domain, rawToken, baseAttrs);
+    const owesWorkerReport = refusalsForWakeThisTurn(currentTurnId(bind), wakeId).includes(DELEGATION_PENDING_REFUSAL_REASON);
+    if (wakeId) carryRunRefusalsToRedrive(wakeId);
+    const outcome = await maybeRedrive(
+      { org, workspace, surface, ...(sessionId ? { sessionId } : {}), wakeId, chars: action.text.length, replied, owesWorkerReport },
+      { store: getOperationalStore(), reinject },
+    );
+    if (outcome.status === "redriven") {
+      ulog(`auto-redrive: re-injected a corrective wake for wake ${outcome.originalWakeId} (dropped ${action.text.length} chars) — one more turn to reply`);
+    } else if (outcome.status !== "skip-replied") {
+      if (wakeId) dropCarriedRunRefusals(wakeId);
+      ulog(`auto-redrive: NOT fired (${outcome.status}) for wake ${outcome.originalWakeId ?? "none"} — drop is final`);
+    }
+    redriven = outcome.status === "redriven";
+  }
+  const dropWakeId = currentWakeId(bind);
+  const answeredThisWake = dropWakeId !== undefined && repliedWakesThisTurn(currentTurnId(bind)).includes(dropWakeId);
+  if (proseDropClosesWakeSession(answeredThisWake, redriven)) {
+    const dropOrigin = dropWakeId ? await resolveUnifiedWakeTarget(getOperationalStore(), org, dropWakeId).catch(() => null) : null;
+    if (dropOrigin && postArm(dropOrigin.platform)?.closeUnifiedSilently) {
+      try {
+        const answered = (await answeredContainerVia(org, currentTurnId(bind), dropWakeId, dropOrigin)) !== undefined;
+        if (await completeUnifiedSessionSilently(dropOrigin, {}, answered)) {
+          ulog(`final prose drop: closed the wake's open ${dropOrigin.platform} session with the host ack (answered elsewhere in this container: ${answered})`);
+        }
+      } catch (err) {
+        ulog(`final prose drop: FAILED to close the open ${dropOrigin.platform} session (spinner may persist until timeout): ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`);
+      }
+    }
+  }
+};
+
+const onUnifiedTurnCompleted: UnifiedTurnCompletedHandler = async (data, channel, ctx) => {
+  const turnId = data.turnId ?? currentTurnId({ session: ctx.session } as unknown as BindableContext);
+  if (finalMessageHandledFor(turnId)) return;
+  await onUnifiedFinalMessage({ finishReason: "stop", message: "", sequence: data.sequence, stepIndex: 0, turnId }, channel, ctx);
+};
 
 const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
   routes: [
@@ -400,7 +595,8 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         (typeof t.answer.requestId !== "string" ||
           t.answer.requestId.length === 0 ||
           typeof t.answer.floor !== "string" ||
-          (t.answer.optionId !== undefined && (typeof t.answer.optionId !== "string" || t.answer.optionId.length === 0))))
+          (t.answer.optionId !== undefined && (typeof t.answer.optionId !== "string" || t.answer.optionId.length === 0)) ||
+          (t.answer.nonMember !== undefined && t.answer.nonMember !== true)))
     ) {
       throw new Error("unified receive: malformed target (host dispatch bug) — refusing the wake");
     }
@@ -429,16 +625,18 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         wakeId: t.wakeId,
         chars: answerText?.length ?? 0,
         surfaceKey: t.surfaceKey,
-        ...(t.answer.taskId !== undefined ? { taskId: t.answer.taskId } : {}),
         ...(t.answer.optionId !== undefined ? { optionId: t.answer.optionId } : {}),
+        ...(t.answer.nonMember === true ? { nonMember: true } : {}),
       };
       const { workspace: answerWorkspace, surface: answerSurface } = auditLabels(t.token);
       try {
         if (answerText === undefined) throw new Error("the delivery is structured content, not text — an answer must be text");
+        if (t.answer.nonMember === true && !(await rememberNonMemberAnswer(getOperationalStore(), org, t.answer.requestId))) {
+          throw new Error("the answerer is a non-member and the stamp could not be recorded — an unmarked guest answer is never delivered");
+        }
         const session = await from(t.token).respond([{ requestId: t.answer.requestId, text: answerText, ...(t.answer.optionId ? { optionId: t.answer.optionId } : {}) }], {
-          auth: input.auth,
           ...(t.context && t.context.length > 0 ? { context: [...t.context] } : {}),
-        });
+        } as { auth: typeof input.auth; context?: string[] });
         await forgetBridgedQuestion(getOperationalStore(), org, bare);
         await settleAnsweredWake(getOperationalStore(), org, t.wakeId);
         ulog(`answer ${t.answer.requestId} delivered to ${t.token} (floor ${t.answer.floor})`);
@@ -465,144 +663,17 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         }).catch(() => undefined);
       }
     }
+    const questionMayBeOpen = await bridgedQuestionMayBeOpen(store, org, bareTokenFromEveContext(t.token) ?? t.token);
     return from(t.token).send(input.message, {
       auth: completeWakeAuth(input.auth),
       ...(t.context && t.context.length > 0 ? { context: [...t.context] } : {}),
+      ...(isWorkWindowToken(t.token) ? { turnPolicy: "steer" as const } : {}),
+      ...ordinaryWakeSendOptions(questionMayBeOpen),
     });
   },
   events: {
-    async "message.completed"(data, channel, ctx) {
-      const sessionId = ctx?.session?.id;
-      const action = finalMessageActionForTurn(data.finishReason, data.message);
-      if (action.kind === "buffer-tool-status") return;
-      const replied = consumeRepliedThisTurn(currentTurnId({ session: ctx.session } as unknown as BindableContext));
-      const org = deploymentOrg();
-      const { workspace, surface } = auditLabels(channel.continuation?.token);
-      const accountingBind = { session: ctx.session } as unknown as BindableContext;
-      const reacted = consumeReactedThisTurn();
-      await auditUnaccountedWakesForTurn(
-        org,
-        workspace,
-        surface,
-        bareTokenFromEveContext(channel.continuation?.token),
-        currentTurnId(accountingBind),
-        currentWakeId(accountingBind),
-        reacted,
-      ).catch(() => undefined);
-      if (action.kind === "silent") {
-        const bind = { session: ctx.session } as unknown as BindableContext;
-        const wakeId = currentWakeId(bind);
-        const silentTurnId = currentTurnId(bind);
-        const answeredThisWake = wakeId !== undefined && repliedWakesThisTurn(silentTurnId).includes(wakeId);
-        const silentOrigin = !answeredThisWake && wakeId ? await resolveUnifiedWakeTarget(getOperationalStore(), org, wakeId).catch(() => null) : null;
-        const answeredVia = silentOrigin ? await answeredContainerVia(org, silentTurnId, wakeId, silentOrigin) : undefined;
-        const answeredContainer = answeredVia !== undefined;
-        let linearClosed: boolean | undefined;
-        if (silentOrigin) {
-          try {
-            if (await completeUnifiedSessionSilently(silentOrigin, {}, answeredContainer)) {
-              linearClosed = true;
-              ulog(`silent turn: closed the wake's open ${silentOrigin.platform} session without posting model prose (answered elsewhere in this container: ${answeredContainer})`);
-            }
-          } catch (err) {
-            linearClosed = false;
-            ulog(`silent turn: FAILED to close the open ${silentOrigin.platform} session (spinner may persist until timeout): ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`);
-          }
-        }
-        if (action.reason === NO_REPLY_SENTINEL_REASON) {
-          await auditNoReplySentinelObserved({ org, platform: "unified", workspace, surface: surface ?? "unknown" }, sessionId, wakeId).catch(() => undefined);
-        }
-        if (isBareStop(action, replied || reacted)) {
-          ulog(
-            `BARE STOP — turn ended with no reply, no react and no no_reply (wake ${wakeId ?? "none"}) — ` +
-              `this usually means a judgement went missing, not that one was made.`,
-          );
-          await appendAudit({
-            org,
-            platform: "unified",
-            workspace,
-            surface,
-            action: "turn.bare_stop",
-            detail: { wakeId: wakeId ?? null, ...(sessionId ? { sessionId } : {}) },
-          }).catch(() => undefined);
-        }
-        if (auditSilencesEnabled()) {
-          await appendAudit({
-            org,
-            platform: "unified",
-            workspace,
-            surface,
-            action: "unified.no_reply",
-            detail: { reason: action.reason, replied, wakeId: wakeId ?? null, ...(linearClosed !== undefined ? { linearClosed, answeredContainer, ...(answeredVia ? { answeredVia } : {}) } : {}), ...(sessionId ? { sessionId } : {}) },
-          }).catch(() => undefined);
-        }
-        return;
-      }
-      const bind = { session: ctx.session } as unknown as BindableContext;
-      const blockingRefusal = proseBlockingRefusal(refusalsForWakeThisTurn(currentTurnId(bind), currentWakeId(bind)));
-      const proseCarriesSubstance = replyCarriesSubstance(action.text);
-      const { addressing: addressingKind, reason: dropReason } = ambientProseDropDetail(
-        currentTurnAddressing(bind),
-        currentTurnAddressed(bind),
-        replied,
-        blockingRefusal,
-        proseCarriesSubstance,
-      );
-      ulog(`message-tool-only: DROPPED terminal prose (${action.text.length} chars; replied=${replied}; addressing=${addressingKind}; reason=${dropReason}) — replies must come from the reply tool`);
-      await appendAudit({
-        org,
-        platform: "unified",
-        workspace,
-        surface,
-        action: "turn.supervisor_prose_dropped",
-        detail: {
-          chars: action.text.length,
-          replied,
-          addressing: addressingKind,
-          reason: dropReason,
-          wakeId: currentWakeId(bind) ?? null,
-          ...(sessionId ? { sessionId } : {}),
-        },
-      }).catch(() => undefined);
-
-      let redriven = false;
-      if (!replied && blockingRefusal === undefined && channel.continuation?.token !== undefined) {
-        const wakeId = currentWakeId(bind);
-        const rawToken = channel.continuation.token;
-        const domain = unifiedDomainFromToken(rawToken);
-        const baseAttrs: Record<string, unknown> = { ...(bind.session?.auth?.current?.attributes ?? {}) };
-        delete baseAttrs[OE_ADDRESSING_ATTR];
-        const reinject: RedriveReinject = buildRedriveReinject(domain, rawToken, baseAttrs);
-        const owesWorkerReport = refusalsForWakeThisTurn(currentTurnId(bind), wakeId).includes(DELEGATION_PENDING_REFUSAL_REASON);
-        if (wakeId) carryRunRefusalsToRedrive(wakeId);
-        const outcome = await maybeRedrive(
-          { org, workspace, surface, ...(sessionId ? { sessionId } : {}), wakeId, chars: action.text.length, replied, owesWorkerReport },
-          { store: getOperationalStore(), reinject },
-        );
-        if (outcome.status === "redriven") {
-          ulog(`auto-redrive: re-injected a corrective wake for wake ${outcome.originalWakeId} (dropped ${action.text.length} chars) — one more turn to reply`);
-        } else if (outcome.status !== "skip-replied") {
-          if (wakeId) dropCarriedRunRefusals(wakeId);
-          ulog(`auto-redrive: NOT fired (${outcome.status}) for wake ${outcome.originalWakeId ?? "none"} — drop is final`);
-        }
-        redriven = outcome.status === "redriven";
-      }
-      const dropWakeId = currentWakeId(bind);
-      const answeredThisWake = dropWakeId !== undefined && repliedWakesThisTurn(currentTurnId(bind)).includes(dropWakeId);
-      if (proseDropClosesWakeSession(answeredThisWake, redriven)) {
-        const dropOrigin = dropWakeId ? await resolveUnifiedWakeTarget(getOperationalStore(), org, dropWakeId).catch(() => null) : null;
-        if (dropOrigin && postArm(dropOrigin.platform)?.closeUnifiedSilently) {
-          try {
-            const answered = (await answeredContainerVia(org, currentTurnId(bind), dropWakeId, dropOrigin)) !== undefined;
-            if (await completeUnifiedSessionSilently(dropOrigin, {}, answered)) {
-              ulog(`final prose drop: closed the wake's open ${dropOrigin.platform} session with the host ack (answered elsewhere in this container: ${answered})`);
-            }
-          } catch (err) {
-            ulog(`final prose drop: FAILED to close the open ${dropOrigin.platform} session (spinner may persist until timeout): ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`);
-          }
-        }
-      }
-    },
+    "message.completed": onUnifiedFinalMessage,
+    "turn.completed": onUnifiedTurnCompleted,
     async "input.requested"(data, channel, ctx) {
       try {
         const question = detectBridgeableInputRequest((data as { requests?: unknown } | undefined)?.requests);
@@ -610,8 +681,23 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         const org = deploymentOrg();
         const { workspace, surface } = auditLabels(channel.continuation?.token);
         const bind = { session: ctx?.session } as unknown as BindableContext;
-        const wakeId = currentWakeId(bind);
         const sessionId = typeof ctx?.session?.id === "string" && ctx.session.id.length > 0 ? ctx.session.id : undefined;
+        const rawTaskId = (data as { taskId?: unknown } | undefined)?.taskId;
+        const taskId = typeof rawTaskId === "string" && rawTaskId.length > 0 ? rawTaskId : undefined;
+        const workBare = bareTokenFromEveContext(channel.continuation?.token);
+        if (workBare !== undefined && isWorkWindowToken(workBare)) {
+          ulog(`question from task ${taskId ?? "(none)"} on a work session NOT bridged: a work-session child asks with ask_room (OPE-2340)`);
+          await appendAudit({
+            org,
+            platform: "unified",
+            workspace,
+            surface,
+            action: QUESTION_DROPPED_AUDIT_ACTION,
+            detail: { reason: "work-session", requestId: question.requestId, ...(taskId ? { taskId } : {}) },
+          }).catch(() => undefined);
+          return;
+        }
+        const wakeId = currentWakeId(bind);
         const bare = bareTokenFromEveContext(channel.continuation?.token);
         const cardTicket = mintApprovalCardTicket();
         let cardActionCount = 0;
@@ -805,7 +891,7 @@ export async function divertToUnifiedWindow(
           },
         }
       : {}),
-    ...(answer ? { answer } : {}),
+    ...(answer ? { answer: authString(authorityAttributes[OE_CHAT_NONMEMBER_ATTR]) === "true" ? { ...answer, nonMember: true as const } : answer } : {}),
     surfaceKey: input.surfaceKey,
     inbound: input.internalDispatch !== true,
     ...(input.window.addressing ? { addressing: input.window.addressing } : {}),
@@ -847,6 +933,29 @@ export async function divertToUnifiedWindow(
     });
     throw err;
   }
+}
+
+export function bindingForDivert(input: {
+  readonly attributes: Readonly<Record<string, unknown>>;
+  readonly origin: UnifiedWakeOrigin;
+  readonly wakeId: string;
+  readonly token: string;
+}): SurfaceBinding | undefined {
+  const bareToken = input.token.startsWith("unified:") ? input.token.slice("unified:".length) : input.token;
+  const attributes: Record<string, unknown> = { ...input.attributes };
+  delete attributes[OE_FROZEN_SURFACE_BINDING_ATTR];
+  const auth = stampUnifiedWindowAuth(
+    { attributes },
+    input.origin.platform,
+    input.wakeId,
+    "direct-mention",
+    windowSourcesForDivert(input.token, input.origin.platform),
+    bareToken,
+    unifiedPlacementRef(input.origin),
+    mintWakeId(),
+  );
+  const ctx: BindableContext = { channel: { kind: "unified" }, session: { auth: { current: auth as never } } };
+  return carriesPlatformIdentity(ctx) ? bindFrom(ctx) : undefined;
 }
 
 export async function divertInboundToUnifiedWindow(
@@ -920,6 +1029,14 @@ export function buildRedriveReinject(domain: string | undefined, rawToken: strin
 }
 
 export const OE_SPAWN_TAINTED_ATTR = "oe_spawn_tainted";
+
+export const OE_SPAWN_TAINT_KINDS_ATTR = "oe_spawn_taint_kinds";
+
+function taintKindsAttrValue(tainted: boolean, kinds: readonly string[] | undefined): string | undefined {
+  if (!tainted || kinds === undefined) return undefined;
+  const named = [...new Set(kinds.filter((k) => (INGESTION_KINDS as readonly string[]).includes(k)))];
+  return named.length > 0 ? named.join(",") : undefined;
+}
 
 export async function dispatchTaskWindow(input: {
   readonly token: string;
@@ -1025,4 +1142,127 @@ export async function dispatchSeatMessage(input: {
   readonly authAttributes?: Record<string, unknown>;
 }): Promise<boolean> {
   return dispatchAmbientSeatWake(input);
+}
+
+export async function dispatchWorkRequest(input: {
+  readonly token: string;
+  readonly requestId: string;
+  readonly message: string;
+  readonly origin: UnifiedWakeOrigin;
+  readonly surfaceKey: string;
+  readonly binding: SurfaceBinding;
+  readonly requester: RequesterVerdict;
+  readonly nonMemberWake: boolean;
+  readonly seatSessionId?: string;
+  readonly seatWakeId: string;
+  readonly cancel?: boolean;
+  readonly tainted: boolean;
+  readonly taintKinds?: readonly string[];
+  readonly invokerPosture?: InvokerPosture;
+  readonly identity?: Readonly<Record<string, string | readonly string[]>>;
+  readonly ownAccountAsk?: string;
+  readonly fireAttributes?: Readonly<Record<string, unknown>>;
+}, receive?: RouteHandlerArgs["to"]): Promise<void> {
+  if (receive === undefined && !crossProcessDispatchAvailable()) {
+    throw new Error("work: no live cross-surface dispatch is available on this instance, so the job could not be forwarded. Retry from a message-driven turn.");
+  }
+  const attributes: Record<string, unknown> = {
+    ...(input.fireAttributes ?? {}),
+    ...(input.identity ?? {}),
+    [OE_GRAIN_ATTR]: "standing",
+    ...(input.cancel === true ? {} : { [OE_WORK_REQUEST_ATTR]: input.requestId }),
+    [OE_REQUESTER_ATTR]: input.requester.kind === "requester" ? input.requester.principalId : REQUESTER_UNVERIFIED,
+    [INVOKER_POSTURE_ATTR]: input.invokerPosture === undefined ? currentInvokerPosture() : narrowerInvokerPosture(input.invokerPosture, currentInvokerPosture()),
+  };
+  if (input.requester.kind === "unverified" && input.requester.candidates !== undefined) {
+    attributes[OE_REQUESTER_CANDIDATES_ATTR] = JSON.stringify(input.requester.candidates);
+  } else {
+    delete attributes[OE_REQUESTER_CANDIDATES_ATTR];
+  }
+  if (input.nonMemberWake) attributes[OE_CHAT_NONMEMBER_ATTR] = "true";
+  else delete attributes[OE_CHAT_NONMEMBER_ATTR];
+  if (input.seatSessionId !== undefined) attributes[OE_WORK_SEAT_SESSION_ATTR] = input.seatSessionId;
+  else delete attributes[OE_WORK_SEAT_SESSION_ATTR];
+  attributes[OE_WORK_SEAT_WAKE_ATTR] = input.seatWakeId;
+  if (input.tainted) attributes[OE_SPAWN_TAINTED_ATTR] = "true";
+  const forwardKinds = taintKindsAttrValue(input.tainted, input.taintKinds);
+  if (forwardKinds !== undefined) attributes[OE_SPAWN_TAINT_KINDS_ATTR] = forwardKinds;
+  if (input.ownAccountAsk !== undefined && input.ownAccountAsk.length > 0) attributes[OE_OWN_ACCOUNT_ASK_ATTR] = input.ownAccountAsk;
+  const payload = {
+    message: input.message,
+    token: input.token,
+    window: { wakeId: input.requestId, origin: input.origin, addressing: "direct-mention" as const },
+    surfaceKey: input.surfaceKey,
+    auth: { attributes },
+    binding: input.binding,
+  };
+  if (receive !== undefined) await divertToUnifiedWindow(receive, { ...payload, internalDispatch: true });
+  else await deliverUnifiedDispatch(payload);
+}
+
+export function workResultAttributes(input: {
+  readonly requestId: string;
+  readonly requester: RequesterVerdict;
+  readonly nonMemberWake: boolean;
+  readonly tainted: boolean;
+  readonly taintKinds?: readonly string[];
+  readonly readsToken?: string;
+  readonly invokerPosture?: InvokerPosture;
+  readonly fireCreator?: string;
+  readonly memoryWrites?: readonly DurableMemoryWrite[];
+}): Record<string, unknown> {
+  const attributes: Record<string, unknown> = {
+    [OE_WORK_RESULT_ATTR]: input.requestId,
+    [OE_REQUESTER_ATTR]: input.requester.kind === "requester" ? input.requester.principalId : REQUESTER_UNVERIFIED,
+    ...(input.invokerPosture !== undefined ? { [INVOKER_POSTURE_ATTR]: input.invokerPosture } : {}),
+    ...(input.fireCreator !== undefined ? { [WORK_FIRE_CREATOR_ATTR]: input.fireCreator } : {}),
+  };
+  if (input.requester.kind === "unverified" && input.requester.candidates !== undefined) {
+    attributes[OE_REQUESTER_CANDIDATES_ATTR] = JSON.stringify(input.requester.candidates);
+  }
+  if (input.nonMemberWake) attributes[OE_CHAT_NONMEMBER_ATTR] = "true";
+  if (input.tainted) attributes[OE_SPAWN_TAINTED_ATTR] = "true";
+  const resultKinds = taintKindsAttrValue(input.tainted, input.taintKinds);
+  if (resultKinds !== undefined) attributes[OE_SPAWN_TAINT_KINDS_ATTR] = resultKinds;
+  if (input.readsToken !== undefined) attributes[OE_WORK_RESULT_READS_ATTR] = input.readsToken;
+  const writes = input.memoryWrites === undefined ? undefined : encodeCarriedWrites(input.memoryWrites);
+  if (writes !== undefined) attributes[OE_WORK_RESULT_WRITES_ATTR] = writes;
+  return attributes;
+}
+
+export async function dispatchWorkResult(input: {
+  readonly seatToken: string;
+  readonly wakeId: string;
+  readonly message: string;
+  readonly context?: readonly string[];
+  readonly origin: UnifiedWakeOrigin;
+  readonly surfaceKey: string;
+  readonly binding: SurfaceBinding;
+  readonly requester: RequesterVerdict;
+  readonly nonMemberWake: boolean;
+  readonly requestId: string;
+  readonly tainted: boolean;
+  readonly taintKinds?: readonly string[];
+  readonly readsToken?: string;
+  readonly invokerPosture?: InvokerPosture;
+  readonly fireCreator?: string;
+  readonly memoryWrites?: readonly DurableMemoryWrite[];
+}): Promise<boolean> {
+  if (!crossProcessDispatchAvailable()) return false;
+  const attributes = workResultAttributes(input);
+  try {
+    await deliverUnifiedDispatch({
+      message: input.message,
+      token: input.seatToken,
+      window: { wakeId: input.wakeId, origin: input.origin, addressing: "direct-mention" },
+      surfaceKey: input.surfaceKey,
+      auth: { attributes },
+      binding: input.binding,
+      ...(input.context && input.context.length > 0 ? { context: input.context } : {}),
+    });
+    return true;
+  } catch (err) {
+    ulog(`work result wake for request ${input.requestId} could NOT be delivered: ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`);
+    return false;
+  }
 }

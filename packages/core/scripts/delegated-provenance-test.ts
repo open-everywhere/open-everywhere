@@ -26,7 +26,7 @@ const { registerPostArm } = await import("../agent/channels/post-arms.js");
 const { postReply, replyAuditFor } = await import("../agent/channels/reply-post.js");
 type ReplyTarget = import("../agent/channels/reply-post.js").ReplyTarget;
 const { PROVENANCE_FOOTER_PREFIX, REPLY_PROVENANCE_ACTION } = await import("../agent/channels/reply-provenance.js");
-const { delegatedProvenanceKey, delegatingParentLink, delegatedSecondAddress } = await import("../agent/channels/delegated-provenance.js");
+const { delegatedProvenanceKey, delegatingParentLink, delegatedSecondAddress, heldTurnWakeProvable } = await import("../agent/channels/delegated-provenance.js");
 const { noteBorrowedRecordRead, BORROWED_RECORD_KIND, BORROWED_READ_OP } = await import("../agent/channels/read-reach.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { taskWakeKey } = await import("../agent/channels/task-wake.js");
@@ -34,7 +34,7 @@ const { registerUnifiedWakeTarget } = await import("../agent/channels/unified-wi
 const { registerSlackFixtureCodec } = await import("./_slack-test-stubs.js");
 registerSlackFixtureCodec();
 const { noteTurnBoundary } = await import("../agent/access/task-wake-signal.js");
-const { applyTaskSettlement, noteTaskReceipt, DELEGATED_PROVENANCE_ACTION } = await import("../agent/hooks/spawn-taint.js");
+const { applyTaskSettlement, noteTaskStarted, DELEGATED_PROVENANCE_ACTION } = await import("../agent/hooks/spawn-taint.js");
 const connectorAudit = await import("../agent/hooks/connector-audit.js");
 
 type BindableContext = import("../agent/identity/binding.js").BindableContext;
@@ -168,7 +168,7 @@ async function runDelegation(input: {
   readonly status?: string;
 }): Promise<void> {
   const childToken = `subagent:${SEAT_SESSION}:${input.callId}`;
-  await noteTaskReceipt({ taskId: input.taskId, callId: input.callId, agentId: null, tool: "agent" }, SEAT_SESSION);
+  await noteTaskStarted({ taskId: input.taskId, callId: input.callId, turnId: "turn_seat_1", kind: "agent", tool: "agent" }, SEAT_SESSION);
   const inWorker = newSession(`worker-${input.callId}`);
   await inWorker(async () => {
     for (const tool of input.tools) await hook(opResult(tool), workerCtx(input.callId, "worker_turn_1"));
@@ -194,7 +194,7 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
     const inSeat = newSession(SEAT_SESSION);
     let messageId = "";
     await inSeat(async () => {
-      await runDelegation({ row, taskId: `task_${n}`, callId: `call_${n}`, seatTurnId: turnId, tools: ["notion__get_page"] });
+      await runDelegation({ row, taskId: `agent-${n}`, callId: `call_${n}`, seatTurnId: turnId, tools: ["notion__get_page"] });
       messageId = await postReply(row.target, ANSWER, replyAuditFor(seatCtx(row, turnId), "tool", `wake-${n}`));
     });
     ok(
@@ -214,7 +214,7 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
       `🔴 §1/${row.id}: the reach rule NAMES it to this room and withholds nothing — the read was scoped to the room the seat is replying into (named=${String(detail.named)}, withheld=${String(detail.withheld)})`,
     );
     const carriedRows = (await readAudit({ org: ORG, action: DELEGATED_PROVENANCE_ACTION })).filter(
-      (r) => (r.detail as { task?: unknown } | undefined)?.task === `task_${n}`,
+      (r) => (r.detail as { task?: unknown } | undefined)?.task === `agent-${n}`,
     );
     ok(
       carriedRows.length === 1 && (carriedRows[0]!.detail as { reads?: unknown }).reads === 1,
@@ -250,7 +250,7 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
   const inSeat = newSession(SEAT_SESSION);
   let messageId = "";
   await inSeat(async () => {
-    await runDelegation({ row, taskId: "task_empty", callId: "call_empty", seatTurnId: turnId, tools: [] });
+    await runDelegation({ row, taskId: "agent-empty", callId: "call_empty", seatTurnId: turnId, tools: [] });
     messageId = await postReply(row.target, `${ANSWER} (empty)`, replyAuditFor(seatCtx(row, turnId), "tool", "wake-empty"));
   });
   ok(
@@ -258,7 +258,7 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
     `🔴 §3: a delegation whose worker read no connector delivers the model's text BYTE-IDENTICAL — no footer, not even a trailing newline (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
   );
   ok((await provenanceRowsFor(messageId)).length === 0, "🔴 §3: …and writes NO provenance row. An empty record is still a claim, and there is nothing to claim");
-  const carried = (await readAudit({ org: ORG, action: DELEGATED_PROVENANCE_ACTION })).filter((r) => (r.detail as { task?: unknown } | undefined)?.task === "task_empty");
+  const carried = (await readAudit({ org: ORG, action: DELEGATED_PROVENANCE_ACTION })).filter((r) => (r.detail as { task?: unknown } | undefined)?.task === "agent-empty");
   ok(carried.length === 0, "§3: the settle writes no carriage row either — its absence is what says the worker read nothing");
 }
 
@@ -266,7 +266,7 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
   const row = SURFACES[0]!;
   const inSeat = newSession(SEAT_SESSION);
   await inSeat(async () => {
-    await noteTaskReceipt({ taskId: "task_shape", callId: "call_shape", agentId: null, tool: "agent" }, SEAT_SESSION);
+    await noteTaskStarted({ taskId: "agent-shape", callId: "call_shape", turnId: "turn_seat_1", kind: "agent", tool: "agent" }, SEAT_SESSION);
   });
   const inWorker = newSession("worker-call_shape");
   await inWorker(async () => {
@@ -296,8 +296,8 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
   const inSeat = newSession(SEAT_SESSION);
   let messageId = "";
   await inSeat(async () => {
-    await runDelegation({ row, taskId: "task_a", callId: "call_a", seatTurnId: turnId, tools: ["notion__get_page"] });
-    await runDelegation({ row, taskId: "task_b", callId: "call_b", seatTurnId: turnId, tools: ["linear__list_issues"] });
+    await runDelegation({ row, taskId: "agent-a", callId: "call_a", seatTurnId: turnId, tools: ["notion__get_page"] });
+    await runDelegation({ row, taskId: "agent-b", callId: "call_b", seatTurnId: turnId, tools: ["linear__list_issues"] });
     messageId = await postReply(row.target, `${ANSWER} (two)`, replyAuditFor(seatCtx(row, turnId), "tool", "wake-two"));
   });
   ok(
@@ -313,15 +313,15 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
   const inSeat = newSession(SEAT_SESSION);
   let messageId = "";
   await inSeat(async () => {
-    await runDelegation({ row, taskId: "task_spent_1", callId: "call_spent", seatTurnId: "seat_turn_spent_1", tools: ["notion__get_page"] });
+    await runDelegation({ row, taskId: "agent-spent_1", callId: "call_spent", seatTurnId: "seat_turn_spent_1", tools: ["notion__get_page"] });
     await postReply(row.target, `${ANSWER} (first)`, replyAuditFor(seatCtx(row, "seat_turn_spent_1"), "tool", "wake-spent-1"));
   });
   ok(lastPosted().includes(`${PROVENANCE_FOOTER_PREFIX} notion`), "§6 precondition: the first answer carries the footer");
   const inSeat2 = newSession(SEAT_SESSION);
   await inSeat2(async () => {
-    await noteTaskReceipt({ taskId: "task_spent_2", callId: "call_spent", agentId: null, tool: "agent" }, SEAT_SESSION);
+    await noteTaskStarted({ taskId: "agent-spent_2", callId: "call_spent", turnId: "turn_seat_1", kind: "agent", tool: "agent" }, SEAT_SESSION);
     await applyTaskSettlement(
-      [{ taskId: "task_spent_2", status: "completed", agentId: null }],
+      [{ taskId: "agent-spent_2", status: "completed", agentId: null }],
       SEAT_SESSION,
       seatCtx(row, "seat_turn_spent_2") as unknown as Parameters<typeof applyTaskSettlement>[2],
     );
@@ -339,8 +339,8 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
   const WAKE_A = "wake-unified-a";
   const WAKE_B = "wake-unified-b";
   const at = new Date().toISOString();
-  await store.putTaskResult(ORG, taskWakeKey("task_uni_a"), JSON.stringify({ wakeId: WAKE_A }), at, 60_000);
-  await store.putTaskResult(ORG, taskWakeKey("task_uni_b"), JSON.stringify({ wakeId: WAKE_B }), at, 60_000);
+  await store.putTaskResult(ORG, taskWakeKey("agent-uni_a"), JSON.stringify({ wakeId: WAKE_A }), at, 60_000);
+  await store.putTaskResult(ORG, taskWakeKey("agent-uni_b"), JSON.stringify({ wakeId: WAKE_B }), at, 60_000);
 
   const uniCtx = (turnId: string): BindableContext =>
     ({
@@ -356,8 +356,8 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
   const inSeat = newSession(SEAT_SESSION);
   let messageId = "";
   await inSeat(async () => {
-    await noteTaskReceipt({ taskId: "task_uni_a", callId: "call_uni_a", agentId: null, tool: "agent" }, SEAT_SESSION);
-    await noteTaskReceipt({ taskId: "task_uni_b", callId: "call_uni_b", agentId: null, tool: "agent" }, SEAT_SESSION);
+    await noteTaskStarted({ taskId: "agent-uni_a", callId: "call_uni_a", turnId: "turn_seat_1", kind: "agent", tool: "agent" }, SEAT_SESSION);
+    await noteTaskStarted({ taskId: "agent-uni_b", callId: "call_uni_b", turnId: "turn_seat_1", kind: "agent", tool: "agent" }, SEAT_SESSION);
     for (const [call, tool] of [
       ["call_uni_a", "notion__get_page"],
       ["call_uni_b", "linear__list_issues"],
@@ -372,8 +372,8 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
     noteTurnBoundary("uni_turn_1", "stamp-1");
     await applyTaskSettlement(
       [
-        { taskId: "task_uni_a", status: "completed", agentId: null },
-        { taskId: "task_uni_b", status: "completed", agentId: null },
+        { taskId: "agent-uni_a", status: "completed", agentId: null },
+        { taskId: "agent-uni_b", status: "completed", agentId: null },
       ],
       SEAT_SESSION,
       uniCtx("uni_turn_1") as unknown as Parameters<typeof applyTaskSettlement>[2],
@@ -391,7 +391,7 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
     `🔴 §7: and the durable row carries the one connection too — a withheld source is not in the ledger at all, so not even a "1 in another domain" count discloses it (saw ${JSON.stringify(rows[0]?.detail)})`,
   );
   const carriedRows = await readAudit({ org: ORG, action: DELEGATED_PROVENANCE_ACTION });
-  const rowB = carriedRows.find((r) => (r.detail as { task?: unknown } | undefined)?.task === "task_uni_b")?.detail as Record<string, unknown> | undefined;
+  const rowB = carriedRows.find((r) => (r.detail as { task?: unknown } | undefined)?.task === "agent-uni_b")?.detail as Record<string, unknown> | undefined;
   ok(
     rowB?.outcome === "wake-unprovable" && rowB.found === 1 && rowB.reads === 0,
     `🔴 §7: the WITHHELD settlement is countable — the row says the worker recorded a source and this seat could not place it (saw ${JSON.stringify(rowB)})`,
@@ -408,7 +408,7 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
   const inSeat = newSession(SEAT_SESSION);
   let messageId = "";
   await inSeat(async () => {
-    await runDelegation({ row, taskId: "task_dead", callId: "call_dead", seatTurnId: "seat_turn_dead", tools: ["notion__get_page"], status: "failed" });
+    await runDelegation({ row, taskId: "agent-dead", callId: "call_dead", seatTurnId: "seat_turn_dead", tools: ["notion__get_page"], status: "failed" });
     messageId = await postReply(row.target, "The research worker failed before it answered.", replyAuditFor(seatCtx(row, "seat_turn_dead"), "tool", "wake-dead"));
   });
   ok(
@@ -416,7 +416,7 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
     `🔴 §8: a FAILED delegation's reads never reach the reply — the answer has no sources, so it carries no receipt (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
   );
   ok((await provenanceRowsFor(messageId)).length === 0, "🔴 §8: …and it writes no provenance row either");
-  const deadRow = (await readAudit({ org: ORG, action: DELEGATED_PROVENANCE_ACTION })).find((r) => (r.detail as { task?: unknown } | undefined)?.task === "task_dead")?.detail as
+  const deadRow = (await readAudit({ org: ORG, action: DELEGATED_PROVENANCE_ACTION })).find((r) => (r.detail as { task?: unknown } | undefined)?.task === "agent-dead")?.detail as
     | Record<string, unknown>
     | undefined;
   ok(deadRow?.outcome === "not-completed" && deadRow.found === 1 && deadRow.reads === 0, `§8: the withholding is countable and says why (saw ${JSON.stringify(deadRow)})`);
@@ -430,7 +430,7 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
   const origin = { platform: "slack", channelId: "C1", threadTs: "111.1" } as const;
   await registerUnifiedWakeTarget(store, ORG, DELIVERED_WAKE, origin, at, "win-1");
   await registerUnifiedWakeTarget(store, ORG, TASK_WAKE, origin, at, "win-1");
-  await store.putTaskResult(ORG, taskWakeKey("task_inherited"), JSON.stringify({ wakeId: TASK_WAKE }), at, 60_000);
+  await store.putTaskResult(ORG, taskWakeKey("agent-inherited"), JSON.stringify({ wakeId: TASK_WAKE }), at, 60_000);
 
   const uniCtx = (turnId: string): BindableContext =>
     ({
@@ -448,7 +448,7 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
   const inSeat = newSession(SEAT_SESSION);
   let messageId = "";
   await inSeat(async () => {
-    await noteTaskReceipt({ taskId: "task_inherited", callId: "call_inherited", agentId: null, tool: "agent" }, SEAT_SESSION);
+    await noteTaskStarted({ taskId: "agent-inherited", callId: "call_inherited", turnId: "turn_seat_1", kind: "agent", tool: "agent" }, SEAT_SESSION);
     const inWorker = newSession("worker-call_inherited");
     await inWorker(async () => {
       await hook(opResult("notion__get_page"), workerCtx("call_inherited", "worker_turn_1"));
@@ -457,7 +457,7 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
     noteTurnBoundary("inh_turn_0", "stamp-inh");
     noteTurnBoundary("inh_turn_1", "stamp-inh");
     await applyTaskSettlement(
-      [{ taskId: "task_inherited", status: "completed", agentId: null }],
+      [{ taskId: "agent-inherited", status: "completed", agentId: null }],
       SEAT_SESSION,
       uniCtx("inh_turn_1") as unknown as Parameters<typeof applyTaskSettlement>[2],
     );
@@ -483,7 +483,7 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
   const at = new Date().toISOString();
   await registerUnifiedWakeTarget(store, ORG, TASK_WAKE, { platform: "slack", channelId: "C1", threadTs: "222.2" }, at, "win-1");
   await registerUnifiedWakeTarget(store, ORG, SIBLING_WAKE, { platform: "slack", channelId: "C-SIBLING", threadTs: "333.3" }, at, "win-1");
-  await store.putTaskResult(ORG, taskWakeKey("task_sibling"), JSON.stringify({ wakeId: TASK_WAKE }), at, 60_000);
+  await store.putTaskResult(ORG, taskWakeKey("agent-sibling"), JSON.stringify({ wakeId: TASK_WAKE }), at, 60_000);
 
   const uniCtx = (turnId: string): BindableContext =>
     ({
@@ -501,7 +501,7 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
   const inSeat = newSession(SEAT_SESSION);
   let messageId = "";
   await inSeat(async () => {
-    await noteTaskReceipt({ taskId: "task_sibling", callId: "call_sibling", agentId: null, tool: "agent" }, SEAT_SESSION);
+    await noteTaskStarted({ taskId: "agent-sibling", callId: "call_sibling", turnId: "turn_seat_1", kind: "agent", tool: "agent" }, SEAT_SESSION);
     const inWorker = newSession("worker-call_sibling");
     await inWorker(async () => {
       await hook(opResult("notion__get_page"), workerCtx("call_sibling", "worker_turn_1"));
@@ -510,7 +510,7 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
     noteTurnBoundary("sib_turn_0", "stamp-sib");
     noteTurnBoundary("sib_turn_1", "stamp-sib");
     await applyTaskSettlement(
-      [{ taskId: "task_sibling", status: "completed", agentId: null }],
+      [{ taskId: "agent-sibling", status: "completed", agentId: null }],
       SEAT_SESSION,
       uniCtx("sib_turn_1") as unknown as Parameters<typeof applyTaskSettlement>[2],
     );
@@ -549,6 +549,22 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
     (await delegatedSecondAddress({ org: ORG, taskWakeId: TASK_WAKE, inheritedWakeId: TASK_WAKE, outcome: "installed" })) === undefined,
     "🔴 §10: ARM 4 — an inherited stamp EQUAL to the minted id widens nothing, so it is refused rather than written as a duplicate address",
   );
+
+  const SAME_CHANNEL_OTHER_THREAD = "wake-sibling-same-channel";
+  await registerUnifiedWakeTarget(store, ORG, SAME_CHANNEL_OTHER_THREAD, { platform: "slack", channelId: "C1", threadTs: "999.9" }, at, "win-1");
+  const held = (turnWakeId: string | undefined, outcome: "ingressed" | "installed" | "already", sameSession: boolean | undefined): Promise<boolean> =>
+    heldTurnWakeProvable({ org: ORG, outcome, sameSession, taskWakeId: TASK_WAKE, turnWakeId });
+  ok(await held(SAME_ROOM_WAKE, "ingressed", true), "🔴 §10b: a held turn whose delivered wake names the task's OWN conversation proves the carriage — without it every result-step reply loses its footer");
+  ok(!(await held(SIBLING_WAKE, "ingressed", true)), "🔴 §10b: a held turn whose delivered wake names a conversation in ANOTHER channel is refused — OPE-1713 on the held-turn road");
+  ok(
+    !(await held(SAME_CHANNEL_OTHER_THREAD, "ingressed", true)),
+    "🔴 §10b: a held turn whose delivered wake names ANOTHER THREAD of the same channel is refused — the proof is the conversation, not the container",
+  );
+  ok(!(await held(SAME_ROOM_WAKE, "ingressed", false)), "🔴 §10b: a dispatch row another session wrote is refused — task ids are not org-unique (OPE-2309)");
+  ok(!(await held(SAME_ROOM_WAKE, "ingressed", undefined)), "🔴 §10b: an `ingressed` verdict with no sameSession answer is refused, fail-closed");
+  ok(!(await held(SAME_ROOM_WAKE, "already", true)), "🔴 §10b: the rule is the HELD turn's only — `already` keeps the equality rule");
+  ok(!(await held("wake-never-registered", "ingressed", true)), "🔴 §10b: a delivered wake with no wake row is refused, fail-closed");
+  ok(!(await held(undefined, "ingressed", true)), "🔴 §10b: a turn with no wake id proves nothing");
 }
 
 {
@@ -558,7 +574,7 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
 
   const inWorkerSeat = newSession(SEAT_SESSION);
   await inWorkerSeat(async () => {
-    await noteTaskReceipt({ taskId: "task_borrow", callId: "call_borrow", agentId: null, tool: "agent" }, SEAT_SESSION);
+    await noteTaskStarted({ taskId: "agent-borrow", callId: "call_borrow", turnId: "turn_seat_1", kind: "agent", tool: "agent" }, SEAT_SESSION);
   });
   const inBorrowWorker = newSession("worker-call_borrow");
   await inBorrowWorker(async () => {
@@ -587,7 +603,7 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
   const inSeat = newSession(SEAT_SESSION);
   await inSeat(async () => {
     await applyTaskSettlement(
-      [{ taskId: "task_borrow", status: "completed", agentId: null }],
+      [{ taskId: "agent-borrow", status: "completed", agentId: null }],
       SEAT_SESSION,
       seatCtx(row, turnId) as unknown as Parameters<typeof applyTaskSettlement>[2],
     );
@@ -600,7 +616,7 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
 
   const inSeat2 = newSession(SEAT_SESSION);
   await inSeat2(async () => {
-    await noteTaskReceipt({ taskId: "task_unpinned", callId: "call_unpinned", agentId: null, tool: "agent" }, SEAT_SESSION);
+    await noteTaskStarted({ taskId: "agent-unpinned", callId: "call_unpinned", turnId: "turn_seat_1", kind: "agent", tool: "agent" }, SEAT_SESSION);
   });
   const inUnpinnedWorker = newSession("worker-call_unpinned");
   await inUnpinnedWorker(async () => {
@@ -615,7 +631,7 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
   const inSeat3 = newSession(SEAT_SESSION);
   await inSeat3(async () => {
     await applyTaskSettlement(
-      [{ taskId: "task_unpinned", status: "completed", agentId: null }],
+      [{ taskId: "agent-unpinned", status: "completed", agentId: null }],
       SEAT_SESSION,
       seatCtx(row, unpinnedTurn) as unknown as Parameters<typeof applyTaskSettlement>[2],
     );

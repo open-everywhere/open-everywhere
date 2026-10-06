@@ -123,12 +123,9 @@ ok(standingBlock.includes("`task_cancel`"), "the STOP verb is named — `task_ca
 ok(!standingBlock.includes("`task_update`"), "🔴 `task_update` was the CHILD's verb and eve 0.54.1 DELETED it — naming it would be the dead-affordance class OPE-359 removed");
 ok(!standingBlock.includes("`task_sleep`"), "`task_sleep` is not named either — pausing its own delegated work is a worker decision, not a routing one (OPE-583)");
 ok(/which request the result answers/.test(standingBlock), "🔴 OPE-555 risk 4: the wrong-thread mitigation is IN the copy — a completion notice carries no thread of its own");
-ok(/`agentId` is refused/.test(standingBlock), "🔴 OPE-593: the copy states the refusal — eve's own prompt still teaches `agentId`, so OE must contradict it out loud");
-ok(/A worker does ONE job/.test(standingBlock), "…and states the invariant the refusal protects: a delegated worker is single-turn");
-ok(
-  !/call \`agent\` with that worker's/.test(standingBlock) && !/with that worker's `agentId`/.test(standingBlock),
-  "🔴 OPE-593: the OPE-564 teaching sentence is GONE — a seat told how to continue would try, and a refused call it was taught to make is a retry loop",
-);
+ok(!/`agentId`/.test(standingBlock), "🔴 OPE-2251: the copy no longer names `agentId` — eve 0.70 has no such field, and the refusal it described is deleted");
+ok(/with the `taskId` from its receipt/.test(standingBlock), "🔴 OPE-2251: the copy teaches continuation by `taskId`");
+ok(/Only continue a task from the room that opened it/.test(standingBlock), "🔴 OPE-2251: …and states the provenance fence, so a refused cross-room continuation is a rule the seat already knew");
 ok(/put everything the new worker needs in its brief/.test(standingBlock), "…and the copy names the route that replaces continuation, so the refusal is actionable");
 
 ok(/does NOT block/.test(threadBlock), "a thread seat is told the same return shape — the shape is build-wide, not per grain");

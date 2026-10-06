@@ -202,9 +202,9 @@ const checkpoints: SpendCheckpoints = defineSpendCheckpoints({
 
 **What "soft-gates consequential actions only" means.** The checkpoint is enforced at the top of each **gate:member** consequential tool's execute (`open_pull_request`, `create_skill`, `create_routine`, `purge_memory`, `request_access`, `cancel_routine`, `delete_skill`) — the [consequence classification](../how-it-works/agent-and-loop.md) decides what counts. Reads, replies, reactions and status updates are never gated, so past the threshold the agent can still answer questions and read context — it just can't open a PR or erase memory until someone confirms. **gate:admin** control actions (`set_spend_limit`, `clear_spend_limit`, `revoke_connector`, `clear_connector_override`) are deliberately **not** checkpointed: those are the very actions that raise the limits or fix the controls that would unblock the session, so soft-blocking them would dead-lock the operator out of their own escape hatch.
 
-**How the pause works.** The crossing is caught at a tool-execute boundary — the only place Open Everywhere can pause a live session and redirect the model mid-turn (an observe-only hook cannot abort the loop; the pre-flight monthly gate can't fire mid-session). The tool call returns a recoverable "paused, awaiting a keep-going confirmation" message the model reads and works around, and a **confirmation card** posts once to the channel (Slack/Discord). A member approving arms a **session-continue grant** and every subsequent consequential action in that session proceeds; declining leaves the soft-block in place (no card spam on later attempts). The grant keys off the session's window token, so it lasts for that session and is dropped naturally when the window rotates — the next fresh session re-evaluates from zero. Each step is audited: `checkpoint.trip` when the pause fires, `checkpoint.continue` when a member approves, and the approval plane's `approval.rejected` (kind `session.checkpoint`) on a decline. Where no approval-card path exists (a surface that can't post a card), the checkpoint fails **open** — a soft control must never dead-end an action it can't offer a way to unblock — and records the crossing; the hard monthly cap still binds there independently.
+**How the pause works.** The crossing is caught at a tool-execute boundary — the only place Open Everywhere can pause a live session and redirect the model mid-turn (an observe-only hook cannot abort the loop; the pre-flight monthly gate can't fire mid-session). The tool call returns a recoverable "paused, awaiting a keep-going confirmation" message the model reads and works around, and a **confirmation card** posts once to the channel (Slack/Discord). A member approving arms a **session-continue grant** and every subsequent consequential action in that session proceeds; declining leaves the soft-block in place (no card spam on later attempts). The grant keys off the session's window token, so it lasts until the window rotates or `approvals.checkpointTtlHours` (default 24 h) lapses, whichever comes first. The card names that clock before the click. The next fresh session re-evaluates from zero. Each step is audited: `checkpoint.trip` when the pause fires, `checkpoint.continue` when a member approves, and the approval plane's `approval.rejected` (kind `session.checkpoint`) on a decline. Where no approval-card path exists (a surface that can't post a card), the checkpoint fails **open** — a soft control must never dead-end an action it can't offer a way to unblock — and records the crossing; the hard monthly cap still binds there independently.
 
-**Approving a job's checkpoint is a decision, not a daily reprieve.** A **durable job**'s fires all resume one session, so its cost only accumulates and its grant memo's key never rotates. Under a wall-clock TTL that made approval meaningless: the memo lapsed, the job paused again on a total that was now strictly higher, and it did that once a day forever. So a **routine fire's** continue grant carries **no expiry**, and the cost at the moment of approval becomes the **approved mark**. The next card fires only when the session spends **a fresh threshold's worth on top of that mark** — the control keeps its teeth against a runaway job, and a member who approved once is asked again only about spend they have not seen. Approving that second card sets a new mark. **The card says this before the click** — a durable session's card carries the sentence "this job keeps one running total, so approving sets a mark rather than a timer… and the approval does not lapse on its own", so nobody grants a non-expiring approval the card did not describe. A **live** session is untouched: its grant is TTL'd and unconditional for the rest of the session, and dies with the window rotation, exactly as before. Which rule applies is decided by the **grant**, not by who is speaking — a person replying inside a job's own thread reads the job's memo, so that turn is held to the job's rebase rather than handed an unconditional grant with no expiry. A *declined* job keeps the TTL on its "asked" marker, which is what lets it be asked again rather than being paused for good.
+**Approving a job's checkpoint is a decision, not a daily reprieve.** A **durable job**'s fires all resume one session, so its cost only accumulates and its grant memo's key never rotates. Under a wall-clock TTL that made approval meaningless: the memo lapsed, the job paused again on a total that was now strictly higher, and it did that once a day forever. So a **routine fire's** continue grant carries **no expiry**, and the cost at the moment of approval becomes the **approved mark**. The next card fires only when the session spends **a fresh threshold's worth on top of that mark** — the control keeps its teeth against a runaway job, and a member who approved once is asked again only about spend they have not seen. Approving that second card sets a new mark. **The card says this before the click** — a durable session's card carries the sentence "this job keeps one running total, so approving sets a mark rather than a timer… and the approval does not lapse on its own", so nobody grants a non-expiring approval the card did not describe. A **live** session is untouched: its grant is unconditional until the window rotates or its TTL lapses, whichever comes first, exactly as before. Which rule applies is decided by the **grant**, not by who is speaking — a person replying inside a job's own thread reads the job's memo, so that turn is held to the job's rebase rather than handed an unconditional grant with no expiry. A *declined* job keeps the TTL on its "asked" marker, which is what lets it be asked again rather than being paused for good.
 
 **When nobody is in the room: a checkpoint on an unattended fire.** Everything above assumes a human is present to answer. A [routine fire](../capabilities/proactivity-and-routines.md) has nobody, by construction — and a durable job makes that permanent rather than momentary, because all its fires share one session: its cost only accumulates, so once it crosses a threshold every later fire is paused again until someone approves. The card still posts, but a paused fire would otherwise be *invisible* — it finishes cleanly (a paused tool is a recoverable error the run works around), so nothing counted it as a failure and nothing reached `complete_job`. So each paused fire is now recorded on the routine itself: `list_routines` reports `blocked on a cost checkpoint: 2/3 runs`, a `routine.stalled` audit row names the refused tool, and after **three paused fires in a row** the job stops itself with a notice saying it was *blocked* — pointing at this card, not at a re-arm. Clear the checkpoint (approve, or raise the threshold for that scope) before re-arming, or it stalls again. A *stateless* routine needs none of this: it gets a fresh session per fire, so its crossing dies with that fire.
 
@@ -247,16 +247,26 @@ sandbox burn. Both rows carry the same **principal and routine attribution** as 
 session's model rows — a routine fire's sandbox time bills its creator, and a person's
 `perUser` budget counts their sandbox dollars, not just their tokens.
 
-Retention is opportunistic, set by the `spend.usageEventsTtlDays` typed setting (default 90)
-drives a prune on roughly 1-in-20 writes (the same amortized-cost idiom the event-dedupe
-table uses) — on SQLite this actually deletes rows older than the window. **Under Postgres
-this is a documented no-op**: `usage_events` carries `SELECT` + `INSERT`-only policies under
-`FORCE ROW LEVEL SECURITY`, so `DELETE` is denied even to the table owner the app connects as
-— the same append-only posture that protects the audit log. That is deliberate: a trustworthy
-per-session/per-user cost trail is worth more than the ability to prune it from the app role.
-Real long-term retention on Postgres therefore needs a maintenance path *outside* the app role
+🔴 **Retention: the default store deletes no usage row.** The `spend.usageEventsTtlDays` typed
+setting (default 90) sets the cutoff for a prune that runs on roughly 1-in-20 writes (the same
+amortized-cost idiom the event-dedupe table uses). Only the deprecated SQLite floor deletes rows
+with it. The zero-wiring default is the embedded-Postgres (PGlite) floor, and a `DATABASE_URL`
+selects hosted Postgres. Both use the Postgres adapter, where the prune issues no SQL and returns
+0. **Under Postgres this is a documented no-op**: `usage_events` carries `SELECT` + `INSERT`-only
+policies under `FORCE ROW LEVEL SECURITY`, so on hosted Postgres `DELETE` is denied even to the
+non-superuser table owner the app connects as — the same append-only posture that protects the
+audit log. That is deliberate: a trustworthy per-session/per-user cost trail is worth more than
+the ability to prune it from the app role. ⚠️ **On the PGlite floor the database does not enforce
+that denial.** The floor has one role, and PGlite's default session role is a superuser, which
+bypasses even `FORCE`. There the no-op is a choice of the app's code, not a property of the
+database. Real long-term retention on Postgres therefore needs a maintenance path *outside* the app role
 (a migration-role-owned `SECURITY DEFINER` prune, or a superuser job) — the same escape hatch
-audit-log tamper-prevention relies on.
+audit-log tamper-prevention relies on. On the PGlite floor, with its one role, the operator's own
+job on the database does the delete. This tree ships no such path. Retention is the operator's
+own control, set on the database. The `spend_ledger` table is the same: no code path in this
+tree deletes a `spend_ledger` row, on any store. On a two-role Postgres deploy the runtime role
+also holds no `DELETE` on it. A new calendar month writes new rows under a new `period` key
+rather than removing the old ones.
 
 ## The ledger row, dimension by dimension
 
@@ -297,10 +307,13 @@ dimensions the ledger deliberately does not keep.
 
 🔴 **Pruning means two different things on the two backings.** On **Postgres** `pruneUsageEvents`
 does nothing, by design: the table carries `SELECT`-and-`INSERT`-only policies exactly as
-`audit_entry` does, so `DELETE` is denied even to the owner the app connects as. On **SQLite** it
+`audit_entry` does, so on hosted Postgres `DELETE` is denied even to the non-superuser owner the
+app connects as. On the PGlite floor the no-op holds too, but the app connects as a superuser, so
+the database does not enforce the denial there. On **SQLite** it
 really deletes rows older than the given instant, because there is no row-level-security engine
-there and local retention holds by contract. A retention job that reports zero rows pruned on
-Postgres has succeeded, not failed.
+there and local retention holds by contract. 🔴 **A zero from the prune on Postgres means it deleted
+nothing.** It issued no SQL, so a retention job that reads that zero as success has removed no row.
+Retention on Postgres, PGlite included, is the operator's own job on the database.
 
 ### Delegation depth, and what it does not claim
 
@@ -622,8 +635,10 @@ chain exactly as rewriting the surface does.
 into a separate `(unclassified)` bucket, never into `(dms)`, because reporting a channel's spend as
 DM spend would be a false statement about where the money went. Rows read that way are the ones
 written before the stamp existed (nothing is backfilled — the mode was knowable only from the turn's
-binding, which no stored row carries) and any row whose writer had no binding. They age out with the
-ledger's calendar month and `usage_events` retention.
+binding, which no stored row carries) and any row whose writer had no binding. 🔴 **They do not age
+out.** A new calendar month starts new ledger rows but deletes no old one, and the default store
+prunes no `usage_events` row. They stay until the operator's own retention on the database removes
+them.
 
 **A group DM is not masked**, on any platform. A group is not an individual, and the bucket exists to
 protect individuals.

@@ -63,6 +63,26 @@ export function resolveGithubApiBase(env: Env): string {
   return env.GITHUB_API_URL?.trim().replace(/\/+$/, "") || GITHUB_API_BASE;
 }
 
+export function resolveGithubOwnerRepoFromEnv(env: Env): { owner: string; repo: string } | undefined {
+  const raw = env.GITHUB_REPOSITORY?.trim();
+  if (!raw) return undefined;
+  const slash = raw.indexOf("/");
+  if (slash <= 0 || slash === raw.length - 1) return undefined;
+  return { owner: raw.slice(0, slash), repo: raw.slice(slash + 1) };
+}
+
+export function pinGhRepoPlaceholders(args: readonly string[], env: Env): string[] {
+  const ownerRepo = resolveGithubOwnerRepoFromEnv(env);
+  if (!ownerRepo) return [...args];
+  const pin = (arg: string): string => arg.replaceAll("{owner}", ownerRepo.owner).replaceAll("{repo}", ownerRepo.repo);
+  return args.map((arg, i) => {
+    if (i === 1 && args[0] === "api") return pin(arg);
+    if (i > 0 && (args[i - 1] === "-F" || args[i - 1] === "--field")) return pin(arg);
+    if (arg.startsWith("--field=")) return pin(arg);
+    return arg;
+  });
+}
+
 export type DeployEnv = {
   scope: string;
   alias: string;

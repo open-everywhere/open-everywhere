@@ -142,7 +142,7 @@ function tsFilesUnder(dir: string): string[] {
   ok(wakeEnvelope.length === 1, `real: channels/wake-envelope.ts carries exactly its ONE known site (the chat-message body) — saw ${wakeEnvelope.length}`);
   ok(wakeEnvelope.every((s) => s.kindLiteral === "chat-message"), "real: …and it is the chat-message site — the handoff-note site went with the note it declared (OPE-794)");
   ok(at("webhooks/dispatch.ts").length === 2, "real: webhooks/dispatch.ts carries both its webhook-body and webhook-summary sites");
-  ok(at("access/untrusted-projection.ts").some((s) => s.kindLiteral === "connector" && s.labelText === "name"), "real: access/untrusted-projection.ts's connector site is SEEN with its bound-identifier label (`label: name`)");
+  ok(at("access/untrusted-projection.ts").some((s) => s.kindLiteral === "connector" && s.labelText === "ingestionLabel"), "real: access/untrusted-projection.ts's connector site is SEEN with its bound-identifier label (`label: ingestionLabel` — OPE-2253 re-keyed the connector label off the connection_execute TARGET, so the bound name is no longer the raw tool name)");
   ok(at("tools/sandbox_tools.ts").some((s) => s.kindLiteral === "skill-declared" && s.hasLabel && s.labelText === undefined), "real: tools/sandbox_tools.ts's skill-declared site is SEEN with its bare shorthand `label` property");
   ok(
     at("channels/slack-shortcut.ts").some((s) => s.form === "noteIngestionVerdict" && s.kindLiteral === "chat-message" && s.labelText === "slack:shortcut"),

@@ -15,7 +15,7 @@ the Bot API host `discord.com/api`. Core's registries refuse a provider the depl
 ## Install
 
 ```sh
-npm i @open-everywhere/core @open-everywhere/provider-discord eve@0.54.3
+npm i @open-everywhere/core @open-everywhere/provider-discord eve@0.71.0
 npx oe-eve-patch
 ```
 

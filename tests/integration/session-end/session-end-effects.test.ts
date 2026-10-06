@@ -1,18 +1,19 @@
 import { randomBytes } from "node:crypto";
 import { expect, test } from "vitest";
+import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import {
-  afterThisTest,
+  armSettlement,
   auditCursor,
-  awaitTaskSettlement,
+  awaitWorkResult,
   bootAgent,
   DISCORD_LISTED_CHANNEL_ID,
   discordMentionWake,
   disposeLater,
   registerScript,
   rowsSinceCursor,
-  taskIdOfDelegation,
   waitFor,
   waitForChildren,
+  workTaskIdOfCall,
 } from "../harness";
 
 const OBSERVATION_ACTION = "memory.observation";
@@ -33,10 +34,10 @@ test("the dream cycle fingerprints the seat's own request and never the worker's
   const handle = disposeLater(
     registerScript({
       parent: [
-        { calls: [{ tool: "agent", input: { message: `${workerNonce} reconcile the quarterly ledger` }, id: "se-delegate" }] },
-        { say: "the worker reported back" },
+        { calls: [{ tool: "work", input: { message: `${workerNonce} reconcile the quarterly ledger` }, id: "se-delegate" }] },
+        { say: NO_REPLY_SENTINEL },
       ],
-      child: [{ say: "reconciled" }],
+      child: [{ delayMs: 120_000, say: "reconciled" }],
     }),
   );
 
@@ -45,29 +46,23 @@ test("the dream cycle fingerprints the seat's own request and never the worker's
     text: `<@9000000000000000001> ${seatNonce} reconcile the quarterly ledger`,
   });
 
-  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the seat's terminal step to be served");
+  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the seat's receipt step");
+  const settlement = disposeLater(armSettlement(handle, { parent: [{ say: NO_REPLY_SENTINEL }] }));
+  const taskId = await workTaskIdOfCall(cursor, handle, "se-delegate", "the session-end forward");
+  handle.releaseHolds();
   await waitForChildren(handle, { count: 1, lastStepIndex: 0, label: "the delegated worker's own terminal step" });
+
+  const seatTurn = handle.requests.find((r) => r.role === "parent")!.turnId;
+  const resultStep = await awaitWorkResult({ handle: settlement, taskId, label: "the seat's step that read the worker's result" });
+  expect(typeof resultStep.turnId, "the scripted model recorded no turnId, so the separate-turn check would be vacuous").toBe("string");
+  expect(resultStep.stepIndex).toBe(0);
+  expect(resultStep.turnId, "the worker's result arrives in a seat turn of its own (OPE-2338)").not.toBe(seatTurn);
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-
-  const taskId = taskIdOfDelegation(handle, "the session-end delegation");
-  const settlement = await awaitTaskSettlement({
-    dispatched: handle,
-    taskId,
-    script: { parent: [{ calls: [{ tool: "task_cancel", input: { taskIds: [taskId] }, id: "se-peek" }] }, { say: "acknowledged" }] },
-    label: "the worker's completion, delivered as a new message naming the task id",
-  });
-  afterThisTest(() => settlement.handle.dispose());
-
-  const peeked = await waitFor(
-    () => settlement.handle.requests.find((r) => r.role === "parent" && r.toolResults.some((t) => t.name === "task_cancel")),
-    "the parent's step carrying the task_cancel result — eve's own terminal view of the worker",
-  );
-  expect(peeked.toolResults.find((t) => t.name === "task_cancel")!.isError).toBe(false);
-  expect(settlement.handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  expect(settlement.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 
   const seatFirst = handle.requests[0];
   expect(seatFirst.role).toBe("parent");
-  expect(seatFirst.tools).toContain("agent");
+  expect(seatFirst.tools).toContain("work");
   expect(seatFirst.messages.map((m) => m.text).join("\n")).toContain(seatNonce);
   const workerRequests = handle.requests.filter((r) => r.role === "child");
   expect(workerRequests.length).toBeGreaterThanOrEqual(1);

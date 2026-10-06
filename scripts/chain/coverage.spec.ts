@@ -24,6 +24,7 @@ import {
   rootChainScriptNames,
   workspacePackages,
 } from "./_legs.js";
+import { floatingAsyncEntrypoints } from "./_floating-entry.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -321,5 +322,57 @@ describe("root chain parity", () => {
       "scripts/settings-boot-order-lint-test.ts no longer runs the full gate with `lint(\"--list\")` — that run IS " +
         "the chain's only run of lint:settings-boot-order, so put lint:settings-boot-order back on the root chain",
     ).toContain('const fullGate = lint("--list");');
+  });
+});
+
+describe("no chain leg floats its async entrypoint", () => {
+  test("every chain leg awaits its async entrypoint at top level", () => {
+    const legs = chainLegs();
+    expect(legs.length).toBeGreaterThan(0);
+    const floating: string[] = [];
+    for (const file of new Set(legs.map((l) => l.file))) {
+      for (const hit of floatingAsyncEntrypoints(readFileSync(file, "utf8"))) floating.push(`${relative(REPO_ROOT, file)}:${hit}`);
+    }
+    expect(
+      floating,
+      "a chain leg starts an async function without awaiting it — the batched runner reads the verdict from the " +
+        "module import, which then resolves before the assertions run. Write `await main();` at top level " +
+        "(inside `try { … } catch { … process.exit(1) }` to keep an error message)",
+    ).toEqual([]);
+  });
+
+  test("the scan reds on each floating shape, and passes the awaited ones (negative control)", () => {
+    const decl = "async function main(): Promise<void> { await Promise.resolve(); }\n";
+    const arrow = "const run = async () => { await Promise.resolve(); };\n";
+    for (const floatingShape of [
+      `${decl}void main();\n`,
+      `${decl}main();\n`,
+      `${decl}main().catch((err) => {\n  console.error(err);\n  process.exit(1);\n});\n`,
+      `${decl}main().then(() => process.exit(0));\n`,
+      `${decl}if (process.argv[1]?.endsWith("x.ts")) {\n  main().catch(() => process.exit(1));\n}\n`,
+      `${arrow}void run();\n`,
+      `${decl}if (import.meta.url === \`file://\${process.argv[1]}\`) void main();\n`,
+      "(async () => {\n  await Promise.resolve();\n})();\n",
+      "void (async function () {\n  await Promise.resolve();\n})();\n",
+      "export default async function main(): Promise<void> {\n  await Promise.resolve();\n}\nvoid main();\n",
+      "const main: () => Promise<void> = async () => {\n  await Promise.resolve();\n};\nvoid main();\n",
+    ]) {
+      expect(floatingAsyncEntrypoints(floatingShape), `the scan misses:\n${floatingShape}`).toHaveLength(1);
+    }
+    for (const awaitedShape of [
+      `${decl}await main();\n`,
+      `${decl}try {\n  await main();\n} catch (err) {\n  process.exit(1);\n}\n`,
+      `${decl}if (process.argv[1]?.endsWith("x.ts")) {\n  await main();\n}\n`,
+      "function main(): void {}\nmain();\n",
+      `${decl}if (process.argv[1]?.endsWith("x.ts")) await main();\n`,
+      "await (async () => {\n  await Promise.resolve();\n})();\n",
+      "const fetchStub = vi.fn(async () => ({ ok: true }));\nawait main2(fetchStub);\nfunction main2(f: unknown): Promise<void> {\n  return Promise.resolve(void f);\n}\n",
+      `${decl}function helper(): void {\n  void main();\n}\n`,
+      `${decl}const run = (): Promise<void> =>\n  main();\n{\n  const drive = () =>\n    main();\n}\nawait run();\n`,
+      `${decl}const obj = {\n  go() {\n    void main();\n  },\n};\nawait main();\n`,
+      `${decl}// void main();\nconst doc = \`\nvoid main();\n\${"}"}\nmain().catch(() => 1);\n\`;\nconst re = /\\{[}{]/;\nawait main();\n`,
+    ]) {
+      expect(floatingAsyncEntrypoints(awaitedShape), `the scan wrongly reds:\n${awaitedShape}`).toEqual([]);
+    }
   });
 });

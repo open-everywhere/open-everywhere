@@ -8,6 +8,7 @@ import {
   REPEAT_NUDGE_THRESHOLD,
   REPEAT_HARD_THRESHOLD,
 } from "../agent/access/loop-breaker.js";
+import { runEveStep, type SavedEveContext } from "./_eve-step-delta.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -64,5 +65,23 @@ try {
   threw = true;
 }
 ok(!threw, "fail-soft: resetLoopBreakerTurn is a no-op with no session context");
+
+{
+  let saved: SavedEveContext = {};
+  const nudges: (string | null)[] = [];
+  const reset = await runEveStep(saved, () => resetLoopBreakerTurn());
+  saved = reset.saved;
+  for (let i = 0; i < REPEAT_HARD_THRESHOLD; i++) {
+    const step = await runEveStep(saved, () => noteToolResultLoop("notion page p1", "nothing new in the doc"));
+    nudges.push(step.result);
+    saved = step.saved;
+  }
+  ok(nudges.slice(0, REPEAT_NUDGE_THRESHOLD - 1).every((n) => n === null), "step delta: the reads below the threshold carry no nudge");
+  ok(/LOOP BREAKER/.test(nudges[REPEAT_NUDGE_THRESHOLD - 1] ?? ""), "step delta: the THIRD identical read, one step each, carries the nudge");
+  ok(/⛔/.test(nudges[REPEAT_HARD_THRESHOLD - 1] ?? ""), "step delta: the count keeps climbing across steps to the hard stop");
+  saved = (await runEveStep(saved, () => resetLoopBreakerTurn())).saved;
+  const afterReset = await runEveStep(saved, () => noteToolResultLoop("notion page p1", "nothing new in the doc"));
+  ok(afterReset.result === null, "step delta: after the reset step, the same read is a first sighting again");
+}
 
 console.log(`loop-breaker-test: ${passed} assertions passed`);

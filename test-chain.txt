@@ -30,6 +30,7 @@ lint:hydration-stub
 lint:human-only-invariants
 lint:principal-gate
 lint:own-account-gate
+test:own-account-gate-refusal
 lint:principal-key
 lint:invisible-bytes
 test:slack-vouch
@@ -60,6 +61,7 @@ test:full-kit-boot-order
 test:settings-boot-order-lint
 test:agent-version-seam
 test:deploy
+test:win32-exit-abort
 test:deploy-smoke
 test:deploy-smoke-fixture
 test:deploy-census
@@ -78,6 +80,7 @@ test:notion-connectors
 test:notion-rest-script
 test:github-personal-credential
 test:approval-dedupe
+test:conversation-grant-scope
 test:provider-selection-integration
 test:webhook-source-vocabulary-live
 test:egress-proxy
@@ -145,6 +148,7 @@ test:reply-anchor-parity
 test:wake-retry-parity
 test:owned-thread-ingress-wiring
 test:deployment-identity-boot
+test:instrumentation-hosted-boot
 lint:glossary-citations
 lint:dynamic-replay
 lint:suite-store
@@ -169,7 +173,15 @@ test:it-prepare
 lint:setup-steps-docs
 lint:skill-sync
 test:scripted-wake-ownership
+test:scripted-task-receipt
+lint:hook-throw
+test:hook-throw-lint
+test:ends-turn-final
 test:posix-path
 test:oe-upgrade-packed
+test:oe-bin-packed
 test:eve-patch-upgrade-packed
+lint:brand-literals
+test:brand-literal-lint
 test:template-drift
+test:template-adapters

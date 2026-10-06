@@ -7,6 +7,8 @@ import type { BindableContext } from "../../agent/identity/binding.js";
 import {
   createRecorder,
   eveFrameworkToolDefinition,
+  eveNamedTool,
+  evePublicTool,
   resolveDynamicEntry,
   type MountableEntry,
   type ResultFor,
@@ -38,13 +40,11 @@ export function workerSeatRoster(): readonly string[] {
   return taskGrainMountSurface().filter((n) => allowedOnWorkerSeat(n));
 }
 
-const EVE_FRAMEWORK_MODULES: Readonly<Record<string, string>> = {
-  ask_question: "tools/framework/ask-question.js",
-  connection_search: "tools/framework/connection-search.js",
-  task_cancel: "tools/framework/task-cancel.js",
-  todo: "tools/provided/todo.js",
-  load_skill: "tools/provided/load-skill.js",
-  web_search: "tools/provided/web-search.js",
+const EVE_FRAMEWORK_MODULES: Readonly<Record<string, { readonly subpath?: string; readonly dist?: string; readonly named?: string }>> = {
+  task_cancel: { dist: "tools/provided/task-cancel.js", named: "taskCancelTool" },
+  task_wait: { dist: "tools/provided/task-wait.js", named: "taskWaitTool" },
+  load_skill: { subpath: "eve/tools/load_skill" },
+  web_search: { subpath: "eve/tools/web_search" },
 };
 
 export const WORKER_SEAT_UNREACHABLE: Readonly<Record<string, string>> = {
@@ -54,6 +54,12 @@ export const WORKER_SEAT_UNREACHABLE: Readonly<Record<string, string>> = {
   read_linear_issue: "defined in packages/providers/linear — packages/core may not import a provider bundle (boundary lock rule 1)",
   extend_workspace_time: "defined in @open-everywhere/adapters — packages/core may not import the adapters package (boundary lock rule 1)",
   fresh_eyes_review: "a declared subagent directory (agent/subagents/fresh_eyes_review) — eve lowers it into a tool at build time, so no importable definition exists",
+  connection_tools:
+    "eve RESERVES the slot (0.69.0 CONNECTION_TOOL_SLOTS) and ships it as a DynamicSentinel on no public subpath; it provides the two verbs below rather than mounting under its own name, so there is no entry to mount here",
+  connection_search:
+    "eve 0.69.0 provides it from the dynamic `tools/connection_tools` source, only while the agent has connections — `tools/framework/connection-search.js` is gone. This synthetic world registers no connection registry, so the resolver would answer null; there is no module whose default export is this verb",
+  connection_execute:
+    "same seam as connection_search — provided by the dynamic `tools/connection_tools` source while the agent has connections, with no module of its own to import",
 };
 
 const CORE_TOOL_MODULES: ReadonlyMap<string, string> = new Map(
@@ -141,9 +147,16 @@ export async function buildWorkerSeatToolset(opts: {
       if (mounted.length === 0) skip(name, "its own shipped `session.started` resolver mounts nothing on this seat");
       continue;
     }
-    const evePath = EVE_FRAMEWORK_MODULES[name];
-    if (evePath !== undefined) {
-      set[name] = rec(name, await eveFrameworkToolDefinition(evePath));
+    const eveSeam = EVE_FRAMEWORK_MODULES[name];
+    if (eveSeam !== undefined) {
+      set[name] = rec(
+        name,
+        eveSeam.subpath !== undefined
+          ? await evePublicTool(eveSeam.subpath)
+          : eveSeam.named !== undefined
+            ? await eveNamedTool(eveSeam.dist!, eveSeam.named)
+            : await eveFrameworkToolDefinition(eveSeam.dist!),
+      );
       continue;
     }
     const unreachable = WORKER_SEAT_UNREACHABLE[name];

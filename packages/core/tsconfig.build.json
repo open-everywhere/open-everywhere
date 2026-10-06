@@ -1,7 +1,7 @@
 {
   // PUBLISH BUILD (OPE-406). `tsconfig.json` stays `noEmit` — it is the typecheck gate and it
-  // deliberately covers `scripts/**` too. This config emits ONLY the published surface (`agent/**`)
-  // into `dist/`, because a registry install cannot run raw TypeScript: Node disables type
+  // deliberately covers `scripts/**` too. This config emits ONLY the published surface (`agent/**`
+  // and the `oe` CLI modules below) into `dist/`, because a registry install cannot run raw TypeScript: Node disables type
   // stripping for anything whose realpath is inside `node_modules`
   // (ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING), and `eve build` EVALUATES the authored agent
   // modules before bundling — so the failure lands at build time, not just at runtime.
@@ -20,5 +20,23 @@
     "outDir": "dist",
     "rootDir": "."
   },
-  "include": ["agent/**/*.ts"]
+  // The `oe` CLI (OPE-2296). `bin/oe.js` imports the EMITTED `dist/scripts/oe-cli.js`, so a consumer
+  // runs plain JavaScript and needs no `tsx`. These are the modules that bin reaches. tsc follows
+  // imports by itself; the list names each one so that the shipped CLI set is readable here.
+  // `package.json` `files` ships no raw `scripts/*.ts`, with one exception:
+  // `scripts/operator-store-connect.ts`. The shipped source `agent/ops/server.ts` imports it, and
+  // attw fails the tarball (InternalResolutionError) when that import does not resolve.
+  "include": [
+    "agent/**/*.ts",
+    "scripts/oe-cli.ts",
+    "scripts/eve-framework-tools.ts",
+    "scripts/oe-wrap-untrusted.ts",
+    "scripts/oe-secret.ts",
+    "scripts/oe-overlays.ts",
+    "scripts/oe-upgrade.ts",
+    "scripts/upgrade-codemods.ts",
+    "scripts/upgrade-notes.ts",
+    "scripts/template-drift.ts",
+    "scripts/operator-store-connect.ts"
+  ]
 }

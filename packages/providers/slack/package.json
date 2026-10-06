@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/provider-slack",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Open Everywhere Slack provider — Slack channel and DM surfaces, identity mapping, approval cards and slash commands.",
   "keywords": [
     "agent",
@@ -112,6 +112,10 @@
       "types": "./dist/agent/channels/slack-spend-gate.d.ts",
       "default": "./dist/agent/channels/slack-spend-gate.js"
     },
+    "./agent/channels/slack-task-card.js": {
+      "types": "./dist/agent/channels/slack-task-card.d.ts",
+      "default": "./dist/agent/channels/slack-task-card.js"
+    },
     "./agent/channels/slack-tenant-fence.js": {
       "types": "./dist/agent/channels/slack-tenant-fence.d.ts",
       "default": "./dist/agent/channels/slack-tenant-fence.js"
@@ -214,13 +218,16 @@
     "test:slack-contextline-trust": "NODE_NO_WARNINGS=1 tsx scripts/slack-contextline-trust-test.ts",
     "test:slack-wake-trust": "NODE_NO_WARNINGS=1 tsx scripts/slack-wake-trust-test.ts",
     "test:slack-dm-seat": "NODE_NO_WARNINGS=1 tsx scripts/slack-dm-seat-test.ts",
+    "test:slack-reasoning-fence": "NODE_NO_WARNINGS=1 tsx scripts/slack-reasoning-fence-test.ts",
     "test:slack-dm-divert": "NODE_NO_WARNINGS=1 tsx scripts/slack-dm-divert-test.ts",
     "test:slack-shortcut": "NODE_NO_WARNINGS=1 tsx scripts/slack-shortcut-test.ts",
     "test:slack-enterprise-rung": "NODE_NO_WARNINGS=1 tsx scripts/slack-enterprise-rung-test.ts",
     "test:slack-native-wake-heal": "NODE_NO_WARNINGS=1 tsx scripts/slack-native-wake-heal-test.ts",
     "test:slack-attachments": "NODE_NO_WARNINGS=1 tsx scripts/slack-attachments-test.ts",
+    "test:slack-governance-roster": "NODE_NO_WARNINGS=1 tsx scripts/slack-governance-roster-test.ts",
     "test:slack-input-response": "NODE_NO_WARNINGS=1 tsx scripts/slack-input-response-test.ts",
     "test:slack-approval-card": "NODE_NO_WARNINGS=1 tsx scripts/slack-approval-card-test.ts",
+    "test:slack-task-card": "NODE_NO_WARNINGS=1 tsx scripts/slack-task-card-test.ts",
     "test:slack-mrkdwn": "NODE_NO_WARNINGS=1 tsx scripts/slack-mrkdwn-test.ts",
     "test:slack-rate-limit": "NODE_NO_WARNINGS=1 tsx scripts/slack-rate-limit-test.ts",
     "test:slack-web-api-seam": "NODE_NO_WARNINGS=1 tsx scripts/slack-web-api-seam-test.ts",
@@ -229,12 +236,12 @@
     "test:slack-surface-evidence": "NODE_NO_WARNINGS=1 tsx scripts/slack-surface-evidence-test.ts"
   },
   "dependencies": {
-    "@open-everywhere/core": "0.1.5",
+    "@open-everywhere/core": "0.2.0",
     "undici": "^7.28.0",
     "zod": "4.5.4"
   },
   "peerDependencies": {
-    "eve": "0.54.3"
+    "eve": "0.71.0"
   },
   "devDependencies": {
     "@types/node": "latest",

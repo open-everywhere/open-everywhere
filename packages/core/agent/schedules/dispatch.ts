@@ -11,7 +11,7 @@ import {
   type TeamsAccountActiveCheck,
   type TeamsRoomMembershipCheck,
 } from "../routines/fire-eligibility.js";
-import { divertTriggeredFire, jobFireSeatKey, runFireSeatKey } from "../routines/fire-window.js";
+import { divertTriggeredFire, type FireWindowDeps } from "../routines/fire-window.js";
 import { mintWakeId, type UnifiedWakeOrigin } from "../channels/unified-window.js";
 import { auditRoutineDisabled, auditRoutineEligibilityUnresolved, auditRoutineFireLost, auditRoutineSkip } from "../routines/fire-audit.js";
 import { auditFireAttrsSent } from "../routines/fire-carriage.js";
@@ -19,7 +19,7 @@ import { checkBound } from "../routines/bound.js";
 import { foldRoutineOutcome, retireExhaustedRoutine } from "../routines/outcome-fold.js";
 import { listAllRoutines, updateRoutine } from "../routines/store.js";
 import { computeNextRun, isDue, DISPATCH_TICK_MINUTES } from "../routines/schedule.js";
-import { isClockScheduled, isJobRoutine, routinePermissionGeneration, routineReportSurfaceKey, type Routine } from "../routines/routine.js";
+import { isClockScheduled, isJobRoutine, routineReportSurfaceKey, type Routine } from "../routines/routine.js";
 import { renderFireMessage } from "../routines/fire-message.js";
 import { preFireFallback, runPreFire, type PreFireOutcome } from "../routines/pre-fire.js";
 import { gateWaitExpiredReason, gatedOnceExhausted } from "../routines/gate.js";
@@ -71,6 +71,7 @@ export async function dispatchTick(
     readonly confirmCreatorActive?: AccountActiveCheck;
     readonly confirmTeamsRoomMembership?: TeamsRoomMembershipCheck;
     readonly confirmTeamsCreatorActive?: TeamsAccountActiveCheck;
+    readonly fireWindow?: FireWindowDeps;
   },
 ): Promise<void> {
   const { to, waitUntil, appAuth } = args;
@@ -265,14 +266,14 @@ export async function dispatchTick(
         dest.origin && dest.origin.platform === "slack" && isJobRoutine(r) && jobAnchor
           ? { ...dest.origin, threadTs: jobAnchor }
           : dest.origin;
-      const seatKey = isJobRoutine(r) ? jobFireSeatKey(r.id, routinePermissionGeneration(r)) : runFireSeatKey(fireWakeId);
       const message = renderFireMessage(r, pre.collected);
       const deliver = async (): Promise<void> => {
         await auditFireAttrsSent(r, markedAuth.attributes, fireWakeId);
         if (fireOrigin) {
           const diverted = await divertTriggeredFire(
             to,
-            { message, surfaceKey: fireSurfaceKey, origin: fireOrigin, seatKey, auth: markedAuth, wakeId: fireWakeId },
+            { message, surfaceKey: fireSurfaceKey, origin: fireOrigin, auth: markedAuth, wakeId: fireWakeId },
+            args.fireWindow ?? {},
           );
           if (diverted) return;
         }

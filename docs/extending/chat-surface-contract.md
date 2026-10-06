@@ -442,10 +442,14 @@ through which the model can name a room.
 | `delegation-pending` | a delegated worker still owes this turn its result |
 | `task-wake-unread` | a task wake this turn holds has not been read |
 | `mismatch` / `expired` / `answered` | the **wake fence**, on a unified single-window session only. The model named a wake id this turn does not hold, or the id aged past its TTL, or an earlier turn already answered it (`channels/unified-window.ts`) |
+| `answer-delivered` | the **wake fence**, on a unified single-window session only (OPE-2335). The turn's own wake carried the answer to a bridged question, and the question bridge settled it, so it takes no reply of its own. It fires only on a turn whose auth bag changed in-turn. Not overridable with `force`. Reply to the wake of the conversation that asked the question |
 
-The last row is a different class from the five above it. The five judge **whether this turn may put
-this text in this room**. The wake fence judges **the address the model named**, so a provider that
-joins a unified window inherits it whole and implements none of it.
+The last two rows are a different class from the six above them. The six judge **whether this turn
+may put this text in this room**. The wake fence judges **the address the model named**, so a
+provider that joins a unified window inherits it whole and implements none of it. One wake-fence
+reason is also prose-blocking, like `stale-conversation`, `should-be-edit`, `answered-this-turn` and
+`declined-this-turn`: `answer-delivered` withholds a dropped prose and suppresses its redrive
+(`PROSE_BLOCKING_REFUSALS`), because the host refused the turn's own host-resolved wake.
 
 **REPORTS** the created message id. Every post is written to the own-post ledger, which is the fence
 that decides what `edit_reply` may later touch.
@@ -654,8 +658,29 @@ every adapter's UNSCOPED call still reaches everything the credential can see.
 
 **MUST NOT return bodies.** Every hit is an id + a title (+ optional url) — the same shape
 `notion_search` already used. Search widens what the agent can **find**; it does not widen what it
-can **read**. A hit is followed up with the matching read tool (`read_notion_page`,
-`read_linear_issue`, `check_pr_status`, …).
+can **read**.
+
+**EVERY HIT NAMES ITS READ ROAD, OR SAYS IT HAS NONE** (OPE-2178). A hit carries an optional
+`readWith: { tool, args }` — the tool and the arguments that read what the hit points at — and the
+render prints it under the hit as a `read with:` line. A hit with no road prints "no tool takes this
+item as a target." A bare id and title read to a live model as the whole of what it could reach:
+in a live run a worker cloned the repo of a GitHub issue hit and reported the body as inaccessible.
+The road names a tool and opens nothing. The named tool runs its own fence when the model calls it,
+and it can refuse. An unscoped search returns Notion pages and Linear issues outside the caller's
+domain. `read_notion_page` refuses any page outside the caller's domain. `read_linear_issue`
+refuses an issue on a team in another domain, but under the Linear work grant it admits an issue
+on a team that no domain holds.
+- **Linear** — `read_linear_issue` with the issue identifier.
+- **Notion** — `read_notion_page` with the page id, for a PAGE hit only. A database hit has no road.
+- **GitHub** — the hit that is the turn's OWN conversation names `read_work_channel`, which reads
+  its opening post and newest comments. It takes no target, so it is the road for no other hit.
+  Another pull request names `get_pr_feedback` with `repo` and `number`. That tool reads the
+  reviews, the comments and the checks; it does NOT read the PR's opening description. Another plain
+  issue names `read_github_issue` with `repo` and `number` (OPE-2305). That tool reads the opening
+  post and the newest comments, and it refuses a repo outside the session's repo grant. It reads a
+  PR's opening description too, but a PR hit keeps `get_pr_feedback` as its road. GitHub has no
+  REST skill, and a repo grant does not open `api.github.com` in the sandbox, so this read runs
+  host-side on the App installation token.
 
 ### 4.7.1 `post_message` — the deliberate cross-CONTAINER exception (tier P1)
 
@@ -902,10 +927,11 @@ more is the one way this feature can actively mislead.
 
 Three host-placed acknowledgements ride the same registry, and none of them is model-driven:
 
-- **The ✋ stop glyph.** Placed on the turn's anchor message on the **first delegation** of a turn,
-  removed on completion, failure or cancel. The trigger is a delegation and not "the turn started",
-  because real work leaves a conversational seat through the delegation verb. Ambient deliberation
-  and quick replies get no glyph — which is the no-surveillance rule for free.
+- **The ✋ stop glyph.** A job that a seat forwards to its work session gets a ✋ on the message that
+  asked for it, from the job's start to its settlement (`hooks/work-status.ts`). A turn that calls a
+  declared subagent gets a ✋ on its anchor message, removed on completion, failure or cancel
+  (`hooks/turn-anchor.ts`). The trigger is work that runs, not "the turn started". Ambient
+  deliberation and quick replies get no glyph — which is the no-surveillance rule for free.
 - **The cancel acknowledgement.** After a cancel lands, the host posts one note into the room saying
   what had already run. It is a plain post through the same ancillary-ops registry.
 - **A working-status reaction.** Slack alone carries a 👀-class status glyph, driven by the channel
@@ -1142,12 +1168,40 @@ best-effort.
 
 ### 4.15 How a turn ends
 
-`no_reply` returns a **non-empty** terminal note (`NO_REPLY_NOTE`,
-`packages/core/agent/tools/no_reply.ts`). eve runs one step per model call, and reads an empty step as
-a failure worth reissuing with "Answer now from the tool results above" — a note that would command a
-reply on a turn that correctly chose silence. Naming the terminal output makes that step non-empty, so
-the recovery path is never reached. This reduces the trigger rather than removing it; the
-deterministic half is the declined-wake record the reply tool refuses against.
+**A successful `reply` or `no_reply` ends the turn natively.** Both set eve's `endsTurn: true`
+(OPE-2252). When every call in a model step is one of them and every call succeeded, eve ends the turn
+with **no further model call** and no final message. A refused call throws, so eve reads it as a
+failed call and the turn continues: a refusal never closes the obligation it names. eve ignores
+`endsTurn` in a delegated session, so a worker always returns a result to its caller. If a worker the
+seat started is still working, the turn waits for it (`turn.waiting`) and the model is called again
+with its `task.result`.
+
+`reply` takes `true`, not a function of its output, because it is a **dynamic** tool and eve 0.70
+refuses an `endsTurn` function on a dynamic tool. So a hand-off note (`done: false`) ends the turn too.
+
+**A turn that ends on `endsTurn` emits no final message.** eve emits `message.completed` only for
+streamed text, so the unified seat decides such a turn at `turn.completed` instead
+(`onUnifiedTurnCompleted`, `channels/unified.ts`). It runs the same decision with an empty `stop`
+message, once per turn: it consumes the `no_reply` reason, writes the sentinel and bare-stop rows,
+and closes an open agent session on a silent turn. A turn whose text completion already ran the
+decision is skipped. The wake-accounting hook also clears the `no_reply` and `react` signals at
+`turn.started`, so a signal that no handler consumed never reaches the next turn.
+
+**Text written before a wait is not the turn's ending.** On a root session eve completes such text as
+an ordinary `stop` message while the turn waits on a working task. When a worker this turn dispatched
+still owes the wake, the unified seat posts nothing, drops nothing, re-drives nothing, and leaves the
+turn undecided; the turn's real final message or `turn.completed` decides it. `turn.completed` always
+decides, because the turn has ended. Every other chat channel gets the same `turn.completed` decision
+from core's `withEndsTurnFinalChannel` (`channels/ends-turn-final.ts`), which each provider applies to
+its exported channel.
+
+`no_reply` still returns a **non-empty** terminal note (`NO_REPLY_NOTE`,
+`packages/core/agent/tools/no_reply.ts`). The model reads it only when the same step also carried a
+call that does not end the turn. eve reads an empty step as a failure and reissues it once with "Your
+previous reply was empty and was not delivered. Continue the current user request" — a note that
+would command a reply on a turn that correctly chose silence. Naming the terminal output makes that
+step non-empty, so the recovery path is never reached. The `reply` result note names the same
+sentinel for the same reason.
 
 One silence row is logged per turn. A **second** `no_reply` in the same turn ends the turn under the
 closeout reason `no-reply-redundant` (`NO_REPLY_REDUNDANT_CLOSEOUT_REASON`), which is countable apart
@@ -1157,15 +1211,17 @@ from a turn ended by a refused reply.
 leaks into a later turn, and then ranks them: a silent routine wins, then a stand-down silence, then
 the `no_reply` reason. Anything else falls through to the ordinary final-message action.
 
-`TURN_TERMINAL_TOOLS` (`turn-terminal-actions.ts`) names `reply`, `no_reply`, `react` and
-`edit_reply`. A call to one of these discharges the turn's reply obligation, so an empty next step is
-the correct end of the turn. `stand_down`, `complete_thread` and `update_status` are deliberately out:
-each leaves the room still owed a line. `edit_reply` belongs because it adds no message to the room.
+**`react` and `edit_reply` do not end the turn, and their result notes name the next step.** Neither
+sets `endsTurn`. An addressed `react` only acknowledges, so the turn must stay open for the one short
+`reply` still owed (OPE-964); `edit_reply` may be followed by a `reply` with anything new. Their notes
+(`reactResultNote`, `tools/react.ts`; `editedNote`, `tools/edit_reply.ts`) ask for that `reply`, or name
+the `NO_REPLY` sentinel when nothing is left, so the next step is not empty. `stand_down`,
+`complete_thread` and `update_status` end nothing: each leaves the room still owed a line.
 
-`turnHasTerminalAction` scans backwards and **stops at the opening user message**, so it never sees an
-earlier wake's terminal call. It answers `false` outright for a **task-grain worker**, which keeps
-eve's empty-step recovery armed there: a worker's scan window is the whole task rather than one wake,
-and one early `reply` would otherwise disarm the recovery for every remaining step.
+These notes replaced eve patch part 5 (the empty-step terminal guard, OPE-762), which suppressed eve's
+reissue after a confirmed terminal verb by scanning the step's messages. The notes are instruction
+compliance, not a mechanism: a model that ignores one and returns an empty step takes eve's one-shot
+reissue, and an empty reissue fails the turn.
 
 **`react` refuses where the wake's origin has no reaction primitive.** The per-turn origin fence is
 skipped on a unified session, so such a wake can reach the tool; it then throws a refusal naming the

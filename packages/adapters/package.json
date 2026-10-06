@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/adapters",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Open Everywhere adapters — the reference Vercel-hosted backends: AI Gateway models and pricing, Sandbox, Blob, Neon, OpenTelemetry, AWS and Okta.",
   "keywords": [
     "agent",
@@ -149,6 +149,10 @@
       "types": "./dist/agent/postgres/neon.d.ts",
       "default": "./dist/agent/postgres/neon.js"
     },
+    "./agent/register-defaults.js": {
+      "types": "./dist/agent/register-defaults.d.ts",
+      "default": "./dist/agent/register-defaults.js"
+    },
     "./agent/sandbox/backend-stop.js": {
       "types": "./dist/agent/sandbox/backend-stop.d.ts",
       "default": "./dist/agent/sandbox/backend-stop.js"
@@ -188,19 +192,20 @@
     "test:model-gateway": "tsx scripts/model-gateway-test.ts",
     "test:dream-judge-gateway": "tsx scripts/dream-judge-gateway-test.ts",
     "test:approval-judge-gateway": "tsx scripts/approval-judge-gateway-test.ts",
-    "test:gateway-vision": "tsx scripts/gateway-vision-test.ts"
+    "test:gateway-vision": "tsx scripts/gateway-vision-test.ts",
+    "test:default-adapters": "tsx scripts/default-adapters-test.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
-    "@open-everywhere/core": "0.1.5",
+    "@open-everywhere/core": "0.2.0",
     "@vercel/blob": "^2.6.1",
     "@vercel/otel": "^2.1.3",
     "@vercel/sandbox": "^3.2.1",
-    "ai": "^7.0.11"
+    "ai": "^7.0.105"
   },
   "peerDependencies": {
     "@agent-browser/eve": "0.32.4",
-    "eve": "0.54.3"
+    "eve": "0.71.0"
   },
   "devDependencies": {
     "@types/node": "latest",

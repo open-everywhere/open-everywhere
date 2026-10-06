@@ -41,9 +41,9 @@ reasoning is worth carrying to the next verdict seam. The shipped classifier is 
 loosens — its read-verb list is what puts `get`/`list`/`search` in the open tier at all, and its own
 default is `destructive`. So "raise-only" was a default posture, never a principle. What IS a
 principle is that a human sees a card at least once for every op an arm LOWERED. Hence the floor: an arm may
-move `destructive` to `write` (a card a session grant may cover) but never to `read` (no card at
-all). The worst a buggy or hostile arm can do is weaken a per-call approval into a session-skippable
-one.
+move `destructive` to `write` (a card a routine may lift with a declared permission) but never to
+`read` (no card at all). The worst a buggy or hostile arm can do is let a routine declare an op that no
+declaration could lift before.
 
 Pick your seam's floor the same way: name the outcome that must survive any arm, and clamp to the
 weakest verdict that still delivers it.
@@ -80,7 +80,7 @@ that the seam floors an arm answering `read` over every base tier.
 🔴 **A clamp is not a substitute for flooring the CONSUMERS.** The tiering seam does both, and each
 catches something the other does not. The clamp stops an arm reaching the open tier. It does not stop
 an arm reaching `write`, which is the tier an unattended fire can LIFT with a standing routine
-permission and the tier a session grant can memo. So the two unattended surfaces read the built-in
+permission. So the two unattended surfaces read the built-in
 too, and the approval fence engages on an arm's lowering rather than only on a raised card. Enumerate
 the consumers that treat the seam's answer as permission, and decide for each whether the clamped
 answer is safe there.
@@ -133,7 +133,7 @@ The seam this pattern was written for (OPE-1321). It is the one that shows the d
 work, because its built-in genuinely abstains on some inputs.
 
 **What it decides.** How consequential one connector op is — `read`, `write` or `destructive`. That
-tier decides whether the op takes an approval card, and whether a session grant may ever cover it
+tier decides whether the op takes an approval card, and whether a routine's declared permission may ever lift it
 (`packages/core/agent/connections/connector-auth.ts` `connectorOpApproval`).
 
 **The built-in arm.** `classifyConnectorOpTierVerdict`
@@ -181,8 +181,8 @@ extra scrutiny — the `write` floor below is the same clamp for every tiering f
 - **a raise passes through as given.** The arm answered at or above the built-in and nothing is at
   stake;
 - **a lowering is floored at `write`** (`ARM_TIER_FLOOR`). `notion__delete_page` can be moved from
-  `destructive` to `write` by a reviewed arm — from a card per call to a card a session grant may
-  cover. It cannot be moved to `read`. `acme__frobnicate_widget`, which the built-in never
+  `destructive` to `write` by a reviewed arm — from a card no declaration lifts to a card a routine
+  may declare. It cannot be moved to `read`. `acme__frobnicate_widget`, which the built-in never
   recognised, lands at `write` the same way instead of being gated per call forever;
 - **an arm answering `read` about an op the built-in already opened moves nothing.** The floor clamps
   lowerings, not agreement — clamping the raise branch too would push every open op to `write` the
@@ -229,7 +229,7 @@ the two surfaces above. A human sees a card at least once for every op an arm LO
 agrees with an op the built-in already opened has moved nothing, and that op stays open.
 
 **What it does not guarantee: that the card is the right card.** An arm that lowers a real delete to
-`write` makes one "Approve for session" click cover every later delete in that session. That is the
+`write` lets a routine declare the delete on its creation card, and that one click then lifts every later delete on the routine's fires. That is the
 power the slot grants, deliberately, and it is weaker than the built-in's promise. Review an arm as
 you would review the verb lists themselves.
 

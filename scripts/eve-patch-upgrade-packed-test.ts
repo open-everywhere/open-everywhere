@@ -10,7 +10,7 @@ import { npmCommand } from "./npm-command.js";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CORE_DIR = join(REPO, "packages", "core");
-const OLD_PATCH_DIR = join(REPO, "scripts", "fixtures", "eve-patch-0.1.4");
+const FIXTURES = join(REPO, "scripts", "fixtures");
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -25,6 +25,29 @@ const coreManifest = JSON.parse(readFileSync(join(CORE_DIR, "package.json"), "ut
 const PIN = coreManifest.peerDependencies.eve!;
 const PATCH_FILE = evePatchFileName(PIN);
 const TARGETS = evePatchTargets(readFileSync(join(CORE_DIR, "patches", PATCH_FILE), "utf8"));
+
+const RELEASES = readdirSync(FIXTURES)
+  .filter((d) => d.startsWith("eve-patch-"))
+  .sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+ok(RELEASES.length > 0, `${FIXTURES} holds at least one eve-patch-<release>/ fixture`);
+for (const release of RELEASES) {
+  ok(
+    readdirSync(join(FIXTURES, release)).some((f) => /^eve\+.+\.patch$/.test(f)),
+    `${release}/ holds the patch file that release shipped`,
+  );
+}
+const OLD_RELEASE = RELEASES.filter((d) => existsSync(join(FIXTURES, d, PATCH_FILE))).at(-1);
+if (OLD_RELEASE === undefined) {
+  const shipped = RELEASES.map((d) => `${d.slice("eve-patch-".length)} (${readdirSync(join(FIXTURES, d)).join(", ")})`).join("; ");
+  console.log(
+    `✓ eve patch upgrade (packed): SKIPPED, the restore and refusal routes are not driven. No older patch to upgrade from — no released OE patch exists for eve@${PIN}. ` +
+      `The fixtures hold only released patches for other pins: ${shipped}. An app that moves to eve@${PIN} installs a pristine eve, so the ` +
+      `restore route has nothing to restore. ${passed} assertions.`,
+  );
+  process.exit(0);
+}
+const OLD_PATCH_DIR = join(FIXTURES, OLD_RELEASE);
+const OLD_VERSION = OLD_RELEASE.slice("eve-patch-".length);
 const OLD_TARGETS = evePatchTargets(readFileSync(join(OLD_PATCH_DIR, PATCH_FILE), "utf8"));
 
 const scratch = mkdtempSync(join(tmpdir(), "oe-eve-patch-upgrade-"));
@@ -90,7 +113,7 @@ function appOnOldEve(corePkg: string, evePkg: string, name: string): string {
   cpSync(OLD_PATCH_DIR, oldPatchDir, { recursive: true });
   const patchPackage = join(REPO, "node_modules", "patch-package", "index.js");
   const applied = run(process.execPath, [patchPackage, "--patch-dir", "old-patch", "--error-on-fail"], app);
-  assert.equal(applied.status, 0, `the 0.1.4 patch did not apply to the pristine eve:\n${applied.output}`);
+  assert.equal(applied.status, 0, `the ${OLD_VERSION} patch did not apply to the pristine eve:\n${applied.output}`);
   rmSync(oldPatchDir, { recursive: true, force: true });
   return app;
 }
@@ -109,20 +132,20 @@ try {
   assert.equal(packedEve.status, 0, `npm pack eve@${PIN} failed (the npm cache should hold it after npm ci):\n${packedEve.output}`);
   const evePkg = extract(join(eveTgzDir, readdirSync(eveTgzDir).find((f) => f.endsWith(".tgz"))!), join(scratch, "eve"));
 
-  ok(OLD_TARGETS.length < TARGETS.length, "the 0.1.4 patch changes fewer files than the packed patch");
+  ok(OLD_TARGETS.length < TARGETS.length, `the ${OLD_VERSION} patch changes fewer files than the packed patch`);
   const app = appOnOldEve(corePkg, evePkg, "app");
   const eveDir = join(app, "node_modules", "eve");
   const missingBefore = missingEveMarkers(TARGETS, targetContents(eveDir));
-  ok(missingBefore.length > 0, "the 0.1.4 tree lacks at least one marker the packed patch adds");
+  ok(missingBefore.length > 0, `the ${OLD_VERSION} tree lacks at least one marker the packed patch adds`);
   ok(
     OLD_TARGETS.every((t) => /__oe[A-Za-z0-9_]/.test(readFileSync(join(eveDir, t.insidePackage), "utf8")) || t.markers.length === 0),
-    "the 0.1.4 tree carries the 0.1.4 patch's OE bytes",
+    `the ${OLD_VERSION} tree carries the ${OLD_VERSION} patch's OE bytes`,
   );
 
   const [npmRunCmd, npmRunArgs] = npmCommand(["run", "postinstall"]);
   const upgraded = run(npmRunCmd, npmRunArgs, app);
   const say = `\n--- postinstall output ---\n${upgraded.output}`;
-  ok(upgraded.status === 0, `🔴 postinstall exits 0 on a 0.1.4 eve — got ${upgraded.status}${say}`);
+  ok(upgraded.status === 0, `🔴 postinstall exits 0 on a ${OLD_VERSION} eve — got ${upgraded.status}${say}`);
   ok(upgraded.output.includes("already carries an older OE patch"), `the applier says it found an older OE patch${say}`);
   ok(/restored \d+ file\(s\)/.test(upgraded.output), `the applier says it restored pristine bytes${say}`);
   ok(

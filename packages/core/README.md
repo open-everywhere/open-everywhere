@@ -30,12 +30,12 @@ Slack's own shortcodes.
 ## Install
 
 ```sh
-npm i @open-everywhere/core eve@0.54.3
+npm i @open-everywhere/core eve@0.71.0
 npx oe-eve-patch
 ```
 
 **Both commands are required.** Core refuses to boot on an unpatched `eve`. It reads one runtime
-marker for each patch part before the first wake is served, and it throws when a marker is missing.
+marker for each live patch part before the first wake is served, and it throws when a marker is missing.
 A registry `eve` carries no patch, so `npx oe-eve-patch` applies the copy in this tarball. The
 applier is idempotent: a second run on a patched tree changes nothing and exits 0. An `eve` that holds
 an older Open Everywhere patch under the same pin is restored from its registry tarball (`npm pack`)

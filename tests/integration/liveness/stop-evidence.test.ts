@@ -13,7 +13,6 @@ import {
   rowsSinceCursor,
   sleep,
   waitFor,
-  waitForTurnCancelDelivered,
 } from "../harness";
 
 const BOT_MENTION = "<@9000000000000000001>";
@@ -65,7 +64,6 @@ test("a stop the ingress accepted leaves exactly one evidence row — turn.cance
   expect(requested[0]!.detail?.sessionId).toBe(anchor.sessionId);
   expect(requested[0]!.principalId).toBe(STOPPER_ID);
 
-  await waitForTurnCancelDelivered(anchor.sessionId);
   handle.releaseHolds();
 
   const evidence = await waitFor(async () => {

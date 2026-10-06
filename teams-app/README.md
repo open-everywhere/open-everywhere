@@ -1,7 +1,6 @@
 # Teams app package
 
-The Teams app package (manifest + icons) that surfaces the Open Everywhere bot inside Microsoft
-Teams. The Azure Bot resource is the *runtime* identity; this package is what a user/admin
+The Teams app package (manifest + icons) that surfaces the agent inside Microsoft Teams. The Azure Bot resource is the *runtime* identity; this package is what a user/admin
 **installs** so the bot appears in Teams. See [`docs/deploy/surfaces/teams.md`](../docs/deploy/surfaces/teams.md)
 for the full runbook — this directory is just the artifact it references.
 
@@ -9,9 +8,24 @@ for the full runbook — this directory is just the artifact it references.
 
 | File | What it is |
 | --- | --- |
-| `manifest.json` | Teams app manifest (schema 1.17). Templated — replace the `{{…}}` placeholders. |
+| `manifest.json` | **Not shipped — rendered** (OPE-2334). Get it from `surface_manifest { "surface": "teams" }` and save it here. |
 | `color.png` | 192×192 full-colour icon (placeholder — replace with your brand). |
 | `outline.png` | 32×32 transparent, single-colour outline icon (placeholder). |
+
+## Get the manifest
+
+The manifest is rendered from your deployment's settings, so the app carries your agent's name, not
+the project's. The Teams bundle owns the template (`packages/providers/teams/agent/app-manifest.ts`),
+and the ops MCP tool serves it with your host substituted:
+
+```
+surface_manifest { "surface": "teams", "baseUrl": "https://<your deploy host>" }
+```
+
+The `identity.name` setting in `agent/settings/settings.ts` names the app (`name.short`,
+`name.full`, `description.full`). With no name configured it is "Open Everywhere". Pass `appName`
+(at most 30 characters) to override the configured name. Save the `manifest` field of the response
+as `manifest.json` in this directory.
 
 ## Placeholders to fill
 
@@ -19,13 +33,12 @@ for the full runbook — this directory is just the artifact it references.
 | --- | --- |
 | `{{MICROSOFT_APP_ID}}` | The Azure Bot's **Application (client) ID** (`MICROSOFT_APP_ID`). Used for both `id` and `bots[].botId` — they must match. |
 | `{{DEVELOPER_NAME}}` | Your org / developer name. |
-| `{{DEPLOY_DOMAIN}}` | Your deployment host, e.g. `my-agent.vercel.app`. Must match the messaging-endpoint host so it's a valid domain. |
 
 ## Privacy policy and terms — served by your deployment
 
 `privacyUrl` and `termsOfUseUrl` are **not** placeholders. They point at `/privacy` and `/terms` on
-your own `{{DEPLOY_DOMAIN}}`, and the deployment serves both. Filling `{{DEPLOY_DOMAIN}}` is all the
-manifest needs — the URLs resolve.
+your own deploy host, and the deployment serves both. The host `surface_manifest` substitutes is all
+the manifest needs — the URLs resolve.
 
 The TEXT of both documents is yours, because both are statements about what *you* do with *your*
 deployment's data. Declare them in `agent/settings/settings.ts`, the same config-in-git plane as
@@ -47,8 +60,8 @@ where a reviewer reads them. The text is rendered as escaped plain text with its
 never as HTML or markdown. See
 [the configuration reference](../docs/deploy/configuration-reference.md#agent-settings-behaviour-config-as-code).
 
-To point the two URLs at pages you host elsewhere, edit `manifest.json` **and** relax the manifest
-join in `packages/core/scripts/policy-pages-test.ts` §7 — it asserts that `privacyUrl` and
+To point the two URLs at pages you host elsewhere, edit your saved `manifest.json` **and** the
+template, and relax the manifest join in `scripts/teams-provider-integration-test.ts` — it asserts that `privacyUrl` and
 `termsOfUseUrl` end at the two paths this deployment mounts, which is what stops the manifest and
 the routes drifting apart again. Nothing else in the deployment requires the pages to be its own.
 
@@ -57,11 +70,10 @@ the routes drifting apart again. Nothing else in the deployment requires the pag
 ```bash
 cd teams-app
 APP_ID="<your MICROSOFT_APP_ID>"
-DOMAIN="<your deploy host, e.g. my-agent.vercel.app>"
 DEV="<your org name>"
 
+# manifest.json is the rendered manifest you saved above (its host is already substituted).
 sed -e "s/{{MICROSOFT_APP_ID}}/$APP_ID/g" \
-    -e "s/{{DEPLOY_DOMAIN}}/$DOMAIN/g" \
     -e "s/{{DEVELOPER_NAME}}/$DEV/g" \
     manifest.json > manifest.filled.json
 

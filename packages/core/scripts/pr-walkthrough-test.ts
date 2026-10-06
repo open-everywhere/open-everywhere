@@ -642,14 +642,14 @@ const NARRATION: WalkthroughNarration = {
 {
   const toolsDir = join(repoRoot, "agent", "subagents", "fresh_eyes_review", "tools");
   const files = readdirSync(toolsDir).filter((f) => f.endsWith(".ts"));
-  ok(files.length >= 8, `fresh_eyes_review declares a sentinel per framework tool (${files.length} found)`);
+  ok(files.length >= 6, `fresh_eyes_review declares a sentinel per framework tool eve still mounts (${files.length} found)`);
   const notSentinels = files.filter((f) => !/\bdisableTool\s*\(\s*\)/.test(readFileSync(join(toolsDir, f), "utf8")));
   eq(
     notSentinels,
     [],
     "🔴 EVERY file in fresh_eyes_review/tools/ is a `disableTool()` sentinel — the narrator holds no bash, no read_file, no web_fetch, so an instruction embedded in the diff cannot make it fetch the proposer's context",
   );
-  for (const must of ["bash", "read_file", "web_fetch", "web_search", "write_file"]) {
+  for (const must of ["bash", "read_file", "web_fetch", "web_search", "write_file", "load_skill"]) {
     ok(files.includes(`${must}.ts`), `…including a sentinel for ${must} (the ones that could reach the parent's world)`);
   }
   const instructions = readFileSync(join(repoRoot, "agent", "subagents", "fresh_eyes_review", "instructions.md"), "utf8");

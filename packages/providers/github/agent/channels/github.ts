@@ -82,6 +82,7 @@ import {
   OE_ADDRESSED_ATTR,
   dispatchNativeWakeWithRetry,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { withEndsTurnFinalChannel } from "@open-everywhere/core/agent/adapter-api.js";
 
 const ROUTE = "/eve/v1/github";
 const BOT_NAME = process.env.GITHUB_APP_SLUG;
@@ -736,4 +737,4 @@ const routes: GitHubChannel["routes"] = native.routes.map((r) =>
 
 const channel: GitHubChannel = { ...native, routes };
 
-export default channel;
+export default withEndsTurnFinalChannel(channel);

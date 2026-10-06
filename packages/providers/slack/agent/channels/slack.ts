@@ -70,12 +70,14 @@ import {
   swallowRoomOp,
   domainRoster,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { withEndsTurnFinalChannel } from "@open-everywhere/core/agent/adapter-api.js";
 import { loadConversationContext } from "./slack-context.js";
 import { slackSpendGate } from "./slack-spend-gate.js";
 import { slackTenantAdmission } from "./slack-tenant-fence.js";
 import { holdRouteWork } from "./slack-route-hold.js";
 import { frontSlackChannel, INTERNAL_SLACK_ROUTE } from "./slack-front.js";
 import { admitSlackInputResponse } from "./slack-input-response.js";
+import { taskCardConfidentiality } from "./slack-task-card.js";
 import { turnEffectsFor, botDisplayName, slackForm, isSupervisorReplyTurn, deliverSupervisorReply, dmWakeThreadOverride, replyThreadTsForState, type SupervisorReplyTarget } from "./slack-events.js";
 import { markdownToSlackMrkdwn } from "./slack-mrkdwn.js";
 
@@ -484,267 +486,276 @@ const slackMentionChannel = slackChannel({
   onAppMention: (ctx, message) => admitInbound(ctx, message, false),
   onDirectMessage: (ctx, message) => admitInbound(ctx, message, true),
   onInputResponse: (ctx, submission) => admitSlackInputResponse(ctx, submission),
-  events: {
-    "turn.started": async (_data, channel, ctx) => {
-      if (isSupervisorReplyTurn(channel.state)) {
-        const attrs = ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined;
-        const channelId = typeof attrs?.channel_id === "string" ? attrs.channel_id : undefined;
-        const threadTs = typeof attrs?.thread_ts === "string" ? attrs.thread_ts : undefined;
-        (channel.state as unknown as Record<string, unknown>).oeReplyTarget = channelId
-          ? ({ channelId, threadTs } satisfies SupervisorReplyTarget)
-          : undefined;
-      }
-      (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId = authPrincipalId(ctx);
-      {
-        const attrs = ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined;
-        if (attrs?.channel_type === "im") {
-          (channel.state as unknown as Record<string, unknown>).oeWakeThreadTs =
-            typeof attrs.thread_ts === "string" ? attrs.thread_ts : undefined;
-        }
-      }
-      channel.state.pendingToolCallMessage = null;
-      channel.state.lastReasoningTypingAtMs = null;
-      channel.state.lastReasoningTypingStatus = null;
-      await setWakeTyping(channel, "Working...");
-    },
-    "reasoning.appended": async (_data, channel) => {
-      const now = Date.now();
-      const last = channel.state.lastReasoningTypingAtMs;
-      if (last != null && now - last >= 0 && now - last < 5000) return;
-      channel.state.lastReasoningTypingAtMs = now;
-      await refreshTypingStatus(channel);
-    },
-    "actions.requested": async (_data, channel) => {
-      await refreshTypingStatus(channel);
-    },
-    "message.completed": async (data, channel, ctx) => {
-      const sessionId = ctx?.session?.id;
-      const turnId = (ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id;
-      const action = finalMessageActionForTurn(data.finishReason, data.message, turnId);
-      if (action.kind === "buffer-tool-status") {
-        return;
-      }
-      const cardPostedThisTurn = consumeCardPostedThisTurn();
-      const reactedThisTurn = consumeReactedThisTurn();
-      const repliedThisTurn = consumeRepliedThisTurn((ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id);
-      if (action.kind === "silent") {
-        (channel.state as unknown as Record<string, unknown>).oeSilentTurn = true;
-        console.log(
-          `[open-everywhere:slack] judged silence (${action.reason}) — nothing posted (${channel.state.channelId ?? "?"}/${channel.state.threadTs ?? "?"})`,
-        );
-        if (action.reason === NO_REPLY_SENTINEL_REASON) {
-          try {
-            const p = resolvePartition({
-              channel: { kind: "slack" },
-              session: { auth: { current: { attributes: { team_id: channel.state.teamId ?? "", channel_id: channel.state.channelId ?? "" }, principalId: "", principalType: "slack-user" } } },
-            });
-            await auditNoReplySentinelObserved(p, sessionId);
-          } catch (err) {
-            console.warn(`[open-everywhere:slack] sentinel no_reply audit write failed: ${String(err)}`);
+  renderers: [
+    taskCardConfidentiality,
+    {
+      events: {
+        "turn.started": async (_data, channel, ctx) => {
+          if (isSupervisorReplyTurn(channel.state)) {
+            const attrs = ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined;
+            const channelId = typeof attrs?.channel_id === "string" ? attrs.channel_id : undefined;
+            const threadTs = typeof attrs?.thread_ts === "string" ? attrs.thread_ts : undefined;
+            (channel.state as unknown as Record<string, unknown>).oeReplyTarget = channelId
+              ? ({ channelId, threadTs } satisfies SupervisorReplyTarget)
+              : undefined;
           }
-        }
-        if (isBareStop(action, reactedThisTurn || repliedThisTurn)) {
-          const channelId = channel.state.channelId ?? undefined;
-          const threadTs = channel.state.threadTs ?? undefined;
-          console.warn(
-            `[open-everywhere:slack] BARE STOP — turn ended with no reply, no react, and no no_reply ` +
-              `(${channelId ?? "?"}/${threadTs ?? "?"}) — this usually means a judgment call went missing, not that one was made.`,
-          );
-          try {
-            const p = resolvePartition({
-              channel: { kind: "slack" },
-              session: { auth: { current: { attributes: { team_id: channel.state.teamId ?? "", channel_id: channelId ?? "" }, principalId: "", principalType: "slack-user" } } },
-            });
-            await getOperationalStore().appendAudit({
-              ts: new Date().toISOString(),
-              org: p.org,
-              platform: p.platform,
-              workspace: p.workspace,
-              surface: p.surface,
-              action: "turn.bare_stop",
-              detail: { threadTs, ...(sessionId ? { sessionId } : {}) },
-            });
-          } catch (err) {
-            console.warn(`[open-everywhere:slack] bare-stop audit write failed: ${String(err)}`);
+          (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId = authPrincipalId(ctx);
+          {
+            const attrs = ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined;
+            if (attrs?.channel_type === "im") {
+              (channel.state as unknown as Record<string, unknown>).oeWakeThreadTs =
+                typeof attrs.thread_ts === "string" ? attrs.thread_ts : undefined;
+            }
           }
-        }
-        try {
-          const { channelId, teamId, threadTs } = channel.state;
-          if (channelId && threadTs) {
-            const p = resolvePartition({
-              channel: { kind: "slack" },
-              session: { auth: { current: { attributes: { team_id: teamId ?? "", channel_id: channelId }, principalId: "", principalType: "slack-user" } } },
-            });
-            const rec = await getThreadEngagement(p, threadTs);
-            if (rec && rec.participating !== true) {
-              const streak = await bumpThreadSilentStreak(p, threadTs);
-              if (streak >= WARM_SILENT_LIMIT) {
-                await disengageThread(p, threadTs);
-                console.log(
-                  `[open-everywhere:slack] warm thread shed after ${streak} silent turns — disengaged (${channelId}/${threadTs})`,
-                );
+          channel.state.pendingTaskResults = null;
+          channel.state.pendingToolCallMessage = null;
+          (channel.state as unknown as Record<string, unknown>).oeReasoningTypingAtMs = null;
+          await setWakeTyping(channel, "Working...");
+        },
+        "reasoning.appended": async (_data, channel) => {
+          const now = Date.now();
+          const state = channel.state as unknown as Record<string, unknown>;
+          const last = state.oeReasoningTypingAtMs;
+          if (typeof last === "number" && now - last >= 0 && now - last < 5000) return;
+          state.oeReasoningTypingAtMs = now;
+          await refreshTypingStatus(channel);
+        },
+        "reasoning.completed": async (_data, channel) => {
+          await refreshTypingStatus(channel);
+        },
+        "actions.requested": async (_data, channel) => {
+          await refreshTypingStatus(channel);
+        },
+        "message.completed": async (data, channel, ctx) => {
+          const sessionId = ctx?.session?.id;
+          const turnId = (ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id;
+          const action = finalMessageActionForTurn(data.finishReason, data.message, turnId);
+          if (action.kind === "buffer-tool-status") {
+            return;
+          }
+          const cardPostedThisTurn = consumeCardPostedThisTurn();
+          const reactedThisTurn = consumeReactedThisTurn();
+          const repliedThisTurn = consumeRepliedThisTurn((ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id);
+          if (action.kind === "silent") {
+            (channel.state as unknown as Record<string, unknown>).oeSilentTurn = true;
+            console.log(
+              `[open-everywhere:slack] judged silence (${action.reason}) — nothing posted (${channel.state.channelId ?? "?"}/${channel.state.threadTs ?? "?"})`,
+            );
+            if (action.reason === NO_REPLY_SENTINEL_REASON) {
+              try {
+                const p = resolvePartition({
+                  channel: { kind: "slack" },
+                  session: { auth: { current: { attributes: { team_id: channel.state.teamId ?? "", channel_id: channel.state.channelId ?? "" }, principalId: "", principalType: "slack-user" } } },
+                });
+                await auditNoReplySentinelObserved(p, sessionId);
+              } catch (err) {
+                console.warn(`[open-everywhere:slack] sentinel no_reply audit write failed: ${String(err)}`);
               }
             }
-          }
-        } catch (err) {
-          console.warn(`[open-everywhere:slack] warm silent-streak bookkeeping failed: ${String(err)}`);
-        }
-        try {
-          await setWakeTyping(channel);
-        } catch {
-        }
-        return;
-      }
-      const effects = turnEffectsFor(action, cardPostedThisTurn);
-      if (effects.kind !== "reply") {
-        return;
-      }
-      (channel.state as unknown as Record<string, unknown>).oeSilentTurn = false;
-      if (isSupervisorReplyTurn(channel.state)) {
-        const target = (channel.state as unknown as Record<string, unknown>).oeReplyTarget as SupervisorReplyTarget | undefined;
-        const channelId = channel.state.channelId ?? undefined;
-        const teamId = channel.state.teamId;
-        const partition = channelId
-          ? resolvePartition({
-              channel: { kind: "slack" },
-              session: { auth: { current: { attributes: { team_id: teamId ?? "", channel_id: channelId }, principalId: "", principalType: "slack-user" } } },
-            })
-          : undefined;
-        const delivery = supervisorTextDelivery(true, capabilitiesForPlatform("slack").midTurnPost);
-        if (delivery.droppedProse && isSupervisorProseLeak(true, repliedThisTurn, cardPostedThisTurn)) {
-          console.warn(
-            `[open-everywhere:slack] supervisor message-tool-only: DROPPED terminal prose (judge emitted text without calling reply) — nothing posted (${channelId ?? "?"}/${target?.threadTs ?? "top-level"})`,
-          );
-          if (partition) {
-            try {
-              await getOperationalStore().appendAudit({
-                ts: new Date().toISOString(),
-                org: partition.org,
-                platform: partition.platform,
-                workspace: partition.workspace,
-                surface: partition.surface,
-                action: "turn.supervisor_prose_dropped",
-                detail: { threadTs: target?.threadTs, chars: action.text.length, ...(sessionId ? { sessionId } : {}) },
-              });
-            } catch (err) {
-              console.warn(`[open-everywhere:slack] supervisor prose-dropped audit write failed: ${String(err)}`);
+            if (isBareStop(action, reactedThisTurn || repliedThisTurn)) {
+              const channelId = channel.state.channelId ?? undefined;
+              const threadTs = channel.state.threadTs ?? undefined;
+              console.warn(
+                `[open-everywhere:slack] BARE STOP — turn ended with no reply, no react, and no no_reply ` +
+                  `(${channelId ?? "?"}/${threadTs ?? "?"}) — this usually means a judgment call went missing, not that one was made.`,
+              );
+              try {
+                const p = resolvePartition({
+                  channel: { kind: "slack" },
+                  session: { auth: { current: { attributes: { team_id: channel.state.teamId ?? "", channel_id: channelId ?? "" }, principalId: "", principalType: "slack-user" } } },
+                });
+                await getOperationalStore().appendAudit({
+                  ts: new Date().toISOString(),
+                  org: p.org,
+                  platform: p.platform,
+                  workspace: p.workspace,
+                  surface: p.surface,
+                  action: "turn.bare_stop",
+                  detail: { threadTs, ...(sessionId ? { sessionId } : {}) },
+                });
+              } catch (err) {
+                console.warn(`[open-everywhere:slack] bare-stop audit write failed: ${String(err)}`);
+              }
             }
+            try {
+              const { channelId, teamId, threadTs } = channel.state;
+              if (channelId && threadTs) {
+                const p = resolvePartition({
+                  channel: { kind: "slack" },
+                  session: { auth: { current: { attributes: { team_id: teamId ?? "", channel_id: channelId }, principalId: "", principalType: "slack-user" } } },
+                });
+                const rec = await getThreadEngagement(p, threadTs);
+                if (rec && rec.participating !== true) {
+                  const streak = await bumpThreadSilentStreak(p, threadTs);
+                  if (streak >= WARM_SILENT_LIMIT) {
+                    await disengageThread(p, threadTs);
+                    console.log(
+                      `[open-everywhere:slack] warm thread shed after ${streak} silent turns — disengaged (${channelId}/${threadTs})`,
+                    );
+                  }
+                }
+              }
+            } catch (err) {
+              console.warn(`[open-everywhere:slack] warm silent-streak bookkeeping failed: ${String(err)}`);
+            }
+            try {
+              await setWakeTyping(channel);
+            } catch {
+            }
+            return;
           }
-        }
-        await deliverSupervisorReply({
-          postText: delivery.postText,
-          text: action.text,
-          target,
-          async post(cid, tts, text) {
-            await postOnce({
-              org: partition?.org,
-              key: outboundKey({ surface: "slack", channel: cid, threadTs: tts, action: "slack.supervisor-reply", payload: text }),
-              run: async () => {
-                await slackForm("chat.postMessage", supervisorPostFormBody(cid, tts, text));
+          const effects = turnEffectsFor(action, cardPostedThisTurn);
+          if (effects.kind !== "reply") {
+            return;
+          }
+          (channel.state as unknown as Record<string, unknown>).oeSilentTurn = false;
+          if (isSupervisorReplyTurn(channel.state)) {
+            const target = (channel.state as unknown as Record<string, unknown>).oeReplyTarget as SupervisorReplyTarget | undefined;
+            const channelId = channel.state.channelId ?? undefined;
+            const teamId = channel.state.teamId;
+            const partition = channelId
+              ? resolvePartition({
+                  channel: { kind: "slack" },
+                  session: { auth: { current: { attributes: { team_id: teamId ?? "", channel_id: channelId }, principalId: "", principalType: "slack-user" } } },
+                })
+              : undefined;
+            const delivery = supervisorTextDelivery(true , capabilitiesForPlatform("slack").midTurnPost);
+            if (delivery.droppedProse && isSupervisorProseLeak(true, repliedThisTurn, cardPostedThisTurn)) {
+              console.warn(
+                `[open-everywhere:slack] supervisor message-tool-only: DROPPED terminal prose (judge emitted text without calling reply) — nothing posted (${channelId ?? "?"}/${target?.threadTs ?? "top-level"})`,
+              );
+              if (partition) {
+                try {
+                  await getOperationalStore().appendAudit({
+                    ts: new Date().toISOString(),
+                    org: partition.org,
+                    platform: partition.platform,
+                    workspace: partition.workspace,
+                    surface: partition.surface,
+                    action: "turn.supervisor_prose_dropped",
+                    detail: { threadTs: target?.threadTs, chars: action.text.length, ...(sessionId ? { sessionId } : {}) },
+                  });
+                } catch (err) {
+                  console.warn(`[open-everywhere:slack] supervisor prose-dropped audit write failed: ${String(err)}`);
+                }
+              }
+            }
+            await deliverSupervisorReply({
+              postText: delivery.postText,
+              text: action.text,
+              target,
+              async post(cid, tts, text) {
+                await postOnce({
+                  org: partition?.org,
+                  key: outboundKey({ surface: "slack", channel: cid, threadTs: tts, action: "slack.supervisor-reply", payload: text }),
+                  run: async () => {
+                    await slackForm("chat.postMessage", supervisorPostFormBody(cid, tts, text));
+                  },
+                });
+              },
+              async resolveOwnerToken() {
+                if (!partition) return undefined;
+                try {
+                  return (await getOperationalStore().getChannelSession(partition.org, partition.surfaceKey))?.token;
+                } catch {
+                  return undefined;
+                }
+              },
+              async bind(tts, ownerToken) {
+                if (!partition) return;
+                await markThreadEngaged(partition, tts, new Date().toISOString(), { participating: true, ownerToken, byOwnPost: true });
               },
             });
-          },
-          async resolveOwnerToken() {
-            if (!partition) return undefined;
-            try {
-              return (await getOperationalStore().getChannelSession(partition.org, partition.surfaceKey))?.token;
-            } catch {
-              return undefined;
+            if (repliedThisTurn || cardPostedThisTurn) {
+              (channel.state as unknown as Record<string, unknown>).oeUninvited = false;
             }
-          },
-          async bind(tts, ownerToken) {
-            if (!partition) return;
-            await markThreadEngaged(partition, tts, new Date().toISOString(), { participating: true, ownerToken, byOwnPost: true });
-          },
-        });
-        if (repliedThisTurn || cardPostedThisTurn) {
-          (channel.state as unknown as Record<string, unknown>).oeUninvited = false;
-        }
-        return;
-      }
-      if (effects.postText) {
-        const channelId = channel.state.channelId ?? undefined;
-        const replyThreadTs = replyThreadTsForState(channel.state);
-        if (channelId) {
-          const p = resolvePartition({
-            channel: { kind: "slack" },
-            session: { auth: { current: { attributes: { team_id: channel.state.teamId ?? "", channel_id: channelId }, principalId: "", principalType: "slack-user" } } },
-          });
-          await dropClosingProse({
-            row: {
-              org: p.org,
-              platform: p.platform,
-              workspace: p.workspace,
-              surface: p.surface,
-              principalId: (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId as string | undefined,
-            },
-            chars: action.text.length,
-            ...(sessionId ? { sessionId } : {}),
-            anchor: { threadTs: replyThreadTs ?? null },
-            log: (m) => console.warn(`[open-everywhere:slack] ${m} (${channelId}/${replyThreadTs ?? "?"})`),
-          });
-        } else {
-          console.warn(
-            `[open-everywhere:slack] closing prose DROPPED (${action.text.length}c) — nothing posted, and no partition to audit it under (?/${replyThreadTs ?? "?"})`,
-          );
-        }
-      } else {
-        console.log(
-          `[open-everywhere:slack] approval card already posted this turn — suppressing the redundant text reply (${channel.state.channelId ?? "?"}/${channel.state.threadTs ?? "?"})`,
-        );
-      }
-      const deliveredThisTurn = repliedThisTurn || cardPostedThisTurn;
-      if (deliveredThisTurn) (channel.state as unknown as Record<string, unknown>).oeUninvited = false;
-      await setStatusReaction(channel.slack, "none", dmWakeThreadOverride(channel.state));
-      try {
-        const { channelId, teamId, threadTs } = channel.state;
-        if (deliveredThisTurn && channelId && threadTs) {
-          const p = resolvePartition({
-            channel: { kind: "slack" },
-            session: { auth: { current: { attributes: { team_id: teamId ?? "", channel_id: channelId }, principalId: "", principalType: "slack-user" } } },
-          });
-          await markThreadEngaged(p, threadTs, new Date().toISOString(), { participating: true, byOwnPost: true });
-        }
-      } catch {
-      }
+            return;
+          }
+          if (effects.postText) {
+            const channelId = channel.state.channelId ?? undefined;
+            const replyThreadTs = replyThreadTsForState(channel.state);
+            if (channelId) {
+              const p = resolvePartition({
+                channel: { kind: "slack" },
+                session: { auth: { current: { attributes: { team_id: channel.state.teamId ?? "", channel_id: channelId }, principalId: "", principalType: "slack-user" } } },
+              });
+              await dropClosingProse({
+                row: {
+                  org: p.org,
+                  platform: p.platform,
+                  workspace: p.workspace,
+                  surface: p.surface,
+                  principalId: (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId as string | undefined,
+                },
+                chars: action.text.length,
+                ...(sessionId ? { sessionId } : {}),
+                anchor: { threadTs: replyThreadTs ?? null },
+                log: (m) => console.warn(`[open-everywhere:slack] ${m} (${channelId}/${replyThreadTs ?? "?"})`),
+              });
+            } else {
+              console.warn(
+                `[open-everywhere:slack] closing prose DROPPED (${action.text.length}c) — nothing posted, and no partition to audit it under (?/${replyThreadTs ?? "?"})`,
+              );
+            }
+          } else {
+            console.log(
+              `[open-everywhere:slack] approval card already posted this turn — suppressing the redundant text reply (${channel.state.channelId ?? "?"}/${channel.state.threadTs ?? "?"})`,
+            );
+          }
+          const deliveredThisTurn = repliedThisTurn || cardPostedThisTurn;
+          if (deliveredThisTurn) (channel.state as unknown as Record<string, unknown>).oeUninvited = false;
+          await setStatusReaction(channel.slack, "none", dmWakeThreadOverride(channel.state));
+          try {
+            const { channelId, teamId, threadTs } = channel.state;
+            if (deliveredThisTurn && channelId && threadTs) {
+              const p = resolvePartition({
+                channel: { kind: "slack" },
+                session: { auth: { current: { attributes: { team_id: teamId ?? "", channel_id: channelId }, principalId: "", principalType: "slack-user" } } },
+              });
+              await markThreadEngaged(p, threadTs, new Date().toISOString(), { participating: true, byOwnPost: true });
+            }
+          } catch {
+          }
+        },
+        "session.completed": async (_data, channel) => {
+          if ((channel.state as unknown as Record<string, unknown>).oeSilentTurn !== true) {
+            await setStatusReaction(channel.slack, "none", dmWakeThreadOverride(channel.state));
+          }
+          await syncPinnedStatus(channel);
+        },
+        "session.waiting": async (_data, channel) => {
+          if ((channel.state as unknown as Record<string, unknown>).oeSilentTurn === true) return;
+          await setStatusReaction(channel.slack, "none", dmWakeThreadOverride(channel.state));
+        },
+        "turn.failed": async (data, channel) => {
+          if (isUninvited(channel.state)) {
+            await recordQuietFailure(channel.state, "turn.failed", data.message);
+            return;
+          }
+          await setStatusReaction(channel.slack, "blocked", dmWakeThreadOverride(channel.state));
+          try {
+            await postWakeText(
+              channel,
+              `:octagonal_sign: I hit an error while handling your request (${data.message}). Please try again or rephrase.`,
+            );
+          } catch {
+          }
+        },
+        "session.failed": async (data, channel) => {
+          if (isUninvited(channel.state)) {
+            await recordQuietFailure(channel.state, "session.failed", data.message);
+            return;
+          }
+          await setStatusReaction(channel.slack, "blocked", dmWakeThreadOverride(channel.state));
+          try {
+            await postWakeText(channel, `:octagonal_sign: Task failed: ${data.message}`);
+          } catch {
+          }
+          await syncPinnedStatus(channel);
+        },
+      },
     },
-    "session.completed": async (_data, channel) => {
-      if ((channel.state as unknown as Record<string, unknown>).oeSilentTurn !== true) {
-        await setStatusReaction(channel.slack, "none", dmWakeThreadOverride(channel.state));
-      }
-      await syncPinnedStatus(channel);
-    },
-    "session.waiting": async (_data, channel) => {
-      if ((channel.state as unknown as Record<string, unknown>).oeSilentTurn === true) return;
-      await setStatusReaction(channel.slack, "none", dmWakeThreadOverride(channel.state));
-    },
-    "turn.failed": async (data, channel) => {
-      if (isUninvited(channel.state)) {
-        await recordQuietFailure(channel.state, "turn.failed", data.message);
-        return;
-      }
-      await setStatusReaction(channel.slack, "blocked", dmWakeThreadOverride(channel.state));
-      try {
-        await postWakeText(
-          channel,
-          `:octagonal_sign: I hit an error while handling your request (${data.message}). Please try again or rephrase.`,
-        );
-      } catch {
-      }
-    },
-    "session.failed": async (data, channel) => {
-      if (isUninvited(channel.state)) {
-        await recordQuietFailure(channel.state, "session.failed", data.message);
-        return;
-      }
-      await setStatusReaction(channel.slack, "blocked", dmWakeThreadOverride(channel.state));
-      try {
-        await postWakeText(channel, `:octagonal_sign: Task failed: ${data.message}`);
-      } catch {
-      }
-      await syncPinnedStatus(channel);
-    },
-  },
+  ],
 });
 
-export default frontSlackChannel(slackMentionChannel);
+export default withEndsTurnFinalChannel(frontSlackChannel(slackMentionChannel));

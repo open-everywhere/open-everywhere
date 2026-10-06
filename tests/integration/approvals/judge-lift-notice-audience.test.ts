@@ -22,6 +22,8 @@ import {
 import { installDiscordWebApiStub, type DiscordCreateMessageCall } from "../discord-web-api";
 import { installHostFetchStub } from "../fetch-stub";
 
+const STARTER_ROUTINE_RULE = "routine-reports-here";
+
 process.env.GITHUB_APP_SLUG = GITHUB_BOT_SLUG;
 
 for (const k of ["GITHUB_TOKEN", "OE_GITHUB_APP_ID", "OE_GITHUB_APP_PRIVATE_KEY", "OE_GITHUB_APP_SLUG", "OE_GITHUB_INSTALLATIONS", "OE_GITHUB_OWNER", "OE_GITHUB_INSTALLATION_ID"]) {
@@ -88,7 +90,7 @@ async function armSeams(): Promise<void> {
     if (pass === "scrutiny") return "YES";
     const reason = `consult ${reasons.length + 1}`;
     reasons.push(reason);
-    return `VERDICT: allow\nREASON: ${reason}`;
+    return `VERDICT: allow\nREASON: ${reason}\nRULE: ${STARTER_ROUTINE_RULE}`;
   });
   cleanups.push(() => judge.resetApprovalJudgeCompletion());
 }

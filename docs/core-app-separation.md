@@ -34,7 +34,10 @@ eve  ←  @open-everywhere/core  ←  {  @open-everywhere/adapters,  provider bu
   (`agent/channels/*.ts`, `agent/tools/*.ts`, … — gitignored build output), and the two boot-time
   wiring modules
   (`agent/lib/register-config.ts`, `agent/lib/register-adapters.ts`) that compose everything
-  together before any hook, tool, or connection handler runs. The app may import vendor SDKs
+  together before any hook, tool, or connection handler runs. `register-adapters.ts` is one call
+  into the product's `registerDefaultAdapters()` (`@open-everywhere/adapters/agent/register-defaults.js`,
+  OPE-2301). The adapter wiring, the store selection rules and the floors live in that function, so an
+  upgrade of the package upgrades them. The app adds its own adapters in the call's `customAdapters` hook. The app may import vendor SDKs
   only through adapters — boundary-test.ts section 3 asserts the app tree itself stays
   vendor-SDK-free.
 
@@ -214,7 +217,7 @@ through `test:suites` (`scripts/chain/_legs.ts`), so it runs as part of `npm tes
 **All six surfaces are now extracted bundles** under `packages/providers/*`
 (`@open-everywhere/provider-notion`, `-slack`, `-discord`, `-teams`, `-linear`, `-github`). Each carries its own chat/work surface, read tools, and memory backing, and each is
 registered by exactly one `registerXProvider()` call — the full set is the `SELECTED_PROVIDERS`
-table in `agent/lib/providers.generated.ts` (built from `roster.config.ts`), driven by `register-adapters.ts` via `declareProviderSelection()`
+table in `agent/lib/providers.generated.ts` (built from `roster.config.ts`), driven by `registerDefaultAdapters()` (which `register-adapters.ts` calls) via `declareProviderSelection()`
 so an unselected provider mounts nothing. The boundary test's provider-bundle sections (4, 5 and 6
 above) are live against every bundle: barrel-only core imports, no sibling/adapters/app reach, and
 vendor-string ownership (e.g. `api.notion.com` / `NOTION_CHANNEL_API_KEY` present in the notion

@@ -13,6 +13,12 @@ import { loadConnectorCredentials } from "../agent/access/connector-credentials.
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const listOnly = process.argv.includes("--list");
+const scanRootArg = process.argv.indexOf("--scan-root");
+const scanRoot = scanRootArg === -1 ? root : process.argv[scanRootArg + 1];
+if (scanRoot === undefined) {
+  console.error("✗ own-account-gate-lint: --scan-root needs a directory");
+  process.exit(2);
+}
 
 function tsFilesUnder(dir: string): string[] {
   let entries: string[];
@@ -31,14 +37,14 @@ function tsFilesUnder(dir: string): string[] {
   return out;
 }
 
-const roots = [join(root, "packages", "core", "agent"), join(root, "agent")].filter((d) => {
+const roots = [join(scanRoot, "packages", "core", "agent"), join(scanRoot, "agent")].filter((d) => {
   try {
     return statSync(d).isDirectory();
   } catch {
     return false;
   }
 });
-const providersDir = join(root, "packages", "providers");
+const providersDir = join(scanRoot, "packages", "providers");
 try {
   for (const p of readdirSync(providersDir)) {
     const agentDir = join(providersDir, p, "agent");
@@ -52,7 +58,14 @@ try {
 
 const files: OwnAccountGateFile[] = [];
 for (const dir of roots) {
-  for (const full of tsFilesUnder(dir)) files.push({ file: relative(root, full), source: readFileSync(full, "utf8") });
+  for (const full of tsFilesUnder(dir)) files.push({ file: relative(scanRoot, full), source: readFileSync(full, "utf8") });
+}
+if (files.length === 0) {
+  console.error(
+    `✗ own-account-gate-lint: found no sources under packages/core/agent, agent or packages/providers/*/agent` +
+      `${scanRoot === root ? "" : ` in ${scanRoot}`} — refusing to report clean against an unread tree`,
+  );
+  process.exit(1);
 }
 
 const connectors = credentialGrantConnectors();

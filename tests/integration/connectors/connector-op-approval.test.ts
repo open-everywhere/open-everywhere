@@ -1,11 +1,15 @@
 import { afterAll, expect, test } from "vitest";
 
+import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
+
 import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
 import { encryptedKvVault } from "@open-everywhere/core/agent/credentials/kv-vault.js";
 import { effectiveUserVaultSubject } from "@open-everywhere/core/agent/connections/connector-auth.js";
 
 import {
+  armSettlement,
   auditCursor,
+  awaitWorkResult,
   bootAgent,
   disposeLater,
   installSlackWebApiStub,
@@ -16,6 +20,7 @@ import {
   slackTs,
   waitFor,
   waitForChildren,
+  workTaskIdOfCall,
   type AuditCursor,
   type AuditRow,
   type ScriptedHandle,
@@ -32,10 +37,14 @@ const OPERATOR_ID = "U0EXOWNER";
 const DM_CHANNEL_ID = "D0IT1232OPERATOR";
 const BOT_USER_ID = "U0IT1232BOT";
 
+const CONNECTION = "notion";
+
 const READ_VENDOR_TOOL = "search_pages";
-const READ_TOOL = `notion__${READ_VENDOR_TOOL}`;
+const READ_TOOL = `${CONNECTION}__${READ_VENDOR_TOOL}`;
 const WRITE_VENDOR_TOOL = "create_page";
-const WRITE_TOOL = `notion__${WRITE_VENDOR_TOOL}`;
+const WRITE_TOOL = `${CONNECTION}__${WRITE_VENDOR_TOOL}`;
+const READ_CALL_ID = "it1232-read";
+const WRITE_CALL_ID = "it1232-write";
 
 const OPERATOR_ACCESS_TOKEN = "it-ope1232-operator-mcp-token";
 const VENDOR_BODY_MARKER = "it-ope1232-vendor-body";
@@ -141,6 +150,8 @@ function armSlackStub(): { uninstall(): void } {
           },
         };
       }
+      case "conversations.members":
+        return { ok: true, members: [], response_metadata: { next_cursor: "" } };
       case "conversations.info":
         return { ok: true, channel: { id: params.get("channel"), name: "it1232-dm", is_im: true, is_channel: false, is_private: true, num_members: 2 } };
       case "conversations.open":
@@ -211,7 +222,7 @@ function connectionSearchOutputs(handle: ScriptedHandle): readonly string[] {
   return out;
 }
 
-test("a DM-delegated worker mounts a DISCOVERED connector op from a real connection_search, and calling it raises the approval BEFORE the vendor is dialled", async () => {
+test("a DM-delegated worker calls a DISCOVERED connector op through connection_execute after a real connection_search, and the write raises the approval BEFORE the vendor is dialled", async () => {
   await bootAgent({ sharedSqlite: true });
   await pinShippedFixture();
   await pinConnectorFlagsAndTiers();
@@ -231,11 +242,11 @@ test("a DM-delegated worker mounts a DISCOVERED connector op from a real connect
 
   const handle = disposeLater(
     registerScript({
-      parent: [{ calls: [{ tool: "agent", input: { message: "look in notion" }, id: "it1232-delegate" }] }, { say: "handed off" }],
+      parent: [{ calls: [{ tool: "work", input: { message: "look in notion" }, id: "it1232-delegate" }] }, { say: NO_REPLY_SENTINEL }],
       child: [
-        { calls: [{ tool: "connection_search", input: { keywords: "pages" }, id: "it1232-search" }] },
-        { calls: [{ tool: READ_TOOL, input: { query: "handbook" }, id: "it1232-read" }] },
-        { calls: [{ tool: WRITE_TOOL, input: { title: "handbook notes" }, id: "it1232-write" }] },
+        { delayMs: 120_000, calls: [{ tool: "connection_search", input: { query: "pages" }, id: "it1232-search" }] },
+        { calls: [{ tool: "connection_execute", input: { connection: CONNECTION, tool: READ_VENDOR_TOOL, input: { query: "handbook" } }, id: READ_CALL_ID }] },
+        { calls: [{ tool: "connection_execute", input: { connection: CONNECTION, tool: WRITE_VENDOR_TOOL, input: { title: "handbook notes" } }, id: WRITE_CALL_ID }] },
         { say: "reported" },
       ],
     }),
@@ -251,7 +262,13 @@ test("a DM-delegated worker mounts a DISCOVERED connector op from a real connect
   });
   expect(res.status, `the DM wake POST was not accepted at all — a signature or route failure: ${res.body.slice(0, 200)}`).toBe(200);
 
-  await waitForChildren(handle, { count: 1, lastStepIndex: 2, label: "it1232: the worker's write-calling step" });
+  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "it1232: the DM seat's receipt step (it forwarded and ended)");
+  await waitForChildren(handle, { count: 1, lastStepIndex: 0, label: "it1232: the worker to enter its hold" });
+  const taskId = await workTaskIdOfCall(cursor, handle, "it1232-delegate", "it1232: the DM forward");
+  const settlement = disposeLater(armSettlement(handle, { parent: [{ say: NO_REPLY_SENTINEL }, { say: NO_REPLY_SENTINEL }] }));
+  handle.releaseHolds();
+
+  await waitForChildren(handle, { count: 1, lastStepIndex: 3, label: "it1232: the worker's report step, after the denied write" });
 
   expect(
     handle.requests.filter((r) => r.fault !== undefined),
@@ -268,25 +285,24 @@ test("a DM-delegated worker mounts a DISCOVERED connector op from a real connect
     "the vendor was dialled under something other than the operator's seeded per-user token — the mint took a different credential path",
   ).toContain(OPERATOR_ACCESS_TOKEN);
 
+  const searchOut = connectionSearchOutputs(handle).join(" | ");
+  for (const vendorTool of [READ_VENDOR_TOOL, WRITE_VENDOR_TOOL]) {
+    expect(searchOut, `the real connection_search did not report the vendor's ${vendorTool}: ${searchOut.slice(0, 400)}`).toContain(vendorTool);
+  }
   const secondStep = handle.requests.find((r) => r.role === "child" && r.stepIndex === 1);
   expect(secondStep, "the worker never reached a second step — the search step faulted").toBeDefined();
-  for (const mounted of [READ_TOOL, WRITE_TOOL]) {
-    expect(
-      secondStep!.tools,
-      `🔴 the discovered op ${mounted} did NOT mount after a real connection_search. The worker was offered [${secondStep!.tools.slice().sort().join(", ")}]`,
-    ).toContain(mounted);
-  }
-  const firstStep = handle.requests.find((r) => r.role === "child" && r.stepIndex === 0)!;
-  expect(firstStep.tools, "the worker's first step was not recorded at all — the absence assertion below would be vacuous").toContain("connection_search");
-  for (const mounted of [READ_TOOL, WRITE_TOOL]) {
-    expect(
-      firstStep.tools,
-      `🔴 ${mounted} was already mounted BEFORE the search ran, so the mount proves nothing about the context cache`,
-    ).not.toContain(mounted);
+  expect(
+    secondStep!.tools,
+    `the worker's op-calling step does not offer connection_execute. The worker was offered [${secondStep!.tools.slice().sort().join(", ")}]`,
+  ).toContain("connection_execute");
+  for (const step of handle.requests.filter((r) => r.role === "child")) {
+    for (const qualified of [READ_TOOL, WRITE_TOOL]) {
+      expect(step.tools, `🔴 worker step ${step.stepIndex} offers ${qualified} as a tool of its own — eve mounts discovered ops again`).not.toContain(qualified);
+    }
   }
 
   const readResult = (() => {
-    for (const r of handle.requests) for (const t of r.toolResults) if (t.name === READ_TOOL) return t;
+    for (const r of handle.requests) for (const t of r.toolResults) if (t.id === READ_CALL_ID) return t;
     return undefined;
   })();
   expect(readResult, `the READ op ${READ_TOOL} never returned a result — the open tier did not execute`).toBeDefined();
@@ -302,37 +318,53 @@ test("a DM-delegated worker mounts a DISCOVERED connector op from a real connect
     "the READ op's call left under something other than the operator's seeded per-user token",
   ).toContain(OPERATOR_ACCESS_TOKEN);
 
+  const isConnectorCard = (r: AuditRow): boolean => r.detail?.kind === "op.connector";
   const outcome = await waitFor(async () => {
-    const card = (await inputRequestRows(cursor)).find((r) => r.detail?.toolName === WRITE_TOOL);
+    const card = (await rowsSinceCursor(cursor, ["approval.requested"], { limit: 50 })).find(isConnectorCard);
     if (card !== undefined) return { card };
     const wrote = vendorRequests(vendor, "tools/call").find((c) => c.rpc.params["name"] === WRITE_VENDOR_TOOL);
     if (wrote !== undefined) return { wrote };
     return undefined;
-  }, `the WRITE op's outcome — an approval card for ${WRITE_TOOL}, or a call that reached the vendor`);
+  }, `the WRITE op's outcome — an op.connector card for ${WRITE_TOOL}, or a call that reached the vendor`);
   expect(
     outcome.wrote,
     `🔴 the WRITE op REACHED THE VENDOR with no approval raised — the connection's approval policy is not gating a discovered op (the OPE-1218 drop)`,
   ).toBeUndefined();
-  const raised = outcome.card!;
+  const pendingId = String(outcome.card!.detail?.id ?? "");
+  expect(pendingId.length, "the op.connector approval.requested row names no pending id").toBeGreaterThan(0);
+  const provider = await import("@open-everywhere/core/agent/operational/provider.js");
+  const row = await provider.getOperationalStore().getPendingAction(deploymentOrg(), pendingId);
+  expect(row?.kind, "the card's pending row is not an op.connector card").toBe("op.connector");
+  expect(row?.status, "the card is not pending — something decided it").toBe("pending");
+  expect((JSON.parse(row!.argsJson) as { tool?: unknown }).tool, `the card does not freeze ${WRITE_TOOL}`).toBe(WRITE_TOOL);
+  const frozen = JSON.parse(row!.argsJson) as { sessionKey?: unknown; grain?: unknown; memoKind?: unknown };
+  expect(frozen.grain, "🔴 the card offers more than one call — a click would keep a grant").toBe("call");
+  expect(String(frozen.memoKind), "the one-call approval is not keyed on the input digest").toMatch(/#[0-9a-f]{32}$/);
+  expect(frozen.sessionKey, "🔴 the card froze a work-session token — the approval could be spent beyond this DM").toBe(
+    `oe-grant:slack/${SLACK_TEAM_ID}/${DM_CHANNEL_ID}:dm`,
+  );
   expect(
-    raised.detail?.kind,
-    `the request raised for ${WRITE_TOOL} was not eve's tool-approval — the connector op was gated as something else`,
-  ).toBe("tool-approval");
+    (await rowsSinceCursor(cursor, ["approval.requested"], { limit: 50 })).filter(isConnectorCard).length,
+    `🔴 the turn raised more than the write's one card — the READ op ${READ_TOOL} was carded too, so the tiering is not distinguishing the two arms`,
+  ).toBe(1);
   expect(
-    (await inputRequestRows(cursor)).filter((r) => r.detail?.toolName === READ_TOOL),
-    `🔴 the READ op ${READ_TOOL} also raised an input request — the tiering is not distinguishing the two arms`,
+    (await inputRequestRows(cursor)).map((r) => `${String(r.detail?.kind)}:${String(r.detail?.toolName)}`),
+    "🔴 eve raised a native input request — a connector approval still parks a turn",
   ).toEqual([]);
 
   expect(
     vendorRequests(vendor, "tools/call").map((c) => c.rpc.params["name"]),
     `🔴 the WRITE op reached the vendor AFTER its card was raised — the card is being shown but not awaited`,
   ).toEqual([READ_VENDOR_TOOL]);
-  expect(
-    handle.requests.flatMap((r) => r.toolResults).filter((t) => t.name === WRITE_TOOL),
-    "the worker received a result for the gated write — the turn was not suspended at its card",
-  ).toEqual([]);
+  const denied = handle.requests.flatMap((r) => r.toolResults).find((t) => t.id === WRITE_CALL_ID);
+  expect(denied, "the worker never received the gated write's result — its turn was held on the card").toBeDefined();
+  const deniedText = JSON.stringify(denied!.output);
+  expect(deniedText, `the write's result does not name the posted card: ${deniedText.slice(0, 300)}`).toContain(`pending ${pendingId}`);
+  expect(deniedText).toContain("did NOT run");
   expect(
     handle.requests.find((r) => r.role === "child" && r.stepIndex === 3),
-    "the worker ran past the gated write — the turn was not suspended at all",
-  ).toBeUndefined();
+    "the worker did not go on past the denied write — the turn was held",
+  ).toBeDefined();
+  const resultStep = await awaitWorkResult({ handle: settlement, taskId, label: "it1232: the DM seat's result-wake step" });
+  expect(resultStep.fault).toBeUndefined();
 }, 600_000);

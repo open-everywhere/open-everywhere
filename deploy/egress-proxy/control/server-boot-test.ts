@@ -4,6 +4,13 @@ import { spawn, type ChildProcessByStdio } from "node:child_process";
 import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { win32ExitAbortSkipLine } from "../../../scripts/win32-exit-abort.ts";
+
+const win32Skip = win32ExitAbortSkipLine("test:egress-proxy-boot");
+if (win32Skip) {
+  console.log(win32Skip);
+  process.exit(0);
+}
 
 type ControlProcess = ChildProcessByStdio<null, Readable, Readable>;
 

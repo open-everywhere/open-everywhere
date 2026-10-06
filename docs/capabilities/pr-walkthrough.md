@@ -31,7 +31,7 @@ each layer can physically touch.**
 |---|---|---|---|
 | **Proposer** | any session, possibly the one that wrote the change | the repo and PR number | write a word of the document; frame the review; supply a fact |
 | **Facts** | a run of `scripts/config-diff.ts`, no model anywhere in it | the computed config delta | be edited, selected or omitted by a model |
-| **Narrator** | the `fresh_eyes_review` declared subagent — fresh session, zero tools | a typed verdict | see the proposer's history; read the repo; reach the network |
+| **Narrator** | the `fresh_eyes_review` declared subagent — fresh session, zero tools | a verdict (prose on this pin — see § *The result*) | see the proposer's history; read the repo; reach the network |
 | **Relay** | the proposing session again — it carries the verdict back | the narration text, as passed on | fake the *spend rows* a delegated run leaves behind |
 | **Render** | `packages/core/agent/review/pr-walkthrough.ts`, pure code | the document | be replaced by model prose |
 | **Merge** | **you** | the decision | be taken by anything above |
@@ -262,14 +262,24 @@ against a newer one.
 
 `fresh_eyes_review` is a [declared subagent](./skills-and-plugins.md#declared-subagents-the-specialist-unit):
 eve gives it a fresh session with **no parent history**, and every slot in its `tools/` directory is
-taken over. Each framework tool carries a `disableTool()` sentinel, except `connection_search`: eve
-0.52.0 refuses to let an app disable that slot, so it carries an authored no-op instead — a tool
-that imports nothing but type and schema modules and answers one constant. So there is no bash, no
-`read_file`, no `web_fetch`, no `web_search`, and no connector search.
-`npm run lint:subagents` pins which slot takes which treatment, and
-`npm run test:subagent-zero-hands` pins that the replacement's import surface stays closed and its
-body stays constant. So an instruction embedded in the diff cannot make it go and find the proposing
-session's reasoning, or anything else.
+taken over. Every framework tool eve mounts by default carries a `disableTool()` sentinel — `bash`,
+`read_file`, `write_file`, `web_fetch`, `web_search` and `load_skill` — so there is no bash, no
+`read_file`, no `web_fetch` and no `web_search`.
+
+**There is no connector search either, and since eve 0.69.0 that rests on eve rather than on us.** eve
+0.52.0 declared `connection_search` a slot an app could not disable, so this subagent carried an
+authored no-op there instead. eve 0.69.0 RESERVED the slot against any authored module, replacement
+included, so that file is gone. What keeps the subagent connector-free now is eve's own per-node
+scoping: its connection registry is built only for a node that declares connections of its own —
+static or dynamic, both of which are modules under `connections/` — and this subagent declares
+neither, so it gets no registry and therefore no `connection_search` and no `connection_execute`. The root's own connectors are not reachable from it.
+🔴 `npm run lint:subagents` and `npm run test:subagent-zero-hands` both read eve's mount sets through
+the one reader, and both pin the halves below. (The lint was dead on the 0.69.0 re-roll, because the
+reader expected a declaration eve had removed; OPE-2254 re-derived it.) The test pins, against the
+real tree: that the subagent authors nothing at a reserved
+slot, and that eve still scopes its registry to the active node — the one check that would notice a
+future eve losing that property. So an instruction embedded in the diff cannot make it go and find the
+proposing session's reasoning, or anything else.
 Everything it knows arrives in the brief, and the diff inside that brief is wrapped in
 the untrusted-content envelope, with embedded delimiters defanged so a diff containing a literal
 closing tag cannot break out and address it as trusted instruction.
@@ -302,9 +312,9 @@ Section 2 therefore opens with one of two lines:
 made model calls. It does **not** establish:
 
 - **which subagent** — eve's parent linkage carries a call id, never a name, and the built-in `agent`
-  delegation mints the same shape. (What *is* true of any declared one: every framework slot is
-  either a `disableTool()` sentinel or an authored no-op that reaches nothing, so whichever ran held
-  no tools.)
+  delegation mints the same shape. (What *is* true of any declared one: every default-mounted
+  framework slot is a `disableTool()` sentinel, and the reserved connector slots mount nothing for a
+  subagent that declares no connections, so whichever ran held no tools.)
 - **that the words are its words** — the narration was relayed by the session being reviewed, which
   could have edited, truncated or replaced it in transit. This is the gap that stays open while eve
   returns a subagent's output to the model rather than to the host.

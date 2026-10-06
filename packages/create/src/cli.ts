@@ -5,6 +5,7 @@ import { initGitRepo, scaffoldApp, ScaffoldRefusal } from "./scaffold.js";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { slackAppNameProblem } from "@open-everywhere/provider-slack/agent/app-manifest.js";
+import { readAppNaming } from "./app-naming.js";
 
 const USAGE = `create-open-everywhere [<dir>] [--check [--json]] [--route vercel|docker] [--host <url>]
                        [--app-name <name>] [--version] [--help]
@@ -24,9 +25,10 @@ const USAGE = `create-open-everywhere [<dir>] [--check [--json]] [--route vercel
   --host <url>   The deployment's public origin. The build + deploy step
                  probes its Slack route.
   --app-name <name>
-                 The Slack app's name in the manifest the Slack step prints
-                 (default "Open Everywhere"). A second install in one
-                 workspace needs its own name.
+                 The Slack app's name in the manifest the Slack step prints.
+                 Default: the app's identity.name setting, else "Open
+                 Everywhere". A second install in one workspace needs its
+                 own name.
   --version      Print this CLI's version.
   --help         Print this message.
 
@@ -100,9 +102,11 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   };
 }
 
-function buildContext(args: ParsedArgs): StepContext {
+async function buildContext(args: ParsedArgs): Promise<StepContext> {
+  const cwd = process.cwd();
   return {
-    cwd: process.cwd(),
+    ...(await readAppNaming(cwd)),
+    cwd,
     env: process.env,
     route: args.route ?? "vercel",
     ...(args.host !== undefined ? { host: args.host } : {}),
@@ -111,7 +115,7 @@ function buildContext(args: ParsedArgs): StepContext {
 }
 
 async function runCheckMode(json: boolean, args: ParsedArgs): Promise<number> {
-  const ctx = buildContext(args);
+  const ctx = await buildContext(args);
   const summary = await checkAll(SETUP_STEPS, ctx);
   if (json) {
     const report = {

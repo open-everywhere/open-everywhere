@@ -10,6 +10,7 @@ import {
   collectDeclaredRooms,
   compareInventory,
   createGuardRefusal,
+  inventoryOptions,
   inventoryVars,
   namesLost,
   notionQueryPageBody,
@@ -21,11 +22,13 @@ import {
   roomIdFor,
   roomName,
   roomsUnseen,
+  staleCheckExitCode,
   slackRoomName,
   teamsSegment,
   trackedRoomId,
   type BindingLike,
   type DomainLike,
+  type InventoryOptions,
   type PlannedRoom,
   type ProvisionDomain,
   type Resolution,
@@ -370,13 +373,6 @@ export async function loadConfigRooms(root: string = resolveAppRoot()): Promise<
   return { domains: domains as readonly DomainLike[], bindings: bindings as readonly BindingLike[] };
 }
 
-export interface InventoryOptions {
-  readonly check: boolean;
-  readonly warnOnly: boolean;
-  readonly partial: boolean;
-  readonly ifArmed: boolean;
-}
-
 export const ARMING_VAR = "E2E_FIXTURE_TABLE_CHECK";
 
 async function runInventory(env: Env, options: InventoryOptions): Promise<number> {
@@ -464,7 +460,7 @@ async function runInventory(env: Env, options: InventoryOptions): Promise<number
   const mark = options.warnOnly ? "WARNING" : "✗";
   if (!existsSync(docPath)) {
     console.log(`${mark} e2e:fixtures inventory --check: ${INVENTORY_DOC} does not exist.`);
-    return options.warnOnly ? 0 : 1;
+    return staleCheckExitCode(options);
   }
   const visibleRows = inventory.rows.filter((r) => !blind.includes(r.surface));
   const committed = parseInventoryDoc(readFileSync(docPath, "utf8")).filter((r) => !blind.includes(r.surface));
@@ -480,7 +476,7 @@ async function runInventory(env: Env, options: InventoryOptions): Promise<number
   }
   console.log(`${mark} e2e:fixtures inventory --check: ${INVENTORY_DOC} is stale — re-run \`npm run e2e:fixtures -- inventory\`.`);
   for (const r of verdict.reasons) console.log(`    ${r}`);
-  return options.warnOnly ? 0 : 1;
+  return staleCheckExitCode(options);
 }
 
 export type ProvisionTarget = Pick<ProvisionDomain, "slug" | "linearKey">;
@@ -1080,12 +1076,7 @@ export async function main(argv: readonly string[]): Promise<number> {
 async function run(argv: readonly string[]): Promise<number> {
   const [command, ...rest] = argv;
   if (command === "inventory") {
-    return runInventory(resolvedEnv(), {
-      check: rest.includes("--check"),
-      warnOnly: rest.includes("--warn-only"),
-      partial: rest.includes("--partial"),
-      ifArmed: rest.includes("--if-armed"),
-    });
+    return runInventory(resolvedEnv(), inventoryOptions(rest));
   }
   if (command === "provision") {
     const domain = rest.find((a) => !a.startsWith("-"));

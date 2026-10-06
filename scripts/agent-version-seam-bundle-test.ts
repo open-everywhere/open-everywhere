@@ -1,10 +1,28 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { EVE_RUNTIME_VERSION } from "@open-everywhere/core/agent/channels/runtime-rotation.js";
 import { CORE_PACKAGE_VERSION } from "@open-everywhere/core/agent/ops/package-info.js";
 
 const ROOT = process.cwd();
-const BUNDLE_PATH = join(ROOT, ".output", "server", "index.mjs");
+const BUNDLE_DIR = join(ROOT, ".output", "server");
+const SEAM_MARKER = "function readAppVersion(";
+
+function findSeamBundles(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  const found: string[] = [];
+  for (const entry of readdirSync(dir, { recursive: true, encoding: "utf8" })) {
+    const path = join(dir, entry);
+    if (!entry.endsWith(".mjs") && !entry.endsWith(".js")) continue;
+    let text: string;
+    try {
+      text = readFileSync(path, "utf8");
+    } catch {
+      continue;
+    }
+    if (text.includes(SEAM_MARKER)) found.push(path);
+  }
+  return found.sort();
+}
 
 if (process.env.VERCEL) {
   console.log(
@@ -16,13 +34,26 @@ if (process.env.VERCEL) {
 
 const problems: string[] = [];
 
-if (!existsSync(BUNDLE_PATH)) {
+if (!existsSync(BUNDLE_DIR)) {
   console.error(
-    `✗ agent-version-seam-bundle: ${BUNDLE_PATH} does not exist. This script reads BUILD OUTPUT — ` +
+    `✗ agent-version-seam-bundle: ${BUNDLE_DIR} does not exist. This script reads BUILD OUTPUT — ` +
       `run \`npm run build\` first (or just \`npm run build\`, which already chains this script).`,
   );
   process.exit(1);
 }
+
+const seamBundles = findSeamBundles(BUNDLE_DIR);
+if (seamBundles.length !== 1) {
+  console.error(
+    `✗ agent-version-seam-bundle: expected exactly ONE build-output module containing \`${SEAM_MARKER}\`, ` +
+      `found ${seamBundles.length}${seamBundles.length === 0 ? "" : ` (${seamBundles.join(", ")})`} under ${BUNDLE_DIR}. ` +
+      `Zero means \`readAppVersion\` was renamed, inlined or deleted — check registerAppInfo's call site in ` +
+      `agent/agent.ts. More than one means the bundler emitted the seam twice, and checking one copy would ` +
+      `leave the other unchecked. Read the output and re-derive this resolver; do not widen it.`,
+  );
+  process.exit(1);
+}
+const BUNDLE_PATH = seamBundles[0] as string;
 
 const bundle = readFileSync(BUNDLE_PATH, "utf8");
 

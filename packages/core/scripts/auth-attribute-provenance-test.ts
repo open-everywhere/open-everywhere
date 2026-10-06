@@ -42,7 +42,9 @@ console.log(`auth-attribute-provenance: verifying against installed eve ${eveVer
 
 const WRITE_RE = /\.set\(\s*(?:Initiator)?AuthKey\b/g;
 const WORKFLOW_STEP_TWIN = "execution/tools/workflow/step-execution.js";
-const EXPECTED_WRITERS = new Set(["execution/runtime-context.js", "execution/workflow-steps.js", WORKFLOW_STEP_TWIN]);
+const TURN_STEP = "execution/session/turn-step.js";
+const PROXIED_DELIVER = "execution/proxied-deliver-step.js";
+const EXPECTED_WRITERS = new Set(["execution/runtime-context.js", TURN_STEP, PROXIED_DELIVER, WORKFLOW_STEP_TWIN]);
 {
   const found = new Set<string>();
   const walk = (dir: string): void => {
@@ -102,8 +104,8 @@ const EXPECTED_WRITERS = new Set(["execution/runtime-context.js", "execution/wor
     "the workflow-tool run's `initiatorAuth` is still a host read of InitiatorAuthKey",
   );
   ok(
-    /session:\{auth:\{current:(\w+)\.auth,initiator:\1\.initiatorAuth\}/.test(read("execution/tools/workflow/start.js")),
-    "startWorkflowTask still builds the run's session.auth from its OWN auth/initiatorAuth arguments, never off the model's task input",
+    /async function startWorkflowToolCallRun\((\w+),\w+\)\{let\{task:(\w+)[^}]*\}=\1;[^;]*?session:\{auth:\1\.auth,/.test(read("execution/tools/workflow/start.js")),
+    "startWorkflowToolCallRun still builds the run's session.auth from its caller's OWN `auth` argument, never off the model's task input",
   );
   {
     const step = read("execution/coordination-dispatch-step.js");
@@ -111,8 +113,12 @@ const EXPECTED_WRITERS = new Set(["execution/runtime-context.js", "execution/wor
     ok(prepared !== null, "the coordination step still prepares its dispatch through prepareCoordinationDispatch");
     const dispatchLocal = prepared![1]!;
     ok(
-      new RegExp(`startWorkflowTask\\(\\{auth:${dispatchLocal}\\.auth,[^}]*initiatorAuth:${dispatchLocal}\\.initiatorAuth`).test(step),
+      new RegExp(`dispatchWorkflowCall\\(\\{[^]*?auth:\\{current:${dispatchLocal}\\.auth,initiator:${dispatchLocal}\\.initiatorAuth\\}`).test(step),
       "🔴 the workflow task's auth pair is read off THE OBJECT prepareCoordinationDispatch returned — the named local, not merely one identifier used twice",
+    );
+    ok(
+      /async function dispatchWorkflowCall\((\w+)\)\{[^]*?case`execute`:return await startWorkflowTask\(\1\);case`task`:case`serve`:return await startTaskRun\(\{\.\.\.\1,/.test(step),
+      "…and dispatchWorkflowCall hands that SAME argument object on to both start paths",
     );
 
     const shared = read("execution/coordination-dispatch-shared.js");
@@ -140,21 +146,121 @@ const EXPECTED_WRITERS = new Set(["execution/runtime-context.js", "execution/wor
 }
 
 {
-  const steps = read("execution/workflow-steps.js");
+  const proxied = read(PROXIED_DELIVER);
+  const fn = /async function deliverChannelInputResponses\((\w+)\)\{(?:(?!function )[\s\S])*/.exec(proxied);
+  ok(fn !== null, `${PROXIED_DELIVER} still declares deliverChannelInputResponses`);
+  const body = fn?.[0] ?? "";
+  const param = fn?.[1] ?? "";
+  const write = new RegExp(
+    `let (\\w+)=await deserializeContext\\(${param}\\.serializedContext\\),\\w+=\\1\\.require\\(ChannelKey\\);if\\(\\w+\\.deliver===void 0\\)return ${param};${param}\\.delivery\\.auth!==void 0&&\\1\\.set\\(AuthKey,${param}\\.delivery\\.auth\\?\\?null\\)`,
+  ).exec(body);
+  ok(write !== null, "🔴 the proxied write takes the DELIVERY's own auth, guarded on presence, into a context it just deserialized");
+  const scratch = write?.[1] ?? "";
   ok(
-    /input\?\.kind===`deliver`&&\w+\.input\.auth!==void 0&&\w+\.set\(AuthKey,\w+\.input\.auth\?\?null\)/.test(steps),
-    "turnStep's auth write is still guarded on kind===`deliver` AND input.auth!==undefined (approval-resume keeps its stamps)",
+    !new RegExp(`serializeContext\\(${scratch}\\)`).test(body),
+    "🔴 …and that context is NEVER serialized back — the write lives only as long as one channel `deliver` call",
   );
   ok(
-    /resumeHook\(\w+,\{kind:`deliver`,payloads:\[\{authorizationCallback:/.test(read("execution/connections/callback-route.js")),
+    new RegExp(`let (\\w+)=await deserializeContext\\(${param}\\.serializedContext\\);return setChannelContext\\(\\1,[^;]*serializedContext:serializeContext\\(\\1\\)`).test(body),
+    "…the context it DOES hand back is a second, fresh deserialize that carries only the channel state",
+  );
+  ok((body.match(WRITE_RE) ?? []).length === 1 && (proxied.match(WRITE_RE) ?? []).length === 1, `${PROXIED_DELIVER} holds exactly ONE auth-slot write`);
+}
+
+{
+  const step = read(TURN_STEP);
+  ok((step.match(WRITE_RE) ?? []).length === 4, `${TURN_STEP} holds exactly FOUR auth-slot writes (saw ${(step.match(WRITE_RE) ?? []).length})`);
+  const bound = /let (\w+)=(\w+)\.input\?\.delivery,(\w+)=\1,/.exec(step);
+  ok(bound !== null, "runSessionStep binds its delivery from the step input, and aliases it");
+  const d = bound?.[3] ?? "";
+  const prior = new RegExp(`let (\\w+)=(\\w+)\\.get\\(AuthKey\\);${d}\\?\\.auth!==void 0&&\\(\\2\\.set\\(AuthKey,${d}\\.auth\\?\\?null\\),\\2\\.has\\(InitiatorAuthKey\\)\\|\\|\\2\\.set\\(InitiatorAuthKey,${d}\\.auth\\?\\?null\\)\\)`).exec(step);
+  ok(prior !== null, "🔴 (1)+(2) the slot takes the DELIVERY's auth only when the delivery supplies one, and the initiator slot only when it is empty");
+  const span = step.slice((bound?.index ?? 0) + (bound?.[0].length ?? 0), prior?.index ?? 0);
+  const reassigned = [...span.matchAll(new RegExp(`(?<![\\w$.])${d}=(?!=)([^;)]{0,24})`, "gu"))].map((m) => m[1]);
+  ok(
+    reassigned.length === 2 && reassigned[0]?.startsWith(`{...${d},payloads:`) === true && reassigned[1] === "void 0",
+    `🔴 before the write the delivery local is reassigned only to the same delivery with its sign-in payloads removed, or to void 0 (saw ${JSON.stringify(reassigned)})`,
+  );
+  ok(
+    !new RegExp(`(?:let|const|var)\\s+${d}\\b|(?:let|const|var)\\s*\\{[^}]*(?<![\\w$])${d}(?![\\w$])[^}]*\\}=`).test(span),
+    "…and no nested declaration shadows it in that span",
+  );
+  const saved = prior?.[1] ?? "";
+  const ctx = prior?.[2] ?? "";
+  const matches = new RegExp(`let\\{matches:(\\w+),remainingPayloads:\\w+\\}=matchAuthorizationCallbacks\\((\\w+),${d}\\.payloads\\)`).exec(step);
+  ok(matches !== null, "the sign-in matches come from matchAuthorizationCallbacks over the step's own delivery payloads");
+  ok(new RegExp(`let ${matches?.[2] ?? "\\0"}=getPendingAuthorization\\(\\w+\\.state\\)`).test(step), "…against the PENDING authorization in durable session state (an `eve.`-reserved key, §5)");
+  const kept = new RegExp(`(\\w+)=${matches?.[1] ?? "\\0"},`).exec(step)?.[1] ?? "";
+  ok(
+    new RegExp(`let (\\w+)=${d}===void 0\\?${kept}\\?\\.find\\(\\(\\{challenge:(\\w+)\\}\\)=>\\2\\.candidateId===void 0\\)\\?\\.challenge\\.requester:void 0;\\1!==void 0&&${ctx}\\.set\\(AuthKey,\\1\\)`).test(step),
+    "🔴 (3) a sign-in-only step restores the challenge's `requester` — nothing else — and only when no delivery is left",
+  );
+  ok(
+    new RegExp(`${saved}===void 0\\?${ctx}\\.delete\\(AuthKey\\):${ctx}\\.set\\(AuthKey,${saved}\\)`).test(step),
+    "🔴 (4) the last write is a RESTORE of the value read before (1) — a mid-turn delivery that yields no turn input leaves the slot as it was",
+  );
+}
+
+{
+  const callers = filesMatching(/requestAuthorization\(\[/u);
+  ok(
+    callers.length === 1 && callers[0] === "runtime/connections/scoped-authorization.js",
+    `requestAuthorization has ONE caller in the whole dist, the scoped authorization (saw ${JSON.stringify(callers)})`,
+  );
+  const scoped = read("runtime/connections/scoped-authorization.js");
+  const req = /(\w+)=\w+\.boundResponder\?\?contextStorage\.getStore\(\)\?\.get\(AuthKey\)\?\?void 0/.exec(scoped);
+  ok(req !== null && new RegExp(`requester:${req[1]}[,}]`).test(scoped), "🔴 `requester` is the bound responder, else a host read of AuthKey — never a tool argument");
+  const responderSites = filesMatching(/boundResponder:/u);
+  ok(
+    JSON.stringify([...responderSites].sort()) === JSON.stringify(["execution/tool-auth.js", "runtime/authorization-context.js"]),
+    `a bound responder is set in exactly two modules (saw ${JSON.stringify(responderSites)})`,
+  );
+  ok(/boundResponder:(\w+)\.boundResponder[,}]/.test(read("runtime/authorization-context.js")), "…runtime/authorization-context.js only forwards one it was given");
+  ok(/createAuthorizationContext\(\{scope:(\w+)\.scope,boundResponder:\1\.responder\}\)/.test(read("execution/tool-auth.js")), "…execution/tool-auth.js binds the approval RESPONDER");
+  const coordinator = read("harness/approval-delivery-coordinator.js");
+  ok(
+    /let (\w+)=(\w+)===void 0\?buildCallbackContext\(\)\.session\.auth\.current:\2;if\(\1===null\)/.test(coordinator),
+    "🔴 …and the responder is the response's attributed auth, else the session's own slot",
+  );
+  const PAIR = /(?<!(?:let|const|var)\s*)\{auth:([^,{}]+),response:/gu;
+  const attributed = filesMatching(PAIR).flatMap((rel) => [...read(rel).matchAll(PAIR)].map((m) => `${rel}: ${m[1]}`));
+  ok(
+    [..."for(let{auth:e,response:n}of C)x={auth:void 0,response:r}".matchAll(PAIR)].length === 1,
+    "control: the pair matcher counts a built literal and skips a binding pattern",
+  );
+  ok(attributed.length > 0, "control: the dist does build `{auth, response}` pairs, so the absence below is not a blind matcher");
+  ok(
+    attributed.every((a) => a.endsWith(": void 0")),
+    `🔴 no module builds an attributed input response with an auth of its own (saw ${JSON.stringify(attributed)})`,
+  );
+}
+
+{
+  ok(
+    /resumeAuthorizationCallback\(\w+,\{kind:`authorization-callback`,payloads:\[\{authorizationCallback:/.test(read("execution/connections/callback-route.js")),
     "the connection authorization callback still resumes with NO `auth` field (auth-preserving resume)",
+  );
+  ok(
+    /if\((\w+)\.kind===`authorization-callback`\)return \w+\.queue\.enqueueAuthorization\(\1\.payloads\)/.test(read("execution/session/admission.js")),
+    "…the session admits it as its PAYLOADS only — an auth field on the callback could not reach the queue",
+  );
+  ok(
+    /\.takeAuthorizations\(\w+\);if\(\w+!==void 0\)return\{kind:`deliver`,payloads:\w+\}/.test(read("execution/session/turn.js")),
+    "…and the held turn re-delivers those payloads in a delivery that carries NO auth key",
   );
 }
 
 {
   const state = read("public/definitions/state.js");
-  ok(/RESERVED_STATE_NAME_PREFIX=`eve\.`/.test(state), "defineState still reserves the `eve.` prefix");
-  ok(/startsWith\(RESERVED_STATE_NAME_PREFIX\)\)throw Error/.test(state), "defineState still THROWS on a reserved-prefix name (cannot alias eve.auth)");
+  ok(
+    /RESERVED_STATE_NAME_PREFIX=`eve\.`/.test(state) || /RESERVED_STATE_NAME_PREFIXES=\[[^\]]*`eve\.`[^\]]*\]/.test(state),
+    "defineState still reserves the `eve.` prefix",
+  );
+  ok(
+    /startsWith\(RESERVED_STATE_NAME_PREFIX\)\)throw Error/.test(state) ||
+      /let (\w+)=RESERVED_STATE_NAME_PREFIXES\.find\(\w+=>(\w+)\.startsWith\(\w+\)\);if\(\1!==void 0\)throw Error/.test(state),
+    "defineState still THROWS on a reserved-prefix name (cannot alias eve.auth)",
+  );
 }
 
 {
@@ -180,7 +286,12 @@ const EXPECTED_WRITERS = new Set(["execution/runtime-context.js", "execution/wor
   ok(!/auth/.test(body), "coalesceTurnInputs still merges only inputResponses/message/context/outputSchema — never `auth`");
   const hitlProxy = read(SUBAGENT_HITL_PROXY);
   ok(/payload:\{inputResponses:/.test(hitlProxy), "routeDeliverPayload still routes HITL answers as `inputResponses` payloads");
-  ok(!/auth/.test(hitlProxy), "the HITL proxy still never touches `auth` — an answer cannot become an attribute");
+  const AUTH_KEY_RE = /(?<![\w$])auth(?![\w$])|AuthKey/u;
+  ok(
+    AUTH_KEY_RE.test("x.auth") && AUTH_KEY_RE.test("{auth:e}") && AUTH_KEY_RE.test("c.set(AuthKey,v)") && !AUTH_KEY_RE.test("emitProxiedAuthorizationEvent"),
+    "control: the key matcher sees `.auth`, `auth:` and AuthKey, and skips a name that only contains the word",
+  );
+  ok(!AUTH_KEY_RE.test(hitlProxy), "the HITL proxy still never touches `auth` — an answer cannot become an attribute");
 }
 
 {
@@ -190,177 +301,108 @@ const EXPECTED_WRITERS = new Set(["execution/runtime-context.js", "execution/wor
 }
 
 {
-  const tw = read("execution/turn-workflow.js");
+  const turnJs = read("execution/session/turn.js");
 
-  const ownedStart = tw.indexOf("async function runTurnOwnedWorkflow(");
-  const waitStart = tw.indexOf("async function waitForRuntimeActionResults(");
-  const legacyStart = tw.indexOf("async function runLegacyTurnWorkflow(");
-  ok(ownedStart >= 0 && waitStart > ownedStart && legacyStart > waitStart, "turn-workflow.js still declares runTurnOwnedWorkflow → waitForRuntimeActionResults → runLegacyTurnWorkflow");
-  const owned = tw.slice(ownedStart, waitStart);
-  const waitFn = tw.slice(waitStart, legacyStart);
-  const legacy = tw.slice(legacyStart);
-
-  const ownedSignature = /^async function runTurnOwnedWorkflow\(([^)]*)\)/.exec(owned)?.[1];
-  const ownedParams = (ownedSignature ?? "")
-    .split(",")
-    .map((p) => p.trim())
-    .filter((p) => p !== "");
-  const ownedParam = ownedParams[0];
-  ok(ownedParam !== undefined, "runTurnOwnedWorkflow still takes a named workflow-input parameter first");
+  const callers = filesMatching(/(?<!function )turnStep\(\{/u);
   ok(
-    ownedParams.every((p) => /^[A-Za-z_$][\w$]*$/u.test(p)),
-    `runTurnOwnedWorkflow's parameters are all plain identifiers (saw: ${JSON.stringify(ownedParams)})`,
+    callers.length === 1 && callers[0] === "execution/session/turn.js",
+    `turnStep has ONE call site in eve's whole dist, the session loop (saw ${JSON.stringify(callers)})`,
+  );
+  const loop = /async runTurnSteps\((\w+),(\w+)\)\{let (\w+)=\2,/.exec(turnJs);
+  ok(loop !== null, "runTurnSteps seeds its step input from its second parameter — the turn's own delivery");
+  const turnVar = loop?.[1] ?? "";
+  const inputVar = loop?.[3] ?? "";
+  ok(
+    new RegExp(`turnStep\\(\\{[^}]*input:${inputVar}[,}]`).test(turnJs),
+    "…and the ONE turnStep call passes that variable as its input",
+  );
+  ok(
+    /async runTurn\((\w+),\w+=\{\}\)\{[^]*?this\.runTurnSteps\(\w+,\1\)/.test(turnJs),
+    "① runTurn hands runTurnSteps the delivery the turn was started with",
   );
 
-  function argsAt(src: string, open: number): string {
-    let depth = 0;
-    for (let i = open; i < src.length; i++) {
-      const ch = src[i];
-      if (ch === "(") depth++;
-      else if (ch === ")") {
-        depth--;
-        if (depth === 0) return src.slice(open + 1, i);
-      }
-    }
-    return "";
-  }
-  function splitArgs(args: string): readonly string[] {
-    if (args.trim() === "") return [];
-    const out: string[] = [];
-    let depth = 0;
-    let start = 0;
-    for (let i = 0; i < args.length; i++) {
-      const ch = args[i]!;
-      if ("([{".includes(ch)) depth++;
-      else if (")]}".includes(ch)) depth--;
-      else if (ch === "," && depth === 0) {
-        out.push(args.slice(start, i).trim());
-        start = i + 1;
-      }
-    }
-    out.push(args.slice(start).trim());
-    return out;
-  }
-  ok(splitArgs(argsAt("f(a(1,2),b.c)", 1)).length === 2, "arg scanner: a nested call is ONE argument, not two");
-  ok(splitArgs(argsAt("f(a(1,2),b.c)", 1))[1] === "b.c", "arg scanner: the second argument is read whole");
-  ok(splitArgs(argsAt("f(x)", 1)).length === 1, "arg scanner: a single argument reads as one");
-  ok(splitArgs(argsAt("f()", 1)).length === 0, "arg scanner: no arguments reads as none");
-
-  const callSites = filesMatching(/runTurnOwnedWorkflow\(/u).flatMap((rel) => {
-    const src = read(rel);
-    return [...src.matchAll(/(?<!function )runTurnOwnedWorkflow\(/gu)].map((m) => ({
-      file: rel,
-      args: splitArgs(argsAt(src, (m.index ?? 0) + m[0].length - 1)),
-    }));
-  });
+  const body = turnJs.slice(loop?.index ?? 0, turnJs.indexOf("async dispatchRuns("));
+  const assigns = [...body.matchAll(new RegExp(`(?<![\\w$.])${inputVar}=(?!=)`, "gu"))].map((m) => body.slice((m.index ?? 0) + m[0].length, (m.index ?? 0) + m[0].length + 60));
+  ok(assigns.length === 5, `runTurnSteps assigns its step input exactly five times — the seed and four re-entries (saw ${assigns.length})`);
+  ok(assigns[0]?.startsWith(`${loop?.[2] ?? ""},`) === true, "…the first is the seed from the turn's delivery");
+  const later = assigns.slice(1);
+  const heldVar = new RegExp(`let (\\w+)=await this\\.waitForHeldRequest\\(${turnVar},\\w+\\);if\\(\\1===\`cancelled\`\\)return await this\\.finishCancelledTurn\\(${turnVar}\\);${inputVar}=\\{delivery:\\1\\};continue`).exec(body);
+  ok(heldVar !== null, "② a held request re-enters with the delivery waitForHeldRequest returned — and nothing else");
+  const steered = [...body.matchAll(new RegExp(`let (\\w+)=await ${turnVar}\\.takeSteering\\(\\);${inputVar}=\\1===void 0\\?void 0:\\{delivery:\\1\\}`, "gu"))];
+  ok(steered.length === 2, `③ two re-entries take a delivery ONLY from takeSteering() with no options (saw ${steered.length})`);
   ok(
-    callSites.length === 2,
-    `runTurnOwnedWorkflow has exactly TWO call sites in eve's whole dist (saw ${callSites.length}: ${JSON.stringify(callSites.map((c) => c.file))})`,
+    new RegExp(`${inputVar}=\\{delivery:await ${turnVar}\\.takeSteering\\(\\),runtimeResults:`).test(body),
+    "③ a coordination park re-enters with runtime results plus whatever takeSteering() admits",
   );
-  const selfSite = callSites.find((c) => c.file.endsWith("turn-workflow.js"));
+  const direct = later.filter((r) => r.startsWith("{delivery:")).length;
+  const optional = later.filter((r) => /^\w+===void 0\?void 0:\{delivery:\w+\}/u.test(r)).length;
   ok(
-    selfSite !== undefined && selfSite.args.length === 1,
-    `turn-workflow.js's own call site still passes just the workflow input (saw: ${JSON.stringify(selfSite?.args)})`,
-  );
-  const outsideSite = callSites.find((c) => !c.file.endsWith("turn-workflow.js"));
-  ok(
-    outsideSite !== undefined,
-    "…and the other call site is OUTSIDE turn-workflow.js — the caller a file-scoped scan cannot see",
-  );
-  ok(
-    /^\w+\.resolve$/u.test(outsideSite?.args[1] ?? ""),
-    `the outside call site's second argument is a bare \`<v>.resolve\`, a readiness signal (saw: ${JSON.stringify(outsideSite?.args)})`,
-  );
-  const resolverVar = (outsideSite?.args[1] ?? "").split(".")[0]!;
-  ok(
-    new RegExp(`(?<![\\w$.])${resolverVar}=Promise\\.withResolvers\\(\\)`, "u").test(read(outsideSite?.file ?? "execution/turn-workflow.js")),
-    "…and that resolver is a `Promise.withResolvers()` resolver from the same module, not a delivery",
-  );
-  ok(
-    callSites.every((c) => c.args.length <= ownedParams.length),
-    `no call site passes more arguments than runTurnOwnedWorkflow declares (params: ${JSON.stringify(ownedParams)}, sites: ${JSON.stringify(callSites.map((c) => c.args))})`,
+    direct === 2 && optional === 2,
+    `every re-entry carries a delivery only through one of those three sources (saw ${JSON.stringify(later.map((r) => r.slice(0, 40)))})`,
   );
 
-  const loopHead = owned.indexOf(";;){");
-  ok(loopHead > 0, "runTurnOwnedWorkflow still drives its steps from a `for(<init>;;)` loop");
-  const bodyOpen = loopHead + ";;)".length;
-  let bodyDepth = 0;
-  let bodyClose = -1;
-  for (let i = bodyOpen; i < owned.length; i++) {
-    const ch = owned[i];
-    if (ch === "{") bodyDepth++;
-    else if (ch === "}") {
-      bodyDepth--;
-      if (bodyDepth === 0) {
-        bodyClose = i;
-        break;
-      }
-    }
-  }
-  ok(bodyClose > bodyOpen, "the step loop's body is a balanced block, so this reader can span it exactly");
-  const loopBody = owned.slice(bodyOpen, bodyClose + 1);
-  const outsideLoopBody = owned.slice(0, bodyOpen) + owned.slice(bodyClose + 1);
-  ok(outsideLoopBody.length < owned.length, "…and the span it removes is non-empty");
-  for (const extra of ownedParams.slice(1)) {
-    ok(
-      new RegExp(`^\\{let ${extra}=`, "u").test(loopBody),
-      `the step loop's body re-binds \`${extra}\`, so no occurrence inside it is about the parameter`,
-    );
-    const uses = [...outsideLoopBody.matchAll(new RegExp(`(?<![\\w$.])${extra}(?![\\w$])`, "gu"))];
-    ok(
-      uses.length === 2,
-      `outside that body — signature, loop init and the tail after the loop — \`${extra}\` appears exactly twice: its declaration and one call (saw ${uses.length})`,
-    );
-    ok(
-      new RegExp(`(?<=[,;{}])${extra}\\?\\.\\(\\)(?=[,;}])`, "u").test(outsideLoopBody),
-      `…and that call is the STATEMENT \`${extra}?.()\` — no arguments in, and the result is discarded, so nothing crosses INTO the turn through it`,
-    );
-  }
-  const stepVar = /turnStep\(\w+\.createStepInput\((\w+),/.exec(owned)?.[1];
-  ok(stepVar !== undefined, "runTurnOwnedWorkflow still drives turnStep via cursor.createStepInput(<stepInput>, …)");
-
-  const assignRe = new RegExp(`(?<![\\w$.])${stepVar as string}=(?!=)`, "g");
-  const rhs = [...owned.matchAll(assignRe)].map((m) => owned.slice((m.index ?? 0) + m[0].length, (m.index ?? 0) + m[0].length + 48));
-  ok(rhs.length === 4, `runTurnOwnedWorkflow still assigns its step-input variable exactly 4 times (found ${rhs.length})`);
-  const initial = rhs.filter((r) => r.startsWith(`${ownedParam as string}.stepInput.input`));
-  ok(initial.length === 1, "exactly ONE assignment carries the workflow input's `deliver` payload (the initial one)");
-  ok(rhs[0] === initial[0], "…and it is the FIRST assignment (so only the first turnStep can see a `deliver` input)");
-  const carriedOn = rhs.slice(1);
+  const queue = read("execution/session/input-queue.js");
   ok(
-    carriedOn.every((r) => /^(?:void 0|\{kind:`runtime-action-result`)/.test(r)),
-    `every LATER assignment is either \`void 0\` or a runtime-action-result — never a delivery (saw: ${JSON.stringify(carriedOn.map((r) => r.slice(0, 34)))})`,
+    /takeSteering\((\w+),(\w+),(\w+)\)\{let \w+=this\.entries\.filter\((\w+)=>\4\.kind===`delivery`&&\1\.has\(\4\.sequence\)&&isSteeringDelivery\(\4\.delivery,\2,\3\)\)/.test(queue),
+    "the queue admits a steering delivery only through isSteeringDelivery",
   );
   ok(
-    new RegExp(`\\.adopt\\(\\w+\\),${stepVar as string}=void 0\\}`).test(owned),
-    "the loop bottom still adopts the step result and NULLS the step input (a continued turn re-enters turnStep with no `deliver`)",
+    /function isSteeringDelivery\((\w+),(\w+),(\w+)\)\{return\(\3\?\.heldOnPerson===!0\|\|\(\1\.turnPolicy\?\?`steer`\)===`steer`\)&&\(\1\.caller===void 0\|\|\1\.caller\.callId===\2\.callerCallId\)&&\(\1\.auth===void 0\|\|principalOf\(\1\.auth\)===\2\.principal\)\}/.test(queue),
+    "🔴 …which needs (held on a person OR a `steer` policy) AND the same caller AND the same principal",
+  );
+  ok(
+    /async takeSteering\((\w+)\)\{[^]*?this\.input\.queue\.takeSteering\(this\.admitted,this\.identity,\1\)/.test(read("execution/session/active-turn.js")),
+    "…and the active turn passes its own identity and the caller's options straight through",
   );
 
-  const legacyVar = /turnStep\((\w+)\)/.exec(legacy)?.[1];
-  const legacyParam = /^async function runLegacyTurnWorkflow\((\w+)\)/.exec(legacy)?.[1];
-  ok(legacyVar !== undefined && legacyParam !== undefined, "runLegacyTurnWorkflow still drives turnStep(<stepInput>) from a named workflow parameter");
-  ok(new RegExp(`(?<![\\w$.])${legacyVar as string}=${legacyParam as string}\\.stepInput;`).test(legacy), "runLegacyTurnWorkflow still seeds its step input from the workflow input ONCE");
-  const legacyRebuilds = [...legacy.matchAll(new RegExp(`(?<![\\w$.])${legacyVar as string}=\\{input:([^,]*),`, "g"))].map((m) => m[1]);
-  ok(legacyRebuilds.length === 1 && legacyRebuilds[0] === "void 0", `runLegacyTurnWorkflow's loop bottom still rebuilds the step input with \`input: void 0\` (saw: ${JSON.stringify(legacyRebuilds)})`);
+  ok(
+    (turnJs.match(/heldOnPerson:!0/gu) ?? []).length === 1 &&
+      /async waitForHeldRequest\((\w+),\w+\)\{[^]*?\1\.takeSteering\(\{heldOnPerson:!0\}\)/.test(turnJs),
+    "② only waitForHeldRequest bypasses the steering policy, and only for a same-principal delivery",
+  );
+  ok(
+    /async waitForHeldRequest\((\w+),\w+\)\{[^]*?let (\w+)=this\.input\.queue\.takeAuthorizations\(\w+\);if\(\2!==void 0\)return\{kind:`deliver`,payloads:\2\};let (\w+)=await \1\.takeInputResponses\(\w+\);if\(\3!==void 0\)return \3;/.test(turnJs),
+    "② …and its other two returns are a sign-in delivery with NO auth key, and the delivery that answers the held request",
+  );
+  const takeInput = /async takeInputResponses\(\w+\)\{(?:(?!async )[\s\S])*/.exec(read("execution/session/active-turn.js"))?.[0] ?? "";
+  ok(takeInput.length > 0 && !/principal/u.test(takeInput), "② the held request's answer is selected by request id with NO principal check — its auth reaches §3c(1) as delivered");
 
-  const cursor = read("execution/turn-execution-cursor.js");
-  ok(/createStepInput\((\w+),\w+\)\{return\{[^}]*input:\1[,}]/.test(cursor), "TurnExecutionCursor.createStepInput still passes its first argument straight through as `input` (no hidden delivery source)");
+  const unifiedSrc = readFileSync(new URL("../agent/channels/unified.ts", import.meta.url), "utf8");
+  ok(
+    /\bturnPolicy:\s*"queue"/u.test(unifiedSrc),
+    "🔴 OE's unified channel declares `turnPolicy: \"queue\"` — so ③ admits no MESSAGE delivery on an OE seat",
+  );
+  ok(
+    /turnPolicy:(\w+)\.message===void 0\?void 0:/u.test(read("channel/channel-address.js")),
+    "🔴 eve stamps NO turnPolicy on a delivery without a message — an input response — so isSteeringDelivery reads it as `steer`",
+  );
+  ok(!/ownerToken/u.test(unifiedSrc), "OE's answer road has no work-session owner arm (D21 retired by OPE-2340)");
+  const respondCall = /\.respond\(\[[^]{0,400}?\],\s*\{([^]{0,4000}?)\}\s*as\s*\{/u.exec(unifiedSrc)?.[1];
+  ok(respondCall !== undefined, "OE's answer road is found: one `.respond([…], {…})` call");
+  ok(
+    respondCall !== undefined && !/\bauth\b/u.test(respondCall.replace(/\/\/.*$/gmu, "")),
+    "🔴 …and it carries NO `auth` key on either road, in any form (key, shorthand or name), so another member's answer never replaces the turn's bag (OPE-2336)",
+  );
+  const spreads = [...(respondCall ?? "").replace(/\/\/.*$/gmu, "").matchAll(/\.\.\.\s*\(?\s*([^\n]*)/gu)].map((m) => m[1] ?? "");
+  ok(
+    respondCall !== undefined && spreads.every((x) => x.startsWith("t.context")),
+    `…and its only spread is the \`t.context\` side channel, so no spread can bring an \`auth\` key back (saw ${JSON.stringify(spreads)})`,
+  );
 
-  ok(/kind===`driver-delivery`/.test(waitFn), "waitForRuntimeActionResults still recognises a `driver-delivery` while a turn is in flight");
+  const active = read("execution/session/active-turn.js");
   ok(
-    /routeDeliverToChildren\(\{(?:auth:\w+\.delivery\.auth|delivery:\w+\.delivery)[,}]/u.test(waitFn),
-    "…and routes it to CHILD sessions (their auth, not this turn's)",
+    /let (\w+)=await this\.input\.cursor\.advance\(\w+=>routeDeliverToChildren\(\{delivery:\w+,\.\.\.\w+\}\)\);[^]*?this\.input\.queue\.replaceDelivery\(\w+,\1\.remainder\)/.test(active),
+    "a mid-turn arrival is routed to CHILD sessions first, and its residue goes BACK INTO THE QUEUE — never into the running step",
   );
   ok(
-    /auth:\w+\.auth,childContinuationToken:/u.test(read("execution/proxied-deliver-step.js")),
-    "the proxied child delivery still binds the DELIVERY's own auth onto the child's payload",
+    /takeNext\(\w+\)\{/.test(queue),
+    "…where takeNext picks it up as the NEXT turn's delivery",
   );
+  const proxied = read(PROXIED_DELIVER);
+  const routed = /\{delivery:(\w+),serializedContext:\w+\}=await deliverChannelInputResponses\(/.exec(proxied)?.[1] ?? "";
   ok(
-    /\w+\.bufferedDeliveries\.push\((?:\{\.\.\.\w+\.delivery|\w+\.remainder)/u.test(waitFn),
-    "…pushing the residue to bufferedDeliveries — never back into the step input",
-  );
-  ok(
-    /async finish\(\w+,\w+,(\w+)\)\{[\s\S]{0,320}?bufferedDeliveries:\1\.length===0\?void 0:\[\.\.\.\1\]/.test(cursor),
-    "TurnExecutionCursor.finish still hands bufferedDeliveries back in the `turn-result` (they become the NEXT turn, not this one)",
+    routed !== "" && new RegExp(`let \\w+=\\{\\.\\.\\.${routed},deliveryMetadata:`).test(proxied) && new RegExp(`auth:${routed}\\.auth,responses:`).test(proxied),
+    "the proxied child delivery still carries the DELIVERY's own auth — spread whole to a local child, named to a remote one",
   );
 }
 

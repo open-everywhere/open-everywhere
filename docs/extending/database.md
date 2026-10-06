@@ -73,8 +73,9 @@ Postgres. The memory backing follows the same rule in
 `packages/core/agent/memory/backing-selection.ts`: `OE_MEMORY_PROVIDER` wins, else a present
 `DATABASE_URL` selects `postgres`, else the `git` floor.
 
-The embedded floor is armed at boot by `registerOperationalPgliteLazy()` (from
-`agent/lib/register-adapters.ts`); the hosted path by the Neon adapter's
+The embedded floor is armed at boot by `registerOperationalPgliteLazy()`, called from
+`registerDefaultAdapters()` in `@open-everywhere/adapters` (the app's `agent/lib/register-adapters.ts`
+calls it); the hosted path by the Neon adapter's
 `registerOperationalPostgres(client)`. Both resolve to id `postgres` — one dialect, one store.
 
 **"Lazy" means the store is registered at boot but *opened* on its first query** — the

@@ -1,19 +1,20 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, expect, test } from "vitest";
+import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import {
   afterThisTest,
   armSettlement,
+  auditCursor,
+  awaitWorkResult,
   bootAgent,
-  consumeSettlement,
   disposeLater,
   installNotionApiStub,
   notionCommentEventPost,
   registerScript,
   seedNotionChannelKey,
-  SETTLEMENT_DRAIN_SCRIPT,
-  taskIdOfDelegation,
   waitFor,
   waitForChildren,
+  workTaskIdOfCall,
   type ScriptedHandle,
 } from "../harness";
 
@@ -39,30 +40,33 @@ async function pinFixtureDomainGrant(): Promise<void> {
 }
 
 async function driveDelegationAndReadWorker(wake: () => Promise<void>): Promise<ScriptedHandle> {
+  const cursor = await auditCursor();
+  const callId = "ope1071-notion-delegate";
   const handle = disposeLater(
     registerScript({
       parent: [
-        { calls: [{ tool: "agent", input: { message: "take it from here" }, id: "ope1071-notion-delegate" }] },
-        { say: "handed off" },
+        { calls: [{ tool: "work", input: { message: "take it from here" }, id: callId }] },
+        { say: NO_REPLY_SENTINEL },
       ],
-      child: [{ say: "reported" }],
+      child: [{ delayMs: 120_000, say: "reported" }],
     }),
   );
 
   await wake();
 
-  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "notion: the dispatch turn's own terminal step");
+  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "notion: the dispatch turn's receipt step");
+  await waitForChildren(handle, { count: 1, lastStepIndex: 0, label: "notion: the worker to enter its hold" });
+  const settlement = disposeLater(armSettlement(handle, { parent: [{ say: NO_REPLY_SENTINEL }] }));
+  const taskId = await workTaskIdOfCall(cursor, handle, callId, "the notion delegation");
+  handle.releaseHolds();
 
-  const armed = armSettlement(handle, SETTLEMENT_DRAIN_SCRIPT);
-  disposeLater(armed);
-
-  await waitForChildren(handle, { count: 1, lastStepIndex: 0, label: "notion: the worker's terminal step" });
-  expect(handle.requests.filter((r) => r.fault !== undefined), "notion: the scripted model reported a fault").toEqual([]);
-
-  const taskId = taskIdOfDelegation(handle, "the notion delegation");
-  await consumeSettlement({ armed, dispatched: handle, taskId, label: "notion: the worker's settlement wake" });
-  expect(armed.requests.filter((r) => r.fault !== undefined), "notion: a straggling worker crossed into the drain").toEqual([]);
-  armed.dispose();
+  const resultStep = await awaitWorkResult({ handle: settlement, taskId, label: "notion: the seat step that read the worker's result" });
+  expect(resultStep.stepIndex, "notion: the result arrives as step 0 of the seat's own result-wake turn").toBe(0);
+  expect(handle.holdsCutShort(), "notion: the worker's hold ended on the release, not on its 120 s backstop").toBe(1);
+  for (const h of [handle, settlement]) {
+    expect(h.requests.filter((r) => r.fault !== undefined), "notion: the scripted model reported a fault").toEqual([]);
+    expect(h.resolves.filter((r) => r.fault !== undefined), "notion: the scripted model reported a fault").toEqual([]);
+  }
 
   return handle;
 }

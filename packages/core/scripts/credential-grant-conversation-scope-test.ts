@@ -254,6 +254,20 @@ try {
   const thread = await workerVerdict("thread");
   ok(!thread.admitted, "🔴 §worker: a worker of a THREAD seat reaches a key — the cross-room spend a live run leg 51 measured reopens through the delegation");
   ok(!thread.admitted && thread.gate === "non_standing_grain", "§worker: …and it is refused for the GRAIN, naming the seat shape rather than attendance or a missing domain");
+  const { formatWindowToken, threadSeatWindowId, workWindowId } = await import("../agent/channels/window-key.js");
+  const threadW = formatWindowToken({ domain: DOMAIN, windowId: workWindowId(threadSeatWindowId(`slack_${WS}_${ROOM}`, "1700000000_000100")), generation: 1 });
+  const domainW = formatWindowToken({ domain: DOMAIN, windowId: workWindowId(`slack_${WS}_${ROOM}`), generation: 1 });
+  const wChildVerdict = async (wToken: string): Promise<ReturnType<typeof grantDomainScopeVerdict>> =>
+    await inEveContext(new FakeEveContext(), async () => {
+      adoptDelegatedAuthority({ binding: bindFrom(liveCtx("standing") as never), nonMemberWake: false, requester: { kind: "requester", principalId: HUMAN } }, undefined);
+      const child = workerOf("standing") as { session: { auth: { current: { attributes: Record<string, unknown> } } } };
+      child.session.auth.current.attributes["oe_window_token"] = wToken;
+      return grantDomainScopeVerdict(child as never);
+    });
+  const threadWChild = await wChildVerdict(threadW);
+  ok(!threadWChild.admitted && threadWChild.gate === "non_standing_grain", "🔴 §worker/W: a worker of a THREAD seat's work session (`w/s/…`, stamped `standing`) is refused for the grain — a live run leg 51 stays shut on the work-session road");
+  const domainWChild = await wChildVerdict(domainW);
+  ok(domainWChild.admitted && domainWChild.scopeKey === KEY, "§worker/W: control — a worker of the DOMAIN seat's work session still reaches the domain key");
   const unstampedWorker = (): unknown => ({
     channel: { kind: PLATFORM },
     session: { auth: { current: { attributes: { actor: HUMAN, room: ROOM, ws: WS }, principalId: HUMAN, principalType: "test-user" } }, id: "w", parent: { callId: "c", sessionId: "p" } },

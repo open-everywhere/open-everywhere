@@ -415,7 +415,7 @@ console.log("3. the golden:");
     [
       'ada approved the credential grant — read a Notion page — "Quarterly report".',
       "The grant is for this conversation, for the next 12 hours (until 04:19 UTC).",
-      "The tool is in this conversation's tool list from the next turn.",
+      "This conversation reaches the tool through the next task it hands work to.",
       "ada granted MORE than was asked: the request was for once, and the grant is for this conversation.",
       DISCLOSURE,
     ].join("\n"),

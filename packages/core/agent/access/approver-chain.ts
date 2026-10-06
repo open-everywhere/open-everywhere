@@ -1,5 +1,7 @@
 import { declaredStandingWrites } from "../routines/declared-permissions.js";
 import { classifyConnectorOp, isConnectorOpTool, judgeDeferredTool, postTurnSurfaceFloors, RESUME_TOOL, TOOL_CONSEQUENCE, type ConsequenceEntry } from "./consequence.js";
+import { CONNECTOR_INPUT_PREVIEW_CAP } from "../approvals/connector-op-offer.js";
+import { effectiveConnectorOpTier } from "./connector-op-gating.js";
 import { awsCommandVerdict, type AwsScreenInput } from "./aws-screen.js";
 import { untrustedIngestedThisTurn, taintKindsThisTurn } from "./taint-signal.js";
 import { taintMode, type TaintMode } from "./taint-enforcement.js";
@@ -14,7 +16,7 @@ import {
   type ApprovalJudgeRun,
 } from "./approval-judge.js";
 import type { ResolvedPreApprovalRule } from "./pre-approval-rules.js";
-import { getConfig } from "./config.js";
+import { configOrRefuse } from "./config.js";
 import { resolveAccess } from "./resolver.js";
 
 export type ApproverVerdict = "allow" | "deny" | "ask" | undefined;
@@ -267,7 +269,19 @@ export interface ResolveChainOptions {
   readonly rules?: readonly ResolvedPreApprovalRule[];
 }
 
-export function judgeHumanOnlyReason(req: Pick<ApprovalChainRequest, "action" | "args">): string | undefined {
+export function judgeHumanOnlyReason(req: Pick<ApprovalChainRequest, "tool" | "action" | "args">): string | undefined {
+  if (TOOL_CONSEQUENCE[req.tool]?.tier === "gate:admin") {
+    return (
+      `human-only: ${req.tool} is an admin act, and only a person's click on its card may approve it — ` +
+      "the judge is not consulted, so no pre-approval rule can lift it (OPE-2366)"
+    );
+  }
+  if (req.tool === PURGE_MEMORY_TOOL) {
+    return (
+      "human-only: purge_memory erases remembered facts, which cannot be undone, so only a person's click on its card may approve it — " +
+      "the judge is not consulted, so no pre-approval rule can lift it (OPE-2366)"
+    );
+  }
   if (req.action !== ROUTINE_CREATE_ACTION) return undefined;
   const raw = (req.args as { permissions?: unknown } | null | undefined)?.permissions;
   const declared = Array.isArray(raw) ? raw.filter((d): d is string => typeof d === "string") : [];
@@ -278,6 +292,8 @@ export function judgeHumanOnlyReason(req: Pick<ApprovalChainRequest, "action" | 
     "and only a person's click on the creation card may arm one — the judge is not consulted (OPE-2101, OPE-2103)"
   );
 }
+
+const PURGE_MEMORY_TOOL = "purge_memory";
 
 const ROUTINE_CREATE_ACTION = "routine.create";
 
@@ -526,11 +542,7 @@ export function renderChainResolution(req: ApprovalChainRequest, res: ChainResol
 
 export function approvalModeForDomain(domain: string | undefined): ApprovalModeConfig | undefined {
   if (domain === undefined) return undefined;
-  try {
-    return getConfig().loadDomains().find((d) => d.name === domain)?.approvalMode;
-  } catch {
-    return undefined;
-  }
+  return configOrRefuse("approval mode", (config) => config.loadDomains().find((d) => d.name === domain)?.approvalMode);
 }
 
 export function approversForScopeKey(scopeKey: string | undefined, domain: string | undefined): readonly OperatorApprover[] {
@@ -538,13 +550,15 @@ export function approversForScopeKey(scopeKey: string | undefined, domain: strin
   const parts = scopeKey.split("/");
   if (parts.length !== 3 || parts.some((p) => p.length === 0)) return [];
   const [platform, workspace, channel] = parts as [string, string, string];
-  try {
-    const cfg = getConfig();
-    const domains = domain !== undefined ? [domain] : cfg.domainsForSurface({ workspaceKey: `${platform}/${workspace}`, surface: channel });
-    return resolveAccess({ mode: "channel", platform, workspace, channel, domains }, cfg.loadBundles(), cfg.loadBindings(), cfg.pluginRegistry, cfg.loadConnectorCredentials?.() ?? []).approvers;
-  } catch {
-    return [];
-  }
+  const loaded = configOrRefuse("approver resolution", (cfg) => ({
+    domains: domain !== undefined ? [domain] : cfg.domainsForSurface({ workspaceKey: `${platform}/${workspace}`, surface: channel }),
+    bundles: cfg.loadBundles(),
+    bindings: cfg.loadBindings(),
+    plugins: cfg.pluginRegistry,
+    credentials: cfg.loadConnectorCredentials?.() ?? [],
+  }));
+  if (loaded === undefined) return [];
+  return resolveAccess({ mode: "channel", platform, workspace, channel, domains: loaded.domains }, loaded.bundles, loaded.bindings, loaded.plugins, loaded.credentials).approvers;
 }
 
 export function preApprovalRulesForScopeKey(
@@ -555,14 +569,34 @@ export function preApprovalRulesForScopeKey(
   const parts = scopeKey.split("/");
   if (parts.length !== 3 || parts.some((p) => p.length === 0)) return [];
   const [platform, workspace, channel] = parts as [string, string, string];
-  try {
-    const cfg = getConfig();
-    const domains = domain !== undefined ? [domain] : cfg.domainsForSurface({ workspaceKey: `${platform}/${workspace}`, surface: channel });
-    return resolveAccess({ mode: "channel", platform, workspace, channel, domains }, cfg.loadBundles(), cfg.loadBindings(), cfg.pluginRegistry, cfg.loadConnectorCredentials?.() ?? []).preApprovalRules;
-  } catch {
-    return [];
-  }
+  const loaded = configOrRefuse("pre-approval rule resolution", (cfg) => ({
+    domains: domain !== undefined ? [domain] : cfg.domainsForSurface({ workspaceKey: `${platform}/${workspace}`, surface: channel }),
+    bundles: cfg.loadBundles(),
+    bindings: cfg.loadBindings(),
+    plugins: cfg.pluginRegistry,
+    credentials: cfg.loadConnectorCredentials?.() ?? [],
+  }));
+  if (loaded === undefined) return [];
+  return resolveAccess({ mode: "channel", platform, workspace, channel, domains: loaded.domains }, loaded.bundles, loaded.bindings, loaded.plugins, loaded.credentials).preApprovalRules;
 }
+
+export function judgedConnectorOpTool(
+  kind: string,
+  args: unknown,
+  chain: { readonly unattended?: boolean; readonly tainted?: boolean; readonly domain?: string } | undefined,
+): string | undefined {
+  if (kind !== CONNECTOR_OP_ACTION) return undefined;
+  if (chain?.unattended !== false || chain.tainted === true) return undefined;
+  if (typeof chain.domain !== "string" || chain.domain.length === 0) return undefined;
+  const a = args as { tool?: unknown; grain?: unknown; credential?: unknown; tainted?: unknown; inputPreview?: unknown } | null | undefined;
+  if (a === null || a === undefined || typeof a.tool !== "string") return undefined;
+  if (typeof a.inputPreview !== "string" || a.inputPreview.length > CONNECTOR_INPUT_PREVIEW_CAP) return undefined;
+  if (a.grain === "destructive" || a.grain === "once" || a.tainted === true || a.credential !== "domain") return undefined;
+  if (!isConnectorOpTool(a.tool) || effectiveConnectorOpTier(a.tool) !== "write") return undefined;
+  return a.tool;
+}
+
+const CONNECTOR_OP_ACTION = "op.connector";
 
 let kindToTool: ReadonlyMap<string, string> | undefined;
 

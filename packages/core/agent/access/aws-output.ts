@@ -12,9 +12,9 @@ export interface AwsRedactedOutput {
 }
 
 const MARKER: Readonly<Record<AwsRedactionHit["rule"], string>> = {
-  "minted-credential": "[redacted by Open Everywhere: this call's own minted AWS credential]",
-  "access-key-id": "[redacted by Open Everywhere: AWS access key id]",
-  "labelled-secret": "[redacted by Open Everywhere: AWS secret/session-token value]",
+  "minted-credential": "[redacted by the agent: this call's own minted AWS credential]",
+  "access-key-id": "[redacted by the agent: AWS access key id]",
+  "labelled-secret": "[redacted by the agent: AWS secret/session-token value]",
 };
 
 const ACCESS_KEY_ID = /(?<![A-Za-z0-9])(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Za-z0-9])/gu;
@@ -109,7 +109,7 @@ export function renderAwsResultForModel(r: AwsModelResult): string {
     const detail = hits.map((h) => `${h.rule}×${h.count}`).join(", ");
     out.push(
       "",
-      `NOTE (Open Everywhere, not the AWS CLI): ${redactionCount(hits)} credential-shaped value(s) were REDACTED from the output above (${detail}). ` +
+      `NOTE (the agent's own redaction, not the AWS CLI): ${redactionCount(hits)} credential-shaped value(s) were REDACTED from the output above (${detail}). ` +
         "The markers are ours; the account does not contain them. Do not attempt to recover, reconstruct or work around a redacted value.",
     );
   }

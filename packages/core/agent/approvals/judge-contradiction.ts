@@ -44,13 +44,23 @@ async function alreadyContradicted(org: string, pendingId: string): Promise<bool
   }
 }
 
+function frozenConnectorOp(kind: string, argsJson: string): string | undefined {
+  if (kind !== "op.connector") return undefined;
+  try {
+    const tool = (JSON.parse(argsJson) as { tool?: unknown } | null)?.tool;
+    return typeof tool === "string" ? tool : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function contradictJudgeAllow(input: ContradictJudgeAllowInput): Promise<ContradictJudgeAllowResult> {
   const row = await getOperationalStore().getPendingAction(input.org, input.id);
   if (!row) return { outcome: "unknown" };
   if (row.status !== "approved" || row.decidedBy !== JUDGE_LIFT_DECIDED_BY) return { outcome: "not-judge-lift", row };
   if (await alreadyContradicted(row.org, row.id)) return { outcome: "already-recorded", row };
 
-  const tool = toolForActionKind(row.kind);
+  const tool = toolForActionKind(row.kind) ?? frozenConnectorOp(row.kind, row.argsJson);
   await recordApprovalJudgeContradiction(
     { ...whereFromScope(input.org, row.scopeKey), principalId: input.principalId },
     {

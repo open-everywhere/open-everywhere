@@ -7,7 +7,78 @@ rule resolved. On its own it sees the action facts and the standing posture only
 that your org treats a docs-only pull request as ordinary. Pre-approval rules are the channel that
 tells it, in your own words.
 
+**In `enforce` mode, the shipped `approvals.judgeMode`, a rule is the only thing that lets a gated
+act run without a card.** The judge allows an act only when it cites a rule that this scope really
+carries. An allow that cites no rule is an `ask`, so a person decides. Every act that ran without a
+card therefore traces to a sentence an admin wrote and a reviewer read.
+
 A rule is curated context for one decision. It is not a verdict, and it is not a chain element.
+
+---
+
+## 0. What a fresh install does
+
+A scaffolded app runs the judge in `enforce` mode and ships four starter rules in
+`agent/access/pre-approval-rules.ts`, bound at org scope by the `approval-policy` bundle in
+`agent/access/bundles.ts`. Edit them there, review the change, and deploy it.
+
+| Rule id | What it pre-approves | Why it is low-risk |
+|---|---|---|
+| `pr-asked-for-here` | Opening a pull request that the requester asked for in this turn's messages, whose repository, branch and title match the ask. | The tool reaches only the repositories granted to the room. A pull request does not merge itself, but whether a merge needs a review is the repository's own branch protection, so the rule does not count on one. A request that came only from fetched or quoted content gets a card. |
+| `routine-reports-here` | Creating a routine that the requester asked for in this turn's messages, whose prompt and schedule match the ask, that reports back to this conversation, and that runs at most once an hour. | It posts only where it was asked for. Each fire costs model calls, so the rule stops at an hourly rate. A routine that declares a standing write never reaches the judge (§4). |
+| `access-request-asked-for` | Sending an access request that the requester asked for in this turn's messages, for the access they named. | A request is not a grant. It notifies the admins, and the access starts only when an admin merges it. |
+| `connector-write-asked-for-here` | A connector write (a Notion page, a Linear issue) that the requester asked for in this turn's messages, whose arguments match the ask, and which only creates or updates content in the workspace the domain connected. | Code keeps the risky connector calls on a card before the judge sees them (below). The rule adds what a model can read: a person asked in this turn, the call matches the ask, and nothing leaves the room. It does not cover a call that sends a message or an email, shares or publishes content, or invites or notifies people outside the conversation. An allow runs that one call only. |
+
+The judge sees only a rule's text, so every starter rule states its own limits. Each one says it
+never covers an unattended run (a routine fire or a webhook), and each one needs the ask in the
+requester's messages from **this turn**, matching the act's arguments. The judge prompt shows the
+messages captured in this turn as the requester's messages. When this turn captured none, the
+previous turn's messages are shown apart, marked as earlier context, so an old ask does not read as
+a new one. Most acts are proposed in a child of the conversation's work session, not on the seat the
+person spoke to. For those, the forward carries the person's own words from the turn that forwarded
+the job, and only the message they wrote that woke that turn. It never carries the seat's summary of
+the job, another person's message, or an ask from an earlier turn. A routine fire carries no ask.
+One limit applies. While a job is the only one open in the work session, every worker the work
+session starts in that turn joins that job. So a second worker, started for other work in the same
+conversation, also sees that person's ask. The judge can then allow its act when the person's words
+plausibly cover it. Write rules that name the act and its arguments, not only that a person asked. On a tainted turn the taint floor still turns a judge allow on `create_routine` back into
+a card (§4).
+
+Whether a rule covers an act is the judge **model's** reading of the rule against the act. The
+parts that do not depend on that reading are code: the citation must name a rule this scope
+carries, the human-only class never reaches the judge, and the clamps run after it (§4).
+
+**What always gets a card.** Some acts never reach a rule:
+
+- every admin act — a spend limit, a connector override, lifting a halt, an admin memory read;
+- a routine that declares a standing write;
+- erasing remembered facts (`purge_memory`). An erasure cannot be undone, so it is human-only in
+  code: the judge is not consulted, and no rule can lift it;
+- every verb that is not defer-flipped (§4);
+- every connector op except a write that runs with the domain's credential. A destructive op (a
+  delete, an archive), an op on a person's own account, a write in an unattended run, a write in a
+  turn that read external content, a write in a room that does not belong to exactly one domain, and
+  a write whose input is too long for the card to show in full all keep the connector card. Code
+  decides this before the judge, so no rule can change it.
+
+**An allow covers one act.** The judge's cached allow is kept per session and keyed on the act's
+whole arguments, the requester and whether the turn is unattended. So a cached allow answers only
+for the same act, asked by the same person, in the same kind of turn. Any other act is judged again,
+even in the same session. A judge allow of a connector write also writes no approval for a later
+call, so it runs that one call only. Only the judge lifts a connector card: an operator approver that
+answers `allow` leaves the card. A connector card's consult reads the room's domain, so that domain's
+judge disarm and halt cover it.
+
+**When the judge cannot decide, the card is posted.** An unreachable judge model, a judge transport
+that is not registered, an unparseable answer and the 30-second timeout all give the card, never an
+allow. A scope with no authored rule is not consulted at all.
+
+**Cost.** A consult makes up to two calls to the `judge` model role (a short scrutiny pass, then the
+verdict pass). A cached allow costs none, and a scope with no authored rule costs none. Each gated
+act that reaches the judge costs one consult.
+
+**Turning it off.** Set `approvals: { judgeMode: "off" }` in `agent/settings/settings.ts`. Every gated
+act then posts a card. `shadow` decides nothing and logs a would-be verdict beside each real card.
 
 ---
 
@@ -118,10 +189,13 @@ untouched:
 |---|---|
 | **A pinned ask** | The judge is consulted only when the ask came from a per-verb default. An operator or surface approver's ask is explicit policy — the judge never sees it, so no rule can lift it. |
 | **The defer flip** | The verb's registry row must be explicitly flipped `ask → defer` by a reviewed edit. A rule cannot open a verb nobody flipped. |
-| **Arming** | The deployment must set `approvals.judgeMode` to `enforce`. Rules change nothing otherwise. |
+| **Arming** | Rules act only in `enforce` mode, the shipped `approvals.judgeMode`. In `shadow` or `off` they lift nothing. |
+| **The citation** | An enforced allow must cite a rule this scope carries. An allow that cites no rule, or a rule that does not exist, is an `ask`. |
 | **Deny** | A deny from any element, or from the judge itself, is absolute and skips everything. |
 | **The clamps** | Modes, the taint floor and the unattended clamp run *after* the judge. They still tighten a rule-driven allow exactly as they tighten any other. |
-| **The human-only class** | A routine whose creation card declares a standing write — `pr.open`, or a connector tool that is not a read — is armed by a person's click only. The judge is not consulted for it, so no rule can lift it ([declared permissions](../capabilities/proactivity-and-routines.md)). |
+| **The human-only class** | Every admin act (a `gate:admin` row, such as `set_spend_limit`) needs a person's click, and so does erasing remembered facts (`purge_memory`). So does a routine whose creation card declares a standing write — `pr.open`, or a connector tool that is not a read ([declared permissions](../capabilities/proactivity-and-routines.md)). The judge is not consulted for either, so no rule can lift them, and the verdict row records `source: "human-only"`. |
+| **The connector fence** | A connector card reaches the chain only for a `write`-tier op on the domain's credential, in an attended turn that read no external content, in a room with exactly one domain, with an input the card shows in full (`access/approver-chain.ts` `judgedConnectorOpTool`). Every other connector card keeps its old road and never meets the judge. A judge allow runs that one call, and only the judge can lift the card. |
+| **The cache** | An enforced cached allow is keyed on the act's whole arguments, the requester and `unattended` (`approval-judge.ts` `enforcedVerdictCacheKey`), so it never answers for a different act. |
 
 There is deliberately **no deny tier and no hard-deny tier** in this store. Denial already lives
 above it, in code, where prose cannot reach it. Adding a prose deny tier would move a hard
@@ -139,10 +213,10 @@ carries:
 | Field | Meaning |
 |---|---|
 | `ruleId` | The matched rule's id. Present only when the citation resolved. |
-| `ruleCitation` | `matched`, or `unmatched` when the judge named a rule that does not exist. |
+| `ruleCitation` | `matched`; `unmatched` when the judge named a rule that does not exist; `uncited` when it allowed without naming one. The last two were degraded to `ask`. |
 
-So "which authored rule let this run without a card?" is one query, and an allow that matched no
-rule carries no id — the field says something precisely because it is not always there.
+So "which authored rule let this run without a card?" is one query. Every enforced allow carries a
+rule id, and an allow that matched no rule never ran without a card.
 
 ### The fence against invented rules
 
@@ -155,7 +229,7 @@ That fails closed to a human, which is the same card the verb produced before it
 bad citation stays on the audit row as `ruleCitation: "unmatched"`, so the attempt is queryable.
 
 The judge's allow cache carries the same discipline. A cached allow keeps its rule id, so a cache
-hit is as traceable as a fresh consult. A cached allow is dropped when the resolved rule set
+hit is as traceable as a fresh consult, and an enforce lookup refuses a cached allow with no rule id. A cached allow is dropped when the resolved rule set
 changes, so a lift authored for one scope is never replayed in a scope whose admins never wrote it.
 
 ---

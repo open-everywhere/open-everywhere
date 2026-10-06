@@ -433,29 +433,45 @@ ok(
     "🔴 OPE-681 §8: …but a child that DOES name a registered platform and no surface is refused",
   );
 
+  const withCancel = (ctx: BindableContext): BindableContext & { cancel: () => void; cancels: number } => {
+    const spy = ctx as BindableContext & { cancel: () => void; cancels: number };
+    spy.cancels = 0;
+    spy.cancel = () => {
+      spy.cancels++;
+    };
+    return spy;
+  };
   await inSession(async () => {
+    const child = withCancel(makeChild({ oe_platform: "ope603a", oe_wake_id: "w", oe_grain: "task" }));
     let threw: string | undefined;
     try {
-      await sessionStarted(makeChild({ oe_platform: "ope603a", oe_wake_id: "w", oe_grain: "task" }));
+      await sessionStarted(child);
     } catch (err) {
       threw = err instanceof Error ? err.message : String(err);
     }
-    ok(threw !== undefined && threw.includes("subagent child binding LOST"), "🔴 OPE-681 §9: the binding-bridge hook FAILS a lost child at session.started");
-    ok(threw !== undefined && threw.includes("subagent/dev/unresolved"), "🔴 OPE-681 §9: …and the message names the unresolved child scope key it refused to run on");
+    ok(threw === undefined, "🔴 OPE-2249 §9: the binding-bridge hook does NOT throw — eve 0.68+ logs and swallows a hook throw, so a throw here would refuse nothing");
+    ok(child.cancels === 1, "🔴 OPE-2249 §9: the binding-bridge hook CANCELS the turn of a lost child at session.started — exactly once");
+  });
+  await inSession(async () => {
+    const child = withCancel(makeChild({ oe_platform: "ope603a", oe_wake_id: "w", oe_grain: "task" }));
+    await turnStarted(child);
+    ok(child.cancels === 1, "🔴 OPE-2249 §9: …and at turn.started too, which is the edge a DELAYED child arrives on");
   });
   await inSession(async () => {
     let threw: string | undefined;
+    const child = withCancel(makeChild(healedBagOut));
     try {
       if (dispatchBindingOut === undefined) throw new Error("missing dispatch binding fixture");
       adoptDelegatedAuthority(
         { binding: dispatchBindingOut, requester: { kind: "requester", principalId: "P_A" }, nonMemberWake: false },
         undefined,
       );
-      await sessionStarted(makeChild(healedBagOut));
+      await sessionStarted(child);
     } catch (err) {
       threw = err instanceof Error ? err.message : String(err);
     }
     ok(threw === undefined, "🔴 OPE-681 §9 negative control: a child with adopted dispatch authority is NOT refused — the hook lets correct work through");
+    ok(child.cancels === 0, "🔴 OPE-2249 §9 negative control: …and its turn is NOT cancelled, so the refusal is not firing on every child");
   });
 }
 

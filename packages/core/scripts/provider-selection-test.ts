@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-access-provider-selection, AP-MOD-core-access-provider-selection-check
+
 import assert from "node:assert/strict";
 import {
   declareProviderSelection,
@@ -214,6 +216,20 @@ firesWith(
   "checker: a second selection list in the wiring fails",
 );
 
+const APP_WIRING = `await registerDefaultAdapters({ providers: SELECTED_PROVIDERS });\n`;
+assert.deepEqual(checkProviderSelection(base({ appWiringSource: APP_WIRING })), [], "checker: an app file that calls registerDefaultAdapters is clean");
+n++;
+firesWith(
+  checkProviderSelection(base({ appWiringSource: WIRING })),
+  "never calls registerDefaultAdapters",
+  "checker: an app file that wires the adapters by hand fails — an upgrade no longer reaches it",
+);
+firesWith(
+  checkProviderSelection(base({ appWiringSource: `${APP_WIRING}import x from ${providerSpec("beta", "agent/register.js")};\n` })),
+  "agent/lib/register-adapters.ts references @open-everywhere/provider-beta directly",
+  "checker: a provider named in the app file fails",
+);
+
 firesWith(
   checkProviderSelection(base({ coreSeams: [{ path: "channels/thing.ts", source: UNGATED_SEAM }] })),
   "never calls admitProviderRegistration",
@@ -245,3 +261,5 @@ assert.deepEqual(
 n++;
 
 console.log(`✓ provider-selection: ${n} assertions (runtime gate + fail-closed seams + inbound refusal + every checker rule)`);
+
+// proves: AP-MOD-core-access-native-admin

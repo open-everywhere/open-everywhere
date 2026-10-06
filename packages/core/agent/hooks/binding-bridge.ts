@@ -8,7 +8,8 @@ import {
   subagentParentSessionId,
   type BindableContext,
 } from "../identity/binding.js";
-import { ensureDelegatedTaskBinding } from "../channels/task-wake.js";
+import { DelegatedTaskBindingUnavailableError, ensureDelegatedTaskBinding } from "../channels/task-wake.js";
+import { refuseTurn, type RefusableContext } from "./control-refusal.js";
 
 function lostBindingError(ctx: BindableContext): Error {
   const b = bindFrom(ctx);
@@ -40,8 +41,18 @@ async function auditRefusal(ctx: BindableContext, phase: "session.started" | "tu
   }).catch(() => undefined);
 }
 
-async function refreshHealAndGuard(ctx: BindableContext, phase: "session.started" | "turn.started"): Promise<void> {
-  await ensureDelegatedTaskBinding(ctx);
+async function guardBody(ctx: RefusableContext, phase: "session.started" | "turn.started"): Promise<void> {
+  try {
+    await ensureDelegatedTaskBinding(ctx);
+  } catch (err) {
+    await refuseTurn(ctx, {
+      hook: "binding-bridge",
+      phase,
+      reason: err instanceof DelegatedTaskBindingUnavailableError ? "delegated-binding-unavailable" : "binding-restore-failed",
+      message: err instanceof Error ? err.message : String(err),
+    });
+    return;
+  }
   refreshBindingStamp(ctx);
   const healed = healDeliveryIdentity(ctx);
   if (healed === "unwritable") {
@@ -53,14 +64,33 @@ async function refreshHealAndGuard(ctx: BindableContext, phase: "session.started
   }
   if (!subagentBindingLost(ctx)) return;
   const failure = lostBindingError(ctx);
-  console.warn(`[open-everywhere:binding-bridge] ${failure.message}`);
+  const b = bindFrom(ctx);
+  await refuseTurn(ctx, {
+    hook: "binding-bridge",
+    phase,
+    reason: "subagent-binding-lost",
+    message: failure.message,
+    detail: { scopeKey: `${b.platform}/${b.workspace}/${b.surface}` },
+  });
   await auditRefusal(ctx, phase);
-  throw failure;
+}
+
+async function refreshHealAndGuard(ctx: RefusableContext, phase: "session.started" | "turn.started"): Promise<void> {
+  try {
+    await guardBody(ctx, phase);
+  } catch (err) {
+    await refuseTurn(ctx, {
+      hook: "binding-bridge",
+      phase,
+      reason: "binding-guard-failed",
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 export default defineHook({
   events: {
-    "session.started": async (_event, ctx) => refreshHealAndGuard(ctx as BindableContext, "session.started"),
-    "turn.started": async (_event, ctx) => refreshHealAndGuard(ctx as BindableContext, "turn.started"),
+    "session.started": async (_event, ctx) => refreshHealAndGuard(ctx as RefusableContext, "session.started"),
+    "turn.started": async (_event, ctx) => refreshHealAndGuard(ctx as RefusableContext, "turn.started"),
   },
 });

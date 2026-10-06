@@ -1,5 +1,6 @@
 import { defineState } from "eve/context";
 import { contentOriginForTool, type ConnectorContentOrigin, type ConnectorContentOriginSpec } from "./bundle.js";
+import type { ConnectionExecuteTarget } from "./connection-execute-target.js";
 
 export type ConnectorContentOriginMap = Readonly<Record<string, ConnectorContentOriginSpec>>;
 
@@ -33,6 +34,12 @@ export function declaredContentOriginForToolName(toolName: string): ConnectorCon
   }
   if (best === undefined) return undefined;
   return contentOriginForTool(declared[best]!, toolName.slice(best.length + 2));
+}
+
+export function declaredContentOriginForExecuteTarget(target: ConnectionExecuteTarget): ConnectorContentOrigin | undefined {
+  const spec = declaredContentOriginForConnection(target.connection);
+  if (spec === undefined) return undefined;
+  return contentOriginForTool(spec, target.tool);
 }
 
 export function declaredContentOriginForConnectionSearch(output: unknown): ConnectorContentOrigin | undefined {

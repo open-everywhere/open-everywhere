@@ -1,6 +1,7 @@
 import { defineState } from "eve/context";
 import { currentWindowToken, isSubagentChildContext, isUnifiedWindowContext, windowGrainOf, type BindableContext } from "../identity/binding.js";
 import { isWakeEnvelopeShaped, triggerAuthors } from "../channels/wake-envelope.js";
+import { isWorkWindowToken } from "../channels/window-key.js";
 import { delegatedRequesterThisTurn } from "../identity/delegated-binding.js";
 import { frozenSurfaceBindingFrom } from "../identity/frozen-surface-binding.internal.js";
 
@@ -15,6 +16,7 @@ export type RequesterSeat =
   | "worker"
   | "continuation"
   | "room"
+  | "work"
   | "open";
 
 export type RequesterVerdict =
@@ -117,6 +119,9 @@ export function requesterVerdictFor(input: {
   if (input.seat === "child") {
     return stamped ?? { kind: "unverified", reason: NO_CARRIAGE };
   }
+  if (input.seat === "work") {
+    return stamped ?? { kind: "unverified", reason: NO_CARRIAGE };
+  }
   if (input.seat === "worker" || input.seat === "continuation") {
     return stamped ?? verdictFromEnvelope(input.text) ?? { kind: "unverified", reason: NO_CARRIAGE };
   }
@@ -132,12 +137,22 @@ export function requesterSeatOf(ctx: BindableContext): RequesterSeat {
   try {
     if (isSubagentChildContext(ctx)) return "child";
     if (!isUnifiedWindowContext(ctx)) return "open";
+    if (isWorkWindowToken(ctx.channel?.continuationToken) || isWorkWindowToken(currentWindowToken(ctx))) return "work";
     if (frozenSurfaceBindingFrom(ctx) !== undefined) return "continuation";
     const grain = windowGrainOf(ctx);
     return grain === "task" || grain === "thread" ? "worker" : "room";
   } catch {
     return "open";
   }
+}
+
+export type RequesterTier = "room" | "work" | "child";
+
+export function requesterTierOf(seat: RequesterSeat): RequesterTier | undefined {
+  if (seat === "child") return "child";
+  if (seat === "work") return "work";
+  if (seat === "open") return undefined;
+  return "room";
 }
 
 export function seatServesManyAskers(ctx: BindableContext): boolean {

@@ -18,7 +18,7 @@ import { narrowByConnectorOverride } from "../access/connector-scope.js";
 import { mintGitReadBroker, mergeGitReadBroker, withBareAllowHost } from "../scm/broker.js";
 import { auditBrokeredEgressPolicy, type BrokerApplyReason } from "../scm/broker-audit.js";
 import type { BindableContext } from "../identity/binding.js";
-import { useSelfHostEgress, pushEgressPolicy } from "../access/self-host-egress.js";
+import { applyAndRecordEgressPolicy } from "../hooks/egress.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
@@ -28,7 +28,7 @@ import { resolveNetworkAccessLevel } from "../access/network-access.js";
 import { executePrOpen, type PrOpenArgs } from "../approvals/pr-open.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { haltScopeFor, resolveHalt } from "../access/halt.js";
-import { proposingSessionId } from "../identity/binding.js";
+import { proposingGrantKey } from "../identity/binding.js";
 import { markCardPostedThisTurn } from "../approvals/card-signal.js";
 import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { surfaceMessageOps } from "../channels/surface-message-ops.js";
@@ -128,8 +128,7 @@ export default windowGated("open_pull_request", defineTool({
       brokered = mergeGitReadBroker(basePolicy, rulesByOwner);
     }
     const applyPolicy = async (policy: SandboxNetworkPolicy, reason: BrokerApplyReason): Promise<void> => {
-      if (useSelfHostEgress()) await pushEgressPolicy(policy);
-      else await sandbox.setNetworkPolicy(policy);
+      await applyAndRecordEgressPolicy(policy, { ctx, sessionId: access.scopeKey });
       await auditBrokeredEgressPolicy(ctx as BindableContext, access, policy, reason);
     };
 
@@ -159,7 +158,7 @@ export default windowGated("open_pull_request", defineTool({
     }
 
     const tainted = untrustedIngestedThisTurn();
-    const sessionId = proposingSessionId(ctx);
+    const sessionId = proposingGrantKey(ctx);
     const args: PrOpenArgs = {
       org: p.org,
       scopeKey: proposeScopeKey,
@@ -183,7 +182,7 @@ export default windowGated("open_pull_request", defineTool({
     if (memo) {
       const outcome = await executePrOpen(args, memo.grantedBy, {}, { sessionApproved: true });
       if (originChannelId) {
-        await postSessionNote(binding.platform, originChannelId, binding.threadTs ?? null, `${outcome}\n-# session-approved by <@${memo.grantedBy}>`);
+        await postSessionNote(binding.platform, originChannelId, binding.threadTs ?? null, `${outcome}\n-# approved for this routine by <@${memo.grantedBy}>`);
       }
       markCardPostedThisTurn();
       return {
@@ -191,7 +190,7 @@ export default windowGated("open_pull_request", defineTool({
         repo: input.repo,
         head: input.head,
         pending: false,
-        message: `session-approved (by ${memo.grantedBy}) — published without a card: ${outcome}`,
+        message: `approved for this routine (by ${memo.grantedBy}) — published without a card: ${outcome}`,
       };
     }
 

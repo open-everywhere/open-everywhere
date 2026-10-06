@@ -16,6 +16,7 @@ import {
   authPrincipalId,
   type ChatAuditPartition,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { withEndsTurnFinalChannel } from "@open-everywhere/core/agent/adapter-api.js";
 
 function auditPartitionForState(state: {
   conversationId: string | null;
@@ -133,4 +134,4 @@ const native = teamsChannel({
   },
 });
 
-export default frontTeamsChannel(native);
+export default withEndsTurnFinalChannel(frontTeamsChannel(native));

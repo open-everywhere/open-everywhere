@@ -10,7 +10,14 @@ import {
   surfaceAppNameProblem,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerSlackOps } from "../agent/ops.js";
-import { SLACK_APP_NAME_MAX, SLACK_DEFAULT_APP_NAME, SLACK_DEPLOY_HOST_PLACEHOLDER, slackAppManifestTemplate } from "../agent/app-manifest.js";
+import {
+  SLACK_APP_NAME_MAX,
+  SLACK_DEFAULT_APP_NAME,
+  SLACK_DEPLOY_HOST_PLACEHOLDER,
+  SLACK_SHORTCUT_NAME_MAX,
+  slackAppManifestTemplate,
+} from "../agent/app-manifest.js";
+import { overrideSettingsForTest, resetSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import { classifyEnvelope } from "../agent/channels/slack-front.js";
 import { SLACK_PROVIDER_EVENTS } from "../agent/provider-events.js";
 
@@ -196,6 +203,34 @@ ok(bare?.placeholdersRemaining === 4, "with no host all four placeholders remain
 ok(bare?.manifest === template, "…and the document is the template, byte for byte");
 ok(bare?.host === undefined, "…and no host is claimed");
 
+interface NamedManifestShape {
+  display_information: { name: string };
+  features: { bot_user: { display_name: string }; slash_commands: { command: string; description: string }[]; shortcuts: { name: string }[] };
+}
+overrideSettingsForTest({ identity: { name: "Aria", commandName: "aria" } });
+try {
+  const fromSettings = JSON.parse(String(surfaceAppManifest("slack")?.manifest)) as NamedManifestShape;
+  ok(fromSettings.display_information.name === "Aria", "🔴 the served manifest names the app with the configured identity.name");
+  ok(fromSettings.features.bot_user.display_name === "Aria", "🔴 …and the bot user");
+  ok(fromSettings.features.slash_commands[0]?.command === "/aria", "🔴 the slash command is the configured identity.commandName");
+  ok(fromSettings.features.slash_commands[0]?.description.startsWith("Aria ") === true, "…and its description names the agent");
+  const shortcutNames = fromSettings.features.shortcuts.map((sc) => sc.name);
+  ok(shortcutNames.includes("Send to Aria") && shortcutNames.includes("Ask Aria"), `…and both shortcuts name the agent (${shortcutNames.join(", ")})`);
+  ok(!JSON.stringify(fromSettings).includes("Open Everywhere"), "🔴 a named deployment's manifest carries no brand at all");
+  const explicit = JSON.parse(String(surfaceAppManifest("slack", { appName: "Acme Agent" })?.manifest)) as NamedManifestShape;
+  ok(explicit.display_information.name === "Acme Agent", "an explicit appName still OVERRIDES the configured name");
+  ok(explicit.features.slash_commands[0]?.command === "/aria", "…and leaves the configured command alone");
+
+  overrideSettingsForTest({ identity: { name: "The Extremely Long Engineering Teammate Name" } });
+  const long = JSON.parse(String(surfaceAppManifest("slack")?.manifest)) as NamedManifestShape;
+  ok(long.display_information.name.length <= SLACK_APP_NAME_MAX, `a long configured name is cut to Slack's ${SLACK_APP_NAME_MAX}-character limit`);
+  ok(long.features.shortcuts.every((sc) => sc.name.length <= SLACK_SHORTCUT_NAME_MAX), `…and every shortcut name stays within ${SLACK_SHORTCUT_NAME_MAX}`);
+} finally {
+  resetSettingsForTest();
+}
+const unnamed = JSON.parse(String(surfaceAppManifest("slack")?.manifest)) as NamedManifestShape;
+ok(unnamed.display_information.name === SLACK_DEFAULT_APP_NAME && unnamed.features.slash_commands[0]?.command === "/oe", "NEGATIVE CONTROL: with no name configured the manifest carries the defaults");
+
 const collect = (served?.collect ?? []).join(" ");
 ok(collect.includes("SLACK_BOT_TOKEN"), "the hand-over names the bot token env key");
 ok(collect.includes("SLACK_SIGNING_SECRET"), "…and the signing secret env key");
@@ -211,5 +246,14 @@ ok(!/oauth_config/.test(setupSlackStep), "…and no longer declares a manifest o
 
 const opsEntry = readFileSync(join(REPO_ROOT, "scripts/ops-mcp.ts"), "utf8");
 ok(opsEntry.includes("registerSlackOps()"), "the shipped ops MCP entry (scripts/ops-mcp.ts) calls registerSlackOps() before serving");
+ok(
+  opsEntry.includes('"agent/settings/settings.ts"') && opsEntry.indexOf("registerSettings(") >= 0 && opsEntry.indexOf("registerSettings(") < opsEntry.indexOf("registerSlackOps()"),
+  "the shipped ops MCP entry registers the app's settings before it registers the manifests",
+);
+const templateOpsEntry = readFileSync(join(REPO_ROOT, "packages/create/template/scripts/ops-mcp.ts"), "utf8");
+ok(
+  templateOpsEntry.includes('"agent/settings/settings.ts"') && templateOpsEntry.indexOf("registerSettings(") >= 0 && templateOpsEntry.indexOf("registerSettings(") < templateOpsEntry.indexOf("registerSlackOps()"),
+  "…and so does the quickstart template's ops MCP entry",
+);
 
 console.log(`✓ slack-app-manifest: ${n} assertions passed (template shape, real registerSlackOps wiring, host substitution, one definition)`);

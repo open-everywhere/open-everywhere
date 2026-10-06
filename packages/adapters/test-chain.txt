@@ -19,3 +19,4 @@ test:neon-pool-error
 test:aws-adapter
 test:aws-sso
 test:okta-directory
+test:default-adapters

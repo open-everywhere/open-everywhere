@@ -1,22 +1,23 @@
 import { expect, test } from "vitest";
+import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import {
+  armSettlement,
   auditCursor,
-  awaitTaskSettlement,
+  awaitWorkResult,
   bootAgent,
   disposeLater,
   installSlackWebApiStub,
   registerScript,
   rowsSinceCursor,
-  SETTLEMENT_DRAIN_SCRIPT,
   slackDmWake,
   slackMentionWake,
   SLACK_NAME_DROP_CHANNEL_ID,
   SLACK_TEAM_ID,
   slackTs,
-  taskIdOfDelegation,
   waitFor,
   waitForAuditRows,
   waitForChildren,
+  workTaskIdOfCall,
   type AuditCursor,
   type AuditRow,
   type ScriptedHandle,
@@ -49,6 +50,8 @@ function armSlackStub(): { uninstall(): void } {
           },
         };
       }
+      case "conversations.members":
+        return { ok: true, members: [], response_metadata: { next_cursor: "" } };
       case "conversations.info":
         return {
           ok: true,
@@ -95,11 +98,13 @@ async function driveConnectorTurn(input: {
   readonly label: string;
   readonly origin: "dm" | "channel";
 }): Promise<ScriptedHandle> {
-  const search = { tool: "connection_search", input: { keywords: "handbook" }, id: `it1465-${input.label}-search` };
+  const search = { tool: "connection_search", input: { query: "handbook" }, id: `it1465-${input.label}-search` };
+  const delegateId = `it1465-${input.label}-delegate`;
+  const cursor = await auditCursor();
   const handle = disposeLater(
     registerScript({
-      parent: [{ calls: [{ tool: "agent", input: { message: "look in notion" }, id: `it1465-${input.label}-delegate` }] }, { say: "handed off" }],
-      child: [{ calls: [search] }, { say: "reported" }],
+      parent: [{ calls: [{ tool: "work", input: { message: "look in notion" }, id: delegateId }] }, { say: NO_REPLY_SENTINEL }],
+      child: [{ delayMs: 120_000, calls: [search] }, { say: "reported" }],
     }),
   );
 
@@ -116,18 +121,17 @@ async function driveConnectorTurn(input: {
         });
   expect(res.status, `the Slack front refused the ${input.origin} wake: ${res.body.slice(0, 200)}`).toBe(200);
 
-  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), `${input.label}: the seat's terminal step`);
+  await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), `${input.label}: the seat's receipt step`);
+  await waitForChildren(handle, { count: 1, lastStepIndex: 0, label: `${input.label}: the worker to enter its hold` });
+  const settlement = disposeLater(armSettlement(handle, { parent: [{ say: NO_REPLY_SENTINEL }] }));
+  const taskId = await workTaskIdOfCall(cursor, handle, delegateId, `${input.label}: the forward`);
+  handle.releaseHolds();
   await waitForChildren(handle, { count: 1, lastStepIndex: 1, label: `${input.label}: the worker's terminal step` });
-  expect(handle.requests.filter((r) => r.fault !== undefined), `${input.label}: the scripted model reported a fault`).toEqual([]);
-
-  const drained = await awaitTaskSettlement({
-    dispatched: handle,
-    taskId: taskIdOfDelegation(handle, `the it1465 ${input.label} delegation`),
-    script: SETTLEMENT_DRAIN_SCRIPT,
-    label: `${input.label}: the worker's settlement wake`,
-  });
-  disposeLater(drained.handle);
-  drained.handle.dispose();
+  const resultStep = await awaitWorkResult({ handle: settlement, taskId, label: `${input.label}: the seat's result-wake step` });
+  expect(resultStep.fault).toBeUndefined();
+  for (const h of [handle, settlement]) expect(h.requests.filter((r) => r.fault !== undefined), `${input.label}: the scripted model reported a fault`).toEqual([]);
+  settlement.dispose();
+  handle.dispose();
   return handle;
 }
 

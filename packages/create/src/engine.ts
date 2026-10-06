@@ -12,6 +12,8 @@ export interface StepContext {
   readonly route?: SetupRoute;
   readonly host?: string;
   readonly appName?: string;
+  readonly agentName?: string;
+  readonly commandName?: string;
 }
 
 export function routeOf(ctx: StepContext): SetupRoute {

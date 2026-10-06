@@ -392,8 +392,8 @@ await withPatchedFetch(vendor.fetch as unknown as typeof globalThis.fetch, async
     "…and it never shows the room the MINTED TOOL NAME",
   );
   ok(
-    posted[0]?.text.includes("The tool is in this conversation's tool list from the next turn."),
-    "…it says the tool ARRIVES instead — the one fact the seat's own tool list cannot carry",
+    posted[0]?.text.includes("This conversation reaches the tool through the next task it hands work to."),
+    "…it says how the tool is REACHED instead — through the next task the seat delegates, because the tool mounts on the workers (OPE-2023)",
   );
 
   posted.length = 0;

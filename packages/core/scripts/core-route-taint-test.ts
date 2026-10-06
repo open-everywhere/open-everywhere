@@ -238,4 +238,28 @@ await inTurn(async () => {
   assertClean("aws [both streams empty]");
 });
 
-console.log(`\n✓ core-route-taint: ${n} assertions passed (web_fetch · browser_<op> + unfenced control · read_webhook_history · list_recent_events · read_routine_transcript · webhook-body/summary + two withheld controls · github-event · aws + empty-stream control)\n`);
+console.log("9. connection_execute:");
+await inTurn(async () => {
+  assertClean("connection_execute [fresh turn]");
+  const set = buildSet([
+    { name: "connection_execute", description: "run one connector operation", inputSchema: { type: "object", properties: {} }, execute: async () => ({}) },
+    { name: "reply", description: "post a message", inputSchema: { type: "object", properties: {} }, execute: async () => ({}) },
+  ]);
+  projectToolSet(set as unknown as Record<string, unknown>);
+  const mo = set["connection_execute"]?.toModelOutput;
+  ok(typeof mo === "function", "connection_execute: projectToolSet attached a projection — without one the payload reaches the model as eve's default JSON normalizer renders it, unfenced");
+  const v = String((await mo!({ output: { content: `notion page body\n${INJECTION}` }, toolCallId: "ce1" })).value);
+  ok(v.includes(UNTRUSTED_OPEN) && v.includes(UNTRUSTED_CLOSE), "connection_execute: the connector's payload is fenced");
+  ok(v.includes(INJECTION), "connection_execute: the injected instruction survives AS DATA inside the fence");
+  ok(v.includes('source="connector connection_execute"'), "connection_execute: provenance names the verb the bytes came through");
+  assertMarked("connection_execute", "connector");
+  const controlOut = await set["reply"]!.toModelOutput!({ output: { content: `a reply body\n${INJECTION}` }, toolCallId: "ce2" });
+  const control = typeof controlOut.value === "string" ? controlOut.value : JSON.stringify(controlOut.value);
+  ok(
+    !control.includes(UNTRUSTED_OPEN),
+    "…and the negative control is unfenced: an OE-authored name with no `__` and no special case gets no connector wrap, so the assertions above measure the explicit naming rather than a blanket fence",
+  );
+  ok(control.includes(INJECTION), "…and the control's own payload still reached the model, so it is 'unfenced', not 'empty'");
+});
+
+console.log(`\n✓ core-route-taint: ${n} assertions passed (web_fetch · browser_<op> + unfenced control · read_webhook_history · list_recent_events · read_routine_transcript · webhook-body/summary + two withheld controls · github-event · aws + empty-stream control · connection_execute + authored-name control)\n`);

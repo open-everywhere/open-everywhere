@@ -128,6 +128,25 @@ export async function generationOwedDelegation(
   }
 }
 
+export async function generationOwedTaskIds(org: string, token: string, store?: Pick<OperationalStore, "getTaskResult">): Promise<readonly string[]> {
+  try {
+    return readOwedTasks(await (store ?? getOperationalStore()).getTaskResult(org, generationOwesKey(token)));
+  } catch {
+    return [];
+  }
+}
+
+export async function generationOfTask(org: string, taskId: string, store?: Pick<OperationalStore, "getTaskResult">): Promise<string | undefined> {
+  try {
+    const raw = await (store ?? getOperationalStore()).getTaskResult(org, taskGenerationKey(taskId));
+    if (raw === null) return undefined;
+    const token = (JSON.parse(raw) as { token?: unknown } | null)?.token;
+    return typeof token === "string" && token.length > 0 ? token : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export type RetirementVerdict = "retire" | "skip-incoming" | "skip-still-live" | "skip-live-turn" | "skip-owed-delegation" | "skip-unreadable";
 
 export function retirementVerdict(input: {

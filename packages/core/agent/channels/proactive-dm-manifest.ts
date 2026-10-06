@@ -3,6 +3,7 @@ export type ProactiveDmPlane =
   | "credential.grant.card"
   | "credential.grant.notice"
   | "credential.grant.consent"
+  | "connector.sign_in"
   | "identity.link-set"
   | "identity.link-consent"
   | "governance.pane";
@@ -44,6 +45,13 @@ export const PROACTIVE_DM_PLANES: readonly ProactiveDmPlaneRow[] = [
     plane: "credential.grant.consent",
     modules: ["packages/core/agent/access/credential-grant-card.ts"],
     what: "The link an owner opens to connect their own account before they can answer a grant card.",
+    stop: "outranks",
+    recordsDelivery: false,
+  },
+  {
+    plane: "connector.sign_in",
+    modules: ["packages/core/agent/approvals/connector-op.ts"],
+    what: "The private link a person opens to connect their own account, when a job they asked for needs it (OPE-2340).",
     stop: "outranks",
     recordsDelivery: false,
   },

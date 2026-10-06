@@ -24,20 +24,21 @@ export interface SlackMessage {
   readonly actions?: readonly SlackMessageAction[];
   readonly files?: readonly SlackFile[];
   readonly editedTs?: string;
+  readonly taskCard?: true;
 }
 
-interface SlackApiButton {
+export interface SlackApiButton {
   action_id?: string;
   value?: string;
   text?: string | { text?: string };
 }
-interface SlackApiBlock {
+export interface SlackApiBlock {
   type?: string;
   block_id?: string;
   elements?: readonly SlackApiButton[];
   actions?: readonly SlackApiButton[];
 }
-interface SlackApiMessage {
+export interface SlackApiMessage {
   ts?: string;
   thread_ts?: string;
   user?: string;
@@ -59,7 +60,30 @@ export function cardJudgeSurface(message: Pick<SlackMessage, "text" | "actions">
   return labels.length > 0 ? `${message.text}\nOptions: ${labels.join(" | ")}` : message.text;
 }
 
-function toMessage(m: SlackApiMessage): SlackMessage {
+export const EVE_TASK_CARD_BLOCK_ID_PREFIX = "eve_task_card_";
+
+const EVE_TASK_CARD_BLOCK_TYPES: ReadonlySet<string> = new Set(["task_card", "plan"]);
+
+export function isEveTaskCardBlocks(blocks: readonly { readonly type?: string; readonly block_id?: string }[] | undefined): boolean {
+  return (blocks ?? []).some(
+    (b) => (b.type !== undefined && EVE_TASK_CARD_BLOCK_TYPES.has(b.type)) || (b.block_id ?? "").startsWith(EVE_TASK_CARD_BLOCK_ID_PREFIX),
+  );
+}
+
+export function isSettledTaskCard(m: Pick<SlackMessage, "taskCard" | "text">): boolean {
+  return m.taskCard === true && m.text.startsWith("Finished ");
+}
+
+export function seatMessageSettles(
+  m: SlackMessage,
+  isBotReply: (m: SlackMessage) => boolean,
+  isInterim: ((m: SlackMessage) => boolean) | undefined,
+): boolean {
+  if (m.taskCard === true) return isSettledTaskCard(m);
+  return isBotReply(m) && !(isInterim?.(m) ?? false);
+}
+
+export function toMessage(m: SlackApiMessage): SlackMessage {
   const actions = (m.blocks ?? [])
     .flatMap((b) =>
       [...(b.elements ?? []), ...(b.actions ?? [])]
@@ -76,6 +100,7 @@ function toMessage(m: SlackApiMessage): SlackMessage {
     actions: actions.length > 0 ? actions : undefined,
     files: files.length > 0 ? files : undefined,
     editedTs: m.edited?.ts,
+    ...(isEveTaskCardBlocks(m.blocks) ? { taskCard: true as const } : {}),
   };
 }
 
@@ -116,6 +141,7 @@ export function isQualifyingEdit(m: SlackMessage, maxDelayMs: number = DEFAULT_Q
 }
 
 export function passesSkip(m: SlackMessage, skip: ((m: SlackMessage) => boolean) | undefined): boolean {
+  if (m.taskCard === true) return false;
   return !(skip?.(m) ?? false) || isQualifyingEdit(m);
 }
 
@@ -315,7 +341,7 @@ export class SlackDriver {
       const step = seatFenceStep({
         prev: state,
         newest: newest
-          ? { ts: newest.ts, settles: this.isBotReply(newest) && !(opts.isInterim?.(newest) ?? false) }
+          ? { ts: newest.ts, settles: seatMessageSettles(newest, (m) => this.isBotReply(m), opts.isInterim) }
           : undefined,
         nowMs: Date.now(),
         quietMs: opts.quietMs,
@@ -342,8 +368,12 @@ export class SlackDriver {
     return msgs.map(toMessage);
   }
 
-  isBotReply(m: SlackMessage): boolean {
+  isBotMessage(m: SlackMessage): boolean {
     return m.userId === this.cfg.botUserId || (m.botId !== undefined && m.userId === undefined);
+  }
+
+  isBotReply(m: SlackMessage): boolean {
+    return this.isBotMessage(m) && m.taskCard !== true;
   }
 
   async awaitThreadReply(
@@ -382,12 +412,17 @@ export class SlackDriver {
 
   async collectRepliesDuring(rootTs: string, afterTs: string, windowMs: number): Promise<readonly SlackMessage[]> {
     await sleep(windowMs);
-    return (await this.replies(rootTs)).filter((m) => this.isBotReply(m) && tsAfter(m.ts, afterTs));
+    return (await this.replies(rootTs)).filter((m) => this.isBotMessage(m) && tsAfter(m.ts, afterTs));
   }
 
-  async collectBotMessagesAfter(rootTs: string, afterTs: string): Promise<readonly SlackMessage[]> {
+  async collectBotMessagesAfter(
+    rootTs: string,
+    afterTs: string,
+    opts: { readonly includeTaskCards?: boolean } = {},
+  ): Promise<readonly SlackMessage[]> {
     const [threadMsgs, historyMsgs] = await Promise.all([this.replies(rootTs), this.history(afterTs)]);
-    return mergeBotMessagesAfter(threadMsgs, historyMsgs, afterTs, (m) => this.isBotReply(m));
+    const isBot = opts.includeTaskCards === true ? (m: SlackMessage) => this.isBotMessage(m) : (m: SlackMessage) => this.isBotReply(m);
+    return mergeBotMessagesAfter(threadMsgs, historyMsgs, afterTs, isBot);
   }
 
   async awaitExactBotPost(anchorTs: string, text: string, opts: { timeoutMs: number; what: string }): Promise<SlackMessage> {

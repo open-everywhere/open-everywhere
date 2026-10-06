@@ -1,4 +1,7 @@
 import { buildOeDiscordCommandDefinition } from "@open-everywhere/provider-discord/agent/commands/discord-commands.js";
+import { oeSlash } from "@open-everywhere/core/agent/commands/core.js";
+import { importAppModule, resolveAppRoot } from "@open-everywhere/core/agent/scaffold/app-root.js";
+import { registerSettings, type AgentSettingsOverrides } from "@open-everywhere/core/agent/settings/settings.js";
 
 async function main(): Promise<void> {
   const applicationId = process.env.DISCORD_APPLICATION_ID;
@@ -15,9 +18,17 @@ async function main(): Promise<void> {
     ? `https://discord.com/api/v10/applications/${applicationId}/guilds/${guildId}/commands`
     : `https://discord.com/api/v10/applications/${applicationId}/commands`;
 
+  try {
+    const { SETTINGS_OVERRIDES } = await importAppModule<{ SETTINGS_OVERRIDES: AgentSettingsOverrides }>("agent/settings/settings.ts", resolveAppRoot());
+    registerSettings(SETTINGS_OVERRIDES);
+  } catch (err) {
+    console.error(`register-discord-commands: agent/settings/settings.ts did not load — refusing to register a default-named command: ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
+    return;
+  }
   const body = [buildOeDiscordCommandDefinition()];
   console.log(
-    `Registering "/oe" ${guildId ? `on guild ${guildId} (instant)` : "GLOBALLY (may take up to ~1h to propagate)"} ` +
+    `Registering "${oeSlash()}" ${guildId ? `on guild ${guildId} (instant)` : "GLOBALLY (may take up to ~1h to propagate)"} ` +
       `— PUT ${url.replace(applicationId, "<application-id>")} ...`,
   );
 

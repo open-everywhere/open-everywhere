@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-job-toolset-")), "ops.sqlite3");
 
@@ -17,6 +17,8 @@ import {
   allowedOnRestrictedJobWake,
   restrictToolsetForJobWake,
   withheldFromJobWake,
+  withheldFromRestrictedJobWake,
+  HARNESS_INTERNAL_TOOLS,
 } from "../agent/access/job-posture.js";
 import {
   markJobSession,
@@ -31,7 +33,6 @@ import {
   WINDOW_GATED_TOOLS,
   WINDOW_UNGATED_TOOLS,
 } from "../agent/access/window-gate-manifest.js";
-import { TRIGGERED_FIRE_GRAIN } from "../agent/routines/fire-window.js";
 import { grantBorrowToolName } from "../agent/operational/credential-grant-rows.js";
 
 const GRANT_TOOL = grantBorrowToolName("rowan", "notion", "notion_fetch_report");
@@ -168,25 +169,38 @@ const withheldList = withheldFromJobWake();
 ok(withheldList.includes("purge_memory") && withheldList.includes("agent") && withheldList.includes("bash"), "withheldFromJobWake lists the consequential names (the audit row's content)");
 ok(!withheldList.includes("reply") && !withheldList.includes("complete_job"), "withheldFromJobWake excludes the kit");
 ok(withheldList.join(",") === [...withheldList].sort().join(","), "withheldFromJobWake is sorted (a stable, diffable audit row)");
+{
+  const restricted = withheldFromRestrictedJobWake();
+  for (const name of HARNESS_INTERNAL_TOOLS) {
+    ok(
+      !restricted.includes(name),
+      `the restricted wake's withheld row does NOT name harness-internal "${name}" — the filter keeps it, so naming it would be false evidence`,
+    );
+    ok(allowedOnRestrictedJobWake(name), `…and the filter really does keep "${name}" (the other half of the pair, so the assertion above is not vacuous)`);
+  }
+  ok(restricted.includes("agent") && restricted.includes("bash"), "…while the consequential names stay on the row (the subtraction is the exemption set, not the whole list)");
+  ok(
+    withheldList.includes("task_wait") && !restricted.includes("task_wait"),
+    "the BARE reader still names `task_wait` and the restricted one does not — which is the whole reason the two readers exist",
+  );
+  const hookSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "agent", "hooks", "job-posture.ts"), "utf8");
+  ok(
+    /withheld:\s*withheldFromRestrictedJobWake\(\)/u.test(hookSrc),
+    "agent/hooks/job-posture.ts builds the audit row's `withheld` field from withheldFromRestrictedJobWake() — the reader that subtracts the harness-internal names the filter keeps",
+  );
+  ok(
+    !/withheld:\s*withheldFromJobWake\(/u.test(hookSrc),
+    "…and NOT from the bare withheldFromJobWake(), which would name `task_wait` as withheld while the filter keeps it — a row claiming a withholding that never happened",
+  );
+}
 
-ok(Array.isArray(WINDOW_GATED_TOOLS.web_fetch), "web_fetch carries a kit row in WINDOW_GATED_TOOLS (the layer-1 lookup has something to read)");
-ok(Array.isArray(WINDOW_GATED_TOOLS.agent), "agent carries a kit row in WINDOW_GATED_TOOLS (the negative control below has something to read)");
-ok(
-  !(WINDOW_GATED_TOOLS.web_fetch as readonly string[]).includes(TRIGGERED_FIRE_GRAIN),
-  `🔴 OPE-252 LAYER 1: web_fetch does not mount on the fire grain "${TRIGGERED_FIRE_GRAIN}" — the grain gate withholds it before the job kit is reached, so a kit admission alone would be inert`,
-);
-ok(!allowedOnRestrictedJobWake("web_fetch"), "🔴 OPE-252 LAYER 2: the job kit withholds web_fetch as well — the two layers are independent");
-ok(
-  (CONVERSATIONAL_ROOT_GRAINS as readonly string[]).includes(TRIGGERED_FIRE_GRAIN),
-  "🔴 OPE-252: the fire grain is a CONVERSATIONAL ROOT grain, so adding it to web_fetch's kit row would put wide hands on the class that must never hold them",
-);
-ok(
-  (WINDOW_GATED_TOOLS.agent as readonly string[]).includes(TRIGGERED_FIRE_GRAIN),
-  `🔴 NEGATIVE CONTROL: \`agent\` DOES mount on the fire grain "${TRIGGERED_FIRE_GRAIN}" — for delegation the job kit is the only control, which is exactly why OPE-252 refuses to solve the fetch gap with it`,
-);
-ok(!allowedOnRestrictedJobWake("agent"), "…and the job kit is what withholds it there (a fire must not launder its restriction into a full-kit worker)");
-ok(!WINDOW_UNGATED_TOOLS.has("web_fetch"), "web_fetch is grain-GATED, not part of the always-mounted conversational kit — the layer-1 lookup is meaningful");
-ok(allowedOnRestrictedJobWake("read_channel") && !Object.keys(WINDOW_GATED_TOOLS).includes("read_channel"), "NEGATIVE CONTROL: a fire's own reads are ungated, so they mount on every grain and survive both layers");
+ok(Array.isArray(WINDOW_GATED_TOOLS.web_fetch), "web_fetch carries a kit row in WINDOW_GATED_TOOLS");
+ok((WINDOW_GATED_TOOLS.web_fetch as readonly string[]).includes("task"), "🔴 OPE-252: web_fetch DOES mount on `task`, the grain of a fire's work-session worker — the grain gate is no layer for a fire any more");
+ok(!(WINDOW_GATED_TOOLS.web_fetch as readonly string[]).some((g) => (CONVERSATIONAL_ROOT_GRAINS as readonly string[]).includes(g)), "OPE-252: web_fetch still mounts on no conversational root grain");
+ok(!allowedOnRestrictedJobWake("web_fetch"), "🔴 OPE-252: the job kit withholds web_fetch — the one control on a job fire's worker");
+ok(!allowedOnRestrictedJobWake("agent"), "…and the job kit withholds `agent` too (a fire must not launder its restriction into a full-kit worker)");
+ok(!WINDOW_UNGATED_TOOLS.has("web_fetch"), "web_fetch is grain-GATED, not part of the always-mounted conversational kit");
+ok(allowedOnRestrictedJobWake("read_channel") && !Object.keys(WINDOW_GATED_TOOLS).includes("read_channel"), "NEGATIVE CONTROL: a fire's own reads are ungated, so they mount on every grain and survive the kit");
 
 function makeToolset(): Record<string, { description: string; execute: () => unknown }> {
   const names = [
@@ -210,17 +224,17 @@ function removedBy(before: Record<string, unknown>, after: Record<string, unknow
     .sort();
 }
 
-const TASK_FAMILY = ["task_cancel"] as const;
+const TASK_FAMILY = ["task_cancel", "task_wait"] as const;
 
 {
   const toolset = makeToolset();
   const before = { ...toolset };
   const removed = restrictToolsetForJobWake(toolset);
   const survivors = new Set(Object.keys(toolset));
-  const expected = new Set<string>([...[...JOB_WAKE_TOOLS].filter((k) => k in before), "notion__search", "final_output"]);
+  const expected = new Set<string>([...[...JOB_WAKE_TOOLS, ...HARNESS_INTERNAL_TOOLS].filter((k) => k in before), "notion__search"]);
   ok(
     survivors.size === expected.size && [...expected].every((k) => survivors.has(k)),
-    `the restricted toolset is EXACTLY the job kit + connector reads + the harness sink — no granted-credential tool (OPE-1091), got ${[...survivors].sort().join(",")}`,
+    `the restricted toolset is EXACTLY the job kit + the connector-read arm's fixture name + the harness-internal names — no granted-credential tool (OPE-1091), got ${[...survivors].sort().join(",")}`,
   );
   ok(removed.length > 0 && removed.every((k) => !survivors.has(k)), "restrictToolsetForJobWake reports every removed name");
   ok(removed.join(",") === [...removed].sort().join(","), "the removed list is sorted");
@@ -261,7 +275,7 @@ inSession(() => {
   const toolset = makeToolset();
   const before = { ...toolset };
   projectToolSet(toolset as unknown as Record<string, unknown>);
-  eq(removedBy(before, toolset), [], "an ESCALATED job wake keeps the FULL toolset — the OPE-111 restriction exists because nobody is watching, so it lifts when somebody is");
+  eq(removedBy(before, toolset), ["ask_room", "cancel_work", "work"], "an ESCALATED job wake keeps the FULL toolset except the forwarding seat's two verbs and the work-session child's question card — the OPE-111 restriction exists because nobody is watching, so it lifts when somebody is");
   ok("open_pull_request" in toolset && "purge_memory" in toolset && "agent" in toolset, "the escalated turn holds the human's normal posture");
   ok("task_cancel" in toolset, "…including the PARENT task verb, because a seat that may delegate may stop its own work");
   ok(GRANT_TOOL in toolset, "🔴 an ESCALATED job wake KEEPS the mounted grant — a person is in the room, so the requester the grant is spent for exists");
@@ -273,7 +287,7 @@ inSession(() => {
   const toolset = makeToolset();
   const before = { ...toolset };
   projectToolSet(toolset as unknown as Record<string, unknown>);
-  eq(removedBy(before, toolset), [], "an ordinary session's toolset is unchanged by OPE-111, and eve 0.54.1 removed the child-only `task_update` that used to be its one loss");
+  eq(removedBy(before, toolset), ["ask_room", "cancel_work", "work"], "an ordinary session's toolset is unchanged by OPE-111 except the forwarding seat's two verbs and the work-session child's question card (OPE-2340), and eve 0.54.1 removed the child-only `task_update` that used to be its one loss");
 });
 
 {
@@ -282,7 +296,7 @@ inSession(() => {
   const before = { ...toolset };
   projectToolSet(toolset as unknown as Record<string, unknown>);
   ok(!("agent" in toolset), "…while the DELEGATION verdict fails CLOSED outside a context (unclassified ⇒ deny) — the opposite direction, on purpose");
-  eq(removedBy(before, toolset), ["agent", ...TASK_FAMILY].sort(), "a context-less projectToolSet call withholds nothing from the job plane — only the fail-closed delegation verb and the task family that follows it");
+  eq(removedBy(before, toolset), ["agent", ...TASK_FAMILY, "ask_room", "cancel_work", "work"].sort(), "a context-less projectToolSet call withholds nothing from the job plane — only the fail-closed delegation verb, the task family that follows it, the forwarding seat's two verbs and the work-session child's question card");
 }
 
 inSession(() => {
@@ -299,7 +313,7 @@ inSession(() => {
   projectToolSet(toolset as unknown as Record<string, unknown>);
   ok(!("agent" in toolset), "OPE-396: on a default (native-armed) deployment an UNCLASSIFIED seat loses `agent` at the projection seam — the delegation verdict fails closed");
   ok("open_pull_request" in toolset && "purge_memory" in toolset, "…and nothing else moves: the job filter is untouched by the delegation one");
-  eq(removedBy(before, toolset), ["agent", ...TASK_FAMILY].sort(), "…exactly the delegation verb and the task family that follows it, so the three filters compose without overlap");
+  eq(removedBy(before, toolset), ["agent", ...TASK_FAMILY, "ask_room", "cancel_work", "work"].sort(), "…exactly the delegation verb, the task family that follows it, the forwarding seat's two verbs (OPE-2338) and the work-session child's question card (OPE-2340), so the filters compose without overlap");
 });
 
 const fireCtx = (stamped: boolean) => ({

@@ -239,7 +239,20 @@ export type { DeploymentIdentity } from "./identity/deployment-identity.js";
 export { registerSubtreePlatform, applySubtreeSurfaceClaims, subtreeSurfaceKeys, _resetSubtreePlatformsForTest } from "./identity/trust.js";
 export type { Surface, SurfaceTrust, SubtreeSurfaceHandler } from "./identity/trust.js";
 
-export { matchesAgentName, agentNameTokens, agentNameTokenPattern, configuredAgentName, DEFAULT_AGENT_SHORT_NAME, DEFAULT_AGENT_FULL_NAME, OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR } from "./identity/bot-name.js";
+export {
+  matchesAgentName,
+  agentNameTokens,
+  agentNameTokenPattern,
+  configuredAgentName,
+  configuredAgentShortName,
+  agentDisplayName,
+  agentCommandName,
+  DEFAULT_AGENT_SHORT_NAME,
+  DEFAULT_AGENT_FULL_NAME,
+  DEFAULT_AGENT_DISPLAY_NAME,
+  OE_ADDRESSED_ATTR,
+  OE_BOT_NAME_ATTR,
+} from "./identity/bot-name.js";
 
 export {
   declareSurfaceCommandScope,
@@ -539,6 +552,7 @@ export type { ContradictJudgeAllowOutcome } from "./approvals/judge-contradictio
 export { admitInputResponse, inputResponseRefusalNotice, INPUT_RESPONSE_DENIED_AUDIT_ACTION } from "./approvals/input-response-floor.js";
 export type { InputResponseAdmission, InputResponseRefusal, InputResponseScope } from "./approvals/input-response-floor.js";
 export type { ApprovalOutcome } from "./approvals/decision-wake.js";
+export { rememberNonMemberAnswer } from "./access/held-question.js";
 
 export { registerNativeAdminCheck, registerNativeMemberCheck } from "./access/native-admin.js";
 export type { NativeAdminCheck, NativeMemberCheck } from "./access/native-admin.js";
@@ -546,7 +560,7 @@ export type { NativeAdminCheck, NativeMemberCheck } from "./access/native-admin.
 export { registerScopeLabelResolver } from "./approvals/scope-label.js";
 export type { ScopeLabelResolver } from "./approvals/scope-label.js";
 
-export { OE_COMMAND_NAME, runOeCommand } from "./commands/core.js";
+export { oeCommandName, oeSlash, runOeCommand } from "./commands/core.js";
 export type { OeCommand, OeCommandDeps } from "./commands/core.js";
 
 export { verifyWebhookSignature, webhookMaxSkewSeconds } from "./webhooks/gate.js";
@@ -676,7 +690,7 @@ export type { TenantAdmissionDecision, TenantAdmissionInput } from "./access/ten
 
 export { consumeCardPostedThisTurn, peekCardPostedThisTurn } from "./approvals/card-signal.js";
 
-export { sessionGrantKind, grantButtonLabel } from "./approvals/session-grant.js";
+export { sessionGrantKind, grantButtonLabel, pendingCardExpiryClause } from "./approvals/session-grant.js";
 
 export { isAllowedDriver } from "./testing/driver-allowlist.js";
 
@@ -730,6 +744,7 @@ export {
 } from "./onboarding/onboarding.js";
 
 export { consumeNoReplyThisTurn } from "./channels/no-reply-signal.js";
+export { withEndsTurnFinalChannel } from "./channels/ends-turn-final.js";
 export { consumeReactedThisTurn } from "./channels/react-signal.js";
 export { consumeStandDownSilenceThisTurn, STAND_DOWN_SILENCE_REASON } from "./channels/stand-down-silence.js";
 
@@ -849,6 +864,7 @@ export { routineIdOf, turnSurfaceMode } from "./hooks/spend.js";
 export { default as spendHook } from "./hooks/spend.js";
 
 export { liveTaskIds, liveTaskCount } from "./access/live-delegated-tasks.js";
+export { workSessionSandboxState } from "./channels/work-generation.js";
 export { LIVE_DELEGATED_TASKS_STATE_KEY } from "./access/live-delegated-tasks.js";
 
 export { withRetryAfter, withRetryAfterLoose, parseRetryAfterMs, RateLimitExhaustedError } from "./channels/rate-limit-retry.js";

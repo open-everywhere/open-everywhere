@@ -15,7 +15,7 @@ import { READ_PERMISSIONS } from "../scm/mint.js";
 import { mintGitReadBroker, mergeGitReadBroker } from "../scm/broker.js";
 import { auditBrokeredEgressPolicy } from "../scm/broker-audit.js";
 import type { BindableContext } from "../identity/binding.js";
-import { useSelfHostEgress, pushEgressPolicy } from "../access/self-host-egress.js";
+import { applyAndRecordEgressPolicy } from "../hooks/egress.js";
 import { checkoutCommand, checkoutCommandBrokered, isSafeCheckoutDir, redactSecret, CHECKOUT_OK, parseConventionProbe, parseSkillsProbe, parseAgentsProbe } from "../scm/git.js";
 import { recordRepoSkills, parseRepoAgent, REPO_SKILL_SEP, type RepoAgentDef } from "../scm/repo-skills.js";
 
@@ -63,7 +63,7 @@ export default windowGated("checkout_repo", defineTool({
     const noInstallationError = () =>
       new Error(
         `repo "${input.repo}": its owner has no linked GitHub App installation. ` +
-          `Install the Open Everywhere GitHub App on that org (see docs/capabilities/source-control.md).`,
+          `Install this deployment's GitHub App on that org (see docs/capabilities/source-control.md).`,
       );
 
     const sandbox = await ctx.getSandbox();
@@ -79,11 +79,7 @@ export default windowGated("checkout_repo", defineTool({
       const { rulesByOwner } = await mintGitReadBroker(app, access.repos);
       if (!rulesByOwner.has(owner)) throw noInstallationError();
       const brokered = mergeGitReadBroker(basePolicy, rulesByOwner);
-      if (useSelfHostEgress()) {
-        await pushEgressPolicy(brokered);
-      } else {
-        await sandbox.setNetworkPolicy(brokered);
-      }
+      await applyAndRecordEgressPolicy(brokered, { ctx, sessionId: access.scopeKey });
       await auditBrokeredEgressPolicy(ctx as BindableContext, access, brokered, "checkout_repo");
       result = await sandbox.run({ command: checkoutCommandBrokered(input.repo, dir, app.committer()) });
       if (!result.stdout.includes(CHECKOUT_OK)) {

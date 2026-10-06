@@ -7,7 +7,7 @@ import {
 } from "./consequence.js";
 import type { ApprovalChainRequest, ChainResolution } from "./approver-chain.js";
 import { taintKindsThisTurn, untrustedIngestedThisTurn } from "./taint-signal.js";
-import { requesterMessagesThisTurn } from "./requester-messages.js";
+import { requesterMessagesByTurn } from "./requester-messages.js";
 import {
   PRE_APPROVAL_RULE_ID_PATTERN,
   renderPreApprovalRulesBlock,
@@ -48,6 +48,9 @@ export interface ApprovalJudgeContext {
   readonly tainted: boolean;
   readonly taintKinds: readonly string[];
   readonly requesterMessages?: readonly string[];
+  readonly earlierRequesterMessages?: readonly string[];
+  readonly argsDigest?: string;
+  readonly requester?: string;
   readonly rules?: readonly ResolvedPreApprovalRule[];
 }
 
@@ -64,9 +67,10 @@ export function judgeContextOf(
   } catch {
     argsJson = "[unserialisable args]";
   }
+  const argsDigest = createHash("sha256").update(argsJson).digest("hex").slice(0, 32);
   if (argsJson.length > ARGS_JSON_CAP) argsJson = `${argsJson.slice(0, ARGS_JSON_CAP)}…[truncated]`;
   const tainted = req.tainted ?? untrustedIngestedThisTurn();
-  const requesterMessages = requesterMessagesThisTurn();
+  const { current: requesterMessages, earlier: earlierRequesterMessages } = requesterMessagesByTurn();
   return {
     tool: req.tool,
     ...(req.action !== undefined ? { action: req.action } : {}),
@@ -77,6 +81,9 @@ export function judgeContextOf(
     tainted,
     taintKinds: tainted ? taintKindsThisTurn() : [],
     ...(requesterMessages.length > 0 ? { requesterMessages } : {}),
+    ...(earlierRequesterMessages.length > 0 ? { earlierRequesterMessages } : {}),
+    argsDigest,
+    ...(req.principalId !== undefined ? { requester: req.principalId } : {}),
     ...(rules !== undefined && rules.length > 0 ? { rules } : {}),
   };
 }
@@ -100,6 +107,12 @@ function judgePromptPrefix(ctx: ApprovalJudgeContext): string {
     ...(ctx.requesterMessages !== undefined && ctx.requesterMessages.length > 0
       ? ["Requester's visible messages:", ...ctx.requesterMessages.map((m) => `> ${m}`)]
       : []),
+    ...(ctx.earlierRequesterMessages !== undefined && ctx.earlierRequesterMessages.length > 0
+      ? [
+          "Requester's messages from EARLIER turns (context only — not a request made in this turn):",
+          ...ctx.earlierRequesterMessages.map((m) => `> ${m}`),
+        ]
+      : []),
     "",
     ...(rulesBlock === "" ? [] : [rulesBlock]),
   ];
@@ -116,8 +129,8 @@ export function judgeVerdictPrompt(ctx: ApprovalJudgeContext): string {
     `${judgePromptPrefix(ctx)}Decide. Reply with a line "VERDICT: allow" or "VERDICT: ask" or "VERDICT: deny", ` +
     `then a line "REASON: <one short sentence>".` +
     (hasRules
-      ? ` If an authored rule above permits this action, add a line "RULE: <id>" naming that rule's id exactly as written in brackets. ` +
-        `Cite a rule ONLY when one genuinely covers this action, and never invent an id.`
+      ? ` Allow ONLY when an authored rule above covers this action, and then add a line "RULE: <id>" naming that rule's id exactly as written in brackets. ` +
+        `An allow with no valid RULE line is treated as ask. Cite a rule ONLY when one genuinely covers this action, and never invent an id.`
       : "") +
     ` Prefer ask when uncertain; deny only what standing policy prohibits.`
   );
@@ -169,6 +182,12 @@ export function judgeExemption(tool: string, meta?: VendorToolMeta): JudgeExempt
 
 export function judgeVerdictCacheKey(tool: string): string {
   return tool;
+}
+
+export function enforcedVerdictCacheKey(ctx: Pick<ApprovalJudgeContext, "tool" | "argsJson" | "argsDigest" | "requester" | "unattended">): string {
+  const args = ctx.argsDigest ?? createHash("sha256").update(ctx.argsJson).digest("hex").slice(0, 32);
+  const act = createHash("sha256").update(JSON.stringify([args, ctx.requester ?? null, ctx.unattended])).digest("hex").slice(0, 32);
+  return `${judgeVerdictCacheKey(ctx.tool)}#${act}`;
 }
 
 export interface JudgeCacheEntry {
@@ -264,14 +283,14 @@ function rulesSigOf(ctx: ApprovalJudgeContext): string {
 
 export interface ApprovalJudgeRun {
   readonly verdict: "allow" | "deny" | "ask" | "defer";
-  readonly source: "cache" | "pass1" | "pass2" | "unavailable" | "error" | "timeout" | "admin-disarm" | "human-only";
+  readonly source: "cache" | "pass1" | "pass2" | "unavailable" | "error" | "timeout" | "admin-disarm" | "human-only" | "no-rules";
   readonly reasoning: string;
   readonly cacheKey: string;
   readonly cacheHit: boolean;
   readonly passes: number;
   readonly pass1?: "yes" | "no" | "unparseable";
   readonly ruleId?: string;
-  readonly ruleCitation?: "matched" | "unmatched";
+  readonly ruleCitation?: "matched" | "unmatched" | "uncited";
 }
 
 export interface RunApprovalJudgeOptions {
@@ -281,7 +300,7 @@ export interface RunApprovalJudgeOptions {
 
 export async function runApprovalJudge(ctx: ApprovalJudgeContext, opts: RunApprovalJudgeOptions = {}): Promise<ApprovalJudgeRun> {
   const enforce = opts.enforce === true;
-  const cacheKey = judgeVerdictCacheKey(ctx.tool);
+  const cacheKey = enforce ? enforcedVerdictCacheKey(ctx) : judgeVerdictCacheKey(ctx.tool);
   const sig = taintSigOf(ctx);
   const rulesSig = rulesSigOf(ctx);
   const store = cacheStoreFor(enforce);
@@ -289,7 +308,7 @@ export async function runApprovalJudge(ctx: ApprovalJudgeContext, opts: RunAppro
   if (cached !== undefined) {
     if (cached.taintSig !== sig || cached.rulesSig !== rulesSig) {
       store?.delete(cacheKey);
-    } else if (enforce && cached.pass !== 2) {
+    } else if (enforce && (cached.pass !== 2 || cached.ruleId === undefined)) {
     } else {
       return {
         verdict: "allow",
@@ -301,6 +320,16 @@ export async function runApprovalJudge(ctx: ApprovalJudgeContext, opts: RunAppro
         ...(cached.ruleId !== undefined ? { ruleId: cached.ruleId, ruleCitation: "matched" as const } : {}),
       };
     }
+  }
+  if (enforce && (ctx.rules ?? []).length === 0) {
+    return {
+      verdict: "defer",
+      source: "no-rules",
+      reasoning: "no pre-approval rule is authored for this scope, so no allow is possible — the judge was not consulted and a person decides",
+      cacheKey,
+      cacheHit: false,
+      passes: 0,
+    };
   }
   const completion = completionSlot.get();
   if (completion === null) {
@@ -347,6 +376,18 @@ export async function runApprovalJudge(ctx: ApprovalJudgeContext, opts: RunAppro
           passes: 2,
           pass1,
           ...citation,
+        };
+      }
+      if (enforce && parsed.verdict === "allow" && !cited) {
+        return {
+          verdict: "ask",
+          source: "pass2",
+          reasoning: `judge allowed without citing an authored pre-approval rule — an enforced allow must cite one, so this degraded to ask (${parsed.reason})`,
+          cacheKey,
+          cacheHit: false,
+          passes: 2,
+          pass1,
+          ruleCitation: "uncited",
         };
       }
       if (parsed.verdict === "allow" && !abandoned) {

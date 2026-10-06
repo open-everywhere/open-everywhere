@@ -49,10 +49,14 @@ apply a fine-grained policy, and on any backend running the policy in dry-run
   runs unfirewalled. A `deny-all` produced by a compile error is applied even then. The compilation
   is structural. The enforcement depends on where you run and what you declared. See
   [Security model](./security-model.md) for the per-backend picture.
-- 🔴 **A failed apply aborts the session, and two settings turn that off.** At `session.started` a
-  rejected policy apply throws, so the agent never runs a turn unenforced — the platform's own
-  session default is allow-all, so an unenforced session is an unfirewalled one. A turn-level
-  re-apply is the one that only logs, because the previously applied policy is still in force.
+- 🔴 **A failed apply refuses the turn, and two settings turn that off.** At `session.started` a
+  rejected policy apply refuses the turn with `ctx.cancel()`, so the agent never runs a turn
+  unenforced — the platform's own session default is allow-all, so an unenforced session is an
+  unfirewalled one. The hook does not throw, because eve logs and swallows a hook's throw
+  (OPE-2249, `agent/hooks/control-refusal.ts`). A failed turn-level re-apply refuses the turn too
+  when no policy is in force yet. It only logs when the new policy covers the one still in force.
+  When the new policy narrows it, the turn is refused instead (OPE-2158,
+  [Revocation latency](./revocation-latency.md)).
   `egress.allowUnenforced: true` restores warn-and-continue at session start. `egress.enforce:
   false` reaches the same end earlier: it attempts no apply at all, so there is no failure to abort
   on. A deployment that sets either one has opted out of this row (`agent/hooks/egress.ts`).
@@ -202,7 +206,7 @@ that runs them is yours.
 | **Data residency** | Your gateway's routing and your sandbox region | Both legs are pinnable, and the sandbox region is asserted by `npm run test:sandbox-region`. See [Models & the AI Gateway](../extending/models-and-gateway.md). |
 | **Zero data retention** | Your gateway, as an org policy | 🔴 Open Everywhere sets **no** per-call ZDR flag, and that is deliberate — a per-call pin on a model with no ZDR-attested route turns a governance option into an outage. The gateway is the layer that knows which upstreams are attested. |
 | **"Nobody trains on your data"** | Your gateway and your model providers | Open Everywhere enforces nothing here and claims nothing. It is a self-hosted client: it sends what you route where you route it. The claim is your providers' to make, in their terms. |
-| **Retention of your own rows** | Your operational store | Audit, usage and spend rows live in your database. The audit record has **no delete path** in this tree — see [Audit & provenance](./audit-and-provenance.md). |
+| **Retention of your own rows** | Your operational store | Audit, usage and spend rows live in your database. The audit record has **no delete path** in this tree — see [Audit & provenance](./audit-and-provenance.md). 🔴 The default store deletes no usage or spend row either: retention is your own job on the database — see [Spend & cost controls](./spend-and-cost.md#per-event-usage-capture). |
 | **Who may act** | Your `agent/access/` config | Bundles, grants and credential bindings are yours to write, and a per-binding expansion is a guardrail change that the fence holds. |
 
 ## Using this page in an assessment

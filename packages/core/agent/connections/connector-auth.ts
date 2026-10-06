@@ -7,9 +7,12 @@ import {
   type TokenResult,
 } from "eve/connections";
 import type { SessionContext } from "eve/context";
-import { once, type ApprovalStatus } from "eve/tools/approval";
+import type { ApprovalStatus } from "eve/tools/approval";
 import { connectorToolPermissionKind } from "../approvals/session-grant.js";
 import { offerRoutinePermissionCardFor } from "../approvals/routine-permission-offer.js";
+import { CONNECTOR_INPUT_PREVIEW_CAP, connectorCardContext, connectorOpApprovalKind, deliverSignInCard, offerConnectorOpCard, type ConnectorOpCardOffer } from "../approvals/connector-op-offer.js";
+import { isWorkSessionChildContext } from "../access/work-session.js";
+import { createHash } from "node:crypto";
 import { getOperationalStore } from "../operational/provider.js";
 import { routinePermissionKeyStamped } from "../routines/routine.js";
 import type { ApprovalPolicy } from "eve/tools/approval";
@@ -38,9 +41,8 @@ import {
 import { OE_REQUESTER_ATTR, REQUESTER_UNVERIFIED } from "../access/requester-identity.js";
 import { OE_CHAT_NONMEMBER_ATTR, untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getSecretVia } from "../access/credentials.js";
-import { withDuplicateApprovalGuard } from "../access/approval-dedupe.js";
 import { resolvePartition } from "../memory/partition.js";
-import { actingPrincipalId, bindFrom, deploymentOrg, unattendedFrom } from "../identity/binding.js";
+import { actingPrincipalId, bindFrom, deploymentOrg, proposingGrantScope, unattendedFrom, type BindableContext } from "../identity/binding.js";
 import { appendAudit } from "../audit/audit.js";
 import {
   requireUserAuthFlow,
@@ -192,6 +194,18 @@ export type ConnectorAuthorizationStarter = (
 export const defaultConnectorAuthStarter: ConnectorAuthorizationStarter = (vercelConnector, params, options) =>
   requireUserAuthFlow(vercelConnector).startAuthorization(vercelConnector, params, options);
 
+function needsSignInMessage(connector: string, delivered: boolean, repeat = false): string {
+  const where = repeat
+    ? "A sign-in card was already offered to that person this turn."
+    : delivered
+      ? "A sign-in card with a private link went to that person directly."
+      : "The sign-in card could not be delivered privately, so ask that person to message the agent directly to connect it.";
+  return (
+    `needs-sign-in: connection "${connector}" needs the person who asked to connect their own account first. ${where} ` +
+    "The op did not run, and nothing waits on the sign-in. Finish this task now and report that the job waits for that sign-in. Do not retry until they say they connected."
+  );
+}
+
 function personalAuthUrlClause(url: string): string {
   return `Open this personal link to connect it (expires soon): ${url} — complete the sign-in, then ask again. `;
 }
@@ -306,16 +320,24 @@ async function consentCarriageFor(
 
 export function userAwareProviderToken(
   opts: { readonly connector: string; readonly fallbackSecretRef?: string; readonly fallbackBroker?: string; readonly directUrl?: string },
-  deps: { readonly mintUser?: ConnectUserTokenMinter; readonly startAuth?: ConnectAuthorizationStarter } = {},
+  deps: {
+    readonly mintUser?: ConnectUserTokenMinter;
+    readonly startAuth?: ConnectAuthorizationStarter;
+    readonly workChild?: (ctx: SessionContext) => boolean;
+    readonly deliverSignIn?: typeof deliverSignInCard;
+  } = {},
 ): ConnectionAuthResolver {
   const mintUser = deps.mintUser ?? ((ref, params) => requireUserAuthFlow(opts.connector).mintUserToken(ref, params));
   const startAuth =
     deps.startAuth ?? ((ref, params, options) => requireUserAuthFlow(opts.connector).startAuthorization(ref, params, options));
+  const isWorkChild = deps.workChild ?? ((c: SessionContext) => isWorkSessionChildContext(c as unknown as BindableContext));
   return async (ctx: SessionContext): Promise<ConnectionAuthProvider> => ({
     principalType: "app",
     async getToken(o) {
-      if (connectorAuthRequiredThisTurn(opts.connector) && !(await memoSelfHealsUserGrant(opts.connector, ctx.session.auth)))
+      if (connectorAuthRequiredThisTurn(opts.connector) && !(await memoSelfHealsUserGrant(opts.connector, ctx.session.auth))) {
+        if (isWorkChild(ctx)) throw new Error(needsSignInMessage(opts.connector, false, true));
         throw connectorAuthRequiredError(opts.connector, connectorAuthUrlThisTurn(opts.connector));
+      }
       await assertConnectorGranted(opts.connector, ctx.session.auth);
       const cred = await boundConnectorCredential(opts.connector, ctx.session.auth);
 
@@ -386,6 +408,21 @@ export function userAwareProviderToken(
                 )
               ).url;
             } catch {
+            }
+            if (isWorkChild(ctx)) {
+              const delivered =
+                url !== undefined &&
+                (await (deps.deliverSignIn ?? deliverSignInCard)({
+                  org: org ?? deploymentOrg(),
+                  platform: platform ?? "unknown",
+                  workspace: workspace ?? "unknown",
+                  recipientId: actorId,
+                  connector: opts.connector,
+                  url,
+                  fromContainer: `${platform ?? "unknown"}/${workspace ?? "unknown"}`,
+                }));
+              markConnectorAuthRequired(opts.connector);
+              throw new Error(needsSignInMessage(opts.connector, delivered));
             }
             markConnectorAuthRequired(opts.connector, url);
             const authorizeClause = url
@@ -459,12 +496,122 @@ async function decideConnectorWrite(
   return "user-approval";
 }
 
-export function connectorApprovalPolicy(): ApprovalPolicy {
+export function connectorApprovalPolicy(deps: OeConnectorCardDeps = {}): ApprovalPolicy {
   const tiered = connectorOpApproval();
-  const blanket = once();
-  return withDuplicateApprovalGuard(
-    withUnattendedConnectorFence((ctx) => (connectorOpTieringEnabled() ? tiered : blanket)(ctx)),
+  return withOeConnectorCard(
+    withUnattendedConnectorFence((ctx) => (connectorOpTieringEnabled() ? tiered : blanketConnectorApproval)(ctx)),
+    deps,
   );
+}
+
+const blanketConnectorApproval: ApprovalPolicy = () => "user-approval";
+
+export interface OeConnectorCardDeps {
+  readonly store?: Pick<ReturnType<typeof getOperationalStore>, "getSessionApproval" | "markEventSeen" | "hasEventSeen">;
+  readonly offer?: typeof offerConnectorOpCard;
+  readonly grantScope?: (ctx: Parameters<ApprovalPolicy>[0]) => ConnectorGrantScope | undefined | Promise<ConnectorGrantScope | undefined>;
+  readonly tainted?: () => boolean;
+  readonly credentialOf?: (connection: string, auth: unknown) => Promise<ConnectorOpCardOffer["credential"]>;
+}
+
+async function connectorCredentialPlane(connection: string, auth: unknown): Promise<ConnectorOpCardOffer["credential"]> {
+  if (auth === undefined || auth === null) return undefined;
+  const bound = await boundConnectorCredential(connection, auth as Parameters<typeof boundConnectorCredential>[1]);
+  return bound?.principal === "user" || bound?.memberPlane === true ? "personal" : "domain";
+}
+
+export type ConnectorGrantScope = NonNullable<ReturnType<typeof proposingGrantScope>>;
+
+async function liveConnectorGrantScope(ctx: Parameters<ApprovalPolicy>[0]): Promise<ConnectorGrantScope | undefined> {
+  const auth = ctx.session?.auth;
+  if (auth === undefined || auth === null) return undefined;
+  const surface = await surfaceContextFromAuth(auth as import("eve/context").SessionAuth).catch(() => null);
+  if (surface === null) return undefined;
+  return proposingGrantScope(connectorCardContext(surface, ctx.session));
+}
+
+function connectorInputJson(input: unknown): string {
+  try {
+    return JSON.stringify(input ?? {}, (_k, v: unknown) =>
+      v !== null && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([x], [y]) => x.localeCompare(y))) : v,
+    );
+  } catch {
+    return "(the input could not be rendered)";
+  }
+}
+
+function connectorInputPreview(input: unknown): string {
+  const text = connectorInputJson(input);
+  return text.length > CONNECTOR_INPUT_PREVIEW_CAP ? `${text.slice(0, CONNECTOR_INPUT_PREVIEW_CAP)}…` : text;
+}
+
+function connectorInputDigest(input: unknown): string {
+  return createHash("sha256").update(connectorInputJson(input)).digest("hex").slice(0, 32);
+}
+
+function connectorOpCardedMessage(connection: string, toolName: string, where: string, pendingId: string): string {
+  return (
+    `connection "${connection}": the op "${toolName}" needs a member's approval, so an approval card is posted ${where} (pending ${pendingId}). ` +
+    "The op did NOT run, and nothing waits on the card. Report that the op waits for approval. When a member approves it, call the op again with the same input."
+  );
+}
+
+export function withOeConnectorCard(policy: ApprovalPolicy, deps: OeConnectorCardDeps = {}): ApprovalPolicy {
+  return async (ctx): Promise<ApprovalStatus> => {
+    const decision = await policy(ctx);
+    if (!decisionWouldPrompt(decision)) return decision;
+    const connection = parseQualifiedToolName(ctx.toolName)?.connection;
+    if (!isConnectorOpTool(ctx.toolName) || connection === undefined || connection.length === 0) {
+      return { type: "denied", reason: unresolvableConnectionRefusalMessage(ctx.toolName) };
+    }
+    const deny = (why: string): ApprovalStatus => ({
+      type: "denied",
+      reason: `connection "${connection}": the op "${ctx.toolName}" needs a member's approval, and ${why}. The op did not run.`,
+    });
+    let scope: ConnectorGrantScope | undefined;
+    try {
+      scope = await (deps.grantScope ?? liveConnectorGrantScope)(ctx);
+    } catch {
+      scope = undefined;
+    }
+    if (scope === undefined) return deny("this call names no conversation an approval could be kept for");
+    const sessionKey = scope.key;
+    const grain: ConnectorOpCardOffer["grain"] =
+      connectorOpTieringEnabled() && effectiveConnectorOpTier(ctx.toolName) === "destructive" ? "destructive" : "call";
+    const memoKind = connectorOpApprovalKind(ctx.toolName, connectorInputDigest(ctx.toolInput));
+    const org = deploymentOrg();
+    const store = deps.store ?? getOperationalStore();
+    const nowIso = new Date().toISOString();
+    const memoAllows = async (): Promise<boolean> => {
+      const memo = await callAsync(() => store.getSessionApproval(org, sessionKey, memoKind, nowIso), null);
+      if (memo === null) return false;
+      const ttlMs = Math.max(1, Date.parse(memo.expiresAt) - Date.now());
+      const spendKey = `connector-op-spent:${sessionKey}:${memoKind}:${memo.createdAt}`;
+      const callKey = typeof ctx.callId === "string" && ctx.callId.length > 0 ? `${spendKey}:call:${ctx.callId}` : undefined;
+      if (callKey !== undefined && (await callAsync(() => store.hasEventSeen(org, callKey, nowIso, ttlMs), false))) return true;
+      const spent = await callAsync(() => store.markEventSeen(org, spendKey, nowIso, ttlMs), false);
+      if (spent && callKey !== undefined) await callAsync(() => store.markEventSeen(org, callKey, nowIso, ttlMs), false);
+      return spent;
+    };
+    if (await memoAllows()) return "not-applicable";
+    const credential = await callAsync(() => (deps.credentialOf ?? connectorCredentialPlane)(connection, ctx.session?.auth), undefined);
+    const offered = await (deps.offer ?? offerConnectorOpCard)({
+      org,
+      tool: ctx.toolName,
+      connection,
+      grain,
+      sessionKey,
+      memoKind,
+      inputPreview: connectorInputPreview(ctx.toolInput),
+      auth: ctx.session?.auth,
+      session: ctx.session,
+      tainted: taintedOrPoisoned(deps.tainted ?? untrustedIngestedThisTurn),
+      ...(credential === undefined ? {} : { credential }),
+    });
+    if (offered.outcome === "approved") return "not-applicable";
+    if (offered.outcome === "refused") return deny(offered.reason);
+    return { type: "denied", reason: connectorOpCardedMessage(connection, ctx.toolName, offered.where, offered.pendingId) };
+  };
 }
 
 export const ASK_UNATTENDED_SENTENCE =

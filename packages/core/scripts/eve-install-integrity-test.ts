@@ -25,6 +25,14 @@ const rel = (p: string): string => relative(repoRoot, p) || ".";
 const rootZod = createRequire(import.meta.url)("zod/package.json") as { version: string };
 const rootZodVersion = rootZod.version;
 
+function eveSourceFiles(eveDir: string): string[] {
+  const srcDir = join(eveDir, "dist", "src");
+  if (!existsSync(srcDir)) return [];
+  return readdirSync(srcDir, { recursive: true, encoding: "utf8" })
+    .filter((rel) => (rel.endsWith(".js") || rel.endsWith(".d.ts")) && !rel.split(/[/\\]/).includes("compiled"))
+    .map((rel) => join("dist", "src", rel));
+}
+
 const SKIP_DIRS = new Set([
   "node_modules",
   ".git",
@@ -137,8 +145,6 @@ ok(
 
 const TOOL_LOOP = join("dist", "src", "harness", "tool-loop.js");
 const COMPACTION = join("dist", "src", "harness", "compaction.js");
-const SESSION_TASK_INDEX = join("dist", "src", "tasks", "session-index.js");
-const DYNAMIC_TOOL_LIFECYCLE = join("dist", "src", "context", "dynamic-tool-lifecycle.js");
 const AUTHORED_PACKAGE_BOUNDARY = join("dist", "src", "internal", "authored-package-boundary.js");
 
 const RETIRED = [
@@ -157,6 +163,14 @@ const RETIRED = [
   { symbol: "__oeStepCounts", why: "OPE-407" },
   { symbol: "__oeCONT", why: "OPE-407" },
   { symbol: "OE_TURN_STEP_CEILING", why: "OPE-407" },
+  { symbol: "__oeTaskCohortJoin", why: "OPE-1856" },
+  { symbol: "__oeTaskCohortJoinPatched", why: "OPE-1856" },
+  { symbol: "__oeSessionToolScopePatched", why: "OPE-2106" },
+  { symbol: "__oeThrowEmptyResponseUnlessTerminal", why: "OPE-2252" },
+  { symbol: "__oeEmptyStepTerminalPatched", why: "OPE-2252" },
+  { symbol: "__oeTurnTerminalActionScan", why: "OPE-2252" },
+  { symbol: "__oeProjectModelMessages", why: "OPE-2251" },
+  { symbol: "__oeProjectModelMessagesPatched", why: "OPE-2251" },
 ] as const;
 
 const CARRIAGE = [
@@ -223,6 +237,12 @@ const WHY: Record<string, string> = {
   "OPE-172": "the force-tool-turn nudge was retired in OPE-172 (gated on an env var that was never set anywhere, so it never ran once)",
   "OPE-407":
     "the per-turn step ceiling LEFT the patch in OPE-407 and lives in userland at packages/core/agent/model/step-boundary.ts (two-tier: a wrap-up instruction at the budget, a text-only stub at the backstop). Porting it back would regress behaviour — the bytes could only stop the loop mutely",
+  "OPE-1856":
+    "patch part 8, the bounded task-cohort join, RETIRED at the eve 0.69.0 re-roll (OPE-2247): its carrier dist/src/tasks/session-index.js no longer exists, because eve 0.63.x deleted the task index. The symbol can only come back by patching a file eve does not ship. The starvation hazard is CLOSED at eve 0.70: both carriers are deleted, so no producer of a caller-less completion delivery exists and the cohort cannot form, which OPE-2250 T4 measured and recorded in agent/access/eve-patch-probe.ts",
+  "OPE-2251":
+    "patch part 6, the model-message projection (OPE-1396), RETIRED at OPE-2251 (eve 0.69 reshape T5, ruling C): it existed to splice eve's `[Agents]` listing out of the model call so the seat could not learn a worker's agentId. eve 0.70 has no `[Agents]` note and no agentId, continuation by taskId is ALLOWED, and the one reader that still needs the model's messages (the attachment leg) reads them from the step.started resolver's own ctx.messages",
+  "OPE-2106":
+    "patch part 9, the delegated-binding refresh, RETIRED at the eve 0.69.0 re-roll (OPE-2247): eve 0.64.1 wraps refreshDynamicSessionToolsForRuntimeRevision in contextStorage.run at the CALLER (dist/src/execution/session/turn-step.js), so re-applying our hunk DOUBLE-WRAPS the same call. The anchor still matches, which is exactly why a blind re-roll needs this row",
 };
 
 for (const eveDir of copies) {
@@ -244,32 +264,8 @@ for (const eveDir of copies) {
     `copies: ${where} carries the compaction event-contract stamp (OPE-697, __oeCompactionReduced + __oeWithReduced) — without it maybeCompact emits compaction.completed with no \`reduced\` field, so a pass that returned the history unchanged is indistinguishable from a real summary`,
   );
   ok(
-    src.includes("__oeThrowEmptyResponseUnlessTerminal(") && !src.includes("throw new EmptyModelResponseError;"),
-    `copies: ${where} carries the empty-step terminal guard (OPE-762, __oeThrowEmptyResponseUnlessTerminal) on BOTH throw sites — an unpatched copy reissues the model call with "Your previous reply was empty and was not delivered" after every correctly-silent turn, so the seat replies to the wake it just declined`,
-  );
-  ok(
-    src.includes("__oeProjectModelMessages(validateHarnessModelMessages(normalizeModelMessages("),
-    `copies: ${where} carries the model-message projection seam (OPE-1396, part 6) WRAPPING normalizeModelMessages — this is the only seam that hands OE the list the model actually reads, so an unpatched copy takes OPE-593's \`[Agents]\` subtraction off the model call and the seat learns a live worker \`agentId\` from the listing`,
-  );
-  const taskIndexFile = join(eveDir, SESSION_TASK_INDEX);
-  ok(
-    existsSync(taskIndexFile),
-    `cohort: ${where}/${SESSION_TASK_INDEX} exists (if eve moved the task index, patch part 8 and packages/core/scripts/task-cohort-starvation-test.ts are both stale)`,
-  );
-  const taskIndexSrc = existsSync(taskIndexFile) ? readFileSync(taskIndexFile, "utf8") : "";
-  ok(
-    taskIndexSrc.includes("function __oeTaskCohortJoin(") && /else\{let [A-Za-z_$][A-Za-z_$0-9]*=__oeTaskCohortJoin\(/.test(taskIndexSrc),
-    `cohort: ${where} carries patch part 8 (OPE-1856, __oeTaskCohortJoin AND its call site in recordSessionTask) — an unpatched copy gives a new task the cohort of the first task with no terminal view WHATEVER TURN IT CAME FROM, so one worker parked on an unanswered question starves every later delegation settlement on that seat for the life of the session (measured on deploy #212: two workers completed, neither ever settled, no completing reply)`,
-  );
-  const lifecycleFile = join(eveDir, DYNAMIC_TOOL_LIFECYCLE);
-  ok(
-    existsSync(lifecycleFile),
-    `scope: ${where}/${DYNAMIC_TOOL_LIFECYCLE} exists (if eve moved the dynamic-tool lifecycle, patch part 9 and packages/core/scripts/delegated-binding-refresh-test.ts are both stale)`,
-  );
-  const lifecycleSrc = existsSync(lifecycleFile) ? readFileSync(lifecycleFile, "utf8") : "";
-  ok(
-    /async function refreshDynamicSessionToolsForRuntimeRevision\(e\)\{[^]*?await contextStorage\.run\(e\.ctx,async\(\)=>await resolveToolsFromEvent\(e\.ctx,a,e\.event,e\.messages\)\);e\.ctx\.set\(SessionDynamicToolMetadataKey/.test(lifecycleSrc),
-    `scope: ${where} carries patch part 9 (OPE-2106, the session-scoped resolver re-run inside contextStorage.run) — an unpatched copy re-runs every session.started resolver outside eve's context in a fresh process, so a delegated worker binds to subagent/…/unresolved, its gated tools do not re-register, and its next gated call fails "not registered in this process" (measured on board #238, S-PR-SESSION)`,
+    !src.includes("__oeThrowEmptyResponseUnlessTerminal") && !src.includes("__oeEmptyStepTerminalPatched") && src.includes("throw new EmptyModelResponseError;"),
+    `copies: ${where} carries NO empty-step terminal guard (part 5, OPE-762) — it RETIRED at OPE-2252 onto eve's native \`endsTurn\`, so eve's own \`EmptyModelResponseError\` throws must be pristine. A re-roll that ports it back re-arms a scan with no producer`,
   );
   const boundaryFile = join(eveDir, AUTHORED_PACKAGE_BOUNDARY);
   ok(
@@ -315,25 +311,24 @@ for (const eveDir of copies) {
     !compactionSrc.includes("__oeAnchoredConfig(") && !compactionSrc.includes("__oeNoteNoOpCompaction("),
     `adjust: ${where} carries NO part-3 helper — the hunk is retired, and a re-roll that ports it back would patch upstream's fix on top of itself`,
   );
-  const pnpmDir = join(eveDir, "dist", "src", "node_modules", ".pnpm");
+  const compiledZodDir = join(eveDir, "dist", "src", "compiled", "zod");
   ok(
-    existsSync(pnpmDir),
-    `zod: ${where}/dist/src/node_modules/.pnpm exists — that is where eve vendors the zod behind \`#compiled/zod\`. If eve stopped vendoring (or moved the directory), re-read dist/src/tools/schema.js and re-derive which zod rehydrates an MCP inputSchema before relaxing this gate (OPE-1751)`,
+    existsSync(compiledZodDir),
+    `zod: ${where}/dist/src/compiled/zod exists — that is where eve vendors the zod behind \`#compiled/zod\` as of 0.66.0. If eve moved or dropped the bundle, re-read dist/src/tools/schema.js and re-derive which zod builds a tool schema before relaxing this gate (OPE-1751)`,
   );
-  const vendoredZod4 = existsSync(pnpmDir)
-    ? readdirSync(pnpmDir)
-        .filter((d) => /^zod@4\./.test(d))
-        .map((d) => d.slice("zod@".length))
-        .sort()
-    : [];
+  const toolSchemaFile = join(eveDir, "dist", "src", "tools", "schema.js");
   ok(
-    vendoredZod4.length === 1,
-    `zod: ${where} vendors exactly ONE zod v4 under dist/src/node_modules/.pnpm — found ${vendoredZod4.length === 0 ? "none" : vendoredZod4.join(", ")}. \`#compiled/zod\` is the v4 copy (it exports fromJSONSchema); with two of them this gate cannot say which one rehydrates a tool schema (OPE-1751)`,
+    existsSync(toolSchemaFile),
+    `zod: ${where}/dist/src/tools/schema.js exists — it is the module that decides what a tool schema becomes before the model call, and the whole OPE-1751 derivation reads it`,
   );
-  const eveVendoredZod = vendoredZod4[0];
+  const zodRehydrators = eveSourceFiles(eveDir).filter((rel) => readFileSync(join(eveDir, rel), "utf8").includes("fromJSONSchema"));
   ok(
-    typeof eveVendoredZod === "string" && rootZodVersion === eveVendoredZod,
-    `zod: root zod ${rootZodVersion} != eve's vendored zod ${eveVendoredZod ?? "unknown"} — every session that mounts a connector tool with an allOf dies (OPE-1751). Pin the root zod to ${eveVendoredZod ?? "eve's vendored version"} exactly: the version in every package.json that declares zod AND the root \`overrides.zod\`, which is what stops npm nesting a private copy for the packages that pin zod exactly (@agent-browser/eve, @vercel/cli-config). Then \`npm install\` and confirm \`npm ls zod\` shows one version and exits 0`,
+    zodRehydrators.length === 0,
+    `zod: no eve module outside dist/src/compiled/ calls \`fromJSONSchema\` — found ${zodRehydrators.join(", ")}. eve 0.66.0 passes tool schemas only as JSON Schema, which is what makes the root-vs-vendored zod skew unreachable through the tool path; a caller coming back means OPE-1751's version-equality rule must be restored, with a readable version for eve's vendored copy`,
+  );
+  ok(
+    /^4\./.test(rootZodVersion),
+    `zod: the root zod is a v4 (found ${rootZodVersion}) — \`overrides.zod\` pins it for every package that declares zod exactly (@agent-browser/eve, @vercel/cli-config), which is what stops npm nesting a private copy. Confirm with \`npm ls zod\`: one version, exit 0 (OPE-1751)`,
   );
   for (const dead of RETIRED) {
     ok(
@@ -360,5 +355,5 @@ for (const eveDir of copies) {
 }
 
 console.log(
-  `\n✓ eve-install-integrity: ${n} assertions passed (${pins.length} pins all @${pinned}, patch file present, ${copies.length} installed cop${copies.length === 1 ? "y carries" : "ies carry"} the OE projection hook, the compaction event-contract stamp, a PRISTINE compaction.js (part 3 retired), all ${CARRIAGE.length} turnPolicy restore hunks and all ${SEMANTICS.length} HITL-answer semantics, and none of the ${RETIRED.length} retired symbols; root zod @${rootZodVersion} matches eve's vendored zod)\n`,
+  `\n✓ eve-install-integrity: ${n} assertions passed (${pins.length} pins all @${pinned}, patch file present, ${copies.length} installed cop${copies.length === 1 ? "y carries" : "ies carry"} the OE projection hook, the compaction event-contract stamp, a PRISTINE compaction.js (part 3 retired), all ${CARRIAGE.length} turnPolicy restore hunks and all ${SEMANTICS.length} HITL-answer semantics, and none of the ${RETIRED.length} retired symbols; root zod @${rootZodVersion}, and no eve module rehydrates a tool schema with eve's vendored zod)\n`,
 );

@@ -1463,8 +1463,21 @@ const store = makeOperationalPostgresStore(client);
     ok((await store.deleteGitHubInstallation("acme", "acme-org")) === true, "two-role: …and DELETE it (the uninstall delivery revokes for real)");
 
     await store.setSessionApproval({ org: "acme", sessionId: "sess-1", kind: "pr.open", grantedBy: "U1", createdAt: "2026-07-28T00:00:00Z", expiresAt: "2026-07-29T00:00:00Z" });
-    ok((await store.getSessionApproval("acme", "sess-1", "pr.open", "2026-07-28T01:00:00Z"))?.grantedBy === "U1", "two-role: the runtime role can write + read pr_session_approval (the \"Approve for session\" path)");
+    ok((await store.getSessionApproval("acme", "sess-1", "pr.open", "2026-07-28T01:00:00Z"))?.grantedBy === "U1", "two-role: the runtime role can write + read pr_session_approval (the \"Approve for this routine\" path)");
     ok((await store.revokeSessionApprovals("acme", "sess-1")) === 1, "two-role: …and revoke it (OPE-152 — withdrawing a standing routine grant is a real DELETE)");
+    for (const sid of ["oe-grant:slack/T1/C1:thread:1.1", "oe-grant:slack/T1/C1:thread:1.2", "oe-grant:slack/T1/CX:thread:1.1"]) {
+      await store.setSessionApproval({ org: "acme", sessionId: sid, kind: "pr.open", grantedBy: "U1", createdAt: "2026-07-28T00:00:00Z", expiresAt: "2026-07-29T00:00:00Z" });
+    }
+    ok((await store.revokeSessionApprovalsByPrefix("acme", "oe-grant:slack/T1/C_:")) === 0, "two-role: 🔴 a LIKE metacharacter in the revoke prefix widens nothing (OPE-2363)");
+    ok((await store.revokeSessionApprovalsByPrefix("acme", "oe-grant:slack/T1/C1:")) === 2, "two-role: …the room prefix deletes both of its threads (OPE-2363)");
+    ok((await store.getSessionApproval("acme", "oe-grant:slack/T1/CX:thread:1.1", "pr.open", "2026-07-28T01:00:00Z")) !== null, "two-role: …and leaves the neighbour room's grant alone");
+    let emptyRefused = false;
+    try {
+      await store.revokeSessionApprovalsByPrefix("acme", "");
+    } catch {
+      emptyRefused = true;
+    }
+    ok(emptyRefused, "two-role: …and an EMPTY prefix is refused rather than revoking every memo of the org");
 
     await denied("DROP POLICY audit_select ON audit_entry", "must be owner", "two-role: DROP POLICY is refused (not owner)");
     await denied("ALTER TABLE audit_entry DISABLE ROW LEVEL SECURITY", "must be owner", "two-role: DISABLE ROW LEVEL SECURITY is refused (not owner)");

@@ -24,18 +24,90 @@ export function wakeIdFromPrompt(messages: readonly { readonly text: string }[])
   return found;
 }
 
+const WORK_RESULT_TRIGGER = /\bid="work-result-[^"]+"/;
+const FOR_WAKE_LINE = /^[ \t]*for wake (\S+)[ \t]*$/m;
+
+export function legWakeIdFromPrompt(messages: readonly { readonly text: string }[]): string | undefined {
+  let found: string | undefined;
+  let tail = "";
+  for (const m of messages) {
+    for (const match of m.text.matchAll(/<wake\b[^>]*\bwake-id="([^"]+)"/g)) {
+      found = match[1];
+      tail = m.text.slice(match.index ?? 0);
+    }
+  }
+  if (found === undefined || !WORK_RESULT_TRIGGER.test(tail)) return found;
+  const note = tail.lastIndexOf("<system-note");
+  return note < 0 ? found : (FOR_WAKE_LINE.exec(tail.slice(note))?.[1] ?? found);
+}
+
+const STARTED_TASK = /\bStarted task ([^\s.]+)\./u;
+
+const STARTED_TASK_ALL = /\bStarted task ([^\s.]+)\./gu;
+
+const SENT_TO_TASK = /\bSent to task ([^\s.]+)\./u;
+
+const TASK_RESULT_BLOCK = /<task_result id="([^"]*)" tool="([^"]*)" status="(completed|failed)">/gu;
+
+const TASK_RESULT_BLOCK_MARKER = '<task_result id="';
+
+export function taskIdFromReceipt(output: unknown): string | undefined {
+  if (typeof output === "object" && output !== null) {
+    const field = (output as { readonly taskId?: unknown }).taskId;
+    if (typeof field === "string" && field.length > 0) return field;
+  }
+  if (typeof output !== "string") return undefined;
+  return STARTED_TASK.exec(output)?.[1] ?? SENT_TO_TASK.exec(output)?.[1];
+}
+
+export interface TaskResultBlock {
+  readonly status: "completed" | "failed";
+  readonly taskId: string;
+  readonly tool: string;
+}
+
+export function taskResultsInPrompt(messages: readonly { readonly text: string }[]): TaskResultBlock[] {
+  const found: TaskResultBlock[] = [];
+  for (const message of messages) {
+    for (const [, taskId, tool, status] of message.text.matchAll(TASK_RESULT_BLOCK)) {
+      found.push({ status: status as "completed" | "failed", taskId: taskId as string, tool: tool as string });
+    }
+  }
+  return found;
+}
+
+export const TASK_FROM_RECEIPT = "<task-from-receipt>";
+
+export function taskIdFromPrompt(messages: readonly { readonly text: string }[]): string | undefined {
+  let found: string | undefined;
+  for (const message of messages) {
+    for (const match of message.text.matchAll(STARTED_TASK_ALL)) found = match[1];
+  }
+  return found;
+}
+
+export function taskResultDeliveryCount(messages: readonly { readonly text: string }[]): number {
+  let count = 0;
+  for (const message of messages) if (message.text.includes(TASK_RESULT_BLOCK_MARKER)) count += 1;
+  return count;
+}
+
 export const WAKE_FROM_REPORT = "<wake-from-report>";
 
 export function wakeIdFromReport(messages: readonly { readonly text: string }[]): string | undefined {
   let found: string | undefined;
   for (const m of messages) {
-    for (const match of m.text.matchAll(/^for wake ([^\s<>]+)[ \t]*$/gm)) found = match[1];
+    for (const match of m.text.matchAll(/^[ \t]*for wake ([^\s<>]+)[ \t]*(?:<\/task_result>[ \t]*)?$/gm)) found = match[1];
   }
   return found;
 }
 
 export function fillWakePlaceholder(input: unknown, wakeId: string | undefined): { readonly value: unknown; readonly unresolved: boolean } {
   return fillOnePlaceholder(input, WAKE_FROM_ENVELOPE, wakeId);
+}
+
+export function fillTaskPlaceholder(input: unknown, taskId: string | undefined): { readonly value: unknown; readonly unresolved: boolean } {
+  return fillOnePlaceholder(input, TASK_FROM_RECEIPT, taskId);
 }
 
 export function fillReportWakePlaceholder(input: unknown, wakeId: string | undefined): { readonly value: unknown; readonly unresolved: boolean } {
@@ -73,6 +145,14 @@ export function unresolvedWakePlaceholderFault(tool: string): string {
   );
 }
 
+export function unresolvedTaskPlaceholderFault(tool: string): string {
+  return (
+    `scripted model: step called "${tool}" with ${TASK_FROM_RECEIPT}, but the served prompt carries no ` +
+    "`Started task <id>` receipt. eve mints a task id at dispatch, so a step that asks for one must " +
+    "come AFTER the step whose call started the task."
+  );
+}
+
 export function unresolvedReportWakePlaceholderFault(tool: string): string {
   return (
     `scripted model: step called "${tool}" with ${WAKE_FROM_REPORT}, but no served message carries a ` +
@@ -91,14 +171,17 @@ export interface ScriptedStep {
   readonly calls?: readonly ScriptedCall[];
   readonly usage?: ScriptedUsage;
   readonly delayMs?: number;
+  readonly holdUntilCancelled?: boolean;
+  readonly onEmptyReissue?: ScriptedStep;
 }
 
 export interface SeatScript {
   readonly parent: readonly ScriptedStep[];
   readonly child?: readonly ScriptedStep[];
+  readonly work?: readonly ScriptedStep[];
 }
 
-export type ScriptedRole = "parent" | "child";
+export type ScriptedRole = "parent" | "child" | "work";
 
 export interface RecordedToolResult {
   readonly id: string;
@@ -127,6 +210,14 @@ export interface RecordedRequest {
   readonly fault?: string;
   readonly redriveSilence?: boolean;
   readonly foreignWakeSilence?: boolean;
+  readonly emptyReissue?: boolean;
+}
+
+export const EVE_EMPTY_REISSUE_NOTE = "Your previous reply was empty and was not delivered.";
+
+export function isEmptyResponseReissue(messages: readonly { readonly text: string }[]): boolean {
+  const last = messages.at(-1);
+  return last !== undefined && last.text.includes(EVE_EMPTY_REISSUE_NOTE);
 }
 
 export function nextScriptedRequestSequence(): number {
@@ -154,13 +245,48 @@ export interface ScriptedEntry {
   readonly requests: RecordedRequest[];
   readonly resolves: ResolveObservation[];
   readonly baselines: Record<string, number>;
+  readonly deliveryBaselines: Record<string, number>;
   readonly firstCallTurnByRole: Partial<Record<ScriptedRole, string>>;
   readonly firstCallWakeByRole: Partial<Record<ScriptedRole, string>>;
   readonly registeredAt: string;
   readonly epoch: number;
   readonly seq: number;
   readonly absorbsStragglers: boolean;
-  readonly holds: { released: boolean; cutShort: number };
+  readonly holds: ScriptedHolds;
+}
+
+export interface ScriptedHolds {
+  released: boolean;
+  cutShort: number;
+  cancelDelivered: number;
+  readonly wakers: Set<() => void>;
+}
+
+export function holdScriptedCall(holds: ScriptedHolds, step: ScriptedStep, signal: AbortSignal | undefined): Promise<void> {
+  const delayMs = step.delayMs;
+  if (typeof delayMs !== "number" || delayMs <= 0) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    let done = false;
+    const finish = (released: boolean): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      holds.wakers.delete(check);
+      signal?.removeEventListener("abort", check);
+      if (released) holds.cutShort += 1;
+      if (signal?.aborted === true) holds.cancelDelivered += 1;
+      resolve();
+    };
+    function check(): void {
+      if (!holds.released) return;
+      if (step.holdUntilCancelled === true && signal?.aborted !== true) return;
+      finish(true);
+    }
+    const timer = setTimeout(() => finish(false), delayMs);
+    holds.wakers.add(check);
+    signal?.addEventListener("abort", check);
+    check();
+  });
 }
 
 export const ANY_SESSION = "*";
@@ -321,6 +447,26 @@ export function isForeignWakeStraggler(check: ForeignWakeCheck): boolean {
   return check.ownerSeq !== check.seq;
 }
 
+export interface WorkSessionCall {
+  readonly seq: number;
+  readonly sessionId: string | undefined;
+  readonly turnId: string | undefined;
+}
+
+function workSessionCallLog(): Map<string, WorkSessionCall> {
+  return processRegistryMap<WorkSessionCall>("scripted-model-work-session-calls.v1");
+}
+
+export function noteWorkSessionCall(call: { readonly sessionId: string | undefined; readonly turnId: string | undefined }): void {
+  const log = workSessionCallLog();
+  const seq = log.size;
+  log.set(String(seq), { seq, ...call });
+}
+
+export function workSessionCalls(): readonly WorkSessionCall[] {
+  return [...workSessionCallLog().values()].sort((a, b) => a.seq - b.seq);
+}
+
 interface ForeignWakeSilence {
   readonly sessionId: string;
   readonly turnId: string;
@@ -366,6 +512,7 @@ export interface ScriptedHandle {
   dispose(): void;
   releaseHolds(): void;
   holdsCutShort(): number;
+  holdsCancelDelivered(): number;
 }
 
 function callerFrame(): string {
@@ -403,13 +550,14 @@ export function registerScript(script: SeatScript, sessionId: string = ANY_SESSI
     requests: [],
     resolves: [],
     baselines: {},
+    deliveryBaselines: {},
     firstCallTurnByRole: {},
     firstCallWakeByRole: {},
     registeredAt: callerFrame(),
     epoch: scriptedEpoch(),
     seq: nextRegistrationSeq(),
     absorbsStragglers: opts.absorbsStragglers === true,
-    holds: { released: false, cutShort: 0 },
+    holds: { released: false, cutShort: 0, cancelDelivered: 0, wakers: new Set() },
   };
   store.set(sessionId, entry);
   return {
@@ -417,8 +565,10 @@ export function registerScript(script: SeatScript, sessionId: string = ANY_SESSI
     resolves: entry.resolves,
     releaseHolds: () => {
       entry.holds.released = true;
+      for (const wake of [...entry.holds.wakers]) wake();
     },
     holdsCutShort: () => entry.holds.cutShort,
+    holdsCancelDelivered: () => entry.holds.cancelDelivered,
     dispose: () => {
       if (store.get(sessionId) === entry) {
         store.delete(sessionId);

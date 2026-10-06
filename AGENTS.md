@@ -32,12 +32,14 @@ Two ideas run through the whole design (see [Core concepts](./docs/introduction/
   database, surfaces) is a swappable **adapter**.
 - **Repo vs runtime.** Config lives in your git repo and deploys with it. Secrets, state, and
   spend live in the operational store and change at runtime.
-- **The conversational seat is lean; a worker does the work.** A standing/thread seat that can
-  delegate holds 14 tools (`packages/core/agent/access/lean-seat.ts`, `LEAN_SEAT_TOOLS`,
+- **The conversational seat is lean; a worker does the work.** A seat that can
+  delegate holds 16 tools at most, the lean roster (`packages/core/agent/access/lean-seat.ts`, `LEAN_SEAT_TOOLS`,
   enforced by deletion at the model-call seam). Everything else — every read, `bash`, every
   cross-surface write — is worker-only
-  (`packages/core/agent/access/worker-capability-index.generated.ts`). Operations are done by
-  subagents, not by the conversational agent.
+  (`packages/core/agent/access/worker-capability-index.generated.ts`). Each conversation runs on
+  three tiers: the conversation seat forwards a job with `work` and never waits, the
+  conversation's own **work session** starts a worker for the job with eve's `agent`, and the
+  worker does it. See [The three tiers](./docs/how-it-works/agent-and-loop.md#the-three-tiers-seat-work-session-worker).
 
 ---
 
@@ -59,7 +61,7 @@ open-everywhere/
 │   ├── memory/config/domains.ts #  memory domains + per-domain model routing
 │   ├── settings/settings.ts   #   ★ this deploy's BEHAVIOUR overrides (schema: packages/core/agent/settings/)
 │   ├── roles/roles.ts         #   role/persona preset library (bind via a domain's `role:`)
-│   ├── subagents/<name>/      #   declared subagents: own prompt + typed outputSchema, ZERO tools
+│   ├── subagents/<name>/      #   declared subagents: own prompt, ZERO tools (no outputSchema — see below)
 │   ├── connections/*.ts       #   host-side connector definitions (e.g. notion)
 │   ├── spend/, skills/, ...    #  per-deploy config for the corresponding core subsystem
 │   └── lib/register-*.ts      #   boot-time registration of app config + adapters into core
@@ -417,13 +419,19 @@ specific guide:
   point; a skill is the lighter choice otherwise. See
   [Declared subagents](./docs/capabilities/skills-and-plugins.md#declared-subagents-the-specialist-unit).
   It inherits **nothing** (an empty slot falls back to the framework default, not to the root's),
-  so it ships with its own instructions, a typed `outputSchema` from
-  `packages/core/agent/subagents/contracts.ts`, a `disableTool()` sentinel per framework tool — or
-  an authored no-op replacement in a slot eve refuses to let an app disable (`connection_search`,
-  since eve 0.52.0) — and
-  its own `hooks/spend.ts`. `npm run lint:subagents` pins all four and says which slot takes which
-  treatment; `npm run test:subagent-zero-hands` pins that a replacement's import surface stays
-  closed and its body stays constant. The name also needs a row
+  so it ships with its own instructions, a `disableTool()` sentinel per default-mounted framework
+  tool, and its own `hooks/spend.ts`. A RESERVED slot carries nothing: eve 0.69.0 and later throw on any
+  authored module at `connection_search`, `connection_execute` or `connection_tools`, so do not write
+  a sentinel or a no-op replacement there. `npm run lint:subagents` (in the `test` chain) pins these
+  rules: no authored `outputSchema`, its own instructions file, a sentinel per default-mounted slot,
+  nothing authored at a reserved slot, and its own spend hook. OPE-2254 re-derived its reader on eve's
+  reserved slots, so it runs on the eve 0.71.0 pin. `npm run test:subagent-zero-hands` covers the
+  sentinel set a second time against the real subagent tree, and it pins that eve still scopes its
+  connection registry to the active node, which is what keeps a subagent declaring no connections
+  connector-free. 🔴 Do NOT author `outputSchema`: eve 0.67.0 removed it from
+  `defineAgent`, so it is a typecheck error, and a schema is requested per turn by the caller instead.
+  `packages/core/agent/subagents/contracts.ts` still holds the result contracts for the re-derivation
+  (OPE-2250). The name also needs a row
   in `packages/core/agent/access/consequence.ts` **and**
   `packages/core/agent/access/window-gate-manifest.ts`.
 - **Change access/capability config** — edit `agent/access/bundles.ts` (config-as-code, reviewed
@@ -480,8 +488,9 @@ specific guide:
 ## Conventions
 
 - **One word, one meaning — use [`docs/glossary.md`](./docs/glossary.md).** The **seat** is the
-  narrow conversational session (14 tools); the **worker** is the wide delegated child (seat + 82,
-  including `bash` and `write_file`); a top-level session does its real work by delegating. Never
+  narrow conversational session (16 tools); the **work session** is the one session per
+  conversation that runs its jobs; the **worker** is the wide delegated child (seat + 84, including
+  `bash` and `write_file`). A conversation seat does its real work by forwarding it with `work`. Never
   write a bare "agent" for a running session. The glossary cites the code for every term — read
   that code before you assert what a run can do.
 - **TypeScript + ESM.** `"type": "module"` in every package; use `.js` import specifiers for

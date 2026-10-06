@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 
+import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
 import { getOperationalStore } from "@open-everywhere/core/agent/operational/provider.js";
 import {
@@ -11,6 +12,7 @@ import {
 
 import {
   auditCursor,
+  awaitWorkResult,
   bootAgent,
   DISCORD_LISTED_CHANNEL_ID,
   discordMentionWake,
@@ -18,6 +20,7 @@ import {
   seatReply,
   rowsSinceCursor,
   waitFor,
+  workTaskIdOfCall,
 } from "../harness";
 
 test("a real window rotation terminally retires the outgoing generation, and leaves the incoming one alone", async () => {
@@ -26,7 +29,7 @@ test("a real window rotation terminally retires the outgoing generation, and lea
   const store = getOperationalStore();
   const cursor = await auditCursor();
 
-  const first = registerScript({ parent: [seatReply("generation one, answering", "ope627-gen1"), { say: "NO_REPLY" }] });
+  const first = registerScript({ parent: [seatReply("generation one, answering", "ope627-gen1")] });
   await discordMentionWake({
     channelId: DISCORD_LISTED_CHANNEL_ID,
     text: "<@9000000000000000001> open the window",
@@ -100,16 +103,20 @@ test("a rotation SKIPS a generation that still owes a live delegation, and does 
   const cursor = await auditCursor();
 
   const dispatch = registerScript({
-    parent: [{ calls: [{ tool: "agent", input: { message: "look this up and report back" }, id: "ope1620-delegate" }] }, { say: "NO_REPLY" }],
-    child: [{ delayMs: 45_000, say: "the worker's answer" }],
+    parent: [{ calls: [{ tool: "work", input: { message: "look this up and report back" }, id: "ope1620-delegate" }] }, { say: NO_REPLY_SENTINEL }],
+    child: [{ delayMs: 120_000, say: "the worker's answer" }],
   });
   await discordMentionWake({
     channelId: DISCORD_LISTED_CHANNEL_ID,
     text: "<@9000000000000000001> look something up for me",
     messageId: "ope1620-owed-wake-1",
   });
+  const receiptStep = await waitFor(() => dispatch.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the dispatch turn's receipt step");
   await waitFor(() => dispatch.requests.find((r) => r.role === "child"), "the delegated worker's own model call — the worker really started");
   expect(dispatch.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  const outgoingSessionId = String(receiptStep.sessionId);
+  const taskId = await workTaskIdOfCall(cursor, dispatch, "ope1620-delegate", "the OPE-1620 forward");
+  const resultSeat = registerScript({ parent: [{ say: NO_REPLY_SENTINEL }] }, outgoingSessionId);
 
   const seated = await waitFor(async () => {
     const rows = await store.listChannelSessions(org, "oe-domain::");
@@ -120,13 +127,11 @@ test("a rotation SKIPS a generation that still owes a live delegation, and does 
 
   await waitFor(async () => ((await generationOwedDelegation(org, outgoingToken)) === "owed" ? true : undefined), "the generation's owed-delegation ledger row");
 
-  expect(await store.markChannelSessionRotation(org, registryKey, new Date().toISOString())).toBe(true);
   await waitFor(async () => {
-    for (const key of [outgoingToken, `unified:${outgoingToken}`]) {
-      if (await store.getTurnAnchorByWindow(org, key)) return undefined;
-    }
-    return true as const;
-  }, "the outgoing generation's turn anchor to clear");
+    const anchors = await Promise.all([outgoingToken, `unified:${outgoingToken}`].map((key) => store.getTurnAnchorByWindow(org, key)));
+    return anchors.every((a) => a === null || a === undefined) ? true : undefined;
+  }, "the forwarding seat's turn to end, so no live anchor guards the outgoing generation");
+  expect(await store.markChannelSessionRotation(org, registryKey, new Date().toISOString())).toBe(true);
 
   dispatch.dispose();
   const rotating = registerScript({ parent: [{ say: "NO_REPLY" }], child: [{ say: "the worker's answer" }] });
@@ -135,7 +140,8 @@ test("a rotation SKIPS a generation that still owes a live delegation, and does 
     text: "<@9000000000000000001> and again",
     messageId: "ope1620-owed-wake-2",
   });
-  await waitFor(() => rotating.requests.find((r) => r.role === "parent"), "the rotating generation's model call");
+  const rotatingCall = await waitFor(() => rotating.requests.find((r) => r.role === "parent"), "the rotating generation's model call");
+  expect(String(rotatingCall.sessionId)).not.toBe(outgoingSessionId);
 
   const skipped = await waitFor(async () => {
     const rows = (await rowsSinceCursor(cursor, [GENERATION_RETIRE_SKIPPED_AUDIT_ACTION])).filter(
@@ -150,6 +156,13 @@ test("a rotation SKIPS a generation that still owes a live delegation, and does 
 
   dispatch.releaseHolds();
   await waitFor(async () => ((await generationOwedDelegation(org, outgoingToken)) === "none" ? true : undefined), "the settlement to clear the generation's owed-delegation row");
+  const resultStep = await awaitWorkResult({ handle: rotating, taskId, label: "the incoming seat's step that read the worker's result" });
+  expect(resultStep.sessionId).toBe(rotatingCall.sessionId);
+  expect(resultStep.sessionId).not.toBe(outgoingSessionId);
+  expect(resultStep.turnId).not.toBe(rotatingCall.turnId);
+  expect(resultSeat.requests).toEqual([]);
+  expect(rotating.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  resultSeat.dispose();
   rotating.dispose();
 
   const live = await store.getChannelSession(org, registryKey);

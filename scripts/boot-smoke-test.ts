@@ -365,22 +365,22 @@ for (const [rel, mod] of loaded) {
   const { getSettings } = await import("@open-everywhere/core/agent/settings/settings.js");
   const settings = getSettings();
   const declared: [string, unknown, unknown][] = [
-    ["approvals.judgeMode", settings.approvals.judgeMode, "off"],
     ["window.topology", settings.window.topology, false],
     ["connectors.dmOnly", settings.connectors.dmOnly, true],
     ["connectors.userPrincipal", settings.connectors.userPrincipal, false],
     ["connectors.opTiering", settings.connectors.opTiering, false],
     ["browser.enabled", settings.browser.enabled, false],
     ["identity.name", settings.identity.name, ""],
+    ["identity.shortName", settings.identity.shortName, ""],
   ];
   const expected: Record<string, unknown> = {
-    "approvals.judgeMode": "enforce",
     "window.topology": true,
     "connectors.dmOnly": false,
     "connectors.userPrincipal": true,
     "connectors.opTiering": true,
     "browser.enabled": true,
     "identity.name": "Open Everywhere",
+    "identity.shortName": "oe",
   };
   for (const [key, live, shipped] of declared) {
     if (live !== expected[key]) {

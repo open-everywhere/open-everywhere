@@ -134,7 +134,7 @@ const hookModules = coreSources(join(ROOT, "packages/core/agent")).filter((f) =>
 for (const exempt of HOOK_EXEMPT.keys()) {
   ok(hookModules.includes(exempt), `${rel(exempt)} is exempt but the scan no longer finds it — drop the stale exemption`);
 }
-ok(hookModules.length >= 4, `the scan finds the three preloaded global-hook modules and the exempt one (found ${hookModules.length})`);
+ok(hookModules.length >= 2, `the scan finds the preloaded global-hook module and the exempt one (found ${hookModules.length})`);
 const direct = new Set(
   staticSpecifiers(readFileSync(HARNESS, "utf8"))
     .map((s) => resolveSpecifier(HARNESS, s))

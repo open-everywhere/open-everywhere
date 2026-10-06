@@ -1,9 +1,10 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, posix, relative, sep } from "node:path";
 import type { Partition } from "./partition.js";
 import { safeName, seedFor, tierRelDir } from "./layout.js";
+import { agentDisplayName } from "../identity/bot-name.js";
 
 export type MemoryFiles = Record<string, string>;
 
@@ -46,7 +47,7 @@ function ensureRepo(): void {
   if (existsSync(join(ROOT, ".git"))) return;
   if (!git(["init", "--quiet"], ROOT).ok) return;
   git(["config", "user.email", "open-everywhere@local"], ROOT);
-  git(["config", "user.name", "OpenEverywhere"], ROOT);
+  git(["config", "user.name", agentDisplayName()], ROOT);
 }
 
 async function readDir(dir: string): Promise<MemoryFiles> {
@@ -62,6 +63,46 @@ async function readDir(dir: string): Promise<MemoryFiles> {
   }
   await walk(dir);
   return out;
+}
+
+const STAGING_DIR = ".oe-staging";
+let stagedWrites = 0;
+
+let stagingSwept = false;
+
+function processIsLive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+async function sweepAbandonedStaging(staging: string): Promise<void> {
+  if (stagingSwept) return;
+  stagingSwept = true;
+  for (const name of await readdir(staging)) {
+    const pid = Number(name.split("-")[0]);
+    if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid || processIsLive(pid)) continue;
+    await rm(join(staging, name), { force: true });
+  }
+}
+
+async function writeFileAtomic(abs: string, content: string): Promise<void> {
+  const staging = join(ROOT, STAGING_DIR);
+  await mkdir(staging, { recursive: true });
+  await sweepAbandonedStaging(staging).catch((err: unknown) => {
+    console.error(`[open-everywhere:memory] staging sweep skipped (the write continues): ${String(err)}`);
+  });
+  const staged = join(staging, `${process.pid}-${++stagedWrites}`);
+  try {
+    await writeFile(staged, content, "utf-8");
+    await rename(staged, abs);
+  } catch (err) {
+    await rm(staged, { force: true });
+    throw err;
+  }
 }
 
 function commit(relDir: string, message: string): string | null {
@@ -95,7 +136,7 @@ export async function ensureTier(p: Partition, tier: Tier): Promise<MemoryFiles>
   for (const [rel, content] of Object.entries(seed)) {
     const abs = join(dir, ...rel.split("/"));
     await mkdir(dirname(abs), { recursive: true });
-    await writeFile(abs, content, "utf-8");
+    await writeFileAtomic(abs, content);
   }
   commit(storeRelDir(p, tier), `seed ${tier} memory for ${storeRelDir(p, tier)}`);
   return seed;
@@ -113,7 +154,7 @@ export async function writeTier(
   for (const [rel, content] of Object.entries(files)) {
     const abs = join(dir, ...rel.split("/"));
     await mkdir(dirname(abs), { recursive: true });
-    await writeFile(abs, content, "utf-8");
+    await writeFileAtomic(abs, content);
   }
   return commit(storeRelDir(p, tier), message);
 }
@@ -132,6 +173,10 @@ export async function deleteFile(p: Partition, tier: Tier, relPath: string): Pro
   if (!existsSync(abs)) return null;
   await rm(abs, { force: true });
   return commit(storeRelDir(p, tier), `delete ${relPath} from ${tierId(tier)} memory for ${storeRelDir(p, tier)}`);
+}
+
+export function __resetStagingSweepForTest(): void {
+  stagingSwept = false;
 }
 
 export function storeRoot(): string {

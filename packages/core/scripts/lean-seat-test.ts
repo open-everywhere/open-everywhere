@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-lean-seat-")), "ops.sqlite3");
 
-import { LEAN_SEAT_TOOLS, allowedOnLeanSeat, resolveLeanSeatPosture, restrictToolsetForLeanSeat, withheldFromLeanSeat } from "../agent/access/lean-seat.js";
+import { LEAN_SEAT_TOOLS, WORK_FORWARD_TOOL, WORK_SESSION_TOOLS, allowedOnLeanSeat, resolveLeanSeatPosture, restrictToolsetForLeanSeat, restrictToolsetForWorkSession, withheldFromLeanSeat } from "../agent/access/lean-seat.js";
 import { setLeanSeatWake, currentLeanSeatPosture } from "../agent/access/lean-seat-state.js";
 import { WORKER_WITHHELD_TOOLS, allowedOnWorkerSeat, chatArmGrain, restrictToolsetForWorkerSeat } from "../agent/access/worker-seat.js";
 import { setWorkerWake, currentWorkerWake } from "../agent/access/worker-seat-state.js";
@@ -41,7 +41,7 @@ function removedBy(before: Record<string, unknown>, after: Record<string, unknow
     .sort();
 }
 
-const TASK_FAMILY = ["task_cancel"] as const;
+const TASK_FAMILY = ["task_cancel", "task_wait"] as const;
 
 const GRANT_TOOL = grantBorrowToolName("rowan", "notion", "notion_fetch_report");
 
@@ -74,7 +74,7 @@ for (const name of ["reply", "no_reply", "react", "update_status"]) {
 for (const name of ["agent", "spawn_thread_session", "complete_thread"]) {
   ok(allowedOnLeanSeat(name), `the lean roster keeps the delegation/lifecycle verb ${name} (the grain matrix still decides where it resolves)`);
 }
-for (const name of ["ask_question", "todo"]) {
+for (const name of ["ask_question"]) {
   ok(!allowedOnLeanSeat(name), `🔴 the lean roster still keeps ${name} — a standing seat that parks a turn stops answering everybody else in the room`);
   ok(!LEAN_SEAT_TOOLS.has(name), `…and ${name} is gone from the roster by NAME, not merely failing some other default`);
   ok(workerOnlyTools("standing").includes(name), `…while the seat is TOLD to route ${name}: without the index line it can only refuse a job that needs it`);
@@ -85,6 +85,10 @@ for (const name of ["task_cancel"]) {
   ok(allowedOnLeanSeat(name), `OPE-583: the lean roster keeps ${name} — the seat can stop work it itself delegated`);
   ok(LEAN_SEAT_TOOLS.has(name), `${name} is a NAMED LEAN_SEAT_TOOLS member, not merely surviving on a different default`);
 }
+ok(allowedOnLeanSeat("task_wait"), "🔴 OPE-2254: a delegating seat HOLDS task_wait — eve injects it and instructs it by name, so a per-wake filter that removed it would leave the model told to call a tool it does not have");
+ok(HARNESS_INTERNAL_TOOLS.has("task_wait"), "…and it survives as a HARNESS-INTERNAL name, which is what makes the same exemption apply at every per-wake filter that shares this seam");
+ok(!LEAN_SEAT_TOOLS.has("task_wait"), "…and NOT as a lean roster row: the roster is the seat's own kit, and this verb is eve's turn plumbing");
+ok(!allowedOnLeanSeat("bash"), "…and the negative control holds: `bash` is still refused, so the filter is default-deny rather than open");
 for (const [name, why] of [
   ["task_peek", "DELETED by eve 0.40.0 — the worker's output now arrives inline on the settlement notification, so no seat-side read verb exists to grant"],
   ["task_sleep", "DELETED by eve 0.42.0 — task-mode parents rely on lifecycle notifications instead of model-paced waits"],
@@ -105,6 +109,7 @@ const mustBeRelocated: readonly [string, string][] = [
   ["read_linear_issue", "cross-surface read"],
   ["read_file_upload", "worker-side; the durable attachment mirror resolves the id cross-process"],
   ["get_pr_feedback", "PR read"],
+  ["read_github_issue", "cross-surface read (OPE-2305)"],
   ["check_pr_status", "PR read"],
   ["set_state", "ticket mutation — belongs to the worker handling the task"],
   ["assign", "ticket mutation"],
@@ -230,7 +235,11 @@ for (const name of ["no_reply", "stand_down"]) {
 }
 ok(
   WINDOW_UNGATED_TOOLS.has("ask_question"),
-  "ask_question stays a MOUNT-time ungated row: the narrowing is per-wake, and a grain row is not even available — manifest rule 4 needs a windowGatedKit to re-provide a framework tool, and eve exports no ask_question definition to re-provide",
+  "ask_question stays a MOUNT-time ungated row: the narrowing is per-wake, and the tool is OE's own static mount of eve's opt-in definition (packages/core/agent/tools/ask_question.ts), so a grain matrix would have to come from a windowGatedKit resolver that nothing provides",
+);
+ok(
+  existsSync(join(dirname(fileURLToPath(import.meta.url)), "..", "agent", "tools", "ask_question.ts")),
+  "🔴 OPE-2254: packages/core/agent/tools/ask_question.ts EXISTS — eve stopped default-mounting the name at 0.65, so an app that authors nothing mounts nothing, and every claim above about a worker holding it would be false",
 );
 
 function makeToolset(): Record<string, { description: string; execute: () => unknown }> {
@@ -256,10 +265,10 @@ function makeToolset(): Record<string, { description: string; execute: () => unk
   const before = { ...toolset };
   const removed = restrictToolsetForLeanSeat(toolset);
   const survivors = new Set(Object.keys(toolset));
-  const expected = new Set<string>([...[...LEAN_SEAT_TOOLS].filter((k) => k in before), "final_output"]);
+  const expected = new Set<string>([...[...LEAN_SEAT_TOOLS, ...HARNESS_INTERNAL_TOOLS].filter((k) => k in before)]);
   ok(
     survivors.size === expected.size && [...expected].every((k) => survivors.has(k)),
-    `the lean toolset is EXACTLY the conversational roster + the harness sink (got ${[...survivors].sort().join(",")})`,
+    `the lean toolset is EXACTLY the conversational roster + the harness-internal names (got ${[...survivors].sort().join(",")})`,
   );
   ok(!survivors.has(GRANT_TOOL), `this chat's mounted grant (${GRANT_TOOL}) is REMOVED from a lean seat's toolset — the seat delegates the lent tool to a worker`);
   ok(removed.includes(GRANT_TOOL), "…and it is REPORTED as removed, so the audit row names what the seat gave up rather than losing it silently");
@@ -336,7 +345,7 @@ inSession(() => {
   const toolset = makeToolset();
   const before = { ...toolset };
   projectToolSet(toolset as unknown as Record<string, unknown>);
-  eq(removedBy(before, toolset), [], "an unmarked wake's toolset is unchanged by OPE-301, and there is no longer a child-only verb to lose (eve 0.54.1 removed `task_update`)");
+  eq(removedBy(before, toolset), ["ask_room", "cancel_work", "work"], "an unmarked wake's toolset is unchanged by OPE-301 except the three-tier `work` verb, its stop `cancel_work` (OPE-2338, D15) and the work-session child's question card `ask_room` (OPE-2340), and there is no longer a child-only verb to lose (eve 0.54.1 removed `task_update`)");
   ok(GRANT_DECOYS.every((d) => d in toolset), "…and every grant look-alike SURVIVES an unmarked wake — nothing but the lean filter removes them");
 });
 
@@ -346,7 +355,7 @@ inSession(() => {
   const beforeSet = { ...toolset };
   projectToolSet(toolset as unknown as Record<string, unknown>);
   ok(!("agent" in toolset), "…while the delegation verdict fails CLOSED outside a context (unclassified ⇒ deny)");
-  eq(removedBy(beforeSet, toolset), ["agent", ...TASK_FAMILY].sort(), "a context-less projectToolSet call withholds nothing from the LEAN plane — only the fail-closed `agent` and the task family that follows it (OPE-564)");
+  eq(removedBy(beforeSet, toolset), ["agent", ...TASK_FAMILY, "ask_room", "cancel_work", "work"].sort(), "a context-less projectToolSet call withholds nothing from the LEAN plane — only the fail-closed `agent`, the task family that follows it (OPE-564), and the three-tier `work` verb with its stop `cancel_work` (OPE-2338, D15)");
 }
 
 inSession(() => {
@@ -541,11 +550,29 @@ ok(leanPreview.member.length === 0 || leanPreview.member.every((t) => allowedOnL
 const dmPreview = approvalPreviewFor("standing", undefined, undefined, undefined, "none");
 ok(dmPreview.member.includes("purge_memory"), "a NON-delegating standing seat's preview still holds `purge_memory` — the preview never contradicts the filter");
 
-ok(HARNESS_INTERNAL_TOOLS.size === 1 && HARNESS_INTERNAL_TOOLS.has("final_output"), "the harness-internal set is exactly { final_output } — eve's structured-output sink");
+ok(
+  HARNESS_INTERNAL_TOOLS.size === 2 && HARNESS_INTERNAL_TOOLS.has("final_output") && HARNESS_INTERNAL_TOOLS.has("task_wait"),
+  `the harness-internal set is exactly { final_output, task_wait } — eve's structured-output sink and eve's own park verb, which its task system block instructs by name (got ${[...HARNESS_INTERNAL_TOOLS].sort().join(",")})`,
+);
 for (const name of HARNESS_INTERNAL_TOOLS) {
   ok(allowedOnLeanSeat(name), `the lean filter admits harness-internal "${name}" (a lean turn must still be able to return)`);
   ok(allowedOnRestrictedJobWake(name), `the job filter admits the SAME harness-internal "${name}" — one list, so the two cannot drift`);
 }
 ok(!allowedOnLeanSeat("final_output_sink") && !allowedOnRestrictedJobWake("final_output_sink"), "a name outside the harness-internal set is withheld by BOTH filters");
+
+ok(
+  WORK_SESSION_TOOLS.size === 2 && WORK_SESSION_TOOLS.has("agent") && WORK_SESSION_TOOLS.has("task_cancel"),
+  `🔴 the work session's kit is exactly { agent, task_cancel } (got ${[...WORK_SESSION_TOOLS].sort().join(",")})`,
+);
+{
+  const toolset: Record<string, unknown> = { agent: {}, task_cancel: {}, task_wait: {}, final_output: {}, reply: {}, bash: {}, work: {}, connection_execute: {}, ask_question: {} };
+  const removed = restrictToolsetForWorkSession(toolset);
+  ok(
+    JSON.stringify(Object.keys(toolset).sort()) === JSON.stringify(["agent", "final_output", "task_cancel", "task_wait"]),
+    `the work-session cut keeps its kit plus the harness internals only (kept ${Object.keys(toolset).sort().join(",")})`,
+  );
+  ok(removed.includes("reply") && removed.includes("ask_question") && removed.includes("work") && removed.includes("bash"), "🔴 …and withholds `reply`, `ask_question`, `work` and `bash`: W speaks to no room, asks no person, forwards to nobody and touches no sandbox itself");
+}
+ok(LEAN_SEAT_TOOLS.has(WORK_FORWARD_TOOL) && WORK_FORWARD_TOOL === "work", "the forwarding seat's verb `work` is on the lean seat roster");
 
 console.log(`\n✓ lean-seat (OPE-301 + the OPE-420 worker subtraction): ${n} assertions passed (posture truth table, roster membership, toolset filter, live-context wiring incl. job mutual-exclusion, execute backstop, derived surfaces)\n`);

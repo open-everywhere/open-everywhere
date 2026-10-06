@@ -9,8 +9,16 @@ export type AudienceFloor = "guest" | "member" | "admin";
 export interface RoomRoster {
   readonly humanMemberIds: readonly string[];
   readonly resolved: boolean;
+  readonly unresolvedState?: UnresolvedRosterState;
   readonly isPrivate: boolean;
   readonly hasGuest: boolean;
+}
+
+export type UnresolvedRosterState = "unobservable" | "failed";
+
+export function rosterState(roster: RoomRoster): "resolved" | UnresolvedRosterState {
+  if (roster.resolved) return "resolved";
+  return roster.unresolvedState === "failed" ? "failed" : "unobservable";
 }
 
 export function computeAudienceFloor(roster: RoomRoster, admins: ReadonlySet<string>): AudienceFloor {
@@ -91,6 +99,7 @@ const rosterCache = new Map<string, CachedRoster>();
 const UNRESOLVED_ROSTER: RoomRoster = Object.freeze({
   humanMemberIds: Object.freeze([]) as readonly string[],
   resolved: false,
+  unresolvedState: "unobservable",
   isPrivate: false,
   hasGuest: false,
 });
@@ -109,12 +118,18 @@ export interface AudienceFloorResolution {
   readonly roster: RoomRoster;
 }
 
+export const UNRESOLVED_ROSTER_TTL_MS = 30_000;
+
 export async function resolveRoomRoster(channelKey: string): Promise<RoomRoster> {
   const cached = rosterCache.get(channelKey);
-  if (cached && Date.now() - cached.at < floorTtlMs()) return cached.roster;
+  if (cached && Date.now() - cached.at < rosterTtlMs(cached.roster)) return cached.roster;
   const roster = (await governanceMemberSupplier()(channelKey)) ?? UNRESOLVED_ROSTER;
   rosterCache.set(channelKey, { roster, at: Date.now() });
   return roster;
+}
+
+function rosterTtlMs(roster: RoomRoster): number {
+  return roster.resolved ? floorTtlMs() : Math.min(floorTtlMs(), UNRESOLVED_ROSTER_TTL_MS);
 }
 
 export async function resolveAudienceFloor(

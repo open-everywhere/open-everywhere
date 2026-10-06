@@ -1,4 +1,4 @@
-import { attestedFireCreatorId, authPrincipalId, bindFrom, currentTurnId, type BindableContext } from "../identity/binding.js";
+import { attestedFireCreatorId, authPrincipalId, bindFrom, currentTurnId, fireResultCreatorId, SCHEDULE_APP_PRINCIPAL_ID, workResultFrozenBinding, type BindableContext } from "../identity/binding.js";
 import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { appendAudit } from "../audit/audit.js";
 import { swallowRoomPost } from "./egress-spoof.js";
@@ -6,7 +6,7 @@ import { postArm } from "./post-arms.js";
 import { outboundKey, postOnce } from "../operational/post-once.js";
 import { withReplierPrefix, truncateMemoryCitationPaths, type ReplierLabel } from "./turn-delivery.js";
 import { recordOwnPost } from "./own-post-ledger.js";
-import { resolvePartition } from "../memory/partition.js";
+import { partitionOfBinding, resolvePartition } from "../memory/partition.js";
 import type { EditLocus } from "./reply-edit.js";
 import { platformFailureClass, platformFailureStatus, type PlatformFailureClass } from "./platform-failure.js";
 import { recordPostTail } from "./session-tail-record.js";
@@ -59,16 +59,25 @@ export interface ReplyAudit {
 }
 
 export function replyAuditFor(ctx: BindableContext, route: ReplyAudit["route"], wakeId?: string): ReplyAudit {
-  const p = resolvePartition(ctx);
+  const resultBinding = workResultFrozenBinding(ctx);
+  const p = resultBinding !== undefined ? partitionOfBinding(resultBinding) : resolvePartition(ctx);
   const sessionId = (ctx as { session?: { id?: string } }).session?.id;
   const turnId = currentTurnId(ctx);
-  const creatorId = attestedFireCreatorId(ctx);
+  const attestedCreatorId = attestedFireCreatorId(ctx);
+  const creatorId = attestedCreatorId ?? fireResultCreatorId(ctx);
   return {
     org: p.org,
     platform: p.platform,
     workspace: p.workspace,
     surface: p.surface,
-    principalId: creatorId !== undefined ? (authPrincipalId(ctx) ?? bindFrom(ctx).principalId) : bindFrom(ctx).principalId,
+    principalId:
+      attestedCreatorId !== undefined
+        ? (authPrincipalId(ctx) ?? bindFrom(ctx).principalId)
+        : resultBinding !== undefined
+          ? resultBinding.principalAttested === true
+            ? SCHEDULE_APP_PRINCIPAL_ID
+            : resultBinding.principalId
+          : bindFrom(ctx).principalId,
     ...(creatorId ? { creatorId } : {}),
     ...(sessionId ? { sessionId } : {}),
     ...(wakeId ? { wakeId } : {}),

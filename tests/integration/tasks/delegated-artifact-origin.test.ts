@@ -3,7 +3,7 @@ import { expect, test } from "vitest";
 import {
   afterThisTest,
   auditCursor,
-  awaitTaskSettlement,
+  awaitWorkResult,
   bootAgent,
   disposeLater,
   installNotionApiStub,
@@ -12,13 +12,12 @@ import {
   registerScript,
   rowsSinceCursor,
   seedNotionChannelKey,
-  SETTLEMENT_DRAIN_SCRIPT,
   SLACK_TEAM_ID,
   slackMentionWake,
   slackTs,
-  taskIdOfDelegation,
   waitFor,
   waitForChildren,
+  workTaskIdOfCall,
   type RecordedRequest,
 } from "../harness";
 
@@ -46,7 +45,7 @@ function promptOf(request: RecordedRequest): string {
   return request.messages.map((message) => message.text).join("\n");
 }
 
-test("a delayed Slack worker posts its artifact to the original Slack thread after a later Notion turn", async () => {
+test("a delayed Slack worker posts its artifact to the original Slack thread after a later Notion delivery reaches the same parent", async () => {
   const slackThreadTs = slackTs(Date.now() - 1_000, 19170);
   const slackMessageTs = slackTs(Date.now(), 19171);
   let laterSeat: ReturnType<typeof registerScript> | undefined;
@@ -67,6 +66,7 @@ test("a delayed Slack worker posts its artifact to the original Slack thread aft
         },
       };
     }
+    if (method === "conversations.members") return { ok: true, members: [], response_metadata: { next_cursor: "" } };
     if (method === "conversations.info") {
       return {
         ok: true,
@@ -133,16 +133,16 @@ test("a delayed Slack worker posts its artifact to the original Slack thread aft
   expect(notionDomain?.name).toBe(slackDomain?.name);
   expect(loadBindings().filter((binding) => binding.scope.level === "surface" && (binding.scope.surface === slackKey || binding.scope.surface === notionKey))).toEqual([]);
 
+  const { NO_REPLY_SENTINEL } = await import("@open-everywhere/core/agent/channels/normalized-wake.js");
   const dispatched = disposeLater(
     registerScript({
       parent: [
-        {
-          delayMs: 120_000,
-          calls: [{ tool: "agent", input: { message: "create the requested text artifact and post it into the Slack thread that asked" }, id: "ope1917-delegate" }],
-        },
+        { calls: [{ tool: "work", input: { message: "create the requested text artifact and post it into the Slack thread that asked" }, id: "ope1917-delegate" }] },
+        { say: NO_REPLY_SENTINEL },
       ],
       child: [
         {
+          delayMs: 120_000,
           calls: [
             {
               tool: "bash",
@@ -173,14 +173,13 @@ test("a delayed Slack worker posts its artifact to the original Slack thread aft
     threadTs: slackThreadTs,
     eventId: `EvOPE1917Slack${slackMessageTs.replace(".", "")}`,
   });
-  const held = await waitFor(
+  const dispatchStep = await waitFor(
     () => dispatched.requests.find((request) => request.role === "parent" && request.stepIndex === 0),
-    "the Slack dispatch model call to enter its hold",
+    "the Slack dispatch model call",
   );
-  const seatSessionId = String(held.sessionId);
+  const seatSessionId = String(dispatchStep.sessionId);
 
-  const { NO_REPLY_SENTINEL } = await import("@open-everywhere/core/agent/channels/normalized-wake.js");
-  laterSeat = disposeLater(registerScript({ parent: [{ say: NO_REPLY_SENTINEL }] }, seatSessionId));
+  laterSeat = disposeLater(registerScript({ parent: [{ say: NO_REPLY_SENTINEL }, { say: NO_REPLY_SENTINEL }] }, seatSessionId));
   const notionPost = notionCommentEventPost({
     workspaceId: NOTION_WORKSPACE,
     commentId: NOTION_TRIGGER,
@@ -188,57 +187,51 @@ test("a delayed Slack worker posts its artifact to the original Slack thread aft
   });
   await waitFor(
     () => notion.calls.some((call) => call.method === "GET" && call.path === `/v1/comments/${NOTION_TRIGGER}`),
-    "the later Notion delivery to be fetched and queued while Slack is held",
+    "the later Notion delivery to be fetched while the worker is held",
+  );
+  const notionIngress = await waitFor(
+    async () => (await rowsSinceCursor(cursor, ["wake.ingress"])).find((row) => row.detail?.surfaceKey === notionKey),
+    "the later Notion delivery's wake.ingress row while the worker is held",
+  );
+  expect(slack.calls.filter((call) => call.method === "files.completeUploadExternal")).toEqual([]);
+  await waitFor(
+    () => laterSeat?.requests.find((request) => request.role === "parent" && promptOf(request).includes(NOTION_MARKER)),
+    "the Notion turn to run on the parent while the Slack worker is held",
   );
 
   dispatched.releaseHolds();
-  const [slackResult, notionResult] = await Promise.all([slackPost, notionPost]);
-  expect(slackResult.status, slackResult.body).toBe(200);
-  expect(notionResult.status, notionResult.body).toBe(200);
-  await waitFor(() => (dispatched.holdsCutShort() === 1 ? true : undefined), "the scripted resolver to consume the released Slack hold");
-
-  const notionTurn = await waitFor(
-    () => laterSeat?.requests.find((request) => request.role === "parent" && promptOf(request).includes(NOTION_MARKER)),
-    "the later Notion turn to run on the same parent",
-  );
-  expect(notionTurn.sessionId).toBe(seatSessionId);
-
-  const childStart = await waitFor(
-    () => dispatched.requests.find((request) => request.role === "child" && request.stepIndex === 0),
-    "the delayed artifact worker's first model request",
-  );
-  expect(
-    childStart.sequence,
-    `worker request ${childStart.sequence} must start after Notion request ${notionTurn.sequence}`,
-  ).toBeGreaterThan(notionTurn.sequence);
+  await waitFor(() => (dispatched.holdsCutShort() === 1 ? true : undefined), "the scripted resolver to consume the released worker hold");
 
   await waitForChildren(dispatched, { count: 1, lastStepIndex: 2, label: "the delayed Slack worker to create and post its artifact" });
   const postResult = resultById(dispatched.requests, "ope1917-post");
   expect(postResult?.isError, `post_file failed: ${JSON.stringify(postResult?.output)}`).toBe(false);
   expect(postResult?.output).toMatchObject({ posted: true, count: 1, platform: "slack" });
 
-  const taskId = taskIdOfDelegation(laterSeat, "the OPE-1917 delayed delegation");
+  const taskId = await workTaskIdOfCall(cursor, [dispatched, laterSeat], "ope1917-delegate", "the OPE-1917 delayed delegation");
   const started = await waitFor(
     async () => (await rowsSinceCursor(cursor, ["delegation.task_started"])).find((row) => row.detail?.task === taskId),
     "the delegation.task_started row joined to the artifact worker",
   );
-  expect(started.detail?.session).toBe(seatSessionId);
-  expect(started.detail?.call).toBe("ope1917-delegate");
-  laterSeat.dispose();
-  const { handle: drain } = await awaitTaskSettlement({
-    dispatched,
-    taskId,
-    script: SETTLEMENT_DRAIN_SCRIPT,
-    label: "the delayed artifact worker's settlement wake",
-  });
-  afterThisTest(() => drain.dispose());
+  expect(started.detail?.session, "the work session started the task, not the seat").not.toBe(seatSessionId);
+  expect(typeof started.detail?.request, "the task_started row names the forwarded request").toBe("string");
+  const resultStep = await awaitWorkResult({ handle: laterSeat, taskId, label: "the seat's result-wake step that read the worker's result" });
+  const notionTurn = await waitFor(
+    () => laterSeat?.requests.find((request) => request.role === "parent" && promptOf(request).includes(NOTION_MARKER)),
+    "the Notion turn to run on the same parent while the Slack worker was held",
+  );
+  expect(notionTurn.sessionId, "Slack and Notion did not share one standing parent session").toBe(seatSessionId);
+  expect(notionTurn.turnId, "the Notion delivery ran as a turn of its own").not.toBe(resultStep.turnId);
+  expect(notionTurn.sequence, "the Notion turn ran before the result wake — the seat did not wait on its worker").toBeLessThan(resultStep.sequence);
+  const [slackResult, notionResult] = await Promise.all([slackPost, notionPost]);
+  expect(slackResult.status, slackResult.body).toBe(200);
+  expect(notionResult.status, notionResult.body).toBe(200);
 
   const complete = slack.calls.filter((call) => call.method === "files.completeUploadExternal");
   expect(complete).toHaveLength(1);
   expect(complete[0]!.params.get("channel_id")).toBe(SLACK_CHANNEL);
   expect(complete[0]!.params.get("thread_ts")).toBe(slackThreadTs);
   expect(complete[0]!.params.get("initial_comment")).toBe(ARTIFACT_COMMENT);
-  expect(notionWasServedAtUpload, "the Notion parent turn must precede the artifact upload or this did not reproduce OPE-1917").toBe(true);
+  expect(notionWasServedAtUpload, "the Notion delivery must have run its own parent turn before the worker's upload").toBe(true);
   expect(notion.calls.filter((call) => call.method === "POST" && call.path === "/v1/comments")).toEqual([]);
 
   const slackRows = await waitFor(async () => {
@@ -246,7 +239,10 @@ test("a delayed Slack worker posts its artifact to the original Slack thread aft
     return rows.length > 0 ? rows : undefined;
   }, "the successful Slack post_file audit row");
   expect(slackRows.some((row) => row.platform === "slack" && row.surface === SLACK_CHANNEL && row.detail?.attached === 1 && row.detail?.hosted === 0)).toBe(true);
+  expect(Math.min(...slackRows.map((row) => row.seq)), "the Notion delivery must reach the parent before the upload").toBeGreaterThan(notionIngress.seq);
   expect(await rowsSinceCursor(cursor, ["notion.post_file"])).toEqual([]);
   expect(dispatched.requests.filter((request) => request.fault !== undefined)).toEqual([]);
+  expect(dispatched.resolves.filter((resolve) => resolve.fault !== undefined)).toEqual([]);
   expect(laterSeat.requests.filter((request) => request.fault !== undefined)).toEqual([]);
+  expect(laterSeat.resolves.filter((resolve) => resolve.fault !== undefined)).toEqual([]);
 }, 420_000);

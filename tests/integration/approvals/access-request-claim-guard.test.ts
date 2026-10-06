@@ -49,6 +49,8 @@ const slack = installSlackWebApiStub((method, params) => {
         },
       };
     }
+    case "conversations.members":
+      return { ok: true, members: [], response_metadata: { next_cursor: "" } };
     case "conversations.info":
       return { ok: true, channel: { id: params.get("channel"), name: "ope2022-dm", is_im: true, is_channel: false, is_private: true, num_members: 2 } };
     case "conversations.open":

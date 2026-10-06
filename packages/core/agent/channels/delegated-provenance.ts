@@ -31,11 +31,6 @@ export interface DelegatingParentLink {
 
 export function delegatingParentLink(ctx: unknown): DelegatingParentLink | null {
   try {
-    const token = (ctx as { channel?: { continuationToken?: unknown } }).channel?.continuationToken;
-    if (typeof token === "string") {
-      const m = /^subagent:([^:]+):([^:]+)$/.exec(token);
-      if (m !== null) return { sessionId: m[1]!, callId: m[2]! };
-    }
     const parent = (ctx as { session?: { parent?: { sessionId?: unknown; callId?: unknown } } }).session?.parent;
     const sessionId = parent?.sessionId;
     const callId = parent?.callId;
@@ -48,7 +43,7 @@ export function delegatingParentLink(ctx: unknown): DelegatingParentLink | null 
   }
 }
 
-function childContinuationToken(link: DelegatingParentLink): string {
+function delegationRowKey(link: DelegatingParentLink): string {
   return `subagent:${link.sessionId}:${link.callId}`;
 }
 
@@ -107,6 +102,28 @@ async function writeDelegatedReads(org: string, childToken: string, reads: reado
   );
 }
 
+async function writeSpentDelegatedReads(org: string, childToken: string, replayKey: string, reads: readonly DelegatedRead[]): Promise<void> {
+  await getOperationalStore().putTaskResult(
+    org,
+    delegatedProvenanceKey(childToken),
+    JSON.stringify({ reads: [], spent: { by: replayKey, reads: [...reads] } }),
+    new Date().toISOString(),
+    DELEGATED_PROVENANCE_TTL_MS,
+  );
+}
+
+async function readSpentDelegatedReads(org: string, childToken: string, replayKey: string): Promise<readonly DelegatedRead[]> {
+  try {
+    const raw = await getOperationalStore().getTaskResult(org, delegatedProvenanceKey(childToken));
+    if (raw === null) return [];
+    const spent = (JSON.parse(raw) as { spent?: { by?: unknown; reads?: unknown } } | null)?.spent;
+    if (spent?.by !== replayKey) return [];
+    return parseDelegatedReads(JSON.stringify({ reads: spent.reads }));
+  } catch {
+    return [];
+  }
+}
+
 let appendQueue: Promise<unknown> = Promise.resolve();
 
 async function appendDelegatedRead(org: string, childToken: string, read: DelegatedRead): Promise<void> {
@@ -123,7 +140,7 @@ export function noteDelegatedRead(bind: BindableContext, connection: string, op:
     const link = delegatingParentLink(bind);
     if (link === null) return;
     const org = deploymentOrg();
-    const childToken = childContinuationToken(link);
+    const childToken = delegationRowKey(link);
     const carried =
       record !== undefined && record.kind.length > 0 && record.id.length > 0 && record.name.length > 0
         ? { kind: record.kind, id: record.id, name: capRecordName(record.name) }
@@ -164,17 +181,34 @@ export async function delegatedSecondAddress(input: {
   return (await sameConversationAsTaskWake(input.org, taskWakeId, inheritedWakeId)) ? inheritedWakeId : undefined;
 }
 
+export async function heldTurnWakeProvable(input: {
+  readonly org: string;
+  readonly outcome: TaskWakeInstall["outcome"];
+  readonly sameSession: boolean | undefined;
+  readonly taskWakeId: string | null;
+  readonly turnWakeId: string | undefined;
+}): Promise<boolean> {
+  if (input.outcome !== "ingressed" || input.sameSession !== true) return false;
+  if (input.taskWakeId === null || input.taskWakeId.length === 0) return false;
+  if (input.turnWakeId === undefined || input.turnWakeId.length === 0) return false;
+  return await sameConversationAsTaskWake(input.org, input.taskWakeId, input.turnWakeId);
+}
+
 export async function settleDelegatedReads(input: {
   readonly org: string;
   readonly childToken: string;
   readonly sessionId: string | undefined;
   readonly turnId: string | undefined;
   readonly reach: Pick<ConnectorRead, "proof" | "surfaceKey" | "wakeId" | "alsoWakeId"> | undefined;
+  readonly replayKey?: string;
 }): Promise<DelegatedReadSettlement> {
   const none: DelegatedReadSettlement = { found: 0, carried: 0 };
   try {
     if (input.childToken.length === 0) return none;
-    const reads = await readDelegatedReads(input.org, input.childToken);
+    let reads = await readDelegatedReads(input.org, input.childToken);
+    if (reads.length === 0 && input.replayKey !== undefined && input.replayKey.length > 0) {
+      reads = await readSpentDelegatedReads(input.org, input.childToken, input.replayKey);
+    }
     if (reads.length === 0) return none;
     const reach = input.reach;
     if (reach !== undefined) {
@@ -190,7 +224,11 @@ export async function settleDelegatedReads(input: {
         }
       }
     }
-    await writeDelegatedReads(input.org, input.childToken, []).catch(() => undefined);
+    if (input.replayKey !== undefined && input.replayKey.length > 0) {
+      await writeSpentDelegatedReads(input.org, input.childToken, input.replayKey, reads).catch(() => undefined);
+    } else {
+      await writeDelegatedReads(input.org, input.childToken, []).catch(() => undefined);
+    }
     return { found: reads.length, carried: reach === undefined ? 0 : reads.length };
   } catch {
     return none;

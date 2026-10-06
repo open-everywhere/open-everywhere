@@ -7,8 +7,13 @@ export interface ResponderIdentity {
   readonly principalType: string;
 }
 
+export type ResponseDecision = "approve" | "cancel";
+
 export const FOREIGN_RESPONDER_REASON =
   "Only the person who asked for this can approve it. Nothing was applied and the request is still pending.";
+
+export const FOREIGN_CANCEL_REASON =
+  "Only the person who asked for this can cancel it. Nothing was cancelled and the request is still pending.";
 
 export function sameResponder(a: ResponderIdentity | null | undefined, b: ResponderIdentity | null | undefined): boolean {
   if (a === null || a === undefined || b === null || b === undefined) return false;
@@ -22,13 +27,19 @@ export function sameResponder(a: ResponderIdentity | null | undefined, b: Respon
 
 export function decideResponder(
   responder: ResponderIdentity | null | undefined,
-  initiator: ResponderIdentity | null | undefined,
+  bound: ResponderIdentity | null | undefined,
+  decision: ResponseDecision = "approve",
 ): ApprovalResponseDecision {
-  if (initiator === null || initiator === undefined) return { status: "allowed" };
-  if (sameResponder(responder, initiator)) return { status: "allowed" };
-  return { reason: FOREIGN_RESPONDER_REASON, status: "rejected" };
+  if (bound === null || bound === undefined) return { status: "allowed" };
+  if (sameResponder(responder, bound)) return { status: "allowed" };
+  return { reason: decision === "cancel" ? FOREIGN_CANCEL_REASON : FOREIGN_RESPONDER_REASON, status: "rejected" };
 }
 
-export function initiatorBoundResponsePolicy<TInput = Record<string, unknown>>(): ApprovalResponsePolicy<TInput> {
-  return (ctx) => decideResponder(ctx.responder as ResponderIdentity, ctx.session.initiator as ResponderIdentity | null);
+export function requesterBoundResponsePolicy<TInput = Record<string, unknown>>(): ApprovalResponsePolicy<TInput> {
+  return (ctx) =>
+    decideResponder(
+      ctx.response.principal as ResponderIdentity,
+      (ctx.request.principal ?? ctx.session.initiator) as ResponderIdentity | null,
+      ctx.response.decision,
+    );
 }

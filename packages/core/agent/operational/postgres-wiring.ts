@@ -23,8 +23,9 @@ export function postgresWiringRefusal(env: NodeJS.ProcessEnv, registered: Postgr
   }
   return (
     `open-everywhere refuses to boot: DATABASE_URL is set, so ${what}, but no Postgres client is registered — ` +
-    "the app's agent/lib/register-adapters.ts is most likely a stale copy from an older template that does not call " +
-    "registerNeon() on DATABASE_URL alone, so sync it from the template of the installed @open-everywhere/create " +
+    "the app's agent/lib/register-adapters.ts is most likely a stale copy from an older template that wires the adapters " +
+    "by hand and does not call registerNeon() on DATABASE_URL alone, so sync it from the template of the installed " +
+    "@open-everywhere/create, whose copy is one registerDefaultAdapters() call " +
     "(`npx oe upgrade --plan --to <installed version>` lists every stale template file)."
   );
 }

@@ -1,3 +1,4 @@
+import { isScheduleAuth } from "eve/schedules";
 import type { SessionMode } from "../access/resolver.js";
 import { readBindingBridge, stampBindingBridge, bridgedContext, type BridgedIdentity } from "./binding-bridge.js";
 import { normalizePlatform, platformFromKind } from "./platform.js";
@@ -6,13 +7,14 @@ import { admitProviderRegistration } from "../access/provider-selection.js";
 import { declaredSurfaceTrust, type SurfaceTrust } from "./trust.js";
 
 import { UNNAMED_TENANT } from "./principal-key.js";
-import { bareTokenFromEveContext, classifySessionId, parseWindowToken, sessionGrantKeyFromToken } from "../channels/window-key.js";
+import { classifySessionId, parseWindowToken } from "../channels/window-key.js";
+import { conversationGrantKey, roomCallGrantKey, type GrantReach } from "../approvals/session-grant.js";
 import { sourcesForWindow, decodeSources } from "../channels/window-sources.js";
 import { ROUTINE_MARKER, routinePermissionKeyStamped } from "../routines/routine.js";
 import type { Domain } from "../memory/domain.js";
 import { processRegistryMap } from "../lib/process-registry.js";
 import { taskWakeThisTurn, uningressedTurn } from "../access/task-wake-signal.js";
-import { delegatedBindingAdopted, delegatedBindingThisTurn, delegatedSlotState } from "./delegated-binding.js";
+import { delegatedBindingAdopted, delegatedBindingThisTurn, delegatedRootSessionId, delegatedSlotState } from "./delegated-binding.js";
 import { frozenSurfaceBindingFrom } from "./frozen-surface-binding.internal.js";
 
 export type Visibility = "public" | "private";
@@ -117,6 +119,22 @@ function attestedFirePrincipal(ctx: BindableContext): { readonly id: string; rea
   return { id, internal: attr(a, [FIRE_PRINCIPAL_TRUST_ATTR, "oeFirePrincipalTrust"]) === "internal" };
 }
 
+export const WORK_FIRE_CREATOR_ATTR = "oe_work_fire_creator";
+
+export function workResultFrozenBinding(ctx: BindableContext): SurfaceBinding | undefined {
+  try {
+    if (attr(authOf(ctx)?.attributes, ["oe_work_result"]) === undefined) return undefined;
+    const frozen = frozenSurfaceBindingFrom(ctx);
+    return frozen !== undefined && frozen.org === deploymentOrg() ? frozen : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function fireResultCreatorId(ctx: BindableContext): string | undefined {
+  return attr(authOf(ctx)?.attributes, [WORK_FIRE_CREATOR_ATTR]);
+}
+
 export function attestedFireCreatorId(ctx: BindableContext): string | undefined {
   return attestedFirePrincipal(ctx)?.id;
 }
@@ -136,11 +154,7 @@ interface ScheduleAuthSlot {
 }
 
 export function isScheduleOriginatedAuth(auth: ScheduleAuthSlot | null | undefined): boolean {
-  return (
-    auth?.authenticator === SCHEDULE_APP_AUTHENTICATOR &&
-    auth?.principalId === SCHEDULE_APP_PRINCIPAL_ID &&
-    auth?.principalType === SCHEDULE_APP_PRINCIPAL_TYPE
-  );
+  return isScheduleAuth(auth as Parameters<typeof isScheduleAuth>[0]);
 }
 
 function routineMarkerDelivery(ctx: BindableContext): boolean {
@@ -209,6 +223,18 @@ export function registeredIdentityMapperPlatforms(): readonly string[] {
   return [...MAPPERS.keys()].sort();
 }
 
+export const OE_WORK_SEAT_SESSION_ATTR = "oe_work_seat_session";
+
+export const OE_WORK_SEAT_WAKE_ATTR = "oe_work_seat_wake";
+
+export function workSeatWakeOf(ctx: BindableContext): string | undefined {
+  try {
+    return isSubagentChildContext(ctx) ? attr(authOf(ctx)?.attributes, [OE_WORK_SEAT_WAKE_ATTR]) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export const SUBAGENT_CHANNEL_KIND = "subagent";
 
 export function subagentParentSessionId(ctx: BindableContext): string | undefined {
@@ -218,10 +244,16 @@ export function subagentParentSessionId(ctx: BindableContext): string | undefine
 
 export function delegationRootSessionId(ctx: BindableContext): string | undefined {
   try {
+    if (isSubagentChildContext(ctx)) {
+      const seat = attr(authOf(ctx)?.attributes, [OE_WORK_SEAT_SESSION_ATTR]);
+      if (seat !== undefined) return seat;
+    }
     const parent = ctx.session?.parent;
     const root = parent?.rootSessionId;
     if (typeof root === "string" && root.length > 0) return root;
-    return subagentParentSessionId(ctx);
+    const direct = subagentParentSessionId(ctx);
+    if (direct !== undefined) return direct;
+    return isSubagentChildContext(ctx) ? delegatedRootSessionId() : undefined;
   } catch {
     return undefined;
   }
@@ -299,16 +331,18 @@ export function currentWindowToken(ctx: BindableContext): string | undefined {
   return attr(authOf(ctx)?.attributes, ["oe_window_token", "oeWindowToken"]);
 }
 
-export function proposingSessionId(ctx: BindableContext): string | undefined {
+export function proposingGrantScope(ctx: BindableContext): { readonly key: string; readonly reach: GrantReach } | undefined {
   const routineKey = routinePermissionKeyStamped(authOf(ctx)?.attributes);
-  if (routineKey !== undefined) return routineKey;
-  if (isSubagentChildContext(ctx)) {
-    const inherited = currentWindowToken(ctx);
-    if (inherited !== undefined) return sessionGrantKeyFromToken(inherited);
-  }
-  const raw = (ctx as { channel?: { continuationToken?: unknown } }).channel?.continuationToken;
-  const token = bareTokenFromEveContext(raw) ?? currentWindowToken(ctx);
-  return token === undefined ? undefined : sessionGrantKeyFromToken(token);
+  if (routineKey !== undefined) return { key: routineKey, reach: "routine" };
+  const binding = bindFrom(ctx);
+  if (unattendedFrom(binding)) return undefined;
+  if (binding.platform === "subagent") return undefined;
+  return { key: conversationGrantKey(binding) ?? roomCallGrantKey(binding), reach: "call" };
+}
+
+export function proposingGrantKey(ctx: BindableContext): string | undefined {
+  const scope = proposingGrantScope(ctx);
+  return scope?.reach === "routine" ? scope.key : undefined;
 }
 
 export function currentTurnAddressing(ctx: BindableContext): string | undefined {
@@ -457,6 +491,10 @@ export function refreshBindingStamp(ctx: BindableContext): "stamped" | "kept" {
 
 const HOST_STAMP_PREFIXES: readonly string[] = ["oe_", "open_everywhere_"];
 
+function isHostStampKey(key: string): boolean {
+  return HOST_STAMP_PREFIXES.some((p) => key.startsWith(p)) || /^oe[A-Z]/.test(key) || /^openEverywhere/.test(key);
+}
+
 export type DeliveryHealOutcome = "not-needed" | "healed" | "no-stamp" | "cross-platform" | "no-delivery" | "unwritable";
 
 export function healDeliveryIdentity(ctx: BindableContext): DeliveryHealOutcome {
@@ -473,13 +511,41 @@ export function healDeliveryIdentity(ctx: BindableContext): DeliveryHealOutcome 
     if (auth.attributes === undefined) auth.attributes = {};
     const bag = auth.attributes;
     for (const [key, value] of Object.entries(bridged.attributes)) {
-      if (HOST_STAMP_PREFIXES.some((p) => key.startsWith(p))) continue;
+      if (isHostStampKey(key)) continue;
       if (bag[key] !== undefined) continue;
       bag[key] = value;
     }
     return carriesPlatformIdentity(ctx) ? "healed" : "unwritable";
   } catch {
     return "unwritable";
+  }
+}
+
+export function platformIdentityAttributesFor(ctx: BindableContext, binding: SurfaceBinding): Record<string, string | readonly string[]> | undefined {
+  try {
+    let platform: string;
+    let raw: RawIdentity;
+    let attributes: Record<string, unknown> | undefined;
+    if (carriesPlatformIdentity(ctx)) {
+      ({ platform, raw } = rawIdentityFrom(ctx));
+      attributes = (authOf(ctx) as { attributes?: Record<string, unknown> } | null)?.attributes;
+    } else {
+      const bridged = readBindingBridge();
+      if (bridged === null) return undefined;
+      ({ platform, raw } = bindBridged(bridged));
+      attributes = bridged.attributes as Record<string, unknown> | undefined;
+    }
+    if (!namesASurface(raw) || attributes === undefined) return undefined;
+    if (normalizePlatform(platform) !== normalizePlatform(binding.platform)) return undefined;
+    if (raw.workspace !== binding.workspace || raw.surface !== binding.surface) return undefined;
+    const out: Record<string, string | readonly string[]> = {};
+    for (const [key, value] of Object.entries(attributes)) {
+      if (isHostStampKey(key)) continue;
+      if (typeof value === "string" || (Array.isArray(value) && value.every((v) => typeof v === "string"))) out[key] = value as string | readonly string[];
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
+  } catch {
+    return undefined;
   }
 }
 

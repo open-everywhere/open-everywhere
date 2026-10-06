@@ -132,14 +132,15 @@ proposal, and only an author with standing in the repository can write one.
 
 A **skill** changes what the agent knows in the session it already has. A **declared
 subagent** hands the work to a *different* session with its own prompt, its own model, and
-its own tool surface — and gives you back a typed result. Reach for one only when the clean
+its own tool surface. 🔴 The result is PROSE on this pin — see *The result was typed…* below. Reach
+for one only when the clean
 context is the point; if an optional procedure would do, a skill is the lighter choice.
 
 A subagent lives in one directory under the deployer app:
 
 ```text
 agent/subagents/<name>/
-├── agent.ts            # required: description + model + outputSchema
+├── agent.ts            # required: description + model (NOT outputSchema — see below)
 ├── instructions.md     # its own prompt (nothing is inherited)
 ├── tools/              # its own tools — Open Everywhere ships these as disable sentinels
 └── hooks/spend.ts      # its own spend hook (hooks are not inherited either)
@@ -157,32 +158,51 @@ inherited either, the [egress firewall](../security/credentials-and-planes.md) i
 behind them. Nor is the host-side `web_fetch` allow-list fence: that is a wrapper the app
 applies where *it* mounts the tool, so a framework built-in reached this way carries neither
 of the two things that bound reach elsewhere. Open Everywhere's convention is therefore
-**zero hands**: every framework tool is disabled by an explicit `disableTool()` sentinel, except a
-slot eve refuses to let an app disable. `connection_search` is that slot since eve 0.52.0, and it
-carries an authored no-op instead — a tool whose only imports are type and schema modules and whose
-body answers one constant. Either way the subagent holds no tool, and everything it needs arrives in
-the message it was called with. A subagent that holds no tool cannot widen access, whatever an
+**zero hands**: every framework tool eve mounts by default is disabled by an explicit
+`disableTool()` sentinel. The connector slots are the exception, and they changed hands at eve
+0.69.0: `connection_search`, `connection_execute` and `connection_tools` are now RESERVED, so an app
+may not author anything there — not a sentinel and not the no-op replacement this subagent used to
+carry. They mount nothing anyway for a subagent that declares no connections of its own, because eve
+builds a connection registry only for a node that declares some — static or dynamic, both of which
+are modules under `connections/`. Either way the subagent holds no
+tool, and everything it needs arrives in the message it was called with. A subagent that holds no tool cannot widen access, whatever an
 injected instruction inside the material it was handed tells it to do. `scripts/subagents-lint.ts`
-pins which slot takes which treatment, `scripts/subagent-zero-hands-test.ts` pins that the
-replacement's import surface stays closed and its body stays constant, and the lint pins the spend
-hook too — without it a delegated child's tokens never reach the ledger or the monthly cap.
+pins which slot takes which treatment and pins the spend hook too — without it a delegated child's
+tokens never reach the ledger or the monthly cap. `scripts/subagent-zero-hands-test.ts` pins the rest:
+that every file in `tools/` is a `disableTool()` sentinel importing nothing but `eve/tools`, that a
+sentinel exists for every slot eve mounts by default, that nothing is authored at a reserved slot, and
+that eve still scopes its connection registry to the active node.
 
-**The result is typed.** `agent.ts` declares an `outputSchema`, and Eve applies it whenever
-the subagent runs as a task and the caller passed no schema of its own — so an ordinary call
-returns a structured verdict rather than prose the caller has to re-parse. The schemas live
-in `packages/core/agent/subagents/contracts.ts` (they're spine, not per-deploy config) and
-each `agent.ts` binds one through `modelFacingOutputSchema(...)`. The wrapper shows every
-optional field to the model as nullable, because a model that cannot omit a field invents a
-value for it; its `validate` removes those nulls before the contract validates. Design them to **fail closed**: give the verdict field the value
-that means "I could not confirm this" and no third value to hide in, so a subagent that was
-handed nothing useful says so instead of shrugging.
+> 🔴 **Both gates hold the sentinel-per-slot rule, deliberately** — `subagents-lint` against the
+> declared-subagent rules, and the zero-hands test's clause 6 against this subagent's real tree. On the
+> eve 0.69.0 re-roll the lint was dead, because the shared mount-set reader expected a declaration eve
+> had removed; OPE-2254 re-derived it, and `lint:window-gate`, `lint:consequence`,
+> `lint:capability-docs` and `test:tool-roster` came back with it.
 
-A **declared** subagent is the only way to get a typed result. The generic `agent` delegation
-verb takes no caller schema at all: Open Everywhere strips the field. An unmet schema fails
-the child's whole turn, and the parent is then handed an error class instead of the answer —
+**The result was typed, and on this pin it is prose.** 🔴 `agent.ts` used to declare an
+`outputSchema`, and eve applied it whenever the subagent ran as a task and the caller passed no schema
+of its own — so an ordinary call returned a structured verdict. By eve 0.69.0 all three parts of
+that road were gone: `mode` and `outputSchema` went at 0.67.0, `execution/workflow-steps.js` is gone, and `outputSchema` is no
+longer a `defineAgent` field, so authoring one is a typecheck error. A schema is now REQUESTED PER
+TURN by the caller, and the caller of a declared subagent is the parent model, which no authored code
+reaches. **Do not author one**; the lint refuses it so the failure names a cause.
+
+The contracts stay in `packages/core/agent/subagents/contracts.ts` (they're spine, not per-deploy
+config) and remain the stated result shape every consumer is written against — but nothing enforces
+them at the subagent boundary today. OPE-2250 re-derives the enforcement on eve's native task surface.
+What is unchanged is the CONSUMER-side treatment: `post_pr_walkthrough` takes the verdict as a tool
+input and `approvals/review-surface.ts` collapses every string to one line inside a block labelled as
+a model opinion. The typed contract was never what made a verdict safe to render. Design the shapes to
+**fail closed** anyway: give the verdict field the value that means "I could not confirm this" and no
+third value to hide in.
+
+The generic `agent` delegation verb takes no caller schema at all: Open Everywhere strips the field.
+An unmet schema fails the child's whole turn, and the parent is then handed an error class instead of
+the answer —
 so a worker's refusal, the thing the seat most needs to relay, is exactly what such a schema
-destroys. Delegated work reports back in prose; a shape you can rely on needs a subagent that
-declares one.
+destroys. Delegated work reports back in prose — and on this pin so does a declared subagent, because
+the field it used to declare no longer exists. A shape you can rely on waits for OPE-2250 to re-derive
+one on eve's native task surface.
 
 One ships in the box:
 

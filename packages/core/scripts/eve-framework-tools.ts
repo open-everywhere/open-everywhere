@@ -7,7 +7,9 @@ const REGISTRY_PATH = "dist/src/framework/sources/registry.js";
 
 const POLICY_PATH = "dist/src/compiler/default-tool-policy.js";
 
-const OPT_IN_SNAPSHOT = ["glob", "grep"] as const;
+const TASK_TOOLS_PATH = "dist/src/protocol/task-tools.js";
+
+const OPT_IN_SNAPSHOT = ["ask_question", "glob", "grep"] as const;
 
 interface FrameworkSourceRegistry {
   readonly registrations: readonly {
@@ -22,10 +24,11 @@ export interface EveFrameworkTools {
   readonly optIn: readonly string[] | undefined;
   readonly rootOnly: readonly string[];
   readonly optInDrift: string | undefined;
-  readonly required: readonly string[];
+  readonly reserved: readonly string[];
+  readonly taskTools: readonly string[];
 }
 
-export function readRequiredFrameworkToolSlots(eveRoot: string): string[] {
+export function readReservedFrameworkToolSlots(eveRoot: string): string[] {
   const file = join(eveRoot, POLICY_PATH);
   let source: string;
   try {
@@ -34,30 +37,61 @@ export function readRequiredFrameworkToolSlots(eveRoot: string): string[] {
     return [];
   }
 
-  const declaration = /REQUIRED_FRAMEWORK_TOOL_SLOTS\s*=\s*new Set\(\[([^\]]*)\]\)/u.exec(source);
+  const declaration = /CONNECTION_TOOL_SLOTS\s*=\s*new Set\(\[([^\]]*)\]\)/u.exec(source);
   if (declaration === null) {
     throw new Error(
       `eve framework tools: ${POLICY_PATH} exists but declares no readable ` +
-        `\`REQUIRED_FRAMEWORK_TOOL_SLOTS = new Set([...])\`. eve restructured the policy that declares which ` +
-        `framework tool slots an app may not simply disable. Guessing is not safe in both directions: an ` +
-        `OVER-report exempts a slot from the sentinel demand and lets a hands-on tool sit there unreviewed, ` +
-        `and an UNDER-report leaves the failure to surface as an \`eve build\` throw naming eve's file instead ` +
-        `of OE's zero-hands invariant. Read eve's policy module and update this reader.`,
+        `\`CONNECTION_TOOL_SLOTS = new Set([...])\`. eve restructured the policy that declares which framework ` +
+        `tool slots an app may author nothing at. Guessing is not safe in both directions: an OVER-report ` +
+        `exempts a slot from the sentinel demand and lets a hands-on tool sit there unreviewed, and an ` +
+        `UNDER-report leaves the failure to surface as an \`eve build\` throw naming eve's file instead of OE's ` +
+        `zero-hands invariant. Read eve's policy module and update this reader.`,
     );
   }
 
-  const slots: string[] = [];
-  for (const [, name] of declaration[1]!.matchAll(/["'`]tools\/([A-Za-z0-9_]+)\.?[a-z]*["'`]/gu)) {
-    slots.push(name!);
-  }
-  if (declaration[1]!.trim() !== "" && slots.length === 0) {
+  const constants = new Map<string, string>();
+  for (const [, name, slot] of source.matchAll(/([A-Z_]+)\s*=\s*`(tools\/[a-z_]+)`/gu)) constants.set(name!, slot!);
+
+  const entries = declaration[1]!
+    .split(",")
+    .map((entry) => entry.trim().replace(/^["'`]|["'`]$/gu, ""))
+    .filter((entry) => entry.length > 0)
+    .map((entry) => (entry.startsWith("tools/") ? entry : (constants.get(entry) ?? entry)));
+  const unresolved = entries.filter((entry) => !/^tools\/[A-Za-z0-9_]+$/u.test(entry));
+  if (unresolved.length > 0) {
     throw new Error(
-      `eve framework tools: ${POLICY_PATH} declares REQUIRED_FRAMEWORK_TOOL_SLOTS with entries this reader ` +
-        `cannot parse (${declaration[1]!.trim()}). Only \`tools/<name>\` slot literals are understood. Half of ` +
-        `guessing wrong here is fail-OPEN — see the note above.`,
+      `eve framework tools: ${POLICY_PATH} declares CONNECTION_TOOL_SLOTS with entr(ies) this reader cannot ` +
+        `resolve to a \`tools/<name>\` slot: ${JSON.stringify(unresolved)}. eve spells the set with a mix of ` +
+        `literals and constants, so a RENAMED constant lands here. Extend the constant resolution rather than ` +
+        `letting the entry drop: a dropped entry under-reports the reserved set, and \`connection_tools\` is ` +
+        `also DEFAULT-MOUNTED, so dropping it makes every zero-hands gate demand a sentinel \`eve build\` throws on.`,
     );
   }
-  return [...new Set(slots)].sort();
+  return [...new Set(entries.map((entry) => entry.slice("tools/".length)))].sort();
+}
+
+export async function readTaskToolNames(eveRoot: string): Promise<string[]> {
+  let names: unknown;
+  try {
+    const mod = (await import(pathToFileURL(join(eveRoot, TASK_TOOLS_PATH)).href)) as { TASK_TOOL_NAMES?: unknown };
+    names = mod.TASK_TOOL_NAMES;
+  } catch (cause) {
+    throw new Error(
+      `eve framework tools: cannot read ${TASK_TOOLS_PATH} from the installed eve (${String(cause)}). It is ` +
+        `eve's own declaration of the task verbs it injects per model call and reserves against an authored ` +
+        `tool. Without it OE's posture tables for \`task_wait\` / \`task_cancel\` read as stale rows and the ` +
+        `names leave every lint's surface. Find the module's new home and update TASK_TOOLS_PATH.`,
+      { cause },
+    );
+  }
+  if (!Array.isArray(names) || names.length === 0 || names.some((n) => typeof n !== "string")) {
+    throw new Error(
+      `eve framework tools: ${TASK_TOOLS_PATH} exports no non-empty \`TASK_TOOL_NAMES\` string array (got ` +
+        `${JSON.stringify(names)}). eve renamed or restructured the declaration; read the module rather than ` +
+        `listing the names here, because a hand-kept list stops tracking the pin the day it moves.`,
+    );
+  }
+  return [...new Set(names as string[])].sort();
 }
 
 function toolNameOf(logicalPath: string): string | undefined {
@@ -157,18 +191,18 @@ export async function readEveFrameworkTools(options: ReadEveFrameworkToolsOption
         `disableTool() sentinel until the snapshot is re-pinned.`;
 
   const optIn = optInDrift === undefined ? [...OPT_IN_SNAPSHOT] : undefined;
-  const all = [...new Set([...inRegistry, ...(optIn ?? [])])].sort();
 
-  const required = readRequiredFrameworkToolSlots(eveRoot);
-  const unmounted = required.filter((name) => !defaultMounted.has(name));
-  if (unmounted.length > 0) {
+  const reserved = readReservedFrameworkToolSlots(eveRoot);
+  if (reserved.length > 0 && !reserved.some((name) => inRegistry.has(name))) {
     throw new Error(
-      `eve framework tools: ${POLICY_PATH} requires slot(s) ${unmounted.join(", ")} that ${REGISTRY_PATH} does ` +
-        `not register for "all-local-nodes". One of the two reads is stale. A required-but-unmounted slot would ` +
-        `make the subagent lint demand a replacement tool in a slot eve never mounts, so this throws rather ` +
-        `than guessing which read to believe.`,
+      `eve framework tools: ${POLICY_PATH} reserves ${reserved.join(", ")} but ${REGISTRY_PATH} registers none of ` +
+        `them, so nothing mounts the family they belong to. One of the two reads is stale. Guessing would put ` +
+        `names on OE's surface that no session can hold, or take live ones off it, so this throws instead.`,
     );
   }
+  const taskTools = await readTaskToolNames(eveRoot);
+
+  const all = [...new Set([...inRegistry, ...(optIn ?? []), ...reserved, ...taskTools])].sort();
 
   return {
     all,
@@ -176,6 +210,7 @@ export async function readEveFrameworkTools(options: ReadEveFrameworkToolsOption
     optIn: optIn === undefined ? undefined : [...optIn].sort(),
     rootOnly: [...rootOnly].sort(),
     optInDrift,
-    required,
+    reserved,
+    taskTools,
   };
 }

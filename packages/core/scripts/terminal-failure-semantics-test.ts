@@ -1,3 +1,6 @@
+// proves: reply.post.failed, slack.react.failed
+// proves: REPLY-06, REPLY-21, REPLY-48, REPLY-49
+
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
@@ -65,7 +68,7 @@ const { getOperationalStore } = await import("../agent/operational/provider.js")
 const { consumeRepliedThisTurn, isWakeDoneThisTurn } = await import("../agent/channels/reply-signal.js");
 const { consumeReactedThisTurn } = await import("../agent/channels/react-signal.js");
 const { peekNoReplyThisTurn } = await import("../agent/channels/no-reply-signal.js");
-const { turnHasTerminalAction, TURN_TERMINAL_TOOLS } = await import("../agent/channels/turn-terminal-actions.js");
+const { END_TURN_WITH_SENTINEL_INSTRUCTION } = await import("../agent/channels/normalized-wake.js");
 const { REPLY_DEDUPE_SKIPPED_ID } = await import("../agent/channels/reply-post.js");
 const { platformFailureClass } = await import("../agent/channels/platform-failure.js");
 const { readAudit } = await import("../agent/audit/audit.js");
@@ -94,6 +97,8 @@ const store = getOperationalStore();
 const replyTool = (await import("../agent/tools/reply.js")).default;
 const reactTool = (await import("../agent/tools/react.js")).default;
 const noReplyTool = (await import("../agent/tools/no_reply.js")).default;
+const editReplyTool = (await import("../agent/tools/edit_reply.js")).default;
+const { reactResultNote } = await import("../agent/tools/react.js");
 
 interface Armed {
   readonly execute: (input: Record<string, unknown>, ctx: unknown) => Promise<unknown>;
@@ -250,99 +255,45 @@ for (const outcome of ["definitive", "ambiguous"] as const) {
 }
 
 {
-  const wake = { role: "user", content: "fix the typo in your last message" };
-  const call = (name: string) => ({ role: "assistant", content: [{ type: "tool-call", toolCallId: "c1", toolName: name, input: {} }] });
-  const okResult = (name: string) => ({ role: "tool", content: [{ type: "tool-result", toolCallId: "c1", toolName: name, output: { type: "json", value: { edited: true } } }] });
-  const failed = (name: string) => ({ role: "tool", content: [{ type: "tool-result", toolCallId: "c1", toolName: name, output: { type: "error-text", value: "the platform refused" } }] });
+  const { readFileSync } = await import("node:fs");
+  const unified = armOf(replyTool, ctxFor("wake-4", "turn_4")) as unknown as { endsTurn?: unknown } | null;
+  ok(unified?.endsTurn === true, "§4: the UNIFIED `reply` declares `endsTurn: true` — a successful reply ends the turn with no further model call");
+  const base = armOf(replyTool, slackCtx("turn_4b")) as unknown as { endsTurn?: unknown } | null;
+  ok(base?.endsTurn === true, "§4: the per-surface `reply` declares `endsTurn: true` too — one word, one meaning on every door");
+  ok((noReplyTool as unknown as { endsTurn?: unknown }).endsTurn === true, "§4: `no_reply` declares `endsTurn: true` — silence ends the turn natively");
+  const react = armOf(reactTool, slackCtx("turn_4c")) as unknown as { endsTurn?: unknown } | null;
+  ok(react !== null && react.endsTurn !== true, "§4: `react` declares NO `endsTurn` — an ADDRESSED react must leave the turn open for the owed reply (OPE-964)");
+  const edit = armOf(editReplyTool, slackCtx("turn_4d")) as unknown as { endsTurn?: unknown } | null;
+  ok(edit !== null && edit.endsTurn !== true, "§4: `edit_reply` declares NO `endsTurn` — an edit may be followed by a `reply` with anything new");
 
-  ok(TURN_TERMINAL_TOOLS.has("edit_reply"), "§4: `edit_reply` is in the terminal set — a correction can be the whole turn (OPE-802)");
-  for (const verb of ["reply", "no_reply", "react", "edit_reply"]) {
-    ok(turnHasTerminalAction([wake, call(verb), okResult(verb)]), `§4: a CONFIRMED \`${verb}\` ends the turn — no reissue nudge`);
-    ok(!turnHasTerminalAction([wake, call(verb), failed(verb)]), `§4: a FAILED \`${verb}\` does NOT — the nudge is what gets the answer into the room`);
-  }
+  const eveRootDir = dirname(nodeRequire.resolve("eve/package.json"));
+  const toolLoop = readFileSync(join(eveRootDir, "dist/src/harness/tool-loop.js"), "utf8");
+  const stepEndsTurn = /async function stepEndsTurn\([^)]*\)\{[^]*?\}async function callEndsTurn/.exec(toolLoop)?.[0] ?? "";
+  ok(stepEndsTurn.length > 0, "§4: eve's `stepEndsTurn` is present in the installed tool loop (if eve moved it, re-derive this leg)");
+  ok(stepEndsTurn.includes("isToolResultError("), "§4: eve's `stepEndsTurn` refuses to end on an ERROR result — so a thrown terminal verb keeps the turn open with no OE code at all");
+  ok(/r\.every\(|\.every\(/.test(stepEndsTurn), "§4: eve ends the turn only when EVERY call in the step ends it — a mixed step continues");
+  const lifecycle = readFileSync(join(eveRootDir, "dist/src/context/dynamic-tool-lifecycle.js"), "utf8");
   ok(
-    !turnHasTerminalAction([wake, call("edit_reply")]),
-    "§4: the model's own tool-call part is the REQUEST, never the platform's answer — it cannot end a turn on its own",
+    /function readDynamicEndsTurn\([^)]*\)\{if\(typeof [a-z]+==`function`\)throw/.test(lifecycle),
+    "§4: eve REFUSES an `endsTurn` function on a dynamic tool — the reason `reply` takes `true` and not a function of its output",
+  );
+  ok(
+    !toolLoop.includes("__oeThrowEmptyResponseUnlessTerminal") && !toolLoop.includes("__oeTurnTerminalActionScan"),
+    "§4: patch part 5 and its scan hook are GONE from the installed bytes (retired at OPE-2252)",
   );
 }
 
 {
-  const wake = { role: "user", content: "do the task" };
-  const call = (name: string) => ({ role: "assistant", content: [{ type: "tool-call", toolCallId: "c1", toolName: name, input: {} }] });
-  const okResult = (name: string) => ({ role: "tool", content: [{ type: "tool-result", toolCallId: "c1", toolName: name, output: { type: "json", value: { posted: true } } }] });
-  const repliedTurn = [wake, call("reply"), okResult("reply")];
-
-  const grainCtx = (turnWake: string, turnId: string, worker: boolean): BindableContext => {
-    const base = ctxFor(turnWake, turnId) as unknown as { session: Record<string, unknown> };
-    if (worker) base.session["parent"] = { sessionId: "parent-session-1" };
-    return base as unknown as BindableContext;
-  };
-
-  {
-    const inTurn = newSession();
-    const w = await wakeNow();
-    postOutcome = "ok";
-    const ctx = grainCtx(w, "turn_5a", false);
-    await inTurn(async () => {
-      const armed = armOf(replyTool, ctx);
-      await armed!.execute({ text: "the answer", wake: w, done: true, force: false }, ctx);
-      ok(turnHasTerminalAction(repliedTurn) === true, "§5a: on a SEAT a confirmed `reply` still suppresses the reissue — OPE-762 is intact");
-    });
-  }
-
-  {
-    const inTurn = newSession();
-    const w = await wakeNow();
-    const ctx = grainCtx(w, "turn_5b", true);
-    await inTurn(async () => {
-      ok(turnHasTerminalAction(repliedTurn) === true, "§5b: before the worker speaks, the scan behaves as it always did — the gate is armed by the CALL, not by the message array");
-      await (noReplyTool as unknown as Armed).execute({ reason: "nothing-to-add" }, ctx);
-      ok(turnHasTerminalAction(repliedTurn) === false, "§5b: after a WORKER calls a terminal verb, the reissue is NOT suppressed — its empty final step is a failure its caller is waiting on");
-    });
-  }
-
-  {
-    const inTurn = newSession();
-    await inTurn(async () => {
-      ok(turnHasTerminalAction(repliedTurn) === true, "§5c: a FRESH session is unaffected by the worker session before it — the record is session-scoped");
-    });
-  }
-
-  {
-    const inTurn = newSession();
-    reactOutcome = "ok";
-    await inTurn(async () => {
-      const spawnEvents = (
-        (await import("../agent/hooks/spawn-taint.js")).default as unknown as {
-          events: Record<string, (e: unknown, c: unknown) => Promise<void> | void>;
-        }
-      ).events;
-      const parent = slackCtx("turn_5d_parent") as unknown as { session: Record<string, unknown> };
-      parent.session["id"] = "parent-session-2";
-      await spawnEvents["actions.requested"]!(
-        { data: { actions: [{ kind: "subagent-call", callId: "call_terminal_react", subagentName: "agent" }] } },
-        parent,
-      );
-      const ctx = slackCtx("turn_5d") as unknown as { channel: Record<string, unknown>; session: Record<string, unknown> };
-      ctx.channel["kind"] = "subagent";
-      ctx.channel["continuationToken"] = "subagent:parent-session-2:call_terminal_react";
-      ctx.session["parent"] = { sessionId: "parent-session-2", callId: "call_terminal_react", rootSessionId: "parent-session-2" };
-      const bindingStarted = (
-        (await import("../agent/hooks/binding-bridge.js")).default as unknown as {
-          events: Record<string, (e: unknown, c: unknown) => Promise<void> | void>;
-        }
-      ).events["turn.started"]!;
-      await bindingStarted({}, ctx);
-      const armed = armOf(reactTool, ctx);
-      await armed!.execute({ emoji: "eyes" }, ctx);
-      ok(turnHasTerminalAction(repliedTurn) === false, "§5d: a worker's `react` arms the gate as well — every terminal verb a worker can call must");
-    });
-  }
-
   const { readFileSync } = await import("node:fs");
+  const eveRootDir = dirname(nodeRequire.resolve("eve/package.json"));
+  const definition = readFileSync(join(eveRootDir, "dist/src/tools/definition.d.ts"), "utf8");
+  ok(
+    definition.includes("Ignored in delegated sessions, which must return") && definition.includes("a reply to their caller"),
+    "§5: eve's contract says `endsTurn` is IGNORED in a delegated session — a worker always returns a result to its caller",
+  );
   for (const verb of ["reply", "react", "no_reply", "edit_reply"]) {
     const src = readFileSync(new URL(`../agent/tools/${verb}.ts`, import.meta.url), "utf8");
-    ok(src.includes("noteTerminalCallGrain("), `§5e: tools/${verb}.ts records the calling grain — the gate is only as complete as its write sites`);
+    ok(!src.includes("noteTerminalCallGrain(") && !src.includes("turn-terminal-actions"), `§5: tools/${verb}.ts no longer writes the retired scan's grain record`);
   }
 }
 
@@ -469,11 +420,6 @@ for (const outcome of ["definitive", "ambiguous"] as const) {
 }
 
 {
-  const wake = { role: "user", content: "@bot please react to this" };
-  const call = (name: string) => ({ role: "assistant", content: [{ type: "tool-call", toolCallId: "c1", toolName: name, input: {} }] });
-  const okResult = (name: string) => ({ role: "tool", content: [{ type: "tool-result", toolCallId: "c1", toolName: name, output: { type: "json", value: { reacted: true } } }] });
-  const reactedTurn = [wake, call("react"), okResult("react")];
-
   const addressedSlackCtx = (turnId: string): BindableContext => {
     const base = slackCtx(turnId) as unknown as { session: { auth: { current: { attributes: Record<string, unknown> } } } };
     base.session.auth.current.attributes["oe_addressed"] = "true";
@@ -486,8 +432,10 @@ for (const outcome of ["definitive", "ambiguous"] as const) {
     const ctx = slackCtx("turn_9a");
     await inTurn(async () => {
       const armed = armOf(reactTool, ctx);
-      await armed!.execute({ emoji: "eyes" }, ctx);
-      ok(turnHasTerminalAction(reactedTurn) === true, "§9a: an UNADDRESSED react still discharges the turn alone — OPE-762 stays intact, and the negative control for §9b");
+      const r = (await armed!.execute({ emoji: "eyes" }, ctx)) as { reacted?: boolean; note?: string };
+      ok(r.reacted === true, "§9a: an unaddressed react lands");
+      ok(r.note?.includes(END_TURN_WITH_SENTINEL_INSTRUCTION) === true, "§9a: its note names the NO_REPLY sentinel, so the next step is not empty — the negative control for §9b");
+      ok(r.note?.includes("`reply` now") === false, "§9a: an unaddressed react asks for NO reply");
     });
   }
 
@@ -497,39 +445,20 @@ for (const outcome of ["definitive", "ambiguous"] as const) {
     const ctx = addressedSlackCtx("turn_9b");
     await inTurn(async () => {
       const armed = armOf(reactTool, ctx);
-      const r = (await armed!.execute({ emoji: "eyes" }, ctx)) as { reacted?: boolean };
+      const r = (await armed!.execute({ emoji: "eyes" }, ctx)) as { reacted?: boolean; note?: string };
       ok(r.reacted === true, "§9b: the reaction still lands — the tool's own behaviour is unchanged");
-      ok(turnHasTerminalAction(reactedTurn) === false, "§9b/FIX: an ADDRESSED react does NOT suppress the reissue — the owed `reply` still gets nudged");
+      ok(r.note?.includes("post one short `reply` now") === true, "§9b/FIX: an ADDRESSED react asks for the owed reply");
+      ok(r.note?.includes(END_TURN_WITH_SENTINEL_INSTRUCTION) === false, "§9b/FIX: an ADDRESSED react does NOT tell the model to end the turn");
     });
   }
 
-  {
-    const inTurn = newSession();
-    await inTurn(async () => {
-      ok(turnHasTerminalAction(reactedTurn) === true, "§9c: a FRESH session reads as unaddressed — the exemption doesn't leak across sessions");
-    });
-  }
-
-  {
-    const inTurn = newSession();
-    postOutcome = "ok";
-    reactOutcome = "ok";
-    const w = await wakeNow();
-    const ctx = addressedSlackCtx("turn_9d");
-    await inTurn(async () => {
-      const armed = armOf(reactTool, ctx);
-      await armed!.execute({ emoji: "eyes" }, ctx);
-      await callReply(w, "turn_9d", "the actual answer");
-      const both = [wake, call("react"), okResult("react"), call("reply"), okResult("reply")];
-      ok(turnHasTerminalAction(both) === true, "§9d: a `reply` elsewhere in the window still discharges the turn, addressed react or not");
-    });
-  }
+  ok(reactResultNote({} as BindableContext).includes(END_TURN_WITH_SENTINEL_INSTRUCTION), "§9c: an unreadable ctx reads as UNADDRESSED — the pre-OPE-964 behaviour, never an invented reply");
 
   {
     const { readFileSync } = await import("node:fs");
     const src = readFileSync(new URL(`../agent/tools/react.ts`, import.meta.url), "utf8");
-    const hits = (src.match(/noteReactCallAddressed\(/g) ?? []).length;
-    ok(hits === 2, `§9e: tools/react.ts records addressedness on BOTH branches (registry dispatch + Slack) — got ${hits}`);
+    const hits = (src.match(/note: reactResultNote\(/g) ?? []).length;
+    ok(hits === 2, `§9d: tools/react.ts returns reactResultNote on BOTH branches (registry dispatch + Slack) — got ${hits}`);
   }
 }
 

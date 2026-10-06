@@ -6,7 +6,7 @@ import { LINK_CONSENT_CLICK_PREFIX, OE_GRANT_ACTION_PREFIX, OE_INPUT_CLICK_PREFI
 import { handleDiscordLinkConsentInteraction } from "../identity/discord-link-consent.js";
 import { handleDiscordGrantCardInteraction } from "../access/discord-grant-click.js";
 import { handleDiscordApprovalCardInteraction, type ApprovalRespondFn } from "./discord-approval-card.js";
-import { approvalCardRespondVia, OE_COMMAND_NAME, type AttachSessionForCancel } from "@open-everywhere/core/agent/adapter-api.js";
+import { approvalCardRespondVia, oeCommandName, type AttachSessionForCancel } from "@open-everywhere/core/agent/adapter-api.js";
 import { handleDiscordOeCommandInteraction } from "../commands/discord-commands.js";
 
 type RouteHandler = (req: Request, args: RouteHandlerArgs) => Promise<Response>;
@@ -52,8 +52,9 @@ export function classifyDiscordInteraction(rawBody: string): DiscordFrontDecisio
   if (p.type === 2) {
     const data = typeof p.data === "object" && p.data !== null ? (p.data as Record<string, unknown>) : undefined;
     const name = typeof data?.name === "string" ? data.name : undefined;
-    if (name === OE_COMMAND_NAME) {
-      return { kind: "oe-command", reason: `"/${OE_COMMAND_NAME}" command — ours, zero-inference, never forwarded`, interaction: json };
+    const commandName = oeCommandName();
+    if (name === commandName) {
+      return { kind: "oe-command", reason: `"/${commandName}" command — ours, zero-inference, never forwarded`, interaction: json };
     }
     return { kind: "forward", reason: `application command "${name ?? "?"}" — not ours, discordChannel dispatches it` };
   }

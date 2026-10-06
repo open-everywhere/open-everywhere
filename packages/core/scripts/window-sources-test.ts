@@ -1,3 +1,5 @@
+// proves: SEAT-62
+
 import assert from "node:assert/strict";
 import { sourcesForWindow, windowSourcesNeedConfig, encodeSources, decodeSources } from "../agent/channels/window-sources.js";
 import { dmAnchorDomain, taskWindowId } from "../agent/channels/window-key.js";
@@ -126,5 +128,14 @@ eq(decodeSources(encodeSources(paymentsSources)), paymentsSources, "encode→dec
 eq(decodeSources(""), [], "decodeSources fails soft on an empty string");
 eq(decodeSources(undefined), [], "decodeSources fails soft on a non-string (absent stamp)");
 eq(decodeSources("slack, , github ,"), ["slack", "github"], "decodeSources trims and drops blank segments");
+
+eq(
+  sourcesForWindow("w/payments", "payments", domains),
+  sourcesForWindow("payments", "payments", domains),
+  "🔴 a work session's sources ARE its seat's: `w/payments` reads the domain roster, never a phantom platform `w`",
+);
+ok(!sourcesForWindow("w/payments", "payments", domains).includes("w"), "…and never names the phantom platform `w`");
+eq(sourcesForWindow("w/slack/T1/C1", "solo", []), sourcesForWindow("slack/T1/C1", "solo", []), "a solo seat's work session carries the solo seat's one platform");
+eq(windowSourcesNeedConfig("w/payments", "payments"), windowSourcesNeedConfig("payments", "payments"), "…and needs the config exactly when its seat does");
 
 console.log(`window-sources-test: ${n} assertions passed`);

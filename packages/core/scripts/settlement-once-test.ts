@@ -96,18 +96,13 @@ type Handler = (event: unknown, ctx: unknown) => unknown;
 const armReply = (ctx: unknown): Armed | null => (replyTool as unknown as { events: Record<string, Handler> }).events["session.started"]!({}, ctx) as Armed | null;
 
 const hooks = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
-const dispatchHook = hooks["action.result"]!;
+const startedHook = hooks["task.started"]!;
 const requestedHook = hooks["actions.requested"]!;
 const turnStarted = hooks["turn.started"]!;
-const settlementWake = hooks["message.received"]!;
+const settlementWake = hooks["task.settled"]!;
 
-const settledNote = (taskId: string, result: string) => `Background task ${taskId} (agent) is completed.\n\nResult:\n${result}`;
-const receipt = (callId: string, taskId: string) => ({
-  callId,
-  kind: "tool-result",
-  toolName: "agent",
-  output: { agentId: "ag_agent:6666", status: "working", taskId },
-});
+const settledNote = (taskId: string, result: string) => ({ callId: `call_${taskId}`, kind: "agent", name: "agent", output: result, status: "completed", taskId, turnId: "turn_settle" });
+const receipt = (callId: string, taskId: string) => ({ callId, kind: "agent", name: "agent", taskId, turnId: "turn_dispatch" });
 
 function ctxFor(turnWake: string, turnId: string): BindableContext {
   return {
@@ -133,7 +128,7 @@ async function dispatchTask(turnWake: string, turnId: string, callId: string, ta
   recordDeliveredWakes(turnId, envelope);
   recordRequesterIdentity(ctx, turnId, envelope);
   await requestedHook({ data: { actions: [{ kind: "subagent-call", callId, subagentName: "agent" }] } }, ctx);
-  await dispatchHook({ data: { result: receipt(callId, taskId) } }, ctx);
+  await startedHook({ data: receipt(callId, taskId) }, ctx);
 }
 
 const nodeRequire = createRequire(import.meta.url);
@@ -221,7 +216,7 @@ const selfPost = (e: { readonly id: string; readonly wake: string; readonly plat
 {
   const inTurn = newSession();
   const wAsk = await wakeOn(CHAN, "928.1");
-  const TASK = "task_1753step28aa";
+  const TASK = "agent-1753step28aa";
   await inTurn(async () => {
     seedTailWindow(TAIL_WINDOW);
     await turnStarted({}, ctxFor(wAsk, "turn_28_a"));
@@ -231,7 +226,7 @@ const selfPost = (e: { readonly id: string; readonly wake: string; readonly plat
     const roomAfterBanner = posted.length;
 
     await turnStarted({}, ctxFor(wAsk, "turn_28_b"));
-    await settlementWake({ data: { message: settledNote(TASK, WORKER_RESULT) } }, ctxFor(wAsk, "turn_28_b"));
+    await settlementWake({ data: settledNote(TASK, WORKER_RESULT) }, ctxFor(wAsk, "turn_28_b"));
     ok(
       (await detailsFor("unified.task_wake")).some((d) => d.task === TASK && d.outcome === "installed"),
       "§1/REACHABILITY: the settlement installed the task's reply address, so this turn CAN post",
@@ -279,7 +274,7 @@ const selfPost = (e: { readonly id: string; readonly wake: string; readonly plat
 {
   const inTurn = newSession();
   const wAsk = await wakeOn(CHAN, "930.1");
-  const TASK = "task_1753widthcc";
+  const TASK = "agent-1753widthcc";
   await inTurn(async () => {
     seedTailWindow(TAIL_WINDOW);
     await turnStarted({}, ctxFor(wAsk, "turn_w_a"));
@@ -287,7 +282,7 @@ const selfPost = (e: { readonly id: string; readonly wake: string; readonly plat
     const banner = await callReply(wAsk, "turn_w_a", wAsk, "Started it — I'll report back.", false);
     ok(banner.posted === true, "§1b/SETUP: the hand-off note posted");
     await turnStarted({}, ctxFor(wAsk, "turn_w_b"));
-    await settlementWake({ data: { message: settledNote(TASK, WORKER_RESULT) } }, ctxFor(wAsk, "turn_w_b"));
+    await settlementWake({ data: settledNote(TASK, WORKER_RESULT) }, ctxFor(wAsk, "turn_w_b"));
 
     const report = await callReply(wAsk, "turn_w_b", wAsk, WORKER_RESULT, false);
     ok(report.posted === true, "§1b/SETUP: the report posted under the exemption");
@@ -340,7 +335,7 @@ const selfPost = (e: { readonly id: string; readonly wake: string; readonly plat
 {
   const inTurn = newSession();
   const wAsk = await wakeOn(CHAN, "929.1");
-  const TASK = "task_1753forcebb";
+  const TASK = "agent-1753forcebb";
   await inTurn(async () => {
     seedTailWindow(TAIL_WINDOW);
     await turnStarted({}, ctxFor(wAsk, "turn_f_a"));
@@ -348,7 +343,7 @@ const selfPost = (e: { readonly id: string; readonly wake: string; readonly plat
     const banner = await callReply(wAsk, "turn_f_a", wAsk, "On it — I'll report back.", false);
     ok(banner.posted === true, "§3/SETUP: the hand-off note posted");
     await turnStarted({}, ctxFor(wAsk, "turn_f_b"));
-    await settlementWake({ data: { message: settledNote(TASK, WORKER_RESULT) } }, ctxFor(wAsk, "turn_f_b"));
+    await settlementWake({ data: settledNote(TASK, WORKER_RESULT) }, ctxFor(wAsk, "turn_f_b"));
 
     const forcedBefore = (await reasonsFor("reply.forced")).length;
     const report = await callReply(wAsk, "turn_f_b", wAsk, WORKER_RESULT, true);
