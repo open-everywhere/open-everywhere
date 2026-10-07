@@ -9,10 +9,10 @@ import { taintKindsThisTurn, untrustedIngestedThisTurn } from "../access/taint-s
 import { currentSessionId, currentTurnId, currentWakeId, deploymentOrg, platformIdentityAttributesFor, type BindableContext } from "../identity/binding.js";
 import { resolveUnifiedWakeAuthority } from "../channels/unified-window.js";
 import { dispatchWorkRequest } from "../channels/unified.js";
-import { noteGenerationDelegation } from "../channels/generation-retirement.js";
-import { resolveWorkGeneration, workSessionLedgerId, type WorkGeneration } from "../channels/work-generation.js";
+import { generationOfTask, noteGenerationDelegation } from "../channels/generation-retirement.js";
+import { continuationRoute, resolveWorkGeneration, workSessionLedgerId, type ContinuationRoute, type WorkGeneration } from "../channels/work-generation.js";
 import { notifyLostWorkRequests } from "../channels/work-loss.js";
-import { readWorkRequest, readWorkTaskRequest, renderWorkRequest, rememberWorkRequest, workLedgerId, workRequestIdFor, workTokenForSeat, WORK_FORWARDED_ACTION, type WorkRowStore } from "../channels/work.js";
+import { readWorkBrief, readWorkRequest, readWorkTaskRequest, renderFreshFollowUpBrief, renderWorkRequest, rememberWorkBrief, rememberWorkRequest, workLedgerId, workRequestIdFor, workTokenForSeat, WORK_FORWARDED_ACTION, type WorkRowStore } from "../channels/work.js";
 import { parseWindowToken, isWorkWindowToken } from "../channels/window-key.js";
 import { ownAccountStampToForward } from "../connections/own-account-carriage.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -95,8 +95,9 @@ export async function forwardWork(input: { readonly message: string; readonly ta
       ? (deps.requesterAsks ?? requesterAsksForWake)({ turnId, wakeId, principalId: authority.requester.principalId })
       : [];
 
+  let openingRequest: string | undefined;
   if (input.taskId !== undefined) {
-    const openingRequest = await readWorkTaskRequest(store, org, input.taskId).catch(() => undefined);
+    openingRequest = await readWorkTaskRequest(store, org, input.taskId).catch(() => undefined);
     const opening = openingRequest === undefined ? undefined : await readWorkRequest(store, org, openingRequest).catch(() => undefined);
     const sameWork = opening !== undefined && workTokenForSeat(opening.seatToken) === workToken;
     const verdict = !sameWork
@@ -123,6 +124,7 @@ export async function forwardWork(input: { readonly message: string; readonly ta
     atIso,
     ...(requesterAsks.length > 0 ? { requesterAsks } : {}),
   });
+  await rememberWorkBrief(store, org, requestId, input.message, atIso);
   await noteGenerationDelegation(org, seatToken, workLedgerId(requestId));
   const recorded = deps.resolveWork ? await readWorkDelivery(store, org, requestId) : undefined;
   const generation: WorkGeneration =
@@ -131,14 +133,35 @@ export async function forwardWork(input: { readonly message: string; readonly ta
       : deps.resolveWork
         ? await deps.resolveWork({ org, seatToken, surfaceKey: authority.surfaceKey, atIso })
         : { token: workToken, generation: 1 };
-  const deliveryToken = generation.token;
+  const route: ContinuationRoute =
+    recorded === undefined && input.taskId !== undefined && deps.resolveWork
+      ? await continuationRoute(
+          { org, holdingToken: (openingRequest === undefined ? undefined : (await readWorkDelivery(store, org, openingRequest))?.token) ?? (await generationOfTask(org, input.taskId, store)), currentToken: generation.token },
+          store,
+        ).catch((): ContinuationRoute => ({ kind: "current" }))
+      : { kind: "current" };
+  const fresh =
+    recorded !== undefined ? recorded.fresh : route.kind === "ended" && input.taskId !== undefined ? { taskId: input.taskId, from: route.from, reason: route.reason } : undefined;
+  const deliveryToken = recorded !== undefined ? recorded.token : route.kind === "holding" ? route.token : generation.token;
+  const deliveredTaskId = fresh !== undefined ? undefined : input.taskId;
+  const brief =
+    fresh === undefined
+      ? input.message
+      : renderFreshFollowUpBrief({
+          taskId: fresh.taskId,
+          message: input.message,
+          ...(await (async () => {
+            const earlier = openingRequest === undefined ? undefined : await readWorkBrief(store, org, openingRequest).catch(() => undefined);
+            return earlier !== undefined ? { earlierBrief: earlier } : {};
+          })()),
+        });
   const loss =
     recorded !== undefined
       ? recorded.loss
       : generation.rotated !== undefined
         ? { from: generation.rotated.from, reason: `work-session ${generation.rotated.trigger}`, lost: generation.rotated.lostRequestIds.filter((id) => id !== requestId) }
         : undefined;
-  if (recorded === undefined && deps.resolveWork) await rememberWorkDelivery(store, org, requestId, { token: deliveryToken, ...(loss !== undefined ? { loss } : {}) }, atIso);
+  if (recorded === undefined && deps.resolveWork) await rememberWorkDelivery(store, org, requestId, { token: deliveryToken, ...(loss !== undefined ? { loss } : {}), ...(fresh !== undefined ? { fresh } : {}) }, atIso);
   if (loss !== undefined && loss.lost.length > 0 && deps.notifyLost) {
     await deps.notifyLost({ org, requestIds: loss.lost, reason: loss.reason, workToken: loss.from });
   }
@@ -146,7 +169,7 @@ export async function forwardWork(input: { readonly message: string; readonly ta
   const forward: Parameters<typeof dispatchWorkRequest>[0] = {
     token: deliveryToken,
     requestId,
-    message: renderWorkRequest({ requestId, brief: input.message, origin: authority.origin, nowIso: atIso, ...(input.taskId !== undefined ? { taskId: input.taskId } : {}) }),
+    message: renderWorkRequest({ requestId, brief, origin: authority.origin, nowIso: atIso, ...(deliveredTaskId !== undefined ? { taskId: deliveredTaskId } : {}) }),
     origin: authority.origin,
     surfaceKey: authority.surfaceKey,
     binding: authority.binding,
@@ -174,15 +197,33 @@ export async function forwardWork(input: { readonly message: string; readonly ta
     platform: "unified",
     workspace: parseWindowToken(seatToken)?.domain ?? "unknown",
     action: WORK_FORWARDED_ACTION,
-    detail: { requestId, wakeId, workToken: deliveryToken, workGeneration: generation.generation, briefLen: input.message.length, askCount: requesterAsks.length, tainted, ...(seatSessionId !== undefined ? { seatSessionId } : {}) },
+    detail: {
+      requestId,
+      wakeId,
+      workToken: deliveryToken,
+      workGeneration: parseWindowToken(deliveryToken)?.generation ?? generation.generation,
+      ...(generation.runtime !== undefined && route.kind !== "holding" ? { workRuntime: generation.runtime } : {}),
+      ...(recorded === undefined && input.taskId !== undefined ? { continuation: fresh !== undefined ? `fresh-${fresh.reason}` : route.kind } : {}),
+      briefLen: input.message.length, askCount: requesterAsks.length, tainted, ...(seatSessionId !== undefined ? { seatSessionId } : {}) },
   }).catch(() => undefined);
 
   return {
     requestId,
-    note:
-      "Forwarded to this conversation's work session. Your turn does not wait on it: tell the people who asked " +
-      "that the work has started (reply with done:false), then carry on. The result arrives to you as a new message.",
+    note: fresh !== undefined ? freshFollowUpNote(fresh.taskId) : FORWARDED_NOTE,
   };
+}
+
+const FORWARDED_NOTE =
+  "Forwarded to this conversation's work session. Your turn does not wait on it: tell the people who asked " +
+  "that the work has started (reply with done:false), then carry on. The result arrives to you as a new message.";
+
+export function freshFollowUpNote(taskId: string): string {
+  return (
+    `The job you asked to continue (task ${taskId}) ran in an earlier work session that can no longer continue it, ` +
+    "so this follow-up was forwarded as a NEW job, with the earlier job's brief attached. The new job does not have the earlier job's work. " +
+    "Tell the people who asked that the job could not be continued and starts again as a new job (reply with done:false), then carry on. " +
+    "The result arrives to you as a new message."
+  );
 }
 
 function workDeliveryKey(requestId: string): string {
@@ -192,13 +233,14 @@ function workDeliveryKey(requestId: string): string {
 interface WorkDelivery {
   readonly token: string;
   readonly loss?: { readonly from: string; readonly reason: string; readonly lost: readonly string[] };
+  readonly fresh?: { readonly taskId: string; readonly from: string; readonly reason: string };
 }
 
 async function readWorkDelivery(store: WorkRowStore, org: string, requestId: string): Promise<WorkDelivery | undefined> {
   try {
     const raw = await store.getTaskResult(org, workDeliveryKey(requestId));
     if (raw === null) return undefined;
-    const row = JSON.parse(raw) as { token?: unknown; loss?: { from?: unknown; reason?: unknown; lost?: unknown } } | null;
+    const row = JSON.parse(raw) as { token?: unknown; loss?: { from?: unknown; reason?: unknown; lost?: unknown }; fresh?: { taskId?: unknown; from?: unknown; reason?: unknown } } | null;
     const token = row?.token;
     if (typeof token !== "string" || !isWorkWindowToken(token)) return undefined;
     const l = row?.loss;
@@ -206,7 +248,10 @@ async function readWorkDelivery(store: WorkRowStore, org: string, requestId: str
       l !== undefined && typeof l.from === "string" && typeof l.reason === "string" && Array.isArray(l.lost)
         ? { from: l.from, reason: l.reason, lost: l.lost.filter((id): id is string => typeof id === "string" && id.length > 0) }
         : undefined;
-    return { token, ...(loss !== undefined ? { loss } : {}) };
+    const f = row?.fresh;
+    const fresh =
+      f !== undefined && typeof f.taskId === "string" && typeof f.from === "string" && typeof f.reason === "string" ? { taskId: f.taskId, from: f.from, reason: f.reason } : undefined;
+    return { token, ...(loss !== undefined ? { loss } : {}), ...(fresh !== undefined ? { fresh } : {}) };
   } catch {
     return undefined;
   }

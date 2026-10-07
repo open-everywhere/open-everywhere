@@ -3450,6 +3450,7 @@
     "test:worker-capabilities": "NODE_NO_WARNINGS=1 tsx scripts/worker-capabilities-test.ts",
     "test:worker-continuation": "NODE_NO_WARNINGS=1 tsx scripts/worker-continuation-test.ts",
     "test:work-forward": "NODE_NO_WARNINGS=1 tsx scripts/work-forward-test.ts",
+    "test:work-report-owed": "NODE_NO_WARNINGS=1 tsx scripts/work-report-owed-test.ts",
     "test:forwarded-asks": "NODE_NO_WARNINGS=1 tsx scripts/forwarded-asks-test.ts",
     "test:fire-work": "NODE_NO_WARNINGS=1 tsx scripts/fire-work-test.ts",
     "test:work-generation": "NODE_NO_WARNINGS=1 tsx scripts/work-generation-test.ts",

@@ -45,6 +45,7 @@ function summarizeConnectorOp(args: ConnectorOpArgs): string[] {
 const connectorOp: ActionKind<ConnectorOpArgs> = {
   kind: CONNECTOR_OP_KIND,
   policy: "member",
+  approvalArmsCall: true,
   summarize: (args) => summarizeConnectorOp(args),
   async execute(args, decidedBy) {
     if (decidedBy.startsWith("chain:")) {

@@ -412,7 +412,8 @@ registerConfig({
   const relW = "packages/core/agent/channels/work-generation.ts";
   const w = readFileSync(join(REPO_ROOT, relW), "utf8");
   ok(w.includes("claimRuntimeRotation"), `🔴 ${relW} claims the runtime rotation — without it a fire after an eve bump dies in a stranded work session, silently`);
-  ok(/const runtimeChanged = await/.test(w), `🔴 ${relW} resolves the verdict into a \`runtimeChanged\` binding (a claim whose boolean is dropped heals nothing)`);
+  ok(/return claimRuntimeRotationOutcome\(scope, \{ store, rotateUnstamped: /.test(w) && /const claimed = await \(deps\.claimRuntime \?\? liveClaim\)\(\)/.test(w), `🔴 ${relW} claims with the outcome-naming claim, and a served W row with no recorded code rotates (OPE-2377)`);
+  ok(/const runtimeChanged = runtimeOutcome === "rotate"/.test(w) && /runtimeChanged \? "runtime-changed"/.test(w), `🔴 ${relW} turns the verdict into the \`runtime-changed\` rung (a claim whose verdict is dropped heals nothing)`);
   const relF = "packages/core/agent/routines/fire-work.ts";
   const f = readFileSync(join(REPO_ROOT, relF), "utf8");
   ok(/resolveWork: \(input\) => resolveWorkGeneration\(input\)/.test(f), `🔴 ${relF}'s live deps resolve W's generation through resolveWorkGeneration — the fire reaches the heal above`);

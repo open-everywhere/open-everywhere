@@ -167,4 +167,22 @@ const baseInput: ApprovalDecisionWakeInput = {
   ok(/<system-note>[\s\S]*task_cancel[\s\S]*<\/system-note>/.test(rendered), "OPE-2071: the cancel sentence reaches the rendered, trusted note");
 }
 
+{
+  const armed: ApprovalDecisionWakeInput = { ...baseInput, armsCall: true, forwardsWork: true, execution: { ran: "ok", line: "may run once; call it again" } };
+  const body = approvalDecisionBody(armed);
+  ok(body.includes("HAS NOT RUN"), `armed: the approved wake says the act has NOT run (${body})`);
+  ok(!body.includes("ALREADY RUN") && !body.includes("NOT delegate it again"), "armed: no already-ran claim and no re-delegation ban");
+  ok(body.includes("`work` and its `taskId`"), "armed (forwarding seat): the follow-up goes to the asking job by `work` + `taskId`");
+  ok(body.includes("call the op again with exactly the same input"), "armed: the job is told to repeat the call with the same input");
+  ok(!body.includes("cancel it ("), "armed: the wake never tells the seat to cancel the job that must make the call");
+  ok(body.includes("do NOT start a new job"), "armed: a new job is forbidden (a rebuilt input posts a new card)");
+  const plain = approvalDecisionBody({ ...armed, forwardsWork: false });
+  ok(plain.includes("by its `taskId`") && !plain.includes("`work`"), "armed (non-forwarding session): the follow-up names the task, not the seat-only `work` verb");
+  ok(approvalDecisionBody({ ...armed, armsCall: false }).includes("ALREADY RUN"), "control: the same input without the flag still says the act already ran");
+  const rejected = approvalDecisionBody({ ...armed, outcome: "rejected" });
+  ok(rejected.includes("REJECTED") && !rejected.includes("call the op again") && !rejected.includes("HAS NOT RUN"), "control: a rejected armed card asks for no call");
+  const failed = approvalDecisionBody({ ...armed, execution: { ran: "failed", line: "FAILED: memo write" } });
+  ok(failed.includes("RAN AND FAILED") && !failed.includes("call the op again"), "control: a failed arming keeps the failure closing");
+}
+
 console.log(`✓ ${n} decision-wake assertions passed`);

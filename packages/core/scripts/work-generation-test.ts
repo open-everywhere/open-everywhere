@@ -9,6 +9,7 @@ import { readAudit } from "../agent/audit/audit.js";
 import { deploymentOrg } from "../agent/identity/binding.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
 import {
+  continuationRoute,
   currentSeatToken,
   currentWorkToken,
   isSameWorkSession,
@@ -105,7 +106,15 @@ const det = (runtimeChanged = false) => ({ claimRuntime: async () => runtimeChan
 
   await noteGenerationDelegation(ORG, hard.token, workSessionLedgerId("req-runtime"), store);
   const runtime = await resolveWorkGeneration({ org: ORG, seatToken: SEAT_G4, surfaceKey: SURFACE, atIso: at(6) }, det(true));
-  ok(runtime.rotated?.trigger === "runtime-changed" && runtime.rotated.lostRequestIds.join() === "req-runtime", "🔴 a runtime change rotates W at once (eve bump), naming the job it loses");
+  ok(runtime.rotated?.trigger === "runtime-changed" && runtime.generation === 4, "🔴 a runtime change rotates W at once, even while W owes a job");
+  ok(
+    runtime.rotated?.lostRequestIds.length === 0 && runtime.rotated.lostTaskIds.length === 0 && runtime.rotated.drainingRequestIds.join() === "req-runtime",
+    "🔴 OPE-2377: …and LOSES nothing: the old W still runs on its own deployment, so its job is DRAINING, never lost",
+  );
+  ok(runtime.runtime === "rotated", "…and the forward's verdict says the job reached a rotated, fresh W");
+  const runtimeRow = (await readAudit({ org: ORG })).find((r) => r.action === WORK_ROTATED_ACTION && r.detail?.["trigger"] === "runtime-changed");
+  ok(runtimeRow?.detail?.["drainingRequests"] === 1 && runtimeRow.detail["lostRequests"] === 0, "…and the rotation row counts the draining job, and no lost one");
+  ok((await generationOwedTaskIds(ORG, hard.token, store)).includes(workSessionLedgerId("req-runtime")), "…and the outgoing W still owes it, so the retirement drain leaves that W alone until it settles");
   const quiet = await resolveWorkGeneration({ org: ORG, seatToken: SEAT_G4, surfaceKey: SURFACE, atIso: at(7) }, det());
   ok(quiet.rotated === undefined && quiet.deferred === undefined && quiet.token === runtime.token, "negative control: a fresh generation with no rung resumes");
   const weekLater = at(7 * 24 * 60);
@@ -275,4 +284,100 @@ const det = (runtimeChanged = false) => ({ claimRuntime: async () => runtimeChan
   ok(lostRows.length === 1, "🔴 …and its owed job gets exactly one lost-job attempt (delivery itself needs a live dispatch, which this process has none of)");
 }
 
+{
+  const { registerConfig } = await import("../agent/access/config.js");
+  const { defineDomain } = await import("../agent/memory/domain.js");
+  const { claimRuntimeRotation } = await import("../agent/channels/runtime-rotation.js");
+  const { dmWindowKey, formatWindowToken } = await import("../agent/channels/window-key.js");
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [defineDomain({ name: "e2e-unified", reach: ["discord/111/222"], ambientSupervisor: true })],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  });
+  const org = "org-ope2377";
+  const live = (codeFingerprint: string) => ({ codeFingerprint, salt: (t: string) => `${t}-${codeFingerprint}` });
+  const forward = (seatToken: string, surfaceKey: string, minute: number, build: string) => resolveWorkGeneration({ org, seatToken, surfaceKey, atIso: at(minute) }, live(build));
+
+  const DM_SURFACE = "slack/T0EXAMPLE/D0DMSTALE";
+  const DM_SEAT = `${formatWindowToken(dmWindowKey(DM_SURFACE, 301))}-abc123`;
+  const minted = await forward(DM_SEAT, DM_SURFACE, 0, "build-A");
+  ok(minted.minted === true && minted.runtime === "minted", "a DM conversation's first forward mints its W on build A");
+  const same = await forward(DM_SEAT, DM_SURFACE, 1, "build-A");
+  ok(same.token === minted.token && same.rotated === undefined && same.runtime === "current", "🔴 NEGATIVE CONTROL: the same build resumes the SAME work session, and says it runs this code");
+  await noteGenerationDelegation(org, minted.token, workSessionLedgerId("req-in-flight"), store);
+  const deployed = await forward(DM_SEAT, DM_SURFACE, 2, "build-B");
+  ok(
+    deployed.rotated?.trigger === "runtime-changed" && deployed.token !== minted.token && deployed.runtime === "rotated",
+    "🔴 OPE-2377: after a deploy, a DM's forward goes to a NEW work session on the new build (before the fix the `oe-dm/` grain read failed and W kept build A's code)",
+  );
+  ok(deployed.rotated?.drainingRequestIds.join() === "req-in-flight" && deployed.rotated.lostRequestIds.length === 0, "🔴 …and the job the old W holds is draining, not lost");
+  const after = await forward(DM_SEAT, DM_SURFACE, 3, "build-B");
+  ok(after.token === deployed.token && after.rotated === undefined && after.runtime === "current", "…and one work session per conversation holds: the next forward on build B joins the new W");
+
+  const OLD_SURFACE = "slack/T0EXAMPLE/D0DMOLD";
+  const OLD_SEAT = `${formatWindowToken(dmWindowKey(OLD_SURFACE, 7))}-abc123`;
+  const oldKey = workRegistryKey(OLD_SEAT)!;
+  const oldW = workTokenForSeat(OLD_SEAT)!;
+  await store.rotateChannelSession(org, oldKey, oldW, at(0));
+  await store.touchChannelSession(org, oldKey, at(0));
+  const healed = await forward(OLD_SEAT, OLD_SURFACE, 4, "build-B");
+  ok(healed.rotated?.trigger === "runtime-changed" && healed.rotated.from === oldW && healed.runtime === "rotated", "🔴 a W row with no recorded code ROTATES on the next forward (fail toward a fresh session)");
+  const healedAgain = await forward(OLD_SEAT, OLD_SURFACE, 5, "build-B");
+  ok(healedAgain.token === healed.token && healedAgain.rotated === undefined, "…once: the fresh W is stamped with this code and resumes");
+  const RACE_SURFACE = "slack/T0EXAMPLE/D0DMRACE";
+  const RACE_SEAT = `${formatWindowToken(dmWindowKey(RACE_SURFACE, 1))}-abc123`;
+  await store.rotateChannelSession(org, workRegistryKey(RACE_SEAT)!, workTokenForSeat(RACE_SEAT)!, at(0));
+  const racer = await forward(RACE_SEAT, RACE_SURFACE, 4, "build-B");
+  ok(racer.rotated === undefined && racer.token === workTokenForSeat(RACE_SEAT) && racer.runtime === "current", "🔴 NEGATIVE CONTROL: an unstamped W row that has served NO forward is adopted, so a concurrent first forward joins the same W");
+  const seatKey = "oe-dm-seat::slack/T0EXAMPLE/D0DMSEATONLY";
+  await store.rotateChannelSession(org, seatKey, "seat-token-g1", at(0));
+  const seatRotated = await claimRuntimeRotation({ org, registryKey: seatKey, surfaceKey: "slack/T0EXAMPLE/D0DMSEATONLY", atIso: at(0) }, { store, codeFingerprint: "build-B" });
+  ok(seatRotated === false, "NEGATIVE CONTROL: a seat row with no recorded code is still ADOPTED, never rotated");
+
+  const DOM_SEAT = "oe-dom:e2e-unified:win:discord/333/444:oe-sup:g2-abc123";
+  const domMinted = await forward(DOM_SEAT, "discord/333/444", 6, "build-A");
+  const domSame = await forward(DOM_SEAT, "discord/333/444", 7, "build-A");
+  ok(domMinted.minted === true && domSame.token === domMinted.token && domSame.runtime === "current", "a declared domain's W resumes on the same build");
+  const domDeployed = await forward(DOM_SEAT, "discord/333/444", 8, "build-B");
+  ok(domDeployed.rotated?.trigger === "runtime-changed" && domDeployed.token !== domMinted.token, "…and rotates on a new build");
+}
+
+{
+  const org = "org-ope2377-dead";
+  const SEAT = "oe-dom:e2e-unified:win:discord/555/666:oe-sup:g1-abc123";
+  const first = await resolveWorkGeneration({ org, seatToken: SEAT, surfaceKey: "discord/555/666", atIso: at(0) }, det());
+  await noteGenerationDelegation(org, first.token, workSessionLedgerId("req-dead"), store);
+  await markWorkSessionDead(org, first.token, "parked", store);
+  const both = await resolveWorkGeneration({ org, seatToken: SEAT, surfaceKey: "discord/555/666", atIso: at(1) }, det(true));
+  ok(both.rotated?.trigger === "parked" && both.rotated.lostRequestIds.join() === "req-dead" && both.rotated.drainingRequestIds.length === 0, "🔴 a PARKED W can never drain, so its job is lost (and the room told) even when the code changed as well");
+}
+
+{
+  const org = "org-ope2378";
+  const SEAT = "oe-dom:e2e-unified:oe-sup:g1";
+  const old = "oe-dom:e2e-unified:win:w/e2e-unified:oe-sup:g2-aaaaaa";
+  const cur = "oe-dom:e2e-unified:win:w/e2e-unified:oe-sup:g3-bbbbbb";
+  const otherW = "oe-dom:e2e-unified:win:w/other-room:oe-sup:g2-cccccc";
+  ok(workTokenForSeat(SEAT) !== undefined && isSameWorkSession(old, workTokenForSeat(SEAT)) && isSameWorkSession(cur, old), "the fixture's tokens name ONE work session in two generations");
+  const route = (holdingToken: string | undefined) => continuationRoute({ org, holdingToken, currentToken: cur }, store);
+  ok((await route(cur)).kind === "current", "a task in W's CURRENT generation goes to the current W");
+  ok((await route(undefined)).kind === "current", "a task with no recorded generation goes to the current W, as before");
+  ok((await route(otherW)).kind === "current", "a generation of ANOTHER work session is never chosen");
+  const idle = await route(old);
+  ok(idle.kind === "ended" && idle.reason === "idle" && idle.from === old, "🔴 an older generation that owes nothing is ENDED (idle): the follow-up starts as a new job");
+  await noteGenerationDelegation(org, old, workSessionLedgerId("req-draining"), store);
+  const holding = await route(old);
+  ok(holding.kind === "holding" && holding.token === old, "🔴 an older generation that still RUNS a job holds the task: the follow-up goes there");
+  ok((await route(`unified:${old}`)).kind === "holding", "…and an eve-prefixed recorded token reads the same");
+  await markWorkSessionDead(org, old, "failed", store);
+  const dead = await route(old);
+  ok(dead.kind === "ended" && dead.reason === "dead", "🔴 a parked or failed older generation is ENDED (dead), even while its ledger owes");
+  const broken = { getTaskResult: async (_o: string, key: string) => (key.startsWith("oe-work-dead:") ? null : Promise.reject(new Error("store down"))) };
+  const unread = await continuationRoute({ org, holdingToken: "oe-dom:e2e-unified:win:w/e2e-unified:oe-sup:g4-dddddd", currentToken: cur }, broken as never);
+  ok(unread.kind === "ended" && unread.reason === "unreadable", "🔴 an unreadable ledger is ENDED (unreadable), never HOLDING");
+}
 console.log(`work-generation-test: ${n} assertions passed`);

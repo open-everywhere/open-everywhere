@@ -1,5 +1,6 @@
 import type { AuditWireEntry } from "./audit-read.js";
 import { WAKE_INGRESS_ACTION, WAKE_TURN_START_ACTION } from "../../agent/channels/wake-timing.js";
+import { workLedgerId } from "../../agent/channels/work.js";
 
 export const DELEGATION_TASK_STARTED_ACTION = "delegation.task_started";
 export const DELEGATION_TASK_SETTLED_ACTION = "delegation.task_settled";
@@ -8,6 +9,38 @@ export const REPLY_POST_ACTION = "reply.post";
 export const REPLY_EDIT_ACTION = "reply.edit";
 
 export const dS = (e: AuditWireEntry, k: string): string | undefined => (typeof e.detail?.[k] === "string" ? (e.detail![k] as string) : undefined);
+
+export const WORK_FORWARDED_ACTION = "work.forwarded";
+
+export function seatDelegationRows(
+  rows: readonly AuditWireEntry[],
+  sessionId: string,
+  wakeId?: string,
+): { readonly forwards: readonly AuditWireEntry[]; readonly started: readonly AuditWireEntry[]; readonly settled: readonly AuditWireEntry[] } {
+  const forwards = rows.filter(
+    (r) => r.action === WORK_FORWARDED_ACTION && ((sessionId.length > 0 && dS(r, "seatSessionId") === sessionId) || (wakeId !== undefined && wakeId.length > 0 && dS(r, "wakeId") === wakeId)),
+  );
+  const requests = new Set(forwards.map((r) => dS(r, "requestId")).filter((id): id is string => id !== undefined && id.length > 0));
+  const started = rows.filter((r) => {
+    if (r.action !== DELEGATION_TASK_STARTED_ACTION) return false;
+    if (sessionId.length > 0 && dS(r, "session") === sessionId) return true;
+    const request = dS(r, "request");
+    return request !== undefined && requests.has(request);
+  });
+  const startedOn = new Map<string, string>();
+  for (const r of started) {
+    const task = dS(r, "task");
+    const session = dS(r, "session");
+    if (task !== undefined && session !== undefined) startedOn.set(task, session);
+  }
+  const settled = rows.filter((r) => {
+    if (r.action !== DELEGATION_TASK_SETTLED_ACTION) return false;
+    if (sessionId.length > 0 && dS(r, "session") === sessionId) return true;
+    const task = dS(r, "task");
+    return task !== undefined && startedOn.has(task) && startedOn.get(task) === dS(r, "session");
+  });
+  return { forwards, started, settled };
+}
 
 export type DelegatedReadVerdict =
   | { readonly kind: "delegated-completed"; readonly taskId: string; readonly detail: string }
@@ -95,7 +128,8 @@ export async function pollForFinalReply(
     await deps.sleep(pollMs);
     const rows = await deps.fetchRows();
     const replies = turnReplies(rows, wakeId, sessionId);
-    const settled = rows.find((r) => r.action === DELEGATION_TASK_SETTLED_ACTION && dS(r, "session") === sessionId);
+    const delegation = seatDelegationRows(rows, sessionId, wakeId);
+    const settled = delegation.settled[0];
     if (settled && settledFirstSeenAt === undefined) {
       settledFirstSeenAt = deps.now();
       lastChangeAt = settledFirstSeenAt;
@@ -123,7 +157,7 @@ export async function pollForFinalReply(
       lastChangeAt = deps.now();
       continue;
     }
-    const outstanding = rows.some((r) => r.action === DELEGATION_TASK_STARTED_ACTION && dS(r, "session") === sessionId) && !settled;
+    const outstanding = delegation.started.length > 0 && !settled;
     if (!outstanding && deps.now() - lastChangeAt >= quietMs) {
       return {
         kind: "quiet",
@@ -247,15 +281,29 @@ export function wakeLineage(rows: readonly AuditWireEntry[], wakeId: string, flo
 
 export function tasksDispatchedAtOrAfter(rows: readonly AuditWireEntry[], floorMs: number): ReadonlySet<string> {
   const out = new Set<string>();
-  for (const r of rows) {
-    if (r.action !== DELEGATION_TASK_STARTED_ACTION) continue;
+  for (const r of dispatchRowsAtOrAfter(rows, floorMs)) {
     const task = dS(r, "task");
-    const at = Date.parse(r.ts);
-    if (task === undefined || task.length === 0) continue;
-    if (!Number.isFinite(at) || at < floorMs) continue;
-    out.add(task);
+    if (task !== undefined) out.add(task);
   }
   return out;
+}
+
+export function forwardedJobsDispatchedAtOrAfter(rows: readonly AuditWireEntry[], floorMs: number): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const r of dispatchRowsAtOrAfter(rows, floorMs)) {
+    const request = dS(r, "request");
+    if (request !== undefined && request.length > 0) out.add(workLedgerId(request));
+  }
+  return out;
+}
+
+function dispatchRowsAtOrAfter(rows: readonly AuditWireEntry[], floorMs: number): readonly AuditWireEntry[] {
+  return rows.filter((r) => {
+    if (r.action !== DELEGATION_TASK_STARTED_ACTION) return false;
+    const task = dS(r, "task");
+    const at = Date.parse(r.ts);
+    return task !== undefined && task.length > 0 && Number.isFinite(at) && at >= floorMs;
+  });
 }
 
 function replyIdsByWake(rows: readonly AuditWireEntry[], wakeId: string, floorMs: number | undefined): { readonly mine: ReadonlyMap<string, string>; readonly foreign: ReadonlySet<string> } {

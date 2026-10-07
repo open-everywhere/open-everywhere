@@ -8,7 +8,8 @@ import { criteriaDomain } from "../memory/domain.js";
 import { seatTokenForwardsWork } from "../access/work-session.js";
 import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { emitTelemetry } from "../observability/telemetry.js";
-import { grainUsesUnifiedWindow, supervisorGrainFor } from "../channels/unified-supervisor.js";
+import { dmWindowRegistryKey, grainUsesUnifiedWindow, supervisorGrainFor } from "../channels/unified-supervisor.js";
+import { dmAnchorDomain, dmAnchorSurfaceForToken, isDmAnchorWindowToken } from "../channels/window-key.js";
 import { mintWakeId, type UnifiedWakeOrigin } from "../channels/unified-window.js";
 import { dispatchApprovalDecisionWake } from "../channels/unified.js";
 import { postSurfaceText, surfaceMessageOps } from "../channels/surface-message-ops.js";
@@ -1356,6 +1357,33 @@ export interface DecisionWakeDeps {
   readonly mintWakeId?: () => string;
 }
 
+function isOwnDmSeatToken(token: string, surfaceKey: string): boolean {
+  return isDmAnchorWindowToken(token) && dmAnchorSurfaceForToken(token) === surfaceKey;
+}
+
+async function decisionWakeSeatFor(org: string, surfaceKey: string): Promise<{ readonly domainName: string; readonly token: string } | null> {
+  const store = getOperationalStore();
+  let dmKey: { readonly domainName: string; readonly registryKey: string } | undefined;
+  try {
+    dmKey = { domainName: dmAnchorDomain(surfaceKey), registryKey: dmWindowRegistryKey(surfaceKey) };
+  } catch {
+    dmKey = undefined;
+  }
+  if (dmKey) {
+    const dm = await store.getChannelSession(org, dmKey.registryKey).catch(() => null);
+    if (dm) return isOwnDmSeatToken(dm.token, surfaceKey) ? { domainName: dmKey.domainName, token: dm.token } : null;
+  }
+  let grain: ReturnType<typeof supervisorGrainFor>;
+  try {
+    grain = supervisorGrainFor(surfaceKey, getConfig().loadDomains());
+  } catch {
+    return null;
+  }
+  if (!grainUsesUnifiedWindow(grain) || grain.domainName === undefined) return null;
+  const session = await store.getChannelSession(org, grain.registryKey).catch(() => null);
+  return session ? { domainName: grain.domainName, token: session.token } : null;
+}
+
 export async function wakeWindowOnDecision(
   input: {
     readonly row: PendingActionRow;
@@ -1376,20 +1404,9 @@ export async function wakeWindowOnDecision(
   const surfaceKey = authority?.surfaceKey ?? input.surfaceKey;
   const origin = authority?.origin ?? input.origin;
 
-  let domainName: string;
-  let registryKey: string;
-  try {
-    const grain = supervisorGrainFor(surfaceKey, getConfig().loadDomains());
-    if (!grainUsesUnifiedWindow(grain) || grain.domainName === undefined) return false;
-    domainName = grain.domainName;
-    registryKey = grain.registryKey;
-  } catch {
-    return false;
-  }
-
-  const store = getOperationalStore();
-  const session = await store.getChannelSession(input.row.org, registryKey).catch(() => null);
-  if (!session) return false;
+  const seat = await decisionWakeSeatFor(input.row.org, surfaceKey);
+  if (!seat) return false;
+  const { domainName } = seat;
 
   const wakeId = mint();
   const message = renderApprovalDecisionMessage(
@@ -1401,12 +1418,13 @@ export async function wakeWindowOnDecision(
       ...(input.clickerId ? { clickerId: input.clickerId } : {}),
       ...(input.execution ? { execution: input.execution } : {}),
       pendingId: input.row.id,
-      ...(seatTokenForwardsWork(session.token) ? { forwardsWork: true } : {}),
+      ...(seatTokenForwardsWork(seat.token) ? { forwardsWork: true } : {}),
+      ...(actionKind(input.row.kind)?.approvalArmsCall === true ? { armsCall: true } : {}),
     },
     nowIso,
   );
   const delivered = await dispatch({
-    token: session.token,
+    token: seat.token,
     origin,
     wakeId,
     message,

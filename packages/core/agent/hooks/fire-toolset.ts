@@ -2,6 +2,7 @@ import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
 import { appendAudit } from "../audit/audit.js";
 import { isScheduleOriginatedAuth, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
+import { isWorkSessionChildContext } from "../access/work-session.js";
 import { jobFireStamped } from "../access/job-posture.js";
 import { resolvePartition } from "../memory/partition.js";
 import { permissionKindsUnderKey } from "../routines/declared-permissions.js";
@@ -104,14 +105,20 @@ export interface DeclaredOpResolutionOutcome {
 }
 
 export async function resolveDeclaredOps(ctx: HookContext, budgetMs: number = CATALOGUE_READ_BUDGET_MS): Promise<DeclaredOpResolutionOutcome | undefined> {
-  if (isSubagentChildContext(ctx as unknown as BindableContext)) return undefined;
+  const bindable = ctx as unknown as BindableContext;
+  const forwardedFireChild = isWorkSessionChildContext(bindable);
+  if (!forwardedFireChild && isSubagentChildContext(bindable)) return undefined;
   const slots = ctx as unknown as {
     readonly session?: { readonly auth?: { readonly current?: unknown; readonly initiator?: unknown } | null };
   };
   const auth = (slots.session?.auth?.current ?? slots.session?.auth?.initiator ?? null) as
     | { authenticator?: unknown; principalId?: unknown; principalType?: unknown; attributes?: Record<string, string | readonly string[]> }
     | null;
-  if (!isScheduleOriginatedAuth(auth)) return undefined;
+  const fireTurn = forwardedFireChild ? routineMarker(auth?.attributes) !== null : isScheduleOriginatedAuth(auth);
+  if (!fireTurn) {
+    if (declaredOpsForReach().length > 0) keepDeclaredOps([]);
+    return undefined;
+  }
   if (jobFireStamped(auth?.attributes ?? {})) return undefined;
   const permissionKey = routinePermissionKeyStamped(auth?.attributes);
   if (permissionKey === undefined) return undefined;

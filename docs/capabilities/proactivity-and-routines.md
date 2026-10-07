@@ -513,7 +513,11 @@ into it.
 
 A declaration that no connection advertises, one that two connections can both compose, or one whose
 catalogue does not answer within three seconds resolves to nothing. That fire searches, as an
-ordinary fire does. A delegated worker and a durable job's fire resolve nothing. The
+ordinary fire does. A fire with a surface is forwarded into the conversation's work session, and
+the work session only relays the job to a child. So there the CHILD that runs the routine resolves
+the declared operations and carries the block, because it is the turn that calls
+`connection_execute`. The work session itself resolves nothing. Any other delegated worker and a
+durable job's fire resolve nothing either. The
 `routine.declared_ops_resolved` audit row names, per fire, which declared operations resolved and
 which resolved to nothing. It replaces `routine.declared_ops_mounted`, which claimed a mounted tool
 that the current framework (eve 0.69 and later) never mounts.
@@ -1360,7 +1364,7 @@ into a **config pull request**.
 | `routine.permission_declined_stale` | The ask was **already stale** when the click landed, so nothing was remembered. | The same four fields. The separate action name is what keeps "declined" and "arrived too late" countable apart. |
 | `routine.permission_never_lifts` | A routine declares a permission this deployment's config raises out of reach, so the ask can never lift. | The routine id, the declaration string, the generation, and the reason. It makes a standing widening countable. It is **not** written on a tainted arm, where nothing armed and the cause is taint rather than the raise. |
 | `routine.expire` | A pull-request subscription stops watching — the pull request settled, or the chain spent its check budget. | The `repo#number` it watched and the stop reason. 🔴 It is written only when a chain **was already running**, cap-exhausted stops included. A first `subscribe_pr` against an already-settled pull request answers a question rather than expiring a subscription, so it writes nothing. |
-| `routine.fire_attrs_seen` | A session that eve's own schedule auth woke records the carriage attribute **key names** that arrived on its turn. | The sorted key names, and never a value. It pairs with the `routine.fire_attrs_sent` row the fire itself wrote, so the two ends of one carriage are comparable. A fire that is forwarded into the work session (every fire with a surface) writes **no** such row: no session receives the schedule auth there. Only the thread-seat fallback writes it. |
+| `routine.fire_attrs_seen` | A fire's own turn records the carriage attribute **key names** that arrived on it. Two turns count: a session that eve's own schedule auth woke (a fire with no surface, which keeps the native send), and a work-session turn whose delivery carries a forwarded fire's routine marker (every fire with a surface). | The sorted key names, and never a value, with the session id. It pairs with the `routine.fire_attrs_sent` row the fire itself wrote, so the two ends of one carriage are comparable. A delegated child writes no row. For a forwarded fire, the work session's row names the session that each worker's `parentSession` names. A forwarded fire that lost its routine marker writes no row. |
 
 🔴 **`routine.grant` and `routine.grants_revoked` are named for a vocabulary this plane has since
 renamed.** The plane calls the thing a *declared permission*, and the code's own constants say so.

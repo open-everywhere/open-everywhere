@@ -109,12 +109,21 @@ function continuationWakeKey(parentSessionId: string, openingCallId: string): st
   return `${TASK_CONTINUATION_WAKE_PREFIX}${parentSessionId}:${openingCallId}`;
 }
 
-export async function readContinuationWake(org: string, parentSessionId: string, openingCallId: string): Promise<string | undefined> {
+export interface ContinuationWake {
+  readonly wakeId: string;
+  readonly generation: number;
+}
+
+export async function readContinuationWake(org: string, parentSessionId: string, openingCallId: string): Promise<ContinuationWake | undefined> {
   try {
     const raw = await getOperationalStore().getTaskResult(org, continuationWakeKey(parentSessionId, openingCallId));
     if (raw === null) return undefined;
-    const wakeId = (JSON.parse(raw) as { wakeId?: unknown } | null)?.wakeId;
-    return typeof wakeId === "string" && wakeId.length > 0 ? wakeId : undefined;
+    const parsed = JSON.parse(raw) as { wakeId?: unknown; generation?: unknown } | null;
+    const wakeId = parsed?.wakeId;
+    const generation = parsed?.generation;
+    if (typeof wakeId !== "string" || wakeId.length === 0) return undefined;
+    if (typeof generation !== "number" || !Number.isInteger(generation) || generation < 0) return undefined;
+    return { wakeId, generation };
   } catch {
     return undefined;
   }
@@ -225,7 +234,13 @@ export async function commitTaskContinuation(input: {
       return { admit: false, reason: "authority-not-durable" };
     }
     await store
-      .putTaskResult(input.org, continuationWakeKey(input.parentSessionId, input.check.openingCallId), JSON.stringify({ wakeId: input.check.continuingWakeId }), at, TASK_PROVENANCE_TTL_MS)
+      .putTaskResult(
+        input.org,
+        continuationWakeKey(input.parentSessionId, input.check.openingCallId),
+        JSON.stringify({ wakeId: input.check.continuingWakeId, generation: input.check.generation }),
+        at,
+        TASK_PROVENANCE_TTL_MS,
+      )
       .catch(() => undefined);
     return { admit: true, openingCallId: input.check.openingCallId };
   } catch {

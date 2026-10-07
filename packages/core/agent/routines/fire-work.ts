@@ -203,6 +203,7 @@ export async function forwardFireToWork(
         wakeId: input.wakeId,
         workToken: generation.token,
         workGeneration: generation.generation,
+        ...(generation.runtime !== undefined ? { workRuntime: generation.runtime } : {}),
         briefLen: input.message.length,
         tainted,
         fire: true,

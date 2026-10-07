@@ -1426,8 +1426,17 @@ captures nothing. So the ask crosses the forward on host rows only:
   (`readContinuationWake`, `packages/core/agent/channels/task-provenance.ts`). The work session's
   `task.started` advances the child's authority row to a new task wake, but it never writes either of
   these two rows, and both exist before the child's turn runs. A later turn on a request the child
-  already adopted (an approval resume) adopts nothing, so that ask reads as earlier context.
-  Adoption is idempotent per turn.
+  already adopted adopts nothing, so that ask reads as earlier context. Adoption is idempotent per
+  turn.
+- A later turn adopts a continuation only in that continuation's own turn. The fence records the
+  task's settlement generation on the continuation row, and the call it admits after settlement N is
+  served by the child's turn N. Every other turn refuses the row. So a turn that starts while a
+  continuation is still pending never weighs the pending ask, and that act gets a card. Two other
+  facts already keep a pending continuation away from a parked child: the fence refuses a
+  continuation while the child's call is unsettled, and an approval resume continues the parked turn
+  without a new `turn.started`. The generation check holds when the fence's best-effort claim write is
+  lost. Its cost is in the closed direction: a redelivered settlement or an extra child turn moves the
+  two counts apart, and every later continuation of that task gets a card.
 - The child records the row's asks as its own turn's messages only when the row is not a fire, names
   a verified requester equal to the child's own dispatch requester, and belongs to the child's own
   work session. The judge then reads them as this turn's requester messages, as on the seat.

@@ -139,6 +139,14 @@ interface BuiltTool {
     !connectionToolsSrc.includes("qualifiedConnectionToolName"),
     "1C: eve no longer mints a model-visible tool PER OPERATION — the `<connection>__<tool>` spelling is an approval key now, which is exactly why the `__` test alone would leave `connection_execute` unfenced",
   );
+  ok(
+    /\{tools:\w+\.slice\(/.test(connectionToolsSrc) && /\btotal:\w+\.length\}/.test(connectionToolsSrc) && /\.unavailable=\w+\.map\(/.test(connectionToolsSrc),
+    "1C: eve's connection_search still returns `{ tools, total, unavailable? }` — the shape connectionSearchRows decomposes (a reshape makes every search taint again)",
+  );
+  ok(
+    /\(\{connection:\w+\.connectionName,description:\w+\.description,signature:[^}]*\}\),tool:\w+\.name\}\)/.test(connectionToolsSrc),
+    "1C: …and each `tools` row still names its `connection` and its `tool` — the two fields the content-origin read keys on",
+  );
 }
 
 {
@@ -692,6 +700,35 @@ function replayedToolSet(name: string): Record<string, BuiltTool> {
       setConnectorContentOrigin(stamp as Parameters<typeof setConnectorContentOrigin>[0]);
       await csTool().toModelOutput!({ output, toolCallId: `cs-neg-${label}` });
       ok(untrustedIngestedThisTurn() === true, `connection_search still TAINTS for ${label} — one row the declarations do not vouch for is enough`);
+    });
+  }
+
+  const csRow71 = (connection: string, tool: string) => ({ connection, description: "server text", signature: `${tool}(input)`, tool });
+  await inTurn(async () => {
+    setConnectorContentOrigin({ notion: "internal" });
+    dryRows.length = 0;
+    const out = await csTool().toModelOutput!({ output: { tools: [csRow71("notion", "notion-create-pages")], total: 1 }, toolCallId: "cs71-int" });
+    ok(String(out.value).startsWith(UNTRUSTED_OPEN), "eve 0.71 connection_search over a declared-internal connection is STILL fenced");
+    ok(untrustedIngestedThisTurn() === false, "🔴 OPE-2177: an eve 0.71 search whose every tool is on a declared-internal connection leaves the turn CLEAN");
+    const row = dryRows.find((r) => r.label === "connection_search");
+    ok(!!row && row.tableTier === "trusted" && row.assumed === false, "…and logs an EXACT trusted verdict, not the `assumed` default the 0.2.0 board read");
+  });
+  await inTurn(async () => {
+    const out = await csTool().toModelOutput!({ output: { tools: [], total: 0, unavailable: [{ connection: "notion", error: "Authorization failed for notion: token rejected" }] }, toolCallId: "cs71-status" });
+    ok(String(out.value).startsWith(UNTRUSTED_OPEN), "eve 0.71 status-only search: STILL fenced");
+    ok(untrustedIngestedThisTurn() === false, "🔴 eve 0.71 status-only search (only `unavailable` rows): does NOT taint the turn");
+  });
+  for (const [label, stamp, output] of [
+    ["an eve 0.71 tool row from an UNDECLARED connection", { notion: "internal" }, { tools: [csRow71("notion", "search"), csRow71("acme", "forms")], total: 2 }],
+    ["an eve 0.71 tool row with nothing stamped", {}, { tools: [csRow71("notion", "search")], total: 1 }],
+    ["an eve 0.71 status row beside an undeclared tool", { notion: "internal" }, { tools: [csRow71("acme", "forms")], total: 1, unavailable: [{ connection: "notion", error: "x" }] }],
+    ["an eve 0.71 object with an unknown key", { notion: "internal" }, { tools: [csRow71("notion", "search")], total: 1, extra: true }],
+    ["an eve 0.71 object with no discovered tool and no status row", { notion: "internal" }, { tools: [], total: 0 }],
+  ] as const) {
+    await inTurn(async () => {
+      setConnectorContentOrigin(stamp as Parameters<typeof setConnectorContentOrigin>[0]);
+      await csTool().toModelOutput!({ output, toolCallId: `cs71-neg-${label}` });
+      ok(untrustedIngestedThisTurn() === true, `connection_search still TAINTS for ${label} — the 0.71 read fails closed like the array read`);
     });
   }
 

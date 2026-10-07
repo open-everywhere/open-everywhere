@@ -375,8 +375,8 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
   },
   {
     action: "work.session_rotated",
-    fields: ["registryKey", "from", "to", "trigger"],
-    proves: "a conversation's work session rotated to a fresh generation, losing its sandbox, and why (OPE-2341, ruling Q6)",
+    fields: ["registryKey", "from", "to", "trigger", "drainingRequests"],
+    proves: "a conversation's work session rotated to a fresh generation, losing its sandbox, and why (OPE-2341, ruling Q6); on a code change (`runtime-changed`) the old session keeps the jobs it holds and drains them (OPE-2377)",
     notExercised:
       "RED-until-leg: beside work.forwarded — no deployed domain runs the work session yet; the integration tier drives it (liveness/work-session-park).",
   },

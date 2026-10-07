@@ -458,7 +458,7 @@ console.log("§OPE-2341 the forward resolves W's generation, notes W's ledger, a
       ...deps(),
       resolveWork: async (input) => {
         resolved.push({ seatToken: input.seatToken, surfaceKey: input.surfaceKey });
-        return { token: G2, generation: 2, rotated: { from: work.workTokenForSeat(SEAT_TOKEN)!, trigger: "parked" as const, lostRequestIds: ["req-lost-1"], lostTaskIds: [] } };
+        return { token: G2, generation: 2, rotated: { from: work.workTokenForSeat(SEAT_TOKEN)!, trigger: "parked" as const, lostRequestIds: ["req-lost-1"], lostTaskIds: [], drainingRequestIds: [], drainingTaskIds: [] } };
       },
       notifyLost: async (input) => {
         lostCalls.push(input);
@@ -486,7 +486,7 @@ console.log("§OPE-2341 a replayed forward keeps its W address and never loses i
       resolves += 1;
       return resolves === 1
         ? { token: G3, generation: 3 }
-        : { token: G4, generation: 4, rotated: { from: G3, trigger: "runtime-changed" as const, lostRequestIds: [ownRequest, "req-other"], lostTaskIds: [] } };
+        : { token: G4, generation: 4, rotated: { from: G3, trigger: "runtime-changed" as const, lostRequestIds: [ownRequest, "req-other"], lostTaskIds: [], drainingRequestIds: [], drainingTaskIds: [] } };
     },
     notifyLost: async (input: { readonly requestIds: readonly string[] }) => {
       lostCalls.push(input.requestIds);
@@ -501,7 +501,7 @@ console.log("§OPE-2341 a replayed forward keeps its W address and never loses i
   eq(delivered[delivered.length - 1]!.token, G3, "…to the first execution's W");
   eq(lostCalls, [], "…and no rotation, so no lost-job notice");
   resolves = 1;
-  await inSession(() => workTool.forwardWork({ message: "a fresh job" }, seatCtx("call-fresh", "turn-fresh"), { ...replayDeps, resolveWork: async () => ({ token: G4, generation: 4, rotated: { from: G3, trigger: "runtime-changed" as const, lostRequestIds: [work.workRequestIdFor("call-fresh"), "req-other"], lostTaskIds: [] } }) }));
+  await inSession(() => workTool.forwardWork({ message: "a fresh job" }, seatCtx("call-fresh", "turn-fresh"), { ...replayDeps, resolveWork: async () => ({ token: G4, generation: 4, rotated: { from: G3, trigger: "runtime-changed" as const, lostRequestIds: [work.workRequestIdFor("call-fresh"), "req-other"], lostTaskIds: [], drainingRequestIds: [], drainingTaskIds: [] } }) }));
   eq(lostCalls, [["req-other"]], "🔴 a rotation's lost list never names the job being forwarded now");
 }
 
@@ -516,7 +516,7 @@ console.log("§OPE-2341 a replay re-sends the lost-job notice its first executio
     ...deps(),
     resolveWork: async () => {
       resolves += 1;
-      return { token: G6, generation: 6, rotated: { from: G5, trigger: "runtime-changed" as const, lostRequestIds: ["req-lost-on-crash"], lostTaskIds: [] } };
+      return { token: G6, generation: 6, rotated: { from: G5, trigger: "runtime-changed" as const, lostRequestIds: ["req-lost-on-crash"], lostTaskIds: [], drainingRequestIds: [], drainingTaskIds: [] } };
     },
     notifyLost: async (input: { readonly requestIds: readonly string[] }) => {
       if (crash) throw new Error("the step died before the notice went out");
@@ -531,6 +531,79 @@ console.log("§OPE-2341 a replay re-sends the lost-job notice its first executio
   eq(notices, [["req-lost-on-crash"]], "🔴 …and still sends the lost-job notice the first execution never sent");
 }
 
+console.log("§OPE-2378 a follow-up after a rotation reaches its task's generation, or starts as a new job:");
+{
+  const { clearGenerationDelegation, generationOwedTaskIds } = await import("../agent/channels/generation-retirement.js");
+  const { workSessionLedgerId } = await import("../agent/channels/work-generation.js");
+  const OLD = "oe-dom:e2e-unified:win:w/e2e-unified:oe-sup:g8-0a1b2c";
+  const NEW = "oe-dom:e2e-unified:win:w/e2e-unified:oe-sup:g9-3d4e5f";
+  let current = OLD;
+  let resolves = 0;
+  const genDeps = {
+    ...deps(),
+    resolveWork: async () => {
+      resolves += 1;
+      return { token: current, generation: current === OLD ? 8 : 9 };
+    },
+  };
+  const lastBlock = () => work.parseWorkRequests(delivered[delivered.length - 1]!.message);
+  const forwardedRow = (requestId: string) => audits.find((r) => (r as { detail?: { requestId?: unknown } }).detail?.requestId === requestId) as { detail: Record<string, unknown> } | undefined;
+
+  const running = await inSession(() => workTool.forwardWork({ message: "build the weekly report" }, seatCtx("call-2378-a", "turn-2378-a"), genDeps));
+  const settled = await inSession(() => workTool.forwardWork({ message: "summarise the incident" }, seatCtx("call-2378-b", "turn-2378-b"), genDeps));
+  const RUNNING_TASK = "agent-run2378";
+  const SETTLED_TASK = "agent-set2378";
+  await work.rememberWorkTask(store, ORG, RUNNING_TASK, running.requestId, new Date().toISOString());
+  await work.rememberWorkTask(store, ORG, SETTLED_TASK, settled.requestId, new Date().toISOString());
+  ok(delivered[delivered.length - 1]!.token === OLD, "fixture: both jobs reached the OLD generation");
+  current = NEW;
+
+  const held = await inSession(() => workTool.forwardWork({ message: "add the regional totals", taskId: RUNNING_TASK }, seatCtx("call-2378-c", "turn-2378-c"), genDeps));
+  eq(delivered[delivered.length - 1]!.token, OLD, "🔴 a follow-up on a task the OLD generation holds, while it still runs, goes to THAT generation, not to the new one");
+  eq(lastBlock(), [{ requestId: held.requestId, brief: "add the regional totals", taskId: RUNNING_TASK }], "…as a continuation of its task, with the brief untouched");
+  ok(!held.note.includes("NEW job"), "…and its receipt is the ordinary hand-off");
+  eq(forwardedRow(held.requestId)?.detail["continuation"], "holding", "…and the work.forwarded row records the route");
+  ok((await generationOwedTaskIds(ORG, OLD, store)).includes(workSessionLedgerId(held.requestId)), "…and the OLD generation's ledger owes the follow-up, so the drain still leaves it alone");
+
+  for (const id of [running.requestId, settled.requestId, held.requestId]) await clearGenerationDelegation(ORG, workSessionLedgerId(id), store);
+  const before = delivered.length;
+  const fresh = await inSession(() => workTool.forwardWork({ message: "now split it by team", taskId: SETTLED_TASK }, seatCtx("call-2378-d", "turn-2378-d"), genDeps));
+  eq(delivered.length, before + 1, "🔴 the follow-up is NOT lost: it is delivered");
+  eq(delivered[delivered.length - 1]!.token, NEW, "🔴 …to the CURRENT generation, on the running code, because the old one can no longer continue the task");
+  const block = lastBlock();
+  ok(block.length === 1 && block[0]!.taskId === undefined, "🔴 …as a NEW job: the block names no task the current generation does not hold");
+  ok(block[0]!.brief.includes("summarise the incident") && block[0]!.brief.includes("now split it by team") && block[0]!.brief.includes(SETTLED_TASK), "…whose brief carries the earlier job's brief and the follow-up");
+  eq(fresh.note, workTool.freshFollowUpNote(SETTLED_TASK), "🔴 …and the receipt tells the seat the job could not be continued, so the room hears it");
+  eq(forwardedRow(fresh.requestId)?.detail["continuation"], "fresh-idle", "…and the work.forwarded row records why");
+
+  const resolvesBefore = resolves;
+  const replay = await inSession(() => workTool.forwardWork({ message: "now split it by team", taskId: SETTLED_TASK }, seatCtx("call-2378-d", "turn-2378-d"), genDeps));
+  eq(resolves, resolvesBefore, "a replay resolves W no second time");
+  eq(delivered.length, before + 1, "…delivers nothing again");
+  eq(replay.note, fresh.note, "…and returns the same honest receipt");
+
+  const onNew = await inSession(() => workTool.forwardWork({ message: "a job on the new code" }, seatCtx("call-2378-e", "turn-2378-e"), genDeps));
+  const NEW_TASK = "agent-new2378";
+  await work.rememberWorkTask(store, ORG, NEW_TASK, onNew.requestId, new Date().toISOString());
+  const cont = await inSession(() => workTool.forwardWork({ message: "tighten it", taskId: NEW_TASK }, seatCtx("call-2378-f", "turn-2378-f"), genDeps));
+  eq(delivered[delivered.length - 1]!.token, NEW, "a follow-up on a task of the CURRENT generation goes to the current generation");
+  eq(lastBlock()[0]!.taskId, NEW_TASK, "…as a continuation");
+  eq(forwardedRow(cont.requestId)?.detail["continuation"], "current", "…recorded as `current`");
+
+  const { TASK_CONTINUATION_REFUSAL_MESSAGE } = await import("../agent/channels/task-provenance.js");
+  const OTHER_WAKE = "33333333-4444-4555-8666-777777777777";
+  const otherBinding = { ...binding, surface: "C_ELSE", target: { channelId: "C_ELSE" }, threadTs: "300.3" } as const;
+  await registerUnifiedWakeTarget(store, ORG, OTHER_WAKE, { platform: "slack", channelId: "C_ELSE", threadTs: "300.3" }, new Date().toISOString(), SEAT_TOKEN, true, "direct-mention", "slack/TW/C_ELSE", otherBinding, {
+    binding: otherBinding,
+    requester: { kind: "requester", principalId: "U_BOB" },
+    nonMemberWake: false,
+  });
+  const elsewhere = { ...seatCtx("call-2378-g", "turn-2378-g"), session: { id: "sess-seat", turn: { id: "turn-2378-g" }, auth: { current: { attributes: { oe_wake_id: OTHER_WAKE } } } } };
+  const mid = delivered.length;
+  await assert.rejects(() => inSession(() => workTool.forwardWork({ message: "post it here", taskId: SETTLED_TASK }, elsewhere, genDeps)), (err: Error) => err.message === TASK_CONTINUATION_REFUSAL_MESSAGE, "🔴 a follow-up from ANOTHER room is still refused by the fence, never started fresh");
+  n++;
+  eq(delivered.length, mid, "…and nothing is delivered");
+}
 console.log("§15 the forward carries this turn's own-account ask; the host note carries the stop's refusal:");
 await inSession(async () => {
   const { adoptedOwnAccountAsk, OE_OWN_ACCOUNT_ASK_ATTR } = await import("../agent/connections/own-account-carriage.js");

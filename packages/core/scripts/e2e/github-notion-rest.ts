@@ -1,6 +1,19 @@
 import type { AuditWireEntry } from "./audit-read.js";
+import { seatDelegationRows, WORK_FORWARDED_ACTION } from "./read-channel-lib.js";
 
-export const GITHUB_NOTION_REST_ACTIONS = ["github.dispatched", "wake.ingress", "wake.turn_start", "reply.post", "egress.policy"] as const;
+export const WORK_RESULT_WAKE_ACTION = "work.result_wake";
+
+export const GITHUB_NOTION_REST_ACTIONS = [
+  "github.dispatched",
+  "wake.ingress",
+  "wake.turn_start",
+  "reply.post",
+  "egress.policy",
+  WORK_FORWARDED_ACTION,
+  "delegation.task_started",
+  "delegation.task_settled",
+  WORK_RESULT_WAKE_ACTION,
+] as const;
 
 export interface GithubNotionOrigin {
   readonly surfaceKey: string;
@@ -77,4 +90,41 @@ export function githubNotionReplyRow(
       detailString(row, "sessionId") === input.sessionId,
   );
   return matches.length === 1 ? matches[0] : undefined;
+}
+
+export interface GithubNotionForward {
+  readonly requestId: string;
+  readonly workSessionId: string;
+  readonly taskId: string;
+  readonly resultWakeId: string;
+}
+
+export function githubNotionForward(rows: readonly AuditWireEntry[], lifecycle: GithubNotionLifecycle): GithubNotionForward | undefined {
+  const joined = seatDelegationRows(rows, lifecycle.sessionId, lifecycle.wakeId);
+  const forwards = joined.forwards.filter((row) => detailString(row, "wakeId") === lifecycle.wakeId);
+  if (forwards.length !== 1) return undefined;
+  const requestId = detailString(forwards[0]!, "requestId");
+  if (!requestId) return undefined;
+  const started = joined.started.filter((row) => detailString(row, "request") === requestId);
+  if (started.length !== 1) return undefined;
+  const workSessionId = detailString(started[0]!, "session");
+  const taskId = detailString(started[0]!, "task");
+  if (!workSessionId || !taskId || workSessionId === lifecycle.sessionId) return undefined;
+  const settled = joined.settled.filter((row) => detailString(row, "task") === taskId && detailString(row, "session") === workSessionId);
+  if (settled.length !== 1) return undefined;
+  const results = rows.filter(
+    (row) =>
+      row.action === WORK_RESULT_WAKE_ACTION &&
+      detailString(row, "requestId") === requestId &&
+      detailString(row, "outcome") === "delivered",
+  );
+  if (results.length !== 1) return undefined;
+  const resultWakeId = detailString(results[0]!, "wakeId");
+  if (!resultWakeId) return undefined;
+  return { requestId, workSessionId, taskId, resultWakeId };
+}
+
+export function githubNotionReplyNamesBlock(body: string, blockId: string): boolean {
+  const normalized = blockId.toLowerCase().replaceAll("-", "");
+  return normalized.length > 0 && body.toLowerCase().replaceAll("-", "").includes(normalized);
 }

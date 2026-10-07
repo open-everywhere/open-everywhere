@@ -4,7 +4,7 @@ import { delegatedRequesterThisTurn } from "../identity/delegated-binding.js";
 import { parseWindowToken } from "../channels/window-key.js";
 import { readWorkCall, readWorkRequest, workTokenForSeat, type WorkRequestRow } from "../channels/work.js";
 import { ensureDelegatedTaskBinding } from "../channels/task-wake.js";
-import { readContinuationWake } from "../channels/task-provenance.js";
+import { readContinuationWake, type ContinuationWake } from "../channels/task-provenance.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { resolveOwnWindowToken } from "./delegation-mount.js";
 import { isWorkSessionChildContext } from "./work-session.js";
@@ -53,7 +53,7 @@ export interface ForwardedAskDeps {
   readonly ensureBinding: (ctx: BindableContext) => Promise<void>;
   readonly readCall: (org: string, workSessionId: string, callId: string) => Promise<string | undefined>;
   readonly readRequest: (org: string, requestId: string) => Promise<WorkRequestRow | undefined>;
-  readonly readContinuation: (org: string, workSessionId: string, openingCallId: string) => Promise<string | undefined>;
+  readonly readContinuation: (org: string, workSessionId: string, openingCallId: string) => Promise<ContinuationWake | undefined>;
   readonly delegatedRequester: () => RequesterVerdict | undefined;
   readonly record: (turnId: string, text: string) => void;
   readonly lastAdoption: () => ForwardedAskAdoptionMark | undefined;
@@ -99,7 +99,7 @@ const LIVE_DEPS: ForwardedAskDeps = {
 
 export type ForwardedAskAdoption =
   | { readonly adopted: number }
-  | { readonly refused: ForwardedAskRefusal | "not-a-work-child" | "no-turn" | "no-linkage" | "binding-unavailable" | "already-adopted-this-turn" | "request-already-adopted" };
+  | { readonly refused: ForwardedAskRefusal | "not-a-work-child" | "no-turn" | "no-linkage" | "binding-unavailable" | "already-adopted-this-turn" | "request-already-adopted" | "continuation-of-another-turn" };
 
 export async function adoptForwardedRequesterAsks(ctx: BindableContext, deps: ForwardedAskDeps = LIVE_DEPS): Promise<ForwardedAskAdoption> {
   try {
@@ -119,8 +119,10 @@ export async function adoptForwardedRequesterAsks(ctx: BindableContext, deps: Fo
     const sequence = (ctx as { session?: { turn?: { sequence?: unknown } } }).session?.turn?.sequence;
     const laterTurn = typeof sequence === "number" && sequence > 0;
     const org = deps.org();
-    const requestId = laterTurn ? await deps.readContinuation(org, workSessionId, callId) : await deps.readCall(org, workSessionId, callId);
+    const continuation = laterTurn ? await deps.readContinuation(org, workSessionId, callId) : undefined;
+    const requestId = laterTurn ? continuation?.wakeId : await deps.readCall(org, workSessionId, callId);
     if (laterTurn && requestId !== undefined && last?.requestId === requestId) return { refused: "request-already-adopted" };
+    if (laterTurn && continuation !== undefined && continuation.generation !== sequence) return { refused: "continuation-of-another-turn" };
     const row = requestId === undefined ? undefined : await deps.readRequest(org, requestId);
     const verdict = forwardedAsksFromRow({ requestId, row, childWorkToken: resolveOwnWindowToken(ctx), childRequester: deps.delegatedRequester() });
     if ("refused" in verdict) return verdict;

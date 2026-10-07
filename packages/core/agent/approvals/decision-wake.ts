@@ -14,6 +14,7 @@ export interface ApprovalDecisionWakeInput {
   readonly pendingId: string;
   readonly execution?: { readonly ran: "ok" | "failed"; readonly line: string };
   readonly forwardsWork?: boolean;
+  readonly armsCall?: boolean;
 }
 
 function originContainerId(origin: UnifiedWakeOrigin): string {
@@ -60,11 +61,28 @@ function rejectedClosing(forwardsWork: boolean | undefined): string {
 const REQUEST_FENCE_SOURCE = "approval-decision:request";
 const RESULT_FENCE_SOURCE = "approval-decision:result";
 
-function approvedClosing(execution: { readonly ran: "ok" | "failed" } | undefined, forwardsWork: boolean | undefined): string {
+function armedCallClosing(forwardsWork: boolean | undefined): string {
+  const followUp =
+    forwardsWork === true
+      ? `Send that job a follow-up with \`work\` and its \`taskId\`.`
+      : `Send that worker a follow-up on its task, by its \`taskId\`. If you made the call yourself, make it again.`;
+  return (
+    `THE APPROVED ACT HAS NOT RUN. The approval allows ONE more call of the same op, with exactly the input ` +
+    `on the card, and only that call runs it. The approval's own line is in the fenced block marked ` +
+    `${RESULT_FENCE_SOURCE} after this envelope. The job that asked must make that call. ${followUp} ` +
+    `Tell it that the card was approved and that it must call the op again with exactly the same input. ` +
+    `If the job's result has not reached you yet, send the follow-up when it arrives. Do NOT cancel that ` +
+    `job, and do NOT start a new job for the act: a new job rebuilds the input, and a different input ` +
+    `posts a new card. When the job reports back, tell the room what it did.`
+  );
+}
+
+function approvedClosing(execution: { readonly ran: "ok" | "failed" } | undefined, forwardsWork: boolean | undefined, armsCall: boolean | undefined): string {
   const cancelSentence = cancelWorkerSentence(forwardsWork);
   const continuation =
     `If you told the room you would do more BEYOND that act once it was approved, continue that work ` +
     `now — the approval unblocks it, it does not end your turn.`;
+  if (execution?.ran === "ok" && armsCall === true) return armedCallClosing(forwardsWork);
   if (execution?.ran === "ok") {
     return (
       `THE APPROVED ACT HAS ALREADY RUN. The approval performed it — you did not, and a delegated ` +
@@ -90,7 +108,7 @@ function approvedClosing(execution: { readonly ran: "ok" | "failed" } | undefine
 }
 
 export function approvalDecisionBody(input: ApprovalDecisionWakeInput): string {
-  const closed = input.outcome === "approved" ? approvedClosing(input.execution, input.forwardsWork) : rejectedClosing(input.forwardsWork);
+  const closed = input.outcome === "approved" ? approvedClosing(input.execution, input.forwardsWork, input.armsCall) : rejectedClosing(input.forwardsWork);
   return (
     `A pending approval you were waiting on (id ${input.pendingId}) has been decided. The request ` +
     `${outcomeClause(input.outcome, input.clickerId)}. What the request was is in the fenced block marked ` +

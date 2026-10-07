@@ -606,6 +606,21 @@ console.log("6. connector grantContentOrigin, end to end:");
     eq(declaredContentOriginForConnectionSearch([]), undefined, "an empty result ⇒ undefined");
     eq(declaredContentOriginForConnectionSearch("notion"), undefined, "a shape it cannot decompose ⇒ undefined");
     eq(declaredContentOriginForConnectionSearch([{ connection: "notion", description: "d" }]), undefined, "a row with neither a tool nor a status marker ⇒ undefined");
+
+    const row71 = (connection: string, tool: string) => ({ connection, description: "d", signature: `${tool}(input)`, tool });
+    eq(declaredContentOriginForConnectionSearch({ tools: [row71("notion", "notion-create-pages")], total: 1 }), "internal", "🔴 OPE-2177: an eve 0.71 result whose every tool is on a declared-internal connection ⇒ internal");
+    eq(
+      declaredContentOriginForConnectionSearch({ tools: [row71("notion", "search")], total: 1, unavailable: [{ connection: "linear", error: "Sign-in required", requiresSignIn: true }] }),
+      "internal",
+      "an eve 0.71 `unavailable` status row adds nothing",
+    );
+    eq(declaredContentOriginForConnectionSearch({ tools: [row71("notion", "search"), row71("forms", "submit")], total: 2 }), "external", "eve 0.71: one declared-external tool ⇒ external");
+    eq(declaredContentOriginForConnectionSearch({ tools: [row71("helpdesk", "search_tickets")], total: 1 }), "external", "eve 0.71: the per-tool grain applies to the row's own tool");
+    eq(declaredContentOriginForConnectionSearch({ tools: [row71("notion", "search"), row71("linear-mcp", "issues")], total: 2 }), undefined, "eve 0.71: one UNDECLARED connection ⇒ undefined, never internal");
+    eq(declaredContentOriginForConnectionSearch({ tools: [], total: 0 }), undefined, "eve 0.71: no discovered tool ⇒ undefined");
+    eq(declaredContentOriginForConnectionSearch({ tools: [row71("notion", "search")], total: 1, next: "x" }), undefined, "eve 0.71: an UNKNOWN key fails closed ⇒ undefined");
+    eq(declaredContentOriginForConnectionSearch({ tools: "notion__search", total: 1 }), undefined, "eve 0.71: a `tools` that is not an array ⇒ undefined");
+    eq(declaredContentOriginForConnectionSearch({ tools: [row71("notion", "search")], unavailable: "linear" }), undefined, "eve 0.71: an `unavailable` that is not an array ⇒ undefined");
   });
 }
 

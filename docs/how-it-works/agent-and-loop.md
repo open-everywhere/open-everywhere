@@ -826,6 +826,14 @@ Continuation is safe because the properties the old refusal protected now travel
   address from the dispatch row of the call that opened it. An admitted continuation re-points that
   row at the continuing turn's wake before the call runs, and the worker re-reads it at the start of
   each later turn. A later turn whose row is unreadable is refused, never run as the opener.
+  The continuing turn's wake is the wake the turn addressed, or else its one delivered wake. A turn
+  with several wakes and no address has no continuing wake, so its continuation is refused
+  (`no-continuing-wake`). A work session is the one exception. Its turn can hold several forwarded
+  jobs, because a turn that waits on `task_wait` takes in every later job. There, a continuation
+  passes under the wake of the forwarded job that names the task (the job's `task` attribute), when
+  the call joined that job and the step that delivered the job runs it. A continuation that no
+  forwarded job names is still refused, and the named job's wake goes through every other check
+  below, the room check included.
 - **One continuation at a time.** The framework would forward a `taskId` call to a worker that is
   still busy, and two callers in flight could then share one row. So Open Everywhere admits a
   continuation only after the task has reported back, and refuses one sent while it works. The seat
@@ -1025,8 +1033,17 @@ seat resolves who asked, and which wake to answer, from its own request row, nev
 session's words. It answers under the wake that asked. The seat wakes on results only: no progress
 wake costs a seat turn. A result whose job read untrusted content marks the turn that adopts it.
 
-The result wake carries two more host facts:
+The result wake carries more host facts:
 
+- **Whether the seat owes the room the result.** The seat's hand-off note (`reply` with `done:false`)
+  is its promise. The host writes the promise to the operational store as well as to the seat
+  session's state, because the seat can rotate to a new session while the job runs (after a deploy,
+  an operator mark, the age expiry or a context backstop). The result wake reads the store and
+  carries a promise stamp, so the session that receives it owes the report even if it never saw the
+  ask: its first `no_reply` is refused, and the refusal writes `delegation.settlement_report_skipped`.
+- **The ask, when the seat rotated.** If the seat session live at settlement is not the one that
+  forwarded the job, the wake carries the forwarded request (the brief, cut at 4,000 characters) as a
+  fenced message before the result, and the host note says that an earlier session forwarded it.
 - **The memory writes the job landed.** The work session persists the job's memory edits before the
   result leaves. The seat's own turn wrote nothing, so the result wake carries the work session's
   landed fact writes, and the seat's turn records them as its own write evidence. A seat that says
@@ -1110,11 +1127,32 @@ The work session has its own lifetime, apart from the seat's:
 - **Its token, turn and context-size thresholds rotate it only when it is idle.** While it owes a
   job, such a rotation waits. It takes no expiry and no quiet-gap rotation, so an idle workspace
   stays. Four cases rotate it at once, whatever it holds: the work session parked at its session
-  limit, it failed (on eve 0.69+ an empty compaction summary is fatal), the eve runtime changed, or an
-  operator marked it for rotation.
-  A rotation loses the sandbox. Each job the old work session still owed is reported to the room as
-  a failed result, once per job. After a runtime change the old work session is not dead, so a real
-  result for such a job can still follow the notice.
+  limit, it failed (on eve 0.69+ an empty compaction summary is fatal), its code differs from the
+  running deployment's, or an operator marked it for rotation.
+- **It never outlives a deploy.** eve pins a workflow run to the deployment that started it, so a
+  work session keeps the code of that deployment for as long as it lives. Each forward compares the
+  code the work session was started on with the running code (the seat's own comparison, see
+  [Session rotation](../deploy/configuration-reference.md#session-rotation-standing-seats)). When they differ, the
+  forward goes to a NEW work session on the running code. A work session whose row records no code
+  (one an older build started) also rotates, because nothing proves which code it runs. The
+  `work.session_rotated` row (trigger `runtime-changed`) records the rotation, and each
+  `work.forwarded` row records the verdict for the work session it reached (`workRuntime`: `minted`,
+  `rotated`, `current` or `unchecked`).
+- **A code change loses no job.** The old work session stays alive on its own deployment. The jobs it
+  holds finish there, and their results reach the asking room as any result does, the seat's
+  promise to report included. The `work.session_rotated` row counts them as `drainingRequests`.
+- **A follow-up goes to the work session that holds its task.** eve keeps a task in the session that
+  started it, so a follow-up (`work` with a `taskId`) must reach that session. The forward reads which
+  generation the task's latest request reached. While that older generation still runs a job, the
+  follow-up goes there and continues the task on that generation's own code. When the older
+  generation runs nothing more (the retirement drain may already have reset it), or it parked or
+  failed, the task cannot be continued. The follow-up then starts as a NEW job on the current work
+  session, with the earlier job's brief attached, and the receipt tells the seat to say so in the
+  room. The room check runs first in every case. The `work.forwarded` row records the route as
+  `continuation`: `current`, `holding`, `fresh-idle`, `fresh-dead` or `fresh-unreadable`.
+- **A rotation loses the sandbox.** On a park, a failure or an operator mark, each job the old work
+  session still owed is reported to the room as a failed result, once per job. After an operator
+  mark the old work session is not dead, so a real result for such a job can still follow the notice.
 - **It is the room's one memory writer.** The forwarding seat skips the memory sync. When a job
   settles and no other job is running, the work session persists the job's memory edits before the
   result reaches the seat. When another job is still running, it waits, and its own turn end persists
@@ -1678,7 +1716,26 @@ proposal with the same dedup identity (kind, scope, channel and non-prose argume
 approval TTL, the new card still posts, because a second human ask must get one. Its result names who
 rejected the last one and when, and tells a proposer that retries on its own to stop and report the
 rejection. Every closing of the decision notice tells the owning session to cancel a worker of its own
-that still runs toward the act (`task_cancel`).
+that still runs toward the act (`task_cancel`), with one exception below.
+
+**An approval that only arms a call says so.** For most kinds, the approval runs the act, and the
+notice says the act already ran. A kind that sets `approvalArmsCall` (`packages/core/agent/approvals/types.ts`)
+runs nothing on approval. Its `execute` arms ONE more call of the proposer's own tool with the same
+input, and that call runs the act. `op.connector` is such a kind: the connector seam denied the call
+and told the proposer to call it again after approval. For such a kind, the notice says the act has
+NOT run. It tells the owning session to send the job that asked a follow-up (`work` with its `taskId`
+on a forwarding seat) to call the op again with exactly the same input. It forbids a cancel of that job
+and a new job for the act. The one-call approval is keyed on the input's digest, and only the asking
+job holds that input, so a new job would post a new card (OPE-2383).
+
+**A DM card wakes the DM's own seat.** `wakeWindowOnDecision` (`packages/core/agent/approvals/flow.ts`)
+finds the owning seat in two steps. First it reads the DM seat's own registry row, the window on the
+`oe-dm/<surfaceKey>` pseudo-domain. No config declares that domain, so the domain grain cannot find
+the seat. Only when no DM row exists does the function use the domain grain to find a window seat. A
+DM row whose token is not that DM's own seat refuses the wake: the token must anchor to exactly the
+card's surface, so a decision never wakes another conversation. The wake is what lets the seat
+send the asking job back to make an approved call again, so an approved write in a DM can run. A Discord DM click carries no guild
+id, so a Discord DM card gets no decision wake today (OPE-2376).
 
 ### A background task's answer finds its conversation
 

@@ -1,4 +1,4 @@
-import { claimWorkCall, releaseWorkCall, retireWorkRequest, workCallClaimed, WORK_REQUEST_UNJOINABLE_MESSAGE } from "./work-request-turn.js";
+import { claimWorkCall, releaseWorkCall, retireWorkRequest, workCallClaimed, workRequestNamesTask, WORK_REQUEST_UNJOINABLE_MESSAGE } from "./work-request-turn.js";
 import { gateWorkCallStamp, liveWorkRequestStamp, workStampVerdict, WORK_CALL_NEEDS_REISSUE_MESSAGE } from "./work-step-stamp.js";
 import { asSchema, jsonSchema } from "ai";
 import { defineState } from "eve/context";
@@ -91,16 +91,23 @@ function continuingWakeForTurn(turnId: string): string | undefined {
   return addressedWakeThisTurn(turnId) ?? exactDispatchWakeThisTurn(turnId);
 }
 
+function continuingWakeForCall(turnId: string, taskId: string, joinedRequestId: string | undefined): string | undefined {
+  if (workRequestNamesTask(turnId, joinedRequestId, taskId)) return joinedRequestId;
+  return continuingWakeForTurn(turnId);
+}
+
 export async function decideTaskContinuation(
   turn: ContinuationTurn | null,
   taskId: string,
   toolName: string = DELEGATION_TOOL_NAME,
   org: string = deploymentOrg(),
   validated: () => Promise<boolean> = async () => true,
+  joinedRequestId?: string,
 ): Promise<TaskContinuationVerdict | { readonly admit: false; readonly reason: "eve-refused" }> {
   if (turn === null) return { admit: false, reason: "no-turn" };
   if (!turn.unified) return { admit: false, reason: "not-unified" };
-  const checked = await checkTaskContinuation({ org, parentSessionId: turn.sessionId, taskId, toolName, continuingWakeId: continuingWakeForTurn(turn.turnId), continuingTurnId: turn.turnId });
+  const continuingWakeId = continuingWakeForCall(turn.turnId, taskId, joinedRequestId);
+  const checked = await checkTaskContinuation({ org, parentSessionId: turn.sessionId, taskId, toolName, continuingWakeId, continuingTurnId: turn.turnId });
   if (!checked.admit) return checked;
   if (!(await validated())) return { admit: false, reason: "eve-refused" };
   return await commitTaskContinuation({ org, parentSessionId: turn.sessionId, taskId, continuingTurnId: turn.turnId, check: checked.check });
@@ -163,6 +170,7 @@ function guardTool(tool: ToolWithInputSchema, name: string, delegation: boolean)
         candidate = rest;
       }
       const taskId = candidate !== null && typeof candidate === "object" ? continuationTaskId((candidate as Record<string, unknown>)[TASK_ID_FIELD]) : undefined;
+      let joinedRequestId: string | undefined;
       if (delegation) {
         const turnNow = currentContinuationTurn();
         const callMessage = candidate !== null && typeof candidate === "object" ? (candidate as Record<string, unknown>)["message"] : undefined;
@@ -179,6 +187,7 @@ function guardTool(tool: ToolWithInputSchema, name: string, delegation: boolean)
             retireWorkRequest(turnNow?.turnId, join.requestId);
             return { success: false as const, error: new Error(WORK_CALL_NEEDS_REISSUE_MESSAGE) };
           }
+          joinedRequestId = join.requestId;
         }
       }
       if (delegation) candidate = carryAttachmentsIntoBrief(candidate);
@@ -190,7 +199,7 @@ function guardTool(tool: ToolWithInputSchema, name: string, delegation: boolean)
       const verdict = await decideTaskContinuation(turn, taskId, name, deploymentOrg(), async () => {
         eveResult = await evesOwn(candidate);
         return eveResult.success === true;
-      });
+      }, joinedRequestId);
       if (!verdict.admit && verdict.reason === "eve-refused" && eveResult !== undefined) return eveResult;
       auditTaskContinuation({ org: deploymentOrg(), parentSessionId: turn?.sessionId ?? "", turnId: turn?.turnId, taskId, verdict: verdict as TaskContinuationVerdict });
       if (!verdict.admit) return { success: false as const, error: new Error(taskContinuationRefusalMessage(verdict.reason as Exclude<typeof verdict.reason, "eve-refused">)) };

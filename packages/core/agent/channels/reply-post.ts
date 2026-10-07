@@ -90,7 +90,7 @@ export function replyCarriesSubstance(body: string): boolean {
   return /[\p{L}\p{N}]/u.test(body.replace(/:[a-z0-9_+-]+:/gi, " "));
 }
 
-export async function auditReplyPost(audit: ReplyAudit | undefined, id: string, platform: string, chars: number): Promise<void> {
+export async function auditReplyPost(audit: ReplyAudit | undefined, id: string, platform: string, chars: number, done?: boolean): Promise<void> {
   if (!audit) return;
   await appendAudit({
     org: audit.org,
@@ -104,6 +104,7 @@ export async function auditReplyPost(audit: ReplyAudit | undefined, id: string, 
       platform,
       chars,
       route: audit.route,
+      ...(done !== undefined ? { done } : {}),
       ...(audit.creatorId ? { creatorId: audit.creatorId } : {}),
       ...(audit.wakeId ? { wakeId: audit.wakeId } : {}),
       ...(audit.sessionId ? { sessionId: audit.sessionId } : {}),

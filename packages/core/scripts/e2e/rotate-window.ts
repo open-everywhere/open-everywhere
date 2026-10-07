@@ -1,4 +1,5 @@
-import { wireNeonOperationalStore, rotateUnifiedWindow, parseRotateArgs, checkOrgAllowed, WindowTargetRefused } from "./rotate-window-lib.js";
+import { wireNeonOperationalStore, rotateUnifiedWindow, parseRotateArgs, checkOrgAllowed, WindowTargetRefused, awaitGenerationIdle, generationNotIdleMessage } from "./rotate-window-lib.js";
+import { unifiedDomainSessionKey } from "../../agent/channels/unified-supervisor.js";
 import { dmAnchorDomain } from "../../agent/channels/window-key.js";
 import { guardStoreIdentityBeforeWrite } from "../store-identity-guard.js";
 import { loadAppDomains } from "./app-config.js";
@@ -25,6 +26,16 @@ async function main() {
   if (!allowed.ok) {
     console.error(allowed.error);
     process.exit(1);
+  }
+
+  if (target.waitIdleMs !== undefined) {
+    const registryKey = unifiedDomainSessionKey(target.kind === "dm" ? dmAnchorDomain(target.dmSurfaceKey) : (target.windowId ?? target.domain));
+    const idle = await awaitGenerationIdle(store, target.org, registryKey, { timeoutMs: target.waitIdleMs });
+    if (!idle.ok) {
+      console.error(generationNotIdleMessage(registryKey, idle));
+      process.exit(3);
+    }
+    console.log(`wait-idle:      ${registryKey} owes no job (waited ${Math.round(idle.waitedMs / 1000)}s)`);
   }
 
   if (target.kind === "dm") {

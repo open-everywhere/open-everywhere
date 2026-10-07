@@ -4,6 +4,7 @@ import { parseWorkRequests } from "../channels/work.js";
 export interface OpenWorkRequest {
   readonly requestId: string;
   readonly brief: string;
+  readonly taskId?: string;
 }
 
 export type WorkCallJoin =
@@ -46,10 +47,12 @@ function readState(v: unknown): WorkRequestTurnState {
   const s = v as { turn?: unknown; open?: unknown; claims?: unknown; retired?: unknown };
   if (typeof s.turn !== "string" || s.turn.length === 0) return {};
   const open = Array.isArray(s.open)
-    ? s.open.filter(
-        (r): r is OpenWorkRequest =>
-          typeof r === "object" && r !== null && typeof (r as OpenWorkRequest).requestId === "string" && typeof (r as OpenWorkRequest).brief === "string",
-      )
+    ? s.open
+        .filter(
+          (r): r is OpenWorkRequest =>
+            typeof r === "object" && r !== null && typeof (r as OpenWorkRequest).requestId === "string" && typeof (r as OpenWorkRequest).brief === "string",
+        )
+        .map((r) => ({ requestId: r.requestId, brief: r.brief, ...(typeof r.taskId === "string" && r.taskId.length > 0 ? { taskId: r.taskId } : {}) }))
     : [];
   const claims = Array.isArray(s.claims)
     ? s.claims.filter(
@@ -63,7 +66,7 @@ function readState(v: unknown): WorkRequestTurnState {
 
 export function recordWorkRequestsThisTurn(turnId: string | undefined, message: string | undefined): void {
   if (turnId === undefined || turnId.length === 0 || message === undefined) return;
-  const incoming = parseWorkRequests(message).map((r) => ({ requestId: r.requestId, brief: r.brief }));
+  const incoming: OpenWorkRequest[] = parseWorkRequests(message).map((r) => ({ requestId: r.requestId, brief: r.brief, ...(r.taskId !== undefined ? { taskId: r.taskId } : {}) }));
   if (incoming.length === 0) return;
   try {
     slot.update((cur) => {
@@ -165,6 +168,11 @@ export function retireWorkRequest(turnId: string | undefined, requestId: string)
     });
   } catch {
   }
+}
+
+export function workRequestNamesTask(turnId: string | undefined, requestId: string | undefined, taskId: string): boolean {
+  if (requestId === undefined || requestId.length === 0 || taskId.length === 0) return false;
+  return workRequestsThisTurn(turnId).some((r) => r.requestId === requestId && r.taskId === taskId);
 }
 
 export function workRequestsThisTurn(turnId: string | undefined): readonly OpenWorkRequest[] {

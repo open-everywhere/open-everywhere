@@ -12,6 +12,8 @@ import {
   WindowTargetRefused,
   parseRotateArgs,
   rotateUnifiedWindow,
+  awaitGenerationIdle,
+  generationNotIdleMessage,
 } from "./e2e/rotate-window-lib.js";
 import { openTestPg, closeAllTestPg } from "./test-pg-driver.js";
 
@@ -375,6 +377,43 @@ await store.rotateChannelSession(KNOWN_ORG, "oe-domain::slack/T1/C1", mintToken(
     const r = await rotateUnifiedWindow(store, CFG_ORG, FAKE_DOMAIN, REAL_SURFACE, { force: true, domains });
     ok(r.newRow.token !== before?.token, "--force mints the config-contradicting pair anyway");
   }
+}
+
+{
+  const parsed = parseRotateArgs(["e2e-unified", "--wait-idle", "600"], {});
+  ok(parsed.ok && parsed.target.kind === "domain" && parsed.target.waitIdleMs === 600_000, "§6: --wait-idle 600 parses to a 600 s wait");
+  ok(parsed.ok && parsed.target.kind === "domain" && parsed.target.domain === "e2e-unified" && parsed.target.org === "default", "§6: …and shifts no positional");
+  const none = parseRotateArgs(["e2e-unified"], {});
+  ok(none.ok && none.target.waitIdleMs === undefined, "§6: no flag, no wait — the tool rotates at once as before");
+  ok(!parseRotateArgs(["e2e-unified", "--wait-idle", "ten"], {}).ok, "§6: a non-number is refused");
+  ok(!parseRotateArgs(["e2e-unified", "--wait-idle"], {}).ok, "§6: a missing value is refused");
+  const dm = parseRotateArgs(["--dm", "slack/T1/D1", "--wait-idle", "30"], {});
+  ok(dm.ok && dm.target.kind === "dm" && dm.target.waitIdleMs === 30_000, "§6: the DM form takes the flag too");
+
+  const TOKEN = "oe-dom:e2e-unified:oe-sup:g42";
+  const KEY = unifiedDomainSessionKey("e2e-unified");
+  let owed: string[] = ["work:req-a", "agent-t1"];
+  const fake = {
+    getChannelSession: async (_org: string, key: string) => (key === KEY ? ({ token: TOKEN } as never) : null),
+    getTaskResult: async (_org: string, key: string) => (key === `oe-gen-owes:${TOKEN}` ? JSON.stringify({ tasks: owed }) : null),
+  };
+  const { generationOwedTaskIds } = await import("../agent/channels/generation-retirement.js");
+  const shapeOk = (await generationOwedTaskIds("default", TOKEN, fake)).length === 2;
+  ok(shapeOk, `§6/FIXTURE: the fake ledger row reads back through the product's reader (got ${JSON.stringify(await generationOwedTaskIds("default", TOKEN, fake))})`);
+
+  let clock = 0;
+  const timing = { now: () => clock, sleep: async (ms: number) => { clock += ms; }, pollMs: 5_000 };
+  const stuck = await awaitGenerationIdle(fake, "default", KEY, { timeoutMs: 20_000, ...timing });
+  ok(!stuck.ok && stuck.owed.length === 2 && stuck.waitedMs >= 20_000, `🔴 §6: a generation that still owes a job is NOT idle at the deadline (got ${JSON.stringify(stuck)})`);
+  ok(!stuck.ok && generationNotIdleMessage(KEY, stuck).startsWith(`refusing to rotate ${KEY}: the live generation ${TOKEN} still owes 2 job(s)`), "§6: …and the refusal names the key, the token and the count");
+
+  clock = 0;
+  let polls = 0;
+  const settling = { ...fake, getTaskResult: async (org: string, key: string) => { polls++; if (polls >= 3) owed = []; return fake.getTaskResult(org, key); } };
+  const settled = await awaitGenerationIdle(settling, "default", KEY, { timeoutMs: 60_000, ...timing });
+  ok(settled.ok && settled.waitedMs === 10_000, `🔴 §6: the wait returns once the ledger empties — after two polls, never at the deadline (got ${JSON.stringify(settled)})`);
+  const noRow = await awaitGenerationIdle(fake, "default", "oe-domain::no-such", { timeoutMs: 1, ...timing });
+  ok(noRow.ok, "§6: a key with no row owes nothing");
 }
 
 assert.ok(passed > 0, "at least one assertion ran");

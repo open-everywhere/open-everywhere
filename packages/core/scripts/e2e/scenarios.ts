@@ -29,16 +29,12 @@ import { capDriveOutcome } from "./cap-drive-outcome.js";
 import { FORGE_CREATOR_ID, FORGE_ISSUE_ID, FORGE_ORGANIZATION_ID, FORGE_SESSION_ID, type LinearDriver } from "./linear-driver.js";
 import type { NotionDriver } from "./notion-driver.js";
 import { archiveNotionPageByTitle, notionMinuteFloor, notionPageIdFromText, msToNextMinuteBoundary, pinNotionQueryPage, type NotionComment, type NotionPagePinResult } from "./notion-driver.js";
-import { GITHUB_NOTION_REST_ACTIONS, githubNotionOriginLifecycle, githubNotionReplyRow } from "./github-notion-rest.js";
+import { GITHUB_NOTION_REST_ACTIONS, githubNotionForward, githubNotionOriginLifecycle, githubNotionReplyNamesBlock, githubNotionReplyRow } from "./github-notion-rest.js";
 import type { PrApi } from "./pr-api.js";
 import { buildUnifiedAuditQuery, type AuditQueryOpts, type AuditWireEntry, type UnifiedAuditCall, type UnifiedAuditWire } from "./audit-read.js";
 import { ARMING_ADVISORY_LOOKBACK_DAYS, armingNote, CREDENTIAL_BOUND_ACTION, deriveConnectorArming, deriveOrgConsent, orgConsentMissingReason, lookbackIso, watchConnectorArming, type ArmingProbe } from "./connector-arming.js";
-import {
-  approvedSuspendedReply,
-  slackVendorTimestamp,
-  suspendedApprovalRequest,
-  SUSPENDED_APPROVAL_ACTIONS,
-} from "./suspended-approval.js";
+import { slackVendorTimestamp } from "./suspended-approval.js";
+import { CONNECTOR_CARD_ACTIONS, completedConnectorWrites, connectorCardRequest, connectorCardRun, forwardedWorkSessionStale } from "./connector-card.js";
 import { findCredentialedWriteHost, notionPageLinks, quotedPagePhrase } from "./egress-evidence.js";
 import {
   allAtWriteTier,
@@ -89,6 +85,8 @@ import {
   isAmbientLegAddressing,
   dispatchedAction,
   replyPostCount,
+  replyPostHighWater,
+  replyPostsAfter,
   replyPostSurfaces,
   reportedDirectMention,
   reportedNameDrop,
@@ -215,7 +213,7 @@ import {
   s23ConfirmationCheck,
 } from "./gate-joins.js";
 import { haltConfirmation } from "../../agent/tools/halt.js";
-import { awaitDelegatedAnswer, DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, dS, pollForFinalReply, pollForOwnWakeReply, REPLY_EDIT_ACTION, TASK_WAKE_ACTION, type OwnWakeCandidate } from "./read-channel-lib.js";
+import { awaitDelegatedAnswer, DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, dS, pollForFinalReply, pollForOwnWakeReply, REPLY_EDIT_ACTION, seatDelegationRows, TASK_WAKE_ACTION, WORK_FORWARDED_ACTION, type OwnWakeCandidate } from "./read-channel-lib.js";
 import {
   CLAIMED_REQUEST_SHAPES,
   NARRATED_ACT_SHAPES,
@@ -246,6 +244,7 @@ import {
   distinctFactToken,
   examinedPostLines,
   factToken,
+  supervisorAsk,
   otherFactTokens,
   withoutMarker,
   parseLinkCode,
@@ -452,6 +451,28 @@ const LINK_VENUE_PROOF_WINDOW = 20_000;
 
 export const isPendingWorkHandoff = (text: string): boolean => isFillerAck(text);
 
+export function handoffFromReplyPostRows(rows: readonly { readonly action?: string; readonly detail?: unknown }[], messageId: string): boolean | undefined {
+  for (const r of rows) {
+    if (r.action !== undefined && r.action !== REPLY_POST_ACTION) continue;
+    const d = r.detail as { id?: unknown; done?: unknown } | undefined;
+    if (d?.id === messageId && typeof d.done === "boolean") return d.done === false;
+  }
+  return undefined;
+}
+
+export function replyIsPendingWorkHandoff(ctx: Pick<ScenarioContext, "auditRead">, sinceIso: string): (messageId: string, text: string) => Promise<boolean> {
+  return async (messageId, text) => {
+    if (ctx.auditRead !== undefined && messageId.length > 0) {
+      try {
+        const exact = handoffFromReplyPostRows(await ctx.auditRead({ sinceIso, actions: [REPLY_POST_ACTION], limit: 500 }), messageId);
+        if (exact !== undefined) return exact;
+      } catch {
+      }
+    }
+    return isPendingWorkHandoff(text);
+  };
+}
+
 export const handoffReplyWaitMs = (firstReplyText: string): number | undefined =>
   isPendingWorkHandoff(firstReplyText) ? FILE_REPLY_WAIT : undefined;
 
@@ -469,8 +490,9 @@ const FILLER_ACK_RE = new RegExp(
     "just a (?:sec|moment)|hand(?:ed|ing) (?:this |it )?off|report back|delegat(?:ed|ing)\\s+(?:this|it|that|to)\\b|spun up a worker|" +
     "(?:still|currently) in progress|in progress|standing by)\\b" +
     "|(?:^|[.!?,;:\u2014\u2013-]\\s*|\\b(?:(?:i['\u2019]?m|we['\u2019]?re|am|are)\\s+(?:still\\s+)?|still\\s+))(?:on it|checking|working on)\\b" +
+    "|\\b(?:i['\u2019]?m|we['\u2019]?re)\\s+(?:now\\s+)?pulling\\b" +
     "|" +
-    `${PROMISE_SUBJECT}\\s+(?:look|check|report|update|retrieve|return|fetch|get|run|confirm|post)\\b`,
+    `${PROMISE_SUBJECT}\\s+(?:look|check|report|update|retrieve|return|fetch|get|run|confirm|post|reply)\\b`,
   "i",
 );
 
@@ -676,6 +698,8 @@ export function expensiveReasonError(scenario: Pick<Scenario, "id" | "expensive"
 
 export const DELEGATED_TURN_SURFACE_ACTIONS = [REPLY_POST_ACTION, REPLY_EDIT_ACTION] as const;
 
+export const DELEGATED_TURN_DELEGATION_ACTIONS = [DELEGATION_TASK_STARTED_ACTION, DELEGATION_TASK_SETTLED_ACTION, WORK_FORWARDED_ACTION] as const;
+
 async function gateDelegatedTurn(
   ctx: ScenarioContext,
   opts: {
@@ -706,7 +730,7 @@ async function gateDelegatedTurn(
 
   const readTurnRows = async () => [
     ...(await read({ sinceIso: opts.sinceIso, platform: opts.platform, actions: [...DELEGATED_TURN_SURFACE_ACTIONS] })),
-    ...(await read({ sinceIso: opts.sinceIso, actions: [DELEGATION_TASK_STARTED_ACTION, DELEGATION_TASK_SETTLED_ACTION] })),
+    ...(await read({ sinceIso: opts.sinceIso, actions: [...DELEGATED_TURN_DELEGATION_ACTIONS] })),
   ];
   const outcome = await pollForFinalReply(
     { now: () => Date.now(), sleep, fetchRows: readTurnRows },
@@ -719,15 +743,15 @@ async function gateDelegatedTurn(
   ctx.log(`delegated turn on ${opts.platform}: ${outcome.kind} — ${outcome.detail}`);
 
   const rows = await readTurnRows();
-  const started = rows.filter((r) => r.action === DELEGATION_TASK_STARTED_ACTION && String(r.detail?.["session"] ?? "") === sessionId);
-  const settled = rows.filter((r) => r.action === DELEGATION_TASK_SETTLED_ACTION && String(r.detail?.["session"] ?? "") === sessionId);
+  const { forwards, started, settled } = seatDelegationRows(rows, sessionId, wakeId);
+  const road = `seat session ${sessionId}${forwards.length > 0 ? `, or the work session of its forward(s) ${forwards.map((r) => dS(r, "requestId") ?? "?").join(", ")}` : ""}`;
   ctx.gate(
     started.length > 0,
-    `🔴 (hard): the ask DISPATCHED a background worker — a ${DELEGATION_TASK_STARTED_ACTION} row for session ${sessionId}. None means the seat answered in-seat, so this leg exercised no delegation road at all and its ask needs to be one the seat cannot answer alone (found ${started.length})`,
+    `🔴 (hard): the ask DISPATCHED a background worker — a ${DELEGATION_TASK_STARTED_ACTION} row on the ${road}. None means the seat answered in-seat, so this leg exercised no delegation road at all and its ask needs to be one the seat cannot answer alone (found ${started.length}; ${forwards.length} ${WORK_FORWARDED_ACTION} row(s))`,
   );
   ctx.gate(
     settled.length > 0,
-    `🔴 (hard): the worker SETTLED — a ${DELEGATION_TASK_SETTLED_ACTION} row for session ${sessionId}. A start with no settle is a worker that never reported back, which is the failure this shape exists to catch (found ${settled.length})`,
+    `🔴 (hard): the worker SETTLED — a ${DELEGATION_TASK_SETTLED_ACTION} row for a task the ${road} started. A start with no settle is a worker that never reported back, which is the failure this shape exists to catch (found ${settled.length})`,
   );
   ctx.gate(
     outcome.kind === "settled-relay",
@@ -828,10 +852,10 @@ async function gateStandDownMarked(
 async function gateAuditedSilence(
   ctx: ScenarioContext,
   opts: {
-    readonly sinceIso: string;
     readonly platform: string;
     readonly surface: string;
     readonly liveFrom: string;
+    readonly highWater: number;
     readonly observedSilent: boolean;
   },
 ): Promise<void> {
@@ -843,11 +867,35 @@ async function gateAuditedSilence(
     mine > 0,
     `stop honoured: NEGATIVE CONTROL — this journey's OWN earlier replies are readable under surface "${opts.surface}" (found ${mine} of ${replyPostCount(earlier)} ${REPLY_POST_ACTION} row(s) since the journey opened). Zero means the scope names no surface the deployment posted on — a wrong SHAPE, most likely a qualified key where the row carries the bare segment — and the silence gate below would then pass however much was posted. Surfaces this window carried: ${JSON.stringify(replyPostSurfaces(earlier))}`,
   );
-  const posts = await ctx.auditRead!({ sinceIso: opts.sinceIso, platform: opts.platform, actions: [REPLY_POST_ACTION], ...scope });
+  const after = replyPostsAfter(earlier, opts.highWater, scope);
   ctx.gate(
-    replyPostCount(posts, scope) === 0,
-    `stop honoured: AUDITED silence — zero ${REPLY_POST_ACTION} rows on surface "${opts.surface}" after the stop (found ${posts.length}). A reply the deployment posted on a SIBLING surface of this platform in the same window is NOT counted here and never was a broken stop`,
+    after.length === 0,
+    `stop honoured: AUDITED silence — zero ${REPLY_POST_ACTION} rows on surface "${opts.surface}" above seq ${opts.highWater}, the mark taken before the post-stop probe (found ${after.length}: ${JSON.stringify(after.map((r) => ({ seq: r.seq ?? null, ts: r.ts, wakeId: r.detail?.wakeId ?? null })))}). A reply the deployment posted on a SIBLING surface of this platform in the same window is NOT counted here and never was a broken stop`,
   );
+}
+
+const SILENCE_MARK_QUIET_MS = 3_000;
+
+async function auditedSilenceMark(ctx: ScenarioContext, opts: { readonly platform: string; readonly liveFrom: string }): Promise<number> {
+  const read = async (): Promise<{ readonly seq: number; readonly unsequenced: number }> =>
+    replyPostHighWater(await ctx.auditRead!({ sinceIso: opts.liveFrom, platform: opts.platform, actions: [REPLY_POST_ACTION], limit: 1000 }));
+  const deadline = Date.now() + AUDIT_ROW_WAIT;
+  let mark = await read();
+  for (;;) {
+    await sleep(SILENCE_MARK_QUIET_MS);
+    const next = await read();
+    if (next.seq === mark.seq || Date.now() >= deadline) {
+      mark = next;
+      break;
+    }
+    mark = next;
+  }
+  ctx.gate(
+    mark.unsequenced === 0,
+    `stop honoured: every ${REPLY_POST_ACTION} row carries a store seq (${mark.unsequenced} do not) — this deployment predates OPE-1933, so no clock-free "after the stop" boundary exists`,
+  );
+  ctx.log(`stop honoured: the ${opts.platform} ${REPLY_POST_ACTION} high-water mark before the probe is seq ${mark.seq}`);
+  return mark.seq;
 }
 
 async function gateOneSeatAcrossNameDrops(
@@ -3615,10 +3663,11 @@ export const SCENARIOS: readonly Scenario[] = [
     run: async (ctx) => {
       const gh = ctx.github!;
       const runStart = new Date(Date.now() - 60_000).toISOString();
+      const ghHandoff = replyIsPendingWorkHandoff(ctx, runStart);
 
       const markerA = factToken("gh");
       const askId = await gh.comment(gh.fixtureIssue, gh.mention(`summarise this issue in one line. Include the token ${markerA} in your reply.`));
-      const reply = await gh.awaitBotReply(gh.fixtureIssue, askId, { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.body) });
+      const reply = await gh.awaitBotReply(gh.fixtureIssue, askId, { timeoutMs: REPLY_WAIT, skip: (c) => ghHandoff(String(c.id), c.body) });
       ctx.gate(reply.body.trim().length > 0, "mention: a <slug>[bot] reply appears on the fixture issue (real-remote wake end-to-end)");
       await ctx.judgePass(
         closedQA(`Does the reply quote ${markerA} (proving it answered THIS comment)?`, { mustMatch: [markerA] }),
@@ -3666,14 +3715,14 @@ export const SCENARIOS: readonly Scenario[] = [
       else ctx.gate(ghVerdict.ok, `mention-gate: ${ghVerdict.label}`);
 
       const followId = await gh.comment(gh.fixtureIssue, gh.mention("and roughly how many comments does it have now? one line."));
-      const resume = await gh.awaitBotReply(gh.fixtureIssue, followId, { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.body) });
+      const resume = await gh.awaitBotReply(gh.fixtureIssue, followId, { timeoutMs: REPLY_WAIT, skip: (c) => ghHandoff(String(c.id), c.body) });
       ctx.gate(resume.id > followId, "resume: a second @mention gets a fresh reply (session resumed on the stable issue continuation)");
 
       const issueB = await gh.createIssue(`(e2e) reply-targeting probe ${factToken("probe")}`, "second discussion for the reply-targeting gate");
       try {
         const markerB = factToken("ghb");
         const askBId = await gh.comment(issueB, gh.mention(`what number issue is this? Include the token ${markerB}.`));
-        const replyB = await gh.awaitBotReply(issueB, askBId, { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.body) });
+        const replyB = await gh.awaitBotReply(issueB, askBId, { timeoutMs: REPLY_WAIT, skip: (c) => ghHandoff(String(c.id), c.body) });
         ctx.gate(replyB.body.trim().length > 0, "reply-targeting: the SECOND issue gets its OWN bot reply (not just the first) — the reply-targeting fix, live");
         const leakedToA = (await gh.comments(gh.fixtureIssue)).some((c) => gh.isBotComment(c) && c.body.includes(markerB));
         ctx.gate(!leakedToA, "reply-targeting: issue B's answer did NOT leak into issue A (hard gate — the bug's exact signature)");
@@ -4453,9 +4502,8 @@ export const SCENARIOS: readonly Scenario[] = [
       const isApprovalCard = (m: { text: string }) => m.text.startsWith("Approval requested:");
 
       const marker = factToken("sup");
-      const { ts: askTs } = await sup.post(
-        `Quick question for whoever's around — what's a good one-line summary of what this channel is for? Please include the ref ${marker} in your reply so I can find it.`,
-      );
+      const probe = supervisorAsk(marker);
+      const { ts: askTs } = await sup.post(probe.text);
       const reply = await sup.awaitAnyReply(askTs, {
         timeoutMs: REPLY_WAIT,
         skip: (m) => isFillerAck(m.text) || isApprovalCard(m),
@@ -4465,6 +4513,7 @@ export const SCENARIOS: readonly Scenario[] = [
         reply.threadTs === askTs || reply.text.includes(marker),
         `supervisor: the reply is attributable to THIS run's ask — threaded under it (threadTs=${reply.threadTs ?? "(none)"}, ask=${askTs}) or carrying the run marker "${marker}"`,
       );
+      ctx.log(`supervisor diagnostic (not scored): the reply ${withoutMarker(reply.text, marker).includes(String(probe.sum)) ? "names" : "does not name"} the sum ${probe.sum}`);
 
       await sleep(SILENCE_WINDOW);
       const afterReply = (await sup.collectBotMessagesAfter(askTs, reply.ts, { includeTaskCards: true })).filter((m) => !isApprovalCard(m));
@@ -4610,7 +4659,7 @@ export const SCENARIOS: readonly Scenario[] = [
 
   {
     id: "S-GITHUB-NOTION-REST",
-    title: "GitHub-origin shared workflow: the exact issue wake writes the domain's Notion page through credential-injected REST, readback verifies it, then the same session replies",
+    title: "GitHub-origin shared workflow: the exact issue wake forwards the job, the work session writes the domain's Notion page through credential-injected REST, readback verifies it, then the seat replies under the asking wake",
     requires: ["github", "notionAmbient"],
     surface: "cross",
     suite: "core",
@@ -4660,19 +4709,17 @@ export const SCENARIOS: readonly Scenario[] = [
         );
         const block = readbackBlocks[0]!;
         ctx.gate(!Number.isNaN(Date.parse(block.createdTime)), `S-GITHUB-NOTION-REST: returned block ${block.id} carries a parseable Notion created_time`);
-        const normalizedBlockId = block.id.toLowerCase().replaceAll("-", "");
 
+        const handoff = replyIsPendingWorkHandoff(ctx, sinceIso);
         const reply = await github.awaitBotReply(issueNumber, askId, {
           timeoutMs: FILE_REPLY_WAIT,
-          skip: (candidate) =>
-            isPendingWorkHandoff(candidate.body) ||
-            !candidate.body.includes(marker) ||
-            !candidate.body.toLowerCase().replaceAll("-", "").includes(normalizedBlockId),
+          skip: async (candidate) => (await handoff(String(candidate.id), candidate.body)) || !githubNotionReplyNamesBlock(candidate.body, block.id),
         });
         ctx.gate(
-          reply.body.toLowerCase().replaceAll("-", "").includes(normalizedBlockId),
+          githubNotionReplyNamesBlock(reply.body, block.id),
           `S-GITHUB-NOTION-REST: GitHub reply ${reply.id} names response-derived Notion block ${block.id}, which was unknowable before the successful append`,
         );
+        ctx.log(`S-GITHUB-NOTION-REST diagnostic (not scored): reply ${reply.id} ${reply.body.includes(marker) ? "repeats" : "does not repeat"} the run marker ${marker}`);
         ctx.gate(
           !Number.isNaN(Date.parse(reply.createdAt)),
           `S-GITHUB-NOTION-REST: GitHub reply ${reply.id} carries a parseable created_at for diagnostics`,
@@ -4696,17 +4743,23 @@ export const SCENARIOS: readonly Scenario[] = [
               sessionId: lifecycle.sessionId,
             });
             if (!replyRow) return undefined;
+            const forward = githubNotionForward(rows, lifecycle);
+            if (!forward) return undefined;
             const scopedPolicyRows = rows.filter(
               (row) => row.action === "egress.policy" && row.detail?.scopeKey === surfaceKey,
             );
             const route = findCredentialedWriteHost(scopedPolicyRows, { host: "api.notion.com", surface: repoName });
             if (!route.matches.some((match) => match.via === "notion-rest")) return undefined;
-            return { lifecycle, replyRow, route };
+            return { lifecycle, replyRow, route, forward };
           },
           {
             timeoutMs: FILE_REPLY_WAIT,
-            what: "the exact GitHub issue/delivery/wake/session/reply join plus its notion-rest credentialed write policy",
+            what: "the exact GitHub issue/delivery/wake/session/reply join, the seat's forward to the work session, plus the notion-rest credentialed write policy",
           },
+        );
+        ctx.gate(
+          evidence.forward.workSessionId !== evidence.lifecycle.sessionId,
+          `S-GITHUB-NOTION-REST: wake ${evidence.lifecycle.wakeId} forwarded request ${evidence.forward.requestId}; task ${evidence.forward.taskId} started and settled on work session ${evidence.forward.workSessionId}, and result wake ${evidence.forward.resultWakeId} reached the seat`,
         );
         ctx.gate(
           evidence.route.matches.some((match) => match.via === "notion-rest"),
@@ -4714,7 +4767,7 @@ export const SCENARIOS: readonly Scenario[] = [
         );
         ctx.gate(
           evidence.replyRow.detail?.sessionId === evidence.lifecycle.sessionId,
-          `S-GITHUB-NOTION-REST: issue #${issueNumber} comment ${askId} joined delivery ${evidence.lifecycle.deliveryId}, wake ${evidence.lifecycle.wakeId}, session ${evidence.lifecycle.sessionId}, Notion block ${block.id}, and GitHub reply ${reply.id}`,
+          `S-GITHUB-NOTION-REST: issue #${issueNumber} comment ${askId} joined delivery ${evidence.lifecycle.deliveryId}, wake ${evidence.lifecycle.wakeId}, seat session ${evidence.lifecycle.sessionId}, Notion block ${block.id}, and GitHub reply ${reply.id}`,
         );
       } catch (error) {
         runError = error;
@@ -4770,8 +4823,8 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "S-SUSPENDED-slack",
-    title: "Approval-SUSPENDED turn on Slack: an exact human answer settles the bridged eve approval and the same session posts its resumed reply (OPE-1856)",
-    requires: ["slack", "syntheticDm"],
+    title: "Approval card on Slack: the forwarded connector write posts an op.connector card, the exact human approves it, the write runs only after the click, and the seat answers in the asking DM (OPE-1856, OPE-2361)",
+    requires: ["slack", "syntheticDm", "synthetic"],
     surface: "slack",
     suite: "core",
     timeoutMs: 1_800_000,
@@ -4787,12 +4840,14 @@ export const SCENARIOS: readonly Scenario[] = [
       );
       await fenceDmSeat(ctx, "S-SUSPENDED-slack");
       const dm = ctx.dm!;
-      const { teamId } = await ctx.slack!.identity();
+      const { userId: human, teamId } = await dm.identity();
       const token = factToken("suspended-slack");
       const pageTitle = `OE suspended ${token}`;
       const sinceIso = new Date().toISOString();
       let creationAttempted = false;
       let createdReplyText: string | undefined;
+      let card: { pendingId: string; org: string; ts: string } | undefined;
+      let decided = false;
       try {
         const { ts: askTs } = await dm.post(`Create a new Notion page titled "${pageTitle}" with a one-line body containing ${token}.`);
         creationAttempted = true;
@@ -4800,72 +4855,94 @@ export const SCENARIOS: readonly Scenario[] = [
         ctx.gate(askVendorTs !== undefined, `S-SUSPENDED-slack: Slack returned a parseable vendor timestamp for the ask (${askTs})`);
         const surfaceKey = `slack/${teamId}/${dm.channelId}`;
 
-        const raised = await pollUntil(
+        const carded = await pollUntil(
           async () => {
             const [messages, rows] = await Promise.all([
               dm.collectBotMessagesAfter(askTs, askTs),
-              ctx.auditRead!({ sinceIso, actions: SUSPENDED_APPROVAL_ACTIONS, limit: 1000 }),
+              ctx.auditRead!({ sinceIso, actions: CONNECTOR_CARD_ACTIONS, limit: 1000 }),
             ]);
-            const request = suspendedApprovalRequest(rows, {
-              anchor: { platform: "slack", surfaceKey, vendorTs: askVendorTs! },
-              destinationPlatform: "slack",
-              destinationWorkspace: teamId,
-              containerKey: `slack/${dm.channelId}`,
-            });
+            const request = connectorCardRequest(rows, { anchor: { platform: "slack", surfaceKey, vendorTs: askVendorTs! }, requester: human });
             if (!request) return undefined;
-            const message = messages.find((candidate) => candidate.ts === request.messageId && candidate.text.includes(APPROVAL_ANSWER_HINT));
-            return message ? { request, message } : undefined;
+            const message = messages.find((candidate) => approveButton(candidate)?.pendingId === request.pendingId);
+            return message ? { request, message, button: approveButton(message)!, rows } : undefined;
           },
-          { timeoutMs: FILE_REPLY_WAIT, what: "the exact Slack ask's bridged tool approval and readable host answer line" },
+          { timeoutMs: FILE_REPLY_WAIT, what: `the exact Slack ask's forward and its op.connector approval card for ${human} in the DM` },
         ).catch(async (error: unknown) => {
           await arming.recheck();
+          const stale = forwardedWorkSessionStale(
+            await ctx.auditRead!({ sinceIso, actions: CONNECTOR_CARD_ACTIONS, limit: 1000 }).catch(() => []),
+            { platform: "slack", surfaceKey, vendorTs: askVendorTs! },
+          );
+          if (stale?.stale === true) throw new Error(`STALE WORK SESSION — ${stale.why}. The missing card is a symptom of the old build, not of the card road.`);
           throw error;
         });
-        ctx.gate(/\bApprove\b/.test(raised.message.text), "S-SUSPENDED-slack: the exact bridged request offers the Approve option the human will type");
+        const runtimeVerdict = forwardedWorkSessionStale(carded.rows, { platform: "slack", surfaceKey, vendorTs: askVendorTs! });
+        ctx.log(`diagnostic (not scored): the forward's work-session runtime verdict is ${runtimeVerdict === undefined ? "not joinable" : runtimeVerdict.stale ? `STALE (${runtimeVerdict.why})` : runtimeVerdict.verdict}`);
+        card = { pendingId: carded.request.pendingId, org: carded.button.org, ts: carded.message.ts };
+        ctx.gate(
+          completedConnectorWrites(carded.rows, dm.channelId).every((row) => Date.parse(row.ts) < Date.parse(carded.request.requestedAt)),
+          `S-SUSPENDED-slack: no connector write ran after card ${card.pendingId} was posted and before the click`,
+        );
 
-        const beforeAnswer = new Map<string, string>();
-        for (const message of await dm.collectBotMessagesAfter(askTs, askTs)) beforeAnswer.set(message.ts, message.text);
+        const clicked = await ctx.synthetic!.click({
+          pendingId: card.pendingId,
+          org: card.org,
+          decision: "approve",
+          messageTs: card.ts,
+          channelId: dm.channelId,
+          userId: human,
+          teamId,
+        });
+        ctx.log(`${clicked.label}: ${human} approves op.connector ${card.pendingId} → ${clicked.status}`);
+        ctx.gate(clicked.status === 200, `S-SUSPENDED-slack: the asking human's approve on card ${card.pendingId} acked 200`);
+        decided = true;
 
-        const { ts: answerTs } = await dm.post("Approve");
-        const answerVendorTs = slackVendorTimestamp(answerTs);
-        ctx.gate(answerVendorTs !== undefined, `S-SUSPENDED-slack: Slack returned a parseable vendor timestamp for the human answer (${answerTs})`);
-
-        const resumed = await pollUntil(
+        const ran = await pollUntil(
           async () => {
             const [messages, rows] = await Promise.all([
               dm.collectBotMessagesAfter(askTs, askTs),
-              ctx.auditRead!({ sinceIso, actions: SUSPENDED_APPROVAL_ACTIONS, limit: 1000 }),
+              ctx.auditRead!({ sinceIso, actions: CONNECTOR_CARD_ACTIONS, limit: 1000 }),
             ]);
             const candidates = messages
               .filter(
                 (message) =>
-                  message.ts !== raised.message.ts &&
-                  !message.text.includes(APPROVAL_ANSWER_HINT) &&
-                  message.text.includes(token) &&
+                  message.ts !== card!.ts &&
+                  !APPROVAL_DECISION_NOTICE.test(message.text) &&
                   message.text.trim().length > 0 &&
                   !isFillerAck(message.text),
               )
-              .map((message) => ({ id: message.ts, text: message.text, message }));
-            return approvedSuspendedReply(rows, {
-              request: raised.request,
-              answer: { platform: "slack", surfaceKey, vendorTs: answerVendorTs! },
-              replyPlatform: "slack",
-              candidates,
-              beforeAnswer,
-            });
+              .map((message) => ({ id: message.ts, text: message.text }));
+            return connectorCardRun(rows, { request: carded.request, clicker: human, surface: dm.channelId, replyPlatform: "slack", candidates });
           },
-          { timeoutMs: FILE_REPLY_WAIT, what: `a new/edited reply naming ${token} whose own reply.post closes the exact approved lifecycle` },
+          { timeoutMs: FILE_REPLY_WAIT, what: `the approved write of card ${card.pendingId} after the click, and the seat's answer in the DM after that write` },
         ).catch(async (error: unknown) => {
           await arming.recheck();
           throw error;
         });
-        createdReplyText = resumed.candidate.text;
+        createdReplyText = ran.candidate.text;
         await arming.recheck();
         ctx.gate(
-          resumed.lifecycle.request.requestId === raised.request.requestId && resumed.lifecycle.request.sessionId === raised.request.sessionId,
-          `S-SUSPENDED-slack: exact lifecycle joined request ${raised.request.requestId}, session ${raised.request.sessionId}, answer wake ${resumed.lifecycle.answerWakeId} and reply ${resumed.candidate.id}`,
+          ran.approved.principalId === human && ran.opApproved.principalId === human,
+          `S-SUSPENDED-slack: card ${card.pendingId} was approved by the asking human ${human}, and no one else`,
         );
+        ctx.gate(
+          Date.parse(ran.write.ts) > Date.parse(ran.approved.ts),
+          `S-SUSPENDED-slack: the ${String(ran.write.detail?.op)} write ran at ${ran.write.ts}, after the approval at ${ran.approved.ts}, through decision wake ${ran.decisionWakeId}`,
+        );
+        ctx.gate(
+          ran.reply.detail?.sessionId === carded.request.seatSessionId,
+          `S-SUSPENDED-slack: ask wake ${carded.request.askWakeId} forwarded request ${carded.request.requestId}; the seat session ${carded.request.seatSessionId} answered with reply ${ran.candidate.id} in the asking DM`,
+        );
+        ctx.log(`S-SUSPENDED-slack diagnostic (not scored): reply ${ran.candidate.id} ${ran.candidate.text.includes(token) ? "names" : "does not name"} ${token}`);
       } finally {
+        if (card !== undefined && !decided) {
+          try {
+            const rejected = await ctx.synthetic!.click({ pendingId: card.pendingId, org: card.org, decision: "reject", messageTs: card.ts, channelId: dm.channelId, userId: human, teamId });
+            ctx.log(`S-SUSPENDED-slack cleanup: ${rejected.label}: ${human} rejects the undecided card ${card.pendingId} → ${rejected.status}`);
+          } catch (error) {
+            ctx.log(`S-SUSPENDED-slack cleanup: rejecting card ${card.pendingId} failed: ${String(error instanceof Error ? error.message : error)}`);
+          }
+        }
         if (creationAttempted) await archiveNotionPageOverRest(ctx, pageTitle, "S-SUSPENDED-slack", createdReplyText);
       }
     },
@@ -5767,9 +5844,10 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.gate(readReply.text.trim().length > 0, "read: the agent replied to the catch-up ask");
       await ctx.judgePass(
         closedQA(
-          "Is the reply a plausible short summary of channel activity, free of runtime machinery and of any attempt narrated as having gone wrong?" +
+          "Is the reply a plausible short summary of channel activity, free of runtime machinery?" +
             TRUTHFUL_WITHHOLDING_CLAUSE +
-            " On this reply the summary itself is still required: a reply that only withholds, and names no channel activity at all, FAILS.",
+            " On this reply the summary itself is still required: a reply that only withholds, and names no channel activity at all, FAILS." +
+            " An accurate report of what happened in the channel is channel activity even when what happened was a refusal — a pull request that was rejected or never opened, a request or proposal that was refused or denied — and it PASSES. The narration rule applies only to the reply's own attempt to answer this catch-up ask.",
           {
             mustMatch: [/.{15,}/],
             mustNotMatch: [...TOOL_FAILURE_MACHINERY_SHAPES],
@@ -6267,124 +6345,146 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     id: "S-EVE-CARD",
     title:
-      "the bridged approval CARD, live (OPE-1056/OPE-1720): a DM connector WRITE parks on eve's `tool-approval`, the unified post arm renders it as an interactive card that is NOT OE's governance card, the forged Approve is accepted, and the SUSPENDED TURN RESUMES only after the click",
+      "the connector-write CARD, live (OPE-1056/OPE-2340/OPE-2361): a DM connector WRITE never parks on eve's native `tool-approval`; it posts an OE op.connector card, the card's OWN rendered Approve button, replayed byte for byte, approves it, and the write runs only after that click",
     requires: ["slack", "syntheticDm", "synthetic"],
     surface: "notion",
     suite: "core",
-    timeoutMs: 2_400_000,
+    timeoutMs: 1_800_000,
     judged: false,
     run: async (ctx) => {
-      const dm = ctx.dm!;
-      const synthetic = ctx.synthetic!;
       const arming = await watchConnectorArming(armingProbeOf(ctx), NOTION_CONNECTOR);
       await fenceDmSeat(ctx, "S-EVE-CARD");
-      const { userId, teamId } = await ctx.slack!.identity();
+      const dm = ctx.dm!;
+      const { userId: human, teamId } = await dm.identity();
       const token = factToken("evecard");
       const pageTitle = `OE eve-card ${token}`;
       const sinceIso = new Date().toISOString();
-      const { ts: anchorTs } = await dm.post(
-        `create a new Notion page titled "${pageTitle}" with a one-line body that includes the exact token ${token}.`,
-      );
-
-      const card = await pollUntil(
-        async () => {
-          const [messages, auditRows] = await Promise.all([
-            dm.collectBotMessagesAfter(anchorTs, anchorTs),
-            ctx.auditRead!({ sinceIso, actions: APPROVAL_REQUEST_PROVENANCE_ACTIONS, limit: 1000 }),
-          ]);
-          const selected = approvalRequestForSlackAsk({
-            messages,
-            auditRows,
-            anchorTs,
-            teamId,
-            channelId: dm.channelId,
-            decode: eveRequestApprovalButtons,
-          });
-          return selected ? { message: selected.message, buttons: selected.decoded } : undefined;
-        },
-        { timeoutMs: FILE_REPLY_WAIT, what: "the eve-native approval card on the DM connector write" },
-      ).catch(async (e: unknown) => {
-        await arming.recheck();
-        throw e;
-      });
-      ctx.log(
-        `eve-native card at ts ${card.message.ts}: approve action_id "${card.buttons.approve.actionId}"` +
-          ` (value ${JSON.stringify(card.buttons.approve.value)}, label ${JSON.stringify(card.buttons.approve.text)})` +
-          `${card.buttons.deny ? `, deny action_id "${card.buttons.deny.actionId}"` : ", no deny button read"}`,
-      );
-      const rawButtons = card.message.actions ?? [];
-      ctx.gate(
-        rawButtons.length > 0 && rawButtons.every((a) => !a.actionId.startsWith(APPROVAL_PREFIX)),
-        `S-EVE-CARD: none of the card's ${rawButtons.length} button(s) carries an "${APPROVAL_PREFIX}" action_id — this is eve's REQUEST, not OE's governance card, whichever plane rendered the blocks`,
-      );
-
-      const beforeClick = new Map<string, string>();
-      for (const m of await dm.collectBotMessagesAfter(anchorTs, anchorTs)) beforeClick.set(m.ts, m.text);
-
-      const clicked = await synthetic.clickBlockAction({
-        actionId: card.buttons.approve.actionId,
-        blockId: card.buttons.approve.blockId,
-        value: card.buttons.approve.value,
-        buttonText: card.buttons.approve.text,
-        userId,
-        teamId,
-        channelId: dm.channelId,
-        messageTs: card.message.ts,
-        threadTs: card.message.threadTs ?? anchorTs,
-      });
-      ctx.log(`${clicked.label}: Approve on the eve-native card ${card.message.ts} → ${clicked.status}`);
-      ctx.gate(clicked.status === 200, `S-EVE-CARD: the forged Approve click was accepted (${clicked.status})`);
-
-      const settled = await pollUntil(
-        async () => {
-          const msgs = await dm.collectBotMessagesAfter(anchorTs, anchorTs);
-          let latest: SlackMessage | undefined;
-          for (const m of msgs) {
-            if (m.ts === card.message.ts) continue;
-            if (eveRequestApprovalButtons(m)) continue;
-            const text = m.text.trim();
-            if (text.length === 0 || isFillerAck(text)) continue;
-            const before = beforeClick.get(m.ts);
-            if (before !== undefined && before === m.text) continue;
-            if (!m.text.includes(token)) continue;
-            latest = m;
-          }
-          return latest;
-        },
-        { timeoutMs: FILE_REPLY_WAIT, what: `a substantive bot reply naming ${token}, NEW or EDITED since the Approve click (the resumed turn)` },
-      ).catch(async (e: unknown) => {
-        await arming.recheck();
-        throw e;
-      });
-      await arming.recheck();
-      ctx.log(`S-EVE-CARD: the resumed turn answered at ts ${settled.ts} naming ${token}`);
-      ctx.gate(
-        !/\b(error|exception|traceback)\b/i.test(settled.text),
-        "S-EVE-CARD: the resumed turn reports no error (the click resumed the write rather than failing it)",
-      );
-
-      const reread = (await dm.collectBotMessagesAfter(anchorTs, anchorTs)).find((m) => m.ts === card.message.ts);
-      ctx.observe(
-        `S-EVE-CARD: the DECIDED eve-native card ${card.message.ts} ` +
-          `${reread === undefined ? "could not be re-read" : eveRequestApprovalButtons(reread) ? "STILL carries its buttons" : "has had its buttons removed"}` +
-          " — eve 0.54.3 re-renders it answered and drops the actions block; a card that still carries buttons means the settle never reached the surface.",
-      );
-      if (ctx.auditRead) {
-        const rows = await ctx.auditRead({
-          sinceIso,
-          actions: ["approval.chain", "turn.native_input_requested", "approval.eve_settled", "connector.op"],
-        });
-        const count = (action: string): number => rows.filter((r) => r.action === action).length;
-        const settledRows = rows.filter((r) => r.action === "approval.eve_settled");
-        ctx.observe(
-          `S-EVE-CARD rows in this leg's window — approval.chain=${count("approval.chain")} (OE's own card's row; eve's card does not enter the approver chain) · ` +
-            `turn.native_input_requested=${count("turn.native_input_requested")} · approval.eve_settled=${count("approval.eve_settled")} ` +
-            `[outcomes ${JSON.stringify(settledRows.map((r) => (r.detail as { outcome?: unknown } | undefined)?.outcome))}] · ` +
-            `connector.op=${count("connector.op")}. The eve_settled outcome is the candidate GATE for the next increment (OPE-1056).`,
+      let creationAttempted = false;
+      let createdReplyText: string | undefined;
+      let card: { pendingId: string; org: string; ts: string } | undefined;
+      let decided = false;
+      try {
+        const { ts: askTs } = await dm.post(
+          `create a new Notion page titled "${pageTitle}" with a one-line body that includes the exact token ${token}.`,
         );
-      }
+        creationAttempted = true;
+        const askVendorTs = slackVendorTimestamp(askTs);
+        ctx.gate(askVendorTs !== undefined, `S-EVE-CARD: Slack returned a parseable vendor timestamp for the ask (${askTs})`);
+        const surfaceKey = `slack/${teamId}/${dm.channelId}`;
 
-      await archiveNotionPageOverRest(ctx, pageTitle, "S-EVE-CARD", settled.text);
+        const carded = await pollUntil(
+          async () => {
+            const [messages, rows] = await Promise.all([
+              dm.collectBotMessagesAfter(askTs, askTs),
+              ctx.auditRead!({ sinceIso, actions: CONNECTOR_CARD_ACTIONS, limit: 1000 }),
+            ]);
+            const request = connectorCardRequest(rows, { anchor: { platform: "slack", surfaceKey, vendorTs: askVendorTs! }, requester: human });
+            if (!request) return undefined;
+            const message = messages.find((candidate) => approveButton(candidate)?.pendingId === request.pendingId);
+            return message ? { request, message, button: approveButton(message)!, rows } : undefined;
+          },
+          { timeoutMs: FILE_REPLY_WAIT, what: `the exact Slack ask's forward and its op.connector approval card for ${human} in the DM` },
+        ).catch(async (error: unknown) => {
+          await arming.recheck();
+          const stale = forwardedWorkSessionStale(
+            await ctx.auditRead!({ sinceIso, actions: CONNECTOR_CARD_ACTIONS, limit: 1000 }).catch(() => []),
+            { platform: "slack", surfaceKey, vendorTs: askVendorTs! },
+          );
+          if (stale?.stale === true) throw new Error(`STALE WORK SESSION — ${stale.why}. The missing card is a symptom of the old build, not of the card road.`);
+          throw error;
+        });
+        const runtimeVerdict = forwardedWorkSessionStale(carded.rows, { platform: "slack", surfaceKey, vendorTs: askVendorTs! });
+        ctx.log(`diagnostic (not scored): the forward's work-session runtime verdict is ${runtimeVerdict === undefined ? "not joinable" : runtimeVerdict.stale ? `STALE (${runtimeVerdict.why})` : runtimeVerdict.verdict}`);
+        card = { pendingId: carded.request.pendingId, org: carded.button.org, ts: carded.message.ts };
+        const rawButtons = carded.message.actions ?? [];
+        ctx.gate(
+          rawButtons.length > 0 && rawButtons.every((a) => a.actionId.startsWith(APPROVAL_PREFIX)),
+          `S-EVE-CARD: every one of the card's ${rawButtons.length} button(s) carries "${APPROVAL_PREFIX}" — the approval is OE's op.connector card, not eve's request (got ${JSON.stringify(rawButtons.map((a) => a.actionId))})`,
+        );
+        ctx.gate(
+          completedConnectorWrites(carded.rows, dm.channelId).every((row) => Date.parse(row.ts) < Date.parse(carded.request.requestedAt)),
+          `S-EVE-CARD: no connector write ran after card ${card.pendingId} was posted and before the click`,
+        );
+
+        const live = rawButtons.find((a) => a.actionId === `${APPROVAL_PREFIX}approve:${card!.pendingId}`);
+        ctx.gate(live !== undefined, `S-EVE-CARD: the card renders an Approve button for its own pending id ${card.pendingId}`);
+        const clicked = await ctx.synthetic!.clickBlockAction({
+          actionId: live!.actionId,
+          ...(live!.blockId === undefined ? {} : { blockId: live!.blockId }),
+          ...(live!.value === undefined ? {} : { value: live!.value }),
+          ...(live!.text === undefined ? {} : { buttonText: live!.text }),
+          userId: human,
+          teamId,
+          channelId: dm.channelId,
+          messageTs: card.ts,
+          threadTs: carded.message.threadTs ?? askTs,
+        });
+        ctx.log(`${clicked.label}: ${human} taps the live Approve on op.connector ${card.pendingId} → ${clicked.status}`);
+        ctx.gate(clicked.status === 200, `S-EVE-CARD: the replayed Approve on card ${card.pendingId} acked 200`);
+        decided = true;
+
+        const ran = await pollUntil(
+          async () => {
+            const [messages, rows] = await Promise.all([
+              dm.collectBotMessagesAfter(askTs, askTs),
+              ctx.auditRead!({ sinceIso, actions: CONNECTOR_CARD_ACTIONS, limit: 1000 }),
+            ]);
+            const candidates = messages
+              .filter(
+                (message) =>
+                  message.ts !== card!.ts &&
+                  !APPROVAL_DECISION_NOTICE.test(message.text) &&
+                  message.text.trim().length > 0 &&
+                  !isFillerAck(message.text),
+              )
+              .map((message) => ({ id: message.ts, text: message.text }));
+            return connectorCardRun(rows, { request: carded.request, clicker: human, surface: dm.channelId, replyPlatform: "slack", candidates });
+          },
+          { timeoutMs: FILE_REPLY_WAIT, what: `the approved write of card ${card.pendingId} after the live-button click, and the seat's answer in the DM after that write` },
+        ).catch(async (error: unknown) => {
+          await arming.recheck();
+          throw error;
+        });
+        createdReplyText = ran.candidate.text;
+        await arming.recheck();
+        ctx.gate(
+          ran.approved.principalId === human && ran.opApproved.principalId === human,
+          `S-EVE-CARD: card ${card.pendingId} was approved by the asking human ${human}, and no one else`,
+        );
+        ctx.gate(
+          Date.parse(ran.write.ts) > Date.parse(ran.approved.ts),
+          `S-EVE-CARD: the ${String(ran.write.detail?.op)} write ran at ${ran.write.ts}, after the approval at ${ran.approved.ts}, through decision wake ${ran.decisionWakeId}`,
+        );
+
+        const dmMessages = await dm.collectBotMessagesAfter(askTs, askTs);
+        const nativeCards = dmMessages.filter((m) => eveRequestApprovalButtons(m) !== undefined);
+        ctx.gate(
+          nativeCards.length === 0,
+          `S-EVE-CARD: no DM message since the ask carries eve-native approve buttons (found ${nativeCards.length}: ${JSON.stringify(nativeCards.map((m) => m.ts))})`,
+        );
+        const nativeRows = (
+          await ctx.auditRead!({
+            sinceIso,
+            actions: ["turn.question_bridged", "turn.question_dropped", "turn.native_input_requested", "approval.eve_settled"],
+            limit: 1000,
+          })
+        ).filter((r) => r.action === "approval.eve_settled" || r.detail?.kind === "tool-approval");
+        ctx.gate(
+          nativeRows.length === 0,
+          `S-EVE-CARD: no native tool-approval was raised or settled in the leg's window — the connector seam never prompts through eve (found ${nativeRows.length}: ${JSON.stringify(nativeRows.map((r) => ({ action: r.action, ts: r.ts, surface: r.surface ?? null })))})`,
+        );
+        ctx.log(`S-EVE-CARD diagnostic (not scored): reply ${ran.candidate.id} ${ran.candidate.text.includes(token) ? "names" : "does not name"} ${token}`);
+      } finally {
+        if (card !== undefined && !decided) {
+          try {
+            const rejected = await ctx.synthetic!.click({ pendingId: card.pendingId, org: card.org, decision: "reject", messageTs: card.ts, channelId: dm.channelId, userId: human, teamId });
+            ctx.log(`S-EVE-CARD cleanup: ${rejected.label}: ${human} rejects the undecided card ${card.pendingId} → ${rejected.status}`);
+          } catch (error) {
+            ctx.log(`S-EVE-CARD cleanup: rejecting card ${card.pendingId} failed: ${String(error instanceof Error ? error.message : error)}`);
+          }
+        }
+        if (creationAttempted) await archiveNotionPageOverRest(ctx, pageTitle, "S-EVE-CARD", createdReplyText);
+      }
     },
   },
   {
@@ -8448,10 +8548,10 @@ export const SCENARIOS: readonly Scenario[] = [
       await slack.awaitThreadReply(rootTs, { afterTs: stopTs, timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
       await gateStandDownMarked(ctx, { sinceIso: stopFrom, platform: "slack", anchor: rootTs });
 
-      const silenceFrom = new Date().toISOString();
+      const highWater = await auditedSilenceMark(ctx, { platform: "slack", liveFrom: mentionFrom });
       const { ts: afterStopTs } = await slack.post(fixtureLine("and what's 5 plus 5?"), rootTs);
       const during = await slack.collectRepliesDuring(rootTs, afterStopTs, SILENCE_WINDOW);
-      await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "slack", surface, liveFrom: mentionFrom, observedSilent: during.length === 0 });
+      await gateAuditedSilence(ctx, { platform: "slack", surface, liveFrom: mentionFrom, highWater, observedSilent: during.length === 0 });
 
       const idleMarker = factToken("sl-idle");
       await slack.post(`noting for the record: this run's build token is ${idleMarker}. No reply needed.`, rootTs);
@@ -8561,12 +8661,12 @@ export const SCENARIOS: readonly Scenario[] = [
       });
       await gateStandDownMarked(ctx, { sinceIso: stopFrom, platform: "discord", anchor: threadId });
 
-      const silenceFrom = new Date().toISOString();
+      const highWater = await auditedSilenceMark(ctx, { platform: "discord", liveFrom: mentionFrom });
       const afterStop = await discord.post("and who else works on it?", threadId);
       const raw = await discord.collectRepliesDuring(threadId, afterStop.id, SILENCE_WINDOW);
       const silent = raw.filter(notCancelNote);
       if (raw.length !== silent.length) ctx.log(`stop window: skipped ${raw.length - silent.length} turn-cancel note(s) — not replies, and not explained (OPE-1724)`);
-      await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "discord", surface: threadId, liveFrom: mentionFrom, observedSilent: silent.length === 0 });
+      await gateAuditedSilence(ctx, { platform: "discord", surface: threadId, liveFrom: mentionFrom, highWater, observedSilent: silent.length === 0 });
 
       const idleMarker = factToken("dc-idle");
       await discord.post(`noting for the record: this run's build token is ${idleMarker}. No reply needed.`, threadId);
@@ -8635,13 +8735,14 @@ export const SCENARIOS: readonly Scenario[] = [
         await github.awaitBotReply(issue, stopId, { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.body) }).catch(() => undefined);
         await gateStandDownMarked(ctx, { sinceIso: stopFrom, platform: "github" });
 
+        const highWater = await auditedSilenceMark(ctx, { platform: "github", liveFrom: mentionFrom });
         const beforeStop = new Set((await github.comments(issue).catch(() => [])).map((c) => c.id).filter((id) => id !== 0));
         const silenceFrom = new Date().toISOString();
         await github.comment(issue, fixtureLine("and what's 5 plus 5?"));
         await sleep(SILENCE_WINDOW);
         const after = await github.comments(issue);
         const observedSilent = after.filter((c) => github.isBotComment(c) && commentAtOrAfter(c.createdAt, silenceFrom) && !beforeStop.has(c.id)).length === 0;
-        await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "github", surface: bareSurfaceSegment(github.repo), liveFrom: mentionFrom, observedSilent });
+        await gateAuditedSilence(ctx, { platform: "github", surface: bareSurfaceSegment(github.repo), liveFrom: mentionFrom, highWater, observedSilent });
 
         const idleMarker = factToken("gh-idle");
         await github.comment(issue, `noting for the record: this run's build token is ${idleMarker}. No reply needed.`);
@@ -8701,13 +8802,14 @@ export const SCENARIOS: readonly Scenario[] = [
         await linear.awaitAppReply(issue.id, seen, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
         await gateStandDownMarked(ctx, { sinceIso: stopFrom, platform: "linear" });
 
+        const highWater = await auditedSilenceMark(ctx, { platform: "linear", liveFrom: mentionFrom });
         const beforeStop = new Set((await linear.comments(issue.id).catch(() => [])).map((c) => c.id).filter((id) => id.length > 0));
         const silenceFrom = new Date().toISOString();
         await linear.comment(issue.id, fixtureLine("and what's 5 plus 5?"));
         await sleep(SILENCE_WINDOW);
         const after = await linear.comments(issue.id);
         const observedSilent = after.filter((c) => linear.isAppComment(c) && commentAtOrAfter(c.createdAt, silenceFrom) && !beforeStop.has(c.id)).length === 0;
-        await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "linear", surface: linear.teamId, liveFrom: mentionFrom, observedSilent });
+        await gateAuditedSilence(ctx, { platform: "linear", surface: linear.teamId, liveFrom: mentionFrom, highWater, observedSilent });
 
         const idleMarker = factToken("lin-idle");
         await linear.comment(issue.id, `noting for the record: this run's build token is ${idleMarker}. No reply needed.`);
@@ -8770,6 +8872,7 @@ export const SCENARIOS: readonly Scenario[] = [
           .catch(() => undefined);
         await gateStandDownMarked(ctx, { sinceIso: stopFrom, platform: "notion" });
 
+        const highWater = await auditedSilenceMark(ctx, { platform: "notion", liveFrom: mentionFrom });
         const beforeStop = new Set((await notion.blockComments(blockId).catch(() => [])).map((c) => c.id));
         const silenceFrom = new Date().toISOString();
         await notion.replyToDiscussion(opened.discussionId, fixtureLine("and what's 5 plus 5?"));
@@ -8777,7 +8880,7 @@ export const SCENARIOS: readonly Scenario[] = [
         const after = await notion.blockComments(blockId);
         const silenceFloor = notionMinuteFloor(silenceFrom);
         const observedSilent = after.filter((c) => notion.isBotComment(c) && c.createdTime >= silenceFloor && !beforeStop.has(c.id)).length === 0;
-        await gateAuditedSilence(ctx, { sinceIso: silenceFrom, platform: "notion", surface: notion.pageId, liveFrom: mentionFrom, observedSilent });
+        await gateAuditedSilence(ctx, { platform: "notion", surface: notion.pageId, liveFrom: mentionFrom, highWater, observedSilent });
 
         foreignBlockId = await notion.appendParagraphBlock(`e2e engaged-foreign probe ${factToken("eng")}`);
         const foreignMarker = factToken("not-foreign");

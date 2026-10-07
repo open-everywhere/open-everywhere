@@ -3,7 +3,7 @@ import type { TranscriptWireEvent } from "./transcript-read.js";
 import { WAKE_INGRESS_ACTION, WAKE_TURN_START_ACTION } from "../../agent/channels/wake-timing.js";
 import type { MemoryPersistOutcome } from "../../agent/hooks/memory.js";
 import type { MemoryWriteRoad } from "../../agent/memory/write-road.js";
-import { DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, tasksDispatchedAtOrAfter, wakeLineage } from "./read-channel-lib.js";
+import { DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, forwardedJobsDispatchedAtOrAfter, tasksDispatchedAtOrAfter, wakeLineage } from "./read-channel-lib.js";
 import { carriesFactToken } from "./journey.js";
 
 function dstr(row: AuditWireEntry, key: string): string | undefined {
@@ -272,7 +272,7 @@ export function classifySettlementReply(
       detail: `message ${opts.messageId} carried the SETTLEMENT REPORT of task ${pairing.task}, and ${missing} — it cannot be tied to this ask, so it is stepped over (OPE-1965)`,
     };
   }
-  if (!tasksDispatchedAtOrAfter(rows, opts.floorMs).has(pairing.task)) {
+  if (!tasksDispatchedAtOrAfter(rows, opts.floorMs).has(pairing.task) && !forwardedJobsDispatchedAtOrAfter(rows, opts.floorMs).has(pairing.task)) {
     return {
       kind: "step-over",
       detail:

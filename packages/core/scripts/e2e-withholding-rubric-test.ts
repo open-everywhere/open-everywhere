@@ -156,6 +156,19 @@ const HANDOFF_NARRATION = "I've handed this off to make the one-line README chan
     block("J-WORKFLOW").includes("a reply that only withholds, and names no channel activity at all, FAILS."),
     "🔴 J-WORKFLOW keeps the summary floor beside the clause — the withholding may ride ALONGSIDE a summary, never instead of one",
   );
+
+  ok(
+    block("J-WORKFLOW").includes("An accurate report of what happened in the channel is channel activity even when what happened was a refusal"),
+    "🔴 J-WORKFLOW tells the judge that an accurate account of refusals in the channel PASSES (OPE-2361)",
+  );
+  ok(
+    block("J-WORKFLOW").includes("The narration rule applies only to the reply's own attempt to answer this catch-up ask."),
+    "…and scopes the narration rule to the reply's own act, so a live tool failure in THIS reply still fails",
+  );
+  ok(
+    !block("J-WORKFLOW").includes('"Is the reply a plausible short summary of channel activity, free of runtime machinery and of any attempt narrated as having gone wrong?"'),
+    "🔴 CONTROL: the question that failed the accurate summary is gone from the J-WORKFLOW code",
+  );
 }
 
 console.log(`✓ e2e-withholding-rubric: ${n} assertions passed`);

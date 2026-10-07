@@ -73,6 +73,7 @@ import {
   settlementReportOwedOn,
 } from "../access/pending-delegation-signal.js";
 import { retargetTaskWakes, taskWakeUnreadRefusalMessage, TASK_WAKE_UNREAD_REFUSAL_REASON } from "../channels/task-wake.js";
+import { rememberWorkReportPromised, workRequestIdOfLedger } from "../channels/work.js";
 import { uningressedTurn } from "../access/task-wake-signal.js";
 import { silentRoutineThisTurn } from "../routines/report.js";
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
@@ -292,7 +293,11 @@ export const unifiedReplyEntry = defineTool({
       markWakeRepliedThisTurn(turnId, input.wake);
 
       if (owingTask !== undefined) {
-        for (const task of pendingDelegationsOwing(turnId, input.wake, addressedWakeThisTurn(turnId))) notePromisedReport(task);
+        for (const task of pendingDelegationsOwing(turnId, input.wake, addressedWakeThisTurn(turnId))) {
+          notePromisedReport(task);
+          const requestId = workRequestIdOfLedger(task);
+          if (requestId !== undefined) await rememberWorkReportPromised(store, org, requestId, new Date().toISOString()).catch(() => undefined);
+        }
       }
       if (owedReport !== undefined && isSettlementReport) {
         dischargeSettlementReport();

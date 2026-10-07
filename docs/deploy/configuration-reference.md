@@ -978,6 +978,16 @@ A code ship therefore costs every standing seat its in-context state once — th
 conversation tail and durable memory survive, and the seat's next turn runs the code you just
 shipped. A config-only change costs that only to the seats it actually changed.
 
+**A conversation's work session takes the same comparison, at each forward.** Its run is pinned to
+the deployment that started it, as a seat's is. When the code under it differs from the running
+code, the forward goes to a new work session on the running code, with a `work.session_rotated` row
+(trigger `runtime-changed`). Two things differ from a seat. A work-session row that records no code
+rotates, because a work session must never keep code that nothing identifies; a seat row adopts.
+And the rotation loses no job: the old work session keeps running the jobs it holds on its own
+deployment, and their results still reach the room (`drainingRequests` on the row). A DM's work
+session takes the DM seat's domain half (the `no-domain` literal). See
+[the work session's lifetime](../how-it-works/agent-and-loop.md#the-work-sessions-lifetime).
+
 🔴 **A rollback rotates, and that is the point.** `npm run rollback` moves the alias back to a
 deployment that already served. Its code fingerprint is not the one the seats were last served with,
 so they rotate onto the code the alias now serves. A seat that has never been stamped — one this

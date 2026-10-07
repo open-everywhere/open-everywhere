@@ -1,5 +1,5 @@
 import { hostAuthoredModelOutput, ingestUntrustedModelOutput, UNTRUSTED_OPEN } from "./untrusted.js";
-import { declaredContentOriginForConnectionSearch, declaredContentOriginForExecuteTarget, declaredContentOriginForToolName } from "./connector-content-origin-state.js";
+import { connectionSearchRows, declaredContentOriginForConnectionSearch, declaredContentOriginForExecuteTarget, declaredContentOriginForToolName } from "./connector-content-origin-state.js";
 import {
   CONNECTION_EXECUTE_TOOL_NAME,
   CONNECTION_SEARCH_TOOL_NAME,
@@ -73,8 +73,9 @@ function isConnectorExternalName(name: string): boolean {
 }
 
 function isStatusOnlyConnectionSearch(output: unknown): boolean {
-  if (!Array.isArray(output) || output.length === 0) return false;
-  return output.every((el) => {
+  const rows = connectionSearchRows(output);
+  if (rows === undefined || rows.length === 0) return false;
+  return rows.every((el) => {
     if (el === null || typeof el !== "object") return false;
     const row = el as Record<string, unknown>;
     if ("tool" in row || "qualifiedName" in row) return false;

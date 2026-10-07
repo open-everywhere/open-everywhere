@@ -50,9 +50,20 @@ import {
   suspendedApprovalRequest,
 } from "../packages/core/scripts/e2e/suspended-approval.js";
 import {
+  GITHUB_NOTION_REST_ACTIONS,
+  githubNotionForward,
   githubNotionOriginLifecycle,
+  githubNotionReplyNamesBlock,
   githubNotionReplyRow,
 } from "../packages/core/scripts/e2e/github-notion-rest.js";
+import { scenarioFailureMessage } from "../packages/core/scripts/e2e/failure-message.js";
+import {
+  CONNECTOR_CARD_ACTIONS,
+  completedConnectorWrites,
+  connectorCardRequest,
+  connectorCardRun,
+  forwardedWorkSessionStale,
+} from "../packages/core/scripts/e2e/connector-card.js";
 import type { HaltOwnershipHandle } from "../packages/core/scripts/e2e/control-write-driver.js";
 import { EGRESS_POLICY_ACTION, findCredentialedWriteHost, notionBlockPhrases, notionPageLinks, quotedPagePhrase } from "../packages/core/scripts/e2e/egress-evidence.js";
 import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
@@ -154,6 +165,9 @@ const {
   handoffReplyWaitMs,
   seedWriteWaitMs,
   DELEGATED_TURN_SURFACE_ACTIONS,
+  DELEGATED_TURN_DELEGATION_ACTIONS,
+  handoffFromReplyPostRows,
+  replyIsPendingWorkHandoff,
   parseOeStatusFacts, decodeSlackEphemeralText, oeStatusCompactionThresholdTokens,
   haltWakeForSlackAnchor, haltSetEvidence, haltClearEvidence, haltOwnedBySet, haltOwnedByWake, cleanupExactHalt,
   grantRowWaitMs, grantRowMissingNote, GRANTED_CALL_WAIT_MS,
@@ -1487,7 +1501,7 @@ const { parseAppMentionEvent } = await import(
   ok(req("J2") === "slack+slackChannelB", "J2 (memory journey) requires slack + slackChannelB (the union of S4's slack and S12's slack+slackChannelB)");
   ok(req("S13") === "slack+syntheticDm" && req("S14") === "slack+syntheticDm", "S13/S14 require slack + syntheticDm");
   ok(
-    req("S-SUSPENDED-slack") === "slack+syntheticDm",
+    req("S-SUSPENDED-slack") === "slack+syntheticDm+synthetic",
     "S-SUSPENDED-slack drives the real Slack DM door that can legally use the consented personal connector",
   );
   ok(
@@ -1551,6 +1565,10 @@ const { parseAppMentionEvent } = await import(
       { ts: "2026-05-26T06:32:02.000Z", org: "o", platform: "github", workspace: "example-owner", surface: origin.surfaceKey, action: "wake.turn_start", detail: { wakeId: "wake-77", sessionId: "session-77" } },
       { ts: "2026-05-26T06:32:03.000Z", org: "o", platform: "github", workspace: "example-owner", surface: "e2e-scratch", action: "egress.policy", detail: { scopeKey: origin.surfaceKey, writeHosts: [{ host: "api.notion.com", credentialed: true, credential: "notion-rest", verb: ["GET", "POST", "PATCH"] }] } },
       { ts: "2026-05-26T06:32:07.000Z", org: "o", platform: "github", workspace: "example-owner", surface: "e2e-scratch", action: "reply.post", detail: { id: "303", platform: "github", sessionId: "session-77", wakeId: "wake-77" } },
+      { ts: "2026-05-26T06:32:02.500Z", org: "o", platform: "unified", workspace: "delegation", action: "work.forwarded", detail: { requestId: "req-77", wakeId: "wake-77", seatSessionId: "session-77", workToken: "oe-dom:e2e-unified:win:w/e2e-unified:oe-sup:g1" } },
+      { ts: "2026-05-26T06:32:03.500Z", org: "o", platform: "unified", workspace: "delegation", action: "delegation.task_started", detail: { task: "agent-77", session: "work-session-77", request: "req-77" } },
+      { ts: "2026-05-26T06:32:05.500Z", org: "o", platform: "unified", workspace: "delegation", action: "delegation.task_settled", detail: { task: "agent-77", session: "work-session-77", status: "completed" } },
+      { ts: "2026-05-26T06:32:05.700Z", org: "o", platform: "unified", workspace: "delegation", action: "work.result_wake", detail: { taskId: "agent-77", requestId: "req-77", status: "completed", outcome: "delivered", wakeId: "result-wake-77" } },
     ];
     const lifecycle = githubNotionOriginLifecycle(rows, origin);
     ok(
@@ -1575,6 +1593,46 @@ const { parseAppMentionEvent } = await import(
       "reply join rejects the wrong session and an ambiguous duplicate row",
     );
 
+    const forward = lifecycle ? githubNotionForward(rows, lifecycle) : undefined;
+    ok(
+      forward?.requestId === "req-77" && forward.workSessionId === "work-session-77" && forward.taskId === "agent-77" && forward.resultWakeId === "result-wake-77",
+      `🔴 GitHub→Notion: the asking wake's forward joins W's task and the delivered result wake by request id (got ${JSON.stringify(forward)})`,
+    );
+    const without = (action: string) => rows.filter((row) => row.action !== action);
+    ok(lifecycle !== undefined && githubNotionForward(without("work.forwarded"), lifecycle) === undefined, "GitHub→Notion NEGATIVE CONTROL: no work.forwarded row ⇒ no forward join");
+    ok(lifecycle !== undefined && githubNotionForward(without("delegation.task_settled"), lifecycle) === undefined, "GitHub→Notion NEGATIVE CONTROL: a task that never settled ⇒ no forward join");
+    ok(lifecycle !== undefined && githubNotionForward(without("work.result_wake"), lifecycle) === undefined, "GitHub→Notion NEGATIVE CONTROL: no delivered result wake ⇒ no forward join");
+    ok(
+      lifecycle !== undefined &&
+        githubNotionForward(rows.map((row) => (row.action === "delegation.task_started" ? { ...row, detail: { ...row.detail, session: "session-77" } } : row)), lifecycle) === undefined,
+      "GitHub→Notion: a task that ran on the SEAT's own session is not a forward",
+    );
+    ok(
+      lifecycle !== undefined &&
+        githubNotionForward(rows.map((row) => (row.action === "work.forwarded" ? { ...row, detail: { ...row.detail, wakeId: "other-wake", seatSessionId: "other-seat" } } : row)), lifecycle) === undefined,
+      "GitHub→Notion: another wake's forward does not join this ask",
+    );
+    for (const action of ["work.forwarded", "delegation.task_started", "delegation.task_settled", "work.result_wake", "egress.policy"]) {
+      ok((GITHUB_NOTION_REST_ACTIONS as readonly string[]).includes(action), `🔴 GitHub→Notion: the scenario's audit read asks for ${action}, or its join has nothing to join on`);
+    }
+    const liveRelay =
+      "The paragraph was appended to Notion page `40000000-0000-4000-8000-000000000101`. The new block ID is `40000000-0000-4000-8000-0000000b10c1`.";
+    ok(githubNotionReplyNamesBlock(liveRelay, "40000000-0000-4000-8000-0000000b10c1"), "🔴 GitHub→Notion: the live relay that names the block and drops the marker is the answer");
+    ok(githubNotionReplyNamesBlock(liveRelay, "400000000000400080000000000B10C1"), "GitHub→Notion: the block id matches with no hyphens and in upper case");
+    ok(!githubNotionReplyNamesBlock(liveRelay, "40000000-0101-804a-8b55-e1ba00cedb19"), "GitHub→Notion NEGATIVE CONTROL: a different block id does not match");
+    ok(!githubNotionReplyNamesBlock(liveRelay, ""), "GitHub→Notion NEGATIVE CONTROL: an empty block id never matches");
+
+    const timedOut = new Error("timed out after 420000ms waiting for the bot reply", { cause: new Error("last skip: reply 6000000001") });
+    const aggregate = new AggregateError([timedOut, new Error("close refused")], "S-GITHUB-NOTION-REST failed");
+    const printed = scenarioFailureMessage(aggregate);
+    ok(
+      printed.startsWith("S-GITHUB-NOTION-REST failed: [1] timed out after 420000ms") && printed.includes("(cause: last skip: reply 6000000001)") && printed.includes("[2] close refused"),
+      `🔴 the runner prints every inner error and its cause of a RED leg's AggregateError (got ${printed})`,
+    );
+    ok(scenarioFailureMessage(new Error("plain")) === "plain", "the runner prints a plain error unchanged");
+    ok(scenarioFailureMessage("text") === "text", "…and a thrown non-Error as text");
+    ok(scenarioFailureMessage(new AggregateError(["x".repeat(5_000)], "big")).length < 4_100, "…and caps a huge message");
+
     const scenario = SCENARIOS.find((candidate) => candidate.id === "S-GITHUB-NOTION-REST")!;
     let marker = "";
     let ask = "";
@@ -1595,10 +1653,12 @@ const { parseAppMentionEvent } = await import(
       async commentById(issue: number, id: number) {
         return issue === 77 && id === 101 ? { id, body: ask, authorLogin: "driver", authorType: "User", createdAt: origin.vendorCreatedAt } : undefined;
       },
-      async awaitBotReply(issue: number, after: number, opts: { skip?: (comment: { body: string }) => boolean }) {
+      async awaitBotReply(issue: number, after: number, opts: { skip?: (comment: { id: number; body: string }) => boolean | Promise<boolean> }) {
         const reply = { id: 303, body: `Completed ${marker}; new block block77`, authorLogin: "open-everywhere[bot]", authorType: "Bot", createdAt: "2026-05-26T06:32:06.000Z" };
-        ok(opts.skip?.({ body: `Completed ${marker}` }) === true, "workflow rejects a marker-only reply that cannot prove the append returned a block id");
-        ok(issue === 77 && after === 101 && opts.skip?.(reply) === false, "workflow waits past hand-offs for the marker-bearing settled GitHub reply");
+        ok((await opts.skip?.({ id: 301, body: `Completed ${marker}` })) === true, "workflow rejects a marker-only reply that cannot prove the append returned a block id");
+        ok((await opts.skip?.({ id: 302, body: "I'm pulling the page now and will reply with the new block id block77 when it lands." })) === true, "workflow skips a hand-off note even when it names the block id");
+        ok((await opts.skip?.({ id: 304, body: "The new block ID is `block-77`." })) === false, "🔴 workflow accepts a relay that names the block and drops the marker (the 2026-10-06 board red)");
+        ok(issue === 77 && after === 101 && (await opts.skip?.(reply)) === false, "workflow waits past hand-offs for the block-bearing settled GitHub reply");
         return reply;
       },
       async closeIssueStrict(issue: number) { closed = issue; },
@@ -1622,7 +1682,33 @@ const { parseAppMentionEvent } = await import(
     } as never);
     ok(marker.length > 0 && ask.includes(marker) && ask.includes("notion-page-fixture"), "workflow uses one unique marker and the exact E2E_NOTION_PAGE_ID fixture in its delegated ask");
     ok(ask.includes("do not wait for or claim a per-write approval"), "workflow states raw shared REST's real approval behavior instead of inventing a suspended request");
-    ok(gates >= 6, "workflow gates vendor time, unique readback, mutation/reply order, credential route and exact lifecycle");
+    ok(gates >= 7, `workflow gates vendor time, unique readback, mutation/reply order, the forward, credential route and exact lifecycle (got ${gates})`);
+
+    {
+      const realNow = Date.now;
+      const realSetTimeout = globalThis.setTimeout;
+      let fake = realNow();
+      Date.now = () => fake;
+      globalThis.setTimeout = ((fn: () => void, ms?: number) => { fake += ms ?? 0; return realSetTimeout(fn, 0); }) as typeof setTimeout;
+      let noForward: unknown;
+      try {
+        await scenario.run({
+          github,
+          notionAmbient: notion,
+          async auditRead() { return rows.filter((row) => row.action !== "work.forwarded"); },
+          gate(pass: boolean, label: string) { if (!pass) throw new Error(`GATE ${label}`); },
+          skip(reason: string): never { throw new ScenarioSkip(reason); },
+          log() {},
+        } as never);
+      } catch (error) {
+        noForward = error;
+      } finally {
+        Date.now = realNow;
+        globalThis.setTimeout = realSetTimeout;
+      }
+      const why = scenarioFailureMessage(noForward);
+      ok(noForward instanceof AggregateError && why.includes("forward to the work session"), `🔴 workflow fails without the seat's forward, and the printed failure names the wait (got ${why.slice(0, 300)})`);
+    }
     ok(archived === "block-77" && closed === 77, "workflow strictly archives the exact returned block and closes its own issue");
 
     let cleanupFailure: unknown;
@@ -4994,6 +5080,163 @@ const { parseAppMentionEvent } = await import(
     ok(surfaceActions.length === 2, `…and asks for exactly those two on the surface's platform; the delegation pair is read UNSCOPED because it is written on platform "ingest" (got ${JSON.stringify(surfaceActions)})`);
   }
 
+  {
+    const { seatDelegationRows, pollForFinalReply } = await import("../packages/core/scripts/e2e/read-channel-lib.js");
+    const SEAT = "wrun_SEAT_2361";
+    const W = "wrun_example69";
+    const WAKE = "2361aaaa-0000-4000-8000-000000000027";
+    const REQ = "2361bbbb-0000-4000-8000-000000000027";
+    const at = (action: string, ts: string, detail: Record<string, unknown>) => ({ ts, org: "default", platform: "unified", workspace: "delegation", action, detail });
+    const ack = at("reply.post", "2026-06-14T04:58:02.000Z", { id: "m-ack", sessionId: SEAT, wakeId: WAKE, chars: 60, done: false });
+    const forwarded = at("work.forwarded", "2026-06-14T04:58:01.000Z", { requestId: REQ, wakeId: WAKE, seatSessionId: SEAT, workToken: "oe-dom:e2e-unified:win:w/e2e-unified:oe-sup:g1" });
+    const started = at("delegation.task_started", "2026-06-14T04:58:05.000Z", { task: "agent-27", session: W, request: REQ });
+    const settled = at("delegation.task_settled", "2026-06-14T04:59:30.000Z", { task: "agent-27", session: W, status: "completed" });
+    const report = at("reply.post", "2026-06-14T04:59:35.000Z", { id: "m-report", sessionId: SEAT, wakeId: "2361cccc-result-wake", chars: 400, done: true });
+    const foreignSettled = at("delegation.task_settled", "2026-06-14T04:59:00.000Z", { task: "agent-27", session: "wrun_OTHER_W", status: "completed" });
+
+    const joined = seatDelegationRows([ack, forwarded, started, settled, report], SEAT, WAKE);
+    ok(joined.forwards.length === 1 && joined.started.length === 1 && joined.settled.length === 1, `🔴 (c3): the seat's forward joins W's task_started and task_settled by request id (got ${joined.forwards.length}/${joined.started.length}/${joined.settled.length})`);
+    const unjoined = seatDelegationRows([ack, started, settled, report], SEAT, WAKE);
+    ok(unjoined.started.length === 0 && unjoined.settled.length === 0, "(c3) NEGATIVE CONTROL: without the work.forwarded row nothing joins — the board's red, and why the gate must read that row");
+    const foreign = seatDelegationRows([ack, forwarded, started, foreignSettled], SEAT, WAKE);
+    ok(foreign.settled.length === 0, "🔴 (c3): a settlement of the same task id on ANOTHER work session does not join");
+    const byWake = seatDelegationRows([at("work.forwarded", forwarded.ts, { requestId: REQ, wakeId: WAKE }), started, settled], SEAT, WAKE);
+    ok(byWake.started.length === 1, "(c3): a forward row with no seatSessionId still joins on the asking wake");
+    const twoTier = seatDelegationRows([at("delegation.task_started", started.ts, { task: "t1", session: SEAT }), at("delegation.task_settled", settled.ts, { task: "t1", session: SEAT })], SEAT, WAKE);
+    ok(twoTier.started.length === 1 && twoTier.settled.length === 1, "(c3): the two-tier shape (task on the seat's own session) still joins");
+    ok([...DELEGATED_TURN_DELEGATION_ACTIONS].includes("work.forwarded"), "🔴 (c3): gateDelegatedTurn's unscoped read asks for work.forwarded, or the join above has nothing to join on");
+    ok([...DELEGATED_TURN_DELEGATION_ACTIONS].includes("delegation.task_started") && [...DELEGATED_TURN_DELEGATION_ACTIONS].includes("delegation.task_settled"), "(c3): …beside the delegation pair");
+
+    let clock = 1_000_000;
+    let call = 0;
+    const sequence = [[ack, forwarded, started], [ack, forwarded, started, settled, report]];
+    const deps = { now: () => clock, sleep: async (ms: number) => { clock += ms; }, fetchRows: async () => sequence[Math.min(call++, sequence.length - 1)]! };
+    const outcome = await pollForFinalReply(deps, WAKE, SEAT, 100_000, 4_000, 12_000);
+    ok(outcome.kind === "settled-relay", `🔴 (c3): the delegated-turn wait reads the three-tier settlement as the relay (got "${outcome.kind}": ${outcome.detail})`);
+    clock = 1_000_000;
+    call = 0;
+    const held = { ...deps, fetchRows: async () => [ack, forwarded, started] };
+    const running = await pollForFinalReply(held, WAKE, SEAT, 40_000, 4_000, 12_000);
+    ok(running.kind === "timeout", `🔴 (c3): a forwarded job still running holds the wait open — it never reads "quiet" on the ack's stillness (got "${running.kind}")`);
+  }
+
+  {
+    const JGH = "I'm pulling the issue details now and will reply with a one-line summary including `gh-28431`.";
+    ok(isPendingWorkHandoff(JGH), "🔴 (c4): the J-GH holding reply reads as a pending-work hand-off");
+    ok(isPendingWorkHandoff("I’m pulling that now."), "(c4): …with a curly apostrophe too");
+    ok(!isPendingWorkHandoff("Pulling the logs shows no error in the last hour."), "(c4) NEGATIVE CONTROL: bare `pulling` opening real prose is an answer");
+    ok(!isPendingWorkHandoff("gh-28431: the build fails on Windows paths because the loader joins with a backslash."), "(c4) NEGATIVE CONTROL: the one-line summary itself is an answer");
+    const rows = [
+      { action: "reply.post", detail: { id: "101", done: false } },
+      { action: "reply.post", detail: { id: "102", done: true } },
+      { action: "reply.post", detail: { id: "103" } },
+      { action: "reply.refused", detail: { id: "104", done: false } },
+    ];
+    ok(handoffFromReplyPostRows(rows, "101") === true, "🔴 (c4): a done:false row is a hand-off, whatever its prose");
+    ok(handoffFromReplyPostRows(rows, "102") === false, "🔴 (c4): a done:true row is the answer, whatever its prose");
+    ok(handoffFromReplyPostRows(rows, "103") === undefined, "(c4): a row with no `done` is unknown, never a guess");
+    ok(handoffFromReplyPostRows(rows, "104") === undefined, "(c4): a row of another action never answers");
+    ok(handoffFromReplyPostRows(rows, "999") === undefined, "(c4): no row is unknown");
+    const exact = replyIsPendingWorkHandoff({ auditRead: async () => rows as never }, "2026-06-14T04:19:00.000Z");
+    ok((await exact("101", "gh-28431: the build fails.")) === true, "🔴 (c4): the row outranks prose that reads as an answer");
+    ok((await exact("102", JGH)) === false, "🔴 (c4): the row outranks prose that reads as a hand-off");
+    ok((await exact("103", JGH)) === true, "(c4): no `done` on the row ⇒ the prose guess decides");
+    const unread = replyIsPendingWorkHandoff({ auditRead: async () => { throw new Error("503"); } }, "2026-06-14T04:19:00.000Z");
+    ok((await unread("101", JGH)) === true && (await unread("101", "gh-28431: the build fails.")) === false, "(c4): an unreadable audit route falls back to the guess");
+    const noReader = replyIsPendingWorkHandoff({ auditRead: undefined }, "2026-06-14T04:19:00.000Z");
+    ok((await noReader("101", "gh-28431: the build fails.")) === false, "(c4): no audit reader ⇒ the guess alone");
+  }
+
+  {
+    const HUMAN = "U0EXOWNER";
+    const DM = "D0EXDMCH001";
+    const SK = `slack/T0EXAMPLE/${DM}`;
+    const SEAT = "wrun_example70";
+    const ASK = "00000000-0000-4000-8000-0000000000a1";
+    const PENDING = "00000000-0000-4000-8000-0000000000b2";
+    const anchorTs = "2026-06-14T05:11:00.000Z";
+    const row = (action: string, ts: string, detail: Record<string, unknown>, extra: Partial<AuditWireEntry> = {}): AuditWireEntry =>
+      ({ ts, org: "default", platform: "slack", workspace: "T0EXAMPLE", surface: DM, action, detail, ...extra }) as AuditWireEntry;
+    const before: AuditWireEntry[] = [
+      row("wake.ingress", "2026-06-14T05:11:00.300Z", { wakeId: ASK, surfaceKey: SK, vendorTs: anchorTs, vendorTsSource: "slack-ts" }, { surface: SK }),
+      row("wake.turn_start", "2026-06-14T05:11:04.000Z", { wakeId: ASK, sessionId: SEAT, turnId: "turn_0" }, { surface: SK }),
+      row("work.forwarded", "2026-06-14T05:11:09.000Z", { requestId: "00000000-0000-4000-8000-0000000000c3", wakeId: ASK, seatSessionId: SEAT }, { platform: "unified", surface: undefined }),
+      row("connector.op", "2026-06-14T05:11:34.000Z", { connection: "notion", op: "notion-search", tier: "open", opTier: "read", status: "completed" }),
+      row("approval.requested", "2026-06-14T05:11:39.000Z", { id: PENDING, kind: "op.connector", scopeKey: SK }, { principalId: HUMAN }),
+      row("connector.op", "2026-06-14T05:11:39.500Z", { connection: "notion", op: "notion-create-pages", opTier: "write", isError: true }),
+    ];
+    const anchor = { platform: "slack", surfaceKey: SK, vendorTs: anchorTs };
+    const request = connectorCardRequest(before, { anchor, requester: HUMAN });
+    ok(request?.pendingId === PENDING && request.seatSessionId === SEAT && request.askWakeId === ASK, `🔴 (c5): the exact DM ask joins its forward and card ${PENDING} (got ${JSON.stringify(request)})`);
+    ok(connectorCardRequest(before, { anchor, requester: "U_SOMEONE_ELSE" }) === undefined, "(c5) NEGATIVE CONTROL: a card raised for another person is not this ask's card");
+    ok(connectorCardRequest(before.filter((r) => r.action !== "work.forwarded"), { anchor, requester: HUMAN }) === undefined, "(c5) NEGATIVE CONTROL: no forward ⇒ no card join");
+    ok(
+      connectorCardRequest([...before, row("approval.requested", "2026-06-14T05:11:40.000Z", { id: "second-card", kind: "op.connector", scopeKey: SK }, { principalId: HUMAN })], { anchor, requester: HUMAN }) === undefined,
+      "(c5): two cards for one ask refuse — the driver never picks which card to click",
+    );
+    ok(
+      connectorCardRequest(before.map((r) => (r.action === "approval.requested" ? { ...r, detail: { ...r.detail, kind: "pr.open" } } : r)), { anchor, requester: HUMAN }) === undefined,
+      "(c5): a card of another kind is not the connector card",
+    );
+    ok(completedConnectorWrites(before, DM).length === 0, "🔴 (c5): the denied, carded call is not a completed write; a read is not a write");
+
+    const withVerdict = (verdict: string | undefined) =>
+      before.map((r) => (r.action === "work.forwarded" ? { ...r, detail: { ...r.detail, workToken: "oe-dom:oe-dm/x:win:w/oe-dm/x:oe-sup:g1", ...(verdict === undefined ? {} : { workRuntime: verdict }) } } : r));
+    const absent = forwardedWorkSessionStale(withVerdict(undefined), anchor);
+    ok(absent?.stale === true && absent.why.includes("recorded no runtime verdict"), `🔴 (c5): a forward with NO runtime verdict reads as a stale work session (got ${JSON.stringify(absent)})`);
+    const unchecked = forwardedWorkSessionStale(withVerdict("unchecked"), anchor);
+    ok(unchecked?.stale === true && unchecked.why.includes("unchecked"), "🔴 (c5): an `unchecked` verdict reads as a stale work session");
+    for (const verdict of ["minted", "rotated", "current"]) {
+      const fresh = forwardedWorkSessionStale(withVerdict(verdict), anchor);
+      ok(fresh?.stale === false && fresh.verdict === verdict, `(c5) NEGATIVE CONTROL: a \`${verdict}\` verdict is a work session on this deployment's code, never stale`);
+    }
+    ok(forwardedWorkSessionStale(before.filter((r) => r.action !== "work.forwarded"), anchor) === undefined, "(c5): no forward ⇒ not the stale class at all");
+    ok(forwardedWorkSessionStale(withVerdict("current"), { ...anchor, vendorTs: "1.0" }) === undefined, "(c5): another ask's anchor joins no forward");
+    for (const action of ["work.forwarded", "approval.requested", "approval.approved", "connector.op_approved", "approval.decision_wake", "connector.op", "reply.post"]) {
+      ok((CONNECTOR_CARD_ACTIONS as readonly string[]).includes(action), `(c5): the leg's audit read asks for ${action}`);
+    }
+
+    const clickRows: AuditWireEntry[] = [
+      row("connector.op_approved", "2026-06-14T05:12:10.100Z", { connection: "notion", op: "notion-create-pages", grain: "write", requestedBy: HUMAN }, { principalId: HUMAN }),
+      row("approval.approved", "2026-06-14T05:12:10.200Z", { id: PENDING, kind: "op.connector" }, { principalId: HUMAN }),
+      row("approval.decision_wake", "2026-06-14T05:12:10.400Z", { id: PENDING, kind: "op.connector", outcome: "approved", delivered: true, wakeId: "decision-wake-1" }, { principalId: HUMAN }),
+      row("connector.op", "2026-06-14T05:12:30.000Z", { connection: "notion", op: "notion-create-pages", tier: "gate:member", opTier: "write", status: "completed" }),
+      row("reply.post", "2026-06-14T05:12:20.000Z", { id: "1781413940.000100", platform: "slack", sessionId: SEAT, done: false }),
+      row("reply.post", "2026-06-14T05:12:40.000Z", { id: "1781413960.000200", platform: "slack", sessionId: SEAT, done: true }),
+    ];
+    const candidates = [{ id: "1781413940.000100", text: "Running it now." }, { id: "1781413960.000200", text: "Created the page OE suspended suspended-slack-1." }];
+    const all = [...before, ...clickRows];
+    const run = request ? connectorCardRun(all, { request, clicker: HUMAN, surface: DM, replyPlatform: "slack", candidates }) : undefined;
+    ok(run?.candidate.id === "1781413960.000200" && run.decisionWakeId === "decision-wake-1", `🔴 (c5): the approved card's write and the seat's answer after it join (got ${JSON.stringify(run?.candidate)})`);
+    const runOf = (rows: readonly AuditWireEntry[], clicker = HUMAN) => (request ? connectorCardRun(rows, { request, clicker, surface: DM, replyPlatform: "slack", candidates }) : "no-request");
+    ok(runOf(all, "U_ADMIN") === undefined, "🔴 (c5): an approval by anyone but the asking human does not pass");
+    ok(
+      runOf(all.map((r) => (r.action === "approval.approved" ? { ...r, principalId: "U_ADMIN" } : r))) === undefined,
+      "🔴 (c5): a card approved by someone else does not pass, even beside the memo row of the human",
+    );
+    ok(runOf(before) === undefined, "🔴 (c5) NEGATIVE CONTROL: no click ⇒ nothing passes");
+    ok(runOf(all.filter((r) => !(r.action === "connector.op" && r.detail?.status === "completed"))) === undefined, "🔴 (c5): an approval that ran no write does not pass");
+    ok(
+      runOf([...all, row("connector.op", "2026-06-14T05:12:00.000Z", { connection: "notion", op: "notion-create-pages", opTier: "write", status: "completed" })]) === undefined,
+      "🔴 (c5): a write that ran BEFORE the click does not pass — the card guarded nothing",
+    );
+    ok(runOf(all.filter((r) => r.action !== "approval.decision_wake")) === undefined, "(c5): no delivered decision wake ⇒ no pass");
+    ok(runOf([...all, row("approval.rejected", "2026-06-14T05:12:11.000Z", { id: PENDING }, { principalId: HUMAN })]) === undefined, "(c5): a rejected card never passes");
+    ok(
+      runOf(all.map((r) => (r.action === "reply.post" && r.detail?.done === true ? { ...r, detail: { ...r.detail, sessionId: "wrun_OTHER" } } : r))) === undefined,
+      "(c5): an answer from another session does not pass",
+    );
+    ok(
+      runOf(all.map((r) => (r.action === "reply.post" && r.detail?.done === true ? { ...r, detail: { ...r.detail, done: false } } : r))) === undefined,
+      "(c5): a hand-off note after the write is not the answer",
+    );
+
+    const body = SCENARIOS.find((sc) => sc.id === "S-SUSPENDED-slack")!.run.toString();
+    ok(body.includes("connectorCardRequest(") && body.includes("connectorCardRun("), "🔴 (c5): S-SUSPENDED-slack gates on the card road");
+    ok(!body.includes("suspendedApprovalRequest(") && !body.includes('dm.post("Approve")'), "🔴 (c5): …and no longer waits for the bridged eve line or types Approve");
+    ok(/decision:\s*"reject"/.test(body) && body.includes("!decided"), "🔴 (c5): an undecided card is rejected by the asking human in the teardown");
+  }
+
   ok(
     !delegationHasReturned([row("task.spawned", { taskId: "rt1", parentSessionId: "s1" }), row("task.returned", { taskId: "rt1", sessionId: "w1" })]),
     "delegationHasReturned: the emitterless roll-own pair is NOT a return — only delegation.task_started/settled is evidence",
@@ -6957,10 +7200,14 @@ await removeTempDir(dir);
       /awaitRepliesForAdmittedWakes\([\s\S]*?timeoutMs:\s*REPLY_WAIT/.test(oneSeatBody),
       "🔴 OPE-1895: gateOneSeatAcrossNameDrops gives the two-reply poll the 180-second REPLY_WAIT budget — A live run's first and second rows landed after the 60-second audit-only budget",
     );
+    const silenceStart = gatesSrc.indexOf("async function gateAuditedSilence(");
+    const silenceEnd = gatesSrc.indexOf("async function auditedSilenceMark(", silenceStart);
+    const silenceBody = gatesSrc.slice(silenceStart, silenceEnd);
     ok(
-      (gatesSrc.match(/actions: \[REPLY_POST_ACTION\], \.\.\.scope \}\)/g) ?? []).length === 1,
-      `OPE-1711: exactly ONE single-read reply.post gate remains IN THE ENGAGED HELPERS — the audited-SILENCE gate, which must not poll (found ${(gatesSrc.match(/actions: \[REPLY_POST_ACTION\], \.\.\.scope \}\)/g) ?? []).length}; this counts the REPLY_POST_ACTION spelling those helpers use, not every "reply.post" read in the file)`,
+      silenceStart >= 0 && silenceEnd > silenceStart && (silenceBody.match(/ctx\.auditRead!\(/g) ?? []).length === 1 && !/poll(?:Until|Optional)\(/.test(silenceBody),
+      `OPE-1711: the audited-SILENCE gate reads reply.post exactly ONCE and never polls (reads found: ${(silenceBody.match(/ctx\.auditRead!\(/g) ?? []).length})`,
     );
+    ok(silenceBody.includes("replyPostsAfter(earlier, opts.highWater, scope)"), "🔴 OPE-2361: the silence is the rows above the seq mark, from that one read");
 
     {
       const calls = gatesSrc.match(/await gateAuditedSilence\(ctx, \{[^}]*\}\)/g) ?? [];
@@ -8452,6 +8699,68 @@ await removeTempDir(dir);
   ok(suspended.includes("archiveNotionPageOverRest(") && !/dm\.post\([^)]*archive/i.test(suspended), "S-SUSPENDED-slack tears its page down over REST and posts no archive ask");
   const restLegs = SCENARIOS.filter((s) => s.run.toString().includes("archiveNotionPageOverRest(")).map((s) => s.id).sort().join(",");
   ok(restLegs === "S-EVE-BRIDGE,S-EVE-CARD,S-SUSPENDED-slack", `negative control: exactly the three page-creating DM legs use the REST teardown (got ${restLegs})`);
+}
+
+{
+  const { replyPostHighWater, replyPostsAfter } = await import("../packages/core/scripts/e2e/engaged-rows.js");
+  const { supervisorAsk } = await import("../packages/core/scripts/e2e/journey.js");
+  const { SCENARIOS: legs } = await import("../packages/core/scripts/e2e/scenarios.js");
+  const post = (seq: number | undefined, ts: string, surface: string, wakeId: string): AuditWireEntry => ({
+    ...(seq === undefined ? {} : { seq }),
+    ts,
+    org: "default",
+    platform: "slack",
+    workspace: "T0EXAMPLE",
+    surface,
+    action: "reply.post",
+    detail: { wakeId },
+  });
+
+  const ack = post(216187, "2026-06-14T07:03:02.165Z", "C0EXCHAN004", "fba046a5");
+  const earlierReply = post(216150, "2026-06-14T07:02:51.041Z", "C0EXCHAN004", "c2f43027");
+  const beforeProbe = [ack, earlierReply];
+  const mark = replyPostHighWater(beforeProbe);
+  ok(mark.seq === 216187 && mark.unsequenced === 0, `the high-water mark is the newest reply.post seq (got ${JSON.stringify(mark)})`);
+  ok(replyPostsAfter(beforeProbe, mark.seq, { surface: "C0EXCHAN004" }).length === 0, "🔴 the measured leg-54 window: the stop's own acknowledgement is NOT a post-stop reply");
+  const broken = post(216190, "2026-06-14T07:03:05.000Z", "C0EXCHAN004", "new-wake");
+  ok(replyPostsAfter([broken, ...beforeProbe], mark.seq, { surface: "C0EXCHAN004" }).length === 1, "NEGATIVE CONTROL: a reply the deployment wrote after the mark on this surface IS counted");
+  const skewed = post(216191, "2026-06-14T07:03:00.000Z", "C0EXCHAN004", "new-wake");
+  ok(replyPostsAfter([skewed, ...beforeProbe], mark.seq, { surface: "C0EXCHAN004" }).length === 1, "🔴 a row above the mark counts even when its ts is older than the ack's — ts plays no part");
+  ok(replyPostsAfter([post(216195, "2026-06-14T07:03:06.000Z", "C0OTHER", "x"), ...beforeProbe], mark.seq, { surface: "C0EXCHAN004" }).length === 0, "a sibling surface's reply above the mark is not this journey's");
+  const unsequenced = post(undefined, "2026-06-14T07:03:06.000Z", "C0EXCHAN004", "x");
+  ok(replyPostHighWater([unsequenced, ...beforeProbe]).unsequenced === 1, "a row without seq is reported, so the mark can refuse an older build");
+  ok(replyPostsAfter([unsequenced, ...beforeProbe], mark.seq, { surface: "C0EXCHAN004" }).length === 1, "…and it counts against the silence (the loud direction)");
+  const nonReply = { ...post(216199, "2026-06-14T07:03:07.000Z", "C0EXCHAN004", "x"), action: "engagement.stood_down" };
+  ok(replyPostHighWater([nonReply, ...beforeProbe]).seq === 216187, "only reply.post rows move the mark");
+
+  const scenariosSrc = readFileSync(fileURLToPath(new URL("../packages/core/scripts/e2e/scenarios.ts", import.meta.url)), "utf-8");
+  const gateCalls = scenariosSrc.match(/await gateAuditedSilence\(ctx, \{[^}]*\}\)/g) ?? [];
+  ok(gateCalls.length === 5, `the five engaged journeys call gateAuditedSilence (found ${gateCalls.length})`);
+  ok(gateCalls.every((c) => c.includes("highWater") && !c.includes("sinceIso")), "🔴 no silence gate takes a driver-clock sinceIso any more; each passes the seq mark");
+  const marks = scenariosSrc.match(/const highWater = await auditedSilenceMark\(ctx, \{ platform: "(slack|discord|github|linear|notion)"/g) ?? [];
+  ok(marks.length === 5, `each journey takes its mark with auditedSilenceMark (found ${marks.length})`);
+  for (const id of ["J-ENGAGED-slack", "J-ENGAGED-github"]) {
+    const body = legs.find((s) => s.id === id)!.run.toString().replace(/\s+/g, "");
+    const at = body.indexOf("auditedSilenceMark(");
+    const probe = body.indexOf('fixtureLine("andwhat\'s5plus5?")');
+    ok(at > 0 && probe > at, `${id} takes the mark BEFORE it posts the probe (mark at ${at}, probe at ${probe})`);
+  }
+
+  const seen = ["sup-77351", "sup-11541", "sup-69520"].map((m) => supervisorAsk(m));
+  ok(new Set(seen.map((a) => a.text.replace(/sup-\d+/, ""))).size === 3, `🔴 three runs ask three different questions even with the ref removed (${seen.map((a) => a.sum).join(", ")})`);
+  ok(seen.every((a, i) => a.text.includes(["sup-77351", "sup-11541", "sup-69520"][i]!)), "each ask still demands its own ref");
+  const probe = supervisorAsk("sup-69520");
+  const [x, y] = [...probe.text.matchAll(/what's (\d+) plus (\d+)\?/g)].map((m) => [Number(m[1]), Number(m[2])])[0] ?? [NaN, NaN];
+  ok(x + y === probe.sum, `the sum the leg logs matches the question it asked (${x} + ${y} = ${probe.sum})`);
+  ok(supervisorAsk("sup-69520").text === probe.text, "the ask is a pure function of the token (reproducible from the leg log)");
+  const jsup = legs.find((s) => s.id === "J-SUP")!.run.toString();
+  ok(jsup.includes("supervisorAsk(marker)") && !jsup.includes("what's a good one-line summary of what this channel is for"), "J-SUP posts the per-run question, and the fixed one is gone");
+
+  const evecard = legs.find((s) => s.id === "S-EVE-CARD")!.run.toString();
+  ok(evecard.includes("connectorCardRequest(") && evecard.includes("connectorCardRun("), "S-EVE-CARD joins ask → forward → op.connector card → approved write → seat reply");
+  ok(evecard.includes("clickBlockAction(") && !/synthetic\.click\(\{\s*pendingId:\s*card\.pendingId,\s*org:\s*card\.org,\s*decision:\s*"approve"/.test(evecard), "🔴 S-EVE-CARD approves by replaying the card's own button, not by building the action from the pending id");
+  ok(evecard.includes('"approval.eve_settled"') && evecard.includes('"tool-approval"'), "S-EVE-CARD asserts the native approval plane stayed silent");
+  ok(!evecard.includes("approvalRequestForSlackAsk("), "CONTROL: S-EVE-CARD no longer waits for the eve-native card join");
 }
 
 console.log(

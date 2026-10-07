@@ -459,6 +459,64 @@ console.log("§3b the negative controls");
   ok(declaredOpsForReach().length === 0, "…and the reader answers empty outside a session");
 }
 
+console.log("§3e a forwarded fire: the work session's child resolves the declared op");
+const { workTokenForSeat } = await import("../agent/channels/work.js");
+const W_TOKEN = workTokenForSeat("oe-dom:e2e-unified:win:slack_T0FIRE_C0FIRE:oe-sup:g1");
+ok(W_TOKEN !== undefined, "control: the fixture seat has a work-session token");
+function forwardedBag(base: Record<string, string> = fireAttributes()): Record<string, string> {
+  return { ...base, oe_grain: "standing", oe_work_request: "wreq_FIRE", oe_requester: "oe/unverified", oe_work_seat_wake: "wake_FIRE" };
+}
+function workCtx(asChild: boolean, attributes: Record<string, string> = forwardedBag()): HookContext {
+  return {
+    channel: { kind: "unified", continuationToken: `unified:${W_TOKEN}` },
+    session: {
+      id: asChild ? "wrun_W_CHILD" : "wrun_W",
+      ...(asChild ? { parent: { sessionId: "wrun_W" } } : {}),
+      auth: { current: { attributes } },
+    },
+  } as unknown as HookContext;
+}
+{
+  await inSession(async (store) => {
+    store.set({ name: CONNECTION_REGISTRY_KEY_NAME }, registry([NOTION]));
+    const outcome = await resolveDeclaredOps(workCtx(true));
+    ok(outcome?.resolved.join(",") === QUALIFIED, "🔴 THE POINT OF OPE-2373: the work-session child that runs a forwarded fire resolves the declared op");
+    ok(declaredOpsForReach().length === 1 && declaredOpsForReach()[0]?.connection === CONNECTION, "…and keeps it for the child's own instructions");
+    const scope = await renderScopeMarkdown(workCtx(true) as never);
+    const childBlock = renderDeclaredReachBlock(declaredOpsForReach());
+    ok(childBlock.length > 0 && scope.includes(childBlock), "🔴 …and the child's instructions carry the declared-op reach block — the child is the turn that calls `connection_execute`");
+  });
+
+  await inSession(async (store) => {
+    store.set({ name: CONNECTION_REGISTRY_KEY_NAME }, registry([NOTION]));
+    const before = (await settledRows()).length;
+    await turnStarted(workCtx(true));
+    const rows = await settledRows();
+    ok(rows.length === before + 1, "🔴 the forwarded fire's child files the routine.declared_ops_resolved row");
+    ok((rows.at(-1)?.detail as Record<string, unknown> | undefined)?.resolved?.toString() === QUALIFIED, "…naming the declared op");
+  });
+
+  await inSession(async (store) => {
+    store.set({ name: CONNECTION_REGISTRY_KEY_NAME }, registry([NOTION]));
+    ok((await resolveDeclaredOps(workCtx(false))) === undefined, "🔴 W ITSELF resolves nothing: it relays the job and never calls `connection_execute`");
+    ok(declaredOpsForReach().length === 0, "…and keeps nothing");
+  });
+  await inSession(async (store) => {
+    store.set({ name: CONNECTION_REGISTRY_KEY_NAME }, registry([NOTION]));
+    const { [ROUTINE_MARKER.id]: _marker, ...unmarked } = fireAttributes();
+    ok((await resolveDeclaredOps(workCtx(true, forwardedBag(unmarked)))) === undefined, "🔴 a work-session child with NO routine marker resolves nothing, though its bag carries the permission key");
+    ok(declaredOpsForReach().length === 0, "…and keeps nothing");
+  });
+  await inSession(async (store) => {
+    store.set({ name: CONNECTION_REGISTRY_KEY_NAME }, registry([NOTION]));
+    await resolveDeclaredOps(workCtx(true));
+    ok(declaredOpsForReach().length === 1, "control: the fire's turn named the op");
+    const personBag: Record<string, string> = { team_id: "T0FIRE", channel_id: "C0FIRE", channel_type: "channel", oe_grain: "standing", oe_work_request: "wreq_PERSON", oe_requester: "U_HUMAN" };
+    ok((await resolveDeclaredOps(workCtx(true, personBag))) === undefined, "a later person's job on the same child resolves nothing");
+    ok(declaredOpsForReach().length === 0, "🔴 …and the held block is CLEARED, so the person's turn is not told a routine declared operations for it");
+  });
+}
+
 console.log("§3c the audit action is declared");
 {
   ok(
@@ -568,6 +626,20 @@ console.log("§6 an op the block names lifts; an op it does not name is refused"
   }
   const undeclared = { connection: CONNECTION, tool: UNDECLARED_OP };
   ok(denied(await ask(connectorApprovalPolicy(), undeclared)), "🔴 an UNDECLARED op on the SAME connection, called through `connection_execute` on the same fire, is REFUSED");
+  const childAsk = async (policy: ApprovalPolicy, input: { connection: string; tool: string }): Promise<ApprovalStatus> => {
+    const target = readExecuteTarget({ ...input, input: { title: "x" } });
+    if (target === undefined) throw new Error("eve refused the target shape");
+    const toolName = qualifiedToolName(target);
+    return await policy({
+      toolName,
+      approvedTools: new Set<string>(),
+      callId: `call-child-${toolName}`,
+      toolInput: { title: "x" },
+      session: { id: "wrun_W_CHILD", parent: { sessionId: "wrun_W" }, auth: { current: { attributes: forwardedBag() } } },
+    } as never);
+  };
+  ok((await childAsk(connectorApprovalPolicy(), { connection: CONNECTION, tool: OP })) === "not-applicable", "the declared op is lifted in the forwarded fire's child too");
+  ok(denied(await childAsk(connectorApprovalPolicy(), undeclared)), "🔴 …and the UNDECLARED op is REFUSED there, exactly as on a native fire");
   const inner = await ask(connectorOpApproval(), undeclared);
   ok(!denied(inner), "negative control: without the fence the same call is NOT refused — the leg measures the fence");
   const read = { connection: CONNECTION, tool: "notion-search" };

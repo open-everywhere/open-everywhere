@@ -92,7 +92,7 @@ export async function postUnifiedReply(
         await notePostFailure(audit, err, origin.platform);
         throw err;
       }
-      await auditReplyPost(audit, realId, origin.platform, body.length);
+      await auditReplyPost(audit, realId, origin.platform, body.length, intent?.terminal);
       await auditReplyProvenance(audit, realId, origin.platform, provenance.reads, provenance.shown);
       await auditWithheldMemoryClaim(audit, origin.platform, claimGuard.withheld);
       await auditWithheldApprovalClaim(audit, origin.platform, approvalGuard.withheld, approvalGuard.cause);

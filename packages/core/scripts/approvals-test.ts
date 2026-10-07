@@ -1327,6 +1327,103 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
       { post, decisionWake },
     );
     ok(wakes.length === 0, "decision wake: a payload missing team.id emits no wake (the surfaceKey can't be formed — fail-soft)");
+
+    const { dmWindowRegistryKey } = await import("../agent/channels/unified-supervisor.js");
+    const DM_SURFACE = "slack/TW/D_DMSEAT1";
+    const DM_TOKEN = "oe-dom:oe-dm/slack/TW/D_DMSEAT1:oe-sup:g1-abc123";
+    const dmGrain = supervisorGrainFor(DM_SURFACE, getConfig().loadDomains());
+    ok(dmGrain.registryKey !== dmWindowRegistryKey(DM_SURFACE), `DM setup: the domain grain does NOT name the DM seat's row (${dmGrain.registryKey}) — the gap the DM arm closes`);
+    await store.rotateChannelSession("default", dmWindowRegistryKey(DM_SURFACE), DM_TOKEN, new Date().toISOString());
+    const dmRow = (over: Partial<PendingActionRow>) =>
+      row({
+        scopeKey: DM_SURFACE,
+        channelId: "D_DMSEAT1",
+        threadTs: null,
+        messageTs: "333.444",
+        domain: null,
+        argsJson: JSON.stringify({ org: over.org ?? "default", scopeKey: DM_SURFACE, level: "surface", monthlyTokens: 400, currentCap: null }),
+        ...over,
+      });
+    const dmPayload = (actionId: string, channel = "D_DMSEAT1") => winPayload(actionId, { channel, team: "TW" });
+
+    await store.addPendingAction(dmRow({ id: "p-dm-approve" }));
+    wakes.length = 0;
+    await handleApprovalPayload(dmPayload("oe_approval:approve:p-dm-approve"), { post, decisionWake });
+    ok(wakes.length === 1, `decision wake (DM): an APPROVE on a DM card emits EXACTLY ONE decision wake (got ${wakes.length})`);
+    ok(wakes[0]?.token === DM_TOKEN, "decision wake (DM): the wake targets the DM seat's CURRENT registry token");
+    ok(wakes[0]?.domain === "oe-dm/slack/TW/D_DMSEAT1", "decision wake (DM): the wake carries the DM's own pseudo-domain");
+    const oDm = wakes[0] ? slackOrigin(wakes[0].origin) : null;
+    ok(!!oDm && oDm.channelId === "D_DMSEAT1", "decision wake (DM): origin = the DM the card lives in");
+    ok(!!wakes[0] && wakes[0].message.includes("APPROVED") && wakes[0].message.includes("ALREADY RUN"), "decision wake (DM): the approved wake states the outcome and that the act already ran");
+    const dmAudit = (await readAudit({ org: "default", action: "approval.decision_wake" })).find((e) => e.detail?.id === "p-dm-approve");
+    ok(dmAudit?.detail?.delivered === true && dmAudit.detail.domain === "oe-dm/slack/TW/D_DMSEAT1", "decision wake (DM): approval.decision_wake records delivered:true on the DM pseudo-domain");
+    await store.clearSpendLimit("default", DM_SURFACE, "surface");
+
+    await store.addPendingAction(dmRow({ id: "p-dm-reject" }));
+    wakes.length = 0;
+    await handleApprovalPayload(dmPayload("oe_approval:reject:p-dm-reject"), { post, decisionWake });
+    ok(wakes.length === 1 && wakes[0]!.message.includes("REJECTED") && !wakes[0]!.message.includes("ALREADY RUN"), "decision wake (DM): a REJECT emits one wake that says rejected and never claims the act ran");
+
+    await store.addPendingAction(dmRow({ id: "p-dm-noseat", scopeKey: "slack/TW/D_NOSEAT", channelId: "D_NOSEAT", argsJson: JSON.stringify({ org: "default", scopeKey: "slack/TW/D_NOSEAT", level: "surface", monthlyTokens: 1, currentCap: null }) }));
+    wakes.length = 0;
+    await handleApprovalPayload(dmPayload("oe_approval:reject:p-dm-noseat", "D_NOSEAT"), { post, decisionWake });
+    ok(wakes.length === 0, "decision wake (DM): a DM with no live seat row emits no wake");
+
+    const FENCE_SURFACE = "slack/TW/D_FENCE";
+    const fenceRow = (id: string) =>
+      dmRow({ id, scopeKey: FENCE_SURFACE, channelId: "D_FENCE", argsJson: JSON.stringify({ org: "default", scopeKey: FENCE_SURFACE, level: "surface", monthlyTokens: 1, currentCap: null }) });
+    await store.rotateChannelSession("default", dmWindowRegistryKey(FENCE_SURFACE), DM_TOKEN, new Date().toISOString());
+    await store.addPendingAction(fenceRow("p-dm-fence-other"));
+    wakes.length = 0;
+    await handleApprovalPayload(dmPayload("oe_approval:reject:p-dm-fence-other", "D_FENCE"), { post, decisionWake });
+    ok(wakes.length === 0, "decision wake (DM fence): a seat row whose token anchors to ANOTHER DM is never woken");
+    await store.rotateChannelSession("default", dmWindowRegistryKey(FENCE_SURFACE), "oe-dom:oe-dm/slack/TW/D_FENCE:win:t/abc:oe-sup:g0", new Date().toISOString());
+    await store.addPendingAction(fenceRow("p-dm-fence-task"));
+    wakes.length = 0;
+    await handleApprovalPayload(dmPayload("oe_approval:reject:p-dm-fence-task", "D_FENCE"), { post, decisionWake });
+    ok(wakes.length === 0, "decision wake (DM fence): a DM-anchored WORKER token on the row is never treated as the DM seat");
+    await store.rotateChannelSession("default", dmWindowRegistryKey(FENCE_SURFACE), "oe-dom:oe-dm/slack/TW/D_FENCE:oe-sup:g2-def456", new Date().toISOString());
+    await store.addPendingAction(fenceRow("p-dm-fence-own"));
+    wakes.length = 0;
+    await handleApprovalPayload(dmPayload("oe_approval:reject:p-dm-fence-own", "D_FENCE"), { post, decisionWake });
+    ok(wakes.length === 1 && wakes[0]!.token === "oe-dom:oe-dm/slack/TW/D_FENCE:oe-sup:g2-def456", "decision wake (DM fence): positive control — the same row with its OWN seat token is woken");
+
+    const opRow = (id: string) =>
+      dmRow({
+        id,
+        kind: "op.connector",
+        argsJson: JSON.stringify({
+          org: "default",
+          scopeKey: DM_SURFACE,
+          tool: "notion__notion-create-pages",
+          connection: "notion",
+          grain: "call",
+          sessionKey: `conv:${DM_SURFACE}`,
+          memoKind: `connector-op:${id}`,
+          inputPreview: '{"title":"T"}',
+          requestedBy: "U_ORG_ADMIN",
+        }),
+      });
+    await store.addPendingAction(opRow("p-dm-op-approve"));
+    wakes.length = 0;
+    await handleApprovalPayload(dmPayload("oe_approval:approve:p-dm-op-approve"), { post, decisionWake });
+    const opMsg = wakes[0]?.message ?? "";
+    ok(wakes.length === 1 && wakes[0]!.token === DM_TOKEN, `decision wake (op.connector): an APPROVE emits ONE wake into the DM seat (got ${wakes.length})`);
+    ok(opMsg.includes("HAS NOT RUN"), "decision wake (op.connector): the approved wake says the write has NOT run");
+    ok(!opMsg.includes("ALREADY RUN"), "decision wake (op.connector): the approved wake never claims the write already ran");
+    ok(opMsg.includes("`taskId`") && opMsg.includes("call the op again with exactly the same input"), "decision wake (op.connector): the wake sends the asking job back to call the op again");
+    ok(!opMsg.includes("cancel it ("), "decision wake (op.connector): the wake never tells the seat to cancel the job that must make the call");
+
+    await store.addPendingAction(opRow("p-dm-op-reject"));
+    wakes.length = 0;
+    await handleApprovalPayload(dmPayload("oe_approval:reject:p-dm-op-reject"), { post, decisionWake });
+    const rejMsg = wakes[0]?.message ?? "";
+    ok(wakes.length === 1 && rejMsg.includes("REJECTED"), "decision wake (op.connector): a REJECT emits one wake that says rejected");
+    ok(!rejMsg.includes("call the op again") && !rejMsg.includes("HAS NOT RUN") && !rejMsg.includes("ALREADY RUN"), "decision wake (op.connector): a rejected card asks for no call and claims no run");
+    const memo = await store.getSessionApproval("default", `conv:${DM_SURFACE}`, "connector-op:p-dm-op-reject", new Date().toISOString());
+    ok(memo === null, "decision wake (op.connector): a rejected card writes no one-call memo, so nothing can run");
+    const approvedMemo = await store.getSessionApproval("default", `conv:${DM_SURFACE}`, "connector-op:p-dm-op-approve", new Date().toISOString());
+    ok(approvedMemo !== null, "decision wake (op.connector): positive control — the approved card wrote its one-call memo");
   } finally {
     overrideSettingsForTest({ window: { topology: false } });
   }

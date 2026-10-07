@@ -61,6 +61,7 @@ import { renderObservationSummary, type Observation } from "./observations.js";
 import { createPacingGate, paceMaybe, renderPacingLine } from "./pacing.js";
 import { summariseTimings, writeTimingsRecords, type TimingsRecord } from "./timings-record.js";
 import { fmtMs } from "./transcript-timings.js";
+import { scenarioFailureMessage } from "./failure-message.js";
 
 const WAKE_EVIDENCE_LIMIT = 1000;
 const WAKE_EVIDENCE_TIMEOUT_MS = 20_000;
@@ -539,7 +540,7 @@ async function main(): Promise<void> {
         }
       } else {
         failed++;
-        const message = String(err instanceof Error ? err.message : err);
+        const message = scenarioFailureMessage(err);
         recordBoard(scenario, { status: "RED", reason: message, evidence: `failed after ${secs()}` });
         console.error(`✗ ${scenario.id} ${scenario.title} (${secs()}): ${message}`);
       }

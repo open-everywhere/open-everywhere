@@ -476,3 +476,4 @@ test:browser-durable-schema
 test:surface-evidence
 test:temp-dir
 test:postgres-wiring-boot
+test:work-report-owed

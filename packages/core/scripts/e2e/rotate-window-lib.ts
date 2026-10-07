@@ -6,6 +6,7 @@ import { registerOperationalPostgres, getOperationalStore } from "../../agent/op
 import type { PgClient } from "../../agent/operational/postgres.js";
 import type { OperationalStore, ChannelSessionRow } from "../../agent/operational/store.js";
 import type { Domain } from "../../agent/memory/domain.js";
+import { generationOwedTaskIds } from "../../agent/channels/generation-retirement.js";
 
 export async function wireNeonOperationalStore(dbUrl: string): Promise<OperationalStore> {
   const pkg = "@neondatabase/serverless";
@@ -192,6 +193,7 @@ export interface ParsedDomainTarget {
   readonly force: boolean;
   readonly domain: string;
   readonly windowId?: string;
+  readonly waitIdleMs?: number;
 }
 export interface ParsedDmTarget {
   readonly kind: "dm";
@@ -199,6 +201,7 @@ export interface ParsedDmTarget {
   readonly allowNewOrg: boolean;
   readonly force: boolean;
   readonly dmSurfaceKey: string;
+  readonly waitIdleMs?: number;
 }
 export type ParsedRotateTarget = ParsedDomainTarget | ParsedDmTarget;
 export type ParseRotateArgsResult =
@@ -229,6 +232,16 @@ export function parseRotateArgs(argvIn: readonly string[], env: { E2E_ORG?: stri
   const force = forceIdx !== -1;
   if (force) argv.splice(forceIdx, 1);
 
+  const waitFlag = takeValueFlag(argv, "--wait-idle");
+  if (waitFlag.error) return { ok: false, error: `${waitFlag.error} (seconds to wait for the live generation to owe no job)` };
+  let waitIdleMs: number | undefined;
+  if (waitFlag.value !== undefined) {
+    const seconds = Number(waitFlag.value);
+    if (!Number.isFinite(seconds) || seconds < 0 || !/^\d+$/.test(waitFlag.value)) return { ok: false, error: `--wait-idle takes a whole number of seconds — got "${waitFlag.value}"` };
+    waitIdleMs = seconds * 1000;
+  }
+  const wait = waitIdleMs !== undefined ? { waitIdleMs } : {};
+
   const dmFlag = argv.indexOf("--dm");
   if (dmFlag !== -1) {
     const dmSurfaceKey = argv[dmFlag + 1];
@@ -246,7 +259,7 @@ export function parseRotateArgs(argvIn: readonly string[], env: { E2E_ORG?: stri
     }
     argv.splice(dmFlag, 2);
     const org = explicitOrg ?? argv[0] ?? env.E2E_ORG ?? "default";
-    return { ok: true, target: { kind: "dm", org, allowNewOrg, force, dmSurfaceKey } };
+    return { ok: true, target: { kind: "dm", org, allowNewOrg, force, dmSurfaceKey, ...wait } };
   }
 
   const windowFlag = takeValueFlag(argv, "--window");
@@ -255,10 +268,10 @@ export function parseRotateArgs(argvIn: readonly string[], env: { E2E_ORG?: stri
 
   const domain = argv[0];
   if (!domain) {
-    return { ok: false, error: "usage: rotate-window.ts <domain> [org] [--org <id>] [--window <windowId>] [--new-org] [--force]" };
+    return { ok: false, error: "usage: rotate-window.ts <domain> [org] [--org <id>] [--window <windowId>] [--new-org] [--force] [--wait-idle <seconds>]" };
   }
   const org = explicitOrg ?? argv[1] ?? env.E2E_ORG ?? "default";
-  return { ok: true, target: { kind: "domain", org, allowNewOrg, force, domain, windowId } };
+  return { ok: true, target: { kind: "domain", org, allowNewOrg, force, domain, windowId, ...wait } };
 }
 
 export interface MarkRotateResult {
@@ -296,4 +309,37 @@ export async function markAllSeatsForRotation(store: OperationalStore, org: stri
     else vanished.push(row.surfaceKey);
   }
   return { marked, vanished };
+}
+
+export type GenerationIdleResult =
+  | { readonly ok: true; readonly waitedMs: number; readonly token?: string }
+  | { readonly ok: false; readonly waitedMs: number; readonly token: string; readonly owed: readonly string[] };
+
+export async function awaitGenerationIdle(
+  store: Pick<OperationalStore, "getChannelSession" | "getTaskResult">,
+  org: string,
+  registryKey: string,
+  opts: { readonly timeoutMs: number; readonly pollMs?: number; readonly now?: () => number; readonly sleep?: (ms: number) => Promise<void> },
+): Promise<GenerationIdleResult> {
+  const now = opts.now ?? Date.now;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const pollMs = opts.pollMs ?? 5_000;
+  const start = now();
+  for (;;) {
+    const row = await store.getChannelSession(org, registryKey);
+    if (row === null) return { ok: true, waitedMs: now() - start };
+    const owed = await generationOwedTaskIds(org, row.token, store);
+    if (owed.length === 0) return { ok: true, waitedMs: now() - start, token: row.token };
+    const waitedMs = now() - start;
+    if (waitedMs >= opts.timeoutMs) return { ok: false, waitedMs, token: row.token, owed };
+    await sleep(Math.min(pollMs, Math.max(1, opts.timeoutMs - waitedMs)));
+  }
+}
+
+export function generationNotIdleMessage(registryKey: string, r: Extract<GenerationIdleResult, { ok: false }>): string {
+  return (
+    `refusing to rotate ${registryKey}: the live generation ${r.token} still owes ${r.owed.length} job(s) after ${Math.round(r.waitedMs / 1000)}s ` +
+    `(${r.owed.slice(0, 8).join(", ")}${r.owed.length > 8 ? ", …" : ""}). A rotation now sends their results to a session that never saw the ask. ` +
+    "Wait longer, or rotate with no --wait-idle to accept that."
+  );
 }

@@ -469,6 +469,30 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
     await carriageHook.events!["turn.started"]!({} as never, child);
   });
   ok((await seen()) === before + 2, "carriage: a DELEGATED CHILD's turn writes NO row, though it inherits the fire's whole auth bag");
+
+  const { workTokenForSeat } = await import("../agent/channels/work.js");
+  const wToken = workTokenForSeat("oe-dom:e2e-unified:win:slack_TW_C_ROOM:oe-sup:g1");
+  ok(wToken !== undefined, "control: the fixture seat has a work-session token");
+  const fireBag = (fire as unknown as { session: { auth: { current: { attributes: Record<string, string> } } } }).session.auth.current.attributes;
+  const wTurn = (attributes: Record<string, string>, extra: Record<string, unknown> = {}) =>
+    ({
+      channel: { kind: "unified", continuationToken: `unified:${wToken}` },
+      session: { id: "sess-W", auth: { current: { attributes } }, ...extra },
+    }) as never;
+  const { isFireCarriageTurn } = await import("../agent/hooks/fire-carriage.js");
+  await inEveContext(new FakeEveContext(), async () => {
+    await carriageHook.events!["turn.started"]!({} as never, wTurn(fireBag));
+  });
+  const wRows = (await rowsFor(FIRE_ATTRS_SEEN_ACTION)).filter((e) => detailOf(e, "sessionId") === "sess-W");
+  ok(wRows.length === 1, "🔴 carriage: the work session's turn that carries a forwarded fire writes one routine.fire_attrs_seen row");
+  ok(isFireCarriageTurn(wTurn(fireBag) as never) === true, "…and the predicate answers true for it");
+  const { [ROUTINE_MARKER.id]: _dropped, ...personBag } = fireBag;
+  ok(isFireCarriageTurn(wTurn(personBag) as never) === false, "🔴 negative control: a work-session turn with no routine marker is NOT a fire turn");
+  ok(isFireCarriageTurn(wTurn(fireBag, { parent: { sessionId: "sess-W" } }) as never) === false, "🔴 negative control: the work session's CHILD is not a fire-carriage turn, though it carries the fire's bag");
+  ok(
+    isFireCarriageTurn({ channel: { kind: "slack" }, session: { id: "sess-plain", auth: { current: { attributes: fireBag } } } } as never) === false,
+    "🔴 negative control: the marker alone, outside a work session and with no schedule auth, is not a fire turn",
+  );
 }
 
 {

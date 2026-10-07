@@ -476,4 +476,107 @@ eq(noMessage.success, false, "🔴 §4 NEGATIVE CONTROL: eve's own `message` req
   ok(refusedLater instanceof DelegatedTaskBindingUnavailableError, "🔴 §6 a later turn with an unreadable row is REFUSED — running it as the opener would be the defect this re-read exists for");
 }
 
+{
+  const work = await import("../agent/channels/work.js");
+  const { recordDeliveredWakes } = await import("../agent/access/dispatch-origin-signal.js");
+  const { recordWorkRequestsThisTurn } = await import("../agent/access/work-request-turn.js");
+  const { readContinuationWake } = await import("../agent/channels/task-provenance.js");
+  const { AuthKey } = (await import(pathToFileURL(join(eveDist, "dist/src/context/keys.js")).href)) as { AuthKey: unknown };
+
+  const W = "sess-work-2384";
+  const W_TASK = "agent-w2384a";
+  const OTHER_TASK = "agent-w2384b";
+  const at = "2026-10-08T01:25:00.000Z";
+  await seedWake("req-2384-first", ORIGIN_A, "U_ALICE");
+  await seedWake("req-2384-follow", ORIGIN_A, "U_ALICE");
+  await seedWake("req-2384-plain", ORIGIN_A, "U_ALICE");
+  await seedWake("req-2384-other", ORIGIN_B, "U_BOB");
+  ok(await recordTaskOpening({ org: ORG, parentSessionId: W, taskId: W_TASK, callId: "call-w-open", tool: "agent", wakeId: "req-2384-first" }), "§7 precondition: W's child task is opened under the first job");
+  ok(await recordTaskOpening({ org: ORG, parentSessionId: W, taskId: OTHER_TASK, callId: "call-w-other", tool: "agent", wakeId: "req-2384-first" }), "§7 precondition: a second task of W, in the same room");
+  await noteTaskProvenanceSettled(ORG, W, W_TASK);
+  await noteTaskProvenanceSettled(ORG, W, OTHER_TASK);
+
+  type Delivery = { readonly requestId: string; readonly brief: string; readonly origin: typeof ORIGIN_A | typeof ORIGIN_B; readonly taskId?: string };
+  const FIRST: Delivery = { requestId: "req-2384-first", brief: "post the update to the page", origin: ORIGIN_A };
+  const FOLLOW: Delivery = { requestId: "req-2384-follow", brief: "approved: retry the exact call", origin: ORIGIN_A, taskId: W_TASK };
+  const PLAIN: Delivery = { requestId: "req-2384-plain", brief: "a job that names no task", origin: ORIGIN_A };
+  const OTHER_ROOM: Delivery = { requestId: "req-2384-other", brief: "a follow-up from another room", origin: ORIGIN_B, taskId: W_TASK };
+
+  const wStep = <T>(turn: string, delivered: readonly Delivery[], stamp: string, fn: () => Promise<T>): Promise<T> => {
+    const c = new ContextContainer() as { set(key: unknown, value: unknown): void };
+    c.set(AuthKey, { attributes: { [work.OE_WORK_REQUEST_ATTR]: stamp } });
+    return contextStorage.run(c, async () => {
+      noteContinuationTurn({ channel: { kind: "unified" }, session: { id: W, turn: { id: turn } } } as never);
+      for (const d of delivered) {
+        const message = work.renderWorkRequest({ requestId: d.requestId, brief: d.brief, origin: d.origin as never, nowIso: at, ...(d.taskId !== undefined ? { taskId: d.taskId } : {}) });
+        recordDeliveredWakes(turn, message);
+        recordWorkRequestsThisTurn(turn, message);
+      }
+      return await fn();
+    });
+  };
+  const wTurn = (turn: string) => ({ sessionId: W, turnId: turn, unified: true });
+  const wValidate = async (input: Record<string, unknown>) => {
+    const ts: Record<string, { inputSchema: unknown }> = { agent: { inputSchema: agentSchema() } };
+    guardTaskContinuations(ts);
+    const r = await asSchema(ts.agent.inputSchema as never).validate!(input);
+    return r.success ? "ok" : String((r as { error?: Error }).error?.message);
+  };
+
+  eq(
+    await wStep("w-turn-precond", [FIRST, FOLLOW], FOLLOW.requestId, async () => await decideTaskContinuation(wTurn("w-turn-precond"), W_TASK)),
+    { admit: false, reason: "no-continuing-wake" },
+    "§7 precondition: a W turn that holds two jobs' wakes has no turn-wide continuing wake — a continuation no job names is refused",
+  );
+
+  eq(
+    await wStep("w-turn-wait", [FIRST, FOLLOW], FOLLOW.requestId, async () => await wValidate({ message: FOLLOW.brief, taskId: W_TASK })),
+    "ok",
+    "🔴 §7 OPE-2384: a follow-up the job NAMES (its `task` attribute) is admitted in a W turn that holds several wakes",
+  );
+  eq(
+    await readContinuationWake(ORG, W, "call-w-open"),
+    { wakeId: FOLLOW.requestId, generation: 1 },
+    "🔴 §7 …under THAT job's wake: the admitted continuing wake is the follow-up's request, so the child adopts the follow-up's ask",
+  );
+  const wRow = JSON.parse((await store.getTaskResult(ORG, `oe-delegated-task-wake:${W}:call-w-open`)) ?? "null") as { wakeId?: string; requester?: { principalId?: string } } | null;
+  eq(wRow?.wakeId, FOLLOW.requestId, "🔴 §7 …and the child's authority row is re-pointed at the follow-up's wake");
+  eq(wRow?.requester?.principalId, "U_ALICE", "§7 …so the child runs as the follow-up's requester");
+
+  eq(
+    await wStep("w-turn-plain", [FIRST, PLAIN], PLAIN.requestId, async () => await wValidate({ message: PLAIN.brief, taskId: W_TASK })),
+    TASK_CONTINUATION_UNAVAILABLE_MESSAGE,
+    "🔴 §7 NEGATIVE CONTROL: a `taskId` the joined job does not name is refused — the model cannot pick a task the host did not forward",
+  );
+  eq(
+    await wStep("w-turn-plain-2", [FIRST, PLAIN], PLAIN.requestId, async () => await decideTaskContinuation(wTurn("w-turn-plain-2"), W_TASK, "agent", ORG, async () => true, PLAIN.requestId)),
+    { admit: false, reason: "no-continuing-wake" },
+    "§7 …and the reason is `no-continuing-wake`, as before the fix",
+  );
+  eq(
+    await wStep("w-turn-mismatch", [FIRST, FOLLOW], FOLLOW.requestId, async () => await decideTaskContinuation(wTurn("w-turn-mismatch"), OTHER_TASK, "agent", ORG, async () => true, FOLLOW.requestId)),
+    { admit: false, reason: "no-continuing-wake" },
+    "🔴 §7 NEGATIVE CONTROL: a job that names task X never admits a continuation of task Y",
+  );
+  eq(
+    await wStep("w-turn-stale", [FIRST, PLAIN], PLAIN.requestId, async () => await decideTaskContinuation(wTurn("w-turn-stale"), W_TASK, "agent", ORG, async () => true, FOLLOW.requestId)),
+    { admit: false, reason: "no-continuing-wake" },
+    "🔴 §7 NEGATIVE CONTROL: a job id that this turn did not receive is not read as the continuing wake",
+  );
+  eq(
+    await wStep("w-turn-cross", [FIRST, OTHER_ROOM], OTHER_ROOM.requestId, async () => await decideTaskContinuation(wTurn("w-turn-cross"), W_TASK, "agent", ORG, async () => true, OTHER_ROOM.requestId)),
+    { admit: false, reason: "cross-room" },
+    "🔴 §7 NEGATIVE CONTROL: a follow-up from another room that names the task is refused as `cross-room` — the named wake runs every fence check",
+  );
+  eq(
+    await wStep("w-turn-cross-2", [FIRST, OTHER_ROOM], OTHER_ROOM.requestId, async () => await wValidate({ message: OTHER_ROOM.brief, taskId: W_TASK })),
+    TASK_CONTINUATION_REFUSAL_MESSAGE,
+    "§7 …and through the real validate, the model reads the cross-room refusal",
+  );
+  ok(
+    (await wStep("w-turn-steered", [FIRST, FOLLOW], FIRST.requestId, async () => await wValidate({ message: FOLLOW.brief, taskId: W_TASK }))) !== "ok",
+    "🔴 §7 NEGATIVE CONTROL: the same-step gate (OPE-2339) still refuses a follow-up started on a step that received another job",
+  );
+}
+
 console.log(`worker-continuation: ${n} assertions passed`);

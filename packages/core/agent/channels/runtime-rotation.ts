@@ -35,9 +35,18 @@ export interface RuntimeRotationScope {
 }
 
 export async function claimRuntimeRotation(scope: RuntimeRotationScope, deps: RuntimeRotationDeps = {}): Promise<boolean> {
+  return (await claimRuntimeRotationOutcome(scope, deps)) === "rotate";
+}
+
+export type RuntimeRotationOutcome = "rotate" | "current" | "unchecked";
+
+export async function claimRuntimeRotationOutcome(
+  scope: RuntimeRotationScope,
+  deps: RuntimeRotationDeps & { readonly rotateUnstamped?: boolean } = {},
+): Promise<RuntimeRotationOutcome> {
   const codeFingerprint = deps.codeFingerprint ?? RUNTIME_CODE_FINGERPRINT;
   const domainFingerprint = deps.domainFingerprint ?? domainFingerprintForSeat(scope.domainName, scope.surfaceKey);
-  if (domainFingerprint === undefined) return false;
+  if (domainFingerprint === undefined) return "unchecked";
 
   const store = deps.store ?? getOperationalStore();
   let stamp;
@@ -45,13 +54,14 @@ export async function claimRuntimeRotation(scope: RuntimeRotationScope, deps: Ru
     stamp = await store.stampChannelSessionRuntime(scope.org, scope.registryKey, codeFingerprint, domainFingerprint);
   } catch (err) {
     console.warn(`[open-everywhere:runtime-rotation] comparison failed for ${scope.registryKey}: ${String(err)} — resuming the current generation`);
-    return false;
+    return "unchecked";
   }
-  if (stamp.outcome !== "rotate") return false;
+  const unstamped = stamp.outcome === "adopted" && deps.rotateUnstamped === true;
+  if (stamp.outcome !== "rotate" && !unstamped) return "current";
 
   const codeChanged = stamp.previousCodeFingerprint !== codeFingerprint;
   const domainChanged = stamp.previousDomainFingerprint !== domainFingerprint;
-  const changed = codeChanged && domainChanged ? "both" : codeChanged ? "code" : "domain";
+  const changed = unstamped ? "unstamped" : codeChanged && domainChanged ? "both" : codeChanged ? "code" : "domain";
 
   const [platform = "", workspace = "", ...rest] = scope.surfaceKey.split("/");
   await appendAudit({
@@ -77,7 +87,7 @@ export async function claimRuntimeRotation(scope: RuntimeRotationScope, deps: Ru
     },
   }).catch(() => undefined);
 
-  return true;
+  return "rotate";
 }
 
 export async function stampMintedRuntime(scope: RuntimeRotationScope, deps: RuntimeRotationDeps = {}): Promise<void> {

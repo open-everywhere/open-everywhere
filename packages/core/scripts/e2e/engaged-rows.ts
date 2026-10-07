@@ -104,6 +104,30 @@ export function replyPostSurfaces(rows: readonly AuditWireEntry[]): readonly str
   return seen;
 }
 
+export function replyPostHighWater(rows: readonly AuditWireEntry[]): { readonly seq: number; readonly unsequenced: number } {
+  let seq = 0;
+  let unsequenced = 0;
+  for (const r of rows) {
+    if (r.action !== REPLY_POST_ACTION) continue;
+    if (typeof r.seq !== "number") {
+      unsequenced += 1;
+      continue;
+    }
+    if (r.seq > seq) seq = r.seq;
+  }
+  return { seq, unsequenced };
+}
+
+export function replyPostsAfter(
+  rows: readonly AuditWireEntry[],
+  highWater: number,
+  opts: { readonly surface: string },
+): readonly AuditWireEntry[] {
+  return rows.filter(
+    (r) => r.action === REPLY_POST_ACTION && r.surface === opts.surface && (typeof r.seq !== "number" || r.seq > highWater),
+  );
+}
+
 export interface SeatContinuity {
   readonly replies: number;
   readonly answeredWakeIds: readonly string[];

@@ -12,6 +12,16 @@ function factTokenDigits(token: string): string | undefined {
   return /-(\d{1,5})$/.exec(token)?.[1];
 }
 
+export function supervisorAsk(marker: string): { readonly text: string; readonly sum: number } {
+  const n = Number(factTokenDigits(marker) ?? "0");
+  const a = 11 + (n % 83);
+  const b = 11 + (Math.floor(n / 83) % 83);
+  return {
+    text: `Quick question for whoever's around — what's ${a} plus ${b}? Please include the ref ${marker} in your reply so I can find it.`,
+    sum: a + b,
+  };
+}
+
 export function distinctFactToken(stem: string, taken: readonly string[], seed: number = Date.now() % 100_000): string {
   const used = new Set(taken.map(factTokenDigits).filter((d): d is string => d !== undefined));
   let n = ((Math.trunc(seed) % 100_000) + 100_000) % 100_000;

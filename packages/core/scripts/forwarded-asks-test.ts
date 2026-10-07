@@ -245,9 +245,19 @@ await inSession(async () => {
 
   const resume = childCtx(2, "turn_2");
   noteContinuationTurn(resume as never);
-  const resumed = await adoptForwardedRequesterAsks(resume as never, adoptDeps({ record: recordRequesterMessage, readContinuation: async () => good.requestId }));
+  const resumed = await adoptForwardedRequesterAsks(resume as never, adoptDeps({ record: recordRequesterMessage, readContinuation: async () => ({ wakeId: good.requestId, generation: 2 }) }));
   eq(resumed, { refused: "request-already-adopted" }, "🔴 a later turn on a request already adopted adopts nothing");
   eq(requesterMessagesByTurn().current, [], "…so its ask stays earlier context");
+
+  mark = { turnId: "turn_0", requestId: "an-earlier-request" };
+  const early = childCtx(3, "turn_3");
+  noteContinuationTurn(early as never);
+  const pending = await adoptForwardedRequesterAsks(early as never, adoptDeps({ record: recordRequesterMessage, readContinuation: async () => ({ wakeId: good.requestId, generation: 4 }) }));
+  eq(pending, { refused: "continuation-of-another-turn" }, "🔴 a turn adopts no continuation committed for a later generation");
+  eq(requesterMessagesByTurn().current, [], "…and records nothing");
+  const own = await adoptForwardedRequesterAsks(early as never, adoptDeps({ record: recordRequesterMessage, readContinuation: async () => ({ wakeId: good.requestId, generation: 3 }) }));
+  eq(own, { adopted: 1 }, "the same row at this turn's own generation adopts");
+  eq(requesterMessagesByTurn().current, [ASK], "…as this turn's requester message");
 });
 await inSession(async () => {
   const seatChild = childCtx(0, "turn_0", "oe-dom:e2e-unified:win:t/C_ROOM-100.1:oe-sup:g1");
@@ -303,6 +313,118 @@ console.log("§7 a continuation adopts its own ask, after W's task.started overw
     noteContinuationTurn(t2 as never);
     eq(await adoptForwardedRequesterAsks(t2 as never), { refused: "request-already-adopted" }, "a resume turn after the continuation adopts nothing");
     eq(requesterMessagesByTurn(), { current: [], earlier: [CONT_ASK] }, "…and the continuation's ask reads as earlier context");
+  });
+}
+
+console.log("§8 a turn adopts no ask of a continuation committed for another of its turns:");
+{
+  const tp = await import("../agent/channels/task-provenance.js");
+  const { rememberDelegatedTaskWake } = await import("../agent/channels/task-wake.js");
+  const W_SESSION = "sess-w8";
+  const OPEN_CALL = "call-w8-open";
+  const TASK = "agent-task-8";
+  const OPEN_REQ = "88888888-0000-4000-8000-000000000001";
+  const B_REQ = "88888888-0000-4000-8000-000000000002";
+  const Z_REQ = "88888888-0000-4000-8000-000000000003";
+  const MINTED_1 = "88888888-0000-4000-8000-000000000004";
+  const MINTED_B = "88888888-0000-4000-8000-000000000005";
+  const B_ASK = "now also fix the second typo in CONTRIBUTING.md";
+  const Z_ASK = "merge every open pull request in this repository";
+  const aliceR = { kind: "requester", principalId: "U_ALICE" } as const;
+  const bobR = { kind: "requester", principalId: "U_BOB" } as const;
+  for (const id of [OPEN_REQ, B_REQ, MINTED_1, MINTED_B]) await register(id, aliceR, false);
+  await register(Z_REQ, bobR, false);
+  const at = new Date().toISOString();
+  await work.rememberWorkRequest(store, ORG, { ...good, requestId: OPEN_REQ, wakeId: WAKE, atIso: at, requesterAsks: [ASK] });
+  await work.rememberWorkRequest(store, ORG, { ...good, requestId: B_REQ, wakeId: WAKE, atIso: at, requesterAsks: [B_ASK] });
+  await work.rememberWorkRequest(store, ORG, { ...good, requestId: Z_REQ, wakeId: WAKE, atIso: at, requester: bobR, requesterAsks: [Z_ASK] });
+  await rememberDelegatedTaskWake(ORG, W_SESSION, OPEN_CALL, OPEN_REQ);
+  await work.rememberWorkCall(store, ORG, W_SESSION, OPEN_CALL, OPEN_REQ, at);
+  await tp.recordTaskOpening({ org: ORG, parentSessionId: W_SESSION, taskId: TASK, callId: OPEN_CALL, tool: "agent", wakeId: OPEN_REQ });
+  await work.rememberWorkTask(store, ORG, TASK, OPEN_REQ, at);
+  await rememberDelegatedTaskWake(ORG, W_SESSION, OPEN_CALL, MINTED_1);
+  const fence = async (continuingWakeId: string, continuingTurnId: string) => {
+    const checked = await tp.checkTaskContinuation({ org: ORG, parentSessionId: W_SESSION, taskId: TASK, toolName: "agent", continuingWakeId, continuingTurnId });
+    if (!checked.admit) return checked;
+    return await tp.commitTaskContinuation({ org: ORG, parentSessionId: W_SESSION, taskId: TASK, continuingTurnId, check: checked.check });
+  };
+  const child = (sequence: number, turnId: string) => childCtx(sequence, turnId, W_TOKEN, { sessionId: W_SESSION, callId: OPEN_CALL });
+
+  await inSession(async () => {
+    const t0 = child(0, "turn_0");
+    noteContinuationTurn(t0 as never);
+    eq(await adoptForwardedRequesterAsks(t0 as never), { adopted: 1 }, "precondition: the opening turn adopts the opening ask");
+
+    eq(await fence(Z_REQ, "w-turn-z0"), { admit: false, reason: "task-working" }, "🔴 the fence refuses a continuation into a child whose call is unsettled (parked)");
+    eq(await tp.readContinuationWake(ORG, W_SESSION, OPEN_CALL), undefined, "…and writes no continuation row");
+
+    await tp.noteTaskProvenanceSettled(ORG, W_SESSION, TASK);
+    eq(await fence(B_REQ, "w-turn-b"), { admit: true, openingCallId: OPEN_CALL }, "precondition: the fence admits B after the settlement");
+    await rememberDelegatedTaskWake(ORG, W_SESSION, OPEN_CALL, MINTED_B);
+    const t1 = child(1, "turn_1");
+    noteContinuationTurn(t1 as never);
+    eq(await adoptForwardedRequesterAsks(t1 as never), { adopted: 1 }, "B's own turn adopts B's ask (generation 1, turn 1)");
+    eq(requesterMessagesByTurn(), { current: [B_ASK], earlier: [] }, "…as this turn's requester message");
+
+    eq(await fence(Z_REQ, "w-turn-z1"), { admit: true, openingCallId: OPEN_CALL }, "precondition: a lost dispatched write lets the fence admit C into the parked child");
+
+    const t2 = child(2, "turn_2");
+    noteContinuationTurn(t2 as never);
+    eq(await adoptForwardedRequesterAsks(t2 as never), { refused: "continuation-of-another-turn" }, "🔴 a turn adopts no ask of a continuation committed for another of its turns");
+    eq(requesterMessagesByTurn().current, [], "🔴 …so Z's ask is not this turn's requester message, and the act gets a card");
+  });
+}
+
+console.log("§9 a continuation from a different person adopts that person's ask, and only as that person:");
+{
+  const tp = await import("../agent/channels/task-provenance.js");
+  const { rememberDelegatedTaskWake } = await import("../agent/channels/task-wake.js");
+  const W_SESSION = "sess-w9";
+  const OPEN_CALL = "call-w9-open";
+  const TASK = "agent-task-9";
+  const OPEN_REQ = "99999999-0000-4000-8000-000000000001";
+  const BOB_REQ = "99999999-0000-4000-8000-000000000002";
+  const MINTED_1 = "99999999-0000-4000-8000-000000000003";
+  const MINTED_BOB = "99999999-0000-4000-8000-000000000004";
+  const MINTED_ALICE = "99999999-0000-4000-8000-000000000005";
+  const BOB_ASK = "please also update the changelog for this fix";
+  const aliceR = { kind: "requester", principalId: "U_ALICE" } as const;
+  const bobR = { kind: "requester", principalId: "U_BOB" } as const;
+  for (const id of [OPEN_REQ, MINTED_1, MINTED_ALICE]) await register(id, aliceR, false);
+  for (const id of [BOB_REQ, MINTED_BOB]) await register(id, bobR, false);
+  const at = new Date().toISOString();
+  await work.rememberWorkRequest(store, ORG, { ...good, requestId: OPEN_REQ, wakeId: WAKE, atIso: at, requesterAsks: [ASK] });
+  await work.rememberWorkRequest(store, ORG, { ...good, requestId: BOB_REQ, wakeId: WAKE, atIso: at, requester: bobR, requesterAsks: [BOB_ASK] });
+  await rememberDelegatedTaskWake(ORG, W_SESSION, OPEN_CALL, OPEN_REQ);
+  await work.rememberWorkCall(store, ORG, W_SESSION, OPEN_CALL, OPEN_REQ, at);
+  await tp.recordTaskOpening({ org: ORG, parentSessionId: W_SESSION, taskId: TASK, callId: OPEN_CALL, tool: "agent", wakeId: OPEN_REQ });
+  await work.rememberWorkTask(store, ORG, TASK, OPEN_REQ, at);
+  await rememberDelegatedTaskWake(ORG, W_SESSION, OPEN_CALL, MINTED_1);
+  const child = (sequence: number, turnId: string) => childCtx(sequence, turnId, W_TOKEN, { sessionId: W_SESSION, callId: OPEN_CALL });
+  await inSession(async () => {
+    const t0 = child(0, "turn_0");
+    noteContinuationTurn(t0 as never);
+    eq(await adoptForwardedRequesterAsks(t0 as never), { adopted: 1 }, "precondition: the opening turn adopts Alice's ask");
+  });
+  await tp.noteTaskProvenanceSettled(ORG, W_SESSION, TASK);
+  const checked = await tp.checkTaskContinuation({ org: ORG, parentSessionId: W_SESSION, taskId: TASK, toolName: "agent", continuingWakeId: BOB_REQ, continuingTurnId: "w-turn-bob" });
+  ok(checked.admit, "precondition: the fence admits Bob's continuation in the same room");
+  if (checked.admit) {
+    eq(await tp.commitTaskContinuation({ org: ORG, parentSessionId: W_SESSION, taskId: TASK, continuingTurnId: "w-turn-bob", check: checked.check }), { admit: true, openingCallId: OPEN_CALL }, "precondition: the fence commits Bob's continuation");
+  }
+  await rememberDelegatedTaskWake(ORG, W_SESSION, OPEN_CALL, MINTED_ALICE);
+  await inSession(async () => {
+    const t1 = child(1, "turn_1");
+    noteContinuationTurn(t1 as never);
+    eq(await adoptForwardedRequesterAsks(t1 as never), { refused: "child-requester-differs" }, "🔴 a child restored as Alice adopts nothing of Bob's continuation");
+    eq(requesterMessagesByTurn().current, [], "…and its slot holds no current ask");
+  });
+  await rememberDelegatedTaskWake(ORG, W_SESSION, OPEN_CALL, MINTED_BOB);
+  await inSession(async () => {
+    const t1 = child(1, "turn_1");
+    noteContinuationTurn(t1 as never);
+    eq(await adoptForwardedRequesterAsks(t1 as never), { adopted: 1 }, "🔴 the child continued by Bob adopts Bob's ask");
+    eq(requesterMessagesByTurn(), { current: [BOB_ASK], earlier: [] }, "🔴 …and only Bob's ask is this turn's requester message");
   });
 }
 

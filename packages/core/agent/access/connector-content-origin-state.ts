@@ -42,11 +42,24 @@ export function declaredContentOriginForExecuteTarget(target: ConnectionExecuteT
   return contentOriginForTool(spec, target.tool);
 }
 
+const CONNECTION_SEARCH_RESULT_KEYS: ReadonlySet<string> = new Set(["tools", "total", "unavailable"]);
+
+export function connectionSearchRows(output: unknown): readonly unknown[] | undefined {
+  if (Array.isArray(output)) return output;
+  if (output === null || typeof output !== "object") return undefined;
+  const result = output as Record<string, unknown>;
+  if (Object.keys(result).some((key) => !CONNECTION_SEARCH_RESULT_KEYS.has(key))) return undefined;
+  if (!Array.isArray(result.tools)) return undefined;
+  if (result.unavailable !== undefined && !Array.isArray(result.unavailable)) return undefined;
+  return [...((result.unavailable as readonly unknown[] | undefined) ?? []), ...result.tools];
+}
+
 export function declaredContentOriginForConnectionSearch(output: unknown): ConnectorContentOrigin | undefined {
-  if (!Array.isArray(output) || output.length === 0) return undefined;
+  const rows = connectionSearchRows(output);
+  if (rows === undefined || rows.length === 0) return undefined;
   let sawTool = false;
   let sawExternal = false;
-  for (const el of output) {
+  for (const el of rows) {
     if (el === null || typeof el !== "object") return undefined;
     const row = el as Record<string, unknown>;
     const isToolRow = "tool" in row || "qualifiedName" in row;

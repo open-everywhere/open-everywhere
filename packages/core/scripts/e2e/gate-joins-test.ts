@@ -57,6 +57,7 @@ import {
   workerRoadForOp,
 } from "./gate-joins.js";
 import { runFallbackCheck } from "./judge.js";
+import { classifyDelegatedAnswer, forwardedJobsDispatchedAtOrAfter, tasksDispatchedAtOrAfter } from "./read-channel-lib.js";
 import { seatCatchUpWake, SEAT_READ_RESULT_TYPES, SEAT_READ_TOOL, type TranscriptWireEvent } from "./transcript-read.js";
 
 let n = 0;
@@ -407,6 +408,73 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
 
   const dispatchedHere = rowsRb.map((r) => (r.action === "delegation.task_started" ? row(r.action, "2026-01-27T00:33:17.000Z", r.detail as Record<string, unknown>, r.seq, "ingest") : r));
   ok(classifySettlementReply(dispatchedHere, { ...keysRb, messageId: REPORT_Rb, answersAsk: true }).kind === "answer", "…and the SAME rows with the dispatch inside this turn answer — a seat that delegates and settles under its own wake has answered its ask");
+}
+
+{
+  const SURFACE = "slack/T0EXAMPLE/C0EXAMPLE01";
+  const SEAT = "wrun_SEAT";
+  const WORK = "wrun_WORK";
+  const W1 = "w1-ask";
+  const R1 = "r1-request";
+  const T1 = "agent-task01";
+  const REPORT1 = "1771245933.000102";
+  const W2 = "w2-ask";
+  const R2 = "r2-request";
+  const T2 = "agent-task02";
+  const ACK2 = "1771245933.000201";
+  const REPORT2 = "1771245933.000202";
+  const rows = [
+    row("wake.ingress", "2026-02-16T17:41:11.101Z", { wakeId: W1, vendorTs: "2026-02-16T17:41:09.971Z", surfaceKey: SURFACE }, 1),
+    row("wake.turn_start", "2026-02-16T17:41:15.342Z", { wakeId: W1, sessionId: SEAT, turnStartTs: "2026-02-16T17:41:15.342Z" }, 2),
+    row("work.forwarded", "2026-02-16T17:41:21.882Z", { requestId: R1, wakeId: W1, seatSessionId: SEAT }, 3, "unified"),
+    row("delegation.task_started", "2026-02-16T17:41:24.683Z", { task: T1, kind: "agent", session: WORK, continuation: false, request: R1 }, 4, "ingest"),
+    row("reply.post", "2026-02-16T17:41:24.715Z", { id: "1771245933.000101", done: false, wakeId: W1, sessionId: SEAT }, 5),
+    row("unified.task_wake", "2026-02-16T17:41:49.581Z", { task: T1, outcome: "ingressed", wakeId: "w1-task", inheritedWakeId: R1, sessionId: WORK }, 6, "unified"),
+    row("delegation.task_settled", "2026-02-16T17:41:49.604Z", { task: T1, status: "completed", session: WORK }, 6.5, "ingest"),
+    row("reply.post", "2026-02-16T17:41:57.907Z", { id: REPORT1, done: true, wakeId: W1, sessionId: SEAT }, 7),
+    row("delegation.settlement_report_posted", "2026-02-16T17:41:57.954Z", { task: `work:${R1}`, wake: W1 }, 8),
+    row("wake.ingress", "2026-02-16T17:42:06.606Z", { wakeId: W2, vendorTs: "2026-02-16T17:42:06.078Z", surfaceKey: SURFACE }, 9),
+    row("wake.turn_start", "2026-02-16T17:42:07.396Z", { wakeId: W2, sessionId: SEAT, turnStartTs: "2026-02-16T17:42:07.396Z" }, 10),
+    row("work.forwarded", "2026-02-16T17:42:11.795Z", { requestId: R2, wakeId: W2, seatSessionId: SEAT }, 11, "unified"),
+    row("reply.post", "2026-02-16T17:42:14.167Z", { id: ACK2, done: false, wakeId: W2, sessionId: SEAT }, 12),
+    row("delegation.task_started", "2026-02-16T17:42:14.546Z", { task: T2, kind: "agent", session: WORK, continuation: false, request: R2 }, 13, "ingest"),
+    row("unified.task_wake", "2026-02-16T17:43:26.192Z", { task: T2, outcome: "ingressed", wakeId: "w2-task", inheritedWakeId: R2, sessionId: WORK }, 14, "unified"),
+    row("delegation.task_settled", "2026-02-16T17:43:26.200Z", { task: T2, status: "completed", session: WORK }, 14.5, "ingest"),
+    row("reply.post", "2026-02-16T17:43:39.516Z", { id: REPORT2, done: true, wakeId: W2, sessionId: SEAT }, 15),
+    row("delegation.settlement_report_posted", "2026-02-16T17:43:39.569Z", { task: `work:${R2}`, wake: W2 }, 16),
+  ];
+  const askWakeId = wakeIdForVendorInstant(rows, Date.parse("2026-02-16T17:42:06.078Z"), SURFACE);
+  const floorMs = turnStartMs(rows, W2);
+  const keys = { askWakeId, floorMs };
+  ok(askWakeId === W2 && floorMs === Date.parse("2026-02-16T17:42:07.396Z"), "the remember ask's wake and turn floor are read from the three-tier rows");
+
+  const dispatched = tasksDispatchedAtOrAfter(rows, floorMs!);
+  const forwarded = forwardedJobsDispatchedAtOrAfter(rows, floorMs!);
+  ok(forwarded.has(`work:${R2}`), "🔴 the forwarded-job set names THIS step's job by the work-ledger id its request carries");
+  ok(forwarded.has(`work:${R1}`) === false && dispatched.has(T1) === false, "…and neither set names the PREVIOUS step's job, which was dispatched before this floor");
+  ok(dispatched.has(T2) && dispatched.size === 1 && dispatched.has(`work:${R2}`) === false, "🔴 the eve-id dispatch set holds the eve id ONLY — a ledger id there would hold the delegated-answer wait forever");
+  const delegated = classifyDelegatedAnswer(rows, { messageId: REPORT2, floorMs: floorMs! });
+  ok(delegated.kind !== "unsettled", `…so classifyDelegatedAnswer does not wait on the ledger id (got ${delegated.kind}: ${delegated.detail})`);
+
+  const answered = classifySettlementReply(rows, { ...keys, messageId: REPORT2, answersAsk: true });
+  ok(answered.kind === "answer", `🔴 the settlement report of the job THIS ask forwarded IS the answer — J-WORKFLOW's 0.2.0 red (got ${answered.kind}: ${answered.detail})`);
+  ok(answered.kind === "answer" && answered.wakeId === W2, "…and it was posted under the ask's OWN wake: the seat answers under the ask, so no task-wake adoption is needed");
+
+  ok(classifySettlementReply(rows, { ...keys, messageId: REPORT2, answersAsk: false }).kind === "step-over", "control: the same report without the ask's content is still stepped over");
+  ok(classifySettlementReply(rows, { ...keys, messageId: ACK2, answersAsk: true }).kind === "not-a-report", "control: the interim ack is not a report");
+
+  ok(classifySettlementReply(rows, { ...keys, messageId: REPORT1, answersAsk: true }).kind === "step-over", "🔴 control: the PREVIOUS step's forwarded report is stepped over against this ask's keys");
+
+  const lateReport = "1771245933.000203";
+  const lateRows = [
+    ...rows,
+    row("reply.post", "2026-02-16T17:43:23.000Z", { id: lateReport, done: true, wakeId: W2, sessionId: SEAT }, 17),
+    row("delegation.settlement_report_posted", "2026-02-16T17:43:23.050Z", { task: `work:${R1}`, wake: W2 }, 18),
+  ];
+  ok(classifySettlementReply(lateRows, { ...keys, messageId: lateReport, answersAsk: true }).kind === "step-over", "🔴 control: a previous step's forwarded job reported under THIS ask's wake is still a PREVIOUS leg's — the dispatch join refuses it");
+
+  const noRequest = rows.map((r) => (r.action === "delegation.task_started" ? row(r.action, r.ts, { ...(r.detail as Record<string, unknown>), request: undefined }, r.seq, "ingest") : r));
+  ok(classifySettlementReply(noRequest, { ...keys, messageId: REPORT2, answersAsk: true }).kind === "step-over", "control: with no `detail.request` on the dispatch row, the forwarded report FAILS CLOSED to step-over");
 }
 
 {
@@ -1715,7 +1783,9 @@ console.log("25. the rewritten e2e asks carry no test scaffolding:");
     ok(start > 0 && a > start && b > a && b < end, `the ${leg} ask is found inside its own leg (opening "${from}")`);
     return src.slice(a, b + to.length);
   };
-  asks.push(["J-SUP", legAsk("J-SUP", "Quick question for whoever's around", "`,")]);
+  const { supervisorAsk } = await import("./journey.js");
+  ok(legAsk("J-SUP", "supervisorAsk(marker)", ")").length > 0, "J-SUP builds its ask with supervisorAsk (OPE-2361)");
+  asks.push(["J-SUP", supervisorAsk("sup-12345").text]);
   asks.push(["S-TAINT-UNATTENDED-DENY", legAsk("S-TAINT-UNATTENDED-DENY", "Please schedule a one-shot check-in", "Confirm you've scheduled it.")]);
   asks.push(["S-ROUTINE-CONNECTOR-WRITE", legAsk("S-ROUTINE-CONNECTOR-WRITE", "Please schedule a one-shot check-in", "Confirm you've scheduled it.")]);
   const { routineConnectorFirePrompt, ROUTINE_CONNECTOR_WRITE_OP } = await import("./routine-connector-fixture.js");
@@ -1736,7 +1806,7 @@ console.log("25. the rewritten e2e asks carry no test scaffolding:");
   ok(SCAFFOLDING.test("(fresh check — even if a similar question was answered before, this one needs its own answer)"), "…and the old anti-dedupe clause");
   const discordAsk = asks[0]![1];
   ok(discordAsk.includes("ref dgrant-x") && discordAsk.includes("page-1") && discordAsk.includes("discord/1") && discordAsk.includes("<@1>"), "the grant ask keeps the mention, ref, page and owner key");
-  ok(asks[2]![1].includes("${marker}") && asks[4]![1].includes("routineConnectorReportLine(fireWord)") && asks[3]![1].includes("${fireWord}"), "the inline asks keep their ref and confirmation-word tokens");
+  ok(asks[2]![1].includes("sup-12345") && asks[4]![1].includes("routineConnectorReportLine(fireWord)") && asks[3]![1].includes("${fireWord}"), "the inline asks keep their ref and confirmation-word tokens");
 }
 
 console.log(`✓ ${n} gate-joins assertions passed`);

@@ -1,10 +1,10 @@
 import type { OperationalStore } from "../operational/store.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
-import { formatWindowToken, parseWindowToken, isWorkWindowId, workWindowId, saltSupervisorGeneration, bareTokenFromEveContext } from "./window-key.js";
+import { formatWindowToken, parseWindowToken, isWorkWindowId, workWindowId, saltSupervisorGeneration, bareTokenFromEveContext, dmSurfaceKeyFromAnchorDomain } from "./window-key.js";
 import { unifiedDomainSessionKey, standingSeatRegistryKey } from "./unified-supervisor.js";
 import { rotationTrigger, type RotationTrigger } from "./turn-delivery.js";
-import { claimRuntimeRotation, stampMintedRuntime } from "./runtime-rotation.js";
+import { claimRuntimeRotationOutcome, stampMintedRuntime, type RuntimeRotationOutcome, type RuntimeRotationScope } from "./runtime-rotation.js";
 import { parkRotateDelta } from "./session-park.js";
 import { isWorkSessionContext } from "../access/work-session.js";
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
@@ -75,6 +75,23 @@ export async function workTokenHoldingTask(
   return currentWorkToken(org, seatToken, store);
 }
 
+export type ContinuationRoute =
+  | { readonly kind: "current" }
+  | { readonly kind: "holding"; readonly token: string }
+  | { readonly kind: "ended"; readonly from: string; readonly reason: "dead" | "idle" | "unreadable" };
+
+export async function continuationRoute(
+  input: { readonly org: string; readonly holdingToken: string | undefined; readonly currentToken: string },
+  store: Pick<OperationalStore, "getTaskResult"> = getOperationalStore(),
+): Promise<ContinuationRoute> {
+  const holding = input.holdingToken === undefined ? undefined : bare(input.holdingToken);
+  if (holding === undefined || !isSameWorkSession(holding, input.currentToken) || holding === bare(input.currentToken)) return { kind: "current" };
+  if (await workSessionMarkedDead(input.org, holding, store)) return { kind: "ended", from: holding, reason: "dead" };
+  const owes = await generationOwedDelegation(input.org, holding, store);
+  if (owes === "owed") return { kind: "holding", token: holding };
+  return { kind: "ended", from: holding, reason: owes === "none" ? "idle" : "unreadable" };
+}
+
 export async function currentSeatToken(org: string, recordedSeatToken: string, store: Pick<OperationalStore, "getChannelSession"> = getOperationalStore()): Promise<string> {
   const recorded = bare(recordedSeatToken);
   const key = parseWindowToken(recorded);
@@ -113,20 +130,38 @@ export async function workSessionMarkedDead(org: string, token: string, store: P
   }
 }
 
+export type WorkRuntimeVerdict = "minted" | "rotated" | "current" | "unchecked";
+
 export interface WorkGeneration {
   readonly token: string;
   readonly generation: number;
   readonly minted?: true;
-  readonly rotated?: { readonly from: string; readonly trigger: RotationTrigger | "parked"; readonly lostRequestIds: readonly string[]; readonly lostTaskIds: readonly string[] };
+  readonly rotated?: {
+    readonly from: string;
+    readonly trigger: RotationTrigger | "parked";
+    readonly lostRequestIds: readonly string[];
+    readonly lostTaskIds: readonly string[];
+    readonly drainingRequestIds: readonly string[];
+    readonly drainingTaskIds: readonly string[];
+  };
   readonly deferred?: { readonly trigger: RotationTrigger; readonly owed: number };
+  readonly runtime?: WorkRuntimeVerdict;
 }
 
 export interface WorkGenerationDeps {
   readonly store?: Pick<OperationalStore, "getChannelSession" | "rotateChannelSession" | "touchChannelSession" | "getTaskResult" | "stampChannelSessionRuntime">;
   readonly audit?: typeof appendAudit;
-  readonly claimRuntime?: () => Promise<boolean>;
+  readonly claimRuntime?: () => Promise<boolean | RuntimeRotationOutcome>;
   readonly stampRuntime?: () => Promise<void>;
+  readonly codeFingerprint?: string;
   readonly salt?: (token: string) => string;
+}
+
+function workRuntimeScope(input: { readonly org: string; readonly registryKey: string; readonly surfaceKey: string; readonly domainName: string; readonly atIso: string }): RuntimeRotationScope {
+  const dmSurface = dmSurfaceKeyFromAnchorDomain(input.domainName);
+  return dmSurface !== undefined
+    ? { org: input.org, registryKey: input.registryKey, surfaceKey: dmSurface, atIso: input.atIso }
+    : { org: input.org, registryKey: input.registryKey, surfaceKey: input.surfaceKey, domainName: input.domainName, atIso: input.atIso };
 }
 
 export async function resolveWorkGeneration(
@@ -141,22 +176,30 @@ export async function resolveWorkGeneration(
   }
   const store = deps.store ?? getOperationalStore();
   const audit = deps.audit ?? appendAudit;
-  const scope = { org: input.org, registryKey, surfaceKey: input.surfaceKey, domainName, atIso: input.atIso };
-  const runtimeChanged = await (deps.claimRuntime ?? (() => claimRuntimeRotation(scope, { store })))();
+  const scope = workRuntimeScope({ org: input.org, registryKey, surfaceKey: input.surfaceKey, domainName, atIso: input.atIso });
+  const fingerprint = deps.codeFingerprint !== undefined ? { codeFingerprint: deps.codeFingerprint } : {};
+  const liveClaim = async (): Promise<RuntimeRotationOutcome> => {
+    const prior = await store.getChannelSession(input.org, registryKey);
+    return claimRuntimeRotationOutcome(scope, { store, rotateUnstamped: prior !== null && prior.firstWakeAt !== null, ...fingerprint });
+  };
+  const claimed = await (deps.claimRuntime ?? liveClaim)();
+  const runtimeOutcome: RuntimeRotationOutcome = claimed === true ? "rotate" : claimed === false ? "current" : claimed;
+  const runtimeChanged = runtimeOutcome === "rotate";
   const existing = await store.getChannelSession(input.org, registryKey);
 
   if (existing === null) {
     const row = await store.rotateChannelSession(input.org, registryKey, first, input.atIso);
-    await (deps.stampRuntime ?? (() => stampMintedRuntime(scope, { store })))();
+    await (deps.stampRuntime ?? (() => stampMintedRuntime(scope, { store, ...fingerprint })))();
     await store.touchChannelSession(input.org, registryKey, input.atIso);
-    return { token: row.token, generation: row.generation, minted: true };
+    return { token: row.token, generation: row.generation, minted: true, runtime: "minted" };
   }
 
   const parked = await workSessionMarkedDead(input.org, existing.token, store);
-  const trigger: RotationTrigger | "parked" | null = runtimeChanged ? "runtime-changed" : parked ? "parked" : rotationTrigger(existing, input.atIso, WORK_THRESHOLDS);
+  const trigger: RotationTrigger | "parked" | null = parked ? "parked" : runtimeChanged ? "runtime-changed" : rotationTrigger(existing, input.atIso, WORK_THRESHOLDS);
+  const resumedRuntime: WorkRuntimeVerdict = runtimeOutcome === "unchecked" ? "unchecked" : "current";
   if (trigger === null) {
     await store.touchChannelSession(input.org, registryKey, input.atIso);
-    return { token: existing.token, generation: existing.generation };
+    return { token: existing.token, generation: existing.generation, runtime: resumedRuntime };
   }
 
   const owed = await generationOwedTaskIds(input.org, existing.token, store);
@@ -171,15 +214,20 @@ export async function resolveWorkGeneration(
       detail: { registryKey, token: existing.token, generation: existing.generation, trigger, owed: owed.length },
     }).catch(() => undefined);
     await store.touchChannelSession(input.org, registryKey, input.atIso);
-    return { token: existing.token, generation: existing.generation, deferred: { trigger, owed: owed.length } };
+    return { token: existing.token, generation: existing.generation, deferred: { trigger, owed: owed.length }, runtime: resumedRuntime };
   }
 
   const next = (deps.salt ?? saltSupervisorGeneration)(formatWindowToken({ domain: domainName, windowId: parseWindowToken(first)!.windowId, generation: existing.generation + 1 }));
   const row = await store.rotateChannelSession(input.org, registryKey, next, input.atIso);
   await store.touchChannelSession(input.org, registryKey, input.atIso);
   noteGenerationForRetirement({ org: input.org, registryKey, token: existing.token });
-  const lostRequestIds = owed.map(requestIdOfWorkSessionLedgerId).filter((id): id is string => id !== undefined);
-  const lostTaskIds = owed.filter((id) => requestIdOfWorkSessionLedgerId(id) === undefined);
+  const owedRequestIds = owed.map(requestIdOfWorkSessionLedgerId).filter((id): id is string => id !== undefined);
+  const owedTaskIds = owed.filter((id) => requestIdOfWorkSessionLedgerId(id) === undefined);
+  const drains = trigger === "runtime-changed";
+  const lostRequestIds = drains ? [] : owedRequestIds;
+  const lostTaskIds = drains ? [] : owedTaskIds;
+  const drainingRequestIds = drains ? owedRequestIds : [];
+  const drainingTaskIds = drains ? owedTaskIds : [];
   await audit({
     org: input.org,
     platform: "unified",
@@ -194,10 +242,14 @@ export async function resolveWorkGeneration(
       trigger,
       lostRequests: lostRequestIds.length,
       lostTasks: lostTaskIds.length,
-      note: "the work session rotated: its sandbox and any task still running in it are gone; durable memory is in the store",
+      drainingRequests: drainingRequestIds.length,
+      drainingTasks: drainingTaskIds.length,
+      note: drains
+        ? "the work session ran other code than this deployment: new jobs go to a fresh work session on this code; the old one keeps running the jobs it holds, and their results still reach the room"
+        : "the work session rotated: its sandbox and any task still running in it are gone; durable memory is in the store",
     },
   }).catch(() => undefined);
-  return { token: row.token, generation: row.generation, rotated: { from: existing.token, trigger, lostRequestIds, lostTaskIds } };
+  return { token: row.token, generation: row.generation, rotated: { from: existing.token, trigger, lostRequestIds, lostTaskIds, drainingRequestIds, drainingTaskIds }, runtime: "rotated" };
 }
 
 export async function workSessionIdle(org: string, workToken: string, store: Pick<OperationalStore, "getTaskResult"> = getOperationalStore()): Promise<{ readonly idle: boolean; readonly owed: readonly string[] }> {
