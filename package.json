@@ -175,6 +175,7 @@
     "access:diff": "tsx scripts/access-diff.ts",
     "config:snapshot": "tsx scripts/config-snapshot.ts",
     "config:diff": "tsx scripts/config-diff.ts",
+    "test:npm-command": "tsx scripts/npm-command-test.ts",
     "test:config-diff": "NODE_NO_WARNINGS=1 tsx scripts/config-diff-test.ts",
     "test:tool-roster": "NODE_NO_WARNINGS=1 tsx scripts/tool-roster-test.ts",
     "test:roster": "NODE_NO_WARNINGS=1 tsx scripts/roster-test.ts",

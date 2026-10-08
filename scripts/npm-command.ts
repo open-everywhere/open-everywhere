@@ -29,3 +29,15 @@ export function tsxCommand(repoRoot: string, args: readonly string[]): [string, 
   if (process.platform !== "win32") return [join(repoRoot, "node_modules", ".bin", "tsx"), [...args]];
   return [process.execPath, [join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs"), ...args]];
 }
+
+export function spawnFailure(
+  result: { status: number | null; signal?: NodeJS.Signals | null; error?: (Error & { code?: unknown }) | undefined },
+  label: string,
+): string | undefined {
+  if (result.error) {
+    const code = typeof result.error.code === "string" ? ` (${result.error.code})` : "";
+    return `${label} did not start${code}: ${result.error.message}`;
+  }
+  if (result.status === null) return `${label} ended without an exit code${result.signal ? ` (signal ${result.signal})` : ""}`;
+  return undefined;
+}

@@ -186,3 +186,4 @@ lint:brand-literals
 test:brand-literal-lint
 test:template-drift
 test:template-adapters
+test:npm-command

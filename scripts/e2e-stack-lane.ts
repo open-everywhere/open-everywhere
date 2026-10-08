@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { npmCommand, spawnFailure } from "./npm-command.js";
 import { isModelUsable } from "@open-everywhere/core/agent/model/policy.js";
 import { wireNeonOperationalStore } from "../packages/core/scripts/e2e/rotate-window-lib.js";
 import type { ModelRole, StackAlias } from "../agent/model/stacks.js";
@@ -102,9 +103,10 @@ if (dryRun) {
   process.exit(0);
 }
 
+const [npmBin, npmArgv] = npmCommand(["run", "e2e:driver", "--workspace", "@open-everywhere/core", "--", "--only", scenarios.join(",")]);
 const result = spawnSync(
-  "npm",
-  ["run", "e2e:driver", "--workspace", "@open-everywhere/core", "--", "--only", scenarios.join(",")],
+  npmBin,
+  npmArgv,
   {
     stdio: "inherit",
     env: {
@@ -116,4 +118,9 @@ const result = spawnSync(
   },
 );
 
+const failure = spawnFailure(result, "the e2e driver (npm run e2e:driver)");
+if (failure) {
+  console.error(failure);
+  process.exit(1);
+}
 process.exit(result.status ?? 1);

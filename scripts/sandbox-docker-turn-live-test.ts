@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { builtTreeArtifactsSource } from "../tests/integration/prewarm.js";
+import { npmCommand } from "./npm-command.js";
 
 const ROOT = process.cwd();
 const RELAY_SECRET = randomBytes(32).toString("hex");
@@ -68,8 +69,10 @@ async function main(): Promise<void> {
   const entry = join(ROOT, ".output", "server", "index.mjs");
   if (!existsSync(entry)) {
     console.log("-- .output/server/index.mjs missing, building --");
-    execFileSync("npm", ["run", "oe:build"], { cwd: ROOT, stdio: "inherit" });
-    execFileSync("npm", ["run", "build"], { cwd: ROOT, stdio: "inherit" });
+    for (const script of ["oe:build", "build"]) {
+      const [bin, argv] = npmCommand(["run", script]);
+      execFileSync(bin, argv, { cwd: ROOT, stdio: "inherit" });
+    }
   }
 
   for (const k of ["AI_GATEWAY_API_KEY", "VERCEL_AI_GATEWAY_KEY", "DATABASE_URL", "VERCEL"]) {
