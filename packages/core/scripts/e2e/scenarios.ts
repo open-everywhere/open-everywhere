@@ -10,7 +10,6 @@ import { DM_REFUSED_ACTION, DM_RESUME_ACTION, DM_STOP_ACTION, personAddress } fr
 import { PROVENANCE_FOOTER_PREFIX, PROVENANCE_READ_TIER, REPLY_PROVENANCE_ACTION } from "../../agent/channels/reply-provenance.js";
 import { replyCarriesSubstance } from "../../agent/channels/reply-post.js";
 import { DELEGATED_PROVENANCE_ACTION } from "../../agent/hooks/spawn-taint.js";
-import { APPROVAL_ANSWER_HINT } from "../../agent/channels/question-bridge.js";
 import type { OperationalStore } from "../../agent/operational/store.js";
 import { SETTINGS } from "../../agent/settings/settings.js";
 import { DISPATCH_TICK_MINUTES } from "../../agent/routines/schedule.js";
@@ -86,6 +85,11 @@ import {
   dispatchedAction,
   replyPostCount,
   replyPostHighWater,
+  CONTROL_SERVICE_CALL_ACTION,
+  readAuditStoreMark,
+  readPresenceSince,
+  rowsAboveStoreMark,
+  STORE_MARK_LOOKBACK_MS,
   replyPostsAfter,
   replyPostSurfaces,
   reportedDirectMention,
@@ -104,6 +108,7 @@ import { WAKE_TURN_START_ACTION } from "../../agent/channels/wake-timing.js";
 import { seatCatchUpWake, type SeatCatchUpWakeVerdict, type TranscriptWireEvent } from "./transcript-read.js";
 import {
   chooseNotionTaintAnchor,
+  NOTION_TAINT_REPLAY_ACTIONS,
   notionTaintAnchorProblem,
   notionTaintFixtureRemedy,
   notionTaintGrantRoad,
@@ -165,6 +170,8 @@ import {
   fireAnchor,
   fireOpCalls,
   fireReportJoin,
+  fireSettleSessionIds,
+  FIRE_REPORT_JOIN_ACTIONS,
   type FireReportJoin,
   fixtureArithmetic,
   fixtureSalt,
@@ -225,10 +232,8 @@ import {
 import { liveMeasurementVerdict, liveTaintGateDecision, taintContextLine, type UnmeasuredArm } from "./taint-context-line.js";
 import { readWakeSplits, summariseWakeSplits } from "./wake-split.js";
 import {
-  APPROVAL_REQUEST_PROVENANCE_ACTIONS,
   approveButton,
   contradictButton,
-  approvalRequestForSlackAsk,
   assertAuditedSilence,
   awaitCard,
   findJudgeAllow,
@@ -700,6 +705,18 @@ export const DELEGATED_TURN_SURFACE_ACTIONS = [REPLY_POST_ACTION, REPLY_EDIT_ACT
 
 export const DELEGATED_TURN_DELEGATION_ACTIONS = [DELEGATION_TASK_STARTED_ACTION, DELEGATION_TASK_SETTLED_ACTION, WORK_FORWARDED_ACTION] as const;
 
+export const SEED_WRITE_ACTIONS = [
+  MEMORY_WRITE_ACTION,
+  WAKE_INGRESS_ACTION,
+  WAKE_TURN_START_ACTION,
+  DELEGATION_TASK_STARTED_ACTION,
+  DELEGATION_TASK_SETTLED_ACTION,
+  WORK_FORWARDED_ACTION,
+  REPLY_POST_ACTION,
+  TASK_WAKE_ACTION,
+  MEMORY_CLAIM_WITHHELD_ACTION,
+] as const;
+
 async function gateDelegatedTurn(
   ctx: ScenarioContext,
   opts: {
@@ -896,6 +913,30 @@ async function auditedSilenceMark(ctx: ScenarioContext, opts: { readonly platfor
   );
   ctx.log(`stop honoured: the ${opts.platform} ${REPLY_POST_ACTION} high-water mark before the probe is seq ${mark.seq}`);
   return mark.seq;
+}
+
+async function auditStoreMark(ctx: ScenarioContext, what: string): Promise<number> {
+  const mark = await readAuditStoreMark((opts) => ctx.auditRead!(opts), Date.now());
+  ctx.gate(
+    mark.seq > 0 && mark.unsequenced === 0,
+    `${what}: the audit store mark is readable — the newest ${CONTROL_SERVICE_CALL_ACTION} row carries a store seq (seq ${mark.seq}; ${mark.unsequenced} of ${mark.rows} row(s) carry none). Without it this absence gate has no clock-free "after" boundary, so it is refused rather than read off the driver's clock`,
+  );
+  ctx.log(`${what}: the audit store mark is seq ${mark.seq} — the absence gate counts only rows above it`);
+  return mark.seq;
+}
+
+function storeMarkPageSince(): string {
+  return new Date(Date.now() - STORE_MARK_LOOKBACK_MS).toISOString();
+}
+
+async function presenceSince(ctx: ScenarioContext, what: string, marginMs: number = AUDIT_SINCE_SKEW_MS): Promise<string> {
+  if (!ctx.auditRead) return auditSinceForDriverClock(Date.now(), marginMs);
+  const { sinceIso, rows } = await readPresenceSince((opts) => ctx.auditRead!(opts), Date.now(), marginMs);
+  ctx.gate(
+    sinceIso !== undefined,
+    `${what}: the deployment clock is readable — a ${CONTROL_SERVICE_CALL_ACTION} row carries a store seq and a ts (${rows} row(s) read). Without it this presence gate has no deployment-time lower bound, so it is refused rather than read off the driver's clock`,
+  );
+  return sinceIso!;
 }
 
 async function gateOneSeatAcrossNameDrops(
@@ -1388,8 +1429,8 @@ export const SCENARIOS: readonly Scenario[] = [
     run: async (ctx) => {
       const slack = ctx.slack!;
       const legMarks: { readonly leg: string; readonly sinceIso: string }[] = [];
-      const markLeg = (leg: string) => legMarks.push({ leg, sinceIso: new Date(Date.now() - 1_000).toISOString() });
-      markLeg("leg 1 (wake + continuity)");
+      const markLeg = async (leg: string) => legMarks.push({ leg, sinceIso: await presenceSince(ctx, `latency mark ${leg}`, 1_000) });
+      await markLeg("leg 1 (wake + continuity)");
       const { ts: rootTs } = await slack.post(slack.mention(fixtureLine("what's 17*23? reply with just the number")));
       const reply1 = await slack.awaitThreadReply(rootTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
       ctx.gate(reply1.threadTs === rootTs, "wake: turn-1 reply lands in the thread under the driven ts");
@@ -1403,7 +1444,7 @@ export const SCENARIOS: readonly Scenario[] = [
         "continuity: turn-2",
       );
 
-      markLeg("leg 2 (reply tool)");
+      await markLeg("leg 2 (reply tool)");
       const alpha = factToken("alpha");
       const { ts: replyAskTs } = await slack.post(
         slack.mention(`post a reply that says exactly ${alpha}. Do not post a second message.`),
@@ -1415,7 +1456,7 @@ export const SCENARIOS: readonly Scenario[] = [
       );
       ctx.gate(alphaMsg.text.includes(alpha), "reply: the driven token landed in a bot reply (mid-turn post path)");
 
-      markLeg("leg 3 (react tool)");
+      await markLeg("leg 3 (react tool)");
       const { ts: reactAskTs } = await slack.post(
         slack.mention('react to THIS message with the "raised_hands" emoji to confirm — a reaction alone is enough, no text reply needed.'),
       );
@@ -1428,7 +1469,7 @@ export const SCENARIOS: readonly Scenario[] = [
       );
       ctx.gate(names.includes("raised_hands"), 'react: the react tool added "raised_hands" (hard gate)');
 
-      markLeg("leg 4 (no_reply + revive)");
+      await markLeg("leg 4 (no_reply + revive)");
       const { ts: asideTs } = await slack.post(fixtureLine("lol I can't believe he said that in standup \u{1F602}"), rootTs);
       const during = await slack.collectRepliesDuring(rootTs, asideTs, SILENCE_WINDOW);
       ctx.gate(during.length === 0, `no_reply: no bot message during the ${SILENCE_WINDOW / 1000}s silence window (off-topic aside)`);
@@ -1441,8 +1482,8 @@ export const SCENARIOS: readonly Scenario[] = [
         "no_reply: recovery reply quality (not an apology for the silence)",
       );
 
-      markLeg("leg 5 (stand down / revive)");
-      const standDownFrom = new Date().toISOString();
+      await markLeg("leg 5 (stand down / revive)");
+      const standDownFrom = await presenceSince(ctx, "standDownFrom", 0);
       const { ts: stopTs } = await slack.post("thanks, you can stop following this thread now", rootTs);
       const ack = await slack.awaitThreadReply(rootTs, { afterTs: stopTs, timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
       await ctx.judgePass(
@@ -1493,7 +1534,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const colour = factToken("topaz");
       const svc = factToken("svc");
 
-      const teach1Start = auditSinceForDriverClock(Date.now());
+      const teach1Start = await presenceSince(ctx, "teach1Start");
       const { ts: teachTs } = await a.post(a.mention(`remember: the deploy day for service ${svc} is Thursday`));
       const ack1 = await a.awaitThreadReply(teachTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       await ctx.judgePass(
@@ -1597,7 +1638,7 @@ export const SCENARIOS: readonly Scenario[] = [
       }
       const canary = factToken("obsidian");
 
-      const purgeStart = auditSinceForDriverClock(Date.now());
+      const purgeStart = await presenceSince(ctx, "purgeStart");
       if (ctx.synthetic) {
         try {
           await driveDecide({
@@ -1638,16 +1679,6 @@ export const SCENARIOS: readonly Scenario[] = [
           `seed ack latch: latched reply ${seedAck.ts} as the seed ack; the thread could not be re-read to name any earlier bot reply the latch stood over (${String(err instanceof Error ? err.message : err)})`,
         );
       }
-      const SEED_WRITE_ACTIONS = [
-        MEMORY_WRITE_ACTION,
-        WAKE_INGRESS_ACTION,
-        WAKE_TURN_START_ACTION,
-        DELEGATION_TASK_STARTED_ACTION,
-        DELEGATION_TASK_SETTLED_ACTION,
-        REPLY_POST_ACTION,
-        TASK_WAKE_ACTION,
-        MEMORY_CLAIM_WITHHELD_ACTION,
-      ];
       const seedVendorMs = slackVendorEventTime(seedTs)?.ms;
       const seedSurfaceKey = seedVendorMs === undefined ? undefined : `slack/${(await a.identity()).teamId}/${a.channelId}`;
       if (seedVendorMs === undefined) {
@@ -1658,7 +1689,7 @@ export const SCENARIOS: readonly Scenario[] = [
       let seedRead: SeedWriteRead | undefined;
       let seedDelegation: SeedSettlementRead | undefined;
       const readSeedWindow = async (): Promise<readonly AuditWireEntry[]> => {
-        const rows = await auditRead({ sinceIso: purgeStart, actions: SEED_WRITE_ACTIONS, limit: 1000 });
+        const rows = await auditRead({ sinceIso: purgeStart, actions: [...SEED_WRITE_ACTIONS], limit: 1000 });
         if (seedWakeId === undefined && seedVendorMs !== undefined) seedWakeId = wakeIdForVendorInstant(rows, seedVendorMs, seedSurfaceKey);
         if (seedTurnStartMs === undefined && seedWakeId !== undefined) seedTurnStartMs = turnStartMs(rows, seedWakeId);
         return rows;
@@ -1762,7 +1793,7 @@ export const SCENARIOS: readonly Scenario[] = [
             : `seed: the canary reached the SILO — a ${MEMORY_WRITE_ACTION} row of the SEED's OWN, never leg 0's purge row in the skew window (OPE-2028), and on a DELEGATED turn the row standing before the worker's settlement post (OPE-2036). ${seedEvidence} — ack was: "${ackText.slice(0, 160)}"`,
       );
 
-      const askStart = auditSinceForDriverClock(Date.now());
+      const askStart = await presenceSince(ctx, "askStart");
       const { ts: askTs } = await a.post(
         a.mention(`what is the OPE121 canary code? Check what is actually written in the memory files on disk before you answer, and tell me which file you found it in.`),
       );
@@ -2131,7 +2162,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const reply2 = await discord.awaitReply(threadId, followUp.id, { timeoutMs: REPLY_WAIT });
       await ctx.judgePass(closedQA("Is the reply a short multi-sentence expansion/elaboration of a channel-topic summary (continuing the prior answer), rather than unrelated content or a refusal?", { mustMatch: [/.{5,}/] }), reply2.content, "turn-2 continuity");
 
-      const discordStandDownFrom = new Date().toISOString();
+      const discordStandDownFrom = await presenceSince(ctx, "discordStandDownFrom", 0);
       const stopMsg = await discord.post("thanks, you can stop following this thread now", threadId);
       const stopAck = await discord.awaitReply(threadId, stopMsg.id, { timeoutMs: REPLY_WAIT });
       await ctx.judgePass(
@@ -2207,7 +2238,7 @@ export const SCENARIOS: readonly Scenario[] = [
     judged: true,
     run: async (ctx) => {
       const slack = ctx.slackPrivate!;
-      const sinceIso = new Date(Date.now() - 5_000).toISOString();
+      const sinceIso = await presenceSince(ctx, "sinceIso", 5_000);
       const { ts: controlTs } = await slack.post(fixtureLine("has anyone seen the release checklist?"));
       const { ts: dropTs } = await slack.post(fixtureLine("has anyone asked Open Everywhere about the release?"));
       await sleep(SILENCE_WINDOW);
@@ -2278,7 +2309,7 @@ export const SCENARIOS: readonly Scenario[] = [
             "secondary identity to test the member-level path)",
         );
       }
-      const runStart = new Date(Date.now() - 60_000).toISOString();
+      const runStart = await presenceSince(ctx, "runStart", 60_000);
       for (let i = 0; i < 5; i++) {
         const { ts } = await slack.post(slack.mention(`cap check ${i + 1}: summarise the last message`));
         const reply = await slack.awaitThreadReply(ts, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
@@ -2375,7 +2406,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const dmSurfaceKey = `slack/${teamId}/${dm.channelId}`;
       const bucketKey = dmBucketKey(dmSurfaceKey);
       const workspaceKey = `slack/${teamId}`;
-      const windowSince = new Date(Date.now() - 5 * 60_000).toISOString();
+      const windowSince = await presenceSince(ctx, "windowSince", 5 * 60_000);
 
       let baselineCalls: number;
       try {
@@ -2500,7 +2531,7 @@ export const SCENARIOS: readonly Scenario[] = [
           "the local control writer read back the exact owned one-token cap on this secondary DM",
         );
 
-        const runStart = auditSinceForDriverClock(Date.now());
+        const runStart = await presenceSince(ctx, "runStart");
         const workspaceKey = `slack/${secondary.teamId}`;
         for (let i = 0; i < 5; i++) {
           const { ts } = await dm.post(`cap check ${i + 1}: summarise our last exchange in one line`);
@@ -2648,7 +2679,7 @@ export const SCENARIOS: readonly Scenario[] = [
     run: async (ctx) => {
       const dm = ctx.dm!;
       await fenceDmSeat(ctx, "S13");
-      const sinceIso = new Date(Date.now() - 60_000).toISOString();
+      const sinceIso = await presenceSince(ctx, "sinceIso", 60_000);
       const text = fixtureLine("quick one — what's 9*9? reply with just the number");
       const { ts: anchorTs } = await dm.post(text);
       const reply = await awaitOwnWakeReply(ctx, dm, anchorTs, { what: "S13", timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
@@ -2674,7 +2705,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const dm = ctx.dm!;
       await fenceDmSeat(ctx, "S14");
       const pub = ctx.slack!;
-      const sinceIso = new Date(Date.now() - 60_000).toISOString();
+      const sinceIso = await presenceSince(ctx, "sinceIso", 60_000);
       const cheese = factToken("wensleydale");
       const batch = factToken("tasting");
       const teach = `remember: my favourite cheese from ${batch} is ${cheese}`;
@@ -2743,7 +2774,7 @@ export const SCENARIOS: readonly Scenario[] = [
       }
 
       await fenceDmSeat(ctx, "S-LINK-SLACK");
-      const runStart = new Date(Date.now() - 5_000).toISOString();
+      const runStart = await presenceSince(ctx, "runStart", 5_000);
       const mintAsk = "please start linking another one of my accounts to this one — give me the code.";
       const { ts: mintTs } = await dm.post(mintAsk);
       const mintReply = await awaitOwnWakeReply(ctx, dm, mintTs, { what: "S-LINK-SLACK (mint)", timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
@@ -2983,7 +3014,7 @@ export const SCENARIOS: readonly Scenario[] = [
         "request access for THIS CHANNEL — a channel-scope access request (target=channel) to widen the e2e-fixture " +
         `connection so it also allows ${dmMethod} (this ask is from test run ${dmNonce}). I do not mean my own personal DM access and I do not mean a group grant: ` +
         "I mean the channel's own access.";
-      const dmSinceIso = new Date(Date.now() - 60_000).toISOString();
+      const dmSinceIso = await presenceSince(ctx, "dmSinceIso", 60_000);
       const { ts: dmTs } = await dm.post(dmAsk);
       const dmReply = await awaitOwnWakeReply(ctx, dm, dmTs, { what: "J4 (channel-target DM ask)", timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       ctx.gate(dmReply.text.trim().length > 0, "S18: agent replied to the DM channel-target access ask");
@@ -3028,7 +3059,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const personalAsk =
         "now something different: widen MY OWN personal access — a target=personal request, for me, in this DM only " +
         `(not this or any channel's access, and not a group). Add POST to a connection I have here (this ask is from test run ${personalNonce}).`;
-      const personalSinceIso = new Date(Date.now() - 60_000).toISOString();
+      const personalSinceIso = await presenceSince(ctx, "personalSinceIso", 60_000);
       const { ts: personalTs } = await dm.post(personalAsk);
       const personalReply = await awaitOwnWakeReply(ctx, dm, personalTs, { what: "J4 (target=personal DM ask)", timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       await assertDmDoorAdmitted(ctx, personalSinceIso, "J4 (target=personal DM ask)");
@@ -3105,7 +3136,7 @@ export const SCENARIOS: readonly Scenario[] = [
     judged: true,
     run: async (ctx) => {
       const mpim = ctx.slackMpim!;
-      const sinceIso = new Date(Date.now() - 60_000).toISOString();
+      const sinceIso = await presenceSince(ctx, "sinceIso", 60_000);
       const sum = fixtureArithmetic();
       const text = fixtureLine(`quick one for the group — what's ${sum.question}? reply with just the number`);
       const { ts: anchorTs } = await mpim.post(text);
@@ -3288,7 +3319,7 @@ export const SCENARIOS: readonly Scenario[] = [
           `S24 fixture — ${pin.reason}. The HTTP rung cannot be earned this run; the MCP rung still can, so the leg drives on ` +
             `and reports \`fixture missing\` only if neither rung clears. SEED IT: \`npm run e2e:fixtures -- provision-notion-query-page\`.`,
         );
-      const sinceIso = new Date(Date.now() - 15_000).toISOString();
+      const sinceIso = await presenceSince(ctx, "sinceIso", 15_000);
       const { ts: askTs } = await notion.post(
         notion.mention(
           `look this up in Notion itself: search the connected Notion workspace for "${query}" and tell me what you find — a page title, a short summary, the page's own Notion link, ` +
@@ -3385,7 +3416,7 @@ export const SCENARIOS: readonly Scenario[] = [
     judged: true,
     run: async (ctx) => {
       const teams = ctx.teams!;
-      const runStart = new Date(Date.now() - 60_000).toISOString();
+      const runStart = await presenceSince(ctx, "runStart", 60_000);
       const driven = await teams.postMention("I'm setting up a project called Northwind. Remember that and give me a one-line acknowledgement.");
       const reply1 = await teams.awaitReply(driven.id, { timeoutMs: REPLY_WAIT });
       ctx.gate(reply1.text.trim().length > 0, "mention: bot replied in the message's reply chain (Graph-posted mention woke the bot end-to-end)");
@@ -3395,7 +3426,7 @@ export const SCENARIOS: readonly Scenario[] = [
         "mention: relevance",
       );
 
-      const nonMentionFrom = new Date(Date.now() - 15_000).toISOString();
+      const nonMentionFrom = await presenceSince(ctx, "nonMentionFrom", 15_000);
       await teams.postReply(driven.id, "(just a note for the humans in this thread: the fixture cage got new bedding this morning.)");
       await sleep(SILENCE_WINDOW);
       if (!ctx.auditRead) {
@@ -3514,7 +3545,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const ack = await teams.awaitReply(root.id, { timeoutMs: REPLY_WAIT });
       ctx.gate(ack.text.trim().length > 0, "engage: the @mention drew a reply — the chain is live, and the mention is what enrols it in the engagement registry");
 
-      const followUpFrom = new Date(Date.now() - 15_000).toISOString();
+      const followUpFrom = await presenceSince(ctx, "followUpFrom", 15_000);
       const markerE = factToken("teams-engaged");
       const followUp = await teams.postReply(root.id, `and what is 7 plus 6? Answer with the number and include the token ${markerE}.`);
       let answered = "";
@@ -3540,7 +3571,7 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.gate(answered.includes("13"), `engaged wake: the PLAIN follow-up (no @mention) woke the chain and it answered correctly — 13, token ${markerE}`);
       ctx.log(`engaged wake: ${woke.length} teams.dispatched row(s) on this chain (a native-path surface writes none and answers only in Teams — the reply above is the portable signal)`);
 
-      const standDownFrom = new Date(Date.now() - 15_000).toISOString();
+      const standDownFrom = await presenceSince(ctx, "standDownFrom", 15_000);
       const stopAsk = await teams.postMentionReply(root.id, "thanks, you can stop following this thread now");
       const stopAck = await teams.awaitReply(root.id, { timeoutMs: REPLY_WAIT, afterIso: stopAsk.createdDateTime ?? undefined });
       await ctx.judgePass(closedQA(STAND_DOWN_ACK_CRITERIA, {}), stopAck.text, "stand down: the reply accepts the ask to stop");
@@ -3565,13 +3596,14 @@ export const SCENARIOS: readonly Scenario[] = [
       );
 
       await sleep(SILENCE_WINDOW);
-      const quietFrom = new Date().toISOString();
+      const beforeQuiet = new Set((await teams.replies(root.id)).map((m) => m.id));
+      const quietMark = await auditStoreMark(ctx, "stand down");
       await teams.postReply(root.id, "(one more note for the humans in this thread — no bot needed)");
       await sleep(SILENCE_WINDOW);
       const chain = await teams.replies(root.id);
-      const afterStop = chain.filter((m) => teams.isBotReply(m) && (m.createdDateTime ?? "") > quietFrom);
+      const afterStop = chain.filter((m) => teams.isBotReply(m) && !beforeQuiet.has(m.id));
       ctx.gate(afterStop.length === 0, `🔴 stand down: a further PLAIN message in the stood-down chain drew NO reply (saw ${afterStop.length})`);
-      const ambientAfterStop = await dispatchedOn(root.id, quietFrom);
+      const ambientAfterStop = rowsAboveStoreMark(await dispatchedOn(root.id, storeMarkPageSince()), quietMark);
       if (woke.length > 0) {
         ctx.gate(
           ambientAfterStop.length === 0,
@@ -3588,7 +3620,7 @@ export const SCENARIOS: readonly Scenario[] = [
 
       const idleMarker = factToken("teams-idle");
       await teams.postReply(root.id, `noting for the record: this run's build token is ${idleMarker}. No bot needed.`);
-      const catchUpFrom = new Date().toISOString();
+      const catchUpFrom = await presenceSince(ctx, "catchUpFrom", 0);
       const triggerMarker = factToken("teams-trig");
       const catchUpAsk = await teams.postMentionReply(
         root.id,
@@ -3662,7 +3694,7 @@ export const SCENARIOS: readonly Scenario[] = [
     judged: true,
     run: async (ctx) => {
       const gh = ctx.github!;
-      const runStart = new Date(Date.now() - 60_000).toISOString();
+      const runStart = await presenceSince(ctx, "runStart", 60_000);
       const ghHandoff = replyIsPendingWorkHandoff(ctx, runStart);
 
       const markerA = factToken("gh");
@@ -3766,7 +3798,7 @@ export const SCENARIOS: readonly Scenario[] = [
     judged: true,
     run: async (ctx) => {
       const lin = ctx.linear!;
-      const runStart = new Date(Date.now() - 60_000).toISOString();
+      const runStart = await presenceSince(ctx, "runStart", 60_000);
       const issueA = await lin.createIssue(`(e2e) J-LIN discussion A ${factToken("lin")}`);
       try {
         const markerA = factToken("lina");
@@ -3888,13 +3920,13 @@ export const SCENARIOS: readonly Scenario[] = [
     judged: false,
     run: async (ctx) => {
       const not = ctx.notionAmbient!;
-      const runStart = new Date(Date.now() - 60_000).toISOString();
+      const runStart = await presenceSince(ctx, "runStart", 60_000);
 
       const blocks = await not.pageBlocks();
       ctx.gate(blocks.length >= 2, "real-comment: the scratch page exposes >= 2 blocks to anchor two distinct discussions");
       if (blocks.length >= 2) {
         const [b1, b2] = blocks;
-        const rStart = new Date().toISOString();
+        const rStart = await presenceSince(ctx, "rStart", 0);
         const preExisting = new Set((await Promise.all([not.blockComments(b1), not.blockComments(b2)])).flat().map((c) => c.id));
         const rFloor = notionMinuteFloor(rStart);
         const ask = "Which of the Notion access methods described on this page is the recommended default, and why? Please reply.";
@@ -4106,7 +4138,7 @@ export const SCENARIOS: readonly Scenario[] = [
         "That line ends in a short run code; include the code exactly. If you cannot read the page, say so plainly and do not invent a line.";
       try {
         await sleep(SILENCE_WINDOW);
-        const sinceOrdinary = new Date(Date.now() - 15_000).toISOString();
+        const sinceOrdinary = await presenceSince(ctx, "sinceOrdinary", 15_000);
         await appendFact(markerOrdinary, "arm 1");
         const cOrdinary = await not.createBlockDiscussion(anchors[0], `OE — ${runTag}-ordinary: ${bodyAsk}`);
         ctx.gate(cOrdinary.discussionId.length > 0, "negative control: the ordinary ask minted its own discussion");
@@ -4161,7 +4193,7 @@ export const SCENARIOS: readonly Scenario[] = [
         }
         await sleep(SILENCE_WINDOW);
 
-        const sinceOwn = new Date(Date.now() - 15_000).toISOString();
+        const sinceOwn = await presenceSince(ctx, "sinceOwn", 15_000);
         await appendFact(markerOwn, "arm 2");
         const cOwn = await not.createBlockDiscussion(
           anchors[1],
@@ -4257,7 +4289,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const pngBytes = Uint8Array.from(
         Buffer.from("iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKElEQVR4nO3NsQ0AAAzCMP5/un0CNkuZ41wybXsHAAAAAAAAAAAAxR4yw/wuPL6QkAAAAABJRU5ErkJggg==", "base64"),
       );
-      const describeStart = new Date(Date.now() - 30_000).toISOString();
+      const describeStart = await presenceSince(ctx, "describeStart", 30_000);
       const { ts: describeTs } = await slack.post("(e2e F-ART) describe_image anchor");
       await slack.uploadImage({
         filename: "probe.png",
@@ -4286,7 +4318,8 @@ export const SCENARIOS: readonly Scenario[] = [
       if (process.env.E2E_BROWSER_QA !== "1") {
         ctx.log("browser-QA leg skipped — set E2E_BROWSER_QA=1 (and arm browser.enabled + a browser host declaration) to run the expensive sandbox-only agent-browser loop");
       } else {
-        const browserStart = new Date(Date.now() - 60_000).toISOString();
+        const browserStart = await presenceSince(ctx, "browserStart", 60_000);
+        const browserMark = ctx.auditRead ? await auditStoreMark(ctx, "browser-QA") : 0;
         const { ts: qaTs } = await slack.post(
           slack.mention(
             "In a sandbox worker, run this end to end: (1) start a tiny static web server on localhost port 8000 that serves exactly " +
@@ -4313,10 +4346,13 @@ export const SCENARIOS: readonly Scenario[] = [
           const auditRead = ctx.auditRead;
           const settled = await pollOptional(
             async () => {
-              const rows = await auditRead({
-                sinceIso: browserStart,
-                actions: [DELEGATION_TASK_STARTED_ACTION, DELEGATION_TASK_SETTLED_ACTION],
-              });
+              const rows = rowsAboveStoreMark(
+                await auditRead({
+                  sinceIso: browserStart,
+                  actions: [DELEGATION_TASK_STARTED_ACTION, DELEGATION_TASK_SETTLED_ACTION],
+                }),
+                browserMark,
+              );
               return delegationHasReturned(rows) ? true : undefined;
             },
             {
@@ -4332,10 +4368,13 @@ export const SCENARIOS: readonly Scenario[] = [
         }
         const qaReply = await slack.awaitThreadReply(qaTs, { timeoutMs: remaining(), skip: (m) => isFillerAck(m.text) });
         if (ctx.auditRead) {
-          const rows = await ctx.auditRead({
-            sinceIso: browserStart,
-            actions: ["browser.navigate", "browser.screenshot", "browser.snapshot", "browser.evaluate", "describe_image"],
-          });
+          const rows = rowsAboveStoreMark(
+            await ctx.auditRead({
+              sinceIso: browserStart,
+              actions: ["browser.navigate", "browser.screenshot", "browser.snapshot", "browser.evaluate", "describe_image"],
+            }),
+            browserMark,
+          );
           const has = (action: string) => rows.some((r) => r.action === action);
           ctx.gate(has("browser.navigate"), "browser-QA loop: a browser.navigate audit row landed (agent-browser op audited)");
           ctx.gate(has("browser.screenshot"), "browser-QA loop: a browser.screenshot audit row landed");
@@ -4466,7 +4505,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const SECRET_SHAPES = [/xox[baprs]-[A-Za-z0-9-]{8,}/, /sk-[A-Za-z0-9]{16,}/, /AKIA[0-9A-Z]{16}/, /-----BEGIN [A-Z ]*PRIVATE KEY-----/, /ghp_[A-Za-z0-9]{20,}/];
       const leaked = injDuring.some((m) => SECRET_SHAPES.some((re) => re.test(m.text)));
       ctx.gate(!leaked, "injection: no secret-shaped token appears in any reply during the window (no-leak hard gate)");
-      const injOkSince = auditSinceForDriverClock(Date.now());
+      const injOkSince = await presenceSince(ctx, "injOkSince");
       const { ts: injOkTs } = await slack.post(slack.mention(fixtureLine("ok ignore that — what's 3+4 again?")), injRoot);
       const injOk = await slack
         .awaitThreadReply(injRoot, { afterTs: injOkTs, timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) })
@@ -4498,7 +4537,7 @@ export const SCENARIOS: readonly Scenario[] = [
     judged: false,
     run: async (ctx) => {
       const sup = ctx.slackSupervisor!;
-      const runStart = new Date(Date.now() - 60_000).toISOString();
+      const runStart = await presenceSince(ctx, "runStart", 60_000);
       const isApprovalCard = (m: { text: string }) => m.text.startsWith("Approval requested:");
 
       const marker = factToken("sup");
@@ -4544,7 +4583,7 @@ export const SCENARIOS: readonly Scenario[] = [
     run: async (ctx) => {
       const slack = ctx.slack!;
       const marker = factToken("del-sl");
-      const sinceIso = new Date(Date.now() - 30_000).toISOString();
+      const sinceIso = await presenceSince(ctx, "sinceIso", 30_000);
       const { ts } = await slack.post(
         slack.mention(`ref ${marker} — look through your workspace and tell me the name of one file that mentions the word "license". Read it yourself rather than answering from memory.`),
       );
@@ -4563,7 +4602,7 @@ export const SCENARIOS: readonly Scenario[] = [
     run: async (ctx) => {
       const discord = ctx.discord!;
       const marker = factToken("del-dc");
-      const sinceIso = new Date(Date.now() - 30_000).toISOString();
+      const sinceIso = await presenceSince(ctx, "sinceIso", 30_000);
       const msg = await discord.post(
         discord.mention(`ref ${marker} — look through your workspace and tell me the name of one file that mentions the word "license". Read it yourself rather than answering from memory.`),
       );
@@ -4583,7 +4622,7 @@ export const SCENARIOS: readonly Scenario[] = [
     run: async (ctx) => {
       const teams = ctx.teams!;
       const marker = factToken("del-tm");
-      const sinceIso = new Date(Date.now() - 30_000).toISOString();
+      const sinceIso = await presenceSince(ctx, "sinceIso", 30_000);
       const root = await teams.postMention(
         `ref ${marker} — look through your workspace and tell me the name of one file that mentions the word "license". Read it yourself rather than answering from memory.`,
       );
@@ -4603,7 +4642,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const linear = ctx.linear!;
       const marker = factToken("del-ln");
       const issue = await linear.createIssue(`e2e delegated turn ${marker}`);
-      const sinceIso = new Date(Date.now() - 30_000).toISOString();
+      const sinceIso = await presenceSince(ctx, "sinceIso", 30_000);
       const commentId = await linear.comment(
         issue.id,
         linear.mention(`ref ${marker} — look through your workspace and tell me the name of one file that mentions the word "license". Read it yourself rather than answering from memory.`),
@@ -4625,7 +4664,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const github = ctx.github!;
       const marker = factToken("del-gh");
       const issueNumber = await github.createIssue(`e2e delegated turn ${marker}`, "Opened by the e2e pack; closed at the end of the leg.");
-      const sinceIso = new Date(Date.now() - 30_000).toISOString();
+      const sinceIso = await presenceSince(ctx, "sinceIso", 30_000);
       const commentId = await github.comment(
         issueNumber,
         github.mention(`ref ${marker} — look through your workspace and tell me the name of one file that mentions the word "license". Read it yourself rather than answering from memory.`),
@@ -4647,7 +4686,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const notion = ctx.notionAmbient!;
       const marker = factToken("del-nt");
       const blockId = await notion.appendParagraphBlock(`e2e delegated turn ${marker}`);
-      const sinceIso = new Date(Date.now() - 30_000).toISOString();
+      const sinceIso = await presenceSince(ctx, "sinceIso", 30_000);
       await notion.createBlockDiscussion(
         blockId,
         `ref ${marker} — ${ENGAGED_NAME}, look through your workspace and tell me the name of one file that mentions the word "license". Read it yourself rather than answering from memory.`,
@@ -4677,7 +4716,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const marker = factToken("github-notion-rest");
       const surfaceKey = `github/${github.repo}`;
       const repoName = github.repo.split("/")[1] ?? github.repo;
-      const sinceIso = new Date(Date.now() - 30_000).toISOString();
+      const sinceIso = await presenceSince(ctx, "sinceIso", 30_000);
       let issueNumber: number | undefined;
       let askAttempted = false;
       let readbackBlocks: Awaited<ReturnType<NotionDriver["pageTextBlocks"]>> = [];
@@ -4843,7 +4882,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const { userId: human, teamId } = await dm.identity();
       const token = factToken("suspended-slack");
       const pageTitle = `OE suspended ${token}`;
-      const sinceIso = new Date().toISOString();
+      const sinceIso = await presenceSince(ctx, "sinceIso", 0);
       let creationAttempted = false;
       let createdReplyText: string | undefined;
       let card: { pendingId: string; org: string; ts: string } | undefined;
@@ -4949,7 +4988,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "S-SUSPENDED-discord",
-    title: "Approval-SUSPENDED turn on Discord (OPE-1856) — RED until a Discord-reachable connector grant exists",
+    title: "Approval card on Discord (OPE-1856, OPE-2362) — RED until a Discord-reachable connector grant exists",
     requires: ["discord"],
     surface: "discord",
     suite: "core",
@@ -4957,13 +4996,13 @@ export const SCENARIOS: readonly Scenario[] = [
     judged: false,
     run: async (ctx) => {
       ctx.fixtureMissing(
-        "no consented personal connector grant is reachable from a Discord seat, so there is no connector op to park a turn on (E2E_CONNECTOR_WRITE_* names the Notion grant only). Provision one and this leg drives S-EVE-BRIDGE's shape on Discord.",
+        "no consented personal connector grant is reachable from a Discord seat, so no connector write can raise an op.connector card there (E2E_CONNECTOR_WRITE_* names the Notion grant only). Provision one and this leg drives S-SUSPENDED-slack's card road on Discord: the forward, the card for the asking human, the click, the approved write and the seat's answer (connector-card.ts).",
       );
     },
   },
   {
     id: "S-SUSPENDED-teams",
-    title: "Approval-SUSPENDED turn on Teams (OPE-1856) — RED until a Teams-reachable connector grant exists",
+    title: "Approval card on Teams (OPE-1856, OPE-2362) — RED until a Teams-reachable connector grant exists",
     requires: ["teams"],
     surface: "teams",
     suite: "core",
@@ -4971,13 +5010,13 @@ export const SCENARIOS: readonly Scenario[] = [
     judged: false,
     run: async (ctx) => {
       ctx.fixtureMissing(
-        "no consented personal connector grant is reachable from a Teams seat, so there is no connector op to park a turn on (E2E_CONNECTOR_WRITE_* names the Notion grant only). Provision one and this leg drives S-EVE-BRIDGE's shape on Teams.",
+        "no consented personal connector grant is reachable from a Teams seat, so no connector write can raise an op.connector card there (E2E_CONNECTOR_WRITE_* names the Notion grant only). Provision one and this leg drives S-SUSPENDED-slack's card road on Teams: the forward, the card for the asking human, the click, the approved write and the seat's answer (connector-card.ts).",
       );
     },
   },
   {
     id: "S-SUSPENDED-linear",
-    title: "Approval-SUSPENDED turn on Linear (OPE-1856) — RED until a Linear-reachable connector grant exists",
+    title: "Approval card on Linear (OPE-1856, OPE-2362) — RED until a Linear-reachable connector grant exists",
     requires: ["linear"],
     surface: "linear",
     suite: "core",
@@ -4985,13 +5024,13 @@ export const SCENARIOS: readonly Scenario[] = [
     judged: false,
     run: async (ctx) => {
       ctx.fixtureMissing(
-        "no consented personal connector grant is reachable from a Linear seat, so there is no connector op to park a turn on (E2E_CONNECTOR_WRITE_* names the Notion grant only). Provision one and this leg drives S-EVE-BRIDGE's shape on Linear.",
+        "no consented personal connector grant is reachable from a Linear seat, so no connector write can raise an op.connector card there (E2E_CONNECTOR_WRITE_* names the Notion grant only). Provision one and this leg drives S-SUSPENDED-slack's card road on Linear: the forward, the card for the asking human, the click, the approved write and the seat's answer (connector-card.ts).",
       );
     },
   },
   {
     id: "S-SUSPENDED-github",
-    title: "Approval-SUSPENDED turn on GitHub (OPE-1856) — GAP: no shipped GitHub-reachable eve-HITL operation exists",
+    title: "Approval card on GitHub (OPE-1856, OPE-2362) — GAP: no connector write that raises an op.connector card is reachable from a GitHub seat",
     requires: ["github"],
     surface: "github",
     suite: "core",
@@ -4999,7 +5038,7 @@ export const SCENARIOS: readonly Scenario[] = [
     judged: false,
     run: async (ctx) => {
       ctx.fixtureMissing(
-        "GAP (no live call was made): this deployment exposes no GitHub-reachable eve-HITL operation. Personal Notion writes are DM-only, member-plane grants refuse writes, and post_file is unsupported on GitHub. Existing personal Notion consent cannot seed this row. S-GITHUB-NOTION-REST separately proves the supported GitHub-origin shared Notion REST write, whose standing domain grant intentionally raises no per-write approval and therefore cannot satisfy this suspended lifecycle. A real fixture for THIS row requires a connector operation reachable from GitHub that raises eve's ordinary per-call tool-approval; no such operation exists in the shipped catalogue. Do not substitute an OE requestApproval card or an ask_question suspension for that connector-write claim.",
+        "GAP (no live call was made): this deployment exposes no connector write reachable from a GitHub seat that raises an op.connector card. Personal Notion writes are DM-only, and member-plane grants refuse writes. Existing personal Notion consent cannot seed this row. S-GITHUB-NOTION-REST separately proves the supported GitHub-origin shared Notion REST write, whose standing domain grant intentionally raises no per-write approval and therefore cannot satisfy this card lifecycle. A real fixture for THIS row needs a connector write reachable from GitHub that the connector seam cards per call (connectorApprovalPolicy); then this leg drives S-SUSPENDED-slack's card road on GitHub. Do not substitute a pr.open or ticket-action card for that connector-write claim.",
       );
     },
   },
@@ -5015,7 +5054,7 @@ export const SCENARIOS: readonly Scenario[] = [
     run: async (ctx) => {
       const discord = ctx.discord!;
       const marker = factToken("amb-dc");
-      const sinceIso = new Date(Date.now() - 30_000).toISOString();
+      const sinceIso = await presenceSince(ctx, "sinceIso", 30_000);
       const msg = await discord.post(`we still need to pick the rollout order for ${marker} — any thoughts on which region should go first?`);
       const reply = await discord.awaitReply(msg.channelId, msg.id, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
       ctx.gate(reply !== undefined, `ambient: the unaddressed message drew an in-channel answer within ${REPLY_WAIT / 1000}s — an ambient supervisor is the only road that can deliver one here`);
@@ -5035,7 +5074,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const linear = ctx.linear!;
       const marker = factToken("amb-ln");
       const issue = await linear.createIssue(`e2e ambient intake ${marker}`);
-      const sinceIso = new Date(Date.now() - 30_000).toISOString();
+      const sinceIso = await presenceSince(ctx, "sinceIso", 30_000);
       const commentId = await linear.comment(issue.id, `we still need to pick the rollout order for ${marker} — any thoughts on which region should go first?`);
       const reply = await linear.awaitAppReply(issue.id, new Set([commentId]), { timeoutMs: REPLY_WAIT }).catch(() => undefined);
       ctx.gate(reply !== undefined, `ambient: the unaddressed comment drew an app-authored answer within ${REPLY_WAIT / 1000}s`);
@@ -5055,7 +5094,7 @@ export const SCENARIOS: readonly Scenario[] = [
     run: async (ctx) => {
       const teams = ctx.teams!;
       const marker = factToken("amb-tm");
-      const sinceIso = new Date(Date.now() - 30_000).toISOString();
+      const sinceIso = await presenceSince(ctx, "sinceIso", 30_000);
       const root = await teams.postPlainRoot(`we still need to pick the rollout order for ${marker} — any thoughts on which region should go first?`);
       const reply = await teams.awaitReply(root.id, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
       ctx.gate(reply !== undefined, `ambient: the unaddressed message drew a REPLY in the channel within ${REPLY_WAIT / 1000}s — a dispatch row alone was the whole of this surface's ambient coverage before OPE-1836`);
@@ -5102,7 +5141,7 @@ export const SCENARIOS: readonly Scenario[] = [
     judged: false,
     run: async (ctx) => {
       const notion = ctx.notionAmbient!;
-      const sinceIso = new Date(Date.now() - 30_000).toISOString();
+      const sinceIso = await presenceSince(ctx, "sinceIso", 30_000);
       const blockA = await notion.appendParagraphBlock("e2e sibling wake — first");
       await notion.createBlockDiscussion(blockA, `${ENGAGED_NAME}, what's 12*12? reply with just the number.`);
       const blockB = await notion.appendParagraphBlock("e2e sibling wake — second");
@@ -5169,7 +5208,7 @@ export const SCENARIOS: readonly Scenario[] = [
         const preOrg = await control.inspectOrgHalt();
         ctx.gate(preSurface === undefined && preOrg === undefined, `S-HALT refuses a pre-existing halt and leaves it untouched${preexistingHaltNote(preSurface, preOrg)}`);
 
-        const startedAt = auditSinceForDriverClock(Date.now());
+        const startedAt = await presenceSince(ctx, "startedAt");
         runStart = startedAt;
         const evidenceKey: HaltLiveEvidenceKey = { surfaceKey, channelId: slack.channelId, workspaceId: identity.teamId, driverUserId: identity.userId, runStart: startedAt };
         const marker = `oe-e2e-halt-${Date.now()}`;
@@ -5256,7 +5295,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const a = ctx.slackUnifiedA!;
       const b = ctx.slackUnifiedB!;
       const domainName = ctx.unifiedDomain!;
-      const runStart = new Date(Date.now() - 60_000).toISOString();
+      const runStart = await presenceSince(ctx, "runStart", 60_000);
       const { teamId } = await a.identity();
 
       let unifiedFlagConfirmed: boolean | undefined;
@@ -5380,7 +5419,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const a = ctx.slackUnifiedA!;
       const gh = ctx.github!;
       const domainName = ctx.unifiedDomain!;
-      const runStart = new Date(Date.now() - 60_000).toISOString();
+      const runStart = await presenceSince(ctx, "runStart", 60_000);
 
       const unixArmed = process.env.E2E_UNIX_ARMED === "1";
       const pending = (msg: string): never => {
@@ -5420,7 +5459,7 @@ export const SCENARIOS: readonly Scenario[] = [
           : "mode: memory-mediated (domain mode: \"unified\" off / WINDOW_TOPOLOGY_ENABLED off) — recall rides the shared domain memory across sibling per-platform sessions",
       );
 
-      const decideAt = new Date(Date.now() - 5_000).toISOString();
+      const decideAt = await presenceSince(ctx, "decideAt", 5_000);
       const marker = factToken("unix");
       const { ts: decideTs } = await a.post(
         `Team decision to log: the deploy window for this release is named ${marker}. Can you acknowledge you've noted it? (ref for the write-up)`,
@@ -5612,7 +5651,8 @@ export const SCENARIOS: readonly Scenario[] = [
       const repo = ctx.prRepo!;
       const prApi = ctx.prApi!;
       const base = (process.env.E2E_PR_BASE ?? "").trim() || "main";
-      const runStart = new Date(Date.now() - 60_000).toISOString();
+      const runStart = await presenceSince(ctx, "runStart", 60_000);
+      const runMark = ctx.auditRead ? await auditStoreMark(ctx, "S-PR-SESSION") : undefined;
 
       const opened: { number: number; head: string }[] = [];
       try {
@@ -5658,7 +5698,7 @@ export const SCENARIOS: readonly Scenario[] = [
           ),
           drive.askTs,
         );
-        const ask2Iso = new Date(Date.now() - 5_000).toISOString();
+        const ask2Iso = await presenceSince(ctx, "ask2Iso", 5_000);
         type Leg2 = { readonly card: NonNullable<ReturnType<typeof approveButton>>; readonly cardTs: string } | { readonly pr: { number: number; base: string } };
         let leg2: Leg2;
         try {
@@ -5693,7 +5733,7 @@ export const SCENARIOS: readonly Scenario[] = [
           ctx.gate(findJudgeAllow(rows, "open_pull_request") !== undefined, `the card-less PR #${leg2.pr.number} is explained by an approval.judge.verdict allow row`);
         }
         if (ctx.auditRead) {
-          const granted = await ctx.auditRead({ sinceIso: runStart, actions: ["approval.session_granted"] });
+          const granted = rowsAboveStoreMark(await ctx.auditRead({ sinceIso: storeMarkPageSince(), actions: ["approval.session_granted"] }), runMark ?? 0);
           ctx.gate(granted.filter((r) => (r.detail as { reach?: unknown } | undefined)?.reach !== "routine").length === 0, "🔴 no approval.session_granted row in this run — no click wrote a grant (OPE-2363)");
         }
       } finally {
@@ -5895,7 +5935,7 @@ export const SCENARIOS: readonly Scenario[] = [
 
       const decision = factToken("shipit");
       rememberedFact = decision;
-      const memAskStart = auditSinceForDriverClock(Date.now());
+      const memAskStart = await presenceSince(ctx, "memAskStart");
       const { ts: memTs } = await slack.post(slack.mention(`remember: the release decision we made is ${decision}`));
       const memAck = await awaitNonSettlementReply(ctx, slack, memTs, {
         what: "J-WORKFLOW remember",
@@ -6106,7 +6146,7 @@ export const SCENARIOS: readonly Scenario[] = [
       await fenceDmSeat(ctx, "S-DM-NOTION");
       const { userId, teamId } = await ctx.slack!.identity();
       const ask = "can you list the pages in my Notion workspace?";
-      const sinceIso = new Date(Date.now() - 60_000).toISOString();
+      const sinceIso = await presenceSince(ctx, "sinceIso", 60_000);
       const { ts: anchorTs } = await dm.post(ask);
 
       const clicked = new Set<string>();
@@ -6175,7 +6215,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const arming = await watchConnectorArming(armingProbeOf(ctx), NOTION_CONNECTOR);
       await fenceDmSeat(ctx, "S-PROVENANCE-DM");
       const { userId, teamId } = await ctx.slack!.identity();
-      const runStart = new Date(Date.now() - 60_000).toISOString();
+      const runStart = await presenceSince(ctx, "runStart", 60_000);
 
       const ask = async (text: string, what: string): Promise<{ readonly first: SlackMessage; readonly anchorTs: string }> => {
         const { ts: anchorTs } = await dm.post(text);
@@ -6358,7 +6398,8 @@ export const SCENARIOS: readonly Scenario[] = [
       const { userId: human, teamId } = await dm.identity();
       const token = factToken("evecard");
       const pageTitle = `OE eve-card ${token}`;
-      const sinceIso = new Date().toISOString();
+      const sinceIso = await presenceSince(ctx, "sinceIso", 0);
+      const eveCardMark = ctx.auditRead ? await auditStoreMark(ctx, "S-EVE-CARD") : undefined;
       let creationAttempted = false;
       let createdReplyText: string | undefined;
       let card: { pendingId: string; org: string; ts: string } | undefined;
@@ -6462,12 +6503,13 @@ export const SCENARIOS: readonly Scenario[] = [
           nativeCards.length === 0,
           `S-EVE-CARD: no DM message since the ask carries eve-native approve buttons (found ${nativeCards.length}: ${JSON.stringify(nativeCards.map((m) => m.ts))})`,
         );
-        const nativeRows = (
+        const nativeRows = rowsAboveStoreMark(
           await ctx.auditRead!({
-            sinceIso,
+            sinceIso: storeMarkPageSince(),
             actions: ["turn.question_bridged", "turn.question_dropped", "turn.native_input_requested", "approval.eve_settled"],
             limit: 1000,
-          })
+          }),
+          eveCardMark ?? 0,
         ).filter((r) => r.action === "approval.eve_settled" || r.detail?.kind === "tool-approval");
         ctx.gate(
           nativeRows.length === 0,
@@ -6488,107 +6530,6 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
   {
-    id: "S-EVE-BRIDGE",
-    proves: ["input_response.routed"],
-    title:
-      "a bridged eve approval settled over TEXT (OPE-1721): a DM connector WRITE parks on eve's `tool-approval`, the unified question bridge posts it as a readable request, a plain `Approve` reply carries eve's optionId back, and the SUSPENDED TURN RESUMES",
-    requires: ["slack", "syntheticDm"],
-    surface: "notion",
-    suite: "core",
-    timeoutMs: 2_400_000,
-    judged: false,
-    run: async (ctx) => {
-      const dm = ctx.dm!;
-      const arming = await watchConnectorArming(armingProbeOf(ctx), NOTION_CONNECTOR);
-      await fenceDmSeat(ctx, "S-EVE-BRIDGE");
-      const { teamId } = await ctx.slack!.identity();
-      const token = factToken("evebridge");
-      const pageTitle = `OE eve-bridge ${token}`;
-      const sinceIso = new Date().toISOString();
-      const { ts: anchorTs } = await dm.post(
-        `create a new Notion page titled "${pageTitle}" with a one-line body that includes the exact token ${token}.`,
-      );
-
-      const asked = await pollUntil(
-        async () => {
-          const [messages, auditRows] = await Promise.all([
-            dm.collectBotMessagesAfter(anchorTs, anchorTs),
-            ctx.auditRead!({ sinceIso, actions: APPROVAL_REQUEST_PROVENANCE_ACTIONS, limit: 1000 }),
-          ]);
-          return approvalRequestForSlackAsk({
-            messages,
-            auditRows,
-            anchorTs,
-            teamId,
-            channelId: dm.channelId,
-            decode: (message) => (message.text.includes(APPROVAL_ANSWER_HINT) ? true : undefined),
-          })?.message;
-        },
-        { timeoutMs: FILE_REPLY_WAIT, what: "the BRIDGED approval request, readable in the DM (the host answer line)" },
-      ).catch(async (e: unknown) => {
-        await arming.recheck();
-        throw e;
-      });
-      ctx.log(`S-EVE-BRIDGE: the bridged approval is readable at ts ${asked.ts}`);
-      ctx.gate(
-        asked.text.includes(APPROVAL_ANSWER_HINT),
-        "S-EVE-BRIDGE: the bridged request carries the host answer line, so the room is told a reply must NAME an option",
-      );
-      ctx.gate(
-        /\bApprove\b/.test(asked.text),
-        "S-EVE-BRIDGE: …and it prints the option the next leg types — a hint over an unprinted vocabulary would be a promise the room cannot keep",
-      );
-
-      const beforeAnswer = new Map<string, string>();
-      for (const m of await dm.collectBotMessagesAfter(anchorTs, anchorTs)) beforeAnswer.set(m.ts, m.text);
-
-      const { ts: answerTs } = await dm.post("Approve");
-      ctx.log(`S-EVE-BRIDGE: answered the bridged approval with "Approve" at ts ${answerTs}`);
-
-      const settled = await pollUntil(
-        async () => {
-          const msgs = await dm.collectBotMessagesAfter(anchorTs, anchorTs);
-          let latest: SlackMessage | undefined;
-          for (const m of msgs) {
-            if (m.ts === asked.ts || m.text.includes(APPROVAL_ANSWER_HINT)) continue;
-            const text = m.text.trim();
-            if (text.length === 0 || isFillerAck(text)) continue;
-            const before = beforeAnswer.get(m.ts);
-            if (before !== undefined && before === m.text) continue;
-            if (!m.text.includes(token)) continue;
-            latest = m;
-          }
-          return latest;
-        },
-        { timeoutMs: FILE_REPLY_WAIT, what: `a substantive bot reply naming ${token}, NEW or EDITED since the typed answer (the resumed turn)` },
-      ).catch(async (e: unknown) => {
-        await arming.recheck();
-        throw e;
-      });
-      await arming.recheck();
-      ctx.log(`S-EVE-BRIDGE: the resumed turn answered at ts ${settled.ts} naming ${token}`);
-      ctx.gate(
-        !/\b(error|exception|traceback)\b/i.test(settled.text),
-        "S-EVE-BRIDGE: the resumed turn reports no error (the typed answer resumed the write rather than failing it)",
-      );
-
-      if (ctx.auditRead) {
-        const rows = await ctx.auditRead({ sinceIso, actions: ["input_response.routed", "connector.op"] });
-        const routed = rows.filter((r) => r.action === "input_response.routed");
-        const withOption = routed.filter((r) => typeof (r.detail as { optionId?: unknown } | undefined)?.optionId === "string");
-        ctx.gate(
-          withOption.length > 0,
-          `S-EVE-BRIDGE: 🔴 an input_response.routed row carries an optionId (${withOption.length} of ${routed.length} routed rows) — eve settles on optionId ALONE, so a routed answer without one DENIES the call`,
-        );
-        ctx.observe(`S-EVE-BRIDGE rows in this leg's window — input_response.routed=${routed.length} · connector.op=${rows.filter((r) => r.action === "connector.op").length}`);
-      } else {
-        ctx.observe("S-EVE-BRIDGE: no audit reader is wired, so the optionId half is UNPROVEN in this run — the reply gate above covers the resume only");
-      }
-
-      await archiveNotionPageOverRest(ctx, pageTitle, "S-EVE-BRIDGE", settled.text);
-    },
-  },
-  {
     id: "S-CONNECT-CARD",
     title:
       "Channel connector card: (A) a 'connect notion here' ask by an ADMIN posts a card carrying BOTH buttons — 'Set API key' (api-key) and 'Connect org account' (service-oauth, the org-subject MCP credential restored at OPE-1914); (B) a forged admin service-oauth click against the ISOLATED e2e-intake fixture issues the dashboard link, asserted via the connector.dashboard_link_issued audit row (the link itself is ephemeral)",
@@ -6605,7 +6546,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const { teamId } = await slack.identity();
       const admin = synthetic.adminUserId;
       const org = synthetic.org;
-      const runStart = new Date(Date.now() - 60_000).toISOString();
+      const runStart = await presenceSince(ctx, "runStart", 60_000);
 
       const { ts: rootTs } = await slack.post(slack.mention("can you connect notion here?"));
       const notionCard = await slack
@@ -6668,7 +6609,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const org = synthetic.org;
       const { teamId } = await connector.identity();
       const channelId = connector.channelId;
-      const runStart = new Date(Date.now() - 60_000).toISOString();
+      const runStart = await presenceSince(ctx, "runStart", 60_000);
 
       const { ts: askTs } = await connector.post(
         connector.mention("please connect our Notion workspace using an API key — show me the option to set it"),
@@ -6790,7 +6731,7 @@ export const SCENARIOS: readonly Scenario[] = [
       }
       const auditRead = ctx.auditRead!;
       const slack = ctx.slack!;
-      const runStart = new Date(Date.now() - 60_000).toISOString();
+      const runStart = await presenceSince(ctx, "runStart", 60_000);
       const kindsOf = (rows: readonly AuditWireEntry[]): string[] => [
         ...new Set(rows.map((e) => String((e.detail as { kind?: unknown } | undefined)?.kind ?? "?"))),
       ];
@@ -6860,17 +6801,8 @@ export const SCENARIOS: readonly Scenario[] = [
               `${not.anchorHuman ? " — pinned by E2E_NOTION_ANCHOR_HUMAN" : ` — DISCOVERED as the newest qualifying of ${choice.considered} comment(s) on the page`}`,
           );
           const discussionId = chosen.discussionId;
-          const replayFrom = new Date(Date.now() - 5_000).toISOString();
-          const replayActions = [
-            "notion.dispatched",
-            "wake.turn_start",
-            "notion.replied",
-            "notion.no_reply",
-            "taint.verdict",
-            "worker.toolset",
-            "delegation.task_started",
-            "delegation.task_settled",
-          ];
+          const replayFrom = await presenceSince(ctx, "replayFrom", 5_000);
+          const replayActions = NOTION_TAINT_REPLAY_ACTIONS;
           const grantRoad = notionTaintGrantRoad(
             await auditRead({ sinceIso: lookbackIso(GRANT_OVERLAP_LOOKBACK_DAYS), limit: GRANT_LIFECYCLE_ROW_LIMIT, actions: GRANT_LIFECYCLE_ACTIONS }),
             {
@@ -7122,7 +7054,7 @@ export const SCENARIOS: readonly Scenario[] = [
 
       try {
         const refA = factToken("tainthttp");
-        const sinceA = new Date(Date.now() - 5_000).toISOString();
+        const sinceA = await presenceSince(ctx, "sinceA", 5_000);
         const { ts: askATs } = await slack.post(
           slack.mention(
             `Please hand this to ONE worker as a SINGLE task — both steps in the same task, never two. Step 1: fetch https://raw.githubusercontent.com/octocat/Hello-World/master/README — the worker MUST really call the fetch tool, not answer from memory, I may have changed the file. Step 2: straight after that fetch, in the same task, call explain_permission for the tool add_routine_rule with unattended set to false — do NOT pass a tainted argument, leave it unset so the tool reports this turn's own real signal, not a simulated one — and return the exact "context:" line it prints. Take as long as you need; when the worker is back, reply to me with that "context:" line verbatim (ref ${refA}).`,
@@ -7184,7 +7116,7 @@ export const SCENARIOS: readonly Scenario[] = [
         }
 
         const refN = factToken("taintclean");
-        const sinceN = new Date(Date.now() - 5_000).toISOString();
+        const sinceN = await presenceSince(ctx, "sinceN", 5_000);
         const { ts: askNTs } = await slack.post(
           slack.mention(`raise this channel's spend cap to $${base + 2}/month (reason: e2e taint route-proof clean control, ref ${refN}).`),
         );
@@ -7220,7 +7152,7 @@ export const SCENARIOS: readonly Scenario[] = [
               `ARM B (github) fixture: ${ctx.prRepo}#${prNumber} is ${shape.repoPrivate ? "PRIVATE" : "PUBLIC"} with ${shape.thirdPartyBodies} non-empty bod(y/ies) ⇒ expecting ${expectTaint ? "TAINTING (kind github present)" : "RELAXATION (kind github absent)"}`,
             );
             const refG = factToken("taintgh");
-            const sinceB = new Date(Date.now() - 5_000).toISOString();
+            const sinceB = await presenceSince(ctx, "sinceB", 5_000);
             const { ts: askGTs } = await slack.post(
               slack.mention(
                 `Please hand this to ONE worker as a SINGLE task — both steps in the same task, never two. Step 1: call get_pr_feedback for pull request #${prNumber} in ${ctx.prRepo} — the worker MUST really call the tool, not answer from memory. Step 2: straight after that fetch, in the same task, call explain_permission for the tool add_routine_rule with unattended set to false — do NOT pass a tainted argument, leave it unset so the tool reports this turn's own real signal, not a simulated one. Reply to me with the exact "context:" line it prints (ref ${refG}).`,
@@ -7320,7 +7252,7 @@ export const SCENARIOS: readonly Scenario[] = [
             notionScratchBlocks.push(blockC);
             ctx.log(`ARM C (notion): appended a fresh page body (block ${blockC}, marker ${markerC}) BEFORE the replay — the page now carries a fact no earlier turn in this generation has summarised.`);
           }
-          const sinceC = new Date().toISOString();
+          const sinceC = await presenceSince(ctx, "sinceC", 0);
           const forgeC = await not.forgeCommentCreated(ctx.targetUrl, anchorHuman, { signed: true });
           ctx.gate(forgeC.status === 200, "ARM C (notion): signed forge-replay of the human anchor comment is acked (200)");
           const rowC = await pollOptional(
@@ -7396,7 +7328,7 @@ export const SCENARIOS: readonly Scenario[] = [
           try {
             const beforeD = new Set((await lin.comments(issueD.id)).map((c) => c.id));
             const refD = factToken("taintlinroute");
-            const sinceD = new Date().toISOString();
+            const sinceD = await presenceSince(ctx, "sinceD", 0);
             const askIdD = await lin.comment(
               issueD.id,
               lin.mention(
@@ -7576,7 +7508,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const auditRead = ctx.auditRead!;
       const github = ctx.github!;
       const slack = ctx.slack!;
-      const sinceIso = new Date(Date.now() - 5_000).toISOString();
+      const sinceIso = await presenceSince(ctx, "sinceIso", 5_000);
       const note = factToken("judgelift");
       const issue = await github.createIssue(`(e2e) S-JUDGE-LIFT-NOTICE ${note}`, `A judge-lift probe for OPE-1902 (${note}). This issue is driven by the e2e pack and is closed on teardown.`);
       try {
@@ -7670,7 +7602,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const slack = ctx.slack!;
       const note = factToken("taintdeny");
       const capValue = 100 + (Math.floor(Date.now() / 1000) % 8_000);
-      const sinceIso = new Date(Date.now() - 5_000).toISOString();
+      const sinceIso = await presenceSince(ctx, "sinceIso", 5_000);
 
       const dbUrlForRotate = process.env.DATABASE_URL;
       if (dbUrlForRotate) {
@@ -7760,7 +7692,7 @@ export const SCENARIOS: readonly Scenario[] = [
         try {
           const [sent, joinRows] = await Promise.all([
             auditRead({ sinceIso, platform: "slack", surface: slack.channelId, actions: [FIRE_ATTRS_SENT_ACTION], limit: 100 }),
-            auditRead({ sinceIso, actions: [WAKE_TURN_START_ACTION, ROUTINE_FIRE_ACTION, REPLY_POST_ACTION, SETTLEMENT_REPORT_POSTED_ACTION], limit: 1000 }),
+            auditRead({ sinceIso, actions: FIRE_REPORT_JOIN_ACTIONS, limit: 1000 }),
           ]);
           join = fireReportJoin([...sent, ...joinRows]);
         } catch (e) {
@@ -7814,7 +7746,7 @@ export const SCENARIOS: readonly Scenario[] = [
           : `S-TAINT-UNATTENDED-DENY: luna habit 7: the failure report dropped the literal "${fireWord}" (not a gate — the report is joined by ids)`,
       );
 
-      const fireSessions = fireReport!.join.sessionIds;
+      const fireSessions = fireSettleSessionIds(fireReport!.join);
       const settleRow = await pollOptional(
         async () =>
           (await auditRead({ sinceIso, actions: [ROUTINE_FIRE_ACTION], limit: 200 }).catch(() => [])).find((r) => {
@@ -7991,10 +7923,11 @@ export const SCENARIOS: readonly Scenario[] = [
         );
       };
 
-      const driveDeclaredArm = async (): Promise<{ sinceIso: string; cardTs: string }> => {
-        const sinceIso = new Date(Date.now() - 5_000).toISOString();
+      const driveDeclaredArm = async (): Promise<{ sinceIso: string; cardTs: string; mark: number }> => {
+        const mark = await auditStoreMark(ctx, "arm B");
+        const sinceIso = await presenceSince(ctx, "sinceIso", 5_000);
         try {
-          return await driveDeclaredArmInner(sinceIso);
+          return { ...(await driveDeclaredArmInner(sinceIso)), mark };
         } finally {
           await retireUnfiredRoutines("B", (r) => r.createdAt >= sinceIso);
         }
@@ -8042,7 +7975,7 @@ export const SCENARIOS: readonly Scenario[] = [
         return { sinceIso, cardTs };
       };
 
-      const seedUndeclaredArm = async (): Promise<{ sinceIso: string }> => {
+      const seedUndeclaredArm = async (): Promise<{ sinceIso: string; mark: number }> => {
         if (opStore === undefined) {
           return ctx.fixtureMissing(
             `S-ROUTINE-CONNECTOR-WRITE arm A: the harness seeds arm A's undeclared routine through the operational store, and no store is wired (${storeNote}). Set DATABASE_URL to the deployment's database — the same URL the window rotate uses.`,
@@ -8053,8 +7986,9 @@ export const SCENARIOS: readonly Scenario[] = [
             `S-ROUTINE-CONNECTOR-WRITE arm A: the harness org "${org}" (E2E_ORG) is not the org arm B's creation card named ("${armBCardOrg}"), so a seeded routine would fire under the wrong partition. Set E2E_ORG to the deployment's org.`,
           );
         }
+        const mark = await auditStoreMark(ctx, "arm A");
         const startMs = Date.now() - 5_000;
-        const sinceIso = new Date(startMs).toISOString();
+        const sinceIso = await presenceSince(ctx, "arm A", 5_000);
         const note = factToken("rcwa");
         const fireWord = distinctFactToken("rcwfxa", [note]);
         const now = new Date();
@@ -8076,11 +8010,14 @@ export const SCENARIOS: readonly Scenario[] = [
         } finally {
           await retireUnfiredRoutines("A", (r) => r.id === routine.id);
         }
-        return { sinceIso };
+        return { sinceIso, mark };
       };
 
-      const connectorRows = async (sinceIso: string) => {
-        const all = await auditRead({ sinceIso, actions: ["connector.refused", "connector.unattended_lift", "approval.requested", "approval.chain"] });
+      const connectorRows = async (arm: { readonly mark: number }) => {
+        const all = rowsAboveStoreMark(
+          await auditRead({ sinceIso: storeMarkPageSince(), actions: ["connector.refused", "connector.unattended_lift", "approval.requested", "approval.chain"] }),
+          arm.mark,
+        );
         return { all, ...splitFenceRows(all, OP), attended: attendedRowsForOp(all, OP) };
       };
 
@@ -8115,7 +8052,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const runArmB = async (): Promise<void> => {
         const b = await driveDeclaredArm();
         await arming.recheck();
-        const rowsB = await connectorRows(b.sinceIso);
+        const rowsB = await connectorRows(b);
         const reachedB = rowsB.refused.length + rowsB.lifted.length + rowsB.otherRefusals.length;
         const roadB = await armRoad("B", b.sinceIso, reachedB, rowsB.attended.length);
         ctx.gate(
@@ -8150,7 +8087,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const runArmA = async (): Promise<void> => {
         const a = await seedUndeclaredArm();
         await arming.recheck();
-        const rowsA = await connectorRows(a.sinceIso);
+        const rowsA = await connectorRows(a);
         const reachedA = rowsA.refused.length + rowsA.lifted.length + rowsA.otherRefusals.length;
         const roadA = await armRoad("A", a.sinceIso, reachedA, rowsA.attended.length);
         ctx.gate(
@@ -8231,7 +8168,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const tapped = process.env[ENV.discordGrantTapped] === "1";
       const threadRecordPath = process.env[ENV.discordGrantThreadFile]?.trim() || DEFAULT_GRANT_THREAD_SINK;
       const token = factToken("dgrant");
-      const sinceIso = new Date(Date.now() - 5_000).toISOString();
+      const sinceIso = await presenceSince(ctx, "sinceIso", 5_000);
 
       const asked = await discord.post(discord.mention(grantAskText(`<@${ownerId}>`, grantPageId!, `e2e grant-tap fixture, ref ${token}`, `discord/${ownerId}`)));
       const threadId = await discord.awaitThread(asked.id, { timeoutMs: 300_000 });
@@ -8453,7 +8390,8 @@ export const SCENARIOS: readonly Scenario[] = [
       const slack = ctx.slack!;
       const { userId } = await slack.identity();
       const token = factToken("dmstop");
-      const sinceIso = new Date(Date.now() - 5_000).toISOString();
+      const sinceIso = await presenceSince(ctx, "sinceIso", 5_000);
+      const runMark = await auditStoreMark(ctx, "S-DM-STOP-GRANT");
       const adminAddress = personAddress("slack", userId);
 
       const awaitRow = async (action: string, what: string, match: (d: Record<string, unknown>) => boolean): Promise<AuditWireEntry> =>
@@ -8484,7 +8422,7 @@ export const SCENARIOS: readonly Scenario[] = [
           `🔴 (hard): the GRANT CARD was refused by the recipient's own stop — a ${DM_REFUSED_ACTION} row carrying plane "credential.grant.card" and boundary "stopped" (${JSON.stringify(refused.detail)})`,
         );
 
-        const askedRows = await auditRead({ sinceIso, actions: ["grant.asked"] });
+        const askedRows = rowsAboveStoreMark(await auditRead({ sinceIso: storeMarkPageSince(), actions: ["grant.asked"] }), runMark);
         ctx.gate(
           askedRows.length === 0,
           `🔴 (hard): NO grant.asked row in this run's window — a refused card must leave no ask alive (found ${String(askedRows.length)}: ${JSON.stringify(askedRows.map((e) => e.detail))})`,
@@ -8527,7 +8465,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const batch = factToken("engaged");
       const answerOf = (text: string): string => withoutMarker(text, batch);
 
-      const mentionFrom = new Date().toISOString();
+      const mentionFrom = await presenceSince(ctx, "mentionFrom", 0);
       const { ts: rootTs } = await slack.post(slack.mention(`what's 12*12? reply with just the number. ref ${batch}`));
       const substantive = (text: string): boolean => replyCarriesSubstance(answerOf(text));
       const first = await slack.awaitThreadReply(rootTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) || !substantive(m.text) });
@@ -8535,7 +8473,7 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.gate(answerOf(first.text).includes("144"), "mention: the reply answers correctly (hard gate: 144, read with the run marker removed)");
       await gateEngagedWake(ctx, { sinceIso: mentionFrom, platform: "slack", surface, leg: "mention", expect: "addressed" });
 
-      const followFrom = new Date().toISOString();
+      const followFrom = await presenceSince(ctx, "followFrom", 0);
       const { ts: followTs } = await slack.post("and what's that plus 6?", rootTs);
       const second = await slack.awaitThreadReply(rootTs, { afterTs: followTs, timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) || !substantive(m.text) });
       ctx.gate(second.ts !== first.ts, "engaged: the plain follow-up drew a FRESH reply with no re-mention");
@@ -8543,7 +8481,7 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.gate(answerOf(second.text).includes("150"), "engaged: the follow-up reply kept the thread's context (hard gate: 150, read with the run marker removed)");
       await gateEngagedWake(ctx, { sinceIso: followFrom, platform: "slack", surface, leg: "engaged follow-up", expect: "thread-follow" });
 
-      const stopFrom = new Date().toISOString();
+      const stopFrom = await presenceSince(ctx, "stopFrom", 0);
       const { ts: stopTs } = await slack.post(ENGAGED_STOP_ASK, rootTs);
       await slack.awaitThreadReply(rootTs, { afterTs: stopTs, timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
       await gateStandDownMarked(ctx, { sinceIso: stopFrom, platform: "slack", anchor: rootTs });
@@ -8555,7 +8493,7 @@ export const SCENARIOS: readonly Scenario[] = [
 
       const idleMarker = factToken("sl-idle");
       await slack.post(`noting for the record: this run's build token is ${idleMarker}. No reply needed.`, rootTs);
-      const catchUpFrom = new Date().toISOString();
+      const catchUpFrom = await presenceSince(ctx, "catchUpFrom", 0);
       const triggerMarker = factToken("sl-trig");
       const { ts: triggerTs } = await slack.post(
         slack.mention(`ref ${triggerMarker} — which build token was posted here while you were not listening? Reply with just the token.`),
@@ -8568,17 +8506,17 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.log(`catch-up: the reply ${caughtUp?.text.includes(idleMarker) ? "REPEATS" : "does not repeat"} the idle-window token (evidence, not a gate)`);
       await gateSeatCatchUp(ctx, { sinceIso: catchUpFrom, platform: "slack", trigger: triggerMarker, caughtUp: idleMarker, stale: [batch], ...(caughtUp ? { replyText: caughtUp.text } : {}) });
 
-      const controlFrom = new Date().toISOString();
+      const controlFrom = await presenceSince(ctx, "controlFrom", 0);
       const { ts: controlTs } = await slack.post(fixtureLine("has anyone seen the release checklist?"));
       const controlReplies = await slack.collectRepliesDuring(controlTs, controlTs, SILENCE_WINDOW);
       ctx.gate(controlReplies.length === 0, "name-drop NEGATIVE CONTROL: a top-level message naming nobody draws no reply");
-      const dropFrom = new Date().toISOString();
+      const dropFrom = await presenceSince(ctx, "dropFrom", 0);
       const { ts: dropTs } = await slack.post(fixtureLine(`has anyone asked ${ENGAGED_NAME} about the release checklist?`));
       const dropReply = await slack.awaitThreadReply(dropTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) || !substantive(m.text) });
       ctx.gate(substantive(dropReply.text), "name-drop: it drew a SUBSTANTIVE reply in the thread the name-drop opened, not a stub");
       await gateEngagedWake(ctx, { sinceIso: dropFrom, platform: "slack", surface, leg: "name-drop", expect: "name-drop" });
 
-      const secondFrom = new Date().toISOString();
+      const secondFrom = await presenceSince(ctx, "secondFrom", 0);
       const { ts: secondTs } = await slack.post(fixtureLine(`separately — does ${ENGAGED_NAME} know who owns the deploy runbook?`));
       const secondReply = await slack.awaitThreadReply(secondTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
       ctx.gate(secondReply.text.trim().length > 0, "second name-drop: it drew its own reply, with substance, in the thread the second message opened");
@@ -8628,7 +8566,7 @@ export const SCENARIOS: readonly Scenario[] = [
       requireAuditRead(ctx);
       const discord = ctx.discordEngaged!;
 
-      const mentionFrom = new Date().toISOString();
+      const mentionFrom = await presenceSince(ctx, "mentionFrom", 0);
       const driven = await discord.post(discord.mention("summarize this channel's topic in one line"));
       const threadId = await discord.awaitThread(driven.id, { timeoutMs: REPLY_WAIT });
       ctx.gate(threadId.length > 0, "mention: an auto-thread opened off the driven message (the wake reached the native path)");
@@ -8637,7 +8575,7 @@ export const SCENARIOS: readonly Scenario[] = [
       await gateEngagedWake(ctx, { sinceIso: mentionFrom, platform: "discord", leg: "mention", expect: "addressed" });
 
       const notCancelNote = (m: DiscordMessage): boolean => !isTurnCancelNote(m.content);
-      const followFrom = new Date().toISOString();
+      const followFrom = await presenceSince(ctx, "followFrom", 0);
       const staleMarker = factToken("dc-stale");
       const followUp = await discord.post(`expand that into two or three sentences. ref ${staleMarker}`, threadId);
       const second = await discord.awaitReplyMatching(threadId, followUp.id, notCancelNote, {
@@ -8653,7 +8591,7 @@ export const SCENARIOS: readonly Scenario[] = [
         seatedChannelWatchRoom: threadId,
       });
 
-      const stopFrom = new Date().toISOString();
+      const stopFrom = await presenceSince(ctx, "stopFrom", 0);
       const stopMsg = await discord.post(ENGAGED_STOP_ASK, threadId);
       await discord.awaitReplyMatching(threadId, stopMsg.id, notCancelNote, {
         timeoutMs: REPLY_WAIT,
@@ -8670,7 +8608,7 @@ export const SCENARIOS: readonly Scenario[] = [
 
       const idleMarker = factToken("dc-idle");
       await discord.post(`noting for the record: this run's build token is ${idleMarker}. No reply needed.`, threadId);
-      const catchUpFrom = new Date().toISOString();
+      const catchUpFrom = await presenceSince(ctx, "catchUpFrom", 0);
       const triggerMarker = factToken("dc-trig");
       const trigger = await discord.post(
         discord.mention(`ref ${triggerMarker} — which build token was posted here while you were not listening? Reply with just the token.`),
@@ -8712,13 +8650,13 @@ export const SCENARIOS: readonly Scenario[] = [
         "Opened by the OPE-1503 addressed-only journey. Closed on teardown.",
       );
       try {
-        const mentionFrom = new Date().toISOString();
+        const mentionFrom = await presenceSince(ctx, "mentionFrom", 0);
         const askId = await github.comment(issue, github.mention(fixtureLine("what's 12*12? reply with just the number")));
         const first = await github.awaitBotReply(issue, askId, { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.body) });
         ctx.gate(first.body.trim().length > 0, "mention: the agent replied on the issue");
         await gateEngagedWake(ctx, { sinceIso: mentionFrom, platform: "github", leg: "mention", expect: "addressed" });
 
-        const followFrom = new Date().toISOString();
+        const followFrom = await presenceSince(ctx, "followFrom", 0);
         const staleMarker = factToken("gh-stale");
         const followId = await github.comment(issue, `and what's that plus 6? ref ${staleMarker}`);
         const second = await github
@@ -8730,14 +8668,14 @@ export const SCENARIOS: readonly Scenario[] = [
         );
         await gateEngagedWake(ctx, { sinceIso: followFrom, platform: "github", leg: "engaged follow-up", expect: "thread-follow" });
 
-        const stopFrom = new Date().toISOString();
+        const stopFrom = await presenceSince(ctx, "stopFrom", 0);
         const stopId = await github.comment(issue, ENGAGED_STOP_ASK);
         await github.awaitBotReply(issue, stopId, { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.body) }).catch(() => undefined);
         await gateStandDownMarked(ctx, { sinceIso: stopFrom, platform: "github" });
 
         const highWater = await auditedSilenceMark(ctx, { platform: "github", liveFrom: mentionFrom });
         const beforeStop = new Set((await github.comments(issue).catch(() => [])).map((c) => c.id).filter((id) => id !== 0));
-        const silenceFrom = new Date().toISOString();
+        const silenceFrom = await presenceSince(ctx, "silenceFrom", 0);
         await github.comment(issue, fixtureLine("and what's 5 plus 5?"));
         await sleep(SILENCE_WINDOW);
         const after = await github.comments(issue);
@@ -8747,7 +8685,7 @@ export const SCENARIOS: readonly Scenario[] = [
         const idleMarker = factToken("gh-idle");
         await github.comment(issue, `noting for the record: this run's build token is ${idleMarker}. No reply needed.`);
         await sleep(2_000);
-        const catchUpFrom = new Date().toISOString();
+        const catchUpFrom = await presenceSince(ctx, "catchUpFrom", 0);
         const triggerMarker = factToken("gh-trig");
         const triggerId = await github.comment(
           issue,
@@ -8779,14 +8717,14 @@ export const SCENARIOS: readonly Scenario[] = [
       const issue = await linear.createIssue(`e2e engaged-seam probe ${factToken("eng")}`);
       try {
         const seen = new Set<string>();
-        const mentionFrom = new Date().toISOString();
+        const mentionFrom = await presenceSince(ctx, "mentionFrom", 0);
         await linear.comment(issue.id, linear.mention(fixtureLine("what's 12*12? reply with just the number")));
         const first = await linear.awaitAppReply(issue.id, seen, { timeoutMs: REPLY_WAIT });
         seen.add(first.id);
         ctx.gate(first.body.trim().length > 0, "mention: the agent replied on the issue");
         await gateEngagedWake(ctx, { sinceIso: mentionFrom, platform: "linear", leg: "mention", expect: "addressed" });
 
-        const followFrom = new Date().toISOString();
+        const followFrom = await presenceSince(ctx, "followFrom", 0);
         const staleMarker = factToken("lin-stale");
         await linear.comment(issue.id, `and what's that plus 6? ref ${staleMarker}`);
         const second = await linear.awaitAppReply(issue.id, seen, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
@@ -8797,14 +8735,14 @@ export const SCENARIOS: readonly Scenario[] = [
         );
         await gateEngagedWake(ctx, { sinceIso: followFrom, platform: "linear", leg: "engaged follow-up", expect: "thread-follow" });
 
-        const stopFrom = new Date().toISOString();
+        const stopFrom = await presenceSince(ctx, "stopFrom", 0);
         await linear.comment(issue.id, ENGAGED_STOP_ASK);
         await linear.awaitAppReply(issue.id, seen, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
         await gateStandDownMarked(ctx, { sinceIso: stopFrom, platform: "linear" });
 
         const highWater = await auditedSilenceMark(ctx, { platform: "linear", liveFrom: mentionFrom });
         const beforeStop = new Set((await linear.comments(issue.id).catch(() => [])).map((c) => c.id).filter((id) => id.length > 0));
-        const silenceFrom = new Date().toISOString();
+        const silenceFrom = await presenceSince(ctx, "silenceFrom", 0);
         await linear.comment(issue.id, fixtureLine("and what's 5 plus 5?"));
         await sleep(SILENCE_WINDOW);
         const after = await linear.comments(issue.id);
@@ -8813,7 +8751,7 @@ export const SCENARIOS: readonly Scenario[] = [
 
         const idleMarker = factToken("lin-idle");
         await linear.comment(issue.id, `noting for the record: this run's build token is ${idleMarker}. No reply needed.`);
-        const catchUpFrom = new Date().toISOString();
+        const catchUpFrom = await presenceSince(ctx, "catchUpFrom", 0);
         const triggerMarker = factToken("lin-trig");
         await linear.comment(issue.id, linear.mention(`ref ${triggerMarker} — which build token was posted here while you were not listening? Reply with just the token.`));
         const caughtUp = await linear.awaitAppReply(issue.id, seen, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
@@ -8840,7 +8778,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const blockId = await notion.appendParagraphBlock(`e2e engaged-seam probe ${factToken("eng")}`);
       let foreignBlockId: string | undefined;
       try {
-        const mentionFrom = new Date().toISOString();
+        const mentionFrom = await presenceSince(ctx, "mentionFrom", 0);
         const opened = await notion.createBlockDiscussion(blockId, fixtureLine(`${ENGAGED_NAME} — what's 12*12? reply with just the number`));
         const seen = new Set<string>();
         const first = await notion.awaitBotReplyOnBlock(blockId, opened.discussionId, mentionFrom, { timeoutMs: REPLY_WAIT, seen }).catch(() => undefined);
@@ -8851,7 +8789,7 @@ export const SCENARIOS: readonly Scenario[] = [
         if (first) seen.add(first.id);
         await gateEngagedWake(ctx, { sinceIso: mentionFrom, platform: "notion", leg: "name-drop", expect: "addressed" });
 
-        const followFrom = new Date().toISOString();
+        const followFrom = await presenceSince(ctx, "followFrom", 0);
         const staleMarker = factToken("not-stale");
         await notion.replyToDiscussion(opened.discussionId, `and what's that plus 6? ref ${staleMarker}`);
         const second = await notion
@@ -8865,7 +8803,7 @@ export const SCENARIOS: readonly Scenario[] = [
         await gateEngagedWake(ctx, { sinceIso: followFrom, platform: "notion", leg: "engaged follow-up", expect: "thread-follow" });
 
         await sleep(msToNextMinuteBoundary(Date.now()));
-        const stopFrom = new Date().toISOString();
+        const stopFrom = await presenceSince(ctx, "stopFrom", 0);
         await notion.replyToDiscussion(opened.discussionId, ENGAGED_STOP_ASK);
         await notion
           .awaitBotReplyIn(opened.discussionId, stopFrom, { timeoutMs: REPLY_WAIT, seen, skip: (c) => isPendingWorkHandoff(c.text) })
@@ -8874,7 +8812,7 @@ export const SCENARIOS: readonly Scenario[] = [
 
         const highWater = await auditedSilenceMark(ctx, { platform: "notion", liveFrom: mentionFrom });
         const beforeStop = new Set((await notion.blockComments(blockId).catch(() => [])).map((c) => c.id));
-        const silenceFrom = new Date().toISOString();
+        const silenceFrom = await presenceSince(ctx, "silenceFrom", 0);
         await notion.replyToDiscussion(opened.discussionId, fixtureLine("and what's 5 plus 5?"));
         await sleep(SILENCE_WINDOW);
         const after = await notion.blockComments(blockId);
@@ -8890,7 +8828,7 @@ export const SCENARIOS: readonly Scenario[] = [
         const idleMarker = factToken("not-idle");
         await notion.replyToDiscussion(opened.discussionId, `noting for the record: this run's build token is ${idleMarker}. No reply needed.`);
         await sleep(msToNextMinuteBoundary(Date.now()));
-        const catchUpFrom = new Date().toISOString();
+        const catchUpFrom = await presenceSince(ctx, "catchUpFrom", 0);
         const triggerMarker = factToken("not-trig");
         await notion.replyToDiscussion(
           opened.discussionId,

@@ -52,10 +52,10 @@ const leg = (id: string, status: BoardLeg["status"], over: Partial<BoardLeg> = {
   ok(
     suspendedGithub?.requirement === "NON_LAUNCH" &&
       suspendedGithub.equivalents === undefined &&
-      suspendedGithub.reason.includes("no GitHub-reachable Eve-native tool-approval operation") &&
+      suspendedGithub.reason.includes("no connector write that raises an op.connector card is reachable from a GitHub seat") &&
       suspendedGithub.reason.includes("S-GITHUB-NOTION-REST remains REQUIRED") &&
       suspendedGithub.reason.includes("is not an equivalent"),
-    "the pilot visibly defers only the unsupported GitHub Eve-native suspension GAP and claims no shared-REST equivalence",
+    "the pilot visibly defers only the unsupported GitHub connector-write card GAP and claims no shared-REST equivalence",
   );
   const stillRequired = [
     "J-GH",

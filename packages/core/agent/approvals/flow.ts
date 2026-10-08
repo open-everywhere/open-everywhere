@@ -290,6 +290,30 @@ function dedupIdentity(argsJson: string, proseArgs: readonly string[] | undefine
   return JSON.stringify(Object.fromEntries(Object.entries(parsed as Record<string, unknown>).filter(([k]) => !proseArgs.includes(k))));
 }
 
+async function closePendingAction(
+  store: ReturnType<typeof getOperationalStore>,
+  org: string,
+  row: Pick<PendingActionRow, "id" | "kind" | "argsJson">,
+  status: "rejected" | "expired",
+  decidedBy: string,
+  decidedAt: string,
+): Promise<boolean> {
+  const won = await store.decidePendingAction(org, row.id, status, decidedBy, decidedAt);
+  if (won) await applyArgsAfterClose(store, org, row);
+  return won;
+}
+
+async function applyArgsAfterClose(store: ReturnType<typeof getOperationalStore>, org: string, row: Pick<PendingActionRow, "id" | "kind" | "argsJson">): Promise<void> {
+  const close = actionKind(row.kind)?.argsAfterClose;
+  if (close === undefined) return;
+  try {
+    const next = JSON.stringify(close(JSON.parse(row.argsJson) as unknown));
+    if (next !== row.argsJson) await store.rewriteDecidedPendingActionArgs(org, row.id, next);
+  } catch (err) {
+    console.warn(`[open-everywhere:approvals] could not clear the closed row ${row.id}'s args: ${String(err)}`);
+  }
+}
+
 function uuidFromDigest(hex: string): string {
   const variant = ((parseInt(hex.slice(16, 17), 16) & 0x3) | 0x8).toString(16);
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
@@ -587,7 +611,8 @@ export async function requestApproval(
   }
 
   const rejectedSince = new Date(now.getTime() - approvalTtlHours() * 3_600_000).toISOString();
-  const priorRejection = await findPriorRejection(store, input, kindDef, identity, rejectedSince);
+  const closedIdentity = kindDef.argsAfterClose === undefined ? identity : dedupIdentity(JSON.stringify(kindDef.argsAfterClose(input.args ?? null)), kindDef.proseArgs);
+  const priorRejection = await findPriorRejection(store, input, kindDef, [identity, closedIdentity], rejectedSince);
 
   const decisionAuthority = deps.authorityContext === undefined ? undefined : await captureApprovalDecisionAuthority(deps.authorityContext);
 
@@ -641,7 +666,7 @@ export async function requestApproval(
     try {
       await rememberApprovalDecisionAuthority(row.org, row.id, row.expiresAt, decisionAuthority);
     } catch (err) {
-      await store.decidePendingAction(row.org, row.id, "expired", "system", new Date().toISOString()).catch(() => {});
+      await closePendingAction(store, row.org, row, "expired", "system", new Date().toISOString()).catch(() => false);
       await appendAudit({
         ...whereFromScope(row.org, row.scopeKey),
         principalId: row.requestedBy,
@@ -668,7 +693,7 @@ export async function requestApproval(
   }
 
   if (!messageTs) {
-    await store.decidePendingAction(input.org, row.id, "expired", "system", new Date().toISOString()).catch(() => {});
+    await closePendingAction(store, input.org, row, "expired", "system", new Date().toISOString()).catch(() => false);
     await appendAudit({
       ...whereFromScope(input.org, input.scopeKey),
       principalId: input.requestedBy,
@@ -700,7 +725,7 @@ async function findPriorRejection(
   store: ReturnType<typeof getOperationalStore>,
   input: RequestApprovalInput,
   kindDef: Pick<ActionKind, "proseArgs">,
-  identity: string,
+  identities: readonly string[],
   sinceIso: string,
 ): Promise<PriorRejection | undefined> {
   const rows = await Promise.resolve()
@@ -714,7 +739,7 @@ async function findPriorRejection(
       r.decidedBy !== null &&
       r.decidedAt !== null &&
       r.decidedAt >= sinceIso &&
-      dedupIdentity(r.argsJson, kindDef.proseArgs) === identity,
+      identities.includes(dedupIdentity(r.argsJson, kindDef.proseArgs)),
   );
   return match === undefined ? undefined : { decidedBy: match.decidedBy as string, decidedAt: match.decidedAt as string };
 }
@@ -1160,7 +1185,7 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
 
   const nowIso = new Date().toISOString();
   if (!contradicting && Date.parse(row.expiresAt) <= Date.now()) {
-    const cas = await store.decidePendingAction(input.org, row.id, "expired", "system", nowIso);
+    const cas = await closePendingAction(store, input.org, row, "expired", "system", nowIso);
     if (!cas) return { outcome: "expired-race" };
     const expiredRow: PendingActionRow = { ...row, status: "expired", decidedBy: "system", decidedAt: nowIso };
     await appendAudit({
@@ -1221,6 +1246,7 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
   const summaryLines = summaryLinesFor(decidedRow);
 
   if (status === "rejected") {
+    await applyArgsAfterClose(store, input.org, row);
     await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.rejected", detail: { id: row.id, kind: row.kind, ...venue } });
     emitTelemetry("oe.feature.used", { "oe.feature": "approval_decided", "oe.outcome": "rejected" });
     let outcomeLine = "rejected";
@@ -1305,7 +1331,7 @@ export async function sweepExpiredPendings(org: string, now: Date = new Date(), 
   let count = 0;
   for (const row of expired) {
     try {
-      const won = await store.decidePendingAction(org, row.id, "expired", "system", nowIso);
+      const won = await closePendingAction(store, org, row, "expired", "system", nowIso);
       if (!won) continue;
       await appendAudit({
         ...whereFromScope(org, row.scopeKey),
@@ -1361,7 +1387,7 @@ function isOwnDmSeatToken(token: string, surfaceKey: string): boolean {
   return isDmAnchorWindowToken(token) && dmAnchorSurfaceForToken(token) === surfaceKey;
 }
 
-async function decisionWakeSeatFor(org: string, surfaceKey: string): Promise<{ readonly domainName: string; readonly token: string } | null> {
+async function decisionWakeSeatFor(org: string, surfaceKey: string, opts: { readonly dmOnly?: boolean } = {}): Promise<{ readonly domainName: string; readonly token: string } | null> {
   const store = getOperationalStore();
   let dmKey: { readonly domainName: string; readonly registryKey: string } | undefined;
   try {
@@ -1373,6 +1399,7 @@ async function decisionWakeSeatFor(org: string, surfaceKey: string): Promise<{ r
     const dm = await store.getChannelSession(org, dmKey.registryKey).catch(() => null);
     if (dm) return isOwnDmSeatToken(dm.token, surfaceKey) ? { domainName: dmKey.domainName, token: dm.token } : null;
   }
+  if (opts.dmOnly) return null;
   let grain: ReturnType<typeof supervisorGrainFor>;
   try {
     grain = supervisorGrainFor(surfaceKey, getConfig().loadDomains());
@@ -1382,6 +1409,17 @@ async function decisionWakeSeatFor(org: string, surfaceKey: string): Promise<{ r
   if (!grainUsesUnifiedWindow(grain) || grain.domainName === undefined) return null;
   const session = await store.getChannelSession(org, grain.registryKey).catch(() => null);
   return session ? { domainName: grain.domainName, token: session.token } : null;
+}
+
+function armedCallReplayOf(row: PendingActionRow): { replay?: { connection: string; tool: string } } {
+  const kindDef = actionKind(row.kind);
+  if (kindDef?.approvalArmsCall !== true || kindDef.armedCallReplay === undefined) return {};
+  try {
+    const target = kindDef.armedCallReplay(JSON.parse(row.argsJson));
+    return target === undefined ? {} : { replay: { connection: target.connection, tool: target.tool } };
+  } catch {
+    return {};
+  }
 }
 
 export async function wakeWindowOnDecision(
@@ -1401,10 +1439,13 @@ export async function wakeWindowOnDecision(
   const nowIso = (deps.now ?? (() => new Date().toISOString()))();
 
   const authority = await readApprovalDecisionAuthority(input.row.org, input.row.id);
+  if (isDiscordDmOrigin(input.origin) && !(authority && isDiscordDmOrigin(authority.origin) && authority.origin.channelId === input.origin.channelId && authority.surfaceKey === input.surfaceKey)) {
+    return false;
+  }
   const surfaceKey = authority?.surfaceKey ?? input.surfaceKey;
   const origin = authority?.origin ?? input.origin;
 
-  const seat = await decisionWakeSeatFor(input.row.org, surfaceKey);
+  const seat = await decisionWakeSeatFor(input.row.org, surfaceKey, { dmOnly: isDiscordDmOrigin(origin) });
   if (!seat) return false;
   const { domainName } = seat;
 
@@ -1420,6 +1461,7 @@ export async function wakeWindowOnDecision(
       pendingId: input.row.id,
       ...(seatTokenForwardsWork(seat.token) ? { forwardsWork: true } : {}),
       ...(actionKind(input.row.kind)?.approvalArmsCall === true ? { armsCall: true } : {}),
+      ...armedCallReplayOf(input.row),
     },
     nowIso,
   );
@@ -1456,11 +1498,27 @@ function slackDecisionWakeTarget(row: PendingActionRow, teamId: string | undefin
 }
 
 export function discordDecisionWakeTarget(row: PendingActionRow, guildId: string | undefined): { surfaceKey: string; origin: UnifiedWakeOrigin } | null {
-  if (!guildId) return null;
-  return {
-    surfaceKey: `discord/${guildId}/${row.channelId}`,
-    origin: { platform: "discord", channelId: row.channelId, guildId, ...(row.messageTs ? { messageId: row.messageTs } : {}) },
-  };
+  if (guildId) {
+    return {
+      surfaceKey: `discord/${guildId}/${row.channelId}`,
+      origin: { platform: "discord", channelId: row.channelId, guildId, ...(row.messageTs ? { messageId: row.messageTs } : {}) },
+    };
+  }
+  const dmSurfaceKey = discordDmCardSurfaceKey(row);
+  if (!dmSurfaceKey) return null;
+  return { surfaceKey: dmSurfaceKey, origin: { platform: "discord", channelId: row.channelId, dm: true } };
+}
+
+function isDiscordDmOrigin(origin: UnifiedWakeOrigin): origin is Extract<UnifiedWakeOrigin, { readonly platform: "discord"; readonly dm: true }> {
+  return origin.platform === "discord" && "dm" in origin && origin.dm === true;
+}
+
+function discordDmCardSurfaceKey(row: PendingActionRow): string | undefined {
+  const parts = row.postedTo?.split("/");
+  if (!parts || parts.length !== 3) return undefined;
+  const [platform, workspace, channel] = parts;
+  if (platform !== "discord" || !workspace || !row.channelId || channel !== row.channelId) return undefined;
+  return row.postedTo ?? undefined;
 }
 
 export function postDiscordDecisionNotice(row: PendingActionRow, text: string): Promise<unknown> {

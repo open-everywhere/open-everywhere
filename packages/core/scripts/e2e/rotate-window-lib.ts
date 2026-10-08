@@ -186,6 +186,8 @@ export async function checkOrgAllowed(
   };
 }
 
+export const DEFAULT_WAIT_IDLE_SECONDS = 600;
+
 export interface ParsedDomainTarget {
   readonly kind: "domain";
   readonly org: string;
@@ -234,11 +236,11 @@ export function parseRotateArgs(argvIn: readonly string[], env: { E2E_ORG?: stri
 
   const waitFlag = takeValueFlag(argv, "--wait-idle");
   if (waitFlag.error) return { ok: false, error: `${waitFlag.error} (seconds to wait for the live generation to owe no job)` };
-  let waitIdleMs: number | undefined;
+  let waitIdleMs: number | undefined = DEFAULT_WAIT_IDLE_SECONDS * 1000;
   if (waitFlag.value !== undefined) {
     const seconds = Number(waitFlag.value);
     if (!Number.isFinite(seconds) || seconds < 0 || !/^\d+$/.test(waitFlag.value)) return { ok: false, error: `--wait-idle takes a whole number of seconds — got "${waitFlag.value}"` };
-    waitIdleMs = seconds * 1000;
+    waitIdleMs = seconds === 0 ? undefined : seconds * 1000;
   }
   const wait = waitIdleMs !== undefined ? { waitIdleMs } : {};
 
@@ -340,6 +342,6 @@ export function generationNotIdleMessage(registryKey: string, r: Extract<Generat
   return (
     `refusing to rotate ${registryKey}: the live generation ${r.token} still owes ${r.owed.length} job(s) after ${Math.round(r.waitedMs / 1000)}s ` +
     `(${r.owed.slice(0, 8).join(", ")}${r.owed.length > 8 ? ", …" : ""}). A rotation now sends their results to a session that never saw the ask. ` +
-    "Wait longer, or rotate with no --wait-idle to accept that."
+    "Wait longer (--wait-idle <seconds>), or pass --wait-idle 0 to rotate anyway."
   );
 }

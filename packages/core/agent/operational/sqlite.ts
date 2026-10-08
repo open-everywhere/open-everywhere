@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Routine } from "../routines/routine.js";
-import { asSurfaceMode, auditSurfaceMode, auditReadOrg, likePrefixPattern, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type ChannelSessionRuntimeStamp, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
+import { asSurfaceMode, auditSurfaceMode, auditReadOrg, likePrefixPattern, argKeyNeedle, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type ChannelSessionRuntimeStamp, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
 import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn, grantRefundTurnOrdinal } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
@@ -3046,6 +3046,23 @@ export const sqliteOperationalStore: OperationalStore = {
       .prepare("UPDATE pending_actions SET status = ?, decided_by = ?, decided_at = ? WHERE org_id = ? AND id = ? AND status = 'pending'")
       .run(status, decidedBy, decidedAt, org, id);
     return info.changes > 0;
+  },
+
+  async rewriteDecidedPendingActionArgs(org, id, argsJson) {
+    const info = getDb()
+      .prepare("UPDATE pending_actions SET args_json = ? WHERE org_id = ? AND id = ? AND status <> 'pending'")
+      .run(argsJson, org, id);
+    return info.changes > 0;
+  },
+
+  async listDecidedPendingActionsWithArg(org, kind, argKey) {
+    const rows = getDb()
+      .prepare(
+        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at
+         FROM pending_actions WHERE org_id = ? AND kind = ? AND status <> 'pending' AND instr(args_json, ?) > 0 ORDER BY decided_at ASC`,
+      )
+      .all(org, kind, argKeyNeedle(argKey)) as PendingActionSqlRow[];
+    return rows.map((r) => pendingActionFromRow(org, r));
   },
 
   async setSessionApproval(row) {

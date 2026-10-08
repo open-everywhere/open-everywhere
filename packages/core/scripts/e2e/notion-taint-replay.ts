@@ -236,9 +236,12 @@ export function notionTaintReplayEvidence(rows: readonly AuditWireEntry[], input
   const lifecycle = rows.find(
     (row) => (row.action === "notion.replied" || row.action === "notion.no_reply") && str(detail(row).sessionId) === sessionId,
   );
+  const forwarded = forwardedWorkers(rows, wakeId);
+  const forwardedIds = new Set(forwarded.map((f) => f.worker));
   const attributed = (row: AuditWireEntry): boolean => {
     const d = detail(row);
-    return row.action === "taint.verdict" && (str(d.sessionId) === sessionId || str(d.parentSessionId) === sessionId);
+    const session = str(d.sessionId);
+    return row.action === "taint.verdict" && (session === sessionId || str(d.parentSessionId) === sessionId || (session !== undefined && forwardedIds.has(session)));
   };
   const verdicts = rows.filter(attributed);
   const orgRoad = verdicts.find((row) => detail(row).kind === "notion");
@@ -256,7 +259,7 @@ export function notionTaintReplayEvidence(rows: readonly AuditWireEntry[], input
         ? ` ${lentCandidates.length} \`connector\` verdict row(s) labelled [${[...new Set(lentCandidates.map((row) => str(detail(row).label) ?? "unlabelled"))].join(", ")}] ARE attributed to this turn — ` +
           `${input.grantRoad ? input.grantRoad.reason : "this join was given no lent-road admission to judge them against"}`
         : "";
-    const workerSessionIds = [
+    const seatWorkers = [
       ...new Set(
         rows
           .filter((row) => row.action === "worker.toolset" && str(detail(row).parentSession) === sessionId)
@@ -264,6 +267,7 @@ export function notionTaintReplayEvidence(rows: readonly AuditWireEntry[], input
           .filter((id): id is string => id !== undefined),
       ),
     ];
+    const workerSessionIds = [...new Set([...seatWorkers, ...forwarded.map((f) => f.worker)])];
     const turnId = str(detail(turnStart).turnId);
     return {
       ok: false,
@@ -275,7 +279,7 @@ export function notionTaintReplayEvidence(rows: readonly AuditWireEntry[], input
         turnStart,
         wakeId,
         ...(lifecycle ? { lifecycle } : {}),
-        settlements: workerSettlements(rows, sessionId, workerSessionIds),
+        settlements: { ...workerSettlements(rows, sessionId, seatWorkers), ...forwardedSettlements(rows, forwarded) },
       },
       reason:
         `the replay's turn ran (session ${sessionId}) but wrote no \`notion\` taint.verdict row attributed to it and no admitted lent-tool row. ` +
@@ -314,6 +318,61 @@ function workerSettlements(rows: readonly AuditWireEntry[], seat: string, worker
       ? rows.find((row) => row.action === "delegation.task_settled" && str(detail(row).session) === seat && str(detail(row).task) === task)
       : undefined;
     out[worker] = { ...(task ? { task } : {}), ...(settle ? { settle } : {}) };
+  }
+  return out;
+}
+
+export const NOTION_TAINT_REPLAY_ACTIONS: readonly string[] = [
+  "notion.dispatched",
+  "wake.turn_start",
+  "notion.replied",
+  "notion.no_reply",
+  "taint.verdict",
+  "worker.toolset",
+  "work.forwarded",
+  "delegation.task_started",
+  "delegation.task_settled",
+];
+
+export interface NotionTaintForwardedWorker {
+  readonly worker: string;
+  readonly workSession: string;
+  readonly task: string;
+}
+
+export function forwardedWorkers(rows: readonly AuditWireEntry[], wakeId: string): readonly NotionTaintForwardedWorker[] {
+  const requests = new Set(
+    rows.flatMap((row) => {
+      if (row.action !== "work.forwarded" || str(detail(row).wakeId) !== wakeId) return [];
+      const request = str(detail(row).requestId);
+      return request ? [request] : [];
+    }),
+  );
+  const out: NotionTaintForwardedWorker[] = [];
+  for (const started of rows) {
+    if (started.action !== "delegation.task_started") continue;
+    const sd = detail(started);
+    const request = str(sd.request);
+    const workSession = str(sd.session);
+    const call = str(sd.call);
+    const task = str(sd.task);
+    if (!request || !requests.has(request) || !workSession || !call || !task) continue;
+    for (const toolset of rows) {
+      if (toolset.action !== "worker.toolset") continue;
+      const td = detail(toolset);
+      const worker = str(td.worker);
+      if (!worker || str(td.parentSession) !== workSession || str(td.parentCallId) !== call) continue;
+      if (!out.some((f) => f.worker === worker)) out.push({ worker, workSession, task });
+    }
+  }
+  return out;
+}
+
+function forwardedSettlements(rows: readonly AuditWireEntry[], forwarded: readonly NotionTaintForwardedWorker[]): Record<string, NotionTaintWorkerSettlement> {
+  const out: Record<string, NotionTaintWorkerSettlement> = {};
+  for (const f of forwarded) {
+    const settle = rows.find((row) => row.action === "delegation.task_settled" && str(detail(row).session) === f.workSession && str(detail(row).task) === f.task);
+    out[f.worker] = { task: f.task, ...(settle ? { settle } : {}) };
   }
   return out;
 }

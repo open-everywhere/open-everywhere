@@ -849,6 +849,32 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   await seedRejected("p-2071-fresh", "slack/T2071/CFRESH", "CFRESH", freshAt);
   const inside = await propose("Inside the TTL.", {}, { scopeKey: "slack/T2071/CFRESH", channelId: "CFRESH" });
   ok(inside.priorRejection?.decidedBy === "U_OLD_ADMIN" && inside.priorRejection.decidedAt === freshAt, "OPE-2071 CONTROL: the same seeded reject just INSIDE the TTL is reported");
+
+  const connectorArgs = (input: Record<string, unknown>) => ({
+    org: "default",
+    scopeKey: "slack/T2071/CCONN",
+    tool: "notion__create_page",
+    connection: "notion",
+    grain: "call",
+    sessionKey: "oe-grant:slack/T2071/CCONN:thread",
+    memoKind: `connector.approved:notion__create_page#${JSON.stringify(input).length}`,
+    inputPreview: JSON.stringify(input),
+    input,
+    requestedBy: "U_REQUESTER",
+  });
+  const proposeConnector = (input: Record<string, unknown>) =>
+    requestApproval(
+      { org: "default", kind: "op.connector", args: connectorArgs(input), scopeKey: "slack/T2071/CCONN", requestedBy: "U_REQUESTER", channelId: "CCONN", chain: { unattended: false } },
+      { post },
+    );
+  const connFirst = await proposeConnector({ title: "Q3 plan" });
+  await handleApprovalPayload(payloadFor(`oe_approval:reject:${connFirst.id}`, { user: "U_ORG_ADMIN", channel: "CCONN", ts: "2390.0" }), { post });
+  const connRejected = await store.getPendingAction("default", connFirst.id);
+  ok(connRejected?.status === "rejected" && !connRejected.argsJson.includes('"input":'), "OPE-2390 fixture: the rejected connector card no longer stores its input");
+  const connAgain = await proposeConnector({ title: "Q3 plan" });
+  ok(connAgain.priorRejection?.decidedBy === "U_ORG_ADMIN", `🔴 OPE-2390: the same connector proposal after a reject still reports it (${JSON.stringify(connAgain.priorRejection)})`);
+  const connOther = await proposeConnector({ title: "Q4 plan!" });
+  ok(connOther.priorRejection === undefined, "OPE-2390 NEGATIVE CONTROL: a connector proposal with a different input reports no prior rejection");
 }
 
 {
@@ -1424,6 +1450,32 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
     ok(memo === null, "decision wake (op.connector): a rejected card writes no one-call memo, so nothing can run");
     const approvedMemo = await store.getSessionApproval("default", `conv:${DM_SURFACE}`, "connector-op:p-dm-op-approve", new Date().toISOString());
     ok(approvedMemo !== null, "decision wake (op.connector): positive control — the approved card wrote its one-call memo");
+
+    const storedRow = (id: string) => {
+      const r = opRow(id);
+      return { ...r, argsJson: JSON.stringify({ ...JSON.parse(r.argsJson), input: { title: "T", allow_async: false } }) };
+    };
+    await store.addPendingAction(storedRow("p-dm-op-replay"));
+    wakes.length = 0;
+    await handleApprovalPayload(dmPayload("oe_approval:approve:p-dm-op-replay"), { post, decisionWake });
+    const replayMsg = wakes[0]?.message ?? "";
+    ok(wakes.length === 1 && replayMsg.includes("HAS NOT RUN"), "decision wake (op.connector replay): an APPROVE emits one wake that says the write has NOT run");
+    ok(
+      replayMsg.includes("`connection` set to `notion`, `tool` set to `notion-create-pages`, and `input` set to an object whose ONLY key is `oe_approved_card`, with the card id `p-dm-op-replay` as its value"),
+      `decision wake (op.connector replay): the wake names the stored call's target and the card id (${replayMsg.slice(0, 400)})`,
+    );
+    ok(!replayMsg.includes("call the op again with exactly the same input"), "decision wake (op.connector replay): the wake never asks for a rebuilt call");
+    ok(!opMsg.includes("oe_approved_card"), "decision wake (op.connector): control — a card with no stored input names no replay");
+
+    await store.addPendingAction(storedRow("p-dm-op-reject-stored"));
+    await handleApprovalPayload(dmPayload("oe_approval:reject:p-dm-op-reject-stored"), { post, decisionWake });
+    const rejectedStored = await store.getPendingAction("default", "p-dm-op-reject-stored");
+    const rejectedArgs = JSON.parse(rejectedStored?.argsJson ?? "{}") as Record<string, unknown>;
+    ok(rejectedStored?.status === "rejected", "op.connector retention: fixture — the click rejected the stored-input card");
+    ok(!("input" in rejectedArgs) && rejectedArgs["inputCleared"] === true, `🔴 op.connector retention: a REJECTED card no longer stores its input (${rejectedStored?.argsJson})`);
+    ok(rejectedArgs["inputPreview"] === '{"title":"T"}' && rejectedArgs["memoKind"] === "connector-op:p-dm-op-reject-stored", "op.connector retention: the rejected card keeps its preview and memo kind for audit");
+    const approvedStored = JSON.parse((await store.getPendingAction("default", "p-dm-op-replay"))?.argsJson ?? "{}") as Record<string, unknown>;
+    ok("input" in approvedStored && approvedStored["inputCleared"] === undefined, "op.connector retention: NEGATIVE CONTROL — an APPROVED card that has not replayed keeps its input");
   } finally {
     overrideSettingsForTest({ window: { topology: false } });
   }

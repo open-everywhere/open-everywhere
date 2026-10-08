@@ -612,6 +612,95 @@ const store = getOperationalStore();
     ok(notices.length === 1 && notices[0]!.rowId === "dw-dm", "decision feedback: the notice still posts beside the card on a DM-context decide");
     await store.clearSpendLimit("default", "discord/G1/C_WIN", "surface");
 
+    const authorityKey = (id: string) => `approval-decision-authority:${id}`;
+    const seedAuthority = (id: string, a: Record<string, unknown>) =>
+      store.putTaskResult("default", authorityKey(id), JSON.stringify(a), new Date().toISOString(), 24 * 3600 * 1000);
+    const dmAuthority = (surfaceKey: string, channelId: string) => ({
+      binding: { org: "default", platform: "discord", workspace: "U_ORG_ADMIN", surface: channelId, mode: "dm", visibility: "private", trust: "internal", target: { channelId } },
+      origin: { platform: "discord", channelId, dm: true },
+      surfaceKey,
+      requester: { kind: "requester", principalId: "U_ORG_ADMIN" },
+      nonMemberWake: false,
+    });
+    const guildAuthority = {
+      binding: { org: "default", platform: "discord", workspace: "G1", surface: "C_WIN", mode: "channel", visibility: "public", trust: "internal", target: { channelId: "C_WIN", guildId: "G1" } },
+      origin: { platform: "discord", channelId: "C_WIN", guildId: "G1" },
+      surfaceKey: "discord/G1/C_WIN",
+      requester: { kind: "requester", principalId: "U_ORG_ADMIN" },
+      nonMemberWake: false,
+    };
+    const { dmWindowRegistryKey } = await import("@open-everywhere/core/agent/channels/unified-supervisor.js");
+    const { discordDecisionWakeTarget } = await import("@open-everywhere/core/agent/approvals/flow.js");
+    const DM_SURFACE = "discord/U_ORG_ADMIN/D_DMSEAT1";
+    const DM_TOKEN = "oe-dom:oe-dm/discord/U_ORG_ADMIN/D_DMSEAT1:oe-sup:g1-abc123";
+    await store.rotateChannelSession("default", dmWindowRegistryKey(DM_SURFACE), DM_TOKEN, new Date().toISOString());
+    const dmRow = (id: string, over: Partial<PendingActionRow> = {}) =>
+      row({
+        id,
+        scopeKey: DM_SURFACE,
+        channelId: "D_DMSEAT1",
+        messageTs: "900777",
+        postedTo: DM_SURFACE,
+        argsJson: JSON.stringify({ org: "default", scopeKey: DM_SURFACE, level: "surface", monthlyTokens: 650, currentCap: null }),
+        ...over,
+      });
+    const dmCardClick = (customId: string) => ({ type: 3, data: { custom_id: customId, component_type: 2 }, message: { id: "900777" }, channel_id: "D_DMSEAT1", user: { id: "U_ORG_ADMIN" } });
+
+    const dmTarget = discordDecisionWakeTarget(dmRow("t-dm"), undefined);
+    ok(dmTarget?.surfaceKey === DM_SURFACE, `DM target: a no-guild click builds the DM seat's surfaceKey off the frozen postedTo (got ${dmTarget?.surfaceKey})`);
+    const dmOrigin = dmTarget?.origin as { platform?: string; channelId?: string; dm?: boolean; guildId?: string; messageId?: string } | undefined;
+    ok(dmOrigin?.platform === "discord" && dmOrigin.channelId === "D_DMSEAT1" && dmOrigin.dm === true, "DM target: the origin is the DM shape (dm: true) on the card's own DM channel");
+    ok(dmOrigin !== undefined && !("guildId" in dmOrigin) && !("messageId" in dmOrigin), "DM target: the DM origin carries no guild id and no message anchor, like the DM seat's own wakes");
+    const guildTarget = discordDecisionWakeTarget(winRow({ id: "t-guild", postedTo: "discord/G1/C_WIN" }), "G1");
+    const guildOrigin = guildTarget?.origin as { guildId?: string; dm?: boolean } | undefined;
+    ok(guildTarget?.surfaceKey === "discord/G1/C_WIN" && guildOrigin?.guildId === "G1" && guildOrigin.dm === undefined, "DM target (negative control): a guild click builds the guild surfaceKey and a guild origin with no dm flag");
+    ok(discordDecisionWakeTarget(dmRow("t-null", { postedTo: null }), undefined) === null, "DM target: a no-guild click on a card with no postedTo builds no target");
+    ok(discordDecisionWakeTarget(dmRow("t-other", { postedTo: "discord/U_ORG_ADMIN/D_OTHER" }), undefined) === null, "DM target: a postedTo naming ANOTHER channel builds no target");
+    ok(discordDecisionWakeTarget(dmRow("t-slack", { postedTo: "slack/U_ORG_ADMIN/D_DMSEAT1" }), undefined) === null, "DM target: a non-Discord postedTo builds no target");
+
+    await store.addPendingAction(dmRow("dw-dmseat-approve"));
+    await seedAuthority("dw-dmseat-approve", dmAuthority(DM_SURFACE, "D_DMSEAT1"));
+    wakes.length = 0;
+    notices.length = 0;
+    const dmSeatRes = (await handleDiscordApprovalInteraction(dmCardClick("oe-approval:dw-dmseat-approve:approve:default"), deps)) as Resp;
+    ok(dmSeatRes.type === 7, "decision feedback (DM seat): the DM decide answers the decided card");
+    ok(wakes.length === 1, `decision feedback (DM seat): a DM APPROVE emits EXACTLY ONE decision wake (got ${wakes.length})`);
+    ok(wakes[0]?.token === DM_TOKEN, "decision feedback (DM seat): the wake targets the DM seat's CURRENT registry token");
+    ok(wakes[0]?.domain === `oe-dm/${DM_SURFACE}`, "decision feedback (DM seat): the wake carries the DM's own pseudo-domain");
+    const wokeOrigin = wakes[0]?.origin as { channelId?: string; dm?: boolean } | undefined;
+    ok(wokeOrigin?.channelId === "D_DMSEAT1" && wokeOrigin.dm === true, "decision feedback (DM seat): the wake origin is the DM the card lives in");
+    ok(!!wakes[0] && wakes[0].message.includes("APPROVED"), "decision feedback (DM seat): the wake states the approved outcome");
+    const dmWakeAudit = (await readAudit({ org: "default", action: "approval.decision_wake" })).find((e) => e.detail?.id === "dw-dmseat-approve");
+    ok(dmWakeAudit?.detail?.delivered === true && dmWakeAudit.detail.domain === `oe-dm/${DM_SURFACE}`, "decision feedback (DM seat): approval.decision_wake records delivered:true on the DM pseudo-domain");
+    ok(notices.length === 1 && notices[0]!.rowId === "dw-dmseat-approve", "decision feedback (DM seat): the notice still posts beside the card");
+    await store.clearSpendLimit("default", DM_SURFACE, "surface");
+
+    await store.addPendingAction(winRow({ id: "dw-guild-noguild", postedTo: "discord/G1/C_WIN", argsJson: JSON.stringify({ org: "default", scopeKey: "discord/G1/C_WIN", level: "surface", monthlyTokens: 651, currentCap: null }) }));
+    await seedAuthority("dw-guild-noguild", guildAuthority);
+    wakes.length = 0;
+    notices.length = 0;
+    const noGuildClick = { type: 3, data: { custom_id: "oe-approval:dw-guild-noguild:approve:default", component_type: 2 }, message: { id: "900001" }, channel_id: "C_WIN", user: { id: "U_ORG_ADMIN" } };
+    const noGuildRes = (await handleDiscordApprovalInteraction(noGuildClick, deps)) as Resp;
+    ok(noGuildRes.type === 7 && (await store.getPendingAction("default", "dw-guild-noguild"))?.status === "approved", "DM fence: the guild card clicked without a guild id is still decided");
+    ok(wakes.length === 0, `🔴 DM fence: a GUILD card clicked without a guild id wakes NOTHING — not the guild seat, not a DM seat (got ${wakes.length})`);
+    const noGuildAudit = (await readAudit({ org: "default", action: "approval.decision_wake" })).filter((e) => e.detail?.id === "dw-guild-noguild");
+    ok(noGuildAudit.length === 0, "🔴 DM fence: …and writes no approval.decision_wake row");
+    ok(notices.length === 1, "DM fence: the notice still posts beside the card");
+    await store.clearSpendLimit("default", "discord/G1/C_WIN", "surface");
+
+    await store.addPendingAction(dmRow("dw-dm-noauth", { argsJson: JSON.stringify({ org: "default", scopeKey: DM_SURFACE, level: "surface", monthlyTokens: 652, currentCap: null }) }));
+    wakes.length = 0;
+    await handleDiscordApprovalInteraction(dmCardClick("oe-approval:dw-dm-noauth:approve:default"), deps);
+    ok(wakes.length === 0, `DM fence: a DM card with no frozen authority emits no wake (got ${wakes.length})`);
+    await store.clearSpendLimit("default", DM_SURFACE, "surface");
+
+    await store.addPendingAction(dmRow("dw-dm-otherauth", { argsJson: JSON.stringify({ org: "default", scopeKey: DM_SURFACE, level: "surface", monthlyTokens: 653, currentCap: null }) }));
+    await seedAuthority("dw-dm-otherauth", dmAuthority("discord/U_ORG_ADMIN/D_ELSEWHERE", "D_ELSEWHERE"));
+    wakes.length = 0;
+    await handleDiscordApprovalInteraction(dmCardClick("oe-approval:dw-dm-otherauth:approve:default"), deps);
+    ok(wakes.length === 0, `DM fence: a DM authority naming another DM surface emits no wake (got ${wakes.length})`);
+    await store.clearSpendLimit("default", DM_SURFACE, "surface");
+
     await store.addPendingAction(winRow({ id: "dw-throws", argsJson: JSON.stringify({ org: "default", scopeKey: "discord/G1/C_WIN", level: "surface", monthlyTokens: 643, currentCap: null }) }));
     const throwingDeps = {
       postNotice: async () => {

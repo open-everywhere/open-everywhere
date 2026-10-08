@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/core",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Open Everywhere core — the portable, host-agnostic agent runtime: access and approvals, identity, memory, spend, routines, webhooks, connectors, the audit chain and the `oe` roster build.",
   "keywords": [
     "agent",
@@ -605,6 +605,10 @@
     "./agent/access/work-mount-manifest.js": {
       "types": "./dist/agent/access/work-mount-manifest.d.ts",
       "default": "./dist/agent/access/work-mount-manifest.js"
+    },
+    "./agent/access/work-refusal-notice.js": {
+      "types": "./dist/agent/access/work-refusal-notice.d.ts",
+      "default": "./dist/agent/access/work-refusal-notice.js"
     },
     "./agent/access/work-request-turn.js": {
       "types": "./dist/agent/access/work-request-turn.d.ts",
@@ -1330,6 +1334,10 @@
       "types": "./dist/agent/connections/connector-auth.d.ts",
       "default": "./dist/agent/connections/connector-auth.js"
     },
+    "./agent/connections/connector-card-retention.js": {
+      "types": "./dist/agent/connections/connector-card-retention.d.ts",
+      "default": "./dist/agent/connections/connector-card-retention.js"
+    },
     "./agent/connections/connector-card.js": {
       "types": "./dist/agent/connections/connector-card.d.ts",
       "default": "./dist/agent/connections/connector-card.js"
@@ -1341,6 +1349,10 @@
     "./agent/connections/connector-offer.js": {
       "types": "./dist/agent/connections/connector-offer.d.ts",
       "default": "./dist/agent/connections/connector-offer.js"
+    },
+    "./agent/connections/connector-replay.js": {
+      "types": "./dist/agent/connections/connector-replay.d.ts",
+      "default": "./dist/agent/connections/connector-replay.js"
     },
     "./agent/connections/connector-transport.js": {
       "types": "./dist/agent/connections/connector-transport.d.ts",
@@ -3592,6 +3604,7 @@
     "test:routine-permission-wait": "NODE_NO_WARNINGS=1 tsx scripts/routine-permission-wait-test.ts",
     "test:routine-permission-review": "NODE_NO_WARNINGS=1 tsx scripts/routine-permission-review-test.ts",
     "test:connector-permission-card": "NODE_NO_WARNINGS=1 tsx scripts/connector-permission-card-test.ts",
+    "test:connector-replay": "NODE_NO_WARNINGS=1 tsx scripts/connector-replay-test.ts",
     "test:own-account-ask": "NODE_NO_WARNINGS=1 tsx scripts/own-account-ask-test.ts",
     "test:own-account-ask-audit": "NODE_NO_WARNINGS=1 tsx scripts/own-account-ask-audit-test.ts",
     "test:own-account-egress": "NODE_NO_WARNINGS=1 tsx scripts/own-account-egress-test.ts",

@@ -141,7 +141,7 @@ const rules = (findings: readonly { readonly rule: string }[]): string[] => [...
   );
   ok(
     eveCandidate?.notExercised?.includes("response-policy") === true && eveCandidate.notExercised.includes("request-only") === true,
-    "approval.eve_candidate names the missing live response-policy fixture and distinguishes it from request-only S-EVE-CARD/S-EVE-BRIDGE",
+    "approval.eve_candidate names the missing live response-policy fixture and says no request-only candidate exists either",
   );
 
   const declaredFields = (action: string): readonly string[] => {

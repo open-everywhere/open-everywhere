@@ -1306,8 +1306,9 @@ Not every action kind needs the same tier. The split is a **rule**, not a list o
   whose delegated worker can already edit that silo's files. The card exists to defeat injection
   here, not to gate privilege.
   - Two member kinds are cards that replaced eve-native confirms (OPE-2340): `file.publish` (a
-    `post_file` HTML page published to a public URL) and `op.connector` (one connector op that needs a
-    person: a write once per op per conversation, a destructive op once per call). Neither is in the
+    `post_file` HTML page published to a public URL) and `op.connector` (one connector op call that
+    needs a person: every click approves one call with the input stored on the card, and the agent
+    runs it by replaying the card by its id, OPE-2363 and OPE-2388). Neither is in the
     `connector.` admin family, which is the connector **overrides**, an org config mutation. The
     native connector confirm had no response half and bound its click to nobody, so a member bar on
     `op.connector` is a narrowing. The native `post_file` confirm bound its click to the requester,

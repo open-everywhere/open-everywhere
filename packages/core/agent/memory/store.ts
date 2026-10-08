@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, renameSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, posix, relative, sep } from "node:path";
 import type { Partition } from "./partition.js";
@@ -89,6 +89,26 @@ async function sweepAbandonedStaging(staging: string): Promise<void> {
   }
 }
 
+export async function renameOverReaders(
+  from: string,
+  to: string,
+  options: { readonly rename?: (from: string, to: string) => Promise<void>; readonly windows?: boolean; readonly attempts?: number } = {},
+): Promise<void> {
+  const windows = options.windows ?? process.platform === "win32";
+  const doRename = options.rename ?? (windows ? async (a: string, b: string) => renameSync(a, b) : rename);
+  const attempts = windows ? (options.attempts ?? 40) : 1;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await doRename(from, to);
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (attempt >= attempts || (code !== "EPERM" && code !== "EACCES" && code !== "EBUSY")) throw err;
+      await new Promise((r) => setTimeout(r, Math.min(attempt * 5, 50)));
+    }
+  }
+}
+
 async function writeFileAtomic(abs: string, content: string): Promise<void> {
   const staging = join(ROOT, STAGING_DIR);
   await mkdir(staging, { recursive: true });
@@ -98,7 +118,7 @@ async function writeFileAtomic(abs: string, content: string): Promise<void> {
   const staged = join(staging, `${process.pid}-${++stagedWrites}`);
   try {
     await writeFile(staged, content, "utf-8");
-    await rename(staged, abs);
+    await renameOverReaders(staged, abs);
   } catch (err) {
     await rm(staged, { force: true });
     throw err;

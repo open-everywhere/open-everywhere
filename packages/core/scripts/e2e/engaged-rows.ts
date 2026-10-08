@@ -128,6 +128,55 @@ export function replyPostsAfter(
   );
 }
 
+export const CONTROL_SERVICE_CALL_ACTION = "control.service_call";
+
+export function auditStoreHighWater(rows: readonly AuditWireEntry[]): { readonly seq: number; readonly unsequenced: number } {
+  let seq = 0;
+  let unsequenced = 0;
+  for (const r of rows) {
+    if (typeof r.seq !== "number") {
+      unsequenced += 1;
+      continue;
+    }
+    if (r.seq > seq) seq = r.seq;
+  }
+  return { seq, unsequenced };
+}
+
+export function rowsAboveStoreMark(rows: readonly AuditWireEntry[], mark: number): readonly AuditWireEntry[] {
+  return rows.filter((r) => typeof r.seq !== "number" || r.seq > mark);
+}
+
+export const STORE_MARK_LOOKBACK_MS = 10 * 60_000;
+
+export async function readAuditStoreMark(
+  read: (opts: { readonly sinceIso: string; readonly actions: readonly string[]; readonly limit: number }) => Promise<readonly AuditWireEntry[]>,
+  nowMs: number,
+): Promise<{ readonly seq: number; readonly unsequenced: number; readonly rows: number; readonly deploymentMs: number | undefined }> {
+  const rows = await read({ sinceIso: new Date(nowMs - STORE_MARK_LOOKBACK_MS).toISOString(), actions: [CONTROL_SERVICE_CALL_ACTION], limit: 50 });
+  return { ...auditStoreHighWater(rows), rows: rows.length, deploymentMs: auditStoreMarkInstantMs(rows) };
+}
+
+export function auditStoreMarkInstantMs(rows: readonly AuditWireEntry[]): number | undefined {
+  let best: { readonly seq: number; readonly ms: number } | undefined;
+  for (const r of rows) {
+    if (typeof r.seq !== "number") continue;
+    const ms = Date.parse(r.ts);
+    if (!Number.isFinite(ms)) continue;
+    if (best === undefined || r.seq > best.seq) best = { seq: r.seq, ms };
+  }
+  return best?.ms;
+}
+
+export async function readPresenceSince(
+  read: (opts: { readonly sinceIso: string; readonly actions: readonly string[]; readonly limit: number }) => Promise<readonly AuditWireEntry[]>,
+  nowMs: number,
+  marginMs: number,
+): Promise<{ readonly sinceIso: string | undefined; readonly rows: number }> {
+  const mark = await readAuditStoreMark(read, nowMs);
+  return { sinceIso: mark.deploymentMs === undefined ? undefined : new Date(mark.deploymentMs - marginMs).toISOString(), rows: mark.rows };
+}
+
 export interface SeatContinuity {
   readonly replies: number;
   readonly answeredWakeIds: readonly string[];

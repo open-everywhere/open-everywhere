@@ -1,8 +1,10 @@
 # Core / app separation
 
-`packages/core/scripts/e2e/read-channel.ts:37` and `rotate-window-lib.ts:246` for the rule,
-`rotate-window.ts:99` for the carve-out it names. This is that page: the
+This page describes the core/app split: the dependency direction the codebase already enforces
 today, the inversion pattern that makes it possible, and how the boundary test keeps it from eroding.
+The registry seam lives in `agent/lib/register-config.ts`, `packages/core/agent/access/config.ts` and
+`packages/core/agent/model/routing.ts`. The e2e scripts `packages/core/scripts/e2e/read-channel.ts`,
+`rotate-window-lib.ts` and `rotate-window.ts` follow the app-tree boundary rule.
 
 ## The dependency direction
 
@@ -58,7 +60,7 @@ named, tested seam, never a relative import that assumes a shared working tree.
 a gate.** Section 1 scans `packages/core/agent` and `packages/core/scripts` for three things only: a
 vendor-SDK specifier, an `@open-everywhere/adapters` import, and any other non-core
 `@open-everywhere/*` import. A **relative climb** out of the package is never checked. Live-only
-scripts under `packages/core/scripts/{e2e,eval}` do read the app tree, and `e2e/rotate-window.ts:99`
+scripts under `packages/core/scripts/{e2e,eval}` do read the app tree. `e2e/rotate-window.ts` is one: it is a live-only tool that product code never
 imports, so the boundary exempts it. They read it
 through `packages/core/agent/scaffold/app-root.ts` (see [below](#scripts-that-read-the-deployers-app)),
 not by a relative climb. A product module under `packages/core/agent` that climbed into `agent/`

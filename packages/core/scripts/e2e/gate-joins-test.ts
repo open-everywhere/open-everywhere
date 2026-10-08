@@ -1272,6 +1272,63 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
     const late = seedSettlementRead([...rowsRj, seedSettled, seedPersist, reportRj], optsRj);
     ok(late.kind === "settled" && late.settlement === seedSettled && late.post === reportRj, `OPE-2100: with the delegated budget the same join reaches the seed task's own settlement (got ${late.kind})`);
   }
+
+  {
+    const SEAT3 = "wrun_SEAT3";
+    const WORK3 = "wrun_WORK3";
+    const W3 = "w3-seed";
+    const R3 = "r3-request";
+    const T3 = "agent-seed03";
+    const ACK3 = "1771464850.000301";
+    const REPORT3 = "1771464850.000302";
+    const START3 = "2026-02-19T06:35:51.000Z";
+    const turnStart3 = row("wake.turn_start", START3, { wakeId: W3, sessionId: SEAT3, turnStartTs: START3 }, 201);
+    const forward3 = row("work.forwarded", "2026-02-19T06:35:54.000Z", { requestId: R3, wakeId: W3, seatSessionId: SEAT3 }, 202, "unified");
+    const ack3 = row("reply.post", "2026-02-19T06:35:56.000Z", { id: ACK3, done: false, wakeId: W3, sessionId: SEAT3 }, 203);
+    const started3 = row("delegation.task_started", "2026-02-19T06:35:56.400Z", { task: T3, kind: "agent", session: WORK3, continuation: false, request: R3 }, 204, "ingest");
+    const settled3 = row("delegation.task_settled", "2026-02-19T06:37:10.000Z", { task: T3, status: "completed", session: WORK3 }, 205, "ingest");
+    const persist3 = row("memory.write", "2026-02-19T06:37:09.800Z", { road: "session-persist", outcome: "write-intent", kind: "memory", silo: "e2e-ambient-brain" }, 204.5);
+    const report3 = row("reply.post", "2026-02-19T06:37:20.000Z", { id: REPORT3, done: true, wakeId: W3, sessionId: SEAT3 }, 206);
+    const rows3 = [turnStart3, forward3, ack3, started3, persist3, settled3, report3];
+    const opts3 = { seedWakeId: W3, seedTurnStartMs: Date.parse(START3), ackId: ACK3 };
+
+    const read = seedSettlementRead(rows3, opts3);
+    ok(read.kind === "settled", `🔴 OPE-2381: a seed turn whose seat FORWARDED the remember reads as SETTLED once the work session's worker settles (got ${read.kind}: ${read.detail})`);
+    ok(read.dispatched.join(",") === T3 && read.post === report3, `…naming the work session's task, with the report as the ceiling (got ${read.dispatched.join(",")})`);
+    const mid = seedSettlementRead([turnStart3, forward3, ack3, started3], opts3);
+    ok(mid.kind === "unsettled" && mid.unsettled.join(",") === T3, `🔴 OPE-2381: before the worker settles the read WAITS (unsettled), never "inline" (got ${mid.kind}: ${mid.detail})`);
+
+    const noForward = seedSettlementRead([turnStart3, ack3, started3, persist3, settled3, report3], opts3);
+    ok(noForward.kind === "inline" && noForward.detail.includes("belong to ANOTHER session"), `🔴 OPE-2381 CONTROL: without work.forwarded the work-session dispatch is not attributed (got ${noForward.kind}: ${noForward.detail})`);
+
+    const foreignForward = row("work.forwarded", "2026-02-19T06:35:54.500Z", { requestId: "r-foreign", wakeId: "w-foreign", seatSessionId: "wrun_OTHER" }, 202.5, "unified");
+    const foreignStarted = row("delegation.task_started", "2026-02-19T06:35:57.000Z", { task: "agent-foreign", kind: "agent", session: WORK3, continuation: false, request: "r-foreign" }, 204.2, "ingest");
+    const withForeign = seedSettlementRead([turnStart3, forward3, foreignForward, ack3, started3, foreignStarted, persist3, settled3, report3], opts3);
+    ok(withForeign.kind === "settled" && withForeign.dispatched.join(",") === T3, `🔴 OPE-2381 NEGATIVE CONTROL: another seat's forwarded dispatch is never joined as the seed's (got ${withForeign.kind}: ${withForeign.dispatched.join(",")})`);
+    const foreignOnly = seedSettlementRead([turnStart3, foreignForward, ack3, foreignStarted, persist3], opts3);
+    ok(foreignOnly.kind === "inline", `…and with ONLY the foreign forward the seed turn reads INLINE (got ${foreignOnly.kind}: ${foreignOnly.detail})`);
+
+    const ackNoSession = row("reply.post", "2026-02-19T06:35:56.000Z", { id: ACK3, done: false, wakeId: W3 }, 203);
+    const forwardByWake = row("work.forwarded", "2026-02-19T06:35:54.000Z", { requestId: R3, wakeId: W3 }, 202, "unified");
+    const byWake = seedSettlementRead([turnStart3, forwardByWake, ackNoSession, started3, persist3, settled3, report3], opts3);
+    ok(byWake.kind === "settled" && byWake.dispatched.join(",") === T3, `OPE-2381: a forward on the seed wake attributes the dispatch with no session on the ack (got ${byWake.kind}: ${byWake.detail})`);
+    const stray = row("delegation.task_started", "2026-02-19T06:35:57.500Z", { task: "agent-stray", kind: "agent", session: "wrun_STRAY" }, 204.3, "ingest");
+    ok(
+      seedSettlementRead([turnStart3, forwardByWake, ackNoSession, started3, stray, persist3, settled3, report3], opts3).kind === "unjoinable",
+      "OPE-2381: …and a dispatch that no forward and no session attributes is still refused, so the refusal of OPE-2036 stands",
+    );
+
+    const prevForward = row("work.forwarded", "2026-02-19T06:35:30.000Z", { requestId: "r-prev", wakeId: "w-prev", seatSessionId: SEAT3 }, 190, "unified");
+    const prevStarted = row("delegation.task_started", "2026-02-19T06:35:32.000Z", { task: "agent-prev", kind: "agent", session: WORK3, request: "r-prev" }, 191, "ingest");
+    const prevRead = seedSettlementRead([prevForward, prevStarted, turnStart3, ack3, persist3], opts3);
+    ok(prevRead.kind === "inline", `🔴 OPE-2381 NEGATIVE CONTROL: a forwarded dispatch BELOW the seed turn's start is a previous leg's (got ${prevRead.kind}: ${prevRead.detail})`);
+    const lateStarted = row("delegation.task_started", "2026-02-19T06:35:52.000Z", { task: "agent-prev", kind: "agent", session: WORK3, request: "r-prev" }, 201.5, "ingest");
+    const lateRead = seedSettlementRead([prevForward, turnStart3, lateStarted, ack3, persist3], opts3);
+    ok(lateRead.kind === "inline", `🔴 OPE-2381 NEGATIVE CONTROL: the same seat's previous forward, dispatched after the floor, is not the seed's (got ${lateRead.kind}: ${lateRead.detail})`);
+    const forwardNoWake = row("work.forwarded", "2026-02-19T06:35:54.000Z", { requestId: R3, seatSessionId: SEAT3 }, 202, "unified");
+    const noWakeRead = seedSettlementRead([turnStart3, forwardNoWake, ack3, started3, persist3, settled3, report3], opts3);
+    ok(noWakeRead.kind === "settled" && noWakeRead.dispatched.join(",") === T3, `OPE-2381: a forward with no wake joins on the ack's session (got ${noWakeRead.kind}: ${noWakeRead.detail})`);
+  }
 }
 
 {

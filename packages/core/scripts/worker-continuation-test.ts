@@ -577,6 +577,61 @@ eq(noMessage.success, false, "🔴 §4 NEGATIVE CONTROL: eve's own `message` req
     (await wStep("w-turn-steered", [FIRST, FOLLOW], FIRST.requestId, async () => await wValidate({ message: FOLLOW.brief, taskId: W_TASK }))) !== "ok",
     "🔴 §7 NEGATIVE CONTROL: the same-step gate (OPE-2339) still refuses a follow-up started on a step that received another job",
   );
+
+  const { registerContinuationRefusalNotifier, registeredContinuationRefusalNotifier, WORK_CONTINUATION_RETURNED_MESSAGE } = await import("../agent/access/work-refusal-notice.js");
+  const liveNotifier = registeredContinuationRefusalNotifier();
+  const notices: { requestId: string; taskId: string; reason: string }[] = [];
+  registerContinuationRefusalNotifier(async (input) => {
+    notices.push({ ...input });
+    return true;
+  });
+  await noteTaskClaimDispatched(ORG, W, W_TASK, "call-w-follow", "w-turn-wait");
+  await seedWake("req-2379-busy", ORIGIN_A, "U_ALICE");
+  await seedWake("req-2379-silent", ORIGIN_A, "U_ALICE");
+  await seedWake("req-2379-repeat", ORIGIN_A, "U_ALICE");
+  const BUSY: Delivery = { requestId: "req-2379-busy", brief: "and also fix the title", origin: ORIGIN_A, taskId: W_TASK };
+  eq(
+    await wStep("w-turn-busy-pre", [BUSY], BUSY.requestId, async () => await decideTaskContinuation(wTurn("w-turn-busy-pre"), W_TASK, "agent", ORG, async () => true, BUSY.requestId)),
+    { admit: false, reason: "task-working" },
+    "§8 precondition: the task still works on the §7 follow-up, so W's fence refuses this one as `task-working`",
+  );
+  const busyOutcome = await wStep("w-turn-busy", [BUSY], BUSY.requestId, async () => {
+    const refused = await wValidate({ message: BUSY.brief, taskId: W_TASK });
+    const retry = await wValidate({ message: BUSY.brief });
+    return { refused, retry };
+  });
+  eq(busyOutcome.refused, WORK_CONTINUATION_RETURNED_MESSAGE, "🔴 §8 OPE-2379: W reads that the job went back to the conversation, and that it must not retry");
+  eq(notices, [{ requestId: BUSY.requestId, taskId: W_TASK, reason: "task-working" }], "🔴 §8 …and the refused job is returned to the seat ONCE, with its request, its task and the reason");
+  ok(busyOutcome.retry !== "ok", "🔴 §8 the returned job is RETIRED for the turn: a retry as a new task is refused, so the room is never answered twice");
+  eq(notices.length, 1, "§8 …and the refused retry returns nothing more");
+
+  const REPEAT: Delivery = { requestId: "req-2379-repeat", brief: "rerun the check", origin: ORIGIN_A, taskId: W_TASK };
+  const repeatOutcome = await wStep("w-turn-repeat", [REPEAT], REPEAT.requestId, async () => {
+    const first = await wValidate({ message: REPEAT.brief });
+    const second = await wValidate({ message: REPEAT.brief, taskId: W_TASK });
+    return { first, second };
+  });
+  eq(repeatOutcome, { first: "ok", second: TASK_CONTINUATION_BUSY_MESSAGE }, "🔴 §8 NEGATIVE CONTROL: a refused call for a job an earlier call claimed keeps the plain refusal");
+  eq(notices.length, 1, "🔴 §8 NEGATIVE CONTROL: …and returns nothing to the seat, because the earlier call's task may answer the room");
+
+  await seedWake("req-2379-fresh", ORIGIN_A, "U_ALICE");
+  const FRESH: Delivery = { requestId: "req-2379-fresh", brief: "a fresh job W mislabels", origin: ORIGIN_A };
+  eq(
+    await wStep("w-turn-fresh", [FRESH], FRESH.requestId, async () => await wValidate({ message: FRESH.brief, taskId: W_TASK })),
+    TASK_CONTINUATION_BUSY_MESSAGE,
+    "🔴 §8 NEGATIVE CONTROL: a `taskId` on a job that names no task keeps the plain refusal",
+  );
+  eq(notices.length, 1, "🔴 §8 NEGATIVE CONTROL: …and returns nothing to the seat, so W can still start the job as it was forwarded");
+
+  registerContinuationRefusalNotifier(undefined);
+  const SILENT: Delivery = { requestId: "req-2379-silent", brief: "one more change", origin: ORIGIN_A, taskId: W_TASK };
+  eq(
+    await wStep("w-turn-silent", [SILENT], SILENT.requestId, async () => await wValidate({ message: SILENT.brief, taskId: W_TASK })),
+    TASK_CONTINUATION_BUSY_MESSAGE,
+    "§8 NEGATIVE CONTROL: no registered notice ⇒ the plain `task-working` refusal, and no claim that the job went back",
+  );
+  eq(notices.length, 1, "§8 NEGATIVE CONTROL: …and the recorder hears nothing");
+  registerContinuationRefusalNotifier(liveNotifier);
 }
 
 console.log(`worker-continuation: ${n} assertions passed`);

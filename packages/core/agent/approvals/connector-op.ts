@@ -7,7 +7,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import { checkApprovalVenue, describeVenueRefusal } from "./card-venue.js";
-import { connectorCardContext, registerConnectorOpCardOfferer, registerSignInCardDeliverer, type ConnectorOpCardOffer, type ConnectorOpCardResult, type SignInCardOffer } from "./connector-op-offer.js";
+import { CONNECTOR_OP_CARD_KIND, connectorArgsWithoutInput, connectorCardContext, registerConnectorOpCardOfferer, registerSignInCardDeliverer, type ConnectorOpCardOffer, type ConnectorOpCardResult, type SignInCardOffer } from "./connector-op-offer.js";
 import { deliverProactiveDm, dmDeliveryFooter, personAddress } from "../channels/dm-audience.js";
 import { canDeliverDirectMessage } from "../channels/post-arms.js";
 import type { ActionKind } from "./types.js";
@@ -15,6 +15,8 @@ import { approvalPostDeps, requestApproval } from "./flow.js";
 import type { SessionAuth } from "eve/context";
 
 const CONNECTOR_OP_KIND = "op.connector";
+const CONNECTOR_OP_KIND_MATCHES_OFFER: typeof CONNECTOR_OP_CARD_KIND = CONNECTOR_OP_KIND;
+void CONNECTOR_OP_KIND_MATCHES_OFFER;
 
 const CONNECTOR_OP_APPROVED_ACTION = "connector.op_approved";
 
@@ -27,6 +29,8 @@ interface ConnectorOpArgs {
   readonly sessionKey: string;
   readonly memoKind: string;
   readonly inputPreview: string;
+  readonly input?: Readonly<Record<string, unknown>>;
+  readonly inputCleared?: true;
   readonly requestedBy: string;
   readonly tainted?: boolean;
   readonly credential?: "domain" | "personal";
@@ -42,10 +46,23 @@ function summarizeConnectorOp(args: ConnectorOpArgs): string[] {
   ];
 }
 
+const REPLAY_TARGET_SEGMENT = /^[A-Za-z0-9_.:-]{1,128}$/u;
+
+function connectorReplayTarget(args: ConnectorOpArgs): { connection: string; tool: string } | undefined {
+  if (args.input === undefined || args.input === null || typeof args.input !== "object") return undefined;
+  const prefix = `${args.connection}__`;
+  if (!args.tool.startsWith(prefix)) return undefined;
+  const tool = args.tool.slice(prefix.length);
+  if (!REPLAY_TARGET_SEGMENT.test(args.connection) || !REPLAY_TARGET_SEGMENT.test(tool)) return undefined;
+  return { connection: args.connection, tool };
+}
+
 const connectorOp: ActionKind<ConnectorOpArgs> = {
   kind: CONNECTOR_OP_KIND,
   policy: "member",
   approvalArmsCall: true,
+  armedCallReplay: (args) => connectorReplayTarget(args),
+  argsAfterClose: (args) => connectorArgsWithoutInput(args),
   summarize: (args) => summarizeConnectorOp(args),
   async execute(args, decidedBy) {
     if (decidedBy.startsWith("chain:")) {
@@ -91,6 +108,23 @@ function singleDomainOf(p: { readonly platform: string; readonly workspace: stri
   }
 }
 
+export function connectorOpArgsFromOffer(offer: ConnectorOpCardOffer, room: { readonly scopeKey: string; readonly requestedBy: string }): ConnectorOpArgs {
+  return {
+    org: offer.org,
+    scopeKey: room.scopeKey,
+    tool: offer.tool,
+    connection: offer.connection,
+    grain: offer.grain,
+    sessionKey: offer.sessionKey,
+    memoKind: offer.memoKind,
+    inputPreview: offer.inputPreview,
+    ...(offer.input === undefined ? {} : { input: offer.input }),
+    requestedBy: room.requestedBy,
+    ...(offer.tainted ? { tainted: true } : {}),
+    ...(offer.credential === undefined ? {} : { credential: offer.credential }),
+  };
+}
+
 export async function offerConnectorCard(offer: ConnectorOpCardOffer, deps: { readonly request?: typeof requestApproval } = {}): Promise<ConnectorOpCardResult> {
   const surface = offer.auth === undefined || offer.auth === null ? null : await surfaceContextFromAuth(offer.auth as SessionAuth).catch(() => null);
   if (surface === null) return { outcome: "refused", reason: "this call names no conversation a card could be posted to" };
@@ -103,19 +137,7 @@ export async function offerConnectorCard(offer: ConnectorOpCardOffer, deps: { re
   if ("refusal" in venueResult) return { outcome: "refused", reason: describeVenueRefusal(venueResult.refusal, binding.platform, `run ${offer.tool}`) };
   const venue = venueResult.venue;
   const domain = singleDomainOf(p);
-  const args: ConnectorOpArgs = {
-    org: offer.org,
-    scopeKey: p.surfaceKey,
-    tool: offer.tool,
-    connection: offer.connection,
-    grain: offer.grain,
-    sessionKey: offer.sessionKey,
-    memoKind: offer.memoKind,
-    inputPreview: offer.inputPreview,
-    requestedBy,
-    ...(offer.tainted ? { tainted: true } : {}),
-    ...(offer.credential === undefined ? {} : { credential: offer.credential }),
-  };
+  const args = connectorOpArgsFromOffer(offer, { scopeKey: p.surfaceKey, requestedBy });
   const request = deps.request ?? requestApproval;
   const posted = await request(
     {

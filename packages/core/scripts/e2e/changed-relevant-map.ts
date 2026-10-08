@@ -166,9 +166,9 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
       "packages/core/agent/channels/unified-reply.ts",
       "packages/providers/slack/agent/channels/slack-approval-card.ts",
     ],
-    scenarios: ["S-EVE-CARD", "S-EVE-BRIDGE", "S-DM-NOTION", "J-UNI-X", "J-SUP"],
+    scenarios: ["S-EVE-CARD", "S-SUSPENDED-slack", "S-DM-NOTION", "J-UNI-X", "J-SUP"],
     why:
-      "S-EVE-CARD and S-EVE-BRIDGE are the only legs that drive an eve `tool-approval` through this bridge, and they take its TWO answer paths: the button (OPE-1720) and the typed word (OPE-1721). The approval half is where the bridge can silently DENY a governed connector write — eve settles on `optionId` alone, so an answer delivered without one resolves `invalid` (OPE-1056) — and only the TYPED path can regress that way, because a button carries its option id by construction. S-DM-NOTION and J-SUP/J-UNI-X pay a delegated round trip through the same handler, because a WORKER's request is proxied up to the parent seat's adapter and bridged from there — which is the only path a worker's question or approval can reach a room at all. A change here that drops the post, the durable row or the option ids leaves a turn parked with nobody able to answer it, and the failure is SILENCE, so no other leg would notice.",
+      "S-EVE-CARD and S-SUSPENDED-slack drive a DM connector write to its OE `op.connector` card through these files, and they click it two ways: S-EVE-CARD replays the card's own rendered button whole, S-SUSPENDED-slack builds the click from the pending id. Both assert in the same leg that no eve-native approval was raised: since OPE-2340 (ruling Q4) no shipped tool prompts through eve, so a change here that revives a native request on the unified path is caught as a red, not as a parked turn. The typed-answer road (OPE-1721) has no producer left and its leg, S-EVE-BRIDGE, is retired (OPE-2362). S-DM-NOTION and J-SUP/J-UNI-X pay a delegated round trip through the same handler. A change here that drops the card post or the click route leaves a write denied with nobody able to approve it, and the failure is SILENCE, so no other leg would notice.",
   },
   {
     area: "wake-envelope",

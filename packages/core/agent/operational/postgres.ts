@@ -1,6 +1,6 @@
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
-import { asSurfaceMode, auditSurfaceMode, auditReadOrg, likePrefixPattern, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type CredentialIntakeRow, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
+import { asSurfaceMode, auditSurfaceMode, auditReadOrg, likePrefixPattern, argKeyNeedle, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type CredentialIntakeRow, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
 import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn, grantRefundTurnOrdinal } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
@@ -3657,6 +3657,24 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         [status, decidedBy, decidedAt, org, id],
       );
       return rows.length > 0;
+    },
+
+    async rewriteDecidedPendingActionArgs(org, id, argsJson) {
+      const { rows } = await client.query(
+        `UPDATE pending_actions SET args_json = $1
+         WHERE org_id = $2 AND id = $3 AND status <> 'pending' RETURNING id`,
+        [argsJson, org, id],
+      );
+      return rows.length > 0;
+    },
+
+    async listDecidedPendingActionsWithArg(org, kind, argKey) {
+      const { rows } = await client.query(
+        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at
+         FROM pending_actions WHERE org_id = $1 AND kind = $2 AND status <> 'pending' AND strpos(args_json, $3) > 0 ORDER BY decided_at ASC`,
+        [org, kind, argKeyNeedle(argKey)],
+      );
+      return (rows as PendingActionPgRow[]).map((r) => pendingActionFromPgRow(org, r));
     },
 
     async setSessionApproval(row) {

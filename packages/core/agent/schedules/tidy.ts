@@ -12,6 +12,10 @@ import { guardProvenanceMarks } from "../memory/provenance-mark.js";
 import { writeMemoryTier } from "../memory/write-road.js";
 import { appendAudit } from "../audit/audit.js";
 import { sweepExpiredPendings } from "../approvals/flow.js";
+import { ONE_CALL_APPROVAL_TTL_HOURS } from "../approvals/connector-op.js";
+import { CONNECTOR_REPLAY_ADMISSION_TTL_MS } from "../approvals/connector-op-offer.js";
+import { sweepConnectorCardInputs } from "../connections/connector-card-retention.js";
+import { getOperationalStore } from "../operational/provider.js";
 import { sweepCredentialGrants } from "../access/credential-grant-flow.js";
 import { getSettings } from "../settings/settings.js";
 
@@ -180,6 +184,9 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
     } catch (err) {
       log(`skip approval-sweep ${org} — ${String(err)}`);
     }
+
+    const clearedInputs = await sweepConnectorCardInputs(getOperationalStore(), org, now, ONE_CALL_APPROVAL_TTL_HOURS * 3_600_000 + CONNECTOR_REPLAY_ADMISSION_TTL_MS);
+    if (clearedInputs > 0) log(`cleared the stored input of ${clearedInputs} connector card(s) in ${org}`);
 
     try {
       const grants = await sweepCredentialGrants(org, now.toISOString());

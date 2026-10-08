@@ -4,7 +4,8 @@ import { asSchema, jsonSchema } from "ai";
 import { defineState } from "eve/context";
 import { parseWakeAttachments, withDelegatedAttachments, type BriefAttachment } from "../channels/attachments.js";
 import { isWakeEnvelopeShaped } from "../channels/wake-envelope.js";
-import { auditTaskContinuation, checkTaskContinuation, commitTaskContinuation, TASK_CONTINUATION_REFUSAL_MESSAGE, taskContinuationRefusalMessage, type TaskContinuationVerdict } from "../channels/task-provenance.js";
+import { auditTaskContinuation, checkTaskContinuation, commitTaskContinuation, TASK_CONTINUATION_REFUSAL_MESSAGE, taskContinuationRefusalMessage, type TaskContinuationRefusal, type TaskContinuationVerdict } from "../channels/task-provenance.js";
+import { registeredContinuationRefusalNotifier, WORK_CONTINUATION_RETURNED_MESSAGE } from "./work-refusal-notice.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { currentContinuationTurn, type ContinuationTurn } from "./continuation-turn-state.js";
 import { settlementDispatchAuthorityThisTurn } from "./settlement-dispatch-signal.js";
@@ -113,6 +114,18 @@ export async function decideTaskContinuation(
   return await commitTaskContinuation({ org, parentSessionId: turn.sessionId, taskId, continuingTurnId: turn.turnId, check: checked.check });
 }
 
+async function returnRefusedJob(turnId: string | undefined, requestId: string, taskId: string, reason: TaskContinuationRefusal): Promise<boolean> {
+  const notify = registeredContinuationRefusalNotifier();
+  if (notify === undefined) {
+    console.error(`[open-everywhere:work] request ${requestId}: the continuation of task ${taskId} was refused (${reason}), and NO refusal notice is registered (channels/work-loss.ts did not load), so the seat is not told`);
+    return false;
+  }
+  retireWorkRequest(turnId, requestId);
+  console.warn(`[open-everywhere:work] request ${requestId}: the continuation of task ${taskId} was refused (${reason}) — the job goes back to the seat as failed`);
+  await notify({ requestId, taskId, reason }).catch(() => false);
+  return true;
+}
+
 function continuationTaskId(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
@@ -171,6 +184,7 @@ function guardTool(tool: ToolWithInputSchema, name: string, delegation: boolean)
       }
       const taskId = candidate !== null && typeof candidate === "object" ? continuationTaskId((candidate as Record<string, unknown>)[TASK_ID_FIELD]) : undefined;
       let joinedRequestId: string | undefined;
+      let joinedBefore = false;
       if (delegation) {
         const turnNow = currentContinuationTurn();
         const callMessage = candidate !== null && typeof candidate === "object" ? (candidate as Record<string, unknown>)["message"] : undefined;
@@ -188,6 +202,7 @@ function guardTool(tool: ToolWithInputSchema, name: string, delegation: boolean)
             return { success: false as const, error: new Error(WORK_CALL_NEEDS_REISSUE_MESSAGE) };
           }
           joinedRequestId = join.requestId;
+          joinedBefore = repeat;
         }
       }
       if (delegation) candidate = carryAttachmentsIntoBrief(candidate);
@@ -202,7 +217,18 @@ function guardTool(tool: ToolWithInputSchema, name: string, delegation: boolean)
       }, joinedRequestId);
       if (!verdict.admit && verdict.reason === "eve-refused" && eveResult !== undefined) return eveResult;
       auditTaskContinuation({ org: deploymentOrg(), parentSessionId: turn?.sessionId ?? "", turnId: turn?.turnId, taskId, verdict: verdict as TaskContinuationVerdict });
-      if (!verdict.admit) return { success: false as const, error: new Error(taskContinuationRefusalMessage(verdict.reason as Exclude<typeof verdict.reason, "eve-refused">)) };
+      if (!verdict.admit) {
+        const reason = verdict.reason as Exclude<typeof verdict.reason, "eve-refused">;
+        if (
+          joinedRequestId !== undefined &&
+          !joinedBefore &&
+          workRequestNamesTask(turn?.turnId, joinedRequestId, taskId) &&
+          (await returnRefusedJob(turn?.turnId, joinedRequestId, taskId, reason))
+        ) {
+          return { success: false as const, error: new Error(WORK_CONTINUATION_RETURNED_MESSAGE) };
+        }
+        return { success: false as const, error: new Error(taskContinuationRefusalMessage(reason)) };
+      }
       return eveResult ?? (await evesOwn(candidate));
   }
 

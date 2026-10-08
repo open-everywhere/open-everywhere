@@ -2,6 +2,7 @@ import { ingestUntrusted } from "../access/untrusted.js";
 import { renderWake, type NormalizedWake } from "../channels/normalized-wake.js";
 import { escapeXml } from "../channels/wake-envelope.js";
 import type { UnifiedWakeOrigin } from "../channels/unified-window.js";
+import { CONNECTOR_REPLAY_INPUT_KEY } from "./connector-op-offer.js";
 
 export type ApprovalOutcome = "approved" | "rejected" | "expired";
 
@@ -15,7 +16,10 @@ export interface ApprovalDecisionWakeInput {
   readonly execution?: { readonly ran: "ok" | "failed"; readonly line: string };
   readonly forwardsWork?: boolean;
   readonly armsCall?: boolean;
+  readonly replay?: { readonly connection: string; readonly tool: string };
 }
+
+const SAFE_REPLAY_SEGMENT = /^[A-Za-z0-9_.:-]{1,128}$/u;
 
 function originContainerId(origin: UnifiedWakeOrigin): string {
   switch (origin.platform) {
@@ -61,7 +65,10 @@ function rejectedClosing(forwardsWork: boolean | undefined): string {
 const REQUEST_FENCE_SOURCE = "approval-decision:request";
 const RESULT_FENCE_SOURCE = "approval-decision:result";
 
-function armedCallClosing(forwardsWork: boolean | undefined): string {
+function armedCallClosing(forwardsWork: boolean | undefined, replay: ApprovalDecisionWakeInput["replay"], pendingId: string): string {
+  if (replay !== undefined && SAFE_REPLAY_SEGMENT.test(replay.connection) && SAFE_REPLAY_SEGMENT.test(replay.tool) && SAFE_REPLAY_SEGMENT.test(pendingId)) {
+    return replayClosing(forwardsWork, replay, pendingId);
+  }
   const followUp =
     forwardsWork === true
       ? `Send that job a follow-up with \`work\` and its \`taskId\`.`
@@ -77,12 +84,31 @@ function armedCallClosing(forwardsWork: boolean | undefined): string {
   );
 }
 
-function approvedClosing(execution: { readonly ran: "ok" | "failed" } | undefined, forwardsWork: boolean | undefined, armsCall: boolean | undefined): string {
+function replayClosing(forwardsWork: boolean | undefined, replay: { readonly connection: string; readonly tool: string }, pendingId: string): string {
+  const call =
+    `call \`connection_execute\` with \`connection\` set to \`${replay.connection}\`, \`tool\` set to ` +
+    `\`${replay.tool}\`, and \`input\` set to an object whose ONLY key is \`${CONNECTOR_REPLAY_INPUT_KEY}\`, ` +
+    `with the card id \`${pendingId}\` as its value`;
+  const who =
+    forwardsWork === true
+      ? `Send a job with \`work\` that tells it to ${call}. Send it to the job that asked, with its \`taskId\`, or as a new job if that job has ended.`
+      : `If you hold \`connection_execute\`, make that call yourself: ${call}. Otherwise send the call to a worker: the one that asked, by its \`taskId\`, or a new one.`;
+  return (
+    `THE APPROVED ACT HAS NOT RUN. The approval allows ONE replay of the exact call stored on card ` +
+    `${pendingId}, and only that replay runs it. The approval's own line is in the fenced block marked ` +
+    `${RESULT_FENCE_SOURCE} after this envelope. ${who} The host then runs the input stored on the card. ` +
+    `Do NOT rebuild the input: a rebuilt input is a different call, and it posts a new card. Do NOT cancel ` +
+    `the job that asked. When the replay reports back, tell the room what it did.`
+  );
+}
+
+function approvedClosing(input: ApprovalDecisionWakeInput): string {
+  const { execution, forwardsWork, armsCall } = input;
   const cancelSentence = cancelWorkerSentence(forwardsWork);
   const continuation =
     `If you told the room you would do more BEYOND that act once it was approved, continue that work ` +
     `now — the approval unblocks it, it does not end your turn.`;
-  if (execution?.ran === "ok" && armsCall === true) return armedCallClosing(forwardsWork);
+  if (execution?.ran === "ok" && armsCall === true) return armedCallClosing(forwardsWork, input.replay, input.pendingId);
   if (execution?.ran === "ok") {
     return (
       `THE APPROVED ACT HAS ALREADY RUN. The approval performed it — you did not, and a delegated ` +
@@ -108,7 +134,7 @@ function approvedClosing(execution: { readonly ran: "ok" | "failed" } | undefine
 }
 
 export function approvalDecisionBody(input: ApprovalDecisionWakeInput): string {
-  const closed = input.outcome === "approved" ? approvedClosing(input.execution, input.forwardsWork, input.armsCall) : rejectedClosing(input.forwardsWork);
+  const closed = input.outcome === "approved" ? approvedClosing(input) : rejectedClosing(input.forwardsWork);
   return (
     `A pending approval you were waiting on (id ${input.pendingId}) has been decided. The request ` +
     `${outcomeClause(input.outcome, input.clickerId)}. What the request was is in the fenced block marked ` +

@@ -28,7 +28,7 @@ import {
   WORK_SESSION_FAILED_ACTION,
   WORK_REQUEST_LOST_ACTION,
 } from "../agent/channels/work-generation.js";
-import { notifyLostWorkRequests } from "../agent/channels/work-loss.js";
+import { notifyLostWorkRequests, notifyRefusedWorkRequest, refusedFollowUpText, WORK_REQUEST_REFUSED_ACTION } from "../agent/channels/work-loss.js";
 import { handleSessionLimitPark, parkRotateDelta } from "../agent/channels/session-park.js";
 import { noteGenerationDelegation, generationOwedTaskIds, __pendingGenerationRetirementsForTest, __resetGenerationRetirementsForTest } from "../agent/channels/generation-retirement.js";
 import { rememberWorkRequest, workLedgerId, workTokenForSeat, type WorkRequestRow } from "../agent/channels/work.js";
@@ -222,6 +222,46 @@ const det = (runtimeChanged = false) => ({ claimRuntime: async () => runtimeChan
   const rows = (await readAudit({ org: ORG })).filter((r) => r.action === WORK_REQUEST_LOST_ACTION);
   ok(rows.some((r) => r.detail?.["outcome"] === "notified") && rows.some((r) => r.detail?.["outcome"] === "replay-skipped") && rows.some((r) => r.detail?.["why"] === "request-row-missing"), "every outcome writes its audit row");
   ok(requestIdOfWorkSessionLedgerId(workSessionLedgerId("r1")) === "r1" && requestIdOfWorkSessionLedgerId("agent-1") === undefined && workSessionLedgerId("r1") !== workLedgerId("r1"), "W's ledger id is distinct from the seat's D18 id, so the two never share a reverse pointer");
+}
+
+{
+  const seatKey = unifiedDomainSessionKey("discord/111/222");
+  const row: WorkRequestRow = {
+    requestId: "req-refused",
+    seatToken: SEAT_G3,
+    wakeId: "22222222-2222-4222-8222-222222222222",
+    origin: { platform: "slack", channelId: "C_ROOM", threadTs: "100.2" },
+    surfaceKey: SURFACE,
+    binding: { principalId: "discord/u1" } as never,
+    requester: { kind: "requester", principalId: "discord/u1" } as never,
+    nonMemberWake: false,
+    tainted: false,
+    atIso: at(0),
+  };
+  await rememberWorkRequest(store, ORG, row);
+  await noteGenerationDelegation(ORG, SEAT_G3, workLedgerId("req-refused"), store);
+  const W = "oe-dom:e2e-unified:win:w/discord/111/222:oe-sup:g9-cccccc";
+  await noteGenerationDelegation(ORG, W, workSessionLedgerId("req-refused"), store);
+  const sent: { seatToken: string; requestId: string; message: string }[] = [];
+  const dispatch = async (input: { seatToken: string; requestId: string; message: string }) => {
+    sent.push(input);
+    return true;
+  };
+  ok((await generationOwedTaskIds(ORG, SEAT_G3, store)).includes(workLedgerId("req-refused")), "⑦b precondition: the seat owes the forwarded follow-up");
+  const woke = await notifyRefusedWorkRequest({ org: ORG, requestId: "req-refused", taskId: "agent-busy-1", reason: "task-working" }, { store, dispatch: dispatch as never });
+  ok(woke === true && sent.length === 1 && sent[0]!.requestId === "req-refused", "🔴 ⑦b a W-side refusal wakes the seat ONCE, for that request");
+  ok(sent[0]!.seatToken === (await store.getChannelSession(ORG, seatKey))!.token, "⑦b …on the seat generation live NOW");
+  ok(sent[0]!.message.includes("FAILED") && sent[0]!.message.includes("did not run this follow-up") && sent[0]!.message.includes("still working on an earlier message"), "⑦b …as a FAILED result that says the follow-up was not run, and why");
+  ok((await generationOwedTaskIds(ORG, SEAT_G3, store)).length === 0, "⑦b …the seat no longer owes the job (D18 cleared)");
+  ok((await generationOwedTaskIds(ORG, W, store)).length === 0, "⑦b …and W's ledger no longer holds it");
+  const again = await notifyRefusedWorkRequest({ org: ORG, requestId: "req-refused", taskId: "agent-busy-1", reason: "task-working" }, { store, dispatch: dispatch as never });
+  ok(again === false && sent.length === 1, "🔴 ⑦b ONCE per request: a replayed refusal sends nothing more");
+  const none = await notifyRefusedWorkRequest({ org: ORG, requestId: "req-refused-missing", taskId: "agent-busy-1", reason: "no-provenance" }, { store, dispatch: dispatch as never });
+  ok(none === false && sent.length === 1, "⑦b a request with no row sends nothing");
+  const rows = (await readAudit({ org: ORG })).filter((r) => r.action === WORK_REQUEST_REFUSED_ACTION);
+  ok(rows.some((r) => r.detail?.["outcome"] === "notified" && r.detail?.["reason"] === "task-working") && rows.some((r) => r.detail?.["outcome"] === "replay-skipped") && rows.some((r) => r.detail?.["why"] === "request-row-missing"), "⑦b every outcome writes its work.request_refused row");
+  ok(typeof (await import("../agent/access/work-refusal-notice.js")).registeredContinuationRefusalNotifier() === "function", "🔴 ⑦b loading channels/work-loss.ts registers the notice with the fence's light half — without it a W-side refusal stays silent");
+  ok(refusedFollowUpText("t1", "cross-room").includes("different conversation") && refusedFollowUpText("t1", "no-provenance").includes("as a new job"), "⑦b the text names what the seat can do for each reason");
 }
 
 {

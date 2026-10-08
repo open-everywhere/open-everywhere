@@ -7,12 +7,13 @@ import { fileURLToPath } from "node:url";
 import { scaffoldApp } from "../packages/create/src/scaffold.js";
 import { defaultAdapterWiring } from "../packages/adapters/agent/register-defaults.js";
 import { assertCoreDistFresh, assertPackageDistFresh } from "./core-dist-freshness.js";
+import { tsxCommand } from "./npm-command.js";
 
 assertCoreDistFresh();
 assertPackageDistFresh("packages/adapters", "@open-everywhere/adapters");
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const TSX = join(REPO, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
+const tsx = (args: readonly string[]): [string, string[]] => tsxCommand(REPO, args);
 const OE_CLI = join(REPO, "packages", "core", "scripts", "oe-cli.ts");
 const WIRING_REL = "agent/lib/register-adapters.ts";
 
@@ -89,8 +90,8 @@ const scratch = mkdtempSync(join(tmpdir(), "oe-template-adapters-"));
 
 function scaffold(name: string): string {
   const { dir } = scaffoldApp({ targetDir: join(scratch, name), version: "0.0.0-test", eol: "\n" });
-  symlinkSync(join(REPO, "node_modules"), join(dir, "node_modules"), "dir");
-  execFileSync(TSX, [OE_CLI, "build"], { cwd: dir, env: childEnv(dir, {}), stdio: ["ignore", "pipe", "pipe"] });
+  symlinkSync(join(REPO, "node_modules"), join(dir, "node_modules"), process.platform === "win32" ? "junction" : "dir");
+  execFileSync(...tsx([OE_CLI, "build"]), { cwd: dir, env: childEnv(dir, {}), stdio: ["ignore", "pipe", "pipe"] });
   writeFileSync(join(dir, "probe.ts"), PROBE);
   return dir;
 }
@@ -106,7 +107,7 @@ function childEnv(dir: string, extra: Readonly<Record<string, string>>): NodeJS.
 }
 
 function boot(dir: string, extra: Readonly<Record<string, string>> = {}, neonPglite = false): Boot {
-  const out = execFileSync(TSX, ["probe.ts", ...(neonPglite ? ["--neon-pglite"] : [])], { cwd: dir, env: childEnv(dir, extra), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 });
+  const out = execFileSync(...tsx(["probe.ts", ...(neonPglite ? ["--neon-pglite"] : [])]), { cwd: dir, env: childEnv(dir, extra), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 });
   const line = out.split("\n").find((l) => l.startsWith("OE_TEMPLATE_ADAPTERS="));
   assert.ok(line, `the probe printed no report in ${dir}`);
   return JSON.parse(line.slice("OE_TEMPLATE_ADAPTERS=".length)) as Boot;

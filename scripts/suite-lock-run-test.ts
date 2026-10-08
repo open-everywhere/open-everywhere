@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import vitestConfig from "../vitest.config.js";
 import { DurationShardSequencer } from "./it-shard-sequencer.js";
 import { mergeTimings, timingsFileText } from "./it-timings-generate.js";
-import { SIGKILL_EXIT_CODE, acquireLock, classifyExit, fencedSpawn, pidAlive, readHolder, reclaimDeadLock, releaseLock, runLocked, spawnPrepareStep, type LockHolder } from "./suite-lock-run.js";
+import { SIGKILL_EXIT_CODE, acquireLock, classifyExit, fencedSpawn, pidAlive, readHolder, reclaimDeadLock, releaseLock, runLocked, spawnPlan, spawnPrepareStep, type LockHolder } from "./suite-lock-run.js";
 import { DAC_BYPASS_CAPS, assertWriteBitsBite, dacFenceScript, posixWriteBitsAbsentReason, writeBitsBite } from "./dac-fence.js";
 import type { BoxProbe } from "./ci-max-workers.js";
 import {
@@ -45,6 +45,8 @@ const tsx = (args: string[]): [string, string[]] => tsxCommand(repoRoot, args);
 const wrapperScript = join(repoRoot, "scripts", "suite-lock-run.ts");
 
 const scratch = mkdtempSync(join(tmpdir(), "oe-suite-lock-test-"));
+
+const HAS_PROC = existsSync("/proc/self/status");
 
 function vitestCountSplit(files: readonly string[], index: number, total: number): string[] {
   const base = Math.floor(files.length / total);
@@ -111,6 +113,18 @@ function check(name: string, fn: () => void | Promise<void>): Promise<void> {
       console.error(`✗ ${name}`);
       console.error(err instanceof Error ? (err.stack ?? err.message) : err);
     });
+}
+
+function writeFakeVitest(dir: string, body: string): string {
+  if (process.platform !== "win32") {
+    const fake = join(dir, "vitest");
+    writeFileSync(fake, `#!/usr/bin/env node\n${body}`, { mode: 0o755 });
+    return fake;
+  }
+  writeFileSync(join(dir, "vitest.js"), body);
+  const shim = join(dir, "vitest.cmd");
+  writeFileSync(shim, `@"${process.execPath}" "%~dp0vitest.js" %*\r\n`);
+  return shim;
 }
 
 function markerArgs(logFile: string, id: string, sleepMs: number): string[] {
@@ -238,7 +252,9 @@ async function main(): Promise<void> {
     assert.equal(existsSync(lockDir), false, "the lock must be released even after a failing command");
   });
 
-  await check("a wrapped command killed by SIGKILL exits 137 and says so", async () => {
+  if (process.platform === "win32") {
+    console.log("– skipped on Windows: a wrapped command killed by SIGKILL exits 137 and says so (Windows reports a SIGKILL as exit 1 with no signal)");
+  } else await check("a wrapped command killed by SIGKILL exits 137 and says so", async () => {
     const lockDir = join(scratch, "lock-killed");
     let code = 0;
     const lines = await captureStderr(async () => {
@@ -481,7 +497,7 @@ async function main(): Promise<void> {
     };
     const probe: TierFileProbe = {
       readDir: (path) => {
-        const entries = tree[path.replace(/^\/root\//u, "")];
+        const entries = tree[path.replaceAll("\\", "/").replace(/^\/root\//u, "")];
         if (entries === undefined) throw new Error(`ENOENT ${path}`);
         return entries;
       },
@@ -600,13 +616,11 @@ async function main(): Promise<void> {
     const lockDir = join(scratch, "lock-shards");
     const marks = join(scratch, "shard-marks.txt");
     const fakeDir = mkdtempSync(join(tmpdir(), "oe-fake-vitest-"));
-    const fake = join(fakeDir, "vitest");
-    writeFileSync(
-      fake,
-      `#!/usr/bin/env node\nrequire("node:fs").appendFileSync(${JSON.stringify(marks)}, process.argv.slice(2).join(" ") + ` +
+    const fake = writeFakeVitest(
+      fakeDir,
+      `require("node:fs").appendFileSync(${JSON.stringify(marks)}, process.argv.slice(2).join(" ") + ` +
         `" skip=" + (process.env.OE_IT_SKIP_BUILD ?? "unset") + "\\n");\n` +
         `process.exit(process.argv.includes("--shard=2/4") ? 3 : 0);\n`,
-      { mode: 0o755 },
     );
     let out: string[] = [];
     const logged = await captureStderr(async () => {
@@ -639,7 +653,9 @@ async function main(): Promise<void> {
       `…as a human log label and never as an evidence line — got ${JSON.stringify(shardLabels)}`,
     );
     assert.ok(
-      shardLabels.every((l) => /exit=\d+ peak-tree-rss=\d+(\.\d+)? [A-Za-z]+ wall=\d+\.\d+s workers=\d+$/u.test(l)),
+      shardLabels.every((l) =>
+        (HAS_PROC ? /exit=\d+ peak-tree-rss=\d+(\.\d+)? [A-Za-z]+ wall=\d+\.\d+s workers=\d+$/u : /exit=\d+ peak-tree-rss=not measured wall=\d+\.\d+s workers=\d+$/u).test(l),
+      ),
       `each shard label carries its exit, peak tree RSS, wall clock and worker count — got ${JSON.stringify(shardLabels)}`,
     );
     assert.ok(
@@ -815,12 +831,10 @@ async function main(): Promise<void> {
     const lockDir = join(scratch, "lock-single-shard");
     const marks = join(scratch, "single-shard-marks.txt");
     const fakeDir = mkdtempSync(join(tmpdir(), "oe-fake-vitest-"));
-    const fake = join(fakeDir, "vitest");
-    writeFileSync(
-      fake,
-      `#!/usr/bin/env node\nrequire("node:fs").appendFileSync(${JSON.stringify(marks)}, process.argv.slice(2).join(" ") + "\\n");\n` +
+    const fake = writeFakeVitest(
+      fakeDir,
+      `require("node:fs").appendFileSync(${JSON.stringify(marks)}, process.argv.slice(2).join(" ") + "\\n");\n` +
         `process.exit(process.argv.includes("--shard=2/4") ? 3 : 0);\n`,
-      { mode: 0o755 },
     );
     let prepared = 0;
     let out: string[] = [];
@@ -901,8 +915,7 @@ async function main(): Promise<void> {
   await check("runLocked: a targeted leg runs once and prints NO tier proof line", async () => {
     const lockDir = join(scratch, "lock-targeted");
     const fakeDir = mkdtempSync(join(tmpdir(), "oe-fake-vitest-t-"));
-    const fake = join(fakeDir, "vitest");
-    writeFileSync(fake, "#!/usr/bin/env node\nprocess.exit(0);\n", { mode: 0o755 });
+    const fake = writeFakeVitest(fakeDir, "process.exit(0);\n");
     const out = await captureStdout(async () => {
       const code = await runLocked(fake, ["run", "tests/integration/x.test.ts"], {
         manual: false,
@@ -962,7 +975,9 @@ async function main(): Promise<void> {
     assert.deepEqual(node.args, ["-e", "0"], "…with its arguments untouched");
 
     const vitest = fencedSpawn("/repo/node_modules/.bin/vitest", ["run", "--shard=1/4"]);
-    if (bits) {
+    if (posixWriteBitsAbsentReason() !== null) {
+      assert.equal(vitest.cmd, "/repo/node_modules/.bin/vitest", "a host with no POSIX write bits spawns vitest unwrapped");
+    } else if (bits) {
       assert.equal(vitest.cmd, "/repo/node_modules/.bin/vitest", "a runner the write bits already bite is spawned unwrapped");
       assert.deepEqual(vitest.args, ["run", "--shard=1/4"], "…with its arguments untouched");
     } else {
@@ -970,6 +985,26 @@ async function main(): Promise<void> {
       assert.equal(vitest.args[0], `--drop=${DAC_BYPASS_CAPS.join(",")}`, "…dropping exactly the two DAC bypass capabilities, and no others");
       assert.match(vitest.args.at(-1) ?? "", /vitest'? '?run/u, "…and the wrapped command still runs vitest with its own arguments");
     }
+  });
+
+  await check("on Windows the wrapper spawns vitest unwrapped and prints why", async () => {
+    const err = await captureStderr(async () => {
+      const win = fencedSpawn("C:\\repo\\node_modules\\.bin\\vitest.cmd", ["run", "a.test.ts"], "win32");
+      assert.equal(win.cmd, "C:\\repo\\node_modules\\.bin\\vitest.cmd", "a Windows host spawns vitest itself, not capsh");
+      assert.deepEqual(win.args, ["run", "a.test.ts"], "…with its arguments untouched");
+    });
+    assert.match(err.join("\n"), /no DAC fence on this host — Windows/u, "…and it prints the reason by name");
+  });
+
+  await check("spawnPlan: no shell off Windows; on Windows a real executable runs direct and a shim gets one quoted line", () => {
+    const script = 'process.exit(require("node:fs").existsSync("a b") ? 0 : 7)';
+    assert.deepEqual(spawnPlan("vitest", ["run"], "linux"), { cmd: "vitest", args: ["run"], shell: false }, "Linux spawns the command as given, with no shell");
+    assert.deepEqual(spawnPlan("node", ["-e", script], "win32"), { cmd: "node", args: ["-e", script], shell: false }, "🔴 Windows spawns node directly, so a script argument stays one word");
+    assert.equal(spawnPlan("C:\\nodejs\\node.exe", ["-e", "0"], "win32").shell, false, "…and any .exe directly");
+    const shim = spawnPlan("C:\\my tools\\vitest.cmd", ["run", "--shard=1/4", 'a "b"'], "win32");
+    assert.equal(shim.shell, true, "a .cmd shim goes through cmd.exe");
+    assert.deepEqual(shim.args, [], "…as ONE command line, never an argv for Node to join");
+    assert.equal(shim.cmd, '"C:\\my tools\\vitest.cmd" run --shard=1/4 "a \\"b\\""', "…with a spaced path and an embedded quote quoted, and plain words left alone");
   });
 
   await check("dacFenceScript quotes every word, so a path with a space cannot split", () => {

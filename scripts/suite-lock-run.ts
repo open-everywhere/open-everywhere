@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { withoutDacOverride, writeBitsBite } from "./dac-fence.js";
+import { posixWriteBitsAbsentReason, withoutDacOverride, writeBitsBite } from "./dac-fence.js";
 import { HOST_BOX_PROBE, integrationMaxWorkers } from "./ci-max-workers.js";
 import {
   SINGLE_SHARD_ENV,
@@ -202,6 +202,21 @@ export function classifyExit(code: number | null, signal: NodeJS.Signals | null,
   return code ?? (signal ? 1 : 0);
 }
 
+function windowsQuote(word: string): string {
+  if (/^[\w\-.,:=/\\@+]+$/u.test(word)) return word;
+  return `"${word.replace(/(\\*)"/gu, '$1$1\\"').replace(/(\\+)$/u, "$1$1")}"`;
+}
+
+export function spawnPlan(
+  cmd: string,
+  args: readonly string[],
+  platform: NodeJS.Platform = process.platform,
+): { readonly cmd: string; readonly args: string[]; readonly shell: boolean } {
+  if (platform !== "win32") return { cmd, args: [...args], shell: false };
+  if (/(^|[\\/])node$/iu.test(cmd) || /\.exe$/iu.test(cmd)) return { cmd, args: [...args], shell: false };
+  return { cmd: [cmd, ...args].map(windowsQuote).join(" "), args: [], shell: true };
+}
+
 function spawnMeasured(
   cmd: string,
   args: readonly string[],
@@ -210,7 +225,8 @@ function spawnMeasured(
 ): Promise<{ exit: number; peakRssBytes: number; wallMs: number }> {
   return new Promise((resolve, reject) => {
     const startedAt = Date.now();
-    const child = spawn(cmd, [...args], { stdio: "inherit", shell: process.platform === "win32", ...(env ? { env } : {}) });
+    const plan = spawnPlan(cmd, args);
+    const child = spawn(plan.cmd, plan.args, { stdio: "inherit", shell: plan.shell, ...(env ? { env } : {}) });
     const sampler = child.pid === undefined ? undefined : samplePeakRss(child.pid);
     child.on("error", (err) => {
       sampler?.stop();
@@ -240,8 +256,18 @@ function headSha(): string | undefined {
   }
 }
 
-export function fencedSpawn(cmd: string, args: readonly string[]): { cmd: string; args: string[] } {
-  if (!isVitestCommand(cmd) || writeBitsBite()) return { cmd, args: [...args] };
+export function fencedSpawn(
+  cmd: string,
+  args: readonly string[],
+  platform: NodeJS.Platform = process.platform,
+): { cmd: string; args: string[] } {
+  if (!isVitestCommand(cmd)) return { cmd, args: [...args] };
+  const absent = posixWriteBitsAbsentReason(platform);
+  if (absent !== null) {
+    console.error(`suite-lock-run: no DAC fence on this host — ${absent}. The write-fence tests fail by name here.`);
+    return { cmd, args: [...args] };
+  }
+  if (writeBitsBite()) return { cmd, args: [...args] };
   console.error(
     "suite-lock-run: this process BYPASSES the POSIX write bits (uid 0 with CAP_DAC_OVERRIDE), which would invert every " +
       "write-fence assertion in the tier. Spawning the suite with the DAC bypass dropped (OPE-1989/OPE-1990) — same uid, " +

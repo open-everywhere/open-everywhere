@@ -55,6 +55,7 @@ import {
 } from "./release-scope.js";
 import { buildCostReport, checkExpectedModels, fetchRunUsage, renderCostReport, resolveExpectedModels } from "./cost.js";
 import { callUnifiedAudit, fetchAudit, fetchAuditWindow } from "./audit-read.js";
+import { measureDeploymentClockSkew, renderClockSkewLine } from "./clock-skew.js";
 import { captureWakeEvidence, renderLegWakeEvidence, writeWakeEvidence, type LegWakeEvidence } from "./wake-evidence.js";
 import { fetchTranscript, type TranscriptWireEvent } from "./transcript-read.js";
 import { renderObservationSummary, type Observation } from "./observations.js";
@@ -213,6 +214,10 @@ async function main(): Promise<void> {
     report.available.size > 0 ? [...report.available].join(", ") : "none (dry mode only when no canonical release scope is armed)"
   }; judge: ${judge.name}`);
   console.log(`seat lock: /tmp/oe-e2e-locks/domain-${process.env.E2E_UNIFIED_DOMAIN?.trim() || "e2e-unified"}.lock — hold it for the whole live drive; never run a second driver against any surface of this domain`);
+  if (auditTarget) {
+    const measured = await measureDeploymentClockSkew(auditTarget);
+    console.log(renderClockSkewLine(measured.skew, measured.unavailable));
+  }
 
   let passed = 0;
   let failed = 0;

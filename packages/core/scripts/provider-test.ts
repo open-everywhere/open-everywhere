@@ -202,6 +202,37 @@ for (const provider of [gitProvider, sqliteProvider]) {
   ok(torn === 0, `🔴 OPE-2297: no concurrent read saw a truncated or partial file (${torn} of ${reads} reads did)`);
   ok(!readdirSync(join(gitProvider.root!(), ".oe-staging")).length, "OPE-2297: every staged write was renamed into place — nothing is left in the staging dir");
 
+  {
+    const { renameOverReaders } = await import("../agent/memory/store.js");
+    const busy = (code: string) => Object.assign(new Error(code), { code });
+    let calls = 0;
+    const flaky = async (): Promise<void> => {
+      if (++calls < 3) throw busy("EPERM");
+    };
+    await renameOverReaders("a", "b", { rename: flaky, windows: true });
+    ok(calls === 3, `OPE-2369: on Windows a rename that a reader blocks retries until it lands (${calls} calls)`);
+    calls = 0;
+    let posixErr: unknown;
+    await renameOverReaders("a", "b", { rename: flaky, windows: false }).catch((e: unknown) => (posixErr = e));
+    ok(calls === 1 && (posixErr as NodeJS.ErrnoException | undefined)?.code === "EPERM", "OPE-2369: off Windows the rename never retries — the first EPERM escapes");
+    calls = 0;
+    let otherErr: unknown;
+    const missing = async (): Promise<void> => {
+      calls++;
+      throw busy("ENOENT");
+    };
+    await renameOverReaders("a", "b", { rename: missing, windows: true }).catch((e: unknown) => (otherErr = e));
+    ok(calls === 1 && (otherErr as NodeJS.ErrnoException | undefined)?.code === "ENOENT", "OPE-2369: a non-busy error (ENOENT) escapes at once, with no retry");
+    calls = 0;
+    let stuckErr: unknown;
+    const stuck = async (): Promise<void> => {
+      calls++;
+      throw busy("EBUSY");
+    };
+    await renameOverReaders("a", "b", { rename: stuck, windows: true, attempts: 4 }).catch((e: unknown) => (stuckErr = e));
+    ok(calls === 4 && (stuckErr as NodeJS.ErrnoException | undefined)?.code === "EBUSY", "OPE-2369: the retry is bounded — a handle that stays open makes the last error escape");
+  }
+
   const { writeFileSync, existsSync } = await import("node:fs");
   const staging = join(gitProvider.root!(), ".oe-staging");
   const dead = join(staging, `${2 ** 31 - 2}-1`);

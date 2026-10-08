@@ -46,6 +46,34 @@ export function connectionExecuteTargetForCall(callId: unknown): ConnectionExecu
   return targetsByCallId.get(callId);
 }
 
+export type ConnectorReplayResolver = (callId: unknown, executeInput: unknown) => Promise<Record<string, unknown>>;
+
+let replayResolver: ConnectorReplayResolver | undefined;
+
+export function registerConnectorReplayResolver(resolver: ConnectorReplayResolver): void {
+  replayResolver = resolver;
+}
+
+export async function resolveConnectorReplay(callId: unknown, executeInput: unknown): Promise<Record<string, unknown>> {
+  if (replayResolver === undefined) throw new Error("The replay of an approved card was refused, because no replay resolver is loaded in this process. Nothing ran.");
+  return replayResolver(callId, executeInput);
+}
+
+export type ConnectorReplaySettler = (executeInput: unknown) => Promise<void>;
+
+let replaySettler: ConnectorReplaySettler | undefined;
+
+export function registerConnectorReplaySettler(settler: ConnectorReplaySettler): void {
+  replaySettler = settler;
+}
+
+export async function settleConnectorReplay(executeInput: unknown): Promise<void> {
+  try {
+    await replaySettler?.(executeInput);
+  } catch {
+  }
+}
+
 export function clearConnectionExecuteTargets(): void {
   targetsByCallId.clear();
 }

@@ -697,7 +697,9 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
   depends on this calls `assertWriteBitsBite` first, which fails BY NAME on an unfenced runner.
   Windows has no POSIX write bits at all, so no capability drop can make a fence refuse there.
   `posixWriteBitsAbsentReason()` names that host, and a unit suite that measures the fence
-  (`memory-root-fence-test.ts`) prints a SKIPPED line with that reason and does not count the leg. The
+  (`memory-root-fence-test.ts`) prints a SKIPPED line with that reason and does not count the leg.
+  On Windows the wrapper prints the same reason and spawns vitest without a drop. The integration
+  tests that need the fence then fail by name in `assertWriteBitsBite`. They never pass unmeasured. The
   earlier remedy was a non-root `runner` user; a cloud sandbox refuses `useradd` and `chown`,
   so it is gone.
 - Two booted hosts can coexist because each

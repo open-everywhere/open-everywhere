@@ -10,7 +10,25 @@ import type { SessionContext } from "eve/context";
 import type { ApprovalStatus } from "eve/tools/approval";
 import { connectorToolPermissionKind } from "../approvals/session-grant.js";
 import { offerRoutinePermissionCardFor } from "../approvals/routine-permission-offer.js";
-import { CONNECTOR_INPUT_PREVIEW_CAP, connectorCardContext, connectorOpApprovalKind, deliverSignInCard, offerConnectorOpCard, type ConnectorOpCardOffer } from "../approvals/connector-op-offer.js";
+import "./connector-replay.js";
+import { clearSpentConnectorCards, type ConnectorCardRetentionStore } from "./connector-card-retention.js";
+import {
+  CONNECTOR_INPUT_PREVIEW_CAP,
+  CONNECTOR_OP_CARD_KIND,
+  CONNECTOR_REPLAY_ADMISSION_TTL_MS,
+  CONNECTOR_REPLAY_INPUT_CAP,
+  CONNECTOR_REPLAY_INPUT_KEY,
+  connectorCardContext,
+  connectorOpApprovalKind,
+  connectorCardCall,
+  connectorReplayAdmissionKey,
+  deliverSignInCard,
+  mentionsConnectorReplay,
+  offerConnectorOpCard,
+  readConnectorReplayCardId,
+  storedConnectorCall,
+  type ConnectorOpCardOffer,
+} from "../approvals/connector-op-offer.js";
 import { isWorkSessionChildContext } from "../access/work-session.js";
 import { createHash } from "node:crypto";
 import { getOperationalStore } from "../operational/provider.js";
@@ -507,7 +525,7 @@ export function connectorApprovalPolicy(deps: OeConnectorCardDeps = {}): Approva
 const blanketConnectorApproval: ApprovalPolicy = () => "user-approval";
 
 export interface OeConnectorCardDeps {
-  readonly store?: Pick<ReturnType<typeof getOperationalStore>, "getSessionApproval" | "markEventSeen" | "hasEventSeen">;
+  readonly store?: Pick<ReturnType<typeof getOperationalStore>, "getSessionApproval" | "markEventSeen" | "hasEventSeen" | "getPendingAction"> & ConnectorCardRetentionStore;
   readonly offer?: typeof offerConnectorOpCard;
   readonly grantScope?: (ctx: Parameters<ApprovalPolicy>[0]) => ConnectorGrantScope | undefined | Promise<ConnectorGrantScope | undefined>;
   readonly tainted?: () => boolean;
@@ -549,15 +567,110 @@ function connectorInputDigest(input: unknown): string {
   return createHash("sha256").update(connectorInputJson(input)).digest("hex").slice(0, 32);
 }
 
-function connectorOpCardedMessage(connection: string, toolName: string, where: string, pendingId: string): string {
+function connectorReplayInput(input: unknown): Record<string, unknown> | undefined {
+  const text = connectorInputJson(input);
+  if (text.length > CONNECTOR_REPLAY_INPUT_CAP) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function connectorOpCardedMessage(connection: string, toolName: string, where: string, pendingId: string, replayable: boolean): string {
+  const op = toolName.startsWith(`${connection}__`) ? toolName.slice(connection.length + 2) : toolName;
+  const after = replayable
+    ? `When a member approves it, replay the approved call by its card id: call \`connection_execute\` with \`connection\` "${connection}", \`tool\` "${op}" and \`input\` {"${CONNECTOR_REPLAY_INPUT_KEY}":"${pendingId}"}. The host then runs the exact input stored on the card. Do not rebuild the input.`
+    : "When a member approves it, call the op again with the same input.";
   return (
     `connection "${connection}": the op "${toolName}" needs a member's approval, so an approval card is posted ${where} (pending ${pendingId}). ` +
-    "The op did NOT run, and nothing waits on the card. Report that the op waits for approval. When a member approves it, call the op again with the same input."
+    `The op did NOT run, and nothing waits on the card. Report that the op waits for approval. ${after}`
   );
+}
+
+async function decideConnectorReplay(
+  policy: ApprovalPolicy,
+  ctx: Parameters<ApprovalPolicy>[0],
+  cardId: string | undefined,
+  deps: OeConnectorCardDeps,
+): Promise<ApprovalStatus> {
+  const connection = parseQualifiedToolName(ctx.toolName)?.connection ?? "";
+  const deny = (why: string): ApprovalStatus => ({
+    type: "denied",
+    reason: `connection "${connection}": the replay of an approved card for "${ctx.toolName}" was refused, because ${why}. Nothing ran.`,
+  });
+  if (cardId === undefined) return deny(`the input holds "${CONNECTOR_REPLAY_INPUT_KEY}" but is not a replay: it must be the only key, and its value must be a card id`);
+  if (typeof ctx.callId !== "string" || ctx.callId.length === 0) return deny("this call has no call id to bind the replay to");
+  let scope: ConnectorGrantScope | undefined;
+  try {
+    scope = await (deps.grantScope ?? liveConnectorGrantScope)(ctx);
+  } catch {
+    scope = undefined;
+  }
+  if (scope === undefined) return deny("this call names no conversation the card could belong to");
+  const org = deploymentOrg();
+  const store = deps.store ?? getOperationalStore();
+  const row = await callAsync(() => store.getPendingAction(org, cardId), null);
+  if (row === null || row.kind !== CONNECTOR_OP_CARD_KIND) return deny(`no connector approval card has the id ${cardId}`);
+  const call = connectorCardCall(row.argsJson);
+  if (call === undefined) return deny(`card ${cardId} stores no input to replay; call the op again with the exact input on the card`);
+  if (call.tool !== ctx.toolName) return deny(`card ${cardId} approves another op`);
+  if (call.sessionKey !== scope.key) return deny(`card ${cardId} belongs to another conversation`);
+  if (row.status !== "approved") return deny(`card ${cardId} is ${row.status}, not approved`);
+  if (call.inputCleared) {
+    return deny(
+      `card ${cardId}'s one approved call was already used, or its approval lapsed, so the card no longer stores its input. ` +
+        "Do not replay this card again. If that call failed and the op is still needed, call the op with its full input to ask for a new approval",
+    );
+  }
+  const stored = storedConnectorCall(row.argsJson);
+  if (stored === undefined) return deny(`card ${cardId} stores no input to replay; call the op again with the exact input on the card`);
+  if (connectorOpApprovalKind(stored.tool, connectorInputDigest(stored.input)) !== stored.memoKind) return deny(`card ${cardId} does not match its own approval`);
+  const decision = await policy({ ...ctx, toolInput: stored.input });
+  if (typeof decision === "object" && decision !== null && (decision as { type?: unknown }).type === "denied") return decision;
+  const nowIso = new Date().toISOString();
+  const spend = await spendOneCallApproval(store, org, stored.sessionKey, stored.memoKind, ctx.callId, nowIso);
+  if (spend === "absent") return deny(`card ${cardId}'s one-call approval has expired or was revoked`);
+  if (spend === "taken") {
+    return deny(
+      `card ${cardId}'s one-call approval was already taken by another call. ` +
+        "That call may still be running, may have stopped before it ran, or may already have run, so check whether the write happened before you act. " +
+        "Do not replay this card again. If the write did not happen and the op is still needed, call the op with its full input to ask for a new approval",
+    );
+  }
+  const admitted = await callAsync(
+    () => store.markEventSeen(org, connectorReplayAdmissionKey(cardId, ctx.callId as string), nowIso, CONNECTOR_REPLAY_ADMISSION_TTL_MS),
+    false,
+  );
+  if (!admitted && !(await callAsync(() => store.hasEventSeen(org, connectorReplayAdmissionKey(cardId, ctx.callId as string), nowIso, CONNECTOR_REPLAY_ADMISSION_TTL_MS), false))) {
+    return deny("the replay could not be recorded");
+  }
+  return "not-applicable";
+}
+
+async function spendOneCallApproval(
+  store: NonNullable<OeConnectorCardDeps["store"]>,
+  org: string,
+  sessionKey: string,
+  memoKind: string,
+  callId: unknown,
+  nowIso: string,
+): Promise<"spent" | "absent" | "taken"> {
+  const memo = await callAsync(() => store.getSessionApproval(org, sessionKey, memoKind, nowIso), null);
+  if (memo === null) return "absent";
+  const ttlMs = Math.max(1, Date.parse(memo.expiresAt) - Date.now());
+  const spendKey = `connector-op-spent:${sessionKey}:${memoKind}:${memo.createdAt}`;
+  const callKey = typeof callId === "string" && callId.length > 0 ? `${spendKey}:call:${callId}` : undefined;
+  if (callKey !== undefined && (await callAsync(() => store.hasEventSeen(org, callKey, nowIso, ttlMs), false))) return "spent";
+  const spent = await callAsync(() => store.markEventSeen(org, spendKey, nowIso, ttlMs), false);
+  if (spent && callKey !== undefined) await callAsync(() => store.markEventSeen(org, callKey, nowIso, ttlMs), false);
+  return spent ? "spent" : "taken";
 }
 
 export function withOeConnectorCard(policy: ApprovalPolicy, deps: OeConnectorCardDeps = {}): ApprovalPolicy {
   return async (ctx): Promise<ApprovalStatus> => {
+    if (mentionsConnectorReplay(ctx.toolInput)) return decideConnectorReplay(policy, ctx, readConnectorReplayCardId(ctx.toolInput), deps);
     const decision = await policy(ctx);
     if (!decisionWouldPrompt(decision)) return decision;
     const connection = parseQualifiedToolName(ctx.toolName)?.connection;
@@ -582,18 +695,11 @@ export function withOeConnectorCard(policy: ApprovalPolicy, deps: OeConnectorCar
     const org = deploymentOrg();
     const store = deps.store ?? getOperationalStore();
     const nowIso = new Date().toISOString();
-    const memoAllows = async (): Promise<boolean> => {
-      const memo = await callAsync(() => store.getSessionApproval(org, sessionKey, memoKind, nowIso), null);
-      if (memo === null) return false;
-      const ttlMs = Math.max(1, Date.parse(memo.expiresAt) - Date.now());
-      const spendKey = `connector-op-spent:${sessionKey}:${memoKind}:${memo.createdAt}`;
-      const callKey = typeof ctx.callId === "string" && ctx.callId.length > 0 ? `${spendKey}:call:${ctx.callId}` : undefined;
-      if (callKey !== undefined && (await callAsync(() => store.hasEventSeen(org, callKey, nowIso, ttlMs), false))) return true;
-      const spent = await callAsync(() => store.markEventSeen(org, spendKey, nowIso, ttlMs), false);
-      if (spent && callKey !== undefined) await callAsync(() => store.markEventSeen(org, callKey, nowIso, ttlMs), false);
-      return spent;
-    };
-    if (await memoAllows()) return "not-applicable";
+    if ((await spendOneCallApproval(store, org, sessionKey, memoKind, ctx.callId, nowIso)) === "spent") {
+      await clearSpentConnectorCards(store, org, sessionKey, memoKind, nowIso);
+      return "not-applicable";
+    }
+    const replayInput = connectorReplayInput(ctx.toolInput);
     const credential = await callAsync(() => (deps.credentialOf ?? connectorCredentialPlane)(connection, ctx.session?.auth), undefined);
     const offered = await (deps.offer ?? offerConnectorOpCard)({
       org,
@@ -603,6 +709,7 @@ export function withOeConnectorCard(policy: ApprovalPolicy, deps: OeConnectorCar
       sessionKey,
       memoKind,
       inputPreview: connectorInputPreview(ctx.toolInput),
+      ...(replayInput === undefined ? {} : { input: replayInput }),
       auth: ctx.session?.auth,
       session: ctx.session,
       tainted: taintedOrPoisoned(deps.tainted ?? untrustedIngestedThisTurn),
@@ -610,7 +717,7 @@ export function withOeConnectorCard(policy: ApprovalPolicy, deps: OeConnectorCar
     });
     if (offered.outcome === "approved") return "not-applicable";
     if (offered.outcome === "refused") return deny(offered.reason);
-    return { type: "denied", reason: connectorOpCardedMessage(connection, ctx.toolName, offered.where, offered.pendingId) };
+    return { type: "denied", reason: connectorOpCardedMessage(connection, ctx.toolName, offered.where, offered.pendingId, replayInput !== undefined) };
   };
 }
 

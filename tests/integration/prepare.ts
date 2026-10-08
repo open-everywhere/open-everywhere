@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { npmCommand, npxCommand } from "../../scripts/npm-command.js";
 import { INTEGRATION_SANDBOX_BACKEND, PREPARED_PGLITE_TEMPLATE_PARENT } from "./global-setup-contract.js";
 import { mintPgliteTemplate } from "./pglite-template.js";
 import {
@@ -64,13 +65,15 @@ function seconds(fromMs: number): number {
 }
 
 function runOeBuild(root: string): void {
-  execFileSync("npm", ["run", "oe:build"], { cwd: root, stdio: "inherit" });
+  const [npm, npmArgs] = npmCommand(["run", "oe:build"]);
+  execFileSync(npm, npmArgs, { cwd: root, stdio: "inherit" });
 }
 
 function runEveBuild(root: string): void {
   const inherited = process.env.NODE_OPTIONS ?? "";
   const nodeOptions = inherited.includes("--max-old-space-size") ? inherited : [inherited, "--max-old-space-size=6144"].filter(Boolean).join(" ");
-  execFileSync("npx", ["eve", "build"], { cwd: root, stdio: "inherit", env: { ...process.env, NODE_OPTIONS: nodeOptions } });
+  const [npx, npxArgs] = npxCommand(["eve", "build"]);
+  execFileSync(npx, npxArgs, { cwd: root, stdio: "inherit", env: { ...process.env, NODE_OPTIONS: nodeOptions } });
 }
 
 async function mintTemplateForShards(root: string): Promise<string> {

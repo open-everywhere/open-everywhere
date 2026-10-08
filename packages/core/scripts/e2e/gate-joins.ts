@@ -3,7 +3,14 @@ import type { TranscriptWireEvent } from "./transcript-read.js";
 import { WAKE_INGRESS_ACTION, WAKE_TURN_START_ACTION } from "../../agent/channels/wake-timing.js";
 import type { MemoryPersistOutcome } from "../../agent/hooks/memory.js";
 import type { MemoryWriteRoad } from "../../agent/memory/write-road.js";
-import { DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, forwardedJobsDispatchedAtOrAfter, tasksDispatchedAtOrAfter, wakeLineage } from "./read-channel-lib.js";
+import {
+  DELEGATION_TASK_SETTLED_ACTION,
+  DELEGATION_TASK_STARTED_ACTION,
+  forwardedJobsDispatchedAtOrAfter,
+  tasksDispatchedAtOrAfter,
+  WORK_FORWARDED_ACTION,
+  wakeLineage,
+} from "./read-channel-lib.js";
 import { carriesFactToken } from "./journey.js";
 
 function dstr(row: AuditWireEntry, key: string): string | undefined {
@@ -927,25 +934,44 @@ export function seedSettlementRead(
 
   const dispatchedHere = tasksDispatchedAtOrAfter(rows, floor);
   const seatSession = ackId === undefined ? undefined : replyPostSessionId(rows, ackId);
+  const forwardedRequests = new Set<string>();
+  for (const r of rows) {
+    if (r.action !== WORK_FORWARDED_ACTION) continue;
+    const request = dstr(r, "requestId");
+    if (request === undefined || request.length === 0) continue;
+    const wake = dstr(r, "wakeId");
+    const thisTurns = wake !== undefined && wake.length > 0 ? lineage.has(wake) : seatSession !== undefined && dstr(r, "seatSessionId") === seatSession;
+    if (thisTurns) forwardedRequests.add(request);
+  }
   const dispatched: string[] = [];
+  const unattributed: string[] = [];
   const otherSessions = new Set<string>();
   for (const r of rows) {
     if (r.action !== DELEGATION_TASK_STARTED_ACTION) continue;
     const task = dstr(r, "task");
     if (task === undefined || !dispatchedHere.has(task) || dispatched.includes(task)) continue;
-    if (seatSession !== undefined && dstr(r, "session") !== seatSession) {
+    const request = dstr(r, "request");
+    if (request !== undefined && forwardedRequests.has(request)) {
+      dispatched.push(task);
+      continue;
+    }
+    if (seatSession === undefined) {
+      if (!unattributed.includes(task)) unattributed.push(task);
+      continue;
+    }
+    if (dstr(r, "session") !== seatSession) {
       otherSessions.add(task);
       continue;
     }
     dispatched.push(task);
   }
-  if (seatSession === undefined && dispatched.length > 0) {
+  if (unattributed.length > 0) {
     return {
       ...base,
       claimsWithheld,
       kind: "unjoinable",
       detail:
-        `${dispatched.length} ${DELEGATION_TASK_STARTED_ACTION} row(s) stand inside the seed turn and no ${REPLY_POST_ACTION} row names a ` +
+        `${unattributed.length} ${DELEGATION_TASK_STARTED_ACTION} row(s) stand inside the seed turn and no ${REPLY_POST_ACTION} row names a ` +
         `session for the seed ack ${ackId ?? "(none given)"}, so this reader cannot tell the seat's own dispatch from a fire's — ` +
         "the gate takes §16's inline path rather than waiting on a task that may not be this turn's",
     };
@@ -1328,6 +1354,7 @@ export interface FireReportJoin {
   readonly verdict: "posted" | "no-fire" | "no-session" | "no-reply";
   readonly fires: readonly FireReportFire[];
   readonly sessionIds: readonly string[];
+  readonly workSessionIds: readonly string[];
   readonly replies: readonly AuditWireEntry[];
   readonly report?: AuditWireEntry;
   readonly reportRoad?: "settlement" | "last-post";
@@ -1364,6 +1391,31 @@ export function fireReportJoin(rows: readonly AuditWireEntry[]): FireReportJoin 
   fires.sort((a, b) => Date.parse(a.atIso) - Date.parse(b.atIso));
   const sessionIds = [...new Set(fires.flatMap((f) => (f.sessionId !== undefined ? [f.sessionId] : [])))];
   const wakeIds = new Set(fires.flatMap((f) => (f.wakeId !== undefined ? [f.wakeId] : [])));
+  const requests = new Set(
+    rows.flatMap((r) => {
+      if (r.action !== WORK_FORWARDED_ACTION) return [];
+      const wake = dstr(r, "wakeId");
+      const request = dstr(r, "requestId");
+      return wake !== undefined && request !== undefined && wakeIds.has(wake) ? [request] : [];
+    }),
+  );
+  const workSessionIds = [
+    ...new Set(
+      rows.flatMap((r) => {
+        if (r.action === DELEGATION_TASK_STARTED_ACTION) {
+          const request = dstr(r, "request");
+          const session = dstr(r, "session");
+          return request !== undefined && session !== undefined && requests.has(request) ? [session] : [];
+        }
+        if (r.action === WAKE_TURN_START_ACTION) {
+          const wake = dstr(r, "wakeId");
+          const session = dstr(r, "sessionId");
+          return wake !== undefined && session !== undefined && requests.has(wake) ? [session] : [];
+        }
+        return [];
+      }),
+    ),
+  ].filter((s) => !sessionIds.includes(s));
   const sessions = new Set(sessionIds);
   const replies = rows
     .filter((r) => {
@@ -1379,6 +1431,7 @@ export function fireReportJoin(rows: readonly AuditWireEntry[]): FireReportJoin 
       verdict: "no-fire",
       fires,
       sessionIds,
+      workSessionIds,
       replies,
       detail: `no ${FIRE_ATTRS_SENT_ACTION} row in this room: the dispatcher did not hand the routine out`,
     };
@@ -1389,6 +1442,7 @@ export function fireReportJoin(rows: readonly AuditWireEntry[]): FireReportJoin 
       verdict: "no-session",
       fires,
       sessionIds,
+      workSessionIds,
       replies,
       detail: `the dispatcher handed out ${named}, but no ${WAKE_TURN_START_ACTION} row names that wake and no ${ROUTINE_FIRE_ACTION} row names that routine: the fire's turn did not start`,
     };
@@ -1398,8 +1452,9 @@ export function fireReportJoin(rows: readonly AuditWireEntry[]): FireReportJoin 
       verdict: "no-reply",
       fires,
       sessionIds,
+      workSessionIds,
       replies,
-      detail: `the dispatcher handed out ${named} and the fire ran as session(s) ${JSON.stringify(sessionIds)}, but no ${REPLY_POST_ACTION} row names that session or wake: the fire did not report back`,
+      detail: `the dispatcher handed out ${named} and the fire ran as session(s) ${JSON.stringify(sessionIds)}${workSessionIds.length > 0 ? ` (forwarded to work session(s) ${JSON.stringify(workSessionIds)})` : ""}, but no ${REPLY_POST_ACTION} row names that session or wake: the fire did not report back`,
     };
   }
   const settledIds = new Set(settlementReportPairings(rows).map((p) => p.id));
@@ -1413,11 +1468,25 @@ export function fireReportJoin(rows: readonly AuditWireEntry[]): FireReportJoin 
     verdict: "posted",
     fires,
     sessionIds,
+    workSessionIds,
     replies,
     report,
     reportRoad,
-    detail: `the fire ran as session(s) ${JSON.stringify(sessionIds)} and posted ${replies.length} message(s) ${JSON.stringify(replies.map((r) => dstr(r, "id") ?? null))}; the report is ${JSON.stringify(dstr(report, "id") ?? null)} (${reportRoad})`,
+    detail: `the fire ran as session(s) ${JSON.stringify(sessionIds)}${workSessionIds.length > 0 ? `, its job in work session(s) ${JSON.stringify(workSessionIds)},` : ""} and posted ${replies.length} message(s) ${JSON.stringify(replies.map((r) => dstr(r, "id") ?? null))}; the report is ${JSON.stringify(dstr(report, "id") ?? null)} (${reportRoad})`,
   };
+}
+
+export const FIRE_REPORT_JOIN_ACTIONS: readonly string[] = [
+  WAKE_TURN_START_ACTION,
+  ROUTINE_FIRE_ACTION,
+  REPLY_POST_ACTION,
+  SETTLEMENT_REPORT_POSTED_ACTION,
+  WORK_FORWARDED_ACTION,
+  DELEGATION_TASK_STARTED_ACTION,
+];
+
+export function fireSettleSessionIds(join: Pick<FireReportJoin, "sessionIds" | "workSessionIds">): readonly string[] {
+  return [...new Set([...join.sessionIds, ...join.workSessionIds])];
 }
 
 const REFUSAL_SHAPE = /\b(?:refus\w*|den(?:y|ied|ies)|reject\w*|block\w*|not (?:be )?(?:allowed|permitted|authori[sz]ed)|could ?n[o']t|can ?n[o']t|unable|fail\w*|no (?:cap|limit|spend\w*) (?:was )?changed)\b/i;

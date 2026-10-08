@@ -60,7 +60,6 @@ const REQUIRED_IDS = [
   "S-DM-NOTION",
   "S-PROVENANCE-DM",
   "S-EVE-CARD",
-  "S-EVE-BRIDGE",
   "S-CONNECT-CARD",
   "S-APIKEY-INTAKE",
   "S-TAINT-DRYRUN",
@@ -78,7 +77,7 @@ const NON_LAUNCH_ROWS: readonly ReleaseScopeRow[] = [
     id: "S-SUSPENDED-github",
     requirement: "NON_LAUNCH",
     reason:
-      "Known unsupported pilot capability: this deployment exposes no GitHub-reachable Eve-native tool-approval operation, so the static GAP cannot produce live pause/answer/resume/reply evidence. S-GITHUB-NOTION-REST remains REQUIRED but proves a standing shared REST write with no per-write approval and is not an equivalent. Reclassify this row when a GitHub-reachable Eve-native approval raiser ships.",
+      "Known unsupported pilot capability: no connector write that raises an op.connector card is reachable from a GitHub seat, so the static GAP cannot produce live card/click/write/reply evidence. S-GITHUB-NOTION-REST remains REQUIRED but proves a standing shared REST write with no per-write approval and is not an equivalent. Reclassify this row when a GitHub-reachable carded connector write ships.",
   },
   { id: "J-DISC", requirement: "NON_LAUNCH", reason: "Discord-only confidence is deferred for this release." },
   {

@@ -7,8 +7,15 @@ import {
   qualifiedConnectorToolName,
   readConnectionExecuteTarget,
   rememberConnectionExecuteTarget,
+  resolveConnectorReplay,
+  settleConnectorReplay,
   type ConnectionExecuteTarget,
 } from "./connection-execute-target.js";
+import { mentionsConnectorReplay } from "../approvals/connector-op-offer.js";
+
+function isReplayExecuteInput(executeInput: unknown): boolean {
+  return executeInput !== null && typeof executeInput === "object" && !Array.isArray(executeInput) && mentionsConnectorReplay((executeInput as Record<string, unknown>)["input"]);
+}
 import { restrictToolsetForJobWake } from "./job-posture.js";
 import { currentJobWakePosture } from "./job-session-state.js";
 import { fenceWorkSessionCancel } from "./work-cancel-fence.js";
@@ -213,6 +220,15 @@ export function projectToolSet(toolset: Record<string, unknown>): void {
         tool.execute = (...args: unknown[]) => {
           const options = args[1] as { toolCallId?: unknown } | undefined;
           rememberConnectionExecuteTarget(options?.toolCallId, args[0]);
+          if (isReplayExecuteInput(args[0])) {
+            return resolveConnectorReplay(options?.toolCallId, args[0]).then(async (stored) => {
+              try {
+                return await innerExecute(stored, ...args.slice(1));
+              } finally {
+                await settleConnectorReplay(args[0]);
+              }
+            });
+          }
           return innerExecute(...args);
         };
       }

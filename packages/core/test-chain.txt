@@ -448,6 +448,7 @@ test:counted-claims
 test:approver-policy
 test:rate-limit-retry
 test:connector-permission-card
+test:connector-replay
 test:e2e-reserved-scenarios
 test:e2e-withholding-rubric
 test:own-account-ask

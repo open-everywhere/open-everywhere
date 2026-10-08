@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 
 const require = createRequire(import.meta.url);
 
@@ -22,7 +22,7 @@ function allJsFiles(): readonly string[] {
     for (const entry of readdirSync(dir)) {
       const full = join(dir, entry);
       if (statSync(full).isDirectory()) walk(full);
-      else if (entry.endsWith(".js")) out.push(relative(root, full));
+      else if (entry.endsWith(".js")) out.push(relative(root, full).split(sep).join("/"));
     }
   };
   walk(root);

@@ -14,6 +14,7 @@ import {
   rotateUnifiedWindow,
   awaitGenerationIdle,
   generationNotIdleMessage,
+  DEFAULT_WAIT_IDLE_SECONDS,
 } from "./e2e/rotate-window-lib.js";
 import { openTestPg, closeAllTestPg } from "./test-pg-driver.js";
 
@@ -384,7 +385,11 @@ await store.rotateChannelSession(KNOWN_ORG, "oe-domain::slack/T1/C1", mintToken(
   ok(parsed.ok && parsed.target.kind === "domain" && parsed.target.waitIdleMs === 600_000, "§6: --wait-idle 600 parses to a 600 s wait");
   ok(parsed.ok && parsed.target.kind === "domain" && parsed.target.domain === "e2e-unified" && parsed.target.org === "default", "§6: …and shifts no positional");
   const none = parseRotateArgs(["e2e-unified"], {});
-  ok(none.ok && none.target.waitIdleMs === undefined, "§6: no flag, no wait — the tool rotates at once as before");
+  ok(none.ok && none.target.waitIdleMs === DEFAULT_WAIT_IDLE_SECONDS * 1000 && DEFAULT_WAIT_IDLE_SECONDS === 600, "§6: no flag waits the 600 s default — a runner that passes nothing still never rotates under an owed job");
+  const noneDm = parseRotateArgs(["--dm", "slack/T1/D1"], {});
+  ok(noneDm.ok && noneDm.target.waitIdleMs === 600_000, "§6: …and so does the DM form");
+  const zero = parseRotateArgs(["e2e-unified", "--wait-idle", "0"], {});
+  ok(zero.ok && zero.target.waitIdleMs === undefined && !("waitIdleMs" in zero.target), "§6: --wait-idle 0 is the one spelling that rotates at once (no wait key at all)");
   ok(!parseRotateArgs(["e2e-unified", "--wait-idle", "ten"], {}).ok, "§6: a non-number is refused");
   ok(!parseRotateArgs(["e2e-unified", "--wait-idle"], {}).ok, "§6: a missing value is refused");
   const dm = parseRotateArgs(["--dm", "slack/T1/D1", "--wait-idle", "30"], {});

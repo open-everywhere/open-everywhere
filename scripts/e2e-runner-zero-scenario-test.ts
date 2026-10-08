@@ -70,7 +70,7 @@ function run(env: Record<string, string>): { code: number; out: string } {
 {
   const r = run({ E2E_RELEASE_SCOPE: "launch" });
   ok(r.code !== 0, `a canonical launch run with no capabilities exits NON-zero — got ${r.code}. Output:\n${r.out}`);
-  ok(r.out.includes("release scope=launch: 57 REQUIRED, 23 NON_LAUNCH"), "the canonical selector prints its reviewed accounting totals");
+  ok(r.out.includes("release scope=launch: 56 REQUIRED, 23 NON_LAUNCH"), "the canonical selector prints its reviewed accounting totals");
   ok(/\| J1 \| slack \| REQUIRED \| RED \|/.test(r.out), `a required missing Slack leg is RED — got:\n${r.out}`);
   ok(/\| S-SPEND-DM-MASK \| slack \| REQUIRED \| RED \|/.test(r.out), "a shared security row remains REQUIRED, and a leg that could not run scores RED on a LAUNCH surface (OPE-1914 re-vehicled this row onto Slack)");
   ok(/\| S-DISCORD-GRANT \| discord \| REQUIRED \| RED \|/.test(r.out), "the unresolved live grant-used to grant-notified row remains REQUIRED despite its Discord vehicle");
@@ -80,8 +80,8 @@ function run(env: Record<string, string>): { code: number; out: string } {
   );
   ok(
     /\| S-SUSPENDED-github \| github \| NON_LAUNCH \| NOT_RUN \|/.test(r.out) &&
-      r.out.includes("no GitHub-reachable Eve-native tool-approval operation"),
-    "the unsupported GitHub native-approval GAP stays visible as a reasoned pilot NON_LAUNCH row",
+      r.out.includes("no connector write that raises an op.connector card is reachable from a GitHub seat"),
+    "the unsupported GitHub carded-write GAP stays visible as a reasoned pilot NON_LAUNCH row",
   );
   ok(
     r.out.includes("S-DISCORD-GRANT requires the human-tapped phase") && r.out.includes("E2E_DISCORD_GRANT_TAPPED=1"),

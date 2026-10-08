@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { npmCommand } from "./npm-command.js";
 import { BOOTSTRAP_PREFIX, bootstrapCommands, compareVersions } from "../packages/core/scripts/upgrade-notes.js";
@@ -43,7 +43,7 @@ function run(command: string, args: readonly string[], cwd: string, env?: NodeJS
 
 function extract(tarball: string, dest: string): string {
   mkdirSync(dest, { recursive: true });
-  const r = run("tar", ["-xzf", tarball, "-C", dest], dest);
+  const r = run("tar", ["-xzf", relative(dest, tarball).split(sep).join("/")], dest);
   assert.equal(r.status, 0, `tar -xzf failed:\n${r.output}`);
   return join(dest, "package");
 }

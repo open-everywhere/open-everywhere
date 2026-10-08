@@ -219,6 +219,11 @@ export function likePrefixPattern(prefix: string): string {
   return `${prefix.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 }
 
+export function argKeyNeedle(argKey: string): string {
+  if (!/^[A-Za-z]{1,64}$/u.test(argKey)) throw new Error(`listDecidedPendingActionsWithArg: the arg key must be 1 to 64 letters, not "${argKey}"`);
+  return `"${argKey}":`;
+}
+
 export function spendLedgerConjuncts(filter: SpendLedgerFilter): { conjuncts: string[]; params: (string | number)[] } {
   const conjuncts: string[] = [];
   const params: (string | number)[] = [];
@@ -975,6 +980,8 @@ export interface OperationalStore {
   listRejectedActionsSince(org: string, sinceIso: string): Promise<readonly PendingActionRow[]>;
   setPendingActionMessage(org: string, id: string, messageTs: string): Promise<void>;
   decidePendingAction(org: string, id: string, status: "approved" | "rejected" | "expired", decidedBy: string, decidedAt: string): Promise<boolean>;
+  rewriteDecidedPendingActionArgs(org: string, id: string, argsJson: string): Promise<boolean>;
+  listDecidedPendingActionsWithArg(org: string, kind: string, argKey: string): Promise<readonly PendingActionRow[]>;
 
   setSessionApproval(row: SessionApprovalRow): Promise<void>;
   getSessionApproval(org: string, sessionId: string, kind: string, nowIso: string): Promise<SessionApprovalRow | null>;

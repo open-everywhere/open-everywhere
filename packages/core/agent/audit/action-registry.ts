@@ -315,7 +315,7 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
     fields: [],
     proves: "the framework terminally rejected, failed, timed out or marked stale a native approval candidate",
     notExercised:
-      "RED-until-fixture: S-EVE-CARD and S-EVE-BRIDGE exercise request-only connector approvals; since OPE-2340 no shipped tool carries a native approval or a response-policy site at all (OE cards only, ruling Q4), so the pack has no live candidate it can legitimately reject.",
+      "RED-until-fixture: since OPE-2340 no shipped tool carries a native approval or a response-policy site at all (OE cards only, ruling Q4), so the pack has no live candidate it can legitimately reject, request-only or otherwise. S-EVE-CARD asserts that a DM connector write raises no native approval in its window.",
   },
   {
     action: "approval.eve_settled",
@@ -372,6 +372,13 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
     proves: "a forwarded job was lost because its work session rotated, parked or failed, and the seat was told with a failed result (OPE-2341, placement §2.18 and D9)",
     notExercised:
       "RED-until-leg: beside work.forwarded — no deployed domain runs the work session yet; the integration tier drives it (liveness/work-session-park).",
+  },
+  {
+    action: "work.request_refused",
+    fields: ["requestId", "taskId", "reason", "outcome"],
+    proves: "the work session's continuation fence refused a forwarded follow-up, and the seat was told with a failed result (OPE-2379)",
+    notExercised:
+      "RED-until-leg: beside work.forwarded — no journey yet drives a W-side continuation refusal; the integration tier drives it (tasks/work-refused-follow-up-reaches-room), and the unit tier pins it (packages/core/scripts/worker-continuation-test.ts §8).",
   },
   {
     action: "work.session_rotated",

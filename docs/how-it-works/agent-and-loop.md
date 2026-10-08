@@ -1150,6 +1150,12 @@ The work session has its own lifetime, apart from the seat's:
   session, with the earlier job's brief attached, and the receipt tells the seat to say so in the
   room. The room check runs first in every case. The `work.forwarded` row records the route as
   `continuation`: `current`, `holding`, `fresh-idle`, `fresh-dead` or `fresh-unreadable`.
+- **A follow-up the work session refuses still reaches the room.** The work session runs the room check
+  again on its own `agent` call, and it also refuses a task that is still working on an earlier
+  message. A refusal there starts no task, so no result would ever come back. Instead the refusal
+  sends the seat one failed result for that job, which says that the follow-up was not run and what
+  the seat can do next. The work session cannot start the same job again in that turn. The
+  `work.request_refused` row records the request, the task, the reason and the outcome.
 - **A rotation loses the sandbox.** On a park, a failure or an operator mark, each job the old work
   session still owed is reported to the room as a failed result, once per job. After an operator
   mark the old work session is not dead, so a real result for such a job can still follow the notice.
@@ -1722,11 +1728,48 @@ that still runs toward the act (`task_cancel`), with one exception below.
 notice says the act already ran. A kind that sets `approvalArmsCall` (`packages/core/agent/approvals/types.ts`)
 runs nothing on approval. Its `execute` arms ONE more call of the proposer's own tool with the same
 input, and that call runs the act. `op.connector` is such a kind: the connector seam denied the call
-and told the proposer to call it again after approval. For such a kind, the notice says the act has
-NOT run. It tells the owning session to send the job that asked a follow-up (`work` with its `taskId`
-on a forwarding seat) to call the op again with exactly the same input. It forbids a cancel of that job
-and a new job for the act. The one-call approval is keyed on the input's digest, and only the asking
-job holds that input, so a new job would post a new card (OPE-2383).
+and told the proposer how to run it after approval. For such a kind, the notice says the act has NOT
+run, and it never tells the owning session to cancel the job that asked.
+
+**An approved connector card replays by its id.** The `op.connector` card stores the call's whole
+input (up to `CONNECTOR_REPLAY_INPUT_CAP`, `packages/core/agent/approvals/connector-op-offer.ts`). The
+notice then names the replay: call `connection_execute` with the card's `connection` and `tool`, and an
+`input` whose only key is `oe_approved_card`, with the card id as its value. On a forwarding seat, the
+seat sends that call to a job with `work`: the job that asked, or a new job. The replay runs inside an
+agent turn, so the turn's own checks apply. The connector seam (`decideConnectorReplay`,
+`packages/core/agent/connections/connector-auth.ts`) admits the replay only when the card is approved,
+names this op, belongs to this conversation, and its one-call approval is unspent. The wrapped policy
+decides the stored input, and the admission spends the approval. The `connection_execute` execute wrap
+(`packages/core/agent/connections/connector-replay.ts`) then runs the card's STORED input in place of
+the replay input. So a changed input never rides the approval, and a pending, rejected,
+expired or spent card replays nothing (OPE-2388). A card with no stored input (an input over the cap)
+keeps the old road: the notice tells the job that asked to call the op again with exactly the same
+input, and forbids a new job, because the one-call approval is keyed on the input's digest (OPE-2383).
+
+**A card keeps the whole input only while the input can replay** (OPE-2390,
+`packages/core/agent/connections/connector-card-retention.ts`). After that, the row drops `input` and
+sets `inputCleared`. The preview, the memo kind (it carries the input's digest) and the decision stay
+for audit. The input goes at these points:
+
+- A rejected or expired card drops it at the decide CAS (`closePendingAction` in
+  `packages/core/agent/approvals/flow.ts`, through the kind's `argsAfterClose`).
+- A replay drops it when eve's execute returns or throws. Until then the input stays, so eve's re-run of
+  the SAME call id before the execute still runs the stored input. Once the clear lands, a re-run after
+  the execute is refused. The clear is best-effort: a store error or a kill before it leaves the input
+  on the row, and then a re-run of the same call id is stopped only by the one-call spend fence, which
+  admits that same call id again. The daily tidy removes such an input later.
+- An identical call that spends the approval with its own full input drops the input of the cards that
+  the approval covered.
+- The daily tidy (`packages/core/agent/schedules/tidy.ts`) drops it from every other decided card that
+  can no longer replay: a rejected or expired card, and an approved card decided longer ago than the
+  one-call approval's TTL plus the replay admission window.
+
+A replay of a card whose input is cleared is refused, and the refusal says that the card's one call was
+already used or its approval lapsed. eve re-mints the call id when it re-runs a crashed turn step,
+because the model call is in that same step. So a replay under a new call id, after a crash between the
+spend and the execute, is refused. The refusal says that another call took the approval, and that the
+call may still be running or may already have run, so the model checks whether the write happened
+before it asks for a new approval.
 
 **A DM card wakes the DM's own seat.** `wakeWindowOnDecision` (`packages/core/agent/approvals/flow.ts`)
 finds the owning seat in two steps. First it reads the DM seat's own registry row, the window on the
@@ -1734,8 +1777,13 @@ finds the owning seat in two steps. First it reads the DM seat's own registry ro
 the seat. Only when no DM row exists does the function use the domain grain to find a window seat. A
 DM row whose token is not that DM's own seat refuses the wake: the token must anchor to exactly the
 card's surface, so a decision never wakes another conversation. The wake is what lets the seat
-send the asking job back to make an approved call again, so an approved write in a DM can run. A Discord DM click carries no guild
-id, so a Discord DM card gets no decision wake today (OPE-2376).
+send the replay of an approved call to a job, so an approved write in a DM can run. A Discord DM click carries no guild
+id. `discordDecisionWakeTarget` then takes the DM seat's surfaceKey from the card's mint-frozen
+`postedTo` and gives the wake the DM origin shape (`dm: true`). That target is only a claim: a guild
+card's `postedTo` has the same shape. `wakeWindowOnDecision` wakes on it only when the authority
+frozen at proposal names a Discord DM origin on the same surface, and then only the DM's own seat.
+A guild card clicked without a guild id, or a card with no frozen authority, gets no wake
+(OPE-2376).
 
 ### A background task's answer finds its conversation
 

@@ -1,4 +1,5 @@
 import type { AuditQueryOpts, AuditWireEntry } from "./audit-read.js";
+import { readPresenceSince } from "./engaged-rows.js";
 
 export const CONNECTOR_MINT_ACTION = "connector.mint";
 
@@ -105,7 +106,9 @@ export async function watchConnectorArming(probe: ArmingProbe, connector: string
     probe.skip(
       `needs E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN — the deployment's own ${CONNECTOR_MINT_ACTION} rows are the only honest evidence that the "${connector}" personal grant is consented, and no arming env var replaces them (OPE-894)`,
     );
-  const since = new Date().toISOString();
+  const marked = await readPresenceSince(probe.auditRead!, Date.now(), 0);
+  if (marked.sinceIso === undefined) probe.log(`arming watch: no deployment instant on the store mark (${marked.rows} row(s) read) — the recheck window falls back to the driver clock`);
+  const since = marked.sinceIso ?? new Date().toISOString();
   probe.log(
     `advisory (as of ${since}, before this leg drives — recheck() below is decisive) · ` +
       `${armingNote(connector, await deriveConnectorArming(probe.auditRead, { connector, sinceIso: lookbackIso(ARMING_ADVISORY_LOOKBACK_DAYS) }))}`,

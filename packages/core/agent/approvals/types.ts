@@ -28,6 +28,8 @@ export interface ActionKind<A = unknown> {
   readonly volatileArgs?: readonly string[];
   readonly proseArgs?: readonly string[];
   readonly approvalArmsCall?: true;
+  armedCallReplay?(args: A): { readonly connection: string; readonly tool: string } | undefined;
+  argsAfterClose?(args: A): A;
   summarize(args: A): string[];
   execute(args: A, decidedBy: string): Promise<string>;
   declined?(args: A, decidedBy: string): Promise<string>;
