@@ -17,11 +17,40 @@ import {
 import { appendAudit, readAudit } from "../audit/audit.js";
 import { getSettings, type ApprovalJudgeMode as SettingsApprovalJudgeMode } from "../settings/settings.js";
 import { processRegistrySlot } from "../lib/process-registry.js";
+import { getConfig } from "./config.js";
+import type { Binding, Bundle } from "./bundle.js";
 
 export type ApprovalJudgeMode = SettingsApprovalJudgeMode;
 
 export function approvalJudgeMode(): ApprovalJudgeMode {
   return getSettings().approvals.judgeMode;
+}
+
+export function judgeWithoutRulesBootLine(
+  mode: ApprovalJudgeMode,
+  bundles: readonly Pick<Bundle, "name" | "preApprovalRules">[],
+  bindings: readonly Pick<Binding, "bundle">[],
+): string | undefined {
+  if (mode !== "enforce") return undefined;
+  const bound = new Set(bindings.map((b) => b.bundle));
+  if (bundles.some((b) => (b.preApprovalRules?.length ?? 0) > 0 && bound.has(b.name))) return undefined;
+  return (
+    "[open-everywhere:approvals] the approval judge is in enforce with no rules: every gated act will ask a person. " +
+    "No bound bundle carries a pre-approval rule, so the judge never runs and no act is pre-approved. " +
+    "To pre-approve acts, bind a bundle with `preApprovalRules` (agent/access/pre-approval-rules.ts in the template). " +
+    'To say what you mean, set `approvals: { judgeMode: "off" }` in agent/settings/settings.ts.'
+  );
+}
+
+export async function announceJudgeWithoutRules(): Promise<void> {
+  let config: ReturnType<typeof getConfig>;
+  try {
+    config = getConfig();
+  } catch {
+    return;
+  }
+  const line = judgeWithoutRulesBootLine(approvalJudgeMode(), config.loadBundles(), config.loadBindings());
+  if (line !== undefined) console.warn(line);
 }
 
 export type JudgePass = "scrutiny" | "verdict";

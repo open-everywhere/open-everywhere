@@ -53,6 +53,16 @@ ok(!wakeAuthorIsAdmin(undefined, "slack/T1/C_ENG", DOMAINS), "no author id → n
 ok(!wakeAuthorIsAdmin("U_ORG_ADMIN", "slack/T1/C_ENG", []), "empty rosters → nobody is an admin");
 
 {
+  const GRID: Domain[] = [defineDomain({ name: "org", match: "org", admins: ["slack/E_GRID/U_GRID_ADMIN"] })];
+  assertDomainsValid(GRID);
+  ok(wakeAuthorIsAdmin("U_GRID_ADMIN", "slack/T_SIB/C_ANY", GRID, "E_GRID"), "🔴 a Grid admin key is an admin in a workspace whose wake named that Grid (OPE-2400)");
+  ok(!wakeAuthorIsAdmin("U_GRID_ADMIN", "slack/T_SIB/C_ANY", GRID), "🔴 NEGATIVE CONTROL: …and not when the wake named no Grid");
+  ok(!wakeAuthorIsAdmin("U_GRID_ADMIN", "slack/T_SIB/C_ANY", GRID, "E_OTHER"), "🔴 …nor when it named another Grid");
+  ok(resolveWakeTrust({ authorIsBot: false, authorId: "U_GRID_ADMIN", surfaceInternal: true, channelKey: "slack/T_SIB/C_ANY", enterpriseId: "E_GRID", domains: GRID }) === "principal", "resolveWakeTrust: a Grid admin on an internal channel under the Grid → principal");
+  ok(resolveWakeTrust({ authorIsBot: false, authorId: "U_GRID_ADMIN", surfaceInternal: true, channelKey: "slack/T_SIB/C_ANY", domains: GRID }) === "peer", "resolveWakeTrust: …and peer when the route passes no Grid id");
+}
+
+{
   let threw = false;
   try {
     assertDomainsValid([defineDomain({ name: "org", match: "org", admins: ["linkSet:set-admin"] })]);

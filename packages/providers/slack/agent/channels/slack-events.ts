@@ -717,6 +717,7 @@ export async function routeMessageEvent(ev: ParsedMessageEvent, deps: MessageRou
     authorId: ev.userId,
     surfaceInternal: authorFacts.surfaceInternal,
     channelKey: domainKeyOf(p),
+    ...(ev.enterpriseId === undefined ? {} : { enterpriseId: ev.enterpriseId }),
   });
   {
     const verdict = await applySlackExternalPolicy(ev, p, { trust: wakeTrust, refuted: authorFacts.refuted }, "routeMessageEvent");
@@ -1217,6 +1218,7 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
     authorId: ev.userId,
     surfaceInternal: authorFacts.surfaceInternal,
     channelKey: domainKeyOf(p),
+    ...(ev.enterpriseId === undefined ? {} : { enterpriseId: ev.enterpriseId }),
   });
   {
     const verdict = await applySlackExternalPolicy(ev, p, { trust: wakeTrust, refuted: authorFacts.refuted }, "routeNameDropEvent");
@@ -1969,6 +1971,7 @@ export async function routeSupervisorEvent(
     authorId: ev.userId,
     surfaceInternal: authorFacts.surfaceInternal,
     channelKey: domainKeyOf(p),
+    ...(ev.enterpriseId === undefined ? {} : { enterpriseId: ev.enterpriseId }),
   });
   const externalPolicy = slackExternalPolicyForRoom(domainKeyOf(p));
   {

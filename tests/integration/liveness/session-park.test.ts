@@ -86,7 +86,6 @@ test("a seat that hits eve's session-token bound parks, and OE retires the gener
   const registryKey = String(detail["registryKey"] ?? "");
   expect(registryKey.length).toBeGreaterThan(0);
 
-  expect(await rowsSinceCursor(cursor, ["turn.question_bridged"])).toEqual([]);
   expect(await rowsSinceCursor(cursor, ["turn.question_dropped"])).toEqual([]);
 
   const parked = await store.getChannelSession(org, registryKey);
@@ -118,3 +117,5 @@ test("a seat that hits eve's session-token bound parks, and OE retires the gener
   expect(rotated!.token).not.toBe(parkedToken);
   expect(Number(rotated!.inputTokensTotal ?? 0)).toBeLessThan(parkRotateDelta());
 });
+
+// proves: SET-002

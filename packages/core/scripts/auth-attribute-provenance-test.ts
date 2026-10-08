@@ -376,18 +376,7 @@ const EXPECTED_WRITERS = new Set(["execution/runtime-context.js", TURN_STEP, PRO
     /turnPolicy:(\w+)\.message===void 0\?void 0:/u.test(read("channel/channel-address.js")),
     "🔴 eve stamps NO turnPolicy on a delivery without a message — an input response — so isSteeringDelivery reads it as `steer`",
   );
-  ok(!/ownerToken/u.test(unifiedSrc), "OE's answer road has no work-session owner arm (D21 retired by OPE-2340)");
-  const respondCall = /\.respond\(\[[^]{0,400}?\],\s*\{([^]{0,4000}?)\}\s*as\s*\{/u.exec(unifiedSrc)?.[1];
-  ok(respondCall !== undefined, "OE's answer road is found: one `.respond([…], {…})` call");
-  ok(
-    respondCall !== undefined && !/\bauth\b/u.test(respondCall.replace(/\/\/.*$/gmu, "")),
-    "🔴 …and it carries NO `auth` key on either road, in any form (key, shorthand or name), so another member's answer never replaces the turn's bag (OPE-2336)",
-  );
-  const spreads = [...(respondCall ?? "").replace(/\/\/.*$/gmu, "").matchAll(/\.\.\.\s*\(?\s*([^\n]*)/gu)].map((m) => m[1] ?? "");
-  ok(
-    respondCall !== undefined && spreads.every((x) => x.startsWith("t.context")),
-    `…and its only spread is the \`t.context\` side channel, so no spread can bring an \`auth\` key back (saw ${JSON.stringify(spreads)})`,
-  );
+  ok(!/\.respond\s*\(/u.test(unifiedSrc.replace(/^\s*(\/\/|\*|\/\*).*$/gmu, "")), "🔴 OE's unified channel has no answer road — no `.respond(` call, so no room message can replace a window turn's bag (OPE-2389)");
 
   const active = read("execution/session/active-turn.js");
   ok(

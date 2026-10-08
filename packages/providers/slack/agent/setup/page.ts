@@ -62,6 +62,7 @@ export interface SlackSetupPageDeps extends SlackClaimDeps {
   readonly createApp?: typeof createSlackApp;
   readonly exchangeCode?: typeof exchangeSlackOauthCode;
   readonly keyArmed?: () => boolean;
+  readonly probeFetch?: (url: string, init: RequestInit) => Promise<Response>;
 }
 
 function vaultOf(deps: SlackSetupPageDeps): EncryptedKvVault {
@@ -102,6 +103,41 @@ function manifestHost(base: string): string {
   return base.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
 }
 
+const PROBE_TIMEOUT_MS = 3_000;
+
+async function loginWallStatus(base: string, deps: SlackSetupPageDeps): Promise<number | undefined> {
+  let res: Response;
+  try {
+    res = await (deps.probeFetch ?? fetch)(`${base}${SLACK_SETUP_PATH}`, {
+      method: "GET",
+      redirect: "manual",
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
+  } catch {
+    return undefined;
+  }
+  await res.body?.cancel().catch(() => undefined);
+  const s = res.status;
+  return s === 401 || s === 403 || (s >= 300 && s < 400) ? s : undefined;
+}
+
+function loginWallWarning(host: string, status: number): string {
+  return (
+    `<p style="color:#b91c1c"><strong>Slack cannot reach <code>${escapeHtml(host)}</code>.</strong> This deployment ` +
+    `asked its own <code>${escapeHtml(SLACK_SETUP_PATH)}</code> at that host with no login, and the host answered ` +
+    `<code>${status}</code>. That is the answer of a login wall, such as Vercel deployment protection, or of a redirect. ` +
+    `Slack sends its requests with no login and follows no redirect, so an app created here would never receive an event.</p>` +
+    `<p>Set <code>OE_PUBLIC_BASE_URL</code> to a public host of this deployment (for example its custom domain) and ` +
+    `redeploy, or remove the protection from this host. Then reload this page.</p>`
+  );
+}
+
+async function createScreenFor(base: string, deps: SlackSetupPageDeps): Promise<Response> {
+  const host = manifestHost(base);
+  const wall = await loginWallStatus(base, deps);
+  return createScreen(host, wall === undefined ? "" : loginWallWarning(host, wall));
+}
+
 function claimScreen(retry: boolean): Response {
   return securePageResponse(
     200,
@@ -118,14 +154,16 @@ function claimScreen(retry: boolean): Response {
   );
 }
 
-function createScreen(host: string): Response {
+function createScreen(host: string, warning: string): Response {
   return securePageResponse(
     200,
     "Create the Slack app",
-    `<p>Open <code>api.slack.com/apps</code>, scroll to <strong>Your App Configuration Tokens</strong>, ` +
+    warning +
+      `<p>Open <code>api.slack.com/apps</code>, scroll to <strong>Your App Configuration Tokens</strong>, ` +
       `and generate one for the workspace that will host the agent. Paste it below. It needs the ` +
       `<code>app_configurations:write</code> scope and lasts about 12 hours.</p>` +
-      `<p>This page will create the Slack app for <code>${escapeHtml(host)}</code> and keep its ` +
+      `<p>This page will create the Slack app for <code>${escapeHtml(host)}</code>: every request URL in the ` +
+      `app's manifest names that host, so Slack must be able to reach it with no login. It keeps the app's ` +
       `credentials in this deployment's own encrypted store. The configuration token is used once and never stored.</p>` +
       `<form method="post" action="${escapeHtml(SLACK_SETUP_PATH)}">` +
       `<input type="hidden" name="${FIELD_ACTION}" value="create">` +
@@ -234,7 +272,7 @@ export async function handleSlackSetupGet(req: Request, deps: SlackSetupPageDeps
 
   const pending = await readPending(deps);
   if (pending) return installScreen(authorizeUrlFor(pending, base, manifestBotScopes()));
-  return createScreen(manifestHost(base));
+  return createScreenFor(base, deps);
 }
 
 export async function handleSlackSetupPost(req: Request, deps: SlackSetupPageDeps = {}): Promise<Response> {
@@ -268,7 +306,7 @@ export async function handleSlackSetupPost(req: Request, deps: SlackSetupPageDep
   if (base === undefined) return notAvailable();
 
   const configToken = (form.get(FIELD_CONFIG_TOKEN) ?? "").trim();
-  if (configToken.length === 0) return createScreen(manifestHost(base));
+  if (configToken.length === 0) return createScreenFor(base, deps);
 
   const rawName = (form.get(FIELD_APP_NAME) ?? "").trim();
   if (rawName.length > 0) {

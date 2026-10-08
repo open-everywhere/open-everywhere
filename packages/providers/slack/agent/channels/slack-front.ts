@@ -64,7 +64,6 @@ import {
   OE_CONNECT_ACTION_PREFIX,
   handleConnectClick as liveHandleConnectClick,
   OE_GRANT_ACTION_PREFIX,
-  OE_INPUT_CLICK_PREFIX,
   handleGrantCardClick as liveHandleGrantCardClick,
   buildRecord,
   enqueue as enqueueLogRecord,
@@ -77,7 +76,6 @@ import {
   recordWakeTail,
   tailAuthorGrain,
   dmWindowRegistryKey,
-  approvalCardRespondVia,
   stampSurfaceEventVerified,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import {
@@ -95,11 +93,6 @@ import {
 import { buildSlackAuth, withForwardedSlackEnvelope, type ForwardedSlackEnvelope } from "./slack-identity.js";
 import { holdRouteWork, routeHoldQuiesced, withSlackRouteHold } from "./slack-route-hold.js";
 import { persistSlackAttachment, registerSlackAttachment } from "./slack-attachments.js";
-import {
-  handleSlackApprovalCardClick as liveHandleApprovalCardClick,
-  type ApprovalCardClickOutcome,
-  type ApprovalRespondFn,
-} from "./slack-approval-card.js";
 import {
   parseSlackShortcutPayload,
   shortcutMessageEvent,
@@ -122,7 +115,6 @@ export type FrontDecision =
   | { readonly kind: "setkey-submit"; readonly reason: string; readonly payload: unknown }
   | { readonly kind: "connect-click"; readonly reason: string; readonly payload: unknown }
   | { readonly kind: "grant-click"; readonly reason: string; readonly payload: unknown }
-  | { readonly kind: "input-click"; readonly reason: string; readonly payload: unknown }
   | { readonly kind: "mention"; readonly reason: string; readonly env: SlackEventEnvelope }
   | { readonly kind: "dm-wake"; readonly reason: string; readonly env: SlackEventEnvelope; readonly dmKind: "im" | "mpim" }
   | { readonly kind: "shortcut"; readonly reason: string; readonly shortcut: ParsedSlackShortcut };
@@ -200,19 +192,6 @@ function parseOeGrantClickPayload(rawBody: string): unknown | undefined {
   return isOurs ? p : undefined;
 }
 
-function parseOeInputClickPayload(rawBody: string): unknown | undefined {
-  const p = decodeInteractivityPayload(rawBody);
-  if (!p || p.type !== "block_actions" || !Array.isArray(p.actions)) return undefined;
-  const isOurs = (p.actions as unknown[]).some(
-    (a) =>
-      typeof a === "object" &&
-      a !== null &&
-      typeof (a as Record<string, unknown>).action_id === "string" &&
-      ((a as Record<string, unknown>).action_id as string).startsWith(OE_INPUT_CLICK_PREFIX),
-  );
-  return isOurs ? p : undefined;
-}
-
 function parseOeSetKeyViewSubmission(rawBody: string): unknown | undefined {
   const p = decodeInteractivityPayload(rawBody);
   if (!p || p.type !== "view_submission") return undefined;
@@ -259,10 +238,6 @@ export function classifyEnvelope(rawBody: string, contentType: string): FrontDec
     const grantClick = parseOeGrantClickPayload(rawBody);
     if (grantClick !== undefined) {
       return { kind: "grant-click", reason: "block_actions oe_grant: click — ours, never forwarded", payload: grantClick };
-    }
-    const inputClick = parseOeInputClickPayload(rawBody);
-    if (inputClick !== undefined) {
-      return { kind: "input-click", reason: "block_actions oe_input: click — ours, never forwarded", payload: inputClick };
     }
     const shortcut = parseSlackShortcutPayload(decodeInteractivityPayload(rawBody));
     if (shortcut) {
@@ -368,7 +343,6 @@ export interface FrontOptions {
   readonly handleSetKeyViewSubmission?: (payload: unknown) => Promise<SetKeyViewResult>;
   readonly handleConnectClick?: (payload: unknown) => Promise<boolean>;
   readonly handleGrantCardClick?: (payload: unknown) => Promise<boolean>;
-  readonly handleApprovalCardClick?: (payload: unknown, respond: ApprovalRespondFn) => Promise<ApprovalCardClickOutcome>;
   readonly mentionPolicyFor?: (channelId: string, surfaceKey: string) => Promise<SingleWindowMentionPolicy>;
   readonly resolveDmSeat?: (org: string, dm: { surfaceKey: string; channelId?: string; legacyChannelId?: string }, atIso: string) => Promise<DmSeat>;
   readonly touchDmSeatFn?: (org: string, dmSurfaceKey: string, atIso: string) => Promise<void>;
@@ -565,7 +539,6 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
   const handleSetKeyViewSubmission = opts.handleSetKeyViewSubmission ?? liveHandleSetKeyViewSubmission;
   const handleConnectClick = opts.handleConnectClick ?? liveHandleConnectClick;
   const handleGrantCardClick = opts.handleGrantCardClick ?? liveHandleGrantCardClick;
-  const handleApprovalCardClick = opts.handleApprovalCardClick ?? liveHandleApprovalCardClick;
   const ambientEnabledFor = opts.ambientEnabledFor ?? ((surfaceKey: string) => ambientSupervisorEnabled(surfaceKey, getConfig().loadDomains()));
   const seatedSurface = opts.seatedSurfaceFor ?? slackDomainUsesUnifiedWindow;
   const mentionPolicyFor = opts.mentionPolicyFor ?? slackSingleWindowMentionPolicy;
@@ -706,6 +679,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         authorId: ev.userId,
         surfaceInternal,
         channelKey: p.surfaceKey,
+        ...(ev.enterpriseId === undefined ? {} : { enterpriseId: ev.enterpriseId }),
       });
       {
         const verdict = await applySlackExternalPolicy(ev, p, { trust: wakeTrust, refuted: authorRefuted }, "scheduleDmWake");
@@ -960,6 +934,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
               authorId: mev.userId,
               surfaceInternal: facts.surfaceInternal,
               channelKey: roomKey,
+              ...(mev.enterpriseId === undefined ? {} : { enterpriseId: mev.enterpriseId }),
             });
             const verdict = await applySlackExternalPolicy(mev, p, { trust: wakeTrust, refuted: facts.refuted }, "native-mention-forward");
             if (verdict !== "proceed") {
@@ -1018,17 +993,6 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
             console.warn("[open-everywhere:slack-front] grant click failed after acknowledgement");
           }),
       );
-      return new Response(null, { status: 200 });
-    }
-
-    if (decision.kind === "input-click") {
-      if (slackInteractivityTenantFenceDeclined(interactivityFenceIds(decision.payload), "input-click", "front-interactivity-branch")) {
-        return fencedAck(new Response(null, { status: 200 }));
-      }
-      const respondToApproval: ApprovalRespondFn = approvalCardRespondVia(args.attachSession);
-      const tap = await handleApprovalCardClick(decision.payload, respondToApproval);
-      console.log(`[open-everywhere:slack] oe_input: tap — ${tap.reason}`);
-      if (!tap.handled) return forwardNative();
       return new Response(null, { status: 200 });
     }
 

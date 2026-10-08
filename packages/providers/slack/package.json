@@ -44,10 +44,6 @@
       "types": "./dist/agent/app-manifest.d.ts",
       "default": "./dist/agent/app-manifest.js"
     },
-    "./agent/channels/slack-approval-card.js": {
-      "types": "./dist/agent/channels/slack-approval-card.d.ts",
-      "default": "./dist/agent/channels/slack-approval-card.js"
-    },
     "./agent/channels/slack-attachments.js": {
       "types": "./dist/agent/channels/slack-attachments.d.ts",
       "default": "./dist/agent/channels/slack-attachments.js"
@@ -226,7 +222,6 @@
     "test:slack-attachments": "NODE_NO_WARNINGS=1 tsx scripts/slack-attachments-test.ts",
     "test:slack-governance-roster": "NODE_NO_WARNINGS=1 tsx scripts/slack-governance-roster-test.ts",
     "test:slack-input-response": "NODE_NO_WARNINGS=1 tsx scripts/slack-input-response-test.ts",
-    "test:slack-approval-card": "NODE_NO_WARNINGS=1 tsx scripts/slack-approval-card-test.ts",
     "test:slack-task-card": "NODE_NO_WARNINGS=1 tsx scripts/slack-task-card-test.ts",
     "test:slack-mrkdwn": "NODE_NO_WARNINGS=1 tsx scripts/slack-mrkdwn-test.ts",
     "test:slack-rate-limit": "NODE_NO_WARNINGS=1 tsx scripts/slack-rate-limit-test.ts",

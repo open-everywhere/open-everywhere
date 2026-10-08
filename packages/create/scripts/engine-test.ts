@@ -289,7 +289,7 @@ function step(parts: Partial<SetupStep> & Pick<SetupStep, "id" | "check">): Setu
     ok(typeof sOne.next === "string" && sOne.next.length > 0, "slackStep: …with a next action");
     ok(!(await slackStep.check({ cwd: dir, env: {}, route: "docker" })).satisfied, "slackStep: the docker route does NOT exempt Slack");
     ok((await slackStep.check({ cwd: dir, env: { SLACK_BOT_TOKEN: "x", SLACK_SIGNING_SECRET: "y" } })).satisfied, "slackStep: satisfied once both are set (negative control)");
-    ok(/scaffold_env/.test(sNone.next ?? ""), "slackStep: the next action hands the write to the ops tool, not to a prompt");
+    ok(/npx oe env set SLACK_BOT_TOKEN/.test(sNone.next ?? "") && !/scaffold_env/.test(sNone.next ?? ""), "slackStep: the next action hands the secret write to `oe env set`, not to an ops tool");
     ok(sNone.detail.includes(missNote("vercel")), "slackStep: a miss says the value may be set on the deployment instead");
 
     ok(/missing from \.env\.local and this shell/.test(sNone.detail), "slackStep: a miss names the two homes it READ, never a bare `missing`");
@@ -449,6 +449,70 @@ function step(parts: Partial<SetupStep> & Pick<SetupStep, "id" | "check">): Setu
 }
 
 {
+  const { DEPLOY_STATUS_PATH, deployedEnvVerdict, parseStatusRequirements } = await import("../src/deploy-status.js");
+  const { OE_STATUS_PATH } = await import("@open-everywhere/core/agent/ops/status.js");
+  const { envChecklistStep } = await import("../src/steps/env-checklist.js");
+  const { missNote } = await import("../src/env-file.js");
+  const { createServer } = await import("node:http");
+  ok(DEPLOY_STATUS_PATH === OE_STATUS_PATH, "deploy-status: the CLI's copy of the status path equals core's OE_STATUS_PATH");
+
+  const row = (id: string, met: string) => ({ id, met, detail: `${id} is ${met}` });
+  const doc = (secrets: string, postgres: string, model: string) => ({
+    contract: 1,
+    host: "vercel",
+    requirements: [row("node-24", "yes"), row("public-https-url", "yes"), row("postgres", postgres), row("model-route", model), row("secrets", secrets)],
+  });
+  let body: string = JSON.stringify(doc("yes", "yes", "unknown"));
+  let status = 200;
+  let seen: { method?: string; url?: string } = {};
+  const server = createServer((req, res) => {
+    seen = { method: req.method, url: req.url };
+    res.writeHead(status, { "content-type": "application/json" }).end(body);
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  const dir = mkdtempSync(join(tmpdir(), "oe-env-host-"));
+  try {
+    const local = await envChecklistStep.check({ cwd: dir, env: {} });
+    ok(!local.satisfied && local.detail.includes(missNote("vercel")) && /--host/.test(local.detail), "envChecklist: without --host, a miss names --host as the way to read the deployment");
+    ok(seen.url === undefined, "envChecklist: without --host, no request reaches the deployment (negative control)");
+
+    const up = await envChecklistStep.check({ cwd: dir, env: {}, host: origin });
+    ok(seen.method === "GET" && seen.url === DEPLOY_STATUS_PATH, "envChecklist: with --host, one GET to the status route");
+    ok(up.satisfied, "envChecklist: a deployment that reports secrets=yes and no env row as no satisfies the step, though .env.local is empty");
+    ok(/the deployment reports its env as set/.test(up.detail) && /secrets=yes/.test(up.detail) && /model-route=unknown/.test(up.detail), "envChecklist: …and the detail names the deployment's verdicts");
+
+    body = JSON.stringify(doc("no", "no", "unknown"));
+    const down = await envChecklistStep.check({ cwd: dir, env: {}, host: origin });
+    ok(!down.satisfied && /NOT set/.test(down.detail) && /secrets=no/.test(down.detail), "envChecklist: a deployment that reports secrets=no fails the step, naming the verdict");
+    body = JSON.stringify(doc("yes", "no", "yes"));
+    ok(!(await envChecklistStep.check({ cwd: dir, env: {}, host: origin })).satisfied, "envChecklist: one env row that reads no fails the step");
+    body = JSON.stringify(doc("unknown", "yes", "yes"));
+    ok(!(await envChecklistStep.check({ cwd: dir, env: {}, host: origin })).satisfied, "envChecklist: secrets=unknown is not a pass — the root-of-trust pair must read yes");
+
+    status = 404;
+    const missing = await envChecklistStep.check({ cwd: dir, env: {}, host: origin });
+    ok(!missing.satisfied && /could not be read/.test(missing.detail) && /404/.test(missing.detail), "envChecklist: a status route that answers 404 leaves the local verdict, and says why");
+    status = 200;
+    body = "<html>login</html>";
+    ok(/not JSON/.test((await envChecklistStep.check({ cwd: dir, env: {}, host: origin })).detail), "envChecklist: a non-JSON body is not a status document");
+    body = JSON.stringify({ requirements: [{ id: "secrets", met: "maybe" }] });
+    ok(/not a status document/.test((await envChecklistStep.check({ cwd: dir, env: {}, host: origin })).detail), "envChecklist: a verdict outside yes|no|unknown is not a status document");
+
+    seen = {};
+    writeFileSync(join(dir, ".env.local"), "DATABASE_URL=postgres://u:p@h/db\nOE_CREDENTIAL_ENCRYPTION_KEY=" + Buffer.alloc(32, 7).toString("base64") + "\n");
+    const full = await envChecklistStep.check({ cwd: dir, env: {}, host: origin });
+    ok(full.satisfied && seen.url === undefined && !full.detail.includes("postgres://"), "envChecklist: a complete local env passes without reading the deployment, and prints no value");
+
+    ok(parseStatusRequirements({}) === undefined && parseStatusRequirements(null) === undefined, "parseStatusRequirements: a body with no requirements array is not a status document");
+    ok(!deployedEnvVerdict([]).satisfied, "deployedEnvVerdict: an empty document is not a pass");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+}
+
+{
   const templateDir = fileURLToPath(new URL("../template/", import.meta.url));
   const readme = readFileSync(join(templateDir, "README.md"), "utf8");
   const agents = readFileSync(join(templateDir, "AGENTS.md"), "utf8");
@@ -467,6 +531,7 @@ function step(parts: Partial<SetupStep> & Pick<SetupStep, "id" | "check">): Setu
   ok(/Step 1 is to ask which route/.test(agents), "template AGENTS.md: step 1 is to ask which route");
   ok(/Never propose a local run as a setup step/.test(agents), "template AGENTS.md: forbids proposing a local run as setup");
   ok(/Never ask the user to paste a secret into the chat/.test(agents), "template AGENTS.md: forbids a secret in the chat");
+  ok(/npx oe env set/.test(agents), "template AGENTS.md: names `oe env set` as the door for a secret value (OPE-2396)");
   ok(/--route docker/.test(agents) && /docs\/deploy\/setup-steps\.md/.test(agents), "template AGENTS.md: names the docker route and the reference page");
   ok(!/--goal local|interactive wizard/.test(agents), "template AGENTS.md: names no retired flag");
 
@@ -474,6 +539,7 @@ function step(parts: Partial<SetupStep> & Pick<SetupStep, "id" | "check">): Setu
   ok(/## The Vercel route/.test(skill) && /## The Docker route/.test(skill), "skill: both routes have their own section");
   ok(/Never propose a local run as a setup step/.test(skill), "skill: forbids proposing a local run as setup");
   ok(/Never ask the user to paste a secret into the chat/.test(skill), "skill: forbids a secret in the chat");
+  ok(/npx oe env set/.test(skill), "skill: names `oe env set` as the door for a secret value (OPE-2396)");
   ok(!/\bquickstart \{/.test(skill) && !/quickstart plan/i.test(skill), "skill: never calls the retired `quickstart` plan tool");
   ok(/there is no plan\s+tool/.test(skill), "skill: says so outright, so a reader does not go looking for one");
   ok(/target: "vercel"/.test(skill) && /target: "docker"/.test(skill), "skill: passes the route as the preflight target");
@@ -489,6 +555,19 @@ function step(parts: Partial<SetupStep> & Pick<SetupStep, "id" | "check">): Setu
   for (const named of [...skill.matchAll(/npm run (?:-s )?([a-z][a-z0-9:-]*)/gu)].map((m) => m[1]!)) {
     ok(templateScripts.has(named), `skill: \`npm run ${named}\` is a script the scaffolded app actually ships`);
   }
+  const envExample = readFileSync(join(templateDir, ".env.example"), "utf8");
+  const disclosesOn = (text: string): boolean => /\bON\b/.test(text) || /on by default/i.test(text);
+  ok(!disclosesOn("turn it off on the deployment, OE_TELEMETRY=off"), "telemetry disclosure check: a text that never says ON fails it (negative control)");
+  for (const [name, text] of [["README.md", readme], [".env.example", envExample], ["AGENTS.md", agents], ["the setup skill", skill]] as const) {
+    ok(disclosesOn(text) && /OE_TELEMETRY=off/.test(text), `${name}: discloses that runtime telemetry is ON and names OE_TELEMETRY=off`);
+    ok(/service\.instance\.id/.test(text) && !/never[^.]*\bids, names\b/.test(text), `${name}: names the per-install id, and claims no blanket "never ids"`);
+  }
+  ok(/^# OE_TELEMETRY=off$/m.test(envExample), ".env.example: carries OE_TELEMETRY=off as a commented line, so a copy does not turn it off by accident");
+  ok(/before the first deploy/i.test(skill) && /Do not decide for them/.test(skill), "skill: the agent tells the person before the first deploy and lets them choose");
+  ok(readme.includes("scripts/goldens/roster-plan.txt") && agents.includes("scripts/goldens/roster-plan.txt"), "README and AGENTS.md: explain scripts/goldens/roster-plan.txt");
+  ok(/Neon\s+Auth/.test(skill) && /NEON_AUTH_BASE_URL/.test(skill), "skill: the Vercel route's database step says Neon Auth is not used");
+  ok(databaseStep.guide({ cwd: templateDir, env: {} }).instructions.some((l) => /Neon Auth/.test(l) && /does not use it/.test(l)), "databaseStep: the Vercel guide says Neon Auth is not used");
+  ok(!databaseStep.guide({ cwd: templateDir, env: {}, route: "docker" }).instructions.some((l) => /Neon Auth/.test(l)), "databaseStep: the Docker guide does not mention Neon Auth (negative control)");
   for (const line of skill.split("\n").filter((l) => l.includes("env:pipe --"))) {
     ok(/\|/.test(line) || /Never run it bare/.test(line), `skill: every env:pipe line is piped or is the warning itself: ${line.trim().slice(0, 48)}`);
   }

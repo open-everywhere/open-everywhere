@@ -7,6 +7,8 @@ import type { SurfaceBinding } from "../agent/identity/binding.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 registerSlackFixtureMapper();
+import { pinSuiteStore } from "./_suite-store.js";
+pinSuiteStore("roles");
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -171,6 +173,27 @@ function ctxFor(principalId: string | undefined, channelId: string): BindableCon
 }
 
 {
+  const gridDomains: Domain[] = [
+    defineDomain({ name: "org", match: "org", memory: "org-brain", admins: ["slack/E_GRID/U_GRID_ORG"] }),
+    defineDomain({ name: "txn", reach: ["slack/T1/C_TXN"], admins: ["slack/E_GRID/U_GRID_TXN"] }),
+  ];
+  assertDomainsValid(gridDomains);
+  const gridOrg = roleForBinding(bind({ principalId: "U_GRID_ORG", surface: "C_TXN", enterprise: "E_GRID" }), gridDomains);
+  ok(gridOrg.isOrgAdmin && gridOrg.isDomainAdmin, "🔴 a Grid ORG admin key holds org-admin standing in a workspace under that Grid (OPE-2400)");
+  const gridSibling = roleForBinding(bind({ principalId: "U_GRID_ORG", workspace: "T_SIB", surface: "C_ANY", enterprise: "E_GRID" }), gridDomains);
+  ok(gridSibling.isOrgAdmin, "…and in a SIBLING workspace under the same Grid — one line for the whole org");
+  const gridDom = roleForBinding(bind({ principalId: "U_GRID_TXN", surface: "C_TXN", enterprise: "E_GRID" }), gridDomains);
+  ok(!gridDom.isOrgAdmin && gridDom.isDomainAdmin, "a Grid DOMAIN admin key holds on the domain's channel, not org-wide");
+  const noGrid = roleForBinding(bind({ principalId: "U_GRID_ORG", surface: "C_TXN" }), gridDomains);
+  ok(!noGrid.isOrgAdmin && !noGrid.isDomainAdmin, "🔴 NEGATIVE CONTROL: the same person on a delivery that names NO Grid holds nothing");
+  const otherGrid = roleForBinding(bind({ principalId: "U_GRID_ORG", surface: "C_TXN", enterprise: "E_OTHER" }), gridDomains);
+  ok(!otherGrid.isOrgAdmin, "🔴 …nor on a delivery that names ANOTHER Grid");
+  ok(adminControlRoles("U_GRID_ORG", gridDomains, "slack", "T_SIB", "E_GRID").join(",") === "admin", "adminControlRoles: a Grid org admin → [\"admin\"] when the caller holds the Grid id");
+  ok(adminControlRoles("U_GRID_TXN", gridDomains, "slack", "T1", "E_GRID").join(",") === "domain:txn", "adminControlRoles: a Grid domain admin → [\"domain:txn\"]");
+  ok(adminControlRoles("U_GRID_ORG", gridDomains, "slack", "T_SIB").length === 0, "adminControlRoles: a caller that holds no Grid id gets nothing from a Grid key (fail closed)");
+}
+
+{
   const twoAdminDomains: Domain[] = [
     defineDomain({ name: "org", match: "org", memory: "org-brain", admins: ["slack/T1/U_ORG_A", "slack/T1/U_ORG_B"] }),
     defineDomain({ name: "txn", reach: ["slack/T1/C_TXN"], admins: ["slack/T1/U_TXN_ADMIN"] }),
@@ -200,6 +223,22 @@ function ctxFor(principalId: string | undefined, channelId: string): BindableCon
 
   ok(sharedOrgAdminSubject(bind({ principalId: "U_ORG_A", workspace: "T_OTHER" }), "U_ORG_A", ["U_ORG_A", "U_ORG_B"]) === undefined, "🔴 the same ids in ANOTHER workspace hold nothing — the roster names slack/T1/…");
   ok(sharedOrgAdminSubject(bind({ principalId: "U_ORG_A", platform: "discord" }), "U_ORG_A", ["U_ORG_A", "U_ORG_B"]) === undefined, "🔴 the same ids on ANOTHER platform hold nothing");
+
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [defineDomain({ name: "org", match: "org", memory: "org-brain", admins: ["slack/E_GRID/U_ORG_A", "slack/T1/U_ORG_B"] })],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  } as never);
+  ok(sharedOrgAdminSubject(bind({ principalId: "U_ORG_A", enterprise: "E_GRID" }), "U_ORG_A", ["U_ORG_A", "U_ORG_B"]) === "U_ORG_A", "🔴 a Grid org admin and a workspace org admin together are served when the binding names the Grid (OPE-2400)");
+  ok(sharedOrgAdminSubject(bind({ principalId: "U_ORG_A" }), "U_ORG_A", ["U_ORG_A", "U_ORG_B"]) === undefined, "🔴 …and refused when it names none");
+  const { capBypassFor } = await import("../agent/spend/bypass.js");
+  const gridBypass = await capBypassFor({ org: "default", principalId: "U_ORG_A", surfaceKey: "slack/T_SIB/C_CAPPED", enterprise: "E_GRID" });
+  ok(gridBypass?.standing === "roster", "🔴 capBypassFor: a Grid org admin key holds the cap bypass when the caller passes the Grid id (OPE-2400)");
+  ok((await capBypassFor({ org: "default", principalId: "U_ORG_A", surfaceKey: "slack/T_SIB/C_CAPPED" })) === null, "🔴 capBypassFor NEGATIVE CONTROL: …and nothing when no Grid id rides along");
 
   registerConfig({
     loadBundles: () => [],
@@ -262,3 +301,5 @@ function ctxFor(principalId: string | undefined, channelId: string): BindableCon
 }
 
 console.log(`\n✓ roles: ${n} assertions passed (config-as-code RBAC: org/domain admin matrix + exact-id-only admin rosters + the all-candidates serve rule + the no-record seat fence + throw-message wording)\n`);
+
+// proves: AP-MOD-core-access-admin-standing, AP-MOD-core-access-roles

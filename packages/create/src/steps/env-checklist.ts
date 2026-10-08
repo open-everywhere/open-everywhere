@@ -1,22 +1,35 @@
 import { preflight } from "@open-everywhere/core/agent/ops/quickstart.js";
 import { routeOf, type SetupStep, type StepContext } from "../engine.js";
 import { mergedEnv, missNote } from "../env-file.js";
+import { normalizeHost } from "../deploy-probe.js";
+import { deployedEnvVerdict, readDeployedStatus } from "../deploy-status.js";
 
 export const envChecklistStep: SetupStep = {
   id: "env-checklist",
   title: "Env var checklist",
-  check(ctx: StepContext) {
+  async check(ctx: StepContext) {
     const env = mergedEnv(ctx.cwd, ctx.env) as NodeJS.ProcessEnv;
     const route = routeOf(ctx);
     const { checks, ready } = preflight(env, { target: route });
+    if (ready) return { satisfied: true, detail: `all required env vars present for the ${route} route` };
     const missing = checks.filter((c) => c.status === "missing");
-    return {
-      satisfied: ready,
-      detail: ready
-        ? `all required env vars present for the ${route} route`
-        : `missing from .env.local and this shell: ${missing.map((c) => c.name).join(", ")}. ${missNote(route)}`,
-      next: ready ? undefined : missing.map((c) => c.fix).filter((f): f is string => Boolean(f)).join(" · "),
-    };
+    const localMiss = `missing from .env.local and this shell: ${missing.map((c) => c.name).join(", ")}`;
+    const localNext = missing.map((c) => c.fix).filter((f): f is string => Boolean(f)).join(" · ");
+    const origin = ctx.host === undefined ? undefined : normalizeHost(ctx.host);
+    if (origin === undefined) return { satisfied: false, detail: `${localMiss}. ${missNote(route)}`, next: localNext };
+    const read = await readDeployedStatus(origin);
+    if (!read.ok) return { satisfied: false, detail: `${localMiss}. The deployment's own verdicts could not be read: ${read.detail}`, next: localNext };
+    const deployed = deployedEnvVerdict(read.requirements);
+    return deployed.satisfied
+      ? {
+          satisfied: true,
+          detail: `the deployment reports its env as set (${read.url}): ${deployed.summary}. The local reading differs (${localMiss}); that is expected when the values live only on the deployment`,
+        }
+      : {
+          satisfied: false,
+          detail: `the deployment reports its env as NOT set (${read.url}): ${deployed.summary}. Locally, ${localMiss}`,
+          next: localNext,
+        };
   },
   guide(ctx: StepContext) {
     const route = routeOf(ctx);
@@ -32,7 +45,8 @@ export const envChecklistStep: SetupStep = {
           : "The Vercel route needs NO AI_GATEWAY_API_KEY: a deployed project authenticates to the AI Gateway with OIDC.",
         "Each chat surface adds its own names — Slack reads SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET from the environment.",
         "Not needed on a deployment: OE_PUBLIC_BASE_URL (only for a custom domain) and OE_INTAKE_PAGE_SIGNING_KEY (the deployment mints it into the credential store).",
-        "Run `npx @open-everywhere/create --check --json`, or the ops tool `preflight`, for the live verdict per name.",
+        "Run `npx @open-everywhere/create --check --json`, or the ops tool `preflight`, for the live verdict per name. Both read .env.local and the shell only.",
+        "Set the values on the deployment instead (the Vercel dashboard, say)? Add `--host https://<host>`: the step then also reads the deployment's own verdicts from its public `/eve/v1/oe/status` route.",
       ],
     };
   },

@@ -24,11 +24,22 @@ It exposes seven tools:
 | --- | --- | --- |
 | `preflight` | Reports every prerequisite, plus each configured provider's live posture. | no |
 | `surface_manifest` | Returns the chat app's paste-ready manifest for a surface, with your deploy host substituted. | no |
-| `scaffold_env` | Merges `KEY=VALUE` settings into the project's `.env.local`. | `.env.local` |
+| `scaffold_env` | Writes non-secret config into the project's `.env.local`. For a secret, it takes the **name** and returns the command the operator runs. | `.env.local` |
 | `scaffold_credential_key` | Mints the credential store's AES-256-GCM key into `.env.local`. Never returns the value. | `.env.local` |
-| `secret_set` | Encrypts secrets into the deployment's own credential store. | the store |
+| `secret_set` | Encrypts secrets, **by name**, from `.env.local` into the deployment's own credential store. | the store |
 | `secret_list` | Lists stored secret **names**, who set them, and when. Never a value. | no |
 | `secret_rm` | Deletes one stored secret. | the store |
+
+**A server started before an upgrade refuses every call.** The server holds the core it loaded at
+start. After an `npm install` moves the app to a new `@open-everywhere/core`, each call compares the
+two versions, and on a mismatch it answers `the app now runs @open-everywhere/core X; this ops
+server runs Y` instead of serving the old code (an old Slack manifest, an old tool set). That
+includes a call the old tool's schema rejects and a call to a tool the old server lacks. Restart
+the server — in Claude Code, `/mcp`, then reconnect `open-everywhere-ops` — and call again. Two
+cases are not judged: a project with no installed core to read, and a reinstall that keeps the same
+version number. A server whose core predates this check cannot refuse at all: after an upgrade, an
+input-validation error that names `values` or `secrets`, a `scaffold_env` reply with no `secrets`
+list for the `secretNames` you sent, or a "Tool … not found", means the same thing — restart the server. Never fall back to passing a value.
 
 A second MCP server, `open-everywhere-control` (`npm run control -w @open-everywhere/core`), manages
 a **running** instance — spend, routines, audit, access. It is not part of standing one up. Use it
@@ -42,8 +53,13 @@ Three rules govern everything below.
   bootstrap credentials that reach a store go in the environment. Everything else — the deployment's
   identity, access bundles, spend caps, trust vouches — is tracked code that changes by pull
   request. Never invent an environment variable for a list, a room key, a tenant id or a roster.
-- **Never echo a secret.** No value the operator gives you goes into a message, a log, a commit or
-  a tracked file. `.env.local` is gitignored; the credential store is encrypted; both are fine.
+- **Never hold a secret.** No secret value passes through you: not in a message, a tool call, a
+  log, a commit or a tracked file. A tool call is part of your transcript, and the transcript goes
+  to your model provider. The operator types each value into their **own** terminal with
+  `npx oe env set <NAME>` (a hidden prompt), which writes it to the gitignored `.env.local`. The ops
+  tools take secret **names** only. No tool has an input for a secret value, and
+  `scaffold_env`'s `values` refuses every name outside its short config list. A schema cannot stop a
+  value typed into a free text field (a name, a path), so that part is on you.
 
 ## Step 1 — Prove the toolchain
 
@@ -97,13 +113,15 @@ already linked to Vercel, the gateway authenticates through OIDC and there is no
 the [quick start](../introduction/quick-start.md). `preflight` still reports the key as `missing`
 there; read that line as "no key set", not as "broken".
 
-Ask for the value, then write it and nothing else:
+Do not ask for the value. Name the secret instead:
 
 ```
-scaffold_env { "values": { "AI_GATEWAY_API_KEY": "<the key>" } }
+scaffold_env { "secretNames": ["AI_GATEWAY_API_KEY"] }
 ```
 
-Then `preflight` again. The model line reads `ok`.
+The reply gives the command — `npx oe env set AI_GATEWAY_API_KEY` — and `present: false`. Ask the
+operator to run it in their own terminal, from the project root, and paste the key at its hidden
+prompt. Then `preflight` again. The model line reads `ok`.
 
 ## Step 5 — A local smoke check (optional, and never the finish line)
 
@@ -126,9 +144,9 @@ Serverless hosting makes this mandatory, and `preflight` says so unconditionally
 `sqlite` defaults are process-local, so a hosted deployment loses memory and operational state on
 every deploy and every cold start.
 
-```
-scaffold_env { "values": { "DATABASE_URL": "<the connection string>" } }
-```
+The connection string carries the database password, so it is a secret. Ask the operator to run
+`npx oe env set DATABASE_URL` in their own terminal and paste it there. Confirm with
+`scaffold_env { "secretNames": ["DATABASE_URL"] }`: the reply reports `present: true`.
 
 That one value is the whole step. A present `DATABASE_URL` selects `postgres` for the operational
 store AND the memory backing (OPE-2230), so `OE_OPERATIONAL_PROVIDER` and `OE_MEMORY_PROVIDER` are
@@ -158,8 +176,8 @@ A key exported in the operator's **shell** is refused outright, `replace` includ
 the one the secret tools use, so a file key would be a rival that never takes effect. Push the
 exported value to the deployment instead.
 
-Both writing tools — this one and `scaffold_env` — share one target gate, so the `path` override
-cannot put a secret where it must not go. The target must sit at the **project root**, and its name
+Both writing tools — this one and `scaffold_env` — share one target gate with `oe env set`, so a
+path override cannot put a secret where it must not go. The target must sit at the **project root**, and its name
 must be `.env`, `.env.local` or `.env.<name>.local`: the three names this repository never tracks.
 Any other name is refused, `.env.example` included. `.gitignore` ignores `.env*` and then negates
 the two `.example` files back into the tree, so "it starts with `.env`" is not the same question as
@@ -182,18 +200,18 @@ the git diff is the review surface.
 The remote control plane is an OAuth resource server. Without this it answers 401, and the operator
 cannot inspect spend, audit or access from outside the box. Local stdio needs nothing.
 
-```
-scaffold_env { "values": { "OE_ADMIN_STATIC_TOKEN": "<a long random string>" } }
-```
-
 Unlike the credential store's key, this one has no mint-and-forget tool, and that is deliberate: the
 admin token is a bearer credential the operator must also hold to call the control plane, so it can
-never be write-only. Have them generate it (`openssl rand -hex 32`) and keep it, rather than
-inventing one for them.
+never be write-only. Have them generate it (`openssl rand -hex 32`), keep it, and write it with
+`npx oe env set OE_ADMIN_STATIC_TOKEN` in their own terminal. Never invent one for them.
 
 Offer the OIDC form instead — `OE_ADMIN_OIDC_ISSUER` plus `OE_ADMIN_OIDC_AUDIENCE`, against any
 provider the operator already runs. Prefer it for anything beyond a trial: nothing is then held on
-either side.
+either side. Neither value is a secret, so you write them yourself:
+
+```
+scaffold_env { "values": { "OE_ADMIN_OIDC_ISSUER": "<the issuer URL>", "OE_ADMIN_OIDC_AUDIENCE": "<the audience>" } }
+```
 
 ## Step 10 — Link the Vercel project
 
@@ -315,15 +333,20 @@ For Slack, the exact action:
 
 2. Give the operator this instruction verbatim: *open https://api.slack.com/apps → Create New App →
    From an app manifest → pick the workspace → paste the manifest → Create → Install to Workspace.*
-3. Ask them for two values from the created app: the **Bot User OAuth Token** (`xoxb-…`, under OAuth
-   & Permissions) and the **Signing Secret** (under Basic Information → App Credentials).
+3. Ask them to copy two values from the created app into their own terminal — never into the
+   chat: the **Bot User OAuth Token** (`xoxb-…`, under OAuth & Permissions) and the **Signing
+   Secret** (under Basic Information → App Credentials).
 
 Both are environment variables, not credential-store secrets — the Slack bundle reads
-`SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` from the environment:
+`SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` from the environment. Name them:
 
 ```
-scaffold_env { "values": { "SLACK_BOT_TOKEN": "<xoxb-…>", "SLACK_SIGNING_SECRET": "<the secret>" } }
+scaffold_env { "secretNames": ["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET"] }
 ```
+
+The reply gives one `npx oe env set <NAME>` command per name. The operator runs each in their own
+terminal and pastes the value at its hidden prompt. Call the tool again with the same names: both
+read `present: true`.
 
 Then push both to the deployment with `vercel env add`, exactly as in step 11, and redeploy. Slack verifies the Event Subscriptions URL with a signed challenge, so the verification fails until a deploy that holds `SLACK_SIGNING_SECRET` is up: after that redeploy, ask the operator to choose **Retry** under Event Subscriptions.
 
@@ -334,12 +357,22 @@ are in the surface guides: [Slack](./surfaces/slack.md), [Teams](./surfaces/team
 
 ## Step 15 — Load the remaining secrets
 
-Every secret past the root-of-trust pair belongs in the encrypted credential store, not in a file:
+Every secret past the root-of-trust pair belongs in the encrypted credential store, not in a file.
+The operator has two doors, and neither puts the value in front of you:
 
-```
-secret_set { "secrets": { "ACME_API_TOKEN": "<the token>" } }
-secret_list {}
-```
+- **Straight to the store:** `npx oe secret set ACME_API_TOKEN` in their own terminal, with the value
+  on standard input. This is the shorter path.
+- **Through `.env.local`:** `npx oe env set ACME_API_TOKEN` in their own terminal, then you move it by
+  name:
+
+  ```
+  secret_set { "names": ["ACME_API_TOKEN"] }
+  secret_list {}
+  ```
+
+  `secret_set` reads each value from `.env.local` and reports a byte count only. A name the file
+  does not hold is refused before the store opens, and the reply names the command to run. The
+  value stays in `.env.local` afterwards; delete the line once nothing reads it as an env var.
 
 `secret_set` writes the same store the deployment reads, through the same code path as the
 `oe secret` CLI. Point it at the same `DATABASE_URL` the deployment uses; the response names the

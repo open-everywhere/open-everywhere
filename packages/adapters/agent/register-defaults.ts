@@ -19,6 +19,8 @@ import {
   bootVerifyAuditChainTail,
   bootBackfillLinkTenants,
   runBootNotices,
+  registerBootNotice,
+  announceJudgeWithoutRules,
   registerOperationalPgliteLazy,
   resolveOperationalSelection,
   resolveMemoryProviderId,
@@ -123,6 +125,8 @@ async function wireDefaultAdapters(options: DefaultAdapterOptions): Promise<Defa
   assertConnectorMemoryGrants(options.memory.domains(), options.memory.silos(), options.memory.grants);
 
   applySubtreeSurfaceClaims();
+
+  registerBootNotice("approval-judge-no-rules", announceJudgeWithoutRules);
 
   const store = decideStoreWiring(process.env, onVercel());
 

@@ -80,6 +80,25 @@ act that reaches the judge costs one consult.
 **Turning it off.** Set `approvals: { judgeMode: "off" }` in `agent/settings/settings.ts`. Every gated
 act then posts a card. `shadow` decides nothing and logs a would-be verdict beside each real card.
 
+**`enforce` with no rules logs one boot line.** When no bound bundle carries a rule, the judge has
+nothing to cite. Each consult then returns `no-rules` with no model call, so every gated act posts a
+card, the same as `off`. The setting still reads `enforce`, so at boot the deployment logs this line
+once (OPE-2400):
+
+```text
+[open-everywhere:approvals] the approval judge is in enforce with no rules: every gated act will ask a person. …
+```
+
+A rule counts only when a binding names its bundle, because the resolver reads bound bundles only.
+To clear the line, bind a bundle with `preApprovalRules`, or set `judgeMode: "off"` to say what you
+mean.
+
+**An app scaffolded before 0.2.1 has no rules file.** `npx oe upgrade` and `npx oe upgrade --plan` offer
+the target template's `agent/access/pre-approval-rules.ts` to such an app. The upgrade never writes
+the file and never overwrites one you have. The offer names the template's copy and the
+`approval-policy` binding to add (see `UPGRADING.md`). An app that names the file in
+`.oe-template-ignore` left it out on purpose, so it is not offered.
+
 ---
 
 ## 1. What a rule is

@@ -50,6 +50,7 @@ export interface IngressSpendGateInput {
     readonly principalId: string | undefined;
     readonly surfaceKey: string;
     readonly reason?: string;
+    readonly enterprise?: string;
   }) => Promise<{ readonly warn: boolean } | null>;
   readonly appendGateAudit?: (row: SpendGateAuditRow) => Promise<void>;
 }
@@ -132,6 +133,7 @@ export async function ingressSpendGate(input: IngressSpendGateInput): Promise<Sp
       principalId: input.principalId,
       surfaceKey: domainKeyOf(partition),
       reason: verdict.reason,
+      ...(binding.enterprise === undefined ? {} : { enterprise: binding.enterprise }),
     });
     if (granted) {
       if (granted.warn) {

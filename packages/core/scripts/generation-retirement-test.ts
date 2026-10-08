@@ -308,8 +308,8 @@ async function rowsFor(action: string): Promise<readonly { detail?: Record<strin
     "🔴 the unified `receive` drains the retirements, passing the CHANNEL'S OWN audit labels — one derivation, no drift",
   );
   ok(
-    unified.indexOf("await drainGenerationRetirements(") < unified.indexOf("if (t.answer) {"),
-    "…before both delivery branches, so the answer leg's early return cannot skip it",
+    unified.indexOf("await drainGenerationRetirements(") < unified.indexOf("return from(t.token).send("),
+    "…before the send, so the retirement does not depend on a delivery that may throw",
   );
 }
 

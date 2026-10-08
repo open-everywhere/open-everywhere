@@ -1,9 +1,20 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { join, resolve, dirname, basename } from "node:path";
+import { join, resolve } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { mergeEnv, credentialKeyStatus, CREDENTIAL_KEY_ENV_NAME, CREDENTIAL_KEY_BYTES } from "./quickstart.js";
+import { parseEnv } from "node:util";
+import {
+  mergeEnv,
+  credentialKeyStatus,
+  envAssignmentValue,
+  envFileTargetRefusal,
+  envSetCommand,
+  CREDENTIAL_KEY_ENV_NAME,
+  CREDENTIAL_KEY_BYTES,
+  ENV_CONFIG_NAMES,
+  ENV_NAME_PATTERN,
+} from "./quickstart.js";
 import { preflightAsync } from "./probes.js";
 import { corePackageVersion } from "./package-info.js";
 import { registeredDeploymentIdentity, deploymentOrg } from "../identity/deployment-identity.js";
@@ -26,21 +37,19 @@ function envFilePath(path?: string): string {
   return path === undefined ? join(projectDir(), ".env.local") : resolve(projectDir(), path);
 }
 
-const WRITABLE_ENV_NAMES = /^\.env$|^\.env\.local$|^\.env\..+\.local$/;
-
 function envTargetRefusal(file: string): string | undefined {
-  const dir = dirname(file);
-  if (dir !== projectDir()) {
-    return `refusing to write to "${file}" — it resolves outside the project root (${projectDir()}). The target must sit at the project root.`;
+  return envFileTargetRefusal(file, projectDir());
+}
+
+function installedCoreVersion(): string | undefined {
+  try {
+    const manifest = JSON.parse(readFileSync(join(projectDir(), "node_modules", "@open-everywhere", "core", "package.json"), "utf-8")) as {
+      version?: unknown;
+    };
+    return typeof manifest.version === "string" ? manifest.version : undefined;
+  } catch {
+    return undefined;
   }
-  const base = basename(file);
-  if (!WRITABLE_ENV_NAMES.test(base)) {
-    return (
-      `refusing to write to "${base}" — the target must be .env, .env.local or .env.<name>.local, the names this repository never ` +
-      "tracks. A .env.example (or any other name) is a TRACKED file."
-    );
-  }
-  return undefined;
 }
 
 function loadEnvFile(path: string): Record<string, string> {
@@ -76,7 +85,24 @@ export interface OpsServerDeps {
 }
 
 export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
-  const server = new McpServer({ name: "open-everywhere-ops", version: corePackageVersion() });
+  const loadedCore = corePackageVersion();
+  const server = new McpServer({ name: "open-everywhere-ops", version: loadedCore });
+
+  const staleCoreRefusal = () => {
+    const installed = installedCoreVersion();
+    if (installed === undefined || installed === loadedCore) return undefined;
+    return {
+      isError: true,
+      ...json({
+        ok: false,
+        stale: { installedCore: installed, serverCore: loadedCore },
+        note:
+          `the app now runs @open-everywhere/core ${installed}; this ops server runs ${loadedCore}. Restart the ops server ` +
+          "(in Claude Code: /mcp, then reconnect open-everywhere-ops), then call the tool again. A server that predates an " +
+          "upgrade serves the old code, so nothing it returned is current.",
+      }),
+    };
+  };
   const identityDeclaredAtBoot = registeredDeploymentIdentity() !== undefined;
   const defaultOrgRefusal = (org: string | undefined): string | undefined => {
     if (org) return undefined;
@@ -168,28 +194,75 @@ export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
     },
   );
 
+  const configShape = Object.fromEntries(ENV_CONFIG_NAMES.map((name) => [name, z.string().optional()])) as Record<
+    (typeof ENV_CONFIG_NAMES)[number],
+    z.ZodOptional<z.ZodString>
+  >;
   server.registerTool(
     "scaffold_env",
     {
-      title: "Write .env.local config",
+      title: "Write .env.local config; name the secrets the person must set",
       description:
-        "Merge KEY=VALUE settings into the project's .env.local (updating in place, appending new keys, preserving comments). Use after " +
-        "gathering answers from the preflight check. The target must sit at the project root and be named .env, .env.local or " +
-        ".env.<name>.local — the names this repository never tracks; any other name is refused, because these values are secrets and a " +
-        ".env.example is a tracked file.",
+        `Write non-secret configuration into the project's .env.local (updating in place, appending new keys, preserving comments). ` +
+        `\`values\` takes ONLY these names: ${ENV_CONFIG_NAMES.join(", ")}. A secret never passes through this tool: name it in ` +
+        "`secretNames`, and the reply gives the command the person runs in their OWN terminal (`npx oe env set <NAME>`, a hidden " +
+        "prompt) plus whether the file already holds a value — presence only, never any part of one. Never ask the person to paste a " +
+        "secret into the chat. The target must sit at the project root and be named .env, .env.local or .env.<name>.local.",
       inputSchema: {
-        values: z.record(z.string(), z.string()).describe("env keys to set, e.g. { AI_GATEWAY_API_KEY: '...', OE_OPERATIONAL_PROVIDER: 'postgres' }"),
+        values: z
+          .object(configShape)
+          .strict()
+          .optional()
+          .describe(`non-secret config to write, e.g. { OE_PUBLIC_BASE_URL: 'https://agent.example.com' }. Allowed names: ${ENV_CONFIG_NAMES.join(", ")}`),
+        secretNames: z
+          .array(z.string())
+          .optional()
+          .describe("secret NAMES the person must set, e.g. ['ACME_API_TOKEN', 'DATABASE_URL']. Never a value."),
         path: z.string().optional().describe("override the target file (default <project>/.env.local; must be a never-tracked env name at the project root)"),
       },
     },
     (a) => {
       const file = envFilePath(a.path);
+      const values = Object.fromEntries(Object.entries(a.values ?? {}).filter((e): e is [string, string] => e[1] !== undefined));
+      const secretNames = a.secretNames ?? [];
       const refusal = envTargetRefusal(file);
       if (refusal) return json({ ok: false, file, keysSet: [], note: refusal });
-      const existing = existsSync(file) ? readFileSync(file, "utf-8") : "";
-      const next = mergeEnv(existing, a.values);
-      writeFileSync(file, next.endsWith("\n") ? next : next + "\n", "utf-8");
-      return json({ ok: true, file, keysSet: Object.keys(a.values) });
+      const badAt = secretNames.findIndex((name) => !ENV_NAME_PATTERN.test(name));
+      if (badAt >= 0) {
+        return json({ ok: false, file, keysSet: [], note: `secretNames[${badAt}] is not an environment variable name (A-Z, 0-9 and _, starting with a letter).` });
+      }
+      const rhs: Record<string, string> = {};
+      for (const [name, value] of Object.entries(values)) {
+        const line = envAssignmentValue(value);
+        if (line === undefined) return json({ ok: false, file, keysSet: [], note: `the value for ${name} holds a line break, which a .env line cannot carry.` });
+        rhs[name] = line;
+      }
+      if (Object.keys(rhs).length > 0) {
+        const existing = existsSync(file) ? readFileSync(file, "utf-8") : "";
+        const next = mergeEnv(existing, rhs);
+        writeFileSync(file, next.endsWith("\n") ? next : next + "\n", "utf-8");
+      }
+      const held = existsSync(file) ? parseEnv(readFileSync(file, "utf-8")) : {};
+      const secrets = secretNames.map((name) => ({
+        name,
+        present: (held[name] ?? "") !== "",
+        command: envSetCommand(name) + (a.path === undefined ? "" : ` --file ${file}`),
+      }));
+      const missing = secrets.filter((s) => !s.present);
+      return json({
+        ok: true,
+        file,
+        keysSet: Object.keys(rhs),
+        ...(secrets.length > 0 ? { secrets } : {}),
+        ...(missing.length > 0
+          ? {
+              note:
+                "Ask the person to run each command below in their own terminal, from the project root. The command reads the value " +
+                "from a hidden prompt and writes it to the file, so it never enters this conversation. Then call scaffold_env with the " +
+                `same secretNames again to confirm: ${missing.map((s) => s.command).join(" ; ")}`,
+            }
+          : {}),
+      });
     },
   );
 
@@ -266,28 +339,60 @@ export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
   server.registerTool(
     "secret_set",
     {
-      title: "Store a secret in the deployment's credential store",
+      title: "Store secrets from .env.local in the deployment's credential store",
       description:
-        "Encrypt one or more secrets into this deployment's own credential store (AES-256-GCM, keyed by OE_CREDENTIAL_ENCRYPTION_KEY) so channels and connectors resolve them WITHOUT env vars. Write-only: no tool reads a value back, and the confirmation reports only the byte count. Needs DATABASE_URL + OE_CREDENTIAL_ENCRYPTION_KEY (from the environment or the project's .env.local).",
+        "Encrypt one or more secrets into this deployment's own credential store (AES-256-GCM, keyed by OE_CREDENTIAL_ENCRYPTION_KEY) so channels and connectors resolve them WITHOUT env vars. Takes NAMES, never values: each value is read from the project's .env.local (or envPath), where the person put it with `npx oe env set <NAME>` in their own terminal. A name the file does not hold is refused before the store opens, and the reply names the command. Write-only: no tool reads a value back, and the confirmation reports only the byte count. Needs DATABASE_URL + OE_CREDENTIAL_ENCRYPTION_KEY (from the environment or the project's .env.local).",
       inputSchema: {
-        secrets: z
-          .record(z.string(), z.string())
-          .describe("name → value, e.g. { ACME_API_TOKEN: '<the token>' }. The name is the secretRef a credential points at."),
+        names: z
+          .array(z.string())
+          .min(1)
+          .describe("the secret names to store, e.g. ['ACME_API_TOKEN']. Each is the secretRef a credential points at, and each value is read from the env file."),
         org: z.string().optional().describe(ORG_INPUT_DESCRIPTION),
-        envPath: z.string().optional(),
+        envPath: z.string().optional().describe("the env file the values are read from (default <project>/.env.local; must be a never-tracked env name at the project root)"),
       },
     },
     async (a) => {
       const orgRefusal = defaultOrgRefusal(a.org);
       if (orgRefusal) return json({ ok: false, set: [], note: orgRefusal });
-      const store = await connectStore(envFilePath(a.envPath), a.org);
+      const file = envFilePath(a.envPath);
+      const sourceRefusal = envTargetRefusal(file);
+      if (sourceRefusal) return json({ ok: false, set: [], note: sourceRefusal.replace("refusing to write to", "refusing to read secrets from") });
+      const badAt = a.names.findIndex((name) => !ENV_NAME_PATTERN.test(name));
+      if (badAt >= 0) {
+        return json({
+          ok: false,
+          set: [],
+          note:
+            `names[${badAt}] is not an environment variable name (A-Z, 0-9 and _, starting with a letter), so no env file can hold it. ` +
+            "Nothing was stored. For a store-only name, the person runs `npx oe secret set <name>` in their own terminal, value on stdin.",
+        });
+      }
+      const held = existsSync(file) ? parseEnv(readFileSync(file, "utf-8")) : {};
+      const missing = a.names.filter((name) => (held[name] ?? "") === "");
+      if (missing.length > 0) {
+        return json({
+          ok: false,
+          set: [],
+          missing,
+          note:
+            `${file} holds no value for ${missing.join(", ")}. Nothing was stored. Ask the person to run, in their own terminal from the ` +
+            `project root: ${missing.map((name) => envSetCommand(name) + (a.envPath === undefined ? "" : ` --file ${file}`)).join(" ; ")}. Then call secret_set again.`,
+        });
+      }
+      const store = await connectStore(file, a.org);
       const { setOperatorSecret, SET_BY_OPS_MCP } = await import("../credentials/operator-secrets.js");
       const set: unknown[] = [];
-      for (const [name, value] of Object.entries(a.secrets)) {
-        const r = await setOperatorSecret({ name, value, setBy: SET_BY_OPS_MCP, ...(a.org ? { org: a.org } : {}) });
+      for (const name of a.names) {
+        const r = await setOperatorSecret({ name, value: held[name]!, setBy: SET_BY_OPS_MCP, ...(a.org ? { org: a.org } : {}) });
         set.push({ name: r.name, bytes: r.bytes, at: r.at, replaced: r.replaced });
       }
-      return json({ ok: true, store: store.label, org: actingOrg(a.org), set, note: "Values are write-only — nothing can read them back out." });
+      return json({
+        ok: true,
+        store: store.label,
+        org: actingOrg(a.org),
+        set,
+        note: `Values are write-only — nothing can read them back out. They are still in ${file}; delete those lines once the deployment no longer needs them as env vars.`,
+      });
     },
   );
 
@@ -344,6 +449,14 @@ export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
       });
     },
   );
+
+  const handlers = (server.server as unknown as { _requestHandlers?: Map<string, (request: unknown, extra: unknown) => Promise<unknown>> })
+    ._requestHandlers;
+  const sdkToolCall = handlers?.get("tools/call");
+  if (handlers === undefined || sdkToolCall === undefined) {
+    throw new Error("open-everywhere-ops: the MCP SDK's tools/call handler is not where this server expects it, so the stale-core guard cannot install.");
+  }
+  handlers.set("tools/call", async (request, extra) => staleCoreRefusal() ?? sdkToolCall(request, extra));
 
   return server;
 }

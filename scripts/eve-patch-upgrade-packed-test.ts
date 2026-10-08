@@ -152,7 +152,7 @@ try {
     OLD_TARGETS.every((t) => t.markers.length === 0 || upgraded.output.includes(`      ${t.insidePackage}`)),
     `the applier names each restored file${say}`,
   );
-  ok(!upgraded.output.includes("**ERROR**"), `a repaired failure prints no patch-package error block${say}`);
+  ok(!upgraded.output.includes("**ERROR**"), `a repaired failure prints no patch-package error block (the applier no longer runs patch-package, OPE-2398)${say}`);
   const missingAfter = missingEveMarkers(TARGETS, targetContents(eveDir));
   ok(missingAfter.length === 0, `every marker the packed patch adds is in eve: ${missingAfter.join("; ")}`);
   const repoEve = join(REPO, "node_modules", "eve");

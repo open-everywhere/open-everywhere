@@ -1,14 +1,9 @@
-import { appendAudit, type AuditInput } from "../audit/audit.js";
 import { isSessionLimitContinuationRequest } from "./session-park.js";
-import { WAKE_TARGET_TTL_MS, unifiedThreadRef, type UnifiedWakeOrigin } from "./unified-window.js";
-import { dmAnchorSurfaceForToken } from "./window-key.js";
+import { WAKE_TARGET_TTL_MS } from "./unified-window.js";
 
-export const QUESTION_BRIDGED_AUDIT_ACTION = "turn.question_bridged";
 export const QUESTION_DROPPED_AUDIT_ACTION = "turn.question_dropped";
 
 export const EMPTY_QUESTION_FALLBACK = "I asked a question but supplied no text — reply with anything and I'll carry on.";
-
-export const APPROVAL_REQUEST_KIND = "tool-approval";
 
 export interface BridgeOption {
   readonly id: string;
@@ -48,114 +43,11 @@ export function detectBridgeableInputRequest(requests: unknown): BridgeableQuest
   return undefined;
 }
 
-export function renderQuestionForSurface(question: BridgeableQuestion, opts?: RenderQuestionOptions): string {
+export function renderQuestionForSurface(question: BridgeableQuestion): string {
   const head = question.prompt.trim().length > 0 ? question.prompt.trim() : EMPTY_QUESTION_FALLBACK;
   if (question.options.length === 0) return head;
   const list = question.options.map((o) => `• ${o.label}`).join("\n");
-  const hint = opts?.answerByOption === true && question.kind === APPROVAL_REQUEST_KIND ? `\n\n${APPROVAL_ANSWER_HINT}` : "";
-  return `${head}\n\n${list}${hint}`;
-}
-
-export interface RenderQuestionOptions {
-  readonly answerByOption?: boolean;
-}
-
-export const APPROVAL_ANSWER_HINT = "Reply with one of those words to answer — anything else leaves this waiting.";
-
-export function approvalOptionIds(question: BridgeableQuestion): readonly string[] {
-  if (question.kind !== APPROVAL_REQUEST_KIND) return [];
-  return question.options.map((o) => o.id).filter((id) => id.length > 0);
-}
-
-const APPROVE_WORDS: ReadonlySet<string> = new Set(["approve", "approved", "allow", "yes"]);
-const DENY_WORDS: ReadonlySet<string> = new Set(["cancel", "deny", "denied", "reject", "rejected", "no", "stop", "decline"]);
-
-export function resolveApprovalOptionId(text: string, optionIds: readonly string[]): string | undefined {
-  const word = text.trim().toLowerCase().replace(/^[^\p{L}\p{N}]+/u, "").replace(/[^\p{L}\p{N}]+$/u, "");
-  if (word.length === 0) return undefined;
-  const offered = optionIds.filter((id) => id.length > 0);
-  const exact = offered.find((id) => id.toLowerCase() === word);
-  if (exact !== undefined) return exact;
-  const family = APPROVE_WORDS.has(word) ? APPROVE_WORDS : DENY_WORDS.has(word) ? DENY_WORDS : undefined;
-  if (family === undefined) return undefined;
-  return offered.find((id) => family.has(id.toLowerCase()));
-}
-
-export type QuestionDropReason = "unresolved-origin" | "post-failed";
-
-export type QuestionBridgeOutcome =
-  | { readonly status: "bridged"; readonly platform: string; readonly id: string; readonly origin: UnifiedWakeOrigin }
-  | { readonly status: "dropped"; readonly reason: QuestionDropReason };
-
-export interface QuestionBridgeScope {
-  readonly org: string;
-  readonly platform: string;
-  readonly workspace: string;
-  readonly surface?: string;
-  readonly sessionId?: string;
-  readonly wakeId?: string;
-}
-
-export interface QuestionBridgeDeps {
-  readonly resolveOrigin: () => Promise<UnifiedWakeOrigin | null>;
-  readonly post: (origin: UnifiedWakeOrigin, text: string) => Promise<string>;
-  readonly audit?: (entry: AuditInput) => Promise<void>;
-}
-
-const ERROR_MAX = 300;
-
-function containerKeyOf(origin: UnifiedWakeOrigin): string | undefined {
-  try {
-    const key = unifiedThreadRef(origin).channelKey;
-    return key.length > 0 ? key : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-export async function bridgeQuestionToSurface(
-  scope: QuestionBridgeScope,
-  question: BridgeableQuestion,
-  deps: QuestionBridgeDeps,
-): Promise<QuestionBridgeOutcome> {
-  const audit = deps.audit ?? appendAudit;
-  const text = renderQuestionForSurface(question, { answerByOption: true });
-  const base = {
-    requestId: question.requestId,
-    toolName: question.toolName,
-    kind: question.kind,
-    chars: text.length,
-    options: question.options.length,
-    ...(scope.wakeId ? { wakeId: scope.wakeId } : {}),
-    ...(scope.sessionId ? { sessionId: scope.sessionId } : {}),
-  };
-  const row = (action: string, detail: Record<string, unknown>): Promise<void> =>
-    audit({ org: scope.org, platform: scope.platform, workspace: scope.workspace, surface: scope.surface, action, detail }).catch(() => undefined);
-
-  let origin: UnifiedWakeOrigin | null = null;
-  try {
-    origin = await deps.resolveOrigin();
-  } catch {
-    origin = null;
-  }
-  if (!origin) {
-    await row(QUESTION_DROPPED_AUDIT_ACTION, { ...base, reason: "unresolved-origin" satisfies QuestionDropReason });
-    return { status: "dropped", reason: "unresolved-origin" };
-  }
-  try {
-    const id = await deps.post(origin, text);
-    const containerKey = containerKeyOf(origin);
-    await row(QUESTION_BRIDGED_AUDIT_ACTION, { ...base, platform: origin.platform, id, ...(containerKey ? { containerKey } : {}) });
-    return { status: "bridged", platform: origin.platform, id, origin };
-  } catch (err) {
-    await row(QUESTION_DROPPED_AUDIT_ACTION, {
-      ...base,
-      reason: "post-failed" satisfies QuestionDropReason,
-      platform: origin.platform,
-      error: (err instanceof Error ? err.message : String(err)).slice(0, ERROR_MAX),
-    });
-    return { status: "dropped", reason: "post-failed" };
-  }
+  return `${head}\n\n${list}`;
 }
 
 export const QUESTION_ANSWERED_AUDIT_ACTION = "input_response.routed";
@@ -173,7 +65,6 @@ export interface OutstandingQuestion {
   readonly requestId: string;
   readonly containerKey?: string;
   readonly wakeId?: string;
-  readonly optionIds?: readonly string[];
   readonly at: string;
 }
 
@@ -192,18 +83,15 @@ export async function rememberBridgedQuestion(
     readonly containerKey?: string;
     readonly wakeId?: string;
     readonly at?: string;
-    readonly optionIds?: readonly string[];
   },
 ): Promise<boolean> {
   try {
     if (bareToken.length === 0 || input.requestId.length === 0) return false;
     const at = input.at ?? new Date().toISOString();
-    const optionIds = (input.optionIds ?? []).filter((id) => id.length > 0);
     const row: OutstandingQuestion = {
       requestId: input.requestId,
       ...(input.containerKey !== undefined && input.containerKey.length > 0 ? { containerKey: input.containerKey } : {}),
       ...(input.wakeId !== undefined && input.wakeId.length > 0 ? { wakeId: input.wakeId } : {}),
-      ...(optionIds.length > 0 ? { optionIds } : {}),
       at,
     };
     await store.putTaskResult(org, bridgedQuestionKey(bareToken), JSON.stringify(row), at, BRIDGED_QUESTION_TTL_MS);
@@ -221,33 +109,14 @@ export async function readBridgedQuestion(store: BridgedQuestionStore, org: stri
     const parsed = JSON.parse(raw) as Partial<OutstandingQuestion> | null;
     const requestId = parsed?.requestId;
     if (typeof requestId !== "string" || requestId.length === 0) return undefined;
-    const optionIds = Array.isArray(parsed?.optionIds)
-      ? (parsed.optionIds as readonly unknown[]).filter((id): id is string => typeof id === "string" && id.length > 0)
-      : [];
     return {
       requestId,
       ...(typeof parsed?.containerKey === "string" && parsed.containerKey.length > 0 ? { containerKey: parsed.containerKey } : {}),
       ...(typeof parsed?.wakeId === "string" && parsed.wakeId.length > 0 ? { wakeId: parsed.wakeId } : {}),
-      ...(optionIds.length > 0 ? { optionIds } : {}),
       at: typeof parsed?.at === "string" ? parsed.at : "",
     };
   } catch {
     return undefined;
-  }
-}
-
-export const EVE_INPUT_TEXT_KEY = "__eveInputText";
-
-export function ordinaryWakeSendOptions(questionMayBeOpen: boolean): { readonly [EVE_INPUT_TEXT_KEY]?: "" } {
-  return questionMayBeOpen ? { [EVE_INPUT_TEXT_KEY]: "" } : {};
-}
-
-export async function bridgedQuestionMayBeOpen(store: BridgedQuestionStore, org: string, bareToken: string): Promise<boolean> {
-  if (bareToken.length === 0) return false;
-  try {
-    return (await store.getTaskResult(org, bridgedQuestionKey(bareToken))) !== null;
-  } catch {
-    return true;
   }
 }
 
@@ -260,33 +129,14 @@ export async function forgetBridgedQuestion(store: BridgedQuestionStore, org: st
   }
 }
 
-export interface AnsweredWakeStore {
-  markUnifiedWakeAnswered(org: string, wakeId: string, at: string, turnId?: string): Promise<void>;
-}
-
-export async function settleAnsweredWake(store: AnsweredWakeStore, org: string, wakeId: string, at: string = new Date().toISOString()): Promise<boolean> {
-  try {
-    if (wakeId.length === 0) return false;
-    await store.markUnifiedWakeAnswered(org, wakeId, at);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export type InboundAnswerRouting =
   | {
       readonly kind: "answer";
       readonly requestId: string;
       readonly floor: string;
       readonly wakeId?: string;
-      readonly optionId?: string;
     }
-  | { readonly kind: "wake"; readonly reason: "internal-dispatch" | "no-question" | "addressed-mention" | "foreign-room" | "refused" | "unmatched-option" };
-
-export function isAddressedMentionWake(window: { readonly addressing?: string; readonly followUp?: true }, bareToken: string): boolean {
-  return window.addressing === "direct-mention" && window.followUp !== true && dmAnchorSurfaceForToken(bareToken) === undefined;
-}
+  | { readonly kind: "wake"; readonly reason: "internal-dispatch" | "no-question" | "foreign-room" | "refused" };
 
 export interface InboundAnswerDeps {
   readonly read: () => Promise<OutstandingQuestion | undefined>;
@@ -297,25 +147,16 @@ export async function resolveInboundAnswerRouting(
   input: {
     readonly internalDispatch: boolean;
     readonly containerKey?: string;
-    readonly text?: string;
-    readonly addressedMention?: boolean;
   },
   deps: InboundAnswerDeps,
 ): Promise<InboundAnswerRouting> {
   if (input.internalDispatch) return { kind: "wake", reason: "internal-dispatch" };
   const outstanding = await deps.read();
   if (outstanding === undefined) return { kind: "wake", reason: "no-question" };
-  if (input.addressedMention === true) return { kind: "wake", reason: "addressed-mention" };
   const asked = outstanding.containerKey;
   const here = input.containerKey;
   if (asked === undefined || asked.length === 0 || here === undefined || here.length === 0 || asked !== here) {
     return { kind: "wake", reason: "foreign-room" };
-  }
-  const optionIds = outstanding.optionIds;
-  let optionId: string | undefined;
-  if (optionIds !== undefined && optionIds.length > 0) {
-    optionId = resolveApprovalOptionId(input.text ?? "", optionIds);
-    if (optionId === undefined) return { kind: "wake", reason: "unmatched-option" };
   }
   const verdict = await deps.admit();
   if (!verdict.ok) return { kind: "wake", reason: "refused" };
@@ -324,6 +165,5 @@ export async function resolveInboundAnswerRouting(
     requestId: outstanding.requestId,
     floor: verdict.floor,
     ...(outstanding.wakeId !== undefined ? { wakeId: outstanding.wakeId } : {}),
-    ...(optionId !== undefined ? { optionId } : {}),
   };
 }

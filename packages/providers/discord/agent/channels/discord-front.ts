@@ -2,11 +2,10 @@ import { POST, type Channel, type HttpRouteDefinition, type RouteHandlerArgs } f
 import { verifyDiscordSignature } from "eve/channels/discord";
 import { OE_DISCORD_APPROVAL_PREFIX } from "../approvals/discord-card.js";
 import { handleDiscordApprovalInteraction, type DiscordInteractionResponse } from "../approvals/discord-flow.js";
-import { LINK_CONSENT_CLICK_PREFIX, OE_GRANT_ACTION_PREFIX, OE_INPUT_CLICK_PREFIX } from "@open-everywhere/core/agent/adapter-api.js";
+import { LINK_CONSENT_CLICK_PREFIX, OE_GRANT_ACTION_PREFIX } from "@open-everywhere/core/agent/adapter-api.js";
 import { handleDiscordLinkConsentInteraction } from "../identity/discord-link-consent.js";
 import { handleDiscordGrantCardInteraction } from "../access/discord-grant-click.js";
-import { handleDiscordApprovalCardInteraction, type ApprovalRespondFn } from "./discord-approval-card.js";
-import { approvalCardRespondVia, oeCommandName, type AttachSessionForCancel } from "@open-everywhere/core/agent/adapter-api.js";
+import { oeCommandName, type AttachSessionForCancel } from "@open-everywhere/core/agent/adapter-api.js";
 import { handleDiscordOeCommandInteraction } from "../commands/discord-commands.js";
 
 type RouteHandler = (req: Request, args: RouteHandlerArgs) => Promise<Response>;
@@ -35,7 +34,6 @@ export type DiscordFrontDecision =
   | { readonly kind: "approval-click"; readonly reason: string; readonly interaction: unknown }
   | { readonly kind: "link-consent-click"; readonly reason: string; readonly interaction: unknown }
   | { readonly kind: "grant-click"; readonly reason: string; readonly interaction: unknown }
-  | { readonly kind: "input-click"; readonly reason: string; readonly interaction: unknown }
   | { readonly kind: "oe-command"; readonly reason: string; readonly interaction: unknown };
 
 export function classifyDiscordInteraction(rawBody: string): DiscordFrontDecision {
@@ -72,9 +70,6 @@ export function classifyDiscordInteraction(rawBody: string): DiscordFrontDecisio
   if (customId?.startsWith(OE_GRANT_ACTION_PREFIX)) {
     return { kind: "grant-click", reason: "oe_grant: component click — ours, never forwarded", interaction: json };
   }
-  if (customId?.startsWith(OE_INPUT_CLICK_PREFIX)) {
-    return { kind: "input-click", reason: "oe_input: component click — ours, never forwarded", interaction: json };
-  }
   return { kind: "forward", reason: "component click — eve's HITL owns it" };
 }
 
@@ -90,11 +85,6 @@ export interface DiscordFrontOptions {
     raw: unknown,
     deps?: { waitUntil?: (p: Promise<unknown>) => void },
   ) => Promise<DiscordInteractionResponse | null>;
-  readonly handleApprovalCardInteraction?: (
-    raw: unknown,
-    respond: ApprovalRespondFn,
-    deps?: { waitUntil?: (p: Promise<unknown>) => void },
-  ) => Promise<DiscordInteractionResponse | null>;
   readonly handleOeCommand?: (raw: unknown, attachSession?: AttachSessionForCancel) => Promise<DiscordInteractionResponse | null>;
 }
 
@@ -108,7 +98,6 @@ export function buildDiscordFrontHandler(innerHandler: RouteHandler, opts: Disco
   const handleClick = opts.handleApprovalInteraction ?? handleDiscordApprovalInteraction;
   const handleLinkConsent = opts.handleLinkConsentInteraction ?? handleDiscordLinkConsentInteraction;
   const handleGrantCard = opts.handleGrantCardInteraction ?? handleDiscordGrantCardInteraction;
-  const handleApprovalCard = opts.handleApprovalCardInteraction ?? handleDiscordApprovalCardInteraction;
   const handleOeCommand = opts.handleOeCommand ?? handleDiscordOeCommandInteraction;
 
   return async (req: Request, args: RouteHandlerArgs): Promise<Response> => {
@@ -130,12 +119,6 @@ export function buildDiscordFrontHandler(innerHandler: RouteHandler, opts: Disco
 
     if (decision.kind === "grant-click") {
       const response = await handleGrantCard(decision.interaction, { waitUntil: args.waitUntil });
-      if (response) return interactionJson(response);
-    }
-
-    if (decision.kind === "input-click") {
-      const respondToApproval: ApprovalRespondFn = approvalCardRespondVia(args.attachSession);
-      const response = await handleApprovalCard(decision.interaction, respondToApproval, { waitUntil: args.waitUntil });
       if (response) return interactionJson(response);
     }
 

@@ -25,7 +25,7 @@ model, or jump straight to a section. New here? Start with
 
 - [What is Open Everywhere](./introduction/what-is-open-everywhere.md) — the one-screen pitch and mental model.
 - [Built on Eve](./introduction/built-on-eve.md) — what Eve provides and what Open Everywhere adds on top.
-- [Quick start](./introduction/quick-start.md) — from deploy button to a talking agent in minutes.
+- [Quick start](./introduction/quick-start.md) — from deploy button to a talking agent.
 - [Core concepts](./introduction/core-concepts.md) — the glossary: surface, domain, bundle, grant, silo, adapter, broker, routine.
 - [Glossary](./glossary.md) — the ratified runtime vocabulary: seat vs worker, grain vs posture, taint, tier vs verdict vs judge, the scope ladder — each anchored to the code that decides it.
 

@@ -33,7 +33,6 @@ test:slack-app-manifest
 test:slack-workspace-roster
 test:slack-webhook-verifier
 test:slack-input-response
-test:slack-approval-card
 test:slack-task-card
 test:slack-mrkdwn
 test:slack-native-wake-heal

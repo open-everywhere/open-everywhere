@@ -33,7 +33,7 @@ const CONFIG_PREFIXES: readonly string[] = [
   "agent/webhooks/",
 ];
 const CONFIG_FILES: ReadonlySet<string> = new Set(["roster.config.ts", "agent/instructions.md", ".gitignore"]);
-const MANAGED_FILES: ReadonlySet<string> = new Set(["package.json", "roster.lock.json"]);
+const MANAGED_FILES: ReadonlySet<string> = new Set(["package.json", "roster.lock.json", "scripts/goldens/roster-plan.txt"]);
 
 export function templateFileKind(path: string): TemplateFileKind {
   if (MANAGED_FILES.has(path) || path.endsWith(".generated.ts") || path.startsWith("agent/plugins/generated/")) return "managed";
@@ -41,12 +41,31 @@ export function templateFileKind(path: string): TemplateFileKind {
   return "owned";
 }
 
+export const TEMPLATE_IGNORE_FILE = ".oe-template-ignore";
+
+export function parseTemplateIgnore(text: string): readonly string[] {
+  return normalise(text)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "" && !line.startsWith("#"))
+    .map((line) => line.replace(/^\.\//u, ""));
+}
+
+export function isTemplateIgnored(ignore: readonly string[], path: string): boolean {
+  return ignore.some((entry) => (entry.endsWith("/") ? path.startsWith(entry) : path === entry));
+}
+
+export function readTemplateIgnore(appRoot: string): readonly string[] {
+  const path = join(appRoot, TEMPLATE_IGNORE_FILE);
+  return existsSync(path) ? parseTemplateIgnore(readFileSync(path, "utf8")) : [];
+}
+
 export interface DriftEntry {
   readonly path: string;
   readonly kind: Exclude<TemplateFileKind, "managed">;
-  readonly state: "missing" | "differs";
+  readonly state: "missing" | "differs" | "removed" | "app-owned";
   readonly summary: string;
-  readonly templatePath: string;
+  readonly templatePath?: string;
 }
 
 export interface DriftReport {
@@ -110,18 +129,29 @@ function commonLineCount(a: readonly string[], b: readonly string[]): number {
   return prev[b.length]!;
 }
 
-export function templateDrift(options: { readonly appRoot: string; readonly templateDir: string; readonly version: string; readonly appName: string }): DriftReport {
+export function templateDrift(options: {
+  readonly appRoot: string;
+  readonly templateDir: string;
+  readonly version: string;
+  readonly appName: string;
+  readonly removedFiles?: readonly string[];
+  readonly ignore?: readonly string[];
+}): DriftReport {
+  const ignore = options.ignore ?? [];
   const entries: DriftEntry[] = [];
+  const templatePaths = new Set<string>();
   let compared = 0;
   for (const rel of listFiles(options.templateDir).sort()) {
     const path = scaffoldedPathOf(rel);
+    templatePaths.add(path);
     const kind = templateFileKind(path);
     if (kind === "managed") continue;
     compared++;
     const templatePath = join(options.templateDir, ...rel.split("/"));
     const appPath = join(options.appRoot, ...path.split("/"));
+    const ignored = isTemplateIgnored(ignore, path);
     if (!existsSync(appPath)) {
-      entries.push({ path, kind, state: "missing", summary: "the template has it, the app does not", templatePath });
+      if (!ignored) entries.push({ path, kind, state: "missing", summary: "the template has it, the app does not", templatePath });
       continue;
     }
     let expected: string;
@@ -137,25 +167,49 @@ export function templateDrift(options: { readonly appRoot: string; readonly temp
       throw new Error(`${path}: ${err instanceof Error ? err.message : String(err)}`);
     }
     if (normalise(actual) === normalise(expected)) continue;
-    entries.push({ path, kind, state: "differs", summary: lineDiffSummary(actual, expected), templatePath });
+    const summary = lineDiffSummary(actual, expected);
+    entries.push({ path, kind, state: ignored ? "app-owned" : "differs", summary, templatePath });
   }
-  entries.sort((x, y) => (x.kind === y.kind ? 0 : x.kind === "owned" ? -1 : 1));
+  for (const path of [...new Set(options.removedFiles ?? [])].sort()) {
+    if (templatePaths.has(path) || !existsSync(join(options.appRoot, ...path.split("/")))) continue;
+    const kind = templateFileKind(path);
+    if (kind === "managed") continue;
+    if (isTemplateIgnored(ignore, path)) entries.push({ path, kind, state: "app-owned", summary: "a release removed it from the template" });
+    else entries.push({ path, kind, state: "removed", summary: "a release removed it from the template, and the app still has it" });
+  }
+  const rank = (e: DriftEntry): number => (e.state === "removed" ? 0 : e.state === "app-owned" ? 3 : e.kind === "owned" ? 1 : 2);
+  entries.sort((x, y) => rank(x) - rank(y));
   return { entries, compared };
 }
 
+export function driftCounts(report: DriftReport): { readonly sync: number; readonly delete: number } {
+  return {
+    sync: report.entries.filter((e) => e.state !== "removed" && e.state !== "app-owned" && e.kind === "owned").length,
+    delete: report.entries.filter((e) => e.state === "removed").length,
+  };
+}
+
 export function renderDriftReport(report: DriftReport, version: string, templateDir: string): readonly string[] {
-  const owned = report.entries.filter((e) => e.kind === "owned");
-  const config = report.entries.filter((e) => e.kind === "config");
+  const removed = report.entries.filter((e) => e.state === "removed");
+  const owned = report.entries.filter((e) => (e.state === "missing" || e.state === "differs") && e.kind === "owned");
+  const config = report.entries.filter((e) => (e.state === "missing" || e.state === "differs") && e.kind === "config");
+  const appOwned = report.entries.filter((e) => e.state === "app-owned");
   const lines: string[] = [`Template drift (against ${version}'s @open-everywhere/create template, ${report.compared} files compared):`];
   if (report.entries.length === 0) {
     lines.push(`  every scaffolded file matches ${version}'s template.`);
     return lines;
   }
+  for (const e of removed) lines.push(`  DELETE    ${e.path} — ${e.summary}`);
   for (const e of owned) lines.push(`  SYNC      ${e.path} — ${e.summary}`);
   for (const e of config) lines.push(`  config    ${e.path} — ${e.summary} (your own config: merge by hand only if you want the template's change)`);
+  for (const e of appOwned) lines.push(`  app-owned ${e.path} — ${e.summary} (${TEMPLATE_IGNORE_FILE} names it, so the report asks nothing)`);
+  if (removed.length > 0) {
+    lines.push(`  ${removed.length} file(s) that a release removed from the template are still in the app. Delete each one, or name it in ${TEMPLATE_IGNORE_FILE} if the app owns it.`);
+  }
   if (owned.length > 0) {
     lines.push(`  ${owned.length} template-owned file(s) differ from ${version}'s template. A stale copy can typecheck and build and still be wrong at runtime.`);
     lines.push(`  oe upgrade never overwrites an app file: read each diff against ${templateDir}, then copy the template's file over yours.`);
+    lines.push(`  A file the app removed or owns on purpose goes in ${TEMPLATE_IGNORE_FILE} (one path per line), and the report stops asking.`);
   }
   return lines;
 }

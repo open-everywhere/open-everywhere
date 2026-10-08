@@ -180,6 +180,18 @@ ok(
   ok(!rosterHasPrincipal(["slack/U_ADMIN"], "slack", "T1", "U_ADMIN"), "🔴 an UNQUALIFIED roster entry does not match a qualified lookup (a missed matcher costs standing…)");
   ok(!rosterHasPrincipal(["slack/T1/U_ADMIN"], "discord", undefined, "T1"), "🔴 …and no lookup can be shaped to match a qualified entry from the other direction either");
 
+  const grid = ["slack/E_GRID/U_GRIDADMIN"];
+  ok(rosterHasPrincipal(grid, "slack", "T_SIB", "U_GRIDADMIN", "E_GRID"), "🔴 a Grid entry admits its person in a workspace whose delivery named that Grid (OPE-2400)");
+  ok(rosterHasPrincipal(grid, "slack", "T_OTHER_SIB", "U_GRIDADMIN", "E_GRID"), "…and in every other workspace under the same Grid");
+  ok(!rosterHasPrincipal(grid, "slack", "T_SIB", "U_GRIDADMIN"), "🔴 …but NOT when the delivery named no Grid — the rung is read off the delivery, never assumed");
+  ok(!rosterHasPrincipal(grid, "slack", "T_SIB", "U_GRIDADMIN", "E_OTHER"), "🔴 …nor when the delivery named ANOTHER Grid");
+  ok(!rosterHasPrincipal(grid, "slack", undefined, "U_GRIDADMIN", "E_GRID"), "🔴 …nor when the workspace cannot be named: the Grid line never stands in for an unnamed workspace");
+  ok(!rosterHasPrincipal(grid, "slack", "T_SIB", "U_SOMEONE_ELSE", "E_GRID"), "…nor for another person under the Grid");
+  ok(!rosterHasPrincipal(["slack/T_SIB/U_ADMIN"], "slack", "T_OTHER_SIB", "U_ADMIN", "E_GRID"), "🔴 a WORKSPACE entry still never reaches a sibling workspace, Grid or not — the walk goes up, never sideways");
+  ok(rosterHasPrincipal(["slack/T_SIB/U_ADMIN"], "slack", "T_SIB", "U_ADMIN", "E_GRID"), "…and a workspace entry still matches in its own workspace when the delivery also names a Grid");
+  ok(!rosterHasPrincipal(["slack/T_SIB/U_ADMIN"], "slack", "T_OTHER", "U_ADMIN", "T_SIB"), "🔴 an enterprise value cannot be shaped to re-read a workspace entry for another workspace's delivery… (a Slack Grid id is E…, a workspace id T…, and the matcher composes the key the entry spells)");
+  ok(!rosterHasPrincipal(["discord/E_GRID/U1"], "discord", "G1", "U1", "E_GRID"), "…and the rung exists only on a tenant-scoped platform");
+
   ok(JSON.stringify(principalIdsOnPlatform(roster, "slack", "T1")) === JSON.stringify(["U_ADMIN"]), "principalIdsOnPlatform projects the roster down to one platform's bare ids");
   ok(principalIdsOnPlatform(roster, "teams", undefined).length === 0, "…dropping every other platform's entries");
   ok(principalIdsOnPlatform(roster, "slack", "T_OTHER").length === 0, "🔴 …and every other WORKSPACE's entries — the one function that legitimately UNQUALIFIES must not hand a foreign workspace's bare id to a membership comparison");
@@ -529,6 +541,8 @@ ok(
   ok(isFrozenSurfaceBinding({ ...resolvedDm, modeResolved: true }), "🔴 OPE-1867: the frozen-binding grammar ADMITS modeResolved — an unlisted key is rejected outright, so omitting it here would silently drop every frozen binding");
   ok(!isFrozenSurfaceBinding({ ...resolvedDm, modeResolved: false }), "OPE-1867: the grammar refuses `false` — true-or-absent, like principalAttested");
   ok(isFrozenSurfaceBinding({ ...gapFilled, principalId: "U_P" }), "OPE-1867: a gap-filled binding freezes fine without the key");
+  ok(isFrozenSurfaceBinding({ ...resolvedDm, enterprise: "E_GRID" }), "🔴 OPE-2400: the frozen-binding grammar ADMITS the Grid id — an unlisted key is rejected outright, which refused every Grid wake");
+  ok(!isFrozenSurfaceBinding({ ...resolvedDm, enterprise: "" }), "OPE-2400: …but not an empty one");
 }
 
 console.log(`✓ identity: ${passed} assertions passed`);

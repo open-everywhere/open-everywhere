@@ -27,13 +27,14 @@ export function wakeAuthorIsAdmin(
   authorId: string | undefined,
   channelKey: string | undefined,
   domains: readonly Domain[],
+  enterprise?: string,
 ): boolean {
   if (!authorId || !channelKey) return false;
   const parsed = parseScopeKey(channelKey);
   const platform = parsed.kind === "tenant" || parsed.kind === "surface" || parsed.kind === "principal" ? parsed.platform : undefined;
   const tenant = parsed.kind === "tenant" || parsed.kind === "surface" ? parsed.workspace : undefined;
   const admits = (roster: readonly string[] | undefined): boolean =>
-    rosterHasPrincipal(roster, platform, tenant, authorId);
+    rosterHasPrincipal(roster, platform, tenant, authorId, enterprise);
   if (admits(criteriaDomain("org", domains)?.admins)) return true;
   return admits(domainForChannel(channelKey, domains)?.admins);
 }
@@ -51,6 +52,7 @@ export function resolveWakeTrust(input: {
   readonly authorId?: string;
   readonly surfaceInternal: boolean;
   readonly channelKey?: string;
+  readonly enterpriseId?: string;
   readonly domains?: readonly Domain[];
   readonly driverAllowlist?: ReadonlySet<string>;
 }): WakeTrust {
@@ -61,7 +63,7 @@ export function resolveWakeTrust(input: {
     authorIsBot: input.authorIsBot,
     authorId: input.authorId,
     surfaceInternal: input.surfaceInternal,
-    authorIsAdmin: wakeAuthorIsAdmin(input.authorId, input.channelKey, domains),
+    authorIsAdmin: wakeAuthorIsAdmin(input.authorId, input.channelKey, domains, input.enterpriseId),
     isAllowlistedDriver,
   });
 }
@@ -80,6 +82,7 @@ export function resolveWakeTrustFromContext(
       authorId,
       surfaceInternal: binding.trust === "internal",
       channelKey: `${binding.platform}/${binding.workspace}/${binding.domainSurface ?? binding.surface}`,
+      ...(binding.enterprise === undefined ? {} : { enterpriseId: binding.enterprise }),
       domains: opts?.domains,
     });
   } catch {

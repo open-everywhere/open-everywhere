@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SETUP_STEPS } from "../src/steps/index.js";
-import { parseArgs } from "../src/cli.js";
+import { main, parseArgs, scaffoldNodeRefusal } from "../src/cli.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -85,6 +85,47 @@ function runCli(args: readonly string[], cwd: string): { status: number | null; 
     ok(inPlace.status === 0, `. in a fresh clone: exits 0 (stderr: ${inPlace.stderr.trim()})`);
     ok(existsSync(join(clone, "agent", "agent.ts")), ". in a fresh clone: scaffolds the app in place");
     ok(!inPlace.stdout.includes("cd ."), ". in a fresh clone: the next steps carry no `cd .` line");
+
+    const sameName = join(dir, "my-agent");
+    mkdirSync(join(sameName, ".git"), { recursive: true });
+    const nested = runCli(["my-agent"], sameName);
+    ok(nested.status === 1, `nested same-name <dir>: refused with exit 1 (stdout: ${nested.stdout.trim()})`);
+    ok(nested.stderr.includes("npx @open-everywhere/create ."), "nested same-name <dir>: the refusal prints the `.` command");
+    ok(!existsSync(join(sameName, "my-agent")), "nested same-name <dir>: nothing is written");
+    ok(runCli(["./my-agent"], sameName).status === 1, "nested same-name <dir>: `./my-agent` is the same case");
+    const otherName = runCli(["inner-app"], sameName);
+    ok(otherName.status === 0 && existsSync(join(sameName, "inner-app", "agent", "agent.ts")), "nested <dir> with ANOTHER name: scaffolds as asked (negative control)");
+    const onPurpose = join(dir, "twin");
+    mkdirSync(join(onPurpose, "twin"), { recursive: true });
+    const nestedOnPurpose = runCli(["twin"], onPurpose);
+    ok(nestedOnPurpose.status === 0 && existsSync(join(onPurpose, "twin", "agent", "agent.ts")), "nested same-name <dir> created first: scaffolds — the refusal names that escape");
+
+    const oldNodeTarget = join(dir, "old-node-app");
+    const oldNode = await main([oldNodeTarget], { nodeVersion: "22.18.0", nodeRange: ">=24" });
+    ok(oldNode === 1 && !existsSync(oldNodeTarget), "<dir> on Node 22: exits 1 and writes nothing");
+    const refusal = scaffoldNodeRefusal("22.18.0", ">=24") ?? "";
+    ok(/found 22\.18\.0/.test(refusal) && refusal.includes("nvm install 24 && nvm use 24"), "<dir> on Node 22: the refusal names the found version and the nvm command");
+    ok(scaffoldNodeRefusal("24.0.0", ">=24") === undefined, "Node gate: Node 24 passes (negative control)");
+    ok(scaffoldNodeRefusal("22.18.0", undefined) === undefined, "Node gate: an unreadable range does not block — the prerequisites step reports it");
+    const out: string[] = [];
+    const err: string[] = [];
+    const [log, error] = [console.log, console.error];
+    console.log = (...a: unknown[]) => void out.push(a.join(" "));
+    console.error = (...a: unknown[]) => void err.push(a.join(" "));
+    let oldNodeCheck: number;
+    const cwd = process.cwd();
+    try {
+      process.chdir(dir);
+      oldNodeCheck = await main(["--check", "--json"], { nodeVersion: "22.18.0", nodeRange: ">=24" });
+    } finally {
+      process.chdir(cwd);
+      [console.log, console.error] = [log, error];
+    }
+    const oldNodeReport = JSON.parse(out.join("\n")) as { steps: { id: string }[] };
+    ok(
+      oldNodeCheck === 1 && oldNodeReport.steps.length === SETUP_STEPS.length && !err.join(" ").includes("refusing to scaffold"),
+      "Node gate: it gates the scaffold only, so `--check --json` still reports on Node 22",
+    );
 
     const checkScaffold = runCli(["other-app", "--check"], dir);
     ok(checkScaffold.status === 2, "<dir> --check: refused with exit 2 — --check changes nothing");

@@ -51,10 +51,34 @@ export function rosterHasPrincipal(
   platform: string | undefined,
   tenant: string | undefined | null,
   id: string | undefined,
+  enterprise?: string | null,
 ): boolean {
   if (!roster || roster.length === 0 || !platform || !id) return false;
   const key = tryPrincipalKey(platform, tenant, id);
-  return key !== undefined && roster.includes(key);
+  if (key === undefined) return false;
+  if (roster.includes(key)) return true;
+  const gridKey = enterprisePrincipalKey(platform, tenant, enterprise, id);
+  return gridKey !== undefined && roster.includes(gridKey);
+}
+
+function enterprisePrincipalKey(
+  platform: string,
+  tenant: string | undefined | null,
+  enterprise: string | undefined | null,
+  id: string,
+): string | undefined {
+  if (!isTenantScopedPlatform(platform)) return undefined;
+  const named = typeof enterprise === "string" ? enterprise.trim() : "";
+  if (named.length === 0 || /[/\s]/u.test(named) || !isEnterpriseRungId(platform, named)) return undefined;
+  if (named === (typeof tenant === "string" ? tenant.trim() : tenant)) return undefined;
+  return `${platform}/${named}/${id}`;
+}
+
+const ENTERPRISE_RUNG_PREFIX: ReadonlyMap<string, string> = new Map([["slack", "E"]]);
+
+export function isEnterpriseRungId(platform: string, id: string): boolean {
+  const prefix = ENTERPRISE_RUNG_PREFIX.get(platform);
+  return prefix !== undefined && id.startsWith(prefix);
 }
 
 export function principalKeyReplacementHint(entry: string, tenant: string | undefined): string {

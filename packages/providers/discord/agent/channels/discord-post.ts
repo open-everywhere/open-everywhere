@@ -123,7 +123,6 @@ export async function discordPostMessageWithButtons(
   channelId: string,
   content: string,
   buttons: readonly DiscordDmButton[],
-  opts?: { readonly replyToMessageId?: string },
 ): Promise<string> {
   if (content.length > DISCORD_MESSAGE_MAX) {
     throw markNotApplied(
@@ -135,7 +134,6 @@ export async function discordPostMessageWithButtons(
     headers: botHeaders(botToken()),
     body: JSON.stringify({
       content,
-      ...(opts?.replyToMessageId ? { message_reference: { message_id: opts.replyToMessageId, fail_if_not_exists: false } } : {}),
       components: [
         {
           type: COMPONENT_ACTION_ROW,

@@ -318,7 +318,7 @@ console.log("§10 cancel_work relays a stop into the work session, for the job's
     loadDomains: () =>
       [
         { name: "org", match: "org", admins: ["discord/300000000000000104"] },
-        { name: "e2e-unified", admins: ["slack/TW/U_DOMADMIN"] },
+        { name: "e2e-unified", admins: ["slack/TW/U_DOMADMIN", "slack/E_GRID/U_GRIDADMIN"] },
       ] as never,
   });
   const actor = (principalId: string, b: Record<string, unknown>) => ({ principalId, binding: { ...binding, ...b } as never });
@@ -327,6 +327,8 @@ console.log("§10 cancel_work relays a stop into the work session, for the job's
   ok(!cancelTool.principalAdministers(actor("U_DOMADMIN", {}), "another-domain"), "…and not another domain's");
   ok(!cancelTool.principalAdministers(actor("U_DOMADMIN", { workspace: "TW-OTHER" }), "e2e-unified"), "…and the same id in another workspace is not that admin");
   ok(!cancelTool.principalAdministers(actor("U_NOBODY", {}), "e2e-unified"), "a person on no admin list administers nothing");
+  ok(cancelTool.principalAdministers(actor("U_GRIDADMIN", { enterprise: "E_GRID" }), "e2e-unified"), "🔴 OPE-2400: a Grid admin key administers the domain's jobs when the binding names that Grid");
+  ok(!cancelTool.principalAdministers(actor("U_GRIDADMIN", {}), "e2e-unified"), "🔴 OPE-2400 NEGATIVE CONTROL: …and not when the binding names no Grid");
 
   const { fenceWorkSessionCancel, WORK_CANCEL_UNAUTHORISED_MESSAGE } = await import("../agent/access/work-cancel-fence.js");
   const { setWorkSessionToken } = await import("../agent/access/lean-seat-state.js");

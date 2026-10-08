@@ -176,6 +176,7 @@ function canonicalBinding(binding: SurfaceBinding): Record<string, unknown> {
     roomEngagementKey: binding.roomEngagementKey,
     anchorMessageId: binding.anchorMessageId,
     anchorChannelId: binding.anchorChannelId,
+    enterprise: binding.enterprise,
   };
 }
 
@@ -621,7 +622,6 @@ export interface UnifiedWindowWake {
   readonly wakeId: string;
   readonly origin: UnifiedWakeOrigin;
   readonly addressing?: "direct-mention";
-  readonly followUp?: true;
   readonly vendorTs?: VendorEventTime;
 }
 

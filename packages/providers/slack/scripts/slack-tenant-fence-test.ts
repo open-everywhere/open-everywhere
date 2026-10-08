@@ -479,14 +479,13 @@ async function dropRows(ts: string) {
         `TOTALITY(click): the "${arm.name}" branch runs no model turn and still decides something, so it must consult the tenant fence`,
       );
     }
-    ok(fenced === 7, `…and the scan really found all seven click branches (${fenced}) — a renamed or deleted arm must red this, never silently empty it`);
+    ok(fenced === 6, `…and the scan really found all six click branches (${fenced}) — a renamed or deleted arm must red this, never silently empty it`);
     for (const [arm, handler] of [
       ["approval-click", "handleApproval("],
       ["setkey-click", "handleSetKeyClick("],
       ["connect-click", "handleConnectClick("],
       ["grant-click", "handleGrantCardClick("],
       ["setkey-submit", "handleSetKeyViewSubmission("],
-      ["input-click", "handleApprovalCardClick("],
     ] as const) {
       const at = frontCode.indexOf(`if (decision.kind === "${arm}") {`);
       const body = frontCode.slice(at, frontCode.indexOf("\n    if (decision.kind ===", at + 1));

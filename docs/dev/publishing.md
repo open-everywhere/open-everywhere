@@ -94,14 +94,26 @@ and exits 0 — it never patches bytes outside the project, and it refuses rathe
 |---|---|
 | no eve resolves from the project | eve is a peer; the message names `npm i eve@<pin>` |
 | the resolved eve is outside the project root | patching there would rewrite bytes the project does not own |
-| nothing is installed at `<root>/node_modules/eve` | the patch spells its targets relative to the project root, and patch-package addresses no other path |
-| the installed eve is not the pinned version | the hunks derive from other bytes; patch-package would only warn |
-| a marker the patch adds is missing afterwards | patch-package reports a failed hunk as a **warning**, so nothing else would say so |
+| nothing is installed at `<root>/node_modules/eve` | the patch spells its targets relative to the project root |
+| the installed eve is not the pinned version | the hunks derive from other bytes; a patch tool would only warn |
+| a hunk does not apply, forward or in reverse | the applier writes nothing, and names the file and the hunk |
+| a marker the patch adds is missing afterwards | the bytes are the evidence, not the apply step's own verdict |
+
+**The applier needs no patch tool (OPE-2398).** `applyEvePatch` in
+`packages/core/agent/publish/eve-patch-pack.ts` applies the patch itself. Core used to declare
+`patch-package` as a runtime dependency for this step, so every app installed its dependency chain,
+and `npm audit` on a fresh app reported a high `braces` advisory through it. The patch only modifies
+existing text files, so a small applier does the job. It applies every hunk in memory before it
+writes a file, so a hunk that does not apply leaves eve as it was. A hunk applies only where its
+lines match the file exactly, within 20 lines of the line its header names, which is the window
+patch-package used. `packages/core/scripts/eve-patch-applier-test.ts` proves that its output is
+byte-identical to patch-package's on the real patch. This repository still applies its own
+`patches/` with patch-package on `postinstall`, as a root devDependency that no app installs.
 
 **An eve that holds an older OE patch is restored, not refused (OPE-2294).** A release can re-roll
 the patch while the eve pin stays the same: on the 0.1 line, 0.1.5 added part 10 to `eve+0.54.3.patch`. `npm install`
 then keeps the eve that holds the old patch, because its version still matches the pin, and
-patch-package cannot apply the new patch over the old one. When that apply fails and eve already
+the new patch does not apply over the old one. When that apply fails and eve already
 carries an `__oe` symbol, the applier runs `npm pack eve@<pin>`. npm reads the tarball from its cache,
 or from the registry when the cache does not hold it, and checks its integrity hash. The applier
 copies back every eve file whose bytes differ from the tarball, prints each path, then applies the
@@ -118,28 +130,28 @@ patch). When no release shipped a patch for the pin, no app can hold an older OE
 version. The leg then drives neither route: it says so and passes, so the restore route and the
 refusal route have no test on that pin.
 
-🔴 **Under pnpm and bun the applier detaches each target from the shared store before patching, and
-this is not optional.** Both import a package's files from a content store by **hardlink**, so one
-inode is shared with every project on the machine that installed that eve — and patch-package rewrites
-a target with `writeFileSync(path, …)`, which truncates that inode rather than replacing the directory
-entry. Left alone, one consumer running the applier would silently splice OE's tool loop into every
-other project's eve. So the applier copies each hardlinked target to a fresh inode and renames it over
-the entry first; the store keeps the original bytes. `node-linker=hoisted` does **not** avoid this —
-pnpm hardlinks from the store whatever the linker produces. A symlinked `node_modules/eve` is
-otherwise fine: it is what pnpm produces, its target is inside the project root, and patch-package
-reaches it.
+🔴 **Under pnpm and bun the applier never writes a target in place, and this is not optional.** Both
+import a package's files from a content store by **hardlink**, so one inode is shared with every
+project on the machine that installed that eve. A `writeFileSync(path, …)` on a target truncates that
+inode rather than replacing the directory entry. Left alone, one consumer running the applier would
+silently splice OE's tool loop into every other project's eve. So the applier writes each patched file
+to a fresh inode and renames it over the entry; the store keeps the original bytes, and the applier
+says how many files it detached. `node-linker=hoisted` does **not** avoid this — pnpm hardlinks from
+the store whatever the linker produces. A symlinked `node_modules/eve` is otherwise fine: it is what
+pnpm produces, its target is inside the project root, and the applier writes there.
 
-The last refusal row is the one that matters. `--error-on-fail` is not enough on its own:
-patch-package's already-applied path is a reverse dry run, which is what makes a second run a no-op,
-and neither route reads the bytes afterwards. The applier reads them, and reports one line per patch
-part. One of the four patched files carries no `__oe` marker: `protocol/message.d.ts` is types-only.
-That file rests on patch-package's own `--error-on-fail` verdict, and the applier prints a line for it
-that says so. It is also the only patched file with no part header.
+The last refusal row is the one that matters. The apply step's own verdict is not enough: its
+already-applied route is a reverse match, which is what makes a second run a no-op, and neither route
+reads the bytes afterwards. The applier reads them, and reports one line per patch part. One of the
+four patched files carries no `__oe` marker: `protocol/message.d.ts` is types-only. That file rests on
+the apply verdict alone: a hunk that applies neither forward nor in reverse refuses the install. It is
+also the only patched file with no part header.
 
 **Copying the patch by hand still works**, and it is what a consumer who would rather not run our bin
 can do: take `patches/eve+<pinned version>.patch` from this repository into their own `patches/`,
 add `patch-package` to their `devDependencies`, and add `"postinstall": "patch-package"` to their own
-manifest. The applier exists so that is not the only route.
+manifest. That route puts patch-package's dependency chain, `braces` included, back in their tree as a
+devDependency. The applier exists so that is not the only route.
 
 **The refusal is two checks, and between them no path serves a wake on an unpatched `eve`.**
 

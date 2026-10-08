@@ -90,6 +90,40 @@ async function run(opts: {
 }
 
 {
+  const seen: { enterprise?: string }[] = [];
+  const gate = (attrs: Record<string, string>) =>
+    slackSpendGate({
+      bindable: {
+        channel: { kind: "slack" },
+        session: {
+          auth: {
+            current: {
+              attributes: { team_id: "T_ENG", channel_id: "C_TXN", channel_type: "channel", is_ext_shared: "false", trust_checked: "true", ...attrs },
+              principalId: "U_ASKER",
+              principalType: "slack-user",
+            },
+          },
+        },
+      },
+      mode: "channel",
+      principalId: "U_ASKER",
+      teamId: "T_ENG",
+      door: "mention",
+      post: async () => undefined,
+      checkOverBudget: async () => ({ over: true, reason: "over cap" }),
+      bypassFor: async (input) => {
+        seen.push({ ...(input.enterprise === undefined ? {} : { enterprise: input.enterprise }) });
+        return null;
+      },
+      appendGateAudit: async () => undefined,
+    });
+  await gate({ enterprise_id: "E_GRID" });
+  ok(seen[0]?.enterprise === "E_GRID", "🔴 OPE-2400: the spend gate hands the delivery's Grid id to the admin bypass");
+  await gate({});
+  ok(seen[1]?.enterprise === undefined, "OPE-2400 NEGATIVE CONTROL: a delivery with no Grid hands none");
+}
+
+{
   const r = await run({ verdict: { over: false } });
   ok(r.decision === "proceed", "under cap → proceed");
   ok(r.posts.length === 0, "under cap posts nothing");

@@ -5,7 +5,6 @@ export const DISCORD_SURFACE_PARITY: SurfaceParityDeclaration = {
   "capability-manifest": "supported",
   "post-arm": "supported",
   "wake-origin-codec": "supported",
-  "unified-action-plane": "supported",
   "origin-placement-carry": "supported",
   "read-adapter": "supported",
   "reaction-feedback-ingest": "supported",

@@ -117,8 +117,10 @@ const INSTALLED = JSON.stringify({
 
 const ENV_HOST = { OE_PUBLIC_BASE_URL: "https://oe.example.com" } as NodeJS.ProcessEnv;
 
+const publicHost = async (): Promise<Response> => new Response("ok", { status: 200 });
+
 function depsFor(vault: EncryptedKvVault, extra: Record<string, unknown> = {}) {
-  return { vault, env: ENV_HOST, keyArmed: () => true, ...extra } as never;
+  return { vault, env: ENV_HOST, keyArmed: () => true, probeFetch: publicHost, ...extra } as never;
 }
 
 function claimDeps(vault: EncryptedKvVault, extra: Record<string, unknown> = {}) {
@@ -235,6 +237,16 @@ console.log("  1. the claim lock");
     const code = await slackSetupCode(claimDeps(openVault));
     console.log = realLog;
     ok(lines.some((l) => l.includes(code)), "the boot notice logs the setup code while setup is open");
+    ok(
+      lines.some((l) => l.includes(`Open ${ENV_HOST.OE_PUBLIC_BASE_URL}${SLACK_SETUP_PATH} and enter`)),
+      "the boot notice names the absolute /setup URL on the deployment's public host",
+    );
+
+    lines.length = 0;
+    console.log = (...a: unknown[]) => void lines.push(a.map(String).join(" "));
+    await announceSlackSetupCode({ vault: memoryVault(), env: {} as NodeJS.ProcessEnv } as never);
+    console.log = realLog;
+    ok(lines.some((l) => l.includes("set OE_PUBLIC_BASE_URL to name it")), "with no base URL, the boot notice names OE_PUBLIC_BASE_URL");
 
     lines.length = 0;
     console.log = (...a: unknown[]) => void lines.push(a.map(String).join(" "));
@@ -1069,6 +1081,54 @@ console.log("  7. eve's credential arms");
     resetSlackCredentialNotices();
   }
   void stored;
+}
+
+console.log("  8. the login-wall probe");
+{
+  async function screen2(answer: () => Promise<Response>): Promise<{ status: number; body: string; calls: { url: string; init: RequestInit }[] }> {
+    const vault = memoryVault();
+    const cookie = await mintSetupCookie(claimDeps(vault));
+    const calls: { url: string; init: RequestInit }[] = [];
+    const probeFetch = async (url: string, init: RequestInit): Promise<Response> => {
+      calls.push({ url, init });
+      return answer();
+    };
+    const res = await handleSlackSetupGet(get(SLACK_SETUP_PATH, cookie), depsFor(vault, { probeFetch }));
+    return { status: res.status, body: await res.text(), calls };
+  }
+
+  const walled = await screen2(async () => new Response("login required", { status: 401 }));
+  ok(walled.status === 200 && walled.body.includes("app configuration token"), "a walled host still renders screen 2");
+  ok(walled.body.includes("Slack cannot reach <code>oe.example.com</code>"), "🔴 a 401 from the base URL renders the warning, naming the host");
+  ok(walled.body.includes("OE_PUBLIC_BASE_URL"), "🔴 the warning names OE_PUBLIC_BASE_URL, the variable that fixes it");
+  ok(walled.body.includes("<code>401</code>"), "the warning names the status the host answered");
+
+  ok(walled.calls.length === 1 && walled.calls[0]!.url === `${ENV_HOST.OE_PUBLIC_BASE_URL}${SLACK_SETUP_PATH}`, "the probe asks <base>/setup once");
+  ok(walled.calls[0]!.init.redirect === "manual", "the probe does not follow a redirect (Slack does not)");
+  ok(walled.calls[0]!.init.headers === undefined, "the probe carries no header, so no cookie reaches the host");
+
+  for (const status of [403, 302, 307]) {
+    const r = await screen2(async () => new Response(null, { status, headers: status < 400 ? { location: "https://login.example.com/" } : {} }));
+    ok(r.body.includes("Slack cannot reach") && r.body.includes(`<code>${status}</code>`), `a ${status} from the base URL renders the warning`);
+  }
+
+  const open = await screen2(publicHost);
+  ok(!open.body.includes("Slack cannot reach"), "a 200 from the base URL renders no warning");
+  ok(open.body.includes("every request URL in the app's manifest names that host"), "screen 2 names the host the manifest points at");
+  const notFound = await screen2(async () => new Response(null, { status: 404 }));
+  ok(!notFound.body.includes("Slack cannot reach"), "a 404 is not a login wall: no warning");
+  const unreachable = await screen2(async () => {
+    throw new TypeError("fetch failed");
+  });
+  ok(unreachable.status === 200 && !unreachable.body.includes("Slack cannot reach"), "a probe that cannot connect renders screen 2 with no warning");
+
+  const vault = memoryVault();
+  const cookie = await mintSetupCookie(claimDeps(vault));
+  const reRender = await handleSlackSetupPost(
+    post({ a: "create", t: "  " }, cookie),
+    depsFor(vault, { probeFetch: async () => new Response(null, { status: 401 }) }),
+  );
+  ok((await reRender.text()).includes("Slack cannot reach"), "the POST re-render of screen 2 carries the warning too");
 }
 
 console.log(`✓ slack setup: ${n} assertions`);

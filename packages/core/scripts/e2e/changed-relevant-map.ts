@@ -161,14 +161,12 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     globs: [
       "packages/core/agent/channels/question-bridge.ts",
       "packages/core/agent/channels/unified.ts",
-      "packages/core/agent/channels/approval-card.ts",
       "packages/core/agent/channels/post-arms.ts",
       "packages/core/agent/channels/unified-reply.ts",
-      "packages/providers/slack/agent/channels/slack-approval-card.ts",
     ],
     scenarios: ["S-EVE-CARD", "S-SUSPENDED-slack", "S-DM-NOTION", "J-UNI-X", "J-SUP"],
     why:
-      "S-EVE-CARD and S-SUSPENDED-slack drive a DM connector write to its OE `op.connector` card through these files, and they click it two ways: S-EVE-CARD replays the card's own rendered button whole, S-SUSPENDED-slack builds the click from the pending id. Both assert in the same leg that no eve-native approval was raised: since OPE-2340 (ruling Q4) no shipped tool prompts through eve, so a change here that revives a native request on the unified path is caught as a red, not as a parked turn. The typed-answer road (OPE-1721) has no producer left and its leg, S-EVE-BRIDGE, is retired (OPE-2362). S-DM-NOTION and J-SUP/J-UNI-X pay a delegated round trip through the same handler. A change here that drops the card post or the click route leaves a write denied with nobody able to approve it, and the failure is SILENCE, so no other leg would notice.",
+      "S-EVE-CARD and S-SUSPENDED-slack drive a DM connector write to its OE `op.connector` card through these files, and they click it two ways: S-EVE-CARD replays the card's own rendered button whole, S-SUSPENDED-slack builds the click from the pending id. Both assert in the same leg that no eve-native approval was raised: since OPE-2340 (ruling Q4) no shipped tool prompts through eve, so a change here that revives a native request on the unified path is caught as a red, not as a parked turn. The typed-answer road (OPE-1721) and the unified approval card (OPE-1720) are deleted (OPE-2389): the unified `input.requested` handler drops every request with a `turn.question_dropped` row, which S-EVE-CARD gates on as a native request. S-DM-NOTION and J-SUP/J-UNI-X pay a delegated round trip through the same handler. A change here that drops the card post or the click route leaves a write denied with nobody able to approve it, and the failure is SILENCE, so no other leg would notice.",
   },
   {
     area: "wake-envelope",

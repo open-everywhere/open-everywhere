@@ -670,8 +670,6 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "grant.mount_refused",
   "grant.mount_withheld",
   "hook.refused",
-  "input_response.card_refused",
-  "input_response.card_settled",
   "input_response.dropped",
   "input_response.nonmember_marked",
   "input_response.routed",
@@ -832,11 +830,6 @@ export const DYNAMIC_ACTION_SITES: readonly DynamicActionSite[] = [
     file: "packages/core/agent/approvals/pr-open.ts",
     expression: 'pr.updated ? "pr.update" : "pr.open"',
     emits: ["pr.open", "pr.update"],
-  },
-  {
-    file: "packages/core/agent/channels/approval-card.ts",
-    expression: "outcome.kind === \"settled\" ? APPROVAL_CARD_SETTLED_AUDIT_ACTION : APPROVAL_CARD_REFUSED_AUDIT_ACTION",
-    emits: ["input_response.card_settled", "input_response.card_refused"],
   },
   {
     file: "packages/core/agent/memory/write-road.ts",

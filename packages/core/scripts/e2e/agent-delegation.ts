@@ -1,6 +1,7 @@
 import {
   sleep, dS, makeWant, createRecorder, createInjector, createAuditReader, readToolCalls,
   classifyDelegationOutcome, type ToolCall,
+  deploymentPresenceSince,
 } from "./window-harness.js";
 import { type AuditWireEntry } from "./audit-read.js";
 
@@ -40,7 +41,7 @@ const FILE_BRIEF =
   "Make a tiny CSV file with two rows (header name,score then alice,1 and bob,2) and post it into this thread as a file attachment.";
 
 async function t1aAsync(): Promise<void> {
-  const since = new Date().toISOString();
+  const since = await deploymentPresenceSince(TARGET, READ);
   const { wakeId, token } = await inject({ domain: DOMAIN, platform: "slack", surfaceKey: SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: slackOrigin, text: ASYNC_BRIEF });
   console.log(`  T1a injected standing window wake ${wakeId} → token ${token}`);
   const deadline = Date.now() + TIMEOUT_MS;
@@ -65,7 +66,7 @@ async function t1aAsync(): Promise<void> {
 }
 
 async function t1cFile(): Promise<void> {
-  const since = new Date().toISOString();
+  const since = await deploymentPresenceSince(TARGET, READ);
   const { wakeId } = await inject({ domain: DOMAIN, platform: "slack", surfaceKey: SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: slackOrigin, text: FILE_BRIEF });
   console.log(`  T1c injected standing window wake ${wakeId}`);
   const deadline = Date.now() + TIMEOUT_MS;

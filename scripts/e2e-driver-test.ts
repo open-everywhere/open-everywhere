@@ -8710,10 +8710,14 @@ await removeTempDir(dir);
   const driverFloors = scenariosSrc.match(/auditSinceForDriverClock\(Date\.now\(\)\)/g) ?? [];
   ok(driverFloors.length === 0, `🔴 OPE-2387: no scenario calls auditSinceForDriverClock on the bare driver clock (found ${driverFloors.length})`);
   const nowAssigned = [...scenariosSrc.matchAll(/const (\w+) = new Date\(\)\.toISOString\(\);/g)].map((m) => m[1]!);
-  const nowAllowed = new Set(["nowIso", "offTopicAt", "since"]);
+  const nowAllowed = new Set(["nowIso"]);
   const nowStray = nowAssigned.filter((n) => !nowAllowed.has(n));
-  ok(nowStray.length === 0, `🔴 OPE-2387: no scenario presence floor is the bare driver "now" (found: ${nowStray.join(", ")})`);
-  ok(nowAssigned.length === 4, `the allowlisted driver "now" instants are the four that bound no audit read (found ${nowAssigned.length}: ${nowAssigned.join(", ")})`);
+  ok(nowStray.length === 0, `🔴 OPE-2387/OPE-2391: no scenario presence floor or vendor wait is the bare driver "now" (found: ${nowStray.join(", ")})`);
+  ok(nowAssigned.length === 2, `the allowlisted driver "now" instants are the two pending-row decide times, which bound no read (found ${nowAssigned.length}: ${nowAssigned.join(", ")})`);
+  ok(scenariosSrc.includes("const offTopicAt = (await lin.comments(issueA.id).catch(() => [])).find((c) => c.id === offTopicId)?.createdAt ?? \"\";"), "🔴 OPE-2391: the J-LIN stray filter opens at the off-topic note's own Linear createdAt");
+  ok(scenariosSrc.indexOf("const offTopicId = await lin.comment(issueA.id,") >= 0 && scenariosSrc.indexOf("const offTopicId = await lin.comment(issueA.id,") < scenariosSrc.indexOf("const offTopicAt ="), "…which exists only after the note is posted, so the bound is read after it");
+  ok(scenariosSrc.includes("await not.awaitBotReplyIn(discussionId, replayFrom, { timeoutMs: REPLY_WAIT })"), "🔴 OPE-2391: the S-TAINT-DRYRUN Notion drain floors on the deployment-clock replayFrom");
+  ok(!/awaitBotReplyIn\(discussionId, since,/.test(scenariosSrc), "NEGATIVE CONTROL: no Notion drain floors on a bare `since`");
   ok((scenariosSrc.match(/await presenceSince\(ctx, /g) ?? []).length >= 90, "the presence floors moved to presenceSince (95 sites when OPE-2387 landed)");
   ok(/const markLeg = async \(leg: string\) => legMarks\.push\(\{ leg, sinceIso: await presenceSince\(ctx,/.test(scenariosSrc), "🔴 J1's latency marks bound their wake reads on the deployment's clock");
   ok(/const startMs = Date\.now\(\) - 5_000;\s*const sinceIso = await presenceSince\(ctx, "arm A", 5_000\);/.test(scenariosSrc), "🔴 S-ROUTINE-CONNECTOR-WRITE arm A: the seed ts keeps the driver clock, the audit window does not");
@@ -8722,6 +8726,42 @@ await removeTempDir(dir);
   ok(journeySrc.indexOf("const { ts: askTs } = await slack.post(slack.mention(ask));") < journeySrc.indexOf("const askIso ="), "…which exists only after the post, so the bound is taken after it");
   const armingSrc = readFileSync(fileURLToPath(new URL("../packages/core/scripts/e2e/connector-arming.ts", import.meta.url)), "utf-8");
   ok(armingSrc.includes("const marked = await readPresenceSince(probe.auditRead!, Date.now(), 0);") && armingSrc.includes("const since = marked.sinceIso ??"), "🔴 the connector-arming recheck window opens on the deployment's clock");
+
+  const { deploymentPresenceSince } = await import("../packages/core/scripts/e2e/window-harness.js");
+  const realFetch = globalThis.fetch;
+  const fetched: string[] = [];
+  const stubFetch = (entries: readonly AuditWireEntry[]) =>
+    (async (url: string | URL) => {
+      fetched.push(String(url));
+      return new Response(JSON.stringify({ entries }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as unknown as typeof fetch;
+  try {
+    globalThis.fetch = stubFetch([older, own]);
+    const floor = await deploymentPresenceSince("https://example.test", "read-token");
+    ok(floor === own.ts, `🔴 OPE-2391: a stage script's floor is the store mark's deployment instant (got ${floor})`);
+    ok(fetched.length === 1 && fetched[0]!.includes(`actions=${encodeURIComponent(CONTROL_SERVICE_CALL_ACTION)}`), "the stage-script floor is ONE store-mark read of the route's own self-audit row");
+    globalThis.fetch = stubFetch([]);
+    let refused = "";
+    await deploymentPresenceSince("https://example.test", "read-token").catch((e: Error) => { refused = e.message; });
+    ok(refused.includes("refusing a driver-clock presence floor"), `NEGATIVE CONTROL: a mark with no instant refuses, never falls back to the driver clock (got ${JSON.stringify(refused)})`);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  const STAGE_SCRIPT_FLOORS: Readonly<Record<string, number>> = {
+    "agent-delegation.ts": 2,
+    "read-channel.ts": 2,
+    "solo-window.ts": 3,
+    "source-scoped-mount.ts": 2,
+    "window-gate.ts": 8,
+    "single-window-fanin.ts": 1,
+  };
+  for (const [file, floors] of Object.entries(STAGE_SCRIPT_FLOORS)) {
+    const src = readFileSync(fileURLToPath(new URL(`../packages/core/scripts/e2e/${file}`, import.meta.url)), "utf-8");
+    const driverNow = src.match(/const \w+ = new Date\(\)\.toISOString\(\);/g) ?? [];
+    ok(driverNow.length === 0, `🔴 OPE-2391: ${file} takes no bare driver-clock floor (found ${driverNow.length})`);
+    const moved = (src.match(/= await deploymentPresenceSince\(TARGET, READ\);/g) ?? []).length;
+    ok(moved === floors, `🔴 OPE-2391: ${file} opens its ${floors} presence poll(s) on the deployment's clock (found ${moved})`);
+  }
 }
 
 console.log(

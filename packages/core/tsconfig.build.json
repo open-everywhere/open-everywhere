@@ -32,11 +32,13 @@
     "scripts/eve-framework-tools.ts",
     "scripts/oe-wrap-untrusted.ts",
     "scripts/oe-secret.ts",
+    "scripts/oe-env.ts",
     "scripts/oe-overlays.ts",
     "scripts/oe-upgrade.ts",
     "scripts/upgrade-codemods.ts",
     "scripts/upgrade-notes.ts",
     "scripts/template-drift.ts",
+    "scripts/starter-rules-offer.ts",
     "scripts/operator-store-connect.ts"
   ]
 }

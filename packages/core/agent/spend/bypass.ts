@@ -24,6 +24,7 @@ export async function capBypassFor(input: {
   readonly principalId: string | undefined;
   readonly surfaceKey: string;
   readonly reason?: string;
+  readonly enterprise?: string;
 }): Promise<CapBypass | null> {
   try {
     if (!input.principalId) return null;
@@ -33,7 +34,7 @@ export async function capBypassFor(input: {
     const platform =
       parsedScope.kind === "tenant" || parsedScope.kind === "surface" || parsedScope.kind === "principal" ? parsedScope.platform : undefined;
     const tenant = parsedScope.kind === "tenant" || parsedScope.kind === "surface" ? parsedScope.workspace : undefined;
-    const roles = adminControlRoles(input.principalId, domains, platform, tenant);
+    const roles = adminControlRoles(input.principalId, domains, platform, tenant, input.enterprise);
     if (rosterStanding(roles, domainForChannel(input.surfaceKey, domains)?.name ?? null)) {
       standing = "roster";
     } else {

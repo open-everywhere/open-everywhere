@@ -2,6 +2,7 @@ import { type AuditWireEntry } from "./audit-read.js";
 import {
   sleep, dS, makeWant, createRecorder, createInjector, createAuditReader, readToolCalls, wholeTranscriptText, sessionMatrix, scoreWithheldPair,
   type InjectBody, type Injected,
+  deploymentPresenceSince,
 } from "./window-harness.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
 import { withheldFromGrain } from "../../agent/access/window-gate-manifest.js";
@@ -141,7 +142,7 @@ function soloTokenVerdict(token: string, surfaceKey: string): { ok: boolean; det
 
 const HEAVY = "please clone the acme/web repo, run the full test suite in a sandbox, then open a pull request with the fix. reply here when the PR is up.";
 async function w1(): Promise<void> {
-  const since = new Date().toISOString();
+  const since = await deploymentPresenceSince(TARGET, READ);
   let inj: Injected;
   try {
     inj = await wakeAt(DOMAIN, SLACK_A, HEAVY);
@@ -203,7 +204,7 @@ async function sessionSplitCheck(
   surfaceB: string,
   expect: "distinct" | "equal",
 ): Promise<void> {
-  const since = new Date().toISOString();
+  const since = await deploymentPresenceSince(TARGET, READ);
   const tagA = `${id}A-${RUN}`;
   const tagB = `${id}B-${RUN}`;
   const legA = await driveLeg(domain, surfaceA, tagA, since);
@@ -257,7 +258,7 @@ async function w3(): Promise<void> {
   if (!DISCORD_C) {
     return record("W3", "SKIP", "no dedicated Discord channel configured (E2E_SOLO_DISCORD unset) — the prod-resident e2e-solo domain is Slack-only until a Discord channel it OWNS exists (the bot lacks Manage Channels / the Slack token lacks channels:write, so one can't be auto-provisioned). The core solo proof is W1/W2/W4/W5; set E2E_SOLO_DISCORD to light up the sources-narrowing leg.");
   }
-  const since = new Date().toISOString();
+  const since = await deploymentPresenceSince(TARGET, READ);
   const slackChannelId = SLACK_A.split("/").slice(2).join("/");
   const brief = `Please pull recent messages from Slack channel ${slackChannelId} and reply with W3-${RUN} summarising what you saw. If you cannot read that Slack channel — no tool for it, or it refuses — reply W3-${RUN} NOSLACK and say so explicitly.`;
   let inj: Injected;

@@ -228,6 +228,40 @@ gateway call per request. On a serverless host the memo is per instance: a burst
 instances and each assembles its own document, so the platform's own rate limiting is what bounds
 the instance count.
 
+<a id="hiding-the-status-route"></a>
+
+### Hiding the status route
+
+The route has no setting that turns it off. It is public on every host the deployment answers on,
+and that includes a custom domain that Vercel deployment protection leaves open (see
+[Public exposure on a custom domain](surfaces/slack.md#public-exposure-on-a-custom-domain)). What it
+discloses is limited, but real: the exact `core` and `eve` versions, the host label, the
+`sandbox-backend` and `egress-control` verdicts, and per surface whether an install is recorded. An
+exact version tells a caller which published defects apply. A Slack `installed` that reads `no` tells
+a caller that `/setup` can be open.
+
+There are two ways to hide it. Use one of them on a deployment whose host is public.
+
+1. **Exclude the channel from the roster.** In `roster.config.ts`, give `core` an exclusion with a
+   reason:
+
+   ```ts
+   core: { exclude: { "channel/oe-status": "this deployment does not publish its status" } },
+   ```
+
+   Then run `npx oe build --accept`, and commit `roster.config.ts` and the `roster.lock.json` diff.
+   The build writes no `agent/channels/oe-status.ts`, and eve mounts no route for it, so the path
+   answers 404. `scripts/roster-test.ts` proves the plan with core's real manifest. The cost: no
+   reader gets the verdicts any more, the operator's own agent included.
+2. **Block the path at the edge.** The route stays mounted, and the edge refuses it. On Vercel, add a
+   custom rule in the project's Firewall: the request path starts with `/eve/v1/oe/status`, and the
+   action is Deny. On Docker, refuse every path with that prefix in the reverse proxy. Match the
+   prefix, not the exact path: the router also serves `/eve/v1/oe/status/`, so an exact-path rule
+   leaves the trailing-slash form open. The verdicts stay readable from inside the network, or from a
+   host the rule does not cover.
+
+Neither way changes the payload itself.
+
 ### The surface fields
 
 | Field | What it means |

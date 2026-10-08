@@ -213,7 +213,7 @@ async function pinConnectorFlagsAndTiers(): Promise<void> {
 }
 
 async function inputRequestRows(cursor: AuditCursor): Promise<readonly AuditRow[]> {
-  return rowsSinceCursor(cursor, ["turn.question_bridged", "turn.native_input_requested"], { limit: 50 });
+  return rowsSinceCursor(cursor, ["turn.question_dropped", "turn.native_input_requested"], { limit: 50 });
 }
 
 function connectionSearchOutputs(handle: ScriptedHandle): readonly string[] {

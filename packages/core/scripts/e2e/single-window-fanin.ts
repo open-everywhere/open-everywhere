@@ -6,7 +6,7 @@ import { DiscordDriver } from "./discord-driver.js";
 import { TeamsDriver } from "./teams-driver.js";
 import { NotionDriver } from "./notion-driver.js";
 import { fetchAudit } from "./audit-read.js";
-import { sleep, sessionMatrix } from "./window-harness.js";
+import { sleep, sessionMatrix, deploymentPresenceSince } from "./window-harness.js";
 
 const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
 const READ = process.env.E2E_CONTROL_READ_TOKEN ?? "";
@@ -66,7 +66,7 @@ async function post(): Promise<Ping[]> {
 
 async function main() {
   if (!TARGET || !READ) { console.error("need E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN"); process.exit(1); }
-  const startIso = new Date().toISOString();
+  const startIso = await deploymentPresenceSince(TARGET, READ);
   console.log(`=== SINGLE-WINDOW FAN-IN ${startIso} · run ${RUN} · target ${TARGET} ===\n`);
 
   const pings = await post();

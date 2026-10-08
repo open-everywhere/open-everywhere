@@ -311,7 +311,6 @@ test:name-drop-wake-audit
 test:unified-audit
 test:unified-redrive
 test:question-bridge
-test:approval-card
 test:native-input-audit
 test:wake-trust
 test:memory-resync
@@ -360,6 +359,7 @@ test:self-dispatch
 test:transcript-tool
 test:source-scoped-mount
 test:read-channel-e2e
+test:connector-card-e2e
 test:e2e-gate-joins
 test:e2e-halt-cleanup
 test:credential-narrowing

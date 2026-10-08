@@ -78,10 +78,9 @@ a person answers, and a standing seat that blocks stops answering everybody else
 replies and lets the room carry on instead. It stays mounted on workers, and the worker-capability
 index names it, so a seat meeting a job that needs it routes it rather than refusing. (`todo`, the
 in-context scratch pad, was named here beside it until eve 0.65 deleted the tool; no session mounts
-the name now, so there is no roster decision left to record.) The **question bridge**
-(`channels/question-bridge.ts`) is unaffected: it routes eve's input requests by KIND, not by which
-seat holds the tool, so a delegated worker's question still reaches the room and its answer still
-comes back.
+the name now, so there is no roster decision left to record.) The cross-surface window
+has no question road (OPE-2389): a session there that raised a native input request would have it
+dropped and audited, never posted.
 
 `request_credential_grant` is NOT on the roster (OPE-2023). The ask is a doing verb, so it lives
 where the doing verbs live: a person who asks the agent to use their own Notion account gets the job
@@ -219,22 +218,19 @@ Source: `packages/core/agent/access/worker-seat.ts` (`WORKER_WITHHELD_TOOLS`).
 Not to be confused with: the **lean seat roster** (what a conversational seat should route rather
 than do) or the **consequence registry** (what is risky). Those are different questions.
 
-**question bridge** — the two-way route for `ask_question` on the unified window. Outbound, it posts
-a question into the conversation the wake came from. Inbound, the conversation's next unaddressed
-message is delivered back as the answer, addressed to the request the question was raised under. A
-message that @-mentions the agent is the seat's wake and never the answer; the question stays open. A
-DM, and a Linear reply in the app's own agent session that names no mention, are addressed by
-construction, so a plain reply there still answers. A **delegated
-worker** is answered only through a response addressed to its own pending request. The framework
-also has a rule of its own: with exactly one question open, it takes any plain message as that
-question's answer. So while a bridged question may be open, every message the agent delivers as
-an ordinary wake carries an empty answer text, and the framework resolves nothing on it. Where the
-agent holds no row (a failed post or row write, or a row past its 6-hour life), the framework's
-rule still applies. The bridge carries no question from a worker of a **work session** (OPE-2340): a worker
-there asks with `ask_room`, an OE card that posts and returns, and the seat forwards the room's answer
-as a continuation of the task.
-Source: `packages/core/agent/channels/question-bridge.ts`, `packages/core/agent/channels/unified.ts`
-(`receive`).
+**question bridge** — the two-way route for a parked eve input request on a surface the agent
+watches on its own: today the Notion question return. Outbound, the surface posts the question into
+the discussion the session runs in. Inbound, the discussion's next comment is delivered back as the
+answer, addressed to the request id, after a room check and the same admission a button answer runs.
+The **cross-surface window has no question bridge** since OPE-2389: its `input.requested` handler
+drops every non-park request and writes a `turn.question_dropped` row, because no shipped production
+session there can raise one (a work-session worker asks with `ask_room`, an OE card that posts and returns, unless its work-tier
+verdict fails soft).
+The drop is an alarm, not a fence: eve can still take that session's next plain message as the answer by
+its own rule, without the admission check.
+Source: `packages/core/agent/channels/question-bridge.ts`,
+`packages/providers/notion/agent/channels/notion-question-return.ts`,
+`packages/core/agent/channels/unified.ts` (`input.requested`).
 Not to be confused with: the **session-limit park**, which is never posted to a room and is retired
 by rotation instead (`packages/core/agent/channels/session-park.ts`).
 

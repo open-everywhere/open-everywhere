@@ -7,10 +7,14 @@ function log(msg: string): void {
   console.log(`[open-everywhere:routines] ${msg}`);
 }
 
-export function disableNoticeText(r: Pick<Routine, "id" | "prompt" | "report">, reason: string, consecutiveFailures: number): string {
+export function disableNoticeText(r: Pick<Routine, "id" | "prompt" | "report" | "trigger">, reason: string, consecutiveFailures: number): string {
   const what = r.prompt.trim().replace(/\s+/g, " ").slice(0, 160);
+  const headline =
+    r.trigger.kind === "once"
+      ? `🛑 One-shot routine \`${r.id}\` did not complete: its one scheduled fire failed, and a one-shot routine does not run again.\n`
+      : `🛑 Routine \`${r.id}\` has DISABLED itself after ${consecutiveFailures} consecutive failures and will not run again — ${reason.slice(0, 200)}.\n`;
   return (
-    `🛑 Routine \`${r.id}\` has DISABLED itself after ${consecutiveFailures} consecutive failures and will not run again — ${reason.slice(0, 200)}.\n` +
+    headline +
     `> ${what}\n` +
     (isSilentRoutine(r)
       ? `This one reported nothing while it was healthy, so this notice is the only sign it stopped. `

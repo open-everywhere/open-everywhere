@@ -85,22 +85,6 @@ async function liveSlackPost(origin: SlackOrigin, text: string, replier?: Replie
   return postSlackMessage(body, replier, "unified reply couldn't post to Slack");
 }
 
-async function liveSlackPostWithActions(origin: SlackOrigin, text: string, actions: readonly DirectMessageAction[], replier?: ReplierLabel): Promise<string> {
-  return postSlackMessage(slackUnifiedActionForm(origin, text, actions), replier, "unified reply couldn't post to Slack");
-}
-
-export function slackUnifiedActionForm(origin: Pick<SlackOrigin, "channelId" | "threadTs" | "replyAnchorTs">, text: string, actions: readonly DirectMessageAction[]): URLSearchParams {
-  const rendered = markdownToSlackMrkdwn(text);
-  const body = new URLSearchParams({ channel: origin.channelId, text: rendered });
-  const threadTarget = slackThreadTarget(origin);
-  if (threadTarget) body.set("thread_ts", threadTarget);
-  const actionBlock = slackDirectMessageActionBlock(actions);
-  if (actionBlock !== undefined) {
-    body.set("blocks", JSON.stringify([{ text: { text: rendered, type: "mrkdwn" }, type: "section" }, actionBlock]));
-  }
-  return body;
-}
-
 function slackDirectMessageActionBlock(actions: readonly DirectMessageAction[]): Record<string, unknown> | undefined {
   const elements = actions
     .filter((a) => a.id.length > 0 && a.id.length <= 255 && a.label.length > 0 && a.label.length <= 75)
@@ -156,8 +140,6 @@ export const slackPostArm: PostArm = {
   dispatchReply: (target, text, replier) => dispatchSlackReply(target as SlackTarget, text, replier),
   dispatchUnified: (origin, text, deps: UnifiedReplyDeps, replier) =>
     deps.postSlack ? deps.postSlack(origin as SlackOrigin, text) : liveSlackPost(origin as SlackOrigin, text, replier),
-  dispatchUnifiedActions: (origin, text, actions, deps: UnifiedReplyDeps, replier) =>
-    deps.postSlack ? deps.postSlack(origin as SlackOrigin, text) : liveSlackPostWithActions(origin as SlackOrigin, text, actions, replier),
   describeRedriveTarget: (origin) => {
     const o = origin as SlackOrigin;
     return `slack ${o.threadTs ? `thread in ${o.channelId}` : `channel ${o.channelId}`}`;

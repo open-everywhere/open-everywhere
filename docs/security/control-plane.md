@@ -1543,20 +1543,11 @@ own row.
 | `admin.identity.directory_groups_plan` | A directory-group plan is requested. | The provider, the people count, the planned counts, the warning count, and the allowlist size when groups are allowlisted. Plan mode returns the content and applies nothing. |
 | `admin.identity.directory_groups_pr` | A directory-group plan is turned into a config pull request. | The same plan fields, plus the delivery outcome — so a plan that produced no pull request reads differently from one that did. |
 
-### Two more rows on this plane
+### One more row on this plane
 
 **`control.oauth_code_issued`** — the control plane's OAuth route writes this when it issues an
 authorization code. The row names the client id and the granted scope, as a space-joined list. It
 never carries the code.
-
-**`input_response.card_settled` and `input_response.card_refused`** — a person taps an approval card
-in chat. Both actions are written by **Slack and Discord alike**, from each surface's own card
-handler, so an operator counting taps reads one vocabulary across the two. A tap that settles the
-parked approval writes `input_response.card_settled`, carrying the request id, the option id, the
-approver floor and the surface key. A verified tap that settles **nothing** writes
-`input_response.card_refused` instead, carrying the refusal reason and the surface key. The approval
-then stays parked and answerable in words. Both rows hold eve-minted ids, enums and counts only —
-never the approval prompt, and never the room's prose.
 
 ### The update siblings: `pr.update` and `skill.update`
 

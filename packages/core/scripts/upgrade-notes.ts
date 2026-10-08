@@ -10,6 +10,7 @@ export interface ReleaseNote {
   readonly configMigrations: readonly ConfigMigration[];
   readonly env: ReleaseEnvChange;
   readonly manualSteps: readonly string[];
+  readonly removedFiles: readonly string[];
 }
 
 export interface ConfigMigration {
@@ -36,6 +37,7 @@ const VERSION = /^\d+\.\d+\.\d+$/u;
 const DATE = /^\d{4}-\d{2}-\d{2}$/u;
 const ENV_NAME = /^[A-Z][A-Z0-9_]*$/u;
 const CODEMOD_ID = /^[a-z0-9][a-z0-9-]*$/u;
+const REL_PATH = /^(?!.*(?:^|\/)\.{1,2}(?:\/|$))[^/\\]+(?:\/[^/\\]+)*$/u;
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -131,6 +133,10 @@ function parseRelease(value: unknown, index: number, problems: string[]): Releas
   const configMigrations = parseMigrations(value.configMigrations, `${at}.configMigrations`, problems);
   const env = parseEnv(value.env, `${at}.env`, problems);
   const manualSteps = stringList(value.manualSteps, `${at}.manualSteps`, problems);
+  const removedFiles = value.removedFiles === undefined ? [] : stringList(value.removedFiles, `${at}.removedFiles`, problems);
+  for (const path of removedFiles) {
+    if (!REL_PATH.test(path)) problems.push(`${at}.removedFiles: "${path}" is not an app-relative path like "agent/instrumentation.ts".`);
+  }
   if (bad) return undefined;
   return {
     version: version as string,
@@ -141,6 +147,7 @@ function parseRelease(value: unknown, index: number, problems: string[]): Releas
     configMigrations,
     env,
     manualSteps,
+    removedFiles,
   };
 }
 
@@ -203,6 +210,15 @@ export function codemodIdsIn(releases: readonly ReleaseNote[]): readonly string[
   return out;
 }
 
+export function removedFilesUpTo(notes: UpgradingNotes, target: string): readonly string[] {
+  const out: string[] = [];
+  for (const release of notes.releases) {
+    if (compareVersions(release.version, target) > 0) continue;
+    for (const path of release.removedFiles) if (!out.includes(path)) out.push(path);
+  }
+  return out;
+}
+
 export const BOOTSTRAP_PREFIX = ".open-everywhere/bootstrap";
 
 export function bootstrapCommands(target: string): readonly [install: string, run: string] {
@@ -225,6 +241,12 @@ const preamble = (newest: string): readonly string[] => [
   "then `oe build --accept`, `npm run typecheck` and `npm run build`. `npx oe upgrade --plan` prints",
   "the plan and writes nothing.",
   "",
+  "Before the install, a core after 0.2.1 drops the `package-lock.json` entries of `eve`, of every",
+  "`@open-everywhere/*` package and of every package that peers on one of them. npm then resolves",
+  "that set again from the new pins. A core at 0.2.1 or earlier installs over the old lockfile, and",
+  "npm exits ERESOLVE when the eve peer changes. Then run `rm package-lock.json && npm install`, and",
+  "run `npx oe upgrade` again: it resumes. Read the lockfile diff before you commit it.",
+  "",
   "The codemods run from the TARGET release's own registry, so a release can ship a codemod for its",
   "own upgrade. A core at 0.1.4 runs them from its OWN registry instead: after the install, it",
   "refuses a codemod a later release introduces. Run `npx oe upgrade` again: the target's own `oe`",
@@ -242,6 +264,23 @@ const preamble = (newest: string): readonly string[] => [
   "report, even when there is nothing left to install. A stale template-owned file can typecheck and build and",
   "still break the deployment, so read each SYNC line and copy the target's file after you read the",
   "diff.",
+  "",
+  "A core after 0.2.1 also prints a DELETE line for each file that a release up to the target removed",
+  "from the template, while the app still has it. A release names those files in its \"Removed",
+  "template files\" list below. To mark a template file as the app's own, name it in",
+  "`.oe-template-ignore` at the app root: one app-relative path per line, a trailing `/` for a",
+  "directory, and `#` for a comment. The report prints nothing for an ignored file that the app does",
+  "not have, and one `app-owned` line for an ignored file that it has. An ignored file never counts as",
+  "a SYNC or a DELETE.",
+  "",
+  "An app with no `agent/access/pre-approval-rules.ts` (every app scaffolded before 0.2.1) is OFFERED the",
+  "target template's starter pre-approval rules, in `npx oe upgrade` and in `--plan`. The upgrade",
+  "never writes the file and never overwrites one you have. Without a bound rule the approval judge,",
+  "shipped in `enforce`, has nothing to cite, so every gated act asks a person. To take the rules,",
+  "read each one, copy the file, and bind it as the template's `agent/access/bundles.ts` does (the",
+  "`approval-policy` bundle at org scope). An app that names the file in `.oe-template-ignore` is",
+  "not offered it. A core without the offer prints none: run `npx oe upgrade --plan --to <target>`",
+  "after the upgrade to see it.",
   "",
   "Read the entries between your installed version and your target, oldest first.",
   "",
@@ -292,7 +331,11 @@ export function renderUpgradingMarkdown(notes: UpgradingNotes): string {
     lines.push(...section("Config migrations", migrationLines(release.configMigrations)));
     lines.push(...section("Environment", envLines(release.env)));
     lines.push(...section("Manual steps", release.manualSteps));
-    if (release.breaking.length + release.configMigrations.length + release.env.added.length + release.env.removed.length + release.manualSteps.length === 0) {
+    lines.push(...section("Removed template files (delete each one the app still has)", release.removedFiles.map((p) => `\`${p}\``)));
+    if (
+      release.breaking.length + release.configMigrations.length + release.env.added.length + release.env.removed.length + release.manualSteps.length + release.removedFiles.length ===
+      0
+    ) {
       lines.push("No breaking change, no config migration, no env change and no manual step.", "");
     }
   }

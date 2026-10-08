@@ -1,8 +1,9 @@
 import { checkAll, isSetupRoute, SETUP_ROUTES, type SetupRoute, type StepContext } from "./engine.js";
 import { SETUP_STEPS } from "./steps/index.js";
 import { CLI_VERSION } from "./version.js";
-import { initGitRepo, scaffoldApp, ScaffoldRefusal } from "./scaffold.js";
+import { initGitRepo, nestedNameRefusal, scaffoldApp, ScaffoldRefusal } from "./scaffold.js";
 import { resolve } from "node:path";
+import { coreNodeRange, nodeRangeSatisfied } from "@open-everywhere/core/agent/ops/package-info.js";
 import { pathToFileURL } from "node:url";
 import { slackAppNameProblem } from "@open-everywhere/provider-slack/agent/app-manifest.js";
 import { readAppNaming } from "./app-naming.js";
@@ -23,7 +24,8 @@ const USAGE = `create-open-everywhere [<dir>] [--check [--json]] [--route vercel
                  two supported routes. A local run is the development loop
                  after a deploy, never a route.
   --host <url>   The deployment's public origin. The build + deploy step
-                 probes its Slack route.
+                 probes its Slack route, and the env step reads the env
+                 verdicts its status route (/eve/v1/oe/status) reports.
   --app-name <name>
                  The Slack app's name in the manifest the Slack step prints.
                  Default: the app's identity.name setting, else "Open
@@ -159,6 +161,16 @@ function runScaffold(target: string): string | undefined {
   }
 }
 
+export function scaffoldNodeRefusal(version: string, range: string | undefined): string | undefined {
+  if (range === undefined || nodeRangeSatisfied(range, version) !== false) return undefined;
+  return `refusing to scaffold: Open Everywhere needs Node ${range} (found ${version}). Run \`nvm install 24 && nvm use 24\`, then run this command again.`;
+}
+
+export interface MainOptions {
+  readonly nodeVersion?: string;
+  readonly nodeRange?: string;
+}
+
 function nextSteps(target: string): string {
   return [
     "Next, from the new app:",
@@ -173,7 +185,7 @@ function nextSteps(target: string): string {
   ].join("\n");
 }
 
-export async function main(argv: readonly string[]): Promise<number> {
+export async function main(argv: readonly string[], options: MainOptions = {}): Promise<number> {
   if (argv.includes("--help") || argv.includes("-h")) {
     console.log(USAGE);
     return 0;
@@ -201,6 +213,16 @@ export async function main(argv: readonly string[]): Promise<number> {
   if (flags.has("--check")) {
     console.error("--check changes nothing, so it cannot scaffold. Scaffold first, then run --check from inside the app.");
     return 2;
+  }
+  const nodeRefusal = scaffoldNodeRefusal(options.nodeVersion ?? process.versions.node, "nodeRange" in options ? options.nodeRange : coreNodeRange());
+  if (nodeRefusal !== undefined) {
+    console.error(nodeRefusal);
+    return 1;
+  }
+  const nested = nestedNameRefusal(target, process.cwd());
+  if (nested !== undefined) {
+    console.error(nested);
+    return 1;
   }
   const dir = runScaffold(target);
   if (dir === undefined) return 1;

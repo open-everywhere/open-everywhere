@@ -20,7 +20,6 @@ export const SURFACE_CAPABILITIES = [
   { id: "capability-manifest", label: "Capability manifest", section: "§2.4", group: "seam" },
   { id: "post-arm", label: "Post arm", section: "§4.1", group: "seam" },
   { id: "wake-origin-codec", label: "Wake-origin codec", section: "§2.3", group: "seam" },
-  { id: "unified-action-plane", label: "**Unified component plane** (`dispatchUnifiedActions`)", section: "§4.1", group: "seam" },
   { id: "origin-placement-carry", label: "**Wake-origin placement carry** (`placementRef`/`carryPlacement`)", section: "§2.3", group: "seam" },
   { id: "read-adapter", label: "Read adapter", section: "§4.5", group: "seam" },
   { id: "reaction-feedback-ingest", label: "Reaction **feedback** ingest", section: "§4.9", group: "seam" },

@@ -17,17 +17,31 @@ Setup is yours to drive, with the user's consent at every command. Use the
 - **Never propose a local run as a setup step.** `npm run dev` is the development loop after the
   deploy — changing tools and skills, evals, debugging a turn. A local run has no public HTTPS URL
   for Slack to reach and a different store, so it proves little about the deployment.
-- **Never ask the user to paste a secret into the chat.** They paste it where a tool reads it; you
-  write it with `scaffold_env`, or mint it with `scaffold_credential_key`, which never prints it.
+- **Never ask the user to paste a secret into the chat, and never pass one to a tool.** The user
+  types each secret into their own terminal with `npx oe env set <NAME>` (a hidden prompt into
+  `.env.local`). You handle names only: `scaffold_env { secretNames }` gives the command per name,
+  and `scaffold_credential_key` mints the store key without printing it.
+- **Tell the user about telemetry before the first deploy.** The deployed app sends anonymous usage
+  telemetry, and it is ON by default: event names, enums, coarse buckets, public model ids and the
+  app version, with a random per-install id (`service.instance.id`). It never sends message or
+  memory content, org names, workspace, channel, user or session ids, or env values. To turn it off, they set `OE_TELEMETRY=off` (or
+  `DO_NOT_TRACK=1`) on the deployment itself. The full list of events is
+  `https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/telemetry.md`. Ask which
+  they want, and do not decide for them.
 - `npx @open-everywhere/create --check --json` is the status report: every step, with `satisfied`,
   `detail` and a `next` command. Add `--route docker` for the Docker route and
-  `--host https://<host>` to probe a deployment. The human-readable version of the same step list is
+  `--host https://<host>` to probe a deployment and read the env verdicts it reports for itself. The human-readable version of the same step list is
   `https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/setup-steps.md`.
 
 ## Where things live
 
 - `roster.config.ts` — what the agent can do. `roster.lock.json` is the reviewed roll-call of every
   contribution. Both are committed.
+- `scripts/goldens/roster-plan.txt` — the roster review surface: one line per slot file `oe build`
+  writes, with the package that mounts it. The slot tree is not committed, so this file is how a
+  pull request shows what the agent gains or loses. `oe build` keeps it current, and
+  `npx oe build --check` fails when it differs from the plan. Commit it, and read its diff with the
+  lock's. Never edit it by hand.
 - `agent/agent.ts` — the eve agent definition.
 - `agent/` — the config: access bundles, identity and trust, memory domains, models, settings, spend
   caps, webhooks. Each file's header says what it controls.

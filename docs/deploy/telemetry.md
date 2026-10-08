@@ -132,6 +132,21 @@ Every boot prints, before anything is transmitted:
 
 (or, when disabled: `anonymous usage telemetry is OFF (OE_TELEMETRY / DO_NOT_TRACK)`).
 
+## Where the setup path discloses it
+
+The boot line is not the only disclosure. A scaffolded app states that telemetry is on, and how to
+turn it off, in four files the setup path reads (OPE-2399):
+
+- `README.md` — a "Telemetry" section.
+- `AGENTS.md` — tells the coding agent to tell the person before the first deploy.
+- The `quickstart-open-everywhere` skill — a section the agent follows before the first deploy. It
+  asks the person to choose, and sets `OE_TELEMETRY=off` on the deployment when they opt out.
+- `.env.example` — a commented `# OE_TELEMETRY=off` line.
+
+An agent-led setup that follows the skill therefore shows the person the disclosure before the first
+deploy.
+`@open-everywhere/create`'s own tests pin all four. The default itself is unchanged: ON.
+
 ## One full example payload
 
 The exact OTLP/JSON wire shape (`resourceLogs[].scopeLogs[].logRecords[]`,
@@ -232,9 +247,10 @@ did.
 ## Retention
 
 **Raw events: 90 days. Aggregates: indefinitely.** The collector is a separate,
-small project (its own repo, its own deploy) that will be **published open source**
-— so a claim like "we don't store IP addresses" is checkable by reading the code
-that ingests your payload, not just a promise on this page.
+small project with its own deploy. Its code is open source and lives in this
+repository, in [`deploy/oe-telemetry/`](../../deploy/oe-telemetry/) — so a claim like
+"we don't store IP addresses" is checkable by reading the code that ingests your
+payload, not just a promise on this page.
 
 ## Config
 

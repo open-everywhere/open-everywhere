@@ -29,5 +29,5 @@ export function isSet(v: string | undefined): boolean {
 export function missNote(route: SetupRoute): string {
   const where = route === "docker" ? "the container's environment" : "the Vercel project";
   const list = route === "docker" ? "`docker inspect` lists the names there" : "`npx vercel env ls production` lists the names there";
-  return `Did you set these on ${where} instead? Then ignore this miss: the check reads only .env.local and this shell, never the deployment's own env (${list})`;
+  return `Did you set these on ${where} instead? Re-run with --host https://<host>: the env step then also reads the deployment's own verdicts from its status route. Without --host it reads only .env.local and this shell (${list})`;
 }

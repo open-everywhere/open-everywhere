@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { decideStoreWiring, registerDefaultAdapters, type StoreWiring } from "../agent/register-defaults.js";
 import { pinSuiteStore } from "../../core/scripts/_suite-store.js";
+import { registeredBootNoticeNames } from "@open-everywhere/core/agent/adapter-api.js";
 
 pinSuiteStore("default-adapters");
 
@@ -72,6 +73,7 @@ eq(
   }, "🔴 a second call in the same process does not throw");
   assert.equal(second, first, "🔴 …and returns the first call's promise, so the wiring does not run twice");
   await first.catch(() => undefined);
+  assert.ok(registeredBootNoticeNames().includes("approval-judge-no-rules"), "🔴 the default wiring registers the judge-without-rules boot notice (OPE-2400)");
 }
 
 console.log(`✓ default-adapters: ${n} store-decision cases, plus the once-per-process row`);

@@ -107,7 +107,6 @@
     "tests/integration/tasks/teams-turn-two-delegation-continuity.test.ts": 9652,
     "tests/integration/tasks/thread-seat-completer.test.ts": 10010,
     "tests/integration/tasks/worker-admin-standing.test.ts": 34477,
-    "tests/integration/tasks/worker-approval-card-room.test.ts": 11118,
     "tests/integration/tasks/worker-brief-room-containment.test.ts": 7380,
     "tests/integration/tasks/worker-question-answer.test.ts": 19155,
     "tests/integration/tasks/worker-seat-floor.test.ts": 18882,

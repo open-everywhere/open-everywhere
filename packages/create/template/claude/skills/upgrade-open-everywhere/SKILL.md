@@ -66,7 +66,8 @@ Those are decisions, not steps.
 
 `--plan` also prints a **template drift** report. It compares every file the scaffold copied into
 this app with the TARGET release's `@open-everywhere/create` template, and lists each one that
-differs, with a one-line size of its diff. An upgrade changes only `package.json`, so a scaffolded
+differs, with a one-line size of its diff. An upgrade changes only `package.json` and
+`package-lock.json`, so a scaffolded
 file stays as the old template wrote it. A stale copy can typecheck and build and still break the
 deployment: the 0.1.2 `agent/lib/register-adapters.ts` registers no Postgres client on a bare
 `DATABASE_URL`, so a Vercel+Neon deployment of 0.1.4 fails at its first write.
@@ -82,6 +83,14 @@ the adapters by hand to the one-call copy: move any adapter the user registered 
 | --- | --- |
 | SYNC | a template-owned file — wiring, a script, `AGENTS.md`, `README.md`, `.env.example`, a skill. Plan to copy the target's file over this one, after you read the diff. |
 | config | the app's own config-as-code. A difference is normal once the app is configured. Merge the template's change by hand only if the user wants it. |
+| DELETE | a release up to the target removed this file from the template, and the app still has it. Plan to delete it. eve 0.69 and later refuse `agent/instrumentation.ts` at build. |
+| app-owned | `.oe-template-ignore` names the file, so the app owns it. Nothing to do. |
+
+`.oe-template-ignore` at the app root lists the template files the app removed or owns on purpose:
+one app-relative path per line, a trailing `/` for a directory, `#` for a comment. The report prints
+nothing for an ignored file the app does not have, and one `app-owned` line for one it has. Add a
+path only when the user says the app owns that file. Never add one to silence a SYNC line you have
+not read.
 
 The report never writes a file. If it says the drift check did not run, compare the files with the
 target's template by hand. An installed core without the report prints none: `oe upgrade` runs the
@@ -99,7 +108,11 @@ In order, and it stops at the first step that fails:
 1. bump every `@open-everywhere/*` package to the target, renaming a dependency on the retired
    unscoped `create-open-everywhere` to `@open-everywhere/create` as it goes;
 2. pin `eve` to the version the target core declares as its peer;
-3. `npm install` — its `postinstall` runs `oe-eve-patch`, which the app refuses to boot without;
+3. `npm install` — its `postinstall` runs `oe-eve-patch`, which the app refuses to boot without.
+   Before it, the run drops the `package-lock.json` entries of `eve`, of every
+   `@open-everywhere/*` package and of every package that peers on one of them, so npm resolves
+   that set again. If the install still stops with ERESOLVE (a core at 0.2.1 or earlier does not
+   drop them), run `rm package-lock.json && npm install`, then run `oe upgrade` again;
 4. run the config codemods the target's notes name, and print the migrations that are yours;
 5. `oe build --accept` — this rewrites `roster.lock.json`;
 6. `npm run typecheck`;
@@ -136,7 +149,7 @@ codemod. Do not delete the marker to get past this refusal.
 
 ```
 git diff roster.lock.json
-git diff package.json
+git diff package.json package-lock.json
 git status
 ```
 
@@ -149,7 +162,8 @@ Then run the app's own checks once more if anything above was fixed by hand:
 
 Then act on the template drift report. A core that carries it prints it again after the install;
 if this run printed no "Template drift" heading, run `npx oe upgrade --to <target> --plan` now to get it. For
-each SYNC line, read the diff against the installed template, for example
+each DELETE line, delete the file. If the user says the app owns it, keep it and name it in
+`.oe-template-ignore`. For each SYNC line, read the diff against the installed template, for example
 `diff node_modules/@open-everywhere/create/template/agent/lib/register-adapters.ts agent/lib/register-adapters.ts`.
 Keep any edit the user made on purpose, and copy the template's file otherwise. For
 `agent/lib/register-adapters.ts`, the user's edits belong in the `customAdapters` hook of the
@@ -171,7 +185,7 @@ Commit on a branch, never on the default branch. The body carries:
 - what changed in `roster.lock.json`, in your own words;
 - **the env names the deployment needs before this merges**, names only;
 - the manual steps, and who does each one.
-- the template files you synced, and each SYNC line you left as it is, with the reason.
+- the template files you synced or deleted, and each SYNC or DELETE line you left as it is, with the reason.
 
 Then stop. The admin reviews the lock diff and merges. The merge deploys.
 
@@ -179,21 +193,23 @@ Then stop. The admin reviews the lock diff and merges. The merge deploys.
 
 A green build is not a working deployment.
 
-**The status endpoint is not built yet.** OPE-2230 adds one: an unauthenticated, non-sensitive
-JSON route that reports the deployment's version, whether the database is reachable and which
-provider it uses, the sandbox backend, whether egress is enforced, whether the model route
-answers, and the Slack posture. That ticket proposes `GET /eve/v1/oe/status`. Do not assume the
-route exists, and never read some other route as if it were this one. Check the deployment's own
-routes first; when the endpoint is there, read it and report each field, in this order:
+**Read the status route, `GET /eve/v1/oe/status`.** It ships from core 0.1.4. It is an
+unauthenticated, non-sensitive JSON route that reports the deployment's version, whether the
+database is reachable, the sandbox backend, whether egress is enforced, whether the model route
+answers, and the Slack posture. A deployment can hide it on purpose, with a roster exclusion or an
+edge rule (`docs/deploy/contract.md` § Hiding the status route). A 404 or a 403 there can be that
+choice, not a fault: ask the operator before you call it broken. Never read some other route as if
+it were this one. When the route answers, report each field, in this order:
 
 1. **version** — it reads the target. If it still reads the old version, the deploy has not
    finished, or it failed. Nothing below is meaningful until this matches.
-2. **database reachable**, and the provider it names.
+2. **database reachable** (the `postgres` verdict).
 3. **sandbox backend**, and **egress enforced**.
 4. **model route answers.**
 5. **Slack** — credentials present, workspace installed, events verified.
 
-**Until that endpoint ships**, confirm what you can and say plainly what you could not:
+**When the route does not answer**, on a core older than 0.1.4 or on a deployment that hides it,
+confirm what you can and say plainly what you could not:
 
 - the deploy finished, from the host's own deployment log;
 - `npx @open-everywhere/create --check --json --host https://<host>` — its `build-deploy` step

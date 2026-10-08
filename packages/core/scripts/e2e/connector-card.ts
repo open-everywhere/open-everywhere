@@ -14,6 +14,7 @@ export const CONNECTOR_CARD_ACTIONS = [
   "approval.decision_wake",
   "connector.op",
   "reply.post",
+  "reply.edit",
 ] as const;
 
 export interface ConnectorCardRequest {
@@ -32,7 +33,13 @@ export interface ConnectorCardRun<T> {
   readonly decisionWakeId: string;
   readonly write: AuditWireEntry;
   readonly reply: AuditWireEntry;
+  readonly replyShape: "post" | "edit";
   readonly candidate: T;
+}
+
+export interface ConnectorCardCandidate {
+  readonly id: string;
+  readonly editedTs?: string;
 }
 
 function s(row: AuditWireEntry, key: string): string | undefined {
@@ -139,7 +146,7 @@ export function completedConnectorWrites(rows: readonly AuditWireEntry[], surfac
   );
 }
 
-export function connectorCardRun<T extends { readonly id: string }>(
+export function connectorCardRun<T extends ConnectorCardCandidate>(
   rows: readonly AuditWireEntry[],
   input: {
     readonly request: ConnectorCardRequest;
@@ -177,18 +184,28 @@ export function connectorCardRun<T extends { readonly id: string }>(
   if (!write) return undefined;
 
   const byId = new Map(input.candidates.map((candidate) => [candidate.id, candidate] as const));
-  const replies = rows
-    .filter(
-      (row) =>
-        row.action === "reply.post" &&
-        s(row, "platform") === input.replyPlatform &&
-        s(row, "sessionId") === request.seatSessionId &&
-        row.detail?.done !== false &&
-        after(row, write.ts) &&
-        byId.has(s(row, "id") ?? ""),
-    )
-    .sort((a, b) => ms(a.ts) - ms(b.ts));
-  const reply = replies[0];
+  const seatRow = (row: AuditWireEntry, action: string): boolean =>
+    row.action === action && s(row, "platform") === input.replyPlatform && s(row, "sessionId") === request.seatSessionId;
+  const seatPostIds = new Set(rows.filter((row) => seatRow(row, "reply.post")).map((row) => s(row, "id")));
+  const posts = rows.filter(
+    (row) => seatRow(row, "reply.post") && row.detail?.done !== false && after(row, write.ts) && byId.has(s(row, "id") ?? ""),
+  );
+  const edits = rows.filter((row) => {
+    if (!seatRow(row, "reply.edit") || !after(row, write.ts)) return false;
+    const id = s(row, "id");
+    if (id === undefined || !seatPostIds.has(id)) return false;
+    const editedSec = Number.parseFloat(byId.get(id)?.editedTs ?? "");
+    return Number.isFinite(editedSec) && editedSec * 1000 >= ms(write.ts);
+  });
+  const reply = [...posts, ...edits].sort((a, b) => ms(a.ts) - ms(b.ts))[0];
   if (!reply) return undefined;
-  return { approved, opApproved, decisionWakeId, write, reply, candidate: byId.get(s(reply, "id")!)! };
+  return {
+    approved,
+    opApproved,
+    decisionWakeId,
+    write,
+    reply,
+    replyShape: reply.action === "reply.edit" ? "edit" : "post",
+    candidate: byId.get(s(reply, "id")!)!,
+  };
 }

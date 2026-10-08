@@ -109,7 +109,7 @@ console.log("3. NEGATIVE CONTROL — a REAL unified-window context writes NO nat
 {
   const before = (await rowsFor()).length;
   await fireHook(APPROVAL_BATCH, nativeCtx("s4", "unified", "slack"));
-  eq((await rowsFor()).length, before, "the unified window's raw channel.kind excludes it — channels/question-bridge.ts already audited this one as turn.question_bridged/turn.question_dropped, and it must not be double-counted here");
+  eq((await rowsFor()).length, before, "the unified window's raw channel.kind excludes it — channels/unified.ts already audited this one as turn.question_dropped, and it must not be double-counted here");
 }
 
 console.log("3b. the origin stamp alone does not suppress a genuinely native context:");

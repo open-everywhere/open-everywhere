@@ -1,34 +1,42 @@
 import assert from "node:assert/strict";
 
+delete process.env.DATABASE_URL;
 process.env.OE_SQLITE_PATH = ":memory:";
 
-import type { AuditInput } from "../agent/audit/audit.js";
-import { unifiedThreadRef, type UnifiedWakeOrigin } from "../agent/channels/unified-window.js";
 import {
   detectBridgeableInputRequest,
   renderQuestionForSurface,
-  bridgeQuestionToSurface,
   EMPTY_QUESTION_FALLBACK,
-  QUESTION_BRIDGED_AUDIT_ACTION,
   QUESTION_DROPPED_AUDIT_ACTION,
   bridgedQuestionKey,
   forgetBridgedQuestion,
   readBridgedQuestion,
   rememberBridgedQuestion,
-  ordinaryWakeSendOptions,
-  bridgedQuestionMayBeOpen,
-  EVE_INPUT_TEXT_KEY,
   resolveInboundAnswerRouting,
-  isAddressedMentionWake,
-  approvalOptionIds,
-  resolveApprovalOptionId,
-  APPROVAL_ANSWER_HINT,
-  type BridgeableQuestion,
   type BridgedQuestionStore,
 } from "../agent/channels/question-bridge.js";
 import { detectSessionLimitPark, isSessionLimitContinuationRequest, SESSION_LIMIT_CONTINUATION_TOOL_NAME } from "../agent/channels/session-park.js";
-import { isWakeEnvelopeShaped, triggerMessageBody } from "../agent/channels/wake-envelope.js";
-import { dmWindowKey, formatWindowToken, saltSupervisorGeneration } from "../agent/channels/window-key.js";
+import { classifySessionId, dmWindowKey, formatWindowToken, taskWindowId, threadSeatWindowId, workWindowId } from "../agent/channels/window-key.js";
+import { isUnifiedSupervisorToken } from "../agent/channels/unified-supervisor.js";
+import { readAudit } from "../agent/audit/audit.js";
+import { deploymentOrg } from "../agent/identity/deployment-identity.js";
+import { getOperationalStore } from "../agent/operational/provider.js";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
+
+const eveRoot = dirname(createRequire(import.meta.url).resolve("eve/package.json"));
+const eveDist = (rel: string): string => pathToFileURL(join(eveRoot, "dist/src/context", rel)).href;
+const { ContextContainer, contextStorage } = (await import(eveDist("container.js"))) as {
+  ContextContainer: new () => { set(key: unknown, value: unknown): void };
+  contextStorage: { run<T>(c: unknown, fn: () => Promise<T>): Promise<T> };
+};
+const { SessionKey } = (await import(eveDist("keys.js"))) as { SessionKey: unknown };
+const inSession = <T>(fn: () => Promise<T>): Promise<T> => {
+  const c = new ContextContainer();
+  c.set(SessionKey, { sessionId: "sess-qb", auth: { current: null, initiator: null }, turn: { id: "turn-qb" }, parent: undefined });
+  return contextStorage.run(c, fn);
+};
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -75,7 +83,6 @@ const approvalRequest = {
   action: { callId: "call_z", input: {}, kind: "tool-call", toolName: "notion__notion-create-pages" },
 };
 
-const slackOrigin: UnifiedWakeOrigin = { platform: "slack", channelId: "C_PAY", threadTs: "1700.1" };
 {
   ok(detectBridgeableInputRequest([parkRequest]) === undefined, "1: a session-limit park is NOT bridgeable (hooks/session-park.ts owns it)");
   ok(detectSessionLimitPark([parkRequest]) !== undefined, "1: the park detector still detects the park — passthrough to session-park is UNCHANGED");
@@ -109,7 +116,7 @@ const slackOrigin: UnifiedWakeOrigin = { platform: "slack", channelId: "C_PAY", 
 {
   const q = detectBridgeableInputRequest([questionRequest])!;
   ok(q.options.length === 2 && q.options[0]!.label === LABEL_YES && q.options[1]!.label === LABEL_NO, "2: option LABELS are extracted, in order");
-  ok(q.options[0]!.id === "yes" && q.options[1]!.id === "no", "2: …and their IDS ride along (OPE-1056 — an approval cannot be settled without one); styles are still dropped");
+  ok(q.options[0]!.id === "yes" && q.options[1]!.id === "no", "2: …and their IDS ride along; styles are dropped");
   ok(Object.keys(q.options[1]!).sort().join(",") === "id,label", "2: …so an option carries the two fields the bridge needs and nothing else (the fixture's `style` is dropped)");
   const text = renderQuestionForSurface(q);
   ok(text.startsWith(QUESTION_TEXT), "2: the question leads the post");
@@ -121,137 +128,79 @@ const slackOrigin: UnifiedWakeOrigin = { platform: "slack", channelId: "C_PAY", 
   const empty = renderQuestionForSurface({ requestId: "r", toolName: "ask_question", kind: "question", prompt: "   ", options: [] });
   ok(empty === EMPTY_QUESTION_FALLBACK, "2: an empty prompt posts the HOST-authored fallback — a parked turn the room can still unpark");
 }
-
-const scope = { org: "acme", platform: "unified", workspace: "payments", surface: "oe-domain::payments", sessionId: "sess-9", wakeId: "w-42" };
-const question: BridgeableQuestion = detectBridgeableInputRequest([questionRequest])!;
-
-function sink(): { rows: AuditInput[]; audit: (e: AuditInput) => Promise<void> } {
-  const rows: AuditInput[] = [];
-  return {
-    rows,
-    audit: async (e: AuditInput) => {
-      rows.push(e);
-    },
-  };
+const { registerSlackFixtureMapper, registerSlackFixturePostArm, registerSlackFixtureCodec, registerSlackTestBridge } = await import("./_slack-test-stubs.js");
+registerSlackFixtureMapper();
+registerSlackFixturePostArm();
+registerSlackFixtureCodec();
+registerSlackTestBridge();
+const unified = (await import("../agent/channels/unified.js")).default as unknown as {
+  adapter?: Record<string, unknown>;
+};
+type InputRequestedHandler = (data: unknown, adapterCtx: { session?: { continuation?: { token: string } } }) => Promise<void>;
+const rawOnInputRequested = unified.adapter?.["input.requested"] as InputRequestedHandler;
+const onInputRequested = (data: unknown, token?: string): Promise<void> =>
+  inSession(() => rawOnInputRequested(data, token === undefined ? {} : { session: { continuation: { token } } }));
+const ORG = deploymentOrg();
+const droppedRows = async () => readAudit({ org: ORG, action: QUESTION_DROPPED_AUDIT_ACTION });
+{
+  const STANDING = formatWindowToken({ domain: "payments", windowId: "C_PAY", generation: 2 });
+  const TASK = formatWindowToken({ domain: "payments", windowId: taskWindowId("C_PAY", "1700.1"), generation: 2 });
+  const WORK = formatWindowToken({ domain: "payments", windowId: workWindowId("C_PAY"), generation: 2 });
+  const UNCLASSIFIED = "not-a-window-token";
+  const cases: ReadonlyArray<{ readonly token: string; readonly reason: string; readonly label: string }> = [
+    { token: STANDING, reason: "no-question-road", label: "a standing seat" },
+    { token: TASK, reason: "no-question-road", label: "🔴 the e2e test door's TASK window (control/test-route.ts `taskThread`, full kit)" },
+    { token: UNCLASSIFIED, reason: "no-question-road", label: "🔴 a token that fails to classify (grain native, full kit)" },
+    { token: WORK, reason: "work-session", label: "the work session" },
+  ];
+  const store = getOperationalStore();
+  for (const c of cases) {
+    for (const request of [questionRequest, approvalRequest]) {
+      const before = (await droppedRows()).length;
+      await onInputRequested({ requests: [request], taskId: "task_7" }, `unified:${c.token}`);
+      const rows = await droppedRows();
+      ok(rows.length === before + 1, `3: ${c.label} — a ${request.kind} writes exactly ONE turn.question_dropped row`);
+      const row = rows.find((r) => {
+        const d = (r.detail ?? {}) as Record<string, unknown>;
+        return d.requestId === request.requestId && d.reason === c.reason;
+      });
+      ok(row !== undefined, `3: ${c.label} — …with reason "${c.reason}" and the request id`);
+      const detail = (row?.detail ?? {}) as Record<string, unknown>;
+      ok(detail.toolName === request.action.toolName && detail.kind === request.kind, `3: ${c.label} — …naming the tool and the eve kind (ids and enums only)`);
+      ok(detail.taskId === "task_7", `3: ${c.label} — …and the owning task eve stated on the event, for the audit join`);
+      ok((await readBridgedQuestion(store, ORG, c.token)) === undefined, `3: 🔴 ${c.label} — no outstanding-question row is written, so nothing can route an answer`);
+    }
+  }
+  const DM = formatWindowToken(dmWindowKey("slack/T1/D_ALICE", 3));
+  const THREAD = formatWindowToken({ domain: "payments", windowId: threadSeatWindowId("C_PAY", "1700.1"), generation: 2 });
+  for (const t of [STANDING, TASK, WORK, DM, THREAD]) {
+    ok(isUnifiedSupervisorToken(t), `3: ${t} is a window token the unified receive admits`);
+    ok(classifySessionId(t).grain !== "native", `3: 🔴 …and it classifies "${classifySessionId(t).grain}", never the full-kit native fallback`);
+  }
+  ok(!isUnifiedSupervisorToken(UNCLASSIFIED) && classifySessionId(UNCLASSIFIED).grain === "native", "3: 🔴 a token that classifies native is not a window token, so the unified receive refuses it");
+  const before = (await droppedRows()).length;
+  await onInputRequested({ requests: [parkRequest] }, `unified:${STANDING}`);
+  ok((await droppedRows()).length === before, "3: a session-limit PARK writes no drop row — the park hook owns it");
+  for (const junk of [undefined, null, {}, { requests: "x" }, { requests: [null] }]) {
+    await onInputRequested(junk);
+  }
+  ok((await droppedRows()).length === before, "3: junk input writes no row and does not throw");
 }
 
 {
-  const s = sink();
-  const posts: Array<{ origin: UnifiedWakeOrigin; text: string }> = [];
-  const outcome = await bridgeQuestionToSurface(scope, question, {
-    resolveOrigin: async () => slackOrigin,
-    post: async (origin, text) => {
-      posts.push({ origin, text });
-      return "msg-1";
-    },
-    audit: s.audit,
-  });
-  ok(outcome.status === "bridged" && outcome.id === "msg-1" && outcome.platform === "slack", "3a: a resolvable wake + a live post ⇒ bridged");
-  ok(posts.length === 1 && posts[0]!.origin === slackOrigin, "3a: posted EXACTLY once, to the wake's own origin (the reply route's target, never an addressed one)");
-  ok(posts[0]!.text.includes(QUESTION_TEXT), "3a: the room gets the real question text");
-  ok(s.rows.length === 1 && s.rows[0]!.action === QUESTION_BRIDGED_AUDIT_ACTION, "3a: exactly one turn.question_bridged row");
-  const d = s.rows[0]!.detail as Record<string, unknown>;
-  ok(s.rows[0]!.org === "acme" && s.rows[0]!.platform === "unified" && s.rows[0]!.workspace === "payments", "3a: the row is partitioned like every other unified row (platform=unified)");
-  ok(d.platform === "slack", "3a: the ORIGIN platform — where the question actually landed — rides the detail");
-  ok(d.id === "msg-1" && d.requestId === "call_abc123" && d.toolName === "ask_question" && d.kind === "question", "3a: ids + eve-owned enums are recorded");
-  ok(d.options === 2 && typeof d.chars === "number" && (d.chars as number) > 0, "3a: option COUNT and rendered length, not content");
-  ok(d.wakeId === "w-42" && d.sessionId === "sess-9", "3a: the wake + session join keys are stamped");
-}
-
-for (const [label, resolveOrigin] of [
-  ["a wake with no map row", async () => null],
-  ["an origin lookup that THREW", async () => { throw new Error("store down"); }],
-] as ReadonlyArray<[string, () => Promise<UnifiedWakeOrigin | null>]>) {
-  const s = sink();
-  let posted = false;
-  const outcome = await bridgeQuestionToSurface(scope, question, {
-    resolveOrigin,
-    post: async () => {
-      posted = true;
-      return "never";
-    },
-    audit: s.audit,
-  });
-  ok(outcome.status === "dropped" && outcome.reason === "unresolved-origin", `3b: ${label} ⇒ dropped(unresolved-origin), no throw`);
-  ok(!posted, `3b: ${label} ⇒ nothing was posted anywhere`);
-  ok(s.rows.length === 1 && s.rows[0]!.action === QUESTION_DROPPED_AUDIT_ACTION, `3b: ${label} ⇒ exactly one turn.question_dropped row (the silent-with-no-row outcome is now impossible)`);
-  ok((s.rows[0]!.detail as Record<string, unknown>).reason === "unresolved-origin", `3b: ${label} ⇒ the reason distinguishes it from a post failure`);
-}
-
-{
-  const s = sink();
-  const outcome = await bridgeQuestionToSurface(scope, question, {
-    resolveOrigin: async () => slackOrigin,
-    post: async () => {
-      throw new Error("slack chat.postMessage failed: channel_not_found");
-    },
-    audit: s.audit,
-  });
-  ok(outcome.status === "dropped" && outcome.reason === "post-failed", "3c: a throwing post arm ⇒ dropped(post-failed), no throw");
-  ok(s.rows.length === 1 && s.rows[0]!.action === QUESTION_DROPPED_AUDIT_ACTION, "3c: exactly one turn.question_dropped row");
-  const d = s.rows[0]!.detail as Record<string, unknown>;
-  ok(d.reason === "post-failed" && d.platform === "slack", "3c: the failing surface is named");
-  ok(typeof d.error === "string" && (d.error as string).includes("channel_not_found"), "3c: the arm's error is carried, so the failure is diagnosable");
-}
-
-{
-  const s = sink();
-  await bridgeQuestionToSurface(scope, question, {
-    resolveOrigin: async () => slackOrigin,
-    post: async () => {
-      throw new Error("x".repeat(5000));
-    },
-    audit: s.audit,
-  });
-  ok(((s.rows[0]!.detail as Record<string, unknown>).error as string).length === 300, "3c: the error string is capped at 300 chars");
-}
-
-{
-  const outcome = await bridgeQuestionToSurface(scope, question, {
-    resolveOrigin: async () => slackOrigin,
-    post: async () => "msg-2",
-    audit: async () => {
-      throw new Error("audit store down");
-    },
-  });
-  ok(outcome.status === "bridged", "3: a failing audit sink never breaks the bridge (best-effort, house posture)");
-}
-
-{
-  const all: AuditInput[] = [];
-  const collect = async (e: AuditInput): Promise<void> => {
-    all.push(e);
-  };
-  await bridgeQuestionToSurface(scope, question, { resolveOrigin: async () => slackOrigin, post: async () => "m", audit: collect });
-  await bridgeQuestionToSurface(scope, question, { resolveOrigin: async () => null, post: async () => "m", audit: collect });
-  await bridgeQuestionToSurface(scope, question, {
-    resolveOrigin: async () => slackOrigin,
-    post: async () => {
-      throw new Error("boom");
-    },
-    audit: collect,
-  });
-  ok(all.length === 3, "4: three paths, three rows");
-  const serialised = JSON.stringify(all);
+  const serialised = JSON.stringify(await droppedRows());
+  ok(serialised.includes("call_abc123"), "4: the drop rows are there to search");
   ok(!serialised.includes(QUESTION_TEXT), "4: the model-authored PROMPT is in no row (it may carry attacker-derived content)");
-  ok(!serialised.includes(LABEL_YES) && !serialised.includes(LABEL_NO), "4: model-authored option LABELS are in no row — only their count");
+  ok(!serialised.includes(LABEL_YES) && !serialised.includes(LABEL_NO), "4: model-authored option LABELS are in no row");
 }
 
 {
-  const { registerSlackFixtureMapper, registerSlackFixturePostArm, registerSlackFixtureCodec, registerSlackTestBridge } = await import("./_slack-test-stubs.js");
-  registerSlackFixtureMapper();
-  registerSlackFixturePostArm();
-  registerSlackFixtureCodec();
-  registerSlackTestBridge();
-
-  const unified = (await import("../agent/channels/unified.js")).default as unknown as { adapter?: Record<string, unknown> };
   ok(typeof unified.adapter?.["input.requested"] === "function", "5: the unified channel registers an input.requested handler through eve's own defineChannel builder");
-  ok(typeof unified.adapter?.["message.completed"] === "function", "5: message.completed still registers (the bridge ADDS an edge, it does not move one)");
+  ok(typeof unified.adapter?.["message.completed"] === "function", "5: message.completed still registers");
 
   const parkHook = (await import("../agent/hooks/session-park.js")).default as unknown as { events: Record<string, unknown> };
   ok(typeof parkHook.events["input.requested"] === "function", "5: hooks/session-park.ts STILL subscribes to input.requested — the park path is untouched");
 }
-
 {
   const TASK_REQUEST_ID = "task_abc123:call_child_1";
   const OWN_REQUEST_ID = "call_window_1";
@@ -391,280 +340,14 @@ for (const [label, resolveOrigin] of [
   }
 
   {
-    const store = makeStore();
-    await rememberBridgedQuestion(store, "o1", TOKEN, { requestId: TASK_REQUEST_ID, containerKey: ROOM_A, wakeId: "w1" });
-    let admits = 0;
-    let reads = 0;
-    const deps = {
-      read: async () => {
-        reads++;
-        return readBridgedQuestion(store, "o1", TOKEN);
-      },
-      admit: async (): Promise<{ ok: true; floor: string }> => {
-        admits++;
-        return { ok: true, floor: "member" };
-      },
-    };
-    const mentioned = await resolveInboundAnswerRouting({ internalDispatch: false, containerKey: ROOM_A, addressedMention: true }, deps);
-    ok(mentioned.kind === "wake" && mentioned.reason === "addressed-mention", "6m: 🔴 an @-MENTION in the asking room is the SEAT's wake (reason addressed-mention), never the worker's answer");
-    ok(reads === 1 && admits === 0, "6m: 🔴 …and it spends no admission call, so no refusal row is written against the person who asked");
-    ok((await readBridgedQuestion(store, "o1", TOKEN))?.requestId === TASK_REQUEST_ID, "6m: 🔴 …and the question row is LEFT IN PLACE, so a plain reply can still answer the worker");
-    const plain = await resolveInboundAnswerRouting({ internalDispatch: false, containerKey: ROOM_A, addressedMention: false }, deps);
-    ok(plain.kind === "answer" && plain.requestId === TASK_REQUEST_ID, "6m: NEGATIVE CONTROL: an unaddressed reply in the asking room still ANSWERS the worker");
-    ok(admits === 1, "6m: …and that answer is the one that runs the admission");
-    const internal = await resolveInboundAnswerRouting({ internalDispatch: true, containerKey: ROOM_A, addressedMention: true }, deps);
-    ok(internal.kind === "wake" && internal.reason === "internal-dispatch", "6m: an internal dispatch keeps its own reason — the mention check runs after it");
-    const none = await resolveInboundAnswerRouting({ internalDispatch: false, containerKey: ROOM_A, addressedMention: true }, { read: async () => undefined, admit: allow });
-    ok(none.kind === "wake" && none.reason === "no-question", "6m: with no question open a mention routes exactly as before (no-question)");
-  }
-  {
-    const dmSeat = saltSupervisorGeneration(formatWindowToken(dmWindowKey("slack/T1/D_ALICE", 3)));
-    const channelWindow = TOKEN;
-    ok(isAddressedMentionWake({ addressing: "direct-mention" }, channelWindow), "6m: a direct-mention wake on a CHANNEL window is an addressed mention");
-    ok(isAddressedMentionWake({ addressing: "direct-mention" }, dmSeat) === false, "6m: 🔴 a direct-mention wake on a DM SEAT is NOT — a DM is addressed by construction");
-    ok(
-      isAddressedMentionWake({ addressing: "direct-mention", followUp: true }, channelWindow) === false,
-      "6m: 🔴 a FOLLOW-UP (a Linear `prompted` reply with no app mention) is NOT a mention — it can still answer the worker",
-    );
-    ok(isAddressedMentionWake({}, channelWindow) === false, "6m: NEGATIVE CONTROL: an ambient wake (no addressing) is not a mention");
-    ok(isAddressedMentionWake({ addressing: "channel-watch" }, channelWindow) === false, "6m: NEGATIVE CONTROL: a channel-watch wake is not a mention");
-    const dmRouted = await resolveInboundAnswerRouting(
-      { internalDispatch: false, containerKey: ROOM_A, addressedMention: isAddressedMentionWake({ addressing: "direct-mention" }, dmSeat) },
-      { read: async () => outstanding, admit: allow },
-    );
-    ok(dmRouted.kind === "answer" && dmRouted.requestId === TASK_REQUEST_ID, "6m: 🔴 a plain DM reply with the worker's question open still ANSWERS the worker");
-  }
-
-  {
     const { readFileSync } = await import("node:fs");
-    const unifiedSrc = readFileSync(new URL("../agent/channels/unified.ts", import.meta.url), "utf8").replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
-    ok(/admitInputResponse\(\{/.test(unifiedSrc), "6: 🔴 the live decision runs the SAME admission all five arms run (approvals/input-response-floor.ts) — the transport is not the control");
-    ok(/\.respond\(\[\{ requestId: /.test(unifiedSrc), "6: …and the channel answers with `respond([{requestId, …}])`, the one shape routeDeliverPayload can route to a child");
-    ok(/rememberBridgedQuestion\(/.test(unifiedSrc), "6: …and the input.requested handler writes the row a later answer is matched on");
-    {
-      const linearSrc = readFileSync(new URL("../../providers/linear/agent/channels/linear.ts", import.meta.url), "utf8").replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
-      ok(/sig\.action === "prompted" && linearPromptReAddress\(c\.body, viewer\.name\) !== "mention" \? \{ followUp: true as const \}/.test(linearSrc), "6m: 🔴 the Linear addressed leg marks a `prompted` reply with no app mention as a follow-up");
-    }
-    ok(/addressedMention: isAddressedMentionWake\(input\.window, bareToken\)/.test(unifiedSrc), "6m: 🔴 the live decision passes the wake's own addressing and window token, so a real @-mention reaches the seat");
-    ok(/forgetBridgedQuestion\(/.test(unifiedSrc), "6: …and consumes it once the answer is delivered");
-    ok(/forgetBridgedQuestion\([^;]*\);\s*await settleAnsweredWake\(getOperationalStore\(\), org, t\.wakeId\)/.test(unifiedSrc), "6: …and settles the wake the answer rode, so the seat is not told it is queued");
+    const strip = (src: string): string => src.replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
+    const unifiedSrc = strip(readFileSync(new URL("../agent/channels/unified.ts", import.meta.url), "utf8"));
+    ok(!/rememberBridgedQuestion\(|readBridgedQuestion\(|resolveInboundAnswerRouting\(/.test(unifiedSrc), "6: 🔴 the unified channel writes and reads no outstanding-question row (OPE-2389)");
+    ok(!/\.respond\(\[/.test(unifiedSrc), "6: 🔴 …and delivers no `respond` — a room message on the unified window is always an ordinary wake");
+    const notionSrc = strip(readFileSync(new URL("../../providers/notion/agent/channels/notion-question-return.ts", import.meta.url), "utf8"));
+    ok(/resolveInboundAnswerRouting\(/.test(notionSrc) && /readBridgedQuestion\(/.test(notionSrc), "6: …while the Notion question return still runs the routing decision over the row");
   }
-}
-
-{
-  console.log("\n7. the bridged row names the room (OPE-1231):");
-  const posts: { origin: UnifiedWakeOrigin; text: string }[] = [];
-  const s = sink();
-  const outcome = await bridgeQuestionToSurface(scope, question, {
-    resolveOrigin: async () => slackOrigin,
-    post: async (origin, text) => {
-      posts.push({ origin, text });
-      return "msg-room-1";
-    },
-    audit: s.audit,
-  });
-  ok(outcome.status === "bridged", "7: the question bridged");
-  ok(posts.length === 1 && posts[0]!.origin === slackOrigin, "7: …to the origin it was handed, once (the row below describes THAT post)");
-  const d = s.rows[0]!.detail as Record<string, unknown>;
-  const expected = unifiedThreadRef(slackOrigin).channelKey;
-  ok(typeof expected === "string" && expected.length > 0, "7: the fixture codec really derives a container key (else the line below would assert nothing)");
-  ok(d.containerKey === expected, `7: 🔴 the row names the CONTAINER the post went to (${String(d.containerKey)})`);
-  ok(d.containerKey !== undefined && String(d.containerKey).includes(slackOrigin.channelId), "7: …and that container carries the origin's own channel, not another room's");
-  const serialised = JSON.stringify(s.rows);
-  ok(!serialised.includes(QUESTION_TEXT), "7: adding the room did NOT bring the prompt with it");
-
-  const sUnknown = sink();
-  const unknownOrigin = { platform: "no-such-platform", channelId: "C_X" } as unknown as UnifiedWakeOrigin;
-  const unknownOutcome = await bridgeQuestionToSurface(scope, question, {
-    resolveOrigin: async () => unknownOrigin,
-    post: async () => "msg-room-2",
-    audit: sUnknown.audit,
-  });
-  ok(unknownOutcome.status === "bridged", "7: an undecodable origin still BRIDGES — the container is a field, never a gate");
-  ok(sUnknown.rows.length === 1, "7: …and still writes exactly one row");
-  ok((sUnknown.rows[0]!.detail as Record<string, unknown>).containerKey === undefined, "7: …with the container ABSENT rather than a guessed or empty value");
-}
-
-{
-  console.log("\n8. a bridged approval can be answered (OPE-1056):");
-  const approval = detectBridgeableInputRequest([approvalRequest])!;
-
-  ok(approvalOptionIds(approval).join(",") === "approve,cancel", "8a: an approval's eve-minted option ids are the ones the row will store");
-  ok(approvalOptionIds(detectBridgeableInputRequest([questionRequest])!).length === 0, "8a: 🔴 an ask_question contributes NO ids — its options are model-authored and the row stays ids-only");
-
-  const approvalText = renderQuestionForSurface(approval, { answerByOption: true });
-  ok(approvalText.includes("• Approve") && approvalText.includes("• Cancel"), "8b: the approval's options still render as the plain surface-agnostic list");
-  ok(approvalText.includes(APPROVAL_ANSWER_HINT), "8b: 🔴 …and an APPROVAL carries the host-authored line saying a reply must name one — without it the room cannot know a bare answer parks");
-  ok(!renderQuestionForSurface(detectBridgeableInputRequest([questionRequest])!, { answerByOption: true }).includes(APPROVAL_ANSWER_HINT), "8b: 🔴 NEGATIVE CONTROL: an ask_question gets NO hint even where the caller opts in — every reply answers one, so the line would be false there");
-  ok(!renderQuestionForSurface(approval).includes(APPROVAL_ANSWER_HINT), "8b: 🔴 NEGATIVE CONTROL: and a caller that does NOT opt in gets no hint for an APPROVAL either — the Notion surface shares this renderer and its return leg cannot honour the line, so following it there would DENY the write");
-
-  const OPTS = ["approve", "cancel"] as const;
-  ok(resolveApprovalOptionId("Approve", [...OPTS]) === "approve", "8c: the option LABEL answers, because eve's labels lowercase to its ids");
-  ok(resolveApprovalOptionId("  approve.  ", [...OPTS]) === "approve", "8c: …after trimming and stripping surrounding punctuation");
-  ok(resolveApprovalOptionId("yes", [...OPTS]) === "approve", "8c: a small authored synonym vocabulary answers too");
-  ok(resolveApprovalOptionId("Cancel", [...OPTS]) === "cancel", "8c: and the deny half");
-  ok(resolveApprovalOptionId("no", [...OPTS]) === "cancel", "8c: …by synonym as well");
-  ok(resolveApprovalOptionId("deny", ["approve", "deny"]) === "deny", "8c: the id the request ACTUALLY offered is the one returned — `deny` here, not a hardcoded `cancel`");
-  ok(resolveApprovalOptionId("no", ["approve"]) === undefined, "8c: 🔴 a word can only select an id the request OFFERED — a request with no deny option cannot be denied");
-  ok(
-    resolveApprovalOptionId("no, that is the wrong page — use the other one", [...OPTS]) === undefined,
-    "8c: 🔴 THE WHOLE MESSAGE MUST BE THE ANSWER — a correction that merely CONTAINS 'no' settles nothing, or prose steering the approval would decide it",
-  );
-  ok(resolveApprovalOptionId("approve the other one instead", [...OPTS]) === undefined, "8c: 🔴 …and the same on the approve side, which is the dangerous direction");
-  ok(resolveApprovalOptionId("", [...OPTS]) === undefined, "8c: an empty reply names nothing");
-  ok(resolveApprovalOptionId("maybe", [...OPTS]) === undefined, "8c: an unrelated word names nothing");
-
-  const TOKEN8 = "oe-dom:payments:oe-sup:g1";
-  const ROOM8 = unifiedThreadRef(slackOrigin).channelKey;
-  const rows = new Map<string, string>();
-  const store8: BridgedQuestionStore = {
-    putTaskResult: async (_o, k, v) => void rows.set(k, v),
-    getTaskResult: async (_o, k) => rows.get(k) ?? null,
-    deleteTaskResult: async (_o, k) => rows.delete(k),
-  };
-  const allow8 = async (): Promise<{ ok: true; floor: string }> => ({ ok: true, floor: "member" });
-  await rememberBridgedQuestion(store8, "o8", TOKEN8, {
-    requestId: approval.requestId,
-    containerKey: ROOM8,
-    wakeId: "w-8",
-    optionIds: approvalOptionIds(approval),
-  });
-  const stored = await readBridgedQuestion(store8, "o8", TOKEN8);
-  ok(stored?.optionIds?.join(",") === "approve,cancel", "8d: 🔴 the option ids survive the JSON round trip — the answering turn cannot re-read the parked request, so this row is the only join");
-  const rawRow = rows.get(bridgedQuestionKey(TOKEN8))!;
-  ok(rawRow.includes("approve"), "8d: the raw stored row really is the row under test (else the redaction line below would assert nothing)");
-  ok(!rawRow.includes("Approve tool call"), "8d: 🔴 …and the prompt never reaches the STORE (the redaction rule §4 states is untouched)");
-
-  const approved = await resolveInboundAnswerRouting({ internalDispatch: false, containerKey: ROOM8, text: "Approve" }, { read: async () => stored, admit: allow8 });
-  ok(approved.kind === "answer" && approved.optionId === "approve", "8d: 🔴 a reply naming the option answers WITH THAT OPTION ID — the field eve's resolveApprovalOutcome reads");
-  const denied = await resolveInboundAnswerRouting({ internalDispatch: false, containerKey: ROOM8, text: "cancel" }, { read: async () => stored, admit: allow8 });
-  ok(denied.kind === "answer" && denied.optionId === "cancel", "8d: …and the deny half carries its own id, so a REJECT is a real reject rather than an `invalid`");
-
-  let admits8 = 0;
-  const unmatched = await resolveInboundAnswerRouting(
-    { internalDispatch: false, containerKey: ROOM8, text: "what page is this about?" },
-    {
-      read: async () => stored,
-      admit: async () => {
-        admits8++;
-        return { ok: true, floor: "member" };
-      },
-    },
-  );
-  ok(unmatched.kind === "wake" && unmatched.reason === "unmatched-option", "8d: 🔴 a reply naming no option is an ordinary WAKE — the approval stays parked instead of being denied by accident");
-  ok(admits8 === 0, "8d: …and spends no admission call, because that person was not answering the approval");
-  ok((await readBridgedQuestion(store8, "o8", TOKEN8))?.requestId === approval.requestId, "8d: …and the row is LEFT IN PLACE, so the room can still answer");
-
-  let admits8m = 0;
-  const mentionPick = await resolveInboundAnswerRouting(
-    { internalDispatch: false, containerKey: ROOM8, text: "Approve", addressedMention: true },
-    {
-      read: async () => stored,
-      admit: async () => {
-        admits8m++;
-        return { ok: true, floor: "member" };
-      },
-    },
-  );
-  ok(mentionPick.kind === "wake" && mentionPick.reason === "addressed-mention", "8d: 🔴 an @-MENTION naming an option picks NO option — it is the seat's wake");
-  ok(admits8m === 0, "8d: …and spends no admission call");
-  ok((await readBridgedQuestion(store8, "o8", TOKEN8))?.optionIds?.join(",") === "approve,cancel", "8d: …and the approval row stays parked, so a plain reply can still decide it");
-
-  const qRow = { requestId: "call_abc123", containerKey: ROOM8, at: "2026-05-14T11:35:00.000Z" };
-  const qRouted = await resolveInboundAnswerRouting({ internalDispatch: false, containerKey: ROOM8, text: "what page is this about?" }, { read: async () => qRow, admit: allow8 });
-  ok(qRouted.kind === "answer" && qRouted.optionId === undefined, "8d: 🔴 NEGATIVE CONTROL: an ask_question row still answers on ANY text, and carries no optionId");
-
-  rows.set(bridgedQuestionKey(TOKEN8), JSON.stringify({ requestId: approval.requestId, containerKey: ROOM8, at: "2026-05-05T23:30:00.000Z" }));
-  const legacy = await readBridgedQuestion(store8, "o8", TOKEN8);
-  ok(legacy?.optionIds === undefined, "8d: a PRE-FIX row on disk reads back with no option ids…");
-  const legacyRouted = await resolveInboundAnswerRouting({ internalDispatch: false, containerKey: ROOM8, text: "anything" }, { read: async () => legacy, admit: allow8 });
-  ok(legacyRouted.kind === "answer" && legacyRouted.optionId === undefined, "8d: …and routes exactly as it did then, rather than becoming unanswerable");
-
-  const envelopeWith = (body: string): string =>
-    `<wake reason="dm" addressing="direct-mention" current-time="2026-07-10T10:00:00.000Z" wake-id="wk_dm_1">\n` +
-    `  <channel id="ch_c2xhY2s6RF9BTElDRQ" type="im" container="channel">\n` +
-    `  <message trigger="true" from="human" trust="principal" mention="true" author="Rowan Hale" author-id="U1" handle="rowan" id="400.0" sent-at="1970-01-01T00:06:40.000Z">\n` +
-    `    ${body}\n` +
-    `  </message>\n  </channel>\n</wake>`;
-  const dmEnvelope = envelopeWith("Approve");
-  ok(isWakeEnvelopeShaped(dmEnvelope) && triggerMessageBody(dmEnvelope) === "Approve", "8dd: the fixture really is an envelope whose trigger body is the answer (else the two arms below assert nothing)");
-  ok(resolveApprovalOptionId(dmEnvelope, [...OPTS]) === undefined, "8dd: 🔴 the RAW delivery matches NOTHING — this is the arm that makes reading the envelope load-bearing rather than tidy");
-  ok(resolveApprovalOptionId(triggerMessageBody(dmEnvelope)!, [...OPTS]) === "approve", "8dd: 🔴 …and the trigger BODY taken out of that same delivery answers `approve`");
-  ok(triggerMessageBody(`${envelopeWith("Approve")}\n${envelopeWith("hello")}`) === undefined, "8dd: 🔴 a COALESCED delivery names no single author, so it yields no body and can settle no approval");
-
-  {
-    const { readFileSync } = await import("node:fs");
-    const unifiedSrc = readFileSync(new URL("../agent/channels/unified.ts", import.meta.url), "utf8").replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
-    ok(
-      /\.respond\(\[\{ requestId: t\.answer\.requestId, text: answerText, \.\.\.\(t\.answer\.optionId \? \{ optionId: t\.answer\.optionId \} : \{\}\) \}\]/.test(unifiedSrc),
-      "8e: 🔴 the channel really sends the optionId to eve — a resolution that never reaches `respond` settles nothing",
-    );
-    ok(/optionIds: approvalOptionIds\(question\)/.test(unifiedSrc), "8e: …and the input.requested handler really records the ids the answer is matched against");
-    ok(/isWakeEnvelopeShaped\(input\.message\) \? triggerMessageBody\(input\.message\)/.test(unifiedSrc), "8e: 🔴 …and it matches the trigger BODY of the rendered wake, never the raw delivery");
-    ok(/\.\.\.\(roomText !== undefined \? \{ text: roomText \} : \{\}\)/.test(unifiedSrc), "8e: …and that derived body is what reaches the routing decision, which is what selects the option");
-  }
-}
-
-{
-  const { createRequire } = await import("node:module");
-  const { readFileSync } = await import("node:fs");
-  const { dirname, join } = await import("node:path");
-  const { pathToFileURL } = await import("node:url");
-  const eveRoot = dirname(createRequire(import.meta.url).resolve("eve/package.json"));
-  const eveFile = (rel: string): string => join(eveRoot, "dist", "src", rel);
-
-  ok(readFileSync(eveFile("internal/input-text.js"), "utf8").includes(`inputTextKey=\`${EVE_INPUT_TEXT_KEY}\``), "9a: 🔴 EVE_INPUT_TEXT_KEY is the installed eve's own typed-text key");
-  ok(
-    /async send\(e,t\)\{return await n\.deliver\(attachInputText\(\{[^}]*message:e[^}]*\},readInputText\(t\)\),t\)/.test(readFileSync(eveFile("channel/channel-operations.js"), "utf8")),
-    "9a: …and eve's channel `send` copies that key from the send options onto the delivered payload",
-  );
-
-  const inputText = (await import(pathToFileURL(eveFile("internal/input-text.js")).href)) as { readAnswerText(p: unknown): string | undefined };
-  const resolveText = (await import(pathToFileURL(eveFile("channel/resolve-text.js")).href)) as { resolveTextToResponse(text: string, q: unknown): unknown };
-  const proxied = { requestId: "run-1-ask-1", allowFreeform: true, options: [{ id: "Use staging", label: "Use staging" }] };
-  const mention = "<wake …>separately, what is on the roadmap this week?</wake>";
-  ok(resolveText.resolveTextToResponse(inputText.readAnswerText({ message: mention })!, proxied) !== undefined, "9b: 🔴 the defect, reproduced on the installed eve: a plain message with no override IS resolved as the open question's answer");
-  const withOverride = { message: mention, ...ordinaryWakeSendOptions(true) };
-  ok(inputText.readAnswerText(withOverride) === "", "9b: with the override, eve's answer text is the EMPTY string, not the message");
-  ok(resolveText.resolveTextToResponse(inputText.readAnswerText(withOverride)!, proxied) === undefined, "9b: 🔴 …and eve resolves NOTHING on it, so the message stays the seat's wake");
-
-  ok(Object.keys(ordinaryWakeSendOptions(false)).length === 0, "9c: no bridged question ⇒ no override, eve's default is untouched");
-  ok(JSON.stringify(ordinaryWakeSendOptions(true)) === JSON.stringify({ [EVE_INPUT_TEXT_KEY]: "" }), "9c: a bridged question ⇒ exactly the one empty override, nothing else");
-  {
-    const raw = new Map<string, string>([[bridgedQuestionKey("tok-c"), "{not json"]]);
-    const st: BridgedQuestionStore = {
-      putTaskResult: async () => undefined,
-      getTaskResult: async (_o, k) => raw.get(k) ?? null,
-      deleteTaskResult: async () => false,
-    };
-    const down: BridgedQuestionStore = { ...st, getTaskResult: async () => { throw new Error("store down"); } };
-    ok((await readBridgedQuestion(st, "o", "tok-c")) === undefined, "9c: the fixture row really is unreadable to readBridgedQuestion (else the next line asserts nothing)");
-    ok((await bridgedQuestionMayBeOpen(st, "o", "tok-c")) === true, "9c: 🔴 …and the override still treats it as OPEN");
-    ok((await bridgedQuestionMayBeOpen(down, "o", "tok-c")) === true, "9c: 🔴 a store that throws counts as open too");
-    ok((await bridgedQuestionMayBeOpen(st, "o", "tok-none")) === false, "9c: no row ⇒ not open");
-    ok((await bridgedQuestionMayBeOpen(st, "o", "")) === false, "9c: no token ⇒ not open");
-  }
-
-  const rows = new Map<string, string>();
-  const store: BridgedQuestionStore = {
-    putTaskResult: async (_o, k, v) => {
-      rows.set(k, v);
-    },
-    getTaskResult: async (_o, k) => rows.get(k) ?? null,
-    deleteTaskResult: async (_o, k) => rows.delete(k),
-  };
-  rows.set(bridgedQuestionKey("tok-9"), JSON.stringify({ requestId: "wrun_X-ask-1", taskId: "agent-ab12cd", at: "2026-10-06T00:00:00.000Z" }));
-  const legacy = await readBridgedQuestion(store, "o9", "tok-9");
-  ok(legacy?.requestId === "wrun_X-ask-1" && !("taskId" in (legacy ?? {})), "9d: an earlier build's row still routes on its request id, and its task id is not read");
-  const s9 = sink();
-  await bridgeQuestionToSurface(scope, question, { resolveOrigin: async () => slackOrigin, post: async () => "m9", audit: s9.audit });
-  ok(!("taskId" in (s9.rows[0]!.detail as Record<string, unknown>)), "9d: …and a bridged row names no task");
-
-  const unifiedSrc = readFileSync(new URL("../agent/channels/unified.ts", import.meta.url), "utf8").replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
-  ok(/return from\(t\.token\)\.send\(input\.message, \{[\s\S]{0,300}?\.\.\.ordinaryWakeSendOptions\(questionMayBeOpen\),\s*\}\);/.test(unifiedSrc), "9f: 🔴 the ordinary send really carries the override");
-  ok(/const questionMayBeOpen = await bridgedQuestionMayBeOpen\(store, org, /.test(unifiedSrc), "9f: …computed from THIS window's bridged-question row, by the fail-closed read");
-  ok(/detail: \{ reason: "work-session", requestId: question\.requestId, \.\.\.\(taskId \? \{ taskId \} : \{\}\) \}/.test(unifiedSrc), "9f: the event's taskId reaches the work session's drop row");
-  ok((unifiedSrc.match(/\.\.\.\(taskId \? \{ taskId \} : \{\}\)/g) ?? []).length === 1, "9f: 🔴 …and no other row: a question this channel bridges is the session's own (OPE-2351)");
 }
 
 console.log(`question-bridge: ${n} assertions passed`);

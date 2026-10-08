@@ -1069,7 +1069,7 @@ const NO_REQUESTER_BASELINE =
   ok(/payload:\{inputResponses:/.test(hitl), "eve still routes a child's answer ONLY through payload.inputResponses");
 }
 {
-  const HITL_CLIENTS = ["core/agent/channels/approval-card.ts", "core/agent/channels/unified.ts", "providers/notion/agent/channels/notion.ts"];
+  const HITL_CLIENTS = ["providers/notion/agent/channels/notion.ts"];
   const roots = ["agent", "../providers", "../adapters"].map((r) => new URL(`../${r}/`, import.meta.url));
   const found: string[] = [];
   const walk = (dir: URL): void => {
@@ -1092,26 +1092,8 @@ const NO_REQUESTER_BASELINE =
     rel.length === HITL_CLIENTS.length && rel.every((p, i) => p === HITL_CLIENTS[i]),
     `🔴 OE's HITL client is EXACTLY [${HITL_CLIENTS.join(", ")}] — a second .respond() call site is a second thing a cancel orphans. Found: ${rel.join(", ") || "none"}`,
   );
-  const client = readFileSync(new URL("../agent/channels/unified.ts", import.meta.url), "utf8");
-  ok(/\.respond\(\[\{ requestId: /.test(client), "…and that client really builds an inputResponses entry keyed on the parent-visible requestId");
   const native = readFileSync(new URL("../../providers/notion/agent/channels/notion.ts", import.meta.url), "utf8");
-  ok(/requestId: input\.requestId, text: input\.text/.test(native), "…and so does the NATIVE client, so the allow-list cannot pass by a client quietly becoming inert");
-  const tap = readFileSync(new URL("../agent/channels/approval-card.ts", import.meta.url), "utf8");
-  ok(/attach\(sessionId\)\.respond\(\[response\], NO_AUTH_REWRITE\)/.test(tap), "…and so does the TAP client, which addresses eve at the ticket's own durable SESSION id");
-  for (const front of ["../../providers/slack/agent/channels/slack-front.ts", "../../providers/discord/agent/channels/discord-front.ts"]) {
-    const src = readFileSync(new URL(front, import.meta.url), "utf8");
-    ok(/approvalCardRespondVia\(args\.attachSession\)/.test(src), `🔴 …and ${front.slice(front.indexOf("providers/"))} binds the tap delivery through core's one road, never a \`from()\` of its own`);
-  }
-  const tapGate = readFileSync(new URL("../../providers/slack/agent/channels/slack-approval-card.ts", import.meta.url), "utf8");
-  ok(
-    /stillOutstanding: async \(bareToken, requestId\)[\s\S]{0,400}?readBridgedQuestion\(store, org, bareToken\)/.test(tapGate),
-    "🔴 …and the TAP's own gate reads the BRIDGED row — the key hooks/turn-anchor.ts's cancel arm wipes — so a cancelled window refuses the tap instead of respond()ing into a wiped proxy map",
-  );
-  const discordTapGate = readFileSync(new URL("../../providers/discord/agent/channels/discord-approval-card.ts", import.meta.url), "utf8");
-  ok(
-    /stillOutstanding: async \(bareToken, requestId\)[\s\S]{0,400}?readBridgedQuestion\(store, org, bareToken\)/.test(discordTapGate),
-    "🔴 …and the SECOND TAP's own gate reads the BRIDGED row too — the key hooks/turn-anchor.ts's cancel arm wipes — so a cancelled window refuses the Discord tap instead of respond()ing into a wiped proxy map",
-  );
+  ok(/requestId: input\.requestId, text: input\.text/.test(native), "…and the NATIVE client really builds an inputResponses entry keyed on the request id, so the allow-list cannot pass by a client quietly becoming inert");
   const anchor = readFileSync(new URL("../agent/hooks/turn-anchor.ts", import.meta.url), "utf8");
   ok(
     /forgetBridgedQuestion\(/.test(anchor.replace(/^\s*(\/\/|\*|\/\*).*$/gm, "")),

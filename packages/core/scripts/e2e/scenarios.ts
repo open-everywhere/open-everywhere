@@ -3875,8 +3875,8 @@ export const SCENARIOS: readonly Scenario[] = [
         }
 
         const beforeOffTopic = new Set((await lin.comments(issueA.id).catch(() => [])).map((c) => c.id).filter((id) => id.length > 0));
-        const offTopicAt = new Date().toISOString();
-        await lin.comment(issueA.id, "just a note for the humans: the fixture cage got new bedding this morning.");
+        const offTopicId = await lin.comment(issueA.id, "just a note for the humans: the fixture cage got new bedding this morning.");
+        const offTopicAt = (await lin.comments(issueA.id).catch(() => [])).find((c) => c.id === offTopicId)?.createdAt ?? "";
         if (ctx.auditRead) {
           await assertAuditedSilence({
             auditRead: ctx.auditRead,
@@ -4950,7 +4950,7 @@ export const SCENARIOS: readonly Scenario[] = [
                   message.text.trim().length > 0 &&
                   !isFillerAck(message.text),
               )
-              .map((message) => ({ id: message.ts, text: message.text }));
+              .map((message) => ({ id: message.ts, text: message.text, editedTs: message.editedTs }));
             return connectorCardRun(rows, { request: carded.request, clicker: human, surface: dm.channelId, replyPlatform: "slack", candidates });
           },
           { timeoutMs: FILE_REPLY_WAIT, what: `the approved write of card ${card.pendingId} after the click, and the seat's answer in the DM after that write` },
@@ -4970,7 +4970,7 @@ export const SCENARIOS: readonly Scenario[] = [
         );
         ctx.gate(
           ran.reply.detail?.sessionId === carded.request.seatSessionId,
-          `S-SUSPENDED-slack: ask wake ${carded.request.askWakeId} forwarded request ${carded.request.requestId}; the seat session ${carded.request.seatSessionId} answered with reply ${ran.candidate.id} in the asking DM`,
+          `S-SUSPENDED-slack: ask wake ${carded.request.askWakeId} forwarded request ${carded.request.requestId}; the seat session ${carded.request.seatSessionId} answered with reply ${ran.candidate.id} (${ran.replyShape === "edit" ? "an edit of its own earlier post" : "a new post"}) in the asking DM`,
         );
         ctx.log(`S-SUSPENDED-slack diagnostic (not scored): reply ${ran.candidate.id} ${ran.candidate.text.includes(token) ? "names" : "does not name"} ${token}`);
       } finally {
@@ -6478,7 +6478,7 @@ export const SCENARIOS: readonly Scenario[] = [
                   message.text.trim().length > 0 &&
                   !isFillerAck(message.text),
               )
-              .map((message) => ({ id: message.ts, text: message.text }));
+              .map((message) => ({ id: message.ts, text: message.text, editedTs: message.editedTs }));
             return connectorCardRun(rows, { request: carded.request, clicker: human, surface: dm.channelId, replyPlatform: "slack", candidates });
           },
           { timeoutMs: FILE_REPLY_WAIT, what: `the approved write of card ${card.pendingId} after the live-button click, and the seat's answer in the DM after that write` },
@@ -6506,7 +6506,7 @@ export const SCENARIOS: readonly Scenario[] = [
         const nativeRows = rowsAboveStoreMark(
           await ctx.auditRead!({
             sinceIso: storeMarkPageSince(),
-            actions: ["turn.question_bridged", "turn.question_dropped", "turn.native_input_requested", "approval.eve_settled"],
+            actions: ["turn.question_dropped", "turn.native_input_requested", "approval.eve_settled"],
             limit: 1000,
           }),
           eveCardMark ?? 0,
@@ -6780,7 +6780,6 @@ export const SCENARIOS: readonly Scenario[] = [
       if (ctx.notionAmbient) {
         const not = ctx.notionAmbient;
         if (not.webhookSecret && ctx.targetUrl) {
-          const since = new Date().toISOString();
           const comments = await not.allComments();
           const anchorCtx = { botUserId: not.botUserId, nowMs: Date.now() };
           const choice = not.anchorHuman
@@ -6878,7 +6877,7 @@ export const SCENARIOS: readonly Scenario[] = [
               ctx.log(`arm B: the transcript for ${replay.verdictSessionId} is unreadable on this deployment, so the verdict row is the only witness for this run.`);
             }
           }
-          await not.awaitBotReplyIn(discussionId, since, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
+          await not.awaitBotReplyIn(discussionId, replayFrom, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
         } else {
           ctx.log(
             "arm B (notion) SKIPPED — forge-replay needs E2E_NOTION_WEBHOOK_SECRET + E2E_TARGET_URL (the anchor itself is DISCOVERED on the page, so no anchor id has to be configured); `createBlockDiscussion` cannot wake the classifier (a driver-authored comment is always Notion `type: \"bot\"`, dropped before any read — OPE-576). The `notion` row shape is unpopulated in this run's sample.",

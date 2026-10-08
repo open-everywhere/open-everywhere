@@ -870,10 +870,6 @@
       "types": "./dist/agent/channels/answered-container-ledger.d.ts",
       "default": "./dist/agent/channels/answered-container-ledger.js"
     },
-    "./agent/channels/approval-card.js": {
-      "types": "./dist/agent/channels/approval-card.d.ts",
-      "default": "./dist/agent/channels/approval-card.js"
-    },
     "./agent/channels/approval-claim-guard.js": {
       "types": "./dist/agent/channels/approval-claim-guard.d.ts",
       "default": "./dist/agent/channels/approval-claim-guard.js"
@@ -3441,7 +3437,6 @@
     "test:unified-audit": "NODE_NO_WARNINGS=1 tsx scripts/unified-audit-test.ts",
     "test:unified-redrive": "NODE_NO_WARNINGS=1 tsx scripts/unified-redrive-test.ts",
     "test:question-bridge": "NODE_NO_WARNINGS=1 tsx scripts/question-bridge-test.ts",
-    "test:approval-card": "NODE_NO_WARNINGS=1 tsx scripts/approval-card-test.ts",
     "test:native-input-audit": "NODE_NO_WARNINGS=1 tsx scripts/native-input-audit-test.ts",
     "test:wake-trust": "NODE_NO_WARNINGS=1 tsx scripts/wake-trust-test.ts",
     "test:memory-resync": "NODE_NO_WARNINGS=1 tsx scripts/memory-resync-test.ts",
@@ -3487,6 +3482,7 @@
     "test:transcript-tool": "NODE_NO_WARNINGS=1 tsx scripts/transcript-tool-test.ts",
     "test:source-scoped-mount": "NODE_NO_WARNINGS=1 tsx scripts/source-scoped-mount-test.ts",
     "test:read-channel-e2e": "NODE_NO_WARNINGS=1 tsx scripts/e2e/read-channel-test.ts",
+    "test:connector-card-e2e": "NODE_NO_WARNINGS=1 tsx scripts/e2e/connector-card-test.ts",
     "test:e2e-gate-joins": "NODE_NO_WARNINGS=1 tsx scripts/e2e/gate-joins-test.ts",
     "test:e2e-grant-fence-rows": "NODE_NO_WARNINGS=1 tsx scripts/e2e/grant-fence-rows-test.ts",
     "test:e2e-halt-cleanup": "NODE_NO_WARNINGS=1 tsx scripts/e2e/halt-cleanup-test.ts",
@@ -3631,7 +3627,6 @@
     "ai": "^7.0.105",
     "jose": "^6.2.3",
     "just-bash": "^3.1.0",
-    "patch-package": "^8.0.1",
     "undici": "^7.28.0",
     "zod": "4.5.4"
   },

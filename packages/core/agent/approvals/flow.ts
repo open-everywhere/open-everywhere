@@ -34,7 +34,7 @@ import { shadowJudgeAuditDetail } from "../access/approval-judge.js";
 import { RESUME_TOOL, TOOL_CONSEQUENCE } from "../access/consequence.js";
 import { haltAuditDetail, haltRefusalMessage, haltScopeFor, resolveHalt, type HaltDeps } from "../access/halt.js";
 import { parseScopeKey, platformOfScopeKey } from "../access/scope-key.js";
-import { tryPrincipalKey } from "../identity/principal-key.js";
+import { rosterHasPrincipal, tryPrincipalKey } from "../identity/principal-key.js";
 import { checkClickerFloor, clickRoomMatches, clickerFloorRefusalNotice, type ClickerFloorRefusal } from "./clicker-floor.js";
 import { checkCardDisclosure, cardDisclosureRefusalNotice } from "./card-disclosure.js";
 import { pendingCardBlocks, decidedCardBlocks, judgeLiftNoticeBlocks, judgeLiftNoticeText, type RenderedCard } from "./card.js";
@@ -903,16 +903,17 @@ export function clickerMayDecide(
   clickerId: string,
   clickerPlatform: string | undefined,
   clickerTenant: string | undefined,
+  clickerEnterprise?: string,
 ): boolean {
   if (!clickerPlatform) return false;
   const domains = getConfig().loadDomains();
-  const key = tryPrincipalKey(clickerPlatform, clickerTenant, clickerId);
-  if (key === undefined) return false;
-  if (criteriaDomain("org", domains)?.admins?.includes(key) === true) return true;
+  if (tryPrincipalKey(clickerPlatform, clickerTenant, clickerId) === undefined) return false;
+  const admits = (roster: readonly string[] | undefined): boolean =>
+    rosterHasPrincipal(roster, clickerPlatform, clickerTenant, clickerId, clickerEnterprise);
+  if (admits(criteriaDomain("org", domains)?.admins)) return true;
   if (isOrgAdminOnlySpendCap(row)) return false;
   if (!row.domain) return false;
-  const explicit = domains.find((d) => d.name === row.domain);
-  return explicit?.admins?.includes(key) === true;
+  return admits(domains.find((d) => d.name === row.domain)?.admins);
 }
 
 interface BlockActionsPayload {
@@ -920,7 +921,9 @@ interface BlockActionsPayload {
   readonly user?: { readonly id?: unknown };
   readonly channel?: { readonly id?: unknown };
   readonly message?: { readonly ts?: unknown };
-  readonly team?: { readonly id?: unknown };
+  readonly team?: { readonly id?: unknown; readonly enterprise_id?: unknown };
+  readonly enterprise?: { readonly id?: unknown };
+  readonly enterprise_id?: unknown;
 }
 
 export interface HandleApprovalDeps {
@@ -1038,6 +1041,7 @@ export interface ResolveApprovalClickInput {
   readonly releaseFeedback?: SweepFeedbackDeps;
   readonly clickerPlatform?: string;
   readonly clickerTenant?: string;
+  readonly clickerEnterprise?: string;
   readonly clickerIsGuest?: boolean;
   readonly halt?: HaltDeps;
   readonly waitUntil?: (p: Promise<unknown>) => void;
@@ -1225,7 +1229,7 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
   const clickerRoom = roomNamespace(input.clickContext?.surfaceKey) ?? roomNamespace(row.postedTo);
   const clickerPlatform = input.clickerPlatform ?? clickerRoom?.platform;
   const clickerTenant = input.clickerTenant ?? clickerRoom?.tenant;
-  if (kindDef.policy === "admin" && !clickerMayDecide(row, input.clickerId, clickerPlatform, clickerTenant) && (await input.platformAdmin?.(row)) !== true) {
+  if (kindDef.policy === "admin" && !clickerMayDecide(row, input.clickerId, clickerPlatform, clickerTenant, input.clickerEnterprise) && (await input.platformAdmin?.(row)) !== true) {
     await auditClickerDenial(input.org, row, input.clickerId, "not-admin", input.clickContext?.surfaceKey);
     return { outcome: "denied", row };
   }
@@ -1575,6 +1579,8 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
     const channelId = typeof p?.channel?.id === "string" ? p.channel.id : undefined;
     const messageTs = typeof p?.message?.ts === "string" ? p.message.ts : undefined;
     const teamId = typeof p?.team?.id === "string" ? p.team.id : undefined;
+    const gridOf = (v: unknown): string | undefined => (typeof v === "string" && v.length > 0 ? v : undefined);
+    const enterpriseId = gridOf(p?.enterprise?.id) ?? gridOf(p?.enterprise_id) ?? gridOf(p?.team?.enterprise_id);
 
     if (!org || !clickerId || !channelId) {
       console.error(`[open-everywhere:approvals] malformed block_actions payload for "${actionId}" — missing org/user/channel; ignoring the click`);
@@ -1589,6 +1595,7 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
       decision: parsed.decision,
       clickerId,
       clickerPlatform: "slack",
+      ...(enterpriseId === undefined ? {} : { clickerEnterprise: enterpriseId }),
       ...(teamId ? { clickContext: { surfaceKey: `slack/${teamId}/${channelId}` } } : {}),
       ...(clickerIsGuest === undefined ? {} : { clickerIsGuest }),
       ...(deps.waitUntil ? { waitUntil: deps.waitUntil } : {}),

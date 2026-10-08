@@ -5,10 +5,6 @@ export const LINEAR_SURFACE_PARITY: SurfaceParityDeclaration = {
   "capability-manifest": "supported",
   "post-arm": "supported",
   "wake-origin-codec": "supported",
-  "unified-action-plane": {
-    unsupported:
-      "a Linear comment and an Agent Activity are both markdown bodies with no component plane — there is no tappable button this app may render and therefore nothing for a tap route to receive. The bridged approval posts as prose, which the question bridge already renders complete",
-  },
   "origin-placement-carry": {
     unsupported:
       "the placement is INSIDE the conversation identity: `parentId` is the thread-root comment a reply nests under and it is exactly what `threadRef` keys on. `agentSessionId` is not a second axis — it selects the reply ROUTE, so carrying it would deliver an answer into a session that asked nothing",

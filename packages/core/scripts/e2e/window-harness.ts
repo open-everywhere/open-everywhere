@@ -1,5 +1,6 @@
 import { fetchAudit, type AuditWireEntry } from "./audit-read.js";
 import { fetchTranscript } from "./transcript-read.js";
+import { readPresenceSince } from "./engaged-rows.js";
 
 export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -75,6 +76,13 @@ export function createAuditReader(
     }
   };
   return { rowsSince, readFailed: () => failed };
+}
+
+export async function deploymentPresenceSince(target: string, readToken: string, marginMs = 0): Promise<string> {
+  const { sinceIso, rows } = await readPresenceSince((opts) => fetchAudit(target, readToken, opts), Date.now(), marginMs);
+  if (sinceIso === undefined)
+    throw new Error(`no deployment instant on the audit store mark (${rows} row(s) read) — refusing a driver-clock presence floor (OPE-2391)`);
+  return sinceIso;
 }
 
 export interface ToolCall { name: string; errored: boolean; }

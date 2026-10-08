@@ -394,6 +394,33 @@ const inboundFrom = (channelId: string, ts: string, teamId: string) =>
   }
 
   {
+    const previous = declaredDomains;
+    declaredDomains = [
+      ...previous,
+      defineDomain({ name: "org", match: "org", memory: "brain", admins: [`slack/${GRID}/${USER}`, `slack/${GRID}/U_AUTHOR`] }),
+    ];
+    try {
+      const tierOf = async (ts: string, over: Record<string, unknown>): Promise<string> => {
+        const sc = parseSlackShortcutPayload(shortcutPayload(CHANNEL, ts, over));
+        const wakes: unknown[] = [];
+        const tailStore = getOperationalStore();
+        const tailKey = `slack/${TEAM}/${CHANNEL}`;
+        const tailToken = `${CHANNEL}:oe-sup:g1`;
+        const before = (await tailStore.readSessionTail("default", tailKey, tailToken)).length;
+        const out = await routeSupervisorEvent(shortcutMessageEvent(sc!, CHANNEL, "channel", 1769564200000), supervisorDeps(wakes), { directMention: true });
+        ok(out.deliver && wakes.length === 1, `grid admin (${ts}): the shortcut wakes at all (a dropped wake would prove nothing about its tier)`);
+        const rows = await tailStore.readSessionTail("default", tailKey, tailToken);
+        ok(rows.length === before + 1, `grid admin (${ts}): the wake recorded exactly one tail row`);
+        return String((rows[rows.length - 1] as { trust?: unknown }).trust);
+      };
+      eq(await tierOf("9297.100", { enterprise: { id: GRID }, team: { id: TEAM } }), "principal", "🔴 OPE-2400: a Grid admin key grades the wake `principal` when the event names that Grid");
+      eq(await tierOf("9296.100", { team: { id: TEAM } }), "peer", "🔴 OPE-2400 NEGATIVE CONTROL: …and `peer` when the event names no Grid");
+    } finally {
+      declaredDomains = previous;
+    }
+  }
+
+  {
     const ts = "9298.100";
     const sc = parseSlackShortcutPayload(shortcutPayload(FOREIGN_CHANNEL, ts, { enterprise: { id: OTHER_GRID } }));
     eq(sc!.enterpriseId, OTHER_GRID, "refusal(shortcut/org-wide): an org-wide payload names the foreign Grid…");

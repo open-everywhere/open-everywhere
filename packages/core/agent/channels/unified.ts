@@ -20,28 +20,9 @@ import {
 } from "./wake-timing.js";
 import { withRetryAfterThrown, isRateLimitThrow, RateLimitExhaustedError } from "./rate-limit-retry.js";
 import { postUnifiedReply, completeUnifiedSessionSilently } from "./unified-reply.js";
-import { canPostUnifiedActions, postArm } from "./post-arms.js";
-import { approvalCardActions, mintApprovalCardTicket, rememberApprovalCardTicket } from "./approval-card.js";
+import { postArm } from "./post-arms.js";
 import { containerAnsweredSince } from "./answered-container-ledger.js";
-import { isWakeEnvelopeShaped, triggerMessageBody } from "./wake-envelope.js";
-import {
-  detectBridgeableInputRequest,
-  bridgeQuestionToSurface,
-  forgetBridgedQuestion,
-  settleAnsweredWake,
-  readBridgedQuestion,
-  ordinaryWakeSendOptions,
-  bridgedQuestionMayBeOpen,
-  rememberBridgedQuestion,
-  resolveInboundAnswerRouting,
-  isAddressedMentionWake,
-  approvalOptionIds,
-  QUESTION_ANSWERED_AUDIT_ACTION,
-  QUESTION_ANSWER_DROPPED_AUDIT_ACTION,
-  QUESTION_DROPPED_AUDIT_ACTION,
-} from "./question-bridge.js";
-import { admitInputResponse } from "../approvals/input-response-floor.js";
-import { resolvePartition } from "../memory/partition.js";
+import { detectBridgeableInputRequest, QUESTION_DROPPED_AUDIT_ACTION } from "./question-bridge.js";
 import { encodeCarriedWrites, OE_WORK_RESULT_WRITES_ATTR, type DurableMemoryWrite } from "../memory/write-evidence.js";
 import { unifiedDomainFromToken, unifiedDomainSessionKey, isUnifiedSupervisorToken } from "./unified-supervisor.js";
 import { parseWindowToken, isTaskWindowId, isThreadSeatWindowId, isThreadSeatWindowToken, isWorkWindowToken, dmAnchorSurfaceForToken, dmSurfaceKeyFromAnchorDomain, bareTokenFromEveContext } from "./window-key.js";
@@ -61,7 +42,6 @@ import {
   type RequesterVerdict,
 } from "../access/requester-identity.js";
 import { OE_CHAT_NONMEMBER_ATTR } from "../access/taint-signal.js";
-import { rememberNonMemberAnswer } from "../access/held-question.js";
 import { carryRunRefusalsToRedrive, dropCarriedRunRefusals } from "../approvals/card-signal.js";
 import { DELEGATION_PENDING_REFUSAL_REASON, pendingDelegationOwing } from "../access/pending-delegation-signal.js";
 import { addressedWakeThisTurn } from "../access/dispatch-origin-signal.js";
@@ -148,12 +128,6 @@ export interface UnifiedReceiveTarget {
   readonly surfaceKey: string;
   readonly authority?: UnifiedWakeAuthority;
   readonly context?: readonly string[];
-  readonly answer?: {
-    readonly requestId: string;
-    readonly floor: string;
-    readonly optionId?: string;
-    readonly nonMember?: true;
-  };
   readonly inbound?: boolean;
   readonly addressing?: string;
 }
@@ -324,76 +298,6 @@ async function windowSpendGate(input: {
       await postUnifiedReply(input.window.origin, text);
     },
   });
-}
-
-async function resolveInboundAnswer(
-  input: {
-    readonly window: UnifiedWindowWake;
-    readonly auth: { attributes?: Record<string, unknown> };
-    readonly internalDispatch?: true;
-    readonly message?: unknown;
-  },
-  bareToken: string,
-): Promise<UnifiedReceiveTarget["answer"] | undefined> {
-  try {
-    const org = deploymentOrg();
-    let containerKey: string | undefined;
-    try {
-      containerKey = unifiedThreadRef(input.window.origin).channelKey;
-    } catch {
-      containerKey = undefined;
-    }
-    const roomText =
-      typeof input.message !== "string" ? undefined : isWakeEnvelopeShaped(input.message) ? triggerMessageBody(input.message) : input.message;
-    const readOwnedQuestion = async () => await readBridgedQuestion(getOperationalStore(), org, bareToken);
-    const routing = await resolveInboundAnswerRouting(
-      {
-        internalDispatch: input.internalDispatch === true,
-        ...(containerKey ? { containerKey } : {}),
-        ...(roomText !== undefined ? { text: roomText } : {}),
-        addressedMention: isAddressedMentionWake(input.window, bareToken),
-      },
-      {
-        read: readOwnedQuestion,
-        admit: async () => {
-          const bindable = {
-            channel: { kind: input.window.origin.platform },
-            session: { auth: { current: input.auth } },
-          } as unknown as BindableContext;
-          const p = resolvePartition(bindable);
-          return admitInputResponse({
-            org: p.org,
-            platform: p.platform,
-            workspace: p.workspace,
-            ...(p.surface === undefined ? {} : { surface: p.surface }),
-            surfaceKey: p.surfaceKey,
-            principalId: bindFrom(bindable).principalId ?? "",
-            responses: 1,
-          });
-        },
-      },
-    );
-    if (routing.kind === "wake") {
-      if (routing.reason === "refused") {
-        ulog(`REFUSED an answer to the outstanding question on ${bareToken} — delivering it as an ordinary wake, the question stays open`);
-      } else if (routing.reason === "unmatched-option") {
-        ulog(`the outstanding APPROVAL on ${bareToken} was not answered by this message (it names no option) — ordinary wake, the approval stays parked`);
-      } else if (routing.reason === "addressed-mention") {
-        ulog(`the outstanding question on ${bareToken} was not answered by this message (it @-mentions the agent) — ordinary wake, the question stays open`);
-      } else if (routing.reason === "foreign-room") {
-        ulog(`the outstanding question on ${bareToken} is showing in another room — this message is an ordinary wake, the question stays open`);
-      }
-      return undefined;
-    }
-    return {
-      requestId: routing.requestId,
-      floor: routing.floor,
-      ...(routing.optionId !== undefined ? { optionId: routing.optionId } : {}),
-    };
-  } catch (err) {
-    console.warn(`[open-everywhere:unified] inbound-answer decision skipped (${String(err)}) — delivering as an ordinary wake`);
-    return undefined;
-  }
 }
 
 type UnifiedFinalMessageHandler = NonNullable<ChannelEvents<void>["message.completed"]>;
@@ -590,13 +494,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
       t.wakeId.length === 0 ||
       typeof t.surfaceKey !== "string" ||
       (t.authority !== undefined && !isUnifiedWakeAuthority(t.authority)) ||
-      !isUnifiedWakeOrigin(t.origin) ||
-      (t.answer !== undefined &&
-        (typeof t.answer.requestId !== "string" ||
-          t.answer.requestId.length === 0 ||
-          typeof t.answer.floor !== "string" ||
-          (t.answer.optionId !== undefined && (typeof t.answer.optionId !== "string" || t.answer.optionId.length === 0)) ||
-          (t.answer.nonMember !== undefined && t.answer.nonMember !== true)))
+      !isUnifiedWakeOrigin(t.origin)
     ) {
       throw new Error("unified receive: malformed target (host dispatch bug) — refusing the wake");
     }
@@ -616,151 +514,37 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
     await registerUnifiedWakeTarget(store, org, t.wakeId, t.origin, new Date().toISOString(), t.token, t.inbound === true, t.addressing, t.surfaceKey, authority?.binding, authority);
     ulog(`wake ${t.wakeId} from ${t.surfaceKey} → ${t.token} (origin ${t.origin.platform})`);
     await drainGenerationRetirements(from, { org, incomingToken: t.token }, { labelsFor: auditLabels });
-    const answerText = typeof input.message === "string" ? input.message : undefined;
-    if (t.answer) {
-      const bare = bareTokenFromEveContext(t.token) ?? t.token;
-      const answerDetail = {
-        requestId: t.answer.requestId,
-        floor: t.answer.floor,
-        wakeId: t.wakeId,
-        chars: answerText?.length ?? 0,
-        surfaceKey: t.surfaceKey,
-        ...(t.answer.optionId !== undefined ? { optionId: t.answer.optionId } : {}),
-        ...(t.answer.nonMember === true ? { nonMember: true } : {}),
-      };
-      const { workspace: answerWorkspace, surface: answerSurface } = auditLabels(t.token);
-      try {
-        if (answerText === undefined) throw new Error("the delivery is structured content, not text — an answer must be text");
-        if (t.answer.nonMember === true && !(await rememberNonMemberAnswer(getOperationalStore(), org, t.answer.requestId))) {
-          throw new Error("the answerer is a non-member and the stamp could not be recorded — an unmarked guest answer is never delivered");
-        }
-        const session = await from(t.token).respond([{ requestId: t.answer.requestId, text: answerText, ...(t.answer.optionId ? { optionId: t.answer.optionId } : {}) }], {
-          ...(t.context && t.context.length > 0 ? { context: [...t.context] } : {}),
-        } as { auth: typeof input.auth; context?: string[] });
-        await forgetBridgedQuestion(getOperationalStore(), org, bare);
-        await settleAnsweredWake(getOperationalStore(), org, t.wakeId);
-        ulog(`answer ${t.answer.requestId} delivered to ${t.token} (floor ${t.answer.floor})`);
-        await appendAudit({
-          org,
-          platform: "unified",
-          workspace: answerWorkspace,
-          surface: answerSurface,
-          action: QUESTION_ANSWERED_AUDIT_ACTION,
-          detail: answerDetail,
-        }).catch(() => undefined);
-        return session;
-      } catch (err) {
-        if (isRateLimitThrow(err)) throw err;
-        const error = (err instanceof Error ? err.message : String(err)).slice(0, 300);
-        console.warn(`[open-everywhere:unified] answer ${t.answer.requestId} could NOT be delivered (${error}) — falling back to an ordinary wake, the question stays open`);
-        await appendAudit({
-          org,
-          platform: "unified",
-          workspace: answerWorkspace,
-          surface: answerSurface,
-          action: QUESTION_ANSWER_DROPPED_AUDIT_ACTION,
-          detail: { ...answerDetail, error },
-        }).catch(() => undefined);
-      }
-    }
-    const questionMayBeOpen = await bridgedQuestionMayBeOpen(store, org, bareTokenFromEveContext(t.token) ?? t.token);
     return from(t.token).send(input.message, {
       auth: completeWakeAuth(input.auth),
       ...(t.context && t.context.length > 0 ? { context: [...t.context] } : {}),
       ...(isWorkWindowToken(t.token) ? { turnPolicy: "steer" as const } : {}),
-      ...ordinaryWakeSendOptions(questionMayBeOpen),
     });
   },
   events: {
     "message.completed": onUnifiedFinalMessage,
     "turn.completed": onUnifiedTurnCompleted,
-    async "input.requested"(data, channel, ctx) {
+    async "input.requested"(data, channel) {
       try {
         const question = detectBridgeableInputRequest((data as { requests?: unknown } | undefined)?.requests);
         if (!question) return;
-        const org = deploymentOrg();
         const { workspace, surface } = auditLabels(channel.continuation?.token);
-        const bind = { session: ctx?.session } as unknown as BindableContext;
-        const sessionId = typeof ctx?.session?.id === "string" && ctx.session.id.length > 0 ? ctx.session.id : undefined;
         const rawTaskId = (data as { taskId?: unknown } | undefined)?.taskId;
         const taskId = typeof rawTaskId === "string" && rawTaskId.length > 0 ? rawTaskId : undefined;
-        const workBare = bareTokenFromEveContext(channel.continuation?.token);
-        if (workBare !== undefined && isWorkWindowToken(workBare)) {
-          ulog(`question from task ${taskId ?? "(none)"} on a work session NOT bridged: a work-session child asks with ask_room (OPE-2340)`);
-          await appendAudit({
-            org,
-            platform: "unified",
-            workspace,
-            surface,
-            action: QUESTION_DROPPED_AUDIT_ACTION,
-            detail: { reason: "work-session", requestId: question.requestId, ...(taskId ? { taskId } : {}) },
-          }).catch(() => undefined);
-          return;
-        }
-        const wakeId = currentWakeId(bind);
         const bare = bareTokenFromEveContext(channel.continuation?.token);
-        const cardTicket = mintApprovalCardTicket();
-        let cardActionCount = 0;
-        const outcome = await bridgeQuestionToSurface(
-          { org, platform: "unified", workspace, surface, ...(sessionId ? { sessionId } : {}), ...(wakeId ? { wakeId } : {}) },
-          question,
-          {
-            resolveOrigin: async () => (wakeId ? await resolveUnifiedWakeTarget(getOperationalStore(), org, wakeId).catch(() => null) : null),
-            post: async (origin, text) => {
-              const actions = canPostUnifiedActions(origin.platform) ? approvalCardActions(question, cardTicket) : [];
-              if (actions.length > 0 && sessionId === undefined) {
-                console.warn(`[open-everywhere:unified] question bridge: the turn names no session id — posting ${question.toolName} as TEXT, because a tap would have nowhere to deliver`);
-              }
-              if (actions.length === 0 || bare === undefined || sessionId === undefined) return postUnifiedReply(origin, text);
-              let cardContainerKey: string | undefined;
-              try {
-                cardContainerKey = unifiedThreadRef(origin).channelKey;
-              } catch {
-                cardContainerKey = undefined;
-              }
-              const stored = await rememberApprovalCardTicket(getOperationalStore(), org, cardTicket, {
-                sessionId,
-                bareToken: bare,
-                ...(cardContainerKey ? { containerKey: cardContainerKey } : {}),
-                requestId: question.requestId,
-                optionIds: approvalOptionIds(question),
-              });
-              if (!stored) return postUnifiedReply(origin, text);
-              cardActionCount = actions.length;
-              return postUnifiedReply(origin, text, {}, undefined, undefined, undefined, actions);
-            },
-          },
+        const reason = bare !== undefined && isWorkWindowToken(bare) ? "work-session" : "no-question-road";
+        console.warn(
+          `[open-everywhere:unified] input request ${question.toolName} (${question.kind}) NOT shown to the room (${reason}) — this channel has no question road; the session stays parked until eve lapses the request or takes a later plain message as its answer (audited)`,
         );
-        if (outcome.status === "bridged") {
-          let containerKey: string | undefined;
-          try {
-            containerKey = unifiedThreadRef(outcome.origin).channelKey;
-          } catch {
-            containerKey = undefined;
-          }
-          const remembered =
-            bare === undefined
-              ? false
-              : await rememberBridgedQuestion(getOperationalStore(), org, bare, {
-                  requestId: question.requestId,
-                  ...(containerKey ? { containerKey } : {}),
-                  ...(wakeId ? { wakeId } : {}),
-                  optionIds: approvalOptionIds(question),
-                });
-          ulog(
-            `question bridge: posted ${question.toolName} (${question.kind}) to ${outcome.platform} for wake ${wakeId ?? "none"} — id ${outcome.id}` +
-              (cardActionCount > 0 ? ` (card: ${cardActionCount} button(s))` : " (text only)") +
-              (remembered && containerKey
-                ? ` (answerable from ${containerKey}: ${question.requestId})`
-                : " (NOT answerable — no outstanding-question row, or no room to bind it to)"),
-          );
-        } else {
-          console.warn(
-            `[open-everywhere:unified] question bridge: DROPPED ${question.toolName} (${outcome.reason}) for wake ${wakeId ?? "none"} — the session is parked on a question the room cannot see (audited)`,
-          );
-        }
+        await appendAudit({
+          org: deploymentOrg(),
+          platform: "unified",
+          workspace,
+          surface,
+          action: QUESTION_DROPPED_AUDIT_ACTION,
+          detail: { reason, requestId: question.requestId, toolName: question.toolName, kind: question.kind, ...(taskId ? { taskId } : {}) },
+        }).catch(() => undefined);
       } catch (err) {
-        console.warn(`[open-everywhere:unified] question bridge skipped: ${String(err)}`);
+        console.warn(`[open-everywhere:unified] input-request drop skipped: ${String(err)}`);
       }
     },
     async "turn.failed"(data, channel) {
@@ -872,7 +656,6 @@ export async function divertToUnifiedWindow(
     }
   } catch {
   }
-  const answer = await resolveInboundAnswer(input, bareToken);
   const target: UnifiedReceiveTarget = {
     token: input.token,
     wakeId: input.window.wakeId,
@@ -891,7 +674,6 @@ export async function divertToUnifiedWindow(
           },
         }
       : {}),
-    ...(answer ? { answer: authString(authorityAttributes[OE_CHAT_NONMEMBER_ATTR]) === "true" ? { ...answer, nonMember: true as const } : answer } : {}),
     surfaceKey: input.surfaceKey,
     inbound: input.internalDispatch !== true,
     ...(input.window.addressing ? { addressing: input.window.addressing } : {}),

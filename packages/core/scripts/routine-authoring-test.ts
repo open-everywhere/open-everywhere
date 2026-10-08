@@ -375,6 +375,12 @@ const enableTool = (await import("../agent/tools/enable_routine.js")).default;
   const card = enableKind.summarize(args as never).join("\n");
   ok(/Stopped because/.test(card) && card.includes("3 consecutive failures"), "enable: the card names WHY it stopped — the clicker confirms a diagnosis, not just a button");
   ok(/WITHOUT a fresh @-mention/.test(card), "enable: the card states plainly that it will fire unattended again");
+  ok(card.includes("(3 consecutive failures)"), "NEGATIVE CONTROL (OPE-2394): a recurring routine's card keeps the failure count after the reason");
+  const onceCard = enableKind
+    .summarize({ ...args, trigger: { kind: "once", at: "2026-07-02T00:00:00.000Z" }, disabledReason: "auto-disabled — its one scheduled fire failed", consecutiveFailures: 1 } as never)
+    .join("\n");
+  ok(/Stopped because: auto-disabled — its one scheduled fire failed/.test(onceCard), "enable: a one-shot's card still names WHY it stopped");
+  ok(!/consecutive failures/.test(onceCard), `🔴 OPE-2394: a one-shot's card never says "(1 consecutive failures)" (saw ${JSON.stringify(onceCard.split("\n")[1])})`);
 
   await enableKind.execute(args as never, "U9");
   const after = (await store.getRoutine(ORG, SURFACE, "r-revive"))!;

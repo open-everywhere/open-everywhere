@@ -1,5 +1,6 @@
 import {
   encryptedKvVault,
+  pageBaseUrl,
   type EncryptedKvVault,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
@@ -80,11 +81,16 @@ export function resetSlackSetupLockCache(): void {
   lockCache = null;
 }
 
+function setupPageUrl(deps: SlackClaimDeps): string {
+  const base = pageBaseUrl(deps.env ?? process.env);
+  return base === undefined ? "/setup on this deployment's public URL (set OE_PUBLIC_BASE_URL to name it)" : `${base}/setup`;
+}
+
 export async function announceSlackSetupCode(deps: SlackClaimDeps = {}): Promise<void> {
   if (!(await slackSetupOpen(deps))) return;
   const code = await slackSetupCode(deps);
   console.log(
-    `[open-everywhere:slack-setup] Slack is not installed on this deployment. Open /setup and enter this one-time setup code: ${code}\n` +
+    `[open-everywhere:slack-setup] Slack is not installed on this deployment. Open ${setupPageUrl(deps)} and enter this one-time setup code: ${code}\n` +
       `[open-everywhere:slack-setup] The code stops being logged once the Slack install completes, and /setup locks at that point.`,
   );
 }

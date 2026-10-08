@@ -262,7 +262,10 @@ function cli(stdin = "") {
     return (res.content as { type: string; text: string }[])[0]!.text;
   };
 
-  const setText = await call("secret_set", { secrets: { MICROSOFT_APP_PASSWORD: SENTINEL } });
+  const outerProject = process.env.CLAUDE_PROJECT_DIR;
+  process.env.CLAUDE_PROJECT_DIR = dir;
+  writeFileSync(join(dir, ".env.local"), `MICROSOFT_APP_PASSWORD=${SENTINEL}\n`, "utf8");
+  const setText = await call("secret_set", { names: ["MICROSOFT_APP_PASSWORD"] });
   ok(JSON.parse(setText).ok === true, "mcp: secret_set reports ok");
   ok(!setText.includes(SENTINEL.slice(0, 8)), "🔴 mcp: secret_set's response carries no part of the value");
   ok((await secrets.getOperatorSecret("MICROSOFT_APP_PASSWORD")).source === "db", "mcp: secret_set wrote through the same db path");
@@ -276,6 +279,8 @@ function cli(stdin = "") {
   ok(JSON.parse(rmText).ok === true, "mcp: secret_rm deletes");
   ok(connects === 3, "mcp: every secret tool wires the operator store first");
   await client.close();
+  if (outerProject === undefined) delete process.env.CLAUDE_PROJECT_DIR;
+  else process.env.CLAUDE_PROJECT_DIR = outerProject;
 
   const shipped = buildOpsServer();
   const [ct2, st2] = InMemoryTransport.createLinkedPair();

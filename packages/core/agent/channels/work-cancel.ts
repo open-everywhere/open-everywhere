@@ -1,6 +1,6 @@
 import { getConfig } from "../access/config.js";
 import { criteriaDomain } from "../memory/domain.js";
-import { tryPrincipalKey } from "../identity/principal-key.js";
+import { rosterHasPrincipal, tryPrincipalKey } from "../identity/principal-key.js";
 import type { RequesterVerdict } from "../access/requester-identity.js";
 import type { SurfaceBinding } from "../identity/binding.js";
 import { dispatchWorkRequest } from "./unified.js";
@@ -15,16 +15,17 @@ import { readAnchoredWorkJobs, readWorkJobStatus } from "../hooks/work-status.js
 
 export interface WorkCancelActor {
   readonly requester: RequesterVerdict;
-  readonly binding: Pick<SurfaceBinding, "platform" | "workspace">;
+  readonly binding: Pick<SurfaceBinding, "platform" | "workspace" | "enterprise">;
 }
 
-export function principalAdministers(actor: { readonly principalId: string; readonly binding: Pick<SurfaceBinding, "platform" | "workspace"> }, domain: string | undefined): boolean {
-  const key = tryPrincipalKey(actor.binding.platform, actor.binding.workspace, actor.principalId);
-  if (key === undefined) return false;
+export function principalAdministers(actor: { readonly principalId: string; readonly binding: Pick<SurfaceBinding, "platform" | "workspace" | "enterprise"> }, domain: string | undefined): boolean {
+  if (tryPrincipalKey(actor.binding.platform, actor.binding.workspace, actor.principalId) === undefined) return false;
+  const admits = (roster: readonly string[] | undefined): boolean =>
+    rosterHasPrincipal(roster, actor.binding.platform, actor.binding.workspace, actor.principalId, actor.binding.enterprise);
   const domains = getConfig().loadDomains();
-  if (criteriaDomain("org", domains)?.admins?.includes(key) === true) return true;
+  if (admits(criteriaDomain("org", domains)?.admins)) return true;
   if (domain === undefined) return false;
-  return domains.find((d) => d.name === domain)?.admins?.includes(key) === true;
+  return admits(domains.find((d) => d.name === domain)?.admins);
 }
 
 export function sameWorkRequester(actor: WorkCancelActor, row: Pick<WorkRequestRow, "requester" | "binding">): boolean {
@@ -37,7 +38,7 @@ export function sameWorkRequester(actor: WorkCancelActor, row: Pick<WorkRequestR
   );
 }
 
-export type WorkAdminCheck = (actor: { readonly principalId: string; readonly binding: Pick<SurfaceBinding, "platform" | "workspace"> }, domain: string | undefined) => boolean;
+export type WorkAdminCheck = (actor: { readonly principalId: string; readonly binding: Pick<SurfaceBinding, "platform" | "workspace" | "enterprise"> }, domain: string | undefined) => boolean;
 
 export function mayCancelWork(actor: WorkCancelActor, row: Pick<WorkRequestRow, "requester" | "binding" | "seatToken">, isAdmin: WorkAdminCheck): boolean {
   if (sameWorkRequester(actor, row)) return true;

@@ -23,6 +23,8 @@ const {
   shadowJudgeAuditDetail,
   shadowJudgeEligible,
   setApprovalJudgeLedgerReadLimitForTest,
+  judgeWithoutRulesBootLine,
+  announceJudgeWithoutRules,
 } = await import("../agent/access/approval-judge.js");
 const { resolveApproverChain, toolForActionKind } = await import("../agent/access/approver-chain.js");
 const { registerConfig } = await import("../agent/access/config.js");
@@ -1067,6 +1069,34 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
   ok(member.autoApproved?.resolvedBy === "judge" && memberRun.calls.length === 2, "human-only negative control (OPE-2366): the member act under the same rule IS judge-lifted");
   resetApprovalJudgeCompletion();
   clearApprovalJudgeVerdictCache();
+}
+
+{
+  const rule = { id: "r1", rule: "Open a pull request when asked in this turn." };
+  const ruleBundle = { name: "approval-policy", preApprovalRules: [rule] };
+  const line = judgeWithoutRulesBootLine("enforce", [{ name: "org-default" }], [{ bundle: "org-default" }]);
+  ok(line?.includes("judge is in enforce with no rules: every gated act will ask a person") === true, "🔴 boot line: enforce with NO rule says the judge has nothing to judge (OPE-2400)");
+  ok(judgeWithoutRulesBootLine("enforce", [ruleBundle], [{ bundle: "approval-policy" }]) === undefined, "boot line NEGATIVE CONTROL: a BOUND rule bundle silences it");
+  ok(judgeWithoutRulesBootLine("enforce", [ruleBundle], []) !== undefined, "🔴 boot line: a rule bundle that NO binding names still counts as no rules — the resolver reads bound bundles only");
+  ok(judgeWithoutRulesBootLine("enforce", [{ name: "approval-policy", preApprovalRules: [] }], [{ bundle: "approval-policy" }]) !== undefined, "boot line: a bound bundle with an EMPTY rule list is no rule");
+  ok(judgeWithoutRulesBootLine("off", [], []) === undefined, "boot line: `off` says nothing — the operator asked for no judge");
+  ok(judgeWithoutRulesBootLine("shadow", [], []) === undefined, "boot line: `shadow` says nothing — it decides nothing by design");
+
+  const warned: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]) => void warned.push(args.map(String).join(" "));
+  try {
+    overrideSettingsForTest({ approvals: { judgeMode: "enforce" } });
+    registerConfig({ loadBundles: () => [{ name: "org-default" }], loadBindings: () => [{ bundle: "org-default", scope: { kind: "org" } }], loadDomains: () => [] } as never);
+    await announceJudgeWithoutRules();
+    ok(warned.length === 1 && warned[0]!.includes("enforce with no rules"), "🔴 announceJudgeWithoutRules: logs ONE line for the live enforce-with-no-rules config");
+    warned.length = 0;
+    registerConfig({ loadBundles: () => [ruleBundle], loadBindings: () => [{ bundle: "approval-policy", scope: { kind: "org" } }], loadDomains: () => [] } as never);
+    await announceJudgeWithoutRules();
+    ok(warned.length === 0, "announceJudgeWithoutRules NEGATIVE CONTROL: a bound rule logs nothing");
+  } finally {
+    console.warn = realWarn;
+  }
 }
 
 overrideSettingsForTest({ approvals: { judgeMode: "off" } });

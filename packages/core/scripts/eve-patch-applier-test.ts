@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { EVE_PATCH_PARTS } from "../agent/access/eve-patch-probe.js";
 import {
   EVE_APPLIER_BIN,
+  applyEvePatch,
   EVE_PATCH_DIR,
   checkEveApplierPacking,
   checkEvePatchPartTable,
@@ -26,7 +27,6 @@ import {
   missingEveMarkers,
   parseEvePatchMarkers,
   parseEvePatchParts,
-  patchDirArgument,
 } from "../agent/publish/eve-patch-pack.js";
 
 let n = 0;
@@ -198,7 +198,7 @@ ok(
     rootBody: "same",
     packedBody: "same",
   }).length === 1,
-  "§4 a SECOND patch in the packed directory is refused — patch-package would apply it to a consumer's tree",
+  "§4 a SECOND patch in the packed directory is refused — the tarball ships exactly one",
 );
 ok(
   checkPackedEvePatchDir({
@@ -276,7 +276,7 @@ ok(
     installedVersion: PIN,
     pin: PIN,
   })[0]?.includes("nothing is installed there") === true,
-  "§5 an eve with NO top-level node_modules/eve entry is refused — patch-package can address no other path",
+  "§5 an eve with NO top-level node_modules/eve entry is refused — the patch spells its targets from the project root",
 );
 ok(
   checkEveResolution({
@@ -319,16 +319,6 @@ eq(
   [],
   "§5b a target outside the eve package is never detached",
 );
-eq(
-  patchDirArgument({ consumerRoot: ROOT, packedPatchDir: `${ROOT}/node_modules/@open-everywhere/core/patches` }),
-  { ok: true, value: "node_modules/@open-everywhere/core/patches" },
-  "§5 the --patch-dir argument is relative to the consumer root (patch-package refuses an absolute path)",
-);
-eq(
-  patchDirArgument({ consumerRoot: ROOT, packedPatchDir: "/linked/core/patches" }).ok,
-  false,
-  "§5 a packed directory outside the root has no argument to pass",
-);
 
 eq(
   evePatchedFilesInstalled(new Map([["dist/b.js", "x;function __oeHelper(){}"], ["dist/a.js", "globalThis.__oeAPatched=1"], ["dist/c.js", "plain"]])),
@@ -360,6 +350,68 @@ ok(
   evePatchedFilesInstalled(new Map(realTargets.map((t) => [t.insidePackage, PATCH_BODY]))).length === realTargets.length,
   "§5c the committed patch's bytes carry the `__oe` signature the restore rule looks for",
 );
+
+const block = (path: string, hunks: string): string =>
+  `diff --git a/node_modules/eve/${path} b/node_modules/eve/${path}\nindex 1111111..2222222 100644\n` +
+  `--- a/node_modules/eve/${path}\n+++ b/node_modules/eve/${path}\n${hunks}`;
+const files = (entries: Record<string, string | undefined>): Map<string, string | undefined> => new Map(Object.entries(entries));
+const applied = (result: ReturnType<typeof applyEvePatch>): ReadonlyMap<string, string> | undefined =>
+  result.ok && result.state === "applied" ? result.files : undefined;
+
+const MID = block("a.js", "@@ -2,3 +2,4 @@\n two\n-three\n+THREE\n+three-and-a-half\n four\n");
+eq(
+  applied(applyEvePatch(MID, files({ "a.js": "one\ntwo\nthree\nfour\nfive\n" })))?.get("a.js"),
+  "one\ntwo\nTHREE\nthree-and-a-half\nfour\nfive\n",
+  "§7 a hunk in the middle of a file applies, and the final newline stays",
+);
+eq(
+  applyEvePatch(MID, files({ "a.js": "one\ntwo\nTHREE\nthree-and-a-half\nfour\nfive\n" })),
+  { ok: true, state: "already-applied" },
+  "§7 the same patch over its own output is already applied — the applier writes nothing",
+);
+eq(
+  applied(applyEvePatch(MID, files({ "a.js": "zero\nzero\nzero\none\ntwo\nthree\nfour\nfive\n" })))?.get("a.js"),
+  "zero\nzero\nzero\none\ntwo\nTHREE\nthree-and-a-half\nfour\nfive\n",
+  "§7 a hunk three lines from its header's line still applies (the offset window)",
+);
+const far = `${"pad\n".repeat(25)}one\ntwo\nthree\nfour\n`;
+ok(!applyEvePatch(MID, files({ "a.js": far })).ok, "§7 a hunk 25 lines from its header's line does not apply (outside the window)");
+const drifted = applyEvePatch(MID, files({ "a.js": "one\ntwo\nthree, changed\nfour\nfive\n" }));
+ok(!drifted.ok, "§7 🔴 a hunk whose lines are not in the file is REFUSED, not skipped");
+ok(!drifted.ok && drifted.problem.includes("node_modules/eve/a.js: hunk 1 of 1"), "§7 the refusal names the file and the hunk");
+ok(!applyEvePatch(MID, files({ "a.js": "one\ntwo\nthree \nfour\n" })).ok, "§7 a trailing space is a different line — the match is exact");
+
+const NOEOL = block("b.js", "@@ -1 +1,2 @@\n-x\n\\ No newline at end of file\n+x\n+y\n\\ No newline at end of file\n");
+eq(applied(applyEvePatch(NOEOL, files({ "b.js": "x" })))?.get("b.js"), "x\ny", "§7 a file with no final newline keeps none");
+ok(!applyEvePatch(NOEOL, files({ "b.js": "x\n" })).ok, "§7 the old side's `\\ No newline` refuses a file that ends in a newline");
+eq(applyEvePatch(NOEOL, files({ "b.js": "x\ny" })), { ok: true, state: "already-applied" }, "§7 a no-final-newline patch reads as already applied");
+const ADDEOL = block("c.js", "@@ -1 +1 @@\n-x\n\\ No newline at end of file\n+x\n");
+eq(applied(applyEvePatch(ADDEOL, files({ "c.js": "x" })))?.get("c.js"), "x\n", "§7 a patch that adds the final newline adds it");
+
+const TWO = `${MID}${block("d.js", "@@ -1,2 +1,2 @@\n-p\n+P\n q\n")}`;
+const mixed = applyEvePatch(TWO, files({ "a.js": "one\ntwo\nTHREE\nthree-and-a-half\nfour\n", "d.js": "p\nq\n" }));
+ok(!mixed.ok, "🔴 §7 one file patched and one not is REFUSED — not all-applied, not all-pristine");
+const twoOk = applied(applyEvePatch(TWO, files({ "a.js": "one\ntwo\nthree\nfour\n", "d.js": "p\nq\n" })));
+eq([...(twoOk?.keys() ?? [])], ["a.js", "d.js"], "§7 a two-file patch writes both files");
+const missingFile = applyEvePatch(TWO, files({ "a.js": "one\ntwo\nthree\nfour\n", "d.js": undefined }));
+ok(!missingFile.ok && missingFile.problem.includes("not installed"), "§7 a target that is not installed is refused");
+
+const MULTI = block("e.js", "@@ -1,2 +1,3 @@\n a\n+a2\n b\n@@ -5,2 +6,2 @@\n e\n-f\n+F\n");
+eq(applied(applyEvePatch(MULTI, files({ "e.js": "a\nb\nc\nd\ne\nf\n" })))?.get("e.js"), "a\na2\nb\nc\nd\ne\nF\n", "§7 a second hunk applies after the first moved the lines");
+eq(applyEvePatch(MULTI, files({ "e.js": "a\na2\nb\nc\nd\ne\nF\n" })), { ok: true, state: "already-applied" }, "§7 a two-hunk patch reads as already applied");
+
+for (const [label, body] of [
+  ["a new file", `diff --git a/node_modules/eve/n.js b/node_modules/eve/n.js\nnew file mode 100644\n--- /dev/null\n+++ b/node_modules/eve/n.js\n@@ -0,0 +1 @@\n+n\n`],
+  ["a mode change", `diff --git a/node_modules/eve/m.js b/node_modules/eve/m.js\nold mode 100644\nnew mode 100755\n`],
+  ["a short hunk", block("a.js", "@@ -1,3 +1,3 @@\n one\n-two\n+TWO\n")],
+  ["no hunk at all", block("a.js", "")],
+  ["a header that undercounts, before a second hunk", block("a.js", "@@ -1,2 +1,2 @@\n one\n-two\n+TWO\n three\n@@ -3 +3 @@\n-three\n+THREE\n")],
+  ["a trailing added line past the counts", block("a.js", "@@ -1 +1 @@\n-one\n+ONE\n+EXTRA\n")],
+  ["a file outside eve", "diff --git a/node_modules/other/x.js b/node_modules/other/x.js\n--- a/node_modules/other/x.js\n+++ b/node_modules/other/x.js\n@@ -1 +1 @@\n-x\n+y\n"],
+  ["an empty patch", ""],
+] as const) {
+  ok(!applyEvePatch(body, files({ "a.js": "one\ntwo\nthree\n", "m.js": "m\n", "n.js": undefined })).ok, `§7 ${label} is refused, never skipped`);
+}
 
 const require_ = createRequire(import.meta.url);
 const installedEve = dirname(require_.resolve("eve/package.json"));
@@ -425,6 +477,20 @@ try {
     "§6a missingEveMarkers reports every marker as missing on the unpatched tree",
   );
 
+  const inMemory = applyEvePatch(PATCH_BODY, contentsBefore);
+  ok(inMemory.ok && inMemory.state === "applied", "§7 the real patch applies forward to the unpatched fixture");
+  if (inMemory.ok && inMemory.state === "applied") {
+    eq(inMemory.files.size, realTargets.length, "§7 the applier writes every target of the real patch");
+    for (const t of realTargets) {
+      ok(
+        inMemory.files.get(t.insidePackage) === readFileSync(join(installedEve, t.insidePackage), "utf8"),
+        `§7 ${t.insidePackage} is byte-identical to patch-package's output`,
+      );
+    }
+  }
+  const patchedContents = new Map(realTargets.map((t) => [t.insidePackage, readFileSync(join(installedEve, t.insidePackage), "utf8")]));
+  eq(applyEvePatch(PATCH_BODY, patchedContents), { ok: true, state: "already-applied" }, "§7 the real patch reads as already applied on patched bytes");
+
   const first = run();
   eq(first.code, 0, `§6b the applier exits 0 on an unpatched tree — output:\n${first.out}`);
   eq(markerCount(), totalMarkers, "§6b every marker the patch adds is in the fixture's eve afterwards");
@@ -439,6 +505,26 @@ try {
   const second = run();
   eq(second.code, 0, `§6c a second run on a patched tree exits 0 — output:\n${second.out}`);
   eq(markerCount(), totalMarkers, "§6c the second run left every marker in place");
+  ok(second.out.includes("already applied"), "§6c the second run says the patch is already applied");
+
+  reverse();
+  const typesTarget = realTargets.find((t) => t.markers.length === 0)!;
+  const typesFile = join(eveDir, typesTarget.insidePackage);
+  const typesBefore = readFileSync(typesFile, "utf8");
+  ok(typesBefore.includes(" * Stream event emitted after one compaction checkpoint message has been"), "§6g the fixture holds the context line the hunk removes");
+  writeFileSync(typesFile, typesBefore.replace(" * Stream event emitted after one compaction checkpoint message has been", " * changed by a third party"));
+  const othersBefore = new Map(realTargets.map((t) => [t.insidePackage, readFileSync(join(eveDir, t.insidePackage), "utf8")]));
+  const broken = run();
+  eq(broken.code, 1, `§6g the applier exits 1 when a hunk does not apply — output:\n${broken.out}`);
+  ok(broken.out.includes("does not apply") && broken.out.includes(typesTarget.path), "§6g the refusal names the file whose hunk does not apply");
+  ok(broken.out.includes("wrote nothing"), "§6g the refusal says the applier wrote nothing");
+  ok(!broken.out.includes("restoring"), "§6g an eve with no OE bytes is refused, not restored");
+  for (const t of realTargets) {
+    eq(readFileSync(join(eveDir, t.insidePackage), "utf8"), othersBefore.get(t.insidePackage), `§6g ${t.insidePackage} is byte-unchanged`);
+  }
+  writeFileSync(typesFile, typesBefore);
+  eq(markerCount(), 0, "§6g the fixture is back to its unpatched bytes");
+  eq(run().code, 0, "§6g the restored fixture patches cleanly");
 
   reverse();
   writeFileSync(join(eveDir, "package.json"), JSON.stringify({ name: "eve", version: "0.1.0" }));
@@ -460,6 +546,7 @@ try {
   eq(readFileSync(storeProbe, "utf8"), storeBefore, "§6f the STORE copy is byte-unchanged — the shared inode was not rewritten");
   eq(statSync(sharedTarget).nlink, 1, "§6f the project's target now has its own inode");
   ok(detached.out.includes("detached 1 file(s)"), "§6f the applier says it detached the file");
+  ok(!readdirSync(dirname(sharedTarget)).some((f) => f.endsWith(".oe-apply")), "§6f no staged `.oe-apply` copy is left behind");
   rmSync(storeProbe, { force: true });
 
   const repoEveBefore = readFileSync(join(installedEve, realTargets[0]!.insidePackage), "utf8");

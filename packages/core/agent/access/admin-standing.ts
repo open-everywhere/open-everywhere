@@ -31,6 +31,7 @@ function adminUnverifiedMessage(reason: string, tail: string = COALESCED_TAIL): 
 }
 
 export function adminStandingSubject(binding: SurfaceBinding, ctx?: BindableContext): AdminSubject {
+  // principal-gate: presence — a HUMAN must be here, acting. A fire must NOT satisfy this, whatever
   const acting = actingPrincipalId(binding);
   if (!acting) return { ok: false, message: ADMIN_NO_ACTING_MESSAGE };
   if (ctx !== undefined && liveAuthIsAnotherPrincipal(ctx)) {
@@ -61,7 +62,7 @@ export function sharedOrgAdminSubject(
   }
   if (admins === undefined || admins.length === 0) return undefined;
   for (const id of candidates) {
-    if (!rosterHasPrincipal(admins, binding.platform, binding.workspace, id)) return undefined;
+    if (!rosterHasPrincipal(admins, binding.platform, binding.workspace, id, binding.enterprise)) return undefined;
   }
   const sorted = [...candidates].sort();
   return acting !== undefined && candidates.includes(acting) ? acting : (sorted[0] as string);

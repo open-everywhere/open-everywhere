@@ -48,7 +48,7 @@ registerConfig({
   pluginRegistry: {},
   skillContent: {},
   loadDomains: () => [
-    defineDomain({ name: "org", match: "org", admins: ["slack/T1/U_ORG_ADMIN", "slack/TW/U_ORG_ADMIN"] }),
+    defineDomain({ name: "org", match: "org", admins: ["slack/T1/U_ORG_ADMIN", "slack/TW/U_ORG_ADMIN", "slack/E_GRID/U_GRID_ADMIN"] }),
     defineDomain({ name: "eng", reach: ["slack/T1/C_ENG"], admins: ["slack/T1/U_ENG_ADMIN"] }),
     defineDomain({ name: "win", reach: ["slack/TW/C_WIN"], admins: ["slack/T1/U_ORG_ADMIN"], ambientSupervisor: true, mode: "solo" }),
     defineDomain({ name: "dwin", reach: ["discord/GW/C_DWIN"], admins: ["discord/U_ORG_ADMIN"], ambientSupervisor: true, mode: "solo" }),
@@ -527,10 +527,21 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
     "OPE-332: approval.denied names the venue the refused click happened in (non-redirected)",
   );
 
+  const gridArgs = JSON.stringify({ org: "default", scopeKey: "slack/T4/C4", level: "surface", monthlyTokens: 700, currentCap: null });
+  await store.addPendingAction(row({ id: "p-grid-yes", domain: null, argsJson: gridArgs }));
+  await store.addPendingAction(row({ id: "p-grid-no", domain: null, argsJson: gridArgs }));
+  await handleApprovalPayload({ ...payloadFor("oe_approval:approve:p-grid-yes", { user: "U_GRID_ADMIN" }), enterprise: { id: "E_GRID" } }, { post });
+  ok((await store.getPendingAction("default", "p-grid-yes"))?.status === "approved", "🔴 handleApprovalPayload: a Grid admin key decides an admin card when the payload names that Grid (OPE-2400)");
+  await handleApprovalPayload(payloadFor("oe_approval:approve:p-grid-no", { user: "U_GRID_ADMIN" }), { post });
+  ok((await store.getPendingAction("default", "p-grid-no"))?.status === "pending", "🔴 handleApprovalPayload: NEGATIVE CONTROL — the same click with no Grid on the payload leaves the card PENDING");
+
   ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: null }, "U_ORG_ADMIN", "slack", "T1") === true, "clickerMayDecide: org admin covers a domain-less scope");
   ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: null }, "U_RANDOM_MEMBER", "slack", "T1") === false, "clickerMayDecide: a plain member does not cover a domain-less scope");
   ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: "eng" }, "U_ENG_ADMIN", "slack", "T1") === true, "clickerMayDecide: the FROZEN domain's own admin covers it");
   ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: "eng" }, "U_RANDOM_MEMBER", "slack", "T1") === false, "clickerMayDecide: a non-admin does not cover an explicit domain either");
+  ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: null }, "U_GRID_ADMIN", "slack", "T1", "E_GRID") === true, "🔴 clickerMayDecide: a Grid org admin key covers a click whose payload named that Grid (OPE-2400)");
+  ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: null }, "U_GRID_ADMIN", "slack", "T1") === false, "🔴 clickerMayDecide: NEGATIVE CONTROL — the same clicker on a payload that named no Grid holds nothing");
+  ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: null }, "U_GRID_ADMIN", "slack", "T1", "E_OTHER") === false, "🔴 clickerMayDecide: …nor on one that named another Grid");
 
   const domainCapRow = (level: "domain" | "surface" | "workspace") =>
     row({
@@ -1077,6 +1088,35 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
       requester: { kind: "requester", principalId: "U_LATER" },
       nonMemberWake: true,
     });
+    {
+      const { resolveUnifiedWakeAuthority } = await import("../agent/channels/unified-window.js");
+      const gridOrigin = { platform: "slack", channelId: "C_WIN", threadTs: "GRID.T" } as const;
+      const gridBinding = { ...proposalBinding, threadTs: "GRID.T", enterprise: "E_GRID" } as const;
+      let threw: unknown;
+      try {
+        await registerUnifiedWakeTarget(store, "default", "wake-grid-binding", gridOrigin, new Date().toISOString(), WIN_TOKEN, true, "direct-mention", "slack/TW/C_WIN", gridBinding, {
+          binding: gridBinding,
+          requester: { kind: "requester", principalId: "U_ORIGINAL_REQUESTER" },
+          nonMemberWake: false,
+        });
+      } catch (err) {
+        threw = err;
+      }
+      ok(threw === undefined, "🔴 OPE-2400: a wake whose binding carries a Grid id registers — the frozen grammar admits `enterprise`");
+      const gridAuthority = await resolveUnifiedWakeAuthority(store, "default", "wake-grid-binding");
+      ok(gridAuthority?.binding.enterprise === "E_GRID", "🔴 OPE-2400: …and the Grid id round-trips through the durable wake row");
+      let mismatch: unknown;
+      try {
+        await registerUnifiedWakeTarget(store, "default", "wake-grid-mismatch", { ...gridOrigin, threadTs: "GRID.M" }, new Date().toISOString(), WIN_TOKEN, true, "direct-mention", "slack/TW/C_WIN", { ...proposalBinding, threadTs: "GRID.M" }, {
+          binding: { ...proposalBinding, threadTs: "GRID.M", enterprise: "E_GRID" },
+          requester: { kind: "requester", principalId: "U_ORIGINAL_REQUESTER" },
+          nonMemberWake: false,
+        });
+      } catch (err) {
+        mismatch = err;
+      }
+      ok(mismatch !== undefined, "OPE-2400: two bindings that disagree on the Grid are a dual-binding mismatch — the Grid id is admin authority");
+    }
     const proposalHookCtx = {
       channel: { kind: "unified" },
       session: {

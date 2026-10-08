@@ -76,7 +76,7 @@ test("a worker's question card reaches the room, and the room's answer reaches t
   }, "the work.question_posted row — the worker's card posted into the room");
   expect(posted).toHaveLength(1);
   expect(JSON.stringify(posted)).not.toContain(QUESTION_PROMPT);
-  expect(await rowsSinceCursor(cursor, ["turn.question_bridged"])).toEqual([]);
+  expect(await rowsSinceCursor(cursor, ["turn.question_dropped"])).toEqual([]);
 
   const waitingResult = await awaitWorkResult({ handle: firstResult, taskId, label: "the seat step that read the worker's waiting result" });
   expect(waitingResult.messages.some((m) => m.text.includes(CHILD_WAITING))).toBe(true);

@@ -442,7 +442,7 @@ through which the model can name a room.
 | `delegation-pending` | a delegated worker still owes this turn its result |
 | `task-wake-unread` | a task wake this turn holds has not been read |
 | `mismatch` / `expired` / `answered` | the **wake fence**, on a unified single-window session only. The model named a wake id this turn does not hold, or the id aged past its TTL, or an earlier turn already answered it (`channels/unified-window.ts`) |
-| `answer-delivered` | the **wake fence**, on a unified single-window session only (OPE-2335). The turn's own wake carried the answer to a bridged question, and the question bridge settled it, so it takes no reply of its own. It fires only on a turn whose auth bag changed in-turn. Not overridable with `force`. Reply to the wake of the conversation that asked the question |
+| `answer-delivered` | the **wake fence**, on a unified single-window session only (OPE-2335). The turn's own wake is marked answered with no turn id, so it takes no reply of its own. The unified question bridge's answer leg wrote that mark until OPE-2389 deleted it; the fence still refuses the shape. It fires only on a turn whose auth bag changed in-turn. Not overridable with `force`. Reply to the wake of the conversation that asked the question |
 
 The last two rows are a different class from the six above them. The six judge **whether this turn
 may put this text in this room**. The wake fence judges **the address the model named**, so a
@@ -1110,13 +1110,8 @@ model must write the full message, not only the new part.
 then counts pending inbound wakes registered after that anchor **in the same conversation**. A row is
 counted only when it parses as a known origin and names this conversation; an unreadable origin never
 counts. With no window token, or with no stamp on either wake, or on a store error, the gate is simply
-off and the answer lands. When the question bridge delivers a wake to a worker as an answer, the
-same leg marks that wake answered (`settleAnsweredWake`), so the gate never counts it: the seat never
-receives that wake. Only an unaddressed reply in the question's room answers the worker. An @-mention of the agent
-is always the seat's wake (`resolveInboundAnswerRouting` reason `addressed-mention`), and the question
-stays open for a plain reply. A DM wake, and a Linear reply in the app's own agent session that names
-no mention (`UnifiedWindowWake.followUp`), are addressed by construction, so a plain reply there still
-answers.
+off and the answer lands. The unified window has no question road (OPE-2389), so every inbound
+wake there reaches the seat and is counted.
 
 It loads at most **20** newer wakes (`MAX_NEWER_WAKES`); past that cap the refusal reports the count as
 "at least". `markStaleRefusedThisTurn` records the refusal per turn per wake, capped at **32** wakes,
@@ -1289,7 +1284,7 @@ probe of the vendor's API.
 capability in `packages/providers/<id>/agent/surface-parity.ts`, and
 `npx tsx scripts/surface-parity.ts` renders these tables from those declarations.
 `npm run lint:surface-parity` reds on a capability a provider leaves unanswered and on an
-`unsupported` with no reason. For the sixteen rows a machine can measure it also compares the
+`unsupported` with no reason. For the fifteen rows a machine can measure it also compares the
 declaration against the code, in two arms that do NOT cover the same cells:
 
 - a **bare `supported`** the code cannot confirm reds. A `{ supported: "<note>" }` cell does not —
@@ -1298,12 +1293,11 @@ declaration against the code, in two arms that do NOT cover the same cells:
 - **any `unsupported` cell the code contradicts** reds. Nothing is exempt here. This is the arm that
   catches a gap closing without the ledger being updated.
 
-Eleven of those sixteen rows read a live registry alone. Four have no registry to read — the ambient
+Eleven of those fifteen rows read a live registry alone. Four have no registry to read — the ambient
 engagement seam, the owned-thread ingress divert, the engaged wake row promotion and the seat
 context-line admission — so each of those probes scans the bundle's sources instead, for an import
 of the core function that IS the seam, or, for the promotion, for the mapping's own body and the
-audit field it feeds. The sixteenth, the unified component plane, needs both: the registry answers
-whether the arm renders the button, and the source scan answers whether the tap comes back. The
+audit field it feeds. The
 other twenty-three rows are declaration-only — the §4 verbs mount on session grants and per-surface tool logic, not on a
 platform-keyed registry, so there is nothing for a probe to read and their truth rests on the
 provider author.
@@ -1319,7 +1313,6 @@ the rows.
 | Capability manifest §2.4 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Post arm §4.1 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Wake-origin codec §2.3 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Unified component plane** (`dispatchUnifiedActions`) §4.1 | ✅ | ✅ | ❌ the arm posts a plain message activity, and a button here needs an Adaptive Card PLUS an invoke route to receive the tap. `teams-front.ts` forwards every `invoke` to the native channel, whose HITL route resolves a tap against the TEAMS channel's own session — a unified seat's parked request lives on another session entirely, so an OE-minted card would render a button that settles nothing. Prose, which stands on its own, until that route exists | ❌ an issue comment is markdown and carries no component plane at all — GitHub offers no tappable button a bot may render into a timeline comment, so there is nothing for a tap route to receive. The bridged approval posts as prose, which the question bridge already renders complete | ❌ a Linear comment and an Agent Activity are both markdown bodies with no component plane — there is no tappable button this app may render and therefore nothing for a tap route to receive. The bridged approval posts as prose, which the question bridge already renders complete | ❌ a Notion discussion comment is rich text with no component plane — the API offers no tappable button an integration may render into one, so there is nothing for a tap route to receive. The bridged approval posts as prose, which the question bridge already renders complete |
 | **Wake-origin placement carry** (`placementRef`/`carryPlacement`) §2.3 | ✅ | ✅ | ❌ the placement is INSIDE the conversation identity: `threadRef` keys on `replyToActivityId`, the very activity a reply hangs under, so two origins that pass the conversation test already agree on placement and there is no gap to carry | ❌ the placement is INSIDE the conversation identity: a reply is a comment appended to the issue timeline and the issue IS `threadRef`'s thread key, so there is no 'where inside it' left to name | ❌ the placement is INSIDE the conversation identity: `parentId` is the thread-root comment a reply nests under and it is exactly what `threadRef` keys on. `agentSessionId` is not a second axis — it selects the reply ROUTE, so carrying it would deliver an answer into a session that asked nothing | ❌ the placement is INSIDE the conversation identity: a reply targets `discussionId`, which is exactly what `threadRef` keys on, so two origins that pass the conversation test name the same discussion and cannot disagree about placement |
 | Read adapter §4.5 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Reaction **feedback** ingest §4.9 | ✅ | ✅ | ✅ the vendor fence is the guarantee — Teams delivers the event only for the agent's own messages, and carries no author to compare | ✅ polled on the next delivery for that conversation — GitHub pushes no reaction webhook, so a removal is never observed | ✅ the author of the reacted comment costs one GraphQL read — the webhook does not carry it | ❌ vendor limit — Notion pushes no reaction event and its comment object exposes no reaction resource, so there is nothing to receive and nothing to poll |

@@ -56,10 +56,6 @@
       "types": "./dist/agent/approvals/discord-scope-label.d.ts",
       "default": "./dist/agent/approvals/discord-scope-label.js"
     },
-    "./agent/channels/discord-approval-card.js": {
-      "types": "./dist/agent/channels/discord-approval-card.d.ts",
-      "default": "./dist/agent/channels/discord-approval-card.js"
-    },
     "./agent/channels/discord-backscroll.js": {
       "types": "./dist/agent/channels/discord-backscroll.d.ts",
       "default": "./dist/agent/channels/discord-backscroll.js"

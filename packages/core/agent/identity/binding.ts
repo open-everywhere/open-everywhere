@@ -31,6 +31,7 @@ export interface SurfaceBinding {
   readonly modeResolved?: true;
   readonly visibility: Visibility;
   readonly trust: Trust;
+  readonly enterprise?: string;
   readonly declaredTrust?: SurfaceTrust;
   readonly principalId?: string;
   readonly principalAttested?: true;
@@ -616,6 +617,7 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
   const workspace = seg(raw.workspace ?? ambientWorkspace(), UNNAMED_TENANT);
   const surface = seg(raw.surface ?? ambientSurface(), "default");
   const domainSurfaceSeg = raw.domainSurface ? seg(raw.domainSurface, surface) : undefined;
+  const enterpriseSeg = seg(raw.trustEnterprise, "");
   const declared = declaredSurfaceTrust({
     tenantKey: `${platform}/${workspace}`,
     surfaceKeys:
@@ -650,6 +652,7 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
     visibility: raw.visibility ?? local.visibility ?? "public",
     trust,
     ...(declared === undefined ? {} : { declaredTrust: declared }),
+    ...(enterpriseSeg.length === 0 ? {} : { enterprise: enterpriseSeg }),
     principalId: fire?.id ?? raw.principalId ?? local.principalId,
     ...(fire || unattended ? { principalAttested: true as const } : {}),
     target: raw.target,

@@ -648,6 +648,15 @@ const eq = (actual: unknown, expected: unknown, label: string) => {
     "…and the floor AGREES there, because it derives the tenant from the key — only the enterprise rung diverges",
   );
 
+  const bindingOf = (attrs: Record<string, string>) =>
+    bindFrom({
+      channel: { kind: "vendortest" },
+      session: { auth: { current: { attributes: attrs, principalId: "U1", principalType: "vendortest-user" } } },
+    } as unknown as BindableContext);
+  eq(bindingOf({ ws: "W_SIB", sf: "C_ROOM", enterprise: "E_GRID" }).enterprise, "E_GRID", "🔴 bindFrom: the mapper's `trustEnterprise` reaches `SurfaceBinding.enterprise` (OPE-2400)");
+  ok(!("enterprise" in bindingOf({ ws: "W_SIB", sf: "C_ROOM" })), "bindFrom NEGATIVE CONTROL: a delivery that names no Grid omits the key — absent, not empty");
+  eq(bindingOf({ ws: "W_SIB", sf: "C_ROOM", enterprise: "E/GRID!" }).enterprise, "E-GRID", "bindFrom: the Grid id takes the one tenant-segment spelling, the same one the trust walk's enterprise key uses");
+
   registerSurfaces([defineSurface({ key: "vendortest/W1/D_PARTNER", trust: "public" })]);
   eq(
     bind({ ws: "W1", sf: "D_PARTNER", mode: "dm", verdict: "internal" }),

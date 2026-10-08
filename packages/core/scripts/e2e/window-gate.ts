@@ -1,6 +1,7 @@
 import { type AuditWireEntry } from "./audit-read.js";
 import {
   sleep, dS, makeWant, createRecorder, createInjector, createAuditReader, readToolCalls, readToolNames, scoreWithheldPair,
+  deploymentPresenceSince,
 } from "./window-harness.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
 import { withheldFromGrain } from "../../agent/access/window-gate-manifest.js";
@@ -97,7 +98,7 @@ const withheldStanding = new Set(withheldFromGrain("standing"));
 const leanKeep = [...LEAN_SEAT_TOOLS].filter((n) => !withheldStanding.has(n)).sort();
 
 async function f1(): Promise<void> {
-  const since = new Date().toISOString();
+  const since = await deploymentPresenceSince(TARGET, READ);
   const { wakeId, token } = await inject({ domain: DOMAIN, platform: "slack", surfaceKey: SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: slackOrigin, text: HEAVY });
   console.log(`  F1 injected standing unified wake ${wakeId} → token ${token}`);
   const { grainRow, leanRow } = await pollForGatedPair(since, wakeId, GATE_TIMEOUT_MS);
@@ -119,7 +120,7 @@ async function f1(): Promise<void> {
 }
 
 async function f2(): Promise<void> {
-  const since = new Date().toISOString();
+  const since = await deploymentPresenceSince(TARGET, READ);
   const solo = `solochan-${RUN}`;
   const { wakeId, token } = await inject({ domain: DOMAIN, platform: "slack", surfaceKey: SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: slackOrigin, text: HEAVY, soloWindowId: solo });
   const isSolo = token.includes(`:win:${solo}:`);
@@ -163,7 +164,7 @@ async function f3(): Promise<void> {
 
   let legB = "leg B (live standing-token drive) skipped (no injectable window)";
   try {
-    const since = new Date().toISOString();
+    const since = await deploymentPresenceSince(TARGET, READ);
     const inj = await inject({ domain: DOMAIN, platform: "slack", surfaceKey: SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: dmOrigin, text: HEAVY, soloWindowId: `dm-${RUN}` });
     const g = await pollForGated(since, inj.wakeId, GATE_TIMEOUT_MS);
     if (g && dS(g, "grain") === "standing" && !WIDE_HANDS.some((w) => !((g.detail?.withheld as string[]) ?? []).includes(w))) {
@@ -179,7 +180,7 @@ async function f3(): Promise<void> {
 }
 
 async function f4(): Promise<void> {
-  const since = new Date().toISOString();
+  const since = await deploymentPresenceSince(TARGET, READ);
   const thread = `f4-${RUN}`;
   const brief = `${HEAVY} As part of the job run \`echo window-gate-${RUN}\` with bash to confirm your sandbox, then reply here with DONE-${RUN}.`;
   const { wakeId, token } = await inject({ domain: DOMAIN, platform: "slack", surfaceKey: SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: slackOrigin, text: brief, taskThread: thread });
@@ -203,10 +204,10 @@ async function f4(): Promise<void> {
 
 async function f5(): Promise<void> {
   const thread = `f5-${RUN}`;
-  const since1 = new Date().toISOString();
+  const since1 = await deploymentPresenceSince(TARGET, READ);
   const inj1 = await inject({ domain: DOMAIN, platform: "slack", surfaceKey: SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: slackOrigin, text: `first task turn (marker ${RUN}-a). reply with SESSION-${RUN}.`, taskThread: thread });
   const r1 = await pollForReply(since1, inj1.wakeId, REPLY_TIMEOUT_MS);
-  const since2 = new Date().toISOString();
+  const since2 = await deploymentPresenceSince(TARGET, READ);
   const inj2 = await inject({ domain: DOMAIN, platform: "slack", surfaceKey: SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: slackOrigin, text: `second task turn in the SAME thread (marker ${RUN}-b). reply with SESSION-${RUN}.`, taskThread: thread });
   const r2 = await pollForReply(since2, inj2.wakeId, REPLY_TIMEOUT_MS);
   const sameToken = inj1.token === inj2.token && isTaskWindowToken(inj1.token);
@@ -254,7 +255,7 @@ async function f6(store: OperationalStore | null): Promise<void> {
 }
 
 async function f7(): Promise<void> {
-  const since = new Date().toISOString();
+  const since = await deploymentPresenceSince(TARGET, READ);
   const { wakeId } = await inject({
     domain: DOMAIN, platform: "slack", surfaceKey: SURFACE, addressing: "channel-watch", author: "routine", origin: slackOrigin,
     text: `scheduled sweep ${RUN}: ${HEAVY}`,
@@ -282,7 +283,7 @@ async function f9(): Promise<void> {
   if (!oneshotAgentEnabled()) {
     return record("F9", "SKIP", "delegation.oneshotAgent is not set in THIS process — spawn_thread_session is flag-gated absent. Re-run with the flag on AND a target deployed with `delegation.oneshotAgent` armed.");
   }
-  const since = new Date().toISOString();
+  const since = await deploymentPresenceSince(TARGET, READ);
   const brief = `We'll be going back and forth in this thread for a while about the ${RUN} rollout — please open a lasting presence here to keep track, then say READY-${RUN}.`;
   const { wakeId, token } = await inject({ domain: DOMAIN, platform: "slack", surfaceKey: SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: slackOrigin, text: brief });
   console.log(`  F9 injected standing wake ${wakeId} → token ${token}`);

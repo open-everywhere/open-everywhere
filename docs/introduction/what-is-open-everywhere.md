@@ -70,7 +70,7 @@ the gap Open Everywhere fills.
 
 ## Where to go next
 
-- **[Quick start](./quick-start.md)** — the five-minutes-to-a-talking-agent path: deploy
+- **[Quick start](./quick-start.md)** — the fast path to a talking agent: deploy
   button → live agent answering in a channel.
 - **[Core concepts](./core-concepts.md)** — the glossary. Every term above, defined once, each
   linking to its deep page.

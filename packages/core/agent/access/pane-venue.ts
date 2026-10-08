@@ -75,6 +75,7 @@ interface VenueResolution {
   readonly isGovernanceChannel: boolean;
   readonly attestation?: FloorAttestation;
   readonly coords: { org: string; platform: string; workspace: string; surface: string };
+  readonly enterprise?: string;
 }
 
 async function resolvePaneVenue(ctx: BindableContext): Promise<VenueResolution> {
@@ -82,7 +83,7 @@ async function resolvePaneVenue(ctx: BindableContext): Promise<VenueResolution> 
   const b = bindFrom(ctx);
   const part = resolvePartition(ctx);
   const coords = { org: part.org, platform: part.platform, workspace: part.workspace, surface: part.surface };
-  const base = { domains, channelKey: part.surfaceKey, principalId: actingPrincipalId(b), coords };
+  const base = { domains, channelKey: part.surfaceKey, principalId: actingPrincipalId(b), coords, ...(b.enterprise === undefined ? {} : { enterprise: b.enterprise }) };
 
   const dmFallback = governanceDeliveryMode(domains) === "dm-fallback";
   if (governanceDomains(domains).length === 0 && !dmFallback) {
@@ -149,7 +150,7 @@ export async function fulfilPaneRead<T>(
     throw redirectError(r, opts.kind);
   }
 
-  const roles = adminControlRoles(r.principalId, r.domains, r.coords.platform, r.coords.workspace);
+  const roles = adminControlRoles(r.principalId, r.domains, r.coords.platform, r.coords.workspace, r.enterprise);
   if (roles.length === 0) {
     const why = r.principalId
       ? `your id ("${r.principalId}") holds no admin standing in any configured domain`

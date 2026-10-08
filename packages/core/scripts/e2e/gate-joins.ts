@@ -1343,6 +1343,8 @@ export function dollarOnlySpendCardFault(cardText: string): string | undefined {
 
 export const ROUTINE_FIRE_ACTION = "routine.fire";
 
+export const TASK_WAKE_ACTION = "unified.task_wake";
+
 export interface FireReportFire {
   readonly atIso: string;
   readonly routineId?: string;
@@ -1417,12 +1419,36 @@ export function fireReportJoin(rows: readonly AuditWireEntry[]): FireReportJoin 
     ),
   ].filter((s) => !sessionIds.includes(s));
   const sessions = new Set(sessionIds);
+  const everyFireHasWake = fires.length > 0 && fires.every((f) => f.wakeId !== undefined);
+  const firstFireMs = fires.length > 0 ? Date.parse(fires[0]!.atIso) : Number.NaN;
+  const fireSessions = new Set([...sessionIds, ...workSessionIds]);
+  const fireTasks = new Set<string>([...requests].map((r) => `work:${r}`));
+  for (const r of rows) {
+    if (r.action !== DELEGATION_TASK_STARTED_ACTION) continue;
+    const task = dstr(r, "task");
+    if (task === undefined) continue;
+    const wake = dstr(r, "wake");
+    const request = dstr(r, "request");
+    const session = dstr(r, "session");
+    const bySession = session !== undefined && fireSessions.has(session) && Number.isFinite(firstFireMs) && tsMs(r) >= firstFireMs;
+    if ((wake !== undefined && wakeIds.has(wake)) || (request !== undefined && requests.has(request)) || bySession) fireTasks.add(task);
+  }
+  const fireWakes = new Set(wakeIds);
+  for (const r of rows) {
+    if (r.action !== SETTLEMENT_REPORT_POSTED_ACTION && r.action !== TASK_WAKE_ACTION) continue;
+    const task = dstr(r, "task");
+    const wake = dstr(r, r.action === TASK_WAKE_ACTION ? "wakeId" : "wake");
+    if (task !== undefined && wake !== undefined && fireTasks.has(task)) fireWakes.add(wake);
+  }
   const replies = rows
     .filter((r) => {
       if (r.action !== REPLY_POST_ACTION) return false;
       const session = dstr(r, "sessionId");
       const wake = dstr(r, "wakeId");
-      return (session !== undefined && sessions.has(session)) || (wake !== undefined && wakeIds.has(wake));
+      if (wake !== undefined && fireWakes.has(wake)) return true;
+      if (session === undefined || !sessions.has(session)) return false;
+      if (wake !== undefined && everyFireHasWake) return false;
+      return Number.isFinite(firstFireMs) && tsMs(r) >= firstFireMs;
     })
     .sort((a, b) => tsMs(a) - tsMs(b));
 
@@ -1454,10 +1480,14 @@ export function fireReportJoin(rows: readonly AuditWireEntry[]): FireReportJoin 
       sessionIds,
       workSessionIds,
       replies,
-      detail: `the dispatcher handed out ${named} and the fire ran as session(s) ${JSON.stringify(sessionIds)}${workSessionIds.length > 0 ? ` (forwarded to work session(s) ${JSON.stringify(workSessionIds)})` : ""}, but no ${REPLY_POST_ACTION} row names that session or wake: the fire did not report back`,
+      detail: `the dispatcher handed out ${named} and the fire ran as session(s) ${JSON.stringify(sessionIds)}${workSessionIds.length > 0 ? ` (forwarded to work session(s) ${JSON.stringify(workSessionIds)})` : ""}, but no ${REPLY_POST_ACTION} row names that wake, or that session after the fire: the fire did not report back`,
     };
   }
-  const settledIds = new Set(settlementReportPairings(rows).map((p) => p.id));
+  const settledIds = new Set(
+    settlementReportPairings(rows)
+      .filter((p) => !everyFireHasWake || fireWakes.has(p.wake))
+      .map((p) => p.id),
+  );
   const settled = replies.filter((r) => {
     const id = dstr(r, "id");
     return id !== undefined && settledIds.has(id);
@@ -1483,6 +1513,7 @@ export const FIRE_REPORT_JOIN_ACTIONS: readonly string[] = [
   SETTLEMENT_REPORT_POSTED_ACTION,
   WORK_FORWARDED_ACTION,
   DELEGATION_TASK_STARTED_ACTION,
+  TASK_WAKE_ACTION,
 ];
 
 export function fireSettleSessionIds(join: Pick<FireReportJoin, "sessionIds" | "workSessionIds">): readonly string[] {

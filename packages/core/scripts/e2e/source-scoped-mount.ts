@@ -1,6 +1,6 @@
 import { type AuditWireEntry } from "./audit-read.js";
 import { fetchTranscript } from "./transcript-read.js";
-import { sleep, dS, makeWant, createRecorder, createInjector, createAuditReader } from "./window-harness.js";
+import { sleep, dS, makeWant, createRecorder, createInjector, createAuditReader, deploymentPresenceSince } from "./window-harness.js";
 import { isWindowToken } from "../../agent/channels/window-key.js";
 
 const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
@@ -79,7 +79,7 @@ async function transcriptOf(sessionId: string, sinceIso: string): Promise<{ tool
 }
 
 async function s1(): Promise<void> {
-  const since = new Date().toISOString();
+  const since = await deploymentPresenceSince(TARGET, READ);
   const brief = `Please use your channel-reading tool (read_channel) to pull recent messages from channel ${SLACK_CHANNEL_ID} in our domain, then reply here with SSM1-${RUN} summarising what you saw. If you cannot read Slack (no such tool, or it refuses), reply SSM1-${RUN} NOSLACK and say so.`;
   const { wakeId, token } = await inject({ domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: { platform: "slack", channelId: SLACK_CHANNEL_ID }, text: brief });
   if (!isWindowToken(token)) return record("S1", "FAIL", `dispatched token ${token} is not a window token — the multi-source window did not resolve`);
@@ -100,7 +100,7 @@ async function s1(): Promise<void> {
 }
 
 async function s2(): Promise<void> {
-  const since = new Date().toISOString();
+  const since = await deploymentPresenceSince(TARGET, READ);
   const solo = `ssm-gh-${RUN}`;
   const brief = `Please use your channel-reading tool (read_channel) to read Slack channel ${SLACK_CHANNEL_ID}, then reply with SSM2-${RUN} summarising what you saw. If you cannot read Slack (no such tool, or it refuses), reply SSM2-${RUN} NOSLACK and say so.`;
   const { wakeId, token } = await inject({ domain: DOMAIN, platform: "github", surfaceKey: GITHUB_SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: { platform: "github", owner: GITHUB_OWNER, repo: GITHUB_REPO, issueNumber: GITHUB_ISSUE }, text: brief, soloWindowId: solo });

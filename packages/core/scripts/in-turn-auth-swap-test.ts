@@ -35,7 +35,6 @@ const { authPrincipalId, currentWakeId, deliveryStampOf } = await import("../age
 const { adoptTaskWakeThisTurn, deliveryChangedThisTurn, noteTurnBoundary, uningressedTurn } = await import("../agent/access/task-wake-signal.js");
 const { markWakeRepliedThisTurn } = await import("../agent/channels/reply-signal.js");
 const { answeredContainerVia, proseDropMayRedrive } = await import("../agent/channels/unified.js");
-const { settleAnsweredWake } = await import("../agent/channels/question-bridge.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 
 const ORG = "default";
@@ -132,7 +131,8 @@ await contextStorage.run(new ContextContainer(), async () => {
   const wB = "wake-B-s4";
   await registerUnifiedWakeTarget(store, ORG, wA, ROOM, iso(), WINDOW);
   await registerUnifiedWakeTarget(store, ORG, wB, ROOM, iso(), WINDOW);
-  ok(await settleAnsweredWake(store, ORG, wB), "S4 precondition: the answer leg settled B's wake, with no turn id");
+  await store.markUnifiedWakeAnswered(ORG, wB, iso());
+  ok((await store.getUnifiedWakeRecord(ORG, wB))?.answeredTurnId === undefined, "S4 precondition: B's wake is settled, with no turn id");
 
   turnStarted(stepCtx("turn_s4_ctl", { principal: B.principal, wakeId: wB, deliveryId: "dlv-s4-ctl" }), "turn_s4_ctl");
   const ctl = await resolveAnswerableReplyTarget(store, ORG, wB, WINDOW, "turn_s4_ctl", wB);

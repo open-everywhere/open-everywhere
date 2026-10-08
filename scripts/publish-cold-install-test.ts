@@ -88,6 +88,11 @@ try {
     "the installed patch is byte-identical to the repository's own",
   );
 
+  ok(!existsSync(join(consumer, "node_modules", "patch-package")), "the cold tree installs no patch-package");
+  const ls = run(...npmCommand(["ls", "patch-package", "--all", "--json"]), consumer);
+  const lsTree = JSON.parse(ls.out.slice(ls.out.indexOf("{"))) as { dependencies?: Record<string, unknown> };
+  eq(Object.keys(lsTree.dependencies ?? {}), [], "`npm ls patch-package --all` finds no path to patch-package in the cold tree");
+
   const createVersion = (JSON.parse(readFileSync(join(REPO_ROOT, "packages", "create", "package.json"), "utf8")) as { version: string }).version;
   const scaffolder = run(...npmCommand(["exec", "--no", "--", "create-open-everywhere", "--version"]), consumer);
   assert.equal(scaffolder.code, 0, `create-open-everywhere --version failed on the unpatched cold tree:\n${scaffolder.out}`);

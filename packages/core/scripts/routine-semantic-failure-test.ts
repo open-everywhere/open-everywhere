@@ -31,7 +31,7 @@ _setDeploymentIdentityForTest({ org: "acme" });
 overrideSettingsForTest({ delegation: { oneshotAgent: false } });
 overrideSettingsForTest({ window: { topology: false } });
 
-const { applyOutcome, declareRunFailed, settleOutcome, MAX_CONSECUTIVE_FAILURES } = await import("../agent/routines/lifecycle.js");
+const { applyOutcome, declareRunFailed, settleOutcome, MAX_CONSECUTIVE_FAILURES, ONCE_FIRE_FAILED_REASON } = await import("../agent/routines/lifecycle.js");
 const { ROUTINE_MARKER, RUN_FAILURE_REASON_MAX_CHARS, routineMarker } = await import("../agent/routines/routine.js");
 const { RUN_FAILED_TOOL, renderFailureBlock, renderScheduledMessage, renderWatchMessage } = await import("../agent/routines/watch.js");
 const { renderJobMessage } = await import("../agent/routines/job.js");
@@ -95,6 +95,15 @@ const MIN = 60_000;
     !(r.disabledReason ?? "").includes("api 500"),
     "applyOutcome: `disabledReason` stays HOST-COMPOSED — routines/disable-notice.ts posts it into the room past the silent-routine delivery gate, so model text must never reach it (routine.ts lastFailureReason §quarantine)",
   );
+
+  const once = applyOutcome(
+    { ...base, trigger: { kind: "once", at: "2026-07-02T12:00:00.000Z" }, ...declareRunFailed("api 500 on the one fire").patch } as Routine,
+    "failed",
+    at,
+  );
+  ok(once.status === "disabled" && once.disabledReason === ONCE_FIRE_FAILED_REASON, `applyOutcome: a failed one-shot disables with the host-composed reason (saw ${JSON.stringify(once.disabledReason)})`);
+  ok(!(once.disabledReason ?? "").includes("api 500"), "🔴 OPE-2394: a one-shot's `disabledReason` carries no declared (model) text either");
+  ok(once.lastFailureReason === "api 500 on the one fire", "applyOutcome: the one-shot's declared reason survives on `lastFailureReason` for the audit rows");
 }
 
 {

@@ -117,7 +117,9 @@ const routineEnable: ActionKind<RoutineEnableArgs> = {
   summarize(args) {
     return [
       `Re-arm routine ${args.id} — ${args.description} — will fire again WITHOUT a fresh @-mention`,
-      `Stopped because: ${args.disabledReason} (${args.consecutiveFailures} consecutive failures)`,
+      args.trigger.kind === "once"
+        ? `Stopped because: ${args.disabledReason} (a one-shot routine runs once)`
+        : `Stopped because: ${args.disabledReason} (${args.consecutiveFailures} consecutive failures)`,
       "↻ keeps everything it learned — a watch's baseline, a job's progress ledger and thread, its id and history",
       ...(args.bounded ? ["⏹️ its run ceiling starts again from zero — it gets a fresh full allowance, not the remainder of the old one"] : []),
       ...(args.stalled

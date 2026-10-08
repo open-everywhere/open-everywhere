@@ -49,6 +49,15 @@ const notesOf = (raw: unknown) => {
 ok(problemsOf(record(release())).length === 0, "a well-formed record parses clean — the negative control for every rule below");
 ok(parseUpgradingNotes(record(release())).notes !== undefined, "…and hands back the parsed record");
 
+ok(notesOf(record(release())).releases[0]!.removedFiles.length === 0, "an entry with no removedFiles reads as an empty list — an older published record still parses");
+ok(notesOf(record(release({ removedFiles: ["agent/instrumentation.ts"] }))).releases[0]!.removedFiles[0] === "agent/instrumentation.ts", "…and a listed path is kept");
+ok(problemsOf(record(release({ removedFiles: ["/etc/passwd"] }))).some((p) => p.includes("removedFiles")), "🔴 an absolute removed path is refused");
+ok(problemsOf(record(release({ removedFiles: "agent/instrumentation.ts" }))).some((p) => p.includes("removedFiles")), "a removedFiles that is not an array is refused");
+ok(
+  renderUpgradingMarkdown(notesOf(record(release({ removedFiles: ["agent/instrumentation.ts"] })))).includes("**Removed template files (delete each one the app still has)**\n\n- `agent/instrumentation.ts`"),
+  "the page lists a release's removed template files",
+);
+
 ok(problemsOf("not an object").length === 1, "a non-object record is refused");
 ok(problemsOf({ schemaVersion: 2, releases: [release()] }).some((p) => p.includes("schemaVersion")), "an unknown schemaVersion is refused");
 ok(problemsOf({ schemaVersion: 1 }).some((p) => p.includes("releases")), "a record with no releases array is refused");

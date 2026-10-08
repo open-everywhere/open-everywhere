@@ -5,10 +5,6 @@ export const GITHUB_SURFACE_PARITY: SurfaceParityDeclaration = {
   "capability-manifest": "supported",
   "post-arm": "supported",
   "wake-origin-codec": "supported",
-  "unified-action-plane": {
-    unsupported:
-      "an issue comment is markdown and carries no component plane at all — GitHub offers no tappable button a bot may render into a timeline comment, so there is nothing for a tap route to receive. The bridged approval posts as prose, which the question bridge already renders complete",
-  },
   "origin-placement-carry": {
     unsupported:
       "the placement is INSIDE the conversation identity: a reply is a comment appended to the issue timeline and the issue IS `threadRef`'s thread key, so there is no 'where inside it' left to name",

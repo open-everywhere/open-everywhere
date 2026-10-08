@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-
 import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -12,6 +12,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -19,6 +20,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
+  applyEvePatch,
   checkEveResolution,
   checkPristineEve,
   evePatchedFilesInstalled,
@@ -28,7 +30,6 @@ import {
   packageManagerOf,
   evePatchTargets,
   missingEveMarkers,
-  patchDirArgument,
 } from "../dist/agent/publish/eve-patch-pack.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -87,13 +88,10 @@ if (packedPatchDir === undefined || !existsSync(join(packedPatchDir, patchFile))
 const extra = readdirSync(packedPatchDir).filter((f) => f.endsWith(".patch") && f !== patchFile);
 if (extra.length > 0) {
   refuse([
-    `patches/ in this install holds ${extra.join(", ")} beside ${patchFile}. patch-package applies EVERY patch in the ` +
-      `directory it is pointed at, so the applier refuses rather than change a package nobody asked it to`,
+    `patches/ in this install holds ${extra.join(", ")} beside ${patchFile}. The tarball ships exactly one patch (the ` +
+      `publish gate asserts that), so this is not the install it built — reinstall @open-everywhere/core`,
   ]);
 }
-
-const patchDir = patchDirArgument({ consumerRoot, packedPatchDir });
-if (!patchDir.ok) refuse([patchDir.problem]);
 
 const patchBody = readFileSync(join(packedPatchDir, patchFile), "utf8");
 const targets = evePatchTargets(patchBody);
@@ -101,58 +99,52 @@ if (targets.length === 0) {
   refuse([`patches/${patchFile} declares no target files (no "+++ b/…" header) — it cannot be applied`]);
 }
 
-let patchPackageBin;
-try {
-  const patchPackageManifest = createRequire(import.meta.url).resolve("patch-package/package.json");
-  const { bin } = JSON.parse(readFileSync(patchPackageManifest, "utf8"));
-  const entry = typeof bin === "string" ? bin : bin?.["patch-package"];
-  if (typeof entry !== "string") throw new Error(`its manifest declares no patch-package bin (bin: ${JSON.stringify(bin)})`);
-  patchPackageBin = join(dirname(patchPackageManifest), entry);
-} catch (err) {
-  refuse([
-    `patch-package could not be resolved from this install: ${err instanceof Error ? err.message : String(err)}. It is a ` +
-      `dependency of @open-everywhere/core, so a tree without it is incomplete — reinstall @open-everywhere/core`,
-  ]);
-}
-
 console.log(
   `oe-eve-patch: eve@${installedVersion} at ${consumerRoot}/node_modules/eve — applying ${patchFile} ` +
     `(${targets.length} file(s))`,
 );
 
-const linkCounts = new Map();
-for (const target of targets) {
-  if (target.insidePackage === "") continue;
-  const file = join(eveRoot, target.insidePackage);
-  if (existsSync(file)) linkCounts.set(target.insidePackage, statSync(file).nlink);
-}
-const shared = evePatchSharedTargets(targets, linkCounts);
-for (const rel of shared) {
-  const file = join(eveRoot, rel);
-  const detached = `${file}.oe-detach`;
-  copyFileSync(file, detached);
-  renameSync(detached, file);
-}
-if (shared.length > 0) {
-  console.log(
-    `  · detached ${shared.length} file(s) from a shared package store before patching — pnpm and bun ` +
-      `hardlink from a store, and patching in place would have rewritten eve for every project on this machine`,
-  );
-}
-
 function applyPatch() {
-  const run = spawnSync(process.execPath, [patchPackageBin, "--patch-dir", patchDir.value, "--error-on-fail"], {
-    cwd: consumerRoot,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (run.error !== undefined) refuse([`patch-package could not be started: ${run.error.message}`]);
-  return run;
-}
-
-function echo(run) {
-  if (run.stdout) process.stdout.write(run.stdout);
-  if (run.stderr) process.stderr.write(run.stderr);
+  const result = applyEvePatch(patchBody, readTargets());
+  if (!result.ok || result.state !== "applied") return result;
+  const shared = evePatchSharedTargets(
+    targets,
+    new Map([...result.files.keys()].map((rel) => [rel, statSync(join(eveRoot, rel)).nlink])),
+  );
+  const staged = [];
+  try {
+    for (const [rel, text] of result.files) {
+      const file = join(eveRoot, rel);
+      const copy = `${file}.oe-apply`;
+      writeFileSync(copy, text);
+      staged.push(copy);
+      chmodSync(copy, statSync(file).mode);
+    }
+  } catch (err) {
+    for (const copy of staged) discard(copy);
+    refuse([`the applier could not stage the patched eve files (${err instanceof Error ? err.message : String(err)}). eve is unchanged`]);
+  }
+  let renamed = 0;
+  try {
+    for (const rel of result.files.keys()) {
+      renameSync(`${join(eveRoot, rel)}.oe-apply`, join(eveRoot, rel));
+      renamed++;
+    }
+  } catch (err) {
+    for (const copy of staged.slice(renamed)) discard(copy);
+    refuse([
+      `the applier wrote ${renamed} of ${result.files.size} patched eve file(s) and then could not replace one ` +
+        `(${err instanceof Error ? err.message : String(err)}). eve is PARTLY patched, and the boot probe refuses it`,
+      evePatchRecovery(pin, packageManager),
+    ]);
+  }
+  if (shared.length > 0) {
+    console.log(
+      `  · detached ${shared.length} file(s) from a shared package store — pnpm and bun hardlink from a store, and ` +
+        `the applier gave each patched file its own inode rather than rewrite eve for every project on this machine`,
+    );
+  }
+  return result;
 }
 
 function readTargets() {
@@ -262,13 +254,11 @@ function restorePristineEve() {
 const packageManager = packageManagerOf(process.env.npm_config_user_agent);
 
 let applied = applyPatch();
-if (applied.status !== 0) {
+if (!applied.ok) {
   const carrying = evePatchedFilesInstalled(readTargets());
   if (carrying.length === 0) {
-    echo(applied);
     refuse([
-      `patch-package exited ${applied.status ?? `on signal ${applied.signal}`} — the patch did not apply. Its output above ` +
-        `names the hunk. An eve whose bytes were already modified is the usual cause: reinstall eve@${pin} and try again`,
+      `${applied.problem}. An eve whose bytes were already modified is the usual cause: reinstall eve@${pin} and try again`,
       evePatchRecovery(pin, packageManager),
     ]);
   }
@@ -278,7 +268,6 @@ if (applied.status !== 0) {
   );
   const restore = restorePristineEve();
   if (!restore.ok) {
-    echo(applied);
     const state = restore.partial
       ? "The installed eve is PARTLY restored: it carries neither patch whole, and the boot probe refuses it"
       : "The installed eve is unchanged and still carries the older OE patch";
@@ -287,17 +276,19 @@ if (applied.status !== 0) {
   console.log(`  · restored ${restore.restored.length} file(s) of eve@${pin} to their pristine bytes:`);
   for (const rel of restore.restored) console.log(`      ${rel}`);
   applied = applyPatch();
-  echo(applied);
-  if (applied.status !== 0) {
+  if (!applied.ok) {
     refuse([
-      `patch-package exited ${applied.status ?? `on signal ${applied.signal}`} on the RESTORED, pristine eve@${pin} — the ` +
-        `packed ${patchFile} does not apply to eve's registry bytes. eve now carries no OE patch; the boot probe refuses it`,
+      `${applied.problem} — on the RESTORED, pristine eve@${pin}, so the packed ${patchFile} does not apply to eve's ` +
+        `registry bytes. eve now carries no OE patch; the boot probe refuses it`,
       evePatchRecovery(pin, packageManager),
     ]);
   }
-} else {
-  echo(applied);
 }
+console.log(
+  applied.state === "applied"
+    ? `  · applied ${patchFile} to ${targets.length} file(s)`
+    : `  · ${patchFile} is already applied — nothing to write`,
+);
 
 const missing = missingEveMarkers(targets, readTargets());
 if (missing.length > 0) refuse(missing);

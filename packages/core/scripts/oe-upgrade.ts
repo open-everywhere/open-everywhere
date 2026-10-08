@@ -2,10 +2,12 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { CONFIG_FILE, findRepoRoot } from "../agent/scaffold/roster-fs.js";
 import { codemodById, unknownCodemods } from "./upgrade-codemods.js";
-import { renderDriftReport, templateDrift } from "./template-drift.js";
-import { NOTES_FILE, codemodIdsIn, compareVersions, notesBetween, parseUpgradingNotes, type ReleaseNote, type UpgradingNotes } from "./upgrade-notes.js";
+import { driftCounts, readTemplateIgnore, renderDriftReport, templateDrift } from "./template-drift.js";
+import { starterRulesOffer } from "./starter-rules-offer.js";
+import { NOTES_FILE, codemodIdsIn, compareVersions, notesBetween, parseUpgradingNotes, removedFilesUpTo, type ReleaseNote, type UpgradingNotes } from "./upgrade-notes.js";
 
 export interface UpgradeRegistry {
   latestVersion(pkg: string): Promise<string | undefined>;
@@ -39,7 +41,10 @@ const USAGE = [
   "  --accept, npm run typecheck, npm run build.",
   "",
   "  Both modes also list every scaffolded file that differs from the target's template (the",
-  "  template drift report). oe upgrade never overwrites one: you read each diff and copy the file.",
+  "  template drift report), and every file a crossed release removed from the template (DELETE).",
+  "  oe upgrade never overwrites or deletes one: you read each diff and copy or delete the file.",
+  "  A path in .oe-template-ignore (one per line, a trailing / for a directory) is the app's own:",
+  "  the report asks nothing for it.",
 ].join("\n");
 
 interface AppManifest {
@@ -136,6 +141,65 @@ function installedOeBin(appRoot: string): readonly [string, readonly string[]] |
   return existsSync(script) ? [process.execPath, [script]] : undefined;
 }
 
+export const LOCKFILE = "package-lock.json";
+
+function inUpgradeSet(name: string): boolean {
+  return name === "eve" || name.startsWith(SCOPE) || name === SCAFFOLDER_OLD;
+}
+
+export function lockfileEntriesToDrop(lock: unknown): readonly string[] {
+  if (typeof lock !== "object" || lock === null) return [];
+  const packages = (lock as { packages?: unknown }).packages;
+  if (typeof packages !== "object" || packages === null || Array.isArray(packages)) return [];
+  const out: string[] = [];
+  for (const [key, entry] of Object.entries(packages as Record<string, unknown>)) {
+    const at = key.lastIndexOf("node_modules/");
+    if (at < 0 || typeof entry !== "object" || entry === null) continue;
+    const e = entry as { link?: unknown; peerDependencies?: unknown };
+    if (e.link === true) continue;
+    const name = key.slice(at + "node_modules/".length);
+    const peers = typeof e.peerDependencies === "object" && e.peerDependencies !== null ? Object.keys(e.peerDependencies) : [];
+    if (inUpgradeSet(name) || peers.some(inUpgradeSet)) out.push(key);
+  }
+  const nested = Object.keys(packages as Record<string, unknown>).filter((key) => !out.includes(key) && out.some((d) => key.startsWith(`${d}/node_modules/`)));
+  return [...out, ...nested];
+}
+
+function dropLegacyDependencies(tree: unknown): number {
+  if (typeof tree !== "object" || tree === null) return 0;
+  let dropped = 0;
+  for (const [name, entry] of Object.entries(tree as Record<string, unknown>)) {
+    if (inUpgradeSet(name)) {
+      delete (tree as Record<string, unknown>)[name];
+      dropped++;
+      continue;
+    }
+    if (typeof entry === "object" && entry !== null) dropped += dropLegacyDependencies((entry as { dependencies?: unknown }).dependencies);
+  }
+  return dropped;
+}
+
+function planLockfilePrune(appRoot: string): { readonly lock: Record<string, unknown>; readonly keys: readonly string[] } | undefined {
+  const path = join(appRoot, LOCKFILE);
+  if (!existsSync(path)) return undefined;
+  try {
+    const lock = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    if (typeof lock !== "object" || lock === null || Array.isArray(lock)) return undefined;
+    return { lock: lock as Record<string, unknown>, keys: lockfileEntriesToDrop(lock) };
+  } catch {
+    return undefined;
+  }
+}
+
+function pruneLockfile(appRoot: string, planned: { readonly lock: Record<string, unknown>; readonly keys: readonly string[] }): number {
+  const packages = planned.lock.packages as Record<string, unknown>;
+  for (const key of planned.keys) delete packages[key];
+  const legacy = dropLegacyDependencies(planned.lock.dependencies);
+  const dropped = planned.keys.length + legacy;
+  if (dropped > 0) writeFileSync(join(appRoot, LOCKFILE), `${JSON.stringify(planned.lock, null, 2)}\n`);
+  return dropped;
+}
+
 function installedTemplateDir(appRoot: string, version: string): string | undefined {
   const root = join(appRoot, "node_modules", SCOPE_DIR, "create");
   try {
@@ -148,14 +212,35 @@ function installedTemplateDir(appRoot: string, version: string): string | undefi
   return existsSync(join(template, "package.json")) ? template : undefined;
 }
 
-async function reportTemplateDrift(io: UpgradeIo, appRoot: string, target: string, manifest: AppManifest): Promise<number | undefined> {
+function ownNotes(): UpgradingNotes | undefined {
+  for (const rel of ["../upgrading.json", "../../upgrading.json"]) {
+    const path = fileURLToPath(new URL(rel, import.meta.url));
+    if (!existsSync(path)) continue;
+    try {
+      return parseUpgradingNotes(JSON.parse(readFileSync(path, "utf8"))).notes;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+async function reportTemplateDrift(
+  io: UpgradeIo,
+  appRoot: string,
+  target: string,
+  manifest: AppManifest,
+  notes: UpgradingNotes | undefined,
+): Promise<{ readonly sync: number; readonly delete: number } | undefined> {
   let templateDir: string | undefined;
   try {
     templateDir = installedTemplateDir(appRoot, target) ?? (await io.registry.templateDir?.(target));
   } catch (err) {
     io.out(`! the template drift check did not run: ${err instanceof Error ? err.message : String(err)}`);
+    for (const line of starterRulesOffer(appRoot, target, undefined)) io.out(line);
     return undefined;
   }
+  for (const line of starterRulesOffer(appRoot, target, templateDir)) io.out(line);
   if (templateDir === undefined) {
     io.out(`! cannot read ${target}'s @open-everywhere/create template, so the template drift check did not run.`);
     io.out(`  Compare agent/lib/register-adapters.ts and the other scaffolded files with that template by hand.`);
@@ -163,17 +248,18 @@ async function reportTemplateDrift(io: UpgradeIo, appRoot: string, target: strin
   }
   const appName = typeof manifest.json.name === "string" && manifest.json.name !== "" ? manifest.json.name : "open-everywhere-app";
   let lines: readonly string[];
-  let owned: number;
+  let counts: { readonly sync: number; readonly delete: number };
   try {
-    const report = templateDrift({ appRoot, templateDir, version: target, appName });
+    const removedFiles = [...new Set([notes, ownNotes()].flatMap((n) => (n === undefined ? [] : removedFilesUpTo(n, target))))];
+    const report = templateDrift({ appRoot, templateDir, version: target, appName, removedFiles, ignore: readTemplateIgnore(appRoot) });
     lines = renderDriftReport(report, target, templateDir);
-    owned = report.entries.filter((e) => e.kind === "owned").length;
+    counts = driftCounts(report);
   } catch (err) {
     io.out(`! the template drift check did not run: ${err instanceof Error ? err.message : String(err)}`);
     return undefined;
   }
   for (const line of lines) io.out(line);
-  return owned;
+  return counts;
 }
 
 function npmCommand(args: readonly string[]): readonly [string, readonly string[]] {
@@ -228,14 +314,20 @@ function applyPins(manifest: AppManifest, target: string, evePeer: string): read
   return changes;
 }
 
-function step(io: UpgradeIo, appRoot: string, label: string, command: readonly [string, readonly string[]]): boolean {
+function step(io: UpgradeIo, appRoot: string, label: string, command: readonly [string, readonly string[]], recovery: readonly string[] = []): boolean {
   io.out(`→ ${label}`);
   const code = io.run(command[0], command[1], appRoot);
   if (code === 0) return true;
   io.err(`✗ oe upgrade: ${label} exited ${code}. Nothing after this step ran.`);
+  for (const line of recovery) io.err(`  ${line}`);
   io.err(`  Fix the cause, then run the same command again: it resumes from here rather than reporting there is nothing to do.`);
   return false;
 }
+
+const INSTALL_RECOVERY: readonly string[] = [
+  `If npm reported ERESOLVE, ${LOCKFILE} still locks a package against the old eve or the old @open-everywhere/* set.`,
+  `Run \`rm ${LOCKFILE} && npm install\`, then read the lockfile diff before you commit it.`,
+];
 
 export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, cwd: string): Promise<number> {
   if (args.includes("--help") || args.includes("-h")) {
@@ -306,7 +398,8 @@ export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, 
   const installed = resumeBaseline ?? current;
   if (pinned === target && onDisk === target && marker.kind === "none" && !retiredScaffolder) {
     io.out(`✓ oe upgrade: already on ${installed}. Nothing to do.`);
-    await reportTemplateDrift(io, appRoot, target, manifest);
+    const here = readInstalledNotes(appRoot);
+    await reportTemplateDrift(io, appRoot, target, manifest, here.kind === "ok" ? here.notes : undefined);
     return 0;
   }
   if (retiredScaffolder && pinned === target && onDisk === target && marker.kind === "none") {
@@ -344,6 +437,10 @@ export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, 
   const pinChanges = applyPins({ ...manifest, json: structuredClone(manifest.json) }, target, evePeer);
   io.out(`Plan:`);
   for (const line of pinChanges) io.out(`  pin  ${line}`);
+  const lockPlan = planLockfilePrune(appRoot);
+  if (lockPlan !== undefined && lockPlan.keys.length > 0) {
+    io.out(`  edit ${LOCKFILE}: drop the ${lockPlan.keys.length} locked entries of eve, @open-everywhere/* and their peer dependents, so npm resolves them together`);
+  }
   io.out(`  run  npm install`);
   const planned = codemodIdsIn(windowBefore);
   if (planned.length === 0) io.out(`  run  the config codemods the target's notes name (the notes read so far name none)`);
@@ -353,7 +450,7 @@ export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, 
   io.out(`  run  npm run build`);
 
   if (plan) {
-    await reportTemplateDrift(io, appRoot, target, manifest);
+    await reportTemplateDrift(io, appRoot, target, manifest, before.kind === "ok" ? before.notes : undefined);
     io.out(`✓ oe upgrade --plan: nothing was written.`);
     return 0;
   }
@@ -368,7 +465,11 @@ export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, 
 
   mkdirSync(dirname(join(appRoot, RESUME_MARKER)), { recursive: true });
   writeFileSync(join(appRoot, RESUME_MARKER), `${JSON.stringify({ from: installed, target })}\n`);
-  if (!step(io, appRoot, "npm install", npmCommand(["install"]))) return 1;
+  if (lockPlan !== undefined) {
+    const dropped = pruneLockfile(appRoot, lockPlan);
+    if (dropped > 0) io.out(`✓ dropped ${dropped} locked entries from ${LOCKFILE} (eve, @open-everywhere/* and their peer dependents)`);
+  }
+  if (!step(io, appRoot, "npm install", npmCommand(["install"]), INSTALL_RECOVERY)) return 1;
 
   const after = readInstalledNotes(appRoot);
   if (after.kind === "broken") {
@@ -391,7 +492,7 @@ export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, 
     io.out(`Release notes (${target}'s own copy):`);
     printWindow(io, windowAfter, installed, target);
   }
-  const staleOwned = await reportTemplateDrift(io, appRoot, target, manifest);
+  const drift = await reportTemplateDrift(io, appRoot, target, manifest, after.kind === "ok" ? after.notes : undefined);
   const oe = installedOeBin(appRoot);
   if (oe === undefined) {
     io.err(`✗ oe upgrade: the install left no \`oe\` bin under node_modules/${CORE}. The install did not complete.`);
@@ -418,8 +519,11 @@ export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, 
     for (const name of release.env.removed) io.out(`  ENV: ${name} is no longer read; remove it after the next deploy (${release.version}).`);
     for (const manual of release.manualSteps) io.out(`  MANUAL (${release.version}): ${manual}`);
   }
-  if (staleOwned !== undefined && staleOwned > 0) {
-    io.out(`  SYNC: ${staleOwned} template-owned file(s) differ from ${target}'s template — see the drift report above. oe upgrade changed none of them.`);
+  if (drift !== undefined && drift.delete > 0) {
+    io.out(`  DELETE: ${drift.delete} file(s) that a release removed from the template are still in the app — see the drift report above. oe upgrade deleted none of them.`);
+  }
+  if (drift !== undefined && drift.sync > 0) {
+    io.out(`  SYNC: ${drift.sync} template-owned file(s) differ from ${target}'s template — see the drift report above. oe upgrade changed none of them.`);
   }
   return 0;
 }

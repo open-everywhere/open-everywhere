@@ -29,7 +29,7 @@ export const slackStep: SetupStep = {
       next:
         'open https://<host>/setup once the deployment is up (it creates and installs the Slack app from one pasted configuration ' +
         'token, with no env var to set), or create the app from the manifest the ops tool `surface_manifest { surface: "slack" }` ' +
-        "returns and write each pasted value with `scaffold_env`",
+        "returns, then have the person run `npx oe env set SLACK_BOT_TOKEN` and `npx oe env set SLACK_SIGNING_SECRET` in their own terminal",
     };
   },
   guide(ctx: StepContext) {
@@ -52,7 +52,7 @@ export const slackStep: SetupStep = {
         }). A second install in one workspace needs its own name: re-run with --app-name "<name>".`,
         "Install to Workspace, then OAuth & Permissions → copy the Bot User OAuth Token (xoxb-…) = SLACK_BOT_TOKEN.",
         "Basic Information → App Credentials → copy the Signing Secret = SLACK_SIGNING_SECRET.",
-        "Write both with the ops tool `scaffold_env`. Never paste a secret into the chat: the person pastes it where the tool reads it.",
+        "Write both with `npx oe env set SLACK_BOT_TOKEN` and `npx oe env set SLACK_SIGNING_SECRET`, run in your own terminal: each reads the value from a hidden prompt. Never paste a secret into the chat, and never pass one to an ops tool.",
         "THE SHORT WAY, once the deployment is up: open https://<host>/setup. It creates the Slack app from this same manifest with one pasted Slack app configuration token, installs it, and keeps every credential in the deployment's own encrypted store — no env var to set. This check cannot see that store, so it still reports this step unsatisfied afterwards; the status endpoint can.",
         "The manifest's URLs say YOUR-DEPLOY-URL until you deploy. Slack cannot verify Event Subscriptions before a deploy that holds SLACK_SIGNING_SECRET is up. After the deploy, paste the manifest again with your host (App Manifest → Save Changes), then retry the verification under Event Subscriptions.",
         "Note two ids for the trust edits: the workspace (team) id T… (the segment after /client/ in the workspace URL at https://app.slack.com), and your own member id U… (your Slack profile → ⋮ More → Copy member ID).",

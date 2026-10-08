@@ -20,6 +20,7 @@ import {
 } from "@open-everywhere/core/agent/scaffold/roster-plan.js";
 import { classifyRosterTransition, rosterToolNameOf } from "@open-everywhere/core/agent/scaffold/tool-roster.js";
 import type { RosterConfig } from "@open-everywhere/core/agent/scaffold/roster-config.js";
+import { CONTRIBUTIONS as CORE_CONTRIBUTIONS } from "@open-everywhere/core/agent/contributions.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -282,6 +283,19 @@ const ONE = [{ kind: "tool", name: "remember", module: "agent/tools/remember.js"
     "provider ids expand to @open-everywhere/provider-<id>; `packages` is the escape hatch",
   );
   eq(declared.find((d) => d.declaredAs === "providers.slack")?.providerId, "slack", "only `providers` entries carry a provider id");
+}
+
+{
+  const status = "agent/channels/oe-status.ts";
+  const core = [pkg(CORE_CONTRIBUTIONS)];
+  const mountedPlan = planAccepted({ core: true }, core);
+  ok(mountedPlan.files.some((f) => f.path === status), "with no exclusion, the plan writes the status-route channel file");
+
+  const hidden = planAccepted({ core: { exclude: { "channel/oe-status": "the deployment does not publish its status" } } }, core);
+  eq(hidden.verdict, "clean", "the status-route exclusion is a clean plan");
+  ok(!hidden.files.some((f) => f.path === status), "🔴 the status-route exclusion plans NO channel file, so eve mounts no route");
+  eq(hidden.lock.packages[CORE]?.contributions["channel/oe-status"], "excluded", "the lock records the status route as excluded");
+  eq(hidden.files.length, mountedPlan.files.length - 1, "the exclusion removes that one file and no other");
 }
 
 {

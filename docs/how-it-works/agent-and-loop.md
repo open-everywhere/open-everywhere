@@ -429,33 +429,18 @@ existed no row named a worker's own session or the tools it mounted. The trail d
 a `tool.action` row carries the principal and no session, and none of them says what the worker
 mounted. A worker is also not narrowed by the seat cut below, so it wrote no `turn.tool_gated` row.
 The question could only be settled by reading the framework's source for the version that was
-deployed. The framework
-proxies a worker's `ask_question` up through the delegating seat's channel, and it is posted
-into the conversation that delegated the work. The next message **in that same conversation** is
-then delivered back to that worker as its answer, addressed to the request it is parked on.
+deployed.
 
-The framework (eve 0.71.0) also has a rule of its own. With exactly one worker question open, it
-takes ANY plain message to the delegating seat as that question's answer. Left alone, that rule
-overrides every decision below: an @-mention, a message from another room and a refused answer all
-reached the worker as its answer. So while a bridged question is open, every message the agent
-delivers as an ordinary wake carries an empty answer text, and the framework resolves nothing on
-it (`ordinaryWakeSendOptions` in `channels/question-bridge.ts`). A row the agent cannot read counts
-as open. The framework's own rule still applies wherever the agent holds no row at all: a question
-whose post failed, whose row write failed, or whose row expired (rows last 6 hours) while the
-framework still holds the question open. Whether a message can arrive between the framework raising
-a question and the row being written is not proven either way.
-
-The conversation is checked, not assumed. One window spans every room and surface in a domain, so
-the agent records the room it posted the question into and compares it against the room each message
-comes from. A message from any other room is an ordinary message: it wakes the agent as usual and
-the question stays open. Where either room cannot be identified the message is also treated as
-ordinary, never as an answer — a question that waits is a smaller cost than a message swallowed by a
-question its sender never saw.
-
-The answer runs the same admission the question's button does: a conversation whose audience floor
-resolves to `guest` cannot answer on the org's behalf, the message is delivered as an ordinary
-wake instead, and the question stays open (see
-[the security model](../security/security-model.md)).
+**The cross-surface window has no question road (OPE-2389).** No shipped production session on it
+raises a native input request: a standing or thread seat runs lean with no `ask_question`, the work session holds
+only `agent` and `task_cancel`, a worker of the work session asks with the `ask_room` card (unless its work-tier verdict fails soft), and no
+shipped tool raises a native approval. So the window's `input.requested` handler posts nothing and
+routes no answer. It drops every such request and writes one `turn.question_dropped` row, which is
+the alarm if a session ever does raise one. That is an alarm, not a fence: the parked request
+holds the turn until the framework lapses it, or until the framework takes the next plain message to
+that session as the answer by its own rule. On that second path the agent's answer admission does
+not run. A surface the agent watches on its own still carries a question both ways —
+the Notion question return (see [the security model](../security/security-model.md)).
 
 **A worker reads its own prompt, not the seat's.** A conversational seat's standing prompt
 describes a channel it watches over days: when to speak, when to stay silent, when a reaction is

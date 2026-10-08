@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { npmCommand } from "./npm-command.js";
 import { BOOTSTRAP_PREFIX, bootstrapCommands, compareVersions } from "../packages/core/scripts/upgrade-notes.js";
 
@@ -85,6 +88,7 @@ function makeNew(pkg: string, options: { readonly codemodId?: string; readonly n
 
   const notesJsonPath = join(pkg, "upgrading.json");
   const notes = JSON.parse(readFileSync(notesJsonPath, "utf8")) as { schemaVersion: number; releases: Record<string, unknown>[] };
+  notes.releases = notes.releases.filter((r) => r.version !== NEW);
   notes.releases.unshift({
     version: NEW,
     date: "2026-10-03",
@@ -169,6 +173,182 @@ else if (command === "install") {
   fs.cpSync(process.env.OE_FAKE_INSTALL_FROM, core, { recursive: true });
 } else if (args[0] !== "run") process.exit(1);
 `;
+
+function runAsync(command: string, args: readonly string[], cwd: string, env: NodeJS.ProcessEnv): Promise<{ status: number; output: string }> {
+  return new Promise((done) => {
+    execFile(command, [...args], { cwd, env, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
+      const status = err === null ? 0 : typeof (err as { code?: unknown }).code === "number" ? ((err as { code: number }).code) : 1;
+      done({ status, output: `${stdout}${stderr}` });
+    });
+  });
+}
+
+const LOCK_FROM = "0.1.4";
+const LOCK_TO = "0.2.1";
+const EVE_FROM = "0.54.3";
+const EVE_TO = "0.71.0";
+
+function standInPackages(): readonly Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = [
+    { name: "eve", version: EVE_FROM },
+    { name: "eve", version: EVE_TO },
+    { name: "@agent-browser/eve", version: "0.32.4", peerDependencies: { eve: ">=0.25.1" } },
+    { name: "oe-lock-bystander", version: "1.0.0" },
+  ];
+  for (const [v, e] of [
+    [LOCK_FROM, EVE_FROM],
+    [LOCK_TO, EVE_TO],
+  ] as const) {
+    const later = v === LOCK_TO;
+    const notes = {
+      schemaVersion: 1,
+      releases: [
+        ...(later ? [{ version: LOCK_TO, date: "2026-10-08", summary: "the stand-in target.", evePeer: EVE_TO, breaking: [], configMigrations: [], env: { added: [], removed: [] }, manualSteps: [] }] : []),
+        { version: LOCK_FROM, date: "2026-10-03", summary: "the stand-in start.", evePeer: EVE_FROM, breaking: [], configMigrations: [], env: { added: [], removed: [] }, manualSteps: [] },
+      ],
+    };
+    out.push({ name: "@open-everywhere/core", version: v, bin: { oe: "bin/oe.js" }, peerDependencies: { eve: e }, __files: { "upgrading.json": JSON.stringify(notes), "bin/oe.js": "process.exit(0);\n" } });
+    out.push({
+      name: "@open-everywhere/adapters",
+      version: v,
+      dependencies: { "@open-everywhere/core": v },
+      peerDependencies: later ? { eve: e, "@agent-browser/eve": "0.32.4" } : { eve: e },
+    });
+    out.push({ name: "@open-everywhere/provider-slack", version: v, dependencies: { "@open-everywhere/core": v }, peerDependencies: { eve: e } });
+    out.push({ name: "@open-everywhere/create", version: v, dependencies: { "@open-everywhere/core": v, "@open-everywhere/provider-slack": v } });
+  }
+  return out;
+}
+
+async function standInRegistry(root: string): Promise<{ readonly url: string; close(): Promise<void> }> {
+  const packuments = new Map<string, { name: string; "dist-tags": Record<string, string>; versions: Record<string, unknown> }>();
+  const tarballs = new Map<string, Buffer>();
+  const server = createServer((req, res) => {
+    const path = decodeURIComponent((req.url ?? "/").split("?")[0]!.slice(1));
+    const tarball = path.startsWith("-/t/") ? tarballs.get(path.slice("-/t/".length)) : undefined;
+    if (tarball !== undefined) {
+      res.setHeader("content-type", "application/octet-stream");
+      res.end(tarball);
+      return;
+    }
+    const packument = packuments.get(path);
+    res.statusCode = packument === undefined ? 404 : 200;
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify(packument ?? {}));
+  });
+  await new Promise<void>((ready) => server.listen(0, "127.0.0.1", ready));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+  for (const spec of standInPackages()) {
+    const { __files, ...manifest } = spec as { __files?: Record<string, string> } & Record<string, unknown>;
+    const name = manifest.name as string;
+    const version = manifest.version as string;
+    const dir = join(root, `${name.replace("/", "+")}@${version}`);
+    mkdirSync(join(dir, "package"), { recursive: true });
+    writeFileSync(join(dir, "package", "package.json"), JSON.stringify(manifest));
+    for (const [rel, body] of Object.entries(__files ?? {})) {
+      mkdirSync(dirname(join(dir, "package", rel)), { recursive: true });
+      writeFileSync(join(dir, "package", rel), body);
+    }
+    const r = run("tar", ["-czf", "p.tgz", "package"], dir);
+    assert.equal(r.status, 0, `tar -czf failed:\n${r.output}`);
+    const bytes = readFileSync(join(dir, "p.tgz"));
+    const key = `${name.replace("/", "+")}-${version}.tgz`;
+    tarballs.set(key, bytes);
+    const packument = packuments.get(name) ?? { name, "dist-tags": {}, versions: {} };
+    packument.versions[version] = {
+      ...manifest,
+      dist: {
+        tarball: `${url}-/t/${key}`,
+        shasum: createHash("sha1").update(bytes).digest("hex"),
+        integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`,
+      },
+    };
+    packument["dist-tags"].latest = version;
+    packuments.set(name, packument);
+  }
+  return { url, close: () => new Promise<void>((closed) => server.close(() => closed())) };
+}
+
+const LOCK_DRIVER = `
+const { spawnSync } = await import("node:child_process");
+const [upgradeModule, app, target, eve] = process.argv.slice(2);
+const { runUpgradeCommand } = await import(upgradeModule);
+const io = {
+  out: (l) => console.log(l),
+  err: (l) => console.error(l),
+  registry: { latestVersion: async () => target, evePeer: async () => eve },
+  run: (command, args, cwd) => spawnSync(command, args, { cwd, stdio: "inherit" }).status ?? 1,
+};
+process.exit(await runUpgradeCommand(["--to", target], io, app));
+`;
+
+async function lockfileLeg(packedCore: string): Promise<void> {
+  const root = join(scratch, "lockfile");
+  const registry = await standInRegistry(join(root, "registry"));
+  try {
+    const userconfig = join(root, "npmrc");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(userconfig, "");
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      npm_config_registry: registry.url,
+      npm_config_userconfig: userconfig,
+      npm_config_cache: join(root, "npm-cache"),
+      npm_config_audit: "false",
+      npm_config_fund: "false",
+      npm_config_update_notifier: "false",
+      NO_PROXY: "127.0.0.1",
+      no_proxy: "127.0.0.1",
+    };
+    const appAt014 = async (name: string): Promise<string> => {
+      const app = join(root, name);
+      mkdirSync(app, { recursive: true });
+      writeFileSync(join(app, "roster.config.ts"), "export default {};\n");
+      const pins = { "@open-everywhere/adapters": LOCK_FROM, "@open-everywhere/core": LOCK_FROM, "@open-everywhere/provider-slack": LOCK_FROM, eve: EVE_FROM, "oe-lock-bystander": "^1.0.0" };
+      const manifest = { name, private: true, scripts: { typecheck: "node -e 0", build: "node -e 0" }, dependencies: pins, devDependencies: { "@open-everywhere/create": LOCK_FROM } };
+      writeFileSync(join(app, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+      const [cmd, args] = npmCommand(["install"]);
+      const r = await runAsync(cmd, args, app, env);
+      assert.equal(r.status, 0, `the fixture install at ${LOCK_FROM} failed:\n${r.output}`);
+      return app;
+    };
+    const lockOf = (app: string): Record<string, { version?: string; resolved?: string; integrity?: string }> =>
+      (JSON.parse(readFileSync(join(app, "package-lock.json"), "utf8")) as { packages: Record<string, { version?: string }> }).packages;
+
+    const control = await appAt014("app-lock-control");
+    ok(lockOf(control)["node_modules/@open-everywhere/adapters"]?.version === LOCK_FROM, `the fixture: the lockfile locks adapters at ${LOCK_FROM}`);
+    const bumped = readFileSync(join(control, "package.json"), "utf8").split(`"${LOCK_FROM}"`).join(`"${LOCK_TO}"`).split(`"${EVE_FROM}"`).join(`"${EVE_TO}"`);
+    writeFileSync(join(control, "package.json"), bumped);
+    const [cmd, args] = npmCommand(["install"]);
+    const bare = await runAsync(cmd, args, control, env);
+    ok(bare.status !== 0 && bare.output.includes("ERESOLVE"), `🔴 the control: a bare npm install of the new pins over the old lockfile exits ERESOLVE — got ${bare.status}\n${bare.output}`);
+
+    const app = await appAt014("app-lock");
+    const bystander = lockOf(app)["node_modules/oe-lock-bystander"];
+    const runner = join(root, "runner");
+    mkdirSync(join(runner, "node_modules", "@open-everywhere"), { recursive: true });
+    cpSync(packedCore, join(runner, "node_modules", "@open-everywhere", "core"), { recursive: true });
+    linkDeps(runner, CORE_RUNTIME);
+    writeFileSync(join(runner, "drive.mjs"), LOCK_DRIVER);
+    const upgradeModule = pathToFileURL(join(runner, "node_modules", "@open-everywhere", "core", "dist", "scripts", "oe-upgrade.js")).href;
+    const up = await runAsync(process.execPath, ["drive.mjs", upgradeModule, app, LOCK_TO, EVE_TO], runner, env);
+    const say = `\n--- oe upgrade output ---\n${up.output}`;
+    ok(up.status === 0, `🔴 \`oe upgrade --to ${LOCK_TO}\` over the ${LOCK_FROM} lockfile exits 0, with the real npm install — got ${up.status}${say}`);
+    ok(existsSync(join(app, "package-lock.json")), "…and the app still has its lockfile");
+    const after = lockOf(app);
+    ok(
+      after["node_modules/@open-everywhere/adapters"]?.version === LOCK_TO && after["node_modules/@open-everywhere/core"]?.version === LOCK_TO && after["node_modules/eve"]?.version === EVE_TO,
+      `🔴 …and the lockfile now locks the ${LOCK_TO} set and eve ${EVE_TO}${say}`,
+    );
+    ok(after["node_modules/@agent-browser/eve"]?.version === "0.32.4", "…and npm placed the new peer the target's adapters declare");
+    const installedEve = JSON.parse(readFileSync(join(app, "node_modules", "eve", "package.json"), "utf8")) as { version: string };
+    ok(installedEve.version === EVE_TO, `…and node_modules holds eve ${EVE_TO} — got ${installedEve.version}`);
+    ok(JSON.stringify(after["node_modules/oe-lock-bystander"]) === JSON.stringify(bystander), "…and an unrelated locked entry is exactly as it was");
+    ok(up.output.includes(`✓ oe upgrade: ${LOCK_FROM} → ${LOCK_TO}.`), `…and the run reports ${LOCK_FROM} → ${LOCK_TO}${say}`);
+  } finally {
+    await registry.close();
+  }
+}
 
 try {
   const [packCmd, packArgs] = npmCommand(["pack", "--workspace", "@open-everywhere/core", "--pack-destination", scratch, "--loglevel", "error", "--ignore-scripts"]);
@@ -358,6 +538,8 @@ try {
       `…and it installs before the installed target's \`oe build --accept\` — got ${callsAgain.join(", ")}`,
     );
   }
+
+  await lockfileLeg(oldPkg);
 } finally {
   if (keep) console.log(`kept ${scratch}`);
   else rmSync(scratch, { recursive: true, force: true });

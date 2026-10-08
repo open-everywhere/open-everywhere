@@ -1,9 +1,21 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { parseEnv } from "node:util";
 import { randomBytes } from "node:crypto";
 import { join, basename } from "node:path";
-import { preflight, mergeEnv, credentialKeyStatus, CREDENTIAL_KEY_ENV_NAME, CREDENTIAL_KEY_BYTES } from "../agent/ops/quickstart.js";
+import {
+  preflight,
+  mergeEnv,
+  credentialKeyStatus,
+  envAssignmentValue,
+  CREDENTIAL_KEY_ENV_NAME,
+  CREDENTIAL_KEY_BYTES,
+  ENV_CONFIG_NAMES,
+  PREFLIGHT_SECRET_NAMES,
+} from "../agent/ops/quickstart.js";
+import { CORE_PACKAGE_VERSION } from "../agent/ops/package-info.js";
+import { runEnvCommand } from "./oe-env.js";
 import { preflightAsync, registerPreflightProbe, _resetPreflightProbesForTest } from "../agent/ops/probes.js";
 import {
   DEPLOY_HOST_PLACEHOLDER,
@@ -52,7 +64,7 @@ const ok = (label: string, cond: boolean) => {
 {
   const dir = mkdtempSync(join(tmpdir(), "open-everywhere-ops-"));
   const file = join(dir, ".env.local");
-  writeFileSync(file, "# existing\nAI_GATEWAY_API_KEY=old\n", "utf-8");
+  writeFileSync(file, "# existing\nOE_OPERATIONAL_PROVIDER=old\nAI_GATEWAY_API_KEY=k\n", "utf-8");
 
   const outerProject = process.env.CLAUDE_PROJECT_DIR;
   process.env.CLAUDE_PROJECT_DIR = dir;
@@ -68,12 +80,12 @@ const ok = (label: string, cond: boolean) => {
   const coreVersion = (JSON.parse(readFileSync(join(import.meta.dirname, "..", "package.json"), "utf-8")) as { version: string }).version;
   ok(`serverInfo.version is core's package version (${coreVersion})`, client.getServerVersion()?.version === coreVersion);
 
-  const res = await client.callTool({ name: "scaffold_env", arguments: { values: { AI_GATEWAY_API_KEY: "new", OE_PUBLIC_BASE_URL: "https://example.test" }, path: file } });
+  const res = await client.callTool({ name: "scaffold_env", arguments: { values: { OE_OPERATIONAL_PROVIDER: "postgres", OE_PUBLIC_BASE_URL: "https://example.test" }, path: file } });
   const out = JSON.parse((res.content as { type: string; text: string }[])[0].text);
   ok("scaffold_env reports the keys it set", out.ok === true && out.keysSet.includes("OE_PUBLIC_BASE_URL"));
 
   const written = readFileSync(file, "utf-8");
-  ok("scaffold_env updates an existing key in place", written.includes("AI_GATEWAY_API_KEY=new") && !written.includes("=old"));
+  ok("scaffold_env updates an existing key in place", written.includes("OE_OPERATIONAL_PROVIDER=postgres") && !written.includes("=old"));
   ok("scaffold_env appends a new key", written.includes("OE_PUBLIC_BASE_URL=https://example.test"));
   ok("scaffold_env preserves comments", written.includes("# existing"));
 
@@ -83,7 +95,7 @@ const ok = (label: string, cond: boolean) => {
 
   {
     const scaffold = async (target: string) => {
-      const r = await client.callTool({ name: "scaffold_env", arguments: { values: { SOME_TOKEN: "s3cr3t-fixture" }, path: target } });
+      const r = await client.callTool({ name: "scaffold_env", arguments: { values: { OE_PUBLIC_BASE_URL: "https://gate.fixture" }, path: target } });
       return JSON.parse((r.content as { type: string; text: string }[])[0].text) as Record<string, unknown>;
     };
     for (const name of [".env.example", ".env.e2e.example", "notes.md", ".envrc"]) {
@@ -104,7 +116,7 @@ const ok = (label: string, cond: boolean) => {
     }
     rmSync(outside, { recursive: true, force: true });
     const allowed = await scaffold(join(dir, ".env.local"));
-    ok("scaffold_env still writes the project's own .env.local", allowed.ok === true && readFileSync(file, "utf-8").includes("SOME_TOKEN=s3cr3t-fixture"));
+    ok("scaffold_env still writes the project's own .env.local", allowed.ok === true && readFileSync(file, "utf-8").includes("OE_PUBLIC_BASE_URL=https://gate.fixture"));
   }
 
   await client.close();
@@ -451,7 +463,7 @@ const ok = (label: string, cond: boolean) => {
   process.env.CLAUDE_PROJECT_DIR = dir;
 
   const withoutOrg: Record<string, Record<string, unknown>> = {
-    secret_set: { secrets: { OPS_TEST_ORG_GUARD: "fixture-value" } },
+    secret_set: { names: ["OPS_TEST_ORG_GUARD"] },
     secret_list: {},
     secret_rm: { name: "OPS_TEST_ORG_GUARD" },
   };
@@ -634,4 +646,211 @@ const ok = (label: string, cond: boolean) => {
   ok("vercel: a selector set to another value still blocks", preflight({ ...pinnedEnv, OE_MEMORY_PROVIDER: "git" }, { target: "vercel" }).ready === false);
 }
 
-console.log(`\n✓ ops/setup: ${n} assertions passed (three-target preflight, live probes, env merge, scaffold via MCP, credential-store key, two-role provisioning, chat-app manifest, secret org guard, secret_rm env fallback)\n`);
+{
+  const SENTINEL = "ope2396-sentinel-value-that-must-never-be-echoed";
+  const outerProject = process.env.CLAUDE_PROJECT_DIR;
+  const dir = mkdtempSync(join(tmpdir(), "open-everywhere-ops-2396-"));
+  process.env.CLAUDE_PROJECT_DIR = dir;
+  const file = join(dir, ".env.local");
+  _resetDeploymentIdentityForTest();
+  registerDeploymentIdentity({ org: "opstest-2396" });
+
+  let connects = 0;
+  const server = buildOpsServer({
+    connectStore: async () => {
+      connects++;
+      return { label: "fixture-store" };
+    },
+  });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  await server.connect(st);
+  const client = new Client({ name: "ops-2396", version: "0" });
+  await client.connect(ct);
+  const call = async (name: string, args: Record<string, unknown>) => {
+    const res = await client.callTool({ name, arguments: args });
+    const text = (res.content as { type: string; text: string }[])[0].text;
+    let body: Record<string, unknown> = {};
+    try {
+      body = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+    }
+    return { isError: res.isError === true, text, body };
+  };
+
+  const freeMaps: string[] = [];
+  const walk = (schema: unknown, at: string) => {
+    if (schema === null || typeof schema !== "object") return;
+    const node = schema as Record<string, unknown>;
+    const extra = node.additionalProperties;
+    if (node.type === "object" && extra !== undefined && extra !== false && at.includes(".")) freeMaps.push(at);
+    for (const [key, child] of Object.entries((node.properties as Record<string, unknown> | undefined) ?? {})) walk(child, `${at}.${key}`);
+    for (const key of ["items", "anyOf", "oneOf", "allOf"]) {
+      const child = node[key];
+      if (Array.isArray(child)) child.forEach((c, i) => walk(c, `${at}.${key}[${i}]`));
+      else walk(child, `${at}.${key}`);
+    }
+  };
+  const listed = (await client.listTools()).tools;
+  ok("every ops tool is listed", JSON.stringify(listed.map((t) => t.name).sort()) === JSON.stringify([...OPS_TOOL_NAMES].sort()));
+  for (const tool of listed) walk(tool.inputSchema, tool.name);
+  ok(`🔴 no ops tool input takes a free name → value map (found: ${freeMaps.join(", ") || "none"})`, freeMaps.length === 0);
+  const oldShape = { type: "object", properties: { values: { type: "object", additionalProperties: { type: "string" } } } };
+  const probe: string[] = [];
+  const saved = freeMaps.length;
+  walk(oldShape, "old_scaffold_env");
+  probe.push(...freeMaps.splice(saved));
+  ok("…and the walker DOES find the old `values: Record<string, string>` shape (negative control)", probe.length === 1);
+  const scaffoldValues = listed.find((t) => t.name === "scaffold_env")?.inputSchema.properties?.values as Record<string, unknown> | undefined;
+  ok(
+    "scaffold_env advertises exactly the config allowlist under `values`",
+    JSON.stringify(Object.keys((scaffoldValues?.properties as Record<string, unknown>) ?? {}).sort()) === JSON.stringify([...ENV_CONFIG_NAMES].sort()),
+  );
+  const secretSetProps = Object.keys(listed.find((t) => t.name === "secret_set")?.inputSchema.properties ?? {});
+  ok("secret_set takes names, org and envPath — no value field", JSON.stringify(secretSetProps.sort()) === JSON.stringify(["envPath", "names", "org"]));
+
+  const pfBase: NodeJS.ProcessEnv = { DATABASE_URL: "postgres://u:p@h/db" };
+  const pfOf = (env: NodeJS.ProcessEnv) => JSON.stringify(preflight(env, { target: "docker", nodeVersion: "24.19.0", nodeRange: ">=24" }).checks);
+  for (const name of PREFLIGHT_SECRET_NAMES) {
+    const without: NodeJS.ProcessEnv = { ...pfBase };
+    delete without[name];
+    ok(`preflight checks for the secret ${name}`, pfOf(without) !== pfOf({ ...without, [name]: "fixture" }));
+    ok(`${name} is not on the scaffold_env config allowlist`, !(ENV_CONFIG_NAMES as readonly string[]).includes(name));
+    const r = await call("scaffold_env", { values: { [name]: SENTINEL } });
+    ok(`🔴 scaffold_env refuses a value for the secret ${name}`, r.isError || r.body.ok === false);
+    ok(`…and writes nothing (${name})`, !existsSync(file) || !readFileSync(file, "utf-8").includes(SENTINEL));
+  }
+  const fixEnvs: NodeJS.ProcessEnv[] = [{}, { DATABASE_URL: "postgres://u:p@h/db" }, { OE_OPERATIONAL_PROVIDER: "postgres" }, { OE_MEMORY_PROVIDER: "git", DATABASE_URL: "postgres://u:p@h/db" }];
+  const examined = new Set<string>();
+  for (const target of ["local", "vercel", "docker"] as const) {
+    for (const env of fixEnvs) {
+      for (const check of preflight(env, { target, nodeVersion: "24.19.0", nodeRange: ">=24" }).checks) {
+        const fix = check.fix ?? "";
+        if (!/\b(set|sets|copy|put|puts|paste|add|enter|store|write)\b/i.test(fix)) continue;
+        for (const name of PREFLIGHT_SECRET_NAMES.filter((n) => fix.includes(n) || check.name.includes(n))) {
+          ok(
+            `${target}: the "${check.name}" fix names a door for ${name} that keeps the value from the agent`,
+            fix.includes(`npx oe env set ${name}`) || (name === CREDENTIAL_KEY_ENV_NAME && fix.includes("scaffold_credential_key")),
+          );
+          examined.add(`${check.name} | ${name}`);
+        }
+      }
+    }
+  }
+  for (const pair of [
+    "model: AI_GATEWAY_API_KEY | AI_GATEWAY_API_KEY",
+    "DATABASE_URL (Postgres) | DATABASE_URL",
+    "deploy store: operational = postgres | DATABASE_URL",
+    "deploy store: memory = postgres | DATABASE_URL",
+    `credential store key (${CREDENTIAL_KEY_ENV_NAME}) | ${CREDENTIAL_KEY_ENV_NAME}`,
+    "control-plane admin auth | OE_ADMIN_STATIC_TOKEN",
+  ]) {
+    ok(`the preflight-fix door arm examined "${pair}"`, examined.has(pair));
+  }
+  for (const name of ["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET"]) {
+    const r = await call("scaffold_env", { values: { [name]: SENTINEL } });
+    ok(`🔴 scaffold_env refuses a value for ${name}`, r.isError || r.body.ok === false);
+  }
+
+  const askMissing = await call("scaffold_env", { secretNames: ["SLACK_BOT_TOKEN"] });
+  const askedRow = (askMissing.body.secrets as { name: string; present: boolean; command: string }[] | undefined)?.[0];
+  ok("scaffold_env { secretNames } names the person's command", askedRow?.command === "npx oe env set SLACK_BOT_TOKEN" && askedRow.present === false);
+  ok("…and the note says where the command runs", String(askMissing.body.note).includes("their own terminal"));
+  writeFileSync(file, `SLACK_BOT_TOKEN=${SENTINEL}\n`, "utf-8");
+  const askPresent = await call("scaffold_env", { secretNames: ["SLACK_BOT_TOKEN"] });
+  ok("…and reports presence once the file holds it", (askPresent.body.secrets as { present: boolean }[])[0]?.present === true);
+  ok("🔴 …and no part of the value reaches the reply", !askPresent.text.includes(SENTINEL) && !askPresent.text.includes("sentinel"));
+  ok("…and nothing was rewritten", readFileSync(file, "utf-8") === `SLACK_BOT_TOKEN=${SENTINEL}\n`);
+  const notAName = await call("scaffold_env", { secretNames: [SENTINEL] });
+  ok("scaffold_env refuses a secretName that is not an env name", notAName.body.ok === false);
+  ok("🔴 …and does not echo it (a pasted value in a name field stays out of the reply)", !notAName.text.includes(SENTINEL));
+
+  const before = connects;
+  const lacking = await call("secret_set", { names: ["ACME_API_TOKEN"] });
+  ok("secret_set refuses a name the env file does not hold", lacking.body.ok === false && JSON.stringify(lacking.body.missing) === '["ACME_API_TOKEN"]');
+  ok("…and names the person's command", String(lacking.body.note).includes("npx oe env set ACME_API_TOKEN"));
+  ok("…and opens no store", connects === before);
+  const lower = await call("secret_set", { names: ["acme_api_token", SENTINEL] });
+  ok("secret_set refuses a name `oe env set` could never write", lower.body.ok === false && String(lower.body.note).includes("names[0]"));
+  ok("…and points at `oe secret set` for a store-only name", String(lower.body.note).includes("npx oe secret set"));
+  ok("🔴 …and echoes no name it refused", !lower.text.includes("acme_api_token") && !lower.text.includes(SENTINEL));
+  ok("…and opens no store", connects === before);
+  writeFileSync(join(dir, ".env.example"), `ACME_API_TOKEN=${SENTINEL}\n`, "utf-8");
+  const tracked = await call("secret_set", { names: ["ACME_API_TOKEN"], envPath: ".env.example" });
+  ok("secret_set refuses to read secrets from a tracked file", tracked.body.ok === false && String(tracked.body.note).includes("refusing to read secrets from"));
+  ok("…and opens no store", connects === before);
+
+  const installed = join(dir, "node_modules", "@open-everywhere", "core");
+  mkdirSync(installed, { recursive: true });
+  const setInstalled = (version: string) => writeFileSync(join(installed, "package.json"), JSON.stringify({ name: "@open-everywhere/core", version }), "utf-8");
+  const minimalArgs: Record<string, Record<string, unknown>> = {
+    preflight: {},
+    surface_manifest: { surface: "slack" },
+    scaffold_env: {},
+    scaffold_credential_key: {},
+    secret_set: { names: ["OPS_TEST_2396_ABSENT"] },
+    secret_list: {},
+    secret_rm: { name: "OPS_TEST_2396" },
+  };
+  ok("the stale-core arms cover every tool", JSON.stringify(Object.keys(minimalArgs).sort()) === JSON.stringify([...OPS_TOOL_NAMES].sort()));
+  setInstalled(CORE_PACKAGE_VERSION);
+  for (const [tool, args] of Object.entries(minimalArgs)) {
+    const r = await call(tool, args);
+    ok(`${tool}: an installed core equal to the loaded one is served (negative control)`, r.body.stale === undefined);
+  }
+  const STALE = "9.9.9-ope2396";
+  setInstalled(STALE);
+  for (const [tool, args] of Object.entries(minimalArgs)) {
+    const before2 = connects;
+    const r = await call(tool, args);
+    ok(`🔴 ${tool}: refuses once the app's installed core differs`, r.isError && r.body.ok === false);
+    ok(`…and names both versions (${tool})`, String(r.body.note).includes(STALE) && String(r.body.note).includes(CORE_PACKAGE_VERSION));
+    ok(`…and says to restart the ops server (${tool})`, /Restart the ops server/.test(String(r.body.note)));
+    ok(`…and touches no store (${tool})`, connects === before2);
+  }
+  const badShape = await call("scaffold_env", { values: { SLACK_BOT_TOKEN: "x" } });
+  ok("🔴 a stale server answers a schema-invalid call with the restart, not a validation error", String(badShape.body.note).includes("Restart the ops server"));
+  const unknown = await call("a_tool_a_later_core_adds", {});
+  ok("🔴 a stale server answers a call to a tool it lacks with the restart, not 'not found'", String(unknown.body.note).includes("Restart the ops server"));
+  setInstalled(CORE_PACKAGE_VERSION);
+  ok("the refusal lifts when the versions agree again (read per call, never cached)", (await call("preflight", {})).body.stale === undefined);
+
+  await client.close();
+  rmSync(dir, { recursive: true, force: true });
+  if (outerProject === undefined) delete process.env.CLAUDE_PROJECT_DIR;
+  else process.env.CLAUDE_PROJECT_DIR = outerProject;
+  _resetDeploymentIdentityForTest();
+}
+
+{
+  for (const value of ["plain", "has#hash", "has space", " leading", "it's", 'say "hi"', "back`tick", "postgres://u:p@h/db?sslmode=require"]) {
+    const rhs = envAssignmentValue(value);
+    ok(`envAssignmentValue round-trips ${JSON.stringify(value)}`, rhs !== undefined && parseEnv(`X=${rhs}`).X === value);
+  }
+  ok("envAssignmentValue refuses a line break", envAssignmentValue("a\nb") === undefined);
+
+  const dir = mkdtempSync(join(tmpdir(), "open-everywhere-oe-env-"));
+  const VALUE = "xoxb-oe-env-value #with-hash";
+  const run = async (args: string[], value = VALUE) => {
+    const out: string[] = [];
+    const err: string[] = [];
+    const code = await runEnvCommand(args, { out: (l) => out.push(l), err: (l) => err.push(l), readValue: async () => `${value}\n` }, dir);
+    return { code, text: [...out, ...err].join("\n") };
+  };
+  writeFileSync(join(dir, ".env.local"), "# kept\nSLACK_BOT_TOKEN=old\n", "utf-8");
+  const set = await run(["set", "SLACK_BOT_TOKEN"]);
+  ok("oe env set writes the value", set.code === 0 && parseEnv(readFileSync(join(dir, ".env.local"), "utf-8")).SLACK_BOT_TOKEN === VALUE);
+  ok("…in place, keeping comments", readFileSync(join(dir, ".env.local"), "utf-8").startsWith("# kept\n") && !readFileSync(join(dir, ".env.local"), "utf-8").includes("=old"));
+  ok("🔴 …and never prints the value", !set.text.includes("xoxb") && set.text.includes(`${Buffer.byteLength(VALUE)} bytes`));
+  const extra = await run(["set", "SLACK_BOT_TOKEN", VALUE]);
+  ok("🔴 oe env set refuses a value on argv", extra.code === 2 && !extra.text.includes("xoxb"));
+  ok("oe env set refuses a tracked target", (await run(["set", "A_TOKEN", "--file", ".env.example"])).code === 1 && !existsSync(join(dir, ".env.example")));
+  ok("oe env set refuses a target outside the root", (await run(["set", "A_TOKEN", "--file", "../.env.local"])).code === 1);
+  ok("oe env set refuses an empty value", (await run(["set", "A_TOKEN"], "")).code === 1);
+  ok("oe env set refuses a lower-case name", (await run(["set", "a_token"])).code === 2);
+  const arrow = await run(["set", "A_TOKEN"], "abc\u001b[Ddef");
+  ok("oe env set refuses a value with a control character (an arrow key at the prompt)", arrow.code === 1 && !parseEnv(readFileSync(join(dir, ".env.local"), "utf-8")).A_TOKEN);
+  ok("…and a tab is still a legal value", (await run(["set", "TAB_TOKEN"], "a\tb")).code === 0);
+  rmSync(dir, { recursive: true, force: true });
+}
+
+console.log(`\n✓ ops/setup: ${n} assertions passed (three-target preflight, live probes, env merge, scaffold via MCP, credential-store key, two-role provisioning, chat-app manifest, secret org guard, secret_rm env fallback, no secret value in a tool, stale-core refusal, oe env set)\n`);

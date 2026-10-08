@@ -230,11 +230,13 @@ async function retryRows(wakeId: string): Promise<Array<Record<string, unknown>>
     "🔴 §5: …and the dispatch grew no backoff of its own beside it — one road, not two",
   );
 
-  const answerLeg = src.slice(src.indexOf("A RATE-LIMITED ANSWER IS NOT A DROPPED ANSWER"), src.indexOf("falling back to an ordinary wake"));
+  const receiveBody = src.slice(src.indexOf("async receive(input, { from })"), src.indexOf("  events: {", src.indexOf("async receive(input, { from })")));
+  ok(receiveBody.length > 1000 && receiveBody.includes("from(t.token).send("), "§5: the slice is the real `receive` body, ending at its one send");
   ok(
-    /if \(isRateLimitThrow\(err\)\) throw err;/.test(answerLeg),
-    "🔴 §5: the answer leg still rethrows a rate-limit refusal ahead of its catch-all — remove it and a retried answer writes one false `question_answer_dropped` row per attempt",
+    !/\bcatch\b/.test(receiveBody.replace(/^\s*(\/\/|\*|\/\*).*$/gm, "")),
+    "🔴 §5: the unified `receive` holds no `catch` (OPE-2389 deleted the answer leg's) — nothing inside it can swallow a rate-limit refusal",
   );
+
 }
 
 console.log(`✓ wake-rate-limit: ${n} assertions passed (eve live pin, windowed and native retries, negative controls, bounded exhaustion, the one road)`);

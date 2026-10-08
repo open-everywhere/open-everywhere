@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runUpgradeCommand, type UpgradeIo, type UpgradeRegistry } from "../packages/core/scripts/oe-upgrade.js";
+import { lockfileEntriesToDrop, runUpgradeCommand, type UpgradeIo, type UpgradeRegistry } from "../packages/core/scripts/oe-upgrade.js";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = join(REPO, "packages/core/scripts/oe-cli.ts");
@@ -128,6 +128,57 @@ const manifestOf = (root: string): { dependencies: Record<string, string>; devDe
 }
 
 {
+  const RULES = join("agent", "access", "pre-approval-rules.ts");
+  const templateWithRules = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), "oe-upgrade-template-"));
+    mkdirSync(join(dir, "agent", "access"), { recursive: true });
+    writeFileSync(join(dir, "package.json"), "{}\n");
+    writeFileSync(join(dir, RULES), "export const PRE_APPROVAL_RULES = [];\n");
+    return dir;
+  };
+
+  const tpl = templateWithRules();
+  const root = fixtureApp();
+  const h = harness({ registry: { templateDir: async () => tpl } });
+  ok((await runUpgradeCommand(["--plan"], h.io, root)) === 0, "offer: --plan still exits 0");
+  ok(h.out.some((l) => l.startsWith("  OFFER     agent/access/pre-approval-rules.ts")), "🔴 offer: --plan OFFERS the starter rules to an app that has none (OPE-2400)");
+  ok(h.text().includes(join(tpl, RULES)), "offer: …and names the target template's own copy to read");
+  ok(h.text().includes("approval-policy"), "offer: …and names the binding the file needs, because the file alone binds nothing");
+  ok(!existsSync(join(root, RULES)), "🔴 offer: --plan writes no rules file — an OFFER, never a copy");
+
+  const blind = fixtureApp();
+  const hb = harness();
+  await runUpgradeCommand(["--plan"], hb.io, blind);
+  ok(hb.text().includes(`@open-everywhere/create@${LATEST} package's template/`), "offer: with no readable template it names the file by its package path");
+
+  const applied = fixtureApp();
+  const ha = harness({ registry: { templateDir: async () => tpl } });
+  ok((await runUpgradeCommand([], ha.io, applied)) === 0, "offer: the apply path still exits 0");
+  ok(ha.out.some((l) => l.startsWith("  OFFER     agent/access/pre-approval-rules.ts")), "offer: the apply path OFFERS it too");
+  ok(!existsSync(join(applied, RULES)), "🔴 offer: the apply path writes no rules file either");
+
+  const owned = fixtureApp();
+  mkdirSync(join(owned, "agent", "access"), { recursive: true });
+  writeFileSync(join(owned, RULES), "// the operator's own rules\n");
+  const ho = harness({ registry: { templateDir: async () => tpl } });
+  await runUpgradeCommand(["--plan"], ho.io, owned);
+  ok(!ho.text().includes("OFFER"), "🔴 offer NEGATIVE CONTROL: an app that has the file is offered nothing");
+  ok(readFileSync(join(owned, RULES), "utf8") === "// the operator's own rules\n", "🔴 offer: …and its file is byte-for-byte unchanged — never overwritten");
+
+  const ignoring = fixtureApp();
+  writeFileSync(join(ignoring, ".oe-template-ignore"), "agent/access/pre-approval-rules.ts\n");
+  const hi = harness({ registry: { templateDir: async () => tpl } });
+  await runUpgradeCommand(["--plan"], hi.io, ignoring);
+  ok(!hi.text().includes("OFFER"), "🔴 offer: an app that names the file in .oe-template-ignore is offered nothing");
+
+  const bare = mkdtempSync(join(tmpdir(), "oe-upgrade-template-"));
+  writeFileSync(join(bare, "package.json"), "{}\n");
+  const hn = harness({ registry: { templateDir: async () => bare } });
+  await runUpgradeCommand(["--plan"], hn.io, fixtureApp());
+  ok(!hn.text().includes("OFFER"), "offer: a target template with no rules file offers nothing");
+}
+
+{
   const root = fixtureApp({ notes: recordOf(note({ env: { added: ["OE_NEW_NAME"], removed: ["OE_OLD_NAME"] }, manualSteps: ["re-paste the Slack manifest"] })) });
   const h = harness();
   const code = await runUpgradeCommand([], h.io, root);
@@ -191,6 +242,7 @@ const manifestOf = (root: string): { dependencies: Record<string, string>; devDe
   ok(code === 1, "a failing npm install exits 1");
   ok(h.calls.length === 1, "🔴 nothing after the failing step ran — a half-installed tree is never built");
   ok(h.text().includes("Nothing after this step ran"), "the refusal says so");
+  ok(h.text().includes("If npm reported ERESOLVE") && h.text().includes("`rm package-lock.json && npm install`"), "🔴 a failed install names the lockfile recovery (OPE-2395)");
   ok(manifestOf(root).dependencies["@open-everywhere/core"] === LATEST, "the pins were written before the install, so the manifest already names the target");
 
   const retry = harness();
@@ -403,6 +455,75 @@ const manifestOf = (root: string): { dependencies: Record<string, string>; devDe
   const code = await runUpgradeCommand([], h.io, root);
   ok(code === 1, "a failing typecheck exits 1");
   ok(h.calls.length === 3, "🔴 the build never runs after a red typecheck");
+}
+
+const LOCK = {
+  name: "fixture-app",
+  lockfileVersion: 3,
+  requires: true,
+  packages: {
+    "": { name: "fixture-app", dependencies: { "@open-everywhere/core": INSTALLED, eve: "0.54.3" } },
+    "node_modules/@open-everywhere/adapters": { version: INSTALLED, peerDependencies: { eve: "0.54.3" } },
+    "node_modules/@open-everywhere/core": { version: INSTALLED, peerDependencies: { eve: "0.54.3" } },
+    "node_modules/@agent-browser/eve": { version: "0.30.0", peerDependencies: { eve: ">=0.25.1" } },
+    "node_modules/eve": { version: "0.54.3" },
+    "node_modules/eve/node_modules/undici": { version: "8.0.0" },
+    "node_modules/foo/node_modules/eve": { version: "0.50.0" },
+    "node_modules/just-bash": { version: "3.1.0", resolved: "https://registry.npmjs.org/just-bash/-/just-bash-3.1.0.tgz", integrity: "sha512-x" },
+    "node_modules/eve-adjacent": { version: "1.0.0" },
+    "packages/local": { version: "1.0.0", peerDependencies: { eve: "*" } },
+    "node_modules/@open-everywhere/linked": { resolved: "packages/local", link: true },
+  },
+};
+
+{
+  const dropped = lockfileEntriesToDrop(LOCK);
+  ok(
+    JSON.stringify([...dropped].sort()) ===
+      JSON.stringify(["node_modules/@agent-browser/eve", "node_modules/@open-everywhere/adapters", "node_modules/@open-everywhere/core", "node_modules/eve", "node_modules/eve/node_modules/undici", "node_modules/foo/node_modules/eve"]),
+    `🔴 the prune drops eve at any depth, every @open-everywhere/* entry, every package that peers on eve and every entry nested under one of them — got ${JSON.stringify(dropped)}`,
+  );
+  ok(!dropped.includes("") && !dropped.includes("node_modules/just-bash") && !dropped.includes("node_modules/eve-adjacent"), "NEGATIVE CONTROL: the root entry and every unrelated package stay locked");
+  ok(!dropped.includes("node_modules/@open-everywhere/linked") && !dropped.includes("packages/local"), "…and a workspace link and a workspace path stay, even one that peers on eve");
+  ok(lockfileEntriesToDrop({ lockfileVersion: 1, dependencies: {} }).length === 0 && lockfileEntriesToDrop("{").length === 0, "a lockfile with no packages map drops nothing from it");
+}
+
+{
+  const root = fixtureApp({ notes: recordOf(note()) });
+  const lockText = `${JSON.stringify(LOCK, null, 2)}\n`;
+  writeFileSync(join(root, "package-lock.json"), lockText);
+  const plan = harness();
+  ok((await runUpgradeCommand(["--plan"], plan.io, root)) === 0, "--plan with a lockfile exits 0");
+  ok(plan.text().includes("edit package-lock.json: drop the 6 locked entries"), `--plan names the lockfile edit\n${plan.text()}`);
+  ok(readFileSync(join(root, "package-lock.json"), "utf8") === lockText, "🔴 --plan leaves the lockfile unchanged");
+
+  let atInstall: Record<string, unknown> | undefined;
+  const h = harness({
+    onRun: (c) => {
+      if (c.args[0] === "install") atInstall = (JSON.parse(readFileSync(join(root, "package-lock.json"), "utf8")) as { packages: Record<string, unknown> }).packages;
+      return 0;
+    },
+  });
+  ok((await runUpgradeCommand([], h.io, root)) === 0, "the upgrade with a lockfile exits 0");
+  ok(atInstall !== undefined && atInstall["node_modules/eve"] === undefined && atInstall["node_modules/@open-everywhere/core"] === undefined, "🔴 npm install runs over a lockfile without the old eve and @open-everywhere/* entries");
+  ok(
+    JSON.stringify(atInstall?.["node_modules/just-bash"]) === JSON.stringify(LOCK.packages["node_modules/just-bash"]) && atInstall?.[""] !== undefined,
+    "…and with every other entry exactly as it was",
+  );
+  ok(h.text().includes("dropped 6 locked entries from package-lock.json"), "…and the run says what it dropped");
+
+  const legacy = fixtureApp({ notes: recordOf(note()) });
+  writeFileSync(
+    join(legacy, "package-lock.json"),
+    JSON.stringify({ lockfileVersion: 2, packages: { "": {}, "node_modules/eve": { version: "0.54.3" } }, dependencies: { eve: { version: "0.54.3" }, "just-bash": { version: "3.1.0", dependencies: { "@open-everywhere/core": { version: INSTALLED } } } } }),
+  );
+  ok((await runUpgradeCommand([], harness().io, legacy)) === 0, "the upgrade with a v2 lockfile exits 0");
+  const after = JSON.parse(readFileSync(join(legacy, "package-lock.json"), "utf8")) as { dependencies: Record<string, { dependencies?: Record<string, unknown> }> };
+  ok(after.dependencies.eve === undefined && after.dependencies["just-bash"]?.dependencies?.["@open-everywhere/core"] === undefined && after.dependencies["just-bash"] !== undefined, "…and the legacy tree loses eve and @open-everywhere/* at every depth, and keeps the rest");
+
+  const none = fixtureApp({ notes: recordOf(note()) });
+  const n = harness();
+  ok((await runUpgradeCommand([], n.io, none)) === 0 && !existsSync(join(none, "package-lock.json")) && !n.text().includes("package-lock.json:"), "an app with no lockfile gets none written");
 }
 
 {

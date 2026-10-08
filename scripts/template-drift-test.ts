@@ -1,10 +1,21 @@
 import assert from "node:assert/strict";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runUpgradeCommand, type UpgradeIo, type UpgradeRegistry } from "../packages/core/scripts/oe-upgrade.js";
-import { TEMPLATE_RENAMED_ON_COPY, lineDiffSummary, scaffoldedPathOf, templateDrift, templateFileKind } from "../packages/core/scripts/template-drift.js";
+import {
+  TEMPLATE_IGNORE_FILE,
+  TEMPLATE_RENAMED_ON_COPY,
+  driftCounts,
+  isTemplateIgnored,
+  lineDiffSummary,
+  parseTemplateIgnore,
+  scaffoldedPathOf,
+  templateDrift,
+  templateFileKind,
+} from "../packages/core/scripts/template-drift.js";
+import { parseUpgradingNotes, removedFilesUpTo } from "../packages/core/scripts/upgrade-notes.js";
 import { RENAMED_ON_COPY, scaffoldApp, scaffoldPathFor, listFiles } from "../packages/create/src/scaffold.js";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -31,6 +42,7 @@ ok(templateFileKind("AGENTS.md") === "owned" && templateFileKind("README.md") ==
 ok(templateFileKind(".claude/skills/quickstart-open-everywhere/SKILL.md") === "owned", "the skills are template-owned");
 ok(templateFileKind("roster.config.ts") === "config" && templateFileKind("agent/access/bundles.ts") === "config" && templateFileKind("agent/instructions.md") === "config", "the app's config-as-code is config");
 ok(templateFileKind("package.json") === "managed" && templateFileKind("roster.lock.json") === "managed" && templateFileKind("agent/access/grants.generated.ts") === "managed", "tool-written files are managed");
+ok(templateFileKind("scripts/goldens/roster-plan.txt") === "managed", "the roster golden is managed: `oe build` writes it, so an app's own roster never reads as drift (OPE-2399)");
 ok(lineDiffSummary("a\nb\n", "a\nb\nc\n") === "the template adds 1 and drops 0 line(s), first at line 3", "an appended line counts as one added, at the line it lands on");
 ok(lineDiffSummary("a\nold\nc\n", "a\nnew\nnew2\nc\n") === "the template adds 2 and drops 1 line(s), first at line 2", "a changed line counts as one removed and its replacements as added");
 ok(lineDiffSummary("a\r\nb\r\n", "a\nb\n").startsWith("the template adds 0 and drops 0"), "a CRLF checkout does not read as a rewrite");
@@ -168,6 +180,76 @@ function assertReport(text: string, where: string): void {
   writeFileSync(join(dir, "node_modules/@open-everywhere/core/package.json"), JSON.stringify({ name: CORE, version: FROM, bin: { oe: "./bin/oe.js" } }));
   ok((await runUpgradeCommand(["--plan"], unfetchable.io, dir)) === 0, "a template fetch that throws never fails the run");
   ok(unfetchable.out.join("\n").includes("! the template drift check did not run: tmpdir is read-only"), "🔴 …and it says the check did not run");
+}
+
+{
+  const ignore = parseTemplateIgnore("# the app's own files\r\n.mcp.json\n\n  ./README.md  \n.claude/skills/quickstart-open-everywhere/\n");
+  ok(JSON.stringify(ignore) === JSON.stringify([".mcp.json", "README.md", ".claude/skills/quickstart-open-everywhere/"]), `the ignore list skips comments and blank lines, trims, and drops a leading ./ — got ${JSON.stringify(ignore)}`);
+  ok(isTemplateIgnored(ignore, ".mcp.json") && isTemplateIgnored(ignore, ".claude/skills/quickstart-open-everywhere/SKILL.md"), "an exact path and a directory entry both match");
+  ok(!isTemplateIgnored(ignore, ".mcp.json.bak") && !isTemplateIgnored(ignore, "agent/README.md"), "NEGATIVE CONTROL: an entry matches no other path that shares its prefix or its base name");
+
+  const notes = parseUpgradingNotes({
+    schemaVersion: 1,
+    releases: [
+      { version: "0.1.5", date: "2026-10-04", summary: "later.", evePeer: "0.54.3", breaking: [], configMigrations: [], env: { added: [], removed: [] }, manualSteps: [], removedFiles: ["agent/later-removed.ts"] },
+      { version: TARGET, date: "2026-10-03", summary: "x.", evePeer: "0.54.3", breaking: [], configMigrations: [], env: { added: [], removed: [] }, manualSteps: [], removedFiles: ["agent/instrumentation.ts", "scripts/ops-mcp.ts"] },
+      { version: "0.1.3", date: "2026-10-03", summary: "older.", evePeer: "0.54.3", breaking: [], configMigrations: [], env: { added: [], removed: [] }, manualSteps: [] },
+    ],
+  }).notes!;
+  const removed = removedFilesUpTo(notes, TARGET);
+  ok(JSON.stringify(removed) === JSON.stringify(["agent/instrumentation.ts", "scripts/ops-mcp.ts"]), `the removed files are every release's up to the target, never a later one's — got ${JSON.stringify(removed)}`);
+  ok(parseUpgradingNotes({ schemaVersion: 1, releases: [{ ...notes.releases[1], removedFiles: ["../escape.ts"] }] }).notes === undefined, "🔴 a removed path that climbs out of the app is refused by the parser");
+
+  const upToDate = (): string => {
+    const dir = app012();
+    const pkgPath = join(dir, "package.json");
+    writeFileSync(pkgPath, readFileSync(pkgPath, "utf8").split(`"${FROM}"`).join(`"${TARGET}"`));
+    const core = join(dir, "node_modules/@open-everywhere/core");
+    writeFileSync(join(core, "package.json"), JSON.stringify({ name: CORE, version: TARGET, bin: { oe: "./bin/oe.js" } }));
+    writeFileSync(join(core, "upgrading.json"), JSON.stringify({ schemaVersion: 1, releases: notes.releases.slice(1) }));
+    writeFileSync(join(dir, "agent/instrumentation.ts"), "export default {};\n");
+    rmSync(join(dir, ".mcp.json"));
+    writeFileSync(join(dir, "README.md"), "# Our app\n");
+    return dir;
+  };
+
+  const plain = upToDate();
+  const p = harness({ templateDir: async () => TEMPLATE });
+  ok((await runUpgradeCommand(["--plan"], p.io, plain)) === 0, "--plan exits 0 over an app that holds a removed file");
+  const plainText = p.out.join("\n");
+  ok(plainText.includes("DELETE    agent/instrumentation.ts — a release removed it from the template, and the app still has it"), `🔴 --plan prints DELETE for the removed file the app still has\n${plainText}`);
+  ok(!/DELETE {4}scripts\/ops-mcp\.ts/u.test(plainText), "🔴 NEGATIVE CONTROL: a removed path that the target's template holds again is never a DELETE line");
+  ok(plainText.includes("SYNC      .mcp.json — the template has it, the app does not") && /SYNC {6}README\.md/u.test(plainText), "the control: with no ignore list, the deliberate deletion and rewrite are SYNC lines");
+  ok(plainText.includes("4 template-owned file(s) differ") && plainText.includes(`name it in ${TEMPLATE_IGNORE_FILE}`), "the control: they count as SYNC, and the report names the ignore list");
+  ok(existsSync(join(plain, "agent/instrumentation.ts")), "🔴 the report deletes nothing");
+
+  const owned = upToDate();
+  writeFileSync(join(owned, TEMPLATE_IGNORE_FILE), "# deleted on purpose\n.mcp.json\nREADME.md\n");
+  const o = harness({ templateDir: async () => TEMPLATE });
+  ok((await runUpgradeCommand(["--plan"], o.io, owned)) === 0, "--plan exits 0 with an ignore list");
+  const ownedText = o.out.join("\n");
+  ok(!ownedText.includes(".mcp.json"), `🔴 an ignored file that the app deleted prints no line at all\n${ownedText}`);
+  ok(/app-owned README\.md — the template adds \d+ and drops \d+ line\(s\)/u.test(ownedText) && !/SYNC {6}README\.md/u.test(ownedText), "🔴 an ignored file that differs prints one app-owned line, never SYNC");
+  ok(ownedText.includes("2 template-owned file(s) differ"), `🔴 the SYNC count excludes the ignored paths\n${ownedText}`);
+  ok(ownedText.includes("DELETE    agent/instrumentation.ts"), "the ignore list leaves the DELETE line of a file it does not name");
+
+  const across = app012();
+  writeFileSync(join(across, "agent/instrumentation.ts"), "export default {};\n");
+  const x = harness({ templateDir: async () => TEMPLATE });
+  ok((await runUpgradeCommand(["--plan", "--to", "0.2.1"], x.io, across)) === 0, "--plan --to 0.2.1 exits 0 over a 0.1.2 app whose installed core ships no record");
+  ok(x.out.join("\n").includes("Template drift (against 0.2.1's @open-everywhere/create template"), "…and the 0.2.1 run printed its drift report");
+  ok(x.out.join("\n").includes("DELETE    agent/instrumentation.ts"), `🔴 --plan prints DELETE from the RUNNING core's own record when the installed record names nothing\n${x.out.join("\n")}`);
+  const y = harness({ templateDir: async () => TEMPLATE });
+  ok((await runUpgradeCommand(["--plan", "--to", "0.1.5"], y.io, across)) === 0, "--plan --to 0.1.5 exits 0");
+  ok(y.out.join("\n").includes("Template drift (against 0.1.5's @open-everywhere/create template"), "…and the 0.1.5 run printed its drift report, so the absence below has a witness");
+  ok(!y.out.join("\n").includes("DELETE    agent/instrumentation.ts"), "🔴 NEGATIVE CONTROL: a file the record removes only ABOVE the target is never a DELETE line");
+
+  writeFileSync(join(owned, TEMPLATE_IGNORE_FILE), "agent/instrumentation.ts\n");
+  const report = templateDrift({ appRoot: owned, templateDir: TEMPLATE, version: TARGET, appName: "upgraded-app", removedFiles: removed, ignore: parseTemplateIgnore(readFileSync(join(owned, TEMPLATE_IGNORE_FILE), "utf8")) });
+  ok(report.entries.some((e) => e.path === "agent/instrumentation.ts" && e.state === "app-owned") && driftCounts(report).delete === 0, "an ignored removed file is app-owned and never counts as a DELETE");
+  rmSync(join(owned, "agent/instrumentation.ts"));
+  const gone = templateDrift({ appRoot: owned, templateDir: TEMPLATE, version: TARGET, appName: "upgraded-app", removedFiles: removed });
+  ok(!gone.entries.some((e) => e.path === "agent/instrumentation.ts"), "a removed file that the app no longer has prints nothing");
 }
 
 console.log(`template-drift-test: ${passed} assertions passed`);

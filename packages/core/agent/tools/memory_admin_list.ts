@@ -37,7 +37,7 @@ export default defineTool({
     if (!subject.ok) throw new Error(`memory_admin_list: ${subject.message}`);
     const caller = subject.principalId;
     const domains = getConfig().loadDomains();
-    const roles = adminControlRoles(caller, domains, binding.platform, binding.workspace);
+    const roles = adminControlRoles(caller, domains, binding.platform, binding.workspace, binding.enterprise);
     if (roles.length === 0) {
       throw new Error(
         `memory_admin_list requires an org admin, or a domain admin for at least one memory domain. Your id ("${caller}") ` +

@@ -73,8 +73,8 @@ The Docker route needs no Vercel project.
 
 Both routes need Postgres: an ephemeral disk (Vercel) or a replaced container (Docker) loses every local store.
 
-- `npx vercel install neon` provisions Neon and connects it to the linked project, which sets DATABASE_URL there. The project's Storage → Neon → Connect does the same thing.
-- Write the same connection string into .env.local with the ops tool `scaffold_env`. It selects postgres for the operational store and the memory backing on its own — no provider selector needed. Never paste a connection string into the chat.
+- `npx vercel install neon` provisions Neon and connects it to the linked project, which sets DATABASE_URL there. The project's Storage → Neon → Connect does the same thing. The integration can also enable Neon Auth (NEON_AUTH_BASE_URL, VITE_NEON_AUTH_URL): Open Everywhere does not use it, so leave it off, or ignore those two variables.
+- Write the same connection string into .env.local with `npx oe env set DATABASE_URL`, run in your own terminal: it reads the value from a hidden prompt. It selects postgres for the operational store and the memory backing on its own — no provider selector needed. Never paste a connection string into the chat, and never pass it to an ops tool.
 - The deployment needs it too: the Neon integration already set DATABASE_URL on the Vercel project.
 - Harden later: the two-role split parks the owner credential as OE_DB_OWNER_URL and runs the app as the non-owner "oe_runtime" role, which the owner-DDL escape cannot reach. It is MANUAL — nothing provisions it for you. See https://github.com/open-everywhere/open-everywhere/blob/main/docs/extending/database.md.
 
@@ -184,7 +184,7 @@ Create a Slack app from the manifest below, then copy its bot token and signing 
 - The app is named "Open Everywhere" (the default — set identity.name in agent/settings/settings.ts to name it). A second install in one workspace needs its own name: re-run with --app-name "<name>".
 - Install to Workspace, then OAuth & Permissions → copy the Bot User OAuth Token (xoxb-…) = SLACK_BOT_TOKEN.
 - Basic Information → App Credentials → copy the Signing Secret = SLACK_SIGNING_SECRET.
-- Write both with the ops tool `scaffold_env`. Never paste a secret into the chat: the person pastes it where the tool reads it.
+- Write both with `npx oe env set SLACK_BOT_TOKEN` and `npx oe env set SLACK_SIGNING_SECRET`, run in your own terminal: each reads the value from a hidden prompt. Never paste a secret into the chat, and never pass one to an ops tool.
 - THE SHORT WAY, once the deployment is up: open https://<host>/setup. It creates the Slack app from this same manifest with one pasted Slack app configuration token, installs it, and keeps every credential in the deployment's own encrypted store — no env var to set. This check cannot see that store, so it still reports this step unsatisfied afterwards; the status endpoint can.
 - The manifest's URLs say YOUR-DEPLOY-URL until you deploy. Slack cannot verify Event Subscriptions before a deploy that holds SLACK_SIGNING_SECRET is up. After the deploy, paste the manifest again with your host (App Manifest → Save Changes), then retry the verification under Event Subscriptions.
 - Note two ids for the trust edits: the workspace (team) id T… (the segment after /client/ in the workspace URL at https://app.slack.com), and your own member id U… (your Slack profile → ⋮ More → Copy member ID).
@@ -199,7 +199,8 @@ A presence-only checklist (it never prints a value). The full surface is in the 
 - The Vercel route needs NO AI_GATEWAY_API_KEY: a deployed project authenticates to the AI Gateway with OIDC.
 - Each chat surface adds its own names — Slack reads SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET from the environment.
 - Not needed on a deployment: OE_PUBLIC_BASE_URL (only for a custom domain) and OE_INTAKE_PAGE_SIGNING_KEY (the deployment mints it into the credential store).
-- Run `npx @open-everywhere/create --check --json`, or the ops tool `preflight`, for the live verdict per name.
+- Run `npx @open-everywhere/create --check --json`, or the ops tool `preflight`, for the live verdict per name. Both read .env.local and the shell only.
+- Set the values on the deployment instead (the Vercel dashboard, say)? Add `--host https://<host>`: the step then also reads the deployment's own verdicts from its public `/eve/v1/oe/status` route.
 
 **Docker route.**
 

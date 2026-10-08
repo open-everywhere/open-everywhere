@@ -67,11 +67,11 @@ const B = { principal: "U_B", deliveryId: "dlv-B-0002" };
 
 {
   const seatToken = unifiedSupervisorToken("payments", 1);
-  const respondCalls: { token: string; options: Record<string, unknown> }[] = [];
+  const respondCalls: string[] = [];
   const sends: string[] = [];
   const from = (token: string) => ({
-    async respond(_responses: unknown, options: Record<string, unknown>) {
-      respondCalls.push({ token, options });
+    async respond() {
+      respondCalls.push(token);
       return {} as never;
     },
     async send() {
@@ -79,32 +79,22 @@ const B = { principal: "U_B", deliveryId: "dlv-B-0002" };
       return {} as never;
     },
   });
-  const answerOf = (ownerToken?: string) => ({
-    message: "use staging",
-    auth: { principalId: B.principal, attributes: { oe_platform: "slack", user_id: B.principal, team_id: "T_HA", channel_id: "C_HA" } },
-    target: {
-      token: seatToken,
-      wakeId: mintWakeId(),
-      surfaceKey: SLACK_KEY,
-      origin: { platform: "slack", channelId: "C_HA", threadTs: "111.1" },
-      answer: { requestId: "req-held-1", floor: "member", ...(ownerToken !== undefined ? { ownerToken } : {}) },
+  await unifiedChannel.receive(
+    {
+      message: "use staging",
+      auth: { principalId: B.principal, attributes: { oe_platform: "slack", user_id: B.principal, team_id: "T_HA", channel_id: "C_HA" } },
+      target: {
+        token: seatToken,
+        wakeId: mintWakeId(),
+        surfaceKey: SLACK_KEY,
+        origin: { platform: "slack", channelId: "C_HA", threadTs: "111.1" },
+        answer: { requestId: "req-held-1", floor: "member" },
+      },
     },
-  });
-
-  await unifiedChannel.receive(answerOf(), { from });
-  eq(respondCalls.length, 1, "H1 precondition: the seat's answer road delivered ONE respond");
-  eq(sends.length, 0, "H1 precondition: …and no ordinary send — the message WAS the answer");
-  ok(
-    !Object.prototype.hasOwnProperty.call(respondCalls[0]!.options, "auth"),
-    `🔴 H1 THE FIX: member B's answer on the SEAT's road carries NO auth key, so eve keeps the bag member A's turn opened under (saw ${JSON.stringify(Object.keys(respondCalls[0]!.options))})`,
+    { from },
   );
-
-  const workToken = "oe-dom:payments:win:w/slack_T_HA_C_HA:oe-sup:g1";
-  await unifiedChannel.receive(answerOf(workToken), { from });
-  eq(respondCalls.length, 2, "H1 precondition: an answer that names an owner session still delivers ONE respond");
-  eq(respondCalls[1]!.token, seatToken, "H1: …to the SEAT — slice C retired D21, so an ownerToken routes nothing to the work session");
-  ok(!respondCalls.some((c) => c.token === workToken), "H1: no respond ever reaches the work session's token");
-  ok(!Object.prototype.hasOwnProperty.call(respondCalls[1]!.options, "auth"), "H1: that road carries no auth key either");
+  eq(respondCalls.length, 0, "🔴 H1: a target that names an answer delivers NO respond — the unified channel has no answer road (OPE-2389)");
+  eq(sends, [seatToken], "H1: …it is one ordinary send to the seat, as every room message is");
 }
 
 function seatCtx(turnId: string, who: { principal: string; deliveryId: string }) {

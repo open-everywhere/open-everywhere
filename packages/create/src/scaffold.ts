@@ -56,6 +56,19 @@ export function isScaffoldableDir(dir: string): boolean {
   return readdirSync(dir).every((name) => name === ".git");
 }
 
+export function nestedNameRefusal(target: string, cwd: string): string | undefined {
+  const dir = resolve(cwd, target);
+  const here = resolve(cwd);
+  if (resolve(dir, "..") !== here || basename(dir) !== basename(here)) return undefined;
+  if (!isScaffoldableDir(here)) return undefined;
+  return [
+    `refusing to scaffold: you are inside an empty directory named "${basename(here)}", so this would create ${basename(here)}/${basename(dir)}/.`,
+    "To scaffold into this directory, run:",
+    "  npx @open-everywhere/create .",
+    `To nest the app on purpose, create the directory first (\`mkdir ${basename(dir)}\`), then run this command again.`,
+  ].join("\n");
+}
+
 export function scaffoldApp(options: {
   readonly targetDir: string;
   readonly version: string;

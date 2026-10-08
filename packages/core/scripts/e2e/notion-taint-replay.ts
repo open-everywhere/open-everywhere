@@ -386,7 +386,16 @@ export function notionTaintRestMarkSettled(noRow: NotionTaintReplayNoRow): boole
   return Object.values(noRow.settlements).some((s) => settleKinds(s.settle).includes(NOTION_REST_MARK_KIND));
 }
 
-const NOTION_REST_WRAPPED_VERB = /notion\.mjs\s+(?:page\s+markdown|blocks\s+list|comments\s+list)\b/;
+const NOTION_REST_WRAPPED_VERB = /notion\.mjs(?:\\?["'])?\s+(?:page\s+markdown|blocks\s+list|comments\s+list)\b/;
+
+function bashCommandText(input: unknown): string {
+  const command = (input as { command?: unknown } | null | undefined)?.command;
+  return typeof command === "string" ? command : JSON.stringify(input ?? null);
+}
+
+export function isNotionRestWrappedRead(input: unknown): boolean {
+  return NOTION_REST_WRAPPED_VERB.test(bashCommandText(input));
+}
 
 function transcriptHasRestRead(events: readonly TranscriptWireEvent[]): boolean {
   for (const event of events) {
@@ -394,7 +403,7 @@ function transcriptHasRestRead(events: readonly TranscriptWireEvent[]): boolean 
     const actions = (event.data as { actions?: unknown } | null)?.actions;
     if (!Array.isArray(actions)) continue;
     for (const action of actions as { toolName?: unknown; input?: unknown }[]) {
-      if (action?.toolName === "bash" && NOTION_REST_WRAPPED_VERB.test(JSON.stringify(action.input ?? null))) return true;
+      if (action?.toolName === "bash" && isNotionRestWrappedRead(action.input)) return true;
     }
   }
   return false;
@@ -505,7 +514,7 @@ export function notionTaintNoRowReason(
 }
 
 function isRestCall(call: TranscriptToolCall): boolean {
-  return call.toolName === "bash" && NOTION_REST_WRAPPED_VERB.test(JSON.stringify(call.input ?? null));
+  return call.toolName === "bash" && isNotionRestWrappedRead(call.input);
 }
 
 function restSettleGap(worker: string, settlement: NotionTaintWorkerSettlement | undefined): string {

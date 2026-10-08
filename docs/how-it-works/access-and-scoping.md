@@ -411,6 +411,10 @@ defineDomain({ name: "org", match: "org", admins: ["slack/T0AB1CD2E/U0EXUSER002"
 defineDomain({ name: "payments", reach: [...], admins: ["slack/T0AB1CD2E/U_LEAD"] }), // this domain's admins
 ```
 
+On a Slack Enterprise Grid one member id serves every workspace under the Grid, so an entry can
+name the Grid instead: `slack/E<grid-id>/<member-id>` admits that person in every workspace whose
+delivery names that Grid (OPE-2400, [Slack § Admin keys on a Grid](../deploy/surfaces/slack.md#admin-keys-on-a-grid)).
+
 One roster still covers one human across several surfaces — it just names the surface each
 id belongs to. That qualifier is what stops a Discord snowflake being matched by an
 identical id on another platform; a bare entry is refused at config load, because every matcher builds

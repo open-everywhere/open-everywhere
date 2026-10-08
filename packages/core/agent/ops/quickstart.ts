@@ -1,5 +1,7 @@
 import { resolveOperationalSelection } from "../operational/selection.js";
 import { resolveMemoryProviderId } from "../memory/backing-selection.js";
+import { basename, dirname } from "node:path";
+import { parseEnv } from "node:util";
 import { coreNodeRange, nodeRangeSatisfied } from "./package-info.js";
 
 export type CheckStatus = "ok" | "missing" | "info";
@@ -83,8 +85,8 @@ export function preflight(env: NodeJS.ProcessEnv = process.env, options: Preflig
     fix: keySet || gatewayExempt
       ? undefined
       : target === "docker"
-        ? `set AI_GATEWAY_API_KEY in .env.local (Vercel → AI Gateway → API Keys issues one for any host). Running a different model backend instead? That is an adapter swap in app code, which this check cannot see — ${docUrl("docs/extending/adapter-model.md")} — so this line stays \`missing\`.`
-        : "Vercel → AI Gateway → API Keys, then set AI_GATEWAY_API_KEY in .env.local",
+        ? `the person runs \`${envSetCommand("AI_GATEWAY_API_KEY")}\` in their own terminal (Vercel → AI Gateway → API Keys issues a key for any host). Running a different model backend instead? That is an adapter swap in app code, which this check cannot see — ${docUrl("docs/extending/adapter-model.md")} — so this line stays \`missing\`.`
+        : `Vercel → AI Gateway → API Keys, then the person runs \`${envSetCommand("AI_GATEWAY_API_KEY")}\` in their own terminal`,
   });
 
   const memProvider = resolveMemoryProviderId(env);
@@ -118,7 +120,7 @@ export function preflight(env: NodeJS.ProcessEnv = process.env, options: Preflig
           : `resolves to ${detail} — ${consequence[name]}`,
         fix: ok
           ? undefined
-          : `set DATABASE_URL in .env.local (scaffold_env) and on the deployment (${target === "docker" ? "the container's environment" : "the Vercel project"}) — ` +
+          : `set DATABASE_URL in .env.local (the person runs \`${envSetCommand("DATABASE_URL")}\` in their own terminal) and on the deployment (${target === "docker" ? "the container's environment" : "the Vercel project"}) — ` +
             `it selects postgres for both stores on its own. A selector pointing elsewhere (${name}) overrides it and must be removed.`,
       });
     }
@@ -133,8 +135,8 @@ export function preflight(env: NodeJS.ProcessEnv = process.env, options: Preflig
       fix: set(env.DATABASE_URL)
         ? undefined
         : target === "docker"
-          ? "provision a Postgres the container can reach, then copy its connection string into .env.local for the operator tools. It selects postgres for both stores on its own."
-          : "add Neon from the Vercel Marketplace (`npx vercel install neon`, or the project's Storage → Neon → Connect): it sets DATABASE_URL on the project. Copy the same value into .env.local for the operator tools.",
+          ? `provision a Postgres the container can reach, then the person runs \`${envSetCommand("DATABASE_URL")}\` in their own terminal to put its connection string in .env.local for the operator tools. It selects postgres for both stores on its own.`
+          : `add Neon from the Vercel Marketplace (\`npx vercel install neon\`, or the project's Storage → Neon → Connect): it sets DATABASE_URL on the project. The person puts the same value in .env.local for the operator tools: they run \`${envSetCommand("DATABASE_URL")}\` in their own terminal.`,
     });
     if (set(env.DATABASE_URL)) {
       const twoRole = set(env.OE_DB_OWNER_URL);
@@ -175,11 +177,60 @@ export function preflight(env: NodeJS.ProcessEnv = process.env, options: Preflig
     name: "control-plane admin auth",
     status: hasAdminAuth ? "ok" : "info",
     detail: hasAdminAuth ? "configured" : "none — the REMOTE control plane will 401 until set (local stdio is fine)",
-    fix: hasAdminAuth ? undefined : "optional: set OE_ADMIN_OIDC_ISSUER/_AUDIENCE (any OIDC provider) or OE_ADMIN_STATIC_TOKEN",
+    fix: hasAdminAuth
+      ? undefined
+      : `optional: set OE_ADMIN_OIDC_ISSUER/_AUDIENCE with scaffold_env (any OIDC provider), or the person runs \`${envSetCommand("OE_ADMIN_STATIC_TOKEN")}\` in their own terminal`,
   });
 
   const ready = checks.every((c) => c.status !== "missing");
   return { checks, ready };
+}
+
+export const ENV_CONFIG_NAMES = [
+  "OE_OPERATIONAL_PROVIDER",
+  "OE_MEMORY_PROVIDER",
+  "OE_PUBLIC_BASE_URL",
+  "OE_ADMIN_OIDC_ISSUER",
+  "OE_ADMIN_OIDC_AUDIENCE",
+  "OE_ADMIN_GITHUB",
+] as const;
+
+export const PREFLIGHT_SECRET_NAMES = [
+  "AI_GATEWAY_API_KEY",
+  "DATABASE_URL",
+  "OE_DB_OWNER_URL",
+  CREDENTIAL_KEY_ENV_NAME,
+  "OE_ADMIN_STATIC_TOKEN",
+] as const;
+
+export const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
+
+export function envSetCommand(name: string): string {
+  return `npx oe env set ${name}`;
+}
+
+export function envAssignmentValue(value: string): string | undefined {
+  if (/[\r\n]/.test(value)) return undefined;
+  for (const candidate of [value, `'${value}'`, `"${value}"`, `\`${value}\``]) {
+    if (parseEnv(`X=${candidate}`).X === value) return candidate;
+  }
+  return undefined;
+}
+
+const WRITABLE_ENV_NAMES = /^\.env$|^\.env\.local$|^\.env\..+\.local$/;
+
+export function envFileTargetRefusal(file: string, projectRoot: string): string | undefined {
+  if (dirname(file) !== projectRoot) {
+    return `refusing to write to "${file}" — it resolves outside the project root (${projectRoot}). The target must sit at the project root.`;
+  }
+  const base = basename(file);
+  if (!WRITABLE_ENV_NAMES.test(base)) {
+    return (
+      `refusing to write to "${base}" — the target must be .env, .env.local or .env.<name>.local, the names this repository never ` +
+      "tracks. A .env.example (or any other name) is a TRACKED file."
+    );
+  }
+  return undefined;
 }
 
 export function mergeEnv(existing: string, values: Readonly<Record<string, string>>): string {

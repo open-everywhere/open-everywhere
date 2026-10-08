@@ -10,6 +10,12 @@ page and the record disagree.
 then `oe build --accept`, `npm run typecheck` and `npm run build`. `npx oe upgrade --plan` prints
 the plan and writes nothing.
 
+Before the install, a core after 0.2.1 drops the `package-lock.json` entries of `eve`, of every
+`@open-everywhere/*` package and of every package that peers on one of them. npm then resolves
+that set again from the new pins. A core at 0.2.1 or earlier installs over the old lockfile, and
+npm exits ERESOLVE when the eve peer changes. Then run `rm package-lock.json && npm install`, and
+run `npx oe upgrade` again: it resumes. Read the lockfile diff before you commit it.
+
 The codemods run from the TARGET release's own registry, so a release can ship a codemod for its
 own upgrade. A core at 0.1.4 runs them from its OWN registry instead: after the install, it
 refuses a codemod a later release introduces. Run `npx oe upgrade` again: the target's own `oe`
@@ -28,6 +34,23 @@ report, even when there is nothing left to install. A stale template-owned file 
 still break the deployment, so read each SYNC line and copy the target's file after you read the
 diff.
 
+A core after 0.2.1 also prints a DELETE line for each file that a release up to the target removed
+from the template, while the app still has it. A release names those files in its "Removed
+template files" list below. To mark a template file as the app's own, name it in
+`.oe-template-ignore` at the app root: one app-relative path per line, a trailing `/` for a
+directory, and `#` for a comment. The report prints nothing for an ignored file that the app does
+not have, and one `app-owned` line for an ignored file that it has. An ignored file never counts as
+a SYNC or a DELETE.
+
+An app with no `agent/access/pre-approval-rules.ts` (every app scaffolded before 0.2.1) is OFFERED the
+target template's starter pre-approval rules, in `npx oe upgrade` and in `--plan`. The upgrade
+never writes the file and never overwrites one you have. Without a bound rule the approval judge,
+shipped in `enforce`, has nothing to cite, so every gated act asks a person. To take the rules,
+read each one, copy the file, and bind it as the template's `agent/access/bundles.ts` does (the
+`approval-policy` bundle at org scope). An app that names the file in `.oe-template-ignore` is
+not offered it. A core without the offer prints none: run `npx oe upgrade --plan --to <target>`
+after the upgrade to see it.
+
 Read the entries between your installed version and your target, oldest first.
 
 ## An app below 0.1.4
@@ -37,8 +60,8 @@ and the installed core ships no `upgrading.json`. Install the target core beside
 gitignored `.open-everywhere/` directory, and run that core's `oe` from the app root:
 
 ```sh
-npm install --prefix .open-everywhere/bootstrap @open-everywhere/core@0.2.1 tsx@4
-node .open-everywhere/bootstrap/node_modules/@open-everywhere/core/bin/oe.js upgrade --to 0.2.1
+npm install --prefix .open-everywhere/bootstrap @open-everywhere/core@0.2.2 tsx@4
+node .open-everywhere/bootstrap/node_modules/@open-everywhere/core/bin/oe.js upgrade --to 0.2.2
 ```
 
 The run renames `create-open-everywhere`, bumps every pin, installs, and then reads the target's
@@ -54,6 +77,20 @@ that release or a later one as the target, this one-liner is the bootstrap too:
 ```sh
 npx -p @open-everywhere/core@<version> oe upgrade --to <version>
 ```
+
+## 0.2.2 — 2026-10-08
+
+The cross-surface window loses its question road and its tappable approval card, because no shipped session could reach them (OPE-2389). Since 0.2.0 no shipped production session on that window can raise a native input request: a conversation seat holds no `ask_question`, the work session holds only `agent` and `task_cancel`, a worker of the work session asks with `ask_room`, and no shipped tool raises a native `tool-approval`. The window now drops such a request and writes one `turn.question_dropped` audit row. The row is an alarm, not a fence: eve can still take that session's next plain message as the answer, without OE's admission check. The Notion question return is unchanged. Most apps need to do nothing: the breaking items touch only an app that imports one of the removed names or declares its own post arm.
+
+eve peer: `0.71.0`
+
+**Breaking**
+
+- `@open-everywhere/core/agent/adapter-api.js` no longer exports these 24 names: `APPROVAL_BUTTON_LABELS`, `APPROVAL_CARD_REFUSED_AUDIT_ACTION`, `APPROVAL_CARD_SETTLED_AUDIT_ACTION`, `ApprovalCardInputResponse`, `ApprovalCardRespondFn`, `ApprovalCardTapOutcome`, `ApprovalCardTicket`, `ApprovalClickAuditReason`, `ApprovalClickDeps`, `ApprovalClickRefusal`, `ApprovalClickRouting`, `AttachSessionForRespond`, `OE_INPUT_CLICK_PREFIX`, `approvalCardActions`, `approvalCardRespondVia`, `approvalClickId`, `auditApprovalCardTap`, `forgetApprovalCardTicket`, `mintApprovalCardTicket`, `parseApprovalClickId`, `readApprovalCardTicket`, `rememberApprovalCardTicket`, `resolveApprovalCardClick`, `unifiedActionCapablePlatforms`. The subpath exports `@open-everywhere/core/agent/channels/approval-card.js`, `@open-everywhere/provider-slack/agent/channels/slack-approval-card.js` and `@open-everywhere/provider-discord/agent/channels/discord-approval-card.js` are removed too. They served the tappable approval card on the cross-surface window, which no shipped session could raise. An app that imports one of them must delete the import and the code that uses it. There is no replacement.
+- `PostArm` has no `dispatchUnifiedActions` member, and `postUnifiedReply` takes no `actions` argument. A post arm that an app declares itself must delete its `dispatchUnifiedActions` member. Core never calls it.
+- These types and signatures are narrower: `OutstandingQuestion` has no `optionIds`, the `answer` arm of `InboundAnswerRouting` has no `optionId`, its `wake` arm has no `addressed-mention` or `unmatched-option` reason, `resolveInboundAnswerRouting` takes no `text` or `addressedMention` input, `renderQuestionForSurface` takes one argument, and `UnifiedWindowWake` has no `followUp` field. A caller that passes one of them gets a type error. Delete the argument or the field.
+- The cross-surface window no longer writes the audit actions `turn.question_bridged`, `input_response.card_settled` and `input_response.card_refused`. `turn.question_dropped` now records every native input request that window receives, with `reason` `no-question-road` (or `work-session` for the work session). `input_response.routed` and `input_response.dropped` now come only from the Notion question return. A dashboard or an alert that counts these actions must change.
+- A Slack or Discord click whose action id starts with `oe_input:` is no longer handled by Open Everywhere. It goes to eve like any other click that is not ours. No shipped session posted a card that carries this prefix.
 
 ## 0.2.1 — 2026-10-08
 
@@ -99,11 +136,15 @@ eve peer: `0.71.0`
 
 - Before the deploy, let the jobs that are running settle. A job still running on the 0.1.x deployment after the deploy keeps running there; remove the 0.1.x deployment to stop it. After the deploy, check the `session.runtime_rotation` audit rows: each standing seat writes one at its first wake. From 0.2.0, a deploy that changes code also rotates each conversation's work session at its next forward: the job goes to a new work session on the new code, and a `work.session_rotated` row (trigger `runtime-changed`) records it. The jobs that the old work session holds finish on the old deployment, and their results still reach the room (OPE-2377).
 - Read the `roster.lock.json` diff, then commit it. The 0.2.0 packages contribute new tools, among them `work`, `cancel_work` and `ask_room`. `oe upgrade` runs `npx oe build --accept`, which records a decision for each of them; after a manual install, run it yourself. `oe build`, which runs before the app's build, dev, start and typecheck, refuses a lock that has no decision for a contribution.
-- Copy the 0.2.1 template's `agent/instrumentation/otel.ts` and `agent/instrumentation/otlp.ts` into the app, and delete `agent/instrumentation.ts` if the app has it. `eve build` refuses the old file. `npx oe upgrade --plan` lists each new file as missing, but it does not name the old file. Without `otlp.ts` the app boots, but it exports no spans to an OTLP collector.
+- Copy the 0.2.1 template's `agent/instrumentation/otel.ts` and `agent/instrumentation/otlp.ts` into the app, and delete `agent/instrumentation.ts` if the app has it. `eve build` refuses the old file. `npx oe upgrade --plan` lists each new file as missing. A core at 0.2.1 or earlier does not name the old file. A later core prints `DELETE agent/instrumentation.ts` while the app still has it. Without `otlp.ts` the app boots, but it exports no spans to an OTLP collector.
 - Start the Docker daemon before `oe upgrade` reaches `npm run build`, if the app builds off Vercel. An app that deploys to Vercel can upgrade on a machine with no Docker daemon as `OE_SANDBOX_BACKEND=justbash npx oe upgrade`. The local build output of that run is specialised to the uncontained just-bash backend, so never start or deploy it. The Vercel deploy builds again on Vercel.
 - Sync these template files from the 0.2.1 `@open-everywhere/create` template, if the app was scaffolded at 0.1.5 or earlier: `agent/lib/register-adapters.ts`, `agent/sandbox/sandbox.ts`, `scripts/ops-mcp.ts`, `README.md` and `.claude/skills/upgrade-open-everywhere/SKILL.md`. No 0.2.0 template was published, and no template file changed between 0.2.0 and 0.2.1. The app owns its scaffolded files, so `oe upgrade` changes none of them. `npx oe upgrade --plan` lists every file that differs. The `scripts/ops-mcp.ts` edit matters most: without it, `surface_manifest` renders the Slack and Teams app manifests with the shipped default names, not the `identity.*` settings.
 - Merge by hand, if you want them, the template changes to the app's own config files: `agent/instructions.md` (a successful `reply` ends the turn) and the comment in `agent/spend/checkpoints.ts`.
 - Decide the approval judge's posture. To keep 0.1.x behaviour (a card for every gated act), set `approvals: { judgeMode: "off" }` in `agent/settings/settings.ts`. To auto-approve routine acts, copy the template's starter rules (`agent/access/pre-approval-rules.ts` in a fresh `npx @open-everywhere/create` app) into your app, bind them at org scope as the template's `approval-policy` bundle in `agent/access/bundles.ts` does, review each rule, and deploy. An app that ran 0.1.x with `judgeMode: "enforce"` and no authored rules now gets a card where the judge used to allow on its own judgement.
+
+**Removed template files (delete each one the app still has)**
+
+- `agent/instrumentation.ts`
 
 ## 0.1.5 — 2026-10-04
 
@@ -139,7 +180,7 @@ eve peer: `0.54.3`
 - `StatusVersions.core` is `string`, no longer `string | null` (`@open-everywhere/core/agent/ops/status.js`). The status route always answers a real core version now, so a reader that branched on `core === null` must drop that branch, and a caller that injects a version bag into `deploymentStatus` must stop passing `core: null`. Both are compile errors on the upgrade, never a silent change.
 - `PreflightTarget` (`@open-everywhere/core/agent/ops/quickstart.js`) is now `"local" | "vercel" | "docker"`. The `"hosted"` member is gone. In TypeScript a caller passing `target: "hosted"` is a compile error. In JavaScript it is worse, because it matches neither deployment route: the gateway exemption and every route-specific sentence then answer as though the deployment were Docker, so a correct Vercel deploy can be reported not ready. Pass `"vercel"` or `"docker"`.
 - `@open-everywhere/core/agent/observability/telemetry.js` no longer exports `resetTelemetryConfigCache` or `resolveInstanceId`. Both existed for the retired install wizard's mid-process collector redirect. `__resetTelemetryForTest` is the remaining reset seam.
-- `GET /eve/v1/oe/status` is a NEW PUBLIC, UNAUTHENTICATED route on every deployment. It is built to be safe to publish — no secret, id, hostname, content or count — but it does disclose this deployment's contract posture (including `sandbox-backend` and `egress-control` verdicts) and its exact core version to any caller that knows the host. Block the path at the edge if that is not wanted.
+- `GET /eve/v1/oe/status` is a NEW PUBLIC, UNAUTHENTICATED route on every deployment. It is built to be safe to publish — no secret, id, hostname, content or count — but it does disclose this deployment's contract posture (including `sandbox-backend` and `egress-control` verdicts) and its exact core version to any caller that knows the host. To hide it, exclude `channel/oe-status` in `roster.config.ts` or block the path at the edge. `docs/deploy/contract.md` § Hiding the status route gives both recipes, and `docs/deploy/surfaces/slack.md` § Public exposure covers a Vercel custom domain.
 - The Slack bundle mounts `GET`/`POST /setup` and `GET /setup/callback` on every deployment that registers it. The page is OPEN, and the deployment logs a one-time setup code on every start while it is, unless a Slack install is already recorded, `SLACK_BOT_TOKEN` or `SLACK_SIGNING_SECRET` is set in the environment, or `OE_CREDENTIAL_ENCRYPTION_KEY` is unset or malformed. 🔴 A deployment that ships the Slack bundle but does NOT use Slack meets none of those conditions, so it upgrades into an open setup page. The trust root is read access to the deployment's logs — a platform permission (`vercel logs`, `docker logs`), not this product's `admin` role — so whoever holds it can complete the setup and bind a Slack app to this deployment. The lock fails closed and the page closes for good at the first install. Block both paths at the edge, or drop `slack-setup-page` from the roster, if the deployment will never use Slack.
 
 **Config migrations**

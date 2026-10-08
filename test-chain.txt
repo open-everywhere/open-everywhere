@@ -172,6 +172,7 @@ test:it-memory-config
 test:it-prepare
 lint:setup-steps-docs
 lint:skill-sync
+lint:ops-secret-args
 test:scripted-wake-ownership
 test:scripted-task-receipt
 lint:hook-throw

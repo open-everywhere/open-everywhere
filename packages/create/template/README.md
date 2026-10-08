@@ -28,7 +28,19 @@ It is generated from the same step list the status check reports, so it cannot d
 
 `npx @open-everywhere/create --check` reports every setup step and the next command for each
 unsatisfied one. It changes nothing. Add `--json` for the report as data, `--route docker` to judge
-against the Docker route, and `--host https://<host>` to probe a deployment.
+against the Docker route, and `--host https://<host>` to probe a deployment. With `--host`, the env
+step also reads the deployment's own verdicts, so values set only in the Vercel dashboard count.
+
+## Telemetry
+
+The deployed app sends **anonymous usage telemetry, ON by default**: event names, enums, coarse
+buckets, public model ids and the app version. Each event carries a random per-install id
+(`service.instance.id`). It never sends message or memory content, org names, workspace, channel,
+user or session ids, or env values. **To turn it off, set `OE_TELEMETRY=off`** (or `DO_NOT_TRACK=1`) on the deployment:
+the Vercel project's environment or the container's. `.env.local` alone does not do it, because it
+never ships. Every event and attribute is listed in the
+[telemetry disclosure](https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/telemetry.md).
+The `@open-everywhere/create` CLI sends none.
 
 ## Develop locally
 
@@ -44,6 +56,7 @@ without a public tunnel.
 | --- | --- |
 | `roster.config.ts` | What the agent can do: which packages contribute, and which eve built-ins it takes away. |
 | `roster.lock.json` | The reviewed roll-call of every contribution. `npx oe build --accept` updates it. Review its diff. |
+| `scripts/goldens/roster-plan.txt` | The roster review surface: one line per slot file `oe build` writes, with the package that mounts it. `oe build` keeps it current and `npx oe build --check` fails when it drifts. Commit it, and review its diff with the lock's. |
 | `agent/agent.ts` | The eve agent definition. |
 | `agent/access/` | Bundles and bindings (what the agent may reach, and where), connector credentials, browser hosts, and the pre-approval rules (what runs with no approval card). |
 | `agent/identity/` | Trusted surfaces, principals and groups. |

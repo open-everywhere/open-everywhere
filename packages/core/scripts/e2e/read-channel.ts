@@ -1,5 +1,6 @@
 import { fetchAudit, type AuditWireEntry } from "./audit-read.js";
 import { fetchTranscript } from "./transcript-read.js";
+import { deploymentPresenceSince } from "./window-harness.js";
 import { isWindowToken } from "../../agent/channels/window-key.js";
 import { REPLY_POST_ACTION, dS, classifyDelegatedReadEvidence, pollForDelegationSettlement, pollForFinalReply } from "./read-channel-lib.js";
 
@@ -109,7 +110,7 @@ async function awaitFinalReply(id: string, sinceIso: string, wakeId: string, ses
 }
 
 async function g1(): Promise<void> {
-  const since = new Date().toISOString();
+  const since = await deploymentPresenceSince(TARGET, READ);
   const brief = `Please use read_channel with target {platform:"slack", channel:"${SLACK_CHANNEL_ID}"} to pull recent messages from that channel, then reply here with GRV1-${RUN} summarising what you saw.`;
   const { wakeId, token } = await inject({ domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: { platform: "slack", channelId: SLACK_CHANNEL_ID }, text: brief });
   if (!isWindowToken(token)) return record("G1", "FAIL", `dispatched token ${token} is not a window token — the window did not resolve`);
@@ -134,7 +135,7 @@ async function g1(): Promise<void> {
 
 async function g2(): Promise<void> {
   if (!DISCORD_SURFACE) return record("G2", "SKIP", "no E2E_GRV_DISCORD_SURFACE set — supply a discord/<guild>/<channel> surface in the domain to drive the additive Discord read.");
-  const since = new Date().toISOString();
+  const since = await deploymentPresenceSince(TARGET, READ);
   const brief = `Please use read_channel with target {platform:"discord", channel:"${DISCORD_CHANNEL_ID}"} to read that Discord channel, then reply with GRV2-${RUN} summarising what you saw.`;
   const { wakeId, token } = await inject({ domain: DOMAIN, platform: "discord", surfaceKey: DISCORD_SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: { platform: "discord", channelId: DISCORD_CHANNEL_ID, guildId: DISCORD_GUILD_ID }, text: brief });
   console.log(`  G2 injected Discord wake ${wakeId} → token ${token}`);

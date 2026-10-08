@@ -1,5 +1,5 @@
 import { getConfig } from "./config.js";
-import { isTenantScopedPlatform, principalKeyReplacementHint } from "../identity/principal-key.js";
+import { isEnterpriseRungId, isTenantScopedPlatform, principalKeyReplacementHint } from "../identity/principal-key.js";
 import type { Domain } from "../memory/domain.js";
 
 export type TenantRung = "workspace" | "enterprise";
@@ -9,11 +9,8 @@ export interface TenantRungSets {
   readonly enterprises: ReadonlySet<string>;
 }
 
-const ENTERPRISE_RUNG_PREFIX: ReadonlyMap<string, string> = new Map([["slack", "E"]]);
-
 export function tenantRungOf(platform: string, tenant: string): TenantRung {
-  const prefix = ENTERPRISE_RUNG_PREFIX.get(platform);
-  return prefix !== undefined && tenant.startsWith(prefix) ? "enterprise" : "workspace";
+  return isEnterpriseRungId(platform, tenant) ? "enterprise" : "workspace";
 }
 
 export function splitTenantRungs(platform: string, tenants: Iterable<string>): TenantRungSets {

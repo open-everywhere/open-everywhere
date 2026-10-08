@@ -20,6 +20,13 @@ import {
   s23ConfirmationCheck,
   delegationJoinForSession,
   fireAnchor,
+  fireReportJoin,
+  FIRE_ATTRS_SENT_ACTION,
+  FIRE_REPORT_JOIN_ACTIONS,
+  TASK_WAKE_ACTION,
+  REPLY_POST_ACTION,
+  ROUTINE_FIRE_ACTION,
+  SETTLEMENT_REPORT_POSTED_ACTION,
   fixtureArithmetic,
   judgeDeniedRoutineCreation,
   fixtureSalt,
@@ -1864,6 +1871,101 @@ console.log("25. the rewritten e2e asks carry no test scaffolding:");
   const discordAsk = asks[0]![1];
   ok(discordAsk.includes("ref dgrant-x") && discordAsk.includes("page-1") && discordAsk.includes("discord/1") && discordAsk.includes("<@1>"), "the grant ask keeps the mention, ref, page and owner key");
   ok(asks[2]![1].includes("sup-12345") && asks[4]![1].includes("routineConnectorReportLine(fireWord)") && asks[3]![1].includes("${fireWord}"), "the inline asks keep their ref and confirmation-word tokens");
+}
+
+console.log("26. the REST-road witness reads a quoted notion-rest script path:");
+{
+  const { isNotionReadCall, isNotionRestWrappedRead, transcriptHasNotionPageRead } = await import("./notion-taint-replay.js");
+  const SCRIPT = "$HOME/.agents/skills/notion-rest/scripts/notion.mjs";
+  const bash = (command: string) => ({ toolName: "bash", input: { command } });
+  const quoted = bash(`node "${SCRIPT}" page markdown current`);
+  ok(isNotionReadCall(quoted, "notion"), "🔴 OPE-2394: a `bash` call with a double-quoted script path and `page markdown` is a Notion read");
+  ok(isNotionReadCall(bash(`node '${SCRIPT}' blocks list current`), "notion"), "…and a single-quoted path with `blocks list`");
+  ok(isNotionReadCall(bash(`node ${SCRIPT} comments list current`), "notion"), "…and a bare path with `comments list` (the old form still reads)");
+  ok(isNotionRestWrappedRead({ script: `node "${SCRIPT}" page markdown current` }), "…and an input with no `command` string, read from its serialised form");
+  const events: TranscriptWireEvent[] = [{ index: 0, at: null, type: "actions.requested", data: { turnId: "turn_1", actions: [{ callId: "c1", ...quoted }] } }];
+  ok(transcriptHasNotionPageRead(events, { road: "rest", connector: "notion" }), "🔴 OPE-2394: the arm-B transcript witness on the REST road sees the quoted-path read");
+  ok(isNotionReadCall(bash(`node "${SCRIPT}" page current`), "notion") === false, "NEGATIVE CONTROL: `page current` (a handle, no content) is not a read");
+  ok(isNotionReadCall(bash(`node "${SCRIPT}" search "roadmap"`), "notion") === false, "NEGATIVE CONTROL: `search` is not a read");
+  ok(isNotionReadCall(bash(`cat "${SCRIPT}" | grep "page markdown"`), "notion") === false, "NEGATIVE CONTROL: a command that only names the verb elsewhere is not a read");
+  ok(isNotionReadCall({ toolName: "write_file", input: { command: `node "${SCRIPT}" page markdown current` } }, "notion") === false, "NEGATIVE CONTROL: a non-bash tool with the same text is not a REST read");
+  const other: TranscriptWireEvent[] = [{ index: 0, at: null, type: "actions.requested", data: { actions: [{ callId: "c2", ...bash(`node "${SCRIPT}" page current`) }] } }];
+  ok(transcriptHasNotionPageRead(other, { road: "rest", connector: "notion" }) === false, "NEGATIVE CONTROL: the transcript witness refuses a handle-only call");
+}
+
+console.log("27. the fire report join ignores the creation turn's posts:");
+{
+  const dstrOf = (r: AuditWireEntry | undefined, key: string): unknown => (r?.detail as Record<string, unknown> | undefined)?.[key];
+  const SEAT = "wrun_seat";
+  const WORK = "wrun_work";
+  const ASK_WAKE = "wake_ask";
+  const FIRE_WAKE = "wake_fire";
+  const creation = [
+    row("wake.turn_start", "2026-02-09T19:20:00.000Z", { wakeId: ASK_WAKE, sessionId: SEAT }, 10),
+    row(REPLY_POST_ACTION, "2026-02-09T19:20:20.000Z", { sessionId: SEAT, wakeId: ASK_WAKE, id: "1700.001" }, 11),
+    row(REPLY_POST_ACTION, "2026-02-09T19:21:00.000Z", { sessionId: SEAT, wakeId: ASK_WAKE, id: "1700.002" }, 12),
+    row(SETTLEMENT_REPORT_POSTED_ACTION, "2026-02-09T19:21:00.100Z", { task: "work:req_ask", wake: ASK_WAKE }, 13),
+  ];
+  const fire = [
+    row(FIRE_ATTRS_SENT_ACTION, "2026-02-09T19:30:00.000Z", { routineId: "r-once", wakeId: FIRE_WAKE }, 20),
+    row("wake.turn_start", "2026-02-09T19:30:01.000Z", { wakeId: FIRE_WAKE, sessionId: SEAT }, 21),
+    row("work.forwarded", "2026-02-09T19:30:01.500Z", { wakeId: FIRE_WAKE, requestId: "req_fire", fire: true }, 22),
+    row("delegation.task_started", "2026-02-09T19:30:02.000Z", { request: "req_fire", session: WORK }, 23, "control"),
+    row(ROUTINE_FIRE_ACTION, "2026-02-09T19:30:30.000Z", { routineId: "r-once", sessionId: WORK, outcome: "failed" }, 24),
+  ];
+  const fireReport = row(REPLY_POST_ACTION, "2026-02-09T19:30:40.000Z", { sessionId: SEAT, wakeId: FIRE_WAKE, id: "1800.001" }, 25);
+
+  const reported = fireReportJoin([...creation, ...fire, fireReport]);
+  ok(reported.verdict === "posted", `the fire that posted reads as posted (saw ${reported.verdict})`);
+  ok(dstrOf(reported.report, "id") === "1800.001", `🔴 OPE-2394: the report is the FIRE's post, not the creation turn's settlement post (saw ${JSON.stringify(dstrOf(reported.report, "id"))})`);
+  ok(reported.replies.length === 1, `🔴 OPE-2394: the creation turn's two posts never count as fire posts (saw ${reported.replies.length} replies)`);
+  ok(reported.reportRoad === "last-post", `the creation turn's settlement row never names the fire's report (saw ${reported.reportRoad})`);
+
+  const fireHandOff = row(REPLY_POST_ACTION, "2026-02-09T19:30:05.000Z", { sessionId: SEAT, wakeId: FIRE_WAKE, id: "1800.000" }, 22.5);
+  const fireSettled = row(SETTLEMENT_REPORT_POSTED_ACTION, "2026-02-09T19:30:40.100Z", { task: "work:req_fire", wake: FIRE_WAKE }, 26);
+  const settledJoin = fireReportJoin([...creation, ...fire, fireHandOff, fireReport, fireSettled]);
+  ok(dstrOf(settledJoin.report, "id") === "1800.001" && settledJoin.reportRoad === "settlement", `a fire-wake settlement row still names the fire's report (saw ${JSON.stringify(dstrOf(settledJoin.report, "id"))}, ${settledJoin.reportRoad})`);
+
+  const silent = fireReportJoin([...creation, ...fire]);
+  ok(silent.verdict === "no-reply" && silent.report === undefined, `🔴 OPE-2394: a fire that never reported is no-reply, whatever the creation turn posted (saw ${silent.verdict}, report ${JSON.stringify(dstrOf(silent.report, "id"))})`);
+
+  const noWakeBefore = row(REPLY_POST_ACTION, "2026-02-09T19:25:00.000Z", { sessionId: SEAT, id: "1750.001" }, 15);
+  ok(fireReportJoin([...creation, noWakeBefore, ...fire]).verdict === "no-reply", "NEGATIVE CONTROL: a wakeless seat post BEFORE the fire never counts");
+  const noWakeAfter = row(REPLY_POST_ACTION, "2026-02-09T19:30:50.000Z", { sessionId: SEAT, id: "1800.009" }, 27);
+  ok(dstrOf(fireReportJoin([...creation, ...fire, noWakeAfter]).report, "id") === "1800.009", "a wakeless seat post AFTER the fire counts");
+  const otherWake = row(REPLY_POST_ACTION, "2026-02-09T19:31:00.000Z", { sessionId: SEAT, wakeId: "wake_other", id: "1810.001" }, 28);
+  ok(fireReportJoin([...creation, ...fire, otherWake]).verdict === "no-reply", "NEGATIVE CONTROL: a seat post under a non-fire wake never counts as the fire's report");
+
+  const TASK_WAKE = "wake_task";
+  const fireTask = row("delegation.task_started", "2026-02-09T19:30:03.000Z", { task: "agent-fire", session: WORK, request: "req_fire" }, 23.5, "ingest");
+  const taskPost = row(REPLY_POST_ACTION, "2026-02-09T19:30:45.000Z", { sessionId: SEAT, wakeId: TASK_WAKE, id: "1800.002" }, 29);
+  const taskSettled = row(SETTLEMENT_REPORT_POSTED_ACTION, "2026-02-09T19:30:45.100Z", { task: "agent-fire", wake: TASK_WAKE }, 30);
+  const viaSettlement = fireReportJoin([...creation, ...fire, fireTask, fireHandOff, taskPost, taskSettled]);
+  ok(
+    dstrOf(viaSettlement.report, "id") === "1800.002" && viaSettlement.reportRoad === "settlement" && viaSettlement.replies.length === 2,
+    `🔴 OPE-2394: a post under a fire task's own wake is the fire's report (saw ${JSON.stringify(dstrOf(viaSettlement.report, "id"))}, ${viaSettlement.reportRoad}, ${viaSettlement.replies.length} replies)`,
+  );
+  const taskWakeRow = row(TASK_WAKE_ACTION, "2026-02-09T19:30:44.000Z", { task: "agent-fire", status: "completed", outcome: "installed", wakeId: TASK_WAKE, inheritedWakeId: FIRE_WAKE, sessionId: SEAT }, 28.5, "unified");
+  ok(dstrOf(fireReportJoin([...creation, ...fire, fireTask, taskWakeRow, taskPost]).report, "id") === "1800.002", "…and the unified.task_wake row alone links the task's wake to the fire");
+  ok(FIRE_REPORT_JOIN_ACTIONS.includes(TASK_WAKE_ACTION), "🔴 WIRING: the fire-report read asks for unified.task_wake");
+  const askTask = row("delegation.task_started", "2026-02-09T19:20:30.000Z", { task: "agent-ask", session: WORK, request: "req_ask" }, 11.5, "ingest");
+  const askTaskPost = row(REPLY_POST_ACTION, "2026-02-09T19:21:30.000Z", { sessionId: SEAT, wakeId: "wake_ask_task", id: "1700.003" }, 14);
+  const askTaskSettled = row(SETTLEMENT_REPORT_POSTED_ACTION, "2026-02-09T19:21:30.100Z", { task: "agent-ask", wake: "wake_ask_task" }, 14.5);
+  const askTaskWake = row(TASK_WAKE_ACTION, "2026-02-09T19:21:29.000Z", { task: "agent-ask", wakeId: "wake_ask_task", sessionId: SEAT }, 13.5, "unified");
+  ok(
+    fireReportJoin([...creation, askTask, askTaskWake, askTaskPost, askTaskSettled, ...fire]).verdict === "no-reply",
+    "NEGATIVE CONTROL: a creation-turn task's settlement post never counts, and a fire that never reports stays no-reply",
+  );
+  const lateAsk = row("delegation.task_started", "2026-02-09T19:30:20.000Z", { task: "agent-ask", session: "wrun_other", request: "req_other" }, 24.5, "ingest");
+  ok(fireReportJoin([...creation, lateAsk, askTaskPost, askTaskSettled, ...fire]).verdict === "no-reply", "NEGATIVE CONTROL: a task from another session and request never joins, whatever its time");
+
+  const native = [
+    row(FIRE_ATTRS_SENT_ACTION, "2026-02-09T19:30:00.000Z", { routineId: "r-native" }, 20),
+    row(ROUTINE_FIRE_ACTION, "2026-02-09T19:30:30.000Z", { routineId: "r-native", sessionId: SEAT, outcome: "failed" }, 24),
+  ];
+  const nativePost = row(REPLY_POST_ACTION, "2026-02-09T19:30:20.000Z", { sessionId: SEAT, wakeId: "wake_native", id: "1800.100" }, 23);
+  const nativeJoin = fireReportJoin([...creation, ...native, nativePost]);
+  ok(dstrOf(nativeJoin.report, "id") === "1800.100" && nativeJoin.replies.length === 1, `a native fire's own post counts by session, and the creation turn's posts still do not (saw ${nativeJoin.replies.length} replies)`);
 }
 
 console.log(`✓ ${n} gate-joins assertions passed`);

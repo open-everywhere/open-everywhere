@@ -134,6 +134,41 @@ The plane itself **ships dark on this deployment**: the setting keeps its shippe
 and the gate refuses on that first. Declaring the workspace removes the config blocker; it does not
 arm the plane.
 
+### Admin keys on a Grid
+
+An admin key on Slack names the workspace and the person: `slack/T…/U…`. On a Grid, you can write
+the Grid id in the workspace slot instead (OPE-2400):
+
+```ts
+defineDomain({ name: "org", match: "org", memory: "org-brain", admins: ["slack/E0GRIDID/U0EXUSER002"] }),
+```
+
+That one key gives the person admin standing in every workspace under the Grid. Slack issues one
+member id for the whole Grid, so the key names one person. Slack's own admin pages show the `E…` id,
+so you do not need to find the person's `T…` workspace id.
+
+The rung works as it does for trust. Open Everywhere reads the Grid id from the delivery itself, in
+the same places listed above. It checks the workspace key first and the Grid key last. A Grid key
+matches only where the delivery named that Grid. A delivery from a workspace under another Grid, or
+under no Grid, does not match it. A workspace key still never reaches a sibling workspace. An admin
+roster only grants standing, so no narrower line can take standing away: a workspace key and a Grid
+key for one person both grant, and either one is enough.
+
+The Grid key reaches the admin tools, the approval-card click (an admin-tier card), the admin
+bypass of a spend cap, the wake trust tier on the Slack event doors, and the admin memory reads.
+🔴 **Three readers do not use the Grid key.** There, a Grid key grants nothing, which is the safe
+direction:
+
+- the governance-channel floor, which needs every member of the room to be an admin. It holds only
+  a channel key, and a channel key names no Grid, so it counts a Grid admin as a plain member and
+  the floor stays unarmed;
+- the ✋ stop reaction on work that another person started. The reaction door reads the Grid id for
+  its tenant fence, but this change does not pass it on to the stop;
+- the trust grade of quoted messages in backscroll (the bootstrap read, the catch-up read and the
+  name-drop read). Each one grades a Grid-only admin as a member, so all three agree.
+
+For a person who needs one of these, add the workspace key `slack/T…/U…` as well.
+
 ## Prerequisites
 
 - **Admin** (or app-install rights) on the target Slack workspace.
@@ -146,12 +181,16 @@ arm the plane.
 That page does the whole install for you (OPE-2231):
 
 1. It asks for a **one-time setup code**. The deployment logs the code on every start while Slack is
-   not installed — read it with `vercel logs` or `docker logs`. This is the page's only
-   authentication, so whoever can read the deployment's logs can run setup.
+   not installed — read it with `vercel logs` or `docker logs`. The log line names the absolute page
+   URL, `https://<host>/setup`, on the host the page will write into the Slack app. This is the
+   page's only authentication, so whoever can read the deployment's logs can run setup.
 2. You paste **one Slack app configuration token** (<https://api.slack.com/apps> → *Your App
    Configuration Tokens*; it needs `app_configurations:write` and lasts about 12 hours). The page
    calls `apps.manifest.create` with the manifest below and your deployment's own host, so no URL is
-   typed by hand. The configuration token is used once and never stored.
+   typed by hand. The screen names that host. It also asks the host for its own `/setup` with no
+   login. On a 401, a 403 or a redirect, the screen warns that Slack cannot reach the host and
+   names `OE_PUBLIC_BASE_URL`, because Slack sends its requests with no login. The configuration
+   token is used once and never stored.
 3. You click **Install to Slack**. The OAuth callback stores the bot token.
 4. The last screen gives you the **two config edits**, already filled in with your workspace and user
    ids — the vouch in `agent/identity/surfaces.ts` and `admins` in
@@ -180,6 +219,41 @@ configured by environment variable, so the page is closed from the start.
 
 The rest of this page is the **manual path** — still fully supported, and the one to use before the
 first deploy (the page needs a running deployment to create an app that points at it).
+
+## Public exposure on a custom domain
+
+A deployment on a public host exposes two things to any caller that knows the host. Know both, and
+close what you do not need.
+
+**Vercel Standard Protection leaves a production custom domain public.** It puts a Vercel login in
+front of every other domain of the project. Check the protection your project's dashboard shows.
+With Standard Protection, the status route and `/setup` answer anyone on a production custom domain.
+The reverse case breaks setup: when the host that `/setup` writes into the Slack app sits behind the
+login, Slack's requests never reach the deployment. `/setup` warns about that on screen 2. The host
+comes from `OE_PUBLIC_BASE_URL`, else `VERCEL_PROJECT_PRODUCTION_URL`, else `VERCEL_URL`. Set
+`OE_PUBLIC_BASE_URL` to the public custom domain to choose it.
+
+**1. The status route, `GET /eve/v1/oe/status`.** It is public with no setting to turn it off. It
+names the exact core and eve versions and the contract verdicts, and its Slack `installed` field
+reads `no` while `/setup` can be open. It carries no secret, id or content. To hide it, exclude
+`channel/oe-status` in `roster.config.ts`, or deny every path that starts with it in the Vercel
+Firewall. The [deployment contract](../contract.md#hiding-the-status-route) gives both recipes.
+
+**2. The `/setup` window.** The page is open from the first start with a valid
+`OE_CREDENTIAL_ENCRYPTION_KEY` until the first Slack install, unless `SLACK_BOT_TOKEN` or
+`SLACK_SIGNING_SECRET` is set in the environment. It answers 404 while the key is unset. In that
+window, anyone who can read the deployment's logs can claim the page: every member of the Vercel
+team, and every reader of a log drain. The code is 128 bits, so a guess does not work. A claim lets
+the holder create a Slack app in their own workspace that points at this deployment, and lock
+`/setup`. That workspace is not declared in `agent/identity/surfaces.ts`, so the agent treats it as
+an outside workspace. Recover with the `reopen_slack_setup` control call. To keep the window short:
+
+- Set `OE_CREDENTIAL_ENCRYPTION_KEY` on the day you install Slack, if the deployment needs no stored
+  credential before then. Then run `/setup` in the same sitting.
+- If the deployment will never use Slack, exclude `channel/slack-setup-page` under `providers.slack`
+  in `roster.config.ts` (then `npx oe build --accept`), or deny every path that starts with `/setup`
+  at the edge. That prefix covers `/setup/` and `/setup/callback` too.
+- After the install, `/setup` answers 404 for good, until a `reopen_slack_setup`.
 
 ## Step 1 — Create the Slack app
 

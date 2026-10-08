@@ -1,6 +1,6 @@
 # Quick start
 
-**Five minutes to a talking agent: deploy button → a live agent answering in a channel.**
+**The fast path to a talking agent: deploy button → a live agent answering in a channel.**
 
 This is the fastest path to a working Open Everywhere. It gets you a deployed agent that
 responds when you `@mention` it in one channel, with a minimal config — one surface, one
@@ -57,8 +57,10 @@ needs its own name.
 `--check` changes nothing: no prompts, no writes, no telemetry. **There is no interactive wizard,
 and this CLI sends no telemetry at all** — see [Telemetry](../deploy/telemetry.md) for the two
 retired install-wizard events and why their names are still accepted by the collector. The ops MCP
-server's tools are what write: `scaffold_env` writes `.env.local`, and
-`scaffold_credential_key` mints the credential-store key without printing it.
+server's tools write non-secret config: `scaffold_env` writes it to `.env.local`, and
+`scaffold_credential_key` mints the credential-store key without printing it. A secret value never
+passes through a tool: you type it into your own terminal with `npx oe env set <NAME>`, which reads
+it from a hidden prompt into `.env.local`.
 
 Without a directory name, `--check` reports on the app in the current directory. Its repo step
 checks that the directory is an Open Everywhere app — a scaffolded one, or a clone under

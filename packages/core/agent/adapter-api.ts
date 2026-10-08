@@ -339,7 +339,7 @@ export type {
   ParityProblem,
 } from "./identity/surface-parity.js";
 
-export { registerPostArm, registeredPostArmPlatforms, unifiedActionCapablePlatforms } from "./channels/post-arms.js";
+export { registerPostArm, registeredPostArmPlatforms } from "./channels/post-arms.js";
 export type { PostArm, PostIntent, TargetResolveBag, DirectMessageRequest, DirectMessageDelivery, DirectMessageAction, ReactTarget } from "./channels/post-arms.js";
 export type { ReplyTarget } from "./channels/reply-post.js";
 export type { UnifiedReplyDeps } from "./channels/unified-reply.js";
@@ -363,24 +363,6 @@ export {
   QUESTION_ANSWER_DROPPED_AUDIT_ACTION,
 } from "./channels/question-bridge.js";
 export type { OutstandingQuestion, InboundAnswerRouting, BridgedQuestionStore } from "./channels/question-bridge.js";
-export {
-  OE_INPUT_CLICK_PREFIX,
-  APPROVAL_BUTTON_LABELS,
-  approvalClickId,
-  parseApprovalClickId,
-  mintApprovalCardTicket,
-  approvalCardActions,
-  rememberApprovalCardTicket,
-  readApprovalCardTicket,
-  forgetApprovalCardTicket,
-  resolveApprovalCardClick,
-  APPROVAL_CARD_SETTLED_AUDIT_ACTION,
-  APPROVAL_CARD_REFUSED_AUDIT_ACTION,
-  auditApprovalCardTap,
-  approvalCardRespondVia,
-} from "./channels/approval-card.js";
-export type { ApprovalCardInputResponse, ApprovalCardRespondFn, AttachSessionForRespond } from "./channels/approval-card.js";
-export type { ApprovalCardTicket, ApprovalClickRouting, ApprovalClickRefusal, ApprovalClickDeps, ApprovalClickAuditReason, ApprovalCardTapOutcome } from "./channels/approval-card.js";
 export { bareTokenFromEveContext } from "./channels/window-key.js";
 
 export { auditNoReplySentinelObserved } from "./channels/chat-turn-audit.js";
@@ -571,7 +553,8 @@ export { readCappedBody, selfDispatchBaseUrl } from "./channels/self-dispatch.js
 export { securePageResponse, escapeHtml, BUTTON_STYLE, CODE_BLOCK_STYLE } from "./credentials/page-chrome.js";
 export { pageBaseUrl } from "./credentials/page-token.js";
 
-export { registerBootNotice, runBootNotices } from "./boot/notices.js";
+export { registerBootNotice, runBootNotices, registeredBootNoticeNames } from "./boot/notices.js";
+export { announceJudgeWithoutRules } from "./access/approval-judge.js";
 export type { BootNotice } from "./boot/notices.js";
 
 export {

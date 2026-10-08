@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -414,6 +415,46 @@ try {
     else ok(/not on PATH|already inside/.test(r.detail), `git init (real git): skipped for a stated reason (${r.detail})`);
   } finally {
     rmSync(real, { recursive: true, force: true });
+  }
+}
+
+{
+  const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
+  const tsxCli = join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs");
+  const oeCli = join(repoRoot, "packages", "core", "scripts", "oe-cli.ts");
+  const version = (JSON.parse(readFileSync(join(repoRoot, "packages", "core", "package.json"), "utf8")) as { version: string }).version;
+  ok(templateFiles.includes("scripts/goldens/roster-plan.txt"), "template: ships scripts/goldens/roster-plan.txt, the roster review surface");
+  const parent = mkdtempSync(join(tmpdir(), "oe-scaffold-golden-"));
+  const link = join(parent, "app", "node_modules");
+  try {
+    const app = scaffoldApp({ targetDir: join(parent, "app"), version }).dir;
+    symlinkSync(join(repoRoot, "node_modules"), link, process.platform === "win32" ? "junction" : "dir");
+    const git = (...args: string[]) => spawnSync("git", args, { cwd: app, encoding: "utf8" });
+    if (git("--version").status !== 0) {
+      console.log("  · git is not on PATH: the clean-status half of the golden check is skipped");
+    } else {
+      git("init", "-q");
+      git("add", "-A");
+      const commit = git("-c", "user.name=oe-test", "-c", "user.email=oe-test@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "scaffold");
+      ok(commit.status === 0, `golden: the scaffold commits (${commit.stderr.trim()})`);
+      const build = spawnSync(process.execPath, [tsxCli, oeCli, "build", "--accept"], { cwd: app, encoding: "utf8", timeout: 120_000 });
+      ok(build.status === 0, `golden: \`oe build --accept\` succeeds on a fresh scaffold (${(build.stdout + build.stderr).trim().split("\n").slice(-5).join(" | ")})`);
+      const status = git("status", "--porcelain").stdout.trim();
+      ok(
+        status === "",
+        `golden: \`oe build --accept\` on a fresh scaffold leaves a clean git status (got: ${status || "clean"}). ` +
+          "Fix: scaffold the template, run `oe build --accept` in it, then copy its roster.lock.json (versions back to " +
+          `${VERSION_PLACEHOLDER}) and scripts/goldens/roster-plan.txt into packages/create/template/, and review both diffs`,
+      );
+      const check = spawnSync(process.execPath, [tsxCli, oeCli, "build", "--check"], { cwd: app, encoding: "utf8", timeout: 120_000 });
+      ok(check.status === 0, "golden: `oe build --check` passes on the built scaffold, golden included");
+    }
+  } finally {
+    try {
+      unlinkSync(link);
+    } catch {
+    }
+    rmSync(parent, { recursive: true, force: true });
   }
 }
 

@@ -10,7 +10,8 @@ function postgresResolution(env: NodeJS.ProcessEnv): { operational: boolean; mem
 }
 
 function nextFor(route: SetupRoute): string {
-  const write = 'write it with the ops MCP tool `scaffold_env { values: { DATABASE_URL: "<the connection string>" } }` — it selects postgres for both stores on its own';
+  const write =
+    "ask the person to run `npx oe env set DATABASE_URL` in their own terminal and paste the connection string at its hidden prompt — it selects postgres for both stores on its own";
   return route === "vercel"
     ? `add Neon from the Vercel Marketplace (\`npx vercel install neon\`, or the project's Storage → Neon → Connect; either sets DATABASE_URL on the project), then ${write}`
     : `provision a Postgres the container can reach (the deployment contract names it), then ${write}`;
@@ -52,9 +53,9 @@ export const databaseStep: SetupStep = {
       summary: "Both routes need Postgres: an ephemeral disk (Vercel) or a replaced container (Docker) loses every local store.",
       instructions: [
         vercel
-          ? "`npx vercel install neon` provisions Neon and connects it to the linked project, which sets DATABASE_URL there. The project's Storage → Neon → Connect does the same thing."
+          ? "`npx vercel install neon` provisions Neon and connects it to the linked project, which sets DATABASE_URL there. The project's Storage → Neon → Connect does the same thing. The integration can also enable Neon Auth (NEON_AUTH_BASE_URL, VITE_NEON_AUTH_URL): Open Everywhere does not use it, so leave it off, or ignore those two variables."
           : "Provision a Postgres the container can reach (Neon, RDS, or your own server). The deployment contract states what it must satisfy.",
-        "Write the same connection string into .env.local with the ops tool `scaffold_env`. It selects postgres for the operational store and the memory backing on its own — no provider selector needed. Never paste a connection string into the chat.",
+        "Write the same connection string into .env.local with `npx oe env set DATABASE_URL`, run in your own terminal: it reads the value from a hidden prompt. It selects postgres for the operational store and the memory backing on its own — no provider selector needed. Never paste a connection string into the chat, and never pass it to an ops tool.",
         vercel
           ? "The deployment needs it too: the Neon integration already set DATABASE_URL on the Vercel project."
           : "The deployment needs it too: DATABASE_URL is part of the container's environment.",

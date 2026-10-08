@@ -1250,9 +1250,11 @@ Proactivity that misbehaves is worse than no proactivity, so routines are govern
   budget decline, a creator-eligibility skip) it flips to `disabled` immediately, with a
   reason naming why it never even tried. If it DOES fire, it goes terminal once the outcome
   is known: a success is recorded as an ordinary completion (no announcement — a healthy
-  one-shot finishing on schedule is not a self-disable), and a failure disables it with a
-  reason that names the failure, on its FIRST and only try — there is no second chance to
-  wait for. The row stays for `list_routines`/audit visibility either way; recreate a fresh
+  one-shot finishing on schedule is not a self-disable), and a failure disables it on its
+  FIRST and only try — there is no second chance to wait for. Its notice says that its one
+  scheduled fire failed, not that it reached a failure count. The reason on the row is
+  host-composed; the fire's own declared reason stays on the `routine.fire` and
+  `routine.disabled` audit rows (`declaredFailure`). The row stays for `list_routines`/audit visibility either way; recreate a fresh
   one-shot rather than expecting this one to fire again.
 - **A durable job retires on its own completion.** A [durable job](#durable-jobs-persistent-multi-step-work)
   fires until its own session calls `complete_job`, which flips it to the terminal `done` status
