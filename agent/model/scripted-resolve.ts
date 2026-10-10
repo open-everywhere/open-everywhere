@@ -11,7 +11,7 @@ import { boundaryStopReply, noteTurnStep, reportStepBoundary } from "@open-every
 import {
   isEmptyResponseReissue,
   ANY_SESSION,
-  SCRIPTED_MODEL_ENV,
+  SCRIPTED_MODEL_VALVE,
   SCRIPTED_MODEL_ID,
   claimWakeOwner,
   clearIncompleteParentTurn,
@@ -65,7 +65,7 @@ export async function scriptedModelFor(event: unknown, ctx: unknown): Promise<Re
   if (!scriptedModelArmed()) return null;
   if (onVercel()) {
     throw new Error(
-      `open-everywhere: ${SCRIPTED_MODEL_ENV} is a local test flag — refusing on Vercel. ` +
+      `open-everywhere: the ${SCRIPTED_MODEL_VALVE} test valve is a local test seam — refusing on Vercel. ` +
         "A hosted deployment must never answer from a scripted model.",
     );
   }
@@ -108,7 +108,7 @@ export async function scriptedModelFor(event: unknown, ctx: unknown): Promise<Re
   const entry = ownEntry ?? store.get(ANY_SESSION);
   if (entry === undefined) {
     throw new Error(
-      `open-everywhere: ${SCRIPTED_MODEL_ENV}=1 but no script is registered for session ` +
+      `open-everywhere: the ${SCRIPTED_MODEL_VALVE} test valve is armed but no script is registered for session ` +
         `"${String(sessionId)}" (and none under "${ANY_SESSION}"). Refusing to fall through to the ` +
         "gateway — an armed process is a test process and must never buy inference.",
     );

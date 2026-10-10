@@ -414,7 +414,7 @@ async function main(): Promise<void> {
   }
 
   const key = process.env.AI_GATEWAY_API_KEY;
-  if (!key) throw new Error("AI_GATEWAY_API_KEY is unset — source the repo-root .env.e2e (never the shell key, which is the shell key)");
+  if (!key) throw new Error("AI_GATEWAY_API_KEY is unset — source the repo-root .env.e2e, which sets it to the gateway key for your deployment");
 
   console.log(`fabrication-bench: layer=${layer ?? "custom"} system=${SYSTEM_KIND} render=${RENDER} tools=${TOOLS} model=${MODEL} judge=${NO_JUDGE ? "off" : JUDGE_MODEL} n=${N} concurrency=${CONCURRENCY}`);
   console.log(`system prompt: ${system.length} chars · out: ${outDir}`);

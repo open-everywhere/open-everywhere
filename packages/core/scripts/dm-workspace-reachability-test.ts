@@ -1,3 +1,5 @@
+// proves: dm.delivery.skipped
+
 process.env.OE_SQLITE_PATH = ":memory:";
 _setDeploymentIdentityForTest({ org: "acme" });
 
@@ -6,7 +8,7 @@ import { sqliteOperationalStore } from "../agent/operational/sqlite.js";
 import { registerOperationalStore, resetOperationalStore, getOperationalStore } from "../agent/operational/provider.js";
 import { registerConfig } from "../agent/access/config.js";
 import { defineDomain } from "../agent/memory/domain.js";
-import { MULTI_TENANT_ENV } from "../agent/access/tenant-admission.js";
+import { resetSettingsForTest } from "../agent/settings/settings.js";
 import {
   classifyDmWorkspaceReachability,
   dmWorkspaceReachableFromConfig,
@@ -16,7 +18,7 @@ import {
 } from "../agent/channels/post-arms.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
-delete process.env[MULTI_TENANT_ENV];
+resetSettingsForTest();
 registerOperationalStore(sqliteOperationalStore);
 resetOperationalStore();
 

@@ -100,7 +100,8 @@ layout, hence this README.
   lint/preview tools over the real app config), `ops-mcp.ts` (the ops MCP server entry point),
   `register-discord-commands.ts` (the one-off GLOBAL Discord slash-command registration CLI — the
   deployment registers its own guild-scoped commands at boot, OPE-1687),
-  `docker-smoke.sh` (shell smoke check for the Docker sandbox tier).
+  `docker-smoke.sh` (shell smoke check for the Docker image and the enforced-egress compose
+  topology; its in-container probe is `docker-smoke-egress-probe.mjs`).
 
 ## Adding a new file
 

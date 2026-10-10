@@ -122,7 +122,7 @@ function notThroughProduct(b: Boot): string | undefined {
 function floorWiring(table: readonly string[]): Wiring {
   return {
     providers: [...table].sort(),
-    oeOauth: false,
+    oeOauth: true,
     dbCredentialBroker: false,
     agentBrowser: false,
     awsAccess: false,

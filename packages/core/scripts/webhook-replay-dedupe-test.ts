@@ -27,7 +27,7 @@ const {
 const { standardWebhookVerifier, standardWebhookSignature, standardWebhookReplayKey, SW_ID_HEADER, SW_SIGNATURE_HEADER, SW_TIMESTAMP_HEADER } =
   await import("../agent/webhooks/oe-standard-webhook.js");
 const { registerWebhookVerifier, resetWebhookVerifiersForTest } = await import("../agent/webhooks/verifier.js");
-const { gateWebhookDelivery } = await import("../agent/webhooks/gate.js");
+const { gateWebhookDelivery, webhookMaxSkewSeconds } = await import("../agent/webhooks/gate.js");
 const { defineWebhook } = await import("../agent/webhooks/config.js");
 
 type Verifier = import("../agent/webhooks/verifier.js").WebhookVerifier;
@@ -90,11 +90,8 @@ const NOW_TS = String(Math.floor(NOW_MS / 1000));
 }
 
 {
-  delete process.env.OE_WEBHOOK_MAX_SKEW_SECONDS;
-  ok(webhookReplayNonceTtlMs() === (300 * 2 + 60) * 1000, "H: default retention is 2×300s skew + 60s slack = 660 000ms");
-  process.env.OE_WEBHOOK_MAX_SKEW_SECONDS = "60";
-  ok(webhookReplayNonceTtlMs() === (60 * 2 + 60) * 1000, "H: an operator's tighter skew override shrinks retention to match (180 000ms)");
-  delete process.env.OE_WEBHOOK_MAX_SKEW_SECONDS;
+  ok(webhookReplayNonceTtlMs() === (300 * 2 + 60) * 1000, "H: retention is 2×300s skew + 60s slack = 660 000ms");
+  ok(webhookReplayNonceTtlMs() === (webhookMaxSkewSeconds() * 2 + 60) * 1000, "H: retention is derived from the gate's skew constant, not a second copy of it");
 }
 
 {

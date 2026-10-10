@@ -11,7 +11,7 @@ if (!SERVICE_NAME.test(name)) {
 }
 
 const family = inject
-  ? { label: "WAKE-INJECTION", deployEnv: "OE_CONTROL_INJECT_TOKENS", callerEnv: "E2E_CONTROL_INJECT_TOKEN", grants: "`POST /control/v1/test/wake` ONLY (and only while OE_TEST_WAKE is truthy). NOT a read credential — it opens no control-plane view." }
+  ? { label: "WAKE-INJECTION", deployEnv: "OE_CONTROL_INJECT_TOKENS", callerEnv: "E2E_CONTROL_INJECT_TOKEN", grants: "`POST /control/v1/test/wake` ONLY (and only while the deployment turns on the `wake.testWakeRoute` setting). NOT a read credential — it opens no control-plane view." }
   : { label: "READ-ONLY", deployEnv: "OE_CONTROL_READ_TOKENS", callerEnv: "E2E_CONTROL_READ_TOKEN", grants: "the read views + the deployment-mounted GET routes. NOT an injection credential — it is refused (401) by the test-wake route." };
 
 const token = randomBytes(32).toString("hex");

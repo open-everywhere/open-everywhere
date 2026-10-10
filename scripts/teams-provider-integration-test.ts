@@ -1,3 +1,4 @@
+import { __setTestValveForTest } from "@open-everywhere/core/agent/testing/test-valves.js";
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
@@ -27,7 +28,6 @@ const dir = join(tmpdir(), `open-everywhere-teams-integration-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
-delete process.env.OE_TRUST;
 process.env.MICROSOFT_APP_ID = "teams-app-id";
 process.env.MICROSOFT_APP_PASSWORD = "teams-app-secret";
 
@@ -157,7 +157,7 @@ await inSession(async () => {
 }
 
 {
-  process.env.OE_EGRESS_SPOOF = "1";
+  __setTestValveForTest("egress-spoof", true);
   const { SessionKey } = await import(abs("dist/src/context/keys.js"));
   const inChatSession = <T>(fn: () => Promise<T>): Promise<T> => {
     const c = new ContextContainer();
@@ -186,7 +186,7 @@ await inSession(async () => {
     "🔴 OPE-2006: …and ONE drop row records it, with the char count and the conversation the answer was owed to",
   );
   ok((await readAudit({ org: "default", action: "teams.replied" })).length === 0, "chat-audit: the legacy teams.replied row is GONE");
-  delete process.env.OE_EGRESS_SPOOF;
+  __setTestValveForTest("egress-spoof", false);
 }
 
 {

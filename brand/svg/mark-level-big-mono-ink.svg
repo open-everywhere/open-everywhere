@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+<defs><clipPath id="clip"><circle cx="50" cy="50" r="50"/></clipPath><mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100"><rect width="100" height="100" fill="#fff"/><g transform="matrix(1.22 0 0 1.22 -11 -10.4)"><path fill="#fff" d="M24 92V61C24 55.5 29.5 51 37 49.6C41.5 48.8 45.5 48.4 50 48.4C54.5 48.4 58.5 48.8 63 49.6C70.5 51 76 55.5 76 61V92Z"/><g><path fill="#fff" d="M38.6 56V44C36.6 38 37.6 31 42 28C44.5 26.6 47 26 50 26C53 26 55.5 26.6 58 28C62.4 31 63.4 38 61.4 44V56Z"/></g><path fill="#fff" d="M-20 61H120V120H-20Z"/><path stroke="#000" stroke-width="2.2" d="M-20 59.9H120"/><g>
+<circle fill="#000" cx="39.6" cy="37" r="3.9"/><circle fill="#fff" cx="38.82" cy="38.638" r="1.95"/>
+<circle fill="#000" cx="60.4" cy="37" r="3.9"/><circle fill="#fff" cx="61.18" cy="38.638" r="1.95"/>
+<path fill="#fff" stroke="#000" stroke-width="1.2" paint-order="stroke" stroke-linejoin="round" d="M47.5 44H52.5L51 49.3C50.6 50.8 49.4 50.8 49 49.3Z"/>
+<path fill="#000" d="M45.4 43.8C44.8 40.4 47.4 39.199999999999996 50 40.4C52.6 39.199999999999996 55.2 40.4 54.6 43.8C53 45.4 47 45.4 45.4 43.8Z"/></g></g></mask></defs>
+<g clip-path="url(#clip)"><g mask="url(#cut)"><g transform="matrix(1.22 0 0 1.22 -11 -10.4)"><path fill="#1a1a1a" d="M24 92V61C24 55.5 29.5 51 37 49.6C41.5 48.8 45.5 48.4 50 48.4C54.5 48.4 58.5 48.8 63 49.6C70.5 51 76 55.5 76 61V92Z"/><g><path fill="#1a1a1a" d="M38.6 56V44C36.6 38 37.6 31 42 28C44.5 26.6 47 26 50 26C53 26 55.5 26.6 58 28C62.4 31 63.4 38 61.4 44V56Z"/></g><path fill="#1a1a1a" d="M-20 61H120V120H-20Z"/><path stroke="none" stroke-width="2.2" d="M-20 59.9H120"/><g>
+<circle fill="none" cx="39.6" cy="37" r="3.9"/><circle fill="#1a1a1a" cx="38.82" cy="38.638" r="1.95"/>
+<circle fill="none" cx="60.4" cy="37" r="3.9"/><circle fill="#1a1a1a" cx="61.18" cy="38.638" r="1.95"/>
+<path fill="#1a1a1a" stroke="none" stroke-width="1.2" paint-order="stroke" stroke-linejoin="round" d="M47.5 44H52.5L51 49.3C50.6 50.8 49.4 50.8 49 49.3Z"/>
+<path fill="none" d="M45.4 43.8C44.8 40.4 47.4 39.199999999999996 50 40.4C52.6 39.199999999999996 55.2 40.4 54.6 43.8C53 45.4 47 45.4 45.4 43.8Z"/></g></g></g></g>
+</svg>

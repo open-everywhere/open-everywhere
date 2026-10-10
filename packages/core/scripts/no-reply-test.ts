@@ -4,12 +4,12 @@ import { rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
-import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 const dir = join(tmpdir(), `open-everywhere-no-reply-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-overrideSettingsForTest({ audit: { silences: true } });
+const { setSilenceAuditForTest } = await import("../agent/audit/audit.js");
+setSilenceAuditForTest(true);
 
 const noReply = (await import("../agent/tools/no_reply.js")).default as unknown as {
   readonly description: string;
@@ -103,7 +103,7 @@ await inSession(async () => {
 });
 
 await inSession(async () => {
-  overrideSettingsForTest({ audit: { silences: false } });
+  setSilenceAuditForTest(false);
   try {
     const before = (await readAudit({ org: "default", action: "reply.no_reply" })).length;
     const beforeObserved = (await readAudit({ org: "default", action: "reply.no_reply_observed" })).length;
@@ -116,7 +116,7 @@ await inSession(async () => {
     ok(afterObserved.length - beforeObserved === 1, "no_reply: flag OFF still writes ONE reply.no_reply_observed row — this is the observability fix");
     ok(afterObserved[0]?.detail?.reason === "nothing_to_add", "no_reply: the flag-OFF reply.no_reply_observed row carries the real reason (newest-first read)");
   } finally {
-    overrideSettingsForTest({ audit: { silences: true } });
+    setSilenceAuditForTest(true);
   }
 });
 
@@ -229,17 +229,17 @@ await inSession(async () => {
   };
 
   await inWindowTurn("wrun_bare", "wake-bare-1", "turn-bare")(async () => {
-    overrideSettingsForTest({ audit: { silences: false } });
+    setSilenceAuditForTest(false);
     try {
       const before = (await readAudit({ org: "default", action: "turn.bare_stop" })).length;
       await onCompleted({ finishReason: "stop", message: "" }, windowChannel);
       const rows = await readAudit({ org: "default", action: "turn.bare_stop" });
-      ok(rows.length - before === 1, "unified bare stop: an empty final message with no reply/react/no_reply writes ONE turn.bare_stop row with audit.silences OFF");
+      ok(rows.length - before === 1, "unified bare stop: an empty final message with no reply/react/no_reply writes ONE turn.bare_stop row with the silence-audit switch OFF");
       ok(rows[0]?.detail?.sessionId === "wrun_bare", "unified bare stop: the row names the session so it joins to the transcript");
       ok(rows[0]?.detail?.wakeId === "wake-bare-1", "unified bare stop: the row names the wake that went unanswered");
       ok((await readAudit({ org: "default", action: "unified.no_reply" })).length === 0, "unified bare stop: the gated judged-silence row still writes nothing on the actions-only posture");
     } finally {
-      overrideSettingsForTest({ audit: { silences: true } });
+      setSilenceAuditForTest(true);
     }
   });
 
@@ -257,6 +257,44 @@ await inSession(async () => {
     const after = (await readAudit({ org: "default", action: "turn.bare_stop" })).length;
     ok(after === before, "unified bare stop: the NO_REPLY sentinel route is a stated silence — no row");
   });
+}
+
+{
+  const { readdirSync, readFileSync } = await import("node:fs");
+  const repoRoot = join(dirname(new URL(import.meta.url).pathname), "..", "..", "..");
+  const CALL = /\bsetSilenceAuditForTest\b|audit\.silence-rows\.test/;
+  const HOME = join("packages", "core", "agent", "audit", "audit.ts");
+  const agentTrees = [join(repoRoot, "agent"), join(repoRoot, "packages", "core", "agent")];
+  for (const group of [join(repoRoot, "packages", "providers"), join(repoRoot, "packages")]) {
+    for (const e of readdirSync(group, { withFileTypes: true })) if (e.isDirectory()) agentTrees.push(join(group, e.name, "agent"));
+  }
+  const offenders: string[] = [];
+  let scanned = 0;
+  const walk = (d: string): void => {
+    let entries;
+    try {
+      entries = readdirSync(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const p = join(d, e.name);
+      if (e.isDirectory()) {
+        if (e.name !== "node_modules" && e.name !== "dist") walk(p);
+      } else if (/\.tsx?$/.test(e.name) && !/[-.]test\.tsx?$/.test(e.name)) {
+        scanned++;
+        const rel = p.slice(repoRoot.length + 1);
+        if (rel !== HOME && CALL.test(readFileSync(p, "utf8"))) offenders.push(rel);
+      }
+    }
+  };
+  for (const t of agentTrees) walk(t);
+  ok(scanned > 100, `silence-audit scan: it read the agent trees (${scanned} files) — a wrong root would pass vacuously`);
+  assert.deepEqual(offenders, [], "🔴 no committed production module names setSilenceAuditForTest or its slot — none arms the switch");
+  n++;
+  ok(CALL.test("  setSilenceAuditForTest(true);"), "silence-audit scan: NEGATIVE CONTROL — the pattern does match a real call");
+  ok(CALL.test('import { setSilenceAuditForTest as arm } from "../audit/audit.js";'), "silence-audit scan: NEGATIVE CONTROL — an aliased import is caught");
+  ok(CALL.test('processRegistrySlot<boolean>("audit.silence-rows.test.v1").set(true);'), "silence-audit scan: NEGATIVE CONTROL — a direct slot write is caught");
 }
 
 ok(isNoReply(`${NO_REPLY_SENTINEL} trailing rationale`), "isNoReply: prefix match still holds for the legacy sentinel");

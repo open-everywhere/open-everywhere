@@ -92,7 +92,7 @@ resolves through the criteria domains (`org`, `dm`, `public`) instead.
 
 | id | name | env var | claimed by | note |
 | --- | --- | --- | --- | --- |
-| — | oe-e2e-addressed-teams | `E2E_ADDRESSED_TEAMS_SURFACE` | unclaimed | unclaimed by design — no explicit domain holds it — it falls to the `org` criteria domain, which is addressed-only by default, and that default is the posture J-ENGAGED-teams drives |
+| — | oe-e2e-addressed-teams | `E2E_ADDRESSED_TEAMS_SURFACE` | unclaimed | unclaimed by design — no explicit domain holds it — it falls to the `org` criteria domain, which declares `ambientSupervisor: false` in this deployment, and that addressed-only posture is the one J-ENGAGED-teams drives |
 | — | General | `E2E_TEAMS_CHANNEL_ID` | e2e-unified | — |
 | — | Open Everywhere | `E2E_TEAMS_TEAM_ID` | unclaimed | unclaimed by design — a TEAM, not a room — a domain names channels, never the team above them |
 | — | (fabricated id) | — | it-work-read-fixture-teams | synthetic — an integration-tier fixture id, never a live room |

@@ -7,7 +7,7 @@
   // registry install cannot run raw TypeScript (see `scripts/publish-exports-generate.ts`).
   // `knip.json` ignores `**/dist/**`, so the resolved file left the graph and the SOURCE `.ts` file
   // looked unused. On an earlier tree knip called 21 files unused; 12 of them had a plain importer, and
-  // the report was ~96% noise end to end (`scripts/tidy/dead-report-audit.mjs`). The `paths` below
+  // the report was ~96% noise end to end (docs/dev/tidy.md has the measurement). The `paths` below
   // send knip to the source instead, and knip's resolver applies them BEFORE `node_modules`.
   //
   // WHY NOT IN THE REAL TSCONFIGS. The same `paths` in `tsconfig.json` would change what

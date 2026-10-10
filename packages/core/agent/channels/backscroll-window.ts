@@ -17,6 +17,8 @@ export function catchUpSender(f: { readonly self: boolean; readonly bot?: boolea
   return f.bot === true ? "bot" : "human";
 }
 
+export const SUPERVISOR_BACKSCROLL_REACHBACK_HOURS = 168;
+
 const CHARS_PER_TOKEN = 4;
 
 const PER_MESSAGE_OVERHEAD_TOKENS = 110;

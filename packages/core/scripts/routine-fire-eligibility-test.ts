@@ -26,7 +26,6 @@ async function throwsWith(fn: () => unknown, needle: RegExp, label: string): Pro
 const dir = mkdtempSync(join(tmpdir(), "oe-routine-fire-eligibility-"));
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: "acme" });
-delete process.env.OE_TRUST;
 overrideSettingsForTest({ delegation: { oneshotAgent: false } });
 overrideSettingsForTest({ window: { topology: false } });
 

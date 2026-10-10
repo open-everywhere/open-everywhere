@@ -257,6 +257,6 @@ export async function assertConnectorGranted(connectionName: string, auth: Sessi
   await auditConnectorGate(ctx, "connector.use", {
     connection: connectionName,
     ...(mode !== undefined ? { mode } : {}),
-    ...(connectorDmOnlyEnabled() && mode !== "dm" ? { grant: "work-surface" } : {}),
+    ...(mode !== undefined && mode !== "dm" ? { grant: "work-surface" } : {}),
   });
 }

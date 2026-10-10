@@ -368,7 +368,7 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
   from the scripted model's `parent` arm and answers the worker on its `child` arm — no `execute` to
   swap, and no real network — then reads the ✋ add and remove off the stub's own call log.
   **That leg also turns the tier's egress spoof OFF, and a glyph test must.** `bootAgent` arms
-  `OE_EGRESS_SPOOF=1` for the whole tier, and `setSurfaceReaction` asks `swallowRoomOp` before it
+  the `egress-spoof` test valve (`packages/core/agent/testing/test-valves.ts`) for the whole tier, and `setSurfaceReaction` asks `swallowRoomOp` before it
   builds any request: armed, it returns `true` without calling Discord, so the product behaves
   correctly and the stub's log stays empty.
 - **Only three things cross into the booted agent**: `process.env`, `globalThis`, and HTTP. The
@@ -776,8 +776,9 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
   that moment — `bootAgent()` re-pointing the variable afterwards changes nothing for it. So ASK
   THE MODULE what it resolved (`storeRoot()`), never rebuild the path from what you think the
   environment held. A wrong guess is silent: the fixture lands where the code under test never
-  looks. `globalSetup` leaks no state-dir variable at all and pins `OE_SANDBOX_BACKEND` for every
-  fork, and since OPE-2235 it has ONE path through it — the build that used to branch on
+  looks. `globalSetup` leaks no state-dir variable at all. It sets no sandbox
+  backend either: every fork reads the root app's committed `sandbox.selfHostBackend: "justbash"`
+  (it pinned the `OE_SANDBOX_BACKEND` variable until OPE-2411). Since OPE-2235 it has ONE path through it — the build that used to branch on
   `OE_IT_SKIP_BUILD` is a separate step now, so the two run modes cannot hand the forks different
   environments. That divergence reads as a depth-dependent flake and is not one (OPE-582, OPE-1363);
   the prewarm's own state-dir pinning moved with it to `tests/integration/prewarm.ts`. `global-setup-env.test.ts` guards that contract from inside a real fork, and proves it is

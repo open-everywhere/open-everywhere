@@ -28,10 +28,7 @@ export function dreamCandidateCap(): number {
 }
 
 export function tidyOrgs(): string[] {
-  const raw = process.env.OE_TIDY_ORGS;
-  if (!raw) return ["default"];
-  const orgs = raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
-  return orgs.length > 0 ? orgs : ["default"];
+  return [...getSettings().schedules.sweepOrgs];
 }
 
 function partitionForOrg(org: string): Partition {

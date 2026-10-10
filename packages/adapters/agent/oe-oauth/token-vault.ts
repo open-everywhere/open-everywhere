@@ -117,7 +117,10 @@ function defaultRedirectUri(): string | undefined {
   return `${withScheme}${OE_OAUTH_CALLBACK_PATH}`;
 }
 
-export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProviderConfig>, deps: OeOauthVaultDeps = {}) {
+export type OeOauthProviderSource = ReadonlyMap<string, OeOauthProviderConfig> | (() => ReadonlyMap<string, OeOauthProviderConfig>);
+
+export function makeOeOauthTokenVault(source: OeOauthProviderSource, deps: OeOauthVaultDeps = {}) {
+  const providersNow = typeof source === "function" ? source : () => source;
   const vault = deps.vault ?? encryptedKvVault();
   const doFetch = deps.fetch ?? ((input: string, init?: RequestInit) => fetch(input, init));
   const now = deps.now ?? Date.now;
@@ -136,8 +139,12 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
   const tokRef = (providerRef: string, subject: OeOauthSubject) => `oe-oauth:tok:${providerRef}:${subjectKey(subject)}`;
 
   function providerConfig(providerRef: string): OeOauthProviderConfig {
-    const cfg = providers.get(providerRef);
-    if (!cfg) throw new Error(`connection "${providerRef}": no oe-oauth provider config (set OE_OAUTH_CONFIG / OE_OAUTH_NOTION_RESOURCE).`);
+    const cfg = providersNow().get(providerRef);
+    if (!cfg) {
+      throw new Error(
+        `connection "${providerRef}": no sign-in is declared for this OAuth home — the connector's connection module declares one with declareConnectionSignIn (core connections/connection-sign-in.ts).`,
+      );
+    }
     return cfg;
   }
 
@@ -213,7 +220,7 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
   }
 
   async function ensureClient(providerRef: string): Promise<ClientRecord> {
-    const cfg = providers.get(providerRef);
+    const cfg = providersNow().get(providerRef);
     return cfg !== undefined && isStaticConfidential(cfg) ? staticClient(cfg) : ensureDcrClient(providerRef);
   }
 
@@ -234,7 +241,7 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
   }
 
   async function exchangeForPending(pending: PendingRecord, code: string): Promise<OAuthTokenResponse> {
-    const cfg = providers.get(pending.providerRef);
+    const cfg = providersNow().get(pending.providerRef);
     const startedStatic = pending.mode === OE_OAUTH_MODE_STATIC;
     if (cfg !== undefined && isStaticConfidential(cfg) !== startedStatic) {
       throw new Error(
@@ -274,7 +281,7 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
     return vault.withLock(ref, async () => {
       const rec = await readJson<TokenRecord>(ref);
       if (rec) {
-        const cfg = providers.get(providerRef);
+        const cfg = providersNow().get(providerRef);
         const client: ClientRecord | null = cfg && isStaticConfidential(cfg) ? staticClient(cfg) : await readJson<DcrClientRecord>(dcrRef(providerRef));
         const token = rec.refreshToken ?? rec.accessToken;
         if (client?.revocationEndpoint && token) {
@@ -331,7 +338,8 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
       let purged = 0;
       let failures = 0;
       let lastError: unknown;
-      for (const providerRef of providers.keys()) {
+      const all = providersNow();
+      for (const providerRef of all.keys()) {
         try {
           if (await forget(providerRef, subject)) purged++;
         } catch (e) {
@@ -339,7 +347,7 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
           lastError = e;
         }
       }
-      if (failures > 0 && purged === 0 && failures === providers.size) throw lastError;
+      if (failures > 0 && purged === 0 && failures === all.size) throw lastError;
       return purged;
     },
 
@@ -430,7 +438,7 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
         const won = await vault.claim(ref, claimId, now(), CLAIM_LEASE_TTL_MS);
         if (won) {
           try {
-            const cfg = providers.get(providerRef);
+            const cfg = providersNow().get(providerRef);
             let tok: OAuthTokenResponse;
             try {
               if (cfg !== undefined && isStaticConfidential(cfg)) {

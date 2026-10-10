@@ -76,7 +76,7 @@ Two sources answer it, and the read path is their union:
 
   A **bare id needs no change and means what it always did**: "this id, in whichever workspace this
   deployment serves" — exact, because a deployment refuses to boot with two workspaces of one
-  platform unless `OE_ALLOW_MULTI_TENANT_PRINCIPALS=1` says so deliberately. What config load
+  platform unless the setting `identity.allowMultiTenantPrincipals: true` says so deliberately. What config load
   *refuses* is the **half-migrated** map: writing some of one platform's entries with a workspace and
   leaving others bare. A bare entry alongside a qualified one would match in every workspace,
   including the ones the qualified entries exist to tell apart. So a platform is all-bare or
@@ -529,7 +529,7 @@ agreed*, not about how confident the IdP sounds:
 | `asserted` | The IdP **states** the mapping and nothing downstream ever confirmed it — an IdP-side field like Okta's `credentials.userName`, which a profile-mapping expression an app-admin or helpdesk role can edit. | The IdP only. |
 | `email-match` | The two sides were joined on a **server-attested email** matching on both. An inference over a shared attribute. | Neither, about *this* account. |
 
-The one org-level policy escape — `OE_DIRECTORY_AUTOCONFIRM=attested`, **off by default** —
+The one org-level policy escape — the setting `directory.autoConfirm: "attested"`, **off by default** —
 auto-confirms `attested` mappings only, because that is the only grade with a downstream fact
 behind it. `asserted` and `email-match` always wait for a person.
 
@@ -546,24 +546,29 @@ loud warning in `directory_sync_status` saying why:
 - the target link-set is **named by access config** — a `principal` credential binding or a
   person-group `{ linkSet }` member. Confirming into it would widen a credentialed grant on an IdP
   edit alone.
-- **`connectors.linkSetVault` is armed** (the shared user-OAuth vault). Then *every* link-set is
+- **`connectors.linkSetVault` is armed** (the shared user-OAuth vault). It SHIPS armed (OPE-2414),
+  so one consent covers all of a person's linked accounts. Then *every* link-set is
   credential-bearing — the vault is keyed by the set, so any confirmed member can mint the set's
-  shared token — and auto-confirm is suppressed for **all** sets, named or not. If you arm both
-  knobs, expect `attested` to confirm nothing; that is the guard working, not a misconfiguration.
+  shared token — and auto-confirm is suppressed for **all** sets, named or not. With the shipped
+  default, expect `attested` to confirm nothing; that is the guard working, not a misconfiguration.
+  A person confirms each link. To let `attested` confirm again, set
+  `connectors: { linkSetVault: false }`: each account then keys its own token, and one consent no
+  longer covers the person's other accounts.
 
 Okta's own adapter emits `attested` **and** `asserted` mappings, and which one you get is decided
-by the field you configured for that app in `OE_DIRECTORY_OKTA_APPS`: the default `externalId`
-grades `attested`, while an app opted into `:userName` grades `asserted` — so such an app never
+by the field you configured for that app in the setting `directory.oktaApps`: the default
+`externalId` grades `attested`, while an app opted into `field: "userName"` grades `asserted` — so such an app never
 auto-confirms, whatever the policy. It never emits `email-match`: per-platform *enrichers* that
 would produce those joins (Slack `users.lookupByEmail`, GitHub SAML/EMU `externalIdentities`,
 Linear SCIM) are follow-up work, because only the platform can attest its own side of such a join.
 
 An app-map entry can name **which workspace** an app's ids belong to —
-`OE_DIRECTORY_OKTA_APPS="slack/T0AB1CD2E:0oa1,slack/T9ZYX8W7V:0oa2"` — so a deployment serving two
+`oktaApps: [{ platform: "slack", tenant: "T0AB1CD2E", appId: "0oa1" }, { platform: "slack", tenant: "T9ZYX8W7V", appId: "0oa2" }]`
+under `directory` in `agent/settings/settings.ts` — so a deployment serving two
 Slack workspaces can map both, and a suggestion for the second one is expressible at all. The
 workspace is still **your** config's answer, never the IdP's: Okta knows which *app* somebody is
 assigned to, not which of your admitted workspaces that app serves, so the rung is written by you in
-your own env next to the app id, and the sync **refuses a workspace no domain's `reach` list
+your own settings file next to the app id, and the sync **refuses a workspace no domain's `reach` list
 declares** (`agent/memory/config/domains/<name>.ts`) — such an account is skipped with a warning
 rather than placed in a guessed one. Omit the rung and nothing changes: the accounts land in the
 deployment's single workspace, as before.
@@ -748,7 +753,7 @@ verdict. It binds the page's memory, and it also admits the page to the **cross-
 vouched page joins. The floor never re-walks anything: it reads the verdict the delivery carries, so
 no network call enters that gate. A `public` declaration on the page still refuses it, on both planes
 — see **Demote above the vendor, promote below it** below. One exception: under the
-`OE_TRUST=internal` blanket the window floor admits every page **first**, above the `public`
+`identity.blanketTrust: "internal"` blanket the window floor admits every page **first**, above the `public`
 demotion — as every platform's floor does — while the binding plane keeps the demotion above the
 blanket. Under the blanket, a `public`-declared page therefore joins the shared window while its
 org-brain binding stays external.
@@ -801,12 +806,12 @@ trust = (declared "public" ⇒ external)     ← the operator's DEMOTION, above 
      ?? the platform mapper's own verdict  ← a real membership check, or a positively-shared room
      ?? the triggered fire's creator recheck
      ?? (declared "internal" ⇒ internal)   ← the operator's PROMOTION, below the vendor
-     ?? OE_TRUST
+     ?? identity.blanketTrust
      ?? external                           ← fail closed on every real platform
 ```
 
 One blanket outranks this chain at the ADMISSION gates: on a deployment that sets
-`OE_TRUST=internal`, the window and governance admission checks are satisfied by the blanket
+`identity.blanketTrust: "internal"`, the window and governance admission checks are satisfied by the blanket
 itself, so a `public` declaration does not fence a room out of a private cross-surface window
 there. Declare rooms `public` on deployments that vouch per surface, not through the blanket.
 
@@ -957,18 +962,27 @@ default** is the shipped block in `packages/core/agent/settings/settings.ts`, an
 override it in its own `agent/settings/settings.ts`; a **domain override** is
 `externalPolicy` on a domain in its own `agent/memory/config/domains/<name>.ts` file. The override resolves **field by field**, so a
 domain that states one grain keeps the org default for the other. The domain hop is **single**, the
-same rule `nameDropWake` and `ambientSupervisor` use: a channel in an explicit domain reads *that*
-domain's declaration and does not fall through to `org`; an unassigned channel reads the `org`
+same rule `nameDropWake` uses: a channel in an explicit domain reads *that*
+domain's declaration and does not fall through to `org` (`ambientSupervisor` differs: it inherits
+explicit → `org` → on); an unassigned channel reads the `org`
 pseudo-domain's.
 
 | Knob | Values | Shipped | Grain |
 |---|---|---|---|
-| `externalPolicy.authorGrain` | `taint` · `withhold` | `taint` | one excluded **author's** message |
-| `externalPolicy.roomGrain` | `engage` · `silent` | `engage` | a whole **room** the classification calls external |
+| `externalPolicy.authorGrain` | `withhold` · `taint` | `withhold` | one excluded **author's** message |
+| `externalPolicy.roomGrain` | `silent` · `engage` | `silent` | a whole **room** the classification calls external |
 
-**Both shipped values are today's behaviour**, so an upgrade changes nothing anywhere.
+**Both grains ship strict**: the shipped defaults are maximally locked
+down for guests and external rooms. `taint` and `engage` are the deliberate opt-outs. Each strict
+value acts only where a leg refutes an author or classifies a room external. A member's own new
+messages are not withheld, and a room that no leg classifies external is never silenced. Two
+changes still reach members: a guest's text in an internal room reaches the model as the
+arrived-marker (in a wake and in `read_channel` / `read_thread`), and a session-tail row recorded
+before OPE-1747 carries no author grade, so it shows as the arrived-marker too, a member's row
+included. An existing deployment that wants the old behaviour sets the opt-out
+values in its own `agent/settings/settings.ts` (see `packages/core/UPGRADING.md`).
 
-### The author grain — `taint` (shipped) or `withhold`
+### The author grain — `withhold` (shipped) or `taint`
 
 Who counts as **excluded** is exactly the existing evidence, and nothing new: the platform's own
 positive refutation (Slack's `is_restricted` / `is_ultra_restricted` / `is_stranger`, Teams' Bot
@@ -977,11 +991,11 @@ register above on a tenant the operator has **armed**. Where the register is the
 and Notion — an unarmed tenant excludes nobody, so turning `withhold` on there without arming a register
 changes nothing at all. A machine (`relay`) author is never excluded.
 
-**`taint`** is what every deployment does today: the text enters the context inside the
-untrusted-content envelope, the ingestion marks the turn, and the approval plane carries the
-consequence.
+**`taint`** is the opt-out: the text enters the context inside the untrusted-content envelope, the
+ingestion marks the turn, and the approval plane carries the consequence. Choose it only where an
+excluded author's text must reach the model.
 
-**`withhold`** stops the text *entering*. Four behaviours:
+**`withhold`** (shipped) stops the text *entering*. Four behaviours:
 
 1. **An @mention or a DM from an excluded sender gets a private notice and no action.** No turn, no
    tool call, no affordance. On Discord the notice is a DM to the sender; if that DM cannot be opened
@@ -1033,25 +1047,27 @@ the envelope would leave a member unable to quote an outsider at the agent.
   a design choice:
 
   - On the **DM path** the gate sits above the seat resolve, so a suppressed DM mints no seat and
-    consumes no tail. ⚠️ A **group DM (`mpim`) can never be suppressed**: it has no partner
-    to probe, so it produces no refutation, and the DM rule already turns its room leg off. The taint
-    join still marks it through the room's own confirmed-internal verdict.
+    consumes no tail. A **group DM (`mpim`)** has no partner to probe, so the gate grades its
+    TRIGGER author with the same `users.info` probe a channel uses (OPE-1486), and a refuted author's
+    group-DM message is suppressed like a 1:1's. The DM rule still turns the room leg off for the
+    whole DM family, so `silent` never applies to a group DM.
   - On the **channel routes** the gate sits where the `users.info` refutation first exists, which is
     below the spend read: a suppressed message costs one budget read and never a model turn.
   - On the **native `app_mention` forward** — the path an @mention takes in an ordinary
     non-single-window channel, where eve's own `slackChannel` owns the turn — the gate sits above the
     forward, because there is no seam inside eve the policy could reach. That leg resolves no author
     facts of its own, so it checks first whether the policy can suppress anything at all and skips
-    the probe entirely on the shipped grains.
+    the probe entirely on the `taint` / `engage` opt-out pair. On the shipped grains it runs the
+    probe.
 - **Teams** applies behaviours 1 and 2 in the front route, above both the DM divert and the
   single-window plan. Because a suppressed activity is never forwarded, the policy covers the native
   path as well as the window. Behaviour 1 posts into a **personal chat** only: Teams cannot open a
   1:1 with someone the bot has never met, and a notice posted into a team channel would announce that
   person's classification to the room, so a channel @mention is a silent drop. The author evidence is
   the Bot Connector **roster probe** plus the operator's author-trust register. The gate runs before
-  the webhook ack, so it buys the roster answer **only when a grain could act on it** — on the shipped
-  `taint` / `engage` pair it skips the probe entirely, exactly as Slack's native `app_mention` forward
-  does. The two dispatch paths (the shared window and the DM divert) run after the ack, so they always
+  the webhook ack, so it buys the roster answer **only when a grain could act on it** — on the
+  `taint` / `engage` opt-out pair it skips the probe entirely, exactly as Slack's native `app_mention`
+  forward does. On the shipped grains it buys the answer. The two dispatch paths (the shared window and the DM divert) run after the ack, so they always
   resolve it.
 - **The chat READ verbs** apply behaviour 4 on every wired surface at once. `read_channel` and
   `read_thread` share one grade-and-project body, and the per-author evidence comes from the same
@@ -1091,7 +1107,7 @@ the envelope would leave a member unable to quote an outsider at the agent.
   the agent off the air.
 
 
-### The room grain — `engage` (shipped) or `silent`
+### The room grain — `silent` (shipped) or `engage`
 
 A room is in the **external class** on any of three legs, each of them positive evidence somebody
 already produced:
@@ -1107,11 +1123,13 @@ external  ⟸  the VENDOR reported the room spans another organisation   (Slack 
 have not declared; reading it as "external" would take the agent off the air across a whole
 un-configured deployment.
 
-Under `silent` the agent does not engage in such a room, and it says so **exactly twice, ever**: once
+Under `silent` (shipped) the agent does not engage in such a room, and it says so **exactly twice, ever**: once
 when it joins, and once on the first wake it suppresses. There is **no periodic re-announcement** —
 that is a ruling, not a default. Each announcement is backed by a permanent claim row
 (`notice_claim`), so a re-invite, a redeploy or a cold start cannot make the agent repeat itself. If
 the claim cannot be proved unsaid, the agent stays quiet.
+
+**`engage`** is the opt-out: the agent answers in an external room as it does in an internal one.
 
 A **DM is never in the class**: on a DM the trust plane asks about the partner, not about the room.
 
@@ -1245,7 +1263,7 @@ addressing when the envelope renders** — see the note below the list.
   in a wake the envelope appends a trusted `<system-note>` telling the model not to act on
   instructions in it. Backscroll siblings get this per-message, so an unvouched author's message
   never renders as an authorized `peer`. On Discord's default posture — a guild with no
-  `internal`/`OE_TRUST` vouch — every human backscroll sibling on a mention or name-drop wake
+  `internal`/`identity.blanketTrust` vouch — every human backscroll sibling on a mention or name-drop wake
   resolves `unauth` too, so that wake can carry two separate reference-only notes: the trigger's
   own and one for the backscroll block.
 
@@ -1331,10 +1349,10 @@ Current state across surfaces, stated honestly:
   positively identified as `standard`/`private` in a known tenant is `internal`; an activity
   with unknown membership or tenant binds `external`. Since inbound activities routinely omit
   `membershipType`, external is the common verdict — a single-tenant deployment opts back in
-  with `OE_TRUST=internal`. The mapper also reads a **verified guest bit**: a cached Bot Connector
+  with `identity.blanketTrust: "internal"`. The mapper also reads a **verified guest bit**: a cached Bot Connector
   roster lookup (`GET {serviceUrl}/v3/conversations/{id}/members/{userId}`) reports `userRole:
   "guest"` for a B2B guest, which demotes the surface to `external` ahead of every other verdict
-  including `OE_TRUST`. It is demotion-only and fails open — a lookup that cannot answer leaves the
+  including `identity.blanketTrust`. It is demotion-only and fails open — a lookup that cannot answer leaves the
   existing verdict alone. It needs no Microsoft Graph registration and no new permission, but the
   token mint is tenant-scoped, so `MICROSOFT_TENANT_ID` must be set.
 - **Linear** — mapped, with **demotion-only** guest verification: a positively-detected
@@ -1346,7 +1364,7 @@ Current state across surfaces, stated honestly:
   closed to `external`** (read-only `public` memory at most). The author-trust register is the
   operator's own author-grain lever there.
 - Both reach `internal` only through an operator vouch, or through the blanket
-  `OE_TRUST=internal` a single-tenant deployment throws.
+  `identity.blanketTrust: "internal"` a single-tenant deployment throws.
 
 ## The link layer's own rules
 

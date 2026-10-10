@@ -1,3 +1,4 @@
+import { __setTestValveForTest } from "@open-everywhere/core/agent/testing/test-valves.js";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
 import { mkdtempSync } from "node:fs";
@@ -8,7 +9,7 @@ import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/ident
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-discord-grant-")), "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: "acme" });
 delete process.env.OE_PLATFORM;
-delete process.env.OE_EGRESS_SPOOF;
+__setTestValveForTest("egress-spoof", false);
 delete process.env.DISCORD_PUBLIC_KEY;
 process.env.DISCORD_BOT_TOKEN = "fixture-bot-token-not-a-secret";
 

@@ -187,6 +187,18 @@ Being in several groups at once is normal and expected.
 > degrades to the config-direct grant, never widens); a channel/mpim session resolves nothing from a
 > group or `principal` binding, as before.
 
+**The built-in group `oe:everyone`** (OPE-2414) is the one group nobody declares and nobody
+lists. The resolver matches it in a DM for any caller with an acting principal, and never in a
+channel, a group DM or a fire. It is how a server declared in `agent/access/mcp-servers.ts` reaches
+every person's DM as that person ([Connectors](../extending/connectors.md#declare-an-mcp-server-in-your-app)).
+🔴 "Every person" means every account that can DM the agent. The resolver has no trust input, so
+`oe:everyone` also matches an external account: a Slack Connect user, a Discord user who shares a
+server with the bot. Such a person reaches only what their own account on the vendor sees, through
+their own sign-in, but the sign-in runs through the deployment's OAuth client. Where external people
+can DM the agent, narrow each server with `people: { groups: [...] }`. A declared group may not take
+the name, a `group` binding may name it without a registry entry, and the broad-grant lint calls a
+credentialed `oe:everyone` binding broad, so it needs `allowBroad`.
+
 **Both personal levels are self-serve-able.** The [access-request](./access-requests.md) flow
 reaches `principal` and `group` scopes as well as channels: a person can ask for a connector in
 their **own** DM (self-only, from that DM), and an **org admin** can ask for one on behalf of a
@@ -200,8 +212,8 @@ overlay (`agent/identity/groups.generated.ts`, groups named `directory:<idp-grou
 can never collide with hand-written ones). By default it returns the next file for a human to
 commit; with `deliver: true` it **opens a bot-PR** that writes it — the same merge-is-the-approval
 delivery the grants overlay uses, so nothing applies until an admin merges and the config redeploys.
-Either way it stays a reviewed diff: a membership widens capability, so it never applies itself. An
-optional `OE_DIRECTORY_GROUP_ALLOWLIST` restricts *which* IdP groups sync (unset = all), so a small
+Either way it stays a reviewed diff: a membership widens capability, so it never applies itself. The
+optional setting `directory.groupAllowlist` restricts *which* IdP groups sync (empty = all), so a small
 team need not carry every Okta group in the overlay. Narrowing still lands fast by another route — a
 deprovisioned person's link-set is suspended eagerly by directory sync, which stops their group
 access before the diff is even opened.
@@ -494,7 +506,7 @@ bounds who could have clicked.
 The last-but-two row uses a **separate**, OIDC-authenticated mapping onto the same roster: the
 remote control plane grants roles by `(issuer, subject)` claim, and an email/subject claim
 isn't Slack channel membership — so "anyone in the domain" isn't expressible there. It has
-its own convention, `domain:<name>` via `OE_ADMIN_ROLE_RULES`, layered on the *same*
+its own convention, `domain:<name>` via the setting `control.adminRoleRules`, layered on the *same*
 `Domain.admins` list. See [The control plane](../security/control-plane.md#auth-and-roles)
 for that half — this page and that one describe two of the three doors onto one roster, not
 different rosters.

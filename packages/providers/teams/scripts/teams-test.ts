@@ -214,9 +214,9 @@ const memCfg: MemoryResolveConfig = {
     "B: ambiguous Teams event gets at most read-only public memory",
   );
 
-  process.env.OE_TRUST = "internal";
+  overrideSettingsForTest({ identity: { blanketTrust: "internal" } });
   ok(dispatch(input).binding.trust === "internal", "B: OE_TRUST=internal vouches for the unverifiable channel (single-tenant opt-in)");
-  delete process.env.OE_TRUST;
+  overrideSettingsForTest({ identity: { blanketTrust: "none" } });
 }
 
 {
@@ -229,9 +229,9 @@ const memCfg: MemoryResolveConfig = {
     membershipType: "shared",
   };
   ok(dispatch(input).binding.trust === "external", "B2: Shared Channel (cross-tenant) binds external");
-  process.env.OE_TRUST = "internal";
+  overrideSettingsForTest({ identity: { blanketTrust: "internal" } });
   ok(dispatch(input).binding.trust === "external", "B2: OE_TRUST=internal does NOT override a POSITIVE external verdict");
-  delete process.env.OE_TRUST;
+  overrideSettingsForTest({ identity: { blanketTrust: "none" } });
 }
 
 {

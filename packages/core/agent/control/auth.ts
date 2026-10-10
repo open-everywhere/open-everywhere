@@ -4,6 +4,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import { domainForChannel, memoryRefs, type Domain } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
+import { getSettings, type AdminRoleRule } from "../settings/settings.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { serviceTokenFireAttributes } from "../routines/fire-auth.js";
 
@@ -25,13 +26,7 @@ export interface RawIdentity {
 
 export type TokenVerifier = (token: string, req: IncomingMessage) => Promise<RawIdentity | null>;
 
-export interface RoleRule {
-  readonly roles: readonly string[];
-  readonly issuer?: string;
-  readonly subject?: string;
-  readonly email?: string;
-  readonly emailDomain?: string;
-}
+export type RoleRule = AdminRoleRule;
 
 export function resolveRoles(id: RawIdentity, rules: readonly RoleRule[]): string[] {
   const granted = new Set<string>();
@@ -266,7 +261,8 @@ export function adminAuthenticatorFromEnv(): ((req: IncomingMessage) => Promise<
   const audience = process.env.OE_ADMIN_OIDC_AUDIENCE;
   if (issuer && audience) verifiers.push(genericOidcVerifier({ issuer, audience }));
 
-  if (process.env.OE_ADMIN_GITHUB === "1") verifiers.push(githubOAuthVerifier());
+  const control = getSettings().control;
+  if (control.githubAdmin) verifiers.push(githubOAuthVerifier());
 
   const staticToken = process.env.OE_ADMIN_STATIC_TOKEN;
   if (staticToken) {
@@ -274,14 +270,7 @@ export function adminAuthenticatorFromEnv(): ((req: IncomingMessage) => Promise<
     rules.push({ roles: ["admin"], issuer: "static" });
   }
 
-  if (process.env.OE_ADMIN_ROLE_RULES) {
-    try {
-      const parsed = JSON.parse(process.env.OE_ADMIN_ROLE_RULES) as RoleRule[];
-      if (Array.isArray(parsed)) rules.push(...parsed);
-    } catch {
-      throw new Error("OE_ADMIN_ROLE_RULES is not valid JSON (expected a RoleRule[] array)");
-    }
-  }
+  rules.push(...control.adminRoleRules);
 
   if (verifiers.length === 0 && serviceTokens.length === 0) return null;
   const base = verifiers.length > 0 ? makeAdminAuthenticator(verifiers, rules) : null;

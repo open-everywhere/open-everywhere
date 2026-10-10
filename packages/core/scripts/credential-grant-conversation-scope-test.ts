@@ -7,7 +7,6 @@ import { adoptDelegatedAuthority } from "../agent/identity/delegated-binding.js"
 import { FakeEveContext, inEveContext } from "./_eve-context-stub.js";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-grant-conv-scope-")), "ops.sqlite3");
-delete process.env.OE_TRUST;
 delete process.env.OE_PLATFORM;
 
 const { registerConfig } = await import("../agent/access/config.js");
@@ -21,6 +20,9 @@ const { classifyWindowRouting } = await import("../agent/access/window-routing.j
 const { registerSettings, resetSettingsForTest } = await import("../agent/settings/settings.js");
 
 _setDeploymentIdentityForTest({ org: undefined });
+
+const UNSEATED = { window: { topology: false } } as const;
+registerSettings(UNSEATED);
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -129,7 +131,7 @@ ok(!dmVerdict.admitted && dmVerdict.scopeKey === undefined, "§keyless: …and c
 
 const unmapped = {
   channel: { kind: "grantconvscopetestplatform-unregistered" },
-  session: { auth: { current: { attributes: { actor: HUMAN, oe_grain: "standing", room: ROOM, ws: WS } } }, id: "wrun_example26" },
+  session: { auth: { current: { attributes: { actor: HUMAN, oe_grain: "standing", room: ROOM, ws: WS } } }, id: "wrun_unmapped" },
 };
 const unmappedVerdict = grantDomainScopeVerdict(unmapped as never);
 ok(!unmappedVerdict.admitted && unmappedVerdict.gate === "unresolved_mode", `§keyless: a conversation no mapper classified answers \`unresolved_mode\` (got ${String(!unmappedVerdict.admitted && unmappedVerdict.gate)})`);
@@ -151,7 +153,7 @@ ok(grantDomainScopeKey(dispatchedFire as never) === undefined, "§wrapper: …an
 
 const nativeSeat = liveCtx("native");
 const nativeVerdict = grantDomainScopeVerdict(nativeSeat as never);
-ok(nativeVerdict.admitted, "§solo: 🔴 an ATTENDED `native` turn in a declared room IS admitted — the room's own conversation under the shipped topology");
+ok(nativeVerdict.admitted, "§solo: 🔴 an ATTENDED `native` turn in a declared room IS admitted — the room's own conversation under the unseated topology");
 ok(nativeVerdict.scopeKey === ROOM_KEY, `§solo: …and the key names the DOMAIN AND THE ROOM (want ${ROOM_KEY}, got ${String(nativeVerdict.scopeKey)})`);
 ok(nativeVerdict.scopeKey !== KEY, "§solo: 🔴 …and is NOT the domain key, so this arm can never reach a grant tapped in a sibling room");
 
@@ -166,7 +168,7 @@ ok(!grantScopeAdmits({ mode: "standing", scopeKey: "wrun_before" }, "wrun_after"
 const sibling = liveCtx("native", ROOM2);
 ok(grantDomainScopeKey(sibling as never) === ROOM2_KEY, `§solo: a SECOND declared room of the same domain mints its OWN key (got ${String(grantDomainScopeKey(sibling as never))})`);
 ok(!grantScopeAdmits(roomGrant, "wrun_sibling", grantDomainScopeKey(sibling as never)), "§solo: 🔴 …and cannot reach the first room's standing grant — the key is at most as wide as the domain key, never wider");
-ok(!grantScopeAdmits(roomGrant, "wrun_example37", KEY), "§solo: 🔴 …and the DOMAIN's standing seat cannot reach a room-keyed row either — the two shapes never join");
+ok(!grantScopeAdmits(roomGrant, "wrun_standing", KEY), "§solo: 🔴 …and the DOMAIN's standing seat cannot reach a room-keyed row either — the two shapes never join");
 ok(!grantScopeAdmits({ mode: "session", scopeKey: ROOM_KEY }, "wrun_after", grantDomainScopeKey(after as never)), "§solo: a `session`-mode row spelled with a ROOM key is still refused — the MODE decides, never the shape of the string");
 
 registerSettings({ window: { topology: true } });
@@ -175,7 +177,7 @@ try {
   ok(!seatedNative.admitted && seatedNative.gate === "non_standing_grain", `§solo: 🔴 a \`native\` wake in a SEATED room mints NO room key (got ${String(seatedNative.admitted ? "admitted" : seatedNative.gate)})`);
   ok(!seatedNative.admitted && seatedNative.scopeKey === KEY, "§solo: …and reports the DOMAIN key it was withheld, unchanged from before this arm");
 } finally {
-  resetSettingsForTest();
+  registerSettings(UNSEATED);
 }
 ok(grantDomainScopeKey(liveCtx("native") as never) === ROOM_KEY, "§solo: NEGATIVE CONTROL: the SAME wake in the SAME room IS admitted once the room is unseated — the leg above measures the seat, not a broken context");
 
@@ -206,11 +208,11 @@ useDomains(DECLARED);
 ok(grantScopeReachOf(ROOM_KEY) === "room", "§solo: grantScopeReachOf reads a room key as `room`");
 ok(grantScopeReachOf(KEY) === "domain", "§solo: …a domain key as `domain`");
 ok(grantScopeReachOf(undefined) === "session" && grantScopeReachOf("") === "session", "§solo: …and no key at all as `session`, which is the exact-session rule");
-ok(grantScopeReachOf("wrun_example38_unrecognised") === "domain", "§solo: 🔴 …while an UNRECOGNISED shape reads as the WIDEST keyed reach — the card may under-promise a boundary and must never claim one the row has not got");
+ok(grantScopeReachOf("wrun_something_unrecognised") === "domain", "§solo: 🔴 …while an UNRECOGNISED shape reads as the WIDEST keyed reach — the card may under-promise a boundary and must never claim one the row has not got");
 ok(grantScopeKeyForMode("standing", "wrun_after", ROOM_KEY) === ROOM_KEY, "§solo: the mint binds an approved `standing` tap to the room key …");
 ok(grantScopeKeyForMode("once", "wrun_after", ROOM_KEY) === "wrun_after", "§solo: … and a `once` tap to the asking session, whatever key the ask recorded");
 
-ok(!windowedSupervisorEnabled(`${PLATFORM}/${WS}/${ROOM}`, DECLARED as never), "§solo: 🔴 on the SHIPPED default no seat stands for a declared room — which is why its own wake is `native`");
+ok(!windowedSupervisorEnabled(`${PLATFORM}/${WS}/${ROOM}`, DECLARED as never), "§solo: 🔴 with `window.topology` off no seat stands for a declared room — which is why its own wake is `native`");
 ok(classifyWindowRouting("native", `${PLATFORM}/${WS}/${ROOM}`, DECLARED as never) === "native-by-design", "§solo: …and the router calls that `native` wake BY DESIGN, not a degradation");
 registerSettings({ window: { topology: true } });
 try {
@@ -218,7 +220,7 @@ try {
   ok(classifyWindowRouting("native", `${PLATFORM}/${WS}/${ROOM}`, DECLARED as never) === "native-degraded", "§solo: …and a `native` wake there is a DEGRADATION instead, which is the armed deployment's own road — and the arm above refuses exactly that wake");
   ok(grantDomainScopeVerdict(liveCtx("standing") as never).scopeKey === KEY, "§solo: …while the armed topology's STANDING seat still answers the DOMAIN key, unchanged by this arm");
 } finally {
-  resetSettingsForTest();
+  registerSettings(UNSEATED);
 }
 
 {
@@ -287,7 +289,7 @@ try {
     ok(!unstampedSeated.admitted, "🔴 §worker: an unstamped worker in a SEATED room is admitted — the `native` fallback has widened the very topology OPE-1972 narrowed");
     ok(!unstampedSeated.admitted && unstampedSeated.gate === "non_standing_grain", "§worker: …and it is the GRAIN that refuses it, naming the seat shape rather than an unreadable binding");
   } finally {
-    resetSettingsForTest();
+    registerSettings(UNSEATED);
   }
 
   ok(!grantDomainScopeVerdict(liveCtx("task") as never).admitted, "§worker: control — a `task` session that is NOBODY'S CHILD is still refused, so the stamp is read only for a real delegated worker");
@@ -382,4 +384,5 @@ try {
   }
 }
 
+resetSettingsForTest();
 console.log(`credential-grant-conversation-scope: ${String(n)} assertions passed`);

@@ -223,25 +223,30 @@ const row = (extra: Partial<BrowserHostDeclaration> = {}): BrowserHostDeclaratio
 }
 
 {
-  const saved = process.env.OE_PLATFORM;
+  const saved = process.env.VERCEL;
   try {
     resetExtraEgressHostsForTest();
-    process.env.OE_PLATFORM = "self-host";
+    resetSettingsForTest();
+    delete process.env.VERCEL;
     ok(browserPlaneRefusal() !== undefined, "fixture check: the plane refuses on this platform");
     ok(openBrowserEgressHosts(["qa.example.com", "preview.example.com"]) === false, "🔴 off-Vercel the opener REFUSES, and says so in its return value");
     eq(extraEgressHosts(), [], "🔴 …and opens NO host — the firewall reach is byte-identical to flag-off");
 
-    process.env.OE_PLATFORM = "vercel";
+    process.env.VERCEL = "1";
     ok(openBrowserEgressHosts(["qa.example.com", "preview.example.com"]) === true, "negative control: ON Vercel the same call opens them");
     eq(extraEgressHosts(), ["qa.example.com", "preview.example.com"], "negative control: …and both hosts are in the reach table");
 
-    process.env.VERCEL = "";
+    delete process.env.VERCEL;
     process.env.OE_PLATFORM = "vercel";
-    ok(browserPlaneRefusal() === undefined, "🔴 OE_PLATFORM=vercel makes the plane arm off Vercel — the operator's choice, stated in docs/capabilities/browser-qa.md");
+    ok(browserPlaneRefusal() !== undefined, "🔴 OE_PLATFORM=vercel no longer arms the plane off Vercel — the variable is deleted");
+    delete process.env.OE_PLATFORM;
+    overrideSettingsForTest({ sandbox: { useVercelSandbox: true } });
+    ok(browserPlaneRefusal() === undefined, "…while a declared `sandbox.useVercelSandbox` arms it off a Vercel host, because the Vercel Sandbox then really runs");
+    resetSettingsForTest();
     resetExtraEgressHostsForTest();
   } finally {
-    if (saved === undefined) delete process.env.OE_PLATFORM;
-    else process.env.OE_PLATFORM = saved;
+    if (saved === undefined) delete process.env.VERCEL;
+    else process.env.VERCEL = saved;
     resetExtraEgressHostsForTest();
   }
 }

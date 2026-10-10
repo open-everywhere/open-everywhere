@@ -71,7 +71,7 @@ const setDomains = (domains: readonly Domain[]) =>
     loadDomains: () => domains, loadSilos: () => [], domainsForSurface: () => [],
   });
 
-setDomains([]);
+setDomains([{ name: "org", match: "org", externalPolicy: { authorGrain: "taint", roomGrain: "engage" } }]);
 
 _resetSurfacesForTest();
 

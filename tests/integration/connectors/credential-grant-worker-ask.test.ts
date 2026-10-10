@@ -28,10 +28,6 @@ import {
 import { installHostFetchStub } from "../fetch-stub";
 
 const NOTION_OAUTH_PROVIDER_REF = "mcp.notion.com/notion-mcp";
-process.env.OE_OAUTH_ENABLED = "1";
-process.env.OE_OAUTH_CONFIG = JSON.stringify({
-  [NOTION_OAUTH_PROVIDER_REF]: { mode: "discovery-dcr-pkce", resource: "https://mcp.notion.com/mcp" },
-});
 process.env.VERCEL_DEPLOYMENT_ID = "it-ope1343-dep-a";
 
 const OWNER_NATIVE_ID = "U0BFOPE1343OWNER";

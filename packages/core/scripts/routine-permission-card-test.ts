@@ -1,3 +1,4 @@
+import { __setTestValveForTest } from "../agent/testing/test-valves.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { tmpdir } from "node:os";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -17,11 +18,14 @@ function ok(cond: boolean, label: string): void {
 }
 
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
-process.env.OE_EGRESS_SPOOF = "1";
+__setTestValveForTest("egress-spoof", true);
 _setDeploymentIdentityForTest({ org: undefined });
 
 const { registerSlackFixtureMapper } = await import("./_slack-test-stubs.js");
 registerSlackFixtureMapper();
+
+const { overrideSettingsForTest } = await import("../agent/settings/settings.js");
+overrideSettingsForTest({ approvals: { routineCardWaitSeconds: 0 } });
 
 const routineDispatch = await import("../agent/schedules/routine-dispatch.js");
 const { registerCardPoster, reapSupersededRoutineCards, requestApproval, resolveApprovalClick, sweepExpiredPendings } = await import("../agent/approvals/flow.js");

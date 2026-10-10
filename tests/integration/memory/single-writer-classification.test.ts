@@ -69,7 +69,7 @@ test("one forwarding wake has ONE memory writer — the work session; the forwar
   }
 
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-  expect(handle.requests.some((r) => r.role === "parent" && r.stepIndex >= 2), "a parent step after the dispatch turn's last step was requested").toBe(false);
+  expect(handle.requests.some((r) => r.role === "parent" && r.stepIndex < 0), "a parent step after the dispatch turn's last step was requested").toBe(false);
 
   const { SUBAGENT_SKIP_MARKER, FORWARDING_SEAT_SKIP_MARKER } = await import("@open-everywhere/core/agent/hooks/memory.js");
   const memoryLines = lines.filter((l) => l.includes(MEMORY_LOG_PREFIX));

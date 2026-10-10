@@ -116,15 +116,15 @@ ok(
 );
 ok((await suppressedRows()).length === 2, "author grain: neither negative control writes a suppression row");
 
-setDomains([]);
-const shippedDefault = await drive("CONTRIBUTOR", "outsider");
+setDomains([{ name: "org", match: "org", externalPolicy: { authorGrain: "taint", roomGrain: "engage" } }]);
+const optOut = await drive("CONTRIBUTOR", "outsider");
 ok(
-  shippedDefault.res !== null && (shippedDefault.res as { auth?: unknown }).auth !== undefined,
-  "author grain: the SAME CONTRIBUTOR DISPATCHES under the shipped `taint` default (negative control — an upgrade changes nothing)",
+  optOut.res !== null && (optOut.res as { auth?: unknown }).auth !== undefined,
+  "author grain: the SAME CONTRIBUTOR DISPATCHES under the `taint` / `engage` opt-out (negative control — the opt-out restores the old behaviour)",
 );
-ok((await suppressedRows()).length === 2, "author grain: the shipped default writes NO suppression row");
+ok((await suppressedRows()).length === 2, "author grain: the opt-out writes NO suppression row");
 
-setDomains([{ name: "org", match: "org", externalPolicy: { roomGrain: "silent" } }]);
+setDomains([{ name: "org", match: "org", externalPolicy: { authorGrain: "taint", roomGrain: "silent" } }]);
 const guestPresent = await drive("CONTRIBUTOR", "outsider");
 ok(guestPresent.res === null, "room grain: a refuted author makes the UNDECLARED room external under `silent` — the wake is dropped");
 const rows3 = await suppressedRows();
@@ -146,6 +146,21 @@ ok(
   "room grain: a MEMBER in the SAME undeclared room under `silent` DISPATCHES (negative control — no external leg holds)",
 );
 ok((await suppressedRows()).length === 3, "room grain: the member comment writes NO suppression row");
+
+setDomains([]);
+const shippedExcluded = await drive("CONTRIBUTOR", "outsider");
+ok(shippedExcluded.res === null, "🔴 shipped default: a CONTRIBUTOR's @mention is DROPPED with no declaration at all — `withhold` ships");
+ok(
+  shippedExcluded.posted.length === 1 && shippedExcluded.posted[0] === EXTERNAL_MENTION_ACK,
+  "shipped default: the dropped @mention gets the one fixed ack, so the mentioning person does not read the agent as broken",
+);
+ok((await suppressedRows()).length === 4, "shipped default: the drop writes its suppression row");
+const shippedMember = await drive("MEMBER", "insider");
+ok(
+  shippedMember.res !== null && (shippedMember.res as { auth?: unknown }).auth !== undefined,
+  "🔴 shipped default: a MEMBER in the same undeclared repo DISPATCHES (negative control — a member's own message is not withheld)",
+);
+ok((await suppressedRows()).length === 4, "shipped default: the member comment writes NO suppression row");
 
 const refuted = { refuted: true } as const;
 ok(

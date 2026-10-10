@@ -27,8 +27,6 @@ import { installDiscordWebApiStub } from "../discord-web-api";
 import { installHostFetchStub } from "../fetch-stub";
 
 const NOTION_OAUTH_PROVIDER_REF = "mcp.notion.com/notion-mcp";
-process.env.OE_OAUTH_ENABLED = "1";
-process.env.OE_OAUTH_CONFIG = JSON.stringify({ [NOTION_OAUTH_PROVIDER_REF]: { mode: "discovery-dcr-pkce", resource: "https://mcp.notion.com/mcp" } });
 
 const DOMAIN_SCOPE_KEY = "oe-grant-domain::e2e-unified";
 const OWNER_NATIVE_ID = "U0OPE2018OWNER";

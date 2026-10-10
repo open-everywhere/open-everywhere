@@ -14,6 +14,7 @@ import {
   type SeatCatchUpFetch,
   type SeatCatchUpRequest,
   type WakeMessageInput,
+  SUPERVISOR_BACKSCROLL_REACHBACK_HOURS,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 export { WAKE_BACKSCROLL_MAX };
@@ -132,7 +133,7 @@ function cappedEntry(lines: readonly ContextLine[], source: string): WakeBackscr
   return backscrollEntry(lines.slice(-WAKE_BACKSCROLL_MAX), source);
 }
 
-export const RAW_FETCH_REACHBACK_HOURS = Number(process.env.OE_SUPERVISOR_BACKSCROLL_REACHBACK_HOURS) || 168;
+export const RAW_FETCH_REACHBACK_HOURS = SUPERVISOR_BACKSCROLL_REACHBACK_HOURS;
 
 const RAW_FETCH_PAGE_LIMIT = 200;
 

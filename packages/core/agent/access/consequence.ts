@@ -93,9 +93,34 @@ const VERB_SEGMENT_BASIS: Readonly<Record<ConnectorOpTier, OpTierBasis>> = {
 export interface ConnectorOpTierVerdict {
   readonly tier: ConnectorOpTier;
   readonly basis: OpTierBasis;
+  readonly hint?: ConnectorOpTier;
+  readonly hintDecided: boolean;
 }
 
-export function classifyConnectorOpTierVerdict(toolName: string): ConnectorOpTierVerdict {
+export interface ConnectorOpToolHints {
+  readonly readOnlyHint?: boolean;
+  readonly destructiveHint?: boolean;
+}
+
+export function connectorOpHintTier(hints: ConnectorOpToolHints | undefined): ConnectorOpTier | undefined {
+  if (hints === undefined) return undefined;
+  if (hints.destructiveHint === true) return "destructive";
+  if (hints.readOnlyHint === true) return "read";
+  if (hints.readOnlyHint === false && hints.destructiveHint === false) return "write";
+  return undefined;
+}
+
+const HINT_TIER_RANK: Readonly<Record<ConnectorOpTier, number>> = { read: 0, write: 1, destructive: 2 };
+
+export function classifyConnectorOpTierVerdict(toolName: string, hints?: ConnectorOpToolHints): ConnectorOpTierVerdict {
+  const plain = classifyByName(toolName, undefined);
+  const hint = isReservedNamespaceTool(toolName) ? undefined : connectorOpHintTier(hints);
+  if (hint === undefined) return { ...plain, hintDecided: false };
+  const hinted = classifyByName(toolName, hint);
+  return { tier: hinted.tier, basis: plain.basis, hint, hintDecided: hinted.tier !== plain.tier };
+}
+
+function classifyByName(toolName: string, hint: ConnectorOpTier | undefined): { readonly tier: ConnectorOpTier; readonly basis: OpTierBasis } {
   const { kept, stripped } = connectorOpVerbTokens(toolName);
   let best: ConnectorOpTier | undefined;
   for (const token of kept) {
@@ -106,6 +131,7 @@ export function classifyConnectorOpTierVerdict(toolName: string): ConnectorOpTie
     if (CONNECTOR_WRITE_VERBS.includes(token)) best = "write";
     else if (best === undefined && CONNECTOR_READ_VERBS.includes(token)) best = "read";
   }
+  if (hint !== undefined) best = best === undefined || HINT_TIER_RANK[hint] > HINT_TIER_RANK[best] ? hint : best;
   if (best !== "destructive") {
     for (const token of stripped) {
       if (CONNECTOR_DESTRUCTIVE_VERBS.includes(token)) {
@@ -123,19 +149,20 @@ export function classifyConnectorOpTierVerdict(toolName: string): ConnectorOpTie
   return { tier: best ?? "destructive", basis };
 }
 
-export function classifyConnectorOpTier(toolName: string): ConnectorOpTier {
-  return classifyConnectorOpTierVerdict(toolName).tier;
+export function classifyConnectorOpTier(toolName: string, hints?: ConnectorOpToolHints): ConnectorOpTier {
+  return classifyConnectorOpTierVerdict(toolName, hints).tier;
 }
 
 export interface ConnectorOpTierQuestion {
   readonly connection: string;
   readonly verb: string;
   readonly toolName: string;
+  readonly hints?: ConnectorOpToolHints;
 }
 
 export type ConnectorOpTierArm = (op: ConnectorOpTierQuestion) => ConnectorOpTier | undefined;
 
-export const defaultConnectorOpTierArm: ConnectorOpTierArm = (op) => classifyConnectorOpTier(op.toolName);
+export const defaultConnectorOpTierArm: ConnectorOpTierArm = (op) => classifyConnectorOpTier(op.toolName, op.hints);
 
 export function restMethodTier(method: string): ConnectorOpTier {
   switch (method.trim().toUpperCase()) {
@@ -312,8 +339,8 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   browser_tools: open(
     "the resolver FILE that mounts the flag-gated agent-browser tool family (access/browser-toolkit.ts, OPE-43); mounts nothing under its own name. The injected browser_* tools are a runtime-injected family (the connector-op precedent): each is open on the bash rationale — in-sandbox execution whose reach is bounded by the OPERATOR's host declaration (access/browser-hosts.ts) enforced twice, never by this table. The declaration is a host+METHOD row, so the egress firewall narrows each host to the verbs that row admits and stamps any credential it names AT the boundary; a form submit on a declared third-party host is that reviewed row, not a per-call card (OPE-1614). browser_evaluate is not in the default kit at all — page scripting is opt-in per host (OPE-1624)",
   ),
-  post_file: member("file.publish", "disclose",
-    "posts files into the asking room (same class as reply); the ONE gated arm is the HTML publish to a PUBLIC Blob URL on an org that opted in, which is an outward-facing act with a data-exposure blast radius, so it is an OE card (OPE-2340, ruling Q4 — it was an eve-native confirm that held the turn). The call freezes the page bytes and posts the card, and the publish runs on the REQUESTER's click: the kind is `member` tier, and its execute refuses any other clicker, as the native confirm's response policy did (approvals/file-publish.ts). `disclose`, not `gate`: the publish arms nothing after the turn (the gate column is derived from post-turn arming, OPE-419), and the card itself is the human decision on every publish, so a tainted turn's card carries the disclosure line. Attachments of non-HTML files stay ungated, as before",
+  post_file: open(
+    "attaches files to the asking room (same class as reply). An HTML page attaches as a downloadable file like any other file; nothing is ever published to a public URL, so no arm is gated",
   ),
 
 
@@ -474,8 +501,13 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   },
 };
 
+export function judgeableConnectorOp(tool: string): boolean {
+  const verdict = classifyConnectorOpTierVerdict(tool);
+  return verdict.tier !== "read" && verdict.basis !== "unrecognised";
+}
+
 export function judgeDeferredTool(tool: string): boolean {
-  if (isConnectorOpTool(tool)) return classifyConnectorOpTier(tool) === "write";
+  if (isConnectorOpTool(tool)) return judgeableConnectorOp(tool);
   return TOOL_CONSEQUENCE[tool]?.judgeDefer === true;
 }
 
@@ -493,7 +525,7 @@ export const NON_TOOL_ACTION_KINDS: Readonly<Record<string, ActionKindEntry>> = 
   "op.connector": {
     tier: "gate:member",
     reason:
-      "the CONNECTOR-OP CARD (OPE-2340, ruling Q4): a connector op that needs a person's approval — a write once per op per conversation, a destructive op once per call, every op once per conversation with tiering off — gets an OE card instead of eve's native once(). Raised by the connector seam (connections/connector-auth.ts `withOeConnectorCard`), not by a verb, so it needs pinning here. Member on purpose: the native connector card it replaces had no response half and bound its click to nobody (OPE-1218), and the personal-credential write in a shared room is refused before any card (decideConnectorWrite), so a member bar is the narrowing, not a widening",
+      "the CONNECTOR-OP CARD (OPE-2340, ruling Q4): a connector op that needs a person's approval — a write or a destructive op once per call, every op once per call with tiering off (OPE-2363: a click approves one call) — gets an OE card instead of eve's native once(). Raised by the connector seam (connections/connector-auth.ts `withOeConnectorCard`), not by a verb, so it needs pinning here. Member on purpose: the native connector card it replaces had no response half and bound its click to nobody (OPE-1218), and the personal-credential write in a shared room is refused before any card (decideConnectorWrite), so a member bar is the narrowing, not a widening",
   },
   "routine.permission": {
     tier: "gate:member",
@@ -622,8 +654,8 @@ export function checkActionKindCoverage(
 }
 
 export const NON_TOOL_APPROVAL_SITES: Readonly<Record<string, string>> = {
-  "packages/core/agent/connections/notion.ts":
-    "REAL, and deliberate: `connectorApprovalPolicy()` on an eve CONNECTION, not a tool. The connector-op plane is explicitly NOT rows in TOOL_CONSEQUENCE (see the scope note at the top of this file) — an op's name is injected at runtime and cannot be enumerated statically — and the eve-native `approval:` callback is the ONLY pre-execution seam eve exposes for an injected connection tool. It is used as an OE GATE that never prompts (OPE-2340, ruling Q4): it answers `not-applicable` or `denied` only. An op that needs a person is DENIED with \"a card is posted\", and the OE `op.connector` card (approvals/connector-op.ts) carries the approval, so no turn holds on it; scripts/no-native-hitl-test.ts §3 pins that it never prompts. It is defence in depth over the hard credential gates (grant + DM-only wall), never the gate itself. The value is a BARE request policy and must stay one (OPE-1218): eve's connection resolver keeps `approval` only when it is a function",
+  "packages/core/agent/connections/mcp-server-connection.ts":
+    "REAL, and deliberate: `connectorApprovalPolicy()` on an eve CONNECTION, not a tool. It is the ONE builder every MCP connection goes through — the shipped Notion connection and every server an app declares in agent/access/mcp-servers.ts (OPE-2414) — so this one line is the approval of each of them. The connector-op plane is explicitly NOT rows in TOOL_CONSEQUENCE (see the scope note at the top of this file) — an op's name is injected at runtime and cannot be enumerated statically — and the eve-native `approval:` callback is the ONLY pre-execution seam eve exposes for an injected connection tool. It is used as an OE GATE that never prompts (OPE-2340, ruling Q4): it answers `not-applicable` or `denied` only. An op that needs a person is DENIED with \"a card is posted\", and the OE `op.connector` card (approvals/connector-op.ts) carries the approval, so no turn holds on it; scripts/no-native-hitl-test.ts §3 pins that it never prompts. It is defence in depth over the hard credential gates (grant + DM-only wall), never the gate itself. The value is a BARE request policy and must stay one (OPE-1218): eve's connection resolver keeps `approval` only when it is a function",
   "packages/core/agent/plugins/extract.ts":
     "NOT a live policy: the match is inside a TEMPLATE LITERAL — the `approval: connectorApprovalPolicy()` line that the plugin extractor GENERATES into a scaffolded `agent/connections/<slug>.ts`. It is reviewed where it lands, by whoever reads the generated file, and the header of that generated file says so",
   "packages/core/agent/access/window-gated.ts":

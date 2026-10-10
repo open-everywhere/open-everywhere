@@ -1,4 +1,5 @@
 import type { UnifiedWakeOrigin, WakeOriginCodec } from "@open-everywhere/core/agent/adapter-api.js";
+import { getSettings } from "@open-everywhere/core/agent/adapter-api.js";
 
 type TeamsOrigin = Extract<UnifiedWakeOrigin, { platform: "teams" }>;
 
@@ -25,10 +26,7 @@ const DEFAULT_TEAMS_SERVICE_HOSTS: readonly string[] = [
 ];
 
 function teamsServiceHostAllowlist(): readonly string[] {
-  const extra = (process.env.OE_TEAMS_SERVICE_HOSTS ?? "")
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter((s) => s.length > 0);
+  const extra = getSettings().teams.serviceHosts;
   return extra.length > 0 ? [...DEFAULT_TEAMS_SERVICE_HOSTS, ...extra] : DEFAULT_TEAMS_SERVICE_HOSTS;
 }
 

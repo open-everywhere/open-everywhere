@@ -32,7 +32,7 @@ export function linkTenantBackfillWarning(platform: string): string {
     "DORMANT — the people on them fall back to per-surface identity (nothing is mis-attributed; standing is lost, never " +
     `gained). Fix: declare that workspace's ${platform} channel in agent/memory/config/domains.ts and reboot — this sweep runs ` +
     "on every boot and stamps the rows as soon as the workspace is nameable. If more than one workspace is declared " +
-    "(OE_ALLOW_MULTI_TENANT_PRINCIPALS=1), only the original delivery knew which one these rows belong to; they have to " +
+    "(`identity.allowMultiTenantPrincipals: true`), only the original delivery knew which one these rows belong to; they have to " +
     "be re-linked. (OPE-309 phase 2, identity/link-tenant-backfill.ts)"
   );
 }

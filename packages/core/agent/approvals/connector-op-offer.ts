@@ -11,6 +11,7 @@ export interface ConnectorOpCardOffer {
   readonly tool: string;
   readonly connection: string;
   readonly grain: "destructive" | "call";
+  readonly opTier?: "write" | "destructive";
   readonly sessionKey: string;
   readonly memoKind: string;
   readonly inputPreview: string;

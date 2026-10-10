@@ -138,12 +138,9 @@ waits: the approvals plane turns a gate into a refusal (`ask-unattended`), and a
 delete now does the same. The fire ends and says what would have lifted the gate, instead of hanging
 on a card.
 
-**`post_file` refuses too, and it is a third gate rather than an exception.** Its publish card
-applies when the org has opted in to Blob hosting and the post carries an HTML page, because
-publishing a world-readable URL is the one outward-facing branch that tool has. On a fire the tool
-reads the turn as unattended and **refuses** the publish before it reads the page — it never posts a
-card that nobody can click. Read the rest of this section as being about **connector ops**, the gate
-this page describes in detail.
+`post_file` has no gate. It attaches every file to the room, an HTML page included, so a fire posts
+files the same way an attended turn does. Read the rest of this section as being about **connector
+ops**, the gate this page describes in detail.
 
 **This includes a fire you asked for yourself.** `run_routine_now` does not run the routine in your
 conversation — it moves the schedule forward, and the dispatcher fires it exactly as the clock would.
@@ -233,8 +230,8 @@ case-sensitive throughout, so that row lifts that name and no other — `tool:ac
 different row for a different tool.
 
 **Nothing parks on a card any more** (OPE-2340). Every approval is an OE card that posts and
-returns; no turn waits on a click. A connector **read** on a deployment that has not armed
-`connectors.opTiering` needs one approval per conversation, and on a fire there is nobody to name on
+returns; no turn waits on a click. A connector **read** on a deployment that turns
+`connectors.opTiering` off needs one approval per call, and on a fire there is nobody to name on
 the card, so the read is refused like a write. A turn whose surface the host cannot resolve is
 refused the same way. A `run_routine_now` fire is unattended too, so it refuses on the same terms.
 
@@ -264,9 +261,10 @@ leaves its text only in its `routine.create` card's frozen args.
 ### Asking after the fact — the permission card
 
 A creation card is not the only moment. When a fire is refused an action a creation card *could*
-have declared, the refusal posts one **permission card** into the routine's own room. The refusal
-itself does not change: that run is refused. The card decides the **next** run — and, where the
-timed wait below is armed, the run that asked, if somebody answers while it is still going.
+have declared, the refusal posts one **permission card** into the routine's own room. By default
+the refusing call then holds for up to 120 s (the [timed wait](#the-timed-wait) below), and an
+approval inside that window lets the run that asked do the work. With the wait's `0` opt-out, that
+run is refused at once. Either way, the card decides every **later** run.
 
 - **Approve** writes exactly the row the creation card would have written, so every later fire of
   that instruction does the work without asking.
@@ -332,10 +330,10 @@ later fire, which is the card's own question.
 
 ### The timed wait
 
-By default the refusal is immediate: the run gets nothing, and the card decides later runs. A
-deployment can instead let the refusing call **hold** for a bounded window, so somebody who is around
-can answer the card while the run is still up. `approvals.routineCardWaitSeconds` sets that window
-and **ships 0**, which is no wait at all.
+By default the refusing call **holds** for a bounded window, so somebody who is around can answer the
+card while the run is still up. `approvals.routineCardWaitSeconds` sets that window and **ships 120**
+seconds. Set it to **0** to opt out: the refusal is then immediate, the run gets nothing, and the card
+decides only later runs.
 
 The wait applies to every fire that posts a card **or points at a live one** — the clock never proves
 that nobody is there, so a 03:00 cron fire gets the same window a hand-pressed fire gets.
@@ -374,8 +372,8 @@ the budget runs out is reported as the fourth case above.
 elapsed time is read off its start stamp and subtracted, and the model still has to be told and the
 run's report posted, so 60 s is reserved. The wait is clamped to what is left. A turn that reached
 its refusal 250 s in therefore waits **not at all** and refuses immediately, rather than spending a
-window it cannot afford and dying mid-report. **120 s** is the recommended armed value: it is what a
-turn that reached its refusal at the assumed 120 s can still afford. A ten-minute card is not
+window it cannot afford and dying mid-report. **120 s** is the shipped value: it is what a turn that
+reached its refusal at the assumed 120 s can still afford. A ten-minute card is not
 possible here; answering after the run has ended is what the card itself is for.
 
 The reading comes from the **turn's own start stamp**, taken when the turn starts and kept for as
@@ -1711,8 +1709,7 @@ curl -X POST "$URL" -H "webhook-id: $ID" -H "webhook-timestamp: $TS" \
 
 Both the id and the timestamp are part of what's signed. A delivery whose timestamp is more
 than **300 seconds** from ours is rejected before any HMAC is computed (five minutes is what
-Slack, Stripe and Discord all use; `OE_WEBHOOK_MAX_SKEW_SECONDS` overrides it for a
-clock-broken self-host), and a `webhook-id` already accepted inside that window is refused
+Slack, Stripe and Discord all use, and it is a code constant), and a `webhook-id` already accepted inside that window is refused
 **409** — which is why the id must be **unique per delivery** rather than per payload. For a
 vendor `source`, sign nothing yourself — the vendor already signs, and its
 own scheme is what gets verified. Whatever the scheme, verification runs on the **exact bytes
@@ -2351,8 +2348,9 @@ fail-closed.
 derived, not chosen: the 300-second function wall, less 120 seconds assumed already spent in the turn,
 less a 60-second tail reserve. The wait can therefore never run the function out of time.
 
-The tidy sweep reads its orgs from `OE_TIDY_ORGS`, comma-separated, and **defaults to the single org
-`default`** when the variable is unset, empty, or contains nothing after trimming.
+The tidy sweep reads its orgs from the setting `schedules.sweepOrgs`, a string array, and **ships
+the single org `default`**. An empty list fails the boot. (The orgs were the `OE_TIDY_ORGS` variable
+until OPE-2411.)
 
 ## What's available, and what's seam
 

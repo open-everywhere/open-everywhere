@@ -135,7 +135,7 @@ function liveModel(): LanguageModel {
   const key = process.env.AI_GATEWAY_API_KEY;
   if (key === undefined || key.length === 0) {
     throw new Error(
-      "AI_GATEWAY_API_KEY is unset — source .env.e2e and set it from ROWAN_VERCEL_AI_GATEWAY_KEY (never the shell key, which is the shell key). Or run with --model scripted.",
+      "AI_GATEWAY_API_KEY is unset — source .env.e2e, which sets AI_GATEWAY_API_KEY to the gateway key for your deployment. Or run with --model scripted.",
     );
   }
   return createGateway({ apiKey: key })(MODEL);

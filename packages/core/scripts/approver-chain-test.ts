@@ -259,7 +259,9 @@ ok(!ELEMENT_CLAMPS.registry.includes("defer"), "pin4: the registry may not defer
     );
     ok(judgeDeferredTool("open_pull_request") && !judgeDeferredTool("create_ticket"), "pin5: judgeDeferredTool reads the flip, and an unflipped gated row stays plain ask");
     ok(judgeDeferredTool("notion__create_page"), "pin5: a connector WRITE carries the flip (OPE-2368)");
-    ok(!judgeDeferredTool("notion__delete_block") && !judgeDeferredTool("notion__get_page"), "pin5: a destructive and a read connector op carry NO flip");
+    ok(judgeDeferredTool("notion__delete_block"), "pin5: a DESTRUCTIVE connector op carries the flip (2026-10-10)");
+    ok(!judgeDeferredTool("notion__frobnicate_widget") && !judgeDeferredTool("supabase__execute_sql"), "pin5: an op whose name carries NO recognised verb (fail-closed destructive, not a known delete) carries NO flip");
+    ok(!judgeDeferredTool("notion__get_page"), "pin5: a read connector op carries NO flip");
 
     overrideSettingsForTest({ approvals: { judgeMode: "enforce" } });
     const noOptIn = await resolveApproverChain(req("open_pull_request"));

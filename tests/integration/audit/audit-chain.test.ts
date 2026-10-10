@@ -99,7 +99,7 @@ async function turnOnce(): Promise<DrivenTurn> {
     return rows.find((r) => r.surface === channelId);
   }, `a reply.post audit row for channel ${channelId}`);
   await awaitWindowQuiet();
-  expect(handle.requests.some((r) => r.role === "parent" && r.stepIndex >= 1), "a step after the reply was requested").toBe(false);
+  expect(handle.requests.some((r) => r.role === "parent" && r.stepIndex !== 0), "a step after the reply was requested").toBe(false);
   expect((posted.detail as { chars?: unknown }).chars).toBe(replyText.length);
   driven = { channelId, replyChars: replyText.length };
   return driven;

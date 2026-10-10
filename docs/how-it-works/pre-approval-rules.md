@@ -18,7 +18,7 @@ A rule is curated context for one decision. It is not a verdict, and it is not a
 
 ## 0. What a fresh install does
 
-A scaffolded app runs the judge in `enforce` mode and ships four starter rules in
+A scaffolded app runs the judge in `enforce` mode and ships five starter rules in
 `agent/access/pre-approval-rules.ts`, bound at org scope by the `approval-policy` bundle in
 `agent/access/bundles.ts`. Edit them there, review the change, and deploy it.
 
@@ -27,7 +27,8 @@ A scaffolded app runs the judge in `enforce` mode and ships four starter rules i
 | `pr-asked-for-here` | Opening a pull request that the requester asked for in this turn's messages, whose repository, branch and title match the ask. | The tool reaches only the repositories granted to the room. A pull request does not merge itself, but whether a merge needs a review is the repository's own branch protection, so the rule does not count on one. A request that came only from fetched or quoted content gets a card. |
 | `routine-reports-here` | Creating a routine that the requester asked for in this turn's messages, whose prompt and schedule match the ask, that reports back to this conversation, and that runs at most once an hour. | It posts only where it was asked for. Each fire costs model calls, so the rule stops at an hourly rate. A routine that declares a standing write never reaches the judge (§4). |
 | `access-request-asked-for` | Sending an access request that the requester asked for in this turn's messages, for the access they named. | A request is not a grant. It notifies the admins, and the access starts only when an admin merges it. |
-| `connector-write-asked-for-here` | A connector write (a Notion page, a Linear issue) that the requester asked for in this turn's messages, whose arguments match the ask, and which only creates or updates content in the workspace the domain connected. | Code keeps the risky connector calls on a card before the judge sees them (below). The rule adds what a model can read: a person asked in this turn, the call matches the ask, and nothing leaves the room. It does not cover a call that sends a message or an email, shares or publishes content, or invites or notifies people outside the conversation. An allow runs that one call only. |
+| `connector-write-asked-for-here` | A connector write (a Notion page, a Linear issue) that the requester asked for in this turn's messages, whose arguments match the ask, and which only creates or updates content in the workspace the domain connected. | Code keeps the risky connector calls on a card before the judge sees them (below). The rule adds what a model can read: a person asked in this turn, the call matches the ask, and nothing leaves the room. It does not cover a call that sends a message or an email, shares or publishes content, or invites or notifies people outside the conversation, and it never covers a delete. An allow runs that one call only. |
+| `connector-delete-asked-for-here` | A connector delete that the requester asked for in this turn's messages, in their own words, naming exactly this item, where the call's arguments name that one item and nothing else. | A delete cannot be undone, so this is the strictest starter rule. It never covers a delete of more than one item, a bulk or batch delete, a delete by filter, query, pattern or wildcard, or a delete of a whole page tree, database, project or workspace. When the ask does not name the item, or is ambiguous about which item, a person decides. The same code floors as a write apply before the judge sees it (below). Delete this rule to keep every connector delete on a card. |
 
 The judge sees only a rule's text, so every starter rule states its own limits. Each one says it
 never covers an unattended run (a routine fire or a webhook), and each one needs the ask in the
@@ -55,17 +56,24 @@ carries, the human-only class never reaches the judge, and the clamps run after 
 - erasing remembered facts (`purge_memory`). An erasure cannot be undone, so it is human-only in
   code: the judge is not consulted, and no rule can lift it;
 - every verb that is not defer-flipped (§4);
-- every connector op except a write that runs with the domain's credential. A destructive op (a
-  delete, an archive), an op on a person's own account, a write in an unattended run, a write in a
-  turn that read external content, a write in a room that does not belong to exactly one domain, and
-  a write whose input is too long for the card to show in full all keep the connector card. Code
-  decides this before the judge, so no rule can change it.
+- every connector op except a write or a delete that runs with the domain's credential. An op on a
+  person's own account, an op in an unattended run, an op in a turn that read external content, an
+  op in a room that does not belong to exactly one domain, and an op whose input is too long for the
+  card to show in full all keep the connector card. So does an op whose name carries no
+  verb the classifier recognises (`execute_sql`, `run_workflow`), unless the tool annotations of its
+  registered server bring its final tier down to `read`: the judge reads an op mostly by its name,
+  so it is not a known write or delete. Code decides this before the judge, so no rule can change
+  it. [Connectors and providers](../capabilities/connectors-and-providers.md) gives the annotation
+  rules. (Until 2026-10-10 a destructive op always kept its card too. The rule of that
+  day lets the judge approve a delete that a rule covers; the starter delete rule above is strict on
+  purpose.)
 
 **An allow covers one act.** The judge's cached allow is kept per session and keyed on the act's
 whole arguments, the requester and whether the turn is unattended. So a cached allow answers only
 for the same act, asked by the same person, in the same kind of turn. Any other act is judged again,
-even in the same session. A judge allow of a connector write also writes no approval for a later
-call, so it runs that one call only. Only the judge lifts a connector card: an operator approver that
+even in the same session. A judge allow of a connector write or delete is never cached and writes no
+approval for a later call, so it runs that one call only. An identical call later in the session is
+judged again. Only the judge lifts a connector card: an operator approver that
 answers `allow` leaves the card. A connector card's consult reads the room's domain, so that domain's
 judge disarm and halt cover it.
 
@@ -213,7 +221,7 @@ untouched:
 | **Deny** | A deny from any element, or from the judge itself, is absolute and skips everything. |
 | **The clamps** | Modes, the taint floor and the unattended clamp run *after* the judge. They still tighten a rule-driven allow exactly as they tighten any other. |
 | **The human-only class** | Every admin act (a `gate:admin` row, such as `set_spend_limit`) needs a person's click, and so does erasing remembered facts (`purge_memory`). So does a routine whose creation card declares a standing write — `pr.open`, or a connector tool that is not a read ([declared permissions](../capabilities/proactivity-and-routines.md)). The judge is not consulted for either, so no rule can lift them, and the verdict row records `source: "human-only"`. |
-| **The connector fence** | A connector card reaches the chain only for a `write`-tier op on the domain's credential, in an attended turn that read no external content, in a room with exactly one domain, with an input the card shows in full (`access/approver-chain.ts` `judgedConnectorOpTool`). Every other connector card keeps its old road and never meets the judge. A judge allow runs that one call, and only the judge can lift the card. |
+| **The connector fence** | A connector card reaches the chain only for an op whose name tiers it `write` or `destructive` (a delete reaches it since 2026-10-10), on the domain's credential, in an attended turn that read no external content, in a room with exactly one domain, with an input the card shows in full (`access/approver-chain.ts` `judgedConnectorOpTool`). An op whose name carries no recognised verb keeps its card. The card freezes the op's effective tier as `opTier`, and the judge reads it. A write-named op that an operator's `connectorOps` raise or a server's `destructiveHint` made destructive keeps its card, because the judge reads an op mostly by its name. Every other connector card keeps its old road and never meets the judge. A judge allow runs that one call, and only the judge can lift the card. |
 | **The cache** | An enforced cached allow is keyed on the act's whole arguments, the requester and `unattended` (`approval-judge.ts` `enforcedVerdictCacheKey`), so it never answers for a different act. |
 
 There is deliberately **no deny tier and no hard-deny tier** in this store. Denial already lives

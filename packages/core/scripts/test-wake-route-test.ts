@@ -19,7 +19,6 @@ await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: "acme" });
 overrideSettingsForTest({ window: { topology: true } });
-delete process.env.OE_TEST_WAKE;
 delete process.env.OE_CONTROL_READ_TOKENS;
 delete process.env.OE_CONTROL_INJECT_TOKENS;
 
@@ -107,20 +106,24 @@ function post(body: unknown, token?: string, receive = captureReceive): Promise<
 }
 
 {
-  ok(testWakeEnabled({ OE_TEST_WAKE: "1" } as NodeJS.ProcessEnv), "testWakeEnabled: '1' → true");
-  ok(testWakeEnabled({ OE_TEST_WAKE: "true" } as NodeJS.ProcessEnv), "testWakeEnabled: 'true' → true");
-  ok(!testWakeEnabled({} as NodeJS.ProcessEnv), "testWakeEnabled: unset → false");
-  ok(!testWakeEnabled({ OE_TEST_WAKE: "0" } as NodeJS.ProcessEnv), "testWakeEnabled: '0' → false");
+  ok(!testWakeEnabled(), "testWakeEnabled: the shipped setting → false");
+  process.env.OE_TEST_WAKE = "1";
+  ok(!testWakeEnabled(), "testWakeEnabled: the retired OE_TEST_WAKE=1 env var → still false");
+  delete process.env.OE_TEST_WAKE;
+  overrideSettingsForTest({ wake: { testWakeRoute: true } });
+  ok(testWakeEnabled(), "testWakeEnabled: wake.testWakeRoute on → true");
+  overrideSettingsForTest({ wake: { testWakeRoute: false } });
+  ok(!testWakeEnabled(), "testWakeEnabled: wake.testWakeRoute off → false");
 }
 
 process.env.OE_CONTROL_INJECT_TOKENS = `eval-injector:${INJECT_SHA}`;
 {
   const res = await post(goodBody(), INJECT_SECRET);
-  ok(res.status === 404, "OE_TEST_WAKE unset → 404 (seam does not exist) even with tokens + bearer + good body");
+  ok(res.status === 404, "wake.testWakeRoute off → 404 (seam does not exist) even with tokens + bearer + good body");
   ok(captured.length === 0, "disarmed seam never diverts");
 }
 
-process.env.OE_TEST_WAKE = "1";
+overrideSettingsForTest({ wake: { testWakeRoute: true } });
 delete process.env.OE_CONTROL_INJECT_TOKENS;
 {
   ok((await post(goodBody(), INJECT_SECRET)).status === 404, "armed but no OE_CONTROL_INJECT_TOKENS → 404");

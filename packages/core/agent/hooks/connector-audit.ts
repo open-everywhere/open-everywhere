@@ -4,6 +4,7 @@ import { bindFrom, currentTurnId, deploymentOrg, type BindableContext } from "..
 import { resolvePartition } from "../memory/partition.js";
 import { connectorOpName, isConnectorOpTool, parseQualifiedToolName } from "../access/consequence.js";
 import { connectorOpConsequenceOfTier, connectorOpTierParts } from "../access/connector-op-gating.js";
+import { connectorOpToolHints } from "../connections/connector-tool-hints.js";
 import { noteConnectorRead, PROVENANCE_READ_TIER } from "../channels/reply-provenance.js";
 import { stampReadReach } from "../channels/read-reach.js";
 import { noteDelegatedRead } from "../channels/delegated-provenance.js";
@@ -27,7 +28,7 @@ async function auditOpResult(event: unknown, ctx: HookContext): Promise<void> {
     const connection = toolName.slice(0, toolName.indexOf("__"));
     const op = connectorOpName(toolName);
     const status = typeof data?.status === "string" ? data.status : undefined;
-    const tiers = connectorOpTierParts(toolName);
+    const tiers = connectorOpTierParts(toolName, undefined, await connectorOpToolHints(toolName));
 
     let org = deploymentOrg();
     let platform = "unknown";
@@ -73,6 +74,8 @@ async function auditOpResult(event: unknown, ctx: HookContext): Promise<void> {
         ...(tiers.armReplaced ? { opTierArmReplaced: true } : {}),
         ...(tiers.arm !== undefined ? { armOpTier: tiers.arm } : {}),
         ...(tiers.armLowered ? { opTierArmLowered: true, opTierBasis: tiers.basis } : {}),
+        ...(tiers.hint !== undefined ? { opTierHint: tiers.hint } : {}),
+        ...(tiers.hintDecided ? { opTierHintDecided: true, opTierBasis: tiers.basis } : {}),
         ...(status !== undefined ? { status } : {}),
         ...(result.isError ? { isError: true } : {}),
       },

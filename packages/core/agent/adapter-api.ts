@@ -84,6 +84,8 @@ export { NOTION_HANDSHAKE_REF_NAMESPACE } from "./credentials/reserved-refs.js";
 export { SLACK_APP_REF_NAMESPACE } from "./credentials/reserved-refs.js";
 
 export { registerOeOauthCallbackCompleter, OE_OAUTH_CALLBACK_PATH } from "./connections/oe-oauth-callback.js";
+export { declareConnectionSignIn, declaredConnectionSignIns, _resetConnectionSignInsForTest } from "./connections/connection-sign-in.js";
+export type { ConnectionSignIn, DiscoverySignIn, StaticConfidentialSignIn } from "./connections/connection-sign-in.js";
 export type { OeOauthCallbackArgs, OeOauthCallbackResult, OeOauthCallbackCompleter } from "./connections/oe-oauth-callback.js";
 
 export { registerAwsSsoCallbackCompleter, OE_AWS_SSO_CALLBACK_PATH } from "./connections/aws-sso-callback.js";
@@ -109,8 +111,8 @@ export type { ActionKind, PendingActionRow } from "./approvals/types.js";
 
 export { platformName, onVercel } from "./access/platform.js";
 
-export { resolveSelfHostBackendKind } from "./sandbox/backend-select.js";
-export type { SelfHostBackendKind } from "./sandbox/backend-select.js";
+export { resolveSandboxBackend, resolveSelfHostBackendKind, sandboxOnVercel } from "./sandbox/backend-select.js";
+export type { SandboxBackendKind, SelfHostBackendKind } from "./sandbox/backend-select.js";
 
 export { isSubagentChildContext, subagentParentSessionId } from "./identity/binding.js";
 
@@ -125,13 +127,10 @@ export { registerExtraEgressHosts, extraEgressHosts, resetExtraEgressHostsForTes
 export { registerAttachmentResolver, resolveAttachment, resolveGuardedAttachment, AttachmentOversizeError } from "./channels/attachments.js";
 export type { AttachmentResolver, ResolvedAttachment, GuardedAttachment } from "./channels/attachments.js";
 
-export { setBlobPutter } from "./blob/hosting.js";
-export type { BlobPutter } from "./blob/hosting.js";
-
 export { getConfig, registerConfig } from "./access/config.js";
 
-export { SETTINGS, getSettings, defineSettings, registerSettings, resetSettingsForTest, overrideSettingsForTest, settingDocs, settingEnvNames } from "./settings/settings.js";
-export type { AgentSettings, AgentSettingsOverrides, SettingSpec, SettingDoc, TaintTierMode, ApprovalJudgeMode } from "./settings/settings.js";
+export { SETTINGS, getSettings, defineSettings, registerSettings, resetSettingsForTest, overrideSettingsForTest, settingDocs } from "./settings/settings.js";
+export type { AgentSettings, AgentSettingsOverrides, SettingSpec, SettingDoc, TaintTierMode, ApprovalJudgeMode, AdminRoleRule, OktaAppSetting, DirectoryAutoConfirm, SandboxBackendChoice, BlanketTrust } from "./settings/settings.js";
 
 export { registerProvider, registerPostgres } from "./memory/provider.js";
 export { resolveMemoryProviderId, MEMORY_PROVIDER_FLOOR } from "./memory/provider.js";
@@ -627,7 +626,7 @@ export type {
 
 export { renderContext, capLines, sinceLastAgentReply, WAKE_BACKSCROLL_MAX, contextLineIngestion, contextLinesNotInEnvelope, hydrationSlices } from "./channels/context-render.js";
 export type { HydrationSlices } from "./channels/context-render.js";
-export { fetchedBackscroll, approxMessageTokens, seatCatchUpSinceMs, catchUpSender } from "./channels/backscroll-window.js";
+export { fetchedBackscroll, approxMessageTokens, seatCatchUpSinceMs, catchUpSender, SUPERVISOR_BACKSCROLL_REACHBACK_HOURS } from "./channels/backscroll-window.js";
 export type { NormalizedMessage, BackscrollTrustFor } from "./channels/backscroll-window.js";
 export {
   registerSeatCatchUp,
@@ -668,7 +667,7 @@ export type { IngressSpendGateInput, SpendGateBadges, SpendGateDecision, SpendGa
 export { classifyWakeMapping, unmappedWakeCopy, UNMAPPED_WAKE_DROP_REASON } from "./access/wake-mapping.js";
 export type { WakeMappingDecision, WakeMappingInput } from "./access/wake-mapping.js";
 
-export { classifyTenantAdmission, admittedTenants, admittedTenantsFromConfig, unadmittedTenantLog, multiTenantPrincipalsAllowed, UNADMITTED_TENANT_DROP_REASON, MULTI_TENANT_ENV } from "./access/tenant-admission.js";
+export { classifyTenantAdmission, admittedTenants, admittedTenantsFromConfig, unadmittedTenantLog, multiTenantPrincipalsAllowed, UNADMITTED_TENANT_DROP_REASON, MULTI_TENANT_SETTING } from "./access/tenant-admission.js";
 export type { TenantAdmissionDecision, TenantAdmissionInput } from "./access/tenant-admission.js";
 
 export { consumeCardPostedThisTurn, peekCardPostedThisTurn } from "./approvals/card-signal.js";
@@ -739,7 +738,8 @@ export { PREFER_NO_REPLY_TOOL } from "./channels/normalized-wake.js";
 export { registeredReactionSurfaces } from "./channels/reaction-ingest.js";
 export type { IngestedReaction } from "./channels/reaction-ingest.js";
 
-export { isAllowedSlackDriver, parseDriverAllowlist, e2eDriverPrincipals, isE2eDriver, e2eDriversProblem } from "./testing/driver-allowlist.js";
+export { testValveArmed, __setTestValveForTest, type TestValve } from "./testing/test-valves.js";
+export { isAllowedSlackDriver, parseDriverAllowlist, configuredDriverAllowlist, driverAllowlistProblem, e2eDriverPrincipals, isE2eDriver, e2eDriversProblem } from "./testing/driver-allowlist.js";
 export type { E2eDriverIdentity } from "./testing/driver-allowlist.js";
 
 export { STATUS_REACTION, renderPinned, isPinnedStatusMessage, STOP_HAND_SLACK_NAME, STOP_HAND_UNICODE } from "./status/status.js";
@@ -776,6 +776,7 @@ export { buildRecord, enqueue, flushLogShip } from "./observability/ship.js";
 export { parseSlackCommandText } from "./commands/core.js";
 
 export { assertSafeFetchUrl, setHostEgressLookup, type EgressDispatch, type EgressRefusalCause } from "./access/host-egress.js";
+export { hostPlaneFetch, hostPlanePolicy } from "./access/host-plane-egress.js";
 export {
   egressAuditFields,
   hostCallAuditFields,

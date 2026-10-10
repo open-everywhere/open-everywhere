@@ -28,8 +28,10 @@ work the same here.
   egress firewall must be enforceable at this boundary. Vercel Sandbox enforces the full
   policy natively; Eve's `microsandbox` backend enforces only the host-grain part natively
   (per-host allow/deny) — credential injection and `match` narrowing are measured gaps
-  (OPE-917). Open Everywhere's own `docker()` deployment gets full parity instead with a
-  [forced local egress proxy](./self-host-egress.md), which is the pattern to port here.
+  (OPE-917). Open Everywhere's own Docker deployment enforces the session policy with a
+  [forced local egress proxy](./self-host-egress.md), which is the pattern to port here. Today
+  that proxy fronts only the development-grade `justbash` backend; the `docker()` backend's
+  session containers sit outside it (OPE-2407).
 - A registered operational-store client and memory provider. A present `DATABASE_URL` selects
   `postgres` for both; `OE_OPERATIONAL_PROVIDER` and `OE_MEMORY_PROVIDER` override it — see
   [Database](../../extending/database.md).

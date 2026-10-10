@@ -726,8 +726,7 @@ The details that actually bite:
   "try both" fallback — each secret takes exactly one branch, decided by its own first six
   characters — because trying both would be a downgrade primitive.
 - **The timestamp is signed and skew-checked.** More than **300 seconds** from ours and the delivery
-  is rejected before any HMAC is computed (`OE_WEBHOOK_MAX_SKEW_SECONDS` overrides it for a
-  clock-broken self-host). The header's bytes are signed **verbatim** — `" 123 "` is malformed, not
+  is rejected before any HMAC is computed. The window is a code constant (OPE-2411). The header's bytes are signed **verbatim** — `" 123 "` is malformed, not
   silently trimmed.
 - **The message id is a real nonce.** It is covered by the signature, so re-presenting a delivery
   inside the skew window is refused **409** — durable, cross-instance, keyed per hook. This is the
@@ -738,8 +737,7 @@ The details that actually bite:
   which is what keeps two hooks' deliveries from ever colliding in one dedupe key. `uuidgen` output
   is fine.
 - **Verification runs on the exact bytes received.** A reserialised JSON body produces different
-  bytes and fails. Bodies over **256 KiB** are rejected before hashing
-  (`OE_WEBHOOK_MAX_BODY_BYTES`).
+  bytes and fails. Bodies over **256 KiB** are rejected before hashing (a code constant).
 - **Several signatures may be presented at once**, space-delimited, so a sender mid-rotation can
   offer old and new. Entries tagged with a version we do not know are skipped, not refused.
 
@@ -836,8 +834,8 @@ remaining keys stand.
 
 `standardWebhookVerifier` (`webhooks/oe-standard-webhook.ts`) checks in this order: the signature
 header must be present, the message id must be present and well-formed, the timestamp must be present
-and digits-only, and **the skew is checked before any HMAC is computed** — 300 seconds by default
-(`OE_WEBHOOK_MAX_SKEW_SECONDS`). Only then does it hash.
+and digits-only, and **the skew is checked before any HMAC is computed** — 300 seconds, a code
+constant. Only then does it hash.
 
 The signature header may carry **several space-separated values**, which is how a sender rotates a
 key. The verifier keeps the `v1,` tagged ones and accepts a delivery when **any** presented `v1`

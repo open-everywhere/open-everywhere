@@ -7,7 +7,6 @@ import {
   resetSettingsForTest,
   overrideSettingsForTest,
   settingDocs,
-  settingEnvNames,
 } from "../agent/settings/settings.js";
 import type { E2eDriverIdentity } from "../agent/testing/driver-allowlist.js";
 import { windowTopologyEnabled, WINDOW_TOPOLOGY_ENABLED } from "../agent/access/capabilities.js";
@@ -53,35 +52,47 @@ const eq = (a: unknown, b: unknown, label: string): void => {
   n++;
 };
 
-const at = (env: NodeJS.ProcessEnv): ReturnType<typeof getSettings> => getSettings(env);
+const at = (env: NodeJS.ProcessEnv): ReturnType<typeof getSettings> => {
+  const saved = new Map(Object.keys(env).map((k) => [k, process.env[k]] as const));
+  for (const [k, v] of Object.entries(env)) process.env[k] = v;
+  try {
+    return getSettings();
+  } finally {
+    for (const [k, v] of saved) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+};
 
 console.log("1 — precedence is two tiers: the registered override, then the shipped default:");
 {
   resetSettingsForTest();
-  eq(at({}).window.topology, false, "[1] nothing registered ⇒ the shipped default (window.topology ships OFF)");
+  eq(at({}).window.topology, true, "[1] nothing registered ⇒ the shipped default (window.topology ships ON)");
   eq(at({}).delegation.oneshotAgent, true, "[1] nothing registered ⇒ the shipped default (delegation.oneshotAgent ships ON, OPE-370)");
-  eq(at({}).connectors.dmOnly, true, "[1] …and the security defaults ship in the closed position");
+  eq(at({}).connectors.dmOnly, false, "[1] …connectors.dmOnly ships OFF: a channel reaches a connector exactly when a grant says so (2026-10-10)");
+  eq(at({}).connectors.opTiering, true, "[1] …and connectors.opTiering ships ON, so a channel's writes stay behind a card");
 
-  registerSettings(defineSettings({ window: { topology: true }, bash: { timeoutMs: 5_000 } }));
-  eq(at({}).window.topology, true, "[1] a REGISTERED override beats the shipped default — arming by reviewed diff, the only route there is");
+  registerSettings(defineSettings({ window: { topology: false }, bash: { timeoutMs: 5_000 } }));
+  eq(at({}).window.topology, false, "[1] a REGISTERED override beats the shipped default — disarming by reviewed diff, the only route there is");
   eq(at({}).bash.timeoutMs, 5_000, "[1] a registered numeric override applies");
-  eq(at({}).connectors.dmOnly, true, "[1] settings not overridden keep their shipped default");
+  eq(at({}).connectors.dmOnly, false, "[1] settings not overridden keep their shipped default");
   resetSettingsForTest();
-  eq(at({}).window.topology, false, "[1] resetSettingsForTest() drops back to the shipped defaults");
+  eq(at({}).window.topology, true, "[1] resetSettingsForTest() drops back to the shipped defaults");
 }
 
 console.log("1b — the test patch merges, and the boot registration replaces:");
 {
   resetSettingsForTest();
   registerSettings(defineSettings({ delegation: { oneshotAgent: false } }));
-  overrideSettingsForTest({ connectors: { dmOnly: false } });
+  overrideSettingsForTest({ connectors: { dmOnly: true } });
   eq(at({}).delegation.oneshotAgent, false, "[1b] a patch of ANOTHER group leaves the registered value alone — the whole point of the merge");
-  eq(at({}).connectors.dmOnly, false, "[1b] …and the patched key applies");
-  overrideSettingsForTest({ connectors: { opTiering: true } });
-  eq(at({}).connectors.dmOnly, false, "[1b] a second patch of the SAME group is key-wise, not group-wise");
-  eq(at({}).connectors.opTiering, true, "[1b] …and adds its own key");
+  eq(at({}).connectors.dmOnly, true, "[1b] …and the patched key applies");
+  overrideSettingsForTest({ connectors: { opTiering: false } });
+  eq(at({}).connectors.dmOnly, true, "[1b] a second patch of the SAME group is key-wise, not group-wise");
+  eq(at({}).connectors.opTiering, false, "[1b] …and adds its own key");
 
-  registerSettings(defineSettings({ connectors: { dmOnly: false } }));
+  registerSettings(defineSettings({ connectors: { dmOnly: true } }));
   eq(at({}).delegation.oneshotAgent, true, "[1b] 🔴 registerSettings REPLACES — the earlier pin is gone, which is why a test must not use it to vary one flag");
   resetSettingsForTest();
 }
@@ -135,12 +146,13 @@ const DELETED_ENV_MIRRORS: ReadonlyArray<readonly [string, string]> = [
   ["OE_GENERIC_READ_VERBS", "1"],
   ["OE_WINDOW_TOPOLOGY", "1"],
   ["OE_UNIFIED_REDRIVE", "0"],
+  ["OE_MODEL_STACK", "chinese-open"],
 ];
 
 console.log("2 — every deleted env mirror is inert, individually and all at once:");
 {
   resetSettingsForTest();
-  eq(DELETED_ENV_MIRRORS.length, 48, "[2] the historical set is FORTY-EIGHT names (49 mirrors existed; OE_MODEL_STACK survives as a harness seam)");
+  eq(DELETED_ENV_MIRRORS.length, 49, "[2] the historical set is all FORTY-NINE mirrors (OPE-2411 deleted the last, OE_MODEL_STACK)");
 
   const shipped = at({});
   const all: NodeJS.ProcessEnv = {};
@@ -148,36 +160,56 @@ console.log("2 — every deleted env mirror is inert, individually and all at on
     all[name] = raw;
     eq(at({ [name]: raw }), shipped, `[2] ${name}=${JSON.stringify(raw)} moves NOTHING — the mirror is deleted, not merely undocumented`);
   }
-  eq(at(all), shipped, "[2] 🔴 …and all forty-eight set AT ONCE are still byte-identical to an empty environment");
+  eq(at(all), shipped, "[2] 🔴 …and all forty-nine set AT ONCE are still byte-identical to an empty environment");
 
   registerSettings(
     defineSettings({
-      window: { topology: true },
+      window: { topology: false },
       taint: { tierMode: "dryrun" },
-      connectors: { dmOnly: false },
+      connectors: { dmOnly: true },
       rotation: { turnBudget: 90 },
     }),
   );
   const configured = at({});
   eq(at(all), configured, "[2] 🔴 …and they do not beat a REGISTERED value either — the committed file is the authority, which is the whole ticket");
-  eq(configured.window.topology, true, "[2] (the registered posture really is the non-default one, so the assertion above has teeth)");
+  eq(configured.window.topology, false, "[2] (the registered posture really is the non-default one, so the assertion above has teeth)");
   eq(configured.rotation.turnBudget, 90, "[2] …including a rotation clock, the group OPE-409 unblocked");
   resetSettingsForTest();
 }
 
-console.log("3 — models.stack is the one env seam, and it is a harness seam:");
+const RETIRED_BY_OPE_2411: ReadonlyArray<readonly [string, string]> = [
+  ["OE_MODEL_STACK", "chinese-open"],
+  ["OE_PRIMARY_MODEL", "acme/primary"],
+  ["OE_FORCE_MODEL", "acme/forced"],
+  ["OE_ADMIN_GITHUB", "1"],
+  ["OE_ADMIN_ROLE_RULES", '[{"roles":["admin"],"email":"a@b.c"}]'],
+  ["OE_ALLOW_MULTI_TENANT_PRINCIPALS", "1"],
+  ["OE_TEAMS_SERVICE_HOSTS", "smba.infra.gcc.teams.microsoft.com"],
+  ["OE_TIDY_ORGS", "acme,globex"],
+  ["OE_DIRECTORY_AUTOCONFIRM", "attested"],
+  ["OE_DIRECTORY_GROUP_ALLOWLIST", "Payments"],
+  ["OE_DIRECTORY_OKTA_APPS", "slack:0oa1"],
+  ["OE_AWS_ENABLED", "1"],
+  ["OE_AWS_SSO_SCOPES", "openid extra"],
+  ["OE_MEMORY_SYNC_TIMING", "1"],
+  ["OE_SANDBOX_BACKEND", "justbash"],
+  ["OE_PLATFORM", "vercel"],
+  ["OE_ALLOW_EPHEMERAL_MEMORY", "1"],
+  ["OE_ALLOW_EPHEMERAL_OPERATIONAL", "1"],
+  ["OE_TRUST", "internal"],
+];
+console.log("3 — no env seam survives, and no variable OPE-2411 retired moves a setting:");
 {
   resetSettingsForTest();
-  eq(at({}).models.stack, "american-closed", "[3] models.stack: the shipped alias");
-  eq(at({ OE_MODEL_STACK: "chinese-open" }).models.stack, "chinese-open", "[3] 🔴 OE_MODEL_STACK still selects a stack per RUN — the e2e:stack harness depends on this");
-  eq(at({ OE_MODEL_STACK: "   " }).models.stack, "american-closed", "[3] …a blank value falls through rather than naming an empty stack");
+  const shipped = at({});
+  eq(shipped.models.stack, "american-closed", "[3] models.stack: the shipped alias");
+  eq(at({ OE_MODEL_STACK: "chinese-open" }).models.stack, "american-closed", "[3] 🔴 OE_MODEL_STACK selects NOTHING any more — the stack changes by a commit");
+  eq(at(Object.fromEntries(RETIRED_BY_OPE_2411)), shipped, "[3] 🔴 every variable OPE-2411 retired, set at once, is byte-identical to an empty environment");
 
-  registerSettings(defineSettings({ models: { stack: "registered-alias" } }));
-  eq(at({}).models.stack, "registered-alias", "[3] a registered override applies when the variable is unset");
-  eq(at({ OE_MODEL_STACK: "chinese-open" }).models.stack, "chinese-open", "[3] …and the harness seam still wins over it, which is what makes a per-run switch possible");
+  registerSettings(defineSettings({ models: { stack: "registered-alias", primary: "acme/p", force: "acme/f" } }));
+  eq(at({ OE_MODEL_STACK: "chinese-open" }).models.stack, "registered-alias", "[3] a registered stack applies, and no variable outvotes it");
+  eq(at({ OE_PRIMARY_MODEL: "x/y", OE_FORCE_MODEL: "x/z" }).models, { stack: "registered-alias", primary: "acme/p", force: "acme/f" }, "[3] …and the two model pins are registered rows too");
   resetSettingsForTest();
-
-  eq([...settingEnvNames()], ["OE_MODEL_STACK"], "[3] 🔴 it is the ONLY env name the schema owns — the list is the ratchet scripts/settings-docs.ts guards");
 }
 
 console.log("4 — every read re-resolves (registration order and the test seam both depend on it):");
@@ -224,23 +256,33 @@ console.log("5 — a bad override fails the boot, not a turn:");
   refuses(() => defineSettings({ approvals: { judgeMode: "ENFORCE" } } as never), 'must be "off", "shadow" or "enforce"', "[5] 🔴 …and a mis-cased judge mode likewise — the old parser answered `off` here, which was fail-safe but silent");
   refuses(() => defineSettings({ taint: { mode: "disabled" } } as never), 'must be "on" or "off"', "[5] …and taint.mode keeps the validator it has always had");
 
-  refuses(
-    () => defineSettings({ connectors: { userPrincipal: true } }),
-    "armed without connectors.opTiering",
-    "[5] 🔴 userPrincipal declared ALONE is refused — opTiering ships OFF, so the resolved posture is the holed one",
+  eq(
+    defineSettings({ connectors: { userPrincipal: true } }).connectors?.userPrincipal,
+    true,
+    "[5] 🔴 userPrincipal declared ALONE is accepted — opTiering ships ON (2026-10-10), so the resolved posture holes nothing",
   );
   refuses(
     () => defineSettings({ connectors: { userPrincipal: true, opTiering: false } }),
-    "armed without connectors.opTiering",
+    "while connectors.opTiering is off",
     "[5] …and declaring opTiering FALSE beside it is refused the same way — an explicit off is still off",
   );
   eq(
     defineSettings({ connectors: { userPrincipal: true, opTiering: true } }).connectors?.userPrincipal,
     true,
-    "[5] 🔴 BOTH ARMED is accepted — this is the posture agent/settings/settings.ts commits, so the rule must not refuse it",
+    "[5] 🔴 BOTH ARMED is accepted, so the rule must not refuse an explicit tiering declaration either",
   );
   eq(defineSettings({ connectors: { opTiering: true } }).connectors?.opTiering, true, "[5] …opTiering alone is accepted: tiering without the per-user path holes nothing");
   eq(defineSettings({ connectors: { userPrincipal: false } }).connectors?.userPrincipal, false, "[5] …and userPrincipal explicitly OFF is accepted whatever opTiering says");
+  refuses(
+    () => defineSettings({ connectors: { opTiering: false } }),
+    "while connectors.opTiering is off",
+    "[5] 🔴 opTiering FALSE alone is refused — userPrincipal ships ON (OPE-2414), so the resolved posture is the hole",
+  );
+  eq(
+    defineSettings({ connectors: { opTiering: false, userPrincipal: false } }).connectors?.opTiering,
+    false,
+    "[5] …and the opt-out pair (opTiering AND userPrincipal off) is accepted",
+  );
 
   ok(
     defineSettings({ bash: { timeoutMs: 0 } }).bash?.timeoutMs === 0,
@@ -288,7 +330,7 @@ console.log("6 — the public resolvers are schema-backed, with their names and 
 {
   resetSettingsForTest();
   eq(WINDOW_TOPOLOGY_ENABLED, SETTINGS.window.topology.shipped, "[6] WINDOW_TOPOLOGY_ENABLED IS the schema's shipped default — one source, not two that can drift");
-  eq(WINDOW_TOPOLOGY_ENABLED, false, "[6] …and it is still FALSE (the open-source posture pin)");
+  eq(WINDOW_TOPOLOGY_ENABLED, true, "[6] …and it is TRUE: standing seats ship on");
   eq(DEFAULT_BASH_TIMEOUT_MS, 600_000, "[6] DEFAULT_BASH_TIMEOUT_MS still exports 600s from the schema");
   eq(DEFAULT_DOMAIN_SKILL_CAP, 50, "[6] DEFAULT_DOMAIN_SKILL_CAP still exports 50 from the schema");
   eq(DEFAULT_MAX_RESULT_CHARS, SETTINGS.tools.maxResultChars.shipped, "[6] DEFAULT_MAX_RESULT_CHARS IS the schema's shipped cap — one source");
@@ -298,19 +340,19 @@ console.log("6 — the public resolvers are schema-backed, with their names and 
   eq(DEFAULT_CANDIDATE_CAP, SETTINGS.memory.dreamCandidateCap.shipped, "[6] DEFAULT_CANDIDATE_CAP IS the schema's shipped cap — one source");
   eq(DEFAULT_JOB_MAX_FIRES, 200, "[6] …and the derived 200 (>168 hourly fires in the default week) is unchanged");
 
-  ok(!windowTopologyEnabled(), "[6] windowTopologyEnabled() ⇒ shipped OFF");
+  ok(windowTopologyEnabled(), "[6] windowTopologyEnabled() ⇒ shipped ON");
   ok(oneshotAgentEnabled(), "[6] oneshotAgentEnabled() ⇒ shipped ON");
   eq(taintTierMode(), "enforced", "[6] taintTierMode() ⇒ shipped enforced");
   eq(approvalJudgeMode(), "enforce", "[6] approvalJudgeMode() ⇒ shipped enforce (OPE-2366)");
-  ok(connectorDmOnlyEnabled(), "[6] connectorDmOnlyEnabled() ⇒ shipped ON (the wall is up)");
-  ok(!connectorUserPrincipalEnabled(), "[6] connectorUserPrincipalEnabled() ⇒ shipped OFF");
-  ok(!connectorOpTieringEnabled(), "[6] connectorOpTieringEnabled() ⇒ shipped OFF");
-  ok(!connectorLinkSetVaultEnabled(), "[6] connectorLinkSetVaultEnabled() ⇒ shipped OFF");
-  ok(!directoryLinkSetVaultArmed(), "[6] directoryLinkSetVaultArmed() ⇒ shipped OFF (the C2.4 guard alone)");
+  ok(!connectorDmOnlyEnabled(), "[6] connectorDmOnlyEnabled() ⇒ shipped OFF (the wall is down)");
+  ok(connectorUserPrincipalEnabled(), "[6] 🔴 connectorUserPrincipalEnabled() ⇒ shipped ON (OPE-2414): in a DM a person signs in as themselves");
+  ok(connectorOpTieringEnabled(), "[6] connectorOpTieringEnabled() ⇒ shipped ON");
+  ok(connectorLinkSetVaultEnabled(), "[6] 🔴 connectorLinkSetVaultEnabled() ⇒ shipped ON (OPE-2414): one consent covers a person's linked accounts");
+  ok(directoryLinkSetVaultArmed(), "[6] directoryLinkSetVaultArmed() ⇒ shipped ON, so directory auto-confirm is suppressed for every link-set");
   eq(bashTimeoutMs(), 600_000, "[6] bashTimeoutMs() ⇒ shipped 600s");
   ok(backgroundGuardEnabled(), "[6] backgroundGuardEnabled() ⇒ shipped ON");
   eq(domainSkillCap(), 50, "[6] domainSkillCap() ⇒ shipped 50");
-  ok(!auditSilencesEnabled(), "[6] auditSilencesEnabled() ⇒ shipped OFF");
+  ok(!auditSilencesEnabled(), "[6] auditSilencesEnabled() ⇒ OFF — no setting reaches the silence-audit switch");
   eq(maxResultChars(), 120_000, "[6] maxResultChars() ⇒ shipped 120k");
   eq(stallThreshold(), 3, "[6] stallThreshold() ⇒ shipped 3");
   eq(checkpointTtlHours(), 24, "[6] checkpointTtlHours() ⇒ shipped 24h");
@@ -325,28 +367,29 @@ console.log("6 — the public resolvers are schema-backed, with their names and 
 
   registerSettings(
     defineSettings({
-      window: { topology: true },
+      window: { topology: false },
       delegation: { oneshotAgent: false },
       taint: { tierMode: "dryrun" },
       approvals: { judgeMode: "shadow" },
-      connectors: { dmOnly: false, userPrincipal: true, opTiering: true, linkSetVault: true },
+      connectors: { dmOnly: true, userPrincipal: false, opTiering: false, linkSetVault: false },
       bash: { timeoutMs: 1_000, backgroundGuard: false },
       skills: { domainSkillCap: 7 },
-      audit: { silences: true },
     }),
   );
-  ok(windowTopologyEnabled(), "[6] …windowTopologyEnabled() follows a registered override");
+  ok(!windowTopologyEnabled(), "[6] …windowTopologyEnabled() follows a registered override");
   ok(!oneshotAgentEnabled(), "[6] …oneshotAgentEnabled()");
   eq(taintTierMode(), "dryrun", "[6] …taintTierMode()");
   eq(approvalJudgeMode(), "shadow", "[6] …approvalJudgeMode()");
-  ok(!connectorDmOnlyEnabled(), "[6] …connectorDmOnlyEnabled()");
-  ok(connectorUserPrincipalEnabled(), "[6] …connectorUserPrincipalEnabled()");
-  ok(connectorOpTieringEnabled(), "[6] …connectorOpTieringEnabled()");
-  ok(directoryLinkSetVaultArmed(), "[6] …directoryLinkSetVaultArmed()");
+  ok(connectorDmOnlyEnabled(), "[6] …connectorDmOnlyEnabled()");
+  ok(!connectorUserPrincipalEnabled(), "[6] …connectorUserPrincipalEnabled() (declared off: the cross-key rule refuses it on with opTiering off)");
+  ok(!connectorOpTieringEnabled(), "[6] …connectorOpTieringEnabled()");
+  ok(!directoryLinkSetVaultArmed(), "[6] …directoryLinkSetVaultArmed() (declared off: the opt-out)");
   eq(bashTimeoutMs(), 1_000, "[6] …bashTimeoutMs()");
   ok(!backgroundGuardEnabled(), "[6] …backgroundGuardEnabled()");
   eq(domainSkillCap(), 7, "[6] …domainSkillCap()");
-  ok(auditSilencesEnabled(), "[6] …auditSilencesEnabled()");
+  assert.throws(() => defineSettings({ audit: { silences: true } } as never), /unknown settings group "audit"/, "[6] defineSettings refuses the deleted `audit` group (OPE-2410)");
+  registerSettings(defineSettings({ connectors: { userPrincipal: true } }));
+  ok(connectorUserPrincipalEnabled(), "[6] …connectorUserPrincipalEnabled() follows its own registered override");
   resetSettingsForTest();
 }
 
@@ -365,8 +408,7 @@ console.log("7 — every setting reaches the generated operator table:");
     docs.map((d) => d.path),
     "[7] rows are emitted sorted — a deterministic generator, so a re-run rewrites byte-identical output",
   );
-  eq(new Set(settingEnvNames()).size, settingEnvNames().length, "[7] no env var name is claimed by two settings");
-  eq(docs.filter((d) => d.env !== undefined).length, 1, "[7] 🔴 exactly ONE row renders an ops override; every other row renders as code-only");
+  eq(docs.filter((d) => "env" in d).length, 0, "[7] 🔴 NO row renders an ops override — every row is code-only (OPE-2411)");
 }
 
 console.log("7b — every declared setting is resolvable, not only documentable:");
@@ -391,20 +433,16 @@ console.log("7b — every declared setting is resolvable, not only documentable:
   eq(checked, settingDocs().length, "[7b] the two totality arms walked the same set — a spec count that disagrees with the doc count means one arm skipped a nesting level");
 }
 
-console.log("8 — a setting either has an env path or has none, with nothing in between:");
+console.log("8 — no setting has an env path at all:");
 {
   let withEnvField = 0;
-  for (const [group, specs] of Object.entries(SETTINGS as unknown as Record<string, Record<string, { env?: string; parseEnv?: unknown }>>)) {
+  for (const [group, specs] of Object.entries(SETTINGS as unknown as Record<string, Record<string, Record<string, unknown>>>)) {
     for (const [key, spec] of Object.entries(specs)) {
-      ok(
-        (spec.env === undefined) === (spec.parseEnv === undefined),
-        `[8] ${group}.${key}: \`env\` and \`parseEnv\` are present together or absent together`,
-      );
-      if (spec.env !== undefined) withEnvField++;
+      ok(!("env" in spec) && !("parseEnv" in spec), `[8] ${group}.${key}: no \`env\` field and no \`parseEnv\``);
+      if ("env" in spec) withEnvField++;
     }
   }
-  eq(withEnvField, 1, "[8] 🔴 exactly one spec declares an env path (models.stack). A second one is a ticket, not a tidy-up");
-  eq(SETTINGS.models.stack.env, "OE_MODEL_STACK", "[8] …and it is the harness seam, by name");
+  eq(withEnvField, 0, "[8] 🔴 ZERO specs declare an env path since OPE-2411. A new one is a ticket against the rule, not a tidy-up");
 
   resetSettingsForTest();
   eq(at({}).taint.mode, "on", "[8] taint.mode: the shipped default is ON");

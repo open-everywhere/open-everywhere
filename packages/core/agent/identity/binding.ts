@@ -12,7 +12,8 @@ import { conversationGrantKey, roomCallGrantKey, type GrantReach } from "../appr
 import { sourcesForWindow, decodeSources } from "../channels/window-sources.js";
 import { ROUTINE_MARKER, routinePermissionKeyStamped } from "../routines/routine.js";
 import type { Domain } from "../memory/domain.js";
-import { processRegistryMap } from "../lib/process-registry.js";
+import { processRegistryMap, processRegistrySlot } from "../lib/process-registry.js";
+import { getSettings } from "../settings/settings.js";
 import { taskWakeThisTurn, uningressedTurn } from "../access/task-wake-signal.js";
 import { delegatedBindingAdopted, delegatedBindingThisTurn, delegatedRootSessionId, delegatedSlotState } from "./delegated-binding.js";
 import { frozenSurfaceBindingFrom } from "./frozen-surface-binding.internal.js";
@@ -201,13 +202,13 @@ const ENV_MODES: ReadonlySet<string> = new Set(["channel", "dm", "mpim"]);
 const bindLocal: Mapper = (ctx) => {
   const envMode = process.env.OE_MODE;
   const envVis = process.env.OE_VISIBILITY;
-  const envTrust = process.env.OE_TRUST;
+  const blanketTrust = getSettings().identity.blanketTrust;
   return {
     workspace: undefined,
     surface: undefined,
     mode: envMode && ENV_MODES.has(envMode) ? (envMode as SessionMode) : undefined,
     visibility: envVis === "private" ? "private" : "public",
-    trust: envTrust === "external" ? "external" : envTrust === "internal" ? "internal" : undefined,
+    trust: blanketTrust === "none" ? undefined : blanketTrust,
     principalId: authPrincipalId(ctx) ?? process.env.OE_PRINCIPAL,
     target: undefined,
   };
@@ -270,6 +271,12 @@ export function isSubagentChildContext(ctx: BindableContext): boolean {
   }
 }
 
+const PLATFORM_STAND_IN = processRegistrySlot<string>("binding.platform-stand-in.v1");
+
+export function setPlatformStandInForTest(platform: string | null): void {
+  PLATFORM_STAND_IN.set(platform);
+}
+
 export function channelPlatform(ctx: BindableContext): string | undefined {
   if (platformFromKind(ctx.channel?.kind) === SUBAGENT_CHANNEL_KIND) {
     const delegated = delegatedBindingThisTurn(currentTurnId(ctx));
@@ -277,7 +284,7 @@ export function channelPlatform(ctx: BindableContext): string | undefined {
     const inherited = attr(authOf(ctx)?.attributes, ["oe_platform", "oePlatform"]);
     return inherited ? normalizePlatform(inherited) : SUBAGENT_CHANNEL_KIND;
   }
-  const kind = platformFromKind(ctx.channel?.kind ?? process.env.OE_PLATFORM);
+  const kind = platformFromKind(ctx.channel?.kind ?? PLATFORM_STAND_IN.get() ?? undefined);
   if (kind === "unified") {
     const stamped = attr(authOf(ctx)?.attributes, ["oe_platform", "oePlatform"]);
     return stamped ? normalizePlatform(stamped) : kind;
@@ -634,7 +641,7 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
   if (
     mode === "dm" &&
     platform !== "local" &&
-    process.env.OE_TRUST !== "internal" &&
+    getSettings().identity.blanketTrust !== "internal" &&
     !raw.trustVerified &&
     vouched !== "internal" &&
     fire?.internal !== true

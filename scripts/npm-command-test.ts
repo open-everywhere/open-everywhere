@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { npmCommand, spawnFailure } from "./npm-command.js";
 
 const enoent = Object.assign(new Error("spawn npm ENOENT"), { code: "ENOENT" });
@@ -14,14 +17,18 @@ try {
   assert.deepEqual(npmCommand(["run", "x"]), ["npm", ["run", "x"]]);
   Object.defineProperty(process, "platform", { value: "win32" });
   const saved = process.env.npm_execpath;
+  const dir = mkdtempSync(join(tmpdir(), "npm-command-test-"));
   try {
-    process.env.npm_execpath = process.argv[1];
+    const cli = join(dir, "npm-cli.js");
+    writeFileSync(cli, "");
+    process.env.npm_execpath = cli;
     const [cmd, argv] = npmCommand(["run", "x"]);
     assert.equal(cmd, process.execPath);
     assert.notEqual(cmd, "npm");
-    assert.deepEqual(argv.slice(-2), ["run", "x"]);
+    assert.deepEqual(argv, [cli, "run", "x"]);
   } finally {
     if (saved === undefined) delete process.env.npm_execpath; else process.env.npm_execpath = saved;
+    rmSync(dir, { recursive: true, force: true });
   }
 } finally {
   Object.defineProperty(process, "platform", real);

@@ -102,7 +102,7 @@ import {
   consumeRepliedThisTurn,
   dropClosingProse,
   isAllowedDriver,
-  parseDriverAllowlist,
+  configuredDriverAllowlist,
   getOrCreateDmSeat,
   touchDmSeat,
   buildIngestedReaction,
@@ -338,7 +338,7 @@ export function relayGate(
 export function authForRelayMessage(msg: DiscordRelayMessage): OpenEverywhereDiscordAuth | null {
   if (msg.author.bot) {
     if (!isAllowedDriver(msg.guildId, msg.author.id)) return null;
-    log(`e2e driver accepted as user: bot ${msg.author.id} in guild ${msg.guildId} (OE_TEST_DRIVER_IDS)`);
+    log(`e2e driver accepted as user: bot ${msg.author.id} in guild ${msg.guildId} (wake.driverAllowlist)`);
   }
   return buildDiscordAuth({
     userId: msg.author.id,
@@ -353,7 +353,7 @@ export function authForRelayMessage(msg: DiscordRelayMessage): OpenEverywhereDis
 export function isMisplacedDriver(
   guildId: string | undefined,
   botUserId: string,
-  allowlist: ReadonlySet<string> = parseDriverAllowlist(process.env.OE_TEST_DRIVER_IDS),
+  allowlist: ReadonlySet<string> = configuredDriverAllowlist(),
 ): boolean {
   if (!botUserId) return false;
   if (guildId !== undefined && allowlist.has(`${guildId}:${botUserId}`)) return false;
@@ -832,7 +832,7 @@ export function discordSingleWindowPrivacyOk(
 ): boolean {
   if (!input.guildId) return false;
   const vouched = deps.vouched ?? isVouchedInternal;
-  const trustEnv = "trustEnv" in deps ? deps.trustEnv : process.env.OE_TRUST;
+  const trustEnv = "trustEnv" in deps ? deps.trustEnv : getSettings().identity.blanketTrust;
   if (trustEnv === "internal") return true;
   if (vouched(input.workspaceKey, input.surfaceKey)) return true;
   return input.domainKey !== undefined && input.domainKey !== input.surfaceKey && vouched(input.workspaceKey, input.domainKey);

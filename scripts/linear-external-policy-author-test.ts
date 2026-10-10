@@ -1,3 +1,5 @@
+// proves: linear.external_policy_suppressed
+
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -125,15 +127,15 @@ ok(
 );
 ok((await suppressedRows()).length === 1, "author grain: neither negative control writes a suppression row");
 
-setDomains([]);
-const shippedDefault = await drive("as-shipped", "guest-1", true);
+setDomains([{ name: "org", match: "org", externalPolicy: { authorGrain: "taint", roomGrain: "engage" } }]);
+const optOut = await drive("as-optout", "guest-1", true);
 ok(
-  shippedDefault.res !== null && (shippedDefault.res as { auth?: unknown }).auth !== undefined,
-  "author grain: the SAME guest DISPATCHES under the shipped `taint` default (negative control — an upgrade changes nothing)",
+  optOut.res !== null && (optOut.res as { auth?: unknown }).auth !== undefined,
+  "author grain: the SAME guest DISPATCHES under the `taint` / `engage` opt-out (negative control — the opt-out restores the old behaviour)",
 );
-ok((await suppressedRows()).length === 1, "author grain: the shipped default writes NO suppression row");
+ok((await suppressedRows()).length === 1, "author grain: the opt-out writes NO suppression row");
 
-setDomains([{ name: "org", match: "org", externalPolicy: { roomGrain: "silent" } }]);
+setDomains([{ name: "org", match: "org", externalPolicy: { authorGrain: "taint", roomGrain: "silent" } }]);
 const guestPresent = await drive("as-guest-present", "guest-1", true);
 ok(guestPresent.res === null, "room grain: a refuted author makes the UNDECLARED room external under `silent` — the mention is dropped");
 const rows3 = await suppressedRows();
@@ -152,6 +154,21 @@ ok(
 );
 ok((await suppressedRows()).length === 2, "room grain: the member session writes NO suppression row");
 
+setDomains([]);
+const shippedGuest = await drive("as-shipped", "guest-1", true);
+ok(shippedGuest.res === null, "🔴 shipped default: a GUEST's session is DROPPED with no declaration at all — `withhold` ships");
+ok(
+  shippedGuest.posted.filter((b) => b.includes("AgentActivityCreate")).length === 1,
+  "shipped default: the dropped session gets the one ack, which also closes it — no spinner is left open",
+);
+ok((await suppressedRows()).length === 3, "shipped default: the drop writes its suppression row");
+const shippedMember = await drive("as-shipped-member", "member-1", false);
+ok(
+  shippedMember.res !== null && (shippedMember.res as { auth?: unknown }).auth !== undefined,
+  "🔴 shipped default: a full MEMBER on the same undeclared team DISPATCHES (negative control — a member's own message is not withheld)",
+);
+ok((await suppressedRows()).length === 3, "shipped default: the member session writes NO suppression row");
+
 const refutedAuthor = { refuted: true } as const;
 const SURFACE = `linear/${ORG}/${TEAM}`;
 ok(
@@ -160,7 +177,7 @@ ok(
 );
 ok(
   linearExternalVerdict({ policy: { authorGrain: "taint", roomGrain: "silent" }, surfaceKey: SURFACE, author: refutedAuthor }) === "silent-room",
-  "order: with the author grain shipped, the SAME guest still answers silent-room via the room leg",
+  "order: with the author grain opted out to `taint`, the SAME guest still answers silent-room via the room leg",
 );
 ok(
   linearExternalVerdict({ policy: { authorGrain: "withhold", roomGrain: "silent" }, surfaceKey: SURFACE }) === "proceed",
@@ -225,11 +242,11 @@ ok(
 );
 ok((await roomlessRows()).length === 1, "OPE-541: neither negative control writes a roomless suppression row");
 
-setDomains([{ name: "org", match: "org", externalPolicy: { roomGrain: "silent" } }]);
+setDomains([{ name: "org", match: "org", externalPolicy: { authorGrain: "taint", roomGrain: "silent" } }]);
 const noTeamRoomSilent = await driveNoTeam("as-noteam-room", "guest-1", true);
 ok(
   noTeamRoomSilent.res !== null && (noTeamRoomSilent.res as { auth?: unknown }).auth !== undefined,
-  "OPE-541: under `roomGrain: \"silent\"` ALONE the unparseable-team wake PROCEEDS — the room leg needs a key and never guesses one",
+  "OPE-541: under `roomGrain: \"silent\"` with the author grain at `taint` the unparseable-team wake PROCEEDS — the room leg needs a key and never guesses one",
 );
 ok((await roomlessRows()).length === 1, "OPE-541: the room leg writes NO roomless suppression row");
 ok(
@@ -252,7 +269,7 @@ const resolvedRows = async () =>
   (await readAudit({ org: part.org, action: "linear.external_policy_suppressed" })).filter((r) => r.surface === RESOLVED_SURFACE);
 issueTeamAnswer = { teamId: RESOLVED_TEAM, isPrivate: true };
 
-setDomains([{ name: "org", match: "org", externalPolicy: { roomGrain: "silent" } }]);
+setDomains([{ name: "org", match: "org", externalPolicy: { authorGrain: "taint", roomGrain: "silent" } }]);
 const resolvedGuest = await driveNoTeam("as-resolved-room", "guest-1", true);
 ok(
   resolvedGuest.res === null,

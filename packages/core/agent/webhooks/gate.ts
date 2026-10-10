@@ -3,22 +3,16 @@ import { hookSecretRefs } from "./config.js";
 import { webhookVerifier, registeredWebhookVerifierSources, webhookAuthCeiling, meetsWebhookAuthFloor, type WebhookAuthGrade } from "./verifier.js";
 import { webhookScheme } from "../routines/scheme-name.js";
 
-const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
+const MAX_BODY_BYTES = 256 * 1024;
 
 export function webhookMaxBodyBytes(): number {
-  const raw = process.env.OE_WEBHOOK_MAX_BODY_BYTES;
-  if (raw === undefined) return DEFAULT_MAX_BODY_BYTES;
-  const n = Number(raw);
-  return Number.isInteger(n) && n > 0 ? n : DEFAULT_MAX_BODY_BYTES;
+  return MAX_BODY_BYTES;
 }
 
-const DEFAULT_MAX_SKEW_SECONDS = 300;
+const MAX_SKEW_SECONDS = 300;
 
 export function webhookMaxSkewSeconds(): number {
-  const raw = process.env.OE_WEBHOOK_MAX_SKEW_SECONDS;
-  if (raw === undefined) return DEFAULT_MAX_SKEW_SECONDS;
-  const n = Number(raw);
-  return Number.isInteger(n) && n > 0 ? n : DEFAULT_MAX_SKEW_SECONDS;
+  return MAX_SKEW_SECONDS;
 }
 
 export function verifyWebhookSignature(secret: string, body: string, signatureHeader: string | null | undefined): boolean {

@@ -207,7 +207,7 @@ async function runTrial(system: string): Promise<Trial> {
 
 async function main(): Promise<void> {
   if (!process.env.AI_GATEWAY_API_KEY) {
-    console.error("AI_GATEWAY_API_KEY not set — source .env.e2e and export ROWAN_VERCEL_AI_GATEWAY_KEY as AI_GATEWAY_API_KEY first. Refusing to run against no key (or worse, an inherited the shell key).");
+    console.error("AI_GATEWAY_API_KEY not set — source .env.e2e, which sets AI_GATEWAY_API_KEY to your own gateway key, first. Refusing to run against no key (or worse, an inherited key that is not this project's).");
     process.exit(1);
   }
   const prompts = await buildPrompts();

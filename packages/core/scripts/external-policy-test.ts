@@ -66,9 +66,19 @@ console.log("1. the shipped default:");
 
 eq(
   shippedExternalPolicy(),
-  { authorGrain: "taint", roomGrain: "engage" },
-  "🔴 the SHIPPED policy is today's behaviour on both grains — an upgrade must not change what any deployment does",
+  { authorGrain: "withhold", roomGrain: "silent" },
+  "🔴 the SHIPPED policy is strict on both grains — `withhold` and `silent`; `taint` and `engage` are the opt-outs",
 );
+{
+  const shipped = shippedExternalPolicy();
+  const member = { trust: "peer" as const, refuted: false };
+  ok(withholdsBody(member, shipped) === false, "🔴 under the shipped policy a graded MEMBER's body is NOT withheld");
+  ok(suppressesAmbientWake(member, shipped) === false, "…and a member's ambient message still wakes the agent");
+  ok(
+    roomIsSilenced({ room: { surfaceKey: "slack/T0MEMBER/C0INTERNAL" }, ingested: [member] }, shipped) === false,
+    "🔴 …and an undeclared room with no refuted author and no vendor-external verdict is NOT silenced",
+  );
+}
 eq(resolveExternalPolicy(), shippedExternalPolicy(), "no override resolves to the org default exactly");
 eq(
   resolveExternalPolicy({}),
@@ -77,49 +87,49 @@ eq(
 );
 
 eq(
-  resolveExternalPolicy({ roomGrain: "silent" }),
-  { authorGrain: "taint", roomGrain: "silent" },
+  resolveExternalPolicy({ roomGrain: "engage" }),
+  { authorGrain: "withhold", roomGrain: "engage" },
   "🔴 the override resolves FIELD BY FIELD — declaring `roomGrain` leaves `authorGrain` at the org default",
 );
 eq(
-  resolveExternalPolicy({ authorGrain: "withhold" }),
-  { authorGrain: "withhold", roomGrain: "engage" },
+  resolveExternalPolicy({ authorGrain: "taint" }),
+  { authorGrain: "taint", roomGrain: "silent" },
   "…and the same in the other direction",
 );
 
 try {
-  overrideSettingsForTest({ externalPolicy: { authorGrain: "withhold", roomGrain: "silent" } });
+  overrideSettingsForTest({ externalPolicy: { authorGrain: "taint", roomGrain: "engage" } });
   eq(
     shippedExternalPolicy(),
-    { authorGrain: "withhold", roomGrain: "silent" },
-    "the ORG DEFAULT is the settings block — a deployment moves both grains with a reviewed diff",
+    { authorGrain: "taint", roomGrain: "engage" },
+    "the ORG DEFAULT is the settings block — a deployment opts out of both grains with a reviewed diff",
   );
   eq(
-    resolveExternalPolicy({ authorGrain: "taint" }),
-    { authorGrain: "taint", roomGrain: "silent" },
-    "🔴 THE DOMAIN OVERRIDE WINS OVER THE ORG DEFAULT — a domain may RELAX as well as tighten, per field",
+    resolveExternalPolicy({ authorGrain: "withhold" }),
+    { authorGrain: "withhold", roomGrain: "engage" },
+    "🔴 THE DOMAIN OVERRIDE WINS OVER THE ORG DEFAULT — a domain may TIGHTEN as well as relax, per field",
   );
 } finally {
   resetSettingsForTest();
 }
-eq(shippedExternalPolicy(), { authorGrain: "taint", roomGrain: "engage" }, "the settings override is not sticky across tests");
+eq(shippedExternalPolicy(), { authorGrain: "withhold", roomGrain: "silent" }, "the settings override is not sticky across tests");
 
 console.log("1b. the domain hop:");
 
 const DOMAINS: readonly Domain[] = [
-  { name: "org", match: "org", externalPolicy: { roomGrain: "silent" } },
-  { name: "payments", reach: [`${GUILD}/C_PAY`], externalPolicy: { authorGrain: "withhold" } },
+  { name: "org", match: "org", externalPolicy: { roomGrain: "engage" } },
+  { name: "payments", reach: [`${GUILD}/C_PAY`], externalPolicy: { authorGrain: "taint" } },
   { name: "support", reach: [`${GUILD}/C_SUP`] },
 ];
 
 eq(
   externalPolicyOverrideFor(`${GUILD}/C_PAY`, DOMAINS),
-  { authorGrain: "withhold" },
+  { authorGrain: "taint" },
   "an EXPLICIT domain's declaration is what its channels read",
 );
 eq(
   externalPolicyOverrideFor(`${GUILD}/C_UNASSIGNED`, DOMAINS),
-  { roomGrain: "silent" },
+  { roomGrain: "engage" },
   "an UNASSIGNED channel reads the `org` pseudo-domain's declaration",
 );
 eq(
@@ -130,17 +140,17 @@ eq(
 eq(externalPolicyOverrideFor(`${GUILD}/C_PAY`, []), undefined, "no domains at all ⇒ no override ⇒ the org default");
 eq(
   externalPolicyOverrideFor(undefined, DOMAINS),
-  { roomGrain: "silent" },
+  { roomGrain: "engage" },
   "🔴 NO CHANNEL KEY reads the `org` pseudo-domain's declaration — an unnameable room is not a reason to skip the question",
 );
 eq(
-  externalPolicyOverrideFor(undefined, [{ name: "payments", reach: [`${GUILD}/C_PAY`], externalPolicy: { authorGrain: "withhold" } }]),
+  externalPolicyOverrideFor(undefined, [{ name: "payments", reach: [`${GUILD}/C_PAY`], externalPolicy: { authorGrain: "taint" } }]),
   undefined,
   "NO CHANNEL KEY never reads an EXPLICIT domain's declaration (negative control) — an unnameable room can never be in one",
 );
 eq(
   resolveExternalPolicy(externalPolicyOverrideFor(`${GUILD}/C_PAY`, DOMAINS)),
-  { authorGrain: "withhold", roomGrain: "engage" },
+  { authorGrain: "taint", roomGrain: "silent" },
   "the two layers compose: the domain's `authorGrain` over the org default's `roomGrain`",
 );
 
@@ -166,7 +176,7 @@ ok(
 
 ok(
   armed(() => withholdsBody({ trust: "peer", authorTrust: OUTSIDER }, TAINT)) === false,
-  "🔴 on `taint` an excluded author's body is NOT withheld (=== false) — the shipped grain does nothing at all",
+  "🔴 on `taint` an excluded author's body is NOT withheld (=== false) — the opt-out grain does nothing at all",
 );
 ok(
   armed(() => withholdsBody({ trust: "peer", authorTrust: OUTSIDER }, WITHHOLD)) === true,
@@ -507,7 +517,7 @@ console.log("7. silent-room-grain reachability signal:");
 {
   ok(withholdsBody({ trust: "peer", ungraded: true }, WITHHOLD) === true, "🔴 an UNGRADED author's body is WITHHELD — unknown is the fail-closed answer, never 'not refuted'");
   ok(withholdsBody({ trust: "peer" }, WITHHOLD) === false, "🔴 NEGATIVE CONTROL: the same facts WITHOUT the flag are not withheld — the flag is what decides, not the tier or the grain");
-  ok(withholdsBody({ trust: "peer", ungraded: true }, TAINT) === false, "…and the shipped `taint` grain withholds it just as it withholds everything else: not at all");
+  ok(withholdsBody({ trust: "peer", ungraded: true }, TAINT) === false, "…and the `taint` opt-out grain withholds it just as it withholds everything else: not at all");
   ok(withholdsBody({ trust: "relay", ungraded: true }, WITHHOLD) === false, "🔴 a `relay` author is exempt — the seat's own recorded posts are a machine author, not a person outside the organisation");
   ok(nonMemberChatTrust({ trust: "peer", ungraded: true }) === false, "🔴 the TAINT JOIN never reads it: an ungraded row must not start marking turns (that join fails OPEN by design)");
   ok(

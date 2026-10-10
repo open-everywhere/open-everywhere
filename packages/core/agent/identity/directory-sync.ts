@@ -7,6 +7,7 @@ import { LINK_TENANT_NONE, linkTenantUnresolvableMessage, tryLinkTenantOf } from
 import { admittedTenantsFromConfig } from "../access/tenant-admission.js";
 import { accessReferencedLinkSets } from "../access/access-referenced-link-sets.js";
 import { getConfig } from "../access/config.js";
+import { getSettings, type DirectoryAutoConfirm } from "../settings/settings.js";
 import { directoryLinkSetVaultArmed } from "../connections/connector-flags.js";
 import type { LinkSetRow, LinkedIdRow } from "../operational/store.js";
 
@@ -34,19 +35,12 @@ function admittedDirectoryTenant(platform: string, claimed?: string): string | u
   return admittedTenantsFromConfig(platform).has(named) ? named : undefined;
 }
 
-export type DirectoryAutoConfirm = "off" | "attested";
+export type { DirectoryAutoConfirm };
 
-export const OE_DIRECTORY_AUTOCONFIRM_ENV = "OE_DIRECTORY_AUTOCONFIRM";
+export const DIRECTORY_AUTOCONFIRM_SETTING = "directory.autoConfirm";
 
-export function directoryAutoConfirm(env: NodeJS.ProcessEnv = process.env): DirectoryAutoConfirm {
-  const raw = env[OE_DIRECTORY_AUTOCONFIRM_ENV]?.trim().toLowerCase();
-  if (raw === undefined || raw === "") return "off";
-  if (raw === "off" || raw === "attested") return raw;
-  throw new Error(
-    `${OE_DIRECTORY_AUTOCONFIRM_ENV}="${env[OE_DIRECTORY_AUTOCONFIRM_ENV]}" is not a policy — use "off" (default: every ` +
-      `directory suggestion waits for the person's own DM confirmation) or "attested" (mappings the IdP itself ` +
-      `provisions are auto-confirmed; weaker "asserted" and "email-match" mappings still wait).`,
-  );
+export function directoryAutoConfirm(): DirectoryAutoConfirm {
+  return getSettings().directory.autoConfirm;
 }
 
 const DIRECTORY_SYNC_ACTOR = "directory-sync";
@@ -494,11 +488,8 @@ export async function runDirectorySync(opts: { readonly orgs?: readonly string[]
   return out;
 }
 
-function directorySyncOrgs(env: NodeJS.ProcessEnv = process.env): string[] {
-  const raw = env.OE_TIDY_ORGS;
-  if (!raw) return ["default"];
-  const orgs = raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
-  return orgs.length > 0 ? orgs : ["default"];
+function directorySyncOrgs(): string[] {
+  return [...getSettings().schedules.sweepOrgs];
 }
 
 export async function lastDirectorySync(org: string): Promise<{ readonly ts: string; readonly detail: Record<string, unknown> } | null> {

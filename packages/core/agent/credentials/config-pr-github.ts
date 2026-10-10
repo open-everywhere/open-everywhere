@@ -20,14 +20,14 @@ const DEFAULT_COMMITTER: CommitIdentity = {
 };
 
 async function openOrReopenPr(
-  opts: { repo: string; head: string; base: string; title: string; body: string; token: string; draft?: boolean },
+  opts: { repo: string; head: string; base: string; title: string; body: string; token: string },
   fetchFn: PrFetchFn,
   apiBase: string,
 ): Promise<ConfigPrOutcome> {
   const post = await fetchFn(`${apiBase}/repos/${opts.repo}/pulls`, {
     method: "POST",
     headers: prApiHeaders(opts.token),
-    body: JSON.stringify({ title: opts.title, body: opts.body, head: opts.head, base: opts.base, ...(opts.draft ? { draft: true } : {}) }),
+    body: JSON.stringify({ title: opts.title, body: opts.body, head: opts.head, base: opts.base }),
   });
   if (post.ok) {
     const pr = (await post.json()) as { html_url: string; number: number };

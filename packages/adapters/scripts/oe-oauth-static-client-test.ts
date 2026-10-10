@@ -12,7 +12,7 @@ _setDeploymentIdentityForTest({ org: undefined });
 process.env.OE_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 
 const { makeOeOauth } = await import("../agent/oe-oauth/user-auth-flow.js");
-const { loadOeOauthConfig, isStaticConfidential, OE_OAUTH_CONFIG_ENV, OE_OAUTH_MODE_STATIC, OE_OAUTH_MODE_DISCOVERY } = await import("../agent/oe-oauth/config.js");
+const { loadOeOauthConfig, isStaticConfidential, OE_OAUTH_MODE_STATIC, OE_OAUTH_MODE_DISCOVERY } = await import("../agent/oe-oauth/config.js");
 const { basicAuthHeader } = await import("../agent/oe-oauth/oauth-client.js");
 import type { OeOauthProviderConfig, OeOauthStaticProviderConfig } from "../agent/oe-oauth/config.js";
 import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/adapter-api.js";
@@ -203,17 +203,8 @@ async function captureThrow(fn: () => Promise<unknown>): Promise<Error> {
 }
 
 {
-  const withConfig = <T>(value: string | undefined, fn: () => T): T => {
-    const prior = process.env[OE_OAUTH_CONFIG_ENV];
-    if (value === undefined) delete process.env[OE_OAUTH_CONFIG_ENV];
-    else process.env[OE_OAUTH_CONFIG_ENV] = value;
-    try {
-      return fn();
-    } finally {
-      if (prior === undefined) delete process.env[OE_OAUTH_CONFIG_ENV];
-      else process.env[OE_OAUTH_CONFIG_ENV] = prior;
-    }
-  };
+  const withConfig = <T>(json: string, fn: (declared: ReadonlyMap<string, unknown>) => T): T =>
+    fn(new Map(Object.entries(JSON.parse(json) as Record<string, unknown>)));
   const entry = (extra: Record<string, unknown>): string => JSON.stringify({ "api.notion.com/rest": { mode: OE_OAUTH_MODE_STATIC, ...extra } });
   const good = {
     authorizationEndpoint: AUTHORIZE_URL,
@@ -225,34 +216,34 @@ async function captureThrow(fn: () => Promise<unknown>): Promise<Error> {
     bodyEncoding: "json",
   };
 
-  const loaded = withConfig(entry(good), () => loadOeOauthConfig());
+  const loaded = withConfig(entry(good), (d) => loadOeOauthConfig(d));
   const cfg = loaded?.get("api.notion.com/rest");
-  ok(cfg !== undefined && isStaticConfidential(cfg), "a JSON entry declaring the static mode loads as a static confidential provider");
+  ok(cfg !== undefined && isStaticConfidential(cfg), "a declaration naming the static mode loads as a static confidential provider");
   ok(cfg !== undefined && isStaticConfidential(cfg) && cfg.clientSecretBroker === "db", "the client secret broker defaults to the encrypted db credential store");
   ok(cfg !== undefined && isStaticConfidential(cfg) && cfg.authorizeParams?.owner === "user", "the vendor's extra authorize parameter survives the parse (M3 owner=user)");
   ok(cfg !== undefined && isStaticConfidential(cfg) && cfg.tokenHeaders?.["Notion-Version"] === NOTION_VERSION, "the vendor's extra token header survives the parse (M4 Notion-Version)");
 
-  const legacy = withConfig(JSON.stringify({ notion: { resource: "https://mcp.notion.com/mcp" } }), () => loadOeOauthConfig());
+  const legacy = withConfig(JSON.stringify({ notion: { resource: "https://mcp.notion.com/mcp" } }), (d) => loadOeOauthConfig(d));
   const legacyCfg = legacy?.get("notion");
   ok(legacyCfg !== undefined && legacyCfg.mode === OE_OAUTH_MODE_DISCOVERY, "an entry with no declared mode still reads as the discovery + DCR + PKCE dialect");
   ok(legacyCfg !== undefined && !isStaticConfidential(legacyCfg), "…and it is NOT promoted to the confidential mode");
 
   throws(
-    () => withConfig(JSON.stringify({ x: { resource: "https://mcp.notion.com/mcp", clientId: CLIENT_ID } }), () => loadOeOauthConfig()),
+    () => withConfig(JSON.stringify({ x: { resource: "https://mcp.notion.com/mcp", clientId: CLIENT_ID } }), (d) => loadOeOauthConfig(d)),
     /carries "clientId" but declares no mode/,
     "a config that LOOKS static but declares no mode is refused, never promoted",
   );
-  throws(() => withConfig(JSON.stringify({ x: { mode: "pkce", resource: "https://m.test" } }), () => loadOeOauthConfig()), /is not a known oe-oauth mode/, "an unknown mode is refused, not defaulted");
+  throws(() => withConfig(JSON.stringify({ x: { mode: "pkce", resource: "https://m.test" } }), (d) => loadOeOauthConfig(d)), /is not a known oe-oauth mode/, "an unknown mode is refused, not defaulted");
 
-  throws(() => withConfig(entry({ ...good, clientSecret: CLIENT_SECRET }), () => loadOeOauthConfig()), /must NEVER live in this config block/, "a literal clientSecret in the config block is refused");
+  throws(() => withConfig(entry({ ...good, clientSecret: CLIENT_SECRET }), (d) => loadOeOauthConfig(d)), /must NEVER live in a sign-in declaration/, "a literal clientSecret in a sign-in declaration is refused");
 
-  throws(() => withConfig(entry({ ...good, tokenEndpoint: "http://api.notion.com/v1/oauth/token" }), () => loadOeOauthConfig()), /must use https/, "a plaintext http token endpoint is refused");
-  throws(() => withConfig(entry({ ...good, authorizationEndpoint: "/v1/oauth/authorize" }), () => loadOeOauthConfig()), /must be an absolute URL/, "a relative authorization endpoint is refused");
-  throws(() => withConfig(entry({ ...good, authorizeParams: { client_id: "OTHER" } }), () => loadOeOauthConfig()), /may not set "client_id"/, "config may not override the client_id on the authorize URL");
-  throws(() => withConfig(entry({ ...good, authorizeParams: { redirect_uri: "https://evil.test/cb" } }), () => loadOeOauthConfig()), /may not set "redirect_uri"/, "config may not override the redirect_uri on the authorize URL");
-  throws(() => withConfig(entry({ ...good, tokenHeaders: { Authorization: "Bearer nope" } }), () => loadOeOauthConfig()), /may not set "Authorization"/, "config may not replace the Basic credential header");
-  throws(() => withConfig(entry({ ...good, bodyEncoding: "xml" }), () => loadOeOauthConfig()), /must be "json" or "form"/, "the body encoding vocabulary is closed");
-  throws(() => withConfig(entry({ ...good, clientSecretRef: "" }), () => loadOeOauthConfig()), /clientSecretRef must be a non-empty string/, "a static provider with no secret ref is refused");
+  throws(() => withConfig(entry({ ...good, tokenEndpoint: "http://api.notion.com/v1/oauth/token" }), (d) => loadOeOauthConfig(d)), /must use https/, "a plaintext http token endpoint is refused");
+  throws(() => withConfig(entry({ ...good, authorizationEndpoint: "/v1/oauth/authorize" }), (d) => loadOeOauthConfig(d)), /must be an absolute URL/, "a relative authorization endpoint is refused");
+  throws(() => withConfig(entry({ ...good, authorizeParams: { client_id: "OTHER" } }), (d) => loadOeOauthConfig(d)), /may not set "client_id"/, "config may not override the client_id on the authorize URL");
+  throws(() => withConfig(entry({ ...good, authorizeParams: { redirect_uri: "https://evil.test/cb" } }), (d) => loadOeOauthConfig(d)), /may not set "redirect_uri"/, "config may not override the redirect_uri on the authorize URL");
+  throws(() => withConfig(entry({ ...good, tokenHeaders: { Authorization: "Bearer nope" } }), (d) => loadOeOauthConfig(d)), /may not set "Authorization"/, "config may not replace the Basic credential header");
+  throws(() => withConfig(entry({ ...good, bodyEncoding: "xml" }), (d) => loadOeOauthConfig(d)), /must be "json" or "form"/, "the body encoding vocabulary is closed");
+  throws(() => withConfig(entry({ ...good, clientSecretRef: "" }), (d) => loadOeOauthConfig(d)), /clientSecretRef must be a non-empty string/, "a static provider with no secret ref is refused");
 }
 
 {
@@ -493,6 +484,53 @@ async function captureThrow(fn: () => Promise<unknown>): Promise<Error> {
   const sent = seen.find((r) => r.url === TOKEN_URL)!;
   ok(sent.headers["content-type"] === "application/json", "…the adapter's Content-Type is what travels");
   ok(sent.headers["notion-version"] === NOTION_VERSION, "…and the vendor header the adapter does NOT own still travels");
+}
+
+{
+  const { declareConnectionSignIn, _resetConnectionSignInsForTest } = await import("@open-everywhere/core/agent/adapter-api.js");
+  _resetConnectionSignInsForTest();
+  ok(loadOeOauthConfig() === undefined, "declared: nothing declared ⇒ no provider (the default read is the registry, never env)");
+
+  process.env.OE_OAUTH_CONFIG = JSON.stringify({ "x.test/mcp": { resource: "https://x.test/mcp" } });
+  process.env.OE_OAUTH_ENABLED = "1";
+  ok(loadOeOauthConfig() === undefined, "🔴 declared: the retired OE_OAUTH_CONFIG / OE_OAUTH_ENABLED pair configures NOTHING");
+  delete process.env.OE_OAUTH_CONFIG;
+  delete process.env.OE_OAUTH_ENABLED;
+
+  const v = memVault();
+  const lateRef = "late.test/mcp";
+  const offline = (async () => {
+    throw new Error("offline-fixture: no network in this test");
+  }) as unknown as typeof fetch;
+  const { flow } = makeOeOauth(() => loadOeOauthConfig() ?? new Map(), { vault: v, fetch: offline, redirectUri: () => "https://oe.test/oauth/v1/callback" });
+  let before = "";
+  try {
+    await flow.startAuthorization(lateRef, { subject: { type: "user", id: "u1" } }, {});
+  } catch (err) {
+    before = String(err);
+  }
+  ok(before.includes("no sign-in is declared"), `declared: a mint for an undeclared home fails closed and names the fix (got: ${before})`);
+  declareConnectionSignIn(lateRef, { mode: "discovery-dcr-pkce", resource: "https://late.test/mcp" });
+  ok(loadOeOauthConfig()?.get(lateRef)?.mode === OE_OAUTH_MODE_DISCOVERY, "declared: a declaration made after the vault exists loads");
+  let after = "";
+  try {
+    await flow.startAuthorization(lateRef, { subject: { type: "user", id: "u1" } }, {});
+  } catch (err) {
+    after = String(err);
+  }
+  ok(
+    after !== "" && !after.includes("no sign-in is declared"),
+    `🔴 declared: the SAME flow, built before the declaration, now gets past the config lookup on the next call (it stops at the offline discovery fetch instead — got: ${after})`,
+  );
+
+  declareConnectionSignIn(lateRef, { mode: "discovery-dcr-pkce", resource: "https://late.test/mcp" });
+  ok(true, "declared: re-declaring the SAME value (a module evaluated twice) is accepted");
+  throws(
+    () => declareConnectionSignIn(lateRef, { mode: "discovery-dcr-pkce", resource: "https://other.test/mcp" }),
+    /two different sign-in declarations/,
+    "declared: two DIFFERENT declarations for one home are refused — one home holds one client",
+  );
+  _resetConnectionSignInsForTest();
 }
 
 console.warn = realWarn;

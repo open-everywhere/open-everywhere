@@ -1,4 +1,5 @@
 import { getConfig } from "./config.js";
+import { getSettings } from "../settings/settings.js";
 import { isEnterpriseRungId, isTenantScopedPlatform, principalKeyReplacementHint } from "../identity/principal-key.js";
 import type { Domain } from "../memory/domain.js";
 
@@ -20,11 +21,13 @@ export function splitTenantRungs(platform: string, tenants: Iterable<string>): T
   return { workspaces, enterprises };
 }
 
-export const MULTI_TENANT_ENV = "OE_ALLOW_MULTI_TENANT_PRINCIPALS";
+export const MULTI_TENANT_SETTING = "identity.allowMultiTenantPrincipals";
 
 export function multiTenantPrincipalsAllowed(): boolean {
-  return process.env[MULTI_TENANT_ENV] === "1";
+  return getSettings().identity.allowMultiTenantPrincipals;
 }
+
+const OPT_IN_HINT = `set \`${MULTI_TENANT_SETTING}: true\` in agent/settings/settings.ts`;
 
 export function admittedTenants(platform: string, domains: readonly Domain[]): ReadonlySet<string> {
   const admitted = new Set<string>();
@@ -61,8 +64,8 @@ export function soleAdmittedTenantFromConfig(platform: string): string | undefin
   }
 }
 
-export function assertSingleTenantPerTenantScopedPlatform(domains: readonly Domain[]): void {
-  if (multiTenantPrincipalsAllowed()) return;
+export function assertSingleTenantPerTenantScopedPlatform(domains: readonly Domain[], allowMultiTenantPrincipals: boolean = multiTenantPrincipalsAllowed()): void {
+  if (allowMultiTenantPrincipals) return;
   const platforms = new Set<string>();
   for (const d of domains) {
     for (const key of d.reach ?? []) {
@@ -90,7 +93,7 @@ export function assertSingleTenantPerTenantScopedPlatform(domains: readonly Doma
         `  "${platform}" declares ${tenants.length} ${rung === "enterprises" ? "Enterprise Grid organisations" : "tenants"} ` +
           `(${tenants.map((t) => JSON.stringify(t)).join(", ")}). ` +
           `${exposure} Every matcher over that key (admin rosters, wake trust, approval clickers, a DM's personal credentials) can hand one ` +
-          `person another's standing on a chance id collision. ${remedy}, or set ${MULTI_TENANT_ENV}=1 to accept ` +
+          `person another's standing on a chance id collision. ${remedy}, or ${OPT_IN_HINT} to accept ` +
           `that exposure deliberately until the tenant rung lands in the principal grammar (OPE-309 phase 1).`,
       );
     }
@@ -149,7 +152,7 @@ export function unadmittedTenantLog(
   return (
     `[open-everywhere:${platform}] wake dropped — ${named.join(" / ") || "a delivery naming no tenant"} is not admitted on this deployment ` +
     `(declared: ${[...admitted].sort().join(", ") || "none"}). A ${platform} person id is issued per tenant, so admitting a second one ` +
-    `would let two people share one principal key. Add a channel for that tenant to agent/memory/config/domains.ts, or set ${MULTI_TENANT_ENV}=1 ` +
+    `would let two people share one principal key. Add a channel for that tenant to agent/memory/config/domains.ts, or ${OPT_IN_HINT} ` +
     "to accept multi-tenant principals deliberately (OPE-309)."
   );
 }

@@ -134,7 +134,21 @@ async function crossing(occurrences: number): Promise<Proposal | null> {
 }
 
 {
-  ok(SETTINGS.memory.skillProposalPr.shipped === false, "shipped default: the proposal PR is OFF until a deployment arms it in Git");
+  ok(SETTINGS.memory.skillProposalPr.shipped === true, "shipped default: the proposal PR is ON — a built, proven capability ships on");
+  {
+    const proposal = await crossing(3);
+    const provider = fakeProvider({});
+    const res = await openSkillProposalPr("acme", proposal!, { provider, priorPrs: [] });
+    ok(res.opened === false, "shipped on, no config repo: nothing is opened");
+    ok((res.skipped ?? "").includes("no config repo configured"), `shipped on, no config repo: the skip names the missing repo, not the setting (got "${res.skipped}")`);
+    ok(provider.tokens === 0 && provider.opened.length === 0, "🔴 shipped on, no config repo: no credential is resolved and GitHub is never touched");
+  }
+  {
+    const proposal = await crossing(3);
+    const provider = fakeProvider({});
+    const res = await openSkillProposalPr("acme", proposal!, { provider, repo: "acme/config", base: "main", priorPrs: [] });
+    ok(res.opened === true, "shipped on, config repo set: the proposal opens a pull request with no setting authored");
+  }
 
   const proposal = await crossing(3);
   ok(proposal !== null, "the recurrence crossing produced a skill proposal (the fixture drives the real gate)");

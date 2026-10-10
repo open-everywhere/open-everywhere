@@ -96,7 +96,7 @@ model, or jump straight to a section. New here? Start with
 
 ## 6. Deploy & operate
 
-- [The deployment contract](./deploy/contract.md) — what a host must provide (Node 24, a public HTTPS URL, Postgres, a sandbox backend, egress control, a model route, two secrets, eve's durable run storage), the two proven routes, and the `GET /eve/v1/oe/status` route a running deployment answers them on.
+- [The deployment contract](./deploy/contract.md) — what a host must provide (Node 24, a public HTTPS URL, Postgres, a sandbox backend, egress control, a model route, two secrets, eve's durable run storage), the two supported routes and what each has proven, and the `GET /eve/v1/oe/status` route a running deployment answers them on.
 - [Hosting overview](./deploy/hosting-overview.md) — a platform is a curated set of adapters.
 - [Hosting comparison](./deploy/platforms/comparison.md) — Vercel vs KVM self-host vs Docker self-host vs container PaaS, capability by capability.
 - Platform guides: [Vercel](./deploy/platforms/vercel.md) · [Cloudflare](./deploy/platforms/cloudflare.md) · [AWS](./deploy/platforms/aws.md) · [Azure](./deploy/platforms/azure.md) · [GCP](./deploy/platforms/gcp.md) · [Self-roll](./deploy/platforms/self-roll.md)

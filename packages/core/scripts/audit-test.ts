@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _resetDeploymentIdentityForTest, _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { removeTempDir } from "./_temp-dir.js";
+import { setPlatformStandInForTest } from "../agent/identity/binding.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-audit-"));
 const dbFile = join(tmp, "ops.sqlite3");
@@ -72,7 +73,7 @@ ok(!("deleteAudit" in await import("../agent/audit/audit.js")), "no delete API e
 {
   const { auditToolAction } = await import("../agent/audit/tool-action.js");
   _setDeploymentIdentityForTest({ org: "toolorg" });
-  process.env.OE_PLATFORM = "slack";
+  setPlatformStandInForTest("slack");
   _setDeploymentIdentityForTest({ workspace: "TW", surface: "CW" });
   process.env.OE_PRINCIPAL = "U_actor";
   process.env.OE_MODE = "channel";
@@ -86,7 +87,8 @@ ok(!("deleteAudit" in await import("../agent/audit/audit.js")), "no delete API e
   ok(rows.every((e) => e.principalId === "U_actor"), "tool action stamps WHO from the ctx binding");
   ok(rows.every((e) => e.platform === "slack" && e.workspace === "TW" && e.surface === "CW"), "tool action stamps WHERE from the ctx binding");
   _resetDeploymentIdentityForTest();
-  for (const k of ["OE_PLATFORM", "OE_PRINCIPAL", "OE_MODE"]) delete process.env[k];
+  for (const k of ["OE_PRINCIPAL", "OE_MODE"]) delete process.env[k];
+  setPlatformStandInForTest(null);
 }
 
 {

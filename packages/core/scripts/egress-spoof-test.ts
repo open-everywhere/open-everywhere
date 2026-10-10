@@ -1,3 +1,4 @@
+import { __setTestValveForTest } from "../agent/testing/test-valves.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,7 +6,7 @@ import { join } from "node:path";
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-egress-spoof-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: undefined });
-delete process.env.OE_EGRESS_SPOOF;
+__setTestValveForTest("egress-spoof", false);
 delete process.env.VERCEL;
 delete process.env.OE_PLATFORM;
 
@@ -99,7 +100,7 @@ async function autoApprovedRows(): Promise<unknown[]> {
 
 {
   armAllowingJudge();
-  delete process.env.OE_EGRESS_SPOOF;
+  __setTestValveForTest("egress-spoof", false);
   const res = await requestApproval(liftInput() as never, {});
   ok(res.autoApproved?.resolvedBy === "judge", "1a. NEGATIVE CONTROL: the judge lifted the gated verb (no card, the frozen args ran)");
   ok(noticePosts === 1, "1b. NEGATIVE CONTROL: …and the registered notice poster was REALLY called — the room got the notice");
@@ -109,31 +110,31 @@ async function autoApprovedRows(): Promise<unknown[]> {
 {
   armAllowingJudge();
   noticePosts = 0;
-  process.env.OE_EGRESS_SPOOF = "1";
+  __setTestValveForTest("egress-spoof", true);
   const res = await requestApproval(liftInput() as never, {});
   ok(res.autoApproved?.resolvedBy === "judge", "2a. spoofed: the judge still lifts — the flag swallows posts, not work");
   ok(noticePosts === 0, "2b. 🔴 spoofed: the judge-lift notice reached NO vendor transport (the registered poster was never called)");
   ok((await autoApprovedRows()).length === 2, "2c. spoofed: the lift still wrote its approval.autoapproved row, so an eval can still score the act");
-  delete process.env.OE_EGRESS_SPOOF;
+  __setTestValveForTest("egress-spoof", false);
 }
 
 {
   reactions = 0;
-  delete process.env.OE_EGRESS_SPOOF;
+  __setTestValveForTest("egress-spoof", false);
   const live = await setSurfaceReaction("discord", { channelId: "C1", messageId: "m1" }, { slackName: "raised_hand", unicode: "✋" }, true);
   ok(live && reactions === 1, "3a. NEGATIVE CONTROL: no flag ⇒ the registered reaction arm was REALLY called");
 
   reactions = 0;
-  process.env.OE_EGRESS_SPOOF = "1";
+  __setTestValveForTest("egress-spoof", true);
   const spoofed = await setSurfaceReaction("discord", { channelId: "C1", messageId: "m1" }, { slackName: "raised_hand", unicode: "✋" }, true);
   ok(reactions === 0, "3b. 🔴 spoofed: the reaction reached NO vendor transport");
   ok(spoofed === true, "3c. spoofed: …and it still reports TRUE, so placeStopHand's handPlaced tally reads the same under eval as on a live surface");
-  delete process.env.OE_EGRESS_SPOOF;
+  __setTestValveForTest("egress-spoof", false);
 }
 
 {
   reactions = 0;
-  process.env.OE_EGRESS_SPOOF = "1";
+  __setTestValveForTest("egress-spoof", true);
   process.env.VERCEL = "1";
   let threw = "";
   try {
@@ -141,10 +142,10 @@ async function autoApprovedRows(): Promise<unknown[]> {
   } catch (e) {
     threw = String(e);
   }
-  ok(/OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel\./.test(threw), "4a. the Vercel refusal PROPAGATES out of setSurfaceReaction rather than being caught as a transport failure");
+  ok(/the egress-spoof test valve is a local-eval seam — refusing on Vercel\./.test(threw), "4a. the Vercel refusal PROPAGATES out of setSurfaceReaction rather than being caught as a transport failure");
   ok(reactions === 0, "4b. …and it fires before the vendor arm is ever reached");
   delete process.env.VERCEL;
-  delete process.env.OE_EGRESS_SPOOF;
+  __setTestValveForTest("egress-spoof", false);
 }
 
 {
@@ -161,13 +162,13 @@ async function autoApprovedRows(): Promise<unknown[]> {
     },
   } as never);
 
-  delete process.env.OE_EGRESS_SPOOF;
+  __setTestValveForTest("egress-spoof", false);
   await bridgeSlackForm("chat.postMessage", "channel=C1&text=hi");
   await bridgeSlackReadCall("reactions.add", { channel: "C1", name: "eyes", timestamp: "1724.0001" });
   ok(methods.length === 2, "4b-a. NEGATIVE CONTROL: no flag ⇒ both Slack writes REALLY reached the registered bridge");
 
   methods.length = 0;
-  process.env.OE_EGRESS_SPOOF = "1";
+  __setTestValveForTest("egress-spoof", true);
   const posted = await bridgeSlackForm("chat.postMessage", "channel=C1&text=hi");
   const reacted = await bridgeSlackReadCall("reactions.add", { channel: "C1", name: "eyes", timestamp: "1724.0001" });
   ok(methods.length === 0, "4b-b. 🔴 spoofed: NEITHER Slack write reached the bridge — a card/notice with no spine of its own is covered too");
@@ -177,7 +178,7 @@ async function autoApprovedRows(): Promise<unknown[]> {
   await bridgeSlackForm("users.info", "user=U1");
   ok(methods.length === 1 && methods[0] === "users.info", "4b-e. 🔴 spoofed: a READ still reaches Slack — the gate is a write ALLOWLIST, never a 'not a read' guess");
 
-  delete process.env.OE_EGRESS_SPOOF;
+  __setTestValveForTest("egress-spoof", false);
   _resetSlackBridgeForTest();
 }
 
@@ -187,19 +188,25 @@ async function autoApprovedRows(): Promise<unknown[]> {
   const { dirname, relative, sep } = await import("node:path");
   const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
   const readers: string[] = [];
+  const envReaders: string[] = [];
   const walk = (dir: string): void => {
     for (const entry of readdirSync(dir)) {
       if (entry === "node_modules" || entry === "dist" || entry === "scripts") continue;
       const full = join(dir, entry);
       if (statSync(full).isDirectory()) walk(full);
-      else if (full.endsWith(".ts") && readFileSync(full, "utf8").includes("process.env.OE_EGRESS_SPOOF")) readers.push(relative(repoRoot, full));
+      else if (full.endsWith(".ts")) {
+        const text = readFileSync(full, "utf8");
+        if (text.includes('testValveArmed("egress-spoof")')) readers.push(relative(repoRoot, full));
+        if (/process\.env(\.|\[")OE_EGRESS_SPOOF/.test(text)) envReaders.push(relative(repoRoot, full));
+      }
     }
   };
   for (const root of ["packages/core/agent", "packages/providers"]) walk(join(repoRoot, root));
   const gate = ["packages", "core", "agent", "channels", "egress-spoof.ts"].join(sep);
   const offenders = readers.filter((f) => f !== gate);
-  ok(offenders.length === 0, `5a. only channels/egress-spoof.ts reads process.env.OE_EGRESS_SPOOF in product code — offenders: ${offenders.join(", ") || "(none)"}`);
+  ok(offenders.length === 0, `5a. only channels/egress-spoof.ts reads the egress-spoof valve in product code — offenders: ${offenders.join(", ") || "(none)"}`);
   ok(readers.length === 1, "5b. …and the gate IS one of them (a moved or renamed gate would otherwise pass 5a vacuously)");
+  ok(envReaders.length === 0, `5c. no product module reads the retired OE_EGRESS_SPOOF env var (OPE-2411) — offenders: ${envReaders.join(", ") || "(none)"}`);
 }
 
 await removeTempDir(tmp);

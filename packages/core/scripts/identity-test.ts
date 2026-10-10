@@ -17,6 +17,7 @@ import bindingBridgeHook from "../agent/hooks/binding-bridge.js";
 import { resolvePartition } from "../agent/memory/partition.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { _resetDeploymentIdentityForTest, _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -51,9 +52,9 @@ const defaults = bindFrom({ channel: { kind: "local" } });
 ok(defaults.surface === "default", "local: surface defaults when the declaration names none");
 
 ok(bindFrom({}).trust === "internal", "bindFrom: local/dev defaults internal");
-process.env.OE_TRUST = "external";
-ok(bindFrom({}).trust === "external", "bindFrom: OE_TRUST=external forces external (gate testing)");
-delete process.env.OE_TRUST;
+overrideSettingsForTest({ identity: { blanketTrust: "external" } });
+ok(bindFrom({}).trust === "external", "bindFrom: identity.blanketTrust external forces external (gate testing)");
+overrideSettingsForTest({ identity: { blanketTrust: "none" } });
 ok(bindFrom({ channel: { kind: "myspace" } }).trust === "external", "bindFrom: unknown platform fails closed to external");
 
 process.env.OE_MODE = "dm";
@@ -546,3 +547,8 @@ ok(
 }
 
 console.log(`✓ identity: ${passed} assertions passed`);
+
+// proves: AP-MOD-core-identity-binding, AP-MOD-core-identity-binding-bridge, AP-MOD-core-identity-platform
+// proves: AP-MOD-core-identity-principal-key
+
+// proves: SET-077

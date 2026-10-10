@@ -1157,9 +1157,8 @@ The work session has its own lifetime, apart from the seat's:
 conversation. It holds `ask_room` instead: the question is posted into the job's own room, the call
 returns at once, and the worker finishes its task and says that it waits for the answer. When
 someone answers in the room, the seat forwards the answer with `work` and the job's task id, and the
-same worker continues. Approvals work the same way: a `post_file` publish and a connector op that
-needs a person each post an OE approval card and return, and the call runs again after a member
-approves.
+same worker continues. Approvals work the same way: a connector op that needs a person posts an OE
+approval card and returns, and the call runs again after a member approves.
 
 A **sign-in** works the same way. When a worker in the work session needs the asking person's own
 account and it is not connected, the call settles `needs-sign-in` at once. The personal sign-in link
@@ -1181,8 +1180,8 @@ already holds the earlier exchange — not in a fresh per-thread session that ha
 reconstruct it. What addressing decides is narrower, and there are two separate questions:
 
 - **What WAKES the seat.** An addressed message always does. Unaddressed talk wakes it only
-  where the domain's chattiness switch (`ambientSupervisor`) is on; otherwise the room is
-  *addressed-only*. No wake means no reply target, so an addressed-only room stays quiet by
+  where the domain's chattiness switch (`ambientSupervisor`) is on — the default since OPE-2409;
+  where a domain sets it `false`, the room is *addressed-only*. No wake means no reply target, so an addressed-only room stays quiet by
   construction rather than by the agent's restraint.
 - **What ENTERS the seat.** On a wake the seat reads the room since it last looked —
   thread replies included, capped, and filtered by the domain's `admission` policy. So the
@@ -1214,8 +1213,8 @@ owns that thread's messages. The channel seat sees that thread through the histo
 asks what it recorded with `read_thread_seat` — which seat holds the thread, whether it is
 still open, and its closing report — steers it with `message_thread_seat`, and is told what
 the thread settled when the seat hands it back.
-Standing seats are gated by one deployment setting, `window.topology`; with it off, the agent
-runs the older per-container path where a mention opens a session of its own.
+Standing seats are gated by one deployment setting, `window.topology`, which ships on. With it
+off, the agent runs the older per-container path where a mention opens a session of its own.
 
 ### What a thread seat writes to the audit log
 
@@ -1580,9 +1579,23 @@ would otherwise take one for a per-delivery record. The row names no delivery an
 can neither confirm nor deny that any particular message was skipped. Per-delivery counting lives in
 the log line, which is unconditional.
 
-The row's `fix` field names the edit the operator actually needs, and the three cases need different
-edits: a domain that is addressed-only by declaration is a decision rather than a gap, an excluded
-surface names the exclusion that carved it out, and an unrouted surface names the reach entry to add.
+The row's `fix` field names the edit the operator actually needs. There are four cases, and each
+needs a different edit:
+
+- **`domain-refused` — a decision, not a gap.** A domain is addressed-only by declaration
+  (`ambientSupervisor: false`, its own or inherited from `org`). The row names the domain whose
+  line declared it, and adds `declaredBy` when that is `org` rather than the routing domain.
+- **`no-domain`, the domain set did not load.** The row carries `loadFailed: true` and names only
+  the config error the boot log reports. It does not claim that `org` is missing.
+- **`no-domain`, an excluded surface with no `org` domain.** The row names the exclusion that
+  carved the surface out (OPE-417), and says to drop or narrow it, name the surface in another
+  domain's reach, or add an `org` domain.
+- **`no-domain`, an unrouted surface with no `org` domain.** The row says to add an `org` domain,
+  which turns the default on for every unrouted surface, or a reach entry: the exact key, the whole
+  tenant, or a same-level glob.
+
+Since the default turned on (OPE-2409), an unrouted or excluded surface on a deployment WITH an
+`org` domain is no longer skipped for that alone: it inherits the `org` domain's flag.
 
 ### How a wake is timed and accounted
 
@@ -1847,7 +1860,7 @@ The five DM rotation thresholds are the whole DM policy (`dmSeatThresholds`):
 | Expiry | 30 days from row creation; `0` disables | The primary trigger. A DM is one person's thread and holds far less stale than a room. |
 | Turn budget | 50 turns | A backstop, deliberately below the supervisor's 60. |
 | Input-token budget | 5,000,000 tokens | A backstop kept **above** the supervisor's, so a DM is not first to trip both. |
-| Quiet gap | 0 hours — **disabled**, spelled `POSITIVE_INFINITY` | Idleness alone is not evidence a DM's context went stale. |
+| Quiet gap | None — a DM seat has no quiet-gap rung, spelled `POSITIVE_INFINITY` | Idleness alone is not evidence a DM's context went stale. No setting turns it on. |
 | Context size | The deployment-wide setting | A property of the model window, shared with a channel seat. |
 
 **The DM audience reads fail closed.** `readDmAudience` (`dm-audience.ts`) answers **stopped** and

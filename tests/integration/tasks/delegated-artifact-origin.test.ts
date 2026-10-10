@@ -238,7 +238,7 @@ test("a delayed Slack worker posts its artifact to the original Slack thread aft
     const rows = await rowsSinceCursor(cursor, ["slack.post_file"]);
     return rows.length > 0 ? rows : undefined;
   }, "the successful Slack post_file audit row");
-  expect(slackRows.some((row) => row.platform === "slack" && row.surface === SLACK_CHANNEL && row.detail?.attached === 1 && row.detail?.hosted === 0)).toBe(true);
+  expect(slackRows.some((row) => row.platform === "slack" && row.surface === SLACK_CHANNEL && row.detail?.attached === 1 && row.detail?.hosted === undefined)).toBe(true);
   expect(Math.min(...slackRows.map((row) => row.seq)), "the Notion delivery must reach the parent before the upload").toBeGreaterThan(notionIngress.seq);
   expect(await rowsSinceCursor(cursor, ["notion.post_file"])).toEqual([]);
   expect(dispatched.requests.filter((request) => request.fault !== undefined)).toEqual([]);

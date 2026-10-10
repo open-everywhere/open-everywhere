@@ -1,5 +1,5 @@
 _resetDeploymentIdentityForTest();
-for (const k of ["OE_PLATFORM", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST", "OE_TEST_DRIVER_IDS"]) {
+for (const k of ["OE_PLATFORM", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST"]) {
   delete process.env[k];
 }
 
@@ -127,3 +127,5 @@ ok(unvouched.find((m) => m.id === "1")?.trust === "unauth" && unvouched.find((m)
 ok(unvouched.find((m) => m.id === "2")?.trust === "relay" && unvouched.find((m) => m.id === "4")?.trust === "relay", "backscrollTrustResolver on an unvouched surface: machine authors (bot/self) still relay");
 
 console.log(`wake-trust tests passed (${passed})`);
+
+// proves: AP-MOD-core-identity-wake-trust

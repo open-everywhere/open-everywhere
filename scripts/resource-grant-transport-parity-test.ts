@@ -1,3 +1,4 @@
+import { __setTestValveForTest, testValveArmed } from "@open-everywhere/core/agent/testing/test-valves.js";
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +15,7 @@ for (const id of ["slack", "discord", "teams"]) {
   assertPackageDistFresh(`packages/providers/${id}`, `@open-everywhere/provider-${id}`);
 }
 
-delete process.env.OE_EGRESS_SPOOF;
+__setTestValveForTest("egress-spoof", false);
 process.env.SLACK_BOT_TOKEN = "xoxb-test-token";
 process.env.DISCORD_BOT_TOKEN = "discord-test-token";
 process.env.MICROSOFT_APP_ID = "fixture-app-id-not-a-secret";
@@ -89,7 +90,7 @@ const fakeVendorHttp = (async (url: unknown, init?: unknown) => {
 
 try {
   await withPatchedFetch(fakeVendorHttp, async () => {
-    ok(process.env.OE_EGRESS_SPOOF === undefined, "OE_EGRESS_SPOOF is unset — every post below is a real transport call, not a synthetic id");
+    ok(!testValveArmed("egress-spoof"), "the egress-spoof valve is unarmed — every post below is a real transport call, not a synthetic id");
 
     await recordTeamsConversationReference({
       scope: "channel",

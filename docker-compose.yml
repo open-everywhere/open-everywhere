@@ -59,11 +59,17 @@ services:
       NODE_USE_ENV_PROXY: "1"                          # Node 24: route built-in fetch via *_PROXY
       HTTP_PROXY: "http://oe-egress-proxy:3128"
       HTTPS_PROXY: "http://oe-egress-proxy:3128"
-      NO_PROXY: "oe-egress-proxy,localhost,127.0.0.1"  # policy pushes/health stay direct
-      # This local egress DEV stack deliberately pins justbash (the app code default is docker,
-      # OPE-106). justbash shares this app process's filesystem → dev/testing only; set
-      # OE_SANDBOX_BACKEND=docker (+ the daemon socket below) to exercise real git/npm.
-      OE_SANDBOX_BACKEND: "${OE_SANDBOX_BACKEND:-justbash}"
+      # Policy pushes, health and the op-store WebSocket stay direct. `neon-wsproxy` MUST be here:
+      # Node 24 sends the driver's WebSocket through HTTP_PROXY too, the proxy denies
+      # `CONNECT neon-wsproxy:80`, and the app exits at boot on an ErrorEvent (OPE-2193).
+      NO_PROXY: "oe-egress-proxy,neon-wsproxy,localhost,127.0.0.1"
+      # justbash is the only backend this stack runs (OPE-2407): the image carries a just-bash
+      # template only, and the app declares `sandbox.selfHostBackend: "justbash"` in
+      # agent/settings/settings.ts (OPE-2411 deleted the OE_SANDBOX_BACKEND variable). Its session egress leaves through this
+      # app process, so the proxy holds every session request to the session's allow list, and the
+      # app's own model call to its host-plane list (OPE-2406). justbash shares this app process's
+      # filesystem → dev/testing grade isolation. An app that declares `docker` REFUSES TO BOOT here:
+      # eve starts docker session containers on the daemon's default network, outside this proxy.
       OE_EGRESS_PROXY_URL: "http://oe-egress-proxy:8080"    # control endpoint for policy push
       OE_EGRESS_PROXY_TOKEN: "${OE_EGRESS_PROXY_TOKEN:?set OE_EGRESS_PROXY_TOKEN in .env — the app's policy push is rejected without it (same value as the proxy)}"
       # OPE-314: tail the proxy's denial log so a blocked host becomes an `egress.denied` audit row
@@ -71,7 +77,6 @@ services:
       # app only ever READS this volume. Unset it to turn the poller off; a missing/unreadable file
       # degrades to nothing (the plane goes dark, as it is on the Vercel tier) and says so once.
       OE_EGRESS_DENIAL_LOG: "${OE_EGRESS_DENIAL_LOG:-/var/log/oe-egress/denied.log}"
-      OE_EGRESS_DENIAL_POLL_MS: "${OE_EGRESS_DENIAL_POLL_MS:-60000}"
       # Tier B: the app must trust the MITM CA for git/npm/curl (no-op under Tier A).
       NODE_EXTRA_CA_CERTS: "/opt/oe-egress/ca/oe-egress-ca.crt"
       GIT_SSL_CAINFO: "/opt/oe-egress/ca/oe-egress-ca.crt"
@@ -99,9 +104,6 @@ services:
       - oe-workflow:/app/.workflow-data                # durable sessions
       - oe-ca:/opt/oe-egress/ca:ro                     # read the CA for Tier B trust
       - oe-egress-log:/var/log/oe-egress:ro            # tail the proxy's denial log (READ-ONLY)
-      # docker() sandbox backend (OE_SANDBOX_BACKEND=docker) also needs the daemon socket —
-      # uncomment to grant it (DooD; only with a trusted runner):
-      # - /var/run/docker.sock:/var/run/docker.sock
     # The app is only reachable via a reverse proxy you place in front of it (forward BOTH
     # /eve/ and /.well-known/workflow/ — see docs/deploy/platforms/self-roll.md). To expose
     # it directly for local testing, publish 3000:

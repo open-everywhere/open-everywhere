@@ -76,5 +76,5 @@ test("a signed Discord relay mention wakes the channel's STANDING SEAT and its r
   expect(detail.chars).toBe(replyText.length);
 
   await awaitWindowQuiet();
-  expect(handle.requests.some((r) => r.role === "parent" && r.stepIndex >= 1), "a step after the reply was requested").toBe(false);
+  expect(handle.requests.some((r) => r.role === "parent" && r.stepIndex !== 0), "a step after the reply was requested").toBe(false);
 });

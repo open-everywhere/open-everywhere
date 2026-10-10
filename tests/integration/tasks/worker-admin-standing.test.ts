@@ -1,7 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 
 const INJECT_TOKEN = "ope673-inject-token";
-process.env.OE_TEST_WAKE = "1";
 process.env.OE_CONTROL_INJECT_TOKENS = `it-ope673:${createHash("sha256").update(INJECT_TOKEN, "utf8").digest("hex")}`;
 
 import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
@@ -113,6 +112,9 @@ let BASE = "";
 beforeAll(async () => {
   const { base } = await bootAgent();
   BASE = base;
+  const settings = await import("@open-everywhere/core/agent/settings/settings.js");
+  settings.overrideSettingsForTest({ wake: { testWakeRoute: true } });
+  expect(settings.getSettings().wake.testWakeRoute).toBe(true);
   const opener = registerScript({
     parent: [{ calls: [{ tool: "no_reply", input: { reason: "nothing_to_add" }, id: "ope673-opener-silence" }] }, { say: NO_REPLY_SENTINEL }],
   });

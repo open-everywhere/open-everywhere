@@ -1,11 +1,12 @@
 process.env.OE_SQLITE_PATH = ":memory:";
-process.env.OE_PLATFORM = "slack";
+setPlatformStandInForTest("slack");
 _setDeploymentIdentityForTest({ org: undefined });
 
 import { classifyConnectorOpTier, restMethodTier } from "../agent/access/consequence.js";
 import { sessionGrantKind, connectorSessionKind } from "../agent/approvals/session-grant.js";
 import { connectorOpApproval } from "../agent/connections/connector-auth.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { setPlatformStandInForTest } from "../agent/identity/binding.js";
 
 const { registerConfig } = await import("../agent/access/config.js");
 registerConfig({
@@ -64,7 +65,7 @@ ok(sessionGrantKind({ kind: "connector.op:notion", argsJson: "{}" }) === null, "
 
 {
   const approve = connectorOpApproval();
-  ok(approve({ toolName: "notion__search", approvedTools: new Set<string>() } as never) === "not-applicable", "read never prompts");
+  ok((await approve({ toolName: "notion__search", approvedTools: new Set<string>() } as never)) === "not-applicable", "read never prompts");
   const approvedWrite = new Set<string>(["notion__create_page"]);
   ok((await approve({ toolName: "notion__create_page", approvedTools: approvedWrite } as never)) === "not-applicable", "an already-approved WRITE is silenced (once-per-op)");
   const approvedDelete = new Set<string>(["notion__delete_page"]);

@@ -97,8 +97,8 @@ test("Notion: a delegated worker in it-work-read-fixture-notion holds read_work_
   settings.overrideSettingsForTest({ approvals: { judgeMode: "off" } });
   expect(settings.getSettings().approvals.judgeMode).toBe("off");
 
-  process.env.OE_TRUST = "internal";
-  afterThisTest(() => delete process.env.OE_TRUST);
+  settings.overrideSettingsForTest({ identity: { blanketTrust: "internal" } });
+  afterThisTest(() => settings.overrideSettingsForTest({ identity: { blanketTrust: "none" } }));
 
   const nonce = randomBytes(4).toString("hex");
   const triggerId = `it-1071-notion-trigger-${nonce}`;

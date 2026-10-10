@@ -12,6 +12,7 @@ import { resolvePartition } from "@open-everywhere/core/agent/memory/partition.j
 import { discordWakeOriginCodec } from "@open-everywhere/provider-discord/agent/channels/discord-origin-codec.js";
 import { registerDiscordProvider as __regDiscord } from "@open-everywhere/provider-discord/agent/register.js";
 import { _resetDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 __regDiscord();
 
 let passed = 0;
@@ -154,14 +155,14 @@ function dispatch(input: {
 }
 
 {
-  process.env.OE_TRUST = "internal";
+  overrideSettingsForTest({ identity: { blanketTrust: "internal" } });
   const pending = dispatch({ userId: "U_eve", guildId: "G_ACME", channelId: "C_ENG", channelType: "0", memberPending: true });
   ok(pending.binding.trust === "external", "H: PENDING member -> external (screening incomplete; demotion overrides OE_TRUST=internal)");
   const member = dispatch({ userId: "U_frank", guildId: "G_ACME", channelId: "C_ENG", channelType: "0", memberPending: false });
   ok(member.binding.trust === "internal", "H: non-pending member -> internal (rides the vouch, unchanged)");
   const unknown = dispatch({ userId: "U_grace", guildId: "G_ACME", channelId: "C_ENG", channelType: "0" });
   ok(unknown.binding.trust === "internal", "H: no pending signal -> vouch stands (fail toward the existing tier, like Slack's channel path)");
-  delete process.env.OE_TRUST;
+  overrideSettingsForTest({ identity: { blanketTrust: "none" } });
 }
 
 {

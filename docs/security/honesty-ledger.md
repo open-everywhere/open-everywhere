@@ -95,7 +95,7 @@ agent would be authorising itself.
   Everywhere's own egress-proxy, do enforce — they carry the second exception only in dry-run.
   Eve's own `microsandbox` would carry it always: it enforces host-grain allow/deny natively, but
   at-boundary credential injection silently does not happen there (measured, OPE-917). It is not a posture a deployment can reach —
-  `OE_SANDBOX_BACKEND` takes `docker` or `justbash` and refuses to boot on anything else — so the
+  the setting `sandbox.selfHostBackend` takes `"docker"` or `"justbash"` and refuses to boot on anything else — so the
   measurement is a finding held open by that refusal rather than a live exception on a shipped tier.
   See [Source-control backends](../extending/source-control-backends.md).
 - **Plain Docker self-hosting is a different isolation class from the Vercel tier.** Vercel Sandbox

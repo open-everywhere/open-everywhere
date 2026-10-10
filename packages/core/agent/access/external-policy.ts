@@ -149,8 +149,8 @@ export type SilentNoticeKind = (typeof SILENT_NOTICE_KINDS)[number];
 
 export function silentRoomNotice(kind: SilentNoticeKind): string {
   return kind === "join"
-    ? "Heads up: this room is set up as an external space, so I'll stay quiet here. I won't reply, and I won't act on anything said in this room."
-    : "I'm staying quiet in this room because it's set up as an external space — I won't act on that. Please ask me somewhere inside the organisation.";
+    ? "Heads up: this room is open to people outside the organisation, so I'll stay quiet here. I won't reply, and I won't act on anything said in this room."
+    : "I'm staying quiet in this room because it's open to people outside the organisation, so I won't act on that. Please ask me in a room inside the organisation.";
 }
 
 export function silentNoticeKey(surfaceKey: string, kind: SilentNoticeKind): string {

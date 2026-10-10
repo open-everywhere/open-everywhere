@@ -17,7 +17,7 @@ import { admitInbound } from "../agent/channels/slack.js";
 import { _resetDeploymentIdentityForTest } from "@open-everywhere/core/agent/adapter-api.js";
 
 _resetDeploymentIdentityForTest();
-for (const k of ["OE_PLATFORM", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST", "OE_TEST_DRIVER_IDS"]) {
+for (const k of ["OE_PLATFORM", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST"]) {
   delete process.env[k];
 }
 

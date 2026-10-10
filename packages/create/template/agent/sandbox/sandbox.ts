@@ -6,10 +6,9 @@ import { bindFrom, type BindableContext } from "@open-everywhere/core/agent/iden
 import { resolvePartition } from "@open-everywhere/core/agent/memory/partition.js";
 import { sandboxPresetFor } from "@open-everywhere/core/agent/roles/role.js";
 import { getConfig } from "@open-everywhere/core/agent/access/config.js";
-import { onVercel } from "@open-everywhere/core/agent/access/platform.js";
 import { agentBrowserSandboxHooks, type BakeableSandbox } from "@open-everywhere/adapters/agent/browser/sandbox.js";
 import { registerSandboxFirewall } from "@open-everywhere/core/agent/sandbox/network-policy.js";
-import { resolveSelfHostBackendKind, selfHostBackendBootLog } from "./backend-select.js";
+import { resolveSandboxBackend, resolveSelfHostBackendKind, selfHostBackendBootLog } from "./backend-select.js";
 import type { SelfHostBackendKind } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   resolveSandboxRegionPlan,
@@ -24,7 +23,7 @@ const SANDBOX_SETTINGS = getSettings().sandbox;
 const TIMEOUT_MS = SANDBOX_SETTINGS.timeoutMs;
 const SNAPSHOT_EXPIRATION_MS = SANDBOX_SETTINGS.snapshotExpirationMs;
 
-const ON_VERCEL = onVercel();
+const ON_VERCEL = resolveSandboxBackend(SANDBOX_SETTINGS) === "vercel";
 
 const REGION_PLAN = resolveSandboxRegionPlan({ region: SANDBOX_SETTINGS.region, onVercel: ON_VERCEL });
 if (REGION_PLAN.kind === "invalid" || REGION_PLAN.kind === "refused") throw new Error(REGION_PLAN.error);
@@ -59,11 +58,12 @@ interface SelfHostSandbox {
 }
 
 function selfHostEnvironment(): SelfHostSandbox {
-  const kind = resolveSelfHostBackendKind();
+  const kind = resolveSelfHostBackendKind(SANDBOX_SETTINGS);
   const bootLog = selfHostBackendBootLog(kind);
   if (bootLog.warn !== undefined) console.warn(bootLog.warn);
   console.info(bootLog.info);
   const egressLog = selfHostEgressBootLog();
+  if (egressLog.fatal !== undefined) throw new Error(egressLog.fatal);
   if (egressLog.warn !== undefined) console.warn(egressLog.warn);
   console.info(egressLog.info);
   startEgressDenialPoller();

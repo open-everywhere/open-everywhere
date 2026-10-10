@@ -1,5 +1,5 @@
 import { processRegistrySlot } from "../lib/process-registry.js";
-import { e2eDriversProblem, type E2eDriverIdentity } from "../testing/driver-allowlist.js";
+import { e2eDriversProblem, driverAllowlistProblem, type E2eDriverIdentity } from "../testing/driver-allowlist.js";
 import { sandboxRegionProblem } from "../sandbox/vercel-create.js";
 
 export type TaintTierMode = "enforced" | "dryrun";
@@ -14,6 +14,27 @@ export type ExternalAuthorGrain = "taint" | "withhold";
 
 export type ExternalRoomGrain = "engage" | "silent";
 
+export type DirectoryAutoConfirm = "off" | "attested";
+
+export type SandboxBackendChoice = "docker" | "justbash";
+
+export type BlanketTrust = "none" | "internal" | "external";
+
+export interface AdminRoleRule {
+  readonly roles: readonly string[];
+  readonly issuer?: string;
+  readonly subject?: string;
+  readonly email?: string;
+  readonly emailDomain?: string;
+}
+
+export interface OktaAppSetting {
+  readonly platform: string;
+  readonly tenant?: string;
+  readonly appId: string;
+  readonly field?: "externalId" | "userName";
+}
+
 export interface AgentSettings {
   readonly agent: {
     readonly sessionInputTokenBudget: number;
@@ -26,11 +47,12 @@ export interface AgentSettings {
     readonly checkpointTtlHours: number;
     readonly routineCardWaitSeconds: number;
   };
-  readonly audit: {
-    readonly silences: boolean;
-  };
   readonly browser: {
     readonly enabled: boolean;
+  };
+  readonly aws: {
+    readonly enabled: boolean;
+    readonly ssoScopes: readonly string[];
   };
   readonly bash: {
     readonly timeoutMs: number;
@@ -43,6 +65,15 @@ export interface AgentSettings {
     readonly opTiering: boolean;
     readonly memberPlane: boolean;
   };
+  readonly control: {
+    readonly githubAdmin: boolean;
+    readonly adminRoleRules: readonly AdminRoleRule[];
+  };
+  readonly directory: {
+    readonly autoConfirm: DirectoryAutoConfirm;
+    readonly groupAllowlist: readonly string[];
+    readonly oktaApps: readonly OktaAppSetting[];
+  };
   readonly identityLinking: {
     readonly codeBack: boolean;
   };
@@ -51,6 +82,8 @@ export interface AgentSettings {
   };
   readonly models: {
     readonly stack: string;
+    readonly primary: string;
+    readonly force: string;
   };
   readonly discord: {
     readonly autoThread: boolean;
@@ -72,14 +105,20 @@ export interface AgentSettings {
     readonly name: string;
     readonly shortName: string;
     readonly commandName: string;
+    readonly allowMultiTenantPrincipals: boolean;
+    readonly blanketTrust: BlanketTrust;
   };
   readonly memory: {
     readonly dreamCandidateCap: number;
     readonly skillProposalPr: boolean;
+    readonly syncTiming: boolean;
   };
   readonly policyPages: {
     readonly privacy: string;
     readonly terms: string;
+  };
+  readonly schedules: {
+    readonly sweepOrgs: readonly string[];
   };
   readonly routines: {
     readonly eventMaxFanout: number;
@@ -96,12 +135,18 @@ export interface AgentSettings {
     readonly tailTokenCap: number;
   };
   readonly sandbox: {
+    readonly selfHostBackend: SandboxBackendChoice;
+    readonly useVercelSandbox: boolean;
     readonly stopAfterTurn: boolean;
     readonly extendMaxMinutes: number;
     readonly timeoutMs: number;
     readonly snapshotExpirationMs: number;
     readonly image: string;
     readonly region: string;
+  };
+  readonly storage: {
+    readonly allowEphemeralMemory: boolean;
+    readonly allowEphemeralOperational: boolean;
   };
   readonly spend: {
     readonly usageEventsTtlDays: number;
@@ -123,6 +168,9 @@ export interface AgentSettings {
     readonly tierMode: TaintTierMode;
     readonly undeclaredSurface: TaintUndeclaredSurface;
   };
+  readonly teams: {
+    readonly serviceHosts: readonly string[];
+  };
   readonly tools: {
     readonly maxResultChars: number;
   };
@@ -134,6 +182,8 @@ export interface AgentSettings {
     readonly nameDropInclude: readonly string[];
     readonly nameDropExclude: readonly string[];
     readonly e2eDrivers: readonly E2eDriverIdentity[];
+    readonly driverAllowlist: readonly string[];
+    readonly testWakeRoute: boolean;
   };
   readonly webhooks: {
     readonly allowUnverified: boolean;
@@ -147,9 +197,7 @@ export interface AgentSettings {
 
 export interface SettingSpec<T> {
   readonly path: string;
-  readonly env?: string;
   readonly shipped: T;
-  readonly parseEnv?: (raw: string) => T | undefined;
   readonly validate?: (value: T) => string | undefined;
   readonly alsoAccepts?: "string" | "object";
   readonly summary: string;
@@ -169,6 +217,50 @@ const policyTextProblem = (value: string): string | undefined =>
 
 const stringArray = (value: readonly string[]): string | undefined =>
   Array.isArray(value) && value.every((t) => typeof t === "string") ? undefined : "must be an array of strings";
+
+const tokenArray = (value: readonly string[]): string | undefined =>
+  Array.isArray(value) && value.every((t) => typeof t === "string" && /^\S+$/u.test(t))
+    ? undefined
+    : "must be an array of non-empty strings with no whitespace";
+
+const modelIdOrEmpty = (v: string): string | undefined =>
+  v === "" || /^\S+$/u.test(v) ? undefined : "must be empty or one model id with no whitespace";
+
+const adminRoleRulesProblem = (rules: readonly AdminRoleRule[]): string | undefined => {
+  if (!Array.isArray(rules)) return "must be an array of role rules";
+  for (const [i, r] of rules.entries()) {
+    if (typeof r !== "object" || r === null) return `rule ${i} must be an object`;
+    if (!Array.isArray(r.roles) || r.roles.length === 0 || !r.roles.every((x: unknown) => typeof x === "string" && x.trim() !== "")) {
+      return `rule ${i} must name at least one role in \`roles\``;
+    }
+    const matchers = [r.issuer, r.subject, r.email, r.emailDomain];
+    if (matchers.some((m) => m !== undefined && (typeof m !== "string" || m.trim() === ""))) {
+      return `rule ${i} has a matcher that is not a non-empty string`;
+    }
+    if (matchers.every((m) => m === undefined)) {
+      return `rule ${i} names no matcher (issuer, subject, email or emailDomain), so it would match every verified identity`;
+    }
+  }
+  return undefined;
+};
+
+const oktaAppsProblem = (apps: readonly OktaAppSetting[]): string | undefined => {
+  if (!Array.isArray(apps)) return "must be an array of { platform, tenant?, appId, field? } entries";
+  const seen = new Set<string>();
+  for (const [i, a] of apps.entries()) {
+    if (typeof a !== "object" || a === null) return `entry ${i} must be an object`;
+    if (typeof a.platform !== "string" || !/^[a-z0-9-]+$/u.test(a.platform)) return `entry ${i}: platform must be a lowercase platform token, e.g. "slack"`;
+    if (typeof a.appId !== "string" || a.appId.trim() === "" || /\s/u.test(a.appId)) return `entry ${i}: appId must be the Okta application id, e.g. "0oa1a2b3c4d5"`;
+    if (a.tenant !== undefined && (typeof a.tenant !== "string" || a.tenant.trim() === "" || a.tenant.includes("/"))) {
+      return `entry ${i}: tenant must be one workspace id with no slash, e.g. "T0AB1CD2E"`;
+    }
+    if (a.field !== undefined && a.field !== "externalId" && a.field !== "userName") return `entry ${i}: field must be "externalId" (default) or "userName"`;
+    const key = `${a.platform}/${a.tenant ?? ""}`;
+    if (seen.has(key)) return `two entries map to the same target "${key.replace(/\/$/u, "")}" — give each workspace its own entry, or remove the duplicate`;
+    seen.add(key);
+  }
+  return undefined;
+};
 
 const stringOrStringArray = (value: string | readonly string[]): string | undefined =>
   typeof value === "string" || (Array.isArray(value) && value.every((t) => typeof t === "string")) ? undefined : "must be a string or an array of strings";
@@ -224,21 +316,13 @@ export const SETTINGS = {
     } satisfies SettingSpec<number>,
     routineCardWaitSeconds: {
       path: "approvals.routineCardWaitSeconds",
-      shipped: 0,
+      shipped: 120,
       validate: (v) =>
         Number.isInteger(v) && v >= 0 && v <= 300 ? undefined : "must be a whole number of seconds between 0 and 300",
       summary:
-        "How long an unattended routine fire's APPROVALS-PLANE refusal WAITS for its permission card to be answered before it declines for that run. 0 (shipped) waits not at all: the refusal is immediate and the card decides only FUTURE runs. It does NOT govern the CONNECTOR plane's refusal, which posts its card and refuses at once whatever this says: that refusal is computed inside the connection's own approval gate, so a wait there holds the connector call open rather than the model's turn. Armed, the refusing tool call polls the card's own pending row, and an approval inside the window lets that run proceed. THE BUDGET, and why 120 is the recommended armed value: the deployed function's wall ceiling is 300 s (measured, platform default, no app pin); the turn's own elapsed time is read off its start stamp and subtracted; the model still has to be told and the run's report posted, so 60 s is reserved. The wait is CLAMPED to what is left, whatever this value says — so a turn already 250 s old waits not at all rather than dying mid-report, and 120 is the value a turn that reached its refusal at the assumed 120 s can still afford (300 − 120 − 60). 🔴 A deadline never decides the card: it stays pending and clickable, and approving it still arms every later run.",
+        "How long an unattended routine fire's APPROVALS-PLANE refusal WAITS for its permission card to be answered before it declines for that run. 120 (shipped) holds the refusing call for up to two minutes, so a person who is around can answer the card while the run is still up. 0 is the opt-out: the refusal is immediate and the card decides only FUTURE runs. It does NOT govern the CONNECTOR plane's refusal, which posts its card and refuses at once whatever this says: that refusal is computed inside the connection's own approval gate, so a wait there holds the connector call open rather than the model's turn. Armed, the refusing tool call polls the card's own pending row, and an approval inside the window lets that run proceed. THE BUDGET, and why 120 is the shipped value: the deployed function's wall ceiling is 300 s (measured, platform default, no app pin); the turn's own elapsed time is read off its start stamp and subtracted; the model still has to be told and the run's report posted, so 60 s is reserved. The wait is CLAMPED to what is left, whatever this value says — so a turn already 250 s old waits not at all rather than dying mid-report, and 120 is the value a turn that reached its refusal at the assumed 120 s can still afford (300 − 120 − 60). 🔴 A deadline never decides the card: it stays pending and clickable, and approving it still arms every later run.",
       format: (v) => (v === 0 ? "0 (no wait — the refusal is immediate)" : `${v} s`),
     } satisfies SettingSpec<number>,
-  },
-  audit: {
-    silences: {
-      path: "audit.silences",
-      shipped: false,
-      summary:
-        "Write the judged-SILENCE audit rows (`unified.no_reply` and the `reply.no_reply` tool row). Off is the ACTIONS-ONLY posture: on an ambient surface these are the ~99% majority and would bury the rows that mean something. A deployment that scores abstention (the local eval targets do) turns it on in `agent/settings/settings.ts`.",
-    } satisfies SettingSpec<boolean>,
   },
   browser: {
     enabled: {
@@ -247,6 +331,22 @@ export const SETTINGS = {
       summary:
         "The in-sandbox browser master flag. Unarmed the capability does not exist: no `browser_*` tools mount, no egress hosts open, no browser bakes into the sandbox template. Arming ALSO requires at least one row in the host declaration (`agent/access/browser-hosts.ts`), which is where the reach itself lives — each row names a host, the HTTP verbs the firewall admits there, an optional credential the firewall injects at the boundary, and whether `browser_evaluate` is armed for it. Both halves are compiled into the build, so the sandbox template and the runtime mount cannot disagree.",
     } satisfies SettingSpec<boolean>,
+  },
+  aws: {
+    enabled: {
+      path: "aws.enabled",
+      shipped: false,
+      summary:
+        "The AWS access plane's master flag (was `OE_AWS_ENABLED`). Off (shipped), nothing registers and core's AWS mint and exec paths fail closed. On, the adapter registers the STS mint, the CLI executor and the Identity Center link callback at boot. The regions and the public OIDC client id stay environment wiring (`OE_AWS_REGION`, `OE_AWS_SSO_REGION`, `OE_AWS_SSO_CLIENT_ID`).",
+    } satisfies SettingSpec<boolean>,
+    ssoScopes: {
+      path: "aws.ssoScopes",
+      shipped: [] as readonly string[],
+      validate: tokenArray,
+      summary:
+        "The OAuth scopes the Identity Center link asks for (was `OE_AWS_SSO_SCOPES`). Empty (shipped) asks for the minter's default, `sso:account:access` plus `openid`. A scope list is what access is asked for, so a wider list widens the agent's reach. A non-empty list must keep `openid`: without it the link cannot verify who consented, and it refuses.",
+      format: (v) => (v.length > 0 ? v.join(" ") : "(the minter's default)"),
+    } satisfies SettingSpec<readonly string[]>,
   },
   bash: {
     timeoutMs: {
@@ -266,27 +366,27 @@ export const SETTINGS = {
   connectors: {
     dmOnly: {
       path: "connectors.dmOnly",
-      shipped: true,
+      shipped: false,
       summary:
-        "The connector DM-only wall: a connector operation must come from a positively-DM context (or a task worker spawned from one) or it is refused fail-closed before a token exists.",
+        "The connector DM-only wall. Off (shipped), a channel reaches a connector exactly when a domain or bundle grants it the connection, and `connectors.opTiering` decides which calls need a card. On, a connector operation must come from a positively-DM context (or a task worker spawned from one) or it is refused fail-closed before a token exists. The wall bites only while `connectors.opTiering` is off: with tiering on, a granted non-DM context still passes, because tiering keeps each write behind an approval.",
     } satisfies SettingSpec<boolean>,
     userPrincipal: {
       path: "connectors.userPrincipal",
-      shipped: false,
+      shipped: true,
       summary:
-        "The per-user credential path (A1): a DM surface with a `user-oauth` credential bound resolves the OAuth subject to the calling human instead of the app principal. Arming it REQUIRES `connectors.opTiering`: the member-plane deny of a personal-credential write is computed only on the tiering branch, so settings load refuses `userPrincipal` on with `opTiering` off rather than ship a posture where a declared `connector.tool:` row can lift an unattended personal-credential write.",
+        "The per-user credential path (A1). On (shipped, OPE-2414), a DM surface with a `user-oauth` credential bound resolves the OAuth subject to the calling human instead of the app principal: in a DM, a person signs in with their own account, and a person who has not signed in yet gets the \"Connect my account\" card. Channels keep the org credential paths. Off, a DM's `user-oauth` binding is refused: the app-principal path takes no personal credential, so a server declared in `agent/access/mcp-servers.ts` does not work in a DM. It REQUIRES `connectors.opTiering`, which ships on: the member-plane deny of a personal-credential write is computed only on the tiering branch, so settings load refuses `userPrincipal` on with `opTiering` set to off rather than ship a posture where a declared `connector.tool:` row can lift an unattended personal-credential write.",
     } satisfies SettingSpec<boolean>,
     linkSetVault: {
       path: "connectors.linkSetVault",
-      shipped: false,
+      shipped: true,
       summary:
-        "The C.3 shared user-OAuth vault: a confirmed link-set member keys the vault by their org-scoped link-set subject, so one consent covers all their linked DMs. Also suppresses directory auto-confirm for every link-set.",
+        "The C.3 shared user-OAuth vault. On (shipped, OPE-2414), a confirmed link-set member keys the vault by their org-scoped link-set subject, so one consent covers all of that person's linked accounts. Because a confirmed membership then carries a credential, it also suppresses directory auto-confirm for every link-set: a person confirms each link. Off, each account keys its own token.",
     } satisfies SettingSpec<boolean>,
     opTiering: {
       path: "connectors.opTiering",
-      shipped: false,
+      shipped: true,
       summary:
-        "The per-op consequence gate (A2): each `<connection>__<op>` call is classified individually (reads open, a write needs one approval per conversation, a destructive op one per call) instead of the blanket grain, where every op needs one approval per conversation. Either way the approval is an OE card that posts and returns, never a native wait (OPE-2340).",
+        "The per-op consequence gate (A2). On (shipped), each `<connection>__<op>` call is classified individually: a read runs with no card, a write or a destructive op gets an approval card that approves that one call. The approval judge may pre-approve a write or a recognised delete on a domain credential under a bound pre-approval rule, and it never caches that allow. An op whose name carries no recognised verb gets a card that the judge never lifts, unless the tool annotations of its registered server bring its final tier down to `read`. Off, every op takes the blanket grain: each call, a read included, needs a card. Either way the approval is an OE card that posts and returns, never a native wait (OPE-2340).",
     } satisfies SettingSpec<boolean>,
     memberPlane: {
       path: "connectors.memberPlane",
@@ -294,6 +394,47 @@ export const SETTINGS = {
       summary:
         "The member plane (OPE-944): a member's own connector credential resolves in a SHARED ROOM their domain declared it for, keyed to the one verified requester of that turn, reads only. The room must also be DECLARED INTERNAL in agent/identity/surfaces.ts (OPE-1472) — an undeclared room vouches for nobody, so a deployment that has declared nothing internal has no member plane until it declares something. It does not govern DMs — a personal credential always resolves in the asker's own DM, where a write takes the ordinary approval card.",
     } satisfies SettingSpec<boolean>,
+  },
+  control: {
+    githubAdmin: {
+      path: "control.githubAdmin",
+      shipped: false,
+      summary:
+        "Arm the GitHub user-login verifier on the admin control plane (was `OE_ADMIN_GITHUB=1`). Off (shipped), a GitHub token authenticates nobody there. On, a GitHub user token is a verified identity, and `control.adminRoleRules` decides which roles it gets — an identity no rule grants is denied.",
+    } satisfies SettingSpec<boolean>,
+    adminRoleRules: {
+      path: "control.adminRoleRules",
+      shipped: [] as readonly AdminRoleRule[],
+      validate: adminRoleRulesProblem,
+      summary:
+        "Which verified control-plane identity gets which roles (was the `OE_ADMIN_ROLE_RULES` JSON). Each rule names `roles` and at least one matcher — `issuer`, `subject`, `email` or `emailDomain` — and grants its roles to an identity that matches every matcher it names. The `email` and `emailDomain` matchers match a VERIFIED email only. Default-deny: empty (shipped) grants nothing, except that a configured `OE_ADMIN_STATIC_TOKEN` always carries the single-operator `admin` rule. A rule with no matcher fails the boot, because it would match every verified identity.",
+      format: (v) => (v.length > 0 ? `${v.length} rule(s)` : "(none)"),
+    } satisfies SettingSpec<readonly AdminRoleRule[]>,
+  },
+  directory: {
+    autoConfirm: {
+      path: "directory.autoConfirm",
+      shipped: "off",
+      validate: (v) => (v === "off" || v === "attested" ? undefined : 'must be "off" or "attested"'),
+      summary:
+        "Whether the directory sync confirms a mapping itself (was `OE_DIRECTORY_AUTOCONFIRM`). `off` (shipped): every new IdP→platform mapping lands as `suggested` and waits for its person's own DM tap. `attested`: a mapping the IdP itself provisioned (the downstream platform wrote the id back) is confirmed by the sync; an `asserted` or `email-match` mapping still waits, always. There is no third value: \"confirm everything\" would make an email collision a person-merge. An Okta app mapped with `field: \"userName\"` grades `asserted`, so `attested` never confirms it.",
+    } satisfies SettingSpec<DirectoryAutoConfirm>,
+    groupAllowlist: {
+      path: "directory.groupAllowlist",
+      shipped: [] as readonly string[],
+      validate: (v) => stringArray(v) ?? (v.every((t) => t.trim() !== "") ? undefined : "must hold no blank group name"),
+      summary:
+        "Which IdP groups the group sync reads, by their VERBATIM IdP names (was `OE_DIRECTORY_GROUP_ALLOWLIST`). Empty (shipped) syncs every group. Set, a group outside the list is neither added nor kept in the machine-owned person-group overlay.",
+      format: (v) => (v.length > 0 ? v.join(", ") : "(every group)"),
+    } satisfies SettingSpec<readonly string[]>,
+    oktaApps: {
+      path: "directory.oktaApps",
+      shipped: [] as readonly OktaAppSetting[],
+      validate: oktaAppsProblem,
+      summary:
+        "The Okta application → platform table the Okta adapter syncs (was `OE_DIRECTORY_OKTA_APPS`). One entry per app: `{ platform, tenant?, appId, field? }`. `tenant` names the workspace the app's ids belong to; absent, they belong to this deployment's sole admitted workspace, and the sync still refuses a workspace the deployment never admitted. `field` says where the app-side id lives: `externalId` (default) is the SCIM write-back and grades `attested`; `userName` is usually an email an app admin can edit, so it grades `asserted` and `directory.autoConfirm` never confirms it. Two entries for one platform and workspace fail the boot.",
+      format: (v) => (v.length > 0 ? v.map((a) => `${a.platform}${a.tenant ? `/${a.tenant}` : ""}:${a.appId}`).join(", ") : "(none)"),
+    } satisfies SettingSpec<readonly OktaAppSetting[]>,
   },
   identityLinking: {
     codeBack: {
@@ -314,15 +455,26 @@ export const SETTINGS = {
   models: {
     stack: {
       path: "models.stack",
-      env: "OE_MODEL_STACK",
       shipped: "american-closed",
-      parseEnv: (raw) => {
-        const v = raw.trim();
-        return v === "" ? undefined : v;
-      },
       validate: (v) => (v.trim().length > 0 ? undefined : "must be a non-empty stack alias"),
       summary:
-        "The named model stack this deployment runs — one alias picks a coherent model for all five roles (primary/utility/vision/supervisor/judge). Aliases are defined in `agent/model/stacks.ts`; an unknown one fails config load. Per-role overrides layer on top there, and `OE_FORCE_MODEL`/`OE_PRIMARY_MODEL` still override the primary role last.",
+        "The named model stack this deployment runs — one alias picks a coherent model for all five roles (primary/utility/vision/supervisor/judge). Aliases are defined in `agent/model/stacks.ts`; an unknown one fails config load. Per-role overrides layer on top there, and `models.primary` and `models.force` override the primary role last.",
+    } satisfies SettingSpec<string>,
+    primary: {
+      path: "models.primary",
+      shipped: "",
+      validate: modelIdOrEmpty,
+      summary:
+        "The primary role's model id, over the stack's own primary (was `OE_PRIMARY_MODEL`). Empty (shipped) runs the stack's primary. It is the DEFAULT id only: a domain route that pins a concrete model id still wins over it. The derived model allow-list names this id, so the model-policy envelope accepts the model the deployment was told to run.",
+      format: (v) => (v === "" ? "`` (the stack's primary)" : v),
+    } satisfies SettingSpec<string>,
+    force: {
+      path: "models.force",
+      shipped: "",
+      validate: modelIdOrEmpty,
+      summary:
+        "A HARD PIN: one model id for EVERY resolved route (was `OE_FORCE_MODEL`). Set, it wins over the stack, over `models.primary`, over a domain's concrete route pin, over the runtime domain pick and over the model-policy envelope. Only the model id moves: the route's reasoning and provider hints and the reasoning ceiling stay as they are, and a route's `tier` is dropped. Empty (shipped) pins nothing.",
+      format: (v) => (v === "" ? "`` (no pin)" : v),
     } satisfies SettingSpec<string>,
   },
   discord: {
@@ -356,17 +508,17 @@ export const SETTINGS = {
   externalPolicy: {
     authorGrain: {
       path: "externalPolicy.authorGrain",
-      shipped: "taint",
+      shipped: "withhold",
       validate: (v) => (v === "taint" || v === "withhold" ? undefined : 'must be "taint" or "withhold"'),
       summary:
-        'What the agent does with a message an EXCLUDED author wrote — an author the SURFACE positively refuted (Slack `is_restricted`/`is_ultra_restricted`/`is_stranger`, Entra `userType: "guest"`) or the OPERATOR\'s author-trust register refuted (`agent/identity/authors.ts`, Discord and Notion). `taint` (shipped) lets the text enter the context inside the untrusted-content envelope and leaves the consequence to the tainted-turn model and the approval plane. `withhold` stops the text ENTERING: an @mention or DM from that author gets a private notice and no action, ambient engagement never triggers on their messages, and their reply inside a permitted member\'s thread reaches the model as an arrived-marker with no body. It binds the READ verbs too: `read_channel`/`read_thread` replace that author\'s message text with the same arrived-marker, so a body a wake suppressed cannot be fetched back by reading the channel. A withheld body never ingests, so it never keys taint. The two mechanisms COEXIST — the envelope is provenance-based and stays as it is; withhold is identity-based. On a tenant the operator has NOT armed nothing is excluded, so `withhold` changes nothing there. \u26a0\ufe0f EVERY CHAT SURFACE READS IT, BUT THE EVIDENCE DIFFERS PER SURFACE. Slack and Teams refute an author themselves; Discord and Notion read the operator\'s register; GitHub refutes on the comment\'s `author_association` (`OWNER`, `MEMBER` and `COLLABORATOR` each hold a deliberate access grant and are internal — every other value, `CONTRIBUTOR` and `MANNEQUIN` included, is excluded); Linear refutes a workspace guest (`User.guest`). \u26a0\ufe0f GITHUB AND LINEAR HAVE NO PRIVATE CHANNEL back to a commenter, so an AMBIENT excluded author\'s message is a silent drop with an audit row and nothing posted. An explicit @mention from an excluded author still gets one fixed, identity-blind acknowledgement line (`EXTERNAL_MENTION_ACK` — names no person, no organisation, no setting, no verdict) on both surfaces, so the mentioning member never reads the agent as broken; on Linear it posts as a `response` Agent Activity, which also ends the session, so no spinner is left open. Two known limits elsewhere — a Slack GROUP DM has no partner to refute, so it can never be suppressed; and Discord\'s hydrated context lines are not filtered, so an excluded author quoted there still reaches the model when the TRIGGER author is permitted. EVERY chat reader — `read_channel`/`read_thread` and the delegated worker\'s `read_work_channel`/`read_work_thread` — routes through ONE grade-and-project body (`readChannelResult`/`readThreadResult`), so the author-taint mark and the `withhold` read half are declared once and no reader can declare them differently.',
+        'What the agent does with a message an EXCLUDED author wrote — an author the SURFACE positively refuted (Slack `is_restricted`/`is_ultra_restricted`/`is_stranger`, Entra `userType: "guest"`) or the OPERATOR\'s author-trust register refuted (`agent/identity/authors.ts`, Discord and Notion). `withhold` (shipped) stops the text ENTERING: an @mention or DM from that author gets a private notice and no action, ambient engagement never triggers on their messages, and their reply inside a permitted member\'s thread reaches the model as an arrived-marker with no body. It binds the READ verbs too: `read_channel`/`read_thread` replace that author\'s message text with the same arrived-marker, so a body a wake suppressed cannot be fetched back by reading the channel. A withheld body never ingests, so it never keys taint. The two mechanisms COEXIST — the envelope is provenance-based and stays as it is; withhold is identity-based. On Discord and Notion, where the operator\'s register is the only evidence, a tenant the operator has NOT armed excludes nobody, so `withhold` changes nothing there. `taint` is the deliberate OPT-OUT: it lets the text enter the context inside the untrusted-content envelope and leaves the consequence to the tainted-turn model and the approval plane. Choose it only where an excluded author\'s text must reach the model. \u26a0\ufe0f EVERY CHAT SURFACE READS IT, BUT THE EVIDENCE DIFFERS PER SURFACE. Slack and Teams refute an author themselves; Discord and Notion read the operator\'s register; GitHub refutes on the comment\'s `author_association` (`OWNER`, `MEMBER` and `COLLABORATOR` each hold a deliberate access grant and are internal — every other value, `CONTRIBUTOR` and `MANNEQUIN` included, is excluded); Linear refutes a workspace guest (`User.guest`). \u26a0\ufe0f GITHUB AND LINEAR HAVE NO PRIVATE CHANNEL back to a commenter, so an AMBIENT excluded author\'s message is a silent drop with an audit row and nothing posted. An explicit @mention from an excluded author still gets one fixed, identity-blind acknowledgement line (`EXTERNAL_MENTION_ACK` — names no person, no organisation, no setting, no verdict) on both surfaces, so the mentioning member never reads the agent as broken; on Linear it posts as a `response` Agent Activity, which also ends the session, so no spinner is left open. One known limit elsewhere — Discord\'s hydrated context lines are not filtered, so an excluded author quoted there still reaches the model when the TRIGGER author is permitted. EVERY chat reader — `read_channel`/`read_thread` and the delegated worker\'s `read_work_channel`/`read_work_thread` — routes through ONE grade-and-project body (`readChannelResult`/`readThreadResult`), so the author-taint mark and the `withhold` read half are declared once and no reader can declare them differently.',
     } satisfies SettingSpec<ExternalAuthorGrain>,
     roomGrain: {
       path: "externalPolicy.roomGrain",
-      shipped: "engage",
+      shipped: "silent",
       validate: (v) => (v === "engage" || v === "silent" ? undefined : 'must be "engage" or "silent"'),
       summary:
-        "Whether the agent engages in a room the classification calls EXTERNAL — a room the operator declared `public` in the trust registry, a room the vendor reports as spanning another organisation (Slack Connect, a Teams shared channel), or a room whose ingested set contains a refuted author. `engage` (shipped) is today's behaviour. `silent` announces at most twice per room — once on join, once on the first wake it suppresses — and never repeats; there is deliberately NO periodic re-announcement. ⚠️ NOT EVERY SURFACE READS IT THE SAME WAY: `silent` suppresses a wake on SLACK, DISCORD, TEAMS, GITHUB and LINEAR. Discord and Teams post the suppressed-wake notice only, because neither surface delivers a join event the agent can hang the join notice on. Slack posts both halves, but its JOIN half fires only where `conversations.info` already refused the channel as not-internal — a channel the operator declared `public` that Slack reports internal is still silenced and still announces at its first suppressed wake, but gets no join notice. GitHub and Linear read the OPERATOR-DECLARED leg and the REFUTED-AUTHOR leg (neither surface has a vendor-external signal) and post NO announcement on either half — neither has a private channel back to a commenter, so an AMBIENT or NAME-DROP wake it silences is a silent drop with an audit row and nothing posted. An explicit @mention still gets the same fixed, identity-blind acknowledgement line every other silenced surface's addressed suppression gets; on Linear it posts as a `response` Agent Activity, which also ends the session. ⚠️ `silent` HAS NO CONFIG-VALIDATION ERROR FOR A HALF-DECLARATION, ONLY A BOOT WARNING: the EXTERNAL classification has three legs and only the OPERATOR-DECLARED one is visible in static config, so a domain that sets `roomGrain: \"silent\"` with no matching `public` trust entry gets a `console.warn` at boot naming the channel, not a boot failure — a vendor-external or guest-present signal can still arm it correctly at runtime, and refusing boot on that shape would be a false positive (`agent/lib/register-config.ts` calls `warnSilentRoomGrainWithoutPublicSignal`, `packages/core/agent/memory/domain.ts`).",
+        "Whether the agent engages in a room the classification calls EXTERNAL — a room the operator declared `public` in the trust registry, a room the vendor reports as spanning another organisation (Slack Connect, a Teams shared channel), or a room whose ingested set contains a refuted author. `silent` (shipped) suppresses the wake and announces at most twice per room — once on join, once on the first wake it suppresses — and never repeats; there is deliberately NO periodic re-announcement. `engage` is the deliberate OPT-OUT: the agent answers in an external room as it does in an internal one. A room that no leg classifies external is never silenced, so a member-only room sees no change. ⚠️ NOT EVERY SURFACE READS IT THE SAME WAY: `silent` suppresses a wake on SLACK, DISCORD, TEAMS, GITHUB and LINEAR. Discord and Teams post the suppressed-wake notice only, because neither surface delivers a join event the agent can hang the join notice on. Slack posts both halves, but its JOIN half fires only where `conversations.info` already refused the channel as not-internal — a channel the operator declared `public` that Slack reports internal is still silenced and still announces at its first suppressed wake, but gets no join notice. GitHub and Linear read the OPERATOR-DECLARED leg and the REFUTED-AUTHOR leg (neither surface has a vendor-external signal) and post NO announcement on either half — neither has a private channel back to a commenter, so an AMBIENT or NAME-DROP wake it silences is a silent drop with an audit row and nothing posted. An explicit @mention still gets the same fixed, identity-blind acknowledgement line every other silenced surface's addressed suppression gets; on Linear it posts as a `response` Agent Activity, which also ends the session. ⚠️ `silent` HAS NO CONFIG-VALIDATION ERROR FOR A HALF-DECLARATION, ONLY A BOOT WARNING: the EXTERNAL classification has three legs and only the OPERATOR-DECLARED one is visible in static config, so a domain that sets `roomGrain: \"silent\"` with no matching `public` trust entry gets a `console.warn` at boot naming the channel, not a boot failure — a vendor-external or guest-present signal can still arm it correctly at runtime, and refusing boot on that shape would be a false positive (`agent/lib/register-config.ts` calls `warnSilentRoomGrainWithoutPublicSignal`, `packages/core/agent/memory/domain.ts`).",
     } satisfies SettingSpec<ExternalRoomGrain>,
   },
   governance: {
@@ -423,6 +575,19 @@ export const SETTINGS = {
         "The name of the zero-inference control-plane slash command, without its slash (OPE-2334). Shipped `oe`, so the command is `/oe`. It reaches every place the command name lives: the Slack app manifest's `slash_commands` entry, the Slack command route's own name check, Discord's command registration and interaction-router match, and the help, acknowledgement and error text the commands render. ⚠️ CHANGING IT IS AN INSTALL STEP, NOT ONLY A DIFF: Slack registers the command from the manifest, so paste the re-rendered manifest (`surface_manifest`) into the Slack app; Discord registers it at boot under the new name, and the old command stays listed until it is deleted in the Discord developer portal.",
       format: (v) => `/${v}`,
     } satisfies SettingSpec<string>,
+    allowMultiTenantPrincipals: {
+      path: "identity.allowMultiTenantPrincipals",
+      shipped: false,
+      summary:
+        "The opt-out of the multi-tenant principal fence (was `OE_ALLOW_MULTI_TENANT_PRINCIPALS=1`). On a tenant-scoped platform (Slack) a person id is issued PER WORKSPACE while a principal key is only `platform/id`, so two workspaces can hand one person another's standing on an id collision. Off (shipped), config load refuses a deployment that declares two tenants of one such platform, and the wake door drops a delivery from a tenant no domain declares. On accepts that known aliasing exposure for the whole deployment.",
+    } satisfies SettingSpec<boolean>,
+    blanketTrust: {
+      path: "identity.blanketTrust",
+      shipped: "none",
+      validate: (v) => (v === "none" || v === "internal" || v === "external" ? undefined : 'must be "none", "internal" or "external"'),
+      summary:
+        "A deployment-wide trust declaration for the bindings no platform mapper verifies (was `OE_TRUST`). `none` (shipped) declares nothing: a real platform that cannot verify a surface fails closed to `external`, and the local stand-in binding is `internal`. `internal` is the single-tenant opt-in: it raises an unverified surface to internal, lets an unvouched DM partner read the shared DM layer, and satisfies the multi-source window vouch and the governance vouch at config load. It never overrides a platform mapper's own verdict or a surface the operator declared `public`. `external` forces the local stand-in binding to external, which a test uses to drive the fail-closed path. Prefer a per-surface declaration in `agent/identity/surfaces.ts`: it names WHICH rooms are internal.",
+    } satisfies SettingSpec<BlanketTrust>,
   },
   memory: {
     dreamCandidateCap: {
@@ -433,9 +598,15 @@ export const SETTINGS = {
     } satisfies SettingSpec<number>,
     skillProposalPr: {
       path: "memory.skillProposalPr",
+      shipped: true,
+      summary:
+        "Whether a Mode-1 SKILL proposal also opens a PULL REQUEST on the config repo (`accessRequests.configRepo`), adding the drafted skill under `.agents/skills/<name>/SKILL.md` on its own branch. It ships ON, and it acts only where the deployer configured a config repo: with no `accessRequests.configRepo` the proposal is recorded in the review queue, nothing reaches GitHub, and nothing errors. `false` is the opt-out, and keeps the v1 behaviour on every deployment: the review-queue row only. On, MERGING the pull request is what arms the skill — the cycle never merges, never pushes to the base branch, and needs no credential beyond the one the access-request and credential-binding flows already use. A person's review or comment on a proposal is read back as a CORRECTION and carried into the next proposal for that scope, and only an author with repository standing (GitHub's `author_association`: OWNER, MEMBER or COLLABORATOR) counts.",
+    } satisfies SettingSpec<boolean>,
+    syncTiming: {
+      path: "memory.syncTiming",
       shipped: false,
       summary:
-        "Whether a Mode-1 SKILL proposal also opens a PULL REQUEST on the config repo (`accessRequests.configRepo`), adding the drafted skill under `.agents/skills/<name>/SKILL.md` on its own branch. Off ships the v1 behaviour: the proposal is recorded in the review queue and nothing reaches GitHub. On, MERGING the pull request is what arms the skill — the cycle never merges, never pushes to the base branch, and needs no credential beyond the one the access-request and credential-binding flows already use. A person's review or comment on a proposal is read back as a CORRECTION and carried into the next proposal for that scope, and only an author with repository standing (GitHub's `author_association`: OWNER, MEMBER or COLLABORATOR) counts.",
+        "A measurement mode (was `OE_MEMORY_SYNC_TIMING=1`): write one `memory.sync_timing` audit row per session, with each read silo's load, sync and lock time, so a session's boot time can be attributed and not only bounded. Off (shipped), the memory hook allocates nothing, reads no clock and adds no await. On costs a durable row per session and one store insert inside the boot window, so arm it while you investigate where boot time goes, then disarm it. The row holds names, counts, sizes and durations only — never content.",
     } satisfies SettingSpec<boolean>,
   },
   policyPages: {
@@ -455,6 +626,16 @@ export const SETTINGS = {
         "The operator's TERMS OF USE, served as `GET /terms` — the URL the rendered Teams app manifest (`packages/providers/teams/agent/app-manifest.ts`, served by `surface_manifest`) declares as `termsOfUseUrl`. Same rendering and same unset behaviour as `policyPages.privacy`.",
       format: (v) => (v === "" ? "`` (unset — `/terms` serves the placeholder page)" : "the operator's own text"),
     } satisfies SettingSpec<string>,
+  },
+  schedules: {
+    sweepOrgs: {
+      path: "schedules.sweepOrgs",
+      shipped: ["default"] as readonly string[],
+      validate: (v) => tokenArray(v) ?? (v.length > 0 ? undefined : "must name at least one org"),
+      summary:
+        "The orgs the scheduled sweeps cover — the tidy sweep, dream mode 3 and the daily directory sync (was `OE_TIDY_ORGS`). Shipped `[\"default\"]`, the single-operator org. A multi-org deployment lists each org its sweeps run for; an org not listed is never swept.",
+      format: (v) => v.join(", "),
+    } satisfies SettingSpec<readonly string[]>,
   },
   routines: {
     eventMaxFanout: {
@@ -532,6 +713,19 @@ export const SETTINGS = {
     } satisfies SettingSpec<number>,
   },
   sandbox: {
+    selfHostBackend: {
+      path: "sandbox.selfHostBackend",
+      shipped: "docker",
+      validate: (v) => (v === "docker" || v === "justbash" ? undefined : 'must be "docker" or "justbash"'),
+      summary:
+        "Which backend runs the agent's shell on a NON-Vercel host (was `OE_SANDBOX_BACKEND`). `docker` (shipped) CONTAINS the shell in a per-session container with its own filesystem; it needs the daemon socket, and its session containers sit outside the egress proxy, so `docker` with `OE_EGRESS_PROXY_URL` set refuses to boot. `justbash` runs in-process and the agent's shell SHARES THE APP PROCESS'S FILESYSTEM — development and testing grade, with a loud boot warning. The Docker image carries a just-bash template only, so an app built into that image declares `justbash`. A Vercel host always runs the Vercel Sandbox, so this setting is inert there. Read at BOOT; eve also provisions the sandbox template at BUILD time on the backend this resolves.",
+    } satisfies SettingSpec<SandboxBackendChoice>,
+    useVercelSandbox: {
+      path: "sandbox.useVercelSandbox",
+      shipped: false,
+      summary:
+        "Run the agent's shell in the Vercel Sandbox from a NON-Vercel host (was `OE_PLATFORM=vercel` on that host) — the \"self-host app, Vercel Sandbox executor\" route. On, the app selects the `vercel()` backend, the egress policy takes the Vercel Sandbox firewall path (`sandbox.setNetworkPolicy`) instead of the self-host proxy push, and the browser plane may arm. The app then needs `VERCEL_TOKEN`, `VERCEL_TEAM_ID` (or `VERCEL_ORG_ID`) and `VERCEL_PROJECT_ID` to create sandboxes; this route is UNVERIFIED live. It does NOT make the app a Vercel host: the durable-store floors follow the real host. Inert on a Vercel host, which always runs the Vercel Sandbox. Read at BOOT.",
+    } satisfies SettingSpec<boolean>,
     stopAfterTurn: {
       path: "sandbox.stopAfterTurn",
       shipped: true,
@@ -576,6 +770,20 @@ export const SETTINGS = {
         "Vercel region to create sandboxes in — the data-residency pin for sandbox COMPUTE, the sibling of the AI Gateway's `inferenceRegion` for inference. Empty (the default) pins nothing. Read at boot, applied at sandbox CREATE, and inert off Vercel (a loud warning says so). Existing sandboxes keep the region they were created in. Should a future eve stop forwarding the region to sandbox creation, `npm run test:sandbox-region` goes red — that red is the signal, and it is the only automatic part. The boot keeps pinning until a maintainer flips the hand-maintained capability constant to `false`. That flip is what makes setting this REFUSE THE BOOT with the reason, rather than run in the default region under a residency claim.",
       format: (v) => (v === "" ? "`` (no pin — Vercel's own default region)" : v),
     } satisfies SettingSpec<string>,
+  },
+  storage: {
+    allowEphemeralMemory: {
+      path: "storage.allowEphemeralMemory",
+      shipped: false,
+      summary:
+        "Accept a per-instance, ephemeral DM/personal memory store on a Vercel host (was `OE_ALLOW_EPHEMERAL_MEMORY=1`). Off (shipped), a Vercel host with no durable memory backing refuses to resolve the DM store: a memory write would report success and the fact would vanish at the next cold start. Set `DATABASE_URL` instead, which selects Postgres on its own. On is for a knowingly single-instance host only. Off a Vercel host the local floor is correct, and this setting is inert.",
+    } satisfies SettingSpec<boolean>,
+    allowEphemeralOperational: {
+      path: "storage.allowEphemeralOperational",
+      shipped: false,
+      summary:
+        "Accept a per-instance, ephemeral operational store (the PGlite or sqlite floor) on a Vercel host (was `OE_ALLOW_EPHEMERAL_OPERATIONAL=1`). Off (shipped), a Vercel host with no hosted Postgres refuses to boot: the audit log, the spend ledger and break-glass revocations would be per-instance, so a revoke would report success and never take effect. Set `DATABASE_URL` instead. On is for a knowingly single-instance host only. Off a Vercel host the floor is correct, and this setting is inert.",
+    } satisfies SettingSpec<boolean>,
   },
   skills: {
     domainSkillCap: {
@@ -664,6 +872,16 @@ export const SETTINGS = {
         "What a chat wake does on a surface the operator has NEVER declared in the trust registry (`agent/identity/surfaces.ts`). `clean` (shipped) marks nothing and relocates the complaint to preflight, where it names the surface once and is actionable — a declared room is judged by its declaration and a refuted author still marks, so the bit keeps discriminating. `mark` restores per-turn pressure at ROOM grain: every human-authored turn on an undeclared surface marks. That is much narrower than the pre-OPE-489 behaviour, because a DECLARED surface never reaches it. The residual under `clean` is real and bounded: between install and the first declaration a genuinely public chat room reads clean, the ACL plane still fences it to the read-only `public` pseudo-domain, and the approval plane is the defence against a consequential act.",
     } satisfies SettingSpec<TaintUndeclaredSurface>,
   },
+  teams: {
+    serviceHosts: {
+      path: "teams.serviceHosts",
+      shipped: [] as readonly string[],
+      validate: (v) => tokenArray(v) ?? (v.every((h) => h === h.toLowerCase()) ? undefined : "must be lowercase host names"),
+      summary:
+        "Bot Connector hosts the Teams provider admits BEYOND the global-cloud default (was `OE_TEAMS_SERVICE_HOSTS`). Each entry is an exact host or a dot-anchored `.suffix`. Empty (shipped) admits the global (commercial) cloud only, which is the Teams provider's own built-in host list. A sovereign-cloud deployment adds its own host here — GCC `smba.infra.gcc.teams.microsoft.com`, GCC High `smba.infra.gov.teams.microsoft.us`, DoD `smba.infra.dod.teams.microsoft.us`. The reply's bearer token only ever goes to a matched host, so list Microsoft-owned hosts only.",
+      format: (v) => (v.length > 0 ? v.join(", ") : "(the global-cloud default only)"),
+    } satisfies SettingSpec<readonly string[]>,
+  },
   tools: {
     maxResultChars: {
       path: "tools.maxResultChars",
@@ -714,9 +932,23 @@ export const SETTINGS = {
       shipped: [] as readonly E2eDriverIdentity[],
       validate: e2eDriversProblem,
       summary:
-        "The e2e DRIVER bot identities the seat doors admit, one `{ surface, principal }` entry per identity. `principal` is written in the surface's OWN id vocabulary: Slack a `teamId:botId` pair (the workspace and the POSTING APP's `B…` bot record, which is what a `message.im`/`message.mpim` event carries in `bot_id`), Discord the driver bot's user-id snowflake, Notion the driver integration's bot id. Every chat surface stamps a machine author on anything a script posts — Slack does it on a USER token too, and Discord bans user tokens outright — so without this the e2e pack cannot drive a real seat and its legs can only forge an envelope. Empty (shipped) ⇒ a bot-authored DM drops at the Slack DM door with its `surface.wake_dropped` row, and a message a surface tags as machine-authored is refused in a seat's catch-up read by the domain's own admission policy, exactly as before. 🔴 NOTION IS THE ONE SURFACE THAT CANNOT TAG ONE (OPE-1857): it serves a comment's `created_by` as a partial user with no `type`, so a catch-up read cannot tell an integration's comment from a person's and `wide` admits it at the `unauth` floor whether or not this list names it. A `notion` entry therefore widens only the case where Notion DOES state a `type`; it is not what admits the driver today. 🔴 A `members-only` domain refuses an UNLISTED machine author alike, but NOT a listed one: the carve-out ORs past the domain's own policy, so a LISTED identity enters a seat in any domain. Set ⇒ a LISTED identity is admitted at the Slack DM door (which writes a `surface.wake_admitted` row naming the carve-out, and resolves author trust from the HUMAN `user` the post carries — no trust is invented for the bot), and enters the standing seat's own reads — the since-last-wake catch-up, the bootstrap window and the name-drop hydration, every read `seatAdmissionFor` governs — wherever that ONE identity speaks on its own surface, at the `relay` tier every machine author already carries. The PRINCIPAL is what pins the reach: a Slack entry is workspace-pinned by its `teamId:botId` pair, while a Discord or Notion entry names a globally unique vendor id and reaches that identity's rooms on that surface. 🔴 THE DOOR AND THE READ ASK ONE PREDICATE (OPE-1969), so the two cannot disagree about one identity: the read was scoped to the `e2e-engaged` domain alone until a fixture room no domain claims showed the disagreement — the door admitted the driver and the seat's catch-up dropped it. An unlisted bot is refused exactly as it was before, on every surface and in every room. Deliberately SEPARATE from the `OE_TEST_DRIVER_IDS` allowlist that lifts a driver at the engagement and mention doors: a seat holds a window token, delegation and memory, so admitting a bot there is a larger grant and is made by its own reviewed diff. TEST BEDS ONLY — a real deployment leaves it empty.",
+        "The e2e DRIVER bot identities the seat doors admit, one `{ surface, principal }` entry per identity. `principal` is written in the surface's OWN id vocabulary: Slack a `teamId:botId` pair (the workspace and the POSTING APP's `B…` bot record, which is what a `message.im`/`message.mpim` event carries in `bot_id`), Discord the driver bot's user-id snowflake, Notion the driver integration's bot id. Every chat surface stamps a machine author on anything a script posts — Slack does it on a USER token too, and Discord bans user tokens outright — so without this the e2e pack cannot drive a real seat and its legs can only forge an envelope. Empty (shipped) ⇒ a bot-authored DM drops at the Slack DM door with its `surface.wake_dropped` row, and a message a surface tags as machine-authored is refused in a seat's catch-up read by the domain's own admission policy, exactly as before. 🔴 NOTION IS THE ONE SURFACE THAT CANNOT TAG ONE (OPE-1857): it serves a comment's `created_by` as a partial user with no `type`, so a catch-up read cannot tell an integration's comment from a person's and `wide` admits it at the `unauth` floor whether or not this list names it. A `notion` entry therefore widens only the case where Notion DOES state a `type`; it is not what admits the driver today. 🔴 A `members-only` domain refuses an UNLISTED machine author alike, but NOT a listed one: the carve-out ORs past the domain's own policy, so a LISTED identity enters a seat in any domain. Set ⇒ a LISTED identity is admitted at the Slack DM door (which writes a `surface.wake_admitted` row naming the carve-out, and resolves author trust from the HUMAN `user` the post carries — no trust is invented for the bot), and enters the standing seat's own reads — the since-last-wake catch-up, the bootstrap window and the name-drop hydration, every read `seatAdmissionFor` governs — wherever that ONE identity speaks on its own surface, at the `relay` tier every machine author already carries. The PRINCIPAL is what pins the reach: a Slack entry is workspace-pinned by its `teamId:botId` pair, while a Discord or Notion entry names a globally unique vendor id and reaches that identity's rooms on that surface. 🔴 THE DOOR AND THE READ ASK ONE PREDICATE (OPE-1969), so the two cannot disagree about one identity: the read was scoped to the `e2e-engaged` domain alone until a fixture room no domain claims showed the disagreement — the door admitted the driver and the seat's catch-up dropped it. An unlisted bot is refused exactly as it was before, on every surface and in every room. Deliberately SEPARATE from the `wake.driverAllowlist` pairs that lift a driver at the engagement and mention doors: a seat holds a window token, delegation and memory, so admitting a bot there is a larger grant and is made by its own reviewed diff. TEST BEDS ONLY — a real deployment leaves it empty.",
       format: (v) => (v.length > 0 ? v.map((d) => `${d.surface}: ${d.principal}`).join(", ") : "(none)"),
     } satisfies SettingSpec<readonly E2eDriverIdentity[]>,
+    driverAllowlist: {
+      path: "wake.driverAllowlist",
+      shipped: [] as readonly string[],
+      validate: driverAllowlistProblem,
+      summary:
+        "The one deliberate, narrow exception to \"never act on another bot\": the e2e DRIVER bot pairs the Slack engagement and mention doors and the Discord relay ingress admit as if they were a user, so full-path tests can drive the real agent. Each entry is ONE pair: `guildId:botUserId` on Discord, `teamId:botId` on Slack (the posting app's `B…` bot record). Guild/workspace-pinned, exact match, no wildcards; a malformed entry fails the boot. On Discord, a listed driver id that posts from a DIFFERENT guild than its pair names is still refused, and the refusal writes a `discord.relay_admission_refused` audit row (OPE-647) — every other bot-authored message stays a silent no-op. Empty (shipped) ⇒ every bot-authored message drops. Deliberately SEPARATE from `wake.e2eDrivers`, which admits a driver into a standing seat: that is a larger grant, made by its own reviewed diff. Was the `OE_TEST_DRIVER_IDS` env var until OPE-2411. TEST BEDS ONLY — a real deployment leaves it empty. 🔴 This repository's own `agent/settings/settings.ts` names the maintainers' test-deployment pairs, so a deployment made from a clone of this repository must delete that entry.",
+      format: (v) => (v.length > 0 ? v.join(", ") : "(none)"),
+    } satisfies SettingSpec<readonly string[]>,
+    testWakeRoute: {
+      path: "wake.testWakeRoute",
+      shipped: false,
+      summary:
+        "Whether the spoofed-wake injection route `POST /control/v1/test/wake` exists. The e2e packs and the eval harnesses use it to feed a synthesised wake into a standing window. Off (shipped) ⇒ the route answers 404 — it does not exist. On, it ALSO needs the `OE_CONTROL_INJECT_TOKENS` credential family and a matching bearer: either half alone leaves the route dead. Injection transitively WRITES (the agent acts and replies for real) and can mint a full-kit task seat. Was the `OE_TEST_WAKE` env var until OPE-2411. TEST BEDS ONLY — a real deployment leaves it off. 🔴 This repository's own `agent/settings/settings.ts` turns it on for the maintainers' test bed, so a deployment made from a clone of this repository must delete that entry, or the credential alone guards the route.",
+    } satisfies SettingSpec<boolean>,
   },
   webhooks: {
     allowUnverified: {
@@ -741,9 +973,9 @@ export const SETTINGS = {
   window: {
     topology: {
       path: "window.topology",
-      shipped: false,
+      shipped: true,
       summary:
-        "The STANDING-SEAT apparatus — the ONE gate governing every seat and every window shape: the per-channel `solo` seat every channel the bot is in gets, a named `windows` group, and the cross-surface `unified` window. On, addressing decides what enters a seat and what wakes it, never the shape of the session: a mention lands in the room's own standing seat, and an undeclared channel inherits the `org` pseudo-domain's defaults (its own solo seat — never a shared context). 🔴 That inheritance is the ONE fail-closed arm: a deployment that declares NO `org` pseudo-domain leaves an undeclared channel with no domain to inherit, so it keeps the native per-container path even with this gate on. Off, every domain runs the native per-container path, a mention opens eve's per-thread session, and `mode` and `windows` are inert. **Arm deliberately: a `unified` window is a wider data blast radius.** The since-last-wake catch-up read — a seat arriving with what the room said while it was not woken — runs on every surface through one shared path, each reading its own container (a Slack or Discord channel, a Teams channel over Microsoft Graph, a GitHub issue or pull request, a Linear issue, a Notion page discussion). A surface that registers NO history fetch states that in the wake rather than arriving with an empty context; a registered read that fails stays fail-soft to empty, so a revoked history scope reads as a quiet room.",
+        "The STANDING-SEAT apparatus — the ONE gate governing every seat and every window shape: the per-channel `solo` seat every channel the bot is in gets, a named `windows` group, and the cross-surface `unified` window. On, addressing decides what enters a seat and what wakes it, never the shape of the session: a mention lands in the room's own standing seat, and an undeclared channel inherits the `org` pseudo-domain's defaults (its own solo seat — never a shared context). 🔴 That inheritance is the ONE fail-closed arm: a deployment that declares NO `org` pseudo-domain leaves an undeclared channel with no domain to inherit, so it keeps the native per-container path even with this gate on. On is the shipped posture (the maintainer's ruling). The `org` pseudo-domain stays solo: config load refuses `mode` on it, because the whole org is never one window. A shared window exists only where a deployer declares one: an explicit team domain with `mode: \"unified\"` and its `reach`, or a named `windows` group. A fresh install declares none, so every channel gets its own solo seat. The gate also arms mid-session memory re-sync org-wide: on each wake, a supervisor-shaped session re-reads the read silos whose store version advanced, and the re-sync propagates deletes into the sandbox. Off, every domain runs the native per-container path, a mention opens eve's per-thread session, and `mode` and `windows` are inert. **Declare a `unified` window deliberately: it is a wider data blast radius.** The since-last-wake catch-up read — a seat arriving with what the room said while it was not woken — runs on every surface through one shared path, each reading its own container (a Slack or Discord channel, a Teams channel over Microsoft Graph, a GitHub issue or pull request, a Linear issue, a Notion page discussion). A surface that registers NO history fetch states that in the wake rather than arriving with an empty context; a registered read that fails stays fail-soft to empty, so a revoked history scope reads as a quiet room.",
     } satisfies SettingSpec<boolean>,
   },
 };
@@ -766,11 +998,11 @@ function connectorPlaneCouplingProblem(overrides: AgentSettingsOverrides): strin
   const opTiering = overrides.connectors?.opTiering ?? SETTINGS.connectors.opTiering.shipped;
   if (userPrincipal !== true || opTiering === true) return undefined;
   return (
-    "connectors.userPrincipal: armed without connectors.opTiering. The per-user credential path resolves a personal " +
+    "connectors.userPrincipal resolves ON (it ships on) while connectors.opTiering is off. The per-user credential path resolves a personal " +
     "credential in a DM, and every member-plane deny of a personal-credential write is computed only on the " +
     "connectors.opTiering branch — so this posture lets a declared `connector.tool:` row lift an unattended " +
-    "personal-credential write that the tiering-on path denies outright. Arm connectors.opTiering as well, or leave " +
-    "connectors.userPrincipal off"
+    "personal-credential write that the tiering-on path denies outright. Arm connectors.opTiering, or declare " +
+    "connectors.userPrincipal: false"
   );
 }
 
@@ -843,157 +1075,175 @@ export function overrideSettingsForTest(patch: AgentSettingsOverrides): void {
   registeredSlot.set(next as AgentSettingsOverrides);
 }
 
-function resolve<T>(spec: SettingSpec<T>, override: T | undefined, env: NodeJS.ProcessEnv): T {
-  if (spec.env !== undefined && spec.parseEnv !== undefined) {
-    const raw = env[spec.env];
-    if (raw !== undefined) {
-      const parsed = spec.parseEnv(raw);
-      if (parsed !== undefined) return parsed;
-    }
-  }
+function resolve<T>(spec: SettingSpec<T>, override: T | undefined): T {
   return override ?? spec.shipped;
 }
 
-export function getSettings(
-  env: NodeJS.ProcessEnv = process.env,
-  overrides: AgentSettingsOverrides = registeredOverrides(),
-): AgentSettings {
+export function getSettings(overrides: AgentSettingsOverrides = registeredOverrides()): AgentSettings {
   const o = overrides;
   return {
     agent: {
-      sessionInputTokenBudget: resolve(SETTINGS.agent.sessionInputTokenBudget, o.agent?.sessionInputTokenBudget, env),
-      compactionThresholdPercent: resolve(SETTINGS.agent.compactionThresholdPercent, o.agent?.compactionThresholdPercent, env),
+      sessionInputTokenBudget: resolve(SETTINGS.agent.sessionInputTokenBudget, o.agent?.sessionInputTokenBudget),
+      compactionThresholdPercent: resolve(SETTINGS.agent.compactionThresholdPercent, o.agent?.compactionThresholdPercent),
     },
     approvals: {
-      judgeMode: resolve(SETTINGS.approvals.judgeMode, o.approvals?.judgeMode, env),
-      ttlHours: resolve(SETTINGS.approvals.ttlHours, o.approvals?.ttlHours, env),
-      routineGrantTtlHours: resolve(SETTINGS.approvals.routineGrantTtlHours, o.approvals?.routineGrantTtlHours, env),
-      checkpointTtlHours: resolve(SETTINGS.approvals.checkpointTtlHours, o.approvals?.checkpointTtlHours, env),
-      routineCardWaitSeconds: resolve(SETTINGS.approvals.routineCardWaitSeconds, o.approvals?.routineCardWaitSeconds, env),
-    },
-    audit: {
-      silences: resolve(SETTINGS.audit.silences, o.audit?.silences, env),
+      judgeMode: resolve(SETTINGS.approvals.judgeMode, o.approvals?.judgeMode),
+      ttlHours: resolve(SETTINGS.approvals.ttlHours, o.approvals?.ttlHours),
+      routineGrantTtlHours: resolve(SETTINGS.approvals.routineGrantTtlHours, o.approvals?.routineGrantTtlHours),
+      checkpointTtlHours: resolve(SETTINGS.approvals.checkpointTtlHours, o.approvals?.checkpointTtlHours),
+      routineCardWaitSeconds: resolve(SETTINGS.approvals.routineCardWaitSeconds, o.approvals?.routineCardWaitSeconds),
     },
     browser: {
-      enabled: resolve(SETTINGS.browser.enabled, o.browser?.enabled, env),
+      enabled: resolve(SETTINGS.browser.enabled, o.browser?.enabled),
+    },
+    aws: {
+      enabled: resolve(SETTINGS.aws.enabled, o.aws?.enabled),
+      ssoScopes: resolve(SETTINGS.aws.ssoScopes, o.aws?.ssoScopes),
     },
     bash: {
-      timeoutMs: resolve(SETTINGS.bash.timeoutMs, o.bash?.timeoutMs, env),
-      backgroundGuard: resolve(SETTINGS.bash.backgroundGuard, o.bash?.backgroundGuard, env),
+      timeoutMs: resolve(SETTINGS.bash.timeoutMs, o.bash?.timeoutMs),
+      backgroundGuard: resolve(SETTINGS.bash.backgroundGuard, o.bash?.backgroundGuard),
     },
     connectors: {
-      dmOnly: resolve(SETTINGS.connectors.dmOnly, o.connectors?.dmOnly, env),
-      userPrincipal: resolve(SETTINGS.connectors.userPrincipal, o.connectors?.userPrincipal, env),
-      linkSetVault: resolve(SETTINGS.connectors.linkSetVault, o.connectors?.linkSetVault, env),
-      opTiering: resolve(SETTINGS.connectors.opTiering, o.connectors?.opTiering, env),
-      memberPlane: resolve(SETTINGS.connectors.memberPlane, o.connectors?.memberPlane, env),
+      dmOnly: resolve(SETTINGS.connectors.dmOnly, o.connectors?.dmOnly),
+      userPrincipal: resolve(SETTINGS.connectors.userPrincipal, o.connectors?.userPrincipal),
+      linkSetVault: resolve(SETTINGS.connectors.linkSetVault, o.connectors?.linkSetVault),
+      opTiering: resolve(SETTINGS.connectors.opTiering, o.connectors?.opTiering),
+      memberPlane: resolve(SETTINGS.connectors.memberPlane, o.connectors?.memberPlane),
+    },
+    control: {
+      githubAdmin: resolve(SETTINGS.control.githubAdmin, o.control?.githubAdmin),
+      adminRoleRules: resolve(SETTINGS.control.adminRoleRules, o.control?.adminRoleRules),
+    },
+    directory: {
+      autoConfirm: resolve(SETTINGS.directory.autoConfirm, o.directory?.autoConfirm),
+      groupAllowlist: resolve(SETTINGS.directory.groupAllowlist, o.directory?.groupAllowlist),
+      oktaApps: resolve(SETTINGS.directory.oktaApps, o.directory?.oktaApps),
     },
     identityLinking: {
-      codeBack: resolve(SETTINGS.identityLinking.codeBack, o.identityLinking?.codeBack, env),
+      codeBack: resolve(SETTINGS.identityLinking.codeBack, o.identityLinking?.codeBack),
     },
     delegation: {
-      oneshotAgent: resolve(SETTINGS.delegation.oneshotAgent, o.delegation?.oneshotAgent, env),
+      oneshotAgent: resolve(SETTINGS.delegation.oneshotAgent, o.delegation?.oneshotAgent),
     },
     models: {
-      stack: resolve(SETTINGS.models.stack, o.models?.stack, env),
+      stack: resolve(SETTINGS.models.stack, o.models?.stack),
+      primary: resolve(SETTINGS.models.primary, o.models?.primary),
+      force: resolve(SETTINGS.models.force, o.models?.force),
     },
     discord: {
-      autoThread: resolve(SETTINGS.discord.autoThread, o.discord?.autoThread, env),
-      statusUx: resolve(SETTINGS.discord.statusUx, o.discord?.statusUx, env),
+      autoThread: resolve(SETTINGS.discord.autoThread, o.discord?.autoThread),
+      statusUx: resolve(SETTINGS.discord.statusUx, o.discord?.statusUx),
     },
     egress: {
-      enforce: resolve(SETTINGS.egress.enforce, o.egress?.enforce, env),
-      allowUnenforced: resolve(SETTINGS.egress.allowUnenforced, o.egress?.allowUnenforced, env),
+      enforce: resolve(SETTINGS.egress.enforce, o.egress?.enforce),
+      allowUnenforced: resolve(SETTINGS.egress.allowUnenforced, o.egress?.allowUnenforced),
     },
     externalPolicy: {
-      authorGrain: resolve(SETTINGS.externalPolicy.authorGrain, o.externalPolicy?.authorGrain, env),
-      roomGrain: resolve(SETTINGS.externalPolicy.roomGrain, o.externalPolicy?.roomGrain, env),
+      authorGrain: resolve(SETTINGS.externalPolicy.authorGrain, o.externalPolicy?.authorGrain),
+      roomGrain: resolve(SETTINGS.externalPolicy.roomGrain, o.externalPolicy?.roomGrain),
     },
     governance: {
-      floorTtlMs: resolve(SETTINGS.governance.floorTtlMs, o.governance?.floorTtlMs, env),
+      floorTtlMs: resolve(SETTINGS.governance.floorTtlMs, o.governance?.floorTtlMs),
     },
     identity: {
-      dmTrustTtlMs: resolve(SETTINGS.identity.dmTrustTtlMs, o.identity?.dmTrustTtlMs, env),
-      name: resolve(SETTINGS.identity.name, o.identity?.name, env),
-      shortName: resolve(SETTINGS.identity.shortName, o.identity?.shortName, env),
-      commandName: resolve(SETTINGS.identity.commandName, o.identity?.commandName, env),
+      dmTrustTtlMs: resolve(SETTINGS.identity.dmTrustTtlMs, o.identity?.dmTrustTtlMs),
+      name: resolve(SETTINGS.identity.name, o.identity?.name),
+      shortName: resolve(SETTINGS.identity.shortName, o.identity?.shortName),
+      commandName: resolve(SETTINGS.identity.commandName, o.identity?.commandName),
+      allowMultiTenantPrincipals: resolve(SETTINGS.identity.allowMultiTenantPrincipals, o.identity?.allowMultiTenantPrincipals),
+      blanketTrust: resolve(SETTINGS.identity.blanketTrust, o.identity?.blanketTrust),
     },
     memory: {
-      dreamCandidateCap: resolve(SETTINGS.memory.dreamCandidateCap, o.memory?.dreamCandidateCap, env),
-      skillProposalPr: resolve(SETTINGS.memory.skillProposalPr, o.memory?.skillProposalPr, env),
+      dreamCandidateCap: resolve(SETTINGS.memory.dreamCandidateCap, o.memory?.dreamCandidateCap),
+      skillProposalPr: resolve(SETTINGS.memory.skillProposalPr, o.memory?.skillProposalPr),
+      syncTiming: resolve(SETTINGS.memory.syncTiming, o.memory?.syncTiming),
     },
     policyPages: {
-      privacy: resolve(SETTINGS.policyPages.privacy, o.policyPages?.privacy, env),
-      terms: resolve(SETTINGS.policyPages.terms, o.policyPages?.terms, env),
+      privacy: resolve(SETTINGS.policyPages.privacy, o.policyPages?.privacy),
+      terms: resolve(SETTINGS.policyPages.terms, o.policyPages?.terms),
+    },
+    schedules: {
+      sweepOrgs: resolve(SETTINGS.schedules.sweepOrgs, o.schedules?.sweepOrgs),
     },
     routines: {
-      eventMaxFanout: resolve(SETTINGS.routines.eventMaxFanout, o.routines?.eventMaxFanout, env),
-      maxConcurrency: resolve(SETTINGS.routines.maxConcurrency, o.routines?.maxConcurrency, env),
-      jobMaxFires: resolve(SETTINGS.routines.jobMaxFires, o.routines?.jobMaxFires, env),
-      jobMaxDays: resolve(SETTINGS.routines.jobMaxDays, o.routines?.jobMaxDays, env),
+      eventMaxFanout: resolve(SETTINGS.routines.eventMaxFanout, o.routines?.eventMaxFanout),
+      maxConcurrency: resolve(SETTINGS.routines.maxConcurrency, o.routines?.maxConcurrency),
+      jobMaxFires: resolve(SETTINGS.routines.jobMaxFires, o.routines?.jobMaxFires),
+      jobMaxDays: resolve(SETTINGS.routines.jobMaxDays, o.routines?.jobMaxDays),
     },
     rotation: {
-      quietGapHours: resolve(SETTINGS.rotation.quietGapHours, o.rotation?.quietGapHours, env),
-      expiryDays: resolve(SETTINGS.rotation.expiryDays, o.rotation?.expiryDays, env),
-      tokenBudget: resolve(SETTINGS.rotation.tokenBudget, o.rotation?.tokenBudget, env),
-      turnBudget: resolve(SETTINGS.rotation.turnBudget, o.rotation?.turnBudget, env),
-      contextSizeTokens: resolve(SETTINGS.rotation.contextSizeTokens, o.rotation?.contextSizeTokens, env),
-      tailTokenCap: resolve(SETTINGS.rotation.tailTokenCap, o.rotation?.tailTokenCap, env),
+      quietGapHours: resolve(SETTINGS.rotation.quietGapHours, o.rotation?.quietGapHours),
+      expiryDays: resolve(SETTINGS.rotation.expiryDays, o.rotation?.expiryDays),
+      tokenBudget: resolve(SETTINGS.rotation.tokenBudget, o.rotation?.tokenBudget),
+      turnBudget: resolve(SETTINGS.rotation.turnBudget, o.rotation?.turnBudget),
+      contextSizeTokens: resolve(SETTINGS.rotation.contextSizeTokens, o.rotation?.contextSizeTokens),
+      tailTokenCap: resolve(SETTINGS.rotation.tailTokenCap, o.rotation?.tailTokenCap),
     },
     sandbox: {
-      stopAfterTurn: resolve(SETTINGS.sandbox.stopAfterTurn, o.sandbox?.stopAfterTurn, env),
-      extendMaxMinutes: resolve(SETTINGS.sandbox.extendMaxMinutes, o.sandbox?.extendMaxMinutes, env),
-      timeoutMs: resolve(SETTINGS.sandbox.timeoutMs, o.sandbox?.timeoutMs, env),
-      snapshotExpirationMs: resolve(SETTINGS.sandbox.snapshotExpirationMs, o.sandbox?.snapshotExpirationMs, env),
-      image: resolve(SETTINGS.sandbox.image, o.sandbox?.image, env),
-      region: resolve(SETTINGS.sandbox.region, o.sandbox?.region, env),
+      selfHostBackend: resolve(SETTINGS.sandbox.selfHostBackend, o.sandbox?.selfHostBackend),
+      useVercelSandbox: resolve(SETTINGS.sandbox.useVercelSandbox, o.sandbox?.useVercelSandbox),
+      stopAfterTurn: resolve(SETTINGS.sandbox.stopAfterTurn, o.sandbox?.stopAfterTurn),
+      extendMaxMinutes: resolve(SETTINGS.sandbox.extendMaxMinutes, o.sandbox?.extendMaxMinutes),
+      timeoutMs: resolve(SETTINGS.sandbox.timeoutMs, o.sandbox?.timeoutMs),
+      snapshotExpirationMs: resolve(SETTINGS.sandbox.snapshotExpirationMs, o.sandbox?.snapshotExpirationMs),
+      image: resolve(SETTINGS.sandbox.image, o.sandbox?.image),
+      region: resolve(SETTINGS.sandbox.region, o.sandbox?.region),
     },
     spend: {
-      usageEventsTtlDays: resolve(SETTINGS.spend.usageEventsTtlDays, o.spend?.usageEventsTtlDays, env),
-      sandboxMemoryGiB: resolve(SETTINGS.spend.sandboxMemoryGiB, o.spend?.sandboxMemoryGiB, env),
-      sandboxGiBHourUsd: resolve(SETTINGS.spend.sandboxGiBHourUsd, o.spend?.sandboxGiBHourUsd, env),
+      usageEventsTtlDays: resolve(SETTINGS.spend.usageEventsTtlDays, o.spend?.usageEventsTtlDays),
+      sandboxMemoryGiB: resolve(SETTINGS.spend.sandboxMemoryGiB, o.spend?.sandboxMemoryGiB),
+      sandboxGiBHourUsd: resolve(SETTINGS.spend.sandboxGiBHourUsd, o.spend?.sandboxGiBHourUsd),
+    },
+    storage: {
+      allowEphemeralMemory: resolve(SETTINGS.storage.allowEphemeralMemory, o.storage?.allowEphemeralMemory),
+      allowEphemeralOperational: resolve(SETTINGS.storage.allowEphemeralOperational, o.storage?.allowEphemeralOperational),
     },
     skills: {
-      domainSkillCap: resolve(SETTINGS.skills.domainSkillCap, o.skills?.domainSkillCap, env),
+      domainSkillCap: resolve(SETTINGS.skills.domainSkillCap, o.skills?.domainSkillCap),
     },
     soak: {
-      capture: resolve(SETTINGS.soak.capture, o.soak?.capture, env),
-      captureSurfacePrefix: resolve(SETTINGS.soak.captureSurfacePrefix, o.soak?.captureSurfacePrefix, env),
+      capture: resolve(SETTINGS.soak.capture, o.soak?.capture),
+      captureSurfacePrefix: resolve(SETTINGS.soak.captureSurfacePrefix, o.soak?.captureSurfacePrefix),
     },
     stall: {
-      repeatThreshold: resolve(SETTINGS.stall.repeatThreshold, o.stall?.repeatThreshold, env),
+      repeatThreshold: resolve(SETTINGS.stall.repeatThreshold, o.stall?.repeatThreshold),
     },
     taint: {
-      mode: resolve(SETTINGS.taint.mode, o.taint?.mode, env),
-      tierMode: resolve(SETTINGS.taint.tierMode, o.taint?.tierMode, env),
-      undeclaredSurface: resolve(SETTINGS.taint.undeclaredSurface, o.taint?.undeclaredSurface, env),
+      mode: resolve(SETTINGS.taint.mode, o.taint?.mode),
+      tierMode: resolve(SETTINGS.taint.tierMode, o.taint?.tierMode),
+      undeclaredSurface: resolve(SETTINGS.taint.undeclaredSurface, o.taint?.undeclaredSurface),
+    },
+    teams: {
+      serviceHosts: resolve(SETTINGS.teams.serviceHosts, o.teams?.serviceHosts),
     },
     tools: {
-      maxResultChars: resolve(SETTINGS.tools.maxResultChars, o.tools?.maxResultChars, env),
+      maxResultChars: resolve(SETTINGS.tools.maxResultChars, o.tools?.maxResultChars),
     },
     turn: {
-      stepBudget: resolve(SETTINGS.turn.stepBudget, o.turn?.stepBudget, env),
-      stepBackstopMultiple: resolve(SETTINGS.turn.stepBackstopMultiple, o.turn?.stepBackstopMultiple, env),
+      stepBudget: resolve(SETTINGS.turn.stepBudget, o.turn?.stepBudget),
+      stepBackstopMultiple: resolve(SETTINGS.turn.stepBackstopMultiple, o.turn?.stepBackstopMultiple),
     },
     wake: {
-      nameDropInclude: resolve(SETTINGS.wake.nameDropInclude, o.wake?.nameDropInclude, env),
-      nameDropExclude: resolve(SETTINGS.wake.nameDropExclude, o.wake?.nameDropExclude, env),
-      e2eDrivers: resolve(SETTINGS.wake.e2eDrivers, o.wake?.e2eDrivers, env),
+      nameDropInclude: resolve(SETTINGS.wake.nameDropInclude, o.wake?.nameDropInclude),
+      nameDropExclude: resolve(SETTINGS.wake.nameDropExclude, o.wake?.nameDropExclude),
+      e2eDrivers: resolve(SETTINGS.wake.e2eDrivers, o.wake?.e2eDrivers),
+      driverAllowlist: resolve(SETTINGS.wake.driverAllowlist, o.wake?.driverAllowlist),
+      testWakeRoute: resolve(SETTINGS.wake.testWakeRoute, o.wake?.testWakeRoute),
     },
     webhooks: {
-      allowUnverified: resolve(SETTINGS.webhooks.allowUnverified, o.webhooks?.allowUnverified, env),
-      allowUnverifiedGithub: resolve(SETTINGS.webhooks.allowUnverifiedGithub, o.webhooks?.allowUnverifiedGithub, env),
-      allowUnverifiedNotion: resolve(SETTINGS.webhooks.allowUnverifiedNotion, o.webhooks?.allowUnverifiedNotion, env),
+      allowUnverified: resolve(SETTINGS.webhooks.allowUnverified, o.webhooks?.allowUnverified),
+      allowUnverifiedGithub: resolve(SETTINGS.webhooks.allowUnverifiedGithub, o.webhooks?.allowUnverifiedGithub),
+      allowUnverifiedNotion: resolve(SETTINGS.webhooks.allowUnverifiedNotion, o.webhooks?.allowUnverifiedNotion),
     },
     window: {
-      topology: resolve(SETTINGS.window.topology, o.window?.topology, env),
+      topology: resolve(SETTINGS.window.topology, o.window?.topology),
     },
   };
 }
 
 export interface SettingDoc {
   readonly path: string;
-  readonly env?: string;
   readonly shipped: string;
   readonly summary: string;
 }
@@ -1008,15 +1258,8 @@ export function settingDocs(): readonly SettingDoc[] {
     for (const spec of Object.values(group)) {
       if (!isSpec(spec)) continue;
       const rendered = spec.format ? spec.format(spec.shipped) : JSON.stringify(spec.shipped);
-      out.push({ path: spec.path, env: spec.env, shipped: rendered, summary: spec.summary });
+      out.push({ path: spec.path, shipped: rendered, summary: spec.summary });
     }
   }
   return out.sort((a, b) => a.path.localeCompare(b.path));
-}
-
-export function settingEnvNames(): readonly string[] {
-  return settingDocs()
-    .map((d) => d.env)
-    .filter((e): e is string => e !== undefined)
-    .sort();
 }

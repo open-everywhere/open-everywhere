@@ -172,6 +172,29 @@ A `broad grant:` warning means you've made something reachable everywhere — fi
 go live. The full anti-footgun checklist lives in the
 **[setup runbook](../deploy/setup-runbook.md)**.
 
+### Optional: one cross-surface window
+
+Every channel the bot is in gets its own standing seat, because `window.topology` ships on. The
+`org` catch-all always stays solo: the boot refuses `mode` on it, because the whole org is never
+one window. A fresh install declares no shared window, and that is a complete setup.
+
+If a few rooms should share ONE conversation, declare ONE explicit domain with `mode: "unified"`.
+Give it a name and list its reach, in its own file under `agent/memory/config/domains/`:
+
+```ts
+export const domain = defineDomain({
+  name: "team",
+  reach: ["slack/T0123ABC/C0123ABC", "github/acme/api"], // every room that shares the window
+  memory: "org-brain",
+  mode: "unified",
+});
+```
+
+Then list it in `agent/memory/config/domains/index.ts`. Each room's seat sees what the other rooms
+said, so a unified window is a wider data blast radius than a solo seat. Every member outside Slack
+must be declared internal in `agent/identity/surfaces.ts`, or the boot refuses the window. The
+setup skill offers this step after the admin step, and makes it only if you say yes.
+
 ## Where to go next
 
 - **[Setup runbook](../deploy/setup-runbook.md)** — the full operational path: real workspace,

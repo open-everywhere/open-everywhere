@@ -3,9 +3,9 @@ const http = require("node:http");
 const CONTROL_HOST = process.env.OE_EGRESS_CONTROL_HOST_INTERNAL || "127.0.0.1";
 const CONTROL_PORT = Number(process.env.OE_EGRESS_CONTROL_PORT || 8080);
 
-function query(src, host, method, path) {
+function query(src, host, method, path, auth) {
   return new Promise((resolve) => {
-    const qs = new URLSearchParams({ src: src || "", host: host || "", method: method || "", path: path || "" });
+    const qs = new URLSearchParams({ src: src || "", host: host || "", method: method || "", path: path || "", auth: auth || "" });
     const req = http.request(
       { host: CONTROL_HOST, port: CONTROL_PORT, path: `/acl?${qs.toString()}`, method: "GET", timeout: 2000 },
       (res) => {
@@ -38,9 +38,9 @@ async function handleLine(line) {
   if (!trimmed) return;
   const parts = trimmed.split(/\s+/);
   const id = parts.shift();
-  const [src, host, rawMethod, path] = parts;
+  const [src, host, rawMethod, path, auth] = parts;
   const method = rawMethod && rawMethod.toUpperCase() === "CONNECT" ? "" : rawMethod;
-  const decision = await query(dec(src), dec(host), dec(method), dec(path));
+  const decision = await query(dec(src), dec(host), dec(method), dec(path), dec(auth));
   if (decision && decision.allow) {
     let extra = "";
     if (decision.headers && decision.headers.authorization) {

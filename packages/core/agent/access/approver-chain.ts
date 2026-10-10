@@ -1,7 +1,6 @@
 import { declaredStandingWrites } from "../routines/declared-permissions.js";
-import { classifyConnectorOp, isConnectorOpTool, judgeDeferredTool, postTurnSurfaceFloors, RESUME_TOOL, TOOL_CONSEQUENCE, type ConsequenceEntry } from "./consequence.js";
+import { classifyConnectorOp, classifyConnectorOpTier, isConnectorOpTool, judgeableConnectorOp, judgeDeferredTool, postTurnSurfaceFloors, RESUME_TOOL, TOOL_CONSEQUENCE, type ConsequenceEntry } from "./consequence.js";
 import { CONNECTOR_INPUT_PREVIEW_CAP } from "../approvals/connector-op-offer.js";
-import { effectiveConnectorOpTier } from "./connector-op-gating.js";
 import { awsCommandVerdict, type AwsScreenInput } from "./aws-screen.js";
 import { untrustedIngestedThisTurn, taintKindsThisTurn } from "./taint-signal.js";
 import { taintMode, type TaintMode } from "./taint-enforcement.js";
@@ -588,11 +587,14 @@ export function judgedConnectorOpTool(
   if (kind !== CONNECTOR_OP_ACTION) return undefined;
   if (chain?.unattended !== false || chain.tainted === true) return undefined;
   if (typeof chain.domain !== "string" || chain.domain.length === 0) return undefined;
-  const a = args as { tool?: unknown; grain?: unknown; credential?: unknown; tainted?: unknown; inputPreview?: unknown } | null | undefined;
+  const a = args as { tool?: unknown; grain?: unknown; opTier?: unknown; credential?: unknown; tainted?: unknown; inputPreview?: unknown } | null | undefined;
   if (a === null || a === undefined || typeof a.tool !== "string") return undefined;
   if (typeof a.inputPreview !== "string" || a.inputPreview.length > CONNECTOR_INPUT_PREVIEW_CAP) return undefined;
-  if (a.grain === "destructive" || a.grain === "once" || a.tainted === true || a.credential !== "domain") return undefined;
-  if (!isConnectorOpTool(a.tool) || effectiveConnectorOpTier(a.tool) !== "write") return undefined;
+  if (a.grain === "once" || a.tainted === true || a.credential !== "domain") return undefined;
+  if (!isConnectorOpTool(a.tool) || !judgeableConnectorOp(a.tool)) return undefined;
+  const nameTier = classifyConnectorOpTier(a.tool);
+  if (a.opTier !== undefined && a.opTier !== "write" && a.opTier !== "destructive") return undefined;
+  if (a.opTier === "destructive" && nameTier !== "destructive") return undefined;
   return a.tool;
 }
 

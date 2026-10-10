@@ -429,7 +429,7 @@ connected catalogues, nothing more. `connection_execute` runs one operation, nam
 not tools of their own, so they never appear as a fixed list anywhere. The framework re-keys each
 call to its `<connection>__<op>` name (`notion__search`, `linear__create_issue`, …), and every OE
 gate reads that name. Each operation is tiered by its verb when it is called (reads run, writes
-draw an approval) **once `connectors.opTiering` is armed** — see the note below — and each call is
+draw an approval) under `connectors.opTiering`, which ships on — see the note below — and each call is
 audited individually.
 
 ### Raising an operation's tier
@@ -437,9 +437,11 @@ audited individually.
 The verb classifier is the default, not the last word. It reads `search`/`get`/`list` as
 **read**, a recognised mutation as **write**, an irreversible one as **destructive** — and
 anything it doesn't recognise as **destructive**, so a novel verb fails closed rather than
-sailing through. A `read` runs with no prompt; a `write` needs one approval per operation per
-conversation; a `destructive` op needs one **per call**, always, for exactly the input the card
-showed.
+sailing through. A `read` runs with no prompt. A `write` and a `destructive` op each need one
+approval **per call**, for exactly the input the card showed (OPE-2363): a click keeps no grant for
+a later call. The approval is a person's click, or an approval-judge allow under a pre-approval rule
+the deployment wrote ([pre-approval rules](../how-it-works/pre-approval-rules.md)). A judge allow is
+never cached for a connector op, so an identical later call is judged again.
 
 **Every approval here is an OE card, never a wait** (OPE-2340). A call that needs a person is
 refused with "an approval card is posted", and the card goes into the room. Nothing holds a turn
@@ -447,10 +449,40 @@ on it, so the room and every other job of the conversation carry on. When a memb
 agent calls the operation again and it runs. The card shows the operation, its connection and its
 input, rendered as data.
 
-**This ladder needs `connectors.opTiering`, and that setting ships OFF.** Without it every
-operation needs one approval per conversation and the verb is not read — so a read needs a card
-too, and a destructive op is covered by its first approval instead of asking again. Arm the
-setting in your deployment's `agent/settings.ts` to get the ladder described above.
+**This ladder needs `connectors.opTiering`, and that setting ships ON.** Turned off, the verb
+is not read: every call needs a card, a read included, and a destructive op takes the same card as
+a write. Set `connectors: { opTiering: false, userPrincipal: false }` in your deployment's
+`agent/settings/settings.ts` only if you want that blanket grain. The boot refuses `opTiering: false`
+while `userPrincipal` is on, and `userPrincipal` ships on.
+
+**The server's own tool annotations are a second tier source** (2026-10-10). An MCP server can
+declare, per tool, `readOnlyHint` and `destructiveHint` (MCP spec `ToolAnnotations`). For a
+connection the deployment registered in its own code (or a plugin an admin installed), the
+connector seam reads them from the framework's MCP client
+(`packages/core/agent/connections/connector-tool-hints.ts`):
+
+- `readOnlyHint: true` reads as **read**, `destructiveHint: true` as **destructive**, and both
+  explicitly `false` as **write**. `readOnlyHint: false` alone names no tier.
+- When the verb classifier recognises **no** verb in the name, the hint decides. So a read with an
+  unusual name runs with no card when its server says it is read-only.
+- When the classifier **does** recognise a verb and the hint disagrees, the **stricter** of the
+  two wins. A server cannot open a `delete_page` by calling it read-only, and a server that calls a
+  `search` destructive makes it draw a card per call.
+- With no hint and no recognised verb, the op stays **destructive** (fail-closed).
+
+🔴 **What this trusts.** The MCP spec calls annotations untrusted unless they come from a trusted
+server. Here the trust decision is the deployer's own registration of the connection. A server
+you registered can open an op whose name the classifier does not recognise by declaring it
+read-only, so register only servers whose annotations you accept. A `connectorOps` raise still
+applies on top of a hint (below), so you can hold any op at a card whatever its server declares.
+A person's lent tool (`grant__…`) never takes hints. When the catalogue cannot be read within
+three seconds, the op has no hints and the classifier alone decides. That keeps an unrecognised
+name at **destructive**, but it drops a raise the server declared on a recognised name, so a
+`search` its server calls destructive runs as a read on that call. The framework caches the
+catalogue after its first read, so this affects a cold first call only. A `connectorOps` raise
+holds whatever the catalogue does. The `connector.op` audit row
+carries `opTierHint` when the server declared a tier, and `opTierHintDecided: true` when that
+hint moved the tier.
 
 It reads the **operation** half of the name and nothing else. A connection slug can itself
 contain `__` — a plugin-minted connector is named `<plugin>__<server>` — so the operation is
@@ -614,20 +646,21 @@ Granting a connector is enforced at eight layers:
    terminal and fail-closed, if that surface wasn't granted this connector. An ungranted
    or unresolvable surface never reaches a credential. This is built into the credential
    builders, so an author can't forget it.
-4. **DM-only context wall (v1, default on).** The framework gives *every* session that
+4. **DM-only context wall (v1, shipped off).** The framework gives *every* session that
    has connections `connection_search` and `connection_execute`, and each call names one
    operation (`notion` / `search`, …) — standing channel watchers included — so the same `getToken` gate also requires the calling
-   surface to resolve a *positively-DM* context. Connector operations outside a DM seat
+   surface to resolve a *positively-DM* context when it is armed. Armed, connector operations outside a DM seat
    (or a task worker spawned from one) are refused fail-closed before any token exists,
-   and every verdict is audited (`connector.use` / `connector.refused`). **Two settings take this
-   wall down.** Set `connectors.dmOnly: false`, or arm `connectors.opTiering` — a non-DM context
-   reaches a connector on the tiering branch, because that branch is what holds its writes behind an
-   approval. This deployment ships both moved.
+   and every verdict is audited (`connector.use` / `connector.refused`). **The shipped posture
+   leaves this wall down:** `connectors.dmOnly` ships `false` and `connectors.opTiering` ships
+   `true`, so a channel reaches a connector exactly when a domain or bundle grants it, and the
+   tiering branch holds its writes behind an approval. The wall bites only with
+   `connectors: { dmOnly: true, opTiering: false, userPrincipal: false }`.
 5. **Disclosure gate.** The grant check runs `assertConnectorDisclosure` **last**, so the cheaper
-   grant and DM checks refuse first. Its audience-floor and requestor-entitlement legs are inert on
-   the default posture. Only a Slack bundle registers a member supplier, and the DM-only wall above
-   defaults on, so the audience-floor leg refuses only on an externally-shared Slack channel in a
-   deployment that has set `connectors.dmOnly` to false.
+   grant and DM checks refuse first. It judges the room, never the person who asked. Only a Slack
+   bundle registers a member supplier, so the audience-floor leg refuses only on an
+   externally-shared Slack channel (or while a Slack roster read has failed). The DM-only wall ships
+   down, so on the shipped posture that leg sees every granted channel turn.
 6. **Broad-grant lint.** Binding at org or tenant scope emits a warning at preview
    time — broad blast radius is visible before you ship.
 7. **Break-glass revoke.** A control-plane override can *remove* a connector from a
@@ -660,10 +693,10 @@ defineBinding({ bundle: "payments-tools",
 ```
 
 - In `#payments`: the firewall lets GitHub through (one repo). The Notion grant
-  resolves. On a deployment that still holds the DM-only wall up, host-side connector *operations*
-  are refused from a channel seat, and the channel reaches Notion by the egress/skill routes
-  instead. Either `connectors.dmOnly: false` or `connectors.opTiering: true` takes that wall down;
-  this deployment ships both.
+  resolves, and on the shipped posture the channel's host-side connector *operations* run under
+  the per-op tier: reads run, writes get a card. A deployment that sets
+  `connectors: { dmOnly: true, opTiering: false, userPrincipal: false }` refuses those operations from a channel seat,
+  and the channel then reaches Notion by the egress/skill routes instead.
 - In any other channel: the hard gate refuses Notion; the firewall blocks GitHub.
 - In a DM: neither applies — a DM resolves against the caller's *own* credentials, and a
   **write** with them is admitted on the ordinary approval card (the read/write/destructive
@@ -914,12 +947,12 @@ unexpired, unrevoked grant that nobody could spend for another 29 days.
 
 🔴 **The key has two shapes, and whether the room is SEATED decides which.** A seated room's own
 conversation is the domain's standing seat; an unseated room's is its own wake. Seating is what
-`window.topology` arms, and it ships **unarmed**, so every room of a fresh self-hosted deployment is
-unseated:
+`window.topology` arms, and it ships **armed**, so every room the bot is in on a fresh self-hosted
+deployment is seated (each in its own `solo` seat, unless a deployer declares a `unified` domain):
 
 | The room | Its own conversation | The scope key |
 |---|---|---|
-| **unseated** — the shipped default, and any room no seat domain reaches | every wake in that room, threads included; nothing stamps a grain | `oe-grant-room::<domain name>::<platform>/<workspace>/<room>` |
+| **unseated** — `window.topology` off, and any room no seat domain reaches | every wake in that room, threads included; nothing stamps a grain | `oe-grant-room::<domain name>::<platform>/<workspace>/<room>` |
 | **seated** | the domain's `standing` seat, shared by the rooms of that domain | `oe-grant-domain::<domain name>` |
 
 🔴 **Either key is reached by the room's WORKERS, never by its seat** (OPE-2023). The seat holds no
@@ -1469,21 +1502,23 @@ A grant row that names no vendor tool is not a borrow, and the broker fails it c
 
 ### The two `oe-oauth` dialects
 
-`oe-oauth` is the built-in user-authorization flow. Each provider entry in
-`OE_OAUTH_CONFIG` **declares** which dialect its authorization server speaks. The mode is
-never inferred from which fields an entry carries: a config that looks confidential but
-declares no mode is refused, because guessing would silently change how the deployment
-authenticates.
+`oe-oauth` is the built-in user-authorization flow. Each connector declares its own sign-in in
+its connection module, next to its URL, with `declareConnectionSignIn(homeRef, { mode, … })` from
+core `agent/connections/connection-sign-in.ts`. The key is the OAuth home ref of the credential,
+for example `mcp.notion.com/notion-mcp`. The declaration states which dialect its authorization
+server speaks. The mode is never inferred from which fields an entry carries: a declaration that
+looks confidential but declares no mode is refused, because guessing would silently change how the
+deployment authenticates. (The provider map was the `OE_OAUTH_CONFIG` variable until OPE-2411.)
 
 | Mode | For | How the client exists | How it authenticates |
 | --- | --- | --- | --- |
 | `discovery-dcr-pkce` (default) | Hosted MCP servers that publish RFC 8414 metadata | The adapter registers itself (RFC 7591) | PKCE, public client, no secret |
 | `static-confidential` | Vendors with no discovery and no registration, such as Notion's REST OAuth | A human creates it in the vendor's portal | HTTP Basic over a client id and a client secret |
 
-A `static-confidential` entry never holds the secret itself. It names a `clientSecretRef`,
+A `static-confidential` declaration never holds the secret itself. It names a `clientSecretRef`,
 and the adapter reads that ref through the credential broker at the moment of each token
 call — so the secret lives encrypted in the credential store and nowhere else. A literal
-`clientSecret` in the config block is refused outright.
+`clientSecret` in the declaration is refused outright.
 
 ### After you consent: what resumes, and what does not
 
@@ -1540,14 +1575,12 @@ Three families of row cover connecting a vendor, taking a credential in, and len
 | `connector.credential_bound` | A consent completion BINDS the credential — the OAuth callback route, after the token lands in the vault. | The connector, the **subject type** (`app` or `user`), and `rebound` — `true` when the bind replaced an existing row for that subject. `rebound` is read just before the write and takes no cross-process lock, so two simultaneous completions can both report `false`; a serial second consent — the case the row exists for — always reports `true`. 🔴 It never carries token material, and it names no principal on either subject type: the callback authenticates nobody. |
 | `connector.consent_detour` | A session pauses and sends a person to a consent detour. | The detour id, the connector, the detour's expiry, and the paused session. |
 | `connector.consent_resume` | That detour comes back. | The same detour id and connector, plus the **verdict** the person gave and whether the resume was delivered to the paused session. The two halves of one detour join on `detourId`. |
-| `connector.entitlement_check` | The disclosure gate **allows** a connector read. | The connection, the verdict, and the audience floor the gate read. |
 
-🔴 **`connector.entitlement_check` is the compliance-mode ALLOW row, and nothing else.** The gate
-writes it only when compliance mode is on **and** the agent was directly addressed **and** the
-verdict passed. A refusal never writes it — a refusal writes `connector.refused`, the established
-refusal action, so it lands in the stream an operator already watches. So the count of
-`connector.entitlement_check` rows is a count of permitted compliance-mode disclosures, never a
-count of entitlement checks performed.
+The disclosure gate writes no row when it allows a connector read. A refusal writes
+`connector.refused`, the established refusal action, so it lands in the stream an operator already
+watches. An older log can still hold `connector.entitlement_check` rows: the removed
+`requestorEntitlementChecks` flag wrote one per allowed directly-addressed read while it was `true`,
+and no code writes the name now.
 
 ### Taking a credential in
 
@@ -1596,14 +1629,15 @@ never on its own as evidence that the prompt rule is failing.
 the workspace. The ask row carries no requester partition to reuse, so the sweep names its own
 instead of borrowing one that would be wrong.
 
-🔴 **The lapse notices cover only the orgs in `OE_TIDY_ORGS`.** The daily sweep sends the
+🔴 **The lapse notices cover only the orgs in `schedules.sweepOrgs`.** The daily sweep sends the
 requester's lapse notice, rewrites the owner's card to expired and writes `grant.expired`. It walks
-only the orgs that `OE_TIDY_ORGS` names (default: the single org `default`). A lapsed ask grants
+only the orgs that the setting `schedules.sweepOrgs` names (shipped: `["default"]`; it was
+`OE_TIDY_ORGS` until OPE-2411). A lapsed ask grants
 nothing in ANY org, because every read and every approve checks the clock on the row. But in an
-org the variable does not list, the owner's card keeps a live Approve button, the requester gets no
+org the setting does not list, the owner's card keeps a live Approve button, the requester gets no
 lapse notice, and no `grant.expired` row is written. A Decline click does not check the clock, so a
 Decline on such a lapsed ask still records `declined` and tells the requester. A multi-tenant deployment must list every org
-in `OE_TIDY_ORGS` — see the [configuration reference](../deploy/configuration-reference.md#approvals).
+in `schedules.sweepOrgs` — see the [configuration reference](../deploy/configuration-reference.md#approvals).
 
 ## Reaching AWS (host-side, identity-bound)
 
@@ -1651,15 +1685,15 @@ invocation. Two identity modes:
   It refuses **by default**. A requester the link plane holds no `aws` account for is refused
   too; it never falls back to binding whoever happened to sign in. So a deployment must link
   its people's Identity Center accounts before `identity: "me"` works at all, and the link
-  flow must request the `openid` scope (see `OE_AWS_SSO_SCOPES`) — without an id-token nothing
+  flow must request the `openid` scope (see the setting `aws.ssoScopes`) — without an id-token nothing
   can name the signer, and every completion refuses.
 
   **How an `aws` account gets linked, and what its id must be.** The link plane's only in-tree
   writer for a platform the agent cannot post to is the [directory sync](../how-it-works/identity.md):
   a directory provider arm returns the person's Identity Center account as a `DirectoryAccount`
   with `platform: "aws"`, which lands as a `suggested` row the person ratifies in their own DM —
-  or which auto-confirms when the arm grades it `attested` and the operator armed
-  `OE_DIRECTORY_AUTOCONFIRM=attested`. There is no challenge route: an Identity Center account
+  or which auto-confirms when the arm grades it `attested` and the operator set
+  `directory.autoConfirm: "attested"`. There is no challenge route: an Identity Center account
   can neither post a code nor answer a consent in a DM. 🔴 **The row's `nativeId` must be the
   Identity Center *user id*** — the exact value the sign-in's id-token carries as `sub`. The join
   matches on that and on nothing else, so an arm that writes a display name, an email or another

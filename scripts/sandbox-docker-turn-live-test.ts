@@ -1,3 +1,4 @@
+import { __setTestValveForTest } from "@open-everywhere/core/agent/testing/test-valves.js";
 import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
@@ -82,11 +83,25 @@ async function main(): Promise<void> {
     throw new Error("sandbox-docker-turn-live-test: NODE_ENV=test would make eve substitute its own fixture mock. Unset it.");
   }
   delete process.env.EVE_MOCK_AUTHORED_MODELS;
-  delete process.env.OE_SANDBOX_BACKEND;
+  {
+    const key = Symbol.for("open-everywhere.settings.registered.v1");
+    let held: Record<string, Record<string, unknown> | undefined> | null = null;
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      value: {
+        get oeSlot() {
+          return held;
+        },
+        set oeSlot(v: Record<string, Record<string, unknown> | undefined> | null) {
+          held = v === null ? null : { ...v, sandbox: { ...(v.sandbox ?? {}), selfHostBackend: "docker" } };
+        },
+      },
+    });
+  }
 
   const state = mkdtempSync(join(tmpdir(), "oe-docker-live-"));
-  process.env.OE_SCRIPTED_MODEL = "1";
-  process.env.OE_EGRESS_SPOOF = "1";
+  __setTestValveForTest("scripted-model", true);
+  __setTestValveForTest("egress-spoof", true);
   process.env.OE_RELAY_SECRET = RELAY_SECRET;
   process.env.OE_CONTROL_READ_TOKENS = `dlt:${createHash("sha256").update("unused", "utf8").digest("hex")}`;
   process.env.OE_PGLITE_DIR = join(state, "pglite");

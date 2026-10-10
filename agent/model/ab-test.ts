@@ -19,7 +19,7 @@ if (abTestCollidesWithChampion(MODEL_AB_TEST, PRIMARY_MODEL)) {
   throw new Error(
     `model A/B test: the challenger "${MODEL_AB_TEST.challenger}" IS this deployment's resolved champion, so both ` +
       `arms would run one model. Point CHALLENGER_STACK at a different stack, or set percent to 0. ` +
-      `(The champion follows models.stack, which OE_MODEL_STACK and \`npm run e2e:stack\` both move.)`,
+      `(The champion follows models.stack in agent/settings/settings.ts, which \`npm run e2e:stack\` also moves.)`,
   );
 }
 

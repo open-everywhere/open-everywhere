@@ -1,7 +1,5 @@
 import { assertPackageDistFresh } from "./core-dist-freshness.js";
 
-delete process.env.OE_TRUST;
-
 assertPackageDistFresh("packages/core", "@open-everywhere/core");
 assertPackageDistFresh("packages/providers/slack", "@open-everywhere/provider-slack");
 

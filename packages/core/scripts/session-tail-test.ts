@@ -296,7 +296,7 @@ function post(secs: number, text: string, over: Partial<SessionTailEntry> = {}):
 
 {
   const WITHHOLD: ExternalPolicy = { authorGrain: "withhold", roomGrain: "engage" };
-  const SHIPPED: ExternalPolicy = { authorGrain: "taint", roomGrain: "engage" };
+  const OPT_OUT: ExternalPolicy = { authorGrain: "taint", roomGrain: "engage" };
   const REGISTER: AuthorTrustQuery = { tenantKey: "discord/guild-1", authorId: "U_STRANGER" };
 
   const shapes: readonly { readonly name: string; readonly refuted: IngestedChatMessage; readonly member: IngestedChatMessage }[] = [
@@ -312,7 +312,7 @@ function post(secs: number, text: string, over: Partial<SessionTailEntry> = {}):
 
     ok(withholdsBody(refutedMsg!, WITHHOLD), `🔴 ${s.name}: a refuted author's tail row is WITHHELD under authorGrain: "withhold"`);
     ok(!withholdsBody(memberMsg!, WITHHOLD), `🔴 ${s.name} NEGATIVE CONTROL: a member's tail row in the same position is NOT withheld — the row's facts decide, not the grain`);
-    ok(!withholdsBody(refutedMsg!, SHIPPED), `${s.name}: the SHIPPED \`taint\` grain withholds nothing, so no deployment moves without opting in`);
+    ok(!withholdsBody(refutedMsg!, OPT_OUT), `${s.name}: the \`taint\` opt-out grain withholds nothing`);
     eq(memberRow.refuted, false, `${s.name}: a member's row records a graded "no" as \`false\`, never as an absent field`);
     eq(tailAuthorGrain({ trust: "peer" }).refuted, false, `${s.name}: …and so does a fact set that OMITTED it — the road normalises, it does not forward`);
     eq(refutedMsg!.ungraded, undefined, `${s.name}: a row this road wrote is never UNGRADED — that state is reserved for a row persisted before the field existed`);
@@ -322,9 +322,9 @@ function post(secs: number, text: string, over: Partial<SessionTailEntry> = {}):
   const [olderMsg] = buildTail([olderRow]);
   eq(olderMsg!.body, "written before the field existed", "an older row still renders — the read path tolerates the missing field");
   eq(olderMsg!.ungraded, true, "…and rides as UNGRADED rather than as a claim about its author");
-  eq(olderMsg!.refuted, undefined, "🔴 …and is NEVER stamped `refuted`, which would be a verdict nothing measured (and would mark the turn on the shipped grain)");
+  eq(olderMsg!.refuted, undefined, "🔴 …and is NEVER stamped `refuted`, which would be a verdict nothing measured (and would mark the turn on the `taint` grain)");
   ok(withholdsBody(olderMsg!, WITHHOLD), '🔴 an UNGRADED row is withheld under "withhold" — unknown reads as the fail-closed answer, never as "not refuted"');
-  ok(!withholdsBody(olderMsg!, SHIPPED), "negative control: …and is byte-identical on the shipped `taint` grain");
+  ok(!withholdsBody(olderMsg!, OPT_OUT), "negative control: …and is byte-identical on the `taint` opt-out grain");
   ok(!nonMemberChatTrust(olderMsg!), "🔴 …while the TAINT JOIN still fails OPEN on it — an ungraded old row must not start marking every turn it appears in");
 
   const [postMsg] = buildTail([post(30, "the seat's own reply", { refuted: false })]);

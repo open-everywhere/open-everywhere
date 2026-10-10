@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { LIVE_DELEGATED_TASKS_STATE_KEY, overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
+import { LIVE_DELEGATED_TASKS_STATE_KEY, overrideSettingsForTest, resetSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import lifecycleHook, {
   shouldStop,
   stopAfterTurnEnabled,
@@ -392,19 +392,21 @@ function testStopper(parts: Partial<SandboxStopper>): SandboxStopper {
 }
 
 {
-  const platform = process.env.OE_PLATFORM;
-  const backend = process.env.OE_SANDBOX_BACKEND;
+  const vercel = process.env.VERCEL;
+  resetSettingsForTest();
 
-  process.env.OE_PLATFORM = "vercel";
+  process.env.VERCEL = "1";
   ok(resolveSandboxStopper().backend === "vercel", "on Vercel the Vercel stopper owns the stop");
   ok(resolveSandboxStopper().metered === true, "…and Vercel is the metered backend, so its stops are priced");
 
-  process.env.OE_PLATFORM = "self-host";
-  delete process.env.OE_SANDBOX_BACKEND;
+  delete process.env.VERCEL;
   ok(resolveSandboxStopper().backend === "docker", "🔴 OPE-450: off Vercel the DEFAULT self-host backend gets a real stop (was: nothing, silently)");
   ok(resolveSandboxStopper().metered === false, "…and docker is NOT metered per second, so no Vercel-rate spend row is invented for it");
 
   process.env.OE_SANDBOX_BACKEND = "justbash";
+  ok(resolveSandboxStopper().backend === "docker", "🔴 the retired OE_SANDBOX_BACKEND selects NOTHING (OPE-2411)");
+  delete process.env.OE_SANDBOX_BACKEND;
+  overrideSettingsForTest({ sandbox: { selfHostBackend: "justbash" } });
   ok(resolveSandboxStopper().backend === "just-bash", "the just-bash backend selects its own (inert) stopper");
   ok((await resolveSandboxStopper().list("sess-x")).length === 0, "…whose peek is empty — there is no VM or container in this app process to find");
 
@@ -412,10 +414,12 @@ function testStopper(parts: Partial<SandboxStopper>): SandboxStopper {
     ok(s.ownership.length > 0 && s.ownership.includes(s.backend === "just-bash" ? "NONE" : s.backend), `the ${s.backend} stopper's ownership line names who stops the sandbox`);
   }
 
-  if (platform === undefined) delete process.env.OE_PLATFORM;
-  else process.env.OE_PLATFORM = platform;
-  if (backend === undefined) delete process.env.OE_SANDBOX_BACKEND;
-  else process.env.OE_SANDBOX_BACKEND = backend;
+  overrideSettingsForTest({ sandbox: { useVercelSandbox: true } });
+  ok(resolveSandboxStopper().backend === "vercel", "sandbox.useVercelSandbox off a Vercel host → the Vercel stopper (the sandbox that runs is Vercel's)");
+  resetSettingsForTest();
+
+  if (vercel === undefined) delete process.env.VERCEL;
+  else process.env.VERCEL = vercel;
 }
 
 {

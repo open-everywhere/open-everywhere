@@ -1,11 +1,12 @@
 import { processRegistryMap } from "@open-everywhere/core/agent/lib/process-registry.js";
+import { testValveArmed } from "@open-everywhere/core/agent/testing/test-valves.js";
 
-export const SCRIPTED_MODEL_ENV = "OE_SCRIPTED_MODEL";
+export const SCRIPTED_MODEL_VALVE = "scripted-model";
 
 export const SCRIPTED_MODEL_ID = "open-everywhere/scripted-model";
 
-export function scriptedModelArmed(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env[SCRIPTED_MODEL_ENV] === "1";
+export function scriptedModelArmed(): boolean {
+  return testValveArmed(SCRIPTED_MODEL_VALVE);
 }
 
 export interface ScriptedCall {
@@ -533,8 +534,8 @@ export interface RegisterScriptOptions {
 export function registerScript(script: SeatScript, sessionId: string = ANY_SESSION, opts: RegisterScriptOptions = {}): ScriptedHandle {
   if (!scriptedModelArmed()) {
     throw new Error(
-      `open-everywhere: registerScript called without ${SCRIPTED_MODEL_ENV}=1. ` +
-        "Arm the process before the agent boots, or this script can never answer a model call.",
+      `open-everywhere: registerScript called without the ${SCRIPTED_MODEL_VALVE} test valve armed. ` +
+        "Arm it with __setTestValveForTest before the agent boots, or this script can never answer a model call.",
     );
   }
   const store = scriptedStore();

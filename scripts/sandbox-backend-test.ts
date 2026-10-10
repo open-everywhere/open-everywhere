@@ -1,8 +1,10 @@
 import {
+  resolveSandboxBackend,
   resolveSelfHostBackendKind,
   selfHostBackendBootLog,
   JUSTBASH_BOOT_WARNING,
 } from "../agent/sandbox/backend-select.js";
+import { defineSettings, getSettings } from "@open-everywhere/core/agent/settings/settings.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -33,17 +35,31 @@ function throwsWith(fn: () => unknown, fragment: string, label: string): void {
   passed++;
 }
 
-ok(resolveSelfHostBackendKind({}) === "docker", "unset OE_SANDBOX_BACKEND → docker (new default)");
-ok(resolveSelfHostBackendKind({ OE_SANDBOX_BACKEND: "" }) === "docker", "empty string → docker");
-ok(resolveSelfHostBackendKind({ OE_SANDBOX_BACKEND: "   " }) === "docker", "whitespace-only → docker");
-ok(resolveSelfHostBackendKind({ OE_SANDBOX_BACKEND: "docker" }) === "docker", "explicit docker → docker");
-ok(resolveSelfHostBackendKind({ OE_SANDBOX_BACKEND: " DOCKER " }) === "docker", "docker is trimmed + case-insensitive");
+const sandbox = (over: Partial<{ selfHostBackend: "docker" | "justbash"; useVercelSandbox: boolean }> = {}) => ({
+  ...getSettings({}).sandbox,
+  ...over,
+});
 
-ok(resolveSelfHostBackendKind({ OE_SANDBOX_BACKEND: "justbash" }) === "justbash", "explicit justbash → justbash");
-ok(resolveSelfHostBackendKind({ OE_SANDBOX_BACKEND: "JustBash " }) === "justbash", "justbash is trimmed + case-insensitive");
+ok(resolveSelfHostBackendKind(sandbox()) === "docker", "shipped sandbox.selfHostBackend → docker (the contained default)");
+ok(resolveSandboxBackend(sandbox(), false) === "docker", "off a Vercel host with nothing declared → docker");
+ok(resolveSandboxBackend(sandbox(), true) === "vercel", "a Vercel host → the Vercel Sandbox");
 
-throwsWith(() => resolveSelfHostBackendKind({ OE_SANDBOX_BACKEND: "podman" }), 'unknown OE_SANDBOX_BACKEND="podman"', "unknown value throws (no silent fallback)");
-throwsWith(() => resolveSelfHostBackendKind({ OE_SANDBOX_BACKEND: "vercel" }), 'unknown OE_SANDBOX_BACKEND="vercel"', "'vercel' is not a self-host backend → throws");
+ok(resolveSelfHostBackendKind(sandbox({ selfHostBackend: "justbash" })) === "justbash", "declared justbash → justbash");
+ok(resolveSandboxBackend(sandbox({ selfHostBackend: "justbash" }), false) === "justbash", "…and it runs off a Vercel host");
+ok(resolveSandboxBackend(sandbox({ selfHostBackend: "justbash" }), true) === "vercel", "🔴 …and it is INERT on a Vercel host — the Vercel Sandbox always runs there");
+
+ok(resolveSandboxBackend(sandbox({ useVercelSandbox: true }), false) === "vercel", "useVercelSandbox off a Vercel host → the Vercel Sandbox");
+ok(resolveSandboxBackend(sandbox({ useVercelSandbox: true, selfHostBackend: "justbash" }), false) === "vercel", "…and it wins over the self-host backend");
+
+throwsWith(() => defineSettings({ sandbox: { selfHostBackend: "podman" as never } }), 'sandbox.selfHostBackend: must be "docker" or "justbash"', "unknown backend fails settings load (no silent fallback)");
+throwsWith(() => defineSettings({ sandbox: { selfHostBackend: "vercel" as never } }), 'sandbox.selfHostBackend: must be "docker" or "justbash"', "'vercel' is not a self-host backend → settings load refuses it");
+
+delete process.env.VERCEL;
+process.env.OE_SANDBOX_BACKEND = "justbash";
+process.env.OE_PLATFORM = "vercel";
+ok(resolveSandboxBackend(sandbox()) === "docker", "🔴 OE_SANDBOX_BACKEND and OE_PLATFORM set in the environment move NOTHING");
+delete process.env.OE_SANDBOX_BACKEND;
+delete process.env.OE_PLATFORM;
 
 const jb = selfHostBackendBootLog("justbash");
 ok(jb.warn === JUSTBASH_BOOT_WARNING, "justbash boot log carries the loud shared-filesystem warning");
@@ -54,4 +70,8 @@ const dk = selfHostBackendBootLog("docker");
 ok(dk.warn === undefined, "docker boot log emits NO warning (contained default)");
 ok(dk.info.includes("docker"), "docker info line names the backend");
 
-console.log(`✓ sandbox-backend: ${passed} assertions passed (default→docker, justbash opt-in+warn, unknown→throw)`);
+console.log(`✓ sandbox-backend: ${passed} assertions passed (default→docker, justbash opt-in+warn and inert on Vercel, useVercelSandbox, unknown→settings refusal)`);
+
+// proves: AP-MOD-app-sandbox-backend-select
+
+// proves: SET-081, SET-082

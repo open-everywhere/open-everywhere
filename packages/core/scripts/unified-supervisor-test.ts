@@ -83,10 +83,10 @@ const payments = defineDomain({
 });
 const orgNoGate = defineDomain({ name: "org", match: "org" });
 
-withEnv(undefined, () => {
+withEnv(false, () => {
   ok(windowedSupervisorEnabled(CH, [payments, orgNoGate]) === false, "gate OFF ⇒ not windowed (byte-identical per-container path)");
 });
-withEnv(false, () => ok(windowedSupervisorEnabled(CH, [payments, orgNoGate]) === false, "`window.topology: false` does not arm the gate"));
+withEnv(undefined, () => ok(windowedSupervisorEnabled(CH, [payments, orgNoGate]) === true, "shipped default (nothing registered) ⇒ the gate is ON"));
 withEnv(true, () => {
   ok(windowedSupervisorEnabled(CH, [payments, orgNoGate]) === true, "gate ON + ambient explicit domain ⇒ windowed");
   ok(windowedSupervisorEnabled(GH, [payments, orgNoGate]) === true, "windowing applies to every channel in the domain");
@@ -102,7 +102,7 @@ withEnv(true, () => {
   ok(windowedDomainFor("slack/T1/C_ORPHAN", [payments, orgNoGate])?.name === "org", "windowedDomainFor answers the ORG pseudo-domain for an undeclared channel (OPE-1695) …");
   ok(windowedDomainFor("slack/T1/C_ORPHAN", [payments]) === undefined, "… and undefined when there is no seat domain to resolve at all");
 });
-withEnv(undefined, () => ok(windowedDomainFor(CH, [payments, orgNoGate]) === undefined, "windowedDomainFor undefined when the code gate is off"));
+withEnv(false, () => ok(windowedDomainFor(CH, [payments, orgNoGate]) === undefined, "windowedDomainFor undefined when the code gate is off"));
 
 const paymentsSolo = defineDomain({
   name: "payments",
@@ -173,7 +173,7 @@ ok(isSupervisorSession({ channel: { continuationToken: "C_PAY:oe-sup:g1" } } as 
 ok(!isSupervisorSession({ channel: { continuationToken: "C_PAY:1720000000.001" } } as never), "a thread token is not a supervisor session");
 ok(TOK.includes(":oe-sup:g"), "unified token carries the :oe-sup:g infix the spend hook keys on");
 
-withEnv(undefined, () => {
+withEnv(false, () => {
   const g = supervisorGrainFor(CH, [payments, orgNoGate]);
   ok(g.unified === false && g.registryKey === CH && g.domainName === undefined, "flag-off grain: per-container (registryKey === surfaceKey), byte-identical path");
 });
@@ -199,7 +199,7 @@ withEnv(true, () => {
   ok(supervisorTokenForGrain(ghGrain, 4, () => githubSupervisorToken("acme", "payments-api", 4)) === tok, "unified github grain mints the DOMAIN token, not the per-repo one");
   ok(supervisorTokenForGrain(slackGrain, 4, () => "C_PAY:oe-sup:g4") === tok, "unified slack grain mints the SAME domain token — one team, one token per generation");
 });
-withEnv(undefined, () => {
+withEnv(false, () => {
   const off = supervisorGrainFor(GH, [payments, orgNoGate]);
   ok(supervisorTokenForGrain(off, 2, () => githubSupervisorToken("acme", "payments-api", 2)) === "github:acme/payments-api:oe-sup:g2", "flag-off github grain falls back to the per-repo token (byte-identical)");
   ok(supervisorTokenForGrain(off, 2, () => "linear:team-1:oe-sup:g2") === "linear:team-1:oe-sup:g2", "flag-off linear fallback is the per-team token");
@@ -427,7 +427,7 @@ withEnv(true, () => {
   const sidAgain = classifySessionId(mintedAgain);
   ok(sidAgain.kind === "window" && sidAgain.key.domain === "payments" && sidAgain.key.generation === 4, "the re-mint parses to the SAME logical generation too");
 
-  withEnv(undefined, () => {
+  withEnv(false, () => {
     const off = supervisorGrainFor(GH, [payments, orgNoGate]);
     const mintedOff = mintRotationToken(off, 2, () => githubSupervisorToken("acme", "payments-api", 2));
     ok(/^github:acme\/payments-api:oe-sup:g2-[0-9a-f]{6}$/.test(mintedOff), `mintRotationToken (per-container branch) shape: ${JSON.stringify(mintedOff)}`);
@@ -547,7 +547,7 @@ withEnv(true, () => {
       "GOLDEN: the native per-container grain is untouched where there is no seat domain to inherit",
     );
   });
-  withEnv(undefined, () => {
+  withEnv(false, () => {
     eqJson(
       supervisorGrainFor(A, [grouped, orgGate]),
       `{"unified":false,"registryKey":"${A}"}`,

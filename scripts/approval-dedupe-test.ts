@@ -5,7 +5,7 @@ import type { Approval, ApprovalContext, ApprovalStatus } from "eve/tools/approv
 const dir = join(tmpdir(), `open-everywhere-approval-dedupe-${process.pid}`);
 await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-process.env.OE_PLATFORM = "slack";
+setPlatformStandInForTest("slack");
 _setDeploymentIdentityForTest({ org: undefined });
 
 const { registerConfig } = await import("@open-everywhere/core/agent/access/config.js");
@@ -17,7 +17,6 @@ registerConfig({
   loadDomains: () => [],
   loadSilos: () => [],
   domainsForSurface: () => [],
-  loadBlobHosting: () => ({ enabled: true }),
 });
 
 const { withDuplicateApprovalGuard, recordApprovalRaised, DUPLICATE_APPROVAL_WINDOW_MS, DUPLICATE_APPROVAL_KEY_PREFIX } = await import(
@@ -26,6 +25,7 @@ const { withDuplicateApprovalGuard, recordApprovalRaised, DUPLICATE_APPROVAL_WIN
 import type { HasEventSeen, MarkEventSeen } from "@open-everywhere/core/agent/access/approval-dedupe.js";
 import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
 import { removeTempDir } from "../packages/core/scripts/_temp-dir.js";
+import { setPlatformStandInForTest } from "@open-everywhere/core/agent/identity/binding.js";
 
 const requestOf = (approval: Approval): ((ctx: ApprovalContext) => ApprovalStatus | Promise<ApprovalStatus>) =>
   typeof approval === "function" ? approval : approval.request;
@@ -206,7 +206,7 @@ ok(DUPLICATE_APPROVAL_KEY_PREFIX.length > 0, "6a. the guard's dedupe key carries
     (await import("@open-everywhere/core/agent/tools/post_file.js")).default,
     { channel: { kind: "slack" }, session: { auth: { current: { attributes: { oe_grain: "task" } } } } } as never,
   );
-  ok(approvalRequestOf(postFile as unknown as { approval?: never }) === undefined, "8a. post_file carries no eve approval policy — its publish is an OE card (OPE-2340)");
+  ok(approvalRequestOf(postFile as unknown as { approval?: never }) === undefined, "8a. post_file carries no eve approval policy — it only attaches files");
   const { connectorApprovalPolicy } = await import("@open-everywhere/core/agent/connections/connector-auth.js");
   const policy = connectorApprovalPolicy();
   for (const toolName of ["notion__create_page", "notion__search", "notion__delete_page"]) {
@@ -388,3 +388,5 @@ await removeTempDir(dir);
 console.log(
   `✓ approval-dedupe — ${passed} assertions (duplicate-card suppression, crash-recovery ordering, OPE-476 residual, no false dedup, fail-open, window expiry, string/object input convergence, retired live sites (OPE-2340), both approval authoring shapes, the eve-0.47.3 follow-up re-propose)`,
 );
+
+// proves: AP-MOD-core-access-approval-dedupe

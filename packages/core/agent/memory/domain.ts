@@ -16,6 +16,7 @@ import { credentialGrantDeclarationProblems } from "../access/credential-grant.j
 import { domainCredentialProblems, type DomainCredentialOverride } from "../access/domain-credentials.js";
 import type { SessionMode } from "../access/resolver.js";
 import type { Trust } from "../identity/binding.js";
+import { getSettings } from "../settings/settings.js";
 import type { ApprovalModeConfig } from "../access/approver-chain.js";
 import type { ExternalPolicyOverride, ExternalRoomGrain } from "../access/external-policy.js";
 
@@ -88,7 +89,6 @@ export interface Domain {
   readonly admins?: readonly string[];
   readonly governance?: boolean;
   readonly reportChannel?: string;
-  readonly requestorEntitlementChecks?: boolean;
   readonly governanceDelivery?: GovernanceDeliveryMode;
   readonly credentials?: readonly DomainCredentialOverride[];
 
@@ -257,10 +257,23 @@ export function warnSilentRoomGrainWithoutPublicSignal(
   }
 }
 
+const AMBIENT_SUPERVISOR_DEFAULT = true;
+
+function resolveAmbientSupervisor(
+  channelKey: string,
+  domains: readonly Domain[],
+): { readonly on: boolean; readonly routing: DomainRouting; readonly declaredBy?: Domain; readonly unrouted?: true } {
+  const routing = resolveDomainForChannel(channelKey, domains);
+  const org = criteriaDomain("org", domains);
+  if (routing.domain === undefined && org === undefined) return { on: false, routing, unrouted: true };
+  for (const layer of [routing.domain, org]) {
+    if (layer?.ambientSupervisor !== undefined) return { on: layer.ambientSupervisor, routing, declaredBy: layer };
+  }
+  return { on: AMBIENT_SUPERVISOR_DEFAULT, routing };
+}
+
 export function ambientSupervisorEnabled(channelKey: string, domains: readonly Domain[]): boolean {
-  const explicit = domainForChannel(channelKey, domains);
-  if (explicit) return explicit.ambientSupervisor === true;
-  return criteriaDomain("org", domains)?.ambientSupervisor === true;
+  return resolveAmbientSupervisor(channelKey, domains).on;
 }
 
 export type AmbientSkip = "no-domain" | "domain-refused";
@@ -268,14 +281,12 @@ export type AmbientSkip = "no-domain" | "domain-refused";
 export function ambientSkipFor(
   channelKey: string,
   domains: readonly Domain[],
-): { readonly reason: AmbientSkip; readonly domain?: string; readonly via: DomainVia } | undefined {
-  const routing = resolveDomainForChannel(channelKey, domains);
-  if (routing.domain) {
-    if (routing.domain.ambientSupervisor === true) return undefined;
-    return { reason: "domain-refused", domain: routing.domain.name, via: routing.via };
-  }
-  if (criteriaDomain("org", domains)?.ambientSupervisor === true) return undefined;
-  return { reason: "no-domain", via: routing.via };
+): { readonly reason: AmbientSkip; readonly domain?: string; readonly declaredBy?: string; readonly via: DomainVia } | undefined {
+  const { on, routing, declaredBy, unrouted } = resolveAmbientSupervisor(channelKey, domains);
+  if (on) return undefined;
+  if (unrouted) return { reason: "no-domain", via: routing.via };
+  const router = routing.domain ?? criteriaDomain("org", domains);
+  return { reason: "domain-refused", domain: router?.name ?? declaredBy?.name, declaredBy: declaredBy?.name, via: routing.via };
 }
 
 export function admissionNameFor(channelKey: string, domains: readonly Domain[]): string {
@@ -439,7 +450,7 @@ function windowMemberSets(d: Domain): ReadonlyMap<string, readonly string[]> {
 
 export function assertWindowSourcesVouched(domains: readonly Domain[], vouched: readonly string[] | VouchedInternalFor): void {
   const isInternal = vouchedPredicate(vouched);
-  const trustEnv = (process.env.OE_TRUST ?? "").trim().toLowerCase() === "internal";
+  const trustEnv = getSettings().identity.blanketTrust === "internal";
   const bad: string[] = [];
   for (const d of domains) {
     for (const [windowId, members] of windowMemberSets(d)) {
@@ -453,7 +464,7 @@ export function assertWindowSourcesVouched(domains: readonly Domain[], vouched: 
         const okay = isInternal(workspaceKey, ch) || trustEnv;
         if (!okay) {
           bad.push(
-              `  ${where} includes UN-vouched source "${ch}" in a multi-source (${members.length}-channel) cross-surface window — vouch it in agent/identity/surfaces.ts (add "${ch}" or its workspace "${workspaceKey}"), or set OE_TRUST=internal for an internal-only deploy` +
+              `  ${where} includes UN-vouched source "${ch}" in a multi-source (${members.length}-channel) cross-surface window — vouch it in agent/identity/surfaces.ts (add "${ch}" or its workspace "${workspaceKey}"), or declare \`identity.blanketTrust: "internal"\` in agent/settings/settings.ts for an internal-only deploy` +
               (platform === "notion"
                 ? `. A Notion TRUST ROOT does not satisfy this gate: the ancestor walk runs per delivery against the live Notion API, so config load cannot resolve it. Declare this page in the register as well`
                 :
@@ -495,7 +506,7 @@ export function governanceDeliveryMode(domains: readonly Domain[]): GovernanceDe
 
 export function assertGovernanceDomains(domains: readonly Domain[], vouched: readonly string[] | VouchedInternalFor): void {
   const isInternal = vouchedPredicate(vouched);
-  const trustEnv = (process.env.OE_TRUST ?? "").trim().toLowerCase() === "internal";
+  const trustEnv = getSettings().identity.blanketTrust === "internal";
   const bad: string[] = [];
   for (const d of domains) {
     if (d.governanceDelivery !== undefined && d.match !== "org") {
@@ -527,7 +538,7 @@ export function assertGovernanceDomains(domains: readonly Domain[], vouched: rea
       if (BINDING_TRUSTED_PLATFORMS.has(platform)) continue;
       const workspaceKey = segs.slice(0, 2).join("/");
       if (!(isInternal(workspaceKey, ch) || trustEnv)) {
-        bad.push(`  "${d.name}" is governance but its channel "${ch}" is not operator-vouched-internal — vouch it in agent/identity/surfaces.ts (add "${ch}" or its workspace "${workspaceKey}"), or set OE_TRUST=internal for an internal-only deploy`);
+        bad.push(`  "${d.name}" is governance but its channel "${ch}" is not operator-vouched-internal — vouch it in agent/identity/surfaces.ts (add "${ch}" or its workspace "${workspaceKey}"), or declare \`identity.blanketTrust: "internal"\` in agent/settings/settings.ts for an internal-only deploy`);
       }
     }
   }
@@ -560,28 +571,6 @@ export function assertReportChannels(domains: readonly Domain[]): void {
   }
   if (bad.length > 0) {
     throw new Error("open-everywhere: invalid domain reportChannel(s):\n" + bad.join("\n") + "\n(memory/domain.ts assertReportChannels — OPE-148).");
-  }
-}
-
-export function requestorEntitlementChecksEnabled(domains: readonly Domain[]): boolean {
-  return criteriaDomain("org", domains)?.requestorEntitlementChecks === true;
-}
-
-export function assertComplianceDomains(domains: readonly Domain[]): void {
-  const bad = domains
-    .filter((d) => d.requestorEntitlementChecks !== undefined && d.match !== "org")
-    .map(
-      (d) =>
-        `  "${d.name}" sets requestorEntitlementChecks — that is an ORG-LEVEL compliance opt-in and ` +
-        `belongs on the \`org\` pseudo-domain (match: "org"), never on a room/criteria domain ` +
-        `(a per-room requestor pre-check is the per-user-answers-inside-a-room shape the design rejected)`,
-    );
-  if (bad.length > 0) {
-    throw new Error(
-      "open-everywhere: invalid compliance-mode config:\n" +
-        bad.join("\n") +
-        "\n(memory/domain.ts assertComplianceDomains).",
-    );
   }
 }
 
@@ -835,6 +824,11 @@ export function assertDomainsValid(domains: readonly Domain[]): void {
   const byMatch = new Map<DomainMatch, string>();
   let hasOrg = false;
   for (const d of domains) {
+    if ((d as { readonly requestorEntitlementChecks?: unknown }).requestorEntitlementChecks !== undefined) {
+      bad.push(
+        `  "${d.name}" sets requestorEntitlementChecks, which is REMOVED. Core never shipped an entitlement probe: with the key set to true and no probe registered, the flag refused every directly-addressed connector call. A turn runs as its ROOM, never as a person. Delete the key. Connector reads are now judged on the room's audience floor only (see UPGRADING.md).`,
+      );
+    }
     if (d.name.startsWith(DM_ANCHOR_DOMAIN_PREFIX)) {
       bad.push(
         `  "${d.name}" starts with the RESERVED prefix "${DM_ANCHOR_DOMAIN_PREFIX}" — that namespace belongs to the DM delegation anchor (channels/window-key.ts dmAnchorDomain, OPE-306) and can never be a configured domain name. Rename it.`,

@@ -111,6 +111,15 @@ export function decide(policy: EgressPolicy | undefined, req: AclRequest): AclDe
 
 export class PolicyStore {
   private readonly byIp = new Map<string, EgressPolicy>();
+  private hostPlanePolicy: EgressPolicy | undefined;
+
+  setHostPlane(policy: EgressPolicy): void {
+    this.hostPlanePolicy = policy;
+  }
+
+  hostPlane(): EgressPolicy | undefined {
+    return this.hostPlanePolicy;
+  }
 
   set(sourceIp: string, policy: EgressPolicy): void {
     this.byIp.set(normalizeSourceIp(sourceIp), policy);
@@ -143,4 +152,18 @@ export function validatePolicy(input: unknown): EgressPolicy {
     }
   }
   throw new Error('policy must be "allow-all", "deny-all", or an object with an `allow` list/map');
+}
+
+export function validateHostPlanePolicy(input: unknown): EgressPolicy {
+  const allow = input && typeof input === "object" ? (input as Record<string, unknown>).allow : undefined;
+  if (!Array.isArray(allow) || allow.length === 0) {
+    throw new Error("host-plane policy must be an object with a non-empty `allow` list of exact hosts");
+  }
+  const hosts: string[] = [];
+  for (const h of allow) {
+    if (typeof h !== "string" || h.trim() === "") throw new Error("host-plane `allow` entries must be non-empty host strings");
+    if (h.includes("*")) throw new Error(`host-plane hosts are exact hosts, never a wildcard ("${h}")`);
+    hosts.push(normalizeHost(h));
+  }
+  return { allow: hosts };
 }

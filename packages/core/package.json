@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/core",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Open Everywhere core — the portable, host-agnostic agent runtime: access and approvals, identity, memory, spend, routines, webhooks, connectors, the audit chain and the `oe` roster build.",
   "keywords": [
     "agent",
@@ -321,6 +321,10 @@
     "./agent/access/host-egress.js": {
       "types": "./dist/agent/access/host-egress.d.ts",
       "default": "./dist/agent/access/host-egress.js"
+    },
+    "./agent/access/host-plane-egress.js": {
+      "types": "./dist/agent/access/host-plane-egress.d.ts",
+      "default": "./dist/agent/access/host-plane-egress.js"
     },
     "./agent/access/human-only-invariants-manifest.js": {
       "types": "./dist/agent/access/human-only-invariants-manifest.d.ts",
@@ -730,10 +734,6 @@
       "types": "./dist/agent/approvals/eve-response-policy.d.ts",
       "default": "./dist/agent/approvals/eve-response-policy.js"
     },
-    "./agent/approvals/file-publish.js": {
-      "types": "./dist/agent/approvals/file-publish.d.ts",
-      "default": "./dist/agent/approvals/file-publish.js"
-    },
     "./agent/approvals/flow.js": {
       "types": "./dist/agent/approvals/flow.d.ts",
       "default": "./dist/agent/approvals/flow.js"
@@ -849,10 +849,6 @@
     "./agent/audit/worker-toolset.js": {
       "types": "./dist/agent/audit/worker-toolset.d.ts",
       "default": "./dist/agent/audit/worker-toolset.js"
-    },
-    "./agent/blob/hosting.js": {
-      "types": "./dist/agent/blob/hosting.d.ts",
-      "default": "./dist/agent/blob/hosting.js"
     },
     "./agent/boot/notices.js": {
       "types": "./dist/agent/boot/notices.d.ts",
@@ -1326,6 +1322,10 @@
       "types": "./dist/agent/connections/aws-sso-link.d.ts",
       "default": "./dist/agent/connections/aws-sso-link.js"
     },
+    "./agent/connections/connection-sign-in.js": {
+      "types": "./dist/agent/connections/connection-sign-in.d.ts",
+      "default": "./dist/agent/connections/connection-sign-in.js"
+    },
     "./agent/connections/connector-auth.js": {
       "types": "./dist/agent/connections/connector-auth.d.ts",
       "default": "./dist/agent/connections/connector-auth.js"
@@ -1350,6 +1350,10 @@
       "types": "./dist/agent/connections/connector-replay.d.ts",
       "default": "./dist/agent/connections/connector-replay.js"
     },
+    "./agent/connections/connector-tool-hints.js": {
+      "types": "./dist/agent/connections/connector-tool-hints.d.ts",
+      "default": "./dist/agent/connections/connector-tool-hints.js"
+    },
     "./agent/connections/connector-transport.js": {
       "types": "./dist/agent/connections/connector-transport.d.ts",
       "default": "./dist/agent/connections/connector-transport.js"
@@ -1365,6 +1369,14 @@
     "./agent/connections/grant-mcp-transport.js": {
       "types": "./dist/agent/connections/grant-mcp-transport.d.ts",
       "default": "./dist/agent/connections/grant-mcp-transport.js"
+    },
+    "./agent/connections/mcp-server-connection.js": {
+      "types": "./dist/agent/connections/mcp-server-connection.d.ts",
+      "default": "./dist/agent/connections/mcp-server-connection.js"
+    },
+    "./agent/connections/mcp-servers.js": {
+      "types": "./dist/agent/connections/mcp-servers.d.ts",
+      "default": "./dist/agent/connections/mcp-servers.js"
     },
     "./agent/connections/notion.js": {
       "types": "./dist/agent/connections/notion.d.ts",
@@ -1786,6 +1798,10 @@
       "types": "./dist/agent/identity/display-title.d.ts",
       "default": "./dist/agent/identity/display-title.js"
     },
+    "./agent/identity/everyone-group.js": {
+      "types": "./dist/agent/identity/everyone-group.d.ts",
+      "default": "./dist/agent/identity/everyone-group.js"
+    },
     "./agent/identity/group-sync.js": {
       "types": "./dist/agent/identity/group-sync.d.ts",
       "default": "./dist/agent/identity/group-sync.js"
@@ -1925,10 +1941,6 @@
     "./agent/memory/dream/mode3-cluster.js": {
       "types": "./dist/agent/memory/dream/mode3-cluster.d.ts",
       "default": "./dist/agent/memory/dream/mode3-cluster.js"
-    },
-    "./agent/memory/dream/mode3-last-mile.js": {
-      "types": "./dist/agent/memory/dream/mode3-last-mile.d.ts",
-      "default": "./dist/agent/memory/dream/mode3-last-mile.js"
     },
     "./agent/memory/dream/mode3.js": {
       "types": "./dist/agent/memory/dream/mode3.d.ts",
@@ -2698,6 +2710,10 @@
       "types": "./dist/agent/testing/driver-allowlist.d.ts",
       "default": "./dist/agent/testing/driver-allowlist.js"
     },
+    "./agent/testing/test-valves.js": {
+      "types": "./dist/agent/testing/test-valves.d.ts",
+      "default": "./dist/agent/testing/test-valves.js"
+    },
     "./agent/tools/add_label.js": {
       "types": "./dist/agent/tools/add_label.d.ts",
       "default": "./dist/agent/tools/add_label.js"
@@ -3169,6 +3185,7 @@
     "test:platform": "tsx scripts/platform-test.ts",
     "test:identity": "tsx scripts/identity-test.ts",
     "test:tenant-admission": "NODE_NO_WARNINGS=1 tsx scripts/tenant-admission-test.ts",
+    "test:store-floor-settings": "NODE_NO_WARNINGS=1 tsx scripts/store-floor-settings-test.ts",
     "test:identity-links": "NODE_NO_WARNINGS=1 tsx scripts/identity-links-test.ts",
     "test:link-flow": "NODE_NO_WARNINGS=1 tsx scripts/link-flow-test.ts",
     "test:link-tenant": "NODE_NO_WARNINGS=1 tsx scripts/link-tenant-test.ts",
@@ -3190,6 +3207,7 @@
     "test:settings": "NODE_NO_WARNINGS=1 tsx scripts/settings-test.ts",
     "test:policy-pages": "NODE_NO_WARNINGS=1 tsx scripts/policy-pages-test.ts",
     "test:resolver": "tsx scripts/resolver-test.ts",
+    "test:mcp-servers": "tsx scripts/mcp-servers-test.ts",
     "test:roles": "tsx scripts/roles-test.ts",
     "test:governance": "NODE_NO_WARNINGS=1 tsx scripts/governance-test.ts",
     "test:connector-disclosure": "NODE_NO_WARNINGS=1 tsx scripts/connector-disclosure-test.ts",
@@ -3215,6 +3233,7 @@
     "test:connector-op-gating": "NODE_NO_WARNINGS=1 tsx scripts/connector-op-gating-test.ts",
     "test:connector-op-audit": "NODE_NO_WARNINGS=1 tsx scripts/connector-op-audit-test.ts",
     "test:connector-op-arm": "NODE_NO_WARNINGS=1 tsx scripts/connector-op-arm-test.ts",
+    "test:connector-op-hint": "NODE_NO_WARNINGS=1 tsx scripts/connector-op-hint-test.ts",
     "test:connector-tool": "NODE_NO_WARNINGS=1 tsx scripts/connector-tool-test.ts",
     "test:credential-registries": "NODE_NO_WARNINGS=1 tsx scripts/credential-registries-test.ts",
     "test:connector-transport-registry": "NODE_NO_WARNINGS=1 tsx scripts/connector-transport-registry-test.ts",
@@ -3293,6 +3312,7 @@
     "test:reply-dedupe": "NODE_NO_WARNINGS=1 tsx scripts/reply-dedupe-test.ts",
     "test:surface-message-ops": "NODE_NO_WARNINGS=1 tsx scripts/surface-message-ops-test.ts",
     "test:egress-spoof": "NODE_NO_WARNINGS=1 tsx scripts/egress-spoof-test.ts",
+    "test:test-valves": "NODE_NO_WARNINGS=1 tsx scripts/test-valves-test.ts",
     "test:onboarding": "tsx scripts/onboarding-test.ts",
     "test:control": "tsx scripts/control-test.ts",
     "test:control-http": "tsx scripts/control-http-test.ts",
@@ -3486,6 +3506,7 @@
     "test:e2e-gate-joins": "NODE_NO_WARNINGS=1 tsx scripts/e2e/gate-joins-test.ts",
     "test:e2e-grant-fence-rows": "NODE_NO_WARNINGS=1 tsx scripts/e2e/grant-fence-rows-test.ts",
     "test:e2e-halt-cleanup": "NODE_NO_WARNINGS=1 tsx scripts/e2e/halt-cleanup-test.ts",
+    "test:e2e-qa-repo": "NODE_NO_WARNINGS=1 tsx scripts/e2e/qa-repo-test.ts",
     "test:dynamic-replay": "NODE_NO_WARNINGS=1 tsx scripts/dynamic-tool-replay-test.ts",
     "test:dynamic-entry-collision": "NODE_NO_WARNINGS=1 tsx scripts/dynamic-entry-collision-test.ts",
     "test:dynamic-native-heal": "NODE_NO_WARNINGS=1 tsx scripts/dynamic-tool-native-heal-test.ts",

@@ -47,17 +47,6 @@ export const AMBIENT_READ_MANIFEST: ReadonlyMap<string, DeclaredRead> = new Map(
     },
   ],
   [
-    declarationKey("scripts/model-stack-policy-test.ts", WHOLE_ENV),
-    {
-      klass: "deliberate",
-      why:
-        "`getSettings(env, overrides)` takes the environment as a parameter, and the suite passes " +
-        "the real one to assert what THIS deployment resolves. Every behaviour spec in the schema " +
-        "is code-only (settings.ts `resolve()` reads env for `models.stack` alone), so a host " +
-        "variable cannot move any number this suite pins.",
-    },
-  ],
-  [
     declarationKey("deploy/egress-proxy/control/server-boot-test.ts", WHOLE_ENV),
     {
       klass: "deliberate",

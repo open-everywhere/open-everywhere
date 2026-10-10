@@ -9,7 +9,7 @@ import {
   defineDomain,
   getOperationalStore,
   UNADMITTED_TENANT_DROP_REASON,
-  MULTI_TENANT_ENV,
+  resetSettingsForTest,
   _resetDeploymentIdentityForTest,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { buildFrontHandler, ThreadFifo } from "../agent/channels/slack-front.js";
@@ -21,7 +21,8 @@ import { slackTenantAdmission } from "../agent/channels/slack-tenant-fence.js";
 import { admitInbound } from "../agent/channels/slack.js";
 
 _resetDeploymentIdentityForTest();
-for (const k of ["OE_PLATFORM", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST", "OE_TEST_DRIVER_IDS", MULTI_TENANT_ENV]) {
+resetSettingsForTest();
+for (const k of ["OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL"]) {
   delete process.env[k];
 }
 

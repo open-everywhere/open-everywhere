@@ -85,6 +85,7 @@ import {
   receiptEventTime,
   spreadVendorTs,
   seatCatchUp,
+  getSettings,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 type RouteHandler = (req: Request, args: RouteHandlerArgs) => Promise<Response>;
@@ -293,7 +294,7 @@ export function liveTeamsFrontPlan(a: TeamsMessageActivity): TeamsFrontPlan | nu
       tenantId,
       vouched:
         isVouchedSurface(partition.surfaceKey, { containerKey: surfaceKey, ...(groupKey === undefined ? {} : { groupKey }) }) ||
-        process.env.OE_TRUST === "internal",
+        getSettings().identity.blanketTrust === "internal",
     };
     const window = planTeamsSingleWindow(true, a.isBotMentioned, facts, {
       serviceUrl: a.serviceUrl,

@@ -52,7 +52,7 @@ const armed = <T>(fn: () => T): T => {
 
 const ORG = defineDomain({ name: "org", match: "org" });
 const TEAM = defineDomain({ name: "payments", reach: ["slack/T1/C-pay"], ambientSupervisor: true });
-const ADDRESSED_ONLY = defineDomain({ name: "engaged", reach: ["slack/T1/C-engaged"] });
+const ADDRESSED_ONLY = defineDomain({ name: "engaged", reach: ["slack/T1/C-engaged"], ambientSupervisor: false });
 
 console.log("1 — a seat in every channel:");
 {
@@ -62,14 +62,20 @@ console.log("1 — a seat in every channel:");
     ok(windowedSupervisorEnabled("slack/T1/C-engaged", domains), "an ADDRESSED-ONLY domain seats its channel too — the flag no longer decides whether a seat exists");
     ok(windowedSupervisorEnabled("slack/T1/C-undeclared", domains), "an UNDECLARED channel seats on the org default");
     ok(!ambientSupervisorEnabled("slack/T1/C-engaged", domains), "…and the addressed-only domain still refuses AMBIENT wakes, which is the flag's whole remaining job");
-    ok(!ambientSupervisorEnabled("slack/T1/C-undeclared", domains), "…as does the undeclared channel, inheriting the org default (off)");
+    ok(ambientSupervisorEnabled("slack/T1/C-undeclared", domains), "…while the undeclared channel inherits the org domain, which sets nothing, so the framework default (ON since OPE-2409) applies");
   });
   armed(() => {
     ok(!windowedSupervisorEnabled("slack/T1/C-undeclared", [TEAM]), "no org pseudo-domain ⇒ an undeclared channel has NO seat (nothing to inherit — fail closed)");
     eq(standingSeatDomainFor("slack/T1/C-undeclared", [TEAM]), undefined, "…and the seat-domain resolver says so directly");
   });
-  ok(!windowedSupervisorEnabled("slack/T1/C-pay", domains), "capability OFF ⇒ no seat anywhere, byte-identical to a pre-feature build");
-  eq(windowedDomainFor("slack/T1/C-pay", domains), undefined, "…and the domain resolver agrees with its own gate");
+  registerSettings({ window: { topology: false } });
+  try {
+    ok(!windowedSupervisorEnabled("slack/T1/C-pay", domains), "capability OFF ⇒ no seat anywhere, byte-identical to a pre-feature build");
+    eq(windowedDomainFor("slack/T1/C-pay", domains), undefined, "…and the domain resolver agrees with its own gate");
+  } finally {
+    resetSettingsForTest();
+  }
+  ok(windowedSupervisorEnabled("slack/T1/C-undeclared", domains), "🔴 shipped default ⇒ an undeclared channel IS seated (standing seats ship on)");
 }
 
 console.log("2 — a pseudo-domain seat is its own room's:");
@@ -168,9 +174,10 @@ console.log("5 — the ambient_skipped fix text:");
   });
   eq(reason, "domain-refused", "an addressed-only domain records the domain-refused reason (unchanged)");
   const line = logged[0] ?? "";
-  ok(line.includes("ADDRESSED-ONLY by declaration"), "the row names the DECLARATION — the absence is the fixture, not a gap");
+  ok(line.includes("ADDRESSED-ONLY by declaration"), "the row names the DECLARATION — the written `false` is the fixture, not a gap");
+  ok(line.includes('domain "engaged" sets ambientSupervisor: false'), "…and names the domain whose line declared it");
   ok(!line.includes("set ambientSupervisor: true on it"), "🔴 it no longer prescribes the change the ruling refused on such a domain");
-  ok(line.includes("MAY opt in"), "the setting is named as an opt-in a domain OWNER may choose");
+  ok(line.includes("MAY turn ambient talk on"), "turning it on is named as an option a domain OWNER may choose");
   ok(line.includes("decision, not a gap"), "…and the reader is told which of the two they are looking at");
 }
 

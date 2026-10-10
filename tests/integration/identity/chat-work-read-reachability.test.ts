@@ -118,7 +118,8 @@ test("Teams: a delegated worker in it-work-read-fixture-teams holds read_work_ch
   await bootAgent();
   await pinFixtureDomainGrant("it-work-read-fixture-teams", "teams");
 
-  process.env.OE_TRUST = "internal";
+  const trustSettings = await import("@open-everywhere/core/agent/settings/settings.js");
+  trustSettings.overrideSettingsForTest({ identity: { blanketTrust: "internal" } });
 
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   settings.overrideSettingsForTest({ window: { topology: true } });
@@ -149,7 +150,7 @@ test("Teams: a delegated worker in it-work-read-fixture-teams holds read_work_ch
     assertWorkerHoldsWorkReads(handle, "teams");
   } finally {
     jwks.uninstall();
-    delete process.env.OE_TRUST;
+    trustSettings.overrideSettingsForTest({ identity: { blanketTrust: "none" } });
   }
 }, 420_000);
 

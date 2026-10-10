@@ -16,7 +16,6 @@ process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: undefined });
 const ORG = "default";
 process.env.OE_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
-delete process.env.OE_WEBHOOK_MAX_SKEW_SECONDS;
 overrideSettingsForTest({ routines: { eventMaxFanout: 3 } });
 
 const { registerSlackTestBridge } = await import("./_slack-test-stubs.js");

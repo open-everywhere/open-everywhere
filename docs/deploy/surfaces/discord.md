@@ -35,7 +35,7 @@ which **fails closed to `external`**: a fresh guild channel gets read-only `publ
 most — never an explicit domain's silo, never the `org` brain — public-looking channel or not.
 A public Discord server is full of strangers, so a guild existing is not proof of org
 membership. To unlock domain/org memory, the operator explicitly **vouches** it: set
-`OE_TRUST=internal` for a single-tenant deployment where every guild you'll ever be in is
+`identity.blanketTrust: "internal"` in `agent/settings/settings.ts` for a single-tenant deployment where every guild you'll ever be in is
 trusted, or vouch specific guilds via a `discord/<guild_id>` (or `discord/<channel_id>` for one
 channel) entry in `agent/identity/surfaces.ts`. Unvouched, the bot still answers slash
 commands (chat-only, no shared memory); vouched, normal domain/org resolution applies exactly
@@ -134,7 +134,7 @@ DMs are capped like any other surface. The escape hatch is the **admin bypass**:
 
 ## Step 1 — Create the Discord application + bot
 
-1. Go to the [Discord Developer Portal](https://discord.com/developers/applications) → **New Application**. Name it (e.g. `Open Everywhere`).
+1. Go to the [Discord Developer Portal](https://discord.com/developers/applications) → **New Application**. Name it (e.g. `Open Everywhere`). Upload [`brand/png/mark-square-1024.png`](../../../brand/png/mark-square-1024.png), the project mark, as the **App Icon** on **General Information** and as the bot's **Icon** on the **Bot** tab. Skip this when you set [`identity.name`](../configuration-reference.md) and chose your own icon: with no name configured the agent presents as the project, so the project mark is its default avatar.
 2. On **General Information**, copy the **Application ID** — this is `DISCORD_APPLICATION_ID`.
 3. Still on **General Information**, copy the **Public Key** — this is `DISCORD_PUBLIC_KEY`. It verifies the Ed25519 signature on every inbound interaction POST.
 4. Go to the **Bot** tab → **Reset Token** → copy the token — this is `DISCORD_BOT_TOKEN`. (Treat it like a password; it's shown once.)
@@ -325,7 +325,7 @@ never the relay's — see [rollback](../rollback.md).
 ### `.env.e2e` does not hold this token
 
 The e2e tier drives Discord with `E2E_DISCORD_DRIVER_TOKEN`, and that is a **different bot** — the
-test driver, a second application the `OE_TEST_DRIVER_IDS` allowlist admits
+test driver, a second application the `wake.driverAllowlist` setting admits
 (`packages/core/scripts/e2e/env.ts`). Resetting the deployment's own bot token does not invalidate
 it. No code in this repository reads the deployment's bot token out of `.env.e2e`, so a rotation
 leaves that file alone.
@@ -493,6 +493,6 @@ There is no model turn to decline, so `/oe` isn't a "new spend" origin — it wo
 - **PING handshake needs the endpoint live first.** Saving the Interactions Endpoint URL triggers an immediate `PING` (type `1`); your instance must already be running with the public key set so it can return the signed `PONG`. Set env → deploy → *then* save the URL.
 - **3-second ack / deferred response.** Discord requires an interaction acknowledgement within 3 seconds. Open Everywhere handles this for you (deferred ack, then edits the original response), so the agent can take as long as it needs — no extra wiring required.
 - **Global vs guild propagation.** Guild commands are instant; global commands can take up to an hour to appear. Register a guild command for setup and testing.
-- **No domain/org memory until the guild is vouched.** Every guild starts `external` (no membership check exists yet — see [Trust is unverified by default](#how-the-silo-model-maps) above), so a fresh guild channel's memory stays wherever the `public` pseudo-domain reaches at most, regardless of whether Discord could confirm the channel `@everyone`-readable. Vouch the guild (`OE_TRUST=internal` or `surfaces.ts`) to unlock an explicit domain or the org brain.
+- **No domain/org memory until the guild is vouched.** Every guild starts `external` (no membership check exists yet — see [Trust is unverified by default](#how-the-silo-model-maps) above), so a fresh guild channel's memory stays wherever the `public` pseudo-domain reaches at most, regardless of whether Discord could confirm the channel `@everyone`-readable. Vouch the guild (`identity.blanketTrust: "internal"` or `surfaces.ts`) to unlock an explicit domain or the org brain.
 - **Webhook Events *do* need a separate URL.** The one exception to "Discord has only one public endpoint per app": install/uninstall events (Step 1.6) are configured on the **Webhooks** tab with their own URL (`/eve/v1/discord/events`), not the Interactions Endpoint. They share `DISCORD_PUBLIC_KEY`, and they carry **no chat messages** — the feature name misleads; ambient content stays Gateway-only.
 - **`/oe` needs no separate URL.** It rides the SAME Interactions Endpoint URL as everything else in Step 1.5 — Discord has only the one public endpoint per app, so there's nothing extra to configure beyond registering the command itself ([above](#register-oe)).

@@ -9,7 +9,6 @@ It implements core's host seams against concrete services:
 
 - **AI Gateway** — model routing and the pricing the spend reports read
 - **Sandbox** — the isolated workspace a turn runs its commands in
-- **Blob** — file storage
 - **Neon** — Postgres for the operational and memory stores
 - **OpenTelemetry** — the traces and the telemetry export
 - **AWS** and **Okta** — the directory and credential integrations

@@ -111,10 +111,8 @@ _resetModelPricingForTest();
 
 {
   const { registerDefaultAgentModelId, _resetDefaultAgentModelIdForTest } = await import("../agent/model/default-model.js");
-  const prevForce = process.env.OE_FORCE_MODEL;
-  const prevPrimary = process.env.OE_PRIMARY_MODEL;
-  delete process.env.OE_FORCE_MODEL;
-  delete process.env.OE_PRIMARY_MODEL;
+  const { overrideSettingsForTest, resetSettingsForTest } = await import("../agent/settings/settings.js");
+  resetSettingsForTest();
 
   _resetDefaultAgentModelIdForTest();
   ok(soleConfiguredModel() === BUILT_IN_ID, "soleConfiguredModel: assumes the built-in entry when nothing has re-pointed the primary (the shipped case — the negative control for the two below)");
@@ -123,18 +121,16 @@ _resetModelPricingForTest();
   ok(soleConfiguredModel() === undefined, "soleConfiguredModel: DECLINES when the app resolved a primary the built-in table does not name (a stack switch) — tokens-only beats a permanently wrong rate");
 
   _resetDefaultAgentModelIdForTest();
-  process.env.OE_PRIMARY_MODEL = "acme/env-pinned";
-  ok(soleConfiguredModel() === undefined, "soleConfiguredModel: DECLINES under an OE_PRIMARY_MODEL pin too — the env knobs move the primary with every lint green");
-  delete process.env.OE_PRIMARY_MODEL;
+  overrideSettingsForTest({ models: { primary: "acme/settings-pinned" } });
+  ok(soleConfiguredModel() === undefined, "soleConfiguredModel: DECLINES under a models.primary pin too — the setting moves the primary with every lint green");
+  resetSettingsForTest();
 
-  process.env.OE_FORCE_MODEL = "acme/force-pinned";
-  ok(soleConfiguredModel() === undefined, "soleConfiguredModel: DECLINES under an OE_FORCE_MODEL hard pin");
-  delete process.env.OE_FORCE_MODEL;
+  overrideSettingsForTest({ models: { force: "acme/force-pinned" } });
+  ok(soleConfiguredModel() === undefined, "soleConfiguredModel: DECLINES under a models.force hard pin");
+  resetSettingsForTest();
 
   ok(soleConfiguredModel() === BUILT_IN_ID, "soleConfiguredModel: assumes again once the pins are cleared (proves the three declines above are the pins, not a stuck state)");
 
-  if (prevForce !== undefined) process.env.OE_FORCE_MODEL = prevForce;
-  if (prevPrimary !== undefined) process.env.OE_PRIMARY_MODEL = prevPrimary;
 }
 
 function refuses(table: Record<string, ModelPricing>, label: string): void {
@@ -232,3 +228,7 @@ ok(unpricedModelIds([BUILT_IN_ID]).length === 0, "unpricedModelIds: a BUILT_IN-p
 ok(unpricedModelIds(["acme/x", "acme/x"]).join() === "acme/x", "unpricedModelIds: dedupes — one red per id, not one per selection site");
 
 console.log(`✓ pricing: ${passed} assertions passed`);
+
+// proves: MOD-14
+
+// proves: SET-080

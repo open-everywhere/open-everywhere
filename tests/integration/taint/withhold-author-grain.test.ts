@@ -40,8 +40,9 @@ async function armSeams(): Promise<void> {
 
 async function setAuthorGrain(grain: "taint" | "withhold"): Promise<void> {
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
-  settings.overrideSettingsForTest({ externalPolicy: { authorGrain: grain } });
+  settings.overrideSettingsForTest({ externalPolicy: { authorGrain: grain, roomGrain: "engage" } });
   expect(settings.getSettings().externalPolicy.authorGrain).toBe(grain);
+  expect(settings.getSettings().externalPolicy.roomGrain).toBe("engage");
 }
 
 async function waitForSuppressionRows(cursor: AuditCursor, label: string) {
@@ -56,7 +57,7 @@ async function waitForSuppressionRows(cursor: AuditCursor, label: string) {
   });
 }
 
-test("🔴 negative control: authorGrain \"taint\" (shipped) — a REGISTER-REFUTED author's mention still wakes the model", async () => {
+test("🔴 negative control: authorGrain \"taint\" (the opt-out) — a REGISTER-REFUTED author's mention still wakes the model", async () => {
   await armSeams();
   await setAuthorGrain("taint");
   const nonce = randomBytes(4).toString("hex");

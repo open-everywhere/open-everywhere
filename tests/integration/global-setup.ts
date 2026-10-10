@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { sweepStaleForkAppRoots } from "./fork-app-root.js";
-import { GLOBAL_SETUP_PID_ENV, INTEGRATION_SANDBOX_BACKEND, PGLITE_TEMPLATE_DIR_ENV, PREPARED_PGLITE_TEMPLATE_PARENT } from "./global-setup-contract.js";
+import { GLOBAL_SETUP_PID_ENV, PGLITE_TEMPLATE_DIR_ENV, PREPARED_PGLITE_TEMPLATE_PARENT } from "./global-setup-contract.js";
 import { PGLITE_TEMPLATE_DIR_NAME, mintPgliteTemplate } from "./pglite-template.js";
 import { PREPARED_ARTIFACTS, missingPreparedArtifacts } from "./prepare-cache.js";
 import { sweepStaleSandboxSessions } from "./sandbox-session-sweep.js";
@@ -26,7 +26,6 @@ export function preparedPgliteTemplate(root: string): string | undefined {
 export default async function globalSetup(): Promise<void> {
   const root = process.cwd();
   process.env[GLOBAL_SETUP_PID_ENV] = String(process.pid);
-  process.env.OE_SANDBOX_BACKEND = INTEGRATION_SANDBOX_BACKEND;
   const swept = sweepStaleForkAppRoots();
   if (swept > 0) console.log(`integration global-setup: removed ${swept} abandoned fork app root(s).`);
   const sweptState = sweepAbandonedStateDirs();

@@ -18,7 +18,7 @@ Issues, discussions, and pull requests are welcome.
 Open Everywhere targets **Node 24** (Eve's floor — `package.json#engines`).
 
 ```bash
-git clone https://github.com/<owner>/open-everywhere.git
+git clone https://github.com/open-everywhere/open-everywhere.git
 cd open-everywhere
 npm ci
 ```
@@ -39,7 +39,7 @@ prove your own commit: run all four commands and report the result in the PR bod
 
 ```bash
 npm run typecheck:all     # tsc against real Eve types (root + every workspace) — must be clean
-npm test                  # the full deterministic suite (~75 suites) — must be green
+npm test                  # the full deterministic suite — must be green
 npm run build             # eve build — loads the full agent graph
 npm run test:integration  # vitest — real host, scripted model against a real, in-process boot
 ```

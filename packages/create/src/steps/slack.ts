@@ -5,6 +5,8 @@ import { isSet, mergedEnv, missNote } from "../env-file.js";
 
 const SLACK_ENV = ["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET"] as const;
 
+const PROJECT_MARK_URL = "https://raw.githubusercontent.com/open-everywhere/open-everywhere/main/brand/png/mark-square-1024.png";
+
 export const slackStep: SetupStep = {
   id: "slack",
   title: "Slack app",
@@ -51,6 +53,11 @@ export const slackStep: SetupStep = {
               : "the default — set identity.name in agent/settings/settings.ts to name it"
         }). A second install in one workspace needs its own name: re-run with --app-name "<name>".`,
         "Install to Workspace, then OAuth & Permissions → copy the Bot User OAuth Token (xoxb-…) = SLACK_BOT_TOKEN.",
+        `Basic Information → Display Information → App icon: ${
+          ctx.appName === undefined && ctx.agentName === undefined
+            ? "upload the project mark"
+            : "upload your own icon, or the project mark"
+        }, ${PROJECT_MARK_URL}. Slack's manifest has no icon field, so this step stays by hand.`,
         "Basic Information → App Credentials → copy the Signing Secret = SLACK_SIGNING_SECRET.",
         "Write both with `npx oe env set SLACK_BOT_TOKEN` and `npx oe env set SLACK_SIGNING_SECRET`, run in your own terminal: each reads the value from a hidden prompt. Never paste a secret into the chat, and never pass one to an ops tool.",
         "THE SHORT WAY, once the deployment is up: open https://<host>/setup. It creates the Slack app from this same manifest with one pasted Slack app configuration token, installs it, and keeps every credential in the deployment's own encrypted store — no env var to set. This check cannot see that store, so it still reports this step unsatisfied afterwards; the status endpoint can.",

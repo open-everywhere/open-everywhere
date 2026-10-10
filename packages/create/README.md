@@ -1,17 +1,46 @@
 # @open-everywhere/create
 
-The scaffold and setup check for Open Everywhere.
+<!-- HERO LINE: the maintainer decides -->
 
-Part of [Open Everywhere](https://github.com/open-everywhere/open-everywhere) — an open, self-hostable autonomous teammate you tag where your
-team works. This package is run, not imported, and it does two things: it scaffolds a new app from
+**The scaffold and setup check for Open Everywhere: an open-source AI agent that your team runs on
+its own infrastructure and works with in chat, issues, docs and code.**
+
+```sh
+npm create @open-everywhere my-agent
+```
+
+Then open the new app in your coding agent and ask it to finish the setup.
+
+## What you get
+
+One deployment of Open Everywhere gives your org all of these together:
+
+- **Six platforms.** Slack, Microsoft Teams, Discord, GitHub, Linear and Notion, on one identity model.
+- **One deployment for the whole org.** Each domain names the memory silos it uses and can bind its own credentials.
+- **Changes by pull request.** The agent proposes changes to its own grants, and a human merges each one.
+- **Governance you can verify.** Rules live in your repository, and the audit log is append-only and
+  hash-chained.
+- **Quiet routines.** A condition gate that says no costs no model spend.
+- **Engineering work.** Repository checkout, edits and pull requests behind an approval gate.
+- **Any model.** One setting switches every model role, closed or open-weights.
+
+The [project README](https://github.com/open-everywhere/open-everywhere#how-the-parts-fit) links each
+part to its docs.
+
+## What this package does
+
+This package is run, not imported, and it does two things: it scaffolds a new app from
 the quickstart template, and it reports an existing app's setup status without touching it.
 
 **Setup itself is agent-led.** There is no interactive wizard: you open the scaffolded app in your
 coding agent and ask it to set up Open Everywhere. The agent reads the app's `AGENTS.md`, drives the
-`open-everywhere-ops` MCP server, and reads this command's `--check` report. Two routes are
-supported, and the agent asks which first: **Vercel** (the `vercel` CLI plus Marketplace Neon) or
-**Docker** (a self-hosted container that satisfies the
+`open-everywhere-ops` MCP server, and reads this command's `--check` report. The agent asks which
+route first: **Vercel** (the `vercel` CLI plus Marketplace Neon) or **Docker** (a self-hosted
+container that satisfies the
 [deployment contract](https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/contract.md)).
+Vercel is the one route that the project runs end to end. The Docker route is partly proven, and a
+scaffolded app carries no `Dockerfile`: see the
+[deployment contract](https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/contract.md).
 
 ## Use
 

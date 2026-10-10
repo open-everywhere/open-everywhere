@@ -13,7 +13,7 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     globs: ["packages/providers/slack/**"],
     scenarios: [
       "J1", "J2", "S-MEM-READ", "J3", "S6", "S8", "S9", "S10", "S11", "S13", "S14", "S-LINK-SLACK",
-      "J4", "J-MPIM", "S20", "S23", "S24", "F-ART", "F-EDIT", "F-SEC", "J-SUP", "J-UNIFIED", "J-UNI-X", "J-PR",
+      "J4", "J-MPIM", "S20", "S23", "S24", "F-ART", "F-QA-REPO", "F-EDIT", "F-SEC", "J-SUP", "J-UNIFIED", "J-UNI-X", "J-PR",
       "S-PR-SESSION", "S-PR-BOUNDARY", "S-AWS-BOUNDARY", "J-WORKFLOW", "S-NOTION-WRITE",
       "S-CONNECTOR-TIER", "S-DM-NOTION", "S-EVE-CARD", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-TAINT-DRYRUN",
       "S-TAINT-ROUTE-LIVE", "S-TAINT-UNATTENDED-DENY",
@@ -153,8 +153,20 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   {
     area: "artifacts-and-attachments",
     globs: ["packages/core/agent/tools/post_file.ts", "packages/core/agent/tools/describe_image.ts", "packages/core/agent/tools/read_file_upload.ts"],
-    scenarios: ["F-ART"],
-    why: "F-ART is the only scenario driving post_file + describe_image + the attachment trusted-fetch path together.",
+    scenarios: ["F-ART", "F-QA-REPO"],
+    why: "F-ART is the only scenario driving post_file + describe_image + the attachment trusted-fetch path together. F-QA-REPO drives post_file and describe_image on a workspace screenshot (the { path } arms).",
+  },
+  {
+    area: "browser-qa",
+    globs: [
+      "packages/core/agent/access/browser-toolkit.ts",
+      "packages/core/agent/access/browser-hosts.ts",
+      "packages/core/agent/tools/browser_tools.ts",
+      "packages/adapters/agent/browser/**",
+      "agent/access/browser-hosts.ts",
+    ],
+    scenarios: ["F-ART", "F-QA-REPO"],
+    why: "F-ART leg 4 and F-QA-REPO are the only legs that drive the agent-browser tools; F-QA-REPO is the only one that browses a dev server a worker booted from a checked-out repo.",
   },
   {
     area: "input-request-bridge",
@@ -201,6 +213,12 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     globs: ["packages/core/agent/tools/open_pull_request.ts", "packages/core/agent/approvals/pr-open.ts"],
     scenarios: ["J-PR", "S-PR-SESSION", "S-PR-BOUNDARY", "J-WORKFLOW", "J-UNI-X"],
     why: "These are every scenario that calls open_pull_request — the one consequential-write door with its own approval shape (card vs. armed-judge vs. session-grant vs. ungranted-repo refusal).",
+  },
+  {
+    area: "repo-checkout",
+    globs: ["packages/core/agent/tools/checkout_repo.ts", "packages/core/agent/scm/broker.ts", "packages/core/agent/scm/broker-audit.ts", "packages/core/agent/scm/git.ts"],
+    scenarios: ["J-PR", "F-QA-REPO"],
+    why: "J-PR clones the fixture repo before it opens a PR; F-QA-REPO clones it to boot the repo's own dev server, and its checkout gate reads the scm.broker egress.policy row that broker-audit.ts writes.",
   },
   {
     area: "engagement-seam",

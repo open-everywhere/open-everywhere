@@ -125,17 +125,18 @@ for (const [rel, mod] of loaded) {
 }
 
 {
-  const { SCRIPTED_MODEL_ENV, SCRIPTED_MODEL_ID, scriptedModelArmed } = await import("../agent/model/scripted-model.js");
+  const { SCRIPTED_MODEL_VALVE, SCRIPTED_MODEL_ID, scriptedModelArmed } = await import("../agent/model/scripted-model.js");
+  const { testValveArmed, __setTestValveForTest } = await import("@open-everywhere/core/agent/testing/test-valves.js");
   const { registerScript } = await import("../agent/model/scripted-model.js");
   const { scriptedModelFor } = await import("../agent/model/scripted-resolve.js");
   if (scriptedModelArmed()) {
     problems.push(
-      `SCRIPTED MODEL: ${SCRIPTED_MODEL_ENV} is armed in this process — the boot gate must run with it UNSET, ` +
+      `SCRIPTED MODEL: the ${SCRIPTED_MODEL_VALVE} test valve is armed in this process — the boot gate must run with it UNSET, ` +
         "or ⑤ asserts nothing. (It is armed only inside the vitest integration forks.)",
     );
   } else {
     if ((await scriptedModelFor(undefined, {})) !== null) {
-      problems.push("SCRIPTED MODEL: scriptedModelFor() returned non-null with the env unset — the normal build would consult test scripts.");
+      problems.push("SCRIPTED MODEL: scriptedModelFor() returned non-null with the valve unarmed — the normal build would consult test scripts.");
     }
     let refused = false;
     try {
@@ -144,12 +145,19 @@ for (const [rel, mod] of loaded) {
       refused = true;
     }
     if (!refused) {
-      problems.push("SCRIPTED MODEL: registerScript() accepted a script with the env unset — the fail-closed guard is gone.");
+      problems.push("SCRIPTED MODEL: registerScript() accepted a script with the valve unarmed — the fail-closed guard is gone.");
     }
-    const priorArm = process.env[SCRIPTED_MODEL_ENV];
+    const priorEnv = process.env.OE_SCRIPTED_MODEL;
+    process.env.OE_SCRIPTED_MODEL = "1";
+    if (scriptedModelArmed() || (await scriptedModelFor(undefined, {})) !== null) {
+      problems.push("SCRIPTED MODEL: the retired OE_SCRIPTED_MODEL=1 env var armed the double — a deployment could arm a test seam.");
+    }
+    if (priorEnv === undefined) delete process.env.OE_SCRIPTED_MODEL;
+    else process.env.OE_SCRIPTED_MODEL = priorEnv;
+    const priorArm = testValveArmed("scripted-model");
     const priorVercel = process.env.VERCEL;
     try {
-      process.env[SCRIPTED_MODEL_ENV] = "1";
+      __setTestValveForTest("scripted-model", true);
       process.env.VERCEL = "1";
       let vercelRefused = false;
       try {
@@ -161,8 +169,7 @@ for (const [rel, mod] of loaded) {
         problems.push("SCRIPTED MODEL: scriptedModelFor() did not throw when armed on Vercel — a hosted deployment could answer from a script.");
       }
     } finally {
-      if (priorArm === undefined) delete process.env[SCRIPTED_MODEL_ENV];
-      else process.env[SCRIPTED_MODEL_ENV] = priorArm;
+      __setTestValveForTest("scripted-model", priorArm);
       if (priorVercel === undefined) delete process.env.VERCEL;
       else process.env.VERCEL = priorVercel;
     }
@@ -175,7 +182,7 @@ for (const [rel, mod] of loaded) {
       const seated = selection && typeof selection === "object" ? selection.model : undefined;
       if (seated && typeof seated === "object" && seated.modelId === SCRIPTED_MODEL_ID) {
         problems.push(
-          `MODEL SEAT: the turn seat resolved to the SCRIPTED double (${SCRIPTED_MODEL_ID}) with ${SCRIPTED_MODEL_ENV} unset — ` +
+          `MODEL SEAT: the turn seat resolved to the SCRIPTED double (${SCRIPTED_MODEL_ID}) with the ${SCRIPTED_MODEL_VALVE} valve unarmed — ` +
             "this build would answer wakes from test scripts.",
         );
       }
@@ -365,22 +372,18 @@ for (const [rel, mod] of loaded) {
   const { getSettings } = await import("@open-everywhere/core/agent/settings/settings.js");
   const settings = getSettings();
   const declared: [string, unknown, unknown][] = [
-    ["window.topology", settings.window.topology, false],
-    ["connectors.dmOnly", settings.connectors.dmOnly, true],
-    ["connectors.userPrincipal", settings.connectors.userPrincipal, false],
-    ["connectors.opTiering", settings.connectors.opTiering, false],
     ["browser.enabled", settings.browser.enabled, false],
     ["identity.name", settings.identity.name, ""],
     ["identity.shortName", settings.identity.shortName, ""],
+    ["sandbox.selfHostBackend", settings.sandbox.selfHostBackend, "docker"],
+    ["wake.testWakeRoute", settings.wake.testWakeRoute, false],
   ];
   const expected: Record<string, unknown> = {
-    "window.topology": true,
-    "connectors.dmOnly": false,
-    "connectors.userPrincipal": true,
-    "connectors.opTiering": true,
     "browser.enabled": true,
     "identity.name": "Open Everywhere",
     "identity.shortName": "oe",
+    "sandbox.selfHostBackend": "justbash",
+    "wake.testWakeRoute": true,
   };
   for (const [key, live, shipped] of declared) {
     if (live !== expected[key]) {
@@ -395,12 +398,14 @@ for (const [rel, mod] of loaded) {
   for (const surface of ["slack", "discord", "notion"]) {
     if (!drivers.some((d) => d.surface === surface)) problems.push(`SETTINGS: wake.e2eDrivers names no ${surface} driver after boot.`);
   }
+  const pairs = settings.wake.driverAllowlist;
+  if (pairs.length !== 3) problems.push(`SETTINGS: wake.driverAllowlist resolves ${pairs.length} pairs after boot, not the three agent/settings/settings.ts declares.`);
 
   const { SETTINGS_OVERRIDES } = await import("../agent/settings/settings.js");
   const declaredKeys = Object.entries(SETTINGS_OVERRIDES as Record<string, Record<string, unknown> | undefined>)
     .flatMap(([group, values]) => (values === undefined ? [] : Object.keys(values).map((key) => `${group}.${key}`)))
     .sort();
-  const watchedKeys = [...Object.keys(expected), "wake.e2eDrivers"].sort();
+  const watchedKeys = [...Object.keys(expected), "wake.e2eDrivers", "wake.driverAllowlist"].sort();
   for (const key of declaredKeys) {
     if (!watchedKeys.includes(key)) problems.push(`SETTINGS: agent/settings/settings.ts declares ${key} and nothing in this block watches it — add it to the list above.`);
   }

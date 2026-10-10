@@ -1,3 +1,4 @@
+import { __setTestValveForTest } from "@open-everywhere/core/agent/testing/test-valves.js";
 import { afterAll, expect, test } from "vitest";
 
 import {
@@ -21,8 +22,8 @@ import { installDiscordWebApiStub } from "../discord-web-api";
 const discord = installDiscordWebApiStub({ captureMessages: true });
 
 function egressSpoof(on: boolean): void {
-  if (on) process.env.OE_EGRESS_SPOOF = "1";
-  else delete process.env.OE_EGRESS_SPOOF;
+  if (on) __setTestValveForTest("egress-spoof", true);
+  else __setTestValveForTest("egress-spoof", false);
 }
 
 afterAll(() => {

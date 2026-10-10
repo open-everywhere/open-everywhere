@@ -2,6 +2,7 @@ import type { RouteHandlerArgs } from "eve/channels";
 import { routeAuth } from "eve/channels/auth";
 import { injectTokenEntries, injectTokenAuth } from "./auth.js";
 import { appendAudit } from "../audit/audit.js";
+import { getSettings } from "../settings/settings.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -20,9 +21,8 @@ function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
-export function testWakeEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  const v = (env.OE_TEST_WAKE ?? "").trim().toLowerCase();
-  return v === "1" || v === "true" || v === "yes";
+export function testWakeEnabled(): boolean {
+  return getSettings().wake.testWakeRoute;
 }
 
 export interface TestWakeRequest {

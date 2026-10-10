@@ -81,14 +81,16 @@ proves they hold only data. After a data edit, run `npx oe overlays normalize`.
 The agent asks a person before a gated act: it posts a card, and a person approves or rejects it.
 The approval judge skips the card for routine acts. It runs in `enforce` mode by default, and it
 runs an act with no card only when one of the rules in `agent/access/pre-approval-rules.ts` covers
-that act. The audit row (`approval.judge.verdict`) records which rule. The app ships four starter
-rules: a pull request, a routine, an access request and a connector write (a Notion page, a Linear
-issue), each only when a person in the conversation asked for it. Edit the rules in that file and
+that act. The audit row (`approval.judge.verdict`) records which rule. The app ships five starter
+rules: a pull request, a routine, an access request, a connector write (a Notion page, a Linear
+issue) and a connector delete of one item the requester named, each only when a person in the conversation asked for it. Edit the rules in that file and
 deploy the change.
 
-Every admin act and every memory erasure always posts a card, whatever the rules say. So does a destructive connector op
-(a delete, an archive) and a connector op on a person's own account. A judge allow of a connector
-write runs that one call only. When the judge model cannot be
+Every admin act and every memory erasure always posts a card, whatever the rules say. So does a connector op whose name
+carries no recognised verb, unless the tool annotations of its registered server bring its final
+tier down to `read`. So do an op that a raise or a server annotation made destructive, and a
+connector write or delete on a person's own account. A judge allow of a connector write or
+delete runs that one call only. When the judge model cannot be
 reached or does not answer in time, the card is posted. A consult costs up to two calls to the
 `judge` model role. To turn the judge off, set `approvals: { judgeMode: "off" }` in
 `agent/settings/settings.ts`. See the

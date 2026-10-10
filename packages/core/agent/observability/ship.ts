@@ -59,6 +59,10 @@ function warnOnce(reason: string): void {
   rawConsole.warn(`[open-everywhere:log-ship] ${reason}`);
 }
 
+const LOG_SHIP_BATCH_MAX = 20;
+const LOG_SHIP_FLUSH_MS = 1000;
+let tuning: { batchMax: number; flushMs: number } = { batchMax: LOG_SHIP_BATCH_MAX, flushMs: LOG_SHIP_FLUSH_MS };
+
 function readConfig(): ShipConfig | null {
   if (config !== undefined) return config;
   const url = process.env.OE_LOG_SHIP_URL?.trim();
@@ -66,17 +70,13 @@ function readConfig(): ShipConfig | null {
     config = null;
     return config;
   }
-  const num = (raw: string | undefined, fallback: number): number => {
-    const n = Number(raw);
-    return Number.isFinite(n) && n > 0 ? n : fallback;
-  };
   config = {
     url,
     tokenHeader: process.env.OE_LOG_SHIP_TOKEN_HEADER?.trim() || "authorization",
     token: process.env.OE_LOG_SHIP_TOKEN || undefined,
     service: process.env.OE_LOG_SERVICE?.trim() || "open-everywhere",
-    batchMax: num(process.env.OE_LOG_SHIP_BATCH_MAX, 20),
-    flushMs: num(process.env.OE_LOG_SHIP_FLUSH_MS, 1000),
+    batchMax: tuning.batchMax,
+    flushMs: tuning.flushMs,
   };
   return config;
 }
@@ -258,8 +258,9 @@ export function droppedRecordCount(): number {
   return droppedRecords;
 }
 
-export function __resetLogShipForTest(overrides: { fetchImpl?: typeof fetch } = {}): void {
+export function __resetLogShipForTest(overrides: { fetchImpl?: typeof fetch; batchMax?: number; flushMs?: number } = {}): void {
   config = undefined;
+  tuning = { batchMax: overrides.batchMax ?? LOG_SHIP_BATCH_MAX, flushMs: overrides.flushMs ?? LOG_SHIP_FLUSH_MS };
   queue = [];
   if (flushTimer) {
     clearTimeout(flushTimer);

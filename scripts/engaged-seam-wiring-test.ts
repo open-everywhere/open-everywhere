@@ -663,7 +663,7 @@ const NOW = "2026-05-12T11:30:00.000Z";
   };
 
   {
-    const { marked, sessionOpened } = await drive("direct", undefined);
+    const { marked, sessionOpened } = await drive("direct", { authorGrain: "taint" });
     ok(sessionOpened, "notion mark: precondition — an admitted addressed wake opens its session");
     ok(marked.length === 1 && marked[0] === PAGE, "🔴 notion mark: an ADDRESSED wake ENROLS the page, below the external-author gate");
   }
@@ -678,14 +678,19 @@ const NOW = "2026-05-12T11:30:00.000Z";
   }
 
   {
-    const { marked, sessionOpened } = await drive("channel-watch", undefined);
+    const { marked, sessionOpened } = await drive("direct", undefined);
+    ok(!sessionOpened && marked.length === 0, "🔴 notion mark: under the SHIPPED policy (`withhold`) the excluded author's addressed wake is suppressed and enrols nothing");
+  }
+
+  {
+    const { marked, sessionOpened } = await drive("channel-watch", { authorGrain: "taint" });
     ok(sessionOpened, "notion mark: precondition — a channel-watch wake still opens its session");
     ok(marked.length === 0, "🔴 notion mark: an AMBIENT wake enrols nothing — being read is not being invited");
   }
 
   {
     const { marked, sessionOpened } = await drive("direct", { authorGrain: "taint" });
-    ok(sessionOpened && marked.length === 1, "🔴 notion mark: NEGATIVE CONTROL — under the shipped `taint` grain the same author is admitted and DOES enrol, so control 1 measured the policy and not the fixture");
+    ok(sessionOpened && marked.length === 1, "🔴 notion mark: NEGATIVE CONTROL — under the `taint` opt-out grain the same author is admitted and DOES enrol, so control 1 measured the policy and not the fixture");
   }
 
   const part = resolvePartition({
@@ -694,7 +699,7 @@ const NOW = "2026-05-12T11:30:00.000Z";
   } as never);
   const ANCHOR = `${WS}/${PAGE}`;
   const driveLive = async (commentId: string) => {
-    await handleNotionSupervisorDispatch({ ...dispatchInput("direct"), trigger: wakeMessage(commentId) } as never, {
+    await handleNotionSupervisorDispatch({ ...dispatchInput("direct"), trigger: wakeMessage(commentId), externalPolicy: resolveExternalPolicy({ authorGrain: "taint" }) } as never, {
       getOrCreateSession: async () => ({ token: "notion:mark-page:oe-sup:g1", generation: 1, freshGeneration: false, tail: [] }),
       wake: async () => {},
     } as never);
@@ -728,7 +733,7 @@ const NOW = "2026-05-12T11:30:00.000Z";
   const GH_SURFACE = `github/${GH_OWNER}/${GH_REPO}`;
   const LIN_SURFACE = `linear/${LIN_ORG}/${LIN_TEAM}`;
 
-  const addressedOnly = defineDomain({ name: "addressed-only", reach: [GH_SURFACE, LIN_SURFACE] });
+  const addressedOnly = defineDomain({ name: "addressed-only", reach: [GH_SURFACE, LIN_SURFACE], ambientSupervisor: false });
   const domains = [addressedOnly];
   registerConfig({
     loadBundles: () => [], loadBindings: () => [], pluginRegistry: {}, skillContent: {},
@@ -870,7 +875,7 @@ const NOW = "2026-05-12T11:30:00.000Z";
   const prevDiscordToken = process.env.DISCORD_BOT_TOKEN;
   delete process.env.DISCORD_BOT_TOKEN;
 
-  const domains = [defineDomain({ name: "addressed-guild", reach: [`discord/${GUILD}/${BASE}`] })];
+  const domains = [defineDomain({ name: "addressed-guild", reach: [`discord/${GUILD}/${BASE}`], ambientSupervisor: false })];
   registerConfig({
     loadBundles: () => [], loadBindings: () => [], pluginRegistry: {}, skillContent: {},
     loadDomains: () => domains,

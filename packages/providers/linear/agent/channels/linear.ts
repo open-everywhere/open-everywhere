@@ -90,6 +90,7 @@ import {
   seatAdmissionFor,
   OE_ADDRESSED_ATTR,
   dispatchNativeWakeWithRetry,
+  getSettings,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { withEndsTurnFinalChannel } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -309,7 +310,7 @@ function linearGrainFor(surfaceKey: string): SupervisorGrain {
 }
 
 function linearTeamVouched(organizationId: string, teamId: string): boolean {
-  return isVouchedInternal(`linear/${organizationId}`, `linear/${organizationId}/${teamId}`) || process.env.OE_TRUST === "internal";
+  return isVouchedInternal(`linear/${organizationId}`, `linear/${organizationId}/${teamId}`) || getSettings().identity.blanketTrust === "internal";
 }
 
 export type LinearExternalVerdict = "proceed" | "withheld-author" | "silent-room";

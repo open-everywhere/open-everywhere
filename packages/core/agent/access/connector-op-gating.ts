@@ -6,6 +6,7 @@ import {
   parseQualifiedToolName,
   type ConnectorOpTier,
   type ConnectorOpTierArm,
+  type ConnectorOpToolHints,
   type OpTierBasis,
 } from "./consequence.js";
 import { getConfig } from "./config.js";
@@ -118,14 +119,14 @@ interface ArmAnswer {
   readonly tier?: ConnectorOpTier;
 }
 
-function consultTieringFunction(toolName: string): ArmAnswer {
+function consultTieringFunction(toolName: string, hints: ConnectorOpToolHints | undefined): ArmAnswer {
   const arm = registeredConnectorOpTierArm();
   const replaced = arm !== defaultConnectorOpTierArm;
   const parsed = parseQualifiedToolName(toolName);
   if (parsed?.connection === undefined) return { replaced };
   let answer: unknown;
   try {
-    answer = arm({ connection: parsed.connection, verb: parsed.verb, toolName });
+    answer = arm({ connection: parsed.connection, verb: parsed.verb, toolName, ...(hints !== undefined ? { hints } : {}) });
   } catch (err) {
     console.warn(`[open-everywhere:access] connectorOpTier arm threw for ${toolName}; kept the built-in verdict: ${String(err)}`);
     return { replaced };
@@ -143,6 +144,8 @@ function consultTieringFunction(toolName: string): ArmAnswer {
 export interface ConnectorOpTierParts {
   readonly base: ConnectorOpTier;
   readonly basis: OpTierBasis;
+  readonly hint?: ConnectorOpTier;
+  readonly hintDecided: boolean;
   readonly armReplaced: boolean;
   readonly arm?: ConnectorOpTier;
   readonly armLowered: boolean;
@@ -150,9 +153,9 @@ export interface ConnectorOpTierParts {
   readonly tier: ConnectorOpTier;
 }
 
-export function connectorOpTierParts(toolName: string, bundles?: readonly Bundle[]): ConnectorOpTierParts {
-  const verdict = classifyConnectorOpTierVerdict(toolName);
-  const arm = consultTieringFunction(toolName);
+export function connectorOpTierParts(toolName: string, bundles?: readonly Bundle[], hints?: ConnectorOpToolHints): ConnectorOpTierParts {
+  const verdict = classifyConnectorOpTierVerdict(toolName, hints);
+  const arm = consultTieringFunction(toolName, hints);
   const afterArm =
     arm.tier === undefined
       ? verdict.tier
@@ -165,6 +168,8 @@ export function connectorOpTierParts(toolName: string, bundles?: readonly Bundle
   return {
     base: verdict.tier,
     basis: verdict.basis,
+    ...(verdict.hint !== undefined ? { hint: verdict.hint } : {}),
+    hintDecided: verdict.hintDecided,
     armReplaced: arm.replaced,
     ...(arm.replaced && arm.tier !== undefined ? { arm: arm.tier } : {}),
     armLowered,
@@ -173,12 +178,12 @@ export function connectorOpTierParts(toolName: string, bundles?: readonly Bundle
   };
 }
 
-export function effectiveConnectorOpTier(toolName: string, bundles?: readonly Bundle[]): ConnectorOpTier {
-  return connectorOpTierParts(toolName, bundles).tier;
+export function effectiveConnectorOpTier(toolName: string, bundles?: readonly Bundle[], hints?: ConnectorOpToolHints): ConnectorOpTier {
+  return connectorOpTierParts(toolName, bundles, hints).tier;
 }
 
-export function effectiveConnectorOpConsequence(toolName: string, bundles?: readonly Bundle[]): "open" | "gate:member" {
-  return connectorOpConsequenceOfTier(effectiveConnectorOpTier(toolName, bundles));
+export function effectiveConnectorOpConsequence(toolName: string, bundles?: readonly Bundle[], hints?: ConnectorOpToolHints): "open" | "gate:member" {
+  return connectorOpConsequenceOfTier(effectiveConnectorOpTier(toolName, bundles, hints));
 }
 
 export function connectorOpConsequenceOfTier(tier: ConnectorOpTier): "open" | "gate:member" {

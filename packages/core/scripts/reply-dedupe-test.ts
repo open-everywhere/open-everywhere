@@ -1,3 +1,6 @@
+// proves: REPLY-07, REPLY-28
+
+import { __setTestValveForTest } from "../agent/testing/test-valves.js";
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,7 +10,7 @@ import { removeTempDir } from "./_temp-dir.js";
 const dir = join(tmpdir(), `open-everywhere-reply-dedupe-${process.pid}`);
 await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-process.env.OE_EGRESS_SPOOF = "1";
+__setTestValveForTest("egress-spoof", true);
 delete process.env.VERCEL;
 
 const { postReply, REPLY_DEDUPE_SKIPPED_ID } = await import("../agent/channels/reply-post.js");

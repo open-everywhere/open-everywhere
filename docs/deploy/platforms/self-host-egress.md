@@ -15,10 +15,20 @@ Two tiers:
   method/path narrowing and **credential injection at the firewall** (git read-broker token
   never enters the sandbox) — full parity with the Vercel path.
 
-## Sandbox backend: containment (`OE_SANDBOX_BACKEND`)
+<a id="sandbox-backend-containment-oe_sandbox_backend"></a>
 
-Off Vercel the agent's shell runs in one of two backends. **`docker()` is the default** and the
-only one fit for a real deployment:
+## Sandbox backend: containment (`sandbox.selfHostBackend`)
+
+Off Vercel the agent's shell runs in one of two backends. The setting `sandbox.selfHostBackend` in
+the app's `agent/settings/settings.ts` picks it (it was `OE_SANDBOX_BACKEND` until OPE-2411). **Today only `justbash` runs behind this
+proxy**, and it is development grade. The `docker()` backend contains the filesystem, but its
+session containers sit outside the proxy (below), so no Docker configuration gives both a
+contained filesystem and enforced egress yet (OPE-2407).
+
+| Backend | Runs in the shipped image | Session egress behind the proxy | Filesystem |
+| --- | --- | --- | --- |
+| `justbash` (what an app in the image declares) | Yes | Yes | shared with the app process |
+| `docker()` (the code's default off Vercel) | No: the image carries a just-bash template only | No: the app refuses to boot on `docker` with `OE_EGRESS_PROXY_URL` set | a per-session container |
 
 > [!WARNING]
 > **`justbash` shares the app process's filesystem — dev/testing ONLY.** The `justbash()`
@@ -29,20 +39,39 @@ only one fit for a real deployment:
 > through the proxy (Tier A host allow/deny), but it has no real `git`/`npm` binaries so Tier B
 > credentialed clone can't be exercised there.
 
-- **`docker()` (default) — the contained tier.** The agent runs in a sibling container confined
-  to a **limited, per-session filesystem (its workspace)** — never the app's fs or the host OS.
-  Egress is forced through the proxy sidecar (Tier A + Tier B), and it has real `git`/`npm` for
-  the credentialed checkout path. Honest trade-off: it needs the Docker **daemon socket** mounted
-  into the app (Docker-out-of-Docker), so an app compromise is effectively a host compromise —
-  run it only with a trusted runner. The end-to-end **checkout-on-docker** path (mid-turn broker
-  `pushEgressPolicy` + a real `git clone` with the token injected at the firewall) is still
-  **live-pending** — see [`deploy/egress-proxy/README.md`](../../../deploy/egress-proxy/README.md)
-  ("Still live-pending").
-- **`justbash` (dev opt-in) — set `OE_SANDBOX_BACKEND=justbash` explicitly.** Uncontained (see
-  the warning above). Unknown `OE_SANDBOX_BACKEND` values fail loudly at boot.
+- **`docker()` (the code's default off Vercel) — contained, but NOT behind this proxy.** The agent
+  runs in a sibling container confined to a **limited, per-session filesystem (its workspace)**,
+  with real `git`/`npm`. It needs the Docker **daemon socket** mounted into the app
+  (Docker-out-of-Docker), so an app compromise is effectively a host compromise. 🔴 Its egress is
+  **not** enforced by the proxy: eve starts each session container with no `--network` flag, so it
+  joins the daemon's default bridge network (a direct WAN route, no proxy env), and eve's docker
+  options expose no network field. With the proxy wired, the policy would go to the proxy and never
+  reach the container, while the audit recorded "enforced". So the app **refuses to boot** with
+  `sandbox.selfHostBackend: "docker"` and `OE_EGRESS_PROXY_URL` set. Without the proxy, docker applies only
+  the coarse `"deny-all"`, and a session that needs a host allow-list aborts at `session.started`.
+  The shipped image cannot run it either: eve 0.71 provisions sandbox templates at build time, and
+  the build stage has no daemon, so the image carries a just-bash template only.
+- **`justbash` — the only backend behind this proxy.** Uncontained (see the warning above). Its
+  egress leaves through the app process, so the proxy holds every session request to the session's
+  allow list. Settings load refuses any other `sandbox.selfHostBackend` value at boot.
 
-The bundled `docker-compose.yml` pins `justbash` for the **local egress dev run** (fast, no
-daemon socket); flip it to `docker` and uncomment the socket mount for the contained tier.
+The bundled `docker-compose.yml` runs `justbash`, because this repository's root app declares
+`sandbox: { selfHostBackend: "justbash" }`. Compose sets no backend variable. An app built into the
+Docker image must declare `"justbash"` too.
+
+## The app's own model call: the host plane (OPE-2406)
+
+Under `justbash` the app process and the session send from the same source IP, so the proxy cannot
+tell them apart by address. The app's model call therefore carries the proxy token as
+`Proxy-Authorization: Bearer <OE_EGRESS_PROXY_TOKEN>`, and the proxy decides it against a separate
+**host plane** that names the model gateway host alone (`ai-gateway.vercel.sh`, or the host of
+`OE_AI_GATEWAY_URL`). A request without the credential is a session request, held to the session's
+compiled policy, which never needs to name the gateway. Under Tier B the credentialed CONNECT is
+spliced at step 1, so the model call is never decrypted (a bumped request would lose the header).
+A failed session compile still pushes
+`deny-all`, and that now cuts the session only, not the model call. The full boundary, and how far
+it holds, is in [`deploy/egress-proxy/README.md`](../../../deploy/egress-proxy/README.md)
+("Two principals").
 
 ## Host-side fetches route through the proxy too — with one exception
 
@@ -74,9 +103,10 @@ docker compose up --build
 sole WAN route), a `postgres` sidecar (the docker-tier operational-store default) and
 `neon-wsproxy` (the WebSocket bridge the Neon driver needs to reach it) — plus a memory volume.
 The Discord relay is a commented option. The one "am I on Vercel?" seam is `platformName()`
-(`packages/core/agent/access/platform.ts`): `OE_PLATFORM` if set, else Vercel's own `VERCEL` env,
-else `self-host`. Off Vercel it selects both the self-host sandbox backend and the self-host
-egress push. `OE_EGRESS_PROXY_URL` then decides the posture: set ⇒ enforced; unset ⇒ fail-closed
+(`packages/core/agent/access/platform.ts`): Vercel's own `VERCEL` env, else `self-host`. No
+operator override exists (`OE_PLATFORM` was one until OPE-2411). Off Vercel, and with
+`sandbox.useVercelSandbox` off, the app selects both the self-host sandbox backend and the
+self-host egress push. `OE_EGRESS_PROXY_URL` then decides the posture: set ⇒ enforced; unset ⇒ fail-closed
 (any session resolving a host allow-list aborts at `session.started`) — **unless**
 `egress.allowUnenforced: true` is declared, which runs the agent with no network firewall at all
 and a loud boot warning.
@@ -88,7 +118,7 @@ and a loud boot warning.
 | `OE_EGRESS_PROXY_URL` | The proxy control endpoint the app pushes each compiled policy to, and **the thing that arms this tier**. `docker-compose.yml` sets it for you. |
 | `OE_EGRESS_PROXY_TOKEN` | The bearer token the push carries. |
 
-`useSelfHostEgress()` is true only **off Vercel and with the URL set**; every other case keeps the
+`useSelfHostEgress()` is true only **off the Vercel Sandbox and with the URL set**; every other case keeps the
 sandbox backend's own network-policy call. With the URL unset, a session that resolves a host
 allow-list aborts unless `egress.allowUnenforced` is declared.
 
@@ -128,7 +158,9 @@ set by `docker-compose.yml`:
 | Var | Meaning |
 |---|---|
 | `OE_EGRESS_DENIAL_LOG` | Path to the denial log (`/var/log/oe-egress/denied.log`). **Unset ⇒ the poller does not run**, which is the Vercel case and any self-host run without the volume. |
-| `OE_EGRESS_DENIAL_POLL_MS` | Poll interval, default `60000`, floored at 5000. One row per host per interval, with a count — a crash-looping worker writes one row a minute, not a thousand. |
+
+The poll interval is one minute, a code constant (OPE-2411). The app writes one row per host per
+interval, with a count, so a crash-looping worker writes one row a minute, not a thousand.
 
 Fail-quiet by requirement: a missing, unreadable or rotated log degrades to doing nothing, says so
 **once**, and never touches the turn. A denial seen before this process has applied any policy is

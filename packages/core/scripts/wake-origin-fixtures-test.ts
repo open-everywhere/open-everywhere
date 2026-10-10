@@ -9,6 +9,7 @@ import {
   type UnifiedWakeOrigin,
 } from "../agent/channels/unified-window.js";
 import { wakeOriginContainerId } from "../agent/channels/unified-window.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -364,14 +365,12 @@ console.log("(b2) load-bearing tolerances (validator wider than the type):");
   ok(isUnifiedWakeOrigin({ platform: "teams", serviceUrl: "https://emea.smba.trafficmanager.net/x", conversationId: "c" }), "accepted: a regional .smba.trafficmanager.net subdomain (dot-suffix)");
   ok(isUnifiedWakeOrigin({ platform: "teams", serviceUrl: "https://europe.botframework.com/", conversationId: "c" }), "accepted: a .botframework.com subdomain (dot-suffix)");
   ok(isUnifiedWakeOrigin({ platform: "teams", serviceUrl: "https://botframework.com/", conversationId: "c" }), "accepted: the bare botframework.com exact host");
-  const prevHosts = process.env.OE_TEAMS_SERVICE_HOSTS;
   try {
     ok(!isUnifiedWakeOrigin({ platform: "teams", serviceUrl: "https://smba.infra.gcc.teams.microsoft.com/x", conversationId: "c" }), "a sovereign-cloud host is NOT in the default allowlist");
-    process.env.OE_TEAMS_SERVICE_HOSTS = "smba.infra.gcc.teams.microsoft.com";
-    ok(isUnifiedWakeOrigin({ platform: "teams", serviceUrl: "https://smba.infra.gcc.teams.microsoft.com/x", conversationId: "c" }), "…and IS admitted once opted in via OE_TEAMS_SERVICE_HOSTS");
+    overrideSettingsForTest({ teams: { serviceHosts: ["smba.infra.gcc.teams.microsoft.com"] } });
+    ok(isUnifiedWakeOrigin({ platform: "teams", serviceUrl: "https://smba.infra.gcc.teams.microsoft.com/x", conversationId: "c" }), "…and IS admitted once opted in via the teams.serviceHosts setting");
   } finally {
-    if (prevHosts === undefined) delete process.env.OE_TEAMS_SERVICE_HOSTS;
-    else process.env.OE_TEAMS_SERVICE_HOSTS = prevHosts;
+    overrideSettingsForTest({ teams: { serviceHosts: [] } });
   }
 }
 

@@ -12,7 +12,7 @@ import { randomBytes } from "node:crypto";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-dynamic-replay-")), "ops.sqlite3");
 process.env.OE_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
-delete process.env.OE_PLATFORM;
+delete process.env.VERCEL;
 
 import { replayStepNames } from "../agent/access/window-gated.js";
 import { formatWindowToken, taskWindowId } from "../agent/channels/window-key.js";
@@ -122,8 +122,8 @@ const CASES: readonly ToolCase[] = [
     ctx: slackCtx,
     env: { OE_TRANSCRIPT_RELAY_SECRET: "fixture-relay-secret", OE_PUBLIC_BASE_URL: "https://fixture.invalid" },
   },
-  { slug: "browser_tools", entryKey: "browser_navigate", ctx: taskCtx, env: { OE_PLATFORM: "vercel" } },
-  { slug: "browser_tools", entryKey: "browser_screenshot", ctx: taskCtx, env: { OE_PLATFORM: "vercel" } },
+  { slug: "browser_tools", entryKey: "browser_navigate", ctx: taskCtx, env: { VERCEL: "1" } },
+  { slug: "browser_tools", entryKey: "browser_screenshot", ctx: taskCtx, env: { VERCEL: "1" } },
   { slug: "read_work_channel", entryKey: "_single", ctx: slackCtx },
   { slug: "read_work_thread", entryKey: "_single", ctx: slackCtx },
   { slug: "check_pr_status", entryKey: "_single", ctx: slackCtx },
@@ -223,21 +223,21 @@ for (const c of CASES) {
 
 console.log("3b. the off-Vercel replay arms nothing:");
 {
-  const saved = process.env.OE_PLATFORM;
+  const saved = process.env.VERCEL;
   try {
-    process.env.OE_PLATFORM = "self-host";
+    delete process.env.VERCEL;
     resetExtraEgressHostsForTest();
     const resolved = (await resolvers.get("browser_tools")!({}, taskCtx)) as Record<string, unknown> | null;
     ok(resolved === null, "🔴 off-Vercel the browser_tools resolver mounts NOTHING on the SAME wide-hands session that arms it on Vercel");
     ok(openBrowserEgressHosts(["qa.example.com"]) === false, "🔴 …and the plane's egress opener refuses, so the declared host never reaches the firewall");
     ok(extraEgressHosts().length === 0, "…leaving the reach table empty");
 
-    process.env.OE_PLATFORM = "vercel";
+    process.env.VERCEL = "1";
     const rearmed = (await resolvers.get("browser_tools")!({}, taskCtx)) as Record<string, unknown> | null;
-    ok(rearmed !== null && "browser_navigate" in rearmed, "negative control: declaring the platform vercel re-arms the same resolver on the same session");
+    ok(rearmed !== null && "browser_navigate" in rearmed, "negative control: a Vercel host re-arms the same resolver on the same session");
   } finally {
-    if (saved === undefined) delete process.env.OE_PLATFORM;
-    else process.env.OE_PLATFORM = saved;
+    if (saved === undefined) delete process.env.VERCEL;
+    else process.env.VERCEL = saved;
     resetExtraEgressHostsForTest();
   }
 }

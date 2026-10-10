@@ -261,7 +261,7 @@ function tightenConnector(u: ConnectorGrantUsage, refused: ConnectorRefusalEvide
           remedy:
             `Removing the grant is still a defensible call — a connection refused by a context wall and never otherwise used may be a grant nobody should hold. ` +
             `But decide it against the reasons above, not against the zero: a WIDTH reason (\`ungranted\`, or \`ask-unattended\` at the \`write\` tier) means the work is asking for MORE ` +
-            `access to this connection, so removing the grant answers the opposite question from the one being asked. A context wall (\`dm_only\`, the disclosure legs, the member plane) ` +
+            `access to this connection, so removing the grant answers the opposite question from the one being asked. A context wall (\`dm_only\`, the disclosure gate's \`audience_floor\` and \`audience_unverified\` refusals, the member plane) ` +
             `is a control no grant can open, so those refusals say nothing about whether the grant is wanted.`,
         }
       : {}),

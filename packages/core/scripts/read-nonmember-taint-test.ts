@@ -41,6 +41,8 @@ const human = (id: string, text = "hi"): RenderedLine => ({ author: id, ts: "1",
 const machine = (id: string, text = "beep"): RenderedLine => ({ author: id, ts: "1", text, authorId: id, bot: true });
 const anon = (text = "?"): RenderedLine => ({ author: "(unknown)", ts: "1", text });
 
+overrideSettingsForTest({ externalPolicy: { authorGrain: "taint" } });
+
 console.log("1. distinct authors:");
 {
   eq(distinctReadAuthorIds([human("U1"), human("U2"), human("U1")]), ["U1", "U2"], "distinct: repeats collapse, order is first-seen");
@@ -399,7 +401,7 @@ console.log("7. the author grain on the read path (OPE-534):");
         untrustedIngestedThisTurn() === (!withholding),
         withholding
           ? "🔴 withhold: a WITHHELD body does NOT mark the turn (=== false) — claiming an exposure that did not happen is the always-on bit"
-          : "🔴 taint (shipped): the refuted page still MARKS the turn — the read-side withhold is off by default and changes nothing",
+          : "🔴 taint (the opt-out): the refuted page still MARKS the turn — the read-side withhold is off and changes nothing",
       );
       ok(
         String(projected.value).includes("hi back") === !withholding,

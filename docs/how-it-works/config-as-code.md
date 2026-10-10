@@ -61,9 +61,10 @@ So every behaviour knob lives in one typed schema, with your deployment's overri
 settings](../deploy/configuration-reference.md#agent-settings-behaviour-config-as-code) for the
 generated list. Since OPE-411 **none of them name an environment variable**: the forty-eight
 mirrors that used to let an env var win over the committed file are gone, on purpose, because a
-posture that a dashboard can silently outvote was never really config-as-code. The one surviving
-name, `OE_MODEL_STACK`, is a harness seam for the e2e runner, not a precedent — every real
-behaviour change now costs a diff. Read the setting with `getSettings()` on every call, so a
+posture that a dashboard can silently outvote was never really config-as-code. OPE-411 kept one
+name, `OE_MODEL_STACK`, as a harness seam for the e2e runner. OPE-2411 deleted it: the per-stack
+e2e lane now sets `models.stack` on the target deployment and deploys. Every real behaviour change
+now costs a diff. Read the setting with `getSettings()` on every call, so a
 committed change takes effect on the next deploy without a code path caching a stale value.
 
 ### The line is a lint, not a habit
@@ -80,21 +81,30 @@ checks for. **Five** are permanent, and they are the line above restated: `secre
 limits below). **A read in runtime code that is on no list reds the `test` chain**, and the failure says to move
 the value to settings/config.
 
-The sixth class, `pending-migration`, is the honest backlog: **45 behaviour knobs** that still read
-`process.env` directly and belong in the schema. They are not a permitted pattern — each is held
-under OPE-1153 with its own reason, and the list is **shrink-only**: once a knob moves, its entry
-must go, or the lint reds. The largest families are a DM seat's rotation clocks
-(`OE_DM_SEAT_ROTATE_*`), the ambient-surface backscroll reach-back window
-(`OE_SUPERVISOR_BACKSCROLL_REACHBACK_HOURS`), the access-plane master flags and scope lists
-(`OE_AWS_ENABLED`, `OE_OAUTH_ENABLED`, `OE_OAUTH_CONFIG`, and their directory siblings), and the
-admin control plane's role rules (`OE_ADMIN_ROLE_RULES`). The first family to move was the three
-webhook-verification walls, now the `webhooks.allowUnverified*` settings.
+The sixth class, `pending-migration`, is the honest backlog: **3 names** that still read
+`process.env` directly. They are not a permitted pattern — each is held under OPE-1153 or OPE-2411
+with its own reason, and the list is **shrink-only**: once a name moves, its entry must go, or the
+lint reds. The three are `OE_TELEMETRY` and `OE_TELEMETRY_DEBUG` (left in env by a maintainer
+ruling) and `OE_PRINCIPAL` (the local principal stand-in: a committed value would ship to
+production). The first family to move was the three webhook-verification walls, now the
+`webhooks.allowUnverified*` settings. OPE-2411 moved the rest in two parts. Part 1 made thirteen
+pure tunables into code constants with no setting at all (the DM seat's rotation thresholds, the
+backscroll reach-back, the Notion hot-cache bounds, the log-ship batch knobs, the webhook ingress
+bounds, the denial-log poll interval and the Notion API version), and took six test valves out of
+shipped runtime code. A knob nobody needs to turn is not a setting. Part 2 moved every real choice
+into config: the access-plane master flags and scope lists, the directory policy, the admin control
+plane's role rules, the model pins, the trust declarations and the platform floors. The
+[configuration reference](../deploy/configuration-reference.md#moved-to-config-ope-2411) maps each
+deleted variable to the line that replaces it.
 
-Three names in that backlog are worth naming on their own, because each *looks* like a legitimate
-env fact and is not: `OE_TRUST` reads as identity but defeats a fail-closed DM downgrade;
-`OE_PRINCIPAL` reads as identity but makes every autonomous fire look like a human is present; and
-`OE_PLATFORM` reads as a host fact but is an operator switch that removes the durable-memory floor.
-The class an entry is filed under is the whole gate, which is why the suite pins the count in each.
+Three names that sat in that backlog are worth naming on their own, because each *looks* like a
+legitimate env fact and is not. `OE_TRUST` read as identity but defeated a fail-closed DM downgrade.
+`OE_PRINCIPAL` reads as identity but makes every autonomous fire look like a human is present.
+`OE_PLATFORM` read as a host fact but was an operator switch that removed the durable-memory floor.
+OPE-2411 deleted `OE_TRUST` (now `identity.blanketTrust`) and `OE_PLATFORM` (the host is now Vercel's
+own `VERCEL` only). `OE_PRINCIPAL` stays in env on purpose: a committed value would ship to every
+environment, production included. The class an entry is filed under is the whole gate, which is why
+the suite pins the count in each.
 
 **No PER-SURFACE vouch lives in the environment.** Every vouched surface — the Slack workspace, the
 Discord guild, the GitHub org, the Microsoft 365 tenant — is a `defineSurface` line in
@@ -104,11 +114,11 @@ variable naming one surface would let a hosting dashboard grant that channel the
 with no diff and no review. Env is for infrastructure the code cannot know — a database connection
 string — and the rule holds even when the identifier names your own organisation.
 
-The one trust lever that *is* an environment variable is the blanket **`OE_TRUST=internal`**, and it
-is deliberately all-or-nothing: it vouches every unverifiable surface at once, on every platform, and
-it also opens the Teams single-window privacy floor whatever any declaration says. That is why it is
-listed among the three backlog names above rather than treated as config — it is the switch a
-single-tenant deployment throws, not a way to name one room.
+The blanket trust lever is the setting **`identity.blanketTrust: "internal"`** in
+`agent/settings/settings.ts` (shipped `"none"`; it was the `OE_TRUST=internal` variable until
+OPE-2411). It is deliberately all-or-nothing: it vouches every unverifiable surface at once, on every
+platform, and it also opens the Teams single-window privacy floor whatever any declaration says. It is
+the switch a single-tenant deployment throws, not a way to name one room.
 
 Three read shapes reach the inventory. A **literal** `process.env.NAME`; a **computed key** the
 scan can resolve through a `const` (`process.env[SOME_CONST]`); and a **property off the repo's
@@ -145,7 +155,7 @@ discipline as the env allowlist. The list is **empty today**.
 Three shapes stay safe, and you should write one of them. Read inside the **function** that needs
 the answer. Expose the value through a **getter**, which re-resolves on every property access. Or,
 if a module truly must hold the value at import time, pass your own overrides —
-`getSettings(process.env, SETTINGS_OVERRIDES)` does not consult the registered slot at all, so boot
+`getSettings(SETTINGS_OVERRIDES)` does not consult the registered slot at all, so boot
 order cannot change its answer.
 
 Know the gate's scope before you lean on it. It boots **nine** entries, each in its own process,

@@ -1,3 +1,4 @@
+import { __setTestValveForTest, testValveArmed } from "../agent/testing/test-valves.js";
 import { tmpdir } from "node:os";
 import { rmSync, readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -44,7 +45,7 @@ try {
 } catch {
 }
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-process.env.OE_EGRESS_SPOOF = "1";
+__setTestValveForTest("egress-spoof", true);
 
 const {
   assertSpendCheckpointsValid,
@@ -535,8 +536,8 @@ passed++;
   const noReason = new Error("a throw from somewhere other than the card post");
   ok(checkpointCardFailureClass(noReason) === "the surface reported no reason this deployment recognises", "class: an error carrying no attached reason degrades to the message, honestly");
 
-  const spoof = process.env.OE_EGRESS_SPOOF;
-  delete process.env.OE_EGRESS_SPOOF;
+  const spoof = testValveArmed("egress-spoof");
+  __setTestValveForTest("egress-spoof", false);
   try {
     const sid = "sess-card-post-failed";
     await seed(sid, 2000);
@@ -566,7 +567,7 @@ passed++;
     const pendingAfter = (await store.listPendingActions("default")).filter((r) => r.kind === "session.checkpoint").length;
     ok(pendingAfter === pendingBefore, "failed post: the unseeable pending was expired rather than left awaiting a click");
   } finally {
-    if (spoof !== undefined) process.env.OE_EGRESS_SPOOF = spoof;
+    __setTestValveForTest("egress-spoof", spoof);
   }
 
   {

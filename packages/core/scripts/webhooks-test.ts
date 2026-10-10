@@ -155,13 +155,9 @@ ok(!verifyWebhookSignature(secret, body, "sha256=deadbeef"), "tampered signature
 ok(!verifyWebhookSignature(secret, body, null), "missing signature rejected");
 ok(!verifyWebhookSignature("wrong", body, good), "wrong secret rejected");
 
-delete process.env.OE_WEBHOOK_MAX_BODY_BYTES;
-const defaultMax = webhookMaxBodyBytes();
-ok(defaultMax === 256 * 1024, "default max body size is 256 KiB");
+ok(webhookMaxBodyBytes() === 256 * 1024, "max body size is 256 KiB");
 process.env.OE_WEBHOOK_MAX_BODY_BYTES = "1024";
-ok(webhookMaxBodyBytes() === 1024, "OE_WEBHOOK_MAX_BODY_BYTES overrides the default");
-process.env.OE_WEBHOOK_MAX_BODY_BYTES = "not-a-number";
-ok(webhookMaxBodyBytes() === defaultMax, "a non-numeric override falls back to the default");
+ok(webhookMaxBodyBytes() === 256 * 1024, "the cap is a code constant (OPE-2411): the retired OE_WEBHOOK_MAX_BODY_BYTES changes nothing");
 delete process.env.OE_WEBHOOK_MAX_BODY_BYTES;
 
 const maxBodyBytes = 1024;

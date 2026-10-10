@@ -1,3 +1,5 @@
+// proves: SEAT-15
+
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -165,32 +167,54 @@ const throws = (fn: () => void, needle: string, label: string) => {
 {
   const routed = defineDomain({ name: "platform", reach: ["github/acme"] });
   const live = defineDomain({ name: "watched", reach: ["github/acme/watched"], ambientSupervisor: true });
-  const domains: Domain[] = [routed, live];
+  const quiet = defineDomain({ name: "quiet", reach: ["github/acme/quiet"], ambientSupervisor: false });
+  const domains: Domain[] = [routed, live, quiet];
 
-  ok(ambientSupervisorEnabled("github/acme/watched", domains), "the gate is ON for an opted-in roster surface");
-  ok(ambientSkipFor("github/acme/watched", domains) === undefined, "an engaged surface has no skip reason");
+  ok(ambientSupervisorEnabled("github/acme/api", domains), "🔴 DEFAULT ON: an explicit domain that sets no flag, with no org domain at all, is ambient");
+  ok(!ambientSupervisorEnabled("github/nobody/api", domains), "🔴 FAIL CLOSED: a surface in no domain, on a deployment with NO org domain, is OFF");
+  const gapNoOrg = ambientSkipFor("github/nobody/api", domains);
+  ok(gapNoOrg?.reason === "no-domain" && gapNoOrg.via === "none", "…and the recorder reports it as the no-domain config gap");
+  ok(ambientSupervisorEnabled("github/nobody/api", [defineDomain({ name: "org", match: "org" })]), "🔴 DEFAULT ON: an org domain that sets no flag (the scaffold's) leaves an unrouted surface ambient");
+  ok(ambientSupervisorEnabled("github/acme/watched", domains), "an explicit `true` is on");
+  ok(ambientSkipFor("github/acme/api", domains) === undefined, "a default-on surface has no skip reason, so the recorder never contradicts the gate");
 
-  const refused = ambientSkipFor("github/acme/api", domains);
-  ok(refused?.reason === "domain-refused", "a surface swept in by a claim whose domain has not opted in reports domain-refused");
-  ok(refused?.domain === "platform" && refused.via === "container:github/acme", "the refusal names the domain and how the surface reached it");
+  ok(!ambientSupervisorEnabled("github/acme/quiet", domains), "🔴 OPT-OUT: an explicit `ambientSupervisor: false` turns it off for that domain");
+  const refused = ambientSkipFor("github/acme/quiet", domains);
+  ok(refused?.reason === "domain-refused", "an opted-out domain reports domain-refused");
+  ok(refused?.domain === "quiet" && refused.declaredBy === "quiet" && refused.via === "roster", "the refusal names the domain, who declared the false, and how the surface reached it");
 
-  const gap = ambientSkipFor("github/nobody/api", domains);
-  ok(gap?.reason === "no-domain", "a surface in no domain at all reports no-domain");
-  ok(gap?.via === "none", "the config gap reports via=none");
+  const orgOff = defineDomain({ name: "org", match: "org", ambientSupervisor: false });
+  const withOrgOff: Domain[] = [...domains, orgOff];
+  ok(!ambientSupervisorEnabled("github/nobody/api", withOrgOff), "🔴 OPT-OUT: `org: false` turns off an unrouted surface");
+  ok(!ambientSupervisorEnabled("github/acme/api", withOrgOff), "🔴 INHERITS: an explicit domain that sets no flag inherits `org: false`");
+  ok(ambientSupervisorEnabled("github/acme/watched", withOrgOff), "an explicit `true` still wins over `org: false`");
+  const inherited = ambientSkipFor("github/acme/api", withOrgOff);
+  ok(
+    inherited?.reason === "domain-refused" && inherited.domain === "platform" && inherited.declaredBy === "org" && inherited.via === "container:github/acme",
+    "an inherited refusal names the ROUTING domain and the org as the domain that declared the false",
+  );
+  const unrouted = ambientSkipFor("github/nobody/api", withOrgOff);
+  ok(unrouted?.reason === "domain-refused" && unrouted.domain === "org" && unrouted.via === "none", "an unrouted surface under `org: false` is a decision by org, not a config gap");
 
-  const withOrgOn = [...domains, defineDomain({ name: "org", match: "org", ambientSupervisor: true })];
-  ok(ambientSkipFor("github/nobody/api", withOrgOn) === undefined, "an org-wide ambient opt-in leaves an unrouted surface with no skip");
-  ok(ambientSupervisorEnabled("github/nobody/api", withOrgOn), "…and the gate itself agrees, so the recorder never contradicts it");
+  const orgOn = defineDomain({ name: "org", match: "org", ambientSupervisor: true });
+  ok(!ambientSupervisorEnabled("github/acme/quiet", [...domains, orgOn]), "an explicit `false` still wins over `org: true`");
 }
 
 {
-  const domains: Domain[] = [defineDomain({ name: "watched", reach: ["github/acme/watched"], ambientSupervisor: true })];
+  const domains: Domain[] = [
+    defineDomain({ name: "watched", reach: ["github/acme/watched"], ambientSupervisor: true }),
+    defineDomain({ name: "org", match: "org", ambientSupervisor: false }),
+  ];
+  let loadFails = false;
   registerConfig({
     loadBundles: () => [],
     loadBindings: () => [],
     pluginRegistry: {},
     skillContent: {},
-    loadDomains: () => domains,
+    loadDomains: () => {
+      if (loadFails) throw new Error("domain set did not load");
+      return domains;
+    },
     loadSilos: () => [],
     domainsForSurface: () => [],
   } as never);
@@ -200,18 +224,19 @@ const throws = (fn: () => void, needle: string, label: string) => {
   const skip = { platform: "github", workspace: "acme", surfaceKey: "github/acme/unrouted", log: (m: string) => logged.push(m) };
 
   const first = await auditAmbientSkip(skip);
-  ok(first === "no-domain", "auditAmbientSkip returns the recorded reason");
+  ok(first === "domain-refused", "auditAmbientSkip returns the recorded reason");
   const second = await auditAmbientSkip(skip);
-  ok(second === "no-domain", "a repeat skip still reports its reason to the caller");
+  ok(second === "domain-refused", "a repeat skip still reports its reason to the caller");
 
   ok(logged.length === 2, "the log line is UNCONDITIONAL — every skipped delivery says so");
-  ok(logged[0].includes("add it to a domain's reach"), "the log names the exact edit (add it to a reach list), not the blockage");
-  ok(logged[0].includes('the whole tenant "github/acme"'), "…and it spells out the container form too, so the wide fix is one paste");
+  ok(logged[0].includes('domain "org" sets ambientSupervisor: false'), "the log names the domain that DECLARED the false, which is the line to change");
+  ok(logged[0].includes("That is a decision, not a gap"), "…and calls it a decision, not a config gap");
 
   const rows = await readAudit({ org: "containers-test", action: "github.ambient_skipped" });
   ok(rows.length === 1, "the audit row is written ONCE per surface+reason, not once per delivery");
   ok(rows[0].surface === "github/acme/unrouted", "the row names the surface a deployer would add");
-  ok((rows[0].detail as Record<string, unknown>).reason === "no-domain", "the row carries the closed-set reason");
+  ok((rows[0].detail as Record<string, unknown>).reason === "domain-refused", "the row carries the closed-set reason");
+  ok((rows[0].detail as Record<string, unknown>).domain === "org", "the row names the domain that routes the surface");
   ok((rows[0].detail as Record<string, unknown>).via === "none", "the row carries the routing provenance");
   ok(
     (rows[0].detail as Record<string, unknown>).dedupe === "process",
@@ -221,6 +246,31 @@ const throws = (fn: () => void, needle: string, label: string) => {
   const bogus = await auditAmbientSkip({ platform: "github", workspace: "acme", surfaceKey: "github/acme/watched" });
   ok(bogus === undefined, "an ENGAGED surface records nothing, even if an ingress calls the recorder by mistake");
   ok((await readAudit({ org: "containers-test", action: "github.ambient_skipped" })).length === 1, "…and writes no row");
+
+  loadFails = true;
+  const gapLog: string[] = [];
+  const gap = await auditAmbientSkip({ platform: "github", workspace: "acme", surfaceKey: "github/acme/gap", log: (m: string) => gapLog.push(m) });
+  ok(gap === "no-domain", "a domain set that will not load records no-domain");
+  ok(gapLog[0]?.includes("did not load"), "…and the line names the config error");
+  ok(!gapLog[0]?.includes('declares no "org" domain') && !gapLog[0]?.includes("reach"), "🔴 …and ONLY the config error: no claim that org is missing, no reach edit");
+  const gapRows = await readAudit({ org: "containers-test", action: "github.ambient_skipped", surface: "github/acme/gap" });
+  ok((gapRows[0]?.detail as Record<string, unknown>)?.via === "none", "…and its row says via=none");
+  ok((gapRows[0]?.detail as Record<string, unknown>)?.loadFailed === true, "…and marks the row loadFailed, so a reader can tell the two roads apart");
+  loadFails = false;
+
+  const noOrgLog: string[] = [];
+  const noOrg = await auditAmbientSkip({
+    platform: "github",
+    workspace: "acme",
+    surfaceKey: "github/acme/no-org",
+    log: (m: string) => noOrgLog.push(m),
+    domains: [defineDomain({ name: "watched", reach: ["github/acme/watched"], ambientSupervisor: true })],
+  });
+  ok(noOrg === "no-domain", "an unrouted surface with no org domain records no-domain");
+  ok(noOrgLog[0]?.includes('declares no "org" domain') && noOrgLog[0]?.includes("add an \"org\" domain"), "…and the line says there is no org domain and names adding one");
+  ok(noOrgLog[0]?.includes('the whole tenant "github/acme"') && noOrgLog[0]?.includes('"github/acme/<prefix>*"'), "…and spells out the container forms too, so the wide fix is one paste");
+  const noOrgRows = await readAudit({ org: "containers-test", action: "github.ambient_skipped", surface: "github/acme/no-org" });
+  ok((noOrgRows[0]?.detail as Record<string, unknown>)?.loadFailed === undefined, "…and its row is NOT marked loadFailed");
 }
 
 {
@@ -429,14 +479,16 @@ const throws = (fn: () => void, needle: string, label: string) => {
 }
 
 {
-  const domains: Domain[] = [
-    defineDomain({ name: "payments", reach: ["github/acme/pay-*"], exclude: ["github/acme/pay-secrets"], ambientSupervisor: true }),
-  ];
+  const payments = defineDomain({ name: "payments", reach: ["github/acme/pay-*"], exclude: ["github/acme/pay-secrets"], ambientSupervisor: true });
   resetAmbientSkipSightings();
 
-  ok(ambientSupervisorEnabled("github/acme/pay-api", domains), "the gate is ON for a surface the pattern admits");
+  ok(ambientSupervisorEnabled("github/acme/pay-api", [payments]), "the gate is ON for a surface the pattern admits");
+  ok(ambientSupervisorEnabled("github/acme/pay-secrets", [payments, defineDomain({ name: "org", match: "org" })]), "an EXCLUDED surface inherits the default (on) when org sets nothing");
+  ok(!ambientSupervisorEnabled("github/acme/pay-secrets", [payments]), "…and is OFF when there is no org domain to fall to (the fail-closed arm)");
+
+  const domains: Domain[] = [payments, defineDomain({ name: "org", match: "org", ambientSupervisor: false })];
   const skip = ambientSkipFor("github/acme/pay-secrets", domains);
-  ok(skip?.reason === "no-domain", "an EXCLUDED surface is in no domain, so the gate is off for it");
+  ok(skip?.reason === "domain-refused" && skip.domain === "org", "under `org: false`, an EXCLUDED surface is refused by org, which now routes it");
   ok(skip?.via === "excluded:payments:github/acme/pay-secrets", "…and the skip carries the exclusion as its provenance");
 
   const logged: string[] = [];
@@ -447,10 +499,15 @@ const throws = (fn: () => void, needle: string, label: string) => {
     log: (m: string) => logged.push(m),
     domains,
   });
-  ok(reason === "no-domain", "the recorder records the excluded surface");
-  ok(logged[0]?.includes("exclude"), "the operator line names the EXCLUSION — the edit is 'drop it', not 'add a claim you already wrote'");
+  ok(reason === "domain-refused", "the recorder records the excluded surface");
+  ok(logged[0]?.includes("excluded:payments"), "the operator line carries the exclusion provenance");
   const rows = await readAudit({ org: "containers-test", action: "github.ambient_skipped", surface: "github/acme/pay-secrets" });
   ok(String((rows[0]?.detail as Record<string, unknown>)?.via ?? "").startsWith("excluded:"), "…and the audit row carries the exclusion provenance");
+
+  const exLog: string[] = [];
+  const exReason = await auditAmbientSkip({ platform: "github", workspace: "acme", surfaceKey: "github/acme/pay-secrets", log: (m: string) => exLog.push(m), domains: [payments] });
+  ok(exReason === "no-domain", "an EXCLUDED surface with no org domain records no-domain");
+  ok(exLog[0]?.includes('its exclude entry "github/acme/pay-secrets"') && exLog[0]?.includes("drop or narrow that exclusion"), "🔴 …and the operator line names the EXCLUSION — the edit is 'drop it', not 'add a reach entry you already wrote'");
 }
 
 {
@@ -470,3 +527,5 @@ const throws = (fn: () => void, needle: string, label: string) => {
 
 await removeTempDir(tmp);
 console.log(`\n✓ domain-containers: ${n} assertions passed (OPE-205 containers + the audited ambient skip; OPE-417 same-level globs + exclusions; OPE-490 the group-rung refusal; OPE-254 one reach list, most-specific-wins)\n`);
+
+// proves: AP-MOD-core-identity-surface-key-grammar

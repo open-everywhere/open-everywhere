@@ -21,7 +21,7 @@ await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: "acme" });
 delete process.env.OE_CONTROL_OAUTH_SIGNING_SECRET;
-for (const v of ["OE_ADMIN_OIDC_ISSUER", "OE_ADMIN_OIDC_AUDIENCE", "OE_ADMIN_GITHUB", "OE_ADMIN_STATIC_TOKEN", "OE_ADMIN_ROLE_RULES"]) {
+for (const v of ["OE_ADMIN_OIDC_ISSUER", "OE_ADMIN_OIDC_AUDIENCE", "OE_ADMIN_STATIC_TOKEN"]) {
   delete process.env[v];
 }
 

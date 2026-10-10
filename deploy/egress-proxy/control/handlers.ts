@@ -1,5 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
-import { PolicyStore, validatePolicy, normalizeSourceIp, type AclRequest, type AclDecision } from "./acl.ts";
+import { PolicyStore, decide, validatePolicy, validateHostPlanePolicy, normalizeSourceIp, type AclRequest, type AclDecision } from "./acl.ts";
 
 export interface PushInput {
   readonly body: unknown;
@@ -43,6 +43,20 @@ export function handlePolicyPush(store: PolicyStore, input: PushInput): PushResu
     return { status: 400, body: { error: "expected a JSON object body" } };
   }
   const obj = body as Record<string, unknown>;
+  if (obj.plane !== undefined && obj.plane !== "host" && obj.plane !== "session") {
+    return { status: 400, body: { error: 'plane must be "host" or "session"' } };
+  }
+  if (obj.plane === "host") {
+    if (obj.policy !== undefined) return { status: 400, body: { error: "a host-plane push carries `hostPlane`, never `policy`" } };
+    let hostPolicy;
+    try {
+      hostPolicy = validateHostPlanePolicy(obj.hostPlane);
+    } catch (err) {
+      return { status: 400, body: { error: String(err instanceof Error ? err.message : err) } };
+    }
+    store.setHostPlane(hostPolicy);
+    return { status: 200, body: { ok: true, plane: "host", policies: store.size() }, keyed: "host-plane" };
+  }
   let policy;
   try {
     policy = validatePolicy(obj.policy);
@@ -61,6 +75,7 @@ export interface AclQuery {
   host?: string;
   method?: string;
   path?: string;
+  auth?: string;
 }
 
 export interface AclResult {
@@ -68,7 +83,7 @@ export interface AclResult {
   readonly evaluated: boolean;
 }
 
-export function handleAcl(store: PolicyStore, q: AclQuery): AclResult {
+export function handleAcl(store: PolicyStore, q: AclQuery, token?: string): AclResult {
   const src = clean(q.src);
   const host = clean(q.host);
   if (!src || !host) return { decision: { allow: false }, evaluated: false };
@@ -77,6 +92,11 @@ export function handleAcl(store: PolicyStore, q: AclQuery): AclResult {
   const path = clean(q.path);
   if (method) req.method = method;
   if (path) req.path = path;
+  const auth = clean(q.auth);
+  if (auth !== undefined) {
+    if (token === undefined || !bearerMatches(auth, token)) return { decision: { allow: false }, evaluated: true };
+    return { decision: decide(store.hostPlane(), { host }), evaluated: true };
+  }
   return { decision: store.decide(src, req), evaluated: true };
 }
 

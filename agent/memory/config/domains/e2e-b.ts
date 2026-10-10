@@ -1,3 +1,4 @@
+import { testValveArmed } from "@open-everywhere/core/agent/testing/test-valves.js";
 import { defineDomain } from "@open-everywhere/core/agent/memory/domain.js";
 import { UTILITY_MODEL } from "../../../model/models.js";
 
@@ -8,4 +9,4 @@ export const domain = defineDomain({
   models: { primary: { id: UTILITY_MODEL } },
 });
 
-export const enabled = (): boolean => process.env.OE_MEMORY_EVAL !== "1";
+export const enabled = (): boolean => !testValveArmed("memory-eval");

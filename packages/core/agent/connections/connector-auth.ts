@@ -43,6 +43,7 @@ import { vercelConnectorOf } from "../access/connector-credentials.js";
 import { assertCredentialEndpointHostAllowed } from "../access/credential-endpoints.js";
 import { classifyConnectorOpTier, isConnectorOpTool, parseQualifiedToolName } from "../access/consequence.js";
 import { effectiveConnectorOpTier, joinConnectorOpTiers } from "../access/connector-op-gating.js";
+import { connectorOpToolHints } from "./connector-tool-hints.js";
 import { sharedVaultSubjectFor } from "../access/group-request.js";
 import { rawVaultSubject, SHARED_VAULT_SUBJECT_PREFIX } from "../identity/oauth-vault-share.js";
 import { connectorOpTieringEnabled, connectorLinkSetVaultEnabled, connectorMemberPlaneEnabled } from "./connector-flags.js";
@@ -458,9 +459,10 @@ export function userAwareProviderToken(
 }
 
 export function connectorOpApproval(deps: ConnectorOpApprovalDeps = {}): ApprovalPolicy {
-  return (ctx): ApprovalStatus | Promise<ApprovalStatus> => {
+  return async (ctx): Promise<ApprovalStatus> => {
     if (!isConnectorOpTool(ctx.toolName)) return "not-applicable";
-    const tier = effectiveConnectorOpTier(ctx.toolName);
+    const hints = await (deps.toolHints ?? connectorOpToolHints)(ctx.toolName);
+    const tier = effectiveConnectorOpTier(ctx.toolName, undefined, hints);
     if (tier === "read") return "not-applicable";
     return decideConnectorWrite(ctx, tier, deps.boundCredential ?? boundConnectorCredential, deps.dmPrincipal ?? resolveDmPrincipal);
   };
@@ -469,6 +471,7 @@ export function connectorOpApproval(deps: ConnectorOpApprovalDeps = {}): Approva
 export interface ConnectorOpApprovalDeps {
   readonly boundCredential?: typeof boundConnectorCredential;
   readonly dmPrincipal?: typeof resolveDmPrincipal;
+  readonly toolHints?: typeof connectorOpToolHints;
 }
 
 export function unresolvableConnectionRefusalMessage(toolName: string): string {
@@ -530,6 +533,7 @@ export interface OeConnectorCardDeps {
   readonly grantScope?: (ctx: Parameters<ApprovalPolicy>[0]) => ConnectorGrantScope | undefined | Promise<ConnectorGrantScope | undefined>;
   readonly tainted?: () => boolean;
   readonly credentialOf?: (connection: string, auth: unknown) => Promise<ConnectorOpCardOffer["credential"]>;
+  readonly toolHints?: typeof connectorOpToolHints;
 }
 
 async function connectorCredentialPlane(connection: string, auth: unknown): Promise<ConnectorOpCardOffer["credential"]> {
@@ -689,8 +693,9 @@ export function withOeConnectorCard(policy: ApprovalPolicy, deps: OeConnectorCar
     }
     if (scope === undefined) return deny("this call names no conversation an approval could be kept for");
     const sessionKey = scope.key;
-    const grain: ConnectorOpCardOffer["grain"] =
-      connectorOpTieringEnabled() && effectiveConnectorOpTier(ctx.toolName) === "destructive" ? "destructive" : "call";
+    const effectiveTier = effectiveConnectorOpTier(ctx.toolName, undefined, await (deps.toolHints ?? connectorOpToolHints)(ctx.toolName));
+    const opTier: ConnectorOpCardOffer["opTier"] = effectiveTier === "read" ? undefined : effectiveTier;
+    const grain: ConnectorOpCardOffer["grain"] = connectorOpTieringEnabled() && effectiveTier === "destructive" ? "destructive" : "call";
     const memoKind = connectorOpApprovalKind(ctx.toolName, connectorInputDigest(ctx.toolInput));
     const org = deploymentOrg();
     const store = deps.store ?? getOperationalStore();
@@ -706,6 +711,7 @@ export function withOeConnectorCard(policy: ApprovalPolicy, deps: OeConnectorCar
       tool: ctx.toolName,
       connection,
       grain,
+      ...(opTier === undefined ? {} : { opTier }),
       sessionKey,
       memoKind,
       inputPreview: connectorInputPreview(ctx.toolInput),
@@ -750,6 +756,7 @@ export interface UnattendedConnectorFenceDeps {
   readonly grantExists?: (org: string, grantKey: string, kind: string, nowIso: string) => Promise<boolean>;
   readonly audit?: typeof appendAudit;
   readonly tainted?: () => boolean;
+  readonly toolHints?: typeof connectorOpToolHints;
 }
 
 async function routinePermissionExists(org: string, grantKey: string, kind: string, nowIso: string): Promise<boolean> {
@@ -825,8 +832,9 @@ export function withUnattendedConnectorFence(
     const decision = await policy(ctx);
     if (!isConnectorOpTool(ctx.toolName)) return decision;
     const connection = parseQualifiedToolName(ctx.toolName)?.connection;
-    const baseTier = classifyConnectorOpTier(ctx.toolName);
-    const seamTier = effectiveConnectorOpTier(ctx.toolName);
+    const hints = await (deps.toolHints ?? connectorOpToolHints)(ctx.toolName);
+    const baseTier = classifyConnectorOpTier(ctx.toolName, hints);
+    const seamTier = effectiveConnectorOpTier(ctx.toolName, undefined, hints);
     const tier = joinConnectorOpTiers(baseTier, seamTier);
     if (tier === "read") return decision;
     const seamBelowBuiltIn = tier !== seamTier;

@@ -193,7 +193,7 @@ test("stop on one request id cancels that job's task only, and the other job set
   expect(promptOf(readA), "🔴 a cancelled job's result carried its child's answer").not.toContain(A_RESULT);
   await waitFor(() => closingA.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "A's result turn to close", TURN_END_CEILING_MS);
 
-  expect(forB.requests.filter((r) => r.role === "child" && r.stepIndex > 0), "B's child moved past its held call before its release").toEqual([]);
+  expect(forB.requests.filter((r) => r.role === "child" && r.stepIndex !== 0), "B's child moved past its held call before its release").toEqual([]);
   expect(forB.holdsCutShort(), "B's child's hold ended before its release").toBe(0);
   expect((await statusRows(cursor)).filter((r) => detailOf(r).taskId === taskB).map((r) => detailOf(r).state), "🔴 B's job settled when only A's was stopped").toEqual(["working"]);
   expect((await rowsSinceCursor(cursor, ["work.cancel_redeemed"], { limit: 50 })).filter((r) => detailOf(r).taskId === taskB), "🔴 W ran a stop for B's task").toEqual([]);

@@ -29,6 +29,9 @@ export function groupPrincipalKeys(group: Group): readonly string[] {
   return group.members.filter((m): m is string => typeof m === "string");
 }
 
+export { EVERYONE_GROUP } from "./everyone-group.js";
+import { EVERYONE_GROUP } from "./everyone-group.js";
+
 export const DIRECTORY_GROUP_PREFIX = "directory:";
 
 export function directoryGroupName(idpGroup: string): string {
@@ -46,6 +49,8 @@ export function assertGroupsValid(groups: readonly Group[]): void {
     const where = g.name && g.name.trim().length > 0 ? `group "${g.name}"` : `group (entry #${index})`;
     if (!g.name || g.name.trim().length === 0) {
       bad.push(`  ${where} has an empty name — a group's name is the id every binding references`);
+    } else if (g.name === EVERYONE_GROUP) {
+      bad.push(`  group "${g.name}" is reserved — it is the built-in "every person in their own DM" group (identity/groups.ts EVERYONE_GROUP), and its membership is computed, never listed. Rename this group.`);
     } else if (seen.has(g.name)) {
       bad.push(`  group name "${g.name}" is defined more than once (bindings reference groups by name — names must be unique)`);
     } else {

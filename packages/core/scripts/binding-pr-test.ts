@@ -9,7 +9,6 @@ import type { ConfigPrProvider, ConfigPrOutcome, CommitIdentity } from "../agent
 const dir = join(tmpdir(), `open-everywhere-binding-pr-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-delete process.env.OE_CREDENTIAL_BINDING_LIVE;
 
 const { stageCredentialBindingPr } = await import("../agent/credentials/binding-pr.js");
 const { readAudit } = await import("../agent/audit/audit.js");
@@ -121,6 +120,25 @@ function tripwireProvider(onTouch: () => void): ConfigPrProvider {
   const d = proposed[0].detail as Record<string, unknown>;
   ok(d.dryRun === true && d.connector === "acme" && d.credential === "key" && d.storedRef === "db:acme:key" && d.broker === "db", "dry-run: audit carries references (connector/credential/ref/broker), dryRun:true");
   ok((await rowsFor("credential.binding_opened", "intake-dry")).length === 0, "dry-run: NO binding_opened row");
+}
+
+{
+  for (const [label, over, live] of [
+    ["unset (shipped)", {}, false],
+    ["credentialBindingLive: true", { credentialBindingLive: true }, true],
+    ["credentialBindingLive: true + dryRun: true", { credentialBindingLive: true, dryRun: true }, false],
+  ] as const) {
+    let touched = false;
+    const provider = tripwireProvider(() => {
+      touched = true;
+    });
+    const res = await stageCredentialBindingPr(
+      { ...baseArgs, credentialAuditId: `intake-arm-${label}` },
+      { config: cfg(over), provider },
+    ).catch(() => ({ staged: false, dryRun: false }) as const);
+    ok(res.dryRun === !live, `live arm: ${label} → ${live ? "LIVE" : "dry run"}`);
+    ok(touched === live, `live arm: ${label} → the config-repo PR mechanism is ${live ? "reached" : "never touched"}`);
+  }
 }
 
 {

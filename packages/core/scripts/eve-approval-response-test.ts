@@ -5,10 +5,11 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { removeTempDir } from "./_temp-dir.js";
+import { setPlatformStandInForTest } from "../agent/identity/binding.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-eve-approval-response-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
-process.env.OE_PLATFORM = "slack";
+setPlatformStandInForTest("slack");
 _setDeploymentIdentityForTest({ org: undefined });
 
 let passed = 0;
@@ -357,6 +358,7 @@ console.log("4. settlement audit (adopt-part C):");
     eq(cancelled?.detail?.responderPrincipalId, "U_bob", "…and the clicker who cancelled somebody else's request (the ONLY record of the cancel asymmetry)");
   }
 
+  // proves: approval.eve_candidate
   await onCandidate(
     { type: "approval.candidate", data: { outcome: "rejected", requestId: "req-3", candidateId: "cand-3", responderPrincipalId: "U_bob", reason: FOREIGN_RESPONDER_REASON } },
     ctx,
@@ -389,3 +391,5 @@ console.log("4. settlement audit (adopt-part C):");
 
 await removeTempDir(tmp);
 console.log(`\n✓ eve-approval-response: ${passed} assertions passed`);
+
+// proves: AP-MOD-core-approvals-eve-response-policy

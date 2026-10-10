@@ -35,7 +35,7 @@ export const DEPLOYMENT_CONTRACT: readonly ContractRequirement[] = [
     consequence: "An older runtime fails at install or at the first use of a language or standard-library feature the tree assumes.",
     routes: {
       vercel: "Set the project's Node.js Version to 24.x (Project → Settings → Build and Deployment).",
-      docker: "The shipped `Dockerfile` pins the base image; a hand-rolled image must match the same range.",
+      docker: "The repository's `Dockerfile` pins the base image; a hand-rolled image must match the same range.",
     },
   },
   {
@@ -73,9 +73,9 @@ export const DEPLOYMENT_CONTRACT: readonly ContractRequirement[] = [
       "The dev-only `justbash` backend shares the app process's filesystem, so a model holding `bash` reads the deployment's own files and environment. It is supported for development and for nothing else.",
     routes: {
       vercel: "Vercel Sandbox — selected automatically on Vercel.",
-      docker: "The default off-Vercel backend. `OE_SANDBOX_BACKEND` names it explicitly; `justbash` is the dev-only opt-in.",
+      docker:
+        "NOT MET by the shipped image. The image carries a just-bash template only, so an app built into it declares `sandbox.selfHostBackend: \"justbash\"` in `agent/settings/settings.ts`, and justbash shares the app process's filesystem. The `docker` backend contains the filesystem but does not run in the image (OPE-2407), and its session containers sit outside the egress proxy, so the app refuses to boot on `docker` with `OE_EGRESS_PROXY_URL` set.",
     },
-    env: ["OE_SANDBOX_BACKEND"],
   },
   {
     id: "egress-control",
@@ -86,7 +86,8 @@ export const DEPLOYMENT_CONTRACT: readonly ContractRequirement[] = [
       "Unenforced, the agent reaches any host and the credential the policy would have injected at the boundary is not withheld from the sandbox. A session that resolves a host allow-list ABORTS rather than run unfirewalled, unless the deployment declares `egress.allowUnenforced`.",
     routes: {
       vercel: "The Vercel Sandbox firewall applies the fine-grained policy natively.",
-      docker: "The egress-proxy sidecar (`docker-compose.yml`). `OE_EGRESS_PROXY_URL` points the deployment at it; the policy is pushed on every session.",
+      docker:
+        "The egress-proxy sidecar (`docker-compose.yml`), with the `justbash` backend only. `OE_EGRESS_PROXY_URL` points the deployment at it; the session policy is pushed on every session. The app's own model call goes out on a separate host plane that names the model gateway alone (OPE-2406), on Tier A and Tier B alike (Tier B splices it, never decrypts it). Credential injection at the firewall needs Tier B (`OE_EGRESS_MITM=1`).",
     },
     env: ["OE_EGRESS_PROXY_URL"],
   },
@@ -97,7 +98,8 @@ export const DEPLOYMENT_CONTRACT: readonly ContractRequirement[] = [
     consequence: "No turn can run: every role in the model stack resolves through the gateway.",
     routes: {
       vercel: "OIDC. A deployed Vercel project authenticates to the gateway with no key to set.",
-      docker: "`AI_GATEWAY_API_KEY`, or `OE_AI_GATEWAY_URL` pointed at a compatible relay.",
+      docker:
+        "`AI_GATEWAY_API_KEY`, or `OE_AI_GATEWAY_URL` pointed at a compatible relay. Behind the egress proxy the model call is held to the gateway's one host (the default, or the relay's), on the app's host plane.",
     },
     env: ["AI_GATEWAY_API_KEY", "OE_AI_GATEWAY_URL"],
   },

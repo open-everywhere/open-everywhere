@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
-import { SETTINGS } from "@open-everywhere/core/agent/settings/settings.js";
+import { SETTINGS, getSettings } from "@open-everywhere/core/agent/settings/settings.js";
+import { SETTINGS_OVERRIDES } from "../agent/settings/settings.js";
 import {
   registerModelPricing,
   selectedStackModelIds,
@@ -132,6 +133,10 @@ for (const [alias, stack] of Object.entries(STACKS)) {
 
 registerModelPricing(loadModelPricing());
 const allowListed = (loadModelPolicy()?.allow ?? []).map((entry) => entry.id);
+function committedModelPins(): string[] {
+  const { force, primary } = getSettings(SETTINGS_OVERRIDES).models;
+  return [force, primary].filter((id) => id !== "");
+}
 const selected = [
   ...new Set([
     ...selectedStackModelIds(STACKS),
@@ -139,6 +144,7 @@ const selected = [
     ...routePinnedModelIds(loadDomains()),
     ...routePinnedModelIds(loadRoles()),
     MODEL_AB_TEST.challenger,
+    ...committedModelPins(),
   ]),
 ].sort();
 for (const id of unpricedModelIds(selected)) {

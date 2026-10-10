@@ -1,3 +1,4 @@
+import { __setTestValveForTest } from "../agent/testing/test-valves.js";
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
@@ -11,7 +12,7 @@ registerSlackFixtureMapper();
 const dir = join(tmpdir(), `open-everywhere-ticket-verbs-tools-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-delete process.env.OE_EGRESS_SPOOF;
+__setTestValveForTest("egress-spoof", false);
 
 const { registerEntityActionAdapter } = await import("../agent/channels/entity-actions.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
@@ -158,7 +159,7 @@ async function armed<T>(tool: unknown, c: BindableContext): Promise<T | null> {
   ok(after === before, "the venue refusal fires BEFORE any pending action is written");
 }
 {
-  process.env.OE_EGRESS_SPOOF = "1";
+  __setTestValveForTest("egress-spoof", true);
   const slackCtx = ctx(
     "slack",
     { room: "granted", team_id: "T1", channel_id: "C1", channel_type: "channel", user_id: "U_PROPOSER" },
@@ -171,7 +172,7 @@ async function armed<T>(tool: unknown, c: BindableContext): Promise<T | null> {
   const frozen = JSON.parse(row!.argsJson) as { platform: string; entityId: string; state: string; requestedBy: string };
   ok(frozen.platform === "tool-test-platform" && frozen.entityId === "TT-2" && frozen.state === "Done", "the FROZEN args carry the resolved platform/entityId + the target state");
   ok(frozen.requestedBy === "U_PROPOSER", "the frozen args carry the verified proposer");
-  delete process.env.OE_EGRESS_SPOOF;
+  __setTestValveForTest("egress-spoof", false);
 }
 
 {
@@ -183,7 +184,7 @@ async function armed<T>(tool: unknown, c: BindableContext): Promise<T | null> {
   n++;
 }
 {
-  process.env.OE_EGRESS_SPOOF = "1";
+  __setTestValveForTest("egress-spoof", true);
   const slackCtx = ctx(
     "slack",
     { room: "granted", team_id: "T1", channel_id: "C1", channel_type: "channel", user_id: "U_PROPOSER" },
@@ -194,7 +195,7 @@ async function armed<T>(tool: unknown, c: BindableContext): Promise<T | null> {
   const row = await getOperationalStore().getPendingAction("default", out.pendingId!);
   const frozen = JSON.parse(row!.argsJson) as { platform: string; entityId: string; assignee: string };
   ok(row!.kind === "ticket.assign" && frozen.assignee === "alice" && frozen.entityId === "TT-3", "the pending row is kind ticket.assign with the frozen assignee");
-  delete process.env.OE_EGRESS_SPOOF;
+  __setTestValveForTest("egress-spoof", false);
 }
 
 console.log(`✓ ${n} ticket-verbs-tools assertions passed`);

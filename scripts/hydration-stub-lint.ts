@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const DRIVES_HYDRATION = /\bfanOutDelivery\b|\bhydratePointer\b/;
-const HAS_STUB = /registerEntityRead|resetEntityReadForTest|hydrate\s*:|\bread\s*:|OE_ALLOW_TEST_NETWORK/;
+const HAS_STUB = /registerEntityRead|resetEntityReadForTest|hydrate\s*:|\bread\s*:/;
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", ".next", "coverage"]);
 
 function testFiles(root: string): string[] {
@@ -38,7 +38,7 @@ for (const file of testFiles(".")) {
     reds.push(
       `${file}: drives fanOutDelivery/hydratePointer but shows no hydration stub. Register one after ` +
         `importing the fan-out path — registerEntityRead({ platform: "github", read: async () => ({ status: "gone" }) }) — ` +
-        `or pass deps.read (hydrate: { read }). If a live call is genuinely intended, set OE_ALLOW_TEST_NETWORK=1.`,
+        `or pass deps.read (hydrate: { read }) — a test that genuinely wants a live read passes its own reader there.`,
     );
   }
 }

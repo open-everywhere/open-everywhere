@@ -18,7 +18,6 @@ npx tsx scripts/eval/injection-eval.ts                    # scripted: all five l
 npx tsx scripts/eval/injection-eval.ts --leg 2            # one leg (1..5, or a leg id)
 
 set -a && . ../../.env.e2e && set +a && \
-  AI_GATEWAY_API_KEY="$ROWAN_VERCEL_AI_GATEWAY_KEY" \
   npx tsx scripts/eval/injection-eval.ts --model openai/gpt-6-luna --n 20
 ```
 
@@ -38,7 +37,7 @@ leg 1 two arms whose SCORED sets still differ, and the wake-vs-read delta is par
 difference again. `notAttacked` per carriage is what exposes it — the summary reports both counts
 per arm under `byCarriage`, and a carriage comparison must be read beside them.
 
-🔴 A live run reads `AI_GATEWAY_API_KEY` and never the shell key, which is the shell key.
+🔴 A live run reads `AI_GATEWAY_API_KEY`. Set it to the gateway key for your deployment, in `.env.e2e`.
 Results land in `scripts/eval/results/` (gitignored) as one JSON file per run, carrying every leg's
 summary, its stated pass criterion and its per-probe rows.
 

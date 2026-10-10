@@ -15,10 +15,10 @@ import { slackSpendGate, spendRefusalCopy, spendBypassWarnCopy, type SpendGateAu
 import { admitInbound } from "../agent/channels/slack.js";
 import { parseMessageEvent, routeSupervisorEvent, supervisorToken, type SupervisorRouteDeps } from "../agent/channels/slack-events.js";
 import { stripComments } from "./_source-scan-utils.js";
-import { _resetDeploymentIdentityForTest } from "@open-everywhere/core/agent/adapter-api.js";
+import { _resetDeploymentIdentityForTest, overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 
 _resetDeploymentIdentityForTest();
-for (const k of ["OE_PLATFORM", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST", "OE_TEST_DRIVER_IDS"]) {
+for (const k of ["OE_PLATFORM", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST"]) {
   delete process.env[k];
 }
 
@@ -293,7 +293,7 @@ ok(/consult\.gated = true;/.test(mentionDoor), "the mention door's gate consult 
   const DRIVER_BOT = "B0EXBOT0001";
   const OTHER_BOT = "B0BZZZOTHER";
   const CHANNEL = "C0EXCHAN006";
-  process.env.OE_TEST_DRIVER_IDS = `${TEAM}:${DRIVER_BOT}`;
+  overrideSettingsForTest({ wake: { driverAllowlist: [`${TEAM}:${DRIVER_BOT}`] } });
   domains = [defineDomain({ name: "transactions", reach: [`slack/${TEAM}/C_TXN`], memory: "txn" })];
   const store = getOperationalStore();
 
@@ -346,7 +346,7 @@ ok(/consult\.gated = true;/.test(mentionDoor), "the mention door's gate consult 
   ok(human.woke === true && wakes.length === 1, "human-authored ambient message still dispatches (no new gate on the ordinary path)");
   ok((await dropRows("9003.1")).length === 0, "…writing no row");
 
-  delete process.env.OE_TEST_DRIVER_IDS;
+  overrideSettingsForTest({ wake: { driverAllowlist: [] } });
 }
 
 {

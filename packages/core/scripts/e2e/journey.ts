@@ -222,7 +222,7 @@ export function silenceAssertionPlan(surfaceAction: string, silencesDeclared: bo
     alwaysLabel:
       "audited silence: a reply.no_reply_observed row exists for the run (the ALWAYS-ON judged-silence row — the positive assertion that holds on prod's actions-only posture). " +
       "Absent, either a silent turn left NO trace at all, or no turn ran — read the silence-WINDOW gate and the classifySilence line beside this one to tell those apart",
-    declaredLabel: `audited silence (declared audit.silences): a ${surfaceAction}/unified.no_reply row exists for the run (the FULL-DETAIL judged-silence row this target declares it writes)`,
+    declaredLabel: `audited silence (declared silence-audit switch): a ${surfaceAction}/unified.no_reply row exists for the run (the FULL-DETAIL judged-silence row this target declares it writes)`,
   };
 }
 
@@ -262,7 +262,7 @@ export async function assertAuditedSilence(args: {
   );
   args.gate((seen ?? []).length > 0, plan.alwaysLabel);
   if (plan.whenDeclared.length === 0) {
-    args.log("silence auditing not declared for this target — asserting the ALWAYS-ON reply.no_reply_observed row only; set E2E_AUDIT_SILENCES=1 against an audit.silences deployment to assert the full-detail row too");
+    args.log("silence auditing not declared for this target — asserting the ALWAYS-ON reply.no_reply_observed row only; set E2E_AUDIT_SILENCES=1 against a local eval target that arms the silence-audit test switch to assert the full-detail row too");
     return;
   }
   const declared = await pollOptional(

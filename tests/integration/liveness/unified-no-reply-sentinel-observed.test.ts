@@ -16,6 +16,7 @@ import {
 afterAll(async () => {
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   settings.resetSettingsForTest();
+  (await import("@open-everywhere/core/agent/audit/audit.js")).setSilenceAuditForTest(false);
 });
 
 async function knownWakeIds(action: string, matches: (detail: Record<string, unknown> | undefined) => boolean): Promise<ReadonlySet<string>> {
@@ -37,8 +38,9 @@ test("unified: a bare NO_REPLY sentinel writes the sentinel route's reply.no_rep
   await bootAgent();
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   const { NO_REPLY_SENTINEL } = await import("@open-everywhere/core/agent/channels/normalized-wake.js");
-  settings.overrideSettingsForTest({ audit: { silences: false } });
-  expect(settings.getSettings().audit.silences).toBe(false);
+  const silenceAudit = await import("@open-everywhere/core/agent/audit/audit.js");
+  silenceAudit.setSilenceAuditForTest(false);
+  expect(silenceAudit.auditSilencesEnabled()).toBe(false);
 
   const before = await knownWakeIds("reply.no_reply_observed", isSentinelRoute);
   const at = Date.now();
@@ -66,19 +68,20 @@ test("unified: a bare NO_REPLY sentinel writes the sentinel route's reply.no_rep
     const gated = await rowsSinceCursor(cursor, ["unified.no_reply"]);
     expect(
       gated.find((r) => (r.detail as { wakeId?: unknown } | undefined)?.wakeId === wakeId),
-      "unified.no_reply stays gated behind audit.silences — off means off",
+      "unified.no_reply stays gated behind the silence-audit switch — off means off",
     ).toBeUndefined();
   } finally {
     handle.dispose();
   }
 }, 300_000);
 
-test("unified: with audit.silences ON, the full-detail unified.no_reply row fires ADDITIONALLY (not instead of) the minimal row", async () => {
+test("unified: with the silence-audit switch ON, the full-detail unified.no_reply row fires ADDITIONALLY (not instead of) the minimal row", async () => {
   await bootAgent();
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   const { NO_REPLY_SENTINEL } = await import("@open-everywhere/core/agent/channels/normalized-wake.js");
-  settings.overrideSettingsForTest({ audit: { silences: true } });
-  expect(settings.getSettings().audit.silences).toBe(true);
+  const silenceAudit = await import("@open-everywhere/core/agent/audit/audit.js");
+  silenceAudit.setSilenceAuditForTest(true);
+  expect(silenceAudit.auditSilencesEnabled()).toBe(true);
 
   const before = await knownWakeIds("reply.no_reply_observed", isSentinelRoute);
   const at = Date.now();
@@ -116,7 +119,7 @@ test("unified: no_reply TOOL call + the taught trailing sentinel writes ONLY the
   await bootAgent();
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   const { NO_REPLY_SENTINEL } = await import("@open-everywhere/core/agent/channels/normalized-wake.js");
-  settings.overrideSettingsForTest({ audit: { silences: false } });
+  (await import("@open-everywhere/core/agent/audit/audit.js")).setSilenceAuditForTest(false);
 
   const beforeToolRows = await knownWakeIds("reply.no_reply_observed", (d) => (d as { reason?: unknown } | undefined)?.reason === "not_relevant");
   const beforeSentinelRows = await knownWakeIds("reply.no_reply_observed", isSentinelRoute);

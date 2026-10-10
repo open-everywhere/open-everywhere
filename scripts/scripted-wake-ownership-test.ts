@@ -1,3 +1,4 @@
+import { testValveArmed, __setTestValveForTest } from "@open-everywhere/core/agent/testing/test-valves.js";
 import {
   __resetWakeOwnersForTest,
   claimWakeOwner,
@@ -5,7 +6,6 @@ import {
   isForeignWakeStraggler,
   legWakeIdFromPrompt,
   registerScript,
-  SCRIPTED_MODEL_ENV,
   wakeIdFromPrompt,
   wakeOwnerSeq,
   type ForeignWakeCheck,
@@ -22,8 +22,8 @@ function ok(cond: boolean, label: string): void {
   passed++;
 }
 
-const WAKE_A = "00000000-0000-4000-8000-000000000064";
-const WAKE_B = "00000000-0000-4000-8000-000000000065";
+const WAKE_A = "9d2f1c44-2f7a-4d1e-9f0b-6a4c1d2e3f40";
+const WAKE_B = "1b7e5a90-3c11-4a52-8d63-0e9f2a7b4c18";
 
 const STRAGGLER: ForeignWakeCheck = {
   role: "parent",
@@ -80,8 +80,8 @@ function withCheck(over: Partial<ForeignWakeCheck>): ForeignWakeCheck {
 }
 
 {
-  const prior = process.env[SCRIPTED_MODEL_ENV];
-  process.env[SCRIPTED_MODEL_ENV] = "1";
+  const prior = testValveArmed("scripted-model");
+  __setTestValveForTest("scripted-model", true);
   try {
     const served = (turnId: string, sessionId: string, stepIndex: number): RecordedRequest => ({
       sequence: 1,
@@ -114,13 +114,12 @@ function withCheck(over: Partial<ForeignWakeCheck>): ForeignWakeCheck {
       "🔴 a declared ABSORBER disposed mid-arm records NOTHING — its straggler goes to the fence, not to an OPE-995 fault",
     );
   } finally {
-    if (prior === undefined) delete process.env[SCRIPTED_MODEL_ENV];
-    else process.env[SCRIPTED_MODEL_ENV] = prior;
+    __setTestValveForTest("scripted-model", prior);
   }
 }
 
 {
-  const RESULT_WAKE = "00000000-0000-4000-8000-000000000068";
+  const RESULT_WAKE = "5c0a7e21-8b44-4f19-a6d2-3e7b9c1d0f55";
   const resultWake = renderWorkResultWake({
     wakeId: RESULT_WAKE,
     origin: { platform: "discord", channelId: "CH_LEG", guildId: "G_LEG" },

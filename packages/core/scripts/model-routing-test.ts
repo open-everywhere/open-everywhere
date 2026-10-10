@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 import { defineDomain, domainMatchFor, modelRouteFor, statusVerbsFor, type Domain } from "../agent/memory/domain.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 import { ROUTINE_MARKER, routineModelRoleStamped } from "../agent/routines/routine.js";
@@ -228,19 +229,17 @@ function slackDmCtx(team: string, dmId: string): BindableContext {
 {
   const deps = fakeDeps(() => domains2, []);
   const FORCED = "deepseek/deepseek-v4-flash";
-  const prev = process.env.OE_FORCE_MODEL;
-  process.env.OE_FORCE_MODEL = FORCED;
+  overrideSettingsForTest({ models: { force: FORCED } });
   try {
     const rPinned = await resolveRoute("primary", C_TXN, undefined, DEFAULT_ID, deps);
-    ok(rPinned.id === FORCED && rPinned.tier === undefined, "resolveRoute: OE_FORCE_MODEL overrides a domain's concrete id pin");
+    ok(rPinned.id === FORCED && rPinned.tier === undefined, "resolveRoute: models.force overrides a domain's concrete id pin");
     const rDefault = await resolveRoute("primary", C_OTHER, undefined, DEFAULT_ID, deps);
-    ok(rDefault.id === FORCED, "resolveRoute: OE_FORCE_MODEL overrides the org default id too");
+    ok(rDefault.id === FORCED, "resolveRoute: models.force overrides the org default id too");
   } finally {
-    if (prev === undefined) delete process.env.OE_FORCE_MODEL;
-    else process.env.OE_FORCE_MODEL = prev;
+    overrideSettingsForTest({ models: { force: "" } });
   }
   const rRestored = await resolveRoute("primary", C_TXN, undefined, DEFAULT_ID, deps);
-  ok(rRestored.id === "anthropic/claude-sonnet-5", "resolveRoute: unset OE_FORCE_MODEL restores per-domain routing");
+  ok(rRestored.id === "anthropic/claude-sonnet-5", "resolveRoute: an empty models.force restores per-domain routing");
 }
 {
   const threw = fakeDeps(() => {

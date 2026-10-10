@@ -133,6 +133,6 @@ test("a human stops an in-flight turn, and the turn's own process cleans up and 
   expect(prompt).toContain(`\`${RAN_TOOL}\``);
 
   await awaitWindowQuiet();
-  expect(after.requests.some((r) => r.role === "parent" && r.stepIndex >= 1), "a step after the follow-up's reply was requested").toBe(false);
+  expect(after.requests.some((r) => r.role === "parent" && r.stepIndex !== 0), "a step after the follow-up's reply was requested").toBe(false);
   expect(after.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 });

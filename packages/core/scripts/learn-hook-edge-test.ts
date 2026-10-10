@@ -209,13 +209,11 @@ async function deliver(container: InstanceType<typeof FakeEveContext>, ctx: neve
 
 {
   const { registerConfig, getConfig } = await import("../agent/access/config.js");
-  const { registerSettings, defineSettings } = await import("../agent/settings/settings.js");
   const { registerConfigPrProvider } = await import("../agent/credentials/config-pr.js");
   const { SKILL_PROPOSAL_PR_ACTION } = await import("../agent/memory/dream/skill-proposal-pr.js");
 
   const accessRequests = { configRepo: "acme/config", configBase: "main", baseBundles: () => [], baseBindings: () => [] };
   registerConfig({ ...getConfig(), loadAccessRequests: () => accessRequests });
-  registerSettings(defineSettings({ memory: { skillProposalPr: true } }));
 
   const opened: { head: string; base: string; title: string }[] = [];
   const written: { path: string; branch: string }[] = [];

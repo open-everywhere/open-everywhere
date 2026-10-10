@@ -51,8 +51,8 @@ Every GitHub App webhook delivery hits **`POST /eve/v1/github`** and feeds up to
    does not prove the run ran on your branch. See the
    [event inventory](../../capabilities/proactivity-and-routines.md#the-event-inventory--what-each-vendor-can-send-and-how-far-we-carry-it)
    for what every other event does and does not carry.
-3. **The ambient-supervisor leg** (opt-in). Every *non-mention* issue/PR-timeline comment on an
-   opted-in repo is judged by a **standing per-repo supervisor session** — the same ambient
+3. **The ambient-supervisor leg** (on by default). Every *non-mention* issue/PR-timeline comment on an
+   ambient-on repo is judged by a **standing per-repo supervisor session** — the same ambient
    judge Slack channels and Notion docs use — which replies into the triggering issue/PR or
    stays audibly silent (a `github.no_reply` audit row, reason included).
 
@@ -78,15 +78,17 @@ somebody already wrote.
   issue. It then answers nothing there, on either leg, until somebody `@mentions` it again. A new
   `@mention` is the way back in; there is no timeout.
 - **A container nobody ever mentioned it in is untouched** by all of this. It wakes only through
-  the ambient supervisor below, which is off until a domain opts in.
+  the ambient supervisor below, which is on by default and off where a domain sets
+  `ambientSupervisor: false`.
 - **The agent's own comments never re-trigger it**, and neither do other bots' — an engaged issue
   admits comments from people only.
 
 ### Ambient mode — reserved by default, fail-closed everywhere
 
-- **Opt-in is per domain** (`ambientSupervisor: true` on the repo's memory domain — the same
-  flag that turns on Slack/Notion ambient). Until a domain opts in, non-mention comments do
-  nothing.
+- **On by default, off per domain.** The repo's memory domain decides with `ambientSupervisor`,
+  the same flag that governs Slack, Linear and Notion ambient. Unset, it inherits the `org`
+  domain's value, and an unset `org` means on (OPE-2409). With `ambientSupervisor: false`,
+  non-mention comments do nothing. The private-repo floor below holds either way.
 - **A positively private repo, or any repo the operator vouched internal — fail-closed.** On a
   private repo every commenter was invited. On an unvouched public repo any drive-by stranger
   could buy judged model turns (an uninvited spend + prompt-injection surface). So the ambient
@@ -96,7 +98,7 @@ somebody already wrote.
   one repo by declaring the surface key `github/<owner>` or `github/<owner>/<repo>` internal in
   the trust register (see
   [Identity](../../how-it-works/identity.md#the-trust-registry--declaring-what-a-rooms-audience-is));
-  `OE_TRUST=internal` is the deployment-wide blanket, not the per-repo act.
+  the setting `identity.blanketTrust: "internal"` is the deployment-wide blanket, not the per-repo act.
 - **GitHub's calibration tier defaults to `reserved`** — a deliberately *higher* bar than
   Slack/Notion, because an over-eager bot in a collaborative code space reads as spam. Tune it
   per domain with `engagementTier` (see the
@@ -117,7 +119,7 @@ somebody already wrote.
     attribute: it is owed an answer whatever the enrolment says. The classifier itself reads no
     engagement row; the split is made at the native suppression gate.
 - **A stood-down container is dropped here too.** Once somebody asks the agent to stop following
-  an issue, the ambient leg stops answering it as well, whatever this opt-in says. That is the
+  an issue, the ambient leg stops answering it as well, whatever the domain flag says. That is the
   only thing that makes the stop a stop rather than a note.
 - **The supervisor is silent plumbing.** Its judged turns add no 👀 reaction (the mention leg
   keeps its ack reaction), never check the repo out, and a *failed* judge turn is audited —
@@ -139,7 +141,7 @@ somebody already wrote.
 
 **Trust fails closed.** Only a *private* repo touched by an org **OWNER/MEMBER** binds
 `internal` (shared/org memory readable); public repos, outside collaborators, and missing
-signals bind `external`. The operator can vouch a deployment with `OE_TRUST=internal` — the
+signals bind `external`. The operator can vouch a deployment with the setting `identity.blanketTrust: "internal"` — the
 same layer the other non-Slack platforms use.
 
 ## Setup
@@ -161,6 +163,7 @@ same layer the other non-Slack platforms use.
    list for that reason ("All GitHub Apps receive this event by default. You cannot manually
    subscribe to this event."). They arrive on the same webhook URL, so each org that installs
    the App registers itself with no extra configuration (see *Multi-org installs* below).
+   On the App's settings page, under **Display information**, upload [`brand/png/mark-square-1024.png`](../../../brand/png/mark-square-1024.png), the project mark, as its logo. Skip this when you set [`identity.name`](../configuration-reference.md) and chose your own icon: with no name configured the agent presents as the project, so the project mark is its default avatar.
 2. **Install the App** on the repos the agent should live on.
 3. **Configure the environment** (the conversational surface uses the **bare** names — the
    `OE_GITHUB_*` set is the separate source-control plane, even when both point at one App):
@@ -174,10 +177,11 @@ same layer the other non-Slack platforms use.
    # in agent/settings/settings.ts to accept unsigned deliveries locally.
    ```
 
-4. **For ambient mode**, add the repo to a memory domain (surface key
-   `github/<owner>/<repo>`) and set `ambientSupervisor: true` on it — see
-   [Memory](../../capabilities/memory.md). A domain can compose repos **with** Slack channels,
-   Notion docs, and Linear teams: one flag, one shared silo, ambient everywhere in it.
+4. **Ambient mode is on by default** for a positively private or vouched repo. Add the repo to a
+   memory domain (surface key `github/<owner>/<repo>`) to give it a silo — see
+   [Memory](../../capabilities/memory.md). To make the repo addressed-only, set
+   `ambientSupervisor: false` on that domain. A domain can compose repos **with** Slack channels,
+   Notion docs, and Linear teams: one flag, one shared silo, one posture everywhere in it.
 
 ## Multi-org installs (self-registering)
 
@@ -273,12 +277,13 @@ back to `GITHUB_TOKEN` — so a repo the App is not installed on cannot be read.
   this row too. That case is visible instead as the audit drop counter and an
   `[open-everywhere:audit] dropped a "github.reaction_claim_unreadable" entry …` warning in the
   logs. So: rows present means the claim table specifically; the warning means the store.
-- **Ambient is off until a domain opts in**, and it never runs on a repo that isn't positively
-  private. If non-mention comments get no response, check the domain flag, then the repo's
+- **Ambient is on unless a domain turns it off** (`ambientSupervisor: false`), and it never runs
+  on a repo that isn't positively private or vouched. If non-mention comments get no response, check the domain flag, then the repo's
   privacy — and read the record rather than guessing: the first delivery from a repo the
   supervisor was never asked about writes a **`github.ambient_skipped`** audit row naming the
-  surface key, the reason (`no-domain` — nothing routes this repo — versus `domain-refused` —
-  a domain does route it but hasn't opted in) and the exact edit to make. Query it with
+  surface key, the reason (`domain-refused` — a domain declares `ambientSupervisor: false` and
+  this repo inherits it — versus `no-domain` — no domain routes the repo and the app has no `org`
+  domain to inherit from, or the domain set did not load, so the gate failed closed) and the line to change. Query it with
   `GET /control/v1/audit?since=<iso>&actions=github.ambient_skipped`. A whole owner at once is
   `reach: ["github/<owner>"]` on the domain — or, better where it fits, a same-level glob
   `reach: ["github/<owner>/payments-*"]` plus `exclude` for the repos that must stay out. With

@@ -139,10 +139,15 @@ tier decides whether the op takes an approval card, and whether a routine's decl
 **The built-in arm.** `classifyConnectorOpTierVerdict`
 (`packages/core/agent/access/consequence.ts`) — three reviewed verb lists, scanned over the verb
 segment, failing closed to `destructive`. It returns a tier AND an `OpTierBasis`: `destructive-verb`,
-`write-verb`, `read-verb`, or `unrecognised`.
+`write-verb`, `read-verb`, or `unrecognised`. Since 2026-10-10 it also takes the org-admitted MCP
+server's own tool annotations (`readOnlyHint`, `destructiveHint`) as a second source: a hint decides
+where the name is `unrecognised`, and where the name named a verb the stricter of the two wins
+([Connectors](../capabilities/connectors-and-providers.md#raising-an-operations-tier)). The verdict
+then carries `hint` and `hintDecided`, and `connectorOpTierParts` reports both.
 
 **The slot, and it ships FULL.** `AppConfig.connectorOpTier?: ConnectorOpTierArm` — one tiering
-function, `(op: { connection, verb, toolName }) => ConnectorOpTier | undefined`.
+function, `(op: { connection, verb, toolName, hints? }) => ConnectorOpTier | undefined`. `hints` is
+present when the seam read the server's annotations for that op.
 
 🔴 **The default is a registered value, not a fallback.** `registerConfig`
 (`packages/core/agent/access/config.ts`) puts `defaultConnectorOpTierArm`
@@ -541,7 +546,7 @@ overturn a policy drop; and no arm is offered a message on a surface that declin
 arm is handed the message text before two gates the route runs later: the spend gate, and the
 **external-participant policy** (`applySlackExternalPolicy` — OPE-507/OPE-504), which decides an
 excluded author is owed nothing. Neither can be overturned by an arm, so no wake gets past them; but
-on a deployment that has left the shipped `taint` grain, an excluded author's message text does
+on a deployment that has opted out to the `taint` grain, an excluded author's message text does
 reach the arm — and, for a model arm, a model vendor — before that policy refuses it. The tenant
 fence is the one moved ahead of the consult, because an unadmitted workspace is the posture that
 says no turn may run at any price. A deployment arming this seam should decide whether the external

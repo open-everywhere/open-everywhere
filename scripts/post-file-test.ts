@@ -44,27 +44,21 @@ const { inferContentType, postFileDescription } = await import("@open-everywhere
 const { readAudit } = await import("@open-everywhere/core/agent/audit/audit.js");
 const { registerConfig } = await import("@open-everywhere/core/agent/access/config.js");
 const { defineBundle, defineBinding } = await import("@open-everywhere/core/agent/access/bundle.js");
-const { setBlobPutter, assertBlobUrl, hostHtmlArtifact } = await import("@open-everywhere/core/agent/blob/hosting.js");
 
-const { actionKind } = await import("@open-everywhere/core/agent/approvals/actions.js");
 const { getOperationalStore } = await import("@open-everywhere/core/agent/operational/provider.js");
-async function pendingPublishes(): Promise<{ id: string; argsJson: string; status: string; channelId: string }[]> {
-  return ((await getOperationalStore().listPendingActions("default")) as unknown as { id: string; kind: string; argsJson: string; status: string; channelId: string }[]).filter((r) => r.kind === "file.publish");
+async function pendingCards(): Promise<number> {
+  return ((await getOperationalStore().listPendingActions("default")) as unknown as unknown[]).length;
 }
 
-function registerBlobConfig(enabled: boolean, publicPrefix?: string, domains: readonly unknown[] = []): void {
-  registerConfig({
-    loadBundles: () => [defineBundle({ name: "org-default", instructions: "test" })],
-    loadBindings: () => [defineBinding({ bundle: "org-default", scope: { level: "org" } })],
-    pluginRegistry: {},
-    skillContent: {},
-    loadDomains: () => domains as never,
-    loadSilos: () => (domains.length > 0 ? [{ name: "pf-brain", provider: "sqlite" }] : []) as never,
-    domainsForSurface: () => [],
-    loadBlobHosting: () => ({ enabled, ...(publicPrefix ? { publicPrefix } : {}) }),
-  });
-}
-registerBlobConfig(false);
+registerConfig({
+  loadBundles: () => [defineBundle({ name: "org-default", instructions: "test" })],
+  loadBindings: () => [defineBinding({ bundle: "org-default", scope: { level: "org" } })],
+  pluginRegistry: {},
+  skillContent: {},
+  loadDomains: () => [],
+  loadSilos: () => [],
+  domainsForSurface: () => [],
+});
 
 const require = createRequire(import.meta.url);
 const eveRoot = dirname(require.resolve("eve/package.json"));
@@ -231,28 +225,6 @@ await inSession(async () => {
   );
 });
 
-ok(assertBlobUrl("https://abc.public.blob.vercel-storage.com/x.html").hostname.endsWith(".blob.vercel-storage.com"), "assertBlobUrl: a real Blob host is allowed");
-const rejectsBlob = (u: string, label: string) => {
-  let threw = false;
-  try {
-    assertBlobUrl(u);
-  } catch {
-    threw = true;
-  }
-  ok(threw, label);
-};
-rejectsBlob("http://abc.public.blob.vercel-storage.com/x.html", "assertBlobUrl: non-https Blob URL rejected");
-rejectsBlob("https://evil.example.com/x.html", "assertBlobUrl: off-host (non-Blob) URL rejected");
-rejectsBlob("https://blob.vercel-storage.com.evil.com/x", "assertBlobUrl: look-alike suffix host rejected");
-
-setBlobPutter(async () => ({ url: "https://evil.example.com/leaked.html" }));
-await assert.rejects(
-  () => hostHtmlArtifact({ bytes: new Uint8Array([1]), filename: "p.html", contentType: "text/html" }),
-  /non-Blob URL/,
-  "hostHtmlArtifact: rejects a non-Blob URL returned by the putter",
-);
-setBlobPutter(undefined);
-
 calls = [];
 fakeNet();
 try {
@@ -356,88 +328,29 @@ await inSession(async () => {
 }
 
 calls = [];
-registerBlobConfig(false);
-setBlobPutter(async () => {
-  throw new Error("blob putter must NOT be called when the org has not opted in");
-});
 fakeNet();
 try {
 await inSession(async () => {
+  const before = await pendingCards();
   const res = await postFile.execute(
     { files: [{ source: { path: "page.html" }, filename: "page.html" }], comment: "the page" },
     slackCtx("111.222"),
   );
-  ok(res.posted === true && (res as { urls?: string[] }).urls === undefined, "post_file(html, opt-out): attaches (no hosted urls returned)");
+  ok(res.posted === true && res.count === 1 && (res as { urls?: string[] }).urls === undefined, "post_file(html): attaches (no urls returned)");
   const getUrl = calls.find((c) => c.url.endsWith("/api/files.getUploadURLExternal"));
-  ok(!!getUrl, "post_file(html, opt-out): the .html is uploaded as a file (getUploadURLExternal called)");
-  ok(new URLSearchParams(getUrl!.body).get("filename") === "page.html", "post_file(html, opt-out): the attachment keeps the .html filename");
-  ok(!calls.some((c) => c.url.endsWith("/api/chat.postMessage")), "post_file(html, opt-out): no link message posted (nothing hosted)");
-  ok((await pendingPublishes()).length === 0, "post_file(html, opt-out): no publish card is proposed (the attach path is ungated)");
-});
-} finally {
-  restoreFetch();
-}
-setBlobPutter(undefined);
-
-calls = [];
-registerBlobConfig(true);
-let putArgs: { pathname: string; contentType: string; byteLen: number } | undefined;
-const BLOB_URL = "https://store123.public.blob.vercel-storage.com/public-artifacts/page-abc123.html";
-setBlobPutter(async (args: { pathname: string; body: Uint8Array; contentType: string }) => {
-  putArgs = { pathname: args.pathname, contentType: args.contentType, byteLen: args.body.byteLength };
-  return { url: BLOB_URL };
-});
-fakeNet();
-try {
-await inSession(async () => {
-  const res = (await postFile.execute(
-    { files: [{ source: { path: "page.html" }, filename: "page.html" }], comment: "rendered page" },
-    slackCtx("111.222"),
-  )) as { posted: boolean; pending?: boolean; pendingId?: string; urls?: string[]; message?: string };
-  ok(res.pending === true && typeof res.pendingId === "string", "post_file(html, opt-in): proposes a file.publish card and returns at once (OPE-2340)");
-  ok(res.urls === undefined && putArgs === undefined, "post_file(html, opt-in): nothing is published before a member approves");
-  ok((res.message ?? "").includes("Nothing is public yet"), "post_file(html, opt-in): the result tells the model the page is not public yet");
-  ok(!calls.some((c) => c.url.endsWith("/api/files.getUploadURLExternal")), "post_file(html, opt-in): the HTML is NOT raw-uploaded as a file");
-  const card = calls.find((c) => c.url.endsWith("/api/chat.postMessage"));
-  ok(!!card && (new URLSearchParams(card.body).get("blocks") ?? "").includes("PUBLIC URL"), "post_file(html, opt-in): the card is posted into the room and says the page goes public");
-  const rows = await pendingPublishes();
-  ok(rows.length === 1 && rows[0]!.id === res.pendingId && rows[0]!.status === "pending", "post_file(html, opt-in): one pending file.publish row, frozen");
-  const frozen = JSON.parse(rows[0]!.argsJson) as { pages: { filename: string; sha256: string; contentBase64: string }[]; linkChannelId: string; threadTs: string | null; comment?: string; requestedBy: string };
-  ok(frozen.pages.length === 1 && frozen.pages[0]!.filename === "page.html" && frozen.pages[0]!.sha256.length === 64, "the card froze the page with its digest");
-  ok(frozen.linkChannelId === "C1" && frozen.threadTs === "111.222" && frozen.comment === "rendered page" && frozen.requestedBy === "U1", "the card froze the room, thread, comment and asker the click needs");
-
-  calls = [];
-  await assert.rejects(() => actionKind("file.publish")!.execute(frozen, "U0OTHER"), /only the person who asked/, "a member who did not ask cannot publish someone else's page");
-  ok(putArgs === undefined && calls.length === 0, "…and nothing was published or posted");
-
-  calls = [];
-  const outcome = await actionKind("file.publish")!.execute(frozen, "U1");
-  ok(outcome.includes(BLOB_URL), "the click publishes and its outcome line names the URL");
-  ok(!!putArgs && putArgs.pathname.startsWith("public-artifacts/") && putArgs.contentType === "text/html", "the click writes under the reserved public prefix with text/html");
-  const msg = calls.find((c) => c.url.endsWith("/api/chat.postMessage"));
-  ok(!!msg, "the click posts a text message with the URL");
-  const text = new URLSearchParams(msg!.body).get("text") ?? "";
-  ok(text.includes(BLOB_URL) && text.includes("rendered page"), "the link message carries the Blob URL + the comment");
-  ok(new URLSearchParams(msg!.body).get("thread_ts") === "111.222", "the link posts into the thread that asked");
+  ok(!!getUrl, "post_file(html): the .html is uploaded as a file (getUploadURLExternal called)");
+  ok(new URLSearchParams(getUrl!.body).get("filename") === "page.html", "post_file(html): the attachment keeps the .html filename");
+  ok(!calls.some((c) => c.url.endsWith("/api/chat.postMessage")), "post_file(html): no link message and no card is posted");
+  ok((await pendingCards()) === before, "post_file(html): no approval card is proposed");
   const newest = (await readAudit({ org: "default", action: "slack.post_file" }))[0];
-  ok(newest?.detail?.hosted === 1 && newest?.detail?.attached === 0 && newest?.detail?.viaCard === true, "the click's audit row records hosted=1, attached=0, via the card");
-  ok(newest?.principalId === "U1", "…attributed to the member who approved — the asker");
-
-  calls = [];
-  putArgs = undefined;
-  const mixed = (await postFile.execute(
-    { files: [{ source: { path: "shot.png" }, filename: "shot.png" }, { source: { path: "other.html" }, filename: "other.html" }] },
-    slackCtx("111.222"),
-  )) as { posted: boolean; pending?: boolean };
-  ok(mixed.pending === true && mixed.posted === true, "a mixed call attaches the image and cards the page");
-  ok(calls.some((c) => c.url.endsWith("/api/files.getUploadURLExternal")) && putArgs === undefined, "…the image is uploaded at once, nothing is published");
+  ok(newest?.detail?.attached === 1 && newest?.detail?.hosted === undefined, "post_file(html): the audit row counts one attached file and no hosted count");
 
   const POST_FILE_ROUTINE: Routine = {
     id: "r-postfile",
     org: "default",
     surfaceKey: "slack/T0PF/C0PF",
     trigger: { kind: "cron", expr: "0 3 * * *" },
-    prompt: "publish the nightly report page",
+    prompt: "post the nightly report page",
     createdBy: "U0CREATOR",
     createdAt: "2026-05-07T23:30:00.000Z",
     status: "active",
@@ -450,91 +363,22 @@ await inSession(async () => {
     },
     undefined,
   );
-  const before = (await pendingPublishes()).length;
   calls = [];
-  await assert.rejects(
-    () => postFile.execute({ files: [{ source: { path: "page.html" }, filename: "page.html" }] }, fireCtx),
-    /nobody is attending this run/,
-    "🔴 post_file(html, opt-in, UNATTENDED FIRE): REFUSED — no card nobody can click",
-  );
-  ok((await pendingPublishes()).length === before && calls.length === 0, "…and nothing was proposed or posted");
-  const firedImage = await postFile.execute({ files: [{ source: { path: "shot.png" }, filename: "shot.png" }] }, fireCtx);
-  ok(firedImage.posted === true, "control: an IMAGE on the same unattended fire still attaches — the arm refuses only the public publish");
+  const fired = await postFile.execute({ files: [{ source: { path: "page.html" }, filename: "page.html" }] }, fireCtx);
+  ok(fired.posted === true, "post_file(html, UNATTENDED FIRE): the page attaches — there is nothing to approve");
+  ok(calls.some((c) => c.url.endsWith("/api/files.getUploadURLExternal")), "…and it is uploaded as a file");
 });
 } finally {
   restoreFetch();
 }
-setBlobPutter(undefined);
 
 {
-  const { defineDomain } = await import("@open-everywhere/core/agent/memory/domain.js");
-  calls = [];
-  registerBlobConfig(true, undefined, [
-    defineDomain({ name: "pf-mixed", reach: [`notion/${NOTION_WORKSPACE}/${NOTION_PAGE}`, "slack/T1/C_OPS"], memory: "pf-brain" }),
-  ]);
-  fakeNet();
-  try {
-    await inSession(async () => {
-      const before = (await pendingPublishes()).length;
-      await assert.rejects(
-        () => {
-          const c = notionCtx() as { session: { auth: { current: Record<string, unknown> } } };
-          c.session.auth.current = { ...c.session.auth.current, principalId: "notion-user-1", principalType: "notion-user" };
-          return postFile.execute({ files: [{ source: { path: "page.html" }, filename: "page.html" }] }, c);
-        },
-        /only the person who asked can approve a publish/,
-        "post_file(html, opt-in, notion): a card redirected to another platform's room is refused before it posts",
-      );
-      ok((await pendingPublishes()).length === before, "…and no card was proposed");
-    });
-  } finally {
-    restoreFetch();
-  }
-  registerBlobConfig(false);
+  const d = postFileDescription();
+  ok(d.includes("HTML page is attached as a downloadable file"), "description says an HTML page is attached as a file");
+  ok(!/public URL|Blob|host|publish/i.test(d), "description never mentions hosting, Blob, a public URL or a publish");
+  ok(d.includes("Do not rename it to `.txt`"), "description tells the model to keep the .html extension");
+  ok((postFile as unknown as { description?: unknown }).description === d, "the mounted post_file tool carries that description");
+  ok(d.startsWith("Post one or more FILES/artifacts"), "description keeps the lead text");
 }
 
-calls = [];
-registerBlobConfig(true);
-setBlobPutter(async () => {
-  throw new Error("blob store exploded");
-});
-fakeNet();
-try {
-await inSession(async () => {
-  const proposed = (await postFile.execute({ files: [{ source: { path: "page3.html" }, filename: "page3.html" }] }, slackCtx("111.222"))) as { pendingId?: string };
-  const row = (await pendingPublishes()).find((r) => r.id === proposed.pendingId);
-  ok(!!row, "post_file(html, opt-in, write fails): the card is proposed");
-  calls = [];
-  await assert.rejects(
-    () => actionKind("file.publish")!.execute(JSON.parse(row!.argsJson), "U1"),
-    /blob store exploded/,
-    "post_file(html, opt-in, write fails): the click fails loud (no silent attach fallback)",
-  );
-  ok(!calls.some((c) => c.url.endsWith("/api/files.getUploadURLExternal")), "post_file(html, opt-in, write fails): did not silently fall back to a raw upload");
-  ok(!calls.some((c) => c.url.endsWith("/api/chat.postMessage")), "post_file(html, opt-in, write fails): no link message for a page that was never published");
-});
-} finally {
-  restoreFetch();
-}
-setBlobPutter(undefined);
-registerBlobConfig(false);
-
-{
-  const off = postFileDescription(false);
-  const on = postFileDescription(true);
-  ok(off.includes("attached") && off.includes("not opted in"), "description (hosting OFF) says the HTML page is attached and the org has not opted in");
-  ok(!off.includes("public URL"), "description (hosting OFF) never mentions a public URL");
-  ok(off.includes("Do not rename it to `.txt`"), "description (hosting OFF) tells the model to keep the .html extension");
-  ok(on.includes("public URL") && on.includes("approval"), "description (hosting ON) says the page is published to a public URL behind approval");
-  ok(!on.includes("not opted in"), "description (hosting ON) never claims the org has not opted in");
-  ok((postFile as unknown as { description?: unknown }).description === off, "the mounted post_file tool carries the OFF description (fail-closed hosting state)");
-  ok(off.startsWith("Post one or more FILES/artifacts") && on.startsWith("Post one or more FILES/artifacts"), "both descriptions keep the shared lead text");
-}
-
-const { loadBlobHosting: shippedBlobHosting } = await import("../agent/blob/hosting.js");
-ok(
-  shippedBlobHosting().enabled === false,
-  "the SHIPPED org config keeps Blob hosting OFF (agent/blob/hosting.ts) — the fail-closed default, and the reason post_file's file.publish card cannot be raised on this tree",
-);
-
-console.log(`\n✓ post_file: ${n} assertions passed (validation, content-type, sandbox-path resolution+guards, surface dispatch, blob-hosting opt-in, the shipped org config, audit)\n`);
+console.log(`\n✓ post_file: ${n} assertions passed (validation, content-type, sandbox-path resolution+guards, surface dispatch, HTML attach, audit)\n`);

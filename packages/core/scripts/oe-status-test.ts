@@ -129,10 +129,12 @@ const req = (doc: DeploymentStatus, id: string): RequirementStatus => {
   });
   ok(req(vercelUrl, "public-https-url").met === "yes", "public url: the Vercel production alias reads yes");
 
-  const justbash = await deploymentStatus({ ...BASE, env: { ...HEALTHY_ENV, OE_SANDBOX_BACKEND: "justbash" }, probes: {} });
+  const justbash = await deploymentStatus({ ...BASE, env: HEALTHY_ENV, sandboxBackend: "justbash", probes: {} });
   ok(req(justbash, "sandbox-backend").met === "no", "sandbox: justbash shares the app filesystem and reads no");
-  const badBackend = await deploymentStatus({ ...BASE, env: { ...HEALTHY_ENV, OE_SANDBOX_BACKEND: "wat" }, probes: {} });
-  ok(req(badBackend, "sandbox-backend").met === "no", "sandbox: an unknown backend reads no (the app refuses to boot on it)");
+  const staleEnv = await deploymentStatus({ ...BASE, env: { ...HEALTHY_ENV, OE_SANDBOX_BACKEND: "justbash" }, probes: {} });
+  ok(req(staleEnv, "sandbox-backend").met === "yes", "sandbox: the retired OE_SANDBOX_BACKEND decides nothing — the default docker reads yes");
+  const vercelSandbox = await deploymentStatus({ ...BASE, env: { ...HEALTHY_ENV, OE_EGRESS_PROXY_URL: "" }, sandboxBackend: "vercel", probes: {} });
+  ok(req(vercelSandbox, "sandbox-backend").met === "yes" && req(vercelSandbox, "egress-control").met === "yes", "sandbox: the Vercel Sandbox from a non-Vercel host (useVercelSandbox) reads yes, firewall included");
 
   const noProxy = { ...HEALTHY_ENV, OE_EGRESS_PROXY_URL: "" };
   const failClosed = await deploymentStatus({ ...BASE, env: noProxy, probes: {} });
@@ -274,7 +276,7 @@ const req = (doc: DeploymentStatus, id: string): RequirementStatus => {
     surfaceReporters: { slack: async () => ({ credentials: "yes", installed: "yes", eventsVerified: "yes" }) },
   });
   const wire = JSON.stringify(doc);
-  ok(doc.host === "self-host", "🔴 an OE_PLATFORM label outside the contract's vocabulary is NARROWED to self-host, never echoed");
+  ok(doc.host === "self-host", "🔴 a host label outside the contract's vocabulary is NARROWED to self-host, never echoed");
   ok(!wire.includes(secret), "no seeded secret's bytes appear anywhere in the payload");
   for (const [name, value] of Object.entries(env)) {
     ok(!wire.includes(value!), `no env VALUE appears in the payload (${name})`);

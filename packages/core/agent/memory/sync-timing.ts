@@ -1,13 +1,14 @@
 import { appendAudit } from "../audit/audit.js";
+import { getSettings } from "../settings/settings.js";
 import type { Partition } from "./partition.js";
 import type { MemoryFiles } from "./store.js";
 
-export const OE_MEMORY_SYNC_TIMING_ENV = "OE_MEMORY_SYNC_TIMING";
+export const MEMORY_SYNC_TIMING_SETTING = "memory.syncTiming";
 
 export const MEMORY_SYNC_TIMING_ACTION = "memory.sync_timing";
 
 export function memorySyncTimingEnabled(): boolean {
-  return process.env[OE_MEMORY_SYNC_TIMING_ENV] === "1";
+  return getSettings().memory.syncTiming;
 }
 
 export interface SiloSyncTiming {

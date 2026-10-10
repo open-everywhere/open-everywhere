@@ -51,7 +51,6 @@ const APP_CONFIG_MEMBERS: readonly string[] = [
   "loadSpendCheckpoints",
   "loadAccessRequests",
   "loadModelPolicy",
-  "loadBlobHosting",
   "loadPrincipals",
   "loadGroups",
   "auditScrub",

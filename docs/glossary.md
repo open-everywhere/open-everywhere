@@ -435,7 +435,7 @@ Source: `packages/core/agent/channels/read-author-trust.ts` (`refutedReadAuthorI
 returns the refuted author IDS, and `read_channel` / `read_thread` read that one answer twice: they
 declare `authoredByNonMember` for the table, and — on `externalPolicy.authorGrain: "withhold"` — they
 replace those authors' message text with the arrived-marker. A withheld body never reached the model,
-so the read declares nothing and the turn stays clean. On the shipped `taint` grain nothing is
+so the read declares nothing and the turn stays clean. On the `taint` opt-out grain nothing is
 withheld and the mark is unchanged.
 Source: `packages/core/agent/channels/channel-read.ts` (`gradeAndProject`).
 
@@ -848,6 +848,10 @@ The verb classifier reads the **verb segment only**. A qualified tool name is
 `<plugin>__<server>`), so the verb is the LAST segment. Only that segment may put an op in the
 `read` tier. The segments before it may RAISE the tier and never lower it. A name whose shape does
 not parse has no verb, so it classifies `destructive`.
+The one input besides the name is the org-admitted MCP server's own tool annotations
+(`readOnlyHint`, `destructiveHint`). A hint decides only where the verb segment named no recognised
+verb; where it named one, the stricter of the two wins
+(`packages/core/agent/access/consequence.ts#classifyConnectorOpTierVerdict`).
 The HEAD segment is read in ONE case only: when the verb starts with it, so the hosted-vendor prefix
 strip fires (hosted MCP servers re-prefix their ops — `notion__notion-fetch`). The tokens that strip
 removes are then fed back RAISE-ONLY, so a connection whose slug spells a verb cannot delete that

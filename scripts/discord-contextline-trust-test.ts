@@ -12,6 +12,7 @@ import {
   type ContextLine,
   type BindableContext,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -63,12 +64,12 @@ ok(
   "🔴 an UNVOUCHED guild (no OE_TRUST/vouch armed) resolves a human sibling `unauth` — the SAME floor the trigger already sits on for an unvouched guild, not a new behaviour this fix introduces",
 );
 
-process.env.OE_TRUST = "internal";
+overrideSettingsForTest({ identity: { blanketTrust: "internal" } });
 try {
   const gradedVouched = await gradeDiscordContextLines(lines, ctx, GUILD, fakeRoleProbe({}));
   ok(gradedVouched[0].trust === "peer", "a VOUCHED guild resolves a human sibling `peer` — mirrors the trigger's own resolveWakeTrustFromContext exactly");
 } finally {
-  delete process.env.OE_TRUST;
+  overrideSettingsForTest({ identity: { blanketTrust: "none" } });
 }
 
 console.log("3. the cost gate on an unarmed tenant:");

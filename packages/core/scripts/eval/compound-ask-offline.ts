@@ -288,7 +288,7 @@ async function main(): Promise<void> {
   }
 
   const apiKey = process.env.AI_GATEWAY_API_KEY;
-  if (apiKey === undefined || apiKey.length === 0) throw new Error("AI_GATEWAY_API_KEY is unset — source .env.e2e and pass ROWAN_VERCEL_AI_GATEWAY_KEY");
+  if (apiKey === undefined || apiKey.length === 0) throw new Error("AI_GATEWAY_API_KEY is unset — source .env.e2e, which sets AI_GATEWAY_API_KEY to your own gateway key");
   const gateway = createGateway({ apiKey });
 
   console.log(`compound-ask offline — model=${MODEL} effort=${EFFORT} condition=${CONDITION} arm=${ARM} n=${N}`);

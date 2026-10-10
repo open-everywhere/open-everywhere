@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -8,7 +9,7 @@ const ok = (cond: boolean, label: string) => {
 };
 
 _setDeploymentIdentityForTest({ org: "acme-org", workspace: "ws1", surface: "c1" });
-process.env.OE_TRUST = "internal";
+overrideSettingsForTest({ identity: { blanketTrust: "internal" } });
 delete process.env.OE_MEMORY_PROVIDER;
 
 await import("./_register-test-config.js");

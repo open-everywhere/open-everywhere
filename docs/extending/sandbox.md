@@ -122,11 +122,12 @@ closed — the session default is allow-all, so unenforced means unfirewalled); 
 - **On Vercel:** the Vercel Sandbox is the default executor and the **only** backend that fully
   enforces the fine-grained egress firewall (per-host allow + at-boundary credential injection).
   Enforcement is on by default; set `egress.enforce: false` to opt out to dry-run.
-- **Off Vercel:** Open Everywhere's own deployment picks between two Eve backends via
-  `OE_SANDBOX_BACKEND` — `docker()` (the default, contained) or `justbash` (dev-only, shares the
+- **Off Vercel:** Open Everywhere's own deployment picks between two Eve backends via the
+  setting `sandbox.selfHostBackend` — `docker()` (the default, contained) or `justbash` (dev-only, shares the
   app process's filesystem); see [Self-host with enforced egress](../deploy/platforms/self-host-egress.md).
-  Full firewall parity on `docker()` comes from the egress-proxy sidecar, not from Eve's native
-  `setNetworkPolicy` (which Docker only honours coarsely). A from-scratch adapter could instead
+  The egress-proxy sidecar enforces the session policy for `justbash` only. `docker()` honours
+  only Eve's coarse `setNetworkPolicy` strings, and its session containers sit outside the proxy,
+  so the app refuses to boot on `docker()` with the proxy wired (OPE-2407). A from-scratch adapter could instead
   pick Eve's `microsandbox` backend (needs `/dev/kvm`) for native host-grain enforcement — but
   not full parity: credential injection and `match` narrowing are measured gaps (OPE-917,
   upstream defect OPE-954) — or a custom backend like E2B; any backend that doesn't honour

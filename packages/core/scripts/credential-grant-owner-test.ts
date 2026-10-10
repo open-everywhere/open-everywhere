@@ -98,7 +98,7 @@ console.log("4. a confirmed link-set member derives the link-set subject, and th
     updatedAt: at,
   });
 
-  resetSettingsForTest();
+  registerSettings({ connectors: { linkSetVault: false } });
   const off = await grantOwnerSubject(ORG, "notion", `slack/${WS}/U-linked`);
   eq(off!.vaultSubject, rawVaultSubject(ORG, "slack", WS, "U-linked"), "flag OFF: a confirmed member still derives their OWN raw subject");
 

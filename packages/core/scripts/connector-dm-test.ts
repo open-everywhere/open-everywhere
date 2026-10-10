@@ -3,17 +3,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
-import { overrideSettingsForTest } from "../agent/settings/settings.js";
+import { overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { removeTempDir } from "./_temp-dir.js";
+import { setPlatformStandInForTest } from "../agent/identity/binding.js";
 registerSlackFixtureMapper();
 
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-connector-dm-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
-overrideSettingsForTest({ connectors: { dmOnly: true } });
+const WALL_UP = { connectors: { dmOnly: true, opTiering: false, userPrincipal: false } } as const;
+overrideSettingsForTest(WALL_UP);
 _setDeploymentIdentityForTest({ org: undefined });
-process.env.OE_PLATFORM = "slack";
+setPlatformStandInForTest("slack");
 
 const { registerConfig } = await import("../agent/access/config.js");
 const { defineBundle, defineBinding } = await import("../agent/access/bundle.js");
@@ -76,12 +78,11 @@ async function refusal(name: string, auth: unknown): Promise<string> {
   }
 }
 
-ok(scope.connectorDmOnlyEnabled(), "OE_CONNECTOR_DM_ONLY unset -> wall ON (security default)");
+resetSettingsForTest();
+ok(!scope.connectorDmOnlyEnabled(), "nothing registered -> wall OFF (shipped default since 2026-10-10)");
 overrideSettingsForTest({ connectors: { dmOnly: true } });
-ok(scope.connectorDmOnlyEnabled(), "OE_CONNECTOR_DM_ONLY empty -> wall still ON");
-overrideSettingsForTest({ connectors: { dmOnly: false } });
-ok(!scope.connectorDmOnlyEnabled(), 'OE_CONNECTOR_DM_ONLY="0" -> wall off (explicit disarm only)');
-overrideSettingsForTest({ connectors: { dmOnly: true } });
+ok(scope.connectorDmOnlyEnabled(), "connectors.dmOnly: true -> wall ON (explicit arm only)");
+overrideSettingsForTest(WALL_UP);
 
 {
   const msg = await refusal("notion", channelAuth);
@@ -135,21 +136,38 @@ overrideSettingsForTest({ connectors: { dmOnly: true } });
   ok(rows.some((r) => r.detail?.mode === "channel"), "disarmed-wall channel pass is still audited as connector.use");
   const denied = await refusal("not-a-connection", channelAuth);
   ok(denied.includes("not granted"), "disarming the wall does NOT disarm the grant gate");
-  overrideSettingsForTest({ connectors: { dmOnly: true } });
+  overrideSettingsForTest(WALL_UP);
+}
+
+{
+  resetSettingsForTest();
+  ok(!scope.connectorDmOnlyEnabled(), "shipped: the wall is DOWN");
+  const stamped = (rs: Awaited<ReturnType<typeof readAudit>>) => rs.filter((r) => r.detail?.mode === "channel" && r.detail?.grant === "work-surface").length;
+  const beforeRows = await readAudit({ org: "default", action: "connector.use" });
+  ok((await refusal("notion", channelAuth)) === "", "🔴 shipped: a GRANTED channel surface reaches the connector");
+  const rows = await readAudit({ org: "default", action: "connector.use" });
+  ok(rows.length === beforeRows.length + 1, "shipped: the channel pass wrote one connector.use row");
+  ok(stamped(rows) === stamped(beforeRows) + 1, "shipped: …and that NEW row is stamped grant=work-surface (counted against the rows before it)");
+  ok((await refusal("not-a-connection", channelAuth)).includes("not granted"), "shipped: an UNGRANTED connection is still refused from a channel");
+  ok((await refusal("personal-only", channelAuth)).includes("not granted"), "🔴 shipped: a PERSONAL-only connector is still unreachable from a channel");
+  ok((await refusal("personal-only", dmAuth)) === "", "shipped: …and still works in its owner's DM");
+  overrideSettingsForTest(WALL_UP);
 }
 
 {
   overrideSettingsForTest({ connectors: { dmOnly: true, opTiering: true } });
   ok(scope.connectorDmOnlyEnabled(), "the wall is still UP for this block — the carve-out is not the escape hatch");
 
-  const before = (await readAudit({ org: "default", action: "connector.use" })).length;
+  const beforeRows = await readAudit({ org: "default", action: "connector.use" });
+  const before = beforeRows.length;
+  const carvedBefore = beforeRows.filter((r) => r.detail?.grant === "work-surface").length;
   const msg = await refusal("notion", channelAuth);
   ok(msg === "", "opTiering armed -> a CHANNEL surface holding a service grant passes the wall");
   const rows = await readAudit({ org: "default", action: "connector.use" });
   ok(rows.length === before + 1, "the carve-out pass wrote one connector.use audit row");
   const carved = rows.filter((r) => r.detail?.grant === "work-surface");
-  ok(carved.length === 1, "exactly one row names the tier that admitted it (grant=work-surface)");
-  ok(carved[0].detail?.mode === "channel", "that row still carries the resolved mode");
+  ok(carved.length === carvedBefore + 1, "exactly one NEW row names the tier that admitted it (grant=work-surface)");
+  ok(carved.every((r) => r.detail?.mode === "channel"), "every work-surface row carries the resolved channel mode");
   ok(
     rows.filter((r) => r.detail?.mode === "dm").every((r) => r.detail?.grant === undefined),
     "a DM pass carries NO work-surface stamp — the two tiers are distinguishable in the log",
@@ -165,11 +183,11 @@ overrideSettingsForTest({ connectors: { dmOnly: true } });
 
   ok((await refusal("not-a-connection", channelAuth)).includes("not granted"), "the carve-out does NOT disarm the grant gate");
 
-  overrideSettingsForTest({ connectors: { dmOnly: true, opTiering: false } });
+  overrideSettingsForTest({ connectors: { dmOnly: true, opTiering: false, userPrincipal: false } });
   const refused = await refusal("notion", channelAuth);
   ok(refused.includes("DM-only"), "opTiering OFF -> the same channel call is refused by the wall again");
   ok(refused.includes("opTiering"), "the refusal names the setting a deployment must arm to hold a work grant");
-  overrideSettingsForTest({ connectors: { dmOnly: true, opTiering: false } });
+  overrideSettingsForTest(WALL_UP);
 }
 
 await removeTempDir(tmp);

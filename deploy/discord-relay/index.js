@@ -14,22 +14,14 @@ const GUILD_ALLOWLIST = (process.env.DISCORD_GUILD_ALLOWLIST ?? "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
-const TEST_DRIVER_IDS = new Set(
-  (process.env.OE_TEST_DRIVER_IDS ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter((pair) => /^\d+:\d+$/.test(pair)),
-);
-const isDriverAllowlisted = (message) =>
-  Boolean(message.guildId) && TEST_DRIVER_IDS.has(`${message.guildId}:${message.author.id}`);
 
 const HEARTBEAT_MS = Number(process.env.OE_RELAY_HEARTBEAT_MS) >= 0 ? Number(process.env.OE_RELAY_HEARTBEAT_MS) : 300_000;
 
 const LOG_SHIP_URL = process.env.OE_LOG_SHIP_URL;
 const LOG_SHIP_TOKEN = process.env.OE_LOG_SHIP_TOKEN;
 const LOG_SHIP_TOKEN_HEADER = process.env.OE_LOG_SHIP_TOKEN_HEADER || "authorization";
-const LOG_SHIP_BATCH_MAX = Number(process.env.OE_LOG_SHIP_BATCH_MAX) > 0 ? Number(process.env.OE_LOG_SHIP_BATCH_MAX) : 20;
-const LOG_SHIP_FLUSH_MS = Number(process.env.OE_LOG_SHIP_FLUSH_MS) > 0 ? Number(process.env.OE_LOG_SHIP_FLUSH_MS) : 1000;
+const LOG_SHIP_BATCH_MAX = 20;
+const LOG_SHIP_FLUSH_MS = 1000;
 let logQueue = [];
 let logFlushTimer;
 async function flushLogs() {
@@ -218,8 +210,6 @@ client.once(Events.ClientReady, (c) => {
   console.log(`[oe-discord-relay] ready as ${c.user.tag} | mode: ${mode}`);
   console.log(`[oe-discord-relay] in guilds: ${guilds}`);
   if (GUILD_ALLOWLIST.length) console.log(`[oe-discord-relay] guild allowlist active: ${GUILD_ALLOWLIST.join(", ")}`);
-  if (TEST_DRIVER_IDS.size)
-    console.log(`[oe-discord-relay] e2e driver seam ARMED for ${TEST_DRIVER_IDS.size} pair(s) — bot messages from these ids are forwarded`);
 
   if (INGEST_URL && HEARTBEAT_MS > 0) {
     console.log(`[oe-discord-relay] heartbeat armed: every ${HEARTBEAT_MS}ms to ${INGEST_URL}`);
@@ -231,7 +221,7 @@ client.once(Events.ClientReady, (c) => {
 });
 
 client.on(Events.MessageCreate, async (message) => {
-  if (message.author.bot && !isDriverAllowlisted(message)) return;
+  if (message.author.bot && (message.author.id === client.user?.id || !INGEST_URL || !message.guildId)) return;
   if (GUILD_ALLOWLIST.length && message.guildId && !GUILD_ALLOWLIST.includes(message.guildId)) return;
 
   if (!INGEST_URL) {

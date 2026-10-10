@@ -7,6 +7,7 @@ import type { PluginRegistry } from "../plugins/types.js";
 import { parseSurfaceKeyEntry, surfaceKeyEntryContains } from "../identity/surface-key-grammar.js";
 import { domainContainers, resolveDomainForChannel, type Domain } from "../memory/domain.js";
 import { isLinkSetMember, type Group } from "../identity/groups.js";
+import { EVERYONE_GROUP } from "../identity/everyone-group.js";
 
 export const GROUP_BROAD_MEMBERS = 8;
 
@@ -28,7 +29,10 @@ function tenantClaims(domains: readonly Domain[]): Map<string, readonly string[]
   return claims;
 }
 
-export function groupWidth(group: Group | undefined): string | undefined {
+export function groupWidth(group: Group | undefined, name?: string): string | undefined {
+  if (name === EVERYONE_GROUP) {
+    return `"${EVERYONE_GROUP}" is the built-in group of EVERY person who DMs the agent — every one of them gets this capability in their own DM`;
+  }
   if (!group) return undefined;
   const sets = group.members.filter(isLinkSetMember).length;
   if (sets > 0) {
@@ -57,7 +61,7 @@ export function lintBroadGrants(
         : undefined;
     const wideGroup =
       binding.scope.level === "group" && binding.scope.group !== undefined
-        ? groupWidth(groupByName.get(binding.scope.group))
+        ? groupWidth(groupByName.get(binding.scope.group), binding.scope.group)
         : undefined;
     const broad =
       binding.scope.level === "org" || binding.scope.level === "tenant" || claimed !== undefined || wideGroup !== undefined;

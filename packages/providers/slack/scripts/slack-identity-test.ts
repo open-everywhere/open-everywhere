@@ -20,6 +20,7 @@ import {
   appCanReadConversation,
 } from "../agent/channels/slack-identity.js";
 import { _resetDeploymentIdentityForTest, _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/adapter-api.js";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -313,9 +314,9 @@ const dmVerifiedExt = slackCtx({ team_id: "T", channel_id: "Duser", channel_type
 ok(bindFrom(dmVerifiedExt).trust === "external", "bindFrom: VERIFIED-external Slack DM partner → external (routes to public)");
 const dmUnverified = slackCtx({ team_id: "T", channel_id: "Duser", channel_type: "im", is_ext_shared: "false", trust_checked: "true" });
 ok(bindFrom(dmUnverified).trust === "external", "bindFrom: UNVERIFIED Slack DM partner fails closed to external");
-process.env.OE_TRUST = "internal";
+overrideSettingsForTest({ identity: { blanketTrust: "internal" } });
 ok(bindFrom(dmUnverified).trust === "internal", "bindFrom: OE_TRUST=internal vouches for an unverified DM partner (dev/test)");
-delete process.env.OE_TRUST;
+overrideSettingsForTest({ identity: { blanketTrust: "none" } });
 
 const bridged = bindFrom(
   bridgedContext({

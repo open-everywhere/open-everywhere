@@ -49,8 +49,8 @@ console.log(`  require      ${requiredIds.join(", ")}`);
 console.log(`  judge (pin)  ${PINNED_JUDGE_MODEL}  ← the GRADER, held fixed across stacks`);
 console.log(`──────────────────────────────────────────────────────────────────────`);
 console.log(
-  `  ⚠️ The deployment under test must ALREADY be running this stack: set OE_MODEL_STACK=${alias}\n` +
-    `     on the target and deploy before running. This driver cannot flip it — the value is read\n` +
+  `  ⚠️ The deployment under test must ALREADY be running this stack: set models: { stack: "${alias}" }\n` +
+    `     in the target's agent/settings/settings.ts and deploy before running. This driver cannot flip it — the value is read\n` +
     `     by the deployed process at config load. A target on the wrong stack fails the required\n` +
     `     pin below rather than silently proving nothing.\n`,
 );
@@ -86,7 +86,7 @@ if (dbUrl === "") {
     console.error(
       `✗ PREFLIGHT: ${outside.length} runtime domain pick(s) in org "${ORG}" sit OUTSIDE stack "${alias}":\n` +
         outside.map((r) => `    domain "${r.domain}" → "${r.modelId}"  (set by ${r.setBy ?? "unknown"}, ${r.updatedAt})`).join("\n") +
-        `\n  Those domains route to that model regardless of OE_MODEL_STACK, so this run would not prove the\n` +
+        `\n  Those domains route to that model regardless of models.stack, so this run would not prove the\n` +
         `  switch. Clear them first (\`clear_domain_model\`), then re-run.`,
     );
     process.exit(2);

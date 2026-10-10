@@ -20,7 +20,7 @@ test("Discord: no_reply TOOL call + the taught trailing sentinel writes ONE row,
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   const { NO_REPLY_SENTINEL } = await import("@open-everywhere/core/agent/channels/normalized-wake.js");
   topologyBefore ??= settings.getSettings().window.topology;
-  settings.overrideSettingsForTest({ audit: { silences: false }, window: { topology: false } });
+  settings.overrideSettingsForTest({ window: { topology: false } });
   expect(settings.getSettings().window.topology, "the seat capability must be OFF — see the header").toBe(false);
 
   const channelId = freshUnlistedChannelId();
@@ -71,7 +71,7 @@ test("Discord: a bare NO_REPLY sentinel with NO tool call writes the sentinel ro
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   const { NO_REPLY_SENTINEL } = await import("@open-everywhere/core/agent/channels/normalized-wake.js");
   topologyBefore ??= settings.getSettings().window.topology;
-  settings.overrideSettingsForTest({ audit: { silences: false }, window: { topology: false } });
+  settings.overrideSettingsForTest({ window: { topology: false } });
   expect(settings.getSettings().window.topology, "the seat capability must be OFF — see the header").toBe(false);
 
   const channelId = freshUnlistedChannelId();

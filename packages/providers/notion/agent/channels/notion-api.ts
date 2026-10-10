@@ -12,10 +12,7 @@ import { NOTION_CHANNEL_CREDENTIAL, NOTION_PROVIDER } from "./notion-credentials
 import type { NotionParentLink } from "./notion-ancestry-trust.js";
 
 export const NOTION_API_BASE = "https://api.notion.com";
-function notionVersion(): string {
-  const v = process.env.NOTION_VERSION;
-  return v && v.trim().length > 0 ? v.trim() : "2022-06-28";
-}
+const NOTION_API_VERSION = "2022-06-28";
 
 const NOTION_FILE_UPLOAD_VERSION = "2026-03-11";
 
@@ -168,7 +165,7 @@ export const NOTION_INGRESS_RETRY = {
 function notionHeaders(opts: NotionCallOpts): Record<string, string> {
   return {
     authorization: `Bearer ${opts.apiKey}`,
-    "notion-version": opts.version ?? notionVersion(),
+    "notion-version": opts.version ?? NOTION_API_VERSION,
     "content-type": "application/json",
   };
 }

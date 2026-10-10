@@ -84,11 +84,19 @@ registerConfig({
   loadDomains: () => [], loadSilos: () => [], domainsForSurface: () => [],
 });
 const shippedDefault = await drive("public-org", "public-repo");
+ok(shippedDefault.res === null, "🔴 room grain: the SAME declared-public repo is SILENCED under the shipped `silent` default, with no declaration at all");
+
+const ENGAGE_DOMAINS: readonly Domain[] = [{ name: "org", match: "org", externalPolicy: { roomGrain: "engage" } }];
+registerConfig({
+  loadBundles: () => [], loadBindings: () => [], pluginRegistry: {}, skillContent: {},
+  loadDomains: () => ENGAGE_DOMAINS, loadSilos: () => [], domainsForSurface: () => [],
+});
+const optOut = await drive("public-org", "public-repo");
 ok(
-  shippedDefault.res !== null && (shippedDefault.res as { auth?: unknown }).auth !== undefined,
-  "room grain: the SAME declared-public repo DISPATCHES under the shipped `engage` default (negative control — an upgrade changes nothing)",
+  optOut.res !== null && (optOut.res as { auth?: unknown }).auth !== undefined,
+  "room grain: the SAME declared-public repo DISPATCHES under the `engage` opt-out (negative control — the opt-out restores the old behaviour)",
 );
 
 _resetSurfacesForTest();
 await removeTempDir(dir);
-console.log(`\n✓ github-external-policy-room: ${n} assertions passed (silent drop + audit on a declared-public repo, undeclared-repo and shipped-default negative controls)`);
+console.log(`\n✓ github-external-policy-room: ${n} assertions passed (silent drop + audit on a declared-public repo, undeclared-repo and engage-opt-out negative controls, shipped-default pin)`);

@@ -1,24 +1,21 @@
 import { getOperationalStore } from "../operational/provider.js";
 import type { ChannelSessionRow, OperationalStore } from "../operational/store.js";
-import { shouldRotate, rotationClockMsFromDays, supervisorRotateContextSize, type RotationThresholds } from "./turn-delivery.js";
+import { shouldRotate, supervisorRotateContextSize, type RotationThresholds } from "./turn-delivery.js";
 import { claimRuntimeRotation, stampMintedRuntime } from "./runtime-rotation.js";
 import { carryTailForward } from "./session-tail-record.js";
 import type { WakeMessageInput } from "./wake-envelope.js";
 import { dmWindowKey, formatWindowToken, saltSupervisorGeneration } from "./window-key.js";
 import { dmWindowRegistryKey } from "./unified-supervisor.js";
 
-export const DM_SEAT_ROTATE_EXPIRY_MS = rotationClockMsFromDays(process.env.OE_DM_SEAT_ROTATE_EXPIRY_DAYS, 30);
+export const DM_SEAT_ROTATE_EXPIRY_MS = 30 * 86_400_000;
 
-export const DM_SEAT_ROTATE_TURN_BUDGET = Number(process.env.OE_DM_SEAT_ROTATE_TURN_BUDGET) || 50;
+export const DM_SEAT_ROTATE_TURN_BUDGET = 50;
 
-export const DM_SEAT_ROTATE_TOKEN_BUDGET = Number(process.env.OE_DM_SEAT_ROTATE_TOKEN_BUDGET) || 5_000_000;
-
-const DM_SEAT_ROTATE_QUIET_GAP_HOURS = Number(process.env.OE_DM_SEAT_ROTATE_QUIET_GAP_HOURS) || 0;
+export const DM_SEAT_ROTATE_TOKEN_BUDGET = 5_000_000;
 
 export function dmSeatThresholds(): Required<Omit<RotationThresholds, "runtimeChanged">> {
-  const hours = DM_SEAT_ROTATE_QUIET_GAP_HOURS;
   return {
-    quietGapMs: hours > 0 ? hours * 3_600_000 : Number.POSITIVE_INFINITY,
+    quietGapMs: Number.POSITIVE_INFINITY,
     turnBudget: DM_SEAT_ROTATE_TURN_BUDGET,
     tokenBudget: DM_SEAT_ROTATE_TOKEN_BUDGET,
     expiryMs: DM_SEAT_ROTATE_EXPIRY_MS,

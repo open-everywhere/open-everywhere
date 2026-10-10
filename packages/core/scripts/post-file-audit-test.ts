@@ -15,8 +15,6 @@ const { registerIdentityMapper } = await import("../agent/identity/binding.js");
 const { registerSurfaceMessageOps } = await import("../agent/channels/surface-message-ops.js");
 const { resolveWindowGated } = await import("../agent/access/window-gated.js");
 const { readAudit } = await import("../agent/audit/audit.js");
-const { registerConfig } = await import("../agent/access/config.js");
-const { setBlobPutter } = await import("../agent/blob/hosting.js");
 
 import postFile from "../agent/tools/post_file.js";
 import type { BindableContext } from "../agent/identity/binding.js";
@@ -105,7 +103,7 @@ async function armed(ctx: BindableContext): Promise<ArmedPostFile> {
   ok(audit.length === before + 1, "post_file: audits exactly one discord.post_file row");
   const row = audit[0]!;
   ok(row.detail?.id === "DFILE_ATTACH_1", "post_file: OPE-932 — the Discord attach row's detail.id is the message id the provider returned");
-  ok(row.detail?.attached === 1 && row.detail?.hosted === 0, "post_file: attach/hosted counts unchanged by the fix");
+  ok(row.detail?.attached === 1 && row.detail?.hosted === undefined, "post_file: the row counts the attached files and carries no hosted count");
 }
 
 {
@@ -152,59 +150,4 @@ async function armed(ctx: BindableContext): Promise<ArmedPostFile> {
   }
 }
 
-{
-  const emptyDomains = { domainsForSurface: () => [] as readonly string[] };
-  registerConfig({
-    loadBundles: () => [],
-    loadBindings: () => [],
-    pluginRegistry: {},
-    skillContent: {},
-    loadDomains: () => [],
-    loadSilos: () => [],
-    domainsForSurface: emptyDomains.domainsForSurface,
-    loadBlobHosting: () => ({ enabled: true }),
-  });
-  setBlobPutter(async () => ({ url: "https://store123.public-artifacts.blob.vercel-storage.com/page.html" }));
-
-  await import("../agent/approvals/file-publish.js");
-  const { actionKind } = await import("../agent/approvals/actions.js");
-  const { freezePublishPage } = await import("../agent/approvals/file-publish.js");
-  const page = freezePublishPage({ filename: "page.html", contentType: "text/html", bytes: new TextEncoder().encode("<p>x</p>") });
-  const frozenFor = (platform: string, channel: string) => ({ org: "default", scopeKey: `${platform}/T1/${channel}`, platform, linkChannelId: channel, threadTs: null, pages: [page], requestedBy: "U1" });
-
-  {
-    discordPostTextCalls = [];
-    nextDiscordTextId = "DLINK1";
-    const before = (await readAudit({ org: "default", action: "discord.post_file" })).length;
-    const outcome = await actionKind("file.publish")!.execute(frozenFor("discord", "D_CH3"), "U1");
-    ok(outcome.includes("https://store123.public-artifacts.blob.vercel-storage.com/page.html"), "post_file: the approved HTML artifact hosts, and the outcome names the URL");
-    ok(discordPostTextCalls.length === 1, "post_file: the hosted URL is posted as a Discord text message");
-    const audit = await readAudit({ org: "default", action: "discord.post_file" });
-    const row = audit[0]!;
-    ok(audit.length === before + 1 && row.detail?.id === "DLINK1", "post_file: OPE-932 — the Discord LINK row's detail.id is the posted-link message id");
-    ok(row.detail?.hosted === 1 && row.detail?.attached === 0, "post_file: hosted/attached counts reflect the link-only post");
-  }
-
-  {
-    const realFetch = globalThis.fetch;
-    globalThis.fetch = (async (url: unknown) => {
-      const u = String(url);
-      if (u.includes("chat.postMessage")) {
-        return { ok: true, status: 200, json: async () => ({ ok: true, ts: "999.111" }) } as Response;
-      }
-      throw new Error(`post-file-audit-test: unexpected fetch to ${u}`);
-    }) as typeof fetch;
-    try {
-      const before = (await readAudit({ org: "default", action: "slack.post_file" })).length;
-      const outcome = await actionKind("file.publish")!.execute(frozenFor("slack", "C2"), "U1");
-      ok(outcome.includes("the link is posted"), "post_file: Slack hosted HTML also posts its link");
-      const audit = await readAudit({ org: "default", action: "slack.post_file" });
-      const row = audit[0]!;
-      ok(audit.length === before + 1 && row.detail?.id === "999.111", "post_file: OPE-932 — the Slack LINK row's detail.id is chat.postMessage's own ts, the SAME field the reply path reads (slack-post-arm.ts)");
-    } finally {
-      globalThis.fetch = realFetch;
-    }
-  }
-}
-
-console.log(`\n✓ post-file-audit: ${n} assertions passed (Discord attach id, Slack attach named-absence, hosted-link id on both surfaces, negative control)\n`);
+console.log(`\n✓ post-file-audit: ${n} assertions passed (Discord attach id, Slack attach named-absence, negative control)\n`);

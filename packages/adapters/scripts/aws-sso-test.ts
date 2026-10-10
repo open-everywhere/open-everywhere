@@ -10,6 +10,8 @@ import {
   type AwsSsoPendingStore,
 } from "../agent/aws/sso.js";
 import type { AwsIdentityRequest, AwsSsoLinkStore, EncryptedKvVault } from "@open-everywhere/core/agent/adapter-api.js";
+import { overrideSettingsForTest, resetSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
+import { awsAccessEnabled, loadAwsSsoConfig } from "../agent/aws/config.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -540,6 +542,17 @@ function linkMinter(idTokenClaims: Record<string, unknown> | undefined) {
   }
   ok(caught instanceof Error && /omit "openid"/u.test(caught.message), "🔴 scopes: a scope override without `openid` refuses the LINK, so nobody signs in to a flow that can never complete");
   ok(strictPending.rows.size === 0, "scopes: the refused link wrote no pending row — it fails before any state is created");
+}
+
+{
+  resetSettingsForTest();
+  ok(awsAccessEnabled() === false, "aws.enabled: shipped OFF — the plane stays inert with nothing declared");
+  ok(loadAwsSsoConfig().scopes === undefined, "aws.ssoScopes: shipped EMPTY ⇒ no override, the minter's default (with openid) applies");
+  overrideSettingsForTest({ aws: { enabled: true, ssoScopes: ["sso:account:access", "openid", "extra:scope"] } });
+  ok(awsAccessEnabled() === true, "aws.enabled: a registered true arms the plane");
+  ok(JSON.stringify(loadAwsSsoConfig().scopes) === JSON.stringify(["sso:account:access", "openid", "extra:scope"]), "aws.ssoScopes: the registered list is what the link asks for");
+  resetSettingsForTest();
+  ok(awsAccessEnabled() === false && loadAwsSsoConfig().scopes === undefined, "…and a reset returns both to the shipped values (read per call, not latched)");
 }
 
 console.log(`✓ aws-sso: ${passed} assertions passed (mint happy path + parse + refresh + unlinked/not-entitled/re-link + warm cache + link roundtrip + OPE-286 qualified-subject keying + OPE-300 purge hook + OPE-1955 signer binding)`);

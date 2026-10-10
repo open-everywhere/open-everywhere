@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { join, dirname } from "node:path";
 import { TRACKED_ROOM_IDS, idOfKey } from "../packages/core/scripts/e2e/fixture-inventory-lib.js";
 
 const NOTION = "notion/40000000-0000-4000-8000-000000000001/40000000-0000-4000-8000-000000000101";
@@ -50,16 +51,19 @@ if (process.argv.includes("--probe")) {
 
 const SELF = fileURLToPath(import.meta.url);
 
-function snapshotUnder(memoryEval: "1" | "off"): Snapshot {
+const PRELOAD = pathToFileURL(join(dirname(SELF), "..", "packages", "core", "scripts", "eval", "arm-memory-eval.mjs")).href;
+
+function snapshotUnder(memoryEval: "1" | "off" | "retired-env"): Snapshot {
   const env = { ...process.env };
-  if (memoryEval === "1") env.OE_MEMORY_EVAL = "1";
+  if (memoryEval === "retired-env") env.OE_MEMORY_EVAL = "1";
   else delete env.OE_MEMORY_EVAL;
-  const r = spawnSync(process.execPath, [...process.execArgv, SELF, "--probe"], { env, encoding: "utf8" });
+  const preload = memoryEval === "1" ? ["--import", PRELOAD] : [];
+  const r = spawnSync(process.execPath, [...process.execArgv, ...preload, SELF, "--probe"], { env, encoding: "utf8" });
   const out = `${r.stdout ?? ""}`;
   const marker = out.indexOf("__SNAPSHOT__");
   if (r.status !== 0 || marker < 0) {
     throw new Error(
-      `domains.ts failed to load with OE_MEMORY_EVAL=${memoryEval} (exit ${r.status}) — the module-load ` +
+      `domains.ts failed to load in flag state ${memoryEval} (exit ${r.status}) — the module-load ` +
         `validators (channel exclusivity / domain shape / unified trust) rejected the config.\n` +
         `stdout: ${out}\nstderr: ${r.stderr ?? ""}`,
     );
@@ -75,8 +79,13 @@ const ok = (cond: boolean, label: string): void => {
 
 const off = snapshotUnder("off");
 const on = snapshotUnder("1");
-ok(true, "domains.ts loads clean with OE_MEMORY_EVAL unset (channel exclusivity + unified trust pass)");
-ok(true, "domains.ts loads clean with OE_MEMORY_EVAL=1 (channel exclusivity + unified trust pass)");
+const retired = snapshotUnder("retired-env");
+ok(true, "domains.ts loads clean with the memory-eval valve unarmed (channel exclusivity + unified trust pass)");
+ok(true, "domains.ts loads clean with the valve armed by the preload (channel exclusivity + unified trust pass)");
+assert.deepEqual(retired, off, "the retired OE_MEMORY_EVAL=1 env var, with no preload, loads the OFF shape exactly");
+n++;
+assert.notDeepEqual(on, off, "…and the preload really arms the valve (else the line above is vacuous)");
+n++;
 
 {
   ok(off.resolved[NOTION] === "e2e-unified", `flag off: Notion surface resolves to e2e-unified (got ${off.resolved[NOTION]})`);

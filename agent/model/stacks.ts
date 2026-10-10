@@ -54,7 +54,7 @@ export function resolveStack(alias: string, overrides: StackOverrides = {}): Mod
   if (!isStackAlias(alias)) {
     throw new Error(
       `open-everywhere: unknown model stack "${alias}" — shipped stacks are ${STACK_ALIASES.map((a) => `"${a}"`).join(", ")}. ` +
-        `Add one in agent/model/stacks.ts, or set models.stack (env OE_MODEL_STACK) to a shipped alias.`,
+        `Add one in agent/model/stacks.ts, or set models.stack in agent/settings/settings.ts to a shipped alias.`,
     );
   }
   const base = STACKS[alias];

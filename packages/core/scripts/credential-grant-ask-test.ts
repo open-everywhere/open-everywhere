@@ -1,3 +1,4 @@
+import { __setTestValveForTest } from "../agent/testing/test-valves.js";
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -5,7 +6,7 @@ import { join } from "node:path";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-grant-ask-")), "ops.sqlite3");
 delete process.env.OE_PLATFORM;
-delete process.env.OE_EGRESS_SPOOF;
+__setTestValveForTest("egress-spoof", false);
 
 import { GRANT_CARD_CLICK_ACTION, handleGrantCardClick, resolveGrantCardClick, type GrantClickFailureReason } from "../agent/access/credential-grant-click.js";
 import { grantCardActionId, grantCardActions, OE_GRANT_ACTION_PREFIX, parseGrantCardActionId } from "../agent/access/credential-grant-card.js";
@@ -1117,6 +1118,14 @@ console.log("10. the standing binding reaches the ask:");
       resetSettingsForTest();
     }
   };
+  const topologyOff = <T>(fn: () => T): T => {
+    registerSettings({ window: { topology: false } });
+    try {
+      return fn();
+    } finally {
+      resetSettingsForTest();
+    }
+  };
   const asMode = <T>(mode: string | undefined, fn: () => T): T => {
     const before = process.env.OE_MODE;
     if (mode === undefined) delete process.env.OE_MODE;
@@ -1129,8 +1138,8 @@ console.log("10. the standing binding reaches the ask:");
     }
   };
 
-  const shipped = asMode("channel", () => grantDomainScopeKey(probeCtx("sess-1950-shipped")));
-  eq(shipped, "oe-grant-domain::grant-1950-room", "🔴 THE SHIPPED DEFAULT: with the window topology UNARMED, a declared room still resolves its domain scope");
+  const shipped = asMode("channel", () => topologyOff(() => grantDomainScopeKey(probeCtx("sess-1950-shipped"))));
+  eq(shipped, "oe-grant-domain::grant-1950-room", "🔴 with `window.topology` OFF, a declared room still resolves its domain scope");
   eq(
     asMode("channel", () => windowed(() => grantDomainScopeKey(probeCtx("sess-1950-armed")))),
     shipped,

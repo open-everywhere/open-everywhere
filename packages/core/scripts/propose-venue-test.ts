@@ -1,3 +1,4 @@
+import { __setTestValveForTest } from "../agent/testing/test-valves.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,7 +6,7 @@ import { removeTempDir } from "./_temp-dir.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "oe-propose-venue-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
-process.env.OE_EGRESS_SPOOF = "1";
+__setTestValveForTest("egress-spoof", true);
 delete process.env.OE_PLATFORM;
 
 let n = 0;

@@ -148,8 +148,8 @@ next deploy of the merged config. This is review mode *automated*, not replaced.
 deliberately no auto-apply-to-a-running-instance mode — silently granting credentials to whoever an
 IdP group happens to contain is the thing the reviewed-diff rule exists to prevent, and `deliver:true`
 refuses politely unless the config repo is configured (`OE_ACCESS_CONFIG_REPO`), exactly as
-`request_access` does. Which IdP groups sync at all is narrowable with `OE_DIRECTORY_GROUP_ALLOWLIST`
-(a comma-separated list of verbatim IdP group names; unset syncs every group) — a deployer who grants
+`request_access` does. Which IdP groups sync at all is narrowable with the setting `directory.groupAllowlist`
+(a string array of verbatim IdP group names; empty syncs every group) — a deployer who grants
 the agent 3 of their 50 Okta groups need not carry 50 in the overlay. Narrowing never waits for the
 diff: a deprovisioned person's link-set is suspended eagerly by `directory_sync_now`, and a suspended
 set contributes no group membership, so their access stops immediately and the overlay removal is
@@ -615,7 +615,7 @@ Stop whichever process you do not need, or point both at hosted Postgres — see
 The remote plane is an OAuth 2.1 **resource** server, and it is **fail-closed**: with no issuer configured, it returns 401 to every request. It cannot deploy publicly-open by accident. Since OPE-72 the deployment also runs a **small authorization server of its own** for the MCP write transport — see [Control-plane MCP over HTTPS](#control-plane-mcp-over-https-oauth-21) below. That server issues tokens for this one resource and nothing else; it is not a general identity provider.
 
 - **Identity is `(issuer, subject)`, never email.** Email- or domain-based role rules require a verified email and accept only trusted issuers, so the same human can map in through multiple providers *without* the classic email-linking account-takeover footgun.
-- **Claim → role gives RBAC.** Roles resolve from token claims (`OE_ADMIN_ROLE_RULES`); the pluggable OIDC issuer is a swappable seam — see [Scheduler & control-plane identity](../extending/scheduler-and-identity.md).
+- **Claim → role gives RBAC.** Roles resolve from token claims (the setting `control.adminRoleRules`); the pluggable OIDC issuer is a swappable seam — see [Scheduler & control-plane identity](../extending/scheduler-and-identity.md).
 
 Two role tiers, both config-as-code (no roles table): `admin` — org-wide, covers every scope — and `domain:<name>`, scoped to one memory domain (`Domain.name`, `agent/memory/config/domains/<name>.ts`). A `domain:<name>` identity can call the write tools (`set_spend_limit`, `revoke_connector`, `cancel_routine`, `set_domain_model`, …) for scopes that resolve to its own domain — its own `scopeKey`/`surfaceKey`, or a channel that maps to that domain — but not org-wide reads/writes. `overrides_list` is **not** among them: its only input is the org, so it is an unscoped org-wide listing and takes the `admin` role.
 
@@ -676,8 +676,8 @@ infrastructure by that same rule — it is a key, not a list.
 
 🔴 **The person leg is not a browser login, and this is the honest bound.** `/control/v1/oauth/authorize`
 does not show a consent page and sets no cookie. It requires the caller to present a credential the
-deployment's **existing** admin door already accepts (`OE_ADMIN_OIDC_ISSUER`, `OE_ADMIN_GITHUB`, or
-`OE_ADMIN_STATIC_TOKEN`) and mints a code for that identity. So the flow is a correct
+deployment's **existing** admin door already accepts (`OE_ADMIN_OIDC_ISSUER`, a GitHub user token when the setting
+`control.githubAdmin` is on, or `OE_ADMIN_STATIC_TOKEN`) and mints a code for that identity. So the flow is a correct
 authorization-code round trip for a CLI or any client that can set an `Authorization` header, and a
 browser that opens the URL with no bearer gets a 401. Federating a human identity through a chat
 provider is the separate leg of OPE-72 and is **not built**.
@@ -1031,7 +1031,7 @@ Two gates, and both must pass:
 On `npm run control` the token is the operator's own, out of their own deploy-plane environment, so
 both gates are theirs and the reader set is unchanged. On an **HTTP mount** the token belongs to the
 **process**: it lives in the reader the mounting route was built with, while the caller presents an
-OIDC identity whose roles come from `OE_ADMIN_ROLE_RULES`. So wiring `AdminHttpOptions.readTranscript`
+OIDC identity whose roles come from the setting `control.adminRoleRules`. So wiring `AdminHttpOptions.readTranscript`
 widens the set of principals who can read a transcript from *token-holders* to *org admins* — an
 identity matched by an `admin` role rule reads any `wrun_…` without ever being issued a value listed
 in `OE_CONTROL_READ_TOKENS`. That is a deliberate choice (a transcript is served at the audit log's
@@ -1139,10 +1139,13 @@ calls read-only. The families never fall back to each other in either direction:
 token presented here is a **401**, and an injection token authenticates no read view and no
 MCP mount.
 
-**Still triple-gated, fail-closed** — arming is unchanged, only the credential moved:
+**Still triple-gated, fail-closed.** The credential moved to its own family, and gate 1 moved from the `OE_TEST_WAKE` env var to a setting (OPE-2411):
 
-1. `OE_TEST_WAKE` must be truthy. **Default off ⇒ the route 404s**; an operator arms it
-   deliberately, per deployment.
+1. The `wake.testWakeRoute` setting must be on. **Default off ⇒ the route 404s.** A test bed
+   arms it in its own tracked settings file, so arming it is a reviewed commit. It was the
+   `OE_TEST_WAKE` env var until OPE-2411. 🔴 This repository's own `agent/settings/settings.ts`
+   turns it on for the maintainers' test bed, so a deployment made from a clone of this
+   repository must delete that entry, or gate 2 alone guards the route.
 2. `OE_CONTROL_INJECT_TOKENS` must be configured **and** the bearer must match an entry in
    it. Unset ⇒ 404 (the route does not exist); configured but non-matching ⇒ 401.
 3. A standing window (`mode: "solo"` or `"unified"`) must be enabled for the named
@@ -1162,7 +1165,7 @@ from one direct-mention fact). The route now reads an addressed attribute as the
 is a 400 as well. A body that states no addressed attribute is unchanged — it still defaults
 to `channel-watch`.
 
-Leave `OE_TEST_WAKE` unset on any deployment that isn't being driven by a harness. On one
+Leave `wake.testWakeRoute` off on any deployment that isn't being driven by a harness. On one
 that is, treat the injection token as the more sensitive of the two: it can make the agent
 act, whereas the read token can only observe.
 
@@ -1253,13 +1256,13 @@ card ends when the routine's instruction is edited or the routine is deleted.
 Pending actions lapse after 24 hours by default (`approvals.ttlHours`) and can no longer be
 approved or rejected once expired.
 
-🔴 **The expiry NOTICE covers only the orgs in `OE_TIDY_ORGS`.** A click on a lapsed card is
+🔴 **The expiry NOTICE covers only the orgs in `schedules.sweepOrgs`.** A click on a lapsed card is
 refused in every org, because the click path reads the clock off the row. That late click also
 writes the `approval.expired` row. But the daily sweep is what rewrites an UNCLICKED card and writes
-its row, and the sweep walks only the orgs that `OE_TIDY_ORGS` names (default: the single org
-`default`). In any other org, a lapsed card keeps its buttons until someone clicks it, and no
+its row, and the sweep walks only the orgs that the setting `schedules.sweepOrgs` names (shipped: the single
+org `default`; it was `OE_TIDY_ORGS` until OPE-2411). In any other org, a lapsed card keeps its buttons until someone clicks it, and no
 `approval.expired` row is written until that click. A multi-tenant deployment must
-list every org in `OE_TIDY_ORGS` — see the
+list every org in `schedules.sweepOrgs` — see the
 [configuration reference](../deploy/configuration-reference.md#approvals).
 
 **Click.** The approve/reject click lands on Slack's own interactivity endpoint — the same
@@ -1305,15 +1308,12 @@ Not every action kind needs the same tier. The split is a **rule**, not a list o
   authoring: being able to click is already being in the channel, which is the same trust tier
   whose delegated worker can already edit that silo's files. The card exists to defeat injection
   here, not to gate privilege.
-  - Two member kinds are cards that replaced eve-native confirms (OPE-2340): `file.publish` (a
-    `post_file` HTML page published to a public URL) and `op.connector` (one connector op call that
-    needs a person: every click approves one call with the input stored on the card, and the agent
-    runs it by replaying the card by its id, OPE-2363 and OPE-2388). Neither is in the
-    `connector.` admin family, which is the connector **overrides**, an org config mutation. The
-    native connector confirm had no response half and bound its click to nobody, so a member bar on
-    `op.connector` is a narrowing. The native `post_file` confirm bound its click to the requester,
-    so `file.publish` keeps that bind: its execute refuses any clicker who is not the person who
-    asked, and nothing goes public. Each card posts and returns, so no turn waits on it.
+  - One member kind is a card that replaced an eve-native confirm (OPE-2340): `op.connector` (one
+    connector op call that needs a person: every click approves one call with the input stored on
+    the card, and the agent runs it by replaying the card by its id, OPE-2363 and OPE-2388). It is
+    not in the `connector.` admin family, which is the connector **overrides**, an org config
+    mutation. The native connector confirm had no response half and bound its click to nobody, so a
+    member bar on `op.connector` is a narrowing. The card posts and returns, so no turn waits on it.
 
 The admin kinds are the **carve-out**; the member kinds are everything the rule leaves. The table
 below is generated from each kind's registered `ApproverPolicy`
@@ -1332,7 +1332,6 @@ rule.
 | `chat.post` | `post_message` | member |
 | `connector.clear` | `clear_connector_override` | admin |
 | `connector.revoke` | `revoke_connector` | admin |
-| `file.publish` | `post_file` | member |
 | `halt.resume` | `resume` | admin |
 | `memory.purge` | `purge_memory` | member |
 | `op.connector` | — *(no propose tool)* | member |

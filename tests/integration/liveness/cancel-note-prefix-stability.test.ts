@@ -1,3 +1,5 @@
+// proves: turn.stop_ignored
+
 import { expect, test } from "vitest";
 import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
 import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
@@ -76,7 +78,7 @@ test("a cancelled turn's system-prompt reminder is one clean insertion at a fixe
   const requestA = await waitFor(() => a.requests.find((r) => r.role === "parent" && r.stepIndex === 0), "turn A's model call");
   expect(requestA.fault).toBeUndefined();
   await awaitWindowQuiet();
-  expect(a.requests.some((r) => r.role === "parent" && r.stepIndex >= 1), "a step after turn A's reply was requested").toBe(false);
+  expect(a.requests.some((r) => r.role === "parent" && r.stepIndex !== 0), "a step after turn A's reply was requested").toBe(false);
   a.dispose();
 
   const controlDescriptions = controlWriteDescriptions();
@@ -149,7 +151,7 @@ test("a cancelled turn's system-prompt reminder is one clean insertion at a fixe
   );
   expect(requestC.fault).toBeUndefined();
   await awaitWindowQuiet();
-  expect(c.requests.some((r) => r.role === "parent" && r.stepIndex >= 1), "a step after turn C's reply was requested").toBe(false);
+  expect(c.requests.some((r) => r.role === "parent" && r.stepIndex !== 0), "a step after turn C's reply was requested").toBe(false);
   c.dispose();
 
   const d = disposeLater(registerScript({ parent: [seatReply("ack ope693d", "ope693-d-reply")] }));
@@ -157,7 +159,7 @@ test("a cancelled turn's system-prompt reminder is one clean insertion at a fixe
   const requestD = await waitFor(() => d.requests.find((r) => r.role === "parent" && r.stepIndex === 0), "turn D's model call");
   expect(requestD.fault).toBeUndefined();
   await awaitWindowQuiet();
-  expect(d.requests.some((r) => r.role === "parent" && r.stepIndex >= 1), "a step after turn D's reply was requested").toBe(false);
+  expect(d.requests.some((r) => r.role === "parent" && r.stepIndex !== 0), "a step after turn D's reply was requested").toBe(false);
   d.dispose();
 
   expect(new Set([requestA.sessionId, requestC.sessionId, requestD.sessionId]).size).toBe(1);

@@ -1,9 +1,9 @@
+import { __setTestValveForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
-import { overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import { _resetDeploymentIdentityForTest } from "@open-everywhere/core/agent/adapter-api.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "oe-slack-chat-audit-"));
@@ -12,8 +12,7 @@ _resetDeploymentIdentityForTest();
 for (const k of ["OE_PLATFORM", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST"]) {
   delete process.env[k];
 }
-overrideSettingsForTest({ audit: { silences: false } });
-process.env.OE_EGRESS_SPOOF = "1";
+__setTestValveForTest("egress-spoof", true);
 delete process.env.VERCEL;
 
 let passed = 0;

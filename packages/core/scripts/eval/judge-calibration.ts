@@ -184,7 +184,7 @@ async function measureBinding(gateway: ReturnType<typeof createGateway>, system:
 async function main(): Promise<void> {
   const runStartedAt = new Date().toISOString();
   const key = process.env.AI_GATEWAY_API_KEY;
-  if (!key) throw new Error("AI_GATEWAY_API_KEY is unset — source .env.e2e and set it from ROWAN_VERCEL_AI_GATEWAY_KEY (never the shell key, which is the shell key)");
+  if (!key) throw new Error("AI_GATEWAY_API_KEY is unset — source .env.e2e, which sets AI_GATEWAY_API_KEY to the gateway key for your deployment");
   const gateway = createGateway({ apiKey: key });
 
   const shippedSystem = JUDGE_KIND === "binding" ? BINDING_JUDGE_SYSTEM : FABRICATION_JUDGE_SYSTEM;

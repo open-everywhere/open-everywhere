@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { URL } from "node:url";
 
@@ -20,9 +21,11 @@ const providerRef = flag("provider") ?? DEFAULT_PROVIDER;
 const redirectUri = flag("redirect-uri") ?? DEFAULT_REDIRECT;
 
 const { loadOeOauthConfig, isStaticConfidential } = await import("../packages/adapters/agent/oe-oauth/config.js");
-const providers = loadOeOauthConfig();
+const signInPath = flag("sign-in");
+if (!signInPath) fail("pass --sign-in <file.json> — the sign-in declaration to drive. See this file's header for the shape.");
+const providers = loadOeOauthConfig(new Map([[providerRef, JSON.parse(readFileSync(signInPath, "utf8")) as unknown]]));
 const cfg = providers?.get(providerRef);
-if (!cfg) fail(`OE_OAUTH_CONFIG declares no provider "${providerRef}". See this file's header for the JSON shape.`);
+if (!cfg) fail(`the sign-in in ${signInPath} did not load for "${providerRef}". See this file's header for the shape.`);
 if (!isStaticConfidential(cfg)) fail(`provider "${providerRef}" declares mode "${cfg.mode}" — this proof drives the static confidential mode.`);
 
 const { registerDbCredentialBroker } = await import("@open-everywhere/core/agent/credentials/db-broker.js");

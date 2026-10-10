@@ -12,6 +12,7 @@ import {
 } from "./pre-approval-rules.js";
 import { tryPrincipalKey } from "../identity/principal-key.js";
 import { isLinkSetRef, parseLinkSetRef } from "../identity/link-set-ref.js";
+import { EVERYONE_GROUP } from "../identity/everyone-group.js";
 import type { PluginRegistry } from "../plugins/types.js";
 import { expandConnectorGrant, type ConnectorCredentials, type ResolvedConnectorCredential } from "./connector-credentials.js";
 
@@ -216,7 +217,7 @@ export function resolveAccess(
         callerKey !== undefined &&
         binding.scope.level === "group" &&
         binding.scope.group !== undefined &&
-        callerGroups.has(binding.scope.group)
+        (callerGroups.has(binding.scope.group) || binding.scope.group === EVERYONE_GROUP)
       ) {
         specificity = SPECIFICITY.group;
       }

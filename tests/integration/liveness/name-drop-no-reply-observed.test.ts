@@ -28,6 +28,7 @@ afterAll(async () => {
   for (const c of cleanups.splice(0)) c();
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   settings.resetSettingsForTest();
+  (await import("@open-everywhere/core/agent/audit/audit.js")).setSilenceAuditForTest(false);
 });
 
 function userInfo(id: string, name: string): Record<string, unknown> {
@@ -74,11 +75,11 @@ async function armSeams(): Promise<void> {
   cleanups.push(() => installed.uninstall());
 }
 
-test("Slack NAME-DROP wake that ends in no_reply writes an UNGATED reply.no_reply_observed row (audit.silences OFF)", async () => {
+test("Slack NAME-DROP wake that ends in no_reply writes an UNGATED reply.no_reply_observed row (the silence-audit switch OFF)", async () => {
   await armSeams();
-  const settings = await import("@open-everywhere/core/agent/settings/settings.js");
-  settings.overrideSettingsForTest({ audit: { silences: false } });
-  expect(settings.getSettings().audit.silences).toBe(false);
+  const silenceAudit = await import("@open-everywhere/core/agent/audit/audit.js");
+  silenceAudit.setSilenceAuditForTest(false);
+  expect(silenceAudit.auditSilencesEnabled()).toBe(false);
 
   const callId = `ope649-nd-${randomUUID()}`;
   const handle: ScriptedHandle = registerScript({
@@ -119,7 +120,7 @@ test("Slack NAME-DROP wake that ends in no_reply writes an UNGATED reply.no_repl
     const gated = await rowsSinceCursor(cursor, ["reply.no_reply"], { limit: 50 });
     expect(
       gated.find((r) => r.platform === "slack" && r.surface === SLACK_NAME_DROP_CHANNEL_ID),
-      "the gated reply.no_reply row must be ABSENT with audit.silences OFF — otherwise this run does not prove the new row is independently ungated",
+      "the gated reply.no_reply row must be ABSENT with the silence-audit switch OFF — otherwise this run does not prove the new row is independently ungated",
     ).toBeUndefined();
   } finally {
     handle.dispose();

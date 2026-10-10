@@ -2,6 +2,8 @@ import type { SandboxNetworkPolicy } from "eve/sandbox";
 
 import { getSettings } from "../settings/settings.js";
 
+import { resolveSelfHostBackendKind, sandboxOnVercel } from "../sandbox/backend-select.js";
+
 import { onVercel } from "./platform.js";
 export { onVercel };
 
@@ -11,20 +13,30 @@ export function egressProxyUrl(): string | undefined {
 }
 
 export function useSelfHostEgress(): boolean {
-  return !onVercel() && egressProxyUrl() !== undefined;
+  return !sandboxOnVercel() && egressProxyUrl() !== undefined;
 }
 
 export interface EgressBootLog {
+  readonly fatal?: string;
   readonly warn?: string;
   readonly info: string;
 }
+
+export const DOCKER_BEHIND_PROXY_FATAL =
+  "[open-everywhere:egress] refusing to boot: sandbox.selfHostBackend \"docker\" with OE_EGRESS_PROXY_URL set. The docker backend starts each session container " +
+  "on the Docker daemon's default network, outside the egress proxy, so the proxy cannot enforce that session's egress. " +
+  "Declare sandbox.selfHostBackend \"justbash\" behind the proxy (its egress leaves through this app process), or run docker without OE_EGRESS_PROXY_URL " +
+  "(docker then applies only the coarse \"deny-all\", and a session that needs a host allow-list aborts), or deploy on Vercel.";
 
 export function selfHostEgressBootLog(env: NodeJS.ProcessEnv = process.env): EgressBootLog {
   const proxy = (env.OE_EGRESS_PROXY_URL ?? "").trim();
   const allowUnenforced = getSettings().egress.allowUnenforced;
   if (proxy) {
+    if (resolveSelfHostBackendKind() === "docker") {
+      return { fatal: DOCKER_BEHIND_PROXY_FATAL, info: "[open-everywhere:egress] self-host egress posture = refused (docker backend behind the proxy)" };
+    }
     return {
-      info: "[open-everywhere:egress] self-host egress ENFORCED via proxy sidecar (OE_EGRESS_PROXY_URL set) — the compiled policy is pushed to the proxy natively; `egress.allowUnenforced` is not needed.",
+      info: "[open-everywhere:egress] self-host egress ENFORCED via proxy sidecar (OE_EGRESS_PROXY_URL set) — the compiled policy is pushed to the proxy natively; `egress.allowUnenforced` is not needed. The app's own model call is decided against its host-plane list, never against a session policy (OPE-2406).",
     };
   }
   if (allowUnenforced) {
@@ -44,10 +56,19 @@ export function selfHostEgressBootLog(env: NodeJS.ProcessEnv = process.env): Egr
   };
 }
 
+export function egressProxyToken(): string | undefined {
+  return process.env.OE_EGRESS_PROXY_TOKEN?.trim() || undefined;
+}
+
 export interface PushPolicyBody {
   readonly policy: SandboxNetworkPolicy;
   readonly sourceIp?: string;
   readonly sessionId?: string;
+}
+
+export interface HostPlanePushBody {
+  readonly plane: "host";
+  readonly hostPlane: { readonly allow: readonly string[] };
 }
 
 export type FetchLike = (
@@ -59,7 +80,7 @@ export async function postPolicy(
   fetchImpl: FetchLike,
   proxyUrl: string,
   token: string | undefined,
-  body: PushPolicyBody,
+  body: PushPolicyBody | HostPlanePushBody,
 ): Promise<void> {
   const url = `${proxyUrl.replace(/\/+$/, "")}/policy`;
   const headers: Record<string, string> = { "content-type": "application/json" };
@@ -84,7 +105,7 @@ export async function pushEgressPolicy(
   if (!proxyUrl) {
     throw new Error("pushEgressPolicy called with no OE_EGRESS_PROXY_URL set (self-host egress not configured)");
   }
-  const token = process.env.OE_EGRESS_PROXY_TOKEN?.trim() || undefined;
+  const token = egressProxyToken();
   await postPolicy(
     globalThis.fetch as unknown as FetchLike,
     proxyUrl,

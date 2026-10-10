@@ -54,14 +54,14 @@ plugin definitions under `agent/plugins/generated/` are **in** its reach: they a
 | What you want | Where |
 |---|---|
 | a different stack, reviewed in a PR | `models.stack` in `agent/settings/settings.ts` |
-| a different stack on a running deployment | `OE_MODEL_STACK=<alias>` |
 | this stack, but one different model | the per-role overrides argument in `agent/model/models.ts` |
-| a different **primary** without touching config | `OE_PRIMARY_MODEL`, or `OE_FORCE_MODEL` to pin every route |
+| a different **primary** over the stack | `models.primary`, or `models.force` to pin every route |
 
 Per-role overrides are field-wise, so `{ vision: { id: "…" } }` keeps that role's tier and
-context window. The env knobs **compose** with the stack rather than competing with it:
-`OE_MODEL_STACK` moves all five roles, then `OE_PRIMARY_MODEL` / `OE_FORCE_MODEL` are layered
-on top of the primary role last, exactly as they always were.
+context window. The three settings **compose** rather than compete: `models.stack` moves all five
+roles, then `models.primary` / `models.force` are layered on top of the primary role last. All
+three live in `agent/settings/settings.ts`, and no environment variable overrides them (the
+`OE_MODEL_STACK`, `OE_PRIMARY_MODEL` and `OE_FORCE_MODEL` variables were deleted in OPE-2411).
 
 An unknown alias fails **loudly** at config load, naming the shipped ones. A deployment that
 thinks it switched but did not is the one failure mode worth being noisy about.
@@ -76,15 +76,15 @@ runs a lean live scenario set against a named stack and asserts, from the deploy
 usage rows, that the models which ran were *that stack's* — both that nothing else appeared
 **and** that the stack's own ids actually did. (The second half matters: a pin that only fails
 on an unexpected model passes vacuously when a run produces no model rows at all.) Set
-`OE_MODEL_STACK` on the target and deploy first — the value is read by the deployed process,
-so the driver cannot flip it.
+`models.stack` in the TARGET deployment's `agent/settings/settings.ts` and deploy first — the value
+is read by the deployed process, so the driver cannot flip it.
 
 The lane pins the harness's own grading model, which does **not** follow the stack: changing
 the ruler and the thing being measured in the same run makes a green meaningless.
 
 It also **preflights the runtime domain-model picks** and refuses to run when one names a model
 outside the chosen stack. A `set_domain_model` pick overrides routing for its domain underneath
-`OE_MODEL_STACK`, so a leftover pick can make a correctly-switched target answer on a model the
+`models.stack`, so a leftover pick can make a correctly-switched target answer on a model the
 stack never names. The preflight reads the picks directly from the database (there is no
 control-plane route that enumerates them), so it needs `DATABASE_URL`; without it the lane prints
 a loud SKIPPED warning rather than quietly checking nothing.
@@ -154,8 +154,8 @@ what the stack alias is for.
 
 🔴 **`PRIMARY_MODEL` is the exception.** It is not read off the stack directly: the primary role is
 built as the stack's own binding with its `id` replaced by core's `defaultAgentModelId()`
-(`agent/model/models.ts`). That resolver answers, in order, `OE_FORCE_MODEL`, `OE_PRIMARY_MODEL`, the
-id the app published, and a committed literal last — so either variable really does move the
+(`agent/model/models.ts`). That resolver answers, in order, `models.force`, `models.primary`, the
+id the app published, and a committed literal last — so either setting really does move the
 conversational model, layered on top of the stack's primary. The other four roles reach no such
 resolver.
 
@@ -306,8 +306,7 @@ models only"* restriction in the gateway's settings — and this deployment inhe
 guarantee is the same one; the enforcement point is one layer down, where it is stronger:
 
 - It covers **every caller of that gateway**, not just this process — including a domain routed
-  to a model this app never names, an `OE_PRIMARY_MODEL` / `OE_FORCE_MODEL` override set after
-  deploy, and anything else in your org pointed at the same gateway.
+  to a model this app never names, a `models.primary` / `models.force` pin, and anything else in your org pointed at the same gateway.
 - It is **one setting an operator can see and audit**, not an option every new model call site
   has to remember to pass. A site that forgets is silently non-compliant; there is nothing to
   forget when the policy lives at the gateway.
@@ -491,7 +490,7 @@ that looks like a real bill.
 
 In increasing order of escape:
 
-1. **A different stack** — set `models.stack` (or `OE_MODEL_STACK`). One word; all five roles,
+1. **A different stack** — set `models.stack`. One word; all five roles,
    the allow-list, the route pins and `/oe status` follow. Prove it with
    `npm run e2e:stack -- <alias>`.
 2. **A different model for one role** — a per-role override in `agent/model/models.ts`, or a
@@ -500,10 +499,12 @@ In increasing order of escape:
 3. **A different model for some channels** — don't change any role: give those channels'
    domain a `models` route (see above). This is the right tool for "the exec channel gets
    the stronger model" or "support runs on low reasoning".
-4. **Without a redeploy** — `OE_PRIMARY_MODEL` overrides the primary role's id;
-   `OE_FORCE_MODEL` is a blunter hard pin that overrides *every* resolved route, including
-   concrete per-domain pins. Both are env-only, intended for cost-pinning a live deploy, and
-   both layer on top of whichever stack is selected.
+4. **One pin over the stack** — the setting `models.primary` overrides the primary role's id;
+   `models.force` is a blunter hard pin that overrides *every* resolved route, including
+   concrete per-domain pins. Both are settings in `agent/settings/settings.ts`, so a change is a
+   reviewed diff and a deploy (they were the env-only `OE_PRIMARY_MODEL` / `OE_FORCE_MODEL` until
+   OPE-2411). Both layer on top of whichever stack is selected, and `npm run lint:model-ids`
+   prices the committed pins.
 5. **A different upstream** — see below; this is your gateway's configuration, not the app's.
 6. **Leave the Gateway entirely** — implement a `ModelBackend` for your transport (two
    functions: id → model instance, route hints → call options) and wire it in `agent.ts`

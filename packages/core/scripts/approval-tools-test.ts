@@ -1,3 +1,4 @@
+import { __setTestValveForTest } from "../agent/testing/test-valves.js";
 import setSpendLimitTool, { planSetSpendLimit, defaultScopeKey, hasApprovalCardPath } from "../agent/tools/set_spend_limit.js";
 import { rosterStanding } from "../agent/spend/bypass.js";
 import clearSpendLimitDynamic, { planClearSpendLimit } from "../agent/tools/clear_spend_limit.js";
@@ -348,7 +349,7 @@ async function resolveClearSpendLimit(ctx: unknown): Promise<ResolvedEntry | nul
   const dir = join(tmpdir(), `open-everywhere-approval-tools-${process.pid}`);
   rmSync(dir, { recursive: true, force: true });
   process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-  process.env.OE_EGRESS_SPOOF = "1";
+  __setTestValveForTest("egress-spoof", true);
 
   const { registerSlackFixtureMapper } = await import("./_slack-test-stubs.js");
   registerSlackFixtureMapper();
@@ -556,7 +557,7 @@ async function resolveClearSpendLimit(ctx: unknown): Promise<ResolvedEntry | nul
     registerDomains([defineDomain({ name: "eng", reach: ["slack/T123/C456"] })]);
   }
 
-  delete process.env.OE_EGRESS_SPOOF;
+  __setTestValveForTest("egress-spoof", false);
 }
 
 {

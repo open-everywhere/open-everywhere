@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-access-worker-continuation
+
 import { afterAll, expect, test } from "vitest";
 
 import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
@@ -179,7 +181,7 @@ test("a follow-up the work session refuses as task-working settles as ONE failed
   follow.dispose();
 
   expect(opening.holdsCutShort(), "the opening child's hold ended before its release").toBe(0);
-  expect(opening.requests.filter((r) => r.role === "child" && r.sessionId === childOpen.sessionId && r.stepIndex > 0), "the opening child moved on before its release").toEqual([]);
+  expect(opening.requests.filter((r) => r.role === "child" && r.sessionId === childOpen.sessionId && r.stepIndex !== 0), "the opening child moved on before its release").toEqual([]);
   expect(await rowsSinceCursor(followCursor, ["delegation.task_started"], { limit: 50 }), "🔴 the refused follow-up started a task").toEqual([]);
 
   relayTurn.dispose();

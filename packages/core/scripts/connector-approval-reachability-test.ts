@@ -1,3 +1,5 @@
+// proves: AP-EVEAPP-packages-core-agent-connections-notion-ts
+
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -5,11 +7,12 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { removeTempDir } from "./_temp-dir.js";
+import { setPlatformStandInForTest } from "../agent/identity/binding.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-connector-approval-reach-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
-process.env.OE_PLATFORM = "slack";
+setPlatformStandInForTest("slack");
 _setDeploymentIdentityForTest({ org: undefined });
 
 let passed = 0;

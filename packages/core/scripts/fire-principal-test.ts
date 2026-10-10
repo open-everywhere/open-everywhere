@@ -25,7 +25,6 @@ async function refuses(fn: () => unknown, needle: RegExp, label: string): Promis
 
 const dir = mkdtempSync(join(tmpdir(), "oe-fire-principal-"));
 process.env.OE_SQLITE_PATH = join(dir, "store.db");
-delete process.env.OE_TRUST;
 overrideSettingsForTest({ delegation: { oneshotAgent: false } });
 
 const { registerSlackFixtureMapper, registerSlackTestBridge } = await import("./_slack-test-stubs.js");

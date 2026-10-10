@@ -49,8 +49,10 @@ once they exist) to stay current.
 
 ## Our side of the bargain
 
-- **CI is fork-safe by design.** Workflows run on `pull_request` (not `pull_request_target`) and use no
-  secrets, so a malicious fork PR has nothing to exfiltrate. We treat this as an invariant — see
+- **This repo runs no CI.** No workflow runs on a pull request, so a malicious fork PR has no workflow
+  to attack and no secret to exfiltrate. Each contributor proves their own commit: they run the four
+  gates locally and put the exit codes in the PR body. A maintainer runs the same gates privately
+  before merge. The suites need no secrets, and we treat that as an invariant. See
   [CONTRIBUTING.md](./CONTRIBUTING.md).
 - The deeper architecture (egress injection, connector scoping, memory isolation, audit) is documented in
   **[docs/security/security-model.md](./docs/security/security-model.md)**.

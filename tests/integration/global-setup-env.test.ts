@@ -10,7 +10,6 @@ import { PGLITE_TEMPLATE_DIR_NAME } from "./pglite-template.js";
 const AT_LOAD = {
   memoryDir: process.env.OE_MEMORY_DIR,
   pgliteDir: process.env.OE_PGLITE_DIR,
-  sandboxBackend: process.env.OE_SANDBOX_BACKEND,
   setupPid: process.env[GLOBAL_SETUP_PID_ENV],
   skipBuild: process.env.OE_IT_SKIP_BUILD,
   pgliteTemplate: process.env[PGLITE_TEMPLATE_DIR_ENV],
@@ -22,8 +21,9 @@ test("a fork really does inherit the global setup's environment — the positive
   expect(AT_LOAD.setupPid).toBe(String(process.ppid));
 });
 
-test("both run modes hand the forks the SAME sandbox backend", () => {
-  expect(`${MODE}: ${AT_LOAD.sandboxBackend}`).toBe(`${MODE}: ${INTEGRATION_SANDBOX_BACKEND}`);
+test(`${MODE}: both run modes boot the SAME sandbox backend — the app's committed declaration`, async () => {
+  const { SETTINGS_OVERRIDES } = await import("../../agent/settings/settings.js");
+  expect(SETTINGS_OVERRIDES.sandbox?.selfHostBackend).toBe(INTEGRATION_SANDBOX_BACKEND);
 });
 
 test("the global setup leaks NO state directory into the forks (OPE-582)", () => {

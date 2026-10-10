@@ -1,3 +1,4 @@
+import { testValveArmed } from "@open-everywhere/core/agent/testing/test-valves.js";
 import { defineDomain } from "@open-everywhere/core/agent/memory/domain.js";
 import { E2E_NOTION_SURFACE } from "../fixture-surfaces.js";
 
@@ -10,4 +11,4 @@ export const domain = defineDomain({
   reasoningCeiling: "high",
 });
 
-export const enabled = (): boolean => process.env.OE_MEMORY_EVAL === "1";
+export const enabled = (): boolean => testValveArmed("memory-eval");

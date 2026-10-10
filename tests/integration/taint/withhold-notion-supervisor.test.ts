@@ -213,7 +213,7 @@ test("authorGrain \"withhold\": a REFUTED author's Notion backscroll comment rea
   expect(chain.detail?.taintKinds ?? []).toEqual([]);
 });
 
-test("🔴 negative control: authorGrain \"taint\" (shipped) — the SAME refuted author's Notion comment reaches the model verbatim, and it MARKS the turn", async () => {
+test("🔴 negative control: authorGrain \"taint\" (the opt-out) — the SAME refuted author's Notion comment reaches the model verbatim, and it MARKS the turn", async () => {
   await armSeams();
   await armAuthorTrust();
   await setAuthorGrain("taint");
@@ -223,7 +223,7 @@ test("🔴 negative control: authorGrain \"taint\" (shipped) — the SAME refute
   const prompt = wakePrompt(handle);
 
   const refutedElement = messageElementFor(prompt, REFUTED_AUTHOR_ID);
-  expect(refutedElement, "the shipped grain withheld a body — \"taint\" must withhold nothing, ever").toContain(REFUTED_BODY);
+  expect(refutedElement, "the opt-out grain withheld a body — \"taint\" must withhold nothing, ever").toContain(REFUTED_BODY);
   expect(messageElementFor(prompt, MEMBER_CONTEXT_AUTHOR_ID)).toContain(MEMBER_BODY);
   expect(prompt, "the arrived-marker appeared on the shipped grain").not.toContain(WITHHELD_MARKER);
   expectElementFenced(refutedElement);

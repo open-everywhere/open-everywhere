@@ -7,7 +7,6 @@ import { pathToFileURL } from "node:url";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-teams-roster-")), "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: undefined });
-delete process.env.OE_TRUST;
 
 import { parseTeamsActivity, type TeamsMessageActivity } from "eve/channels/teams";
 import {
@@ -542,7 +541,7 @@ async function runDm(probe: TeamsRosterProbe | undefined): Promise<Received> {
 }
 
 {
-  const roomDomain = (override?: { authorGrain?: "taint" | "withhold" }) => [
+  const roomDomain = (override?: { authorGrain?: "taint" | "withhold"; roomGrain?: "engage" | "silent" }) => [
     defineDomain({ name: "org", match: "org", reach: [], memory: "brain", ...(override ? { externalPolicy: override } : {}) }),
   ];
   const useConfig = (domains: ReturnType<typeof roomDomain>) =>
@@ -557,15 +556,21 @@ async function runDm(probe: TeamsRosterProbe | undefined): Promise<Received> {
     });
 
   _resetTeamsUserTypeCacheForTest();
+  useConfig(roomDomain({ authorGrain: "taint", roomGrain: "engage" }));
+  const optOut = scriptProbe({ ok: true, body: { userRole: "guest" } });
+  const optOutSuppressed = await liveTeamsExternalGate(channelActivity(), () => optOut.probe);
+  eq(optOutSuppressed, false, "on the `taint` / `engage` OPT-OUT the gate suppresses nothing");
+  eq(
+    optOut.paths.length,
+    0,
+    "🔴 …and the ROSTER PROBE NEVER RAN (=== 0 connector calls) — this gate is pre-ack, so an opted-out deployment pays exactly what it paid before",
+  );
+
+  _resetTeamsUserTypeCacheForTest();
   useConfig(roomDomain());
   const shipped = scriptProbe({ ok: true, body: { userRole: "guest" } });
-  const shippedSuppressed = await liveTeamsExternalGate(channelActivity(), () => shipped.probe);
-  eq(shippedSuppressed, false, "on the SHIPPED grains the gate suppresses nothing — an upgrade changes no behaviour");
-  eq(
-    shipped.paths.length,
-    0,
-    "🔴 …and the ROSTER PROBE NEVER RAN (=== 0 connector calls) — this gate is pre-ack, so a deployment that has not opted in pays exactly what it paid before",
-  );
+  eq(await liveTeamsExternalGate(channelActivity(), () => shipped.probe), true, "🔴 on the SHIPPED grains a roster-refuted GUEST is suppressed with no declaration at all");
+  eq(shipped.paths.length, 1, "…having bought the roster answer (=== 1 call) — the shipped policy can use it");
 
   _resetTeamsUserTypeCacheForTest();
   useConfig(roomDomain({ authorGrain: "withhold" }));

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { registerConfig, registerIdentityMapper, defineDomain, getOperationalStore, UNADMITTED_TENANT_DROP_REASON, MULTI_TENANT_ENV } from "@open-everywhere/core/agent/adapter-api.js";
+import { registerConfig, registerIdentityMapper, defineDomain, getOperationalStore, UNADMITTED_TENANT_DROP_REASON, MULTI_TENANT_SETTING, overrideSettingsForTest, resetSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import { bindSlack } from "../agent/channels/slack-identity.js";
 import { slackTenantAdmission } from "../agent/channels/slack-tenant-fence.js";
 import { admitInbound } from "../agent/channels/slack.js";
@@ -13,7 +13,8 @@ import { stripComments } from "./_source-scan-utils.js";
 import { _resetDeploymentIdentityForTest } from "@open-everywhere/core/agent/adapter-api.js";
 
 _resetDeploymentIdentityForTest();
-for (const k of ["OE_PLATFORM", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST", "OE_TEST_DRIVER_IDS", MULTI_TENANT_ENV]) {
+resetSettingsForTest();
+for (const k of ["OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL"]) {
   delete process.env[k];
 }
 
@@ -139,11 +140,11 @@ async function dropRows(ts: string) {
 }
 
 {
-  process.env[MULTI_TENANT_ENV] = "1";
+  overrideSettingsForTest({ identity: { allowMultiTenantPrincipals: true } });
   const posts: string[] = [];
   const outcome = await admitInbound(fakeCtx(posts), messageIn(FOREIGN_CHANNEL, "9003.1", FOREIGN_TEAM), false);
-  ok(outcome !== null, `${MULTI_TENANT_ENV}=1 admits the second workspace at the WAKE DOOR too — one switch, both fences, so config and runtime can never disagree about the topology`);
-  delete process.env[MULTI_TENANT_ENV];
+  ok(outcome !== null, `${MULTI_TENANT_SETTING}: true admits the second workspace at the WAKE DOOR too — one switch, both fences, so config and runtime can never disagree about the topology`);
+  overrideSettingsForTest({ identity: { allowMultiTenantPrincipals: false } });
 }
 
 {

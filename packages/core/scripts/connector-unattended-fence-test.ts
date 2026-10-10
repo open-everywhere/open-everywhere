@@ -9,7 +9,7 @@ registerSlackFixtureMapper();
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-connector-unattended-fence-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
-process.env.OE_PLATFORM = "slack";
+setPlatformStandInForTest("slack");
 _setDeploymentIdentityForTest({ org: undefined });
 
 import type { ApprovalPolicy, ApprovalStatus } from "eve/tools/approval";
@@ -31,6 +31,7 @@ import { overrideSettingsForTest, registerSettings } from "../agent/settings/set
 import { effectiveConnectorOpTier } from "../agent/access/connector-op-gating.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { removeTempDir } from "./_temp-dir.js";
+import { setPlatformStandInForTest } from "../agent/identity/binding.js";
 
 const { registerConfig } = await import("../agent/access/config.js");
 registerConfig({
@@ -245,7 +246,7 @@ console.log("§5 reads are untouched under either flag state:");
 {
   ok((await ask(cardProbePolicy(), fireAuth(), READ_OP)) === "not-applicable", "opTiering ON: an unattended READ never prompts and is never refused");
 
-  overrideSettingsForTest({ connectors: { opTiering: false } });
+  overrideSettingsForTest({ connectors: { opTiering: false, userPrincipal: false } });
   {
     const residual = await ask(connectorApprovalPolicy(), fireAuth(), READ_OP);
     ok(isDeniedRaw(residual) && !carded(residual), "opTiering OFF: an unattended read is denied, never parked (the residual is closed, OPE-2340)");
@@ -569,6 +570,25 @@ console.log("§18 an arm cannot lift an op on an unattended fire:");
     "no arm: a surface that will not bind → the wrapped decision still stands, verbatim",
   );
   ok(isDenied(await ask(openedPolicy(), fireAuth(), EMPTY_CONNECTION_OP)) === false, "no arm: the `__<verb>` name stands the fence down again — the refusal above was the arm and nothing else");
+}
+
+console.log("§hints the server's annotations join the fence's built-in tier (2026-10-10):");
+{
+  const liftable = (toolHints?: () => Promise<{ readOnlyHint?: boolean; destructiveHint?: boolean } | undefined>) =>
+    withUnattendedConnectorFence(fixedPolicy("user-approval"), { grantExists: async () => true, ...(toolHints ? { toolHints } : {}) });
+  ok((await ask(liftable(), fireAuth(), WRITE_OP)) === "not-applicable", "control: with no hint, a declared WRITE lifts on its fire");
+  ok(
+    isDenied(await ask(liftable(async () => ({ readOnlyHint: false, destructiveHint: true })), fireAuth(), WRITE_OP)),
+    "🔴 a write-named op its server declares DESTRUCTIVE is refused on an unattended fire, whatever the declared row says",
+  );
+  ok(
+    (await ask(withUnattendedConnectorFence(fixedPolicy("user-approval"), { grantExists: async () => false, toolHints: async () => ({ readOnlyHint: true }) }), fireAuth(), "notion__frobnicate_widget")) === "user-approval",
+    "an unrecognised op its server declares read-only is a READ to the fence: it stands down and returns the wrapped decision",
+  );
+  ok(
+    isDenied(await ask(withUnattendedConnectorFence(fixedPolicy("user-approval"), { grantExists: async () => false }), fireAuth(), "notion__frobnicate_widget")),
+    "…control: the same op with no hint stays fail-closed destructive and is refused",
+  );
 }
 
 await removeTempDir(tmp);

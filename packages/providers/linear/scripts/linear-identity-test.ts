@@ -10,6 +10,7 @@ import { enrichTeamPrivacy } from "../agent/channels/linear.js";
 import { bindFrom, resolvePartition, type BindableContext } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerLinearProvider } from "../agent/register.js";
 import { _resetDeploymentIdentityForTest } from "@open-everywhere/core/agent/adapter-api.js";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 
 registerLinearProvider();
 
@@ -83,14 +84,14 @@ ok(userGuestFromUser(null).guest === undefined, "userGuestFromUser: defensive on
 ok(linearTrust("true") === "external", "linearTrust: guest -> external (demote, wins over vouch)");
 ok(linearTrust("false") === undefined, "linearTrust: member -> no verdict (membership alone isn't internal)");
 ok(linearTrust(undefined) === undefined, "linearTrust: unknown -> no verdict (fail toward existing tier)");
-process.env.OE_TRUST = "internal";
+overrideSettingsForTest({ identity: { blanketTrust: "internal" } });
 const linGuest = bindFrom(linearCtx({ organization_id: "ORG1", team_id: "TEAM5", issue_id: "ISS9", guest: "true", agent_session_id: "AS1", creator_id: "LU3" }));
 ok(linGuest.trust === "external", "linear: GUEST creator -> demoted to external (overrides OE_TRUST=internal vouch)");
 const linMember = bindFrom(linearCtx({ organization_id: "ORG1", team_id: "TEAM5", issue_id: "ISS9", guest: "false", agent_session_id: "AS1", creator_id: "LU3" }));
 ok(linMember.trust === "internal", "linear: MEMBER creator -> internal (rides the vouch, unchanged)");
 const linUnknownGuest = bindFrom(linearCtx({ organization_id: "ORG1", team_id: "TEAM5", issue_id: "ISS9", agent_session_id: "AS1", creator_id: "LU3" }));
 ok(linUnknownGuest.trust === "internal", "linear: UNAVAILABLE guest signal -> vouch stands (fail toward existing tier)");
-delete process.env.OE_TRUST;
+overrideSettingsForTest({ identity: { blanketTrust: "none" } });
 ok(buildLinearAuth({ agentSessionId: "AS1", principalId: "LU3", guest: true }).attributes.guest === "true", "buildLinearAuth: guest captured as string");
 ok(buildLinearAuth({ agentSessionId: "AS1", principalId: "LU3" }).attributes.guest === undefined, "buildLinearAuth: omits guest when unknown");
 

@@ -127,11 +127,11 @@ Two surface-wide notes before the rows:
     confirm in-tenant membership and channels fail closed to `external` — no domain/org brain
     — until a Graph-API enrichment supplies it, or the deploy vouches the tenant/channel.
 11. Discord has no guild-membership/guest check yet, so every guild starts `external` (no
-    domain/org brain) until the operator vouches the guild via `OE_TRUST=internal` or a
+    domain/org brain) until the operator vouches the guild via `identity.blanketTrust: "internal"` or a
     `surfaces.ts` entry — see [the Discord guide](./discord.md#how-the-silo-model-maps).
 12. No positive membership verification exists yet on this platform, so unverifiable surfaces
     bind `external` (shared/org memory gated off) unless the deploy vouches for them
-    (`OE_TRUST=internal` or a per-surface vouch). Teams does honour positive facts when
+    (`identity.blanketTrust: "internal"` or a per-surface vouch). Teams does honour positive facts when
     present — a Shared Channel always binds `external`, no override.
 13. The memory-admin tools aren't platform-gated; they gate on the **caller** being an org or
     domain admin, so your `Domain.admins` lists must carry that platform's user ids — written

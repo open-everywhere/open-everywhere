@@ -6,10 +6,8 @@ import {
 } from "../agent/access/egress-denial-log.js";
 import {
   MAX_HOSTS_PER_PASS,
-  MIN_POLL_MS,
-  DEFAULT_POLL_MS,
+  DENIAL_POLL_MS,
   egressDenialLogPath,
-  egressDenialPollMs,
   pollEgressDenials,
   currentEgressAttribution,
   rememberEgressAttribution,
@@ -116,9 +114,7 @@ const SECRET = "SEEDED-EGRESS-TOKEN-9f3a";
   ok(egressDenialLogPath({} as NodeJS.ProcessEnv) === undefined, "no OE_EGRESS_DENIAL_LOG ⇒ no poller (every Vercel deployment, and any self-host run without the volume)");
   ok(egressDenialLogPath({ OE_EGRESS_DENIAL_LOG: "  " } as NodeJS.ProcessEnv) === undefined, "a blank value is unset, not a path");
   ok(egressDenialLogPath({ OE_EGRESS_DENIAL_LOG: "/var/log/oe-egress/denied.log" } as NodeJS.ProcessEnv) === "/var/log/oe-egress/denied.log", "…and a real path is taken");
-  ok(egressDenialPollMs({} as NodeJS.ProcessEnv) === DEFAULT_POLL_MS, "the poll interval defaults");
-  ok(egressDenialPollMs({ OE_EGRESS_DENIAL_POLL_MS: "10" } as NodeJS.ProcessEnv) === MIN_POLL_MS, "…and is floored, so a mistyped env cannot spin against a shared volume");
-  ok(egressDenialPollMs({ OE_EGRESS_DENIAL_POLL_MS: "nonsense" } as NodeJS.ProcessEnv) === DEFAULT_POLL_MS, "…and an unparseable value falls back rather than becoming NaN");
+  ok(DENIAL_POLL_MS === 60_000, "the poll interval is a one-minute code constant (OPE-2411), not an env read");
 }
 
 const SCOPE: EgressAttribution = {

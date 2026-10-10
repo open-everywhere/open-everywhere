@@ -8,7 +8,7 @@ import {
   getOperationalStore,
   UNADMITTED_TENANT_DROP_REASON,
   UNMAPPED_WAKE_DROP_REASON,
-  MULTI_TENANT_ENV,
+  resetSettingsForTest,
   _resetDeploymentIdentityForTest,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerOperationalStore, resetOperationalStore } from "@open-everywhere/core/agent/adapter-api.js";
@@ -18,7 +18,8 @@ import { routeSupervisorEvent, type SupervisorRouteDeps, type ParsedMessageEvent
 import { admitInbound } from "../agent/channels/slack.js";
 
 _resetDeploymentIdentityForTest();
-for (const k of ["OE_PLATFORM", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST", "OE_TEST_DRIVER_IDS", MULTI_TENANT_ENV]) {
+resetSettingsForTest();
+for (const k of ["OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL"]) {
   delete process.env[k];
 }
 

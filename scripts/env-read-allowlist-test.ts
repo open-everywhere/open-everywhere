@@ -132,10 +132,10 @@ function main(): void {
     const expected: Record<string, number> = {
       "settings-lever": 0,
       secret: 33,
-      connection: 38,
+      connection: 36,
       identity: 19,
-      platform: 18,
-      "pending-migration": 45,
+      platform: 17,
+      "pending-migration": 3,
     };
     for (const [klass, n] of Object.entries(expected)) {
       ok(
@@ -143,7 +143,7 @@ function main(): void {
         `class ${klass} holds ${n} entries (found ${census.get(klass) ?? 0}) — if you meant to change this, say so here`,
       );
     }
-    ok(ENV_READ_ALLOWLIST.size === 153, `the allowlist holds 153 names (found ${ENV_READ_ALLOWLIST.size})`);
+    ok(ENV_READ_ALLOWLIST.size === 108, `the allowlist holds 108 names (found ${ENV_READ_ALLOWLIST.size})`);
   }
 
   {
@@ -275,7 +275,7 @@ function main(): void {
   }
 
   {
-    ok(DYNAMIC_ENV_READ_SITES.size === 12, `12 dynamic sites are excused (found ${DYNAMIC_ENV_READ_SITES.size})`);
+    ok(DYNAMIC_ENV_READ_SITES.size === 11, `11 dynamic sites are excused (found ${DYNAMIC_ENV_READ_SITES.size})`);
     const bare = [...DYNAMIC_ENV_READ_SITES].filter(([, why]) => why.trim().length < 10);
     ok(bare.length === 0, `every excused site carries a reason (bare: ${bare.map(([k]) => k).join(", ")})`);
   }

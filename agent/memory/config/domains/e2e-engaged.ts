@@ -10,6 +10,7 @@ export const domain = defineDomain({
     "github/example-owner/oe-e2e-addressed-github",
   ],
   memory: "e2e-brain",
+  ambientSupervisor: false,
   nameDropWake: true,
   engagementTier: "neutral",
   models: { primary: { id: UTILITY_MODEL } },

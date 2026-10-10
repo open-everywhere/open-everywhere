@@ -9,7 +9,6 @@ import { assertDomainCredentialsResolvable } from "@open-everywhere/core/agent/a
 import {
   assertWindowSourcesVouched,
   assertGovernanceDomains,
-  assertComplianceDomains,
   assertReportChannels,
   warnSilentRoomGrainWithoutPublicSignal,
 } from "@open-everywhere/core/agent/memory/domain.js";
@@ -30,7 +29,6 @@ import { loadSpendCheckpoints } from "../spend/checkpoints.js";
 import { loadModelPolicy } from "../model/policy.js";
 import { registerModelAbTest } from "@open-everywhere/core/agent/model/ab-test.js";
 import { loadModelAbTest } from "../model/ab-test.js";
-import { loadBlobHosting } from "../blob/hosting.js";
 import { loadPrincipals } from "../identity/principals.js";
 import { loadGroups } from "../identity/groups.js";
 import "../identity/surfaces.js";
@@ -61,7 +59,6 @@ registerConfig({
   loadSpendCheckpoints,
   loadAccessRequests,
   loadModelPolicy,
-  loadBlobHosting,
   loadPrincipals,
   loadGroups,
 });
@@ -77,8 +74,6 @@ assertWindowSourcesVouched(loadDomains(), isVouchedInternal);
 assertGovernanceDomains(loadDomains(), isVouchedInternal);
 
 assertReportChannels(loadDomains());
-
-assertComplianceDomains(loadDomains());
 
 assertDomainCredentialsResolvable(loadDomains(), loadConnectorCredentials());
 

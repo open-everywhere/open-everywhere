@@ -296,5 +296,35 @@ write(
   write("roster.config.ts", good);
 }
 
+{
+  eq(oe().code, 0, "the app builds clean before it declares any server");
+  ok(oe().out.includes("MCP servers declared by the app: (none)"), "an app with no mcp-servers.ts declares none — the first-run state");
+
+  write("agent/access/mcp-servers.ts", "export const NOT_THE_LIST = [];\n");
+  const noExport = oe();
+  eq(noExport.code, 1, "🔴 a present mcp-servers.ts with no MCP_SERVERS export is refused");
+  ok(noExport.out.includes("exports no MCP_SERVERS list"), "…naming the missing export, rather than reading an empty list that would delete every stub");
+
+  write("agent/access/mcp-servers.ts", 'export const MCP_SERVERS = [{ name: "fullstory", url: "https://mcp.fullstory.example/mcp", description: "FullStory." }];\n');
+  eq(oe().code, 0, "a declared server builds");
+  ok(read("agent/connections/fullstory.ts").includes('declaredMcpServerConnection(MCP_SERVERS, "fullstory")'), "…and writes its connection stub");
+  eq(oe("--check").code, 0, "…which passes --check");
+
+  write("summary-without.json", JSON.stringify({ channels: [{ name: "beta" }], schedules: [], connections: [] }));
+  const missing = oe("--against-summary", "summary-without.json");
+  eq(missing.code, 1, "--against-summary reds when eve's summary lacks a declared server");
+  ok(missing.out.includes("connections/fullstory"), "…naming it");
+  write("summary-with.json", JSON.stringify({ channels: [{ name: "beta" }], schedules: [], connections: [{ name: "fullstory" }] }));
+  eq(oe("--against-summary", "summary-with.json").code, 0, "…and passes when eve mounted it");
+
+  write("agent/access/mcp-servers.ts", "export const MCP_SERVERS = [];\n");
+  const stray = oe("--check");
+  eq(stray.code, 1, "a removed server's stub fails --check");
+  ok(stray.out.includes("STRAY · agent/connections/fullstory.ts"), "…as a STRAY");
+  eq(oe().code, 0, "the next build succeeds");
+  ok(!existsSync(join(root, "agent/connections/fullstory.ts")), "…and deletes the stub");
+  rmSync(join(root, "agent/access"), { recursive: true, force: true });
+}
+
 rmSync(root, { recursive: true, force: true });
 console.log(`✓ roster-build-test: ${n} assertions passed (materialise, reconcile, delete strays, unreviewed/vanished, --show/--json/--accept)`);

@@ -178,8 +178,8 @@ platform reason, and a lint reds a silent gap (OPE-1499).
 
 🔴 **The seam is NOT the only ambient wake, and the two must not be confused.** Four surfaces run a
 non-mention leg on a different mechanism — the ambient supervisor on GitHub, Linear and Notion, and
-the single-window front's Leg A on Teams. Those legs answer a DOMAIN's opted-in posture; the seam
-answers a CONVERSATION's own invitation, and needs no domain opt-in. The two are not alternatives:
+the single-window front's Leg A on Teams. Those legs answer a DOMAIN's posture; the seam
+answers a CONVERSATION's own invitation, and needs no domain posture. The two are not alternatives:
 Slack runs the ambient supervisor AND the seam (§10 item 5). Every surface now shares one suppressor
 — a stood-down conversation is dropped above both legs, so `stand_down` silences the ambient leg too,
 for a conversation an address enrolled. Teams adds a second, ROOM-grain stop for the undirected wake
@@ -187,8 +187,8 @@ the conversation grain cannot address (§7.6).
 
 **Which leg answers an engaged follow-up differs by surface, and only two of the three ticketing
 surfaces open their ambient leg.** On **Linear** and **Notion** the registry does open it: an engaged
-container's plain follow-up runs even where the domain never opted in. On **GitHub** it does not —
-the ambient leg returns on the domain opt-in before it reads the registry, and the engaged follow-up
+container's plain follow-up runs even where the domain turned ambient off. On **GitHub** it does not —
+the ambient leg returns on the domain flag before it reads the registry, and the engaged follow-up
 is answered by the NATIVE leg (`githubOnComment`) instead. The registry only SUPPRESSES and DROPS on
 GitHub's ambient leg.
 
@@ -1550,10 +1550,10 @@ engagement seam.
 
 The ambient leg is a DIFFERENT mechanism from the engagement seam on four surfaces — the ambient
 supervisor on GitHub, Linear and Notion, and the single-window front's Leg A on Teams — and what
-decides whether it runs is the domain opt-in, never the registry. Since OPE-1500 and OPE-1501 the
+decides whether it runs is the domain flag, never the registry. Since OPE-1500 and OPE-1501 the
 registry does reach it, though: a stood-down conversation is dropped above every one of those legs,
-and on **Linear and Notion** an ENGAGED container wakes its ambient leg even where the domain never
-opted in. **GitHub is the exception**: its ambient leg returns on the opt-in before the registry is
+and on **Linear and Notion** an ENGAGED container wakes its ambient leg even where the domain turned
+ambient off. **GitHub is the exception**: its ambient leg returns on the domain flag before the registry is
 read, so an engaged follow-up there is answered by the native leg, on a private repo and outside a
 review thread (§2.5, §7.6).
 
@@ -1820,8 +1820,8 @@ would fail the suite.
 
 **The ambient supervisor on the three ticketing surfaces, and how the registry now reaches it
 (OPE-1501).** GitHub (`github.ts`), Linear (`linear.ts`) and Notion (`notion-webhook.ts`) each run an
-ambient leg behind the per-domain `ambientSupervisor` flag, which is off until a deployer sets it
-(`memory/domain.ts`). That flag still decides whether the leg runs on an unenrolled container. What
+ambient leg behind the per-domain `ambientSupervisor` flag, which is on by default since OPE-2409 and
+off where a domain sets `ambientSupervisor: false` (`memory/domain.ts`). That flag still decides whether the leg runs on an unenrolled container. What
 changed is both edges of it:
 
 - a container `stand_down` marked is DROPPED on that leg, so the verb is a stop the loud path
@@ -1850,11 +1850,11 @@ watching is an operator action — un-vouch the surface, or take the domain off 
 a verb.
 
 **Teams was the fourth, and is now the PARTIAL case — the partial half is the point (OPE-1500).** The
-single-window front's Leg A (`teams-front.ts`) wakes on non-mention channel messages, and it reads the
-same `ambientSupervisor` field through `windowedSupervisorEnabled` (`memory/domain.ts:463`) plus
-three more requirements: the `window.topology` gate, which the schema ships off
-(`packages/core/agent/settings/settings.ts`, `SETTING_SPECS.window.topology`) and this deployment
-turns on (`agent/settings/settings.ts`); an explicit `reach` domain, because a pseudo-domain never
+single-window front's Leg A (`teams-front.ts`) wakes on non-mention channel messages. It does NOT
+read `ambientSupervisor`: no file under `packages/providers/teams` calls `ambientSupervisorEnabled`,
+and `windowedSupervisorEnabled` (`memory/domain.ts`) reads only the seat domain. It has three
+requirements instead: the `window.topology` gate, which the schema ships on
+(`packages/core/agent/settings/settings.ts`, `SETTING_SPECS.window.topology`); an explicit `reach` domain, because a pseudo-domain never
 windows; and an operator vouch of the channel. Teams also needs the tenant to grant the
 `ChannelMessage.Read.Group` RSC permission, or no non-mention message reaches the front at all.
 
@@ -1991,10 +1991,11 @@ changes no behaviour until it is ruled on.
 
    *Why the ambient leg does not settle it.* The ambient leg and the engaged seam are different
    mechanisms. GitHub, Linear and Notion gate the ambient supervisor on the per-domain
-   `ambientSupervisor` flag, which is off until a deployer sets it (`memory/domain.ts`); Teams reads
-   the same flag through `windowedSupervisorEnabled` and adds the `window.topology` gate, an explicit
-   domain, and an operator vouch. So on a default install none of the four wakes on a non-mention
-   message THROUGH ITS AMBIENT LEG. The engaged seam is the exception on all four: an engaged
+   `ambientSupervisor` flag, which is ON by default since OPE-2409 and off where a domain sets
+   `ambientSupervisor: false` (`memory/domain.ts`). Teams does not read that flag: its Leg A needs
+   the `window.topology` gate, an explicit domain, and an operator vouch. So on a default install
+   GitHub, Linear and Notion wake on a non-mention message THROUGH THEIR AMBIENT LEG (behind each
+   surface's own floor), and Teams does not. The engaged seam is the exception on all four: an engaged
    conversation wakes on a plain follow-up with no domain opt-in and no vouch, which is the ruled
    capability of item 5. GitHub carries the one floor on that exception — its follow-up arm runs on
    the native leg and refuses a public or unknown-privacy repo, and an inline review comment (§2.5). The ambient leg also stores no engagement row, so it gives `stand_down`
@@ -2002,7 +2003,7 @@ changes no behaviour until it is ruled on.
 
    *The posture picture both legs sit in.* Every surface carries an **addressed leg** that is always
    on — an @mention, a Notion structured mention or name-drop, a Slack name-drop. Every surface may
-   carry an **ambient leg**, opt-in per domain through `ambientSupervisor`
+   carry an **ambient leg**, on by default and off per domain through `ambientSupervisor: false`
    (`agent/memory/config/domains/<name>.ts`); Teams runs its ambient leg through the single-window front's
    Leg A once the tenant grants `ChannelMessage.Read.Group`. **Unified posture** (`mode: "unified"` —
    every message in a domain reaches one session and inference decides) is the primary posture being
@@ -2034,8 +2035,9 @@ changes no behaviour until it is ruled on.
    is a per-room declaration, which the room-config plane owns rather than this contract, and a
    deployer applies it one room at a time. That plane silences a room on
    `externalPolicy.roomGrain: "silent"`, and only for a room the external class already covers
-   (`access/external-policy.ts`); the shipped pair is `taint`/`engage`, which suppresses nothing. So
-   marking a room external does not by itself silence it.
+   (`access/external-policy.ts`). The shipped pair is `withhold`/`silent`, so a room the external
+   class covers is silenced unless the deployer opts out to `engage`. A room outside that class is
+   never silenced.
 
 No provider code was touched to write this section — §7.5's receipts are read-only observations of
 the code as it already stands. Two of the six items since changed code or will. §7.6's finding named

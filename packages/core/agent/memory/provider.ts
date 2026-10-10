@@ -4,6 +4,7 @@ import type { CredentialBoundDomain } from "../access/domain-credentials.js";
 import { sqliteProvider } from "./sqlite.js";
 import { makePostgresProvider, type PgClient } from "./postgres.js";
 import { onVercel } from "../access/platform.js";
+import { getSettings } from "../settings/settings.js";
 import { resolveMemoryProviderId } from "./backing-selection.js";
 import {
   deleteTier as gitDeleteTier,
@@ -118,12 +119,12 @@ export function providerById(id: string | undefined): MemoryProvider {
 
 export function dbProviderId(): string {
   if (resolveMemoryProviderId() === "postgres" && REGISTRY["postgres"]) return "postgres";
-  if (onVercel() && process.env.OE_ALLOW_EPHEMERAL_MEMORY !== "1") {
+  if (onVercel() && !getSettings().storage.allowEphemeralMemory) {
     throw new Error(
       "DM/personal memory has no durable backing on Vercel — sqlite is per-instance and ephemeral " +
         "(a memory write would report success but be lost on the next cold start). Set " +
-        "DATABASE_URL (which selects postgres on its own) and register a client (docs/deploy/setup-runbook.md), or " +
-        "OE_ALLOW_EPHEMERAL_MEMORY=1 to accept ephemeral personal memory on a single-instance host.",
+        "DATABASE_URL (which selects postgres on its own) and register a client (docs/deploy/setup-runbook.md), or declare " +
+        "`storage.allowEphemeralMemory: true` in agent/settings/settings.ts to accept ephemeral personal memory on a single-instance host.",
     );
   }
   return "sqlite";

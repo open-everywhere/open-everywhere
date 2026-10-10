@@ -96,7 +96,7 @@ function connectionFile(slug: string, server: ParsedMcpServer): string {
     server.description ?? `MCP connector "${slug}" (extracted from a plugin). Review and refine this description.`;
   return `// GENERATED from a plugin MCP server by scripts/extract-plugin.ts — review before trusting.
 // Eve connection (host-side connector plane). Two gates are wired by default, matching
-// agent/connections/notion.ts: the per-surface HARD gate (assertConnectorGranted) inside
+// the one MCP connection builder (agent/connections/mcp-server-connection.ts): the per-surface HARD gate (assertConnectorGranted) inside
 // getToken, and \`connectorApprovalPolicy()\` on \`approval\` — the duplicate-approval guard,
 // then the unattended fence, then per-op read/write tiering where the deployment arms it.
 // 🔴 The fence is why this is not a bare \`once()\`: a connector WRITE on an unattended fire

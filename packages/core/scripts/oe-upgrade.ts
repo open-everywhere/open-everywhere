@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { CONFIG_FILE, findRepoRoot } from "../agent/scaffold/roster-fs.js";
@@ -13,6 +13,7 @@ export interface UpgradeRegistry {
   latestVersion(pkg: string): Promise<string | undefined>;
   evePeer(version: string): Promise<string | undefined>;
   templateDir?(version: string): Promise<string | undefined>;
+  tarball?(pkg: string, version: string): string | undefined;
 }
 
 export interface UpgradeIo {
@@ -34,6 +35,8 @@ const USAGE = [
   "  oe upgrade                 take the latest release of every @open-everywhere/* package",
   "  oe upgrade --to <version>  take an exact release (x.y.z)",
   "  oe upgrade --plan          print the plan; write nothing, install nothing, run nothing",
+  "  oe upgrade --from <dir>    take the release packed in <dir> (npm pack output), not the registry:",
+  "                             a rehearsal of an unpublished release. It pins file: tarballs.",
   "",
   "  The procedure: bump every @open-everywhere/* package together (renaming a dependency on the",
   "  retired create-open-everywhere to @open-everywhere/create), pin eve to the target core's",
@@ -231,10 +234,11 @@ async function reportTemplateDrift(
   target: string,
   manifest: AppManifest,
   notes: UpgradingNotes | undefined,
+  registry: UpgradeRegistry,
 ): Promise<{ readonly sync: number; readonly delete: number } | undefined> {
   let templateDir: string | undefined;
   try {
-    templateDir = installedTemplateDir(appRoot, target) ?? (await io.registry.templateDir?.(target));
+    templateDir = installedTemplateDir(appRoot, target) ?? (await registry.templateDir?.(target));
   } catch (err) {
     io.out(`! the template drift check did not run: ${err instanceof Error ? err.message : String(err)}`);
     for (const line of starterRulesOffer(appRoot, target, undefined)) io.out(line);
@@ -291,20 +295,20 @@ function printWindow(io: UpgradeIo, window: readonly ReleaseNote[], installed: s
   }
 }
 
-function applyPins(manifest: AppManifest, target: string, evePeer: string): readonly string[] {
+function applyPins(manifest: AppManifest, target: string, evePeer: string, spec: (name: string) => string = () => target): readonly string[] {
   const changes: string[] = [];
   for (const [section, deps] of dependencySections(manifest.json)) {
     for (const [name, range] of Object.entries(deps)) {
       if (!(name.startsWith(SCOPE) || name === SCAFFOLDER_OLD)) continue;
       if (name === SCAFFOLDER_OLD) {
         delete deps[name];
-        deps[SCAFFOLDER] = target;
-        changes.push(`${section}.${name} → ${section}.${SCAFFOLDER}: ${String(range)} → ${target} (the scaffolder moved into the scope)`);
+        deps[SCAFFOLDER] = spec(SCAFFOLDER);
+        changes.push(`${section}.${name} → ${section}.${SCAFFOLDER}: ${String(range)} → ${spec(SCAFFOLDER)} (the scaffolder moved into the scope)`);
         continue;
       }
-      if (range === target) continue;
-      deps[name] = target;
-      changes.push(`${section}.${name}: ${String(range)} → ${target}`);
+      if (range === spec(name)) continue;
+      deps[name] = spec(name);
+      changes.push(`${section}.${name}: ${String(range)} → ${spec(name)}`);
     }
     if (typeof deps.eve === "string" && deps.eve !== evePeer) {
       changes.push(`${section}.eve: ${deps.eve} → ${evePeer} (core's declared peer at ${target})`);
@@ -343,13 +347,21 @@ export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, 
     io.err(USAGE);
     return 2;
   }
-  const unknownFlag = args.find((a) => a.startsWith("--") && !["--plan", "--to", "--help"].includes(a) && !a.startsWith("--to="));
+  const fromIndex = args.indexOf("--from");
+  const fromInline = args.find((a) => a.startsWith("--from="));
+  const fromArg = fromIndex >= 0 ? args[fromIndex + 1] : fromInline?.slice("--from=".length);
+  if ((fromIndex >= 0 || fromInline !== undefined) && (fromArg === undefined || fromArg === "" || fromArg.startsWith("--"))) {
+    io.err(`✗ oe upgrade: --from takes a directory of packed tarballs.`);
+    io.err(USAGE);
+    return 2;
+  }
+  const unknownFlag = args.find((a) => a.startsWith("--") && !["--plan", "--to", "--from", "--help"].includes(a) && !a.startsWith("--to=") && !a.startsWith("--from="));
   if (unknownFlag !== undefined) {
     io.err(`✗ oe upgrade: unknown flag "${unknownFlag}".`);
     io.err(USAGE);
     return 2;
   }
-  const stray = args.find((a, i) => !a.startsWith("--") && !(toIndex >= 0 && i === toIndex + 1));
+  const stray = args.find((a, i) => !a.startsWith("--") && !(toIndex >= 0 && i === toIndex + 1) && !(fromIndex >= 0 && i === fromIndex + 1));
   if (stray !== undefined) {
     io.err(`✗ oe upgrade: unexpected argument "${stray}" — the version goes after --to.`);
     io.err(USAGE);
@@ -372,21 +384,53 @@ export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, 
     io.err(`✗ oe upgrade: ${manifest.path} declares no ${CORE} dependency — this is not an Open Everywhere app.`);
     return 1;
   }
-  if (!EXACT.test(core.range)) {
+  let registry = io.registry;
+  if (fromArg !== undefined) {
+    const local = localReleaseRegistry(resolve(cwd, fromArg));
+    if (typeof local === "string") {
+      io.err(`✗ oe upgrade: ${local}`);
+      return 1;
+    }
+    registry = local;
+  }
+  const coreRange = core.range.startsWith("file:") ? installedCoreVersion(appRoot) : core.range;
+  if (coreRange === undefined) {
+    io.err(`✗ oe upgrade: ${CORE} is pinned to "${core.range}", and no ${CORE} is installed, so the version it names cannot be read.`);
+    io.err(`  Set the pin to the exact version you are on, then run the same command again.`);
+    return 1;
+  }
+  if (!EXACT.test(coreRange)) {
     io.err(`✗ oe upgrade: ${CORE} is pinned to "${core.range}", not an exact version.`);
     io.err(`  The nine packages publish in lockstep, so an app pins each one exactly. Set it to the version you are on, then run the same command again.`);
     return 1;
   }
-  const pinned = core.range;
+  const pinned = coreRange;
   const retiredScaffolder = manifest.pinned.some((p) => p.name === SCAFFOLDER_OLD);
   const onDisk = installedCoreVersion(appRoot);
   const marker = readResumeMarker(appRoot);
 
-  const target = requested ?? (await io.registry.latestVersion(CORE));
+  const target = requested ?? (await registry.latestVersion(CORE));
   if (target === undefined) {
-    io.err(`✗ oe upgrade: the registry did not answer with a latest version for ${CORE}. Pass \`--to <version>\`.`);
+    io.err(
+      fromArg === undefined
+        ? `✗ oe upgrade: the registry did not answer with a latest version for ${CORE}. Pass \`--to <version>\`.`
+        : `✗ oe upgrade: ${fromArg} holds no ${CORE} tarball. Pack the release into it first.`,
+    );
     return 1;
   }
+  const tarballOf = registry.tarball?.bind(registry);
+  if (tarballOf !== undefined) {
+    const names = [...new Set([CORE, ...manifest.pinned.map((p) => (p.name === SCAFFOLDER_OLD ? SCAFFOLDER : p.name))])];
+    const missing = names.filter((name) => tarballOf(name, target) === undefined);
+    if (missing.length > 0) {
+      io.err(`✗ oe upgrade: ${fromArg} holds no ${target} tarball for ${missing.join(", ")}. The app pins it, and the set moves together.`);
+      return 1;
+    }
+  }
+  const spec = (name: string): string => {
+    const file = tarballOf?.(name, target);
+    return file === undefined ? target : `file:${file}`;
+  };
 
   const current = onDisk ?? pinned;
   if (compareVersions(target, current) < 0) {
@@ -396,10 +440,11 @@ export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, 
 
   const resumeBaseline = marker.kind === "resume" && compareVersions(marker.from, target) < 0 ? marker.from : undefined;
   const installed = resumeBaseline ?? current;
-  if (pinned === target && onDisk === target && marker.kind === "none" && !retiredScaffolder) {
+  const pinsMatch = manifest.pinned.every((p) => p.range === spec(p.name));
+  if (pinned === target && pinsMatch && onDisk === target && marker.kind === "none" && !retiredScaffolder) {
     io.out(`✓ oe upgrade: already on ${installed}. Nothing to do.`);
     const here = readInstalledNotes(appRoot);
-    await reportTemplateDrift(io, appRoot, target, manifest, here.kind === "ok" ? here.notes : undefined);
+    await reportTemplateDrift(io, appRoot, target, manifest, here.kind === "ok" ? here.notes : undefined, registry);
     return 0;
   }
   if (retiredScaffolder && pinned === target && onDisk === target && marker.kind === "none") {
@@ -410,11 +455,13 @@ export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, 
     io.out(`  Resuming. The release-note window below may be short — read UPGRADING.md for the entries you crossed.`);
   } else if (marker.kind === "resume") {
     io.out(`· an earlier run began taking ${marker.target} and stopped before the tree was proven. Resuming from ${installed}.`);
+  } else if (pinned === target && onDisk === target && !pinsMatch && !retiredScaffolder) {
+    io.out(`· ${target} is installed, but the pins do not name this run's ${target} source. Re-pinning and re-installing.`);
   } else if (pinned === target) {
     io.out(`· the manifest already pins ${target} but ${onDisk ?? "nothing"} is installed — an earlier run stopped part way. Resuming.`);
   }
 
-  const evePeer = await io.registry.evePeer(target);
+  const evePeer = await registry.evePeer(target);
   if (evePeer === undefined) {
     io.err(`✗ oe upgrade: cannot read the \`eve\` peer ${CORE}@${target} declares. Without it the install would leave eve on a version core does not support.`);
     return 1;
@@ -424,9 +471,14 @@ export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, 
   io.out(`Release notes:`);
   const before = readInstalledNotes(appRoot);
   if (before.kind === "broken") for (const p of before.problems) io.err(`! the installed ${NOTES_FILE} does not parse: ${p}`);
-  const windowBefore = before.kind === "ok" ? notesBetween(before.notes, installed, target) : [];
-  if (before.kind === "ok") printWindow(io, windowBefore, installed, target);
-  else io.out(`  (the installed ${CORE} ships no readable ${NOTES_FILE} — the target's own copy is read after the install)`);
+  const own = ownNotes();
+  const covers = (notes: UpgradingNotes | undefined): boolean => notes?.releases.some((r) => r.version === target) ?? false;
+  const fromOwn = !covers(before.kind === "ok" ? before.notes : undefined) && covers(own);
+  const adviseFrom = fromOwn ? own : before.kind === "ok" ? before.notes : undefined;
+  const windowBefore = adviseFrom === undefined ? [] : notesBetween(adviseFrom, installed, target);
+  if (before.kind !== "ok") io.out(`  (the installed ${CORE} ships no readable ${NOTES_FILE} — the target's own copy is read after the install)`);
+  if (fromOwn) io.out(`  (read from this oe's own ${NOTES_FILE}, because the installed copy has no entry for ${target})`);
+  if (adviseFrom !== undefined) printWindow(io, windowBefore, installed, target);
 
   const unknownBefore = unknownCodemods(windowBefore);
   if (unknownBefore.length > 0) {
@@ -434,7 +486,7 @@ export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, 
     io.err(`  ${target}'s own registry decides after the install, and it refuses an id it does not hold before any codemod runs.`);
   }
 
-  const pinChanges = applyPins({ ...manifest, json: structuredClone(manifest.json) }, target, evePeer);
+  const pinChanges = applyPins({ ...manifest, json: structuredClone(manifest.json) }, target, evePeer, spec);
   io.out(`Plan:`);
   for (const line of pinChanges) io.out(`  pin  ${line}`);
   const lockPlan = planLockfilePrune(appRoot);
@@ -450,7 +502,7 @@ export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, 
   io.out(`  run  npm run build`);
 
   if (plan) {
-    await reportTemplateDrift(io, appRoot, target, manifest, before.kind === "ok" ? before.notes : undefined);
+    await reportTemplateDrift(io, appRoot, target, manifest, before.kind === "ok" ? before.notes : undefined, registry);
     io.out(`✓ oe upgrade --plan: nothing was written.`);
     return 0;
   }
@@ -458,7 +510,7 @@ export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, 
   if (pinChanges.length === 0) {
     io.out(`· ${manifest.path} already names ${target} — left untouched.`);
   } else {
-    applyPins(manifest, target, evePeer);
+    applyPins(manifest, target, evePeer, spec);
     writeFileSync(manifest.path, `${JSON.stringify(manifest.json, null, 2)}\n`);
     io.out(`✓ wrote ${manifest.path}`);
   }
@@ -492,7 +544,7 @@ export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, 
     io.out(`Release notes (${target}'s own copy):`);
     printWindow(io, windowAfter, installed, target);
   }
-  const drift = await reportTemplateDrift(io, appRoot, target, manifest, after.kind === "ok" ? after.notes : undefined);
+  const drift = await reportTemplateDrift(io, appRoot, target, manifest, after.kind === "ok" ? after.notes : undefined, registry);
   const oe = installedOeBin(appRoot);
   if (oe === undefined) {
     io.err(`✗ oe upgrade: the install left no \`oe\` bin under node_modules/${CORE}. The install did not complete.`);
@@ -524,6 +576,9 @@ export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, 
   }
   if (drift !== undefined && drift.sync > 0) {
     io.out(`  SYNC: ${drift.sync} template-owned file(s) differ from ${target}'s template — see the drift report above. oe upgrade changed none of them.`);
+  }
+  if (tarballOf !== undefined) {
+    io.out(`  REHEARSAL: package.json pins the @open-everywhere/* set to file: tarballs in ${fromArg}. Do not commit it or the lockfile.`);
   }
   return 0;
 }
@@ -597,6 +652,52 @@ function npmViewRegistry(): UpgradeRegistry {
       const template = join(dir, "package", "template");
       return untar.status === 0 && existsSync(join(template, "package.json")) ? template : undefined;
     },
+  };
+}
+
+function localReleaseRegistry(dir: string): (UpgradeRegistry & { tarball(pkg: string, version: string): string | undefined }) | string {
+  if (!existsSync(dir) || !statSync(dir).isDirectory()) return `--from ${dir} is not a directory.`;
+  const index = new Map<string, { readonly file: string; readonly manifest: Record<string, unknown> }>();
+  for (const name of readdirSync(dir).filter((n) => n.endsWith(".tgz")).sort()) {
+    const r = spawnSync("tar", ["-xzOf", name, "package/package.json"], { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 16 * 1024 * 1024 });
+    if (r.status !== 0) return `cannot read package/package.json from ${join(dir, name)} — is it an npm pack tarball?`;
+    let manifest: Record<string, unknown>;
+    try {
+      manifest = JSON.parse(r.stdout) as Record<string, unknown>;
+    } catch {
+      return `${join(dir, name)} carries a package.json that is not valid JSON.`;
+    }
+    if (typeof manifest.name !== "string" || typeof manifest.version !== "string") return `${join(dir, name)} carries no package name and version.`;
+    index.set(`${manifest.name}@${manifest.version}`, { file: join(dir, name), manifest });
+  }
+  if (index.size === 0) {
+    const checkout = existsSync(join(dir, "packages", "core", "package.json"));
+    return checkout
+      ? `${dir} is a checkout, not a directory of tarballs. In it run \`npm run build:packages && npm pack --workspaces --pack-destination <dir>\`, then pass that <dir>.`
+      : `${dir} holds no .tgz file. Pack the release into it with \`npm pack --workspaces --pack-destination ${dir}\`.`;
+  }
+  const cores = [...index.values()].filter((e) => e.manifest.name === CORE).map((e) => e.manifest.version as string).filter((v) => EXACT.test(v));
+  const highest = cores.sort(compareVersions).at(-1);
+  const extracted = new Map<string, string | undefined>();
+  return {
+    latestVersion: async (pkg) => (pkg === CORE ? highest : undefined),
+    evePeer: async (version) => {
+      const peers = index.get(`${CORE}@${version}`)?.manifest.peerDependencies as Record<string, unknown> | undefined;
+      const eve = peers?.eve;
+      return typeof eve === "string" && eve.trim() !== "" ? eve : undefined;
+    },
+    templateDir: async (version) => {
+      const entry = index.get(`${SCAFFOLDER}@${version}`);
+      if (entry === undefined) return undefined;
+      if (!extracted.has(version)) {
+        const into = mkdtempSync(join(tmpdir(), "oe-upgrade-template-"));
+        const untar = spawnSync("tar", ["-xzf", basename(entry.file), "-C", into], { cwd: dir, stdio: "ignore" });
+        const template = join(into, "package", "template");
+        extracted.set(version, untar.status === 0 && existsSync(join(template, "package.json")) ? template : undefined);
+      }
+      return extracted.get(version);
+    },
+    tarball: (pkg, version) => index.get(`${pkg}@${version}`)?.file,
   };
 }
 

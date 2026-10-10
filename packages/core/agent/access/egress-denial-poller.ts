@@ -4,8 +4,7 @@ import { planTailRead, reduceDenialLog, type DenialScan } from "./egress-denial-
 
 const EGRESS_DENIED_ACTION = "egress.denied";
 
-export const DEFAULT_POLL_MS = 60_000;
-export const MIN_POLL_MS = 5_000;
+export const DENIAL_POLL_MS = 60_000;
 
 export const MAX_HOSTS_PER_PASS = 20;
 
@@ -36,12 +35,6 @@ export function resetEgressAttribution(): void {
 export function egressDenialLogPath(env: NodeJS.ProcessEnv = process.env): string | undefined {
   const raw = env.OE_EGRESS_DENIAL_LOG?.trim();
   return raw ? raw : undefined;
-}
-
-export function egressDenialPollMs(env: NodeJS.ProcessEnv = process.env): number {
-  const raw = Number(env.OE_EGRESS_DENIAL_POLL_MS ?? "");
-  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_POLL_MS;
-  return Math.max(MIN_POLL_MS, Math.trunc(raw));
 }
 
 export interface DenialPollDeps {
@@ -142,7 +135,7 @@ export function startEgressDenialPoller(options?: { readonly env?: NodeJS.Proces
   const env = options?.env ?? process.env;
   const path = egressDenialLogPath(env);
   if (path === undefined) return undefined;
-  const intervalMs = egressDenialPollMs(env);
+  const intervalMs = DENIAL_POLL_MS;
 
   const warned = new Set<string>();
   const warnOnce = (reason: string, message: string): void => {

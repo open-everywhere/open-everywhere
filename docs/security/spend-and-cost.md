@@ -41,12 +41,12 @@ is **evidence-only**: a call this deployment has no rate for contributes **$0** 
 guessed rate), which would leave a USD cap enforcing over nothing. For every model the
 **committed config** selects, that state is a **build failure** rather than a caveat: `npm run
 lint:model-ids` refuses a config that selects a model with no committed price (below). The gate
-reads the repo, not your environment, so a deployment that pins its primary with `OE_FORCE_MODEL`
-or `OE_PRIMARY_MODEL` owns pricing what it pins — set a token cap beside the $ cap if you use
-those pins. Those two pins are also how an unpriced id reaches a **runtime model pick**: the
-allow-list this app declares is derived from the roles it resolved (`agent/model/models.ts`), so
-an env-pinned primary enters that list, and `set_domain_model` may then route a domain to it. The
-gate cannot see it — the pick is an operational-store overlay, not a repo file — so that tool
+reads the repo, and the primary pins are in the repo: the settings `models.force` and
+`models.primary` join the selected set, so the lint prices a committed pin too (they were the
+unpriced `OE_FORCE_MODEL` / `OE_PRIMARY_MODEL` variables until OPE-2411). The allow-list this app
+declares is derived from the roles it resolved (`agent/model/models.ts`), so a pinned primary enters
+that list, and `set_domain_model` may then route a domain to it. The
+gate cannot see a runtime pick — the pick is an operational-store overlay, not a repo file — so that tool
 prices the pick itself: an unpriced model still lands, and the result and the audit row carry
 `unpriced: true`. A deployment that declares no model policy at all (core's default) has no
 allow-list clamp either, and the same flag is its only signal.
@@ -413,8 +413,8 @@ A built-in table with several entries gives no way to know which one a given row
 single entry naming a model the deploy no longer runs would price every stampless row at the
 wrong model's rate, permanently, since a ledger row's dollars are written once.
 
-So a deployment that selects the other shipped stack (`models.stack`, or `OE_MODEL_STACK`), or
-pins its primary with `OE_FORCE_MODEL` / `OE_PRIMARY_MODEL`, gets **no** assumption: those rows
+So a deployment that selects the other shipped stack (`models.stack`), or
+pins its primary with `models.force` / `models.primary`, gets **no** assumption: those rows
 show tokens only, and the tool's `note` says so plainly. Pass `assumedModelId` explicitly to
 price them, or move the built-in entry to the model you run.
 

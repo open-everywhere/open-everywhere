@@ -5,7 +5,7 @@ import { currentSessionId, type BindableContext } from "../identity/binding.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { ingestUntrustedModelOutput } from "./untrusted.js";
 import { browserEvaluateHosts } from "./browser-hosts.js";
-import { onVercel } from "./platform.js";
+import { sandboxOnVercel } from "../sandbox/backend-select.js";
 import { registerExtraEgressHosts } from "./extra-hosts.js";
 
 export interface BrowserToolEntry {
@@ -19,7 +19,7 @@ export interface BrowserToolEntry {
 const BROWSER_TOOLS_SLUG = "browser_tools";
 
 export function browserPlaneRefusal(): string | undefined {
-  return onVercel()
+  return sandboxOnVercel()
     ? undefined
     : "the browser plane needs the Vercel Sandbox backend — the self-host image ships no Chromium, so nothing arms here (agent/access/browser-toolkit.ts).";
 }

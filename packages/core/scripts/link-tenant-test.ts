@@ -82,7 +82,7 @@ function row(over: Partial<LinkedIdRow> & { platform: string; tenant: string; na
     threw = e instanceof Error ? e.message : String(e);
   }
   ok(threw === linkTenantUnresolvableMessage("slack"), "fail-loud: the throw carries the ONE operator-actionable message, naming both fixes");
-  ok(threw.includes("agent/memory/config/domains.ts") && threw.includes("OE_ALLOW_MULTI_TENANT_PRINCIPALS"), "fail-loud: …and that message names the declare-the-channel fix and the multi-tenant knob by their real spellings");
+  ok(threw.includes("agent/memory/config/domains.ts") && threw.includes("identity.allowMultiTenantPrincipals"), "fail-loud: …and that message names the declare-the-channel fix and the multi-tenant knob by their real spellings");
   ok(tryLinkTenantOf("github", undefined) === LINK_TENANT_NONE, "fail-closed is SCOPED: a vendor-global platform still answers with no config at all");
 
   configWithSlackTenants([WS_A, WS_B]);

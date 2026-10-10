@@ -30,7 +30,62 @@ A bundle grants `connectors: [{ name: "notion", credential: "team-key", contentO
 [resolver](../how-it-works/access-and-scoping.md) checks the allowlist and the universe gate
 and binds that credential **to this surface**, narrowest-wins.
 
-## Defining a new MCP connection
+## Declare an MCP server in your app
+
+Most hosted MCP servers need nothing but a URL and a sign-in. Declare one in your app's own
+config, `agent/access/mcp-servers.ts`, in one pull request. This is the path for a deployer; the
+package path below is for a connection that ships inside a package.
+
+```ts
+// agent/access/mcp-servers.ts
+import { defineMcpServers } from "@open-everywhere/core/agent/connections/mcp-servers.js";
+
+export const MCP_SERVERS = defineMcpServers([
+  {
+    name: "fullstory", // the connection slug: agent/connections/fullstory.ts and the grant key
+    url: "https://<the vendor's hosted MCP endpoint>",
+    description: "FullStory: search sessions, read session summaries and product analytics.",
+  },
+]);
+```
+
+Then run `npx oe build` and commit the diff. What the entry gives you:
+
+- **A connection.** `oe build` writes `agent/connections/<name>.ts`, a stub that builds the
+  connection from your list. The golden plan (`scripts/goldens/roster-plan.txt`) shows one line per
+  server. A name that a package already mounts is refused.
+- **A sign-in.** The default is MCP OAuth discovery, dynamic client registration and PKCE against
+  the URL: no client id and no secret. A vendor WITHOUT dynamic registration takes
+  `signIn: { mode: "static-confidential", authorizationEndpoint, tokenEndpoint, clientId,
+  clientSecretRef, bodyEncoding }`. `clientSecretRef` names the secret in the credential store,
+  never its value. `defineMcpServers` refuses a literal `clientSecret`, a non-`https` URL, and a URL
+  with a user-info part or a query string, because a token in a URL is a secret in Git.
+- **Each person's own account, in their own DM.** Core derives a `user-oauth` credential and a
+  bundle that grants it at the built-in `oe:everyone` person-group. The resolver matches that group
+  only in a DM with an attested caller, so every person reaches the server as THEMSELVES. A person
+  who has not signed in gets the "Connect my account" card on their first call. This needs
+  `connectors.userPrincipal`, which ships on: with it off, a DM's `user-oauth` binding is refused,
+  so a declared server works in no DM.
+- 🔴 **"Every person" includes external accounts.** The resolver has no trust input, so a Slack
+  Connect user or a Discord user who shares a server with the bot also matches `oe:everyone`. They
+  reach only what their own vendor account sees, but they sign in through your OAuth client. Where
+  external people can DM the agent, narrow the entry with `people: { groups: ["<group>"] }`. A
+  group that is broad (a link-set member, or 8+ members) also needs
+  `people: { groups: [...], allowBroad: "<reason>" }`. `allowBroad` applies to every group in
+  the entry, and the lint refuses it on a narrow group. To give the server to a broad group and a
+  narrow one, name only the broad group(s) in `people`. Then bind the narrow group to the bundle
+  `mcp-server:<name>` by hand in `agent/access/bundles.ts`.
+- **Nothing in a channel.** Core also derives a `workspace-oauth` credential: the org's own account
+  on the server. It is inert until an admin grants it on a bundle in `agent/access/bundles.ts`,
+  as with any connector. A personal login never resolves in a channel.
+
+A person in chat cannot add a server. A server that is not in the list has no connection, no
+credential and no grant, and the list changes only by pull request. The shipped Notion connection
+builds through the same builder (`connections/mcp-server-connection.ts`), but stays a core module:
+it also carries the org's REST key credentials and an env fallback secret, which a declared server
+does not take.
+
+## Defining a new MCP connection in a package
 
 Eve discovers a connection from the app's `agent/connections/<slug>.ts`, and the file's slug (its
 filename, minus `.ts`) becomes the connection's runtime name — exactly the name a catalogue's
@@ -64,11 +119,13 @@ export default defineMcpClientConnection({
 });
 ```
 
-`packages/core/agent/connections/notion.ts` is the shipped worked example. It is the only
-`defineMcpClientConnection` module in core today, and it takes its `url` and `auth` from
-`selectConnectorTransport(...)` rather than writing them inline, so the connection picks up the
-[transport seam](./adapter-model.md#the-connector-transport-seam-is-swappable-too). The other
-files under `packages/core/agent/connections/` are helper modules, not connections.
+`packages/core/agent/connections/notion.ts` is the shipped worked example. It builds through
+`buildMcpConnection(...)` (`connections/mcp-server-connection.ts`), the one builder every MCP
+connection uses, rather than calling `defineMcpClientConnection` inline. The builder declares the
+sign-in, takes the `url` and `auth` from `selectConnectorTransport(...)` so the connection picks up
+the [transport seam](./adapter-model.md#the-connector-transport-seam-is-swappable-too), and
+attaches the approval policy. The other files under `packages/core/agent/connections/` are helper
+modules, not connections.
 
 The credential never lives on the connection — a provider's `ConnectorCredential` names a
 `secretRef` + `broker` (or a `home` bag for an OAuth-homed credential, or a future registered

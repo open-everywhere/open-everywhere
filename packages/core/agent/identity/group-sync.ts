@@ -2,6 +2,7 @@ import { directoryGroupName, type Group } from "./groups.js";
 import { directoryLinkSetId } from "./directory-sync.js";
 import { emitGroupsModule, type GroupsFile } from "./groups-codemod.js";
 import type { DirectoryPerson } from "./directory.js";
+import { getSettings } from "../settings/settings.js";
 
 export type GroupSyncStep =
   | { readonly kind: "add-group"; readonly group: string; readonly title: string; readonly members: number }
@@ -98,15 +99,8 @@ export function planOverlayContent(plan: GroupSyncPlan): string {
   return emitGroupsModule(plan.next);
 }
 
-export const OE_DIRECTORY_GROUP_ALLOWLIST_ENV = "OE_DIRECTORY_GROUP_ALLOWLIST";
-
-export function directoryGroupAllowlist(env: NodeJS.ProcessEnv = process.env): readonly string[] | undefined {
-  const raw = env[OE_DIRECTORY_GROUP_ALLOWLIST_ENV]?.trim();
-  if (!raw) return undefined;
-  const names = raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+export function directoryGroupAllowlist(): readonly string[] | undefined {
+  const names = getSettings().directory.groupAllowlist;
   return names.length > 0 ? names : undefined;
 }
 

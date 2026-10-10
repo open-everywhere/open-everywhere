@@ -2,7 +2,7 @@ import browserExtension from "@agent-browser/eve";
 
 import assert from "node:assert/strict";
 import { agentBrowserEnabled, loadAgentBrowserConfig, resetAgentBrowserConfigForTest } from "../agent/browser/config.js";
-import { registerAgentBrowser } from "../agent/browser/register.js";
+import { registerAgentBrowser, BROWSER_SESSION_NAME } from "../agent/browser/register.js";
 import { agentBrowserSandboxHooks, type BakeableSandbox } from "../agent/browser/sandbox.js";
 import { installAgentBrowser, type EveSandboxSession } from "@agent-browser/eve/sandbox";
 import {
@@ -32,12 +32,13 @@ const ok = (cond: boolean, label: string) => {
   n++;
 };
 
-const saved = process.env.OE_PLATFORM;
+const saved = process.env.VERCEL;
 function setEnv(values: { enabled?: boolean; hosts?: BrowserHostDeclaration[]; platform?: string }): void {
   overrideSettingsForTest({ browser: { enabled: values.enabled ?? false } });
   if (values.hosts === undefined) resetBrowserHostsForTest();
   else _setBrowserHostsForTest(values.hosts);
-  process.env.OE_PLATFORM = values.platform ?? "vercel";
+  if ((values.platform ?? "vercel") === "vercel") process.env.VERCEL = "1";
+  else delete process.env.VERCEL;
   resetAgentBrowserConfigForTest();
 }
 
@@ -92,6 +93,7 @@ function setEnv(values: { enabled?: boolean; hosts?: BrowserHostDeclaration[]; p
   ok((bound.allowedDomains ?? []).join("|") === "localhost|qa.example.com|preview.vercel.app", "bound config: allowedDomains = the operator list (inner containment wall armed)");
   ok(bound.contentBoundaries === true, "bound config: contentBoundaries ON (page text is untrusted input)");
   ok(bound.inlineScreenshots === false, "bound config: inlineScreenshots OFF (no multi-MB base64 in durable transcripts)");
+  ok((bound as { session?: string }).session === BROWSER_SESSION_NAME, "bound config: session pinned (the vendor default reads sandbox.id, which eve ≥0.69 does not give)");
 
   const kit = registeredBrowserToolkit();
   ok(kit !== undefined, "toolkit registered");
@@ -158,6 +160,25 @@ function setEnv(values: { enabled?: boolean; hosts?: BrowserHostDeclaration[]; p
   ok(cmd.includes("--session"), "the issued command pins the per-sandbox browser session");
   ok(cmd.includes("--json"), "the issued command requests the structured envelope");
   ok(out !== null && out.url === "https://qa.example.com/", "the parsed --json envelope data flows back as the tool result");
+
+  const idlessCommands: string[] = [];
+  const idlessSandbox = {
+    run: async ({ command }: { command: string }) => {
+      idlessCommands.push(command);
+      return { exitCode: 0, stdout: JSON.stringify({ success: true, data: { url: "https://qa.example.com/" } }), stderr: "" };
+    },
+  };
+  let idlessError: unknown;
+  try {
+    await (nav.execute as (i: unknown, c: unknown) => Promise<unknown>)(
+      { action: "goto", url: "https://qa.example.com/" },
+      { ...taskCtx, getSandbox: async () => idlessSandbox },
+    );
+  } catch (err) {
+    idlessError = err;
+  }
+  ok(idlessError === undefined, `navigate runs on an id-less sandbox (the eve ≥0.69 SandboxSession shape) — threw: ${String(idlessError)}`);
+  ok(idlessCommands.length === 1 && idlessCommands[0]!.includes(`--session ${BROWSER_SESSION_NAME}`), `the id-less call pins the bound session name: ${idlessCommands.join(" | ")}`);
 }
 
 {
@@ -239,17 +260,17 @@ function setEnv(values: { enabled?: boolean; hosts?: BrowserHostDeclaration[]; p
   ok(Object.keys(registeredBrowserToolkit() ?? {}).length > 0, "negative control: …and the tools are registered there");
   ok(extraEgressHosts().includes("qa.example.com"), "negative control: …and the uncredentialed declared host IS opened there");
   ok(resolveBrowserKit("task") !== null, "negative control: …and a worker seat resolves the kit there");
-  process.env.OE_PLATFORM = "self-host";
+  delete process.env.VERCEL;
   ok(resolveBrowserKit("task") === null, "🔴 the resolver refuses off-Vercel even with 20 entries already registered (the second door stays shut)");
-  process.env.OE_PLATFORM = "vercel";
+  process.env.VERCEL = "1";
   ok(resolveBrowserKit("task") !== null, "…and flipping the platform back re-admits it, so the arm above measured the platform and nothing else");
 
   resetBrowserToolkitForTest();
   resetExtraEgressHostsForTest();
 }
 
-if (saved === undefined) delete process.env.OE_PLATFORM;
-else process.env.OE_PLATFORM = saved;
+if (saved === undefined) delete process.env.VERCEL;
+else process.env.VERCEL = saved;
 resetSettingsForTest();
 resetAgentBrowserConfigForTest();
 resetBrowserToolkitForTest();

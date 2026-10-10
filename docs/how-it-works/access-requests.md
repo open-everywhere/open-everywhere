@@ -223,8 +223,11 @@ OE_ACCESS_ADMIN_CHANNEL=C…        # Slack channel that hears "PR opened — me
 OE_ACCESS_CONFIG_REPO=owner/repo  # this deployment's config repo (the grants overlay lives here)
 OE_ACCESS_CONFIG_BASE=main        # optional, default main
 OE_ACCESS_GRANTS_PATH=agent/access/grants.generated.ts   # optional, default shown
-OE_ACCESS_DRY_RUN=1               # optional: taps validate + report, no branch/PR (e2e)
 ```
+
+A dry run is not an environment variable. Set `dryRun: true` in the app's
+`agent/access/access-requests.ts` to make taps validate and report with no branch or PR (e2e).
+It was `OE_ACCESS_DRY_RUN=1` until OPE-2411.
 
 The GitHub App (`OE_GITHUB_APP_*`) needs write access to the config repo — the same
 plane that signs every other bot-PR.

@@ -188,6 +188,7 @@ function assertSnappy(b: AnsweredWake, a: AnsweredWake, label: string): void {
     answerMs,
     `🔴 ${label}: B was answered ${answerMs} ms after arrival, over the ${SEAT_ANSWER_BOUND_MS} ms bound (turn start was ${startMs} ms).`,
   ).toBeLessThan(SEAT_ANSWER_BOUND_MS);
+  // eslint-disable-next-line no-console
   console.log(
     `[ope2269] ${label}: B's turn started +${startMs} ms, answered +${answerMs} ms ` +
       `(bounds ${SEAT_TURN_START_BOUND_MS} / ${SEAT_ANSWER_BOUND_MS} ms)`,

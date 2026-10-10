@@ -54,7 +54,6 @@ export interface ConfigPrProvider {
     title: string;
     body: string;
     token: string;
-    draft?: boolean;
   }): Promise<ConfigPrOutcome>;
 
   listPrFeedback?(args: { repo: string; number: number; token: string }): Promise<readonly ConfigPrFeedback[]>;

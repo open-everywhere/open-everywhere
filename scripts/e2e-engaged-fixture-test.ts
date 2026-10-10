@@ -116,8 +116,8 @@ const ok = (cond: boolean, label: string): void => {
   const s = snapshot();
   const d = s.engaged!;
   ok(
-    d.ambientSupervisor === null,
-    `ADDRESSED-ONLY: ambientSupervisor is UNSET (got ${JSON.stringify(d.ambientSupervisor)}) — since OPE-1695 the absence buys exactly one thing: no UNADDRESSED message wakes this room. The room IS seated (slackDomainUsesUnifiedWindow reads the grain alone now), so the engaged seam runs on the SEAT path — slack-front.ts reaches isThreadEngaged through seatedSurface(). Set the flag and unowned chatter wakes the seat too, which is the posture this fixture exists to exclude`,
+    d.ambientSupervisor === false,
+    `ADDRESSED-ONLY: ambientSupervisor is declared false (got ${JSON.stringify(d.ambientSupervisor)}) — an UNSET flag inherits org's value and then the framework default, which is ON since OPE-2409, so the posture must be WRITTEN. Since OPE-1695 the flag buys exactly one thing: no UNADDRESSED message wakes this room. The room IS seated (slackDomainUsesUnifiedWindow reads the grain alone now), so the engaged seam runs on the SEAT path — slack-front.ts reaches isThreadEngaged through seatedSurface(). Set the flag and unowned chatter wakes the seat too, which is the posture this fixture exists to exclude`,
   );
   ok(
     d.mode === null,
@@ -125,7 +125,7 @@ const ok = (cond: boolean, label: string): void => {
   );
   ok(
     d.nameDropWake === true,
-    "nameDropWake is ON — declared so this fixture asserts its OWN posture rather than inheriting a workspace default. 🔴 IT IS LIVE ON DISCORD AND INERT ON NOTION: discord-gateway.ts reads the flag, so the room OPE-1581 added is the first here it governs, while no packages/providers/notion file reads it at all. Notion's silence is NOT the ambient gate: that gate reads the addressing (OPE-1510), so an addressed comment on a DECLARED page passes it with ambientSupervisor unset. J-ENGAGED-slack's name-drop leg rides the `org` criteria domain's own nameDropWake, because its room is in no explicit domain (OPE-1539) — leg 5 pins THAT knob, which is the one that leg reads",
+    "nameDropWake is ON — declared so this fixture asserts its OWN posture rather than inheriting a workspace default. 🔴 IT IS LIVE ON DISCORD AND INERT ON NOTION: discord-gateway.ts reads the flag, so the room OPE-1581 added is the first here it governs, while no packages/providers/notion file reads it at all. Notion's silence is NOT the ambient gate: that gate reads the addressing (OPE-1510), so an addressed comment on a DECLARED page passes it with ambientSupervisor off. J-ENGAGED-slack's name-drop leg rides the `org` criteria domain's own nameDropWake, because its room is in no explicit domain (OPE-1539) — leg 5 pins THAT knob, which is the one that leg reads",
   );
   ok(d.engagementTier === "neutral", `engagementTier is "neutral" — it overrides GitHub's "reserved" default so every room behaves uniformly (got ${JSON.stringify(d.engagementTier)})`);
   ok(d.memory === "e2e-brain", `the fixture reuses the shared harness brain (got ${JSON.stringify(d.memory)}) — no memory leg lives in these journeys, so it needs no silo of its own`);
@@ -156,8 +156,8 @@ const ok = (cond: boolean, label: string): void => {
   ok(s.org !== null, "the `org` criteria domain is registered — the domain every NO_EXPLICIT_DOMAIN room falls to");
   const org = s.org!;
   ok(
-    org.ambientSupervisor === null,
-    `the \`org\` criteria domain sets NO ambientSupervisor (got ${JSON.stringify(org.ambientSupervisor)}) — J-ENGAGED-slack's room inherits its addressed-only posture from here. Turn this on and a supervisor answers the plain follow-up, so the journey passes on the supervisor rather than the engagement registry`,
+    org.ambientSupervisor === false,
+    `the \`org\` criteria domain declares ambientSupervisor: false (got ${JSON.stringify(org.ambientSupervisor)}) — J-ENGAGED-slack's room inherits its addressed-only posture from here. Drop the line and the framework default (ON since OPE-2409) applies, a supervisor answers the plain follow-up, and the journey passes on the supervisor rather than the engagement registry`,
   );
   ok(
     org.mode === null,

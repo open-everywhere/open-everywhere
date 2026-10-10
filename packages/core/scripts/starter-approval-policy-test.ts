@@ -44,7 +44,7 @@ const templateRulesUrl = new URL("../../create/template/agent/access/pre-approva
 const { PRE_APPROVAL_RULES } = (await import(templateRulesUrl)) as { PRE_APPROVAL_RULES: readonly PreApprovalRule[] };
 const ids = PRE_APPROVAL_RULES.map((r) => r.id);
 await ok(ids.length > 0, "starter rules: the template ships at least one pre-approval rule");
-for (const want of ["pr-asked-for-here", "routine-reports-here", "access-request-asked-for", "connector-write-asked-for-here"]) {
+for (const want of ["pr-asked-for-here", "routine-reports-here", "access-request-asked-for", "connector-write-asked-for-here", "connector-delete-asked-for-here"]) {
   await ok(ids.includes(want), `starter rules: the template ships "${want}"`);
 }
 
@@ -285,11 +285,17 @@ async function verdictRow(kind: string, where: (d: Record<string, unknown>) => b
   await eq(down.autoApproved, undefined, "6 connector fail-closed: an UNREACHABLE judge gives a CARD");
   await eq((await verdictRow("op.connector", (d) => d.source === "error")).enforcedVerdict, "ask", "6 connector fail-closed: the error consult stayed the ask");
 
+  const DELETE = { tool: "notion__delete_block", grain: "destructive" };
   const never: readonly [string, Record<string, unknown>, Record<string, unknown>?][] = [
-    ["a destructive op", { tool: "notion__delete_block", grain: "destructive" }],
-    ["a write frozen with the destructive grain", { grain: "destructive" }],
-    ["a write an operator raised to destructive (connectorOps)", { tool: "notion__update_block" }],
     ["a card frozen with the old blanket grain", { grain: "once" }],
+    ["a card for an op whose name reads as a read", { tool: "notion__search" }],
+    ["an op with no recognised verb (execute_sql)", { tool: "supabase__execute_sql", grain: "destructive", opTier: "destructive" }],
+    ["an op with no recognised verb a server called a write", { tool: "notion__frobnicate_widget", opTier: "write" }],
+    ["a delete on a person's own account", { ...DELETE, credential: "personal" }],
+    ["a delete in a tainted turn", DELETE, { ...ATTENDED, tainted: true }],
+    ["a delete in an unattended run", DELETE, { unattended: true, domain: "team" }],
+    ["a delete in a room with no single domain", DELETE, { unattended: false }],
+    ["a delete whose input the card truncated", { ...DELETE, inputPreview: `${"x".repeat(600)}…` }],
     ["a person's own account", { credential: "personal" }],
     ["an unknown credential", { credential: undefined }],
     ["a tainted turn", {}, { ...ATTENDED, tainted: true }],
@@ -343,6 +349,57 @@ async function verdictRow(kind: string, where: (d: Record<string, unknown>) => b
     await getOperationalStore().clearHalt("test-org", { orgWide: false, level: "domain", scopeKey: "team" }, { clearedBy: "U_OPS" } as never);
   }
 
+  const COVERED_DELETE = "VERDICT: allow\nREASON: the person asked to delete exactly this block\nRULE: connector-delete-asked-for-here";
+  for (const [what, over] of [
+    ["a delete frozen with the destructive grain", DELETE],
+    ["a delete on the flag-off blanket grain", { tool: "notion__delete_block" }],
+    ["a delete-named op frozen with opTier destructive", { ...DELETE, opTier: "destructive" }],
+  ] as const) {
+    const judge = judgeAnswers(COVERED_DELETE);
+    const r = await requestApproval(connectorOp(over) as never, { postCard });
+    await eq(r.autoApproved?.resolvedBy, "judge", `6i connector delete: ${what} the starter delete rule covers runs with NO card`);
+    await eq(judge.calls > 0, true, `6i connector delete: the judge model was asked about ${what}`);
+  }
+  const deleteRows = (await readAudit({ org: "test-org" }))
+    .filter((r) => r.action === "approval.judge.verdict")
+    .map((r) => (r.detail ?? {}) as Record<string, unknown>)
+    .filter((d) => d.action === "op.connector" && d.verdict === "allow" && d.tool === "notion__delete_block");
+  await eq(deleteRows.length, 3, "6i connector delete: one allow row per lifted delete");
+  await eq(deleteRows.every((d) => d.ruleId === "connector-delete-asked-for-here"), true, "6i connector delete: each verdict row CITES connector-delete-asked-for-here");
+  {
+    const judge = judgeAnswers(COVERED);
+    const before = (await readAudit({ org: "test-org" })).filter((r) => r.action === "approval.chain").length;
+    const r = await requestApproval(connectorOp({ tool: "notion__append_block", opTier: "destructive" }) as never, { postCard });
+    await eq(r.autoApproved, undefined, "6i connector delete: a write-named op frozen with opTier destructive CARDS although the write rule is cited");
+    await eq(judge.calls, 0, "6i connector delete: …and the judge model is never asked");
+    await eq((await readAudit({ org: "test-org" })).filter((r) => r.action === "approval.chain").length, before, "6i connector delete: …it never enters the chain");
+    const odd = judgeAnswers(COVERED);
+    await eq((await requestApproval(connectorOp({ opTier: "bogus" }) as never, { postCard })).autoApproved, undefined, "6i connector delete: an unrecognised frozen opTier CARDS (fail closed)");
+    await eq(odd.calls, 0, "6i connector delete: …with no judge call");
+    judgeAnswers(COVERED);
+    const control = await requestApproval(connectorOp({ tool: "notion__append_block", opTier: "write" }) as never, { postCard });
+    await eq(control.autoApproved?.resolvedBy, "judge", "6i control: the same write-named op frozen with opTier write still lifts under the write rule");
+  }
+  {
+    const { setApprovalJudgeCacheStoreForTest } = await import("../agent/access/approval-judge.js");
+    const cache = new Map<string, never>();
+    setApprovalJudgeCacheStoreForTest({ get: (k: string) => cache.get(k), set: (k: string, e: unknown) => void cache.set(k, e as never), delete: (k: string) => void cache.delete(k) } as never);
+    const judge = judgeAnswers(COVERED_DELETE);
+    const same = connectorOp(DELETE);
+    await eq((await requestApproval(same as never, { postCard })).autoApproved?.resolvedBy, "judge", "6i cache: the first identical delete lifts");
+    const callsAfterFirst = judge.calls;
+    await eq((await requestApproval({ ...same } as never, { postCard })).autoApproved?.resolvedBy, "judge", "6i cache: the second identical delete lifts too…");
+    await eq(judge.calls > callsAfterFirst, true, "🔴 6i cache: …but only because the model was ASKED AGAIN, never from a cached allow");
+    await eq(cache.size, 0, "6i cache: no connector allow was written to the session cache");
+    setApprovalJudgeCacheStoreForTest(undefined);
+  }
+  judgeAnswers("VERDICT: allow\nREASON: looks fine");
+  const uncitedDelete = await requestApproval(connectorOp(DELETE) as never, { postCard });
+  await eq(uncitedDelete.autoApproved, undefined, "6i connector delete: an uncited allow of a delete CARDS");
+  judgeAnswers("VERDICT: ask\nREASON: the person did not name this block");
+  const askedDelete = await requestApproval(connectorOp(DELETE) as never, { postCard });
+  await eq(askedDelete.autoApproved, undefined, "6i connector delete: a judge `ask` on a delete CARDS");
+
   judgeAnswers("VERDICT: allow\nREASON: looks fine");
   const lowered = await requestApproval(connectorOp({ tool: "notion__update_page" }) as never, { postCard });
   await eq(lowered.autoApproved, undefined, "6 connector: an OPERATOR approver's allow does not lift a connector card (only the judge does)");
@@ -365,10 +422,10 @@ async function verdictRow(kind: string, where: (d: Record<string, unknown>) => b
   await eq(await seam(opCtx), "not-applicable", "6 connector seam: the next call runs only through a NEW offer…");
   await eq(offers, 2, "6 connector seam: …so each call was judged again (one call per allow)");
   await eq(offered[0]?.credential, "domain", "6 connector seam: the offer carries the credential plane");
-  await eq(getSettings().connectors.opTiering, false, "6 connector seam: (premise) op tiering ships off");
-  overrideSettingsForTest({ connectors: { opTiering: true } } as never);
+  await eq(getSettings().connectors.opTiering, true, "6 connector seam: (premise) op tiering ships on");
+  overrideSettingsForTest({ connectors: { opTiering: false, userPrincipal: false } } as never);
   await seam(opCtx);
-  await eq(offered[2]?.credential, "domain", "6 connector seam: with op tiering ON the offer carries the plane too");
+  await eq(offered[2]?.credential, "domain", "6 connector seam: with op tiering OFF (the blanket card) the offer carries the plane too");
   resetSettingsForTest();
   resetApprovalJudgeCompletion();
   clearApprovalJudgeVerdictCache();

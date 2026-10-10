@@ -1,6 +1,6 @@
 # Linear
 
-Assign or mention Open Everywhere on a Linear issue and it acts as an autonomous teammate — it runs on the issue, does the work, posts its progress back as native Agent Activities, and remembers what it learned scoped per **team** (not per throwaway issue). Opt the team's memory **domain** into ambient mode and it also becomes a **quiet standing teammate on the whole team**: it reads every comment on the team's issues, judges each against the shared engagement bar, and replies in-thread only where it clearly adds something — every silence audited (see [Ambient mode](#ambient-mode--the-standing-team-supervisor-opt-in)).
+Assign or mention Open Everywhere on a Linear issue and it acts as an autonomous teammate — it runs on the issue, does the work, posts its progress back as native Agent Activities, and remembers what it learned scoped per **team** (not per throwaway issue). With ambient mode, which is **on by default**, it also becomes a **quiet standing teammate on the whole team**: it reads every comment on the team's issues, judges each against the shared engagement bar, and replies in-thread only where it clearly adds something — every silence audited (see [Ambient mode](#ambient-mode--the-standing-team-supervisor-on-by-default)).
 
 This page is the Linear-specific setup runbook. For the concept of a *surface* and how surfaces plug in, see [Surfaces](../../extending/surfaces.md). For how memory is scoped per organization and team, see [Memory](../../capabilities/memory.md).
 
@@ -36,8 +36,8 @@ Linear guest/external-member check yet, so `bindLinear` leaves `trust` undefined
 **fails closed to `external`**: a fresh team gets read-only `public` memory at most — never an
 explicit domain's silo, never the `org` brain — team-visible or not. A Linear organization is
 usually one team, but "usually" isn't a security guarantee, so nothing shares by default. To
-unlock domain/org memory, the operator explicitly **vouches** it: set `OE_TRUST=internal` for
-a single-tenant deployment where every Linear team is trusted, or vouch specific teams via a
+unlock domain/org memory, the operator explicitly **vouches** it: set `identity.blanketTrust: "internal"`
+in `agent/settings/settings.ts` for a single-tenant deployment where every Linear team is trusted, or vouch specific teams via a
 `linear/<organization_id>` (workspace-wide) or `linear/<organization_id>/<team_id>` entry in
 `agent/identity/surfaces.ts`. Unvouched, the agent still works the issue (chat-only, no
 shared memory); vouched, normal domain/org resolution applies exactly as it does for any other
@@ -54,7 +54,7 @@ internal surface.
 
 There is **no separate "Agents" section** in Linear — an agent is just an OAuth application that (a) has the **Agent session events** webhook enabled and (b) requests the `app:` scopes. That's what turns a plain OAuth client into an agent.
 
-1. Go to **Linear → Settings → API → OAuth applications → New application** (`linear.app/settings/api/applications/new`; needs workspace admin). Name it (e.g. `Open Everywhere`).
+1. Go to **Linear → Settings → API → OAuth applications → New application** (`linear.app/settings/api/applications/new`; needs workspace admin). Name it (e.g. `Open Everywhere`), and upload [`brand/png/mark-square-1024.png`](../../../brand/png/mark-square-1024.png), the project mark, as its icon. Skip this when you set [`identity.name`](../configuration-reference.md) and chose your own icon: with no name configured the agent presents as the project, so the project mark is its default avatar.
 2. Set a **Callback URL** — this field is required, but you will **not** host a redirect flow (see Step 5 for how the token is minted instead), so any valid URL works, e.g. `https://<your-deploy-url>/eve/v1/linear`.
 3. Enable **Webhooks**, tick the **Agent session events** category, and set the webhook **URL** to:
 
@@ -214,28 +214,31 @@ somebody already wrote. Three things to know:
   it. Agent-session events alone are not enough.
 
 An issue nobody ever addressed the agent on is untouched by this. It wakes only through the ambient
-supervisor below, which is off until a domain opts in — and a stood-down issue is dropped on that
-leg too, which is what makes the stop a stop rather than a note.
+supervisor below, which is on by default and off where a domain sets `ambientSupervisor: false` —
+and a stood-down issue is dropped on that leg too, which is what makes the stop a stop rather than
+a note.
 
-## Ambient mode — the standing team supervisor (opt-in)
+## Ambient mode — the standing team supervisor (on by default)
 
-Beyond the assign/@mention Agent Session flow, the team can opt into the **ambient
-supervisor**: a standing per-team session (the same judge Slack channels, Notion docs, and
+Beyond the assign/@mention Agent Session flow, the team has the **ambient supervisor**
+unless its domain turns it off: a standing per-team session (the same judge Slack channels, Notion docs, and
 GitHub repos use) that reads every comment on the team's issues and steps in only where it
 clearly adds something.
 
 - **Enable the "Comment" data webhook** on the SAME OAuth app (Step 1.3's webhook settings —
   tick the generic **Comments** data category in addition to *Agent session events*). Without
   it, no ambient signal ever arrives.
-- **Opt-in is per domain**: add the team to a memory domain (surface key
-  `linear/<organization_id>/<team_id>`) and set `ambientSupervisor: true`. Fail-closed off
-  until then. A domain can compose Linear teams **with** Slack channels, GitHub repos, and
-  Notion docs — one flag, one shared silo. Every team in the org at once is
-  `reach: ["linear/<organization_id>"]`.
+- **On by default, off per domain** (OPE-2409). The team's memory domain (surface key
+  `linear/<organization_id>/<team_id>`) decides with `ambientSupervisor`. Unset, it inherits the
+  `org` domain's value, and an unset `org` means on. Set `ambientSupervisor: false` to make the
+  team addressed-only. A config that will not load fails closed to off. A domain can compose
+  Linear teams **with** Slack channels, GitHub repos, and Notion docs — one flag, one shared
+  silo. Every team in the org at once is `reach: ["linear/<organization_id>"]`.
 - **A team the supervisor was never asked about says so.** The first such delivery writes a
-  **`linear.ambient_skipped`** audit row naming the surface key, the reason (`no-domain` —
-  nothing routes this team — versus `domain-refused` — a domain does route it but hasn't
-  opted in) and the exact edit to make: `GET /control/v1/audit?since=<iso>&actions=linear.ambient_skipped`.
+  **`linear.ambient_skipped`** audit row naming the surface key, the reason (`domain-refused` —
+  a domain declares `ambientSupervisor: false` and this team inherits it — versus `no-domain` —
+  no domain routes the team and the app has no `org` domain, or the domain set did not load, so
+  the gate failed closed) and the line to change: `GET /control/v1/audit?since=<iso>&actions=linear.ambient_skipped`.
   🔴 **Read it as a config verdict, never as the record of one comment.** The row is written once
   per surface and reason per process — it carries `dedupe: "process"`, and it names no delivery and
   no comment — so it cannot tell you whether a *particular* comment was skipped. A row timed beside
@@ -283,7 +286,7 @@ events*, and no new URL, secret or scope is needed.
   issue) in its filter. Subscribing to every event in the whole workspace has to be spelled out
   deliberately, and a filter naming only the organization is refused at creation.
 - **Only `Issue` deliveries route.** Agent Session deliveries belong to the @mention/assign leg and
-  `Comment` deliveries belong to the [ambient supervisor](#ambient-mode--the-standing-team-supervisor-opt-in)
+  `Comment` deliveries belong to the [ambient supervisor](#ambient-mode--the-standing-team-supervisor-on-by-default)
   above — neither can ever fire a routine, so the three legs never double-handle one delivery. Any
   other Linear model (`Project`, `Cycle`, …) is **not** routed; that is deliberate, not an oversight.
 - **Matchable fields**: `event` (the Linear model, e.g. `Issue`), `action` (`create` / `update` /

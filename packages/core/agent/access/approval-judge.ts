@@ -332,7 +332,7 @@ export async function runApprovalJudge(ctx: ApprovalJudgeContext, opts: RunAppro
   const cacheKey = enforce ? enforcedVerdictCacheKey(ctx) : judgeVerdictCacheKey(ctx.tool);
   const sig = taintSigOf(ctx);
   const rulesSig = rulesSigOf(ctx);
-  const store = cacheStoreFor(enforce);
+  const store = enforce && isConnectorOpTool(ctx.tool) ? undefined : cacheStoreFor(enforce);
   const cached = store?.get(cacheKey);
   if (cached !== undefined) {
     if (cached.taintSig !== sig || cached.rulesSig !== rulesSig) {

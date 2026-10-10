@@ -267,6 +267,26 @@ npm run publish:preview -- --only packages/create
 npm run publish:preview -- --strict            # REVIEW rows fail the run too
 ```
 
+### Rehearse the upgrade before you publish
+
+`oe upgrade --from <dir>` takes the release packed in `<dir>`, not the release on the registry. So
+you can prove the upgrade on a real app with the command a consumer runs, before npm holds
+the release. Pack the release commit, then run the command in a scratch copy of an app on the
+previous release:
+
+```bash
+npm run build:packages
+npm pack --workspaces --pack-destination /tmp/oe-release     # in this repository's checkout
+npx oe upgrade --plan --from /tmp/oe-release                  # in the app: the plan, nothing written
+npx oe upgrade --from /tmp/oe-release                         # in the app: the seven steps
+```
+
+The run pins each `@open-everywhere/*` package to `file:<its tarball>`, so do not commit the app's
+`package.json` or lockfile. `eve` still comes from the registry. Leg 8 of
+`scripts/oe-upgrade-packed-test.ts` proves the rehearsal with the real npm against a registry that
+does not hold the target. [Consuming as packages](../deploy/consuming-as-packages.md#upgrading)
+says what the command does.
+
 ## Versions track milestones, not merges
 
 **One version per milestone.** Not one per batch merge, and not one per pull request.

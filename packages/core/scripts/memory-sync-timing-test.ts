@@ -1,5 +1,4 @@
 process.env.OE_SQLITE_PATH = ":memory:";
-delete process.env.OE_MEMORY_SYNC_TIMING;
 
 import assert from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -9,9 +8,12 @@ import { registerProvider, type MemoryProvider } from "../agent/memory/provider.
 import { siloTier, tierId, type MemoryFiles, type Tier } from "../agent/memory/store.js";
 import type { Partition } from "../agent/memory/partition.js";
 import { readAudit } from "../agent/audit/audit.js";
+import { overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
+
+resetSettingsForTest();
 import {
   MEMORY_SYNC_TIMING_ACTION,
-  OE_MEMORY_SYNC_TIMING_ENV,
+  MEMORY_SYNC_TIMING_SETTING,
   SILO_DETAIL_KEYS,
   SYNC_DETAIL_KEYS,
   byteSize,
@@ -212,11 +214,11 @@ async function syncRows(): Promise<AuditWireEntry[]> {
 }
 
 {
-  ok(memorySyncTimingEnabled() === false, "OE_MEMORY_SYNC_TIMING defaults OFF (a measurement flag is opt-in)");
+  ok(memorySyncTimingEnabled() === false, `${MEMORY_SYNC_TIMING_SETTING} defaults OFF (a measurement flag is opt-in)`);
   ok(startMemorySyncTiming() === null, "flag OFF ⇒ startMemorySyncTiming() returns NULL, not a no-op collector — nothing is allocated on the default path");
-  process.env[OE_MEMORY_SYNC_TIMING_ENV] = "0";
-  ok(startMemorySyncTiming() === null, "only the literal '1' arms it (a stray '0' does not)");
-  delete process.env[OE_MEMORY_SYNC_TIMING_ENV];
+  process.env.OE_MEMORY_SYNC_TIMING = "1";
+  ok(startMemorySyncTiming() === null, "🔴 the retired env var arms NOTHING (OPE-2411) — the setting is the only switch");
+  delete process.env.OE_MEMORY_SYNC_TIMING;
   ok(DRIVER_ACTION === MEMORY_SYNC_TIMING_ACTION, "the e2e driver's duplicated action key still matches the producer's exported constant");
 }
 
@@ -238,7 +240,7 @@ let offCounts: { readTier: number; ensureTier: number; roReads: number; writes: 
   };
 }
 
-process.env[OE_MEMORY_SYNC_TIMING_ENV] = "1";
+overrideSettingsForTest({ memory: { syncTiming: true } });
 let armedRow: AuditWireEntry;
 {
   const readsBefore = brain.calls.readTier;
@@ -412,6 +414,6 @@ function leakSurfaceOf(row: unknown): string {
   ok(attributeBoot(session, rows, "sess-broken")!.gaps.some((g) => g.includes("FAILED")), "a failed silo is a NAMED gap in the attribution, not a silent null");
 }
 
-delete process.env[OE_MEMORY_SYNC_TIMING_ENV];
+resetSettingsForTest();
 
 console.log(`\n✓ memory-sync-timing: ${n} assertions passed (flag OFF is a structural no-op + no row; flag ON emits one per-session row with per-silo load/sync/lock/files/bytes + the once-per-session sandbox cold-create; work is unchanged by arming; TAINT holds — bodies, unknown fields and provider error text all refused; boot decomposes into hook + unattributed)\n`);

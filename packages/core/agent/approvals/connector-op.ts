@@ -26,6 +26,7 @@ interface ConnectorOpArgs {
   readonly tool: string;
   readonly connection: string;
   readonly grain: ConnectorOpCardOffer["grain"];
+  readonly opTier?: ConnectorOpCardOffer["opTier"];
   readonly sessionKey: string;
   readonly memoKind: string;
   readonly inputPreview: string;
@@ -115,6 +116,7 @@ export function connectorOpArgsFromOffer(offer: ConnectorOpCardOffer, room: { re
     tool: offer.tool,
     connection: offer.connection,
     grain: offer.grain,
+    ...(offer.opTier === undefined ? {} : { opTier: offer.opTier }),
     sessionKey: offer.sessionKey,
     memoKind: offer.memoKind,
     inputPreview: offer.inputPreview,

@@ -6,6 +6,7 @@ import {
   normalizeSourceIp,
   PolicyStore,
   validatePolicy,
+  validateHostPlanePolicy,
   type EgressPolicy,
 } from "./acl.ts";
 import {
@@ -138,6 +139,68 @@ const ok = (cond: boolean, label: string) => {
 }
 
 {
+  const TOKEN = "s3cret";
+  const APP_IP = "172.20.0.3";
+  const store = new PolicyStore();
+  store.set(APP_IP, { allow: { "api.notion.com": [] } });
+
+  const early = handleAcl(store, { src: APP_IP, host: "ai-gateway.vercel.sh", auth: `Bearer ${TOKEN}` }, TOKEN);
+  ok(early.evaluated && !early.decision.allow, "host plane: the credential before any host-plane push → deny");
+
+  ok(handlePolicyPush(store, { body: { plane: "host", hostPlane: { allow: ["ai-gateway.vercel.sh"] } }, remoteAddr: APP_IP, authOk: false }).status === 401, "host-plane push without auth → 401");
+  ok(handlePolicyPush(store, { body: { plane: "host", hostPlane: "allow-all" }, remoteAddr: APP_IP, authOk: true }).status === 400, "host-plane push of allow-all → 400 (never an open plane)");
+  ok(handlePolicyPush(store, { body: { plane: "host", hostPlane: { allow: ["*.vercel.sh"] } }, remoteAddr: APP_IP, authOk: true }).status === 400, "host-plane push with a wildcard → 400");
+  ok(handlePolicyPush(store, { body: { plane: "host", hostPlane: { allow: { "ai-gateway.vercel.sh": [] } } }, remoteAddr: APP_IP, authOk: true }).status === 400, "host-plane push with a rule map → 400 (no injection on this plane)");
+  ok(handlePolicyPush(store, { body: { plane: "host", hostPlane: { allow: [] } }, remoteAddr: APP_IP, authOk: true }).status === 400, "host-plane push with an empty list → 400");
+  ok(handlePolicyPush(store, { body: { plane: "other", policy: "deny-all" }, remoteAddr: APP_IP, authOk: true }).status === 400, "an unknown plane → 400");
+  ok(handlePolicyPush(store, { body: { plane: "host", policy: { allow: ["ai-gateway.vercel.sh"] } }, remoteAddr: APP_IP, authOk: true }).status === 400, "a host-plane push that carries `policy` → 400 (the list travels in `hostPlane` only)");
+  let oldProxyRefuses = false;
+  try {
+    validatePolicy(({ plane: "host", hostPlane: { allow: ["ai-gateway.vercel.sh"] } } as Record<string, unknown>).policy);
+  } catch {
+    oldProxyRefuses = true;
+  }
+  ok(oldProxyRefuses, "🔴 an older proxy's validatePolicy refuses the host-plane body (no `policy` field), so skew fails closed");
+  const pushed = handlePolicyPush(store, { body: { plane: "host", hostPlane: { allow: ["AI-Gateway.vercel.sh."] } }, remoteAddr: APP_IP, authOk: true });
+  ok(pushed.status === 200 && pushed.keyed === "host-plane", "a valid host-plane push → 200, stored on the host plane");
+  ok(store.size() === 1, "…and it adds NO per-source entry: the host plane is never keyed by an IP");
+  ok(store.decide(APP_IP, { host: "ai-gateway.vercel.sh" }).allow === false, "…and the app IP's SESSION policy still does not list the gateway");
+
+  const app = handleAcl(store, { src: APP_IP, host: "ai-gateway.vercel.sh:443", method: "CONNECT", auth: `Bearer ${TOKEN}` }, TOKEN);
+  ok(app.evaluated && app.decision.allow, "🔴 the APP's credentialed model call to the gateway → allow");
+  const session = handleAcl(store, { src: APP_IP, host: "ai-gateway.vercel.sh:443", method: "CONNECT", auth: "-" }, TOKEN);
+  ok(session.evaluated && !session.decision.allow, "🔴 the SESSION (no credential, same IP) to the gateway → deny: the host plane does not widen a session");
+  const sessionOwn = handleAcl(store, { src: APP_IP, host: "api.notion.com", auth: "-" }, TOKEN);
+  ok(sessionOwn.decision.allow, "the session still reaches its own declared host (positive control)");
+  const appOther = handleAcl(store, { src: APP_IP, host: "pastebin.com", auth: `Bearer ${TOKEN}` }, TOKEN);
+  ok(!appOther.decision.allow, "the credential to an undeclared host → deny");
+  const appSessionHost = handleAcl(store, { src: APP_IP, host: "api.notion.com", auth: `Bearer ${TOKEN}` }, TOKEN);
+  ok(!appSessionHost.decision.allow, "the credential never falls through to the session policy");
+  const wrong = handleAcl(store, { src: APP_IP, host: "ai-gateway.vercel.sh", auth: "Bearer wrong!" }, TOKEN);
+  ok(wrong.evaluated && !wrong.decision.allow, "a wrong credential → deny (never the session policy either)");
+  const wrongToSession = handleAcl(store, { src: APP_IP, host: "api.notion.com", auth: "Bearer wrong!" }, TOKEN);
+  ok(!wrongToSession.decision.allow, "a wrong credential to a session host → deny");
+  const noToken = handleAcl(store, { src: APP_IP, host: "ai-gateway.vercel.sh", auth: `Bearer ${TOKEN}` });
+  ok(!noToken.decision.allow, "a control service with no token in hand denies every credentialed request");
+  const otherSrc = handleAcl(store, { src: "172.20.0.9", host: "ai-gateway.vercel.sh", auth: `Bearer ${TOKEN}` }, TOKEN);
+  ok(otherSrc.decision.allow, "the host plane follows the credential, not the address");
+
+  store.set(APP_IP, "deny-all");
+  ok(handleAcl(store, { src: APP_IP, host: "ai-gateway.vercel.sh", auth: `Bearer ${TOKEN}` }, TOKEN).decision.allow, "🔴 a session deny-all (compile failure) no longer cuts the app's model call");
+  ok(!handleAcl(store, { src: APP_IP, host: "api.notion.com", auth: "-" }, TOKEN).decision.allow, "…while the session itself is cut");
+
+  let threw = false;
+  try {
+    validateHostPlanePolicy({ allow: ["ok.example", ""] });
+  } catch {
+    threw = true;
+  }
+  ok(threw, "validateHostPlanePolicy refuses an empty host entry");
+  const v = validateHostPlanePolicy({ allow: ["Gateway.Example:443"] });
+  ok(JSON.stringify(v) === JSON.stringify({ allow: ["gateway.example"] }), "validateHostPlanePolicy normalises each host");
+}
+
+{
   ok(isLoopbackAddr("127.0.0.1"), "IPv4 loopback → /acl allowed (the in-container helper)");
   ok(isLoopbackAddr("127.1.2.3"), "any 127.0.0.0/8 address is loopback");
   ok(isLoopbackAddr("::1"), "IPv6 loopback is loopback");
@@ -182,4 +245,4 @@ const ok = (cond: boolean, label: string) => {
   ok(!bearerMatches("Bearer ", "s3cret"), "an empty bearer value does not match");
 }
 
-console.log(`\n✓ egress-proxy control: ${n} assertions passed (ACL match + wildcard + Tier A/B narrowing + store fail-closed + push/acl handlers + /acl loopback gate + token-required boot + bearer check)\n`);
+console.log(`\n✓ egress-proxy control: ${n} assertions passed (ACL match + wildcard + Tier A/B narrowing + store fail-closed + push/acl handlers + host plane + /acl loopback gate + token-required boot + bearer check)\n`);

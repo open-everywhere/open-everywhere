@@ -6,13 +6,14 @@ import { join } from "node:path";
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { removeTempDir } from "./_temp-dir.js";
+import { setPlatformStandInForTest } from "../agent/identity/binding.js";
 registerSlackFixtureMapper();
 
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-connector-user-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: undefined });
-process.env.OE_PLATFORM = "slack";
+setPlatformStandInForTest("slack");
 process.env.NOTION_API_KEY = "STATIC-TEAM-KEY";
 process.env.NOTION_TEAM = "BOUND-TEAM-KEY";
 
@@ -51,7 +52,7 @@ const {
   connectorUserPrincipalEnabled,
   connectorLinkSetVaultEnabled,
 } = await import("../agent/connections/connector-flags.js");
-const { registerSettings, resetSettingsForTest } = await import("../agent/settings/settings.js");
+const { overrideSettingsForTest, registerSettings, resetSettingsForTest } = await import("../agent/settings/settings.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { sharedVaultSubject, rawVaultSubject } = await import("../agent/identity/oauth-vault-share.js");
 const { setLinkSetHold, revokeLinkSet } = await import("../agent/identity/link-store.js");
@@ -150,9 +151,9 @@ function eveContextStorage(): AsyncLocalStorage<unknown> {
 }
 
 resetSettingsForTest();
-ok(!connectorUserPrincipalEnabled(), "connectors.userPrincipal unregistered → OFF (the shipped default, flag-off byte-identical)");
-registerSettings({ connectors: { userPrincipal: true } });
-ok(connectorUserPrincipalEnabled(), "connectors.userPrincipal: true → ON");
+ok(connectorUserPrincipalEnabled(), "🔴 connectors.userPrincipal unregistered → ON (the shipped default since OPE-2414: a DM signs in as the person)");
+registerSettings({ connectors: { userPrincipal: false } });
+ok(!connectorUserPrincipalEnabled(), "connectors.userPrincipal: false → OFF (the opt-out)");
 resetSettingsForTest();
 
 {
@@ -255,10 +256,20 @@ await eveContextStorage().run(new FakeSession(), async () => {
 }
 
 {
+  registerSettings({ connectors: { dmOnly: true, opTiering: false, userPrincipal: false } });
   const m = makeMinter("ok");
   const r = await getToken(channelAuth, m);
   ok(r.token === undefined && /DM-only/.test(r.err ?? ""), "channel + wall ON → refused DM-only (A1 composes with the re-armed wall)");
   ok(m.calls.length === 0, "A1 mints NOTHING on a non-DM seat — the wall fires first, minter never called");
+  resetSettingsForTest();
+}
+
+{
+  resetSettingsForTest();
+  const m = makeMinter("ok");
+  const r = await getToken(channelAuth, m);
+  ok(r.token === "BOUND-TEAM-KEY", "🔴 shipped posture: a channel resolves the app credential the grant NAMES — never the user's");
+  ok(m.calls.length === 0, "🔴 shipped posture: no per-user mint on a channel");
 }
 
 {
@@ -273,7 +284,8 @@ await eveContextStorage().run(new FakeSession(), async () => {
 
 {
   resetSettingsForTest();
-  ok(!connectorLinkSetVaultEnabled(), "C.3: connectors.linkSetVault unregistered → OFF (the shipped default, raw-principal keying)");
+  ok(connectorLinkSetVaultEnabled(), "🔴 C.3: connectors.linkSetVault unregistered → ON (the shipped default since OPE-2414: one consent covers a person's linked accounts)");
+  registerSettings({ connectors: { linkSetVault: false } });
 
   const org = deploymentOrg();
   const store = getOperationalStore();
@@ -311,9 +323,16 @@ await eveContextStorage().run(new FakeSession(), async () => {
   }
 
   {
+    overrideSettingsForTest({ connectors: { dmOnly: true, opTiering: false, userPrincipal: false } });
     const m = makeMinter("ok");
     const r = await getToken(channelAuth, m);
     ok(r.token === undefined && /DM-only/.test(r.err ?? "") && m.calls.length === 0, "C.3: channel + wall on → refused DM-only, derivation never reached (threat f)");
+    overrideSettingsForTest({ connectors: { dmOnly: false, opTiering: true } });
+  }
+  {
+    const m = makeMinter("ok");
+    const r = await getToken(channelAuth, m);
+    ok(r.token === "BOUND-TEAM-KEY" && m.calls.length === 0, "C.3: channel on the shipped posture → the app credential, derivation never reached (threat f)");
   }
 
   await revokeLinkSet({ org, linkSetId: SET, actor: "admin" });

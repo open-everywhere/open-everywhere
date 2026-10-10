@@ -1,6 +1,7 @@
 process.env.OE_SQLITE_PATH = ":memory:";
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readAudit } from "../agent/audit/audit.js";
 import type { SessionTailEntry } from "../agent/channels/session-tail.js";
 import { getOrCreateDmSeat, touchDmSeat, dmSeatThresholds, DM_SEAT_ROTATE_TURN_BUDGET, DM_SEAT_ROTATE_TOKEN_BUDGET, DM_SEAT_ROTATE_EXPIRY_MS } from "../agent/channels/dm-seat.js";
@@ -272,6 +273,12 @@ function makeStore(...seeds: (Partial<ChannelSessionRow> & { surfaceKey: string 
   eq(dmSeatThresholds().turnBudget, DM_SEAT_ROTATE_TURN_BUDGET, "…and the DM turn backstop");
   eq(dmSeatThresholds().tokenBudget, DM_SEAT_ROTATE_TOKEN_BUDGET, "…and the DM token backstop");
   ok(dmSeatThresholds().quietGapMs !== supervisorRotateQuietGapMs(), "🔴 the DM quiet-gap is NOT the channel supervisor's 12h — the mechanism unified, the policy did not");
+  const probe = spawnSync(
+    process.execPath,
+    ["--import", "tsx", "--input-type=module", "-e", `const m = await import(${JSON.stringify(new URL("../agent/channels/dm-seat.ts", import.meta.url).href)}); process.stdout.write(String(m.dmSeatThresholds().quietGapMs));`],
+    { env: { ...process.env, OE_DM_SEAT_ROTATE_QUIET_GAP_HOURS: "1" }, encoding: "utf8" },
+  );
+  eq(probe.stdout.trim(), "Infinity", "🔴 the deleted OE_DM_SEAT_ROTATE_QUIET_GAP_HOURS=1 does NOT arm a DM quiet gap (OPE-2410)");
   ok(DM_SEAT_ROTATE_EXPIRY_MS !== supervisorRotateExpiryMs(), "🔴 the DM expiry clock is NOT the unified window's");
   ok(DM_SEAT_ROTATE_TURN_BUDGET !== supervisorRotateTurnBudget(), "🔴 the DM turn backstop is NOT the supervisor's");
   ok(DM_SEAT_ROTATE_TOKEN_BUDGET !== supervisorRotateTokenBudget(), "🔴 the DM token backstop is NOT the supervisor's");

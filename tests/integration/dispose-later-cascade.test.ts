@@ -1,9 +1,10 @@
+import { __setTestValveForTest } from "@open-everywhere/core/agent/testing/test-valves.js";
 import { expect, test } from "vitest";
 
 import { ANY_SESSION, registerScript, scriptedStore } from "../../agent/model/scripted-model";
 import { disposeLater } from "./harness";
 
-process.env.OE_SCRIPTED_MODEL = "1";
+__setTestValveForTest("scripted-model", true);
 
 test("OPE-768 — THE BUG, reproduced directly: an inline-only dispose leaks when the code between registration and that dispose throws first", () => {
   const store = scriptedStore();

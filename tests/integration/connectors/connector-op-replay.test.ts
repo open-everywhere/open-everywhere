@@ -26,10 +26,6 @@ import {
 import { installHostFetchStub } from "../fetch-stub";
 
 const NOTION_OAUTH_PROVIDER_REF = "mcp.notion.com/notion-mcp";
-process.env.OE_OAUTH_ENABLED = "1";
-process.env.OE_OAUTH_CONFIG = JSON.stringify({
-  [NOTION_OAUTH_PROVIDER_REF]: { mode: "discovery-dcr-pkce", resource: "https://mcp.notion.com/mcp" },
-});
 
 const OPERATOR_ID = "U0EXOWNER";
 const DM_CHANNEL_ID = "D0IT2388OPERATOR";

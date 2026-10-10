@@ -205,3 +205,5 @@ eq(
 eq(await approve(ctxFor("linear__search")), "not-applicable", "live gate: the same op name on an undeclared connector is untouched");
 
 console.log(`✓ connector-op-gating: ${passed} assertions passed`);
+
+// proves: AP-MOD-core-access-connector-op-gating

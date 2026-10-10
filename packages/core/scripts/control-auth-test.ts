@@ -25,6 +25,7 @@ import {
   type RoleRule,
 } from "../agent/control/auth.js";
 import { createAdminHttpServer } from "../agent/control/http.js";
+import { defineSettings, overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
 import { CONTROL_TOOL_NAMES } from "../agent/control/server.js";
 import { CONTROL_WRITE_TOOL_NAMES } from "../agent/control/writes.js";
 import { readAudit } from "../agent/audit/audit.js";
@@ -75,7 +76,13 @@ ok("wrong issuer is rejected", (await oidc(await token({ sub: "g-1" }, { iss: "h
 ok("expired token is rejected", (await oidc(await token({ sub: "g-1" }, { expSecondsFromNow: -3600 }), reqWith())) === null);
 {
   const t = await token({ sub: "g-1", email: "x@y.com", email_verified: true });
-  ok("tampered token is rejected", (await oidc(t.slice(0, -3) + "AAA", reqWith())) === null);
+  const [head, body, sig] = t.split(".");
+  const sigBytes = Buffer.from(sig, "base64url");
+  sigBytes[sigBytes.length >> 1] ^= 0x01;
+  const tampered = `${head}.${body}.${sigBytes.toString("base64url")}`;
+  ok("the tamper changes the signature bytes", !sigBytes.equals(Buffer.from(sig, "base64url")) && tampered !== t);
+  ok("the tamper keeps header + claims, so only the signature can reject it", tampered.startsWith(`${head}.${body}.`));
+  ok("tampered token is rejected", (await oidc(tampered, reqWith())) === null);
   const unverified = await oidc(await token({ sub: "g-2", email: "rowan@x.com", email_verified: false }), reqWith());
   ok("token with email_verified:false yields emailVerified=false", unverified?.emailVerified === false);
 }
@@ -254,7 +261,8 @@ const SVC_SHA = createHash("sha256").update(SVC_SECRET, "utf-8").digest("hex");
 }
 
 {
-  for (const k of ["OE_ADMIN_OIDC_ISSUER", "OE_ADMIN_OIDC_AUDIENCE", "OE_ADMIN_GITHUB", "OE_ADMIN_STATIC_TOKEN", "OE_ADMIN_ROLE_RULES", "OE_CONTROL_READ_TOKENS"]) delete process.env[k];
+  for (const k of ["OE_ADMIN_OIDC_ISSUER", "OE_ADMIN_OIDC_AUDIENCE", "OE_ADMIN_STATIC_TOKEN", "OE_CONTROL_READ_TOKENS"]) delete process.env[k];
+  resetSettingsForTest();
   ok("fromEnv: nothing configured -> null (fail-closed, unchanged)", adminAuthenticatorFromEnv() === null);
 
   process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SVC_SHA}`;
@@ -263,6 +271,34 @@ const SVC_SHA = createHash("sha256").update(SVC_SECRET, "utf-8").digest("hex");
   ok("fromEnv: the service token authenticates as its svc principal", (await fromEnv!(reqWith(SVC_SECRET)))?.subject === "svc:e2e-harness");
   ok("fromEnv: garbage bearer is still refused", (await fromEnv!(reqWith("garbage"))) === null);
   delete process.env.OE_CONTROL_READ_TOKENS;
+}
+
+{
+  resetSettingsForTest();
+  ok("settings: control.githubAdmin off (shipped) + nothing else configured -> null", adminAuthenticatorFromEnv() === null);
+  overrideSettingsForTest({ control: { githubAdmin: true } });
+  ok("settings: control.githubAdmin on arms the authenticator with nothing in env", adminAuthenticatorFromEnv() !== null);
+  resetSettingsForTest();
+
+  process.env.OE_ADMIN_STATIC_TOKEN = "s3cret-2411";
+  overrideSettingsForTest({ control: { adminRoleRules: [{ roles: ["domain:finance"], issuer: "static" }] } });
+  const ruled = await adminAuthenticatorFromEnv()!(reqWith("s3cret-2411"));
+  ok(
+    "settings: a control.adminRoleRules rule grants its roles to a matching identity",
+    ruled !== null && ruled.roles.includes("domain:finance") && ruled.roles.includes("admin"),
+  );
+  resetSettingsForTest();
+  const unruled = await adminAuthenticatorFromEnv()!(reqWith("s3cret-2411"));
+  ok("settings: …and with no declared rule the identity holds only the implied admin role", unruled !== null && !unruled.roles.includes("domain:finance"));
+  delete process.env.OE_ADMIN_STATIC_TOKEN;
+
+  let refused = "";
+  try {
+    defineSettings({ control: { adminRoleRules: [{ roles: ["admin"] }] } });
+  } catch (err) {
+    refused = String(err);
+  }
+  ok("settings: defineSettings refuses an admin role rule that names no matcher", refused.includes("control.adminRoleRules") && refused.includes("names no matcher"));
 }
 
 {

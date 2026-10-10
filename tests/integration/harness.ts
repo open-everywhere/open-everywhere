@@ -1,3 +1,4 @@
+import { __setTestValveForTest } from "@open-everywhere/core/agent/testing/test-valves.js";
 import { createHash, createHmac, generateKeyPairSync, randomBytes, sign as signEd25519 } from "node:crypto";
 import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -19,7 +20,6 @@ import {
 export type { AuditCursor } from "./audit-cursor";
 import { REDELIVERY_SIGNATURE, REDELIVERY_STORM_THRESHOLD, RedeliveryStormGuard } from "./redelivery-storm-guard";
 import { installHostFetchStub } from "./fetch-stub";
-import { INTEGRATION_SANDBOX_BACKEND } from "./global-setup-contract";
 import { copyPgliteTemplateInto } from "./pglite-template";
 import { createStateDir } from "./state-dir";
 
@@ -428,9 +428,9 @@ export async function bootAgent(opts: BootOptions = {}): Promise<{ base: string 
   }
 
   const state = createStateDir();
-  process.env.OE_SCRIPTED_MODEL = "1";
-  if (opts.stubbedProviderTransport === true) delete process.env.OE_EGRESS_SPOOF;
-  else process.env.OE_EGRESS_SPOOF = "1";
+  __setTestValveForTest("scripted-model", true);
+  if (opts.stubbedProviderTransport === true) __setTestValveForTest("egress-spoof", false);
+  else __setTestValveForTest("egress-spoof", true);
   process.env.OE_RELAY_SECRET = RELAY_SECRET;
   process.env.OE_CONTROL_READ_TOKENS = `${READ_TOKEN_NAME}:${createHash("sha256").update(READ_TOKEN, "utf8").digest("hex")}`;
   process.env.OE_WEBHOOK_E2E_SECRET = WEBHOOK_E2E_SECRET;
@@ -457,7 +457,6 @@ export async function bootAgent(opts: BootOptions = {}): Promise<{ base: string 
   process.env.OE_MEMORY_DIR = join(state, "memory");
 
   rmSync(join(ROOT, ".eve", ".workflow-data"), { recursive: true, force: true });
-  process.env.OE_SANDBOX_BACKEND = INTEGRATION_SANDBOX_BACKEND;
 
   const reserved = await reserveEphemeralPort();
   process.env.PORT = String(reserved.port);

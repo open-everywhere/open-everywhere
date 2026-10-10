@@ -31,6 +31,7 @@ test:sandbox-firewall
 test:network-access
 test:identity
 test:tenant-admission
+test:store-floor-settings
 test:identity-links
 test:link-flow
 test:link-tenant
@@ -49,6 +50,7 @@ test:settings
 test:policy-pages
 test:capabilities
 test:resolver
+test:mcp-servers
 test:roles
 test:governance
 test:connector-disclosure
@@ -73,6 +75,7 @@ test:connector-approval-model
 test:connector-unattended-fence
 test:connector-op-gating
 test:connector-op-arm
+test:connector-op-hint
 test:connector-op-audit
 test:provider
 test:memory-resolve
@@ -175,6 +178,7 @@ test:edit-reply
 test:terminal-failure-semantics
 test:surface-message-ops
 test:egress-spoof
+test:test-valves
 test:onboarding
 test:control
 test:control-http
@@ -362,6 +366,7 @@ test:read-channel-e2e
 test:connector-card-e2e
 test:e2e-gate-joins
 test:e2e-halt-cleanup
+test:e2e-qa-repo
 test:credential-narrowing
 test:connector-transport-host-fence
 test:credential-broker

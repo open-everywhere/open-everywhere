@@ -182,6 +182,18 @@ async function waitForStdout(getStdout: () => string, substring: string, timeout
     const aclDeny = await fetch(`${base}/acl?src=172.20.0.5&host=pastebin.test&method=CONNECT&path=-`);
     ok(((await aclDeny.json()) as { allow: boolean }).allow === false, "GET /acl still denies an unlisted host");
 
+    const acl2 = async (q: string) => ((await (await fetch(`${base}/acl?${q}`)).json()) as { allow: boolean }).allow;
+    const cred = encodeURIComponent(`Bearer ${TOKEN}`);
+    ok((await acl2(`src=172.20.0.5&host=ai-gateway.vercel.sh&auth=${cred}`)) === false, "host plane: the credential before a host-plane push → deny");
+    const hp = await push({ authorization: `Bearer ${TOKEN}` }, { plane: "host", hostPlane: { allow: ["ai-gateway.vercel.sh"] } });
+    ok(hp.status === 200, "POST /policy {plane:host} with the token → 200");
+    ok((await acl2(`src=172.20.0.5&host=ai-gateway.vercel.sh&method=CONNECT&path=-&auth=${cred}`)) === true, "🔴 GET /acl: the credentialed app request to the gateway → allow");
+    ok((await acl2(`src=172.20.0.5&host=ai-gateway.vercel.sh&method=CONNECT&path=-&auth=-`)) === false, "🔴 GET /acl: the same request with no credential (a session) → deny");
+    ok((await acl2(`src=172.20.0.5&host=ai-gateway.vercel.sh&auth=${encodeURIComponent("Bearer nope")}`)) === false, "GET /acl: a wrong credential → deny");
+    ok((await acl2(`src=172.20.0.5&host=github.com&auth=${cred}`)) === false, "GET /acl: the credential never reaches the session policy");
+    const hz = (await (await fetch(`${base}/healthz`)).json()) as { hostPlane?: boolean };
+    ok(hz.hostPlane === true, "/healthz reports that a host plane is set");
+
     const delAnon = await fetch(`${base}/policy?sourceIp=172.20.0.5`, { method: "DELETE" });
     ok(delAnon.status === 401, "DELETE /policy without the token → 401");
     const stillThere = await fetch(`${base}/acl?src=172.20.0.5&host=github.com&method=CONNECT&path=-`);
@@ -200,4 +212,4 @@ async function waitForStdout(getStdout: () => string, substring: string, timeout
   }
 }
 
-console.log(`\n✓ egress-proxy control server: ${n} assertions passed (boot refusal without a token + /policy bearer gate + /acl loopback path intact)\n`);
+console.log(`\n✓ egress-proxy control server: ${n} assertions passed (boot refusal without a token + /policy bearer gate + /acl loopback path intact + host plane)\n`);

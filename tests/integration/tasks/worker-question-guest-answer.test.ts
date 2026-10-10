@@ -28,8 +28,10 @@ const MEMBER_USER_ID = "U0OPE2348MEM";
 const GUEST_USER_ID = "U0OPE2348GST";
 
 const cleanups: (() => void)[] = [];
-afterAll(() => {
+afterAll(async () => {
   for (const c of cleanups.splice(0)) c();
+  const settings = await import("@open-everywhere/core/agent/settings/settings.js");
+  settings.resetSettingsForTest();
 });
 
 let stub: SlackWebApiStub | undefined;
@@ -45,6 +47,8 @@ function userInfo(id: string, name: string, guest: boolean): Record<string, unkn
 
 async function armSeams(): Promise<void> {
   await bootAgent();
+  const settings = await import("@open-everywhere/core/agent/settings/settings.js");
+  settings.overrideSettingsForTest({ externalPolicy: { authorGrain: "taint", roomGrain: "engage" } });
   if (!stub) {
     const installed = installSlackWebApiStub((method, params) => {
       switch (method) {

@@ -8,7 +8,10 @@ interface BoundBrowserConfig {
   readonly autoInstall: boolean;
   readonly contentBoundaries: boolean;
   readonly inlineScreenshots: boolean;
+  readonly session?: string;
 }
+
+export const BROWSER_SESSION_NAME = "oe-browser";
 
 export function registerAgentBrowser(cfg: AgentBrowserConfig): boolean {
   browserExtension({
@@ -16,6 +19,7 @@ export function registerAgentBrowser(cfg: AgentBrowserConfig): boolean {
     autoInstall: false,
     contentBoundaries: true,
     inlineScreenshots: false,
+    session: BROWSER_SESSION_NAME,
   });
 
   const bound = browserExtension.config as unknown as BoundBrowserConfig;
@@ -23,7 +27,7 @@ export function registerAgentBrowser(cfg: AgentBrowserConfig): boolean {
     Array.isArray(bound.allowedDomains) &&
     bound.allowedDomains.length === cfg.domains.length &&
     cfg.domains.every((d, i) => bound.allowedDomains![i] === d);
-  if (bound.autoInstall !== false || !domainsBound) {
+  if (bound.autoInstall !== false || !domainsBound || bound.session !== BROWSER_SESSION_NAME) {
     console.error(
       "[open-everywhere:agent-browser] extension config binding FAILED (namespace patch missing? see patches/@agent-browser+eve+*.patch) — " +
         "REFUSING to arm the browser toolkit: unbound tools would run with vendor defaults (auto-install on, no domain containment).",

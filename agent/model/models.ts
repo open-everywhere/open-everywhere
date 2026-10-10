@@ -9,14 +9,15 @@ import { resolveStack, type ModelRole, type ModelRoleSpec, type ModelStack } fro
 
 export type { ModelRoleSpec, ModelStack } from "./stacks.js";
 
-const STACK_ALIAS = getSettings(process.env, SETTINGS_OVERRIDES).models.stack;
+const MODEL_SETTINGS = getSettings(SETTINGS_OVERRIDES).models;
+const STACK_ALIAS = MODEL_SETTINGS.stack;
 
 const STACK: ModelStack = resolveStack(STACK_ALIAS, {});
 
 registerDefaultAgentModelId(STACK.primary.id);
 
 export const MODELS = {
-  primary: { ...STACK.primary, id: defaultAgentModelId() },
+  primary: { ...STACK.primary, id: defaultAgentModelId(MODEL_SETTINGS) },
   utility: STACK.utility,
   vision: STACK.vision,
   supervisor: STACK.supervisor,

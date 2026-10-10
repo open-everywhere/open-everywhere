@@ -60,7 +60,7 @@ the agent is hosted, so they aren't part of the platform adapter-set.
 
 | Seam | Vercel (built) | Cloudflare | AWS | Azure | GCP | Self-roll (Docker/VM) |
 |---|---|---|---|---|---|---|
-| Sandbox | Vercel Sandbox | Workers | Lambda / Fargate | Container Apps | Cloud Run | `docker()` (default) with the [egress-proxy sidecar](./platforms/self-host-egress.md) for full egress parity without KVM. Eve ships a KVM-dependent `microsandbox` backend, but Open Everywhere does not wire it: `OE_SANDBOX_BACKEND` accepts only `docker`/`justbash` and refuses anything else at boot |
+| Sandbox | Vercel Sandbox | Workers | Lambda / Fargate | Container Apps | Cloud Run | `justbash` behind the [egress-proxy sidecar](./platforms/self-host-egress.md) (enforced egress, development-grade filesystem isolation). `docker()` contains the filesystem but cannot run behind the proxy or in the shipped image (OPE-2407). Eve ships a KVM-dependent `microsandbox` backend, but Open Everywhere does not wire it: the setting `sandbox.selfHostBackend` accepts only `"docker"`/`"justbash"` and refuses anything else at boot |
 | Operational store | Neon Postgres | D1 | RDS / Aurora | Azure Postgres | Cloud SQL | any Postgres |
 | Credential broker | `env` / `db` (core) | Workers secrets | Secrets Manager | Key Vault | Secret Manager | `env` / `db` / Vault |
 | Scheduler | scheduled cron | Workers Cron | EventBridge | Azure Scheduler | Cloud Scheduler | none to wire — `eve start` fires it in-process |

@@ -1,3 +1,4 @@
+import { __setTestValveForTest } from "@open-everywhere/core/agent/testing/test-valves.js";
 import { mkdtempSync } from "node:fs";
 import { registerDiscordProvider as __regDiscord } from "@open-everywhere/provider-discord/agent/register.js";
 __regDiscord();
@@ -5,7 +6,6 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
-import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 import { _resetDeploymentIdentityForTest, deploymentOrg } from "@open-everywhere/core/agent/identity/deployment-identity.js";
 import { removeTempDir } from "../packages/core/scripts/_temp-dir.js";
 
@@ -15,8 +15,7 @@ _resetDeploymentIdentityForTest();
 for (const k of ["OE_PLATFORM", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST"]) {
   delete process.env[k];
 }
-overrideSettingsForTest({ audit: { silences: false } });
-process.env.OE_EGRESS_SPOOF = "1";
+__setTestValveForTest("egress-spoof", true);
 delete process.env.VERCEL;
 
 let passed = 0;

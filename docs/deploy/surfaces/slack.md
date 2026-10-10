@@ -191,7 +191,7 @@ That page does the whole install for you (OPE-2231):
    login. On a 401, a 403 or a redirect, the screen warns that Slack cannot reach the host and
    names `OE_PUBLIC_BASE_URL`, because Slack sends its requests with no login. The configuration
    token is used once and never stored.
-3. You click **Install to Slack**. The OAuth callback stores the bot token.
+3. You click **Install to Slack**. The OAuth callback stores the bot token. Slack's manifest has no icon field, so set the app icon by hand: **Basic Information** → **Display Information** → **App icon**, and upload [`brand/png/mark-square-1024.png`](../../../brand/png/mark-square-1024.png). Skip this when you set [`identity.name`](../configuration-reference.md) and chose your own icon: with no name configured the agent presents as the project, so the project mark is its default avatar.
 4. The last screen gives you the **two config edits**, already filled in with your workspace and user
    ids — the vouch in `agent/identity/surfaces.ts` and `admins` in
    `agent/memory/config/domains/org.ts`. DM the bot and ask it to commit them, or make them by hand.
@@ -257,7 +257,7 @@ an outside workspace. Recover with the `reopen_slack_setup` control call. To kee
 
 ## Step 1 — Create the Slack app
 
-1. Go to <https://api.slack.com/apps> → **Create New App** → **From scratch**. Name it (e.g. `Open Everywhere`) and pick the target workspace.
+1. Go to <https://api.slack.com/apps> → **Create New App** → **From scratch**. Name it (e.g. `Open Everywhere`) and pick the target workspace. Under **Basic Information** → **Display Information** → **App icon**, upload [`brand/png/mark-square-1024.png`](../../../brand/png/mark-square-1024.png), the project mark. Skip this when you set [`identity.name`](../configuration-reference.md) and chose your own icon: with no name configured the agent presents as the project, so the project mark is its default avatar.
 2. **OAuth & Permissions** → **Bot Token Scopes**, add:
    - `app_mentions:read` — receive `@mention` events.
    - `chat:write` — post replies, and edit the agent's own posts (`edit_reply` uses `chat.update`,

@@ -25,8 +25,6 @@ const SHIP_ENV = [
   "OE_LOG_SHIP_TOKEN",
   "OE_LOG_SHIP_TOKEN_HEADER",
   "OE_LOG_SERVICE",
-  "OE_LOG_SHIP_BATCH_MAX",
-  "OE_LOG_SHIP_FLUSH_MS",
 ];
 function clearShipEnv(): void {
   for (const key of SHIP_ENV) delete process.env[key];
@@ -110,17 +108,15 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   process.env.OE_LOG_SHIP_URL = "https://ingest.example.test/v1";
   process.env.OE_LOG_SHIP_TOKEN = "Bearer xaat-123";
   process.env.OE_LOG_SHIP_TOKEN_HEADER = "X-Custom-Auth";
-  process.env.OE_LOG_SHIP_BATCH_MAX = "3";
-  process.env.OE_LOG_SHIP_FLUSH_MS = "20";
   const { calls, impl } = fakeFetch();
-  __resetLogShipForTest({ fetchImpl: impl });
+  __resetLogShipForTest({ fetchImpl: impl, batchMax: 3, flushMs: 20 });
 
   enqueue(buildRecord("info", "batch", "one"));
   enqueue(buildRecord("info", "batch", "two"));
   ok(calls.length === 0 && __queueLengthForTest() === 2, "below batchMax → queued, not shipped");
   enqueue(buildRecord("info", "batch", "three"));
   await sleep(5);
-  ok(calls.length === 1, "hitting OE_LOG_SHIP_BATCH_MAX flushes immediately");
+  ok(calls.length === 1, "hitting batchMax flushes immediately");
   ok(calls[0].body.length === 3 && calls[0].body[2].message === "three", "batch ships as a JSON array in order");
   ok(calls[0].headers["content-type"] === "application/json", "content-type set");
   ok(calls[0].headers["X-Custom-Auth"] === "Bearer xaat-123", "configured token header name/value applied");
@@ -129,7 +125,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   enqueue(buildRecord("info", "batch", "four"));
   ok(calls.length === 1, "single record waits for the timer");
   await sleep(60);
-  ok(calls.length === 2 && calls[1].body[0].message === "four", "OE_LOG_SHIP_FLUSH_MS timer flushes the stragglers");
+  ok(calls.length === 2 && calls[1].body[0].message === "four", "the flush timer flushes the stragglers");
   ok(__queueLengthForTest() === 0, "queue empty after flushes");
 }
 
@@ -163,9 +159,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 {
   clearShipEnv();
   process.env.OE_LOG_SHIP_URL = "https://ingest.example.test/v1";
-  process.env.OE_LOG_SHIP_FLUSH_MS = "5000";
   const { calls, impl } = fakeFetch();
-  __resetLogShipForTest({ fetchImpl: impl });
+  __resetLogShipForTest({ fetchImpl: impl, flushMs: 5000 });
 
   const printed: string[] = [];
   const realLog = console.log;

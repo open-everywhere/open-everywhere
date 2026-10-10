@@ -4,7 +4,7 @@ import { getAppInfo } from "../commands/app-info.js";
 import { CREDENTIAL_KEY_ENV_NAME, credentialKeyStatus } from "./quickstart.js";
 import { resolveOperationalSelection } from "../operational/selection.js";
 import { resolveMemoryProviderId } from "../memory/backing-selection.js";
-import { resolveSelfHostBackendKind } from "../sandbox/backend-select.js";
+import type { SandboxBackendKind } from "../sandbox/backend-select.js";
 import { platformName } from "../access/platform.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 import { pageBaseUrl } from "../credentials/page-token.js";
@@ -152,14 +152,8 @@ function storeStatus(env: NodeJS.ProcessEnv, probed: ProbeAnswer | undefined): R
   return { id: "postgres", met: probed.met, detail: `hosted Postgres is selected for both stores — ${probed.detail}` };
 }
 
-function sandboxStatus(env: NodeJS.ProcessEnv, onVercelHost: boolean): RequirementStatus {
-  if (onVercelHost) return { id: "sandbox-backend", met: "yes", detail: "Vercel Sandbox — a contained, per-session filesystem" };
-  let kind: string;
-  try {
-    kind = resolveSelfHostBackendKind(env);
-  } catch {
-    return { id: "sandbox-backend", met: "no", detail: "OE_SANDBOX_BACKEND names a backend that does not exist; the app refuses to boot on it" };
-  }
+function sandboxStatus(kind: SandboxBackendKind): RequirementStatus {
+  if (kind === "vercel") return { id: "sandbox-backend", met: "yes", detail: "Vercel Sandbox — a contained, per-session filesystem" };
   if (kind === "justbash") {
     return {
       id: "sandbox-backend",
@@ -170,8 +164,8 @@ function sandboxStatus(env: NodeJS.ProcessEnv, onVercelHost: boolean): Requireme
   return { id: "sandbox-backend", met: "yes", detail: "docker — a contained, per-session filesystem" };
 }
 
-function egressStatus(env: NodeJS.ProcessEnv, onVercelHost: boolean, allowUnenforced: boolean): RequirementStatus {
-  if (onVercelHost) return { id: "egress-control", met: "yes", detail: "the Vercel Sandbox firewall applies the compiled per-session policy" };
+function egressStatus(env: NodeJS.ProcessEnv, vercelSandbox: boolean, allowUnenforced: boolean): RequirementStatus {
+  if (vercelSandbox) return { id: "egress-control", met: "yes", detail: "the Vercel Sandbox firewall applies the compiled per-session policy" };
   if ((env.OE_EGRESS_PROXY_URL ?? "").trim().length > 0) {
     return { id: "egress-control", met: "yes", detail: "the compiled policy is pushed to the egress-proxy sidecar on every session" };
   }
@@ -222,6 +216,7 @@ export interface StatusInputs {
   readonly version?: StatusVersions;
   readonly host?: string;
   readonly allowUnenforced?: boolean;
+  readonly sandboxBackend?: SandboxBackendKind;
   readonly probes?: Partial<Record<ProbedRequirementId, StatusProbe>>;
   readonly surfaceReporters?: Readonly<Record<string, () => Promise<Partial<SurfaceStatus>>>>;
 }
@@ -241,6 +236,7 @@ export async function deploymentStatus(inputs: StatusInputs = {}): Promise<Deplo
   const env = inputs.env ?? process.env;
   const host = hostRoute(inputs.host ?? platformName());
   const onVercelHost = host === "vercel";
+  const sandboxBackend: SandboxBackendKind = inputs.sandboxBackend ?? (onVercelHost ? "vercel" : "docker");
   const probes = inputs.probes ?? PROBES;
   const reporters = inputs.surfaceReporters ?? SURFACE_REPORTERS;
 
@@ -255,8 +251,8 @@ export async function deploymentStatus(inputs: StatusInputs = {}): Promise<Deplo
     nodeStatus(inputs.nodeVersion ?? process.versions.node, inputs.nodeRange ?? CONTRACT_NODE_RANGE),
     publicUrlStatus(env),
     storeStatus(env, db),
-    sandboxStatus(env, onVercelHost),
-    egressStatus(env, onVercelHost, inputs.allowUnenforced ?? false),
+    sandboxStatus(sandboxBackend),
+    egressStatus(env, sandboxBackend === "vercel", inputs.allowUnenforced ?? false),
     modelStatus(model),
     secretsStatus(env),
     workflowStorageStatus(onVercelHost),

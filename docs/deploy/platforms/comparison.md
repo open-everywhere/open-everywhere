@@ -30,9 +30,9 @@ built or proven for them, so they aren't columns here.
 
 | Capability | Vercel (managed) | KVM self-host (bare metal / VDS) | Docker self-host (any VPS) | Container PaaS (Railway / Fly / Render) |
 |---|---|---|---|---|
-| **Overall** | ✅ Reference deploy, run end to end | 📋 Seams proven first-party — Eve's own framework docs now cover this (see [below](#what-has-actually-been-run-where)); not OE-smoke-tested | 📋 Same, minus egress parity — but the OE image's **boot** is now first-party smoke-verified off Vercel (clean boot + `docker()` backend + egress posture; a full live turn is still unverified — [details](#what-has-actually-been-run-where)) | 🚧 Boots only with egress enforcement disabled; unproven for Eve |
+| **Overall** | ✅ Reference deploy, run end to end | 📋 Seams proven first-party — Eve's own framework docs now cover this (see [below](#what-has-actually-been-run-where)); not OE-smoke-tested | 📋 Same, minus egress parity — but the OE image is first-party smoke-verified off Vercel (clean boot on `justbash`, and on the compose topology a real model call through the enforcing egress proxy while the session stays deny-by-default; a full live turn is still unverified — [details](#what-has-actually-been-run-where)) | 🚧 Boots only with egress enforcement disabled; unproven for Eve |
 | **Durable sessions / workflow runtime** | ✅ Vercel Workflow (the default) | 📋 Local world (`.workflow-data` on the box's persistent disk) is the off-Vercel **default** for a single node — no seam-swap needed; `@workflow/world-postgres` is the multi-node option — see [notes](#durable-sessions--the-workflow-world) | 📋 Same | 📋 Same, if a single always-on instance with a persistent volume; `@workflow/world-postgres` for multi-instance |
-| **Sandbox execution** | ✅ Vercel Sandbox (Firecracker microVM) | 📋 microsandbox — Eve ships it (`eve/sandbox/microsandbox`, needs `/dev/kvm`), but **Open Everywhere does not expose it as a backend**: `OE_SANDBOX_BACKEND` accepts only `docker`/`justbash` and rejects anything else fail-loud at boot, so even a KVM host can't select it without a code change (see [note](#microsandbox-is-not-a-selectable-open-everywhere-backend)) | 📋 `docker()` backend (Eve built-in) — **the OE default off Vercel, now boot-smoke-verified** (`npm run test:docker-smoke` builds the image and boots it on `docker()` via the daemon socket; see [below](#what-has-actually-been-run-where)) | 🚧 Docker-backend shape at best, unverified; ⛔ microsandbox on Fly Machines (no nested virt) |
+| **Sandbox execution** | ✅ Vercel Sandbox (Firecracker microVM) | 📋 microsandbox — Eve ships it (`eve/sandbox/microsandbox`, needs `/dev/kvm`), but **Open Everywhere does not expose it as a backend**: the setting `sandbox.selfHostBackend` accepts only `"docker"`/`"justbash"` and rejects anything else fail-loud at boot, so even a KVM host can't select it without a code change (see [note](#microsandbox-is-not-a-selectable-open-everywhere-backend)) | 📋 `docker()` backend (Eve built-in) — the OE code default off Vercel, but **it does not run in the shipped image** (the image carries a just-bash template only, and an app built into it declares `sandbox.selfHostBackend: "justbash"`) and **it cannot run behind the egress proxy** (its session containers sit on the daemon's default network; the app refuses that pair at boot, OPE-2407). `npm run test:docker-smoke` boots the image on `justbash` | 🚧 Docker-backend shape at best, unverified; ⛔ microsandbox on Fly Machines (no nested virt) |
 | **Fine-grained egress firewall** ★ | ✅ Full: per-host allow + credential injection at the boundary | 🚧 Host-grain allow/deny only, measured (OPE-917) — no at-boundary credential injection, no `match` narrowing, and not a selectable OE backend today | 📋 Full parity via Open Everywhere's own **egress-proxy sidecar** on `docker()` (the shipped, [documented](./self-host-egress.md) self-host path — no KVM needed; the Tier B MITM + credential-injection mechanic is live-verified on the `justbash` backend, and the end-to-end credentialed checkout on `docker()` is still live-pending) — coarse-only if you skip it, or run the [hybrid Vercel Sandbox pattern](#the-hybrid-option-vercel-sandbox-from-any-host) (UNVERIFIED live) instead | 🚧 Same loss as plain Docker unless you wire the same egress-proxy sidecar yourself, or worse (`just-bash`); hybrid Vercel Sandbox applies here too (UNVERIFIED live) |
 | **Model routing** | ✅ AI Gateway, OIDC auto-auth | ✅ Portable — same Gateway via `AI_GATEWAY_API_KEY`, or any provider via `ModelBackend` | ✅ Same | ✅ Same |
 | **Credential broker** | ✅ `env` + `db` (core); OAuth connectors via the built-in own-rolled flow | ✅ `env` broker (core, zero-dependency) or your own vault — static keys only | ✅ Same | ✅ Same (platform secrets feed `env`) |
@@ -57,10 +57,11 @@ credential injection silently no-ops (Eve never enables TLS interception, so the
 never replaces the placeholder) and `match` narrowing is dropped (measured, OPE-917;
 upstream defect filed as OPE-954). Plain Docker enforces coarse allow-all / deny-all only,
 and `just-bash` rejects network policies entirely. Open Everywhere's off-Vercel deployment
-sidesteps the Docker limit rather than hitting it: it pushes the compiled policy to a
-**forced local egress proxy** in front of `docker()` instead of relying on Eve's own
-`setNetworkPolicy`, restoring full parity without KVM — see
-[Self-host with enforced egress](./self-host-egress.md).
+pushes the compiled policy to a **forced local egress proxy** instead of relying on Eve's own
+`setNetworkPolicy` — see [Self-host with enforced egress](./self-host-egress.md). That proxy
+fronts only the development-grade `justbash` backend today: the `docker()` backend's session
+containers start on the daemon's default network, outside it, so the app refuses that pair at
+boot (OPE-2407).
 
 On a backend that can't apply the fine-grained policy, the session **aborts** rather than
 running unenforced (fail-closed — the sandbox's own default is allow-all, so an unenforced
@@ -84,8 +85,8 @@ cost of needing `/dev/kvm`, but not credential injection or `match` narrowing (m
 OPE-917) — and it is not a selectable OE backend regardless (see
 [below](#microsandbox-is-not-a-selectable-open-everywhere-backend)). Open Everywhere's own
 **egress-proxy sidecar** (see [Self-host with enforced egress](./self-host-egress.md)) is
-the path that gets full parity on plain `docker()`, no KVM needed — which is why that's the
-recommended self-host default rather than the KVM tier.
+the no-KVM path for enforced egress, but today only with the development-grade `justbash`
+backend: it does not front `docker()` (OPE-2407).
 
 ### The KVM tier means bare metal or a VDS
 
@@ -185,14 +186,21 @@ env vars as its fallback (after the on-platform OIDC token). Sandbox pricing is 
 either way (~$0.128/vCPU-hr active, ~$0.60/M sandbox creations as of this writing).
 
 **The exact self-hoster config (code path verified, not live-run — 2026-07-24):** on an
-off-Vercel box, set the OE platform seam **`OE_PLATFORM=vercel`** — this is what makes
-`onVercel()` true, so Open Everywhere selects the `vercel()` sandbox backend *and* takes the
-on-Vercel egress path (`sandbox.setNetworkPolicy`, full firewall parity) instead of the
-self-host proxy push. Then provide the three Vercel credentials so Eve can authenticate
-sandbox creation from off-platform:
+off-Vercel box, set **`sandbox.useVercelSandbox: true`** in the app's `agent/settings/settings.ts`.
+Open Everywhere then selects the `vercel()` sandbox backend *and* takes the Vercel Sandbox egress
+path (`sandbox.setNetworkPolicy`, full firewall parity) instead of the self-host proxy push. The
+setting does not make the app a Vercel host: the durable-store floors follow the real host. (This
+route was `OE_PLATFORM=vercel` until OPE-2411.) Then provide the three Vercel credentials so Eve
+can authenticate sandbox creation from off-platform:
+
+```ts
+// agent/settings/settings.ts
+export default defineSettings({
+  sandbox: { useVercelSandbox: true },
+});
+```
 
 ```
-OE_PLATFORM=vercel
 VERCEL_TOKEN=<a Vercel access token>
 VERCEL_TEAM_ID=<team/org id>        # or VERCEL_ORG_ID
 VERCEL_PROJECT_ID=<project id>
@@ -201,9 +209,9 @@ VERCEL_PROJECT_ID=<project id>
 Both halves were confirmed by reading the shipped code: Eve's
 `getVercelSandboxCredentials` resolves `token ?? VERCEL_OIDC_TOKEN ?? VERCEL_TOKEN`,
 `VERCEL_TEAM_ID ?? VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID`
-(`node_modules/eve/dist/src/execution/sandbox/bindings/vercel-credentials.js`); OE's
-platform seam resolves `OE_PLATFORM` over `process.env.VERCEL`
-(`packages/core/agent/access/platform.ts`). **No one has run this path live**, so it stays
+(`node_modules/eve/dist/src/execution/sandbox/bindings/vercel-credentials.js`); OE's backend
+selector runs the Vercel Sandbox on a Vercel host or when `sandbox.useVercelSandbox` is on
+(`packages/core/agent/sandbox/backend-select.ts`). **No one has run this path live**, so it stays
 UNVERIFIED below — the wiring is proven to exist, the round-trip is not.
 
 If it works as documented, this converts "self-host = lose the firewall, or buy KVM bare
@@ -246,23 +254,22 @@ An honest confidence note, because the statuses above are only as good as their 
 - **The hybrid Vercel-Sandbox-from-any-host pattern (previous section) is UNVERIFIED
   live** — it's the one claim in this document that rests on reading two vendors' docs
   side by side rather than on any proof run, first- or third-party.
-- **Open Everywhere's own Docker boot IS now first-party smoke-verified — but only the
-  boot, not a full turn.** The repo ships a reference image (root `Dockerfile` +
-  `docker-compose.yml`) and an opt-in integration smoke, `npm run test:docker-smoke`
-  (`scripts/docker-smoke.sh`). It builds the image, boots it **off Vercel on the default
-  `docker()` sandbox backend** with the Docker daemon socket mounted, and asserts: a clean
-  boot (the Eve node-server actually serves HTTP), the backend resolving to `docker()` **and
-  Eve initializing a real sandbox template through the socket** (so the backend genuinely
-  functions, not just that it was selected), and the boot-time egress warning. This was run
-  green on a developer machine (Docker Desktop, 2026-07-24). The image build then broke as the
-  workspace grew (OPE-2187). The fixed build stage installs, patches eve and completes
-  `build:packages` + `oe build` under a 4 GB limit, but `eve build` needs a builder with about
-  6 GB of memory, and the smoke has not re-run on the fixed image. What it does **not** cover, and
-  what therefore keeps the Docker column at 📋 rather than ✅: a full **live turn** — a real
-  model call, a chat round-trip, memory materialization, or spend stamping. Those seams (the
-  egress policy compiler in a live session, memory silos, the spend ledger) remain unproven
-  off-platform. So: the *self-host boot* is OE-verified; *running OE end to end* off Vercel
-  is not.
+- **Open Everywhere's own Docker image IS first-party smoke-verified — the boot and the
+  enforced-egress model call, not a full turn.** The repo ships a reference image (root
+  `Dockerfile` + `docker-compose.yml`) and an opt-in integration smoke, `npm run test:docker-smoke`
+  (`scripts/docker-smoke.sh`). It builds the image and the egress proxy, then runs two legs.
+  Leg 1 boots the image **off Vercel on its default `justbash` backend** (the only sandbox
+  template the image carries, OPE-2407) and asserts a clean boot and the fail-closed egress
+  warning. Leg 2 reproduces the compose topology (app on an internal-only network, the proxy its
+  only route out) and asserts that **a real model call succeeds through the enforcing proxy**
+  while a session shell in the same container is refused for the model gateway and for an
+  undeclared host (OPE-2406), and that `docker` behind the proxy refuses to boot. The smoke's
+  session shell turns off just-bash's DNS pre-check; the shell as eve builds it reaches no host on
+  the internal-only network today, so the session's own `curl` does not work there. The `docker()`
+  backend itself does not run in the image. What it does **not** cover, and what therefore keeps
+  the Docker column at 📋 rather than ✅: a full **live turn** — a chat round-trip, memory
+  materialization, or spend stamping. So: the *self-host boot and model route* are OE-verified;
+  *running OE end to end* off Vercel is not.
 
 If you self-host and verify a column, that's exactly the community verification the 📋
 status is asking for — please report what you find.
@@ -281,10 +288,12 @@ OPE-954.
 On top of that gap, **Open Everywhere does not currently wire microsandbox at all.** The
 off-Vercel backend selector (`agent/sandbox/backend-select.ts`) accepts only two values —
 `docker` (the default) and `justbash` (a dev opt-in) — and rejects anything else, including
-`microsandbox`, *fail-loud at boot* (`unknown OE_SANDBOX_BACKEND=… — Refusing to boot`).
-This is the deliberate OPE-106 posture: the contained `docker()` backend plus the
-egress-proxy sidecar already gets full egress parity without KVM, so microsandbox wasn't
-wired.
+`microsandbox`, *fail-loud at boot*: `defineSettings` refuses any other `sandbox.selfHostBackend`
+value and names the setting.
+This was the OPE-106 posture: the contained `docker()` backend plus the egress-proxy sidecar
+was meant to give full egress parity without KVM, so microsandbox wasn't wired. That pairing does
+not hold today: `docker()` session containers sit outside the proxy, and the app refuses the pair
+at boot (OPE-2407).
 
 The practical consequence for this column: even on a host that *has* `/dev/kvm`, you cannot
 select microsandbox through configuration today, and wiring it would not by itself close
@@ -296,8 +305,10 @@ and blocked upstream for the rest** — not a path to full parity today.
 
 - **Want it to just work, with the full security story:** Vercel. It's the reference for a
   reason, and stop-after-turn keeps idle cost near zero.
-- **Want self-host without giving up the firewall:** the [egress-proxy sidecar](./self-host-egress.md)
-  on plain `docker()` is the path with full parity today, no KVM needed. The KVM tier
+- **Want self-host without giving up the firewall:** no off-Vercel configuration gives both a
+  contained filesystem and an enforced host allow-list today. The [egress-proxy sidecar](./self-host-egress.md)
+  enforces egress for the development-grade `justbash` backend only; `docker()` contains the
+  filesystem but sits outside the proxy (OPE-2407). The KVM tier
   (bare metal or a VDS + microsandbox) gives native host-grain enforcement only —
   credential injection and `match` narrowing are measured gaps (OPE-917), and OE doesn't
   wire the backend yet either.

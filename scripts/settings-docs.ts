@@ -1,8 +1,8 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, dirname, relative } from "node:path";
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeFileIfChanged } from "./write-if-changed.js";
-import { settingDocs, settingEnvNames } from "@open-everywhere/core/agent/settings/settings.js";
+import { settingDocs } from "@open-everywhere/core/agent/settings/settings.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const check = process.argv.includes("--check");
@@ -14,15 +14,12 @@ const END = "<!-- END GENERATED: agent-settings -->";
 const SCHEMA_MODULE = "packages/core/agent/settings/settings.ts";
 
 function renderTable(): string {
-  const rows = settingDocs().map((d) => {
-    const env = d.env === undefined ? "— *(code-only)*" : `\`${d.env}\``;
-    return `| \`${d.path}\` | \`${d.shipped}\` | ${env} | ${d.summary} |`;
-  });
+  const rows = settingDocs().map((d) => `| \`${d.path}\` | \`${d.shipped}\` | ${d.summary} |`);
   return [
     BEGIN,
     "",
-    "| Setting | Shipped default | Ops override | Meaning |",
-    "|---|---|---|---|",
+    "| Setting | Shipped default | Meaning |",
+    "|---|---|---|",
     ...rows,
     "",
     END,
@@ -43,62 +40,6 @@ if (beginAt < 0 || endAt < 0 || endAt < beginAt) {
 }
 const updated = reference.slice(0, beginAt) + renderTable() + reference.slice(endAt + END.length);
 
-const owned = settingEnvNames();
-const problems: string[] = [];
-
-for (const name of owned) {
-  if (!reference.includes(name)) {
-    problems.push(
-      `UNDOCUMENTED OVERRIDE: the settings schema declares \`${name}\` as an ops override, but ${REFERENCE} never mentions it. ` +
-        `scripts/env-docs-lint.ts cannot catch this (the resolver reads the var through a schema field, not a literal ` +
-        `process.env.${name}), so this gate is the only thing standing between an operator and an undocumented knob.`,
-    );
-  }
-}
-
-function filesUnder(dir: string, out: string[] = []): string[] {
-  let entries: string[];
-  try {
-    entries = readdirSync(dir);
-  } catch {
-    return out;
-  }
-  for (const entry of entries) {
-    if (entry === "node_modules" || entry === "dist" || entry === "generated") continue;
-    const p = join(dir, entry);
-    if (statSync(p).isDirectory()) filesUnder(p, out);
-    else if (entry.endsWith(".ts") && !entry.endsWith(".d.ts") && !entry.endsWith("-test.ts")) out.push(p);
-  }
-  return out;
-}
-
-const runtimeFiles = ["agent", "packages"]
-  .flatMap((r) => filesUnder(join(root, r)))
-  .map((p) => relative(root, p).split("\\").join("/"))
-  .filter((p) => p.split("/").includes("agent") && p !== SCHEMA_MODULE);
-
-for (const rel of runtimeFiles) {
-  const src = readFileSync(join(root, rel), "utf8");
-  if (!src.includes("process.env")) continue;
-  for (const name of owned) {
-    const direct = new RegExp(`process\\.env\\s*(?:\\.${name}\\b|\\[\\s*["'\`]${name}["'\`]\\s*\\])`, "u");
-    const viaConst = new RegExp(`process\\.env\\s*\\[[^\\]]*\\b${name}_ENV\\b`, "u");
-    if (direct.test(src) || viaConst.test(src)) {
-      problems.push(
-        `SECOND PARSE SITE: ${rel} reads \`${name}\` directly, but that variable is owned by the behaviour-settings schema ` +
-          `(${SCHEMA_MODULE}). A second reader grows a second vocabulary and a second default — exactly the drift OPE-371 ` +
-          `removed. Read the resolved value through \`getSettings()\` instead.`,
-      );
-    }
-  }
-}
-
-if (problems.length > 0) {
-  console.error(`✗ settings-docs: ${problems.length} problem(s):\n`);
-  for (const p of problems) console.error(`  • ${p}`);
-  process.exit(1);
-}
-
 if (check) {
   if (updated !== reference) {
     console.error(
@@ -107,10 +48,7 @@ if (check) {
     );
     process.exit(1);
   }
-  console.log(
-    `✓ settings-docs: ${settingDocs().length} setting(s) in sync with ${REFERENCE}; ` +
-      `${owned.length} declared ops override(s), all documented, no second parse site`,
-  );
+  console.log(`✓ settings-docs: ${settingDocs().length} setting(s) in sync with ${REFERENCE}`);
 } else {
   const wrote = writeFileIfChanged(referencePath, updated);
   console.log(`✓ settings-docs: ${REFERENCE} ${wrote ? "updated" : "already current"} — ${settingDocs().length} setting(s)`);

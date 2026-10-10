@@ -250,6 +250,11 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   ok(/forward\(toHeartbeatPayload\(\), "heartbeat"\)/.test(relaySrc), "relay contract: the heartbeat rides the SAME forward() that HMAC-signs + retries every other payload");
   ok(/if \(INGEST_URL && HEARTBEAT_MS > 0\)/.test(relaySrc), "relay contract: the heartbeat timer only arms in FORWARD mode (nowhere to send one in PROOF mode) with a positive interval");
   ok(/OE_RELAY_HEARTBEAT_MS/.test(relaySrc), "relay contract: the interval is operator-configurable, not hardcoded");
+  const botGate = relaySrc.split("\n").find((l) => l.includes("if (message.author.bot &&")) ?? "";
+  ok(botGate.includes("message.author.id === client.user?.id"), "relay bot filter: the relay never forwards its OWN messages");
+  ok(botGate.includes("!INGEST_URL"), "relay bot filter: PROOF mode logs no bot message");
+  ok(botGate.includes("!message.guildId"), "relay bot filter: a bot DM is never forwarded — the driver exercises guild surfaces");
+  ok(!/OE_TEST_DRIVER_IDS/.test(relaySrc.replace(/\/\/[^\n]*/g, "")), "relay: no code reads the retired OE_TEST_DRIVER_IDS — one list, in the deploy's tracked settings");
 }
 
 {
@@ -722,8 +727,13 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   ok(isAllowedDriver(undefined, "456", list) === false, "driver: no guild (a DM) never matches");
   ok(isAllowedDriver("123", "456", new Set()) === false, "driver: empty allowlist → unconditional bot drop (today's behaviour)");
 
-  const prevEnv = process.env.OE_TEST_DRIVER_IDS;
   process.env.OE_TEST_DRIVER_IDS = "555:777";
+  const envOnly = parseRelayPayload(
+    relayEnvelope({ id: "m9", content: "hi", channelId: "C9", guildId: "555", author: { id: "777", bot: true } }),
+  );
+  ok(envOnly !== null && authForRelayMessage(envOnly) === null, "driver: the retired OE_TEST_DRIVER_IDS env var admits nobody");
+  delete process.env.OE_TEST_DRIVER_IDS;
+  overrideSettingsForTest({ wake: { driverAllowlist: ["555:777"] } });
   const driverMsg = parseRelayPayload(
     relayEnvelope({ id: "m9", content: "hi", channelId: "C9", guildId: "555", author: { id: "777", bot: true } }),
   );
@@ -736,8 +746,7 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
     relayEnvelope({ id: "m9", content: "hi", channelId: "C9", guildId: "556", author: { id: "777", bot: true } }),
   );
   ok(wrongGuild !== null && authForRelayMessage(wrongGuild) === null, "driver: the allowlisted bot outside its pinned guild still drops");
-  if (prevEnv === undefined) delete process.env.OE_TEST_DRIVER_IDS;
-  else process.env.OE_TEST_DRIVER_IDS = prevEnv;
+  overrideSettingsForTest({ wake: { driverAllowlist: [] } });
 }
 
 {
@@ -900,7 +909,7 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   try {
     registerAuthorTrust([defineAuthorTrust({ tenant: TENANT2, internal: [`discord/${INSIDER}`] })]);
 
-    ok(verdict(TAINT_ENGAGE, stranger, true) === "proceed", "🔴 on the shipped `taint`/`engage` grains an excluded author still proceeds — an upgrade changes nothing");
+    ok(verdict(TAINT_ENGAGE, stranger, true) === "proceed", "🔴 on the `taint`/`engage` opt-out grains an excluded author still proceeds");
 
     ok(verdict(WITHHOLD, stranger, true) === "withheld-addressed", "BEHAVIOUR 1: an excluded author's @mention or DM is owed a PRIVATE notice and nothing else");
     ok(verdict(WITHHOLD, stranger, false) === "withheld-ambient", "BEHAVIOUR 2: an excluded author's ambient message is owed NOTHING — suppressed in silence");

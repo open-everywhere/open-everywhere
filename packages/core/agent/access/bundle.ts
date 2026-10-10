@@ -6,7 +6,7 @@ import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
 import { parseSurfaceKeyEntry } from "../identity/surface-key-grammar.js";
 import { tenantRungRemedy } from "./tenant-admission.js";
 import { isValidLinkSetRef } from "../identity/link-set-ref.js";
-import type { Group } from "../identity/groups.js";
+import { EVERYONE_GROUP, type Group } from "../identity/groups.js";
 
 export type ScopeLevel = "org" | "tenant" | "domain" | "surface" | "group" | "principal";
 
@@ -423,7 +423,7 @@ export const SURFACE_KEY = /^[^/\s]+\/[^/\s]+\/\S+$/u;
 
 export function assertBindingsValid(bindings: readonly Binding[], bundles: readonly Bundle[], groups?: readonly Group[]): void {
   const known = new Set(bundles.map((b) => b.name));
-  const knownGroups = groups === undefined ? undefined : new Set(groups.map((g) => g.name));
+  const knownGroups = groups === undefined ? undefined : new Set([EVERYONE_GROUP, ...groups.map((g) => g.name)]);
   const bad: string[] = [];
   for (const b of bindings) {
     const where = `binding "${b.bundle}" (${b.scope.level} scope)`;

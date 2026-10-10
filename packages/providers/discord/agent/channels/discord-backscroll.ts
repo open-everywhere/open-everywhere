@@ -13,6 +13,7 @@ import {
   type WakeMessageInput,
   type BindableContext,
   type AuthorTrustQuery,
+  SUPERVISOR_BACKSCROLL_REACHBACK_HOURS,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { discordAuthorRoles } from "../approvals/discord-admin.js";
 
@@ -131,7 +132,7 @@ export async function fetchDiscordBackscrollLines(
   }
 }
 
-export const DISCORD_RAW_FETCH_REACHBACK_HOURS = Number(process.env.OE_SUPERVISOR_BACKSCROLL_REACHBACK_HOURS) || 168;
+export const DISCORD_RAW_FETCH_REACHBACK_HOURS = SUPERVISOR_BACKSCROLL_REACHBACK_HOURS;
 
 const DISCORD_RAW_FETCH_PAGE_LIMIT = 100;
 

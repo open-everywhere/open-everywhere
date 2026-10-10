@@ -1,5 +1,5 @@
 import { getOperationalStore } from "../operational/provider.js";
-import { getSettings } from "../settings/settings.js";
+import { processRegistrySlot } from "../lib/process-registry.js";
 import type { AuditEntry, AuditInput, AuditFilter, AuditReadRow } from "../operational/store.js";
 
 export type { AuditEntry, AuditInput, AuditFilter, AuditReadRow } from "../operational/store.js";
@@ -27,7 +27,13 @@ export async function appendAudit(entry: AuditInput): Promise<void> {
 }
 
 export function auditSilencesEnabled(): boolean {
-  return getSettings().audit.silences;
+  return silenceAuditSlot.get() === true;
+}
+
+const silenceAuditSlot = processRegistrySlot<boolean>("audit.silence-rows.test.v1");
+
+export function setSilenceAuditForTest(on: boolean): void {
+  silenceAuditSlot.set(on ? true : null);
 }
 
 export async function readAudit(filter: AuditFilter): Promise<AuditReadRow[]> {

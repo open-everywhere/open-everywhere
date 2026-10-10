@@ -230,6 +230,7 @@ import {
   type Rubric,
 } from "./judge.js";
 import { liveMeasurementVerdict, liveTaintGateDecision, taintContextLine, type UnmeasuredArm } from "./taint-context-line.js";
+import { freshQaRunToken, namesQaHeading, qaAuditGates, qaBrief, qaFixtureDrift, qaHeading, QA_FIXTURE_DIR, QA_FIXTURE_FILES } from "./qa-repo.js";
 import { readWakeSplits, summariseWakeSplits } from "./wake-split.js";
 import {
   approveButton,
@@ -451,6 +452,7 @@ async function assertDmDoorAdmitted(ctx: ScenarioContext, sinceIso: string, labe
 }
 const UNIFIED_REPLY_WAIT = 420_000;
 const BROWSER_QA_WAIT = 420_000;
+const QA_REPO_WAIT = 600_000;
 const SILENCE_WINDOW = 45_000;
 const LINK_VENUE_PROOF_WINDOW = 20_000;
 
@@ -2970,7 +2972,7 @@ export const SCENARIOS: readonly Scenario[] = [
         ctx.log("S17: non-admin member tap DECIDES the card (buttons removed) — member-policy coverage");
 
         if (/dry-run/i.test(decided.text)) {
-          ctx.log("S17: dry-run confirmed (OE_ACCESS_DRY_RUN=1 on the deployment) — validated, no PR, nothing to tear down");
+          ctx.log("S17: dry-run confirmed (`dryRun: true` in the deployment's access-requests config) — validated, no PR, nothing to tear down");
         } else {
           const prMatch = decided.text.match(/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/);
           ctx.gate(prMatch !== null, "S17: live outcome names a real PR URL (github.com/<repo>/pull/<n>)");
@@ -3081,7 +3083,7 @@ export const SCENARIOS: readonly Scenario[] = [
         pendingCleanup.push({ pendingId: personalBtn.pendingId, org: personalBtn.org, where: `DM card ${personalCard.ts}` });
         ctx.log(
           `personal: card ${personalCard.ts} proposed in the DM (pending ${personalBtn.pendingId}) — NOT tapped, torn down at scenario end` +
-            (/dry-run/i.test(personalCard.text) ? " (deployment is in OE_ACCESS_DRY_RUN)" : ""),
+            (/dry-run/i.test(personalCard.text) ? " (deployment is in access-request dry-run)" : ""),
         );
       } else if (process.env.E2E_ACCESS_PERSONAL_FIXTURE === "1") {
         ctx.gate(
@@ -4266,7 +4268,7 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     id: "F-ART",
     proves: ["PAR-post_file"],
-    title: "Artifacts: post_file PNG + HTML-attach fallback + describe_image (attachment trusted fetch, sec-15 live twin)",
+    title: "Artifacts: post_file PNG + HTML attach + describe_image (attachment trusted fetch, sec-15 live twin)",
     requires: ["slack"],
     surface: "slack",
     suite: "core",
@@ -4281,10 +4283,10 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.gate((pngReply.files ?? []).some((f) => f.filetype === "png"), "post_file: a bot reply carries a PNG file attachment (files[] filetype=png)");
 
       const { ts: htmlTs } = await slack.post(
-        slack.mention("now post a small self-contained HTML artifact (a one-paragraph page) here as a file using post_file. Attach it, don't publish a public URL."),
+        slack.mention("now post a small self-contained HTML artifact (a one-paragraph page) here as a file using post_file."),
       );
       const htmlReply = await slack.awaitFileReply(htmlTs, { timeoutMs: FILE_REPLY_WAIT, filetype: "html" });
-      ctx.gate((htmlReply.files ?? []).some((f) => f.filetype === "html"), "post_file: the HTML path posts an html file attachment (the safe attach fallback)");
+      ctx.gate((htmlReply.files ?? []).some((f) => f.filetype === "html"), "post_file: the HTML path posts an html file attachment");
 
       const pngBytes = Uint8Array.from(
         Buffer.from("iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKElEQVR4nO3NsQ0AAAzCMP5/un0CNkuZ41wybXsHAAAAAAAAAAAAxR4yw/wuPL6QkAAAAABJRU5ErkJggg==", "base64"),
@@ -4400,6 +4402,107 @@ export const SCENARIOS: readonly Scenario[] = [
           'browser-QA loop: navigate → screenshot → describe_image({ kind: "path", ref }) reports the page heading (OPE43), then a declared third-party page reports its own',
         );
       }
+    },
+  },
+  {
+    id: "F-QA-REPO",
+    proves: ["PAR-post_file", "TOOL-browser_tools", "TOOL-describe_image"],
+    title: "Repo-backed browser QA: checkout_repo → the repo's own dev server → browser screenshot → describe_image on the shot → post_file to the thread, heading derived per run (OPE-2404)",
+    requires: ["slack", "pr"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 1_200_000,
+    judged: true,
+    run: async (ctx) => {
+      if (process.env.E2E_BROWSER_QA !== "1") {
+        ctx.skip("F-QA-REPO needs E2E_BROWSER_QA=1 (and a deployment armed with browser.enabled + a localhost browser host declaration) — the same arm as F-ART leg 4");
+      }
+      if (!ctx.auditRead) {
+        ctx.skip("F-QA-REPO needs E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN — the browser, vision and post links are each proven by an audit row, and the checkout link is too on an enforced firewall (the scm.broker row); a reply alone proves none of them");
+      }
+      const slack = ctx.slack!;
+      const repo = ctx.prRepo!;
+      const prApi = ctx.prApi!;
+      const base = (process.env.E2E_PR_BASE ?? "").trim() || "main";
+
+      const remote: Record<string, string | undefined> = {};
+      for (const path of Object.keys(QA_FIXTURE_FILES)) remote[path] = await prApi.fileText(path, base);
+      const drift = qaFixtureDrift(remote);
+      if (drift.length > 0) {
+        ctx.fixtureMissing(
+          `F-QA-REPO: the QA fixture app in ${repo}@${base} is not current (${drift.join("; ")}). ` +
+            `Provision it: run \`npx tsx packages/core/scripts/e2e/qa-repo.ts --write <dir>\`, then commit <dir>/${QA_FIXTURE_DIR}/ ` +
+            `to ${repo}'s ${base} branch unchanged (package.json, server.js, README.md — zero dependencies). ` +
+            "An absent result also comes back when the driver PAT cannot read the repo, so check its access first.",
+        );
+      }
+
+      const run = freshQaRunToken();
+      const heading = qaHeading(run);
+      ctx.log(`F-QA-REPO: run token ${run}; the fixture server renders the heading "${heading}" for it (the brief never names it)`);
+
+      const qaStart = await presenceSince(ctx, "qaStart", 60_000);
+      const qaMark = await auditStoreMark(ctx, "F-QA-REPO");
+      const { ts: qaTs } = await slack.post(slack.mention(qaBrief(repo, run)));
+
+      const deadline = Date.now() + QA_REPO_WAIT;
+      const remaining = (): number => Math.max(deadline - Date.now(), 0);
+      const auditRead = ctx.auditRead!;
+      const settled = await pollOptional(
+        async () => {
+          const rows = rowsAboveStoreMark(
+            await auditRead({ sinceIso: qaStart, actions: [DELEGATION_TASK_STARTED_ACTION, DELEGATION_TASK_SETTLED_ACTION] }),
+            qaMark,
+          );
+          return delegationHasReturned(rows) ? true : undefined;
+        },
+        { timeoutMs: remaining(), what: "the delegated repo-QA worker's task to settle (delegation.task_settled)" },
+      );
+      ctx.log(
+        settled
+          ? "F-QA-REPO: the delegated task settled — reading the chain's audit rows now"
+          : `F-QA-REPO: no task settlement within ${QA_REPO_WAIT}ms — reading the audit rows anyway (a stall shows up as the first missing link below)`,
+      );
+
+      const rows = rowsAboveStoreMark(
+        await auditRead({
+          sinceIso: qaStart,
+          actions: ["egress.policy", "browser.navigate", "browser.screenshot", "describe_image", "slack.post_file"],
+        }),
+        qaMark,
+      );
+      for (const g of qaAuditGates(rows)) ctx.gate(g.pass, g.label);
+
+      const fileReply = await slack.awaitFileReply(qaTs, { timeoutMs: Math.max(remaining(), 30_000), filetype: "png" });
+      ctx.gate((fileReply.files ?? []).some((f) => f.filetype === "png"), "show the result: a bot reply in the thread carries the PNG screenshot (files[] filetype=png)");
+
+      const threadText = async (): Promise<string> =>
+        (await slack.replies(qaTs))
+          .filter((m) => slack.isBotReply(m) && m.ts !== qaTs && !isFillerAck(m.text))
+          .map((m) => m.text)
+          .join("\n");
+      const named = await pollOptional(
+        async () => {
+          const text = await threadText();
+          return namesQaHeading(text, heading) ? text : undefined;
+        },
+        { timeoutMs: Math.max(remaining(), 30_000), what: `a bot post in thread ${qaTs} that names the heading "${heading}"` },
+      );
+      const replyText = named ?? (await threadText());
+      ctx.gate(
+        named !== undefined,
+        `see it: the thread names the per-run heading "${heading}" — only the fixture's derivation (its seed and word list) produces it for run ${run}, so a remembered answer cannot supply it; no gate proves the dev server served the page rather than the worker running that code another way, and the screenshot and vision links are the audit gates above`,
+      );
+      await ctx.judgePass(
+        closedQA(
+          "Does the reply report the page heading it read from the screenshot, with no checkout, dev-server, browser, vision or file-post error reported? (A terse report of the heading is fine — whether each tool ran is asserted separately from the audit trail.)",
+          {
+            mustNotMatch: [/could ?n.?t (?:clone|check ?out|start|navigate|screenshot|read|open|post)/i, /no vision model/i, /not armed|capability is not|not available/i],
+          },
+        ),
+        replyText,
+        "repo QA: the reply reports what the screenshot showed, with no tool error reported",
+      );
     },
   },
   {
@@ -5335,7 +5438,7 @@ export const SCENARIOS: readonly Scenario[] = [
           ctx.skip(
             `deployment reports domain "${domainName}" is NOT unified (unified:false — WINDOW_TOPOLOGY_ENABLED off and/or the domain's mode is not "unified"); ` +
               "flag-off is byte-identical per-container ambient, so the cross-container legs would test nothing new — " +
-              "arm window.topology: true (the WINDOW_TOPOLOGY_ENABLED code capability) + set the domain's mode to \"unified\" to run them",
+              "keep window.topology on (it ships true; the WINDOW_TOPOLOGY_ENABLED code capability) + set the domain's mode to \"unified\" to run them",
           );
         }
       } else {
@@ -5440,7 +5543,7 @@ export const SCENARIOS: readonly Scenario[] = [
       if (wire.unified !== true) {
         pending(
           `live-fixture-pending: deployment reports domain "${domainName}" is NOT unified (WINDOW_TOPOLOGY_ENABLED off and/or the domain's mode is not "unified") — ` +
-            "arm window.topology: true (the WINDOW_TOPOLOGY_ENABLED code capability) + set the domain's mode to \"unified\"",
+            "keep window.topology on (it ships true; the WINDOW_TOPOLOGY_ENABLED code capability) + set the domain's mode to \"unified\"",
         );
       }
       const ghKey = `github/${gh.repo}`;
@@ -6063,7 +6166,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "S-CONNECTOR-TIER",
-    title: "Connector op tiering, live: a READ (notion__search) sails through with NO prompt while a WRITE (notion__create_page) prompts — classifyConnectorOp's split gates at runtime (optional — needs the connector-write fixture ARMED)",
+    title: "Connector op tiering, live: a Notion READ (notion__notion-search) answers with NO approval prompt, and a Notion WRITE (notion__notion-create-pages) reports the page and never reads as ungated (optional — needs the connector-write fixture ARMED)",
     requires: ["slack", "connectorWrite"],
     surface: "notion",
     suite: "core",
@@ -6121,7 +6224,7 @@ export const SCENARIOS: readonly Scenario[] = [
       }
       ctx.gate(
         /created|page/i.test(writeReply.text) && !/error|exception|traceback/i.test(writeReply.text),
-        "tier-split: the write is gated where the read was not (classifyConnectorOp's split, enforced live)",
+        "tier-split: the write reply reports the page with no error text",
       );
       ctx.log(
         "tier-split: the read/write split itself is unit-pinned in connector-op-tier-test.ts; what this leg adds is that a LIVE write never reads as ungated, " +
@@ -6598,7 +6701,7 @@ export const SCENARIOS: readonly Scenario[] = [
 
       if (process.env.E2E_CREDENTIAL_BROKER_DB?.trim() !== "1")
         ctx.skip(
-          "needs the db broker CONFIGURED (OE_CREDENTIAL_ENCRYPTION_KEY armed ⇒ db registered) — set E2E_CREDENTIAL_BROKER_DB=1 once it is (packages/core/scripts/e2e/README-db-broker-flip.md). With no host-write broker the card correctly OMITS the api-key option, so this path can't arm.",
+          "needs the db broker CONFIGURED (OE_CREDENTIAL_ENCRYPTION_KEY armed ⇒ db registered) — set E2E_CREDENTIAL_BROKER_DB=1 once it is (how the db broker arms: docs/extending/credential-brokers.md). With no host-write broker the card correctly OMITS the api-key option, so this path can't arm.",
         );
       const connector = ctx.connectorWrite!;
       const synthetic = ctx.synthetic!;

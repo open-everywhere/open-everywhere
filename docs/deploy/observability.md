@@ -158,9 +158,10 @@ OE_LOG_SHIP_URL=https://<your-ingesting-host>/
 OE_LOG_SHIP_TOKEN="Bearer <source-token>"
 ```
 
-Knobs (all optional): `OE_LOG_SHIP_TOKEN_HEADER` (default `authorization`),
-`OE_LOG_SERVICE`, `OE_LOG_SHIP_BATCH_MAX`, `OE_LOG_SHIP_FLUSH_MS` — see the
-[configuration reference](./configuration-reference.md#observability).
+Knobs (all optional): `OE_LOG_SHIP_TOKEN_HEADER` (default `authorization`) and
+`OE_LOG_SERVICE` — see the [configuration reference](./configuration-reference.md#observability).
+The batch size (20 records) and the flush interval (1 second) are code constants, not knobs
+(OPE-2411).
 
 For **new code and error paths**, prefer the structured API over raw console — it
 adds typed fields and preserves stacks:

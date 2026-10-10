@@ -834,9 +834,10 @@ theirs; nothing rewrites or retires them behind their back.)
   and in no audit row.
 - **Skill proposal** (the same crossing): a workflow that keeps recurring is also a candidate
   for a **skill** — a procedure worth writing down. The cycle drafts a `SKILL.md` and records
-  it in the proposal review queue. Where the deployment sets `memory.skillProposalPr`, the same
-  draft also opens a **pull request** on the config repo, adding the file under
-  `.agents/skills/<name>/SKILL.md` on its own branch. See below.
+  it in the proposal review queue. Where the deployment has a config repo
+  (`accessRequests.configRepo`), the same draft also opens a **pull request** on it, adding the
+  file under `.agents/skills/<name>/SKILL.md` on its own branch. `memory.skillProposalPr` ships on;
+  with no config repo the pull request is skipped with no error, and `false` turns it off. See below.
 
 ### The skill proposal, and how a correction reaches the next one
 
@@ -911,7 +912,8 @@ top few clusters into a short label plus a concrete fix-sketch — falling back 
 label/sketch when no judge is registered or it abstains on a cluster. The digest posts to
 the admin channel (the same channel the access-request flow already notifies). A human
 decides which fix sketch, if any, to act on. An empty week is a quiet no-op: nothing
-posts, nothing is recorded, and nothing is spent — no model call, no repro, no post.
+posts, nothing is recorded, and nothing is spent — no model call, no post. The digest opens no
+pull request: it is discovery only.
 
 #### How the clustering works
 
@@ -929,68 +931,6 @@ proxied by **spread** — the number of distinct days of the week the signature 
 signature seen on five separate days is a standing leak; five hits in one hour is one
 incident. Ties past that break by first-seen order, so the same week always produces the same
 digest.
-
-#### The optional last mile
-
-**It ships off.** For the **top** cluster only, the digest can go one step further: attempt a
-reproduction, and when it reproduces, open a **draft pull request** carrying that repro. It
-is a proposal, not a fix, and a human merges — always.
-
-Four properties hold by construction, not by promise. A fifth — the draft COUNT — holds by
-construction within one run and has one narrow exception across an interrupted step; it is stated
-last, with the exception in its own words:
-
-- **The arm never merges.** It drives the same config-repo PR port the credential-binding flow
-  uses (`ConfigPrProvider`, `packages/core/agent/credentials/config-pr.ts`), and that port has no
-  merge method, so no code path in the arm can merge. The pull request opens as a draft on top of
-  that. The bound is the **code path, not the credential**: the write token the arm resolves is the
-  same repo-write token the credential-binding flow already uses, and a repo-write token can merge
-  a pull request. A deployment that needs the stronger property enforces it with branch protection
-  on the declared repository.
-- **The base branch is never written.** The base is read once, for the sha the head branch is
-  cut from. Every write names the head. If the computed head and the configured base were ever
-  the same name, the arm refuses outright.
-- **The declared repository only.** The repository is a tracked literal in typed code. There is
-  no environment variable, and there will not be one: which repository the agent may propose
-  against is a trust declaration, and a trust declaration changes by pull request. No declared
-  repository means no attempt — the arm never infers one from a cluster, a model or an audited row.
-- **Nothing runs unapproved.** The approval gate is consulted before the clone, so a refusal
-  costs nothing. With no gate registered the arm refuses: it is fail-closed.
-- **One draft per digest RUN, with one exception across a resume.** The arm handles the top cluster and returns. There is no loop,
-  and the head branch is derived from the cluster's signature, so a still-recurring failure updates
-  the same pull request rather than opening a second. A resume **inside** the short outbound
-  dedupe window skips the arm entirely; a resume after it runs the arm again, which re-pays the
-  approval call, the clone and the reproduction, and updates the same draft.
-  The head branch bounds the pull-request count across an interrupted weekly step **while the
-  resumed run ranks the same cluster first**. It is derived from that cluster's signature, and the
-  resumed run rebuilds its report over a `now - 7 days` window that has SLID. A slid window can
-  break a `count` tie and rank a different cluster first, and the arm then cuts that cluster's
-  branch and opens a second draft. The case is narrow, and it is the one the deterministic head
-  does not cover.
-
-The repro file's name comes from the transport, so it is checked before it is used: one plain
-segment, no path separator, no leading dot. The committed path is always
-`<repro directory>/<name>` and nothing else, which is what makes the directory in the config
-literal a real bound rather than a suggestion. A transport that names a file any other way is
-refused, and nothing is written.
-
-A failure **after** the commit reports differently from a refusal: the digest names the branch that
-was written and says no pull request opened. Only a refusal says nothing was written.
-
-The arm records the branch **before** it writes anything else. The moment the head branch exists it
-appends its own audit row naming that branch, and the outcome row follows. A run that dies between
-the two — a process death, not an error, which the arm already catches — therefore still leaves a
-row a reader can act on. That is what makes the resume-duplicate digest line worth following when it
-sends the reader to the audit trail.
-
-The append is **best-effort**, like the outcome row beside it: a store that refuses it must never
-turn a real pull request into a refusal, so the arm swallows that failure and carries on. The row
-therefore SHRINKS the blind window — the few lines between the branch and the append — rather than
-closing it. An empty trail is still weaker evidence than a branch listing on the declared repository.
-
-When the reproduction fails, the digest says **"could not reproduce"** in plain words and opens
-nothing. That sentence is the product — a digest that quietly skipped would teach the reader
-nothing. Every outcome, including a refusal, is recorded on the digest's own audit row.
 
 ## One road, one row: every durable write is audited
 
@@ -1118,7 +1058,7 @@ a claim the host has no write for.
 
 ## What the memory plane writes to the audit log
 
-Five more actions sit on this plane. Each carries ids, enums, counts and digests only. None carries
+Four more actions sit on this plane. Each carries ids, enums, counts and digests only. None carries
 a member's words, a memory line's text, or a correction's prose — the
 [audit trail's own rule](../security/audit-and-provenance.md#properties-that-make-the-log-trustworthy)
 holds here as everywhere.
@@ -1128,8 +1068,7 @@ holds here as everywhere.
 | `memory.trust_gate` | A session whose binding is **external and non-local** starts, and the trust gate decides what it may read. One row per session, never per wake. | The binding mode, how many reads the plan admits, the plan's reason, and the session id when one exists. 🔴 A session with an internal or local binding writes no row, so an absent row does not mean the gate did not run. |
 | `memory.tidy` | The tidy schedule finishes a pass over one silo. | The silo, the provider, the operations it applied (kind, file and summary each), and the provenance the guard reverted. |
 | `memory.skill_proposal_pr` | The dream pass attempts a skill-proposal pull request. | The OE-minted scope, the workflow-signature digest, the delivery id, and the pull request number when one opened. The correction loop reads these rows back to find its own prior proposals, so the row is a working record rather than only evidence. |
-| `dream.mode3_report` | The dream mode-3 digest is built. | The total failure count, one entry per cluster (its action, count, label and whether it was judged), and the last-mile result. |
-| `dream.mode3_last_mile` | The mode-3 last-mile pass finishes. | The repository and the outcome. An opened pull request adds its number, URL and whether it was updated. A failure after the write adds the head and the reason. A branch cut adds the head. |
+| `dream.mode3_report` | The dream mode-3 digest is built. | The total failure count, one entry per cluster (its action, count, label and whether it was judged). |
 
 🔴 **A fully-refused tidy still writes a row.** When the provenance guard reverts every proposed
 change, `applied` is an empty list and `provenanceReverted` names what was put back. Without that

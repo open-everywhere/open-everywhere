@@ -116,12 +116,22 @@ tool. The same step list, written for a human, is
    creates and installs the app, then runs `npx oe env set SLACK_BOT_TOKEN` and
    `npx oe env set SLACK_SIGNING_SECRET` in their own terminal. Confirm with
    `scaffold_env { secretNames: ["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET"] }`: both read `present: true`.
+   **App icon.** With no `identity.name` set, the agent presents as the project, so its default
+   avatar is the project mark. Unless the user set `identity.name` and chose their own icon, tell
+   them to upload
+   `https://raw.githubusercontent.com/open-everywhere/open-everywhere/main/brand/png/mark-square-1024.png`
+   under **Basic Information → Display Information → App icon**. The manifest has no icon field.
+   The same file is the icon for a Discord application, a GitHub App, and a Notion or Linear
+   integration. For Teams, the package icons are the mark:
+   `https://raw.githubusercontent.com/open-everywhere/open-everywhere/main/teams-app/color.png` and
+   `https://raw.githubusercontent.com/open-everywhere/open-everywhere/main/teams-app/outline.png`.
 6. **Vouch the workspace.** Ask for the team id (`T…`: the segment after `/client/` in the
    workspace URL at app.slack.com). In `agent/identity/surfaces.ts` add
    `defineSurface({ key: "slack/<team-id>", trust: "internal" })`.
 7. **Admin.** Ask for the user's member id (`U…`: Slack profile → ⋮ More → Copy member ID). In
    `agent/memory/config/domains/org.ts` set `admins: ["slack/<team-id>/<member-id>"]`. Offer to
    commit both edits. They take effect on the next deploy, so make them before it.
+   Then OFFER the optional window step below. Do not make it for the user unasked.
 8. **Build.** `npm run build`. It must pass.
 9. **Deployment env.** `.env.local` never ships, so the deployment reads only what you set ON it.
    The names are `OE_CREDENTIAL_ENCRYPTION_KEY`, `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET`. The
@@ -176,6 +186,52 @@ Then:
    them from there.
 7. **Prove it, then the Slack URLs and the hello.** As steps 11–13 of the Vercel route, with
    `--route docker --host https://<host>`.
+
+## Optional: one cross-surface window
+
+Offer this step once, after the admin step. Skip it when the user declines. Every channel the bot
+is in already has its own standing seat, because `window.topology` ships on. The `org` catch-all
+always stays solo: the boot refuses `mode` on it, because the whole org is never one window.
+
+A cross-surface window lets a few rooms share ONE conversation and one brain. To make one:
+
+1. Ask for the window's **name** (for example `team`) and its **reach**: the exact surface keys of
+   the rooms that share it, such as `slack/<team-id>/<channel-id>` or `github/<owner>/<repo>`.
+2. Say the cost plainly: each room's seat sees what the other rooms said, so the window is a wider
+   data blast radius than a solo seat.
+3. Write `agent/memory/config/domains/<name>.ts`:
+   `export const domain = defineDomain({ name: "<name>", reach: [ … ], memory: "org-brain", mode: "unified" });`
+   Then add `import * as <name> from "./<name>.js";` and `<name>` to `MODULES` in
+   `agent/memory/config/domains/index.ts`. Declare ONE such domain, not one per room.
+4. Every member outside Slack must be declared internal in `agent/identity/surfaces.ts`, or the
+   boot refuses the window at config load.
+
+## Optional: add an MCP server
+
+Offer this step when the user names a tool their team uses that has a hosted MCP server (for
+example FullStory). An admin declares the server, and the declaration lands by pull request: a
+person in chat cannot add one.
+
+1. Ask for the server's **name** (lowercase, for example `fullstory`), its **URL** from the
+   vendor's own MCP documentation, and one line that says what it is for.
+2. Add one entry to `MCP_SERVERS` in `agent/access/mcp-servers.ts`:
+   `{ name: "fullstory", url: "https://<the vendor's MCP endpoint>", description: "…" }`.
+   The default sign-in is MCP OAuth discovery with dynamic client registration, so the entry
+   needs no client id and no secret. Only a vendor WITHOUT dynamic registration takes a
+   `signIn: { mode: "static-confidential", … }` block, and that block names the secret's
+   credential-store REF (`clientSecretRef`), never the value.
+3. Run `npx oe build`. Commit `agent/access/mcp-servers.ts` and the updated
+   `scripts/goldens/roster-plan.txt`, then open the pull request.
+4. Say what the user gets. In a DM, each person uses the server as THEMSELVES: their first call
+   posts a "Connect my account" card, and they sign in with their own account once. A channel
+   gets nothing until an admin grants the server's `workspace-oauth` credential (the org's own
+   account) on a bundle in `agent/access/bundles.ts`.
+5. Say who "each person" is: every account that can DM the agent, an external one included (a
+   Slack Connect user, a Discord user who shares a server with the bot). If external people can
+   DM the agent, offer to narrow the entry with `people: { groups: ["<group>"] }`.
+
+With no server declared, nothing changes: the build writes no connection for one, and only the
+shipped connections (Notion) stay mounted.
 
 ## Develop locally
 

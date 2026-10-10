@@ -129,6 +129,7 @@ export const SLACK_APP_MANIFEST_STEPS: readonly string[] = [
   "Pick the workspace, choose JSON, and paste the manifest below.",
   "Next → Create.",
   "Install to Workspace, and approve the scopes Slack lists.",
+  "Unless you set identity.name and chose your own icon, give the app the project mark: Basic Information → Display Information → App icon, and upload https://raw.githubusercontent.com/open-everywhere/open-everywhere/main/brand/png/mark-square-1024.png. Slack's manifest has no icon field, so this step stays by hand.",
   "Before the first deploy, Slack cannot verify the Event Subscriptions URL: it answers only once a deploy that holds SLACK_SIGNING_SECRET is up. After the deploy, paste the manifest again with the real host (App Manifest → Save Changes), then retry the verification under Event Subscriptions.",
 ];
 

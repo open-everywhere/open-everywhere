@@ -36,31 +36,16 @@ function withEnv(patch: Record<string, string | undefined>, fn: () => void): voi
 }
 
 {
-  withEnv({ VERCEL: "1", OE_PLATFORM: "self-host" }, () => {
-    ok(platformName() === "self-host", "OE_PLATFORM=self-host overrides VERCEL=1");
-    ok(!onVercel(), "onVercel() false when OE_PLATFORM forces self-host despite VERCEL=1");
-  });
-  withEnv({ VERCEL: undefined, OE_PLATFORM: "vercel" }, () => {
-    ok(platformName() === "vercel", "OE_PLATFORM=vercel overrides an unset VERCEL");
-    ok(onVercel(), "onVercel() true when OE_PLATFORM forces vercel despite VERCEL unset");
-  });
-  withEnv({ VERCEL: undefined, OE_PLATFORM: "railway" }, () => {
-    ok(platformName() === "railway", "an arbitrary OE_PLATFORM label passes through");
-    ok(!onVercel(), "onVercel() false for a non-vercel OE_PLATFORM label");
-  });
-}
-
-{
-  withEnv({ VERCEL: undefined, OE_PLATFORM: "  Vercel  " }, () => {
-    ok(platformName() === "vercel", "OE_PLATFORM is trimmed and lower-cased");
-    ok(onVercel(), "onVercel() true after normalising a mixed-case OE_PLATFORM=Vercel");
-  });
-  withEnv({ VERCEL: undefined, OE_PLATFORM: "" }, () => {
-    ok(platformName() === "self-host", "blank OE_PLATFORM is treated as unset");
-  });
-  withEnv({ VERCEL: undefined, OE_PLATFORM: "   " }, () => {
-    ok(platformName() === "self-host", "whitespace-only OE_PLATFORM is treated as unset");
-  });
+  for (const label of ["self-host", "vercel", "  Vercel  ", "railway", "local", ""]) {
+    withEnv({ VERCEL: "1", OE_PLATFORM: label }, () => {
+      ok(platformName() === "vercel" && onVercel(), `OE_PLATFORM=${JSON.stringify(label)} does NOT turn a Vercel host into a self-host`);
+    });
+    withEnv({ VERCEL: undefined, OE_PLATFORM: label }, () => {
+      ok(platformName() === "self-host" && !onVercel(), `OE_PLATFORM=${JSON.stringify(label)} does NOT turn a self-host into Vercel`);
+    });
+  }
 }
 
 console.log(`platform-test: ${n} assertions passed`);
+
+// proves: AP-MOD-core-access-platform

@@ -27,6 +27,7 @@ afterAll(async () => {
   for (const c of cleanups.splice(0)) c();
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   settings.resetSettingsForTest();
+  (await import("@open-everywhere/core/agent/audit/audit.js")).setSilenceAuditForTest(false);
 });
 
 function userInfo(id: string, name: string): Record<string, unknown> {
@@ -73,12 +74,12 @@ async function armSeams(): Promise<void> {
   cleanups.push(() => installed.uninstall());
 }
 
-test("Slack NAME-DROP wake that ends in the bare NO_REPLY sentinel writes an UNGATED reply.no_reply_observed row (route: sentinel, audit.silences OFF)", async () => {
+test("Slack NAME-DROP wake that ends in the bare NO_REPLY sentinel writes an UNGATED reply.no_reply_observed row (route: sentinel, the silence-audit switch OFF)", async () => {
   await armSeams();
-  const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   const { NO_REPLY_SENTINEL } = await import("@open-everywhere/core/agent/channels/normalized-wake.js");
-  settings.overrideSettingsForTest({ audit: { silences: false } });
-  expect(settings.getSettings().audit.silences).toBe(false);
+  const silenceAudit = await import("@open-everywhere/core/agent/audit/audit.js");
+  silenceAudit.setSilenceAuditForTest(false);
+  expect(silenceAudit.auditSilencesEnabled()).toBe(false);
 
   const handle: ScriptedHandle = registerScript({
     parent: [{ say: NO_REPLY_SENTINEL }],
@@ -114,7 +115,7 @@ test("Slack NAME-DROP wake that ends in the bare NO_REPLY sentinel writes an UNG
     expect(typeof observed.detail?.wakeId, "a standing-seat sentinel row carries the wake id").toBe("string");
 
     const gated = await rowsSinceCursor(cursor, ["reply.no_reply"], { limit: 50 });
-    expect(gated.find((r) => namesThisRoom(r.surface)), "the gated reply.no_reply row must be ABSENT with audit.silences OFF").toBeUndefined();
+    expect(gated.find((r) => namesThisRoom(r.surface)), "the gated reply.no_reply row must be ABSENT with the silence-audit switch OFF").toBeUndefined();
   } finally {
     handle.dispose();
   }

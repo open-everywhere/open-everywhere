@@ -14,7 +14,6 @@ export const COUNTED_FACT_KEYS = [
   "lean-seat-tools",
   "worker-only-standing",
   "worker-only-thread",
-  "settings-env-seams",
   "grant-refund-cap-per-turn",
   "grant-once-max-attempts-per-turn",
   "taint-gate-sinks",
@@ -63,13 +62,6 @@ export const COUNTED_CLAIMS: readonly CountedClaim[] = [
     fact: "worker-only-thread",
     kind: "count",
     pattern: String.raw`#WORKER_ONLY_TOOLS_THREAD\x60 \((\d+) entries\)`,
-  },
-  {
-    id: "settings/sole-env-seam",
-    doc: "packages/core/agent/settings/settings.ts",
-    fact: "settings-env-seams",
-    kind: "names",
-    pattern: String.raw`When present — and only \x60([a-z.]+)\x60 has it —`,
   },
   {
     id: "agents/seat-holds",
@@ -132,7 +124,7 @@ export const COUNTED_CLAIMS: readonly CountedClaim[] = [
     doc: "docs/how-it-works/config-as-code.md",
     fact: "env-pending-migration",
     kind: "count",
-    pattern: String.raw`the honest backlog: \*\*(\d+) behaviour knobs\*\*`,
+    pattern: String.raw`the honest backlog: \*\*(\d+) names\*\*`,
   },
 ];
 

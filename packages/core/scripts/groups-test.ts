@@ -33,7 +33,6 @@ import {
   type GroupsFile,
 } from "../agent/identity/groups-codemod.js";
 import {
-  OE_DIRECTORY_GROUP_ALLOWLIST_ENV,
   directoryGroupAllowlist,
   groupPlanIsNoop,
   planDirectoryGroups,
@@ -47,6 +46,7 @@ import type { DirectoryPerson } from "../agent/identity/directory.js";
 import { callerLinkSets, withLinkSetGroups } from "../agent/access/group-request.js";
 import { confirmLinkedId, ensureLinkSet, expandLinkSet, setLinkSetHold, suggestLinkedId } from "../agent/identity/link-store.js";
 import { principalKey } from "../agent/identity/principal-key.js";
+import { defineSettings, overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -357,12 +357,22 @@ const setOf = (externalId: string): string => directoryLinkSetId(PROVIDER, exter
   });
   ok(emptied.next.groups.length === 0, "allowlist: an allowlisted-but-empty group is dropped like today (never emitted empty)");
 
-  ok(directoryGroupAllowlist({}) === undefined, "allowlist env: unset ⇒ undefined (sync everything)");
-  ok(directoryGroupAllowlist({ [OE_DIRECTORY_GROUP_ALLOWLIST_ENV]: "" }) === undefined, "allowlist env: blank ⇒ undefined (not a silent total narrowing)");
-  ok(directoryGroupAllowlist({ [OE_DIRECTORY_GROUP_ALLOWLIST_ENV]: " , " }) === undefined, "allowlist env: all-blank entries ⇒ undefined");
-  assert.deepEqual(directoryGroupAllowlist({ [OE_DIRECTORY_GROUP_ALLOWLIST_ENV]: "Payments, Secret-Internal ,Eng" }), ["Payments", "Secret-Internal", "Eng"]);
+  resetSettingsForTest();
+  ok(directoryGroupAllowlist() === undefined, "allowlist: shipped empty ⇒ undefined (sync everything)");
+  process.env.OE_DIRECTORY_GROUP_ALLOWLIST = "Payments";
+  ok(directoryGroupAllowlist() === undefined, "🔴 allowlist: the retired OE_DIRECTORY_GROUP_ALLOWLIST narrows NOTHING");
+  delete process.env.OE_DIRECTORY_GROUP_ALLOWLIST;
+  overrideSettingsForTest({ directory: { groupAllowlist: ["Payments", "Secret-Internal", "Eng"] } });
+  assert.deepEqual(directoryGroupAllowlist(), ["Payments", "Secret-Internal", "Eng"]);
   passed++;
-  ok(true, "allowlist env: comma-separated, per-entry trimmed, empties dropped");
+  resetSettingsForTest();
+  let refused = "";
+  try {
+    defineSettings({ directory: { groupAllowlist: ["Payments", "  "] } });
+  } catch (e) {
+    refused = String(e);
+  }
+  ok(refused.includes("directory.groupAllowlist"), "allowlist: a blank group name fails settings load — never a silent narrowing");
 }
 
 {

@@ -38,6 +38,7 @@ const REQUIRED_IDS = [
   "J-NOT",
   "S-OWN-ACCOUNT-NOTION",
   "F-ART",
+  "F-QA-REPO",
   "F-EDIT",
   "F-SEC",
   "J-SUP",

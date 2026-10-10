@@ -1,3 +1,4 @@
+import { __setTestValveForTest } from "../agent/testing/test-valves.js";
 import assert from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { tmpdir } from "node:os";
@@ -11,7 +12,7 @@ registerSlackFixtureMapper();
 const dir = join(tmpdir(), `open-everywhere-create-ticket-tool-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-delete process.env.OE_EGRESS_SPOOF;
+__setTestValveForTest("egress-spoof", false);
 
 const { registerTicketCreateAdapter } = await import("../agent/channels/ticket-create.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
@@ -185,7 +186,7 @@ async function inFakeSession<T>(fn: () => T | Promise<T>): Promise<T> {
 }
 
 {
-  process.env.OE_EGRESS_SPOOF = "1";
+  __setTestValveForTest("egress-spoof", true);
   calls.length = 0;
   const out = await execTool(createTicketEntry)(
     { platform: "tool-create-platform", target: "T-9", title: "Login 500s on retry", body: "Steps: …" },
@@ -200,11 +201,11 @@ async function inFakeSession<T>(fn: () => T | Promise<T>): Promise<T> {
   ok(frozen.title === "Login 500s on retry" && frozen.body === "Steps: …", "the frozen args carry the exact text that will be published");
   ok(frozen.requestedBy === "U_PROPOSER", "the frozen args carry the verified proposer");
   ok(frozen.tainted === false, "a clean turn freezes tainted:false");
-  delete process.env.OE_EGRESS_SPOOF;
+  __setTestValveForTest("egress-spoof", false);
 }
 
 {
-  process.env.OE_EGRESS_SPOOF = "1";
+  __setTestValveForTest("egress-spoof", true);
   const out = await inFakeSession(async () => {
     markUntrustedIngestedThisTurn();
     return execTool(createTicketEntry)(
@@ -216,7 +217,7 @@ async function inFakeSession<T>(fn: () => T | Promise<T>): Promise<T> {
   const row = await getOperationalStore().getPendingAction("default", out.pendingId!);
   const frozen = JSON.parse(row!.argsJson) as { tainted?: boolean };
   ok(frozen.tainted === true, "…and the taint flag is FROZEN onto the row so the card can warn the reviewer");
-  delete process.env.OE_EGRESS_SPOOF;
+  __setTestValveForTest("egress-spoof", false);
 }
 
 console.log(`✓ ${n} create-ticket-tool assertions passed`);

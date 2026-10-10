@@ -525,18 +525,10 @@ export const TEMPLATED_AUDIT_ACTIONS: readonly TemplatedAuditActionDeclaration[]
       "RED-until-leg: F-ART (slack) · J-DISC leg 3 (discord) · lane A run 2 (notion, no leg posts a file there). Each drives the attachment in the room and gates the reply, never this row.",
    },
   {
-    template: "<platform>.post_file.link",
-    platforms: ["slack", "discord", "notion"],
-    fields: ["count", "filenames"],
-    proves: "a file left the sandbox as a HOSTED LINK, which is a different exposure from an attachment",
-    consequential: true,    notExercised:
-      "RED-until-leg: lane A run 2 — the HOSTED-LINK arm on every platform. F-ART and J-DISC both ask for an attachment, and a hosted link is a different exposure.",
-   },
-  {
     template: "<platform>.post_file",
     platforms: ["slack", "discord", "notion"],
-    fields: ["count", "filenames", "hasComment", "hosted"],
-    proves: "the whole post_file batch: how many files went out, and how many were hosted rather than attached",
+    fields: ["count", "filenames", "hasComment", "attached"],
+    proves: "the whole post_file batch: how many files went out as attachments",
     consequential: true,    notExercised:
       "RED-until-leg: F-ART (slack) · J-DISC leg 3 (discord) · lane A run 2 (notion). The whole-batch row, which no leg reads.",
    },
@@ -616,7 +608,6 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "connector.consent_detour",
   "connector.consent_resume",
   "connector.dashboard_link_issued",
-  "connector.entitlement_check",
   "connector.mint",
   "connector.oauth_url_issued",
   "connector.op",
@@ -797,13 +788,8 @@ export const DYNAMIC_ACTION_SITES: readonly DynamicActionSite[] = [
     ],
   },
   {
-    file: "packages/core/agent/approvals/file-publish.ts",
-    expression: "`${args.platform}.post_file`",
-    emits: ["slack.post_file", "discord.post_file", "notion.post_file"],
-  },
-  {
     file: "packages/core/agent/tools/post_file.ts",
-    expression: "`${platform}.post_file` / `.attach` / `.link`",
+    expression: "`${platform}.post_file` / `.attach`",
     emits: [
       "slack.post_file",
       "discord.post_file",
@@ -811,9 +797,6 @@ export const DYNAMIC_ACTION_SITES: readonly DynamicActionSite[] = [
       "slack.post_file.attach",
       "discord.post_file.attach",
       "notion.post_file.attach",
-      "slack.post_file.link",
-      "discord.post_file.link",
-      "notion.post_file.link",
     ],
   },
   {
@@ -902,12 +885,12 @@ export const DYNAMIC_ACTION_SITES: readonly DynamicActionSite[] = [
   {
     file: "packages/core/agent/access/connector-scope.ts",
     expression: "the shorthand `action` forwarded from the connector gate's verdict",
-    emits: ["connector.use", "connector.read", "connector.refused", "connector.entitlement_check"],
+    emits: ["connector.use", "connector.read", "connector.refused"],
   },
   {
     file: "packages/core/agent/access/connector-disclosure.ts",
     expression: "the shorthand `action` forwarded from the disclosure decision",
-    emits: ["grant.undisclosed", "grant.notified", "grant.used"],
+    emits: ["connector.refused", "governance.redirected"],
   },
   {
     file: "packages/core/agent/access/credential-grant-flow.ts",

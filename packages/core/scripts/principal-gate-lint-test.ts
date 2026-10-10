@@ -502,8 +502,7 @@ class Policies {
   const eveSites = attended.filter((a) => a.shape === "eve-approval");
   ok(eveSites.length >= 4, `real-r5E: the eve ApprovalPolicy inventory is non-empty (${eveSites.length}) — zero would mean the detector went blind, not that the tree stopped authoring policies`);
   ok(eveSites.every((a) => a.exempt || a.derivedInFile === true), `real-r5E: every eve approval site derives attendedness or states why it cannot (${eveSites.filter((a) => !a.exempt && a.derivedInFile !== true).map((a) => `${a.file}:${a.line}`).join(", ")})`);
-  ok(!eveSites.some((a) => a.file.endsWith("tools/post_file.ts")), "real-r5E: post_file carries no eve approval policy any more (OPE-2340)");
-  ok(attended.some((a) => a.file.endsWith("tools/post_file.ts") && a.shape !== "eve-approval" && !a.exempt), "real-r5: …its publish card is SEEN as an approval site, and derives attendedness");
+  ok(!attended.some((a) => a.file.endsWith("tools/post_file.ts")), "real-r5: post_file is no approval site at all — it only attaches files");
   ok(eveSites.filter((a) => a.file.endsWith("connections/connector-auth.ts")).length >= 3, "real-r5E: …and the connection plane's three policy factories are seen too");
   ok(attended.filter((a) => a.file.endsWith("commands/core.ts")).length === 2, "real-r5: 🔴 BOTH slash-command propose sites are seen — they call through an injected alias, and a checker blind to that reported the file clean while both shipped with no bag");
   ok(attended.filter((a) => a.file.endsWith("commands/core.ts")).every((a) => a.expr === ATTENDEDNESS_DERIVATION_BINDING), "real-r5: …and both derive through the binding-taking twin, which is the only spelling available to a caller with no ctx");

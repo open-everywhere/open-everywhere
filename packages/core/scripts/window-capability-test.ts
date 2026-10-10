@@ -229,7 +229,7 @@ const NATIVE_DM_CAPABILITY_GOLDEN: Readonly<Record<string, ConsequenceTier>> = {
   bash: "open",
   web_fetch: "open",
   write_file: "open",
-  post_file: "gate:member",
+  post_file: "open",
   open_pull_request: "gate:member",
   create_skill: "gate:member",
   create_routine: "gate:member",
@@ -257,12 +257,12 @@ console.log("P0-e — assertWindowSourcesVouched direct unit tests:");
     "[P0-e] surface-grain vouch satisfies the exact source",
   );
   {
-    process.env.OE_TRUST = "internal";
+    overrideSettingsForTest({ identity: { blanketTrust: "internal" } });
     noThrow(
       () => assertWindowSourcesVouched([win(["github/acme/one", "notion/ws/pg"]), orgGate], []),
-      "[P0-e] OE_TRUST=internal blanket satisfies all sources with an EMPTY vouch set",
+      "[P0-e] the identity.blanketTrust internal blanket satisfies all sources with an EMPTY vouch set",
     );
-    delete process.env.OE_TRUST;
+    overrideSettingsForTest({ identity: { blanketTrust: "none" } });
   }
   noThrow(
     () => assertWindowSourcesVouched([win(["slack/T1/C_X", "github/acme/one"]), orgGate], ["github/acme/one"]),
@@ -364,7 +364,7 @@ console.log("P0-e — assertWindowSourcesVouched direct unit tests:");
     const expected =
       `  domain "win" includes UN-vouched source "${ch}" in a multi-source (2-channel) cross-surface window` +
       ` — vouch it in agent/identity/surfaces.ts (add "${ch}" or its workspace "github/a"),` +
-      ` or set OE_TRUST=internal for an internal-only deploy`;
+      ` or declare \`identity.blanketTrust: "internal"\` in agent/settings/settings.ts for an internal-only deploy`;
     let message = "";
     try {
       assertWindowSourcesVouched([win([ch, "notion/b/y"]), orgGate], []);

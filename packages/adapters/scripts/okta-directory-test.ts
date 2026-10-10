@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { makeOktaDirectoryProvider, nextLink } from "../agent/directory/okta.js";
-import { loadOktaDirectoryConfig, oktaDirectoryEnabled, parseOktaAppMap, type OktaDirectoryConfig } from "../agent/directory/config.js";
+import { loadOktaDirectoryConfig, oktaDirectoryEnabled, oktaAppMappings, type OktaDirectoryConfig } from "../agent/directory/config.js";
+import { defineSettings, type OktaAppSetting } from "@open-everywhere/core/agent/adapter-api.js";
 import type { DirectoryPerson } from "@open-everywhere/core/agent/adapter-api.js";
 
 let passed = 0;
@@ -209,38 +210,61 @@ const APP_USERS_P2 = `${ORG_URL}/api/v1/apps/0oaSLACK/users?after=a2`;
 }
 
 {
-  const apps = parseOktaAppMap("slack:0oa1, github:0oa2 , linear:0oa3:userName");
-  ok(apps.length === 3, "app map: comma-separated entries, whitespace-tolerant");
+  const apps = oktaAppMappings([
+    { platform: "slack", appId: "0oa1" },
+    { platform: "github", appId: "0oa2" },
+    { platform: "linear", appId: "0oa3", field: "userName" },
+  ]);
+  ok(apps.length === 3, "app map: one entry per app");
   ok(apps[0]!.platform === "slack" && apps[0]!.appId === "0oa1" && apps[0]!.field === "externalId", "app map: the default field is externalId");
-  ok(apps[2]!.field === "userName", "app map: the :userName suffix opts one app into the weaker field");
-  ok(parseOktaAppMap(undefined).length === 0 && parseOktaAppMap("").length === 0, "app map: unset/empty ⇒ no apps (the person spine still syncs, with no account mappings)");
-  ok(parseOktaAppMap("SLACK:0oa1")[0]!.platform === "slack", "app map: the platform token is lower-cased into our namespace");
+  ok(apps[2]!.field === "userName", "app map: field: \"userName\" opts one app into the weaker field");
+  ok(oktaAppMappings([]).length === 0, "app map: empty ⇒ no apps (the person spine still syncs, with no account mappings)");
 
-  const throws = (raw: string, label: string) => {
+  const throws = (entries: readonly OktaAppSetting[], label: string) => {
     let threw = false;
     try {
-      parseOktaAppMap(raw);
+      oktaAppMappings(entries);
     } catch {
       threw = true;
     }
-    ok(threw, label);
+    let refusedAtLoad = false;
+    try {
+      defineSettings({ directory: { oktaApps: entries } });
+    } catch {
+      refusedAtLoad = true;
+    }
+    ok(threw && refusedAtLoad, `${label} (and settings load refuses the same table)`);
   };
-  throws("slack", "app map: FAIL-LOUD on an entry with no app id — a silently dropped mapping looks exactly like an IdP with nothing to say");
-  throws("slack:", "app map: FAIL-LOUD on a blank app id");
-  throws(":0oa1", "app map: FAIL-LOUD on a blank platform");
-  throws("slack:0oa1:email", "app map: FAIL-LOUD on an unknown field name");
-  throws("slack:0oa1:externalId:extra", "app map: FAIL-LOUD on too many segments");
+  throws([{ platform: "slack", appId: "" }], "app map: FAIL-LOUD on a blank app id — a silently dropped mapping looks exactly like an IdP with nothing to say");
+  throws([{ platform: "", appId: "0oa1" }], "app map: FAIL-LOUD on a blank platform");
+  throws([{ platform: "SLACK", appId: "0oa1" }], "app map: FAIL-LOUD on a platform that is not our lowercase token");
+  throws([{ platform: "slack", appId: "0oa1", field: "email" as never }], "app map: FAIL-LOUD on an unknown field name");
 
-  const twoWorkspaces = parseOktaAppMap("slack/T0AB1CD2E:0oa1,slack/T9ZYX8W7V:0oa2,github:0oa3");
+  const twoWorkspaces = oktaAppMappings([
+    { platform: "slack", tenant: "T0AB1CD2E", appId: "0oa1" },
+    { platform: "slack", tenant: "T9ZYX8W7V", appId: "0oa2" },
+    { platform: "github", appId: "0oa3" },
+  ]);
   ok(twoWorkspaces.length === 3, "app map (OPE-350): two apps for ONE platform are both kept — a second same-platform workspace is expressible");
-  ok(twoWorkspaces[0]!.platform === "slack" && twoWorkspaces[0]!.tenant === "T0AB1CD2E", "app map (OPE-350): the `<platform>/<tenant>` half parses into platform + workspace");
+  ok(twoWorkspaces[0]!.platform === "slack" && twoWorkspaces[0]!.tenant === "T0AB1CD2E", "app map (OPE-350): the tenant names the workspace");
   ok(twoWorkspaces[1]!.tenant === "T9ZYX8W7V" && twoWorkspaces[1]!.appId === "0oa2", "app map (OPE-350): …and the second app carries the OTHER workspace");
-  ok(twoWorkspaces[2]!.tenant === undefined, "app map (OPE-350): an entry with no rung carries NO tenant — the pre-350 meaning (this deployment's sole workspace), unchanged");
-  ok(parseOktaAppMap("SLACK/T0AB1CD2E:0oa1:userName")[0]!.field === "userName", "app map (OPE-350): the rung composes with the :field suffix and still lower-cases the platform");
-  throws("slack/:0oa1", "app map (OPE-350): FAIL-LOUD on a blank workspace rung");
-  throws("slack/T1/T2:0oa1", "app map (OPE-350): FAIL-LOUD on more than one slash — the key grammar has exactly one workspace rung");
-  throws("slack/T1:0oa1,slack/T1:0oa2", "app map (OPE-350): FAIL-LOUD on two apps mapped to the SAME (platform, workspace)");
-  throws("github:0oa1,github:0oa2", "app map (OPE-350): …and the same for a vendor-global platform mapped twice");
+  ok(twoWorkspaces[2]!.tenant === undefined, "app map (OPE-350): an entry with no tenant carries NO tenant — this deployment's sole workspace, unchanged");
+  throws([{ platform: "slack", tenant: "", appId: "0oa1" }], "app map (OPE-350): FAIL-LOUD on a blank workspace");
+  throws([{ platform: "slack", tenant: "T1/T2", appId: "0oa1" }], "app map (OPE-350): FAIL-LOUD on a workspace with a slash — one workspace per entry");
+  throws(
+    [
+      { platform: "slack", tenant: "T1", appId: "0oa1" },
+      { platform: "slack", tenant: "T1", appId: "0oa2" },
+    ],
+    "app map (OPE-350): FAIL-LOUD on two apps mapped to the SAME (platform, workspace)",
+  );
+  throws(
+    [
+      { platform: "github", appId: "0oa1" },
+      { platform: "github", appId: "0oa2" },
+    ],
+    "app map (OPE-350): …and the same for a vendor-global platform mapped twice",
+  );
 
   ok(!oktaDirectoryEnabled({}), "selector: unset ⇒ the directory plane is OFF (silently — a deployment with no IdP is normal)");
   ok(!oktaDirectoryEnabled({ OE_DIRECTORY_PROVIDER: "oktaa" }), "selector: a typo leaves it OFF rather than half-arming");
@@ -257,12 +281,15 @@ const APP_USERS_P2 = `${ORG_URL}/api/v1/apps/0oaSLACK/users?after=a2`;
     "config: FAIL-LOUD naming EVERY missing required var when the selector is armed",
   );
 
-  const cfg = loadOktaDirectoryConfig({
-    OE_DIRECTORY_PROVIDER: "okta",
-    OE_DIRECTORY_OKTA_ORG_URL: "https://acme.okta.com/",
-    OE_DIRECTORY_OKTA_TOKEN_REF: "OKTA_API_TOKEN",
-    OE_DIRECTORY_OKTA_APPS: "slack:0oa1",
-  });
+  const cfg = loadOktaDirectoryConfig(
+    {
+      OE_DIRECTORY_PROVIDER: "okta",
+      OE_DIRECTORY_OKTA_ORG_URL: "https://acme.okta.com/",
+      OE_DIRECTORY_OKTA_TOKEN_REF: "OKTA_API_TOKEN",
+    },
+    [{ platform: "slack", appId: "0oa1" }],
+  );
+  ok(cfg.apps.length === 1 && cfg.apps[0]!.appId === "0oa1", "config: the app table comes from the argument (the directory.oktaApps setting by default), never from env");
   ok(cfg.orgUrl === "https://acme.okta.com", "config: a trailing slash on the org URL is normalised away");
   ok(cfg.tokenBroker === "db", "config: the broker defaults to the encrypted db credential store (OPE-408 step 2)");
   ok(
@@ -271,7 +298,6 @@ const APP_USERS_P2 = `${ORG_URL}/api/v1/apps/0oaSLACK/users?after=a2`;
       OE_DIRECTORY_OKTA_ORG_URL: ORG_URL,
       OE_DIRECTORY_OKTA_TOKEN_REF: "OKTA_API_TOKEN",
       OE_DIRECTORY_OKTA_TOKEN_BROKER: "env",
-      OE_DIRECTORY_OKTA_APPS: "",
     }).tokenBroker === "env",
     "config: the broker is selectable, so the token can instead live in a plain env var",
   );

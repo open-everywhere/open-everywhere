@@ -239,7 +239,7 @@ test("authorGrain \"withhold\": a REFUTED author's hydrated backscroll reaches t
   ).toHaveLength(1);
 });
 
-test("🔴 negative control: authorGrain \"taint\" (shipped) — the SAME refuted author's line reaches the model verbatim", async () => {
+test("🔴 negative control: authorGrain \"taint\" (the opt-out) — the SAME refuted author's line reaches the model verbatim", async () => {
   await armSeams();
   await armGrain("taint");
   const arm = ARMS.taint;
@@ -248,7 +248,7 @@ test("🔴 negative control: authorGrain \"taint\" (shipped) — the SAME refute
   const prompt = wakePrompt(handle);
 
   const refutedLine = contextLineFor(prompt, arm.refuted);
-  expect(refutedLine, "the shipped grain withheld a body — `taint` must withhold nothing, ever").toContain(arm.refutedBody);
+  expect(refutedLine, "the opt-out grain withheld a body — `taint` must withhold nothing, ever").toContain(arm.refutedBody);
   expect(contextLineFor(prompt, arm.member)).toContain(arm.memberBody);
   expectLineFenced(prompt, arm.refuted);
 

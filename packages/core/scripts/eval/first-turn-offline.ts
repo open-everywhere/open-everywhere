@@ -1014,7 +1014,7 @@ async function main(): Promise<void> {
   }
 
   const key = process.env.AI_GATEWAY_API_KEY;
-  if (!key) throw new Error("AI_GATEWAY_API_KEY is unset — source .env.e2e and set it from ROWAN_VERCEL_AI_GATEWAY_KEY (never the shell key, which is the shell key)");
+  if (!key) throw new Error("AI_GATEWAY_API_KEY is unset — source .env.e2e, which sets AI_GATEWAY_API_KEY to the gateway key for your deployment");
   const gateway = createGateway({ apiKey: key });
 
   console.log(`first-turn-offline: n=${N} path=${PATH}${TICKETING ? ` platform=${PLATFORM}` : ""} mode=${MODE} arm=${ARM}${ARM === "c" ? " (say-something)" : " (shipped)"} toolset=${TOOLSET} reissue=${REISSUE ? (STOCK_REISSUE ? "stock (pre-OPE-762)" : "guarded (OPE-762)") : "off"} pair=${PAIR ?? "rotating"} model=${MODEL} effort=${EFFORT}`);

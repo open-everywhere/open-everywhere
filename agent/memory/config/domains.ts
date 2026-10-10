@@ -6,7 +6,10 @@ import {
   assertWindowGroupExclusivity,
   type Domain,
 } from "@open-everywhere/core/agent/memory/domain.js";
+import { testValveArmed } from "@open-everywhere/core/agent/testing/test-valves.js";
 import { assertSingleTenantPerTenantScopedPlatform } from "@open-everywhere/core/agent/access/tenant-admission.js";
+import { getSettings } from "@open-everywhere/core/agent/settings/settings.js";
+import { SETTINGS_OVERRIDES } from "../../settings/settings.js";
 import { defineMemorySilo, assertSilosValid, type MemorySilo } from "@open-everywhere/core/agent/memory/silo.js";
 import { assertExposedAgentsCurated } from "@open-everywhere/core/agent/memory/agents-codemod.js";
 import { applyRoleDefaults } from "@open-everywhere/core/agent/roles/role.js";
@@ -25,7 +28,7 @@ const silos: MemorySilo[] = [
 
   defineMemorySilo({ name: "soak-brain", provider: "postgres" }),
 
-  ...(process.env.OE_MEMORY_EVAL === "1"
+  ...(testValveArmed("memory-eval")
     ? [
         defineMemorySilo({ name: "payments-brain", provider: "postgres", description: "payments-domain decisions — refunds, chargebacks, settlement, KYC" }),
         defineMemorySilo({ name: "platform-notes", provider: "postgres", description: "platform engineering — services, deploys, infra decisions" }),
@@ -51,7 +54,7 @@ const domains: Domain[] = applyRoleDefaults(mergedRawDomains, loadRoles());
 
 assertChannelExclusivity(domains);
 assertDomainsValid(domains);
-assertSingleTenantPerTenantScopedPlatform(domains);
+assertSingleTenantPerTenantScopedPlatform(domains, getSettings(SETTINGS_OVERRIDES).identity.allowMultiTenantPrincipals);
 assertUnifiedDomainTrust(domains);
 assertWindowGroupExclusivity(domains);
 assertSilosValid(mergedSilos);

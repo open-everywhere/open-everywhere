@@ -92,11 +92,11 @@ test("a Teams seat's SECOND turn reads the first turn, its worker reads only the
   await bootAgent();
   await pinFixtureDomain();
 
-  process.env.OE_TRUST = "internal";
-  cleanups.push(() => {
-    delete process.env.OE_TRUST;
-  });
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
+  settings.overrideSettingsForTest({ identity: { blanketTrust: "internal" } });
+  cleanups.push(() => {
+    settings.overrideSettingsForTest({ identity: { blanketTrust: "none" } });
+  });
   settings.overrideSettingsForTest({ window: { topology: true } });
 
   const jwks = installTeamsJwksStub();

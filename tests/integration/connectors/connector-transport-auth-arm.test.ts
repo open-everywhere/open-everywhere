@@ -207,7 +207,7 @@ test("connectors.userPrincipal ON selects userAwareProviderToken: the DM turn ta
     const output = connectionSearchOutputs(handle).join("\n");
     expect(output, "the ON arm produced no connection_search output at all").not.toBe("");
     expect(output, "the ON arm did not reach the per-user mint — the transport selected the APP builder").toContain(
-      "no user-auth-flow provider is registered",
+      'needs-sign-in: connection "notion" needs the person who asked to connect their own account',
     );
     expect(output, "the ON arm took the app-principal refusal, so the ternary selected the wrong builder").not.toContain(
       "is not valid on an app connection",
@@ -243,7 +243,7 @@ test("connectors.userPrincipal OFF selects appProviderToken: the SAME DM turn re
       "is not valid on an app connection",
     );
     expect(output, "the OFF arm reached the per-user mint, so the ternary selected the wrong builder").not.toContain(
-      "no user-auth-flow provider is registered",
+      "needs-sign-in",
     );
 
     expect(await notionMintRows(cursor), "the OFF arm minted a per-user token with connectors.userPrincipal off").toEqual([]);

@@ -6,8 +6,8 @@ page is the control that stops that, and the deployment shape it depends on.
 ## The residual it closes
 
 A self-upgrade routine needs a declared `pr.open` permission. An unattended fire can wait on a
-permission card only for a short window, and by default not at all, so the permission is armed once
-on the routine's creation card and then stands. A routine's declared permissions are visible in
+permission card only for a bounded window (120 s by default, `approvals.routineCardWaitSeconds`), so
+the permission is normally armed once on the routine's creation card and then stands. A routine's declared permissions are visible in
 `list_routines`, revocable without cancelling the routine, and invalidated wholesale when the
 routine's text is edited.
 

@@ -353,8 +353,8 @@ const GRANTS: DeclaredGrants[] = [
     refused(2, { connection: "notion", reason: "dm_only", mode: "channel" }),
     refused(3, { connection: "notion", reason: "audience_floor" }),
     refused(4, { connection: "notion", reason: "audience_floor" }),
-    refused(5, { connection: "notion", reason: "requestor_unentitled" }),
-    refused(6, { connection: "notion", reason: "requestor_unentitled" }),
+    refused(5, { connection: "notion", reason: "audience_unverified" }),
+    refused(6, { connection: "notion", reason: "audience_unverified" }),
     refused(7, { connection: "notion", reason: "unresolved_surface" }),
     refused(8, { connection: "notion", reason: "unresolved_surface" }),
     refused(9, { connection: "notion", reason: "member_plane_write" }),
@@ -364,7 +364,7 @@ const GRANTS: DeclaredGrants[] = [
   ok(wallsEv.refusals.filter((r) => r.kind === "connector-refused").length === 1, "walls fixture: the rows are read and clustered — otherwise the assertion below is vacuous");
   ok(
     proposePermissionChanges(wallsEv, "widen").filter((p) => p.id.startsWith("widen:connector:")).length === 0,
-    "⭐ connector: ten refusals across five reason codes a grant cannot open — a context wall, both disclosure legs, an unresolvable surface and the member plane — propose NOTHING",
+    "⭐ connector: ten refusals across five reason codes a grant cannot open — a context wall, both disclosure refusals, an unresolvable surface and the member plane — propose NOTHING",
   );
 
   ok(

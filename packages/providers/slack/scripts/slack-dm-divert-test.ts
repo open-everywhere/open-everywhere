@@ -196,6 +196,8 @@ async function runFront(
   return { dispatched, touched, seatCalls, innerCalled, res, fifo, settled, factsLookups, partnerLookups, authorFactLookups, sendAttempts: () => sendAttempts };
 }
 
+overrideSettingsForTest({ externalPolicy: { authorGrain: "taint", roomGrain: "engage" } });
+
 {
   const d = classifyEnvelope(dmEnvelope("Ev1"), "application/json");
   eq(d.kind, "dm-wake", "🔴 a `message.im` classifies `dm-wake` — the DM window seat owns it (it used to classify `forward`, to eve's native onDirectMessage)");
@@ -795,9 +797,9 @@ async function runFront(
 }
 
 {
-  const shipped = await runFront(dmEnvelope("Ev14a"), { partnerTrust: "external" });
-  eq(shipped.dispatched.length, 1, "🔴 OPE-525 NEGATIVE CONTROL: on the shipped `taint` grain a REFUTED DM partner still wakes — the feature is opt-in");
-  eq(shipped.seatCalls.length, 1, "…and their DM seat is resolved exactly as before");
+  const optOut = await runFront(dmEnvelope("Ev14a"), { partnerTrust: "external" });
+  eq(optOut.dispatched.length, 1, "🔴 OPE-525 NEGATIVE CONTROL: on the `taint` opt-out grain a REFUTED DM partner still wakes");
+  eq(optOut.seatCalls.length, 1, "…and their DM seat is resolved exactly as before");
 
   try {
     overrideSettingsForTest({ externalPolicy: { authorGrain: "withhold" } });
@@ -818,9 +820,9 @@ async function runFront(
 }
 
 {
-  const shipped = await runFront(mentionEnvelope("Ev15a", "C_PUBLIC"), { authorRefuted: true });
-  ok(shipped.innerCalled, "🔴 OPE-525 NEGATIVE CONTROL: on the shipped `taint`/`engage` pair a REFUTED author's @mention still forwards to eve's native path");
-  eq(shipped.authorFactLookups, 0, "🔴 OPE-525: …and NO `users.info` probe is made — the inert check runs first, so an un-opted-in deployment pays nothing for this gate");
+  const optOut = await runFront(mentionEnvelope("Ev15a", "C_PUBLIC"), { authorRefuted: true });
+  ok(optOut.innerCalled, "🔴 OPE-525 NEGATIVE CONTROL: on the `taint`/`engage` opt-out pair a REFUTED author's @mention still forwards to eve's native path");
+  eq(optOut.authorFactLookups, 0, "🔴 OPE-525: …and NO `users.info` probe is made — the inert check runs first, so an opted-out deployment pays nothing for this gate");
 
   try {
     overrideSettingsForTest({ externalPolicy: { authorGrain: "withhold" } });

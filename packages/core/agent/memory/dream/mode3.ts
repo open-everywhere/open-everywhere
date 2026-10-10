@@ -102,8 +102,8 @@ export function bucketFailures(rows: readonly AuditEntry[], opts: BucketOptions 
     .slice(0, maxClusters);
 }
 
-export const FACET_LABEL_MAX = 120;
-export const FACET_SKETCH_MAX = 300;
+const FACET_LABEL_MAX = 120;
+const FACET_SKETCH_MAX = 300;
 
 export interface FailureFacet {
   readonly label: string;
@@ -255,9 +255,9 @@ export async function buildMode3Report(
 }
 
 const DISCOVERY_ONLY_FOOTER =
-  "_Discovery only — no PR opened this run. A human picks which fix sketch, if any, to act on._";
+  "_Discovery only — the digest opens no PR. A human picks which fix sketch, if any, to act on._";
 
-export function formatMode3Report(report: Mode3Report, footer: string = DISCOVERY_ONLY_FOOTER): string {
+export function formatMode3Report(report: Mode3Report): string {
   const lines = [
     `:microscope: *Weekly failure digest* (${report.windowStart.slice(0, 10)} → ${report.windowEnd.slice(0, 10)}) — ` +
       `${report.totalFailures} failure event(s), top ${report.clusters.length} cluster(s):`,
@@ -266,6 +266,6 @@ export function formatMode3Report(report: Mode3Report, footer: string = DISCOVER
     lines.push(`${i + 1}. *${c.label}* (\`${c.action}\`, ${c.count}×) — ${c.fixSketch}`);
     if (c.examples[0]) lines.push(`   e.g. ${c.examples[0]}`);
   });
-  lines.push(footer);
+  lines.push(DISCOVERY_ONLY_FOOTER);
   return lines.join("\n");
 }

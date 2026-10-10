@@ -7,7 +7,6 @@ import { removeTempDir } from "./_temp-dir.js";
 const tmp = mkdtempSync(join(tmpdir(), "oe-unattended-derivation-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: undefined });
-delete process.env.OE_TRUST;
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {

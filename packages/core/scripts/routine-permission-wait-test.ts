@@ -1,3 +1,4 @@
+import { __setTestValveForTest } from "../agent/testing/test-valves.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { tmpdir } from "node:os";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -17,7 +18,7 @@ function ok(cond: boolean, label: string): void {
 }
 
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
-process.env.OE_EGRESS_SPOOF = "1";
+__setTestValveForTest("egress-spoof", true);
 _setDeploymentIdentityForTest({ org: undefined });
 
 const { registerSlackFixtureMapper } = await import("./_slack-test-stubs.js");
@@ -107,9 +108,12 @@ async function inTurn<T>(sessionId: string, turnId: string, fn: () => T | Promis
     "§budget: the ceiling IS the stated arithmetic, not a number that drifted from the doc",
   );
   ok(ROUTINE_CARD_WAIT_CEILING_SECONDS === 120, `§budget: 300 − 120 − 60 = 120 (got ${ROUTINE_CARD_WAIT_CEILING_SECONDS})`);
-  ok(routineCardWaitBudgetMs(0) === 0, "§budget: 0 is NO wait — the shipped default disarms the whole path");
+  ok(routineCardWaitBudgetMs(0) === 0, "§budget: 0 is NO wait — the opt-out disarms the whole path");
   ok(routineCardWaitBudgetMs(30) === 30_000, "§budget: a value under the ceiling is spent as authored");
-  ok(routineCardWaitBudgetMs(120) === 120_000, "§budget: the recommended armed value is spent whole");
+  ok(routineCardWaitBudgetMs(120) === 120_000, "§budget: the shipped value is spent whole");
+  const { SETTINGS: SETTINGS_SCHEMA } = await import("../agent/settings/settings.js");
+  ok(SETTINGS_SCHEMA.approvals.routineCardWaitSeconds.shipped === 120, "🔴 §budget: the wait ships ARMED at 120 s; 0 is the opt-out");
+  ok(SETTINGS_SCHEMA.approvals.routineCardWaitSeconds.shipped === ROUTINE_CARD_WAIT_CEILING_SECONDS, "§budget: the shipped value is exactly what a turn at the assumed elapsed can afford");
   ok(routineCardWaitBudgetMs(200) === 120_000, "§budget: an over-ceiling value is CLAMPED to the ceiling, never spent");
   ok(routineCardWaitBudgetMs(-5) === 0, "§budget: a negative value disarms rather than waiting forever");
   ok(routineCardWaitBudgetMs(Number.NaN) === 0, "§budget: an unreadable value disarms — the fail-safe direction is the immediate refusal");
@@ -288,7 +292,7 @@ async function inTurn<T>(sessionId: string, turnId: string, fn: () => T | Promis
   const cardArgs = { org: ORG, scopeKey: SURFACE, grantKey: "oe-routine:r-x:g1", routineId: "r-x", routineSurfaceKey: SURFACE, grantKind: "pr.open", declaration: "pr.open", prompt: "nightly" };
   overrideSettingsForTest({ approvals: { routineCardWaitSeconds: 0 } });
   const shipped = routinePermissionCardLines(cardArgs)[1] ?? "";
-  ok(shipped === "It asked for this while running unattended, so the run was refused and has already finished. This decides FUTURE runs.", `🔴 §copy: at the shipped 0 the card is byte-identical to PR 1's (got "${shipped}")`);
+  ok(shipped === "It asked for this while running unattended, so the run was refused and has already finished. This decides FUTURE runs.", `🔴 §copy: at the 0 opt-out the card is byte-identical to PR 1's (got "${shipped}")`);
   overrideSettingsForTest({ approvals: { routineCardWaitSeconds: 120 } });
   const armed = routinePermissionCardLines(cardArgs)[1] ?? "";
   ok(armed.includes("any run still waiting on this card when you answer"), "§copy: armed, it names whichever run may still be waiting instead");
@@ -323,7 +327,7 @@ async function inTurn<T>(sessionId: string, turnId: string, fn: () => T | Promis
   };
   overrideSettingsForTest({ approvals: { routineCardWaitSeconds: 0 } });
   const shippedLine = await kind!.execute(clickerArgs as never, "U_CLICKER");
-  ok(shippedLine.includes("from its next run"), `🔴 §clicker: at the shipped 0 the clicker is told the grant starts next run (got "${shippedLine}")`);
+  ok(shippedLine.includes("from its next run"), `🔴 §clicker: at the 0 opt-out the clicker is told the grant starts next run (got "${shippedLine}")`);
   ok(!shippedLine.includes("still waiting"), "§clicker: with no mention of a run that cannot be waiting");
   overrideSettingsForTest({ approvals: { routineCardWaitSeconds: 120 } });
   const armedLine = await kind!.execute(clickerArgs as never, "U_CLICKER");
@@ -379,7 +383,7 @@ const setWait = (seconds: number): void => overrideSettingsForTest({ approvals: 
   setWait(0);
   const started = Date.now();
   const refusal = await fire("disarmed");
-  ok(refusal.includes("ask-unattended"), "§fire: at the shipped 0 the run is refused, exactly as before the wait existed");
+  ok(refusal.includes("ask-unattended"), "§fire: at the 0 opt-out the run is refused, exactly as before the wait existed");
   ok(refusal.includes("is now waiting in the routine's own room"), "§fire: with PR 1's card sentence and nothing appended to it");
   ok(!refusal.includes("nobody was present"), "§fire: no auto-decline sentence — no wait ran to produce one");
   ok(refusal.includes("An unattended run cannot wait on an approval card"), "§fire: and the standing advice is intact — the negative control for the sentence the armed path drops");

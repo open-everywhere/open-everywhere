@@ -12,11 +12,11 @@ points INTO those; it does not replace them.
 
 ## The count
 
-**679 rows: 676 documented, 3 RETIRED, 0 UNDOCUMENTED.** Those three counts partition the rows by the
+**676 rows: 673 documented, 3 RETIRED, 0 UNDOCUMENTED.** Those three counts partition the rows by the
 value in the **`Documented by`** column, which is the only thing counted here: `RETIRED — …` marks a
 row whose sole record is the commit that removed its write site, and a row that names a manual page
 counts as documented whatever else is true of it. Section membership is a different question and
-gives a different number: 671 rows are live behaviours and the other five are the retired action
+gives a different number: 668 rows are live behaviours and the other five are the retired action
 names of § 15 — and two of those five are documented by a manual page, so they count under
 `documented` rather than under `RETIRED`. The `Tested by` column declares only an exemption; the coverage answer comes from `npm run coverage-board` (see [the coverage matrix](../dev/coverage-matrix.md)).
 
@@ -25,7 +25,7 @@ names of § 15 — and two of those five are documented by a manual page, so the
 | 1. The audit log — mechanism | 29 | 0 |
 | 2. The audit log — storage and the append-only posture | 31 | 0 |
 | 3. Reading the log — the control-plane routes | 11 | 0 |
-| 4. The audit action vocabulary | 320 | 0 |
+| 4. The audit action vocabulary | 317 | 0 |
 | 5. Spend — mechanism | 27 | 0 |
 | 6. Spend — gates and refusals | 34 | 0 |
 | 7. Spend — the ledger and the usage rows | 38 | 0 |
@@ -37,9 +37,8 @@ names of § 15 — and two of those five are documented by a manual page, so the
 | 13. The census heartbeats that read this plane | 2 | 0 |
 | 15. Retired action names | 5 | 0 |
 
-🔴 **Five § 4 rows name something that is NOT an audit action.** `reply.dispatch`,
-`reply.dispatch.unified`, `<platform>.post_file.attach`, `<platform>.post_file.link` and
-`thread_seat.dispatch` are the `action` tag on an **outbound idempotency key**, and nothing appends
+🔴 **Four § 4 rows name something that is NOT an audit action.** `reply.dispatch`,
+`reply.dispatch.unified`, `<platform>.post_file.attach` and `thread_seat.dispatch` are the `action` tag on an **outbound idempotency key**, and nothing appends
 them to the log. Catcher 1 below — an `action: "…"` object-literal property — cannot tell that
 construct from an audit write, so it swept them in. Their rows stay, with corrected `Behaviour`
 cells, because a reader who greps one needs to find the fact rather than conclude the sweep missed a
@@ -87,13 +86,13 @@ The list was therefore swept out of the source, by four catchers over
 4. an `<x>Action: "…"` property, which is how a surface spec hands its own action names to a shared
    writer (`packages/core/agent/channels/supervisor-complete.ts:23`).
 
-The four catchers found 278 of the 310 action rows — 305 live ones in § 4 and the five retired
-names in § 15. **The other 32 were added by hand, because no textual catcher can see them.** Nine
+The four catchers found 276 of the 307 action rows — 302 live ones in § 4 and the five retired
+names in § 15. **The other 31 were added by hand, because no textual catcher can see them.** Eight
 write sites build the action from a **template** at run time:
 `packages/core/agent/channels/read-scope-audit.ts:66`,
 `packages/core/agent/channels/ambient-skip.ts:45`,
 `packages/providers/linear/agent/channels/linear-scope.ts:182`,
-`packages/core/agent/tools/post_file.ts:357`, `:379` and `:390`,
+`packages/core/agent/tools/post_file.ts:231` and `:266`,
 `packages/core/agent/tools/react.ts:86` and `:126`, and
 `packages/core/agent/access/browser-toolkit.ts:197`. The rest sit behind a ternary
 (`packages/core/agent/channels/webhooks.ts:35`, `packages/core/agent/approvals/pr-open.ts:69`,
@@ -127,9 +126,9 @@ drift that follows a rename or a moved section, which is the failure this page w
 | --- | --- | --- | --- | --- | --- |
 | `appendAudit` | `packages/core/agent/audit/audit.ts:12` | core/audit | Appends one row best-effort: it retries once, then counts the drop and warns, and never throws into its caller. | `docs/security/audit-and-provenance.md#the-audit-trail` | ? |
 | `registerAuditDropCounter` | `packages/core/agent/audit/audit.ts:8` | core/audit | Registers the boot-time telemetry counter for dropped audit lines, which a static import could not reach. | `docs/security/audit-and-provenance.md#inside-the-append-path` | ? |
-| `auditSilencesEnabled` | `packages/core/agent/audit/audit.ts:88` | core/audit | Gates judged-silence rows on the `audit.silences` setting; production keeps it off. | `docs/security/audit-and-provenance.md#whats-logged` | ? |
-| `readAudit` | `packages/core/agent/audit/audit.ts:95` | core/audit | Reads audit entries matching a filter, newest first, and refuses a filter that names no org. | `docs/security/audit-and-provenance.md#reading-it` | ? |
-| `auditRoot` | `packages/core/agent/audit/audit.ts:100` | core/audit | Reports the backing location the log writes to, for logs and admin views. | `docs/security/audit-and-provenance.md#inside-the-append-path` | ? |
+| `auditSilencesEnabled` | `packages/core/agent/audit/audit.ts:36` | core/audit | Gates judged-silence rows on a test-only switch (`setSilenceAuditForTest`). It is not a setting or an env var, and no committed production module calls it. | `docs/security/audit-and-provenance.md#whats-logged` | ? |
+| `readAudit` | `packages/core/agent/audit/audit.ts:42` | core/audit | Reads audit entries matching a filter, newest first, and refuses a filter that names no org. | `docs/security/audit-and-provenance.md#reading-it` | ? |
+| `auditRoot` | `packages/core/agent/audit/audit.ts:44` | core/audit | Reports the backing location the log writes to, for logs and admin views. | `docs/security/audit-and-provenance.md#inside-the-append-path` | ? |
 | `auditToolAction` | `packages/core/agent/audit/tool-action.ts:41` | core/audit | Writes the per-action "who asked for what" row from a tool's own context, and never raises. | `docs/security/audit-and-provenance.md#whats-logged` | ? |
 | `auditErrorDetail` | `packages/core/agent/audit/tool-action.ts:38` | core/audit | Reduces a caught error to one scrubbed, truncated message field. | `docs/security/audit-and-provenance.md#inside-the-append-path` | ? |
 | `auditErrorFrames` | `packages/core/agent/audit/tool-action.ts:81` | core/audit | Projects a caught error's STACK to at most eight frames, by a whitelist: a line must be path-shaped with `:line:col`, and its name half is bounded by charset and length. The error's own message, an inspect property dump and ordinary prose are DROPPED rather than truncated, because a dead worker's error text is child-authored and this string lands in an operator-read row. The RESIDUAL, not denied: an identifier-shaped name half still rides, so up to 120 characters of chosen text can travel per frame — bounded, control-stripped and scrubbed, which is why nothing keys on this field. | `docs/security/audit-and-provenance.md#inside-the-append-path` | ? |
@@ -219,9 +218,8 @@ One row per distinct `action` string the code writes. The Id is that string. `<p
 | --- | --- | --- | --- | --- | --- |
 | `<platform>.ambient_skipped` | `packages/core/agent/channels/ambient-skip.ts:45` | core/channels | The ambient gate skips a surface and records the reason and the config route it read. | `docs/security/audit-and-provenance.md#turn-reply-and-window-rows` | n/a: unannotated — lane F |
 | `<platform>.origin_refused` | `packages/core/agent/channels/read-scope-audit.ts:90` | core/channels | The per-turn origin fence refuses a read whose target is not the turn's own surface. | `docs/security/audit-and-provenance.md#whats-logged` (+1) | n/a: unannotated — lane F |
-| `<platform>.post_file` | `packages/core/agent/tools/post_file.ts:390` | core/tools | A file post that lands records the surface, the target and the upload route. | `docs/security/audit-and-provenance.md#tool-and-guard-rows` | n/a: unannotated — lane F |
-| `<platform>.post_file.attach` | `packages/core/agent/tools/post_file.ts:357` | core/tools | NOT an audit action: the `action` tag on the outbound idempotency key for the attachment half of a `post_file` send. Nothing appends it. | `docs/security/audit-and-provenance.md#action-tags-that-are-not-audit-actions` | n/a: unannotated — lane F |
-| `<platform>.post_file.link` | `packages/core/agent/tools/post_file.ts:379` | core/tools | NOT an audit action: the `action` tag on the outbound idempotency key for the hosted-link half of a `post_file` send. Nothing appends it. | `docs/security/audit-and-provenance.md#action-tags-that-are-not-audit-actions` | n/a: unannotated — lane F |
+| `<platform>.post_file` | `packages/core/agent/tools/post_file.ts:241` | core/tools | A file post that lands records the file count, the filenames, whether a comment rode with them, the attached count, and the delivered message id when the surface returns one. | `docs/security/audit-and-provenance.md#tool-and-guard-rows` | n/a: unannotated — lane F |
+| `<platform>.post_file.attach` | `packages/core/agent/tools/post_file.ts:231` | core/tools | NOT an audit action: the `action` tag on the outbound idempotency key for the attachment post of a `post_file` send. Nothing appends it. | `docs/security/audit-and-provenance.md#action-tags-that-are-not-audit-actions` | n/a: unannotated — lane F |
 | `<platform>.react` | `packages/core/agent/tools/react.ts:97` | core/tools | A reaction the model places records the emoji and the stated reason. | `docs/security/audit-and-provenance.md#tool-and-guard-rows` | n/a: unannotated — lane F |
 | `<platform>.react.failed` | `packages/core/agent/tools/react.ts:86` | core/tools | A reaction the platform rejects records the failure class and the HTTP status. | `docs/security/audit-and-provenance.md#tool-and-guard-rows` | n/a: unannotated — lane F |
 | `<platform>.sources_refused` | `packages/core/agent/channels/read-scope-audit.ts:85` | core/channels | The window-sources gate refuses a read of a platform this window does not carry. | `docs/security/audit-and-provenance.md#whats-logged` (+1) | n/a: unannotated — lane F |
@@ -288,7 +286,6 @@ One row per distinct `action` string the code writes. The Id is that string. `<p
 | `connector.consent_resume` | `packages/core/agent/connections/consent-resume.ts:67` | core/connections | A paused session resumes after connector consent. | `docs/capabilities/connectors-and-providers.md#connecting-a-vendor` | ? |
 | `connector.credential_bound` | `packages/core/agent/connections/oe-oauth-callback.ts:111` | core/connections | An OAuth consent completion BINDS a credential; the row names the connector, the subject type and whether the bind replaced an existing row (read before the write, with no cross-process lock, so two simultaneous completions can both report `false`). Never token material, and no principal. | `docs/capabilities/connectors-and-providers.md#connecting-a-vendor` | ? |
 | `connector.dashboard_link_issued` | `packages/core/agent/connections/connector-card.ts:210` | core/connections | A connector dashboard link is issued. | `docs/capabilities/connectors-and-providers.md#connecting-a-vendor` | ? |
-| `connector.entitlement_check` | `packages/core/agent/access/connector-disclosure.ts:206` | core/access | The disclosure gate checks a connector entitlement and records the verdict and the floor. | `docs/capabilities/connectors-and-providers.md#connecting-a-vendor` | ? |
 | `connector.grant` | `packages/core/agent/hooks/egress.ts:292` | core/hooks | A connector grant is resolved for a surface. | `docs/security/credentials-and-planes.md#a-write-from-a-channel-path-by-path` | ? |
 | `connector.mint` | `packages/core/agent/connections/connector-auth.ts:172` | core/connections | A connector credential is minted. | `docs/security/credentials-and-planes.md#why-a-grant-is-a-real-boundary` | ? |
 | `connector.oauth_url_issued` | `packages/core/agent/connections/connector-card.ts:276` | core/connections | A connector OAuth URL is issued; the row names the subject and the connector, never the URL. | `docs/capabilities/connectors-and-providers.md#connecting-a-vendor` | ? |
@@ -327,9 +324,8 @@ One row per distinct `action` string the code writes. The Id is that string. `<p
 | `docs.index` | `packages/core/agent/tools/read_docs.ts:33` | core/tools | The read_docs tool serves the manual index. | `docs/capabilities/self-documentation.md#the-read_docs-tool` | n/a: unannotated — lane F |
 | `docs.read` | `packages/core/agent/tools/read_docs.ts:41` | core/tools | The read_docs tool serves one manual page. | `docs/capabilities/self-documentation.md#the-read_docs-tool` | n/a: unannotated — lane F |
 | `docs.refused` | `packages/core/agent/tools/read_docs.ts:38` | core/tools | The read_docs tool refuses a page. | `docs/capabilities/self-documentation.md#the-read_docs-tool` | n/a: unannotated — lane F |
-| `dream.mode3_last_mile` | `packages/core/agent/memory/dream/mode3-last-mile.ts:243` | core/memory | The dream mode-3 last-mile pass records what it produced. | `docs/capabilities/memory.md#what-the-memory-plane-writes-to-the-audit-log` | n/a: unannotated — lane F |
-| `dream.mode3_report` | `packages/core/agent/schedules/dream-mode3.ts:220` | core/schedules | The dream mode-3 digest records failures, clusters and the last-mile result. | `docs/capabilities/memory.md#what-the-memory-plane-writes-to-the-audit-log` | ? |
-| `dream.mode3_tick` | `packages/core/agent/schedules/dream-mode3.ts:296` | core/schedules | The dream mode-3 schedule records one tick. | `docs/deploy/rollback.md#store-identity` | ? |
+| `dream.mode3_report` | `packages/core/agent/schedules/dream-mode3.ts:101` | core/schedules | The dream mode-3 digest records failures and clusters. | `docs/capabilities/memory.md#what-the-memory-plane-writes-to-the-audit-log` | ? |
+| `dream.mode3_tick` | `packages/core/agent/schedules/dream-mode3.ts:159` | core/schedules | The dream mode-3 schedule records one tick. | `docs/deploy/rollback.md#store-identity` | ? |
 | `egress.denied` | `packages/core/agent/access/egress-denial-poller.ts:5` | core/access | The self-host egress proxy's denial poller records one denied destination. | `docs/security/audit-and-provenance.md#outbound-calls-two-planes-one-row-shape` (+5) | ? |
 | `egress.hostside.allow` | `packages/core/agent/access/host-egress.ts:287` | core/access | A host-side outbound call is allowed, and the row names host, verb and outcome. | `docs/security/audit-and-provenance.md#outbound-calls-two-planes-one-row-shape` (+1) | ? |
 | `egress.hostside.deny` | `packages/core/agent/access/host-egress.ts:252` | core/access | A host-side outbound call is denied, and the row names the reason and the tool. | `docs/security/audit-and-provenance.md#outbound-calls-two-planes-one-row-shape` | ? |
@@ -337,7 +333,7 @@ One row per distinct `action` string the code writes. The Id is that string. `<p
 | `egress.policy` | `packages/core/agent/hooks/egress.ts:196` | core/hooks | A session's network policy is compiled, and the row carries its fingerprint and hosts. | `docs/security/audit-and-provenance.md#outbound-calls-two-planes-one-row-shape` (+6) | ? |
 | `engagement.stood_down` | `packages/core/agent/tools/stand_down.ts:10` | core/tools | A person asks the agent to leave a conversation, and the stand-down is recorded — `marked` when the verb reached the registry, `refused` when a turn shape stopped it first. | `docs/security/audit-and-provenance.md#whats-logged` | ? |
 | `github.dispatched` | `packages/providers/github/agent/channels/github.ts:414` | providers/github | A GitHub webhook dispatches a woken session and opens its lifecycle row. | `docs/security/audit-and-provenance.md#the-per-surface-lifecycle-rows` | ? |
-| `github.external_policy_suppressed` | `packages/providers/github/agent/channels/github.ts:480` | providers/github | The GitHub external policy suppresses a reply. | `docs/how-it-works/identity.md#the-author-grain--taint-shipped-or-withhold` (+1) | ? |
+| `github.external_policy_suppressed` | `packages/providers/github/agent/channels/github.ts:480` | providers/github | The GitHub external policy suppresses a reply. | `docs/how-it-works/identity.md#the-author-grain--withhold-shipped-or-taint` (+1) | ? |
 | `github.no_reply` | `packages/providers/github/agent/channels/github.ts:455` | providers/github | A GitHub supervisor turn declines to reply and closes its dispatch row. | `docs/deploy/surfaces/github.md#gotchas` (+1) | ? |
 | `github.reaction_claim_unreadable` | `packages/providers/github/agent/channels/github-reaction-scope.ts:14` | providers/github | A GitHub reaction claim cannot be read. | `docs/deploy/surfaces/github.md#gotchas` | ? |
 | `github.reaction_poll_budget` | `packages/providers/github/agent/channels/github-reaction-scope.ts:12` | providers/github | The GitHub reaction poll exhausts its budget. | `docs/deploy/surfaces/github.md#gotchas` (+1) | ? |
@@ -382,10 +378,10 @@ One row per distinct `action` string the code writes. The Id is that string. `<p
 | `input_response.dropped` | `packages/core/agent/channels/question-bridge.ts:54` | core/channels | The Notion question return drops an answer eve would not accept, and delivers the comment as an ordinary wake. | `docs/security/audit-and-provenance.md#turn-reply-and-window-rows` | n/a: unannotated — lane F |
 | `input_response.routed` | `packages/core/agent/channels/question-bridge.ts:53` | core/channels | The Notion question return routes a discussion comment to the session that asked, as an answer. | `docs/security/audit-and-provenance.md#turn-reply-and-window-rows` | n/a: no e2e leg drives it — the unified window's answer road is deleted (OPE-2389), and the Notion return leg writes the row; `packages/providers/notion/scripts/notion-question-return-test.ts` pins it |
 | `linear.dispatched` | `packages/providers/linear/agent/channels/linear.ts:595` | providers/linear | A Linear webhook dispatches a woken session and opens its lifecycle row. | `docs/security/audit-and-provenance.md#the-per-surface-lifecycle-rows` | n/a: unannotated — lane F |
-| `linear.external_policy_suppressed` | `packages/providers/linear/agent/channels/linear.ts:620` | providers/linear | The Linear external policy suppresses a reply. | `docs/how-it-works/identity.md#the-author-grain--taint-shipped-or-withhold` (+3) | ? |
+| `linear.external_policy_suppressed` | `packages/providers/linear/agent/channels/linear.ts:620` | providers/linear | The Linear external policy suppresses a reply. | `docs/how-it-works/identity.md#the-author-grain--withhold-shipped-or-taint` (+3) | ? |
 | `linear.mention_divert_failed` | `packages/providers/linear/agent/channels/linear.ts:828` | providers/linear | A Linear mention divert fails. | `docs/security/audit-and-provenance.md#the-per-surface-lifecycle-rows` | n/a: unannotated — lane F |
-| `linear.no_reply` | `packages/providers/linear/agent/channels/linear.ts:1643` | providers/linear | A Linear supervisor turn declines to reply and closes its dispatch row. | `docs/deploy/surfaces/linear.md#ambient-mode--the-standing-team-supervisor-opt-in` (+1) | ? |
-| `linear.replied` | `packages/providers/linear/agent/channels/linear.ts:2023` | providers/linear | A Linear supervisor turn replies and closes its dispatch row. | `docs/deploy/surfaces/linear.md#ambient-mode--the-standing-team-supervisor-opt-in` | n/a: unannotated — lane F |
+| `linear.no_reply` | `packages/providers/linear/agent/channels/linear.ts:1643` | providers/linear | A Linear supervisor turn declines to reply and closes its dispatch row. | `docs/deploy/surfaces/linear.md#ambient-mode--the-standing-team-supervisor-on-by-default` (+1) | ? |
+| `linear.replied` | `packages/providers/linear/agent/channels/linear.ts:2023` | providers/linear | A Linear supervisor turn replies and closes its dispatch row. | `docs/deploy/surfaces/linear.md#ambient-mode--the-standing-team-supervisor-on-by-default` | n/a: unannotated — lane F |
 | `linear.stand_down_suppressed` | `packages/providers/linear/agent/channels/linear.ts:394` | providers/linear | A Linear stand-down suppresses a reply. | `docs/deploy/surfaces/linear.md#reply-without-re-tagging` | n/a: unannotated — lane F |
 | `linear.supervisor_turn_failed` | `packages/providers/linear/agent/channels/linear.ts:1096` | providers/linear | A Linear supervisor turn fails, and the row is the only notice. | `docs/security/audit-and-provenance.md#the-per-surface-lifecycle-rows` | ? |
 | `linear.token_mint_failed` | `packages/providers/linear/agent/channels/linear-credentials.ts:14` | providers/linear | A Linear token cannot be minted. | `docs/deploy/configuration-reference.md#linear-token-lifecycle-mint-on-demand` (+2) | ? |
@@ -426,11 +422,11 @@ One row per distinct `action` string the code writes. The Id is that string. `<p
 | `reply.edit` | `packages/core/agent/channels/reply-edit.ts:82` | core/channels | An edit rewrites a message this deployment posted; the row never carries the text. | `docs/security/audit-and-provenance.md#whats-logged` | n/a: unannotated — lane F |
 | `reply.edit.refused` | `packages/core/agent/channels/reply-edit.ts:62` | core/channels | An edit is refused, and the row names which of the three reasons held. | `docs/security/audit-and-provenance.md#whats-logged` (+1) | n/a: unannotated — lane F |
 | `reply.forced` | `packages/core/agent/channels/reply-post.ts:110` | core/channels | The model overrides a reply verdict with force, and the row names the verdict. | `docs/security/audit-and-provenance.md#whats-logged` | ? |
-| `reply.no_reply` | `packages/core/agent/tools/no_reply.ts:259` | core/tools | A judged silence is recorded; this row is gated by the audit.silences setting. | `docs/deploy/configuration-reference.md#agent-settings-behaviour-config-as-code` | ? |
+| `reply.no_reply` | `packages/core/agent/tools/no_reply.ts:270` | core/tools | A judged silence is recorded; this row is gated by the test-only silence-audit switch, which no setting, env var or committed production module arms. | `docs/security/audit-and-provenance.md#whats-logged` | ? |
 | `reply.no_reply_addressed_to_other_refused` | `packages/core/agent/channels/engaged-wake.ts:28` | core/channels | A no_reply is refused because the wake addressed somebody else. | `docs/security/audit-and-provenance.md#turn-reply-and-window-rows` | n/a: unannotated — lane F |
 | `reply.no_reply_after_stand_down` | `packages/core/agent/channels/reply-signal.ts:206` | core/channels | A `no_reply` is REFUSED because the turn still owes a stand-down acknowledgement; the call throws and no silence is recorded. | `docs/security/audit-and-provenance.md#turn-reply-and-window-rows` | n/a: unannotated — lane F |
 | `reply.no_reply_observed` | `packages/core/agent/channels/chat-turn-audit.ts:12` | core/channels | The no_reply tool or the bare sentinel always writes this minimal row. | `docs/security/audit-and-provenance.md#whats-logged` | ? |
-| `reply.no_reply_redundant` | `packages/core/agent/tools/no_reply.ts:227` | core/tools | A second no_reply for the same wake is recorded as redundant. | `docs/security/audit-and-provenance.md#turn-reply-and-window-rows` | ? |
+| `reply.no_reply_redundant` | `packages/core/agent/tools/no_reply.ts:238` | core/tools | A second no_reply for the same wake is recorded as redundant. | `docs/security/audit-and-provenance.md#turn-reply-and-window-rows` | ? |
 | `reply.post` | `packages/core/agent/channels/reply-post.ts:67` | core/channels | One reply leaves the choke point; the platform column names the surface it landed on. | `docs/security/audit-and-provenance.md#whats-logged` (+5) | ? |
 | `reply.post.failed` | `packages/core/agent/channels/reply-post.ts:86` | core/channels | A reply reaches the platform and fails; the row carries the status and the failure class. | `docs/security/audit-and-provenance.md#whats-logged` (+1) | ? |
 | `reply.provenance` | `packages/core/agent/channels/reply-provenance.ts:203` | core/channels | A reply records what it read and what it withheld. | `docs/security/audit-and-provenance.md#whats-logged` (+1) | ? |
@@ -516,7 +512,7 @@ One row per distinct `action` string the code writes. The Id is that string. `<p
 | `turn.tool_gated` | `packages/core/agent/audit/window-tool-gate.ts:18` | core/audit | The window tool gate withholds tools from a turn, and the row counts them. | `docs/how-it-works/agent-and-loop.md#a-turn-ends-when-its-wake-closes` | ? |
 | `turn.unaccounted_wakes` | `packages/core/agent/channels/wake-accounting.ts:12` | core/channels | A turn ends with a wake it was shown and never accounted for. One row per wake, ever. | `docs/security/audit-and-provenance.md#whats-logged` | n/a: unannotated — lane F |
 | `turn.wake_accounting_skipped` | `packages/core/agent/channels/wake-accounting.ts:14` | core/channels | The wake-accounting pass cannot anchor a read, and the row names the missing precondition. | `docs/security/audit-and-provenance.md#whats-logged` | n/a: unannotated — lane F |
-| `unified.no_reply` | `packages/core/agent/channels/unified.ts:702` | core/channels | The cross-surface window records a judged silence; gated by the audit.silences setting. | `docs/security/audit-and-provenance.md#whats-logged` (+2) | n/a: unannotated — lane F |
+| `unified.no_reply` | `packages/core/agent/channels/unified.ts:403` | core/channels | The cross-surface window records a judged silence; gated by the test-only silence-audit switch, which no setting, env var or committed production module arms. | `docs/security/audit-and-provenance.md#whats-logged` (+2) | n/a: unannotated — lane F |
 | `unified.self_dispatch` | `packages/core/agent/channels/self-dispatch.ts:201` | core/channels | The cross-surface window dispatches a wake to itself. | `docs/security/audit-and-provenance.md#turn-reply-and-window-rows` | ? |
 | `unified.supervisor_session_failed` | `packages/core/agent/channels/unified.ts:637` | core/channels | A supervisor session fails on the cross-surface window. | `docs/security/audit-and-provenance.md#turn-reply-and-window-rows` | n/a: unannotated — lane F |
 | `unified.supervisor_turn_failed` | `packages/core/agent/channels/unified.ts:635` | core/channels | A supervisor turn fails on the cross-surface window. | `docs/security/audit-and-provenance.md#turn-reply-and-window-rows` | n/a: unannotated — lane F |
@@ -895,9 +891,10 @@ scanning 664 rows.
 🔴 **The suggested sentences this section used to carry are gone, and that is deliberate.** They
 were written from the row list rather than from the code, and several of them were wrong. They
 claimed an audit row for each of the five idempotency-key tags named under § The count. They
-described `connector.entitlement_check` as a general entitlement check, where the code writes it
-only as the compliance-mode ALLOW row. They omitted that `reply.no_reply_redundant` is gated behind
-the `audit.silences` setting, which production keeps off. And they omitted that the three
+described `connector.entitlement_check` as a general entitlement check, where the code wrote it
+only as the compliance-mode ALLOW row (the action is gone since the `requestorEntitlementChecks` flag was removed). They omitted that `reply.no_reply_redundant` is gated behind
+the judged-silence switch (then the `audit.silences` setting, a test-only hook since OPE-2410), which
+production keeps off. And they omitted that the three
 `*.pr_opened` actions are written on a dry run too, so a count of those rows is not a count of pull
 requests. A tracked draft that disagrees with the manual it fed is a second source of truth, so it
 does not survive the work it existed for.
@@ -991,4 +988,4 @@ repository ships. They are not dead, and a deployment that turns them on gets th
 | --- | --- | --- |
 | Session cost checkpoints — `checkpoint.trip`, `routine.stalled`, `checkpoint.continue` | `agent/spend/checkpoints.ts:1` | Every `default`, `perDomain` and `perSurface` entry in the shipped registry is commented out, so `resolveCheckpoint` returns an empty checkpoint and `requireSessionContinuation` proceeds on every call. |
 | Per-person spend allowances from config | `agent/spend/budgets.ts` | The shipped registry declares `perDomain`, `perSurface` and `perWorkspace` only. The person axis is reachable today only through a runtime `level: "user"` override. |
-| Judged-silence rows — `reply.no_reply`, `unified.no_reply` | `packages/core/agent/audit/audit.ts:88` | Gated on the `audit.silences` setting, which production keeps off. Only the always-on `reply.no_reply_observed` twin is written. |
+| Judged-silence rows — `reply.no_reply`, `unified.no_reply` | `packages/core/agent/audit/audit.ts:36` | Gated on a test-only switch, which no setting, env var or committed production module arms. Only the always-on `reply.no_reply_observed` twin is written. |

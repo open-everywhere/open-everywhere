@@ -10,6 +10,7 @@ import { bindFrom, type BindableContext } from "@open-everywhere/core/agent/iden
 import { resolvePartition } from "@open-everywhere/core/agent/memory/partition.js";
 import { registerSurfaces, defineSurface, _resetSurfacesForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import { parseDriverAllowlist } from "@open-everywhere/core/agent/testing/driver-allowlist.js";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 import { _resetDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
 
 let passed = 0;
@@ -61,13 +62,13 @@ function dispatch(input: {
   ok(tenantA.partition.workspaceKey !== tenantB.partition.workspaceKey, "A3: the two tenants' memory partitions are disjoint keys");
   ok(tenantB.partition.workspaceKey === "discord/G_TENANT_B", "A3b: tenant B's own key is guild-scoped, never borrowed from A");
 
-  process.env.OE_TRUST = "internal";
+  overrideSettingsForTest({ identity: { blanketTrust: "internal" } });
   const tenantBBlanket = dispatch({ userId: "U_mallory", guildId: "G_TENANT_B", channelId: "C_B", channelType: "0" });
   ok(
     tenantBBlanket.binding.trust === "internal",
     "A4 (negative control): WITH OE_TRUST=internal, the SAME unvouched guild B crosses into internal — proving A2 exercises a real branch, not a default that can never be false",
   );
-  delete process.env.OE_TRUST;
+  overrideSettingsForTest({ identity: { blanketTrust: "none" } });
   const tenantBRestored = dispatch({ userId: "U_mallory", guildId: "G_TENANT_B", channelId: "C_B", channelType: "0" });
   ok(tenantBRestored.binding.trust === "external", "A5: restoring the baseline (OE_TRUST unset) restores the fail-closed default");
 
@@ -92,7 +93,7 @@ function dispatch(input: {
     };
   }
 
-  process.env.OE_TEST_DRIVER_IDS = `${GUILD_A}:${DRIVER_BOT}`;
+  overrideSettingsForTest({ wake: { driverAllowlist: [`${GUILD_A}:${DRIVER_BOT}`] } });
   const homeMsg = relayMsg(GUILD_A, DRIVER_BOT);
   ok(authForRelayMessage(homeMsg) !== null, "B1: the driver credential IS admitted as a user in the guild it's pinned to");
   ok(!isMisplacedDriver(GUILD_A, DRIVER_BOT, allowlist), "B1b: pinned-here is never classified a misplacement");
@@ -100,7 +101,7 @@ function dispatch(input: {
   const strangerMsg = relayMsg(GUILD_B, DRIVER_BOT);
   ok(authForRelayMessage(strangerMsg) === null, "B2: the SAME driver credential is REFUSED admission when it claims a guild it isn't pinned to");
   ok(isMisplacedDriver(GUILD_B, DRIVER_BOT, allowlist), "B2b: …and IS classified as a misplaced driver — this is what earns the named audit row");
-  delete process.env.OE_TEST_DRIVER_IDS;
+  overrideSettingsForTest({ wake: { driverAllowlist: [] } });
 
   ok(!isMisplacedDriver(GUILD_B, OTHER_BOT, allowlist), "B3 (negative control): an unrelated bot id is NOT a misplaced driver — no audit noise for ordinary bot chatter");
 

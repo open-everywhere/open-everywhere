@@ -85,7 +85,7 @@ import { renderContext } from "@open-everywhere/core/agent/adapter-api.js";
 import { hydrationSlices } from "@open-everywhere/core/agent/adapter-api.js";
 import { fetchWakeBackscrollLines, WAKE_BACKSCROLL_MAX, type WakeBackscrollLines } from "../agent/channels/slack-wake-backscroll.js";
 import type { ContextLine } from "@open-everywhere/core/agent/adapter-api.js";
-import { overrideSettingsForTest, WITHHELD_BODY_MARKER } from "@open-everywhere/core/agent/adapter-api.js";
+import { overrideSettingsForTest, driverAllowlistProblem, WITHHELD_BODY_MARKER } from "@open-everywhere/core/agent/adapter-api.js";
 
 registerIdentityMapper("slack", bindSlack);
 
@@ -114,6 +114,13 @@ const suppressionDelta = (seen: Set<number>) => async (): Promise<readonly Suppr
 
 const nameDropRows = async (action: string): Promise<readonly { readonly detail?: Record<string, unknown> | null }[]> =>
   (await getOperationalStore().readAudit({ org: "default", action })) as readonly { readonly detail?: Record<string, unknown> | null }[];
+
+const OPT_OUT = { externalPolicy: { authorGrain: "taint", roomGrain: "engage" } } as const;
+const resetToOptOut = (): void => {
+  resetSettingsForTest();
+  overrideSettingsForTest(OPT_OUT);
+};
+overrideSettingsForTest(OPT_OUT);
 
 registerConfig({
   loadBundles: () => [],
@@ -550,20 +557,24 @@ registerConfig({
   {
     const evT = (over: Record<string, unknown> = {}) =>
       parseMessageEvent({ type: "event_callback", team_id: "TENG123", event: { type: "message", channel: "C_TXN", ts: "9.9", thread_ts: "1.1", user: "U1", text: "more please", ...over } })!;
-    process.env.OE_TEST_DRIVER_IDS = "TENG123:B9";
-    process.env.OE_ALLOW_MULTI_TENANT_PRINCIPALS = "1";
+    overrideSettingsForTest({ wake: { driverAllowlist: ["TENG123:B9"] } });
+    overrideSettingsForTest({ identity: { allowMultiTenantPrincipals: true } });
     woke.length = 0;
     out = await routeMessageEvent(evT({ bot_id: "B9" }), deps(true));
     ok(out.woke && woke.length === 1, "allowlisted driver bot in its pinned team wakes the engaged thread");
     out = await routeMessageEvent(evT({ bot_id: "B8" }), deps(true));
     ok(!out.woke, "a DIFFERENT bot still drops while the seam is armed");
-    process.env.OE_TEST_DRIVER_IDS = "T_ENG:B9";
+    ok(driverAllowlistProblem(["T_ENG:B9"]) !== undefined, "a malformed (non-Slack-shaped) pair fails the setting's validator — it can never arm");
     out = await routeMessageEvent(ev({ bot_id: "B9" }), deps(true));
-    ok(!out.woke, "a malformed (non-Slack-shaped) pair never arms — parse can only narrow");
-    delete process.env.OE_TEST_DRIVER_IDS;
+    ok(!out.woke, "…and the T_ENG driver bot is not admitted by the TENG123 pair");
+    overrideSettingsForTest({ wake: { driverAllowlist: [] } });
     out = await routeMessageEvent(evT({ bot_id: "B9" }), deps(true));
-    ok(!out.woke, "seam disarmed (env cleared) → the driver bot drops again (default off)");
-    delete process.env.OE_ALLOW_MULTI_TENANT_PRINCIPALS;
+    ok(!out.woke, "seam disarmed (setting emptied) → the driver bot drops again (default off)");
+    process.env.OE_TEST_DRIVER_IDS = "TENG123:B9";
+    out = await routeMessageEvent(evT({ bot_id: "B9" }), deps(true));
+    ok(!out.woke, "the retired OE_TEST_DRIVER_IDS env var does not arm the seam");
+    delete process.env.OE_TEST_DRIVER_IDS;
+    overrideSettingsForTest({ identity: { allowMultiTenantPrincipals: false } });
   }
 
   out = await routeMessageEvent(ev({ thread_ts: undefined }), deps(true));
@@ -1243,13 +1254,16 @@ registerConfig({
 
   const ambientDomains = [
     defineDomain({ name: "ambient-on", reach: ["slack/T2/C_ON"], ambientSupervisor: true }),
-    defineDomain({ name: "ambient-off", reach: ["slack/T2/C_OFF"] }),
-    defineDomain({ name: "org-ambient", match: "org", ambientSupervisor: true }),
+    defineDomain({ name: "ambient-off", reach: ["slack/T2/C_OFF"], ambientSupervisor: false }),
+    defineDomain({ name: "ambient-unset", reach: ["slack/T2/C_UNSET"] }),
+    defineDomain({ name: "org-ambient", match: "org", ambientSupervisor: false }),
   ];
-  ok(ambientSupervisorEnabled("slack/T2/C_ON", ambientDomains), "explicit domain with the flag → on");
-  ok(!ambientSupervisorEnabled("slack/T2/C_OFF", ambientDomains), "explicit domain WITHOUT the flag → off (no fall-through to org)");
-  ok(ambientSupervisorEnabled("slack/T2/C_UNASSIGNED", ambientDomains), "unassigned channel → org pseudo-domain's flag");
-  ok(!ambientSupervisorEnabled("slack/T2/C_ANY", [defineDomain({ name: "o", match: "org" })]), "org without the flag → off (default)");
+  ok(ambientSupervisorEnabled("slack/T2/C_ON", ambientDomains), "explicit `true` → on, over an org `false`");
+  ok(!ambientSupervisorEnabled("slack/T2/C_OFF", ambientDomains), "explicit `false` → off (the per-domain opt-out)");
+  ok(!ambientSupervisorEnabled("slack/T2/C_UNSET", ambientDomains), "explicit domain WITHOUT the flag → inherits the org's `false`");
+  ok(!ambientSupervisorEnabled("slack/T2/C_UNASSIGNED", ambientDomains), "unassigned channel → org pseudo-domain's `false`");
+  ok(ambientSupervisorEnabled("slack/T2/C_ANY", [defineDomain({ name: "o", match: "org" })]), "🔴 org without the flag → ON (the framework default since OPE-2409)");
+  ok(ambientSupervisorEnabled("slack/T2/C_UNSET", [defineDomain({ name: "ambient-unset", reach: ["slack/T2/C_UNSET"] })]), "🔴 explicit domain without the flag and no org domain → ON (the framework default)");
 
   const tierDomains = [
     defineDomain({ name: "tier-set", reach: ["slack/T4/C_RES", "github/acme/widgets"], engagementTier: "reserved" }),
@@ -1653,34 +1667,34 @@ registerConfig({
   });
   ok(!out.woke, "display-name lookup failure → no needle → no wake (fail-soft, never a crash)");
 
-  resetSettingsForTest();
+  resetToOptOut();
 
-  registerSettings(defineSettings({ identity: { name: "Aria" } }));
+  registerSettings(defineSettings({ ...OPT_OUT, identity: { name: "Aria" } }));
   calls.length = 0;
   out = await routeNameDropEvent(topLevel({ text: "hey Aria, can you check this?" }), {
     ...deps(true, true),
     displayName: async () => "Test Slack Bot",
   });
   ok(out.woke && calls.length === 1, "[OPE-571] identity.name wakes the agent on a Slack name-drop, even though the live display name differs");
-  resetSettingsForTest();
+  resetToOptOut();
 
-  registerSettings(defineSettings({ wake: { nameDropInclude: ["Codename Falcon"] } }));
+  registerSettings(defineSettings({ ...OPT_OUT, wake: { nameDropInclude: ["Codename Falcon"] } }));
   calls.length = 0;
   out = await routeNameDropEvent(topLevel({ text: "Codename Falcon, status check" }), {
     ...deps(true, true),
     displayName: async () => "Test Slack Bot",
   });
   ok(out.woke && calls.length === 1, "[OPE-571] wake.nameDrop.include adds a wake the base set would not fire");
-  resetSettingsForTest();
+  resetToOptOut();
 
-  registerSettings(defineSettings({ wake: { nameDropExclude: ["Test Slack Bot"] } }));
+  registerSettings(defineSettings({ ...OPT_OUT, wake: { nameDropExclude: ["Test Slack Bot"] } }));
   calls.length = 0;
   out = await routeNameDropEvent(topLevel({ text: "Test Slack Bot, what's the ETA?" }), {
     ...deps(true, true),
     displayName: async () => "Test Slack Bot",
   });
   ok(!out.woke && calls.length === 0, "[OPE-571] wake.nameDrop.exclude suppresses a wake the automatic base would otherwise fire");
-  resetSettingsForTest();
+  resetToOptOut();
 
   calls.length = 0;
   out = await routeNameDropEvent(topLevel({ text: "Test Slack Bot, what's the ETA?" }), {
@@ -1836,7 +1850,7 @@ registerConfig({
       probed.length = 0;
       out = await routeNameDropEvent(topLevel(), withMixed());
       const shippedCtx = ((calls[0] as { context?: readonly string[] }).context ?? []).join("\n");
-      ok(out.woke && shippedCtx.includes(GUEST_TEXT), "🔴 OPE-525 NEGATIVE CONTROL: on the shipped `taint` grain a REFUTED author's hydrated line arrives VERBATIM");
+      ok(out.woke && shippedCtx.includes(GUEST_TEXT), "🔴 OPE-525 NEGATIVE CONTROL: on the `taint` opt-out grain a REFUTED author's hydrated line arrives VERBATIM");
       ok(probed.length === 0, "🔴 OPE-525: …and NO membership probe runs — `taint` returns the wake by reference before any lookup");
 
       try {
@@ -2206,11 +2220,11 @@ registerConfig({
     const lineFor = (block: string, id: string): string =>
       block.split("\n").find((l) => l.startsWith("[sender_type=") && l.includes(`sender_id=${id}`)) ?? "";
 
-    resetSettingsForTest();
+    resetToOptOut();
     let co = await routeSupervisorEvent(supEv(), ctxDeps(), { nameDrop: true, nameDropContext: hydrate });
     ok(co.woke && ctxWakes.length === 1, "a name-drop seat wake fires");
     ok(ctxWakes[0].context !== undefined && ctxWakes[0].context.length === 1, "🔴 the seat wake CARRIES the name-drop's hydrated block as its context (the slot the seat road used to drop)");
-    ok(lineFor(blockOf(0), REFUTED).includes(REFUTED_BODY), "on the shipped `taint` grain the refuted author's body arrives verbatim");
+    ok(lineFor(blockOf(0), REFUTED).includes(REFUTED_BODY), "on the `taint` opt-out grain the refuted author's body arrives verbatim");
     ok(lineFor(blockOf(0), MEMBER).includes(MEMBER_BODY), "…and so does the member's");
     ok(!blockOf(0).includes(WITHHELD_BODY_MARKER), "…and nothing is withheld on a grain that withholds nothing");
 
@@ -2223,11 +2237,11 @@ registerConfig({
     ok(lineFor(blockOf(0), REFUTED).includes(`sender_id=${REFUTED}`), "…with the identity metadata intact, so the marker reads as an arrival and not as a hole");
     ok(lineFor(blockOf(0), MEMBER).includes(MEMBER_BODY), "NEGATIVE CONTROL: the member's line in the same block is untouched — the swap is per-author");
     ok(nonMemberStamp(ctxWakes[0].auth) === undefined, "🔴 a WITHHELD hydrated line never keys taint — the seat wake's auth carries no chat-nonmember mark");
-    resetSettingsForTest();
+    resetToOptOut();
 
     ctxWakes.length = 0;
     co = await routeSupervisorEvent(supEv(), ctxDeps(), { nameDrop: true, nameDropContext: hydrate });
-    ok(co.woke && nonMemberStamp(ctxWakes[0].auth) === "true", "NEGATIVE CONTROL: on the shipped `taint` grain the same hydrated line MARKS the turn");
+    ok(co.woke && nonMemberStamp(ctxWakes[0].auth) === "true", "NEGATIVE CONTROL: on the `taint` opt-out grain the same hydrated line MARKS the turn");
 
     ctxWakes.length = 0;
     co = await routeSupervisorEvent(supEv(), ctxDeps());
@@ -2517,7 +2531,7 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
   overrideSettingsForTest({ window: { topology: false } });
   out2 = await routeSupervisorEvent(supEv(), supDepsFresh(false));
   ok(out2.woke && backscrollCalls.length === 0, "capability OFF: an ongoing generation's wake reads NOTHING — flag-off is byte-identical, and pays no Slack calls");
-  resetSettingsForTest();
+  resetToOptOut();
   registerConfig(catchUpBaseConfig);
 
   backscrollCalls.length = 0;
@@ -3285,7 +3299,7 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
   const ack = async (_c: string, _t: string, text: string) => { posts.push(text); };
 
   await announceSilentJoin(jev, part, { channelId: "C_CONNECT", vendorExternal: true }, { ack }, store);
-  ok(posts.length === 0, "🔴 on the shipped `engage` grain a Connect-channel join announces NOTHING — the feature is opt-in");
+  ok(posts.length === 0, "🔴 on the `engage` opt-out grain a Connect-channel join announces NOTHING");
 
   try {
     overrideSettingsForTest({ externalPolicy: { roomGrain: "silent" } });
@@ -3503,7 +3517,7 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
       globalThis.fetch = realFetch;
       if (prevToken === undefined) delete process.env.SLACK_BOT_TOKEN;
       else process.env.SLACK_BOT_TOKEN = prevToken;
-      resetSettingsForTest();
+      resetToOptOut();
     }
   }
 }

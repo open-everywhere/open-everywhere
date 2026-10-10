@@ -4,7 +4,7 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { npmCommand, npxCommand } from "../../scripts/npm-command.js";
-import { INTEGRATION_SANDBOX_BACKEND, PREPARED_PGLITE_TEMPLATE_PARENT } from "./global-setup-contract.js";
+import { PREPARED_PGLITE_TEMPLATE_PARENT } from "./global-setup-contract.js";
 import { mintPgliteTemplate } from "./pglite-template.js";
 import {
   PREPARED_ARTIFACTS,
@@ -102,7 +102,6 @@ const HOST_PREPARE_LEGS: PrepareLegs = {
   oeBuild: runOeBuild,
   eveBuild: runEveBuild,
   prewarm: async (root, log) => {
-    process.env.OE_SANDBOX_BACKEND = INTEGRATION_SANDBOX_BACKEND;
     return await prewarmJustBashTemplate(root, createStateDir(), log);
   },
   mint: mintTemplateForShards,

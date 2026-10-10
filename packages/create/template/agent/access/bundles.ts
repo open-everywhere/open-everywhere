@@ -6,7 +6,9 @@ import {
   type Binding,
   type Bundle,
 } from "@open-everywhere/core/agent/access/bundle.js";
+import { mcpServerBindings, mcpServerBundles } from "@open-everywhere/core/agent/connections/mcp-servers.js";
 import { loadGrantsOverlay } from "./grants.js";
+import { MCP_SERVERS } from "./mcp-servers.js";
 import { PRE_APPROVAL_RULES } from "./pre-approval-rules.js";
 import { loadAgentsOverlay } from "../memory/config/agents-overlay.js";
 import { loadGroups } from "../identity/groups.js";
@@ -27,6 +29,9 @@ const bindings: Binding[] = [
   defineBinding({ bundle: "org-default", scope: { level: "org" } }),
   defineBinding({ bundle: "approval-policy", scope: { level: "org" } }),
 ];
+
+bundles.push(...mcpServerBundles(MCP_SERVERS));
+bindings.push(...mcpServerBindings(MCP_SERVERS));
 
 const overlay = loadGrantsOverlay();
 const agentsOverlay = loadAgentsOverlay();

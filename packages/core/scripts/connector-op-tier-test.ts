@@ -57,23 +57,23 @@ ok(classifyConnectorOp("notion__notionette") === "gate:member", "prefix strip re
 
 const approve = connectorOpApproval();
 const noneApproved = new Set<string>();
-ok(approve({ toolName: "notion__search", approvedTools: noneApproved } as never) === "not-applicable", "read op → not-applicable (no prompt)");
+ok((await approve({ toolName: "notion__search", approvedTools: noneApproved } as never)) === "not-applicable", "read op → not-applicable (no prompt)");
 ok((await approve({ toolName: "notion__create_page", approvedTools: noneApproved } as never)) === "user-approval", "unapproved write → user-approval (prompt)");
 const oneApproved = new Set<string>(["notion__create_page"]);
 ok((await approve({ toolName: "notion__create_page", approvedTools: oneApproved } as never)) === "not-applicable", "already-approved write → not-applicable (once-per-op)");
 ok((await approve({ toolName: "notion__delete_page", approvedTools: oneApproved } as never)) === "user-approval", "a DIFFERENT write still prompts (approval is per-op, not blanket)");
 ok((await approve({ toolName: "notion__delete_page", approvedTools: new Set<string>(["notion__delete_page"]) } as never)) === "user-approval", "an already-approved DESTRUCTIVE op STILL prompts (per-call, OPE-11)");
 
-resetSettingsForTest();
+registerSettings({ connectors: { opTiering: false, userPrincipal: false } });
 {
   const off = connectorApprovalPolicy();
   const read = await off({ toolName: "notion__search", approvedTools: new Set<string>() } as never);
   ok(read !== "not-applicable", "flag OFF → once(): an unapproved READ is not auto-allowed (blanket policy)");
 }
-registerSettings({ connectors: { opTiering: true } });
+resetSettingsForTest();
 {
   const on = connectorApprovalPolicy();
-  ok((await on({ toolName: "notion__search", approvedTools: new Set<string>() } as never)) === "not-applicable", "flag ON → tiered: a READ is auto-allowed");
+  ok((await on({ toolName: "notion__search", approvedTools: new Set<string>() } as never)) === "not-applicable", "flag ON (shipped) → tiered: a READ is auto-allowed");
   ok(isDeniedStatus(await on({ toolName: "notion__create_page", approvedTools: new Set<string>() } as never)), "flag ON → tiered: a WRITE is denied, never prompted (OE card plane)");
 }
 resetSettingsForTest();
@@ -81,9 +81,9 @@ resetSettingsForTest();
 {
   resetSettingsForTest();
   const builtBeforeRegistration = connectorApprovalPolicy();
-  registerSettings({ connectors: { opTiering: true } });
+  registerSettings({ connectors: { opTiering: false, userPrincipal: false } });
   ok(
-    (await builtBeforeRegistration({ toolName: "notion__search", approvedTools: new Set<string>() } as never)) === "not-applicable",
+    (await builtBeforeRegistration({ toolName: "notion__search", approvedTools: new Set<string>() } as never)) !== "not-applicable",
     "a policy BUILT before registerSettings() still honours the deployment's opTiering (OPE-1450)",
   );
   ok(
@@ -379,5 +379,10 @@ for (const name of AUTHORED_AND_FRAMEWORK) {
   ok(!isConnectorOpTool(name), `authored/framework tool ${name} is not a qualified name — the connector-op plane never sees it`);
   ok(parseQualifiedToolName(name) === undefined, `…and it does not parse as one either (${name})`);
 }
+
+for (const name of ["x__preview_and_purchase", "x__analyze_and_refund", "x__preview_and_deploy", "x__verify_code", "x__inspect_page", "supabase__execute_sql", "github__run_workflow"]) {
+  ok(classifyConnectorOpTier(name) === "destructive", `${name} stays fail-closed destructive`);
+}
+ok(classifyConnectorOpTier("github__get_workflow_run") === "read", "a read whose name carries `run` stays a read (`run` is not a write verb)");
 
 console.log(`✓ connector-op-tier: ${passed} assertions passed`);

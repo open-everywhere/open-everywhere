@@ -2,6 +2,7 @@ import { sqliteOperationalStore } from "./sqlite.js";
 import { makeOperationalPostgresStore, type PgClient } from "./postgres.js";
 import type { OperationalStore } from "./store.js";
 import { onVercel } from "../access/platform.js";
+import { getSettings } from "../settings/settings.js";
 import { resolveOperationalSelection } from "./selection.js";
 
 export { resolveOperationalSelection, type OperationalFloor } from "./selection.js";
@@ -50,12 +51,12 @@ export function getOperationalStore(): OperationalStore {
   if (active) return active;
   const { id, floor } = resolveOperationalSelection();
 
-  if (floor !== "none" && onVercel() && process.env.OE_ALLOW_EPHEMERAL_OPERATIONAL !== "1") {
+  if (floor !== "none" && onVercel() && !getSettings().storage.allowEphemeralOperational) {
     throw new Error(
       `operational store is the ${floor === "pglite" ? "embedded-Postgres (PGlite)" : "sqlite"} floor on Vercel — ` +
         "audit, spend caps, and break-glass revocations would be per-instance and ephemeral (a revoke would " +
         "report success but never take effect). Set DATABASE_URL — it selects postgres for both stores on its " +
-        "own — and register a client (see docs/deploy/setup-runbook.md), or OE_ALLOW_EPHEMERAL_OPERATIONAL=1 " +
+        "own — and register a client (see docs/deploy/setup-runbook.md), or declare `storage.allowEphemeralOperational: true` in agent/settings/settings.ts " +
         "to accept ephemeral operational state on a single-instance host.",
     );
   }

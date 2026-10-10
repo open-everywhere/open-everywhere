@@ -170,7 +170,7 @@ const INSTRUCTIONS_ALLOWANCE: readonly { readonly reference: string; readonly te
   ok(rules.length >= 4, `template ${rulesRel}: ships at least four starter rules`);
   const ids = rules.map((r) => r.id);
   eq(new Set(ids).size, ids.length, `template ${rulesRel}: every starter rule id is unique`);
-  for (const want of ["pr-asked-for-here", "routine-reports-here", "access-request-asked-for", "connector-write-asked-for-here"]) {
+  for (const want of ["pr-asked-for-here", "routine-reports-here", "access-request-asked-for", "connector-write-asked-for-here", "connector-delete-asked-for-here"]) {
     ok(ids.includes(want), `template ${rulesRel}: ships the "${want}" rule`);
   }
   ok(rules.every((r) => r.rule.trim().length > 0), `template ${rulesRel}: every starter rule has prose`);
@@ -183,6 +183,17 @@ const INSTRUCTIONS_ALLOWANCE: readonly { readonly reference: string; readonly te
   ok(/^\s*defineBinding\(\{ bundle: "approval-policy", scope: \{ level: "org" \} \}\),$/m.test(bundlesSrc), `template ${bundlesRel}: the rules bundle is bound at org scope`);
   const settingsSrc = readFileSync(join(TEMPLATE, "agent", "settings", "settings.ts"), "utf8");
   ok(!/judgeMode\s*:/.test(settingsSrc.replace(/^\s*\/\/.*$/gm, "")), "template agent/settings/settings.ts: sets no judgeMode, so a fresh app runs the shipped enforce");
+}
+
+{
+  const settingsMod = (await import(pathToFileURL(join(TEMPLATE, "agent", "settings", "settings.ts")).href)) as {
+    SETTINGS_OVERRIDES?: { browser?: { enabled?: unknown } };
+  };
+  eq(settingsMod.SETTINGS_OVERRIDES?.browser?.enabled, true, "template agent/settings/settings.ts: arms the browser (`browser.enabled: true`)");
+  const { browserHostDeclarations } = await import("@open-everywhere/core/agent/access/browser-hosts.js");
+  await import(pathToFileURL(join(TEMPLATE, "agent", "access", "browser-hosts.ts")).href);
+  const hosts = browserHostDeclarations().map((h) => h.host);
+  ok(hosts.includes("localhost"), `template agent/access/browser-hosts.ts: declares a localhost row (got ${JSON.stringify(hosts)})`);
 }
 
 {

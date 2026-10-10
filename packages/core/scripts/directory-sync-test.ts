@@ -7,7 +7,7 @@ import { initOperationalSchema, makeOperationalPostgresStore, type PgClient } fr
 import { registerOperationalStore, resetOperationalStore } from "../agent/operational/provider.js";
 import {
   DIRECTORY_SYNC_ACTION,
-  OE_DIRECTORY_AUTOCONFIRM_ENV,
+  DIRECTORY_AUTOCONFIRM_SETTING,
   directoryAutoConfirm,
   directoryLinkSetId,
   directoryLinkSetVaultArmed,
@@ -20,7 +20,7 @@ import {
   type DirectoryLinkState,
 } from "../agent/identity/directory-sync.js";
 import { directoryProvider, registerDirectoryProvider, resetDirectoryProvider, type DirectoryPerson, type DirectoryProvider } from "../agent/identity/directory.js";
-import { registerSettings, resetSettingsForTest } from "../agent/settings/settings.js";
+import { defineSettings, overrideSettingsForTest, registerSettings, resetSettingsForTest } from "../agent/settings/settings.js";
 import {
   confirmedLinkSetPrincipals,
   expandLinkSet,
@@ -112,18 +112,22 @@ const rowan = (over: Partial<DirectoryPerson> = {}): DirectoryPerson => ({
 const stepsFor = (plan: DirectorySyncPlan, kind: string) => plan.steps.filter((s) => s.kind === kind);
 
 {
-  ok(directoryAutoConfirm({}) === "off", "policy: unset ⇒ off — every suggestion waits for its human");
-  ok(directoryAutoConfirm({ [OE_DIRECTORY_AUTOCONFIRM_ENV]: "" }) === "off", "policy: empty ⇒ off");
-  ok(directoryAutoConfirm({ [OE_DIRECTORY_AUTOCONFIRM_ENV]: " ATTESTED " }) === "attested", "policy: trimmed + case-insensitive \"attested\" arms the single escape");
-  ok(directoryAutoConfirm({ [OE_DIRECTORY_AUTOCONFIRM_ENV]: "off" }) === "off", "policy: explicit \"off\" is off");
+  resetSettingsForTest();
+  ok(directoryAutoConfirm() === "off", "policy: shipped ⇒ off — every suggestion waits for its human");
+  process.env.OE_DIRECTORY_AUTOCONFIRM = "attested";
+  ok(directoryAutoConfirm() === "off", "🔴 policy: the retired OE_DIRECTORY_AUTOCONFIRM arms NOTHING — the escape opens only by a reviewed commit");
+  delete process.env.OE_DIRECTORY_AUTOCONFIRM;
+  overrideSettingsForTest({ directory: { autoConfirm: "attested" } });
+  ok(directoryAutoConfirm() === "attested", "policy: a registered \"attested\" arms the single escape");
+  registerSettings({ connectors: { linkSetVault: false } });
   let threw = "";
   try {
-    directoryAutoConfirm({ [OE_DIRECTORY_AUTOCONFIRM_ENV]: "atested" });
+    defineSettings({ directory: { autoConfirm: "atested" as never } });
   } catch (e) {
     threw = e instanceof Error ? e.message : String(e);
   }
-  ok(threw.includes("is not a policy"), "policy: FAIL-LOUD on a typo — a security knob that silently resolves safe is still a deployment lying to its operator");
-  ok(threw.includes("attested") && threw.includes("off"), "policy: …and the throw names both valid values");
+  ok(threw.includes(DIRECTORY_AUTOCONFIRM_SETTING), "policy: FAIL-LOUD on a typo at settings load — a security knob that silently resolves safe is still a deployment lying to its operator");
+  ok(threw.includes("attested") && threw.includes("off"), "policy: …and the refusal names both valid values");
 }
 
 {
@@ -592,7 +596,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
   registerDirectoryProvider(fakeDirectory(() => [erin]));
 
   resetSettingsForTest();
-  ok(directoryLinkSetVaultArmed() === false, "vault reader: nothing registered ⇒ not armed (the id-keyed C2.4 guard alone, byte-identical to before C.3)");
+  ok(directoryLinkSetVaultArmed() === true, "🔴 vault reader: nothing registered ⇒ ARMED (the shipped default since OPE-2414)");
   registerSettings({ connectors: { linkSetVault: false } });
   ok(directoryLinkSetVaultArmed() === false, "vault reader: an explicit false is not armed");
   registerSettings({ connectors: { linkSetVault: true } });
@@ -612,7 +616,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
     "…without naming the set: the reason is the deployment's flag, not anything about Erin's set (which no config mentions)",
   );
 
-  resetSettingsForTest();
+  registerSettings({ connectors: { linkSetVault: false } });
   const offRun = (await syncDirectoryOrg({ org: ORG, autoConfirm: "attested" }))!;
   ok(offRun.applied.confirmed === 1, "🔴 runner (vault OFF): the SAME fixture auto-confirms exactly as before C.3 — the guard adds nothing when the vault is not armed");
   ok((await resolveLinkSet(ORG, "slack", "U-ERIN", T1))?.id === erinSet, "…the account resolves to its directory-derived set");
@@ -651,9 +655,8 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
   let daveNow: DirectoryPerson = dave;
   registerDirectoryProvider(fakeDirectory(() => [daveNow]));
 
-  const priorPolicy = process.env[OE_DIRECTORY_AUTOCONFIRM_ENV];
-  process.env[OE_DIRECTORY_AUTOCONFIRM_ENV] = "attested";
-  ok(directoryAutoConfirm() === "attested", "asserted: the escape really is armed for this block (read from the env, not passed in)");
+  overrideSettingsForTest({ directory: { autoConfirm: "attested" } });
+  ok(directoryAutoConfirm() === "attested", "asserted: the escape really is armed for this block (read from the registered settings, not passed in)");
 
   const daveRun1 = (await syncDirectoryOrg({ org: ORG }))!;
   ok(daveRun1.applied.confirmed === 1 && (await resolveLinkSet(ORG, "slack", "U-DAVE", T1))?.id === daveSet, "asserted: (setup) Dave's ATTESTED slack account auto-confirms under the armed escape, making him a confirmed member");
@@ -668,7 +671,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
   };
   const daveRun2 = (await syncDirectoryOrg({ org: ORG }))!;
   const assertedSuggest = daveRun2.plan.steps.find((s): s is Extract<typeof s, { kind: "suggest" }> => s.kind === "suggest" && s.nativeId === "gh-dave")!;
-  ok(assertedSuggest.grade === "asserted" && assertedSuggest.autoConfirm === false, "🔴 asserted: an ASSERTED mapping is NOT marked auto-confirmable even with OE_DIRECTORY_AUTOCONFIRM=attested — the escape is narrowed to downstream-confirmed facts");
+  ok(assertedSuggest.grade === "asserted" && assertedSuggest.autoConfirm === false, "🔴 asserted: an ASSERTED mapping is NOT marked auto-confirmable even with directory.autoConfirm \"attested\" — the escape is narrowed to downstream-confirmed facts");
   ok(daveRun2.plan.steps.find((s): s is Extract<typeof s, { kind: "suggest" }> => s.kind === "suggest" && s.nativeId === "lin-dave")!.autoConfirm === true, "asserted: …while the sibling ATTESTED mapping in the very same run still confirms — the narrowing is per-grade, not a blanket off-switch");
   ok((await resolveLinkSet(ORG, "github", "gh-dave", "")) === null, "🔴 asserted: end-to-end, the asserted account resolves to NOTHING — it is waiting for a human");
   ok((await resolveLinkSet(ORG, "linear", "lin-dave", ""))?.id === daveSet, "asserted: …and the attested one resolved immediately");
@@ -685,8 +688,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
   await refuses(() => confirmLink.execute({ decision: "confirm", accounts: ["github/gh-dave"] }, dmDave), "nothing of yours", "🔴 asserted: …and confirm_link refuses it by name from Dave's own DM — the read's narrowness is what the tool enforces");
   ok((await resolveLinkSet(ORG, "github", "gh-dave", "")) === null, "🔴 asserted: …and nothing was linked by the attempt");
 
-  if (priorPolicy === undefined) delete process.env[OE_DIRECTORY_AUTOCONFIRM_ENV];
-  else process.env[OE_DIRECTORY_AUTOCONFIRM_ENV] = priorPolicy;
+  overrideSettingsForTest({ directory: { autoConfirm: "off" } });
 }
 
 {
@@ -701,8 +703,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
     loadDomains: () => [defineDomain({ name: "eng", reach: [`slack/${T1}/C_ENG`, `slack/${T2}/C_ENG2`] })],
   });
 
-  const priorPolicy = process.env[OE_DIRECTORY_AUTOCONFIRM_ENV];
-  delete process.env[OE_DIRECTORY_AUTOCONFIRM_ENV];
+  overrideSettingsForTest({ directory: { autoConfirm: "off" } });
 
   const twin: DirectoryPerson = {
     externalId: "00u-twin",
@@ -802,8 +803,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
   ok(namedBoth.accounts.length === 2, "OPE-350(c): NAMING both accounts confirms both — the fence is on the blanket yes, not on the count");
   ok((await resolveLinkSet(ORG, "slack", "U-PAIR", T2))?.id === pairSet, "OPE-350(c): …and the T2 account is keyed by ITS OWN workspace, not the confirmer's");
 
-  if (priorPolicy === undefined) delete process.env[OE_DIRECTORY_AUTOCONFIRM_ENV];
-  else process.env[OE_DIRECTORY_AUTOCONFIRM_ENV] = priorPolicy;
+  overrideSettingsForTest({ directory: { autoConfirm: "off" } });
 }
 
 {
@@ -843,6 +843,25 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
   );
 
   resetDirectoryProvider();
+}
+
+{
+  const { runDirectorySync } = await import("../agent/identity/directory-sync.js");
+  resetDirectoryProvider();
+  overrideSettingsForTest({ schedules: { sweepOrgs: ["sweep-org-a", "sweep-org-b"] } });
+  process.env.OE_TIDY_ORGS = "sweep-org-env";
+  await runDirectorySync();
+  delete process.env.OE_TIDY_ORGS;
+  ok((await readAudit({ org: "sweep-org-a", action: DIRECTORY_SYNC_ACTION })).length === 1, "sweep orgs: the sync covers the FIRST declared org");
+  ok((await readAudit({ org: "sweep-org-b", action: DIRECTORY_SYNC_ACTION })).length === 1, "sweep orgs: …and the SECOND");
+  ok((await readAudit({ org: "sweep-org-env", action: DIRECTORY_SYNC_ACTION })).length === 0, "🔴 sweep orgs: the retired OE_TIDY_ORGS adds no org");
+  overrideSettingsForTest({ schedules: { sweepOrgs: ["default"] } });
+
+  const { tidyOrgs } = await import("../agent/schedules/tidy.js");
+  overrideSettingsForTest({ schedules: { sweepOrgs: ["acme", "globex"] } });
+  ok(JSON.stringify(tidyOrgs()) === JSON.stringify(["acme", "globex"]), "sweep orgs: the tidy sweep reads the SAME setting — one answer to 'which orgs'");
+  overrideSettingsForTest({ schedules: { sweepOrgs: ["default"] } });
+  ok(JSON.stringify(tidyOrgs()) === JSON.stringify(["default"]), "sweep orgs: …and the shipped answer is the single-operator org");
 }
 
 resetDirectoryProvider();

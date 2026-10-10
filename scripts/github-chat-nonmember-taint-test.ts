@@ -18,6 +18,8 @@ process.env.GITHUB_APP_SLUG = "eve-bot";
 
 const { registerGithubProvider } = await import("@open-everywhere/provider-github/agent/register.js");
 registerGithubProvider();
+const { overrideSettingsForTest } = await import("@open-everywhere/core/agent/settings/settings.js");
+overrideSettingsForTest({ window: { topology: false } });
 const { githubOnComment } = await import("@open-everywhere/provider-github/agent/channels/github.js");
 const { registerConfig } = await import("@open-everywhere/core/agent/access/config.js");
 
@@ -56,7 +58,7 @@ const setDomains = (domains: readonly Domain[]) =>
     loadDomains: () => domains, loadSilos: () => [], domainsForSurface: () => [],
   });
 
-setDomains([]);
+setDomains([{ name: "org", match: "org", externalPolicy: { authorGrain: "taint", roomGrain: "engage" } }]);
 
 _resetSurfacesForTest();
 

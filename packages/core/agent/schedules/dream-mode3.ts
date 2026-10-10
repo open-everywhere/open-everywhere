@@ -4,7 +4,6 @@ import { readAudit, appendAudit } from "../audit/audit.js";
 import { DREAM_ACTOR } from "../memory/dream/proposal.js";
 import { buildMode3Report, formatMode3Report, isFailureAction, type Mode3Report } from "../memory/dream/mode3.js";
 import { clusterFailures } from "../memory/dream/mode3-cluster.js";
-import { lastMileDedupeKey, lastMileLine, runLastMile, type LastMileDeps, type LastMileOutcome } from "../memory/dream/mode3-last-mile.js";
 import type { AuditEntry } from "../operational/store.js";
 import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { tidyOrgs } from "./tidy.js";
@@ -65,39 +64,12 @@ interface OrgDigestOutcome {
   readonly posted: boolean;
 }
 
-function lastMileDetail(outcome: LastMileOutcome): Record<string, unknown> {
-  switch (outcome.kind) {
-    case "opened":
-      return { kind: outcome.kind, number: outcome.number, url: outcome.url, updated: outcome.updated };
-    case "refused":
-      return { kind: outcome.kind, reason: outcome.reason };
-    case "failed-after-write":
-      return { kind: outcome.kind, reason: outcome.reason, head: outcome.head };
-    default:
-      return { kind: outcome.kind };
-  }
-}
-
-async function runLastMileOnce(org: string, report: Mode3Report, deps: LastMileDeps | undefined): Promise<LastMileOutcome> {
-  const fingerprint = lastMileDedupeKey(report) ?? "none";
-  const skipped: LastMileOutcome = { kind: "skipped-resume" };
-  return (
-    (await postOnce<LastMileOutcome>({
-      org,
-      key: outboundKey({ surface: "dream", channel: "last-mile", action: "dream.mode3-last-mile", payload: fingerprint }),
-      run: () => runLastMile(report, deps),
-      skipped: () => skipped,
-    })) ?? skipped
-  );
-}
-
 async function runOrgDigest(input: {
   readonly org: string;
   readonly now: Date;
   readonly windowStart: Date;
   readonly post: Mode3Poster;
   readonly channel: string | undefined;
-  readonly lastMile: LastMileDeps | undefined;
 }): Promise<OrgDigestOutcome> {
   const { org, now, windowStart, post, channel } = input;
 
@@ -122,8 +94,6 @@ async function runOrgDigest(input: {
   }
   if (!report) return { outcome: "no-op: empty week", reported: false, posted: false };
 
-  const lastMile = await runLastMileOnce(org, report, input.lastMile);
-
   await appendAudit({
     org,
     platform: "dream",
@@ -133,7 +103,6 @@ async function runOrgDigest(input: {
     detail: {
       totalFailures: report.totalFailures,
       clusters: report.clusters.map((c) => ({ action: c.action, count: c.count, label: c.label, judged: c.judged })),
-      lastMile: lastMileDetail(lastMile),
     },
   });
 
@@ -142,7 +111,7 @@ async function runOrgDigest(input: {
     return { outcome: "reported: no admin channel configured — skipped post", totalFailures: report.totalFailures, reported: true, posted: false };
   }
   try {
-    const text = formatMode3Report(report, lastMileLine(lastMile));
+    const text = formatMode3Report(report);
     const res = await postOnce({
       org,
       key: outboundKey({ surface: "dream", channel, action: "dream.mode3-digest", payload: text }),
@@ -167,7 +136,6 @@ export async function mode3Tick(
     readonly now?: Date;
     readonly orgs?: readonly string[];
     readonly post?: Mode3Poster;
-    readonly lastMile?: LastMileDeps;
   } = {},
 ): Promise<Mode3TickReport> {
   const now = opts.now ?? new Date();
@@ -180,7 +148,7 @@ export async function mode3Tick(
   let posted = 0;
 
   for (const org of orgs) {
-    const result = await runOrgDigest({ org, now, windowStart, post, channel, lastMile: opts.lastMile });
+    const result = await runOrgDigest({ org, now, windowStart, post, channel });
     if (result.reported) reports++;
     if (result.posted) posted++;
 

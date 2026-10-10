@@ -86,7 +86,7 @@ export async function stageCredentialBindingPr(
   const repo = cfg.configRepo;
   const base = cfg.configBase ?? "main";
   const bindingsPath = deps.bindingsPath ?? process.env.OE_CREDENTIAL_BINDINGS_PATH ?? "agent/access/credential-bindings.generated.ts";
-  const liveArmed = process.env.OE_CREDENTIAL_BINDING_LIVE === "1" && cfg.dryRun !== true;
+  const liveArmed = cfg.credentialBindingLive === true && cfg.dryRun !== true;
   const dryRun = deps.dryRun ?? !liveArmed;
 
   const override: CredentialBindingOverride = { connector: args.connector, credential: args.credential, broker: DB_BROKER, secretRef: args.storedRef };

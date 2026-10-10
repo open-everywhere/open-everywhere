@@ -14,7 +14,7 @@ far side.)
 The embedded (PGlite) floor is a **single process on one box**, durable to local disk. It buys zero
 setup, and it costs you what a managed/server database gives you: **backups, replication,
 multi-instance access, and a smaller RAM footprint** (in-process WASM Postgres is heavier than a
-Postgres server — see the [OPE-113 spike](../../packages/core/scripts/spikes/pglite-floor-spike.ts):
+Postgres server — the OPE-113 spike measured it, and that spike is not kept in this repo:
 ~660MB RSS at 200k rows, ~250ms cold-boot, and it is **single-writer only** — an OE lockfile refuses
 a second process). If the box dies, the disk fills, or you scale past one instance, the operational
 store — your **audit log, spend ledger, break-glass connector revocations, routine run-status, and

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -125,6 +125,22 @@ const manifestOf = (root: string): { dependencies: Record<string, string>; devDe
   ok(h.text().includes("eve 0.55.0"), "--plan names the eve pin it would take from the target's declared peer");
   ok(h.text().includes("a seat tool was renamed"), "--plan prints the release notes it can see");
   ok(h.text().includes("nothing was written"), "--plan says plainly that it wrote nothing");
+}
+
+{
+  const ownRecord = JSON.parse(readFileSync(join(REPO, "packages/core/upgrading.json"), "utf8")) as {
+    releases: { version: string; manualSteps: string[] }[];
+  };
+  const ownStep = ownRecord.releases.find((r) => r.version === LATEST)?.manualSteps[0];
+  assert.ok(ownStep !== undefined, `this repository's record holds a ${LATEST} entry with a manual step`);
+  const short = harness();
+  ok((await runUpgradeCommand(["--plan"], short.io, fixtureApp({ notes: recordOf(note({ version: INSTALLED })) }))) === 0, "own record: --plan exits 0");
+  ok(short.text().includes(`MANUAL    ${ownStep}`), `🔴 own record: --plan prints the target's MANUAL steps from the running core's record\n${short.text()}`);
+  ok(short.text().includes(`read from this oe's own upgrading.json, because the installed copy has no entry for ${LATEST}`), "own record: --plan says which record it read");
+  const full = harness();
+  await runUpgradeCommand(["--plan"], full.io, fixtureApp({ notes: recordOf(note({ manualSteps: ["the installed step"] })) }));
+  ok(full.text().includes("MANUAL    the installed step"), "own record: an installed record that holds the target is read as before");
+  ok(!full.text().includes("read from this oe's own"), "own record: and the own-record line does not print then");
 }
 
 {
@@ -767,6 +783,106 @@ function installTargetNaming(root: string, codemod: string): (c: Call) => void {
   ok((await runUpgradeCommand(["--to", LATEST, "--plan"], withTo.io, root)) === 0, "…the negative control: --to's own value is not mistaken for a stray argument");
 }
 
+function releaseDir(packages: readonly { readonly name: string; readonly version: string; readonly peerDependencies?: Record<string, string> }[]): string {
+  const dir = mkdtempSync(join(tmpdir(), "oe-upgrade-release-"));
+  for (const pkg of packages) {
+    const work = mkdtempSync(join(tmpdir(), "oe-upgrade-pkg-"));
+    mkdirSync(join(work, "package"));
+    writeFileSync(join(work, "package", "package.json"), JSON.stringify(pkg));
+    const file = `${pkg.name.slice(1).replace("/", "-")}-${pkg.version}.tgz`;
+    execFileSync("tar", ["-czf", file, "package"], { cwd: work });
+    writeFileSync(join(dir, file), readFileSync(join(work, file)));
+  }
+  return dir;
+}
+
+const noRegistry: Partial<UpgradeRegistry> = {
+  latestVersion: async () => assert.fail("--from read the registry's latest version"),
+  evePeer: async () => assert.fail("--from read the registry's eve peer"),
+};
+const FULL_SET = ["core", "adapters", "provider-slack", "create"].map((n) => ({
+  name: `@open-everywhere/${n}`,
+  version: LATEST,
+  ...(n === "core" ? { peerDependencies: { eve: "0.60.0" } } : {}),
+}));
+
+{
+  const root = fixtureApp();
+  const dir = releaseDir(FULL_SET);
+  const h = harness({ registry: noRegistry });
+  const code = await runUpgradeCommand(["--from", dir], h.io, root);
+  ok(code === 0, `🔴 \`oe upgrade --from <dir>\` takes the target from the tarballs and never asks the registry — got ${code}\n${h.text()}`);
+  ok(h.text().includes(`oe upgrade: ${INSTALLED} → ${LATEST} (eve 0.60.0)`), "…and the target and the eve peer are the core tarball's own");
+  const pins = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { dependencies: Record<string, string>; devDependencies: Record<string, string> };
+  const tgz = (n: string): string => `file:${join(dir, `open-everywhere-${n}-${LATEST}.tgz`)}`;
+  ok(
+    pins.dependencies["@open-everywhere/core"] === tgz("core") && pins.dependencies["@open-everywhere/adapters"] === tgz("adapters") && pins.dependencies.eve === "0.60.0",
+    `🔴 …and every @open-everywhere/* pin names its tarball — got ${JSON.stringify(pins.dependencies)}`,
+  );
+  ok(pins.devDependencies["@open-everywhere/create"] === tgz("create") && pins.devDependencies["create-open-everywhere"] === undefined, "…and the retired scaffolder is renamed onto the create tarball");
+  ok(h.text().includes("REHEARSAL: package.json pins"), "…and the last lines say the file: pins are not for a commit");
+  const inline = harness({ registry: noRegistry });
+  ok((await runUpgradeCommand([`--from=${dir}`, "--plan"], inline.io, fixtureApp())) === 0, "…and --from=<dir> is the same flag");
+}
+
+{
+  const root = fixtureApp();
+  const before = readFileSync(join(root, "package.json"), "utf8");
+  const dir = releaseDir(FULL_SET.filter((p) => p.name !== "@open-everywhere/adapters"));
+  const h = harness({ registry: noRegistry });
+  ok((await runUpgradeCommand(["--from", dir], h.io, root)) === 1, "🔴 --from refuses when the app pins a package the directory holds no tarball for");
+  ok(h.text().includes("@open-everywhere/adapters"), "…and names it");
+  ok(h.calls.length === 0 && readFileSync(join(root, "package.json"), "utf8") === before, "…and it writes nothing and spawns nothing");
+  const wrongTo = harness({ registry: noRegistry });
+  ok((await runUpgradeCommand(["--from", releaseDir(FULL_SET), "--to", "0.1.9"], wrongTo.io, root)) === 1, "…and --to a version the directory does not hold refuses too");
+  ok(wrongTo.text().includes("holds no 0.1.9 tarball for @open-everywhere/core"), `…and it refuses on the whole-set check, not on a later read — got ${wrongTo.text()}`);
+}
+
+{
+  const first = releaseDir(FULL_SET);
+  const rehearsed = async (): Promise<string> => {
+    const root = fixtureApp({ scopedScaffolder: true });
+    const h = harness({
+      registry: noRegistry,
+      onRun: (c) => {
+        if (c.args[0] === "install") writeFileSync(join(root, "node_modules", "@open-everywhere", "core", "package.json"), JSON.stringify({ name: CORE, version: LATEST, bin: { oe: "./bin/oe.js" } }));
+        return 0;
+      },
+    });
+    assert.equal(await runUpgradeCommand(["--from", first], h.io, root), 0, `the fixture rehearsal failed:\n${h.text()}`);
+    return root;
+  };
+  const viaRegistry = await rehearsed();
+  ok(JSON.parse(readFileSync(join(viaRegistry, "package.json"), "utf8")).dependencies["@open-everywhere/core"].startsWith("file:"), "the fixture: the rehearsal left file: pins and core at the target");
+  const reg = harness();
+  ok((await runUpgradeCommand([], reg.io, viaRegistry)) === 0, `a registry run over the rehearsed app exits 0 — got\n${reg.text()}`);
+  ok(!reg.text().includes("Nothing to do"), `🔴 …and it does NOT report "Nothing to do" over file: pins\n${reg.text()}`);
+  ok(reg.text().includes("Re-pinning and re-installing"), "…and it says why it runs");
+  const pins = JSON.parse(readFileSync(join(viaRegistry, "package.json"), "utf8")) as { dependencies: Record<string, string>; devDependencies: Record<string, string> };
+  ok(pins.dependencies["@open-everywhere/core"] === LATEST && pins.devDependencies["@open-everywhere/create"] === LATEST, `…and it re-pins the set to ${LATEST} — got ${JSON.stringify(pins)}`);
+  ok(reg.calls.some((c) => c.args[0] === "install"), "…and it re-installs");
+
+  const repacked = await rehearsed();
+  const second = releaseDir(FULL_SET);
+  const again = harness({ registry: noRegistry });
+  ok((await runUpgradeCommand(["--from", second], again.io, repacked)) === 0 && !again.text().includes("Nothing to do"), `🔴 …and --from a re-packed release in another directory re-pins too — got\n${again.text()}`);
+  ok(JSON.parse(readFileSync(join(repacked, "package.json"), "utf8")).dependencies["@open-everywhere/core"] === `file:${join(second, `open-everywhere-core-${LATEST}.tgz`)}`, "…onto the new directory's tarball");
+  const same = harness({ registry: noRegistry });
+  ok((await runUpgradeCommand(["--from", second], same.io, repacked)) === 0 && same.text().includes("Nothing to do"), `…the negative control: the same directory again has nothing to do — got\n${same.text()}`);
+}
+
+{
+  const root = fixtureApp();
+  const checkout = mkdtempSync(join(tmpdir(), "oe-upgrade-checkout-"));
+  mkdirSync(join(checkout, "packages", "core"), { recursive: true });
+  writeFileSync(join(checkout, "packages", "core", "package.json"), "{}");
+  const h = harness({ registry: noRegistry });
+  ok((await runUpgradeCommand(["--from", checkout], h.io, root)) === 1, "--from on a checkout with no tarballs refuses");
+  ok(h.text().includes("npm pack --workspaces --pack-destination"), "…and says how to pack the checkout");
+  const empty = harness();
+  ok((await runUpgradeCommand(["--from"], empty.io, root)) === 2, "…and --from with no directory is a usage error");
+}
+
 {
   const root = fixtureApp();
   let status = 0;
@@ -798,6 +914,23 @@ function installTargetNaming(root: string, codemod: string): (c: Call) => void {
   ok(unknown.output.includes("nobody-wrote-this") && unknown.output.includes("no codemod ran"), "…and names it, and says no codemod ran");
   const bare = runCli(["upgrade-codemods"]);
   ok(bare.status === 2, `…and with no id it is a usage error — got exit ${bare.status}`);
+}
+
+{
+  const root = fixtureApp({ notes: recordOf(note({ manualSteps: ["x".repeat(300_000)] })) });
+  const dir = releaseDir(FULL_SET);
+  const child = spawn(process.execPath, [TSX_CLI, CLI, "upgrade", "--plan", "--from", dir], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+  const closed = new Promise<number | null>((done) => child.on("close", done));
+  child.stdout.pause();
+  await new Promise((done) => setTimeout(done, 1500));
+  let output = "";
+  child.stdout.setEncoding("utf8").on("data", (d: string) => (output += d));
+  child.stderr.setEncoding("utf8").on("data", (d: string) => (output += d));
+  child.stdout.resume();
+  const status = await closed;
+  ok(status === 0, `the slow-reader plan exits 0 — got ${status}\n${output.slice(-2000)}`);
+  ok(output.length > 300_000, `🔴 the oe bin flushes its whole plan before it exits — got ${output.length} characters`);
+  ok(output.includes("✓ oe upgrade --plan: nothing was written."), "…and the plan's last line arrives");
 }
 
 console.log(`✓ oe upgrade: ${passed} assertions.`);

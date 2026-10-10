@@ -88,7 +88,7 @@ export const ROOM_VARS: readonly RoomVarSpec[] = [
     envVar: "E2E_ADDRESSED_TEAMS_SURFACE",
     what: "J-ENGAGED-teams's addressed-only channel — NOT E2E_TEAMS_CHANNEL_ID, which J-TEAMS drives",
     ownedBy: "e2e-engaged",
-    expectUnclaimed: "no explicit domain holds it — it falls to the `org` criteria domain, which is addressed-only by default, and that default is the posture J-ENGAGED-teams drives",
+    expectUnclaimed: "no explicit domain holds it — it falls to the `org` criteria domain, which declares `ambientSupervisor: false` in this deployment, and that addressed-only posture is the one J-ENGAGED-teams drives",
   },
   { surface: "linear", envVar: "E2E_ADDRESSED_LINEAR_TEAM_ID", what: "J-ENGAGED-linear's addressed-only team", ownedBy: "e2e-engaged" },
   { surface: "notion", envVar: "E2E_ADDRESSED_NOTION_PAGE_ID", what: "J-ENGAGED-notion's addressed-only page", ownedBy: "e2e-engaged" },
@@ -258,7 +258,7 @@ export const PROVISION_PLAN: readonly ProvisionDomain[] = [
         envVar: "E2E_SLACK_PRIVATE_CHANNEL",
         action: "reuse",
         reuseOf: "E2E_SLACK_PRIVATE_CHANNEL",
-        note: "S11's private channel already carries the addressed-only posture — it sits in NO explicit domain, so it falls to the `org` criteria domain, which sets neither ambientSupervisor nor mode. J-ENGAGED-slack drives it. Do NOT put it in ANY explicit domain: scripts/e2e-engaged-fixture-test.ts asserts it resolves to no explicit domain at all, which is what both S11 and this journey need. Its silo is therefore org-brain, the real shared brain (OPE-1541)",
+        note: "S11's private channel already carries the addressed-only posture — it sits in NO explicit domain, so it falls to the `org` criteria domain, which sets ambientSupervisor: false and no mode. J-ENGAGED-slack drives it. Do NOT put it in ANY explicit domain: scripts/e2e-engaged-fixture-test.ts asserts it resolves to no explicit domain at all, which is what both S11 and this journey need. Its silo is therefore org-brain, the real shared brain (OPE-1541)",
       },
       {
         surface: "discord",

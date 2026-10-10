@@ -1,6 +1,4 @@
-const OE_OAUTH_ENABLED_ENV = "OE_OAUTH_ENABLED";
-export const OE_OAUTH_CONFIG_ENV = "OE_OAUTH_CONFIG";
-const OE_OAUTH_NOTION_RESOURCE_ENV = "OE_OAUTH_NOTION_RESOURCE";
+import { declaredConnectionSignIns } from "@open-everywhere/core/agent/adapter-api.js";
 
 export const OE_OAUTH_MODE_DISCOVERY = "discovery-dcr-pkce";
 export const OE_OAUTH_MODE_STATIC = "static-confidential";
@@ -35,13 +33,6 @@ export type OeOauthProviderConfig = OeOauthDiscoveryProviderConfig | OeOauthStat
 
 export function isStaticConfidential(cfg: OeOauthProviderConfig): cfg is OeOauthStaticProviderConfig {
   return cfg.mode === OE_OAUTH_MODE_STATIC;
-}
-
-export function oeOauthEnabled(): boolean {
-  const raw = process.env[OE_OAUTH_ENABLED_ENV];
-  if (raw === undefined) return false;
-  const v = raw.trim().toLowerCase();
-  return v !== "" && v !== "0" && v !== "false" && v !== "off" && v !== "no";
 }
 
 const RESERVED_AUTHORIZE_PARAMS = new Set(["response_type", "client_id", "redirect_uri", "state", "scope", "code_challenge", "code_challenge_method"]);
@@ -82,10 +73,10 @@ function parseScopes(v: unknown): readonly string[] | undefined {
 }
 
 function parseStaticProvider(ref: string, rec: Record<string, unknown>): OeOauthStaticProviderConfig {
-  const where = `${OE_OAUTH_CONFIG_ENV}["${ref}"]`;
+  const where = `sign-in "${ref}"`;
   if ("clientSecret" in rec) {
     throw new Error(
-      `${where} carries a literal "clientSecret". The client secret must NEVER live in this config block — ` +
+      `${where} carries a literal "clientSecret". The client secret must NEVER live in a sign-in declaration — ` +
         `store it in the credential store and name it with "clientSecretRef" (for example "db:notion:rest-client-secret").`,
     );
   }
@@ -123,7 +114,7 @@ function parseStaticProvider(ref: string, rec: Record<string, unknown>): OeOauth
 }
 
 function parseDiscoveryProvider(ref: string, rec: Record<string, unknown>): OeOauthDiscoveryProviderConfig {
-  const where = `${OE_OAUTH_CONFIG_ENV}["${ref}"]`;
+  const where = `sign-in "${ref}"`;
   const resource = typeof rec.resource === "string" ? rec.resource.trim() : "";
   if (!resource) throw new Error(`${where} is missing a string "resource".`);
   const scopes = parseScopes(rec.scopes);
@@ -136,18 +127,9 @@ function parseDiscoveryProvider(ref: string, rec: Record<string, unknown>): OeOa
   };
 }
 
-function parseJsonConfig(raw: string): Map<string, OeOauthProviderConfig> {
+function parseDeclarations(declared: ReadonlyMap<string, unknown>): Map<string, OeOauthProviderConfig> {
   const out = new Map<string, OeOauthProviderConfig>();
-  let obj: unknown;
-  try {
-    obj = JSON.parse(raw);
-  } catch {
-    throw new Error(`${OE_OAUTH_CONFIG_ENV} is not valid JSON — expected {"<ref>":{"resource":"..."}}.`);
-  }
-  if (typeof obj !== "object" || obj === null || Array.isArray(obj)) {
-    throw new Error(`${OE_OAUTH_CONFIG_ENV} must be a JSON object mapping provider ref → one provider entry.`);
-  }
-  for (const [ref, v] of Object.entries(obj as Record<string, unknown>)) {
+  for (const [ref, v] of declared) {
     if (typeof v !== "object" || v === null) continue;
     const rec = v as Record<string, unknown>;
     const mode = rec.mode === undefined ? OE_OAUTH_MODE_DISCOVERY : rec.mode;
@@ -157,14 +139,14 @@ function parseJsonConfig(raw: string): Map<string, OeOauthProviderConfig> {
     }
     if (mode !== OE_OAUTH_MODE_DISCOVERY) {
       throw new Error(
-        `${OE_OAUTH_CONFIG_ENV}["${ref}"].mode ${JSON.stringify(mode)} is not a known oe-oauth mode — use "${OE_OAUTH_MODE_DISCOVERY}" or "${OE_OAUTH_MODE_STATIC}".`,
+        `sign-in "${ref}".mode ${JSON.stringify(mode)} is not a known oe-oauth mode — use "${OE_OAUTH_MODE_DISCOVERY}" or "${OE_OAUTH_MODE_STATIC}".`,
       );
     }
     const parsed = parseDiscoveryProvider(ref, rec);
     for (const field of ["clientId", "clientSecretRef", "clientSecret", "tokenEndpoint", "authorizationEndpoint"]) {
       if (field in rec) {
         throw new Error(
-          `${OE_OAUTH_CONFIG_ENV}["${ref}"] carries "${field}" but declares no mode, so it reads as "${OE_OAUTH_MODE_DISCOVERY}" ` +
+          `sign-in "${ref}" carries "${field}" but declares no mode, so it reads as "${OE_OAUTH_MODE_DISCOVERY}" ` +
             `(discovery + dynamic registration + PKCE), which ignores that field. Add "mode": "${OE_OAUTH_MODE_STATIC}" if that is what you meant.`,
         );
       }
@@ -174,14 +156,7 @@ function parseJsonConfig(raw: string): Map<string, OeOauthProviderConfig> {
   return out;
 }
 
-export function loadOeOauthConfig(): Map<string, OeOauthProviderConfig> | undefined {
-  const providers = new Map<string, OeOauthProviderConfig>();
-
-  const notionResource = process.env[OE_OAUTH_NOTION_RESOURCE_ENV]?.trim();
-  if (notionResource) providers.set("notion", { mode: OE_OAUTH_MODE_DISCOVERY, ref: "notion", resource: notionResource });
-
-  const rawJson = process.env[OE_OAUTH_CONFIG_ENV]?.trim();
-  if (rawJson) for (const [ref, cfg] of parseJsonConfig(rawJson)) providers.set(ref, cfg);
-
+export function loadOeOauthConfig(declared: ReadonlyMap<string, unknown> = declaredConnectionSignIns()): Map<string, OeOauthProviderConfig> | undefined {
+  const providers = parseDeclarations(declared);
   return providers.size > 0 ? providers : undefined;
 }

@@ -8,13 +8,16 @@ import {
   splitTenantRungs,
   tenantRungOf,
   unadmittedTenantLog,
-  MULTI_TENANT_ENV,
+  MULTI_TENANT_SETTING,
   UNADMITTED_TENANT_DROP_REASON,
 } from "../agent/access/tenant-admission.js";
+import { overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
 import { isTenantScopedPlatform } from "../agent/identity/principal-key.js";
 import { defineDomain, type Domain } from "../agent/memory/domain.js";
 
-delete process.env[MULTI_TENANT_ENV];
+resetSettingsForTest();
+const optIn = (): void => overrideSettingsForTest({ identity: { allowMultiTenantPrincipals: true } });
+const optOut = (): void => overrideSettingsForTest({ identity: { allowMultiTenantPrincipals: false } });
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -65,7 +68,7 @@ const ok = (cond: boolean, label: string) => {
     ok(true, "🔴 TWO Slack tenants are refused at CONFIG LOAD — fail loud at boot, because the failure it prevents produces no error anywhere, only the wrong answer to `is this an admin`");
   }
   ok(msg.includes('"T_ONE"') && msg.includes('"T_TWO"'), `…and the message NAMES both tenants, so the operator can see what collided (got: ${msg})`);
-  ok(msg.includes(MULTI_TENANT_ENV), "…and names the one escape hatch, so the message is actionable rather than a dead end");
+  ok(msg.includes(MULTI_TENANT_SETTING) && msg.includes("agent/settings/settings.ts"), "…and names the one escape hatch and where it is written, so the message is actionable rather than a dead end");
 
   const claimAndRoster: Domain[] = [
     defineDomain({ name: "eng", reach: ["slack/T_ONE/C_A"], memory: "brain" }),
@@ -81,14 +84,23 @@ const ok = (cond: boolean, label: string) => {
   assertSingleTenantPerTenantScopedPlatform(twoGithubOrgs);
   ok(true, "🔴 two GitHub owners load fine — the fence is about tenant-SCOPED ids, not about multi-tenancy as such");
 
-  process.env[MULTI_TENANT_ENV] = "1";
-  ok(multiTenantPrincipalsAllowed(), "the env opt-in is readable");
+  optIn();
+  ok(multiTenantPrincipalsAllowed(), "the settings opt-in is readable");
   assertSingleTenantPerTenantScopedPlatform(twoTenants);
-  ok(true, `${MULTI_TENANT_ENV}=1 accepts the exposure knowingly — the fence is refuse-by-DEFAULT, not refuse-always`);
-  process.env[MULTI_TENANT_ENV] = "0";
-  assert.throws(() => assertSingleTenantPerTenantScopedPlatform(twoTenants), /multi-tenant principal exposure/, "…and only the literal \"1\" arms it (a stray \"0\"/\"false\" must not read as consent)");
+  ok(true, `${MULTI_TENANT_SETTING}: true accepts the exposure knowingly — the fence is refuse-by-DEFAULT, not refuse-always`);
+  optOut();
+  assert.throws(() => assertSingleTenantPerTenantScopedPlatform(twoTenants), /multi-tenant principal exposure/, "…and an explicit false re-arms it");
   n++;
-  delete process.env[MULTI_TENANT_ENV];
+  resetSettingsForTest();
+
+  assertSingleTenantPerTenantScopedPlatform(twoTenants, true);
+  ok(true, "an explicit `true` (the app's own setting, read before registration) accepts with NOTHING registered");
+  optIn();
+  assert.throws(() => assertSingleTenantPerTenantScopedPlatform(twoTenants, false), /multi-tenant principal exposure/, "…and an explicit `false` refuses even when the registered slot says true");
+  n++;
+  resetSettingsForTest();
+  assert.throws(() => assertSingleTenantPerTenantScopedPlatform(twoTenants), /multi-tenant principal exposure/, "…and an omitted argument with an EMPTY slot refuses — a pre-registration caller that forgets the argument fails closed, never open");
+  n++;
 }
 
 {
@@ -103,9 +115,9 @@ const ok = (cond: boolean, label: string) => {
   ok(classifyTenantAdmission({ platform: "slack", tenant: undefined, admitted }) === "proceed", "(4) a delivery naming NO tenant proceeds — a blank tenant is not evidence of a foreign one, and the unmapped-channel guard already drops the channel case");
   ok(classifyTenantAdmission({ platform: "slack", tenant: "   ", admitted }) === "proceed", "…same for a blank string (the two are the same fact)");
 
-  process.env[MULTI_TENANT_ENV] = "1";
+  optIn();
   ok(classifyTenantAdmission({ platform: "slack", tenant: "T_TWO", admitted }) === "proceed", "(2) the operator opt-in reaches the wake door too — one switch, both fences, so config and runtime can never disagree about the topology");
-  delete process.env[MULTI_TENANT_ENV];
+  resetSettingsForTest();
   ok(classifyTenantAdmission({ platform: "slack", tenant: "T_TWO", admitted }) === "unadmitted", "…and dropping the opt-in re-arms it (the fence is read live, not latched at import)");
 }
 
@@ -152,9 +164,9 @@ const ok = (cond: boolean, label: string) => {
   ok(classifyTenantAdmission({ platform: "slack", tenant: "T_FOREIGN", enterprise: "E_OURS", admitted: both }) === "proceed", "…while the SAME foreign workspace under the DECLARED Grid proceeds — that is what declaring an organisation means");
 
   ok(classifyTenantAdmission({ platform: "slack", tenant: undefined, enterprise: "E_OTHER", admitted: new Set() }) === "proceed", "(3) an EMPTY admitted set is INERT for the enterprise rung too");
-  process.env[MULTI_TENANT_ENV] = "1";
+  optIn();
   ok(classifyTenantAdmission({ platform: "slack", tenant: undefined, enterprise: "E_OTHER", admitted: workspaceOnly }) === "proceed", "(2) the operator opt-in reaches the enterprise rung too — one switch, every rung");
-  delete process.env[MULTI_TENANT_ENV];
+  resetSettingsForTest();
   ok(classifyTenantAdmission({ platform: "slack", tenant: undefined, enterprise: "E_OTHER", admitted: workspaceOnly }) === "unadmitted", "…and dropping it re-arms the enterprise rung (read live, not latched at import)");
 
   const gridPlusWorkspace = [defineDomain({ name: "grid", reach: ["slack/E_OURS/C_ORG", "slack/T_ONE/C_A"], memory: "brain" })];
@@ -210,8 +222,12 @@ const ok = (cond: boolean, label: string) => {
   ok(log.includes("T_TWO") && log.includes("T_ONE"), "the log names the REFUSED tenant and what this deployment does admit");
   const orgLog = unadmittedTenantLog("slack", undefined, new Set(["T_ONE"]), "E_OTHER");
   ok(orgLog.includes("E_OTHER") && !orgLog.includes('workspace ""'), "🔴 a workspace-less refusal names the ENTERPRISE it refused — printing the absent workspace would leave the operator reading an empty string for the one fact that decided it");
-  ok(log.includes("agent/memory/config/domains.ts") && log.includes(MULTI_TENANT_ENV), "…and both remedies: declare that tenant, or opt in explicitly");
+  ok(log.includes("agent/memory/config/domains.ts") && log.includes(MULTI_TENANT_SETTING), "…and both remedies: declare that tenant, or opt in explicitly");
   ok(UNADMITTED_TENANT_DROP_REASON.length > 0 && UNADMITTED_TENANT_DROP_REASON.includes("alias"), "the audit reason is one greppable string that says WHY, not just THAT");
 }
 
 console.log(`tenant-admission: ${n} assertions passed`);
+
+// proves: AP-MOD-core-access-tenant-admission
+
+// proves: SET-076

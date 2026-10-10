@@ -38,7 +38,7 @@ whether a `DATABASE_URL` is present:
   *same* Postgres store (`operational/postgres.ts`) backed by an in-process, file-backed WASM
   Postgres, so there's no dialect change from a laptop up to hosted Neon. Its data dir defaults to
   `.open-everywhere-data/pglite` beside your memory dir (override with `OE_PGLITE_DIR`). The
-  [OPE-113 validation spike](../../packages/core/scripts/spikes/pglite-floor-spike.ts) proved it
+  OPE-113 validation spike (not kept in this repo) proved it
   crash-durable (30/30 `kill -9` cycles reopened clean, chain always verified), with these honest
   caveats: it is **single-process only** (a second process opening a live data dir corrupts it — an
   OE-level **single-writer lockfile** enforces this and refuses to boot against a live-locked dir),

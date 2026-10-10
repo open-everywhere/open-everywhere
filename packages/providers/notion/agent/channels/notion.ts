@@ -142,7 +142,7 @@ export function notionSingleWindowPrivacyOk(
     readonly trustEnv?: string | undefined;
   } = {},
 ): boolean {
-  const trustEnv = "trustEnv" in deps ? deps.trustEnv : process.env.OE_TRUST;
+  const trustEnv = "trustEnv" in deps ? deps.trustEnv : getSettings().identity.blanketTrust;
   if (trustEnv === "internal") return true;
   const declared = (deps.declared ?? declaredTrustForKeys)(input.workspaceKey, input.surfaceKey);
   if (declared === "public") return false;

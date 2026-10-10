@@ -14,52 +14,52 @@ function eq(actual: StoreWiring, expected: StoreWiring, label: string): void {
 const URL = "postgres://app@db.invalid/app";
 
 eq(
-  decideStoreWiring({ DATABASE_URL: URL }, true),
+  decideStoreWiring({ DATABASE_URL: URL }, true, false),
   { operational: { id: "postgres", floor: "none" }, neon: true, pgliteFloor: false },
   "🔴 Neon Marketplace env on Vercel (DATABASE_URL only): the Neon gate opens",
 );
 eq(
-  decideStoreWiring({ DATABASE_URL: URL }, false),
+  decideStoreWiring({ DATABASE_URL: URL }, false, false),
   { operational: { id: "postgres", floor: "none" }, neon: true, pgliteFloor: false },
   "DATABASE_URL only, off Vercel: the Neon gate opens, no floor",
 );
 eq(
-  decideStoreWiring({}, false),
+  decideStoreWiring({}, false, false),
   { operational: { id: "postgres", floor: "pglite" }, neon: false, pgliteFloor: true },
   "bare env off Vercel: the PGlite floor arms, Neon stays shut",
 );
 eq(
-  decideStoreWiring({}, true),
+  decideStoreWiring({}, true, false),
   { operational: { id: "postgres", floor: "pglite" }, neon: false, pgliteFloor: false },
   "bare env on Vercel: the per-instance floor does NOT arm",
 );
 eq(
-  decideStoreWiring({ OE_ALLOW_EPHEMERAL_OPERATIONAL: "1" }, true),
+  decideStoreWiring({}, true, true),
   { operational: { id: "postgres", floor: "pglite" }, neon: false, pgliteFloor: true },
-  "bare env on Vercel with the single-instance escape: the floor arms",
+  "bare env on Vercel with the single-instance escape (storage.allowEphemeralOperational): the floor arms",
 );
 eq(
-  decideStoreWiring({ OE_ALLOW_EPHEMERAL_OPERATIONAL: "true" }, true),
+  decideStoreWiring({ OE_ALLOW_EPHEMERAL_OPERATIONAL: "1" }, true, false),
   { operational: { id: "postgres", floor: "pglite" }, neon: false, pgliteFloor: false },
-  "the escape is the literal 1 only",
+  "🔴 the retired env var opens nothing (OPE-2411): only the setting is the escape",
 );
 eq(
-  decideStoreWiring({ OE_OPERATIONAL_PROVIDER: "sqlite" }, false),
+  decideStoreWiring({ OE_OPERATIONAL_PROVIDER: "sqlite" }, false, false),
   { operational: { id: "sqlite", floor: "sqlite" }, neon: false, pgliteFloor: false },
   "an explicit sqlite selection: no floor, no Neon",
 );
 eq(
-  decideStoreWiring({ OE_OPERATIONAL_PROVIDER: "postgres" }, false),
+  decideStoreWiring({ OE_OPERATIONAL_PROVIDER: "postgres" }, false, false),
   { operational: { id: "postgres", floor: "none" }, neon: false, pgliteFloor: false },
   "postgres named without DATABASE_URL: Neon cannot build a driver, and the floor does not mask the gap",
 );
 eq(
-  decideStoreWiring({ OE_OPERATIONAL_PROVIDER: "sqlite", DATABASE_URL: URL }, false),
+  decideStoreWiring({ OE_OPERATIONAL_PROVIDER: "sqlite", DATABASE_URL: URL }, false, false),
   { operational: { id: "sqlite", floor: "sqlite" }, neon: true, pgliteFloor: false },
   "sqlite operational store with DATABASE_URL: memory still selects postgres, so Neon registers",
 );
 eq(
-  decideStoreWiring({ OE_OPERATIONAL_PROVIDER: "sqlite", OE_MEMORY_PROVIDER: "sqlite", DATABASE_URL: URL }, false),
+  decideStoreWiring({ OE_OPERATIONAL_PROVIDER: "sqlite", OE_MEMORY_PROVIDER: "sqlite", DATABASE_URL: URL }, false, false),
   { operational: { id: "sqlite", floor: "sqlite" }, neon: false, pgliteFloor: false },
   "both stores named away from postgres: Neon stays shut even with DATABASE_URL",
 );

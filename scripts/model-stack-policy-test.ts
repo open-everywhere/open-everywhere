@@ -36,8 +36,6 @@ import {
 import { resolveRoute, type ModelBackend, type RoutingDeps } from "@open-everywhere/core/agent/model/routing.js";
 import { defineDomain, type Domain, type ModelTier } from "@open-everywhere/core/agent/memory/domain.js";
 
-delete process.env.OE_FORCE_MODEL;
-
 let passed = 0;
 const reds: string[] = [];
 function ok(cond: boolean, label: string): void {
@@ -133,8 +131,8 @@ for (const alias of Object.keys(STACKS) as StackAlias[]) {
 }
 
 {
-  const percent = getSettings(process.env, SETTINGS_OVERRIDES).agent.compactionThresholdPercent;
-  const shippedPercent = getSettings(process.env, {}).agent.compactionThresholdPercent;
+  const percent = getSettings(SETTINGS_OVERRIDES).agent.compactionThresholdPercent;
+  const shippedPercent = getSettings({}).agent.compactionThresholdPercent;
 
   const resolvedPrimaryWindow = resolveStack(MODEL_STACK).primary.contextWindowTokens;
   ok(
@@ -151,9 +149,9 @@ for (const alias of Object.keys(STACKS) as StackAlias[]) {
       `0.5 — the OPE-672 exercise override was retired by OPE-794 and nothing should re-introduce one here.`,
   );
   ok(
-    getSettings(process.env, {}).window.topology === false && getSettings(process.env, SETTINGS_OVERRIDES).window.topology === true,
-    `the override-is-respected control needs a row this deployment genuinely overrides: window.topology resolves ` +
-      `${getSettings(process.env, SETTINGS_OVERRIDES).window.topology} against a shipped ${getSettings(process.env, {}).window.topology}, expected true against false.`,
+    getSettings({}).browser.enabled === false && getSettings(SETTINGS_OVERRIDES).browser.enabled === true,
+    `the override-is-respected control needs a row this deployment genuinely overrides: browser.enabled resolves ` +
+      `${getSettings(SETTINGS_OVERRIDES).browser.enabled} against a shipped ${getSettings({}).browser.enabled}, expected true against false.`,
   );
 
   ok(SHIPPED_STACK === "american-closed", `SHIPPED_STACK is "${SHIPPED_STACK}", expected "american-closed" — pin (c) below names it.`);
@@ -168,7 +166,7 @@ for (const alias of Object.keys(STACKS) as StackAlias[]) {
     `american-closed compacts at ${lunaThreshold} tokens, expected 525000 (1050000 × 0.5).`,
   );
 
-  const contextSizeTrigger = getSettings(process.env, SETTINGS_OVERRIDES).rotation.contextSizeTokens;
+  const contextSizeTrigger = getSettings(SETTINGS_OVERRIDES).rotation.contextSizeTokens;
   ok(
     contextSizeTrigger < lunaThreshold,
     `the context-size rotation trigger is ${contextSizeTrigger} tokens and compaction fires at ${lunaThreshold} — the trigger ` +
@@ -229,7 +227,7 @@ for (const alias of Object.keys(STACKS) as StackAlias[]) {
 
   const resolved = resolveStack(MODEL_STACK, {});
   ok(isStackAlias(MODEL_STACK), `MODEL_STACK is a shipped alias (got ${MODEL_STACK})`);
-  ok(MODEL_STACK === getSettings(process.env, SETTINGS_OVERRIDES).models.stack, "MODEL_STACK is the alias the settings schema resolved — one source, not a second copy");
+  ok(MODEL_STACK === getSettings(SETTINGS_OVERRIDES).models.stack, "MODEL_STACK is the alias the settings schema resolved — one source, not a second copy");
   ok(MODELS.utility.id === resolved.utility.id, `UTILITY_MODEL/MODELS.utility is the stack's utility id (got ${MODELS.utility.id}, want ${resolved.utility.id})`);
   ok(UTILITY_MODEL === MODELS.utility.id, "UTILITY_MODEL re-exports MODELS.utility.id");
   ok(VISION_MODEL === resolved.vision.id, `VISION_MODEL is the stack's vision id (got ${VISION_MODEL}, want ${resolved.vision.id})`);

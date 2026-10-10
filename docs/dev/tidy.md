@@ -1,7 +1,8 @@
 # The tidy toolchain
 
-Three scripts measure and reduce this repository's comment weight. They change comments only, and
-one of them proves it. Nothing here runs at runtime; they are contributor tools.
+Two scripts, `scripts/tidy/loc.mjs` and `scripts/tidy/comments.mjs` (run as `npm run tidy`),
+measure and reduce this repository's comment weight. They change comments only, and one of them
+proves it. Nothing here runs at runtime; they are contributor tools.
 
 ## The tools
 
@@ -20,16 +21,10 @@ one of them proves it. Nothing here runs at runtime; they are contributor tools.
   decisions file has already run. A replacement is re-wrapped in the block's own comment style at its
   own indent, a blank run left behind collapses to one line, and a second run writes nothing new.
 - **`npm run tidy -- verify --base <git-ref>`** — the gate. See the invariant below.
-- **`node scripts/tidy/dead-report-audit.mjs`** — how much of `lint:dead` is real. It runs knip with
-  the flags the `lint:dead` script itself carries, then re-checks every entry against an independent
-  import sweep, and prints how many reported entries have an importer. `--json` prints the verdict
-  per entry. It is a measuring instrument, not a gate: run it after changing `knip.json` or
-  `tsconfig.knip.json` to see what the change did to the report.
 
-[`scripts/tidy/RUBRIC.md`](../../scripts/tidy/RUBRIC.md) is the instruction set a judging agent reads
-to decide each block. 🔴 **The repo copy is the canonical one.** It began as a copy of the tracking
-ticket's text and has since been edited here — PR #544 added the OPE-1427 section and the
-operator-caveat KEEP row — so the ticket is history and this file is the rubric.
+A rubric, `RUBRIC.md`, is the instruction set a judging agent reads to decide each block. The rubric
+is maintainer tooling and is not kept in this repo, so this page records what it produced, not how
+to rerun it.
 
 ## What `npm run lint:dead` now trusts
 
@@ -86,10 +81,10 @@ a published surface with no in-tree importer — and read the pin for whether on
 
 ### What the fix moved
 
-Measured with `node scripts/tidy/dead-report-audit.mjs`, which re-checks every entry knip reports
-against an independent import sweep. Before is the commit this fix landed on; after is
-this repository with the fix, measured 2026-09-13. Re-run the auditor to refresh the after column —
-these are the numbers of one tree on one day, not an invariant:
+Measured with a dead-report auditor, which re-checks every entry knip reports against an
+independent import sweep. The auditor is maintainer tooling and is not kept in this repo. Before is
+the commit this fix landed on; after is this repository with the fix, measured
+2026-09-13. These are the numbers of one tree on one day, not an invariant:
 
 | | before | after |
 | --- | --- | --- |
@@ -156,9 +151,8 @@ comments; those lines are string content, and check 1 refuses to let them move.
 
 ## Phase 4 — the docs audit
 
-Phase 1 judges a comment block. **Phase 4 judges a page under `docs/`.** Its rubric is
-[`scripts/tidy/RUBRIC-P4.md`](../../scripts/tidy/RUBRIC-P4.md), beside the Phase 1 one, and the same
-rule holds: the repo copy is canonical. This section is the judged inventory it produced.
+Phase 1 judges a comment block. **Phase 4 judges a page under `docs/`.** Its rubric,
+`RUBRIC-P4.md`, is maintainer tooling like the Phase 1 one and is not kept in this repo. This section is the judged inventory it produced.
 
 **Result: 75 pages, 25,042 lines, and every page is a KEEP.** The audit deleted nothing and folded
 nothing, so it touched no page any open pull request was editing.
@@ -191,9 +185,9 @@ numbers only say which pages to read first and what to check.
   all three: **prose mirrors prose.** The generated modules embed each page verbatim, so leaving
   them in confirms every name a page uses and scores a meaningless 0 absent — that is how the first
   sweep of this audit read 0 of 2,756. Other tracked markdown does the same job more quietly:
-  `ProviderCredential`, `assertProvidersValid` and `OE_CREDENTIAL_BROKER` each sit in
-  `packages/core/scripts/e2e/README-db-broker-flip.md` or `review/audits/access-identity.md` and in
-  no TypeScript file at all, so a corpus that counted markdown would have called all three live.
+  `ProviderCredential`, `assertProvidersValid` and `OE_CREDENTIAL_BROKER` each sat in
+  `packages/core/scripts/e2e/README-db-broker-flip.md` or `review/audits/access-identity.md` (both
+  since removed) and in no TypeScript file at all, so a corpus that counted markdown would have called all three live.
   Against code only, **39 of 2,759 identifiers (1.4%) are absent**.
   Thirty of the 39 are absent by design — upstream `eve` symbols (`getVercelSandboxCredentials`,
   `truncateHead`), vendor API names (Graph's `unsetReaction`, Bot Framework's `BadArgument`),
@@ -232,7 +226,7 @@ corrected. The table is kept because two of its rows are worth carrying forward.
 | Page | Was written | Now says |
 |---|---|---|
 | `security/audit-and-provenance.md` | `query_audit` tool | `audit_query` (`agent/control/server.ts`) |
-| `deploy/configuration-reference.md` | `host_html_artifact` tool | `post_file` alone — `hostHtmlArtifact` is an internal function, never a tool |
+| `deploy/configuration-reference.md` | `host_html_artifact` tool | `post_file` alone — `hostHtmlArtifact` was an internal function, never a tool, and was later deleted with Blob hosting |
 | `extending/provider-bundles.md` | `CoreCodecPlatform` | rewritten: `wake-origin-codecs.ts` registers no codec in core, so there is no union left to name |
 | `extending/connectors.md`, `extending/credential-brokers.md`, `security/credentials-and-planes.md` | `ProviderCredential` | `ConnectorCredential` (`access/connector-credentials.ts`) |
 | `security/credentials-and-planes.md` | `assertProvidersValid` | `assertConnectorCredentialsValid` |

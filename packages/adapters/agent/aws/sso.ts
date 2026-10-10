@@ -15,7 +15,6 @@ import { makePkce, makeState } from "../oe-oauth/pkce.js";
 export type FetchLike = typeof fetch;
 
 export { OE_AWS_SSO_CALLBACK_PATH };
-
 const DEFAULT_SSO_SCOPES = ["sso:account:access", "openid"] as const;
 const DEFAULT_PENDING_TTL_MS = 15 * 60 * 1000;
 const DEFAULT_EXPIRY_SKEW_MS = 60 * 1000;
@@ -195,7 +194,7 @@ export function makeAwsSsoMinter(opts: AwsSsoMinterOptions = {}): AwsSsoMinter {
   function requireOpenIdScope(): void {
     if (scopes.includes("openid")) return;
     throw new Error(
-      "AWS SSO link: the configured scopes omit \"openid\" (OE_AWS_SSO_SCOPES). Without it the Identity " +
+      "AWS SSO link: the configured scopes omit \"openid\" (the aws.ssoScopes setting). Without it the Identity " +
         "Center token response carries no id-token, so the account that signs in cannot be named and the " +
         "link can never complete. Fail-closed: no link was started.",
     );

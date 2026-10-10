@@ -99,6 +99,7 @@ test:linear-external-policy-room
 test:linear-external-policy-author
 test:linear-chat-nonmember-taint
 test:teams-integration
+test:teams-icons
 test:teams-roster-probe
 test:teams-directory
 test:discord-provider
@@ -187,3 +188,5 @@ test:brand-literal-lint
 test:template-drift
 test:template-adapters
 test:npm-command
+lint:doc-links
+test:doc-links-lint

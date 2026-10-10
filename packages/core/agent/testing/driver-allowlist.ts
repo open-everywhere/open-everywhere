@@ -1,3 +1,5 @@
+import { getSettings } from "../settings/settings.js";
+
 const DISCORD_PAIR = /^\d+:\d+$/;
 
 const SLACK_DRIVER_PAIR = /^T[A-Z0-9]+:B[A-Z0-9]+$/;
@@ -46,6 +48,20 @@ export function isE2eDriver(
   return configured.some((d) => d.surface === surface && d.principal === principal);
 }
 
+export function driverAllowlistProblem(value: unknown): string | undefined {
+  const bad =
+    'must be an array of driver pairs, each a Discord `guildId:botUserId` (snowflakes) or a Slack `teamId:botId` (e.g. "T0123ABCD:B0456EFGH")';
+  if (!Array.isArray(value)) return bad;
+  for (const entry of value) {
+    if (typeof entry !== "string" || !(DISCORD_PAIR.test(entry) || SLACK_DRIVER_PAIR.test(entry))) return bad;
+  }
+  return undefined;
+}
+
+export function configuredDriverAllowlist(): ReadonlySet<string> {
+  return parseDriverAllowlist(getSettings().wake.driverAllowlist.join(","));
+}
+
 export function parseDriverAllowlist(raw: string | undefined): ReadonlySet<string> {
   const out = new Set<string>();
   if (!raw) return out;
@@ -59,7 +75,7 @@ export function parseDriverAllowlist(raw: string | undefined): ReadonlySet<strin
 export function isAllowedDriver(
   guildId: string | undefined,
   botUserId: string,
-  allowlist: ReadonlySet<string> = parseDriverAllowlist(process.env.OE_TEST_DRIVER_IDS),
+  allowlist: ReadonlySet<string> = configuredDriverAllowlist(),
 ): boolean {
   if (!guildId || !botUserId) return false;
   return allowlist.has(`${guildId}:${botUserId}`);
@@ -68,7 +84,7 @@ export function isAllowedDriver(
 export function isAllowedSlackDriver(
   teamId: string | undefined,
   botId: string | undefined,
-  allowlist: ReadonlySet<string> = parseDriverAllowlist(process.env.OE_TEST_DRIVER_IDS),
+  allowlist: ReadonlySet<string> = configuredDriverAllowlist(),
 ): boolean {
   if (!teamId || !botId) return false;
   return allowlist.has(`${teamId}:${botId}`);
@@ -77,7 +93,7 @@ export function isAllowedSlackDriver(
 export function isAllowlistedDriverAuthor(
   workspace: string | undefined,
   authorId: string | undefined,
-  allowlist: ReadonlySet<string> = parseDriverAllowlist(process.env.OE_TEST_DRIVER_IDS),
+  allowlist: ReadonlySet<string> = configuredDriverAllowlist(),
 ): boolean {
   if (!workspace || !authorId) return false;
   return allowlist.has(`${workspace}:${authorId}`);

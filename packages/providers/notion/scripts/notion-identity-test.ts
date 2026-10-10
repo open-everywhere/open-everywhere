@@ -15,6 +15,7 @@ import {
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerNotionProvider } from "../agent/register.js";
 import { _resetDeploymentIdentityForTest } from "@open-everywhere/core/agent/adapter-api.js";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 
 registerNotionProvider();
 
@@ -94,9 +95,9 @@ ok(noPage.surface === DISCUSSION, "surface falls back to discussion_id when page
 const onlyComment = bindFrom(ctxFromAuth(buildNotionAuth({ workspaceId: WS, commentId: COMMENT })));
 ok(onlyComment.surface === COMMENT, "surface falls back to comment_id when page + discussion absent");
 
-process.env.OE_TRUST = "internal";
+overrideSettingsForTest({ identity: { blanketTrust: "internal" } });
 ok(dispatch().trust === "internal", "OE_TRUST=internal narrows the whole deployment to internal");
-delete process.env.OE_TRUST;
+overrideSettingsForTest({ identity: { blanketTrust: "none" } });
 
 _resetSurfacesForTest();
 registerSurfaces([defineSurface({ key: notionWorkspaceKey(WS), trust: "internal" })]);

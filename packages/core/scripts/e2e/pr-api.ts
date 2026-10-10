@@ -101,6 +101,19 @@ export class PrApi {
     return files.some((f) => typeof f.patch === "string" && f.patch.includes(token));
   }
 
+  async fileText(path: string, ref: string): Promise<string | undefined> {
+    const encoded = path.split("/").map(encodeURIComponent).join("/");
+    let json: { content?: unknown; encoding?: unknown };
+    try {
+      json = (await this.api("GET", `/repos/${this.cfg.repo}/contents/${encoded}?ref=${encodeURIComponent(ref)}`)) as typeof json;
+    } catch (err) {
+      if (/→ 404\b/.test(String(err instanceof Error ? err.message : err))) return undefined;
+      throw err;
+    }
+    if (json.encoding !== "base64" || typeof json.content !== "string") throw new Error(`github contents ${path}@${ref}: not a base64 file body`);
+    return Buffer.from(json.content, "base64").toString("utf8");
+  }
+
   async closePr(prNumber: number): Promise<void> {
     await this.api("PATCH", `/repos/${this.cfg.repo}/pulls/${prNumber}`, { state: "closed" });
   }

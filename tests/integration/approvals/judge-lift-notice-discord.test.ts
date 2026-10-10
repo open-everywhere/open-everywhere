@@ -1,3 +1,4 @@
+import { __setTestValveForTest } from "@open-everywhere/core/agent/testing/test-valves.js";
 import { generateKeyPairSync, randomUUID, sign, type KeyObject } from "node:crypto";
 import { afterAll, expect, test } from "vitest";
 
@@ -144,8 +145,8 @@ async function noticeThisTurn(label: string): Promise<DiscordCreateMessageCall> 
 }
 
 function egressSpoof(on: boolean): void {
-  if (on) process.env.OE_EGRESS_SPOOF = "1";
-  else delete process.env.OE_EGRESS_SPOOF;
+  if (on) __setTestValveForTest("egress-spoof", true);
+  else __setTestValveForTest("egress-spoof", false);
 }
 
 function buttonsOf(message: DiscordCreateMessageCall): { label?: string; custom_id?: string }[] {
@@ -268,7 +269,7 @@ test("③ 🔴 with the judge OFF no notice reaches the room, and a contradict c
   expect(await rowsSinceCursor(clickCursor, ["approval.judge.contradicted"])).toEqual([]);
 });
 
-test("④ 🔴 with OE_EGRESS_SPOOF armed and a real bot token present, the notice reaches NO vendor transport", async () => {
+test("④ 🔴 with the egress-spoof valve armed and a real bot token present, the notice reaches NO vendor transport", async () => {
   await armSeams();
   await armJudgeMode("enforce");
   egressSpoof(true);

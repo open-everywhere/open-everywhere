@@ -117,10 +117,11 @@ that stays code + PR, per the credential story in
 
 A third way a skill arrives, and the only one nobody asks for. When a workflow keeps recurring,
 the [dream cycle's learn mode](memory.md#the-skill-proposal-and-how-a-correction-reaches-the-next-one)
-drafts a `SKILL.md` for it. Where the deployment sets `memory.skillProposalPr`, that draft opens
-a **pull request** on the config repo, adding the file under `.agents/skills/<name>/SKILL.md` —
+drafts a `SKILL.md` for it. Where the deployment has a config repo (`accessRequests.configRepo`),
+that draft opens a **pull request** on it, adding the file under `.agents/skills/<name>/SKILL.md` —
 so it arms the way any [repo-shipped skill](#skills-are-scoped-per-surface) does, on the next
-checkout of a granted repo.
+checkout of a granted repo. `memory.skillProposalPr` ships on. With no config repo, the draft stays in
+the review queue and nothing errors. Set it to `false` to keep every draft in the queue only.
 
 **Merging is the approval.** The cycle writes one branch and one file, never the base branch, and
 it cannot merge — the same "a skill is a procedure the agent follows, so a human reads it first"

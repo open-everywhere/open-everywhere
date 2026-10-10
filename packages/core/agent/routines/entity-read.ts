@@ -68,7 +68,7 @@ async function liveRead(platform: string, id: string): Promise<HydrationOutcome>
 }
 
 function noNetworkTest(): boolean {
-  return !process.env.OE_ALLOW_TEST_NETWORK && process.argv.some((a) => typeof a === "string" && a.endsWith("-test.ts"));
+  return process.argv.some((a) => typeof a === "string" && a.endsWith("-test.ts"));
 }
 
 export async function hydratePointer(
@@ -84,8 +84,7 @@ export async function hydratePointer(
         `entity hydration for "${pointer.platform}" ${pointer.id} reached the LIVE network reader inside a test. ` +
           `Register a stub after importing the fan-out path — ` +
           `registerEntityRead({ platform: "${pointer.platform}", read: async () => ({ status: "gone" }) }) — ` +
-          `or pass deps.read to hydratePointer. (Keeps the suite's "no network" guarantee structural; ` +
-          `set OE_ALLOW_TEST_NETWORK=1 to override.)`,
+          `or pass deps.read to hydratePointer. (Keeps the suite's "no network" guarantee structural.)`,
       );
     }
   }

@@ -55,8 +55,8 @@ for (const grain of GRAINS) {
   eq(leaked, [], `[${grain}] no open/admin-roles/eve-hitl tool is presented as something a human must click`);
 }
 ok(TOOL_CONSEQUENCE["memory_admin_read"].via.kind === "admin-roles", "fixture: memory_admin_read is admin-ROLES — it refuses without standing, it never posts a card");
-ok(TOOL_CONSEQUENCE["post_file"].via.kind === "action-kind", "fixture: post_file is action-kind — its publish is an OE card (OPE-2340)");
-ok(approvalPreviewFor("task").member.includes("post_file"), "a worker holding post_file is told its publish is a card a member must click");
+ok(TOOL_CONSEQUENCE["post_file"].tier === "open", "fixture: post_file is open — it only attaches files to the asking room");
+ok(!approvalPreviewFor("task").member.includes("post_file"), "a worker holding post_file is not told it raises a card");
 
 const hitl = nonCarding.filter((name) => TOOL_CONSEQUENCE[name].via.kind === "eve-hitl").sort();
 eq(hitl, [], "no TOOL_CONSEQUENCE row is eve-hitl (OE cards only, OPE-2340)");
@@ -83,7 +83,7 @@ eq([...standing.member, ...standing.admin], [], "a DELEGATING standing seat hold
 eq([...standing.elsewhere], CARDED, "…so every carded verb is elsewhere: reachable through a worker, carded the same there");
 
 const dmStanding = approvalPreviewFor("standing", undefined, undefined, undefined, "none");
-eq([...dmStanding.elsewhere], ["create_skill", "delete_skill", "open_pull_request", "post_file"], "a NON-delegating standing seat's carded-but-absent set is the skill-authoring pair, open_pull_request and post_file (its publish is a card since OPE-2340)");
+eq([...dmStanding.elsewhere], ["create_skill", "delete_skill", "open_pull_request"], "a NON-delegating standing seat's carded-but-absent set is the skill-authoring pair and open_pull_request");
 ok(dmStanding.member.includes("create_routine") && dmStanding.member.includes("create_ticket"), "a non-delegating standing seat DOES hold carded routine/ticket verbs — nothing was stripped from the seat that cannot route");
 ok(dmStanding.admin.includes("set_spend_limit"), "spend control is in the admin bucket");
 

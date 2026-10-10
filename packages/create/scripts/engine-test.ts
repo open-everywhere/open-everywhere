@@ -306,6 +306,19 @@ function step(parts: Partial<SetupStep> & Pick<SetupStep, "id" | "check">): Setu
       "slackStep guide: --app-name names the app in the printed manifest",
     );
 
+    const iconLine = (lines: readonly string[]): string => lines.find((l) => l.includes("App icon")) ?? "";
+    const markUrl = "brand/png/mark-square-1024.png";
+    ok(
+      iconLine(slackStep.guide({ cwd: dir, env: {} }).instructions).includes(`upload the project mark, https://`) &&
+        iconLine(slackStep.guide({ cwd: dir, env: {} }).instructions).includes(markUrl),
+      "slackStep guide: with no name, the guide says to upload the project mark",
+    );
+    ok(
+      iconLine(slackStep.guide({ cwd: dir, env: {}, agentName: "Aria" }).instructions).includes("upload your own icon, or the project mark") &&
+        iconLine(slackStep.guide({ cwd: dir, env: {}, appName: "Acme Agent" }).instructions).includes("upload your own icon, or the project mark"),
+      "slackStep guide: a configured or explicit name offers the operator's own icon first",
+    );
+
     type NamedManifest = {
       display_information: { name: string };
       features: { bot_user: { display_name: string }; slash_commands: { command: string }[]; shortcuts: { name: string }[] };

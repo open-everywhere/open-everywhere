@@ -1,6 +1,7 @@
 import type { ModelRole, ModelRoute, Domain, NamedKnobLayer, DomainMatch, ModelReasoning } from "../memory/domain.js";
 import { modelRouteFor, domainMatchFor, reasoningCeilingFor, domainForChannel, criteriaDomain } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
+import { getSettings } from "../settings/settings.js";
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import { bindFrom, deploymentOrg, type BindableContext } from "../identity/binding.js";
 import { currentWorkerWake } from "../access/worker-seat-state.js";
@@ -182,7 +183,7 @@ export async function resolveRoute(
     }
     const enveloped = applyModelPolicyToRoute(armedRoute, policy, defaultId, effectiveCeiling, defaultId);
     for (const w of enveloped.warnings) logOnce("warn", `${role}: model policy: ${w}`);
-    const forcedId = process.env.OE_FORCE_MODEL?.trim();
+    const forcedId = getSettings().models.force || undefined;
     const route: ModelRoute = forcedId
       ? { ...armedRoute, id: forcedId, tier: undefined, reasoning: enveloped.reasoning }
       : { ...armedRoute, id: enveloped.id, reasoning: enveloped.reasoning };

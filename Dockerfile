@@ -25,24 +25,23 @@ RUN npx patch-package --error-on-fail \
       grep -rqF "$m" node_modules/eve/dist || { echo "eve patch marker $m missing" >&2; exit 1; }; \
     done
 
-# Bring in the source and build. VERCEL is unset here → `eve build` emits a Nitro
-# node-server bundle (.output/server/index.mjs), the portable off-Vercel artifact.
-# `npm run build` runs `prebuild` (`oe:build` = `build:packages` + `oe build`), then `eve build`
-# with a 6 GB Node heap, then `postbuild` (the bundle checks).
-# 🔴 The builder needs about 6 GB of memory. `eve build` peaks at about 5.4 GB (OPE-1661). A smaller
-# Node heap does not bring it under 4 GB: under a 4 GB limit the kernel killed the build inside
-# `eve build` with a 3 GB heap and again with a 1.5 GB heap (OPE-2187).
 COPY . .
 RUN npm run build
 
 FROM node:24-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
-# git/openssh for real git operations; `docker-cli` so the default docker() sandbox backend
-# can spawn its sibling per-session containers through a MOUNTED daemon socket (DooD — see
-# docker-compose.yml's `/var/run/docker.sock` line). Without the CLI eve's boot-time template
-# init fails `spawn docker ENOENT` and the container exits. ca-certificates for TLS egress.
 RUN apk add --no-cache git openssh-client ca-certificates docker-cli
+
+# 🔴 THE IMAGE RUNS justbash (OPE-2407), because it is the only template this image carries (see the
+# build step), and the app declares it (`sandbox.selfHostBackend`). What each backend gives here:
+#   justbash (default) — runs. Its egress leaves through this app process, so behind the egress
+#     proxy (docker-compose.yml) every session request is held to the session's allow list. It
+#     shares the app process's filesystem: dev and testing grade isolation, with a boot warning.
+#   docker — does NOT run here. Every sandbox step refuses: "Prepared sandbox artifact … belongs
+#     to provider just-bash, not docker". It would also sit outside the egress proxy (eve starts
+#     the session container on the daemon's default network), so with OE_EGRESS_PROXY_URL set the
+#     app refuses to boot on it.
 
 # Copy the built app + installed deps. (Kept simple: copy the whole tree — the build
 # stage already produced node_modules and .output. Trim later with a prune step if needed.)

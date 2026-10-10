@@ -1,15 +1,11 @@
-const OE_AWS_ENABLED_ENV = "OE_AWS_ENABLED";
+import { getSettings } from "@open-everywhere/core/agent/adapter-api.js";
+
 const OE_AWS_REGION_ENV = "OE_AWS_REGION";
 
 const OE_AWS_SSO_REGION_ENV = "OE_AWS_SSO_REGION";
 const OE_AWS_SSO_CLIENT_ID_ENV = "OE_AWS_SSO_CLIENT_ID";
-const OE_AWS_SSO_SCOPES_ENV = "OE_AWS_SSO_SCOPES";
-
 export function awsAccessEnabled(): boolean {
-  const raw = process.env[OE_AWS_ENABLED_ENV];
-  if (raw === undefined) return false;
-  const v = raw.trim().toLowerCase();
-  return v !== "" && v !== "0" && v !== "false" && v !== "off" && v !== "no";
+  return getSettings().aws.enabled;
 }
 
 export interface AwsAccessConfig {
@@ -33,9 +29,7 @@ export function loadAwsSsoConfig(): AwsSsoConfig {
     process.env[OE_AWS_REGION_ENV]?.trim() ||
     process.env.AWS_REGION?.trim();
   const clientId = process.env[OE_AWS_SSO_CLIENT_ID_ENV]?.trim();
-  const scopes = process.env[OE_AWS_SSO_SCOPES_ENV]?.trim()
-    ? process.env[OE_AWS_SSO_SCOPES_ENV]!.trim().split(/\s+/u).filter(Boolean)
-    : undefined;
+  const scopes = getSettings().aws.ssoScopes;
   return {
     ...(region ? { region } : {}),
     ...(clientId ? { clientId } : {}),

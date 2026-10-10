@@ -5,7 +5,9 @@ import {
   type ConnectorCredentials,
 } from "@open-everywhere/core/agent/access/connector-credentials.js";
 import { applyOverridesToConnectorCredentials } from "@open-everywhere/core/agent/access/credential-bindings-codemod.js";
+import { mcpServerConnectorCredentials } from "@open-everywhere/core/agent/connections/mcp-servers.js";
 import { loadCredentialBindingsOverlay } from "./credential-bindings.js";
+import { MCP_SERVERS } from "./mcp-servers.js";
 
 const catalogues: ConnectorCredentials[] = [
   defineConnectorCredentials({
@@ -110,6 +112,8 @@ const catalogues: ConnectorCredentials[] = [
     ],
   }),
 ];
+
+catalogues.push(...mcpServerConnectorCredentials(MCP_SERVERS));
 
 assertConnectorCredentialsValid(catalogues);
 

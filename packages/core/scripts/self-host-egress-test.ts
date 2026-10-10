@@ -5,11 +5,16 @@ import {
   egressProxyUrl,
   postPolicy,
   selfHostEgressBootLog,
+  DOCKER_BEHIND_PROXY_FATAL,
   type FetchLike,
   type PushPolicyBody,
 } from "../agent/access/self-host-egress.js";
+import { hostPlaneFetch, hostPlanePolicy } from "../agent/access/host-plane-egress.js";
+import { assertSafeFetchUrl } from "../agent/access/host-egress.js";
+import http from "node:http";
+import { ProxyAgent } from "undici";
 import type { SandboxNetworkPolicy } from "eve/sandbox";
-import { overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
+import { defineSettings, overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
 import { resolveSelfHostBackendKind, type SelfHostBackendKind } from "../agent/sandbox/backend-select.js";
 
 let n = 0;
@@ -111,8 +116,17 @@ function fakeFetch(res: { ok: boolean; status: number; text?: string }): {
   ok(threw2 instanceof Error && threw2.message.includes("network"), "a network error THROWS (fail-closed), not swallowed");
 }
 
+function withBackend<T>(kind: SelfHostBackendKind, fn: () => T): T {
+  overrideSettingsForTest({ sandbox: { selfHostBackend: kind } });
+  try {
+    return fn();
+  } finally {
+    overrideSettingsForTest({ sandbox: { selfHostBackend: "docker" } });
+  }
+}
+
 {
-  const enforced = selfHostEgressBootLog({ OE_EGRESS_PROXY_URL: "http://proxy:8080" } as NodeJS.ProcessEnv);
+  const enforced = withBackend("justbash", () => selfHostEgressBootLog({ OE_EGRESS_PROXY_URL: "http://proxy:8080" } as NodeJS.ProcessEnv));
   ok(enforced.warn === undefined, "proxy configured → no boot warning");
   ok(enforced.info.includes("ENFORCED"), "proxy configured → info says egress ENFORCED");
 
@@ -146,7 +160,7 @@ function fakeFetch(res: { ok: boolean; status: number; text?: string }): {
   const blankProxy = selfHostEgressBootLog({ OE_EGRESS_PROXY_URL: "   " } as NodeJS.ProcessEnv);
   ok(blankProxy.warn !== undefined, "blank OE_EGRESS_PROXY_URL is treated as no proxy");
 
-  const both = selfHostEgressBootLog({ OE_EGRESS_PROXY_URL: "http://proxy:8080", OE_ALLOW_UNENFORCED_EGRESS: "1" } as NodeJS.ProcessEnv);
+  const both = withBackend("justbash", () => selfHostEgressBootLog({ OE_EGRESS_PROXY_URL: "http://proxy:8080", OE_ALLOW_UNENFORCED_EGRESS: "1" } as NodeJS.ProcessEnv));
   ok(both.warn === undefined && both.info.includes("ENFORCED"), "proxy + hatch → still ENFORCED (proxy wins, no warn)");
 }
 
@@ -157,23 +171,198 @@ function fakeFetch(res: { ok: boolean; status: number; text?: string }): {
   const wired = Object.keys(WIRED_BACKEND_KINDS);
   ok(wired.length === 2, `OPE-955 tripwire: exactly 2 off-Vercel backends are wired (found ${wired.length}: ${wired.join(", ")}). A new one may enforce natively — make the boot log backend-aware before shipping it.`);
   for (const kind of wired) {
-    ok(resolveSelfHostBackendKind({ OE_SANDBOX_BACKEND: kind } as NodeJS.ProcessEnv) === kind, `${kind} still resolves as a wired off-Vercel backend`);
+    ok(withBackend(kind as SelfHostBackendKind, () => resolveSelfHostBackendKind()) === kind, `${kind} still resolves as a wired off-Vercel backend`);
   }
 
   for (const candidate of ["microsandbox", "firecracker", "gvisor", "e2b"]) {
     let threw = false;
     try {
-      resolveSelfHostBackendKind({ OE_SANDBOX_BACKEND: candidate } as NodeJS.ProcessEnv);
+      defineSettings({ sandbox: { selfHostBackend: candidate as never } });
     } catch {
       threw = true;
     }
     ok(threw, `OPE-955 tripwire: '${candidate}' is NOT wired, so selfHostEgressBootLog's backend-blind ABORT claim still holds. If this is red, that backend may enforce natively — make the boot log warn about PARTIAL enforcement (credential injection is a measured gap, OPE-917/OPE-954), never go silent.`);
   }
 
-  const underDocker = selfHostEgressBootLog({ OE_SANDBOX_BACKEND: "docker" } as NodeJS.ProcessEnv);
-  const underJustbash = selfHostEgressBootLog({ OE_SANDBOX_BACKEND: "justbash" } as NodeJS.ProcessEnv);
+  const underDocker = withBackend("docker", () => selfHostEgressBootLog({} as NodeJS.ProcessEnv));
+  const underJustbash = withBackend("justbash", () => selfHostEgressBootLog({} as NodeJS.ProcessEnv));
   ok(underDocker.warn !== undefined && underDocker.warn === underJustbash.warn, "the no-proxy ABORT warn is identical across backends (selfHostEgressBootLog reads no backend kind)");
   ok(underDocker.warn !== undefined && underDocker.warn.includes("ABORT"), "…and it is the ABORT warn, not some other posture line (a content pin on the assertion above)");
 }
 
-console.log(`\n✓ self-host-egress: ${n} assertions passed (switch + push serialisation + fail-closed on push failure + boot posture + OPE-955 backend tripwire)\n`);
+{
+  const dockerProxy = withBackend("docker", () => selfHostEgressBootLog({ OE_EGRESS_PROXY_URL: "http://proxy:8080" } as NodeJS.ProcessEnv));
+  ok(dockerProxy.fatal === DOCKER_BEHIND_PROXY_FATAL, "🔴 docker + OE_EGRESS_PROXY_URL → the boot log carries the fatal refusal");
+  resetSettingsForTest();
+  const defaultProxy = selfHostEgressBootLog({ OE_EGRESS_PROXY_URL: "http://proxy:8080" } as NodeJS.ProcessEnv);
+  ok(defaultProxy.fatal === DOCKER_BEHIND_PROXY_FATAL, "…and so does the SHIPPED default backend (docker) behind the proxy");
+  const staleEnv = selfHostEgressBootLog({ OE_EGRESS_PROXY_URL: "http://proxy:8080", OE_SANDBOX_BACKEND: "justbash" } as NodeJS.ProcessEnv);
+  ok(staleEnv.fatal === DOCKER_BEHIND_PROXY_FATAL, "🔴 …and the retired OE_SANDBOX_BACKEND=justbash cannot talk it out of the refusal (OPE-2411)");
+  ok(!dockerProxy.info.includes("ENFORCED"), "…and no ENFORCED line is printed for it");
+  const jbProxy = withBackend("justbash", () => selfHostEgressBootLog({ OE_EGRESS_PROXY_URL: "http://proxy:8080" } as NodeJS.ProcessEnv));
+  ok(jbProxy.fatal === undefined && jbProxy.info.includes("ENFORCED"), "justbash + proxy → ENFORCED, no refusal");
+  const dockerBare = withBackend("docker", () => selfHostEgressBootLog({} as NodeJS.ProcessEnv));
+  ok(dockerBare.fatal === undefined, "docker WITHOUT a proxy boots (the coarse deny-all path, unchanged)");
+}
+
+async function withEnvAsync(patch: Record<string, string | undefined>, fn: () => Promise<void>): Promise<void> {
+  const saved: Record<string, string | undefined> = {};
+  for (const k of Object.keys(patch)) saved[k] = process.env[k];
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+  try {
+    await fn();
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+const GW = "ai-gateway.vercel.sh";
+const PROXY_TIER = {
+  VERCEL: undefined,
+  OE_EGRESS_PROXY_URL: "http://oe-egress-proxy:8080",
+  OE_EGRESS_PROXY_TOKEN: "tok-123",
+  HTTPS_PROXY: "http://oe-egress-proxy:3128",
+  https_proxy: undefined,
+  NO_PROXY: "oe-egress-proxy,localhost",
+  no_proxy: undefined,
+};
+
+interface Seen {
+  url: string;
+  init?: RequestInit;
+}
+function recorder(policyStatus = 200): { seen: Seen[]; transport: (input: string | URL | Request, init?: RequestInit) => Promise<Response> } {
+  const seen: Seen[] = [];
+  return {
+    seen,
+    transport: async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      seen.push({ url, init });
+      if (url.endsWith("/policy")) return new Response(policyStatus === 200 ? "{}" : "nope", { status: policyStatus });
+      return new Response("ok", { status: 200 });
+    },
+  };
+}
+
+await (async () => {
+  await withEnvAsync({ ...PROXY_TIER, OE_EGRESS_PROXY_URL: undefined }, async () => {
+    ok(hostPlaneFetch([GW]) === undefined, "host plane: no OE_EGRESS_PROXY_URL → undefined (default transport, byte-identical)");
+  });
+  await withEnvAsync({ ...PROXY_TIER, VERCEL: "1" }, async () => {
+    ok(hostPlaneFetch([GW]) === undefined, "host plane: on Vercel → undefined");
+  });
+
+  ok(JSON.stringify(hostPlanePolicy([" AI-Gateway.vercel.sh ", GW])) === JSON.stringify({ allow: [GW] }), "hostPlanePolicy lowercases, trims and de-duplicates");
+  for (const bad of [[], [""], ["*.vercel.sh"]]) {
+    let threw = false;
+    try {
+      hostPlanePolicy(bad);
+    } catch {
+      threw = true;
+    }
+    ok(threw, `hostPlanePolicy refuses ${JSON.stringify(bad)}`);
+  }
+
+  await withEnvAsync(PROXY_TIER, async () => {
+    {
+      const r = recorder();
+      const f = hostPlaneFetch([GW], r.transport);
+      ok(f !== undefined, "host plane: proxy tier → a fetch");
+      let threw = false;
+      try {
+        await f!("https://pastebin.com/raw/x");
+      } catch {
+        threw = true;
+      }
+      ok(threw && r.seen.length === 0, "🔴 an undeclared host is refused, and nothing is pushed or sent");
+    }
+    {
+      const r = recorder();
+      const f = hostPlaneFetch([GW], r.transport)!;
+      await f(`https://${GW}/v4/ai/language-model`, { method: "POST", body: "{}" });
+      ok(r.seen.length === 2, "the first call pushes once, then sends");
+      const push = r.seen[0];
+      ok(push.url === "http://oe-egress-proxy:8080/policy", "the push goes to the control service's /policy");
+      ok((push.init?.headers as Record<string, string>).authorization === "Bearer tok-123", "the push carries the control token");
+      const pushBody = JSON.parse(String(push.init?.body)) as Record<string, unknown>;
+      ok(JSON.stringify(pushBody) === JSON.stringify({ plane: "host", hostPlane: { allow: [GW] } }), "🔴 the push body is the HOST PLANE with the gateway host alone");
+      ok(!("policy" in pushBody), "🔴 …and it carries no `policy`: a proxy from before the host plane refuses it (400) instead of storing the gateway as the app IP's SESSION policy");
+      const call = r.seen[1];
+      ok(call.url === `https://${GW}/v4/ai/language-model`, "the call goes to the gateway");
+      ok((call.init as { dispatcher?: unknown }).dispatcher instanceof ProxyAgent, "🔴 the call is dispatched through a ProxyAgent (the credentialed proxy hop)");
+      ok(call.init?.method === "POST" && call.init?.body === "{}", "the caller's own init survives");
+      await f(`https://${GW}/v4/ai/language-model`);
+      ok(r.seen.length === 3 && !r.seen[2].url.endsWith("/policy"), "a second call does not push again");
+    }
+    {
+      const r = recorder(401);
+      const f = hostPlaneFetch([GW], r.transport)!;
+      let threw = false;
+      try {
+        await f(`https://${GW}/v1/models`);
+      } catch {
+        threw = true;
+      }
+      ok(threw && r.seen.length === 1, "🔴 a refused host-plane push fails the model call; the call is never sent");
+      try {
+        await f(`https://${GW}/v1/models`);
+      } catch {
+      }
+      ok(r.seen.length === 2 && r.seen[1].url.endsWith("/policy"), "the next call pushes again");
+    }
+    await withEnvAsync({ NO_PROXY: `oe-egress-proxy,${GW}` }, async () => {
+      const r = recorder();
+      const f = hostPlaneFetch([GW], r.transport)!;
+      await f(`https://${GW}/v1/models`);
+      ok((r.seen[1].init as { dispatcher?: unknown } | undefined)?.dispatcher === undefined, "NO_PROXY exempts the gateway → direct (no ProxyAgent)");
+    });
+  });
+
+  const seenAuth: Array<string | undefined> = [];
+  const proxy = http.createServer((_req, res) => {
+    seenAuth.push(_req.headers["proxy-authorization"]);
+    res.writeHead(403);
+    res.end();
+  });
+  proxy.on("connect", (req, socket) => {
+    seenAuth.push(req.headers["proxy-authorization"]);
+    socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
+  });
+  await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+  const port = (proxy.address() as { port: number }).port;
+  try {
+    await withEnvAsync({ ...PROXY_TIER, HTTPS_PROXY: `http://127.0.0.1:${port}`, NO_PROXY: "oe-egress-proxy" }, async () => {
+      const pushOnly = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (url.endsWith("/policy")) return new Response("{}", { status: 200 });
+        return await globalThis.fetch(input, init);
+      };
+      const f = hostPlaneFetch([GW], pushOnly)!;
+      let refused = false;
+      try {
+        await f(`https://${GW}/v1/models`);
+      } catch {
+        refused = true;
+      }
+      ok(refused, "the stub proxy refuses the tunnel, and the host-plane fetch surfaces it (fail-closed)");
+      ok(seenAuth[0] === "Bearer tok-123", "🔴 ON THE WIRE: the app's CONNECT carries Proxy-Authorization: Bearer <token>");
+      const sessionDispatch = await assertSafeFetchUrl(`https://${GW}/v1/models`);
+      ok(sessionDispatch.via === "proxy", "the session-side host fetch routes through the same proxy");
+      try {
+        await globalThis.fetch(`https://${GW}/v1/models`, { dispatcher: sessionDispatch.dispatcher } as RequestInit);
+      } catch {
+      }
+      ok(seenAuth.length === 2 && seenAuth[1] === undefined, "🔴 …and the session-side host fetch (assertSafeFetchUrl's ProxyAgent) carries NO credential");
+    });
+  } finally {
+    proxy.close();
+  }
+})();
+
+console.log(`\n✓ self-host-egress: ${n} assertions passed (switch + push serialisation + fail-closed on push failure + boot posture + OPE-955 backend tripwire + docker-behind-proxy refusal + host plane)\n`);

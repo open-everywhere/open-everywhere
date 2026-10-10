@@ -28,10 +28,6 @@ import {
 import { installHostFetchStub } from "../fetch-stub";
 
 const NOTION_OAUTH_PROVIDER_REF = "mcp.notion.com/notion-mcp";
-process.env.OE_OAUTH_ENABLED = "1";
-process.env.OE_OAUTH_CONFIG = JSON.stringify({
-  [NOTION_OAUTH_PROVIDER_REF]: { mode: "discovery-dcr-pkce", resource: "https://mcp.notion.com/mcp" },
-});
 
 const OPERATOR_ID = "U0EXOWNER";
 const DM_CHANNEL_ID = "D0IT1232OPERATOR";
@@ -197,11 +193,11 @@ async function pinConnectorFlagsAndTiers(): Promise<void> {
   const connectors = getSettings().connectors;
   expect(
     connectors.userPrincipal,
-    "this deployment no longer ships connectors.userPrincipal ON — the app-principal path refuses the user-oauth credential and no arm below can run",
+    "connectors.userPrincipal resolves OFF — the core shipped default moved or this deployment opted out, so the app-principal path refuses the user-oauth credential and no arm below can run",
   ).toBe(true);
   expect(
     connectors.opTiering,
-    "this deployment no longer ships connectors.opTiering ON — the blanket once() policy cards BOTH arms and the read/write contrast below is gone",
+    "connectors.opTiering resolves OFF — the core shipped default moved or this deployment opted out, so the blanket policy cards BOTH arms and the read/write contrast below is gone",
   ).toBe(true);
 
   const { effectiveConnectorOpTier } = await import("@open-everywhere/core/agent/access/connector-op-gating.js");

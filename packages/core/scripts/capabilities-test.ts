@@ -1,8 +1,6 @@
 import { capabilitiesForPlatform, capabilitiesFor, registerCapabilityManifest, type CapabilityManifest } from "../agent/identity/capabilities.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 
-delete process.env.OE_PLATFORM;
-
 let passed = 0;
 function ok(cond: boolean, label: string): void {
   if (!cond) {
@@ -46,3 +44,5 @@ eq(capabilitiesForPlatform("regtest"), { midTurnPost: true, reactions: true }, "
 eq(capabilitiesForPlatform("neverregistered"), { midTurnPost: false, reactions: false }, "register seam: an unregistered platform still falls back to NONE");
 
 console.log(`✓ ${passed} capabilities assertions passed`);
+
+// proves: AP-MOD-core-identity-capabilities

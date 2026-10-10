@@ -54,7 +54,7 @@ app typechecks, and that `eve build` succeeds. The rest of this page explains wh
 | Package | What it is |
 | --- | --- |
 | `@open-everywhere/core` | The portable runtime — access and approvals, identity, memory, spend, routines, webhooks, connectors, the audit chain, and the `oe` roster build. |
-| `@open-everywhere/adapters` | The reference Vercel-hosted backends: AI Gateway models and pricing, Sandbox, Blob, Neon, OpenTelemetry, AWS and Okta. |
+| `@open-everywhere/adapters` | The reference Vercel-hosted backends: AI Gateway models and pricing, Sandbox, Neon, OpenTelemetry, AWS and Okta. |
 | `@open-everywhere/provider-slack` · `-teams` · `-discord` · `-github` · `-linear` · `-notion` | One per surface. Take only the ones you use. |
 
 All eight are **ESM-only** and versioned in lockstep — the eve pin, the shipped patch, and the
@@ -219,6 +219,20 @@ prints nothing for an ignored file that the app does not have. It prints one `ap
 an ignored file that the app has, and that line never counts as a SYNC or a DELETE. A core at 0.2.1
 or earlier prints no `DELETE` line and reads no ignore list.
 
+**Rehearse an unpublished release.** `npx oe upgrade --from <dir>` reads the target from the
+`npm pack` tarballs in `<dir>`, not from the registry. It reads the target version and the `eve`
+peer from the core tarball, and the template from the `@open-everywhere/create` tarball. It pins
+each `@open-everywhere/*` package to `file:<its tarball>`, then runs the same seven steps. `--plan`
+and `--to` work with it. To pack a release checkout, run
+`npm run build:packages && npm pack --workspaces --pack-destination <dir>` in it. The command
+refuses when the app pins a package that `<dir>` holds no tarball for, because the set moves
+together. The check covers only the packages the app pins. When a tarball depends on a package
+the app does not pin (`@open-everywhere/create` depends on `@open-everywhere/provider-slack`), npm
+reads that package from the registry, and the install fails on the unpublished version. The
+scaffolded app pins all nine packages. The `file:` pins are for the rehearsal only: do not commit
+`package.json` or the lockfile after the run. `eve` and every other dependency still come from the registry. A core at 0.3.0 or
+earlier has no `--from`.
+
 **An app that was bumped by hand in the past** has never seen the report. Run
 `npx oe upgrade --plan` once to see its template drift, even when it is already on the newest
 release. The report prints in that case too.
@@ -261,4 +275,6 @@ on its resolution path, and shows that the old `tsx` shim fails in the same layo
 runs `npm install` against the public registry. Leg 7 of `scripts/oe-upgrade-packed-test.ts` runs
 the real `npm install` against a local registry of stand-in packages. It proves that a bare
 install over a 0.1.4-shape lockfile exits ERESOLVE across the eve peer change, and that the packed
-core's `oe upgrade` takes the same app to the new set with its lockfile in place.
+core's `oe upgrade` takes the same app to the new set with its lockfile in place. Leg 8 serves no
+`@open-everywhere/*` package at the target, and the packed core's `oe upgrade --from <dir>` takes a
+0.1.4-shape app to the packed target set with the real `npm install`.

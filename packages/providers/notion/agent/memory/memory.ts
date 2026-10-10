@@ -38,10 +38,10 @@ const NOTION_VERSION = "2022-06-28";
 
 export const NOTION_MEMORY_CREDENTIAL = "memory";
 
-const MAX_PAGES = Number(process.env.OE_NOTION_MAX_PAGES) || 200;
-const MAX_PAGE_DEPTH = Number(process.env.OE_NOTION_MAX_DEPTH) || 6;
+const MAX_PAGES = 200;
+const MAX_PAGE_DEPTH = 6;
 const MAX_BLOCK_DEPTH = 4;
-const TTL_MS = Number(process.env.OE_NOTION_TTL_MS) || 5 * 60_000;
+const TTL_MS = 5 * 60_000;
 
 export type HttpFetch = (
   url: string,

@@ -1,5 +1,4 @@
 import { registerOeOauth } from "./oe-oauth/register.js";
-import { oeOauthEnabled, loadOeOauthConfig } from "./oe-oauth/config.js";
 import { registerAgentBrowser } from "./browser/register.js";
 import { agentBrowserEnabled, loadAgentBrowserConfig } from "./browser/config.js";
 import { registerAwsAccess } from "./aws/register.js";
@@ -7,12 +6,10 @@ import { awsAccessEnabled } from "./aws/config.js";
 import { registerDirectoryAdapter } from "./directory/register.js";
 import { registerGatewayRouteProbe } from "./model/gateway-probe.js";
 import { registerNeon } from "./postgres/neon.js";
-import { vercelBlobPutter } from "./blob/hosting.js";
 import {
   registerDbCredentialBroker,
   CREDENTIAL_KEY_ENV,
   registerGitHubConfigPrProvider,
-  setBlobPutter,
   registerAuditDropCounter,
   emitTelemetry,
   getOperationalStore,
@@ -25,6 +22,7 @@ import {
   resolveOperationalSelection,
   resolveMemoryProviderId,
   onVercel,
+  getSettings,
   declareProviderSelection,
   assertConnectorMemoryGrants,
   applySubtreeSurfaceClaims,
@@ -66,14 +64,14 @@ export interface DefaultAdapterWiring {
   readonly store: StoreWiring;
 }
 
-export function decideStoreWiring(env: NodeJS.ProcessEnv, vercel: boolean): StoreWiring {
+export function decideStoreWiring(env: NodeJS.ProcessEnv, vercel: boolean, allowEphemeralOperational: boolean): StoreWiring {
   const operational = resolveOperationalSelection(env);
   const postgresSelected =
     resolveMemoryProviderId(env) === "postgres" || (operational.id === "postgres" && operational.floor === "none");
   return {
     operational,
     neon: postgresSelected && Boolean(env.DATABASE_URL),
-    pgliteFloor: operational.floor === "pglite" && (!vercel || env.OE_ALLOW_EPHEMERAL_OPERATIONAL === "1"),
+    pgliteFloor: operational.floor === "pglite" && (!vercel || allowEphemeralOperational),
   };
 }
 
@@ -93,8 +91,7 @@ async function wireDefaultAdapters(options: DefaultAdapterOptions): Promise<Defa
 
   const providers = declareProviderSelection(options.providers.map((p) => p.id));
 
-  const oeOauthCfg = oeOauthEnabled() ? loadOeOauthConfig() : undefined;
-  if (oeOauthCfg) registerOeOauth({ providers: oeOauthCfg });
+  registerOeOauth();
 
   const dbCredentialBroker = Boolean(process.env[CREDENTIAL_KEY_ENV]);
   if (dbCredentialBroker) registerDbCredentialBroker();
@@ -117,8 +114,6 @@ async function wireDefaultAdapters(options: DefaultAdapterOptions): Promise<Defa
 
   registerAuditDropCounter((action, platform) => emitTelemetry("oe.audit.dropped", { "oe.action": action, "oe.platform": platform }));
 
-  setBlobPutter(vercelBlobPutter);
-
   const customAdapters = options.customAdapters !== undefined;
   if (options.customAdapters) await options.customAdapters();
 
@@ -128,7 +123,7 @@ async function wireDefaultAdapters(options: DefaultAdapterOptions): Promise<Defa
 
   registerBootNotice("approval-judge-no-rules", announceJudgeWithoutRules);
 
-  const store = decideStoreWiring(process.env, onVercel());
+  const store = decideStoreWiring(process.env, onVercel(), getSettings().storage.allowEphemeralOperational);
 
   if (store.neon) await registerNeon();
 
@@ -137,7 +132,7 @@ async function wireDefaultAdapters(options: DefaultAdapterOptions): Promise<Defa
 
   await reconcileSurfaceCommands();
 
-  WIRED = { providers, oeOauth: oeOauthCfg !== undefined, dbCredentialBroker, agentBrowser, awsAccess, customAdapters, store };
+  WIRED = { providers, oeOauth: true, dbCredentialBroker, agentBrowser, awsAccess, customAdapters, store };
   return WIRED;
 }
 

@@ -5,6 +5,7 @@ export const domain = defineDomain({
   name: "e2e-cap",
   reach: ["slack/T0EXAMPLE/C0EXCHAN007"],
   memory: "e2e-brain",
+  ambientSupervisor: false,
   engagementTier: "neutral",
   models: { primary: { id: UTILITY_MODEL } },
 });

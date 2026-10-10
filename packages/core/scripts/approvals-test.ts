@@ -1,3 +1,4 @@
+import { __setTestValveForTest } from "../agent/testing/test-valves.js";
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync, readFileSync } from "node:fs";
@@ -712,9 +713,9 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
     return "vendor-message-id";
   };
 
-  process.env.OE_EGRESS_SPOOF = "1";
+  __setTestValveForTest("egress-spoof", true);
   const spoofed = await requestApproval(spoofArgs, { postCard });
-  delete process.env.OE_EGRESS_SPOOF;
+  __setTestValveForTest("egress-spoof", false);
   ok(posterCalls === 0, "egress spoof: the registered CardPoster is NEVER called — the vendor REST post is swallowed");
   const spoofedRow = await getOperationalStore().getPendingAction("default", spoofed.id);
   ok(spoofedRow?.messageTs?.startsWith("spoof-card-") === true, "egress spoof: the pending row carries the synthetic card ts, so it stays real and clickable-in-principle");

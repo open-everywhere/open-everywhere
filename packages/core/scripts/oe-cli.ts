@@ -18,6 +18,7 @@ import {
   applyPlan,
   diffAgainstDisk,
   findRepoRoot,
+  loadMcpServerNames,
   loadRosterConfig,
   readLock,
   resolvePackages,
@@ -50,7 +51,7 @@ if (subcommand === "wrap-untrusted") {
   );
 } else if (subcommand === "upgrade") {
   const { runUpgradeCommand, realUpgradeIo } = await import("./oe-upgrade.js");
-  process.exit(await runUpgradeCommand(argv.slice(1), realUpgradeIo(), process.cwd()));
+  await exitAfterFlush(await runUpgradeCommand(argv.slice(1), realUpgradeIo(), process.cwd()));
 } else if (subcommand === "upgrade-codemods") {
   const { runUpgradeCodemodsCommand } = await import("./oe-upgrade.js");
   process.exit(runUpgradeCodemodsCommand(argv.slice(1), { out: (l) => console.log(l), err: (l) => console.error(l) }, process.cwd()));
@@ -62,6 +63,14 @@ if (subcommand === "wrap-untrusted") {
 } else {
   console.error(`oe: unknown subcommand "${subcommand}". Known: build, env, overlays, upgrade, secret, wrap-untrusted.`);
   process.exit(2);
+}
+
+async function exitAfterFlush(code: number): Promise<never> {
+  process.stdout.once("error", () => process.exit(code));
+  process.stderr.once("error", () => process.exit(code));
+  await new Promise<void>((done) => process.stdout.write("", () => done()));
+  await new Promise<void>((done) => process.stderr.write("", () => done()));
+  process.exit(code);
 }
 
 function flagValue(args: readonly string[], name: string): string | undefined {
@@ -107,6 +116,9 @@ async function runBuild(args: readonly string[]): Promise<void> {
   const lockRead = readLock(repoRoot);
   if (lockRead.error !== undefined) fail([`✗ oe build: ${lockRead.error}`]);
 
+  const mcpServers = await loadMcpServerNames(repoRoot, agentDir);
+  if (mcpServers.error !== undefined) fail([`✗ oe build: ${mcpServers.error}`]);
+
   const packages = await resolvePackages(repoRoot, declaredPackages(parsed.config));
   const plan = planRoster({
     config: parsed.config,
@@ -115,11 +127,12 @@ async function runBuild(args: readonly string[]): Promise<void> {
     packages,
     frameworkToolNames: await frameworkToolNames(repoRoot),
     agentDir,
+    mcpServers: mcpServers.names,
   });
 
   if (json) {
     process.stdout.write(`${JSON.stringify(buildReport(plan, packages), null, 2)}\n`);
-    process.exit(plan.verdict === "invalid" ? 1 : 0);
+    await exitAfterFlush(plan.verdict === "invalid" ? 1 : 0);
   }
 
   if (show) {
@@ -128,8 +141,11 @@ async function runBuild(args: readonly string[]): Promise<void> {
       console.log(`── ${file.path} ${"─".repeat(Math.max(0, 96 - file.path.length))}`);
       process.stdout.write(file.content);
     }
-    if (plan.reds.length > 0) fail(["", "✗ oe build --show: the plan above is not buildable:", ...plan.reds.map((r) => `  - ${r}`)]);
-    process.exit(0);
+    if (plan.reds.length > 0) {
+      for (const line of ["", "✗ oe build --show: the plan above is not buildable:", ...plan.reds.map((r) => `  - ${r}`)]) console.error(line);
+      await exitAfterFlush(1);
+    }
+    await exitAfterFlush(0);
   }
 
   if (plan.verdict === "invalid" || plan.verdict === "vanished" || plan.verdict === "unreviewed") {
@@ -220,6 +236,7 @@ function printRollCall(plan: PlanResult, mode: string): void {
   const disabled = Object.keys(plan.frameworkDisabled).sort();
   console.log(`  eve built-ins declined by sentinel: ${disabled.length > 0 ? disabled.join(", ") : "(none)"}`);
   console.log(`  providers selected: ${plan.selectedProviders.length > 0 ? plan.selectedProviders.join(", ") : "(none)"} [${mode}]`);
+  console.log(`  MCP servers declared by the app: ${plan.mcpServers.length > 0 ? plan.mcpServers.join(", ") : "(none)"}`);
 }
 
 function buildReport(plan: PlanResult, packages: readonly { name: string; version?: string }[]): unknown {
@@ -267,6 +284,9 @@ function assertAgainstSummary(repoRoot: string, summaryPath: string, plan: PlanR
     for (const r of plan.resolved) {
       if (r.kind !== kind || r.decision !== "mounted") continue;
       if (!present.has(r.name)) missing.push(`${SLOT_DIR[kind]}/${r.name}`);
+    }
+    if (kind === "connection") {
+      for (const name of plan.mcpServers) if (!present.has(name)) missing.push(`${SLOT_DIR[kind]}/${name}`);
     }
   }
   if (missing.length > 0) {

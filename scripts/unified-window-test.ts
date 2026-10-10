@@ -546,7 +546,6 @@ const stubCreateThread = async (): Promise<string | null> => {
 const stubResolveParent = async (): Promise<string | undefined> => undefined;
 {
   _resetSurfacesForTest();
-  delete process.env.OE_TRUST;
   const m1 = discordMsg({});
   await dispatchTurn(m1, authForRelayMessage(m1)!, discordSend, stubCreateThread, stubResolveParent, captureReceive);
   ok(
@@ -814,12 +813,15 @@ await handleTeamsSingleWindowDispatch(
   ok(!isTrustedTeamsServiceUrl("http://smba.trafficmanager.net/"), "serviceUrl: a non-https Bot Framework host is REJECTED");
   ok(!isTrustedTeamsServiceUrl("not a url") && !isTrustedTeamsServiceUrl("") && !isTrustedTeamsServiceUrl(undefined), "serviceUrl: unparseable / empty / non-string → REJECTED (fail-closed)");
   ok(!isTrustedTeamsServiceUrl("https://smba.infra.gov.teams.microsoft.us/v3/"), "serviceUrl: a GCC-High host is REJECTED by default (global cloud only)");
-  process.env.OE_TEAMS_SERVICE_HOSTS = "smba.infra.gov.teams.microsoft.us, .infra.dod.teams.microsoft.us";
-  ok(isTrustedTeamsServiceUrl("https://smba.infra.gov.teams.microsoft.us/v3/"), "serviceUrl: OE_TEAMS_SERVICE_HOSTS admits an exact sovereign host");
-  ok(isTrustedTeamsServiceUrl("https://smba.infra.dod.teams.microsoft.us/v3/"), "serviceUrl: OE_TEAMS_SERVICE_HOSTS admits a .suffix sovereign host");
-  ok(isTrustedTeamsServiceUrl("https://smba.trafficmanager.net/amer/"), "serviceUrl: the global default still admits alongside the env additions");
-  ok(!isTrustedTeamsServiceUrl("https://evil.example/"), "serviceUrl: the env seam does NOT widen to arbitrary hosts");
+  process.env.OE_TEAMS_SERVICE_HOSTS = "smba.infra.gov.teams.microsoft.us";
+  ok(!isTrustedTeamsServiceUrl("https://smba.infra.gov.teams.microsoft.us/v3/"), "serviceUrl: 🔴 the retired OE_TEAMS_SERVICE_HOSTS env var admits NOTHING");
   delete process.env.OE_TEAMS_SERVICE_HOSTS;
+  overrideSettingsForTest({ teams: { serviceHosts: ["smba.infra.gov.teams.microsoft.us", ".infra.dod.teams.microsoft.us"] } });
+  ok(isTrustedTeamsServiceUrl("https://smba.infra.gov.teams.microsoft.us/v3/"), "serviceUrl: teams.serviceHosts admits an exact sovereign host");
+  ok(isTrustedTeamsServiceUrl("https://smba.infra.dod.teams.microsoft.us/v3/"), "serviceUrl: teams.serviceHosts admits a .suffix sovereign host");
+  ok(isTrustedTeamsServiceUrl("https://smba.trafficmanager.net/amer/"), "serviceUrl: the global default still admits alongside the declared additions");
+  ok(!isTrustedTeamsServiceUrl("https://evil.example/"), "serviceUrl: the setting does NOT widen to arbitrary hosts");
+  overrideSettingsForTest({ teams: { serviceHosts: [] } });
 }
 
 const store = getOperationalStore();

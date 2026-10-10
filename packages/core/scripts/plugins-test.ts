@@ -106,9 +106,9 @@ const byPath = (p: string) => files.find((f) => f.path === p);
     !!conn && conn.content.includes('import { assertConnectorGranted } from "@open-everywhere/core/agent/access/connector-scope.js";'),
     "the hard gate's import is a package specifier too",
   );
-  const notionSrc = readFileSync(resolve(import.meta.dirname, "..", "agent", "connections", "notion.ts"), "utf-8");
+  const notionSrc = readFileSync(resolve(import.meta.dirname, "..", "agent", "connections", "mcp-server-connection.ts"), "utf-8");
   const approvalWire = (src: string): string => /^[ \t]*approval: (.+)$/m.exec(src)?.[1] ?? "";
-  ok(approvalWire(notionSrc) === "connectorApprovalPolicy(),", "notion.ts still carries the wire the scaffold claims parity with (RED the day it changes)");
+  ok(approvalWire(notionSrc) === "connectorApprovalPolicy(),", "the shared MCP connection builder still carries the wire the scaffold claims parity with (RED the day it changes)");
   ok(!!conn && approvalWire(conn.content) === approvalWire(notionSrc), "…and the scaffold emits the SAME wire text — the header's parity claim is compared against the real file, not restated");
   ok(!!conn && !conn.content.includes("approval: once()"), "the superseded bare once() wire is GONE, not merely joined by the policy");
   ok(!!conn && !conn.content.includes('from "eve/tools/approval"'), "…and its import went with it, so the scaffold leaves no unused binding behind");

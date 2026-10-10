@@ -165,7 +165,7 @@ export async function prewarmJustBashTemplate(
     throw new Error(
       `integration prepare: the prewarm completed but ${justBashTemplateDir(root)} is still absent. TWO CAUSES look ` +
         "identical from here, so check both. (1) THE BACKEND SELECTION did not land on just-bash — check the " +
-        "OE_SANDBOX_BACKEND handling in tests/integration/prepare.ts. (2) THE TEMPLATE WENT TO THE WRONG ROOT — a " +
+        "`sandbox.selfHostBackend` declaration in agent/settings/settings.ts (it must be \"justbash\"). (2) THE TEMPLATE WENT TO THE WRONG ROOT — a " +
         "missing or wrong `sandboxAppRoot` on `builtTreeArtifactsSource` mints it under " +
         "`<root>/.output/.eve/sandbox-cache` instead, which is measured and is why that field exists (OPE-2248). " +
         "Look there before reading the backend code.",

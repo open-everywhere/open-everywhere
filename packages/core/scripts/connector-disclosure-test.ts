@@ -1,3 +1,7 @@
+// proves: connector.refused, governance.redirected
+
+// proves: AP-MOD-core-access-audience-floor, AP-MOD-core-access-connector-disclosure
+
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -9,12 +13,7 @@ _setDeploymentIdentityForTest({ org: "disc-test" });
 
 import assert from "node:assert/strict";
 import { ConfigLoadRefusalError, registerConfig } from "../agent/access/config.js";
-import {
-  assertComplianceDomains,
-  defineDomain,
-  requestorEntitlementChecksEnabled,
-  type Domain,
-} from "../agent/memory/domain.js";
+import { assertDomainsValid, defineDomain, type Domain } from "../agent/memory/domain.js";
 import {
   attestGovernanceChannel,
   attestGovernanceFloor,
@@ -33,9 +32,6 @@ import {
   assertConnectorDisclosure,
   classifyConnectorDisclosure,
   ConnectorAudienceUnverifiedError,
-  ConnectorEntitlementError,
-  registerConnectorEntitlementProbe,
-  _resetConnectorEntitlementProbeForTest,
 } from "../agent/access/connector-disclosure.js";
 import { connectorDmOnlyEnabled } from "../agent/access/connector-scope.js";
 import { classifyCardDisclosure } from "../agent/approvals/card-disclosure.js";
@@ -46,7 +42,7 @@ import { readAudit } from "../agent/audit/audit.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
-import { getSettings, overrideSettingsForTest } from "../agent/settings/settings.js";
+import { getSettings, overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { removeTempDir } from "./_temp-dir.js";
 registerSlackFixtureMapper();
@@ -138,7 +134,7 @@ const REPO = resolve(HERE, "../../..");
     registerGovernanceMemberSupplier(async () => answers[fetches++]);
     const key = "slack/T1/C_SHARED";
     const verdict = (r: { floor: AudienceFloor; roster: RoomRoster }) =>
-      classifyConnectorDisclosure({ floor: r.floor, roster: r.roster, complianceMode: false, directAddressed: true });
+      classifyConnectorDisclosure({ floor: r.floor, roster: r.roster });
 
     ok(UNRESOLVED_ROSTER_TTL_MS < getSettings().governance.floorTtlMs, "the unresolved memo is SHORTER than the resolved one");
     const first = await resolveAudienceFloor(key, new Set());
@@ -171,11 +167,9 @@ const REPO = resolve(HERE, "../../..");
 {
   const base = {
     roster: { humanMemberIds: ["U_A"], resolved: true, isPrivate: false, hasGuest: false } as RoomRoster,
-    complianceMode: false,
-    directAddressed: true,
   };
-  ok(classifyConnectorDisclosure({ ...base, floor: "member" }).ok, "member floor + compliance off → allow");
-  ok(classifyConnectorDisclosure({ ...base, floor: "admin" }).ok, "admin floor + compliance off → allow");
+  ok(classifyConnectorDisclosure({ ...base, floor: "member" }).ok, "member floor → allow");
+  ok(classifyConnectorDisclosure({ ...base, floor: "admin" }).ok, "admin floor → allow");
 
   const guestSeen = classifyConnectorDisclosure({
     ...base,
@@ -190,24 +184,6 @@ const REPO = resolve(HERE, "../../..");
   });
   ok(unknown.ok, "UNRESOLVED roster (floor=guest by fail-closed default) is INERT for connector disclosure");
 
-  const both = classifyConnectorDisclosure({
-    ...base,
-    floor: "guest",
-    roster: { humanMemberIds: ["U_A"], resolved: true, isPrivate: false, hasGuest: true },
-    complianceMode: true,
-    entitled: true,
-  });
-  ok(!both.ok && both.reason === "audience-floor", "leg 1 is evaluated before leg 2 (floor beats an entitled requestor)");
-
-  ok(classifyConnectorDisclosure({ ...base, floor: "member", complianceMode: true, entitled: true }).ok, "compliance ON + entitled → allow");
-  const unent = classifyConnectorDisclosure({ ...base, floor: "member", complianceMode: true, entitled: false });
-  ok(!unent.ok && unent.reason === "requestor-unentitled", "compliance ON + NOT entitled → refuse");
-  const noSignal = classifyConnectorDisclosure({ ...base, floor: "member", complianceMode: true });
-  ok(!noSignal.ok && noSignal.reason === "entitlement-unavailable", "compliance ON + no signal → FAIL CLOSED");
-  ok(
-    classifyConnectorDisclosure({ ...base, floor: "member", complianceMode: true, directAddressed: false }).ok,
-    "compliance ON but AMBIENT (no requestor) → leg 2 does not run",
-  );
 }
 
 const baseConfig = (domains: readonly Domain[]) => ({
@@ -236,9 +212,6 @@ function ctxFor(principalId: string, channelId: string, channelType: "channel" |
 }
 
 const plainDomains: Domain[] = [defineDomain({ name: "org", match: "org", admins: ["slack/T1/U_ORG"] })];
-const complianceDomains: Domain[] = [
-  defineDomain({ name: "org", match: "org", admins: ["slack/T1/U_ORG"], requestorEntitlementChecks: true }),
-];
 
 const rowsFor = async (action: string) => (await readAudit({ org: "disc-test", action })).length;
 
@@ -246,14 +219,13 @@ const rowsFor = async (action: string) => (await readAudit({ org: "disc-test", a
   registerConfig(baseConfig(plainDomains) as never);
   _resetGovernanceMemberSupplierForTest();
   _resetAudienceFloorCacheForTest();
-  _resetConnectorEntitlementProbeForTest();
   registerGovernanceMemberSupplier(async () => ({ humanMemberIds: ["U_A", "U_B"], resolved: true, isPrivate: false, hasGuest: false }));
 
   await assertConnectorDisclosure("notion", ctxFor("U_A", "C_ENG", "channel"));
   await assertConnectorDisclosure("notion", ctxFor("U_A", "D_DM", "im"));
-  ok((await rowsFor("connector.refused")) === 0, "compliance OFF: no connector.refused rows");
-  ok((await rowsFor("connector.entitlement_check")) === 0, "compliance OFF: no entitlement_check rows");
-  ok((await rowsFor("governance.redirected")) === 0, "compliance OFF: no governance.redirected rows");
+  await assertConnectorDisclosure("notion", ctxFor("U_A", "C_ENG", "channel", { oe_addressing: "direct-mention" }));
+  ok((await rowsFor("connector.refused")) === 0, "no observed guest: no connector.refused rows");
+  ok((await rowsFor("governance.redirected")) === 0, "no observed guest: no governance.redirected rows");
   n += 1;
 }
 
@@ -291,92 +263,6 @@ const rowsFor = async (action: string) => (await readAudit({ org: "disc-test", a
 }
 
 {
-  registerConfig(baseConfig(complianceDomains) as never);
-  ok(requestorEntitlementChecksEnabled(complianceDomains), "requestorEntitlementChecksEnabled reads the org pseudo-domain");
-  _resetGovernanceMemberSupplierForTest();
-  _resetAudienceFloorCacheForTest();
-  registerGovernanceMemberSupplier(async () => ({ humanMemberIds: ["U_A"], resolved: true, isPrivate: true, hasGuest: false }));
-  registerConnectorEntitlementProbe(async () => false);
-
-  let threw = false;
-  try {
-    await assertConnectorDisclosure("notion", ctxFor("U_A", "D_DM", "im"));
-  } catch (err) {
-    threw = true;
-    ok(err instanceof ConnectorEntitlementError, "leg 2 refuses with ConnectorEntitlementError");
-    ok((err as ConnectorEntitlementError).reason === "requestor-unentitled", "the refusal reason is requestor-unentitled");
-  }
-  ok(threw, "compliance ON + unentitled requestor → refused");
-  const refused = await readAudit({ org: "disc-test", action: "connector.refused" });
-  ok(
-    refused.some((r) => (r.detail as { reason?: string })?.reason === "requestor_unentitled"),
-    "the unentitled refusal is audited",
-  );
-}
-
-{
-  _resetAudienceFloorCacheForTest();
-  registerConnectorEntitlementProbe(async () => true);
-  await assertConnectorDisclosure("notion", ctxFor("U_A", "D_DM", "im"));
-  const checks = await readAudit({ org: "disc-test", action: "connector.entitlement_check" });
-  ok(checks.length === 1, "a compliance-mode ALLOW is audited (connector.entitlement_check)");
-  ok((checks[0].detail as { verdict?: string })?.verdict === "allow", "the allow row records the verdict");
-  n += 1;
-}
-
-{
-  _resetAudienceFloorCacheForTest();
-  _resetConnectorEntitlementProbeForTest();
-  let threw = false;
-  try {
-    await assertConnectorDisclosure("notion", ctxFor("U_A", "D_DM", "im"));
-  } catch (err) {
-    threw = true;
-    ok(err instanceof ConnectorEntitlementError, "no probe → ConnectorEntitlementError");
-    ok((err as ConnectorEntitlementError).reason === "entitlement-unavailable", "no probe → entitlement-unavailable");
-    ok(/registerConnectorEntitlementProbe/.test(String((err as Error).message)), "the error names the operator's fix");
-  }
-  ok(threw, "compliance ON with NO entitlement signal FAILS CLOSED");
-  ok(
-    (await readAudit({ org: "disc-test", action: "connector.refused" })).some(
-      (r) => (r.detail as { reason?: string })?.reason === "entitlement_unavailable",
-    ),
-    "the fail-closed refusal is audited",
-  );
-}
-
-{
-  _resetAudienceFloorCacheForTest();
-  registerConnectorEntitlementProbe(async () => {
-    throw new Error("system of record unreachable");
-  });
-  await assert.rejects(
-    () => assertConnectorDisclosure("notion", ctxFor("U_A", "D_DM", "im")),
-    (err: unknown) => err instanceof ConnectorEntitlementError && err.reason === "entitlement-unavailable",
-    "a throwing probe fails closed",
-  );
-  n++;
-}
-
-{
-  _resetAudienceFloorCacheForTest();
-  _resetConnectorEntitlementProbeForTest();
-  const before = await rowsFor("connector.refused");
-  await assertConnectorDisclosure("notion", ctxFor("U_A", "C_ENG", "channel"));
-  ok((await rowsFor("connector.refused")) === before, "an AMBIENT turn is not entitlement-checked (no requestor)");
-}
-
-{
-  _resetAudienceFloorCacheForTest();
-  await assert.rejects(
-    () => assertConnectorDisclosure("notion", ctxFor("U_A", "C_ENG", "channel", { oe_addressing: "direct-mention" })),
-    (err: unknown) => err instanceof ConnectorEntitlementError,
-    "an addressed mention in a channel IS entitlement-checked",
-  );
-  n++;
-}
-
-{
   const failed: RoomRoster = { humanMemberIds: [], resolved: false, unresolvedState: "failed", isPrivate: false, hasGuest: false };
   const unobservable: RoomRoster = { humanMemberIds: [], resolved: false, unresolvedState: "unobservable", isPrivate: false, hasGuest: false };
   const internal: RoomRoster = { humanMemberIds: ["U_A"], resolved: true, isPrivate: false, hasGuest: false };
@@ -386,17 +272,16 @@ const rowsFor = async (action: string) => (await readAudit({ org: "disc-test", a
   ok(rosterState({ ...unobservable, unresolvedState: undefined }) === "unobservable", "rosterState: an unresolved roster with NO state is unobservable");
   ok(rosterState({ ...internal, unresolvedState: "failed" }) === "resolved", "rosterState: a RESOLVED roster ignores a stray state");
 
-  const failedVerdict = classifyConnectorDisclosure({ floor: "guest", roster: failed, complianceMode: false, directAddressed: true });
+  const failedVerdict = classifyConnectorDisclosure({ floor: "guest", roster: failed });
   ok(!failedVerdict.ok && failedVerdict.reason === "audience-unverified", "🔴 a FAILED roster read refuses connector disclosure (audience-unverified)");
   ok(
-    classifyConnectorDisclosure({ floor: "guest", roster: unobservable, complianceMode: false, directAddressed: true }).ok,
+    classifyConnectorDisclosure({ floor: "guest", roster: unobservable }).ok,
     "an UNOBSERVABLE roster stays INERT for connector disclosure",
   );
 
   registerConfig(baseConfig(plainDomains) as never);
   _resetGovernanceMemberSupplierForTest();
   _resetAudienceFloorCacheForTest();
-  _resetConnectorEntitlementProbeForTest();
   const realNow = Date.now;
   let now = realNow();
   Date.now = () => now;
@@ -465,7 +350,7 @@ const rowsFor = async (action: string) => (await readAudit({ org: "disc-test", a
   ok(floor === "guest", "OPE-2311: a shared roster with an empty member list floors to guest");
   const attest = attestGovernanceFloor(sharedPartial, new Set(["U_ADMIN"]));
   ok(!attest.armed && attest.breach?.reason === "guest-present", "OPE-2311: #1 the governance channel does not arm (guest-present)");
-  const conn = classifyConnectorDisclosure({ floor, roster: sharedPartial, complianceMode: false, directAddressed: true });
+  const conn = classifyConnectorDisclosure({ floor, roster: sharedPartial });
   ok(!conn.ok && conn.reason === "audience-floor", "OPE-2311: #2 connector disclosure refuses (audience-floor)");
   ok(!classifyFireDisclosure({ floor, roster: sharedPartial }).ok, "OPE-2311: #3 the triggered-fire disclosure floor refuses");
   ok(!classifyClickerFloor({ floor, roster: sharedPartial, beneficiaryClicker: false }).ok, "OPE-2311: #4 the clicker floor refuses");
@@ -473,17 +358,17 @@ const rowsFor = async (action: string) => (await readAudit({ org: "disc-test", a
 }
 
 {
-  assert.doesNotThrow(() => assertComplianceDomains(complianceDomains), "requestorEntitlementChecks on the org domain passes the lint");
+  assert.doesNotThrow(() => assertDomainsValid(plainDomains), "a domain list without the removed key passes");
   n++;
-  assert.doesNotThrow(() => assertComplianceDomains(plainDomains), "an unset flag passes the lint");
-  n++;
-  assert.throws(
-    () => assertComplianceDomains([defineDomain({ name: "eng", reach: ["slack/T1/C_ENG"], requestorEntitlementChecks: true })]),
-    /ORG-LEVEL compliance opt-in/,
-    "requestorEntitlementChecks on a ROOM domain fails the lint loudly",
-  );
-  n++;
-  ok(!requestorEntitlementChecksEnabled(plainDomains), "compliance mode is OFF by default");
+  for (const value of [true, false]) {
+    const legacy = { name: "org", match: "org", requestorEntitlementChecks: value } as unknown as Domain;
+    assert.throws(
+      () => assertDomainsValid([legacy]),
+      /"org" sets requestorEntitlementChecks, which is REMOVED/,
+      `🔴 requestorEntitlementChecks: ${value} is refused by name at config load`,
+    );
+    n++;
+  }
 }
 
 {
@@ -547,13 +432,17 @@ const rowsFor = async (action: string) => (await readAudit({ org: "disc-test", a
     scopeSrc.slice(wallAt, gateAt).includes("!workSurfaceTierArmed"),
     "n3: the work-surface carve-out is part of that same wall condition (OPE-913), not a separate earlier branch",
   );
-  overrideSettingsForTest({ connectors: { dmOnly: true, opTiering: false } });
-  ok(connectorDmOnlyEnabled(), "n3: the DM-only wall DEFAULTS ON — leg 1 needs the wall down, or a work grant with opTiering armed, to see a channel turn");
+  resetSettingsForTest();
+  ok(
+    !connectorDmOnlyEnabled() && getSettings().connectors.opTiering,
+    "n3: the wall ships DOWN and tiering ON — leg 1 sees every granted channel turn on the shipped posture",
+  );
+  overrideSettingsForTest({ connectors: { dmOnly: true, opTiering: false, userPrincipal: false } });
+  ok(connectorDmOnlyEnabled(), "n3: the ARMED posture (dmOnly on, opTiering off) puts the wall up — leg 1 then sees DM turns only");
 
   {
     _resetGovernanceMemberSupplierForTest();
     _resetAudienceFloorCacheForTest();
-    _resetConnectorEntitlementProbeForTest();
     registerConfig(baseConfig(plainDomains) as never);
     registerGovernanceMemberSupplier(async (channelKey) => {
       const [platform] = channelKey.split("/");
@@ -589,7 +478,6 @@ const rowsFor = async (action: string) => (await readAudit({ org: "disc-test", a
 {
   _resetGovernanceMemberSupplierForTest();
   _resetAudienceFloorCacheForTest();
-  _resetConnectorEntitlementProbeForTest();
   registerGovernanceMemberSupplier(async () => ({ humanMemberIds: ["U_A", "U_GUEST"], resolved: true, isPrivate: false, hasGuest: true }));
   registerConfig({
     ...baseConfig(plainDomains),
@@ -613,6 +501,5 @@ const rowsFor = async (action: string) => (await readAudit({ org: "disc-test", a
 
 _resetGovernanceMemberSupplierForTest();
 _resetAudienceFloorCacheForTest();
-_resetConnectorEntitlementProbeForTest();
 await removeTempDir(tmp);
 console.log(`✓ connector-disclosure: ${n} assertions passed`);

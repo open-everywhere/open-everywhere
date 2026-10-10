@@ -3,10 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { removeTempDir } from "./_temp-dir.js";
+import { setPlatformStandInForTest } from "../agent/identity/binding.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-connector-op-audit-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
-process.env.OE_PLATFORM = "slack";
+setPlatformStandInForTest("slack");
 _setDeploymentIdentityForTest({ org: undefined });
 
 const { registerConfig } = await import("../agent/access/config.js");
@@ -91,6 +92,32 @@ await handler(ev({ kind: "tool-result", toolName: "acme__server__search", isErro
   const rows = await readAudit({ org: "default", action: "connector.op" });
   ok(rows.length === 4, "a three-segment PLUGIN connector name still writes its row -- the skip is namespace-keyed, not segment-count-keyed");
   ok(rows.some((r) => r.detail?.connection === "acme"), "...stamped with its real connection head");
+}
+
+{
+  const { FakeEveContext, inEveContext } = await import("./_eve-context-stub.js");
+  const { CONNECTION_REGISTRY_KEY_NAME } = await import("../agent/connections/connector-tool-hints.js");
+  const session = new FakeEveContext();
+  session.set({ name: CONNECTION_REGISTRY_KEY_NAME }, {
+    getConnectionNames: () => ["notion"],
+    getClient: () => ({
+      getToolMetadata: async () => [
+        { name: "frobnicate_widget", annotations: { readOnlyHint: true } },
+        { name: "search", annotations: { readOnlyHint: true } },
+      ],
+    }),
+  });
+  await inEveContext(session, async () => {
+    await handler(ev({ kind: "tool-result", toolName: "notion__frobnicate_widget", isError: false }), ctx);
+    await handler(ev({ kind: "tool-result", toolName: "notion__search", isError: false }), ctx);
+  });
+  const rows = await readAudit({ org: "default", action: "connector.op" });
+  const hinted = rows.find((r) => r.detail?.op === "frobnicate_widget");
+  ok(hinted?.detail?.opTier === "read" && hinted?.detail?.tier === "open", "🔴 a hint-read op audits at the read tier it ran at");
+  ok(hinted?.detail?.opTierHint === "read" && hinted?.detail?.opTierHintDecided === true, "🔴 …and the row says the server's hint DECIDED it");
+  ok(hinted?.detail?.opTierBasis === "unrecognised", "…with the name's own basis beside it (the verb heuristic abstained)");
+  const agreed = rows.find((r) => r.detail?.op === "search" && r.detail?.opTierHint !== undefined);
+  ok(agreed?.detail?.opTierHint === "read" && agreed?.detail?.opTierHintDecided === undefined, "an agreeing hint is recorded but is not marked as deciding");
 }
 
 await removeTempDir(tmp);

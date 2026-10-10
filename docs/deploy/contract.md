@@ -4,12 +4,18 @@ This page states what a host must provide for Open Everywhere to run correctly. 
 about the **contract**, not about the **host**. Your coding agent maps these requirements onto your
 infrastructure; Open Everywhere supplies the context, the tools and a deterministic self-check.
 
-Two routes are proven end to end:
+Two routes are supported:
 
-| Route | What it is |
-| --- | --- |
-| `vercel` | A Vercel project with Neon from the Marketplace. |
-| `docker` | The shipped `Dockerfile` plus the `docker-compose.yml` sidecars, on a server you run. |
+| Route | What it is | What is proven |
+| --- | --- | --- |
+| `vercel` | A Vercel project with Neon from the Marketplace. | End to end: a scaffolded app deploys and answers a real Slack DM. |
+| `docker` | The repository's root `Dockerfile` plus the `docker-compose.yml` sidecars, on a server you run. | Partly. The image builds and boots on `justbash`, its default backend. `npm run test:docker-smoke` proves, on the compose topology, that a real model call succeeds through the enforcing egress proxy while the session stays deny-by-default (OPE-2406). On 0.3.0 the compose stack (Postgres, egress proxy, `justbash`) answered a signed Discord mention with a real model call, with the model host bypassing the proxy. The `docker` sandbox backend does not run in the image, and it cannot run behind the proxy (OPE-2407). So no Docker configuration meets the [`sandbox-backend`](#req-sandbox-backend) requirement today. No test drives a turn on every change. |
+
+The `Dockerfile` and `docker-compose.yml` live in the
+[repository](https://github.com/open-everywhere/open-everywhere), and the image builds the whole
+workspace. An app scaffolded with `@open-everywhere/create` carries no `Dockerfile`. To run a
+scaffolded app on Docker, write an image for it against the requirements below. The repository's
+`Dockerfile` is the reference recipe.
 
 Any other host is inferred from this page plus the Docker route. Nothing beyond those two is
 tested.
@@ -46,7 +52,7 @@ it at runtime would answer "cannot tell" on every real deployment. A test fails 
 literal and `engines.node` disagree.
 
 - **Vercel:** set the project's Node.js Version to 24.x (Project → Settings → Build and Deployment).
-- **Docker:** the shipped `Dockerfile` pins the base image. A hand-rolled image must match the range.
+- **Docker:** the repository's `Dockerfile` pins the base image. A hand-rolled image must match the range.
 
 <a id="req-public-https-url"></a>
 
@@ -93,7 +99,19 @@ own. The dev-only `justbash` backend shares the app process's filesystem, so a m
 reads the deployment's own files and environment. Use it for development and nothing else.
 
 - **Vercel:** Vercel Sandbox, selected automatically.
-- **Docker:** the default off-Vercel backend. `OE_SANDBOX_BACKEND` names it explicitly.
+- **Docker:** **not met by the shipped image.** The image runs `justbash`, the only sandbox
+  template it carries, so the session shares the app process's filesystem. An app built into the
+  image declares `sandbox.selfHostBackend: "justbash"` in `agent/settings/settings.ts` (a setting
+  since OPE-2411; it was the `OE_SANDBOX_BACKEND` env var). The `docker` backend contains the
+  filesystem, but it does not run in the image (the image builds its template on `justbash`,
+  OPE-2407), and its session containers start on the Docker daemon's default network, outside the
+  egress proxy. So the app refuses to boot with `sandbox.selfHostBackend: "docker"` and
+  `OE_EGRESS_PROXY_URL` set. What each backend gives:
+
+  | Backend | Runs in the image | Session egress behind the proxy | Filesystem |
+  | --- | --- | --- | --- |
+  | `justbash` (the image's only template) | Yes | Yes | shared with the app process (development grade) |
+  | `docker` | No | No (the app refuses to boot on this pair) | a per-session container |
 
 <a id="req-egress-control"></a>
 
@@ -108,9 +126,18 @@ rather than run unfirewalled, unless the deployment declares `egress: { allowUne
 `agent/settings/settings.ts`.
 
 - **Vercel:** the Vercel Sandbox firewall applies the fine-grained policy natively.
-- **Docker:** the egress-proxy sidecar (`docker-compose.yml`). `OE_EGRESS_PROXY_URL` points the
-  deployment at it, and the policy is pushed on every session. See
-  [self-host egress](./platforms/self-roll.md).
+- **Docker:** the egress-proxy sidecar (`docker-compose.yml`), with the `justbash` backend only.
+  `OE_EGRESS_PROXY_URL` points the deployment at it, and the session policy is pushed on every
+  session. The proxy holds two principals apart. The **session** (no credential) is held to its
+  compiled policy, default-deny. The **app's own model call** carries the proxy token as
+  `Proxy-Authorization` and is held to a separate **host plane** that names the model gateway alone
+  (OPE-2406), on Tier A and Tier B alike (Tier B splices that call, never decrypts it). The host
+  plane never widens a session: a session request carries no credential. A
+  session that obtained the token could already push itself any policy, so the separation is as
+  strong as the `justbash` sandbox that keeps the token out of the shell, which is development
+  grade. Credential injection at the firewall needs Tier B
+  (`OE_EGRESS_MITM=1`). See [self-host egress](./platforms/self-roll.md) and
+  `deploy/egress-proxy/README.md`.
 
 <a id="req-model-route"></a>
 
@@ -185,7 +212,7 @@ A running deployment answers `GET /eve/v1/oe/status` with one verdict per requir
 ```json
 {
   "contract": 1,
-  "version": { "app": "unversioned", "core": "0.3.0", "eve": "0.71.0" },
+  "version": { "app": "unversioned", "core": "0.4.0", "eve": "0.71.0" },
   "host": "vercel",
   "requirements": [
     { "id": "node-24", "met": "yes", "detail": "running node 24.21.0, which satisfies 24.x" }

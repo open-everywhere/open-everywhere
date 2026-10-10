@@ -11,18 +11,22 @@ credential the **firewall injects and the browser never holds**.
 
 It ships as **one flag-gated layer**: the [agent-browser toolkit](#the-agent-browser-toolkit-flag-gated)
 (navigate, snapshot, find, click, fill, screenshot, …) from Vercel Labs'
-[`@agent-browser/eve`](https://agent-browser.dev), **off by default** — armed by
-`browser.enabled: true` plus a host declaration. It is **Vercel Sandbox only** for now: the
+[`@agent-browser/eve`](https://agent-browser.dev), armed by `browser.enabled: true` plus a host
+declaration. The framework default is **off**, because core declares no host. A **new app** from
+`@open-everywhere/create` ships it **on**: its `agent/settings/settings.ts` sets the flag, and its
+`agent/access/browser-hosts.ts` declares the sandbox's own dev server (`localhost` and `127.0.0.1`).
+Set `browser: { enabled: false }` to turn it off. It is **Vercel Sandbox only** for now: the
 self-host image (`node:24-alpine`) has no Chromium. Off Vercel the whole plane **refuses and says
 why**: no tool mounts, no declared egress host opens, and nothing bakes. The flag stays armed and
-the deployment boots normally — one loud line names the platform as the reason.
+the deployment boots normally — one loud line names the platform as the reason. A new app that
+deploys to Docker therefore runs with no browser and logs that line at boot; set
+`browser: { enabled: false }` there to silence it.
 
-🔴 **`OE_PLATFORM` overrides that refusal, and that is the operator's own call.** The platform seam
-reads `OE_PLATFORM` **before** Vercel's own `VERCEL` variable, so a self-host deployment that sets
-`OE_PLATFORM=vercel` re-arms the whole plane — all 20 tools mount and every declared egress host
-opens, for a browser the image cannot run. That is the same override a Vercel deployment uses to
-declare itself self-host, so the code cannot tell the two apart and does not try. If you set it,
-either ship Chromium in your image or leave `browser.enabled` off.
+🔴 **No environment variable overrides that refusal.** The plane arms only when the agent's shell
+runs in the Vercel Sandbox: on a Vercel host (Vercel's own `VERCEL`), or with the setting
+`sandbox.useVercelSandbox: true` on any other host. In both cases the browser runs in the Vercel
+Sandbox, which can run it. Until OPE-2411, `OE_PLATFORM=vercel` re-armed the plane on a self-host
+deployment for a browser the image could not run. OPE-2411 deleted that override.
 
 ## The agent-browser toolkit (flag-gated)
 
@@ -80,7 +84,7 @@ Fail-closed matrix:
 | Flag set, declaration empty | Does **not** arm; one loud log line says why. |
 | Declaration holds an invalid row | The boot **throws**. Any bad row invalidates the whole declaration — there is no partial reach. |
 | Armed, off-Vercel | Nothing arms: no tool mounts, no declared egress host opens, no template bakes. One loud line names the platform (no Chromium in the self-host image). The refusal is one core road (`browserPlaneRefusal`), read by the config loader every arming path goes through — and in core by the grain resolver and by the plane's own egress opener, so a registration that arrived by another door mounts nothing and opens no host. |
-| Armed, off-Vercel, `OE_PLATFORM=vercel` | **Fully armed, and broken.** The operator's own override wins over the platform detection, so every gate above answers "on Vercel" and the plane arms for a browser that cannot run. Deliberate: the same override is how a Vercel deployment declares itself self-host. |
+| Armed, off-Vercel, `sandbox.useVercelSandbox: true` | Armed as on Vercel. The agent's shell runs in the Vercel Sandbox, so the browser runs there too. (`OE_PLATFORM=vercel` armed the plane here with no Vercel Sandbox until OPE-2411 deleted it.) |
 | Armed, on Vercel | Tools mount on worker seats; both containment walls carry the declared hosts; the browser is pre-baked into the sandbox template. |
 
 ### What one row says

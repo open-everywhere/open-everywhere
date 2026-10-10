@@ -7,12 +7,13 @@ import { pathToFileURL } from "node:url";
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { removeTempDir } from "./_temp-dir.js";
+import { setPlatformStandInForTest } from "../agent/identity/binding.js";
 registerSlackFixtureMapper();
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-member-arm-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: undefined });
-process.env.OE_PLATFORM = "slack";
+setPlatformStandInForTest("slack");
 
 const { registerConfig } = await import("../agent/access/config.js");
 const { defineBundle, defineBinding } = await import("../agent/access/bundle.js");
@@ -317,7 +318,7 @@ await contextStorage.run(new ContextContainer(), async () => {
   } catch (e) {
     refused = e instanceof Error ? e.message : String(e);
   }
-  ok(refused.includes("armed without connectors.opTiering"), "🔴 ⑥ G1b: a deployment declaring `userPrincipal` without `opTiering` is REFUSED — `member_plane_untiered` is unreachable from a real posture");
+  ok(refused.includes("while connectors.opTiering is off"), "🔴 ⑥ G1b: a deployment declaring `userPrincipal` without `opTiering` is REFUSED — `member_plane_untiered` is unreachable from a real posture");
   ok(bootRefusal(() => defineSettings(armed)) === "", "⑥ …while the armed posture this file drives IS a declarable one");
   ok(defineSettings(armed).connectors?.memberPlane === true, "⑥ …and the declaration keeps the flag this file arms");
   resetSettingsForTest();

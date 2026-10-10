@@ -122,7 +122,8 @@ async function pinVenueContract(platform: string, originSurfaceKey: string, expe
       vouch,
       `🔴 "${vouch?.key}" is now vouched internal — a vouched repo mints a window wake, the seat goes standing and LEAN, and it holds no create_routine. Re-home this fixture under an owner no defineSurface names.`,
     ).toBeUndefined();
-    expect(process.env.OE_TRUST, "OE_TRUST=internal is the blanket vouch — it windows this wake too").not.toBe("internal");
+    const { getSettings } = await import("@open-everywhere/core/agent/settings/settings.js");
+    expect(getSettings().identity.blanketTrust, "identity.blanketTrust internal is the blanket vouch — it windows this wake too").not.toBe("internal");
   }
 
   const roster = (home?.reach ?? []).filter((entry) => entry.split("/").length === 3);

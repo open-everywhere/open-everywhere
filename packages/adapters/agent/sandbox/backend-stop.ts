@@ -1,6 +1,6 @@
 import { Sandbox } from "@vercel/sandbox";
 import { execFile } from "node:child_process";
-import { onVercel, resolveSelfHostBackendKind } from "@open-everywhere/core/agent/adapter-api.js";
+import { resolveSandboxBackend } from "@open-everywhere/core/agent/adapter-api.js";
 import { getRecordedSandboxName } from "./created-sandbox-registry.js";
 
 export interface SandboxListing {
@@ -139,7 +139,7 @@ export const justBashStopper: SandboxStopper = {
   backend: "just-bash",
   metered: false,
   ownership:
-    "stop owner = NONE — the just-bash backend runs inside this app process. There is no VM or container to stop and no metered runtime, so the turn-end sweep is inert by design. Set OE_SANDBOX_BACKEND=docker for a backend whose compute is stopped at turn end",
+    "stop owner = NONE — the just-bash backend runs inside this app process. There is no VM or container to stop and no metered runtime, so the turn-end sweep is inert by design. Declare `sandbox.selfHostBackend: \"docker\"` for a backend whose compute is stopped at turn end",
   async list() {
     return [];
   },
@@ -152,8 +152,9 @@ export const justBashStopper: SandboxStopper = {
 
 export function resolveSandboxStopper(): SandboxStopper {
   if (forcedStopper !== undefined) return forcedStopper;
-  if (onVercel()) return vercelStopper;
-  return resolveSelfHostBackendKind() === "justbash" ? justBashStopper : createDockerStopper();
+  const backend = resolveSandboxBackend();
+  if (backend === "vercel") return vercelStopper;
+  return backend === "justbash" ? justBashStopper : createDockerStopper();
 }
 
 let forcedStopper: SandboxStopper | undefined;

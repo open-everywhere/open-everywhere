@@ -21,7 +21,7 @@ knob must name a *registered* adapter or the agent refuses to start.
 
 | Seam | You must provide | Selected by |
 |---|---|---|
-| Sandbox | An executor where the egress firewall is enforceable (default-deny + boundary credential injection). Eve's own `docker()` is coarse-only via its native `setNetworkPolicy`; Open Everywhere's shipped `docker()` deployment restores full parity with a [forced local egress proxy](./self-host-egress.md) instead (no KVM needed). Eve's `microsandbox` (needs `/dev/kvm`) enforces host-grain allow/deny natively, but not credential injection or `match` narrowing (measured, OPE-917). | [Sandbox](../../extending/sandbox.md) |
+| Sandbox | An executor where the egress firewall is enforceable (default-deny + boundary credential injection). Eve's own `docker()` is coarse-only via its native `setNetworkPolicy`; Open Everywhere's shipped Docker deployment enforces the session policy with a [forced local egress proxy](./self-host-egress.md) instead (no KVM needed), but only for the development-grade `justbash` backend: `docker()` session containers sit outside the proxy (OPE-2407). Eve's `microsandbox` (needs `/dev/kvm`) enforces host-grain allow/deny natively, but not credential injection or `match` narrowing (measured, OPE-917). | [Sandbox](../../extending/sandbox.md) |
 | Operational store | A `PgClient`-shaped Postgres, registered at startup, with `org_id` partitioning + RLS — or, for single-node, leave the knob unset and take the zero-wiring embedded-Postgres (PGlite) floor. The `sqlite` floor still works but is **deprecated** and nags at boot: no managed durability, backups or replication. | `OE_OPERATIONAL_PROVIDER` |
 | Memory backing | One of `git` / `sqlite` / `postgres` / `github` / `notion`, or your own `MemoryProvider`. | `OE_MEMORY_PROVIDER` |
 | Credential broker | An implementation of `getSecret(ref)` over your vault, registered at startup and named on each credential's `broker` stamp (or the built-in `env` broker, always registered — env-backed credentials stamp `broker: "env"`). No global selection. | `broker:` stamps + `registerBroker(...)` |
@@ -33,11 +33,12 @@ knob must name a *registered* adapter or the agent refuses to start.
 - **Start from the shipped reference image, not from scratch.** The repo root carries a
   `Dockerfile` (builds the off-Vercel Eve node-server bundle, runs `eve start`) and a
   `docker-compose.yml` that wires the app to the [egress-proxy sidecar](./self-host-egress.md)
-  on an internal-only network — the enforced-egress `docker()` topology described below. An
-  opt-in integration smoke, `npm run test:docker-smoke`, builds that image and boots it off
-  Vercel on the `docker()` backend to assert a clean boot, the backend resolving to `docker()`,
-  and the egress posture surfacing — the first-party proof the Docker column
-  [now carries](./comparison.md#what-has-actually-been-run-where).
+  on an internal-only network. The image runs the `justbash` backend, the only sandbox template it
+  carries; the `docker()` backend does not run in it and cannot run behind the proxy (OPE-2407). An
+  opt-in integration smoke, `npm run test:docker-smoke`, builds that image and the proxy, boots
+  the image off Vercel, and on the compose topology proves a real model call through the
+  enforcing proxy while the session stays deny-by-default — the first-party proof the Docker
+  column [now carries](./comparison.md#what-has-actually-been-run-where).
 - **The image build needs a builder with about 6 GB of memory.** `eve build` peaks at about
   5.4 GB. A smaller `--max-old-space-size` does not bring it under 4 GB: a 4 GB builder kills the
   build inside `eve build` with a 3 GB heap and with a 1.5 GB heap. On a small VM, build the image
@@ -57,7 +58,8 @@ knob must name a *registered* adapter or the agent refuses to start.
   Sandbox; Eve's `microsandbox` backend enforces only host-grain allow/deny natively
   (measured, OPE-917), and a plain (unwrapped) Docker or bare-metal executor gives coarse or
   no egress enforcement. Open Everywhere's own [egress-proxy sidecar](./self-host-egress.md)
-  restores full parity on `docker()` without KVM (the recommended self-host default); the
+  enforces the session policy without KVM, for the development-grade `justbash` backend only
+  (`docker()` sits outside it, OPE-2407); the
   alternative is routing the sandbox through the
   [hybrid Vercel Sandbox pattern](./comparison.md#the-hybrid-option-vercel-sandbox-from-any-host)
   (UNVERIFIED live).

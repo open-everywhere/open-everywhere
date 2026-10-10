@@ -114,12 +114,20 @@ registerConfig({
   loadDomains: () => [], loadSilos: () => [], domainsForSurface: () => [],
 });
 const shippedDefault = await drive("public-team", "as-shipped");
+ok(shippedDefault.res === null, "🔴 room grain: the SAME declared-public team is SILENCED under the shipped `silent` default, with no declaration at all");
+
+const ENGAGE_DOMAINS: readonly Domain[] = [{ name: "org", match: "org", externalPolicy: { roomGrain: "engage" } }];
+registerConfig({
+  loadBundles: () => [], loadBindings: () => [], pluginRegistry: {}, skillContent: {},
+  loadDomains: () => ENGAGE_DOMAINS, loadSilos: () => [], domainsForSurface: () => [],
+});
+const optOut = await drive("public-team", "as-optout");
 ok(
-  shippedDefault.res !== null && (shippedDefault.res as { auth?: unknown }).auth !== undefined,
-  "room grain: the SAME declared-public team DISPATCHES under the shipped `engage` default (negative control — an upgrade changes nothing)",
+  optOut.res !== null && (optOut.res as { auth?: unknown }).auth !== undefined,
+  "room grain: the SAME declared-public team DISPATCHES under the `engage` opt-out (negative control — the opt-out restores the old behaviour)",
 );
 
 });
 _resetSurfacesForTest();
 await removeTempDir(dir);
-console.log(`\n✓ linear-external-policy-room: ${n} assertions passed (silent drop + audit on a declared-public team, undeclared-team and shipped-default negative controls)`);
+console.log(`\n✓ linear-external-policy-room: ${n} assertions passed (silent drop + audit on a declared-public team, undeclared-team and engage-opt-out negative controls, shipped-default pin)`);

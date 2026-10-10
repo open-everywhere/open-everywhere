@@ -1,3 +1,4 @@
+import { __setTestValveForTest, testValveArmed } from "@open-everywhere/core/agent/testing/test-valves.js";
 import { afterAll, expect, test } from "vitest";
 
 import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
@@ -82,12 +83,10 @@ test("the compiled tidy cron task runs the credential-grant TTL sweep, and a lap
     else delete process.env.DISCORD_BOT_TOKEN;
   });
 
-  const hadOrgs = Object.prototype.hasOwnProperty.call(process.env, "OE_TIDY_ORGS");
-  const previousOrgs = process.env.OE_TIDY_ORGS;
-  process.env.OE_TIDY_ORGS = org;
+  const sweepSettings = await import("@open-everywhere/core/agent/settings/settings.js");
+  sweepSettings.overrideSettingsForTest({ schedules: { sweepOrgs: [org] } });
   cleanups.push(() => {
-    if (hadOrgs) process.env.OE_TIDY_ORGS = previousOrgs;
-    else delete process.env.OE_TIDY_ORGS;
+    sweepSettings.overrideSettingsForTest({ schedules: { sweepOrgs: ["default"] } });
   });
 
   const lapsed = askRow("ope1112-lapsed", {
@@ -115,12 +114,12 @@ test("the compiled tidy cron task runs the credential-grant TTL sweep, and a lap
   await store.addCredentialGrantAsk(org, stale);
   await store.addCredentialGrantAsk(org, answered);
 
-  const spoof = process.env.OE_EGRESS_SPOOF;
-  delete process.env.OE_EGRESS_SPOOF;
+  const spoof = testValveArmed("egress-spoof");
+  __setTestValveForTest("egress-spoof", false);
   try {
     await runScheduleTask("schedules/tidy.ts");
   } finally {
-    if (spoof !== undefined) process.env.OE_EGRESS_SPOOF = spoof;
+    __setTestValveForTest("egress-spoof", spoof);
   }
 
   expect((await store.getCredentialGrantAsk(org, lapsed.id))?.status, "the compiled cron task must expire a pending ask past its TTL — a green unit test and a `pending` row here is exactly the defect OPE-1112 names").toBe(
@@ -165,12 +164,12 @@ test("the compiled tidy cron task runs the credential-grant TTL sweep, and a lap
 
   const postsAfterFirst = posts.length;
   const editsAfterFirst = edits.length;
-  const spoofAgain = process.env.OE_EGRESS_SPOOF;
-  delete process.env.OE_EGRESS_SPOOF;
+  const spoofAgain = testValveArmed("egress-spoof");
+  __setTestValveForTest("egress-spoof", false);
   try {
     await runScheduleTask("schedules/tidy.ts");
   } finally {
-    if (spoofAgain !== undefined) process.env.OE_EGRESS_SPOOF = spoofAgain;
+    __setTestValveForTest("egress-spoof", spoofAgain);
   }
   expect(posts.length, "a second sweep pass must not post the lapse notice again").toBe(postsAfterFirst);
   expect(edits.length, "…nor rewrite the card again").toBe(editsAfterFirst);

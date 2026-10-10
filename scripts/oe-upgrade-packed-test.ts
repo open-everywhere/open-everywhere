@@ -220,7 +220,7 @@ function standInPackages(): readonly Record<string, unknown>[] {
   return out;
 }
 
-async function standInRegistry(root: string): Promise<{ readonly url: string; close(): Promise<void> }> {
+async function standInRegistry(root: string, unpublished?: string): Promise<{ readonly url: string; readonly release: string; close(): Promise<void> }> {
   const packuments = new Map<string, { name: string; "dist-tags": Record<string, string>; versions: Record<string, unknown> }>();
   const tarballs = new Map<string, Buffer>();
   const server = createServer((req, res) => {
@@ -252,6 +252,11 @@ async function standInRegistry(root: string): Promise<{ readonly url: string; cl
     const r = run("tar", ["-czf", "p.tgz", "package"], dir);
     assert.equal(r.status, 0, `tar -czf failed:\n${r.output}`);
     const bytes = readFileSync(join(dir, "p.tgz"));
+    if (version === unpublished && name.startsWith("@open-everywhere/")) {
+      mkdirSync(join(root, "release"), { recursive: true });
+      writeFileSync(join(root, "release", `${name.slice(1).replace("/", "-")}-${version}.tgz`), bytes);
+      continue;
+    }
     const key = `${name.replace("/", "+")}-${version}.tgz`;
     tarballs.set(key, bytes);
     const packument = packuments.get(name) ?? { name, "dist-tags": {}, versions: {} };
@@ -266,7 +271,7 @@ async function standInRegistry(root: string): Promise<{ readonly url: string; cl
     packument["dist-tags"].latest = version;
     packuments.set(name, packument);
   }
-  return { url, close: () => new Promise<void>((closed) => server.close(() => closed())) };
+  return { url, release: join(root, "release"), close: () => new Promise<void>((closed) => server.close(() => closed())) };
 }
 
 const LOCK_DRIVER = `
@@ -282,9 +287,18 @@ const io = {
 process.exit(await runUpgradeCommand(["--to", target], io, app));
 `;
 
-async function lockfileLeg(packedCore: string): Promise<void> {
-  const root = join(scratch, "lockfile");
-  const registry = await standInRegistry(join(root, "registry"));
+const REHEARSAL_DRIVER = `
+const [upgradeModule, app, edge, ...args] = process.argv.slice(2);
+const { runUpgradeCommand, realUpgradeIo } = await import(upgradeModule);
+const real = realUpgradeIo();
+const refuse = async () => { throw new Error("REHEARSAL-DRIVER: the registry was read"); };
+const io = { ...real, registry: edge === "registry" ? real.registry : { latestVersion: refuse, evePeer: refuse, templateDir: refuse } };
+process.exit(await runUpgradeCommand(args, io, app));
+`;
+
+async function lockfileLeg(packedCore: string, rehearse = false): Promise<void> {
+  const root = join(scratch, rehearse ? "rehearsal" : "lockfile");
+  const registry = await standInRegistry(join(root, "registry"), rehearse ? LOCK_TO : undefined);
   try {
     const userconfig = join(root, "npmrc");
     mkdirSync(root, { recursive: true });
@@ -315,6 +329,10 @@ async function lockfileLeg(packedCore: string): Promise<void> {
     const lockOf = (app: string): Record<string, { version?: string; resolved?: string; integrity?: string }> =>
       (JSON.parse(readFileSync(join(app, "package-lock.json"), "utf8")) as { packages: Record<string, { version?: string }> }).packages;
 
+    if (rehearse) {
+      await rehearsalLeg(packedCore, root, registry.release, env, appAt014, lockOf);
+      return;
+    }
     const control = await appAt014("app-lock-control");
     ok(lockOf(control)["node_modules/@open-everywhere/adapters"]?.version === LOCK_FROM, `the fixture: the lockfile locks adapters at ${LOCK_FROM}`);
     const bumped = readFileSync(join(control, "package.json"), "utf8").split(`"${LOCK_FROM}"`).join(`"${LOCK_TO}"`).split(`"${EVE_FROM}"`).join(`"${EVE_TO}"`);
@@ -348,6 +366,63 @@ async function lockfileLeg(packedCore: string): Promise<void> {
   } finally {
     await registry.close();
   }
+}
+
+async function rehearsalLeg(
+  packedCore: string,
+  root: string,
+  release: string,
+  env: NodeJS.ProcessEnv,
+  appAt014: (name: string) => Promise<string>,
+  lockOf: (app: string) => Record<string, { version?: string; resolved?: string }>,
+): Promise<void> {
+  const runner = join(root, "runner");
+  mkdirSync(join(runner, "node_modules", "@open-everywhere"), { recursive: true });
+  cpSync(packedCore, join(runner, "node_modules", "@open-everywhere", "core"), { recursive: true });
+  linkDeps(runner, CORE_RUNTIME);
+  writeFileSync(join(runner, "drive.mjs"), REHEARSAL_DRIVER);
+  const upgradeModule = pathToFileURL(join(runner, "node_modules", "@open-everywhere", "core", "dist", "scripts", "oe-upgrade.js")).href;
+  const drive = (app: string, edge: "registry" | "local", args: readonly string[]) => runAsync(process.execPath, ["drive.mjs", upgradeModule, app, edge, ...args], runner, env);
+  const tarballOf = (n: string): string => join(release, `open-everywhere-${n}-${LOCK_TO}.tgz`);
+
+  const control = await appAt014("app-rehearsal-control");
+  const controlManifest = readFileSync(join(control, "package.json"), "utf8");
+  const viaRegistry = await drive(control, "registry", ["--to", LOCK_TO]);
+  ok(
+    viaRegistry.status === 1 && viaRegistry.output.includes(`cannot read the \`eve\` peer @open-everywhere/core@${LOCK_TO}`),
+    `🔴 the control: \`oe upgrade --to ${LOCK_TO}\` through the registry refuses an unpublished target — got ${viaRegistry.status}\n${viaRegistry.output}`,
+  );
+  ok(readFileSync(join(control, "package.json"), "utf8") === controlManifest, "…and it wrote nothing");
+
+  const app = await appAt014("app-rehearsal");
+  const manifestBefore = readFileSync(join(app, "package.json"), "utf8");
+  const planned = await drive(app, "local", ["--plan", "--from", release]);
+  const sayPlan = `\n--- oe upgrade --plan output ---\n${planned.output}`;
+  ok(planned.status === 0 && planned.output.includes(`oe upgrade: ${LOCK_FROM} → ${LOCK_TO} (eve ${EVE_TO})`), `🔴 \`oe upgrade --plan --from <dir>\` reads the target and its eve peer from the tarballs${sayPlan}`);
+  ok(planned.output.includes(`@open-everywhere/core: ${LOCK_FROM} → file:${tarballOf("core")}`), `…and plans a file: pin on the core tarball${sayPlan}`);
+  ok(readFileSync(join(app, "package.json"), "utf8") === manifestBefore, "…and --plan wrote nothing");
+
+  const up = await drive(app, "local", ["--from", release]);
+  const say = `\n--- oe upgrade --from output ---\n${up.output}`;
+  ok(up.status === 0, `🔴 \`oe upgrade --from <dir>\` takes the ${LOCK_FROM} app to the unpublished ${LOCK_TO}, with the real npm install — got ${up.status}${say}`);
+  ok(!up.output.includes("REHEARSAL-DRIVER"), `…and it never read the registry edge${say}`);
+  const pins = JSON.parse(readFileSync(join(app, "package.json"), "utf8")) as { dependencies: Record<string, string>; devDependencies: Record<string, string> };
+  const all = { ...pins.dependencies, ...pins.devDependencies };
+  ok(
+    ["core", "adapters", "provider-slack", "create"].every((n) => all[`@open-everywhere/${n}`] === `file:${tarballOf(n)}`) && all.eve === EVE_TO,
+    `…and it pins every @open-everywhere/* package to its tarball and eve to ${EVE_TO} — got ${JSON.stringify(all)}`,
+  );
+  const lock = lockOf(app);
+  for (const n of ["core", "adapters", "provider-slack", "create"]) {
+    const installed = JSON.parse(readFileSync(join(app, "node_modules", "@open-everywhere", n, "package.json"), "utf8")) as { version: string };
+    ok(installed.version === LOCK_TO, `🔴 …and node_modules holds @open-everywhere/${n} at ${LOCK_TO} — got ${installed.version}`);
+    ok(lock[`node_modules/@open-everywhere/${n}`]?.resolved?.startsWith("file:") === true, `…and the lockfile resolves @open-everywhere/${n} from its tarball — got ${JSON.stringify(lock[`node_modules/@open-everywhere/${n}`])}`);
+  }
+  ok(up.output.includes(`Release notes (${LOCK_TO}'s own copy):`), `…and it reads the target's own release record after the install${say}`);
+  ok(up.output.includes(`✓ oe upgrade: ${LOCK_FROM} → ${LOCK_TO}.`) && up.output.includes("REHEARSAL: package.json pins"), `…and it reports the upgrade and says the pins are a rehearsal${say}`);
+
+  const again = await drive(app, "local", ["--from", release]);
+  ok(again.status === 0 && again.output.includes(`already on ${LOCK_TO}. Nothing to do.`), `…and a second run reads the file: pin as ${LOCK_TO} and has nothing to do — got ${again.status}\n${again.output}`);
 }
 
 try {
@@ -540,6 +615,7 @@ try {
   }
 
   await lockfileLeg(oldPkg);
+  await lockfileLeg(oldPkg, true);
 } finally {
   if (keep) console.log(`kept ${scratch}`);
   else rmSync(scratch, { recursive: true, force: true });

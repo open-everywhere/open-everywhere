@@ -7,7 +7,6 @@ import {
   WORKER_ONLY_TOOLS_STANDING,
   WORKER_ONLY_TOOLS_THREAD,
 } from "@open-everywhere/core/agent/access/worker-capability-index.generated.js";
-import { SETTINGS } from "@open-everywhere/core/agent/settings/settings.js";
 import { GRANT_REFUND_CAP_PER_TURN } from "@open-everywhere/core/agent/access/credential-grant-broker.js";
 import { GRANT_ONCE_MAX_ATTEMPTS_PER_TURN } from "@open-everywhere/core/agent/access/credential-grant-card.js";
 import { TOOL_CONSEQUENCE } from "@open-everywhere/core/agent/access/consequence.js";
@@ -18,16 +17,6 @@ import { ENV_READ_ALLOWLIST } from "./env-read-allowlist.js";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 assertCoreDistFresh();
-
-function settingsEnvSeams(): string[] {
-  const out: string[] = [];
-  for (const group of Object.values(SETTINGS as Record<string, Record<string, { path: string; env?: string }>>)) {
-    for (const spec of Object.values(group)) {
-      if (typeof spec.env === "string") out.push(spec.path);
-    }
-  }
-  return out.sort();
-}
 
 function taintGateSinks(): string[] {
   return Object.keys(TOOL_CONSEQUENCE)
@@ -47,7 +36,6 @@ const facts: CountedFacts = {
   "taint-gate-sinks": taintGateSinks(),
   "worker-only-standing": WORKER_ONLY_TOOLS_STANDING,
   "worker-only-thread": WORKER_ONLY_TOOLS_THREAD,
-  "settings-env-seams": settingsEnvSeams(),
   "env-pending-migration": envPendingMigration(),
   "grant-refund-cap-per-turn": GRANT_REFUND_CAP_PER_TURN,
   "grant-once-max-attempts-per-turn": GRANT_ONCE_MAX_ATTEMPTS_PER_TURN,
@@ -87,7 +75,7 @@ function factValue(key: string): number {
 console.log(
   `✓ counted-claims-lint: ${report.checked}/${COUNTED_CLAIMS.length} counted claims hold across ${docs.size} document(s) — ` +
     `lean seat ${factValue("lean-seat-tools")}, worker-only standing ${factValue("worker-only-standing")}, ` +
-    `worker-only thread ${factValue("worker-only-thread")}, settings env seams ${factValue("settings-env-seams")}, ` +
+    `worker-only thread ${factValue("worker-only-thread")}, ` +
     `grant refund cap ${factValue("grant-refund-cap-per-turn")}, once-grant attempts ${factValue("grant-once-max-attempts-per-turn")}, ` +
     `taint-gate sinks ${factValue("taint-gate-sinks")}, env knobs pending migration ${factValue("env-pending-migration")}.`,
 );

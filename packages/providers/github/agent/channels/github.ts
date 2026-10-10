@@ -185,7 +185,7 @@ export function shouldSuppressNativeMention(singleWindow: boolean, vouched: bool
 }
 
 function githubRepoVouched(owner: string, repo: string): boolean {
-  return isVouchedInternal(`github/${owner}`, `github/${owner}/${repo}`) || process.env.OE_TRUST === "internal";
+  return isVouchedInternal(`github/${owner}`, `github/${owner}/${repo}`) || getSettings().identity.blanketTrust === "internal";
 }
 
 export type GitHubExternalVerdict = "proceed" | "withheld-author" | "silent-room";

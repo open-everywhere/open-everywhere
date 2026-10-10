@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { serializeLock, type PlanFile, type ResolvedPackage, type DeclaredPackage } from "./roster-plan.js";
+import { MCP_SERVERS_FILE, serializeLock, type PlanFile, type ResolvedPackage, type DeclaredPackage } from "./roster-plan.js";
 import type { RosterLock } from "./roster-config.js";
 import { findUpward } from "./app-root.js";
 
@@ -17,8 +17,23 @@ export async function loadRosterConfig(repoRoot: string): Promise<{ raw?: unknow
   const path = join(repoRoot, CONFIG_FILE);
   if (!existsSync(path)) return { error: `${path} does not exist. Every Open Everywhere app declares its roster there.` };
   try {
+    // hosted-inline-exempt: build-time CLI (`oe build`) loading the app's own roster.config.ts by
     const mod = (await import(pathToFileURL(path).href)) as { default?: unknown };
     return { raw: mod.default };
+  } catch (err) {
+    return { error: `${path} could not be loaded: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
+export async function loadMcpServerNames(repoRoot: string, agentDir: string): Promise<{ names?: string[]; error?: string }> {
+  const path = join(repoRoot, agentDir, MCP_SERVERS_FILE);
+  if (!existsSync(path)) return { names: [] };
+  try {
+    // hosted-inline-exempt: build-time CLI (`oe build`) loading the app's own MCP server list by path —
+    const mod = (await import(pathToFileURL(path).href)) as { MCP_SERVERS?: unknown };
+    const list = mod.MCP_SERVERS;
+    if (!Array.isArray(list)) return { error: `${path} exports no MCP_SERVERS list (write \`export const MCP_SERVERS = defineMcpServers([...])\`).` };
+    return { names: list.map((s: { name?: unknown }) => String(s?.name)) };
   } catch (err) {
     return { error: `${path} could not be loaded: ${err instanceof Error ? err.message : String(err)}` };
   }
@@ -77,6 +92,7 @@ export async function resolvePackages(repoRoot: string, declared: readonly Decla
     }
     let manifest: unknown;
     try {
+      // hosted-inline-exempt: build-time CLI reading contribution manifests by path — never hosted.
       const mod = (await import(pathToFileURL(file).href)) as { CONTRIBUTIONS?: unknown; default?: unknown };
       manifest = mod.CONTRIBUTIONS ?? mod.default;
     } catch (err) {

@@ -14,7 +14,6 @@ import type { WebhookHook } from "../webhooks/config.js";
 import type { SpendBudgets } from "../spend/spend.js";
 import type { SpendCheckpoints } from "../spend/checkpoint.js";
 import type { ModelPolicy } from "../model/policy.js";
-import type { BlobHostingConfig } from "../blob/hosting.js";
 import type { Principal } from "../identity/principals.js";
 import type { Group } from "../identity/groups.js";
 
@@ -31,6 +30,7 @@ export interface AccessRequestsConfig {
   baseDomains?(): readonly Domain[];
   baseSilos?(): readonly MemorySilo[];
   readonly dryRun?: boolean;
+  readonly credentialBindingLive?: boolean;
   baseBundles(): readonly Bundle[];
   baseBindings(): readonly Binding[];
   domainRegistry?(): readonly Domain[];
@@ -56,7 +56,6 @@ export interface AppConfig {
   loadSpendCheckpoints?(): SpendCheckpoints;
   loadAccessRequests?(): AccessRequestsConfig | null;
   loadModelPolicy?(): ModelPolicy | undefined;
-  loadBlobHosting?(): BlobHostingConfig | undefined;
   loadPrincipals?(): readonly Principal[];
   loadGroups?(): readonly Group[];
   auditScrub?(text: string): string;

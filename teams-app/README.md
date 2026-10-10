@@ -9,8 +9,8 @@ for the full runbook — this directory is just the artifact it references.
 | File | What it is |
 | --- | --- |
 | `manifest.json` | **Not shipped — rendered** (OPE-2334). Get it from `surface_manifest { "surface": "teams" }` and save it here. |
-| `color.png` | 192×192 full-colour icon (placeholder — replace with your brand). |
-| `outline.png` | 32×32 transparent, single-colour outline icon (placeholder). |
+| `color.png` | 192×192 full-colour icon: the project mark (see [Icons](#icons)). |
+| `outline.png` | 32×32 white-on-transparent outline icon: the project mark (see [Icons](#icons)). |
 
 ## Get the manifest
 
@@ -116,8 +116,17 @@ Microsoft's Protected-API approval queue. `webApplicationInfo` must be present w
 
 ## Icons
 
-The shipped PNGs are placeholders (an "OE" tile). Replace with real brand assets before any
-public/org-wide install. Constraints Teams enforces:
+The shipped PNGs are the project mark, the pigeon from [`../brand/`](../brand/README.md). With no
+`identity.name` configured the agent presents as the project (`DEFAULT_AGENT_DISPLAY_NAME`), so the
+mark is its default avatar. Keep both files unless you set `identity.name` and chose your own icon.
+In that case, replace both before any public or org-wide install.
+
+`scripts/teams-icons-generate.ts` renders both files from the brand SVGs with a headless Chromium:
+`color.png` from `brand/svg/mark-square.svg`, and `outline.png` from `brand/svg/mark-mono-paper.svg`
+recoloured white. `npm run test:teams-icons` pins the shipped bytes to those masters and checks the
+rules below, so regenerate the files rather than edit them by hand.
+
+Constraints Teams enforces:
 
 - `color.png` — **192×192**, full colour, PNG.
 - `outline.png` — **32×32**, **transparent background**, single colour (white glyph on

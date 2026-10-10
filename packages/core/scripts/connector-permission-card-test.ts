@@ -1,3 +1,4 @@
+import { __setTestValveForTest } from "../agent/testing/test-valves.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,8 +17,8 @@ function ok(cond: boolean, label: string): void {
 
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
-process.env.OE_PLATFORM = "slack";
-process.env.OE_EGRESS_SPOOF = "1";
+setPlatformStandInForTest("slack");
+__setTestValveForTest("egress-spoof", true);
 _setDeploymentIdentityForTest({ org: undefined });
 
 const { resetTurnClock } = await import("../agent/observability/turn-clock.js");
@@ -27,6 +28,7 @@ registerSlackFixtureMapper();
 import type { ApprovalStatus } from "eve/tools/approval";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { removeTempDir } from "./_temp-dir.js";
+import { setPlatformStandInForTest } from "../agent/identity/binding.js";
 
 const routineDispatch = await import("../agent/schedules/routine-dispatch.js");
 const { connectorApprovalPolicy, ASK_UNATTENDED_SENTENCE, TAINTED_ASK_UNATTENDED_SENTENCE } = await import("../agent/connections/connector-auth.js");
@@ -54,7 +56,7 @@ registerConfig({
   domainsForSurface: () => [],
 });
 registerSettings({});
-overrideSettingsForTest({ connectors: { opTiering: true } });
+overrideSettingsForTest({ connectors: { opTiering: true }, approvals: { routineCardWaitSeconds: 0 } });
 
 class FakeSession {
   private readonly slots = new Map<string, unknown>();

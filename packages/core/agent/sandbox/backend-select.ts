@@ -1,18 +1,28 @@
-export type SelfHostBackendKind = "docker" | "justbash";
+import { onVercel } from "../access/platform.js";
+import { getSettings, type AgentSettings, type SandboxBackendChoice } from "../settings/settings.js";
+
+export type SelfHostBackendKind = SandboxBackendChoice;
+
+export type SandboxBackendKind = "vercel" | SelfHostBackendKind;
 
 export const JUSTBASH_BOOT_WARNING =
   "[open-everywhere:sandbox] ⚠ justbash backend: the agent's shell SHARES THE APP PROCESS FILESYSTEM " +
   "(app files, container/OS). Dev + testing only — use docker() (default) or Vercel for any real deployment.";
 
-export function resolveSelfHostBackendKind(env: NodeJS.ProcessEnv = process.env): SelfHostBackendKind {
-  const raw = env.OE_SANDBOX_BACKEND;
-  const kind = (raw ?? "").trim().toLowerCase();
-  if (kind === "" || kind === "docker") return "docker";
-  if (kind === "justbash") return "justbash";
-  throw new Error(
-    `[open-everywhere:sandbox] unknown OE_SANDBOX_BACKEND=${JSON.stringify(raw)} — valid values: ` +
-      `docker (default) | justbash (dev only). Refusing to boot.`,
-  );
+export function resolveSelfHostBackendKind(sandbox: AgentSettings["sandbox"] = getSettings().sandbox): SelfHostBackendKind {
+  return sandbox.selfHostBackend;
+}
+
+export function resolveSandboxBackend(
+  sandbox: AgentSettings["sandbox"] = getSettings().sandbox,
+  vercelHost: boolean = onVercel(),
+): SandboxBackendKind {
+  if (vercelHost || sandbox.useVercelSandbox) return "vercel";
+  return sandbox.selfHostBackend;
+}
+
+export function sandboxOnVercel(): boolean {
+  return resolveSandboxBackend() === "vercel";
 }
 
 export interface BackendBootLog {
@@ -24,10 +34,10 @@ export function selfHostBackendBootLog(kind: SelfHostBackendKind): BackendBootLo
   if (kind === "justbash") {
     return {
       warn: JUSTBASH_BOOT_WARNING,
-      info: "[open-everywhere:sandbox] off-Vercel sandbox backend = justbash (explicit OE_SANDBOX_BACKEND=justbash)",
+      info: "[open-everywhere:sandbox] off-Vercel sandbox backend = justbash (declared: sandbox.selfHostBackend)",
     };
   }
   return {
-    info: "[open-everywhere:sandbox] off-Vercel sandbox backend = docker (default; contained per-session fs, egress via proxy sidecar)",
+    info: "[open-everywhere:sandbox] off-Vercel sandbox backend = docker (default; contained per-session fs; session egress is NOT behind the proxy sidecar — coarse allow-all/deny-all only)",
   };
 }

@@ -433,6 +433,7 @@ for (const [label, err] of [
   const withGuest = dispatch({
     trigger: { ...trigger, trust: "peer" },
     threadComments: [{ from: "human", id: "c0", authorId: GUEST, sentAt: "2026-07-10T08:00:00Z", text: "earlier", trust: "peer" }],
+    externalPolicy: { authorGrain: "taint", roomGrain: "engage" },
   });
 
   await handleNotionSupervisorDispatch(withGuest, deps);
@@ -447,7 +448,7 @@ for (const [label, err] of [
     );
     ok(auths[1] !== AUTH && (AUTH.attributes as Record<string, unknown>)[OE_CHAT_NONMEMBER_ATTR] === undefined, "…on a NEW object; the caller's auth is never mutated");
 
-    await handleNotionSupervisorDispatch(dispatch({ trigger: { ...trigger, trust: "peer" }, threadComments: [] }), deps);
+    await handleNotionSupervisorDispatch(dispatch({ trigger: { ...trigger, trust: "peer" }, threadComments: [], externalPolicy: { authorGrain: "taint", roomGrain: "engage" } }), deps);
     ok(
       auths[2] === AUTH,
       "🔴 NEGATIVE CONTROL: with only the DECLARED author ingested, the armed workspace stamps NOTHING — the leg discriminates, it is not an always-on bit",
@@ -498,14 +499,17 @@ for (const [label, err] of [
       trigger: { ...trigger, trust: "peer" },
       threadComments: [guestComment],
     });
-    ok(tainted.messages[0]!.includes(SECRET), "🔴 NEGATIVE CONTROL: on the shipped `taint` grain the same comment IS delivered in full");
+    ok(tainted.messages[0]!.includes(SECRET), "🔴 NEGATIVE CONTROL: on the `taint` opt-out grain the same comment IS delivered in full");
     ok(
       tainted.auths[0]?.attributes[OE_CHAT_NONMEMBER_ATTR] === "true",
       "🔴 NEGATIVE CONTROL: …and it DOES key taint, which is the behaviour `withhold` replaces rather than duplicates",
     );
 
-    const legacy = await run({ trigger: { ...trigger, trust: "peer" }, threadComments: [guestComment] });
-    ok(legacy.messages[0]!.includes(SECRET), "a dispatch carrying NO policy resolves the org default — byte-identical to before this field existed");
+    const shipped = await run({ trigger: { ...trigger, trust: "peer" }, threadComments: [guestComment] });
+    ok(
+      !shipped.messages[0]!.includes(SECRET) && shipped.messages[0]!.includes("a message arrived here"),
+      "🔴 a dispatch carrying NO policy resolves the SHIPPED org default — `withhold` — so the guest's text is not delivered",
+    );
 
     const suppressed = await run({
       externalPolicy: { authorGrain: "withhold", roomGrain: "engage" },

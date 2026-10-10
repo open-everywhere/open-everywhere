@@ -341,7 +341,7 @@ export function configSnippet(
     "// domain — TWO surfaces on ONE unified window (`mode` and `ambientSupervisor` are independent",
     "// knobs; the pair is what makes probe M4 'cross-surface one-brain' runnable). Each channel must belong to NO other",
     "// domain: a channel lives in at most one (assertChannelExclusivity), so if another fixture already",
-    "// claims one of these, hand it over under the same OE_MEMORY_EVAL gate — see the e2e-b/e2e-unified",
+    "// claims one of these, hand it over under the same memory-eval test valve — see the e2e-b/e2e-unified",
     "// yields in agent/memory/config/domains.ts.",
     `  defineDomain({ name: ${JSON.stringify(domain)}, reach: [${JSON.stringify(channel)}, ${JSON.stringify(crossSurfaceChannel)}], memory: [${memoryRefs}], ambientSupervisor: true, mode: "unified" }),`,
   ].join("\n");

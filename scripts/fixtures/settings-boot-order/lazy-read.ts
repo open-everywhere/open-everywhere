@@ -11,4 +11,4 @@ export const TABLE = {
   },
 };
 
-export const AT_BUILD = getSettings(process.env, { delegation: { oneshotAgent: false } }).delegation.oneshotAgent;
+export const AT_BUILD = getSettings({ delegation: { oneshotAgent: false } }).delegation.oneshotAgent;

@@ -1,3 +1,4 @@
+import { __setTestValveForTest } from "@open-everywhere/core/agent/testing/test-valves.js";
 import { afterAll, expect, test } from "vitest";
 
 import {
@@ -40,7 +41,7 @@ function confirmationsInRoom(confirmation: string): DiscordCreateMessageCall[] {
 
 test("① 🔴 NEGATIVE CONTROL: a turn that does not halt puts NO confirmation in the room", async () => {
   await bootAgent();
-  delete process.env.OE_EGRESS_SPOOF;
+  __setTestValveForTest("egress-spoof", false);
   (discord.messages as DiscordCreateMessageCall[]).length = 0;
 
   const cursor = await driveTurn("hc-clear", [
@@ -55,7 +56,7 @@ test("① 🔴 NEGATIVE CONTROL: a turn that does not halt puts NO confirmation 
 
 test("② a real `halt` call posts the host's confirmation into the room, and the row says it did", async () => {
   await bootAgent();
-  delete process.env.OE_EGRESS_SPOOF;
+  __setTestValveForTest("egress-spoof", false);
   (discord.messages as DiscordCreateMessageCall[]).length = 0;
 
   const cursor = await driveTurn("hc-halt", [

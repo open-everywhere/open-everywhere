@@ -47,12 +47,9 @@ representing the community in public spaces.
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the project
 maintainers. To report privately, **open a private report via the repository's Security → "Report a
-vulnerability" channel** (which routes only to maintainers) and mark it as a Code of Conduct concern, or
-contact a maintainer directly via the contact on their GitHub profile. All complaints will be reviewed and
-investigated promptly and fairly.
-
-> Maintainers: replace this paragraph with a dedicated contact address (e.g. `conduct@<your-domain>`) when
-> one is available.
+vulnerability" channel** (which routes only to maintainers, see [SECURITY.md](./SECURITY.md)) and mark it
+as a Code of Conduct concern, or contact a maintainer directly via the contact on their GitHub profile. All
+complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the reporter of any incident.
 

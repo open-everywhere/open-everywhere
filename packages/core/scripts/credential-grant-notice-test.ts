@@ -1,3 +1,4 @@
+import { __setTestValveForTest } from "../agent/testing/test-valves.js";
 import assert from "node:assert/strict";
 
 import { adoptDelegatedAuthority } from "../agent/identity/delegated-binding.js";
@@ -8,7 +9,7 @@ import { join } from "node:path";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-grant-notice-")), "ops.sqlite3");
 delete process.env.OE_PLATFORM;
-delete process.env.OE_EGRESS_SPOOF;
+__setTestValveForTest("egress-spoof", false);
 
 import { registerGrantBorrowTransport, runGrantedCall } from "../agent/access/credential-grant-broker.js";
 import { _resetGrantBorrowTransportsForTest } from "../agent/access/grant-borrow-transport-registry.internal.js";

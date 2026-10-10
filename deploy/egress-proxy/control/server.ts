@@ -44,7 +44,7 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const path = url.pathname;
 
-    if (req.method === "GET" && path === "/healthz") return send(res, 200, { ok: true, policies: store.size() });
+    if (req.method === "GET" && path === "/healthz") return send(res, 200, { ok: true, policies: store.size(), hostPlane: store.hostPlane() !== undefined });
 
     if (path === "/policy" && req.method === "POST") {
       let body: unknown;
@@ -54,7 +54,7 @@ const server = http.createServer(async (req, res) => {
         return send(res, 400, { error: "invalid JSON" });
       }
       const result = handlePolicyPush(store, { body, remoteAddr: remoteAddr(req), authOk: authOk(req) });
-      if (result.keyed) console.log(`[oe-egress-control] policy set for ${result.keyed} (${store.size()} active)`);
+      if (result.keyed) console.log(`[oe-egress-control] policy set for ${result.keyed} (${store.size()} session source(s) active)`);
       return send(res, result.status, result.body);
     }
 
@@ -72,8 +72,9 @@ const server = http.createServer(async (req, res) => {
         host: url.searchParams.get("host") ?? undefined,
         method: url.searchParams.get("method") ?? undefined,
         path: url.searchParams.get("path") ?? undefined,
+        auth: url.searchParams.get("auth") ?? undefined,
       };
-      const { decision } = handleAcl(store, q);
+      const { decision } = handleAcl(store, q, TOKEN);
       return send(res, 200, { allow: decision.allow, headers: decision.headers ?? null, matchedHost: decision.matchedHost ?? null });
     }
 

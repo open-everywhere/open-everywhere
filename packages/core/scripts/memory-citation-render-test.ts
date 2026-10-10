@@ -1,3 +1,4 @@
+import { __setTestValveForTest } from "../agent/testing/test-valves.js";
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -5,7 +6,7 @@ import { join } from "node:path";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-memory-citation-render-")), "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: undefined });
-delete process.env.OE_EGRESS_SPOOF;
+__setTestValveForTest("egress-spoof", false);
 
 import { truncateMemoryCitationPaths } from "../agent/channels/turn-delivery.js";
 import { registerPostArm, type PostArm } from "../agent/channels/post-arms.js";

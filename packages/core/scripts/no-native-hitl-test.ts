@@ -83,12 +83,13 @@ ok(
 );
 resetSettingsForTest();
 
+const builderSource = readFileSync(join(repoRoot, "packages/core/agent/connections/mcp-server-connection.ts"), "utf8");
+const builderSites = findEveApprovalSites("mcp-server-connection.ts", builderSource);
+ok(builderSites.length === 1, "§4 the shared MCP connection builder carries exactly one approval line");
+ok(/^\s*approval:\s*connectorApprovalPolicy\(\),?\s*$/m.test(builderSource), "§4 the builder's approval is connectorApprovalPolicy() and nothing else");
 const notionSource = readFileSync(join(repoRoot, "packages/core/agent/connections/notion.ts"), "utf8");
-const notionSites = findEveApprovalSites("notion.ts", notionSource);
-ok(notionSites.length === 1, "§4 notion.ts carries exactly one approval line");
-ok(/^\s*approval:\s*connectorApprovalPolicy\(\),?\s*$/m.test(notionSource), "§4 notion.ts's approval is connectorApprovalPolicy() and nothing else");
-
-const notionReason = NON_TOOL_APPROVAL_SITES["packages/core/agent/connections/notion.ts"] ?? "";
+ok(findEveApprovalSites("notion.ts", notionSource).length === 0 && /export default buildMcpConnection\(/.test(notionSource), "§4 notion.ts builds through the shared builder and sets no approval of its own");
+const notionReason = NON_TOOL_APPROVAL_SITES["packages/core/agent/connections/mcp-server-connection.ts"] ?? "";
 ok(/never prompts/i.test(notionReason), "§5 the notion allowlist row says the seam never prompts");
 ok(!/once\(\)/.test(notionReason.replace(/never returns `?once\(\)`?/gi, "")), "§5 the notion allowlist row no longer describes a live once()");
 
@@ -171,42 +172,6 @@ ok(!/once\(\)/.test(notionReason.replace(/never returns `?once\(\)`?/gi, "")), "
   ok(merged.session.turn.id === "turn-7" && merged.session.parent.callId === "call-3" && merged.session.id === "sess-child", "§6b the card context carries the approval session's turn and parent");
   ok(merged.channel.kind === "subagent", "§6b …and keeps the surface kind resolved from the auth");
   ok(connectorCardContext(surface as never, undefined) === (surface as never), "§6b no session: the surface context stands");
-}
-
-{
-  const fp = await import("../agent/approvals/file-publish.js");
-  const { actionKind } = await import("../agent/approvals/actions.js");
-  const kind = actionKind(fp.FILE_PUBLISH_KIND);
-  ok(kind !== undefined && kind.policy === "member", "§7 file.publish is registered at the member tier");
-  const page = fp.freezePublishPage({ filename: "report.html", contentType: "text/html", bytes: new TextEncoder().encode("<h1>hi</h1>") });
-  const args = { org: "o", scopeKey: "slack/T1/C1", platform: "slack", linkChannelId: "C1", threadTs: null, pages: [page], requestedBy: "U1" };
-  const lines = kind!.summarize(args);
-  ok(lines[0]!.includes("PUBLIC URL") && lines.some((l) => l.includes("report.html") && l.includes(page.sha256.slice(0, 16))), "§7 the card names the page and its digest, and says it goes public");
-  ok(lines.some((l) => l.includes("Only <@U1>, who asked, can approve")), "§7 the card says only the asker can approve it");
-  let refusal = "";
-  try {
-    await kind!.execute(args, "U1");
-  } catch (err) {
-    refusal = String((err as Error).message);
-  }
-  ok(refusal.includes("turned Blob hosting off"), `§7 a click with hosting off publishes nothing (got: ${refusal})`);
-  let notAsker = "";
-  try {
-    await kind!.execute(args, "U2");
-  } catch (err) {
-    notAsker = String((err as Error).message);
-  }
-  ok(notAsker.includes("only the person who asked"), `§7 a click by a member who did not ask publishes nothing — the native confirm's requester bind (got: ${notAsker})`);
-  const tampered = { ...page, contentBase64: Buffer.from("<h1>evil</h1>").toString("base64") };
-  const { _testThawPage } = fp as unknown as { _testThawPage?: (p: typeof page) => Uint8Array };
-  ok(typeof _testThawPage === "function", "§7 the thaw is exposed for the test");
-  let thawRefusal = "";
-  try {
-    _testThawPage!(tampered);
-  } catch (err) {
-    thawRefusal = String((err as Error).message);
-  }
-  ok(thawRefusal.includes("does not match the digest"), "§7 a page that does not match its digest is refused");
 }
 
 {

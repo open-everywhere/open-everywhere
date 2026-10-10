@@ -5,19 +5,8 @@ import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { bridgeSlackReadCall } from "../channels/slack-bridge.js";
 import { surfaceMessageOps } from "../channels/surface-message-ops.js";
 import { auditToolAction } from "../audit/tool-action.js";
-import { hostHtmlArtifact, resolveBlobHosting } from "../blob/hosting.js";
 import { confineToWorkspacePath } from "./describe_image.js";
 import { postOnce, outboundKey } from "../operational/post-once.js";
-import { actingPrincipalIdOf, unattendedOf } from "../access/request.js";
-import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
-import { getConfig } from "../access/config.js";
-import { autoApprovedNote, requestApproval } from "../approvals/flow.js";
-import { approvalPostDeps } from "./set_spend_limit.js";
-import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
-import { proposalScopeKey } from "../channels/propose-scope.js";
-import { requireSessionContinuation } from "../spend/checkpoint.js";
-import { resolvePartition } from "../memory/partition.js";
-import { MAX_CARDED_PUBLISH_BYTES, freezePublishPage, type FilePublishArgs } from "../approvals/file-publish.js";
 
 const EXT_CONTENT_TYPES: Readonly<Record<string, string>> = {
   png: "image/png",
@@ -47,10 +36,6 @@ export function inferContentType(filename: string): string {
   if (dot < 0 || dot === filename.length - 1) return "application/octet-stream";
   const ext = filename.slice(dot + 1).toLowerCase();
   return EXT_CONTENT_TYPES[ext] ?? "application/octet-stream";
-}
-
-function isHtmlArtifact(contentType: string): boolean {
-  return contentType === "text/html";
 }
 
 interface SandboxHandle {
@@ -159,88 +144,6 @@ async function postFilesToNotion(ctx: BindableContext, files: readonly ResolvedF
   return await ops.postFiles(notionPageChannelId(ctx), files, comment);
 }
 
-interface PublishCard {
-  readonly pending: boolean;
-  readonly autoApproved?: boolean;
-  readonly pendingId?: string;
-  readonly urls: readonly string[];
-  readonly message: string;
-}
-
-function linkChannelIdOf(ctx: BindableContext, platform: string): string {
-  const binding = bindFrom(ctx);
-  const id = platform === "notion" ? binding.anchorChannelId : binding.target?.channelId;
-  if (typeof id !== "string" || id.length === 0) {
-    throw new Error(`post_file: couldn't resolve this ${platform} conversation's address — try again from a real channel, DM or page comment. Nothing was published.`);
-  }
-  return id;
-}
-
-async function proposePublish(ctx: BindableContext, platform: string, pages: readonly ResolvedFile[], comment: string | undefined): Promise<PublishCard> {
-  if (unattendedOf(ctx)) throw new Error(UNATTENDED_PUBLISH_REFUSAL);
-  await requireSessionContinuation(ctx, "post_file");
-  const total = pages.reduce((n, f) => n + f.bytes.byteLength, 0);
-  if (total > MAX_CARDED_PUBLISH_BYTES) {
-    throw new Error(
-      `post_file: the HTML to publish is ${total} bytes; one approval card holds at most ${MAX_CARDED_PUBLISH_BYTES}. ` +
-        "Split it across several calls, or post it as a plain attachment. Nothing was published or posted.",
-    );
-  }
-  const requestedBy = actingPrincipalIdOf(ctx);
-  if (!requestedBy) {
-    throw new Error("post_file: a publish needs a verified sender on this turn, and this turn has none. Ask a person in this conversation to publish it. Nothing was published.");
-  }
-  const binding = bindFrom(ctx);
-  const p = resolvePartition(ctx);
-  const venueResult = await checkApprovalVenue(binding, p, () => getConfig().loadDomains());
-  if ("refusal" in venueResult) throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "publish that page"));
-  const venue = venueResult.venue;
-  if (venue.platform !== binding.platform) {
-    throw new Error(
-      `post_file: only the person who asked can approve a publish, and ${binding.platform} has no approval-card path here — ` +
-        "a card in another platform's room is one you could never approve. Post the page without Blob hosting so it attaches instead. Nothing was published.",
-    );
-  }
-  const tainted = untrustedIngestedThisTurn();
-  const args: FilePublishArgs = {
-    org: p.org,
-    scopeKey: p.surfaceKey,
-    platform,
-    linkChannelId: linkChannelIdOf(ctx, platform),
-    threadTs: binding.threadTs ?? null,
-    pages: pages.map((f) => freezePublishPage(f)),
-    ...(comment ? { comment } : {}),
-    requestedBy,
-    ...(tainted ? { tainted: true } : {}),
-  };
-  const posted = await requestApproval(
-    {
-      org: p.org,
-      kind: "file.publish",
-      args,
-      scopeKey: await proposalScopeKey(ctx, p),
-      domain: null,
-      requestedBy,
-      channelId: venue.channelId,
-      threadTs: venue.sameRoom ? (binding.threadTs ?? null) : null,
-      postedTo: venue.surfaceKey,
-      chain: { unattended: unattendedOf(ctx), tainted },
-    },
-    approvalPostDeps(venue.platform, ctx),
-  );
-  const subject = `publish of ${pages.map((f) => `"${f.filename}"`).join(", ")} to a public URL`;
-  if (posted.autoApproved) {
-    const urls = posted.autoApproved.outcome.match(/https:\/\/\S+/g) ?? [];
-    return { pending: false, autoApproved: true, pendingId: posted.id, urls, message: autoApprovedNote(subject, posted.autoApproved) };
-  }
-  return {
-    pending: true,
-    pendingId: posted.id,
-    urls: [],
-    message: `${cardPostedPrefix(venue)} — ${subject} awaits a member's approval (pending ${posted.id}). Nothing is public yet.${cardPostedTail(venue, "approve the publish", posted)}`,
-  };
-}
-
 const MAX_FILES = 10;
 
 const NOTION_MAX_POST_FILE_ATTACHMENTS = 3;
@@ -262,28 +165,12 @@ const inputSchema = z.object({
     .describe("One or more files to post (max 10), each up to 10 MB."),
   comment: z.string().min(1).optional().describe("Optional text posted alongside the files."),
 });
-type PostFileInput = z.infer<typeof inputSchema>;
 
-function inputFileIsHtml(f: PostFileInput["files"][number]): boolean {
-  return isHtmlArtifact(f.contentType ?? inferContentType(f.filename));
-}
+const HTML_PAGES_SENTENCE =
+  "HTML pages: an HTML page is attached as a downloadable file, exactly like any other file. " +
+  "Keep the real filename and extension (`page.html`, `text/html`). Do not rename it to `.txt`.";
 
-const UNATTENDED_PUBLISH_REFUSAL =
-  "post_file: publishing an HTML artifact to a public URL needs approval, and nobody is attending this run. " +
-  "An unattended run cannot wait on an approval card, and no standing permission covers this tool. " +
-  "Ask a person to publish it, or post the file without Blob hosting so it attaches instead. Nothing was published.";
-
-function htmlPagesSentence(hostingEnabled: boolean): string {
-  return hostingEnabled
-    ? "HTML pages: this org has opted in to Blob hosting, so an HTML page is published to a public URL. " +
-        "Each publish needs approval: the call posts an approval card into the room and returns at once, " +
-        "and the page goes public only when a member approves the card. Any non-HTML files in the same call attach at once."
-    : "HTML pages: this org has not opted in to Blob hosting. An HTML page is attached as a downloadable " +
-        "file, exactly like any other file. Nothing is ever published or made public. Keep the real " +
-        "filename and extension (`page.html`, `text/html`). Do not rename it to `.txt`.";
-}
-
-export function postFileDescription(hostingEnabled: boolean): string {
+export function postFileDescription(): string {
   return (
     "Post one or more FILES/artifacts (screenshots, images, docs, data) to the current conversation " +
     "on this surface — the delivery channel for things a text reply can't carry. Give each file a " +
@@ -293,22 +180,17 @@ export function postFileDescription(hostingEnabled: boolean): string {
     "and a per-file `caption`. Works on Slack, Discord and Notion today (Notion accepts at most 3 " +
     "files per post — a comment's own vendor cap); on other surfaces it returns a clear " +
     "'not supported here' error so you can fall back to a text reply. " +
-    htmlPagesSentence(hostingEnabled)
+    HTML_PAGES_SENTENCE
   );
 }
 
 export default windowGated("post_file", defineTool({
-  description: postFileDescription(resolveBlobHosting().enabled),
+  description: postFileDescription(),
   inputSchema,
   outputSchema: z.object({
     posted: z.boolean(),
     count: z.number(),
     platform: z.string(),
-    urls: z.array(z.string()).optional(),
-    pending: z.boolean().optional().describe("An approval card for the HTML publish is posted; nothing is public until a member approves it."),
-    pendingId: z.string().optional(),
-    message: z.string().optional(),
-    autoApproved: z.boolean().optional().describe("The approver chain lowered the publish: no card was posted and the pages are ALREADY public."),
   }),
   async execute(input, ctx) {
     const platform = bindFrom(ctx as BindableContext).platform;
@@ -324,25 +206,12 @@ export default windowGated("post_file", defineTool({
       );
     }
 
-    if (resolveBlobHosting().enabled && input.files.some(inputFileIsHtml) && unattendedOf(ctx as BindableContext)) {
-      throw new Error(UNATTENDED_PUBLISH_REFUSAL);
-    }
-
     const resolved: ResolvedFile[] = [];
     for (const f of input.files) {
       const contentType = f.contentType ?? inferContentType(f.filename);
       const bytes = await resolveBytes(f.source.path, ctx as BindableContext);
       resolved.push({ bytes, filename: f.filename, contentType, caption: f.caption });
     }
-
-    const hosting = resolveBlobHosting();
-    const toAttach: ResolvedFile[] = [];
-    const toPublish: ResolvedFile[] = [];
-    for (const file of resolved) {
-      if (isHtmlArtifact(file.contentType) && hosting.enabled) toPublish.push(file);
-      else toAttach.push(file);
-    }
-    const card = toPublish.length > 0 ? await proposePublish(ctx as BindableContext, platform, toPublish, toAttach.length > 0 ? undefined : input.comment) : undefined;
 
     const binding = bindFrom(ctx as BindableContext);
     const channelId =
@@ -353,46 +222,29 @@ export default windowGated("post_file", defineTool({
           : undefined;
     const callId = typeof (ctx as { callId?: unknown }).callId === "string" ? (ctx as { callId: string }).callId : undefined;
 
-    let attachId: string | undefined;
-    if (toAttach.length > 0) {
-      attachId = await postOnce({
-        org: binding.org,
-        key: outboundKey({
-          surface: platform,
-          channel: channelId,
-          threadTs: binding.threadTs,
-          action: `${platform}.post_file.attach`,
-          stableId: callId,
-          payload: `${input.comment ?? ""}\x00${toAttach.map((f) => `${f.filename}:${f.contentType}:${f.bytes.byteLength}`).join(",")}`,
-        }),
-        run: async () => {
-          if (platform === "slack") return await postFilesToSlack(ctx as BindableContext, toAttach, input.comment);
-          if (platform === "discord") return await postFilesToDiscord(ctx as BindableContext, toAttach, input.comment);
-          return await postFilesToNotion(ctx as BindableContext, toAttach, input.comment);
-        },
-      });
-    }
-    if (toAttach.length > 0) {
-      await auditToolAction(ctx, `${platform}.post_file`, {
-        count: toAttach.length,
-        filenames: toAttach.map((f) => f.filename),
-        hasComment: Boolean(input.comment),
-        hosted: 0,
-        attached: toAttach.length,
-        ...(card !== undefined ? { carded: toPublish.length } : {}),
-        ...(attachId ? { id: attachId } : {}),
-      });
-    }
-    if (card === undefined) return { posted: true, count: resolved.length, platform };
-    return {
-      posted: toAttach.length > 0 || card.urls.length > 0,
+    const attachId = await postOnce({
+      org: binding.org,
+      key: outboundKey({
+        surface: platform,
+        channel: channelId,
+        threadTs: binding.threadTs,
+        action: `${platform}.post_file.attach`,
+        stableId: callId,
+        payload: `${input.comment ?? ""}\x00${resolved.map((f) => `${f.filename}:${f.contentType}:${f.bytes.byteLength}`).join(",")}`,
+      }),
+      run: async () => {
+        if (platform === "slack") return await postFilesToSlack(ctx as BindableContext, resolved, input.comment);
+        if (platform === "discord") return await postFilesToDiscord(ctx as BindableContext, resolved, input.comment);
+        return await postFilesToNotion(ctx as BindableContext, resolved, input.comment);
+      },
+    });
+    await auditToolAction(ctx, `${platform}.post_file`, {
       count: resolved.length,
-      platform,
-      ...(card.urls.length > 0 ? { urls: card.urls } : {}),
-      pending: card.pending,
-      ...(card.autoApproved ? { autoApproved: true } : {}),
-      ...(card.pendingId !== undefined ? { pendingId: card.pendingId } : {}),
-      message: card.message,
-    };
+      filenames: resolved.map((f) => f.filename),
+      hasComment: Boolean(input.comment),
+      attached: resolved.length,
+      ...(attachId ? { id: attachId } : {}),
+    });
+    return { posted: true, count: resolved.length, platform };
   },
 }));
