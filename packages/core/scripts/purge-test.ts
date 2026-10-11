@@ -461,6 +461,17 @@ function tiersOf(eng: Record<string, string | undefined>, org: Record<string, st
   ok(clickAudit.length === 1 && clickAudit[0]!.principalId === "U_CLICKER_1", "replay: exactly ONE memory.purge row exists for the re-clicked card");
 }
 
+{
+  const content = "## People\n- top level\n  - nested secret fact\n";
+  const found = findPurgeCandidates([{ siloName: "s", provider: "sqlite", tierId: "silo:s", files: { "MEMORY.md": content } }], "nested secret");
+  ok(found.kind === "some", "nested: the sweep finds the indented bullet");
+  const sha = found.kind === "some" ? bulletSha256(found.candidates[0]!.bullet) : "";
+  const swept = removeBulletLinesBySha(content, [sha]);
+  ok(swept.removed === 1 && !swept.content.includes("nested secret"), "nested: 🔴 the remover erases it by the card's digest — it used to remove nothing");
+  ok(swept.content.includes("- top level"), "nested: the parent bullet stays");
+  ok(removeBulletLineBySha(content, sha).removed, "nested: the single-line remover agrees");
+}
+
 assert.ok(n > 0);
 console.log(`\n✓ purge: ${n} assertions passed (planPurge sweep/multi-bullet/refusals, redacted memory.purge execute + audit, capture-seam deletion digests, GDPR round-trip sweep, OPE-582 re-execution idempotence)\n`);
 await removeTempDir(tmp);

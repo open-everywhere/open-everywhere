@@ -63,6 +63,7 @@ registerActionKind({
   kind: "test.member",
   policy: "member",
   summarize: () => ["a member-policy test action"],
+  plainSummary: () => "Do the test thing",
   async execute(_args: unknown, decidedBy: string) {
     memberExecuted.push(decidedBy);
     return `executed by ${decidedBy}`;
@@ -653,6 +654,16 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   ok(calls.some((c) => c.method === "chat.postMessage" && (bodyField(c.body, "blocks") ?? "").includes("oe_approval:approve:")), "requestApproval: posts a card whose blocks carry an oe_approval: approve action_id");
   const audit = await readAudit({ org: "default", action: "approval.requested" });
   ok(audit.some((e) => e.detail?.id === id && e.principalId === "U_REQUESTER"), "requestApproval: audits approval.requested with the requester as principal");
+  const cardRows = await getOperationalStore().runAnalyticsQuery({
+    table: "tool_usage",
+    select: [{ expr: "COUNT(*)", alias: "n" }],
+    groupBy: [],
+    where: ["org_id = ?", "event = 'card'", "tool = ?", "connector = ''", "surface_key = ?", "principal_id = ?"],
+    params: ["default", "spend.set", "slack/T4/C4", "U_REQUESTER"],
+    orderBy: null,
+    limit: 1,
+  });
+  ok(Number(cardRows[0]?.n) === 1, "requestApproval: a posted card writes one tool_usage card row under its kind (OPE-2435)");
   ok(!calls.some((c) => bodyField(c.body, "thread_ts") !== null), "requestApproval: no threadTs -> the card posts as a fresh channel message (no thread_ts param)");
 
   await requestApproval(
@@ -1359,6 +1370,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
       kind: "test.throws",
       policy: "admin",
       summarize: () => ["a kind whose execute always throws"],
+      plainSummary: () => "Do the test thing",
       execute: async () => {
         throw new Error("transport refused the send");
       },
@@ -1627,6 +1639,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
     policy: "member",
     beneficiaryClicker: true,
     summarize: () => ["a beneficiary member-policy test action"],
+    plainSummary: () => "Do the test thing",
     async execute(_args: unknown, decidedBy: string) {
       benefitExecuted.push(decidedBy);
       return `executed by ${decidedBy}`;
@@ -1637,6 +1650,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
     kind: "test.admin",
     policy: "admin",
     summarize: () => ["an admin-policy test action"],
+    plainSummary: () => "Do the test thing",
     async execute(_args: unknown, decidedBy: string) {
       adminExecuted.push(decidedBy);
       return `executed by ${decidedBy}`;
@@ -1921,6 +1935,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
     kind: "test.member.disclosive",
     policy: "member",
     summarize: () => ["a member-tier card carrying content"],
+    plainSummary: () => "Do the test thing",
     async execute() {
       return "ok";
     },
@@ -2282,6 +2297,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
     kind: liftKind,
     policy: "admin",
     summarize: () => ["lift the halt"],
+    plainSummary: () => "Do the test thing",
     async execute() {
       lifted++;
       return "halt lifted";
@@ -2345,6 +2361,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
     kind: "pr.open",
     policy: "member",
     summarize: () => ["open a pull request"],
+    plainSummary: () => "Do the test thing",
     async execute(args: unknown, decidedBy: string) {
       prExecuted.push(String((args as { what?: unknown }).what));
       return `published by ${decidedBy}`;
@@ -2535,6 +2552,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
     kind: "pr.open",
     policy: "member",
     summarize: () => ["open a pull request"],
+    plainSummary: () => "Do the test thing",
     async execute(args: unknown) {
       const what = String((args as { what?: unknown }).what);
       entered.push(what);

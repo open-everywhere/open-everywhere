@@ -321,7 +321,9 @@ not the standing seat, which is the question a declaration alone cannot answer.
 A thread ownership row records which session owns one thread. `recordThreadOwner`
 (`packages/core/agent/channels/thread-ownership.ts`) writes it with a **seven-day** TTL
 (`THREAD_OWNER_TTL_MS`), so a thread nobody handed back returns to the standing seat rather than
-staying owned forever.
+staying owned forever. The TTL clock is the thread's **last activity**, not the spawn: every message
+routed to a thread seat moves it forward (`touchThreadSeat`), and the idle sweep (§2.6.2) closes a
+quiet thread seat with a hand-back before this backstop could drop its row in silence.
 
 `resolveThreadOwner` **fails closed**: a store error answers `null`, and the message then routes to
 the standing seat. `clearThreadOwner` answers `false` on the same error, so a failed release never
@@ -329,9 +331,18 @@ reads as a release.
 
 `routeThreadMessage` decides the route from the stored token alone, and every doubt routes to the
 standing seat. It returns `standing` when there is no owner token, when the token does not parse as a
-window token, when the window id is neither task-grain nor thread-seat-grain, when the token's
+window token, when the window id is neither task-grain nor thread-seat-grain, when a **task** owner's
 **generation** differs from the live one, and when the token's **domain** differs from the caller's.
-A stale generation therefore cannot swallow a thread's traffic after the seat rotated.
+A retired task worker therefore cannot swallow a thread's traffic after the seat rotated.
+
+🔴 **A thread seat's generation never makes it stale** (OPE-2428). Its token carries the generation
+its parent had at the spawn, but the seat is its own eve session — a dispatch, not a child — so the
+parent's retirement does not end it. Reading that generation as staleness orphaned every delegated
+thread that outlived a rotation (12 quiet hours or 7 days): its messages went back to the standing
+seat, its row was reaped, and it never handed back. The domain check still applies to a seat, and a
+seat that fails it is **closed with a hand-back** at the ingress reap, never just dropped. The spawn's
+idempotency check reads the same rule (`isLiveThreadSeatOwner`): a second spawn on a thread reuses
+the live seat whatever generation spawned it.
 
 The **owner's grain is read from the token's own shape**: a `t/` window id is a wide-hands task
 worker, an `s/` window id a narrow thread seat. Nothing else carries that fact, so the route and the
@@ -349,10 +360,43 @@ registry key, the stored wake origin and the state.
 `threadSeatOrigin` **re-validates the stored origin on every read**. Unparseable JSON and a value that
 is not a known origin both answer "no origin", so a corrupted row cannot misroute a delivery.
 
-`recordThreadSeatReport` **rewrites the row rather than appending to it**: it reads the open record,
-rewrites it with state `completed` and the report, and answers the closed row. With **no open record
-it answers `null`**, and no report wake fires. `readThreadSeatState` is fail-soft in the other
+`recordThreadSeatClose` **rewrites the row rather than appending to it**: it reads the open record,
+rewrites it with how the thread closed — `completed`, `expired` or `closed` — and the seat's report
+when it gave one, and answers the row with whether it was still open. With **no record it answers
+`null`**, and no hand-back fires. 🔴 The write is **one conditional store UPDATE that names the
+closing seat** (`closeThreadSeatState`): it lands only while the row is `open` and still names that
+seat. So two racing closes of the same kind close the record once and hand back once, and a late
+close by an OLD seat never closes, un-routes or marks the record a NEWER seat wrote. One exception is
+deliberate: a `completed` close by the SAME seat supersedes an `expired` row. When the sweep closes a
+thread first and the seat then completes it, the parent gets a SECOND hand-back, which says it
+replaces the first, and the seat's report is kept. `readThreadSeatState` is fail-soft in the other
 direction — a store error reads as no record — and the caller tells the two apart.
+
+**Every close goes through one function, and every close hands the thread back** (OPE-2428,
+OPE-2430). `closeThreadSeat` (`packages/core/agent/channels/thread-seat-close.ts`) records the close,
+clears the ownership row only while it names that seat itself (so closing an old seat never releases
+a thread a newer seat holds), wakes the parent with a **host-written** hand-back, and — for a finished
+thread only — places the done reaction. Its three callers are the three ways a thread ends:
+
+| Reason | Caller | Done reaction |
+|---|---|---|
+| `completed` | the seat's own `complete_thread` | yes, on the thread's root message |
+| `expired` | the idle sweep, `sweepIdleThreadSeats`, from the daily tidy pass: an open seat whose thread had no message for `THREAD_SEAT_IDLE_MS` (three days) | no |
+| `closed` | the ingress reap of a thread seat that can no longer be routed to (a re-homed domain) | no |
+
+**The hand-back is written by the host, from recorded facts.** It names the thread and its channel,
+when it opened, when it was last active, when it closed and how. The seat's report, when it gave one,
+rides inside it verbatim; a seat that gave none still hands the thread back, and the hand-back says
+it left no report. Before OPE-2428 only the model's own `complete_thread` summary reached the parent,
+so a seat that forgot, went quiet or lost its route left the parent knowing nothing.
+
+**A finished thread shows its completion in the thread.** `complete_thread` posts nothing when the
+seat already posted this turn — that post is the completion. Otherwise the host posts the seat's
+report, or a fixed done line when it gave none, into the thread through the ordinary reply road. The
+host then places a ✅ on the thread's **root message**, which the surface's origin codec names
+(`WakeOriginCodec.threadRootMessage`) and `setSurfaceReaction` reaches. §7.1's `thread-done-reaction`
+row says which surfaces can: Slack, and Linear on a reply thread. There is no channel post and no
+mirror of thread traffic into the standing seat (OPE-2427).
 
 **Spawning a seat fails closed on the delegation flag.** `canSpawnThreadFromWindow`
 (`packages/core/agent/tools/spawn_thread_session.ts`) answers `false` whenever
@@ -368,9 +412,12 @@ with `agent`, or ask the channel watcher to open one.
 `oe-oneshot:<callId>`, so an in-attempt retry mints the same id and cannot deliver the brief twice.
 
 **A spawned seat is told what it is.** `renderThreadSeatBrief` prefixes the caller's brief with the
-seat's own posture: it owns this thread, it holds the conversational kit only, it has **no sandbox**,
-and it must delegate real work to a worker through `agent`. It is told to call `complete_thread` when
-the thread is finished.
+seat's own posture: the standing seat handed it this task and this thread and no longer watches the
+thread, it holds the conversational kit only, and it runs the real work through its own work session
+with `work`. It is told to post the completion in the thread with `reply` and then call
+`complete_thread`. Its persona says the same at length: a thread seat reads a thread opening, its own
+side of the routing decision, and a "Finishing the thread" section, never the channel seat's
+"standing session for this channel".
 
 **A steer names a role, never a person.** `renderSeatSteer`
 (`packages/core/agent/tools/message_thread_seat.ts`) opens with "A message from the channel seat that
@@ -386,11 +433,11 @@ thread id, exactly as the spawn path strips them, so one thread always has one k
 session is refused.
 
 **The hand-back resolves the parent's live token from its registry row**, never the token recorded at
-spawn time, so a parent that rotated its generation still receives the report. With no parent row, or
-a parent token that names no domain, the hand-back answers `false` and no wake is sent. The report is
-carried **verbatim** inside a host-composed message that also names the thread and its channel, and
-the wake carries no addressing attributes — so the parent treats it as ambient and stays silent unless
-it decides otherwise. The message says so outright: nothing is owed to the room.
+spawn time, so a parent that rotated its generation still receives it. With no parent row, or a
+parent token that names no domain, the hand-back answers `false` and no wake is sent; the record
+still holds the close for `read_thread_seat`. The wake carries no addressing attributes — so the
+parent treats it as ambient and stays silent unless it decides otherwise. The message says so
+outright: nothing is owed to the room.
 
 ## 3. The honest-absence rule
 
@@ -1320,9 +1367,10 @@ the rows.
 | **Ambient engagement seam** §2.5 | ✅ | ✅ enrols and honours `stopped`; gates delivery in its own gateway rule | ✅ the seam is wired; plain follow-ups reach it only where the tenant consented to `ChannelMessage.Read.Group` / `ChatMessage.Read.Chat`, which no API can probe | ✅ | ✅ | ✅ |
 | **Engaged wake row promotion** (`thread-follow`) §2.5 | ❌ no dispatch row — Slack writes no `slack.dispatched` action, so there is no `addressing` value to promote | ❌ the seated path reports the classifier's word — an auto-thread's follow-up diverts as that channel's own wake, and the journey reads `channel-watch` on a `singleWindow: true` row in that room instead | ❌ not built yet — the single-window divert writes the plan's own `addressing`, which calls an engaged follow-up and room chatter alike | ✅ | ✅ | ✅ |
 | **Owned-thread ingress divert** §2.6 | ✅ | ✅ the guild leg only — a Discord DM carries no threads, so its divert never consults ownership | ✅ the channel leg only — a reply chain is the thread; the DM leg mints no `replyToActivityId`, so it can own none | ✅ | ✅ | ✅ |
+| **Thread done reaction** (`threadRootMessage`) §2.6 | ✅ | ❌ a Discord thread is its own channel, and the message that started it lives in the PARENT channel, whose id the origin does not carry. Marking the thread's first message instead would put the mark on the wrong message | ❌ Teams has no integration reaction primitive (no `setReaction` in the ancillary ops) | ❌ the thread is the issue itself, so no root message stands apart from it, and the ancillary ops carry no `setReaction` | ✅ on a reply thread only — the root is the thread-root comment; a thread that IS the issue has no root comment to mark | ❌ Notion's public API has no reaction primitive |
 | **Seat catch-up read** (since last wake) §2.5 | ✅ | ✅ | ✅ over Microsoft Graph (channel activities only — a personal/group chat carries no team id) | ✅ | ✅ | ✅ |
 | **Seat context-line admission** (`admitContextLines`) §2.5 | ✅ | ✅ | ❌ the hydration fills no context-line slot — the seat's room context is the catch-up read, which core already admits | ✅ | ✅ | ❌ the hydration fills no context-line slot — the seat's room context is the catch-up read, which core already admits |
-| **Approval card** (tappable Approve/Reject) §4.1 | ✅ | ✅ | ❌ no invoke route resolves a tap against a unified seat's parked request. A governed act that takes the venue walk is redirected to a card-capable room in the SAME domain, or refused when the domain holds none. The paths OUTSIDE that walk do not: the spend checkpoint (spend/checkpoint.ts `requireSessionContinuation`) fails OPEN here and records the crossing in an audit row instead | ❌ an issue/PR comment carries no component plane, so there is no button to render and no route for a tap. A governed act that takes the venue walk is redirected to a card-capable room in the SAME domain, or refused when the domain holds none. The paths OUTSIDE that walk do not: the spend checkpoint (spend/checkpoint.ts `requireSessionContinuation`) fails OPEN here and records the crossing in an audit row instead | ❌ an issue comment carries no component plane, so there is no button to render and no route for a tap. A governed act that takes the venue walk is redirected to a card-capable room in the SAME domain, or refused when the domain holds none. The paths OUTSIDE that walk do not: the spend checkpoint (spend/checkpoint.ts `requireSessionContinuation`) fails OPEN here and records the crossing in an audit row instead | ❌ a page comment carries no component plane, so there is no button to render and no route for a tap. A governed act that takes the venue walk is redirected to a card-capable room in the SAME domain, or refused when the domain holds none. The paths OUTSIDE that walk do not: the spend checkpoint (spend/checkpoint.ts `requireSessionContinuation`) fails OPEN here and records the crossing in an audit row instead |
+| **Approval card** (tappable Approve/Reject) §4.1 | ✅ | ✅ | ✅ built, not yet proven on a live tenant — a channel hosts its own Adaptive Card and the tap is answered after the Bot Framework JWT verify; a personal or group chat has no channel id, so its card still goes to a card-capable room in the same domain | ❌ an issue/PR comment carries no component plane, so there is no button to render and no route for a tap. A governed act that takes the venue walk is redirected to a card-capable room in the SAME domain, or refused when the domain holds none. The paths OUTSIDE that walk do not: the spend checkpoint (spend/checkpoint.ts `requireSessionContinuation`) fails OPEN here and records the crossing in an audit row instead | ❌ an issue comment carries no component plane, so there is no button to render and no route for a tap. A governed act that takes the venue walk is redirected to a card-capable room in the SAME domain, or refused when the domain holds none. The paths OUTSIDE that walk do not: the spend checkpoint (spend/checkpoint.ts `requireSessionContinuation`) fails OPEN here and records the crossing in an audit row instead | ❌ a page comment carries no component plane, so there is no button to render and no route for a tap. A governed act that takes the venue walk is redirected to a card-capable room in the SAME domain, or refused when the domain holds none. The paths OUTSIDE that walk do not: the spend checkpoint (spend/checkpoint.ts `requireSessionContinuation`) fails OPEN here and records the crossing in an audit row instead |
 | **Judge-lift notice** (a lifted act leaves a trace) §4.1 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 <!-- END GENERATED: surface-parity-seams -->

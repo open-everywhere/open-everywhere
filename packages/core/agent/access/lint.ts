@@ -124,7 +124,7 @@ export function lintMethodNarrowing(bundles: readonly Bundle[]): string[] {
 }
 
 function bindingScopeKey(scope: Binding["scope"]): string {
-  return [scope.level, scope.tenant ?? "", scope.domain ?? "", scope.surface ?? "", scope.group ?? "", scope.principal ?? ""].join("\u0000");
+  return [scope.level, scope.tenant ?? "", scope.domain ?? "", scope.surface ?? "", scope.group ?? "", scope.principal ?? "", scope.platform ?? ""].join("\u0000");
 }
 
 export function lintCredentialCollisions(bundles: readonly Bundle[], bindings: readonly Binding[]): string[] {

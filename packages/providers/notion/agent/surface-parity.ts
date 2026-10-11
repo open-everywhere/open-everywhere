@@ -15,6 +15,7 @@ export const NOTION_SURFACE_PARITY: SurfaceParityDeclaration = {
   "ambient-engagement-seam": "supported",
   "engaged-row-promotion": "supported",
   "owned-thread-ingress": "supported",
+  "thread-done-reaction": { unsupported: "Notion's public API has no reaction primitive" },
 
   "addressed-leg": { supported: "the `direct` wake — a name-drop or structured mention, not a platform @mention" },
   "ambient-leg": { supported: "the ambient supervisor, not the §2.5 engagement registry" },

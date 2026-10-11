@@ -3,7 +3,7 @@ export interface FetchStubCall {
   readonly init: RequestInit | undefined;
 }
 
-export type FetchStubResponder = (url: URL, init: RequestInit | undefined) => Response | undefined;
+export type FetchStubResponder = (url: URL, init: RequestInit | undefined) => Response | undefined | Promise<Response | undefined>;
 
 export interface HostFetchStub {
   readonly calls: readonly FetchStubCall[];
@@ -24,7 +24,7 @@ export function installHostFetchStub(hostPrefix: string, respond: FetchStubRespo
     const url = urlOf(input);
     if (!url.startsWith(hostPrefix)) return originalFetch(input, init);
     calls.push({ url, init });
-    const answer = respond(new URL(url), init);
+    const answer = await respond(new URL(url), init);
     if (answer) return answer;
     return new Response(JSON.stringify({ error: `oe_integration_stub_unhandled ${url}` }), {
       status: 501,

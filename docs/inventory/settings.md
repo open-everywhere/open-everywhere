@@ -70,13 +70,13 @@ four authored ones not at all, which is where a new behaviour would slip in unre
 | Group | Rows |
 |---|---|
 | The settings mechanism | 10 |
-| Settings keys (the schema) | 85 |
+| Settings keys (the schema) | 86 |
 | This deployment's overrides | 7 |
 | Environment variables the runtime reads | 108 |
 | Dynamic env read sites (key not statically resolvable) | 11 |
 | The configuration reference, its generators and its ratchets | 10 |
 | The model registry | 27 |
-| **Total** | **258** |
+| **Total** | **259** |
 
 OPE-2411 part 2 moved twenty-three of the environment variables into config (eighteen new settings
 keys, two access-request config fields, and each connector's sign-in declaration), deleted the
@@ -232,6 +232,7 @@ means total over two-level specs, not over any nesting.
 | SET-032 | `settings.rotation.expiryDays` | `packages/core/agent/settings/settings.ts:740` | PRIMARY rotation trigger, in days: a standing generation older than this is retired for context freshness (measured from its own `created_at`, reset on every rotation). `0` or a negative value DISABLES the trigger. Ships `7 d`. Code-only. | `docs/deploy/configuration-reference.md#agent-settings-behaviour-config-as-code` *(generated table only)* | ? |
 | SET-033 | `settings.rotation.quietGapHours` | `packages/core/agent/settings/settings.ts:732` | Idleness threshold, in hours: a standing generation not woken for this long rotates fresh on its NEXT wake rather than resuming a stale session. 12 hours holds a standing seat for a working day, so a morning question and an afternoon follow-up reach the same session. 🔴 What BOUNDS the longer gap is… Ships `12 h`. Code-only. | `docs/deploy/configuration-reference.md#agent-settings-behaviour-config-as-code` *(generated table only)* | ? |
 | SET-034 | `settings.rotation.tailTokenCap` | `packages/core/agent/settings/settings.ts:771` | Token cap on the last-generation TAIL a fresh generation's first wake carries — the recorded wake messages and the seat's own posts, selected most-recent-first. Tight on purpose: the tail makes the seat conversational, and its read tools and memory cover everything older. Ships `5000`. Code-only. | `docs/deploy/configuration-reference.md#session-rotation-standing-seats` | ? |
+| SET-087 | `settings.rotation.dmSummaryTokenCap` | `packages/core/agent/settings/settings.ts:1089` | Token cap on a DM seat's CONVERSATION SUMMARY (OPE-2431): the DM's most recent messages (at most 200 entries, about the last 100 exchanges of ordinary length), each cut to 480 characters, that every DM rotation carries beside the verbatim tail… Ships `32000`. Code-only. | `docs/deploy/configuration-reference.md#session-rotation-standing-seats` | `packages/core/scripts/session-tail-test.ts` |
 | SET-035 | `settings.rotation.tokenBudget` | `packages/core/agent/settings/settings.ts:750` | Token BACKSTOP (demoted from primary by OPE-345, value unchanged): the measured cumulative `inputTokens + cacheReadTokens` on one generation. Also the route the session-park remedy uses — parking saturates this counter. Ships `4000000`. Code-only. | `docs/deploy/configuration-reference.md#agent-settings-behaviour-config-as-code` *(generated table only)* | ? |
 | SET-036 | `settings.rotation.turnBudget` | `packages/core/agent/settings/settings.ts:757` | Turn BACKSTOP: turn count on one generation. 60 is derived from the substrate — a workflow run caps at 25,000 events and OE measures ~295 events/turn, so the wall binds near ~85 turns and this sits ~30% under it. It must ALSO satisfy the older invariant it was first derived against, C(budget) < 40M… Ships `60`. Code-only. | `docs/deploy/configuration-reference.md#agent-settings-behaviour-config-as-code` *(generated table only)* | ? |
 | SET-037 | `settings.routines.eventMaxFanout` | `packages/core/agent/settings/settings.ts:685` | Max routines ONE inbound event may fan out to. Every over-cap match is a genuine drop, so it writes a throttled `routine.skip` audit row (reason `fanout_cap`) rather than silently not firing. Ships `3`. Code-only. | `docs/deploy/configuration-reference.md#agent-settings-behaviour-config-as-code` *(generated table only)* | ? |

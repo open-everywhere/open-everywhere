@@ -9,6 +9,7 @@ import type { ActionKind } from "./types.js";
 import { resolvePrWriteToken } from "../scm/write-token.js";
 import { DEFAULT_PERMISSIONS, expandMintPermissions } from "../scm/mint.js";
 import { REPO_CAPABILITIES, isRepoCapability, type RepoCapability } from "../access/repo-capabilities.js";
+import { plainValue } from "./plain-text.js";
 
 export interface PrOpenArgs {
   readonly org: string;
@@ -109,6 +110,9 @@ export async function executePrOpen(args: PrOpenArgs, decidedBy: string, deps: P
 const prOpen: ActionKind<PrOpenArgs> = {
   kind: "pr.open",
   policy: "member",
+  plainSummary(args) {
+    return `Open a pull request on ${plainValue(args.repo)}: ${plainValue(args.title, 70)}`;
+  },
   summarize(args) {
     const body = args.body.length > CARD_BODY_MAX ? `${args.body.slice(0, CARD_BODY_MAX)}\n… (${args.body.length - CARD_BODY_MAX} more bytes)` : args.body;
     return [

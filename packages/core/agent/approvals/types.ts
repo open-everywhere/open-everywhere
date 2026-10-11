@@ -12,6 +12,7 @@ export interface PendingActionRow {
   readonly threadTs: string | null;
   readonly messageTs: string | null;
   readonly postedTo: string | null;
+  readonly groupKey?: string | null;
   readonly status: PendingStatus;
   readonly createdAt: string;
   readonly expiresAt: string;
@@ -31,6 +32,7 @@ export interface ActionKind<A = unknown> {
   armedCallReplay?(args: A): { readonly connection: string; readonly tool: string } | undefined;
   argsAfterClose?(args: A): A;
   summarize(args: A): string[];
+  plainSummary(args: A): string;
   execute(args: A, decidedBy: string): Promise<string>;
   declined?(args: A, decidedBy: string): Promise<string>;
 }

@@ -401,5 +401,44 @@ async function crossing(occurrences: number): Promise<Proposal | null> {
   ok(provider.opened.length === 0, "no config repo: the provider is never asked to open anything");
 }
 
+{
+  const { registerConfig } = await import("../agent/access/config.js");
+  let dryRun = true;
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+    loadAccessRequests: () => ({ configRepo: "dryco/config", configBase: "main", dryRun, baseBundles: () => [], baseBindings: () => [] }),
+  });
+
+  const proposal = (await crossing(3))!;
+  const provider = fakeProvider({});
+  const res = await openSkillProposalPr("dryco", proposal, { provider, delivery: "dry-delivery-1" });
+  ok(res.opened === false && res.dryRun === true, "🔴 dryRun: the shipped-on proposal PR opens NOTHING on a dry-run install");
+  ok(provider.calls.length === 0, `🔴 dryRun: the provider is never touched — no credential, no branch, no file, no PR (got ${provider.calls.join(", ") || "none"})`);
+  ok((res.skipped ?? "").includes("accessRequests.dryRun"), "dryRun: the skip names the switch that held the write");
+  ok(res.repo === "dryco/config" && res.branch === skillProposalBranch(SCOPE, proposal.detail!["signature"] as string), "dryRun: the result says which repo and branch a live run would write");
+
+  const rows = await readAudit({ org: "dryco", action: SKILL_PROPOSAL_PR_ACTION });
+  ok(rows.length === 1 && rows[0]!.detail!["dryRun"] === true, "dryRun: the attempt is AUDITED as a dry run");
+  ok(rows[0]!.detail!["pr"] === undefined, "dryRun: the row names no pull request, so the correction loop reads no phantom PR back");
+  ok(!JSON.stringify(rows[0]).includes("payments"), "dryRun: the row stays taint-clean");
+
+  const replay = fakeProvider({});
+  const again = await openSkillProposalPr("dryco", proposal, { provider: replay, delivery: "dry-delivery-1" });
+  ok(again.dryRun !== true && (again.skipped ?? "").includes("dry-delivery-1"), "a replayed body is caught by the replay guard, and writes no second dry-run row");
+  ok((await readAudit({ org: "dryco", action: SKILL_PROPOSAL_PR_ACTION })).length === 1, "…so the audit holds one row for one delivery");
+
+  dryRun = false;
+  const live = fakeProvider({});
+  const liveRes = await openSkillProposalPr("dryco", proposal, { provider: live, delivery: "dry-delivery-2" });
+  ok(liveRes.opened === true && liveRes.dryRun === undefined, "negative control: dryRun false opens the pull request from the registered config");
+  ok(live.opened.length === 1 && live.opened[0]!.base === "main", "…head → main, as a live install expects");
+}
+
 await removeTempDir(tmp);
 console.log(`✓ skill-proposal-pr: ${passed} assertions passed`);

@@ -425,6 +425,37 @@ Admins get the offboarding levers on the [control plane](../security/control-pla
 terminal — it tombstones every account on the set so none of them can be re-linked by a later
 challenge. Every mutation appends an audit row (`identity.link.*`).
 
+**Automatic offboarding when a surface reports a deactivation (OPE-2423).** When Slack sends a
+`user_change` event whose user is `deleted`, OE runs the same `revoke_link_set` lever by itself:
+the person's link-set is revoked, every account on it is tombstoned, and the credentials stored
+against it are purged (below). This is the one terminal revoke a machine signal can cause, so every
+gate fails closed, and a refusal leaves things exactly as an admin would find them without it:
+
+1. **The same workspace.** The deactivated account must belong to the workspace that delivered the
+   signed event. A Slack-Connect partner's user, seen through our workspace, refuses here.
+2. **A named workspace.** The delivering workspace (or its Enterprise Grid) must be named in config,
+   in a domain's reach. The front-door tenant fence is inert when config names no workspace; that
+   is not enough for a terminal revoke, so such a deployment never offboards automatically.
+3. **A live confirmation.** OE re-reads the account with `users.info` under its own bot token. The
+   account must come back `deleted` and in that workspace. The event body is never the evidence, so
+   a forged or replayed event, or one that a reactivation has overtaken, causes nothing. Without the
+   `users:read` scope every report refuses.
+4. **A proven link.** Only a `confirmed` account revokes its set. An account with no link-set, or
+   only a `suggested` one, has its own stored credentials purged and nothing else.
+5. **One workspace's word covers one workspace.** The whole-set revoke is refused
+   (`cross-workspace-set`) when the set also holds a confirmed account on the same platform in
+   another workspace. Under the `identity.allowMultiTenantPrincipals` opt-in — the only posture in
+   which an admitted Slack workspace can be a partner's — it is refused when the set holds ANY
+   confirmed account outside the reporting workspace, Teams and Discord included. Only the
+   deactivated account's own credentials are purged, and an admin decides the rest. So a partner
+   workspace cannot revoke a person's standing in ours.
+
+A deactivated **guest** of an admitted workspace is offboarded exactly like a member. Each report
+writes one `identity.offboard.applied` or `identity.offboard.refused` row, and a refusal names its
+reason and the manual lever. Teams and Entra send no deactivation event to a bot, so on Teams the
+daily [directory sync](#pre-populating-links-from-an-idp-okta) (when an IdP is configured) and the manual levers remain the
+offboarding path.
+
 **Revoking also destroys the credentials, not just the reach.** Tombstoning severs *reachability*:
 no account resolves to a revoked set, so nothing derives the shared subject that keys the person's
 stored OAuth tokens. That is necessary and it is not sufficient — the encrypted tokens would still
@@ -509,7 +540,9 @@ dependency and never a merge authority.** Concretely:
   degenerate challenge it is. Denying writes nothing at all.
 - **Narrowing is the exception, and it goes the safe way.** A person the directory reports as
   **deprovisioned** has their link-set **suspended immediately**, with no wait for the person's own
-  confirmation — offboarding stops being a memory test. It is never a revoke: terminal decisions stay human (`revoke_link_set`).
+  confirmation — offboarding stops being a memory test. It is never a revoke. The sync leaves the
+  terminal decision to a human (`revoke_link_set`) or to the surface's own confirmed deactivation
+  report (automatic offboarding, above).
   The sync only suspends a set it built. A set holding any challenge-proven account is a
   human-built set, so the sync leaves it alone, records a no-op and warns. An admin then uses
   `suspend_link_set` or `revoke_link_set`.
@@ -619,6 +652,8 @@ credentials. Read them with the [audit trail](../security/audit-and-provenance.m
 | `identity.link.reactivated` | An operator lifts that hold. | The set id, from the same writer and the same call. |
 | `identity.link.revoked` | A set is revoked — the terminal offboarding lever. | The set id, how many account ids were tombstoned, how many credentials the purge destroyed, and a `purgeFailed` flag when the purge did not complete. |
 | `identity.link.credentials_purged` | A set's credentials are purged without revoking the set. | The set id, the set's status at the time, the purged count, and the same `purgeFailed` flag. |
+| `identity.offboard.applied` | A surface's deactivation report passed every gate and the lever ran (OPE-2423). | The account, the source (`slack:user_change`), and the outcome: `revoked` with the set id, or `purged-unlinked` with the purge count. A `revoked` outcome also writes `identity.link.revoked`. |
+| `identity.offboard.refused` | A deactivation report was not acted on. | The account, the source, the reason (`external-workspace`, `unadmitted-tenant`, `unconfirmed`, `cross-workspace-set`, `revoke-failed`, `error`), and a sentence that ends by naming the manual lever. A `cross-workspace-set` row also carries the set id, the accounts that blocked the revoke (`blockedBy`), the account's own purge count, and `purgeFailed` when that purge did not complete. |
 
 🔴 **A control-plane mutation writes two rows, not one.** The store writes the `identity.link.*` row
 above because it is the writer that changed the table. The control plane then writes its own

@@ -77,6 +77,11 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
     ],
   },
   {
+    id: "other-agents",
+    headline: "Hand a task to another organisation's agent — a declared A2A agent, such as a ServiceNow, Workday or Agentforce agent — and follow it to its answer",
+    tools: ["delegate_to_agent", "check_agent_task"],
+  },
+  {
     id: "conversation-history",
     headline: "Re-read a room's own history in full, and open or describe what was uploaded into it",
     tools: ["read_channel", "read_thread", "read_file_upload", "describe_image", "read_routine_transcript"],
@@ -122,7 +127,7 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
   },
   {
     id: "identity-and-access",
-    headline: "Link somebody's other accounts, ask somebody to lend their own connector account for this conversation, ask for access this scope lacks, stand up a new agent, explain why something is refused, review whether the access here still fits",
+    headline: "Link somebody's other accounts, ask somebody to lend their own connector account for this conversation, ask for access this scope lacks, set up a vendor's hosted MCP server (\"set up FullStory\": research it and propose it as a PR), stand up a new agent, explain why something is refused, review whether the access here still fits",
     tools: [
       "link_identity",
       "confirm_link",
@@ -130,11 +135,17 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
       "request_access",
       "request_credential_grant",
       "revoke_credential_grant",
+      "propose_mcp_server",
       "create_agent",
       "explain_permission",
       "permission_fit_report",
       "resume",
     ],
+  },
+  {
+    id: "what-waits-on-you",
+    headline: "Tell the person what is waiting on them — open approval cards they can decide and jobs blocked on them, with links (DM only)",
+    tools: ["waiting_on_me"],
   },
   {
     id: "spend-and-telemetry",
@@ -252,7 +263,7 @@ function delegationReturnShape(route: "agent", asyncVerb: "spawn_thread_session"
   ];
   if (asyncVerb !== undefined) {
     lines.push(
-      `\`${asyncVerb}\` is a different move and still worth knowing: it mints a durable SEAT that joins the room and keeps talking, where a worker reports back on its task and takes a follow-up only by \`taskId\`.`,
+      `\`${asyncVerb}\` is the other side of the Routing decision: it hands a task's whole orchestration to a thread session, which owns a thread, runs its own workers and posts the result there. A worker reports back to you on one job and takes a follow-up only by \`taskId\`; a thread session takes the task off your radar, and the host tells you when its thread finishes.`,
     );
   }
   return lines.join(" ");
@@ -282,9 +293,17 @@ export function renderWorkerCapabilityIndex(
     "## What a worker can do that you cannot",
     "",
     "You are the router for this room. Doing the work yourself in this context window is what makes",
-    "the next message wait, so all but trivial work belongs in a worker — and a worker is not a",
-    "lesser version of you. Each line below is a kind of work a worker can take on; the verbs after",
-    "it are the ones a worker holds THERE and this seat does not:",
+    "the next message wait, so work your own kit cannot do belongs in a worker — and a worker is not a",
+    "lesser version of you.",
+    ...(asyncVerb !== undefined
+      ? [
+          "Whose workers run it is the one decision your Routing section states: your own work",
+          "session's when you orchestrate the task yourself, or a thread session's when you hand its",
+          "orchestration off.",
+        ]
+      : []),
+    "Each line below is a kind of work a worker can take on; the verbs after it are the ones a worker",
+    "holds THERE and this seat does not:",
     "",
   ];
   lines.push(DELEGATION_FLOOR, "");

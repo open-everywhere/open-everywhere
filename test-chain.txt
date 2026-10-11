@@ -102,6 +102,7 @@ test:teams-integration
 test:teams-icons
 test:teams-roster-probe
 test:teams-directory
+test:teams-approvals
 test:discord-provider
 test:governance-dm
 test:resource-grant-transport-parity
@@ -163,6 +164,7 @@ test:model-ab
 test:glossary-citations-lint
 test:thread-seat-tools
 test:discord-gateway-turn-policy
+test:discord-declared-target
 test:publish-license
 test:publish-readme
 test:linear-read-work-grant

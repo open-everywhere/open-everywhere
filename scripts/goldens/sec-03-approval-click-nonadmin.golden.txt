@@ -17,7 +17,7 @@ IN  discord interaction · APPROVE click by guild ADMINISTRATOR U_ADMIN3 (permis
       | {
       |  "type": 7,
       |  "data": {
-      |   "content": "**Approval requested: spend.set**\nSet spend limit — scope `discord/GS3/CS3` (surface)\ntokens: none (uncapped) → 500 tokens/mo\n✅ Approved by <@U_ADMIN3> · spend limit set to 500 tokens/mo for `discord/GS3/CS3` (surface)",
+      |   "content": "**Set the monthly spend limit for discord/GS3/CS3 to 500 tokens/mo.**\n-# Approval requested: spend.set\nSet spend limit — scope `discord/GS3/CS3` (surface)\ntokens: none (uncapped) → 500 tokens/mo\n✅ Approved by <@U_ADMIN3> · spend limit set to 500 tokens/mo for `discord/GS3/CS3` (surface)",
       |   "components": []
       |  }
       | }

@@ -10,8 +10,15 @@ export function redactedBulletLabel(sha256: string, chars?: number): string {
   return `(content redacted — sha256 ${sha256.slice(0, 12)}…${size})`;
 }
 
+function lineMatchesDigest(line: string, wanted: ReadonlySet<string>): boolean {
+  if (wanted.has(bulletSha256(line))) return true;
+  const trimmed = line.trim();
+  return trimmed !== line && wanted.has(bulletSha256(trimmed));
+}
+
 export function removeBulletLineBySha(content: string, sha256: string): { content: string; removed: boolean } {
-  return removeBulletLineWhere(content, (line) => bulletSha256(line) === sha256);
+  const wanted = new Set([sha256]);
+  return removeBulletLineWhere(content, (line) => lineMatchesDigest(line, wanted));
 }
 
 export function removeBulletLinesBySha(content: string, sha256s: readonly string[]): { content: string; removed: number } {
@@ -19,7 +26,7 @@ export function removeBulletLinesBySha(content: string, sha256s: readonly string
   let out = content;
   let removed = 0;
   for (;;) {
-    const next = removeBulletLineWhere(out, (line) => wanted.has(bulletSha256(line)));
+    const next = removeBulletLineWhere(out, (line) => lineMatchesDigest(line, wanted));
     if (!next.removed) break;
     out = next.content;
     removed++;

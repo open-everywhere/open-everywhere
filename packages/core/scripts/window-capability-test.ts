@@ -66,7 +66,7 @@ const grainCtxOf = (grain: "standing" | "task" | "native"): BindableContext => {
       ? `unified:${formatWindowToken({ domain: "payments", windowId: "payments", generation: 5 })}`
       : grain === "task"
         ? `unified:${formatWindowToken({ domain: "payments", windowId: taskWindowId("slack/C1", "1720.9"), generation: 5 })}`
-        : "cse_example3_native";
+        : "cse_capability_native";
   return {
     channel: { kind: "unified", continuationToken: token },
     session: { id: `cap-${grain}`, auth: { current: { attributes: grain === "task" ? { oe_grain: "task" } : {} } } },
@@ -320,10 +320,14 @@ console.log("P0-e — assertWindowSourcesVouched direct unit tests:");
     ok(message.includes("github/a/x") && !message.includes("TRUST ROOT"), "[P0-e] a non-notion offender carries NO trust-root clause (the note is notion-only)");
   }
   noThrow(() => assertWindowSourcesVouched([win(["github/a/x"], "solo"), orgGate], []), "[P0-e] solo (1-channel) window over an unvouched source does NOT throw");
-  noThrow(
-    () => assertWindowSourcesVouched([defineDomain({ name: "plain", reach: ["github/a/x", "github/b/y"] }), orgGate], []),
-    "[P0-e] a non-window (no crossSurfaceWindow) multi-channel domain is never vouch-checked",
-  );
+  {
+    const w: string[] = [];
+    noThrow(
+      () => assertWindowSourcesVouched([defineDomain({ name: "plain", reach: ["github/a/x", "github/b/y"] }), orgGate], [], { warn: (m) => w.push(m) }),
+      "[P0-e] a mode-less multi-channel domain over un-vouched sources falls back to solo and does not throw (OPE-2412)",
+    );
+    ok(w.length === 1 && w[0]!.includes("unvouched:github/a/x"), "[P0-e] … and it warns once, naming the un-vouched source");
+  }
 
   const groupedWin = (windows: readonly { name: string; reach: readonly string[] }[], channels: string[], mode?: "solo" | "unified") =>
     defineDomain({ name: "grouped", reach: channels, ambientSupervisor: true, ...(mode ? { mode } : {}), windows });

@@ -1071,6 +1071,37 @@ const store = makeOperationalPostgresStore(client);
   ring3 = await store.readSessionTail("acme", sk, TOK3);
   ok(ring3.find((r) => r.kind === "post")!.text === "Four items: a, b, c, d.", "pg: …confirmed: this org's row was not touched by the cross-org attempt");
 
+  {
+    const { sqliteOperationalStore } = await import("../agent/operational/sqlite.js");
+    const { CONVERSATION_SUMMARY_PARTITION } = await import("../agent/channels/session-tail.js");
+    const DM_KEY = "oe-domain::oe-dm/slack/T/D1";
+    const first = [
+      { kind: "wake" as const, at: "2026-07-09T10:00:00Z", from: "human" as const, trust: "principal" as const, refuted: false, author: "alice", text: "the offsite is in Lisbon" },
+      { kind: "post" as const, at: "2026-07-09T10:00:05Z", from: "self" as const, trust: "relay" as const, refuted: false, author: "self", id: "m-1", text: "noted" },
+    ];
+    const second = [{ ...first[0]!, id: "m-1" }, { ...first[1]!, text: "noted, Lisbon" }, { ...first[0]!, at: "2026-07-09T11:00:00Z", text: "and the dates?" }];
+    for (const [label, st] of [["pg", store], ["sqlite", sqliteOperationalStore]] as const) {
+      eq(await st.readConversationSummary("acme", DM_KEY), [], `${label}: a DM with no summary reads EMPTY`);
+      await st.writeConversationSummary("acme", DM_KEY, first);
+      eq(await st.readConversationSummary("acme", DM_KEY), first, `${label}: the summary round-trips, oldest-first, every field intact (the author grain included)`);
+      await st.writeConversationSummary("acme", DM_KEY, second);
+      eq(await st.readConversationSummary("acme", DM_KEY), second, `🔴 ${label}: a second write REPLACES the summary — it never appends to it`);
+      eq(await st.readConversationSummary("globex", DM_KEY), [], `${label}: the summary is org-isolated`);
+      eq(await st.readConversationSummary("acme", "oe-domain::oe-dm/slack/T/D2"), [], `${label}: …and seat-isolated`);
+      eq(await st.readSessionTail("acme", DM_KEY, CONVERSATION_SUMMARY_PARTITION), [], `🔴 ${label}: the summary row is NOT readable as a ring — no ring reader can mistake it for one entry`);
+      await st.appendSessionTail("acme", DM_KEY, "oe-dom:oe-dm/slack/T/D1:oe-sup:g1-aaa111", first[0]!);
+      await st.clearSessionTail("acme", DM_KEY, "oe-dom:oe-dm/slack/T/D1:oe-sup:g1-aaa111");
+      eq((await st.readConversationSummary("acme", DM_KEY)).length, 3, `${label}: clearing a GENERATION's ring leaves the summary alone`);
+      ok((await st.editConversationSummaryPost("acme", DM_KEY, "m-1", "noted, Lisbon in November")) === true, `${label}: editConversationSummaryPost finds the POST by id`);
+      const edited = await st.readConversationSummary("acme", DM_KEY);
+      eq(edited.map((e) => e.text), ["the offsite is in Lisbon", "noted, Lisbon in November", "and the dates?"], `🔴 ${label}: …rewrites only the POST's text, in place — the WAKE carrying the same id is untouched — and keeps the order`);
+      eq([edited[1]!.kind, edited[1]!.id, edited[1]!.refuted], ["post", "m-1", false], `${label}: …and every other field of the edited entry`);
+      ok((await st.editConversationSummaryPost("acme", DM_KEY, "no-such-id", "x")) === false, `${label}: a miss answers false`);
+      ok((await st.editConversationSummaryPost("globex", DM_KEY, "m-1", "cross-org")) === false, `${label}: …and a different org finds nothing`);
+      eq((await st.readConversationSummary("acme", DM_KEY))[1]!.text, "noted, Lisbon in November", `${label}: …and neither miss changed the row`);
+    }
+  }
+
   ok((await store.getChannelSession("globex", sk)) === null, "pg: channel session is org-isolated");
   await store.rotateChannelSession("globex", sk, "T:oe-sup:1", "2026-07-11T12:00:00Z");
   ok((await store.getChannelSession("acme", sk))!.generation === 2, "pg: another org's rotation doesn't disturb this org's row");

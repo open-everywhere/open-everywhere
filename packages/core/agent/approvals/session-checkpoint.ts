@@ -5,6 +5,7 @@ import { registerActionKind, whereFromScope } from "./actions.js";
 import { getSettings } from "../settings/settings.js";
 import { ROUTINE_PERMISSION_NO_EXPIRY } from "../routines/declared-permissions.js";
 import type { ActionKind } from "./types.js";
+import { plainValue } from "./plain-text.js";
 
 export const CHECKPOINT_KIND = "session.checkpoint";
 export const CHECKPOINT_GRANT_MEMO = "session.checkpoint.grant";
@@ -32,6 +33,9 @@ interface SessionCheckpointArgs {
 const sessionCheckpoint: ActionKind<SessionCheckpointArgs> = {
   kind: CHECKPOINT_KIND,
   policy: "member",
+  plainSummary(args) {
+    return `Let the agent keep doing consequential work in ${plainValue(args.scopeLabel ?? args.scopeKey)} past its cost checkpoint`;
+  },
   summarize(args) {
     return [
       "Keep this session going past its cost checkpoint?",

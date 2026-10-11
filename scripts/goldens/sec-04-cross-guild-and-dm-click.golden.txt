@@ -28,7 +28,7 @@ IN  discord interaction · APPROVE click by U_AADM4, ADMINISTRATOR of the row's 
       | {
       |  "type": 7,
       |  "data": {
-      |   "content": "**Approval requested: spend.set**\nSet spend limit — scope `discord/GS4A/CS4A` (surface)\ntokens: none (uncapped) → 500 tokens/mo\n✅ Approved by <@U_AADM4> · spend limit set to 500 tokens/mo for `discord/GS4A/CS4A` (surface)",
+      |   "content": "**Set the monthly spend limit for discord/GS4A/CS4A to 500 tokens/mo.**\n-# Approval requested: spend.set\nSet spend limit — scope `discord/GS4A/CS4A` (surface)\ntokens: none (uncapped) → 500 tokens/mo\n✅ Approved by <@U_AADM4> · spend limit set to 500 tokens/mo for `discord/GS4A/CS4A` (surface)",
       |   "components": []
       |  }
       | }

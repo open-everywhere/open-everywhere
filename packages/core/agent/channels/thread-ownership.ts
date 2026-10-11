@@ -9,6 +9,12 @@ export interface ThreadOwnershipStore {
   clearThreadOwner(org: string, channelKey: string, threadKey: string): Promise<boolean>;
 }
 
+export function isLiveThreadSeatOwner(token: string | null, domain: string): boolean {
+  if (!token) return false;
+  const key = parseWindowToken(token);
+  return key !== undefined && isThreadSeatWindowId(key.windowId) && key.domain === domain;
+}
+
 export async function recordThreadOwner(store: ThreadOwnershipStore, org: string, ref: UnifiedThreadRef, taskToken: string, atIso: string): Promise<void> {
   await store.putThreadOwner(org, ref.channelKey, ref.threadKey, taskToken, atIso, THREAD_OWNER_TTL_MS);
 }
@@ -39,7 +45,7 @@ export function routeThreadMessage(ownerToken: string | null, liveGeneration?: n
   if (!key) return { kind: "standing" };
   const grain = isTaskWindowId(key.windowId) ? ("task" as const) : isThreadSeatWindowId(key.windowId) ? ("thread" as const) : undefined;
   if (!grain) return { kind: "standing" };
-  if (liveGeneration !== undefined && key.generation !== liveGeneration) return { kind: "standing" };
+  if (grain === "task" && liveGeneration !== undefined && key.generation !== liveGeneration) return { kind: "standing" };
   if (domain !== undefined && key.domain !== domain) return { kind: "standing" };
   return { kind: "task", token: ownerToken, grain };
 }

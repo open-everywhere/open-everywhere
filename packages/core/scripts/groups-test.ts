@@ -459,6 +459,22 @@ const setOf = (externalId: string): string => directoryLinkSetId(PROVIDER, exter
 
   {
     const state: DeliveryState = { branches: { main: "base-sha" }, files: {}, puts: [], prs: [] };
+    let tokens = 0;
+    const out = await deliverGroupsOverlay(changed, {
+      config: deliveryConfig({ dryRun: true }),
+      ...deliveryDeps(state),
+      resolveToken: async () => {
+        tokens += 1;
+        return "t";
+      },
+    });
+    ok(out.outcome === "dry-run" && !out.pr && out.committed === false, "🔴 delivery(dryRun): a dry-run install reports a dry run and opens NO pull request");
+    ok(tokens === 0 && Object.keys(state.branches).length === 1 && state.puts.length === 0 && state.prs.length === 0, "🔴 delivery(dryRun): no credential, no branch, no commit, no PR");
+    ok(out.note.includes("accessRequests.dryRun") && out.branch === "directory-groups/okta", "delivery(dryRun): the note names the switch, and the result names the branch a live run would write");
+  }
+
+  {
+    const state: DeliveryState = { branches: { main: "base-sha" }, files: {}, puts: [], prs: [] };
     await deliverGroupsOverlay(changed, { config: deliveryConfig({ groupsPath: "config/groups.generated.ts" }), ...deliveryDeps(state) });
     ok(state.files["directory-groups/okta:config/groups.generated.ts"] !== undefined, "delivery: a configured groupsPath is where the overlay is written");
   }

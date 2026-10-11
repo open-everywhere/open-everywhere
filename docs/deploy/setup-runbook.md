@@ -221,7 +221,7 @@ Declare a hook in `agent/webhooks/hooks.ts` (empty by default): a hook id, a `so
 which signature scheme its sender signs with, a `secretRef` naming *where* its shared secret
 lives plus the `broker` that ref resolves through (`"env"` for an env var name, `"db"` for
 the encrypted credential vault), who may read its events, and — optionally, and only together —
-the `slack/TEAM/CHANNEL` surface it fires into plus the instruction the agent runs. Omit that
+the target it fires into — a room on Slack, Discord or Teams, or a person's DM (`dm:<principal key>`) — plus the instruction the agent runs. Omit that
 pair and the hook is emit-only: `event` routines decide what its deliveries cause. Point the
 external provider at `POST /webhooks/<id>`.
 

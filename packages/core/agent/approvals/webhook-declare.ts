@@ -18,6 +18,7 @@ import { platformOfScopeKey } from "../access/scope-key.js";
 import { inlineForReview } from "./review-surface.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import type { ActionKind } from "./types.js";
+import { plainValue } from "./plain-text.js";
 
 export interface WebhookDeclareArgs {
   readonly org: string;
@@ -237,6 +238,9 @@ export async function executeWebhookDeclare(args: WebhookDeclareArgs, decidedBy:
 const webhookDeclare: ActionKind<WebhookDeclareArgs> = {
   kind: "webhook.declare",
   policy: "member",
+  plainSummary(args) {
+    return `Open a pull request that adds the inbound webhook ${plainValue(args.declaration.id)} from ${plainValue(args.declaration.source)}, for an admin to review`;
+  },
   summarize(args) {
     const d = args.declaration;
     return [

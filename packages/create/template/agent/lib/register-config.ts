@@ -28,6 +28,8 @@ import { loadSpendCheckpoints } from "../spend/checkpoints.js";
 import { loadModelPolicy } from "../model/policy.js";
 import { loadPrincipals } from "../identity/principals.js";
 import { loadGroups } from "../identity/groups.js";
+import { registerA2aAgents } from "@open-everywhere/core/agent/a2a/agents.js";
+import { A2A_AGENTS } from "../access/a2a-agents.js";
 import "../identity/surfaces.js";
 import "../access/browser-hosts.js";
 import "../identity/authors.js";
@@ -37,6 +39,8 @@ import "./register-docs.js";
 registerSettings(SETTINGS_OVERRIDES);
 
 registerModelPricing(loadModelPricing());
+
+registerA2aAgents(A2A_AGENTS);
 
 registerConfig({
   loadBundles,

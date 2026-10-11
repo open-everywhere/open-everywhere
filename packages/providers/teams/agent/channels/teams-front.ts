@@ -22,6 +22,7 @@ import {
   type TeamsEngagementVerdict,
 } from "./teams-engagement.js";
 import { teamsGraphTeamId } from "./teams-graph-team-id.js";
+import { handleTeamsApprovalInvoke, parseTeamsApprovalInvoke, type TeamsApprovalInvoke, type TeamsInvokeResponseBody } from "../approvals/teams-flow.js";
 import {
   planTeamsSingleWindow,
   handleTeamsSingleWindowDispatch,
@@ -370,6 +371,7 @@ export interface TeamsFrontOptions {
   readonly roomStopped?: (partition: Partition) => Promise<boolean>;
   readonly markRoomWatched?: (partition: Partition, atIso: string) => Promise<void>;
   readonly clearRoomStop?: (partition: Partition, atIso: string, engagedBy: string) => Promise<void>;
+  readonly approvalInvoke?: (invoke: TeamsApprovalInvoke, waitUntil: (p: Promise<unknown>) => void) => Promise<TeamsInvokeResponseBody>;
 }
 
 const OK = () => new Response("ok");
@@ -547,6 +549,7 @@ export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFr
   const roomStopped = opts.roomStopped ?? teamsRoomWatchStopped;
   const markRoomWatched = opts.markRoomWatched ?? markTeamsRoomWatched;
   const clearRoomStop = opts.clearRoomStop ?? clearTeamsRoomStop;
+  const approvalInvoke = opts.approvalInvoke ?? ((invoke: TeamsApprovalInvoke, waitUntil: (p: Promise<unknown>) => void) => handleTeamsApprovalInvoke(invoke, { waitUntil }));
 
   return async (req: Request, args: RouteHandlerArgs): Promise<Response> => {
     let rawBody: string;
@@ -578,6 +581,13 @@ export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFr
     }
 
     const activity = parseTeamsActivity(parsed);
+
+    const tap = parseTeamsApprovalInvoke(activity);
+    if (tap) {
+      const body = await approvalInvoke(tap, (p) => args.waitUntil(p));
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json; charset=utf-8" } });
+    }
+
     if (!activity || activity.type !== "message") {
       return forward();
     }

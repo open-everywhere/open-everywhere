@@ -2,6 +2,7 @@ import type { WakeMessageInput, WakeTrust } from "./wake-envelope.js";
 import { getSettings } from "../settings/settings.js";
 import type { IngestedChatMessage } from "../access/taint-signal.js";
 import type { AuthorTrustQuery } from "../identity/author-trust.js";
+import { redactMachineLinkCodes } from "../identity/link-challenge.js";
 
 export interface SessionTailEntry {
   readonly kind: "wake" | "post";
@@ -70,6 +71,70 @@ export function tailEntryToWakeMessage(e: SessionTailEntry): WakeMessageInput {
 }
 
 export function buildTail(ring: readonly SessionTailEntry[], capTokens: number = tailTokenCap()): WakeMessageInput[] {
-  const ordered = [...ring].sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || a.kind.localeCompare(b.kind));
-  return selectTail(ordered, capTokens).map(tailEntryToWakeMessage);
+  return selectTail(orderRing(ring), capTokens).map(tailEntryToWakeMessage);
+}
+
+function orderRing(ring: readonly SessionTailEntry[]): SessionTailEntry[] {
+  return [...ring].sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || a.kind.localeCompare(b.kind));
+}
+
+export const CONVERSATION_SUMMARY_PARTITION = "oe-dm-summary";
+
+export function admitToSummary(e: SessionTailEntry): boolean {
+  return e.kind === "post" || e.refuted === false;
+}
+
+export function parseConversationSummary(json: string | undefined): SessionTailEntry[] {
+  if (json === undefined) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter((e): e is SessionTailEntry => typeof e === "object" && e !== null && typeof (e as SessionTailEntry).text === "string" && typeof (e as SessionTailEntry).at === "string");
+}
+
+export const SUMMARY_ENTRY_MAX_CHARS = 480;
+
+export function conversationSummaryTokenCap(): number {
+  return getSettings().rotation.dmSummaryTokenCap;
+}
+
+export function condenseTailEntry(e: SessionTailEntry): SessionTailEntry {
+  const source = e.from === "human" ? e.text : redactMachineLinkCodes(e.text);
+  const flat = source.replace(/\s+/g, " ").trim();
+  const points = Array.from(flat);
+  const text = points.length <= SUMMARY_ENTRY_MAX_CHARS ? flat : `${points.slice(0, SUMMARY_ENTRY_MAX_CHARS - 1).join("").trimEnd()}…`;
+  return text === e.text ? e : { ...e, text };
+}
+
+export interface ConversationCarry {
+  readonly summary: readonly SessionTailEntry[];
+  readonly tail: readonly SessionTailEntry[];
+  readonly record: readonly SessionTailEntry[];
+}
+
+export function planConversationCarry(
+  prior: readonly SessionTailEntry[],
+  ring: readonly SessionTailEntry[],
+  caps: { readonly tailTokens: number; readonly summaryTokens: number } = { tailTokens: tailTokenCap(), summaryTokens: conversationSummaryTokenCap() },
+  admit: (e: SessionTailEntry) => boolean = admitToSummary,
+): ConversationCarry {
+  const ordered = orderRing(ring);
+  const tail = selectTail(ordered, caps.tailTokens);
+  const candidates = [...orderRing(prior), ...ordered].filter(admit).map((source) => ({ source, entry: condenseTailEntry(source) }));
+  const kept: { readonly source: SessionTailEntry; readonly entry: SessionTailEntry }[] = [];
+  let tokens = 0;
+  for (let i = candidates.length - 1; i >= 0 && kept.length < SESSION_TAIL_MAX_ENTRIES; i--) {
+    const cost = approxEntryTokens(candidates[i].entry);
+    if (tokens + cost > caps.summaryTokens && kept.length > 0) break;
+    tokens += cost;
+    kept.unshift(candidates[i]);
+  }
+  const record = kept.map((k) => k.entry);
+  const inTail = new Set<SessionTailEntry>(tail);
+  const summary = kept.filter((k) => !inTail.has(k.source)).map((k) => k.entry);
+  return { summary, tail, record };
 }

@@ -13,7 +13,8 @@ export type MemoryWriteRoad =
   | "pinned-instructions"
   | "dream-learn"
   | "dream-tidy"
-  | "purge";
+  | "purge"
+  | "self-edit";
 
 export type MemoryWriteKind = "memory" | "operational";
 
@@ -77,5 +78,53 @@ export async function writeMemoryTier(req: MemoryWriteRequest): Promise<MemoryWr
     },
   }).catch(() => undefined);
 
+  if (kind === "memory" && req.tier.kind === "silo") await notifyMemoryWriteObservers({ org: req.partition.org, silo: req.tier.name });
+
   return { version, changed: true };
+}
+
+export interface MemoryWriteEvent {
+  readonly org: string;
+  readonly silo: string;
+}
+
+export type MemoryWriteObserver = (event: MemoryWriteEvent) => Promise<void>;
+
+const MEMORY_WRITE_OBSERVER_BUDGET_MS = 1_500;
+let observerBudgetMs = MEMORY_WRITE_OBSERVER_BUDGET_MS;
+
+export function _setMemoryWriteObserverBudgetMsForTest(ms?: number): void {
+  observerBudgetMs = ms ?? MEMORY_WRITE_OBSERVER_BUDGET_MS;
+}
+
+const observers = new Map<string, MemoryWriteObserver>();
+
+export function registerMemoryWriteObserver(name: string, observer: MemoryWriteObserver): void {
+  observers.set(name, observer);
+}
+
+export function _resetMemoryWriteObservers(): void {
+  observers.clear();
+}
+
+async function notifyMemoryWriteObservers(event: MemoryWriteEvent): Promise<void> {
+  if (observers.size === 0) return;
+  const runs = [...observers.entries()].map(([name, observer]) =>
+    Promise.resolve()
+      .then(() => observer(event))
+      .catch((err) => console.log(`[open-everywhere:memory] write observer "${name}" failed for silo "${event.silo}": ${String(err)}`)),
+  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const budget = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      console.log(`[open-everywhere:memory] write observers for silo "${event.silo}" passed the ${observerBudgetMs} ms budget; the write returns without them`);
+      resolve();
+    }, observerBudgetMs);
+    timer.unref?.();
+  });
+  try {
+    await Promise.race([Promise.all(runs).then(() => undefined), budget]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }

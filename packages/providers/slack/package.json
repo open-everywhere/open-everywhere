@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/provider-slack",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Open Everywhere Slack provider — Slack channel and DM surfaces, identity mapping, approval cards and slash commands.",
   "keywords": [
     "agent",
@@ -64,6 +64,10 @@
       "types": "./dist/agent/channels/slack-front.d.ts",
       "default": "./dist/agent/channels/slack-front.js"
     },
+    "./agent/channels/slack-home.js": {
+      "types": "./dist/agent/channels/slack-home.d.ts",
+      "default": "./dist/agent/channels/slack-home.js"
+    },
     "./agent/channels/slack-identity.js": {
       "types": "./dist/agent/channels/slack-identity.d.ts",
       "default": "./dist/agent/channels/slack-identity.js"
@@ -72,9 +76,17 @@
       "types": "./dist/agent/channels/slack-input-response.d.ts",
       "default": "./dist/agent/channels/slack-input-response.js"
     },
+    "./agent/channels/slack-memory-canvas.js": {
+      "types": "./dist/agent/channels/slack-memory-canvas.d.ts",
+      "default": "./dist/agent/channels/slack-memory-canvas.js"
+    },
     "./agent/channels/slack-mrkdwn.js": {
       "types": "./dist/agent/channels/slack-mrkdwn.d.ts",
       "default": "./dist/agent/channels/slack-mrkdwn.js"
+    },
+    "./agent/channels/slack-offboarding.js": {
+      "types": "./dist/agent/channels/slack-offboarding.d.ts",
+      "default": "./dist/agent/channels/slack-offboarding.js"
     },
     "./agent/channels/slack-origin-codec.js": {
       "types": "./dist/agent/channels/slack-origin-codec.d.ts",
@@ -107,6 +119,10 @@
     "./agent/channels/slack-spend-gate.js": {
       "types": "./dist/agent/channels/slack-spend-gate.d.ts",
       "default": "./dist/agent/channels/slack-spend-gate.js"
+    },
+    "./agent/channels/slack-step-label.js": {
+      "types": "./dist/agent/channels/slack-step-label.d.ts",
+      "default": "./dist/agent/channels/slack-step-label.js"
     },
     "./agent/channels/slack-task-card.js": {
       "types": "./dist/agent/channels/slack-task-card.d.ts",
@@ -176,6 +192,10 @@
       "types": "./dist/agent/setup/slack-api-setup.d.ts",
       "default": "./dist/agent/setup/slack-api-setup.js"
     },
+    "./agent/slack-as-you.js": {
+      "types": "./dist/agent/slack-as-you.d.ts",
+      "default": "./dist/agent/slack-as-you.js"
+    },
     "./agent/status.js": {
       "types": "./dist/agent/status.d.ts",
       "default": "./dist/agent/status.js"
@@ -195,6 +215,8 @@
     "test:slack-workspace-roster": "NODE_NO_WARNINGS=1 tsx scripts/slack-workspace-roster-test.ts",
     "test:slack-scope-audit": "NODE_NO_WARNINGS=1 tsx scripts/slack-scope-audit-test.ts",
     "test:slack-app-manifest": "NODE_NO_WARNINGS=1 tsx scripts/slack-app-manifest-test.ts",
+    "test:slack-offboarding": "NODE_NO_WARNINGS=1 tsx scripts/slack-offboarding-test.ts",
+    "test:slack-as-you": "NODE_NO_WARNINGS=1 tsx scripts/slack-as-you-test.ts",
     "test:slack-commands": "NODE_NO_WARNINGS=1 tsx scripts/slack-commands-test.ts",
     "test:slack-reaction-ingest": "NODE_NO_WARNINGS=1 tsx scripts/slack-reaction-ingest-test.ts",
     "test:slack-chat-audit": "NODE_NO_WARNINGS=1 tsx scripts/slack-chat-audit-test.ts",
@@ -215,6 +237,7 @@
     "test:slack-wake-trust": "NODE_NO_WARNINGS=1 tsx scripts/slack-wake-trust-test.ts",
     "test:slack-dm-seat": "NODE_NO_WARNINGS=1 tsx scripts/slack-dm-seat-test.ts",
     "test:slack-reasoning-fence": "NODE_NO_WARNINGS=1 tsx scripts/slack-reasoning-fence-test.ts",
+    "test:slack-step-label": "NODE_NO_WARNINGS=1 tsx scripts/slack-step-label-test.ts",
     "test:slack-dm-divert": "NODE_NO_WARNINGS=1 tsx scripts/slack-dm-divert-test.ts",
     "test:slack-shortcut": "NODE_NO_WARNINGS=1 tsx scripts/slack-shortcut-test.ts",
     "test:slack-enterprise-rung": "NODE_NO_WARNINGS=1 tsx scripts/slack-enterprise-rung-test.ts",
@@ -228,10 +251,11 @@
     "test:slack-web-api-seam": "NODE_NO_WARNINGS=1 tsx scripts/slack-web-api-seam-test.ts",
     "test:slack-setup": "NODE_NO_WARNINGS=1 tsx scripts/slack-setup-test.ts",
     "test:slack-wake-drop-hold": "NODE_NO_WARNINGS=1 tsx scripts/slack-wake-drop-hold-test.ts",
-    "test:slack-surface-evidence": "NODE_NO_WARNINGS=1 tsx scripts/slack-surface-evidence-test.ts"
+    "test:slack-surface-evidence": "NODE_NO_WARNINGS=1 tsx scripts/slack-surface-evidence-test.ts",
+    "test:slack-home": "NODE_NO_WARNINGS=1 tsx scripts/slack-home-test.ts"
   },
   "dependencies": {
-    "@open-everywhere/core": "0.4.0",
+    "@open-everywhere/core": "0.5.0",
     "undici": "^7.28.0",
     "zod": "4.5.4"
   },

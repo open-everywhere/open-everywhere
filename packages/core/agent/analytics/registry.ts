@@ -1,4 +1,4 @@
-export type DatasetName = "audit" | "usage" | "spend";
+export type DatasetName = "audit" | "usage" | "spend" | "tools";
 
 export type TsBucket = "hour" | "day" | "week" | "month";
 
@@ -12,7 +12,7 @@ export type MeasureSpec =
   | { readonly kind: "est_usd" };
 
 export interface DatasetSpec {
-  readonly table: "audit_entry" | "usage_events" | "spend_ledger";
+  readonly table: "audit_entry" | "usage_events" | "spend_ledger" | "tool_usage";
   readonly dims: Readonly<Record<string, DimensionSpec>>;
   readonly measures: Readonly<Record<string, MeasureSpec>>;
   readonly rowColumns: readonly string[];
@@ -153,7 +153,40 @@ const SPEND: DatasetSpec = {
   rowOrderColumn: "period",
 };
 
-export const DATASETS: Readonly<Record<DatasetName, DatasetSpec>> = { audit: AUDIT, usage: USAGE, spend: SPEND };
+const TOOLS: DatasetSpec = {
+  table: "tool_usage",
+  dims: {
+    ts: { kind: "ts", column: "ts" },
+    surface: { kind: "column", column: "surface_key" },
+    principal: { kind: "column", column: "principal_id" },
+    session: { kind: "column", column: "session_id" },
+    connector: { kind: "column", column: "connector" },
+    tool: { kind: "column", column: "tool" },
+    outcome: { kind: "column", column: "outcome" },
+    model: { kind: "column", column: "model" },
+    domain: { kind: "domain" },
+  },
+  measures: {
+    calls: { kind: "sql", expr: "SUM(CASE WHEN event = 'call' THEN 1 ELSE 0 END)" },
+    errors: { kind: "sql", expr: "SUM(CASE WHEN event = 'call' AND outcome = 'error' THEN 1 ELSE 0 END)" },
+    rejected: { kind: "sql", expr: "SUM(CASE WHEN event = 'call' AND outcome = 'rejected' THEN 1 ELSE 0 END)" },
+    cards: { kind: "sql", expr: "SUM(CASE WHEN event = 'card' THEN 1 ELSE 0 END)" },
+    input_tokens: { kind: "sql", expr: "SUM(input_tokens)" },
+    output_tokens: { kind: "sql", expr: "SUM(output_tokens)" },
+    cache_read_tokens: { kind: "sql", expr: "SUM(cache_read_tokens)" },
+    est_usd: { kind: "est_usd" },
+  },
+  rowColumns: ["ts", "surface_key", "surface_mode", "principal_id", "session_id", "event", "connector", "tool", "outcome", "model", "input_tokens", "output_tokens", "cache_read_tokens"],
+  surfaceColumn: "surface_key",
+  surfaceModeColumn: "surface_mode",
+  surfaceKindColumn: null,
+  surfaceParts: null,
+  principalColumn: "principal_id",
+  platformColumn: null,
+  rowOrderColumn: "ts",
+};
+
+export const DATASETS: Readonly<Record<DatasetName, DatasetSpec>> = { audit: AUDIT, usage: USAGE, spend: SPEND, tools: TOOLS };
 
 export const DATASET_NAMES = Object.keys(DATASETS) as DatasetName[];
 

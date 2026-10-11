@@ -18,6 +18,8 @@ import { sweepConnectorCardInputs } from "../connections/connector-card-retentio
 import { getOperationalStore } from "../operational/provider.js";
 import { sweepCredentialGrants } from "../access/credential-grant-flow.js";
 import { getSettings } from "../settings/settings.js";
+import { sweepIdleThreadSeats } from "../channels/thread-seat-close.js";
+import { liveThreadSeatCloseDeps } from "../channels/unified.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:dream/tidy] ${msg}`);
@@ -55,6 +57,7 @@ export interface TidyTickReport {
   readonly grantLapseNotices: number;
   readonly grantCardsExpired: number;
   readonly expiredGrants: number;
+  readonly expiredThreadSeats: number;
 }
 
 export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: readonly string[] } = {}): Promise<TidyTickReport> {
@@ -68,7 +71,7 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
     domains = getConfig().loadDomains();
   } catch (err) {
     log(`tick skipped — config not registered: ${String(err)}`);
-    return { orgs: 0, silos: 0, applied: 0, proposed: 0, changed: 0, judged: noJudge, expiredApprovals: 0, expiredGrantAsks: 0, grantLapseNotices: 0, grantCardsExpired: 0, expiredGrants: 0 };
+    return { orgs: 0, silos: 0, applied: 0, proposed: 0, changed: 0, judged: noJudge, expiredApprovals: 0, expiredGrantAsks: 0, grantLapseNotices: 0, grantCardsExpired: 0, expiredGrants: 0, expiredThreadSeats: 0 };
   }
 
   const judge = dreamJudge();
@@ -84,6 +87,7 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
   let grantLapseNotices = 0;
   let grantCardsExpired = 0;
   let expiredGrants = 0;
+  let expiredThreadSeats = 0;
 
   for (const org of orgs) {
     const orgStart = { siloCount, applied, proposed, changed, expiredApprovals, expiredGrantAsks };
@@ -195,6 +199,13 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
       log(`skip credential-grant-sweep ${org} — ${String(err)}`);
     }
 
+    try {
+      const swept = await sweepIdleThreadSeats(org, { ...liveThreadSeatCloseDeps(), now: () => now });
+      expiredThreadSeats += swept.expired;
+    } catch (err) {
+      log(`skip thread-seat-sweep ${org} — ${String(err)}`);
+    }
+
     const orgSilos = siloCount - orgStart.siloCount;
     const orgApplied = applied - orgStart.applied;
     const orgProposed = proposed - orgStart.proposed;
@@ -226,9 +237,9 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
     `tick: ${orgs.length} org(s), ${siloCount} silo(s) — ${applied} safe op(s) applied, ${changed} silo(s) written, ` +
       `${proposed} proposal(s) recorded, ${expiredApprovals} approval(s) expired, ` +
       `${expiredGrantAsks} grant ask(s) lapsed (${grantLapseNotices} notice(s), ${grantCardsExpired} card(s) updated), ` +
-      `${expiredGrants} grant(s) expired${judgeNote}`,
+      `${expiredGrants} grant(s) expired, ${expiredThreadSeats} idle thread seat(s) closed${judgeNote}`,
   );
-  return { orgs: orgs.length, silos: siloCount, applied, proposed, changed, judged, expiredApprovals, expiredGrantAsks, grantLapseNotices, grantCardsExpired, expiredGrants };
+  return { orgs: orgs.length, silos: siloCount, applied, proposed, changed, judged, expiredApprovals, expiredGrantAsks, grantLapseNotices, grantCardsExpired, expiredGrants, expiredThreadSeats };
 }
 
 export default defineSchedule({

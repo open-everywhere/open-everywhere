@@ -15,6 +15,7 @@ import { platformOfScopeKey } from "../access/scope-key.js";
 import { inlineForReview } from "./review-surface.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import type { ActionKind } from "./types.js";
+import { plainValue } from "./plain-text.js";
 
 export interface AccessRequestArgs {
   readonly org: string;
@@ -203,6 +204,9 @@ export async function executeAccessRequest(args: AccessRequestArgs, decidedBy: s
 const accessRequest: ActionKind<AccessRequestArgs> = {
   kind: "access.request",
   policy: "member",
+  plainSummary(args) {
+    return `Open a pull request for an admin to review: ${plainValue(grantSentence(args.delta), 110)}`;
+  },
   summarize(args) {
     return [
       `Request wider access — ${grantSentence(args.delta)}`,

@@ -98,8 +98,8 @@ ok(
   hookSecretRefs({ ...goodHook, secretRef: ["NEW", "OLD"] }).join(",") === "NEW,OLD",
   "hookSecretRefs preserves declaration order (current key first)",
 );
-throwsWith(() => assertWebhooksValid([{ ...goodHook, target: "github/owner/repo" }]), 'target must be a fully-qualified "slack/TEAM/CHANNEL" surface, got "github/owner/repo"', "a non-slack target is rejected");
-throwsWith(() => assertWebhooksValid([{ ...goodHook, target: "slack/T1" }]), 'target must be a fully-qualified "slack/TEAM/CHANNEL" surface, got "slack/T1"', "a target missing the channel segment is rejected");
+throwsWith(() => assertWebhooksValid([{ ...goodHook, target: "github/owner/repo" }]), '"github/owner/repo" names platform "github", which has no webhook target resolver', "a target on a platform with no target resolver is rejected at load (OPE-2419)");
+throwsWith(() => assertWebhooksValid([{ ...goodHook, target: "slack/T1" }]), '"slack/T1" is not a fully-qualified target', "a target missing the channel segment is rejected");
 throwsWith(() => assertWebhooksValid([{ ...goodHook, instruction: "  " }]), 'declares a target ("slack/T1/C1") but no instruction', "a blank instruction is rejected");
 doesNotThrow(() => assertWebhooksValid([]), "an empty registry is valid (the safe default)");
 doesNotThrow(() => assertWebhooksValid([{ ...goodHook, authFloor: "signed-fresh" }]), "a hook declaring a grade ON the ladder validates");
@@ -125,7 +125,7 @@ throwsWith(() => assertWebhooksValid([{ ...goodHook, authFloor: "" as never }]),
     'declares a target ("slack/T1/C1") but no instruction',
     "a BLANK instruction beside a target is the half-declared case too, not the emit-only one — whitespace must not smuggle a hook past the pair rule",
   );
-  throwsWith(() => assertWebhooksValid([{ ...goodHook, target: "slack/T1" }]), 'target must be a fully-qualified "slack/TEAM/CHANNEL" surface, got "slack/T1"', "a present-but-malformed target is still refused");
+  throwsWith(() => assertWebhooksValid([{ ...goodHook, target: "slack/T1" }]), '"slack/T1" is not a fully-qualified target', "a present-but-malformed target is still refused");
 
   ok(isFusedHook(goodHook) === true, "isFusedHook: both halves present ⇒ fused");
   ok(isFusedHook(emitOnly) === false, "isFusedHook: neither half ⇒ not fused (no declared fire to run)");

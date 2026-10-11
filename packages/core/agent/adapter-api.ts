@@ -30,6 +30,8 @@ export type { AwsSsoLinkStore } from "./connections/aws-sso-link.js";
 
 export { registerDirectoryProvider, directoryProvider, resetDirectoryProvider } from "./identity/directory.js";
 export type { DirectoryProvider, DirectoryPerson, DirectoryAccount, DirectoryGrade } from "./identity/directory.js";
+export { offboardDeactivatedAccount, OFFBOARD_REFUSAL } from "./identity/offboarding.js";
+export type { DeactivationReport, DeactivationConfirmation, OffboardOutcome } from "./identity/offboarding.js";
 
 export { registerRefCodec } from "./credentials/ref.js";
 export type { RefCodec, CredentialRefDeriveInput, ParsedCredentialRef } from "./credentials/ref.js";
@@ -108,6 +110,9 @@ export type {
 
 export { registerActionKind } from "./approvals/actions.js";
 export type { ActionKind, PendingActionRow } from "./approvals/types.js";
+export { plainSummaryForRow } from "./approvals/plain-summary.js";
+export { pendingCardLayout, approvalLabel } from "./approvals/card-layout.js";
+export type { PendingCardLayout, CardOption, CardOptionVerb, CardOptionTone } from "./approvals/card-layout.js";
 
 export { platformName, onVercel } from "./access/platform.js";
 
@@ -167,6 +172,13 @@ export { siloTier } from "./memory/store.js";
 export type { Tier, MemoryFiles } from "./memory/store.js";
 
 export { modelRouteFor, memoryRefs, defineDomain } from "./memory/domain.js";
+export { buildHomeView, runHomeAction, hasHomeAction, homeDomainsFor, registerHomeSection, registerHomeAction, SLACK_HOME_WIRE } from "./home/home-view.js";
+export type { HomeViewer, HomeBlock, HomeItemAction, HomeButton, HomeRoom, HomeDomainMembership, HomeSection, HomeActionResult } from "./home/home-view.js";
+export { MEMORY_HOME_ACTIONS } from "./home/memory-home.js";
+export { readDomainMemory, renderMemoryMarkdown, domainsNamingSilo, isLineDigest } from "./memory/visible.js";
+export type { MemoryGroup, MemoryItem } from "./memory/visible.js";
+export { registerMemoryWriteObserver } from "./memory/write-road.js";
+export type { MemoryWriteEvent } from "./memory/write-road.js";
 export type { ModelRoute } from "./memory/domain.js";
 export { liveIdentity, resolvePrimaryModel } from "./model/routing.js";
 export type { ModelBackend, RoutedCallOptions } from "./model/routing.js";
@@ -252,6 +264,9 @@ export {
   OE_ADDRESSED_ATTR,
   OE_BOT_NAME_ATTR,
 } from "./identity/bot-name.js";
+
+export { declaredMcpServers, defineMcpServers } from "./connections/mcp-servers.js";
+export type { McpServerDeclaration } from "./connections/mcp-servers.js";
 
 export {
   declareSurfaceCommandScope,
@@ -524,8 +539,10 @@ export {
   deliverDecisionFeedback,
   discordDecisionWakeTarget,
   postDiscordDecisionNotice,
+  registerDecisionFeedbackSurface,
+  decisionFeedbackSurfaceFor,
 } from "./approvals/flow.js";
-export type { CardPoster, JudgeLiftNoticePoster, ApprovalClickResolution, DecisionWakeDeps } from "./approvals/flow.js";
+export type { CardPoster, JudgeLiftNoticePoster, ApprovalClickResolution, DecisionWakeDeps, DecisionFeedbackSurface } from "./approvals/flow.js";
 export { clickerFloorRefusalNotice } from "./approvals/clicker-floor.js";
 export type { ClickerFloorRefusal } from "./approvals/clicker-floor.js";
 export { judgeContradictionNotice } from "./approvals/judge-contradiction.js";
@@ -836,7 +853,7 @@ export { gateGithubDelivery, verifyGithubSignature } from "./routines/events.js"
 export { fanOutGitHubDelivery } from "./routines/github-fanout.js";
 
 export { registerRoutineDispatch } from "./schedules/routine-dispatch.js";
-export type { RoutineDispatchProvider, DispatchTarget } from "./schedules/routine-dispatch.js";
+export type { RoutineDispatchProvider, DispatchTarget, DeclaredTargetSpec, DeclaredTargetResolution } from "./schedules/routine-dispatch.js";
 export type { Routine } from "./routines/routine.js";
 
 export { appendUsageEvent, usageForSession } from "./spend/usage-events.js";
@@ -854,6 +871,8 @@ export { LIVE_DELEGATED_TASKS_STATE_KEY } from "./access/live-delegated-tasks.js
 export { withRetryAfter, withRetryAfterLoose, parseRetryAfterMs, RateLimitExhaustedError } from "./channels/rate-limit-retry.js";
 export { RATE_LIMITED_STATUS, DEFAULT_MAX_ATTEMPTS, DEFAULT_CAP_MS, DEFAULT_FALLBACK_MS, DEFAULT_TOTAL_BUDGET_MS } from "./channels/rate-limit-retry.js";
 export type { RateLimitRetryOptions, RetryPolicy } from "./channels/rate-limit-retry.js";
+
+export { classifyConnectorOpTier } from "./access/consequence.js";
 
 export { dispatchNativeWakeWithRetry } from "./channels/native-wake-retry.js";
 export type { NativeWakeRetryAttribution } from "./channels/native-wake-retry.js";

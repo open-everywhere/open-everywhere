@@ -10,6 +10,7 @@ import { acceptsMintedSecret, webhookVerifier } from "../webhooks/verifier.js";
 import { unmintableRotationRefusal } from "../webhooks/source-vocabulary.js";
 import { registerActionKind } from "./actions.js";
 import type { ActionKind } from "./types.js";
+import { plainValue } from "./plain-text.js";
 
 const SECRET_BYTES = 32;
 
@@ -79,6 +80,9 @@ const webhookRotate: ActionKind<WebhookRotateArgs> = {
   kind: "webhook.rotate",
   policy: "member",
   beneficiaryClicker: true,
+  plainSummary(args) {
+    return `New signing secret for the ${plainValue(args.hookId, 18)} webhook. Any old secret stops working unless an overlap is declared. ${plainValue(args.requestedBy, 12)} gets a one-time link`;
+  },
   summarize(args) {
     return [
       `Issue a new signing secret for the declared "${args.hookId}" webhook`,

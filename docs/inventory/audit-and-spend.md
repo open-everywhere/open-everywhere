@@ -12,11 +12,11 @@ points INTO those; it does not replace them.
 
 ## The count
 
-**676 rows: 673 documented, 3 RETIRED, 0 UNDOCUMENTED.** Those three counts partition the rows by the
+**679 rows: 676 documented, 3 RETIRED, 0 UNDOCUMENTED.** Those three counts partition the rows by the
 value in the **`Documented by`** column, which is the only thing counted here: `RETIRED — …` marks a
 row whose sole record is the commit that removed its write site, and a row that names a manual page
 counts as documented whatever else is true of it. Section membership is a different question and
-gives a different number: 668 rows are live behaviours and the other five are the retired action
+gives a different number: 671 rows are live behaviours and the other five are the retired action
 names of § 15 — and two of those five are documented by a manual page, so they count under
 `documented` rather than under `RETIRED`. The `Tested by` column declares only an exemption; the coverage answer comes from `npm run coverage-board` (see [the coverage matrix](../dev/coverage-matrix.md)).
 
@@ -25,7 +25,7 @@ names of § 15 — and two of those five are documented by a manual page, so the
 | 1. The audit log — mechanism | 29 | 0 |
 | 2. The audit log — storage and the append-only posture | 31 | 0 |
 | 3. Reading the log — the control-plane routes | 11 | 0 |
-| 4. The audit action vocabulary | 317 | 0 |
+| 4. The audit action vocabulary | 320 | 0 |
 | 5. Spend — mechanism | 27 | 0 |
 | 6. Spend — gates and refusals | 34 | 0 |
 | 7. Spend — the ledger and the usage rows | 38 | 0 |
@@ -356,6 +356,7 @@ One row per distinct `action` string the code writes. The Id is that string. `<p
 | `grant.revoked` | `packages/core/agent/access/credential-grant-flow.ts:394` | core/access | A credential grant is revoked. | `docs/capabilities/connectors-and-providers.md#credential-grants--lending-one-vendor-tool-fixed-to-named-arguments` | ? |
 | `grant.undisclosed` | `packages/core/agent/access/credential-grant-broker.ts:192` | core/access | The grant broker records a use it could not disclose. | `docs/security/credentials-and-planes.md#why-a-grant-is-a-real-boundary` (+1) | ? |
 | `grant.used` | `packages/core/agent/access/credential-grant-broker.ts:139` | core/access | A credential grant is used. | `docs/security/credentials-and-planes.md#why-a-grant-is-a-real-boundary` (+1) | ? |
+| `home.publish` | `packages/providers/slack/agent/channels/slack-home.ts:310` | provider-slack/channels | The Slack Home tab page was published to one person (or Slack refused it, with its error code). Counts only — the page size, the viewer's trust verdict and the domain count, never a line of the page. | `docs/capabilities/memory.md#memory-you-can-see` | ? |
 | `hook.refused` | `packages/core/agent/hooks/control-refusal.ts:60` | core/hooks | An OE hook refused a turn by calling `ctx.cancel()`. The row names the hook, the edge and a stable `reason`; `cancelCalled` says the call was made, not that the turn stopped — eve returns `void` either way, so the stop is confirmed from eve's own `ctx.cancel() ignored` warning or from `turn.cancelled`. | `docs/security/audit-and-provenance.md#tool-and-guard-rows` | n/a: unannotated — lane F |
 | `identity.credential.orphan_purged` | `packages/core/scripts/purge-orphaned-vault-rows-lib.ts:135` | ops script | The orphaned-vault-row purge script destroys one row; the row is written per deletion. | `docs/how-it-works/identity.md#from-packagescore--dry-run-first-nothing-is-written-without---apply` | ? |
 | `identity.directory.sync` | `packages/core/agent/identity/directory-sync.ts:55` | core/identity | A directory sync runs and records its plan, its applications and its refusals. | `docs/deploy/rollback.md#store-identity` | n/a: unannotated — lane F |
@@ -386,7 +387,9 @@ One row per distinct `action` string the code writes. The Id is that string. `<p
 | `linear.supervisor_turn_failed` | `packages/providers/linear/agent/channels/linear.ts:1096` | providers/linear | A Linear supervisor turn fails, and the row is the only notice. | `docs/security/audit-and-provenance.md#the-per-surface-lifecycle-rows` | ? |
 | `linear.token_mint_failed` | `packages/providers/linear/agent/channels/linear-credentials.ts:14` | providers/linear | A Linear token cannot be minted. | `docs/deploy/configuration-reference.md#linear-token-lifecycle-mint-on-demand` (+2) | ? |
 | `memory.admin_read` | `packages/core/agent/tools/memory_admin_read.ts:69` | core/tools | An admin reads a memory silo. | `docs/security/control-plane.md#memory-admin-from-inside-slack` | ? |
+| `memory.export` | `packages/core/agent/memory/visible.ts:200` | core/memory | A person exported their own memory from a self-service view. The row carries the line count, the document's length and its SHA-256, never its content. | `docs/capabilities/memory.md#memory-you-can-see` | ? |
 | `memory.delete` | `packages/core/agent/control/writes.ts:1365` | core/control | A memory bullet is deleted through the control plane. | `docs/security/control-plane.md#memory-admin-inspecting-and-editing-the-org-brain-without-sql` | ? |
+| `memory.canvas_refresh` | `packages/providers/slack/agent/channels/slack-memory-canvas.ts:158` | provider-slack/channels | One channel a domain memory canvas decision visited — on a memory write, a person joining, or the channel being shared (`trigger`) — and its outcome, including `cleared-external` / `cleared-guest` / `cleared-disabled` when the app replaced its own canvas with a notice that holds no memory, and `clear-failed` when the app could not rule out that its canvas still shows memory. | `docs/capabilities/memory.md#memory-you-can-see` | ? |
 | `memory.claim_withheld` | `packages/core/agent/channels/memory-claim-guard.ts:121` | core/channels | A reply's durability claim is struck because the turn holds no write evidence for it; the row carries the claim's shape, never the sentence. | `docs/capabilities/memory.md#a-reply-may-not-claim-a-save-the-host-did-not-make` | n/a: unannotated — lane F |
 | `memory.index_change` | `packages/core/agent/hooks/memory.ts:561` | core/hooks | The memory index is healed or pruned, and the row counts both. | `docs/security/revocation-latency.md#memory-removal-is-turn-grained-for-a-standing-seat-session-grained-otherwise` | ? |
 | `memory.learn` | `packages/core/agent/hooks/learn.ts:90` | core/hooks | A learn hook writes a durable memory. | `docs/security/audit-and-provenance.md#properties-that-make-the-log-trustworthy` | n/a: unannotated — lane F |

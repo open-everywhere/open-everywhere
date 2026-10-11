@@ -17,6 +17,7 @@ const MAX_PRIOR_PROPOSAL_PRS = 3;
 
 export interface SkillProposalPrResult {
   readonly opened: boolean;
+  readonly dryRun?: boolean;
   readonly skipped?: string;
   readonly url?: string;
   readonly number?: number;
@@ -183,6 +184,33 @@ export async function openSkillProposalPr(
   const history = await proposalPrHistory(org, proposal.scope, sigSha, deps.delivery);
   if (history.attemptedForDelivery) {
     return { opened: false, skipped: `already attempted for delivery ${deps.delivery} — a replayed hook body opens no second PR`, ...none };
+  }
+
+  if (cfg?.dryRun === true) {
+    await appendAudit({
+      org,
+      platform: "memory",
+      workspace: proposal.scope,
+      principalId: DREAM_ACTOR,
+      action: SKILL_PROPOSAL_PR_ACTION,
+      detail: {
+        scope: proposal.scope,
+        repo,
+        branch,
+        dryRun: true,
+        sigSha,
+        ...(deps.delivery !== undefined ? { delivery: deps.delivery } : {}),
+        ...(typeof proposal.detail?.["count"] === "number" ? { count: proposal.detail["count"] } : {}),
+      },
+    });
+    return {
+      opened: false,
+      dryRun: true,
+      skipped: `dry run (accessRequests.dryRun) — would commit ${skillProposalPath(name)} to ${repo}#${branch} and open a PR against ${base}; no branch, no PR`,
+      repo,
+      branch,
+      ...none,
+    };
   }
 
   const provider = deps.provider ?? getConfigPrProvider();

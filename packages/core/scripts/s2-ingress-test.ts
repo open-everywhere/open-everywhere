@@ -10,6 +10,7 @@ import { divertToUnifiedWindow, divertInboundToUnifiedWindow, type UnifiedReceiv
 import { registerSettings } from "../agent/settings/settings.js";
 import { RateLimitExhaustedError } from "../agent/channels/rate-limit-retry.js";
 import { recordThreadOwner, resolveThreadOwner, clearThreadOwner } from "../agent/channels/thread-ownership.js";
+import { recordThreadSeatOpen } from "../agent/channels/thread-seat-state.js";
 import { unifiedThreadRef, isThreadScopedWakeOrigin, mintWakeId, OE_GRAIN_ATTR, OE_ADDRESSING_ATTR, OE_DELIVERY_ID_ATTR, type UnifiedWakeOrigin } from "../agent/channels/unified-window.js";
 import { formatWindowToken, taskWindowId, threadSeatWindowId } from "../agent/channels/window-key.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
@@ -151,23 +152,42 @@ await withFlag(true, async () => {
   received.length = 0;
 });
 
-console.log("5. stale-owner fallback (rotation):");
+console.log("5. stale-owner fallback (rotation, task owner):");
 await withFlag(true, async () => {
-  const staleSeat = formatWindowToken({ domain: DOMAIN, windowId: threadSeatWindowId(REF.channelKey, REF.threadKey), generation: GEN - 1 });
-  await recordThreadOwner(store, ORG, REF, staleSeat, new Date().toISOString());
+  const staleTask = formatWindowToken({ domain: DOMAIN, windowId: taskWindowId(REF.channelKey, REF.threadKey), generation: GEN - 1 });
+  await recordThreadOwner(store, ORG, REF, staleTask, new Date().toISOString());
   const before = (await ingressAudit()).length;
   const wakeId = mintWakeId();
   await divertInboundToUnifiedWindow(captureReceive, inbound(wakeId));
   eq(received.length, 1, "stale: exactly one delivery (never dropped)");
-  eq(received[0].target.token, STANDING, "stale: a rotated-generation owner is IGNORED — the standing seat wakes");
+  eq(received[0].target.token, STANDING, "stale: a rotated-generation TASK owner is IGNORED — the standing seat wakes");
   eq(await resolveThreadOwner(store, ORG, REF), null, "stale: the dead row was lazily REAPED (generation-bump GC)");
   const rows = await ingressAudit();
   eq(rows.length, before + 1, "stale: the fallback decision is audited");
   const detail = rows[0].detail as Record<string, unknown>;
   eq(detail.routed, "standing", "audit: routed=standing");
   eq(detail.reason, "stale-owner", "audit: reason=stale-owner");
-  eq(detail.ownerId, staleSeat, "audit: the reaped owner is named");
+  eq(detail.ownerId, staleTask, "audit: the reaped owner is named");
   eq(detail.reaped, true, "audit: the reap is recorded");
+  received.length = 0;
+});
+
+console.log("5b. thread seat survives the parent's rotation; a routed message touches it:");
+await withFlag(true, async () => {
+  const olderSeat = formatWindowToken({ domain: DOMAIN, windowId: threadSeatWindowId(REF.channelKey, REF.threadKey), generation: GEN - 1 });
+  const longAgo = "2026-01-01T00:00:00.000Z";
+  await recordThreadOwner(store, ORG, REF, olderSeat, longAgo);
+  await recordThreadSeatOpen(store, ORG, REF, { seatToken: olderSeat, parentRegistryKey: "unified-domain:payments", origin: ORIGIN, atIso: longAgo });
+  await divertInboundToUnifiedWindow(captureReceive, inbound(mintWakeId()));
+  eq(received.length, 1, "rotated parent: exactly one delivery");
+  eq(received[0].target.token, olderSeat, "rotated parent: the message still reaches the THREAD SEAT — no silent orphan");
+  eq(received[0].auth.attributes?.[OE_GRAIN_ATTR], "thread", "rotated parent: oe_grain=thread (the seat's narrow hands)");
+  eq(await resolveThreadOwner(store, ORG, REF), olderSeat, "rotated parent: the ownership row is KEPT, not reaped");
+  const state = await store.getThreadSeatState(ORG, REF.channelKey, REF.threadKey);
+  ok(state !== null && state.state === "open" && state.updatedAt > longAgo, "activity: the routed message moved the seat's last-activity stamp forward");
+  const idle = await store.listIdleThreadSeats(ORG, "2026-06-01T00:00:00.000Z", 10);
+  ok(!idle.some((r) => r.threadKey === REF.threadKey), "activity: a thread somebody just wrote in is not idle");
+  await clearThreadOwner(store, ORG, REF);
   received.length = 0;
 });
 
@@ -175,9 +195,15 @@ console.log("6. re-homed-domain fallback:");
 await withFlag(true, async () => {
   const foreign = formatWindowToken({ domain: "treasury", windowId: threadSeatWindowId(REF.channelKey, REF.threadKey), generation: GEN });
   await recordThreadOwner(store, ORG, REF, foreign, new Date().toISOString());
+  await recordThreadSeatOpen(store, ORG, REF, { seatToken: foreign, parentRegistryKey: "unified-domain:treasury", origin: ORIGIN, atIso: new Date().toISOString() });
+  const closedBefore = (await readAudit({ org: ORG, action: "thread_seat.closed" })).length;
   await divertInboundToUnifiedWindow(captureReceive, inbound(mintWakeId()));
   eq(received[0].target.token, STANDING, "re-homed: a foreign-domain owner never captures this window's traffic — standing wakes");
   eq(await resolveThreadOwner(store, ORG, REF), null, "re-homed: the dead row was reaped");
+  eq((await store.getThreadSeatState(ORG, REF.channelKey, REF.threadKey))?.state, "closed", "re-homed: the seat's record says the HOST closed it");
+  const closed = await readAudit({ org: ORG, action: "thread_seat.closed" });
+  eq(closed.length, closedBefore + 1, "re-homed: the close is audited as thread_seat.closed");
+  eq((closed[0].detail as Record<string, unknown>).reason, "closed", "audit: reason=closed");
   received.length = 0;
 });
 

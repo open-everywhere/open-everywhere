@@ -31,7 +31,7 @@ type BindableContext = import("../agent/identity/binding.js").BindableContext;
   const block = renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "agent");
   check("§1 the rendered index is non-empty on the `agent` route", block.length > 0);
   check("🔴 §1 the rendered index CARRIES the floor verbatim — prose nobody is shown enforces nothing", block.includes(DELEGATION_FLOOR));
-  const push = "all but trivial work belongs in a worker";
+  const push = "work your own kit cannot do belongs in a worker";
   check("§1 the push sentence the floor answers is still in the block", block.includes(push));
   check(
     "🔴 §1 the floor sits AFTER the sentence that caused the defect, so a seat reading the push reaches the definition",

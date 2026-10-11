@@ -366,6 +366,9 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   declare_webhook: postTurn("arms", member("webhook.declare", "gate",
     "proposes an inbound webhook in either shape: FUSED (an ingress bound to a standing instruction and a named channel, which runs unattended with that channel's full existing access on anyone's POST, indefinitely) or EMIT-ONLY (an ingress and nothing else, whose consequences are decided later by separately-approved `event` routines). Which is exactly why this tool arms nothing: approving OPENS A PULL REQUEST, and the privilege gate is the MERGE, behind branch protection + CODEOWNERS on the config repo. An unmerged PR declares nothing, and even a merged one authenticates nobody until the signing secret exists — no secret is minted, seen, or transported by this flow, so there is no disclosure axis and no private-delivery precondition (arming a `broker: \"db\"` hook's value is rotate_webhook's separate, card-gated act). Same tier and same two-step as request_access, whose flow it reuses. Declares `taint: \"gate\"`: a durable external wake path aimed at a named channel may never be auto-approved off fetched content, so a tainted turn is floored at a human decision and an unattended tainted run denies (OPE-438)",
   )),
+  propose_mcp_server: postTurn("arms", member("mcp-server.propose", "gate",
+    "proposes ONE entry for the app's agent/access/mcp-servers.ts (OPE-2420): a vendor's hosted MCP server that, once merged, every person who can DM the agent reaches as themselves through their own sign-in. Approving OPENS A PULL REQUEST on the config repo; the privilege gate is the MERGE, behind branch protection and CODEOWNERS. No secret is minted, seen or transported: a static client names its secret's REF. The tool refuses an external or guest conversation, a turn that a non-member's message woke, and a turn with no acting person, before any card; a message READ during the turn from an author refuted as a non-member taints it, and while `taint.mode` is on the `gate` floor below covers that. `arms` (OPE-419): a merged entry adds connector tools to future turns. Declares `taint: \"gate\"`: the entry is researched off fetched vendor pages, so a tainted turn is floored at a human decision and an unattended tainted run denies (OPE-438)",
+  )),
   rotate_webhook: postTurn("arms", member("webhook.rotate", "gate",
     "mints and DISCLOSES a signing secret for an ingress a merged PR ALREADY declared — it widens nothing (no new endpoint, no new authority, no new audience), and the DISCLOSURE is the whole reason for the bar. It is also the only way a `broker: \"db\"` hook ever gets a value at all, which is what lets a declared hook go live without a redeploy; refused by name for any other broker, whose value is set outside this deployment. This is likewise the ONLY recovery path, deliberately: there is no re-reveal anywhere in the design, because a re-reveal is indistinguishable in the audit log from exfiltration of a live secret. Whether the superseded key keeps working is the DECLARATION's own choice — a second `secretRef` entry is the overlap, ended by a PR rather than a timer — so the model cannot choose that window either. Declares `taint: \"gate\"`: minting a live signing secret may never be auto-approved off fetched content, so a tainted turn is floored at a human decision and an unattended tainted run denies (OPE-438). `arms` (OPE-419): the mint is what makes a DECLARED ingress actually able to wake this deployment, so it creates post-turn execution surface even though it declares no new endpoint",
   )),
@@ -439,6 +442,10 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
     "de-escalation only: ENDS a credential grant the CALLER's own account pays for (OPE-1637), and there is no configuration in which it widens anything — afterwards strictly fewer conversations can spend their credential. It is `open` for the reason `unlink_identity` is: gating the off switch for your own credential would mean needing somebody else's permission to stop lending it, which is the one direction this must never require. What bounds it instead is the LOOKUP, not a card — it takes no owner argument, so the acting principal's own principal key is the query key and a caller can neither read nor end anybody else's grants. Refuses outside a DM (a list of the conversations somebody lends their credential to is not a thing to render in front of their colleagues) and refuses without an ACTING principal, so an unattended fire cannot end its creator's grants. Audited (grant.revoked, route `thread`)",
   ),
 
+  waiting_on_me: open(
+    "a read of the CALLER's own queue (OPE-2434, OPE-2433): the open approval cards they can decide or that their own work raised, and the jobs that reported themselves blocked on them, each as a code-rendered plain sentence and a link. It decides nothing, posts nothing and writes nothing. What bounds it is the LOOKUP: it takes no person argument, so the acting principal is the query key and a caller cannot read anybody else's queue. Refuses outside a DM (what waits on somebody is not a thing to render in front of their colleagues) and refuses without an ACTING principal, so an unattended fire reads nothing",
+  ),
+
   link_identity: open(
     "issues a short-TTL, single-use proof-of-control CODE in the initiator's own DM and writes one challenge row. It links nothing, reaches nobody outside that DM, and changes no behaviour — the code's entire power is to earn its holder a QUESTION in the initiator's DM naming them. Gating it would put a card in front of asking a question. The consequential step is confirm_link, and that step is already a specific identified human answering in their own DM, which no card can improve on",
   ),
@@ -468,6 +475,10 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   create_ticket: member("ticket.create", "disclose",
     "audience-expanding: a filed work item reaches every watcher of the repo/team, its triage automation and its subscribers — none of them in the asking room — and the model authors the title + body, so the card (which renders both in full) is the injection gate before that text is published",
   ),
+  delegate_to_agent: member("a2a.delegate", "disclose",
+    "audience-expanding: a delegated task leaves this deployment for another organisation's agent (a declared A2A agent, OPE-2425), with the asker's identity attached, and that agent acts on it — so the card, which renders the agent, its host and the exact task text, is the injection gate before the model's bytes reach a system nobody in the room controls. `disclose`, as for a connector write: the delegation arms no post-turn surface, so a tainted turn's card carries the taint disclosure, and the remote agent's own answer taints the turn that reads it. The click arms ONE more call with the same input (`approvalArmsCall`); only that call sends",
+  ),
+  check_agent_task: open("read of the state and result of a task THIS conversation delegated to a declared A2A agent in the last 24 hours (OPE-2425); it sends no new task and changes nothing on the remote side, it reaches only the declared agent's host, and its result is fenced as untrusted"),
   post_message: member("chat.post", "disclose",
     "audience-expanding: a message posted into a container the turn did NOT arrive in interrupts named humans who never asked, is attributed to the deployment, and cannot be un-seen after an edit — and the model authors the body, so the card (which renders the destination and the full text) is the injection gate before those bytes reach a room that never asked for them",
   ),
@@ -706,6 +717,7 @@ export const POST_TURN_WRITE_PRIMITIVES: readonly string[] = [
   "deleteDomainSkill",
   "applyAgentSpec",
   "applyHookDeclaration",
+  "insertMcpServerEntry",
   "mintSecretFor",
 ];
 

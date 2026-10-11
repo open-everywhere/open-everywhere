@@ -2,7 +2,7 @@ import { getOperationalStore } from "../operational/provider.js";
 import type { ChannelSessionRow, OperationalStore } from "../operational/store.js";
 import { shouldRotate, supervisorRotateContextSize, type RotationThresholds } from "./turn-delivery.js";
 import { claimRuntimeRotation, stampMintedRuntime } from "./runtime-rotation.js";
-import { carryTailForward } from "./session-tail-record.js";
+import { carryConversationForward, readConversationCarry } from "./session-tail-record.js";
 import type { WakeMessageInput } from "./wake-envelope.js";
 import { dmWindowKey, formatWindowToken, saltSupervisorGeneration } from "./window-key.js";
 import { dmWindowRegistryKey } from "./unified-supervisor.js";
@@ -12,6 +12,8 @@ export const DM_SEAT_ROTATE_EXPIRY_MS = 30 * 86_400_000;
 export const DM_SEAT_ROTATE_TURN_BUDGET = 50;
 
 export const DM_SEAT_ROTATE_TOKEN_BUDGET = 5_000_000;
+
+export const DM_SEAT_HEAL_GRACE_MS = 2 * 60_000;
 
 export function dmSeatThresholds(): Required<Omit<RotationThresholds, "runtimeChanged">> {
   return {
@@ -58,15 +60,17 @@ export async function getOrCreateDmSeat(org: string, dm: DmSeatRef, atIso: strin
     return { token: row.token, generation: row.generation, freshGeneration: true, tail: [] };
   }
   if (shouldRotate(existing, atIso, { ...thresholds, runtimeChanged })) {
-    const tail = await carryTailForward(org, key, existing.token, store);
+    const tail = await carryConversationForward(org, key, existing.token, store);
     const row = await store.rotateChannelSession(org, key, mint(existing.generation + 1), atIso);
     return { token: row.token, generation: row.generation, freshGeneration: true, tail };
   }
+  const freshGeneration = existing.firstWakeAt == null;
+  const heal = freshGeneration && Date.parse(atIso) - Date.parse(existing.createdAt) > DM_SEAT_HEAL_GRACE_MS;
   return {
     token: existing.token,
     generation: existing.generation,
-    freshGeneration: existing.firstWakeAt == null,
-    tail: [],
+    freshGeneration,
+    tail: heal ? await readConversationCarry(org, key, store) : [],
   };
 }
 

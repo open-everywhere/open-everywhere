@@ -1,3 +1,5 @@
+import { parseSlackUserDeactivation, routeSlackUserDeactivation, type SlackUserDeactivation } from "./slack-offboarding.js";
+import type { OffboardOutcome } from "@open-everywhere/core/agent/adapter-api.js";
 import { POST, type Channel, type HttpRouteDefinition, type RouteHandlerArgs } from "eve/channels";
 import { SLACK_SIGNATURE_HEADER, SLACK_TIMESTAMP_HEADER, slackSignature, slackSignatureMatches } from "./slack-signature.js";
 import { slackSigningSecret } from "../setup/credentials.js";
@@ -88,10 +90,24 @@ import {
   applySlackExternalPolicy,
   stripUnfencedSlackAttachments,
   slackEnterpriseIdFromEnvelope,
+  slackForm,
   _resetAuthorMemberCache,
 } from "./slack-events.js";
 import { buildSlackAuth, withForwardedSlackEnvelope, type ForwardedSlackEnvelope } from "./slack-identity.js";
 import { holdRouteWork, routeHoldQuiesced, withSlackRouteHold } from "./slack-route-hold.js";
+import { liveMemoryCanvasDeps, recheckChannelCanvas } from "./slack-memory-canvas.js";
+import {
+  handleHomeClick,
+  handleHomeOpened,
+  handleHomeSubmission,
+  liveSlackHomeDeps,
+  parseHomeClick,
+  parseHomeOpened,
+  parseHomeSubmission,
+  type ParsedHomeClick,
+  type ParsedHomeOpen,
+  type ParsedHomeSubmission,
+} from "./slack-home.js";
 import { persistSlackAttachment, registerSlackAttachment } from "./slack-attachments.js";
 import {
   parseSlackShortcutPayload,
@@ -109,6 +125,7 @@ export type FrontDecision =
   | { readonly kind: "forward"; readonly reason: string }
   | { readonly kind: "wake"; readonly reason: string; readonly env: SlackEventEnvelope }
   | { readonly kind: "join"; readonly reason: string; readonly env: SlackEventEnvelope }
+  | { readonly kind: "user-change"; readonly reason: string; readonly env: SlackEventEnvelope }
   | { readonly kind: "reaction"; readonly reason: string; readonly env: SlackEventEnvelope }
   | { readonly kind: "approval-click"; readonly reason: string; readonly payload: unknown }
   | { readonly kind: "setkey-click"; readonly reason: string; readonly payload: unknown }
@@ -117,7 +134,11 @@ export type FrontDecision =
   | { readonly kind: "grant-click"; readonly reason: string; readonly payload: unknown }
   | { readonly kind: "mention"; readonly reason: string; readonly env: SlackEventEnvelope }
   | { readonly kind: "dm-wake"; readonly reason: string; readonly env: SlackEventEnvelope; readonly dmKind: "im" | "mpim" }
-  | { readonly kind: "shortcut"; readonly reason: string; readonly shortcut: ParsedSlackShortcut };
+  | { readonly kind: "shortcut"; readonly reason: string; readonly shortcut: ParsedSlackShortcut }
+  | { readonly kind: "channel-shared"; readonly reason: string; readonly env: SlackEventEnvelope }
+  | { readonly kind: "home-open"; readonly reason: string; readonly open: ParsedHomeOpen }
+  | { readonly kind: "home-click"; readonly reason: string; readonly click: ParsedHomeClick }
+  | { readonly kind: "home-submit"; readonly reason: string; readonly submission: ParsedHomeSubmission };
 
 function parseOeApprovalPayload(rawBody: string): unknown | undefined {
   const raw = new URLSearchParams(rawBody).get("payload");
@@ -239,6 +260,15 @@ export function classifyEnvelope(rawBody: string, contentType: string): FrontDec
     if (grantClick !== undefined) {
       return { kind: "grant-click", reason: "block_actions oe_grant: click — ours, never forwarded", payload: grantClick };
     }
+    const homePayload = decodeInteractivityPayload(rawBody);
+    const homeClick = parseHomeClick(homePayload);
+    if (homeClick !== undefined) {
+      return { kind: "home-click", reason: `block_actions oe_home: ${homeClick.action} — ours, never forwarded`, click: homeClick };
+    }
+    const homeSubmission = parseHomeSubmission(homePayload);
+    if (homeSubmission !== undefined) {
+      return { kind: "home-submit", reason: `view_submission for the Home tab modal (${homeSubmission.action}) — ours, never forwarded`, submission: homeSubmission };
+    }
     const shortcut = parseSlackShortcutPayload(decodeInteractivityPayload(rawBody));
     if (shortcut) {
       return { kind: "shortcut", reason: `${shortcut.kind} shortcut "${shortcut.callbackId}" — ours, never forwarded`, shortcut };
@@ -263,6 +293,17 @@ export function classifyEnvelope(rawBody: string, contentType: string): FrontDec
   }
   if (eventType === "member_joined_channel") {
     return { kind: "join", reason: "member_joined_channel — channel-join intro candidate", env };
+  }
+  if (eventType === "channel_shared") {
+    return { kind: "channel-shared", reason: "channel_shared — recheck the domain memory canvas", env };
+  }
+  if (eventType === "app_home_opened") {
+    const open = parseHomeOpened(env);
+    if (open) return { kind: "home-open", reason: "app_home_opened (home tab) — publish the person's page", open };
+    return { kind: "forward", reason: "app_home_opened for a tab other than home — nothing to publish" };
+  }
+  if (eventType === "user_change") {
+    return { kind: "user-change", reason: "user_change — a deactivation report candidate", env };
   }
   if (eventType === "reaction_added" || eventType === "reaction_removed") {
     return { kind: "reaction", reason: `${eventType} — reaction ingestion candidate`, env };
@@ -342,7 +383,12 @@ export interface FrontOptions {
   readonly handleSetKeyClick?: (payload: unknown) => Promise<boolean>;
   readonly handleSetKeyViewSubmission?: (payload: unknown) => Promise<SetKeyViewResult>;
   readonly handleConnectClick?: (payload: unknown) => Promise<boolean>;
+  readonly routeUserDeactivation?: (d: SlackUserDeactivation) => Promise<OffboardOutcome>;
   readonly handleGrantCardClick?: (payload: unknown) => Promise<boolean>;
+  readonly handleHomeOpened?: (open: ParsedHomeOpen) => Promise<boolean>;
+  readonly handleHomeClick?: (click: ParsedHomeClick) => Promise<boolean>;
+  readonly handleHomeSubmission?: (submission: ParsedHomeSubmission) => Promise<boolean>;
+  readonly recheckChannelCanvas?: (input: { org: string; teamId: string; channelId: string; trigger: "member-joined" | "channel-shared"; joinedUserId?: string }) => Promise<unknown>;
   readonly mentionPolicyFor?: (channelId: string, surfaceKey: string) => Promise<SingleWindowMentionPolicy>;
   readonly resolveDmSeat?: (org: string, dm: { surfaceKey: string; channelId?: string; legacyChannelId?: string }, atIso: string) => Promise<DmSeat>;
   readonly touchDmSeatFn?: (org: string, dmSurfaceKey: string, atIso: string) => Promise<void>;
@@ -538,7 +584,13 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
   const handleSetKeyClick = opts.handleSetKeyClick ?? liveHandleSetKeyClick;
   const handleSetKeyViewSubmission = opts.handleSetKeyViewSubmission ?? liveHandleSetKeyViewSubmission;
   const handleConnectClick = opts.handleConnectClick ?? liveHandleConnectClick;
+  const routeUserDeactivation =
+    opts.routeUserDeactivation ?? ((d: SlackUserDeactivation) => routeSlackUserDeactivation(d, { usersInfo: (userId) => slackForm("users.info", `user=${encodeURIComponent(userId)}`) }));
   const handleGrantCardClick = opts.handleGrantCardClick ?? liveHandleGrantCardClick;
+  const homeOpened = opts.handleHomeOpened ?? ((open: ParsedHomeOpen) => handleHomeOpened(open, liveSlackHomeDeps()));
+  const homeClicked = opts.handleHomeClick ?? ((click: ParsedHomeClick) => handleHomeClick(click, liveSlackHomeDeps()));
+  const recheckCanvas = opts.recheckChannelCanvas ?? ((input: { org: string; teamId: string; channelId: string; trigger: "member-joined" | "channel-shared"; joinedUserId?: string }) => recheckChannelCanvas(input, liveMemoryCanvasDeps()));
+  const homeSubmitted = opts.handleHomeSubmission ?? ((submission: ParsedHomeSubmission) => handleHomeSubmission(submission, liveSlackHomeDeps()));
   const ambientEnabledFor = opts.ambientEnabledFor ?? ((surfaceKey: string) => ambientSupervisorEnabled(surfaceKey, getConfig().loadDomains()));
   const seatedSurface = opts.seatedSurfaceFor ?? slackDomainUsesUnifiedWindow;
   const mentionPolicyFor = opts.mentionPolicyFor ?? slackSingleWindowMentionPolicy;
@@ -996,6 +1048,28 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       return new Response(null, { status: 200 });
     }
 
+    if (decision.kind === "home-open" || decision.kind === "home-click" || decision.kind === "home-submit") {
+      const ids = decision.kind === "home-open" ? decision.open : decision.kind === "home-click" ? decision.click : decision.submission;
+      const fenceIds = {
+        ...(ids.teamId === undefined ? {} : { teamId: ids.teamId }),
+        ...(ids.enterpriseId === undefined ? {} : { enterpriseId: ids.enterpriseId }),
+        userId: ids.userId,
+      };
+      if (slackInteractivityTenantFenceDeclined(fenceIds, decision.kind, decision.kind === "home-open" ? "front-home-event-branch" : "front-interactivity-branch")) {
+        return fencedAck(new Response(null, { status: 200 }));
+      }
+      const run =
+        decision.kind === "home-open" ? homeOpened(decision.open) : decision.kind === "home-click" ? homeClicked(decision.click) : homeSubmitted(decision.submission);
+      args.waitUntil(
+        run
+          .then((handled) => {
+            if (!handled) console.log(`[open-everywhere:slack-front] ${decision.kind} for ${ids.userId} did not complete`);
+          })
+          .catch(() => console.warn(`[open-everywhere:slack-front] ${decision.kind} failed after acknowledgement`)),
+      );
+      return new Response(null, { status: 200 });
+    }
+
     if (decision.kind === "setkey-submit") {
       if (slackInteractivityTenantFenceDeclined(interactivityFenceIds(decision.payload), "setkey-submit", "front-interactivity-branch")) {
         return fencedAck(new Response(null, { status: 200 }));
@@ -1009,11 +1083,71 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       return forwardNative();
     }
 
+    if (decision.kind === "channel-shared") {
+      const ev = decision.env.event as Record<string, unknown> | undefined;
+      const channelId = typeof ev?.channel === "string" ? ev.channel : undefined;
+      const teamId = typeof decision.env.team_id === "string" ? decision.env.team_id : undefined;
+      if (!channelId || !teamId) return OK();
+      const sharedEnterpriseId = slackEnterpriseIdFromEnvelope(decision.env);
+      if (
+        slackInteractivityTenantFenceDeclined(
+          { teamId, ...(sharedEnterpriseId === undefined ? {} : { enterpriseId: sharedEnterpriseId }), channelId },
+          "channel-shared",
+          "front-channel-shared-branch",
+        )
+      ) {
+        return fencedAck(OK());
+      }
+      let sharedOrg: string | undefined;
+      try {
+        sharedOrg = resolvePartition({
+          channel: { kind: "slack" },
+          session: { auth: { current: { attributes: { team_id: teamId, channel_id: channelId }, principalId: "", principalType: "slack-user" } } },
+        } as Parameters<typeof resolvePartition>[0]).org;
+      } catch {
+        sharedOrg = undefined;
+      }
+      if (sharedOrg !== undefined) {
+        args.waitUntil(
+          recheckCanvas({ org: sharedOrg, teamId, channelId, trigger: "channel-shared" }).catch(() =>
+            console.warn("[open-everywhere:slack-front] memory canvas recheck after a share failed"),
+          ),
+        );
+      }
+      return OK();
+    }
+
     if (decision.kind === "join") {
       const jev = parseChannelJoinEvent(decision.env);
       if (!jev) return OK();
       const { userId: joinBotUserId } = await getBotIdentity();
-      if (!joinBotUserId || jev.userId !== joinBotUserId) return OK();
+      if (!joinBotUserId || jev.userId !== joinBotUserId) {
+        if (jev.teamId === undefined) return OK();
+        if (
+          slackInteractivityTenantFenceDeclined(
+            { teamId: jev.teamId, ...(jev.enterpriseId === undefined ? {} : { enterpriseId: jev.enterpriseId }), channelId: jev.channelId, userId: jev.userId },
+            "member-joined",
+            "front-join-branch",
+          )
+        ) {
+          return fencedAck(OK());
+        }
+        let joinOrg: string | undefined;
+        try {
+          joinOrg = resolvePartition(bindableForJoin(jev)).org;
+        } catch {
+          joinOrg = undefined;
+        }
+        if (joinOrg !== undefined) {
+          const teamId = jev.teamId;
+          args.waitUntil(
+            recheckCanvas({ org: joinOrg, teamId, channelId: jev.channelId, trigger: "member-joined", joinedUserId: jev.userId }).catch(() =>
+              console.warn("[open-everywhere:slack-front] memory canvas recheck after a join failed"),
+            ),
+          );
+        }
+        return OK();
+      }
 
       const joinKey = wakeKey(decision.env, jev.channelId, jev.ts);
       if (dedupe.seen(joinKey, now())) return OK();
@@ -1027,6 +1161,30 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       const joinSend = send;
       args.waitUntil(
         routeChannelJoinEvent(jev, liveChannelJoinDeps(joinSend)).then(logOutcome("channel-join", jev.channelId, jev.ts)),
+      );
+      return OK();
+    }
+
+    if (decision.kind === "user-change") {
+      const deactivation = parseSlackUserDeactivation(decision.env);
+      if (!deactivation) return OK();
+      if (
+        slackInteractivityTenantFenceDeclined(
+          {
+            teamId: deactivation.deliveringTeamId,
+            ...(deactivation.enterpriseId === undefined ? {} : { enterpriseId: deactivation.enterpriseId }),
+            userId: deactivation.userId,
+          },
+          "user-change",
+          "front-user-change-branch",
+        )
+      ) {
+        return fencedAck(OK());
+      }
+      args.waitUntil(
+        routeUserDeactivation(deactivation).then((outcome) =>
+          console.log(`[open-everywhere:slack-front] user_change ${deactivation.userId}: offboarding ${outcome.kind}${outcome.kind === "refused" ? ` (${outcome.reason})` : ""}`),
+        ),
       );
       return OK();
     }

@@ -3,6 +3,7 @@ import { describeReadableBy, readableByDefects, type ReadableBy } from "../acces
 import { webhookReach } from "./achievability.js";
 import { WEBHOOK_AUTH_GRADES, type WebhookAuthGrade } from "./verifier.js";
 import type { Domain } from "../memory/domain.js";
+import { parseWebhookTarget } from "./target.js";
 
 export type WebhookPosture = "trigger-only" | "content-bearing" | "projection";
 
@@ -100,14 +101,12 @@ export function assertWebhooksValid(hooks: readonly WebhookHook[], deps: Webhook
       throw new Error(
         hasTarget
           ? `webhook "${h.id}" declares a target (${JSON.stringify(h.target)}) but no instruction — a fired channel with nothing to say. Add the instruction, or drop the target to declare an EMIT-ONLY hook whose consequences are decided by \`event\` routines.`
-          : `webhook "${h.id}" declares an instruction but no target — there is nowhere for it to run. Add the "slack/TEAM/CHANNEL" target, or drop the instruction to declare an EMIT-ONLY hook whose consequences are decided by \`event\` routines.`,
+          : `webhook "${h.id}" declares an instruction but no target — there is nowhere for it to run. Add the target (a room such as "slack/TEAM/CHANNEL", or a person's DM such as "dm:slack/TEAM/USER"), or drop the instruction to declare an EMIT-ONLY hook whose consequences are decided by \`event\` routines.`,
       );
     }
     if (h.target !== undefined) {
-      const parts = h.target.split("/");
-      if (parts.length !== 3 || parts[0] !== "slack" || !parts[1] || !parts[2]) {
-        throw new Error(`webhook "${h.id}" target must be a fully-qualified "slack/TEAM/CHANNEL" surface, got ${JSON.stringify(h.target)}`);
-      }
+      const parsed = parseWebhookTarget(h.target);
+      if ("defect" in parsed) throw new Error(`webhook "${h.id}" target: ${parsed.defect}`);
     }
     const grantDefects = readableByDefects(h.readableBy);
     if (grantDefects.length > 0) {

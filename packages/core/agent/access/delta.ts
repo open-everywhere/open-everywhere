@@ -8,7 +8,12 @@ import type { EffectiveAccess } from "./resolver.js";
 import type { ConnectorCredentials as ConnectorCredentialsCatalogue } from "./connector-credentials.js";
 
 export const OUT_OF_VOCABULARY =
-  "that isn't something I can request automatically — an admin needs to PR this by hand (edit agent/access/bundles.ts in the config repo).";
+  "that isn't something I can request automatically — an admin needs to PR this grant by hand (edit agent/access/bundles.ts in the config repo). " +
+  "A vendor's hosted MCP server this deployment does not declare yet is not a grant: propose it with `propose_mcp_server`, which opens a PR adding one entry to agent/access/mcp-servers.ts.";
+
+export const NEW_CONNECTOR_ROUTE =
+  "a connector this deployment doesn't define yet can't be granted. If the vendor has a hosted MCP server (\"set up FullStory\"), research it and propose it with " +
+  "`propose_mcp_server`: that opens a PR adding one entry to agent/access/mcp-servers.ts in the config repo, for an admin to merge.";
 
 export const HTTP_METHODS: readonly HttpMethod[] = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"];
 
@@ -270,7 +275,7 @@ function planGrantConnector(ask: AccessAsk, ctx: PlanContext, allowBroad: string
   const defined = definedConnectors(ctx.bundles);
   if (!defined.includes(name)) {
     throw new Error(
-      `connector "${name}" isn't defined in this deployment's config (defined: ${defined.length ? defined.join(", ") : "none"}) — ${OUT_OF_VOCABULARY}`,
+      `connector "${name}" isn't defined in this deployment's config (defined: ${defined.length ? defined.join(", ") : "none"}) — ${NEW_CONNECTOR_ROUTE}`,
     );
   }
 

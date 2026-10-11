@@ -170,14 +170,14 @@ Source: `packages/core/agent/access/lean-seat.ts#DM_SEAT_CARVE_IN`,
 Not to be confused with: the roster itself. The carve-in is a property of the SEAT, not of the tool.
 
 **worker** (also **delegated child**) — a `task`-grain child of a conversation's work session. It is
-the **WIDE** surface: the seat's kit plus **84** further tools, with two exact exceptions. It holds
-exactly one of `ask_question` or `ask_room` (`ask_room` on a work-session job), so 83 of the 84, and
-it does not hold the whole seat kit (see the worker withheld set). The 84 include `bash`, `aws`, `write_file`,
+the **WIDE** surface: the seat's kit plus **88** further tools, with two exact exceptions. It holds
+exactly one of `ask_question` or `ask_room` (`ask_room` on a work-session job), so 87 of the 88, and
+it does not hold the whole seat kit (see the worker withheld set). The 88 include `bash`, `aws`, `write_file`,
 `open_pull_request`, `checkout_repo`, `web_fetch`, `request_credential_grant`, `ask_question`
 and every read tool the seat does not hold. It also holds this conversation's own lent `grant__…` tools, which are minted per
 grant row and so appear in no static count. The count is identical for a standing parent and a thread
 parent.
-Source: `packages/core/agent/access/worker-capability-index.generated.ts#WORKER_ONLY_TOOLS_STANDING` (84 entries) and `packages/core/agent/access/worker-capability-index.generated.ts#WORKER_ONLY_TOOLS_THREAD` (84 entries).
+Source: `packages/core/agent/access/worker-capability-index.generated.ts#WORKER_ONLY_TOOLS_STANDING` (88 entries) and `packages/core/agent/access/worker-capability-index.generated.ts#WORKER_ONLY_TOOLS_THREAD` (88 entries).
 Not to be confused with: the **seat**. 🔴 **A top-level session does its real work by DELEGATING.
 The parent does NOT hold the wide toolset.** Any claim that the parent is wide and the child is
 narrow is backwards. Also not to be confused with a **Claude Code subagent**, which is repo
@@ -316,9 +316,30 @@ There is no second route: OE's own dynamic `agent` — the **roll-own** regime, 
 and `stop_task` — is DELETED (OPE-1145 item 2), and with it the `delegation.nativeSubagent` switch.
 
 **`spawn_thread_session`** — mints a `thread`-grain conversational SEAT, not a worker. Standing
-grain only.
+grain only. It is one side of the seat's **routing decision**: the hand-off of a task's whole
+orchestration to a thread session, after which the task is off the seat's radar.
 Source: `packages/core/agent/access/window-gate-manifest.ts#spawn_thread_session`,
 `packages/core/agent/tools/spawn_thread_session.ts#default`.
+
+**thread session** — the MODEL-FACING name of a **thread seat**, and the same thing: a `thread`-grain
+conversational seat on an `s/` window token that owns one thread and one task, minted by
+`spawn_thread_session`. The seat prompt and the tool descriptions say "thread session", the term of
+OPE-2427; code and operator docs say "thread seat". Likewise "standing session" in
+the seat prompt is the model-facing name of the **standing seat**.
+Source: `packages/core/agent/instructions/seat-prompt.ts#ROUTING_DECISION`,
+`packages/core/agent/tools/spawn_thread_session.ts#default`.
+
+**routing decision** — the ONE decision a seat makes about a task (OPE-2429): orchestrate it
+itself, through its own work session, or hand its orchestration to a thread session with
+`spawn_thread_session`. Anything that needs meaningful orchestration or real work goes to a thread
+session. It stays a judgement; the seat prompt states it in one place.
+Source: `packages/core/agent/instructions/seat-prompt.ts#ROUTING_DECISION`.
+
+**hand-back** — the host-written wake that tells a parent seat one of its thread seats closed: it
+finished (`completed`), went quiet (`expired`) or could no longer be reached (`closed`). The host
+writes it from recorded facts on every close, and the seat's own report rides inside it when the
+seat gave one (OPE-2428).
+Source: `packages/core/agent/channels/thread-seat-close.ts#closeThreadSeat`.
 
 **one-shot** — a delegated run started by a fresh `agent` call, with no `taskId`. Every delegation
 opens this way; a seat may then continue it from the same room (see **task continuation** below).

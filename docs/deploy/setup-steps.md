@@ -96,7 +96,7 @@ Create a Slack app from the manifest below, then copy its bot token and signing 
   },
   "features": {
     "app_home": {
-      "home_tab_enabled": false,
+      "home_tab_enabled": true,
       "messages_tab_enabled": true,
       "messages_tab_read_only_enabled": false
     },
@@ -152,7 +152,8 @@ Create a Slack app from the manifest below, then copy its bot token and signing 
         "reactions:read",
         "pins:read",
         "pins:write",
-        "users:read"
+        "users:read",
+        "canvases:write"
       ]
     }
   },
@@ -167,7 +168,10 @@ Create a Slack app from the manifest below, then copy its bot token and signing 
         "message.mpim",
         "member_joined_channel",
         "reaction_added",
-        "reaction_removed"
+        "reaction_removed",
+        "app_home_opened",
+        "channel_shared",
+        "user_change"
       ]
     },
     "interactivity": {

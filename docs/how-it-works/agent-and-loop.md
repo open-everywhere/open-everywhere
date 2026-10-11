@@ -479,8 +479,9 @@ and Teams — therefore gets the seat's own answer, and the worker posts nothing
 **Delegation verbs**, which spawn more agent rather than doing the work in this turn. A
 seat's job is largely to hand work off: `work` (on every conversation seat: a domain seat, a thread
 seat or a DM seat) hands a piece of work to a full-hands worker, and `spawn_thread_session` opens a
-persistent conversational seat for a thread. `complete_thread` releases a thread's ownership so the next message wakes the standing
-seat again, and `task_cancel` stands a worker down mid-flight (see
+persistent conversational seat for a thread. `complete_thread` finishes a thread: it posts the completion in the
+thread, puts a done reaction on the thread's first message, releases the thread's ownership so the next message
+wakes the standing seat again, and hands the thread back to that seat. `task_cancel` stands a worker down mid-flight (see
 [Stopping a turn](#stopping-a-turn)). A worker's answer needs no verb at all: the framework carries
 the child's last message back as the task's output. Delegation widens *hands*, never *authority*: every consequential
 action a child attempts re-gates inside the child, and untrusted-content taint follows it across
@@ -492,6 +493,18 @@ thread seat and a DM seat) runs its jobs through its own conversation's **work s
 comes back as a new wake. The one session that still delegates with eve's `agent` is the work
 session itself, which starts each job with it. See
 [The three tiers](#the-three-tiers-seat-work-session-worker).
+
+**The seat makes ONE routing decision about a task** (OPE-2429). Its own kit answers only a few
+reads, a react, one short reply, a memory note and a hand-off. Anything more is a task, and the seat
+either **orchestrates it itself**, through its own work session (`work`), and relays each result,
+or **hands its orchestration to a thread session** (`spawn_thread_session`), after which the task is
+off its radar. Anything that needs meaningful orchestration or real work goes to a thread session:
+jobs that build on each other, back-and-forth with people, a review or fix loop, or long-running
+work. The decision stays a judgement. The seat prompt states it in one place,
+`instructions/seat-prompt.ts` `ROUTING_DECISION`, and the capability index and the lean-seat refusal
+both defer to it. A thread seat cannot open another thread seat, so it orchestrates its task itself.
+`packages/core/scripts/eval/routing-decision-offline.ts` holds the two-sided ask pool that measures
+the decision.
 
 A deployment that **disarms** delegation ([`delegation.oneshotAgent`](../deploy/configuration-reference.md#delegation))
 gets **no delegation at all**: `agent` and `spawn_thread_session` go absent and
@@ -1212,24 +1225,50 @@ A thread can still be handed to its own **thread seat** (`spawn_thread_session`)
 owns that thread's messages. The channel seat sees that thread through the history above,
 asks what it recorded with `read_thread_seat` — which seat holds the thread, whether it is
 still open, and its closing report — steers it with `message_thread_seat`, and is told what
-the thread settled when the seat hands it back.
+became of the thread when it closes.
+
+**A delegated thread is never lost and always visibly finishes** (OPE-2428, OPE-2430). Three facts
+carry that:
+
+- **A thread seat survives its parent's rotation.** The seat's token carries the generation its
+  parent had at the spawn, but the seat is its own session, so a newer parent generation does not
+  orphan it: its messages keep reaching it (`channels/thread-ownership.ts` `routeThreadMessage`).
+- **Every close hands the thread back, and the host writes the hand-back.** A thread closes in one of
+  three ways: the seat finishes it with `complete_thread`, it goes quiet for three days and the daily
+  tidy pass expires it, or the host closes a seat its thread can no longer reach. Each close records
+  how it ended, releases the thread, and wakes the parent's live generation with a hand-back the host
+  writes from the recorded facts. The seat's own report rides inside it verbatim when the seat gave
+  one, and is not required (`channels/thread-seat-close.ts`). A message the seat is woken by keeps
+  the thread active, so a thread somebody is still talking in never expires.
+- **A finished thread shows as finished.** The completion posts in the thread itself — the seat's own
+  `reply`, or its report posted by the host when the seat did not post — and the host puts a done
+  reaction (✅) on the thread's first message on every surface whose codec can name that message and
+  which has a reaction primitive: Slack, and Linear on a reply thread. There is no channel post, and no mirror of
+  thread traffic into the standing seat. An expired or host-closed thread gets no done mark.
+
+The persona names what each seat is. A channel's standing seat reads "the standing session for this
+channel". A thread seat reads that it is the thread session for one thread and one task, and that it
+finishes by posting its completion and calling `complete_thread`. A DM seat reads that it is the
+standing session for a direct message, with the routing decision.
 Standing seats are gated by one deployment setting, `window.topology`, which ships on. With it
 off, the agent runs the older per-container path where a mention opens a session of its own.
 
 ### What a thread seat writes to the audit log
 
-A thread seat's whole life leaves three rows. Every one is stamped on the `unified` platform, and
-every one carries ids, counts and flags only — never the brief, never the message, and never the
-closing report's text.
+A thread seat's whole life leaves three rows: the spawn, the messages it was sent, and one close
+row. Every one is stamped on the `unified` platform, and every one carries ids, counts and flags
+only — never the brief, never the message, and never the closing report's text.
 
 | Action | When the code writes it | What the row carries |
 | --- | --- | --- |
 | `thread_seat.spawned` | A thread seat is minted for a thread. | The seat id, the window id, the channel key, the thread key, the **length** of the brief, the taint verdict, and the child's wake id. |
 | `thread_seat.messaged` | A standing seat delivers a message to the thread seat it opened. | The channel key, the thread key, the seat id, whether the words were also mirrored into the room, whether delivery succeeded, the character **count** of the text, the wake id and the session id. |
-| `thread_seat.completed` | A thread seat releases its thread. | The channel key, the thread key, whether the ownership record was cleared, whether a report was stored, and whether that report reached the parent. |
+| `thread_seat.completed` | A thread seat finishes its thread with `complete_thread`. | The close reason, the channel key, the thread key, the seat id, whether a record existed (`recorded`), whether this call closed it (`closedNow`), whether a newer seat holds the thread (`foreign`), whether the ownership record was cleared, whether the seat gave a report (`hasReport`), whether the host's hand-back reached the parent (`handedBack`), the done reaction's outcome (`reaction`), where the completion was posted (`posted`: `seat`, `host` or `failed`), the wake id and the session id. |
+| `thread_seat.closed` | The host closes a thread seat: its thread went quiet (`expired`), or it could no longer be routed to (`closed`). | The same fields as `thread_seat.completed` except `posted`, the wake id and the session id. Its `reaction` is always `not-owed`: an unfinished thread gets no done mark. |
 
-Read `thread_seat.spawned` as the census of seats that were minted, and `thread_seat.completed` as
-the census of threads handed back. A spawned seat with no completion row still holds its thread.
+Read `thread_seat.spawned` as the census of seats that were minted, and `thread_seat.completed` plus
+`thread_seat.closed` as the census of threads handed back. A spawned seat with neither row still
+holds its thread.
 
 🔴 **`thread_seat.dispatch` is not one of these rows.** It is the tag on the send's **idempotency
 key**, which is keyed on the call id and the seat token so an interrupted turn cannot dispatch the
@@ -1848,10 +1887,56 @@ verdict and throws at once.
 
 A DM wake resolves its seat through one of three arms (`getOrCreateDmSeat`,
 `packages/core/agent/channels/dm-seat.ts`): **adopt** a DM this deployment has never seated, **rotate**
-a row that aged out or whose runtime fingerprint moved, or **resume**. Only the rotation carries the
-outgoing generation's recorded tail forward; adoption and resume both return an empty tail and fall
-back to the surface's own capped history fetch. The generation is the store's, computed inside its own
-upsert, so the token always agrees with the row it is stored in.
+a row that aged out or whose runtime fingerprint moved, or **resume**. A rotation carries the
+conversation forward, and so does a self-healing resume (below). Adoption and an ordinary resume return an empty carry, and adoption falls back to
+the surface's own capped history fetch. The generation is the store's, computed inside its own upsert, so the token
+always agrees with the row it is stored in.
+
+**A DM is one conversation that carries on (OPE-2431).** The person's chief of staff must follow a
+reference to something said far back. So every DM rotation, whichever rung fires, carries two things
+into the fresh generation's first wake:
+
+- the **conversation summary** — the DM's most recent messages, at most 200 entries (about the last
+  100 exchanges), each cut to 480 characters, capped at
+  [`rotation.dmSummaryTokenCap`](../deploy/configuration-reference.md#rotation) (32,000 by the proxy);
+  and
+- the outgoing generation's **verbatim tail**, capped at `rotation.tailTokenCap` as on every seat.
+
+The summary **rolls**. Each rotation folds the outgoing generation into the summary it inherited and
+stores the result for the next one, so a fact the person said in generation 1 is still carried at
+generation 4. The oldest entries drop first, and older history is the job of the seat's memory and
+read tools. The summary is stored as one row per DM seat in the `session_tail` table, under a
+reserved token. A rotation replaces that row in one statement, and **nothing else deletes it**: it
+holds up to 200 of the DM's messages for the life of the DM seat, including after a DM stop. A
+self-healing wake carries the stored summary too: a generation still unwoken more than two minutes
+after its rotation (`DM_SEAT_HEAL_GRACE_MS`) is a failed first wake. A second message inside those two
+minutes carries nothing. The code cannot tell a first wake that is still in delivery from one that
+failed fast. So when the first wake fails and the person writes again within two minutes, that
+generation runs without the summary until its next rotation. Its memory and read tools still cover the
+conversation.
+
+**The summary is extractive, not model-written.** Each entry is one recorded message, cut to 480
+characters with a closing "…", that keeps its own author grain (`trust`, `refuted`, `authorTrust`) and
+renders inside the same untrusted fence as a tail entry. A model-written summary of a group DM would
+mix several authors' words into one text that has no honest single author grain. The extractive form
+also adds no model call to the rotate leg, which runs before the wake is delivered, and it cannot
+state a fact that nobody said.
+
+**A non-member's words never enter the summary.** The DM wake paths judge the taint join on the
+trigger message alone, and they pass the carried messages as backscroll with no withhold pass. So a
+carried message is not judged the way its original was. The summary admits only the seat's own posts
+and messages from an author who is graded and not refuted, by the surface or by the operator's
+author-trust register. A refuted or ungraded author's message still rides the one-generation verbatim
+tail, as it did before. The register is read at each rotation, so a register entry that later refutes
+an author removes their messages at the next rotation.
+
+**A DM seat still re-mints rather than compacts, on purpose.** A durable session is one workflow run,
+and the run's event limit binds near ~85 turns however small compaction keeps the context
+([`rotation.turnBudget`](../deploy/configuration-reference.md#rotation) carries the derivation). The
+framework's compaction is irreversible, summarises with the live turn model, and folds every message's
+author grain into that summary. An empty compaction summary also fails the session. So the rotation
+rungs stay as the cost guard, and the summary makes each rotation cheap for the person rather than an
+amnesia.
 
 The five DM rotation thresholds are the whole DM policy (`dmSeatThresholds`):
 
@@ -1966,6 +2051,36 @@ reads, which the Slack channel renders and pins. `upsertStatusItem`
 replaces the keyed bullet in place when one exists and appends it otherwise, and a `null` line removes
 it. Blank-line runs are collapsed and the body always ends in a single newline, so repeated upserts
 cannot grow the file with whitespace.
+
+### Attention states and the one blocked ping
+
+`update_status` takes a TYPED state — `working`, `needs_input` (a person must answer), `blocked` (the
+work cannot go on until a person acts) or `done` — and since OPE-2433 that state is also recorded
+across rooms, keyed on the session, in the operational store's `attention_state` table
+(`packages/core/agent/status/attention.ts`). The row names the session's **person**: the principal
+of its turn — the human whose message opened it, or a routine's creator on a fire. The host
+resolves that person from the binding; the model never names a recipient, so a blocked report
+cannot page a stranger.
+
+- **One ping per blocked episode.** An episode begins when the state CHANGES to `blocked`. The first
+  report of the episode pings the person once, in their DM, with the clipped status line and a link
+  to the work. A repeated `blocked` report updates the line and pings nothing; a move to `working`
+  and back to `blocked` is a new episode and pings again. A compare-and-set in the store spends the
+  episode's ping before the send, so a failed send loses that ping rather than risking two, and it
+  writes an `attention.ping_failed` audit row.
+- **The ping takes the proactive-DM road** (plane `attention.blocked`): the person's own stop
+  (`set_dm_delivery`) outranks it, it carries the host footer that says how to stop it, and it writes
+  the `chat.dm` delivery row with its plane. The model writes the status line, so the host cleans it before it
+  stores or sends it: the characters that disguise a link or open a mention (`< > | [ ]`) and every
+  `@` in front of a bare `@everyone` or `@here` are removed. Identifiers such as `oe_config` stay intact.
+- **What it does not do.** A DM session records nothing — the person is already in that
+  conversation, and a DM's status line is personal content that stays in the DM tier. A session
+  with no principal records its state and pings nobody. A row a session stops updating drops out of
+  every list after 14 days and is pruned on the next write. Slack's Agent Sessions `suspended` state
+  is not wired to this yet.
+- **Where it shows.** `needs_input` and `blocked` rows are in the person's
+  [one queue](../security/control-plane.md#in-slack-approvals) beside their open approval cards, so the
+  DM seat answers "what is waiting on me" with both.
 
 ### Which platforms one window reaches
 

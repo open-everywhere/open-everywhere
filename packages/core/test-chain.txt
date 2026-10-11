@@ -51,6 +51,8 @@ test:policy-pages
 test:capabilities
 test:resolver
 test:mcp-servers
+test:mcp-server-propose
+test:set-up-tool-eval-scoring
 test:roles
 test:governance
 test:connector-disclosure
@@ -87,6 +89,7 @@ test:model-policy
 test:domain-model
 test:memory-merge
 test:memory-write-road
+test:memory-visible
 test:memory-claim-guard
 test:approval-claim-guard
 test:request-claim-guard
@@ -130,6 +133,8 @@ test:webhook-provisioning
 test:webhook-scheme-name
 test:standard-webhook
 test:webhook-disclosure
+test:webhook-target-surface
+test:surface-offboarding
 test:webhook-history
 test:webhook-verifier
 test:webhook-replay-dedupe
@@ -249,6 +254,9 @@ test:analytics-compile
 test:analytics-scope
 test:analytics-query
 test:approvals
+test:approval-card-summary
+test:approval-group
+test:attention-queue
 test:scope-key
 test:consequence
 test:pr-open
@@ -367,6 +375,7 @@ test:connector-card-e2e
 test:e2e-gate-joins
 test:e2e-halt-cleanup
 test:e2e-qa-repo
+test:e2e-browser-third-party
 test:credential-narrowing
 test:connector-transport-host-fence
 test:credential-broker
@@ -483,3 +492,9 @@ test:surface-evidence
 test:temp-dir
 test:postgres-wiring-boot
 test:work-report-owed
+test:output-language
+test:audit-export
+test:tool-usage
+test:a2a-client
+test:thread-seat-close
+test:routing-decision-scoring

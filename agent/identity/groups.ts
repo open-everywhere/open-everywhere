@@ -6,9 +6,9 @@ import {
 } from "@open-everywhere/core/agent/identity/groups.js";
 import { loadGroupsOverlay } from "./groups-overlay.js";
 
-void defineGroup;
-
-const groups: Group[] = [];
+const groups: Group[] = [
+  defineGroup({ name: "slack-as-you-pilot", members: ["slack/T0EXAMPLE/U0IT2421PERSON"] }),
+];
 
 assertReservedGroupNamespace(groups);
 

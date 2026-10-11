@@ -9,6 +9,9 @@ import {
   assertUnifiedDomainTrust,
   assertWindowGroupExclusivity,
   WINDOW_GROUP_NAME_RE,
+  resolvedWindowMode,
+  defaultUnifiedFallback,
+  assertWindowSourcesVouched,
 } from "../agent/memory/domain.js";
 import {
   unifiedSupervisorToken,
@@ -113,8 +116,52 @@ const paymentsSolo = defineDomain({
 ok(windowModeFor(CH, [payments, orgNoGate]) === "unified", "windowModeFor reads a domain's explicit mode (unified)");
 ok(windowModeFor(CH, [paymentsSolo, orgNoGate]) === "solo", "windowModeFor reads a domain's explicit mode (solo)");
 const noMode = defineDomain({ name: "y", reach: ["slack/T1/C_Y"], ambientSupervisor: true });
-ok(windowModeFor("slack/T1/C_Y", [noMode, orgNoGate]) === "solo", "a domain with NO mode defaults to solo (no third topology / no per-platform merge)");
+ok(windowModeFor("slack/T1/C_Y", [noMode, orgNoGate]) === "solo", "a ONE-room domain with NO mode resolves solo (single-member fallback; no third topology / no per-platform merge)");
+ok(defaultUnifiedFallback(noMode, []) === "single-member", "… and the fallback it took is single-member");
 ok(windowModeFor("slack/T1/C_ORPHAN", [payments, orgNoGate]) === "solo", "an unassigned channel resolves the harmless default solo (it cannot window anyway)");
+
+{
+  const team = defineDomain({ name: "team", reach: ["slack/T1/C_A", "slack/T1/C_B"] });
+  ok(resolvedWindowMode(team, []) === "unified", "OPE-2412: a declared multi-room team domain with NO mode resolves unified");
+  ok(windowModeFor("slack/T1/C_A", [team, orgNoGate]) === "unified", "OPE-2412: windowModeFor (the runtime reader) answers unified for a mode-less team domain");
+  withEnv(true, () => {
+    const ga = supervisorGrainFor("slack/T1/C_A", [team, orgNoGate]);
+    const gb = supervisorGrainFor("slack/T1/C_B", [team, orgNoGate]);
+    ok(ga.singleWindow === true && ga.windowId === undefined, "OPE-2412: the default grain is the cross-surface window (singleWindow, degenerate id)");
+    ok(ga.registryKey === gb.registryKey && ga.registryKey === "oe-domain::team", "OPE-2412: both rooms share ONE standing seat row");
+    const go = supervisorGrainFor("slack/T1/C_ORPHAN", [team, orgNoGate]);
+    ok(go.domainName === "org" && go.windowId === "slack/T1/C_ORPHAN" && go.singleWindow === undefined, "OPE-2412: an undeclared channel on the org pseudo-domain stays SOLO");
+  });
+  const teamSolo = defineDomain({ name: "team", reach: ["slack/T1/C_A", "slack/T1/C_B"], mode: "solo" });
+  ok(windowModeFor("slack/T1/C_A", [teamSolo, orgNoGate]) === "solo", "OPE-2412: mode: \"solo\" restores one window per channel");
+  for (const m of ["org", "public", "dm"] as const) {
+    ok(resolvedWindowMode(defineDomain({ name: m, match: m }), []) === "solo", `OPE-2412: the ${m} pseudo-domain resolves solo`);
+    ok(defaultUnifiedFallback(defineDomain({ name: m, match: m }), []) === "pseudo-domain", `OPE-2412: the ${m} pseudo-domain names its fallback`);
+  }
+  const unvouched = defineDomain({ name: "mixed", reach: ["github/acme/api", "notion/ws/page"] });
+  ok(defaultUnifiedFallback(unvouched, []) === "unvouched:github/acme/api", "OPE-2412: an un-vouched member refuses the default and is named");
+  ok(resolvedWindowMode(unvouched, []) === "solo", "OPE-2412: an un-vouched multi-source domain falls back to solo");
+  ok(windowModeFor("github/acme/api", [unvouched, orgNoGate]) === "solo", "OPE-2412: the runtime reader falls back to solo too (empty trust register)");
+  ok(resolvedWindowMode(unvouched, ["github/acme", "notion/ws"]) === "unified", "OPE-2412: the same domain with every member vouched takes the unified default");
+  const warned: string[] = [];
+  noThrow(() => assertWindowSourcesVouched([unvouched, orgNoGate], [], { warn: (m) => warned.push(m) }), "OPE-2412: the boot check does NOT refuse a mode-less domain the default could not unify");
+  ok(warned.length === 1 && warned[0]!.includes('"mixed"') && warned[0]!.includes("unvouched:github/acme/api"), "OPE-2412: … and it warns once, naming the domain and the reason");
+  throws(
+    () => assertWindowSourcesVouched([defineDomain({ name: "mixed", reach: ["github/acme/api", "notion/ws/page"], mode: "unified" }), orgNoGate], [], { warn: () => undefined }),
+    "OPE-2412: an EXPLICIT mode: \"unified\" over the same sources still refuses boot (the existing rule)",
+  );
+  const tenant = defineDomain({ name: "eng", reach: ["slack/T1"] });
+  ok(defaultUnifiedFallback(tenant, []) === "container-reach" && resolvedWindowMode(tenant, []) === "solo", "OPE-2412: a container reach (tenant) falls back to solo");
+  const glob = defineDomain({ name: "pay", reach: ["slack/T1/C_A", "github/acme/payments-*"] });
+  ok(defaultUnifiedFallback(glob, ["github/acme"]) === "container-reach", "OPE-2412: a same-level glob in the reach falls back to solo, even when vouched");
+  const one = defineDomain({ name: "one", reach: ["slack/T1/C_ONE"] });
+  ok(defaultUnifiedFallback(one, []) === "single-member" && resolvedWindowMode(one, []) === "solo", "OPE-2412: a one-room domain stays solo (nothing to share)");
+  const grouped = defineDomain({ name: "g", reach: ["slack/T1/C_A", "slack/T1/C_B", "slack/T1/C_C"], windows: [{ name: "pair", reach: ["slack/T1/C_A", "slack/T1/C_B"] }] });
+  ok(defaultUnifiedFallback(grouped, []) === "single-member", "OPE-2412: the default reads the RESIDUE — a group that claims all but one room leaves a one-room residue");
+  const quiet: string[] = [];
+  assertWindowSourcesVouched([one, grouped, team, orgNoGate], [], { warn: (m) => quiet.push(m) });
+  ok(quiet.length === 0, "OPE-2412: a one-room residue and a unified default log no warning");
+}
 
 noThrow(() => assertUnifiedDomainTrust([payments, orgNoGate]), "valid: explicit mode:unified domain + ambientSupervisor");
 noThrow(() => assertUnifiedDomainTrust([paymentsSolo, orgNoGate]), "valid: explicit mode:solo domain + ambientSupervisor");

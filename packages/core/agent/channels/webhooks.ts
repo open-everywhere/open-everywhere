@@ -9,6 +9,7 @@ import { resolveHookKeys } from "../webhooks/secrets.js";
 import { admitTrigger } from "../routines/ingress.js";
 import { declaredDeliveryId } from "../routines/event-model.js";
 import { fireWebhook, webhookOrg } from "../webhooks/dispatch.js";
+import { webhookTargetPlatform } from "../webhooks/target.js";
 import { auditWebhookRejection } from "../webhooks/reject-audit.js";
 import { firstSightingOfWebhookDelivery, REPLAYED_DELIVERY_AUDIT_REASON, REPLAYED_DELIVERY_CALLER_BODY } from "../webhooks/replay-dedupe.js";
 import { appendAudit } from "../audit/audit.js";
@@ -25,15 +26,16 @@ async function deliver(hook: WebhookHook, body: string, headers: Headers, to: Ro
   const flat = lowercaseHeaders(headers);
   const result = isFusedHook(hook) ? await fireWebhook(hook, body, { to, headers: flat }) : undefined;
   const emitted = await emitConfigHookEvent(hook, body, flat, to);
-  const [, teamId, channelId] = hook.target?.split("/") ?? [];
+  const [resolvedPlatform, resolvedWorkspace, resolvedSurface] = result?.surfaceKey?.split("/") ?? [];
+  const declaredPlatform = webhookTargetPlatform(hook.target);
   const previousKey = keyIndex !== null && keyIndex > 0;
   const unverified = acceptedUnverified({ ok: true, keyIndex });
   const fired = result ? result.fired : (emitted?.accepted ?? false);
   await appendAudit({
     org: webhookOrg(),
-    platform: teamId ? "slack" : "webhook",
-    workspace: teamId ?? "-",
-    surface: channelId ?? "-",
+    platform: resolvedPlatform ?? declaredPlatform ?? "webhook",
+    workspace: resolvedWorkspace ?? "-",
+    surface: resolvedSurface ?? "-",
     principalId: `webhook:${hook.id}`,
     action: fired ? "webhook.fired" : "webhook.declined",
     detail: {

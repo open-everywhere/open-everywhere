@@ -27,7 +27,7 @@ export { approvalPostDeps, hasApprovalCardPath };
 export function requireCardPathHere(tool: string, platform: string): void {
   if (hasApprovalCardPath(platform)) return;
   throw new Error(
-    `${tool} needs a surface with an approval-card path — Slack or Discord for now (this surface is "${platform}") — the approval card renders as a message with Approve/Reject buttons, and a slash command posts it in this channel or not at all. Ask me in this conversation instead: the set_spend_limit / clear_spend_limit tools route the card to a card-capable channel in this domain.`,
+    `${tool} needs a surface with an approval-card path — Slack, Discord or a Teams channel for now (this surface is "${platform}") — the approval card renders as a message with Approve/Reject buttons, and a slash command posts it in this channel or not at all. Ask me in this conversation instead: the set_spend_limit / clear_spend_limit tools route the card to a card-capable channel in this domain.`,
   );
 }
 

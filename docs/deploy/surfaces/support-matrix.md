@@ -27,11 +27,13 @@ clearly adds value, staying audibly silent otherwise.)
 
 Two surface-wide notes before the rows:
 
-- **Teams is now live on one path, 🔧 elsewhere.** As of 2026-07-08 the core spine —
-  channel @mention wake, JWT-validated inbound, identity binding, channel wrap, model turn,
-  and reply post-back — is verified end-to-end against a real Microsoft 365 tenant on the
-  production deploy²⁰. The remaining Teams cells (DM wake, threading, proactive fires, memory
-  tiers) still read 🔧: the code exists but those specific paths haven't been exercised yet.
+- **Teams is live on one path and built on most others.** The core spine — channel
+  @mention wake, JWT-validated inbound, identity binding, channel wrap, model turn and reply
+  post-back — runs end-to-end against a real Microsoft 365 tenant²⁰. Most other Teams cells
+  read 🔧: the code exists and tests pin it, but no live leg has driven that path yet. The
+  approval card is one of those 🔧 cells since OPE-2424²⁷. The ❌ cells are features Teams does
+  not have: slash commands, name-drop wake, the channel intro, first-contact onboarding and
+  DM-partner verification.
 - **Discord has two ingestion paths.** The HTTP **interactions** endpoint (slash commands)
   works on a plain serverless deploy; **ambient messages** (@mentions, DMs, channel follow-ups)
   only exist on the **Gateway relay** path¹. Cells below assume the relay is running; without
@@ -50,17 +52,17 @@ Two surface-wide notes before the rows:
 | One task = one thread | ✅ | 🔧 ³ | ✅ ⁴ |
 | Working indicators | ✅ ⁵ | 🔧 ⁶ | ✅ ⁷ |
 | Durable multi-turn sessions (resume across messages) | ✅ | 🔧 | ✅ ⁸ |
-| Reads channel backscroll for context | ✅ | 🔧 | 🔧 ¹ |
+| Reads channel backscroll for context | ✅ | 🔧 ²⁵ | 🔧 ¹ |
 | Intro when invited into a channel | ✅ | ❌ | ❌ |
 | First-contact onboarding + pinned-instruction adoption | ✅ | ❌ | ❌ |
-| Stop following on request (judged, no magic word) | ✅ | ✅ | ✅ ⁹ |
-| Stop an in-flight turn (a reaction / `/oe stop`) | ✅ | ✅ ²² | ✅ |
+| Stop following on request (judged, no magic word) | ✅ | 🔧 ²³ | ✅ ⁹ |
+| Stop an in-flight turn (a reaction / `/oe stop`) | ✅ | 🔧 ²² | ✅ |
 
 ## Memory
 
 | Feature | Slack | Teams | Discord |
 | --- | :-: | :-: | :-: |
-| Identity binding (workspace / surface / mode, fail-closed) | ✅ | 🔧 | ✅ |
+| Identity binding (workspace / surface / mode, fail-closed) | ✅ | ✅ ²⁰ | ✅ |
 | Per-surface memory silo | ✅ | 🔧 | ✅ |
 | Domain/org-brain sharing (gated by trust, not public/private) | ✅ | 🚧 ¹⁰ | 🚧 ¹¹ |
 | External/guest trust gate, positively verified | ✅ | 🚧 ¹² | 🚧 ¹² |
@@ -71,10 +73,10 @@ Two surface-wide notes before the rows:
 
 | Feature | Slack | Teams | Discord |
 | --- | :-: | :-: | :-: |
-| Admin approval cards (approve/reject button clicks) | ✅ | ❌ | ✅ ¹⁴ |
+| Admin approval cards (approve/reject button clicks) | ✅ | 🔧 ²⁷ | ✅ ¹⁴ |
 | Propose spend-cap changes (`set_spend_limit` / `clear_spend_limit`) | ✅ | 🔧 ²¹ | ✅ ¹⁴ |
 | Approval-carded memory erasure (`purge_memory`) | ✅ | 🔧 ²¹ | ❌ |
-| Spend caps enforced on inbound turns | ✅ | ❌ | ✅ |
+| Spend caps enforced on inbound turns | ✅ | 🔧 ²⁶ | ✅ |
 | Spend caps enforced on proactive fires (routines, webhooks) | ✅ | 🔧 | 🔧 |
 | Spend & usage reporting tools | ✅ | 🔧 | 🔧 |
 | Channel-history read tools (`read_channel` / `read_thread`) | ✅ | 🔧 | 🔧 |
@@ -86,7 +88,7 @@ Two surface-wide notes before the rows:
 | Feature | Slack | Teams | Discord |
 | --- | :-: | :-: | :-: |
 | Scheduled routines post back to the surface | ✅ | 🔧 ¹⁵ | 🔧 ¹⁶ |
-| Inbound webhooks trigger a turn on a surface | ✅ | ❌ ¹⁷ | ❌ ¹⁷ |
+| Inbound webhooks trigger a turn on a surface | ✅ | 🔧 ¹⁷ | 🔧 ¹⁷ |
 
 ## Footnotes
 
@@ -105,7 +107,8 @@ Two surface-wide notes before the rows:
    conversation moves there; toggle with `discord.autoThread`. Fails open to an inline
    reply if thread permissions are missing. **Discord has no threads in DMs** (⛔ there —
    replies land in place), and forum posts are already threads.
-5. Rotating status verbs on the typing indicator, a 👀 working / 🛑 blocked reaction on the
+5. Live step labels while a tool runs (`Searching Notion…`, code-owned, never model text) and
+   rotating status verbs between steps on the typing indicator, a 👀 working / 🛑 blocked reaction on the
    thread root (removed when the reply lands — absence is the done signal), and a pinned
    in-flight status message per channel.
 6. The Eve channel's built-in typing indicator only.
@@ -132,7 +135,9 @@ Two surface-wide notes before the rows:
 12. No positive membership verification exists yet on this platform, so unverifiable surfaces
     bind `external` (shared/org memory gated off) unless the deploy vouches for them
     (`identity.blanketTrust: "internal"` or a per-surface vouch). Teams does honour positive facts when
-    present — a Shared Channel always binds `external`, no override.
+    present. A Shared Channel always binds `external`, with no override. The Bot Connector roster
+    also identifies a guest positively, and a guest binds `external` ahead of any vouch. Teams has no
+    positive check that confirms a member, so the roster can only narrow trust, never widen it.
 13. The memory-admin tools aren't platform-gated; they gate on the **caller** being an org or
     domain admin, so your `Domain.admins` lists must carry that platform's user ids — written
     platform-qualified (`teams/<user-id>`, `discord/<user-id>`), since the roster is matched
@@ -148,8 +153,18 @@ Two surface-wide notes before the rows:
     creation, and a routine missing one fails closed to a dry run.
 16. Discord routine post-back is a plain REST create-message with the bot token — it works
     **without** the Gateway relay.
-17. Webhook targets are currently validated as `slack/TEAM/CHANNEL` — a hook can't point at a
-    Teams/Discord surface yet.
+17. Since OPE-2419 a webhook target can name a room on any of the three surfaces
+    (`slack/T…/C…`, `discord/<guild>/<channel>`, `teams/<tenant>/<conversation>`) or a person's DM
+    (`dm:slack/T…/U…`, `dm:discord/<user>`, `dm:teams/<29: id>`). The fire resolves the target
+    through the same per-surface resolver a routine uses, and an unresolvable target declines with a
+    reason on the `webhook.declined` audit row. Discord and Teams are 🔧: unit suites pin both
+    resolvers, and no live leg has fired one yet. Two limits apply. A Teams target needs a captured
+    conversation reference: the bot must hear one message in that conversation (or one 1:1 message
+    from that person) first. A Discord room target must name the guild the channel is in; the
+    resolver checks it and refuses a mismatch. A Teams room target names a channel or a group
+    chat; a 1:1 chat is named as a person. Neither surface reports a room roster, so a webhook there
+    fails closed: a group chat or group DM is refused, and a channel fires only once it is declared
+    internal in `agent/identity/surfaces.ts`.
 18. Built 2026-07-06 (backlog item 23). **Discord: live-verified 2026-07-07** — `/oe`
     registered on a real guild and exercised end-to-end (`/oe status`, `/oe budget`,
     `/oe help`). **Slack: built, awaiting the one portal step** (adding the Slash Command
@@ -168,17 +183,16 @@ Two surface-wide notes before the rows:
     posts a genuine Graph @mention as a real user, the bot wakes, and the reply is read back
     off the message's reply chain and judged. Only the channel-@mention path is exercised so
     far; DM wake, threading, and proactive fires remain 🔧.
-21. **The PROPOSE works on Teams; the card does not live there.** Teams still can't host an
-    approval card (the row above stays ❌ — no renderer, no poster, no click route), but that
-    stopped deciding whether these tools exist: the card is **routed to a card-capable Slack or
-    Discord channel in the same domain**, and the agent tells you which one and that someone
-    there has to act on it. So `purge_memory`, `request_access`, `revoke_connector`,
+21. **The PROPOSE works on Teams, and since OPE-2424 a Teams CHANNEL hosts the card itself**
+    (²⁷). A personal or group chat still cannot: it carries no channel id, so its card is
+    **routed to a card-capable channel in the same domain** — a Slack or Discord channel, or a
+    Teams channel — and the agent tells you which one and that someone there has to act on it. So `purge_memory`, `request_access`, `revoke_connector`,
     `clear_connector_override`, `set_spend_limit`, `clear_spend_limit`, the five routine-authoring
     verbs (`cancel_routine`, `edit_routine`, `enable_routine`, `add_routine_rule`,
     `remove_routine_rule`), `open_pull_request`, `create_skill`, `delete_skill`, the
     three ticket verbs (`set_state`, `assign`, `create_ticket`), `create_agent` and
-    `declare_webhook` all work from a Teams conversation *provided the domain has somewhere to
-    put a card* — if it doesn't, or the room is in no explicit domain, you get a refusal naming
+    `declare_webhook` all work from a Teams personal or group chat *provided the domain has
+    somewhere to put a card* — if it doesn't, or the room is in no explicit domain, you get a refusal naming
     the config to change. (`create_agent` also refuses a room that's already IN a domain — its
     whole job is turning a domain-less channel into one, which is exactly the precondition a
     redirect needs, so in practice it either finds no domain to route through or hits that other
@@ -201,7 +215,7 @@ Two surface-wide notes before the rows:
     already runs (OPE-989). Every one of these routes into the same cancel path; see
     [Stopping a turn](../../how-it-works/agent-and-loop.md#stopping-a-turn).
     Asking the agent to stop *following* still works everywhere, because it is judged rather
-    than clicked.
+    than clicked. The Teams cell is 🔧: tests pin the 😠 stop, but no live leg drives it yet.
 23. **Teams engaged threads, built 2026-09-07 (OPE-1500), not yet live-verified.** An @mention
     engages the reply chain (or the group chat), a later plain message in it wakes the agent,
     and `stand_down` stores the stop — the same core registry Slack and Discord use. It is 🔧
@@ -222,6 +236,34 @@ Two surface-wide notes before the rows:
     token needs one, so the agent cannot re-run the interrupted call on its own — the person's next
     message is what carries the identity. See
     [connectors and providers](../../capabilities/connectors-and-providers.md).
+25. **Teams reads backscroll over Microsoft Graph, in channels only.** The seat catch-up and the
+    `read_channel` / `read_thread` verbs read `/teams/{team}/channels/{channel}/messages` and
+    its `replies`. A
+    personal or group chat carries no team id, so it takes no catch-up. The read needs the
+    per-team `ChannelMessage.Read.Group` grant that a team owner consents to at install, or a
+    tenant-wide Graph permission on the app registration.
+26. **The Teams inbound handler runs the shared ingress spend gate** (`ingressSpendGate`) before the
+    model turn, the same function every other surface calls. An over-budget scope declines the
+    turn with a visible refusal and a `spend.gate` audit row. A message that the single-window
+    front diverts takes the window's own spend gate instead. The Teams provider integration test
+    drives the real handler against an over-budget scope. No live leg has driven it yet.
+27. **The Teams approval card, built 2026-10-10 (OPE-2424), not yet live-verified.** A governed
+    act asked in a Teams **channel** posts an Adaptive Card into that channel, as a new post, with
+    `Action.Execute` Approve and Reject buttons. A tap reaches the deployment as an
+    `adaptiveCard/action` invoke on the same public route as a message. The route verifies the Bot
+    Framework JWT first and answers 401 to an unsigned or forged invoke, before it reads the body,
+    and it counts a tap only from the `msteams` channel of the bot registration.
+    A verified tap goes through the same decide core as Slack and Discord: the same approver tiers
+    (the `Domain.admins` roster, written `teams/<user-id>`), the same clicker gate, the same halt
+    check and the same `approval.*` audit rows. The decided card replaces the pending one, and a
+    decision notice posts into the card's own reply chain. The judge-lift notice carries its
+    "This should not have run" button on Teams too. What the card does NOT cover: a personal or
+    group chat carries no channel id, so its card goes to a card-capable channel in the same domain
+    (²¹). Teams has no platform-native admin leg — a team owner is not an OE approver. The
+    audience-floor legs that need a room roster stay inert, because no Teams roster supplier is
+    registered; so a kind that hands the clicker a live secret is refused on a Teams tap. 🔧 rather
+    than ✅ until the `S-CARD-teams` e2e leg passes on a live tenant — its tap leg needs a person in
+    the Teams client, because Graph cannot press a card button.
 
 ## How to read this — and how it's updated
 

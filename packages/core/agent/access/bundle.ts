@@ -17,6 +17,7 @@ export interface Scope {
   readonly surface?: string;
   readonly group?: string;
   readonly principal?: string;
+  readonly platform?: string;
 }
 
 export type CredentialType = "bearer" | "basic" | "github-app";
@@ -428,7 +429,7 @@ export function assertBindingsValid(bindings: readonly Binding[], bundles: reado
   for (const b of bindings) {
     const where = `binding "${b.bundle}" (${b.scope.level} scope)`;
     if (!known.has(b.bundle)) bad.push(`  ${where} references unknown bundle "${b.bundle}" — define it in the bundles list or fix the name`);
-    const { level, tenant, domain, surface, group, principal } = b.scope;
+    const { level, tenant, domain, surface, group, principal, platform } = b.scope;
     const required = LEVEL_FIELD[level];
     if (required === undefined) {
       bad.push(`  ${where} has an unknown scope.level "${level}" — the levels are org | tenant | domain | surface | group | principal`);
@@ -464,6 +465,13 @@ export function assertBindingsValid(bindings: readonly Binding[], bundles: reado
       bad.push(
         `  ${where} scope.group "${group}" is not a declared person-group — define it with defineGroup() in agent/identity/groups.ts (or fix the name). A binding onto a group nobody declared can never match, so it is refused rather than ignored.`,
       );
+    }
+    if (platform !== undefined) {
+      if (level !== "group") {
+        bad.push(`  ${where} sets scope.platform — only a group-level binding takes a platform narrowing (it reads in a DM only)`);
+      } else if (platform.trim() === "" || /[\s/]/u.test(platform)) {
+        bad.push(`  ${where} scope.platform "${platform}" must be a BARE platform name (e.g. "slack") — no whitespace, no "/"`);
+      }
     }
     if (principal !== undefined && !isQualifiedPrincipalKey(principal) && !isValidLinkSetRef(principal)) {
       bad.push(

@@ -14,6 +14,12 @@ export interface TeamsMessage {
   readonly fromUserId?: string;
   readonly text: string;
   readonly createdDateTime?: string;
+  readonly attachments?: readonly TeamsMessageAttachment[];
+}
+
+export interface TeamsMessageAttachment {
+  readonly contentType?: string;
+  readonly content?: string;
 }
 
 interface GraphChatMessage {
@@ -21,6 +27,44 @@ interface GraphChatMessage {
   from?: { application?: { id?: string }; user?: { id?: string } };
   body?: { contentType?: string; content?: string };
   createdDateTime?: string;
+  attachments?: { contentType?: string; content?: string }[];
+}
+
+export const TEAMS_APPROVAL_DATA_KEY = "oe_teams_approval";
+
+export interface TeamsCardAction {
+  readonly title?: string;
+  readonly verb?: string;
+  readonly pendingId: string;
+  readonly decision: string;
+  readonly org: string;
+}
+
+export function teamsApprovalCardActions(m: Pick<TeamsMessage, "attachments">): readonly TeamsCardAction[] {
+  const out: TeamsCardAction[] = [];
+  for (const a of m.attachments ?? []) {
+    if (a.contentType !== "application/vnd.microsoft.card.adaptive" || typeof a.content !== "string") continue;
+    let card: unknown;
+    try {
+      card = JSON.parse(a.content);
+    } catch {
+      continue;
+    }
+    const actions = (card as { actions?: unknown } | null)?.actions;
+    if (!Array.isArray(actions)) continue;
+    for (const action of actions as { title?: unknown; verb?: unknown; data?: Record<string, unknown> }[]) {
+      const payload = action?.data?.[TEAMS_APPROVAL_DATA_KEY] as { id?: unknown; decision?: unknown; org?: unknown } | undefined;
+      if (!payload || typeof payload.id !== "string" || typeof payload.decision !== "string" || typeof payload.org !== "string") continue;
+      out.push({
+        ...(typeof action.title === "string" ? { title: action.title } : {}),
+        ...(typeof action.verb === "string" ? { verb: action.verb } : {}),
+        pendingId: payload.id,
+        decision: payload.decision,
+        org: payload.org,
+      });
+    }
+  }
+  return out;
 }
 
 export interface GraphPage<T> {
@@ -73,6 +117,9 @@ function toMessage(m: GraphChatMessage): TeamsMessage {
     fromUserId: m.from?.user?.id,
     text: stripHtml(m.body?.content ?? ""),
     createdDateTime: m.createdDateTime,
+    ...(m.attachments && m.attachments.length > 0
+      ? { attachments: m.attachments.map((a) => ({ ...(a.contentType ? { contentType: a.contentType } : {}), ...(typeof a.content === "string" ? { content: a.content } : {}) })) }
+      : {}),
   };
 }
 
@@ -305,6 +352,15 @@ export class TeamsDriver {
       MAX_GRAPH_PAGES,
     );
     return pages.map(toMessage);
+  }
+
+  async channelRootMessages(top = 30): Promise<readonly TeamsMessage[]> {
+    const page = (await this.graph("GET", `/teams/${this.cfg.teamId}/channels/${this.cfg.channelId}/messages?$top=${top}`)) as GraphPage<GraphChatMessage>;
+    return (page.value ?? []).map(toMessage);
+  }
+
+  isBotAuthored(m: TeamsMessage): boolean {
+    return m.fromApplicationId === this.cfg.botAppId;
   }
 
   isBotReply(m: TeamsMessage): boolean {

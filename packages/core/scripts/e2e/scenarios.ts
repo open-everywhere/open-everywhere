@@ -1,6 +1,6 @@
 import { CAPABILITY_REMEDY, auditSilencesExpected, ENV, S24_DEFAULT_QUERY, type Capability, type EngagedRoomConfig, type SlackUser2Config } from "./env.js";
 import { capFixtureFor, resolveCapFixtureCap, roomIdFor } from "./fixture-inventory-lib.js";
-import { loadAppSpendBudgets } from "./app-config.js";
+import { loadAppA2aAgents, loadAppSpendBudgets } from "./app-config.js";
 import { classifyAnswers, renderRepliesPerWake, repliesPerWake } from "./duplicate-post.js";
 import type { SkipKind } from "./skip-summary.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
@@ -21,7 +21,7 @@ import { ADMIN_UNVERIFIED_MARKER, askPastCoalescedRefusal, awaitChannelSeatQuiet
 import type { DiscordDriver, DiscordMessage } from "./discord-driver.js";
 import { isTurnCancelNote } from "../../agent/hooks/turn-anchor.js";
 import type { TeamsDriver } from "./teams-driver.js";
-import { isMissingChatScopeError } from "./teams-driver.js";
+import { isMissingChatScopeError, teamsApprovalCardActions, type TeamsMessage } from "./teams-driver.js";
 import { engagedRepoSkipReason, type GithubDriver } from "./github-driver.js";
 import { commentAtOrAfter } from "./comment-window.js";
 import { capDriveOutcome } from "./cap-drive-outcome.js";
@@ -105,7 +105,7 @@ import {
 } from "./engaged-rows.js";
 import { NAME_DROP_WOKE_ACTION } from "../../agent/channels/name-drop-wake-audit.js";
 import { WAKE_TURN_START_ACTION } from "../../agent/channels/wake-timing.js";
-import { seatCatchUpWake, type SeatCatchUpWakeVerdict, type TranscriptWireEvent } from "./transcript-read.js";
+import { findEvents, seatCatchUpWake, type SeatCatchUpWakeVerdict, type TranscriptWireEvent } from "./transcript-read.js";
 import {
   chooseNotionTaintAnchor,
   NOTION_TAINT_REPLAY_ACTIONS,
@@ -231,6 +231,7 @@ import {
 } from "./judge.js";
 import { liveMeasurementVerdict, liveTaintGateDecision, taintContextLine, type UnmeasuredArm } from "./taint-context-line.js";
 import { freshQaRunToken, namesQaHeading, qaAuditGates, qaBrief, qaFixtureDrift, qaHeading, QA_FIXTURE_DIR, QA_FIXTURE_FILES } from "./qa-repo.js";
+import { THIRD_PARTY_JUDGE_CLAUSE, THIRD_PARTY_REPLY_ASK, THIRD_PARTY_STEP } from "./browser-third-party.js";
 import { readWakeSplits, summariseWakeSplits } from "./wake-split.js";
 import {
   approveButton,
@@ -4335,11 +4336,8 @@ export const SCENARIOS: readonly Scenario[] = [
               "CRITICAL: obtain the heading text ONLY by vision-reading the screenshot via describe_image — do NOT read the page text or DOM " +
               "with browser_get, browser_evaluate, browser_snapshot, or any HTML/text extraction; the whole point is to vision-verify the " +
               "rendered screenshot, so describe_image on the screenshot file is mandatory. " +
-              "(5) THEN, as a separate step, use browser_navigate to open https://example.com/ and browser_snapshot to read its " +
-              "main heading from the accessibility snapshot. Use browser_snapshot for this step — the ban above applies only to " +
-              "the localhost screenshot in steps 1-4. " +
-              "Then reply with BOTH: the exact heading text describe_image read from the localhost screenshot, and the heading " +
-              "browser_snapshot read from example.com.",
+              THIRD_PARTY_STEP +
+              `Then reply with BOTH: the exact heading text describe_image read from the localhost screenshot, and ${THIRD_PARTY_REPLY_ASK}.`,
           ),
         );
         const qaDeadline = Date.now() + BROWSER_QA_WAIT;
@@ -4380,7 +4378,7 @@ export const SCENARIOS: readonly Scenario[] = [
           const has = (action: string) => rows.some((r) => r.action === action);
           ctx.gate(has("browser.navigate"), "browser-QA loop: a browser.navigate audit row landed (agent-browser op audited)");
           ctx.gate(has("browser.screenshot"), "browser-QA loop: a browser.screenshot audit row landed");
-          ctx.gate(has("browser.snapshot"), "snapshot-first kit: a browser.snapshot audit row landed (host-less by contract — the example.com heading is judged from the reply)");
+          ctx.gate(has("browser.snapshot"), "snapshot-first kit: a browser.snapshot audit row landed (host-less by contract — the example.com title is judged from the reply)");
           ctx.gate(!has("browser.evaluate"), "snapshot-first kit: NO browser.evaluate row — page scripting is off unless a host declares it");
           ctx.gate(
             rows.some((r) => r.action === "describe_image" && (r.detail as { ok?: unknown } | undefined)?.ok === true),
@@ -4391,7 +4389,7 @@ export const SCENARIOS: readonly Scenario[] = [
         }
         await ctx.judgePass(
           closedQA(
-            "Does the reply report the distinctive OPE43 page-heading token it read from the screenshot AND a heading it read from example.com, with no browser/vision error? " +
+            `Does the reply report the distinctive OPE43 page-heading token it read from the screenshot AND ${THIRD_PARTY_JUDGE_CLAUSE}, with no browser/vision error? ` +
               "(reporting the OPE43 token is enough for the first — the model may paraphrase the exact heading text.)",
             {
               mustMatch: [/OPE43/i],
@@ -4399,7 +4397,7 @@ export const SCENARIOS: readonly Scenario[] = [
             },
           ),
           qaReply.text,
-          'browser-QA loop: navigate → screenshot → describe_image({ kind: "path", ref }) reports the page heading (OPE43), then a declared third-party page reports its own',
+          'browser-QA loop: navigate → screenshot → describe_image({ kind: "path", ref }) reports the page heading (OPE43), then a declared third-party page reports its title',
         );
       }
     },
@@ -4641,7 +4639,7 @@ export const SCENARIOS: readonly Scenario[] = [
     run: async (ctx) => {
       const sup = ctx.slackSupervisor!;
       const runStart = await presenceSince(ctx, "runStart", 60_000);
-      const isApprovalCard = (m: { text: string }) => m.text.startsWith("Approval requested:");
+      const isApprovalCard = (m: { text: string }) => /^Approval requested: /mu.test(m.text);
 
       const marker = factToken("sup");
       const probe = supervisorAsk(marker);
@@ -5118,6 +5116,180 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
   {
+    id: "S-CARD-SUMMARY",
+    title:
+      "OPE-2434: a live Slack approval card OPENS with one plain sentence of what will happen and to whom — the notification text's first line is that sentence, and the `Approval requested: <kind>` label is the second line; the leg rejects its own card, so nothing changes",
+    requires: ["slack"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 900_000,
+    judged: false,
+    run: async (ctx) => {
+      const slack = ctx.slack!;
+      const dollars = 31 + (Math.floor(Date.now() / 1000) % 9_000);
+      const { ts: askTs } = await slack.post(slack.mention(`raise this channel's spend cap to $${dollars}/month`));
+      const card = await pollOptional<SlackMessage>(
+        async () => (await slack.replies(askTs)).find((m) => slack.isBotReply(m) && approveButton(m) !== undefined),
+        { timeoutMs: FILE_REPLY_WAIT, what: `a spend.set approval card in thread ${askTs}` },
+      );
+      ctx.gate(card !== undefined, "S-CARD-SUMMARY: the spend ask posted an approval card");
+      const lines = card!.text.split("\n");
+      ctx.gate(!lines[0].startsWith("Approval requested"), `S-CARD-SUMMARY: the card does NOT open with the technical label (first line: ${JSON.stringify(lines[0])})`);
+      ctx.gate(/spend limit/i.test(lines[0]) && lines[0].includes(`$${dollars}.00/mo`), `S-CARD-SUMMARY: the first line is the plain sentence — what will happen (the spend limit) and the figure (got ${JSON.stringify(lines[0])})`);
+      ctx.gate(lines[1] === "Approval requested: spend.set", `S-CARD-SUMMARY: the technical label is the second line (got ${JSON.stringify(lines[1])})`);
+      const btn = approveButton(card!)!;
+      ctx.gate(ctx.synthetic !== undefined, "S-CARD-SUMMARY: deciding the card needs the synthetic capability");
+      const rejected = await ctx.synthetic!.click({ pendingId: btn.pendingId, org: btn.org, decision: "reject", messageTs: card!.ts, channelId: slack.channelId, teamId: (await slack.identity()).teamId });
+      ctx.gate(rejected.status === 200, "S-CARD-SUMMARY: the cleanup reject acked 200");
+    },
+  },
+  {
+    id: "S-BLOCKED-PING",
+    title:
+      "OPE-2433: a seat that reports itself BLOCKED on the person who asked pings that person ONCE, in their DM — exactly one outcome row on the attention.blocked plane names the asking user, and a second blocked report in the same episode adds none",
+    requires: ["slack"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 900_000,
+    judged: false,
+    run: async (ctx) => {
+      const slack = ctx.slack!;
+      if (ctx.auditRead === undefined) ctx.skip("S-BLOCKED-PING reads the audit trail, and this run has no audit reader");
+      const me = (await slack.identity()).userId;
+      const word = factToken("blocked");
+      const { ts: askTs } = await slack.post(
+        slack.mention(
+          `I need you to wait on me for a moment: use update_status to mark this work BLOCKED with the summary "waiting for ${word} from you", then mark it BLOCKED again with the summary "still waiting for ${word}", and then reply "ok".`,
+        ),
+      );
+      const since = auditSinceForVendorInstant(slackVendorEventTime(askTs)?.ms ?? Date.now() - AUDIT_SINCE_SKEW_MS);
+      const outcomesOf = async () =>
+        (await ctx.auditRead!({ sinceIso: since, actions: ["chat.dm", "dm.refused", "attention.ping_failed"] })).filter(
+          (r) => r.action === "attention.ping_failed" || (r.detail as { plane?: unknown } | undefined)?.plane === "attention.blocked",
+        );
+      const first = await pollOptional(async () => ((await outcomesOf()).length > 0 ? await outcomesOf() : undefined), {
+        timeoutMs: FILE_REPLY_WAIT,
+        what: "an attention.blocked ping outcome row",
+      });
+      if (first === undefined) ctx.skip("S-BLOCKED-PING: the model never reported itself blocked (no update_status blocked call), so there is no ping to measure");
+      await slack.awaitThreadReply(askTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) }).catch(() => undefined);
+      const all = await outcomesOf();
+      ctx.gate(all.length === 1, `S-BLOCKED-PING: exactly ONE ping outcome for one blocked episode (got ${all.length}: ${JSON.stringify(all.map((r) => r.action))})`);
+      ctx.gate(all[0].principalId === me, `S-BLOCKED-PING: the ping is for the person who asked (${me}), never a model-named recipient (got ${String(all[0].principalId)})`);
+    },
+  },
+  {
+    id: "S-CARD-teams",
+    title:
+      "the OE approval card on Teams (OPE-2424): a governed ask in a Teams channel posts an Adaptive Card, a forged unsigned tap is refused 401 and leaves the row pending, and a real tap (manual) decides it through the invoke route",
+    requires: ["teams"],
+    surface: "teams",
+    suite: "core",
+    timeoutMs: 1_800_000,
+    judged: false,
+    run: async (ctx) => {
+      const teams = ctx.teams!;
+      const note = factToken("teamscard");
+      const sinceIso = await presenceSince(ctx, "S-CARD-teams", 60_000);
+      const driven = await teams.postMention(
+        `schedule a ONE-SHOT check-in for a couple of minutes from now — a single "at" time, not a recurring cron/interval — that posts exactly the word ${note} in this channel. Confirm you've scheduled it.`,
+      );
+      const askedAt = driven.createdDateTime ?? sinceIso;
+
+      const isCard = (m: TeamsMessage): boolean => teams.isBotAuthored(m) && teamsApprovalCardActions(m).length > 0 && (m.createdDateTime ?? "") >= askedAt;
+      const carded = await pollOptional<{ readonly card: TeamsMessage } | { readonly allow: true }>(
+        async () => {
+          const card = (await teams.channelRootMessages()).find(isCard) ?? (await teams.replies(driven.id)).find(isCard);
+          if (card) return { card };
+          if (!ctx.auditRead) return undefined;
+          const rows = await ctx.auditRead({ sinceIso, platform: "teams", actions: [APPROVAL_JUDGE_VERDICT_ACTION] });
+          return findJudgeAllow(rows, "create_routine") !== undefined ? { allow: true } : undefined;
+        },
+        { timeoutMs: FILE_REPLY_WAIT, what: `an OE approval card (Adaptive Card with ${"oe_teams_approval"} actions) in the Teams channel after ${askedAt}, or the judge's allow row` },
+      );
+      if (carded === undefined) {
+        ctx.gate(false, "S-CARD-teams: no OE approval card reached the Teams channel and the judge did not allow the act — the governed ask produced no card");
+        return;
+      }
+      if (!("card" in carded)) {
+        ctx.skip("the approval judge ALLOWED create_routine with no card, so this run has no card to test. Disarm the judge's starter rule for this room and re-run.");
+      }
+      const card = (carded as { readonly card: TeamsMessage }).card;
+      const actions = teamsApprovalCardActions(card);
+      const approve = actions.find((a) => a.decision === "approve");
+      const reject = actions.find((a) => a.decision === "reject");
+      ctx.gate(
+        approve !== undefined && reject !== undefined && approve.pendingId === reject.pendingId,
+        `S-CARD-teams: the card carries Approve and Reject bound to ONE pending id (got ${JSON.stringify(actions)})`,
+      );
+      const pendingId = approve!.pendingId;
+      ctx.log(`S-CARD-teams: card ${card.id} carries pending ${pendingId}`);
+      if (ctx.auditRead) {
+        const requested = await pollOptional(
+          async () => (await ctx.auditRead!({ sinceIso, platform: "teams", actions: ["approval.requested"] })).find((r) => r.detail?.id === pendingId),
+          { timeoutMs: AUDIT_ROW_WAIT, what: `the approval.requested row for pending ${pendingId}` },
+        );
+        ctx.gate(requested !== undefined, `S-CARD-teams: the deployment audited approval.requested on the teams platform for pending ${pendingId}`);
+      }
+
+      if (!ctx.targetUrl) {
+        ctx.log("S-CARD-teams: forged-tap leg SKIPPED — it needs E2E_TARGET_URL");
+      } else {
+        const forged = {
+          type: "invoke",
+          name: "adaptiveCard/action",
+          channelId: "msteams",
+          id: `forged-${note}`,
+          serviceUrl: "https://smba.trafficmanager.net/amer/",
+          from: { id: "29:forged-clicker", name: "Forged" },
+          conversation: { id: `19:forged@thread.tacv2;messageid=${card.id}`, conversationType: "channel" },
+          value: { action: { type: "Action.Execute", verb: approve!.verb ?? "oe-approval", data: { oe_teams_approval: { id: pendingId, decision: "approve", org: approve!.org } } } },
+        };
+        for (const [label, auth] of [
+          ["no Authorization header", undefined],
+          ["a self-minted bearer", "Bearer eyJhbGciOiJSUzI1NiJ9.eyJpc3MiOiJodHRwczovL2FwaS5ib3RmcmFtZXdvcmsuY29tIn0.AAAA"],
+        ] as const) {
+          const res = await fetch(new URL("/eve/v1/teams", ctx.targetUrl), {
+            method: "POST",
+            headers: { "content-type": "application/json", ...(auth === undefined ? {} : { authorization: auth }) },
+            body: JSON.stringify(forged),
+          });
+          ctx.gate(res.status === 401, `S-CARD-teams: a forged tap with ${label} is refused 401 (got ${res.status})`);
+        }
+        if (ctx.auditRead) {
+          await sleep(5_000);
+          const decided = (await ctx.auditRead({ sinceIso, actions: ["approval.approved", "approval.rejected", "approval.failed"] })).filter((r) => r.detail?.id === pendingId);
+          ctx.gate(decided.length === 0, `S-CARD-teams: after both forgeries pending ${pendingId} has NO decision row (found ${decided.length})`);
+        }
+      }
+
+      if ((process.env.E2E_TEAMS_CARD_TAP ?? "").trim() !== "manual") {
+        ctx.skip(
+          `legs 1 and 2 passed for pending ${pendingId}; the TAP leg needs a person in the Teams client (Graph cannot press a card button). Set E2E_TEAMS_CARD_TAP=manual and tap Reject on the card within ${Math.round(FILE_REPLY_WAIT / 60_000)} minutes.`,
+        );
+      }
+      if (!ctx.auditRead) ctx.skip("the TAP leg reads the decision row back, and that needs E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN");
+      ctx.log(`S-CARD-teams: TAP NOW — press Reject on the card in the Teams channel (pending ${pendingId}, card ${card.id})`);
+      const decision = await pollUntil(
+        async () => (await ctx.auditRead!({ sinceIso, platform: "teams", actions: ["approval.approved", "approval.rejected", "approval.denied"] })).find((r) => r.detail?.id === pendingId),
+        { timeoutMs: FILE_REPLY_WAIT, what: `a decision row for pending ${pendingId} from a real tap in Teams` },
+      );
+      ctx.gate(
+        decision.action === "approval.rejected" || decision.action === "approval.approved",
+        `S-CARD-teams: the real tap DECIDED pending ${pendingId} (${decision.action}${decision.detail?.reason ? `, reason ${String(decision.detail.reason)}` : ""})`,
+      );
+      ctx.gate(
+        typeof decision.principalId === "string" && decision.principalId.startsWith("29:"),
+        `S-CARD-teams: the decision names a Bot Framework principal off the verified activity (${String(decision.principalId)})`,
+      );
+      const notice = await pollOptional(
+        async () => (await teams.replies(card.id)).find((m) => teams.isBotReply(m)),
+        { timeoutMs: AUDIT_ROW_WAIT, what: `the decision notice in card ${card.id}'s reply chain` },
+      );
+      ctx.gate(notice !== undefined, `S-CARD-teams: a decision notice posted into the card's own reply chain`);
+    },
+  },
+  {
     id: "S-SUSPENDED-linear",
     title: "Approval card on Linear (OPE-1856, OPE-2362) — RED until a Linear-reachable connector grant exists",
     requires: ["linear"],
@@ -5281,6 +5453,56 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.fixtureMissing(
         "the link loop needs a genuinely SECOND Teams identity — link-store.ts refuses a self-claim. The pack holds a second account on Slack only (E2E_SLACK_SECONDARY_TOKEN / E2E_SLACK_SECONDARY_USER_ID). Provision the Teams pair and this leg drives S-LINK-SLACK's shape, gating on the identity.link.* audit rows.",
       );
+    },
+  },
+
+  {
+    id: "S-APP-HOME",
+    title: "Memory you can see: a signed Home-tab open publishes the person's page, Export hands them their memory, a forged Forget changes nothing (OPE-2451)",
+    requires: ["slack", "synthetic"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 300_000,
+    judged: false,
+    run: async (ctx) => {
+      const synthetic = ctx.synthetic!;
+      const read = ctx.auditRead;
+      if (!read) {
+        return ctx.fixtureMissing("S-APP-HOME gates only on audit rows (home.publish, memory.export, memory.purge). Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to run it.");
+      }
+      const { teamId } = await ctx.slack!.identity();
+      const person = synthetic.adminUserId;
+      const ownRow = (r: AuditWireEntry): boolean => r.principalId === person || (typeof r.principalId === "string" && r.principalId.endsWith(`/${person}`));
+
+      const openedAt = await presenceSince(ctx, "S-APP-HOME open");
+      const opened = await synthetic.homeOpened({ teamId });
+      ctx.gate(opened.status === 200, `S-APP-HOME: the signed app_home_opened is acknowledged (${opened.label}, HTTP ${opened.status})`);
+      const published = await pollOptional(
+        async () => (await read({ sinceIso: openedAt, actions: ["home.publish"], limit: 50 })).find((r) => ownRow(r) && r.detail?.["ok"] === true),
+        { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "S-APP-HOME: the person's home.publish row" },
+      );
+      ctx.gate(published !== undefined, "S-APP-HOME: the person's page was published (a home.publish row with ok:true names them)");
+
+      const exportAt = await presenceSince(ctx, "S-APP-HOME export");
+      const exported = await synthetic.homeButton({ teamId, action: "memory.export" });
+      ctx.gate(exported.status === 200, `S-APP-HOME: the signed Export click is acknowledged (HTTP ${exported.status})`);
+      const exportRow = await pollOptional(
+        async () => (await read({ sinceIso: exportAt, actions: ["memory.export"], limit: 50 })).find((r) => ownRow(r) && r.detail?.["via"] === "slack-app-home"),
+        { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "S-APP-HOME: the person's memory.export row" },
+      );
+      ctx.gate(exportRow !== undefined, "S-APP-HOME: Export handed the person their memory (a memory.export row, via slack-app-home)");
+      ctx.gate(typeof exportRow?.detail?.["sha256"] === "string" && !("markdown" in (exportRow?.detail ?? {})), "S-APP-HOME: the export row carries a digest of the document, never the document");
+
+      const forgedAt = await presenceSince(ctx, "S-APP-HOME forged forget");
+      const forged = await synthetic.homeSubmit({ teamId, action: "memory.forget", ref: "0".repeat(64) });
+      ctx.gate(forged.status === 200, `S-APP-HOME: the forged Forget submission is acknowledged (HTTP ${forged.status})`);
+      const answered = await pollOptional(
+        async () => (await read({ sinceIso: forgedAt, actions: ["home.publish"], limit: 50 })).find((r) => ownRow(r) && r.detail?.["notice"] === true),
+        { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "S-APP-HOME: the republish after the forged Forget" },
+      );
+      ctx.gate(answered !== undefined, "S-APP-HOME: the forged Forget was answered by republishing the page with a notice");
+      const purged = (await read({ sinceIso: forgedAt, actions: ["memory.purge"], limit: 50 })).filter((r) => ownRow(r) && r.detail?.["via"] === "slack-app-home");
+      ctx.gate(purged.length === 0, `S-APP-HOME: a digest that names no line of the person's erased nothing (${purged.length} memory.purge row(s) via slack-app-home)`);
     },
   },
 
@@ -6162,6 +6384,58 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.log(
         `connector-write: asserted write attempt + gate on token "${token}"; page-content readback is NOT verifiable here (no Notion driver key on the connectorWrite capability).`,
       );
+    },
+  },
+  {
+    id: "S-A2A-DELEGATE",
+    title: "A2A delegation (OPE-2425): ask → a2a.delegate card → approve → the declared reference agent's answer reaches the thread, audited",
+    requires: ["slack", "synthetic"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: FILE_REPLY_WAIT + REPLY_WAIT,
+    judged: false,
+    run: async (ctx) => {
+      const agents = await loadAppA2aAgents();
+      const agent = agents.find((a) => a.name.startsWith("reference")) ?? agents[0];
+      if (agent === undefined) {
+        ctx.fixtureMissing(
+          "this deployment declares no A2A agent. On a TEST deployment, add the public reference agent to agent/access/a2a-agents.ts by pull request — " +
+            '{ name: "reference", cardUrl: "https://hello-world-gxfr.onrender.com/.well-known/agent.json", description: "The A2A community\'s public Hello World reference agent." } — then deploy.',
+        );
+      }
+      const slack = ctx.slack!;
+      const synthetic = ctx.synthetic!;
+      const { userId, teamId } = await slack.identity();
+      const sinceIso = await presenceSince(ctx, "a2a: the audit window", 5_000);
+      const token = factToken("a2a");
+      const { ts: askTs } = await slack.post(
+        slack.mention(`use delegate_to_agent to ask the A2A agent "${agent.name}" exactly this: "hi ${token}". Then tell me in this thread what it answered.`),
+      );
+      const card = await awaitCard(slack, askTs, FILE_REPLY_WAIT);
+      const btn = approveButton(card)!;
+      ctx.gate(btn.pendingId.length > 0 && btn.org.length > 0, "a2a: the card's Approve button carries a real pending id and org");
+      ctx.gate(card.text.includes(agent.name), `a2a: the card names the declared agent "${agent.name}"`);
+      ctx.gate(card.text.includes(token), "a2a: the card renders the exact task text (the run token)");
+      const tap = await synthetic.click({ pendingId: btn.pendingId, org: btn.org, decision: "approve", messageTs: card.ts, channelId: slack.channelId, userId, teamId });
+      ctx.log(`${tap.label}: approve ${btn.pendingId} → ${tap.status}`);
+      ctx.gate(tap.status === 200, "a2a: the approve click is acked 200");
+      await awaitDecided(slack, askTs, card.ts, REPLY_WAIT);
+      const answer = await slack.awaitThreadMessage(
+        askTs,
+        { timeoutMs: FILE_REPLY_WAIT, what: `the reference agent's answer after card ${card.ts}` },
+        (msgs) => msgs.find((m) => slack.isBotReply(m) && Number(m.ts) > Number(card.ts) && approveButton(m) === undefined && !isPendingWorkHandoff(m.text) && /hello world/iu.test(m.text)),
+      );
+      ctx.gate(/hello world/iu.test(answer.text), "a2a: the agent's answer (\"Hello World\") reached the thread that asked");
+      if (ctx.auditRead !== undefined) {
+        const rows = await ctx.auditRead({ sinceIso, actions: ["a2a.delegate_approved", "a2a.delegated"] });
+        ctx.gate(rows.some((r) => r.action === "a2a.delegate_approved" && r.detail?.agent === agent.name), "a2a: an a2a.delegate_approved row names the agent");
+        const sent = rows.find((r) => r.action === "a2a.delegated" && r.detail?.agent === agent.name);
+        ctx.gate(sent !== undefined, "a2a: an a2a.delegated row names the agent");
+        ctx.gate(!JSON.stringify(rows).includes(token), "a2a: no audit row carries the task text");
+        ctx.log(`a2a: delegated row state=${String(sent?.detail?.state)}`);
+      } else {
+        ctx.log("a2a: no audit read on this run (E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN unset) — the audit rows are not checked");
+      }
     },
   },
   {
@@ -8955,6 +9229,133 @@ export const SCENARIOS: readonly Scenario[] = [
         await notion.archiveBlock(blockId).catch(() => undefined);
         if (foreignBlockId) await notion.archiveBlock(foreignBlockId).catch(() => undefined);
       }
+    },
+  },
+  {
+    id: "S-SLACK-AS-YOU",
+    title:
+      "Search Slack as you (OPE-2421): (A) a CHANNEL mention asking to read as the person never reaches slack-as-you; (B) the person's own DM answers about a channel the bot is NOT in through their own Slack sign-in; (C) a post as the person raises an op.connector card and nothing is posted",
+    requires: ["slack", "syntheticDm"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 1_800_000,
+    judged: false,
+    run: async (ctx) => {
+      const auditRead = ctx.auditRead;
+      if (!auditRead) return ctx.skip("needs the control-read audit reader (set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN)");
+      const unjoined = (process.env[ENV.slackUnjoinedChannel] ?? "").trim();
+      if (unjoined === "") return ctx.skip(`set ${ENV.slackUnjoinedChannel} to a channel the driver user is in and the bot is NOT`);
+      const slack = ctx.slack!;
+      const dm = ctx.dm!;
+      const room = slack.withChannel(unjoined);
+      if (await room.isMember(slack.botUserId)) {
+        return ctx.skip(`${ENV.slackUnjoinedChannel}=${unjoined} has the bot in it — the scenario needs a channel only the person can read`);
+      }
+      const { userId: personId } = await slack.identity();
+      const CONNECTION = "slack-as-you";
+      const rowsFor = async (sinceIso: string, actions: readonly string[]) =>
+        (await auditRead({ sinceIso, actions })).filter((e) => {
+          const d = e.detail as { connection?: unknown; connector?: unknown } | undefined;
+          return d?.connection === CONNECTION || d?.connector === CONNECTION;
+        });
+
+      const legA = await presenceSince(ctx, "legA", 60_000);
+      const { ts: channelAsk } = await slack.post(slack.mention(fixtureLine(`read <#${unjoined}> as me with my own Slack access and tell me the newest message`)));
+      await slack.awaitAnyReply(channelAsk, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) }).catch(() => undefined);
+      const legAEnd = await presenceSince(ctx, "legAEnd", 0);
+      const channelUse = (await auditRead({ sinceIso: legA, untilIso: legAEnd, actions: ["connector.use", "connector.mint"] })).filter((e) => {
+        const d = e.detail as { connection?: unknown; connector?: unknown } | undefined;
+        return d?.connection === CONNECTION || d?.connector === CONNECTION;
+      });
+      ctx.gate(channelUse.length === 0, `channel (absence-only; leg B is the positive control): no connector.use or connector.mint row for slack-as-you (found ${channelUse.length})`);
+      const fenced = await rowsFor(legA, ["connector.refused"]);
+      ctx.log(`channel: ${fenced.length} connector.refused row(s) for slack-as-you (reason ${fenced.map((r) => String((r.detail as { reason?: unknown })?.reason)).join(",") || "none — the seat never tried it"})`);
+
+      const codename = factToken("asyou");
+      await room.post(`e2e S-SLACK-AS-YOU: the launch codename is ${codename}`);
+      await fenceDmSeat(ctx, "S-SLACK-AS-YOU");
+      const legB = await presenceSince(ctx, "legB", 60_000);
+      const { ts: dmAsk } = await dm.post(fixtureLine(`What is the launch codename in <#${unjoined}>? Yes, you may see what I see in Slack.`));
+      const answer = await awaitOwnWakeReply(ctx, dm, dmAsk, { what: "S-SLACK-AS-YOU leg B", timeoutMs: FILE_REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+      if ((answer.actions ?? []).some((a) => a.actionId.startsWith(`oe_connect:${CONNECTION}`))) {
+        return ctx.skip(`the driver user (${personId}) has not signed in to slack-as-you: click "Connect my account" in the DM once, then re-run`);
+      }
+      ctx.gate(answer.text.includes(codename), `DM: the answer carries the codename only the person can read (${codename})`);
+      const dmUse = await pollOptional(
+        async () => {
+          const rows = (await rowsFor(legB, ["connector.use"])).filter((r) => (r.detail as { mode?: unknown } | undefined)?.mode === "dm");
+          return rows.length > 0 ? rows : undefined;
+        },
+        { timeoutMs: REPLY_WAIT, what: "a connector.use row for slack-as-you in the DM" },
+      );
+      ctx.gate((dmUse?.length ?? 0) > 0, "DM: audit shows slack-as-you's credential gate passed in mode dm");
+
+      const legC = await presenceSince(ctx, "legC", 60_000);
+      const roomMark = (await room.latest(1))[0]?.ts ?? "0";
+      const postMarker = factToken("asyou-post");
+      await dm.post(fixtureLine(`Post "${postMarker}" in <#${unjoined}> as me.`));
+      const card = await pollOptional(
+        async () => {
+          const rows = (await auditRead({ sinceIso: legC, actions: ["approval.requested"] })).filter((e) => {
+            const d = e.detail as { kind?: unknown; scopeKey?: unknown } | undefined;
+            return d?.kind === "op.connector" && String(d.scopeKey ?? "").includes(dm.channelId);
+          });
+          return rows.length > 0 ? rows : undefined;
+        },
+        { timeoutMs: FILE_REPLY_WAIT, what: "an op.connector approval.requested row in the person's DM for the post as the person" },
+      );
+      ctx.gate((card?.length ?? 0) > 0, "write: a post as the person raised an op.connector card in their DM");
+      const cardText = (await dm.latest(10)).find((m) => (m.actions ?? []).length > 0 && m.text.includes(CONNECTION));
+      ctx.log(`write: ${cardText ? "a DM card names" : "no DM card text names"} the ${CONNECTION} connection (evidence, not a gate)`);
+      const posted = (await room.history(roomMark)).filter((m) => m.text.includes(postMarker));
+      ctx.gate(posted.length === 0, "write: nothing was posted in the person's name before an approval");
+    },
+  },
+  {
+    id: "S-STEP-LABELS",
+    title:
+      "Live step labels on Slack (OPE-2449): a mention that makes the agent read the channel runs a labelled tool step, the answer posts ONCE through the reply tool, and no step label or pre-gate text ever posts in the thread",
+    requires: ["slack"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 600_000,
+    judged: false,
+    run: async (ctx) => {
+      const auditRead = ctx.auditRead;
+      const transcriptRead = ctx.transcriptRead;
+      if (!auditRead || !transcriptRead) {
+        return ctx.skip("needs E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN — the labelled step is a transcript fact, and the status line has no read API");
+      }
+      const slack = ctx.slack!;
+      const LABELLED = new Set(["read_channel", "read_work_channel"]);
+      const LABEL_TEXTS = ["Reading the channel…", "Reading the thread…"];
+      const token = factToken("steplabel");
+      await slack.post(`e2e S-STEP-LABELS: the step-label marker is ${token}`);
+      const askStart = await presenceSince(ctx, "ask");
+      const { ts: askTs } = await slack.post(
+        slack.mention(fixtureLine(`use read_channel to read the last 5 messages in this channel, then tell me the step-label marker`)),
+      );
+      const answer = await awaitOwnWakeReply(ctx, slack, askTs, { what: "S-STEP-LABELS", timeoutMs: FILE_REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+      ctx.gate(answer.text.includes(token), `the answer carries the marker it read from the channel (${token})`);
+
+      const askStartMs = Date.parse(askStart);
+      const rows = await auditRead({ sinceIso: askStart, limit: 1000 });
+      const toolNames: string[] = [];
+      for (const sessionId of new Set(auditSessionIds(rows))) {
+        for (const e of findEvents(await transcriptRead(sessionId), "actions.requested")) {
+          const at = e.at === null ? Number.NaN : Date.parse(e.at);
+          if (!Number.isFinite(at) || at < askStartMs) continue;
+          const actions = (e.data as { actions?: readonly { toolName?: unknown }[] } | null)?.actions ?? [];
+          for (const a of actions) if (typeof a.toolName === "string") toolNames.push(a.toolName);
+        }
+      }
+      ctx.log(`tool steps since the ask: ${toolNames.join(", ") || "none"}`);
+      ctx.gate(toolNames.some((n) => LABELLED.has(n)), `the turn ran a step the code labels "Reading the channel…" (tools: ${toolNames.join(", ") || "none"})`);
+
+      const botAfter = (await slack.replies(askTs)).filter((m) => slack.isBotMessage(m) && tsAfter(m.ts, askTs) && !isPendingWorkHandoff(m.text));
+      ctx.gate(botAfter.length === 1, `the answer posts once in the thread (found ${botAfter.length} bot message(s))`);
+      const labelPosts = botAfter.filter((m) => LABEL_TEXTS.some((l) => m.text.trim() === l));
+      ctx.gate(labelPosts.length === 0, `no step label posts as a message (found ${labelPosts.length})`);
     },
   },
 ];

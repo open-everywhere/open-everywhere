@@ -30,6 +30,7 @@ import {
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 import { hasApprovalCardPath, hasJudgeLiftNoticePath } from "@open-everywhere/core/agent/approvals/flow.js";
+import { hasThreadDoneReactionPath } from "@open-everywhere/core/agent/channels/thread-seat-close.js";
 
 import { SETTINGS_OVERRIDES } from "../agent/settings/settings.js";
 
@@ -164,6 +165,7 @@ const PROBES: CapabilityProbe = new Map<string, ReadonlySet<string>>([
   ["ambient-engagement-seam", engagementSeamPlatforms()],
   ["owned-thread-ingress", ownedThreadIngressPlatforms()],
   ["engaged-row-promotion", engagedRowPromotionPlatforms()],
+  ["thread-done-reaction", setOf(PLATFORMS.filter((p) => hasThreadDoneReactionPath(p)))],
   ["seat-context-admission", contextAdmissionPlatforms()],
   ["approval-card", setOf(PLATFORMS.filter((p) => hasApprovalCardPath(p)))],
   ["judge-lift-notice", setOf(PLATFORMS.filter((p) => hasJudgeLiftNoticePath(p)))],

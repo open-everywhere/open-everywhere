@@ -168,4 +168,129 @@ console.log("§6 the connection the stub builds");
   refuses(() => declaredMcpServerConnection(SERVERS, "nonesuch"), "declares no such server", "§6 a stub for a server the list no longer declares fails loud (the tree is stale)");
 }
 
+console.log("§7 a personal-surface server (OPE-2421)");
+{
+  const SLACK_AS_YOU: McpServerDeclaration = {
+    name: "slack-as-you",
+    url: "https://mcp.slack.com/mcp",
+    description: "Search Slack as you.",
+    personalSurface: { platform: "slack", label: "Slack" },
+  };
+  const one = (s: Partial<McpServerDeclaration>) => () => defineMcpServers([{ ...SLACK_AS_YOU, ...s } as McpServerDeclaration]);
+  refuses(one({ personalSurface: { platform: "Slack Inc", label: "Slack" } }), "personalSurface.platform", "§7 a platform that is not a bare name is refused");
+  refuses(one({ personalSurface: { platform: "slack", label: " " } }), "personalSurface.label", "§7 an empty label is refused");
+  const servers = defineMcpServers([SLACK_AS_YOU]);
+  const catalogues = mcpServerConnectorCredentials(servers);
+  const bundles = mcpServerBundles(servers);
+  const bindings = mcpServerBindings(servers);
+  const cat = catalogues[0]!;
+  ok(
+    cat.credentials.map((c) => c.type).join() === "user-oauth" && cat.allows.join() === "user-oauth",
+    "§7 🔴 it carries the person's user-oauth credential ONLY — no org credential an admin could grant to a channel",
+  );
+  ok(bindings.length === 1 && bindings[0]!.scope.platform === "slack" && bindings[0]!.scope.group === EVERYONE_GROUP, "§7 its binding is narrowed to its own platform");
+  assertConnectorCredentialsValid(catalogues);
+  assertBundlesValid(bundles);
+  assertBindingsValid(bindings, bundles, []);
+  ok(lintBroadGrants(bundles, bindings, [], []).length === 0, "§7 the derived config passes core's config-load checks and the broad-grant lint");
+  refuses(
+    () => assertBindingsValid([{ bundle: bundles[0]!.name, scope: { level: "domain", domain: "eng", platform: "slack" } }], bundles, []),
+    "only a group-level binding takes a platform",
+    "§7 a platform narrowing on a container scope is refused, never ignored",
+  );
+  refuses(
+    () => assertBindingsValid([{ bundle: bundles[0]!.name, scope: { level: "group", group: EVERYONE_GROUP, platform: "slack/T1" } }], bundles, []),
+    "BARE platform name",
+    "§7 a qualified platform is refused",
+  );
+
+  const botSlack: (typeof bundles)[number] = {
+    name: "bot-slack",
+    connections: [{ id: "slack-bot", credentialType: "bearer", secretRef: "SLACK_BOT_TOKEN", broker: "env", allowedWebsites: ["slack.com"] }],
+  };
+  const all = [...bundles, botSlack];
+  const allBindings = [...bindings, { bundle: "bot-slack", scope: { level: "principal" as const, principal: "slack/T1/U1" } }];
+  const resolve = (req: ResolveRequest) => resolveAccess(req, all, allBindings, {}, catalogues);
+  const slackDm: ResolveRequest = { mode: "dm", platform: "slack", workspace: "T1", channel: "D1", principalId: "U1" };
+  const inDm = resolve(slackDm);
+  ok(inDm.connectors.includes("slack-as-you") && inDm.connectorCredentials["slack-as-you"]?.principal === "user", "§7 🔴 a Slack DM reaches it, as the person");
+  ok(
+    inDm.reachableHosts.some((h) => h.host === "slack.com" && h.viaConnection === "slack-bot") && !inDm.reachableHosts.some((h) => h.host.includes("mcp.slack.com")),
+    "§7 🔴 it rides the connector plane: the DM's egress keeps the bot's Slack key and gains no Slack MCP host",
+  );
+  ok(!resolve({ ...slackDm, platform: "discord", workspace: "G1" }).connectors.includes("slack-as-you"), "§7 🔴 a DM on ANOTHER platform does not reach it");
+  ok(!resolve({ ...slackDm, mode: "channel", channel: "C1" }).connectors.includes("slack-as-you"), "§7 🔴 a Slack channel does not reach it");
+  ok(!resolve({ ...slackDm, mode: "mpim", channel: "G2" }).connectors.includes("slack-as-you"), "§7 🔴 a Slack group DM does not reach it");
+  const { CREDENTIAL_GRANT_ROLES } = await import("../agent/access/credential-grant.js");
+  ok(!CREDENTIAL_GRANT_ROLES.some((r) => r.connector === "slack-as-you"), "§7 🔴 it is not a credential-grant connector, so no channel can borrow it");
+
+  const copy = bundles[0]!.instructions ?? "";
+  ok(copy.includes("Answer from your own Slack access (the bot) first"), "§7 the seat's copy says the bot answers first");
+  ok(copy.includes("I can only see channels I am in. Want me to see what you see?"), "§7 …and makes the offer in the moment, in the agreed words");
+  ok(copy.includes("approval card first"), "§7 …and says a write as the person takes a card");
+
+  const { personalSurfaceRefusal } = await import("../agent/connections/personal-surface-fence.js");
+  const rows: { action: string; detail?: Readonly<Record<string, unknown>> }[] = [];
+  const audit = async (row: { action: string; detail?: Readonly<Record<string, unknown>> }) => void rows.push(row);
+  const at = (mode: string | undefined, platform: string | undefined) => ({
+    audit,
+    dmPrincipal: async () => ({ ...(mode ? { mode } : {}), ...(platform ? { platform } : {}) }),
+  });
+  const auth = {} as never;
+  ok((await personalSurfaceRefusal("slack-as-you", "slack", auth, at("dm", "slack"))) === undefined, "§7 the fence passes a 1:1 DM on its own platform");
+  ok(rows.length === 0, "§7 …and writes no refusal row for it");
+  ok(((await personalSurfaceRefusal("slack-as-you", "slack", auth, at("channel", "slack"))) ?? "").includes("a channel on slack"), "§7 🔴 the fence refuses a channel");
+  ok(
+    rows[0]?.action === "connector.refused" && rows[0]?.detail?.["reason"] === "personal_surface" && rows[0]?.detail?.["mode"] === "channel",
+    "§7 …and audits the refusal as connector.refused, reason personal_surface",
+  );
+  ok(((await personalSurfaceRefusal("slack-as-you", "slack", auth, at("mpim", "slack"))) ?? "").includes("a group DM"), "§7 🔴 the fence refuses a group DM");
+  ok(((await personalSurfaceRefusal("slack-as-you", "slack", auth, at("dm", "discord"))) ?? "").includes("a DM on discord"), "§7 🔴 the fence refuses a DM on another platform");
+  ok(
+    (await personalSurfaceRefusal("slack-as-you", "slack", auth, { audit, dmPrincipal: async () => Promise.reject(new Error("x")) })) !== undefined,
+    "§7 🔴 an unreadable surface is refused (fail closed)",
+  );
+  ok((await personalSurfaceRefusal("slack-as-you", "slack", undefined, at("dm", "slack"))) !== undefined, "§7 🔴 a call with no auth is refused");
+
+  const { personalSurfaceUnattendedWriteRefusal, personalSurfaceApprovalRefusal, declarePersonalSurfaceConnection } = await import(
+    "../agent/connections/personal-surface-fence.js"
+  );
+  const noHints = async () => undefined;
+  const writeAt = (attended: boolean | undefined) => ({ audit, toolHints: noHints, attended: async () => attended });
+  const WRITE = "slack-as-you__slack_send_message";
+  const READ = "slack-as-you__slack_read_channel";
+  rows.length = 0;
+  ok((await personalSurfaceUnattendedWriteRefusal("slack-as-you", WRITE, auth, writeAt(true))) === undefined, "§7 an ATTENDED write passes on, to the ordinary card");
+  ok(
+    ((await personalSurfaceUnattendedWriteRefusal("slack-as-you", WRITE, auth, writeAt(false))) ?? "").includes("A routine permission does not lift it"),
+    "§7 🔴 an UNATTENDED write is refused — a routine permission cannot post in the person's name",
+  );
+  ok(rows[0]?.detail?.["reason"] === "personal_surface_unattended", "§7 …and the refusal is audited");
+  ok((await personalSurfaceUnattendedWriteRefusal("slack-as-you", WRITE, auth, writeAt(undefined))) !== undefined, "§7 🔴 an unreadable attendance refuses the write (fail closed)");
+  ok((await personalSurfaceUnattendedWriteRefusal("slack-as-you", READ, auth, writeAt(false))) === undefined, "§7 an unattended READ still runs");
+  declarePersonalSurfaceConnection("slack-as-you", "slack");
+  const both = (attended: boolean) => ({ ...at("dm", "slack"), toolHints: noHints, attended: async () => attended });
+  ok((await personalSurfaceApprovalRefusal(WRITE, auth, both(true))) === undefined, "§7 the approval fence passes an attended write in the person's Slack DM");
+  ok((await personalSurfaceApprovalRefusal(WRITE, auth, both(false))) !== undefined, "§7 🔴 …and refuses the same write on an unattended turn");
+  ok((await personalSurfaceApprovalRefusal("notion__create_page", auth, both(false))) === undefined, "§7 a connection no personal-surface declaration names passes untouched");
+
+  const { declaredMcpServerConnection } = await import("../agent/connections/mcp-server-connection.js");
+  const conn = declaredMcpServerConnection(servers, "slack-as-you") as unknown as {
+    auth: (ctx: unknown) => Promise<unknown>;
+    approval: (ctx: unknown) => Promise<unknown>;
+  };
+  const verdict = (await conn.approval({ toolName: "slack-as-you__slack_send_message", approvedTools: new Set(), session: {} })) as { type?: string; reason?: string };
+  ok(verdict?.type === "denied" && String(verdict.reason).includes("answers only in that person's 1:1 DM"), "§7 🔴 the built connection's approval denies a call it cannot place in a DM, before any card");
+  let authErr = "";
+  try {
+    await conn.auth({ session: {} });
+  } catch (e) {
+    authErr = e instanceof Error ? e.message : String(e);
+  }
+  ok(authErr.includes("answers only in that person's 1:1 DM"), "§7 🔴 the built connection's auth refuses it too, before any mint");
+
+  const { declaredMcpServers } = await import("../agent/connections/mcp-servers.js");
+  ok(declaredMcpServers().map((s) => s.name).join() === "slack-as-you", "§7 defineMcpServers records the list the app declared, for a provider's ops plane");
+}
+
 console.log(`\n✓ mcp-servers: ${passed} assertions passed`);

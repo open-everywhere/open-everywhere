@@ -17,6 +17,7 @@ import type { Partition } from "../memory/partition.js";
 import { armingApproval } from "./arming-context.js";
 import { registerActionKind } from "./actions.js";
 import type { ActionKind } from "./types.js";
+import { plainValue } from "./plain-text.js";
 
 const CARD_PROMPT_CHARS = 600;
 
@@ -44,6 +45,9 @@ interface RoutineEditArgs {
 const routineEdit: ActionKind<RoutineEditArgs> = {
   kind: "routine.edit",
   policy: "member",
+  plainSummary(args) {
+    return `Rewrite the instructions of the routine "${plainValue(args.description)}"`;
+  },
   summarize(args) {
     return [
       `Rewrite routine ${args.id} — ${args.description} — keeps its schedule, history and run state`,
@@ -114,6 +118,9 @@ interface RoutineEnableArgs {
 const routineEnable: ActionKind<RoutineEnableArgs> = {
   kind: "routine.enable",
   policy: "member",
+  plainSummary(args) {
+    return `Turn the routine "${plainValue(args.description)}" back on, so it runs again on its own`;
+  },
   summarize(args) {
     return [
       `Re-arm routine ${args.id} — ${args.description} — will fire again WITHOUT a fresh @-mention`,

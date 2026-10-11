@@ -1,4 +1,3 @@
-
 import {
   GRANTS_SECTION,
   SEAT_PROMPT_SLOTS,
@@ -6,8 +5,10 @@ import {
   editReplyParagraph,
   postingIsAnActionParagraph,
   renderDeliverySection,
+  renderDmSeatPersona,
   renderHandle,
   renderSeatPersona,
+  ROUTING_DECISION,
   renderSurface,
   renderSurfaceGuide,
   settlementWakeLine,
@@ -52,6 +53,7 @@ function ok(cond: boolean, label: string): void {
     "delivery",
     "readingAWake",
     "replyStyle",
+    "language",
     "role",
     "access",
     "approvalPreview",
@@ -359,10 +361,10 @@ function ok(cond: boolean, label: string): void {
   ok(seat.includes("your own turn has a budget"), "🔴 the seat reads an explicit per-turn budget");
   ok(
     seat.includes("a few reads to get your bearings, a react, ONE short reply"),
-    "🔴 …enumerated: a few reads, a react, ONE short reply, a memory note, a delegation",
+    "🔴 …enumerated: a few reads, a react, ONE short reply, a memory note, a hand-off",
   );
-  ok(seat.includes("A second reply is itself the signal that you are over budget"), "🔴 …with a second reply as the escalation threshold");
-  ok(seat.includes("with a brief of\nwhat you already know in its instructions"), "🔴 …and the delegation carries a brief of what the seat already knows");
+  ok(seat.includes("A second reply\nis itself the signal that you are over budget"), "🔴 …with a second reply as the escalation threshold");
+  ok(seat.includes("Give it a brief of what you already know"), "🔴 …and the hand-off carries a brief of what the seat already knows");
 
   for (const seatOnly of ["A react acknowledges", "your own turn has a budget", "ONE short reply"]) {
     ok(!worker.includes(seatOnly), `🔴 the worker persona never reads the seat's "${seatOnly}"`);
@@ -441,6 +443,7 @@ function ok(cond: boolean, label: string): void {
     "## This channel": "persona",
     "### Reading a wake": "readingAWake",
     "### How you write": "replyStyle",
+    "## Output language": "language",
     "## What stops for a human": "approvalPreview",
     "## What a worker can do that you cannot": "workerCapabilities",
     "## When somebody refers to something you cannot see": "recoveryRead",
@@ -1056,8 +1059,12 @@ function ok(cond: boolean, label: string): void {
     session: { auth: { current: { attributes: { oe_platform: "slack", channel_type: "im" } } } },
   } as unknown as BindableContext;
   ok(isDmAnchorWindowToken(dmToken), "fixture guard: the minted DM-seat token really is a DM-anchor WINDOW token");
-  ok(!isSupervisorSession(dmSeat), "fixture guard: …which `isSupervisorSession` subtracts, so the DM seat renders no persona");
-  ok(renderSupervisorPersona(dmSeat) === "", "fixture guard: …confirmed on the renderer, not only on the predicate");
+  ok(!isSupervisorSession(dmSeat), "fixture guard: …which `isSupervisorSession` subtracts, so the DM seat renders no CHANNEL persona");
+  const dmPersona = renderSupervisorPersona(dmSeat);
+  ok(dmPersona === renderDmSeatPersona(), "🔴 OPE-2428: the DM seat renders the DM persona");
+  ok(dmPersona.includes("## This conversation") && dmPersona.includes("standing session for this direct message"), "🔴 …which names what it is: a direct message");
+  ok(dmPersona.includes(ROUTING_DECISION), "🔴 …and states the one routing decision");
+  ok(!dmPersona.includes(GRANTS_SECTION), "negative control: the DM persona carries no grant rule of its own (the slot does)");
   const dmMd = await renderScopeMarkdown(dmSeat);
   ok(dmMd.includes(GRANTS_SECTION), "🔴 the ASSEMBLED UNIFIED prompt of a DM seat carries the grant rule");
   ok(dmMd.split("### Grants").length - 1 === 1, "🔴 …exactly once");
@@ -1066,6 +1073,45 @@ function ok(cond: boolean, label: string): void {
   const childCtx = { channel: { kind: "slack", continuationToken: "subagent:sess-parent:call-1" } } as unknown as BindableContext;
   ok(renderGrantsSlot(childCtx) === "", "🔴 a delegated WORKER reads the rule from its persona, so the slot stays empty for it");
   ok(renderSupervisorPersona(childCtx).includes(GRANTS_SECTION), "negative control: that worker really does hold the rule — through its persona, not through the slot");
+}
+
+{
+  const channel = renderSeatPersona({ seatKind: "conversational", delivery: { kind: "dual-mode" } });
+  const thread = renderSeatPersona({ seatKind: "conversational", delivery: { kind: "dual-mode" }, scope: "thread" });
+
+  ok(channel.split(ROUTING_DECISION).length - 1 === 1, "🔴 OPE-2429: the channel seat states the routing decision exactly once");
+  ok(ROUTING_DECISION.includes("every\ntask meets ONE decision"), "🔴 …as ONE decision");
+  ok(ROUTING_DECISION.includes("**Orchestrate it yourself.**") && ROUTING_DECISION.includes("through your own work session"), "🔴 …side one: orchestrate it yourself, through your own work session");
+  ok(ROUTING_DECISION.includes("**Hand its orchestration to a thread session**") && ROUTING_DECISION.includes("`spawn_thread_session`"), "🔴 …side two: hand its orchestration to a thread session");
+  ok(ROUTING_DECISION.includes("meaningful orchestration or real work"), "🔴 …and the line between them is Rowan's: meaningful orchestration or real work");
+  ok(ROUTING_DECISION.includes("the task is off\n  your radar"), "🔴 …after the hand-off the task is off the seat's radar");
+  ok(ROUTING_DECISION.includes("This is a judgement."), "…and it says it stays a judgement");
+  ok(ROUTING_DECISION.includes("If you do not hold `spawn_thread_session`"), "…and names the seat that cannot hand off");
+  for (const retired of ["Hand anything past it", "to a dedicated thread session, with a brief", "It runs concurrently and reports back in its\nown thread"]) {
+    ok(!channel.includes(retired), `🔴 OPE-2429: the retired routing line "${retired}" is deleted`);
+  }
+
+  ok(thread.includes("## This thread") && thread.includes("You are the thread session for this one thread"), "🔴 OPE-2428: a thread seat's persona names what it is");
+  ok(!thread.includes("You are the standing session for this channel"), "🔴 …and never claims to be the channel's standing session");
+  ok(!thread.includes("### Owned threads"), "…and reads no 'Owned threads' coordinator section");
+  ok(!thread.includes("another session owns\n(below)"), "…nor a pointer to that missing section");
+  ok(thread.includes("### Finishing the thread") && thread.includes("post the completion here with `reply`") && thread.includes("`complete_thread`"), "🔴 OPE-2430: the thread seat is told to post its completion in the thread, then complete it");
+  ok(!thread.includes(ROUTING_DECISION) && !thread.includes("`spawn_thread_session`"), "🔴 OPE-2429: the thread seat reads its own side of the decision — it cannot hand off again");
+  ok(thread.includes("you cannot hand it to another thread\nsession"), "…and is told so");
+  ok(channel.includes("## This channel") && channel.includes("### Owned threads") && !channel.includes("### Finishing the thread"), "negative control: the channel seat keeps its own opening and coordinator section, and no finishing duty");
+
+  const seatTok = `unified:oe-dom:ope2428:win:${threadSeatWindowId("slack/T1/C1", "1700.5")}:oe-sup:g1`;
+  const seatCtx = { channel: { kind: "channel:unified", continuationToken: seatTok }, session: { auth: { current: { attributes: { oe_platform: "slack" } } } } } as unknown as BindableContext;
+  ok(renderSupervisorPersona(seatCtx).includes("## This thread"), "🔴 OPE-2428: renderSupervisorPersona gives a thread-seat token the thread persona");
+  const seatMd = await renderScopeMarkdown(seatCtx);
+  ok(seatMd.includes("## This thread"), "fixture guard: the assembled thread-seat prompt really carries the thread persona");
+  ok(seatMd.includes("### Handing work off on this seat"), "fixture guard: this context really renders the work-forward block");
+  ok(
+    !seatMd.includes("spawn_thread_session") && !seatMd.includes("a thread session's when you hand") && !seatMd.includes("goes to a thread session"),
+    "🔴 OPE-2429: nothing a thread seat reads offers it a hand-off to a thread session",
+  );
+  const standingCtx = { channel: { kind: "channel:unified", continuationToken: `unified:${formatWindowToken({ domain: "ope2428", windowId: "ope2428", generation: 1 })}` }, session: { auth: { current: { attributes: { oe_platform: "slack" } } } } } as unknown as BindableContext;
+  ok(renderSupervisorPersona(standingCtx).includes("## This channel"), "negative control: a standing window token still reads the channel persona");
 }
 
 console.log(`✓ seat-prompt: ${passed} assertions passed`);

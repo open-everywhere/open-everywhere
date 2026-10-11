@@ -181,3 +181,33 @@ test("GET /control/v1/usage prices the run at the scripted model id, aggregated,
   expect(row!.estimatedUsd).toBeUndefined();
   expect(window.unpricedModels).toContain(SCRIPTED_MODEL_ID);
 });
+
+test("the seat's `work` call lands in the per-tool ledger with its step's tokens and model (OPE-2435)", async () => {
+  const driven = await driveTurn();
+  const { seat } = await settledRows(driven);
+  const rows = await waitFor(async () => {
+    const found = await getOperationalStore().runAnalyticsQuery({
+      table: "tool_usage",
+      select: [
+        { expr: "tool", alias: "tool" },
+        { expr: "connector", alias: "connector" },
+        { expr: "outcome", alias: "outcome" },
+        { expr: "model", alias: "model" },
+        { expr: "input_tokens", alias: "input_tokens" },
+      ],
+      groupBy: [],
+      where: ["org_id = ?", "session_id = ?", "event = 'call'"],
+      params: [org(), driven.parentSessionId],
+      orderBy: null,
+      limit: 50,
+    });
+    return found.some((r) => r.tool === "work") ? found : undefined;
+  }, "the seat's `work` call row in tool_usage");
+  const work = rows.filter((r) => r.tool === "work");
+  expect(work.length, "one `work` call, one row").toBe(1);
+  expect(work[0]!.connector).toBe("");
+  expect(work[0]!.outcome).toBe("ok");
+  expect(work[0]!.model).toBe(SCRIPTED_MODEL_ID);
+  expect(Number(work[0]!.input_tokens)).toBeGreaterThan(0);
+  expect(seat.map((r) => r.inputTokens), "the share of a one-call step is the step's whole input").toContain(Number(work[0]!.input_tokens));
+});

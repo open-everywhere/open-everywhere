@@ -1381,6 +1381,8 @@ request number and URL, and whether the pull request was updated rather than cre
 have two write sites: the real one above, and a validation-only arm that opens nothing. So a count
 of `*.pr_opened` rows is **not** a count of pull requests. Read `detail.dryRun` before you count,
 and read `detail.pr` — a real row names the pull request number, and a dry-run row cannot.
+The dream cycle's `memory.skill_proposal_pr` row follows the same rule: a dry-run install writes
+it with `dryRun: true` and no `pr` (OPE-2416).
 
 ## Spend caps
 
@@ -1572,7 +1574,7 @@ POST a signed payload — not just GitHub. Declare it once in code:
 
 **A hook comes in two shapes, and `target` + `instruction` are what pick one.** Declare them
 together and the hook is **fused**: every accepted delivery runs that one instruction in that one
-Slack channel. Omit them both and it is **emit-only** — a door and nothing else, whose consequences
+place. Omit them both and it is **emit-only** — a door and nothing else, whose consequences
 are decided afterwards by `event` routines someone creates separately. One without the other is
 **refused at config load**, in both directions: a target with no instruction fires a channel with
 nothing to say, and an instruction with no target has nowhere to run.
@@ -1595,13 +1597,57 @@ defineWebhook({
   source: "oe-standard-webhook",               // WHICH signature scheme its sender signs with
   secretRef: "DEPLOY_STATUS_WEBHOOK_SECRET",   // where the shared secret LIVES — a ref, never the value
   broker: "env",                               // the home that ref resolves through: "env" | "db" | ...
-  target: "slack/T0123ABCD/C0456EFGH",         // fully-qualified slack/TEAM/CHANNEL surface
+  target: "slack/T0123ABCD/C0456EFGH",         // a room on any surface, or "dm:<principal key>" for a person
   readableBy: [{ level: "domain", domain: "engineering" }],  // WHO may read its events — required, no default
   posture: "projection",                       // HOW MUCH of the payload reaches the prompt
   project: ["status", "branch"],               // …under "projection": exactly these fields
   instruction: "A CI deploy-status webhook just fired. Summarise the result for the channel.",
 });
 ```
+
+**A webhook reaches the agent, not Slack (OPE-2419).** `target` names any place the agent lives,
+in one of two forms:
+
+| Form | Example | Where the turn runs |
+|---|---|---|
+| A room: `<platform>/<workspace>/<surface>` | `slack/T0123/C0456`, `discord/<guild>/<channel>`, `teams/<tenant>/<conversation>` | That channel or group. A Teams conversation id is written in its surface-key spelling, as the domain roster writes it. A Teams group chat runs as a group DM; a Teams 1:1 chat is refused as a room — name the person instead. |
+| A person: `dm:<principal key>` | `dm:slack/T0123/U0789`, `dm:discord/<user>`, `dm:teams/<29: id>` | That person's 1:1 DM, as a DM: the DM's standing grain, and no internal-trust verdict. |
+
+The fire **resolves the target when a delivery arrives**, through the same per-surface resolver a
+routine fire uses, so a hook needs no live binding to be declared. Config load checks only the
+shape: a malformed target, or one on a platform with no resolver, fails loud at boot. Whether the
+target RESOLVES is a fire-time question, and an unresolvable target **declines** with a reason that
+names the fix. The reason lands on the `webhook.declined` audit row; nothing is dropped in silence.
+The cases that can decline:
+
+- **Teams** cannot cold-address anybody. A room needs the conversation reference captured when the
+  bot last heard a message there, and a person needs one direct message to the bot first. Until
+  then the fire declines and says so. A target that names another tenant than the conversation's
+  own is refused.
+- **Discord** checks that the channel is in the guild the target names, and refuses a mismatch. A
+  person's DM opens at fire time; Discord refuses it when the person shares no server with the bot
+  or does not accept DMs from server members.
+- **Slack** checks a person with `users.info` before it opens the DM with `conversations.open` (the
+  `users:read` and `im:write` scopes). The person must be a full member of the workspace the target
+  names: a Slack Connect user, a guest, a deactivated account or a bot is refused. When config names
+  exactly one Slack workspace, a target in another workspace is refused before any call. With no
+  Slack workspace named, with several, or with an Enterprise Grid entry, the workspace segment is
+  not verified, which is the same limit a Slack routine has.
+
+The spend gate applies on every surface. The audience floor (below) refuses an observed-guest room
+on Slack, where the platform reports the room's roster. **Discord and Teams report no roster, so a
+webhook there fails closed instead** (the *stranger-room floor*):
+
+- a group chat or group DM is always refused, because its members are an ad-hoc set;
+- a channel fires only when the operator has declared it internal with
+  `defineSurface({ key: "<surface key>", trust: "internal" })` in `agent/identity/surfaces.ts`. A
+  Teams shared channel cannot be told apart from a standard one at fire time, so the declaration is
+  the only evidence there is. A tenant-wide declaration vouches every room in that tenant, a shared
+  channel included, so prefer room-level lines;
+- a 1:1 DM fires, because the hook names that one person.
+
+Only a Slack **channel** can be confirmed internal at fire time; every other target, and every DM,
+binds `external`, so shared memory and domain skills stay off there.
 
 **`readableBy` is required and has no default**, because a hook readable by nobody accepts
 deliveries and then refuses every routine, forever, in silence. It lists the scopes whose surfaces
@@ -1756,7 +1802,8 @@ to a per-hook one:
   lookup, a non-shared channel with more than one page of members, or a deployment with no Slack
   provider): a delivery is acknowledged and fired in the background, so refusing on "we could
   not ask" would silently drop a notification the sender believes it delivered. Move the hook
-  to an internal channel — or remove the external members — and it resumes by itself.
+  to an internal channel — or remove the external members — and it resumes by itself. Discord
+  and Teams cannot report a roster at all, so there the stranger-room floor above refuses instead.
 - **A dev escape hatch exists, scoped to unset-secret only.** The `webhooks.allowUnverified`
   setting accepts a delivery with no configured secret (local dev); it never bypasses signature
   verification once a secret **is** set, and it never waives *verifier resolution* — "I have
@@ -1768,7 +1815,8 @@ to a per-hook one:
   delivery, the fire's audit row carries `unverified: true` — nothing authenticated that
   sender but the URL, and the log says so rather than looking like any other accepted fire.
 - **Accepted deliveries are always audited; rejections are audited but throttled.** Every
-  fire — and every declined fire, whether for budget or for the audience floor — writes a row. Rejections would otherwise be an
+  fire — and every declined fire, whether for budget, for the audience floor or for a target that
+  did not resolve — writes a row. Rejections would otherwise be an
   audit-write amplifier on a public endpoint, so they collapse to roughly one row per
   identity per minute: per hook *and* status for a configured hook, and onto a single
   constant key for unknown ids, so a scanner varying the path can't mint a row per request.
@@ -2070,7 +2118,7 @@ delivery from that source already carries. `scope \`entity\`` is a step in the
 | `member_joined_channel` | ❌ not routed | — | somebody joined a channel; unwired — an onboarding routine would want this one |
 | `team_join` | ❌ not routed | — | a new member joined the workspace; unwired |
 | `file_shared` | ❌ not routed | — | a file was shared; unwired — the attachment plane reads files on a turn it was already woken for |
-| `app_home_opened` | ❌ not routed | — | a user opened the app's home tab; unwired, and a poor routine trigger — it fires on a view, not on work |
+| `app_home_opened` | ❌ not routed | — | a person opened the app's Home tab; the front route publishes their memory page (OPE-2451), and it is no routine trigger — it fires on a view, not on work |
 
 **discord** — no event normalizer · [vendor event index](https://discord.com/developers/docs/events/gateway-events)
 
@@ -2358,11 +2406,19 @@ Scheduled routines fire into all three chat surfaces under every post policy —
 Discord, and Teams (see [Surface coverage](#surface-coverage)); event
 subscriptions (with a built GitHub
 webhook path) and generic webhook triggers are live; status reactions and a pinned
-cross-thread status message are live; spend caps are live. **Broad untagged channel
-ingestion** — triaging general channel chatter the agent wasn't tagged in — is a
-documented seam: the chat surface only delivers mentions, DMs, and interactions, not
-general channel messages, so watching untagged traffic needs that ingress (or a poll)
-first. **Roadmap.**
+cross-thread status message are live; spend caps are live. **Untagged channel ingestion is
+live, and it is on by default.** The ambient supervisor wakes a domain's standing seat on
+messages that do not mention the agent. The seat replies only where it adds something, and
+it audits every silence. A domain turns this off with `ambientSupervisor: false`. The room
+then becomes addressed-only, and its ambient talk reaches the seat as context on the next
+wake. On a default install the supervisor reads Slack channels confirmed internal, private or
+vouched GitHub repositories, Linear teams and Notion pages. The flag lifts no fence: the
+per-surface trust checks and the spend caps still apply. Discord and Teams do not read this
+flag. On Discord an untagged message arrives only over the Gateway relay. On Teams it arrives
+only where a team owner granted the resource-specific consent. Each surface page says which
+untagged messages wake the agent there. See
+[`ambientSupervisor`](../deploy/configuration-reference.md) and the
+[surface support matrix](../deploy/surfaces/support-matrix.md).
 
 ## At-rest isolation
 

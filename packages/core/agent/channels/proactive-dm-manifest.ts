@@ -6,7 +6,8 @@ export type ProactiveDmPlane =
   | "connector.sign_in"
   | "identity.link-set"
   | "identity.link-consent"
-  | "governance.pane";
+  | "governance.pane"
+  | "attention.blocked";
 
 export type ProactiveDmStopStanding = "outranks" | "exempt";
 
@@ -85,6 +86,13 @@ export const PROACTIVE_DM_PLANES: readonly ProactiveDmPlaneRow[] = [
     recordsDelivery: false,
     exemptBecause:
       "It answers the recipient's own tool call. The DM is the private venue for a pane they just asked for, because an org-grain read must not land in a room, so it is a reply rather than a message the agent starts. A stop request throttles chattiness, and an answer the person asked for this minute is not chattiness — silencing it would drop the reply to their own command.",
+  },
+  {
+    plane: "attention.blocked",
+    modules: ["packages/core/agent/status/attention.ts"],
+    what: "The one ping the work session or a thread seat sends its own person when it reports itself blocked on them (OPE-2433): the clipped status line and a link to the work.",
+    stop: "outranks",
+    recordsDelivery: false,
   },
 ];
 

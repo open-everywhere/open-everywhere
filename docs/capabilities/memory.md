@@ -616,7 +616,8 @@ verdict is unchanged. See
 [The control plane: In-Slack approvals](../security/control-plane.md#in-slack-approvals) for the
 propose → card → click mechanics shared with the other admin-mutation tools.
 
-You can ask from a room that can't host a card (a Teams or Linear conversation): the card is
+You can ask from a room that can't host a card (a Teams personal or group chat, or a Linear
+conversation): the card is
 posted into a card-capable channel in the **same domain** and the agent tells you where, which
 matters more here than for most verbs — the card is the only place the bullets appear verbatim,
 and the domain boundary is what keeps that text in front of the audience that already shared the
@@ -655,6 +656,158 @@ read-only bridge to the same silo enumeration/read logic behind the out-of-band
 listing writes a row only where the venue fence narrows or redirects it. See
 [The control plane: Memory-admin, from inside Slack](../security/control-plane.md#memory-admin-from-inside-slack)
 for the full gating rules.
+
+## Memory you can see
+
+A person can read, correct, forget and export what the agent remembers about them, without asking
+the agent. A domain's members can read what the domain knows. Both views read the durable store
+directly, so no model stands between the store and the person (OPE-2451).
+
+Memory stays tool-driven for the agent. These views change nothing about how a seat reads or writes
+memory. They add a second reader: the person.
+
+### Your memory: the Slack Home tab
+
+The agent's **Home tab** in Slack is a private page. Slack shows each person their own Home tab, and
+the page lists what the agent remembers about the person who opens it:
+
+- **Every remembered line** in their personal memory, which is the memory of their direct messages
+  with the agent. A line that sits in two files (the index and its topic file) is listed once. The
+  page lists up to 40 lines and says how many more there are.
+- **Edit** on a line opens a dialog prefilled with the line. Saving replaces the line in every file
+  that holds it. A line must be one line, not blank, and at most 1,000 characters.
+- **Forget** on a line opens a confirmation that quotes the line. Confirming removes the line from
+  every file that holds it.
+- **Export** sends the person a Markdown file in their direct messages. The file holds every memory
+  file verbatim, prose included, not only the lines the page lists.
+- **What your domains know** lists the lines of each domain the person belongs to, read-only, with a
+  link to the domain's channel. To correct or forget a domain's line, a member asks the agent in that
+  channel. That change goes through the tools and the approval card like any other.
+
+**Who the page is for.** The front route builds the viewer from Slack's signed delivery: the `user`
+of the `app_home_opened` event, or the `user.id` of a click. The person's own DM with the agent
+(`conversations.open`) names their personal memory, which is the same partition their DM wakes write.
+A dialog carries only the action and a SHA-256 digest of the line. The host looks the digest up in
+the clicker's own memory, so a forged digest can name only a line the clicker already owns.
+
+**The trust gate holds.** The page lists a domain only when two checks pass, and both fail closed:
+
+- The person is a full member of the workspace (`users.info`). A guest, a Slack Connect stranger or
+  an unresolvable lookup sees their own memory and no domain's.
+- The person sits in a channel of that domain that `conversations.info` confirms internal. A person
+  whose only route into a domain is an externally shared channel does not see that domain, because a
+  wake in that channel reads `public` memory and never the domain's.
+
+**Every change leaves an audit row, and no row holds a remembered line.**
+
+| Action | Rows | What the row carries |
+| --- | --- | --- |
+| Forget | `memory.purge` and `memory.write` (road `purge`) | The line's SHA-256 and length, the files it left, and `via: "slack-app-home"`. It is the same executor an approved `purge_memory` card runs. |
+| Edit | `memory.write` (road `self-edit`) | The before and after SHA-256 and length (`edited`), and `via`. |
+| Export | `memory.export` | The line count, the document's length and its SHA-256. |
+
+A forget or an edit that finds the line already gone writes no row, because nothing changed. What a
+forget achieves is the backing's, as for a purge: the personal silo is always a SQL backing, so the
+line is gone from the store.
+
+**What the page does not do.** It lists bullet lines, not prose. Export carries the prose. It does not
+show the org baseline or the `dm` pseudo-domain's shared read layer, because those are the org's
+knowledge, not the person's.
+
+### A domain's memory: the channel canvas
+
+Each domain with memory shows what it knows as the **channel canvas** of its Slack channels: the
+canvas Slack pins at the top of a channel. The canvas lists the lines of the silos the domain's own
+`memory` list names, grouped by silo and section. The org baseline that `includeOrg` adds is not on
+it, because every including domain would show the same lines.
+
+**It updates on a memory write.** Every durable silo write passes the one write road
+(`memory/write-road.ts`), which tells the surface bundles which silo changed. The Slack bundle then
+re-reads each domain that names the silo and rewrites the canvas of each of the domain's channels the
+app is in, up to 20 channels. A Slack failure never fails the write. The road waits at most 1.5
+seconds for the refresh and then returns. The refresh is not cancelled, but nothing waits for it
+either: on a long-running host it finishes, and on a serverless host it can freeze with the
+invocation. A canvas whose refresh froze stays out of date until the next write to one of its silos.
+That wait is a real cost: a write that runs before the agent's reply (an explicit "remember this" settles inside
+the turn) can hold the reply for up to 1.5 seconds per silo it changes.
+
+**Six rules keep the canvas safe:**
+
+- The canvas is written only into a channel `conversations.info` confirms **internal**. A Slack
+  Connect channel, or a channel whose facts could not be read, never gets one.
+- The canvas is written only when **every member** of the channel is a confirmed full member of the
+  workspace (`conversations.members`, then `users.info` per member). A channel with a guest, a member
+  the lookup cannot resolve, or more members than one page lists (200) never gets one. This check is
+  stricter than the room gate: a wake in a private channel with a guest still reads the domain's
+  memory, because that gate looks at the channel, not at its members. The canvas would put every line
+  in front of every member at once, so it asks about each person.
+- The app rewrites a channel canvas only when **the app created it** (`files.info` names the app's
+  bot user). A canvas a person made stays theirs, and the refresh skips that channel.
+- Member text is **defused**: a remembered `<!channel>` or a mention cannot ping anyone from the
+  canvas, and the Home tab escapes the same characters.
+- **A canvas comes down when its channel stops passing.** When the gate fails on a channel that
+  already shows the app's canvas, the app replaces the canvas with a notice that holds no memory. The
+  gate runs on two trust events in every channel the app is in: a person joins (`member_joined_channel`;
+  the newcomer is checked directly, not only through the member list), and the channel becomes shared
+  (`channel_shared`). It also runs on each memory write to the domain, in the domain's channels. The
+  room verdict is read fresh for every canvas decision, never from the wake path's cache.
+- **Turning the canvas off takes it down.** A channel whose domain no longer shows a canvas
+  (`memoryCanvas: false`, a domain with no `memory`, or a channel moved out of every domain) gets the
+  same notice in place of the app's old canvas: on the next write to the domain's silos when the
+  domain still names them, and on the next join or share in that channel otherwise.
+
+**What the gate cannot do.** These limits stay, and an operator should know them:
+
+- **It runs only when something happens.** Between a memory write and a trust event nothing rechecks
+  a channel. A member whom Slack downgrades to a guest sends no join or share event, so the canvas
+  stays up until the next memory write to the domain.
+- **The memory-write recheck has a cap.** It visits the first 20 of the domain's channels the app is
+  in. A channel past the cap is rechecked only by a join or a share in it.
+- **The per-person check reuses the membership cache.** For up to that cache's lifetime, an earlier
+  "full member" verdict on a person stands.
+- **A failed take-down is not retried.** When Slack refuses the replacement, or a lookup the gate
+  needs fails, the row says `clear-failed` and the canvas may still show memory. The next memory write
+  or trust event tries again; nothing else does.
+- **A canvas a person made is never touched.** A guest can read anything a person pasted into it.
+
+Each channel a canvas decision visits writes one `memory.canvas_refresh` row. Its `trigger` is
+`memory-write`, `member-joined` or `channel-shared`, and its outcome is one of these:
+
+| Outcome | Meaning |
+| --- | --- |
+| `created`, `updated` | The domain's memory was written to the app's canvas. |
+| `unchanged` | A trust-event recheck passed, and nothing was written. |
+| `skipped-external`, `skipped-guest`, `skipped-disabled` | The gate failed or the canvas is off, and the channel holds no canvas of the app's. |
+| `skipped-foreign` | The channel canvas is a person's, so the app left it alone. |
+| `cleared-external`, `cleared-guest`, `cleared-disabled` | The app's canvas was replaced with the notice. |
+| `clear-failed` | The app could not rule out that its canvas still shows memory. |
+| `failed` | A write of memory to the canvas failed. |
+
+**The canvas is a read view.** A direct edit to it is replaced on the next memory change. To correct
+or forget a line, members ask the agent in the channel. A domain turns its canvas off with
+`memoryCanvas: false` (see the [configuration reference](../deploy/configuration-reference.md#memory-domain--silo)),
+which takes the app's canvas down as described above. The canvas needs the `canvases:write` scope,
+and Slack's free plan has no channel canvases; there, each refresh records `failed` and memory is
+unaffected. A trust-event recheck runs on every person who joins any channel the app is in. In a
+channel that shows no canvas it costs two or three Slack reads. In a canvas-showing channel it also
+lists the members and checks each one (`users.info`, cached), up to 200 per channel.
+
+### Other surfaces
+
+- **Teams.** A Teams personal tab is a web page that Teams loads inside the app, and it must know
+  who is signed in. Open Everywhere serves no signed-in web page yet, so Teams has no memory page. A
+  Teams user asks the agent in a direct message what it remembers, and asks it to forget a line.
+  The page model (`home/home-view.ts`) is platform-neutral, so a Teams tab renders the same sections
+  when such a page exists.
+- **Discord, Linear, GitHub and Notion** have no private per-person page. The same direct-message
+  route applies where the surface has direct messages.
+
+### How the page grows
+
+The page is a list of **sections**, each registered by the module that owns its data
+(`registerHomeSection` in `home/home-view.ts`). Memory registers two, at order 10 and 30. Order 20 is
+held for the person's own approval rules (OPE-2456), which then render between the two memory
+sections with no change to the memory code.
 
 ## Curated subsets: `select`
 
@@ -837,7 +990,9 @@ theirs; nothing rewrites or retires them behind their back.)
   it in the proposal review queue. Where the deployment has a config repo
   (`accessRequests.configRepo`), the same draft also opens a **pull request** on it, adding the
   file under `.agents/skills/<name>/SKILL.md` on its own branch. `memory.skillProposalPr` ships on;
-  with no config repo the pull request is skipped with no error, and `false` turns it off. See below.
+  with no config repo the pull request is skipped with no error, and `false` turns it off. A
+  config repo in dry-run mode (`dryRun: true` in `agent/access/access-requests.ts`) opens no
+  pull request: the attempt is audited with `dryRun: true` and nothing reaches GitHub. See below.
 
 ### The skill proposal, and how a correction reaches the next one
 

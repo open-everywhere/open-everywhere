@@ -2,6 +2,7 @@ export interface DiscordChannelInfo {
   readonly name?: string;
   readonly parentId?: string;
   readonly isThread: boolean;
+  readonly guildId?: string;
 }
 
 export interface DiscordInfoDeps {
@@ -32,11 +33,12 @@ export function fetchDiscordInfo(
           headers: { authorization: `Bot ${token}` },
         });
         if (!res.ok) return undefined;
-        const body = (await res.json()) as { name?: unknown; parent_id?: unknown; type?: unknown };
+        const body = (await res.json()) as { name?: unknown; parent_id?: unknown; type?: unknown; guild_id?: unknown };
         const name = typeof body.name === "string" && body.name.trim() ? body.name.trim() : undefined;
         const isThread = body.type === 10 || body.type === 11 || body.type === 12;
         const parentId = isThread && typeof body.parent_id === "string" && body.parent_id ? body.parent_id : undefined;
-        return name ? { name, parentId, isThread } : undefined;
+        const guildId = kind === "channels" && typeof body.guild_id === "string" && body.guild_id ? body.guild_id : undefined;
+        return name ? { name, parentId, isThread, ...(guildId ? { guildId } : {}) } : undefined;
       } catch {
         return undefined;
       }

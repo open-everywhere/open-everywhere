@@ -15,6 +15,7 @@ export const GITHUB_SURFACE_PARITY: SurfaceParityDeclaration = {
   "ambient-engagement-seam": "supported",
   "engaged-row-promotion": "supported",
   "owned-thread-ingress": "supported",
+  "thread-done-reaction": { unsupported: "the thread is the issue itself, so no root message stands apart from it, and the ancillary ops carry no `setReaction`" },
 
   "addressed-leg": "supported",
   "ambient-leg": { supported: "the ambient supervisor, not the §2.5 engagement registry" },

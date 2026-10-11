@@ -42,10 +42,17 @@ export function webhookFireAttributes(
   isDm: boolean,
   internal: boolean,
 ): Record<string, string> {
+  return surfaceWebhookFireAttributes(hookId, { team_id: teamId, channel_id: channelId, channel_type: isDm ? "im" : "channel" }, isDm, internal);
+}
+
+export function surfaceWebhookFireAttributes(
+  hookId: string,
+  destAttributes: Readonly<Record<string, string>>,
+  isDm: boolean,
+  internal: boolean,
+): Record<string, string> {
   return {
-    team_id: teamId,
-    channel_id: channelId,
-    channel_type: isDm ? "im" : "channel",
+    ...destAttributes,
     ...(internal ? { is_ext_shared: "false", trust_checked: "true" } : {}),
     [FIRE_UNATTENDED_ATTR]: "true",
     ...rootDmGrainAttrs(isDm),

@@ -81,6 +81,7 @@ model, or jump straight to a section. New here? Start with
 - [Credential brokers](./extending/credential-brokers.md)
 - [Sandbox](./extending/sandbox.md)
 - [Connectors](./extending/connectors.md)
+- [A2A agents](./extending/a2a-agents.md) — delegating a task to another organisation's agent over the Agent2Agent protocol: MCP gives the agent tools and data, A2A gives it other agents. How to declare an agent, the approval card, the host pin and the untrusted answer.
 - [Source-control backends](./extending/source-control-backends.md)
 - [Database & operational store](./extending/database.md)
 - [Scheduler & control-plane identity](./extending/scheduler-and-identity.md)
@@ -109,6 +110,7 @@ model, or jump straight to a section. New here? Start with
 - [Self-upgrade: the per-release migration record](./deploy/self-upgrade-release-records.md) — the machine-readable `releases/<sha>/migration.json` format: what changed, what a deployer must do, how to verify, how to roll back.
 - [Graduating the operational store](./deploy/database-graduation.md) — leaving the embedded-Postgres (or legacy sqlite) floor for a Postgres server or hosted, and the one supported migration command (chain-verified).
 - [Observability](./deploy/observability.md) — durable logs, traces, and error alerting: what you get bare, and the vendor-neutral seams + free-tier setup.
+- [SIEM export](./deploy/siem-export.md) — stream every audit row to a SIEM (OTLP, JSON or Splunk HEC), at least once, with the hash-chain fields a receiver verifies.
 - [Telemetry](./deploy/telemetry.md) — the anonymous usage telemetry Open Everywhere sends by default: every event, the never-collected list, retention, opt-out.
 - Surface setup: [Slack](./deploy/surfaces/slack.md) · [Teams](./deploy/surfaces/teams.md) · [Discord](./deploy/surfaces/discord.md) · [Linear](./deploy/surfaces/linear.md) · [Notion](./deploy/surfaces/notion.md) · [GitHub](./deploy/surfaces/github.md)
 - [Surface support matrix](./deploy/surfaces/support-matrix.md) — what works where across Slack / Teams / Discord, evidence-based, with platform limitations called out.

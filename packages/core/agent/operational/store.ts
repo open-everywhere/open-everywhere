@@ -34,6 +34,7 @@ export const OPERATIONAL_TABLES = [
   "domain_skill_revisions",
   "domain_model",
   "usage_events",
+  "tool_usage",
   "instance_meta",
   "webhook_capture",
   "identity_link_sets",
@@ -47,6 +48,7 @@ export const OPERATIONAL_TABLES = [
   "credential_grant",
   "dm_audience",
   "ingress_delivery",
+  "attention_state",
 ] as const;
 
 export const EVENT_DEDUPE_MAX_RETENTION_MS = 24 * 60 * 60_000;
@@ -111,6 +113,12 @@ export interface AuditChainRow {
   readonly action: string;
   readonly detail?: Readonly<Record<string, unknown>>;
   readonly prevSha: string | null;
+}
+
+export interface AuditChainReadOptions {
+  readonly tailLimit?: number;
+  readonly afterSeq?: number;
+  readonly limit?: number;
 }
 
 export interface AuditChainEpochWritten {
@@ -508,8 +516,28 @@ export interface UsageSummaryRow {
   readonly sessions: number;
 }
 
+export type ToolUsageEvent = "call" | "card";
+export type ToolUsageOutcome = "ok" | "error" | "rejected" | "";
+
+export interface ToolUsageEntry {
+  readonly org: string;
+  readonly ts: string;
+  readonly surfaceKey: string;
+  readonly surfaceMode?: SurfaceMode;
+  readonly principalId?: string;
+  readonly sessionId: string;
+  readonly event: ToolUsageEvent;
+  readonly tool: string;
+  readonly connector: string;
+  readonly outcome: ToolUsageOutcome;
+  readonly model?: string;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+}
+
 export interface CompiledAnalyticsQuery {
-  readonly table: "audit_entry" | "usage_events" | "spend_ledger";
+  readonly table: "audit_entry" | "usage_events" | "spend_ledger" | "tool_usage";
   readonly select: readonly { readonly expr: string; readonly alias: string }[];
   readonly groupBy: readonly string[];
   readonly where: readonly string[];
@@ -568,10 +596,16 @@ export interface ThreadSeatStateWrite {
   readonly threadKey: string;
   readonly seatToken: string;
   readonly parentRegistryKey: string;
-  readonly state: "open" | "completed";
+  readonly state: ThreadSeatState;
   readonly originJson: string;
   readonly report?: string;
   readonly openedAt: string;
+}
+
+export type ThreadSeatState = "open" | "completed" | "expired" | "closed";
+
+export function readThreadSeatStateValue(raw: string): ThreadSeatState {
+  return raw === "open" || raw === "expired" || raw === "closed" ? raw : "completed";
 }
 
 export interface ThreadSeatStateRow extends ThreadSeatStateWrite {
@@ -765,6 +799,66 @@ export interface DmAudienceRow {
   readonly firstDmAt?: string;
   readonly stoppedAt?: string;
 }
+
+export type AttentionStateName = "working" | "needs_input" | "blocked" | "done";
+
+export interface AttentionRow {
+  readonly org: string;
+  readonly sessionId: string;
+  readonly state: AttentionStateName;
+  readonly summary: string;
+  readonly surfaceKey: string;
+  readonly channelId: string;
+  readonly threadTs: string | null;
+  readonly personPlatform: string | null;
+  readonly personId: string | null;
+  readonly since: string;
+  readonly updatedAt: string;
+  readonly pingedSince: string | null;
+}
+
+export type AttentionWrite = Omit<AttentionRow, "since" | "pingedSince">;
+
+export const ATTENTION_ROW_TTL_DAYS = 14;
+
+export const ATTENTION_COLUMNS = "session_id, state, summary, surface_key, channel_id, thread_ts, person_platform, person_id, since, updated_at, pinged_since";
+
+export type AttentionDbRow = {
+  session_id: string;
+  state: string;
+  summary: string;
+  surface_key: string;
+  channel_id: string;
+  thread_ts: string | null;
+  person_platform: string | null;
+  person_id: string | null;
+  since: string;
+  updated_at: string;
+  pinged_since: string | null;
+};
+
+export function attentionRowFrom(org: string, r: AttentionDbRow): AttentionRow {
+  return {
+    org,
+    sessionId: r.session_id,
+    state: r.state as AttentionStateName,
+    summary: r.summary,
+    surfaceKey: r.surface_key,
+    channelId: r.channel_id,
+    threadTs: r.thread_ts,
+    personPlatform: r.person_platform,
+    personId: r.person_id,
+    since: r.since,
+    updatedAt: r.updated_at,
+    pingedSince: r.pinged_since,
+  };
+}
+
+export function attentionPruneBefore(nowIso: string): string {
+  const t = Date.parse(nowIso);
+  return new Date((Number.isFinite(t) ? t : Date.now()) - ATTENTION_ROW_TTL_DAYS * 24 * 60 * 60_000).toISOString();
+}
+
 export interface ProactiveAddress {
   readonly platform: string;
   readonly kind: string;
@@ -833,7 +927,7 @@ export interface OperationalStore {
   appendAudit(entry: AuditEntry): Promise<void>;
   readAudit(filter: AuditFilter): Promise<AuditReadRow[]>;
   listAuditOrgs(): Promise<string[]>;
-  readAuditChain(org: string, opts?: { readonly tailLimit?: number }): Promise<AuditChainRow[]>;
+  readAuditChain(org: string, opts?: AuditChainReadOptions): Promise<AuditChainRow[]>;
   sealAuditChainEpoch(org: string, sealedBy: string): Promise<AuditChainEpochWritten | null>;
 
   setSpendLimit(
@@ -886,6 +980,9 @@ export interface OperationalStore {
   readSessionTail(org: string, surfaceKey: string, token: string): Promise<SessionTailEntry[]>;
   clearSessionTail(org: string, surfaceKey: string, token: string): Promise<void>;
   editSessionTailPost(org: string, surfaceKey: string, token: string, messageId: string, text: string): Promise<boolean>;
+  readConversationSummary(org: string, surfaceKey: string): Promise<SessionTailEntry[]>;
+  writeConversationSummary(org: string, surfaceKey: string, entries: readonly SessionTailEntry[]): Promise<void>;
+  editConversationSummaryPost(org: string, surfaceKey: string, messageId: string, text: string): Promise<boolean>;
 
   listDomainSkills(org: string, domain: string): Promise<DomainSkillRow[]>;
   putDomainSkill(
@@ -901,6 +998,7 @@ export interface OperationalStore {
   listDomainSkillRevisions(org: string, domain: string, name?: string): Promise<DomainSkillRevisionRow[]>;
 
   appendUsageEvent(entry: UsageEventEntry): Promise<void>;
+  appendToolUsage(entry: ToolUsageEntry): Promise<void>;
   usageForSession(org: string, sessionId: string): Promise<UsageEventEntry[]>;
   usageSummary(org: string, filter?: UsageSummaryFilter): Promise<UsageSummaryRow[]>;
   pruneUsageEvents(org: string, olderThanTs: string): Promise<number>;
@@ -918,6 +1016,10 @@ export interface OperationalStore {
   setDmAudienceStopped(org: string, address: string, at: string): Promise<void>;
   clearDmAudienceStopped(org: string, address: string): Promise<boolean>;
   listDmAudience(org: string): Promise<DmAudienceRow[]>;
+
+  recordAttentionState(row: AttentionWrite): Promise<AttentionRow>;
+  listAttentionWaitingOn(org: string, personPlatform: string, personId: string, sinceIso: string): Promise<readonly AttentionRow[]>;
+  claimAttentionPing(org: string, sessionId: string, since: string): Promise<boolean>;
 
   runAnalyticsQuery(compiled: CompiledAnalyticsQuery): Promise<Record<string, unknown>[]>;
 
@@ -957,6 +1059,9 @@ export interface OperationalStore {
 
   putThreadSeatState(org: string, row: ThreadSeatStateWrite, at: string, ttlMs: number): Promise<void>;
   getThreadSeatState(org: string, channelKey: string, threadKey: string): Promise<ThreadSeatStateRow | null>;
+  touchThreadSeat(org: string, channelKey: string, threadKey: string, at: string): Promise<boolean>;
+  closeThreadSeatState(org: string, channelKey: string, threadKey: string, seatToken: string, state: Exclude<ThreadSeatState, "open">, report: string | null, at: string): Promise<boolean>;
+  listIdleThreadSeats(org: string, before: string, limit: number): Promise<ThreadSeatStateRow[]>;
 
   putTurnAnchor(org: string, anchor: TurnAnchorWrite, at: string, ttlMs: number): Promise<void>;
   getTurnAnchorByWindow(org: string, windowKey: string): Promise<TurnAnchorRow | null>;
@@ -979,6 +1084,7 @@ export interface OperationalStore {
   listExpiredPendingActions(org: string, nowIso: string): Promise<readonly PendingActionRow[]>;
   listRejectedActionsSince(org: string, sinceIso: string): Promise<readonly PendingActionRow[]>;
   setPendingActionMessage(org: string, id: string, messageTs: string): Promise<void>;
+  listPendingActionsForMessage(org: string, channelId: string, messageTs: string): Promise<readonly PendingActionRow[]>;
   decidePendingAction(org: string, id: string, status: "approved" | "rejected" | "expired", decidedBy: string, decidedAt: string): Promise<boolean>;
   rewriteDecidedPendingActionArgs(org: string, id: string, argsJson: string): Promise<boolean>;
   listDecidedPendingActionsWithArg(org: string, kind: string, argKey: string): Promise<readonly PendingActionRow[]>;

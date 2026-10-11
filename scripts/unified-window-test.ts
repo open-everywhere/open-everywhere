@@ -15,6 +15,7 @@ import {
   windowModeFor,
   assertUnifiedDomainTrust,
   type Domain,
+  defaultUnifiedFallback,
 } from "@open-everywhere/core/agent/memory/domain.js";
 import {
   supervisorGrainFor,
@@ -227,7 +228,8 @@ await withGate(true, () => {
   ok(windowedSupervisorEnabled(SLACK_KEY, [winDomain, org]) && windowedSupervisorEnabled(GH_KEY, [winDomain, org]), "code gate ON: the domain windows for the Slack AND GitHub containers");
   ok(crossSurfaceOn(SLACK_KEY, [winDomain, org]) && crossSurfaceOn(GH_KEY, [winDomain, org]), "code gate ON + mode:unified → cross-surface window ON for both containers");
   ok(windowedSupervisorEnabled(SLACK_KEY, [soloTwin, org]) && !crossSurfaceOn(SLACK_KEY, [soloTwin, org]), "mode:solo → windows per-channel, not cross-surface");
-  ok(windowedSupervisorEnabled(SLACK_KEY, [ambientTwin, org]) && !crossSurfaceOn(SLACK_KEY, [ambientTwin, org]), "no mode ⇒ windows solo by default (gate ON)");
+  ok(windowedSupervisorEnabled(SLACK_KEY, [ambientTwin, org]) && !crossSurfaceOn(SLACK_KEY, [ambientTwin, org]), "no mode, with un-vouched sources outside Slack ⇒ falls back to solo (OPE-2412, gate ON)");
+  ok(defaultUnifiedFallback(ambientTwin, isVouchedInternal)?.startsWith("unvouched:") === true, "… and the fallback it took is unvouched (OPE-2412)");
   const noAmbient = defineDomain({ name: "payments", reach: [SLACK_KEY], mode: "unified" });
   ok(windowedSupervisorEnabled(SLACK_KEY, [noAmbient, org]), "a domain without ambientSupervisor still seats its channels (chattiness ⊥ session shape)");
   ok(crossSurfaceOn(SLACK_KEY, [noAmbient, org]), "…and its declared cross-surface topology still holds");

@@ -18,6 +18,7 @@ import type { Partition } from "../memory/partition.js";
 import type { ModelRole } from "../memory/domain.js";
 import { registerActionKind } from "./actions.js";
 import type { ActionKind } from "./types.js";
+import { plainValue } from "./plain-text.js";
 
 export interface RoutineCreateArgs {
   readonly org: string;
@@ -77,6 +78,9 @@ export function modelRoleLines(args: Pick<RoutineCreateArgs, "modelRole">): stri
 const routineCreate: ActionKind<RoutineCreateArgs> = {
   kind: "routine.create",
   policy: "member",
+  plainSummary(args) {
+    return `Start a ${args.sessionMode === "job" ? "job" : "routine"} that runs ${plainValue(describeTrigger(args.trigger, args.report), 70)} without anyone asking each time`;
+  },
   summarize(args) {
     return [
       `Create ${args.sessionMode === "job" ? "durable JOB" : "routine"} — ${describeTrigger(args.trigger, args.report)} — fires WITHOUT a fresh @-mention`,

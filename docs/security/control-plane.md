@@ -46,6 +46,7 @@ Within the control MCP door there's a further split by *who's reaching in*:
 | `overrides_list` | the reconcile worklist: every live override, with reason/setBy/expiry and whether it diverges from config |
 | `usage_summary` | tokens + an estimated $ figure, grouped by surface/user/kind/model, plus per-surface routine cost predictions (`routinePredictions`) |
 | `usage_window` | everything spent since a timestamp across a set of workspaces, grouped by surface × model, priced **exactly** at each row's own stamped model rate (unpriced/unstamped rows show tokens only — no assumed-model fallback). The read a CI/e2e harness uses to price a live run, typically over a [service token](#service-tokens-read-only) — also served by the deployment itself as [`GET /control/v1/usage`](#the-deployment-mounted-read-route) |
+| `tool_usage` | calls, errors, rejected calls, approval cards raised and the **attributed** $ estimate per connector and per tool over a window (`sinceIso`, optional `untilIso`; `by: "connector"` folds the ops of one connector). The $ is each call's even share of the model call that chose it, so it is an attribution, never a measurement — the [`tools` analytics dataset](../capabilities/analytics.md#per-connector-and-per-tool-usage-the-tools-dataset) explains the rule, and `query_analytics` answers the same question in chat. Pass `domain` to narrow it (a covering `domain:<name>` role is enough); an org-wide call needs the org-wide `admin` role. Also served as [`GET /control/v1/tool-usage`](#the-deployment-mounted-read-route) |
 | `skills_list` | a domain's runtime-authored skills |
 | `skill_revisions` | one domain skill's approved-body history, newest first — every content the store recorded on a `putDomainSkill` write, plus who authored/armed it and the approval card's id (see [Skill revision history](#skill-revision-history) below) |
 | `memory_list` | every memory silo the caller's roles cover — provider/backing, read-only flag, files with sizes (see "Memory-admin" below) |
@@ -891,8 +892,10 @@ Same guarantees as the MCP mount, enforced the same ways:
 - **Audited:** every authenticated call writes the same `control.service_call` audit row
   (principal `svc:<name>`, with the view and filters) as a service-token MCP call.
 
-Six sibling routes share this exact contract (fail-closed 404, constant-time bearer,
-read-only, self-audited): `GET /control/v1/audit` (the
+Seven sibling routes share this exact contract (fail-closed 404, constant-time bearer,
+read-only, self-audited): `GET /control/v1/tool-usage?since=<ISO-8601>[&until&domain&by=connector|tool]`
+(the `tool_usage` view — calls, errors, cards and the attributed $ per connector and per tool,
+OPE-2435), `GET /control/v1/audit` (the
 dispatched/replied/no_reply/dropped-prose/rejected audit window — the uniform assertion channel for
 audited *silence*), `GET
 /control/v1/unified-audit` (the cross-surface domain audit), `GET /control/v1/runtime-signal`
@@ -1178,7 +1181,8 @@ card posts as a message with Approve/Reject buttons, the click comes back throug
 signed interactions endpoint, and a guild **Administrator** may approve that guild's own scopes
 without any config seed, alongside the same config-as-code rosters. Which surfaces can host a
 card is a **capability** — a bundle that registers a renderer, a poster and a click route gets
-one — not a fixed list, though today that list is Slack and Discord.)
+one — not a fixed list, though today that list is Slack, Discord and Teams. A Teams card lives in a
+channel only; see [Teams § Approval cards](../deploy/surfaces/teams.md#approval-cards).)
 
 **Asking from a surface that can't host a card.** You still can, for **every propose tool but
 one**. `purge_memory`, `request_access`, `revoke_connector`, `clear_connector_override`,
@@ -1187,7 +1191,7 @@ one**. `purge_memory`, `request_access`, `revoke_connector`, `clear_connector_ov
 `open_pull_request`, `create_skill`, `delete_skill`, the three ticket verbs
 (`set_state`, `assign`, `create_ticket`), `post_message`, `dm_person`, `resume`,
 `create_agent` and `declare_webhook` are all
-available in a Teams or Linear conversation, and the card is **posted into a card-capable channel
+available in a Teams personal or group chat or a Linear conversation, and the card is **posted into a card-capable channel
 in the same domain** — the
 same venue rule [routines](../capabilities/proactivity-and-routines.md#where-you-can-create-one-and-where-it-reports)
 use, including the skip of any candidate the platform positively reports as externally shared.
@@ -1253,6 +1257,50 @@ turn of one session share a row; anything in a different turn, or a different se
 the action, the scope, current → proposed value where relevant, who asked, and an expiry. A
 `routine.permission` card has no clock, so its footer names the bound that ends it instead: the
 card ends when the routine's instruction is edited or the routine is deleted.
+
+**Every card opens with one plain sentence (OPE-2434).** Before the technical detail, the card says
+what will happen and to whom — "Set the monthly spend limit for #general to $50.00/mo.", "Send a
+direct message to slack person U0123ABC." Each action kind writes that sentence from its frozen args
+(`ActionKind.plainSummary`, `packages/core/agent/approvals/types.ts`), so it is code, like the rest
+of the card. The `Approval requested: <kind>` label sits directly under it, then the detail. Two
+fences keep a frozen value from forging card structure inside the sentence: every interpolated value
+goes through `plainValue` (`packages/core/agent/approvals/plain-text.ts`), which removes the
+characters that open a markup link (`<url|label>`, `[label](url)`), a mention, emphasis or a code
+span, removes every `@` in front of a bare `@everyone` or `@here`, and collapses newlines; and Slack renders the
+sentence as `plain_text`. The cleaner does not remove a bare URL: the address stays visible as
+text, and a surface can still link it. The cleaner covers the sentence only: the detail lines
+under it are not cleaned, and they carry the same values as before. A kind whose sentence cannot render (an unknown kind, broken
+args) still opens with a generic sentence that names the kind, because a card that fails to render
+posts no card. The notification text leads with the sentence too. Slack, Teams and Discord render
+the same layout (`packages/core/agent/approvals/card-layout.ts`): the sentence, the label, the
+detail, who asked and the expiry, then the **options as one ordered list** — Approve first, Reject
+last, and a routine's grant option between them. A later option (OPE-2456, "approve, and allow
+things like this") is one more entry in that list, not a new card design. That option is not built:
+plain Approve stays one-off, and repeats are still carried by the judge and the scope's
+[pre-approval rules](../how-it-works/pre-approval-rules.md).
+
+**Several asks from one job arrive as one card, on Slack.** A pending row freezes its proposing
+session (`group_key`). When a second ask comes from the same session, into the same room and the
+same thread, while that session's card is still open, it joins that card instead of posting a new
+one: the card is rewritten as one grouped message that opens with a plain count ("One job asks for
+2 approvals — 2 still need a decision"), and each item keeps its own sentence, detail and buttons.
+A click still decides exactly one row, through the same click core, and the redraw keeps the other
+items live. A card holds at most five items, and a sixth ask posts its own card. A rewrite that
+fails leaves the ask on a card of its own, so a failed join never hides an ask. Teams and Discord
+post one card per ask today: grouping there needs each surface's own update path, and is a
+follow-up.
+
+**One queue: "what is waiting on me".** A person can ask their DM seat what waits on them.
+The `waiting_on_me` read (`packages/core/agent/status/waiting-on-me.ts`) lists every open card they
+can decide — a member-tier card their own work raised, or an admin-tier card their org or domain
+admin roster entry admits — and every card their own work raised that waits on an admin, plus every
+job or thread that reported itself blocked on them or needing them
+([attention states](../how-it-works/agent-and-loop.md#attention-states-and-the-one-blocked-ping)).
+Each item is the card's plain sentence (never its detail lines) and a link to the card. The read is
+DM-only and reads only the asking person's own queue: it takes no person argument, so the acting
+principal is the query key, and an unattended fire reads nothing. A card is matched on the platform
+it was posted to. A link is not a permission: the click core still refuses a click from outside the
+card's own room.
 Pending actions lapse after 24 hours by default (`approvals.ttlHours`) and can no longer be
 approved or rejected once expired.
 
@@ -1326,6 +1374,7 @@ rule.
 
 | Action kind | Propose tool | Who can click |
 |---|---|---|
+| `a2a.delegate` | `delegate_to_agent` | member |
 | `access.request` | `request_access` | member |
 | `agent.create` | `create_agent` | member |
 | `chat.dm` | `dm_person` | member |
@@ -1333,6 +1382,7 @@ rule.
 | `connector.clear` | `clear_connector_override` | admin |
 | `connector.revoke` | `revoke_connector` | admin |
 | `halt.resume` | `resume` | admin |
+| `mcp-server.propose` | `propose_mcp_server` | member |
 | `memory.purge` | `purge_memory` | member |
 | `op.connector` | — *(no propose tool)* | member |
 | `pr.open` | `open_pull_request` | member |
@@ -1540,7 +1590,7 @@ own row.
 | `admin.identity.purge_link_set_credentials` | Every credential a link set holds is purged. | The link-set id and the purged count. |
 | `admin.identity.directory_sync_now` | An on-demand directory sync runs. | The provider, the policy, the planned counts, what was applied, and how many warnings the plan raised. |
 | `admin.identity.directory_groups_plan` | A directory-group plan is requested. | The provider, the people count, the planned counts, the warning count, and the allowlist size when groups are allowlisted. Plan mode returns the content and applies nothing. |
-| `admin.identity.directory_groups_pr` | A directory-group plan is turned into a config pull request. | The same plan fields, plus the delivery outcome — so a plan that produced no pull request reads differently from one that did. |
+| `admin.identity.directory_groups_pr` | A directory-group plan is turned into a config pull request. | The same plan fields, plus the delivery outcome (`no-op`, `dry-run`, `opened` or `updated`) — so a plan that produced no pull request reads differently from one that did. `dry-run` means `accessRequests.dryRun` held the write. |
 
 ### One more row on this plane
 

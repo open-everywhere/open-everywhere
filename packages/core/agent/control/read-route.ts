@@ -2,7 +2,7 @@ import type { AttachSessionFn } from "eve/channels";
 import { routeAuth } from "eve/channels/auth";
 import { classifySessionId } from "../channels/window-key.js";
 import { parseServiceTokenEntries, serviceTokenAuth, type EveSessionAuth } from "./auth.js";
-import { auditView, usageWindowView, unifiedDomainAudit } from "./views.js";
+import { auditView, usageWindowView, unifiedDomainAudit, toolUsageView } from "./views.js";
 import { appendAudit } from "../audit/audit.js";
 import type { AuditFilter } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
@@ -10,6 +10,7 @@ import { credentialKeyArmed } from "../credentials/db-broker.js";
 import { getOperationalStore } from "../operational/provider.js";
 
 export const CONTROL_READ_USAGE_PATH = "/control/v1/usage";
+export const CONTROL_READ_TOOL_USAGE_PATH = "/control/v1/tool-usage";
 export const CONTROL_READ_AUDIT_PATH = "/control/v1/audit";
 export const CONTROL_READ_UNIFIED_AUDIT_PATH = "/control/v1/unified-audit";
 export const CONTROL_READ_TRANSCRIPT_PATH = "/control/v1/session/:sessionId/transcript";
@@ -65,6 +66,36 @@ export async function handleUsageWindowRead(req: Request): Promise<Response> {
 
   try {
     return json(200, await usageWindowView({ sinceIso: since, workspaceKeys: workspaces, ...(sessionStartedAfter ? { sessionStartedAfter } : {}) }));
+  } catch (err) {
+    return json(400, { error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+export async function handleToolUsageRead(req: Request): Promise<Response> {
+  const identity = await authorizeRead(req);
+  if (identity instanceof Response) return identity;
+
+  const url = new URL(req.url);
+  const since = (url.searchParams.get("since") ?? "").trim();
+  const until = (url.searchParams.get("until") ?? "").trim() || undefined;
+  const domain = (url.searchParams.get("domain") ?? "").trim() || undefined;
+  const byRaw = (url.searchParams.get("by") ?? "").trim() || undefined;
+  if (!since) return json(400, { error: "expected query param: since=<ISO-8601 timestamp> (optional: until, domain, by=connector|tool)" });
+  if (byRaw !== undefined && byRaw !== "connector" && byRaw !== "tool") return json(400, { error: 'by must be "connector" or "tool"' });
+  const by = byRaw as "connector" | "tool" | undefined;
+  const org = deploymentOrg();
+
+  await appendAudit({
+    org,
+    platform: "control",
+    workspace: "control",
+    principalId: identity.principalId,
+    action: "control.service_call",
+    detail: { service: identity.principalId, view: "tool_usage", since, ...(until ? { until } : {}), ...(domain ? { domain } : {}), ...(by ? { by } : {}) },
+  });
+
+  try {
+    return json(200, await toolUsageView({ org, sinceIso: since, ...(until ? { untilIso: until } : {}), ...(domain ? { domain } : {}), ...(by ? { by } : {}) }));
   } catch (err) {
     return json(400, { error: err instanceof Error ? err.message : String(err) });
   }

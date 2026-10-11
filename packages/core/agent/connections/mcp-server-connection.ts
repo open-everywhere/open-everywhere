@@ -3,6 +3,7 @@ import { connectorApprovalPolicy } from "./connector-auth.js";
 import { declareConnectionSignIn, type ConnectionSignIn } from "./connection-sign-in.js";
 import { selectConnectorTransport } from "./connector-transport.js";
 import { mcpServerConnectionSignIn, mcpServerHomeRef, type McpServerDeclaration } from "./mcp-servers.js";
+import { declarePersonalSurfaceConnection, personalSurfaceRefusal } from "./personal-surface-fence.js";
 
 export interface McpConnectionSpec {
   readonly name: string;
@@ -10,6 +11,7 @@ export interface McpConnectionSpec {
   readonly description: string;
   readonly signIn?: { readonly homeRef: string; readonly declaration: ConnectionSignIn };
   readonly fallback?: { readonly secretRef: string; readonly broker: string };
+  readonly dmOnlyOn?: string;
 }
 
 export function buildMcpConnection(spec: McpConnectionSpec): ReturnType<typeof defineMcpClientConnection> {
@@ -20,10 +22,20 @@ export function buildMcpConnection(spec: McpConnectionSpec): ReturnType<typeof d
     directUrl: spec.url,
     ...(spec.fallback !== undefined ? { fallbackSecretRef: spec.fallback.secretRef, fallbackBroker: spec.fallback.broker } : {}),
   });
+  const dmOnlyOn = spec.dmOnlyOn;
+  if (dmOnlyOn !== undefined) declarePersonalSurfaceConnection(spec.name, dmOnlyOn);
+  const connector = spec.name;
   return defineMcpClientConnection({
     url: transport.url,
     description: spec.description,
-    auth: transport.auth,
+    auth:
+      dmOnlyOn === undefined
+        ? transport.auth
+        : async (ctx) => {
+            const refusal = await personalSurfaceRefusal(connector, dmOnlyOn, ctx.session.auth);
+            if (refusal !== undefined) throw new Error(refusal);
+            return transport.auth(ctx);
+          },
     approval: connectorApprovalPolicy(),
   });
 }
@@ -44,5 +56,6 @@ export function declaredMcpServerConnection(
     url: server.url,
     description: server.description,
     signIn: { homeRef: mcpServerHomeRef(server.name), declaration: mcpServerConnectionSignIn(server) },
+    ...(server.personalSurface !== undefined ? { dmOnlyOn: server.personalSurface.platform } : {}),
   });
 }

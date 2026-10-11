@@ -15,6 +15,7 @@ export const LINEAR_SURFACE_PARITY: SurfaceParityDeclaration = {
   "ambient-engagement-seam": "supported",
   "engaged-row-promotion": "supported",
   "owned-thread-ingress": "supported",
+  "thread-done-reaction": { supported: "on a reply thread only — the root is the thread-root comment; a thread that IS the issue has no root comment to mark" },
 
   "addressed-leg": "supported",
   "ambient-leg": { supported: "the ambient supervisor, not the §2.5 engagement registry" },

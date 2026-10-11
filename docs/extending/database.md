@@ -293,7 +293,7 @@ To adopt it:
    `runtimeRoleGrantsSql("oe_runtime")` exports (`packages/core/agent/operational/postgres.ts`);
    the operational test executes that same list against a real engine, so the docs and the grants
    can't drift. In short: `USAGE` on the schema, sequence usage, `SELECT, INSERT` **only** on
-   `audit_entry`/`usage_events`/`domain_skill_revisions`/`routine_prompt_revisions` with everything
+   `audit_entry`/`usage_events`/`tool_usage`/`domain_skill_revisions`/`routine_prompt_revisions` with everything
    else revoked (belt at the
    privilege layer, braces
    at the RLS layer), and on the mutable tables **exactly the verbs each table's code path

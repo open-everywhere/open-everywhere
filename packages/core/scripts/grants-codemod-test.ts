@@ -9,7 +9,7 @@ import {
   grantSentence,
   planAccessDelta,
   renderDelta,
-  OUT_OF_VOCABULARY,
+  OUT_OF_VOCABULARY, NEW_CONNECTOR_ROUTE,
   type AccessDelta,
   type PlanContext,
 } from "../agent/access/delta.js";
@@ -147,7 +147,9 @@ function ctxFor(workspace: string, channel: string): PlanContext {
   const d = planAccessDelta({ kind: "grant-connector", connector: "linear", credential: "k" }, ctxFor("T1", "C1"));
   ok(d.kind === "grant-connector" && d.connector === "linear", "grant: plans a grant-connector delta for a defined, not-yet-effective connector");
   throwsWith(() => planAccessDelta({ kind: "grant-connector", connector: "notion", credential: "k" }, ctxFor("T1", "C1")), "already granted to this channel", "grant: refuses an already-effective connector");
-  throwsWith(() => planAccessDelta({ kind: "grant-connector", connector: "jira", credential: "k" }, ctxFor("T1", "C1")), OUT_OF_VOCABULARY, "grant: undefined connector → human-PR fallback wording");
+  throwsWith(() => planAccessDelta({ kind: "grant-connector", connector: "jira", credential: "k" }, ctxFor("T1", "C1")), NEW_CONNECTOR_ROUTE, "grant: undefined connector → the propose_mcp_server road, not a bundle edit (OPE-2420)");
+  ok(NEW_CONNECTOR_ROUTE.includes("propose_mcp_server") && NEW_CONNECTOR_ROUTE.includes("agent/access/mcp-servers.ts") && !NEW_CONNECTOR_ROUTE.includes("bundles.ts"), "grant: the new-connector refusal names propose_mcp_server and mcp-servers.ts, never bundles.ts");
+  ok(OUT_OF_VOCABULARY.includes("propose_mcp_server"), "the general refusal also points a new tool at propose_mcp_server");
   throwsWith(() => planAccessDelta({ kind: "grant-connector" }, ctxFor("T1", "C1")), OUT_OF_VOCABULARY, "grant: missing connector name → human-PR fallback wording");
 }
 

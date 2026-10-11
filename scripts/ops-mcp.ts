@@ -19,6 +19,14 @@ try {
       "surface_manifest renders the shipped default names until it does\n",
   );
 }
+try {
+  await importAppModule("agent/access/mcp-servers.ts", APP_ROOT);
+} catch (err) {
+  process.stderr.write(
+    `open-everywhere-ops: agent/access/mcp-servers.ts did not load (${err instanceof Error ? err.message : String(err)}) — ` +
+      "surface_manifest renders the Slack manifest without the personal-sign-in scopes until it does\n",
+  );
+}
 
 registerSlackOps();
 registerTeamsOps();

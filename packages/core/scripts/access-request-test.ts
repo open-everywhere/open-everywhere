@@ -161,8 +161,8 @@ await rejectsWith(
 );
 await rejectsWith(
   () => planRequestAccess(slackBinding(), planCtxFor("C1"), { kind: "grant-connector", connector: "notarealthing", credential: "k" }, extras),
-  "an admin needs to PR this by hand",
-  "plan: out-of-vocabulary asks carry the human-PR fallback",
+  "propose it with `propose_mcp_server`",
+  "plan: a connector the deployment does not define routes to propose_mcp_server (OPE-2420)",
 );
 
 await rejectsWith(

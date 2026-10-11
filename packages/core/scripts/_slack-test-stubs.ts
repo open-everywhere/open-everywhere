@@ -77,6 +77,10 @@ export function registerSlackFixtureCodec(): void {
         ? { ...target, replyAnchorTs: source.replyAnchorTs }
         : target,
     placementRef: (origin: SlackOrigin) => (typeof origin.replyAnchorTs === "string" && origin.replyAnchorTs.length > 0 ? origin.replyAnchorTs : undefined),
+    threadRootMessage: (origin: SlackOrigin) => {
+      const ts = typeof origin.threadTs === "string" && origin.threadTs.length > 0 ? origin.threadTs : typeof origin.replyAnchorTs === "string" && origin.replyAnchorTs.length > 0 ? origin.replyAnchorTs : undefined;
+      return ts === undefined ? undefined : { channelId: origin.channelId, messageId: ts };
+    },
   });
 }
 

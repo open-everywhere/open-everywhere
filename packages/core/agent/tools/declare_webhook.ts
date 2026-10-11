@@ -1,3 +1,4 @@
+import { parseWebhookTarget } from "../webhooks/target.js";
 import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
@@ -70,7 +71,7 @@ export default defineTool({
       .string()
       .min(1)
       .optional()
-      .describe('The fully-qualified "slack/TEAM/CHANNEL" surface the hook fires into. Omit it (together with `instruction`) for an emit-only hook that fires nothing by itself.'),
+      .describe('Where the hook\'s turn runs: a room as "<platform>/<workspace>/<surface>" (for example "slack/TEAM/CHANNEL", "discord/GUILD/CHANNEL", "teams/TENANT/CONVERSATION"), or a person\'s DM as "dm:<principal key>" (for example "dm:slack/TEAM/USER"). Omit it (together with `instruction`) for an emit-only hook that fires nothing by itself.'),
     instruction: z
       .string()
       .min(1)
@@ -147,14 +148,12 @@ export default defineTool({
       throw new Error(
         target !== undefined
           ? "A target with no instruction would fire that channel with nothing to say. Either tell me what it should do there, or drop the target and I'll declare an emit-only hook — a door whose consequences you decide later with `event` routines."
-          : "An instruction with no target has nowhere to run. Either name the \"slack/TEAM/CHANNEL\" surface it should run in, or drop the instruction and I'll declare an emit-only hook — a door whose consequences you decide later with `event` routines.",
+          : "An instruction with no target has nowhere to run. Either name the room (\"slack/TEAM/CHANNEL\") or the person (\"dm:slack/TEAM/USER\") it should run for, or drop the instruction and I'll declare an emit-only hook — a door whose consequences you decide later with `event` routines.",
       );
     }
     if (target !== undefined) {
-      const parts = target.split("/");
-      if (parts.length !== 3 || parts[0] !== "slack" || !parts[1] || !parts[2]) {
-        throw new Error(`The target must be a fully-qualified "slack/TEAM/CHANNEL" surface, got ${JSON.stringify(input.target)}. Config-hook targets are Slack-only today.`);
-      }
+      const parsed = parseWebhookTarget(target);
+      if ("defect" in parsed) throw new Error(`The target is not usable: ${parsed.defect}.`);
     }
 
     const wantsOrg = input.readableBy.some((d) => d.trim() === "*");

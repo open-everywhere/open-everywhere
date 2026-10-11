@@ -1318,6 +1318,11 @@ export async function confirmChannelInternal(channelId: string): Promise<boolean
   return (await channelInternalAndMeta(channelId)).internal;
 }
 
+export async function confirmChannelInternalFresh(channelId: string): Promise<boolean> {
+  channelTrustCache.delete(channelId);
+  return (await channelInternalAndMeta(channelId)).internal;
+}
+
 export async function confirmChannelInternalWithMeta(channelId: string): Promise<{ internal: boolean; memberCount?: number }> {
   const { internal, meta } = await channelInternalAndMeta(channelId);
   return { internal, memberCount: meta?.memberCount };

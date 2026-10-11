@@ -400,6 +400,18 @@ const MANIFEST_OK = {
   ok(body3.includes("client_id=1111.2222"), "the install link names the app's client id");
   ok(body3.includes(encodeURIComponent(pending.state as string)) || body3.includes(pending.state as string), "the install link carries the CSRF nonce");
   ok(!body3.includes("fake-client-secret") && !body3.includes("fake-signing-secret"), "🔴 the install screen renders no secret");
+
+  const hasMcpConnect = (html: string): boolean => html.includes("mcp%3Aconnect") || html.includes("mcp:connect");
+  ok(!hasMcpConnect(body3), "the install link requests no mcp:connect when the app declares no Slack-as-you entry");
+  const { defineMcpServers } = await import("@open-everywhere/core/agent/adapter-api.js");
+  const { slackAsYou } = await import("../agent/slack-as-you.js");
+  defineMcpServers([slackAsYou({ clientId: "1111.2222" })]);
+  try {
+    const screen3b = await handleSlackSetupGet(get(SLACK_SETUP_PATH, cookie), depsFor(vault));
+    ok(hasMcpConnect(await screen3b.text()), "🔴 OPE-2421: with the entry declared, the install link requests mcp:connect, as the manifest does");
+  } finally {
+    defineMcpServers([]);
+  }
 }
 
 {

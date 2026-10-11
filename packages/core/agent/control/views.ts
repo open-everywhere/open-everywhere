@@ -16,6 +16,9 @@ import { unionPrincipals } from "../identity/link-resolve.js";
 import { confirmedLinkSetPrincipals } from "../identity/link-store.js";
 import { resolveAccess, type ResolveRequest, type SessionMode } from "../access/resolver.js";
 import { usageSummary } from "../spend/usage-events.js";
+import { compileAnalyticsQuery } from "../analytics/compile.js";
+import { executeAnalytics } from "../analytics/execute.js";
+import type { AnalyticsScope } from "../access/analytics-scope.js";
 import type { CapLevel, UsageSummaryRow } from "../operational/store.js";
 import { resolveAssumedModel, rowCostUsd, pricingMix, pricingNote, filterToDomain, buildRoutinePredictions, type RoutinePredictionRow } from "../spend/reporting.js";
 import { modelPricing, estimateCostUsd } from "../spend/pricing.js";
@@ -304,6 +307,92 @@ export async function usageSummaryView(q: UsageSummaryQuery): Promise<UsageSumma
     ...(assumed.model ? { pricedModel: assumed.model } : {}),
     routinePredictions,
     note: pricingNote(pricingMix(rows, assumed), assumed),
+  };
+}
+
+export interface ToolUsageQuery {
+  readonly org: string;
+  readonly sinceIso: string;
+  readonly untilIso?: string;
+  readonly domain?: string;
+  readonly by?: "connector" | "tool";
+}
+
+export interface ToolUsageRow {
+  readonly connector: string;
+  readonly tool?: string;
+  readonly calls: number;
+  readonly errors: number;
+  readonly rejected: number;
+  readonly cards: number;
+  readonly estUsd?: number;
+}
+
+export interface ToolUsageResult {
+  readonly org: string;
+  readonly domain?: string;
+  readonly since: string;
+  readonly until?: string;
+  readonly by: "connector" | "tool";
+  readonly rows: readonly ToolUsageRow[];
+  readonly totals: { readonly calls: number; readonly errors: number; readonly rejected: number; readonly cards: number; readonly estUsd: number };
+  readonly truncated: boolean;
+  readonly note: string;
+}
+
+const TOOL_USAGE_NOTE =
+  "estUsd is ATTRIBUTED, not measured: each tool call carries an even share of the model call that chose it, so per-tool totals never exceed usage_summary. connector \"\" means the tool is not a connector op. cards counts approval cards a tool raised; a card that is not a connector op counts under its approval kind.";
+
+export async function toolUsageView(q: ToolUsageQuery): Promise<ToolUsageResult> {
+  const by = q.by ?? "tool";
+  if (Number.isNaN(Date.parse(q.sinceIso))) throw new Error(`sinceIso is not an ISO-8601 timestamp: ${JSON.stringify(q.sinceIso)}`);
+  if (q.untilIso !== undefined && Number.isNaN(Date.parse(q.untilIso))) throw new Error(`untilIso is not an ISO-8601 timestamp: ${JSON.stringify(q.untilIso)}`);
+  const domains = getConfig().loadDomains();
+  if (q.domain !== undefined && !domains.some((d) => d.name === q.domain)) {
+    throw new Error(`domain ${JSON.stringify(q.domain)} is not a configured domain (have: ${domains.map((d) => d.name).join(", ") || "none"})`);
+  }
+  const scope: AnalyticsScope = q.domain
+    ? { org: q.org, grain: "domain", platform: "control", domain: q.domain, rowMode: false, auditDetail: false, dmUnmasked: false }
+    : { org: q.org, grain: "org", platform: "control", rowMode: false, auditDetail: false, dmUnmasked: false };
+  const compiled = compileAnalyticsQuery(
+    {
+      dataset: "tools",
+      scope: scope.grain,
+      mode: "aggregate",
+      select: ["calls", "errors", "rejected", "cards", "est_usd"],
+      groupBy: by === "tool" ? ["connector", "tool"] : ["connector"],
+      since: q.sinceIso,
+      ...(q.untilIso !== undefined ? { until: q.untilIso } : {}),
+      limit: 200,
+    },
+    scope,
+    domains,
+  );
+  const result = await executeAnalytics(compiled, { store: getOperationalStore(), domains, assumed: resolveAssumedModel() });
+  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  const rows: ToolUsageRow[] = result.rows.map((r) => ({
+    connector: typeof r.connector === "string" ? r.connector : "",
+    ...(by === "tool" ? { tool: typeof r.tool === "string" ? r.tool : "" } : {}),
+    calls: num(r.calls),
+    errors: num(r.errors),
+    rejected: num(r.rejected),
+    cards: num(r.cards),
+    ...(typeof r.est_usd === "number" ? { estUsd: r.est_usd } : {}),
+  }));
+  const totals = rows.reduce(
+    (t, r) => ({ calls: t.calls + r.calls, errors: t.errors + r.errors, rejected: t.rejected + r.rejected, cards: t.cards + r.cards, estUsd: t.estUsd + (r.estUsd ?? 0) }),
+    { calls: 0, errors: 0, rejected: 0, cards: 0, estUsd: 0 },
+  );
+  return {
+    org: q.org,
+    ...(q.domain ? { domain: q.domain } : {}),
+    since: q.sinceIso,
+    ...(q.untilIso !== undefined ? { until: q.untilIso } : {}),
+    by,
+    rows,
+    totals,
+    truncated: result.truncated,
+    note: TOOL_USAGE_NOTE,
   };
 }
 

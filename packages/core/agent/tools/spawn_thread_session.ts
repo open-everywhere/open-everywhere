@@ -16,7 +16,7 @@ import {
   formatWindowToken,
   type WindowKey,
 } from "../channels/window-key.js";
-import { recordThreadOwner, resolveThreadOwner } from "../channels/thread-ownership.js";
+import { recordThreadOwner, resolveThreadOwner, isLiveThreadSeatOwner } from "../channels/thread-ownership.js";
 import { recordThreadSeatOpen } from "../channels/thread-seat-state.js";
 import { unifiedDomainSessionKey } from "../channels/unified-supervisor.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
@@ -48,12 +48,13 @@ export function canSpawnThreadFromWindow(ctx: BindableContext): boolean {
   return parseWindowToken(stripped) !== undefined;
 }
 
-function renderThreadSeatBrief(brief: string): string {
+export function renderThreadSeatBrief(brief: string): string {
   return (
-    "You are a thread seat: a persistent conversational presence that OWNS this one thread and stays " +
-    "live across turns. You have the conversational kit — reply/react/read — and you FORWARD any real " +
-    "work to this thread's own work session via `work` (you have no sandbox yourself). Call `complete_thread` when the thread " +
-    "is finished and hand it back to the channel watcher.\n\n" +
+    "You are a thread seat. The channel's standing seat handed you the task below and this one thread, " +
+    "and it no longer watches the thread: you own the task from here to done. You hold the conversational " +
+    "kit — reply, react, read — and you run the real work through this thread's own work session with " +
+    "`work`. When the task is done, post the completion in this thread with `reply`, then call " +
+    "`complete_thread` with a short summary. That marks the thread done and tells the standing seat.\n\n" +
     brief
   );
 }
@@ -78,11 +79,12 @@ function renderThreadSeatOpening(input: { readonly wakeId: string; readonly orig
 
 export default windowGated("spawn_thread_session", defineTool({
   description:
-    "Open a lasting presence in a thread: spawn a conversational seat that owns the thread and stays " +
-    "live across messages (unlike a one-off worker). Use it when a thread needs ongoing back-and-forth " +
-    "you don't want to run inline in this channel seat. The seat talks, reads, and delegates real work " +
-    "to a worker itself. Give a self-contained brief (what the thread is about + what 'done' looks like); " +
-    "returns at once with the seat's id. You keep watching the channel.",
+    "Hand a task's orchestration to a THREAD SESSION: a seat of its own that owns one thread, runs the " +
+    "work through its own work session, talks with the people in the thread, and posts its result there. " +
+    "Use it for anything that needs meaningful orchestration or real work. After the hand-off the task is " +
+    "off your radar: you do not track it or relay it, and the host tells you when the thread is done. " +
+    "Give a self-contained brief (what the task is, what the seat needs to know, what 'done' looks like). " +
+    "Returns at once with the seat's id. You keep watching the channel.",
   inputSchema: z.object({
     brief: z.string().min(1).describe("What this thread is about and the bar for done. The seat sees only this — include the context it needs."),
     thread: z.string().min(1).optional().describe("The thread to own. Defaults to the thread this message came from."),
@@ -124,7 +126,7 @@ export default windowGated("spawn_thread_session", defineTool({
 
     const store = getOperationalStore();
     const existing = await resolveThreadOwner(store, org, ownRef);
-    if (existing && isThreadSeatWindowToken(existing) && parseWindowToken(existing)?.generation === own.generation) {
+    if (existing && isLiveThreadSeatOwner(existing, own.domain)) {
       return { seatId: existing, thread: threadKey, note: "This thread already has a running thread seat — reusing it (no second seat opened)." };
     }
 

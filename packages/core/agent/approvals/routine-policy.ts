@@ -5,6 +5,7 @@ import { applyPolicyAdd, applyPolicyRemove, POLICY_MAX_RULES, type RoutinePolicy
 import { armingApproval } from "./arming-context.js";
 import { registerActionKind } from "./actions.js";
 import type { ActionKind } from "./types.js";
+import { plainValue } from "./plain-text.js";
 
 interface RoutinePolicyAddArgs {
   readonly org: string;
@@ -24,6 +25,9 @@ interface RoutinePolicyAddArgs {
 const routinePolicyAdd: ActionKind<RoutinePolicyAddArgs> = {
   kind: "routine.policy.add",
   policy: "member",
+  plainSummary(args) {
+    return `Add a standing rule to the routine "${plainValue(args.description)}"`;
+  },
   summarize(args) {
     return [
       `Add a standing rule to routine ${args.routineId} — ${args.description}`,
@@ -106,6 +110,9 @@ interface RoutinePolicyRemoveArgs {
 const routinePolicyRemove: ActionKind<RoutinePolicyRemoveArgs> = {
   kind: "routine.policy.remove",
   policy: "member",
+  plainSummary(args) {
+    return `Remove a standing rule from the routine "${plainValue(args.description)}"`;
+  },
   summarize(args) {
     return [
       `Remove a standing rule from routine ${args.routineId} — ${args.description}`,

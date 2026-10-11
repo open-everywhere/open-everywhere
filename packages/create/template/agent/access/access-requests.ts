@@ -3,6 +3,7 @@ import { emptyAgentsFile } from "@open-everywhere/core/agent/memory/agents-codem
 import { loadBaseBundles, loadBaseBindings } from "./bundles.js";
 import { loadBaseConnectorCredentials } from "./connector-credentials.js";
 import { loadBaseWebhooks } from "../webhooks/hooks.js";
+import { MCP_SERVERS } from "./mcp-servers.js";
 import { loadBaseDomains, loadBaseSilos, loadDomains } from "../memory/config/domains.js";
 import { loadGroups } from "../identity/groups.js";
 
@@ -21,6 +22,7 @@ export function loadAccessRequests(): AccessRequestsConfig | null {
     baseConnectorCredentials: loadBaseConnectorCredentials,
     hooksPath: process.env.OE_WEBHOOK_HOOKS_PATH || undefined,
     baseWebhooks: loadBaseWebhooks,
+    baseMcpServers: () => MCP_SERVERS,
     agentsPath: process.env.OE_AGENTS_PATH || undefined,
     baseAgents: emptyAgentsFile,
     baseDomains: loadBaseDomains,

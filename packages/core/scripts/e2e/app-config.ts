@@ -6,6 +6,7 @@ type DomainsModule = typeof import("../../../../agent/memory/config/domains.js")
 type BundlesModule = typeof import("../../../../agent/access/bundles.js");
 type ConnectorCredentialsModule = typeof import("../../../../agent/access/connector-credentials.js");
 type SpendBudgetsModule = typeof import("../../../../agent/spend/budgets.js");
+type A2aAgentsModule = typeof import("../../../../agent/access/a2a-agents.js");
 
 export async function loadAppDomains(root?: string): Promise<ReturnType<DomainsModule["loadDomains"]>> {
   const { loadDomains } = await importAppModule<DomainsModule>("agent/memory/config/domains.ts", root);
@@ -32,4 +33,9 @@ export async function loadAppSpendBudgets(root?: string): Promise<ReturnType<Spe
   if (!existsSync(join(appRoot, "agent", "spend", "budgets.ts"))) return {};
   const { loadSpendBudgets } = await importAppModule<SpendBudgetsModule>("agent/spend/budgets.ts", appRoot);
   return loadSpendBudgets();
+}
+
+export async function loadAppA2aAgents(root?: string): Promise<A2aAgentsModule["A2A_AGENTS"]> {
+  const { A2A_AGENTS } = await importAppModule<A2aAgentsModule>("agent/access/a2a-agents.ts", root);
+  return A2A_AGENTS;
 }

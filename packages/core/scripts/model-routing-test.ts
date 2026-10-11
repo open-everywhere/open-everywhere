@@ -342,7 +342,8 @@ ok(!isSupervisorSession({ channel: { kind: "slack", continuationToken: "C_TXN:17
   ok(isSupervisorSession({ channel: { kind: "unified", continuationToken: dmWorkerTok } } as BindableContext), "a DM-ANCHORED WORKER (t/ grain, OPE-306) still IS a supervisor session — behaviour-neutral, the exclusion is standing-grain-only");
   ok(isSupervisorSession({ channel: { kind: "unified", continuationToken: formatWindowToken({ domain: "payments", windowId: "payments", generation: 4 }) } } as BindableContext), "a NAMED-domain standing window is still a supervisor session");
 
-  ok(renderSupervisorPersona(dmWindowCtx) === "", "renderSupervisorPersona renders NOTHING on a DM window — the re-seat preserves the DM's current posture rather than changing it");
+  const dmPersona = renderSupervisorPersona(dmWindowCtx);
+  ok(dmPersona.includes("## This conversation") && !dmPersona.includes("## This channel"), "renderSupervisorPersona gives a DM window the DM persona, never the channel's ambient-seat persona");
 }
 
 {

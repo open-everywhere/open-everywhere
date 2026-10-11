@@ -12,6 +12,7 @@ import { configuredAgentName } from "../identity/bot-name.js";
 import { botDisplayNameFor } from "../identity/bot-display-name.js";
 import { planFor, resolveMemoryPlan } from "../memory/resolve.js";
 import { effectiveRoleFor, renderRoleInstructions } from "../roles/role.js";
+import { renderLanguageSlot, renderLanguageSlotForDomain } from "./language.js";
 import { renderMemoryIndex } from "../memory/listing.js";
 import { CONVERSATIONAL_ROOT_GRAINS, memoryRecallRouteFor, type MemoryRecallRoute } from "../access/window-gate-manifest.js";
 import { renderApprovalPreviewFor } from "../access/approval-preview.js";
@@ -27,7 +28,7 @@ import { partialHaltPrefix, resolveTurnHaltReach } from "../channels/halt-per-wa
 import { markDeliveryArm } from "../channels/reply-signal.js";
 import { isSupervisorSession } from "../model/routing.js";
 import { unifiedDomainFromToken } from "../channels/unified-supervisor.js";
-import { classifySessionId, windowTokenPlatform, type SessionId } from "../channels/window-key.js";
+import { classifySessionId, isDmAnchorWindowToken, windowTokenPlatform, type SessionId } from "../channels/window-key.js";
 import {
   GRANTS_SECTION,
   composeSeatPrompt,
@@ -35,6 +36,7 @@ import {
   renderIdentity,
   renderDeliverySection,
   renderSeatPersona,
+  renderDmSeatPersona,
   renderSurface,
   renderSurfaceGuide,
   renderUnifiedSurfaceGuides,
@@ -187,9 +189,15 @@ export function renderSupervisorPersona(
     const midTurnPost = opts?.messageToolOnly === true ? false : workerHasMidTurnPost(ctx);
     return renderSeatPersona({ seatKind: "worker", midTurnPost, ...(opts?.settlementWakeId === undefined ? {} : { settlementWakeId: opts.settlementWakeId }) });
   }
+  if (isDmAnchorWindowToken(ctx.channel?.continuationToken)) return renderDmSeatPersona();
   if (!isSupervisorSession(ctx)) return "";
   const sid = classifySessionId(ctx.channel?.continuationToken);
-  return renderSeatPersona({ seatKind: "conversational", delivery: resolveDeliveryArm(ctx, sid, opts), ...(forwardsToWorkSession(ctx) ? { forwardsWork: true } : {}) });
+  return renderSeatPersona({
+    seatKind: "conversational",
+    delivery: resolveDeliveryArm(ctx, sid, opts),
+    ...(forwardsToWorkSession(ctx) ? { forwardsWork: true } : {}),
+    ...(sid.kind === "thread-seat" ? { scope: "thread" as const } : {}),
+  });
 }
 
 function settlementWakeIdFor(ctx: BindableContext): string | undefined {
@@ -451,6 +459,7 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
     delivery: renderDeliverySlot(ctx, { messageToolOnly: true, ...(pinnedPlatform ? { pinnedPlatform } : {}) }),
     readingAWake: canReceiveJudgedWake(ctx) ? renderReadingAWake() : "",
     replyStyle: REPLY_STYLE_RUBRIC,
+    language: domain ? renderLanguageSlotForDomain(domain) : renderLanguageSlot(ctx),
     role: roleMd,
     access: accessMd,
     approvalPreview: renderApprovalPreviewFor(windowGrainOf(ctx), recall),
@@ -489,6 +498,7 @@ async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
     delivery: renderDeliverySlot(ctx),
     readingAWake: canReceiveJudgedWake(ctx) ? renderReadingAWake() : "",
     replyStyle: REPLY_STYLE_RUBRIC,
+    language: renderLanguageSlot(ctx),
     role: renderRolePrompt(ctx),
     access: assembleAccessInstructions(access, sessionDomains(access)) ?? "",
     approvalPreview: renderApprovalPreviewFor(windowGrainOf(ctx), recall),

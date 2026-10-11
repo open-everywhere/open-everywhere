@@ -47,6 +47,7 @@ const REQUIRED_IDS = [
   "S-DELEGATED-notion",
   "S-GITHUB-NOTION-REST",
   "S-SUSPENDED-slack",
+  "S-CARD-SUMMARY",
   "S-SIBLING-notion",
   "S-HALT",
   "J-UNIFIED",
@@ -97,6 +98,7 @@ const NON_LAUNCH_ROWS: readonly ReleaseScopeRow[] = [
   { id: "S-DELEGATED-linear", requirement: "NON_LAUNCH", reason: "Linear-only transport parity is deferred for this release." },
   { id: "S-SUSPENDED-discord", requirement: "NON_LAUNCH", reason: "Discord-only approval transport parity is deferred for this release." },
   { id: "S-SUSPENDED-teams", requirement: "NON_LAUNCH", reason: "Teams-only approval transport parity is deferred for this release." },
+  { id: "S-CARD-teams", requirement: "NON_LAUNCH", reason: "Teams-only approval transport parity is deferred for this release." },
   { id: "S-SUSPENDED-linear", requirement: "NON_LAUNCH", reason: "Linear-only approval transport parity is deferred for this release." },
   { id: "S-AMBIENT-discord", requirement: "NON_LAUNCH", reason: "Discord-only ambient behavior is deferred for this release." },
   { id: "S-AMBIENT-linear", requirement: "NON_LAUNCH", reason: "Linear-only ambient behavior is deferred for this release." },
@@ -108,6 +110,11 @@ const NON_LAUNCH_ROWS: readonly ReleaseScopeRow[] = [
   { id: "J-ENGAGED-discord", requirement: "NON_LAUNCH", reason: "Discord-only engaged routing is deferred for this release." },
   { id: "J-ENGAGED-linear", requirement: "NON_LAUNCH", reason: "Linear-only engaged routing is deferred for this release." },
   { id: "S-JUDGE-LIFT-NOTICE", requirement: "NON_LAUNCH", reason: "The judge's decision to LIFT is a model judgement this tier cannot drive, so the leg's green is not a release signal — its hard gates are." },
+  { id: "S-APP-HOME", requirement: "NON_LAUNCH", reason: "The Home tab needs the fixture Slack app reinstalled with `home_tab_enabled` and the `app_home_opened` event (OPE-2451); until the board's app carries them, views.publish refuses and the leg cannot go green." },
+  { id: "S-SLACK-AS-YOU", requirement: "NON_LAUNCH", reason: "Search Slack as you is an admin opt-in that needs the Slack app's MCP toggle and the person's own sign-in, which no launch fixture carries." },
+  { id: "S-BLOCKED-PING", requirement: "NON_LAUNCH", reason: "The leg reaches the ping only when the model calls update_status with blocked, a model choice no knob here forces, so its green is not a release signal — its hard gates are." },
+  { id: "S-STEP-LABELS", requirement: "NON_LAUNCH", reason: "Slack's status line has no read API, so this leg cannot see a step label; its green turns on the model running the named read tool, and the label text is pinned offline." },
+  { id: "S-A2A-DELEGATE", requirement: "NON_LAUNCH", reason: "Its fixture is a declared third-party A2A reference agent, which a launch deployment must not declare; it runs on a test deployment." },
 ] as const;
 
 export const LAUNCH_RELEASE_SCOPE: readonly ReleaseScopeRow[] = [

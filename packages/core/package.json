@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/core",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Open Everywhere core — the portable, host-agnostic agent runtime: access and approvals, identity, memory, spend, routines, webhooks, connectors, the audit chain and the `oe` roster build.",
   "keywords": [
     "agent",
@@ -50,6 +50,26 @@
   ],
   "exports": {
     "./package.json": "./package.json",
+    "./agent/a2a/agents.js": {
+      "types": "./dist/agent/a2a/agents.d.ts",
+      "default": "./dist/agent/a2a/agents.js"
+    },
+    "./agent/a2a/client.js": {
+      "types": "./dist/agent/a2a/client.d.ts",
+      "default": "./dist/agent/a2a/client.js"
+    },
+    "./agent/a2a/egress.js": {
+      "types": "./dist/agent/a2a/egress.d.ts",
+      "default": "./dist/agent/a2a/egress.js"
+    },
+    "./agent/a2a/output.js": {
+      "types": "./dist/agent/a2a/output.d.ts",
+      "default": "./dist/agent/a2a/output.js"
+    },
+    "./agent/a2a/room-gate.js": {
+      "types": "./dist/agent/a2a/room-gate.d.ts",
+      "default": "./dist/agent/a2a/room-gate.js"
+    },
     "./agent/access/access-referenced-link-sets.js": {
       "types": "./dist/agent/access/access-referenced-link-sets.d.ts",
       "default": "./dist/agent/access/access-referenced-link-sets.js"
@@ -670,6 +690,10 @@
       "types": "./dist/agent/analytics/registry.d.ts",
       "default": "./dist/agent/analytics/registry.js"
     },
+    "./agent/approvals/a2a-delegate.js": {
+      "types": "./dist/agent/approvals/a2a-delegate.d.ts",
+      "default": "./dist/agent/approvals/a2a-delegate.js"
+    },
     "./agent/approvals/access-request.js": {
       "types": "./dist/agent/approvals/access-request.d.ts",
       "default": "./dist/agent/approvals/access-request.js"
@@ -689,6 +713,10 @@
     "./agent/approvals/card-disclosure.js": {
       "types": "./dist/agent/approvals/card-disclosure.d.ts",
       "default": "./dist/agent/approvals/card-disclosure.js"
+    },
+    "./agent/approvals/card-layout.js": {
+      "types": "./dist/agent/approvals/card-layout.d.ts",
+      "default": "./dist/agent/approvals/card-layout.js"
     },
     "./agent/approvals/card-signal.js": {
       "types": "./dist/agent/approvals/card-signal.d.ts",
@@ -746,9 +774,21 @@
       "types": "./dist/agent/approvals/judge-contradiction.d.ts",
       "default": "./dist/agent/approvals/judge-contradiction.js"
     },
+    "./agent/approvals/mcp-server-propose.js": {
+      "types": "./dist/agent/approvals/mcp-server-propose.d.ts",
+      "default": "./dist/agent/approvals/mcp-server-propose.js"
+    },
     "./agent/approvals/memory-purge.js": {
       "types": "./dist/agent/approvals/memory-purge.d.ts",
       "default": "./dist/agent/approvals/memory-purge.js"
+    },
+    "./agent/approvals/plain-summary.js": {
+      "types": "./dist/agent/approvals/plain-summary.d.ts",
+      "default": "./dist/agent/approvals/plain-summary.js"
+    },
+    "./agent/approvals/plain-text.js": {
+      "types": "./dist/agent/approvals/plain-text.d.ts",
+      "default": "./dist/agent/approvals/plain-text.js"
     },
     "./agent/approvals/pr-open.js": {
       "types": "./dist/agent/approvals/pr-open.d.ts",
@@ -837,6 +877,10 @@
     "./agent/audit/chain.js": {
       "types": "./dist/agent/audit/chain.d.ts",
       "default": "./dist/agent/audit/chain.js"
+    },
+    "./agent/audit/siem-export.js": {
+      "types": "./dist/agent/audit/siem-export.d.ts",
+      "default": "./dist/agent/audit/siem-export.js"
     },
     "./agent/audit/tool-action.js": {
       "types": "./dist/agent/audit/tool-action.d.ts",
@@ -1166,6 +1210,10 @@
       "types": "./dist/agent/channels/thread-ownership.d.ts",
       "default": "./dist/agent/channels/thread-ownership.js"
     },
+    "./agent/channels/thread-seat-close.js": {
+      "types": "./dist/agent/channels/thread-seat-close.d.ts",
+      "default": "./dist/agent/channels/thread-seat-close.js"
+    },
     "./agent/channels/thread-seat-state.js": {
       "types": "./dist/agent/channels/thread-seat-state.d.ts",
       "default": "./dist/agent/channels/thread-seat-state.js"
@@ -1374,6 +1422,10 @@
       "types": "./dist/agent/connections/mcp-server-connection.d.ts",
       "default": "./dist/agent/connections/mcp-server-connection.js"
     },
+    "./agent/connections/mcp-servers-codemod.js": {
+      "types": "./dist/agent/connections/mcp-servers-codemod.d.ts",
+      "default": "./dist/agent/connections/mcp-servers-codemod.js"
+    },
     "./agent/connections/mcp-servers.js": {
       "types": "./dist/agent/connections/mcp-servers.d.ts",
       "default": "./dist/agent/connections/mcp-servers.js"
@@ -1401,6 +1453,10 @@
     "./agent/connections/own-account-vendors.js": {
       "types": "./dist/agent/connections/own-account-vendors.d.ts",
       "default": "./dist/agent/connections/own-account-vendors.js"
+    },
+    "./agent/connections/personal-surface-fence.js": {
+      "types": "./dist/agent/connections/personal-surface-fence.d.ts",
+      "default": "./dist/agent/connections/personal-surface-fence.js"
     },
     "./agent/connections/user-auth-flow.js": {
       "types": "./dist/agent/connections/user-auth-flow.d.ts",
@@ -1598,6 +1654,14 @@
       "types": "./dist/agent/docs/source-map.d.ts",
       "default": "./dist/agent/docs/source-map.js"
     },
+    "./agent/home/home-view.js": {
+      "types": "./dist/agent/home/home-view.d.ts",
+      "default": "./dist/agent/home/home-view.js"
+    },
+    "./agent/home/memory-home.js": {
+      "types": "./dist/agent/home/memory-home.d.ts",
+      "default": "./dist/agent/home/memory-home.js"
+    },
     "./agent/hooks/approval-raised.js": {
       "types": "./dist/agent/hooks/approval-raised.d.ts",
       "default": "./dist/agent/hooks/approval-raised.js"
@@ -1713,6 +1777,10 @@
     "./agent/hooks/telemetry.js": {
       "types": "./dist/agent/hooks/telemetry.d.ts",
       "default": "./dist/agent/hooks/telemetry.js"
+    },
+    "./agent/hooks/tool-usage.js": {
+      "types": "./dist/agent/hooks/tool-usage.d.ts",
+      "default": "./dist/agent/hooks/tool-usage.js"
     },
     "./agent/hooks/turn-anchor.js": {
       "types": "./dist/agent/hooks/turn-anchor.d.ts",
@@ -1858,6 +1926,10 @@
       "types": "./dist/agent/identity/oauth-vault-share.d.ts",
       "default": "./dist/agent/identity/oauth-vault-share.js"
     },
+    "./agent/identity/offboarding.js": {
+      "types": "./dist/agent/identity/offboarding.d.ts",
+      "default": "./dist/agent/identity/offboarding.js"
+    },
     "./agent/identity/platform.js": {
       "types": "./dist/agent/identity/platform.d.ts",
       "default": "./dist/agent/identity/platform.js"
@@ -1897,6 +1969,10 @@
     "./agent/instructions/access.js": {
       "types": "./dist/agent/instructions/access.d.ts",
       "default": "./dist/agent/instructions/access.js"
+    },
+    "./agent/instructions/language.js": {
+      "types": "./dist/agent/instructions/language.d.ts",
+      "default": "./dist/agent/instructions/language.js"
     },
     "./agent/instructions/seat-prompt.js": {
       "types": "./dist/agent/instructions/seat-prompt.d.ts",
@@ -2053,6 +2129,10 @@
     "./agent/memory/sync-timing.js": {
       "types": "./dist/agent/memory/sync-timing.d.ts",
       "default": "./dist/agent/memory/sync-timing.js"
+    },
+    "./agent/memory/visible.js": {
+      "types": "./dist/agent/memory/visible.d.ts",
+      "default": "./dist/agent/memory/visible.js"
     },
     "./agent/memory/wake-delta.js": {
       "types": "./dist/agent/memory/wake-delta.d.ts",
@@ -2494,6 +2574,10 @@
       "types": "./dist/agent/scaffold/tool-roster.d.ts",
       "default": "./dist/agent/scaffold/tool-roster.js"
     },
+    "./agent/schedules/audit-export.js": {
+      "types": "./dist/agent/schedules/audit-export.d.ts",
+      "default": "./dist/agent/schedules/audit-export.js"
+    },
     "./agent/schedules/directory-sync.js": {
       "types": "./dist/agent/schedules/directory-sync.d.ts",
       "default": "./dist/agent/schedules/directory-sync.js"
@@ -2682,6 +2766,10 @@
       "types": "./dist/agent/spend/subagent-runs.d.ts",
       "default": "./dist/agent/spend/subagent-runs.js"
     },
+    "./agent/spend/tool-usage.js": {
+      "types": "./dist/agent/spend/tool-usage.d.ts",
+      "default": "./dist/agent/spend/tool-usage.js"
+    },
     "./agent/spend/usage-events.js": {
       "types": "./dist/agent/spend/usage-events.d.ts",
       "default": "./dist/agent/spend/usage-events.js"
@@ -2694,9 +2782,17 @@
       "types": "./dist/agent/stall/guard.d.ts",
       "default": "./dist/agent/stall/guard.js"
     },
+    "./agent/status/attention.js": {
+      "types": "./dist/agent/status/attention.d.ts",
+      "default": "./dist/agent/status/attention.js"
+    },
     "./agent/status/status.js": {
       "types": "./dist/agent/status/status.d.ts",
       "default": "./dist/agent/status/status.js"
+    },
+    "./agent/status/waiting-on-me.js": {
+      "types": "./dist/agent/status/waiting-on-me.d.ts",
+      "default": "./dist/agent/status/waiting-on-me.js"
     },
     "./agent/subagents/contracts.js": {
       "types": "./dist/agent/subagents/contracts.d.ts",
@@ -2758,6 +2854,10 @@
       "types": "./dist/agent/tools/capture_events.d.ts",
       "default": "./dist/agent/tools/capture_events.js"
     },
+    "./agent/tools/check_agent_task.js": {
+      "types": "./dist/agent/tools/check_agent_task.d.ts",
+      "default": "./dist/agent/tools/check_agent_task.js"
+    },
     "./agent/tools/check_pr_status.js": {
       "types": "./dist/agent/tools/check_pr_status.d.ts",
       "default": "./dist/agent/tools/check_pr_status.js"
@@ -2809,6 +2909,10 @@
     "./agent/tools/declare_webhook.js": {
       "types": "./dist/agent/tools/declare_webhook.d.ts",
       "default": "./dist/agent/tools/declare_webhook.js"
+    },
+    "./agent/tools/delegate_to_agent.js": {
+      "types": "./dist/agent/tools/delegate_to_agent.d.ts",
+      "default": "./dist/agent/tools/delegate_to_agent.js"
     },
     "./agent/tools/delete_skill.js": {
       "types": "./dist/agent/tools/delete_skill.d.ts",
@@ -2909,6 +3013,10 @@
     "./agent/tools/post_pr_walkthrough.js": {
       "types": "./dist/agent/tools/post_pr_walkthrough.d.ts",
       "default": "./dist/agent/tools/post_pr_walkthrough.js"
+    },
+    "./agent/tools/propose_mcp_server.js": {
+      "types": "./dist/agent/tools/propose_mcp_server.d.ts",
+      "default": "./dist/agent/tools/propose_mcp_server.js"
     },
     "./agent/tools/purge_memory.js": {
       "types": "./dist/agent/tools/purge_memory.d.ts",
@@ -3070,6 +3178,10 @@
       "types": "./dist/agent/tools/usage_report.d.ts",
       "default": "./dist/agent/tools/usage_report.js"
     },
+    "./agent/tools/waiting_on_me.js": {
+      "types": "./dist/agent/tools/waiting_on_me.d.ts",
+      "default": "./dist/agent/tools/waiting_on_me.js"
+    },
     "./agent/tools/walk_pr.js": {
       "types": "./dist/agent/tools/walk_pr.d.ts",
       "default": "./dist/agent/tools/walk_pr.js"
@@ -3129,6 +3241,10 @@
     "./agent/webhooks/source-vocabulary.js": {
       "types": "./dist/agent/webhooks/source-vocabulary.d.ts",
       "default": "./dist/agent/webhooks/source-vocabulary.js"
+    },
+    "./agent/webhooks/target.js": {
+      "types": "./dist/agent/webhooks/target.d.ts",
+      "default": "./dist/agent/webhooks/target.js"
     },
     "./agent/webhooks/verifier.js": {
       "types": "./dist/agent/webhooks/verifier.d.ts",
@@ -3208,10 +3324,16 @@
     "test:policy-pages": "NODE_NO_WARNINGS=1 tsx scripts/policy-pages-test.ts",
     "test:resolver": "tsx scripts/resolver-test.ts",
     "test:mcp-servers": "tsx scripts/mcp-servers-test.ts",
+    "test:a2a-client": "tsx scripts/a2a-client-test.ts",
+    "test:mcp-server-propose": "tsx scripts/mcp-server-propose-test.ts",
+    "test:set-up-tool-eval-scoring": "tsx scripts/set-up-tool-eval-scoring-test.ts",
     "test:roles": "tsx scripts/roles-test.ts",
     "test:governance": "NODE_NO_WARNINGS=1 tsx scripts/governance-test.ts",
     "test:connector-disclosure": "NODE_NO_WARNINGS=1 tsx scripts/connector-disclosure-test.ts",
     "test:roles-presets": "tsx scripts/roles-presets-test.ts",
+    "test:output-language": "tsx scripts/output-language-test.ts",
+    "test:audit-export": "tsx scripts/audit-export-test.ts",
+    "test:tool-usage": "tsx scripts/tool-usage-test.ts",
     "test:connections": "tsx scripts/connections-test.ts",
     "test:connector-credentials": "NODE_NO_WARNINGS=1 tsx scripts/connector-credentials-test.ts",
     "test:human-acting": "NODE_NO_WARNINGS=1 tsx scripts/human-acting-test.ts",
@@ -3247,6 +3369,7 @@
     "test:domain-model": "NODE_NO_WARNINGS=1 tsx scripts/domain-model-test.ts",
     "test:memory-merge": "NODE_NO_WARNINGS=1 tsx scripts/memory-merge-test.ts",
     "test:memory-write-road": "NODE_NO_WARNINGS=1 tsx scripts/memory-write-road-test.ts",
+    "test:memory-visible": "NODE_NO_WARNINGS=1 tsx scripts/memory-visible-test.ts",
     "test:memory-claim-guard": "NODE_NO_WARNINGS=1 tsx scripts/memory-claim-guard-test.ts",
     "test:approval-claim-guard": "NODE_NO_WARNINGS=1 tsx scripts/approval-claim-guard-test.ts",
     "test:request-claim-guard": "NODE_NO_WARNINGS=1 tsx scripts/request-claim-guard-test.ts",
@@ -3365,6 +3488,9 @@
     "test:ticket-verbs-tools": "NODE_NO_WARNINGS=1 tsx scripts/ticket-verbs-tools-test.ts",
     "test:access-lint": "NODE_NO_WARNINGS=1 tsx scripts/access-lint-test.ts",
     "test:approvals": "NODE_NO_WARNINGS=1 tsx scripts/approvals-test.ts",
+    "test:approval-card-summary": "NODE_NO_WARNINGS=1 tsx scripts/approval-card-summary-test.ts",
+    "test:approval-group": "NODE_NO_WARNINGS=1 tsx scripts/approval-group-test.ts",
+    "test:attention-queue": "NODE_NO_WARNINGS=1 tsx scripts/attention-queue-test.ts",
     "test:scope-key": "NODE_NO_WARNINGS=1 tsx scripts/scope-key-test.ts",
     "test:approval-tools": "NODE_NO_WARNINGS=1 tsx scripts/approval-tools-test.ts",
     "test:purge": "NODE_NO_WARNINGS=1 tsx scripts/purge-test.ts",
@@ -3452,6 +3578,7 @@
     "test:dispatch-task-window": "NODE_NO_WARNINGS=1 tsx scripts/dispatch-task-window-test.ts",
     "test:replier-label": "NODE_NO_WARNINGS=1 tsx scripts/replier-label-test.ts",
     "test:thread-ownership": "NODE_NO_WARNINGS=1 tsx scripts/thread-ownership-test.ts",
+    "test:thread-seat-close": "NODE_NO_WARNINGS=1 tsx scripts/thread-seat-close-test.ts",
     "test:memory-citation-render": "NODE_NO_WARNINGS=1 tsx scripts/memory-citation-render-test.ts",
     "test:unified": "NODE_NO_WARNINGS=1 tsx scripts/unified-supervisor-test.ts",
     "test:unified-audit": "NODE_NO_WARNINGS=1 tsx scripts/unified-audit-test.ts",
@@ -3507,6 +3634,7 @@
     "test:e2e-grant-fence-rows": "NODE_NO_WARNINGS=1 tsx scripts/e2e/grant-fence-rows-test.ts",
     "test:e2e-halt-cleanup": "NODE_NO_WARNINGS=1 tsx scripts/e2e/halt-cleanup-test.ts",
     "test:e2e-qa-repo": "NODE_NO_WARNINGS=1 tsx scripts/e2e/qa-repo-test.ts",
+    "test:e2e-browser-third-party": "NODE_NO_WARNINGS=1 tsx scripts/e2e/browser-third-party-test.ts",
     "test:dynamic-replay": "NODE_NO_WARNINGS=1 tsx scripts/dynamic-tool-replay-test.ts",
     "test:dynamic-entry-collision": "NODE_NO_WARNINGS=1 tsx scripts/dynamic-entry-collision-test.ts",
     "test:dynamic-native-heal": "NODE_NO_WARNINGS=1 tsx scripts/dynamic-tool-native-heal-test.ts",
@@ -3527,6 +3655,8 @@
     "test:routine-fire-reach": "NODE_NO_WARNINGS=1 tsx scripts/routine-fire-reach-test.ts",
     "test:routine-semantic-failure": "NODE_NO_WARNINGS=1 tsx scripts/routine-semantic-failure-test.ts",
     "test:webhook-disclosure": "NODE_NO_WARNINGS=1 tsx scripts/webhook-disclosure-test.ts",
+    "test:webhook-target-surface": "NODE_NO_WARNINGS=1 tsx scripts/webhook-target-surface-test.ts",
+    "test:surface-offboarding": "NODE_NO_WARNINGS=1 tsx scripts/surface-offboarding-test.ts",
     "test:webhook-history": "NODE_NO_WARNINGS=1 tsx scripts/webhook-history-test.ts",
     "test:routine-targeting": "NODE_NO_WARNINGS=1 tsx scripts/routine-targeting-test.ts",
     "test:notion-handshake-capture": "NODE_NO_WARNINGS=1 tsx scripts/notion-handshake-capture-test.ts",
@@ -3572,6 +3702,7 @@
     "test:settlement-once": "NODE_NO_WARNINGS=1 tsx scripts/settlement-once-test.ts",
     "test:prose-drop-close": "NODE_NO_WARNINGS=1 tsx scripts/unified-prose-drop-close-test.ts",
     "test:delegation-floor-scoring": "NODE_NO_WARNINGS=1 tsx scripts/delegation-floor-scoring-test.ts",
+    "test:routing-decision-scoring": "NODE_NO_WARNINGS=1 tsx scripts/routing-decision-scoring-test.ts",
     "test:reply-provenance": "NODE_NO_WARNINGS=1 tsx scripts/reply-provenance-test.ts",
     "test:delegated-provenance": "NODE_NO_WARNINGS=1 tsx scripts/delegated-provenance-test.ts",
     "test:runtime-rotation": "NODE_NO_WARNINGS=1 tsx scripts/runtime-rotation-test.ts",
@@ -3643,6 +3774,7 @@
     "test:no-native-hitl": "NODE_NO_WARNINGS=1 tsx scripts/no-native-hitl-test.ts"
   },
   "dependencies": {
+    "@a2a-js/sdk": "^1.3.0",
     "@electric-sql/pglite": "^0.5.3",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "ai": "^7.0.105",

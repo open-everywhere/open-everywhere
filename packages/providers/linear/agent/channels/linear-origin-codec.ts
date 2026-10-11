@@ -16,4 +16,5 @@ export const linearWakeOriginCodec: WakeOriginCodec<LinearOrigin> = {
   threadRef: (origin) => ({ channelKey: noColon(`linear/${origin.issueId}`), threadKey: noColon(origin.parentId ?? origin.issueId) }),
   isThreadScoped: () => true,
   containerId: (origin) => origin.issueId,
+  threadRootMessage: (origin) => (typeof origin.parentId === "string" && origin.parentId.length > 0 ? { channelId: origin.issueId, messageId: origin.parentId } : undefined),
 };

@@ -36,6 +36,7 @@ resetGitHubApp();
 const { executeAccessRequest } = await import("../agent/approvals/access-request.js");
 const { executeAgentCreate } = await import("../agent/approvals/agent-create.js");
 const { executeWebhookDeclare } = await import("../agent/approvals/webhook-declare.js");
+const { executeMcpServerPropose } = await import("../agent/approvals/mcp-server-propose.js");
 const { deliverGroupsOverlay } = await import("../agent/identity/groups-delivery.js");
 const { planDirectoryGroups } = await import("../agent/identity/group-sync.js");
 const { emptyGroupsFile } = await import("../agent/identity/groups-codemod.js");
@@ -74,6 +75,7 @@ const baseConfig: AccessRequestsConfig = {
   baseBundles: () => [],
   baseBindings: () => [],
   baseWebhooks: () => [],
+  baseMcpServers: () => [],
   baseAgents: () => ({ domains: [], silos: [], bundles: [], bindings: [], specs: [] }),
 };
 
@@ -149,6 +151,21 @@ const FLOWS: readonly { readonly name: string; readonly file: string; readonly d
       ),
   },
   {
+    name: "mcp-server-propose",
+    file: "packages/core/agent/approvals/mcp-server-propose.ts",
+    drive: () =>
+      executeMcpServerPropose(
+        {
+          ...frozen,
+          declaration: { name: "fullstory", url: "https://mcp.fullstory.example/mcp", description: "FullStory." },
+          docUrls: ["https://developer.fullstory.example/mcp"],
+          vendorSteps: [],
+        },
+        "U_TAP",
+        { config: baseConfig, getBranchSha: stopAfterMint },
+      ),
+  },
+  {
     name: "config-pr-github",
     file: "packages/core/agent/credentials/config-pr-github.ts",
     drive: async () => {
@@ -165,10 +182,10 @@ const FLOWS: readonly { readonly name: string; readonly file: string; readonly d
 ];
 
 await withPatchedFetch(fakeFetch, async () => {
-  console.log("\n1. the five config-repo flows — one mint each, the default job set, nothing more:");
+  console.log("\n1. the six config-repo flows — one mint each, the default job set, nothing more:");
   {
     ok(groupsPlan.steps.length > 0, "fixture: the group plan CHANGES something (a no-op plan returns before the mint and would measure nothing)");
-    ok(FLOWS.length === 5, `fixture: all FIVE config-repo flows are driven (found ${FLOWS.length})`);
+    ok(FLOWS.length === 6, `fixture: all SIX config-repo flows are driven (found ${FLOWS.length})`);
 
     for (const flow of FLOWS) {
       const before = mintCalls.length;
@@ -308,8 +325,8 @@ console.log("\n4. the source fence — one owner for the write set, and no impli
     callers.length === driven.length && callers.every((p, i) => p === driven[i]),
     `🔴 fence: the flows this suite drives ARE every caller of the shared helper — drives [${driven.join(", ")}], tree has [${callers.join(", ")}]`,
   );
-  ok(callers.length === 5, `fence: …and the tree still holds FIVE callers (found ${callers.length}) — the "five" this suite's prose claims is measured, not asserted by hand`);
+  ok(callers.length === 6, `fence: …and the tree still holds SIX callers (found ${callers.length}) — the "six" this suite's prose claims is measured, not asserted by hand`);
 }
 
 await removeTempDir(dir);
-console.log(`\n✓ config-repo mint (OPE-1823): ${n} assertions passed (all five config-repo bot-PR flows mint one narrow body through one resolver)\n`);
+console.log(`\n✓ config-repo mint (OPE-1823): ${n} assertions passed (all six config-repo bot-PR flows mint one narrow body through one resolver)\n`);

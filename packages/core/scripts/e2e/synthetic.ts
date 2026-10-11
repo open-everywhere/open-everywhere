@@ -8,6 +8,8 @@ export const CONNECT_ACTION_PREFIX = "oe_connect:";
 export const SETKEY_MODAL_CALLBACK = "oe_setkey_modal";
 export const SETKEY_INPUT_BLOCK = "oe_setkey_secret_block";
 export const SETKEY_INPUT_ACTION = "oe_setkey_secret_input";
+export const HOME_ACTION_PREFIX = "oe_home:";
+export const HOME_MODAL_CALLBACK = "oe_home_action";
 
 export interface SlackSignature {
   readonly timestamp: string;
@@ -174,6 +176,45 @@ export interface SyntheticResult {
   readonly label: "synthetic click" | "synthetic command" | "synthetic mention";
 }
 
+export function buildHomeOpenedEnvelope(input: { readonly userId: string; readonly teamId: string }): Record<string, unknown> {
+  return {
+    type: "event_callback",
+    team_id: input.teamId,
+    api_app_id: "A_E2E",
+    event_id: `Ev${Date.now()}home`,
+    event_time: Math.floor(Date.now() / 1000),
+    event: { type: "app_home_opened", user: input.userId, tab: "home", event_ts: `${Date.now() / 1000}` },
+  };
+}
+
+export function buildHomeButtonPayload(input: { readonly userId: string; readonly teamId: string; readonly action: string }): Record<string, unknown> {
+  return {
+    type: "block_actions",
+    user: { id: input.userId, team_id: input.teamId },
+    api_app_id: "A_E2E",
+    trigger_id: `${Date.now()}.e2e`,
+    team: { id: input.teamId },
+    container: { type: "view", view_id: "V_E2E_HOME" },
+    view: { id: "V_E2E_HOME", type: "home" },
+    actions: [{ type: "button", action_id: `${HOME_ACTION_PREFIX}${input.action}`, block_id: "e2e", action_ts: `${Date.now() / 1000}` }],
+  };
+}
+
+export function buildHomeSubmissionPayload(input: {
+  readonly userId: string;
+  readonly teamId: string;
+  readonly action: string;
+  readonly ref: string;
+}): Record<string, unknown> {
+  return {
+    type: "view_submission",
+    user: { id: input.userId, team_id: input.teamId },
+    api_app_id: "A_E2E",
+    team: { id: input.teamId },
+    view: { id: "V_E2E_MODAL", type: "modal", callback_id: HOME_MODAL_CALLBACK, private_metadata: `${input.action}|${input.ref}`, state: { values: {} } },
+  };
+}
+
 export class SyntheticSlack {
   constructor(private readonly cfg: SyntheticConfig) {}
 
@@ -244,6 +285,21 @@ export class SyntheticSlack {
 
   async setKeySubmit(input: Omit<SetKeySubmissionInput, "userId"> & { userId?: string }): Promise<SyntheticResult> {
     const payload = buildSetKeySubmissionPayload({ ...input, userId: input.userId ?? this.cfg.adminUserId });
+    return this.signedPost(SYNTHETIC_SLACK_ROUTE, encodeInteractionBody(payload), "synthetic click");
+  }
+
+  async homeOpened(input: { teamId: string; userId?: string }): Promise<SyntheticResult> {
+    const rawBody = JSON.stringify(buildHomeOpenedEnvelope({ teamId: input.teamId, userId: input.userId ?? this.cfg.adminUserId }));
+    return this.signedPost(SYNTHETIC_SLACK_ROUTE, rawBody, "synthetic mention", "application/json");
+  }
+
+  async homeButton(input: { teamId: string; action: string; userId?: string }): Promise<SyntheticResult> {
+    const payload = buildHomeButtonPayload({ ...input, userId: input.userId ?? this.cfg.adminUserId });
+    return this.signedPost(SYNTHETIC_SLACK_ROUTE, encodeInteractionBody(payload), "synthetic click");
+  }
+
+  async homeSubmit(input: { teamId: string; action: string; ref: string; userId?: string }): Promise<SyntheticResult> {
+    const payload = buildHomeSubmissionPayload({ ...input, userId: input.userId ?? this.cfg.adminUserId });
     return this.signedPost(SYNTHETIC_SLACK_ROUTE, encodeInteractionBody(payload), "synthetic click");
   }
 }

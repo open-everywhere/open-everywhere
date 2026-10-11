@@ -910,7 +910,13 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
   ok(threadReporting.includes("Your turn-final text is DISCARDED"), "🔴 OPE-2006: a THREAD seat on a drop surface reads the drop too — the arm keys on the manifest, not on the grain");
   ok(!threadReporting.includes("reply` posts into the channel mid-turn"), "🔴 OPE-2006: …and never reads the dual-mode claim that its closing text posts");
   ok(threadReporting.includes("`cancel_work`") && !threadReporting.includes("`task_cancel`"), "OPE-2350: the thread seat stops a job with `cancel_work` — it forwards, so it holds no `task_cancel`");
-  ok(threadReporting === slackReporting.replaceAll("`task_cancel`", "`cancel_work`"), "🔴 OPE-2006: …and apart from that verb its delivery section is BYTE-IDENTICAL to the container supervisor's — one section, every seat on a drop surface");
+  const reportingSection = (persona: string): string => {
+    const start = persona.indexOf("### Reporting");
+    const end = persona.indexOf(" ### ", start + "### Reporting".length);
+    return start < 0 ? "" : persona.slice(start, end < 0 ? undefined : end);
+  };
+  ok(reportingSection(threadReporting).length > 200, "fixture guard: the thread seat's persona really carries a Reporting section to compare");
+  ok(reportingSection(threadReporting) === reportingSection(slackReporting).replaceAll("`task_cancel`", "`cancel_work`"), "🔴 OPE-2006: …and apart from that verb its delivery section is BYTE-IDENTICAL to the container supervisor's — one section, every seat on a drop surface");
 }
 
 {

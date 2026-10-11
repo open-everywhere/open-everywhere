@@ -110,6 +110,7 @@ function parseStaticProvider(ref: string, rec: Record<string, unknown>): OeOauth
     ...(authorizeParams ? { authorizeParams } : {}),
     ...(tokenHeaders ? { tokenHeaders } : {}),
     bodyEncoding,
+    ...(scopes ? { scopes } : {}),
   };
 }
 

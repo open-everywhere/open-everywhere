@@ -419,6 +419,16 @@ transport that auto-generated tools from a spec was removed — it advertised a 
 tool surface and spent context on every operation's result. A script from a skill is the
 lighter path.) See [Skills & plugins](./skills-and-plugins.md).
 
+## MCP vs A2A — tools or another agent
+
+MCP and REST both give the agent a vendor's **tools and data**: the agent's own model decides each
+operation. **A2A** gives the agent **another agent**: a focused enterprise agent (Agentforce,
+ServiceNow, Workday, Copilot Studio and similar) takes a whole task in plain language, works on it in
+its own system, and reports back. An admin declares each such agent in `agent/access/a2a-agents.ts`.
+`delegate_to_agent` hands it a task after an approval card, with the asker's identity attached, and
+`check_agent_task` follows a task that runs longer than one call. The answer is untrusted, like any
+connector result. See [A2A agents](../extending/a2a-agents.md).
+
 ## How a connector reaches the agent — and how you connect one
 
 Two tools bracket the connector plane, and neither of them is the connector itself.
@@ -1018,7 +1028,7 @@ keep the exact-session rule. That is the honest answer rather than a fallback.
 🔴 **It does not depend on the standing-window capability.** An earlier revision keyed the binding on
 the `channel_session` registry row the room's standing seat rotates under, which reads well and is
 wrong: that row exists only where `window: { topology: true }` is declared, and even then is
-per-channel under the default `solo` window mode. The 30-day promise would have held on one armed
+per-channel under the `solo` window mode. The 30-day promise would have held on one armed
 deployment and nowhere else. Domain membership is the thing a room has regardless, so it is what the
 binding is read from — and on both topologies, which is why the shipped default keeps the survival
 rather than the exact-session rule.

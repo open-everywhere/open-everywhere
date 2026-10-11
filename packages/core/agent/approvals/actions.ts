@@ -6,6 +6,7 @@ import { principalKey } from "../identity/principal-key.js";
 import type { CapLevel } from "../operational/store.js";
 import type { ActionKind, PendingActionRow } from "./types.js";
 import { withTaintDisclosure } from "./taint-disclosure.js";
+import { plainValue } from "./plain-text.js";
 
 const REGISTRY = new Map<string, ActionKind<any>>();
 
@@ -64,6 +65,10 @@ function fmtCapUsd(usd: number | null): string {
 
 function scopeLine(label: string | undefined, scopeKey: string, level: string): string {
   return label ? `${label} (${level})` : `scope \`${scopeKey}\` (${level})`;
+}
+
+function plainScope(label: string | undefined, scopeKey: string): string {
+  return plainValue(label ?? scopeKey);
 }
 
 function spendTaintLines(tainted: boolean | undefined): string[] {
@@ -160,6 +165,13 @@ const spendSet: ActionKind<SpendSetArgs> = {
   policy: "admin",
   volatileArgs: ["coverage"],
   proseArgs: ["reason"],
+  plainSummary(args) {
+    const figures = [
+      ...(args.monthlyTokens != null ? [fmtCap(args.monthlyTokens)] : []),
+      ...(args.monthlyUsd != null ? [fmtCapUsd(args.monthlyUsd)] : []),
+    ].join(" and ");
+    return `Set the monthly spend limit for ${plainScope(args.scopeLabel, args.scopeKey)} to ${figures || "a new figure"}`;
+  },
   summarize(args) {
     return [
       `Set spend limit — ${scopeLine(args.scopeLabel, args.scopeKey, args.level)}`,
@@ -213,6 +225,9 @@ export interface SpendClearArgs {
 const spendClear: ActionKind<SpendClearArgs> = {
   kind: "spend.clear",
   policy: "admin",
+  plainSummary(args) {
+    return `Remove the spend limit override for ${plainScope(args.scopeLabel, args.scopeKey)}, so it goes back to the configured limit`;
+  },
   summarize(args) {
     const current = [
       ...(args.currentCap !== null ? [fmtCap(args.currentCap)] : []),
@@ -250,6 +265,9 @@ interface ConnectorRevokeArgs {
 const connectorRevoke: ActionKind<ConnectorRevokeArgs> = {
   kind: "connector.revoke",
   policy: "admin",
+  plainSummary(args) {
+    return `Turn off the ${plainValue(args.connector)} connector for ${plainValue(args.scopeKey)}`;
+  },
   summarize(args) {
     return [`Revoke connector \`${args.connector}\` — scope \`${args.scopeKey}\``, ...(args.reason ? [`Reason: ${args.reason}`] : [])];
   },
@@ -275,6 +293,9 @@ interface ConnectorClearArgs {
 const connectorClear: ActionKind<ConnectorClearArgs> = {
   kind: "connector.clear",
   policy: "admin",
+  plainSummary(args) {
+    return `Remove the ${plainValue(args.connector)} connector override for ${plainValue(args.scopeKey)}, so it goes back to the configured access`;
+  },
   summarize(args) {
     return [`Clear connector override \`${args.connector}\` — scope \`${args.scopeKey}\``, `Reverts to the config-as-code bundle grant`];
   },
@@ -304,6 +325,10 @@ export interface HaltResumeArgs {
 const haltResume: ActionKind<HaltResumeArgs> = {
   kind: "halt.resume",
   policy: "admin",
+  plainSummary(args) {
+    const where = args.orgWide === true ? "everywhere in this org" : `for ${plainScope(args.scopeLabel, args.scopeKey ?? "")}`;
+    return `Lift the emergency halt ${where}, so the agent can act again`;
+  },
   summarize(args) {
     const where = args.orgWide === true ? "everywhere in this org" : `\`${args.scopeKey}\` (${args.level})`;
     return [

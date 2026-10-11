@@ -6,7 +6,8 @@ import { registerTeamsProvider } from "@open-everywhere/provider-teams/agent/reg
 import { registerLinearProvider } from "@open-everywhere/provider-linear/agent/register.js";
 import { registerDiscordProvider } from "@open-everywhere/provider-discord/agent/register.js";
 import { unifiedThreadRef, isUnifiedWakeOrigin, type UnifiedWakeOrigin } from "@open-everywhere/core/agent/channels/unified-window.js";
-import { recordThreadSeatOpen, recordThreadSeatReport, readThreadSeatState, threadSeatOrigin, type ThreadSeatStateStore } from "@open-everywhere/core/agent/channels/thread-seat-state.js";
+import { threadRootMessageOf, hasThreadDoneReactionPath } from "@open-everywhere/core/agent/channels/thread-seat-close.js";
+import { recordThreadSeatOpen, recordThreadSeatClose, readThreadSeatState, threadSeatOrigin, type ThreadSeatStateStore } from "@open-everywhere/core/agent/channels/thread-seat-state.js";
 import { renderSeatSteer } from "@open-everywhere/core/agent/tools/message_thread_seat.js";
 import messageThreadSeat from "@open-everywhere/core/agent/tools/message_thread_seat.js";
 import readThreadSeat from "@open-everywhere/core/agent/tools/read_thread_seat.js";
@@ -40,6 +41,13 @@ function fakeStore(): ThreadSeatStateStore & { rows: Map<string, ThreadSeatState
     },
     async getThreadSeatState(_org: string, channelKey: string, threadKey: string) {
       return rows.get(`${channelKey}|${threadKey}`) ?? null;
+    },
+    async closeThreadSeatState(_org: string, channelKey: string, threadKey: string, seatToken: string, state: "completed" | "expired" | "closed", report: string | null, at: string) {
+      const k = `${channelKey}|${threadKey}`;
+      const row = rows.get(k);
+      if (!row || row.seatToken !== seatToken || !(row.state === "open" || (row.state === "expired" && state === "completed"))) return false;
+      rows.set(k, { ...row, state, ...(report !== null ? { report } : {}), updatedAt: at });
+      return true;
     },
   };
 }
@@ -96,7 +104,10 @@ console.log("3 — the per-surface record contract:");
     const recovered = open ? threadSeatOrigin(open) : undefined;
     ok(recovered !== undefined && isUnifiedWakeOrigin(recovered), `${s.platform}: the thread's ORIGIN survives storage and the strict validator`);
     eq(recovered, s.origin, `${s.platform}: …and it is the SAME origin the spawn dispatched on — a steer reaches the seat's own thread`);
-    const closed = await recordThreadSeatReport(store, "acme", ref, "Settled on the 3rd; Ana owns the rollback note.", "2026-09-11T11:00:00.000Z");
+    const close = await recordThreadSeatClose(store, "acme", ref, { seatToken, state: "completed", report: "Settled on the 3rd; Ana owns the rollback note.", atIso: "2026-09-11T11:00:00.000Z" });
+    const closed = close?.row;
+    eq(close?.closedNow, true, `${s.platform}: the close found the record OPEN`);
+    eq(close?.lastActiveAt, "2026-09-11T10:00:00.000Z", `${s.platform}: …and reports its last activity from before the close`);
     eq(closed?.state, "completed", `${s.platform}: the hand-back flips the record to completed`);
     eq(closed?.report, "Settled on the 3rd; Ana owns the rollback note.", `${s.platform}: the report is stored VERBATIM — nothing summarises the seat's own words`);
     const after = await readThreadSeatState(store, "acme", ref);
@@ -105,7 +116,7 @@ console.log("3 — the per-surface record contract:");
   const empty = fakeStore();
   const ref = unifiedThreadRef({ platform: "slack", channelId: "C1", threadTs: "1.1" });
   eq(await readThreadSeatState(empty, "acme", ref), null, "an unknown thread reads NULL — the tools report 'no record' rather than guessing");
-  eq(await recordThreadSeatReport(empty, "acme", ref, "orphan report", "2026-09-11T11:00:00.000Z"), null, "…and a report with no open record is not written for a thread nobody opened");
+  eq(await recordThreadSeatClose(empty, "acme", ref, { seatToken: "oe-dom:payments:win:s/slack_C1/1.1:oe-sup:g3", state: "completed", report: "orphan report", atIso: "2026-09-11T11:00:00.000Z" }), null, "…and a report with no open record is not written for a thread nobody opened");
   ok(empty.rows.size === 0, "…leaving no row behind");
 }
 
@@ -114,6 +125,35 @@ console.log("4 — a stored origin is validated, never trusted raw:");
   eq(threadSeatOrigin({ originJson: "not json" }), undefined, "unparseable JSON answers undefined");
   eq(threadSeatOrigin({ originJson: JSON.stringify({ platform: "mystery", channelId: "x" }) }), undefined, "an origin of an unregistered platform is refused (fail-closed, no codec)");
   ok(threadSeatOrigin({ originJson: JSON.stringify({ platform: "slack", channelId: "C1", threadTs: "1.1" }) }) !== undefined, "a live platform's origin passes — the negative controls above are not refusing everything");
+}
+
+console.log("5 — the thread's root message, per surface:");
+{
+  eq(
+    threadRootMessageOf({ platform: "slack", channelId: "C1", threadTs: "1700.5" }),
+    { platform: "slack", channelId: "C1", messageId: "1700.5" },
+    "slack: a threaded origin's root is the thread's parent ts",
+  );
+  eq(
+    threadRootMessageOf({ platform: "slack", channelId: "C1", replyAnchorTs: "1700.9" }),
+    { platform: "slack", channelId: "C1", messageId: "1700.9" },
+    "slack: a top-level trigger that a seat was spawned for is the thread's root",
+  );
+  eq(threadRootMessageOf({ platform: "slack", channelId: "D1" }), undefined, "slack: an origin that names neither (a DM, a routine) has no root to mark");
+  eq(
+    threadRootMessageOf({ platform: "linear", issueId: "iss-1", parentId: "cmt-root", ambient: true }),
+    { platform: "linear", channelId: "iss-1", messageId: "cmt-root" },
+    "linear: the root is the thread-root COMMENT on its issue — the pair linearMessageOps.setReaction takes",
+  );
+  eq(threadRootMessageOf({ platform: "linear", issueId: "iss-1", ambient: true }), undefined, "linear: a thread that IS the issue has no root comment to mark");
+  eq(
+    threadRootMessageOf({ platform: "discord", channelId: "TH1", guildId: "G1", thread: true, messageId: "M1" }),
+    undefined,
+    "discord: no root — the starter message lives in the PARENT channel, which the origin does not carry",
+  );
+  ok(hasThreadDoneReactionPath("slack"), "the runtime predicate: Slack can place the done mark");
+  ok(hasThreadDoneReactionPath("linear"), "the runtime predicate: Linear can place the done mark");
+  for (const p of ["discord", "teams", "github", "notion"]) ok(!hasThreadDoneReactionPath(p), `the runtime predicate: ${p} declares no done mark, and the predicate agrees`);
 }
 
 console.log(`\nthread-seat-tools: ${n} assertions passed`);

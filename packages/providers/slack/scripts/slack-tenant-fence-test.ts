@@ -480,7 +480,14 @@ async function dropRows(ts: string) {
         `TOTALITY(click): the "${arm.name}" branch runs no model turn and still decides something, so it must consult the tenant fence`,
       );
     }
-    ok(fenced === 6, `…and the scan really found all six click branches (${fenced}) — a renamed or deleted arm must red this, never silently empty it`);
+    ok(fenced === 8, `…and the scan really found all eight deciding branches (six clicks, the OPE-2423 user-change branch and the OPE-2451 channel-shared canvas recheck) (${fenced}) — a renamed or deleted arm must red this, never silently empty it`);
+    const homeAt = frontCode.indexOf('if (decision.kind === "home-open" || decision.kind === "home-click" || decision.kind === "home-submit") {');
+    ok(homeAt >= 0, "the Home tab arm is present, under its three decision kinds");
+    const homeBody = frontCode.slice(homeAt, frontCode.indexOf("\n    if (decision.kind ===", homeAt + 1));
+    ok(
+      homeBody.indexOf("slackInteractivityTenantFenceDeclined(") >= 0 && homeBody.indexOf("slackInteractivityTenantFenceDeclined(") < homeBody.indexOf("homeOpened("),
+      "…and it consults the tenant fence ABOVE the Home handlers, so an unadmitted workspace never reads or changes a person's memory",
+    );
     for (const [arm, handler] of [
       ["approval-click", "handleApproval("],
       ["setkey-click", "handleSetKeyClick("],

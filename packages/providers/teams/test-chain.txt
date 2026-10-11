@@ -16,4 +16,5 @@ test:teams-reaction-feedback
 test:teams-engagement
 test:teams-message-ops
 test:teams-id-restore
+test:teams-declared-target
 test:teams-spend-attribution

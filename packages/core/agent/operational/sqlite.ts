@@ -2,12 +2,12 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Routine } from "../routines/routine.js";
-import { asSurfaceMode, auditSurfaceMode, auditReadOrg, likePrefixPattern, argKeyNeedle, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type ChannelSessionRuntimeStamp, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
+import { asSurfaceMode, readThreadSeatStateValue, auditSurfaceMode, auditReadOrg, likePrefixPattern, argKeyNeedle, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type ChannelSessionRuntimeStamp, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow, ATTENTION_COLUMNS, attentionPruneBefore, attentionRowFrom, type AttentionDbRow } from "./store.js";
 import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn, grantRefundTurnOrdinal } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import { CONNECTOR_OP_KIND_PREFIX, ROUTINE_PERMISSION_PREFIX } from "../approvals/session-grant.js";
-import { SESSION_TAIL_MAX_ENTRIES, type SessionTailEntry } from "../channels/session-tail.js";
+import { CONVERSATION_SUMMARY_PARTITION, parseConversationSummary, SESSION_TAIL_MAX_ENTRIES, type SessionTailEntry } from "../channels/session-tail.js";
 import type { ModelReasoning } from "../memory/domain.js";
 import { AUDIT_CHAIN_EPOCH_ACTION, auditEpochDetail, auditEpochSealFor, auditRowSha, withOrgAuditLock } from "../audit/chain.js";
 import { assembleAnalyticsSql } from "../analytics/compile.js";
@@ -189,6 +189,9 @@ function getDb(): DatabaseSync {
     -- generation's first wake. Keyed by the generation's live TOKEN, so a straggler write from a
     -- retired generation files under the retired token and is simply never read again.
     -- Bounded on write (channels/session-tail.ts SESSION_TAIL_MAX_ENTRIES) and dropped once carried.
+    -- EXCEPT the DM conversation summary (OPE-2431): ONE row per DM seat under the reserved token
+    -- 'oe-dm-summary', a JSON array of up to 200 entries, that only the next rotation overwrites.
+    -- Nothing deletes it, so it holds DM text for the life of the seat.
     CREATE TABLE IF NOT EXISTS session_tail (
       org_id      TEXT    NOT NULL,
       surface_key TEXT    NOT NULL,        -- the channel_session registry key this generation lives under
@@ -263,7 +266,7 @@ function getDb(): DatabaseSync {
       thread_key   TEXT NOT NULL,              -- the thread within it (unifiedThreadRef.threadKey)
       seat_token   TEXT NOT NULL,              -- the thread seat's own window token
       parent_key   TEXT NOT NULL,              -- the PARENT seat's channel_session registry key
-      state        TEXT NOT NULL,              -- 'open' | 'completed'
+      state        TEXT NOT NULL,              -- 'open' | 'completed' | 'expired' | 'closed'
       origin_json  TEXT NOT NULL,              -- the thread's own wake origin (UnifiedWakeOrigin JSON)
       report       TEXT,                       -- the seat's closing report, in its own words
       opened_at    TEXT NOT NULL,              -- ISO-8601 of the spawn
@@ -383,6 +386,7 @@ function getDb(): DatabaseSync {
       thread_ts    TEXT,
       message_ts   TEXT,                      -- the card's ts, set after post
       posted_to    TEXT,                      -- proposing surfaceKey frozen at mint; NULL = no sweep feedback
+      group_key    TEXT,                      -- the proposing session (OPE-2434); NULL = never grouped
       status       TEXT NOT NULL,             -- pending|approved|rejected|expired
       created_at   TEXT NOT NULL,
       expires_at   TEXT NOT NULL,
@@ -460,6 +464,26 @@ function getDb(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS usage_events_org_session ON usage_events (org_id, session_id);
     CREATE INDEX IF NOT EXISTS usage_events_org_surface_ts ON usage_events (org_id, surface_key, ts);
+    -- OPE-2435: the per-tool usage ledger (spend/tool-usage.ts). Append-only like usage_events, and
+    -- pruned with it. IDS AND COUNTS ONLY: never a tool's arguments or its output.
+    CREATE TABLE IF NOT EXISTS tool_usage (
+      seq                INTEGER PRIMARY KEY AUTOINCREMENT,
+      org_id             TEXT NOT NULL,
+      ts                 TEXT NOT NULL,        -- ISO-8601
+      surface_key        TEXT NOT NULL,
+      surface_mode       TEXT,                 -- 'dm' | 'mpim' | 'channel'; NULL = unstamped (masked)
+      principal_id       TEXT,
+      session_id         TEXT NOT NULL,
+      event              TEXT NOT NULL,        -- 'call' | 'card'
+      tool               TEXT NOT NULL,
+      connector          TEXT NOT NULL DEFAULT '',  -- '' = not a connector op
+      outcome            TEXT NOT NULL DEFAULT '',  -- 'ok' | 'error' | 'rejected'; '' on a card
+      model              TEXT,
+      input_tokens       INTEGER NOT NULL DEFAULT 0,  -- an ATTRIBUTED share (see store.ts ToolUsageEntry)
+      output_tokens      INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens  INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS tool_usage_org_ts ON tool_usage (org_id, ts);
     -- identity link-sets (P1): the three tables behind DB-backed cross-surface identity. See the
     -- LinkSetRow section in store.ts for what they are, and the postgres twin for the RLS half.
     -- Read-write (a person severs an account, an admin suspends a set); the immutable HISTORY is
@@ -663,6 +687,24 @@ function getDb(): DatabaseSync {
     -- dm_audience (OPE-1064 tier P2): who this deployment may START a direct message with, and
     -- whether they have stopped it. Two nullable timestamps and no content — store.ts's DM AUDIENCE
     -- section carries the whole posture, including why the key is the grant's own ARN-like address.
+    -- attention_state (OPE-2433): one row per session that reported a typed state with update_status —
+    -- the "what waits on me" read, and the once-per-episode ping when a session is blocked.
+    CREATE TABLE IF NOT EXISTS attention_state (
+      org_id          TEXT NOT NULL,
+      session_id      TEXT NOT NULL,
+      state           TEXT NOT NULL,     -- working|needs_input|blocked|done
+      summary         TEXT NOT NULL,     -- the status line, clipped host-side
+      surface_key     TEXT NOT NULL,
+      channel_id      TEXT NOT NULL,
+      thread_ts       TEXT,
+      person_platform TEXT,              -- the person the session works for; NULL = no principal
+      person_id       TEXT,
+      since           TEXT NOT NULL,     -- when the CURRENT state began
+      updated_at      TEXT NOT NULL,
+      pinged_since    TEXT,              -- the since of the blocked episode already pinged
+      PRIMARY KEY (org_id, session_id)
+    );
+    CREATE INDEX IF NOT EXISTS attention_state_person ON attention_state (org_id, person_platform, person_id);
     CREATE TABLE IF NOT EXISTS dm_audience (
       org_id      TEXT NOT NULL,
       address     TEXT NOT NULL,          -- the person address, e.g. slack:person/U0123ABC
@@ -719,6 +761,8 @@ function getDb(): DatabaseSync {
     "ALTER TABLE unified_wake_target ADD COLUMN audited_at TEXT",
 
     "ALTER TABLE pending_actions ADD COLUMN posted_to TEXT",
+
+    "ALTER TABLE pending_actions ADD COLUMN group_key TEXT",
 
     "ALTER TABLE stored_credential ADD COLUMN claim_id TEXT",
     "ALTER TABLE stored_credential ADD COLUMN claimed_at TEXT",
@@ -942,6 +986,7 @@ type PendingActionSqlRow = {
   thread_ts: string | null;
   message_ts: string | null;
   posted_to: string | null;
+  group_key?: string | null;
   status: string;
   created_at: string;
   expires_at: string;
@@ -962,6 +1007,7 @@ function pendingActionFromRow(org: string, r: PendingActionSqlRow): PendingActio
     threadTs: r.thread_ts,
     messageTs: r.message_ts,
     postedTo: r.posted_to,
+    ...(r.group_key ? { groupKey: r.group_key } : {}),
     status: r.status as PendingStatus,
     createdAt: r.created_at,
     expiresAt: r.expires_at,
@@ -1509,17 +1555,21 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async readAuditChain(org, opts) {
     const tail = opts?.tailLimit;
+    const page = !(tail && tail > 0) && opts?.afterSeq !== undefined ? { after: opts.afterSeq, limit: Math.max(1, Math.floor(opts.limit ?? 1)) } : undefined;
+    const cols = "seq, ts, org_id, platform, workspace, surface, surface_mode, principal_id, action, detail, prev_sha";
     const sql =
       tail && tail > 0
         ? `SELECT * FROM (
-             SELECT seq, ts, org_id, platform, workspace, surface, surface_mode, principal_id, action, detail, prev_sha
+             SELECT ${cols}
              FROM audit_entry WHERE org_id = ? ORDER BY seq DESC LIMIT ?
            ) ORDER BY seq ASC`
-        : `SELECT seq, ts, org_id, platform, workspace, surface, surface_mode, principal_id, action, detail, prev_sha
+        : page
+          ? `SELECT ${cols} FROM audit_entry WHERE org_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?`
+          : `SELECT ${cols}
            FROM audit_entry WHERE org_id = ? ORDER BY seq ASC`;
     const rows = getDb()
       .prepare(sql)
-      .all(...(tail && tail > 0 ? [org, tail] : [org])) as {
+      .all(...(tail && tail > 0 ? [org, tail] : page ? [org, page.after, page.limit] : [org])) as {
       seq: number;
       ts: string;
       org_id: string;
@@ -1983,7 +2033,8 @@ export const sqliteOperationalStore: OperationalStore = {
     const out: SessionTailEntry[] = [];
     for (const r of rows) {
       try {
-        out.push(JSON.parse(r.entry_json) as SessionTailEntry);
+        const parsed: unknown = JSON.parse(r.entry_json);
+        if (!Array.isArray(parsed)) out.push(parsed as SessionTailEntry);
       } catch {
       }
     }
@@ -1992,6 +2043,44 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async clearSessionTail(org, surfaceKey, token) {
     getDb().prepare("DELETE FROM session_tail WHERE org_id = ? AND surface_key = ? AND token = ?").run(org, surfaceKey, token);
+  },
+
+  async readConversationSummary(org, surfaceKey) {
+    const row = getDb()
+      .prepare("SELECT entry_json FROM session_tail WHERE org_id = ? AND surface_key = ? AND token = ? AND seq = 1")
+      .get(org, surfaceKey, CONVERSATION_SUMMARY_PARTITION) as { entry_json: string } | undefined;
+    return parseConversationSummary(row?.entry_json);
+  },
+
+  async writeConversationSummary(org, surfaceKey, entries) {
+    const at = entries[entries.length - 1]?.at ?? "";
+    getDb()
+      .prepare(
+        `INSERT INTO session_tail (org_id, surface_key, token, seq, at, entry_json) VALUES (?, ?, ?, 1, ?, ?)
+         ON CONFLICT (org_id, surface_key, token, seq) DO UPDATE SET at = excluded.at, entry_json = excluded.entry_json`,
+      )
+      .run(org, surfaceKey, CONVERSATION_SUMMARY_PARTITION, at, JSON.stringify(entries));
+  },
+
+  async editConversationSummaryPost(org, surfaceKey, messageId, text) {
+    const db = getDb();
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const row = db
+        .prepare("SELECT entry_json FROM session_tail WHERE org_id = ? AND surface_key = ? AND token = ? AND seq = 1")
+        .get(org, surfaceKey, CONVERSATION_SUMMARY_PARTITION) as { entry_json: string } | undefined;
+      const summary = parseConversationSummary(row?.entry_json);
+      const i = summary.findIndex((e) => e.kind === "post" && e.id === messageId);
+      if (i >= 0) {
+        summary[i] = { ...summary[i], text };
+        db.prepare("UPDATE session_tail SET entry_json = ? WHERE org_id = ? AND surface_key = ? AND token = ? AND seq = 1").run(JSON.stringify(summary), org, surfaceKey, CONVERSATION_SUMMARY_PARTITION);
+      }
+      db.exec("COMMIT");
+      return i >= 0;
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
   },
 
   async editSessionTailPost(org, surfaceKey, token, messageId, text) {
@@ -2206,7 +2295,32 @@ export const sqliteOperationalStore: OperationalStore = {
   },
 
   async pruneUsageEvents(org, olderThanTs) {
+    getDb().prepare("DELETE FROM tool_usage WHERE org_id = ? AND ts < ?").run(org, olderThanTs);
     return Number(getDb().prepare("DELETE FROM usage_events WHERE org_id = ? AND ts < ?").run(org, olderThanTs).changes);
+  },
+
+  async appendToolUsage(entry) {
+    getDb()
+      .prepare(
+        `INSERT INTO tool_usage (org_id, ts, surface_key, surface_mode, principal_id, session_id, event, tool, connector, outcome, model, input_tokens, output_tokens, cache_read_tokens)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        entry.org,
+        entry.ts,
+        entry.surfaceKey,
+        entry.surfaceMode ?? null,
+        entry.principalId ?? null,
+        entry.sessionId,
+        entry.event,
+        entry.tool,
+        entry.connector,
+        entry.outcome,
+        entry.model ?? null,
+        Math.round(entry.inputTokens),
+        Math.round(entry.outputTokens),
+        Math.round(entry.cacheReadTokens),
+      );
   },
 
   async appendModelCallCapture(write: ModelCallCaptureWrite) {
@@ -2369,6 +2483,42 @@ export const sqliteOperationalStore: OperationalStore = {
       .prepare("SELECT address, first_dm_at, stopped_at FROM dm_audience WHERE org_id = ? ORDER BY address")
       .all(org) as { address: string; first_dm_at: string | null; stopped_at: string | null }[];
     return rows.map(dmAudienceRowFrom);
+  },
+
+  async recordAttentionState(row) {
+    const db = getDb();
+    db.prepare("DELETE FROM attention_state WHERE org_id = ? AND updated_at < ?").run(row.org, attentionPruneBefore(row.updatedAt));
+    db.prepare(
+      `INSERT INTO attention_state (org_id, session_id, state, summary, surface_key, channel_id, thread_ts, person_platform, person_id, since, updated_at, pinged_since)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+       ON CONFLICT (org_id, session_id) DO UPDATE SET
+         since = CASE WHEN attention_state.state = excluded.state THEN attention_state.since ELSE excluded.since END,
+         state = excluded.state, summary = excluded.summary, surface_key = excluded.surface_key, channel_id = excluded.channel_id,
+         thread_ts = excluded.thread_ts, person_platform = excluded.person_platform, person_id = excluded.person_id, updated_at = excluded.updated_at`,
+    ).run(row.org, row.sessionId, row.state, row.summary, row.surfaceKey, row.channelId, row.threadTs, row.personPlatform, row.personId, row.updatedAt, row.updatedAt);
+    const stored = db.prepare(`SELECT ${ATTENTION_COLUMNS} FROM attention_state WHERE org_id = ? AND session_id = ?`).get(row.org, row.sessionId) as AttentionDbRow;
+    return attentionRowFrom(row.org, stored);
+  },
+
+  async listAttentionWaitingOn(org, personPlatform, personId, sinceIso) {
+    const rows = getDb()
+      .prepare(
+        `SELECT ${ATTENTION_COLUMNS} FROM attention_state
+         WHERE org_id = ? AND person_platform = ? AND person_id = ? AND state IN ('needs_input', 'blocked') AND updated_at >= ?
+         ORDER BY updated_at DESC LIMIT 50`,
+      )
+      .all(org, personPlatform, personId, sinceIso) as AttentionDbRow[];
+    return rows.map((r) => attentionRowFrom(org, r));
+  },
+
+  async claimAttentionPing(org, sessionId, since) {
+    const info = getDb()
+      .prepare(
+        `UPDATE attention_state SET pinged_since = ?
+         WHERE org_id = ? AND session_id = ? AND state = 'blocked' AND since = ? AND (pinged_since IS NULL OR pinged_since <> ?)`,
+      )
+      .run(since, org, sessionId, since, since);
+    return info.changes > 0;
   },
 
   async runAnalyticsQuery(compiled) {
@@ -2695,12 +2845,53 @@ export const sqliteOperationalStore: OperationalStore = {
       threadKey,
       seatToken: row.seat_token,
       parentRegistryKey: row.parent_key,
-      state: row.state === "open" ? "open" : "completed",
+      state: readThreadSeatStateValue(row.state),
       originJson: row.origin_json,
       ...(row.report !== null ? { report: row.report } : {}),
       openedAt: row.opened_at,
       updatedAt: row.updated_at,
     };
+  },
+
+  async touchThreadSeat(org, channelKey, threadKey, at) {
+    const handle = getDb();
+    handle.prepare("UPDATE thread_ownership SET created_at = ? WHERE org_id = ? AND channel_key = ? AND thread_key = ?").run(at, org, channelKey, threadKey);
+    return (
+      handle
+        .prepare("UPDATE thread_seat_state SET updated_at = ? WHERE org_id = ? AND channel_key = ? AND thread_key = ? AND state = 'open'")
+        .run(at, org, channelKey, threadKey).changes > 0
+    );
+  },
+
+  async closeThreadSeatState(org, channelKey, threadKey, seatToken, state, report, at) {
+    return (
+      getDb()
+        .prepare(
+          `UPDATE thread_seat_state SET state = ?, report = COALESCE(?, report), updated_at = ?
+           WHERE org_id = ? AND channel_key = ? AND thread_key = ? AND seat_token = ?
+             AND (state = 'open' OR (state = 'expired' AND ? = 'completed'))`,
+        )
+        .run(state, report, at, org, channelKey, threadKey, seatToken, state).changes > 0
+    );
+  },
+
+  async listIdleThreadSeats(org, before, limit) {
+    const rows = getDb()
+      .prepare(
+        "SELECT channel_key, thread_key, seat_token, parent_key, state, origin_json, report, opened_at, updated_at FROM thread_seat_state WHERE org_id = ? AND state = 'open' AND updated_at < ? ORDER BY updated_at ASC LIMIT ?",
+      )
+      .all(org, before, limit) as { channel_key: string; thread_key: string; seat_token: string; parent_key: string; state: string; origin_json: string; report: string | null; opened_at: string; updated_at: string }[];
+    return rows.map((row) => ({
+      channelKey: row.channel_key,
+      threadKey: row.thread_key,
+      seatToken: row.seat_token,
+      parentRegistryKey: row.parent_key,
+      state: readThreadSeatStateValue(row.state),
+      originJson: row.origin_json,
+      ...(row.report !== null ? { report: row.report } : {}),
+      openedAt: row.opened_at,
+      updatedAt: row.updated_at,
+    }));
   },
 
   async putTurnAnchor(org, anchor, at, ttlMs) {
@@ -2945,8 +3136,8 @@ export const sqliteOperationalStore: OperationalStore = {
     getDb()
       .prepare(
         `INSERT INTO pending_actions
-           (org_id, id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (org_id, id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, group_key, status, created_at, expires_at, decided_by, decided_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         row.org,
@@ -2960,6 +3151,7 @@ export const sqliteOperationalStore: OperationalStore = {
         row.threadTs,
         row.messageTs,
         row.postedTo,
+        row.groupKey ?? null,
         row.status,
         row.createdAt,
         row.expiresAt,
@@ -2972,8 +3164,8 @@ export const sqliteOperationalStore: OperationalStore = {
     const info = getDb()
       .prepare(
         `INSERT INTO pending_actions
-           (org_id, id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           (org_id, id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, group_key, status, created_at, expires_at, decided_by, decided_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (org_id, id) DO NOTHING`,
       )
       .run(
@@ -2988,6 +3180,7 @@ export const sqliteOperationalStore: OperationalStore = {
         row.threadTs,
         row.messageTs,
         row.postedTo,
+        row.groupKey ?? null,
         row.status,
         row.createdAt,
         row.expiresAt,
@@ -3000,7 +3193,7 @@ export const sqliteOperationalStore: OperationalStore = {
   async getPendingAction(org, id) {
     const row = getDb()
       .prepare(
-        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at
+        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, group_key, status, created_at, expires_at, decided_by, decided_at
          FROM pending_actions WHERE org_id = ? AND id = ?`,
       )
       .get(org, id) as PendingActionSqlRow | undefined;
@@ -3010,7 +3203,7 @@ export const sqliteOperationalStore: OperationalStore = {
   async listPendingActions(org) {
     const rows = getDb()
       .prepare(
-        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at
+        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, group_key, status, created_at, expires_at, decided_by, decided_at
          FROM pending_actions WHERE org_id = ? AND status = 'pending' ORDER BY created_at ASC`,
       )
       .all(org) as PendingActionSqlRow[];
@@ -3020,7 +3213,7 @@ export const sqliteOperationalStore: OperationalStore = {
   async listExpiredPendingActions(org, nowIso) {
     const rows = getDb()
       .prepare(
-        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at
+        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, group_key, status, created_at, expires_at, decided_by, decided_at
          FROM pending_actions WHERE org_id = ? AND status = 'pending' AND expires_at <= ? ORDER BY created_at ASC`,
       )
       .all(org, nowIso) as PendingActionSqlRow[];
@@ -3030,7 +3223,7 @@ export const sqliteOperationalStore: OperationalStore = {
   async listRejectedActionsSince(org, sinceIso) {
     const rows = getDb()
       .prepare(
-        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at
+        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, group_key, status, created_at, expires_at, decided_by, decided_at
          FROM pending_actions WHERE org_id = ? AND status = 'rejected' AND decided_at >= ? ORDER BY decided_at DESC`,
       )
       .all(org, sinceIso) as PendingActionSqlRow[];
@@ -3039,6 +3232,16 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async setPendingActionMessage(org, id, messageTs) {
     getDb().prepare("UPDATE pending_actions SET message_ts = ? WHERE org_id = ? AND id = ?").run(messageTs, org, id);
+  },
+
+  async listPendingActionsForMessage(org, channelId, messageTs) {
+    const rows = getDb()
+      .prepare(
+        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, group_key, status, created_at, expires_at, decided_by, decided_at
+         FROM pending_actions WHERE org_id = ? AND channel_id = ? AND message_ts = ? ORDER BY created_at ASC, id ASC`,
+      )
+      .all(org, channelId, messageTs) as PendingActionSqlRow[];
+    return rows.map((r) => pendingActionFromRow(org, r));
   },
 
   async decidePendingAction(org, id, status, decidedBy, decidedAt) {
@@ -3058,7 +3261,7 @@ export const sqliteOperationalStore: OperationalStore = {
   async listDecidedPendingActionsWithArg(org, kind, argKey) {
     const rows = getDb()
       .prepare(
-        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at
+        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, group_key, status, created_at, expires_at, decided_by, decided_at
          FROM pending_actions WHERE org_id = ? AND kind = ? AND status <> 'pending' AND instr(args_json, ?) > 0 ORDER BY decided_at ASC`,
       )
       .all(org, kind, argKeyNeedle(argKey)) as PendingActionSqlRow[];

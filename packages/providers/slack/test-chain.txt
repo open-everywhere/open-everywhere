@@ -30,6 +30,8 @@ test:slack-reaction-ingest
 test:slack-chat-audit
 test:slack-scope-audit
 test:slack-app-manifest
+test:slack-offboarding
+test:slack-as-you
 test:slack-workspace-roster
 test:slack-webhook-verifier
 test:slack-input-response
@@ -40,4 +42,6 @@ test:slack-rate-limit
 test:slack-web-api-seam
 test:slack-setup
 test:slack-reasoning-fence
+test:slack-step-label
 test:slack-surface-evidence
+test:slack-home

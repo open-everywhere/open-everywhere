@@ -701,10 +701,11 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
     routes: { method: string; path: string }[];
   };
   ok(
-    channel.routes.length === 7 && channel.routes.every((r) => r.method === "GET"),
-    "the channel mounts exactly seven GET routes (usage + audit + unified-audit + transcript + runtime-signal + model-calls + model-call-sessions)",
+    channel.routes.length === 8 && channel.routes.every((r) => r.method === "GET"),
+    "the channel mounts exactly eight GET routes (usage + tool-usage + audit + unified-audit + transcript + runtime-signal + model-calls + model-call-sessions)",
   );
   ok(channel.routes.some((r) => r.path === CONTROL_READ_USAGE_PATH), "…one at /control/v1/usage");
+  ok(channel.routes.some((r) => r.path === "/control/v1/tool-usage"), "…one at /control/v1/tool-usage (OPE-2435)");
   ok(channel.routes.some((r) => r.path === CONTROL_READ_AUDIT_PATH), "…one at /control/v1/audit");
   ok(channel.routes.some((r) => r.path === "/control/v1/unified-audit"), "…one at /control/v1/unified-audit");
   ok(channel.routes.some((r) => r.path === CONTROL_READ_TRANSCRIPT_PATH), "…one at /control/v1/session/:sessionId/transcript");

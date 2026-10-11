@@ -2957,13 +2957,24 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
   };
   const waits: Array<Promise<unknown>> = [];
   const fakeArgs = { from: () => ({ send: async () => ({}) }), waitUntil: (p: Promise<unknown>) => void waits.push(p) };
-  const frontOpts = { signingSecret: secret, now: () => nowMs, markEventSeen: async () => true };
+  const rechecks: string[] = [];
+  const frontOpts = {
+    signingSecret: secret,
+    now: () => nowMs,
+    markEventSeen: async () => true,
+    recheckChannelCanvas: async (input: { trigger: string }) => {
+      rechecks.push(input.trigger);
+    },
+  };
   const handler = buildFrontHandler(async () => new Response("inner"), { ...frontOpts, getBotIdentity: async () => ({ userId: "UBOT" }) });
   let res = await handler(mkReq(joinEnv({ user: "UHUMAN" })), fakeArgs as unknown as Parameters<typeof handler>[1]);
-  ok(res.status === 200 && waits.length === 0, "human join → dropped (no wake scheduled)");
+  await Promise.all(waits);
+  ok(res.status === 200 && waits.length === rechecks.length && rechecks.every((t) => t === "member-joined"), "human join → dropped (no wake scheduled; only the canvas recheck)");
   const anon = buildFrontHandler(async () => new Response("inner"), { ...frontOpts, getBotIdentity: async () => ({}) });
   res = await anon(mkReq(joinEnv()), fakeArgs as unknown as Parameters<typeof anon>[1]);
-  ok(res.status === 200 && waits.length === 0, "unresolved bot identity → join dropped (fail-closed)");
+  await Promise.all(waits);
+  ok(res.status === 200 && waits.length === rechecks.length, "unresolved bot identity → join dropped (fail-closed; only the canvas recheck, which can only clear)");
+  waits.length = 0;
 
   const joined = (over: Record<string, unknown> = {}) => parseChannelJoinEvent(JSON.parse(joinEnv(over)))!;
   const meta = { channelId: "C_TXN", name: "txn-eng", topic: "Transactions engineering", purpose: "All things transactions", memberCount: 12, channelType: "channel", isPrivate: false };

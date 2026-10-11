@@ -100,6 +100,20 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
       "RED-until-leg: lane A run 2 — the identity-link teardown cell. This is the row that closes the exposure a revoked link leaves, so the teardown cell is not optional.",
    },
   {
+    action: "identity.offboard.applied",
+    fields: ["account", "source", "outcome"],
+    proves: "a surface reported a person's account deactivated, every gate confirmed it, and the offboarding lever ran without an admin (OPE-2423)",
+    notExercised:
+      "RED-until-leg: no e2e leg deactivates a Slack member — the fixture workspace would lose an account it cannot get back. identity/offboarding.ts's unit suite (test:surface-offboarding) drives every outcome.",
+  },
+  {
+    action: "identity.offboard.refused",
+    fields: ["account", "source", "reason"],
+    proves: "a deactivation report was NOT acted on, and why (another workspace, an unadmitted tenant, an unconfirmed deactivation, a set that also holds the person's account elsewhere) — the row that shows a terminal revoke was withheld",
+    notExercised:
+      "RED-until-leg: no e2e leg deactivates a Slack member, for the reason identity.offboard.applied states. The unit suite (test:surface-offboarding) drives every refusal.",
+  },
+  {
     action: "identity.link.suggested",
     fields: [],
     proves: "the agent proposed a link nobody had asked for, so an unsolicited suggestion is visible",
@@ -174,10 +188,18 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
    },
   {
     action: "thread_seat.completed",
-    fields: ["channelKey", "threadKey", "cleared", "reportDelivered", "wakeId", "sessionId"],
-    proves: "the seat closed, and whether its report reached the parent — a seat that ends without one is a lost errand",    notExercised:
+    fields: ["reason", "channelKey", "threadKey", "seatId", "recorded", "closedNow", "foreign", "cleared", "hasReport", "handedBack", "reaction", "posted", "wakeId", "sessionId"],
+    proves: "the seat finished its thread: whether the completion posted in the thread, whether the done reaction landed on its root, and whether the host's hand-back reached the parent — a seat that ends without one is a lost errand",    notExercised:
       "RED-until-leg: J-SUP — beside thread_seat.messaged. A seat that ends without a delivered report is a lost errand, and no leg would notice.",
    },
+
+  {
+    action: "thread_seat.closed",
+    fields: ["reason", "channelKey", "threadKey", "seatId", "recorded", "closedNow", "foreign", "cleared", "hasReport", "handedBack", "reaction"],
+    proves: "the HOST closed a thread seat — it went quiet (reason expired) or its thread could no longer reach it (reason closed) — and whether the host-written hand-back reached the parent, so no delegated thread ends in silence",
+    notExercised:
+      "RED-until-leg: J-SUP — an idle close needs a thread quiet for three days, and a host close needs a re-homed domain; no journey waits that long or re-homes one. scripts/thread-seat-close-test.ts drives both paths offline.",
+  },
 
   {
     action: "discord.external_policy_suppressed",
@@ -346,6 +368,27 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
       "RED-until-leg: no e2e domain runs the work session yet; tests/integration/tasks/seat-snappy-under-worker.test.ts arm ② reads this row on the integration tier.",
   },
   {
+    action: "a2a.delegate_approved",
+    fields: ["agent", "host", "requestedBy", "tainted"],
+    proves: "a member's click on an a2a.delegate card, or an approver-chain lift (principalId `chain:<element>`), approved ONE delegation of one exact task to one declared A2A agent (OPE-2425) — ids only, never the task text",
+    notExercised:
+      "RED-until-leg: the e2e scenario S-A2A-DELEGATE drives a delegation against a public reference agent only when a deployment declares one; tests/integration/connectors/a2a-delegation.test.ts reads this row on the integration tier.",
+  },
+  {
+    action: "a2a.refused",
+    fields: ["reason", "agent", "tool"],
+    proves: "an A2A tool refused a room before any card or request: not internal (shared, public or guest DM), a non-member in the wake, or a domain the agent's declaration does not allow (OPE-2425)",
+    notExercised:
+      "RED-until-leg: no e2e leg drives an external room into an A2A tool; packages/core/scripts/a2a-client-test.ts §9 drives the gate and tests/integration/connectors/a2a-delegation.test.ts reads this row on the integration tier.",
+  },
+  {
+    action: "a2a.delegated",
+    fields: ["agent", "host", "requestedBy", "approvedBy", "approvedByPolicy", "state"],
+    proves: "an approved delegation SENT one task to a declared A2A agent with the asker's identity attached, and the task state it came back in (OPE-2425) — never the task text or the answer",
+    notExercised:
+      "RED-until-leg: beside a2a.delegate_approved — tests/integration/connectors/a2a-delegation.test.ts reads this row on the integration tier.",
+  },
+  {
     action: "connector.op_approved",
     fields: ["connection", "op", "grain", "requestedBy"],
     proves: "a member's click on an op.connector card approved one connector op for this conversation (a write, or the flag-off blanket) or for one call (a destructive op) — the OE card that replaced eve's native once() (OPE-2340, ruling Q4)",
@@ -484,6 +527,12 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
     proves: "stored memory was destroyed on a human decision — irreversible, so the row is the only record it happened",
   },
   {
+    action: "memory.export",
+    fields: ["via", "silo", "items", "chars", "sha256"],
+    proves:
+      "a person's own memory left the store as a document handed to them, through which door, and a digest of exactly what was handed over — never its lines (OPE-2451). S-APP-HOME drives it with a forged Export click.",
+  },
+  {
     action: "memory.delete",
     fields: ["silo", "relPath"],
     proves: "one stored memory file was deleted, naming the silo and the path",
@@ -561,6 +610,7 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "admin.approval.judge_disarm",
   "admin.approval.judge_rearm",
   "admin.connector.clear_override",
+  "attention.ping_failed",
   "admin.model.clear_domain",
   "admin.model.set_domain",
   "admin.routine.cancel",
@@ -624,6 +674,7 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "github.supervisor_turn_failed",
   "linear.supervisor_session_failed",
   "linear.supervisor_turn_failed",
+  "mcp-server.propose.pr_opened",
   "session.generation_retire_skipped",
   "work.session_rotation_deferred",
   "session.generation_retired",
@@ -660,6 +711,7 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "governance.redirected",
   "grant.mount_refused",
   "grant.mount_withheld",
+  "home.publish",
   "hook.refused",
   "input_response.dropped",
   "input_response.nonmember_marked",
@@ -672,6 +724,7 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "linear.stand_down_lifted",
   "linear.stand_down_suppressed",
   "memory.admin_read",
+  "memory.canvas_refresh",
   "memory.claim_withheld",
   "memory.index_change",
   "memory.learn",

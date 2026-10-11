@@ -11,6 +11,7 @@ import type { Domain } from "../memory/domain.js";
 import type { MemorySilo } from "../memory/silo.js";
 import type { Role } from "../roles/role.js";
 import type { WebhookHook } from "../webhooks/config.js";
+import type { McpServerDeclaration } from "../connections/mcp-servers.js";
 import type { SpendBudgets } from "../spend/spend.js";
 import type { SpendCheckpoints } from "../spend/checkpoint.js";
 import type { ModelPolicy } from "../model/policy.js";
@@ -24,8 +25,10 @@ export interface AccessRequestsConfig {
   readonly grantsPath?: string;
   readonly hooksPath?: string;
   readonly agentsPath?: string;
+  readonly mcpServersPath?: string;
   readonly groupsPath?: string;
   baseWebhooks?(): readonly WebhookHook[];
+  baseMcpServers?(): readonly McpServerDeclaration[];
   baseAgents?(): AgentsFile;
   baseDomains?(): readonly Domain[];
   baseSilos?(): readonly MemorySilo[];

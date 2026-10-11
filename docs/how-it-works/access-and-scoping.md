@@ -162,6 +162,11 @@ Two things about a group are load-bearing:
   `principal`, so for the same connection id a person's own `principal` binding shadows the
   group's — "the team shares this key, except Ada, whose own binding names hers". Additive
   fields (repos, connectors, plugins, hosts) union across both.
+- **A group binding can be narrowed to one platform's DMs.** `scope: { level: "group", group,
+  platform: "slack" }` resolves only in a DM on Slack. The narrowing only subtracts, and only a
+  `group` binding takes it: config load refuses `platform` at any other level. A declared
+  [personal-surface MCP server](../extending/connectors.md#a-chat-platforms-own-server-on-the-persons-sign-in)
+  is the shipped user — "search Slack as you" belongs in a Slack DM, not in a Discord one.
 
 A member is written either way, and the difference matters:
 

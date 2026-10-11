@@ -1,10 +1,11 @@
-import type { OperationalStore, ThreadSeatStateRow } from "../operational/store.js";
+import type { OperationalStore, ThreadSeatState, ThreadSeatStateRow } from "../operational/store.js";
 import { isUnifiedWakeOrigin, type UnifiedThreadRef, type UnifiedWakeOrigin } from "./unified-window.js";
 import { THREAD_OWNER_TTL_MS } from "./thread-ownership.js";
 
 export interface ThreadSeatStateStore {
   putThreadSeatState: OperationalStore["putThreadSeatState"];
   getThreadSeatState: OperationalStore["getThreadSeatState"];
+  closeThreadSeatState: OperationalStore["closeThreadSeatState"];
 }
 
 const THREAD_SEAT_STATE_TTL_MS = THREAD_OWNER_TTL_MS;
@@ -40,18 +41,41 @@ export function threadSeatOrigin(row: { readonly originJson: string }): UnifiedW
   }
 }
 
-export async function recordThreadSeatReport(
+export interface ThreadSeatCloseRecord {
+  readonly row: ThreadSeatStateRow;
+  readonly closedNow: boolean;
+  readonly foreign: boolean;
+  readonly priorState: ThreadSeatState;
+  readonly lastActiveAt: string;
+}
+
+export async function recordThreadSeatClose(
   store: ThreadSeatStateStore,
   org: string,
   ref: UnifiedThreadRef,
-  report: string,
-  atIso: string,
-): Promise<ThreadSeatStateRow | null> {
+  input: { readonly seatToken: string; readonly state: Exclude<ThreadSeatState, "open">; readonly report?: string; readonly atIso: string },
+): Promise<ThreadSeatCloseRecord | null> {
   const existing = await store.getThreadSeatState(org, ref.channelKey, ref.threadKey).catch(() => null);
   if (!existing) return null;
-  const closed: ThreadSeatStateRow = { ...existing, state: "completed", report, updatedAt: atIso };
-  await store.putThreadSeatState(org, closed, atIso, THREAD_SEAT_STATE_TTL_MS);
-  return closed;
+  const base = { priorState: existing.state, lastActiveAt: existing.updatedAt };
+  if (existing.seatToken !== input.seatToken) return { row: existing, closedNow: false, foreign: true, ...base };
+  const closedNow = await store.closeThreadSeatState(org, ref.channelKey, ref.threadKey, input.seatToken, input.state, input.report ?? null, input.atIso);
+  if (!closedNow) {
+    const now = await store.getThreadSeatState(org, ref.channelKey, ref.threadKey).catch(() => null);
+    return { row: now ?? existing, closedNow: false, foreign: false, ...base };
+  }
+  const { report: priorReport, ...rest } = existing;
+  const report = input.report ?? priorReport;
+  const row: ThreadSeatStateRow = { ...rest, state: input.state, ...(report !== undefined ? { report } : {}), updatedAt: input.atIso };
+  return { row, closedNow: true, foreign: false, ...base };
+}
+
+export async function touchThreadSeatActivity(store: Pick<OperationalStore, "touchThreadSeat">, org: string, ref: UnifiedThreadRef, atIso: string): Promise<boolean> {
+  try {
+    return await store.touchThreadSeat(org, ref.channelKey, ref.threadKey, atIso);
+  } catch {
+    return false;
+  }
 }
 
 export async function readThreadSeatState(store: ThreadSeatStateStore, org: string, ref: UnifiedThreadRef): Promise<ThreadSeatStateRow | null> {

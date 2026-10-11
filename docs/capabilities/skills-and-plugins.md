@@ -121,7 +121,9 @@ drafts a `SKILL.md` for it. Where the deployment has a config repo (`accessReque
 that draft opens a **pull request** on it, adding the file under `.agents/skills/<name>/SKILL.md` —
 so it arms the way any [repo-shipped skill](#skills-are-scoped-per-surface) does, on the next
 checkout of a granted repo. `memory.skillProposalPr` ships on. With no config repo, the draft stays in
-the review queue and nothing errors. Set it to `false` to keep every draft in the queue only.
+the review queue and nothing errors. A config repo in dry-run mode (`dryRun: true` in
+`agent/access/access-requests.ts`) opens no pull request either. Set it to `false` to keep every
+draft in the queue only.
 
 **Merging is the approval.** The cycle writes one branch and one file, never the base branch, and
 it cannot merge — the same "a skill is a procedure the agent follows, so a human reads it first"

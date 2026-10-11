@@ -35,7 +35,7 @@ export interface GroupsDeliveryDeps {
 }
 
 export interface GroupsDeliveryOutcome {
-  readonly outcome: "no-op" | "opened" | "updated";
+  readonly outcome: "no-op" | "dry-run" | "opened" | "updated";
   readonly repo: string;
   readonly branch: string;
   readonly committed: boolean;
@@ -84,6 +84,15 @@ export async function deliverGroupsOverlay(plan: GroupSyncPlan, deps: GroupsDeli
   }
 
   const overlayContent = emitGroupsModule(plan.next);
+  if (cfg.dryRun === true) {
+    return {
+      outcome: "dry-run",
+      repo,
+      branch,
+      committed: false,
+      note: `dry run (accessRequests.dryRun) — would commit ${groupsPath} to ${repo}#${branch} and open a PR against ${base}; no branch, no PR.`,
+    };
+  }
   const token = await (deps.resolveToken ?? resolveConfigRepoWriteToken)(repo);
   const contents = deps.contents ?? new GitHubContents();
   const refSha = deps.getBranchSha ?? getBranchSha;

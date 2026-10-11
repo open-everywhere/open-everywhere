@@ -2,6 +2,7 @@ import { ticketCreateFn } from "../channels/ticket-create.js";
 import { appendAudit } from "../audit/audit.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import type { ActionKind } from "./types.js";
+import { plainValue } from "./plain-text.js";
 
 export interface TicketCreateArgs {
   readonly org: string;
@@ -25,6 +26,7 @@ function summarizeCreate(args: TicketCreateArgs): string[] {
 const ticketCreate: ActionKind<TicketCreateArgs> = {
   kind: "ticket.create",
   policy: "member",
+  plainSummary: (args) => `File a new ${plainValue(args.platform)} work item in ${plainValue(args.target)}: ${plainValue(args.title, 60)}`,
   summarize: summarizeCreate,
   async execute(args, decidedBy) {
     const fn = ticketCreateFn(args.platform);

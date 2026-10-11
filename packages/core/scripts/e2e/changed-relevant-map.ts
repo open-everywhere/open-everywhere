@@ -29,7 +29,7 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   {
     area: "teams-provider",
     globs: ["packages/providers/teams/**"],
-    scenarios: ["J-TEAMS", "J-TEAMS-DM", "J-ENGAGED-teams", "S-DELEGATED-teams", "S-AMBIENT-teams", "S-SIBLING-teams", "S-SUSPENDED-teams", "S-LINK-teams"],
+    scenarios: ["J-TEAMS", "J-TEAMS-DM", "J-ENGAGED-teams", "S-DELEGATED-teams", "S-AMBIENT-teams", "S-SIBLING-teams", "S-SUSPENDED-teams", "S-LINK-teams", "S-CARD-teams"],
     why: "The three surface: \"teams\" scenarios — the channel, the 1:1 DM, and the ambient engagement seam (OPE-1500: @mention engages, a plain follow-up wakes, stand_down stops it). J-TEAMS is also the smoke-lane's non-Slack half (scenarios.ts smoke: true); the other two are not — J-TEAMS-DM self-skips until the driver's Chat.* Graph scope is consented (OPE-972), and J-ENGAGED-teams self-skips when the tenant has not consented to the ChannelMessage.Read.Group RSC grant, without which Microsoft never delivers the plain follow-up it asserts on.",
   },
   {
@@ -54,8 +54,20 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   {
     area: "approvals",
     globs: ["packages/core/agent/approvals/**", "packages/core/agent/access/approver-chain.ts", "packages/core/agent/access/approval-*.ts", "packages/core/agent/access/pre-approval-rules.ts"],
-    scenarios: ["J3", "J4", "S-PR-BOUNDARY", "S-AWS-BOUNDARY", "S-CONNECTOR-TIER", "S-NOTION-WRITE", "S-EVE-CARD", "J-PR", "S-PR-SESSION", "F-SEC", "S-JUDGE-LIFT-NOTICE", "S-SUSPENDED-slack", "S-SUSPENDED-discord", "S-SUSPENDED-teams", "S-SUSPENDED-linear", "S-SUSPENDED-github"],
-    why: "These gate on an `approval.chain` row (verdict, transform, card-vs-judge path) — the doctrine's P1.1 list of what the approval seam must prove. S-EVE-CARD is the one exception and belongs here for the opposite reason: it drives the EVE-MINTED card, which never enters OE's approvals plane, so it gates on the card's identity and on the click resuming the turn, and RECORDS the approval.chain row count instead of gating on it (OPE-1056). S-JUDGE-LIFT-NOTICE (OPE-1902) belongs here because it is the only leg on the road a lift takes INSTEAD of a card: `approvals/flow.ts` posts the notice off the row's frozen `postedTo` and `approvals/card.ts` renders it, so a change under this glob decides whether an act that ran without asking leaves any trace in the room at all.",
+    scenarios: ["J3", "J4", "S-PR-BOUNDARY", "S-AWS-BOUNDARY", "S-CONNECTOR-TIER", "S-NOTION-WRITE", "S-EVE-CARD", "J-PR", "S-PR-SESSION", "F-SEC", "S-JUDGE-LIFT-NOTICE", "S-CARD-SUMMARY", "S-SUSPENDED-slack", "S-SUSPENDED-discord", "S-SUSPENDED-teams", "S-SUSPENDED-linear", "S-SUSPENDED-github"],
+    why: "These gate on an `approval.chain` row (verdict, transform, card-vs-judge path) — the doctrine's P1.1 list of what the approval seam must prove. S-EVE-CARD is the one exception and belongs here for the opposite reason: it drives the EVE-MINTED card, which never enters OE's approvals plane, so it gates on the card's identity and on the click resuming the turn, and RECORDS the approval.chain row count instead of gating on it (OPE-1056). S-JUDGE-LIFT-NOTICE (OPE-1902) belongs here because it is the only leg on the road a lift takes INSTEAD of a card: `approvals/flow.ts` posts the notice off the row's frozen `postedTo` and `approvals/card.ts` renders it, so a change under this glob decides whether an act that ran without asking leaves any trace in the room at all. S-CARD-SUMMARY (OPE-2434) belongs here because `approvals/card.ts` and `approvals/plain-summary.ts` write the plain first line it reads off a live card.",
+  },
+  {
+    area: "a2a",
+    globs: [
+      "packages/core/agent/a2a/**",
+      "packages/core/agent/approvals/a2a-delegate.ts",
+      "packages/core/agent/tools/delegate_to_agent.ts",
+      "packages/core/agent/tools/check_agent_task.ts",
+      "agent/access/a2a-agents.ts",
+    ],
+    scenarios: ["S-A2A-DELEGATE"],
+    why: "S-A2A-DELEGATE is the only live leg on the outbound A2A client (OPE-2425): the a2a.delegate card, the armed second call, the declared agent's answer in the thread, and the two a2a.* audit rows.",
   },
   {
     area: "taint",
@@ -130,6 +142,35 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     ],
     scenarios: ["S-GITHUB-NOTION-REST"],
     why: "S-GITHUB-NOTION-REST is the live workflow that crosses every part of the shared notion-rest route: the domain binding and connection in app access config, the plugin alias and packaged skill, scoped skill resolution, brokered header resolution, and sandbox policy compilation/application. It verifies the mutation through an independent Notion credential and requires a policy row for the GitHub scope to name the notion-rest credentialed write route.",
+  },
+  {
+    area: "memory-you-can-see",
+    globs: [
+      "packages/core/agent/home/**",
+      "packages/core/agent/memory/visible.ts",
+      "packages/providers/slack/agent/channels/slack-home.ts",
+      "packages/providers/slack/agent/channels/slack-memory-canvas.ts",
+    ],
+    scenarios: ["S-APP-HOME"],
+    why: "S-APP-HOME (OPE-2451) is the only live leg on the person's Home tab: a signed open publishes the page, Export hands the person their memory, and a forged Forget erases nothing. A change to the page model, the memory data plane behind it or the Slack half reaches exactly that leg.",
+  },
+  {
+    area: "personal-surface-mcp",
+    globs: [
+      "packages/core/agent/connections/mcp-servers.ts",
+      "packages/core/agent/connections/mcp-server-connection.ts",
+      "packages/core/agent/connections/personal-surface-fence.ts",
+      "packages/providers/slack/agent/slack-as-you.ts",
+      "agent/access/mcp-servers.ts",
+    ],
+    scenarios: ["S-SLACK-AS-YOU"],
+    why: "S-SLACK-AS-YOU (OPE-2421) is the only live leg on a personal-surface MCP server: Slack's own MCP server on a person's own sign-in. It proves the person's DM reads a channel the bot is not in, a channel seat never reaches the connection, and a post as the person raises a card.",
+  },
+  {
+    area: "slack-step-labels",
+    globs: ["packages/providers/slack/agent/channels/slack-step-label.ts"],
+    scenarios: ["S-STEP-LABELS"],
+    why: "S-STEP-LABELS (OPE-2449) is the live leg for the Slack step labels: a labelled tool step runs in a real turn, and the thread holds the one answer and no label post.",
   },
   {
     area: "proactive-dm-road",
@@ -271,6 +312,16 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     ],
     scenarios: ["S-HALT"],
     why: "S-HALT is the only live leg that asks for a surface halt through chat, joins it to the originating wake/session and exact stored address, then atomically clears only that observed halt through the local control plane. It exercises both doors and both operational adapters' shared conditional-clear contract.",
+  },
+  {
+    area: "attention-states",
+    globs: [
+      "packages/core/agent/status/attention.ts",
+      "packages/core/agent/tools/update_status.ts",
+      "packages/core/agent/channels/proactive-dm-manifest.ts",
+    ],
+    scenarios: ["S-BLOCKED-PING"],
+    why: "S-BLOCKED-PING is the only live leg that drives a seat into the blocked state and reads the attention.blocked outcome rows the proactive-DM road writes: one ping per blocked episode, for the asking person only.",
   },
   {
     area: "reply-provenance",

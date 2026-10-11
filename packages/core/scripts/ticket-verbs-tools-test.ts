@@ -151,7 +151,7 @@ async function armed<T>(tool: unknown, c: BindableContext): Promise<T | null> {
   const before = (await getOperationalStore().listPendingActions("default")).length;
   await assert.rejects(
     async () => { await execTool(setStateEntry)({ ref: { platform: "tool-test-platform", id: "TT-1" }, state: "Done" }, ctx("tool-test-platform", {}) as never); },
-    /I can't change that ticket's status from here.*has no approval-card path.*no Slack or Discord channel to put the card in.*domains\/[a-z0-9<>-]+\.ts\)/s,
+    /I can't change that ticket's status from here.*has no approval-card path.*no Slack, Discord or Teams channel to put the card in.*domains\/[a-z0-9<>-]+\.ts\)/s,
     "set_state on a card-less origin refuses with the VENUE's copy (OPE-326) — its own verb, and the config change that would unblock it, not a flat 'this surface is not Slack'",
   );
   n++;
@@ -178,7 +178,7 @@ async function armed<T>(tool: unknown, c: BindableContext): Promise<T | null> {
 {
   await assert.rejects(
     async () => { await execTool(assignEntry)({ ref: { platform: "tool-test-platform", id: "TT-1" }, assignee: "alice" }, ctx("tool-test-platform", {}) as never); },
-    /I can't assign that ticket from here.*has no approval-card path.*no Slack or Discord channel to put the card in.*domains\/[a-z0-9<>-]+\.ts\)/s,
+    /I can't assign that ticket from here.*has no approval-card path.*no Slack, Discord or Teams channel to put the card in.*domains\/[a-z0-9<>-]+\.ts\)/s,
     "assign refuses with the same venue copy and its own verb",
   );
   n++;

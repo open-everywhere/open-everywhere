@@ -1,10 +1,14 @@
+// proves: SEAT-16, SEAT-17, SEAT-18, SEAT-19, SEAT-20, SEAT-83
+
 process.env.OE_SQLITE_PATH = ":memory:";
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { readAudit } from "../agent/audit/audit.js";
 import type { SessionTailEntry } from "../agent/channels/session-tail.js";
-import { getOrCreateDmSeat, touchDmSeat, dmSeatThresholds, DM_SEAT_ROTATE_TURN_BUDGET, DM_SEAT_ROTATE_TOKEN_BUDGET, DM_SEAT_ROTATE_EXPIRY_MS } from "../agent/channels/dm-seat.js";
+import { getOrCreateDmSeat, touchDmSeat, dmSeatThresholds, DM_SEAT_ROTATE_TURN_BUDGET, DM_SEAT_ROTATE_TOKEN_BUDGET, DM_SEAT_ROTATE_EXPIRY_MS, DM_SEAT_HEAL_GRACE_MS } from "../agent/channels/dm-seat.js";
+import { conversationSummaryTokenCap, tailTokenCap } from "../agent/channels/session-tail.js";
+import { carryTailForward } from "../agent/channels/session-tail-record.js";
 import { supervisorRotateQuietGapMs, supervisorRotateTokenBudget, supervisorRotateTurnBudget, supervisorRotateExpiryMs } from "../agent/channels/turn-delivery.js";
 import {
   classifySessionId,
@@ -39,9 +43,11 @@ const LEGACY_REG = "oe-dm-seat::D0EXDMCH001";
 function makeStore(...seeds: (Partial<ChannelSessionRow> & { surfaceKey: string })[]): OperationalStore & {
   rows: Map<string, ChannelSessionRow>;
   tail: Map<string, SessionTailEntry[]>;
+  summaries: Map<string, SessionTailEntry[]>;
 } {
   const rows = new Map<string, ChannelSessionRow>();
   const tailRing = new Map<string, SessionTailEntry[]>();
+  const summaries = new Map<string, SessionTailEntry[]>();
   for (const seed of seeds) {
     rows.set(`${ORG}:${seed.surfaceKey}`, {
       org: ORG,
@@ -114,8 +120,15 @@ function makeStore(...seeds: (Partial<ChannelSessionRow> & { surfaceKey: string 
     async clearSessionTail(org: string, surfaceKey: string, token: string) {
       tailRing.delete(`${org}:${surfaceKey}:${token}`);
     },
+    summaries,
+    async readConversationSummary(org: string, surfaceKey: string) {
+      return [...(summaries.get(`${org}:${surfaceKey}`) ?? [])];
+    },
+    async writeConversationSummary(org: string, surfaceKey: string, entries: readonly SessionTailEntry[]) {
+      summaries.set(`${org}:${surfaceKey}`, [...entries]);
+    },
   };
-  return store as unknown as OperationalStore & { rows: Map<string, ChannelSessionRow>; tail: Map<string, SessionTailEntry[]> };
+  return store as unknown as OperationalStore & { rows: Map<string, ChannelSessionRow>; tail: Map<string, SessionTailEntry[]>; summaries: Map<string, SessionTailEntry[]> };
 }
 
 {
@@ -315,6 +328,90 @@ function makeStore(...seeds: (Partial<ChannelSessionRow> & { surfaceKey: string 
   const rotated = await getOrCreateDmSeat(ORG, DM, "2026-07-02T00:00:00.000Z", { store: makeStore(seed) });
   eq(rotated.generation, 3, "…and at 31 days the DM's OWN clock retires it, with no turn or token pressure whatsoever");
   ok(rotated.freshGeneration, "an expiry rotation is a fresh generation like any other (its first wake carries the tail)");
+}
+
+{
+  const FACT = "please remember: my sister's wedding is in Porto on 14 November, so block that week";
+  const store = makeStore();
+  const OUT_OF_BUDGET = { turnCount: DM_SEAT_ROTATE_TURN_BUDGET + 1 };
+  let clock = Date.parse("2026-08-01T09:00:00.000Z");
+  const tick = (): string => new Date((clock += 60_000)).toISOString();
+
+  const talk = async (token: string, exchanges: number, opener?: string): Promise<void> => {
+    if (opener) await store.appendSessionTail(ORG, REG, token, { kind: "wake", at: tick(), from: "human", trust: "principal", refuted: false, author: "alice", authorId: "U_ALICE", text: opener });
+    for (let k = 0; k < exchanges; k++) {
+      await store.appendSessionTail(ORG, REG, token, { kind: "wake", at: tick(), from: "human", trust: "principal", refuted: false, author: "alice", authorId: "U_ALICE", text: `question ${k}: can you look at the ${k}th item on my list and tell me what is blocking it?` });
+      await store.appendSessionTail(ORG, REG, token, { kind: "post", at: tick(), from: "self", trust: "relay", refuted: false, author: "self", text: `item ${k} is blocked on a review. ${"I checked the thread and the doc, and the owner is out until Monday. ".repeat(3)}` });
+    }
+  };
+  const press = (patch: Partial<ChannelSessionRow>): void => {
+    const row = store.rows.get(`${ORG}:${REG}`)!;
+    store.rows.set(`${ORG}:${REG}`, { ...row, firstWakeAt: row.createdAt, ...patch });
+  };
+
+  const g1 = await getOrCreateDmSeat(ORG, DM, tick(), { store });
+  await talk(g1.token, 24, FACT);
+  press(OUT_OF_BUDGET);
+  const g2 = await getOrCreateDmSeat(ORG, DM, tick(), { store });
+  eq(g2.generation, 2, "the turn backstop still ROTATES the DM — the cost guard holds");
+  ok(g2.tail.some((m) => m.body.includes("Porto on 14 November")), "🔴 after the TURN-backstop rotation the generation-1 fact is carried into generation 2");
+
+  await talk(g2.token, 25);
+  press({ lastInputTokens: dmSeatThresholds().contextSizeTokens });
+  const g3 = await getOrCreateDmSeat(ORG, DM, tick(), { store });
+  eq(g3.generation, 3, "the context-size backstop still ROTATES the DM");
+  ok(g3.tail.some((m) => m.body.includes("Porto on 14 November")), "🔴 after the CONTEXT-SIZE rotation the generation-1 fact is STILL carried, two generations later");
+
+  await talk(g3.token, 30);
+  press({ inputTokensTotal: DM_SEAT_ROTATE_TOKEN_BUDGET + 1 });
+  const g4 = await getOrCreateDmSeat(ORG, DM, tick(), { store });
+  eq(g4.generation, 4, "the token backstop still ROTATES the DM");
+  const fact = g4.tail.find((m) => m.body.includes("Porto on 14 November"));
+  ok(fact !== undefined, "🔴 after THREE rotations on three different rungs the person can still refer back to the first thing they said");
+  eq([fact!.from, fact!.author, fact!.trust], ["human", "alice", "principal"], "…and it still reads as the PERSON's own message, with their grade — not as a paraphrase");
+  ok(fact!.body.includes("block that week"), "…in full: a short message is carried whole, not cut");
+  ok(g4.tail.some((m) => m.from === "self"), "the seat's own earlier answers are carried too, from=self");
+  ok(g4.tail.length > 0 && g4.tail[g4.tail.length - 1]!.body.startsWith("item 29"), "the carry ends at the outgoing generation's LAST message, verbatim — the tail is still the newest part");
+
+  const carriedTokens = g4.tail.reduce((sum, m) => sum + Math.ceil((m.body.length + m.author.length) / 4) + 110, 0);
+  ok(carriedTokens <= conversationSummaryTokenCap() + tailTokenCap(), `🔴 the carried conversation stays within the summary cap plus the tail cap (${carriedTokens} ≤ ${conversationSummaryTokenCap() + tailTokenCap()} proxy tokens)`);
+  eq(store.tail.size, 0, "every outgoing ring is cleared once carried; the summary partition is the only record that persists");
+  ok(store.summaries.get(`${ORG}:${REG}`)!.some((e) => e.text.includes("Porto")), "the summary partition holds the fact for the NEXT rotation too");
+
+  await talk(g4.token, 15);
+  press(OUT_OF_BUDGET);
+  const g5 = await getOrCreateDmSeat(ORG, DM, tick(), { store });
+  ok(g5.tail.some((m) => m.body.includes("Porto")), "the fact is still carried after 94 exchanges and four rotations");
+  await talk(g5.token, 40);
+  press(OUT_OF_BUDGET);
+  const g6 = await getOrCreateDmSeat(ORG, DM, tick(), { store });
+  ok(!g6.tail.some((m) => m.body.includes("Porto")), "🔴 …and it has aged out after 134: the summary is bounded by its cap, and older history is the memory's job");
+  ok(g6.tail.some((m) => m.body.startsWith("question 0:")), "…while the conversation the cap does hold still carries");
+
+  {
+    const row = store.rows.get(`${ORG}:${REG}`)!;
+    const second = await getOrCreateDmSeat(ORG, DM, tick(), { store });
+    ok(Date.parse(new Date(clock).toISOString()) - Date.parse(row.createdAt) <= DM_SEAT_HEAL_GRACE_MS, "fixture: this wake is inside the heal grace");
+    eq([second.token, second.freshGeneration, second.tail.length], [row.token, true, 0], "🔴 a second wake INSIDE the grace is fresh but carries NOTHING — no double carry into one session");
+    clock += DM_SEAT_HEAL_GRACE_MS;
+    const healed = await getOrCreateDmSeat(ORG, DM, tick(), { store });
+    eq([healed.token, healed.freshGeneration], [row.token, true], "a generation whose first wake never landed RESUMES as fresh (the self-heal arm)");
+    ok(healed.tail.some((m) => m.body.startsWith("question 0:")), "🔴 …and the healed wake carries the stored summary rather than nothing");
+    press({});
+    const ordinary = await getOrCreateDmSeat(ORG, DM, tick(), { store });
+    eq([ordinary.freshGeneration, ordinary.tail.length], [false, 0], "negative control: an ordinary resume (first wake landed) carries nothing");
+  }
+
+  const control = makeStore();
+  const c1 = await getOrCreateDmSeat(ORG, DM, tick(), { store: control });
+  const ctl = control as unknown as OperationalStore;
+  await ctl.appendSessionTail(ORG, REG, c1.token, { kind: "wake", at: tick(), from: "human", trust: "principal", refuted: false, author: "alice", text: FACT });
+  for (let k = 0; k < 49; k++) {
+    await ctl.appendSessionTail(ORG, REG, c1.token, { kind: "wake", at: tick(), from: "human", trust: "principal", refuted: false, author: "alice", text: `question ${k}: can you look at the ${k}th item on my list and tell me what is blocking it?` });
+    await ctl.appendSessionTail(ORG, REG, c1.token, { kind: "post", at: tick(), from: "self", trust: "relay", refuted: false, author: "self", text: `item ${k} is blocked on a review. ${"I checked the thread and the doc, and the owner is out until Monday. ".repeat(3)}` });
+  }
+  const tailOnly = await carryTailForward(ORG, REG, c1.token, ctl);
+  ok(tailOnly.length > 0 && !tailOnly.some((m) => m.body.includes("Porto")), "negative control: the TAIL-ONLY carry of the same DM has already lost the fact at the first rotation");
 }
 
 console.log(`dm-seat-test: ${n} assertions passed`);

@@ -4,6 +4,7 @@ import {
   resolveThreadOwner,
   clearThreadOwner,
   routeThreadMessage,
+  isLiveThreadSeatOwner,
   THREAD_OWNER_TTL_MS,
   type ThreadOwnershipStore,
 } from "../agent/channels/thread-ownership.js";
@@ -35,7 +36,13 @@ eq(routeThreadMessage("oe-dom:payments:oe-sup:g3"), { kind: "standing" }, "a STA
 eq(routeThreadMessage("garbage"), { kind: "standing" }, "an unparseable owner token ⇒ STANDING (fail-safe)");
 const SEAT_OWNER = formatWindowToken({ domain: "payments", windowId: "s/slack_C1/170.5", generation: 3 });
 eq(routeThreadMessage(SEAT_OWNER, 3), { kind: "task", token: SEAT_OWNER, grain: "thread" }, "a THREAD-SEAT owner (s/… token, live generation) ⇒ route the SEAT session (grain thread)");
-eq(routeThreadMessage(SEAT_OWNER, 4), { kind: "standing" }, "a STALE-generation seat owner ⇒ STANDING (same rotation GC as a task owner)");
+eq(routeThreadMessage(SEAT_OWNER, 4), { kind: "task", token: SEAT_OWNER, grain: "thread" }, "a thread seat from an EARLIER parent generation ⇒ STILL routes the SEAT (a rotation does not orphan it)");
+eq(routeThreadMessage(SEAT_OWNER, 9, "payments"), { kind: "task", token: SEAT_OWNER, grain: "thread" }, "…however many rotations later, while the domain matches");
+eq(routeThreadMessage(SEAT_OWNER, 4, "treasury"), { kind: "standing" }, "…but a thread seat minted into ANOTHER domain ⇒ STANDING (the domain check still applies to seats)");
+ok(isLiveThreadSeatOwner(SEAT_OWNER, "payments"), "isLiveThreadSeatOwner: a thread seat in the same domain is live, whatever its generation");
+ok(!isLiveThreadSeatOwner(SEAT_OWNER, "treasury"), "isLiveThreadSeatOwner: a thread seat in another domain is not");
+ok(!isLiveThreadSeatOwner(OWNER, "payments"), "isLiveThreadSeatOwner: a TASK owner is never a live thread seat");
+ok(!isLiveThreadSeatOwner(null, "payments"), "isLiveThreadSeatOwner: no owner is not a live thread seat");
 eq(routeThreadMessage(OWNER, 3, "payments"), { kind: "task", token: OWNER, grain: "task" }, "matching domain ⇒ still routes the owner");
 eq(routeThreadMessage(OWNER, 3, "treasury"), { kind: "standing" }, "a RE-HOMED domain (owner minted into another domain) ⇒ STANDING (stale, lazily reaped)");
 

@@ -80,6 +80,7 @@ import { admitSlackInputResponse } from "./slack-input-response.js";
 import { taskCardConfidentiality } from "./slack-task-card.js";
 import { turnEffectsFor, botDisplayName, slackForm, isSupervisorReplyTurn, deliverSupervisorReply, dmWakeThreadOverride, replyThreadTsForState, type SupervisorReplyTarget } from "./slack-events.js";
 import { markdownToSlackMrkdwn } from "./slack-mrkdwn.js";
+import { stepStatusFor, type StepAction } from "./slack-step-label.js";
 
 function teamIdFromDomainConfig(channelId: string | undefined): string | undefined {
   if (!channelId) return undefined;
@@ -112,9 +113,9 @@ function statusVerb(state: { channelId?: string | null; teamId?: string | null }
   }
 }
 
-async function refreshTypingStatus(channel: SlackEventContext): Promise<void> {
+async function refreshTypingStatus(channel: SlackEventContext, stepLabel?: string): Promise<void> {
   try {
-    await setWakeTyping(channel, statusVerb(channel.state));
+    await setWakeTyping(channel, stepLabel ?? statusVerb(channel.state));
   } catch {
   }
 }
@@ -523,9 +524,11 @@ const slackMentionChannel = slackChannel({
         "reasoning.completed": async (_data, channel) => {
           await refreshTypingStatus(channel);
         },
-        "actions.requested": async (_data, channel) => {
-          await refreshTypingStatus(channel);
+        "actions.requested": async (data, channel) => {
+          await refreshTypingStatus(channel, stepStatusFor(data.actions as readonly StepAction[] | undefined));
         },
+        "action.partial": async () => {},
+        "action.result": async () => {},
         "message.completed": async (data, channel, ctx) => {
           const sessionId = ctx?.session?.id;
           const turnId = (ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id;

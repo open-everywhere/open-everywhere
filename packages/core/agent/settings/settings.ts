@@ -35,6 +35,18 @@ export interface OktaAppSetting {
   readonly field?: "externalId" | "userName";
 }
 
+export type AuditExportFormat = "otlp" | "json" | "splunk-hec";
+
+export interface AuditExportTarget {
+  readonly name: string;
+  readonly format: AuditExportFormat;
+  readonly url: string;
+  readonly tokenSecret?: string;
+  readonly tokenHeader?: string;
+  readonly tokenScheme?: string;
+  readonly orgs?: readonly string[];
+}
+
 export interface AgentSettings {
   readonly agent: {
     readonly sessionInputTokenBudget: number;
@@ -49,6 +61,9 @@ export interface AgentSettings {
   };
   readonly browser: {
     readonly enabled: boolean;
+  };
+  readonly auditExport: {
+    readonly targets: readonly AuditExportTarget[];
   };
   readonly aws: {
     readonly enabled: boolean;
@@ -108,6 +123,9 @@ export interface AgentSettings {
     readonly allowMultiTenantPrincipals: boolean;
     readonly blanketTrust: BlanketTrust;
   };
+  readonly language: {
+    readonly output: string;
+  };
   readonly memory: {
     readonly dreamCandidateCap: number;
     readonly skillProposalPr: boolean;
@@ -133,6 +151,7 @@ export interface AgentSettings {
     readonly turnBudget: number;
     readonly contextSizeTokens: number;
     readonly tailTokenCap: number;
+    readonly dmSummaryTokenCap: number;
   };
   readonly sandbox: {
     readonly selfHostBackend: SandboxBackendChoice;
@@ -262,6 +281,49 @@ const oktaAppsProblem = (apps: readonly OktaAppSetting[]): string | undefined =>
   return undefined;
 };
 
+export function languageTagProblem(value: string): string | undefined {
+  if (typeof value !== "string") return "must be a string";
+  if (value === "") return undefined;
+  if (value.trim() !== value || /\s/u.test(value)) return "must be one BCP 47 language tag with no whitespace, e.g. \"fr\" or \"pt-BR\"";
+  let canonical: string;
+  try {
+    canonical = Intl.getCanonicalLocales(value)[0] ?? "";
+  } catch {
+    return "must be a well-formed BCP 47 language tag, e.g. \"fr\", \"de\" or \"pt-BR\"";
+  }
+  const name = new Intl.DisplayNames(["en"], { type: "language", fallback: "none" }).of(canonical);
+  return name === undefined ? `names no language this runtime knows (got "${value}") — use a BCP 47 tag such as "fr" or "pt-BR"` : undefined;
+}
+
+const auditExportTargetsProblem = (targets: readonly AuditExportTarget[]): string | undefined => {
+  if (!Array.isArray(targets)) return "must be an array of { name, format, url, tokenSecret?, tokenHeader?, tokenScheme?, orgs? } entries";
+  const names = new Set<string>();
+  for (const [i, t] of targets.entries()) {
+    if (typeof t !== "object" || t === null) return `target ${i} must be an object`;
+    if (typeof t.name !== "string" || !/^[a-z0-9-]{1,64}$/u.test(t.name)) return `target ${i}: name must be 1-64 characters of [a-z0-9-], e.g. "splunk"`;
+    if (names.has(t.name)) return `two targets are named "${t.name}" — each target keys its own delivery cursor, so names must be unique`;
+    names.add(t.name);
+    if (t.format !== "otlp" && t.format !== "json" && t.format !== "splunk-hec") return `target "${t.name}": format must be "otlp", "json" or "splunk-hec"`;
+    let url: URL;
+    try {
+      url = new URL(t.url);
+    } catch {
+      return `target "${t.name}": url must be an absolute URL, e.g. "https://siem.example.com/v1/logs"`;
+    }
+    const loopback = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) return `target "${t.name}": url must use https: (http: is accepted only for a loopback collector)`;
+    if (url.username !== "" || url.password !== "") return `target "${t.name}": url must not carry credentials — name a secret in tokenSecret instead`;
+    if (t.tokenSecret !== undefined && (typeof t.tokenSecret !== "string" || !/^[A-Z][A-Z0-9_]{0,127}$/u.test(t.tokenSecret))) {
+      return `target "${t.name}": tokenSecret must be a secret NAME in env style (A-Z, 0-9, _; e.g. "SPLUNK_HEC_TOKEN"), never a value — store the value with \`oe secret set <name>\``;
+    }
+    if (t.tokenHeader !== undefined && (typeof t.tokenHeader !== "string" || !/^[A-Za-z0-9-]{1,64}$/u.test(t.tokenHeader))) return `target "${t.name}": tokenHeader must be one HTTP header name`;
+    if (t.tokenScheme !== undefined && (typeof t.tokenScheme !== "string" || !/^[A-Za-z0-9-]{0,32}$/u.test(t.tokenScheme))) return `target "${t.name}": tokenScheme must be one word, or "" for a bare token`;
+    if ((t.tokenHeader !== undefined || t.tokenScheme !== undefined) && t.tokenSecret === undefined) return `target "${t.name}": tokenHeader and tokenScheme need a tokenSecret`;
+    if (t.orgs !== undefined && (!Array.isArray(t.orgs) || !t.orgs.every((o: unknown) => typeof o === "string" && o.trim() !== ""))) return `target "${t.name}": orgs must be a list of org ids`;
+  }
+  return undefined;
+};
+
 const stringOrStringArray = (value: string | readonly string[]): string | undefined =>
   typeof value === "string" || (Array.isArray(value) && value.every((t) => typeof t === "string")) ? undefined : "must be a string or an array of strings";
 
@@ -331,6 +393,16 @@ export const SETTINGS = {
       summary:
         "The in-sandbox browser master flag. Unarmed the capability does not exist: no `browser_*` tools mount, no egress hosts open, no browser bakes into the sandbox template. Arming ALSO requires at least one row in the host declaration (`agent/access/browser-hosts.ts`), which is where the reach itself lives — each row names a host, the HTTP verbs the firewall admits there, an optional credential the firewall injects at the boundary, and whether `browser_evaluate` is armed for it. Both halves are compiled into the build, so the sandbox template and the runtime mount cannot disagree.",
     } satisfies SettingSpec<boolean>,
+  },
+  auditExport: {
+    targets: {
+      path: "auditExport.targets",
+      shipped: [] as readonly AuditExportTarget[],
+      validate: auditExportTargetsProblem,
+      summary:
+        "The SIEMs the audit log streams to (OPE-2437). Empty (shipped) exports nothing. Each entry is `{ name, format, url, tokenSecret?, tokenHeader?, tokenScheme?, orgs? }`. `format` is `\"otlp\"` (OTLP/HTTP JSON logs, POSTed to the collector's `/v1/logs` URL), `\"json\"` (one JSON array per batch — Datadog, Microsoft Sentinel's Logs Ingestion API, any HTTPS intake) or `\"splunk-hec\"` (Splunk HTTP Event Collector envelopes). `tokenSecret` NAMES a secret in the DB-backed store (`oe secret set <name>`) in env style (`SPLUNK_HEC_TOKEN`) and never holds a value; it resolves from the store ONLY, never from an environment variable of the same name, so a config line cannot send an infrastructure secret to the SIEM; it is sent as `<tokenScheme> <value>` in `tokenHeader` (defaults: `authorization`, and `Splunk` for HEC or `Bearer` otherwise). The `audit-export` schedule ships every row after the target's cursor, oldest first, each with its `seq`, `prevSha` and recomputed `sha`, so the receiver can verify the hash chain. Delivery is AT-LEAST-ONCE: the cursor advances only after a 2xx, so a failed or interrupted batch is sent again and a receiver deduplicates on `(org, seq)`. The rows carry `detail` in full, so the SIEM holds what an org admin can read on the control plane. `url` must be `https:` (an `http:` loopback collector is accepted). A rename re-sends the log from the start, because the name keys the cursor.",
+      format: (v) => (v.length === 0 ? "[] (no export)" : v.map((t) => `${t.name} (${t.format})`).join(", ")),
+    } satisfies SettingSpec<readonly AuditExportTarget[]>,
   },
   aws: {
     enabled: {
@@ -589,6 +661,16 @@ export const SETTINGS = {
         "A deployment-wide trust declaration for the bindings no platform mapper verifies (was `OE_TRUST`). `none` (shipped) declares nothing: a real platform that cannot verify a surface fails closed to `external`, and the local stand-in binding is `internal`. `internal` is the single-tenant opt-in: it raises an unverified surface to internal, lets an unvouched DM partner read the shared DM layer, and satisfies the multi-source window vouch and the governance vouch at config load. It never overrides a platform mapper's own verdict or a surface the operator declared `public`. `external` forces the local stand-in binding to external, which a test uses to drive the fail-closed path. Prefer a per-surface declaration in `agent/identity/surfaces.ts`: it names WHICH rooms are internal.",
     } satisfies SettingSpec<BlanketTrust>,
   },
+  language: {
+    output: {
+      path: "language.output",
+      shipped: "",
+      validate: (v) => languageTagProblem(v),
+      summary:
+        "The org-level OUTPUT LANGUAGE, as a BCP 47 tag (`\"fr\"`, `\"de\"`, `\"pt-BR\"`, `\"ja\"`). Empty (shipped) adds no language rule, so the model answers in the language it is addressed in. Set, every session's prompt carries one section: the seat and every worker it delegates to write in that language, unless the person writes in another language or asks for another one, and code, commands, identifiers and quoted text stay as they are. A domain overrides it with its own `language` field in `agent/memory/config/domains.ts`; an explicit domain without one inherits the `org` pseudo-domain's, then this value. The tag is checked with `Intl.getCanonicalLocales` at boot, and a bad tag fails the boot. It is an instruction to the model, not a translation layer: card text, slash-command output and other host-rendered strings stay in English.",
+      format: (v) => (v === "" ? '"" (no language rule)' : JSON.stringify(v)),
+    } satisfies SettingSpec<string>,
+  },
   memory: {
     dreamCandidateCap: {
       path: "memory.dreamCandidateCap",
@@ -600,7 +682,7 @@ export const SETTINGS = {
       path: "memory.skillProposalPr",
       shipped: true,
       summary:
-        "Whether a Mode-1 SKILL proposal also opens a PULL REQUEST on the config repo (`accessRequests.configRepo`), adding the drafted skill under `.agents/skills/<name>/SKILL.md` on its own branch. It ships ON, and it acts only where the deployer configured a config repo: with no `accessRequests.configRepo` the proposal is recorded in the review queue, nothing reaches GitHub, and nothing errors. `false` is the opt-out, and keeps the v1 behaviour on every deployment: the review-queue row only. On, MERGING the pull request is what arms the skill — the cycle never merges, never pushes to the base branch, and needs no credential beyond the one the access-request and credential-binding flows already use. A person's review or comment on a proposal is read back as a CORRECTION and carried into the next proposal for that scope, and only an author with repository standing (GitHub's `author_association`: OWNER, MEMBER or COLLABORATOR) counts.",
+        "Whether a Mode-1 SKILL proposal also opens a PULL REQUEST on the config repo (`accessRequests.configRepo`), adding the drafted skill under `.agents/skills/<name>/SKILL.md` on its own branch. It ships ON, and it acts only where the deployer configured a config repo: with no `accessRequests.configRepo` the proposal is recorded in the review queue, nothing reaches GitHub, and nothing errors. A config repo in dry-run mode (`dryRun: true` in `agent/access/access-requests.ts`) holds this write like every other config-repo write: the attempt is audited with `dryRun: true`, and no branch or pull request is opened. `false` is the opt-out, and keeps the v1 behaviour on every deployment: the review-queue row only. On, MERGING the pull request is what arms the skill — the cycle never merges, never pushes to the base branch, and needs no credential beyond the one the access-request and credential-binding flows already use. A person's review or comment on a proposal is read back as a CORRECTION and carried into the next proposal for that scope, and only an author with repository standing (GitHub's `author_association`: OWNER, MEMBER or COLLABORATOR) counts.",
     } satisfies SettingSpec<boolean>,
     syncTiming: {
       path: "memory.syncTiming",
@@ -709,7 +791,14 @@ export const SETTINGS = {
       shipped: 5_000,
       validate: positiveNumber,
       summary:
-        "Token cap on the last-generation TAIL a fresh generation's first wake carries — the recorded wake messages and the seat's own posts, selected most-recent-first. Tight on purpose: the tail makes the seat conversational, and its read tools and memory cover everything older.",
+        "Token cap on the last-generation TAIL a fresh generation's first wake carries — the recorded wake messages and the seat's own posts, selected most-recent-first, VERBATIM. Tight on purpose: the tail makes the seat conversational. On a channel seat, its read tools and memory cover everything older. A DM seat also carries its conversation summary (`rotation.dmSummaryTokenCap`).",
+    } satisfies SettingSpec<number>,
+    dmSummaryTokenCap: {
+      path: "rotation.dmSummaryTokenCap",
+      shipped: 32_000,
+      validate: positiveNumber,
+      summary:
+        "Token cap on a DM seat's CONVERSATION SUMMARY (OPE-2431): the DM's most recent messages (at most 200 entries, about the last 100 exchanges of ordinary length), each cut to 480 characters, that every DM rotation carries beside the verbatim tail, so the person's chief of staff reads as one conversation that carries on. EXTRACTIVE, not model-written: each entry is one recorded message with its own author grain, and a refuted or ungraded author's message never enters it. Each rotation folds the outgoing generation into the summary it inherited, and the oldest entries drop first. Counted by the same characters-per-token proxy as the tail. A COST LEVER: the fresh generation holds the summary in context for its whole life, so it removes up to this many tokens of headroom under `rotation.contextSizeTokens` and adds up to this many tokens to every request against the DM token backstop. Both backstops therefore rotate a long DM sooner. A channel seat carries no summary.",
     } satisfies SettingSpec<number>,
   },
   sandbox: {
@@ -975,7 +1064,7 @@ export const SETTINGS = {
       path: "window.topology",
       shipped: true,
       summary:
-        "The STANDING-SEAT apparatus — the ONE gate governing every seat and every window shape: the per-channel `solo` seat every channel the bot is in gets, a named `windows` group, and the cross-surface `unified` window. On, addressing decides what enters a seat and what wakes it, never the shape of the session: a mention lands in the room's own standing seat, and an undeclared channel inherits the `org` pseudo-domain's defaults (its own solo seat — never a shared context). 🔴 That inheritance is the ONE fail-closed arm: a deployment that declares NO `org` pseudo-domain leaves an undeclared channel with no domain to inherit, so it keeps the native per-container path even with this gate on. On is the shipped posture (the maintainer's ruling). The `org` pseudo-domain stays solo: config load refuses `mode` on it, because the whole org is never one window. A shared window exists only where a deployer declares one: an explicit team domain with `mode: \"unified\"` and its `reach`, or a named `windows` group. A fresh install declares none, so every channel gets its own solo seat. The gate also arms mid-session memory re-sync org-wide: on each wake, a supervisor-shaped session re-reads the read silos whose store version advanced, and the re-sync propagates deletes into the sandbox. Off, every domain runs the native per-container path, a mention opens eve's per-thread session, and `mode` and `windows` are inert. **Declare a `unified` window deliberately: it is a wider data blast radius.** The since-last-wake catch-up read — a seat arriving with what the room said while it was not woken — runs on every surface through one shared path, each reading its own container (a Slack or Discord channel, a Teams channel over Microsoft Graph, a GitHub issue or pull request, a Linear issue, a Notion page discussion). A surface that registers NO history fetch states that in the wake rather than arriving with an empty context; a registered read that fails stays fail-soft to empty, so a revoked history scope reads as a quiet room.",
+        "The STANDING-SEAT apparatus — the ONE gate governing every seat and every window shape: the per-channel `solo` seat every channel the bot is in gets, a named `windows` group, and the cross-surface `unified` window. On, addressing decides what enters a seat and what wakes it, never the shape of the session: a mention lands in the room's own standing seat, and an undeclared channel inherits the `org` pseudo-domain's defaults (its own solo seat — never a shared context). 🔴 That inheritance is the ONE fail-closed arm: a deployment that declares NO `org` pseudo-domain leaves an undeclared channel with no domain to inherit, so it keeps the native per-container path even with this gate on. On is the shipped posture. The `org` pseudo-domain stays solo: config load refuses `mode` on it, because the whole org is never one window. A shared window exists only where a deployer declares one: an explicit team domain (its `reach`), which is `unified` by default (OPE-2412), or a named `windows` group. A declared domain falls back to `solo` when config load cannot prove its window safe, and `mode: \"solo\"` keeps it solo outright. A fresh install declares none, so every channel gets its own solo seat. The gate also arms mid-session memory re-sync org-wide: on each wake, a supervisor-shaped session re-reads the read silos whose store version advanced, and the re-sync propagates deletes into the sandbox. Off, every domain runs the native per-container path, a mention opens eve's per-thread session, and `mode` and `windows` are inert. **Declare a `unified` window deliberately: it is a wider data blast radius.** The since-last-wake catch-up read — a seat arriving with what the room said while it was not woken — runs on every surface through one shared path, each reading its own container (a Slack or Discord channel, a Teams channel over Microsoft Graph, a GitHub issue or pull request, a Linear issue, a Notion page discussion). A surface that registers NO history fetch states that in the wake rather than arriving with an empty context; a registered read that fails stays fail-soft to empty, so a revoked history scope reads as a quiet room.",
     } satisfies SettingSpec<boolean>,
   },
 };
@@ -1096,6 +1185,9 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
     browser: {
       enabled: resolve(SETTINGS.browser.enabled, o.browser?.enabled),
     },
+    auditExport: {
+      targets: resolve(SETTINGS.auditExport.targets, o.auditExport?.targets),
+    },
     aws: {
       enabled: resolve(SETTINGS.aws.enabled, o.aws?.enabled),
       ssoScopes: resolve(SETTINGS.aws.ssoScopes, o.aws?.ssoScopes),
@@ -1154,6 +1246,9 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
       allowMultiTenantPrincipals: resolve(SETTINGS.identity.allowMultiTenantPrincipals, o.identity?.allowMultiTenantPrincipals),
       blanketTrust: resolve(SETTINGS.identity.blanketTrust, o.identity?.blanketTrust),
     },
+    language: {
+      output: resolve(SETTINGS.language.output, o.language?.output),
+    },
     memory: {
       dreamCandidateCap: resolve(SETTINGS.memory.dreamCandidateCap, o.memory?.dreamCandidateCap),
       skillProposalPr: resolve(SETTINGS.memory.skillProposalPr, o.memory?.skillProposalPr),
@@ -1179,6 +1274,7 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
       turnBudget: resolve(SETTINGS.rotation.turnBudget, o.rotation?.turnBudget),
       contextSizeTokens: resolve(SETTINGS.rotation.contextSizeTokens, o.rotation?.contextSizeTokens),
       tailTokenCap: resolve(SETTINGS.rotation.tailTokenCap, o.rotation?.tailTokenCap),
+      dmSummaryTokenCap: resolve(SETTINGS.rotation.dmSummaryTokenCap, o.rotation?.dmSummaryTokenCap),
     },
     sandbox: {
       selfHostBackend: resolve(SETTINGS.sandbox.selfHostBackend, o.sandbox?.selfHostBackend),

@@ -2,6 +2,7 @@ import { postSurfaceTextStrict } from "../channels/surface-message-ops.js";
 import { appendAudit } from "../audit/audit.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import type { ActionKind } from "./types.js";
+import { plainValue } from "./plain-text.js";
 
 export interface ChatPostArgs {
   readonly org: string;
@@ -23,6 +24,7 @@ function summarizePost(args: ChatPostArgs): string[] {
 const chatPost: ActionKind<ChatPostArgs> = {
   kind: "chat.post",
   policy: "member",
+  plainSummary: (args) => `Post a message into ${plainValue(args.platform)} ${plainValue(args.container)}`,
   summarize: summarizePost,
   async execute(args, decidedBy) {
     let messageId: string;

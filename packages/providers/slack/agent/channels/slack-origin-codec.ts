@@ -18,4 +18,8 @@ export const slackWakeOriginCodec: WakeOriginCodec<SlackOrigin> = {
       ? { ...target, replyAnchorTs: source.replyAnchorTs }
       : target,
   placementRef: (origin) => (typeof origin.replyAnchorTs === "string" && origin.replyAnchorTs.length > 0 ? origin.replyAnchorTs : undefined),
+  threadRootMessage: (origin) => {
+    const ts = typeof origin.threadTs === "string" && origin.threadTs.length > 0 ? origin.threadTs : typeof origin.replyAnchorTs === "string" && origin.replyAnchorTs.length > 0 ? origin.replyAnchorTs : undefined;
+    return ts === undefined ? undefined : { channelId: origin.channelId, messageId: ts };
+  },
 };

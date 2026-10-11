@@ -9,6 +9,7 @@ import { getConfig } from "../access/config.js";
 import "../access/eve-patch-probe-boot.js";
 import { windowedSupervisorEnabled, domainRoster } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
+import type { OperationalStore } from "../operational/store.js";
 import { registerUnifiedWakeTarget, resolveUnifiedWakeAuthority, resolveUnifiedWakeTarget, isUnifiedWakeAuthority, isUnifiedWakeOrigin, mintWakeId, stampUnifiedWindowAuth, proseBlockingRefusal, unifiedThreadRef, unifiedPlacementRef, sameUnifiedContainer, isThreadScopedWakeOrigin, wakeBindingMatchesOrigin, wakeBindingMatchesSurfaceKey, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR, type UnifiedWakeAuthority, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
 import {
   WAKE_INGRESS_ACTION,
@@ -27,6 +28,9 @@ import { encodeCarriedWrites, OE_WORK_RESULT_WRITES_ATTR, type DurableMemoryWrit
 import { unifiedDomainFromToken, unifiedDomainSessionKey, isUnifiedSupervisorToken } from "./unified-supervisor.js";
 import { parseWindowToken, isTaskWindowId, isThreadSeatWindowId, isThreadSeatWindowToken, isWorkWindowToken, dmAnchorSurfaceForToken, dmSurfaceKeyFromAnchorDomain, bareTokenFromEveContext } from "./window-key.js";
 import { resolveThreadOwner, clearThreadOwner, routeThreadMessage } from "./thread-ownership.js";
+import { closeThreadSeat, type ThreadSeatCloseDeps } from "./thread-seat-close.js";
+import { touchThreadSeatActivity } from "./thread-seat-state.js";
+import { setSurfaceReaction } from "./surface-message-ops.js";
 import { drainGenerationRetirements } from "./generation-retirement.js";
 import { oneshotAgentEnabled } from "../access/delegation-flag.js";
 import { INGESTION_KINDS } from "../access/taint-tiers.js";
@@ -774,7 +778,9 @@ export async function divertInboundToUnifiedWindow(
     }).catch(() => undefined);
   if (route.kind !== "task") {
     if (owner !== null) {
-      const reaped = await clearThreadOwner(store, org, ref);
+      const reaped = isThreadSeatWindowToken(owner)
+        ? (await closeThreadSeat({ org, ref, reason: "closed", seatToken: owner }, liveThreadSeatCloseDeps())).cleared
+        : await clearThreadOwner(store, org, ref);
       await audit({ routed: "standing", reason: "stale-owner", ownerId: owner, reaped });
     }
     return divertToUnifiedWindow(receive, input);
@@ -791,7 +797,18 @@ export async function divertInboundToUnifiedWindow(
     await audit({ routed: "standing", reason: "owner-divert-failed", ownerId: route.token, grain: route.grain, error: errMsg });
     return divertToUnifiedWindow(receive, input);
   }
+  if (route.grain === "thread") await touchThreadSeatActivity(store, org, ref, new Date().toISOString());
   await audit({ routed: "owner", ownerId: route.token, grain: route.grain });
+}
+
+export function liveThreadSeatCloseDeps(): ThreadSeatCloseDeps & { readonly store: OperationalStore } {
+  return {
+    store: getOperationalStore(),
+    handBack: (h) => dispatchSeatMessage({ token: h.token, origin: h.origin, wakeId: mintWakeId(), domain: h.domain, message: h.message, authAttributes: {} }),
+    react: (platform, ref, emoji) => setSurfaceReaction(platform, ref, emoji, true),
+    appendAudit,
+    now: () => new Date(),
+  };
 }
 
 export function buildRedriveReinject(domain: string | undefined, rawToken: string, baseAttrs: Record<string, unknown>): RedriveReinject {

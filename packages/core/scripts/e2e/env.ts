@@ -13,6 +13,7 @@ export const ENV = {
   slackChannelB: "E2E_SLACK_CHANNEL_B",
   slackMpimChannel: "E2E_SLACK_MPIM_CHANNEL",
   slackDmChannel: "E2E_SLACK_DM_CHANNEL",
+  slackUnjoinedChannel: "E2E_SLACK_UNJOINED_CHANNEL",
   slackUser2Id: "E2E_SLACK_USER2_ID",
   slackSecondaryToken: "E2E_SLACK_SECONDARY_TOKEN",
   slackSecondaryUserId: "E2E_SLACK_SECONDARY_USER_ID",

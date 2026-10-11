@@ -6,7 +6,7 @@ import {
   type JsonValue,
   type TokenResult,
 } from "eve/connections";
-import type { SessionContext } from "eve/context";
+import type { SessionAuth, SessionContext } from "eve/context";
 import type { ApprovalStatus } from "eve/tools/approval";
 import { connectorToolPermissionKind } from "../approvals/session-grant.js";
 import { offerRoutinePermissionCardFor } from "../approvals/routine-permission-offer.js";
@@ -44,6 +44,7 @@ import { assertCredentialEndpointHostAllowed } from "../access/credential-endpoi
 import { classifyConnectorOpTier, isConnectorOpTool, parseQualifiedToolName } from "../access/consequence.js";
 import { effectiveConnectorOpTier, joinConnectorOpTiers } from "../access/connector-op-gating.js";
 import { connectorOpToolHints } from "./connector-tool-hints.js";
+import { personalSurfaceApprovalRefusal } from "./personal-surface-fence.js";
 import { sharedVaultSubjectFor } from "../access/group-request.js";
 import { rawVaultSubject, SHARED_VAULT_SUBJECT_PREFIX } from "../identity/oauth-vault-share.js";
 import { connectorOpTieringEnabled, connectorLinkSetVaultEnabled, connectorMemberPlaneEnabled } from "./connector-flags.js";
@@ -519,10 +520,15 @@ async function decideConnectorWrite(
 
 export function connectorApprovalPolicy(deps: OeConnectorCardDeps = {}): ApprovalPolicy {
   const tiered = connectorOpApproval();
-  return withOeConnectorCard(
+  const carded = withOeConnectorCard(
     withUnattendedConnectorFence((ctx) => (connectorOpTieringEnabled() ? tiered : blanketConnectorApproval)(ctx)),
     deps,
   );
+  return async (ctx) => {
+    const refusal = await personalSurfaceApprovalRefusal(ctx.toolName, ctx.session?.auth as SessionAuth | undefined);
+    if (refusal !== undefined) return { type: "denied", reason: refusal };
+    return carded(ctx);
+  };
 }
 
 const blanketConnectorApproval: ApprovalPolicy = () => "user-approval";

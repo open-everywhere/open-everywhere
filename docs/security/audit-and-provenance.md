@@ -907,6 +907,15 @@ buy its one caller nothing. Read both as statements about **this process at the 
 call**. A present deployment id does not prove that any standing session consumed the revision on
 its next turn, and a key rotated a moment after the call is not observed until the next one.
 
+## Streaming the trail to a SIEM
+
+The audit trail can leave the deployment as a stream, not only through the control-plane read route.
+`auditExport.targets` in `agent/settings/settings.ts` names one or more SIEMs; the `audit-export`
+schedule sends every row to each of them at least once, in OTLP, JSON-array or Splunk HEC form, and
+each row carries its `seq`, its `prevSha` link and its recomputed `sha`, so the SIEM can check the hash
+chain on its own copy. The chain is unkeyed, so that check has limits; the SIEM export page states them. See [SIEM export](../deploy/siem-export.md) for the formats, the delivery
+contract and a worked example.
+
 ## The provenance spine: git + deploy history
 
 The audit trail tells you what the *agent* did. To know what the agent was *allowed* to do — and who decided — you read the configuration's own history.

@@ -129,9 +129,7 @@ export async function grainBackstopAtExecute(
       sessionId: (ctx as { session?: { id?: string } }).session?.id ?? null,
       reason: "lean-seat",
     }).catch(() => undefined);
-    throw new Error(
-      `${name} is not held by this conversational seat — this seat talks and delegates. Hand the work to a worker (\`agent\`, or \`spawn_thread_session\` for anything long): the worker holds the full kit, and its result comes back to you to relay.`,
-    );
+    throw new Error(leanSeatRefusal(name, grain));
   }
   if (allowed.includes(grain)) return;
   await auditWindowToolGate({
@@ -524,4 +522,12 @@ export async function resolveWindowGated(gated: unknown, ctx: BindableContext): 
   const resolver = (gated as { events?: Record<string, (event: unknown, ctx: unknown) => unknown> }).events?.["session.started"];
   if (typeof resolver !== "function") throw new Error("resolveWindowGated: not a windowGated dynamic tool");
   return await resolver({ type: "session.started" }, ctx);
+}
+
+export function leanSeatRefusal(name: string, grain: string): string {
+  const handOff =
+    grain === "thread"
+      ? "Hand the job to a worker (`agent`) and relay its result: this thread's task runs through your own work session."
+      : "Hand the job to a worker (`agent`) and relay its result, or, when the task needs real orchestration, hand the whole task to a thread session (`spawn_thread_session`) as your Routing section says.";
+  return `${name} is not held by this conversational seat — this seat talks and delegates. ${handOff} A worker holds the full kit.`;
 }

@@ -37,6 +37,7 @@ const { postDiscordApprovalCard, postDiscordJudgeLiftNotice, parseDiscordCompone
   "@open-everywhere/provider-discord/agent/approvals/discord-flow.js"
 );
 const { judgeLiftNoticeBlocks } = await import("@open-everywhere/core/agent/approvals/card.js");
+const { plainSummaryForRow } = await import("@open-everywhere/core/agent/approvals/plain-summary.js");
 const { guildIdFromScopeKey, isGuildAdminViaRest, isGuildMemberViaRest, discordAuthorRoles, _resetDiscordAuthorRolesCache } = await import(
   "@open-everywhere/provider-discord/agent/approvals/discord-admin.js"
 );
@@ -77,6 +78,7 @@ registerActionKind({
   kind: "test.member.discord",
   policy: "member",
   summarize: () => ["a member-policy test action"],
+  plainSummary: () => "Do the test thing",
   async execute(_args: unknown, decidedBy: string) {
     memberExecuted.push(decidedBy);
     return `executed by ${decidedBy}`;
@@ -159,7 +161,8 @@ function clickPayload(
 {
   const r = row();
   const card = pendingDiscordCard(r, ["line one", "line two"]);
-  ok(card.content.includes("**Approval requested: spend.set**"), "pending card leads with the kind header");
+  ok(card.content.split("\n")[0] === `**${plainSummaryForRow(r)}**`, "OPE-2434: pending card opens with the plain sentence, in bold");
+  ok(card.content.split("\n")[1] === "-# Approval requested: spend.set", "OPE-2434: the kind label sits directly under the plain sentence");
   ok(card.content.includes("line one") && card.content.includes("line two"), "pending card carries the summary lines");
   ok(card.content.includes(`<@${r.requestedBy}>`), "pending card @-mentions the requester");
   ok(card.content.includes(`expires ${r.expiresAt}`), "pending card shows the expiry timestamp");
@@ -808,6 +811,7 @@ const store = getOperationalStore();
         kind: "pr.open",
         policy: "member",
         summarize: () => ["open a pull request"],
+        plainSummary: () => "Do the test thing",
         async execute(args: unknown) {
           const what = String((args as { what?: unknown }).what);
           if (what !== "clicked") await siblingGate;

@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { spendView, routinesView, auditView, accessView, accessQueryScope, overridesView, usageSummaryView, usageWindowView, skillsListView, skillRevisionsView, DEFAULT_SKILL_REVISIONS_LIMIT, MAX_SKILL_REVISIONS_LIMIT, memoryListView, memoryReadView, pendingActionsView, unifiedDomainAudit } from "./views.js";
+import { spendView, routinesView, auditView, accessView, accessQueryScope, overridesView, usageSummaryView, usageWindowView, toolUsageView, skillsListView, skillRevisionsView, DEFAULT_SKILL_REVISIONS_LIMIT, MAX_SKILL_REVISIONS_LIMIT, memoryListView, memoryReadView, pendingActionsView, unifiedDomainAudit } from "./views.js";
 import { registerControlWriteTools } from "./writes.js";
 import { foreignOrgDenial, scopeDenial, siloScopeDenial } from "./auth.js";
 import { surfaceKeyOf } from "../access/resolver.js";
@@ -46,6 +46,7 @@ export const CONTROL_TOOL_NAMES = [
   "overrides_list",
   "usage_summary",
   "usage_window",
+  "tool_usage",
   "skills_list",
   "skill_revisions",
   "memory_list",
@@ -256,6 +257,29 @@ export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
         const denial = scopeDenial(roles, { org });
         if (denial) throw new Error(denial);
         return usageWindowView({ sinceIso: args.sinceIso, workspaceKeys: args.workspaceKeys, org });
+      })(),
+  );
+
+  server.registerTool(
+    "tool_usage",
+    {
+      title: "Tool usage (per connector and per tool)",
+      description:
+        'Calls, errors, rejected calls, approval cards raised and the attributed $ estimate (estUsd) per connector and per tool over a time window — the admin\'s per-connector usage view. by:"connector" groups by connector only; the default groups by connector and tool. connector "" is a tool that is not a connector op. estUsd is ATTRIBUTED, not measured: each call carries an even share of the model call that chose it. sinceIso/untilIso are ISO-8601; untilIso defaults to now. Pass domain to narrow it (a domain:<name> role covers its own domain); an unscoped, org-wide call needs the org-wide "admin" role. org defaults to the deployment\'s declared org. Read-only.',
+      inputSchema: {
+        sinceIso: z.string().min(1),
+        untilIso: z.string().min(1).optional(),
+        domain: z.string().min(1).optional(),
+        by: z.enum(["connector", "tool"]).optional(),
+        org: z.string().min(1).optional(),
+      },
+    },
+    (args) =>
+      jsonTool(async () => {
+        const org = args.org ?? deploymentOrg();
+        const denial = scopeDenial(roles, { org, domain: args.domain });
+        if (denial) throw new Error(denial);
+        return toolUsageView({ org, sinceIso: args.sinceIso, ...(args.untilIso ? { untilIso: args.untilIso } : {}), ...(args.domain ? { domain: args.domain } : {}), ...(args.by ? { by: args.by } : {}) });
       })(),
   );
 

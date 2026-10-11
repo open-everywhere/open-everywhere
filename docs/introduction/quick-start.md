@@ -179,6 +179,9 @@ Every channel the bot is in gets its own standing seat, because `window.topology
 one window. A fresh install declares no shared window, and that is a complete setup.
 
 If a few rooms should share ONE conversation, declare ONE explicit domain with `mode: "unified"`.
+A declared domain that omits `mode` is unified by default too. Write `mode: "unified"` anyway:
+the boot then refuses a room that is not declared internal, where the default only falls back to
+one seat per room. To keep a declared domain's rooms in their own seats, write `mode: "solo"`.
 Give it a name and list its reach, in its own file under `agent/memory/config/domains/`:
 
 ```ts

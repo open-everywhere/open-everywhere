@@ -9,6 +9,7 @@ import type { ModelRole } from "../memory/domain.js";
 import { routineCardWaitSeconds } from "../routines/permission-card-wait.js";
 import { routinePermissionDeclinedMemo } from "./session-grant.js";
 import type { ActionKind } from "./types.js";
+import { plainValue } from "./plain-text.js";
 
 export const ROUTINE_PERMISSION_KIND = "routine.permission";
 
@@ -99,6 +100,9 @@ export function parseRoutinePermissionArgs(argsJson: string): RoutinePermissionA
 const routinePermission: ActionKind<RoutinePermissionArgs> = {
   kind: ROUTINE_PERMISSION_KIND,
   policy: "member",
+  plainSummary(args) {
+    return `Let routine ${plainValue(args.routineId)} use ${plainValue(args.declaration)} on its own from now on`;
+  },
   summarize(args) {
     return routinePermissionCardLines(args);
   },

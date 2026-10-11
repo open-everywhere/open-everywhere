@@ -217,7 +217,8 @@ export function resolveAccess(
         callerKey !== undefined &&
         binding.scope.level === "group" &&
         binding.scope.group !== undefined &&
-        (callerGroups.has(binding.scope.group) || binding.scope.group === EVERYONE_GROUP)
+        (callerGroups.has(binding.scope.group) || binding.scope.group === EVERYONE_GROUP) &&
+        (binding.scope.platform === undefined || binding.scope.platform === req.platform)
       ) {
         specificity = SPECIFICITY.group;
       }

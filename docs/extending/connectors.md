@@ -79,11 +79,62 @@ Then run `npx oe build` and commit the diff. What the entry gives you:
   on the server. It is inert until an admin grants it on a bundle in `agent/access/bundles.ts`,
   as with any connector. A personal login never resolves in a channel.
 
+### A chat platform's own server, on the person's sign-in
+
+`personalSurface: { platform, label }` marks an entry as the chat platform's OWN MCP server on each
+person's own sign-in, such as Slack's. It is narrower than any other declared server:
+
+- It resolves only in a **1:1 DM on that platform**. The derived binding carries `scope.platform`, a
+  narrowing a `group`-level binding takes, and the resolver applies it in the DM branch only.
+- It carries **no org credential**: the catalogue holds the person's `user-oauth` alone, so no
+  bundle can grant it to a channel.
+- Its connection **refuses every call outside such a DM**, before the approval card and before the
+  mint (`connections/personal-surface-fence.ts`). This holds whatever a bundle or a member-plane grant
+  says, and each refusal writes `connector.refused` with reason `personal_surface`.
+- **A write as the person always takes a card.** On an unattended turn (a routine's fire) every op
+  that is not a read is refused, so a routine permission cannot lift a write in the person's name.
+- Its bundle copy is **bot first**: the seat answers from the bot's own access and offers the
+  person's connection only when the bot cannot see what was asked.
+
+The Slack bundle ships the preset `slackAsYou` — see
+[Search Slack as you](../deploy/surfaces/slack.md#search-slack-as-you). Teams through Microsoft
+Graph on the person's sign-in takes the same field with `platform: "teams"`, from the Teams bundle.
+
 A person in chat cannot add a server. A server that is not in the list has no connection, no
-credential and no grant, and the list changes only by pull request. The shipped Notion connection
-builds through the same builder (`connections/mcp-server-connection.ts`), but stays a core module:
+credential and no grant, and the list changes only by pull request.
+
+### Ask the agent to set one up
+
+"Set up FullStory" in a DM or a channel routes to `propose_mcp_server`, a worker tool. The worker
+researches the vendor with `web_search` and `web_fetch`, then proposes ONE entry for this file. A
+member taps the card, and the agent opens a pull request on the deployment's config repo
+(`accessRequests.configRepo` in `agent/access/access-requests.ts`) for an admin to merge. The agent
+never applies the change itself, and nothing is set up until the merge.
+
+- The PR body names the vendor documentation URLs the agent used, so the reviewer can check the
+  server URL against them. It also lists each step a person does by hand in the vendor's console.
+  For a static client, that is the redirect URI to register
+  (`https://<host>/oauth/v1/callback`) and the `npx oe secret set <clientSecretRef>` command to run
+  after the merge.
+- 🔴 The PR and the card both say that a merged entry reaches every person who can DM the agent,
+  unless the entry names `people.groups`.
+- The tool refuses an external conversation (a shared channel, a guest, an outside account), a turn
+  that a non-member's message woke, and a routine fire. A message the worker reads during the turn
+  from an author refuted as a non-member taints the turn instead. While `taint.mode` is on (the
+  shipped default), the approver chain then floors the card at a person's decision, and an
+  unattended run is denied.
+- The tool needs the access-request config (an admin channel and a config repo) and the
+  `baseMcpServers` baseline in `agent/access/access-requests.ts`. Without them it refuses and names
+  the hand edit. With `dryRun: true` it validates and reports, and opens nothing.
+- The proposed name must be free. A name the app already declares, or a connection core already
+  mounts (`notion`), is refused before the card, because `oe build` would refuse it after the merge.
+
+The shipped Notion connection builds through the same builder (`connections/mcp-server-connection.ts`), but stays a core module:
 it also carries the org's REST key credentials and an env fallback secret, which a declared server
 does not take.
+
+A connector gives the agent a vendor's TOOLS AND DATA. To hand a whole task to another organisation's
+AGENT instead, declare it in `agent/access/a2a-agents.ts`: see [A2A agents](./a2a-agents.md).
 
 ## Defining a new MCP connection in a package
 

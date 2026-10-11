@@ -246,7 +246,7 @@ function authorizeUrlFor(pending: PendingSlackApp, base: string, scopes: string)
 }
 
 function manifestBotScopes(): string {
-  const parsed = JSON.parse(slackAppManifestTemplate()) as {
+  const parsed = JSON.parse(slackAppManifestTemplate(slackManifestOptionsFromSettings())) as {
     oauth_config?: { scopes?: { bot?: readonly string[] } };
   };
   const bot = parsed.oauth_config?.scopes?.bot ?? [];

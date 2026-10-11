@@ -2,6 +2,7 @@ import { defineChannel, GET } from "eve/channels";
 import {
   CONTROL_READ_AUDIT_PATH,
   CONTROL_READ_USAGE_PATH,
+  CONTROL_READ_TOOL_USAGE_PATH,
   CONTROL_READ_UNIFIED_AUDIT_PATH,
   CONTROL_READ_TRANSCRIPT_PATH,
   CONTROL_READ_RUNTIME_SIGNAL_PATH,
@@ -9,6 +10,7 @@ import {
   CONTROL_READ_MODEL_CALL_SESSIONS_PATH,
   handleAuditWindowRead,
   handleUsageWindowRead,
+  handleToolUsageRead,
   handleUnifiedAuditRead,
   handleSessionTranscriptRead,
   handleRuntimeSignalRead,
@@ -19,6 +21,7 @@ import {
 export default defineChannel({
   routes: [
     GET(CONTROL_READ_USAGE_PATH, async (req) => handleUsageWindowRead(req)),
+    GET(CONTROL_READ_TOOL_USAGE_PATH, async (req) => handleToolUsageRead(req)),
     GET(CONTROL_READ_AUDIT_PATH, async (req) => handleAuditWindowRead(req)),
     GET(CONTROL_READ_UNIFIED_AUDIT_PATH, async (req) => handleUnifiedAuditRead(req)),
     GET(CONTROL_READ_TRANSCRIPT_PATH, async (req, { attachSession, params }) => handleSessionTranscriptRead(req, attachSession, params)),

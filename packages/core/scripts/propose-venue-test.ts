@@ -374,7 +374,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
 
   await refuses(
     () => (armed(purgeTool, teamsCtx("CONV_LONE"), "purge_memory") as Promise<Entry>).then((e) => e.execute({ match: "Ada owns billing" }, teamsCtx("CONV_LONE"))),
-    /I can't purge that from memory from here.*domain "lonely" has no Slack or Discord channel.*domains\/[a-z0-9<>-]+\.ts\)/s,
+    /I can't purge that from memory from here.*domain "lonely" has no Slack, Discord or Teams channel.*domains\/[a-z0-9<>-]+\.ts\)/s,
     "refuse: no card-capable channel in the domain ⇒ refusal naming the DOMAIN and the FILE — an action, never a description of the blockage",
   );
   await refuses(
@@ -391,7 +391,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
 
   await refuses(
     () => (armed(setSpendTool, teamsCtx("CONV_LONE"), "set_spend_limit") as Promise<Entry>).then((e) => e.execute({ monthlyUsd: 5, reason: "x" }, teamsCtx("CONV_LONE"))),
-    /I can't set that spend limit from here.*domain "lonely" has no Slack or Discord channel.*domains\/[a-z0-9<>-]+\.ts\)/s,
+    /I can't set that spend limit from here.*domain "lonely" has no Slack, Discord or Teams channel.*domains\/[a-z0-9<>-]+\.ts\)/s,
     "refuse: `set_spend_limit` refuses with the venue's copy and its own verb",
   );
   await refuses(
@@ -511,13 +511,13 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   const before = await pendingCount();
   await refuses(
     () => cancelRoutineTool.execute({ id: "r-lonely-1" } as never, teamsCtx("CONV_LONE")),
-    /I can't cancel that routine from here.*domain "lonely" has no Slack or Discord channel.*domains\/[a-z0-9<>-]+\.ts\)/s,
+    /I can't cancel that routine from here.*domain "lonely" has no Slack, Discord or Teams channel.*domains\/[a-z0-9<>-]+\.ts\)/s,
     "325-refuse: cancel_routine refuses with the venue's copy and its own verb — no card-capable channel in the domain",
   );
   const skillLoneCtx = teamsCtx("CONV_LONE", true);
   await refuses(
     () => (armed(createSkillTool, skillLoneCtx, "create_skill") as Promise<Entry>).then((e) => e.execute({ name: "x", content: "y" }, skillLoneCtx)),
-    /I can't create that skill from here.*domain "lonely" has no Slack or Discord channel.*domains\/[a-z0-9<>-]+\.ts\)/s,
+    /I can't create that skill from here.*domain "lonely" has no Slack, Discord or Teams channel.*domains\/[a-z0-9<>-]+\.ts\)/s,
     "325-refuse: create_skill refuses with the same shape — a different verb, the same config fix",
   );
   ok(await pendingCount().then((after) => after === before), "325-refuse: 🔴 NOTHING is minted on either refusal");
@@ -635,12 +635,12 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   const before = await pendingCount();
   await refuses(
     () => (armed(setStateTool, teamsTicketCtx("CONV_LONE"), "set_state") as Promise<Entry>).then((e) => e.execute({ ref: { platform: "venue-ticket", id: "VT-1" }, state: "Done" }, teamsTicketCtx("CONV_LONE"))),
-    /I can't change that ticket's status from here.*domain "lonely" has no Slack or Discord channel.*domains\/[a-z0-9<>-]+\.ts\)/s,
+    /I can't change that ticket's status from here.*domain "lonely" has no Slack, Discord or Teams channel.*domains\/[a-z0-9<>-]+\.ts\)/s,
     "326-refuse: set_state refuses with the venue's copy and its own verb — no card-capable channel in the domain",
   );
   await refuses(
     () => (armed(assignTool, teamsTicketCtx("CONV_LONE"), "assign") as Promise<Entry>).then((e) => e.execute({ ref: { platform: "venue-ticket", id: "VT-1" }, assignee: "ada" }, teamsTicketCtx("CONV_LONE"))),
-    /I can't assign that ticket from here.*domain "lonely" has no Slack or Discord channel.*domains\/[a-z0-9<>-]+\.ts\)/s,
+    /I can't assign that ticket from here.*domain "lonely" has no Slack, Discord or Teams channel.*domains\/[a-z0-9<>-]+\.ts\)/s,
     "326-refuse: assign names ITS verb, not its sibling's",
   );
   {
@@ -745,12 +745,12 @@ const agentInput = (name: string) => ({ name, memory: newReadonlyMemory, exposed
   const before = await pendingCount();
   await refuses(
     () => declareWebhookTool.execute({ id: "venue-hook-lone", source: "oe-standard-webhook", posture: "trigger-only", readableBy: ["eng"] } as never, teamsCtx("CONV_LONE")),
-    /I can't propose that webhook from here.*domain "lonely" has no Slack or Discord channel.*domains\/[a-z0-9<>-]+\.ts\)/s,
+    /I can't propose that webhook from here.*domain "lonely" has no Slack, Discord or Teams channel.*domains\/[a-z0-9<>-]+\.ts\)/s,
     "338-refuse: declare_webhook refuses with the venue's copy and its own verb — no card-capable channel in the domain",
   );
   await refuses(
     () => createAgentTool.execute({ name: "lone-desk", memory: newReadonlyMemory } as never, teamsCtx("CONV_LONE")),
-    /I can't propose that agent from here.*domain "lonely" has no Slack or Discord channel.*domains\/[a-z0-9<>-]+\.ts\)/s,
+    /I can't propose that agent from here.*domain "lonely" has no Slack, Discord or Teams channel.*domains\/[a-z0-9<>-]+\.ts\)/s,
     "338-refuse: create_agent names ITS OWN verb, not its sibling's",
   );
 

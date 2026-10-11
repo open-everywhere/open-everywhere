@@ -1,11 +1,11 @@
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
-import { asSurfaceMode, auditSurfaceMode, auditReadOrg, likePrefixPattern, argKeyNeedle, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type CredentialIntakeRow, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow } from "./store.js";
+import { asSurfaceMode, readThreadSeatStateValue, auditSurfaceMode, auditReadOrg, likePrefixPattern, argKeyNeedle, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type CredentialIntakeRow, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type ToolUsageEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow, ATTENTION_COLUMNS, attentionPruneBefore, attentionRowFrom, type AttentionDbRow } from "./store.js";
 import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn, grantRefundTurnOrdinal } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import { CONNECTOR_OP_KIND_PREFIX, ROUTINE_PERMISSION_PREFIX } from "../approvals/session-grant.js";
-import { SESSION_TAIL_MAX_ENTRIES, type SessionTailEntry } from "../channels/session-tail.js";
+import { CONVERSATION_SUMMARY_PARTITION, parseConversationSummary, SESSION_TAIL_MAX_ENTRIES, type SessionTailEntry } from "../channels/session-tail.js";
 import type { ModelReasoning } from "../memory/domain.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
@@ -323,6 +323,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      thread_ts    text,
      message_ts   text,
      posted_to    text,
+     group_key    text,
      status       text NOT NULL,
      created_at   text NOT NULL,
      expires_at   text NOT NULL,
@@ -394,6 +395,24 @@ const SCHEMA_STATEMENTS: readonly string[] = [
    )`,
   `CREATE INDEX IF NOT EXISTS usage_events_org_session ON usage_events (org_id, session_id)`,
   `CREATE INDEX IF NOT EXISTS usage_events_org_surface_ts ON usage_events (org_id, surface_key, ts)`,
+  `CREATE TABLE IF NOT EXISTS tool_usage (
+     seq                bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+     org_id             text   NOT NULL,
+     ts                 text   NOT NULL,
+     surface_key        text   NOT NULL,
+     surface_mode       text,
+     principal_id       text,
+     session_id         text   NOT NULL,
+     event              text   NOT NULL,
+     tool               text   NOT NULL,
+     connector          text   NOT NULL DEFAULT '',
+     outcome            text   NOT NULL DEFAULT '',
+     model              text,
+     input_tokens       bigint NOT NULL DEFAULT 0,
+     output_tokens      bigint NOT NULL DEFAULT 0,
+     cache_read_tokens  bigint NOT NULL DEFAULT 0
+   )`,
+  `CREATE INDEX IF NOT EXISTS tool_usage_org_ts ON tool_usage (org_id, ts)`,
   `CREATE TABLE IF NOT EXISTS identity_link_sets (
      org_id     text NOT NULL,
      id         text NOT NULL,
@@ -545,6 +564,22 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      created_at   text NOT NULL
    )`,
   `CREATE INDEX IF NOT EXISTS memory_proposal_org ON memory_proposal (org_id, id)`,
+  `CREATE TABLE IF NOT EXISTS attention_state (
+     org_id          text NOT NULL,
+     session_id      text NOT NULL,
+     state           text NOT NULL,
+     summary         text NOT NULL,
+     surface_key     text NOT NULL,
+     channel_id      text NOT NULL,
+     thread_ts       text,
+     person_platform text,
+     person_id       text,
+     since           text NOT NULL,
+     updated_at      text NOT NULL,
+     pinged_since    text,
+     PRIMARY KEY (org_id, session_id)
+   )`,
+  `CREATE INDEX IF NOT EXISTS attention_state_person ON attention_state (org_id, person_platform, person_id)`,
   `CREATE TABLE IF NOT EXISTS dm_audience (
      org_id      text NOT NULL,
      address     text NOT NULL,
@@ -587,6 +622,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE unified_wake_target ADD COLUMN IF NOT EXISTS inbound boolean`,
   `ALTER TABLE unified_wake_target ADD COLUMN IF NOT EXISTS audited_at text`,
   `ALTER TABLE pending_actions ADD COLUMN IF NOT EXISTS posted_to text`,
+  `ALTER TABLE pending_actions ADD COLUMN IF NOT EXISTS group_key text`,
   `ALTER TABLE stored_credential ADD COLUMN IF NOT EXISTS claim_id text`,
   `ALTER TABLE stored_credential ADD COLUMN IF NOT EXISTS claimed_at text`,
   `DO $$
@@ -679,6 +715,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE routine_prompt_revisions ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_model ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE usage_events ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE tool_usage ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE pending_actions ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE pr_session_approval ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE identity_link_sets ENABLE ROW LEVEL SECURITY`,
@@ -691,8 +728,10 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE credential_grant_ask ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE credential_grant ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE dm_audience ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE attention_state ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE audit_entry FORCE ROW LEVEL SECURITY`,
   `ALTER TABLE usage_events FORCE ROW LEVEL SECURITY`,
+  `ALTER TABLE tool_usage FORCE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_skill_revisions FORCE ROW LEVEL SECURITY`,
   `ALTER TABLE routine_prompt_revisions FORCE ROW LEVEL SECURITY`,
 ];
@@ -729,6 +768,8 @@ const POLICY_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS domain_model_org_isolation ON domain_model`,
   `DROP POLICY IF EXISTS usage_events_select ON usage_events`,
   `DROP POLICY IF EXISTS usage_events_insert ON usage_events`,
+  `DROP POLICY IF EXISTS tool_usage_select ON tool_usage`,
+  `DROP POLICY IF EXISTS tool_usage_insert ON tool_usage`,
   `DROP POLICY IF EXISTS pending_actions_org_isolation ON pending_actions`,
   `DROP POLICY IF EXISTS pr_session_approval_org_isolation ON pr_session_approval`,
   `DROP POLICY IF EXISTS identity_link_sets_org_isolation ON identity_link_sets`,
@@ -741,6 +782,7 @@ const POLICY_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS credential_grant_ask_org_isolation ON credential_grant_ask`,
   `DROP POLICY IF EXISTS credential_grant_org_isolation ON credential_grant`,
   `DROP POLICY IF EXISTS dm_audience_org_isolation ON dm_audience`,
+  `DROP POLICY IF EXISTS attention_state_org_isolation ON attention_state`,
   `CREATE POLICY spend_org_isolation ON spend_ledger
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
@@ -818,6 +860,8 @@ const POLICY_STATEMENTS: readonly string[] = [
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY usage_events_select ON usage_events FOR SELECT USING (true)`,
   `CREATE POLICY usage_events_insert ON usage_events FOR INSERT WITH CHECK (true)`,
+  `CREATE POLICY tool_usage_select ON tool_usage FOR SELECT USING (true)`,
+  `CREATE POLICY tool_usage_insert ON tool_usage FOR INSERT WITH CHECK (true)`,
   `CREATE POLICY pending_actions_org_isolation ON pending_actions
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
@@ -854,9 +898,12 @@ const POLICY_STATEMENTS: readonly string[] = [
   `CREATE POLICY dm_audience_org_isolation ON dm_audience
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY attention_state_org_isolation ON attention_state
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
 ];
 
-const APPEND_ONLY_TABLES = ["audit_entry", "usage_events", "domain_skill_revisions", "routine_prompt_revisions"] as const;
+const APPEND_ONLY_TABLES = ["audit_entry", "usage_events", "tool_usage", "domain_skill_revisions", "routine_prompt_revisions"] as const;
 
 interface DmAudienceDbRow {
   readonly address: string;
@@ -887,6 +934,10 @@ const EXPECTED_POLICIES: Readonly<Record<string, readonly ExpectedPolicy[]>> = {
   usage_events: [
     { name: "usage_events_select", permissive: true, cmd: "r", qual: "true", withCheck: null },
     { name: "usage_events_insert", permissive: true, cmd: "a", qual: null, withCheck: "true" },
+  ],
+  tool_usage: [
+    { name: "tool_usage_select", permissive: true, cmd: "r", qual: "true", withCheck: null },
+    { name: "tool_usage_insert", permissive: true, cmd: "a", qual: null, withCheck: "true" },
   ],
   domain_skill_revisions: [
     { name: "domain_skill_revisions_select", permissive: true, cmd: "r", qual: "true", withCheck: null },
@@ -1139,15 +1190,17 @@ const SCHEMA_POLICY_LOCK_TIMEOUT_MS = 60_000;
 
 const AUDIT_CHAIN_LOCK_TIMEOUT_MS = 10_000;
 
-async function readAuditChainRows(client: PgClient, org: string, tail?: number): Promise<AuditChainRow[]> {
+async function readAuditChainRows(client: PgClient, org: string, tail?: number, page?: { readonly after: number; readonly limit: number }): Promise<AuditChainRow[]> {
   const cols = "seq, ts, org_id, platform, workspace, surface, surface_mode, principal_id, action, detail, prev_sha";
   const sql =
     tail && tail > 0
       ? `SELECT ${cols} FROM (
            SELECT ${cols} FROM audit_entry WHERE org_id = $1 ORDER BY seq DESC LIMIT $2
          ) sub ORDER BY seq ASC`
-      : `SELECT ${cols} FROM audit_entry WHERE org_id = $1 ORDER BY seq ASC`;
-  const { rows } = await client.query(sql, tail && tail > 0 ? [org, tail] : [org]);
+      : page
+        ? `SELECT ${cols} FROM audit_entry WHERE org_id = $1 AND seq > $2 ORDER BY seq ASC LIMIT $3`
+        : `SELECT ${cols} FROM audit_entry WHERE org_id = $1 ORDER BY seq ASC`;
+  const { rows } = await client.query(sql, tail && tail > 0 ? [org, tail] : page ? [org, page.after, page.limit] : [org]);
   return (rows as {
     seq: number | string;
     ts: string;
@@ -1344,8 +1397,8 @@ export function runtimeRoleGrantsSql(role: string): string[] {
   return [
     `GRANT USAGE ON SCHEMA public TO ${role}`,
     `REVOKE CREATE ON SCHEMA public FROM ${role}`,
-    `GRANT SELECT, INSERT ON audit_entry, usage_events, domain_skill_revisions, routine_prompt_revisions TO ${role}`,
-    `REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON audit_entry, usage_events, domain_skill_revisions, routine_prompt_revisions FROM ${role}`,
+    `GRANT SELECT, INSERT ON audit_entry, usage_events, tool_usage, domain_skill_revisions, routine_prompt_revisions TO ${role}`,
+    `REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON audit_entry, usage_events, tool_usage, domain_skill_revisions, routine_prompt_revisions FROM ${role}`,
     `GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${role}`,
     ...mutableTableGrantsSql(role),
     `GRANT SELECT, INSERT, DELETE ON webhook_capture TO ${role}`,
@@ -1378,6 +1431,7 @@ const MUTABLE_TABLE_VERBS: Readonly<Record<string, readonly DmlVerb[]>> = {
   proactive_address: ["SELECT", "INSERT", "UPDATE"],
   memory_proposal: ["SELECT", "INSERT"],
   dm_audience: ["SELECT", "INSERT", "UPDATE"],
+  attention_state: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   thread_ownership: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   thread_seat_state: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   turn_anchor: ["SELECT", "INSERT", "UPDATE", "DELETE"],
@@ -1455,6 +1509,7 @@ type PendingActionPgRow = {
   thread_ts: string | null;
   message_ts: string | null;
   posted_to: string | null;
+  group_key?: string | null;
   status: string;
   created_at: string;
   expires_at: string;
@@ -1475,6 +1530,7 @@ function pendingActionFromPgRow(org: string, r: PendingActionPgRow): PendingActi
     threadTs: r.thread_ts,
     messageTs: r.message_ts,
     postedTo: r.posted_to,
+    ...(r.group_key ? { groupKey: r.group_key } : {}),
     status: r.status as PendingStatus,
     createdAt: r.created_at,
     expiresAt: r.expires_at,
@@ -2016,7 +2072,11 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     },
 
     async readAuditChain(org, opts) {
-      return readAuditChainRows(client, org, opts?.tailLimit);
+      const page =
+        !(opts?.tailLimit && opts.tailLimit > 0) && opts?.afterSeq !== undefined
+          ? { after: opts.afterSeq, limit: Math.max(1, Math.floor(opts.limit ?? 1)) }
+          : undefined;
+      return readAuditChainRows(client, org, opts?.tailLimit, page);
     },
 
     async sealAuditChainEpoch(org, sealedBy) {
@@ -2480,7 +2540,8 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       const out: SessionTailEntry[] = [];
       for (const r of rows as { entry_json: string }[]) {
         try {
-          out.push(JSON.parse(r.entry_json) as SessionTailEntry);
+          const parsed: unknown = JSON.parse(r.entry_json);
+          if (!Array.isArray(parsed)) out.push(parsed as SessionTailEntry);
         } catch {
         }
       }
@@ -2489,6 +2550,38 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async clearSessionTail(org, surfaceKey, token) {
       await client.query("DELETE FROM session_tail WHERE org_id = $1 AND surface_key = $2 AND token = $3", [org, surfaceKey, token]);
+    },
+
+    async readConversationSummary(org, surfaceKey) {
+      const { rows } = await client.query("SELECT entry_json FROM session_tail WHERE org_id = $1 AND surface_key = $2 AND token = $3 AND seq = 1", [
+        org,
+        surfaceKey,
+        CONVERSATION_SUMMARY_PARTITION,
+      ]);
+      return parseConversationSummary((rows as { entry_json: string }[])[0]?.entry_json);
+    },
+
+    async writeConversationSummary(org, surfaceKey, entries) {
+      const at = entries[entries.length - 1]?.at ?? "";
+      await client.query(
+        `INSERT INTO session_tail (org_id, surface_key, token, seq, at, entry_json) VALUES ($1, $2, $3, 1, $4, $5)
+         ON CONFLICT (org_id, surface_key, token, seq) DO UPDATE SET at = excluded.at, entry_json = excluded.entry_json`,
+        [org, surfaceKey, CONVERSATION_SUMMARY_PARTITION, at, JSON.stringify(entries)],
+      );
+    },
+
+    async editConversationSummaryPost(org, surfaceKey, messageId, text) {
+      const { rows } = await client.query(
+        `UPDATE session_tail SET entry_json = (
+           SELECT jsonb_agg(CASE WHEN t.e->>'kind' = 'post' AND t.e->>'id' = $4 THEN jsonb_set(t.e, '{text}', to_jsonb($5::text)) ELSE t.e END ORDER BY t.ord)::text
+             FROM jsonb_array_elements(session_tail.entry_json::jsonb) WITH ORDINALITY AS t(e, ord))
+         WHERE org_id = $1 AND surface_key = $2 AND token = $3 AND seq = 1
+           AND jsonb_typeof(entry_json::jsonb) = 'array'
+           AND EXISTS (SELECT 1 FROM jsonb_array_elements(session_tail.entry_json::jsonb) AS x(e) WHERE x.e->>'kind' = 'post' AND x.e->>'id' = $4)
+         RETURNING seq`,
+        [org, surfaceKey, CONVERSATION_SUMMARY_PARTITION, messageId, text],
+      );
+      return (rows as unknown[]).length > 0;
     },
 
     async editSessionTailPost(org, surfaceKey, token, messageId, text) {
@@ -2745,6 +2838,29 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       }));
     },
 
+    async appendToolUsage(entry: ToolUsageEntry) {
+      await client.query(
+        `INSERT INTO tool_usage (org_id, ts, surface_key, surface_mode, principal_id, session_id, event, tool, connector, outcome, model, input_tokens, output_tokens, cache_read_tokens)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+        [
+          entry.org,
+          entry.ts,
+          entry.surfaceKey,
+          entry.surfaceMode ?? null,
+          entry.principalId ?? null,
+          entry.sessionId,
+          entry.event,
+          entry.tool,
+          entry.connector,
+          entry.outcome,
+          entry.model ?? null,
+          Math.round(entry.inputTokens),
+          Math.round(entry.outputTokens),
+          Math.round(entry.cacheReadTokens),
+        ],
+      );
+    },
+
     async pruneUsageEvents() {
       return 0;
     },
@@ -2942,6 +3058,41 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         [org],
       );
       return (rows as DmAudienceDbRow[]).map(dmAudienceRowFrom);
+    },
+
+    async recordAttentionState(row) {
+      await client.query("DELETE FROM attention_state WHERE org_id = $1 AND updated_at < $2", [row.org, attentionPruneBefore(row.updatedAt)]);
+      const { rows } = await client.query(
+        `INSERT INTO attention_state (org_id, session_id, state, summary, surface_key, channel_id, thread_ts, person_platform, person_id, since, updated_at, pinged_since)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULL)
+         ON CONFLICT (org_id, session_id) DO UPDATE SET
+           since = CASE WHEN attention_state.state = excluded.state THEN attention_state.since ELSE excluded.since END,
+           state = excluded.state, summary = excluded.summary, surface_key = excluded.surface_key, channel_id = excluded.channel_id,
+           thread_ts = excluded.thread_ts, person_platform = excluded.person_platform, person_id = excluded.person_id, updated_at = excluded.updated_at
+         RETURNING ${ATTENTION_COLUMNS}`,
+        [row.org, row.sessionId, row.state, row.summary, row.surfaceKey, row.channelId, row.threadTs, row.personPlatform, row.personId, row.updatedAt, row.updatedAt],
+      );
+      return attentionRowFrom(row.org, rows[0] as AttentionDbRow);
+    },
+
+    async listAttentionWaitingOn(org, personPlatform, personId, sinceIso) {
+      const { rows } = await client.query(
+        `SELECT ${ATTENTION_COLUMNS} FROM attention_state
+         WHERE org_id = $1 AND person_platform = $2 AND person_id = $3 AND state IN ('needs_input', 'blocked') AND updated_at >= $4
+         ORDER BY updated_at DESC LIMIT 50`,
+        [org, personPlatform, personId, sinceIso],
+      );
+      return (rows as AttentionDbRow[]).map((r) => attentionRowFrom(org, r));
+    },
+
+    async claimAttentionPing(org, sessionId, since) {
+      const { rows } = await client.query(
+        `UPDATE attention_state SET pinged_since = $1
+         WHERE org_id = $2 AND session_id = $3 AND state = 'blocked' AND since = $1 AND (pinged_since IS NULL OR pinged_since <> $1)
+         RETURNING session_id`,
+        [since, org, sessionId],
+      );
+      return rows.length > 0;
     },
 
     async runAnalyticsQuery(compiled) {
@@ -3308,12 +3459,50 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         threadKey,
         seatToken: r.seat_token,
         parentRegistryKey: r.parent_key,
-        state: r.state === "open" ? "open" : "completed",
+        state: readThreadSeatStateValue(r.state),
         originJson: r.origin_json,
         ...(r.report !== null ? { report: r.report } : {}),
         openedAt: r.opened_at,
         updatedAt: r.updated_at,
       };
+    },
+
+    async touchThreadSeat(org, channelKey, threadKey, at) {
+      await client.query("UPDATE thread_ownership SET created_at = $1 WHERE org_id = $2 AND channel_key = $3 AND thread_key = $4", [at, org, channelKey, threadKey]);
+      const { rows } = await client.query(
+        "UPDATE thread_seat_state SET updated_at = $1 WHERE org_id = $2 AND channel_key = $3 AND thread_key = $4 AND state = 'open' RETURNING thread_key",
+        [at, org, channelKey, threadKey],
+      );
+      return rows.length > 0;
+    },
+
+    async closeThreadSeatState(org, channelKey, threadKey, seatToken, state, report, at) {
+      const { rows } = await client.query(
+        `UPDATE thread_seat_state SET state = $1, report = COALESCE($2, report), updated_at = $3
+         WHERE org_id = $4 AND channel_key = $5 AND thread_key = $6 AND seat_token = $7
+           AND (state = 'open' OR (state = 'expired' AND $1 = 'completed'))
+         RETURNING thread_key`,
+        [state, report, at, org, channelKey, threadKey, seatToken],
+      );
+      return rows.length > 0;
+    },
+
+    async listIdleThreadSeats(org, before, limit) {
+      const { rows } = await client.query(
+        "SELECT channel_key, thread_key, seat_token, parent_key, state, origin_json, report, opened_at, updated_at FROM thread_seat_state WHERE org_id = $1 AND state = 'open' AND updated_at < $2 ORDER BY updated_at ASC LIMIT $3",
+        [org, before, limit],
+      );
+      return (rows as { channel_key: string; thread_key: string; seat_token: string; parent_key: string; state: string; origin_json: string; report: string | null; opened_at: string; updated_at: string }[]).map((r) => ({
+        channelKey: r.channel_key,
+        threadKey: r.thread_key,
+        seatToken: r.seat_token,
+        parentRegistryKey: r.parent_key,
+        state: readThreadSeatStateValue(r.state),
+        originJson: r.origin_json,
+        ...(r.report !== null ? { report: r.report } : {}),
+        openedAt: r.opened_at,
+        updatedAt: r.updated_at,
+      }));
     },
 
     async putTurnAnchor(org, anchor, at, ttlMs) {
@@ -3558,8 +3747,8 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     async addPendingAction(row: PendingActionRow) {
       await client.query(
         `INSERT INTO pending_actions
-           (org_id, id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+           (org_id, id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, group_key, status, created_at, expires_at, decided_by, decided_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
         [
           row.org,
           row.id,
@@ -3572,6 +3761,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
           row.threadTs,
           row.messageTs,
           row.postedTo,
+          row.groupKey ?? null,
           row.status,
           row.createdAt,
           row.expiresAt,
@@ -3584,8 +3774,8 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     async addPendingActionIfAbsent(row: PendingActionRow) {
       const { rows } = await client.query(
         `INSERT INTO pending_actions
-           (org_id, id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+           (org_id, id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, group_key, status, created_at, expires_at, decided_by, decided_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
          ON CONFLICT (org_id, id) DO NOTHING RETURNING id`,
         [
           row.org,
@@ -3599,6 +3789,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
           row.threadTs,
           row.messageTs,
           row.postedTo,
+          row.groupKey ?? null,
           row.status,
           row.createdAt,
           row.expiresAt,
@@ -3611,7 +3802,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async getPendingAction(org, id) {
       const { rows } = await client.query(
-        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at
+        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, group_key, status, created_at, expires_at, decided_by, decided_at
          FROM pending_actions WHERE org_id = $1 AND id = $2`,
         [org, id],
       );
@@ -3621,7 +3812,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async listPendingActions(org) {
       const { rows } = await client.query(
-        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at
+        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, group_key, status, created_at, expires_at, decided_by, decided_at
          FROM pending_actions WHERE org_id = $1 AND status = 'pending' ORDER BY created_at ASC`,
         [org],
       );
@@ -3630,7 +3821,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async listExpiredPendingActions(org, nowIso) {
       const { rows } = await client.query(
-        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at
+        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, group_key, status, created_at, expires_at, decided_by, decided_at
          FROM pending_actions WHERE org_id = $1 AND status = 'pending' AND expires_at <= $2 ORDER BY created_at ASC`,
         [org, nowIso],
       );
@@ -3639,7 +3830,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async listRejectedActionsSince(org, sinceIso) {
       const { rows } = await client.query(
-        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at
+        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, group_key, status, created_at, expires_at, decided_by, decided_at
          FROM pending_actions WHERE org_id = $1 AND status = 'rejected' AND decided_at >= $2 ORDER BY decided_at DESC`,
         [org, sinceIso],
       );
@@ -3648,6 +3839,15 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async setPendingActionMessage(org, id, messageTs) {
       await client.query("UPDATE pending_actions SET message_ts = $1 WHERE org_id = $2 AND id = $3", [messageTs, org, id]);
+    },
+
+    async listPendingActionsForMessage(org, channelId, messageTs) {
+      const { rows } = await client.query(
+        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, group_key, status, created_at, expires_at, decided_by, decided_at
+         FROM pending_actions WHERE org_id = $1 AND channel_id = $2 AND message_ts = $3 ORDER BY created_at ASC, id ASC`,
+        [org, channelId, messageTs],
+      );
+      return (rows as PendingActionPgRow[]).map((r) => pendingActionFromPgRow(org, r));
     },
 
     async decidePendingAction(org, id, status, decidedBy, decidedAt) {
@@ -3670,7 +3870,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async listDecidedPendingActionsWithArg(org, kind, argKey) {
       const { rows } = await client.query(
-        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at
+        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, group_key, status, created_at, expires_at, decided_by, decided_at
          FROM pending_actions WHERE org_id = $1 AND kind = $2 AND status <> 'pending' AND strpos(args_json, $3) > 0 ORDER BY decided_at ASC`,
         [org, kind, argKeyNeedle(argKey)],
       );

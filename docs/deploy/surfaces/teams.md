@@ -455,6 +455,44 @@ What that means for you, in three lines:
   it refuses rather than guess which organisation the account belongs to. A single message from that
   person to the bot fixes it permanently.
 
+## Approval cards
+
+A governed act — a spend limit, a routine, a memory purge, any verb that needs a person's yes —
+asked in a Teams **channel** posts an approval card into that channel. The card is an Adaptive Card
+with **Approve** and **Reject** buttons. It posts as a new post in the channel, not inside the reply
+chain that asked, and the agent says where it is.
+
+- **The tap is authenticated.** A tap reaches the deployment as an `adaptiveCard/action` invoke on
+  the same public route as a message (`/eve/v1/teams`). The route verifies the Bot Framework JWT
+  before it reads the body, and it answers 401 to an unsigned or forged invoke. The token proves only
+  that the Bot Framework service relayed the request to this bot; it does not bind the body, and
+  every channel on the bot registration (Web Chat, Direct Line) gets the same token. So a tap counts
+  only when the activity's `channelId` is `msteams`, and a tap with no tenant is refused. The card
+  payload names only the pending id and the org; the person, the tenant and the room come from the
+  relayed Teams activity.
+- **The decision is the same as on Slack and Discord.** One decide core holds the approver tiers,
+  the clicker gate, the halt check and the `approval.*` audit rows. An admin-tier card needs a person
+  on a `Domain.admins` roster, written `teams/<user-id>` (the Bot Framework `29:` id). A Teams team
+  owner is not an approver on that standing alone.
+- **The card opens with one plain sentence** of what will happen and to whom, then the
+  `Approval requested: <kind>` label and the detail — the same layout as Slack and Discord
+  ([Approval cards](../../security/control-plane.md#in-slack-approvals)). Several asks from one job
+  still post one Teams card each; grouping them into one card is Slack-only today.
+- **What the person sees.** A decided card replaces the pending one, and a decision notice posts
+  into the card's own reply chain. A notice with no tap behind it — a TTL expiry, or a card a
+  routine grant released — posts as a new post in the channel instead. A refused tap — a
+  non-admin on an admin-tier card, a tap from another Teams channel, a guest — shows a note to
+  that person only, and the card stays live.
+- **A personal or group chat cannot host the card.** It carries no channel id, so the card goes to
+  a card-capable channel in the same domain (a Slack, Discord or Teams channel). With no such
+  channel, or no explicit domain, the agent refuses and names the config to change.
+- **No Teams room roster is read yet**, so the clicker gate cannot see a guest in the room. A kind
+  that hands the clicker a live secret (`declare_webhook`) is therefore refused on a Teams tap.
+
+The card needs no extra manifest permission: `Action.Execute` is answered by the bot itself.
+Status: built and unit-tested, not yet proven on a live tenant — the
+[support matrix](./support-matrix.md) cell stays 🔧 until the `S-CARD-teams` leg passes.
+
 ## Gotchas
 
 - **Public endpoint is mandatory.** The Bot Framework Connector pushes activities to your messaging endpoint over HTTPS; it can't reach `localhost`. Use a tunnel for local work and update the messaging endpoint whenever the tunnel URL changes.
@@ -519,3 +557,23 @@ through an env var:
 
 Either gap self-skips the leg with the exact missing thing named (`ctx.skip`, never a false red) —
 run `E2E_ONLY=J-TEAMS-DM npm run test:e2e-driver` and read the skip reason.
+
+**The approval card (`S-CARD-teams`, OPE-2424).** This leg rides the same six `E2E_TEAMS_*` vars as
+`J-TEAMS`, plus `E2E_TARGET_URL` and `E2E_CONTROL_READ_TOKEN` for the audit read. It has three legs:
+
+1. **The propose.** The driver `@mentions` the bot with a governed ask (a one-shot routine), and the
+   leg waits for an OE Adaptive Card in the channel whose Approve and Reject actions name one pending
+   id, and for the matching `approval.requested` row.
+2. **The refused forgery.** The leg POSTs an `adaptiveCard/action` invoke that carries the real card's
+   Approve payload to `/eve/v1/teams`, once with no `Authorization` header and once with a self-minted
+   bearer. Both must get 401, and the pending row must have no decision row afterwards.
+3. **The tap.** Graph cannot press a card button, and the deployment trusts only invokes that
+   Microsoft signs, so this leg needs a person in the Teams client. Set `E2E_TEAMS_CARD_TAP=manual`,
+   run the leg, and tap **Reject** on the card when the log says `TAP NOW`. The leg then gates on the
+   decision row (named for a `29:` principal) and on the decision notice in the card's reply chain.
+   Without `E2E_TEAMS_CARD_TAP=manual` the leg SKIPS after legs 1 and 2 — it never scores green over
+   a tap nobody made.
+
+```bash
+E2E_TEAMS_CARD_TAP=manual E2E_ONLY=S-CARD-teams npm run test:e2e-driver
+```

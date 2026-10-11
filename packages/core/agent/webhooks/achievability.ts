@@ -1,3 +1,4 @@
+import { WEBHOOK_DM_TARGET_PREFIX } from "./target.js";
 import { resolveDomainForChannel, type Domain } from "../memory/domain.js";
 import { describeReadableBy, scopeGrantsRead, type ReadableBy } from "../access/read-grant.js";
 
@@ -96,6 +97,8 @@ export function webhookReach(
     grantDomainsExist(hook.readableBy, domains),
     hook.target === undefined
       ? inert("this hook declares no target, so there is no room whose ability to read its events could be checked (an emit-only hook's consequences live in `event` routines, anywhere the grant reaches)")
-      : readGrantReach(hook.target, hook.readableBy, domains),
+      : hook.target.startsWith(WEBHOOK_DM_TARGET_PREFIX)
+        ? inert("this hook's target is a person's DM, whose surface key exists only once the DM opens at fire time, so which domain it belongs to is unknown here")
+        : readGrantReach(hook.target, hook.readableBy, domains),
   );
 }

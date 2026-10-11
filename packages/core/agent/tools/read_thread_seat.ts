@@ -5,6 +5,7 @@ import { currentWakeId, deploymentOrg, type BindableContext } from "../identity/
 import { resolveUnifiedWakeTarget, unifiedThreadRef } from "../channels/unified-window.js";
 import { resolveThreadOwner } from "../channels/thread-ownership.js";
 import { readThreadSeatState } from "../channels/thread-seat-state.js";
+import type { ThreadSeatState } from "../operational/store.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { isThreadSeatWindowToken } from "../channels/window-key.js";
 
@@ -68,13 +69,24 @@ export default windowGated(
         updatedAt: state.updatedAt,
         routed,
         ...(state.report !== undefined ? { report: state.report } : {}),
-        note:
-          state.state === "open"
-            ? routed
-              ? "A thread seat is holding this thread. It has not reported back yet — what it is doing is not recorded anywhere, so ask it with `message_thread_seat` rather than assuming."
-              : "The record says open, but nothing routes this thread to a seat any more — the seat is gone (a rotation, or an expired ownership row). Its messages come to you."
-            : "The thread was handed back to you. The report above is the seat's own closing words.",
+        note: readThreadSeatNote(state.state, routed, state.report !== undefined),
       };
     },
   }),
 );
+
+export function readThreadSeatNote(state: ThreadSeatState, routed: boolean, hasReport: boolean): string {
+  const report = hasReport ? " The report above is the seat's own closing words." : " The seat left no report; the thread itself is the record.";
+  switch (state) {
+    case "open":
+      return routed
+        ? "A thread seat is holding this thread. It has not reported back yet — what it is doing is not recorded anywhere, so ask it with `message_thread_seat` rather than assuming."
+        : "The record says open, but nothing routes this thread to a seat any more. Its messages come to you.";
+    case "completed":
+      return `The seat finished the thread and handed it back to you.${report}`;
+    case "expired":
+      return `The thread went quiet, so the host closed its seat and handed it back to you.${report}`;
+    case "closed":
+      return `The host closed the seat because its thread could no longer reach it, and handed the thread back to you.${report}`;
+  }
+}

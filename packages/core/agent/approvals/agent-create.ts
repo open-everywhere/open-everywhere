@@ -26,6 +26,7 @@ import { platformOfScopeKey } from "../access/scope-key.js";
 import { inlineForReview } from "./review-surface.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import type { ActionKind } from "./types.js";
+import { plainValue } from "./plain-text.js";
 
 export interface AgentCreateArgs {
   readonly org: string;
@@ -226,6 +227,9 @@ export async function executeAgentCreate(args: AgentCreateArgs, decidedBy: strin
 const agentCreate: ActionKind<AgentCreateArgs> = {
   kind: "agent.create",
   policy: "member",
+  plainSummary(args) {
+    return `Open a pull request that creates a new agent, ${plainValue(args.spec.name)}, for an admin to review`;
+  },
   summarize(args) {
     const s = args.spec;
     return [

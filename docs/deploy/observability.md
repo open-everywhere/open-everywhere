@@ -130,6 +130,10 @@ The row is ids, counts and durations only, like the two anchors above — never 
 no `Retry-After` on the refusal, so every wait uses that fallback and the 20 s total budget never
 binds. Size an ingress budget against the 6 s, not the 20 s.
 
+> **The audit trail is a separate stream.** Log shipping carries console lines. To send the audit
+> trail itself to a SIEM, with its hash-chain fields, configure [SIEM export](./siem-export.md) in
+> `agent/settings/settings.ts` instead.
+
 ## Signal 1 — durable structured logs (`OE_LOG_SHIP_URL`)
 
 Set `OE_LOG_SHIP_URL` and every console line **also** ships as a structured JSON

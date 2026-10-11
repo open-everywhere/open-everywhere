@@ -24,7 +24,7 @@ import { PROVIDER_DOCS } from "./docs-generated.js";
 import { DISCORD_SURFACE_PARITY } from "./surface-parity.js";
 import { DISCORD_PROVIDER_EVENTS } from "./provider-events.js";
 import { registerDiscordOps } from "./ops.js";
-import { resolveDiscordTarget, discordReportTargetFor } from "./channels/discord-dispatch-target.js";
+import { resolveDiscordTarget, discordReportTargetFor, resolveDiscordDeclaredTarget } from "./channels/discord-dispatch-target.js";
 import { bindDiscord } from "./channels/discord-identity.js";
 import { discordPostArm } from "./channels/discord-post-arm.js";
 import { discordWakeOriginCodec } from "./channels/discord-origin-codec.js";
@@ -51,7 +51,11 @@ export function registerDiscordProvider(): void {
   registerSurfaceMessageOps(discordMessageOps);
   registerCardPoster("discord", postDiscordApprovalCard);
   registerJudgeLiftNoticePoster("discord", postDiscordJudgeLiftNotice);
-  registerRoutineDispatch("discord", { resolveTarget: resolveDiscordTarget, reportTargetFor: discordReportTargetFor });
+  registerRoutineDispatch("discord", {
+    resolveTarget: resolveDiscordTarget,
+    reportTargetFor: discordReportTargetFor,
+    resolveDeclaredTarget: (spec) => resolveDiscordDeclaredTarget(spec),
+  });
   registerNativeAdminCheck("discord", async (scopeKey, principalId) => {
     const guildId = guildIdFromScopeKey(scopeKey);
     return guildId ? isGuildAdminViaRest(guildId, principalId) : false;

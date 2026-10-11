@@ -61,7 +61,7 @@ ok(templatePlaceholders === 4, `the template carries four placeholders — three
 
 ok(parsed.features.app_home?.messages_tab_enabled === true, "the Messages tab is on — a DM is the primary wake");
 ok(parsed.features.app_home?.messages_tab_read_only_enabled === false, "…and writable (read-only blocks the person from sending)");
-ok(parsed.features.app_home?.home_tab_enabled === false, "…and the Home tab is off — the product routes no app_home_opened");
+ok(parsed.features.app_home?.home_tab_enabled === true, "…and the Home tab is on — the front route publishes the person's page on app_home_opened");
 
 ok(parsed.display_information.name === SLACK_DEFAULT_APP_NAME, "with no name the app is named the default");
 ok(parsed.features.bot_user.display_name === SLACK_DEFAULT_APP_NAME, "…and so is the bot user");
@@ -86,9 +86,10 @@ ok(frontLiterals.length >= 4, `scan sanity: the front route compares eventType t
 const candidateTypes = new Set<string>([...SLACK_PROVIDER_EVENTS.events.map((e) => e.event), ...frontLiterals]);
 const manifestEventName = (type: string, channelType?: string): string =>
   type === "message" && channelType !== undefined ? (MESSAGE_EVENT_BY_CHANNEL_TYPE[channelType] ?? `message.${channelType}`) : type;
+const PROBE_FIELDS: Record<string, Record<string, unknown>> = { app_home_opened: { tab: "home", user: "U_PROBE" } };
 const probe = (type: string, channelType?: string): string =>
   classifyEnvelope(
-    JSON.stringify({ type: "event_callback", event: { type, ...(channelType === undefined ? {} : { channel_type: channelType }) } }),
+    JSON.stringify({ type: "event_callback", event: { type, ...(PROBE_FIELDS[type] ?? {}), ...(channelType === undefined ? {} : { channel_type: channelType }) } }),
     "application/json",
   ).kind;
 const handledEvents = new Set<string>();
@@ -131,6 +132,9 @@ const EVENT_SCOPES: Record<string, readonly string[]> = {
   member_joined_channel: ["channels:read", "groups:read", "mpim:read"],
   reaction_added: ["reactions:read"],
   reaction_removed: ["reactions:read"],
+  app_home_opened: [],
+  channel_shared: ["channels:read", "groups:read"],
+  user_change: ["users:read"],
 };
 for (const event of subscribed) {
   const scopes = EVENT_SCOPES[event];

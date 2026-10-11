@@ -43,6 +43,11 @@ const REQUIRED_SCOPES: Record<string, string[]> = {
   "chat.stopStream": ["chat:write"],
   "apps.manifest.create": [],
   "oauth.v2.access": [],
+  "views.publish": [],
+  "users.conversations": ["channels:read", "groups:read"],
+  "files.info": ["files:read"],
+  "conversations.canvases.create": ["canvases:write"],
+  "canvases.edit": ["canvases:write"],
 };
 
 const NOT_SLACK_METHODS: Record<string, string> = {

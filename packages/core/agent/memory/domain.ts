@@ -16,7 +16,8 @@ import { credentialGrantDeclarationProblems } from "../access/credential-grant.j
 import { domainCredentialProblems, type DomainCredentialOverride } from "../access/domain-credentials.js";
 import type { SessionMode } from "../access/resolver.js";
 import type { Trust } from "../identity/binding.js";
-import { getSettings } from "../settings/settings.js";
+import { getSettings, languageTagProblem } from "../settings/settings.js";
+import { isVouchedInternal } from "../identity/trust.js";
 import type { ApprovalModeConfig } from "../access/approver-chain.js";
 import type { ExternalPolicyOverride, ExternalRoomGrain } from "../access/external-policy.js";
 
@@ -72,6 +73,7 @@ export interface Domain {
   readonly match?: DomainMatch;
   readonly memory?: string | readonly string[];
   readonly includeOrg?: "readonly" | "inherit";
+  readonly memoryCanvas?: boolean;
   readonly approvalMode?: ApprovalModeConfig;
   readonly nameDropWake?: boolean;
   readonly ambientSupervisor?: boolean;
@@ -86,6 +88,7 @@ export interface Domain {
   readonly statusVerbsMode?: "extend" | "replace";
   readonly role?: string;
   readonly sandbox?: SandboxPreset;
+  readonly language?: string;
   readonly admins?: readonly string[];
   readonly governance?: boolean;
   readonly reportChannel?: string;
@@ -310,7 +313,25 @@ export function windowedDomainFor(channelKey: string, domains: readonly Domain[]
 }
 
 export function windowModeFor(channelKey: string, domains: readonly Domain[]): WindowMode {
-  return domainForChannel(channelKey, domains)?.mode ?? "solo";
+  const domain = domainForChannel(channelKey, domains);
+  return domain ? resolvedWindowMode(domain, isVouchedInternal) : "solo";
+}
+
+export function defaultUnifiedFallback(d: Domain, vouched: readonly string[] | VouchedInternalFor): string | undefined {
+  if (d.match !== undefined) return "pseudo-domain";
+  if (domainContainers(d).length > 0) return "container-reach";
+  const residue = domainRoster(d).filter((ch) => windowGroupFor(ch, d) === undefined);
+  if (residue.length <= 1) return "single-member";
+  const isInternal = vouchedPredicate(vouched);
+  const trustEnv = getSettings().identity.blanketTrust === "internal";
+  const unvouched = residue.find((ch) => !windowSourceVouched(ch, isInternal, trustEnv));
+  return unvouched === undefined ? undefined : `unvouched:${unvouched}`;
+}
+
+export function resolvedWindowMode(d: Domain, vouched: readonly string[] | VouchedInternalFor): WindowMode {
+  if (d.match !== undefined) return "solo";
+  if (d.mode !== undefined) return d.mode;
+  return defaultUnifiedFallback(d, vouched) === undefined ? "unified" : "solo";
 }
 
 export function windowGroupFor(channelKey: string, domain: Domain): WindowGroup | undefined {
@@ -437,10 +458,17 @@ function vouchedPredicate(vouched: readonly string[] | VouchedInternalFor): Vouc
   return (workspaceKey, surfaceKey) => vset.has(workspaceKey) || vset.has(surfaceKey);
 }
 
-function windowMemberSets(d: Domain): ReadonlyMap<string, readonly string[]> {
+function windowSourceVouched(ch: string, isInternal: VouchedInternalFor, trustEnv: boolean): boolean {
+  const segs = ch.split("/");
+  if (BINDING_TRUSTED_PLATFORMS.has(segs[0] ?? "")) return true;
+  return isInternal(segs.slice(0, 2).join("/"), ch) || trustEnv;
+}
+
+function windowMemberSets(d: Domain, vouched: VouchedInternalFor): ReadonlyMap<string, readonly string[]> {
   const out = new Map<string, string[]>();
+  const residueUnified = resolvedWindowMode(d, vouched) === "unified";
   for (const ch of domainRoster(d)) {
-    const windowId = windowGroupFor(ch, d)?.name ?? (d.mode === "unified" ? d.name : ch);
+    const windowId = windowGroupFor(ch, d)?.name ?? (residueUnified ? d.name : ch);
     const members = out.get(windowId);
     if (members) members.push(ch);
     else out.set(windowId, [ch]);
@@ -448,21 +476,35 @@ function windowMemberSets(d: Domain): ReadonlyMap<string, readonly string[]> {
   return out;
 }
 
-export function assertWindowSourcesVouched(domains: readonly Domain[], vouched: readonly string[] | VouchedInternalFor): void {
+export function assertWindowSourcesVouched(
+  domains: readonly Domain[],
+  vouched: readonly string[] | VouchedInternalFor,
+  deps: { readonly warn?: (message: string) => void } = {},
+): void {
   const isInternal = vouchedPredicate(vouched);
   const trustEnv = getSettings().identity.blanketTrust === "internal";
+  const warn = deps.warn ?? ((m: string) => console.warn(m));
   const bad: string[] = [];
   for (const d of domains) {
-    for (const [windowId, members] of windowMemberSets(d)) {
+    if (d.match === undefined && d.mode === undefined) {
+      const why = defaultUnifiedFallback(d, isInternal);
+      if (why !== undefined && why !== "single-member") {
+        warn(
+          `[open-everywhere:window] domain "${d.name}" omits \`mode\`, so it would default to "unified", but it stays "solo" (${why}): ` +
+            (why === "container-reach"
+              ? `its reach holds a tenant or glob entry, and config load cannot prove that every room under it is internal. List the rooms as exact keys to share one window, or set mode: "solo" to silence this warning.`
+              : `that room is not declared internal. Vouch it in agent/identity/surfaces.ts to share one window, or set mode: "solo" to silence this warning.`),
+        );
+      }
+    }
+    for (const [windowId, members] of windowMemberSets(d, isInternal)) {
       if (members.length <= 1) continue;
       const where = windowId === d.name ? `domain "${d.name}"` : `window "${windowId}" of domain "${d.name}"`;
       for (const ch of members) {
         const segs = ch.split("/");
         const platform = segs[0] ?? "";
-        if (BINDING_TRUSTED_PLATFORMS.has(platform)) continue;
         const workspaceKey = segs.slice(0, 2).join("/");
-        const okay = isInternal(workspaceKey, ch) || trustEnv;
-        if (!okay) {
+        if (!windowSourceVouched(ch, isInternal, trustEnv)) {
           bad.push(
               `  ${where} includes UN-vouched source "${ch}" in a multi-source (${members.length}-channel) cross-surface window — vouch it in agent/identity/surfaces.ts (add "${ch}" or its workspace "${workspaceKey}"), or declare \`identity.blanketTrust: "internal"\` in agent/settings/settings.ts for an internal-only deploy` +
               (platform === "notion"
@@ -833,6 +875,10 @@ export function assertDomainsValid(domains: readonly Domain[]): void {
       bad.push(
         `  "${d.name}" starts with the RESERVED prefix "${DM_ANCHOR_DOMAIN_PREFIX}" — that namespace belongs to the DM delegation anchor (channels/window-key.ts dmAnchorDomain, OPE-306) and can never be a configured domain name. Rename it.`,
       );
+    }
+    if (d.language !== undefined) {
+      const problem = languageTagProblem(d.language);
+      if (problem !== undefined) bad.push(`  "${d.name}" sets language ${JSON.stringify(d.language)}, which ${problem}`);
     }
     bad.push(...domainCredentialProblems(d));
     bad.push(...credentialGrantDeclarationProblems(d));

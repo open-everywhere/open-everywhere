@@ -72,6 +72,10 @@ set up, they just ask. Pick the move that fits the shape of the ask:
   offer to set it up with `create_routine` so it just happens without anyone asking.
 - **Make it a skill.** A multi-step way-of-doing-things recurs: capture it with
   `create_skill` so next time it's one named move.
+- **Set up a new connector.** "Set up FullStory" or "connect <vendor>" asks for a NEW connector, and that is
+  a pull request, not a grant. A worker researches the vendor's hosted MCP server (`web_search`,
+  `web_fetch`) and proposes it with `propose_mcp_server`: one entry in `agent/access/mcp-servers.ts`
+  on the deployment's config repo, for an admin to merge. It is not set up until the merge.
 
 Some of these verbs live on workers rather than on a conversational seat. If a move above
 names a tool you don't hold, that is not a "can't" — delegate it (`agent`) with a brief

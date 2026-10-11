@@ -8,6 +8,7 @@ export interface IngestionRoute {
 }
 
 export const INGESTION_ROUTES: readonly IngestionRoute[] = [
+  { key: "packages/core/agent/a2a/output.ts#a2a-agent", file: "packages/core/agent/a2a/output.ts", form: "ingestion-property", kind: "connector", label: "a2a-agent", pending: false },
   { key: "packages/core/agent/access/aws-output.ts#aws", file: "packages/core/agent/access/aws-output.ts", form: "ingestion-const", kind: "aws", label: "aws", pending: false },
   { key: "packages/core/agent/access/browser-toolkit.ts#browser_${op}", file: "packages/core/agent/access/browser-toolkit.ts", form: "ingestion-property", kind: "web", label: "browser_${op}", pending: false },
   { key: "packages/core/agent/access/untrusted-projection.ts#ingestionLabel", file: "packages/core/agent/access/untrusted-projection.ts", form: "ingestion-property", kind: "connector", label: "ingestionLabel", pending: false },

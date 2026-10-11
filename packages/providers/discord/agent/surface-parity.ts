@@ -15,6 +15,10 @@ export const DISCORD_SURFACE_PARITY: SurfaceParityDeclaration = {
       "the seated path reports the classifier's word — an auto-thread's follow-up diverts as that channel's own wake, and the journey reads `channel-watch` on a `singleWindow: true` row in that room instead",
   },
   "owned-thread-ingress": { supported: "the guild leg only — a Discord DM carries no threads, so its divert never consults ownership" },
+  "thread-done-reaction": {
+    unsupported:
+      "a Discord thread is its own channel, and the message that started it lives in the PARENT channel, whose id the origin does not carry. Marking the thread's first message instead would put the mark on the wrong message",
+  },
 
   "addressed-leg": "supported",
   "ambient-leg": "supported",

@@ -20,6 +20,7 @@ agent/channels/unified.ts	mounted @open-everywhere/core
 agent/channels/webhook-reveal-page.ts	mounted @open-everywhere/core
 agent/channels/webhooks.ts	mounted @open-everywhere/core
 agent/connections/notion.ts	mounted @open-everywhere/core
+agent/connections/slack-as-you.ts	mcp-server agent/access/mcp-servers.ts
 agent/hooks/approval-raised.ts	mounted @open-everywhere/core
 agent/hooks/approval-settlement.ts	mounted @open-everywhere/core
 agent/hooks/binding-bridge.ts	mounted @open-everywhere/core
@@ -48,11 +49,13 @@ agent/hooks/spawn-taint.ts	mounted @open-everywhere/core
 agent/hooks/spend.ts	mounted @open-everywhere/core
 agent/hooks/stall-guard.ts	mounted @open-everywhere/core
 agent/hooks/telemetry.ts	mounted @open-everywhere/core
+agent/hooks/tool-usage.ts	mounted @open-everywhere/core
 agent/hooks/turn-anchor.ts	mounted @open-everywhere/core
 agent/hooks/wake-accounting-turn.ts	mounted @open-everywhere/core
 agent/hooks/wake-turn-start.ts	mounted @open-everywhere/core
 agent/hooks/window-routing.ts	mounted @open-everywhere/core
 agent/lib/providers.generated.ts	providers discord,github,linear,notion,slack,teams
+agent/schedules/audit-export.ts	mounted @open-everywhere/core
 agent/schedules/directory-sync.ts	mounted @open-everywhere/core
 agent/schedules/dispatch.ts	mounted @open-everywhere/core
 agent/schedules/dream-mode3.ts	mounted @open-everywhere/core
@@ -71,6 +74,7 @@ agent/tools/browser_tools.ts	mounted @open-everywhere/core
 agent/tools/cancel_routine.ts	mounted @open-everywhere/core
 agent/tools/cancel_work.ts	mounted @open-everywhere/core
 agent/tools/capture_events.ts	mounted @open-everywhere/core
+agent/tools/check_agent_task.ts	mounted @open-everywhere/core
 agent/tools/check_pr_status.ts	mounted @open-everywhere/core
 agent/tools/checkout_repo.ts	mounted @open-everywhere/core
 agent/tools/clear_connector_override.ts	mounted @open-everywhere/core
@@ -84,6 +88,7 @@ agent/tools/create_routine.ts	mounted @open-everywhere/core
 agent/tools/create_skill.ts	mounted @open-everywhere/core
 agent/tools/create_ticket.ts	mounted @open-everywhere/core
 agent/tools/declare_webhook.ts	mounted @open-everywhere/core
+agent/tools/delegate_to_agent.ts	mounted @open-everywhere/core
 agent/tools/delete_skill.ts	mounted @open-everywhere/core
 agent/tools/describe_image.ts	mounted @open-everywhere/core
 agent/tools/dm_person.ts	mounted @open-everywhere/core
@@ -111,6 +116,7 @@ agent/tools/permission_fit_report.ts	mounted @open-everywhere/core
 agent/tools/post_file.ts	mounted @open-everywhere/core
 agent/tools/post_message.ts	mounted @open-everywhere/core
 agent/tools/post_pr_walkthrough.ts	mounted @open-everywhere/core
+agent/tools/propose_mcp_server.ts	mounted @open-everywhere/core
 agent/tools/purge_memory.ts	mounted @open-everywhere/core
 agent/tools/query_analytics.ts	mounted @open-everywhere/core
 agent/tools/react.ts	mounted @open-everywhere/core
@@ -155,6 +161,7 @@ agent/tools/subscribe_pr.ts	mounted @open-everywhere/core
 agent/tools/unlink_identity.ts	mounted @open-everywhere/core
 agent/tools/update_status.ts	mounted @open-everywhere/core
 agent/tools/usage_report.ts	mounted @open-everywhere/core
+agent/tools/waiting_on_me.ts	mounted @open-everywhere/core
 agent/tools/walk_pr.ts	mounted @open-everywhere/core
 agent/tools/web_fetch.ts	framework-disabled
 agent/tools/work.ts	mounted @open-everywhere/core

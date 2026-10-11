@@ -1,6 +1,7 @@
 import { deliverProactiveDm } from "../channels/dm-audience.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import type { ActionKind } from "./types.js";
+import { plainValue } from "./plain-text.js";
 
 export interface ChatDmArgs {
   readonly org: string;
@@ -28,6 +29,7 @@ function summarizeDm(args: ChatDmArgs): string[] {
 const chatDm: ActionKind<ChatDmArgs> = {
   kind: "chat.dm",
   policy: "member",
+  plainSummary: (args) => `Send a direct message to ${plainValue(args.platform)} person ${plainValue(args.principalId)}`,
   summarize: summarizeDm,
   async execute(args, decidedBy) {
     await deliverProactiveDm({

@@ -142,6 +142,11 @@ const {
   SETKEY_MODAL_CALLBACK,
   SETKEY_INPUT_BLOCK,
   SETKEY_INPUT_ACTION,
+  HOME_ACTION_PREFIX,
+  HOME_MODAL_CALLBACK,
+  buildHomeOpenedEnvelope,
+  buildHomeButtonPayload,
+  buildHomeSubmissionPayload,
 } = await import("../packages/core/scripts/e2e/synthetic.js");
 const {
   buildDiscordDmRelayEnvelope,
@@ -212,6 +217,7 @@ const { SLACK_COMMANDS_ROUTE } = await import("@open-everywhere/provider-slack/a
 const { relayGate, parseRelayPayload, authForRelayMessage } = await import("@open-everywhere/provider-discord/agent/channels/discord-gateway.js");
 const { OE_APPROVAL_PREFIX } = await import("@open-everywhere/core/agent/approvals/flow.js");
 const { OE_CONNECT_ACTION_PREFIX } = await import("@open-everywhere/core/agent/connections/connector-card.js");
+const { SLACK_HOME_WIRE } = await import("@open-everywhere/core/agent/home/home-view.js");
 const {
   OE_SETKEY_MODAL_CALLBACK,
   SETKEY_INPUT_BLOCK: REAL_SETKEY_INPUT_BLOCK,
@@ -1487,6 +1493,7 @@ const { parseAppMentionEvent } = await import(
     "S-PROVENANCE-DM",
     "S-SPEND-DM-MASK",
     "S-SPEND-REFUSAL-KEYS",
+    "S-A2A-DELEGATE",
     "S-JUDGE-LIFT-NOTICE",
     "S-DELEGATED-slack",
     "S-DELEGATED-discord",
@@ -1498,6 +1505,7 @@ const { parseAppMentionEvent } = await import(
     "S-SUSPENDED-slack",
     "S-SUSPENDED-discord",
     "S-SUSPENDED-teams",
+    "S-CARD-teams",
     "S-SUSPENDED-linear",
     "S-SUSPENDED-github",
     "S-AMBIENT-discord",
@@ -1515,6 +1523,10 @@ const { parseAppMentionEvent } = await import(
     "J-ENGAGED-slack", "J-ENGAGED-discord", "J-ENGAGED-github", "J-ENGAGED-linear", "J-ENGAGED-notion",
     "S-OWN-ACCOUNT-NOTION",
     "S-SPEND-DM-MASK", "S-SPEND-REFUSAL-KEYS",
+    "S-SLACK-AS-YOU",
+    "S-APP-HOME",
+    "S-STEP-LABELS",
+    "S-CARD-SUMMARY", "S-BLOCKED-PING",
   ]);
   ok(
     ids.length === EXPECTED_IDS.size && ids.every((id) => EXPECTED_IDS.has(id)),
@@ -1556,7 +1568,7 @@ const { parseAppMentionEvent } = await import(
   const nonSlack = SCENARIOS.filter((s) => s.surface !== "slack").map((s) => s.id).sort();
   ok(
     nonSlack.join(",") ===
-      "J-DISC,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion,J-ENGAGED-teams,J-GH,J-LIN,J-NOT,J-PR,J-TEAMS,J-TEAMS-DM,J-UNI-X,J-WORKFLOW,S-AMBIENT-discord,S-AMBIENT-linear,S-AMBIENT-teams,S-APIKEY-INTAKE,S-CONNECT-CARD,S-CONNECTOR-TIER,S-DELEGATED-discord,S-DELEGATED-github,S-DELEGATED-linear,S-DELEGATED-notion,S-DELEGATED-teams,S-DISCORD-GRANT,S-DM-NOTION,S-EVE-CARD,S-GITHUB-NOTION-REST,S-JUDGE-LIFT-NOTICE,S-LINK-discord,S-LINK-teams,S-NOTION-WRITE,S-OWN-ACCOUNT-NOTION,S-PR-SESSION,S-PROVENANCE-DM,S-ROUTINE-CONNECTOR-WRITE,S-SIBLING-discord,S-SIBLING-notion,S-SIBLING-teams,S-SUSPENDED-discord,S-SUSPENDED-github,S-SUSPENDED-linear,S-SUSPENDED-teams,S8",
+      "J-DISC,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion,J-ENGAGED-teams,J-GH,J-LIN,J-NOT,J-PR,J-TEAMS,J-TEAMS-DM,J-UNI-X,J-WORKFLOW,S-AMBIENT-discord,S-AMBIENT-linear,S-AMBIENT-teams,S-APIKEY-INTAKE,S-CARD-teams,S-CONNECT-CARD,S-CONNECTOR-TIER,S-DELEGATED-discord,S-DELEGATED-github,S-DELEGATED-linear,S-DELEGATED-notion,S-DELEGATED-teams,S-DISCORD-GRANT,S-DM-NOTION,S-EVE-CARD,S-GITHUB-NOTION-REST,S-JUDGE-LIFT-NOTICE,S-LINK-discord,S-LINK-teams,S-NOTION-WRITE,S-OWN-ACCOUNT-NOTION,S-PR-SESSION,S-PROVENANCE-DM,S-ROUTINE-CONNECTOR-WRITE,S-SIBLING-discord,S-SIBLING-notion,S-SIBLING-teams,S-SUSPENDED-discord,S-SUSPENDED-github,S-SUSPENDED-linear,S-SUSPENDED-teams,S8",
     "the non-slack scenarios are exactly J-DISC+S-DISCORD-GRANT(discord)/S8+J-UNI-X+J-PR+S-PR-SESSION+J-WORKFLOW+S-JUDGE-LIFT-NOTICE(cross)/J-TEAMS+J-TEAMS-DM(teams)/J-GH(github)/J-LIN(linear)/J-NOT+S-NOTION-WRITE+S-CONNECTOR-TIER+S-DM-NOTION+S-EVE-CARD+S-CONNECT-CARD+S-APIKEY-INTAKE+S-ROUTINE-CONNECTOR-WRITE+S-OWN-ACCOUNT-NOTION(notion) PLUS the four non-slack engaged-seam journeys (OPE-1503) PLUS J-ENGAGED-teams (OPE-1500) (S-DM-DISCORD retired at OPE-725). S-JUDGE-LIFT-NOTICE is CROSS because its act originates on GitHub and its notice lands in the in-domain Slack venue — the split #911 measured, and the reason it is not a github-surface leg",
   );
   const smoke = SCENARIOS.filter((s) => s.smoke === true).map((s) => s.id);
@@ -1566,7 +1578,7 @@ const { parseAppMentionEvent } = await import(
     "the security suite is F-SEC (tainted-remember/SSRF/injection) + S-PR-BOUNDARY (ungranted-repo PR refusal) + S-AWS-BOUNDARY (ungranted-AWS refusal: no host execution, no credential material)",
   );
   const unjudged = SCENARIOS.filter((s) => !s.judged).map((s) => s.id);
-  ok(unjudged.join(",") === "S-MEM-READ,S6,S-OE-STATUS,S10,S-SPEND-DM-MASK,S-SPEND-REFUSAL-KEYS,S-LINK-SLACK,J-NOT,S-OWN-ACCOUNT-NOTION,J-SUP,S-DELEGATED-slack,S-DELEGATED-discord,S-DELEGATED-teams,S-DELEGATED-linear,S-DELEGATED-github,S-DELEGATED-notion,S-GITHUB-NOTION-REST,S-SUSPENDED-slack,S-SUSPENDED-discord,S-SUSPENDED-teams,S-SUSPENDED-linear,S-SUSPENDED-github,S-AMBIENT-discord,S-AMBIENT-linear,S-AMBIENT-teams,S-SIBLING-discord,S-SIBLING-teams,S-SIBLING-notion,S-LINK-discord,S-LINK-teams,S-HALT,S-PR-SESSION,S-PROVENANCE-DM,S-EVE-CARD,S-CONNECT-CARD,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-JUDGE-LIFT-NOTICE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT,S-DM-STOP-GRANT,J-ENGAGED-slack,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion", "(S-OWN-ACCOUNT-NOTION deliberately: an own-account ask either produced a connector.acting_identity refusal row or it did not, and the refusal SENTENCE is model-facing copy this leg's own backscroll already carries — grading the reply would grade its own history) (five of the six J-ENGAGED journeys are deliberately unjudged — J-ENGAGED-teams is the judged one: every gate is a reply.post or engagement.stood_down row, and the stand-down acknowledgement they would otherwise judge is model-authored copy the pack does not pin — their question is whether the engagement registry held the thread, which only a row answers) S-MEM-READ/S6/S10/S-LINK-SLACK/J-NOT/J-SUP/S-PR-SESSION/S-CONNECT-CARD/S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY/S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT are fully deterministic — no judge (S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT deliberately: a fence either wrote its row or it did not, and both legs turn on rows the model cannot see — connector.refused/connector.unattended_lift and grant.asked/grant.used/grant.notified. A fire that says it could not write the page produces the same sentence whether the fence refused it or the tool was never mounted, which is exactly the ambiguity the audit gates resolve) (J-DM-SYNC, which carried this same posture for the Slack DM twin, was RETIRED by OPE-396 with the sync delegation arm it existed to exercise; S-DM-DISCORD, its Discord twin, was RETIRED by OPE-725 for the same reason) (S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY deliberately: the verdict trail is a LOG — every gate is on taint.verdict/approval.chain audit rows, and what the model said about a page it read is not evidence about what the log recorded) (S-LINK-SLACK deliberately: an identity link either got WRITTEN or it didn't, and the only evidence of that is the identity.link.* audit rows — a model saying \"linked!\" is exactly the false pass this scenario exists to close) (S-MEM-READ deliberately: its whole point is that reply QUALITY is not the evidence — it gates on the memory.write audit row, the session-transcript read count and the touched silo set) (S15's deterministic legs folded into judged J3; S-PR-SESSION gates on GitHub-API readback + audit rows; S-CONNECT-CARD asserts the connector.dashboard_link_issued audit row; S-EVE-CARD deliberately: every gate is an action_id, an HTTP status or the run-unique token, and the one question it exists to answer — WHICH plane raised this card — is decided by the button's id, which no judge can read off a reply; hard gates: route status / audited silence / reply-target / in-channel presence) (S-JUDGE-LIFT-NOTICE deliberately: the lift is an `approval.autoapproved` row carrying `resolvedBy: \"judge\"` and the notice is joined to it by that row's own pending id — a judge cannot grade whether a notice reached a room, and the one thing a reply could say about it is the copy the notice itself carries)");
+  ok(unjudged.join(",") === "S-MEM-READ,S6,S-OE-STATUS,S10,S-SPEND-DM-MASK,S-SPEND-REFUSAL-KEYS,S-LINK-SLACK,J-NOT,S-OWN-ACCOUNT-NOTION,J-SUP,S-DELEGATED-slack,S-DELEGATED-discord,S-DELEGATED-teams,S-DELEGATED-linear,S-DELEGATED-github,S-DELEGATED-notion,S-GITHUB-NOTION-REST,S-SUSPENDED-slack,S-SUSPENDED-discord,S-SUSPENDED-teams,S-CARD-SUMMARY,S-BLOCKED-PING,S-CARD-teams,S-SUSPENDED-linear,S-SUSPENDED-github,S-AMBIENT-discord,S-AMBIENT-linear,S-AMBIENT-teams,S-SIBLING-discord,S-SIBLING-teams,S-SIBLING-notion,S-LINK-discord,S-LINK-teams,S-APP-HOME,S-HALT,S-PR-SESSION,S-A2A-DELEGATE,S-PROVENANCE-DM,S-EVE-CARD,S-CONNECT-CARD,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-JUDGE-LIFT-NOTICE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT,S-DM-STOP-GRANT,J-ENGAGED-slack,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion,S-SLACK-AS-YOU,S-STEP-LABELS", "(S-CARD-SUMMARY deliberately: the plain first line is host-rendered card text, so its gates are the notification text's first two lines and a reject ack, which no judge can read better) (S-BLOCKED-PING deliberately: a ping either wrote one attention.blocked outcome row for the asking person or it did not, and only the audit trail answers that) (S-APP-HOME deliberately: Slack offers no API to read a person's Home tab back, so the page reaching them is a home.publish row, and what Export and a forged Forget did is a memory.export row and the absence of a memory.purge row — nothing a reply says) (S-STEP-LABELS deliberately: a tool step either ran or it did not, and the thread either holds one answer or it does not; the label itself is pinned offline) (S-SLACK-AS-YOU deliberately: the answer either carries the run-unique codename only the person can read or it does not, and the channel and write legs gate on connector.use/connector.mint/approval.requested rows and a channel read-back) (S-OWN-ACCOUNT-NOTION deliberately: an own-account ask either produced a connector.acting_identity refusal row or it did not, and the refusal SENTENCE is model-facing copy this leg's own backscroll already carries — grading the reply would grade its own history) (five of the six J-ENGAGED journeys are deliberately unjudged — J-ENGAGED-teams is the judged one: every gate is a reply.post or engagement.stood_down row, and the stand-down acknowledgement they would otherwise judge is model-authored copy the pack does not pin — their question is whether the engagement registry held the thread, which only a row answers) S-MEM-READ/S6/S10/S-LINK-SLACK/J-NOT/J-SUP/S-PR-SESSION/S-CONNECT-CARD/S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY/S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT are fully deterministic — no judge (S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT deliberately: a fence either wrote its row or it did not, and both legs turn on rows the model cannot see — connector.refused/connector.unattended_lift and grant.asked/grant.used/grant.notified. A fire that says it could not write the page produces the same sentence whether the fence refused it or the tool was never mounted, which is exactly the ambiguity the audit gates resolve) (J-DM-SYNC, which carried this same posture for the Slack DM twin, was RETIRED by OPE-396 with the sync delegation arm it existed to exercise; S-DM-DISCORD, its Discord twin, was RETIRED by OPE-725 for the same reason) (S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY deliberately: the verdict trail is a LOG — every gate is on taint.verdict/approval.chain audit rows, and what the model said about a page it read is not evidence about what the log recorded) (S-LINK-SLACK deliberately: an identity link either got WRITTEN or it didn't, and the only evidence of that is the identity.link.* audit rows — a model saying \"linked!\" is exactly the false pass this scenario exists to close) (S-MEM-READ deliberately: its whole point is that reply QUALITY is not the evidence — it gates on the memory.write audit row, the session-transcript read count and the touched silo set) (S15's deterministic legs folded into judged J3; S-PR-SESSION gates on GitHub-API readback + audit rows; S-CONNECT-CARD asserts the connector.dashboard_link_issued audit row; S-EVE-CARD deliberately: every gate is an action_id, an HTTP status or the run-unique token, and the one question it exists to answer — WHICH plane raised this card — is decided by the button's id, which no judge can read off a reply; hard gates: route status / audited silence / reply-target / in-channel presence) (S-A2A-DELEGATE deliberately: every gate is a card button, the run token on the card, the declared agent's fixed answer in the thread, or an a2a.* audit row — a judge cannot tell a delegation that ran from a reply that claims one) (S-JUDGE-LIFT-NOTICE deliberately: the lift is an `approval.autoapproved` row carrying `resolvedBy: \"judge\"` and the notice is joined to it by that row's own pending id — a judge cannot grade whether a notice reached a room, and the one thing a reply could say about it is the copy the notice itself carries)");
   const req = (id: string) => SCENARIOS.find((s) => s.id === id)!.requires.join("+");
   ok(req("S11") === "slack+slackPrivate", "S11 requires slack + slackPrivate");
   ok(req("J2") === "slack+slackChannelB", "J2 (memory journey) requires slack + slackChannelB (the union of S4's slack and S12's slack+slackChannelB)");
@@ -5122,6 +5134,23 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   const meta = JSON.parse(view.private_metadata) as { org: string; id: string; channelId: string };
   ok(meta.org === "default" && meta.id === "intake-xyz" && meta.channelId === "C1", "the forged view_submission's private_metadata carries {org,id,channelId}");
   ok(view.state.values[REAL_SETKEY_INPUT_BLOCK]?.[REAL_SETKEY_INPUT_ACTION]?.value === "FAKE-KEY-NOT-REAL", "the forged view_submission carries the pasted value at the modal's input block/action");
+}
+
+{
+  ok(HOME_ACTION_PREFIX === SLACK_HOME_WIRE.actionPrefix && HOME_MODAL_CALLBACK === SLACK_HOME_WIRE.modalCallbackId, "synthetic Home literals match home-view.ts SLACK_HOME_WIRE");
+  ok(
+    classifyEnvelope(JSON.stringify(buildHomeOpenedEnvelope({ userId: "U2ADMIN", teamId: "T1" })), "application/json").kind === "home-open",
+    "the real classifyEnvelope routes the forged app_home_opened to the home-open handler",
+  );
+  ok(
+    classifyEnvelope(encodeInteractionBody(buildHomeButtonPayload({ userId: "U2ADMIN", teamId: "T1", action: "memory.export" })), "application/x-www-form-urlencoded").kind === "home-click",
+    "the real classifyEnvelope routes the forged Export click to the home-click handler",
+  );
+  const sub = classifyEnvelope(
+    encodeInteractionBody(buildHomeSubmissionPayload({ userId: "U2ADMIN", teamId: "T1", action: "memory.forget", ref: "0".repeat(64) })),
+    "application/x-www-form-urlencoded",
+  );
+  ok(sub.kind === "home-submit", "the real classifyEnvelope routes the forged Forget submission to the home-submit handler");
 }
 
 {

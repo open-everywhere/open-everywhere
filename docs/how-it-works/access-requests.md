@@ -126,6 +126,11 @@ Everything else — a new host, a new credential, a new repo, a brand-new integr
 **out of vocabulary**: the agent refuses with "an admin needs to PR this by hand".
 Growing the vocabulary is a reviewed code change, never a runtime decision.
 
+One case has its own road. A connector the deployment does not define yet, for a tool with a hosted
+MCP server ("set up FullStory"), is not a grant. The refusal names `propose_mcp_server`, which opens
+a PR adding one entry to `agent/access/mcp-servers.ts` (see
+[Connectors](../extending/connectors.md#ask-the-agent-to-set-one-up)).
+
 ## The safety model
 
 - **Frozen args.** The delta is validated and frozen into the pending-action row at
@@ -228,6 +233,12 @@ OE_ACCESS_GRANTS_PATH=agent/access/grants.generated.ts   # optional, default sho
 A dry run is not an environment variable. Set `dryRun: true` in the app's
 `agent/access/access-requests.ts` to make taps validate and report with no branch or PR (e2e).
 It was `OE_ACCESS_DRY_RUN=1` until OPE-2411.
+
+The switch governs EVERY write to the config repo, not only the access-request tap. With
+`dryRun: true`, none of these opens a branch or a pull request: an access request, a webhook
+declaration, an agent creation, a credential binding, a directory-group overlay delivery, and a
+skill proposal from the dream cycle (OPE-2416). Each one validates what it can and reports what it
+would write.
 
 The GitHub App (`OE_GITHUB_APP_*`) needs write access to the config repo — the same
 plane that signs every other bot-PR.

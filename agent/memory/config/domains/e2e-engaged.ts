@@ -11,6 +11,7 @@ export const domain = defineDomain({
   ],
   memory: "e2e-brain",
   ambientSupervisor: false,
+  mode: "solo",
   nameDropWake: true,
   engagementTier: "neutral",
   models: { primary: { id: UTILITY_MODEL } },

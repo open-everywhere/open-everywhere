@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/provider-teams",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Open Everywhere Microsoft Teams provider — Teams channel and chat surfaces via Microsoft Graph.",
   "keywords": [
     "agent",
@@ -41,6 +41,14 @@
       "types": "./dist/agent/app-manifest.d.ts",
       "default": "./dist/agent/app-manifest.js"
     },
+    "./agent/approvals/teams-card.js": {
+      "types": "./dist/agent/approvals/teams-card.d.ts",
+      "default": "./dist/agent/approvals/teams-card.js"
+    },
+    "./agent/approvals/teams-flow.js": {
+      "types": "./dist/agent/approvals/teams-flow.d.ts",
+      "default": "./dist/agent/approvals/teams-flow.js"
+    },
     "./agent/channels/teams-bot-name.js": {
       "types": "./dist/agent/channels/teams-bot-name.d.ts",
       "default": "./dist/agent/channels/teams-bot-name.js"
@@ -56,6 +64,10 @@
     "./agent/channels/teams-conversation-ref.js": {
       "types": "./dist/agent/channels/teams-conversation-ref.d.ts",
       "default": "./dist/agent/channels/teams-conversation-ref.js"
+    },
+    "./agent/channels/teams-declared-target.js": {
+      "types": "./dist/agent/channels/teams-declared-target.d.ts",
+      "default": "./dist/agent/channels/teams-declared-target.js"
     },
     "./agent/channels/teams-directory.js": {
       "types": "./dist/agent/channels/teams-directory.d.ts",
@@ -177,10 +189,11 @@
     "test:teams-engagement": "NODE_NO_WARNINGS=1 tsx scripts/teams-engagement-test.ts",
     "test:teams-message-ops": "NODE_NO_WARNINGS=1 tsx scripts/teams-message-ops-test.ts",
     "test:teams-id-restore": "NODE_NO_WARNINGS=1 tsx scripts/teams-id-restore-test.ts",
+    "test:teams-declared-target": "NODE_NO_WARNINGS=1 tsx scripts/teams-declared-target-test.ts",
     "test:teams-spend-attribution": "NODE_NO_WARNINGS=1 tsx scripts/teams-spend-attribution-test.ts"
   },
   "dependencies": {
-    "@open-everywhere/core": "0.4.0",
+    "@open-everywhere/core": "0.5.0",
     "zod": "4.5.4"
   },
   "peerDependencies": {

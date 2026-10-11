@@ -64,7 +64,7 @@ export const SLACK_PROVIDER_EVENTS: ProviderEventDeclaration = {
       routing: "none",
       match: [],
       scope: [],
-      note: "a user opened the app's home tab; unwired, and a poor routine trigger — it fires on a view, not on work",
+      note: "a person opened the app's Home tab; the front route publishes their memory page (OPE-2451), and it is no routine trigger — it fires on a view, not on work",
     },
   ],
 };

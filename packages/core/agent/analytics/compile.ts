@@ -24,8 +24,8 @@ export const analyticsQuerySchema = z.object({
       }),
     )
     .optional(),
-  since: z.string().optional().describe("ISO-8601 lower bound on ts (audit/usage)"),
-  until: z.string().optional().describe("ISO-8601 upper bound on ts (audit/usage)"),
+  since: z.string().optional().describe("ISO-8601 lower bound on ts (audit/usage/tools)"),
+  until: z.string().optional().describe("ISO-8601 upper bound on ts (audit/usage/tools)"),
   tsBucket: z.enum(["hour", "day", "week", "month"]).optional().describe('bucket for the "ts" group dimension (default day)'),
   orderBy: z.object({ by: z.enum([...ALL_DIMS, ...ALL_MEASURES] as [string, ...string[]]), dir: z.enum(["asc", "desc"]) }).optional(),
   limit: z.number().int().positive().optional(),

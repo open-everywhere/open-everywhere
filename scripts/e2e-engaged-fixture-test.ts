@@ -120,8 +120,8 @@ const ok = (cond: boolean, label: string): void => {
     `ADDRESSED-ONLY: ambientSupervisor is declared false (got ${JSON.stringify(d.ambientSupervisor)}) — an UNSET flag inherits org's value and then the framework default, which is ON since OPE-2409, so the posture must be WRITTEN. Since OPE-1695 the flag buys exactly one thing: no UNADDRESSED message wakes this room. The room IS seated (slackDomainUsesUnifiedWindow reads the grain alone now), so the engaged seam runs on the SEAT path — slack-front.ts reaches isThreadEngaged through seatedSurface(). Set the flag and unowned chatter wakes the seat too, which is the posture this fixture exists to exclude`,
   );
   ok(
-    d.mode === null,
-    `ADDRESSED-ONLY: mode is UNSET (got ${JSON.stringify(d.mode)}) — so this room's seat stays SOLO, one window per channel with nothing shared across rooms. Since OPE-1695 assertUnifiedDomainTrust no longer couples mode to ambientSupervisor, so this is a topology declaration in its own right`,
+    d.mode === "solo",
+    `ADDRESSED-ONLY: mode is declared "solo" (got ${JSON.stringify(d.mode)}) — so this room's seat stays SOLO, one window per channel with nothing shared across rooms. An UNSET mode on a declared domain defaults to "unified" since OPE-2412, and every room here is vouched, so the posture must be WRITTEN. Since OPE-1695 assertUnifiedDomainTrust no longer couples mode to ambientSupervisor, so this is a topology declaration in its own right`,
   );
   ok(
     d.nameDropWake === true,
@@ -193,4 +193,4 @@ const ok = (cond: boolean, label: string): void => {
   );
 }
 
-console.log(`✓ e2e-engaged fixture: ${n} assertions passed (roster is tracked config, posture by absence, grants nothing, exclusivity, the default posture the Slack journey rides, the roster/harness room joins)`);
+console.log(`✓ e2e-engaged fixture: ${n} assertions passed (roster is tracked config, posture written out, grants nothing, exclusivity, the default posture the Slack journey rides, the roster/harness room joins)`);

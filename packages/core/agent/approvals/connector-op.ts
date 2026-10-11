@@ -13,6 +13,7 @@ import { canDeliverDirectMessage } from "../channels/post-arms.js";
 import type { ActionKind } from "./types.js";
 import { approvalPostDeps, requestApproval } from "./flow.js";
 import type { SessionAuth } from "eve/context";
+import { plainValue } from "./plain-text.js";
 
 const CONNECTOR_OP_KIND = "op.connector";
 const CONNECTOR_OP_KIND_MATCHES_OFFER: typeof CONNECTOR_OP_CARD_KIND = CONNECTOR_OP_KIND;
@@ -64,6 +65,8 @@ const connectorOp: ActionKind<ConnectorOpArgs> = {
   approvalArmsCall: true,
   armedCallReplay: (args) => connectorReplayTarget(args),
   argsAfterClose: (args) => connectorArgsWithoutInput(args),
+  plainSummary: (args) =>
+    `Run ${plainValue(args.tool)} once on the ${plainValue(args.connection)} connection${args.grain === "destructive" ? " — this deletes or overwrites data" : ""}`,
   summarize: (args) => summarizeConnectorOp(args),
   async execute(args, decidedBy) {
     if (decidedBy.startsWith("chain:")) {

@@ -13,6 +13,9 @@ import {
   registerBotDisplayName,
   registerAccountDirectory,
   registerSurfaceMessageOps,
+  registerCardPoster,
+  registerJudgeLiftNoticePoster,
+  registerDecisionFeedbackSurface,
   type DispatchTarget,
   type Routine,
   type UnifiedWakeOrigin,
@@ -25,6 +28,7 @@ import { registerTeamsOps } from "./ops.js";
 import { teamsMessageOps } from "./channels/teams-message-ops.js";
 import teamsChannel from "./channels/teams.js";
 import { bindTeams, teamsMode } from "./channels/teams-identity.js";
+import { resolveTeamsDeclaredTarget } from "./channels/teams-declared-target.js";
 import { teamsPostArm } from "./channels/teams-post-arm.js";
 import { teamsWakeOriginCodec } from "./channels/teams-origin-codec.js";
 import { teamsReadAdapter } from "./channels/teams-read.js";
@@ -32,6 +36,7 @@ import { teamsSeatCatchUpFetch, TEAMS_TIMESTAMP_PRECISION_MS } from "./channels/
 import { liveTeamsRoomMembership, liveTeamsAccountActive } from "./channels/teams-fire-eligibility.js";
 import { teamsBotDisplayName } from "./channels/teams-bot-name.js";
 import { fetchTeamsDirectory } from "./channels/teams-directory.js";
+import { postTeamsApprovalCard, postTeamsJudgeLiftNotice, teamsDecisionFeedback } from "./approvals/teams-flow.js";
 
 function storedString(t: Routine["target"], key: string): string | undefined {
   const v = t?.[key];
@@ -82,11 +87,17 @@ export function registerTeamsProvider(): void {
   registerWakeOriginCodec("teams", teamsWakeOriginCodec);
   registerReadAdapter(teamsReadAdapter);
   registerSeatCatchUp("teams", teamsSeatCatchUpFetch, { timestampPrecisionMs: TEAMS_TIMESTAMP_PRECISION_MS });
-  registerRoutineDispatch("teams", { resolveTarget: resolveTeamsTarget });
+  registerRoutineDispatch("teams", {
+    resolveTarget: resolveTeamsTarget,
+    resolveDeclaredTarget: (spec) => resolveTeamsDeclaredTarget(spec),
+  });
   registerTeamsBridge({ roomMembership: liveTeamsRoomMembership, accountActive: liveTeamsAccountActive });
   registerBotDisplayName("teams", teamsBotDisplayName);
   registerAccountDirectory("teams", (query) => fetchTeamsDirectory(query));
   registerSurfaceMessageOps(teamsMessageOps);
+  registerCardPoster("teams", (row, summaryLines) => postTeamsApprovalCard(row, summaryLines));
+  registerJudgeLiftNoticePoster("teams", (row, summaryLines, outcomeLine) => postTeamsJudgeLiftNotice(row, summaryLines, outcomeLine));
+  registerDecisionFeedbackSurface("teams", teamsDecisionFeedback);
   registerReactionSurface("teams");
   registerProviderDocs("teams", PROVIDER_DOCS);
   registerTeamsOps();

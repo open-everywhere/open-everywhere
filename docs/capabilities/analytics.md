@@ -15,13 +15,15 @@ asking cleverly.
 
 ## What you can ask
 
-Three datasets ship (all already recorded — no new storage):
+Four datasets ship. The first three read records the deployment already kept; `tools` reads the
+per-tool ledger (OPE-2435):
 
 | dataset | one row is… | dimensions | measures |
 |---|---|---|---|
 | `audit`  | one recorded **action** (append-only) | `ts`, `platform`, `workspace`, `surface`, `action`, `principal`, `domain` | `rows` |
 | `usage`  | one **model call** (append-only; the default store deletes none — see [retention](../security/spend-and-cost.md#per-event-usage-capture)) | `ts`, `surface`, `principal`, `kind`, `model`, `session`, `routine`, `depth`, `root_session`, `cost_source`, `domain` | `events`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `reasoning_tokens`, `reasoning_reported_calls`, `cache_reported_calls`, `sessions`, `est_usd`, `measured_usd` |
 | `spend`  | one **monthly** ledger row, keyed by surface, principal, routine, model and cost source (the app deletes none) | `period`, `surface`, `principal`, `routine`, `model`, `cost_source`, `domain` | `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `reasoning_tokens`, `calls`, `usd`, `usd_measured` |
+| `tools`  | one finished **tool call**, or one **approval card** a tool raised (append-only) | `ts`, `surface`, `principal`, `session`, `connector`, `tool`, `outcome`, `model`, `domain` | `calls`, `errors`, `rejected`, `cards`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `est_usd` |
 
 The registry `packages/core/agent/analytics/registry.ts` holds this vocabulary. The model picks
 names from it. A name the registry does not list fails schema validation before the host compiles
@@ -35,6 +37,44 @@ Example asks:
   `usage`, group by `surface`, measures `input_tokens` + `est_usd`.
 - *"Show me the last 20 connector writes and who ran them"* (admins) → `audit`, rows
   mode, filter `action` prefix `connector.`.
+
+- *"Which connectors did we use most this week, and which ones failed?"* (admins) → `tools`, group
+  by `connector` and `tool`, measures `calls` + `errors` + `cards` + `est_usd`.
+
+## Per-connector and per-tool usage (the `tools` dataset)
+
+The `tools` dataset answers the admin's question "what do our tools and connectors do, and what do
+they cost?" (OPE-2435). One row is one tool call that finished, or one approval card that a tool
+raised. The `tool-usage` hook writes the call rows; `requestApproval` writes the card rows once the
+card is on the surface.
+
+- **`connector` and `tool`.** A connector op `<connection>__<op>` is recorded as connector
+  `<connection>` and tool `<op>`. Every other tool has connector `""` and keeps its own name. A card
+  for a connector op counts under its connector and op; any other card counts under its approval kind
+  (`pr.open`, `routine.create`).
+- **`outcome`.** `ok`, `error` (the call failed or returned an error) or `rejected` (a person or a
+  policy refused it before it ran). A card row has `""`.
+- **🔴 `est_usd` is attributed, not measured.** A tool call spends no model tokens of its own. The
+  tokens belong to the model call that chose the tool. So each call row carries an even share of that
+  model call's tokens, and `est_usd` prices the share at the model the call used. The per-tool totals
+  therefore never exceed the `usage` dataset's total. A model call that chose no tool (a final answer)
+  is attributed to no tool.
+- **One call, one row.** eve reports a connector op twice — its nested op result and its
+  `connection_execute` wrapper. The hook keeps the op and drops the wrapper, so a connector call counts
+  once. A wrapper whose op never ran (an unknown tool, a sign-in prompt) counts as `connection_execute`.
+- **Card rows carry no conversation mode.** `requestApproval` holds no binding, so a card row's
+  `surface` is the room the card was posted to and its mode is unstamped. Grouped by `surface`, card
+  rows therefore mask as `(unclassified)`; grouped by `connector`/`tool`, they count normally.
+- **What it never holds.** A row holds ids and counts only: never a tool's arguments, its output or
+  an error message.
+- **Upgrading a two-role Postgres deployment.** `tool_usage` is a new table, and the runtime role's
+  grants are not inherited by a new table. Re-run the runtime-role grants as the owner after the
+  upgrade (see [the database page](../extending/database.md)); until then the hook's inserts are
+  refused and every row is dropped with a warning.
+
+The control plane serves the same numbers: the `tool_usage` control MCP tool and
+`GET /control/v1/tool-usage` (see [the control plane](../security/control-plane.md)). Both read this
+dataset through the same compiler, so the chat answer and the control-plane answer agree.
 
 `mode` is `aggregate` (grouped measures, the default) or `rows` (a raw listing). Rows mode
 follows your standing: `scope: "self"` lists your own rows, and `scope: "domain"` or

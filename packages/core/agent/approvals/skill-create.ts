@@ -4,6 +4,7 @@ import { appendAudit } from "../audit/audit.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 import { registerActionKind } from "./actions.js";
 import type { ActionKind } from "./types.js";
+import { plainValue } from "./plain-text.js";
 
 interface SkillCreateArgs {
   readonly org: string;
@@ -20,6 +21,9 @@ const CARD_BODY_MAX = 1200;
 const skillCreate: ActionKind<SkillCreateArgs> = {
   kind: "skill.create",
   policy: "member",
+  plainSummary(args) {
+    return `${args.action === "updated" ? "Change" : "Add"} the skill ${plainValue(args.name)} that the agent follows in ${plainValue(args.domain)}`;
+  },
   summarize(args) {
     const shown = args.content.length > CARD_BODY_MAX ? `${args.content.slice(0, CARD_BODY_MAX)}\n… (${args.content.length - CARD_BODY_MAX} more bytes)` : args.content;
     return [

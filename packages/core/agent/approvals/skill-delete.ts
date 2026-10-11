@@ -3,6 +3,7 @@ import { appendAudit } from "../audit/audit.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 import { registerActionKind } from "./actions.js";
 import type { ActionKind } from "./types.js";
+import { plainValue } from "./plain-text.js";
 
 interface SkillDeleteArgs {
   readonly org: string;
@@ -14,6 +15,9 @@ interface SkillDeleteArgs {
 const skillDelete: ActionKind<SkillDeleteArgs> = {
   kind: "skill.delete",
   policy: "member",
+  plainSummary(args) {
+    return `Delete the skill ${plainValue(args.name)} from ${plainValue(args.domain)}, so the agent stops following it`;
+  },
   summarize(args) {
     return [
       `Delete skill \`${args.name}\` in domain \`${args.domain}\` — the agent will no longer load or follow it`,

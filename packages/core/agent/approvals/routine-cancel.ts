@@ -4,6 +4,7 @@ import { emitTelemetry } from "../observability/telemetry.js";
 import type { Partition } from "../memory/partition.js";
 import { registerActionKind } from "./actions.js";
 import type { ActionKind } from "./types.js";
+import { plainValue } from "./plain-text.js";
 
 interface RoutineCancelArgs {
   readonly org: string;
@@ -18,6 +19,9 @@ interface RoutineCancelArgs {
 const routineCancel: ActionKind<RoutineCancelArgs> = {
   kind: "routine.cancel",
   policy: "member",
+  plainSummary(args) {
+    return `Stop the routine "${plainValue(args.description)}" — it will not run again`;
+  },
   summarize(args) {
     return [
       `Cancel routine \`${args.id}\` — ${args.description}`,

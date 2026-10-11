@@ -1,3 +1,5 @@
+import { SLACK_MCP_BOT_SCOPE, slackAsYouUserScopes } from "./slack-as-you.js";
+
 export const SLACK_DEPLOY_HOST_PLACEHOLDER = "YOUR-DEPLOY-URL";
 
 export const SLACK_DEFAULT_APP_NAME = "Open Everywhere";
@@ -19,7 +21,10 @@ export interface SlackAppManifestOptions {
   readonly appName?: string;
   readonly agentName?: string;
   readonly commandName?: string;
+  readonly personalMcp?: boolean;
 }
+
+export const SLACK_PERSONAL_SIGN_IN_CALLBACK_PATH = "/oauth/v1/callback";
 
 export function slackManifestAppName(opts: SlackAppManifestOptions = {}): string {
   const explicit = opts.appName?.trim();
@@ -37,11 +42,12 @@ function shortcutName(prefix: string, appName: string, neutral: string): string 
 export function slackAppManifestTemplate(opts: SlackAppManifestOptions = {}): string {
   const appName = slackManifestAppName(opts);
   const commandName = opts.commandName?.trim() || SLACK_DEFAULT_COMMAND_NAME;
+  const personalMcp = opts.personalMcp === true;
   return JSON.stringify(
     {
       display_information: { name: appName },
       features: {
-        app_home: { home_tab_enabled: false, messages_tab_enabled: true, messages_tab_read_only_enabled: false },
+        app_home: { home_tab_enabled: true, messages_tab_enabled: true, messages_tab_read_only_enabled: false },
         bot_user: { display_name: appName, always_online: true },
         slash_commands: [
           {
@@ -68,7 +74,10 @@ export function slackAppManifestTemplate(opts: SlackAppManifestOptions = {}): st
         ],
       },
       oauth_config: {
-        redirect_urls: [`https://${SLACK_DEPLOY_HOST_PLACEHOLDER}/setup/callback`],
+        redirect_urls: [
+          `https://${SLACK_DEPLOY_HOST_PLACEHOLDER}/setup/callback`,
+          ...(personalMcp ? [`https://${SLACK_DEPLOY_HOST_PLACEHOLDER}${SLACK_PERSONAL_SIGN_IN_CALLBACK_PATH}`] : []),
+        ],
         scopes: {
           bot: [
             "app_mentions:read",
@@ -90,7 +99,10 @@ export function slackAppManifestTemplate(opts: SlackAppManifestOptions = {}): st
             "pins:read",
             "pins:write",
             "users:read",
+            "canvases:write",
+            ...(personalMcp ? [SLACK_MCP_BOT_SCOPE] : []),
           ],
+          ...(personalMcp ? { user: [...slackAsYouUserScopes()] } : {}),
         },
       },
       settings: {
@@ -105,6 +117,9 @@ export function slackAppManifestTemplate(opts: SlackAppManifestOptions = {}): st
             "member_joined_channel",
             "reaction_added",
             "reaction_removed",
+            "app_home_opened",
+            "channel_shared",
+            "user_change",
           ],
         },
         interactivity: {

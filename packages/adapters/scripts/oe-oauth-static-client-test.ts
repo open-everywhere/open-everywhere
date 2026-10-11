@@ -223,6 +223,15 @@ async function captureThrow(fn: () => Promise<unknown>): Promise<Error> {
   ok(cfg !== undefined && isStaticConfidential(cfg) && cfg.authorizeParams?.owner === "user", "the vendor's extra authorize parameter survives the parse (M3 owner=user)");
   ok(cfg !== undefined && isStaticConfidential(cfg) && cfg.tokenHeaders?.["Notion-Version"] === NOTION_VERSION, "the vendor's extra token header survives the parse (M4 Notion-Version)");
 
+  const scoped = withConfig(entry({ ...good, scopes: ["read:sessions", "write:notes"] }), (d) => loadOeOauthConfig(d));
+  const scopedCfg = scoped?.get("api.notion.com/rest");
+  ok(scopedCfg !== undefined && JSON.stringify(scopedCfg.scopes) === JSON.stringify(["read:sessions", "write:notes"]), "a static declaration's scopes survive the parse");
+  const scopedFlow = makeOeOauth(scoped!, { vault: memVault(), fetch: async () => new Response("{}", { status: 500 }), now: () => 0, newState: () => "STATE-SCOPED", redirectUri: () => REDIRECT, resolveSecret: async () => CLIENT_SECRET });
+  const scopedUrl = new URL((await scopedFlow.flow.startAuthorization("api.notion.com/rest", { subject: { type: "user", id: "U1" } }, {})).url);
+  ok(scopedUrl.searchParams.get("scope") === "read:sessions write:notes", "the static authorize URL asks for the declared scopes, space-joined");
+  const unscoped = new URL((await makeOeOauth(loaded!, { vault: memVault(), fetch: async () => new Response("{}", { status: 500 }), now: () => 0, newState: () => "STATE-UNSCOPED", redirectUri: () => REDIRECT, resolveSecret: async () => CLIENT_SECRET }).flow.startAuthorization("api.notion.com/rest", { subject: { type: "user", id: "U1" } }, {})).url);
+  ok(unscoped.searchParams.get("scope") === null, "NEGATIVE CONTROL: a declaration with no scopes sends no scope parameter");
+
   const legacy = withConfig(JSON.stringify({ notion: { resource: "https://mcp.notion.com/mcp" } }), (d) => loadOeOauthConfig(d));
   const legacyCfg = legacy?.get("notion");
   ok(legacyCfg !== undefined && legacyCfg.mode === OE_OAUTH_MODE_DISCOVERY, "an entry with no declared mode still reads as the discovery + DCR + PKCE dialect");

@@ -2,7 +2,8 @@ import { defineState } from "eve/context";
 import { getOperationalStore } from "../operational/provider.js";
 import type { OperationalStore } from "../operational/store.js";
 import { noteGenerationForRetirement } from "./generation-retirement.js";
-import { buildTail, type SessionTailWakeRow } from "./session-tail.js";
+import { nonMemberChatTrust } from "../access/taint-signal.js";
+import { admitToSummary, buildTail, condenseTailEntry, planConversationCarry, tailEntryToWakeMessage, type SessionTailEntry, type SessionTailWakeRow } from "./session-tail.js";
 import { standingSeatRegistryKey } from "./unified-supervisor.js";
 import { bareTokenFromEveContext, classifySessionId } from "./window-key.js";
 import type { WakeMessageInput, WakeTrust } from "./wake-envelope.js";
@@ -99,7 +100,8 @@ export async function editPostTail(messageId: string, text: string, store: Opera
   const w = tailWindow();
   if (!w) return false;
   try {
-    return await store.editSessionTailPost(w.org, w.registryKey, w.token, messageId, text);
+    if (await store.editSessionTailPost(w.org, w.registryKey, w.token, messageId, text)) return true;
+    return await store.editConversationSummaryPost(w.org, w.registryKey, messageId, condenseTailEntry({ kind: "post", at: "", from: "self", trust: "relay", author: "self", text }).text);
   } catch (err) {
     console.warn(`[open-everywhere:session-tail] post entry not edited (${w.registryKey}): ${String(err)}`);
     return false;
@@ -121,6 +123,57 @@ export async function carryTailForward(
     return tail;
   } catch (err) {
     console.warn(`[open-everywhere:session-tail] tail not carried forward (${registryKey}): ${String(err)}`);
+    return [];
+  }
+}
+
+export async function carryConversationForward(
+  org: string,
+  registryKey: string,
+  outgoingToken: string | undefined,
+  store: OperationalStore = getOperationalStore(),
+): Promise<WakeMessageInput[]> {
+  if (!outgoingToken) return [];
+  noteGenerationForRetirement({ org, registryKey, token: outgoingToken });
+  let ring: SessionTailEntry[];
+  try {
+    ring = await store.readSessionTail(org, registryKey, outgoingToken);
+  } catch (err) {
+    console.warn(`[open-everywhere:session-tail] tail not carried forward (${registryKey}): ${String(err)}`);
+    return [];
+  }
+  let prior: SessionTailEntry[] | undefined;
+  try {
+    prior = await store.readConversationSummary(org, registryKey);
+  } catch (err) {
+    console.warn(`[open-everywhere:session-tail] conversation summary not read (${registryKey}) — carrying the tail only: ${String(err)}`);
+  }
+  try {
+    if (prior === undefined) {
+      const tail = buildTail(ring);
+      await store.clearSessionTail(org, registryKey, outgoingToken).catch(() => {});
+      return tail;
+    }
+    const carry = planConversationCarry(prior, ring, undefined, (e) => admitToSummary(e) && !nonMemberChatTrust(e));
+    if (carry.record.length > 0) {
+      await store.writeConversationSummary(org, registryKey, carry.record).catch((err: unknown) => {
+        console.warn(`[open-everywhere:session-tail] conversation summary not written (${registryKey}): ${String(err)}`);
+      });
+    }
+    await store.clearSessionTail(org, registryKey, outgoingToken).catch(() => {});
+    return [...carry.summary, ...carry.tail].map(tailEntryToWakeMessage);
+  } catch (err) {
+    console.warn(`[open-everywhere:session-tail] conversation not carried forward (${registryKey}): ${String(err)}`);
+    return [];
+  }
+}
+
+export async function readConversationCarry(org: string, registryKey: string, store: OperationalStore = getOperationalStore()): Promise<WakeMessageInput[]> {
+  try {
+    const summary = await store.readConversationSummary(org, registryKey);
+    return summary.filter((e) => admitToSummary(e) && !nonMemberChatTrust(e)).map(tailEntryToWakeMessage);
+  } catch (err) {
+    console.warn(`[open-everywhere:session-tail] conversation summary not read for the heal (${registryKey}): ${String(err)}`);
     return [];
   }
 }

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
+import { recordToolCard } from "../spend/tool-usage.js";
 import { getConfig } from "../access/config.js";
 import { swallowRoomOp, swallowRoomPost } from "../channels/egress-spoof.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
@@ -37,7 +38,7 @@ import { parseScopeKey, platformOfScopeKey } from "../access/scope-key.js";
 import { rosterHasPrincipal, tryPrincipalKey } from "../identity/principal-key.js";
 import { checkClickerFloor, clickRoomMatches, clickerFloorRefusalNotice, type ClickerFloorRefusal } from "./clicker-floor.js";
 import { checkCardDisclosure, cardDisclosureRefusalNotice } from "./card-disclosure.js";
-import { pendingCardBlocks, decidedCardBlocks, judgeLiftNoticeBlocks, judgeLiftNoticeText, type RenderedCard } from "./card.js";
+import { pendingCardBlocks, decidedCardBlocks, groupedCardBlocks, judgeLiftNoticeBlocks, judgeLiftNoticeText, GROUPED_CARD_MAX_ITEMS, type GroupedCardItem, type RenderedCard } from "./card.js";
 import { contradictJudgeAllow, judgeContradictionNotice, type ContradictJudgeAllowOutcome } from "./judge-contradiction.js";
 import { describeDeclaredPermissionKind, grantableFrozenKey, grantReach, sessionGrantKind } from "./session-grant.js";
 import {
@@ -62,11 +63,13 @@ import "./routine-lifecycle.js";
 import "./routine-policy.js";
 import "./webhook.js";
 import "./webhook-declare.js";
+import "./mcp-server-propose.js";
 import "./agent-create.js";
 import "./ticket-actions.js";
 import "./ticket-create.js";
 import "./chat-post.js";
 import "./connector-op.js";
+import "./a2a-delegate.js";
 import "./chat-dm.js";
 import "./session-checkpoint.js";
 import { ROUTINE_PERMISSION_KIND, parseRoutinePermissionArgs, routineCardGenerationState } from "./routine-permission.js";
@@ -181,6 +184,22 @@ export function registerCardPoster(platform: string, poster: CardPoster): void {
 
 export function cardPosterFor(platform: string | undefined): CardPoster | undefined {
   return platform === undefined ? undefined : CARD_POSTERS.get(platform);
+}
+
+export interface DecisionFeedbackSurface {
+  postNotice(row: PendingActionRow, text: string): Promise<unknown>;
+  wakeTarget(row: PendingActionRow): Promise<{ surfaceKey: string; origin: UnifiedWakeOrigin } | null>;
+}
+
+const DECISION_FEEDBACK_SURFACES = new Map<string, DecisionFeedbackSurface>();
+
+export function registerDecisionFeedbackSurface(platform: string, surface: DecisionFeedbackSurface): void {
+  if (!admitProviderRegistration(platform, "decision-feedback-surface")) return;
+  DECISION_FEEDBACK_SURFACES.set(platform, surface);
+}
+
+export function decisionFeedbackSurfaceFor(platform: string | undefined): DecisionFeedbackSurface | undefined {
+  return platform === undefined ? undefined : DECISION_FEEDBACK_SURFACES.get(platform);
 }
 
 export type JudgeLiftNoticePoster = (row: PendingActionRow, summaryLines: readonly string[], outcomeLine: string) => Promise<void>;
@@ -349,6 +368,93 @@ export interface RequestApprovalDeps {
   readonly post?: PostFn;
   readonly postCard?: CardPoster;
   readonly authorityContext?: BindableContext;
+}
+
+function proposingSessionKey(): string | undefined {
+  const turn = readTurnClock();
+  return turn !== undefined && turn !== null && turn.sessionId.length > 0 ? turn.sessionId : undefined;
+}
+
+function groupItemFor(member: PendingActionRow): GroupedCardItem {
+  return { row: member, summaryLines: summaryLinesFor(member) };
+}
+
+async function joinOpenGroupedCard(
+  store: ReturnType<typeof getOperationalStore>,
+  post: PostFn,
+  row: PendingActionRow,
+  summaryLines: readonly string[],
+  nowIso: string,
+): Promise<string | undefined> {
+  if (!row.groupKey) return undefined;
+  const sameJob = (r: PendingActionRow): boolean =>
+    r.id !== row.id &&
+    r.groupKey === row.groupKey &&
+    r.channelId === row.channelId &&
+    (r.threadTs ?? null) === (row.threadTs ?? null) &&
+    (r.postedTo ?? null) === (row.postedTo ?? null) &&
+    typeof r.messageTs === "string" &&
+    r.messageTs.length > 0 &&
+    r.expiresAt > nowIso;
+  const open = (await store.listPendingActions(row.org)).filter(sameJob);
+  const target = open[open.length - 1]?.messageTs;
+  if (!target) return undefined;
+  const before = await store.listPendingActionsForMessage(row.org, row.channelId, target);
+  if (before.length >= GROUPED_CARD_MAX_ITEMS || before.some((m) => m.groupKey !== row.groupKey)) return undefined;
+  await store.setPendingActionMessage(row.org, row.id, target);
+  const render = async (): Promise<{ ok: boolean; count: number }> => {
+    const members = await store.listPendingActionsForMessage(row.org, row.channelId, target);
+    const items = members.map((m) => (m.id === row.id ? { row: m, summaryLines } : groupItemFor(m)));
+    return { ok: await rewriteCard(post, row.channelId, target, groupedCardBlocks(items)), count: members.length };
+  };
+  const rendered = await render();
+  if (rendered.ok) {
+    const after = await store.listPendingActionsForMessage(row.org, row.channelId, target).catch(() => undefined);
+    if (after !== undefined && after.length !== rendered.count) await render().catch(() => undefined);
+    return target;
+  }
+  await store.setPendingActionMessage(row.org, row.id, "").catch(() => undefined);
+  return undefined;
+}
+
+async function rewriteCard(post: PostFn, channelId: string, ts: string, card: RenderedCard): Promise<boolean> {
+  if (swallowRoomOp("a slack grouped approval-card rewrite")) return true;
+  const body = new URLSearchParams();
+  body.set("channel", channelId);
+  body.set("ts", ts);
+  body.set("text", card.text);
+  body.set("blocks", JSON.stringify(card.blocks));
+  const res = await post("chat.update", body.toString()).catch(() => undefined);
+  return res?.ok === true;
+}
+
+async function decidedRenderFor(decided: PendingActionRow, summaryLines: readonly string[], outcomeLine: string, channelId: string, messageTs: string | undefined): Promise<RenderedCard> {
+  if (messageTs && decided.groupKey) {
+    const members = await getOperationalStore()
+      .listPendingActionsForMessage(decided.org, channelId, messageTs)
+      .catch(() => [] as readonly PendingActionRow[]);
+    if (members.length > 1 && members.some((m) => m.id === decided.id)) {
+      return groupedCardBlocks(members.map((m) => (m.id === decided.id ? { row: decided, summaryLines, outcomeLine } : groupItemFor(m))));
+    }
+  }
+  return decidedCardBlocks(decided, summaryLines, outcomeLine);
+}
+
+async function redrawGroupedCard(post: PostFn, org: string, channelId: string, messageTs: string | undefined): Promise<void> {
+  if (!messageTs) return;
+  const members = await getOperationalStore()
+    .listPendingActionsForMessage(org, channelId, messageTs)
+    .catch(() => [] as readonly PendingActionRow[]);
+  if (members.length < 2 || !members.every((m) => typeof m.groupKey === "string" && m.groupKey.length > 0)) return;
+  await rewriteCard(post, channelId, messageTs, groupedCardBlocks(members.map(groupItemFor))).catch(() => undefined);
+}
+
+async function messageHostsOtherRows(org: string, channelId: string, messageTs: string | undefined, id: string): Promise<boolean> {
+  if (!messageTs) return false;
+  const members = await getOperationalStore()
+    .listPendingActionsForMessage(org, channelId, messageTs)
+    .catch(() => [] as readonly PendingActionRow[]);
+  return members.some((m) => m.id !== id && typeof m.groupKey === "string" && m.groupKey.length > 0);
 }
 
 export async function requestApproval(
@@ -627,7 +733,9 @@ export async function requestApproval(
     }
   }
 
+  const groupKey = proposingSessionKey();
   let row: PendingActionRow = {
+    ...(groupKey !== undefined ? { groupKey } : {}),
     id,
     org: input.org,
     kind: input.kind,
@@ -685,9 +793,12 @@ export async function requestApproval(
       messageTs = await deps.postCard(row, summaryLines);
       if (!messageTs) postFailure = "the surface's own card post did not land and reported no reason";
     } else {
-      const posted = await postRenderedCard(post, input.channelId, input.threadTs, pendingCardBlocks(row, summaryLines));
-      messageTs = posted.ts;
-      postFailure = posted.error;
+      messageTs = await joinOpenGroupedCard(store, post, row, summaryLines, nowIso).catch(() => undefined);
+      if (messageTs === undefined) {
+        const posted = await postRenderedCard(post, input.channelId, input.threadTs, pendingCardBlocks(row, summaryLines));
+        messageTs = posted.ts;
+        postFailure = posted.error;
+      }
     }
   }
 
@@ -715,6 +826,7 @@ export async function requestApproval(
     action: "approval.requested",
     detail: { id: row.id, kind: input.kind, scopeKey: input.scopeKey, ...(row.domain ? { domain: row.domain } : {}) },
   });
+  await recordToolCard({ org: input.org, kind: input.kind, args: input.args, surfaceKey: input.postedTo ?? input.scopeKey, principalId: input.requestedBy });
   emitTelemetry("oe.feature.used", { "oe.feature": "approval_requested", "oe.outcome": "ok" });
 
   return { id: row.id, expiresAt, ...(priorRejection !== undefined ? { priorRejection } : {}) };
@@ -1309,13 +1421,19 @@ async function rowDecisionFeedback(
   const [platform, workspace] = row.postedTo.split("/");
   if (!workspace) return;
   const post = deps.post ?? bridgeSlackForm;
+  if (platform !== "slack" && platform !== "discord") {
+    const surface = decisionFeedbackSurfaceFor(platform);
+    if (!surface) return;
+    await deliverDecisionFeedback(
+      { row, ...what, target: await surface.wakeTarget(row).catch(() => null), postNotice: (text) => surface.postNotice(row, text) },
+      deps.decisionWake,
+    );
+    return;
+  }
   const postNotice =
     platform === "slack"
       ? (text: string) => postThreadNote(post, row.channelId, row.threadTs ?? row.messageTs ?? undefined, text)
-      : platform === "discord"
-        ? (text: string) => (deps.discordNotice ?? postDiscordDecisionNotice)(row, text)
-        : null;
-  if (!postNotice) return;
+      : (text: string) => (deps.discordNotice ?? postDiscordDecisionNotice)(row, text);
   await deliverDecisionFeedback(
     {
       row,
@@ -1605,15 +1723,21 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
           await postThreadNote(post, channelId, messageTs, `<@${clickerId}> ${judgeContradictionNotice("unknown")}`);
           return true;
         }
+        if (await messageHostsOtherRows(org, channelId, messageTs, parsed.id)) {
+          await postThreadNote(post, channelId, messageTs, `<@${clickerId}> that item is no longer known (it may have already been decided or has aged out); the other items on this card are unchanged.`);
+          return true;
+        }
         await updateCardText(post, channelId, messageTs, "This approval request is no longer known (it may have already been decided or has aged out).");
         return true;
       case "not-pending":
+        await redrawGroupedCard(post, org, channelId, messageTs);
+        return true;
       case "expired-race":
       case "unregistered-kind":
       case "lost-race":
         return true;
       case "expired": {
-        await updateCard(post, channelId, messageTs, decidedCardBlocks(res.row, res.summaryLines, "expired"));
+        await updateCard(post, channelId, messageTs, await decidedRenderFor(res.row, res.summaryLines, "expired", channelId, messageTs));
         await deliverDecisionFeedback(
           {
             row: res.row,
@@ -1642,7 +1766,7 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
         return true;
       }
       case "decided": {
-        await updateCard(post, channelId, messageTs, decidedCardBlocks(res.row, res.summaryLines, res.outcomeLine));
+        await updateCard(post, channelId, messageTs, await decidedRenderFor(res.row, res.summaryLines, res.outcomeLine, channelId, messageTs));
         await deliverDecisionFeedback(
           {
             row: res.row,

@@ -36,14 +36,6 @@ function userInfo(id: string, name: string): Record<string, unknown> {
 }
 
 async function armSeams(): Promise<void> {
-  await bootAgent();
-
-  const { loadDomains } = await import("../../../agent/memory/config/domains");
-  const key = `slack/${SLACK_TEAM_ID}/${SLACK_WINDOW_CHANNEL_ID}`;
-  const home = loadDomains().find((d) => (d.reach ?? []).includes(key));
-  expect(home, `${key} is in no domain — a mention there cannot reach a window seat`).toBeDefined();
-  expect(home?.mode, `${home?.name} is not a window domain, so no window seat can mint a thread seat`).toBe("unified");
-  expect(home?.ambientSupervisor, `${home?.name} must run an ambient supervisor for the mention divert to fire`).toBe(true);
 
   if (!stub) {
     const installed = installSlackWebApiStub((method, params) => {
@@ -75,6 +67,8 @@ async function armSeams(): Promise<void> {
           };
         case "conversations.history":
           return { ok: true, messages: [] };
+        case "reactions.add":
+          return { ok: true };
         case "chat.postMessage":
           return { ok: true, channel: params.get("channel"), ts: slackTs(Date.now(), (tsCounter += 1)) };
         default:
@@ -84,6 +78,15 @@ async function armSeams(): Promise<void> {
     stub = installed;
     cleanups.push(() => installed.uninstall());
   }
+
+  await bootAgent({ stubbedProviderTransport: true });
+
+  const { loadDomains } = await import("../../../agent/memory/config/domains");
+  const key = `slack/${SLACK_TEAM_ID}/${SLACK_WINDOW_CHANNEL_ID}`;
+  const home = loadDomains().find((d) => (d.reach ?? []).includes(key));
+  expect(home, `${key} is in no domain — a mention there cannot reach a window seat`).toBeDefined();
+  expect(home?.mode, `${home?.name} is not a window domain, so no window seat can mint a thread seat`).toBe("unified");
+  expect(home?.ambientSupervisor, `${home?.name} must run an ambient supervisor for the mention divert to fire`).toBe(true);
 
   if (standingSessionId.length > 0) return;
   const opener = registerScript({
@@ -163,15 +166,31 @@ test("a thread seat completes its own thread — the completer reads the host-st
   const row = await waitFor(
     async () => {
       const rows = await rowsSinceCursor(cursor, ["thread_seat.completed"], { limit: 100 });
-      return rows.find((r) => r.detail?.hasSummary === true);
+      return rows.find((r) => r.detail?.hasReport === true);
     },
     "the seat's own thread_seat.completed audit row",
     120_000,
   );
   expect(row.detail?.cleared, "🔴 the seat reported success but released no ownership row").toBe(true);
 
-  expect(row.detail?.reportStored, "🔴 the seat's closing report was not filed — `read_thread_seat` would find nothing after the hand-back").toBe(true);
-  expect(typeof row.detail?.reportDelivered, "the hand-back must record whether the parent seat was woken").toBe("boolean");
+  expect(row.detail?.recorded, "🔴 the close found no thread-seat record — `read_thread_seat` would find nothing after the hand-back").toBe(true);
+  expect(row.detail?.closedNow, "🔴 the close did not close the record").toBe(true);
+  expect(typeof row.detail?.handedBack, "the hand-back must record whether the parent seat was woken").toBe("boolean");
+
+  expect(row.detail?.posted, "🔴 the host did not post the completion in the thread").toBe("host");
+  const allPosts = (stub?.calls ?? []).filter((c) => c.method === "chat.postMessage");
+  const posts = allPosts.filter((c) => [...c.params.values()].some((v) => v.includes("ope738 thread wrapped up")));
+  expect(
+    posts.length,
+    `🔴 the completion reached Slack exactly once — chat.postMessage bodies seen: ${JSON.stringify(allPosts.map((c) => Object.fromEntries(c.params))).slice(0, 1200)}`,
+  ).toBe(1);
+  expect(posts[0].params.get("thread_ts"), "🔴 …inside the thread, not at the channel's top level").toBe(rootTs);
+
+  expect(row.detail?.reaction, "🔴 the done reaction did not land").toBe("placed");
+  const marks = (stub?.calls ?? []).filter((c) => c.method === "reactions.add" && c.params.get("name") === "white_check_mark");
+  expect(marks.length, "🔴 exactly one done mark").toBe(1);
+  expect(marks[0].params.get("timestamp"), "🔴 …on the message that STARTED the thread").toBe(rootTs);
+  expect(marks[0].params.get("channel"), "…in the thread's own channel").toBe(SLACK_WINDOW_CHANNEL_ID);
 
   expect(standing.requests.filter((r) => r.fault !== undefined), "the standing seat reported a scripted-model fault").toEqual([]);
   expect(seat.requests.filter((r) => r.fault !== undefined), "the thread seat reported a scripted-model fault").toEqual([]);

@@ -16,6 +16,7 @@ import {
   registerWebhookVerifier,
   registerBootNotice,
   registerSurfaceStatusReporter,
+  registerMemoryWriteObserver,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { PROVIDER_DOCS } from "./docs-generated.js";
 import { slackSurfaceStatus } from "./status.js";
@@ -40,6 +41,7 @@ import {
 import slackChannel from "./channels/slack.js";
 import { slackWebhookVerifier } from "./channels/slack-webhook-verifier.js";
 import { registerSlackOps } from "./ops.js";
+import { coalescedRefresh, liveMemoryCanvasDeps } from "./channels/slack-memory-canvas.js";
 import { announceSlackSetupCode } from "./setup/claim.js";
 import { reopenSlackSetup, slackInstallState } from "./setup/install-state.js";
 
@@ -75,4 +77,5 @@ export function registerSlackProvider(): void {
   registerWebhookVerifier(slackWebhookVerifier);
   registerProviderDocs("slack", PROVIDER_DOCS);
   registerBootNotice("slack-setup-code", announceSlackSetupCode);
+  registerMemoryWriteObserver("slack-memory-canvas", (event) => coalescedRefresh(event, liveMemoryCanvasDeps()));
 }

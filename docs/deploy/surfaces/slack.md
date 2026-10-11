@@ -338,6 +338,12 @@ an outside workspace. Recover with the `reopen_slack_setup` control call. To kee
      also backs the workspace roster (`users.list`) that [identity
      linking](../../how-it-works/identity.md) searches to name a person's other account; without it
      that search finds nothing and linking falls back to its code flow, which still works.
+   - `canvases:write` — **the domain memory canvas.** The agent shows each domain's memory as the
+     channel canvas of the domain's internal channels, and rewrites it when that memory changes (see
+     [Memory you can see](../../capabilities/memory.md#memory-you-can-see)). Omit it and each refresh
+     fails with `missing_scope`, which the deploy log and a `memory.canvas_refresh` audit row record
+     per channel. Memory itself is unaffected. A workspace on Slack's free plan has no channel
+     canvases, and the refresh fails there in the same way.
    > **Already installed?** Adding a scope to the app does **not** retrofit an existing
    > installation — an app installed before this list grew still holds only the scopes it was
    > granted at install time, and its `xoxb-` token keeps working, so nothing looks broken. After
@@ -380,17 +386,33 @@ an outside workspace. Recover with the `reopen_slack_setup` control call. To kee
      channel it introduces itself once, fitted to the channel (see
      [Channel-join intros](#channel-join-intros-default-on-fail-closed)). Omit this and the
      agent stays silent until its first mention, which then carries the intro instead.
+     The same event, for a PERSON joining, re-runs the domain memory canvas gate: when the newcomer
+     is a guest, the agent replaces its own canvas in that channel with a notice that holds no memory.
    - `reaction_added`, `reaction_removed` — **reaction ingestion (feedback signal).** A 👍 / 👎
      on one of the agent's own replies is recorded as lightweight human feedback (and every
      reaction emits anonymous volume telemetry); reactions on *other* messages are counted but
      not stored. Needs the `reactions:read` scope from Step 2. Omit these and the feature is
      silently off — nothing else changes.
+   - `app_home_opened` — **the Home tab page.** When a person opens the agent's Home tab, the agent
+     publishes their private page: what it remembers about them, with Edit, Forget and Export, and
+     what their domains know (see [Memory you can see](../../capabilities/memory.md#memory-you-can-see)).
+     The event needs no scope. Omit it and the Home tab shows Slack's empty placeholder.
+   - `channel_shared` — **take a memory canvas down when its channel is shared.** When a channel
+     becomes Slack Connect shared, the agent re-runs the memory canvas gate there at once and replaces
+     its own canvas with a notice that holds no memory. Needs `channels:read` and `groups:read` from
+     Step 2. Omit it and the canvas comes down at the next memory write to the domain instead.
+   - `user_change` — **automatic offboarding.** When a workspace admin deactivates a member or a
+     guest, OE confirms it with `users.info` and revokes that person's link-set and stored OAuth
+     credentials (see [Identity](../../how-it-works/identity.md), *Automatic offboarding*). Needs
+     the `users:read` scope from Step 2. Omit it and offboarding stays the admin's manual
+     `revoke_link_set`.
    The generated manifest (`/setup`, `surface_manifest`, `npx @open-everywhere/create`) subscribes
    every event in this list and requests each event's scope.
    Then **App Home** → **Show Tabs** → turn the **Messages Tab** on, and tick *Allow users to send
    Slash commands and messages from the messages tab*. Without it, a person who opens a DM with the
    agent sees *"Sending messages to this app has been turned off"*, and `message.im` never fires.
-   The generated manifest sets both (`features.app_home`).
+   Turn the **Home Tab** on too, for the page above. The generated manifest sets all three
+   (`features.app_home`).
 8. **Interactivity & Shortcuts** → toggle **On**. Set the **Request URL** to the same
    `https://<your-deploy-url>/eve/v1/slack` — the same route Event Subscriptions uses. This is
    what makes the agent's **clickable buttons work**: Eve's own tool-approval prompts and
@@ -585,6 +607,20 @@ Open Everywhere wakes on an `@mention` in a channel, or on any message in a DM.
 2. Mention it: `@Open Everywhere summarise the last 20 messages and post the action items`.
 3. Expected behaviour:
    - It reacts to the thread root with 👀 (seen it, working on it) and shows a rotating status verb as its typing indicator (`Tinkering…`). eve's own `Thinking...` status comes first, while the mention is admitted.
+   - **Live step labels.** While a tool runs, the status line says what the agent does, in plain
+     words: `Searching Notion…`, `Reading the PR…`, `Reading the channel…`. Between tool steps it
+     shows the status verb again. The label is code, not model text: it comes from the tool's name
+     and, for a connector, from a fixed list of vendor names. It never shows what the agent searches
+     for, a page title, a URL, or anything a tool returned, so a label in a shared channel cannot
+     carry another conversation's words. Only a step that needs no approval by default gets a label
+     (a read, a search, running code in the sandbox, a hand-off to a declared subagent): a write
+     (a pull request, a ticket, a Notion change) shows the status verb, because the label shows
+     before an approval or a check decides the write. A connector op counts as a read only when
+     its name says so (`list_…`, `search_…`). An operator can still require approval for such an op,
+     and its label then shows while the card waits. A tool with no label shows the status verb.
+     The status line is Slack's native assistant status, so it posts nothing in the thread. The reply still
+     posts once, after every check. A label does tell the room which kind of tool runs, and for a
+     connector, which vendor.
    - A turn that starts a task also posts eve's **task card**: one message per turn, one row per
      task, updated in place. Outside a 1:1 DM a row shows the task's name only (`Researcher`), never
      the brief the agent wrote for it, because a brief can carry content from another conversation.
@@ -720,6 +756,77 @@ and a deleted account all mark the turn, whatever workspace the person sits in.
 **An app is judged by its workspace, like a person.** A bot that writes in a room is a member when it
 is your own workspace's app, and an outside author when it belongs to another workspace you have not
 declared. There is no separate rule for bots.
+
+## Search Slack as you
+
+The bot sees the channels it is in, and nothing else. **"Search Slack as you"** lets a person let the
+agent see what THEY see: the channels and conversations the bot is not in. It can also post in their
+name. It runs on Slack's own MCP server (`https://mcp.slack.com/mcp`) with the person's own Slack
+sign-in. It is off until an admin turns it on, and the bot stays the normal route.
+
+### What a person sees
+
+- **Only in their own Slack DM with the agent.** A channel, a group DM and a DM on another platform
+  never get it. Two walls hold this: the derived grant resolves in a Slack 1:1 DM only, and the
+  connection itself refuses every call from anywhere else before any card or sign-in. A refusal
+  writes a `connector.refused` audit row with reason `personal_surface`.
+- **Bot first, offered in the moment.** The agent answers from the bot's own Slack access first.
+  When the bot cannot see what was asked, it says so and offers: "I can only see channels I am in.
+  Want me to see what you see?" Nothing offers the connection at onboarding.
+- **The person signs in once.** Their first call posts the "Connect my account" card. They consent
+  at Slack to the user scopes below, and their token reaches only what their own Slack account sees.
+- **Every write as them takes a card.** A post or a reply in their name posts an approval card first,
+  and nothing is sent until they approve it. Reads run without a card. On a routine's fire, nobody
+  is there to approve a card, so a write as them is refused: a routine permission does not lift it.
+- **It is labelled as theirs.** The connection is `slack-as-you`, described as "search Slack as you",
+  and the agent says which answers came from their account.
+
+It rides the host-side connector plane, never the sandbox egress plane: the DM's sandbox already holds
+the bot's Slack key, and the firewall stamps one credential per host per session. The person's token
+lives in the OAuth vault and goes to `mcp.slack.com` alone.
+
+### Turn it on
+
+1. **Declare it** in `agent/access/mcp-servers.ts`, with your Slack app's public Client ID (Basic
+   Information → App Credentials). It reuses the app the bot already runs on. Slack opens its MCP
+   server to an internal app (your own Open Everywhere app is one) through that app's own OAuth
+   client, with no dynamic client registration.
+
+   ```ts
+   import { defineMcpServers } from "@open-everywhere/core/agent/connections/mcp-servers.js";
+   import { slackAsYou } from "@open-everywhere/provider-slack/agent/slack-as-you.js";
+
+   export const MCP_SERVERS = defineMcpServers([slackAsYou({ clientId: "<your Slack app's Client ID>" })]);
+   ```
+
+   `tools: ["search", "read"]` makes it read-only (no `chat:write`). `people: { groups: [...] }`
+   narrows who gets it, as in any declared server. Run `npx oe build` and commit the diff.
+2. **Store the Client Secret** (Basic Information → App Credentials) in the credential store:
+   `npx oe secret set db:slack:oauth-client-secret`. The declaration names that ref, never the value.
+   A `/setup` install already holds the secret under its own reserved `slack-app:` ref, which no
+   outbound path may read, so store this copy once by hand.
+3. **Change the Slack app.** Fetch the manifest again (`surface_manifest { surface: "slack" }`, or the
+   `/setup` page). Once the app declares the entry, it carries the `mcp:connect` bot scope, the user
+   scopes below and the redirect URL `https://<host>/oauth/v1/callback`. Paste it (App Manifest → Save
+   Changes) and reinstall the app if Slack asks. Then turn on **the MCP toggle in the app config's
+   Agents section** — the manifest has no field for it, so it stays a click.
+
+The user scopes, by tool group:
+
+| Tool group | User scopes |
+|---|---|
+| `search` | `search:read.public`, `search:read.private`, `search:read.mpim`, `search:read.im`, `search:read.files`, `search:read.users`, `files:read` |
+| `read` | `channels:history`, `groups:history`, `mpim:history`, `im:history`, `canvases:read`, `users:read` |
+| `write` | `chat:write` |
+
+Rate limits are the Web API's own tiers.
+
+> ⚠️ **Not confirmed yet:** whether a Slack plan restricts the MCP server, whether an org admin
+> must approve the internal app before a person can consent, the exact shape of the
+> `oauth.v2.user.access` answer (a top-level `access_token` is assumed), and whether Slack accepts
+> the `scope` parameter on a token refresh. The offline tests prove the Open
+> Everywhere side with a stubbed MCP server. The live e2e scenario `S-SLACK-AS-YOU` proves the rest
+> once your test app has the toggle and the scopes.
 
 ## Slash commands: `/oe` (zero-inference control-plane)
 

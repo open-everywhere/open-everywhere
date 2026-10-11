@@ -19,12 +19,16 @@ export const TEAMS_SURFACE_PARITY: SurfaceParityDeclaration = {
     unsupported: "not built yet — the single-window divert writes the plan's own `addressing`, which calls an engaged follow-up and room chatter alike",
   },
   "owned-thread-ingress": { supported: "the channel leg only — a reply chain is the thread; the DM leg mints no `replyToActivityId`, so it can own none" },
+  "thread-done-reaction": { unsupported: "Teams has no integration reaction primitive (no `setReaction` in the ancillary ops)" },
 
   "addressed-leg": "supported",
   "ambient-leg": { supported: "the single-window front's Leg A, not the §2.5 engagement registry" },
   "seat-catch-up": { supported: "over Microsoft Graph (channel activities only — a personal/group chat carries no team id)" },
   "seat-context-admission": { unsupported: "the hydration fills no context-line slot — the seat's room context is the catch-up read, which core already admits" },
-  "approval-card": { unsupported: "no invoke route resolves a tap against a unified seat's parked request. A governed act that takes the venue walk is redirected to a card-capable room in the SAME domain, or refused when the domain holds none. The paths OUTSIDE that walk do not: the spend checkpoint (spend/checkpoint.ts `requireSessionContinuation`) fails OPEN here and records the crossing in an audit row instead" },
+  "approval-card": {
+    supported:
+      "built, not yet proven on a live tenant — a channel hosts its own Adaptive Card and the tap is answered after the Bot Framework JWT verify; a personal or group chat has no channel id, so its card still goes to a card-capable room in the same domain",
+  },
   "judge-lift-notice": "supported",
   "name-drop-mention": { unsupported: "not built yet — Leg A wakes on an @mention or room chatter, never on a name-drop match" },
   "message-edit-wake": { unsupported: "an edit arrives as a `messageUpdate` activity, and the inbound parser admits `message`, `invoke` and `conversationUpdate` only" },
