@@ -40,6 +40,7 @@ import { checkClickerFloor, clickRoomMatches, clickerFloorRefusalNotice, type Cl
 import { checkCardDisclosure, cardDisclosureRefusalNotice } from "./card-disclosure.js";
 import { pendingCardBlocks, decidedCardBlocks, groupedCardBlocks, judgeLiftNoticeBlocks, judgeLiftNoticeText, GROUPED_CARD_MAX_ITEMS, type GroupedCardItem, type RenderedCard } from "./card.js";
 import { contradictJudgeAllow, judgeContradictionNotice, type ContradictJudgeAllowOutcome } from "./judge-contradiction.js";
+import { applyAllowRule, auditAllowRuleRefused, dmRulesForProposal, planAllowRuleClick, type AllowRulePlan } from "./allow-rule-apply.js";
 import { describeDeclaredPermissionKind, grantableFrozenKey, grantReach, sessionGrantKind } from "./session-grant.js";
 import {
   consumeCardPostedThisTurn,
@@ -64,6 +65,10 @@ import "./routine-policy.js";
 import "./webhook.js";
 import "./webhook-declare.js";
 import "./mcp-server-propose.js";
+import "./meeting-join.js";
+import "./email-sender.js";
+import "./personal-browser.js";
+import "./meeting-recap.js";
 import "./agent-create.js";
 import "./ticket-actions.js";
 import "./ticket-create.js";
@@ -96,9 +101,9 @@ export const OE_APPROVAL_PREFIX = "oe_approval:";
 
 type PostFn = (method: string, body: string) => Promise<Record<string, unknown> | undefined>;
 
-export type ApprovalDecision = "approve" | "reject" | "approve_session" | "contradict";
+export type ApprovalDecision = "approve" | "reject" | "approve_session" | "approve_rule" | "contradict";
 
-const APPROVAL_DECISIONS: readonly ApprovalDecision[] = ["approve", "reject", "approve_session", "contradict"];
+const APPROVAL_DECISIONS: readonly ApprovalDecision[] = ["approve", "reject", "approve_session", "approve_rule", "contradict"];
 
 export function parseApprovalAction(actionId: string): { decision: ApprovalDecision; id: string } | null {
   if (!actionId.startsWith(OE_APPROVAL_PREFIX)) return null;
@@ -484,9 +489,20 @@ export async function requestApproval(
       halted: (await resolveHalt(haltScopeFor({ org: input.org, scopeKey: input.scopeKey, domain: chainDomain, ...(input.requestedBy !== undefined ? { principalId: input.requestedBy } : {}) }))).halted,
       ...(kindDef.beneficiaryClicker === true ? { beneficiaryClicker: true } : {}),
     };
+    const proposalIdentity = dedupIdentity(JSON.stringify(input.args ?? null), kindDef.proseArgs);
+    const dmRules = await dmRulesForProposal(input.org, input.scopeKey, input.requestedBy, async (sourceActionId) => {
+      const source = await getOperationalStore().getPendingAction(input.org, sourceActionId);
+      return (
+        source !== null &&
+        source.status === "approved" &&
+        source.kind === input.kind &&
+        source.scopeKey === input.scopeKey &&
+        dedupIdentity(source.argsJson, kindDef.proseArgs) === proposalIdentity
+      );
+    });
     const resolution = await resolveApproverChain(chainReq, {
       approvers: approversForScopeKey(input.scopeKey, chainDomain ?? undefined),
-      rules: preApprovalRulesForScopeKey(input.scopeKey, chainDomain ?? undefined),
+      rules: [...preApprovalRulesForScopeKey(input.scopeKey, chainDomain ?? undefined), ...dmRules],
       judge: true,
     });
     await appendAudit({
@@ -1353,6 +1369,15 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
     return { outcome: "contradicted", row, summaryLines: summaryLinesFor(row), contradiction: res.outcome };
   }
 
+  const allowRule: AllowRulePlan | undefined =
+    input.decision === "approve_rule"
+      ? await planAllowRuleClick(row, {
+          clickerId: input.clickerId,
+          ...(input.clickContext ? { clickSurfaceKey: input.clickContext.surfaceKey } : {}),
+          ...(input.clickerIsGuest !== undefined ? { clickerIsGuest: input.clickerIsGuest } : {}),
+        })
+      : undefined;
+
   const status = input.decision === "reject" ? "rejected" : "approved";
   const cas = await store.decidePendingAction(input.org, row.id, status, input.clickerId, nowIso);
   if (!cas) return { outcome: "lost-race" };
@@ -1386,17 +1411,26 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
     }
   }
 
+  const withRuleLine = async (line: string): Promise<string> => {
+    if (allowRule === undefined) return line;
+    if (!allowRule.ok) {
+      await auditAllowRuleRefused(row, input.clickerId, allowRule.reason, venue);
+      return `${line} · ${allowRule.why}`;
+    }
+    return `${line} · ${await applyAllowRule(allowRule, row, input.clickerId, venue)}`;
+  };
+
   try {
     const args = JSON.parse(row.argsJson) as unknown;
     const outcome = await withArmingApproval({ id: row.id, kind: row.kind }, () => kindDef.execute(args, input.clickerId));
     await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.approved", detail: { id: row.id, kind: row.kind, ...venue, outcome } });
     emitTelemetry("oe.feature.used", { "oe.feature": "approval_decided", "oe.outcome": "approved" });
-    return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: outcome, executed: "ok" };
+    return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: await withRuleLine(outcome), executed: "ok" };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.failed", detail: { id: row.id, kind: row.kind, ...venue, error: message } });
     emitTelemetry("oe.feature.used", { "oe.feature": "approval_decided", "oe.outcome": "failed" });
-    return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: `FAILED: ${message}`, executed: "failed" };
+    return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: await withRuleLine(`FAILED: ${message}`), executed: "failed" };
   } finally {
     if (releaseTail) await runSessionGrantRelease(releaseTail, input.waitUntil);
   }

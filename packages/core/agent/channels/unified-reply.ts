@@ -50,6 +50,8 @@ function unifiedDedupeLocus(origin: UnifiedWakeOrigin): { channel: string; threa
       return { channel: origin.channelId };
     case "teams":
       return { channel: `${origin.serviceUrl}::${origin.conversationId}`, threadTs: origin.replyToActivityId };
+    case "email":
+      return { channel: `${origin.inbox}::${origin.threadId}`, threadTs: origin.messageId };
     default:
       return { channel: JSON.stringify(origin) };
   }

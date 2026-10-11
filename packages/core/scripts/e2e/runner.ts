@@ -29,6 +29,7 @@ import {
   resolveSyntheticDm,
   resolveTeams,
   resolveWebhook,
+  resolveEmail,
   resolveControlWrite,
 } from "./env.js";
 import { SlackDriver } from "./slack-driver.js";
@@ -40,6 +41,7 @@ import { NotionDriver } from "./notion-driver.js";
 import { PrApi } from "./pr-api.js";
 import { SyntheticSlack } from "./synthetic.js";
 import { WebhookDriver } from "./webhook.js";
+import { EmailFixtureDriver } from "./email.js";
 import { createJudgeReporter, judge3, judgeBannerTag, renderReportedJudgeSummary, resolveJudge, type Rubric } from "./judge.js";
 import { FixtureMissing, GateFailure, ScenarioSkip, SCENARIOS, skipCategory, skipReason, type Scenario, type ScenarioContext } from "./scenarios.js";
 import { replyExcerpt } from "./coalesced-ask.js";
@@ -116,6 +118,7 @@ async function main(): Promise<void> {
   const slackUser2 = resolveSlackUser2();
   const slackSecondary = resolveSlackSecondary();
   const webhook = resolveWebhook();
+  const email = resolveEmail();
   const notion = resolveNotion();
   const github = resolveGithub();
   const linear = resolveLinear();
@@ -178,6 +181,7 @@ async function main(): Promise<void> {
   const slackUnifiedBDriver = slackUnifiedArmed?.driver.withChannel(slackUnifiedArmed.cfg.channelB);
   const dmDriver = slackDriver && syntheticDm.ok ? slackDriver.withChannel(syntheticDm.cfg.dmChannel) : undefined;
   const webhookDriver = webhook.ok ? new WebhookDriver(webhook.cfg) : undefined;
+  const emailDriver = email.ok ? new EmailFixtureDriver(email.cfg) : undefined;
   const notionDriver = slackDriver && notion.ok ? slackDriver.withChannel(notion.cfg.channel) : undefined;
   const connectorWriteDriver = slackDriver && connectorWrite.ok ? slackDriver.withChannel(connectorWrite.cfg.channel) : undefined;
   const discordEngagedDriver = paceMaybe(
@@ -435,6 +439,7 @@ async function main(): Promise<void> {
       slackSecondary: slackSecondaryDriver,
       slackSecondaryUserId: slackSecondary.ok ? slackSecondary.cfg.userId : undefined,
       webhook: webhookDriver,
+      email: emailDriver,
       notion: notionDriver,
       notionQuery: notion.ok ? notion.cfg.query : undefined,
       github: githubDriver,

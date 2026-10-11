@@ -342,6 +342,10 @@ function renderProvidersModule(
     "// one rolldown chunk, and a literal dynamic `import()` code-splits into a second chunk and trips",
     "// eve's \"expected one authored module\" invariant.",
     "",
+    "// The APP half of the running code identity (OPE-2466). `oe build` writes this module beside the",
+    "// table, and the import registers it at boot, so a deploy that changes only app code retires every",
+    "// standing seat and work session that ran the old code.",
+    'import "./app-code-fingerprint.generated.js";',
   ];
   for (const p of providers) lines.push(`import { ${p.exportName} } from "${p.pkg}/${p.module}";`);
   lines.push(

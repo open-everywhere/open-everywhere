@@ -806,8 +806,54 @@ lists the members and checks each one (`users.info`, cached), up to 200 per chan
 
 The page is a list of **sections**, each registered by the module that owns its data
 (`registerHomeSection` in `home/home-view.ts`). Memory registers two, at order 10 and 30. Order 20 is
-held for the person's own approval rules (OPE-2456), which then render between the two memory
-sections with no change to the memory code.
+**Your rules** (OPE-2456, `home/rules-home.ts`): the DM rules the person confirmed with "Approve, and
+allow things like this" on an approval card in their DM, each with a Remove button. Remove takes a
+rule away at once. The list reads the viewer's own DM room only. See
+[Pre-approval rules § 7](../how-it-works/pre-approval-rules.md#7-approve-and-allow-things-like-this). The opt-out (below) registers order 40.
+
+## Opting out of agent actions on your content
+
+A person can tell the agent not to act on, edit or remember their own content. They turn it on with
+`/oe optout on` (the answer is private) or with the **Turn on** button on their Home tab, and off the
+same two ways. Nobody can set it for somebody else: the switch keys on the person who pressed it.
+The data plane is `identity/person-opt-out.ts`.
+
+**What it does.** Each leg is enforced in host code, at one chokepoint, and never by asking the model:
+
+| Leg | Chokepoint | What happens |
+| --- | --- | --- |
+| **Remember** | The one write road (`memory/write-road.ts`) and the learn hook (`hooks/learn.ts`) | The road refuses every agent memory content write whose author is the person: the session persist of their turn, to their DM memory or a shared silo alike. The refused lines are also discarded from the session's sandbox, so the next persist does not carry them. That discard resets the whole tier to the stored bytes, so it also drops an earlier turn's unsaved change whose own persist failed; the log records the count. The learn hook skips the dream cycle's learning from their turn (the recurrence count, the enrichment, a skill proposal) and drops their words from the session's rolling log. Their own **Edit** and **Forget**, an approved purge and an admin's control-plane edit still land, because there a person acts on memory. An operational write (the status board, the onboarding marker) is host bookkeeping and is never refused. |
+| **Act on a message** | The Slack message shortcut (`slack-front.ts`) | When somebody **else** presses the message shortcut on a message the person wrote, nothing wakes. The presser gets a private line that names no person. The person's own shortcut on their own message still works. |
+| **Edit a message** | The platform | The agent cannot edit or delete another person's chat message on any surface it ships: Slack refuses `chat.update` on a message the app did not post. |
+
+The DM seat of an opted-out person also gets a trusted host note that says so, so the agent does not
+promise to remember something the write road will refuse.
+
+**What it does not cover.** The person's messages stay in the session's conversation. A later turn
+by another person in that room can still write a fact taken from them, and that write is attributed
+to the other person, so it is not refused. Two agent writes name no person, so they are not refused: the adoption
+of a channel's pinned instructions on the first mention there (the channel's content), and the
+scheduled dream tidy (a rewrite of lines already stored). A [domain question](./domain-questions.md) is not
+covered yet either (OPE-2452). Both deliveries carry no identity of the asker. The domain seat's turn
+resumes under that seat's own binding. That binding can name whoever the seat last served in any room
+of its window. A write of the question into the domain's silo is attributed to that person and is not
+checked against the asker's opt-out. The answer turn in the DM resumes under the DM seat's own binding, and no test proves
+that the binding names the asker. Do not rely on the opt-out on either turn. It does not detect a fact **about** the person that somebody else states
+in a shared room ("Alice prefers mornings"): attribution is the write's own principal, not a
+classifier over the content. It does not stop an ordinary read of a room — what the agent reads in a
+channel is the room's content, under the room's rules. It does not cover objects the person created
+in Notion, Linear or GitHub, because the host knows no author for those at write time. `/oe optout`
+is wired on Slack; Discord's command registers its own subcommand list and does not carry it yet.
+
+**Fail-closed.** When the operational store cannot answer, the agent treats the person as opted out:
+a write is refused and the refusal row records `storeReadable: false`, so the guess is never
+reported as the person's decision.
+
+**Admins see it in the audit log.** Turning it on writes `person.opt_out.set`, turning it off writes
+`person.opt_out.cleared`, and every refusal writes `person.opt_out.refused` with the leg (`act`) and,
+for a shortcut, who asked (`requestedBy`). Each row names the person in `principalId` and carries ids
+and names only, never the refused content. The current state lives in the `person_opt_out` table,
+one row per person; a cleared opt-out keeps its row.
 
 ## Curated subsets: `select`
 

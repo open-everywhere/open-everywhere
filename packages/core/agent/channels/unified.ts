@@ -49,7 +49,7 @@ import { OE_CHAT_NONMEMBER_ATTR } from "../access/taint-signal.js";
 import { carryRunRefusalsToRedrive, dropCarriedRunRefusals } from "../approvals/card-signal.js";
 import { DELEGATION_PENDING_REFUSAL_REASON, pendingDelegationOwing } from "../access/pending-delegation-signal.js";
 import { addressedWakeThisTurn } from "../access/dispatch-origin-signal.js";
-import { OE_WORK_REQUEST_ATTR, OE_WORK_RESULT_ATTR, OE_WORK_RESULT_OWED_ATTR, OE_WORK_RESULT_READS_ATTR, OE_WORK_SEAT_SESSION_ATTR, OE_WORK_SEAT_WAKE_ATTR } from "./work.js";
+import { OE_WORK_REQUEST_ATTR, OE_WORK_RESULT_ATTR, OE_WORK_RESULT_OWED_ATTR, OE_WORK_RESULT_QUIET_ATTR, OE_WORK_RESULT_READS_ATTR, OE_WORK_SEAT_SESSION_ATTR, OE_WORK_SEAT_WAKE_ATTR } from "./work.js";
 import { OE_OWN_ACCOUNT_ASK_ATTR } from "../connections/own-account-carriage.js";
 import { deliveryChangedThisTurn } from "../access/task-wake-signal.js";
 import { sourcesForWindow, windowSourcesNeedConfig } from "./window-sources.js";
@@ -1010,6 +1010,7 @@ export function workResultAttributes(input: {
   readonly fireCreator?: string;
   readonly memoryWrites?: readonly DurableMemoryWrite[];
   readonly reportOwed?: boolean;
+  readonly quiet?: boolean;
 }): Record<string, unknown> {
   const attributes: Record<string, unknown> = {
     [OE_WORK_RESULT_ATTR]: input.requestId,
@@ -1026,6 +1027,7 @@ export function workResultAttributes(input: {
   if (resultKinds !== undefined) attributes[OE_SPAWN_TAINT_KINDS_ATTR] = resultKinds;
   if (input.readsToken !== undefined) attributes[OE_WORK_RESULT_READS_ATTR] = input.readsToken;
   if (input.reportOwed === true) attributes[OE_WORK_RESULT_OWED_ATTR] = "true";
+  if (input.quiet === true) attributes[OE_WORK_RESULT_QUIET_ATTR] = "true";
   const writes = input.memoryWrites === undefined ? undefined : encodeCarriedWrites(input.memoryWrites);
   if (writes !== undefined) attributes[OE_WORK_RESULT_WRITES_ATTR] = writes;
   return attributes;
@@ -1049,6 +1051,7 @@ export async function dispatchWorkResult(input: {
   readonly fireCreator?: string;
   readonly memoryWrites?: readonly DurableMemoryWrite[];
   readonly reportOwed?: boolean;
+  readonly quiet?: boolean;
 }): Promise<boolean> {
   if (!crossProcessDispatchAvailable()) return false;
   const attributes = workResultAttributes(input);

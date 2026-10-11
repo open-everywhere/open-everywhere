@@ -1,3 +1,4 @@
+import { requesterWords } from "../channels/friendly-ids.js";
 import { getConfig, type AccessRequestsConfig } from "../access/config.js";
 import { describeReadableBy } from "../access/read-grant.js";
 import { assertWebhooksValid, configHookPosture } from "../webhooks/config.js";
@@ -259,7 +260,7 @@ const webhookDeclare: ActionKind<WebhookDeclareArgs> = {
       `🔒 No secret is created or shown by this. ${secretSetupLine(d)}`,
       ...(args.reason ? [`Reason: ${inlineForReview(args.reason)}`] : []),
       `Sending opens a bot-PR against \`${args.configRepo}\` for an admin to merge — nothing is declared, and nothing can authenticate, until they do.`,
-      `Requested by ${args.requestedBy}`,
+      `Requested by ${requesterWords(args.requestedBy, args.scopeKey)}`,
     ];
   },
   async execute(args, decidedBy) {

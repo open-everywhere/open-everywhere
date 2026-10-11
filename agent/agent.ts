@@ -5,6 +5,7 @@ import "./lib/register-adapters.js";
 import "@open-everywhere/core/agent/access/eve-patch-probe-boot.js";
 import { gatewayModelResolver } from "@open-everywhere/adapters/agent/model/gateway.js";
 import { registerGatewayDreamJudge, registerGatewayFailureFacetJudge } from "@open-everywhere/adapters/agent/model/dream-judge.js";
+import { registerGatewayMeetingModels } from "@open-everywhere/adapters/agent/model/meeting-gateway.js";
 import { registerGatewayApprovalJudge } from "@open-everywhere/adapters/agent/model/approval-judge.js";
 import { registerGatewayImageDescriber } from "@open-everywhere/adapters/agent/model/gateway-vision.js";
 import { isModelUsable } from "@open-everywhere/core/agent/model/policy.js";
@@ -12,6 +13,7 @@ import {
   JUDGE_MODEL,
   PRIMARY_MODEL,
   PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS,
+  TRANSCRIPTION_ROLE,
   UTILITY_MODEL,
   VISION_MODEL,
 } from "./model/models.js";
@@ -41,6 +43,8 @@ const COMPACTION_THRESHOLD_TOKENS = compactionThresholdTokens(PRIMARY_MODEL_CONT
 registerGatewayDreamJudge({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS });
 
 registerGatewayFailureFacetJudge({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS });
+
+registerGatewayMeetingModels({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS }, TRANSCRIPTION_ROLE);
 
 registerGatewayApprovalJudge({ id: JUDGE_MODEL, gateway: { caching: "auto" } });
 

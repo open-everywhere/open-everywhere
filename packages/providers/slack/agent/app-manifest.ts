@@ -22,6 +22,16 @@ export interface SlackAppManifestOptions {
   readonly agentName?: string;
   readonly commandName?: string;
   readonly personalMcp?: boolean;
+  readonly suggestedPrompts?: readonly { readonly title: string; readonly message: string }[];
+}
+
+export const SLACK_AGENT_DESCRIPTION_MAX = 300;
+
+function slackAgentDescription(appName: string): string {
+  return `Ask ${appName} beside anything you are reading in Slack. It is your own direct-message conversation, with the same rules as a DM.`.slice(
+    0,
+    SLACK_AGENT_DESCRIPTION_MAX,
+  );
 }
 
 export const SLACK_PERSONAL_SIGN_IN_CALLBACK_PATH = "/oauth/v1/callback";
@@ -48,13 +58,19 @@ export function slackAppManifestTemplate(opts: SlackAppManifestOptions = {}): st
       display_information: { name: appName },
       features: {
         app_home: { home_tab_enabled: true, messages_tab_enabled: true, messages_tab_read_only_enabled: false },
+        agent_view: {
+          agent_description: slackAgentDescription(appName),
+          ...(opts.suggestedPrompts && opts.suggestedPrompts.length > 0
+            ? { suggested_prompts: opts.suggestedPrompts.map((p) => ({ title: p.title, message: p.message })) }
+            : {}),
+        },
         bot_user: { display_name: appName, always_online: true },
         slash_commands: [
           {
             command: `/${commandName}`,
             url: `https://${SLACK_DEPLOY_HOST_PLACEHOLDER}/eve/v1/slack/commands`,
             description: `${appName} control-plane commands (stop, status, budget) — no model turn.`,
-            usage_hint: "stop | status | budget [raise <usd> | clear] | rate <n> | help",
+            usage_hint: "stop | status | budget [raise <usd> | clear] | rate <n> | optout [on | off] | help",
             should_escape: false,
           },
         ],
@@ -100,6 +116,7 @@ export function slackAppManifestTemplate(opts: SlackAppManifestOptions = {}): st
             "pins:write",
             "users:read",
             "canvases:write",
+            "assistant:write",
             ...(personalMcp ? [SLACK_MCP_BOT_SCOPE] : []),
           ],
           ...(personalMcp ? { user: [...slackAsYouUserScopes()] } : {}),
@@ -120,6 +137,7 @@ export function slackAppManifestTemplate(opts: SlackAppManifestOptions = {}): st
             "app_home_opened",
             "channel_shared",
             "user_change",
+            "app_context_changed",
           ],
         },
         interactivity: {

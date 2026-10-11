@@ -58,6 +58,14 @@ export type UnifiedWakeOrigin =
       readonly conversationId: string;
       readonly replyToActivityId?: string;
       readonly tenantId?: string;
+    }
+  | {
+      readonly platform: "email";
+      readonly inbox: string;
+      readonly threadId: string;
+      readonly messageId: string;
+      readonly to: readonly string[];
+      readonly cc?: readonly string[];
     };
 
 export const WAKE_TARGET_TTL_MS = 6 * 60 * 60 * 1000;
@@ -236,6 +244,13 @@ export function wakeBindingMatchesOrigin(binding: SurfaceBinding, origin: Unifie
         target?.["conversationId"] === origin.conversationId &&
         (origin.tenantId === undefined ||
           (segmentNamesOriginId(binding.workspace, origin.tenantId) && target?.["tenantId"] === origin.tenantId))
+      );
+    case "email":
+      return (
+        segmentNamesOriginId(binding.workspace, origin.inbox.slice(origin.inbox.lastIndexOf("@") + 1)) &&
+        target?.["inbox"] === origin.inbox &&
+        target?.["threadId"] === origin.threadId &&
+        target?.["messageId"] === origin.messageId
       );
   }
 }

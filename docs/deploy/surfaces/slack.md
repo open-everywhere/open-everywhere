@@ -344,6 +344,10 @@ an outside workspace. Recover with the `reopen_slack_setup` control call. To kee
      fails with `missing_scope`, which the deploy log and a `memory.canvas_refresh` audit row record
      per channel. Memory itself is unaffected. A workspace on Slack's free plan has no channel
      canvases, and the refresh fails there in the same way.
+   - `assistant:write` — **the side panel.** Slack requires it for the `app_context_changed` event
+     (Step 7). That subscription is what makes Slack tell the agent which room a person is viewing
+     when they write from the side panel (see [The side panel](#the-side-panel)). Omit it and the
+     panel still works as a DM, without the viewed room.
    > **Already installed?** Adding a scope to the app does **not** retrofit an existing
    > installation — an app installed before this list grew still holds only the scopes it was
    > granted at install time, and its `xoxb-` token keeps working, so nothing looks broken. After
@@ -394,8 +398,10 @@ an outside workspace. Recover with the `reopen_slack_setup` control call. To kee
      not stored. Needs the `reactions:read` scope from Step 2. Omit these and the feature is
      silently off — nothing else changes.
    - `app_home_opened` — **the Home tab page.** When a person opens the agent's Home tab, the agent
-     publishes their private page: what it remembers about them, with Edit, Forget and Export, and
-     what their domains know (see [Memory you can see](../../capabilities/memory.md#memory-you-can-see)).
+     publishes their private page: what it remembers about them, with Edit, Forget and Export, the
+     rules they kept with "Approve, and allow things like this", with Remove (see
+     [Pre-approval rules § 7](../../how-it-works/pre-approval-rules.md#7-approve-and-allow-things-like-this)),
+     and what their domains know (see [Memory you can see](../../capabilities/memory.md#memory-you-can-see)).
      The event needs no scope. Omit it and the Home tab shows Slack's empty placeholder.
    - `channel_shared` — **take a memory canvas down when its channel is shared.** When a channel
      becomes Slack Connect shared, the agent re-runs the memory canvas gate there at once and replaces
@@ -406,6 +412,11 @@ an outside workspace. Recover with the `reopen_slack_setup` control call. To kee
      credentials (see [Identity](../../how-it-works/identity.md), *Automatic offboarding*). Needs
      the `users:read` scope from Step 2. Omit it and offboarding stays the admin's manual
      `revoke_link_set`.
+   - `app_context_changed` — **the side panel's viewed room.** Slack fires it when a person moves
+     the side panel to another room, and, once the app subscribes to it, attaches the viewed room to
+     each `message.im` sent from the panel. The agent acts on the room in the message and on nothing
+     else: the event itself wakes nothing. Needs `assistant:write` from Step 2 and Slack's agent
+     view (`features.agent_view` in the manifest). See [The side panel](#the-side-panel).
    The generated manifest (`/setup`, `surface_manifest`, `npx @open-everywhere/create`) subscribes
    every event in this list and requests each event's scope.
    Then **App Home** → **Show Tabs** → turn the **Messages Tab** on, and tick *Allow users to send
@@ -828,6 +839,48 @@ Rate limits are the Web API's own tiers.
 > Everywhere side with a stubbed MCP server. The live e2e scenario `S-SLACK-AS-YOU` proves the rest
 > once your test app has the toggle and the scopes.
 
+## The side panel
+
+Slack's agent experience lets a person open the agent in a **side panel** beside any channel, and
+keep one conversation with it while they read. The manifest turns it on with `features.agent_view`
+(Slack's current name; a new app cannot use the older `assistant_view`). The panel shows the app's
+Messages tab, so a message sent there is an ordinary `message.im` to the person's **own DM seat**.
+It is the same seat, the same session and the same grants as a DM. The panel adds no seat type.
+
+**What the panel adds is one fact: the room the person is looking at.** With the `app_context_changed`
+subscription and `assistant:write` (Step 1), Slack attaches the viewed room to each panel message.
+The agent passes the room's id to the seat in a trusted host note, as context only. The seat gains
+none of that room's reads: a read of that room follows the rules that already apply to the DM.
+
+**Guests and external rooms get the strictest default.** The room id rides the note only when all
+three hold:
+
+- the person is a full member of the workspace (the DM-partner check answers `internal`);
+- the room belongs to the same workspace as the DM;
+- Slack confirms the room internal (`conversations.info`). A Slack Connect channel, or a private
+  channel the app is not in, fails this check.
+
+Otherwise the person still gets an answer, but the seat does not learn the room.
+
+**Suggested prompts** come from the `slack.suggestedPrompts` setting (at most four). They are part of
+the manifest, so a change reaches people only after the operator pastes the manifest again (App
+Manifest → Save Changes). The shipped three name no product.
+
+**Requirements and limits, from Slack's documentation (re-read 2026-10-12):**
+
+- Slack says some AI features need a **paid plan**, though the settings appear on every plan. Its
+  developer sandbox has them for free.
+- 🔴 **The switch is one-way for an app that already has `assistant_view`.** Slack cannot move such
+  an app back, and its people need a hard refresh. An app made from this manifest before the side
+  panel shipped had no `assistant_view`, so for it the paste only adds the panel.
+- The status line under a panel message rides the legacy `assistant.threads.setStatus`. Slack's
+  compatibility bridge maps it onto the new session states: a status sets `processing`, an empty one
+  sets `active`, which the agent sends at the end of every turn. OE does not yet subscribe to
+  `agent_session_stopped`, so the panel shows no interactive Stop button; `/oe stop` and the ✋
+  reaction still stop a turn.
+- **Microsoft Teams** has no equivalent of a panel beside any channel for a bot. The nearest is the
+  bot's personal chat, which is the person's DM seat already.
+
 ## Slash commands: `/oe` (zero-inference control-plane)
 
 `/oe` is the control-plane escape hatch (backlog item 23): pure logic, code-rendered responses,
@@ -847,6 +900,7 @@ Commands (typed as free text after `/oe`):
 | `/oe budget clear` | Proposes clearing this channel's spend-limit override back to the config-as-code cap: posts the SAME public approval card `clear_spend_limit` posts. | Card: public in-channel. Ack: ephemeral |
 | `/oe stop` | Stands down the turn currently running in this channel: resolves it from the durable turn-anchor registry and cancels it. **No model turn, nothing spent** — so it works while the channel is over its cap, which is when you are most likely to want it. | Ephemeral |
 | `/oe rate <1-5>` | Records one human mark on the [model A/B test](../../extending/models-and-gateway.md#ab-testing-a-challenger-model): rates this channel's most recent champion/challenger turn, on the arm that turn actually ran. Answers "nothing to rate" — the normal reply — while the test is off. | Ephemeral |
+| `/oe optout on` / `/oe optout off` / `/oe optout` | Turns on (or off, or shows) **your own** opt-out of agent actions on your content: no memory is saved from your own turns (in a shared conversation, a later turn by somebody else can still save what you said, and a [domain question](../../capabilities/domain-questions.md) you ask is not covered yet), and the agent refuses when somebody else hands it one of your messages with a shortcut. Keyed to you alone — there is no argument that names another person. The Home tab has the same switch. See [Opting out](../../capabilities/memory.md#opting-out-of-agent-actions-on-your-content). | Ephemeral |
 | `/oe help` | Lists the commands. | Ephemeral |
 
 Bare `/oe` (no text) defaults to help — the friendliest landing. `/oe budget` alone (no `raise`/
@@ -865,7 +919,7 @@ for why that's a genuine, documented platform grammar difference, not an inconsi
    ```
 
 4. **Short Description**: `Open Everywhere control-plane commands (stop, status, budget) — no model turn.`
-5. **Usage Hint**: `stop | status | budget [raise <usd> | clear] | rate <n> | help`.
+5. **Usage Hint**: `stop | status | budget [raise <usd> | clear] | rate <n> | optout [on | off] | help`.
 6. **Save**, then reinstall the app if Slack prompts you to (a new command is a scope-adjacent change).
 
 No extra env var is needed — the route reuses `SLACK_SIGNING_SECRET` from [Step 2](#step-2--configure-the-environment) to verify every request (the SAME `v0=` HMAC scheme Event Subscriptions uses), and `SLACK_BOT_TOKEN` to post the `raise`/`clear` approval card.

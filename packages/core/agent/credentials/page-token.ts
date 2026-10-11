@@ -2,9 +2,9 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 export const PAGE_TOKEN_KEY_ENV = "OE_INTAKE_PAGE_SIGNING_KEY";
 
-export type PageAudience = "intake" | "reveal";
+export type PageAudience = "intake" | "reveal" | "browser-view" | "browser-session";
 
-export const PAGE_AUDIENCES = ["intake", "reveal"] as const satisfies readonly PageAudience[];
+export const PAGE_AUDIENCES = ["intake", "reveal", "browser-view", "browser-session"] as const satisfies readonly PageAudience[];
 
 type _AudiencesAreTotal = Exclude<PageAudience, (typeof PAGE_AUDIENCES)[number]> extends never ? true : never;
 const _audiencesAreTotal: _AudiencesAreTotal = true;

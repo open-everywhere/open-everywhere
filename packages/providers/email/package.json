@@ -1,0 +1,114 @@
+{
+  "name": "@open-everywhere/provider-email",
+  "version": "0.6.0",
+  "description": "Open Everywhere email provider — the agent's own inboxes on the org's domains: allowed senders in, threaded replies out.",
+  "keywords": [
+    "agent",
+    "email",
+    "inbox",
+    "agentmail",
+    "eve"
+  ],
+  "license": "Apache-2.0",
+  "type": "module",
+  "homepage": "https://github.com/open-everywhere/open-everywhere/tree/main/packages/providers/email",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/open-everywhere/open-everywhere.git",
+    "directory": "packages/providers/email"
+  },
+  "bugs": {
+    "url": "https://github.com/open-everywhere/open-everywhere/issues"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "agent",
+    "dist",
+    "tsconfig.json",
+    "tsconfig.build.json",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "exports": {
+    "./package.json": "./package.json",
+    "./agent/channels/email-front.js": {
+      "types": "./dist/agent/channels/email-front.d.ts",
+      "default": "./dist/agent/channels/email-front.js"
+    },
+    "./agent/channels/email-identity.js": {
+      "types": "./dist/agent/channels/email-identity.d.ts",
+      "default": "./dist/agent/channels/email-identity.js"
+    },
+    "./agent/channels/email-message-ops.js": {
+      "types": "./dist/agent/channels/email-message-ops.d.ts",
+      "default": "./dist/agent/channels/email-message-ops.js"
+    },
+    "./agent/channels/email-origin-codec.js": {
+      "types": "./dist/agent/channels/email-origin-codec.d.ts",
+      "default": "./dist/agent/channels/email-origin-codec.js"
+    },
+    "./agent/channels/email-post-arm.js": {
+      "types": "./dist/agent/channels/email-post-arm.d.ts",
+      "default": "./dist/agent/channels/email-post-arm.js"
+    },
+    "./agent/channels/email-read.js": {
+      "types": "./dist/agent/channels/email-read.d.ts",
+      "default": "./dist/agent/channels/email-read.js"
+    },
+    "./agent/channels/email.js": {
+      "types": "./dist/agent/channels/email.d.ts",
+      "default": "./dist/agent/channels/email.js"
+    },
+    "./agent/contributions.js": {
+      "types": "./dist/agent/contributions.d.ts",
+      "default": "./dist/agent/contributions.js"
+    },
+    "./agent/docs-generated.js": {
+      "types": "./dist/agent/docs-generated.d.ts",
+      "default": "./dist/agent/docs-generated.js"
+    },
+    "./agent/provider-events.js": {
+      "types": "./dist/agent/provider-events.d.ts",
+      "default": "./dist/agent/provider-events.js"
+    },
+    "./agent/register.js": {
+      "types": "./dist/agent/register.d.ts",
+      "default": "./dist/agent/register.js"
+    },
+    "./agent/surface-parity.js": {
+      "types": "./dist/agent/surface-parity.d.ts",
+      "default": "./dist/agent/surface-parity.js"
+    },
+    "./agent/transports/agentmail.js": {
+      "types": "./dist/agent/transports/agentmail.d.ts",
+      "default": "./dist/agent/transports/agentmail.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "npm run test:chain",
+    "test:chain": "tsx ../../../scripts/chain/run-chain.ts",
+    "test:email-agentmail": "NODE_NO_WARNINGS=1 tsx scripts/email-agentmail-test.ts",
+    "test:email-front": "NODE_NO_WARNINGS=1 tsx scripts/email-front-test.ts",
+    "test:email-post-arm": "NODE_NO_WARNINGS=1 tsx scripts/email-post-arm-test.ts"
+  },
+  "dependencies": {
+    "@open-everywhere/core": "0.6.0",
+    "zod": "4.5.4"
+  },
+  "peerDependencies": {
+    "eve": "0.71.0"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "tsx": "latest",
+    "typescript": "latest"
+  }
+}

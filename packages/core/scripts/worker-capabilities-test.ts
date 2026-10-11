@@ -213,9 +213,10 @@ for (const verb of WORKER_INDEX_SEAT_VERBS) {
   ok(carveIn.length > 0, "§7 precondition: the carve-in names at least one verb, so the loop below asserts something");
 
   for (const verb of carveIn) {
+    const gate = WINDOW_GATED_TOOLS[verb];
     ok(
-      WINDOW_UNGATED_TOOLS.has(verb),
-      `🔴 §7 PREMISE: "${verb}" is an UNGATED row — which is why a worker mounted it, and why absence had to be added rather than assumed`,
+      WINDOW_UNGATED_TOOLS.has(verb) || (gate !== undefined && !gate.includes("task")),
+      `🔴 §7 PREMISE: "${verb}" is an UNGATED row (which is why a worker mounted it, and why absence had to be added rather than assumed), or a row whose window gate keeps it off the task grain`,
     );
     eq(allowedOnWorkerSeat(verb), false, `🔴 §7 "${verb}" is NOT allowed on a delegated worker — containment, not routing`);
   }

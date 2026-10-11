@@ -1,3 +1,7 @@
+// proves: connector.consent_detour, connector.consent_resume
+
+// proves: AP-MOD-core-connections-consent-resume
+
 import assert from "node:assert/strict";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
@@ -76,8 +80,32 @@ function harness(opts: { readonly nowMs: number; readonly postResult?: string; r
   ok(h.posted[0]?.text === cr.consentResumeOfferLine(record()), "the posted line is the offer line");
   const t = h.posted[0]?.target as { platform: string; channelId: string; threadTs?: string };
   ok(t.platform === "slack" && t.channelId === "C456" && t.threadTs === "1712.99", "the line goes to the originating room and thread");
-  ok(/say the word/i.test(h.posted[0]?.text ?? ""), "the offer line asks the person to say the word");
+  ok(/reply here and I'll pick up your request/i.test(h.posted[0]?.text ?? ""), "the offer line asks the person to reply");
+  ok(!/say the word/i.test(h.posted[0]?.text ?? ""), "the offer line no longer says \"say the word\" (OPE-2462)");
+  ok(/Your Notion account is connected/.test(h.posted[0]?.text ?? ""), "the offer line names the vendor by its display name, never the connector id");
   ok(!/picking up|resuming now|I have run/i.test(h.posted[0]?.text ?? ""), "the offer line never claims the request already resumed");
+}
+
+{
+  const woken: ConsentResumeRecord[] = [];
+  const h = harness({ nowMs: T0 + 60_000 });
+  const out = await cr.resumeAfterConsent(record(), { ...h.deps, resumeWork: async (r) => (woken.push(r), true) });
+  ok(woken.length === 1 && woken[0]?.detourId === "det-1", "the return hop asks the resume plane to wake the seat for THIS detour");
+  ok(out.verdict === "resumed" && out.delivered, "a resume wake that went out reports `resumed`");
+  ok(h.posted.length === 1 && h.posted[0]?.text === cr.consentResumedLine(record()), "the posted line is the resumed line");
+  ok(h.posted[0]?.text === "Your Notion account is connected. I'm picking up your request now.", `the resumed line says it once, in plain words (got ${JSON.stringify(h.posted[0]?.text)})`);
+  ok(!/say the word|reply here|ask me again/i.test(h.posted[0]?.text ?? ""), "the resumed line asks the person for nothing — the job is already running");
+
+  const h2 = harness({ nowMs: T0 + 60_000 });
+  const out2 = await cr.resumeAfterConsent(record(), { ...h2.deps, resumeWork: async () => false });
+  ok(out2.verdict === "offer" && h2.posted[0]?.text === cr.consentResumeOfferLine(record()), "no wake ⇒ the offer line, never \"picking up\"");
+  const h3 = harness({ nowMs: T0 + 60_000 });
+  const out3 = await cr.resumeAfterConsent(record(), { ...h3.deps, resumeWork: async () => { throw new Error("boom"); } });
+  ok(out3.verdict === "offer", "a resume plane that throws ⇒ the offer line");
+  const late: ConsentResumeRecord[] = [];
+  const h4 = harness({ nowMs: T0 + TTL + 1 });
+  const out4 = await cr.resumeAfterConsent(record(), { ...h4.deps, resumeWork: async (r) => (late.push(r), true) });
+  ok(out4.verdict === "expired" && late.length === 0, "an expired detour is never resumed");
 }
 
 {
@@ -182,7 +210,10 @@ function harness(opts: { readonly nowMs: number; readonly postResult?: string; r
   const html = await res.text();
   ok(res.status === 200, "a completed authorization still renders 200");
   ok(seen.length === 1 && seen[0]?.detourId === "det-1", "the route hands the re-validated record to the resume plane");
-  ok(/tell me there to carry on/i.test(html), "the page points the person back at their conversation");
+  ok(/Reply there and I'll pick up your request/i.test(html), "the page points the person back at their conversation");
+  const resumedSpy = (async () => ({ verdict: "resumed" as const, delivered: false })) as typeof cr.resumeAfterConsent;
+  const htmlResumed = await (await call(withCarriage, resumedSpy)).text();
+  ok(/picking up your request in your conversation now/i.test(htmlResumed), "a resumed job says so on the page, even when the line did not land");
 
   seen.length = 0;
   const noCarriage: OeOauthCallbackCompleter = async () => ({ ok: true, connectionName: "notion" });
@@ -198,7 +229,7 @@ function harness(opts: { readonly nowMs: number; readonly postResult?: string; r
   const failing = (async () => ({ verdict: "offer" as const, delivered: false })) as typeof cr.resumeAfterConsent;
   const html3 = await (await call(withCarriage, failing)).text();
   ok(/could not reach it from here/i.test(html3), "an undelivered line says so on the page");
-  ok(!/tell me there to carry on/i.test(html3), "an undelivered line never also claims the room was told");
+  ok(!/Reply there/i.test(html3), "an undelivered line never also claims the room was told");
 
   const expired = (async () => ({ verdict: "expired" as const, delivered: true })) as typeof cr.resumeAfterConsent;
   const html4 = await (await call(withCarriage, expired)).text();

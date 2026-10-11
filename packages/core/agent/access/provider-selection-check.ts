@@ -22,6 +22,7 @@ export const UNGATED_SEAMS: Readonly<Record<string, string>> = {
   registerAuditDropCounter: "injects a single process-wide audit-drop counter; the `platform` is a callback ARGUMENT, not a registry key — nothing per-provider is stored",
   registerControlWriteTools: "registers control-plane MCP tools keyed by TOOL NAME; the `.platform` it touches is a linked-identity row's data column, not a per-provider registry key",
   registerWorkPlatform: "records a platform an ALREADY-ADMITTED adapter registration named; both callers gate with admitProviderRegistration before reaching it (proven in work-destinations-test §6)",
+  registerNativeTranscriptSource: "registers one native meeting-transcript reader keyed by MEETING platform (teams, meet, zoom), not by a provider bundle id; the adapters package registers all three unconditionally, and each reads only behind the meeting policy's `native` block and a member's card",
   registeredWorkRole: "a pure READ of that registry — it stores nothing and admits nothing; the name matches the sweep's `register*` shape by accident of English",
 };
 

@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/adapters",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Open Everywhere adapters — the reference Vercel-hosted backends: AI Gateway models and pricing, Sandbox, Neon, OpenTelemetry, AWS and Okta.",
   "keywords": [
     "agent",
@@ -92,6 +92,26 @@
       "types": "./dist/agent/instrumentation.d.ts",
       "default": "./dist/agent/instrumentation.js"
     },
+    "./agent/meetings/native-http.js": {
+      "types": "./dist/agent/meetings/native-http.d.ts",
+      "default": "./dist/agent/meetings/native-http.js"
+    },
+    "./agent/meetings/native-meet.js": {
+      "types": "./dist/agent/meetings/native-meet.d.ts",
+      "default": "./dist/agent/meetings/native-meet.js"
+    },
+    "./agent/meetings/native-sources.js": {
+      "types": "./dist/agent/meetings/native-sources.d.ts",
+      "default": "./dist/agent/meetings/native-sources.js"
+    },
+    "./agent/meetings/native-teams.js": {
+      "types": "./dist/agent/meetings/native-teams.d.ts",
+      "default": "./dist/agent/meetings/native-teams.js"
+    },
+    "./agent/meetings/native-zoom.js": {
+      "types": "./dist/agent/meetings/native-zoom.d.ts",
+      "default": "./dist/agent/meetings/native-zoom.js"
+    },
     "./agent/model/approval-judge.js": {
       "types": "./dist/agent/model/approval-judge.d.ts",
       "default": "./dist/agent/model/approval-judge.js"
@@ -111,6 +131,14 @@
     "./agent/model/gateway.js": {
       "types": "./dist/agent/model/gateway.d.ts",
       "default": "./dist/agent/model/gateway.js"
+    },
+    "./agent/model/meeting-gateway.js": {
+      "types": "./dist/agent/model/meeting-gateway.d.ts",
+      "default": "./dist/agent/model/meeting-gateway.js"
+    },
+    "./agent/model/transcription-routes.js": {
+      "types": "./dist/agent/model/transcription-routes.d.ts",
+      "default": "./dist/agent/model/transcription-routes.js"
     },
     "./agent/oe-oauth/config.js": {
       "types": "./dist/agent/oe-oauth/config.d.ts",
@@ -160,6 +188,10 @@
       "types": "./dist/agent/sandbox/extend-workspace-time.d.ts",
       "default": "./dist/agent/sandbox/extend-workspace-time.js"
     },
+    "./agent/sandbox/long-lived-box.js": {
+      "types": "./dist/agent/sandbox/long-lived-box.d.ts",
+      "default": "./dist/agent/sandbox/long-lived-box.js"
+    },
     "./agent/sandbox/vercel-lifecycle.js": {
       "types": "./dist/agent/sandbox/vercel-lifecycle.d.ts",
       "default": "./dist/agent/sandbox/vercel-lifecycle.js"
@@ -183,8 +215,12 @@
     "test:sandbox-guard": "tsx scripts/sandbox-live-guard-test.ts",
     "test:sandbox-live": "tsx scripts/sandbox-live-test.ts",
     "test:sandbox-extend": "tsx scripts/sandbox-extend-test.ts",
+    "test:long-lived-box": "tsx scripts/long-lived-box-test.ts",
+    "test:native-transcripts": "tsx scripts/native-transcripts-test.ts",
     "test:gateway-probe": "NODE_NO_WARNINGS=1 tsx scripts/gateway-probe-test.ts",
     "test:model-gateway": "tsx scripts/model-gateway-test.ts",
+    "test:transcription-routes": "tsx scripts/transcription-routes-test.ts",
+    "test:host-plane-union": "tsx scripts/host-plane-union-test.ts",
     "test:dream-judge-gateway": "tsx scripts/dream-judge-gateway-test.ts",
     "test:approval-judge-gateway": "tsx scripts/approval-judge-gateway-test.ts",
     "test:gateway-vision": "tsx scripts/gateway-vision-test.ts",
@@ -192,7 +228,7 @@
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
-    "@open-everywhere/core": "0.5.0",
+    "@open-everywhere/core": "0.6.0",
     "@vercel/otel": "^2.1.3",
     "@vercel/sandbox": "^3.2.1",
     "ai": "^7.0.105"

@@ -25,6 +25,7 @@ export interface SlackMessage {
   readonly files?: readonly SlackFile[];
   readonly editedTs?: string;
   readonly taskCard?: true;
+  readonly blockTexts?: readonly string[];
 }
 
 export interface SlackApiButton {
@@ -37,6 +38,7 @@ export interface SlackApiBlock {
   block_id?: string;
   elements?: readonly SlackApiButton[];
   actions?: readonly SlackApiButton[];
+  text?: { text?: string };
 }
 export interface SlackApiMessage {
   ts?: string;
@@ -91,6 +93,7 @@ export function toMessage(m: SlackApiMessage): SlackMessage {
         .map((e) => ({ actionId: e.action_id, value: e.value, blockId: b.block_id, text: buttonLabel(e) })),
     );
   const files = (m.files ?? []).map((f) => ({ id: f.id, name: f.name, filetype: f.filetype, mimetype: f.mimetype }));
+  const blockTexts = blockTextsOf(m.blocks);
   return {
     ts: m.ts ?? "",
     threadTs: m.thread_ts,
@@ -101,7 +104,22 @@ export function toMessage(m: SlackApiMessage): SlackMessage {
     files: files.length > 0 ? files : undefined,
     editedTs: m.edited?.ts,
     ...(isEveTaskCardBlocks(m.blocks) ? { taskCard: true as const } : {}),
+    ...(blockTexts.length > 0 ? { blockTexts } : {}),
   };
+}
+
+export function blockTextsOf(blocks: readonly SlackApiBlock[] | undefined): string[] {
+  const out: string[] = [];
+  for (const b of blocks ?? []) {
+    const t =
+      b.type === "header" || b.type === "section"
+        ? b.text?.text
+        : b.type === "context"
+          ? (b.elements ?? []).map(buttonLabel).filter((x): x is string => typeof x === "string").join(" ")
+          : undefined;
+    if (typeof t === "string" && t.length > 0) out.push(t);
+  }
+  return out;
 }
 
 export function buildChatUpdateBody(input: { channel: string; ts: string; text: string }): string {

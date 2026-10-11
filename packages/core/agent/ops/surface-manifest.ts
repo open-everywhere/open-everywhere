@@ -77,3 +77,57 @@ export function surfaceAppManifest(
     placeholdersRemaining: manifest.split(DEPLOY_HOST_PLACEHOLDER).length - 1,
   };
 }
+
+export interface SurfaceAppPackageFinding {
+  readonly id: string;
+  readonly level: "block" | "warn";
+  readonly detail: string;
+  readonly fix?: string;
+}
+
+export type SurfaceAppListingRoute = "org" | "store";
+
+export interface SurfaceAppPackageInput {
+  readonly host: string;
+  readonly appName?: string;
+  readonly route: SurfaceAppListingRoute;
+  readonly developerName?: string;
+  readonly partnerId?: string;
+  readonly version?: string;
+  readonly supportContact?: string;
+  readonly channelFeatures?: "omit" | "tier1";
+  readonly icons: Readonly<Record<string, Uint8Array | undefined>>;
+  readonly env: NodeJS.ProcessEnv;
+}
+
+export interface SurfaceAppPackageResult {
+  readonly findings: readonly SurfaceAppPackageFinding[];
+  readonly manifest: string;
+  readonly archive?: Uint8Array;
+  readonly fileName: string;
+  readonly steps: readonly string[];
+}
+
+export interface SurfaceAppPackageSource {
+  readonly icons: Readonly<Record<string, string>>;
+  readonly outDir: string;
+  readonly build: (input: SurfaceAppPackageInput) => SurfaceAppPackageResult;
+}
+
+const PACKAGE_SOURCES: Record<string, SurfaceAppPackageSource> = {};
+
+export function registerSurfaceAppPackage(surface: string, source: SurfaceAppPackageSource): void {
+  PACKAGE_SOURCES[surface] = source;
+}
+
+export function surfaceAppPackageSource(surface: string): SurfaceAppPackageSource | undefined {
+  return PACKAGE_SOURCES[surface];
+}
+
+export function surfaceAppPackageSurfaces(): string[] {
+  return Object.keys(PACKAGE_SOURCES).sort();
+}
+
+export function _resetSurfaceAppPackagesForTest(): void {
+  for (const k of Object.keys(PACKAGE_SOURCES)) delete PACKAGE_SOURCES[k];
+}

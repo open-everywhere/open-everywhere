@@ -1,4 +1,5 @@
 import { asConsentResumeRecord, resumeAfterConsent, type ConsentResumeOutcome } from "./consent-resume.js";
+import "../channels/work-sign-in-resume.js";
 import type { ConsentCarriage } from "./user-auth-flow.js";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
@@ -135,10 +136,11 @@ async function runConsentResume(
 
 function resumeClause(outcome: ConsentResumeOutcome | undefined): string {
   if (!outcome) return "";
+  if (outcome.verdict === "resumed") return "I'm picking up your request in your conversation now.";
   if (!outcome.delivered) return "Go back to your conversation and ask again — I could not reach it from here.";
   switch (outcome.verdict) {
     case "offer":
-      return "I've said so in your conversation — tell me there to carry on with the request you paused.";
+      return "I've said so in your conversation. Reply there and I'll pick up your request.";
     case "expired":
       return "The request you paused is too old to pick up on its own; ask me again in your conversation.";
   }

@@ -7,6 +7,7 @@ export const PUBLISHABLE_PACKAGES = [
   "packages/core",
   "packages/adapters",
   "packages/providers/discord",
+  "packages/providers/email",
   "packages/providers/github",
   "packages/providers/linear",
   "packages/providers/notion",

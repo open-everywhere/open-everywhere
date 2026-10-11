@@ -304,7 +304,7 @@ function row(over: Partial<PendingActionRow> = {}): PendingActionRow {
   const labelled = spendSetKind.summarize({ org: "default", scopeKey: "discord/G1/C1", level: "surface", monthlyUsd: 1, currentCap: null, currentUsd: null, scopeLabel: "#proj-chat" } as never);
   ok(labelled[0] === "Set spend limit — #proj-chat (surface)", "summarize: scopeLabel renders instead of the raw key");
   const raw = spendSetKind.summarize({ org: "default", scopeKey: "discord/G1/C1", level: "surface", monthlyUsd: 1, currentCap: null, currentUsd: null } as never);
-  ok(raw[0] === "Set spend limit — scope `discord/G1/C1` (surface)", "summarize: no label → raw scope key (pre-label rows unchanged)");
+  ok(raw[0] === "Set spend limit — <#C1> (surface)", "summarize: no label → the channel mention, never the raw scope key (OPE-2462)");
   const clearKind = actionKind("spend.clear")!;
   const clearLabelled = clearKind.summarize({ org: "default", scopeKey: "discord/G1", level: "workspace", currentCap: null, scopeLabel: "the Acme server" } as never);
   ok(clearLabelled[0] === "Clear spend limit override — the Acme server (workspace)", "summarize: spend.clear renders the label too");

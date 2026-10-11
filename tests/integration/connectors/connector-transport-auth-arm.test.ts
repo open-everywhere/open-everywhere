@@ -29,6 +29,8 @@ const BOT_USER_ID = "U0IT1465BOT";
 
 let tsCounter = 0;
 
+const POSTED: { readonly channel: string; readonly text: string }[] = [];
+
 function armSlackStub(): { uninstall(): void } {
   return installSlackWebApiStub((method, params) => {
     switch (method) {
@@ -69,7 +71,10 @@ function armSlackStub(): { uninstall(): void } {
         };
       case "conversations.history":
         return { ok: true, messages: [] };
+      case "conversations.open":
+        return { ok: true, channel: { id: DM_CHANNEL_ID } };
       case "chat.postMessage":
+        POSTED.push({ channel: params.get("channel") ?? "", text: params.get("text") ?? "" });
         return { ok: true, channel: params.get("channel"), ts: slackTs(Date.now(), (tsCounter += 1)) };
       default:
         return undefined;
@@ -248,6 +253,126 @@ test("connectors.userPrincipal OFF selects appProviderToken: the SAME DM turn re
 
     expect(await notionMintRows(cursor), "the OFF arm minted a per-user token with connectors.userPrincipal off").toEqual([]);
   } finally {
+    stub.uninstall();
+  }
+});
+
+test("OPE-2462: a DM job's personal sign-in is said once by the host, and the sign-in resumes the job on its own", async () => {
+  await bootAgent();
+  const flows = await import("@open-everywhere/core/agent/connections/user-auth-flow.js");
+  const consentResume = await import("@open-everywhere/core/agent/connections/consent-resume.js");
+  const { rawIdLeaks } = await import("@open-everywhere/core/agent/channels/friendly-ids.js");
+  const live = flows.userAuthFlowProvider();
+  expect(live, "no user-auth flow is registered, so no personal mint can reach the sign-in").toBeDefined();
+  const consents: unknown[] = [];
+  flows.registerUserAuthFlow({
+    ...live!,
+    mintServiceToken: (r, o) => live!.mintServiceToken(r, o),
+    mintUserToken: (r, p) => live!.mintUserToken(r, p),
+    isUserAuthRequired: (e) => live!.isUserAuthRequired(e),
+    environmentClaim: () => live!.environmentClaim(),
+    startAuthorization: async (_ref, _params, options) => {
+      consents.push(options.consent);
+      return { url: "https://connect.example.invalid/auth/IT2462" };
+    },
+  });
+  const stub = armSlackStub();
+  try {
+    await armUserPrincipal(true);
+    const postedBefore = POSTED.length;
+    const cursor = await auditCursor();
+    const search = { tool: "connection_search", input: { query: "handbook" }, id: "it2462-search" };
+    const handle = disposeLater(
+      registerScript({
+        parent: [{ calls: [{ tool: "work", input: { message: "look in notion" }, id: "it2462-delegate" }] }, { say: NO_REPLY_SENTINEL }],
+        child: [{ delayMs: 120_000, calls: [search] }, { say: "Notion needs your sign-in." }],
+      }),
+    );
+    const ts = slackTs(Date.now(), (tsCounter += 1));
+    const res = await slackDmWake({ channelId: DM_CHANNEL_ID, userId: OPERATOR_ID, text: "it2462 connect notion", ts, eventId: `EvIT2462${ts.replace(".", "")}` });
+    expect(res.status, `the Slack front refused the DM wake: ${res.body.slice(0, 200)}`).toBe(200);
+    await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "it2462: the seat's receipt step");
+    await waitForChildren(handle, { count: 1, lastStepIndex: 0, label: "it2462: the worker to enter its hold" });
+    const seat = disposeLater(armSettlement(handle, { parent: [{ say: NO_REPLY_SENTINEL }] }));
+    const taskId = await workTaskIdOfCall(cursor, handle, "it2462-delegate", "it2462: the forward");
+    handle.releaseHolds();
+    await waitForChildren(handle, { count: 1, lastStepIndex: 1, label: "it2462: the worker's terminal step" });
+
+    const output = connectionSearchOutputs(handle).join("\n");
+    expect(output, "the worker did not settle needs-sign-in with a delivered card").toContain("A sign-in card with a private link went to that person directly.");
+    expect(output, "the worker's report promises no automatic resume").toContain("When they connect, the host starts this job again.");
+
+    const card = POSTED.slice(postedBefore).find((p) => p.text.includes("connect.example.invalid/auth/IT2462"));
+    expect(card, `no sign-in card was posted. Saw ${JSON.stringify(POSTED.slice(postedBefore))}`).toBeDefined();
+    expect(card!.text, "the card does not say the job resumes on its own").toContain("Once you connect it, I pick the job up again.");
+    expect(card!.text, "🔴 the card in the person's own DM still carries the who-asked footer").not.toContain("asked for this");
+    expect(rawIdLeaks(card!.text), "🔴 the card shows a raw id or a scope key").toEqual([]);
+
+    const result = await awaitWorkResult({ handle: seat, taskId, label: "it2462: the seat's result-wake step" });
+    const resultText = result.messages.map((m) => m.text).join("\n");
+    const note = [...resultText.matchAll(/<system-note>([\s\S]*?)<\/system-note>/g)].map((m) => m[1]!).filter((n) => n.includes(`task ${taskId}`)).at(-1) ?? "";
+    expect(note, "🔴 the result wake does not tell the seat the host already sent the link").toContain("ALREADY sent them a private sign-in link in this conversation");
+    expect(note, "the result wake still tells the seat to relay the stop").not.toContain("relay what came back");
+    const wakes = (await rowsSinceCursor(cursor, ["work.result_wake"])).filter((r) => r.detail?.taskId === taskId);
+    expect(wakes.map((r) => [r.detail?.outcome, r.detail?.signIn]), "W's result-wake row does not record the quiet sign-in").toEqual([["delivered", "quiet"]]);
+    expect(seat.requests.filter((r) => r.fault !== undefined), "it2462: the result-wake script reported a fault").toEqual([]);
+    seat.dispose();
+    const resumeCallId = "it2462-resume";
+    const seat2 = disposeLater(
+      armSettlement(handle, {
+        parent: [
+          { calls: [{ tool: "work", input: { message: "The account is connected. Finish what was asked.", taskId }, id: resumeCallId }] },
+          { say: NO_REPLY_SENTINEL },
+          { say: "The handbook is the onboarding page in Notion." },
+          { say: "The handbook is the onboarding page in Notion." },
+          { say: "The handbook is the onboarding page in Notion." },
+        ],
+      }),
+    );
+    expect(handle.requests.filter((r) => r.fault !== undefined), "it2462: the worker's first turn reported a fault").toEqual([]);
+    handle.dispose();
+    const continued = disposeLater(registerScript({ parent: [], child: [{ say: "The handbook is in Notion: the onboarding page." }] }));
+
+    const record = consentResume.asConsentResumeRecord(JSON.parse(JSON.stringify(consents.at(-1))));
+    expect(record, "the link mint carried no consent record").toBeDefined();
+    const lines: string[] = [];
+    const outcome = await consentResume.resumeAfterConsent(record!, {
+      post: async (_t, text) => (lines.push(text), "1.0"),
+    });
+    expect(outcome.verdict, "the return hop did not resume the job").toBe("resumed");
+    expect(lines, "the connect line does not say the pick-up").toEqual(["Your Notion account is connected. I'm picking up your request now."]);
+    const resumed = await waitFor(
+      () => seat2.requests.find((r) => r.role === "parent" && r.messages.some((m) => m.text.includes("sign-in-resume-"))),
+      "it2462: the seat's resume-wake step",
+    );
+    const resumeText = resumed.messages.map((m) => m.text).join("\n");
+    expect(resumeText, "the resume wake does not tell the seat to run the same job").toContain(`taskId: &quot;${taskId}&quot;`);
+    expect(resumeText, "the resume wake does not keep the seat from listing tools").toContain("Do not list tools");
+
+    const admitted = await waitForAuditRows({
+      probe: async () => {
+        const rows = (await rowsSinceCursor(cursor, ["delegation.continuation_admitted"])).filter((r) => r.detail?.task === taskId);
+        return rows.length > 0 ? rows : undefined;
+      },
+      label: "it2462: the resume's continuation admission",
+      actions: ["delegation.continuation_admitted"],
+      cursor,
+    });
+    expect(admitted.length, "the resume wake's `work` call was not admitted as a continuation").toBeGreaterThan(0);
+    const finalWake = await waitForAuditRows({
+      probe: async () => {
+        const rows = (await rowsSinceCursor(cursor, ["work.result_wake"])).filter((r) => r.detail?.taskId === taskId && r.detail?.signIn === undefined);
+        return rows.length > 0 ? rows : undefined;
+      },
+      label: "it2462: the continued job's result wake",
+      actions: ["work.result_wake"],
+      cursor,
+    });
+    expect(finalWake.map((r) => [r.detail?.outcome, r.detail?.reportOwed]), "🔴 the continued job's result wake does not owe the room its answer").toEqual([["delivered", true]]);
+    expect(continued.requests.filter((r) => r.fault !== undefined), "it2462: the continued worker turn reported a fault").toEqual([]);
+    expect(continued.requests.some((r) => r.role === "child"), "it2462: the continued task never reached a worker turn").toBe(true);
+  } finally {
+    flows.registerUserAuthFlow(live!);
     stub.uninstall();
   }
 });

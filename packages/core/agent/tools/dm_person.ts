@@ -8,6 +8,9 @@ import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getConfig } from "../access/config.js";
 import { assertChatDmAllowed, chatDmMount, PERSON_RESOURCE_TYPE } from "../access/chat-dm-grant.js";
 import { deliverProactiveDm, dmDeliveryFooter } from "../channels/dm-audience.js";
+import { personWords } from "../channels/friendly-ids.js";
+import { accountProfileFor, composedAccountName } from "../identity/account-display-name.js";
+import { friendlyScopeLabel } from "../approvals/scope-label.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
 import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
@@ -62,7 +65,14 @@ const dmPersonEntry = defineTool({
     if (!requestedBy) {
       throw new Error("dm_person needs a verified sender — no principal id resolved, so there is nobody to name as the person who asked for this message.");
     }
-    const footer = dmDeliveryFooter({ requestedBy, fromContainer: p.surfaceKey });
+    const fromLabel = await friendlyScopeLabel(p.surfaceKey).catch(() => undefined);
+    const footer = dmDeliveryFooter({
+      platform: target.platform,
+      recipientId: target.principalId,
+      requestedBy,
+      from: p.surfaceKey,
+      ...(fromLabel !== undefined ? { fromLabel } : {}),
+    });
 
     if (admitted.delivered) {
       await deliverProactiveDm({
@@ -83,7 +93,7 @@ const dmPersonEntry = defineTool({
         delivered: true,
         platform: target.platform,
         person: target.principalId,
-        message: `Sent. ${target.platform} person ${target.principalId} has it, with the line telling them how to stop.`,
+        message: `Sent. ${personWords({ id: target.principalId, platform: target.platform })} has it, with the line telling them how to stop.`,
       };
     }
 
@@ -93,11 +103,13 @@ const dmPersonEntry = defineTool({
     }
     const venue = venueResult.venue;
 
+    const recipientLabel = composedAccountName(await accountProfileFor(target.platform, target.principalId, p.workspace).catch(() => undefined));
     const args: ChatDmArgs = {
       org: p.org,
       scopeKey: proposeScopeKey,
       platform: target.platform,
       principalId: target.principalId,
+      ...(recipientLabel !== undefined ? { recipientLabel } : {}),
       grant: target.address,
       text: input.text,
       footer,
@@ -121,7 +133,7 @@ const dmPersonEntry = defineTool({
       approvalPostDeps(venue.platform, ctx),
     );
 
-    const subject = `start a direct message with ${target.platform} person ${target.principalId}`;
+    const subject = `start a direct message with ${personWords({ id: target.principalId, platform: target.platform })}`;
     if (posted.autoApproved) {
       return {
         pending: false,

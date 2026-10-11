@@ -1,6 +1,6 @@
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
-import { asSurfaceMode, readThreadSeatStateValue, auditSurfaceMode, auditReadOrg, likePrefixPattern, argKeyNeedle, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type CredentialIntakeRow, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type ToolUsageEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow, ATTENTION_COLUMNS, attentionPruneBefore, attentionRowFrom, type AttentionDbRow } from "./store.js";
+import { asSurfaceMode, readThreadSeatStateValue, auditSurfaceMode, auditReadOrg, likePrefixPattern, argKeyNeedle, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type CredentialIntakeRow, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type ToolUsageEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow, type PersonOptOutRow, type PersonalBrowserRow, ATTENTION_COLUMNS, attentionPruneBefore, attentionRowFrom, type AttentionDbRow, DM_RULE_COLUMNS, dmRuleRowFrom, type DmRuleDbRow } from "./store.js";
 import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn, grantRefundTurnOrdinal } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
@@ -580,12 +580,38 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      PRIMARY KEY (org_id, session_id)
    )`,
   `CREATE INDEX IF NOT EXISTS attention_state_person ON attention_state (org_id, person_platform, person_id)`,
+  `CREATE TABLE IF NOT EXISTS dm_rule (
+     org_id           text NOT NULL,
+     surface_key      text NOT NULL,
+     rule_id          text NOT NULL,
+     owner_id         text NOT NULL,
+     rule             text NOT NULL,
+     subject_json     text NOT NULL,
+     source_action_id text NOT NULL,
+     created_at       text NOT NULL,
+     updated_at       text NOT NULL,
+     PRIMARY KEY (org_id, surface_key, rule_id)
+   )`,
   `CREATE TABLE IF NOT EXISTS dm_audience (
      org_id      text NOT NULL,
      address     text NOT NULL,
      first_dm_at text,
      stopped_at  text,
      PRIMARY KEY (org_id, address)
+   )`,
+  `CREATE TABLE IF NOT EXISTS person_opt_out (
+     org_id        text NOT NULL,
+     principal_key text NOT NULL,
+     opted_out_at  text,
+     PRIMARY KEY (org_id, principal_key)
+   )`,
+  `CREATE TABLE IF NOT EXISTS personal_browser (
+     org_id        text NOT NULL,
+     principal_key text NOT NULL,
+     state_json    text NOT NULL,
+     version       integer NOT NULL,
+     updated_at    text NOT NULL,
+     PRIMARY KEY (org_id, principal_key)
    )`,
   `CREATE TABLE IF NOT EXISTS instance_meta (
      key   text PRIMARY KEY,
@@ -728,6 +754,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE credential_grant_ask ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE credential_grant ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE dm_audience ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE person_opt_out ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE personal_browser ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE dm_rule ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE attention_state ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE audit_entry FORCE ROW LEVEL SECURITY`,
   `ALTER TABLE usage_events FORCE ROW LEVEL SECURITY`,
@@ -782,6 +811,9 @@ const POLICY_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS credential_grant_ask_org_isolation ON credential_grant_ask`,
   `DROP POLICY IF EXISTS credential_grant_org_isolation ON credential_grant`,
   `DROP POLICY IF EXISTS dm_audience_org_isolation ON dm_audience`,
+  `DROP POLICY IF EXISTS person_opt_out_org_isolation ON person_opt_out`,
+  `DROP POLICY IF EXISTS personal_browser_org_isolation ON personal_browser`,
+  `DROP POLICY IF EXISTS dm_rule_org_isolation ON dm_rule`,
   `DROP POLICY IF EXISTS attention_state_org_isolation ON attention_state`,
   `CREATE POLICY spend_org_isolation ON spend_ledger
      USING ${ORG_GUC}
@@ -898,12 +930,41 @@ const POLICY_STATEMENTS: readonly string[] = [
   `CREATE POLICY dm_audience_org_isolation ON dm_audience
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY person_opt_out_org_isolation ON person_opt_out
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY personal_browser_org_isolation ON personal_browser
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY dm_rule_org_isolation ON dm_rule
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY attention_state_org_isolation ON attention_state
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
 ];
 
 const APPEND_ONLY_TABLES = ["audit_entry", "usage_events", "tool_usage", "domain_skill_revisions", "routine_prompt_revisions"] as const;
+
+interface PersonalBrowserDbRow {
+  readonly principal_key: string;
+  readonly state_json: string;
+  readonly version: number;
+  readonly updated_at: string;
+}
+
+function personalBrowserRowFrom(r: PersonalBrowserDbRow): PersonalBrowserRow {
+  return { principalKey: r.principal_key, stateJson: r.state_json, version: Number(r.version), updatedAt: r.updated_at };
+}
+
+interface PersonOptOutDbRow {
+  readonly principal_key: string;
+  readonly opted_out_at: string | null;
+}
+
+function personOptOutRowFrom(r: PersonOptOutDbRow): PersonOptOutRow {
+  return { principalKey: r.principal_key, ...(r.opted_out_at === null ? {} : { optedOutAt: r.opted_out_at }) };
+}
 
 interface DmAudienceDbRow {
   readonly address: string;
@@ -1431,6 +1492,9 @@ const MUTABLE_TABLE_VERBS: Readonly<Record<string, readonly DmlVerb[]>> = {
   proactive_address: ["SELECT", "INSERT", "UPDATE"],
   memory_proposal: ["SELECT", "INSERT"],
   dm_audience: ["SELECT", "INSERT", "UPDATE"],
+  person_opt_out: ["SELECT", "INSERT", "UPDATE"],
+  personal_browser: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  dm_rule: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   attention_state: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   thread_ownership: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   thread_seat_state: ["SELECT", "INSERT", "UPDATE", "DELETE"],
@@ -3058,6 +3122,86 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         [org],
       );
       return (rows as DmAudienceDbRow[]).map(dmAudienceRowFrom);
+    },
+
+    async getPersonalBrowser(org, principalKey) {
+      const { rows } = await client.query("SELECT principal_key, state_json, version, updated_at FROM personal_browser WHERE org_id = $1 AND principal_key = $2", [org, principalKey]);
+      const row = rows[0] as PersonalBrowserDbRow | undefined;
+      return row ? personalBrowserRowFrom(row) : null;
+    },
+
+    async casPersonalBrowser(org, principalKey, stateJson, at, expected) {
+      if (expected === null) {
+        const { rows } = await client.query(
+          "INSERT INTO personal_browser (org_id, principal_key, state_json, version, updated_at) VALUES ($1, $2, $3, 1, $4) ON CONFLICT (org_id, principal_key) DO NOTHING RETURNING version",
+          [org, principalKey, stateJson, at],
+        );
+        return rows.length > 0 ? 1 : null;
+      }
+      const { rows } = await client.query(
+        "UPDATE personal_browser SET state_json = $3, version = version + 1, updated_at = $4 WHERE org_id = $1 AND principal_key = $2 AND version = $5 RETURNING version",
+        [org, principalKey, stateJson, at, expected],
+      );
+      const row = rows[0] as { version: number } | undefined;
+      return row === undefined ? null : Number(row.version);
+    },
+
+    async deletePersonalBrowser(org, principalKey) {
+      const { rows } = await client.query("DELETE FROM personal_browser WHERE org_id = $1 AND principal_key = $2 RETURNING principal_key", [org, principalKey]);
+      return rows.length > 0;
+    },
+
+    async listPersonalBrowsers(org) {
+      const { rows } = await client.query("SELECT principal_key, state_json, version, updated_at FROM personal_browser WHERE org_id = $1 ORDER BY principal_key", [org]);
+      return (rows as PersonalBrowserDbRow[]).map(personalBrowserRowFrom);
+    },
+
+    async getPersonOptOut(org, principalKey) {
+      const { rows } = await client.query("SELECT principal_key, opted_out_at FROM person_opt_out WHERE org_id = $1 AND principal_key = $2", [org, principalKey]);
+      const row = rows[0] as PersonOptOutDbRow | undefined;
+      return row ? personOptOutRowFrom(row) : null;
+    },
+
+    async setPersonOptOut(org, principalKey, at) {
+      const inserted = await client.query(
+        "INSERT INTO person_opt_out (org_id, principal_key, opted_out_at) VALUES ($1, $2, $3) ON CONFLICT (org_id, principal_key) DO NOTHING RETURNING principal_key",
+        [org, principalKey, at],
+      );
+      if (inserted.rows.length > 0) return true;
+      const updated = await client.query(
+        "UPDATE person_opt_out SET opted_out_at = $3 WHERE org_id = $1 AND principal_key = $2 AND opted_out_at IS NULL RETURNING principal_key",
+        [org, principalKey, at],
+      );
+      return updated.rows.length > 0;
+    },
+
+    async clearPersonOptOut(org, principalKey) {
+      const { rows } = await client.query(
+        "UPDATE person_opt_out SET opted_out_at = NULL WHERE org_id = $1 AND principal_key = $2 AND opted_out_at IS NOT NULL RETURNING principal_key",
+        [org, principalKey],
+      );
+      return rows.length > 0;
+    },
+
+    async listDmRules(org, surfaceKey) {
+      const { rows } = await client.query(`SELECT ${DM_RULE_COLUMNS} FROM dm_rule WHERE org_id = $1 AND surface_key = $2 ORDER BY created_at, rule_id`, [org, surfaceKey]);
+      return (rows as DmRuleDbRow[]).map((r) => dmRuleRowFrom(org, r));
+    },
+
+    async upsertDmRule(row) {
+      await client.query(
+        `INSERT INTO dm_rule (org_id, surface_key, rule_id, owner_id, rule, subject_json, source_action_id, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (org_id, surface_key, rule_id) DO UPDATE SET
+           owner_id = excluded.owner_id, rule = excluded.rule, subject_json = excluded.subject_json,
+           source_action_id = excluded.source_action_id, updated_at = excluded.updated_at`,
+        [row.org, row.surfaceKey, row.ruleId, row.ownerId, row.rule, row.subjectJson, row.sourceActionId, row.createdAt, row.updatedAt],
+      );
+    },
+
+    async removeDmRule(org, surfaceKey, ruleId) {
+      const { rows } = await client.query("DELETE FROM dm_rule WHERE org_id = $1 AND surface_key = $2 AND rule_id = $3 RETURNING rule_id", [org, surfaceKey, ruleId]);
+      return rows.length > 0;
     },
 
     async recordAttentionState(row) {

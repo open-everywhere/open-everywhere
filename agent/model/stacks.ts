@@ -1,4 +1,5 @@
 import type { ModelTier } from "@open-everywhere/core/agent/memory/domain.js";
+import type { TranscriptionRoleSpec } from "@open-everywhere/adapters/agent/model/transcription-routes.js";
 
 export type ModelRole = "primary" | "utility" | "vision" | "supervisor" | "judge";
 
@@ -22,7 +23,7 @@ export const STACKS = {
   "american-closed": {
     primary: { id: "openai/gpt-6-luna", tier: "high", contextWindowTokens: 1_050_000 },
     utility: { id: "openai/gpt-6-luna", tier: "low", contextWindowTokens: 1_050_000 },
-    vision: { id: "google/gemini-3.7-flash", tier: "low", contextWindowTokens: 1_000_000 },
+    vision: { id: "google/gemini-3.8-flash", tier: "low", contextWindowTokens: 1_000_000 },
     supervisor: { id: "openai/gpt-6-luna", tier: "low", contextWindowTokens: 1_050_000 },
     judge: { id: "openai/gpt-6-luna", tier: "low", contextWindowTokens: 1_050_000 },
   },
@@ -41,6 +42,31 @@ export function compactionThresholdTokens(contextWindowTokens: number, threshold
 }
 
 export const SHIPPED_STACK: StackAlias = "american-closed";
+
+export const TRANSCRIPTION = {
+  "american-closed": {
+    primary: { via: "gateway", id: "microsoft/mai-transcribe-2" },
+    fallback: { via: "gateway", id: "spacexai/grok-stt" },
+  },
+  "chinese-open-weights": {
+    primary: { via: "deepinfra", id: "Qwen/Qwen3-ASR-1.7B" },
+    fallback: { via: "self-hosted", id: "Qwen/Qwen3-ASR-1.7B", baseUrl: "http://qwen3-asr:8000/v1" },
+  },
+} as const satisfies Record<StackAlias, TranscriptionRoleSpec>;
+
+export const LOCAL_TRANSCRIPTION = {
+  primary: { via: "self-hosted", id: "Qwen/Qwen3-ASR-1.7B", baseUrl: "http://qwen3-asr:8000/v1" },
+} as const satisfies TranscriptionRoleSpec;
+
+export type TranscriptionPlacement = "stack" | "local";
+
+export const TRANSCRIPTION_PLACEMENT: TranscriptionPlacement = "stack";
+
+export function resolveTranscription(alias: string, placement: TranscriptionPlacement = TRANSCRIPTION_PLACEMENT): TranscriptionRoleSpec {
+  if (placement === "local") return LOCAL_TRANSCRIPTION;
+  if (!isStackAlias(alias)) throw new Error(`open-everywhere: unknown model stack "${alias}" — no transcription role`);
+  return TRANSCRIPTION[alias];
+}
 
 export type StackOverrides = {
   readonly [R in ModelRole]?: Partial<ModelRoleSpec>;

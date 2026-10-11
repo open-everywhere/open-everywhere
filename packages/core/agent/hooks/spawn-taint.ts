@@ -1,11 +1,13 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
 import { OE_SPAWN_TAINTED_ATTR, OE_SPAWN_TAINT_KINDS_ATTR, dispatchWorkResult } from "../channels/unified.js";
-import { OE_WORK_REQUEST_ATTR, OE_WORK_RESULT_ATTR, OE_WORK_RESULT_OWED_ATTR, OE_WORK_RESULT_READS_ATTR, WORK_RESULT_WAKE_ACTION, postWorkResultOnce, readWorkBrief, spendWorkReportPromise, workReportPromised, readWorkCall, readWorkRequest, rememberWorkCall, workLedgerId, readWorkTaskRequest, rememberWorkTask, renderWorkResultWake, workResultText, workTokenForSeat, workCancelRedeemed, type WorkRequestRow } from "../channels/work.js";
+import { OE_WORK_REQUEST_ATTR, OE_WORK_RESULT_ATTR, OE_WORK_RESULT_OWED_ATTR, OE_WORK_RESULT_QUIET_ATTR, OE_WORK_RESULT_READS_ATTR, WORK_RESULT_WAKE_ACTION, postWorkResultOnce, readWorkBrief, spendWorkReportPromise, workReportPromised, readWorkCall, readWorkRequest, rememberWorkCall, workLedgerId, readWorkTaskRequest, rememberWorkTask, renderWorkResultWake, workResultText, workTokenForSeat, workCancelRedeemed, type WorkRequestRow } from "../channels/work.js";
 import { fireFoldOutcome, foldWorkFire } from "../routines/fire-work-fold.js";
 import { noteWorkJobSettled, noteWorkJobStarted, settledWorkJobStateFor } from "./work-status.js";
 import { currentWorkSessionToken } from "../access/lean-seat-state.js";
 import { forgetWorkStop, readWorkStop } from "../channels/work-stop-note.js";
+import { forgetSignInMarkers, forgetWorkSignIn, readWorkSignIn } from "../channels/work-sign-in-note.js";
+import { settleSignIn } from "../channels/work-sign-in-resume.js";
 import { claimWorkCall, workRequestsThisTurn } from "../access/work-request-turn.js";
 import { keyWorkTask, readWorkTaskKey, wakeSeatNeedsReissue } from "./work-task-key.js";
 import { bareTokenFromEveContext } from "../channels/window-key.js";
@@ -904,6 +906,7 @@ function noteWorkResultReportOwed(bind: BindableContext): void {
     const requestId = deliveryAttr(bind, OE_WORK_RESULT_ATTR);
     if (requestId === undefined) return;
     const promisedHere = claimPromisedReport(workLedgerId(requestId));
+    if (deliveryAttr(bind, OE_WORK_RESULT_QUIET_ATTR) === "true") return;
     const stamped = deliveryAttr(bind, OE_WORK_RESULT_OWED_ATTR) === "true";
     if (promisedHere || stamped) noteSettlementReportOwed(currentTurnId(bind), workLedgerId(requestId), currentWakeId(bind));
   } catch {
@@ -996,6 +999,11 @@ async function wakeSeatWithWorkResult(settled: TaskSettled, event: unknown, ctx:
   const tainted = row.tainted || untrustedIngestedThisTurn();
   const childToken = (await taskCallLink(org, settled.taskId).catch(() => undefined))?.childToken;
   const stop = childToken === undefined ? undefined : await readWorkStop(org, childToken, settled.callId);
+  const signInRow = childToken === undefined ? undefined : await readWorkSignIn(org, childToken, settled.callId);
+  const signInCancelled = signInRow !== undefined && (status === "cancelled" || (await workCancelTicketRedeemed(org, store, row, settled)));
+  const signIn = stop === undefined && signInRow?.delivered === true && signInRow.detourId !== undefined && !signInCancelled && row.fire === undefined ? signInRow : undefined;
+  if (signInCancelled && signInRow?.detourId !== undefined) await forgetSignInMarkers(org, signInRow.detourId);
+  const quietSignIn = signIn !== undefined && signIn.sameConversation;
   const readsToken = status === "completed" && stop === undefined ? childToken : undefined;
   const wakeId = row.fire !== undefined ? row.wakeId : mintWakeId();
   const seatToken = await currentSeatToken(org, row.seatToken, store);
@@ -1016,7 +1024,7 @@ async function wakeSeatWithWorkResult(settled: TaskSettled, event: unknown, ctx:
       const foldAs = row.fire === undefined ? undefined : fireFoldOutcome(status, stop !== undefined, await workCancelTicketRedeemed(org, store, row, settled));
       if (foldAs !== undefined) await foldWorkFire(row, foldAs, { org, sessionId: (ctx as { session?: { id?: string } }).session?.id ?? "" });
       if (silentFire) return;
-      reportOwed = row.fire === undefined && (await workReportPromised(store, org, requestId));
+      reportOwed = row.fire === undefined && !quietSignIn && (await workReportPromised(store, org, requestId));
       delivered = await dispatchWorkResult({
         seatToken,
         wakeId,
@@ -1032,6 +1040,7 @@ async function wakeSeatWithWorkResult(settled: TaskSettled, event: unknown, ctx:
           ...(stop !== undefined ? { stopRefusal: stop.refusal } : {}),
           ...(row.fire !== undefined ? { fire: true as const } : {}),
           ...(seatRotated ? { rotated: { forwardedAtIso: row.atIso, ...(rotatedBrief !== undefined ? { brief: rotatedBrief } : {}) } } : {}),
+          ...(signIn !== undefined && row.fire === undefined ? { signIn: { connector: signIn.connector, sameConversation: signIn.sameConversation } } : {}),
         }),
         origin: row.origin,
         surfaceKey: row.surfaceKey,
@@ -1046,6 +1055,7 @@ async function wakeSeatWithWorkResult(settled: TaskSettled, event: unknown, ctx:
         ...(row.fire?.creator !== undefined ? { fireCreator: row.fire.creator } : {}),
         ...(memoryWrites.length > 0 ? { memoryWrites } : {}),
         ...(reportOwed ? { reportOwed: true } : {}),
+        ...(quietSignIn && row.fire === undefined ? { quiet: true } : {}),
       });
     },
   });
@@ -1053,12 +1063,19 @@ async function wakeSeatWithWorkResult(settled: TaskSettled, event: unknown, ctx:
   if (ran && delivered) await clearGenerationDelegation(org, workLedgerId(requestId), store);
   if (ran) await clearGenerationDelegation(org, workSessionLedgerId(requestId), store);
   if (ran && delivered && stop !== undefined && childToken !== undefined) await forgetWorkStop(org, childToken);
+  if (ran && signInRow !== undefined && childToken !== undefined) await forgetWorkSignIn(org, childToken);
+  await settleSignIn({
+    org,
+    ran,
+    detourId: signInRow?.detourId,
+    file: signIn?.detourId !== undefined ? { requestId, taskId: settled.taskId, connector: signIn.connector } : undefined,
+  });
   await audit(
     !ran
       ? { outcome: "replay-skipped" }
       : silentFire
         ? { outcome: "silent-fire", fire: true }
-        : { outcome: delivered ? "delivered" : "failed", wakeId, tainted, reportOwed, seatRotated, ...(row.fire !== undefined ? { fire: true } : {}), ...(stop !== undefined ? { stoppedBy: "egress-own-account", connector: stop.connector } : {}) },
+        : { outcome: delivered ? "delivered" : "failed", wakeId, tainted, reportOwed, seatRotated, ...(row.fire !== undefined ? { fire: true } : {}), ...(stop !== undefined ? { stoppedBy: "egress-own-account", connector: stop.connector } : {}), ...(signIn !== undefined ? { signIn: quietSignIn ? "quiet" : "said", connector: signIn.connector } : {}) },
   );
 }
 

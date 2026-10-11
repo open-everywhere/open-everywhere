@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/provider-slack",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Open Everywhere Slack provider — Slack channel and DM surfaces, identity mapping, approval cards and slash commands.",
   "keywords": [
     "agent",
@@ -112,6 +112,10 @@
       "types": "./dist/agent/channels/slack-shortcut.d.ts",
       "default": "./dist/agent/channels/slack-shortcut.js"
     },
+    "./agent/channels/slack-side-panel.js": {
+      "types": "./dist/agent/channels/slack-side-panel.d.ts",
+      "default": "./dist/agent/channels/slack-side-panel.js"
+    },
     "./agent/channels/slack-signature.js": {
       "types": "./dist/agent/channels/slack-signature.d.ts",
       "default": "./dist/agent/channels/slack-signature.js"
@@ -213,6 +217,7 @@
     "test:chain": "tsx ../../../scripts/chain/run-chain.ts",
     "test:slack-webhook-verifier": "NODE_NO_WARNINGS=1 tsx scripts/slack-webhook-verifier-test.ts",
     "test:slack-workspace-roster": "NODE_NO_WARNINGS=1 tsx scripts/slack-workspace-roster-test.ts",
+    "test:slack-card-wire-text": "NODE_NO_WARNINGS=1 tsx scripts/slack-card-wire-text-test.ts",
     "test:slack-scope-audit": "NODE_NO_WARNINGS=1 tsx scripts/slack-scope-audit-test.ts",
     "test:slack-app-manifest": "NODE_NO_WARNINGS=1 tsx scripts/slack-app-manifest-test.ts",
     "test:slack-offboarding": "NODE_NO_WARNINGS=1 tsx scripts/slack-offboarding-test.ts",
@@ -252,10 +257,11 @@
     "test:slack-setup": "NODE_NO_WARNINGS=1 tsx scripts/slack-setup-test.ts",
     "test:slack-wake-drop-hold": "NODE_NO_WARNINGS=1 tsx scripts/slack-wake-drop-hold-test.ts",
     "test:slack-surface-evidence": "NODE_NO_WARNINGS=1 tsx scripts/slack-surface-evidence-test.ts",
-    "test:slack-home": "NODE_NO_WARNINGS=1 tsx scripts/slack-home-test.ts"
+    "test:slack-home": "NODE_NO_WARNINGS=1 tsx scripts/slack-home-test.ts",
+    "test:slack-side-panel": "NODE_NO_WARNINGS=1 tsx scripts/slack-side-panel-test.ts"
   },
   "dependencies": {
-    "@open-everywhere/core": "0.5.0",
+    "@open-everywhere/core": "0.6.0",
     "undici": "^7.28.0",
     "zod": "4.5.4"
   },

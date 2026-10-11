@@ -12,7 +12,7 @@ import { dispatchWorkRequest } from "../channels/unified.js";
 import { generationOfTask, noteGenerationDelegation } from "../channels/generation-retirement.js";
 import { continuationRoute, resolveWorkGeneration, workSessionLedgerId, type ContinuationRoute, type WorkGeneration } from "../channels/work-generation.js";
 import { notifyLostWorkRequests } from "../channels/work-loss.js";
-import { readWorkBrief, readWorkRequest, readWorkTaskRequest, renderFreshFollowUpBrief, renderWorkRequest, rememberWorkBrief, rememberWorkRequest, workLedgerId, workRequestIdFor, workTokenForSeat, WORK_FORWARDED_ACTION, type WorkRowStore } from "../channels/work.js";
+import { OE_WORK_RESULT_QUIET_ATTR, readWorkBrief, readWorkRequest, readWorkTaskRequest, renderFreshFollowUpBrief, renderWorkRequest, rememberWorkBrief, rememberWorkReportPromised, rememberWorkRequest, workLedgerId, workRequestIdFor, workTokenForSeat, WORK_FORWARDED_ACTION, type WorkRowStore } from "../channels/work.js";
 import { parseWindowToken, isWorkWindowToken } from "../channels/window-key.js";
 import { ownAccountStampToForward } from "../connections/own-account-carriage.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -22,6 +22,11 @@ import { rememberWorkForward } from "../hooks/work-task-key.js";
 import { currentInvokerPosture } from "../access/invoker-posture-state.js";
 import { requesterAsksForWake } from "../access/requester-messages.js";
 import { auditTaskContinuation, continuationAdmitted, taskContinuationRefusalMessage } from "../channels/task-provenance.js";
+
+function quietResultWake(ctx: BindableContext): boolean {
+  const v = (ctx as { session?: { auth?: { current?: { attributes?: Record<string, unknown> } } } }).session?.auth?.current?.attributes?.[OE_WORK_RESULT_QUIET_ATTR];
+  return (Array.isArray(v) ? v[0] : v) === "true";
+}
 
 export function canForwardWork(ctx: BindableContext): boolean {
   if (!oneshotAgentEnabled()) return false;
@@ -124,6 +129,7 @@ export async function forwardWork(input: { readonly message: string; readonly ta
     atIso,
     ...(requesterAsks.length > 0 ? { requesterAsks } : {}),
   });
+  if (input.taskId !== undefined && quietResultWake(c)) await rememberWorkReportPromised(store, org, requestId, atIso).catch(() => undefined);
   await rememberWorkBrief(store, org, requestId, input.message, atIso);
   await noteGenerationDelegation(org, seatToken, workLedgerId(requestId));
   const recorded = deps.resolveWork ? await readWorkDelivery(store, org, requestId) : undefined;

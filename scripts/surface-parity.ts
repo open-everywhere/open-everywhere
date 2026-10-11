@@ -10,6 +10,7 @@ import { registerTeamsProvider } from "@open-everywhere/provider-teams/agent/reg
 import { registerGithubProvider } from "@open-everywhere/provider-github/agent/register.js";
 import { registerLinearProvider } from "@open-everywhere/provider-linear/agent/register.js";
 import { registerNotionProvider } from "@open-everywhere/provider-notion/agent/register.js";
+import { registerEmailProvider } from "@open-everywhere/provider-email/agent/register.js";
 import {
   SURFACE_CAPABILITIES,
   checkSurfaceParity,
@@ -48,7 +49,7 @@ if (contractFlagAt >= 0 && !check) {
   process.exit(1);
 }
 
-const PLATFORMS = ["slack", "discord", "teams", "github", "linear", "notion"] as const;
+const PLATFORMS = ["slack", "discord", "teams", "github", "linear", "notion", "email"] as const;
 
 clearProviderSelection();
 
@@ -58,6 +59,7 @@ registerTeamsProvider();
 registerGithubProvider();
 registerLinearProvider();
 registerNotionProvider();
+registerEmailProvider();
 
 function engagementSeamPlatforms(): ReadonlySet<string> {
   const wired = new Set<string>();

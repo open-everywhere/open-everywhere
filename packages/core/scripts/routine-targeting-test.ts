@@ -84,7 +84,8 @@ const ORG = "default";
   ok(redirected.surfaceKey === "linear/W1/ISSUE1", "report-model: …and the ORIGINAL row is untouched — ownership, spend and GC reach stay fused to surfaceKey");
   ok(routineMod.routineReportSurfaceKey(redirected) === "slack/T1/C_OPS", "report-model: routineReportSurfaceKey names the destination, which is what the dispatcher's slack-only guards must key on");
 
-  ok(routineMod.describeTrigger(redirected.trigger, redirected.report).includes("slack/T1/C_OPS"), "report-model: describeTrigger NAMES the destination, so list_routines and the card can't render a redirected routine as if it posted here");
+  ok(routineMod.describeTrigger(redirected.trigger, redirected.report).includes("posts into <#C_OPS>"), "report-model: describeTrigger NAMES the destination, so list_routines and the card can't render a redirected routine as if it posted here");
+  ok(!routineMod.describeTrigger(redirected.trigger, redirected.report).includes("slack/T1/C_OPS"), "report-model: …as a channel mention, never the raw key (OPE-2462)");
   ok(!routineMod.describeTrigger(plain.trigger).includes("posts into"), "report-model: an ordinary routine's description is byte-identical to before (no destination suffix)");
 
   const parts = eventAuthz.eventGrantPartitions(redirected as never);

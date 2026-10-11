@@ -317,7 +317,7 @@ const signedHeaders = (body: string, timestamp: string): Headers =>
     { postCard },
   );
   ok(captured.length === 1 && captured[0].row.id === id, "the injected CardPoster receives the frozen pending row");
-  ok(captured[0].summaryLines.some((l) => l.includes("discord/G1/C_ENG")), "the poster receives the code-rendered summary lines");
+  ok(captured[0].summaryLines.some((l) => l.includes("<#C_ENG>")), "the poster receives the code-rendered summary lines (the room as a channel mention, OPE-2462)");
   const posted = await getOperationalStore().getPendingAction("default", id);
   ok(posted?.messageTs === "dmsg-777", "the poster's message id lands as the row's messageTs");
   const audit = await readAudit({ org: "default", action: "approval.requested" });

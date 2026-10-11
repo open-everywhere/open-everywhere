@@ -1,0 +1,100 @@
+{
+  "source": "https://ai-gateway.vercel.sh/v1/models (public, unauthenticated)",
+  "fetchedAt": "2026-10-11",
+  "note": "The rows the bake-off and the transcription-role test read. Refresh with `npm run bakeoff:stt -- --refresh-catalogue`.",
+  "gateway": [
+    {
+      "id": "microsoft/mai-transcribe-2",
+      "name": "MAI-Transcribe 2",
+      "type": "transcription",
+      "zdr": "all",
+      "no_training": "all",
+      "inputModalities": [
+        "audio"
+      ],
+      "pricing": {
+        "input": "0",
+        "transcription_duration_cost_per_second": "0.00002778"
+      }
+    },
+    {
+      "id": "spacexai/grok-stt",
+      "name": "Grok STT",
+      "type": "transcription",
+      "zdr": "all",
+      "no_training": "all",
+      "inputModalities": [
+        "audio"
+      ],
+      "pricing": {
+        "input": "0",
+        "transcription_duration_cost_per_second": "0.000028"
+      }
+    },
+    {
+      "id": "google/gemini-3.8-flash",
+      "name": "Gemini 3.8 Flash",
+      "type": "language",
+      "zdr": "some",
+      "no_training": "all",
+      "inputModalities": [
+        "text",
+        "image",
+        "pdf",
+        "video"
+      ],
+      "pricing": {
+        "input": "0.00000075",
+        "output": "0.00000375"
+      }
+    },
+    {
+      "id": "openai/gpt-4o-transcribe",
+      "name": "GPT-4o Transcribe",
+      "type": "transcription",
+      "zdr": "none",
+      "no_training": "all",
+      "inputModalities": [
+        "audio"
+      ],
+      "pricing": {
+        "input": "0.0000025",
+        "output": "0.00001",
+        "audio_input_token_cost": "0.0000025"
+      }
+    },
+    {
+      "id": "google/gemini-3.5-transcribe",
+      "name": "Gemini 3.5 Transcribe",
+      "type": "transcription",
+      "zdr": "none",
+      "no_training": "all",
+      "inputModalities": [
+        "audio"
+      ],
+      "pricing": {
+        "input": "0.000002",
+        "output": "0.000012",
+        "audio_input_token_cost": "0.000002"
+      }
+    }
+  ],
+  "deepinfra": [
+    {
+      "id": "Qwen/Qwen3-ASR-1.7B",
+      "usdPerMinute": 0.00045,
+      "retention": "Zero retention (DeepInfra model page label)",
+      "timestamps": "segments and words",
+      "source": "https://deepinfra.com/Qwen/Qwen3-ASR-1.7B/api",
+      "checkedAt": "2026-10-11"
+    },
+    {
+      "id": "Qwen/Qwen3-ASR-0.6B",
+      "usdPerMinute": 0.0002,
+      "retention": "Zero retention (DeepInfra model page label)",
+      "timestamps": "segments and words",
+      "source": "https://deepinfra.com/Qwen/Qwen3-ASR-0.6B/api",
+      "checkedAt": "2026-10-11"
+    }
+  ]
+}

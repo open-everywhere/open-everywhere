@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { npmCommand } from "./npm-command.js";
 import { packPublishablePackages } from "./publish-pack.js";
+import { ALL_PUBLISHABLE_PACKAGES } from "./publish-exports-generate.js";
 import { UNIVERSAL_DOCS } from "@open-everywhere/core/agent/docs/generated/index.js";
 
 let n = 0;
@@ -111,9 +112,9 @@ assert.ok(
 const scratch = mkdtempSync(join(tmpdir(), "oe-quickstart-"));
 const app = join(scratch, "app");
 try {
-  console.log("1. pack the nine publishable packages");
+  console.log(`1. pack the ${ALL_PUBLISHABLE_PACKAGES.length} publishable packages`);
   const packed = packPublishablePackages(REPO_ROOT, join(scratch, "tarballs"));
-  eq(packed.length, 9, "packed all nine publishable packages");
+  eq(packed.length, ALL_PUBLISHABLE_PACKAGES.length, `packed all ${ALL_PUBLISHABLE_PACKAGES.length} publishable packages`);
   const tarballOf = new Map(packed.map((p) => [p.name, p.tarball]));
   const fileSpec = (name: string): string => `file:${(tarballOf.get(name) ?? "").split("\\").join("/")}`;
 
@@ -152,7 +153,7 @@ try {
     scripts: Record<string, string>;
   };
   const pinned = packed.map(({ name }) => manifest.dependencies[name] ?? manifest.devDependencies[name]);
-  eq(pinned, packed.map(() => VERSION), `the scaffold pinned all nine lockstep packages to the CLI's version (${VERSION})`);
+  eq(pinned, packed.map(() => VERSION), `the scaffold pinned all ten lockstep packages to the CLI's version (${VERSION})`);
   eq(manifest.scripts.postinstall, "oe-eve-patch", "the app's postinstall is `oe-eve-patch`");
 
   console.log("3. npm install the app against the tarballs (postinstall runs)");

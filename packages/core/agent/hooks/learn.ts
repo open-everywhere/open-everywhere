@@ -10,6 +10,8 @@ import { dreamJudge } from "../memory/dream/judge.js";
 import { recordProposal } from "../memory/dream/proposal.js";
 import { openSkillProposalPr } from "../memory/dream/skill-proposal-pr.js";
 import { appendAudit } from "../audit/audit.js";
+import { auditPersonOptOutRefusal } from "../identity/person-opt-out.js";
+import { turnPersonOptOut } from "../memory/opt-out-turn.js";
 import { triggerMessageBody } from "../channels/wake-envelope.js";
 
 const MAX_MESSAGES = 10;
@@ -43,15 +45,23 @@ function authoredBody(raw: unknown): string | undefined {
   return body !== undefined && body.length > 0 ? body.slice(0, MAX_MESSAGE_CHARS) : undefined;
 }
 
-function consumeTurnRequest(): { request: string; messages: string[] } | null {
+function consumeTurnRequest(): { request: string; messages: string[]; turnTexts: string[] } | null {
   try {
     const state = learnLog.get();
     const request = state.turn[0]?.trim().replace(/\n+/g, " ").slice(0, 300);
     if (!request) return null;
     learnLog.update((s) => ({ ...s, turn: [] }));
-    return { request, messages: state.session };
+    return { request, messages: state.session, turnTexts: state.turn };
   } catch {
     return null;
+  }
+}
+
+function dropFromSessionLog(turnTexts: readonly string[]): void {
+  try {
+    const own = new Set(turnTexts);
+    learnLog.update((s) => ({ ...s, session: s.session.filter((t) => !own.has(t)) }));
+  } catch {
   }
 }
 
@@ -59,11 +69,27 @@ async function consolidate(ctx: HookContext): Promise<void> {
   if (!consolidatableTurn(ctx)) return;
   const captured = consumeTurnRequest();
   if (!captured) return;
-  if (deliveryChangedThisTurn(currentTurnId(ctx as unknown as BindableContext))) return;
+  if (deliveryChangedThisTurn(currentTurnId(ctx as unknown as BindableContext))) {
+    dropFromSessionLog(captured.turnTexts);
+    return;
+  }
   const { request, messages } = captured;
 
   const p = resolvePartition(ctx);
   const binding = bindFrom(ctx);
+  if (binding.principalId) {
+    const optOut = await turnPersonOptOut(p.org, binding.principalId, currentTurnId(ctx as unknown as BindableContext));
+    if (optOut.optedOut) {
+      log(`skipped: the turn's person opted out of agent memory about them${optOut.readable ? "" : " (the opt-out store did not answer; fail-closed)"}`);
+      dropFromSessionLog(captured.turnTexts);
+      await auditPersonOptOutRefusal(
+        { org: p.org, platform: p.platform, workspace: p.workspace, surface: p.surface, principalKey: binding.principalId },
+        "memory-write",
+        { road: "dream-learn", storeReadable: optOut.readable },
+      );
+      return;
+    }
+  }
   const plan = planFor(binding, p);
   const target = plan.writes[0];
   const scope = target ? target.silo.name : p.surfaceKey;

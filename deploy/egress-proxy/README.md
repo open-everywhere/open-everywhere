@@ -23,7 +23,7 @@ Two different principals send traffic through this proxy, and they get different
 
 | Principal | What it is | How the proxy knows it | Allow list it is held to |
 |---|---|---|---|
-| **The app** | the app process's own model call (the gateway provider in `packages/adapters/agent/model/gateway.ts`) | the request carries `Proxy-Authorization: Bearer <OE_EGRESS_PROXY_TOKEN>` | the **host plane**: the model gateway host alone (`ai-gateway.vercel.sh`, or the host of `OE_AI_GATEWAY_URL`) |
+| **The app** | the app process's own model call (the gateway provider in `packages/adapters/agent/model/gateway.ts`), and the meeting bot's non-gateway transcription routes | the request carries `Proxy-Authorization: Bearer <OE_EGRESS_PROXY_TOKEN>` | the **host plane**: the model gateway host (`ai-gateway.vercel.sh`, or the host of `OE_AI_GATEWAY_URL`), plus the hosts of any non-gateway transcription route the app registers (OPE-2470). The app keeps one list and pushes it whole. |
 | **The session** | the agent's sandboxed shell, plus the app's other host-side calls made on the session's behalf (Slack posts, connector calls, `oeFetch`) | no credential | the **session policy** the app compiles and pushes for its source IP, default-deny |
 
 Under `justbash` both principals send from the **same source IP**, because the session runs

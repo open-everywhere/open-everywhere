@@ -314,7 +314,7 @@ passed++;
   ok(!checkpointCardLines(planOf({ durable: true }), "#proj-chat").join("\n").includes("for up to"), "OPE-2161 control: a DURABLE session's card names no clock — its grant has none");
   ok(!checkpointCardLines(planOf({}), "#proj-chat").join("\n").includes(DURABLE_GRANT_DISCLOSURE), "OPE-261 control: a LIVE session's card carries no no-expiry disclosure — it grants nothing that lasts");
   ok(firstDurable.includes("In #proj-chat.") && !firstDurable.includes("slack/T1/C1"), "checkpoint card: the room's NAME, never the raw scope key, when a label resolved");
-  ok(checkpointCardLines(planOf({ durable: true })).join("\n").includes("In slack/T1/C1."), "checkpoint card: the raw key is the fail-open fallback when no label resolved");
+  ok(checkpointCardLines(planOf({ durable: true })).join("\n").includes("In <#C1>."), "checkpoint card: the channel mention is the fail-open fallback when no label resolved — never the raw key (OPE-2462)");
   ok(actionKind(CHECKPOINT_KIND)!.summarize(frozen as never).some((l) => l === DURABLE_GRANT_DISCLOSURE), "OPE-261: summarize() carries the same disclosure, word for word");
 
   await store.decidePendingAction("default", pending!.id, "approved", "U-APPROVER", new Date().toISOString());

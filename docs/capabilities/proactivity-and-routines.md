@@ -2144,6 +2144,15 @@ delivery from that source already carries. `scope \`entity\`` is a step in the
 | `/users/{user-id}/chats/getAllMessages` | ❌ not routed | — | every chat message one user takes part in; changeType `created,updated,deleted` |
 | `/appCatalogs/teamsApps/{teams-app-id}/installedToChats/getAllMessages` | ❌ not routed | — | every chat message where a named Teams app is installed; changeType `created,updated`. The narrowest tenant-wide shape — it follows the app rather than the tenant |
 
+**email** — no event normalizer · [vendor event index](https://docs.agentmail.to/api-reference/webhooks/events/message-received)
+
+| Vendor event | Routing | Addressable | What it is |
+|---|---|---|---|
+| `message.received` | ❌ not routed | — | an inbound mail the vendor accepted — the email front's conversation leg, through the gate, never a routine |
+| `message.received.unauthenticated` | ❌ not routed | — | an inbound mail that arrived without authentication headers, so the vendor could not check it — refused by the gate (`unauthenticated`) |
+| `message.received.spam` | ❌ not routed | — | an inbound mail the vendor flagged as spam — refused by the gate (`flagged`) |
+| `message.received.blocked` | ❌ not routed | — | an inbound mail the vendor blocked — refused by the gate (`flagged`) |
+
 <!-- END GENERATED: provider-event-inventory -->
 
 **A ❌ row is a proposal, not a defect.** Wiring one means writing a normalizer for that source and

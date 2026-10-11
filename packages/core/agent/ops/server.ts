@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { join, resolve } from "node:path";
+import { dirname, join, relative, resolve, isAbsolute } from "node:path";
+import { createHash } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { parseEnv } from "node:util";
@@ -18,11 +19,20 @@ import {
 import { preflightAsync } from "./probes.js";
 import { corePackageVersion } from "./package-info.js";
 import { registeredDeploymentIdentity, deploymentOrg } from "../identity/deployment-identity.js";
-import { DEPLOY_HOST_PLACEHOLDER, normalizeDeployHost, surfaceAppManifest, surfaceAppManifestSurfaces, surfaceAppNameProblem } from "./surface-manifest.js";
+import {
+  DEPLOY_HOST_PLACEHOLDER,
+  normalizeDeployHost,
+  surfaceAppManifest,
+  surfaceAppManifestSurfaces,
+  surfaceAppNameProblem,
+  surfaceAppPackageSource,
+  surfaceAppPackageSurfaces,
+} from "./surface-manifest.js";
 
 export const OPS_TOOL_NAMES = [
   "preflight",
   "surface_manifest",
+  "surface_app_package",
   "scaffold_env",
   "scaffold_credential_key",
   "secret_set",
@@ -39,6 +49,27 @@ function envFilePath(path?: string): string {
 
 function envTargetRefusal(file: string): string | undefined {
   return envFileTargetRefusal(file, projectDir());
+}
+
+function projectPath(path: string): string | undefined {
+  const root = projectDir();
+  const file = resolve(root, path);
+  const inside = (base: string, target: string): boolean => {
+    const rel = relative(base, target);
+    return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+  };
+  if (!inside(root, file)) return undefined;
+  let existing = file;
+  while (lstatSync(existing, { throwIfNoEntry: false }) === undefined) existing = dirname(existing);
+  let realExisting: string;
+  try {
+    realExisting = realpathSync(existing);
+  } catch {
+    return undefined;
+  }
+  const realRoot = realpathSync(root);
+  if (realExisting !== realRoot && !inside(realRoot, realExisting)) return undefined;
+  return file;
 }
 
 function installedCoreVersion(): string | undefined {
@@ -191,6 +222,100 @@ export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
         });
       }
       return json({ ok: true, available, ...resolved });
+    },
+  );
+
+  server.registerTool(
+    "surface_app_package",
+    {
+      title: "Chat-app package",
+      description:
+        "Build the upload-ready app package for a chat surface that takes one (teams): fill the manifest for this deployment, " +
+        "check it against the route's listing rules, and write the zip into the project. route org = an org admin uploads it in " +
+        "the admin centre; route store = a publisher submits it to the store. Returns every finding (block or warn), the filled " +
+        "manifest, and the steps after the upload. A blocked package is not written. Read-only apart from the zip.",
+      inputSchema: {
+        surface: z.string().describe('the surface, e.g. "teams"'),
+        baseUrl: z.string().describe("this deployment's public origin, e.g. https://oe.example.com"),
+        route: z.enum(["org", "store"]).describe("org = admin-centre upload; store = store submission"),
+        developerName: z.string().optional().describe("the publisher's name (on the store route, the Partner Center publisher name)"),
+        appName: z.string().optional().describe("the app name (default: the configured identity.name)"),
+        partnerId: z.string().optional().describe("the Microsoft AI Cloud Partner Program id (digits)"),
+        version: z.string().optional().describe("the package version, MAJOR.MINOR.PATCH (a store update must raise it)"),
+        supportContact: z.string().optional().describe("an email address or https URL where a person reports harmful AI content (store route)"),
+        channelFeatures: z.enum(["omit", "tier1"]).optional().describe("store route: tier1 keeps channels (shared and private too); omit drops the channel scope"),
+        icons: z
+          .object({ color: z.string().optional(), outline: z.string().optional() })
+          .strict()
+          .optional()
+          .describe('icon paths relative to the project, e.g. {"color": "brand/color.png", "outline": "brand/outline.png"}'),
+        outPath: z.string().optional().describe("where to write the zip, relative to the project (default: the surface's own directory)"),
+      },
+    },
+    (a) => {
+      const source = surfaceAppPackageSource(a.surface);
+      if (source === undefined) {
+        const available = surfaceAppPackageSurfaces();
+        return json({
+          ok: false,
+          surface: a.surface,
+          available,
+          note: available.length === 0 ? "no surface registered an app package in this process." : `no app package is registered for "${a.surface}". Registered: ${available.join(", ")}.`,
+        });
+      }
+      const host = normalizeDeployHost(a.baseUrl);
+      if (host === undefined) {
+        return json({ ok: false, surface: a.surface, note: `refusing the baseUrl you passed (${a.baseUrl.length} characters) — it is not a host.` });
+      }
+      if (a.appName !== undefined) {
+        const problem = surfaceAppNameProblem(a.surface, a.appName);
+        if (problem !== undefined) return json({ ok: false, surface: a.surface, note: `refusing the appName: ${problem}.` });
+      }
+      const given: Readonly<Record<string, string | undefined>> = a.icons ?? {};
+      const unknownIcon = Object.keys(given).find((k) => given[k] !== undefined && !(k in source.icons));
+      if (unknownIcon !== undefined) {
+        return json({ ok: false, surface: a.surface, note: `"${unknownIcon}" is not an icon this package takes. It takes: ${Object.keys(source.icons).join(", ")}.` });
+      }
+      const icons: Record<string, Uint8Array | undefined> = {};
+      for (const [name, fallback] of Object.entries(source.icons)) {
+        const path = projectPath(given[name] ?? fallback);
+        if (path === undefined) return json({ ok: false, surface: a.surface, note: `refusing the ${name} icon path — it resolves outside the project.` });
+        icons[name] = existsSync(path) ? new Uint8Array(readFileSync(path)) : undefined;
+      }
+      const built = source.build({
+        host,
+        route: a.route,
+        icons,
+        env: mergedEnv(),
+        ...(a.appName === undefined ? {} : { appName: a.appName.trim() }),
+        ...(a.developerName === undefined ? {} : { developerName: a.developerName }),
+        ...(a.partnerId === undefined ? {} : { partnerId: a.partnerId }),
+        ...(a.version === undefined ? {} : { version: a.version }),
+        ...(a.supportContact === undefined ? {} : { supportContact: a.supportContact }),
+        ...(a.channelFeatures === undefined ? {} : { channelFeatures: a.channelFeatures }),
+      });
+      const blocked = built.findings.filter((f) => f.level === "block");
+      if (blocked.length > 0 || built.archive === undefined) {
+        return json({ ok: false, surface: a.surface, route: a.route, findings: built.findings, manifest: built.manifest, note: `${blocked.length} finding(s) block the package; nothing was written.` });
+      }
+      const outRel = a.outPath ?? join(source.outDir, built.fileName);
+      const out = projectPath(outRel);
+      if (out === undefined || !out.endsWith(".zip")) {
+        return json({ ok: false, surface: a.surface, note: "refusing the outPath — it must be a .zip path inside the project." });
+      }
+      mkdirSync(dirname(out), { recursive: true });
+      writeFileSync(out, built.archive);
+      return json({
+        ok: true,
+        surface: a.surface,
+        route: a.route,
+        path: relative(projectDir(), out),
+        bytes: built.archive.byteLength,
+        sha256: createHash("sha256").update(built.archive).digest("hex"),
+        findings: built.findings,
+        steps: built.steps,
+        manifest: built.manifest,
+      });
     },
   );
 

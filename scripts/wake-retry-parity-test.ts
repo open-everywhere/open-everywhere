@@ -16,6 +16,7 @@ import { registerTeamsProvider } from "@open-everywhere/provider-teams/agent/reg
 import { registerGithubProvider } from "@open-everywhere/provider-github/agent/register.js";
 import { registerLinearProvider } from "@open-everywhere/provider-linear/agent/register.js";
 import { registerNotionProvider } from "@open-everywhere/provider-notion/agent/register.js";
+import { registerEmailProvider } from "@open-everywhere/provider-email/agent/register.js";
 
 import { divertToUnifiedWindow } from "@open-everywhere/core/agent/channels/unified.js";
 import { formatWindowToken } from "@open-everywhere/core/agent/channels/window-key.js";
@@ -31,6 +32,7 @@ registerTeamsProvider();
 registerGithubProvider();
 registerLinearProvider();
 registerNotionProvider();
+registerEmailProvider();
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -59,6 +61,11 @@ const SURFACES: ReadonlyArray<{
   { platform: "github", frontDoor: "packages/providers/github/agent/channels/github.ts", origin: { platform: "github", owner: "acme", repo: "payments-api", issueNumber: 55 } },
   { platform: "linear", frontDoor: "packages/providers/linear/agent/channels/linear.ts", origin: { platform: "linear", agentSessionId: "as-lin-77", issueId: "issue-uuid-77" } },
   { platform: "notion", frontDoor: "packages/providers/notion/agent/channels/notion.ts", origin: { platform: "notion", discussionId: "disc-win-1" } },
+  {
+    platform: "email",
+    frontDoor: "packages/providers/email/agent/channels/email.ts",
+    origin: { platform: "email", inbox: "launch@agent.acme.com", threadId: "thr_win", messageId: "<m-win>", to: ["ann@acme.com"] },
+  },
 ];
 
 const FUNNEL = /\bdivert(?:Inbound)?ToUnifiedWindow\s*\(/;
@@ -87,7 +94,7 @@ console.log("1. every surface reaches the shared dispatch:");
   eq(
     callers,
     SURFACES.map((s) => s.frontDoor).sort(),
-    "🔴 §1: the provider modules that CALL the funnel are EXACTLY the six front doors — a seventh is a module whose wakes nobody proved are on this road",
+    "🔴 §1: the provider modules that CALL the funnel are EXACTLY the seven front doors — a seventh is a module whose wakes nobody proved are on this road",
   );
 }
 

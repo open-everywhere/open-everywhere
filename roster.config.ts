@@ -72,6 +72,13 @@ export default defineRoster({
         "(post/edit/upload), approval-card poster, routine dispatch channel, native guild-admin " +
         "check, and scope-label resolver.",
     },
+    email: {
+      about:
+        "email (OPE-2440) — the agent's own inboxes on domains the org controls: identity mapper, " +
+        "capability manifest, post arm (threaded replies to recipients frozen at the gate), " +
+        "wake-origin codec, thread read adapter, and the AgentMail transport. Off until " +
+        "agent/email/policy.ts enables it.",
+    },
     github: {
       about:
         "github — the CHAT SURFACE only: identity mapper, capability manifest, post arm, " +

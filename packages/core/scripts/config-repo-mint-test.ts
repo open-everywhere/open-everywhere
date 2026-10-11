@@ -37,6 +37,8 @@ const { executeAccessRequest } = await import("../agent/approvals/access-request
 const { executeAgentCreate } = await import("../agent/approvals/agent-create.js");
 const { executeWebhookDeclare } = await import("../agent/approvals/webhook-declare.js");
 const { executeMcpServerPropose } = await import("../agent/approvals/mcp-server-propose.js");
+const { executeDomainRulePr } = await import("../agent/approvals/allow-rule-pr.js");
+const { executeEmailSender } = await import("../agent/approvals/email-sender.js");
 const { deliverGroupsOverlay } = await import("../agent/identity/groups-delivery.js");
 const { planDirectoryGroups } = await import("../agent/identity/group-sync.js");
 const { emptyGroupsFile } = await import("../agent/identity/groups-codemod.js");
@@ -166,6 +168,53 @@ const FLOWS: readonly { readonly name: string; readonly file: string; readonly d
       ),
   },
   {
+    name: "email-sender",
+    file: "packages/core/agent/approvals/email-sender.ts",
+    drive: () =>
+      executeEmailSender(
+        { ...frozen, inbox: "launch@agent.acme.com", sender: "partner@example.com", why: "the venue" },
+        "U_TAP",
+        { config: baseConfig, getBranchSha: stopAfterMint },
+      ),
+  },
+  {
+    name: "allow-rule-pr",
+    file: "packages/core/agent/approvals/allow-rule-pr.ts",
+    drive: () =>
+      executeDomainRulePr(
+        {
+          proposal: {
+            venue: "domain",
+            domain: "eng",
+            id: "eng.request-access.send",
+            subject: { tool: "request_access", action: "send", objects: ["access requests"] },
+            rule: "In this domain, send access requests with request_access when a person asked for it in this turn, with matching arguments. Never in an unattended run.",
+          },
+          row: {
+            id: REQUEST_ID,
+            org: "default",
+            kind: "access.request",
+            argsJson: "{}",
+            scopeKey: "slack/T1/C1",
+            domain: "eng",
+            requestedBy: "U_ASK",
+            channelId: "C1",
+            threadTs: null,
+            messageTs: null,
+            postedTo: "slack/T1/C1",
+            status: "approved",
+            createdAt: "2026-05-17T11:54:00.000Z",
+            expiresAt: "2026-01-08T00:21:00.000Z",
+            decidedBy: "U_TAP",
+            decidedAt: "2026-05-17T11:54:00.000Z",
+          },
+          clickerId: "U_TAP",
+          venue: {},
+        },
+        { config: baseConfig, getBranchSha: stopAfterMint },
+      ),
+  },
+  {
     name: "config-pr-github",
     file: "packages/core/agent/credentials/config-pr-github.ts",
     drive: async () => {
@@ -182,10 +231,10 @@ const FLOWS: readonly { readonly name: string; readonly file: string; readonly d
 ];
 
 await withPatchedFetch(fakeFetch, async () => {
-  console.log("\n1. the six config-repo flows — one mint each, the default job set, nothing more:");
+  console.log("\n1. the eight config-repo flows — one mint each, the default job set, nothing more:");
   {
     ok(groupsPlan.steps.length > 0, "fixture: the group plan CHANGES something (a no-op plan returns before the mint and would measure nothing)");
-    ok(FLOWS.length === 6, `fixture: all SIX config-repo flows are driven (found ${FLOWS.length})`);
+    ok(FLOWS.length === 8, `fixture: all EIGHT config-repo flows are driven (found ${FLOWS.length})`);
 
     for (const flow of FLOWS) {
       const before = mintCalls.length;
@@ -325,8 +374,8 @@ console.log("\n4. the source fence — one owner for the write set, and no impli
     callers.length === driven.length && callers.every((p, i) => p === driven[i]),
     `🔴 fence: the flows this suite drives ARE every caller of the shared helper — drives [${driven.join(", ")}], tree has [${callers.join(", ")}]`,
   );
-  ok(callers.length === 6, `fence: …and the tree still holds SIX callers (found ${callers.length}) — the "six" this suite's prose claims is measured, not asserted by hand`);
+  ok(callers.length === 8, `fence: …and the tree still holds EIGHT callers (found ${callers.length}) — the "eight" this suite's prose claims is measured, not asserted by hand`);
 }
 
 await removeTempDir(dir);
-console.log(`\n✓ config-repo mint (OPE-1823): ${n} assertions passed (all six config-repo bot-PR flows mint one narrow body through one resolver)\n`);
+console.log(`\n✓ config-repo mint (OPE-1823): ${n} assertions passed (all eight config-repo bot-PR flows mint one narrow body through one resolver)\n`);

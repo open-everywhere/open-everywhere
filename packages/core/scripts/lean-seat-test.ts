@@ -153,7 +153,7 @@ ok(
 );
 
 ok(!allowedOnLeanSeat(GRANT_TOOL), `a mounted grant tool (${GRANT_TOOL}) is NOT held on a lean seat — the seat delegates, and the worker of this conversation holds it`);
-ok(!allowedOnLeanSeat(GRANT_TOOL, true), "…nor on a DM seat: the DM carve-in is four named verbs, and a grant is not one of them");
+ok(!allowedOnLeanSeat(GRANT_TOOL, true), "…nor on a DM seat: the DM carve-in is five named verbs, and a grant is not one of them");
 ok(!LEAN_SEAT_TOOLS.has(GRANT_TOOL), "…and not by a name row either — a grant name is minted per grant row and can sit in no static roster");
 ok(
   !allowedOnLeanSeat(grantBorrowToolName("someone_else", "linear", "read_issue")),
@@ -284,11 +284,11 @@ function makeToolset(): Record<string, { description: string; execute: () => unk
   const before = { ...toolset };
   const removed = restrictToolsetForWorkerSeat(toolset);
   ok(
-    removed.join(",") === "confirm_link,link_identity,no_reply,read_channel,read_thread,revoke_credential_grant,stand_down,unlink_identity",
-    `🔴 OPE-877 + OPE-929 + OPE-1343 + OPE-1660: the worker subtraction removes EXACTLY the four verbs that are BROKEN on a worker (no_reply, read_channel, read_thread, stand_down) and the four the SEAT SHAPE reserves (the DM carve-in), sorted (got "${removed.join(",")}")`,
+    removed.join(",") === "ask_domain,confirm_link,link_identity,no_reply,read_channel,read_thread,revoke_credential_grant,stand_down,unlink_identity",
+    `🔴 OPE-877 + OPE-929 + OPE-1343 + OPE-1660 + OPE-2452: the worker subtraction removes EXACTLY the four verbs that are BROKEN on a worker (no_reply, read_channel, read_thread, stand_down) and the five the SEAT SHAPE reserves (the DM carve-in), sorted (got "${removed.join(",")}")`,
   );
   ok(
-    !("link_identity" in toolset) && !("confirm_link" in toolset) && !("unlink_identity" in toolset) && !("revoke_credential_grant" in toolset),
+    !("link_identity" in toolset) && !("confirm_link" in toolset) && !("unlink_identity" in toolset) && !("revoke_credential_grant" in toolset) && !("ask_domain" in toolset),
     "🔴 OPE-1660: the DM carve-in verbs really leave a worker's assembled toolset — the carve-in is CONTAINMENT now, not only a routing rule the index obeys",
   );
   ok(!("no_reply" in toolset) && !("stand_down" in toolset), "…and both really leave the assembled toolset — ABSENCE, so the worker is never told it lost a verb and never retries into a refusal");
@@ -296,7 +296,7 @@ function makeToolset(): Record<string, { description: string; execute: () => unk
     !("read_channel" in toolset) && !("read_thread" in toolset),
     "🔴 OPE-929: the abstract chat READS really leave a worker's assembled toolset — the chat API is the SEAT's vocabulary",
   );
-  ok(Object.keys(toolset).length === Object.keys(before).length - 8, "…and NOTHING ELSE leaves — a worker's wide hands are still the design");
+  ok(Object.keys(toolset).length === Object.keys(before).length - 9, "…and NOTHING ELSE leaves — a worker's wide hands are still the design");
   ok("ask_question" in toolset, "…including ask_question itself, which is the name that left the set (OPE-565)");
   ok("reply" in toolset && "update_status" in toolset && "bash" in toolset && "post_file" in toolset, "…and the verbs OPE-877 checked alongside them stay: a worker still posts and still shows progress");
   ok(Object.keys(toolset).every((k) => toolset[k] === before[k]), "surviving tool OBJECTS keep their identity — eve keys approvals in a WeakMap on them");

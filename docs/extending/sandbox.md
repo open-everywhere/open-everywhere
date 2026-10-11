@@ -201,3 +201,53 @@ parent's own sweep would find nothing and the shared VM would idle out its full 
 starts a child is a work session, so the idle rule above is what keeps the parent's sweep off a
 live child: the work session's turn end skips the stop while a task it started is unsettled. A VM
 the hook never stops still falls back to its own `timeout` fuse.
+
+## Long-lived boxes
+
+A conversation sandbox is turn-bound: the stop above ends it when the work is done. Some features need
+the other shape, a box that outlives the turn that opened it. A meeting bot is the first
+([Meetings](../capabilities/meetings.md)); the person's own browser is the second
+([Personal browser](../capabilities/personal-browser.md)). The **long-lived box** is that operation, as a
+reusable part of the sandbox seam.
+
+- **The contract** lives in core, vendor-free: `packages/core/agent/sandbox/long-lived-box.ts`
+  (`LongLivedBoxBackend`: `open`, `status`, `list`, `stop`, and `forget` for a persistent box). Feature code calls only the resolved
+  backend (`resolveLongLivedBoxBackend()`), never a vendor SDK.
+- **The backends** live in `packages/adapters/agent/sandbox/long-lived-box.ts`, one per sandbox backend.
+  `registerDefaultAdapters()` registers the one `resolveSandboxBackend()` picks, the same rule the turn-end
+  stopper reads, so a box always runs where the conversation sandbox runs. There is no separate backend
+  choice for boxes: a deployment that leaves Vercel Sandbox moves its boxes too.
+
+| Backend | How a box runs | Cap | Spend |
+| --- | --- | --- | --- |
+| Vercel | `Sandbox.create` from the box's image, tagged `oeBox`/`oeBoxRef`, with the program started detached. Not persistent: no snapshot. | The session timeout, clamped to the 24 h plan ceiling (45 min on Hobby). | Metered: memory GiB-hours at `spend.sandboxGiBHourUsd`. |
+| `docker` | `docker run -d --rm` with `--cpus`, `--memory` and `--shm-size` (eve's own docker binding sets none of them), `--cap-drop ALL`, `--security-opt no-new-privileges`, a `--pids-limit`, and `--user` when the spec names the image's non-root user; labelled `oe.box.oeBox`; env values passed in the CLI's environment, never on its argv. | coreutils `timeout` around the program, clamped to 24 h. | Not metered: the hours are recorded at $0. |
+| `justbash` | Refuses with a reason: an in-process interpreter has no VM, no container and no browser. | — | — |
+
+**A persistent box** (a `persist` spec — the person's browser) keeps its files between opens:
+
+| Backend | Where the files live | The port (`port` in the spec) | `forget` |
+| --- | --- | --- | --- |
+| Vercel | One **named, persistent** sandbox per key: its filesystem is snapshotted at each stop and expires `keepDays` after last use. An open updates the stored config (timeout, firewall, port) and stops the sandbox first when it is still running. The per-open secrets go to the box's command only, never into the stored config. | A public HTTPS URL from `sandbox.domain(port)`. The box must authenticate every request itself. | Deletes the sandbox and its snapshots. |
+| `docker` | A named volume per key, mounted at the spec's `mount`, labelled `oe.box.oePersist`. An open first stops every box still running on the volume. | Published on `127.0.0.1` only, or reached by container name on the spec's `network`. A box with no network cannot serve a port, so that spec is refused. | Stops any box on the volume and removes the volume. |
+
+The backend also says whether its own network can hold a box to a host list (`enforcesHostAllowList`): true on
+Vercel, false on docker. A feature that needs a host list on a backend that cannot enforce one must refuse,
+or run the box open only under a declared unenforced posture and say so in its docs (the personal browser
+does the second, under `egress.allowUnenforced`).
+
+Four invariants hold on every backend:
+
+1. **A box never carries the `sessionId` tag or label.** The turn-end stopper lists by `sessionId`, so it
+   cannot stop a box at the end of the turn that opened it.
+2. **Every box has a hard cap.** The backend applies it at creation; a feature's own sweep stops anything
+   past it, because a stuck box costs money every hour.
+3. **A box's network is declared.** `egress: "open"` is full internet, for a feature whose peers are not
+   enumerable (meeting media over UDP), and its docs must say so. 🔴 On docker, `"open"` is the daemon's
+   default bridge network, which also reaches the HOST's network and, on a cloud VM, the cloud metadata
+   endpoint (169.254.169.254). Nothing blocks either. A feature that runs untrusted pages in an open docker
+   box (the meeting bot; the person's browser on docker) must account for that. `egress: { allow }` is a host list; the
+   docker backend cannot enforce one, so it refuses a non-empty list rather than run the box open.
+4. **An unregistered or unavailable backend refuses** with `BoxUnavailableError`. A feature never falls
+   back to running its box somewhere else.
+

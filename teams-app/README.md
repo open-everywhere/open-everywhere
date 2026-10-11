@@ -67,6 +67,14 @@ the routes drifting apart again. Nothing else in the deployment requires the pag
 
 ## Build the package
 
+For an org-wide upload or a Teams Store submission, let the ops tool build it:
+`surface_app_package { "surface": "teams", "route": "org" | "store", "baseUrl": "https://<your deploy host>", "developerName": "<your org>" }`.
+It fills both placeholders, checks the package and writes the zip here. It refuses the project's
+name, so set `identity.name` first. On the store route it also refuses these shipped icon files,
+so put your own icons here before a store submission. On the org route it only warns about them. See
+[Listing the Teams app in the admin centre](../docs/deploy/surfaces/teams.md#listing-in-the-teams-admin-centre).
+The manual steps below build a package for a sideload or a test tenant.
+
 ```bash
 cd teams-app
 APP_ID="<your MICROSOFT_APP_ID>"
@@ -119,7 +127,8 @@ Microsoft's Protected-API approval queue. `webApplicationInfo` must be present w
 The shipped PNGs are the project mark, the pigeon from [`../brand/`](../brand/README.md). With no
 `identity.name` configured the agent presents as the project (`DEFAULT_AGENT_DISPLAY_NAME`), so the
 mark is its default avatar. Keep both files unless you set `identity.name` and chose your own icon.
-In that case, replace both before any public or org-wide install.
+In that case, replace both before any public or org-wide install. A Teams Store submission always
+needs your own icons: `surface_app_package` refuses these files on the store route.
 
 `scripts/teams-icons-generate.ts` renders both files from the brand SVGs with a headless Chromium:
 `color.png` from `brand/svg/mark-square.svg`, and `outline.png` from `brand/svg/mark-mono-paper.svg`

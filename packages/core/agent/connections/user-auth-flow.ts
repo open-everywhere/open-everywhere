@@ -1,4 +1,5 @@
 import type { TokenResult } from "eve/connections";
+import { processRegistrySlot } from "../lib/process-registry.js";
 
 export type UserAuthSubject =
   | { readonly type: "user"; readonly id: string; readonly issuer?: string }
@@ -25,21 +26,22 @@ export interface UserAuthFlowProvider {
   hasFreshGrant?(providerRef: string, subject: UserAuthSubject): Promise<boolean>;
 }
 
-let registeredFlow: UserAuthFlowProvider | undefined;
+const registeredSlot = processRegistrySlot<UserAuthFlowProvider>("connections.user-auth-flow.v1");
 
 export function registerUserAuthFlow(flow: UserAuthFlowProvider): void {
-  registeredFlow = flow;
+  registeredSlot.set(flow);
 }
 
 export function resetUserAuthFlow(): void {
-  registeredFlow = undefined;
+  registeredSlot.set(null);
 }
 
 export function userAuthFlowProvider(): UserAuthFlowProvider | undefined {
-  return registeredFlow;
+  return registeredSlot.get() ?? undefined;
 }
 
 export function requireUserAuthFlow(connector: string): UserAuthFlowProvider {
+  const registeredFlow = registeredSlot.get();
   if (!registeredFlow) {
     throw new Error(
       `connection "${connector}": no user-auth-flow provider is registered — the connector-OAuth adapter ` +

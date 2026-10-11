@@ -655,6 +655,108 @@ await inSession(async () => {
   ok(plain.includes("has finished") && !plain.includes("STOPPED"), "a job the host did not stop keeps the ordinary note");
 });
 
+console.log("§15b a sign-in the host already announced is not repeated, and the sign-in resumes the job:");
+await inSession(async () => {
+  const signIn = await import("../agent/channels/work-sign-in-note.js");
+  const { resumeSignedInWork } = await import("../agent/channels/work-sign-in-resume.js");
+  const W_TOKEN = "oe-dom:e2e-unified:win:w/e2e-unified:oe-sup:g1";
+  const childOfW = { channel: { kind: "unified", continuationToken: `unified:${W_TOKEN}` }, session: { id: "sess-child", turn: { id: "turn-child" }, parent: { sessionId: "sess-w", callId: "call-s1" }, auth: { current: { attributes: {} } } } };
+  const wItself = { channel: { kind: "unified", continuationToken: `unified:${W_TOKEN}` }, session: { id: "sess-w", turn: { id: "turn-w" }, auth: { current: { attributes: {} } } } };
+
+  ok(await signIn.rememberWorkSignIn(childOfW, { connector: "notion", delivered: true, sameConversation: true, detourId: "det-9" }), "a child of W records its sign-in");
+  eq(await signIn.readWorkSignIn(ORG, "subagent:sess-w:call-s1", "call-s1"), { connector: "notion", delivered: true, sameConversation: true, detourId: "det-9" }, "…and W's settlement reads it back");
+  eq(await signIn.readWorkSignIn(ORG, "subagent:sess-w:call-s1", "call-later"), { connector: "notion", delivered: true, sameConversation: true, detourId: "det-9" }, "🔴 a `taskId` continuation's settlement reads it too: the resume is itself a continuation (re-review)");
+  await signIn.forgetWorkSignIn(ORG, "subagent:sess-w:call-s1");
+  eq(await signIn.readWorkSignIn(ORG, "subagent:sess-w:call-s1", "call-s1"), undefined, "the row is single-use");
+  eq(await signIn.rememberWorkSignIn(wItself, { connector: "notion", delivered: true, sameConversation: true }), false, "W itself records nothing: it is not a child");
+
+  const quiet = work.renderWorkResultNote({ requestId: "req-q", taskId: "agent-q", status: "completed", dispatchWakeId: WAKE, signIn: { connector: "Notion", sameConversation: true } });
+  ok(quiet.includes("ALREADY sent them a private sign-in link in this conversation") && quiet.includes("`no_reply`"), "🔴 a card that landed in this conversation: the seat is told the host said it, and to say nothing about it");
+  ok(quiet.includes("also answers part") && /^[ \t]*for wake (\S+)[ \t]*$/m.exec(quiet)?.[1] === WAKE, "…but a part of the ask the worker did answer is still relayed, under the asking wake (cold review, finding 6)");
+  ok(!quiet.includes("relay what came back"), "…and is never told to relay the work session's report of the stop");
+  const away = work.renderWorkResultNote({ requestId: "req-a", taskId: "agent-a", status: "completed", dispatchWakeId: WAKE, signIn: { connector: "Notion", sameConversation: false } });
+  ok(away.includes("ONE short sentence") && away.includes("Put no link in it"), "a card that landed in a DM away from the room: the room hears one short line, with no link");
+  eq(/^[ \t]*for wake (\S+)[ \t]*$/m.exec(away)?.[1], WAKE, "…under the wake that asked for the job");
+  const stopped = work.renderWorkResultNote({ requestId: "req-x", taskId: "agent-x", status: "completed", dispatchWakeId: WAKE, stopRefusal: "Refused.", signIn: { connector: "Notion", sameConversation: true } });
+  ok(stopped.includes("was STOPPED by the host"), "a host stop outranks the sign-in note");
+
+  ok(await signIn.rememberSignInResume(ORG, "det-9", { requestId: "req-q", taskId: "agent-q", connector: "notion" }), "W's settlement files the job under the sign-in's detour id");
+  eq(await signIn.takeSignInResume(ORG, "det-9"), { requestId: "req-q", taskId: "agent-q", connector: "notion" }, "the callback takes it");
+  eq(await signIn.takeSignInResume(ORG, "det-9"), undefined, "🔴 …once: a replayed callback finds nothing to resume");
+
+  const row = { requestId: "req-q", seatToken: SEAT_TOKEN, wakeId: WAKE, origin: ORIGIN, surfaceKey: "slack/T1/D1", binding: {} as never, requester: { kind: "requester" as const, principalId: "slack/T1/U_ROWAN" }, nonMemberWake: false, tainted: false, atIso: "2026-05-17T11:54:00.000Z" };
+  const record = { detourId: "det-9", connector: "notion", origin: { org: ORG, surfaceKey: "slack/T1/D1", target: { platform: "slack", channelId: "D1" } as never, principalId: "U_ROWAN" }, startedAtMs: 0, expiresAtMs: 1 };
+  const sent: { message: string; quiet?: boolean; requestId: string; seatToken: string }[] = [];
+  const deps = (over: Record<string, unknown> = {}) => ({
+    take: async () => ({ requestId: "req-q", taskId: "agent-q", connector: "notion" }),
+    readRequest: async () => row as never,
+    seatToken: async (_o: string, t: string) => t,
+    dispatch: (async (i: { message: string; quiet?: boolean; requestId: string; seatToken: string }) => (sent.push(i), true)) as never,
+    nowIso: () => "2026-05-17T11:54:00.000Z",
+    ...over,
+  });
+  ok(await resumeSignedInWork(record, deps()), "🔴 the sign-in of the job's own requester wakes the seat");
+  const resumeMsg = sent[0]?.message ?? "";
+  ok(sent.length === 1 && sent[0]!.quiet === true && sent[0]!.requestId === "req-q" && sent[0]!.seatToken === SEAT_TOKEN, "…the seat that forwarded the job, for that request, arming no report on this wake");
+  ok(resumeMsg.includes('`taskId: &quot;agent-q&quot;`') || resumeMsg.includes('taskId: "agent-q"'), "…told to run the SAME job again");
+  ok(/Do not list tools/.test(resumeMsg) && /do not post a hand-off note/.test(resumeMsg), "…told to answer what was asked, not to list tools, and not to repeat the host's line");
+  eq(await resumeSignedInWork({ ...record, origin: { ...record.origin, principalId: "U_SOMEONE_ELSE" } }, deps()), false, "🔴 a sign-in by anyone but the job's requester resumes nothing");
+  eq(await resumeSignedInWork(record, deps({ take: async () => undefined })), false, "no filed job ⇒ nothing resumes");
+  eq(await resumeSignedInWork(record, deps({ take: async () => ({ requestId: "req-q", taskId: "agent-q", connector: "github" }) })), false, "a job filed for another connector ⇒ nothing resumes");
+  eq(await resumeSignedInWork(record, deps({ readRequest: async () => ({ ...row, fire: { owesRoom: true } }) as never })), false, "a fire is nobody's ask ⇒ nothing resumes");
+  eq(await resumeSignedInWork(record, deps({ dispatch: (async () => false) as never })), false, "a wake that did not go out reports false, so the host line never claims a pick-up");
+  eq(await resumeSignedInWork(record, deps({ readRequest: async () => { throw new Error("store down"); } })), false, "a store failure reports false and never throws");
+  const { signerIsRequester, resumeFiledJobIfSignedIn } = await import("../agent/channels/work-sign-in-resume.js");
+  const consentAt = { principalId: "U_ROWAN", surfaceKey: "slack/T1/D1" };
+  ok(signerIsRequester("U_ROWAN", "slack/T1/D1", consentAt), "the requester's bare id, in the same room's workspace and platform, matches");
+  ok(signerIsRequester("slack/T1/U_ROWAN", "slack/T1/D1", consentAt), "…and so does the requester's principal key");
+  ok(!signerIsRequester("slack/T2/U_ROWAN", "slack/T1/D1", consentAt), "🔴 a key in another workspace does not match");
+  ok(!signerIsRequester("U_ROWAN", "slack/T2/D9", consentAt), "🔴 the same bare id asked in another workspace does not match");
+  ok(!signerIsRequester("U_ROWAN", "discord/G1/C1", consentAt), "🔴 the same bare id asked on another platform does not match");
+  ok(!signerIsRequester("U_OTHER", "slack/T1/D1", consentAt), "another person does not match");
+  eq(await resumeSignedInWork(record, deps({ readRequest: async () => ({ ...row, surfaceKey: "slack/T2/D9" }) as never })), false, "🔴 a job asked in another workspace resumes nothing");
+
+  const { settleSignIn } = await import("../agent/channels/work-sign-in-resume.js");
+  const early = { ...record, detourId: "det-early" };
+  const pendingOf = (callId: string, detourId: string) =>
+    signIn.rememberWorkSignIn({ ...childOfW, session: { ...childOfW.session, parent: { sessionId: "sess-w", callId } } }, { connector: "notion", delivered: true, sameConversation: true, detourId, principalId: "U_ROWAN", surfaceKey: "slack/T1/D1" });
+  ok(await pendingOf("call-e1", "det-early"), "the child marks the job as pending on this detour");
+  const sentBefore = sent.length;
+  ok(await resumeSignedInWork(early, { ...deps(), take: signIn.takeSignInResume }), "🔴 an early sign-in for a pending job reports the pick-up");
+  eq(sent.length, sentBefore, "…and wakes nothing yet: the job is not filed");
+  const settleDeps = { readRequest: async () => row as never, seatToken: async (_o: string, t: string) => t, dispatch: deps().dispatch, nowIso: () => "x" };
+  eq(await settleSignIn({ org: ORG, ran: true, detourId: "det-early", file: { requestId: "req-q", taskId: "agent-q", connector: "notion" } }, settleDeps), "resumed", "🔴 W's settlement files the job and resumes it at once, from the signed-in mark");
+  eq(sent.length, sentBefore + 1, "…with exactly one resume wake");
+  eq(await signIn.takeSignInResume(ORG, "det-early"), undefined, "…and the filed job is taken, so no second wake can follow");
+  eq(await settleSignIn({ org: ORG, ran: true, detourId: "det-later", file: { requestId: "req-q", taskId: "agent-q", connector: "notion" } }, settleDeps), "filed", "a filed job with no signed-in mark waits for the callback");
+  eq(await signIn.takeSignInResume(ORG, "det-later"), { requestId: "req-q", taskId: "agent-q", connector: "notion" }, "…and is there for it");
+  eq(await settleSignIn({ org: ORG, ran: false, detourId: "det-later", file: { requestId: "req-q", taskId: "agent-q", connector: "notion" } }, settleDeps), "none", "a replayed settlement (the once-guard did not run) files nothing");
+
+  ok(await pendingOf("call-e2", "det-other-ws"), "a second pending job");
+  ok(await resumeSignedInWork({ ...record, detourId: "det-other-ws" }, { ...deps(), take: signIn.takeSignInResume }), "its early sign-in is marked");
+  const sentMid = sent.length;
+  eq(await settleSignIn({ org: ORG, ran: true, detourId: "det-other-ws", file: { requestId: "req-q", taskId: "agent-q", connector: "notion" } }, { ...settleDeps, readRequest: async () => ({ ...row, surfaceKey: "slack/T2/D9" }) as never }), "filed", "🔴 a request asked in another workspace is not resumed by the settlement");
+  eq(sent.length, sentMid, "…and no wake went out");
+
+  ok(await pendingOf("call-open", "det-cont"), "a sign-in inside a continued task, keyed on the opening call");
+  const contRow = await signIn.readWorkSignIn(ORG, "subagent:sess-w:call-open", "call-continuation-2");
+  eq(contRow?.detourId, "det-cont", "the continuation's settlement reads the sign-in");
+  eq(await settleSignIn({ org: ORG, ran: true, detourId: contRow?.detourId, file: { requestId: "req-q", taskId: "agent-q", connector: "notion" } }, settleDeps), "filed", "…and files the job for the resume");
+  const sentCont = sent.length;
+  ok(await resumeSignedInWork({ ...record, detourId: "det-cont" }, { ...deps(), take: signIn.takeSignInResume }), "🔴 the later sign-in resumes the continued job");
+  eq(sent.length, sentCont + 1, "…with one resume wake, so its \"picking up\" line is kept");
+
+  ok(await pendingOf("call-stopped", "det-stopped"), "a sign-in in a call the host then stopped");
+  eq(await settleSignIn({ org: ORG, ran: true, detourId: (await signIn.readWorkSignIn(ORG, "subagent:sess-w:call-stopped", "call-stopped"))?.detourId, file: undefined }, settleDeps), "cleared", "the stopped settlement clears the marks");
+  await signIn.forgetWorkSignIn(ORG, "subagent:sess-w:call-stopped");
+  eq(await signIn.readWorkSignIn(ORG, "subagent:sess-w:call-stopped", "call-later"), undefined, "forgetWorkSignIn removes the row (spawn-taint calls it when `ran && signInRow`, a host stop included — checked by reading)");
+  eq(await resumeSignedInWork({ ...record, detourId: "det-stopped" }, { ...deps(), take: signIn.takeSignInResume }), false, "…and a later sign-in claims nothing");
+
+  ok(await pendingOf("call-e3", "det-dropped"), "a third pending job");
+  eq(await settleSignIn({ org: ORG, ran: true, detourId: "det-dropped", file: undefined }, settleDeps), "cleared", "a cancelled (or undelivered) job is not filed, and its marks are cleared");
+  eq(await resumeSignedInWork({ ...record, detourId: "det-dropped" }, { ...deps(), take: signIn.takeSignInResume }), false, "🔴 …so the later sign-in claims nothing, and the line offers");
+});
+
 console.log("§16 the D20 join refusals: the agent validate, and actions.requested's two refusals:");
 {
   const { recordWorkRequestsThisTurn, WORK_REQUEST_UNJOINABLE_MESSAGE } = await import("../agent/access/work-request-turn.js");

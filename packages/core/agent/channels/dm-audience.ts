@@ -5,6 +5,7 @@ import { dispatchDirectMessage, type DirectMessageAction, type DirectMessageDeli
 import type { DmAudienceRow } from "../operational/store.js";
 import { resourceAddress } from "../access/resource-grant.js";
 import { proactiveDmPlaneRow, type ProactiveDmPlane } from "./proactive-dm-manifest.js";
+import { personWords, placeWords, samePerson } from "./friendly-ids.js";
 
 export const PERSON_RESOURCE_TYPE = "person";
 
@@ -115,9 +116,14 @@ export class ProactiveDmRefusedError extends Error {
   }
 }
 
+function recipientWords(platform: string, recipientId: string): string {
+  const who = personWords({ id: recipientId, platform });
+  return who === "someone" ? "that person" : who;
+}
+
 export function dmStoppedRefusalMessage(platform: string, recipientId: string): string {
   return (
-    `${platform} person "${recipientId}" asked this agent to stop sending them direct messages, so nothing ` +
+    `${recipientWords(platform, recipientId)} asked this agent to stop sending them direct messages, so nothing ` +
     `was sent. That boundary is theirs and no configuration overrides it — only they can lift it, by telling the ` +
     `agent in their own DM. Say so plainly rather than trying another route to reach them.`
   );
@@ -125,7 +131,7 @@ export function dmStoppedRefusalMessage(platform: string, recipientId: string): 
 
 export function dmUnreadableRefusalMessage(platform: string, recipientId: string): string {
   return (
-    `nothing was sent to ${platform} person "${recipientId}": this deployment could not read whether they ` +
+    `nothing was sent to ${recipientWords(platform, recipientId)}: this deployment could not read whether they ` +
     `have asked the agent to stop, and it will not send a direct message it cannot check. Nobody refused you — say ` +
     `that the check itself failed, and that an operator should look at the store.`
   );
@@ -236,9 +242,20 @@ export async function deliverProactiveDm(input: {
   return delivery;
 }
 
-export function dmDeliveryFooter(input: { readonly requestedBy: string; readonly fromContainer: string }): string {
-  return (
-    `\n\n_Sent by the agent on behalf of ${input.requestedBy}, from ${input.fromContainer}. ` +
-    `Reply here to ask me to stop and I will not start another DM with you._`
-  );
+export interface DmDeliveryFooterInput {
+  readonly platform: string;
+  readonly recipientId: string;
+  readonly requestedBy: string;
+  readonly requesterLabel?: string;
+  readonly from?: string;
+  readonly fromLabel?: string;
+  readonly sameConversation?: boolean;
+}
+
+export function dmDeliveryFooter(input: DmDeliveryFooterInput): string {
+  if (input.sameConversation === true && samePerson(input.requestedBy, input.recipientId)) return "";
+  const who = personWords({ id: input.requestedBy, platform: input.platform, reader: input.recipientId, ...(input.requesterLabel !== undefined ? { label: input.requesterLabel } : {}) });
+  const where = input.from === undefined && input.fromLabel === undefined ? "" : ` in ${placeWords({ key: input.from ?? "", ...(input.fromLabel !== undefined ? { label: input.fromLabel } : {}) })}`;
+  const asked = who === "you" ? "You asked for this" : `${who} asked for this`;
+  return `\n\n_${asked}${where}. Reply here to ask me to stop and I will not start another DM with you._`;
 }

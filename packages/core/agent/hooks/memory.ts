@@ -6,6 +6,7 @@ import { defineState } from "eve/context";
 import { resolvePartition } from "../memory/partition.js";
 import { bindFrom, currentTurnId, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
 import { writeMemoryTier } from "../memory/write-road.js";
+import { turnPersonOptOut } from "../memory/opt-out-turn.js";
 import { planFor, type ResolvedMemory } from "../memory/resolve.js";
 import { providerById } from "../memory/provider.js";
 import { renderMemoryIndex } from "../memory/listing.js";
@@ -288,6 +289,18 @@ export interface MemoryFlushSummary {
 
 const NOTHING_PERSISTED: MemoryFlushSummary = { silos: 0, persisted: 0, changed: 0, failed: 0 };
 
+export async function restoreSandboxTierToHost(sandbox: MemorySandbox, tier: Tier, hostCurrent: MemoryFiles, fromSandbox: MemoryFiles): Promise<void> {
+  try {
+    const removed = Object.keys(fromSandbox).filter((rel) => !(rel in hostCurrent));
+    const rewritten = Object.keys(hostCurrent).filter((rel) => fromSandbox[rel] !== hostCurrent[rel]);
+    await syncTierIntoSandbox(sandbox, tier, hostCurrent);
+    await removeTierFiles(sandbox, tier, removed);
+    log(`discarded the unsaved changes in ${tierId(tier)}: ${rewritten.length} file(s) put back, ${removed.length} file(s) removed`);
+  } catch (err) {
+    log(`could not discard the refused lines from the sandbox tier ${tierId(tier)}: ${String(err)}`);
+  }
+}
+
 export async function persistMemoryNow(ctx: MemoryPersistContext, outcome: MemoryPersistOutcome): Promise<MemoryFlushSummary> {
   const where = PERSIST_WHERE[outcome] ?? String(outcome);
   if (skipAsSubagentChild(ctx as unknown as HookContext, where)) return NOTHING_PERSISTED;
@@ -301,6 +314,7 @@ export async function persistMemoryNow(ctx: MemoryPersistContext, outcome: Memor
   await markProvenanceForTurn(ctx, `persist:${outcome}`);
   const sessionId = ctx.session?.id ?? "";
   const principalId = binding.principalId;
+  const personOptOut = principalId ? await turnPersonOptOut(p.org, principalId, currentTurnId(ctx)) : undefined;
   const request = sessionLog.get().firstMessage?.trim().replace(/\n+/g, " ").slice(0, 200);
   const continuationToken = ctx.channel?.continuationToken;
 
@@ -363,7 +377,7 @@ export async function persistMemoryNow(ctx: MemoryPersistContext, outcome: Memor
         }
       }
       const deleted = deletionDetail(hostCurrent, files);
-      const { version: sha } = await writeMemoryTier({
+      const { version: sha, refused: optOutRefused } = await writeMemoryTier({
         provider,
         partition: p,
         tier: rm.tier,
@@ -373,6 +387,7 @@ export async function persistMemoryNow(ctx: MemoryPersistContext, outcome: Memor
         access: rm.access,
         road: "session-persist",
         principalId,
+        ...(personOptOut ? { personOptOut } : {}),
         turnId: currentTurnId(ctx),
         extra: {
           outcome,
@@ -384,6 +399,11 @@ export async function persistMemoryNow(ctx: MemoryPersistContext, outcome: Memor
           ...(deleted ?? {}),
         },
       });
+      if (optOutRefused) {
+        log(`persist of ${tierId(rm.tier)} → ${rm.silo.name} refused: the turn's person opted out of agent memory about them`);
+        if (sandbox) await restoreSandboxTierToHost(sandbox, rm.tier, hostCurrent, fromSandbox);
+        continue;
+      }
       persisted += Object.keys(files).length;
       if (sha) changed++;
       try {

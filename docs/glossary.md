@@ -37,7 +37,7 @@ A channel agent is not an object. `create_agent` composes it from four existing 
 ## 1. Seat, grain, posture
 
 **seat** — the conversational session. It talks, it forwards jobs, and it may read a little to find
-out what it was asked. It is the **NARROW** surface. A delegating standing or thread seat holds 16 tools at
+out what it was asked. It is the **NARROW** surface. A delegating standing or thread seat holds 17 tools at
 most, the **lean roster** (a conversation seat holds `work` and `cancel_work` from it, never `agent`
 and `task_cancel`), and nothing else — not even the credential grants this chat's own scopes carry, which mount on the
 chat's workers instead (OPE-2023).
@@ -52,18 +52,19 @@ per-container standing root is a seat but no conversation seat, because it canno
 Source: `packages/core/agent/access/work-session.ts#seatTokenForwardsWork`.
 Not to be confused with: the **work session**, which runs the jobs and talks to nobody.
 
-**the lean roster** — the 16 names a lean seat may hold, exactly:
+**the lean roster** — the 17 names a lean seat may hold, exactly:
 `reply`, `edit_reply`, `no_reply`, `react`, `update_status`, `stand_down`, `halt`, `set_dm_delivery`,
 `agent`, `work`, `cancel_work`, `spawn_thread_session`, `complete_thread`,
-`task_cancel`, `read_channel`, `read_thread`.
+`task_cancel`, `read_channel`, `read_thread`, `answer_domain_question`.
 Five speak verbs, one stop-following verb, one break-glass **halt** (OPE-1602 — the brake pedal is
 on the seat because a brake reached through a dispatch is not a brake; its `resume` partner is not,
 because resuming widens and is a carded admin decision the seat routes), one recipient-stop verb
 (OPE-1064), two delegation
 verbs, the work-session pair `work` and `cancel_work` (OPE-2338, OPE-2350: every conversation seat
 forwards to its own work session, so it holds these two instead of `agent` and `task_cancel`), one thread-lifecycle verb, one `task_*` lifecycle
-verb (OPE-583) for stopping the seat's own delegated work — and the two **recovery reads**
-(OPE-829). The filter is DEFAULT-DENY: an unknown name is withheld.
+verb (OPE-583) for stopping the seat's own delegated work, the two **recovery reads**
+(OPE-829) — and one answer verb, `answer_domain_question` (OPE-2452), with which a domain's standing
+seat answers a **domain question** delivered to it. The filter is DEFAULT-DENY: an unknown name is withheld.
 
 One further name survives the filter without being a roster row: `task_wait`. eve injects it beside
 `task_cancel` on every session whose toolset can start a task, and eve's own task prompt instructs it
@@ -159,25 +160,27 @@ Source: `packages/core/agent/access/lean-seat.ts#restrictToolsetForLeanSeat`, ca
 Not to be confused with: a **refusal** at execute time. `packages/core/agent/access/window-gated.ts`
 is the backstop behind the wall, not a second copy of it.
 
-**DM-seat carve-in** — four verbs a narrowed DM or group-DM seat keeps on top of the roster:
-`link_identity`, `confirm_link`, `unlink_identity`, `revoke_credential_grant`. Each one acts on the
-CALLER — who they are, or what their own account pays for — and each hard-refuses outside a DM. All
-four need an answer the person gives on the seat, so the worker-capability index never offers one as
-a route. That roster rule is routing. The containment is a second set with the same four names:
-`WORKER_SEAT_RESERVED_TOOLS` withholds them from a delegated worker, which used to mount all four.
+**DM-seat carve-in** — five verbs a narrowed DM or group-DM seat keeps on top of the roster:
+`link_identity`, `confirm_link`, `unlink_identity`, `revoke_credential_grant`, `ask_domain`. Each one
+acts for the CALLER — who they are, what their own account pays for, or (`ask_domain`, OPE-2452) a
+question to a domain they belong to — and each hard-refuses outside a DM. The first four need an answer
+the person gives on the seat. `ask_domain` needs THIS person's proven membership and THIS DM as the
+answer's only destination. So the worker-capability index never offers one as a route. That roster rule
+is routing. The containment is a second set with the same five names: `WORKER_SEAT_RESERVED_TOOLS`
+withholds them from a delegated worker, which used to mount the first four.
 Source: `packages/core/agent/access/lean-seat.ts#DM_SEAT_CARVE_IN`,
 `packages/core/agent/access/worker-seat.ts#WORKER_SEAT_RESERVED_TOOLS`.
 Not to be confused with: the roster itself. The carve-in is a property of the SEAT, not of the tool.
 
 **worker** (also **delegated child**) — a `task`-grain child of a conversation's work session. It is
-the **WIDE** surface: the seat's kit plus **88** further tools, with two exact exceptions. It holds
-exactly one of `ask_question` or `ask_room` (`ask_room` on a work-session job), so 87 of the 88, and
-it does not hold the whole seat kit (see the worker withheld set). The 88 include `bash`, `aws`, `write_file`,
+the **WIDE** surface: the seat's kit plus **94** further tools, with two exact exceptions. It holds
+exactly one of `ask_question` or `ask_room` (`ask_room` on a work-session job), so 93 of the 94, and
+it does not hold the whole seat kit (see the worker withheld set). The 94 include `bash`, `aws`, `write_file`,
 `open_pull_request`, `checkout_repo`, `web_fetch`, `request_credential_grant`, `ask_question`
 and every read tool the seat does not hold. It also holds this conversation's own lent `grant__…` tools, which are minted per
 grant row and so appear in no static count. The count is identical for a standing parent and a thread
 parent.
-Source: `packages/core/agent/access/worker-capability-index.generated.ts#WORKER_ONLY_TOOLS_STANDING` (88 entries) and `packages/core/agent/access/worker-capability-index.generated.ts#WORKER_ONLY_TOOLS_THREAD` (88 entries).
+Source: `packages/core/agent/access/worker-capability-index.generated.ts#WORKER_ONLY_TOOLS_STANDING` (94 entries) and `packages/core/agent/access/worker-capability-index.generated.ts#WORKER_ONLY_TOOLS_THREAD` (94 entries).
 Not to be confused with: the **seat**. 🔴 **A top-level session does its real work by DELEGATING.
 The parent does NOT hold the wide toolset.** Any claim that the parent is wide and the child is
 narrow is backwards. Also not to be confused with a **Claude Code subagent**, which is repo
@@ -340,6 +343,15 @@ finished (`completed`), went quiet (`expired`) or could no longer be reached (`c
 writes it from recorded facts on every close, and the seat's own report rides inside it when the
 seat gave one (OPE-2428).
 Source: `packages/core/agent/channels/thread-seat-close.ts#closeThreadSeat`.
+
+**domain question** — one question a person's DM seat asks a domain the person belongs to, with
+`ask_domain` (OPE-2452). The host delivers it to the standing seat of the domain room the person sits
+in. That seat answers with `answer_domain_question`, and the host delivers the answer to the asker's DM
+and nowhere else. **Membership** here is a room: the platform confirms the person a full member of the
+workspace and the room internal.
+Source: `packages/core/agent/channels/domain-question.ts#domainQuestionRoomRefusal`.
+Not to be confused with: a **forward** (a job for a worker), or a **hand-back** (a thread seat's report to
+the seat that opened it).
 
 **one-shot** — a delegated run started by a fresh `agent` call, with no `taskId`. Every delegation
 opens this way; a seat may then continue it from the same room (see **task continuation** below).
@@ -929,6 +941,24 @@ write on the domain's credential in an attended, clean turn reaches it, and an a
 Source: `packages/core/agent/access/approval-judge.ts#approvalJudgeMode`;
 `packages/core/agent/access/consequence.ts#judgeDeferredTool`.
 
+**DM rule** — a pre-approval rule a person confirmed from an approval card in their own Slack DM with
+the agent, with "Approve, and allow things like this" (OPE-2456). Code writes its sentence from the
+card's frozen act (the tool, the kind of action, the kind of object), and the person reads it in the
+button's confirmation dialog first. It applies at once, only to acts its owner asks for in that DM,
+and the person removes it under "Your rules" in the Home tab. The judge still decides each act
+against it: it is a rule, never a grant.
+Source: `packages/core/agent/approvals/allow-rule.ts#allowRuleProposalForRow`,
+`packages/core/agent/approvals/allow-rule-apply.ts#dmRulesForProposal`.
+Not to be confused with: a **session grant**, which skips the card with no judge at all, and which a
+conversation never keeps (OPE-2363); or a **domain rule**.
+
+**domain rule** — the same option in a Slack room of exactly one domain. The confirmed rule opens a
+pull request that adds or widens one line of the app's `agent/access/domain-rules.ts`, naming who
+asked and from which card. It applies only after an admin merges it, as a rule bound at that domain's
+scope.
+Source: `packages/core/agent/approvals/allow-rule-pr.ts#executeDomainRulePr`,
+`packages/core/agent/access/domain-rules.ts#domainRuleBundles`.
+
 **defer-model** — the arrangement above: a registry row declares `judgeDefer`, and only that residue
 reaches the judge. The verdict is final, including a deny, and each consult is audited.
 Source: `packages/core/agent/access/consequence.ts#deferToJudge`, `packages/core/agent/access/consequence.ts#judgeDefer`.
@@ -1159,3 +1189,25 @@ grammar (`CredentialBindingOverride.connector`) — all say `connector`. The two
 guarded rename migrations; the override grammar does NOT (the loader refuses the old `provider`
 key outright — safe today because the tracked overlay is empty, so a self-hoster with a non-empty
 overlay must rename the key by hand).
+
+## 7. The person's browser
+
+**personal browser** — ONE person's own Chromium with a PERSISTENT profile, so the sites they sign in to
+stay signed in across turns and days. It runs in a long-lived box on the deployment's own sandbox backend
+(a persistent Vercel Sandbox, or a docker container on a named volume), and only the person's own internal
+DM reaches it. Its row key is the ACTING person, read from the binding.
+Source: `packages/core/agent/personal-browser/policy.ts` (`personalBrowserRefusal`),
+`packages/core/agent/personal-browser/lifecycle.ts` (`ensureBrowserOpen`).
+Not to be confused with: the **browser QA kit** (`browser_*` tools), a headless browser inside one
+conversation's sandbox that keeps nothing between conversations and may carry an org credential.
+
+**take-over lock** — who may send input to a person's browser: `agent` or `person`. While the person holds
+it, every agent action is REFUSED, not queued: the app re-reads it before each command, and the box refuses
+an agent command too, once the app has told it. It returns to the agent by the person's hand-back card, by
+Hand back on the watch page, or when the hold expires.
+Source: `packages/core/agent/personal-browser/lifecycle.ts` (`personHolds`, `takeOver`, `handBack`).
+
+**watch page** — the deployment's own page where a person watches their browser and takes its controls.
+A single-use link (audience `browser-view`) starts ONE watch session (audience `browser-session`, a
+cookie).
+Source: `packages/core/agent/personal-browser/viewer.ts` (`handleViewPost`, `handleLiveInput`).

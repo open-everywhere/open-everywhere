@@ -1,0 +1,11 @@
+{
+  "transcripts": [
+    {
+      "name": "conferenceRecords/rec-new/transcripts/tr-1",
+      "state": "FILE_GENERATED",
+      "startTime": "2026-01-15T20:00:10.000Z",
+      "endTime": "2026-01-15T20:42:15.000Z",
+      "docsDestination": { "document": "fixture-doc", "exportUri": "https://docs.google.com/document/d/fixture-doc" }
+    }
+  ]
+}

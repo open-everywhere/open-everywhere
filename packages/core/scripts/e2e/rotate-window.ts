@@ -1,5 +1,4 @@
-import { wireNeonOperationalStore, rotateUnifiedWindow, parseRotateArgs, checkOrgAllowed, WindowTargetRefused, awaitGenerationIdle, generationNotIdleMessage } from "./rotate-window-lib.js";
-import { unifiedDomainSessionKey } from "../../agent/channels/unified-supervisor.js";
+import { wireNeonOperationalStore, rotateUnifiedWindow, parseRotateArgs, checkOrgAllowed, WindowTargetRefused, awaitRotationIdle, generationNotIdleMessage } from "./rotate-window-lib.js";
 import { dmAnchorDomain } from "../../agent/channels/window-key.js";
 import { guardStoreIdentityBeforeWrite } from "../store-identity-guard.js";
 import { loadAppDomains } from "./app-config.js";
@@ -29,13 +28,13 @@ async function main() {
   }
 
   if (target.waitIdleMs !== undefined) {
-    const registryKey = unifiedDomainSessionKey(target.kind === "dm" ? dmAnchorDomain(target.dmSurfaceKey) : (target.windowId ?? target.domain));
-    const idle = await awaitGenerationIdle(store, target.org, registryKey, { timeoutMs: target.waitIdleMs });
+    const window = target.kind === "dm" ? dmAnchorDomain(target.dmSurfaceKey) : (target.windowId ?? target.domain);
+    const idle = await awaitRotationIdle(store, target.org, window, { timeoutMs: target.waitIdleMs });
     if (!idle.ok) {
-      console.error(generationNotIdleMessage(registryKey, idle));
+      console.error(generationNotIdleMessage(idle.registryKey, idle.result));
       process.exit(3);
     }
-    console.log(`wait-idle:      ${registryKey} owes no job (waited ${Math.round(idle.waitedMs / 1000)}s)`);
+    for (const row of idle.idle) console.log(`wait-idle:      ${row.registryKey} owes no job (waited ${Math.round(row.waitedMs / 1000)}s)`);
   }
 
   if (target.kind === "dm") {
@@ -48,6 +47,7 @@ async function main() {
     console.log(`old token:      ${r.oldToken ?? "none"}`);
     console.log(`NEW token:      ${r.newRow.token}   <- eve session key (never seen before ⇒ fresh seat)`);
     console.log(`createdAt:      ${r.newRow.createdAt}`);
+    printWork(r.work);
     return;
   }
 
@@ -65,6 +65,17 @@ async function main() {
   console.log(`row int counter: ${r.newRow.generation}   (separate bookkeeping, not the eve key)`);
   console.log(`createdAt:      ${r.newRow.createdAt}`);
   console.log(`lastInputTokens: ${r.newRow.lastInputTokens ?? "null (no request on this generation yet ✓)"}`);
+  printWork(r.work);
+}
+
+function printWork(work: Awaited<ReturnType<typeof rotateUnifiedWindow>>["work"]): void {
+  if (work === null) {
+    console.log("work session:   not rotated (the target is a work window, or the seat has no work-session row yet)");
+    return;
+  }
+  console.log(`work session:   ${work.registryKey}`);
+  console.log(`  old token:    ${work.oldToken}`);
+  console.log(`  NEW token:    ${work.newRow.token}   <- fresh work session (never seen before)`);
 }
 
 main().catch((e) => {

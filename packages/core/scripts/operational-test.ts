@@ -1309,6 +1309,19 @@ const store = makeOperationalPostgresStore(client);
 }
 
 {
+  ok((await store.getPersonOptOut("acme", "UALICE")) === null, "pg: no opt-out row before the person opts out");
+  ok((await store.setPersonOptOut("acme", "UALICE", "2026-06-04T13:35:00Z")) === true, "pg: the first set draws the boundary");
+  ok((await store.setPersonOptOut("acme", "UALICE", "2026-10-02T00:00:00Z")) === false, "pg: a repeat is not new");
+  ok((await store.getPersonOptOut("acme", "UALICE"))?.optedOutAt === "2026-06-04T13:35:00Z", "pg: …and keeps the FIRST date");
+  ok((await store.getPersonOptOut("globex", "UALICE")) === null, "pg: a different org sees no row");
+  ok((await store.clearPersonOptOut("acme", "UALICE")) === true, "pg: clear lifts it");
+  ok((await store.clearPersonOptOut("acme", "UALICE")) === false, "pg: a second clear lifts nothing and says so");
+  const kept = await store.getPersonOptOut("acme", "UALICE");
+  ok(kept !== null && kept.optedOutAt === undefined, "pg: the cleared row stays, with no date");
+  ok((await store.setPersonOptOut("acme", "UALICE", "2026-10-03T00:00:00Z")) === true, "pg: drawing it again on a cleared row is new");
+}
+
+{
   ok((await store.listDomainSkills("acme", "eng")).length === 0, "pg: empty domain starts with no skills");
   await store.putDomainSkill("acme", "eng", "deploy-runbook", "# Deploy\nSteps.", "U1", "2026-06-30T10:00:00Z");
   let rows = await store.listDomainSkills("acme", "eng");

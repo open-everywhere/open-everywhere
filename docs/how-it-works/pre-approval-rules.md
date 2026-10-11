@@ -10,7 +10,8 @@ tells it, in your own words.
 **In `enforce` mode, the shipped `approvals.judgeMode`, a rule is the only thing that lets a gated
 act run without a card.** The judge allows an act only when it cites a rule that this scope really
 carries. An allow that cites no rule is an `ask`, so a person decides. Every act that ran without a
-card therefore traces to a sentence an admin wrote and a reviewer read.
+card therefore traces to a sentence an admin wrote and a reviewer read, or to a DM rule: a sentence code
+wrote from an approval card, which the person confirmed for their own asks in their own DM (§7).
 
 A rule is curated context for one decision. It is not a verdict, and it is not a chain element.
 
@@ -146,6 +147,18 @@ The id is what makes an auto-allow traceable. The judge cites it, and the audit 
 | Rules per bundle | 50 | Keeps a scope's policy readable in one sitting. |
 | Rules per resolved scope | 200 | Four rungs at the per-bundle cap. |
 
+**A rule should state policy, never one object.** It names the tool, the kind of action and the kind
+of object ("delete Notion pages this domain's agent created"), never an instance ("Notion page 7").
+Code refuses a DM rule or a domain rule pull request, and config load refuses a rule in the domain
+rules file, whose text names a URL, an email address, a UUID or a long hexadecimal id, a `#123`
+reference, a tracker key (`ABC-123`), a platform id, a long number, or a numbered object ("page 7",
+"issue 42"). The rules an admin writes in their own bundles are not checked: keeping those to policy
+is the admin's and the reviewer's job. The lint is `ruleInstanceProblems` in `access/pre-approval-rules.ts`. It is
+not exact: a policy limit ("more than 10000 rows") or a standard name ("UTF-8") also matches. So it
+runs where code writes a rule (a DM rule, a domain rule pull request, §7) and on the domain rules file
+(`defineDomainRules`, and the `domain-rules:*` bundles at config load). It does not run on the rules an
+admin writes in their own bundles, because there a false positive would stop the deployment booting.
+
 An id must be unique across your whole config. Two rules with one id make an audit row ambiguous,
 so the config fails to load. An id is 1 to 64 characters. It starts with a letter or a digit, and
 it then carries letters, digits, dots, dashes and underscores. It carries no whitespace, so a
@@ -166,8 +179,13 @@ only after a person opened a pull request, a reviewer read the prose, and a depl
 > access resolver. Claude Code's auto-mode refuses project-local settings for exactly this reason.
 
 > 🔴 **The agent can never author or edit a rule.**
-> The store has no runtime write path. There is no tool, no command and no function that writes a
-> rule — the invariant holds because there is nothing to guard. The one path by which the agent
+> No tool and no command writes a rule. There is one runtime write path, and only a person's
+> confirmed click on an approval card reaches it (§7): it writes that person's own DM rule, or it
+> opens a pull request for a domain rule. Its exported writers are on the human-only manifest
+> (`lint:human-only-invariants`), so no agent tool may import them. The store write itself is a
+> method that scan cannot see, so `test:allow-rule` pins `approvals/allow-rule-apply.ts` as the only
+> caller of `upsertDmRule` in every agent code tree. Code writes the rule text from the card's frozen
+> act, never the model. The one path by which the agent
 > writes access config is the machine-written grants overlay, and that overlay's parser accepts
 > three fields only (`name`, `connections`, `connectors`). An overlay carrying `preApprovalRules`
 > is refused when it is parsed. A test pins that refusal.
@@ -272,6 +290,95 @@ changes, so a lift authored for one scope is never replayed in a scope whose adm
   their first day.
 - **Keep the id stable.** Audit rows point at it. Renaming an id breaks the trail back to older
   decisions.
+
+---
+
+## 7. Approve and allow things like this
+
+An approval card can carry a third option: **Approve, and allow things like this** (OPE-2456). It approves the one act, and it adds a rule so the judge can lift
+the next act of the same kind without a card. **Plain Approve stays one-off and never writes a
+rule.**
+
+**A rule starts only from a person's explicit choice.** The agent never proposes a rule. The risk is
+an admin who approves a rule pull request on trust while the person only wanted one act approved. So
+no tool reaches the rule writers, and the option is the only way in.
+
+**The person reads the rule before anything is written.** On Slack the button opens a confirmation
+dialog that shows the proposed rule in plain words. The click is sent only when the person confirms.
+Teams and Discord cards send a tap with no confirmation first, so they do not show the option.
+
+**Code writes the rule, never the model.** The rule is one fixed sentence built from the card's
+frozen act: the tool, the kind of action and the kind of object. It never quotes an argument. For
+example: "In this DM, open pull requests with open_pull_request when the person asked for it in this
+turn, with matching arguments. Never in an unattended run." A connector rule names the op's own verb
+("archive issues with the linear connector's archive_issue", "trash pages … with the notion
+connector's trash_page"). The verb is part of the rule's id, so a rule widens only with ops of the
+same verb. The instance lint (§1) checks it too.
+
+**Where the option appears.** Only where a rule could lift the act:
+
+- the judge is in `enforce` mode;
+- the act reaches the judge: `open_pull_request`, a `create_routine` that declares no standing write,
+  or a connector write or delete that passes every connector floor (§4);
+- the card froze `tainted: false`. A card that froze no taint flag reads as tainted, so
+  `request_access` (whose card does not freeze one today) gets no option;
+- the room is the person's own Slack DM with the agent, or a Slack room of exactly one domain on a
+  deployment with a config repo and an admin channel.
+
+An admin act, a memory erasure, a routine with a standing write, and a connector op on a person's own
+account get no option, because no rule can lift them.
+
+**In a DM, the rule is the person's own and applies at once.** It is stored for that DM room
+(`dm_rule` in the operational store). The judge reads it only for acts the DM's owner asks for in that
+DM. The judge prompt says that a `dm` rule was confirmed by the requester, not written by an admin.
+The person sees each rule under **Your rules** in the Home tab and removes it there; removal applies
+at once. One person keeps at most 20 DM rules.
+
+**In a domain room, the rule opens a pull request.** It adds one line to the app's
+`agent/access/domain-rules.ts`, or widens the line for the same tool and kind of action. The pull
+request names who asked for the act, who confirmed the rule, the card's id, and quotes the act in the
+card's own words. The admin channel gets a note. Nothing applies until an admin merges it. Each
+domain's merged rules become one bundle (`domain-rules:<domain>`), bound at that domain's scope only.
+A deployment with `accessRequests.dryRun` writes the audit row and opens nothing.
+
+An app scaffolded before this feature has no `agent/access/domain-rules.ts`. Copy the template's file,
+and add the two `domainRuleBundles` / `domainRuleBindings` lines to `agent/access/bundles.ts` as the
+template does. Until then a domain rule click approves the act, writes no rule, and the card says
+that the file is missing. `npx oe upgrade --plan` lists the file as missing. The path is
+`accessRequests.domainRulesPath` when the app keeps the file elsewhere.
+
+**A rule does not lift its own act again — while that card stays its source.** A rule is never
+read for the act its source card approved: the same kind, scope and arguments. So a second delivery
+of that step posts a new card, and the act runs again only if a person approves that card. When a
+later card widens the rule, the rule's source moves to that card. From then on the rule can lift the
+earlier act, on a later proposal and on a redelivery of the earlier step.
+
+**Merge before add.** A rule's id names its tool and kind of action, never the object. So a second
+card for the same tool widens the rule with one more kind of object instead of adding a rule. In a
+DM an identical rule changes nothing, and the card says so.
+
+**Guests and external rooms get the strictest default.** The rule step needs a positive answer at
+each check, and an unknown answer writes no rule:
+
+- the clicker must be confirmed a full member of the workspace (a guest, a Slack Connect account, or
+  a failed lookup writes no rule);
+- in a DM, the clicker must be the person the DM belongs to;
+- in a domain room, the room's members must be readable and its audience floor must not be `guest`
+  (an externally shared channel, or a channel with a guest in it).
+
+A refused rule step still approves the act. The card's outcome line says why no rule was written, and
+an `approval.rule.refused` row records it.
+
+**A DM rule is not a grant.** It never skips the judge. The judge still reads each act against it, and
+the human-only class, the clamps and the connector floors (§4) stay above it. Session and thread
+grants stay removed (OPE-2363), and nothing here writes one.
+
+| Audit row | When |
+|---|---|
+| `approval.rule.added` | A DM rule was added or widened. |
+| `approval.rule.proposed` | A domain rule pull request was opened or updated. |
+| `approval.rule.refused` | The option was clicked, the act was approved, and no rule was written. |
+| `approval.rule.removed` | A person removed a DM rule in the Home tab. |
 
 ---
 

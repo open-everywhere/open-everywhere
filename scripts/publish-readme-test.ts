@@ -126,7 +126,7 @@ const corePin = (JSON.parse(readFileSync(join(root, "packages/core/package.json"
   .peerDependencies?.eve;
 ok(typeof corePin === "string" && /^\d+\.\d+\.\d+$/u.test(corePin), `@open-everywhere/core pins eve at an exact triple (got ${String(corePin)})`);
 
-ok(ALL_PUBLISHABLE_PACKAGES.length === 9, `the publish list holds exactly 9 packages (got ${ALL_PUBLISHABLE_PACKAGES.length}) — a shrunk list silently stops checking the package that left`);
+ok(ALL_PUBLISHABLE_PACKAGES.length === 10, `the publish list holds exactly 10 packages (got ${ALL_PUBLISHABLE_PACKAGES.length}) — a shrunk list silently stops checking the package that left`);
 
 for (const pkgDir of ALL_PUBLISHABLE_PACKAGES) {
   const file = join(root, pkgDir, README_FILE);
@@ -144,10 +144,10 @@ for (const pkgDir of ALL_PUBLISHABLE_PACKAGES) {
   ok(pinProblems.length === 0, `${pkgDir}: ${pinProblems.join("; ")}`);
 }
 
-const LIBRARY_COUNT = 8;
+const LIBRARY_COUNT = 9;
 ok(
   PUBLISHABLE_PACKAGES.length === LIBRARY_COUNT,
-  `the library list holds exactly ${LIBRARY_COUNT} packages (got ${PUBLISHABLE_PACKAGES.length}) — "eight library packages" in docs/dev/publishing.md is this number`,
+  `the library list holds exactly ${LIBRARY_COUNT} packages (got ${PUBLISHABLE_PACKAGES.length}) — "nine library packages" in docs/dev/publishing.md is this number`,
 );
 
 for (const pkgDir of PUBLISHABLE_PACKAGES) {

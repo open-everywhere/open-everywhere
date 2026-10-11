@@ -25,6 +25,8 @@ lint:model-ids
 test:model-ids-scope
 test:model-pricing-wiring
 test:model-stacks
+test:transcription-role
+test:stt-bakeoff
 test:model-catalog-snapshot
 lint:hydration-stub
 lint:human-only-invariants
@@ -186,9 +188,14 @@ test:oe-upgrade-packed
 test:oe-bin-packed
 test:eve-patch-upgrade-packed
 lint:brand-literals
+lint:friendly-ids
+test:friendly-ids-lint
 test:brand-literal-lint
 test:template-drift
 test:template-adapters
 test:npm-command
 lint:doc-links
 test:doc-links-lint
+test:meeting-bot
+test:email-integration
+test:personal-browser-fence

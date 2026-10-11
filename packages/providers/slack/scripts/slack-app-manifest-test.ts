@@ -9,8 +9,9 @@ import {
   surfaceAppManifestSurfaces,
   surfaceAppNameProblem,
 } from "@open-everywhere/core/agent/adapter-api.js";
-import { registerSlackOps } from "../agent/ops.js";
+import { registerSlackOps, slackManifestOptionsFromSettings } from "../agent/ops.js";
 import {
+  SLACK_AGENT_DESCRIPTION_MAX,
   SLACK_APP_NAME_MAX,
   SLACK_DEFAULT_APP_NAME,
   SLACK_DEPLOY_HOST_PLACEHOLDER,
@@ -62,6 +63,20 @@ ok(templatePlaceholders === 4, `the template carries four placeholders — three
 ok(parsed.features.app_home?.messages_tab_enabled === true, "the Messages tab is on — a DM is the primary wake");
 ok(parsed.features.app_home?.messages_tab_read_only_enabled === false, "…and writable (read-only blocks the person from sending)");
 ok(parsed.features.app_home?.home_tab_enabled === true, "…and the Home tab is on — the front route publishes the person's page on app_home_opened");
+
+{
+  const view = (parsed.features as Record<string, unknown>).agent_view as { agent_description?: string; suggested_prompts?: { title: string; message: string }[] } | undefined;
+  ok(view !== undefined, "the manifest turns on Slack's agent view (the side panel)");
+  ok(!("assistant_view" in parsed.features), "…and never the legacy assistant_view, which a new app cannot use");
+  ok(typeof view?.agent_description === "string" && view.agent_description.length > 0 && view.agent_description.length <= SLACK_AGENT_DESCRIPTION_MAX, "…with a description inside Slack's limit");
+  ok(view?.suggested_prompts === undefined, "with no prompts passed, the manifest offers none (the setup CLI's path)");
+  const prompts = [{ title: "Catch me up", message: "What changed today?" }];
+  const named = JSON.parse(slackAppManifestTemplate({ agentName: "Aria", suggestedPrompts: prompts })) as { features: { agent_view: { agent_description: string; suggested_prompts?: unknown } } };
+  ok(JSON.stringify(named.features.agent_view.suggested_prompts) === JSON.stringify(prompts), "the configured prompts reach the manifest verbatim");
+  ok(named.features.agent_view.agent_description.includes("Aria") && !named.features.agent_view.agent_description.includes(SLACK_DEFAULT_APP_NAME), "the description names the CONFIGURED agent, never the brand");
+  ok(parsed.oauth_config.scopes.bot.includes("assistant:write"), "the manifest requests assistant:write, which app_context_changed needs");
+  ok(slackManifestOptionsFromSettings().suggestedPrompts?.length === 3, "the ops tool and /setup pass the shipped three prompts from the settings");
+}
 
 ok(parsed.display_information.name === SLACK_DEFAULT_APP_NAME, "with no name the app is named the default");
 ok(parsed.features.bot_user.display_name === SLACK_DEFAULT_APP_NAME, "…and so is the bot user");
@@ -135,6 +150,7 @@ const EVENT_SCOPES: Record<string, readonly string[]> = {
   app_home_opened: [],
   channel_shared: ["channels:read", "groups:read"],
   user_change: ["users:read"],
+  app_context_changed: ["assistant:write"],
 };
 for (const event of subscribed) {
   const scopes = EVENT_SCOPES[event];
@@ -204,7 +220,7 @@ ok(
 
 const bare = surfaceAppManifest("slack");
 ok(bare?.placeholdersRemaining === 4, "with no host all four placeholders remain, and are counted");
-ok(bare?.manifest === template, "…and the document is the template, byte for byte");
+ok(bare?.manifest === slackAppManifestTemplate(slackManifestOptionsFromSettings()), "…and the document is the settings-rendered template, byte for byte");
 ok(bare?.host === undefined, "…and no host is claimed");
 
 interface NamedManifestShape {

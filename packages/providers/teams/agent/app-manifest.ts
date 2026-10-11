@@ -46,10 +46,11 @@ export function teamsAppManifestTemplate(opts: TeamsAppManifestOptions = {}): st
       description: {
         short: "An autonomous teammate with per-conversation memory.",
         full:
-          `${name} runs as a Teams bot: @mention it in a team channel, drop it into a group chat, or DM it 1:1. ` +
+          `${name} runs as a Microsoft Teams bot: @mention it in a team channel, drop it into a group chat, or DM it 1:1. ` +
           "It acts under one bot identity shared by this deployment — never under your account and never with your " +
           "permissions — and its memory is scoped per tenant and per conversation. Learnings stay siloed to a " +
-          "conversation until that channel is confirmed team-wide.",
+          "conversation until that channel is confirmed team-wide. " +
+          "It uses AI to write its replies, and an AI reply can be wrong: check what matters before you act on it.",
       },
       icons: { color: "color.png", outline: "outline.png" },
       accentColor: TEAMS_BRAND_ACCENT_COLOR,

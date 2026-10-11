@@ -71,7 +71,8 @@ import {
   type ConsentCarriage,
 } from "./user-auth-flow.js";
 import { randomUUID } from "node:crypto";
-import { recordConsentDetour, type ConsentOrigin } from "./consent-resume.js";
+import { recordConsentDetour, type ConsentOrigin, type ConsentResumeRecord } from "./consent-resume.js";
+import { rememberWorkSignIn, type WorkSignInNote } from "../channels/work-sign-in-note.js";
 import { resolveReplyTarget } from "../channels/reply-post.js";
 import { currentSessionId } from "../identity/binding.js";
 import { delegatedNonMemberWakeThisTurn, delegatedRequesterThisTurn } from "../identity/delegated-binding.js";
@@ -214,7 +215,7 @@ export type ConnectorAuthorizationStarter = (
 export const defaultConnectorAuthStarter: ConnectorAuthorizationStarter = (vercelConnector, params, options) =>
   requireUserAuthFlow(vercelConnector).startAuthorization(vercelConnector, params, options);
 
-function needsSignInMessage(connector: string, delivered: boolean, repeat = false): string {
+function needsSignInMessage(connector: string, delivered: boolean, repeat = false, resumes = false): string {
   const where = repeat
     ? "A sign-in card was already offered to that person this turn."
     : delivered
@@ -222,7 +223,8 @@ function needsSignInMessage(connector: string, delivered: boolean, repeat = fals
       : "The sign-in card could not be delivered privately, so ask that person to message the agent directly to connect it.";
   return (
     `needs-sign-in: connection "${connector}" needs the person who asked to connect their own account first. ${where} ` +
-    "The op did not run, and nothing waits on the sign-in. Finish this task now and report that the job waits for that sign-in. Do not retry until they say they connected."
+    "The op did not run, and nothing waits on the sign-in. Finish this task now: report in one short sentence that the job waits for that sign-in. " +
+    (delivered && resumes && !repeat ? "Do not retry. When they connect, the host starts this job again." : "Do not retry.")
   );
 }
 
@@ -242,12 +244,12 @@ function connectorAuthRequiredUserMessage(connector: string, authorizeClause: st
 
 export async function resolveDmPrincipal(
   auth: import("eve/context").SessionAuth,
-): Promise<{ mode?: string; principalId?: string; platform?: string; workspace?: string; org?: string; trust?: string; declaredTrust?: string }> {
+): Promise<{ mode?: string; principalId?: string; platform?: string; workspace?: string; surface?: string; org?: string; trust?: string; declaredTrust?: string }> {
   const bindCtx = await surfaceContextFromAuth(auth);
   if (!bindCtx) return {};
   try {
     const b = bindFrom(bindCtx);
-    return { mode: b.mode, principalId: actingPrincipalId(b), platform: b.platform, workspace: b.workspace, org: resolvePartition(bindCtx).org, trust: b.trust, declaredTrust: b.declaredTrust };
+    return { mode: b.mode, principalId: actingPrincipalId(b), platform: b.platform, workspace: b.workspace, surface: b.surface, org: resolvePartition(bindCtx).org, trust: b.trust, declaredTrust: b.declaredTrust };
   } catch {
     return {};
   }
@@ -322,7 +324,7 @@ async function consentCarriageFor(
   connector: string,
   ctx: SessionContext,
   actorId: string,
-): Promise<ConsentCarriage | undefined> {
+): Promise<ConsentResumeRecord | undefined> {
   try {
     const origin = await consentOriginFromAuth(ctx, actorId);
     if (!origin) return undefined;
@@ -345,6 +347,7 @@ export function userAwareProviderToken(
     readonly startAuth?: ConnectAuthorizationStarter;
     readonly workChild?: (ctx: SessionContext) => boolean;
     readonly deliverSignIn?: typeof deliverSignInCard;
+    readonly rememberSignIn?: (ctx: BindableContext, note: WorkSignInNote) => Promise<boolean>;
   } = {},
 ): ConnectionAuthResolver {
   const mintUser = deps.mintUser ?? ((ref, params) => requireUserAuthFlow(opts.connector).mintUserToken(ref, params));
@@ -365,7 +368,7 @@ export function userAwareProviderToken(
         if (opts.directUrl !== undefined) {
           assertCredentialEndpointHostAllowed(cred.endpoints, opts.directUrl, `connection "${opts.connector}" credential "${cred.credential}"`);
         }
-        const { mode, principalId, platform, workspace, org, trust, declaredTrust } = await resolveDmPrincipal(ctx.session.auth);
+        const { mode, principalId, platform, workspace, surface, org, trust, declaredTrust } = await resolveDmPrincipal(ctx.session.auth);
         if (!principalId) {
           throw new Error(
             `connection "${opts.connector}": cannot mint a per-user token — this surface has no ` +
@@ -418,8 +421,9 @@ export function userAwareProviderToken(
           });
           if (authRequired) {
             let url: string | undefined;
+            let consent: ConsentResumeRecord | undefined;
             try {
-              const consent = await consentCarriageFor(opts.connector, ctx, actorId);
+              consent = await consentCarriageFor(opts.connector, ctx, actorId);
               url = (
                 await startAuth(
                   connector,
@@ -430,19 +434,30 @@ export function userAwareProviderToken(
             } catch {
             }
             if (isWorkChild(ctx)) {
+              const sameConversation = mode === "dm" && memberRequester === undefined;
+              const resumes = consent?.detourId !== undefined;
               const delivered =
                 url !== undefined &&
                 (await (deps.deliverSignIn ?? deliverSignInCard)({
                   org: org ?? deploymentOrg(),
                   platform: platform ?? "unknown",
                   workspace: workspace ?? "unknown",
+                  ...(surface === undefined ? {} : { surface }),
                   recipientId: actorId,
                   connector: opts.connector,
                   url,
-                  fromContainer: `${platform ?? "unknown"}/${workspace ?? "unknown"}`,
+                  fromContainer: surface === undefined ? `${platform ?? "unknown"}/${workspace ?? "unknown"}` : `${platform ?? "unknown"}/${workspace ?? "unknown"}/${surface}`,
+                  sameConversation,
+                  resumes,
                 }));
+              await (deps.rememberSignIn ?? rememberWorkSignIn)(ctx as unknown as BindableContext, {
+                connector: opts.connector,
+                delivered,
+                sameConversation,
+                ...(consent?.detourId !== undefined ? { detourId: consent.detourId, principalId: consent.origin.principalId, surfaceKey: consent.origin.surfaceKey } : {}),
+              });
               markConnectorAuthRequired(opts.connector);
-              throw new Error(needsSignInMessage(opts.connector, delivered));
+              throw new Error(needsSignInMessage(opts.connector, delivered, false, resumes));
             }
             markConnectorAuthRequired(opts.connector, url);
             const authorizeClause = url

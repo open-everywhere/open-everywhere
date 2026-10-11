@@ -1,9 +1,14 @@
 import {
   configuredAgentName,
+  DEPLOY_HOST_PLACEHOLDER,
+  getSettings,
   registerPreflightProbe,
   registerSurfaceAppManifest,
+  registerSurfaceAppPackage,
   registerSurfaceCredentialProbe,
   type Check,
+  type SurfaceAppPackageInput,
+  type SurfaceAppPackageResult,
 } from "@open-everywhere/core/agent/adapter-api-ops.js";
 import {
   TEAMS_APP_CONSOLE_URL,
@@ -13,6 +18,7 @@ import {
   teamsAppManifestTemplate,
   type TeamsAppManifestOptions,
 } from "./app-manifest.js";
+import { buildTeamsAppPackage, TEAMS_LISTING_STEPS } from "./app-package.js";
 import { boundaryOfGraphToken, TENANT_WIDE_CHANNEL_READ_ROLES, type TeamsReadBoundary } from "./channels/teams-graph-roles.js";
 
 const TOKEN_LOGIN_BASE = "https://login.microsoftonline.com";
@@ -116,6 +122,32 @@ export function registerTeamsOps(): void {
     template: (opts) => teamsAppManifestTemplate(teamsManifestOptionsFromSettings(opts)),
     appNameMax: TEAMS_APP_NAME_MAX,
   });
+  registerSurfaceAppPackage("teams", {
+    icons: { color: "teams-app/color.png", outline: "teams-app/outline.png" },
+    outDir: "teams-app",
+    build: teamsAppPackageFromInput,
+  });
+}
+
+function teamsAppPackageFromInput(input: SurfaceAppPackageInput): SurfaceAppPackageResult {
+  const manifest = teamsAppManifestTemplate(teamsManifestOptionsFromSettings(input.appName === undefined ? {} : { appName: input.appName }))
+    .split(DEPLOY_HOST_PLACEHOLDER)
+    .join(input.host);
+  const policy = getSettings().policyPages;
+  const appId = pick(input.env, "MICROSOFT_APP_ID", "TEAMS_APP_ID");
+  const built = buildTeamsAppPackage({
+    manifest,
+    route: input.route,
+    policyPages: { privacy: policy.privacy.trim() !== "", terms: policy.terms.trim() !== "" },
+    icons: { color: input.icons.color, outline: input.icons.outline },
+    ...(appId === undefined ? {} : { appId }),
+    ...(input.developerName === undefined ? {} : { developerName: input.developerName }),
+    ...(input.partnerId === undefined ? {} : { partnerId: input.partnerId }),
+    ...(input.version === undefined ? {} : { version: input.version }),
+    ...(input.supportContact === undefined ? {} : { supportContact: input.supportContact }),
+    ...(input.channelFeatures === undefined ? {} : { channelFeatures: input.channelFeatures }),
+  });
+  return { ...built, steps: TEAMS_LISTING_STEPS[input.route] };
 }
 
 function teamsManifestOptionsFromSettings(opts: { readonly appName?: string } = {}): TeamsAppManifestOptions {

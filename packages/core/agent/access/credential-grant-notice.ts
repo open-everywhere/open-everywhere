@@ -12,7 +12,8 @@ import {
   GrantRoomNoticeAlreadyRegisteredError,
   registerCoreGrantRoomNotice,
 } from "./grant-room-notice-registry.internal.js";
-import { GRANT_MODE_WORDS, grantBorrowPhrase, grantOwnerDmAddress } from "./credential-grant-card.js";
+import { GRANT_MODE_WORDS, grantBorrowPhrase, grantFooterPlace, grantOwnerDmAddress } from "./credential-grant-card.js";
+import { personWords } from "../channels/friendly-ids.js";
 import { connectorDisplayName, grantClockPhrase, grantDisplayLabel, grantOwnerPhrase, grantSpanPhrase } from "./credential-grant-copy.js";
 import { grantScopeKeyIsConversationStable } from "./credential-grant-key-shape.js";
 import { auditGrant, type GrantAuditStamps } from "./credential-grant-flow.js";
@@ -44,7 +45,7 @@ export async function resolveRequesterLabel(principalId: string): Promise<string
 
 function requesterActorPhrase(principalId: string, requesterLabel: string | undefined): string {
   const label = grantDisplayLabel(requesterLabel);
-  return label === undefined ? `\`${principalId}\`` : `${label} (\`${principalId}\`)`;
+  return personWords({ id: principalId, ...(label !== undefined ? { label } : {}) });
 }
 
 export function grantRoomNoticeText(
@@ -127,7 +128,13 @@ export async function deliverGrantOwnerNotice(
     await deliverProactiveDm({
       ...road,
       text: grantOwnerNoticeText(grant, requesterLabel, Date.parse(atIso)),
-      footer: dmDeliveryFooter({ requestedBy: grant.requesterPrincipalId, fromContainer: grant.scopeKey }),
+      footer: dmDeliveryFooter({
+        platform: ask.ownerPlatform,
+        recipientId: ask.ownerNativeId,
+        requestedBy: grant.requesterPrincipalId,
+        ...(grantDisplayLabel(requesterLabel) !== undefined ? { requesterLabel: grantDisplayLabel(requesterLabel) } : {}),
+        ...grantFooterPlace(grant.scopeKey, undefined),
+      }),
       requestedBy: grant.requesterPrincipalId,
       attributedTo: grant.requesterPrincipalId,
     });

@@ -1,3 +1,4 @@
+import { placeWords } from "../channels/friendly-ids.js";
 import { unattendedFrom, type SurfaceBinding } from "../identity/binding.js";
 import { cancelAnchoredTurn, type AttachSessionForCancel } from "../channels/turn-cancel.js";
 import { turnChannelKey } from "../channels/turn-registry.js";
@@ -26,6 +27,7 @@ import { planClearSpendLimit, type ClearSpendLimitInput } from "../tools/clear_s
 import { domainSpendWindow, reportDomainForBinding } from "../spend/reporting.js";
 import type { SkillDomainRefusal } from "../skills/domain-skills.js";
 import { parseRateTokens, runRate, rateHelpLine, type RateCommand } from "./rate.js";
+import { optOutHelpLine, parseOptOutTokens, runOptOut, type OptOutCommand } from "./optout.js";
 import { agentCommandName, agentDisplayName } from "../identity/bot-name.js";
 import { getAppInfo, hasRealAppVersion, registerAppInfo as storeAppInfo, type AppInfo } from "./app-info.js";
 import { assertPostgresWiredAtBoot } from "../operational/postgres-wiring.js";
@@ -53,6 +55,7 @@ export type OeCommand =
   | { readonly kind: "budget-clear" }
   | { readonly kind: "stop" }
   | RateCommand
+  | Extract<OptOutCommand, { kind: "optout" }>
   | { readonly kind: "error"; readonly message: string };
 
 function parseBudgetTokens(rest: readonly string[]): OeCommand {
@@ -79,6 +82,7 @@ export function parseOeCommandTokens(tokens: readonly string[]): OeCommand {
   if (sub === "stop") return { kind: "stop" };
   if (sub === "rate") return parseRateTokens(rest);
   if (sub === "budget") return parseBudgetTokens(rest);
+  if (sub === "optout") return parseOptOutTokens(rest);
   return { kind: "error", message: `Unknown command "${sub}" — try "${oeSlash("help")}" to see what's available.` };
 }
 
@@ -100,6 +104,7 @@ export function renderHelp(): string {
     `• \`${oeSlash("budget raise <usd>")}\` — propose a new monthly USD cap for this channel (posts an approval card; an admin decides).`,
     `• \`${oeSlash("budget clear")}\` — propose clearing this channel's spend-limit override back to config (posts an approval card).`,
     rateHelpLine(),
+    optOutHelpLine(),
     `• \`${oeSlash("help")}\` — this message.`,
   ].join("\n");
 }
@@ -145,9 +150,9 @@ export interface BudgetStatusFacts {
 export function renderBudgetStatus(f: BudgetStatusFacts): string {
   return [
     "*Spend status* (current calendar month)",
-    `• this channel (\`${f.surfaceKey}\`): ${fmtTokenCount(f.surfaceTokens)} / ${fmtCap(f.caps.surfaceMonthlyTokens, "tokens")} tokens · ` +
+    `• this channel: ${fmtTokenCount(f.surfaceTokens)} / ${fmtCap(f.caps.surfaceMonthlyTokens, "tokens")} tokens · ` +
       `~$${f.surfaceUsd.toFixed(2)} / ${fmtCap(f.caps.surfaceMonthlyUsd, "usd")}`,
-    `• whole workspace (\`${f.workspaceKey}\`): ${fmtTokenCount(f.workspaceTokens)} / ${fmtCap(f.caps.workspaceMonthlyTokens, "tokens")} tokens · ` +
+    `• whole workspace: ${fmtTokenCount(f.workspaceTokens)} / ${fmtCap(f.caps.workspaceMonthlyTokens, "tokens")} tokens · ` +
       `~$${f.workspaceUsd.toFixed(2)} / ${fmtCap(f.caps.workspaceMonthlyUsd, "usd")}`,
     `_propose a change with \`${oeSlash("budget raise <usd>")}\` or \`${oeSlash("budget clear")}\`._`,
   ].join("\n");
@@ -291,13 +296,13 @@ export async function runBudgetRaise(binding: SurfaceBinding, usd: number, deps:
   const spendSentence = await budgetRaiseSpendSentence(binding, deps);
   if (posted.autoApproved) {
     return (
-      `Done — $${usd.toFixed(2)}/month on \`${plan.scopeKey}\` is already in force: the approver chain auto-approved it ` +
+      `Done — $${usd.toFixed(2)}/month on ${placeWords({ key: plan.scopeKey })} is already in force: the approver chain auto-approved it ` +
       `(${posted.autoApproved.resolvedBy}), so no card was posted — ${posted.autoApproved.outcome}` +
       spendSentence
     );
   }
   return (
-    `Card posted in this channel — proposing $${usd.toFixed(2)}/month on \`${plan.scopeKey}\` ` +
+    `Card posted in this channel — proposing $${usd.toFixed(2)}/month on ${placeWords({ key: plan.scopeKey })} ` +
     `(pending \`${posted.id}\`, expires ${posted.expiresAt}). An admin needs to Approve it.` +
     spendSentence
   );
@@ -337,12 +342,12 @@ export async function runBudgetClear(binding: SurfaceBinding, deps: OeApprovalDe
   );
   if (posted.autoApproved) {
     return (
-      `Done — the override on \`${plan.scopeKey}\` is already back to the config-as-code cap: the approver chain auto-approved it ` +
+      `Done — the override on ${placeWords({ key: plan.scopeKey })} is already back to the config-as-code cap: the approver chain auto-approved it ` +
       `(${posted.autoApproved.resolvedBy}), so no card was posted — ${posted.autoApproved.outcome}`
     );
   }
   return (
-    `Card posted in this channel — proposing to clear the override on \`${plan.scopeKey}\` back to the config-as-code cap ` +
+    `Card posted in this channel — proposing to clear the override on ${placeWords({ key: plan.scopeKey })} back to the config-as-code cap ` +
     `(pending \`${posted.id}\`, expires ${posted.expiresAt}). An admin needs to Approve it.`
   );
 }
@@ -403,5 +408,7 @@ export async function runOeCommand(cmd: OeCommand, binding: SurfaceBinding, deps
       return runStop(binding, deps.attachSession);
     case "rate":
       return runRate(binding, cmd.score);
+    case "optout":
+      return runOptOut(binding, cmd.action);
   }
 }

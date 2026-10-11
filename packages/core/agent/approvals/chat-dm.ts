@@ -1,13 +1,14 @@
 import { deliverProactiveDm } from "../channels/dm-audience.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import type { ActionKind } from "./types.js";
-import { plainValue } from "./plain-text.js";
+import { personWords, platformName } from "../channels/friendly-ids.js";
 
 export interface ChatDmArgs {
   readonly org: string;
   readonly scopeKey: string;
   readonly platform: string;
   readonly principalId: string;
+  readonly recipientLabel?: string;
   readonly grant: string;
   readonly text: string;
   readonly footer: string;
@@ -15,9 +16,14 @@ export interface ChatDmArgs {
   readonly tainted?: boolean;
 }
 
+function recipientWords(args: Pick<ChatDmArgs, "platform" | "principalId" | "recipientLabel">): string {
+  const who = personWords({ id: args.principalId, platform: args.platform, ...(args.recipientLabel !== undefined ? { label: args.recipientLabel } : {}) });
+  return who === "someone" ? `a ${platformName(args.platform)} person` : who;
+}
+
 function summarizeDm(args: ChatDmArgs): string[] {
   const lines = [
-    `Start a direct message with ${args.platform} person ${args.principalId} (granted by ${args.grant})`,
+    `Start a direct message with ${recipientWords(args)}, whom an operator granted`,
     args.text,
     `They will also see: ${args.footer.trim()}`,
     "Approving this also lets later messages to this person go without a card. They can stop it from their own DM at any time.",
@@ -29,7 +35,7 @@ function summarizeDm(args: ChatDmArgs): string[] {
 const chatDm: ActionKind<ChatDmArgs> = {
   kind: "chat.dm",
   policy: "member",
-  plainSummary: (args) => `Send a direct message to ${plainValue(args.platform)} person ${plainValue(args.principalId)}`,
+  plainSummary: (args) => `Send a direct message to ${recipientWords(args)}`,
   summarize: summarizeDm,
   async execute(args, decidedBy) {
     await deliverProactiveDm({
@@ -45,7 +51,7 @@ const chatDm: ActionKind<ChatDmArgs> = {
       first: true,
       ...(args.tainted === undefined ? {} : { tainted: args.tainted }),
     });
-    return `sent a direct message to ${args.platform} person ${args.principalId}`;
+    return `sent a direct message to ${recipientWords(args)}`;
   },
 };
 

@@ -464,7 +464,7 @@ console.log("3. the golden:");
       "Your Notion credential was just used in the conversation you approved.",
       "",
       '• What it did: read a Notion page — "Quarterly report"',
-      "• Who ran it: Ada Lovelace (`discord/G1/U-ASKER`)",
+      "• Who ran it: Ada Lovelace",
       "• The grant: this conversation",
       "",
       "This is the FIRST use of that grant, and the only notice you get for it. It stays live for the next 12 hours (until 04:19 UTC). Tell me here to end it and I will end it now.",
@@ -478,7 +478,7 @@ console.log("3. the golden:");
       "Your Notion credential was just used in the conversation you approved.",
       "",
       '• What it did: read a Notion page — "Quarterly report"',
-      "• Who ran it: `discord/G1/U-ASKER`",
+      "• Who ran it: <@U-ASKER>",
       "• The grant: once",
       "",
       "That was a one-shot grant, so it is now spent. Nothing else can be run with it.",
@@ -489,7 +489,7 @@ console.log("3. the golden:");
   eq(
     grantRoomNoticeText(DISCLOSURE, grantRow, "2026-03-20T21:19:45.132Z", "Ada Lovelace"),
     [
-      "Granted-credential use at 14:29 UTC. This is Ada Lovelace (`discord/G1/U-ASKER`)'s act, run with ada's credential.",
+      "Granted-credential use at 21:19 UTC. This is Ada Lovelace's act, run with ada's credential.",
       DISCLOSURE,
     ].join("\n"),
     "the room's disclosure notice",
@@ -696,8 +696,8 @@ console.log("5. the negative controls:");
   ok(!LEAK_PATTERNS.some(({ re }) => re.test("read a Notion page for the next 12 hours (until 04:19 UTC)")), "…and does NOT fire on ordinary product copy");
 
   const disclosure = grantRoomNoticeText(brokerLine(leakyRow), leakyRow, SENTINELS.instant);
-  ok(disclosure.includes("`discord/G1/U-ASKER`"), "🔴 the room's disclosure notice still names the requester's PRINCIPAL KEY — the audit join, deliberately exempt from the lint");
-  ok(grantOwnerNoticeText(leakyRow, undefined, NOW).includes("`discord/G1/U-ASKER`"), "…and so does the owner's first-use DM, for the same reason");
+  ok(!disclosure.includes("discord/G1/U-ASKER") && disclosure.includes("<@U-ASKER>"), "🔴 the room's disclosure notice names the requester as a mention, never by the PRINCIPAL KEY");
+  ok(!grantOwnerNoticeText(leakyRow, undefined, NOW).includes("discord/G1/U-ASKER") && grantOwnerNoticeText(leakyRow, undefined, NOW).includes("<@U-ASKER>"), "…and so does the owner's first-use DM");
 
   const line = brokerLine(leakyRow);
   ok(line.startsWith("acting as "), "the broker's line still leads with the §8.2 `acting as` marker — the room's one spelling of 'this ran on somebody's credential'");

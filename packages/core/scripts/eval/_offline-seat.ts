@@ -16,6 +16,7 @@ import editReplyDynamic from "../../agent/tools/edit_reply.js";
 import completeThreadDynamic from "../../agent/tools/complete_thread.js";
 import workDynamic from "../../agent/tools/work.js";
 import cancelWorkDynamic from "../../agent/tools/cancel_work.js";
+import answerDomainQuestionDynamic from "../../agent/tools/answer_domain_question.js";
 import setDmDeliveryDynamic from "../../agent/tools/set_dm_delivery.js";
 import requestCredentialGrantDynamic from "../../agent/tools/request_credential_grant.js";
 import { renderScopeMarkdown } from "../../agent/instructions/access.js";
@@ -238,6 +239,7 @@ export async function buildLeanSeatToolset(opts: {
     ["request_credential_grant", requestCredentialGrantDynamic],
     ["work", workDynamic],
     ["cancel_work", cancelWorkDynamic],
+    ["answer_domain_question", answerDomainQuestionDynamic],
   ] as const) {
     const entry = await resolveDynamicEntry(mod, opts.ctx);
     if (entry !== null) set[name] = rec(name, entry);

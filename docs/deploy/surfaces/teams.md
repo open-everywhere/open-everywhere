@@ -176,6 +176,7 @@ The Azure Bot exists, but Teams needs an **app package** (a manifest + icons) to
      - **This applied to `ChatMessage.Read.Chat` at `version` `1.0.2`**, and now applies to `ChannelMember.Read.Group` at `version` `1.0.3`: every team **or chat** that installed an earlier version keeps its old grant set. To pick up a new permission: rebuild the package, re-upload it to the catalog (Admin Center → *Teams apps → Manage apps →* the app *→ Update*), then **re-add the app to each affected chat/team** — or run the Graph install-with-consent call above with the new permission name (`permissionType: "application"`) in the `resourceSpecificPermissions` array. For a **chat** the endpoint is `POST /v1.0/chats/{chat-id}/installedApps` rather than `/teams/{team-id}/installedApps`, and the verification read is `GET https://graph.microsoft.com/beta/chats/{chat-id}/permissionGrants`. Until that re-consent happens the permission is inert — exactly like the UI-consent-silently-failed case above. **This is the path existing installs use to pick up `ChannelMember.Read.Group`** (new installs get it automatically as part of the default manifest — see [Proactive routines](#proactive-routines)).
 4. **Install / sideload** the app:
    - Org-wide: an admin uploads it in the [Teams Admin Center](https://admin.teams.microsoft.com) (**Teams apps → Manage apps → Upload**).
+   - **To list it in the Teams admin centre** — an org-wide upload or a Teams Store submission — build the zip with the ops tool `surface_app_package` instead of by hand. It fills the placeholders, refuses the project's name, and checks the package against the route's rules. See [Listing the Teams app in the admin centre](#listing-in-the-teams-admin-centre).
    - Single team: **Apps → Manage your apps → Upload an app** in the Teams client (custom-app upload must be enabled by your tenant admin).
 
 ## Step 3 — Configure the environment
@@ -492,6 +493,207 @@ chain that asked, and the agent says where it is.
 The card needs no extra manifest permission: `Action.Execute` is answered by the bot itself.
 Status: built and unit-tested, not yet proven on a live tenant — the
 [support matrix](./support-matrix.md) cell stays 🔧 until the `S-CARD-teams` leg passes.
+
+## Listing in the Teams admin centre
+
+This section is written for an **agent** that drives the setup over the ops MCP server, as in
+[Agent-driven setup](../agent-driven-setup.md). It takes a deployment whose Teams bot already
+answers (steps 1 to 4 above) to an app that a Teams admin can find and
+manage in the Teams admin centre. The operator does every step that a Microsoft console reserves for
+a person. You build the package, check it, and hand over each step.
+
+### The two routes
+
+A Teams admin manages third-party apps and agents in the Teams admin centre, under **Teams apps →
+Manage apps**. An app reaches that list in one of two ways.
+
+| Route | Who acts | What the admin centre shows | When to use it |
+| --- | --- | --- | --- |
+| `org` | A Teams admin in the operator's own tenant uploads the package (**Manage apps → Upload new app**). | A custom app, for that tenant only. | One organisation runs its own agent. |
+| `store` | A publisher submits the package in Partner Center. Microsoft reviews it and lists it in the Teams Store. | A store app. After the listing, it can also show **publisher attestation** and **Microsoft 365 Certification**. | Other organisations install the agent from the store. |
+
+Both routes take the same package: a zip with `manifest.json`, `color.png` and `outline.png` at its
+root. The ops tool `surface_app_package` builds that zip from this deployment's config and checks it
+against the rules of the route you name.
+
+🔴 **The app carries the operator's agent name, never the project's.** The tool refuses a package
+whose name holds "Open Everywhere". On the store route it also refuses the shipped project-mark
+icon files (`teams-app/color.png`, `teams-app/outline.png`, compared byte for byte); on the org
+route it warns, because the mark is the default avatar of a tenant's own deployment. Set
+[`identity.name`](../configuration-reference.md) in `agent/settings/settings.ts`, and put the
+operator's own icons in the project, before you build.
+
+### Before you build
+
+Ask the operator for each item below. Do not guess any of them.
+
+1. **The agent's name.** `identity.name` in `agent/settings/settings.ts`, at most 30 characters. On
+   the store route, the name must not contain a Microsoft product name ("Teams", "Microsoft",
+   "Excel" and others), must not start with a core Teams feature ("Chat", "Calendar", "Help" and
+   others), and must not contain "Beta", "Dev", "Preview" or "UAT".
+2. **Two icons**, saved in the project (by default `teams-app/color.png` and
+   `teams-app/outline.png`). `color.png` is 192x192. `outline.png` is 32x32, a white glyph on a
+   transparent background. On the store route, the two icons must show the same symbol.
+3. **The policy text.** `policyPages.privacy` and `policyPages.terms` in
+   `agent/settings/settings.ts`, deployed. The manifest points at `/privacy` and `/terms` on the
+   deployment. An admin and a store reviewer read both pages.
+4. **The developer name**: the publisher's name, at most 32 characters. On the store route it must
+   be the Partner Center publisher name.
+5. **The deployment's public origin**, for example `https://agent.example.com`. Not `localhost`, and
+   on the store route not a domain under `azurewebsites.net`, `microsoft.com` or `onmicrosoft.com`.
+6. **`MICROSOFT_APP_ID`** in `.env.local`. It is the Azure Bot's application id, not a secret.
+
+For the **store** route, also ask for:
+
+7. **A report contact**: an email address or an `https` URL that a person reads. The store requires
+   a way for a user to report harmful AI-generated content. The tool adds it to the long
+   description.
+8. **The Partner ID** (Microsoft AI Cloud Partner Program ID), digits only. The store recommends it
+   in `developer.mpnId`.
+9. **The channel choice** — see [Channels on the store route](#channels-on-the-store-route).
+
+### Build the package
+
+Call the tool. For the `org` route:
+
+```
+surface_app_package {
+  "surface": "teams",
+  "route": "org",
+  "baseUrl": "https://agent.example.com",
+  "developerName": "Example Ltd"
+}
+```
+
+For the `store` route, add the store inputs:
+
+```
+surface_app_package {
+  "surface": "teams",
+  "route": "store",
+  "baseUrl": "https://agent.example.com",
+  "developerName": "Example Ltd",
+  "partnerId": "1234567",
+  "supportContact": "ai-reports@example.com",
+  "channelFeatures": "omit"
+}
+```
+
+Optional inputs: `appName` overrides `identity.name`; `icons` gives other icon paths
+(`{"color": "…", "outline": "…"}`, relative to the project); `version` sets the package version;
+`outPath` sets where the zip goes. Every path must stay inside the project.
+
+The reply holds `findings`. A finding with `level: "block"` stops the package: the tool writes no
+file, and the reply says what to fix. A finding with `level: "warn"` does not stop it. Read every
+finding to the operator. When nothing blocks, the reply holds `path` (by default
+`teams-app/<name>-teams-<version>.zip`), its `sha256`, and the `steps` for the route. Git ignores
+`teams-app/*.zip`: build the zip again from config when you need it.
+
+### What the package checks
+
+The tool checks the result, not only the inputs. Each check comes from the Teams app manifest
+schema (versions 1.17 and 1.25) or from Microsoft's Teams Store validation guidelines (read
+2026-10-12).
+
+| Check | `org` | `store` |
+| --- | --- | --- |
+| No placeholder is left; `id`, `bots[0].botId` and `webApplicationInfo.id` are the same GUID | block | block |
+| `version` is `MAJOR.MINOR.PATCH`; names and descriptions are within the schema lengths | block | block |
+| The developer URLs are `https`; `accentColor` is `#RRGGBB` | block | block |
+| The name is not the project's name | block | block |
+| The icons are not the shipped project-mark files (byte for byte) | warn | block |
+| `color.png` is a 192x192 PNG; `outline.png` is a 32x32 white-on-transparent PNG | block | block |
+| `validDomains` is a bare domain that a tenant can reach | block | block |
+| `validDomains` holds no wildcard and no domain the store refuses | warn | block |
+| The name holds no Microsoft product name, no lead with a core Teams feature, no preproduction word | warn | block |
+| `policyPages.privacy` and `policyPages.terms` are declared | warn | block |
+| A channel choice is made (see below) | — | block |
+| A report contact is given; the description says the app uses AI | — | block |
+| A Partner ID is given | — | warn |
+
+The package holds the three files and nothing else, because the store refuses extra files. The long
+description names "Microsoft Teams" in full, and says that the agent uses AI and that a reply can be
+wrong.
+
+### Channels on the store route
+
+From July 2026, Microsoft's store guidelines require a **channel** app to use manifest schema 1.25
+or later and to declare `"supportsChannelFeatures": "tier1"`. That flag also lets a team install the
+app in **shared and private channels**. The org route has no such rule, so its package stays on
+schema 1.17 with the channel scope.
+
+On the store route the operator must choose, and the tool refuses to choose for them:
+
+- **`"omit"`** drops the `team` scope and the two channel RSC grants (`ChannelMessage.Read.Group`,
+  `ChannelMember.Read.Group`). The agent works in 1:1 chats and group chats only. The package stays
+  on schema 1.17.
+- **`"tier1"`** keeps channels, moves the package to schema 1.25 and declares the flag. The tool
+  warns, because this behaviour is not proven: Open Everywhere treats a channel that is not confirmed
+  team-wide as a private surface, but no one has tested a shared channel with external members on a
+  live tenant. Ask the operator to test a shared channel and a private channel before they submit.
+
+### Hand-over: the org route
+
+Give the operator these steps. Each needs a Teams admin.
+
+1. Open the [Teams admin centre](https://admin.teams.microsoft.com) → **Teams apps → Manage apps →
+   Upload new app**, and pick the zip.
+2. On the app's **Permissions** tab, grant consent if the tenant's policy needs it. The three RSC
+   grants are consented per team or per chat when someone installs the app.
+3. Allow the app in an **app permission policy**. To pin it for people, add it to an **app setup
+   policy**.
+4. Install it in one team and one group chat, and `@mention` it in each. A reply proves the round
+   trip.
+
+An update is the same zip with a higher `version`: **Manage apps →** the app **→ Update**. A team
+or chat that installed an older version keeps its old RSC grants (see the
+[Teams runbook](#step-2--package-the-teams-app)).
+
+### Hand-over: the store route
+
+Microsoft's review is a person, not a schema check. The package passes the checks above, but the
+reviewer also tests the running agent. Give the operator these steps, in order.
+
+1. **Publisher verification** (required by the store). Mark the bot's Entra app registration as
+   publisher verified: Entra → **App registrations →** the app **→ Branding & properties →
+   Publisher verification**. It needs a verified Partner Center account.
+2. **Bot metadata.** Make the Azure Bot resource's display name, icon, privacy URL and terms URL
+   match the manifest. The reviewer compares them.
+3. **Partner Center.** Create the Teams app offer (**Marketplace offers → Microsoft 365 and
+   Copilot**). Use the manifest's app name, developer name, short description and long description
+   exactly. Upload the same colour icon as the store icon. Add screenshots.
+4. **Test notes.** Give the reviewer a test tenant and test accounts that stay valid until the app is
+   live. Say what the agent does in a channel, a group chat and a 1:1 chat, and what it needs (an
+   Open Everywhere deployment that the publisher runs). Before you submit, check that the agent gives
+   a useful reply to "Hi", "Hello" and "Help": the store tests these words on every bot. Tell the
+   operator that the replies carry no in-chat AI label, which the store requires (see below).
+5. **Upload** the zip under the offer's **Packages**, and submit.
+6. **After the listing**, complete **publisher attestation** in Partner Center (Microsoft 365 App
+   Compliance). A new app cannot attest before it is listed. Microsoft 365 Certification is a
+   separate, later audit.
+
+An update must raise `version` and keep the same app id. When a capability changes, submit the new
+package for review again.
+
+### What the package cannot prove
+
+These items are outside the package. The tool does not check them, and this repository has not
+tested them on a live tenant.
+
+- 🔴 **The in-chat AI disclaimer.** The store guidelines also require an AI disclaimer that is
+  "clearly visible in the UI where users interact with generative AI content" (Must fix). The
+  package covers only the description. Open Everywhere's Teams replies carry no AI label today, so a
+  store submission can fail on this rule until the replies carry one.
+- **The prompt-injection rule.** The store guidelines require safeguards against attempts to
+  override the system instructions or safety controls. The reviewer judges this; the package cannot
+  show it.
+- The reviewer's live test of the agent, including the "Hi", "Hello" and "Help" replies.
+- The match between the Azure Bot resource's metadata and the manifest.
+- The agent's behaviour in shared and private channels (the `tier1` choice).
+- That the two icons show the same symbol, and that the store icon in Partner Center is the colour
+  icon.
+- Microsoft's app recommendations in the admin centre. The ticket names a change from November 2026
+  (message-centre post MC1481316) that recommends apps by usage. This page does not depend on it.
 
 ## Gotchas
 

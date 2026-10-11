@@ -1,6 +1,6 @@
 # Consuming Open Everywhere as npm packages
 
-You don't have to fork this repo to run Open Everywhere. The runtime ships as eight npm
+You don't have to fork this repo to run Open Everywhere. The runtime ships as nine npm
 packages, and your deployment can be a small repo of your own that depends on them: your
 config, your `roster.config.ts`, your Vercel project, your data.
 
@@ -22,7 +22,7 @@ and prints that `.` command, because it would otherwise make `my-agent/my-agent/
 Node below 24 the scaffold exits non-zero and writes nothing. The app it writes already holds
 everything on this page:
 
-- the eight packages and `@open-everywhere/create`, all pinned to that CLI's own version, and
+- the nine packages and `@open-everywhere/create`, all pinned to that CLI's own version, and
   `eve` pinned exactly to core's peer pin;
 - the root `zod` override (§ 3 below) and `"postinstall": "oe-eve-patch"` (§ 2 below);
 - `undici` overrides that lift `eve`'s exact `8.9.0` pin and `guarded-fetch`'s exact `7.29.0` pin
@@ -55,9 +55,9 @@ app typechecks, and that `eve build` succeeds. The rest of this page explains wh
 | --- | --- |
 | `@open-everywhere/core` | The portable runtime — access and approvals, identity, memory, spend, routines, webhooks, connectors, the audit chain, and the `oe` roster build. |
 | `@open-everywhere/adapters` | The reference Vercel-hosted backends: AI Gateway models and pricing, Sandbox, Neon, OpenTelemetry, AWS and Okta. |
-| `@open-everywhere/provider-slack` · `-teams` · `-discord` · `-github` · `-linear` · `-notion` | One per surface. Take only the ones you use. |
+| `@open-everywhere/provider-slack` · `-teams` · `-discord` · `-github` · `-linear` · `-notion` · `-email` | One per surface. Take only the ones you use. |
 
-All eight are **ESM-only** and versioned in lockstep — the eve pin, the shipped patch, and the
+All nine are **ESM-only** and versioned in lockstep — the eve pin, the shipped patch, and the
 contribution manifests move together, so a mixed set is not a supported configuration. Take the
 same version of everything.
 
@@ -229,7 +229,7 @@ refuses when the app pins a package that `<dir>` holds no tarball for, because t
 together. The check covers only the packages the app pins. When a tarball depends on a package
 the app does not pin (`@open-everywhere/create` depends on `@open-everywhere/provider-slack`), npm
 reads that package from the registry, and the install fails on the unpublished version. The
-scaffolded app pins all nine packages. The `file:` pins are for the rehearsal only: do not commit
+scaffolded app pins all ten packages. The `file:` pins are for the rehearsal only: do not commit
 `package.json` or the lockfile after the run. `eve` and every other dependency still come from the registry. A core at 0.3.0 or
 earlier has no `--from`.
 

@@ -1274,10 +1274,11 @@ args) still opens with a generic sentence that names the kind, because a card th
 posts no card. The notification text leads with the sentence too. Slack, Teams and Discord render
 the same layout (`packages/core/agent/approvals/card-layout.ts`): the sentence, the label, the
 detail, who asked and the expiry, then the **options as one ordered list** — Approve first, Reject
-last, and a routine's grant option between them. A later option (OPE-2456, "approve, and allow
-things like this") is one more entry in that list, not a new card design. That option is not built:
-plain Approve stays one-off, and repeats are still carried by the judge and the scope's
-[pre-approval rules](../how-it-works/pre-approval-rules.md).
+last, and a routine's grant option between them. "Approve, and allow things like this" (OPE-2456)
+is one more entry in that list, offered only where a rule could lift the act. It carries the
+proposed rule as a confirmation, and Slack shows it before the click is sent. Teams and Discord
+send a tap with no confirmation, so they leave that option out. Plain Approve stays one-off and never
+writes a rule. See [pre-approval rules § 7](../how-it-works/pre-approval-rules.md#7-approve-and-allow-things-like-this).
 
 **Several asks from one job arrive as one card, on Slack.** A pending row freezes its proposing
 session (`group_key`). When a second ask comes from the same session, into the same room and the
@@ -1377,12 +1378,17 @@ rule.
 | `a2a.delegate` | `delegate_to_agent` | member |
 | `access.request` | `request_access` | member |
 | `agent.create` | `create_agent` | member |
+| `browser.personal.act` | `my_browser` | member |
+| `browser.personal.handback` | `my_browser_handoff` | member |
 | `chat.dm` | `dm_person` | member |
 | `chat.post` | `post_message` | member |
 | `connector.clear` | `clear_connector_override` | admin |
 | `connector.revoke` | `revoke_connector` | admin |
+| `email.sender` | `propose_email_sender` | member |
 | `halt.resume` | `resume` | admin |
 | `mcp-server.propose` | `propose_mcp_server` | member |
+| `meeting.join` | `meeting_join` | member |
+| `meeting.recap` | `meeting_recap` | member |
 | `memory.purge` | `purge_memory` | member |
 | `op.connector` | — *(no propose tool)* | member |
 | `pr.open` | `open_pull_request` | member |

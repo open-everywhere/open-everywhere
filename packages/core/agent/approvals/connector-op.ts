@@ -1,3 +1,4 @@
+import { placeWords } from "../channels/friendly-ids.js";
 import { appendAudit } from "../audit/audit.js";
 import { getConfig } from "../access/config.js";
 import { surfaceContextFromAuth } from "../access/connector-scope.js";
@@ -10,6 +11,7 @@ import { checkApprovalVenue, describeVenueRefusal } from "./card-venue.js";
 import { CONNECTOR_OP_CARD_KIND, connectorArgsWithoutInput, connectorCardContext, registerConnectorOpCardOfferer, registerSignInCardDeliverer, type ConnectorOpCardOffer, type ConnectorOpCardResult, type SignInCardOffer } from "./connector-op-offer.js";
 import { deliverProactiveDm, dmDeliveryFooter, personAddress } from "../channels/dm-audience.js";
 import { canDeliverDirectMessage } from "../channels/post-arms.js";
+import { connectorDisplayName } from "../access/credential-grant-copy.js";
 import type { ActionKind } from "./types.js";
 import { approvalPostDeps, requestApproval } from "./flow.js";
 import type { SessionAuth } from "eve/context";
@@ -160,16 +162,17 @@ export async function offerConnectorCard(offer: ConnectorOpCardOffer, deps: { re
     approvalPostDeps(venue.platform, ctx),
   );
   if (posted.autoApproved) return { outcome: "approved" };
-  return { outcome: "carded", pendingId: posted.id, where: venue.sameRoom ? "in this conversation" : `in ${venue.surfaceKey}` };
+  return { outcome: "carded", pendingId: posted.id, where: venue.sameRoom ? "in this conversation" : `in ${placeWords({ key: venue.surfaceKey })}` };
 }
 
 registerConnectorOpCardOfferer((offer) => offerConnectorCard(offer));
 
-function signInCardText(offer: SignInCardOffer): string {
+export function signInCardText(offer: Pick<SignInCardOffer, "connector" | "url" | "resumes">): string {
+  const vendor = connectorDisplayName(offer.connector);
   return (
-    `🔐 A job you asked for needs your own ${offer.connector} account, and it is not connected yet. ` +
-    `Open this personal link to connect it (it expires soon): ${offer.url}\n` +
-    "When you have connected it, say so in the conversation, and the agent runs the job again. Nothing ran yet."
+    `🔐 To do this I need your own ${vendor} account, and it is not connected yet. ` +
+    `Open this private link to connect it (it expires soon, so do not forward it): ${offer.url}\n` +
+    (offer.resumes === true ? "Once you connect it, I pick the job up again. Nothing has run yet." : "Once you connect it, tell me here and I'll pick the job up. Nothing has run yet.")
   );
 }
 
@@ -182,7 +185,13 @@ async function deliverSignIn(offer: SignInCardOffer): Promise<boolean> {
     recipientId: offer.recipientId,
     address: personAddress(offer.platform, offer.recipientId),
     text: signInCardText(offer),
-    footer: dmDeliveryFooter({ requestedBy: offer.recipientId, fromContainer: offer.fromContainer }),
+    footer: dmDeliveryFooter({
+      platform: offer.platform,
+      recipientId: offer.recipientId,
+      requestedBy: offer.recipientId,
+      from: offer.fromContainer,
+      ...(offer.sameConversation === true ? { sameConversation: true } : {}),
+    }),
     requestedBy: offer.recipientId,
     attributedTo: offer.recipientId,
   });

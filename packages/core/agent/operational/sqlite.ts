@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Routine } from "../routines/routine.js";
-import { asSurfaceMode, readThreadSeatStateValue, auditSurfaceMode, auditReadOrg, likePrefixPattern, argKeyNeedle, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type ChannelSessionRuntimeStamp, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow, ATTENTION_COLUMNS, attentionPruneBefore, attentionRowFrom, type AttentionDbRow } from "./store.js";
+import { asSurfaceMode, readThreadSeatStateValue, auditSurfaceMode, auditReadOrg, likePrefixPattern, argKeyNeedle, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type ChannelSessionRuntimeStamp, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow, type PersonOptOutRow, type PersonalBrowserRow, ATTENTION_COLUMNS, attentionPruneBefore, attentionRowFrom, type AttentionDbRow, DM_RULE_COLUMNS, dmRuleRowFrom, type DmRuleDbRow } from "./store.js";
 import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn, grantRefundTurnOrdinal } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
@@ -705,12 +705,44 @@ function getDb(): DatabaseSync {
       PRIMARY KEY (org_id, session_id)
     );
     CREATE INDEX IF NOT EXISTS attention_state_person ON attention_state (org_id, person_platform, person_id);
+    -- dm_rule (OPE-2456): the rules a person confirmed from an approval card in their own DM. The judge reads them
+    -- for that person's own asks in that DM only; the person removes one in the Home tab.
+    CREATE TABLE IF NOT EXISTS dm_rule (
+      org_id           TEXT NOT NULL,
+      surface_key      TEXT NOT NULL,
+      rule_id          TEXT NOT NULL,
+      owner_id         TEXT NOT NULL,
+      rule             TEXT NOT NULL,
+      subject_json     TEXT NOT NULL,
+      source_action_id TEXT NOT NULL,
+      created_at       TEXT NOT NULL,
+      updated_at       TEXT NOT NULL,
+      PRIMARY KEY (org_id, surface_key, rule_id)
+    );
     CREATE TABLE IF NOT EXISTS dm_audience (
       org_id      TEXT NOT NULL,
       address     TEXT NOT NULL,          -- the person address, e.g. slack:person/U0123ABC
       first_dm_at TEXT,                   -- ISO-8601 of the FIRST proactive DM; NULL = never delivered
       stopped_at  TEXT,                   -- ISO-8601 the recipient stopped it; NULL = not stopped
       PRIMARY KEY (org_id, address)
+    );
+    -- person_opt_out (OPE-2436): who has opted out of agent actions on their own content. One
+    -- nullable timestamp and no content — store.ts's PersonOptOutRow carries the posture.
+    CREATE TABLE IF NOT EXISTS person_opt_out (
+      org_id        TEXT NOT NULL,
+      principal_key TEXT NOT NULL,        -- the binding's principalId, e.g. a Slack U0456
+      opted_out_at  TEXT,                 -- ISO-8601 the person opted out; NULL = not opted out
+      PRIMARY KEY (org_id, principal_key)
+    );
+    -- personal_browser (OPE-2441): one row per person's browser — store.ts's PersonalBrowserRow. Every
+    -- write is a compare-and-set on version.
+    CREATE TABLE IF NOT EXISTS personal_browser (
+      org_id        TEXT NOT NULL,
+      principal_key TEXT NOT NULL,        -- the person's qualified principal key, e.g. slack/T01/U0456
+      state_json    TEXT NOT NULL,
+      version       INTEGER NOT NULL,
+      updated_at    TEXT NOT NULL,
+      PRIMARY KEY (org_id, principal_key)
     );
     CREATE TABLE IF NOT EXISTS instance_meta (
       key   TEXT PRIMARY KEY,
@@ -1259,6 +1291,21 @@ function grantFromSqliteRow(r: GrantSqliteRow): CredentialGrantRow {
     ...(r.used_at === null ? {} : { usedAt: r.used_at }),
     ...(r.revoked_at === null ? {} : { revokedAt: r.revoked_at }),
   };
+}
+
+interface PersonalBrowserSqliteRow {
+  readonly principal_key: string;
+  readonly state_json: string;
+  readonly version: number;
+  readonly updated_at: string;
+}
+
+function personalBrowserRowFrom(r: PersonalBrowserSqliteRow): PersonalBrowserRow {
+  return { principalKey: r.principal_key, stateJson: r.state_json, version: Number(r.version), updatedAt: r.updated_at };
+}
+
+function personOptOutRowFrom(r: { principal_key: string; opted_out_at: string | null }): PersonOptOutRow {
+  return { principalKey: r.principal_key, ...(r.opted_out_at === null ? {} : { optedOutAt: r.opted_out_at }) };
 }
 
 function dmAudienceRowFrom(r: { address: string; first_dm_at: string | null; stopped_at: string | null }): DmAudienceRow {
@@ -2483,6 +2530,87 @@ export const sqliteOperationalStore: OperationalStore = {
       .prepare("SELECT address, first_dm_at, stopped_at FROM dm_audience WHERE org_id = ? ORDER BY address")
       .all(org) as { address: string; first_dm_at: string | null; stopped_at: string | null }[];
     return rows.map(dmAudienceRowFrom);
+  },
+
+  async getPersonalBrowser(org, principalKey) {
+    const row = getDb()
+      .prepare("SELECT principal_key, state_json, version, updated_at FROM personal_browser WHERE org_id = ? AND principal_key = ?")
+      .get(org, principalKey) as PersonalBrowserSqliteRow | undefined;
+    return row ? personalBrowserRowFrom(row) : null;
+  },
+
+  async casPersonalBrowser(org, principalKey, stateJson, at, expected) {
+    const db = getDb();
+    if (expected === null) {
+      const changes = db
+        .prepare("INSERT INTO personal_browser (org_id, principal_key, state_json, version, updated_at) VALUES (?, ?, ?, 1, ?) ON CONFLICT (org_id, principal_key) DO NOTHING")
+        .run(org, principalKey, stateJson, at).changes;
+      return changes > 0 ? 1 : null;
+    }
+    const changes = db
+      .prepare("UPDATE personal_browser SET state_json = ?, version = version + 1, updated_at = ? WHERE org_id = ? AND principal_key = ? AND version = ?")
+      .run(stateJson, at, org, principalKey, expected).changes;
+    return changes > 0 ? expected + 1 : null;
+  },
+
+  async deletePersonalBrowser(org, principalKey) {
+    return getDb().prepare("DELETE FROM personal_browser WHERE org_id = ? AND principal_key = ?").run(org, principalKey).changes > 0;
+  },
+
+  async listPersonalBrowsers(org) {
+    const rows = getDb()
+      .prepare("SELECT principal_key, state_json, version, updated_at FROM personal_browser WHERE org_id = ? ORDER BY principal_key")
+      .all(org) as unknown as PersonalBrowserSqliteRow[];
+    return rows.map(personalBrowserRowFrom);
+  },
+
+  async getPersonOptOut(org, principalKey) {
+    const row = getDb()
+      .prepare("SELECT principal_key, opted_out_at FROM person_opt_out WHERE org_id = ? AND principal_key = ?")
+      .get(org, principalKey) as { principal_key: string; opted_out_at: string | null } | undefined;
+    return row ? personOptOutRowFrom(row) : null;
+  },
+
+  async setPersonOptOut(org, principalKey, at) {
+    const db = getDb();
+    if (db.prepare("INSERT INTO person_opt_out (org_id, principal_key, opted_out_at) VALUES (?, ?, ?) ON CONFLICT (org_id, principal_key) DO NOTHING").run(org, principalKey, at).changes > 0) {
+      return true;
+    }
+    return (
+      db.prepare("UPDATE person_opt_out SET opted_out_at = ? WHERE org_id = ? AND principal_key = ? AND opted_out_at IS NULL").run(at, org, principalKey).changes > 0
+    );
+  },
+
+  async clearPersonOptOut(org, principalKey) {
+    return (
+      getDb()
+        .prepare("UPDATE person_opt_out SET opted_out_at = NULL WHERE org_id = ? AND principal_key = ? AND opted_out_at IS NOT NULL")
+        .run(org, principalKey).changes > 0
+    );
+  },
+
+  async listDmRules(org, surfaceKey) {
+    const rows = getDb()
+      .prepare(`SELECT ${DM_RULE_COLUMNS} FROM dm_rule WHERE org_id = ? AND surface_key = ? ORDER BY created_at, rule_id`)
+      .all(org, surfaceKey) as DmRuleDbRow[];
+    return rows.map((r) => dmRuleRowFrom(org, r));
+  },
+
+  async upsertDmRule(row) {
+    getDb()
+      .prepare(
+        `INSERT INTO dm_rule (org_id, surface_key, rule_id, owner_id, rule, subject_json, source_action_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (org_id, surface_key, rule_id) DO UPDATE SET
+           owner_id = excluded.owner_id, rule = excluded.rule, subject_json = excluded.subject_json,
+           source_action_id = excluded.source_action_id, updated_at = excluded.updated_at`,
+      )
+      .run(row.org, row.surfaceKey, row.ruleId, row.ownerId, row.rule, row.subjectJson, row.sourceActionId, row.createdAt, row.updatedAt);
+  },
+
+  async removeDmRule(org, surfaceKey, ruleId) {
+    const info = getDb().prepare("DELETE FROM dm_rule WHERE org_id = ? AND surface_key = ? AND rule_id = ?").run(org, surfaceKey, ruleId);
+    return info.changes > 0;
   },
 
   async recordAttentionState(row) {

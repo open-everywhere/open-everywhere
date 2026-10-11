@@ -431,10 +431,15 @@ const ORG = "default";
 }
 
 {
-  const footer = dmDeliveryFooter({ requestedBy: "U_ASKER", fromContainer: HOME });
-  ok(footer.includes("U_ASKER"), "the footer names WHO asked");
-  ok(footer.includes(HOME), "the footer names WHERE the ask came from");
+  const footer = dmDeliveryFooter({ platform: "slack", recipientId: "USARAH001", requestedBy: "UASKER001", from: HOME });
+  ok(footer.includes("<@UASKER001> asked for this"), `the footer names WHO asked, as a mention (got ${JSON.stringify(footer)})`);
+  ok(footer.includes("in <#C_HOME>"), "the footer names WHERE the ask came from, as a channel mention");
+  ok(!footer.includes(HOME), "the footer prints no scope key");
   ok(footer.toLowerCase().includes("stop"), "the footer tells the recipient how to stop it");
+  const own = dmDeliveryFooter({ platform: "slack", recipientId: "UASKER001", requestedBy: "slack/T1/UASKER001", from: HOME });
+  ok(own.includes("_You asked for this in <#C_HOME>."), "a DM to the person who asked says \"you\"");
+  ok(dmDeliveryFooter({ platform: "slack", recipientId: "UASKER001", requestedBy: "UASKER001", from: "slack/T1/D1", sameConversation: true }) === "", "a DM in the conversation the person asked from carries no footer");
+  ok(dmDeliveryFooter({ platform: "slack", recipientId: "USARAH001", requestedBy: "UASKER001", from: "slack/T1/D1", sameConversation: true }) !== "", "…but only when the reader IS the person who asked");
 }
 
 {

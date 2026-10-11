@@ -1,4 +1,5 @@
 import { slackContinuationToken } from "eve/channels/slack";
+import { parseSlackAppContext, type SlackAppContextRoom } from "./slack-side-panel.js";
 import { callSlackWebApi } from "./slack-web-api.js";
 import { slackBotToken } from "../setup/credentials.js";
 import { RateLimitExhaustedError } from "@open-everywhere/core/agent/adapter-api.js";
@@ -163,6 +164,7 @@ export interface ParsedMessageEvent {
   readonly previousText?: string;
   readonly isAppMention: boolean;
   readonly attachments?: readonly WakeAttachment[];
+  readonly appContext?: SlackAppContextRoom;
 }
 
 export function parseSlackFiles(files: unknown): WakeAttachment[] {
@@ -413,6 +415,7 @@ export function parseMessageEvent(envelope: SlackEventEnvelope): ParsedMessageEv
   const teamId = envelope.team_id ?? (typeof e.team === "string" ? e.team : undefined);
   const enterpriseId = slackEnterpriseIdFromEnvelope(envelope);
   const attachments = parseSlackFiles(inner.files);
+  const appContext = parseSlackAppContext(e);
   for (const a of attachments) {
     if (a.kind === "image" && a.id && a.url) registerSlackAttachment(a.id, { urlPrivate: a.url, mimeType: a.mimeType, name: a.name, teamId });
   }
@@ -431,6 +434,7 @@ export function parseMessageEvent(envelope: SlackEventEnvelope): ParsedMessageEv
     previousText: typeof previousMessage?.text === "string" ? previousMessage.text : undefined,
     isAppMention: e.type === "app_mention",
     attachments,
+    ...(appContext === undefined ? {} : { appContext }),
   };
 }
 
@@ -546,6 +550,7 @@ export interface SlackWakeOpts {
   readonly triggerRefuted?: boolean;
   readonly nameDrop?: boolean;
   readonly catchUpUnavailable?: string;
+  readonly systemNote?: string;
   readonly contextLines?: readonly ContextLine[];
   readonly contextSource?: string;
   readonly readMoreHint?: string;
@@ -578,6 +583,7 @@ function slackJudgedWake(
     backscroll: opts.backscroll,
     ...(addressing === "name-drop" ? { nameDrop: { followUp: "follows-on-reply" as const } } : {}),
     ...(opts.catchUpUnavailable !== undefined ? { catchUpUnavailable: opts.catchUpUnavailable } : {}),
+    ...(opts.systemNote !== undefined ? { systemNote: opts.systemNote } : {}),
     ...(opts.contextLines !== undefined ? { contextLines: opts.contextLines } : {}),
     ...(opts.contextSource !== undefined ? { contextSource: opts.contextSource } : {}),
     ...(opts.readMoreHint !== undefined ? { readMoreHint: opts.readMoreHint } : {}),

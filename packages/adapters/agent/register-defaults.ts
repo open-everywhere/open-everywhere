@@ -5,6 +5,8 @@ import { registerAwsAccess } from "./aws/register.js";
 import { awsAccessEnabled } from "./aws/config.js";
 import { registerDirectoryAdapter } from "./directory/register.js";
 import { registerGatewayRouteProbe } from "./model/gateway-probe.js";
+import { registerLongLivedBoxes } from "./sandbox/long-lived-box.js";
+import { registerNativeTranscriptSources } from "./meetings/native-sources.js";
 import { registerNeon } from "./postgres/neon.js";
 import {
   registerDbCredentialBroker,
@@ -109,6 +111,10 @@ async function wireDefaultAdapters(options: DefaultAdapterOptions): Promise<Defa
   for (const provider of options.providers) {
     provider.register();
   }
+
+  registerLongLivedBoxes();
+
+  registerNativeTranscriptSources();
 
   registerGatewayRouteProbe();
 

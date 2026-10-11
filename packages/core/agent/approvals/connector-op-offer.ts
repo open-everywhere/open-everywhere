@@ -139,6 +139,8 @@ export interface SignInCardOffer {
   readonly connector: string;
   readonly url: string;
   readonly fromContainer: string;
+  readonly sameConversation?: boolean;
+  readonly resumes?: boolean;
 }
 
 export type SignInCardDeliverer = (offer: SignInCardOffer) => Promise<boolean>;

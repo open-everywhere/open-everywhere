@@ -2,6 +2,7 @@ import {
   agentCommandName,
   configuredAgentName,
   declaredMcpServers,
+  getSettings,
   registerSurfaceAppManifest,
   registerSurfaceCredentialProbe,
 } from "@open-everywhere/core/agent/adapter-api-ops.js";
@@ -22,6 +23,7 @@ export function slackManifestOptionsFromSettings(opts: { readonly appName?: stri
     ...(agentName === undefined ? {} : { agentName }),
     commandName: agentCommandName(),
     ...(declaredMcpServers().some((s) => s.name === SLACK_AS_YOU_NAME) ? { personalMcp: true } : {}),
+    suggestedPrompts: getSettings().slack.suggestedPrompts,
   };
 }
 

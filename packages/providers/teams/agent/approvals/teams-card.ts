@@ -1,5 +1,5 @@
 import type { CardOptionTone, PendingActionRow } from "@open-everywhere/core/agent/adapter-api.js";
-import { approvalLabel, pendingCardLayout, plainSummaryForRow } from "@open-everywhere/core/agent/adapter-api.js";
+import { approvalLabel, optionsWithoutConfirm, pendingCardLayout, plainSummaryForRow } from "@open-everywhere/core/agent/adapter-api.js";
 
 export const TEAMS_ADAPTIVE_CARD_ACTION_INVOKE = "adaptiveCard/action";
 
@@ -103,7 +103,7 @@ const OPTION_STYLE: Record<CardOptionTone, "positive" | "destructive" | undefine
 
 export function pendingTeamsCard(row: PendingActionRow, summaryLines: readonly string[]): TeamsAdaptiveCard {
   const layout = pendingCardLayout(row, summaryLines);
-  const actions = layout.options.map((o) => execute(row, o.label, o.verb, OPTION_STYLE[o.tone]));
+  const actions = optionsWithoutConfirm(layout.options).map((o) => execute(row, o.label, o.verb, OPTION_STYLE[o.tone]));
   return card(approvalCardBody(row, summaryLines, `Requested by ${layout.requestedBy} · ${layout.expiry}`), actions);
 }
 

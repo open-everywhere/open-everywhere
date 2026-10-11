@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/provider-teams",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Open Everywhere Microsoft Teams provider — Teams channel and chat surfaces via Microsoft Graph.",
   "keywords": [
     "agent",
@@ -40,6 +40,10 @@
     "./agent/app-manifest.js": {
       "types": "./dist/agent/app-manifest.d.ts",
       "default": "./dist/agent/app-manifest.js"
+    },
+    "./agent/app-package.js": {
+      "types": "./dist/agent/app-package.d.ts",
+      "default": "./dist/agent/app-package.js"
     },
     "./agent/approvals/teams-card.js": {
       "types": "./dist/agent/approvals/teams-card.d.ts",
@@ -190,10 +194,11 @@
     "test:teams-message-ops": "NODE_NO_WARNINGS=1 tsx scripts/teams-message-ops-test.ts",
     "test:teams-id-restore": "NODE_NO_WARNINGS=1 tsx scripts/teams-id-restore-test.ts",
     "test:teams-declared-target": "NODE_NO_WARNINGS=1 tsx scripts/teams-declared-target-test.ts",
-    "test:teams-spend-attribution": "NODE_NO_WARNINGS=1 tsx scripts/teams-spend-attribution-test.ts"
+    "test:teams-spend-attribution": "NODE_NO_WARNINGS=1 tsx scripts/teams-spend-attribution-test.ts",
+    "test:teams-app-package": "NODE_NO_WARNINGS=1 tsx scripts/teams-app-package-test.ts"
   },
   "dependencies": {
-    "@open-everywhere/core": "0.5.0",
+    "@open-everywhere/core": "0.6.0",
     "zod": "4.5.4"
   },
   "peerDependencies": {

@@ -17,6 +17,7 @@ import {
   registerBootNotice,
   registerSurfaceStatusReporter,
   registerMemoryWriteObserver,
+  registerDomainMembershipProbe,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { PROVIDER_DOCS } from "./docs-generated.js";
 import { slackSurfaceStatus } from "./status.js";
@@ -42,6 +43,7 @@ import slackChannel from "./channels/slack.js";
 import { slackWebhookVerifier } from "./channels/slack-webhook-verifier.js";
 import { registerSlackOps } from "./ops.js";
 import { coalescedRefresh, liveMemoryCanvasDeps } from "./channels/slack-memory-canvas.js";
+import { slackDomainMembershipProbe } from "./channels/slack-home.js";
 import { announceSlackSetupCode } from "./setup/claim.js";
 import { reopenSlackSetup, slackInstallState } from "./setup/install-state.js";
 
@@ -60,6 +62,7 @@ export function registerSlackProvider(): void {
   registerAccountDirectory("slack", () => fetchWorkspaceRoster());
   registerSlackAttachmentResolver();
   registerSlackGovernanceMembers();
+  registerDomainMembershipProbe("slack", slackDomainMembershipProbe());
   registerSlackBridge({
     form: slackForm,
     readCall: callSlackRead,

@@ -3,6 +3,7 @@ import { domainFingerprintForSeat } from "./domain-fingerprint.js";
 import { getOperationalStore } from "../operational/provider.js";
 import type { OperationalStore } from "../operational/store.js";
 import { RUNTIME_CODE_FINGERPRINT_SOURCE } from "./runtime-code-fingerprint.generated.js";
+import { registeredAppCodeFingerprint } from "./app-code-fingerprint.js";
 
 export const EVE_RUNTIME_VERSION = "0.71.0";
 
@@ -15,6 +16,11 @@ if (RUNTIME_DEPLOYMENT_ID === "local" && (process.env.VERCEL ?? "").trim().lengt
 }
 
 export const RUNTIME_CODE_FINGERPRINT = `${EVE_RUNTIME_VERSION}:${RUNTIME_CODE_FINGERPRINT_SOURCE}`;
+
+export function runningCodeFingerprint(): string {
+  const app = registeredAppCodeFingerprint();
+  return app === undefined ? RUNTIME_CODE_FINGERPRINT : `${RUNTIME_CODE_FINGERPRINT}:${app}`;
+}
 
 export const RUNTIME_ROTATION_AUDIT_ACTION = "session.runtime_rotation";
 
@@ -44,7 +50,7 @@ export async function claimRuntimeRotationOutcome(
   scope: RuntimeRotationScope,
   deps: RuntimeRotationDeps & { readonly rotateUnstamped?: boolean } = {},
 ): Promise<RuntimeRotationOutcome> {
-  const codeFingerprint = deps.codeFingerprint ?? RUNTIME_CODE_FINGERPRINT;
+  const codeFingerprint = deps.codeFingerprint ?? runningCodeFingerprint();
   const domainFingerprint = deps.domainFingerprint ?? domainFingerprintForSeat(scope.domainName, scope.surfaceKey);
   if (domainFingerprint === undefined) return "unchecked";
 
@@ -91,7 +97,7 @@ export async function claimRuntimeRotationOutcome(
 }
 
 export async function stampMintedRuntime(scope: RuntimeRotationScope, deps: RuntimeRotationDeps = {}): Promise<void> {
-  const codeFingerprint = deps.codeFingerprint ?? RUNTIME_CODE_FINGERPRINT;
+  const codeFingerprint = deps.codeFingerprint ?? runningCodeFingerprint();
   const domainFingerprint = deps.domainFingerprint ?? domainFingerprintForSeat(scope.domainName, scope.surfaceKey);
   if (domainFingerprint === undefined) return;
   const store = deps.store ?? getOperationalStore();

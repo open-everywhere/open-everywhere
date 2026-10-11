@@ -31,6 +31,7 @@
       "@open-everywhere/adapters/*": ["./packages/adapters/*"],
       "@open-everywhere/create/*": ["./packages/create/*"],
       "@open-everywhere/provider-discord/*": ["./packages/providers/discord/*"],
+      "@open-everywhere/provider-email/*": ["./packages/providers/email/*"],
       "@open-everywhere/provider-github/*": ["./packages/providers/github/*"],
       "@open-everywhere/provider-linear/*": ["./packages/providers/linear/*"],
       "@open-everywhere/provider-notion/*": ["./packages/providers/notion/*"],

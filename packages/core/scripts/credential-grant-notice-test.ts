@@ -182,14 +182,15 @@ console.log("1. the host-authored copy:");
   const line = "acting as rowan_hale — «the broker's disclosure line, whatever it says»";
   const text = grantRoomNoticeText(line, row, "2026-05-04T05:52:01.000Z");
   ok(text.includes(line), "the room copy carries the broker's disclosure line VERBATIM — the model authors none of it, and this notice reads none of it");
-  ok(text.includes("`slack/T1/U-req`'s act"), "…and it names the REQUESTER as the actor (§8.2 bullet 2), not the owner");
+  ok(text.includes("<@U-req>'s act"), "…and it names the REQUESTER as the actor (§8.2 bullet 2), not the owner, as a mention (OPE-2462)");
+  ok(!text.includes("slack/T1/U-req"), "…and never as the principal key");
   ok(text.includes("run with rowan_hale's credential"), "…and the owner only as the credential holder");
 
   ok(text.includes("Granted-credential use at 05:52 UTC."), "the room reads a clock time");
   ok(!text.includes("2026-05-04T05:52:01.000Z"), "…and never the ISO instant the column holds");
   eq(
     grantRoomNoticeText(line, row, "not-an-instant"),
-    `Granted-credential use. This is \`slack/T1/U-req\`'s act, run with rowan_hale's credential.\n${line}`,
+    `Granted-credential use. This is <@U-req>'s act, run with rowan_hale's credential.\n${line}`,
     "…and a stamp that does not parse names NO time rather than falling back to the bytes",
   );
   ok(
@@ -224,7 +225,7 @@ const sessionGrant = await mintGrant("session-standing", "session");
   ok(posted[0].text.includes(result.disclosure ?? "NO-DISCLOSURE"), "…carrying the SAME host-authored line the broker put in the tool result");
   eq(posted[0].replier, undefined, "…and NO replier label reaches the display-name-capable arm: the post is never re-attributed to the owner (§8.2 bullet 2)");
   ok(posted[0].text.startsWith("Granted-credential use at "), "…and no bracket prefix was baked into the body either, which is how a NON-capable arm would render a replier label");
-  ok(posted[0].text.includes("`slack/T1/U-req`'s act"), "…and the copy names the requester as the actor");
+  ok(posted[0].text.includes("<@U-req>'s act") && !posted[0].text.includes("slack/T1/U-req"), "…and the copy names the requester as the actor, as a mention and never as the principal key (OPE-2462)");
   ok(!posted[0].text.includes("blocks"), "…and never the vendor OUTPUT (§8.2: names and ids only), though the transport returned a body with `blocks` in it");
 
   eq(dmed.length, dmsAfterCard + 1, "THE OWNER GOT A DM on the first use of their grant");
@@ -404,7 +405,8 @@ console.log("9. the two halves called directly:");
     false,
     "…and a grant whose claim is already held delivers nothing, however it is called",
   );
-  ok(grantOwnerNoticeText(grant, undefined, NOW).includes("`slack/T1/U-req`"), "the owner's DM names WHO ran it, by the principal key the `grant.used` row also carries (OPE-1083)");
+  ok(grantOwnerNoticeText(grant, undefined, NOW).includes("Who ran it: <@U-req>"), "the owner's DM names WHO ran it, as a mention");
+  ok(!grantOwnerNoticeText(grant, undefined, NOW).includes("slack/T1/U-req"), "…and never by the principal key");
   ok(!grantOwnerNoticeText(grant, undefined, NOW).includes("blocks"), "…and never the vendor OUTPUT: the notice reports the act, never what it read");
   ok(grantOwnerNoticeText(grant, undefined, NOW).includes("Tell me here to end it and I will end it now."), "the owner's DM OFFERS the end, because `tools/revoke_credential_grant.ts` now takes it");
   ok(!grantOwnerNoticeText(grant, undefined, NOW).includes("There is no way to revoke it yet"), "…and no longer says the control is absent, which the route made false");
@@ -424,14 +426,14 @@ console.log("10. a registered display-name arm resolves a label, and the princip
   eq(dmed.length, dmsBefore + 1, "…and DMed the owner on this grant's first use");
 
   ok(posted[posted.length - 1].text.includes("Rae Chen (@rae)"), "THE ROOM LINE carries the RESOLVED display label");
-  ok(posted[posted.length - 1].text.includes("`slack/T1/U-req`"), "…and STILL carries the principal key — the audit join stays visible");
+  ok(!posted[posted.length - 1].text.includes("slack/T1/U-req"), "…and NO principal key beside it (OPE-2462) — the audit row carries the join");
   ok(dmed[dmed.length - 1].text.includes("Rae Chen (@rae)"), "THE OWNER'S DM carries the resolved label too");
-  ok(dmed[dmed.length - 1].text.includes("`slack/T1/U-req`"), "…and the principal key, for the same reason");
+  ok(!dmed[dmed.length - 1].text.includes("slack/T1/U-req"), "…and no principal key there either");
 
   _resetAccountDisplayNamesForTest();
 }
 
-console.log("11. NEGATIVE CONTROL — no display-name arm resolves ⇒ the notice falls back to the principal key alone:");
+console.log("11. NEGATIVE CONTROL — no display-name arm resolves ⇒ the notice falls back to the platform mention:");
 {
   await mintGrant("session-nolabel", "session");
   const dmsBefore = dmed.length;
@@ -439,9 +441,9 @@ console.log("11. NEGATIVE CONTROL — no display-name arm resolves ⇒ the notic
   ok(result.ok, "the granted call succeeded");
   eq(dmed.length, dmsBefore + 1, "…and DMed the owner on this grant's first use");
 
-  ok(posted[posted.length - 1].text.includes("`slack/T1/U-req`"), "the room line still names the requester, by principal key");
+  ok(posted[posted.length - 1].text.includes("<@U-req>"), "the room line still names the requester, as a mention (OPE-2462)");
   ok(!posted[posted.length - 1].text.includes("Rae Chen"), "…and never a name this deployment cannot resolve — no arm is registered right now");
-  ok(dmed[dmed.length - 1].text.includes("`slack/T1/U-req`"), "the owner's DM names the requester by principal key too");
+  ok(dmed[dmed.length - 1].text.includes("<@U-req>"), "the owner's DM names the requester as a mention too");
   ok(!dmed[dmed.length - 1].text.includes("Rae Chen"), "…and no invented name there either");
 }
 

@@ -79,7 +79,13 @@ import {
   tailAuthorGrain,
   dmWindowRegistryKey,
   stampSurfaceEventVerified,
+  readPersonOptOut,
+  auditPersonOptOutRefusal,
+  PERSON_OPT_OUT_SHORTCUT_NOTICE,
+  PERSON_OPT_OUT_UNREADABLE_NOTICE,
+  type PersonOptOutState,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { sidePanelViewedRoom, slackDmSystemNote } from "./slack-side-panel.js";
 import {
   renderWakeMessage,
   slackChannelFactsFor,
@@ -138,7 +144,8 @@ export type FrontDecision =
   | { readonly kind: "channel-shared"; readonly reason: string; readonly env: SlackEventEnvelope }
   | { readonly kind: "home-open"; readonly reason: string; readonly open: ParsedHomeOpen }
   | { readonly kind: "home-click"; readonly reason: string; readonly click: ParsedHomeClick }
-  | { readonly kind: "home-submit"; readonly reason: string; readonly submission: ParsedHomeSubmission };
+  | { readonly kind: "home-submit"; readonly reason: string; readonly submission: ParsedHomeSubmission }
+  | { readonly kind: "context-change"; readonly reason: string };
 
 function parseOeApprovalPayload(rawBody: string): unknown | undefined {
   const raw = new URLSearchParams(rawBody).get("payload");
@@ -302,6 +309,9 @@ export function classifyEnvelope(rawBody: string, contentType: string): FrontDec
     if (open) return { kind: "home-open", reason: "app_home_opened (home tab) — publish the person's page", open };
     return { kind: "forward", reason: "app_home_opened for a tab other than home — nothing to publish" };
   }
+  if (eventType === "app_context_changed") {
+    return { kind: "context-change", reason: "app_context_changed — the room rides the next side-panel message; nothing to wake" };
+  }
   if (eventType === "user_change") {
     return { kind: "user-change", reason: "user_change — a deactivation report candidate", env };
   }
@@ -397,6 +407,8 @@ export interface FrontOptions {
     channelId: string,
   ) => Promise<{ internal: boolean; channelType?: string; appCanRead?: boolean; extShared?: boolean; trustChecked?: boolean }>;
   readonly openDirectMessageChannel?: (userId: string) => Promise<string | undefined>;
+  readonly personOptOutFor?: (org: string, principalId: string) => Promise<PersonOptOutState>;
+  readonly postPrivateNotice?: (userId: string, text: string) => Promise<void>;
   readonly authorFactsFor?: (
     channelInternal: boolean,
     userId: string | undefined,
@@ -595,6 +607,13 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
   const seatedSurface = opts.seatedSurfaceFor ?? slackDomainUsesUnifiedWindow;
   const mentionPolicyFor = opts.mentionPolicyFor ?? slackSingleWindowMentionPolicy;
   const openDirectMessageChannel = opts.openDirectMessageChannel ?? liveOpenDirectMessageChannel;
+  const personOptOutFor = opts.personOptOutFor ?? readPersonOptOut;
+  const postPrivateNotice =
+    opts.postPrivateNotice ??
+    (async (userId: string, text: string) => {
+      const dm = await openDirectMessageChannel(userId);
+      if (dm) await slackForm("chat.postMessage", new URLSearchParams({ channel: dm, text }).toString());
+    });
   const resolveDmSeat = opts.resolveDmSeat ?? ((org, dm, atIso) => liveGetOrCreateDmSeat(org, dm, atIso));
   const touchDmSeatFn = opts.touchDmSeatFn ?? liveTouchDmSeat;
   const dmPartnerTrustFor = opts.dmPartnerTrustFor ?? liveDmPartnerTrust;
@@ -762,9 +781,21 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         [{ trust: wakeTrust, refuted: authorRefuted }],
         { dm: true },
       );
+      const systemNote = isGroup
+        ? undefined
+        : slackDmSystemNote({
+            viewedRoom: await sidePanelViewedRoom({
+              room: ev.appContext,
+              teamId: ev.teamId,
+              partnerTrust,
+              channelInternal: async (id) => (await channelFactsFor(id)).internal === true,
+            }),
+            personOptOut: ev.userId ? await personOptOutFor(p.org, ev.userId) : undefined,
+          });
       const message = renderWakeMessage(ev, () => atIso, {
         dm: true,
         trust: wakeTrust,
+        ...(systemNote === undefined ? {} : { systemNote }),
         triggerRefuted: authorRefuted || undefined,
         wakeId,
         ...(seat.freshGeneration && seat.tail.length > 0 ? { backscroll: seat.tail } : {}),
@@ -915,6 +946,25 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       const sev = shortcutMessageEvent(sc, shortcutChannelId, shortcutChannelType, now(), { admitAttachments: shortcutFacts.appCanRead });
       if (slackFrontTenantFenceDeclined(sev, `${sc.kind}-shortcut`, "front-shortcut-branch")) return fencedAck(new Response(null, { status: 200 }));
       if (!(await notYetSeenKey(shortcutWakeKey(sc), sev))) return new Response(null, { status: 200 });
+      const shortcutAuthor = sc.kind === "message" ? sc.message?.userId : undefined;
+      if (shortcutAuthor && shortcutAuthor !== sc.userId) {
+        const p = resolvePartition(bindableFor(sev));
+        const authorOptOut = await personOptOutFor(p.org, shortcutAuthor);
+        if (authorOptOut.optedOut) {
+          console.log(`[open-everywhere:slack-front] message shortcut "${sc.callbackId}" in ${shortcutChannelId}: refused — the message's author opted out`);
+          args.waitUntil(
+            Promise.allSettled([
+              auditPersonOptOutRefusal(
+                { org: p.org, platform: p.platform, workspace: p.workspace, surface: p.surface, principalKey: shortcutAuthor },
+                "message-shortcut",
+                { requestedBy: sc.userId, storeReadable: authorOptOut.readable },
+              ),
+              postPrivateNotice(sc.userId, authorOptOut.readable ? PERSON_OPT_OUT_SHORTCUT_NOTICE : PERSON_OPT_OUT_UNREADABLE_NOTICE),
+            ]),
+          );
+          return new Response(null, { status: 200 });
+        }
+      }
       const seedAttachments = (): void => {
         registerAttachments(sev);
         persistAttachments(sev);
@@ -1164,6 +1214,8 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       );
       return OK();
     }
+
+    if (decision.kind === "context-change") return OK();
 
     if (decision.kind === "user-change") {
       const deactivation = parseSlackUserDeactivation(decision.env);

@@ -1,0 +1,18 @@
+{
+  "conferenceRecords": [
+    {
+      "name": "conferenceRecords/rec-new",
+      "startTime": "2026-01-15T20:00:03.120Z",
+      "endTime": "2026-01-15T20:42:17.000Z",
+      "expireTime": "2026-02-14T20:42:17.000Z",
+      "space": "spaces/fixtureSpace"
+    },
+    {
+      "name": "conferenceRecords/rec-old",
+      "startTime": "2026-01-08T20:00:00.000Z",
+      "endTime": "2026-01-08T20:30:00.000Z",
+      "expireTime": "2026-02-07T20:30:00.000Z",
+      "space": "spaces/fixtureSpace"
+    }
+  ]
+}

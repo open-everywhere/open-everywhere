@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/core",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Open Everywhere core — the portable, host-agnostic agent runtime: access and approvals, identity, memory, spend, routines, webhooks, connectors, the audit chain and the `oe` roster build.",
   "keywords": [
     "agent",
@@ -273,6 +273,14 @@
     "./agent/access/domain-credentials.js": {
       "types": "./dist/agent/access/domain-credentials.d.ts",
       "default": "./dist/agent/access/domain-credentials.js"
+    },
+    "./agent/access/domain-membership.js": {
+      "types": "./dist/agent/access/domain-membership.d.ts",
+      "default": "./dist/agent/access/domain-membership.js"
+    },
+    "./agent/access/domain-rules.js": {
+      "types": "./dist/agent/access/domain-rules.d.ts",
+      "default": "./dist/agent/access/domain-rules.js"
     },
     "./agent/access/egress-denial-log.js": {
       "types": "./dist/agent/access/egress-denial-log.d.ts",
@@ -706,6 +714,18 @@
       "types": "./dist/agent/approvals/agent-create.d.ts",
       "default": "./dist/agent/approvals/agent-create.js"
     },
+    "./agent/approvals/allow-rule-apply.js": {
+      "types": "./dist/agent/approvals/allow-rule-apply.d.ts",
+      "default": "./dist/agent/approvals/allow-rule-apply.js"
+    },
+    "./agent/approvals/allow-rule-pr.js": {
+      "types": "./dist/agent/approvals/allow-rule-pr.d.ts",
+      "default": "./dist/agent/approvals/allow-rule-pr.js"
+    },
+    "./agent/approvals/allow-rule.js": {
+      "types": "./dist/agent/approvals/allow-rule.d.ts",
+      "default": "./dist/agent/approvals/allow-rule.js"
+    },
     "./agent/approvals/arming-context.js": {
       "types": "./dist/agent/approvals/arming-context.d.ts",
       "default": "./dist/agent/approvals/arming-context.js"
@@ -758,6 +778,10 @@
       "types": "./dist/agent/approvals/domain-exposure.d.ts",
       "default": "./dist/agent/approvals/domain-exposure.js"
     },
+    "./agent/approvals/email-sender.js": {
+      "types": "./dist/agent/approvals/email-sender.d.ts",
+      "default": "./dist/agent/approvals/email-sender.js"
+    },
     "./agent/approvals/eve-response-policy.js": {
       "types": "./dist/agent/approvals/eve-response-policy.d.ts",
       "default": "./dist/agent/approvals/eve-response-policy.js"
@@ -778,9 +802,21 @@
       "types": "./dist/agent/approvals/mcp-server-propose.d.ts",
       "default": "./dist/agent/approvals/mcp-server-propose.js"
     },
+    "./agent/approvals/meeting-join.js": {
+      "types": "./dist/agent/approvals/meeting-join.d.ts",
+      "default": "./dist/agent/approvals/meeting-join.js"
+    },
+    "./agent/approvals/meeting-recap.js": {
+      "types": "./dist/agent/approvals/meeting-recap.d.ts",
+      "default": "./dist/agent/approvals/meeting-recap.js"
+    },
     "./agent/approvals/memory-purge.js": {
       "types": "./dist/agent/approvals/memory-purge.d.ts",
       "default": "./dist/agent/approvals/memory-purge.js"
+    },
+    "./agent/approvals/personal-browser.js": {
+      "types": "./dist/agent/approvals/personal-browser.d.ts",
+      "default": "./dist/agent/approvals/personal-browser.js"
     },
     "./agent/approvals/plain-summary.js": {
       "types": "./dist/agent/approvals/plain-summary.d.ts",
@@ -910,6 +946,10 @@
       "types": "./dist/agent/channels/answered-container-ledger.d.ts",
       "default": "./dist/agent/channels/answered-container-ledger.js"
     },
+    "./agent/channels/app-code-fingerprint.js": {
+      "types": "./dist/agent/channels/app-code-fingerprint.d.ts",
+      "default": "./dist/agent/channels/app-code-fingerprint.js"
+    },
     "./agent/channels/approval-claim-guard.js": {
       "types": "./dist/agent/channels/approval-claim-guard.d.ts",
       "default": "./dist/agent/channels/approval-claim-guard.js"
@@ -982,6 +1022,10 @@
       "types": "./dist/agent/channels/domain-fingerprint.d.ts",
       "default": "./dist/agent/channels/domain-fingerprint.js"
     },
+    "./agent/channels/domain-question.js": {
+      "types": "./dist/agent/channels/domain-question.d.ts",
+      "default": "./dist/agent/channels/domain-question.js"
+    },
     "./agent/channels/egress-spoof.js": {
       "types": "./dist/agent/channels/egress-spoof.d.ts",
       "default": "./dist/agent/channels/egress-spoof.js"
@@ -1002,6 +1046,10 @@
       "types": "./dist/agent/channels/entity-actions.d.ts",
       "default": "./dist/agent/channels/entity-actions.js"
     },
+    "./agent/channels/friendly-ids.js": {
+      "types": "./dist/agent/channels/friendly-ids.d.ts",
+      "default": "./dist/agent/channels/friendly-ids.js"
+    },
     "./agent/channels/front-queue.js": {
       "types": "./dist/agent/channels/front-queue.d.ts",
       "default": "./dist/agent/channels/front-queue.js"
@@ -1013,6 +1061,10 @@
     "./agent/channels/halt-per-wake.js": {
       "types": "./dist/agent/channels/halt-per-wake.d.ts",
       "default": "./dist/agent/channels/halt-per-wake.js"
+    },
+    "./agent/channels/meeting-callback.js": {
+      "types": "./dist/agent/channels/meeting-callback.d.ts",
+      "default": "./dist/agent/channels/meeting-callback.js"
     },
     "./agent/channels/memory-claim-guard.js": {
       "types": "./dist/agent/channels/memory-claim-guard.d.ts",
@@ -1045,6 +1097,10 @@
     "./agent/channels/own-post-ledger.js": {
       "types": "./dist/agent/channels/own-post-ledger.d.ts",
       "default": "./dist/agent/channels/own-post-ledger.js"
+    },
+    "./agent/channels/personal-browser.js": {
+      "types": "./dist/agent/channels/personal-browser.d.ts",
+      "default": "./dist/agent/channels/personal-browser.js"
     },
     "./agent/channels/platform-failure.js": {
       "types": "./dist/agent/channels/platform-failure.d.ts",
@@ -1326,6 +1382,14 @@
       "types": "./dist/agent/channels/work-search.d.ts",
       "default": "./dist/agent/channels/work-search.js"
     },
+    "./agent/channels/work-sign-in-note.js": {
+      "types": "./dist/agent/channels/work-sign-in-note.d.ts",
+      "default": "./dist/agent/channels/work-sign-in-note.js"
+    },
+    "./agent/channels/work-sign-in-resume.js": {
+      "types": "./dist/agent/channels/work-sign-in-resume.d.ts",
+      "default": "./dist/agent/channels/work-sign-in-resume.js"
+    },
     "./agent/channels/work-stop-note.js": {
       "types": "./dist/agent/channels/work-stop-note.d.ts",
       "default": "./dist/agent/channels/work-stop-note.js"
@@ -1341,6 +1405,10 @@
     "./agent/commands/core.js": {
       "types": "./dist/agent/commands/core.d.ts",
       "default": "./dist/agent/commands/core.js"
+    },
+    "./agent/commands/optout.js": {
+      "types": "./dist/agent/commands/optout.d.ts",
+      "default": "./dist/agent/commands/optout.js"
     },
     "./agent/commands/rate.js": {
       "types": "./dist/agent/commands/rate.d.ts",
@@ -1654,6 +1722,30 @@
       "types": "./dist/agent/docs/source-map.d.ts",
       "default": "./dist/agent/docs/source-map.js"
     },
+    "./agent/email/address.js": {
+      "types": "./dist/agent/email/address.d.ts",
+      "default": "./dist/agent/email/address.js"
+    },
+    "./agent/email/body.js": {
+      "types": "./dist/agent/email/body.d.ts",
+      "default": "./dist/agent/email/body.js"
+    },
+    "./agent/email/gate.js": {
+      "types": "./dist/agent/email/gate.d.ts",
+      "default": "./dist/agent/email/gate.js"
+    },
+    "./agent/email/policy.js": {
+      "types": "./dist/agent/email/policy.d.ts",
+      "default": "./dist/agent/email/policy.js"
+    },
+    "./agent/email/route.js": {
+      "types": "./dist/agent/email/route.d.ts",
+      "default": "./dist/agent/email/route.js"
+    },
+    "./agent/email/transport.js": {
+      "types": "./dist/agent/email/transport.d.ts",
+      "default": "./dist/agent/email/transport.js"
+    },
     "./agent/home/home-view.js": {
       "types": "./dist/agent/home/home-view.d.ts",
       "default": "./dist/agent/home/home-view.js"
@@ -1661,6 +1753,14 @@
     "./agent/home/memory-home.js": {
       "types": "./dist/agent/home/memory-home.d.ts",
       "default": "./dist/agent/home/memory-home.js"
+    },
+    "./agent/home/opt-out-home.js": {
+      "types": "./dist/agent/home/opt-out-home.d.ts",
+      "default": "./dist/agent/home/opt-out-home.js"
+    },
+    "./agent/home/rules-home.js": {
+      "types": "./dist/agent/home/rules-home.d.ts",
+      "default": "./dist/agent/home/rules-home.js"
     },
     "./agent/hooks/approval-raised.js": {
       "types": "./dist/agent/hooks/approval-raised.d.ts",
@@ -1930,6 +2030,10 @@
       "types": "./dist/agent/identity/offboarding.d.ts",
       "default": "./dist/agent/identity/offboarding.js"
     },
+    "./agent/identity/person-opt-out.js": {
+      "types": "./dist/agent/identity/person-opt-out.d.ts",
+      "default": "./dist/agent/identity/person-opt-out.js"
+    },
     "./agent/identity/platform.js": {
       "types": "./dist/agent/identity/platform.d.ts",
       "default": "./dist/agent/identity/platform.js"
@@ -1981,6 +2085,46 @@
     "./agent/lib/process-registry.js": {
       "types": "./dist/agent/lib/process-registry.d.ts",
       "default": "./dist/agent/lib/process-registry.js"
+    },
+    "./agent/meetings/lifecycle.js": {
+      "types": "./dist/agent/meetings/lifecycle.d.ts",
+      "default": "./dist/agent/meetings/lifecycle.js"
+    },
+    "./agent/meetings/link.js": {
+      "types": "./dist/agent/meetings/link.d.ts",
+      "default": "./dist/agent/meetings/link.js"
+    },
+    "./agent/meetings/native-recap.js": {
+      "types": "./dist/agent/meetings/native-recap.d.ts",
+      "default": "./dist/agent/meetings/native-recap.js"
+    },
+    "./agent/meetings/native.js": {
+      "types": "./dist/agent/meetings/native.d.ts",
+      "default": "./dist/agent/meetings/native.js"
+    },
+    "./agent/meetings/policy.js": {
+      "types": "./dist/agent/meetings/policy.d.ts",
+      "default": "./dist/agent/meetings/policy.js"
+    },
+    "./agent/meetings/recap.js": {
+      "types": "./dist/agent/meetings/recap.d.ts",
+      "default": "./dist/agent/meetings/recap.js"
+    },
+    "./agent/meetings/speakers.js": {
+      "types": "./dist/agent/meetings/speakers.d.ts",
+      "default": "./dist/agent/meetings/speakers.js"
+    },
+    "./agent/meetings/store.js": {
+      "types": "./dist/agent/meetings/store.d.ts",
+      "default": "./dist/agent/meetings/store.js"
+    },
+    "./agent/meetings/transcription.js": {
+      "types": "./dist/agent/meetings/transcription.d.ts",
+      "default": "./dist/agent/meetings/transcription.js"
+    },
+    "./agent/meetings/vtt.js": {
+      "types": "./dist/agent/meetings/vtt.d.ts",
+      "default": "./dist/agent/meetings/vtt.js"
     },
     "./agent/memory/agents-codemod.js": {
       "types": "./dist/agent/memory/agents-codemod.d.ts",
@@ -2069,6 +2213,10 @@
     "./agent/memory/markdown.js": {
       "types": "./dist/agent/memory/markdown.d.ts",
       "default": "./dist/agent/memory/markdown.js"
+    },
+    "./agent/memory/opt-out-turn.js": {
+      "types": "./dist/agent/memory/opt-out-turn.d.ts",
+      "default": "./dist/agent/memory/opt-out-turn.js"
     },
     "./agent/memory/partition.js": {
       "types": "./dist/agent/memory/partition.d.ts",
@@ -2293,6 +2441,30 @@
     "./agent/pages/policy-pages.js": {
       "types": "./dist/agent/pages/policy-pages.d.ts",
       "default": "./dist/agent/pages/policy-pages.js"
+    },
+    "./agent/personal-browser/ask.js": {
+      "types": "./dist/agent/personal-browser/ask.d.ts",
+      "default": "./dist/agent/personal-browser/ask.js"
+    },
+    "./agent/personal-browser/box-client.js": {
+      "types": "./dist/agent/personal-browser/box-client.d.ts",
+      "default": "./dist/agent/personal-browser/box-client.js"
+    },
+    "./agent/personal-browser/lifecycle.js": {
+      "types": "./dist/agent/personal-browser/lifecycle.d.ts",
+      "default": "./dist/agent/personal-browser/lifecycle.js"
+    },
+    "./agent/personal-browser/policy.js": {
+      "types": "./dist/agent/personal-browser/policy.d.ts",
+      "default": "./dist/agent/personal-browser/policy.js"
+    },
+    "./agent/personal-browser/store.js": {
+      "types": "./dist/agent/personal-browser/store.d.ts",
+      "default": "./dist/agent/personal-browser/store.js"
+    },
+    "./agent/personal-browser/viewer.js": {
+      "types": "./dist/agent/personal-browser/viewer.d.ts",
+      "default": "./dist/agent/personal-browser/viewer.js"
     },
     "./agent/plugins/extract.js": {
       "types": "./dist/agent/plugins/extract.d.ts",
@@ -2534,6 +2706,10 @@
       "types": "./dist/agent/sandbox/backend-select.d.ts",
       "default": "./dist/agent/sandbox/backend-select.js"
     },
+    "./agent/sandbox/long-lived-box.js": {
+      "types": "./dist/agent/sandbox/long-lived-box.d.ts",
+      "default": "./dist/agent/sandbox/long-lived-box.js"
+    },
     "./agent/sandbox/network-policy.js": {
       "types": "./dist/agent/sandbox/network-policy.d.ts",
       "default": "./dist/agent/sandbox/network-policy.js"
@@ -2589,6 +2765,14 @@
     "./agent/schedules/dream-mode3.js": {
       "types": "./dist/agent/schedules/dream-mode3.d.ts",
       "default": "./dist/agent/schedules/dream-mode3.js"
+    },
+    "./agent/schedules/meeting-sweep.js": {
+      "types": "./dist/agent/schedules/meeting-sweep.d.ts",
+      "default": "./dist/agent/schedules/meeting-sweep.js"
+    },
+    "./agent/schedules/personal-browser-sweep.js": {
+      "types": "./dist/agent/schedules/personal-browser-sweep.d.ts",
+      "default": "./dist/agent/schedules/personal-browser-sweep.js"
     },
     "./agent/schedules/routine-dispatch.js": {
       "types": "./dist/agent/schedules/routine-dispatch.d.ts",
@@ -2822,6 +3006,14 @@
       "types": "./dist/agent/tools/agent_version.d.ts",
       "default": "./dist/agent/tools/agent_version.js"
     },
+    "./agent/tools/answer_domain_question.js": {
+      "types": "./dist/agent/tools/answer_domain_question.d.ts",
+      "default": "./dist/agent/tools/answer_domain_question.js"
+    },
+    "./agent/tools/ask_domain.js": {
+      "types": "./dist/agent/tools/ask_domain.d.ts",
+      "default": "./dist/agent/tools/ask_domain.js"
+    },
     "./agent/tools/ask_question.js": {
       "types": "./dist/agent/tools/ask_question.d.ts",
       "default": "./dist/agent/tools/ask_question.js"
@@ -2978,6 +3170,18 @@
       "types": "./dist/agent/tools/list_webhooks.d.ts",
       "default": "./dist/agent/tools/list_webhooks.js"
     },
+    "./agent/tools/meeting_join.js": {
+      "types": "./dist/agent/tools/meeting_join.d.ts",
+      "default": "./dist/agent/tools/meeting_join.js"
+    },
+    "./agent/tools/meeting_leave.js": {
+      "types": "./dist/agent/tools/meeting_leave.d.ts",
+      "default": "./dist/agent/tools/meeting_leave.js"
+    },
+    "./agent/tools/meeting_recap.js": {
+      "types": "./dist/agent/tools/meeting_recap.d.ts",
+      "default": "./dist/agent/tools/meeting_recap.js"
+    },
     "./agent/tools/memory_admin_list.js": {
       "types": "./dist/agent/tools/memory_admin_list.d.ts",
       "default": "./dist/agent/tools/memory_admin_list.js"
@@ -2989,6 +3193,14 @@
     "./agent/tools/message_thread_seat.js": {
       "types": "./dist/agent/tools/message_thread_seat.d.ts",
       "default": "./dist/agent/tools/message_thread_seat.js"
+    },
+    "./agent/tools/my_browser_handoff.js": {
+      "types": "./dist/agent/tools/my_browser_handoff.d.ts",
+      "default": "./dist/agent/tools/my_browser_handoff.js"
+    },
+    "./agent/tools/my_browser.js": {
+      "types": "./dist/agent/tools/my_browser.d.ts",
+      "default": "./dist/agent/tools/my_browser.js"
     },
     "./agent/tools/no_reply.js": {
       "types": "./dist/agent/tools/no_reply.d.ts",
@@ -3013,6 +3225,10 @@
     "./agent/tools/post_pr_walkthrough.js": {
       "types": "./dist/agent/tools/post_pr_walkthrough.d.ts",
       "default": "./dist/agent/tools/post_pr_walkthrough.js"
+    },
+    "./agent/tools/propose_email_sender.js": {
+      "types": "./dist/agent/tools/propose_email_sender.d.ts",
+      "default": "./dist/agent/tools/propose_email_sender.js"
     },
     "./agent/tools/propose_mcp_server.js": {
       "types": "./dist/agent/tools/propose_mcp_server.d.ts",
@@ -3325,6 +3541,7 @@
     "test:resolver": "tsx scripts/resolver-test.ts",
     "test:mcp-servers": "tsx scripts/mcp-servers-test.ts",
     "test:a2a-client": "tsx scripts/a2a-client-test.ts",
+    "test:domain-question": "tsx scripts/domain-question-test.ts",
     "test:mcp-server-propose": "tsx scripts/mcp-server-propose-test.ts",
     "test:set-up-tool-eval-scoring": "tsx scripts/set-up-tool-eval-scoring-test.ts",
     "test:roles": "tsx scripts/roles-test.ts",
@@ -3333,6 +3550,11 @@
     "test:roles-presets": "tsx scripts/roles-presets-test.ts",
     "test:output-language": "tsx scripts/output-language-test.ts",
     "test:audit-export": "tsx scripts/audit-export-test.ts",
+    "test:meetings": "tsx scripts/meetings-test.ts",
+    "test:meetings-native": "tsx scripts/meetings-native-test.ts",
+    "test:meeting-speakers": "tsx scripts/meeting-speakers-test.ts",
+    "test:email": "tsx scripts/email-test.ts",
+    "test:personal-browser": "tsx scripts/personal-browser-test.ts",
     "test:tool-usage": "tsx scripts/tool-usage-test.ts",
     "test:connections": "tsx scripts/connections-test.ts",
     "test:connector-credentials": "NODE_NO_WARNINGS=1 tsx scripts/connector-credentials-test.ts",
@@ -3370,6 +3592,8 @@
     "test:memory-merge": "NODE_NO_WARNINGS=1 tsx scripts/memory-merge-test.ts",
     "test:memory-write-road": "NODE_NO_WARNINGS=1 tsx scripts/memory-write-road-test.ts",
     "test:memory-visible": "NODE_NO_WARNINGS=1 tsx scripts/memory-visible-test.ts",
+    "test:person-opt-out": "NODE_NO_WARNINGS=1 tsx scripts/person-opt-out-test.ts",
+    "test:person-opt-out-hooks": "NODE_NO_WARNINGS=1 tsx scripts/person-opt-out-hooks-test.ts",
     "test:memory-claim-guard": "NODE_NO_WARNINGS=1 tsx scripts/memory-claim-guard-test.ts",
     "test:approval-claim-guard": "NODE_NO_WARNINGS=1 tsx scripts/approval-claim-guard-test.ts",
     "test:request-claim-guard": "NODE_NO_WARNINGS=1 tsx scripts/request-claim-guard-test.ts",
@@ -3490,6 +3714,7 @@
     "test:approvals": "NODE_NO_WARNINGS=1 tsx scripts/approvals-test.ts",
     "test:approval-card-summary": "NODE_NO_WARNINGS=1 tsx scripts/approval-card-summary-test.ts",
     "test:approval-group": "NODE_NO_WARNINGS=1 tsx scripts/approval-group-test.ts",
+    "test:allow-rule": "NODE_NO_WARNINGS=1 tsx scripts/allow-rule-test.ts",
     "test:attention-queue": "NODE_NO_WARNINGS=1 tsx scripts/attention-queue-test.ts",
     "test:scope-key": "NODE_NO_WARNINGS=1 tsx scripts/scope-key-test.ts",
     "test:approval-tools": "NODE_NO_WARNINGS=1 tsx scripts/approval-tools-test.ts",
@@ -3537,6 +3762,7 @@
     "test:intake-page": "NODE_NO_WARNINGS=1 tsx scripts/intake-page-test.ts",
     "test:oe-oauth-callback": "NODE_NO_WARNINGS=1 tsx scripts/oe-oauth-callback-test.ts",
     "test:consent-resume": "NODE_NO_WARNINGS=1 tsx scripts/consent-resume-test.ts",
+    "test:friendly-ids": "NODE_NO_WARNINGS=1 tsx scripts/friendly-ids-test.ts",
     "test:aws-sso-callback": "NODE_NO_WARNINGS=1 tsx scripts/aws-sso-callback-test.ts",
     "e2e:read-channel": "NODE_NO_WARNINGS=1 tsx scripts/e2e/read-channel.ts",
     "e2e:driver": "NODE_NO_WARNINGS=1 tsx scripts/e2e/runner.ts",
@@ -3706,6 +3932,7 @@
     "test:reply-provenance": "NODE_NO_WARNINGS=1 tsx scripts/reply-provenance-test.ts",
     "test:delegated-provenance": "NODE_NO_WARNINGS=1 tsx scripts/delegated-provenance-test.ts",
     "test:runtime-rotation": "NODE_NO_WARNINGS=1 tsx scripts/runtime-rotation-test.ts",
+    "test:app-code-fingerprint": "NODE_NO_WARNINGS=1 tsx scripts/app-code-fingerprint-test.ts",
     "test:rotate-all-carry-tail": "NODE_NO_WARNINGS=1 tsx scripts/rotate-all-carry-tail-test.ts",
     "test:rotate-window-org-validate": "NODE_NO_WARNINGS=1 tsx scripts/rotate-window-org-validate-test.ts",
     "test:store-identity-guard": "NODE_NO_WARNINGS=1 tsx scripts/store-identity-guard-test.ts",

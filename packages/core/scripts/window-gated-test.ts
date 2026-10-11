@@ -89,7 +89,9 @@ eq(WINDOW_GATED_TOOLS.read_thread_seat, ["standing"], "read_thread_seat is stand
 eq(WINDOW_GATED_TOOLS.message_thread_seat, ["standing"], "message_thread_seat is standing-only (no seat-to-seat mesh, no worker)");
 eq(WINDOW_GATED_TOOLS.work, ["standing", "thread"], "work is on the conversation seats (standing+thread): each forwards to its own work session; never a worker leaf");
 eq([...(WINDOW_GATED_TOOLS.cancel_work ?? [])], ["standing", "thread"], "cancel_work is on the same seats as `work` (OPE-2338, D15): the seat that forwarded a job stops it");
-eq(Object.keys(WINDOW_GATED_TOOLS).length, WIDE_HANDS.length + 7, "the gated table is EXACTLY the 11 wide-hands tools + the 7 delegation/lifecycle/coordinator tools (agent/work/cancel_work/spawn_thread_session/complete_thread/read_thread_seat/message_thread_seat) — nothing else narrows.");
+eq(WINDOW_GATED_TOOLS.ask_domain, ["standing"], "ask_domain is standing-only (the person's DM seat asks; never a thread seat, never a worker)");
+eq(WINDOW_GATED_TOOLS.answer_domain_question, ["standing"], "answer_domain_question is standing-only (a domain's standing seat answers; never a thread seat, never a worker)");
+eq(Object.keys(WINDOW_GATED_TOOLS).length, WIDE_HANDS.length + 9, "the gated table is EXACTLY the 11 wide-hands tools + the 7 delegation/lifecycle/coordinator tools (agent/work/cancel_work/spawn_thread_session/complete_thread/read_thread_seat/message_thread_seat) + the 2 domain question verbs (ask_domain/answer_domain_question) — nothing else narrows.");
 eq([...withheldFromGrain("standing")].sort(), [...WIDE_HANDS, "complete_thread"].sort(), "standing withholds the 11 wide-hands tools + complete_thread (it KEEPS agent and the spawner — a standing seat is what delegates)");
 
 {
@@ -123,18 +125,18 @@ eq([...withheldFromGrain("standing")].sort(), [...WIDE_HANDS, "complete_thread"]
 }
 eq(
   [...withheldFromGrain("task")].sort(),
-  ["agent", "cancel_work", "complete_thread", "message_thread_seat", "read_thread_seat", "spawn_thread_session", "work"].sort(),
-  "task (the worker) withholds agent, the standing-only spawner, forward verb and its stop (OPE-2338, D15), complete_thread and the two coordinator verbs (it has its own wide hands; a worker leaf holds no threads and must not delegate recursively)",
+  ["agent", "answer_domain_question", "ask_domain", "cancel_work", "complete_thread", "message_thread_seat", "read_thread_seat", "spawn_thread_session", "work"].sort(),
+  "task (the worker) withholds agent, the standing-only spawner, forward verb and its stop (OPE-2338, D15), complete_thread, the two coordinator verbs and the two domain question verbs (it has its own wide hands; a worker leaf holds no threads, no person's DM and no domain room, and must not delegate recursively)",
 );
 eq(
   [...withheldFromGrain("native")].sort(),
-  [...WIDE_HANDS, "agent", "cancel_work", "complete_thread", "message_thread_seat", "read_thread_seat", "spawn_thread_session", "work"].sort(),
-  "native withholds agent, the forward verb `work` and its stop `cancel_work` (OPE-2338, D15), the rest of the delegation/lifecycle/coordinator set AND the wide hands — the T2 narrowing, which since OPE-370 is the shipped default",
+  [...WIDE_HANDS, "agent", "answer_domain_question", "ask_domain", "cancel_work", "complete_thread", "message_thread_seat", "read_thread_seat", "spawn_thread_session", "work"].sort(),
+  "native withholds agent, the forward verb `work` and its stop `cancel_work` (OPE-2338, D15), the rest of the delegation/lifecycle/coordinator set, the domain question verbs (OPE-2452) AND the wide hands — the T2 narrowing, which since OPE-370 is the shipped default",
 );
 eq(
   [...withheldFromGrain("thread")].sort(),
-  [...WIDE_HANDS, "message_thread_seat", "read_thread_seat", "spawn_thread_session"].sort(),
-  "a thread seat withholds the wide hands, the spawner and the two coordinator verbs (it keeps the conversational kit and the forward verb `work` with its stop `cancel_work`, OPE-2350, but never reaches a sibling seat)",
+  [...WIDE_HANDS, "answer_domain_question", "ask_domain", "message_thread_seat", "read_thread_seat", "spawn_thread_session"].sort(),
+  "a thread seat withholds the wide hands, the spawner, the two coordinator verbs and the two domain question verbs (it keeps the conversational kit and the forward verb `work` with its stop `cancel_work`, OPE-2350, but never reaches a sibling seat)",
 );
 
 console.log("1. presence/absence matrix (windowGated):");

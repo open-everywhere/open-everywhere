@@ -179,7 +179,7 @@ console.log("5. lean-seat interplay:");
     ok(!allowedOnLeanSeat(name), `a narrowed CHANNEL standing seat does NOT hold ${name}`);
     ok(allowedOnLeanSeat(name, true), `a narrowed DM seat DOES hold ${name} — a verb the person must answer back cannot be relocated to a one-shot worker`);
   }
-  eq([...DM_SEAT_CARVE_IN].sort(), ["confirm_link", "link_identity", "revoke_credential_grant", "unlink_identity"], "the carve-in is EXACTLY the identity trio plus the owner's grant off switch — nothing else is seat-shaped");
+  eq([...DM_SEAT_CARVE_IN].sort(), ["ask_domain", "confirm_link", "link_identity", "revoke_credential_grant", "unlink_identity"], "the carve-in is EXACTLY the identity trio, the owner's grant off switch and the person's question to a domain — nothing else is seat-shaped");
 
   ok(!allowedOnLeanSeat("purge_memory", true), "a DM seat does NOT keep `purge_memory` — memory work relocates cleanly (the worker inherits the DM binding, so its trust gate is the same one)");
   ok(!allowedOnLeanSeat("connection_search", true), "…nor `connection_search` — a DM-spawned worker inherits mode \"dm\", so the DM-only connector wall passes inside it");

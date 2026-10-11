@@ -87,6 +87,7 @@ const PROVIDER_VENDOR_STRINGS: Record<string, string[]> = {
   discord: ["discord.com/api"],
   github: ["x-hub-signature-256"],
   teams: ["graph.microsoft.com", "smba.trafficmanager.net"],
+  email: ["api.agentmail.to", "AGENTMAIL_API_KEY"],
 };
 
 function discoverBundles(): string[] {

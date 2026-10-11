@@ -99,6 +99,12 @@ export const ENV = {
   discordGrantThreadFile: "E2E_DISCORD_GRANT_THREAD_FILE",
   expectModels: "E2E_EXPECT_MODELS",
   expectModelsRequired: "E2E_EXPECT_MODELS_REQUIRED",
+  emailApiKey: "E2E_EMAIL_API_KEY",
+  emailApiBase: "E2E_EMAIL_API_BASE",
+  emailSenderInbox: "E2E_EMAIL_SENDER_INBOX",
+  emailRoomInbox: "E2E_EMAIL_ROOM_INBOX",
+  emailPersonalInbox: "E2E_EMAIL_PERSONAL_INBOX",
+  emailStrangerInbox: "E2E_EMAIL_STRANGER_INBOX",
 } as const;
 
 export type Capability =
@@ -132,7 +138,8 @@ export type Capability =
   | "engagedTeams"
   | "engagedGithub"
   | "engagedLinear"
-  | "engagedNotion";
+  | "engagedNotion"
+  | "email";
 
 export const CAPABILITY_REMEDY: Partial<Record<Capability, string>> = {
   slackMpim:
@@ -183,6 +190,15 @@ export interface SlackUser2Config {
 export interface SlackSecondaryConfig {
   readonly token: string;
   readonly userId: string;
+}
+
+export interface EmailFixtureConfig {
+  readonly apiKey: string;
+  readonly apiBase: string;
+  readonly senderInbox: string;
+  readonly roomInbox: string;
+  readonly personalInbox?: string;
+  readonly strangerInbox?: string;
 }
 
 export interface WebhookConfig {
@@ -425,6 +441,24 @@ export function resolveWebhook(env: Env = process.env): Resolved<WebhookConfig> 
   if (missing.length > 0) return { ok: false, missing };
   const hookId = env[ENV.webhookHookId]?.trim() || "e2e-smoke";
   return { ok: true, cfg: { targetUrl: values[0].replace(/\/+$/, ""), secret: values[1], hookId } };
+}
+
+export function resolveEmail(env: Env = process.env): Resolved<EmailFixtureConfig> {
+  const { values, missing } = need(env, [ENV.emailApiKey, ENV.emailSenderInbox, ENV.emailRoomInbox]);
+  if (missing.length > 0) return { ok: false, missing };
+  const personal = env[ENV.emailPersonalInbox]?.trim();
+  const stranger = env[ENV.emailStrangerInbox]?.trim();
+  return {
+    ok: true,
+    cfg: {
+      apiKey: values[0],
+      apiBase: (env[ENV.emailApiBase]?.trim() || "https://api.agentmail.to").replace(/\/+$/, ""),
+      senderInbox: values[1].toLowerCase(),
+      roomInbox: values[2].toLowerCase(),
+      ...(personal ? { personalInbox: personal.toLowerCase() } : {}),
+      ...(stranger ? { strangerInbox: stranger.toLowerCase() } : {}),
+    },
+  };
 }
 
 export const S24_DEFAULT_QUERY = "team handbook";
@@ -733,6 +767,7 @@ export function resolveCapabilities(env: Env = process.env, tracked: Readonly<Re
   const engagedGithub = resolveEngagedGithub(env, tracked);
   const engagedLinear = resolveEngagedLinear(env, tracked);
   const engagedNotion = resolveEngagedNotion(env);
+  const email = resolveEmail(env);
   const available = new Set<Capability>();
   if (slack.ok) available.add("slack");
   if (discord.ok) available.add("discord");
@@ -765,6 +800,7 @@ export function resolveCapabilities(env: Env = process.env, tracked: Readonly<Re
   if (github.ok && engagedGithub.ok) available.add("engagedGithub");
   if (linear.ok && engagedLinear.ok) available.add("engagedLinear");
   if (engagedNotion.ok) available.add("engagedNotion");
+  if (email.ok) available.add("email");
   return {
     available,
     missing: {
@@ -799,6 +835,7 @@ export function resolveCapabilities(env: Env = process.env, tracked: Readonly<Re
       engagedGithub: engagedGithub.ok ? [] : engagedGithub.missing,
       engagedLinear: engagedLinear.ok ? [] : engagedLinear.missing,
       engagedNotion: engagedNotion.ok ? [] : engagedNotion.missing,
+      email: email.ok ? [] : email.missing,
     },
   };
 }

@@ -5,7 +5,7 @@ import {
 } from "@open-everywhere/core/agent/model/default-model.js";
 import { getSettings } from "@open-everywhere/core/agent/settings/settings.js";
 import { SETTINGS_OVERRIDES } from "../settings/settings.js";
-import { resolveStack, type ModelRole, type ModelRoleSpec, type ModelStack } from "./stacks.js";
+import { resolveStack, resolveTranscription, type ModelRole, type ModelRoleSpec, type ModelStack } from "./stacks.js";
 
 export type { ModelRoleSpec, ModelStack } from "./stacks.js";
 
@@ -25,6 +25,8 @@ export const MODELS = {
 } as const satisfies Record<string, ModelRoleSpec>;
 
 export const MODEL_STACK = STACK_ALIAS;
+
+export const TRANSCRIPTION_ROLE = resolveTranscription(STACK_ALIAS);
 
 export const PRIMARY_MODEL = MODELS.primary.id;
 export const UTILITY_MODEL = MODELS.utility.id;

@@ -1,0 +1,6 @@
+{
+  "participants": [
+    { "name": "conferenceRecords/rec-new/participants/p-ana", "earliestStartTime": "2026-01-15T20:00:03.120Z", "signedinUser": { "user": "users/1001", "displayName": "Ana Lopez" } },
+    { "name": "conferenceRecords/rec-new/participants/p-guest", "earliestStartTime": "2026-01-15T20:01:00.000Z", "anonymousUser": { "displayName": "Guest Carla" } }
+  ]
+}

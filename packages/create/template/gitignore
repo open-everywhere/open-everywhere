@@ -33,6 +33,7 @@ node_modules/
 /agent/skills/
 /agent/connections/
 /agent/lib/providers.generated.ts
+/agent/lib/app-code-fingerprint.generated.ts
 
 # Misc
 *.log
@@ -40,3 +41,6 @@ node_modules/
 *.tsbuildinfo
 *.pem
 *.key
+
+# A built Teams app package (`surface_app_package`): rebuilt from config, never committed.
+teams-app/*.zip

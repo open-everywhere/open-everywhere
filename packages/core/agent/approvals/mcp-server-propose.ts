@@ -1,3 +1,4 @@
+import { requesterWords } from "../channels/friendly-ids.js";
 import { getConfig, type AccessRequestsConfig } from "../access/config.js";
 import { defineMcpServers, type McpServerDeclaration } from "../connections/mcp-servers.js";
 import { insertMcpServerEntry } from "../connections/mcp-servers-codemod.js";
@@ -218,7 +219,7 @@ const mcpServerPropose: ActionKind<McpServerProposeArgs> = {
       mcpServerReachLine(d),
       ...(args.reason ? [`Reason: ${inlineForReview(args.reason)}`] : []),
       `Sending opens a bot-PR against \`${args.configRepo}\` for an admin to merge — nothing is set up until they do.`,
-      `Requested by ${args.requestedBy}`,
+      `Requested by ${requesterWords(args.requestedBy, args.scopeKey)}`,
     ];
   },
   plainSummary(args) {

@@ -1,0 +1,6 @@
+{
+  "transcriptEntries": [
+    { "name": "conferenceRecords/rec-new/transcripts/tr-1/entries/e1", "participant": "conferenceRecords/rec-new/participants/p-ana", "text": "We agreed the launch date is 2 November.", "languageCode": "en-US", "startTime": "2026-01-15T20:00:13.120Z", "endTime": "2026-01-15T20:00:17.000Z" }
+  ],
+  "nextPageToken": "page-2"
+}

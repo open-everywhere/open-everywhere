@@ -90,6 +90,8 @@ test:domain-model
 test:memory-merge
 test:memory-write-road
 test:memory-visible
+test:person-opt-out
+test:person-opt-out-hooks
 test:memory-claim-guard
 test:approval-claim-guard
 test:request-claim-guard
@@ -256,6 +258,7 @@ test:analytics-query
 test:approvals
 test:approval-card-summary
 test:approval-group
+test:allow-rule
 test:attention-queue
 test:scope-key
 test:consequence
@@ -386,6 +389,7 @@ test:credential-registries
 test:connector-transport-registry
 test:oe-oauth-callback
 test:consent-resume
+test:friendly-ids
 test:codemode
 test:docs
 test:capability-docs
@@ -494,7 +498,14 @@ test:postgres-wiring-boot
 test:work-report-owed
 test:output-language
 test:audit-export
+test:meetings
+test:meetings-native
+test:meeting-speakers
 test:tool-usage
 test:a2a-client
+test:domain-question
 test:thread-seat-close
 test:routing-decision-scoring
+test:email
+test:app-code-fingerprint
+test:personal-browser

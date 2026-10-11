@@ -29,6 +29,8 @@ export const WINDOW_GATED_TOOLS: Readonly<Record<string, readonly WindowGrain[]>
   complete_thread: ["thread"],
   read_thread_seat: ["standing"],
   message_thread_seat: ["standing"],
+  ask_domain: ["standing"],
+  answer_domain_question: ["standing"],
 };
 
 export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
@@ -59,6 +61,12 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "rotate_webhook",
   "declare_webhook",
   "propose_mcp_server",
+  "meeting_join",
+  "propose_email_sender",
+  "meeting_recap",
+  "meeting_leave",
+  "my_browser",
+  "my_browser_handoff",
   "read_docs",
   "read_file_upload",
   "read_notion_page",
@@ -292,6 +300,10 @@ export function checkWindowGateManifest(
     } else if (name === "complete_thread") {
       if (grainKey(grains) !== "thread") {
         problems.push(`WINDOW_GATED_TOOLS["complete_thread"] must be exactly ["thread"] (only a thread seat owns a thread) — got [${grains.join(", ")}]`);
+      }
+    } else if (name === "ask_domain" || name === "answer_domain_question") {
+      if (grainKey(grains) !== "standing") {
+        problems.push(`WINDOW_GATED_TOOLS["${name}"] must be exactly ["standing"] (the domain question verbs pass between a DM seat and a domain's standing seat; never a thread seat, never a worker) — got [${grains.join(", ")}]`);
       }
     } else if (name === "read_thread_seat" || name === "message_thread_seat") {
       if (grainKey(grains) !== "standing") {

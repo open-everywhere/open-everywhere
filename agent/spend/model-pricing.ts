@@ -5,7 +5,7 @@ const pricing: ModelPricingTable = defineModelPricing({
 
   "alibaba/qwen3-vl-instruct": { inPerMtok: 0.2, outPerMtok: 0.88 },
 
-  "google/gemini-3.7-flash": { inPerMtok: 0.75, outPerMtok: 3.75 },
+  "google/gemini-3.8-flash": { inPerMtok: 0.75, outPerMtok: 3.75 },
 });
 
 assertModelPricingValid(pricing);

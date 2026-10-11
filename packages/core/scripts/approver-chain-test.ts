@@ -382,6 +382,7 @@ ok(taintToleranceOf("no_such_tool") === "gate", "taint: an unknown name fails cl
     "enable_routine",
     "cancel_routine",
     "delete_skill",
+    "meeting_join",
   ]) {
     ok(gating.includes(sink), `taint: "${sink}" declares the gate floor`);
   }

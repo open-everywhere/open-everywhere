@@ -325,6 +325,10 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
     proves: "the hash-chained link for a decided approval — the row that makes the decision tamper-evident",
   },
   { action: "approval.session_granted", fields: [], proves: "a routine's standing grant was issued (the card's middle button; a conversation keeps none, OPE-2363)" },
+  { action: "approval.rule.added", fields: ["id", "ruleId", "change"], proves: "a person confirmed a rule in their own DM, and the judge reads it for their asks there from now on", notExercised: "RED-until-leg: no live leg clicks the rule option and confirms its dialog yet (OPE-2456)." },
+  { action: "approval.rule.removed", fields: ["ruleId"], proves: "a person removed one of their DM rules in the Home tab", notExercised: "RED-until-leg: no live leg drives the Home tab's Remove dialog yet (OPE-2456)." },
+  { action: "approval.rule.proposed", fields: ["id", "ruleId", "domain"], proves: "a person's confirmed rule opened a pull request against a domain's rules, naming who asked and from which card", notExercised: "RED-until-leg: no live leg clicks the rule option in a domain room yet (OPE-2456)." },
+  { action: "approval.rule.refused", fields: ["id", "reason"], proves: "a click on the rule option approved the act but wrote no rule, and says why (a guest, a shared room, another person's DM)", notExercised: "RED-until-leg: no live leg clicks the rule option yet (OPE-2456)." },
   { action: "approval.session_grant_released", fields: [], proves: "a session-scoped standing grant ended", notExercised: "RED-until-leg: no live leg clicks a routine's standing grant. S-PR-SESSION asserts that a conversation's click writes NO grant (OPE-2363)." },
   {
     action: "approval.autoapproved",
@@ -387,6 +391,37 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
     proves: "an approved delegation SENT one task to a declared A2A agent with the asker's identity attached, and the task state it came back in (OPE-2425) — never the task text or the answer",
     notExercised:
       "RED-until-leg: beside a2a.delegate_approved — tests/integration/connectors/a2a-delegation.test.ts reads this row on the integration tier.",
+  },
+  {
+    action: "domain_question.asked",
+    fields: ["questionId", "domain", "room", "seatId", "delivered", "chars", "tainted"],
+    proves: "a member's DM seat asked a domain the member belongs to, through which of the domain's internal rooms, and whether the domain seat was woken (OPE-2452) — ids and counts only, never the question",
+    notExercised:
+      "RED-until-leg: no e2e domain is wired for a DM question yet; packages/core/scripts/domain-question-test.ts pins the gate's pure decisions offline, and tests/integration/channels/domain-question.test.ts drives the real tool and reads this row on the integration tier.",
+  },
+  {
+    action: "domain_question.received",
+    fields: ["questionId", "domain", "room", "seatId", "delivered", "dm"],
+    proves: "the domain side of a DM question: the domain's own audit shows which member's DM asked it, and which of its rooms the member belongs through (OPE-2452)",
+    notExercised: "RED-until-leg: beside domain_question.asked — tests/integration/channels/domain-question.test.ts reads this row on the integration tier.",
+  },
+  {
+    action: "domain_question.answered",
+    fields: ["questionId", "domain", "asker", "declined", "route", "chars", "tainted"],
+    proves: "a domain's seat answered (or declined) one DM question, and how the answer reached the asker's DM — through the DM seat, by a host post, or not at all (OPE-2452) — never the answer",
+    notExercised: "RED-until-leg: beside domain_question.asked — tests/integration/channels/domain-question.test.ts reads this row on the integration tier.",
+  },
+  {
+    action: "domain_question.answer_delivered",
+    fields: ["questionId", "domain", "asker", "declined", "route"],
+    proves: "the DM side of an answer: the asker's own audit shows which domain answered them and how it reached their DM (OPE-2452)",
+    notExercised: "RED-until-leg: beside domain_question.answered — tests/integration/channels/domain-question.test.ts reads this row on the integration tier.",
+  },
+  {
+    action: "domain_question.refused",
+    fields: ["reason", "domain", "tool"],
+    proves: "a DM question or its answer was refused before anything was sent: not a 1:1 internal DM, a non-member in the wake, no verified person, an unknown or closed domain, membership the platform could not prove, a person outside the domain, no running seat, or an answer from the wrong seat or a turn the delivery did not wake (OPE-2452)",
+    notExercised: "RED-until-leg: no e2e leg drives a refused DM question; packages/core/scripts/domain-question-test.ts pins every refusal reason in the pure gate functions offline, and tests/integration/channels/domain-question.test.ts drives the real tool for the not-a-member reason and reads this row on the integration tier.",
   },
   {
     action: "connector.op_approved",
@@ -560,6 +595,126 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
     notExercised:
       "no e2e leg completes an Identity Center link: it needs a real AWS Identity Center instance, a registered public PKCE client and a browser that can sign in as two different directory users. Driving it needs an Identity Center fixture with two seeded users and a confirmed `aws` linked-id row for one of them.",
   },
+  {
+    action: "meeting.join",
+    fields: ["meetingId", "platform", "host", "requestedBy", "backend", "box", "maxMinutes", "transcription"],
+    proves: "a member approved sending OE's meeting bot to one meeting, naming the platform, the host, the box it runs in, its cap and the transcription route",
+    notExercised:
+      "S-MEETING-RECAP is declared NON_LAUNCH: a live leg needs a deployment with meetings enabled, a published bot image and a real meeting whose host admits the bot. The tier-2 test tests/integration/meetings/meeting-recap.test.ts drives the row on the built host with a fake box backend.",
+  },
+  {
+    action: "meeting.ended",
+    fields: ["meetingId", "reason", "box"],
+    proves: "a meeting bot's box was stopped, why (the meeting ended, the room emptied, the cap), and the seconds and dollars billed for it",
+    notExercised: "pairs with meeting.join — the same live-meeting fixture.",
+  },
+  {
+    action: "meeting.recap_posted",
+    fields: ["meetingId", "posted", "decisions", "actions", "summarised", "missingChunks", "labelledLines"],
+    proves: "the recap of a meeting went (or failed to go) into the thread that asked, with how many decisions and actions it carried, how many chunks of audio were missing, and how many transcript lines carried a speaker name",
+    notExercised: "pairs with meeting.join — the same live-meeting fixture.",
+  },
+  {
+    action: "email.admitted",
+    fields: ["inbox", "route", "trust", "via", "to", "cc", "dropped", "tainted"],
+    proves: "an inbound mail passed the email gate and woke a seat — which inbox, which seat kind, the sender's trust, which list admitted the sender, and how many reply recipients were frozen or dropped",
+    notExercised:
+      "S-EMAIL-ROOM-REPLY and S-EMAIL-DM-FORWARD are declared NON_LAUNCH: a live leg needs an agent-mailbox account with an inbox on a domain the test org controls (DNS records the run cannot create). The unit pack test:email-front drives the row through the real front with a fake transport.",
+  },
+  {
+    action: "email.refused",
+    fields: ["reason", "inbox"],
+    proves: "the email gate refused an inbound mail before any model saw it, and why (disabled, unknown inbox, shared vendor domain, a loop, an automated or flagged mail, a failed sender authentication, a sender not on the list, an unknown person, or no domain reaching the inbox)",
+    notExercised: "pairs with email.admitted — S-EMAIL-STRANGER-REFUSED needs the same live mailbox fixture.",
+  },
+  {
+    action: "email.sender.pr_opened",
+    fields: ["requestId", "inbox", "sender", "repo", "branch"],
+    proves: "a person approved adding an allowed sender to a room inbox, and the pull request that adds it was opened (nothing is allowed until an admin merges it)",
+    notExercised: "pairs with email.admitted — the propose leg needs a config repository the e2e app can write to. The unit pack test:email-sender drives the row with fake repository edges.",
+  },
+  {
+    action: "browser.personal.open",
+    fields: ["box", "backend", "egressEnforced", "hosts", "maxMinutes"],
+    proves: "a person's browser box started on this deployment's sandbox backend, with whether the backend's firewall holds its host list, how many hosts it may reach and its cap",
+    notExercised: "S-PERSONAL-BROWSER is declared NON_LAUNCH: a live leg needs a deployment with the personal browser enabled, a published browser image and a box backend. The tier-2 test tests/integration/personal-browser/personal-browser.test.ts drives the row on the built host with a fake box backend and a fake box.",
+  },
+  {
+    action: "browser.personal.closed",
+    fields: ["box", "reason", "seconds", "usdMicros"],
+    proves: "a person's browser box stopped (closed by them, idle, its cap, a halt, unreachable, a forget), and the seconds and dollars billed for it",
+    notExercised: "pairs with browser.personal.open — the same browser fixture.",
+  },
+  {
+    action: "browser.personal.action",
+    fields: ["op", "host", "box", "ok"],
+    proves: "the agent took one action in a person's browser, naming the kind of action and the site — never the text it typed",
+    notExercised: "pairs with browser.personal.open — the same browser fixture.",
+  },
+  {
+    action: "browser.personal.act_granted",
+    fields: ["host", "minutes", "until"],
+    proves: "the person, by their own click, let the agent click and type on one site in their browser, and until when",
+    notExercised: "pairs with browser.personal.open — the same browser fixture.",
+  },
+  {
+    action: "browser.personal.takeover",
+    fields: ["by", "until", "box"],
+    proves: "the person took the controls of their browser (on the watch page, or handed them by the agent with a reason), and until when every agent action is refused",
+    notExercised: "pairs with browser.personal.open — the same browser fixture.",
+  },
+  {
+    action: "browser.personal.handback",
+    fields: ["by", "box"],
+    proves: "the controls of a person's browser went back to the agent — by the person's card, on the page, or because the take-over expired",
+    notExercised: "pairs with browser.personal.open — the same browser fixture.",
+  },
+  {
+    action: "browser.personal.view_opened",
+    fields: ["session", "until"],
+    proves: "a single-use watch link to a person's browser was opened and started one watch session, naming a prefix of the session and its expiry",
+    notExercised: "pairs with browser.personal.open — the same browser fixture.",
+  },
+  {
+    action: "browser.personal.forget",
+    fields: ["persistKey"],
+    proves: "a person's browser and every login in it were deleted from the sandbox backend at their request",
+    notExercised: "pairs with browser.personal.open — the same browser fixture.",
+  },
+  {
+    action: "meeting.recap_requested",
+    fields: ["meetingId", "platform", "host", "roomId", "requestedBy", "when"],
+    proves: "a member approved reading one meeting's transcript from the meeting platform with the organisation's credential, naming the platform, the meeting and the person who asked",
+    notExercised:
+      "S-MEETING-NATIVE-RECAP is declared NON_LAUNCH: a live leg needs a deployment with native recaps enabled, the org's platform credential stored, and a real meeting with the platform's transcription on. The tier-2 test tests/integration/meetings/meeting-native-recap.test.ts drives the row on the built host with a fake platform reader.",
+  },
+  {
+    action: "meeting.recap_refused",
+    fields: ["meetingId", "platform", "reason", "posted"],
+    proves: "a recap from the platform's own transcript ended with no recap, and why: the platform refused (an admin switch or grant off, not transcribed, expired, not found, a bad credential), no transcript appeared before the watch ran out, native recaps were turned off, or a halt covered the ask",
+    notExercised: "pairs with meeting.recap_requested — the same live-meeting fixture.",
+  },
+  {
+    action: "person.opt_out.set",
+    fields: ["via"],
+    proves: "a person opted out of agent actions on their own content, and through which door (`command` or `app-home`)",
+    notExercised:
+      "no e2e leg drives `/oe optout` or the Home-tab button: the pack's driver posts messages and cannot invoke a slash command or press a Home-tab button as a person. Driving it needs a user-token slash-command fixture.",
+  },
+  {
+    action: "person.opt_out.cleared",
+    fields: ["via"],
+    proves: "a person lifted their opt-out, and through which door",
+    notExercised: "the same gap as `person.opt_out.set`: no e2e leg can invoke a slash command or press a Home-tab button as a person.",
+  },
+  {
+    action: "person.opt_out.refused",
+    fields: ["act"],
+    proves:
+      "the host refused an agent act on an opted-out person's content — a memory write (`act: memory-write`, with `road` and `tier`) or somebody else's message shortcut on their message (`act: message-shortcut`, with `requestedBy`)",
+    notExercised:
+      "no e2e leg opts a person out first, for the reason `person.opt_out.set` gives; the unit packs (`test:person-opt-out`, `test:slack-side-panel`) drive both legs through the real write road and the real front route.",
+  },
 ];
 
 const AUDIT_ACTION_PLATFORMS: readonly string[] = ["slack", "discord", "teams", "github", "linear", "notion", "unified"];
@@ -675,6 +830,8 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "linear.supervisor_session_failed",
   "linear.supervisor_turn_failed",
   "mcp-server.propose.pr_opened",
+  "meeting.status",
+  "email.wake_failed",
   "session.generation_retire_skipped",
   "work.session_rotation_deferred",
   "session.generation_retired",
@@ -822,6 +979,11 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
 ];
 
 export const DYNAMIC_ACTION_SITES: readonly DynamicActionSite[] = [
+  {
+    file: "packages/providers/email/agent/channels/email.ts",
+    expression: "row.action",
+    emits: ["email.admitted", "email.refused"],
+  },
   {
     file: "packages/core/agent/tools/react.ts",
     expression: "`${binding.platform}.react` / `${binding.platform}.react.failed`",

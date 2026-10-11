@@ -58,7 +58,7 @@ prompts. The directory must be new or empty. A fresh clone of an empty repositor
 and it counts as empty: run `npx @open-everywhere/create .` inside it. The scaffold refuses a
 directory that holds anything else. Run inside an empty clone named `my-agent`,
 `npx @open-everywhere/create my-agent` would make `my-agent/my-agent/`, so it refuses and prints the
-`.` command instead. To nest on purpose, create the inner directory first. The app depends on the eight `@open-everywhere/*` libraries at
+`.` command instead. To nest on purpose, create the inner directory first. The app depends on the nine `@open-everywhere/*` libraries at
 this CLI's own version — plus this package itself, as a dev dependency, for its `check` script — and
 on `eve` at the pin core declares; its `postinstall` applies the eve patch. Its roster mounts the launch surfaces: Slack, Notion and GitHub. The app carries `AGENTS.md`,
 a `.mcp.json` for the `open-everywhere-ops` MCP server and the `quickstart-open-everywhere` skill,

@@ -37,6 +37,23 @@ export const PROTECTED_HUMAN_ONLY_EXPORTS: readonly ProtectedHumanOnlyExportGrou
       "the one runtime write path for the operator-declared trust registry. Trust is boot-time " +
       "config-as-code and must never become agent-writable.",
   },
+  {
+    module: "agent/approvals/allow-rule-apply.ts",
+    exportNames: ["applyAllowRule", "planAllowRuleClick", "auditAllowRuleRefused"],
+    reason:
+      "writes a DM rule the approval judge then reads as standing policy, or opens a domain rule pull request. A rule " +
+      "starts only from a person's explicit, confirmed click on an approval card: the agent never " +
+      "proposes a rule. A tool that reached this would author its own exceptions to the approval plane. `auditAllowRuleRefused` " +
+      "writes a row that says a person clicked the option, so a tool-written one would forge that click in the record. The " +
+      "store's own DM-rule upsert is a method, which this scan cannot see: allow-rule-test.ts pins this module as its only caller.",
+  },
+  {
+    module: "agent/approvals/allow-rule-pr.ts",
+    exportNames: ["executeDomainRulePr"],
+    reason:
+      "opens the pull request that adds a domain rule. An admin who receives a rule pull request may approve it on trust, " +
+      "so one must only ever exist because a person chose the option and confirmed the rule (OPE-2456).",
+  },
 ];
 
 const PROTECTED_NAMES: ReadonlySet<string> = new Set(PROTECTED_HUMAN_ONLY_EXPORTS.flatMap((g) => g.exportNames));

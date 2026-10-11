@@ -41,12 +41,15 @@ model, or jump straight to a section. New here? Start with
 ## 3. Capabilities
 
 - [Memory](./capabilities/memory.md) — opt-in domains, silos, materialised vs pointer, the trust gate.
+- [Your DM can ask your domains](./capabilities/domain-questions.md) — the person's DM seat asks a domain they belong to, the domain's own seat answers under its own rules, and the answer comes back to the DM.
 - [Roles & personas](./capabilities/roles.md) — named presets: per-turn instructions, voice, themed verbs, domain knobs.
 - [Connectors & providers](./capabilities/connectors-and-providers.md) — vendors as MCP connections + scoped credentials.
 - [Skills & plugins](./capabilities/skills-and-plugins.md) — the capability units the agent runs.
 - [Source control](./capabilities/source-control.md) — clone, commit, bot PR with attribution.
 - [PR walkthroughs](./capabilities/pr-walkthrough.md) — being walked through a change before you merge it: CI-computed facts and a separate reviewer's narration, rendered as visibly different kinds of thing, each stated with what backs it. Merges nothing.
 - [The browser](./capabilities/browser-qa.md) — the agent drives declared pages, screenshots and vision-verifies its own UI work; flag-gated in-sandbox browser.
+- [Personal browser](./capabilities/personal-browser.md) — each person's own browser, which keeps their logins across turns and days: driven from their DM, watched live from a private link, and taken over for a sign-in, a code or a CAPTCHA, on your own sandbox backend.
+- [Meetings](./capabilities/meetings.md) — OE's own meeting bot: "join this meeting" with a Meet or Teams link, an approval card, a bot in a long-lived box on your own sandbox backend, and a recap with decisions and actions in the thread; or, with no bot, a recap from the Teams, Meet or Zoom meeting's own transcript.
 - [Proactivity & routines](./capabilities/proactivity-and-routines.md) — scheduled and event-driven work.
 - [On-call conventions](./capabilities/on-call-conventions.md) — how to write a routine that watches production: escalation as a condition gate, the lessons log as a collector, runbooks per failure class, a report template that distinguishes quiet from blind, and the emitted time-to-first-output metric.
 - [Analytics](./capabilities/analytics.md) — natural-language querying of your audit, usage, and spend data, scoped to what your access allows.
@@ -104,7 +107,7 @@ model, or jump straight to a section. New here? Start with
 - [Setup runbook](./deploy/setup-runbook.md) — the full path beyond quick start.
 - [Agent-driven setup](./deploy/agent-driven-setup.md) — the same path written for an agent driving the `open-everywhere-ops` MCP server from the operator's own checkout: which tool each step calls, and the five steps a vendor console reserves for a human.
 - [Setup steps](./deploy/setup-steps.md) — the ordered step list a setup walks, generated from the setup engine itself so the page cannot drift from the status check; plus the expected build warnings and what "Develop locally" is for.
-- [Consuming as npm packages](./deploy/consuming-as-packages.md) — run Open Everywhere from your own repo instead of a fork: the eight packages, the exact-eve peer pin (and where it does *not* trip), and why nothing runs on install.
+- [Consuming as npm packages](./deploy/consuming-as-packages.md) — run Open Everywhere from your own repo instead of a fork: the nine packages, the exact-eve peer pin (and where it does *not* trip), and why nothing runs on install.
 - [Rollback, verify, record](./deploy/rollback.md) — the post-deploy health probe, one-command rollback, and the known-good pointer that makes it one hop.
 - [The `oe/cloud-proof` lane](./deploy/cloud-proof.md) — a cloud sandbox proof as an alternative to a paid Actions runner: the evidence format, the verify/post scripts, the deploy gate's acceptance rule, and the trust model stated honestly.
 - [Self-upgrade: the per-release migration record](./deploy/self-upgrade-release-records.md) — the machine-readable `releases/<sha>/migration.json` format: what changed, what a deployer must do, how to verify, how to roll back.
@@ -112,7 +115,7 @@ model, or jump straight to a section. New here? Start with
 - [Observability](./deploy/observability.md) — durable logs, traces, and error alerting: what you get bare, and the vendor-neutral seams + free-tier setup.
 - [SIEM export](./deploy/siem-export.md) — stream every audit row to a SIEM (OTLP, JSON or Splunk HEC), at least once, with the hash-chain fields a receiver verifies.
 - [Telemetry](./deploy/telemetry.md) — the anonymous usage telemetry Open Everywhere sends by default: every event, the never-collected list, retention, opt-out.
-- Surface setup: [Slack](./deploy/surfaces/slack.md) · [Teams](./deploy/surfaces/teams.md) · [Discord](./deploy/surfaces/discord.md) · [Linear](./deploy/surfaces/linear.md) · [Notion](./deploy/surfaces/notion.md) · [GitHub](./deploy/surfaces/github.md)
+- Surface setup: [Slack](./deploy/surfaces/slack.md) · [Teams](./deploy/surfaces/teams.md) ([admin-centre listing](./deploy/surfaces/teams.md#listing-in-the-teams-admin-centre)) · [Discord](./deploy/surfaces/discord.md) · [Linear](./deploy/surfaces/linear.md) · [Notion](./deploy/surfaces/notion.md) · [GitHub](./deploy/surfaces/github.md) · [Email](./deploy/surfaces/email.md)
 - [Surface support matrix](./deploy/surfaces/support-matrix.md) — what works where across Slack / Teams / Discord, evidence-based, with platform limitations called out.
 - [Configuration reference](./deploy/configuration-reference.md) — every config field, env var, and adapter knob.
 

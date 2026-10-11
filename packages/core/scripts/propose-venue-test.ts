@@ -297,7 +297,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   ok(row["postedTo"] === "slack/T1/C_OPS", "redirect: …and `postedTo` is the VENUE's key — the TTL sweep and the decision wake both go looking there, so a stale asking-room key would strand the row");
   ok(row["threadTs"] === null, "redirect: a cross-venue card posts TOP-LEVEL — a thread ts belongs to a different workspace's channel and anchors nothing there");
   ok(row["scopeKey"] === "teams/W1/CONV1", "redirect: the SCOPE stays the asking surface — the card moved, the subject of the decision did not");
-  ok(out.note.includes("card posted in slack/T1/C_OPS"), "redirect: the tool result NAMES where the card went");
+  ok(out.note.includes("card posted in <#C_OPS>") && !out.note.includes("slack/T1/C_OPS"), "redirect: the tool result NAMES where the card went, as a channel mention and never the raw key (OPE-2462)");
   ok(
     out.note.includes("tell the user where it is, by name"),
     "redirect: …and instructs the model to relay it — a user who sees no confirmation reads it as 'the agent ignored me', and the card is by construction invisible from here",
@@ -310,7 +310,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   ok(ra.requested === true, "redirect: 🔴 `request_access` works from a card-less room too");
   const raRow = await rowOf(ra.pendingId);
   ok(raRow["channelId"] === "C_OPS" && raRow["postedTo"] === "slack/T1/C_OPS", "redirect: …with the card in the venue");
-  ok(ra.note.includes("card posted in slack/T1/C_OPS") && ra.note.includes("tap it to send the request"), "redirect: …and a relay instruction naming what the person there must DO (not merely that they must do something)");
+  ok(ra.note.includes("card posted in <#C_OPS>") && ra.note.includes("tap it to send the request"), "redirect: …and a relay instruction naming what the person there must DO (not merely that they must do something)");
 
   const frozen = JSON.parse(raRow["argsJson"] as string) as Record<string, unknown>;
   ok(
@@ -322,7 +322,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   const rv = (await revokeTool.execute({ connector: "notion", reason: "leaked token" } as never, teamsCtx("CONV1"))) as { pendingId: string; note: string };
   const rvRow = await rowOf(rv.pendingId);
   ok(rvRow["postedTo"] === "slack/T1/C_OPS", "redirect: break-glass `revoke_connector` routes too — an incident does not wait for the responder to move to a chat app they may not be in");
-  ok(rv.note.includes("card posted in slack/T1/C_OPS") && rv.note.includes("approve it"), "redirect: …and says where and what next");
+  ok(rv.note.includes("card posted in <#C_OPS>") && rv.note.includes("approve it"), "redirect: …and says where and what next");
   ok(JSON.parse(rvRow["argsJson"] as string).scopeKey === "teams/W1/CONV1", "redirect: …while still revoking the ASKING surface's connector, not the venue's");
 
   const cl = (await (await armed(clearTool, teamsCtx("CONV1"), "clear_connector_override")).execute({ connector: "notion" }, teamsCtx("CONV1"))) as {
@@ -342,7 +342,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   ok(setRow["channelId"] === "C_OPS" && setRow["postedTo"] === "slack/T1/C_OPS", "spend-pair: the card is in the domain's card-capable channel, and `postedTo` is the VENUE's key");
   ok(setRow["threadTs"] === null, "spend-pair: …top-level, like every other cross-venue card");
   ok(setRow["scopeKey"] === "teams/W1/CONV1", "spend-pair: …while the cap being proposed is still the ASKING surface's — the card moved, the subject of the decision did not");
-  ok(set.note.includes("card posted in slack/T1/C_OPS") && set.note.includes("approve it"), "spend-pair: …and the tool result names the venue and what the person there must do");
+  ok(set.note.includes("card posted in <#C_OPS>") && set.note.includes("approve it"), "spend-pair: …and the tool result names the venue and what the person there must do");
 
   const clearSpend = (await (await armed(clearSpendTool, teamsCtx("CONV1"), "clear_spend_limit")).execute({}, teamsCtx("CONV1"))) as {
     pendingId: string;
@@ -363,7 +363,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
     "spend-pair: 🔴 `clear_spend_limit` and `clear_connector_override` now route IDENTICALLY from one Teams room — same venue, same postedTo, same anchor. That divergence was the whole ticket",
   );
   ok(
-    clearSpend.note.includes("card posted in slack/T1/C_OPS") === clearOverride.note.includes("card posted in slack/T1/C_OPS") &&
+    clearSpend.note.includes("card posted in <#C_OPS>") === clearOverride.note.includes("card posted in <#C_OPS>") &&
       clearSpend.note.includes("tell the user where it is, by name") === clearOverride.note.includes("tell the user where it is, by name"),
     "spend-pair: …and say the same thing about it — a user asking the same room to undo two overrides gets one story, not two",
   );
@@ -438,7 +438,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   ok(cancel.pending === true, "325-redirect: 🔴 `cancel_routine` WORKS from a card-less room — it used to refuse outright on `hasApprovalCardPath`");
   const cancelRow = await rowOf(cancel.pendingId);
   ok(cancelRow["channelId"] === "C_OPS" && cancelRow["postedTo"] === "slack/T1/C_OPS" && cancelRow["threadTs"] === null, "325-redirect: cancel_routine's card is in the venue, top-level");
-  ok(cancel.message.includes("card posted in slack/T1/C_OPS") && cancel.message.includes("tell the user where it is, by name") && cancel.message.includes("confirm the cancellation"), "325-redirect: …names the venue and the reader's own verb");
+  ok(cancel.message.includes("card posted in <#C_OPS>") && cancel.message.includes("tell the user where it is, by name") && cancel.message.includes("confirm the cancellation"), "325-redirect: …names the venue and the reader's own verb");
 
   const edit = (await (await armed(editRoutineTool, teamsCtx("CONV1"), "edit_routine")).execute({ id: "r-active-1", prompt: "New instruction." }, teamsCtx("CONV1"))) as {
     pending: boolean;
@@ -447,7 +447,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   };
   const editRow = await rowOf(edit.pendingId);
   ok(editRow["postedTo"] === "slack/T1/C_OPS", "325-redirect: edit_routine routes too");
-  ok(edit.message.includes("card posted in slack/T1/C_OPS") && edit.message.includes("confirm the rewrite"), "325-redirect: …with its own verb");
+  ok(edit.message.includes("card posted in <#C_OPS>") && edit.message.includes("confirm the rewrite"), "325-redirect: …with its own verb");
 
   const enable = (await (await armed(enableRoutineTool, teamsCtx("CONV1"), "enable_routine")).execute({ id: "r-disabled-1" }, teamsCtx("CONV1"))) as {
     pending: boolean;
@@ -456,7 +456,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   };
   const enableRow = await rowOf(enable.pendingId);
   ok(enableRow["postedTo"] === "slack/T1/C_OPS", "325-redirect: enable_routine routes too");
-  ok(enable.message.includes("card posted in slack/T1/C_OPS") && enable.message.includes("confirm the re-arm"), "325-redirect: …with its own verb");
+  ok(enable.message.includes("card posted in <#C_OPS>") && enable.message.includes("confirm the re-arm"), "325-redirect: …with its own verb");
 
   const addRule = (await (await armed(addRoutineRuleTool, teamsCtx("CONV1"), "add_routine_rule")).execute(
     { routineId: "r-active-1", rule: "ignore drafts", why: "flaky pipeline", source: "human" },
@@ -464,7 +464,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   )) as { pending: boolean; pendingId: string; message: string };
   const addRuleRow = await rowOf(addRule.pendingId);
   ok(addRuleRow["postedTo"] === "slack/T1/C_OPS", "325-redirect: add_routine_rule routes too");
-  ok(addRule.message.includes("card posted in slack/T1/C_OPS") && addRule.message.includes("confirm the rule"), "325-redirect: …with its own verb");
+  ok(addRule.message.includes("card posted in <#C_OPS>") && addRule.message.includes("confirm the rule"), "325-redirect: …with its own verb");
 
   const removeRule = (await (await armed(removeRoutineRuleTool, teamsCtx("CONV1"), "remove_routine_rule")).execute(
     { routineId: "r-active-1", ruleId: "p-existing1" },
@@ -472,7 +472,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   )) as { pending: boolean; pendingId: string; message: string };
   const removeRuleRow = await rowOf(removeRule.pendingId);
   ok(removeRuleRow["postedTo"] === "slack/T1/C_OPS", "325-redirect: remove_routine_rule routes too — the sibling that TAKES a guardrail away, same venue as the one that adds it");
-  ok(removeRule.message.includes("card posted in slack/T1/C_OPS") && removeRule.message.includes("confirm the removal"), "325-redirect: …with its own verb");
+  ok(removeRule.message.includes("card posted in <#C_OPS>") && removeRule.message.includes("confirm the removal"), "325-redirect: …with its own verb");
 
   const skillCtx = teamsCtx("CONV1", true);
   const created = (await (await armed(createSkillTool, skillCtx, "create_skill")).execute({ name: "venue-skill", content: "Do the thing, carefully." }, skillCtx)) as {
@@ -483,7 +483,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   ok(created.pending === true, "325-redirect: 🔴 `create_skill` WORKS from a card-less room — it used to refuse outright");
   const createdRow = await rowOf(created.pendingId);
   ok(createdRow["postedTo"] === "slack/T1/C_OPS" && createdRow["domain"] === "eng", "325-redirect: …its card is in the venue, and the DOMAIN frozen on the row is the skill's own (unlike the routine verbs, which freeze domain:null)");
-  ok(created.message.includes("card posted in slack/T1/C_OPS") && created.message.includes("arm it"), "325-redirect: …and the message names the venue and the verb");
+  ok(created.message.includes("card posted in <#C_OPS>") && created.message.includes("arm it"), "325-redirect: …and the message names the venue and the verb");
 
   const deleted = (await (await armed(deleteSkillTool, skillCtx, "delete_skill")).execute({ name: "existing-skill" }, skillCtx)) as {
     pending: boolean;
@@ -492,7 +492,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   };
   const deletedRow = await rowOf(deleted.pendingId);
   ok(deletedRow["postedTo"] === "slack/T1/C_OPS", "325-redirect: delete_skill routes too — the sibling that TAKES a guardrail (a skill) away");
-  ok(deleted.message.includes("card posted in slack/T1/C_OPS") && deleted.message.includes("confirm the removal"), "325-redirect: …with its own verb");
+  ok(deleted.message.includes("card posted in <#C_OPS>") && deleted.message.includes("confirm the removal"), "325-redirect: …with its own verb");
 
   const prCtx = teamsCtx("CONV_PR", true);
   const pr = (await (await armed(openPullRequestTool, prCtx, "open_pull_request")).execute({ repo: "acme/web", head: "fix/1", base: "main", title: "Fix the widget", body: "What changed." }, prCtx)) as {
@@ -503,7 +503,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   ok(pr.pending === true, "325-redirect: 🔴 `open_pull_request` WORKS from a card-less room — it used to refuse outright, with nothing staged");
   const prRow = await rowOf(pr.pendingId);
   ok(prRow["channelId"] === "C_OPS" && prRow["postedTo"] === "slack/T1/C_OPS" && prRow["threadTs"] === null, "325-redirect: open_pull_request's card is in the venue, top-level");
-  ok(pr.message.includes("card posted in slack/T1/C_OPS") && pr.message.includes("approve the publish"), "325-redirect: …names the venue and the verb");
+  ok(pr.message.includes("card posted in <#C_OPS>") && pr.message.includes("approve the publish"), "325-redirect: …names the venue and the verb");
   ok(JSON.parse(prRow["argsJson"] as string).headSha === STAGED_SHA, "325-redirect: …and the staged sha reached the frozen card args — the venue redirect did not skip the staging push");
 }
 
@@ -552,7 +552,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   const ssRow = await rowOf(ss.pendingId);
   ok(ssRow["channelId"] === "C_OPS" && ssRow["postedTo"] === "slack/T1/C_OPS" && ssRow["threadTs"] === null, "326-redirect: set_state's card is in the venue, top-level");
   ok(
-    ss.message.includes("card posted in slack/T1/C_OPS") && ss.message.includes("tell the user where it is, by name") && ss.message.includes("confirm the state change"),
+    ss.message.includes("card posted in <#C_OPS>") && ss.message.includes("tell the user where it is, by name") && ss.message.includes("confirm the state change"),
     "326-redirect: …and names the venue plus the reader's own verb",
   );
 
@@ -562,7 +562,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   )) as { pending: boolean; pendingId: string; message: string };
   const asgRow = await rowOf(asg.pendingId);
   ok(asgRow["postedTo"] === "slack/T1/C_OPS", "326-redirect: `assign` routes too");
-  ok(asg.message.includes("card posted in slack/T1/C_OPS") && asg.message.includes("confirm the assignment"), "326-redirect: …with its own verb");
+  ok(asg.message.includes("card posted in <#C_OPS>") && asg.message.includes("confirm the assignment"), "326-redirect: …with its own verb");
 
   const ct = (await (await armed(createTicketTool, teamsTicketCtx("CONV1"), "create_ticket")).execute(
     { title: "Login 500s on retry", body: "Steps: …" },
@@ -570,7 +570,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   )) as { pending: boolean; pendingId: string; message: string };
   const ctRow = await rowOf(ct.pendingId);
   ok(ctRow["postedTo"] === "slack/T1/C_OPS", "326-redirect: `create_ticket` routes too — the triage → tracked-work loop no longer dead-ends on the surface the work is reported from");
-  ok(ct.message.includes("card posted in slack/T1/C_OPS") && ct.message.includes("confirm the filing"), "326-redirect: …with its own verb");
+  ok(ct.message.includes("card posted in <#C_OPS>") && ct.message.includes("confirm the filing"), "326-redirect: …with its own verb");
 
   const native = (await (await armed(setStateTool, ticketSurfaceCtx(), "set_state")).execute(
     { ref: { platform: "venue-ticket", id: "VT-1" }, state: "Done" },
@@ -683,7 +683,7 @@ const agentInput = (name: string) => ({ name, memory: newReadonlyMemory, exposed
   ok(dw.pending === true, "338-redirect: 🔴 `declare_webhook` WORKS from a card-less room — it used to refuse outright on `hasApprovalCardPath`");
   const dwRow = await rowOf(dw.pendingId);
   ok(dwRow["channelId"] === "C_OPS" && dwRow["postedTo"] === "slack/T1/C_OPS" && dwRow["threadTs"] === null, "338-redirect: declare_webhook's card is in the venue, top-level");
-  ok(dw.message.includes("card posted in slack/T1/C_OPS") && dw.message.includes("approve it"), "338-redirect: …and names the venue and the verb");
+  ok(dw.message.includes("card posted in <#C_OPS>") && dw.message.includes("approve it"), "338-redirect: …and names the venue and the verb");
 
   const ca = (await createAgentTool.execute(agentInput("venue-desk"), teamsCtx("CONV1"))) as {
     requested: boolean;
@@ -693,7 +693,7 @@ const agentInput = (name: string) => ({ name, memory: newReadonlyMemory, exposed
   ok(ca.requested === true, "338-redirect: 🔴 `create_agent` WORKS from a card-less room — it used to refuse outright on `hasApprovalCardPath`");
   const caRow = await rowOf(ca.pendingId);
   ok(caRow["channelId"] === "C_OPS" && caRow["postedTo"] === "slack/T1/C_OPS" && caRow["threadTs"] === null, "338-redirect: create_agent's card is in the venue, top-level");
-  ok(ca.note.includes("card posted in slack/T1/C_OPS") && ca.note.includes("approve it"), "338-redirect: …and names the venue and the verb");
+  ok(ca.note.includes("card posted in <#C_OPS>") && ca.note.includes("approve it"), "338-redirect: …and names the venue and the verb");
 }
 
 {

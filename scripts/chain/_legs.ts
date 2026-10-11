@@ -264,14 +264,14 @@ export const OFF_CHAIN_BY_DESIGN: ReadonlyMap<string, string> = new Map([
   ],
   [
     `${ROOT_PKG_LABEL} test:publish-cold-install`,
-    "a PRE-PUBLISH gate (OPE-2184): it packs all nine publishable packages and runs a real `npm install` " +
+    "a PRE-PUBLISH gate (OPE-2184): it packs all ten publishable packages and runs a real `npm install` " +
       "against the public registry, so it needs the network and measures in minutes — the same reasons " +
       "`lint:publish` sits outside `npm test`. Its fast half, the applier's own decisions, IS on the chain " +
       "as `@open-everywhere/core test:eve-patch-applier`. Run it from `docs/dev/publishing.md` § Before you publish.",
   ],
   [
     `${ROOT_PKG_LABEL} test:quickstart`,
-    "a PRE-PUBLISH gate (OPE-2213): it packs all nine publishable packages, scaffolds the quickstart app " +
+    "a PRE-PUBLISH gate (OPE-2213): it packs all ten publishable packages, scaffolds the quickstart app " +
       "with the packed scaffolder, runs a real `npm install` with lifecycle scripts, then `oe build` and a full " +
       "`eve build`. It needs the network and measures in minutes. Its fast half, the scaffold and the template " +
       "drift check, IS on the chain as `@open-everywhere/create test:scaffold`. Run it from " +

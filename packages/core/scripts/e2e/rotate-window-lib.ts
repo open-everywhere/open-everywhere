@@ -1,6 +1,6 @@
 import { unifiedDomainSessionKey } from "../../agent/channels/unified-supervisor.js";
 import { buildTail } from "../../agent/channels/session-tail.js";
-import { formatWindowToken, parseWindowToken, saltSupervisorGeneration, isDmAnchorDomain } from "../../agent/channels/window-key.js";
+import { formatWindowToken, parseWindowToken, saltSupervisorGeneration, isDmAnchorDomain, isWorkWindowId, workWindowId } from "../../agent/channels/window-key.js";
 import { standingSeatDomainFor } from "../../agent/memory/domain.js";
 import { registerOperationalPostgres, getOperationalStore } from "../../agent/operational/provider.js";
 import type { PgClient } from "../../agent/operational/postgres.js";
@@ -28,6 +28,7 @@ export interface RotateResult {
   readonly oldToken: string | null;
   readonly mintedGeneration: number;
   readonly newRow: ChannelSessionRow;
+  readonly work: { readonly registryKey: string; readonly oldToken: string; readonly newRow: ChannelSessionRow } | null;
 }
 
 export async function rotateUnifiedWindow(
@@ -51,13 +52,27 @@ export async function rotateUnifiedWindow(
   const generation = Date.now();
   const newToken = saltSupervisorGeneration(formatWindowToken({ domain, windowId: window, generation }));
   assertTokenRoundTrips(newToken, domain, window, generation);
+  const workWindow = isWorkWindowId(window) ? undefined : workWindowId(window);
+  const workKey = workWindow === undefined ? undefined : unifiedDomainSessionKey(workWindow);
+  const workCur = workKey === undefined ? null : await store.getChannelSession(org, workKey);
+  if (workWindow !== undefined && workCur !== null && opts.force !== true) {
+    const check = checkWindowTargetResumable(domain, workWindow, workCur);
+    if (!check.ok) throw new WindowTargetRefused(check.error);
+  }
+  const workToken = workWindow === undefined || workCur === null ? undefined : saltSupervisorGeneration(formatWindowToken({ domain, windowId: workWindow, generation }));
+  if (workToken !== undefined) assertTokenRoundTrips(workToken, domain, workWindow!, generation);
   const newRow = await store.rotateChannelSession(org, registryKey, newToken, new Date().toISOString());
+  const work: RotateResult["work"] =
+    workKey === undefined || workCur === null || workToken === undefined
+      ? null
+      : { registryKey: workKey, oldToken: workCur.token, newRow: await store.rotateChannelSession(org, workKey, workToken, new Date().toISOString()) };
   return {
     registryKey,
     oldGeneration: cur ? cur.generation : null,
     oldToken: cur?.token ?? null,
     mintedGeneration: generation,
     newRow,
+    work,
   };
 }
 
@@ -133,6 +148,19 @@ export function checkWindowTargetAgainstConfig(domain: string, windowId: string 
         `Read the deployment's real domain names in agent/memory/config/domains.ts, then rotate one of those.\n` +
         `Or pass --force to mint ${asked} anyway.`,
     };
+  }
+
+  if (windowId !== undefined && isWorkWindowId(windowId)) {
+    const seatWindow = windowId.slice("w/".length);
+    if (isWorkWindowId(seatWindow)) {
+      return {
+        ok: false,
+        error: `refusing to rotate ${registryKey}: "${windowId}" names the work session of a work session, and a work session has no work session of its own. Rotate w/<seatWindowId> instead.\nOr pass --force to mint ${asked} anyway.`,
+      };
+    }
+    if (seatWindow === domain) return { ok: true };
+    const seat = checkWindowTargetAgainstConfig(domain, seatWindow, domains);
+    return seat.ok ? seat : { ok: false, error: `work window "${windowId}" is judged by its seat window "${seatWindow}": ${seat.error}` };
   }
 
   if (windowId !== undefined) {
@@ -336,6 +364,28 @@ export async function awaitGenerationIdle(
     if (waitedMs >= opts.timeoutMs) return { ok: false, waitedMs, token: row.token, owed };
     await sleep(Math.min(pollMs, Math.max(1, opts.timeoutMs - waitedMs)));
   }
+}
+
+export function waitIdleRegistryKeys(window: string): readonly string[] {
+  const own = unifiedDomainSessionKey(window);
+  return isWorkWindowId(window) ? [own] : [own, unifiedDomainSessionKey(workWindowId(window))];
+}
+
+export async function awaitRotationIdle(
+  store: Pick<OperationalStore, "getChannelSession" | "getTaskResult">,
+  org: string,
+  window: string,
+  opts: { readonly timeoutMs: number; readonly pollMs?: number; readonly now?: () => number; readonly sleep?: (ms: number) => Promise<void> },
+): Promise<{ readonly ok: true; readonly idle: readonly { readonly registryKey: string; readonly waitedMs: number }[] } | { readonly ok: false; readonly registryKey: string; readonly result: Extract<GenerationIdleResult, { ok: false }> }> {
+  const now = opts.now ?? Date.now;
+  const deadline = now() + opts.timeoutMs;
+  const idle: { registryKey: string; waitedMs: number }[] = [];
+  for (const registryKey of waitIdleRegistryKeys(window)) {
+    const r = await awaitGenerationIdle(store, org, registryKey, { ...opts, timeoutMs: Math.max(0, deadline - now()) });
+    if (!r.ok) return { ok: false, registryKey, result: r };
+    idle.push({ registryKey, waitedMs: r.waitedMs });
+  }
+  return { ok: true, idle };
 }
 
 export function generationNotIdleMessage(registryKey: string, r: Extract<GenerationIdleResult, { ok: false }>): string {

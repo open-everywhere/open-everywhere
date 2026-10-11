@@ -1,5 +1,5 @@
 {
-  "fetchedAt": "2026-09-22T18:49:04.221Z",
+  "fetchedAt": "2026-10-11T16:55:47.612Z",
   "kind": "eve-model-catalog-cache",
   "models": [
     {
@@ -24,17 +24,6 @@
             "implicit-caching",
             "tool-use",
             "vision"
-          ]
-        },
-        {
-          "provider": "novita",
-          "providerModelId": "qwen/qwen3-vl-235b-a22b-instruct",
-          "contextWindowTokens": 131072,
-          "maxOutputTokens": 32768,
-          "tags": [
-            "tool-use",
-            "vision",
-            "structured-output"
           ]
         }
       ]
@@ -62,18 +51,6 @@
             "reasoning",
             "tool-use",
             "implicit-caching"
-          ]
-        },
-        {
-          "provider": "blackbox",
-          "providerModelId": "blackboxai/deepseek/deepseek-v4-flash-0731",
-          "contextWindowTokens": 1000000,
-          "maxOutputTokens": 384000,
-          "tags": [
-            "reasoning",
-            "tool-use",
-            "implicit-caching",
-            "structured-output"
           ]
         },
         {
@@ -109,17 +86,6 @@
             "tool-use",
             "implicit-caching",
             "structured-output"
-          ]
-        },
-        {
-          "provider": "fireworks",
-          "providerModelId": "accounts/fireworks/models/deepseek-v4-flash-0731",
-          "contextWindowTokens": 1000000,
-          "maxOutputTokens": 384000,
-          "tags": [
-            "reasoning",
-            "tool-use",
-            "implicit-caching"
           ]
         },
         {
@@ -253,13 +219,13 @@
       ]
     },
     {
-      "slug": "google/gemini-3.7-flash",
+      "slug": "google/gemini-3.8-flash",
       "providers": [
         {
           "provider": "google",
-          "providerModelId": "gemini-3.7-flash",
+          "providerModelId": "gemini-3.8-flash",
           "contextWindowTokens": 1000000,
-          "maxOutputTokens": 65536,
+          "maxOutputTokens": 65535,
           "tags": [
             "reasoning",
             "file-input",
@@ -273,9 +239,9 @@
         },
         {
           "provider": "vertex",
-          "providerModelId": "gemini-3.7-flash",
+          "providerModelId": "gemini-3.8-flash",
           "contextWindowTokens": 1000000,
-          "maxOutputTokens": 65536,
+          "maxOutputTokens": 65535,
           "tags": [
             "reasoning",
             "file-input",
@@ -292,6 +258,38 @@
     {
       "slug": "openai/gpt-6-luna",
       "providers": [
+        {
+          "provider": "azure",
+          "providerModelId": "gpt-6-luna",
+          "contextWindowTokens": 1050000,
+          "maxOutputTokens": 128000,
+          "tags": [
+            "explicit-caching",
+            "file-input",
+            "implicit-caching",
+            "reasoning",
+            "structured-output",
+            "tool-use",
+            "vision",
+            "web-search"
+          ]
+        },
+        {
+          "provider": "bedrock",
+          "providerModelId": "global.openai.gpt-6-luna",
+          "contextWindowTokens": 1050000,
+          "maxOutputTokens": 128000,
+          "tags": [
+            "explicit-caching",
+            "file-input",
+            "implicit-caching",
+            "reasoning",
+            "structured-output",
+            "tool-use",
+            "vision",
+            "web-search"
+          ]
+        },
         {
           "provider": "openai",
           "providerModelId": "gpt-6-luna",

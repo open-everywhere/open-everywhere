@@ -37,6 +37,16 @@ function optionButtons(row: PendingActionRow, options: readonly CardOption[]): S
       text: { type: "plain_text", text: o.label, emoji: true },
       action_id: `${APPROVAL_PREFIX}${o.verb}:${row.id}`,
       value: row.org,
+      ...(o.confirm
+        ? {
+            confirm: {
+              title: { type: "plain_text", text: o.confirm.title },
+              text: { type: "plain_text", text: o.confirm.text },
+              confirm: { type: "plain_text", text: o.confirm.yes },
+              deny: { type: "plain_text", text: o.confirm.no },
+            },
+          }
+        : {}),
     };
   });
 }

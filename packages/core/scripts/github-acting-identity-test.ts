@@ -356,6 +356,8 @@ registerIdentityMapper(PLATFORM, (c) => {
     "packages/core/agent/approvals/pr-open.ts": "WRITE — the approved open_pull_request execution",
     "packages/core/agent/approvals/webhook-declare.ts": "WRITE — it opens the declare_webhook bot pull request",
     "packages/core/agent/approvals/mcp-server-propose.ts": "WRITE — it opens the propose_mcp_server bot pull request",
+    "packages/core/agent/approvals/allow-rule-pr.ts": "WRITE — it opens the domain rule bot pull request a person confirmed from a card (OPE-2456)",
+    "packages/core/agent/approvals/email-sender.ts": "WRITE — it opens the allowed-sender bot pull request a person approved from a card (OPE-2440)",
     "packages/core/agent/credentials/config-pr-github.ts": "WRITE — it stages a config-repo pull request",
     "packages/core/agent/identity/groups-delivery.ts": "WRITE — it opens the group-overlay bot pull request",
     "packages/core/agent/routines/github-entity-read.ts":
@@ -363,7 +365,7 @@ registerIdentityMapper(PLATFORM, (c) => {
     "packages/core/agent/scm/app.ts": "the mint itself — what every call site calls, not a call site",
     "packages/core/agent/scm/broker.ts": "the egress broker's mint, reached from checkout_repo, which is gated",
     "packages/core/agent/scm/config-repo-token.ts":
-      "WRITE, and the resolver itself — the one mint the six config-repo bot-PR flows share (OPE-1823); its six call sites, approvals/access-request.ts, approvals/agent-create.ts, approvals/webhook-declare.ts, approvals/mcp-server-propose.ts, credentials/config-pr-github.ts and identity/groups-delivery.ts, are named on the same write decision",
+      "WRITE, and the resolver itself — the one mint the eight config-repo bot-PR flows share (OPE-1823); its eight call sites, approvals/access-request.ts, approvals/agent-create.ts, approvals/webhook-declare.ts, approvals/mcp-server-propose.ts, approvals/allow-rule-pr.ts, approvals/email-sender.ts, credentials/config-pr-github.ts and identity/groups-delivery.ts, are named on the same write decision",
     "packages/core/agent/scm/issue-actions.ts": "WRITE — issue-write permissions",
     "packages/core/agent/scm/pr-status.ts": "the resolvers themselves, not a call site",
     "packages/core/agent/scm/write-token.ts":

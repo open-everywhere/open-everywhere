@@ -32,7 +32,7 @@ export function workChildToken(ctx: BindableContext): string | undefined {
   return workChildLink(ctx)?.childToken;
 }
 
-function workChildLink(ctx: BindableContext): { readonly childToken: string; readonly callId: string } | undefined {
+export function workChildLink(ctx: BindableContext): { readonly childToken: string; readonly callId: string } | undefined {
   try {
     if (!isSubagentChildContext(ctx)) return undefined;
     if (!isWorkWindowToken(resolveOwnWindowToken(ctx))) return undefined;

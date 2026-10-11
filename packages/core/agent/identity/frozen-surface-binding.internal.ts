@@ -49,6 +49,7 @@ export function isFrozenSurfaceBinding(value: unknown): value is SurfaceBinding 
       linear: new Set(["agentSessionId", "issueId", "parentId", "organizationId"]),
       teams: new Set(["serviceUrl", "conversationId", "tenantId", "channelId", "teamId", "conversationType", "aadObjectId"]),
       github: new Set(["owner", "repo", "issueNumber", "pullRequestNumber", "installationId"]),
+      email: new Set(["inbox", "threadId", "messageId", "channelId"]),
     };
     const keys = allowedTargetKeys[String(b.platform)];
     if (

@@ -1,3 +1,4 @@
+import { requesterWords } from "../channels/friendly-ids.js";
 import { createHash } from "node:crypto";
 import { appendAudit } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -41,7 +42,7 @@ const a2aDelegate: ActionKind<A2aDelegateArgs> = {
   policy: "member",
   approvalArmsCall: true,
   plainSummary(args) {
-    return `Send one task to the outside agent ${plainValue(args.agent, 30)} at ${plainValue(args.host, 40)}, with ${plainValue(args.requestedBy, 20)}'s identity`;
+    return `Send one task to the outside agent ${plainValue(args.agent, 30)} at ${plainValue(args.host, 40)}, with ${requesterWords(args.requestedBy, args.scopeKey)}'s identity`;
   },
   summarize: (args) => summarizeDelegate(args),
   async execute(args, decidedBy) {

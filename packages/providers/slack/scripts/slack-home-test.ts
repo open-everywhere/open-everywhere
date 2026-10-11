@@ -12,6 +12,7 @@ import {
   siloTier,
   getOperationalStore,
   writeMemoryTier,
+  domainMembershipProbe,
   type Domain,
   type HomeBlock,
 } from "@open-everywhere/core/agent/adapter-api.js";
@@ -23,6 +24,7 @@ import {
   SLACK_HOME_MAX_BLOCKS,
   buildSlackHomeViewer,
   escapeSlackText,
+  slackDomainMembershipProbe,
   handleHomeSubmission,
   parseHomeClick,
   parseHomeOpened,
@@ -405,6 +407,29 @@ console.log("§7 the boot entry wires the canvas to the write road");
     });
   });
   ok(methods.includes("conversations.canvases.create"), `a silo write through core's one road reached Slack's canvas API (calls: ${methods.join(", ")})`);
+}
+
+console.log("§8 the DM question's membership probe");
+{
+  const probeOf = (deps: SlackHomeDeps) => slackDomainMembershipProbe(deps);
+  const member = fakeDeps({ internal: (c) => c !== "CSHARED" });
+  const a = await probeOf(member)({ principalId: USER, workspaceKey: "slack/T1" });
+  const rooms = a.rooms.map((r) => `${r.domain}:${r.surfaceKey}`).sort();
+  ok(a.fullMember && JSON.stringify(rooms) === JSON.stringify(["bare:slack/T1/CBARE", "platform:slack/T1/CPLAT"]), `a member's internal domain rooms are reported, a memory-less domain included (got ${JSON.stringify(rooms)})`);
+  ok(!rooms.includes("platform:slack/T1/CSHARED"), "🔴 NEGATIVE: a channel Slack does not confirm internal is no route into a domain");
+  ok(a.rooms.find((r) => r.surfaceKey === "slack/T1/CPLAT")?.origin.platform === "slack" && (a.rooms.find((r) => r.surfaceKey === "slack/T1/CPLAT")!.origin as { channelId: string }).channelId === "CPLAT", "each room carries its top-level reply target");
+  const guest = fakeDeps({ member: false });
+  const g = await probeOf(guest)({ principalId: USER, workspaceKey: "slack/T1" });
+  ok(!g.fullMember && g.rooms.length === 0, "🔴 NEGATIVE: a guest belongs to no domain");
+  ok(!guest.calls.some((c) => c.method === "users.conversations"), "…and costs no channel lookup");
+  const unknown = fakeDeps({ member: undefined });
+  ok(!(await probeOf(unknown)({ principalId: USER, workspaceKey: "slack/T1" })).fullMember, "🔴 NEGATIVE: an account whose membership lookup failed is not a full member (fail-closed)");
+  const lookedUp = fakeDeps();
+  await probeOf(lookedUp)({ principalId: USER, workspaceKey: "slack/T1" });
+  ok(lookedUp.calls.find((c) => c.method === "users.conversations")?.body.user === USER, "the channel walk is for the asking person, never another id");
+  ok((await probeOf(fakeDeps())({ principalId: USER, workspaceKey: "discord/G1" })).rooms.length === 0, "NEGATIVE: a workspace key on another platform reports nothing");
+  ok(typeof domainMembershipProbe("slack") === "function", "the boot entry registers the probe as Slack's DomainMembershipProbe");
+  ok(domainMembershipProbe("no-such-platform") === undefined, "NEGATIVE: a platform that registered no probe has none (the DM question refuses there)");
 }
 
 console.log(`\n✓ slack-home: ${n} assertions passed`);

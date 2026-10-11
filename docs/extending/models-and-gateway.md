@@ -23,7 +23,7 @@ consts the rest of the config imports:
 
 | Stack | primary / utility / supervisor / judge | vision |
 |---|---|---|
-| `american-closed` *(default)* | `openai/gpt-6-luna` | `google/gemini-3.7-flash` |
+| `american-closed` *(default)* | `openai/gpt-6-luna` | `google/gemini-3.8-flash` |
 | `chinese-open-weights` | `deepseek/deepseek-v4-flash-0731` | `alibaba/qwen3-vl-instruct` |
 
 The reason the unit is a stack rather than five independent roles is that the interesting
@@ -48,6 +48,54 @@ git-tracked file under `agent/`. Three things are out of its reach, by design: t
 `agent/spend/model-pricing.ts` (it is keyed by model id), the compiled manual (generated into
 `@open-everywhere/core`, outside `agent/`), and anything you have not `git add`ed yet. The extracted
 plugin definitions under `agent/plugins/generated/` are **in** its reach: they are code, not prose.
+
+### The transcription role: speech to text, with a fallback
+
+The meeting bot's speech to text is a sixth role with a different shape. It names a **primary
+route** and a **fallback route**, and each route names its transport as well as its model. A
+meeting is other people's speech, so every route must be zero-data-retention, and one provider is
+one outage. When the primary route fails (an outage, a refusal, no answer in 40 seconds), the
+chunk goes to the fallback route. The table is `TRANSCRIPTION` in `agent/model/stacks.ts`; the
+transports are `packages/adapters/agent/model/transcription-routes.ts`.
+
+| Stack | primary | fallback |
+|---|---|---|
+| `american-closed` | `microsoft/mai-transcribe-2` through the AI Gateway (Azure, ZDR) | `spacexai/grok-stt` through the AI Gateway (xAI, ZDR) |
+| `chinese-open-weights` | `Qwen/Qwen3-ASR-1.7B` on DeepInfra (states zero retention) | `Qwen/Qwen3-ASR-1.7B` on your own server |
+| fully local (`TRANSCRIPTION_PLACEMENT = "local"`) | `Qwen/Qwen3-ASR-1.7B` on your own server | none |
+
+> **These defaults are pending the bake-off.** They follow published word error rates, not a test
+> on meetings. `npm run bakeoff:stt -- --live` runs every candidate over AMI Meeting Corpus meetings
+> in the bot's own chunking, and scores word error rate, damage at chunk seams, and whether the
+> timestamps can place speaker names. It prints the cost of each run. Without `--live` it replays
+> the committed recordings in `scripts/fixtures/stt-bakeoff/`.
+
+What was checked on 2026-10-12, and what was not:
+
+- Both American ids are `transcription` models with `zdr: "all"` in the public Gateway
+  catalogue, on one provider each. The catalogue calls the xAI model "Grok STT".
+- A live call to `spacexai/grok-stt` returned one segment per word, with start and end seconds.
+  MAI-Transcribe-2 was refused by the test team's Provider Allowlist, so its timestamps through
+  the Gateway are not confirmed. A gateway that does not allow `azure` transcribes on the fallback.
+- The Gateway serves no Qwen3-ASR model, so the open-weights stack calls DeepInfra directly. Its
+  key is the `DEEPINFRA_API_KEY` entry of the secret store (`oe secret set DEEPINFRA_API_KEY`), never
+  an environment variable. DeepInfra documents segment and word timestamps; no call was made.
+- The self-hosted route expects an OpenAI-compatible `/audio/transcriptions` server (vLLM serving
+  Qwen3-ASR) at `http://qwen3-asr:8000/v1`. Change `baseUrl` in `stacks.ts` to point at yours. The
+  route asks for word and segment timestamps; whether a given server returns them is not confirmed.
+  Use `Qwen/Qwen3-ASR-0.6B` if the 1.7B model is too slow on CPU.
+- `openai/gpt-4o-transcribe` and `google/gemini-3.5-transcribe` have no ZDR route on the Gateway.
+  They are bake-off baselines only.
+
+🔴 **The `deepinfra` and `self-hosted` routes do not pass through the AI Gateway.** The gateway's
+ZDR policy and its Provider Allowlist do not apply to them: meeting audio on those routes goes to
+`api.deepinfra.com` or to your own server whatever the gateway says. The control for them is
+`TRANSCRIPTION` and `TRANSCRIPTION_PLACEMENT` in `agent/model/stacks.ts`. Only the `american-closed`
+routes are inside the gateway's ZDR policy and Provider Allowlist. `inferenceRegion` is a per-call
+option, and no transcription call carries it, on any route.
+
+The meeting policy's `transcription.model` is not read while the app registers a transcription
+role. The approval card's sentence names every route the audio can reach, in order.
 
 ### Picking a stack, and overriding one role
 
@@ -307,6 +355,8 @@ guarantee is the same one; the enforcement point is one layer down, where it is 
 
 - It covers **every caller of that gateway**, not just this process — including a domain routed
   to a model this app never names, a `models.primary` / `models.force` pin, and anything else in your org pointed at the same gateway.
+  The one exception in this app is meeting audio on a `deepinfra` or `self-hosted` transcription route,
+  which does not call the gateway (see [the transcription role](#the-transcription-role-speech-to-text-with-a-fallback)).
 - It is **one setting an operator can see and audit**, not an option every new model call site
   has to remember to pass. A site that forgets is silently non-compliant; there is nothing to
   forget when the policy lives at the gateway.
@@ -384,8 +434,10 @@ every response carries (`providerMetadata.gateway.routing.finalProvider`; `npm r
 re-checks it). If you need a hard fence — e.g. "never send inference to a China-hosted provider" —
 set it in **your AI Gateway's Provider Allowlist** (dashboard → AI Gateway → Settings → *Restrict
 allowed providers*), the same mechanism the ZDR policy above lives on. Open Everywhere ships no
-provider-routing machinery of its own; like ZDR, the fence belongs at the gateway, where it covers
-every caller, not just this app.
+provider-routing machinery of its own for inference; like ZDR, the fence belongs at the gateway, where it covers
+every caller, not just this app. The exception is the meeting bot's `deepinfra` and `self-hosted`
+transcription routes: they send audio around the gateway, so this fence does not cover them (see
+[the transcription role](#the-transcription-role-speech-to-text-with-a-fallback)).
 
 ## Choosing between the two stacks
 

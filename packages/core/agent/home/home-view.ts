@@ -25,7 +25,7 @@ export interface HomeItemAction {
   readonly id: string;
   readonly label: string;
   readonly kind: "edit" | "confirm";
-  readonly confirm?: { readonly title: string; readonly yes: string };
+  readonly confirm?: { readonly title: string; readonly yes: string; readonly note?: string };
 }
 
 export interface HomeButton {

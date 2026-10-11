@@ -401,7 +401,7 @@ export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, 
   }
   if (!EXACT.test(coreRange)) {
     io.err(`✗ oe upgrade: ${CORE} is pinned to "${core.range}", not an exact version.`);
-    io.err(`  The nine packages publish in lockstep, so an app pins each one exactly. Set it to the version you are on, then run the same command again.`);
+    io.err(`  The ten packages publish in lockstep, so an app pins each one exactly. Set it to the version you are on, then run the same command again.`);
     return 1;
   }
   const pinned = coreRange;

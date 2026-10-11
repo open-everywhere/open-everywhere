@@ -175,6 +175,9 @@ export interface AgentSettings {
   readonly skills: {
     readonly domainSkillCap: number;
   };
+  readonly slack: {
+    readonly suggestedPrompts: readonly SlackSuggestedPrompt[];
+  };
   readonly soak: {
     readonly capture: boolean;
     readonly captureSurfacePrefix: string | readonly string[];
@@ -222,6 +225,29 @@ export interface SettingSpec<T> {
   readonly summary: string;
   readonly format?: (value: T) => string;
 }
+
+export interface SlackSuggestedPrompt {
+  readonly title: string;
+  readonly message: string;
+}
+
+const SLACK_SUGGESTED_PROMPTS_MAX = 4;
+
+const SLACK_SUGGESTED_PROMPTS_SHIPPED: readonly SlackSuggestedPrompt[] = [
+  { title: "What can you do?", message: "What can you help me with?" },
+  { title: "What do you remember?", message: "What do you remember about me?" },
+  { title: "Help me write", message: "Help me write a short update for my team." },
+];
+
+const slackSuggestedPromptsProblem = (v: readonly SlackSuggestedPrompt[]): string | undefined => {
+  if (!Array.isArray(v)) return "must be an array of { title, message } objects";
+  if (v.length > SLACK_SUGGESTED_PROMPTS_MAX) return `must hold at most ${SLACK_SUGGESTED_PROMPTS_MAX} prompts — Slack's agent view shows no more`;
+  for (const [i, p] of v.entries()) {
+    if (typeof p?.title !== "string" || p.title.trim() === "") return `prompt ${i} needs a non-empty \`title\``;
+    if (typeof p?.message !== "string" || p.message.trim() === "") return `prompt ${i} needs a non-empty \`message\``;
+  }
+  return undefined;
+};
 
 const positiveInt = (value: number): string | undefined =>
   Number.isInteger(value) && value > 0 ? undefined : "must be a positive integer";
@@ -883,6 +909,16 @@ export const SETTINGS = {
         "Max runtime-authored domain skills per domain (`create_skill` refuses past this). Per-skill content size is capped separately, in code.",
     } satisfies SettingSpec<number>,
   },
+  slack: {
+    suggestedPrompts: {
+      path: "slack.suggestedPrompts",
+      shipped: SLACK_SUGGESTED_PROMPTS_SHIPPED,
+      validate: slackSuggestedPromptsProblem,
+      summary:
+        "The suggested prompts Slack's side panel offers a person who opens the app there (OPE-2457) — each a short `title` the person sees and the `message` it sends. At most 4, as Slack's agent view shows. They are written into the Slack app MANIFEST (`features.agent_view.suggested_prompts`), so a change reaches people only after the operator pastes the manifest again (App Manifest → Save Changes). The shipped three name no product. Empty shows none.",
+      format: (v) => (v.length > 0 ? v.map((p) => `“${p.title}”`).join(", ") : "(none)"),
+    } satisfies SettingSpec<readonly SlackSuggestedPrompt[]>,
+  },
   soak: {
     capture: {
       path: "soak.capture",
@@ -1297,6 +1333,9 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
     },
     skills: {
       domainSkillCap: resolve(SETTINGS.skills.domainSkillCap, o.skills?.domainSkillCap),
+    },
+    slack: {
+      suggestedPrompts: resolve(SETTINGS.slack.suggestedPrompts, o.slack?.suggestedPrompts),
     },
     soak: {
       capture: resolve(SETTINGS.soak.capture, o.soak?.capture),

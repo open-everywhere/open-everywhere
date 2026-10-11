@@ -111,13 +111,34 @@ export type {
 export { registerActionKind } from "./approvals/actions.js";
 export type { ActionKind, PendingActionRow } from "./approvals/types.js";
 export { plainSummaryForRow } from "./approvals/plain-summary.js";
-export { pendingCardLayout, approvalLabel } from "./approvals/card-layout.js";
-export type { PendingCardLayout, CardOption, CardOptionVerb, CardOptionTone } from "./approvals/card-layout.js";
+export { pendingCardLayout, approvalLabel, optionsWithoutConfirm } from "./approvals/card-layout.js";
+export type { PendingCardLayout, CardOption, CardOptionVerb, CardOptionTone, UnconfirmedCardOption } from "./approvals/card-layout.js";
 
 export { platformName, onVercel } from "./access/platform.js";
 
 export { resolveSandboxBackend, resolveSelfHostBackendKind, sandboxOnVercel } from "./sandbox/backend-select.js";
 export type { SandboxBackendKind, SelfHostBackendKind } from "./sandbox/backend-select.js";
+
+export { BOX_LABEL, BOX_REF_LABEL, boxLabels, clampBoxMinutes, registerLongLivedBoxBackend } from "./sandbox/long-lived-box.js";
+export type { BoxListing, BoxPurpose, BoxSpec, LongLivedBoxBackend, OpenedBox } from "./sandbox/long-lived-box.js";
+
+export { emailPolicy, findEmailInbox } from "./email/policy.js";
+export type { EmailPolicy } from "./email/policy.js";
+export { admitInboundEmail, planReplyRecipients, mayReceiveReply } from "./email/gate.js";
+export type { EmailAdmission, EmailRefusalReason } from "./email/gate.js";
+export { splitEmailBody, remainderTaints } from "./email/body.js";
+export { emailSeatRoute } from "./email/route.js";
+export { normalizeEmailAddress, parseMailbox, parseMailboxList, emailDomainOf } from "./email/address.js";
+export type { Principal } from "./identity/principals.js";
+export { registerEmailTransport, emailTransport } from "./email/transport.js";
+export type { EmailTransport, InboundEmail, EmailDeliveryVerdict, EmailReplyRequest, EmailReplyResult, EmailThreadMessage } from "./email/transport.js";
+
+export { registerMeetingCompletion, registerTranscriptionRoute } from "./meetings/transcription.js";
+export type { MeetingCompletion, TranscriptionInput, TranscriptionOptions, TranscriptionResult, TranscriptionRoute, TranscriptSegment } from "./meetings/transcription.js";
+export { nativeTranscriptSource, registerNativeTranscriptSource } from "./meetings/native.js";
+export type { NativeMeetingRef, NativeReadContext, NativeRefusalReason, NativeTranscriptResult, NativeTranscriptSegment, NativeTranscriptSource } from "./meetings/native.js";
+export type { NativeTranscriptPolicy } from "./meetings/policy.js";
+export { parseWebVtt } from "./meetings/vtt.js";
 
 export { isSubagentChildContext, subagentParentSessionId } from "./identity/binding.js";
 
@@ -175,6 +196,10 @@ export { modelRouteFor, memoryRefs, defineDomain } from "./memory/domain.js";
 export { buildHomeView, runHomeAction, hasHomeAction, homeDomainsFor, registerHomeSection, registerHomeAction, SLACK_HOME_WIRE } from "./home/home-view.js";
 export type { HomeViewer, HomeBlock, HomeItemAction, HomeButton, HomeRoom, HomeDomainMembership, HomeSection, HomeActionResult } from "./home/home-view.js";
 export { MEMORY_HOME_ACTIONS } from "./home/memory-home.js";
+export { OPT_OUT_HOME_ACTIONS } from "./home/opt-out-home.js";
+export { readPersonOptOut, auditPersonOptOutRefusal, PERSON_OPT_OUT_SHORTCUT_NOTICE, PERSON_OPT_OUT_UNREADABLE_NOTICE } from "./identity/person-opt-out.js";
+export type { PersonOptOutState, PersonOptOutWhere } from "./identity/person-opt-out.js";
+export { RULES_HOME_ACTIONS } from "./home/rules-home.js";
 export { readDomainMemory, renderMemoryMarkdown, domainsNamingSilo, isLineDigest } from "./memory/visible.js";
 export type { MemoryGroup, MemoryItem } from "./memory/visible.js";
 export { registerMemoryWriteObserver } from "./memory/write-road.js";
@@ -316,6 +341,7 @@ export {
   nonMemberChatAttrs,
   stampNonMemberChatAuth,
   OE_CHAT_NONMEMBER_ATTR,
+  taintedFireAttrs,
 } from "./access/taint-signal.js";
 export type { IngestedChatMessage, ChatWakeRoom } from "./access/taint-signal.js";
 
@@ -553,6 +579,8 @@ export type { ApprovalOutcome } from "./approvals/decision-wake.js";
 export { rememberNonMemberAnswer } from "./access/held-question.js";
 
 export { registerNativeAdminCheck, registerNativeMemberCheck } from "./access/native-admin.js";
+export { registerDomainMembershipProbe, domainMembershipProbe } from "./access/domain-membership.js";
+export type { DomainMembershipProbe, DomainMembershipAnswer, DomainMembershipRoom, DomainMembershipQuery } from "./access/domain-membership.js";
 export type { NativeAdminCheck, NativeMemberCheck } from "./access/native-admin.js";
 
 export { registerScopeLabelResolver } from "./approvals/scope-label.js";
@@ -814,7 +842,11 @@ export { projectToolSet } from "./access/untrusted-projection.js";
 
 export type { Check } from "./ops/quickstart.js";
 export { registerSurfaceAppManifest, DEPLOY_HOST_PLACEHOLDER } from "./ops/surface-manifest.js";
+export { registerSurfaceAppPackage } from "./ops/surface-manifest.js";
+export type { SurfaceAppPackageFinding, SurfaceAppPackageInput, SurfaceAppPackageResult } from "./ops/surface-manifest.js";
 export { surfaceAppManifest, surfaceAppManifestSurfaces, surfaceAppNameProblem, normalizeDeployHost } from "./ops/surface-manifest.js";
+export { surfaceAppPackageSource, surfaceAppPackageSurfaces } from "./ops/surface-manifest.js";
+export type { SurfaceAppPackageSource } from "./ops/surface-manifest.js";
 export type { SurfaceAppManifestSource, SurfaceAppManifest } from "./ops/surface-manifest.js";
 export { registerPreflightProbe } from "./ops/probes.js";
 export type { PreflightProbe } from "./ops/probes.js";

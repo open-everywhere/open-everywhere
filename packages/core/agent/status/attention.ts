@@ -64,7 +64,7 @@ async function workLink(where: Pick<AttentionWhere, "platform" | "workspace" | "
     const url = await permalink(where.platform, { channelId: where.channelId, messageId: where.threadTs, workspace: where.workspace }).catch(() => undefined);
     if (url) return url;
   }
-  return where.platform === "slack" ? `<#${where.channelId}>` : `the conversation ${where.channelId}`;
+  return where.platform === "slack" || where.platform === "discord" ? `<#${where.channelId}>` : "the conversation where you started it";
 }
 
 export function blockedPingText(summary: string, link: string): string {
@@ -112,7 +112,7 @@ export async function recordAttention(where: AttentionWhere, sessionId: string, 
       recipientId: where.personId,
       address: personAddress(where.platform, where.personId),
       text: blockedPingText(recorded.summary, link),
-      footer: dmDeliveryFooter({ requestedBy: "a job you started", fromContainer: link }),
+      footer: dmDeliveryFooter({ platform: where.platform, recipientId: where.personId, requestedBy: where.personId }),
       requestedBy: where.personId,
       attributedTo: where.personId,
     });

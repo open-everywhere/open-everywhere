@@ -118,6 +118,7 @@ export const NON_ROOM_ENV: Readonly<Record<string, NonRoomReason>> = {
   E2E_NOTION_DRIVER_KEY: "credential",
   E2E_NOTION_WEBHOOK_SECRET: "credential",
   E2E_WEBHOOK_SECRET: "credential",
+  E2E_EMAIL_API_KEY: "credential",
   SLACK_SIGNING_SECRET: "credential",
 
   E2E_SLACK_BOT_USER_ID: "identity",
@@ -135,8 +136,13 @@ export const NON_ROOM_ENV: Readonly<Record<string, NonRoomReason>> = {
   E2E_NOTION_BOT_USER_ID: "identity",
   E2E_NOTION_WORKSPACE_ID: "identity",
   E2E_ORG: "identity",
+  E2E_EMAIL_SENDER_INBOX: "identity",
+  E2E_EMAIL_ROOM_INBOX: "identity",
+  E2E_EMAIL_PERSONAL_INBOX: "identity",
+  E2E_EMAIL_STRANGER_INBOX: "identity",
 
   E2E_AUDIT_SILENCES: "knob",
+  E2E_EMAIL_API_BASE: "knob",
   E2E_CONTROL_LOCAL_WRITE: "knob",
   E2E_ACCESS_ALLOW_SEND: "knob",
   E2E_NOTION_QUERY: "knob",

@@ -323,7 +323,7 @@ function seedRoutine(id: string, surfaceKey: string, target: Record<string, unkn
     const named = JSON.parse(String(surfaceAppManifest("teams")?.manifest)) as TeamsManifest;
     ok(named.name.short === "Aria", "🔴 the served Teams manifest's name.short is the configured identity.name");
     ok(named.name.full.startsWith("Aria"), "…and name.full");
-    ok(named.description.full.startsWith("Aria runs as a Teams bot"), "…and description.full");
+    ok(named.description.full.startsWith("Aria runs as a Microsoft Teams bot"), "…and description.full");
     ok(!JSON.stringify(named).includes("Open Everywhere"), "🔴 a named deployment's Teams manifest carries no brand at all");
     const explicit = JSON.parse(String(surfaceAppManifest("teams", { appName: "Acme Agent" })?.manifest)) as TeamsManifest;
     ok(explicit.name.short === "Acme Agent", "an explicit appName still OVERRIDES the configured name");

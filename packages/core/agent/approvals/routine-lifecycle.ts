@@ -1,3 +1,4 @@
+import { placeWords } from "../channels/friendly-ids.js";
 import { updateRoutine } from "../routines/store.js";
 import { mintJobBound } from "../routines/bound.js";
 import { stallResetPatch } from "../routines/stall.js";
@@ -55,7 +56,7 @@ const routineEdit: ActionKind<RoutineEditArgs> = {
       ...(args.tainted ? ["⚠ proposed in a turn that read external content — read the new text carefully before arming"] : []),
       `Was:\n> ${clip(args.previousPrompt)}`,
       `Now:\n> ${clip(args.prompt)}`,
-      `Target: ${args.surfaceKey}`,
+      `Target: ${placeWords({ key: args.surfaceKey })}`,
     ];
   },
   async execute(args, decidedBy) {
@@ -133,7 +134,7 @@ const routineEnable: ActionKind<RoutineEnableArgs> = {
         ? ["⚠️ it stopped because a session cost checkpoint held its consequential actions and nobody confirmed — answer that card, or raise the checkpoint for this scope, FIRST, or it will stall again"]
         : []),
       `> ${clip(args.prompt)}`,
-      `Target: ${args.surfaceKey}`,
+      `Target: ${placeWords({ key: args.surfaceKey })}`,
     ];
   },
   async execute(args, decidedBy) {

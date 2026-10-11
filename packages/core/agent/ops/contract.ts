@@ -87,7 +87,7 @@ export const DEPLOYMENT_CONTRACT: readonly ContractRequirement[] = [
     routes: {
       vercel: "The Vercel Sandbox firewall applies the fine-grained policy natively.",
       docker:
-        "The egress-proxy sidecar (`docker-compose.yml`), with the `justbash` backend only. `OE_EGRESS_PROXY_URL` points the deployment at it; the session policy is pushed on every session. The app's own model call goes out on a separate host plane that names the model gateway alone (OPE-2406), on Tier A and Tier B alike (Tier B splices it, never decrypts it). Credential injection at the firewall needs Tier B (`OE_EGRESS_MITM=1`).",
+        "The egress-proxy sidecar (`docker-compose.yml`), with the `justbash` backend only. `OE_EGRESS_PROXY_URL` points the deployment at it; the session policy is pushed on every session. The app's own model call goes out on a separate host plane that names the model gateway, plus any non-gateway transcription route host the app registers for the meeting bot (OPE-2406, OPE-2470), on Tier A and Tier B alike (Tier B splices it, never decrypts it). Credential injection at the firewall needs Tier B (`OE_EGRESS_MITM=1`).",
     },
     env: ["OE_EGRESS_PROXY_URL"],
   },
@@ -99,7 +99,7 @@ export const DEPLOYMENT_CONTRACT: readonly ContractRequirement[] = [
     routes: {
       vercel: "OIDC. A deployed Vercel project authenticates to the gateway with no key to set.",
       docker:
-        "`AI_GATEWAY_API_KEY`, or `OE_AI_GATEWAY_URL` pointed at a compatible relay. Behind the egress proxy the model call is held to the gateway's one host (the default, or the relay's), on the app's host plane.",
+        "`AI_GATEWAY_API_KEY`, or `OE_AI_GATEWAY_URL` pointed at a compatible relay. Behind the egress proxy the model call is held to the app's host plane: the gateway's one host (the default, or the relay's), plus any non-gateway transcription route host the app registers.",
     },
     env: ["AI_GATEWAY_API_KEY", "OE_AI_GATEWAY_URL"],
   },

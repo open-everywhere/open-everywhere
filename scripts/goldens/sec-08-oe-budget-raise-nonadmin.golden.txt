@@ -2,9 +2,9 @@ IN  discord interaction · "/oe budget raise usd:5" by NON-admin U_PLEB8 in guil
       | {"type":2,"data":{"name":"oe","options":[{"name":"budget","options":[{"name":"raise","options":[{"name":"usd","value":5}]}]}]},"guild_id":"GS8","channel_id":"CS8","channel":{"type":0},"member":{"user":{"id":"U_PLEB8"},"permissions":"0"}}
   → GET /channels/CS8 ⇒ 404 (unscripted — lookup fail-opens)
   → POST /channels/CS8/messages ⇒ 200 message BM1 [buttons: Approve/Reject]
-      | **Set the monthly spend limit for discord/GS8/CS8 to $5.00/mo.**
+      | **Set the monthly spend limit for <#CS8> to $5.00/mo.**
       | -# Approval requested: spend.set
-      | Set spend limit — scope `discord/GS8/CS8` (surface)
+      | Set spend limit — <#CS8> (surface)
       | $: none (uncapped) → $5.00/mo
       | ℹ pricing coverage: this scope ran no traffic in the 30 days before this card was posted, so nothing here shows whether this $ cap would meter it
       | Reason: requested via "/oe budget raise" by <@U_PLEB8>
@@ -13,7 +13,7 @@ IN  discord interaction · "/oe budget raise usd:5" by NON-admin U_PLEB8 in guil
       | {
       |  "type": 4,
       |  "data": {
-      |   "content": "Card posted in this channel — proposing $5.00/month on `discord/GS8/CS8` (pending `<uuid>`, expires <iso-ts>). An admin needs to Approve it.\n_No domain spend to show — an externally-shared or unconfirmed channel reports no domain spend._",
+      |   "content": "Card posted in this channel — proposing $5.00/month on <#CS8> (pending `<uuid>`, expires <iso-ts>). An admin needs to Approve it.\n_No domain spend to show — an externally-shared or unconfirmed channel reports no domain spend._",
       |   "flags": 64
       |  }
       | }

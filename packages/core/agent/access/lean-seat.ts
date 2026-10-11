@@ -22,9 +22,10 @@ export const LEAN_SEAT_TOOLS: ReadonlySet<string> = new Set([
   "task_cancel",
   "read_channel",
   "read_thread",
+  "answer_domain_question",
 ]);
 
-export const DM_SEAT_CARVE_IN: ReadonlySet<string> = new Set(["link_identity", "confirm_link", "unlink_identity", "revoke_credential_grant"]);
+export const DM_SEAT_CARVE_IN: ReadonlySet<string> = new Set(["link_identity", "confirm_link", "unlink_identity", "revoke_credential_grant", "ask_domain"]);
 
 export type LeanSeatPosture = "lean" | "full";
 

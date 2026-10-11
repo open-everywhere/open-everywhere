@@ -1,4 +1,5 @@
 import { appendAudit } from "../audit/audit.js";
+import { auditPersonOptOutRefusal, OPT_OUT_MEMORY_ROADS, readPersonOptOut, type PersonOptOutState } from "../identity/person-opt-out.js";
 import { noteDurableMemoryWrite } from "./write-evidence.js";
 import type { MemoryAccess, MemoryProvider } from "./provider.js";
 import type { MemorySilo } from "./silo.js";
@@ -37,16 +38,19 @@ export interface MemoryWriteRequest {
   readonly platform?: string;
   readonly workspace?: string;
   readonly extra?: Readonly<Record<string, unknown>>;
+  readonly personOptOut?: PersonOptOutState;
 }
 
 export interface MemoryWriteResult {
   readonly version: string | null;
   readonly changed: boolean;
+  readonly refused?: "person-opt-out";
 }
 
 const CANONICAL_DETAIL_KEYS: ReadonlySet<string> = new Set(["road", "kind", "tier", "silo", "provider", "files", "version"]);
 
 export async function writeMemoryTier(req: MemoryWriteRequest): Promise<MemoryWriteResult> {
+  if (await refusedByPersonOptOut(req)) return { version: null, changed: false, refused: "person-opt-out" };
   const version = await req.provider.writeTier(req.partition, req.tier, req.files, req.message, req.silo, req.access);
   if (version === null) return { version: null, changed: false };
 
@@ -81,6 +85,34 @@ export async function writeMemoryTier(req: MemoryWriteRequest): Promise<MemoryWr
   if (kind === "memory" && req.tier.kind === "silo") await notifyMemoryWriteObservers({ org: req.partition.org, silo: req.tier.name });
 
   return { version, changed: true };
+}
+
+async function refusedByPersonOptOut(req: MemoryWriteRequest): Promise<boolean> {
+  if ((req.kind ?? "memory") !== "memory" || !req.principalId) return false;
+  if (OPT_OUT_MEMORY_ROADS[req.road] !== "refuse") return false;
+  const state = req.personOptOut ?? (await readPersonOptOut(req.partition.org, req.principalId));
+  if (!state.optedOut) return false;
+  console.log(
+    `[open-everywhere:memory] ${req.road} write to ${tierId(req.tier)} refused — the person it is attributed to opted out` +
+      `${state.readable ? "" : " (the opt-out store did not answer; fail-closed)"}`,
+  );
+  await auditPersonOptOutRefusal(
+    {
+      org: req.partition.org,
+      platform: req.partition.platform,
+      workspace: req.partition.workspace,
+      surface: req.partition.surface,
+      principalKey: req.principalId,
+    },
+    "memory-write",
+    {
+      road: req.road,
+      tier: tierId(req.tier),
+      ...(req.silo?.name !== undefined ? { silo: req.silo.name } : {}),
+      storeReadable: state.readable,
+    },
+  );
+  return true;
 }
 
 export interface MemoryWriteEvent {

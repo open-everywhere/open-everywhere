@@ -68,7 +68,7 @@ const MARKUP = /[<>[\]*`|]/u;
     { kind: "routine.cancel", args: { id: "r1", description: "daily digest" }, expect: ["Stop the routine", "daily digest"] },
     { kind: "memory.purge", args: { bullets: [{ sha256: "x", chars: 3 }, { sha256: "y", chars: 4 }], locations: [] }, expect: ["delete 2 remembered facts"] },
     { kind: "skill.delete", args: { name: "triage", domain: "eng" }, expect: ["Delete the skill", "triage", "eng"] },
-    { kind: "webhook.rotate", args: { hookId: "stripe", requestedBy: "U1" }, expect: ["signing secret", "stripe", "U1", "stops working"] },
+    { kind: "webhook.rotate", args: { hookId: "stripe", requestedBy: "U1", surfaceKey: "slack/T1/C1" }, expect: ["signing secret", "stripe", "<@U1>", "stops working"] },
     { kind: "connector.revoke", args: { connector: "notion", scopeKey: "slack/T1/C1" }, expect: ["Turn off", "notion"] },
     { kind: "halt.resume", args: { orgWide: true }, expect: ["Lift the emergency halt", "everywhere"] },
     { kind: "a2a.delegate", args: { org: "default", scopeKey: "slack/T1/C1", agent: "travel-bot", host: "agents.example.com", message: "book", sessionKey: "k", memoKind: "m", requestedBy: "U1" }, expect: ["outside agent", "travel-bot", "agents.example.com", "U1"] },

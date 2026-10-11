@@ -35,7 +35,11 @@ export async function loadAppSpendBudgets(root?: string): Promise<ReturnType<Spe
   return loadSpendBudgets();
 }
 
-export async function loadAppA2aAgents(root?: string): Promise<A2aAgentsModule["A2A_AGENTS"]> {
-  const { A2A_AGENTS } = await importAppModule<A2aAgentsModule>("agent/access/a2a-agents.ts", root);
+export const A2A_AGENTS_FILE = "agent/access/a2a-agents.ts";
+
+export async function loadAppA2aAgents(root?: string): Promise<A2aAgentsModule["A2A_AGENTS"] | undefined> {
+  const appRoot = root ?? resolveAppRoot();
+  if (!existsSync(join(appRoot, A2A_AGENTS_FILE))) return undefined;
+  const { A2A_AGENTS } = await importAppModule<A2aAgentsModule>(A2A_AGENTS_FILE, appRoot);
   return A2A_AGENTS;
 }

@@ -26,6 +26,7 @@ export interface AccessRequestsConfig {
   readonly hooksPath?: string;
   readonly agentsPath?: string;
   readonly mcpServersPath?: string;
+  readonly domainRulesPath?: string;
   readonly groupsPath?: string;
   baseWebhooks?(): readonly WebhookHook[];
   baseMcpServers?(): readonly McpServerDeclaration[];

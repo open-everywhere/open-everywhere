@@ -47,8 +47,11 @@ export const OPERATIONAL_TABLES = [
   "credential_grant_ask",
   "credential_grant",
   "dm_audience",
+  "person_opt_out",
+  "personal_browser",
   "ingress_delivery",
   "attention_state",
+  "dm_rule",
 ] as const;
 
 export const EVENT_DEDUPE_MAX_RETENTION_MS = 24 * 60 * 60_000;
@@ -794,11 +797,37 @@ export interface MemoryProposalRow {
 
 export type MemoryProposalWrite = Omit<MemoryProposalRow, "id">;
 
+export interface PersonOptOutRow {
+  readonly principalKey: string;
+  readonly optedOutAt?: string;
+}
+
+export interface PersonalBrowserRow {
+  readonly principalKey: string;
+  readonly stateJson: string;
+  readonly version: number;
+  readonly updatedAt: string;
+}
+
 export interface DmAudienceRow {
   readonly address: string;
   readonly firstDmAt?: string;
   readonly stoppedAt?: string;
 }
+
+export interface DmRuleRow {
+  readonly org: string;
+  readonly surfaceKey: string;
+  readonly ruleId: string;
+  readonly ownerId: string;
+  readonly rule: string;
+  readonly subjectJson: string;
+  readonly sourceActionId: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export const DM_RULES_MAX_PER_ROOM = 20;
 
 export type AttentionStateName = "working" | "needs_input" | "blocked" | "done";
 
@@ -851,6 +880,33 @@ export function attentionRowFrom(org: string, r: AttentionDbRow): AttentionRow {
     since: r.since,
     updatedAt: r.updated_at,
     pingedSince: r.pinged_since,
+  };
+}
+
+export const DM_RULE_COLUMNS = "surface_key, rule_id, owner_id, rule, subject_json, source_action_id, created_at, updated_at";
+
+export type DmRuleDbRow = {
+  surface_key: string;
+  rule_id: string;
+  owner_id: string;
+  rule: string;
+  subject_json: string;
+  source_action_id: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export function dmRuleRowFrom(org: string, r: DmRuleDbRow): DmRuleRow {
+  return {
+    org,
+    surfaceKey: r.surface_key,
+    ruleId: r.rule_id,
+    ownerId: r.owner_id,
+    rule: r.rule,
+    subjectJson: r.subject_json,
+    sourceActionId: r.source_action_id,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
   };
 }
 
@@ -1016,6 +1072,17 @@ export interface OperationalStore {
   setDmAudienceStopped(org: string, address: string, at: string): Promise<void>;
   clearDmAudienceStopped(org: string, address: string): Promise<boolean>;
   listDmAudience(org: string): Promise<DmAudienceRow[]>;
+
+  getPersonOptOut(org: string, principalKey: string): Promise<PersonOptOutRow | null>;
+  setPersonOptOut(org: string, principalKey: string, at: string): Promise<boolean>;
+  clearPersonOptOut(org: string, principalKey: string): Promise<boolean>;
+  getPersonalBrowser(org: string, principalKey: string): Promise<PersonalBrowserRow | null>;
+  casPersonalBrowser(org: string, principalKey: string, stateJson: string, at: string, expected: number | null): Promise<number | null>;
+  deletePersonalBrowser(org: string, principalKey: string): Promise<boolean>;
+  listPersonalBrowsers(org: string): Promise<PersonalBrowserRow[]>;
+  listDmRules(org: string, surfaceKey: string): Promise<readonly DmRuleRow[]>;
+  upsertDmRule(row: DmRuleRow): Promise<void>;
+  removeDmRule(org: string, surfaceKey: string, ruleId: string): Promise<boolean>;
 
   recordAttentionState(row: AttentionWrite): Promise<AttentionRow>;
   listAttentionWaitingOn(org: string, personPlatform: string, personId: string, sinceIso: string): Promise<readonly AttentionRow[]>;

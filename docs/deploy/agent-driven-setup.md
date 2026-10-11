@@ -18,12 +18,13 @@ The repository registers an MCP server in `.mcp.json`:
 | --- | --- | --- |
 | `open-everywhere-ops` | `npx tsx scripts/ops-mcp.ts` | The **outside-in** plane. It stands an instance up. |
 
-It exposes seven tools:
+It exposes eight tools:
 
 | Tool | What it does | Writes anything? |
 | --- | --- | --- |
 | `preflight` | Reports every prerequisite, plus each configured provider's live posture. | no |
 | `surface_manifest` | Returns the chat app's paste-ready manifest for a surface, with your deploy host substituted. | no |
+| `surface_app_package` | Builds the upload-ready Teams app zip for the admin-centre (`org`) or store route, checks it, and writes it into the project. See [Listing the Teams app](./surfaces/teams.md#listing-in-the-teams-admin-centre). | the zip, inside the project |
 | `scaffold_env` | Writes non-secret config into the project's `.env.local`. For a secret, it takes the **name** and returns the command the operator runs. | `.env.local` |
 | `scaffold_credential_key` | Mints the credential store's AES-256-GCM key into `.env.local`. Never returns the value. | `.env.local` |
 | `secret_set` | Encrypts secrets, **by name**, from `.env.local` into the deployment's own credential store. | the store |

@@ -117,6 +117,7 @@ packages/providers/*/dist/
 /agent/skills/
 /agent/connections/
 /agent/lib/providers.generated.ts
+/agent/lib/app-code-fingerprint.generated.ts
 
 # OPE-1821 — the runtime CODE fingerprint, hashed from this tree's runtime source by
 # `prebuild:packages` (packages/core/scripts/runtime-code-fingerprint-generate.ts). Build output, never committed:
@@ -137,7 +138,7 @@ packages/providers/*/dist/
 # commits harness scratch into the repository.
 .e2e-discord-grant-thread.json*
 # Pack artefacts. `npm pack` writes `<name>-<version>.tgz` into the packed workspace's own directory
-# even when `--pack-destination` names somewhere else, and the publish gate packs all nine packages on
+# even when `--pack-destination` names somewhere else, and the publish gate packs all ten packages on
 # every run (scripts/publish-lint.ts, scripts/publish-preview.ts, scripts/publish-cold-install-test.ts).
 # Measured: one 8 MB `packages/core/open-everywhere-core-0.1.0.tgz` sat untracked and unignored while
 # the gate ran, so a `git add -A` in that window commits it into the repository.
@@ -155,3 +156,6 @@ packages/providers/*/dist/
 /.oe-it-prepare/
 /.oe-it-prepare-restore.tar.gz
 /.oe-it-prepare-publish.tar.gz
+
+# A built Teams app package (`surface_app_package`, OPE-2438): rebuilt from config, never committed.
+teams-app/*.zip

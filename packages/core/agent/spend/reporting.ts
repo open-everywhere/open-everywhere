@@ -5,6 +5,7 @@ import { resolveSkillDomainDetailed, skillDomainFor, type SkillDomainRefusal, ty
 import { getOperationalStore } from "../operational/provider.js";
 import { getConfig } from "../access/config.js";
 import type { UsageSummaryRow } from "../operational/store.js";
+import { isRuntimeUsageKind } from "./usage-events.js";
 import { parseCron, cronMatches, DISPATCH_TICK_MINUTES } from "../routines/schedule.js";
 import type { RoutineTrigger } from "../routines/routine.js";
 import { modelPricing, estimateCostUsd, soleConfiguredModel, type ModelPricing, type UsageTokens, type UsageShape } from "./pricing.js";
@@ -466,7 +467,7 @@ export async function resolveSlackLabels(
 export function approxConversationCount(rows: readonly UsageSummaryRow[]): number {
   let total = 0;
   for (const r of rows) {
-    if (r.kind === "sandbox") continue;
+    if (isRuntimeUsageKind(r.kind)) continue;
     total += r.sessions;
   }
   return total;
@@ -482,7 +483,7 @@ export interface UserActivity {
 export function aggregateByUser(rows: readonly UsageSummaryRow[]): UserActivity[] {
   const byUser = new Map<string, UserActivity>();
   for (const r of rows) {
-    if (r.kind === "sandbox" || !r.principalId) continue;
+    if (isRuntimeUsageKind(r.kind) || !r.principalId) continue;
     const acc = byUser.get(r.principalId) ?? { principalId: r.principalId, events: 0, inputTokens: 0, outputTokens: 0 };
     byUser.set(r.principalId, {
       principalId: r.principalId,
@@ -505,7 +506,7 @@ export interface SurfaceActivity {
 export function aggregateBySurface(rows: readonly UsageSummaryRow[]): SurfaceActivity[] {
   const bySurface = new Map<string, SurfaceActivity>();
   for (const r of rows) {
-    if (r.kind === "sandbox") continue;
+    if (isRuntimeUsageKind(r.kind)) continue;
     const acc = bySurface.get(r.surfaceKey) ?? { surfaceKey: r.surfaceKey, events: 0, sessions: 0, inputTokens: 0, outputTokens: 0 };
     bySurface.set(r.surfaceKey, {
       surfaceKey: r.surfaceKey,

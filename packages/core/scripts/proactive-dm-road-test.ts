@@ -12,6 +12,7 @@ delete process.env.OE_PLATFORM;
 __setTestValveForTest("egress-spoof", false);
 
 import { registerGrantBorrowTransport } from "../agent/access/credential-grant-broker.js";
+import { grantFooterPlace } from "../agent/access/credential-grant-card.js";
 import { _resetGrantBorrowTransportsForTest } from "../agent/access/grant-borrow-transport-registry.internal.js";
 import { approveCredentialGrant, askForCredentialGrant } from "../agent/access/credential-grant-flow.js";
 import { credentialGrantRefusalNote } from "../agent/access/credential-grant-ask.js";
@@ -168,7 +169,8 @@ type AuditRow = { readonly action: string; readonly detail?: unknown };
 const rowsWhere = async (action: string, pick: (d: Record<string, unknown>) => boolean): Promise<AuditRow[]> =>
   (await readAudit({ org: ORG })).filter((r) => r.action === action && pick((r.detail ?? {}) as Record<string, unknown>));
 
-const footerFor = (container: string): string => dmDeliveryFooter({ requestedBy: "slack/T1/U-req", fromContainer: container });
+const footerFor = (container: string, requesterLabel?: string): string =>
+  dmDeliveryFooter({ platform: "slack", recipientId: BOB_ID, requestedBy: "slack/T1/U-req", ...(requesterLabel !== undefined ? { requesterLabel } : {}), ...grantFooterPlace(container, undefined) });
 const STOP_SENTENCE = "Reply here to ask me to stop and I will not start another DM with you.";
 
 console.log("1. Bob stops, then Ada asks to borrow Bob's credential:");
@@ -238,8 +240,10 @@ let grantScope = "";
   const card = dmed[dmed.length - 1]!;
   ok(card.principalId === BOB_ID, "the card went to Bob");
   ok((card.actions ?? []).length === 4, "the card kept its four tappable answers — the road carries actions through");
-  ok(footerFor("session-live").includes(STOP_SENTENCE), "the host footer really carries the stop sentence — without this the two assertions below are vacuous");
-  ok(card.text.endsWith(footerFor("session-live")), "the card carries the host footer that tells Bob how to stop these messages");
+  ok(footerFor("session-live", "Ada").includes(STOP_SENTENCE), "the host footer really carries the stop sentence — without this the two assertions below are vacuous");
+  ok(card.text.endsWith(footerFor("session-live", "Ada")), "the card carries the host footer that tells Bob how to stop these messages");
+  ok(card.text.endsWith("_Ada asked for this in another conversation. " + STOP_SENTENCE + "_"), `the card's footer reads in words (got ${JSON.stringify(card.text.slice(-160))})`);
+  ok(!card.text.includes("slack/T1/U-req") && !card.text.includes("session-live"), "the card names no principal key and no grant scope key");
   ok(!(await readDmAudience(ORG, BOB)).delivered, "the grant card does NOT spend the chat.dm DELIVERY RECORD");
   await deliverProactiveDm({
     where: { org: ORG, platform: "slack", workspace: "T1", surface: "slack/T1/C-ROOM" },

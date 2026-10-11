@@ -347,7 +347,35 @@ async function freshGrant(opts: { to?: string } = {}): Promise<{ token: string; 
     readonly mint: () => Promise<{ token: string; id: string }>;
     readonly get: (token: string) => Promise<Response>;
     readonly post: (token: string) => Promise<Response>;
+    readonly untouched: (id: string) => Promise<boolean>;
   }
+
+  const pbStore = await import("../agent/personal-browser/store.js");
+  const pbViewer = await import("../agent/personal-browser/viewer.js");
+  const pbPerson = (id: string): string => `slack/T1/U-MATRIX-${id}`;
+  const pbRow = async (id: string, field: "links" | "sessions"): Promise<void> => {
+    const person = pbPerson(id);
+    await pbStore.updatePersonalBrowser(ORG, person, () => ({
+      next: {
+        v: 1,
+        org: ORG,
+        person,
+        principalId: `U-MATRIX-${id}`,
+        platform: "slack",
+        dm: { channelId: "D1" },
+        partition: { org: ORG, platform: "slack", workspace: "T1", surface: "D1", workspaceKey: "slack/T1", surfaceKey: "slack/T1/D1", key: "slack/T1/D1" },
+        persistKey: `oe-pb-matrix-${id}`,
+        lock: { holder: "agent", since: Date.now() },
+        acts: {},
+        links: field === "links" ? { [id]: Date.now() + 60_000 } : {},
+        sessions: field === "sessions" ? { [id]: Date.now() + 60_000 } : {},
+      },
+      result: undefined,
+    }));
+  };
+  const pbUnspent = async (id: string, field: "links" | "sessions"): Promise<boolean> => ((await pbStore.getPersonalBrowserState(ORG, pbPerson(id)))?.state[field][id] ?? 0) > Date.now();
+  const cookieReq = (path: string, token: string, init: RequestInit = {}) =>
+    new Request(`https://oe.example.test${path}`, { ...init, headers: { cookie: `oe_pb=${encodeURIComponent(token)}`, "x-oe-pb": "1", "content-type": "application/json" } });
 
   const formPost = (path: string, handler: (r: Request) => Promise<Response>) => (token: string) =>
     handler(
@@ -368,6 +396,7 @@ async function freshGrant(opts: { to?: string } = {}): Promise<{ token: string; 
       },
       get: (t) => intakePage.handleIntakePageGet(new Request(`https://oe.example.test${intakePage.INTAKE_PAGE_PATH}?t=${encodeURIComponent(t)}`)),
       post: formPost(intakePage.INTAKE_PAGE_PATH, (r) => intakePage.handleIntakePagePost(r)),
+      untouched: async (id) => (await store.getCredentialIntake(ORG, id))!.usedAt === undefined,
     },
     reveal: {
       mint: async () => {
@@ -376,6 +405,27 @@ async function freshGrant(opts: { to?: string } = {}): Promise<{ token: string; 
       },
       get: (t) => reveal.handleRevealGet(getReq(t)),
       post: formPost(reveal.REVEAL_PAGE_PATH, (r) => reveal.handleRevealPost(r)),
+      untouched: async (id) => (await store.getCredentialIntake(ORG, id))!.usedAt === undefined,
+    },
+    "browser-view": {
+      mint: async () => {
+        const id = `pbview${seq++}`;
+        await pbRow(id, "links");
+        return { token: mintPageToken({ v: 1, aud: "browser-view", org: ORG, id, rb: pbPerson(id), exp: Date.now() + 60_000 }, KEY), id };
+      },
+      get: (t) => pbViewer.handleViewGet(new Request(`https://oe.example.test${pbViewer.BROWSER_VIEW_PATH}?t=${encodeURIComponent(t)}`)),
+      post: formPost(pbViewer.BROWSER_VIEW_PATH, (r) => pbViewer.handleViewPost(r)),
+      untouched: (id) => pbUnspent(id, "links"),
+    },
+    "browser-session": {
+      mint: async () => {
+        const id = `pbsession${seq++}`;
+        await pbRow(id, "sessions");
+        return { token: mintPageToken({ v: 1, aud: "browser-session", org: ORG, id, rb: pbPerson(id), exp: Date.now() + 60_000 }, KEY), id };
+      },
+      get: (t) => pbViewer.handleLiveGet(cookieReq(pbViewer.BROWSER_LIVE_PATH, t)),
+      post: (t) => pbViewer.handleLiveControl(cookieReq(`${pbViewer.BROWSER_LIVE_PATH}/control`, t, { method: "POST", body: JSON.stringify({ action: "handback" }) })),
+      untouched: (id) => pbUnspent(id, "sessions"),
     },
   };
 
@@ -393,7 +443,7 @@ async function freshGrant(opts: { to?: string } = {}): Promise<{ token: string; 
       } else {
         eq(getRes.status, 404, `🔴 ${mintedFor} token at the ${redeemedAt} GET ⇒ refused`);
         eq(postRes.status, 404, `🔴 ${mintedFor} token at the ${redeemedAt} POST ⇒ refused`);
-        eq((await store.getCredentialIntake(ORG, grant.id))!.usedAt, undefined, `…and the ${mintedFor} grant is untouched by the attempt`);
+        eq(await table[mintedFor].untouched(grant.id), true, `…and the ${mintedFor} grant is untouched by the attempt`);
       }
     }
   }

@@ -10,6 +10,8 @@ import {
   runHomeAction,
   SLACK_HOME_WIRE,
   type BindableContext,
+  type Domain,
+  type DomainMembershipProbe,
   type HomeBlock,
   type HomeDomainMembership,
   type HomeViewer,
@@ -188,6 +190,7 @@ function homeActionModal(input: {
   readonly itemText: string;
   readonly title: string;
   readonly yes: string;
+  readonly note?: string;
 }): Record<string, unknown> {
   const quoted = escapeSlackText(clip(input.itemText, 2800));
   return {
@@ -210,7 +213,7 @@ function homeActionModal(input: {
           ]
         : [
             { type: "section", text: { type: "mrkdwn", text: `> ${quoted}` } },
-            { type: "context", elements: [{ type: "mrkdwn", text: "I remove this line from your memory everywhere it is stored. You cannot undo it." }] },
+            { type: "context", elements: [{ type: "mrkdwn", text: escapeSlackText(input.note ?? "I remove this line from your memory everywhere it is stored. You cannot undo it.") }] },
           ],
   };
 }
@@ -265,7 +268,12 @@ export async function buildSlackHomeViewer(ids: ParsedHomeInteraction, deps: Sla
   };
 }
 
-async function slackDomainMemberships(userId: string, workspaceKey: string, deps: SlackHomeDeps): Promise<HomeDomainMembership[]> {
+async function slackDomainMemberships(
+  userId: string,
+  workspaceKey: string,
+  deps: SlackHomeDeps,
+  keep: (domain: Domain) => boolean = (d) => d.memory !== undefined,
+): Promise<HomeDomainMembership[]> {
   const domains = getConfig().loadDomains();
   const byDomain = new Map<string, HomeDomainMembership>();
   let cursor: string | undefined;
@@ -283,7 +291,7 @@ async function slackDomainMemberships(userId: string, workspaceKey: string, deps
       if (!channelId) continue;
       const surfaceKey = `${workspaceKey}/${channelId}`;
       const domain = domainForChannel(surfaceKey, domains);
-      if (!domain || domain.memory === undefined) continue;
+      if (!domain || !keep(domain)) continue;
       if (!(await deps.channelInternal(channelId))) continue;
       const existing = byDomain.get(domain.name);
       const room = { surfaceKey, nativeId: channelId };
@@ -293,6 +301,23 @@ async function slackDomainMemberships(userId: string, workspaceKey: string, deps
     if (!cursor) break;
   }
   return [...byDomain.values()];
+}
+
+export function slackDomainMembershipProbe(deps: SlackHomeDeps = liveSlackHomeDeps()): DomainMembershipProbe {
+  return async ({ principalId, workspaceKey }) => {
+    try {
+      const [platform, teamId] = workspaceKey.split("/");
+      if (platform !== "slack" || !teamId || principalId.length === 0) return { fullMember: false, rooms: [] };
+      if ((await deps.authorIsMember(principalId, teamId)) !== true) return { fullMember: false, rooms: [] };
+      const memberships = await slackDomainMemberships(principalId, workspaceKey, deps, () => true);
+      return {
+        fullMember: true,
+        rooms: memberships.flatMap((m) => m.rooms.map((r) => ({ domain: m.domain.name, surfaceKey: r.surfaceKey, origin: { platform: "slack" as const, channelId: r.nativeId } }))),
+      };
+    } catch {
+      return { fullMember: false, rooms: [] };
+    }
+  };
 }
 
 const HOME_PUBLISH_ACTION = "home.publish";
@@ -350,6 +375,7 @@ export async function handleHomeClick(click: ParsedHomeClick, deps: SlackHomeDep
       itemText: located.text,
       title: located.action.confirm?.title ?? `${located.action.label}`,
       yes: located.action.confirm?.yes ?? "Save",
+      ...(located.action.confirm?.note !== undefined ? { note: located.action.confirm.note } : {}),
     }),
   });
   return res?.ok === true;

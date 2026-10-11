@@ -1,4 +1,5 @@
 import { getOperationalStore } from "../operational/provider.js";
+import { placeWords } from "../channels/friendly-ids.js";
 import { appendAudit } from "../audit/audit.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
@@ -42,7 +43,7 @@ export function routinePermissionCardLines(args: RoutinePermissionArgs): string[
     "🔑 approving writes the same standing permission the routine's creation card would have declared — it is revoked the moment the routine's instruction is edited, and `revoke_routine_permissions` withdraws it at any time.",
     "⛔ declining is remembered: this routine stops asking for this permission until its instruction is edited.",
     `Routine says:\n> ${clip(args.prompt)}`,
-    `Target: ${args.routineSurfaceKey}`,
+    `Target: ${placeWords({ key: args.routineSurfaceKey })}`,
     args.modelRole === undefined
       ? "Model: inherits this deployment's model stack."
       : `Model: this routine — and the work it delegates — runs the \`${args.modelRole}\` role of this deployment's model stack, not the default \`primary\` one.`,

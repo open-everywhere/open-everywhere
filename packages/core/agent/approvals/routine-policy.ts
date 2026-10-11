@@ -1,3 +1,4 @@
+import { placeWords } from "../channels/friendly-ids.js";
 import { appendAudit } from "../audit/audit.js";
 import type { Partition } from "../memory/partition.js";
 import { getRoutine, updateRoutine } from "../routines/store.js";
@@ -39,7 +40,7 @@ const routinePolicyAdd: ActionKind<RoutinePolicyAddArgs> = {
         : []),
       ...(args.incidentRunAt ? [`Prompted by the run at ${args.incidentRunAt}`] : []),
       `It becomes TRUSTED text in every future fire of this routine, including unattended ones, until someone removes it (${args.countBefore} → ${args.countBefore + 1} of ${POLICY_MAX_RULES} rules)`,
-      `Target: ${args.surfaceKey}`,
+      `Target: ${placeWords({ key: args.surfaceKey })}`,
     ];
   },
   async execute(args, decidedBy) {
@@ -120,7 +121,7 @@ const routinePolicyRemove: ActionKind<RoutinePolicyRemoveArgs> = {
       `Added ${args.addedAt} by ${args.addedBy} because: ${args.why}`,
       "🛡️ this is a guardrail someone armed after an incident — future fires stop following it, with no further notice",
       `${args.countBefore} → ${args.countBefore - 1} of ${POLICY_MAX_RULES} rules`,
-      `Target: ${args.surfaceKey}`,
+      `Target: ${placeWords({ key: args.surfaceKey })}`,
     ];
   },
   async execute(args, decidedBy) {

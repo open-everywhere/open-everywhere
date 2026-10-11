@@ -376,22 +376,24 @@ than refuses. Four deliberate carve-outs:
   stranded. That is a per-container standing root (a channel watcher on a non-window token),
   and a DM root on a surface Open Everywhere cannot derive a reply target for from the
   binding alone (see the DM note below).
-- **A DM or group-DM seat that *can* delegate keeps four verbs on top of the roster**:
-  `link_identity`, `confirm_link`, `unlink_identity` and `revoke_credential_grant`. Each takes its
-  authority from the shape of this seat — a DM binding, and the person's own acting principal. A
-  worker inherits that shape without the person who earned it, so none of the four may be handed to
-  one. The three identity verbs are interactive challenges as well: the agent issues one and *you*
-  answer it in the same 1:1 DM, which a one-shot worker cannot hold a turn open for. All four mount
-  on a group-DM seat and all four then refuse there, because each admits `dm` mode alone. Nothing
-  else is carved in.
+- **A DM or group-DM seat that *can* delegate keeps five verbs on top of the roster**:
+  `link_identity`, `confirm_link`, `unlink_identity`, `revoke_credential_grant` and `ask_domain`.
+  Each takes its authority from the shape of this seat — a DM binding, and the person's own acting
+  principal. A worker inherits that shape without the person who earned it, so none of the five may
+  be handed to one. The three identity verbs are interactive challenges as well: the agent issues one
+  and *you* answer it in the same 1:1 DM, which a one-shot worker cannot hold a turn open for.
+  `ask_domain` asks one of your domains a question for you, and the answer comes back to this DM
+  (see [Your DM can ask your domains](../capabilities/domain-questions.md)). All five mount on a
+  group-DM seat and all five then refuse there, because each admits `dm` mode alone. Nothing else is
+  carved in.
 - **Routine / webhook fires keep their own narrow-kit posture** — the lean cut is about
   delegating conversational seats only.
 
 Operations are done by subagents, not by the conversational agent; that is the doctrine, and
 the roster is its enforcement.
 
-**A delegated worker holds the full kit bar eight verbs, and it can
-ask the room a question.** Four come from the worker subtraction, and four are the DM-seat verbs
+**A delegated worker holds the full kit bar nine verbs, and it can
+ask the room a question.** Four come from the worker subtraction, and five are the DM-seat verbs
 the seat shape reserves so the carve-in above is containment rather than routing. Two of the
 subtracted four are the seat's own conversational controls, withheld
 because a worker inherits the
@@ -1118,7 +1120,14 @@ The work session has its own lifetime, apart from the seat's:
 
 - **It outlives the seat.** The work session keys on the seat's registry row, not on the seat's
   generation. A seat that rotates keeps the same work session, its workspace and its running jobs.
-  A job's result goes to the seat generation that is live when the job settles.
+  A job's result goes to the seat generation that is live when the job settles. One tool is the
+  exception: every caller of the operator rotation `rotateUnifiedWindow`
+  (`packages/core/scripts/e2e/rotate-window.ts`, the board legs that rotate a seat, the e2e packs and
+  the eval tools) also rotates the seat's work session when one exists (OPE-2467). So a leg whose seat
+  rotation succeeds starts on a fresh work session. A rotation that the guards refuse leaves both on
+  their standing generations. A store error between the two writes can leave the seat rotated and
+  the work session on its standing generation. A leg that rotates nothing keeps both. `--window w/<windowId>`
+  rotates the work session alone.
 - **It carries the work budget.** The work session's model calls, and its workers', count against
   the work session's own session limit (`agent.sessionInputTokenBudget`). A long job can no longer
   park the seat. The seat's limit covers its chat only.
@@ -1127,9 +1136,11 @@ The work session has its own lifetime, apart from the seat's:
   stays. Four cases rotate it at once, whatever it holds: the work session parked at its session
   limit, it failed (on eve 0.69+ an empty compaction summary is fatal), its code differs from the
   running deployment's, or an operator marked it for rotation.
-- **It never outlives a deploy.** eve pins a workflow run to the deployment that started it, so a
+- **It never outlives a code change.** eve pins a workflow run to the deployment that started it, so a
   work session keeps the code of that deployment for as long as it lives. Each forward compares the
-  code the work session was started on with the running code (the seat's own comparison, see
+  code the work session was started on with the running code. The running code includes the app's
+  own tree and config, so a deploy that changes only the app rotates it too, and a redeploy of the
+  identical tree does not (the seat's own comparison, see
   [Session rotation](../deploy/configuration-reference.md#session-rotation-standing-seats)). When they differ, the
   forward goes to a NEW work session on the running code. A work session whose row records no code
   (one an older build started) also rotates, because nothing proves which code it runs. The
@@ -1176,8 +1187,21 @@ approval card and returns, and the call runs again after a member approves.
 A **sign-in** works the same way. When a worker in the work session needs the asking person's own
 account and it is not connected, the call settles `needs-sign-in` at once. The personal sign-in link
 goes to that person privately, as a direct message, and never into the worker's report, because the
-report reaches the room. The worker says that the job waits for the sign-in, and the seat runs it
-again when the person says they connected.
+report reaches the room. The card says what is needed, gives the link, and says that the job resumes
+on its own (OPE-2462) — when a consent detour was recorded, which is what lets it resume. Without one, the
+card asks the person to say so instead, and the seat relays the worker's report as usual. With one, each
+thing is said once:
+
+- When the job came from the person's own DM, the card lands in that same conversation. It carries
+  no footer, and the seat posts nothing about the sign-in: the work session's result reaches the seat
+  with a host note that says the person already has the link. The seat relays only a part of the ask the
+  worker answered from another source, if any.
+- When the job came from a room, the room hears one short line from the seat that the job waits for
+  that person's sign-in. The link and the steps stay in the DM.
+- When the person connects, the host posts one line where they asked ("Your Notion account is
+  connected. I'm picking up your request now.") and wakes the seat to run the same job again. The seat
+  posts no hand-off; its next words are the answer to what the person asked. The continued job owes that
+  answer: its result wake arms the report duty, so `no_reply` is refused on it.
 
 ## A wake, a dispatch, a turn
 
@@ -1964,7 +1988,11 @@ state actually changed.
 
 **Every proactive DM carries a host-authored footer** (`dmDeliveryFooter`). The model authors none of
 it. It says three things a person who did not ask for the message needs: who asked, where the ask came
-from, and how to stop it. A stop the recipient cannot find is not a first-class stop.
+from, and how to stop it. A stop the recipient cannot find is not a first-class stop. It says them in
+words, never as ids (OPE-2462): the person who asked is "you", a display name or a mention, and the
+place is a channel mention, a label or plain words (`channels/friendly-ids.ts`). A DM that lands in the
+conversation the person asked from, such as their own sign-in card in their own DM, carries no footer:
+they know who asked and where, because they did, there.
 
 ### When a seat's generation retires
 

@@ -26,7 +26,7 @@ const STACK_RATES: Readonly<Record<string, ModelRateBand>> = {
     longContext: { thresholdInputTokens: 272_001, in: point(0.25), out: point(0.75) },
   },
   "alibaba/qwen3-vl-instruct": { in: point(0.2), out: point(0.88) },
-  "google/gemini-3.7-flash": { in: point(0.75), out: point(3.75) },
+  "google/gemini-3.8-flash": { in: point(0.75), out: point(3.75) },
   "deepseek/deepseek-v4-flash-0731": {
     in: { minPerMtok: 0.09, maxPerMtok: 0.14 },
     out: { minPerMtok: 0.18, maxPerMtok: 0.28 },

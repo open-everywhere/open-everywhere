@@ -247,6 +247,19 @@ sandbox burn. Both rows carry the same **principal and routine attribution** as 
 session's model rows — a routine fire's sandbox time bills its creator, and a person's
 `perUser` budget counts their sandbox dollars, not just their tokens.
 
+A **`meeting`**-kind row (OPE-2459) records one meeting bot's box hours, with no tokens. It is written
+once per meeting, when the bot sends `ended` or the cap sweep finishes a meeting that never did, beside one spend-ledger row
+(`usd_micros` only), attributed to the person who asked. On Vercel the dollars are the box's memory
+GiB-hours at `spend.sandboxGiBHourUsd`; on docker the row records the hours at $0. Transcription and the
+recap's model call are not in it. See [Meetings](../capabilities/meetings.md#governance).
+
+A **`browser`**-kind row (OPE-2441) records one session of a person's browser box, with no tokens. It is
+written once per box session, when the box closes (the person or the agent closed it, it idled out, it hit
+its cap, a halt, or it stopped answering), beside one spend-ledger row (`usd_micros` only), attributed to
+the person. On Vercel the dollars are the box's memory GiB-hours at `spend.sandboxGiBHourUsd`; on docker
+the row records the hours at $0. The model calls that drive the browser are ordinary token rows. See
+[Personal browser](../capabilities/personal-browser.md#governance).
+
 🔴 **Retention: the default store deletes no usage row.** The `spend.usageEventsTtlDays` typed
 setting (default 90) sets the cutoff for a prune that runs on roughly 1-in-20 writes (the same
 amortized-cost idiom the event-dedupe table uses). Only the deprecated SQLite floor deletes rows
@@ -374,7 +387,7 @@ file, reviewed by PR:
 ```ts
 const pricing: ModelPricingTable = defineModelPricing({
   "alibaba/qwen3-vl-instruct": { inPerMtok: 0.2, outPerMtok: 0.88 },
-  "google/gemini-3.7-flash": { inPerMtok: 0.75, outPerMtok: 3.75 },
+  "google/gemini-3.8-flash": { inPerMtok: 0.75, outPerMtok: 3.75 },
 });
 ```
 
@@ -653,10 +666,10 @@ unclassified and masks.
 lookup failure — a missing label degrades a report, it never fails one.
 
 **Two of the three aggregate figures are exact, and one is not.** `aggregateByUser` reports exact
-per-principal event and token counts, dropping sandbox and unattributed rows. `aggregateBySurface`
+per-principal event and token counts, dropping runtime (`sandbox`, `meeting`, `browser`) and unattributed rows. `aggregateBySurface`
 reports the busiest surfaces by **event count**, which is exact. Its **session count** carries the
 approximation caveat. `approxConversationCount` is where that caveat comes from: it approximates
-conversations by summing grouped session counts and excluding sandbox rows. Read it as an
+conversations by summing grouped session counts and excluding runtime (`sandbox`, `meeting`, `browser`) rows. Read it as an
 approximation, because that is what its name says and what the grouping makes it.
 
 **Cadence projection is floored by the dispatcher, not by the trigger.** A projected fire rate is

@@ -130,8 +130,8 @@ rather than run unfirewalled, unless the deployment declares `egress: { allowUne
   `OE_EGRESS_PROXY_URL` points the deployment at it, and the session policy is pushed on every
   session. The proxy holds two principals apart. The **session** (no credential) is held to its
   compiled policy, default-deny. The **app's own model call** carries the proxy token as
-  `Proxy-Authorization` and is held to a separate **host plane** that names the model gateway alone
-  (OPE-2406), on Tier A and Tier B alike (Tier B splices that call, never decrypts it). The host
+  `Proxy-Authorization` and is held to a separate **host plane** that names the model gateway, plus any non-gateway transcription route host
+  the app registers for the meeting bot (OPE-2406, OPE-2470), on Tier A and Tier B alike (Tier B splices that call, never decrypts it). The host
   plane never widens a session: a session request carries no credential. A
   session that obtained the token could already push itself any policy, so the separation is as
   strong as the `justbash` sandbox that keeps the token out of the shell, which is development
@@ -212,7 +212,7 @@ A running deployment answers `GET /eve/v1/oe/status` with one verdict per requir
 ```json
 {
   "contract": 1,
-  "version": { "app": "unversioned", "core": "0.5.0", "eve": "0.71.0" },
+  "version": { "app": "unversioned", "core": "0.6.0", "eve": "0.71.0" },
   "host": "vercel",
   "requirements": [
     { "id": "node-24", "met": "yes", "detail": "running node 24.21.0, which satisfies 24.x" }

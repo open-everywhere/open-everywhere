@@ -26,6 +26,7 @@
     "@open-everywhere/adapters": "{{OE_VERSION}}",
     "@open-everywhere/core": "{{OE_VERSION}}",
     "@open-everywhere/provider-discord": "{{OE_VERSION}}",
+    "@open-everywhere/provider-email": "{{OE_VERSION}}",
     "@open-everywhere/provider-github": "{{OE_VERSION}}",
     "@open-everywhere/provider-linear": "{{OE_VERSION}}",
     "@open-everywhere/provider-notion": "{{OE_VERSION}}",

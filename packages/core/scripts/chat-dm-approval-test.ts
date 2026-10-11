@@ -33,7 +33,7 @@ registerPostArm({
 });
 
 const GRANT = `${PLATFORM}:person/U_SARAH`;
-const FOOTER = dmDeliveryFooter({ requestedBy: "U_PROPOSER", fromContainer: "slack/T1/C_HOME" });
+const FOOTER = dmDeliveryFooter({ platform: PLATFORM, recipientId: "U_SARAH", requestedBy: "U_PROPOSER", from: "slack/T1/C_HOME" });
 function args(over: Partial<ChatDmArgs> = {}): ChatDmArgs {
   return {
     org: "default",
@@ -58,8 +58,13 @@ function args(over: Partial<ChatDmArgs> = {}): ChatDmArgs {
   const kind = actionKind("chat.dm")!;
   const lines = kind.summarize(args()) as string[];
   const all = lines.join("\n");
-  ok(all.includes("U_SARAH"), "the card names the RECIPIENT");
-  ok(all.includes(GRANT), "the card names the GRANT that admitted them");
+  ok(all.includes("a test-dm-platform person"), "on a platform with no mention syntax and no display name, the card names the recipient in plain words (OPE-2462)");
+  const named = (kind.summarize(args({ recipientLabel: "Sarah Lin" })) as string[]).join("\n");
+  ok(named.includes("Start a direct message with Sarah Lin"), "…and by display name when propose resolved one");
+  const slackCard = (kind.summarize(args({ platform: "slack" })) as string[]).join("\n");
+  ok(slackCard.includes("<@U_SARAH>"), "on Slack the card names the RECIPIENT as a mention");
+  ok(!all.includes(GRANT) && !/person U_SARAH/.test(all), "the card prints no grant address and no bare member id");
+  ok(all.includes("whom an operator granted"), "the card says an operator grant admitted them, in words — the grant address stays on the frozen args and the audit row (OPE-2462)");
   ok(all.includes("The build is fixed, you can re-run your deploy."), "the card renders the FULL body — it is the injection gate");
   ok(all.includes(FOOTER.trim()), "the card echoes the footer VERBATIM, so the approver can check the recipient is told how to stop it");
   ok(
@@ -80,7 +85,7 @@ function args(over: Partial<ChatDmArgs> = {}): ChatDmArgs {
   ok(sent[0]!.principalId === "U_SARAH", "it is addressed to the frozen recipient");
   ok(sent[0]!.text.startsWith("The build is fixed"), "the model's body goes first");
   ok(sent[0]!.text.endsWith(FOOTER), "the HOST footer is appended to what the recipient sees");
-  ok(typeof note === "string" && note.includes("U_SARAH"), "the decision note names who was messaged");
+  ok(typeof note === "string" && note.includes("sent a direct message to a test-dm-platform person") && !note.includes("U_SARAH"), "the decision note says who was messaged, in words (OPE-2462)");
 
   const audience = await readDmAudience("default", GRANT);
   ok(audience.delivered, "the approved first delivery records that this person has been delivered to");

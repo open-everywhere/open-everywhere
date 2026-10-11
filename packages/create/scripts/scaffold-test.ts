@@ -53,7 +53,7 @@ const lockstepNames = publishable.map((m) => m.name).sort();
 const scaffolder = publishable.find((m) => m.name === "@open-everywhere/create");
 const core = publishable.find((m) => m.name === "@open-everywhere/core");
 assert.ok(scaffolder && core, "the repository's packages/ holds @open-everywhere/create and @open-everywhere/core");
-eq(lockstepNames.length, 9, "the lockstep set is nine packages (eight libraries + this scaffolder)");
+eq(lockstepNames.length, 10, "the lockstep set is ten packages (nine libraries + this scaffolder)");
 ok(
   lockstepNames.every((name) => name.startsWith("@open-everywhere/")),
   "🔴 every lockstep package is inside the scope, the scaffolder included (OPE-2234) — an unscoped package cannot belong to the npm org",
@@ -66,7 +66,7 @@ const placeholdered = Object.entries(allDeps)
   .filter(([, v]) => v === VERSION_PLACEHOLDER)
   .map(([k]) => k)
   .sort();
-eq(placeholdered, lockstepNames, "template package.json: the version placeholder sits on exactly the nine lockstep packages");
+eq(placeholdered, lockstepNames, "template package.json: the version placeholder sits on exactly the ten lockstep packages");
 ok(
   Object.entries(allDeps).every(([k, v]) => !k.startsWith("@open-everywhere/") || v === VERSION_PLACEHOLDER),
   "template package.json: no @open-everywhere/* dependency carries a hard-coded version",

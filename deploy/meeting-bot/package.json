@@ -1,0 +1,12 @@
+{
+  "name": "oe-meeting-bot",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Open Everywhere's own meeting bot: joins a Meet or Teams meeting in a headless Chromium, records the audio in the page and sends it to OE through signed callbacks.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "main": "bot.mjs",
+  "dependencies": {
+    "playwright": "1.56.1"
+  }
+}

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, symlinkSync } from "node:fs";
 import { parseEnv } from "node:util";
 import { randomBytes } from "node:crypto";
 import { join, basename } from "node:path";
@@ -25,6 +25,10 @@ import {
   surfaceAppManifestSurfaces,
   surfaceAppNameProblem,
   _resetSurfaceAppManifestsForTest,
+  registerSurfaceAppPackage,
+  surfaceAppPackageSurfaces,
+  _resetSurfaceAppPackagesForTest,
+  type SurfaceAppPackageInput,
 } from "../agent/ops/surface-manifest.js";
 import { buildOpsServer, OPS_TOOL_NAMES } from "../agent/ops/server.js";
 import { registerDeploymentIdentity, deploymentOrg, seg, _resetDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
@@ -458,6 +462,85 @@ const ok = (label: string, cond: boolean) => {
 }
 
 {
+  _resetSurfaceAppPackagesForTest();
+  ok("no package surface is registered by default", surfaceAppPackageSurfaces().length === 0);
+  const dir = mkdtempSync(join(tmpdir(), "open-everywhere-pkg-"));
+  const outerProject = process.env.CLAUDE_PROJECT_DIR;
+  process.env.CLAUDE_PROJECT_DIR = dir;
+  mkdirSync(join(dir, "art"), { recursive: true });
+  writeFileSync(join(dir, "art", "c.png"), "COLOR-BYTES");
+  writeFileSync(join(dir, ".env.local"), "FAKE_APP_ID=app-123\n", "utf-8");
+  let seen: SurfaceAppPackageInput | undefined;
+  registerSurfaceAppPackage("fakepkg", {
+    icons: { color: "default/color.png", outline: "default/outline.png" },
+    outDir: "fake-app",
+    build: (input) => {
+      seen = input;
+      const blocked = input.developerName === undefined;
+      return {
+        findings: blocked ? [{ id: "developer-name", level: "block", detail: "no developer name" }] : [{ id: "w", level: "warn", detail: "a warning" }],
+        manifest: JSON.stringify({ host: input.host }),
+        ...(blocked ? {} : { archive: new Uint8Array([0x50, 0x4b, 1, 2]) }),
+        fileName: "fake.zip",
+        steps: ["Upload it."],
+      };
+    },
+  });
+  const server = buildOpsServer();
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  await server.connect(st);
+  const client = new Client({ name: "package-test", version: "0" });
+  await client.connect(ct);
+  const call = async (args: Record<string, unknown>) => {
+    const res = await client.callTool({ name: "surface_app_package", arguments: args });
+    return JSON.parse((res.content as { type: string; text: string }[])[0].text) as Record<string, unknown>;
+  };
+  const okArgs = { surface: "fakepkg", baseUrl: "https://oe.example.com", route: "org", developerName: "Acme", icons: { color: "art/c.png" } };
+
+  const unknown = await call({ surface: "nope", baseUrl: "oe.example.com", route: "org" });
+  ok("surface_app_package refuses an unregistered surface", unknown.ok === false && (unknown.available as string[]).includes("fakepkg"));
+  const badHost = await call({ ...okArgs, baseUrl: "https://oe.example.com/a/path" });
+  ok("surface_app_package refuses a baseUrl that is not a host", badHost.ok === false && seen === undefined);
+
+  const blocked = await call({ ...okArgs, developerName: undefined });
+  ok("🔴 a blocked package is refused…", blocked.ok === false && (blocked.findings as { id: string }[])[0]?.id === "developer-name");
+  ok("🔴 …and nothing is written", !existsSync(join(dir, "fake-app")));
+
+  const built = await call(okArgs);
+  ok("a passing package is written", built.ok === true && built.path === join("fake-app", "fake.zip"));
+  ok("…with the bundle's bytes", readFileSync(join(dir, "fake-app", "fake.zip")).equals(Buffer.from([0x50, 0x4b, 1, 2])));
+  ok("…and its sha256, warnings and steps", typeof built.sha256 === "string" && (built.findings as { level: string }[])[0]?.level === "warn" && (built.steps as string[])[0] === "Upload it.");
+  ok("the bundle got the normalised host", seen?.host === "oe.example.com");
+  ok("the bundle got the named icon's bytes", Buffer.from(seen?.icons.color ?? []).toString() === "COLOR-BYTES");
+  ok("…and absent bytes for a missing default icon", "outline" in (seen?.icons ?? {}) && seen?.icons.outline === undefined);
+  ok("the bundle got the project's .env.local", seen?.env.FAKE_APP_ID === "app-123");
+
+  const outside = await call({ ...okArgs, outPath: "../escape.zip" });
+  ok("🔴 an outPath outside the project is refused", outside.ok === false && !existsSync(join(dir, "..", "escape.zip")));
+  const notZip = await call({ ...okArgs, outPath: "fake-app/x.json" });
+  ok("an outPath that is not a .zip is refused", notZip.ok === false && !existsSync(join(dir, "fake-app", "x.json")));
+  const iconOutside = await call({ ...okArgs, icons: { color: "../../etc/passwd" } });
+  ok("🔴 an icon path outside the project is refused", iconOutside.ok === false && /outside the project/.test(String(iconOutside.note)));
+  const away = mkdtempSync(join(tmpdir(), "open-everywhere-pkg-away-"));
+  symlinkSync(away, join(dir, "linked"));
+  const viaLink = await call({ ...okArgs, outPath: "linked/escape.zip" });
+  ok("🔴 an outPath through a symlink that leaves the project is refused", viaLink.ok === false && !existsSync(join(away, "escape.zip")));
+  writeFileSync(join(away, "c.png"), "OUTSIDE");
+  const iconViaLink = await call({ ...okArgs, icons: { color: "linked/c.png" } });
+  ok("🔴 an icon path through a symlink that leaves the project is refused", iconViaLink.ok === false && /outside the project/.test(String(iconViaLink.note)));
+  symlinkSync(join(away, "dangling.zip"), join(dir, "dangle.zip"));
+  const dangling = await call({ ...okArgs, outPath: "dangle.zip" });
+  ok("🔴 an outPath that is a dangling symlink out of the project is refused", dangling.ok === false && !existsSync(join(away, "dangling.zip")));
+  const custom = await call({ ...okArgs, outPath: "dist/listing.zip" });
+  ok("an outPath inside the project is honoured", custom.ok === true && existsSync(join(dir, "dist", "listing.zip")));
+
+  await client.close();
+  if (outerProject === undefined) delete process.env.CLAUDE_PROJECT_DIR;
+  else process.env.CLAUDE_PROJECT_DIR = outerProject;
+  _resetSurfaceAppPackagesForTest();
+}
+
+{
   const outerProject = process.env.CLAUDE_PROJECT_DIR;
   const dir = mkdtempSync(join(tmpdir(), "open-everywhere-ops-org-"));
   process.env.CLAUDE_PROJECT_DIR = dir;
@@ -785,6 +868,7 @@ const ok = (label: string, cond: boolean) => {
   const minimalArgs: Record<string, Record<string, unknown>> = {
     preflight: {},
     surface_manifest: { surface: "slack" },
+    surface_app_package: { surface: "teams", baseUrl: "oe.example.com", route: "org" },
     scaffold_env: {},
     scaffold_credential_key: {},
     secret_set: { names: ["OPS_TEST_2396_ABSENT"] },

@@ -35,6 +35,8 @@ function originContainerId(origin: UnifiedWakeOrigin): string {
       return origin.channelId;
     case "teams":
       return origin.conversationId;
+    case "email":
+      return origin.threadId;
   }
 }
 

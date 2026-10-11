@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -13,6 +14,7 @@ import {
 } from "../agent/scaffold/roster-plan.js";
 import { SLOT_DIR } from "../agent/scaffold/roster-config.js";
 import { readEveFrameworkTools } from "./eve-framework-tools.js";
+import { APP_CODE_FINGERPRINT_MODULE, writeAppCodeFingerprint } from "./code-fingerprint.js";
 import {
   CONFIG_FILE,
   applyPlan,
@@ -173,13 +175,18 @@ async function runBuild(args: readonly string[]): Promise<void> {
     const problems: string[] = [];
     const absent = diff.written.filter((p) => !existsSync(join(repoRoot, p)));
     const drifted = diff.written.filter((p) => existsSync(join(repoRoot, p)));
-    if (absent.length > 0 && drifted.length === 0 && diff.unchanged.length === 0) {
+    const treeUnbuilt = absent.length > 0 && drifted.length === 0 && diff.unchanged.length === 0;
+    if (treeUnbuilt) {
       problems.push(`NOT BUILT · the slot tree is not built yet (${absent.length} file(s)). Run \`npm run build\`, or \`npx oe build\` to write only the tree.`);
     } else {
       for (const p of absent) problems.push(`NOT BUILT · ${p} is not built yet. Run \`npm run build\`, or \`npx oe build\`.`);
     }
     for (const p of drifted) problems.push(`DRIFTED · ${p} differs from the plan (hand-edited, or the build is stale).`);
     for (const p of diff.deleted) problems.push(`STRAY · ${p} is in an owned slot directory but not in the plan.`);
+    const fingerprintPath = `${agentDir}/${APP_CODE_FINGERPRINT_MODULE}`;
+    if (!treeUnbuilt && !existsSync(join(repoRoot, fingerprintPath))) {
+      problems.push(`NOT BUILT · ${fingerprintPath} is not built yet. Run \`npm run build\`, or \`npx oe build\`.`);
+    }
     const goldenPath = join(repoRoot, GOLDEN);
     if (existsSync(goldenPath) && readFileSync(goldenPath, "utf8") !== `${goldenLines.join("\n")}\n`) {
       problems.push(`GOLDEN · ${GOLDEN} does not match the plan. Fix: \`npm run oe:build -- --accept\` and READ the diff — it is the roster review surface.`);
@@ -206,6 +213,7 @@ async function runBuild(args: readonly string[]): Promise<void> {
   }
 
   const applied = applyPlan(repoRoot, plan.files, owned);
+  const appFingerprint = writeAppCodeFingerprint(repoRoot, agentDir);
   const goldenPath = join(repoRoot, GOLDEN);
   const golden = `${goldenLines.join("\n")}\n`;
   if ((existsSync(dirname(goldenPath)) || accept) && !(existsSync(goldenPath) && readFileSync(goldenPath, "utf8") === golden)) {
@@ -217,8 +225,21 @@ async function runBuild(args: readonly string[]): Promise<void> {
     `✓ oe build: ${plan.files.length} file(s) — ${applied.written.length} written, ` +
       `${applied.unchanged.length} unchanged, ${applied.deleted.length} deleted.`,
   );
+  console.log(`  app code fingerprint: ${appFingerprint.fingerprint} (${appFingerprint.wrote ? "written" : "unchanged"}, ${appFingerprint.path})`);
+  if (!gitIgnores(repoRoot, appFingerprint.path)) {
+    console.log(`  ⚠ ${appFingerprint.path} is not gitignored. It is build output: add \`/${appFingerprint.path}\` to .gitignore, or every app edit rewrites a tracked file.`);
+  }
   printRollCall(plan, "build");
   if (againstSummary !== undefined) assertAgainstSummary(repoRoot, againstSummary, plan);
+}
+
+function gitIgnores(repoRoot: string, relPath: string): boolean {
+  try {
+    execFileSync("git", ["check-ignore", "-q", relPath], { cwd: repoRoot, stdio: "ignore" });
+    return true;
+  } catch (err) {
+    return (err as { status?: number }).status !== 1;
+  }
 }
 
 function printRollCall(plan: PlanResult, mode: string): void {

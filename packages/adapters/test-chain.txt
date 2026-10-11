@@ -7,6 +7,7 @@ test:instrumentation
 test:sandbox-lifecycle
 test:sandbox-guard
 test:sandbox-extend
+test:long-lived-box
 test:model-gateway
 test:gateway-probe
 test:dream-judge-gateway
@@ -20,3 +21,6 @@ test:aws-adapter
 test:aws-sso
 test:okta-directory
 test:default-adapters
+test:native-transcripts
+test:transcription-routes
+test:host-plane-union

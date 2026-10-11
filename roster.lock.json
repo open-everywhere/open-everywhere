@@ -9,21 +9,23 @@
   },
   "packages": {
     "@open-everywhere/adapters": {
-      "version": "0.5.0",
+      "version": "0.6.0",
       "contributions": {
         "hook/sandbox-lifecycle": "mounted",
         "tool/extend_workspace_time": "mounted"
       }
     },
     "@open-everywhere/core": {
-      "version": "0.5.0",
+      "version": "0.6.0",
       "contributions": {
         "channel/aws-sso-callback": "mounted",
         "channel/control-mcp": "mounted",
         "channel/control-read": "mounted",
         "channel/credential-intake-page": "mounted",
+        "channel/meeting-callback": "mounted",
         "channel/oe-oauth-callback": "mounted",
         "channel/oe-status": "mounted",
+        "channel/personal-browser": "mounted",
         "channel/policy-pages": "mounted",
         "channel/test-wake": "mounted",
         "channel/transcript-relay": "mounted",
@@ -67,11 +69,15 @@
         "schedule/directory-sync": "mounted",
         "schedule/dispatch": "mounted",
         "schedule/dream-mode3": "mounted",
+        "schedule/meeting-sweep": "mounted",
+        "schedule/personal-browser-sweep": "mounted",
         "schedule/tidy": "mounted",
         "skill/scoped": "mounted",
         "tool/add_label": "mounted",
         "tool/add_routine_rule": "mounted",
         "tool/agent_version": "mounted",
+        "tool/answer_domain_question": "mounted",
+        "tool/ask_domain": "mounted",
         "tool/ask_question": "mounted",
         "tool/ask_room": "mounted",
         "tool/assign": "mounted",
@@ -111,15 +117,21 @@
         "tool/list_routines": "mounted",
         "tool/list_skills": "mounted",
         "tool/list_webhooks": "mounted",
+        "tool/meeting_join": "mounted",
+        "tool/meeting_leave": "mounted",
+        "tool/meeting_recap": "mounted",
         "tool/memory_admin_list": "mounted",
         "tool/memory_admin_read": "mounted",
         "tool/message_thread_seat": "mounted",
+        "tool/my_browser": "mounted",
+        "tool/my_browser_handoff": "mounted",
         "tool/no_reply": "mounted",
         "tool/open_pull_request": "mounted",
         "tool/permission_fit_report": "mounted",
         "tool/post_file": "mounted",
         "tool/post_message": "mounted",
         "tool/post_pr_walkthrough": "mounted",
+        "tool/propose_email_sender": "mounted",
         "tool/propose_mcp_server": "mounted",
         "tool/purge_memory": "mounted",
         "tool/query_analytics": "mounted",
@@ -167,27 +179,33 @@
       }
     },
     "@open-everywhere/provider-discord": {
-      "version": "0.5.0",
+      "version": "0.6.0",
       "contributions": {
         "channel/discord": "mounted",
         "channel/discord-gateway": "mounted"
       }
     },
+    "@open-everywhere/provider-email": {
+      "version": "0.6.0",
+      "contributions": {
+        "channel/email": "mounted"
+      }
+    },
     "@open-everywhere/provider-github": {
-      "version": "0.5.0",
+      "version": "0.6.0",
       "contributions": {
         "channel/github": "mounted"
       }
     },
     "@open-everywhere/provider-linear": {
-      "version": "0.5.0",
+      "version": "0.6.0",
       "contributions": {
         "channel/linear": "mounted",
         "tool/read_linear_issue": "mounted"
       }
     },
     "@open-everywhere/provider-notion": {
-      "version": "0.5.0",
+      "version": "0.6.0",
       "contributions": {
         "channel/notion": "mounted",
         "schedule/notion-ingress": "mounted",
@@ -197,7 +215,7 @@
       }
     },
     "@open-everywhere/provider-slack": {
-      "version": "0.5.0",
+      "version": "0.6.0",
       "contributions": {
         "channel/slack": "mounted",
         "channel/slack-commands": "mounted",
@@ -205,7 +223,7 @@
       }
     },
     "@open-everywhere/provider-teams": {
-      "version": "0.5.0",
+      "version": "0.6.0",
       "contributions": {
         "channel/teams": "mounted"
       }

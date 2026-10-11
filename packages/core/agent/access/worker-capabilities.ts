@@ -32,6 +32,8 @@ export const WORKER_INDEX_SEAT_VERBS: ReadonlySet<string> = new Set([
   "stand_down",
   "halt",
   "set_dm_delivery",
+  "ask_domain",
+  "answer_domain_question",
 ]);
 
 export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
@@ -141,6 +143,21 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
       "permission_fit_report",
       "resume",
     ],
+  },
+  {
+    id: "meetings",
+    headline: "Join a meeting by its link (Google Meet, Microsoft Teams) with OE's own notetaker bot and post a recap with the decisions and actions in this thread afterwards, recap a Teams, Meet or Zoom meeting from the platform's own transcript with no bot, or stop a notetaker bot this conversation sent",
+    tools: ["meeting_join", "meeting_recap", "meeting_leave"],
+  },
+  {
+    id: "email",
+    headline: "Let a new sender email one of this deployment's room inboxes (an approval card, then a pull request an admin merges)",
+    tools: ["propose_email_sender"],
+  },
+  {
+    id: "personal-browser",
+    headline: "Use the person's own browser, which stays signed in to their sites (look at a page, click, fill a form, check which sites hold a login), show it to them live, or hand them the controls to sign in, type a code or solve a check (DM only)",
+    tools: ["my_browser", "my_browser_handoff"],
   },
   {
     id: "what-waits-on-you",

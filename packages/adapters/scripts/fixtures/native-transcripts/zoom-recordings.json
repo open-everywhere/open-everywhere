@@ -1,0 +1,18 @@
+{
+  "uuid": "4444AAAiAAAAAiAiAiiAii==",
+  "id": 81234567890,
+  "account_id": "fixtureAccount",
+  "host_id": "fixtureHost",
+  "topic": "Weekly launch sync",
+  "type": 2,
+  "start_time": "2026-01-15T22:00:05Z",
+  "timezone": "Europe/London",
+  "duration": 37,
+  "total_size": 52428800,
+  "recording_count": 3,
+  "recording_files": [
+    { "id": "f-video", "meeting_id": "4444AAAiAAAAAiAiAiiAii==", "recording_start": "2026-01-15T22:00:05Z", "recording_end": "2026-01-15T22:37:41Z", "file_type": "MP4", "file_extension": "MP4", "file_size": 50000000, "download_url": "https://us06web.zoom.us/rec/download/fixture-video", "status": "completed", "recording_type": "shared_screen_with_speaker_view" },
+    { "id": "f-audio", "meeting_id": "4444AAAiAAAAAiAiAiiAii==", "recording_start": "2026-01-15T22:00:05Z", "recording_end": "2026-01-15T22:37:41Z", "file_type": "M4A", "file_extension": "M4A", "file_size": 2400000, "download_url": "https://us06web.zoom.us/rec/download/fixture-audio", "status": "completed", "recording_type": "audio_only" },
+    { "id": "f-transcript", "meeting_id": "4444AAAiAAAAAiAiAiiAii==", "recording_start": "2026-01-15T22:00:05Z", "recording_end": "2026-01-15T22:37:41Z", "file_type": "TRANSCRIPT", "file_extension": "VTT", "file_size": 2048, "download_url": "https://us06web.zoom.us/rec/download/fixture-transcript", "status": "completed", "recording_type": "audio_transcript" }
+  ]
+}

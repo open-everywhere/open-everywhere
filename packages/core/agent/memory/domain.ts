@@ -74,6 +74,7 @@ export interface Domain {
   readonly memory?: string | readonly string[];
   readonly includeOrg?: "readonly" | "inherit";
   readonly memoryCanvas?: boolean;
+  readonly dmQuestions?: boolean;
   readonly approvalMode?: ApprovalModeConfig;
   readonly nameDropWake?: boolean;
   readonly ambientSupervisor?: boolean;

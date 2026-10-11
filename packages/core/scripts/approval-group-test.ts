@@ -25,7 +25,7 @@ const { requestApproval, handleApprovalPayload, OE_APPROVAL_PREFIX } = await imp
 const { registerActionKind } = await import("../agent/approvals/actions.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { resetTurnClock } = await import("../agent/observability/turn-clock.js");
-const { GROUPED_CARD_MAX_ITEMS } = await import("../agent/approvals/card.js");
+const { GROUPED_CARD_MAX_ITEMS, pendingCardBlocks, groupedCardBlocks, decidedCardBlocks } = await import("../agent/approvals/card.js");
 
 const require = createRequire(import.meta.url);
 const eveRoot = dirname(require.resolve("eve/package.json"));
@@ -51,12 +51,13 @@ registerActionKind({
 interface Call {
   readonly method: string;
   readonly body: URLSearchParams;
+  readonly raw: string;
 }
 let calls: Call[] = [];
 let nextTs = 100;
 let updateOk = true;
 const post = async (method: string, body: string): Promise<Record<string, unknown> | undefined> => {
-  calls.push({ method, body: new URLSearchParams(body) });
+  calls.push({ method, body: new URLSearchParams(body), raw: body });
   if (method === "chat.postMessage") return { ok: true, ts: `${nextTs++}.0` };
   if (method === "chat.update") return { ok: updateOk };
   return { ok: true };
@@ -239,5 +240,55 @@ await handleApprovalPayload(
   { post },
 );
 ok(calls.length === 0, "a repeat click on a SINGLE decided card stays silent, as before");
+
+{
+  const wireText = (c: Call | undefined): string => c?.body.get("text") ?? "";
+  const carriesLineFeeds = (c: Call | undefined): boolean => (c?.raw ?? "").includes("%0A");
+
+  calls = [];
+  const idW1 = await propose("sess-wire", "kappa", "990.0");
+  const postW = calls.find((c) => c.method === "chat.postMessage");
+  const rowW1 = (await store.getPendingAction("default", idW1))!;
+  const singleText = pendingCardBlocks(rowW1, ["do kappa"]).text;
+  ok(wireText(postW) === singleText, `🔴 SINGLE: chat.postMessage carries the rendered text byte for byte (got ${JSON.stringify(wireText(postW))})`);
+  const singleLines = wireText(postW).split("\n");
+  ok(singleLines.length === 4 && singleLines[0] === "Do kappa for the team." && singleLines[1] === "Approval requested: test.group", `SINGLE: the sentence, then the label, each on its own line (got ${JSON.stringify(singleLines)})`);
+  ok(carriesLineFeeds(postW), "SINGLE: the form body carries encoded line feeds");
+
+  calls = [];
+  const idW2 = await propose("sess-wire", "lambda", "990.0");
+  const tsW = rowW1.messageTs;
+  const joinW = calls.find((c) => c.method === "chat.update" && c.body.get("ts") === tsW);
+  const membersW = await store.listPendingActionsForMessage("default", "C1", tsW!);
+  ok(membersW.some((m) => m.id === idW2), "GROUPED: the second ask joined the first card");
+  const groupedText = groupedCardBlocks(membersW.map((m) => ({ row: m, summaryLines: [`do ${(JSON.parse(m.argsJson) as { what: string }).what}`] }))).text;
+  ok(wireText(joinW) === groupedText, `🔴 GROUPED: the join's chat.update carries the rendered text byte for byte (got ${JSON.stringify(wireText(joinW))})`);
+  const groupedLines = wireText(joinW).split("\n");
+  ok(groupedLines.length === 4 && groupedLines[1] === "Approval requested: grouped" && groupedLines[2].startsWith("1. ") && groupedLines[3].startsWith("2. "), `GROUPED: the count, the label and one line per item (got ${JSON.stringify(groupedLines)})`);
+  ok(carriesLineFeeds(joinW), "GROUPED: the form body carries encoded line feeds");
+
+  calls = [];
+  await handleApprovalPayload({ actions: [{ action_id: `${OE_APPROVAL_PREFIX}approve:${idW1}`, value: "default" }], user: { id: "U_REQ" }, team: { id: "T1" }, channel: { id: "C1" }, message: { ts: tsW } }, { post });
+  const redrawW = calls.find((c) => c.method === "chat.update" && c.body.get("ts") === tsW);
+  const membersW2 = await store.listPendingActionsForMessage("default", "C1", tsW!);
+  const redrawText = groupedCardBlocks(membersW2.map((m) => ({ row: m, summaryLines: [`do ${(JSON.parse(m.argsJson) as { what: string }).what}`] }))).text;
+  ok(wireText(redrawW) === redrawText, `🔴 GROUPED DECIDED: the redraw's chat.update carries the rendered text byte for byte (got ${JSON.stringify(wireText(redrawW))})`);
+  ok(wireText(redrawW).split("\n").length === 4, "GROUPED DECIDED: the redraw keeps one line per item");
+  ok(carriesLineFeeds(redrawW), "GROUPED DECIDED: the form body carries encoded line feeds");
+
+  calls = [];
+  const idW3 = await propose("sess-wire-solo", "mu", "991.0");
+  const tsW3 = (await store.getPendingAction("default", idW3))!.messageTs;
+  calls = [];
+  await handleApprovalPayload({ actions: [{ action_id: `${OE_APPROVAL_PREFIX}approve:${idW3}`, value: "default" }], user: { id: "U_REQ" }, team: { id: "T1" }, channel: { id: "C1" }, message: { ts: tsW3 } }, { post });
+  const decidedW = calls.find((c) => c.method === "chat.update" && c.body.get("ts") === tsW3);
+  const rowW3 = (await store.getPendingAction("default", idW3))!;
+  ok(rowW3.status === "approved", "SINGLE DECIDED: the click decided the row");
+  const decidedText = decidedCardBlocks(rowW3, ["do mu"], "did mu").text;
+  ok(wireText(decidedW) === decidedText, `🔴 SINGLE DECIDED: the rewrite's chat.update carries the rendered text byte for byte (got ${JSON.stringify(wireText(decidedW))})`);
+  const decidedLines = wireText(decidedW).split("\n");
+  ok(decidedLines.length === 4 && decidedLines[1] === "Approval requested: test.group" && decidedLines[3].startsWith("✅ Approved by <@U_REQ>"), `SINGLE DECIDED: the sentence, the label, the detail and the decided line (got ${JSON.stringify(decidedLines)})`);
+  ok(carriesLineFeeds(decidedW), "SINGLE DECIDED: the form body carries encoded line feeds");
+}
 
 console.log(`approval-group-test: ${n} assertions passed`);

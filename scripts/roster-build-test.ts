@@ -161,6 +161,35 @@ write(
 }
 
 {
+  const MODULE = "agent/lib/app-code-fingerprint.generated.ts";
+  const valueOf = (): string | undefined => /registerAppCodeFingerprint\("([0-9a-f]{16})"\);/u.exec(read(MODULE))?.[1];
+  ok(existsSync(join(root, MODULE)), "🔴 OPE-2466: `oe build` wrote the app code fingerprint module");
+  ok(read("agent/lib/providers.generated.ts").includes('import "./app-code-fingerprint.generated.js";'), "🔴 …and the provider table it wrote imports it");
+  const before = valueOf();
+  ok(before !== undefined, "…with a real 16-hex value");
+  write("agent/app-config.ts", "export const appConfig = { a2a: ['reference'] };\n");
+  eq(oe().code, 0, "a build after an app-only edit succeeds");
+  ok(valueOf() !== before, "🔴 OPE-2466: an APP-ONLY edit moves the value the next `oe build` writes");
+  rmSync(join(root, "agent/app-config.ts"));
+  eq(oe().code, 0, "a build after the edit is reverted succeeds");
+  eq(valueOf(), before, "…and the value moves BACK — two builds of one tree agree");
+  rmSync(join(root, MODULE));
+  const absent = oe("--check");
+  eq(absent.code, 1, "an absent fingerprint module fails --check");
+  ok(absent.out.includes(`NOT BUILT · ${MODULE}`), "…naming it as NOT BUILT");
+  eq(oe().code, 0, "a plain build writes it again");
+  eq(oe("--check").code, 0, "…and --check passes again");
+  const WARN = `${MODULE} is not gitignored`;
+  ok(!oe().out.includes(WARN), "control: outside a git work tree the build does not warn");
+  execFileSync("git", ["init", "-q"], { cwd: root });
+  ok(oe().out.includes(WARN), "🔴 in a git work tree whose .gitignore lacks the line, `oe build` warns");
+  write(".gitignore", `/${MODULE}\n`);
+  ok(!oe().out.includes(WARN), "…and with the line in .gitignore it does not");
+  rmSync(join(root, ".git"), { recursive: true, force: true });
+  rmSync(join(root, ".gitignore"));
+}
+
+{
   const overlays = (...args: string[]): { code: number; out: string } => {
     try {
       const out = execFileSync(process.execPath, [TSX_CLI, CLI, "overlays", ...args], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });

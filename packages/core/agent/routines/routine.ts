@@ -1,3 +1,4 @@
+import { placeWords } from "../channels/friendly-ids.js";
 import { describeFilter, storedFilter } from "./event-model.js";
 import { ROUTINE_PERMISSION_PREFIX } from "./permission-key.js";
 import type { RoutinePolicyRule } from "./policy.js";
@@ -211,7 +212,7 @@ export function routineFireIdStamped(attributes: Attrs): string | undefined {
 
 export function describeTrigger(t: RoutineTrigger, report?: RoutineReport): string {
   const silent = report?.kind === "silent";
-  const where = report?.kind === "surface" ? ` → posts into ${report.surfaceKey}` : "";
+  const where = report?.kind === "surface" ? ` → posts into ${placeWords({ key: report.surfaceKey })}` : "";
   return describeTriggerCore(t, silent) + where;
 }
 

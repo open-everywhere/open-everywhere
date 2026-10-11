@@ -6,6 +6,7 @@ import { principalKey } from "../identity/principal-key.js";
 import type { CapLevel } from "../operational/store.js";
 import type { ActionKind, PendingActionRow } from "./types.js";
 import { withTaintDisclosure } from "./taint-disclosure.js";
+import { placeWords } from "../channels/friendly-ids.js";
 import { plainValue } from "./plain-text.js";
 
 const REGISTRY = new Map<string, ActionKind<any>>();
@@ -64,11 +65,15 @@ function fmtCapUsd(usd: number | null): string {
 }
 
 function scopeLine(label: string | undefined, scopeKey: string, level: string): string {
-  return label ? `${label} (${level})` : `scope \`${scopeKey}\` (${level})`;
+  return `${scopeWords(label, scopeKey)} (${level})`;
+}
+
+function scopeWords(label: string | undefined, scopeKey: string): string {
+  return label !== undefined && label.trim().length > 0 ? plainValue(label) : placeWords({ key: scopeKey });
 }
 
 function plainScope(label: string | undefined, scopeKey: string): string {
-  return plainValue(label ?? scopeKey);
+  return scopeWords(label, scopeKey);
 }
 
 function spendTaintLines(tainted: boolean | undefined): string[] {
@@ -208,7 +213,7 @@ const spendSet: ActionKind<SpendSetArgs> = {
       ...(args.monthlyTokens != null ? [fmtCap(args.monthlyTokens)] : []),
       ...(args.monthlyUsd != null ? [fmtCapUsd(args.monthlyUsd)] : []),
     ].join(" + ");
-    return `spend limit set to ${set} for ${args.scopeLabel ?? `\`${args.scopeKey}\``} (${args.level})`;
+    return `spend limit set to ${set} for ${scopeWords(args.scopeLabel, args.scopeKey)} (${args.level})`;
   },
 };
 
@@ -248,7 +253,7 @@ const spendClear: ActionKind<SpendClearArgs> = {
       action: "admin.spend.clear_limit",
       detail: { scopeKey: args.scopeKey, level: args.level, cleared, ...(args.tainted ? { tainted: true } : {}) },
     });
-    const scope = args.scopeLabel ?? `\`${args.scopeKey}\``;
+    const scope = scopeWords(args.scopeLabel, args.scopeKey);
     return cleared
       ? `spend limit override cleared for ${scope} (${args.level}) — reverted to config`
       : `no spend limit override was set for ${scope} (${args.level}) — nothing to clear`;
@@ -266,10 +271,10 @@ const connectorRevoke: ActionKind<ConnectorRevokeArgs> = {
   kind: "connector.revoke",
   policy: "admin",
   plainSummary(args) {
-    return `Turn off the ${plainValue(args.connector)} connector for ${plainValue(args.scopeKey)}`;
+    return `Turn off the ${plainValue(args.connector)} connector for ${placeWords({ key: args.scopeKey })}`;
   },
   summarize(args) {
-    return [`Revoke connector \`${args.connector}\` — scope \`${args.scopeKey}\``, ...(args.reason ? [`Reason: ${args.reason}`] : [])];
+    return [`Revoke connector \`${args.connector}\` — for ${placeWords({ key: args.scopeKey })}`, ...(args.reason ? [`Reason: ${args.reason}`] : [])];
   },
   async execute(args, decidedBy) {
     const store = getOperationalStore();
@@ -280,7 +285,7 @@ const connectorRevoke: ActionKind<ConnectorRevokeArgs> = {
       action: "admin.connector.revoke",
       detail: { connector: args.connector, ...(args.reason ? { reason: args.reason } : {}) },
     });
-    return `connector \`${args.connector}\` revoked for \`${args.scopeKey}\``;
+    return `connector \`${args.connector}\` revoked for ${placeWords({ key: args.scopeKey })}`;
   },
 };
 
@@ -294,10 +299,10 @@ const connectorClear: ActionKind<ConnectorClearArgs> = {
   kind: "connector.clear",
   policy: "admin",
   plainSummary(args) {
-    return `Remove the ${plainValue(args.connector)} connector override for ${plainValue(args.scopeKey)}, so it goes back to the configured access`;
+    return `Remove the ${plainValue(args.connector)} connector override for ${placeWords({ key: args.scopeKey })}, so it goes back to the configured access`;
   },
   summarize(args) {
-    return [`Clear connector override \`${args.connector}\` — scope \`${args.scopeKey}\``, `Reverts to the config-as-code bundle grant`];
+    return [`Clear connector override \`${args.connector}\` — for ${placeWords({ key: args.scopeKey })}`, `Reverts to the config-as-code bundle grant`];
   },
   async execute(args, decidedBy) {
     const store = getOperationalStore();
@@ -309,8 +314,8 @@ const connectorClear: ActionKind<ConnectorClearArgs> = {
       detail: { connector: args.connector, cleared },
     });
     return cleared
-      ? `connector override cleared for \`${args.connector}\` on \`${args.scopeKey}\` — reverted to config`
-      : `no connector override was set for \`${args.connector}\` on \`${args.scopeKey}\` — nothing to clear`;
+      ? `connector override cleared for \`${args.connector}\` in ${placeWords({ key: args.scopeKey })} — reverted to config`
+      : `no connector override was set for \`${args.connector}\` in ${placeWords({ key: args.scopeKey })} — nothing to clear`;
   },
 };
 
@@ -330,7 +335,7 @@ const haltResume: ActionKind<HaltResumeArgs> = {
     return `Lift the emergency halt ${where}, so the agent can act again`;
   },
   summarize(args) {
-    const where = args.orgWide === true ? "everywhere in this org" : `\`${args.scopeKey}\` (${args.level})`;
+    const where = args.orgWide === true ? "everywhere in this org" : `${scopeWords(args.scopeLabel, args.scopeKey ?? "")} (${args.level})`;
     return [
       `Resume — lift the break-glass halt ${where}`,
       "Consequential acts start working again: approvals, routine fires, connector calls, credential grants and outbound network access.",
@@ -347,8 +352,8 @@ const haltResume: ActionKind<HaltResumeArgs> = {
       detail: { ...haltAddressFields(address), cleared },
     });
     return cleared
-      ? `halt cleared${args.orgWide === true ? " org-wide" : ` for \`${args.scopeKey}\``} — consequential acts work again`
-      : `no halt was in force${args.orgWide === true ? " org-wide" : ` for \`${args.scopeKey}\``} — nothing to clear`;
+      ? `halt cleared${args.orgWide === true ? " org-wide" : ` for ${scopeWords(args.scopeLabel, args.scopeKey ?? "")}`} — consequential acts work again`
+      : `no halt was in force${args.orgWide === true ? " org-wide" : ` for ${scopeWords(args.scopeLabel, args.scopeKey ?? "")}`} — nothing to clear`;
   },
 };
 

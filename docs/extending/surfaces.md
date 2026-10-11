@@ -17,7 +17,7 @@ and how they report — see [the chat-surface contract](./chat-surface-contract.
 
 > Every surface shipped today lives in its own installable
 > [provider bundle](./provider-bundles.md) under `packages/providers/<name>/` — Slack, Teams,
-> Discord, Linear, GitHub and Notion. Each bundle registers itself through core's
+> Discord, Linear, GitHub, Notion and Email. Each bundle registers itself through core's
 > identity/capability/post/read seams from its own `agent/register.ts`. Core holds no surface's
 > channel wrap and no surface's identity binding; it keeps only the two bridges it calls back
 > through (`packages/core/agent/channels/slack-bridge.ts` and `teams-bridge.ts`).
@@ -76,9 +76,19 @@ Author the surface in its own bundle, `packages/providers/<x>/`, then mount it t
    [tools & the roster](./tools.md).
 
 The identity adapter is the part you must get right — it's where the trust boundary is drawn.
-Lean on the six shipped `packages/providers/<name>/agent/channels/<name>-identity.ts` files as
+Lean on the seven shipped `packages/providers/<name>/agent/channels/<name>-identity.ts` files as
 templates: capture raw facts only, and leave the private/external interpretation to the shared
 binding layer.
+
+## A surface with no eve channel: email
+
+Email (`packages/providers/email`) is the worked example of a surface eve does not ship. Its channel is a
+generic `defineChannel` route (`POST /eve/v1/email`), and everything a chat surface gets from eve's adapter it
+builds from core's seams instead: a pure front (verify, parse, dedupe, gate, seat route) in
+`email-front.ts`, the shared inbound divert into a domain's standing seat or a person's DM seat, and a post arm
+whose one verb is the reply. The vendor sits behind a second, smaller port in core (`email/transport.ts`), so the
+surface is provider-neutral and a new mail service is one more transport, not a new surface. See
+[Email](../deploy/surfaces/email.md).
 
 ## On Vercel / Off Vercel
 

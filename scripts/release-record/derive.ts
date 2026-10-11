@@ -10,6 +10,7 @@ const EVE_PIN_MANIFESTS = [
   "packages/providers/linear/package.json",
   "packages/providers/github/package.json",
   "packages/providers/teams/package.json",
+  "packages/providers/email/package.json",
 ] as const;
 
 function gitShow(sha: string, path: string): string | undefined {

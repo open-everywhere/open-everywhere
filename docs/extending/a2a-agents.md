@@ -166,7 +166,9 @@ The card also says where the answer will be posted: the asking conversation.
 - The live e2e leg `S-A2A-DELEGATE` asks a deployed agent to delegate to the first declared agent
   whose name starts with `reference`. On a TEST deployment, declare the A2A community's public Hello
   World agent (`https://hello-world-gxfr.onrender.com/.well-known/agent.json`) for it. 🔴 That is a
-  third-party host: never declare it on a deployment that carries real work.
+  third-party host: never declare it on a deployment that carries real work. An app with no
+  `agent/access/a2a-agents.ts` ends the leg as the missing-fixture precondition
+  `a2a-declaration-file`, and a file that declares no agent ends it as `a2a-declared-agent`.
 
 ## Limits today
 

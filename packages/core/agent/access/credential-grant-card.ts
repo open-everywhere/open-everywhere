@@ -8,8 +8,9 @@ import {
 } from "../channels/dm-audience.js";
 import { editSurfaceText } from "../channels/surface-message-ops.js";
 import { GRANT_STANDING_MAX_MS } from "./credential-grant.js";
-import { connectorDisplayName, grantActionIsReviewed, grantActionPhrase, grantConversationPhrase, grantExpiryPhrase, grantRequesterPhrase } from "./credential-grant-copy.js";
+import { connectorDisplayName, grantActionIsReviewed, grantActionPhrase, grantConversationPhrase, grantDisplayLabel, grantExpiryPhrase, grantRequesterPhrase } from "./credential-grant-copy.js";
 import { grantScopeReachOf, type GrantScopeReach } from "./credential-grant-key-shape.js";
+import { parseScopeKey } from "./scope-key.js";
 import {
   flatDisplayName,
   grantResourceTargetLabel,
@@ -285,8 +286,21 @@ export function grantOwnerDmAddress(ask: Pick<CredentialGrantAskRow, "ownerPlatf
   return personAddress(ask.ownerPlatform, ask.ownerNativeId);
 }
 
-function grantDmFooter(ask: CredentialGrantAskRow): string {
-  return dmDeliveryFooter({ requestedBy: ask.requesterPrincipalId, fromContainer: ask.scopeKey });
+export function grantFooterPlace(scopeKey: string, label: string | undefined): { readonly from?: string; readonly fromLabel?: string } {
+  if (label !== undefined) return { fromLabel: label };
+  return parseScopeKey(scopeKey).kind === "surface" ? { from: scopeKey } : { fromLabel: "another conversation" };
+}
+
+function grantDmFooter(ask: CredentialGrantAskRow, labels: { readonly requester?: string; readonly conversation?: string } = {}): string {
+  const requesterLabel = grantDisplayLabel(labels.requester);
+  const fromLabel = grantDisplayLabel(labels.conversation);
+  return dmDeliveryFooter({
+    platform: ask.ownerPlatform,
+    recipientId: ask.ownerNativeId,
+    requestedBy: ask.requesterPrincipalId,
+    ...(requesterLabel !== undefined ? { requesterLabel } : {}),
+    ...grantFooterPlace(ask.scopeKey, fromLabel),
+  });
 }
 
 function grantDmRefusal(err: unknown): GrantCardRefusal {
@@ -310,7 +324,7 @@ export async function deliverGrantCard(
       recipientId: ask.ownerNativeId,
       address: grantOwnerDmAddress(ask),
       text: grantCardText(ask, requesterLabel, workerOrigin, conversationLabel),
-      footer: grantDmFooter(ask),
+      footer: grantDmFooter(ask, { requester: requesterLabel, conversation: conversationLabel }),
       requestedBy: ask.requesterPrincipalId,
       attributedTo: ask.requesterPrincipalId,
       actions: grantCardActions(ask),

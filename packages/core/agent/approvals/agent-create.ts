@@ -1,3 +1,4 @@
+import { requesterWords } from "../channels/friendly-ids.js";
 import { getConfig, type AccessRequestsConfig } from "../access/config.js";
 import { assertBindingsValid, assertBundlesValid } from "../access/bundle.js";
 import { assertChannelExclusivity, assertDomainsValid } from "../memory/domain.js";
@@ -240,7 +241,7 @@ const agentCreate: ActionKind<AgentCreateArgs> = {
       ...(s.exposed ? ["⚠ EXPOSED — reachable by a wider, less-trusted audience; it may only read a curated read-only silo."] : []),
       ...(args.reason ? [`Reason: ${inlineForReview(args.reason)}`] : []),
       `Sending opens a bot-PR against \`${args.configRepo}\` for an admin to merge — nothing is provisioned until they do.`,
-      `Requested by ${args.requestedBy}`,
+      `Requested by ${requesterWords(args.requestedBy, args.scopeKey)}`,
     ];
   },
   async execute(args, decidedBy) {

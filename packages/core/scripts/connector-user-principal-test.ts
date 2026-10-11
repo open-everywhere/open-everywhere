@@ -207,7 +207,8 @@ await eveContextStorage().run(new FakeSession(), async () => {
 await eveContextStorage().run(new FakeSession(), async () => {
   const m = makeMinter("auth-required");
   const s = makeStarter("ok", "https://connect.vercel.com/auth/CHILD-LINK");
-  const cards: { recipientId: string; connector: string; url: string }[] = [];
+  const cards: { recipientId: string; connector: string; url: string; sameConversation?: boolean; resumes?: boolean; fromContainer: string }[] = [];
+  const notes: { connector: string; delivered: boolean; sameConversation: boolean; detourId?: string }[] = [];
   const resolver = userAwareProviderToken(
     { connector: "notion", fallbackSecretRef: "NOTION_API_KEY", fallbackBroker: "env" },
     {
@@ -215,7 +216,11 @@ await eveContextStorage().run(new FakeSession(), async () => {
       startAuth: s.start as never,
       workChild: () => true,
       deliverSignIn: async (o) => {
-        cards.push({ recipientId: o.recipientId, connector: o.connector, url: o.url });
+        cards.push({ recipientId: o.recipientId, connector: o.connector, url: o.url, ...(o.sameConversation !== undefined ? { sameConversation: o.sameConversation } : {}), ...(o.resumes !== undefined ? { resumes: o.resumes } : {}), fromContainer: o.fromContainer });
+        return true;
+      },
+      rememberSignIn: async (_ctx, note) => {
+        notes.push(note);
         return true;
       },
     },
@@ -234,6 +239,11 @@ await eveContextStorage().run(new FakeSession(), async () => {
   ok(!/https?:\/\//.test(first), "🔴 OPE-2340: the needs-sign-in error carries NO link — the child's words reach the room");
   ok(/went to that person directly/.test(first) && /nothing waits/.test(first), "OPE-2340: the error says the card went privately and nothing waits");
   ok(cards.length === 1 && cards[0]!.url === "https://connect.vercel.com/auth/CHILD-LINK" && cards[0]!.recipientId === "U_caller", "OPE-2340: the link went to the asking person's own sign-in card");
+  ok(cards[0]!.sameConversation === true, "OPE-2462: a DM ask marks the card as landing in the conversation the job came from");
+  ok(cards[0]!.fromContainer.split("/").length === 3, `OPE-2462: the card names the full surface it came from, not the workspace alone (got ${cards[0]!.fromContainer})`);
+  ok(notes.length === 1 && notes[0]!.connector === "notion" && notes[0]!.delivered && notes[0]!.sameConversation, "OPE-2462: the child records the delivered, same-conversation sign-in for W's settlement");
+  ok(notes[0]!.detourId === undefined && cards[0]!.resumes === false, "OPE-2462: with no consent detour, the card and the note carry no resume");
+  ok(!/starts this job again/.test(first) && /Do not retry\./.test(first), "OPE-2462: …and the child's report promises no automatic resume");
   const retry = await call();
   ok(!/https?:\/\//.test(retry), "🔴 OPE-2340: a same-turn retry repeats NO link either (the memo holds no URL)");
   ok(s.calls.length === 1 && cards.length === 1, "OPE-2340: one link mint and one card per connector per turn");
@@ -243,7 +253,7 @@ await eveContextStorage().run(new FakeSession(), async () => {
   const s = makeStarter("ok", "https://connect.vercel.com/auth/CHILD-LINK-2");
   const resolver = userAwareProviderToken(
     { connector: "notion", fallbackSecretRef: "NOTION_API_KEY", fallbackBroker: "env" },
-    { mintUser: m.mint, startAuth: s.start as never, workChild: () => true, deliverSignIn: async () => false },
+    { mintUser: m.mint, startAuth: s.start as never, workChild: () => true, deliverSignIn: async () => false, rememberSignIn: async () => true },
   );
   const provider = await resolver({ session: { auth: dmAuth } } as never);
   let err = "";
@@ -253,6 +263,7 @@ await eveContextStorage().run(new FakeSession(), async () => {
     err = e instanceof Error ? e.message : String(e);
   }
   ok(err.startsWith("needs-sign-in:") && /could not be delivered privately/.test(err) && !/https?:\/\//.test(err), "OPE-2340: an undelivered card is reported as such, with no link");
+  ok(!/starts this job again/.test(err), "OPE-2462: an undelivered card promises no automatic resume");
 }
 
 {

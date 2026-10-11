@@ -1551,16 +1551,34 @@ What the return hop then does:
 
 | The return lands and… | What happens |
 | --- | --- |
-| the authorization window is still open | The agent **posts one line into that same conversation** saying the connection is live and offering to pick the request up. Say the word and it does. |
+| the request was a **work-session job** that stopped for this sign-in, and the window is still open | The job **resumes on its own** (OPE-2462). The agent posts one line into that same conversation ("Your Notion account is connected. I'm picking up your request now.") and wakes the conversation's seat to run the same job again. The seat posts no hand-off; its next words are the answer to what you asked. |
+| any other request, and the window is still open | The agent **posts one line into that same conversation** saying the connection is live and asking you to reply there. Your reply picks the request up. |
 | the window has already closed | The agent asks you to **make the request again**. It never picks the old one up silently. |
 | the surface stated no reply address when you asked | **Nothing is said**, in the conversation or on the return page. With no address to write down, no record was kept — ask again and the request runs. |
 
-**The agent offers rather than re-running the request on its own, and that is structural.**
-Re-running it would mean waking the conversation's seat from the browser's return, and a
-turn woken that way carries no acting person. Minting a personal token needs one — that
-requirement is the whole point of the consent — so a self-woken retry would fail closed and
-put a second, more confusing refusal in front of you. Your own next message is what carries
-the identity the mint needs. The line lands wherever you asked, DMs included.
+**Why a work-session job can resume on its own, and a seat's own turn cannot.** A job the seat
+forwarded to the work session has a request row: the room, the seat, the frozen binding and the
+verified requester the original ask carried. When the job settles `needs-sign-in`, the work session
+files that request under the detour id the sign-in link carries
+(`packages/core/agent/channels/work-sign-in-note.ts`). The return hop takes that filing once and wakes
+the seat under the request row's own authority (`packages/core/agent/channels/work-sign-in-resume.ts`),
+so the job runs again for the same person, in the same room. The sign-in link must have been minted for
+the job's verified requester, on the same platform and workspace. 🔴 The callback authenticates nobody,
+so the check reads the consent record, not the person who opened the link: a person who forwards their
+private link lets whoever opens it bind an account to them, and the job then resumes as theirs. A
+sign-in that lands before the work session files the job is not lost: the job's worker left a pending
+mark under the detour id, the return hop leaves a signed-in mark, and the work session resumes the job
+as soon as it files it, after the same requester check. A job the seat cancelled is never filed, and its
+marks are cleared, so a later sign-in gets the "reply here" line. One limit stays: a sign-in that lands
+before a cancel has already been told "picking up", and the cancel then wins. The line says "I'm picking up your
+request now" only when the job resumed or is marked to resume — otherwise the line asks you to reply.
+With no consent detour recorded (no reply address), nothing can resume the job, and the sign-in card
+says "tell me here" instead of promising the pick-up.
+
+A seat's OWN turn (the per-user link in a DM, outside the work session) has no such row. Waking the
+seat from the browser's return would carry no acting person, and minting a personal token needs one,
+so a self-woken retry would fail closed. There, your own next message carries the identity the mint
+needs. The line lands wherever you asked, DMs included.
 
 **Consent grants a credential, not a permission.** When you do carry on, the request runs
 every gate the original would have run — the connector grant, the operation's approval tier,
@@ -1584,7 +1602,7 @@ Three families of row cover connecting a vendor, taking a credential in, and len
 | `connector.dashboard_link_issued` | A service-OAuth click resolves to a vendor dashboard link instead of a mint. A credential that declares a `dashboardUrl` takes this route; one that declares an OAuth home and no dashboard URL mints instead, and writes `connector.oauth_url_issued` with subject `app`. | The connector, and `configured` — `false` when the connector declares no dashboard URL. The row is written either way, so an unconfigured connector is a stated fact rather than a missing row. |
 | `connector.credential_bound` | A consent completion BINDS the credential — the OAuth callback route, after the token lands in the vault. | The connector, the **subject type** (`app` or `user`), and `rebound` — `true` when the bind replaced an existing row for that subject. `rebound` is read just before the write and takes no cross-process lock, so two simultaneous completions can both report `false`; a serial second consent — the case the row exists for — always reports `true`. 🔴 It never carries token material, and it names no principal on either subject type: the callback authenticates nobody. |
 | `connector.consent_detour` | A session pauses and sends a person to a consent detour. | The detour id, the connector, the detour's expiry, and the paused session. |
-| `connector.consent_resume` | That detour comes back. | The same detour id and connector, plus the **verdict** the person gave and whether the resume was delivered to the paused session. The two halves of one detour join on `detourId`. |
+| `connector.consent_resume` | That detour comes back. | The same detour id and connector, plus the **verdict** (`resumed` when the host woke the seat to run the job again, `offer` when it asked the person to reply, `expired`) and whether the line was delivered to the conversation. The two halves of one detour join on `detourId`. |
 
 The disclosure gate writes no row when it allows a connector read. A refusal writes
 `connector.refused`, the established refusal action, so it lands in the stream an operator already

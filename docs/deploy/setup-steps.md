@@ -100,6 +100,9 @@ Create a Slack app from the manifest below, then copy its bot token and signing 
       "messages_tab_enabled": true,
       "messages_tab_read_only_enabled": false
     },
+    "agent_view": {
+      "agent_description": "Ask Open Everywhere beside anything you are reading in Slack. It is your own direct-message conversation, with the same rules as a DM."
+    },
     "bot_user": {
       "display_name": "Open Everywhere",
       "always_online": true
@@ -109,7 +112,7 @@ Create a Slack app from the manifest below, then copy its bot token and signing 
         "command": "/oe",
         "url": "https://YOUR-DEPLOY-URL/eve/v1/slack/commands",
         "description": "Open Everywhere control-plane commands (stop, status, budget) — no model turn.",
-        "usage_hint": "stop | status | budget [raise <usd> | clear] | rate <n> | help",
+        "usage_hint": "stop | status | budget [raise <usd> | clear] | rate <n> | optout [on | off] | help",
         "should_escape": false
       }
     ],
@@ -153,7 +156,8 @@ Create a Slack app from the manifest below, then copy its bot token and signing 
         "pins:read",
         "pins:write",
         "users:read",
-        "canvases:write"
+        "canvases:write",
+        "assistant:write"
       ]
     }
   },
@@ -171,7 +175,8 @@ Create a Slack app from the manifest below, then copy its bot token and signing 
         "reaction_removed",
         "app_home_opened",
         "channel_shared",
-        "user_change"
+        "user_change",
+        "app_context_changed"
       ]
     },
     "interactivity": {

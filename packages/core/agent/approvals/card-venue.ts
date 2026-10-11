@@ -1,3 +1,4 @@
+import { placeWords } from "../channels/friendly-ids.js";
 import { domainForChannel, domainRoster, type Domain } from "../memory/domain.js";
 import { domainKeyOf, type Partition } from "../memory/partition.js";
 import type { SurfaceBinding } from "../identity/binding.js";
@@ -97,7 +98,7 @@ export function describeVenueRefusal(refusal: ApprovalVenueRefusal, platform: st
 }
 
 export function cardPostedPrefix(venue: ApprovalVenue): string {
-  return venue.sameRoom ? "card posted" : `card posted in ${venue.surfaceKey}`;
+  return venue.sameRoom ? "card posted" : `card posted in ${placeWords({ key: venue.surfaceKey })}`;
 }
 
 export function describeVenueRedirect(venue: ApprovalVenue, whatNext: string): string {

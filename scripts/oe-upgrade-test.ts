@@ -202,7 +202,7 @@ const manifestOf = (root: string): { dependencies: Record<string, string>; devDe
 
   const pkg = manifestOf(root);
   ok(pkg.dependencies["@open-everywhere/core"] === LATEST, "core is bumped to the target");
-  ok(pkg.dependencies["@open-everywhere/adapters"] === LATEST, "🔴 every @open-everywhere/* package bumps WITH it — the nine publish in lockstep");
+  ok(pkg.dependencies["@open-everywhere/adapters"] === LATEST, "🔴 every @open-everywhere/* package bumps WITH it — the ten publish in lockstep");
   ok(pkg.dependencies["@open-everywhere/provider-slack"] === LATEST, "a provider package bumps too");
   ok(pkg.devDependencies["@open-everywhere/create"] === LATEST, "🔴 the scaffolder bumps too, from devDependencies");
   ok(

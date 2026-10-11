@@ -8,8 +8,10 @@ import {
   type Bundle,
 } from "@open-everywhere/core/agent/access/bundle.js";
 import { mcpServerBindings, mcpServerBundles } from "@open-everywhere/core/agent/connections/mcp-servers.js";
+import { domainRuleBindings, domainRuleBundles } from "@open-everywhere/core/agent/access/domain-rules.js";
 import { loadGrantsOverlay } from "./grants.js";
 import { MCP_SERVERS } from "./mcp-servers.js";
+import { DOMAIN_RULES } from "./domain-rules.js";
 import { PRE_APPROVAL_RULES } from "./pre-approval-rules.js";
 import { loadAgentsOverlay } from "../memory/config/agents-overlay.js";
 import { loadGroups } from "../identity/groups.js";
@@ -161,6 +163,8 @@ const bindings: Binding[] = [
 
 bundles.push(...mcpServerBundles(MCP_SERVERS));
 bindings.push(...mcpServerBindings(MCP_SERVERS));
+bundles.push(...domainRuleBundles(DOMAIN_RULES));
+bindings.push(...domainRuleBindings(DOMAIN_RULES));
 
 const overlay = loadGrantsOverlay();
 const agentsOverlay = loadAgentsOverlay();

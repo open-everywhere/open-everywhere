@@ -1,5 +1,5 @@
 import type { CardOptionTone, PendingActionRow } from "@open-everywhere/core/agent/adapter-api.js";
-import { approvalLabel, pendingCardLayout, plainSummaryForRow } from "@open-everywhere/core/agent/adapter-api.js";
+import { approvalLabel, optionsWithoutConfirm, pendingCardLayout, plainSummaryForRow } from "@open-everywhere/core/agent/adapter-api.js";
 
 export const OE_DISCORD_APPROVAL_PREFIX = "oe-approval:";
 
@@ -58,7 +58,7 @@ const OPTION_STYLE: Record<CardOptionTone, number> = { primary: BUTTON_STYLE_SUC
 export function pendingDiscordCard(row: PendingActionRow, summaryLines: readonly string[]): DiscordCardMessage {
   const layout = pendingCardLayout(row, summaryLines);
   const content = cardBody(row, summaryLines, `-# Requested by <@${layout.requestedBy}> · ${layout.expiry}`);
-  const buttons: DiscordComponent[] = layout.options.map((o) => ({
+  const buttons: DiscordComponent[] = optionsWithoutConfirm(layout.options).map((o) => ({
     type: COMPONENT_BUTTON,
     style: OPTION_STYLE[o.tone],
     label: o.label,

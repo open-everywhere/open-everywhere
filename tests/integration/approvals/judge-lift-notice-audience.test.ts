@@ -239,7 +239,10 @@ async function expectLiftedNoticeOnVenue(input: {
   expect(message.content).toContain("Ran without asking: routine.create");
   expect(message.content).toContain("Auto-approved by the approval judge");
   expect(message.content).toContain(input.prompt);
-  expect(message.content).toContain(`Target: ${input.originSurfaceKey}`);
+  const { placeWords } = await import("@open-everywhere/core/agent/channels/friendly-ids.js");
+  expect(message.content).toContain(`Target: ${placeWords({ key: input.originSurfaceKey })}`);
+  expect(message.content).not.toContain(input.originSurfaceKey);
+  expect(lifted[0]!.detail?.scopeKey, `${input.label}: the lift row does not name the origin room`).toBe(input.originSurfaceKey);
   expect(message.content).not.toContain(CARD_MARK);
   expect(message.content).not.toContain("expires");
 

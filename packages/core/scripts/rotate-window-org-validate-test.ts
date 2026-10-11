@@ -15,7 +15,10 @@ import {
   awaitGenerationIdle,
   generationNotIdleMessage,
   DEFAULT_WAIT_IDLE_SECONDS,
+  waitIdleRegistryKeys,
+  awaitRotationIdle,
 } from "./e2e/rotate-window-lib.js";
+import { currentWorkToken, isSameWorkSession } from "../agent/channels/work-generation.js";
 import { openTestPg, closeAllTestPg } from "./test-pg-driver.js";
 
 import { pinSuiteStore } from "./_suite-store.js";
@@ -419,6 +422,111 @@ await store.rotateChannelSession(KNOWN_ORG, "oe-domain::slack/T1/C1", mintToken(
   ok(settled.ok && settled.waitedMs === 10_000, `🔴 §6: the wait returns once the ledger empties — after two polls, never at the deadline (got ${JSON.stringify(settled)})`);
   const noRow = await awaitGenerationIdle(fake, "default", "oe-domain::no-such", { timeoutMs: 1, ...timing });
   ok(noRow.ok, "§6: a key with no row owes nothing");
+}
+
+{
+  const W_ORG = "work-rotate-org";
+  const DOMAIN = "e2e-work-unified";
+  const SOLO_DOMAIN = "e2e-work-solo";
+  const SOLO_SURFACE = "slack/TWRKROT1/CWRKROT01";
+  const OTHER_SURFACE = "slack/TWRKROT1/CWRKROT02";
+  const domains = [
+    defineDomain({ name: DOMAIN, reach: [], ambientSupervisor: true }),
+    defineDomain({ name: SOLO_DOMAIN, reach: [SOLO_SURFACE], ambientSupervisor: true, mode: "solo" }),
+    defineDomain({ name: "e2e-work-other", reach: [OTHER_SURFACE], ambientSupervisor: true, mode: "solo" }),
+  ];
+  const seatToken = (domain: string, window: string, g: number) => saltSupervisorGeneration(formatWindowToken({ domain, windowId: window, generation: g }));
+  const firstW = (domain: string, window: string) => formatWindowToken({ domain, windowId: `w/${window}`, generation: 1 });
+  const W_KEY = unifiedDomainSessionKey(`w/${DOMAIN}`);
+  await store.rotateChannelSession(W_ORG, unifiedDomainSessionKey(DOMAIN), seatToken(DOMAIN, DOMAIN, 1), AT);
+
+  {
+    const r = await rotateUnifiedWindow(store, W_ORG, DOMAIN, undefined, { domains });
+    eq(r.work, null, "§7a: a seat with no work-session row reports no work rotation");
+    eq(await store.getChannelSession(W_ORG, W_KEY), null, "§7a: …and writes no work-session row of its own");
+  }
+
+  {
+    const seat = (await store.getChannelSession(W_ORG, unifiedDomainSessionKey(DOMAIN)))!.token;
+    await store.rotateChannelSession(W_ORG, W_KEY, firstW(DOMAIN, DOMAIN), AT);
+    const before = await currentWorkToken(W_ORG, seat, store);
+    eq(before, firstW(DOMAIN, DOMAIN), "§7b/FIXTURE: the live reader resolves the seeded W before the rotation");
+    const r = await rotateUnifiedWindow(store, W_ORG, DOMAIN, undefined, { domains });
+    ok(r.work !== null, "🔴 §7b: rotating a seat window also rotates its work session");
+    eq(r.work?.registryKey, W_KEY, "§7b: …on the W row the live path keys (oe-domain::w/<windowId>)");
+    eq(r.work?.oldToken, before, "§7b: …and reports the W token it replaced");
+    const after = await currentWorkToken(W_ORG, r.newRow.token, store);
+    ok(after !== undefined && after !== before, `🔴 §7b: the live reader now resolves a FRESH W token (before ${before}, after ${after})`);
+    eq(after, r.work?.newRow.token, "§7b: …and it is the token this rotation wrote");
+    ok(isSameWorkSession(after, firstW(DOMAIN, DOMAIN)), "§7b: …and it still names THIS seat's work session (same domain and w/ window), so a forward adopts it");
+  }
+
+  {
+    await store.rotateChannelSession(W_ORG, unifiedDomainSessionKey(SOLO_SURFACE), seatToken(SOLO_DOMAIN, SOLO_SURFACE, 1), AT);
+    await store.rotateChannelSession(W_ORG, unifiedDomainSessionKey(`w/${SOLO_SURFACE}`), firstW(SOLO_DOMAIN, SOLO_SURFACE), AT);
+    const r = await rotateUnifiedWindow(store, W_ORG, SOLO_DOMAIN, SOLO_SURFACE, { domains });
+    const back = parseWindowToken(r.work?.newRow.token ?? "");
+    ok(back?.domain === SOLO_DOMAIN && back.windowId === `w/${SOLO_SURFACE}`, `§7c: a solo window's W rotates under w/<surfaceKey> (got ${r.work?.newRow.token})`);
+  }
+
+  {
+    const BAD = "e2e-work-mismatch";
+    const badDomains = [...domains, defineDomain({ name: BAD, reach: [], ambientSupervisor: true })];
+    const seatBefore = seatToken(BAD, BAD, 1);
+    await store.rotateChannelSession(W_ORG, unifiedDomainSessionKey(BAD), seatBefore, AT);
+    const wrongW = formatWindowToken({ domain: DOMAIN, windowId: `w/${BAD}`, generation: 1 });
+    await store.rotateChannelSession(W_ORG, unifiedDomainSessionKey(`w/${BAD}`), wrongW, AT);
+    let refused = false;
+    try {
+      await rotateUnifiedWindow(store, W_ORG, BAD, undefined, { domains: badDomains });
+    } catch (e) {
+      refused = e instanceof WindowTargetRefused && e.message.includes(`oe-domain::w/${BAD}`);
+    }
+    ok(refused, "§7d: a work-session row that addresses another domain is refused as a WindowTargetRefused naming the W row");
+    eq((await store.getChannelSession(W_ORG, unifiedDomainSessionKey(BAD)))?.token, seatBefore, "§7d: …and the SEAT row is untouched (both checks run before either write)");
+    eq((await store.getChannelSession(W_ORG, unifiedDomainSessionKey(`w/${BAD}`)))?.token, wrongW, "§7d: …and the W row is untouched");
+    const forced = await rotateUnifiedWindow(store, W_ORG, BAD, undefined, { force: true, domains: badDomains });
+    ok(forced.work !== null && forced.work.newRow.token !== wrongW, "§7d: --force rotates the pair anyway");
+  }
+
+  {
+    const orgDomains = [...domains, defineDomain({ name: "e2e-work-org", match: "org", reach: [], ambientSupervisor: true, mode: "solo" })];
+    eq(checkWindowTargetAgainstConfig(DOMAIN, `w/${DOMAIN}`, orgDomains).ok, true, "🔴 §7e: the degenerate seat's W id (w/<domain>) passes the config guard, even beside an org criteria domain");
+    eq(checkWindowTargetAgainstConfig(SOLO_DOMAIN, `w/${SOLO_SURFACE}`, orgDomains).ok, true, "§7e: a solo seat's W id passes under the seat's own domain");
+    const wrong = checkWindowTargetAgainstConfig(SOLO_DOMAIN, `w/${OTHER_SURFACE}`, orgDomains);
+    eq(wrong.ok, false, "§7e NEGATIVE CONTROL: a W id whose seat window another domain seats is still refused");
+    if (!wrong.ok) ok(wrong.error.includes(`seat window "${OTHER_SURFACE}"`) && wrong.error.includes("rotate-window.ts e2e-work-other --window"), "§7e: …and the refusal names the seat window it judged and the domain that seats it");
+    eq(checkWindowTargetAgainstConfig("no-such-domain", "w/no-such-domain", orgDomains).ok, false, "§7e NEGATIVE CONTROL: a W id under an undeclared domain is still refused");
+    const nested = checkWindowTargetAgainstConfig(DOMAIN, `w/w/${DOMAIN}`, orgDomains);
+    eq(nested.ok, false, "§7e NEGATIVE CONTROL: a nested W id (w/w/<domain>) is refused — a work session has no work session of its own");
+    if (!nested.ok) ok(nested.error.includes("no work session of its own"), "§7e: …and the refusal says why");
+
+    const before = (await store.getChannelSession(W_ORG, W_KEY))!.token;
+    const seatBefore = (await store.getChannelSession(W_ORG, unifiedDomainSessionKey(DOMAIN)))!.token;
+    const r = await rotateUnifiedWindow(store, W_ORG, DOMAIN, `w/${DOMAIN}`, { domains: orgDomains });
+    eq(r.registryKey, W_KEY, "§7e: --window w/<domain> rotates the W row without --force");
+    ok(r.newRow.token !== before && parseWindowToken(r.newRow.token)?.windowId === `w/${DOMAIN}`, "§7e: …to a fresh W token that round-trips");
+    eq(r.work, null, "§7e: …and a W target has no W of its own");
+    eq((await store.getChannelSession(W_ORG, unifiedDomainSessionKey(DOMAIN)))?.token, seatBefore, "§7e: …and the seat row is untouched");
+  }
+
+  eq(waitIdleRegistryKeys(DOMAIN).join(","), `oe-domain::${DOMAIN},oe-domain::w/${DOMAIN}`, "§7f: a seat rotation waits on the seat AND its W");
+  eq(waitIdleRegistryKeys(`w/${DOMAIN}`).join(","), `oe-domain::w/${DOMAIN}`, "§7f: a W rotation waits on W alone");
+
+  {
+    const SEAT = `oe-dom:${DOMAIN}:oe-sup:g9`;
+    const W = formatWindowToken({ domain: DOMAIN, windowId: `w/${DOMAIN}`, generation: 1 });
+    let clock = 0;
+    const fake = {
+      getChannelSession: async (_org: string, key: string) =>
+        key === unifiedDomainSessionKey(DOMAIN) ? ({ token: SEAT } as never) : key === W_KEY ? ({ token: W } as never) : null,
+      getTaskResult: async (_org: string, key: string) =>
+        key === `oe-gen-owes:${SEAT}` ? (clock < 15_000 ? JSON.stringify({ tasks: ["work:req-s"] }) : null) : key === `oe-gen-owes:${W}` ? JSON.stringify({ tasks: ["agent-w1"] }) : null,
+    };
+    const r = await awaitRotationIdle(fake, "default", DOMAIN, { timeoutMs: 20_000, pollMs: 5_000, now: () => clock, sleep: async (ms) => { clock += ms; } });
+    ok(!r.ok && r.registryKey === W_KEY, `§7g: the wait refuses on the W row that still owes (got ${JSON.stringify(r)})`);
+    ok(clock <= 20_000, `🔴 §7g: …at the ONE shared deadline, never a second full wait per row (clock ${clock} ms of a 20000 ms wait)`);
+  }
 }
 
 assert.ok(passed > 0, "at least one assertion ran");

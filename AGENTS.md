@@ -33,7 +33,7 @@ Two ideas run through the whole design (see [Core concepts](./docs/introduction/
 - **Repo vs runtime.** Config lives in your git repo and deploys with it. Secrets, state, and
   spend live in the operational store and change at runtime.
 - **The conversational seat is lean; a worker does the work.** A seat that can
-  delegate holds 16 tools at most, the lean roster (`packages/core/agent/access/lean-seat.ts`, `LEAN_SEAT_TOOLS`,
+  delegate holds 17 tools at most, the lean roster (`packages/core/agent/access/lean-seat.ts`, `LEAN_SEAT_TOOLS`,
   enforced by deletion at the model-call seam). Everything else — every read, `bash`, every
   cross-surface write — is worker-only
   (`packages/core/agent/access/worker-capability-index.generated.ts`). Each conversation runs on
@@ -488,8 +488,8 @@ specific guide:
 ## Conventions
 
 - **One word, one meaning — use [`docs/glossary.md`](./docs/glossary.md).** The **seat** is the
-  narrow conversational session (16 tools); the **work session** is the one session per
-  conversation that runs its jobs; the **worker** is the wide delegated child (seat + 88, including
+  narrow conversational session (17 tools); the **work session** is the one session per
+  conversation that runs its jobs; the **worker** is the wide delegated child (seat + 94, including
   `bash` and `write_file`). A conversation seat does its real work by forwarding it with `work`. Never
   write a bare "agent" for a running session. The glossary cites the code for every term — read
   that code before you assert what a run can do.

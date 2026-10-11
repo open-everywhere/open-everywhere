@@ -1,3 +1,4 @@
+import { requesterWords } from "../channels/friendly-ids.js";
 import { randomBytes } from "node:crypto";
 import { appendAudit } from "../audit/audit.js";
 import { getConfig } from "../access/config.js";
@@ -81,15 +82,15 @@ const webhookRotate: ActionKind<WebhookRotateArgs> = {
   policy: "member",
   beneficiaryClicker: true,
   plainSummary(args) {
-    return `New signing secret for the ${plainValue(args.hookId, 18)} webhook. Any old secret stops working unless an overlap is declared. ${plainValue(args.requestedBy, 12)} gets a one-time link`;
+    return `New signing secret for the ${plainValue(args.hookId, 18)} webhook. Any old secret stops working unless an overlap is declared. ${requesterWords(args.requestedBy, args.surfaceKey)} gets a one-time link`;
   },
   summarize(args) {
     return [
       `Issue a new signing secret for the declared "${args.hookId}" webhook`,
       "If it has never had one, this is what makes it start authenticating — no redeploy, and no secret in the config diff.",
       "If it already has one, that value stops being accepted the moment this runs, UNLESS its declaration lists a second `secretRef` — that list IS the overlap, and it ends when a PR removes the entry, not on a timer.",
-      `The person who asked — ${args.requestedBy} — gets a ONE-TIME link to read the new secret, not you. The old one is not recoverable and is never shown again.`,
-      `Requested by ${args.requestedBy}`,
+      `The person who asked — ${requesterWords(args.requestedBy, args.surfaceKey)} — gets a ONE-TIME link to read the new secret, not you. The old one is not recoverable and is never shown again.`,
+      `Requested by ${requesterWords(args.requestedBy, args.surfaceKey)}`,
     ];
   },
   async execute(args, decidedBy) {

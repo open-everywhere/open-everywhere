@@ -1,3 +1,4 @@
+import { placeWords } from "../channels/friendly-ids.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
 import { emitTelemetry } from "../observability/telemetry.js";
@@ -34,12 +35,12 @@ const sessionCheckpoint: ActionKind<SessionCheckpointArgs> = {
   kind: CHECKPOINT_KIND,
   policy: "member",
   plainSummary(args) {
-    return `Let the agent keep doing consequential work in ${plainValue(args.scopeLabel ?? args.scopeKey)} past its cost checkpoint`;
+    return `Let the agent keep doing consequential work in ${args.scopeLabel !== undefined ? plainValue(args.scopeLabel) : placeWords({ key: args.scopeKey })} past its cost checkpoint`;
   },
   summarize(args) {
     return [
       "Keep this session going past its cost checkpoint?",
-      `In ${args.scopeLabel ?? args.scopeKey}.`,
+      `In ${args.scopeLabel ?? placeWords({ key: args.scopeKey })}.`,
       "Approve to let the agent do consequential work again — pull requests, memory writes and the like. Decline to keep that paused. Reading and replying carry on either way.",
       ...(args.durableSession ? [DURABLE_GRANT_DISCLOSURE] : [liveGrantDisclosure()]),
     ];

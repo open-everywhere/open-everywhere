@@ -1,5 +1,7 @@
 import { appendAudit } from "../audit/audit.js";
 import { postHostNotice, REPLY_DEDUPE_SKIPPED_ID, type ReplyTarget } from "../channels/reply-post.js";
+import { connectorDisplayName } from "../access/credential-grant-copy.js";
+import { processRegistrySlot } from "../lib/process-registry.js";
 
 export interface ConsentOrigin {
   readonly org: string;
@@ -17,27 +19,25 @@ export interface ConsentResumeRecord {
   readonly expiresAtMs: number;
 }
 
-export type ConsentResumeVerdict = "offer" | "expired";
+export type ConsentResumeVerdict = "resumed" | "offer" | "expired";
 
 export function consentResumeVerdict(input: {
   readonly record: ConsentResumeRecord;
   readonly nowMs: number;
-}): ConsentResumeVerdict {
+}): Exclude<ConsentResumeVerdict, "resumed"> {
   return input.nowMs > input.record.expiresAtMs ? "expired" : "offer";
 }
 
+export function consentResumedLine(record: ConsentResumeRecord): string {
+  return `Your ${connectorDisplayName(record.connector)} account is connected. I'm picking up your request now.`;
+}
+
 export function consentResumeOfferLine(record: ConsentResumeRecord): string {
-  return (
-    `Your personal *${record.connector}* account is connected now — say the word and I'll pick up ` +
-    `the request I paused.`
-  );
+  return `Your ${connectorDisplayName(record.connector)} account is connected. Reply here and I'll pick up your request.`;
 }
 
 export function consentExpiredLine(record: ConsentResumeRecord): string {
-  return (
-    `Your personal *${record.connector}* account is connected, but the request I paused is too old ` +
-    `to pick up on its own — ask me again and I'll run it.`
-  );
+  return `Your ${connectorDisplayName(record.connector)} account is connected, but the request that needed it is too old to pick up on its own. Ask me again and I'll do it.`;
 }
 
 function consentWhere(origin: ConsentOrigin): { org: string; platform: string; workspace: string; surface: string } {
@@ -45,9 +45,18 @@ function consentWhere(origin: ConsentOrigin): { org: string; platform: string; w
   return { org: origin.org, platform, workspace, surface: rest.join("/") || "unknown" };
 }
 
+export type SignedInWorkResumer = (record: ConsentResumeRecord) => Promise<boolean>;
+
+const resumerSlot = processRegistrySlot<SignedInWorkResumer>("connections.signed-in-work-resumer.v1");
+
+export function registerSignedInWorkResumer(resumer: SignedInWorkResumer): void {
+  resumerSlot.set(resumer);
+}
+
 export interface ConsentResumeDeps {
   readonly post?: (target: ReplyTarget, text: string) => Promise<string>;
   readonly nowMs?: () => number;
+  readonly resumeWork?: SignedInWorkResumer;
 }
 
 export interface ConsentResumeOutcome {
@@ -60,12 +69,17 @@ export async function resumeAfterConsent(
   deps: ConsentResumeDeps = {},
 ): Promise<ConsentResumeOutcome> {
   const nowMs = (deps.nowMs ?? Date.now)();
-  const verdict = consentResumeVerdict({ record, nowMs });
+  let verdict: ConsentResumeVerdict = consentResumeVerdict({ record, nowMs });
+  const resumeWork = deps.resumeWork ?? resumerSlot.get() ?? undefined;
+  if (verdict === "offer" && resumeWork !== undefined) {
+    const resumed = await resumeWork(record).catch(() => false);
+    if (resumed) verdict = "resumed";
+  }
 
   let delivered = false;
   try {
     const post = deps.post ?? postHostNotice;
-    const line = verdict === "expired" ? consentExpiredLine(record) : consentResumeOfferLine(record);
+    const line = verdict === "expired" ? consentExpiredLine(record) : verdict === "resumed" ? consentResumedLine(record) : consentResumeOfferLine(record);
     delivered = (await post(record.origin.target, line)) !== REPLY_DEDUPE_SKIPPED_ID;
   } catch {
     delivered = false;

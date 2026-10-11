@@ -1,0 +1,11 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('3a1e1c5e-0000-4000-8000-00000000a001')/onlineMeetings",
+  "value": [
+    {
+      "id": "MSozYTFlMWM1ZS0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMGEwMDEqMCoqMTk6bWVldGluZ19maXh0dXJlQHRocmVhZC52Mg==",
+      "creationDateTime": "2026-01-08T15:00:00.0000000Z",
+      "subject": "Weekly launch sync",
+      "joinWebUrl": "https://teams.microsoft.com/l/meetup-join/19%3ameeting_fixture%40thread.v2/0?context=%7b%22Tid%22%3a%2211111111-2222-3333-4444-555555555555%22%2c%22Oid%22%3a%223a1e1c5e-0000-4000-8000-00000000a001%22%7d"
+    }
+  ]
+}

@@ -1,3 +1,4 @@
+import { placeWords } from "../channels/friendly-ids.js";
 import { addRoutine, newRoutineId } from "../routines/store.js";
 import { computeNextRun } from "../routines/schedule.js";
 import { describeTrigger, routinePermissionGeneration, type Routine, type RoutineReport, type RoutineTrigger } from "../routines/routine.js";
@@ -85,7 +86,7 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
     return [
       `Create ${args.sessionMode === "job" ? "durable JOB" : "routine"} — ${describeTrigger(args.trigger, args.report)} — fires WITHOUT a fresh @-mention`,
       ...(args.report?.kind === "silent" ? ["🔇 reports NOTHING here — you will only hear from it if it hits a problem it can't resolve, or if it self-disables"] : []),
-      ...(args.report?.kind === "surface" ? [`📤 posts into ${args.report.surfaceKey} — this surface can't post proactively, so its domain's configured reportChannel is where every run will land`] : []),
+      ...(args.report?.kind === "surface" ? [`📤 posts into ${placeWords({ key: args.report.surfaceKey })} — this surface can't post proactively, so its domain's configured reportChannel is where every run will land`] : []),
       ...(args.sessionMode === "job"
         ? ["↻ keeps going until it decides the work is DONE, building on what each earlier run learned — where an ordinary routine starts fresh each time and repeats forever. Arm a job only for work that can actually finish."]
         : []),
@@ -96,7 +97,7 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       ...gateLines(args),
       ...modelRoleLines(args),
       `> ${args.prompt}`,
-      `Target: ${args.surfaceKey}`,
+      `Target: ${placeWords({ key: args.surfaceKey })}`,
     ];
   },
   async execute(args, decidedBy) {

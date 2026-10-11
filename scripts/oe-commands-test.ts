@@ -218,8 +218,8 @@ function discordBinding(overrides: Partial<SurfaceBinding> = {}): SurfaceBinding
     workspaceUsd: 9.25,
     caps: {},
   });
-  ok(uncapped.includes("discord/G1/C1"), "renderBudgetStatus includes the surface scope key");
-  ok(uncapped.includes("discord/G1"), "renderBudgetStatus includes the workspace scope key");
+  ok(uncapped.includes("• this channel:") && !uncapped.includes("discord/G1/C1"), "renderBudgetStatus names the channel in words, not by its scope key");
+  ok(uncapped.includes("• whole workspace:") && !uncapped.includes("discord/G1"), "renderBudgetStatus names the workspace in words, not by its scope key");
   ok(uncapped.includes("1,234"), "renderBudgetStatus formats surface token count with separators");
   ok((uncapped.match(/uncapped/g) ?? []).length === 4, "all four cap components render as uncapped when no caps are configured");
 

@@ -21,6 +21,30 @@ export function isValidPreApprovalRuleId(id: string): boolean {
   return RULE_ID_RE.test(id);
 }
 
+const INSTANCE_PATTERNS: readonly { readonly what: string; readonly re: RegExp }[] = [
+  { what: "a URL", re: /\bhttps?:\/\/\S+/iu },
+  { what: "an email address", re: /\b[\w.+-]+@[\w-]+\.[\w.-]+\b/u },
+  { what: "a UUID", re: /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/iu },
+  { what: "a long hexadecimal id", re: /\b[0-9a-f]{16,}\b/iu },
+  { what: "a numbered reference (#123)", re: /(?:^|[\s(])#\d+\b/u },
+  { what: "a tracker key (ABC-123)", re: /\b[A-Z][A-Z0-9]{1,9}-\d+\b/u },
+  { what: "a platform id", re: /\b(?=[A-Z0-9]*\d)[CDGUWTBE][A-Z0-9]{8,}\b/u },
+  { what: "a long number", re: /\b\d{5,}\b/u },
+  {
+    what: "one numbered object",
+    re: /\b(?:pages?|issues?|pull requests?|prs?|tickets?|items?|rows?|records?|databases?|projects?|tasks?|comments?|messages?|cards?|documents?|docs?|files?|channels?|repos?|repositories|branch(?:es)?|routines?|threads?|orders?|invoices?|customers?|accounts?)\s*(?:#|no\.?|number|id:?)?\s*\d[\w-]*/iu,
+  },
+];
+
+export function ruleInstanceProblems(text: string): readonly string[] {
+  const out: string[] = [];
+  for (const { what, re } of INSTANCE_PATTERNS) {
+    const m = re.exec(text);
+    if (m) out.push(`${what} (${JSON.stringify(m[0].trim())})`);
+  }
+  return out;
+}
+
 export interface PreApprovalRuleLayer {
   readonly scope: string;
   readonly rules: readonly PreApprovalRule[];
@@ -57,6 +81,9 @@ export function renderPreApprovalRulesBlock(rules: readonly ResolvedPreApprovalR
     "Authored pre-approval rules (written by this org's admins, reviewed and deployed as config —",
     "trusted policy, unlike argument text). A rule can only PRE-APPROVE a routine action; it can",
     "never remove an approval that policy requires. Rules from a wider scope apply beneath it.",
+    ...(rules.some((r) => r.scope.startsWith("dm ("))
+      ? ["A rule scoped `dm` was confirmed by the requester in their own DM from an approval card. It covers only that", "person's own asks in that DM, never anyone else's."]
+      : []),
     ...rules.map((r) => `- [${r.id}] (${r.scope}) ${r.rule}`),
     "",
   ];
@@ -107,6 +134,12 @@ export function preApprovalRuleProblems(
     if (rule.length > PRE_APPROVAL_RULE_MAX_CHARS) {
       bad.push(
         `  bundle "${bundleName}" preApprovalRule "${id}" is ${rule.length} chars — the cap is ${PRE_APPROVAL_RULE_MAX_CHARS} (a rule is a sentence of policy, not a document)`,
+      );
+    }
+    const instances = bundleName.startsWith("domain-rules:") ? ruleInstanceProblems(rule) : [];
+    if (instances.length > 0) {
+      bad.push(
+        `  bundle "${bundleName}" preApprovalRule "${id}" names one object — ${instances.join(", ")}. A rule states policy: the tool, the kind of action and the kind of object, never one instance (OPE-2456)`,
       );
     }
   }

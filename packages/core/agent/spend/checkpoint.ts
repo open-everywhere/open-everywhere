@@ -1,10 +1,11 @@
+import { placeWords } from "../channels/friendly-ids.js";
 import type { BindableContext } from "../identity/binding.js";
 import { bindFrom, currentWindowToken } from "../identity/binding.js";
 import { principalIdOf } from "../access/request.js";
 import { domainKeyOf, resolvePartition, type Partition } from "../memory/partition.js";
 import { bareTokenFromEveContext } from "../channels/window-key.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { usageForSession } from "./usage-events.js";
+import { isRuntimeUsageKind, usageForSession } from "./usage-events.js";
 import { resolveAssumedModel, rowCostUsd } from "./reporting.js";
 import { getConfig } from "../access/config.js";
 import { domainNameForScope } from "./caps.js";
@@ -145,7 +146,7 @@ export async function sessionUsage(org: string, sessionId: string, sinceIso?: st
       const at = Date.parse(r.ts);
       if (Number.isFinite(at) && at <= sinceMs) continue;
     }
-    if (r.kind === "sandbox") continue;
+    if (isRuntimeUsageKind(r.kind)) continue;
     modelCalls++;
     tokens += r.inputTokens + r.outputTokens;
     const cost = rowCostUsd(r, assumed, "one-call");
@@ -231,7 +232,7 @@ export function checkpointCardLines(plan: Extract<CheckpointPlan, { decision: "b
   const spent = `${plan.usage.tokens.toLocaleString()} tokens, ${plan.usage.modelCalls.toLocaleString()} model calls${plan.usage.usd !== undefined ? `, about $${plan.usage.usd.toFixed(2)}` : ""}`;
   const lines = [
     rebased ? "Keep this session going past its cost checkpoint again?" : "Keep this session going past its cost checkpoint?",
-    `In ${scopeLabel ?? plan.surfaceKey}.`,
+    `In ${scopeLabel ?? placeWords({ key: plan.surfaceKey })}.`,
     rebased ? `Since a member approved this, it has used ${spent}.` : `So far this session: ${spent}.`,
   ];
   const limits: string[] = [];

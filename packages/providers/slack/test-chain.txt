@@ -33,6 +33,7 @@ test:slack-app-manifest
 test:slack-offboarding
 test:slack-as-you
 test:slack-workspace-roster
+test:slack-card-wire-text
 test:slack-webhook-verifier
 test:slack-input-response
 test:slack-task-card
@@ -45,3 +46,4 @@ test:slack-reasoning-fence
 test:slack-step-label
 test:slack-surface-evidence
 test:slack-home
+test:slack-side-panel

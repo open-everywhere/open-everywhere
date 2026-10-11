@@ -4,6 +4,12 @@ import { getSettings } from "../settings/settings.js";
 
 export type { UsageEventEntry, UsageEventInput, UsageSummaryFilter, UsageSummaryRow } from "../operational/store.js";
 
+export const RUNTIME_USAGE_KINDS: ReadonlySet<string> = new Set(["sandbox", "meeting", "browser"]);
+
+export function isRuntimeUsageKind(kind: string | undefined): boolean {
+  return kind !== undefined && RUNTIME_USAGE_KINDS.has(kind);
+}
+
 export const GENERATION_ID_DETAIL_KEY = "generationId";
 
 export function generationIdOf(row: { readonly detail?: Readonly<Record<string, unknown>> }): string | undefined {
