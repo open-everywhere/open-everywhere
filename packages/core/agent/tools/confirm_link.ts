@@ -8,7 +8,7 @@ import type { LinkChallengeRow } from "../operational/store.js";
 import { actingPrincipalIdOf } from "../access/request.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { principalKey, tryPrincipalKey } from "../identity/principal-key.js";
-import { humanAccountLabel } from "../identity/account-display-name.js";
+import { accountLinkLabel, humanAccountLabel } from "../identity/account-display-name.js";
 import { ingestUntrusted } from "../access/untrusted.js";
 import { resolvePartition } from "../memory/partition.js";
 import { postSurfaceTextStrict } from "../channels/surface-message-ops.js";
@@ -18,9 +18,9 @@ function claimantLabel(platform: string | undefined, tenant: string | undefined,
   return tryPrincipalKey(platform, tenant, nativeId) ?? `the ${platform} account "${nativeId}" (workspace unrecorded)`;
 }
 
-async function claimantName(platform: string | undefined, tenant: string | undefined, nativeId: string | undefined): Promise<string> {
+async function claimantName(platform: string | undefined, tenant: string | undefined, nativeId: string | undefined, surface?: string): Promise<string> {
   if (!platform || !nativeId) return "an account this request never recorded";
-  return humanAccountLabel(platform, nativeId, tenant);
+  return humanAccountLabel(platform, nativeId, tenant, surface);
 }
 
 function fencedClaimantName(name: string): string {
@@ -100,6 +100,7 @@ export default defineTool({
     if (binding.mode !== "dm") {
       throw new Error(`confirm_link is DM-only (this conversation is "${binding.mode}") — only the person who started the link may confirm it, and in a shared conversation anyone could.`);
     }
+    // principal-gate: presence — a HUMAN must be here, acting. This call COMMITS an identity merge
     const actor = actingPrincipalIdOf(ctx);
     if (!actor) {
       throw new Error("confirm_link needs a verified person on this turn — only the human who started the link can confirm it.");
@@ -152,7 +153,7 @@ export default defineTool({
       throw new Error("that link request was not started by you — only its initiator can decide it.");
     }
     const claimant = claimantLabel(challenge.claimedPlatform, challenge.claimedTenant, challenge.claimedNativeId);
-    const name = await claimantName(challenge.claimedPlatform, challenge.claimedTenant, challenge.claimedNativeId);
+    const name = await claimantName(challenge.claimedPlatform, challenge.claimedTenant, challenge.claimedNativeId, binding.platform);
     const fencedName = fencedClaimantName(name);
 
     if (input.decision === "deny") {
@@ -205,7 +206,7 @@ export default defineTool({
       handle: principalKey(binding.platform, tenant, actor),
     });
     if (!result.ok) throw new Error(result.reason);
-    await announceLinkSetGrowth(binding.org, result.linkSetId, claimant, name, { platform: binding.platform, tenant, nativeId: actor });
+    await announceLinkSetGrowth(binding.org, result.linkSetId, [{ platform: challenge.claimedPlatform!, tenant: challenge.claimedTenant ?? "", nativeId: challenge.claimedNativeId! }], { platform: binding.platform, tenant, nativeId: actor });
     return { decided: "confirmed", role: "finalize", claimant, claimantName: fencedName, ...claimantParts(challenge), linkSetId: result.linkSetId, note: result.note };
   },
 });
@@ -231,7 +232,7 @@ async function decideConsent(args: {
   readonly input: { readonly decision: "confirm" | "deny"; readonly acknowledge?: boolean; readonly challengeId?: string; readonly code?: string };
 }): Promise<{ decided: string; role: string; initiatorName?: string; challengeId?: string; note: string }> {
   const c = args.challenge;
-  const who = fencedClaimantName(await claimantName(c.initiatingPlatform, c.initiatingTenant, c.initiatingNativeId));
+  const who = fencedClaimantName(await claimantName(c.initiatingPlatform, c.initiatingTenant, c.initiatingNativeId, args.platform));
 
   if (args.input.decision === "deny") {
     const denied = await denyLinkChallenge({ org: args.org, challengeId: c.id, from: ["pending"] });
@@ -287,16 +288,22 @@ async function decideConsent(args: {
   };
 }
 
-async function announceLinkSetGrowth(org: string, linkSetId: string, joined: string, joinedName: string, initiator: LinkedAccount): Promise<void> {
+async function announceLinkSetGrowth(org: string, linkSetId: string, joined: readonly LinkedAccount[], initiator: LinkedAccount): Promise<void> {
   const n = await notifyLinkSetMembers(
     org,
     linkSetId,
-    `${joinedName} was just linked to your identity, so it now speaks as you across the surfaces I ` +
-      `can see.\n\nIf that was you, nothing to do. If it was not, remove it now — ask me to unlink ` +
-      `${joined} — and tell whoever runs this workspace.`,
+    async (platform) => {
+      const names = (await Promise.all(joined.map((a) => accountLinkLabel(a, platform)))).join(", ");
+      return (
+        `${names} ${joined.length === 1 ? "was" : "were"} just linked to your identity, so ${joined.length === 1 ? "it now speaks" : "they now speak"} as you across the surfaces I ` +
+        `can see.\n\nIf that was you, nothing to do. If it was not, remove it now — ask me to unlink ` +
+        `${joined.length === 1 ? "that account" : "those accounts"} — and tell whoever runs this workspace.`
+      );
+    },
     { except: [initiator] },
   );
-  if (n > 0) console.log(`[open-everywhere:identity] link-set ${linkSetId} grew by ${joined} — notified ${n} other member account(s).`);
+  const keys = joined.map((a) => tryPrincipalKey(a.platform, a.tenant, a.nativeId) ?? a.platform).join(", ");
+  if (n > 0) console.log(`[open-everywhere:identity] link-set ${linkSetId} grew by ${keys} — notified ${n} other member account(s).`);
 }
 
 async function decideDirectorySuggestions(input: {
@@ -340,6 +347,7 @@ async function decideDirectorySuggestions(input: {
 
   const confirmed: string[] = [];
   const confirmedNames: string[] = [];
+  const confirmedAccounts: LinkedAccount[] = [];
   const failed: string[] = [];
   for (const p of chosen) {
     const res = await confirmLinkedId({
@@ -349,19 +357,19 @@ async function decideDirectorySuggestions(input: {
     });
     if (res.ok) {
       confirmed.push(p.principal);
-      confirmedNames.push(await humanAccountLabel(p.platform, p.nativeId, p.tenant));
+      confirmedAccounts.push({ platform: p.platform, tenant: p.tenant, nativeId: p.nativeId });
+      confirmedNames.push(await humanAccountLabel(p.platform, p.nativeId, p.tenant, input.platform));
     } else failed.push(`${p.principal} (${res.reason})`);
   }
   if (confirmed.length === 0) {
     throw new Error(`could not confirm ${failed.join("; ")}`);
   }
-  await announceLinkSetGrowth(input.org, chosen[0]!.linkSetId, confirmed.join(", "), confirmedNames.join(", "), { platform: input.platform, tenant: input.tenant, nativeId: input.actor });
+  await announceLinkSetGrowth(input.org, chosen[0]!.linkSetId, confirmedAccounts, { platform: input.platform, tenant: input.tenant, nativeId: input.actor });
   return {
     decided: "confirmed",
     accounts: confirmed,
     linkSetId: chosen[0]!.linkSetId,
     note:
-      `Linked ${confirmed.join(", ")} to you.` +
-      (failed.length ? ` Could not link ${failed.join("; ")}.` : ""),
+      noteThenAccounts(`Linked ${confirmed.join(", ")} to you.` + (failed.length ? ` Could not link ${failed.join("; ")}.` : ""), fencedClaimantName(confirmedNames.join("\n"))),
   };
 }

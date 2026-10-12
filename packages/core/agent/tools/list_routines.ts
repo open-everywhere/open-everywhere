@@ -9,6 +9,8 @@ import { describeBound } from "../routines/bound.js";
 import { describeStall } from "../routines/stall.js";
 import { policyRules } from "../routines/policy.js";
 import { emptyRoutinePermissionView, readRoutinePermissionViews } from "../routines/permission-review.js";
+import { placeWords } from "../channels/friendly-ids.js";
+import { nameBesideId } from "../channels/friendly-outbound.js";
 
 export default defineTool({
   description:
@@ -27,6 +29,7 @@ export default defineTool({
         job: z.boolean(),
         createdAt: z.string(),
         createdBy: z.string().nullable(),
+        createdByName: z.string().nullable(),
         nextRunAt: z.string().nullable(),
         lastRunAt: z.string().nullable(),
         lastOutcome: z.string().nullable(),
@@ -48,6 +51,7 @@ export default defineTool({
             state: z.enum(["waiting", "unreadable", "superseded", "lapsed", "declined"]),
             askedAt: z.string().nullable(),
             room: z.string().nullable(),
+            roomName: z.string().nullable(),
             nextStep: z.string(),
           }),
         ),
@@ -59,6 +63,7 @@ export default defineTool({
             why: z.string(),
             addedAt: z.string(),
             addedBy: z.string(),
+            addedByName: z.string().nullable(),
             source: z.string(),
           }),
         ),
@@ -82,6 +87,12 @@ export default defineTool({
     });
     const nowIso = new Date().toISOString();
     const views = await readRoutinePermissionViews(p.org, selected, nowIso);
+    const people = [...new Set(selected.flatMap((r) => [r.createdBy ?? "", ...policyRules(r).map((x) => x.addedBy)]).filter((v) => v.length > 0))];
+    const nameOf = new Map(await Promise.all(people.map(async (id) => [id, await nameBesideId(id)] as const)));
+    const named = (id: string | undefined | null): string | null => {
+      const labelled = id ? nameOf.get(id) : undefined;
+      return labelled !== undefined && labelled !== id ? labelled.slice(0, labelled.lastIndexOf(" (")) : null;
+    };
     const routines = selected.map((r) => {
       const f = forensics.get(r.id) ?? emptyRoutineForensics();
       const view = views.get(r.id) ?? emptyRoutinePermissionView();
@@ -93,6 +104,7 @@ export default defineTool({
         job: r.sessionMode === "job",
         createdAt: r.createdAt,
         createdBy: r.createdBy ?? null,
+        createdByName: named(r.createdBy),
         nextRunAt: r.nextRunAt ?? null,
         lastRunAt: r.lastRunAt ?? null,
         lastOutcome: r.lastOutcome ?? null,
@@ -107,9 +119,9 @@ export default defineTool({
         fires7d: f.fires7d,
         tokens7d: f.tokens7d,
         permissions: view.permissions,
-        permissionAsks: view.asks,
+        permissionAsks: view.asks.map((a) => ({ ...a, roomName: a.room === null ? null : placeWords({ key: a.room }) })),
         permissionsUnreadable: view.permissionsUnreadable,
-        rules: policyRules(r).map((x) => ({ id: x.id, rule: x.rule, why: x.why, addedAt: x.addedAt, addedBy: x.addedBy, source: x.source })),
+        rules: policyRules(r).map((x) => ({ id: x.id, rule: x.rule, why: x.why, addedAt: x.addedAt, addedBy: x.addedBy, addedByName: named(x.addedBy), source: x.source })),
         note: r.status === "done" ? r.completedReason ?? "job done" : r.disabledReason ?? null,
       };
     });

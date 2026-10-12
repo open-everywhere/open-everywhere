@@ -9,6 +9,7 @@ import { getConfig } from "../access/config.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
+import { placeBesideKey } from "../channels/friendly-ids.js";
 
 export interface RevokeConnectorInput {
   readonly connector: string;
@@ -29,6 +30,7 @@ export interface ConnectorRevokePlan {
 }
 
 export function planRevokeConnector(binding: SurfaceBinding, input: RevokeConnectorInput, domain: string | null): ConnectorRevokePlan {
+  // principal-gate: presence — break-glass is a HUMAN's verb. Its whole justification is "the change
   if (!actingPrincipalId(binding)) {
     throw new Error("revoke_connector needs a verified sender on this turn — a triggered routine fire has no acting sender (only the creator it is attributed to), and break-glass is a person's decision, not a schedule's. Ask someone in this conversation to propose the revoke.");
   }
@@ -96,7 +98,7 @@ export default defineTool({
       approvalPostDeps(venue.platform, ctx),
     );
 
-    const subject = `revoke "${plan.args.connector}" from "${plan.args.scopeKey}"`;
+    const subject = `revoke "${plan.args.connector}" from ${placeBesideKey(plan.args.scopeKey)}`;
     if (posted.autoApproved) {
       return {
         requested: false,

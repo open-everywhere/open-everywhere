@@ -84,7 +84,10 @@ import {
   PERSON_OPT_OUT_SHORTCUT_NOTICE,
   PERSON_OPT_OUT_UNREADABLE_NOTICE,
   type PersonOptOutState,
+  admitAskedBotReply,
+  deploymentOrg,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { botReplyCandidate, slackBotReplyFacts } from "./slack-bot-ask.js";
 import { sidePanelViewedRoom, slackDmSystemNote } from "./slack-side-panel.js";
 import {
   renderWakeMessage,
@@ -398,6 +401,7 @@ export interface FrontOptions {
   readonly handleHomeOpened?: (open: ParsedHomeOpen) => Promise<boolean>;
   readonly handleHomeClick?: (click: ParsedHomeClick) => Promise<boolean>;
   readonly handleHomeSubmission?: (submission: ParsedHomeSubmission) => Promise<boolean>;
+  readonly admitBotReply?: (ev: ParsedMessageEvent, self: { readonly userId?: string; readonly botId?: string }) => Promise<{ readonly relay: () => Promise<unknown> } | null>;
   readonly recheckChannelCanvas?: (input: { org: string; teamId: string; channelId: string; trigger: "member-joined" | "channel-shared"; joinedUserId?: string }) => Promise<unknown>;
   readonly mentionPolicyFor?: (channelId: string, surfaceKey: string) => Promise<SingleWindowMentionPolicy>;
   readonly resolveDmSeat?: (org: string, dm: { surfaceKey: string; channelId?: string; legacyChannelId?: string }, atIso: string) => Promise<DmSeat>;
@@ -603,6 +607,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
   const homeClicked = opts.handleHomeClick ?? ((click: ParsedHomeClick) => handleHomeClick(click, liveSlackHomeDeps()));
   const recheckCanvas = opts.recheckChannelCanvas ?? ((input: { org: string; teamId: string; channelId: string; trigger: "member-joined" | "channel-shared"; joinedUserId?: string }) => recheckChannelCanvas(input, liveMemoryCanvasDeps()));
   const homeSubmitted = opts.handleHomeSubmission ?? ((submission: ParsedHomeSubmission) => handleHomeSubmission(submission, liveSlackHomeDeps()));
+  const admitBotReply = opts.admitBotReply ?? ((ev: ParsedMessageEvent, self: { readonly userId?: string; readonly botId?: string }) => admitAskedBotReply(slackBotReplyFacts(ev, deploymentOrg(), self), ev.authoredText));
   const ambientEnabledFor = opts.ambientEnabledFor ?? ((surfaceKey: string) => ambientSupervisorEnabled(surfaceKey, getConfig().loadDomains()));
   const seatedSurface = opts.seatedSurfaceFor ?? slackDomainUsesUnifiedWindow;
   const mentionPolicyFor = opts.mentionPolicyFor ?? slackSingleWindowMentionPolicy;
@@ -1283,7 +1288,16 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     if (!ev) return OK();
     persistAttachments(ev);
 
-    const { userId: botUserId } = await getBotIdentity();
+    const identity = await getBotIdentity();
+    if (botReplyCandidate(ev)) {
+      const admitted = await admitBotReply(ev, identity).catch(() => null);
+      if (admitted) {
+        args.waitUntil(admitted.relay().then((route) => console.log(`[open-everywhere:slack-front] asked-thread bot reply ${ev.channelId}/${ev.threadTs}: relayed to the asker's DM (${String(route)})`)));
+        return OK();
+      }
+    }
+
+    const { userId: botUserId } = identity;
     if (mentionSiblingSuppressed({ authoredText: ev.authoredText, ...(ev.subtype === undefined ? {} : { subtype: ev.subtype }), ...(botUserId === undefined ? {} : { botUserId }) })) {
       return OK();
     }

@@ -11,6 +11,7 @@ export interface DiscoveredEndpoints {
 
 export interface OAuthTokenResponse {
   readonly access_token: string;
+  readonly id_token?: string;
   readonly refresh_token?: string;
   readonly expires_in?: number;
   readonly scope?: string;
@@ -236,11 +237,16 @@ async function postTokenConfidential(
 
 export async function exchangeCodeConfidential(
   tokenEndpoint: string,
-  input: { readonly code: string; readonly redirectUri: string },
+  input: { readonly code: string; readonly redirectUri: string; readonly codeVerifier?: string },
   client: ConfidentialClient,
   fetchImpl: OAuthFetch,
 ): Promise<OAuthTokenResponse> {
-  const res = await postTokenConfidential(tokenEndpoint, client, { grant_type: "authorization_code", code: input.code, redirect_uri: input.redirectUri }, fetchImpl);
+  const res = await postTokenConfidential(
+    tokenEndpoint,
+    client,
+    { grant_type: "authorization_code", code: input.code, redirect_uri: input.redirectUri, ...(input.codeVerifier ? { code_verifier: input.codeVerifier } : {}) },
+    fetchImpl,
+  );
   return readTokenResponse(tokenEndpoint, res);
 }
 
@@ -300,4 +306,93 @@ export function refreshToken(
     },
     fetchImpl,
   );
+}
+
+export const GRANT_TOKEN_EXCHANGE = "urn:ietf:params:oauth:grant-type:token-exchange";
+export const GRANT_JWT_BEARER = "urn:ietf:params:oauth:grant-type:jwt-bearer";
+export const TOKEN_TYPE_ID_JAG = "urn:ietf:params:oauth:token-type:id-jag";
+export const TOKEN_TYPE_REFRESH_TOKEN = "urn:ietf:params:oauth:token-type:refresh_token";
+
+export interface OidcEndpoints {
+  readonly authorizationEndpoint: string;
+  readonly tokenEndpoint: string;
+  readonly jwksUri: string;
+  readonly revocationEndpoint?: string;
+}
+
+export async function discoverOidc(issuer: string, fetchImpl: OAuthFetch): Promise<OidcEndpoints> {
+  const url = `${trimSlash(issuer)}/.well-known/openid-configuration`;
+  const res = await fetchImpl(url, { headers: { accept: "application/json" }, redirect: "error" });
+  if (!res.ok) throw new OeOauthError(`OIDC discovery failed for ${issuer}`, { httpStatus: res.status, ...(await readError(res)) });
+  const doc = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (doc["issuer"] !== issuer) throw new OeOauthError(`OIDC discovery for ${issuer} names a different issuer — refused`);
+  const https = (k: string): string | undefined => {
+    const v = doc[k];
+    if (typeof v !== "string" || v === "") return undefined;
+    if (!v.startsWith("https://")) throw new OeOauthError(`OIDC discovery for ${issuer}: ${k} is not https — refused`);
+    return v;
+  };
+  const authorizationEndpoint = https("authorization_endpoint");
+  const tokenEndpoint = https("token_endpoint");
+  const jwksUri = https("jwks_uri");
+  const revocationEndpoint = https("revocation_endpoint");
+  if (!authorizationEndpoint || !tokenEndpoint || !jwksUri) {
+    throw new OeOauthError(`OIDC discovery for ${issuer} is missing authorization_endpoint, token_endpoint or jwks_uri`);
+  }
+  return { authorizationEndpoint, tokenEndpoint, jwksUri, ...(revocationEndpoint ? { revocationEndpoint } : {}) };
+}
+
+export async function fetchJwks(jwksUri: string, fetchImpl: OAuthFetch): Promise<{ keys: Record<string, unknown>[] }> {
+  const res = await fetchImpl(jwksUri, { headers: { accept: "application/json" }, redirect: "error" });
+  if (!res.ok) throw new OeOauthError(`JWKS fetch failed at ${jwksUri}`, { httpStatus: res.status });
+  const doc = (await res.json().catch(() => ({}))) as { keys?: unknown };
+  if (!Array.isArray(doc.keys)) throw new OeOauthError(`JWKS at ${jwksUri} carries no keys array`);
+  return { keys: doc.keys as Record<string, unknown>[] };
+}
+
+export async function requestIdJag(
+  tokenEndpoint: string,
+  input: { readonly subjectToken: string; readonly audience: string; readonly resource?: string; readonly scopes?: readonly string[] },
+  client: ConfidentialClient,
+  fetchImpl: OAuthFetch,
+): Promise<string> {
+  const res = await postTokenConfidential(
+    tokenEndpoint,
+    client,
+    {
+      grant_type: GRANT_TOKEN_EXCHANGE,
+      requested_token_type: TOKEN_TYPE_ID_JAG,
+      subject_token: input.subjectToken,
+      subject_token_type: TOKEN_TYPE_REFRESH_TOKEN,
+      audience: input.audience,
+      ...(input.resource ? { resource: input.resource } : {}),
+      ...(input.scopes && input.scopes.length ? { scope: input.scopes.join(" ") } : {}),
+    },
+    fetchImpl,
+  );
+  const body = (await readTokenResponse(tokenEndpoint, res)) as OAuthTokenResponse & { issued_token_type?: unknown };
+  if (body.issued_token_type !== TOKEN_TYPE_ID_JAG) {
+    throw new OeOauthError(`token endpoint ${tokenEndpoint} answered the ID-JAG exchange with another token type — refused`);
+  }
+  return body.access_token;
+}
+
+export async function jwtBearerGrant(
+  tokenEndpoint: string,
+  input: { readonly assertion: string; readonly resource?: string; readonly scopes?: readonly string[] },
+  client: ConfidentialClient,
+  fetchImpl: OAuthFetch,
+): Promise<OAuthTokenResponse> {
+  const res = await postTokenConfidential(
+    tokenEndpoint,
+    client,
+    {
+      grant_type: GRANT_JWT_BEARER,
+      assertion: input.assertion,
+      ...(input.resource ? { resource: input.resource } : {}),
+      ...(input.scopes && input.scopes.length ? { scope: input.scopes.join(" ") } : {}),
+    },
+    fetchImpl,
+  );
+  return readTokenResponse(tokenEndpoint, res);
 }

@@ -42,6 +42,7 @@ type View = import("../agent/routines/permission-review.js").RoutinePermissionVi
 
 const ORG = "acme";
 const SURFACE = "slack/T1/C1";
+const ROOM_WORDS = "<#C1>";
 const OTHER_SURFACE = "slack/T1/C9";
 const store = getOperationalStore();
 const now = (): string => new Date().toISOString();
@@ -128,7 +129,8 @@ const nightly = await makeRoutine("r-nightly", SURFACE, "C1");
   ok(ask.declaration === "pr.open", "§waiting: …and the declaration is the string edit_routine would take");
   ok(ask.room === SURFACE, "§waiting: the record names the room the card is actually in, read off the row");
   ok(ask.askedAt === card!.createdAt, "§waiting: …and when it was asked, off the same row");
-  ok(ask.nextStep.includes(SURFACE) && ask.nextStep.includes("card"), "§waiting: the next step points at the card that is already there");
+  ok(ask.nextStep.includes(ROOM_WORDS) && ask.nextStep.includes("card"), "§waiting: the next step points at the card that is already there");
+  ok(!ask.nextStep.includes(SURFACE), "§waiting: …and names the room in words, never by its scope key (the `room` field keeps the key)");
   ok(view.permissions.length === 0, "§waiting: a permission that was ASKED for is not a permission the routine HAS");
 }
 
@@ -181,7 +183,7 @@ const lapsed = await makeRoutine("r-lapsed", SURFACE, "C1");
 
   const view = await viewOf(lapsed);
   ok(view.asks.length === 1 && view.asks[0]!.state === "lapsed", "§lapsed: an ask marker with no card, no grant and no decline reads as lapsed");
-  ok(view.asks[0]!.nextStep.includes(SURFACE), "§lapsed: the next step names the room later runs still point at, which is why this state is worth reporting");
+  ok(view.asks[0]!.nextStep.includes(ROOM_WORDS), "§lapsed: the next step names the room later runs still point at, which is why this state is worth reporting");
   ok(view.permissions.length === 0, "§lapsed: nothing was armed");
 }
 
@@ -200,7 +202,7 @@ const lapsed = await makeRoutine("r-lapsed", SURFACE, "C1");
   }
   ok(broken.asks.length === 1 && broken.asks[0]!.state === "unreadable", "§unreadable: a failed card read reports what it is — not the absence `lapsed` asserts");
   ok(!broken.asks[0]!.nextStep.includes("edit_routine"), "§unreadable: …and it does not send the reader to an edit, which would kill the card this read never saw");
-  ok(broken.asks[0]!.nextStep.includes(SURFACE), "§unreadable: it still names the room to look in");
+  ok(broken.asks[0]!.nextStep.includes(ROOM_WORDS), "§unreadable: it still names the room to look in");
   ok(stillDeclined.asks[0]!.state === "declined", "§unreadable: a decline is a row on the routine's own key, so a broken CARD read cannot move it — the negative control");
   ok((await viewOf(lapsed)).asks[0]!.state === "lapsed", "§unreadable: with the store answering again, the same rows read as lapsed — the state tracks the READ, not the routine");
 }

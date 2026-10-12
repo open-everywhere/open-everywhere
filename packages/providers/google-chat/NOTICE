@@ -1,0 +1,51 @@
+Open Everywhere
+Copyright 2026 Rowan Hale
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+---
+
+Built on Vercel Eve (https://github.com/vercel/eve), licensed under the
+Apache License, Version 2.0.
+
+---
+
+Modifications to eve
+
+The @open-everywhere/core package distributes patches/eve+0.71.0.patch. That
+patch file is a modification of eve 0.71.0. Vercel licenses eve 0.71.0 under the
+Apache License, Version 2.0. The copyright notice of eve 0.71.0 reads
+"Copyright 2026 Vercel, Inc. and contributors". The Open Everywhere authors made
+the changes in the patch file.
+
+The patch modifies four files of eve 0.71.0:
+
+  dist/src/execution/web-fetch/request.js
+  dist/src/harness/tool-loop.js
+  dist/src/internal/authored-package-boundary.js
+  dist/src/protocol/message.d.ts
+
+Open Everywhere does not ship the eve package. eve is a peer dependency, so the
+consumer installs eve 0.71.0 from the registry. The patch file carries the
+modified portions of eve. The oe-eve-patch command, which
+@open-everywhere/core ships, applies them to the eve that the consumer
+installed. The command patches no file outside the consumer's own project. To
+restore an eve that holds an older Open Everywhere patch, it also writes to npm's
+cache and to a temporary directory.
+
+The attribution notice of eve 0.71.0 follows, as section 4(d) of the Apache
+License, Version 2.0 requires. The notices for eve's bundled code-mode runtime
+are not reproduced, because the patch modifies no part of that runtime.
+
+eve
+Copyright 2026 Vercel, Inc. and contributors
+
+This product includes software developed at Vercel, Inc.
+(https://vercel.com/).
+
+---
+
+Open Everywhere is an independent, open-source project. It is NOT affiliated
+with, endorsed by, or sponsored by Anthropic. "Claude", "Claude Code", and
+"Claude Tag" are referenced only to describe the prior art Open Everywhere is
+inspired by, and are trademarks of their respective owner.

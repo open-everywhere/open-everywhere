@@ -41,7 +41,7 @@ correct-but-conservative rather than assuming either bit.
 - `membershipType == "shared"` — a Teams **Shared Channel**, which can include people from *other* tenants (the Teams analog of Slack Connect) — is `external`, always. No override reaches it.
 - `membershipType == "standard"` or `"private"` with a known `tenant_id` is a positively-identified in-tenant channel — `internal`.
 - **Anything unverifiable** — absent `membershipType` (the common case), an unrecognised value, or a missing tenant id — produces NO verdict, so the surface falls through to the next rung of the trust chain. With nothing declared it binds `external`. **Two things promote it, not one.** A **register declaration** covering the surface (`defineSurface({ key: "teams/<tenantId>", trust: "internal" })`, the section below) binds it `internal` — and a declaration counts at any rung, so a tenant line covers every room under the tenant. A **single-tenant deployment** can instead use the blanket setting `identity.blanketTrust: "internal"` (the same escape hatch Discord/Linear use). Both sit BELOW the platform verdict in `identity/binding.ts`, so neither overrides a positive `external` one; a `public` declaration outranks both and demotes. What neither does is fence an ambiguous activity out of the org brain: once you declare the tenant, a room with no `membershipType` reaches it. Weigh that reach before you pick the grain.
-- 1:1 and group chats are personal silos (the channel-trust gate doesn't apply), but the **DM-partner gate** still fails closed: Teams doesn't positively verify who the 1:1 partner is, so a DM gets the per-user personal store plus read-only `public` — not the `dm`-shared layer.
+- 1:1 and group chats are personal silos (the channel-trust gate doesn't apply), but the **DM-partner gate** still fails closed. A 1:1 chat gets the `dm`-shared layer only when the partner is **verified**: the Bot Connector roster reports the partner as a tenant **member** (not a guest), and the chat's tenant is the deployment's **home tenant** — the `MICROSOFT_TENANT_ID` (or `TEAMS_TENANT_ID`) of the bot app registration (OPE-2446). A member of any other tenant is not verified, because a multi-tenant registration can be reached from another organisation. A roster that cannot answer, or no `MICROSOFT_TENANT_ID` / `TEAMS_TENANT_ID`, leaves the partner unverified, and the DM gets the per-user personal store plus read-only `public`. A tenant you declared `internal` in `agent/identity/surfaces.ts` verifies its DMs too. `identity.blanketTrust: "internal"` skips the DM-partner gate for every DM, the foreign-tenant member included. Group chats have no single partner and keep the fail-closed rule. Built and pinned by tests; not yet live-verified.
 
 ### Vouching a Teams surface — `agent/identity/surfaces.ts`
 
@@ -196,7 +196,80 @@ Restart the instance so the Teams channel picks up the credentials. **Identity b
 
 1. **In a team channel:** `@Open Everywhere` followed by a request. An `@mention` is how a conversation STARTS, and it also **engages** that reply chain: later plain messages in it wake the bot with no new mention, until someone asks it to stop following (it then goes quiet there until the next `@mention`). A non-mention message in a chain the bot was never invited into is still dropped. The follow-ups depend on the `ChannelMessage.Read.Group` RSC grant — without it Microsoft delivers only `@mention` activities, so the bot answers once per mention.
 2. **In a 1:1 chat:** message the bot directly — no `@mention` needed; personal chats are always for it.
-3. Expected behaviour: a typing indicator, then a Markdown reply in-thread. A DM keeps its own per-user memory, so what it learns in a 1:1 does not appear in the channel. Channel learnings stay siloed because an unconfirmed channel binds **`external` trust**, not because it is private — see [Gotchas](#gotchas).
+3. **By name, without an `@mention` (opt-in):** on a domain with `nameDropWake: true`, a channel message that names the agent ("can Open Everywhere check the deploy?") wakes it for a judged turn — see [Name-drop wake](#name-drop-wake).
+4. Expected behaviour: a typing indicator, then a Markdown reply in-thread. A DM keeps its own per-user memory, so what it learns in a 1:1 does not appear in the channel. Channel learnings stay siloed because an unconfirmed channel binds **`external` trust**, not because it is private — see [Gotchas](#gotchas).
+
+## Name-drop wake
+
+A team-channel message that says the agent's name without an `@mention` wakes it on a domain that
+opted in with `nameDropWake: true` (OPE-2444). The rule is the one Slack and Discord share:
+
+- **The name.** The token set is the bot's display name — the name Teams relays for the bot on each
+  activity, else the app's Graph display name (see [What the agent calls itself here](#what-the-agent-calls-itself-here))
+  — plus `identity.name` and the `wake.nameDrop.include` list, minus `wake.nameDrop.exclude`. A
+  token matches as a whole phrase, in any case.
+- **The domain.** Off unless the channel's domain sets `nameDropWake: true`. A channel in no explicit
+  domain reads the `org` domain's flag. Each refused candidate writes a `surface.name_drop_silent`
+  audit row, and each admitted one writes `surface.name_drop_woke`, so a silent road can be told
+  apart from a dead one.
+- **The turn.** The wake is JUDGED: the agent may decide not to answer. On a single-window channel
+  the standing seat reads it as `addressing="name-drop"`, the higher bar. A name-drop does not engage
+  the reply chain, so a later plain message there needs a new name-drop or an `@mention`.
+- **Channels only.** A personal chat is always answered, and a group chat answers once an
+  `@mention` engages it.
+- **The tenant must consent.** Microsoft delivers a non-`@mention` channel message to the bot only
+  where a team owner consented to `ChannelMessage.Read.Group` at install. No API reports that
+  consent. Without it, a name-drop never reaches the deployment, and only an `@mention` wakes the
+  agent.
+
+## `/oe` commands (zero-inference control plane)
+
+The `/oe` commands Slack and Discord carry work on Teams (OPE-2443): `/oe status`, `/oe budget`,
+`/oe budget raise <usd>`, `/oe budget clear`, `/oe stop`, `/oe rate <1-5>`, `/oe optout` and
+`/oe help`. Each runs core's `runOeCommand`, with no model turn and no spend gate, so it answers
+over a spent cap and in a conversation the agent stood down from. The namespace follows the
+`identity.commandName` setting.
+
+- **How to type one.** A Teams bot has no slash-command event: a command is message text. Type
+  `/oe status` in any conversation the bot is in. Or `@mention` the bot and pick a command from the
+  list Teams suggests — the app manifest lists `oe help`, `oe status`, `oe budget` and `oe stop` —
+  which inserts `oe status` without the slash. The slash-less form counts only in a personal chat or
+  after an `@mention`, and only for a known verb, so "@Open Everywhere oe, can you…" is an ordinary
+  question.
+- **The answer is visible to the conversation.** Slack and Discord answer `/oe` privately. A Teams
+  bot cannot post a message that only one channel member sees, so the answer posts in the
+  conversation that asked — the reply chain, in a channel. For most verbs anyone there could run the
+  same command and read the same answer. `/oe optout` is the exception: its answer names your own
+  opt-out setting and its date, so run it in your personal chat with the bot if you do not want the
+  room to see it.
+- **`/oe budget raise` and `/oe budget clear`** post their approval card in place: in the channel,
+  or in the personal or group chat ([Approval cards](#approval-cards)).
+- **`/oe stop`** stops the turn running in the asking conversation (the reply chain or the chat),
+  through the same stop registry the 😠 reaction reads.
+- **A redelivery runs once.** The Bot Framework redelivers an activity on a slow acknowledgement;
+  the command keeps the same two-layer dedupe a wake keeps.
+
+The command list in the compose box needs the app package from [Step 2](#step-2--package-the-teams-app)
+at manifest version 1.0.4 or later. An older install still runs typed commands; it only lacks the
+suggestions.
+
+## The channel intro
+
+The agent introduces itself once per team channel (OPE-2445), with the same fixed intro and the same
+once-only marker Slack uses:
+
+- **When it is added to a team.** Teams sends the add in the team's General channel only, so the
+  intro posts there.
+- **On the first `@mention` in any other channel.** The intro posts as a new post in the channel, and
+  the answer arrives in the asking reply chain as usual.
+
+It is fixed copy, not a model turn. A personal or group chat, a shared channel, and a room the
+external-participant policy silences get no intro. If the marker cannot be written, nothing posts —
+otherwise every `@mention` would introduce the agent again.
+
+**Pinned instructions are not adopted on Teams.** Slack reads a channel's pinned messages as the
+agent's standing instructions there. Microsoft Graph has no pinned messages for a team channel, and
+the Bot Connector has no pin API. Put standing instructions in the channel's memory instead.
 
 ## What the agent calls itself here
 
@@ -459,9 +532,9 @@ What that means for you, in three lines:
 ## Approval cards
 
 A governed act — a spend limit, a routine, a memory purge, any verb that needs a person's yes —
-asked in a Teams **channel** posts an approval card into that channel. The card is an Adaptive Card
-with **Approve** and **Reject** buttons. It posts as a new post in the channel, not inside the reply
-chain that asked, and the agent says where it is.
+asked in a Teams **channel**, **personal chat** or **group chat** posts an approval card into that
+conversation. The card is an Adaptive Card with **Approve** and **Reject** buttons. In a channel it
+posts as a new post, not inside the reply chain that asked, and the agent says where it is.
 
 - **The tap is authenticated.** A tap reaches the deployment as an `adaptiveCard/action` invoke on
   the same public route as a message (`/eve/v1/teams`). The route verifies the Bot Framework JWT
@@ -471,12 +544,20 @@ chain that asked, and the agent says where it is.
   only when the activity's `channelId` is `msteams`, and a tap with no tenant is refused. The card
   payload names only the pending id and the org; the person, the tenant and the room come from the
   relayed Teams activity.
+- **Only the Teams channel is served (OPE-2455).** The public route refuses (403) any verified
+  activity whose `channelId` is not `msteams` — a message, a reaction or an invoke — before it reads
+  anything else in the body. Eve's own internal route, which the host also mounts, carries the same
+  check. The Bot Framework service stamps `channelId` per channel, so a Web Chat or Direct Line
+  activity is refused before it can bind as a Teams person, whatever `from` or `channelData` its
+  client wrote. No live probe has confirmed that a Direct Line client cannot override `channelId`
+  itself. The Azure portal's "Test in Web Chat" pane gets an error from this bot.
 - **The decision is the same as on Slack and Discord.** One decide core holds the approver tiers,
   the clicker gate, the halt check and the `approval.*` audit rows. An admin-tier card needs a person
   on a `Domain.admins` roster, written `teams/<user-id>` (the Bot Framework `29:` id). A Teams team
   owner is not an approver on that standing alone.
-- **The card opens with one plain sentence** of what will happen and to whom, then the
-  `Approval requested: <kind>` label and the detail — the same layout as Slack and Discord
+- **The card is a headline, at most one consequence line, and the buttons** — the same layout as
+  Slack and Discord. No kind label or raw id shows. The footer names the expiry only, because the
+  row holds the requester's `29:` id and not a display name
   ([Approval cards](../../security/control-plane.md#in-slack-approvals)). Several asks from one job
   still post one Teams card each; grouping them into one card is Slack-only today.
 - **What the person sees.** A decided card replaces the pending one, and a decision notice posts
@@ -484,9 +565,12 @@ chain that asked, and the agent says where it is.
   routine grant released — posts as a new post in the channel instead. A refused tap — a
   non-admin on an admin-tier card, a tap from another Teams channel, a guest — shows a note to
   that person only, and the card stays live.
-- **A personal or group chat cannot host the card.** It carries no channel id, so the card goes to
-  a card-capable channel in the same domain (a Slack, Discord or Teams channel). With no such
-  channel, or no explicit domain, the agent refuses and names the config to change.
+- **A personal or group chat hosts its own card (OPE-2447).** A chat carries no channel id, so the
+  Teams bundle names the chat's own conversation as the card's room. The decision wakes the chat's
+  own DM seat and no other: a chat card's decision never reaches a channel's standing seat, even
+  under a tenant-wide domain. Before OPE-2447 a chat card went to a card-capable channel in the same
+  domain instead. In a 1:1 chat only the requester can tap, so an admin-tier card from a 1:1 needs
+  the requester to be an admin; ask in a channel or group chat where an admin can see it.
 - **No Teams room roster is read yet**, so the clicker gate cannot see a guest in the room. A kind
   that hands the clicker a live secret (`declare_webhook`) is therefore refused on a Teams tap.
 

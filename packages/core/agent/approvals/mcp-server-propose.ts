@@ -1,3 +1,4 @@
+import { QUOTE_MAX, plainQuote } from "./plain-text.js";
 import { requesterWords } from "../channels/friendly-ids.js";
 import { getConfig, type AccessRequestsConfig } from "../access/config.js";
 import { defineMcpServers, type McpServerDeclaration } from "../connections/mcp-servers.js";
@@ -225,6 +226,20 @@ const mcpServerPropose: ActionKind<McpServerProposeArgs> = {
   plainSummary(args) {
     return `Open a pull request on ${plainValue(args.configRepo)} that adds the MCP server ${plainValue(args.declaration.name)}, for an admin to merge`;
   },
+  consequence(args) {
+    const d = args.declaration;
+    const host = (u: string): string => {
+      try {
+        return plainValue(new URL(u).host, 60);
+      } catch {
+        return plainValue(u, 60);
+      }
+    };
+    const token = d.signIn?.mode === "static-confidential" ? ` · client secret goes to ${host(d.signIn.tokenEndpoint)}` : "";
+    const prefix = `${host(d.url)}${token} · `;
+    return `${prefix}${plainQuote(d.description, QUOTE_MAX - prefix.length)}`;
+  },
+  consequenceQuotes: true,
   async execute(args, decidedBy) {
     return executeMcpServerPropose(args, decidedBy);
   },

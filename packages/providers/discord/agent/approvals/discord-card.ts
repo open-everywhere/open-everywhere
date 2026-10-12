@@ -1,5 +1,14 @@
 import type { CardOptionTone, PendingActionRow } from "@open-everywhere/core/agent/adapter-api.js";
-import { approvalLabel, optionsWithoutConfirm, pendingCardLayout, plainSummaryForRow } from "@open-everywhere/core/agent/adapter-api.js";
+import {
+  cardFooter,
+  decidedCardLine,
+  footerRequester,
+  JUDGE_LIFT_BUTTON,
+  judgeLiftLines,
+  optionsWithoutConfirm,
+  pendingCardLayout,
+  pendingCardLines,
+} from "@open-everywhere/core/agent/adapter-api.js";
 
 export const OE_DISCORD_APPROVAL_PREFIX = "oe-approval:";
 
@@ -49,15 +58,12 @@ export function parseDiscordApprovalCustomId(customId: string): { id: string; de
   return { id, decision: decision as DiscordApprovalDecision, org };
 }
 
-function cardBody(row: PendingActionRow, summaryLines: readonly string[], footer: string): string {
-  return [`**${plainSummaryForRow(row)}**`, `-# ${approvalLabel(row.kind)}`, ...summaryLines, footer].join("\n");
-}
-
 const OPTION_STYLE: Record<CardOptionTone, number> = { primary: BUTTON_STYLE_SUCCESS, danger: BUTTON_STYLE_DANGER, neutral: BUTTON_STYLE_SECONDARY };
 
 export function pendingDiscordCard(row: PendingActionRow, summaryLines: readonly string[]): DiscordCardMessage {
   const layout = pendingCardLayout(row, summaryLines);
-  const content = cardBody(row, summaryLines, `-# Requested by <@${layout.requestedBy}> · ${layout.expiry}`);
+  const [headline, ...rest] = pendingCardLines(layout);
+  const content = [`**${headline}**`, ...rest, `-# ${cardFooter(footerRequester(row, "discord"), layout.expiry)}`].join("\n");
   const buttons: DiscordComponent[] = optionsWithoutConfirm(layout.options).map((o) => ({
     type: COMPONENT_BUTTON,
     style: OPTION_STYLE[o.tone],
@@ -67,10 +73,11 @@ export function pendingDiscordCard(row: PendingActionRow, summaryLines: readonly
   return { content, components: [{ type: COMPONENT_ACTION_ROW, components: buttons }] };
 }
 
-export function judgeLiftNoticeDiscordCard(row: PendingActionRow, summaryLines: readonly string[], outcomeLine: string): DiscordCardMessage {
-  const context = `-# ⚡ Auto-approved by the approval judge — no card was posted and this has already run · ${outcomeLine}`;
+export function judgeLiftNoticeDiscordCard(row: PendingActionRow, _summaryLines: readonly string[], outcomeLine: string): DiscordCardMessage {
   return {
-    content: [`**Ran without asking: ${row.kind}**`, ...summaryLines, context].join("\n"),
+    content: judgeLiftLines(row, outcomeLine)
+      .map((line, i, all) => (i === 0 ? `**${line}**` : i === all.length - 1 ? `-# ${line}` : line))
+      .join("\n"),
     components: [
       {
         type: COMPONENT_ACTION_ROW,
@@ -78,7 +85,7 @@ export function judgeLiftNoticeDiscordCard(row: PendingActionRow, summaryLines: 
           {
             type: COMPONENT_BUTTON,
             style: BUTTON_STYLE_DANGER,
-            label: "This should not have run",
+            label: JUDGE_LIFT_BUTTON,
             custom_id: buildDiscordApprovalCustomId(row, "contradict"),
           },
         ],
@@ -87,15 +94,8 @@ export function judgeLiftNoticeDiscordCard(row: PendingActionRow, summaryLines: 
   };
 }
 
-export function decidedDiscordCard(row: PendingActionRow, summaryLines: readonly string[], outcomeLine: string): DiscordCardMessage {
-  const decidedContext =
-    row.status === "approved"
-      ? `✅ Approved by <@${row.decidedBy}> · ${outcomeLine}`
-      : row.status === "rejected"
-        ?
-          `❌ Rejected by <@${row.decidedBy}>${outcomeLine === "rejected" ? "" : ` · ${outcomeLine}`}`
-        : "⏰ Expired";
-  return { content: cardBody(row, summaryLines, decidedContext), components: [] };
+export function decidedDiscordCard(row: PendingActionRow, _summaryLines: readonly string[], outcomeLine: string): DiscordCardMessage {
+  return { content: decidedCardLine(row, outcomeLine, `<@${row.decidedBy}>`), components: [] };
 }
 
 const ADMINISTRATOR_BIT = 1n << 3n;

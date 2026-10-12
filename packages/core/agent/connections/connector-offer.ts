@@ -116,7 +116,7 @@ export function resolveConnectorOptions(input: ResolveConnectorInput): readonly 
       } else {
         route = {
           kind: "text-degrade",
-          reason: "no secure key entry on this surface — ask me in a Slack channel to paste it into a private modal, or an operator can set it via the Vercel dashboard/CLI.",
+          reason: "I can't take a key safely here. Ask me in Slack, where I can open a private form, or ask your admin to add it.",
         };
       }
     }

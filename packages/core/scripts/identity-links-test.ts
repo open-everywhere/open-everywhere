@@ -923,7 +923,8 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
   n++;
   ok(notices.length === 1 && notices[0]!.platform === "slack" && notices[0]!.to === "U_N1", "🔴 OPE-288: EVERY other DM-capable member is told when a member grows the set — the compromised-member case cannot be silent");
   ok(!notices.some((x) => x.platform === "discord"), "OPE-288: the member who DID the growing is excluded — no double-notify (they hold the tool's own answer)");
-  ok(/github\/gh-n2/.test(notices[0]!.text) && /unlink/i.test(notices[0]!.text), "OPE-288: the notice NAMES the account that joined and points at the one-call remedy");
+  ok(notices[0]!.text.includes("https://github.com/gh-n2") && notices[0]!.text.includes("(@gh-n2)") && /unlink/i.test(notices[0]!.text), "OPE-288: the notice NAMES the account that joined — linked to its own profile, with its unique login beside it (OPE-2482) — and points at the one-call remedy");
+  ok(!/github\/gh-n2/.test(notices[0]!.text), "OPE-2482: …and never shows the principal key");
 
   slackThrows = true;
   notices.length = 0;
@@ -1019,7 +1020,7 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
 
   _resetAccountDisplayNamesForTest();
   ok((await accountProfileFor("github", "nobody")) === undefined, "account-display-name: no arm registered ⇒ undefined, never a throw");
-  ok((await humanAccountLabel("github", "nobody")) === 'the github account "nobody"', "🔴 account-display-name: with no name resolved, the label is platform-named prose — NEVER a bare principal key");
+  ok((await humanAccountLabel("github", "nobody")) === "a GitHub account (@nobody) on GitHub", "🔴 account-display-name: with no name resolved, the label is platform-named prose plus the login GitHub keeps unique — NEVER a bare principal key or a raw id (OPE-2482)");
 
   let calls = 0;
   registerAccountDisplayName("github", async (nativeId) => {
@@ -1033,18 +1034,19 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
   });
 
   ok((await accountProfileFor("github", "throws")) === undefined, "🔴 account-display-name: an arm that THROWS resolves undefined — a name lookup must never fail the caller");
-  ok((await humanAccountLabel("github", "throws")) === 'the github account "throws"', "account-display-name: …and the label still falls back to prose");
+  ok((await humanAccountLabel("github", "throws")) === "a GitHub account (@throws) on GitHub", "account-display-name: …and the label still falls back to prose");
   ok((await accountProfileFor("github", "blank")) === undefined, "account-display-name: an arm returning only whitespace resolves undefined, not a blank-string profile");
   ok((await accountProfileFor("github", "missing")) === undefined, "account-display-name: an arm returning undefined resolves undefined");
 
   assert.deepEqual(await accountProfileFor("github", "octocat"), { name: "The Octocat", handle: "octocat" }, "account-display-name: a resolved profile carries both fields, trimmed");
   n++;
   ok(
-    (await humanAccountLabel("github", "octocat")) === "The Octocat (@octocat) (octocat) on github",
-    "account-display-name: NAME + HANDLE compose into one label with the raw id kept in parens as the grounding handle — names collide, ids don't (memory/dream/mode3.ts's exampleLine precedent)",
+    (await humanAccountLabel("github", "octocat")) === "The Octocat (@octocat) on GitHub",
+    "account-display-name: the NAME with the platform-unique LOGIN beside it — names collide, the login does not, and the raw id never shows (OPE-2482)",
   );
-  ok((await humanAccountLabel("github", "handle-only")) === "@justhandle (handle-only) on github", "account-display-name: a handle-only profile still names the person, never falling to a key");
-  ok((await humanAccountLabel("github", "name-only")) === "Just A Name (name-only) on github", "account-display-name: a name-only profile renders without handle parens");
+  ok((await humanAccountLabel("github", "handle-only")) === "justhandle on GitHub", "account-display-name: a handle-only profile still names the person, never falling to a key");
+  ok((await humanAccountLabel("github", "name-only")) === "Just A Name (@name-only) on GitHub", "account-display-name: a name-only profile carries the login beside it");
+  ok((await humanAccountLabel("github", "octocat", undefined, "slack")) === "<https://github.com/octocat|The Octocat> (@octocat) on GitHub", "🔴 account-display-name: given the reading surface, the name LINKS to the account's own profile — the id lives in the link (OPE-2482)");
   ok(calls === 6, `account-display-name: octocat's SECOND lookup (inside the two humanAccountLabel calls above never re-fetches it) — 6 distinct ids looked up, not more (got ${calls})`);
 
   let slackCalls = 0;
@@ -1052,8 +1054,8 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
     slackCalls++;
     return { name: `Name-${tenant}-${nativeId}` };
   });
-  ok((await humanAccountLabel("slack", "U1", "T1")) === "Name-T1-U1 (U1) on slack/T1", "account-display-name: a TENANT-SCOPED platform's label names the workspace, not just the platform");
-  ok((await humanAccountLabel("slack", "U1", "T2")) === "Name-T2-U1 (U1) on slack/T2", "account-display-name: …and a DIFFERENT tenant is a DIFFERENT cache key — the same native id in another workspace is not the same account");
+  ok((await humanAccountLabel("slack", "U1", "T1")) === "Name-T1-U1 on Slack", "account-display-name: a TENANT-SCOPED platform's label names the account and the platform, never the workspace key");
+  ok((await humanAccountLabel("slack", "U1", "T2")) === "Name-T2-U1 on Slack", "account-display-name: …and a DIFFERENT tenant is a DIFFERENT cache key — the same native id in another workspace is not the same account");
   ok(slackCalls === 2, "account-display-name: two distinct tenants ⇒ two arm calls, not a tenant-blind cache hit");
   await humanAccountLabel("slack", "U1", "T1");
   ok(slackCalls === 2, "account-display-name: repeating the FIRST (platform,tenant,id) is a cache hit — no third call");
@@ -1102,7 +1104,7 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
     return { name: "Eventually Resolved" };
   });
   const timedOutLabel = await humanAccountLabel("github", "slow");
-  ok(timedOutLabel === 'the github account "slow"', "🔴 account-display-name: an arm that outlives the timeout falls back to platform-named prose — the notice is never blocked on a stalled call");
+  ok(timedOutLabel === "a GitHub account (@slow) on GitHub", "🔴 account-display-name: an arm that outlives the timeout falls back to platform-named prose — the notice is never blocked on a stalled call");
   ok(!slowArmSettled, "account-display-name timeout setup: the arm genuinely had not answered yet when the fallback fired (the assertion above is not passing by accident)");
   releaseSlowArm?.();
   await new Promise((resolve) => setTimeout(resolve, 10));
@@ -1130,12 +1132,12 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
   dmNotices.length = 0;
   await observeLinkClaim({ org: ORG, platform: "github", authorId: "octocat2", addressed: true, text: `link ${namedCode}`, trust: "peer" });
   ok(dmNotices.length === 1, "OPE-616 setup: the claim notice was delivered");
-  ok(/Second Octocat \(@octocat2\)/.test(dmNotices[0]!.text), "🔴 OPE-616: the claim notice NAMES the claimant with the resolved display name + handle");
+  ok(/<https:\/\/github\.com\/octocat2\|Second Octocat> \(@octocat2\)/.test(dmNotices[0]!.text), "🔴 OPE-616: the claim notice NAMES the claimant with the resolved display name — linked to its profile in the initiator's own surface syntax (OPE-2482) — and its unique login");
   ok(!/github\/octocat2/.test(dmNotices[0]!.text), "🔴 OPE-616: …and does NOT render the bare principal key anywhere in the notice");
 
   const namedPeek = (await confirmLink.execute({ decision: "confirm" }, dmNamed)) as Decision;
   ok(namedPeek.claimant === "github/octocat2", "OPE-616: `claimant` is UNCHANGED — still the exact principal key (kept per the ticket's scope, for a model that must match or record it)");
-  ok(namedPeek.claimantName!.includes("Second Octocat (@octocat2) (octocat2) on github"), "🔴 OPE-616: `claimantName` is the NEW field — the human-readable label, additive to the kept fields");
+  ok(/Second Octocat>? \(@octocat2\) on GitHub/.test(namedPeek.claimantName!), "🔴 OPE-616: `claimantName` is the NEW field — the human-readable label, additive to the kept fields");
   ok(/Second Octocat/.test(namedPeek.note) && !/github\/octocat2/.test(namedPeek.note), "🔴 OPE-616: the peek's `note` — the sentence a model reads aloud to the person — carries the resolved name, not the key");
 
   const namedConfirmed = (await confirmLink.execute({ decision: "confirm", acknowledge: true, challengeId: namedPeek.challengeId }, dmNamed)) as Decision;
@@ -1146,9 +1148,9 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
   const fallbackCode = latestIssuedCode();
   dmNotices.length = 0;
   await observeLinkClaim({ org: ORG, platform: "github", authorId: "unresolved-account", addressed: true, text: `link ${fallbackCode}`, trust: "peer" });
-  ok(/the github account "unresolved-account"/.test(dmNotices[0]!.text), "🔴 OPE-616: an account with no resolvable name still gets PLATFORM-NAMED PROSE in the notice — never a bare key");
+  ok(/a GitHub account>? \(@unresolved-account\)/.test(dmNotices[0]!.text), "🔴 OPE-616: an account with no resolvable name still gets PLATFORM-NAMED PROSE in the notice, with its unique login — never a bare key (OPE-2482)");
   const fallbackPeek = (await confirmLink.execute({ decision: "confirm" }, dmFallback)) as Decision;
-  ok(fallbackPeek.claimantName!.includes('the github account "unresolved-account"'), "OPE-616: …and confirm_link's claimantName matches the same fallback wording (fenced, per the SECURITY block below)");
+  ok(/a GitHub account>? \(@unresolved-account\)/.test(fallbackPeek.claimantName!), "OPE-616: …and confirm_link's claimantName matches the same fallback wording (fenced, per the SECURITY block below)");
   await confirmLink.execute({ decision: "deny" }, dmFallback);
 
   const dmSeveral = ctxFor({ channelId: "D_SEVERAL", channelType: "im", principalId: "U_SEVERAL", dmPartnerTrust: "internal" });
@@ -1165,7 +1167,7 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
     severalMsg = e instanceof Error ? e.message : String(e);
   }
   ok(/Second Octocat/.test(severalMsg), "🔴 OPE-616: the several-waiting-claims refusal names a RESOLVED claimant for a human to pick from");
-  ok(/the github account "unresolved-account"/.test(severalMsg), "OPE-616: …and the unresolved one still gets platform-named prose, not a bare key");
+  ok(/a GitHub account>? \(@unresolved-account\)/.test(severalMsg), "OPE-616: …and the unresolved one still gets platform-named prose, not a bare key");
   ok(!/github\/octocat2/.test(severalMsg) && !/github\/unresolved-account/.test(severalMsg), "🔴 OPE-616: the listing carries NO bare principal key at all — a human reading it cannot eyeball one");
   const stillWaiting = await getOperationalStore().listLinkChallenges(ORG, { initiatingPlatform: "slack", initiatingTenant: T1, initiatingNativeId: "U_SEVERAL", status: "claimed" });
   for (const c of stillWaiting) await denyLinkChallenge({ org: ORG, challengeId: c.id });
@@ -1189,7 +1191,7 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
   ok(discordNotices.length === 1, "OPE-616 setup: the newly-joined discord member received the growth (post-commit) notice");
   ok(/Discord Octo \(@dc_octo\)/.test(discordNotices[0]!.text), "🔴 OPE-616: the growth (post-commit) notice NAMES the joining account with its resolved display name + handle — the live defect");
   ok(!/\*\*/.test(discordNotices[0]!.text), "🔴 OPE-616: the growth notice carries NO markdown — Slack (and most DM-delivery platforms) render `**bold**` literally, which is exactly what Rowan saw live");
-  ok(/discord\/dc-octo/.test(discordNotices[0]!.text), "OPE-616: …and the exact principal key still rides the actionable 'ask me to unlink' clause — a stable, unspoofable anchor alongside the name");
+  ok(!/discord\/dc-octo/.test(discordNotices[0]!.text) && /unlink/i.test(discordNotices[0]!.text), "OPE-2482: …the actionable 'ask me to unlink' clause stays, and the principal key no longer shows — the name, its unique handle and its profile link are the anchor");
 
   discordNotices.length = 0;
   await unlinkIdentity.execute({ platform: "discord", tenant: "", nativeId: "dc-octo" }, dmGrowth);

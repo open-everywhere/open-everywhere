@@ -1,4 +1,5 @@
 import { admitProviderRegistration } from "../access/provider-selection.js";
+import { guardEmailTransport } from "../channels/friendly-outbound.js";
 import { processRegistryMap } from "../lib/process-registry.js";
 
 export interface InboundEmailAttachment {
@@ -64,7 +65,7 @@ const TRANSPORTS = processRegistryMap<EmailTransport>("email-transports.v1");
 
 export function registerEmailTransport(transport: EmailTransport): void {
   if (!admitProviderRegistration("email", "email-transport")) return;
-  TRANSPORTS.set(transport.id, transport);
+  TRANSPORTS.set(transport.id, guardEmailTransport(transport));
 }
 
 export function emailTransport(id: string): EmailTransport | undefined {

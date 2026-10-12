@@ -15,6 +15,33 @@ export interface BrowserBox {
 
 export type LockHolder = "agent" | "person";
 
+export type TaughtStep =
+  | { readonly kind: "go"; readonly url: string }
+  | { readonly kind: "arrive"; readonly url: string }
+  | { readonly kind: "click"; readonly role: string; readonly name: string }
+  | { readonly kind: "type"; readonly role: string; readonly name: string; readonly secret?: true }
+  | { readonly kind: "key"; readonly key: string }
+  | { readonly kind: "back" };
+
+export interface TeachingSession {
+  readonly name: string;
+  readonly goal: string;
+  readonly box: string;
+  readonly startedAt: number;
+  readonly until: number;
+}
+
+export interface TaughtDraft {
+  readonly name: string;
+  readonly goal: string;
+  readonly createdAt: number;
+  readonly steps: readonly TaughtStep[];
+  readonly capped: boolean;
+  readonly seconds: number;
+  readonly rehearsal?: { readonly at: number; readonly found: number; readonly missing: number; readonly unchecked: number };
+  readonly proposal?: { readonly at: number; readonly url?: string; readonly number?: number; readonly dryRun?: boolean };
+}
+
 export interface PersonalBrowserState {
   readonly v: 1;
   readonly org: string;
@@ -31,6 +58,8 @@ export interface PersonalBrowserState {
   readonly acts: Readonly<Record<string, number>>;
   readonly links: Readonly<Record<string, number>>;
   readonly sessions: Readonly<Record<string, number>>;
+  readonly teach?: TeachingSession;
+  readonly drafts?: readonly TaughtDraft[];
 }
 
 export interface StoredBrowserState {

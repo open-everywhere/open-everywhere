@@ -17,6 +17,7 @@ const { standardWebhookSignature } = await import("../agent/webhooks/oe-standard
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { isRuntimeUsageKind } = await import("../agent/spend/usage-events.js");
 const storeMod = await import("../agent/meetings/store.js");
+const provenance = await import("../agent/meetings/provenance.js");
 const { getMeetingRecord, MEETING_ID } = storeMod;
 import type { MeetingPolicy } from "../agent/meetings/policy.js";
 import type { BoxListing, BoxSpec, LongLivedBoxBackend } from "../agent/sandbox/long-lived-box.js";
@@ -77,18 +78,12 @@ const GOOD: MeetingPolicy = {
 };
 {
   ok(!meetingPolicy().enabled, "an app that declares no policy gets the shipped default: off");
-  ok(meetingPolicyProblems(GOOD, { allowEnabledForTest: true }).length === 0, "a complete policy has no other problems");
-  const blocked = meetingPolicyProblems(GOOD);
-  ok(blocked.length === 1 && blocked[0]!.includes("OPE-2461") && blocked[0]!.includes("OPE-2464"), "enabled: true is refused until OPE-2461 and OPE-2464 land");
+  ok(meetingPolicyProblems(GOOD).length === 0, "a complete enabled policy has no problems");
   ok(meetingPolicyProblems({ ...GOOD, enabled: false }).length === 0, "the same policy with meetings off is valid");
-  let regThrew = "";
-  try {
-    registerMeetingPolicy(GOOD);
-  } catch (err) {
-    regThrew = String(err);
-  }
-  ok(regThrew.includes("OPE-2461") && regThrew.includes("OPE-2464"), "the app's own registration of an enabled policy fails the boot, naming both tickets");
-  const p = (over: Partial<MeetingPolicy>): readonly string[] => meetingPolicyProblems({ ...GOOD, ...over }, { allowEnabledForTest: true });
+  registerMeetingPolicy(GOOD);
+  ok(meetingPolicy().enabled, "the app's own registration of an enabled policy boots");
+  resetMeetingPolicyForTest();
+  const p = (over: Partial<MeetingPolicy>): readonly string[] => meetingPolicyProblems({ ...GOOD, ...over });
   ok(p({ hosts: [] }).some((x) => x.includes("no hosts")), "enabled with no hosts is refused");
   ok(p({ hosts: [{ platform: "teams", host: "teams.microsoft.com", why: "x" }] }).some((x) => x.includes("tenant ids")), "a Teams rule without tenants is refused");
   ok(p({ hosts: [{ platform: "meet", host: "meet.google.com", why: "x" }] }).some((x) => x.includes("owner")), "a Meet rule that does not accept the unverifiable owner is refused");
@@ -285,6 +280,9 @@ async function auditActions(): Promise<{ action: string; detail?: Record<string,
   const actions = await auditActions();
   ok(actions.some((r) => r.action === "meeting.ended" && typeof r.detail?.usdMicros === "number" && (r.detail.usdMicros as number) > 0), "meeting.ended records the billed seconds and dollars on a metered backend");
   ok(actions.some((r) => r.action === "meeting.recap_posted" && r.detail?.posted === true && r.detail?.decisions === 1 && r.detail?.actions === 1), "meeting.recap_posted records the counts");
+  ok(await provenance.chatReadCarriesMeetingPost(ORG, { platform: "slack", container: "C1", threadRoot: "1700159720.000100", botMessageIds: [] }), "🔴 the bot recap MARKS the thread it went into");
+  ok(await provenance.chatReadCarriesMeetingPost(ORG, { platform: "slack", container: "C1", botMessageIds: ["ts-1"] }), "🔴 the bot recap MARKS its own post id");
+  ok(await provenance.turnLocusCarriesMeetingPost(ORG, { platform: "slack", container: "C1", threadRoot: "1700159720.000100" }), "🔴 a later turn in that thread is marked");
 
   const again = signed(rec.secret, { type: "ended", chunks: 3, reason: "meeting-ended" });
   await lifecycle.handleMeetingCallback(ORG, a.meetingId, again.raw, again.headers, deps);
@@ -459,7 +457,7 @@ async function auditActions(): Promise<{ action: string; detail?: Record<string,
   const coded = lifecycle.parseMeetingEvent(JSON.stringify({ type: "status", state: "failed", detail: "page-error" }));
   ok(!("error" in leaky) && leaky.type === "status" && leaky.detail === undefined && !("error" in coded) && coded.type === "status" && coded.detail === "page-error", "a status detail keeps a reason code and drops free text that could carry a passcode");
   ok(lifecycle.meetingBoxSpec(args(), policy, "https://oe.example", "whsec_x").user === "pwuser", "the meeting box runs as the image's non-root user");
-  ok(meetingPolicyProblems({ ...GOOD, retention: { audioMinutes: 30, transcriptDays: 30 } }, { allowEnabledForTest: true }).some((x) => x.includes("retention.audioMinutes")), "the policy refuses keeping audio (no store can bound it until OPE-2461)");
+  ok(meetingPolicyProblems({ ...GOOD, retention: { audioMinutes: 30, transcriptDays: 30 } }).some((x) => x.includes("retention.audioMinutes")), "the policy refuses keeping audio (OE never stores it)");
 
   ok(parseRecap("I refuse <!channel>") === undefined, "an answer without the JSON object does not parse");
   const fallback = renderRecapPost(undefined, { platform: "teams", minutes: 12, missingChunks: 0, empty: false });

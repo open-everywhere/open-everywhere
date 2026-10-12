@@ -11,8 +11,7 @@ import { linkClaimInstructions, LINK_CHALLENGE_TTL_MS } from "../identity/link-c
 import { asLinkTransport, linkConsentAsk, linkConsentPendingInstructions, linkStartOpenLoopRefusal } from "../identity/link-flow.js";
 import { linkConsentActions } from "../identity/link-consent.js";
 import { hasAccountDirectory, lookupAccountDirectory, accountDirectoryPlatforms, DIRECTORY_MAX_CANDIDATES } from "../identity/account-directory.js";
-import { accountProfileFor, humanAccountLabel } from "../identity/account-display-name.js";
-import { tryPrincipalKey } from "../identity/principal-key.js";
+import { accountLinkLabel, accountLinkParts, humanAccountLabel } from "../identity/account-display-name.js";
 import { canDeliverDirectMessage, dispatchDirectMessage } from "../channels/post-arms.js";
 import { linkTenantOf, tryLinkTenantOf } from "../identity/link-tenant.js";
 import { ingestUntrusted } from "../access/untrusted.js";
@@ -55,6 +54,7 @@ export default defineTool({
         `link_identity is DM-only (this conversation is "${binding.mode}"). Linking identities ends with a confirmation that only the person themselves may answer, and in a ${binding.mode === "mpim" ? "group DM" : "channel"} anyone present could answer it. Ask them to DM me.`,
       );
     }
+    // principal-gate: presence — a HUMAN must be here, acting. This opens a request whose whole
     const actor = actingPrincipalIdOf(ctx);
     if (!actor) {
       throw new Error("link_identity needs a verified person on this turn — a link is a statement about a human, and there is nobody here to make it.");
@@ -115,7 +115,7 @@ export default defineTool({
         };
       }
       const candidates = await Promise.all(
-        found.candidates.map(async (c) => ({ nativeId: c.nativeId, label: fenced(await humanAccountLabel(platform, c.nativeId, targetTenant || undefined)) })),
+        found.candidates.map(async (c) => ({ nativeId: c.nativeId, label: fenced(await humanAccountLabel(platform, c.nativeId, targetTenant || undefined, binding.platform)) })),
       );
       return {
         decided: "search",
@@ -131,7 +131,7 @@ export default defineTool({
     if (platform === binding.platform && targetTenant === linkTenantOf(binding.platform, binding.workspace) && nativeId === actor) {
       throw new Error("that is the account you are speaking from — linking joins two DIFFERENT accounts. Name the other one.");
     }
-    const targetName = await humanAccountLabel(platform, nativeId, targetTenant || undefined);
+    const targetName = await humanAccountLabel(platform, nativeId, targetTenant || undefined, binding.platform);
     const issued = await issueLinkChallenge({
       org: binding.org,
       platform: binding.platform,
@@ -141,18 +141,12 @@ export default defineTool({
       transport: "directory",
       target: { platform, tenant: targetTenant, nativeId },
     });
-    const initiatorAnchor = accountAnchor(binding.platform, binding.workspace, actor);
-    const initiatorProfile = await accountProfileFor(binding.platform, actor, binding.workspace);
-    const initiatorName = profileName(initiatorProfile);
+    const initiator = await accountLinkParts({ platform: binding.platform, nativeId: actor, ...(binding.workspace ? { tenant: binding.workspace } : {}) }, platform);
+    const target = await accountLinkLabel({ platform, nativeId, ...(targetTenant ? { tenant: targetTenant } : {}) }, platform);
     try {
       await dispatchDirectMessage(platform, {
         principalId: nativeId,
-        text: linkConsentAsk({
-          initiatorAnchor,
-          ...(initiatorName ? { initiatorName } : {}),
-          targetAnchor: accountAnchor(platform, targetTenant, nativeId),
-          ttlMinutes: TTL_MINUTES,
-        }),
+        text: linkConsentAsk({ initiator: initiator.text, target, ttlMinutes: TTL_MINUTES, checkable: initiator.linked || initiator.verified }),
         actions: linkConsentActions(issued.challenge.id),
       });
     } catch (err) {
@@ -171,16 +165,6 @@ export default defineTool({
     };
   },
 });
-
-function accountAnchor(platform: string, tenant: string | undefined, nativeId: string): string {
-  return tryPrincipalKey(platform, tenant, nativeId) ?? `the ${platform} account "${nativeId}"`;
-}
-
-function profileName(profile: { readonly name?: string; readonly handle?: string } | undefined): string | undefined {
-  if (!profile) return undefined;
-  if (profile.name && profile.handle && profile.name !== profile.handle) return `${profile.name} (@${profile.handle})`;
-  return profile.name ?? (profile.handle ? `@${profile.handle}` : undefined);
-}
 
 function directoryShortfall(platform: string): string | undefined {
   if (!hasAccountDirectory(platform)) {

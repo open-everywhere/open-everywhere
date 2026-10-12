@@ -253,7 +253,12 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
   ok(granted !== null, "§click: approve writes exactly the standing row open_pull_request's session skip reads");
   ok(granted?.expiresAt === ROUTINE_PERMISSION_NO_EXPIRY, "§click: the standing row has no TTL — the generation is its death mechanism");
   ok(granted?.grantedBy === "U_CLICKER", "§click: the row records the human who armed it");
-  ok(line.includes("r-nightly"), "§click: the outcome line names the routine");
+  ok(line.startsWith("the routine may now use pr open on its own"), "§click: the outcome line names the routine and the permission in plain words");
+  ok(!line.includes("r-nightly"), "§click: the outcome line shows no raw routine id");
+  ok(
+    JSON.stringify(decidedCardBlocks({ ...(row as never as object), status: "approved", decidedBy: "U_CLICKER" } as never, kind!.summarize(args), line).metadata?.event_payload["detail"]).includes("r-nightly"),
+    "§click: the decided card's metadata detail still names the routine id",
+  );
 
   const res = await resolveApprovalClick({ org: ORG, id: row.id, clickerId: "U_CLICKER", decision: "reject" } as never);
   ok(res.outcome === "decided", "§click: the reject decides the card");
@@ -555,8 +560,8 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
   const blindCards = (await cardsFor(ROUTINE_PERMISSION_KIND)).length;
   ok(blind.length === 1 && blind[0]?.cardKnown === false, "🔴 §runreport: a run whose card store could not be read records the loss with the card's fate UNKNOWN");
   ok(blindCards === blindCardsBefore, "🔴 §runreport: and an UNREADABLE card store posts NO second card — the whole reason `unreadable` is kept apart from `lapsed`");
-  ok(withRunRefusalBlock("body", blind).includes("could not be read"), "🔴 §runreport: and renders that, never the 'no card is waiting' line that would send its owner to an edit");
-  ok(!withRunRefusalBlock("body", blind).includes("no card is waiting"), "🔴 §runreport: …explicitly not that line");
+  ok(withRunRefusalBlock("body", blind).includes("couldn't check"), "🔴 §runreport: and renders that, never the 'no card is waiting' line that would send its owner to an edit");
+  ok(!withRunRefusalBlock("body", blind).includes("no approval request is open"), "🔴 §runreport: …explicitly not that line");
   ok(declinedRun[0]?.cardKnown === true, "§runreport: while a DECLINE knows there is no card, so it says so — the negative control for the arm above");
 
   const W_CARRY = "wake-carry-1982";
@@ -632,16 +637,16 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
   const rendered = withRunRefusalBlock("body", [{ permission: "open pull requests", card: PERMALINK, cardKnown: true, cardPosted: true, cardCapped: false }, { permission: "use Notion", card: null, cardKnown: true, cardPosted: false, cardCapped: false }]);
   ok(rendered.startsWith("body\n\n"), "§runreport: the block is a SUFFIX under a blank line — the answer comes first, the footnote after");
   ok(rendered.includes(RUN_REFUSAL_HEADING), "§runreport: under the host-authored heading, so a reader knows it did not come from the model");
-  ok(rendered.includes(`\u2022 open pull requests \u2014 its card is waiting at ${PERMALINK}`), "§runreport: a permission with an open card points at it");
-  ok(rendered.includes("use Notion \u2014 no card is waiting for it"), "§runreport: and one without says so rather than rendering an empty pointer");
+  ok(rendered.includes(`\u2022 open pull requests \u2014 waiting for approval: ${PERMALINK}`), "§runreport: a permission with an open card points at it");
+  ok(rendered.includes("use Notion \u2014 no approval request is open"), "§runreport: and one without says so rather than rendering an empty pointer");
 
   const noPermalink = withRunRefusalBlock("body", [{ permission: "use Notion", card: null, cardKnown: true, cardPosted: true, cardCapped: false }]);
   ok(!noPermalink.includes("slack/"), "\u{1f534} \u00a7runreport: a card with no permalink renders NO room id \u2014 no arm is left that could print the platform triple");
   ok(
-    noPermalink.includes("use Notion \u2014 its card is waiting in the routine's own room"),
+    noPermalink.includes("use Notion \u2014 waiting for approval in this routine's channel"),
     "\u{1f534} \u00a7runreport: it names the room in WORDS instead \u2014 the card is posted to the routine's own surface, so that says everything the id did",
   );
-  ok(!noPermalink.includes("no card is waiting"), "\u{1f534} \u00a7runreport: and never claims there is NO card \u2014 that line sends an owner to an edit that would destroy it");
+  ok(!noPermalink.includes("no approval request is open"), "\u{1f534} \u00a7runreport: and never claims there is NO card \u2014 that line sends an owner to an edit that would destroy it");
   ok(
     withRunRefusalBlock("body", [{ permission: "use Notion", card: PERMALINK, cardKnown: true, cardPosted: true, cardCapped: false }]).includes(PERMALINK),
     "\u00a7runreport: control \u2014 a card that HAS a permalink still points at it",
@@ -687,7 +692,10 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
   ok((res as { outcomeLine?: string }).outcomeLine === "rejected", "§click: and its outcome line is the literal 'rejected' — the renderers stay byte-identical for every kind without the hook");
   const blocks = decidedCardBlocks((res as unknown as { row: never }).row, (res as { summaryLines: string[] }).summaryLines, "rejected");
   const context = blocks.text.split("\n").at(-1);
-  ok(context === "❌ Rejected by <@U_ADMIN>", `§click: a hookless kind's decided card is byte-identical — no appended outcome clause (got ${String(context)})`);
+  const { plainSummaryForRow } = await import("../agent/approvals/plain-summary.js");
+  const bare = plainSummaryForRow((res as unknown as { row: never }).row).replace(/[.!?]$/u, "");
+  ok(context === `❌ Rejected by <@U_ADMIN> — ${bare}`, `§click: a hookless kind's decided card is one line — no appended outcome clause (got ${String(context)})`);
+  ok(!blocks.text.includes(" · ") && !blocks.text.includes("rejected"), "§click: the literal 'rejected' never shows on the card");
 }
 
 {

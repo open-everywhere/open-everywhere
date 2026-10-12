@@ -3,6 +3,7 @@ import { defineState } from "eve/context";
 import { OE_SPAWN_TAINTED_ATTR, OE_SPAWN_TAINT_KINDS_ATTR, dispatchWorkResult } from "../channels/unified.js";
 import { OE_WORK_REQUEST_ATTR, OE_WORK_RESULT_ATTR, OE_WORK_RESULT_OWED_ATTR, OE_WORK_RESULT_QUIET_ATTR, OE_WORK_RESULT_READS_ATTR, WORK_RESULT_WAKE_ACTION, postWorkResultOnce, readWorkBrief, spendWorkReportPromise, workReportPromised, readWorkCall, readWorkRequest, rememberWorkCall, workLedgerId, readWorkTaskRequest, rememberWorkTask, renderWorkResultWake, workResultText, workTokenForSeat, workCancelRedeemed, type WorkRequestRow } from "../channels/work.js";
 import { fireFoldOutcome, foldWorkFire } from "../routines/fire-work-fold.js";
+import { answerA2aInboundTask } from "../a2a/inbound/answer.js";
 import { noteWorkJobSettled, noteWorkJobStarted, settledWorkJobStateFor } from "./work-status.js";
 import { currentWorkSessionToken } from "../access/lean-seat-state.js";
 import { forgetWorkStop, readWorkStop } from "../channels/work-stop-note.js";
@@ -62,8 +63,11 @@ import {
   inheritedWakeStampOf,
   isSubagentChildContext,
   isUnifiedWindowContext,
+  turnOriginPlatform,
   type BindableContext,
 } from "../identity/binding.js";
+import { READ_ADAPTERS } from "../channels/channel-read.js";
+import { turnLocusCarriesMeetingPost } from "../meetings/provenance.js";
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { advanceDelegatedTaskWake, delegatedTaskDispatchAuthority, installTaskWake, openTaskWake, rememberDelegatedTaskBinding, rememberDelegatedTaskWake } from "../channels/task-wake.js";
 import { noteStepDelivery, noteTurnBoundary, taskWakeThisTurn, uningressedTurn } from "../access/task-wake-signal.js";
@@ -116,6 +120,31 @@ registerTaintVerdictSink((row: TaintVerdictRow) => {
     detail: { ...row, ...liveTaintVerdictIdentity() },
   }).catch(() => undefined);
 });
+
+const LOCUS_CHECKED_MAX = 512;
+const locusCheckedTurns = new Set<string>();
+
+export async function markIfTurnLocusCarriesMeetingPost(bind: BindableContext, sessionId: string | undefined, turnId: string | undefined): Promise<void> {
+  if (untrustedIngestedThisTurn()) return;
+  const turnKey = sessionId !== undefined && sessionId.length > 0 && turnId !== undefined && turnId.length > 0 ? `${sessionId}:${turnId}` : undefined;
+  if (turnKey !== undefined && locusCheckedTurns.has(turnKey)) return;
+  let locus: { platform: string; container: string; threadRoot?: string } | undefined;
+  try {
+    const platform = turnOriginPlatform(bind);
+    const address = platform === undefined ? undefined : READ_ADAPTERS[platform]?.wakeAddress(bind);
+    if (platform !== undefined && address !== undefined) locus = { platform, ...address };
+  } catch {
+    locus = undefined;
+  }
+  if (locus === undefined) return;
+  if (await turnLocusCarriesMeetingPost(deploymentOrg(), locus, Date.now(), turnKey)) {
+    markUntrustedIngestedThisTurn("chat-message");
+    return;
+  }
+  if (turnKey === undefined) return;
+  locusCheckedTurns.add(turnKey);
+  if (locusCheckedTurns.size > LOCUS_CHECKED_MAX) locusCheckedTurns.delete(locusCheckedTurns.values().next().value as string);
+}
 
 export const TAINT_SEED_ATTRS: readonly string[] = [
   OE_SPAWN_TAINTED_ATTR,
@@ -1013,6 +1042,8 @@ async function wakeSeatWithWorkResult(settled: TaskSettled, event: unknown, ctx:
   await flushWorkSettlement(ctx, settled.taskId);
   const memoryWrites = factWritesThisTurn(currentTurnId(ctx as unknown as BindableContext));
   const silentFire = row.fire !== undefined && !row.fire.owesRoom;
+  const a2aFire = row.fire?.a2a;
+  let a2aWrite: "written" | "gone" | "error" | undefined;
   let delivered = false;
   let reportOwed = false;
   const ran = await postWorkResultOnce({
@@ -1023,6 +1054,19 @@ async function wakeSeatWithWorkResult(settled: TaskSettled, event: unknown, ctx:
     run: async () => {
       const foldAs = row.fire === undefined ? undefined : fireFoldOutcome(status, stop !== undefined, await workCancelTicketRedeemed(org, store, row, settled));
       if (foldAs !== undefined) await foldWorkFire(row, foldAs, { org, sessionId: (ctx as { session?: { id?: string } }).session?.id ?? "" });
+      if (a2aFire !== undefined) {
+        a2aWrite = await answerA2aInboundTask({
+          org,
+          store,
+          caller: a2aFire.caller,
+          taskId: a2aFire.taskId,
+          requestId,
+          status: status === "completed" && (await workCancelTicketRedeemed(org, store, row, settled)) ? "cancelled" : status,
+          stopped: stop !== undefined,
+          resultText: workResultText(output, settled.errorText),
+        });
+        return;
+      }
       if (silentFire) return;
       reportOwed = row.fire === undefined && !quietSignIn && (await workReportPromised(store, org, requestId));
       delivered = await dispatchWorkResult({
@@ -1073,7 +1117,9 @@ async function wakeSeatWithWorkResult(settled: TaskSettled, event: unknown, ctx:
   await audit(
     !ran
       ? { outcome: "replay-skipped" }
-      : silentFire
+      : a2aFire !== undefined
+        ? { outcome: a2aWrite === "written" ? "a2a-answered" : a2aWrite === "gone" ? "a2a-task-gone" : "a2a-answer-failed", fire: true }
+        : silentFire
         ? { outcome: "silent-fire", fire: true }
         : { outcome: delivered ? "delivered" : "failed", wakeId, tainted, reportOwed, seatRotated, ...(row.fire !== undefined ? { fire: true } : {}), ...(stop !== undefined ? { stoppedBy: "egress-own-account", connector: stop.connector } : {}), ...(signIn !== undefined ? { signIn: quietSignIn ? "quiet" : "said", connector: signIn.connector } : {}) },
   );
@@ -1237,6 +1283,7 @@ export default defineHook({
       if (typeof ownSessionId !== "string" || ownSessionId.length === 0) return;
       const bind = ctx as unknown as BindableContext;
       const turnId = currentTurnId(bind);
+      await markIfTurnLocusCarriesMeetingPost(bind, ownSessionId, turnId);
       if (!isWorkSessionContext(bind)) {
         const readsToken = deliveryAttr(bind, OE_WORK_RESULT_READS_ATTR);
         const resultRequest = deliveryAttr(bind, OE_WORK_RESULT_ATTR);

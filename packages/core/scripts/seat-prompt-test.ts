@@ -245,7 +245,7 @@ function ok(cond: boolean, label: string): void {
     worker.includes("A search result is never the content") && worker.includes("read the item before you say its body is unavailable"),
     "🔴 the worker persona says a search hit is a pointer to READ before it calls a body unavailable",
   );
-  ok(seat.includes("say so in the room and wait for a person"), "negative control: a conversational seat says it in the room instead of parking the turn");
+  ok(seat.includes("Ask the person in one plain line") && seat.includes("wait for a person to tell you how to proceed"), "negative control: a conversational seat asks in the room instead of parking the turn");
   ok(!seat.includes("`ask_question`"), "🔴 …and the seat persona never names `ask_question` at all — it is a worker verb now, and a prompt that names it points the seat at an absent tool");
   ok(!seat.includes("`return_result`"), "negative control: …and is never handed a verb it does not hold");
 
@@ -538,7 +538,7 @@ function ok(cond: boolean, label: string): void {
     "🔴 §13: …and it names the two measured effects by what actually lands — the file edit (J2) and the returned row (S23)",
   );
   ok(
-    seat.includes("Say which permission is missing and who can grant it"),
+    seat.includes("Say what you can't reach and who can give you access"),
     "🔴 §13: the refusal half tells the seat to pass on the BOUNDARY, which is what S-PR-BOUNDARY's reply replaced with a failed-task story",
   );
   ok(
@@ -585,7 +585,7 @@ function ok(cond: boolean, label: string): void {
   const FORBIDDEN_HANDOFF =
     '"I\'ve handed this off to make the one-line README change — I\'ll report the actual result when it returns" is the same fabrication on a turn that called no worker';
   const ACCEPTED_WITHHOLDING =
-    '"I can\'t run that AWS check — this channel has no AWS role granted, and an admin binds one" is a complete answer';
+    '"I can\'t run that AWS check from this channel — it has no AWS access yet, and an admin can add it" is a complete answer';
 
   const seat = renderSeatPersona({ seatKind: "conversational", delivery: { kind: "dual-mode" } });
   const arms = [
@@ -638,7 +638,7 @@ function ok(cond: boolean, label: string): void {
     "🔴 §13b: …and a delegation is dated by its CALL, which is what makes the hand-off sentence checkable without banning it",
   );
   ok(
-    flat(seat).includes("on a later turn say plainly that it is still running, and report what it found when its notice arrives"),
+    flat(seat).includes("on a later turn say plainly that the work is still under way, and report what it found when its notice arrives"),
     "🔴 §13b: …and the later turns stay ORDERED, so this block and PENDING_WORK_INSTRUCTION give the seat the same instruction",
   );
 

@@ -48,6 +48,9 @@ export interface AuditExportTarget {
 }
 
 export interface AgentSettings {
+  readonly a2a: {
+    readonly inbound: boolean;
+  };
   readonly agent: {
     readonly sessionInputTokenBudget: number;
     readonly compactionThresholdPercent: number;
@@ -354,6 +357,14 @@ const stringOrStringArray = (value: string | readonly string[]): string | undefi
   typeof value === "string" || (Array.isArray(value) && value.every((t) => typeof t === "string")) ? undefined : "must be a string or an array of strings";
 
 export const SETTINGS = {
+  a2a: {
+    inbound: {
+      path: "a2a.inbound",
+      shipped: false,
+      summary:
+        "Whether this deployment accepts INBOUND A2A calls: another organisation's agent calls this agent through its published A2A agent card (`GET /.well-known/agent-card.json`) and its JSON-RPC route (`POST /a2a/jsonrpc`). Off (shipped) ⇒ both routes answer 404 — the ingress does not exist. On, the routes ALSO need at least one caller declared in `agent/access/a2a-inbound.ts`: with none, they still answer 404. Every call must authenticate as a declared caller (a JWT from a declared issuer, or a declared bearer secret by credential-store ref); an unauthenticated or undeclared call is refused 401 before any turn starts. A call lands as a job in its caller's own surface of the caller's declared domain, bound EXTERNAL (read-only `public` memory) and unattended — and it holds that domain's tool and connector grants, so declare a caller only in a domain whose grants you would expose to it. See docs/extending/a2a-agents.md.",
+    } satisfies SettingSpec<boolean>,
+  },
   agent: {
     sessionInputTokenBudget: {
       path: "agent.sessionInputTokenBudget",
@@ -644,7 +655,7 @@ export const SETTINGS = {
       validate: (v) =>
         /[\n\r]/u.test(v) ? "must not contain a line break" : v.length > 64 ? "must be at most 64 characters" : undefined,
       summary:
-        "The deployment's CANONICAL agent name — the ONLY name the agent calls itself, on every surface (OPE-610). Unset (the shipped `\"\"`) renders the generic identity line (\"Identify as this team's agent\") even where a surface has a live display-name arm: a per-surface app's own name is a HANDLE/address, never a substitute identity, so it never feeds the identity line. Each provider bundle registers that arm (`agent/identity/bot-display-name.ts`); Slack, Microsoft Teams and Discord ship one, rendered as a separate handle line (\"your mention/handle on X appears as Y\") for self-recognition of mentions/backscroll — the other surfaces resolve no handle. Configuring this setting matters most for a CROSS-SURFACE session, which speaks on several surfaces from one standing block: before this setting existed, a Teams delivery introduced the agent by the SLACK workspace display name (OPE-569). Set it and one name answers everywhere, on the per-surface path and the cross-surface path alike. It ALSO joins the name-drop token set (`agent/identity/bot-name.ts`) that the Notion synthetic-mention recogniser and the addressed link-claim hook match on, so the agent answers to the name it introduces itself by. 🔴 It REPLACES the brand there (the maintainer's ruling, OPE-2334): with this setting or `identity.shortName` set, ONLY the configured names (and a surface's platform-resolved integration name) match, and the brand tokens \"open everywhere\" and \"oe\" match only on a deployment that configures no name. The same name also renders every install artifact (the Slack and Teams app manifests) and every user-facing and model-facing string that used to spell the brand; unset, those fall back to the brand default \"Open Everywhere\" or a neutral phrase. It ALSO joins the SLACK and DISCORD ambient name-drop wake trigger set (OPE-571), alongside those surfaces' own live display names — see `wake.nameDrop.include`/`wake.nameDrop.exclude` to extend or narrow that set further.",
+        "The deployment's CANONICAL agent name — the ONLY name the agent calls itself, on every surface (OPE-610). Unset (the shipped `\"\"`) renders the generic identity line (\"Identify as this team's agent\") even where a surface has a live display-name arm: a per-surface app's own name is a HANDLE/address, never a substitute identity, so it never feeds the identity line. Each provider bundle registers that arm (`agent/identity/bot-display-name.ts`); Slack, Microsoft Teams and Discord ship one, rendered as a separate handle line (\"your mention/handle on X appears as Y\") for self-recognition of mentions/backscroll — the other surfaces resolve no handle. Configuring this setting matters most for a CROSS-SURFACE session, which speaks on several surfaces from one standing block: before this setting existed, a Teams delivery introduced the agent by the SLACK workspace display name (OPE-569). Set it and one name answers everywhere, on the per-surface path and the cross-surface path alike. It ALSO joins the name-drop token set (`agent/identity/bot-name.ts`) that the Notion synthetic-mention recogniser and the addressed link-claim hook match on, so the agent answers to the name it introduces itself by. 🔴 It REPLACES the brand there (OPE-2334): with this setting or `identity.shortName` set, ONLY the configured names (and a surface's platform-resolved integration name) match, and the brand tokens \"open everywhere\" and \"oe\" match only on a deployment that configures no name. The same name also renders every install artifact (the Slack and Teams app manifests) and every user-facing and model-facing string that used to spell the brand; unset, those fall back to the brand default \"Open Everywhere\" or a neutral phrase. It ALSO joins the SLACK, DISCORD and TEAMS ambient name-drop wake trigger set (OPE-571, Teams since OPE-2444), alongside those surfaces' own live display names — see `wake.nameDrop.include`/`wake.nameDrop.exclude` to extend or narrow that set further.",
       format: (v) => (v === "" ? "`` (unset — generic identity line; per-surface handle still shown separately where resolved)" : v),
     } satisfies SettingSpec<string>,
     shortName: {
@@ -659,7 +670,7 @@ export const SETTINGS = {
               ? "must be at least 2 characters (a shorter token is never matched)"
               : undefined,
       summary:
-        "The agent's SHORT name (OPE-2334) — a second name token beside `identity.name`, for the abbreviation people type (\"ari\" for \"Aria\"). It joins the name-drop token set (`agent/identity/bot-name.ts`) that the Notion synthetic-mention recogniser and the addressed link-claim hook match on. Setting it, like setting `identity.name`, makes the CONFIGURED names the only wake tokens: the brand tokens \"open everywhere\" and \"oe\" stop matching. It does NOT join the Slack/Discord ambient name-drop set, which stays narrow on purpose — add it to `wake.nameDrop.include` to widen that set. Unset (the shipped `\"\"`) adds no token.",
+        "The agent's SHORT name (OPE-2334) — a second name token beside `identity.name`, for the abbreviation people type (\"ari\" for \"Aria\"). It joins the name-drop token set (`agent/identity/bot-name.ts`) that the Notion synthetic-mention recogniser and the addressed link-claim hook match on. Setting it, like setting `identity.name`, makes the CONFIGURED names the only wake tokens: the brand tokens \"open everywhere\" and \"oe\" stop matching. It does NOT join the Slack/Discord/Teams ambient name-drop set, which stays narrow on purpose — add it to `wake.nameDrop.include` to widen that set. Unset (the shipped `\"\"`) adds no token.",
       format: (v) => (v === "" ? "`` (unset — no short-name token)" : v),
     } satisfies SettingSpec<string>,
     commandName: {
@@ -1041,7 +1052,7 @@ export const SETTINGS = {
       shipped: [] as readonly string[],
       validate: stringArray,
       summary:
-        "Extra name tokens the Slack/Discord AMBIENT name-drop wake fires on, beyond the surface's live vendor display name and `identity.name` (OPE-571). Case-insensitive, matched the same word-boundary way as the automatic base — no regex, no predicate. Widening ambient wake is the operator's own choice, made by diff.",
+        "Extra name tokens the Slack/Discord/Teams AMBIENT name-drop wake fires on, beyond the surface's live vendor display name and `identity.name` (OPE-571). Case-insensitive, matched the same word-boundary way as the automatic base — no regex, no predicate. Widening ambient wake is the operator's own choice, made by diff.",
       format: (v) => (v.length > 0 ? v.join(", ") : "(none)"),
     } satisfies SettingSpec<readonly string[]>,
     nameDropExclude: {
@@ -1049,7 +1060,7 @@ export const SETTINGS = {
       shipped: [] as readonly string[],
       validate: stringArray,
       summary:
-        "Name tokens the Slack/Discord name-drop wake NEVER fires on, even when the live display name, `identity.name`, or `wake.nameDrop.include` would otherwise carry them. WINS over both — the narrowing always has the last word.",
+        "Name tokens the Slack/Discord/Teams name-drop wake NEVER fires on, even when the live display name, `identity.name`, or `wake.nameDrop.include` would otherwise carry them. WINS over both — the narrowing always has the last word.",
       format: (v) => (v.length > 0 ? v.join(", ") : "(none)"),
     } satisfies SettingSpec<readonly string[]>,
     e2eDrivers: {
@@ -1065,7 +1076,7 @@ export const SETTINGS = {
       shipped: [] as readonly string[],
       validate: driverAllowlistProblem,
       summary:
-        "The one deliberate, narrow exception to \"never act on another bot\": the e2e DRIVER bot pairs the Slack engagement and mention doors and the Discord relay ingress admit as if they were a user, so full-path tests can drive the real agent. Each entry is ONE pair: `guildId:botUserId` on Discord, `teamId:botId` on Slack (the posting app's `B…` bot record). Guild/workspace-pinned, exact match, no wildcards; a malformed entry fails the boot. On Discord, a listed driver id that posts from a DIFFERENT guild than its pair names is still refused, and the refusal writes a `discord.relay_admission_refused` audit row (OPE-647) — every other bot-authored message stays a silent no-op. Empty (shipped) ⇒ every bot-authored message drops. Deliberately SEPARATE from `wake.e2eDrivers`, which admits a driver into a standing seat: that is a larger grant, made by its own reviewed diff. Was the `OE_TEST_DRIVER_IDS` env var until OPE-2411. TEST BEDS ONLY — a real deployment leaves it empty. 🔴 This repository's own `agent/settings/settings.ts` names the maintainers' test-deployment pairs, so a deployment made from a clone of this repository must delete that entry.",
+        "The test-deployment exception to \"never act on another bot\" (a real deployment's one exception is a reply in an asked thread, OPE-2426, docs/capabilities/bot-delegation.md): the e2e DRIVER bot pairs the Slack engagement and mention doors and the Discord relay ingress admit as if they were a user, so full-path tests can drive the real agent. Each entry is ONE pair: `guildId:botUserId` on Discord, `teamId:botId` on Slack (the posting app's `B…` bot record). Guild/workspace-pinned, exact match, no wildcards; a malformed entry fails the boot. On Discord, a listed driver id that posts from a DIFFERENT guild than its pair names is still refused, and the refusal writes a `discord.relay_admission_refused` audit row (OPE-647) — every other bot-authored message stays a silent no-op. Empty (shipped) ⇒ every bot-authored message drops, except a reply in an asked thread (OPE-2426). Deliberately SEPARATE from `wake.e2eDrivers`, which admits a driver into a standing seat: that is a larger grant, made by its own reviewed diff. Was the `OE_TEST_DRIVER_IDS` env var until OPE-2411. TEST BEDS ONLY — a real deployment leaves it empty. 🔴 This repository's own `agent/settings/settings.ts` names the maintainers' test-deployment pairs, so a deployment made from a clone of this repository must delete that entry.",
       format: (v) => (v.length > 0 ? v.join(", ") : "(none)"),
     } satisfies SettingSpec<readonly string[]>,
     testWakeRoute: {
@@ -1207,6 +1218,9 @@ function resolve<T>(spec: SettingSpec<T>, override: T | undefined): T {
 export function getSettings(overrides: AgentSettingsOverrides = registeredOverrides()): AgentSettings {
   const o = overrides;
   return {
+    a2a: {
+      inbound: resolve(SETTINGS.a2a.inbound, o.a2a?.inbound),
+    },
     agent: {
       sessionInputTokenBudget: resolve(SETTINGS.agent.sessionInputTokenBudget, o.agent?.sessionInputTokenBudget),
       compactionThresholdPercent: resolve(SETTINGS.agent.compactionThresholdPercent, o.agent?.compactionThresholdPercent),

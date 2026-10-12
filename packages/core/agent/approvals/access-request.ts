@@ -1,5 +1,6 @@
 import { getConfig, type AccessRequestsConfig } from "../access/config.js";
-import { grantSentence, renderDelta, type AccessDelta } from "../access/delta.js";
+import { grantSentence, grantWords, renderDelta, type AccessDelta } from "../access/delta.js";
+import { plainValue } from "./plain-text.js";
 import { applyDelta, emitGrantsModule, emptyGrantsFile, parseGrantsModule } from "../access/grants-codemod.js";
 import { assertBindingsValid, assertBundlesValid } from "../access/bundle.js";
 import { GitHubContents, type CommitId } from "../scm/contents.js";
@@ -15,7 +16,6 @@ import { platformOfScopeKey } from "../access/scope-key.js";
 import { inlineForReview } from "./review-surface.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import type { ActionKind } from "./types.js";
-import { plainValue } from "./plain-text.js";
 
 export interface AccessRequestArgs {
   readonly org: string;
@@ -205,8 +205,9 @@ const accessRequest: ActionKind<AccessRequestArgs> = {
   kind: "access.request",
   policy: "member",
   plainSummary(args) {
-    return `Open a pull request for an admin to review: ${plainValue(grantSentence(args.delta), 110)}`;
+    return `Ask an admin, by pull request, to allow ${grantWords(args.delta)}`;
   },
+  consequence: (args) => (args.exposure !== undefined && args.exposure.length > 0 ? `Reach: ${plainValue(args.exposure[0], 150)}` : undefined),
   summarize(args) {
     return [
       `Request wider access — ${grantSentence(args.delta)}`,

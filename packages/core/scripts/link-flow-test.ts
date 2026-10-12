@@ -1,3 +1,5 @@
+// proves: identity.link.claim_unaddressed, identity.link.code_back_undeliverable
+
 process.env.OE_SQLITE_PATH = ":memory:";
 process.env.OE_OPERATIONAL_PROVIDER = "postgres";
 
@@ -141,12 +143,12 @@ function ctxFor(opts: { channelId: string; channelType?: string; principalId: st
   ok(claimVenueRefusal({ dmCapable: true, mode: "dm" }) === undefined, "VENUE: a DM on a DM-capable platform is fine");
   ok(claimVenueRefusal({ dmCapable: false, mode: "channel" }) === undefined, "🔴 VENUE: a platform with NO DM arm (GitHub/Linear/Notion) still takes a claim in a comment — refusing there would delete the cross-platform claim");
   ok(claimVenueRefusal({ dmCapable: false, mode: undefined }) === undefined, "VENUE: no DM arm ⇒ the mode is not consulted at all");
-  const withName = linkConsentAsk({ initiatorAnchor: "slack/T1/U_A", initiatorName: "Visit https://evil.example now", targetAnchor: "github/octocat", ttlMinutes: 10 });
-  ok(withName.indexOf("slack/T1/U_A") < withName.indexOf("evil.example"), "🔴 consent ask: the unspoofable anchor is read BEFORE anything the asking account chose");
-  ok(/calls itself/i.test(withName), "🔴 consent ask: a name carrying a URL is ATTRIBUTED — sanitizing keeps the URL, so the framing is the mitigation");
-  const noName = linkConsentAsk({ initiatorAnchor: "slack/T1/U_A", targetAnchor: "github/octocat", ttlMinutes: 10 });
-  ok(!/calls itself/i.test(noName), "consent ask: no resolved name ⇒ NO attribution clause at all — a placeholder would add nothing a reader can check");
-  ok(/slack\/T1\/U_A/.test(noName), "consent ask: the anchor still names who asked when no profile resolves (the negative control)");
+  const withName = linkConsentAsk({ initiator: "<slack://user?team=T1&id=U_A|Visit https://evil.example now> (a@example.com)", target: "[octocat](https://github.com/octocat)", ttlMinutes: 10, checkable: true });
+  ok(/Who asked: <slack:\/\/user\?team=T1&id=U_A\|/.test(withName) && /Your account: \[octocat\]/.test(withName), "consent ask: both accounts appear as the labels the caller rendered — a link to the account itself");
+  ok(/calls itself/i.test(withName) && /claim rather than/i.test(withName), "🔴 consent ask: a self-set name is ATTRIBUTED as a claim — sanitizing keeps a URL, so the framing is the mitigation");
+  ok(/link opens the account itself/i.test(withName) && /comes from the platform/i.test(withName), "🔴 consent ask: it names the parts a reader can check — the link and the platform's address");
+  const bare = linkConsentAsk({ initiator: "Sam Lee", target: "a Linear account", ttlMinutes: 10, checkable: false });
+  ok(!/link opens the account itself/i.test(bare) && /nothing beside that name a person can check/i.test(bare), "🔴 consent ask: with no link and no verified address, it claims NO check — it says the name stands alone and to deny if unsure");
   const venueText = claimVenueRefusal({ dmCapable: true, mode: "channel" })!;
   ok(/dm me/i.test(venueText) && /nothing was used up|still good/i.test(venueText), "VENUE: the refusal points at the DM and says the code was not spent");
 
@@ -523,7 +525,7 @@ function ctxFor(opts: { channelId: string; channelType?: string; principalId: st
   const search = await linkIdentity.execute({ platform: "slack", query: "bob" }, dmA);
   ok(search.decided === "search" && search.candidates.length === 2, "link_identity search: candidates come back");
   ok(search.candidates[0]!.nativeId === "U_B", "link_identity search: the exact handle match leads");
-  ok(/Bob Target/.test(search.candidates[0]!.label) && /U_B/.test(search.candidates[0]!.label), "link_identity search: a candidate is labelled with the resolved NAME plus the raw id — names collide, ids do not");
+  ok(/Bob Target/.test(search.candidates[0]!.label) && !/U_B/.test(search.candidates[0]!.label.replace(/<slack:\/\/[^>|]*\|/g, "<")) && search.candidates[0]!.nativeId === "U_B", "link_identity search: a candidate is labelled with the resolved NAME (a verified email beside it where the platform gives one), never the raw id — the id rides `nativeId` for the follow-up call (OPE-2482)");
   ok(/untrusted/i.test(search.candidates[0]!.label), "🔴 link_identity search: the label is FENCED as untrusted content before it reaches the model");
   ok((await pg.listLinkChallenges(ORG, { initiatingNativeId: "U_A" })).length === before, "link_identity search: NOTHING was written");
 
@@ -537,9 +539,10 @@ function ctxFor(opts: { channelId: string; channelType?: string; principalId: st
   ok(/Alice Initiator/.test(dms[0]!.text), "🔴 link_identity ask: the consent ask NAMES THE INITIATOR — an unexpected DM naming a stranger is the easy human judgement");
   ok(!/\*\*/.test(dms[0]!.text) && !/<untrusted/i.test(dms[0]!.text), "link_identity ask: the DM is PLAIN TEXT — no markdown, no fence markup for a human to paste");
   const ask = dms[0]!.text;
-  ok(ask.indexOf("slack/T1/U_A") < ask.indexOf("Alice Initiator"), "🔴 link_identity ask: the ANCHOR (platform/workspace/id, composed from captured facts) LEADS the self-set name");
+  ok(/<slack:\/\/user\?team=T1&id=U_A\|Alice Initiator[^>]*>/.test(ask), "🔴 link_identity ask: who asked is a name linked to that account's own profile, built from captured ids");
+  ok(!/slack\/T1\/U_A|(?<![=])U_A\b/.test(ask.replace(/<slack:\/\/[^>]*>/g, "")), "🔴 link_identity ask: the raw id and the principal key never appear in the visible text");
   ok(/calls itself/i.test(ask) && /claim rather than/i.test(ask), "🔴 link_identity ask: the self-set name is ATTRIBUTED as a claim, not asserted — sanitizing does not remove a URL or imitative prose, attribution does the work");
-  ok(/slack\/T1\/U_B/.test(ask), "link_identity ask: the recipient's OWN account is named by anchor too, never by a second self-set string");
+  ok(ask.includes("slack://user?team=T1&id=U_B"), "link_identity ask: the recipient's OWN account is linked to its own profile too");
   ok(!/<untrusted/i.test(String(asked.instructions)), "🔴 link_identity ask: `instructions` (relayed VERBATIM into a chat message) carries the SANITIZED name, never the fence markup");
   ok(/untrusted/i.test(String(asked.target)), "link_identity ask: the structured `target` field a MODEL reads IS fenced — the split every notice in this flow uses");
 
@@ -751,7 +754,7 @@ function ctxFor(opts: { channelId: string; channelType?: string; principalId: st
   ok((await pg.getLinkChallenge(ORG, claimedId!))?.status === "claimed", "OPE-1858: the refusal wrote nothing — the request is still open");
 
   ok(peek.note.includes(UNTRUSTED_OPEN) && peek.note.includes(UNTRUSTED_CLOSE), "🔴 OPE-616 still holds: the note carries the fence");
-  ok(peek.note.includes("Octo Eighteen (@oct18)"), "🔴 OPE-616 still holds: …around the resolved name, which the note still carries");
+  ok(/Octo Eighteen>? \(@oct18\)/.test(peek.note), "🔴 OPE-616 still holds: …around the resolved name, which the note still carries");
   ok(!/github\/oct-1858/.test(peek.note), "🔴 OPE-616 still holds: and the note renders NO bare principal key");
 
   const before = (await pg.readAudit({ org: ORG, action: "identity.link.confirmed" })).length;
@@ -838,3 +841,8 @@ function ctxFor(opts: { channelId: string; channelType?: string; principalId: st
 console.log(
   `✓ link-flow: ${n} assertions (pure gates, account directory, directory-transport CAS incl. sqlite parity, claim venue, claim addressing, forced code-back, both tools, the actionable finalize peek, surface parity)`,
 );
+
+// proves: AP-MOD-core-identity-link-challenge, AP-MOD-core-identity-link-flow
+
+// proves: SET-027
+// proves: TOOL-confirm_link, TOOL-link_identity

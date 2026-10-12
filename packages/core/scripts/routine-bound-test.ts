@@ -1,3 +1,5 @@
+// proves: ROUT-31, ROUT-32, ROUT-33, ROUT-34, ROUT-35
+
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
@@ -225,8 +227,8 @@ async function tick(now: Date): Promise<void> {
 
   ok(notices.length === 1, "🔴 THE NOTICE: stopping POSTS, host-composed, exactly once — a ceiling that disabled the row silently would be strictly worse than no ceiling, because the routine would go quiet with nothing to read");
   const text = notices[0]!;
-  ok(text.includes(id), "notice: names the routine");
-  ok(/Nothing failed/i.test(text), "notice: leads with NOTHING FAILED — a reader who has learned to read a routine's stop as 'it broke' would otherwise misdiagnose a job that was working perfectly and simply never finished");
+  ok(!text.includes(id), "notice: never shows the routine id — the quoted prompt names it (OPE-2486)");
+  ok(/Nothing went wrong/i.test(text), "notice: says NOTHING WENT WRONG — a reader who has learned to read a routine's stop as 'it broke' would otherwise misdiagnose a job that was working perfectly and simply never finished");
   ok(/start it again/i.test(text), "notice: gives the recovery action, which is one call away");
   ok(!/approve|confirm|click/i.test(text), "notice: it is a NOTICE, not an approval card — nobody is there to click at the hour a ceiling trips");
 
@@ -296,11 +298,12 @@ async function tick(now: Date): Promise<void> {
   const verdict = { exhausted: true, dimension: "fires", reason: "it ran 200 times without finishing (its ceiling is 200 runs)" } as const;
   const job = routine({ id: "r-notice", sessionMode: "job", prompt: "Chase   the\n  migration." });
 
-  ok(boundNoticeText(job, verdict).startsWith("⏹️ Job `r-notice`"), "notice: a durable job is called a job");
-  ok(boundNoticeText(routine({ id: "r-n2" }), verdict).startsWith("⏹️ Routine `r-n2`"), "notice: a plain routine is called a routine");
+  ok(boundNoticeText(job, verdict).startsWith("⏹️ I stopped this job because it reached its run limit."), "notice: a durable job is called a job");
+  ok(boundNoticeText(routine({ id: "r-n2" }), verdict).startsWith("⏹️ I stopped this routine because"), "notice: a plain routine is called a routine");
+  ok(boundNoticeText(routine({ id: "r-n3" }), { ...verdict, dimension: "deadline" }).includes("reached its end date"), "notice: a deadline stop names the end date, not the run limit");
   ok(boundNoticeText(job, verdict).includes("> Chase the migration."), "notice: the prompt is whitespace-collapsed — this lands in a room, not a document");
-  ok(!boundNoticeText(job, verdict).includes("only sign of it"), "notice: an ordinary job gets no silent-specific line");
-  ok(boundNoticeText({ ...job, report: { kind: "silent" } }, verdict).includes("only sign of it"), "notice: a SILENT job's notice says why this message matters — nothing else would ever have told you it existed");
+  ok(!boundNoticeText(job, verdict).includes("only sign it stopped"), "notice: an ordinary job gets no silent-specific line");
+  ok(boundNoticeText({ ...job, report: { kind: "silent" } }, verdict).includes("only sign it stopped"), "notice: a SILENT job's notice says why this message matters — nothing else would ever have told you it existed");
 
   const posts: string[] = [];
   const origin = { platform: "slack", channelId: "C1" };
@@ -446,10 +449,10 @@ async function quietStore(except: string): Promise<void> {
 
   ok(notices.length === noticesBefore + 1, "🔴 THE NOTICE: stopping POSTS, exactly once, through the routine's OWN dispatch origin — the same arm a fire's reply takes, not a second delivery mechanism");
   const text = notices[notices.length - 1]!;
-  ok(text.includes(id), "notice: names the routine");
-  ok(/BLOCKED/.test(text) && /cost checkpoint/i.test(text), "🔴 THE DIAGNOSIS: the notice says it was BLOCKED and names the cost checkpoint — remove the dimension branch and a stalled job reports the CEILING's story instead");
-  ok(!/Nothing failed: it just never finished/.test(text), "🔴 THE DIAGNOSIS: …and it does NOT claim 'nothing failed, it just never finished', which is the ceiling's line and a false diagnosis here — it points the operator at re-arm when the truth is unblock-then-re-arm");
-  ok(/raise the cost checkpoint|Answer that card/i.test(text) && /THEN/.test(text), "notice: it names the step that has to happen BEFORE a re-arm, which is the whole reason the two stops read differently");
+  ok(!text.includes(id), "notice: never shows the routine id (OPE-2486)");
+  ok(/waiting for someone to approve more spending/.test(text) && /couldn't do its work/i.test(text), "🔴 THE DIAGNOSIS: the notice says it was BLOCKED on spending — remove the dimension branch and a stalled job reports the CEILING's story instead");
+  ok(!/Nothing went wrong/.test(text), "🔴 THE DIAGNOSIS: …and it does NOT claim 'nothing went wrong', which is the ceiling's line and a false diagnosis here — it points the reader at re-arm when the truth is unblock-then-re-arm");
+  ok(/keep going\?" request/i.test(text) && /first, then ask me to start it again/.test(text), "notice: it names the step that has to happen BEFORE a re-arm, which is the whole reason the two stops read differently");
 
   const disabledRows = (await readAudit({ org: ORG, limit: 1000 })).filter((r) => r.action === ROUTINE_AUDIT.disabled && (r.detail as { routineId?: string } | undefined)?.routineId === id);
   ok(disabledRows.length === 1, "forensics: exactly ONE routine.disabled row, on the transition");

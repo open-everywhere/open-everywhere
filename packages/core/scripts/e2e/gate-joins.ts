@@ -1266,7 +1266,7 @@ export const S23_SCHEDULED_OR_PENDING = /schedul|underway|under way|pending|appr
 export const S23_CONFIRMED = /schedul|\barmed\b|granted|applied|\bset (?:up|for)\b|created|\bactive\b/i;
 export const S23_UNSETTLED =
   /\b(?:still|is|remains|currently|now)\s+(?:\w+\s+)?pending|awaiting (?:an? )?approval|unverified|untrusted|can'?t confirm|cannot confirm|not (?:yet )?(?:been )?(?:confirmed|scheduled)|confirm once|may require an? approval/i;
-export const APPROVAL_DECISION_NOTICE = /^\s*(?:✅|⛔|⌛)\s*Approval (?:APPROVED|REJECTED|EXPIRED)\b/;
+export const APPROVAL_DECISION_NOTICE = /^\s*(?:(?:✅|⛔|⌛)\s*Approval (?:APPROVED|REJECTED|EXPIRED)\b|✅ Approved by |❌ Rejected by |⏰ Expired — )/;
 
 export const S23_ACK_QUESTION = "Does the reply confirm a ONE-TIME check-in was scheduled (not a recurring/cron schedule, not a refusal)?";
 export const S23_CARD_ACK_QUESTION =

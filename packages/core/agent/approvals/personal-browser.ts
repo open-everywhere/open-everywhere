@@ -2,6 +2,8 @@ import { inlineForReview } from "./review-surface.js";
 import { plainValue } from "./plain-text.js";
 import { registerActionKind } from "./actions.js";
 import { grantAct, handBack } from "../personal-browser/lifecycle.js";
+import { getPersonalBrowserState } from "../personal-browser/store.js";
+import { findDraft, proposeDraft } from "../personal-browser/teach.js";
 import type { ActionKind } from "./types.js";
 
 export interface BrowserActArgs {
@@ -18,6 +20,7 @@ export interface BrowserHandbackArgs {
   readonly person: string;
   readonly principalId: string;
   readonly reason: string;
+  readonly teach?: string;
 }
 
 function ownerOnly(principalId: string, decidedBy: string): void {
@@ -53,7 +56,12 @@ export function browserHandbackSummary(args: BrowserHandbackArgs): string[] {
   return [
     `You have the controls of your browser: ${inlineForReview(args.reason)}`,
     "Open it from the link I sent you in this DM. I'm not touching the browser while you have the controls.",
-    "When you're done, approve this card to give the controls back to me, and I'll carry on from the page you left.",
+    ...(args.teach !== undefined
+      ? [
+          `I'm recording your demonstration for the draft skill ${inlineForReview(args.teach)}: the pages, and the links, buttons and fields you use. I never record the text you type into a field, but a link or an option you pick can repeat it.`,
+          "When you're done, approve this card. That ends the recording and saves the draft. Nothing runs it until you ask.",
+        ]
+      : ["When you're done, approve this card to give the controls back to me, and I'll carry on from the page you left."]),
   ];
 }
 
@@ -68,9 +76,54 @@ const browserHandback: ActionKind<BrowserHandbackArgs> = {
   async execute(args, decidedBy) {
     ownerOnly(args.principalId, decidedBy);
     const changed = await handBack(args.org, args.person, "card");
+    if (args.teach !== undefined) {
+      const found = (await getPersonalBrowserState(args.org, args.person))?.state;
+      const draft = found === undefined ? undefined : findDraft(found, args.teach);
+      if (changed && draft !== undefined) {
+        return `the controls are back with the agent, and it saved your demonstration as the paused draft "${draft.name}" (${draft.steps.length} steps${draft.capped ? ", the recording hit its cap" : ""}). Ask it to show, rehearse or propose the draft`;
+      }
+      if (changed) return "the controls are back with the agent, but the recording could not be saved (the browser may have restarted) — nothing was drafted";
+    }
     return changed ? "the controls are back with the agent; it carries on from the page you left" : "the agent already had the controls";
+  },
+};
+
+export interface BrowserProposeArgs {
+  readonly org: string;
+  readonly person: string;
+  readonly principalId: string;
+  readonly name: string;
+  readonly steps: number;
+  readonly gaps: number;
+}
+
+export function browserProposeSummary(args: BrowserProposeArgs): string[] {
+  return [
+    `Open a pull request on this deployment's config repo that proposes your taught draft ${inlineForReview(args.name)} as a skill (${args.steps} steps, ${args.gaps} gaps to fill).`,
+    "The pull request shows the draft to the config repo's readers: the labels of the links, buttons and fields you used, and the page paths. A path can carry an id or a token, and a label can repeat text you typed. Read the draft first.",
+    "Merging the pull request is what arms the skill. Nothing changes until a person merges it.",
+  ];
+}
+
+const browserPropose: ActionKind<BrowserProposeArgs> = {
+  kind: "browser.personal.propose",
+  policy: "member",
+  summarize: browserProposeSummary,
+  plainSummary(args) {
+    return `Propose your taught draft "${plainValue(args.name)}" as a skill, by pull request`;
+  },
+  async execute(args, decidedBy) {
+    ownerOnly(args.principalId, decidedBy);
+    const found = (await getPersonalBrowserState(args.org, args.person))?.state;
+    const draft = found === undefined ? undefined : findDraft(found, args.name);
+    if (found === undefined || draft === undefined) return `the taught draft "${args.name}" is gone (it was discarded, or the browser was forgotten), so nothing was proposed`;
+    const r = await proposeDraft(found, draft);
+    if (r.opened) return `opened a pull request proposing "${draft.name}" as a skill: ${r.url ?? `#${r.number ?? "?"}`}. Merging it is what arms the skill — fill the marked gaps first`;
+    if (r.dryRun === true) return `this deployment runs config-repo writes as a dry run, so the proposal of "${draft.name}" was recorded and no pull request was opened`;
+    return `no pull request was opened: ${r.skipped ?? "the proposal was skipped"}. The draft stays in your browser's record`;
   },
 };
 
 registerActionKind(browserAct);
 registerActionKind(browserHandback);
+registerActionKind(browserPropose);

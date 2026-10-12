@@ -1,3 +1,5 @@
+// proves: ROUT-60
+
 import { __setTestValveForTest } from "../agent/testing/test-valves.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { tmpdir } from "node:os";
@@ -328,12 +330,12 @@ async function inTurn<T>(sessionId: string, turnId: string, fn: () => T | Promis
   overrideSettingsForTest({ approvals: { routineCardWaitSeconds: 0 } });
   const shippedLine = await kind!.execute(clickerArgs as never, "U_CLICKER");
   ok(shippedLine.includes("from its next run"), `🔴 §clicker: at the 0 opt-out the clicker is told the grant starts next run (got "${shippedLine}")`);
-  ok(!shippedLine.includes("still waiting"), "§clicker: with no mention of a run that cannot be waiting");
+  ok(!shippedLine.includes("starting now"), "§clicker: with no mention of a run that cannot be waiting");
   overrideSettingsForTest({ approvals: { routineCardWaitSeconds: 120 } });
   const armedLine = await kind!.execute(clickerArgs as never, "U_CLICKER");
-  ok(armedLine.includes("including any run still waiting on this card"), "🔴 §clicker: armed, the clicker is told their press may have lifted a run holding right now");
+  ok(armedLine.includes("starting now"), "🔴 §clicker: armed, the clicker is told their press may have lifted a run holding right now");
   ok(!armedLine.includes("from its next run"), "§clicker: and is NOT told the work starts next time while it is in fact happening");
-  ok(armedLine.includes("until its instruction is edited"), "§clicker: both arms keep the revocation half — an edit still clears it");
+  ok(armedLine.includes("until its instruction changes") && shippedLine.includes("until its instruction changes"), "§clicker: both arms keep the revocation half — an edit still clears it");
   overrideSettingsForTest({ approvals: { routineCardWaitSeconds: 0 } });
 }
 
@@ -596,3 +598,5 @@ async function approvedPrOpenWedges(): Promise<{ id: string; decidedBy: string |
   }
   return out;
 }
+
+// proves: SET-005

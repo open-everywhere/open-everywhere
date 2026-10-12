@@ -144,8 +144,8 @@ for (const kind of INGESTION_KINDS) {
 }
 eq(
   INGESTION_KINDS.length,
-  14,
-  "the table has exactly the 14 ruled kinds (a 15th means a design decision, not a drive-by add — the 12th `aws` was OPE-305; the 13th `skill-declared` OPE-361; the 14th `work-search` OPE-929/OPE-961; the `handoff` row was DELETED by OPE-794 with the note it classified)",
+  15,
+  "the table has exactly the 15 ruled kinds (a 16th means a design decision, not a drive-by add — the 12th `aws` was OPE-305; the 13th `skill-declared` OPE-361; the 14th `work-search` OPE-929/OPE-961; the 15th `a2a-inbound` OPE-2448, the inbound A2A ingress; the `handoff` row was DELETED by OPE-794 with the note it classified)",
 );
 
 console.log("2. the enforced seam:");

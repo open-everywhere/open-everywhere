@@ -322,11 +322,11 @@ ok((await store.removeRoutine(p as never, made.id)) === false, "store: removing 
     const summary = kind.summarize({ org: cp.org, partition: cp as never, surfaceKey: cp.surfaceKey, id: cancelId, description: "every 30 min" });
     ok(summary.some((l: string) => l.includes(cancelId)), "routine.cancel summarize: names the exact frozen routine id");
     const outcome = await kind.execute({ org: cp.org, partition: cp as never, surfaceKey: cp.surfaceKey, id: cancelId, description: "every 30 min", requestedBy: "U1" }, "U_CONFIRMER");
-    ok(/cancelled/.test(outcome), "routine.cancel execute: the confirming click removes the frozen target");
+    ok(outcome === "the routine that runs every 30 min is stopped", "routine.cancel execute: the confirming click removes the frozen target");
     ok((await store.getRoutine(cp.org, cp.surfaceKey, cancelId)) === null, "cancel_routine: gone from the store after the confirming click");
 
     const again = await kind.execute({ org: cp.org, partition: cp as never, surfaceKey: cp.surfaceKey, id: cancelId, description: "every 30 min" }, "U_CONFIRMER");
-    ok(/nothing to cancel/.test(again), "routine.cancel execute: a target already gone reports cleanly (no throw)");
+    ok(again === "the routine that runs every 30 min was already gone, so nothing changed", "routine.cancel execute: a target already gone reports cleanly (no throw)");
   } finally {
     _resetSlackBridgeForTest();
   }

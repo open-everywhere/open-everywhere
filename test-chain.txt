@@ -105,6 +105,7 @@ test:teams-icons
 test:teams-roster-probe
 test:teams-directory
 test:teams-approvals
+test:teams-parity
 test:discord-provider
 test:governance-dm
 test:resource-grant-transport-parity
@@ -190,6 +191,7 @@ test:eve-patch-upgrade-packed
 lint:brand-literals
 lint:friendly-ids
 test:friendly-ids-lint
+test:friendly-names
 test:brand-literal-lint
 test:template-drift
 test:template-adapters
@@ -197,5 +199,9 @@ test:npm-command
 lint:doc-links
 test:doc-links-lint
 test:meeting-bot
+test:meeting-provenance-surfaces
 test:email-integration
+test:google-chat-integration
 test:personal-browser-fence
+test:personal-browser-recorder
+test:card-budget

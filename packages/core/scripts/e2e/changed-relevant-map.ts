@@ -29,7 +29,7 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   {
     area: "teams-provider",
     globs: ["packages/providers/teams/**"],
-    scenarios: ["J-TEAMS", "J-TEAMS-DM", "J-ENGAGED-teams", "S-DELEGATED-teams", "S-AMBIENT-teams", "S-SIBLING-teams", "S-SUSPENDED-teams", "S-LINK-teams", "S-CARD-teams"],
+    scenarios: ["J-TEAMS", "J-TEAMS-DM", "J-ENGAGED-teams", "S-DELEGATED-teams", "S-AMBIENT-teams", "S-SIBLING-teams", "S-SUSPENDED-teams", "S-LINK-teams", "S-CARD-teams", "S-CARD-teams-dm", "J-NAMEDROP-teams", "S-OE-CMD-teams", "S-INTRO-teams"],
     why: "The three surface: \"teams\" scenarios — the channel, the 1:1 DM, and the ambient engagement seam (OPE-1500: @mention engages, a plain follow-up wakes, stand_down stops it). J-TEAMS is also the smoke-lane's non-Slack half (scenarios.ts smoke: true); the other two are not — J-TEAMS-DM self-skips until the driver's Chat.* Graph scope is consented (OPE-972), and J-ENGAGED-teams self-skips when the tenant has not consented to the ChannelMessage.Read.Group RSC grant, without which Microsoft never delivers the plain follow-up it asserts on.",
   },
   {
@@ -65,9 +65,11 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
       "packages/core/agent/tools/delegate_to_agent.ts",
       "packages/core/agent/tools/check_agent_task.ts",
       "agent/access/a2a-agents.ts",
+      "agent/access/a2a-inbound.ts",
+      "packages/core/agent/channels/a2a-inbound.ts",
     ],
-    scenarios: ["S-A2A-DELEGATE"],
-    why: "S-A2A-DELEGATE is the only live leg on the outbound A2A client (OPE-2425): the a2a.delegate card, the armed second call, the declared agent's answer in the thread, and the two a2a.* audit rows.",
+    scenarios: ["S-A2A-DELEGATE", "S-A2A-INBOUND"],
+    why: "S-A2A-DELEGATE is the only live leg on the outbound A2A client (OPE-2425): the a2a.delegate card, the armed second call, the declared agent's answer in the thread, and the two a2a.* audit rows. S-A2A-INBOUND is the live leg on the inbound ingress (OPE-2448): the published card and the 401 an unauthenticated call gets.",
   },
   {
     area: "taint",
@@ -153,6 +155,18 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     ],
     scenarios: ["S-APP-HOME"],
     why: "S-APP-HOME (OPE-2451) is the only live leg on the person's Home tab: a signed open publishes the page, Export hands the person their memory, and a forged Forget erases nothing. A change to the page model, the memory data plane behind it or the Slack half reaches exactly that leg.",
+  },
+  {
+    area: "personal-watch",
+    globs: [
+      "packages/core/agent/personal-watch/**",
+      "packages/core/agent/commands/watch.ts",
+      "packages/core/agent/home/watch-home.ts",
+      "packages/core/agent/hooks/personal-watch-enroll.ts",
+      "packages/core/agent/schedules/personal-watch.ts",
+    ],
+    scenarios: ["S-WATCH"],
+    why: "S-WATCH (OPE-2422) is the only live leg on the chief-of-staff watch: the person's dial through `/oe watch` and the Home tab, and a forged Not useful that moves no dose. The check itself has no live fixture and is driven offline.",
   },
   {
     area: "meetings",
@@ -379,7 +393,7 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
       "packages/core/agent/hooks/spawn-taint.ts",
     ],
     scenarios: ["S-PROVENANCE-DM"],
-    why: "S-PROVENANCE-DM (OPE-1717) is the ONLY live leg that joins a deployment's own `reply.provenance` row to the bytes the room received, so it is the only scenario that reds when the two halves disagree. `reply-provenance.ts` holds the ledger and the footer text. THREE doors fill that ledger, and each one calls `noteConnectorRead`: `hooks/connector-audit.ts` for a connector op, `channels/read-reach.ts` for an authored read tool, and `channels/delegated-provenance.ts` at the delegation settle, which `hooks/spawn-taint.ts` drives. An unwired call at ANY of the three leaves the row empty while every offline assertion stays green — the defect class OPE-1713 found on the bridge route. The WITHHELD arm of the same rule needs one turn holding two conversations, which no connector on this deployment can reach, so it is proven offline in `packages/core/scripts/reply-provenance-test.ts` and by no live leg.",
+    why: "S-PROVENANCE-DM (OPE-1717) is the ONLY live leg that joins a deployment's own `reply.provenance` row to the bytes the room received, so it is the only scenario that reds when the two halves disagree. `reply-provenance.ts` holds the ledger, the sources line the row records, and the forged-line strip. THREE doors fill that ledger, and each one calls `noteConnectorRead`: `hooks/connector-audit.ts` for a connector op, `channels/read-reach.ts` for an authored read tool, and `channels/delegated-provenance.ts` at the delegation settle, which `hooks/spawn-taint.ts` drives. An unwired call at ANY of the three leaves the row empty while every offline assertion stays green — the defect class OPE-1713 found on the bridge route. The WITHHELD arm of the same rule needs one turn holding two conversations, which no connector on this deployment can reach, so it is proven offline in `packages/core/scripts/reply-provenance-test.ts` and by no live leg.",
   },
   {
     area: "deploy-sanity-facts",

@@ -340,8 +340,8 @@ test("purge_memory proposes a card under the egress spoof and redacts the fact o
   });
   expect(resolution.outcome).toBe("decided");
   if (resolution.outcome !== "decided") throw new Error("unreachable — asserted above");
-  expect(resolution.outcomeLine).toContain("purged 1 line(s)");
-  expect(resolution.outcomeLine).toContain("silo:it-memory-brain/purge-fixture.md");
+  expect(resolution.outcomeLine).toContain("deleted 1 remembered line");
+  expect(resolution.outcomeLine).not.toContain("purge-fixture.md");
 
   const flushCursor = await auditCursor();
   handle.releaseHolds();

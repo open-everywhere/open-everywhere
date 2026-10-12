@@ -33,7 +33,7 @@ Two ideas run through the whole design (see [Core concepts](./docs/introduction/
 - **Repo vs runtime.** Config lives in your git repo and deploys with it. Secrets, state, and
   spend live in the operational store and change at runtime.
 - **The conversational seat is lean; a worker does the work.** A seat that can
-  delegate holds 17 tools at most, the lean roster (`packages/core/agent/access/lean-seat.ts`, `LEAN_SEAT_TOOLS`,
+  delegate holds 18 tools at most, the lean roster (`packages/core/agent/access/lean-seat.ts`, `LEAN_SEAT_TOOLS`,
   enforced by deletion at the model-call seam). Everything else — every read, `bash`, every
   cross-surface write — is worker-only
   (`packages/core/agent/access/worker-capability-index.generated.ts`). Each conversation runs on
@@ -488,11 +488,29 @@ specific guide:
 ## Conventions
 
 - **One word, one meaning — use [`docs/glossary.md`](./docs/glossary.md).** The **seat** is the
-  narrow conversational session (17 tools); the **work session** is the one session per
+  narrow conversational session (18 tools); the **work session** is the one session per
   conversation that runs its jobs; the **worker** is the wide delegated child (seat + 94, including
   `bash` and `write_file`). A conversation seat does its real work by forwarding it with `work`. Never
   write a bare "agent" for a running session. The glossary cites the code for every term — read
   that code before you assert what a run can do.
+- 🔴 **Friendly names everywhere — a person never reads a raw id.** A member id (`U…`), a channel,
+  server or Discord id, a Teams id, a scope or principal key (`slack/T…/C…`), a session id
+  (`wrun_…`) and a meeting id (`mtg_…`) are join keys. In text a person reads — a reply, a card, a
+  notice, a DM, on any surface — a person is a display name, a place is a `#name`, the platform
+  channel mention or plain words, and anything else is plain words. Audit rows, store rows, logs
+  and model-facing tool results keep the exact id. The guard is structural: every post arm,
+  message-ops arm and email transport is stored wrapped by the outbound guard
+  (`packages/core/agent/channels/friendly-outbound.ts`), and the Slack, Discord, Teams, GitHub,
+  Linear, Notion and Google Chat write seams run the payload guard on every message write. It does NOT reach a
+  Slack post through eve's own session client or a Discord thread title, so do not post that way
+  with an id in the text. So: render a person or a place in host copy with `personWords` /
+  `placeWords` (`channels/friendly-ids.ts`); put a name beside every id a tool result returns
+  (`nameBesideId`, `placeBesideKey`); let the model ask `look_up` rather than materialising a list;
+  and when you add a surface, post only through its registered arms and its one write seam, and
+  register a name resolver (`registerFriendlyNameResolver`). Proof: `npm run test:friendly-names`
+  (every surface), `test:friendly-ids` (host copy) and `lint:friendly-ids` (no new raw-key
+  interpolation). See
+  [`docs/extending/chat-surface-contract.md` §4.12.1](./docs/extending/chat-surface-contract.md).
 - **TypeScript + ESM.** `"type": "module"` in every package; use `.js` import specifiers for
   local ESM imports even though the sources are `.ts` (see the existing files). Run via `tsx`.
 - **Fail-closed security posture.** New surfaces and trust decisions default to the *safe* side:
@@ -526,6 +544,47 @@ specific guide:
   `Signed-off-by: Name <email>` trailer (merge commits exempt). It gates a merge only when the
   maintainer runs it before the merge. Nothing attests that it ran, and it does not gate a click
   on the merge button. See [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+---
+
+## Writing for people
+
+Any string the product shows to a person in a room — a host notice, a card line, a claim-guard
+note, a status line, a tool result the model is told to relay — follows the agent's own voice. The
+canonical statement is the "Your voice" section (`REPLY_STYLE_RUBRIC`,
+`packages/core/agent/instructions/access.ts`), which every root session renders. Do not copy it
+into another prompt block: point at it. `npm run test:voice` pins it.
+
+**The reader is an ordinary office worker who is not technical.** They read the message once and
+must understand it the first time. Write for that person, not for the engineer who built the
+feature.
+
+- **The result in a line or two.** Lead with what happened or what you need from them. Cut the
+  rest.
+- **Names, never ids.** Say "Ana", "#general", "the Q3 budget page". Never put a user, channel,
+  page, session, task, wake or pending id, a scope key (`slack/T1/C2`), a credential id or a file
+  path from the agent's own storage into a person-facing string. Use
+  `channels/friendly-ids.ts` (`placeWords`) to turn an address into words.
+- **No machinery.** No workers, hand-offs, delegation, tools or tool names, sessions, wakes,
+  turns, how approvals are routed, grants, gates, policies, trust levels, fences or security
+  checks. Say what happened in the team's words: "Sam needs to approve it in #ops", not "a card was
+  raised on the approval plane for slack/T1/C2".
+- **Don't repeat a card.** When a card already shows an outcome, the room gets nothing more about
+  it.
+- **No debug detail.** No error class, stack, HTTP status or verb, schema complaint or config path
+  in a room. Put it on the audit row, where an operator reads it.
+- **A limit says who can help.** "An admin can turn that on", not the setting or rule name.
+- **A tool result the model relays is a person-facing string too.** Do not tell the model to
+  "report the pending id" or to "tell the user" a mechanism; give it the fact and let the voice
+  section shape the words.
+- **One string table for one fact.** Export a host line as a constant, and make every test and
+  detector import it rather than copy it, so a rewording moves them together.
+- **Run it through the detector.** `personTextFaults` (`packages/core/agent/channels/person-text.ts`)
+  flags raw ids, debug terms and trust-plumbing phrases. A test that renders a person-facing
+  string asserts that the list is empty. Throw `PersonFacingError` for an error a person reads.
+
+Strings an operator reads (audit rows, logs, the control plane, `docs/`) are not covered: they keep
+their precise terms.
 
 ---
 

@@ -1,3 +1,4 @@
+import { failLostInboundTask } from "../a2a/inbound/answer.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { readWorkRequest, workLedgerId, WORK_RESULT_DEDUPE_TTL_MS, type WorkRequestRow, type WorkRowStore } from "../channels/work.js";
 import { renderWake } from "../channels/normalized-wake.js";
@@ -186,6 +187,7 @@ export async function wakeSeatNeedsReissue(
       run: async () => {
         lost = true;
         await (deps.foldFire ?? foldWorkFire)(row, "failed", { org });
+        await failLostInboundTask({ org, store, requestId: input.requestId, fire: row.fire!, audit: deps.audit as typeof appendAudit });
       },
     });
     if (lost) {

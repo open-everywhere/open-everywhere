@@ -88,6 +88,7 @@ const PROVIDER_VENDOR_STRINGS: Record<string, string[]> = {
   github: ["x-hub-signature-256"],
   teams: ["graph.microsoft.com", "smba.trafficmanager.net"],
   email: ["api.agentmail.to", "AGENTMAIL_API_KEY"],
+  "google-chat": ["chat.googleapis.com", "GOOGLE_CHAT_SERVICE_ACCOUNT_KEY"],
 };
 
 function discoverBundles(): string[] {

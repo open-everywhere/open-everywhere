@@ -1,4 +1,4 @@
-import { withRetryAfter, type RateLimitRetryOptions } from "@open-everywhere/core/agent/adapter-api.js";
+import { friendlySlackBody, withRetryAfter, type RateLimitRetryOptions } from "@open-everywhere/core/agent/adapter-api.js";
 import { slackBotToken } from "../setup/credentials.js";
 
 const SLACK_API_BASE = "https://slack.com/api/";
@@ -67,7 +67,7 @@ export async function callSlackWebApi(
   deps: SlackWebApiDeps = {},
 ): Promise<SlackWebApiResponse> {
   const token = input.unauthenticated === true ? undefined : await resolveBotToken(input.botToken);
-  const encoded = encodeSlackForm(input.body);
+  const encoded = encodeSlackForm(await friendlySlackBody(input.operation, input.body));
   const url = new URL(input.operation, deps.apiBase ?? SLACK_API_BASE).toString();
   const send = (): Promise<Response> =>
     (deps.fetch ?? (globalThis.fetch as SlackFetchLike))(url, {

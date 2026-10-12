@@ -120,7 +120,7 @@ await client.connect(clientT);
   ok("🔴 OPE-1604: the halt edits no row — the pending is still pending for the same operator after `resume`", (await store.getPendingAction("default", "pa-halted"))?.status === "pending");
   ok(
     "🔴 OPE-1604: the door relays core's OWN halt sentence, not a generic \"unexpected resolution\" line",
-    JSON.stringify(refused.content ?? "").includes("halted") && !JSON.stringify(refused.content ?? "").includes("unexpected resolution"),
+    JSON.stringify(refused.content ?? "").includes("emergency halt is on") && !JSON.stringify(refused.content ?? "").includes("unexpected resolution"),
   );
 
   await store.clearHalt("default", { orgWide: true }, { clearedBy: "admin@example.com" });

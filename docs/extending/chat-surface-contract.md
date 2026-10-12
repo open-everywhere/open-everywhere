@@ -1114,13 +1114,112 @@ session mounted rather than whichever resolver last won the shared slot.
 citation — markdown link, Slack link or bare reference — to its bare silo-relative path, rendered as
 plain text. The mount path is real only inside that turn's sandbox, so a member would otherwise see an
 unresolvable link. `applyReplyProvenance` (`reply-provenance.ts`) then strikes any model-forged
-Sources-read line out of the body and appends the host-authored footer. The model authors neither.
+Sources-read line out of the body. Since OPE-2487 it appends nothing: the sources line goes on the
+reply's `reply.provenance` row (`detail.sources`), and the room reads the model's text alone.
 
 **While a dispatched worker still owes an answer, all four reply and edit doors append one shared
 sentence** (`PENDING_WORK_INSTRUCTION`, `turn-delivery.ts`). It tells the seat that the worker has not
 reported, that it must not write the answer itself, and that nothing is added to its message on the
 way out — so its own words are the only thing that tells the room where the work stands. One sentence
 on all four doors, so a seat cannot read a difference that is not there.
+
+### 4.12.1 Friendly names — the outbound guard on every surface
+
+🔴 **A person never reads a raw platform id, a scope key or an internal run id** (OPE-2482). A
+member id (`U…`), a channel, server or Discord id, a Teams id, a scope or principal key
+(`slack/T…/C…`), a session id (`wrun_…`), a meeting id (`mtg_…`) and an echoed `wake-id` are join
+keys. In a reply, a card, a notice or a DM, a person reads a display name, a place reads as a
+`#name`, the platform channel mention or plain words, and anything else reads as plain words. Audit
+rows, store rows, logs and model-facing tool results keep the exact id.
+
+**The guard is structural, in two layers, and rendering is idempotent:**
+
+1. **The core registries.** `registerPostArm` (`channels/post-arms.ts`), `registerSurfaceMessageOps`
+   (`channels/surface-message-ops.ts`) and `registerEmailTransport` (`email/transport.ts`) store every
+   arm wrapped (`channels/friendly-outbound.ts`). Every reply, edit, DM, notice, file caption and mail
+   from any provider, a future one included, is rendered before the arm sees it.
+2. **Each provider's one write seam.** Slack `callSlackWebApi` (the `chat.*` message methods: `text`,
+   every Block Kit text object, legacy attachments), Discord `discordFetch` (message create and edit,
+   webhook and interaction follow-ups, JSON and multipart) and the interaction answer
+   (`discord-front.ts`), Teams `teamsConnectorWrite` (activity text and Adaptive Card text), GitHub
+   `githubWrite` (a comment body), Linear's GraphQL transport (`commentCreate`, `commentUpdate`,
+   `agentActivityCreate` bodies), Notion's `notionFetch` (comment rich text) and Google Chat's
+   `createGoogleChatMessage` (message text) run the payload guard.
+   That layer catches the cards and notices that post outside the registries.
+
+**What the guard leaves alone:** a platform mention, a URL, a fenced code block and an inline code
+span (a literal a rewrite would corrupt) — except an inline span that holds ONE id and nothing else,
+which is a quoted id and renders — a key-shaped run inside a path (`packages/providers/github/…`,
+`/api/oauth/callback`), and every routing field: a Slack button `value` or `action_id`, a Discord
+`custom_id`, an Adaptive Card action's `data`, a request's channel or issue address. Two shapes are
+ambiguous with everyday text, so they render only when they are certainly ids: a bare 17-to-20-digit
+number renders only on Discord or when a resolver named it, and a bare GUID only when a resolver named
+it. Slack app (`B…`) and org (`E…`) ids are not matched: they collide with product codes.
+
+**No new pings.** A person the guard finds as a bare id renders as their resolved name, else as plain
+words ("someone on Slack"). It never becomes a live `<@…>` mention: a raw id pinged nobody, and its
+rendering must not either. Host copy that means to tag a person writes the mention itself
+(`personWords`). A channel renders as the platform's own channel mention on Slack and Discord, which
+shows the name and pings nobody. A resolved name is escaped for the target, so a self-set name
+cannot broadcast or ping (`<!here>`, `@everyone`); on Discord it cannot format either, while on Slack
+and Teams it may still carry emphasis (`*bold*`). A mention passes as written only on its own
+platform: a Slack `<@U…>` posted to Discord, Teams or a plain-text field renders as the person it names.
+
+**No exceptions, and accounts are named the way a reader can check.** No escape hatch keeps an id in
+the visible text. Where an id used to carry an anti-spoof job — the identity-link consent ask and the
+"your identity grew" notice — each account renders as its display name LINKED to the account's own
+profile page, with a platform-verified email or the handle the platform keeps unique beside it
+(`accountLinkLabel`, `identity/account-display-name.ts`).
+Every identity notice passes the READING surface, so the link uses that surface's syntax; a `slack://`
+deep link renders only on Slack, and elsewhere the name shows without it. Where there is no profile
+URL and no verifier, the self-set name stands alone, and the consent ask says so plainly instead of
+claiming a check the reader cannot make. 🔴 **A Slack email appears only where the workspace granted
+`users:read.email`, and the shipped Slack manifest does not request that scope**, so on Slack today the
+reader gets the linked name and the self-set handle, not an address.
+The id travels only inside the link: Discord `https://discord.com/users/<id>`; Slack's documented
+user deep link `slack://user?team=<team>&id=<user>` (Slack documents no web profile URL); a GitHub
+login's page; the Teams chat deep link keyed by the user principal name. Linear, Notion and email
+have no profile URL this deployment can build, so the name stays plain there. The link renders in the
+reading surface's own syntax (Slack `<url|name>`, Markdown elsewhere). With no name, the account reads
+as plain words for its platform ("a Discord account"). `scripts/friendly-names-test.ts` pins that no
+source keeps an id visible on purpose.
+
+**Names, one table both ways.** Each provider registers a name resolver
+(`registerFriendlyNameResolver`): Slack (a member, a channel as `#name`, the workspace), Discord (a
+snowflake, by asking channel, then server, then person), Teams (a person through the team roster's
+member read, a channel through the team's channel list). The guard resolves at most 12 ids per text
+within 1.5 seconds; a resolver that fails, throws or hangs costs only the name, never the post. A
+Discord interaction answer renders with no lookup at all, because Discord drops an answer that misses
+its three-second window. Found names go into one process-local cache (30 minutes, at most 2000
+entries) that both directions read.
+
+**The model's lookup: `look_up`.** The model needs to know what an id means and which id a name means,
+on demand, not from a list materialised into every prompt. `look_up` (`tools/look_up.ts`) is on the
+seat and on every worker. Given `ids`, it names each one through the same resolvers and cache. Given a
+`name`, it searches the platform's account directory for a person (sanitized, capped at 8, scoped to
+the conversation's own workspace) and, for a place or a server, ONLY the rooms the conversation's
+domain DECLARES plus its own room and workspace, which it pre-warms first. The shared cache holds names
+resolved for every domain in the process, so a search over all of it would hand one domain another's
+private room names; the scope is what keeps that out. Every name it returns is fenced as untrusted, and
+a `mention` comes back only for an account on the conversation's own platform.
+
+**Names beside ids for the model.** A channel or thread read whose author is a bare platform id shows
+`Name (id)` (`channels/channel-read.ts`); a display name that holds an id-shaped string or the frame's
+own punctuation is dropped. `list_routines` carries `createdByName`, `addedByName` and `roomName`
+beside the ids, `confirm_link` names each linked account beside its key, and the spend and connector
+proposal notes name the place beside its key. When the model echoes `Name (id)`, the guard drops the
+parenthetical. The agent's instructions tell it to name people and places and never write an id.
+
+**What is not covered, stated plainly.** A Slack post that rides eve's own session client
+(`ctx.thread.postEphemeral`, eve's typing and upload machinery) does not reach `callSlackWebApi`. A
+Discord thread's `name` (the thread title the agent opens) is not rendered. A Notion page or a Linear
+issue the agent writes is content, not a message, and is not rendered. Google Chat has no name
+resolver yet, so a Google Chat id renders as plain words.
+
+Proof: `npm run test:friendly-names` drives a fixture with every id class through both layers on
+every shipped platform and checks the bytes on the wire, with negative controls for paths, code,
+numbers and product codes; `test:friendly-ids` sweeps host copy; `lint:friendly-ids` refuses a new
+raw-key interpolation in prose.
 
 ### 4.13 Editing a post — locus, ownership and the six-hour window
 
@@ -1356,24 +1455,24 @@ the rows.
 
 <!-- BEGIN GENERATED: surface-parity-seams (scripts/surface-parity.ts) -->
 
-| Capability | slack | discord | teams | github | linear | notion | email |
-|---|---|---|---|---|---|---|---|
-| Identity mapper §2.1 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Capability manifest §2.4 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Post arm §4.1 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Wake-origin codec §2.3 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Wake-origin placement carry** (`placementRef`/`carryPlacement`) §2.3 | ✅ | ✅ | ❌ the placement is INSIDE the conversation identity: `threadRef` keys on `replyToActivityId`, the very activity a reply hangs under, so two origins that pass the conversation test already agree on placement and there is no gap to carry | ❌ the placement is INSIDE the conversation identity: a reply is a comment appended to the issue timeline and the issue IS `threadRef`'s thread key, so there is no 'where inside it' left to name | ❌ the placement is INSIDE the conversation identity: `parentId` is the thread-root comment a reply nests under and it is exactly what `threadRef` keys on. `agentSessionId` is not a second axis — it selects the reply ROUTE, so carrying it would deliver an answer into a session that asked nothing | ❌ the placement is INSIDE the conversation identity: a reply targets `discussionId`, which is exactly what `threadRef` keys on, so two origins that pass the conversation test name the same discussion and cannot disagree about placement | ❌ the placement is INSIDE the conversation identity: a reply threads under the origin's `messageId`, and `threadRef` keys on the thread itself, so two origins of one thread agree on placement |
-| Read adapter §4.5 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ `read_thread` only — the thread of the mail that woke the turn; an inbox has no shared channel history to read |
-| Reaction **feedback** ingest §4.9 | ✅ | ✅ | ✅ the vendor fence is the guarantee — Teams delivers the event only for the agent's own messages, and carries no author to compare | ✅ polled on the next delivery for that conversation — GitHub pushes no reaction webhook, so a removal is never observed | ✅ the author of the reacted comment costs one GraphQL read — the webhook does not carry it | ❌ vendor limit — Notion pushes no reaction event and its comment object exposes no reaction resource, so there is nothing to receive and nothing to poll | ❌ mail has no reactions |
-| Ancillary ops (`SurfaceMessageOps`) §5 | ✅ inline — rides Eve's own Slack client path, not the ops registry | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ text only — a host notice is one more reply in the thread, to its allowed participants; an email cannot be edited, carry a file or take a reaction |
-| **Ambient engagement seam** §2.5 | ✅ | ✅ enrols and honours `stopped`; gates delivery in its own gateway rule | ✅ the seam is wired; plain follow-ups reach it only where the tenant consented to `ChannelMessage.Read.Group` / `ChatMessage.Read.Chat`, which no API can probe | ✅ | ✅ | ✅ | ❌ every mail to an inbox is addressed to the agent, so there is no ambient chatter to engage with |
-| **Engaged wake row promotion** (`thread-follow`) §2.5 | ❌ no dispatch row — Slack writes no `slack.dispatched` action, so there is no `addressing` value to promote | ❌ the seated path reports the classifier's word — an auto-thread's follow-up diverts as that channel's own wake, and the journey reads `channel-watch` on a `singleWindow: true` row in that room instead | ❌ not built yet — the single-window divert writes the plan's own `addressing`, which calls an engaged follow-up and room chatter alike | ✅ | ✅ | ✅ | ❌ no ambient leg — every email wake is addressed (`direct-mention`) |
-| **Owned-thread ingress divert** §2.6 | ✅ | ✅ the guild leg only — a Discord DM carries no threads, so its divert never consults ownership | ✅ the channel leg only — a reply chain is the thread; the DM leg mints no `replyToActivityId`, so it can own none | ✅ | ✅ | ✅ | ✅ the room leg takes the inbound divert, but an email thread has no inner threads, so no email wake is thread-scoped and ownership never re-routes one |
-| **Thread done reaction** (`threadRootMessage`) §2.6 | ✅ | ❌ a Discord thread is its own channel, and the message that started it lives in the PARENT channel, whose id the origin does not carry. Marking the thread's first message instead would put the mark on the wrong message | ❌ Teams has no integration reaction primitive (no `setReaction` in the ancillary ops) | ❌ the thread is the issue itself, so no root message stands apart from it, and the ancillary ops carry no `setReaction` | ✅ on a reply thread only — the root is the thread-root comment; a thread that IS the issue has no root comment to mark | ❌ Notion's public API has no reaction primitive | ❌ mail has no reactions |
-| **Seat catch-up read** (since last wake) §2.5 | ✅ | ✅ | ✅ over Microsoft Graph (channel activities only — a personal/group chat carries no team id) | ✅ | ✅ | ✅ | ❌ every mail to the inbox is itself a wake, so nothing arrives between wakes for a catch-up to read |
-| **Seat context-line admission** (`admitContextLines`) §2.5 | ✅ | ✅ | ❌ the hydration fills no context-line slot — the seat's room context is the catch-up read, which core already admits | ✅ | ✅ | ❌ the hydration fills no context-line slot — the seat's room context is the catch-up read, which core already admits | ❌ the context slot carries the mail's own quoted or forwarded remainder, fenced and tainting, never other authors' room history |
-| **Approval card** (tappable Approve/Reject) §4.1 | ✅ | ✅ | ✅ built, not yet proven on a live tenant — a channel hosts its own Adaptive Card and the tap is answered after the Bot Framework JWT verify; a personal or group chat has no channel id, so its card still goes to a card-capable room in the same domain | ❌ an issue/PR comment carries no component plane, so there is no button to render and no route for a tap. A governed act that takes the venue walk is redirected to a card-capable room in the SAME domain, or refused when the domain holds none. The paths OUTSIDE that walk do not: the spend checkpoint (spend/checkpoint.ts `requireSessionContinuation`) fails OPEN here and records the crossing in an audit row instead | ❌ an issue comment carries no component plane, so there is no button to render and no route for a tap. A governed act that takes the venue walk is redirected to a card-capable room in the SAME domain, or refused when the domain holds none. The paths OUTSIDE that walk do not: the spend checkpoint (spend/checkpoint.ts `requireSessionContinuation`) fails OPEN here and records the crossing in an audit row instead | ❌ a page comment carries no component plane, so there is no button to render and no route for a tap. A governed act that takes the venue walk is redirected to a card-capable room in the SAME domain, or refused when the domain holds none. The paths OUTSIDE that walk do not: the spend checkpoint (spend/checkpoint.ts `requireSessionContinuation`) fails OPEN here and records the crossing in an audit row instead | ❌ mail cannot carry a tappable card — a governed act asked from an inbox takes the venue walk to a card-capable room in the same domain |
-| **Judge-lift notice** (a lifted act leaves a trace) §4.1 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ the shared text render, sent as a reply in the thread to its allowed participants — mail carries no button, so the overrule is spelled out in words |
+| Capability | slack | discord | teams | github | linear | notion | email | google-chat |
+|---|---|---|---|---|---|---|---|---|
+| Identity mapper §2.1 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Capability manifest §2.4 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Post arm §4.1 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Wake-origin codec §2.3 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Wake-origin placement carry** (`placementRef`/`carryPlacement`) §2.3 | ✅ | ✅ | ❌ the placement is INSIDE the conversation identity: `threadRef` keys on `replyToActivityId`, the very activity a reply hangs under, so two origins that pass the conversation test already agree on placement and there is no gap to carry | ❌ the placement is INSIDE the conversation identity: a reply is a comment appended to the issue timeline and the issue IS `threadRef`'s thread key, so there is no 'where inside it' left to name | ❌ the placement is INSIDE the conversation identity: `parentId` is the thread-root comment a reply nests under and it is exactly what `threadRef` keys on. `agentSessionId` is not a second axis — it selects the reply ROUTE, so carrying it would deliver an answer into a session that asked nothing | ❌ the placement is INSIDE the conversation identity: a reply targets `discussionId`, which is exactly what `threadRef` keys on, so two origins that pass the conversation test name the same discussion and cannot disagree about placement | ❌ the placement is INSIDE the conversation identity: a reply threads under the origin's `messageId`, and `threadRef` keys on the thread itself, so two origins of one thread agree on placement | ❌ the placement is INSIDE the conversation identity: `threadRef` keys on the thread name, the very thread a reply posts into, so two origins of one conversation already agree on placement |
+| Read adapter §4.5 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ `read_thread` only — the thread of the mail that woke the turn; an inbox has no shared channel history to read | ❌ not built yet — listing a space's messages needs user authentication or the admin-approved `chat.app.messages.readonly` app scope, which the app does not request |
+| Reaction **feedback** ingest §4.9 | ✅ | ✅ | ✅ the vendor fence is the guarantee — Teams delivers the event only for the agent's own messages, and carries no author to compare | ✅ polled on the next delivery for that conversation — GitHub pushes no reaction webhook, so a removal is never observed | ✅ the author of the reacted comment costs one GraphQL read — the webhook does not carry it | ❌ vendor limit — Notion pushes no reaction event and its comment object exposes no reaction resource, so there is nothing to receive and nothing to poll | ❌ mail has no reactions | ❌ not built yet — the HTTP endpoint carries no reaction event; a Workspace Events subscription would |
+| Ancillary ops (`SurfaceMessageOps`) §5 | ✅ inline — rides Eve's own Slack client path, not the ops registry | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ text only — a host notice is one more reply in the thread, to its allowed participants; an email cannot be edited, carry a file or take a reaction | ✅ text only — a host notice is one more message in the space; no edit, file or reaction |
+| **Ambient engagement seam** §2.5 | ✅ | ✅ enrols and honours `stopped`; gates delivery in its own gateway rule | ✅ the seam is wired; plain follow-ups reach it only where the tenant consented to `ChannelMessage.Read.Group` / `ChatMessage.Read.Chat`, which no API can probe | ✅ | ✅ | ✅ | ❌ every mail to an inbox is addressed to the agent, so there is no ambient chatter to engage with | ❌ not built yet — the HTTP endpoint delivers a space message only on an @mention; a Workspace Events subscription would deliver the rest |
+| **Engaged wake row promotion** (`thread-follow`) §2.5 | ❌ no dispatch row — Slack writes no `slack.dispatched` action, so there is no `addressing` value to promote | ❌ the seated path reports the classifier's word — an auto-thread's follow-up diverts as that channel's own wake, and the journey reads `channel-watch` on a `singleWindow: true` row in that room instead | ❌ not built yet — the single-window divert writes the plan's own `addressing`, which calls an engaged follow-up and room chatter alike | ✅ | ✅ | ✅ | ❌ no ambient leg — every email wake is addressed (`direct-mention`) | ❌ no ambient leg — every Google Chat wake is addressed (`direct-mention`) |
+| **Owned-thread ingress divert** §2.6 | ✅ | ✅ the guild leg only — a Discord DM carries no threads, so its divert never consults ownership | ✅ the channel leg only — a reply chain is the thread; the DM leg mints no `replyToActivityId`, so it can own none | ✅ | ✅ | ✅ | ✅ the room leg takes the inbound divert, but an email thread has no inner threads, so no email wake is thread-scoped and ownership never re-routes one | ✅ the space leg takes the inbound divert; only a reply inside an existing thread (`threadReply`) is thread-scoped |
+| **Thread done reaction** (`threadRootMessage`) §2.6 | ✅ | ❌ a Discord thread is its own channel, and the message that started it lives in the PARENT channel, whose id the origin does not carry. Marking the thread's first message instead would put the mark on the wrong message | ❌ Teams has no integration reaction primitive (no `setReaction` in the ancillary ops) | ❌ the thread is the issue itself, so no root message stands apart from it, and the ancillary ops carry no `setReaction` | ✅ on a reply thread only — the root is the thread-root comment; a thread that IS the issue has no root comment to mark | ❌ Notion's public API has no reaction primitive | ❌ mail has no reactions | ❌ not built yet — the app sets no reactions (no `setReaction` in the ancillary ops) |
+| **Seat catch-up read** (since last wake) §2.5 | ✅ | ✅ | ✅ over Microsoft Graph (channel activities only — a personal/group chat carries no team id) | ✅ | ✅ | ✅ | ❌ every mail to the inbox is itself a wake, so nothing arrives between wakes for a catch-up to read | ❌ not built yet — the app does not list a space's messages (see the read adapter row) |
+| **Seat context-line admission** (`admitContextLines`) §2.5 | ✅ | ✅ | ❌ the hydration fills no context-line slot — the seat's room context is the catch-up read, which core already admits | ✅ | ✅ | ❌ the hydration fills no context-line slot — the seat's room context is the catch-up read, which core already admits | ❌ the context slot carries the mail's own quoted or forwarded remainder, fenced and tainting, never other authors' room history | ❌ the wake fills no context-line slot — the seat reads only the addressed message and its carried tail |
+| **Approval card** (tappable Approve/Reject) §4.1 | ✅ | ✅ | ✅ built, not yet proven on a live tenant — a channel, a personal chat and a group chat each host their own Adaptive Card, and the tap is answered after the Bot Framework JWT verify | ❌ an issue/PR comment carries no component plane, so there is no button to render and no route for a tap. A governed act that takes the venue walk is redirected to a card-capable room in the SAME domain, or refused when the domain holds none. The paths OUTSIDE that walk do not: the spend checkpoint (spend/checkpoint.ts `requireSessionContinuation`) fails OPEN here and records the crossing in an audit row instead | ❌ an issue comment carries no component plane, so there is no button to render and no route for a tap. A governed act that takes the venue walk is redirected to a card-capable room in the SAME domain, or refused when the domain holds none. The paths OUTSIDE that walk do not: the spend checkpoint (spend/checkpoint.ts `requireSessionContinuation`) fails OPEN here and records the crossing in an audit row instead | ❌ a page comment carries no component plane, so there is no button to render and no route for a tap. A governed act that takes the venue walk is redirected to a card-capable room in the SAME domain, or refused when the domain holds none. The paths OUTSIDE that walk do not: the spend checkpoint (spend/checkpoint.ts `requireSessionContinuation`) fails OPEN here and records the crossing in an audit row instead | ❌ mail cannot carry a tappable card — a governed act asked from an inbox takes the venue walk to a card-capable room in the same domain | ❌ not built yet — a Chat card with a button needs the CARD_CLICKED tap answered; a governed act asked from Google Chat takes the venue walk to a card-capable room in the same domain |
+| **Judge-lift notice** (a lifted act leaves a trace) §4.1 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ the shared text render, sent as a reply in the thread to its allowed participants — mail carries no button, so the overrule is spelled out in words | ✅ the shared text render, posted into the space — no button yet, so the overrule is spelled out in words |
 
 <!-- END GENERATED: surface-parity-seams -->
 
@@ -1562,16 +1661,16 @@ These rows never had a table; they were prose in §2.5 and §4.6.1, which is why
 
 <!-- BEGIN GENERATED: surface-parity-shapes (scripts/surface-parity.ts) -->
 
-| Capability | slack | discord | teams | github | linear | notion | email |
-|---|---|---|---|---|---|---|---|
-| Addressed (@mention) leg §2.2 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ the `direct` wake — a name-drop or structured mention, not a platform @mention | ✅ |
-| Ambient (non-mention) leg §2.5 | ✅ | ✅ | ✅ the single-window front's Leg A, not the §2.5 engagement registry | ✅ the ambient supervisor, not the §2.5 engagement registry | ✅ the ambient supervisor, not the §2.5 engagement registry | ✅ the ambient supervisor, not the §2.5 engagement registry | ❌ every mail to an inbox is addressed to the agent |
-| Name-drop / structured mention §2.5 | ✅ | ✅ | ❌ not built yet — Leg A wakes on an @mention or room chatter, never on a name-drop match | ❌ not built yet — the ambient supervisor already reads every comment, so a name-drop match adds no wake | ❌ not built yet — the ambient supervisor already reads every comment, so a name-drop match adds no wake | ✅ | ❌ every mail to an inbox is addressed to the agent |
-| Message-EDIT wake §2.5 | ✅ | ❌ the gateway relay subscribes to MessageCreate only — an edit raises MessageUpdate, which nothing forwards | ❌ an edit arrives as a `messageUpdate` activity, and the inbound parser admits `message`, `invoke` and `conversationUpdate` only | ❌ every wake leg admits `action: "created"` only — eve's route, the ambient extractor and the stop leg each refuse an edited comment | ❌ the ambient leg admits `Comment` with `action: "create"` only — an edit returns null before the classifier | ❌ the webhook admits `comment.created` only — `comment.updated` answers `ignored` at step 4 | ❌ a sent email cannot be edited |
-| Threads §4.6 | ✅ | ✅ a thread is itself a channel | ✅ | ✅ | ✅ | ✅ thread-first — every wake arrives scoped to one discussion | ✅ the mail thread — a reply threads under the message that woke the seat |
-| Standing rooms *(not §4.5's `read_channel` container)* §4.7.1 | ✅ | ✅ | ✅ | ❌ no standing container — every GitHub container is one issue or pull request | ❌ no standing container — every Linear container is one issue | ❌ no standing container — a discussion is minted by its first comment and anchored to one block | ✅ a room inbox is a surface a domain's `reach` lists (`email/<domain>/<local>`) |
-| DM (`dm`) §4.7.2 | ✅ | ✅ | ✅ | ❌ no DM plane — GitHub carries no person-to-person message channel | ❌ no DM plane — Linear carries no person-to-person message channel | ❌ no DM plane — Notion carries no person-to-person message channel | ✅ a personal inbox wakes the DM seat of the declared person who wrote |
-| Group DM (`mpim`) §4.7.2 | ✅ | ✅ | ✅ | ❌ no DM plane — GitHub carries no person-to-person message channel | ❌ no DM plane — Linear carries no person-to-person message channel | ❌ no DM plane — Notion carries no person-to-person message channel | ❌ a mail with several people on it is a thread in a room or personal inbox, not a group DM |
+| Capability | slack | discord | teams | github | linear | notion | email | google-chat |
+|---|---|---|---|---|---|---|---|---|
+| Addressed (@mention) leg §2.2 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ the `direct` wake — a name-drop or structured mention, not a platform @mention | ✅ | ✅ |
+| Ambient (non-mention) leg §2.5 | ✅ | ✅ | ✅ the single-window front's Leg A, not the §2.5 engagement registry | ✅ the ambient supervisor, not the §2.5 engagement registry | ✅ the ambient supervisor, not the §2.5 engagement registry | ✅ the ambient supervisor, not the §2.5 engagement registry | ❌ every mail to an inbox is addressed to the agent | ❌ not built yet — the HTTP endpoint delivers a space message only on an @mention; a Workspace Events subscription would deliver the rest |
+| Name-drop / structured mention §2.5 | ✅ | ✅ | ✅ channels only; a non-@mention message reaches the bot only where the tenant consented to `ChannelMessage.Read.Group`, which no API can probe | ❌ not built yet — the ambient supervisor already reads every comment, so a name-drop match adds no wake | ❌ not built yet — the ambient supervisor already reads every comment, so a name-drop match adds no wake | ✅ | ❌ every mail to an inbox is addressed to the agent | ❌ not built yet — a message that names the app without an @mention never reaches the HTTP endpoint; a Workspace Events subscription would deliver it |
+| Message-EDIT wake §2.5 | ✅ | ❌ the gateway relay subscribes to MessageCreate only — an edit raises MessageUpdate, which nothing forwards | ❌ an edit arrives as a `messageUpdate` activity, and the inbound parser admits `message`, `invoke` and `conversationUpdate` only | ❌ every wake leg admits `action: "created"` only — eve's route, the ambient extractor and the stop leg each refuse an edited comment | ❌ the ambient leg admits `Comment` with `action: "create"` only — an edit returns null before the classifier | ❌ the webhook admits `comment.created` only — `comment.updated` answers `ignored` at step 4 | ❌ a sent email cannot be edited | ❌ not built yet — the HTTP endpoint sends no event for an edited message; a Workspace Events subscription would |
+| Threads §4.6 | ✅ | ✅ a thread is itself a channel | ✅ | ✅ | ✅ | ✅ thread-first — every wake arrives scoped to one discussion | ✅ the mail thread — a reply threads under the message that woke the seat | ✅ a reply posts into the trigger's own thread (`REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD`) |
+| Standing rooms *(not §4.5's `read_channel` container)* §4.7.1 | ✅ | ✅ | ✅ | ❌ no standing container — every GitHub container is one issue or pull request | ❌ no standing container — every Linear container is one issue | ❌ no standing container — a discussion is minted by its first comment and anchored to one block | ✅ a room inbox is a surface a domain's `reach` lists (`email/<domain>/<local>`) | ✅ a space is a surface a domain's `reach` lists (`google-chat/<workspace>/<space id>`) |
+| DM (`dm`) §4.7.2 | ✅ | ✅ | ✅ | ❌ no DM plane — GitHub carries no person-to-person message channel | ❌ no DM plane — Linear carries no person-to-person message channel | ❌ no DM plane — Notion carries no person-to-person message channel | ✅ a personal inbox wakes the DM seat of the declared person who wrote | ✅ the person's own direct message with the app wakes their DM seat — internal people only |
+| Group DM (`mpim`) §4.7.2 | ✅ | ✅ | ✅ | ❌ no DM plane — GitHub carries no person-to-person message channel | ❌ no DM plane — Linear carries no person-to-person message channel | ❌ no DM plane — Notion carries no person-to-person message channel | ❌ a mail with several people on it is a thread in a room or personal inbox, not a group DM | ❌ policy: a group chat is refused (`group-chat`) — it has no domain to own it and is not one person's DM |
 
 <!-- END GENERATED: surface-parity-shapes -->
 
@@ -1611,23 +1710,23 @@ review thread (§2.5, §7.6).
 
 <!-- BEGIN GENERATED: surface-parity-verbs (scripts/surface-parity.ts) -->
 
-| Capability | slack | discord | teams | github | linear | notion | email |
-|---|---|---|---|---|---|---|---|
-| `reply` §4.1 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ recipients are frozen at the inbound gate from the mail's own headers and re-checked at send time — the model never names one |
-| `edit_reply` §4.2 | ✅ | ✅ | ✅ | ✅ | ✅ the ambient route only — Linear's schema has no mutation that updates an Agent Activity | ✅ | ❌ a sent email cannot be edited |
-| `react` §4.3 | ✅ | ✅ | ❌ vendor limit — Graph's outbound reaction route refuses an application-only identity | ✅ | ✅ | ❌ vendor limit — the Notion comment API exposes no reaction write | ❌ mail has no reactions |
-| `no_reply` §4.4 | ✅ | ✅ | ✅ | ✅ | ✅ posts the host line | ✅ | ✅ |
-| `read_channel` §4.5 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ an inbox holds many unrelated correspondents' threads, so there is no channel history to read into a turn |
-| `read_thread` §4.6 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `search` §4.7 | ❌ no work-search adapter — Slack is a chat surface, not a work corpus (§4.7) | ❌ no work-search adapter — Discord is a chat surface, not a work corpus (§4.7) | ❌ no work-search adapter — Teams is a chat surface, not a work corpus (§4.7) | ✅ the core-resident adapter (`scm/github-search.ts`), registered ungated | ✅ | ✅ | ❌ no work-search adapter — an inbox is a conversation surface, not a work corpus |
-| `post_message` (P1) §4.7.1 | ✅ | ✅ | ✅ | ❌ not built yet — no `channel` row in `access/resource-grant.ts` — OPE-1507 | ❌ not built yet — no `channel` row in `access/resource-grant.ts` — OPE-1507 | ❌ not built yet — no `channel` row in `access/resource-grant.ts` — OPE-1507 | ❌ policy: no cold mail — the agent mails only as a reply on a thread somebody started |
-| `dm_person` (P2) §4.7.2 | ✅ | ✅ | ✅ | ❌ no DM plane — GitHub carries no person-to-person message channel (§4.7.2) | ❌ no DM plane — Linear carries no person-to-person message channel (§4.7.2) | ❌ no DM plane — Notion carries no person-to-person message channel (§4.7.2) | ❌ policy: no cold mail — the agent never starts a mail to a person |
-| `set_dm_delivery` (P2, recipient) §4.7.2 | ✅ | ✅ | ✅ | ❌ no DM plane — the verb mounts only inside a 1:1 DM (§4.7.2) | ❌ no DM plane — the verb mounts only inside a 1:1 DM (§4.7.2) | ❌ no DM plane — the verb mounts only inside a 1:1 DM (§4.7.2) | ❌ policy: no cold mail — an inbox is never a proactive delivery channel |
-| `stop` (human) §4.8 | ✅ ✋ reaction, plus the `/oe stop` command | ✅ ✋ reaction, plus the `/oe stop` command | ✅ the `angry` reaction — Teams' six fixed values carry no ✋ | ✅ a comment whose entire body is `stop` — GitHub sends no reaction webhook | ✅ the ✋ reaction | ✅ a comment whose entire body is `stop` — Notion pushes no reaction webhook | ❌ mail has no reaction to carry a stop |
-| `ack`: ✋ glyph §4.9 | ✅ | ✅ | ❌ vendor limit — Teams' fixed six-value reaction vocabulary has no raised hand | ❌ vendor limit — GitHub's fixed eight reactions carry no raised hand, so there is no ✋ to place | ✅ | ❌ vendor limit — the Notion comment API exposes no reaction write, so there is no glyph to place | ❌ mail has no reactions |
-| `ack`: cancel note §4.9 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ a reply in the thread, through the host-notice transport |
-| `stand_down` §4.10 | ✅ marks the engagement row; refuses out loud when the registry holds none | ✅ marks the engagement row; refuses out loud when the registry holds none | ✅ marks the conversation row; refuses on a 1:1 and when no row exists | ✅ marks the issue/pull-request row; refuses when no row exists | ✅ marks the issue row; drops a top-level comment and suppresses a `prompted` agent-session follow-up on the native leg, while a `prompted` comment that @mentions the app lifts the stop; an unreadable comment body suppresses, an unclassified future action is ungated and the divert leg's copy is unpinned; refuses when no row exists | ✅ marks the page row; refuses when no row exists | ❌ not built yet — a sender is removed from an inbox by a pull request to agent/email/senders.ts or agent/email/policy.ts |
-| `post_file` §7.4 | ✅ | ✅ | ❌ not built yet — no Teams attachment transport is wired (§7.3) | ❌ vendor limit — a GitHub comment carries no file-attachment API | ❌ vendor limit — a Linear comment carries no file-attachment API OE can drive | ✅ at most 3 files per post — a Notion comment's own vendor cap | ❌ not built yet — the reply carries text only |
+| Capability | slack | discord | teams | github | linear | notion | email | google-chat |
+|---|---|---|---|---|---|---|---|---|
+| `reply` §4.1 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ recipients are frozen at the inbound gate from the mail's own headers and re-checked at send time — the model never names one | ✅ |
+| `edit_reply` §4.2 | ✅ | ✅ | ✅ | ✅ | ✅ the ambient route only — Linear's schema has no mutation that updates an Agent Activity | ✅ | ❌ a sent email cannot be edited | ❌ not built yet — the arm registers no edit; Chat's `messages.patch` would carry one |
+| `react` §4.3 | ✅ | ✅ | ❌ vendor limit — Graph's outbound reaction route refuses an application-only identity | ✅ | ✅ | ❌ vendor limit — the Notion comment API exposes no reaction write | ❌ mail has no reactions | ❌ not built yet — no outbound reaction transport is wired |
+| `no_reply` §4.4 | ✅ | ✅ | ✅ | ✅ | ✅ posts the host line | ✅ | ✅ | ✅ |
+| `read_channel` §4.5 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ an inbox holds many unrelated correspondents' threads, so there is no channel history to read into a turn | ❌ not built yet — listing a space's messages needs user authentication or the admin-approved `chat.app.messages.readonly` app scope, which the app does not request |
+| `read_thread` §4.6 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ not built yet — the same message-list scope as `read_channel` |
+| `search` §4.7 | ❌ no work-search adapter — Slack is a chat surface, not a work corpus (§4.7) | ❌ no work-search adapter — Discord is a chat surface, not a work corpus (§4.7) | ❌ no work-search adapter — Teams is a chat surface, not a work corpus (§4.7) | ✅ the core-resident adapter (`scm/github-search.ts`), registered ungated | ✅ | ✅ | ❌ no work-search adapter — an inbox is a conversation surface, not a work corpus | ❌ no work-search adapter — Google Chat is a chat surface, not a work corpus |
+| `post_message` (P1) §4.7.1 | ✅ | ✅ | ✅ | ❌ not built yet — no `channel` row in `access/resource-grant.ts` — OPE-1507 | ❌ not built yet — no `channel` row in `access/resource-grant.ts` — OPE-1507 | ❌ not built yet — no `channel` row in `access/resource-grant.ts` — OPE-1507 | ❌ policy: no cold mail — the agent mails only as a reply on a thread somebody started | ❌ not built yet — no routine dispatch is registered, so the agent answers only in a conversation somebody started |
+| `dm_person` (P2) §4.7.2 | ✅ | ✅ | ✅ | ❌ no DM plane — GitHub carries no person-to-person message channel (§4.7.2) | ❌ no DM plane — Linear carries no person-to-person message channel (§4.7.2) | ❌ no DM plane — Notion carries no person-to-person message channel (§4.7.2) | ❌ policy: no cold mail — the agent never starts a mail to a person | ❌ not built yet — the app cannot open a DM a person did not start |
+| `set_dm_delivery` (P2, recipient) §4.7.2 | ✅ | ✅ | ✅ | ❌ no DM plane — the verb mounts only inside a 1:1 DM (§4.7.2) | ❌ no DM plane — the verb mounts only inside a 1:1 DM (§4.7.2) | ❌ no DM plane — the verb mounts only inside a 1:1 DM (§4.7.2) | ❌ policy: no cold mail — an inbox is never a proactive delivery channel | ❌ not built yet — a Google Chat DM is never a proactive delivery channel |
+| `stop` (human) §4.8 | ✅ ✋ reaction, plus the `/oe stop` command | ✅ ✋ reaction, plus the `/oe stop` command | ✅ the `angry` reaction — Teams' six fixed values carry no ✋ | ✅ a comment whose entire body is `stop` — GitHub sends no reaction webhook | ✅ the ✋ reaction | ✅ a comment whose entire body is `stop` — Notion pushes no reaction webhook | ❌ mail has no reaction to carry a stop | ❌ not built yet — the app reads no reactions, so there is no stop trigger |
+| `ack`: ✋ glyph §4.9 | ✅ | ✅ | ❌ vendor limit — Teams' fixed six-value reaction vocabulary has no raised hand | ❌ vendor limit — GitHub's fixed eight reactions carry no raised hand, so there is no ✋ to place | ✅ | ❌ vendor limit — the Notion comment API exposes no reaction write, so there is no glyph to place | ❌ mail has no reactions | ❌ not built yet — the app sets no reactions |
+| `ack`: cancel note §4.9 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ a reply in the thread, through the host-notice transport | ✅ a message in the space, through the host-notice transport |
+| `stand_down` §4.10 | ✅ marks the engagement row; refuses out loud when the registry holds none | ✅ marks the engagement row; refuses out loud when the registry holds none | ✅ marks the conversation row; refuses on a 1:1 and when no row exists | ✅ marks the issue/pull-request row; refuses when no row exists | ✅ marks the issue row; drops a top-level comment and suppresses a `prompted` agent-session follow-up on the native leg, while a `prompted` comment that @mentions the app lifts the stop; an unreadable comment body suppresses, an unclassified future action is ungated and the divert leg's copy is unpinned; refuses when no row exists | ✅ marks the page row; refuses when no row exists | ❌ not built yet — a sender is removed from an inbox by a pull request to agent/email/senders.ts or agent/email/policy.ts | ❌ not built yet — remove the app from the space instead |
+| `post_file` §7.4 | ✅ | ✅ | ❌ not built yet — no Teams attachment transport is wired (§7.3) | ❌ vendor limit — a GitHub comment carries no file-attachment API | ❌ vendor limit — a Linear comment carries no file-attachment API OE can drive | ✅ at most 3 files per post — a Notion comment's own vendor cap | ❌ not built yet — the reply carries text only | ❌ not built yet — the reply carries text only |
 
 <!-- END GENERATED: surface-parity-verbs -->
 
@@ -1989,6 +2088,10 @@ In build order. Steps 1–4 are the floor: a provider that stops after them can 
     named platform reason, and a lint reds a silent gap (OPE-1499). 🔴 Know the trade before you wire
     it: the seam is what makes `stand_down` work, and half a seam makes it refuse for want of a row
     instead (§7.6). Set an anchor only if you also enrol the conversation.
+12. **Friendly names** (§4.12.1). Post only through your registered arms and your one write seam,
+    run the matching payload guard in that seam for any card or notice that bypasses the arms, and
+    register a name resolver (`registerFriendlyNameResolver`). Add your surface to
+    `scripts/friendly-names-test.ts` so a raw id on your wire reds the suite.
 
 Nothing on this list mentions your vendor by name inside core. If a step cannot be taken without a
 core change, the seam is wrong and the seam is what should move.

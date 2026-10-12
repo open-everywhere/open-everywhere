@@ -184,7 +184,7 @@ const read = (id: string, surfaceKey = SURFACE) => routineStore.getRoutine(ORG, 
   const body = new URLSearchParams(notices[0]!.body);
   ok(body.get("channel") === "C1", "announce: into the routine's OWN channel — the same place its fires would have landed");
   const text = body.get("text") ?? "";
-  ok(text.includes("r-dead") && /will not run again/i.test(text), "announce: the notice names the routine and says it STOPPED");
+  ok(!text.includes("r-dead") && /won't run again/i.test(text), "announce: the notice says it STOPPED, with no routine id (OPE-2486)");
   ok(text.includes("Reconcile the release board"), "announce: and quotes what it was for, so the reader knows what they lost");
 
   await drop("r-dead");

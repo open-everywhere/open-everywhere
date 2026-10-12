@@ -68,7 +68,6 @@ export const KNOWN_UNREACHED_EXPORTS: ReadonlySet<string> = new Set([
   "packages/providers/slack/agent/channels/slack-front.ts::_resetBotIdentity",
   "packages/providers/slack/agent/channels/slack-front.ts::_resetDmTrustCache",
   "packages/providers/slack/agent/channels/slack-front.ts::deliverWithStrandRetry",
-  "packages/providers/slack/agent/channels/slack-front.ts::resolveBotIdentity",
   "packages/providers/slack/agent/channels/slack-identity.ts::slackWorkspaceVouched",
   "packages/providers/slack/agent/channels/slack-wake-backscroll.ts::_resetWakeBotIdentity",
   "packages/providers/teams/agent/channels/teams-conversation-ref.ts::TEAMS_TEAM_ADDRESS_READ_LIMIT",

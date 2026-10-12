@@ -25,6 +25,7 @@ export class Timeline {
         .join("\n")
         .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "<uuid>")
         .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g, "<iso-ts>")
+        .replace(/\b\d{1,2} (?:January|February|March|April|May|June|July|August|September|October|November|December), \d{2}:\d{2} UTC\b/g, "<when>")
         .replace(/(:oe-sup:g\d+)-[0-9a-f]{6}\b/g, "$1-<salt>")
         .replace(/(untrusted_external_data nonce=)"[0-9a-f]+"/g, '$1"<nonce>"')
         .replace(/`nonce="[0-9a-f]+"`/g, '`nonce="<nonce>"`') + "\n"

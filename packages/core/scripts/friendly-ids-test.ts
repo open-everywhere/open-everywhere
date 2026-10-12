@@ -59,7 +59,7 @@ eq(placeWords({ key: "oe-grant-room::eng::C1" }), "another conversation", "a gra
 eq(placeWords({ key: "eng" }), "the eng domain", "a domain name renders as words");
 eq(placeWords({ key: `user:slack/${TEAM}/${ROWAN}` }), `<@${ROWAN}>`, "a person's scope renders as that person");
 
-eq(rawIdLeaks(`Sent by the agent on behalf of ${ROWAN}, from slack/${TEAM}.`), [`slack/${TEAM}`, ROWAN], "🔴 the live footer leaks both the member id and the scope key");
+eq(rawIdLeaks(`Sent by the agent on behalf of ${ROWAN}, from slack/${TEAM}.`), [ROWAN, `slack/${TEAM}`], "🔴 the live footer leaks both the member id and the scope key, in text order");
 ok(rawIdLeaks("in wrun_example79").length === 1, "an eve session id is a leak");
 ok(rawIdLeaks(`asked by <@${ROWAN}> in <#C0123ABCD>`).length === 0, "a platform mention is not a leak");
 ok(rawIdLeaks(`open https://example.com/${ROWAN}/x`).length === 0, "an id inside a URL is not a leak");

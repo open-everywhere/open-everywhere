@@ -66,6 +66,19 @@ export type UnifiedWakeOrigin =
       readonly messageId: string;
       readonly to: readonly string[];
       readonly cc?: readonly string[];
+    }
+  | {
+      readonly platform: "a2a";
+      readonly caller: string;
+      readonly taskId: string;
+    }
+  | {
+      readonly platform: "google-chat";
+      readonly workspace: string;
+      readonly space: string;
+      readonly thread?: string;
+      readonly messageName?: string;
+      readonly threadReply?: true;
     };
 
 export const WAKE_TARGET_TTL_MS = 6 * 60 * 60 * 1000;
@@ -251,6 +264,15 @@ export function wakeBindingMatchesOrigin(binding: SurfaceBinding, origin: Unifie
         target?.["inbox"] === origin.inbox &&
         target?.["threadId"] === origin.threadId &&
         target?.["messageId"] === origin.messageId
+      );
+    case "a2a":
+      return segmentNamesOriginId(binding.surface, origin.caller) && target?.["caller"] === origin.caller && target?.["taskId"] === origin.taskId;
+    case "google-chat":
+      return (
+        segmentNamesOriginId(binding.workspace, origin.workspace) &&
+        segmentNamesOriginId(binding.surface, origin.space.slice(origin.space.indexOf("/") + 1)) &&
+        target?.["space"] === origin.space &&
+        (origin.thread === undefined || target?.["thread"] === origin.thread)
       );
   }
 }

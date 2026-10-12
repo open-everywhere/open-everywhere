@@ -87,7 +87,7 @@ export { SLACK_APP_REF_NAMESPACE } from "./credentials/reserved-refs.js";
 
 export { registerOeOauthCallbackCompleter, OE_OAUTH_CALLBACK_PATH } from "./connections/oe-oauth-callback.js";
 export { declareConnectionSignIn, declaredConnectionSignIns, _resetConnectionSignInsForTest } from "./connections/connection-sign-in.js";
-export type { ConnectionSignIn, DiscoverySignIn, StaticConfidentialSignIn } from "./connections/connection-sign-in.js";
+export type { ConnectionSignIn, DiscoverySignIn, StaticConfidentialSignIn, XaaSignIn } from "./connections/connection-sign-in.js";
 export type { OeOauthCallbackArgs, OeOauthCallbackResult, OeOauthCallbackCompleter } from "./connections/oe-oauth-callback.js";
 
 export { registerAwsSsoCallbackCompleter, OE_AWS_SSO_CALLBACK_PATH } from "./connections/aws-sso-callback.js";
@@ -95,6 +95,11 @@ export type { AwsSsoCallbackArgs, AwsSsoCallbackResult, AwsSsoCallbackCompleter 
 
 export { checkAwsSsoIdentityBinding } from "./connections/aws-sso-identity-binding.js";
 export type { AwsSsoBindingVerdict } from "./connections/aws-sso-identity-binding.js";
+
+export { checkXaaIdentityBinding, recordXaaRefusal, OKTA_LINK_PLATFORM, XAA_LINK_REFUSED_ACTION } from "./connections/xaa-identity-binding.js";
+export type { XaaBindingStage, XaaBindingVerdict } from "./connections/xaa-identity-binding.js";
+export { verifyOidcIdToken } from "./connections/oidc-id-token.js";
+export type { VerifiedIdToken } from "./connections/oidc-id-token.js";
 
 export type { Connection, CredentialAuthorizationDetail } from "./access/bundle.js";
 
@@ -111,8 +116,19 @@ export type {
 export { registerActionKind } from "./approvals/actions.js";
 export type { ActionKind, PendingActionRow } from "./approvals/types.js";
 export { plainSummaryForRow } from "./approvals/plain-summary.js";
-export { pendingCardLayout, approvalLabel, optionsWithoutConfirm } from "./approvals/card-layout.js";
-export type { PendingCardLayout, CardOption, CardOptionVerb, CardOptionTone, UnconfirmedCardOption } from "./approvals/card-layout.js";
+export {
+  pendingCardLayout,
+  pendingCardLines,
+  cardFooter,
+  decidedCardLine,
+  footerRequester,
+  judgeLiftHeadline,
+  judgeLiftLines,
+  judgeLiftOutcome,
+  JUDGE_LIFT_BUTTON,
+  optionsWithoutConfirm,
+} from "./approvals/card-layout.js";
+export type { PendingCardLayout, CardMeta, CardOption, CardOptionVerb, CardOptionTone, UnconfirmedCardOption } from "./approvals/card-layout.js";
 
 export { platformName, onVercel } from "./access/platform.js";
 
@@ -200,7 +216,9 @@ export { OPT_OUT_HOME_ACTIONS } from "./home/opt-out-home.js";
 export { readPersonOptOut, auditPersonOptOutRefusal, PERSON_OPT_OUT_SHORTCUT_NOTICE, PERSON_OPT_OUT_UNREADABLE_NOTICE } from "./identity/person-opt-out.js";
 export type { PersonOptOutState, PersonOptOutWhere } from "./identity/person-opt-out.js";
 export { RULES_HOME_ACTIONS } from "./home/rules-home.js";
+export { WATCH_HOME_ACTIONS } from "./home/watch-home.js";
 export { readDomainMemory, renderMemoryMarkdown, domainsNamingSilo, isLineDigest } from "./memory/visible.js";
+export { memoryLineForReader } from "./memory/provenance-mark.js";
 export type { MemoryGroup, MemoryItem } from "./memory/visible.js";
 export { registerMemoryWriteObserver } from "./memory/write-road.js";
 export type { MemoryWriteEvent } from "./memory/write-road.js";
@@ -569,6 +587,8 @@ export {
   decisionFeedbackSurfaceFor,
 } from "./approvals/flow.js";
 export type { CardPoster, JudgeLiftNoticePoster, ApprovalClickResolution, DecisionWakeDeps, DecisionFeedbackSurface } from "./approvals/flow.js";
+export { registerOwnCardRoom, ownCardRoom } from "./approvals/card-venue.js";
+export type { OwnCardRoom, OwnCardRoomResolver } from "./approvals/card-venue.js";
 export { clickerFloorRefusalNotice } from "./approvals/clicker-floor.js";
 export type { ClickerFloorRefusal } from "./approvals/clicker-floor.js";
 export { judgeContradictionNotice } from "./approvals/judge-contradiction.js";
@@ -581,12 +601,15 @@ export { rememberNonMemberAnswer } from "./access/held-question.js";
 export { registerNativeAdminCheck, registerNativeMemberCheck } from "./access/native-admin.js";
 export { registerDomainMembershipProbe, domainMembershipProbe } from "./access/domain-membership.js";
 export type { DomainMembershipProbe, DomainMembershipAnswer, DomainMembershipRoom, DomainMembershipQuery } from "./access/domain-membership.js";
+export { registerBotAskProbe, botAskProbe, admitAskedBotReply, rememberBotAsk, BOT_ASK_WINDOW_MS } from "./channels/bot-ask.js";
+export type { BotAskProbe, BotAskProbeAnswer, BotAskProbeQuery, BotAskProbeRefusal, BotAskRow, BotAskStore, BotReplyFacts, BotReplyRoute } from "./channels/bot-ask.js";
 export type { NativeAdminCheck, NativeMemberCheck } from "./access/native-admin.js";
 
 export { registerScopeLabelResolver } from "./approvals/scope-label.js";
 export type { ScopeLabelResolver } from "./approvals/scope-label.js";
 
 export { oeCommandName, oeSlash, runOeCommand } from "./commands/core.js";
+export { commandFailureText, COMMAND_FAILED_TEXT, PersonFacingError, TURN_FAILED_TEXT } from "./channels/person-text.js";
 export type { OeCommand, OeCommandDeps } from "./commands/core.js";
 
 export { verifyWebhookSignature, webhookMaxSkewSeconds } from "./webhooks/gate.js";
@@ -818,7 +841,7 @@ export type { GrantClicker, GrantClickResult, GrantClickInput } from "./access/c
 
 export { buildRecord, enqueue, flushLogShip } from "./observability/ship.js";
 
-export { parseSlackCommandText } from "./commands/core.js";
+export { parseSlackCommandText, parseOeCommandTokens } from "./commands/core.js";
 
 export { assertSafeFetchUrl, setHostEgressLookup, type EgressDispatch, type EgressRefusalCause } from "./access/host-egress.js";
 export { hostPlaneFetch, hostPlanePolicy } from "./access/host-plane-egress.js";
@@ -908,3 +931,16 @@ export { classifyConnectorOpTier } from "./access/consequence.js";
 
 export { dispatchNativeWakeWithRetry } from "./channels/native-wake-retry.js";
 export type { NativeWakeRetryAttribution } from "./channels/native-wake-retry.js";
+
+export {
+  friendlySlackBody,
+  friendlyDiscordBody,
+  friendlyTeamsActivity,
+  friendlyGitHubComment,
+  friendlyOutboundText,
+  friendlyGuardSource,
+  isFriendlyGuarded,
+  registerFriendlyNameResolver,
+} from "./channels/friendly-outbound.js";
+export type { FriendlyNameResolver } from "./channels/friendly-outbound.js";
+export type { FriendlyName, FriendlyNameKind } from "./channels/friendly-ids.js";

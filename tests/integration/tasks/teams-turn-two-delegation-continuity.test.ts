@@ -39,6 +39,7 @@ function promptText(req: RecordedRequest): string {
 function mentionActivity(text: string): Record<string, unknown> {
   return {
     type: "message",
+    channelId: "msteams",
     id: `ope1646-teams-act-${randomBytes(6).toString("hex")}`,
     serviceUrl: "https://smba.trafficmanager.net/amer/",
     from: { id: TEAMS_AUTHOR_ID, name: "OPE-1646 Fixture Author" },

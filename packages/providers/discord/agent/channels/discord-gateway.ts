@@ -4,7 +4,7 @@ import { threadParentChannelId } from "./discord-channel-info.js";
 import { splitForDiscord } from "./discord-post.js";
 import { discordFetch, type DiscordFetchDeps } from "./discord-rest.js";
 import { RateLimitExhaustedError, type RetryPolicy } from "@open-everywhere/core/agent/adapter-api.js";
-import { withEndsTurnFinalChannel } from "@open-everywhere/core/agent/adapter-api.js";
+import { TURN_FAILED_TEXT, withEndsTurnFinalChannel } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   finalMessageAction,
   nameDropPattern,
@@ -1661,10 +1661,7 @@ export default withEndsTurnFinalChannel(defineChannel<DiscordGatewayState, Disco
       openTypingGate(channel.channelId);
       const detail = (data as { error?: { message?: string } } | undefined)?.error?.message;
       log(`turn failed (channel ${channel.channelId || "?"})${detail ? `: ${detail}` : ""}`);
-      await postDiscordReply(
-        channel.channelId,
-        "⚠️ I hit an error while handling that and couldn't finish. Please try again — and if it keeps failing, check the deployment logs.",
-      );
+      await postDiscordReply(channel.channelId, `⚠️ ${TURN_FAILED_TEXT}`);
     },
     "message.completed": async (data, channel, ctx) => {
       const sessionId = ctx?.session?.id;

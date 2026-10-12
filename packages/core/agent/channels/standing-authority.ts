@@ -103,12 +103,7 @@ export function gatedConnectorWritesThisTurn(turnId: string | undefined): readon
   return state.writes ?? [];
 }
 
-const READ_ONLY_VERBS: ReadonlySet<string> = new Set(["GET", "HEAD", "OPTIONS"]);
-
 export function describeStandingWriteGrant(grant: StandingWriteGrant): string {
-  if (grant.verb === "any") return `${grant.credential} may make any request to ${grant.host}`;
-  const mutating = grant.verb.filter((v) => !READ_ONLY_VERBS.has(v.toUpperCase()));
-  return mutating.length === 0
-    ? `${grant.credential} may write to ${grant.host}`
-    : `${grant.credential} may ${mutating.join(", ")} to ${grant.host}`;
+  if (grant.host === "*") return "any service";
+  return grant.host.replace(/^\*\./, "");
 }

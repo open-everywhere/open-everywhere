@@ -17,7 +17,7 @@ and how they report — see [the chat-surface contract](./chat-surface-contract.
 
 > Every surface shipped today lives in its own installable
 > [provider bundle](./provider-bundles.md) under `packages/providers/<name>/` — Slack, Teams,
-> Discord, Linear, GitHub, Notion and Email. Each bundle registers itself through core's
+> Discord, Linear, GitHub, Notion, Email and Google Chat. Each bundle registers itself through core's
 > identity/capability/post/read seams from its own `agent/register.ts`. Core holds no surface's
 > channel wrap and no surface's identity binding; it keeps only the two bridges it calls back
 > through (`packages/core/agent/channels/slack-bridge.ts` and `teams-bridge.ts`).
@@ -76,7 +76,7 @@ Author the surface in its own bundle, `packages/providers/<x>/`, then mount it t
    [tools & the roster](./tools.md).
 
 The identity adapter is the part you must get right — it's where the trust boundary is drawn.
-Lean on the seven shipped `packages/providers/<name>/agent/channels/<name>-identity.ts` files as
+Lean on the eight shipped `packages/providers/<name>/agent/channels/<name>-identity.ts` files as
 templates: capture raw facts only, and leave the private/external interpretation to the shared
 binding layer.
 

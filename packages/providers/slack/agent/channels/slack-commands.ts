@@ -2,6 +2,7 @@ import { defineChannel, POST } from "eve/channels";
 import { verifySlackSignature } from "./slack-front.js";
 import { slackSigningSecret } from "../setup/credentials.js";
 import {
+  commandFailureText,
   bindFrom,
   runOeCommand,
   oeSlash,
@@ -104,7 +105,7 @@ export default defineChannel({
         return ephemeralResponse(reply);
       } catch (err) {
         log(`"${expected}" command failed softly: ${String(err)}`);
-        return ephemeralResponse(`Couldn't complete that: ${err instanceof Error ? err.message : String(err)}`);
+        return ephemeralResponse(commandFailureText(err));
       }
     }),
   ],

@@ -42,6 +42,7 @@ model, or jump straight to a section. New here? Start with
 
 - [Memory](./capabilities/memory.md) — opt-in domains, silos, materialised vs pointer, the trust gate.
 - [Your DM can ask your domains](./capabilities/domain-questions.md) — the person's DM seat asks a domain they belong to, the domain's own seat answers under its own rules, and the answer comes back to the DM.
+- [Your DM can ask other bots](./capabilities/bot-delegation.md) — the person's DM asks another bot in a shared channel in the person's name, and only that bot's replies in that thread come back to the DM.
 - [Roles & personas](./capabilities/roles.md) — named presets: per-turn instructions, voice, themed verbs, domain knobs.
 - [Connectors & providers](./capabilities/connectors-and-providers.md) — vendors as MCP connections + scoped credentials.
 - [Skills & plugins](./capabilities/skills-and-plugins.md) — the capability units the agent runs.
@@ -84,7 +85,7 @@ model, or jump straight to a section. New here? Start with
 - [Credential brokers](./extending/credential-brokers.md)
 - [Sandbox](./extending/sandbox.md)
 - [Connectors](./extending/connectors.md)
-- [A2A agents](./extending/a2a-agents.md) — delegating a task to another organisation's agent over the Agent2Agent protocol: MCP gives the agent tools and data, A2A gives it other agents. How to declare an agent, the approval card, the host pin and the untrusted answer.
+- [A2A agents](./extending/a2a-agents.md) — delegating a task to another organisation's agent over the Agent2Agent protocol: MCP gives the agent tools and data, A2A gives it other agents. How to declare an agent, the approval card, the host pin and the untrusted answer — and the inbound half, dark by default: the agent card another agent calls, the declared callers, and where a call lands.
 - [Source-control backends](./extending/source-control-backends.md)
 - [Database & operational store](./extending/database.md)
 - [Scheduler & control-plane identity](./extending/scheduler-and-identity.md)
@@ -107,7 +108,7 @@ model, or jump straight to a section. New here? Start with
 - [Setup runbook](./deploy/setup-runbook.md) — the full path beyond quick start.
 - [Agent-driven setup](./deploy/agent-driven-setup.md) — the same path written for an agent driving the `open-everywhere-ops` MCP server from the operator's own checkout: which tool each step calls, and the five steps a vendor console reserves for a human.
 - [Setup steps](./deploy/setup-steps.md) — the ordered step list a setup walks, generated from the setup engine itself so the page cannot drift from the status check; plus the expected build warnings and what "Develop locally" is for.
-- [Consuming as npm packages](./deploy/consuming-as-packages.md) — run Open Everywhere from your own repo instead of a fork: the nine packages, the exact-eve peer pin (and where it does *not* trip), and why nothing runs on install.
+- [Consuming as npm packages](./deploy/consuming-as-packages.md) — run Open Everywhere from your own repo instead of a fork: the ten packages, the exact-eve peer pin (and where it does *not* trip), and why nothing runs on install.
 - [Rollback, verify, record](./deploy/rollback.md) — the post-deploy health probe, one-command rollback, and the known-good pointer that makes it one hop.
 - [The `oe/cloud-proof` lane](./deploy/cloud-proof.md) — a cloud sandbox proof as an alternative to a paid Actions runner: the evidence format, the verify/post scripts, the deploy gate's acceptance rule, and the trust model stated honestly.
 - [Self-upgrade: the per-release migration record](./deploy/self-upgrade-release-records.md) — the machine-readable `releases/<sha>/migration.json` format: what changed, what a deployer must do, how to verify, how to roll back.
@@ -115,7 +116,7 @@ model, or jump straight to a section. New here? Start with
 - [Observability](./deploy/observability.md) — durable logs, traces, and error alerting: what you get bare, and the vendor-neutral seams + free-tier setup.
 - [SIEM export](./deploy/siem-export.md) — stream every audit row to a SIEM (OTLP, JSON or Splunk HEC), at least once, with the hash-chain fields a receiver verifies.
 - [Telemetry](./deploy/telemetry.md) — the anonymous usage telemetry Open Everywhere sends by default: every event, the never-collected list, retention, opt-out.
-- Surface setup: [Slack](./deploy/surfaces/slack.md) · [Teams](./deploy/surfaces/teams.md) ([admin-centre listing](./deploy/surfaces/teams.md#listing-in-the-teams-admin-centre)) · [Discord](./deploy/surfaces/discord.md) · [Linear](./deploy/surfaces/linear.md) · [Notion](./deploy/surfaces/notion.md) · [GitHub](./deploy/surfaces/github.md) · [Email](./deploy/surfaces/email.md)
+- Surface setup: [Slack](./deploy/surfaces/slack.md) · [Teams](./deploy/surfaces/teams.md) ([admin-centre listing](./deploy/surfaces/teams.md#listing-in-the-teams-admin-centre)) · [Discord](./deploy/surfaces/discord.md) · [Linear](./deploy/surfaces/linear.md) · [Notion](./deploy/surfaces/notion.md) · [GitHub](./deploy/surfaces/github.md) · [Email](./deploy/surfaces/email.md) · [Google Chat](./deploy/surfaces/google-chat.md)
 - [Surface support matrix](./deploy/surfaces/support-matrix.md) — what works where across Slack / Teams / Discord, evidence-based, with platform limitations called out.
 - [Configuration reference](./deploy/configuration-reference.md) — every config field, env var, and adapter knob.
 

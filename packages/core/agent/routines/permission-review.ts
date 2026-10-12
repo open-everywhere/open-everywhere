@@ -9,6 +9,7 @@ import {
 } from "../approvals/session-grant.js";
 import { routinePermissionKey, routineReportSurfaceKey, type Routine } from "./routine.js";
 import { routinePermissionKeyParts } from "./permission-key.js";
+import { placeWords } from "../channels/friendly-ids.js";
 
 type ReviewedRoutine = Pick<Routine, "id" | "promptGeneration" | "surfaceKey" | "report">;
 
@@ -130,7 +131,7 @@ async function readOneView(
       state,
       askedAt: card?.row.createdAt ?? null,
       room: card?.row.postedTo ?? null,
-      nextStep: nextStepFor(state, card?.row.postedTo ?? routineReportSurfaceKey(routine)),
+      nextStep: nextStepFor(state, placeWords({ key: card?.row.postedTo ?? routineReportSurfaceKey(routine) })),
     });
   };
 

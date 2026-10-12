@@ -1,3 +1,5 @@
+import { toolWords } from "../routines/schedule-words.js";
+import { QUOTE_MAX, plainQuote } from "./plain-text.js";
 import { placeWords } from "../channels/friendly-ids.js";
 import { appendAudit } from "../audit/audit.js";
 import { getConfig } from "../access/config.js";
@@ -68,7 +70,9 @@ const connectorOp: ActionKind<ConnectorOpArgs> = {
   armedCallReplay: (args) => connectorReplayTarget(args),
   argsAfterClose: (args) => connectorArgsWithoutInput(args),
   plainSummary: (args) =>
-    `Run ${plainValue(args.tool)} once on the ${plainValue(args.connection)} connection${args.grain === "destructive" ? " — this deletes or overwrites data" : ""}`,
+    `Run ${plainValue(toolWords(args.tool))} once on ${plainValue(args.connection)}${args.grain === "destructive" ? " — this deletes or overwrites data" : ""}`,
+  consequence: (args) => (args.inputPreview.trim().length > 0 ? `Input: ${plainQuote(args.inputPreview, QUOTE_MAX - 10)}` : undefined),
+  consequenceQuotes: true,
   summarize: (args) => summarizeConnectorOp(args),
   async execute(args, decidedBy) {
     if (decidedBy.startsWith("chain:")) {
@@ -78,7 +82,7 @@ const connectorOp: ActionKind<ConnectorOpArgs> = {
         action: CONNECTOR_OP_APPROVED_ACTION,
         detail: { connection: args.connection, op: args.tool, grain: args.grain, requestedBy: args.requestedBy, decidedBy },
       });
-      return `approved by ${decidedBy} — "${args.tool}" runs this one call now`;
+      return `${toolWords(args.tool)} runs this one call now`;
     }
     const now = new Date();
     const ttlMs = ONE_CALL_APPROVAL_TTL_HOURS * 60 * 60 * 1000;
@@ -96,7 +100,7 @@ const connectorOp: ActionKind<ConnectorOpArgs> = {
       action: CONNECTOR_OP_APPROVED_ACTION,
       detail: { connection: args.connection, op: args.tool, grain: args.grain, requestedBy: args.requestedBy },
     });
-    return `approved — "${args.tool}" may run once with this input; the agent must call it again`;
+    return `${toolWords(args.tool)} may run once with this input`;
   },
 };
 

@@ -221,3 +221,53 @@ export function markAddedBullets(baseline: ProvenanceBaseline, files: MemoryFile
   }
   return { files: changed, marked };
 }
+
+const KIND_WORDS: Readonly<Record<string, string>> = {
+  "chat-message": "a chat",
+  notion: "Notion",
+  linear: "Linear",
+  github: "GitHub",
+  connector: "a connected app",
+  web: "the web",
+  webhook: "an outside service",
+  "routine-event": "an outside service",
+  "delegation-result": "a background task",
+  "image-description": "an image",
+  "file-upload": "a file",
+  aws: "AWS",
+};
+
+function carrierSources(body: string): string {
+  const words = [...new Set(body.split(/,|\+\d+ more/).map((k) => KIND_WORDS[k.trim()]).filter((w): w is string => w !== undefined))];
+  return words.length === 0 ? "an outside source" : words.length === 1 ? words[0]! : `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
+}
+
+export function memoryLineForReader(line: string): string {
+  return line.replace(provenanceCarrierPattern(), (carrier) => {
+    if (carrier.startsWith(EXTERNAL_CLAIM_LEAD)) return "(unconfirmed)";
+    return `(from ${carrierSources(carrier.slice(EXTERNAL_PROVENANCE_LEAD.length, -1))})`;
+  });
+}
+
+export function restoreProvenanceCarriers(edited: string, stored: string): string {
+  const carriers = [...stored.matchAll(provenanceCarrierPattern())].map((m) => m[0]);
+  let out = edited;
+  let droppedMark: string | undefined;
+  let cursor = 0;
+  carriers.forEach((carrier, n) => {
+    const raw = out.indexOf(carrier, cursor);
+    if (raw >= 0) {
+      cursor = raw + carrier.length;
+      return;
+    }
+    const shown = memoryLineForReader(carrier);
+    const isMark = carrier.startsWith(EXTERNAL_PROVENANCE_LEAD);
+    const lastMark = isMark && n === carriers.length - 1 && stored.trimEnd().endsWith(carrier);
+    const at = lastMark ? (out.trimEnd().endsWith(shown) ? out.trimEnd().length - shown.length : -1) : out.indexOf(shown, cursor);
+    if (at >= cursor && at >= 0) {
+      out = out.slice(0, at) + carrier + out.slice(at + shown.length);
+      cursor = at + carrier.length;
+    } else if (isMark) droppedMark = carrier;
+  });
+  return droppedMark === undefined ? out : `${out} ${droppedMark}`;
+}

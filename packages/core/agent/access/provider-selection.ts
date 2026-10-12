@@ -43,13 +43,15 @@ export function providerSelectionDeclared(): boolean {
   return SELECTION !== undefined;
 }
 
+const CORE_PROTOCOL_PLATFORMS: ReadonlySet<string> = new Set(["a2a"]);
+
 export function isProviderSelected(provider: string): boolean {
-  return SELECTION === undefined || SELECTION.has(provider);
+  return SELECTION === undefined || SELECTION.has(provider) || CORE_PROTOCOL_PLATFORMS.has(provider);
 }
 
 export function admitProviderRegistration(provider: string, seam: string): boolean {
   if (isProviderSelected(provider)) {
-    if (SELECTION === undefined) ADMITTED.add(provider);
+    if (SELECTION === undefined && !CORE_PROTOCOL_PLATFORMS.has(provider)) ADMITTED.add(provider);
     return true;
   }
   REFUSALS.push({ provider, seam });

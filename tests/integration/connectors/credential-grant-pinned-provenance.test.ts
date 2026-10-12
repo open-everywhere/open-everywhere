@@ -1,3 +1,5 @@
+// proves: reply.provenance
+
 import { afterAll, expect, test } from "vitest";
 
 import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
@@ -5,7 +7,7 @@ import { getOperationalStore } from "@open-everywhere/core/agent/operational/pro
 import { encryptedKvVault } from "@open-everywhere/core/agent/credentials/kv-vault.js";
 import { effectiveUserVaultSubject } from "@open-everywhere/core/agent/connections/connector-auth.js";
 import { grantBorrowResourceLabel, type CredentialGrantRow } from "@open-everywhere/core/agent/operational/credential-grant-rows.js";
-import { PROVENANCE_FOOTER_PREFIX } from "@open-everywhere/core/agent/channels/reply-provenance.js";
+import { PROVENANCE_FOOTER_PREFIX, REPLY_PROVENANCE_ACTION } from "@open-everywhere/core/agent/channels/reply-provenance.js";
 
 import {
   armSettlement,
@@ -17,9 +19,11 @@ import {
   discordMentionWake,
   disposeLater,
   registerScript,
+  rowsSinceCursor,
   SLACK_TEAM_ID,
   WAKE_FROM_ENVELOPE,
   waitFor,
+  waitForAuditRows,
   waitForChildren,
   workTaskIdOfCall,
 } from "../harness";
@@ -176,10 +180,22 @@ test("a pinned lent tool states its pin to the WORKER's model, and the seat's re
   );
   expect(
     reply.content,
-    `the posted reply does not name the page the lent tool actually fetched, so a misattribution in the prose is contradicted by nothing a reader can see (saw: ${JSON.stringify(reply.content.slice(0, 400))})`,
-  ).toContain(`${PROVENANCE_FOOTER_PREFIX} notion (${PINNED_LABEL})`);
-  const footerLine = reply.content.split("\n").find((l) => l.startsWith(PROVENANCE_FOOTER_PREFIX)) ?? "";
-  expect(footerLine, `the footer carries vendor bytes — it must name the grant's approved target and nothing the vendor wrote (saw: ${JSON.stringify(footerLine)})`).not.toContain(
+    `the room's bytes carry a sources footer — OPE-2487 moved that line onto the reply.provenance row (saw: ${JSON.stringify(reply.content.slice(0, 400))})`,
+  ).not.toContain(PROVENANCE_FOOTER_PREFIX);
+  const replyId = `stub-message-${discord.messages.indexOf(reply) + 1}`;
+  const provRow = await waitForAuditRows({
+    probe: async () =>
+      (await rowsSinceCursor(cursor, [REPLY_PROVENANCE_ACTION], { limit: 300 })).find((r) => r.detail?.id === replyId && typeof r.detail?.sources === "string"),
+    label: "the seat reply's reply.provenance row to carry a sources line",
+    actions: [REPLY_PROVENANCE_ACTION],
+    cursor,
+  });
+  const sources = String(provRow.detail?.sources);
+  expect(
+    sources,
+    `the reply's record does not name the page the lent tool actually fetched, so an operator reading the row is told the wrong thing (saw: ${JSON.stringify(sources)})`,
+  ).toBe(`notion (${PINNED_LABEL})`);
+  expect(sources, `the sources line carries vendor bytes — it must name the grant's approved target and nothing the vendor wrote (saw: ${JSON.stringify(sources)})`).not.toContain(
     VENDOR_BODY_MARKER,
   );
   expect(reply.content, "the host rewrote the model's answer instead of adding to it").toContain(MISATTRIBUTED_ANSWER);

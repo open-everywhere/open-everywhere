@@ -1,3 +1,5 @@
+import { toolWords } from "../routines/schedule-words.js";
+import { QUOTE_MAX, plainQuote } from "./plain-text.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { placeWords } from "../channels/friendly-ids.js";
 import { appendAudit } from "../audit/audit.js";
@@ -102,8 +104,10 @@ const routinePermission: ActionKind<RoutinePermissionArgs> = {
   kind: ROUTINE_PERMISSION_KIND,
   policy: "member",
   plainSummary(args) {
-    return `Let routine ${plainValue(args.routineId)} use ${plainValue(args.declaration)} on its own from now on`;
+    return `Let a routine here use ${plainValue(toolWords(args.declaration), 70)} on its own from now on`;
   },
+  consequence: (args) => `The routine: ${plainQuote(args.prompt, QUOTE_MAX - 20)}`,
+  consequenceQuotes: true,
   summarize(args) {
     return routinePermissionCardLines(args);
   },
@@ -129,8 +133,8 @@ const routinePermission: ActionKind<RoutinePermissionArgs> = {
     });
     emitTelemetry("oe.feature.used", { "oe.feature": "routine_permission_card", "oe.outcome": "granted" });
     return routineCardWaitSeconds() > 0
-      ? `routine ${args.routineId} may now use \`${args.declaration}\` on its own — from now on, including any run still waiting on this card, until its instruction is edited`
-      : `routine ${args.routineId} may now use \`${args.declaration}\` on its own — from its next run, until its instruction is edited`;
+      ? `the routine may now use ${toolWords(args.declaration)} on its own, starting now, until its instruction changes`
+      : `the routine may now use ${toolWords(args.declaration)} on its own from its next run, until its instruction changes`;
   },
   async declined(args, decidedBy) {
     const recheck = await recheckedRoutine(args);
@@ -161,7 +165,7 @@ const routinePermission: ActionKind<RoutinePermissionArgs> = {
       detail: { routine: args.routineId, grant: args.grantKind, declaration: args.declaration, key: args.grantKey },
     }).catch(() => undefined);
     emitTelemetry("oe.feature.used", { "oe.feature": "routine_permission_card", "oe.outcome": "declined" });
-    return `routine ${args.routineId} will not ask for \`${args.declaration}\` again until its instruction is edited`;
+    return `the routine will not ask for ${toolWords(args.declaration)} again until its instruction changes`;
   },
 };
 

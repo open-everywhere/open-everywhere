@@ -1,3 +1,5 @@
+import { friendlyWhen } from "../channels/person-text.js";
+
 export type WorkState = "working" | "done" | "needs_input" | "blocked";
 
 export const STATUS_REACTION = {
@@ -63,8 +65,13 @@ export function statusItems(body: string | undefined): string[] {
 }
 
 export function renderPinned(body: string | undefined): string {
-  const items = statusItems(body);
-  return items.length ? `${PINNED_HEADER}\n${items.join("\n")}` : `${PINNED_HEADER}\n_(idle)_`;
+  const items = statusItems(body).map(pinnedItemLine);
+  return items.length ? `${PINNED_HEADER}\n${items.join("\n")}` : `${PINNED_HEADER}\n_Nothing in progress._`;
+}
+
+function pinnedItemLine(line: string): string {
+  const timed = line.replace(/ · `[^`]+` · (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})Z$/, (_m, day: string, time: string) => ` · ${friendlyWhen(`${day}T${time}Z`)}`);
+  return timed !== line ? timed : line.replace(/ · `[^`]+` · ([^·`]*)$/, " · $1");
 }
 
 export function statusSeed(surfaceKey: string): string {

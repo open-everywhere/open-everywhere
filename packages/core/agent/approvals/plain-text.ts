@@ -1,5 +1,9 @@
 export const PLAIN_SUMMARY_MAX = 150;
 
+export const CONSEQUENCE_MAX = 160;
+
+export const QUOTE_MAX = 1400;
+
 const PLAIN_VALUE_MAX = 60;
 
 const MARKUP = /[<>[\]*_~`|]/gu;
@@ -18,6 +22,10 @@ export function plainValue(value: unknown, max: number = PLAIN_VALUE_MAX): strin
   return cutClean(cleaned, max);
 }
 
+export function finishPlainLine(line: string, max: number): string {
+  return cutClean(line.replace(/\s+/gu, " ").trim(), max);
+}
+
 export function finishPlainSentence(sentence: string): string {
   const one = sentence.replace(/\s+/gu, " ").trim();
   const capped = cutClean(one, PLAIN_SUMMARY_MAX);
@@ -29,4 +37,13 @@ const LINK_MARKUP = /[<>[\]|]/gu;
 export function linkSafeLine(value: string, max: number): string {
   const cleaned = value.replace(LINK_MARKUP, "").replace(BROADCAST_MENTION, "").replace(/\s+/gu, " ").trim();
   return cutClean(cleaned, max);
+}
+
+export function plainQuote(value: unknown, max: number): string {
+  const whole = typeof value === "string" ? linkSafeLine(value, Number.MAX_SAFE_INTEGER) : "";
+  if (whole.length === 0) return "“(empty)”";
+  if (whole.length + 2 <= max) return `“${whole}”`;
+  const room = Math.max(40, max - 2 - 40);
+  const shown = linkSafeLine(whole.slice(0, room), room).replace(/…$/u, "");
+  return `“${shown}…” (${whole.length - shown.length} more characters not shown)`;
 }

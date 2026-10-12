@@ -14,6 +14,7 @@ import {
   teamsRosterMemberPath,
   teamsServiceUrlRosterProbe,
   teamsHandleRosterProbe,
+  teamsIsHomeTenant,
   _resetTeamsUserTypeCacheForTest,
   type TeamsRosterProbe,
 } from "@open-everywhere/provider-teams/agent/channels/teams-roster.js";
@@ -68,20 +69,43 @@ const eq = (a: unknown, b: unknown, label: string): void => {
   );
   eq(teamsServiceUrlRosterProbe(undefined), undefined, "no serviceUrl ⇒ NO probe (there is nothing to address), not a probe that throws later");
   ok(typeof teamsServiceUrlRosterProbe("https://smba.trafficmanager.net/emea/") === "function", "negative control: a serviceUrl DOES yield a probe (=== function)");
+  eq(
+    teamsServiceUrlRosterProbe("https://attacker.example/"),
+    undefined,
+    "🔴 an UNTRUSTED serviceUrl host gives NO probe (OPE-2446 review) — the GET carries the bot token, and a member answer can now verify a DM partner",
+  );
+  eq(teamsServiceUrlRosterProbe("http://smba.trafficmanager.net/emea/"), undefined, "…and so does a non-https Bot Connector URL");
 
   {
     const calls: { path: string; body: unknown; method: string | undefined }[] = [];
     const handle = {
+      serviceUrl: "https://smba.trafficmanager.net/emea/",
       request: async (path: string, body: unknown, options?: { method?: string }) => {
         calls.push({ path, body, method: options?.method });
         return { ok: true, status: 200, body: {} };
       },
     };
     const probe = teamsHandleRosterProbe(handle as Parameters<typeof teamsHandleRosterProbe>[0]);
+    assert.ok(probe, "a handle on a trusted Bot Connector host yields a probe");
     void (await probe("/v3/conversations/c/members/u"));
     eq(calls.length, 1, "the handle probe issues exactly one request");
     eq(calls[0].method, "GET", "…as a GET");
     eq(calls[0].body, undefined, "🔴 …with NO body — a defined body (even {}) makes fetch throw on GET and the probe silently fails open");
+    eq(
+      teamsHandleRosterProbe({ ...handle, serviceUrl: "https://attacker.example/" } as Parameters<typeof teamsHandleRosterProbe>[0]),
+      undefined,
+      "🔴 a NATIVE handle on an UNTRUSTED serviceUrl host gives NO probe (OPE-2446 review) — eve sends the bot token to the body's host",
+    );
+    eq(
+      await resolveTeamsUserType(
+        teamsHandleRosterProbe({ ...handle, serviceUrl: "https://attacker.example/" } as Parameters<typeof teamsHandleRosterProbe>[0]),
+        "19:untrusted-host@thread.v2",
+        "29:untrusted-host-user",
+      ),
+      undefined,
+      "…so the resolver gets no verdict for that handle",
+    );
+    eq(calls.length, 1, "…and the untrusted handle issued NO request (still the one call above)");
   }
 }
 
@@ -538,6 +562,60 @@ async function runDm(probe: TeamsRosterProbe | undefined): Promise<Received> {
   ok(silent.message.includes('trust="unauth"'), `…and so does an unrefuted DM partner — the DM tier is NOT the signal here. Got: ${silent.message.slice(0, 300)}`);
 
   eq((await runDm(undefined)).auth.attributes?.["user_type"], undefined, "no probe at all is the same fail-open outcome on the DM path");
+}
+
+{
+  const saved = { ms: process.env.MICROSOFT_TENANT_ID, teams: process.env.TEAMS_TENANT_ID };
+  const setHome = (v: string | undefined): void => {
+    delete process.env.TEAMS_TENANT_ID;
+    if (v === undefined) delete process.env.MICROSOFT_TENANT_ID;
+    else process.env.MICROSOFT_TENANT_ID = v;
+  };
+  const member = () => scriptProbe({ ok: true, body: { userRole: "user" } }).probe;
+  try {
+    setHome(TENANT.toLowerCase());
+    const home = await runDm(member());
+    eq((home.auth.attributes ?? {})["user_type"], "member", "3b: the DM partner's roster verdict is `member`");
+    eq((home.auth.attributes ?? {})["tenant_home"], "true", "🔴 3b: the live DM divert stamps `tenant_home` beside a member verdict in the HOME tenant");
+    ok(
+      !home.message.includes('trust="unauth"'),
+      `🔴 3b: a roster-verified MEMBER of the home tenant is a VERIFIED DM partner — the DM no longer fails closed to unauth. Got: ${home.message.slice(0, 300)}`,
+    );
+
+    setHome("TENANT-SOMEONE-ELSE");
+    const foreign = await runDm(member());
+    eq((foreign.auth.attributes ?? {})["user_type"], "member", "3b negative control: the roster still says `member`…");
+    eq((foreign.auth.attributes ?? {})["tenant_home"], undefined, "…but no `tenant_home` stamp — this is not the deployment's tenant");
+    ok(foreign.message.includes('trust="unauth"'), `🔴 3b: a member of a FOREIGN tenant is NOT a verified DM partner — it stays unauth. Got: ${foreign.message.slice(0, 300)}`);
+
+    setHome(undefined);
+    const unset = await runDm(member());
+    eq((unset.auth.attributes ?? {})["tenant_home"], undefined, "3b: with no home tenant configured there is no `tenant_home` stamp");
+    ok(unset.message.includes('trust="unauth"'), `🔴 3b: …and the DM fails closed to unauth, exactly as before OPE-2446. Got: ${unset.message.slice(0, 300)}`);
+
+    setHome(TENANT);
+    const homeGuest = await runDm(scriptProbe({ ok: true, body: { userRole: "guest" } }).probe);
+    eq((homeGuest.auth.attributes ?? {})["tenant_home"], undefined, "3b: a guest verdict carries no `tenant_home` stamp, even in the home tenant");
+    ok(homeGuest.message.includes('trust="unauth"'), `🔴 3b: a GUEST of the home tenant stays unauth. Got: ${homeGuest.message.slice(0, 300)}`);
+  } finally {
+    setHome(saved.ms);
+    if (saved.teams !== undefined) process.env.TEAMS_TENANT_ID = saved.teams;
+  }
+}
+
+{
+  eq(await teamsIsHomeTenant("T-1", async () => "t-1"), true, "teamsIsHomeTenant: the same tenant id in another case is the home tenant");
+  eq(await teamsIsHomeTenant("T-1", async () => "T-2"), false, "teamsIsHomeTenant: another tenant is not");
+  eq(await teamsIsHomeTenant(undefined, async () => "T-1"), false, "teamsIsHomeTenant: an activity with no tenant is not");
+  eq(await teamsIsHomeTenant("T-1", async () => undefined), false, "teamsIsHomeTenant: no configured home tenant answers false");
+  eq(await teamsIsHomeTenant("T-1", async () => ""), false, "teamsIsHomeTenant: an empty home tenant answers false");
+  eq(
+    await teamsIsHomeTenant("T-1", async () => {
+      throw new Error("resolver failed");
+    }),
+    false,
+    "teamsIsHomeTenant: a resolver throw answers false, never a throw",
+  );
 }
 
 {

@@ -153,7 +153,7 @@ try {
     scripts: Record<string, string>;
   };
   const pinned = packed.map(({ name }) => manifest.dependencies[name] ?? manifest.devDependencies[name]);
-  eq(pinned, packed.map(() => VERSION), `the scaffold pinned all ten lockstep packages to the CLI's version (${VERSION})`);
+  eq(pinned, packed.map(() => VERSION), `the scaffold pinned all eleven lockstep packages to the CLI's version (${VERSION})`);
   eq(manifest.scripts.postinstall, "oe-eve-patch", "the app's postinstall is `oe-eve-patch`");
 
   console.log("3. npm install the app against the tarballs (postinstall runs)");

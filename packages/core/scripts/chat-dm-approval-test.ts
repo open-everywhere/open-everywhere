@@ -10,6 +10,7 @@ process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { actionKind } = await import("../agent/approvals/actions.js");
 const { registerPostArm } = await import("../agent/channels/post-arms.js");
+const { renderFriendlyText } = await import("../agent/channels/friendly-ids.js");
 const { readDmAudience, dmDeliveryFooter } = await import("../agent/channels/dm-audience.js");
 type ChatDmArgs = import("../agent/approvals/chat-dm.js").ChatDmArgs;
 await import("../agent/approvals/flow.js");
@@ -84,7 +85,8 @@ function args(over: Partial<ChatDmArgs> = {}): ChatDmArgs {
   ok(sent.length === 1, "the approved delivery reaches the FROZEN platform's DM transport exactly once");
   ok(sent[0]!.principalId === "U_SARAH", "it is addressed to the frozen recipient");
   ok(sent[0]!.text.startsWith("The build is fixed"), "the model's body goes first");
-  ok(sent[0]!.text.endsWith(FOOTER), "the HOST footer is appended to what the recipient sees");
+  ok(sent[0]!.text.endsWith(renderFriendlyText(FOOTER, { platform: PLATFORM })), "the HOST footer is appended to what the recipient sees");
+  ok(!/<#C_HOME>/.test(sent[0]!.text), "…with the Slack channel mention in words: this platform would print it raw");
   ok(typeof note === "string" && note.includes("sent a direct message to a test-dm-platform person") && !note.includes("U_SARAH"), "the decision note says who was messaged, in words (OPE-2462)");
 
   const audience = await readDmAudience("default", GRANT);
@@ -151,7 +153,7 @@ function args(over: Partial<ChatDmArgs> = {}): ChatDmArgs {
     Object.keys(flowing.detail as object).sort().join(",") === Object.keys(carded.detail as object).sort().join(","),
     "the flowing row and the carded row carry IDENTICAL fields — a reviewer asks the same questions of both",
   );
-  ok(sent[sent.length - 1]!.text.endsWith(FOOTER), "the flowing arm appends the same host footer");
+  ok(sent[sent.length - 1]!.text.endsWith(renderFriendlyText(FOOTER, { platform: PLATFORM })), "the flowing arm appends the same host footer");
 }
 
 await removeTempDir(dir);

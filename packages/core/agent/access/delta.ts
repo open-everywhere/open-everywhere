@@ -1,3 +1,5 @@
+import { personWords, placeWords } from "../channels/friendly-ids.js";
+import { plainValue } from "../approvals/plain-text.js";
 import { SURFACE_KEY, bundleConnectorNames, type Bundle, type Connection, type HttpMethod } from "./bundle.js";
 import { DIRECTORY_GROUP_PREFIX, type Group } from "../identity/groups.js";
 import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
@@ -327,6 +329,26 @@ export function grantSentence(delta: AccessDelta): string {
   if (delta.addMethods.length > 0) parts.push(`method${delta.addMethods.length > 1 ? "s" : ""} ${delta.addMethods.join(", ")}`);
   if (delta.addPathPrefixes.length > 0) parts.push(`path prefix${delta.addPathPrefixes.length > 1 ? "es" : ""} ${delta.addPathPrefixes.join(", ")}`);
   return `Allow ${parts.join(" and ")} on connection "${delta.connectionId}" for ${where}`;
+}
+
+function scopeWords(scope: RequestingScope): string {
+  switch (scope.level) {
+    case "domain":
+      return `the ${plainValue(scope.domain, 30)} domain`;
+    case "surface":
+      return placeWords({ key: scope.surface });
+    case "principal":
+      return `${personWords({ id: scope.principal })}'s own DM`;
+    case "group":
+      return `the ${plainValue(scope.group, 30)} group`;
+  }
+}
+
+export function grantWords(delta: AccessDelta): string {
+  const where = scopeWords(delta.scope);
+  if (delta.kind === "grant-connector") return `the ${plainValue(delta.connector, 30)} connector for ${where}`;
+  const what = plainValue([...delta.addMethods, ...delta.addPathPrefixes].join(" "), 60);
+  return `${what !== "(unnamed)" ? `${what} ` : ""}through ${plainValue(delta.connectionId, 30)} for ${where}`;
 }
 
 export function renderDelta(delta: AccessDelta): string[] {

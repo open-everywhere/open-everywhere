@@ -121,6 +121,7 @@ const teamRow = (teamId: string) => store.proactiveAddress("acme", TEAMS_ADDRESS
     };
     const base: Record<string, unknown> = {
       type: "message",
+      channelId: "msteams",
       id: `act-${scope}-${Math.random()}`,
       serviceUrl: SERVICE_URL,
       from: { id: HAZEL, name: "Hazel" },

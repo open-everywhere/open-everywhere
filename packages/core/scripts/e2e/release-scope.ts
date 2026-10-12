@@ -99,6 +99,10 @@ const NON_LAUNCH_ROWS: readonly ReleaseScopeRow[] = [
   { id: "S-SUSPENDED-discord", requirement: "NON_LAUNCH", reason: "Discord-only approval transport parity is deferred for this release." },
   { id: "S-SUSPENDED-teams", requirement: "NON_LAUNCH", reason: "Teams-only approval transport parity is deferred for this release." },
   { id: "S-CARD-teams", requirement: "NON_LAUNCH", reason: "Teams-only approval transport parity is deferred for this release." },
+  { id: "S-CARD-teams-dm", requirement: "NON_LAUNCH", reason: "Teams-only approval transport parity is deferred for this release." },
+  { id: "J-NAMEDROP-teams", requirement: "NON_LAUNCH", reason: "Teams-only confidence is deferred for this release." },
+  { id: "S-OE-CMD-teams", requirement: "NON_LAUNCH", reason: "Teams-only control-plane parity is deferred for this release." },
+  { id: "S-INTRO-teams", requirement: "NON_LAUNCH", reason: "Teams-only onboarding parity is deferred for this release." },
   { id: "S-SUSPENDED-linear", requirement: "NON_LAUNCH", reason: "Linear-only approval transport parity is deferred for this release." },
   { id: "S-AMBIENT-discord", requirement: "NON_LAUNCH", reason: "Discord-only ambient behavior is deferred for this release." },
   { id: "S-AMBIENT-linear", requirement: "NON_LAUNCH", reason: "Linear-only ambient behavior is deferred for this release." },
@@ -111,6 +115,7 @@ const NON_LAUNCH_ROWS: readonly ReleaseScopeRow[] = [
   { id: "J-ENGAGED-linear", requirement: "NON_LAUNCH", reason: "Linear-only engaged routing is deferred for this release." },
   { id: "S-JUDGE-LIFT-NOTICE", requirement: "NON_LAUNCH", reason: "The judge's decision to LIFT is a model judgement this tier cannot drive, so the leg's green is not a release signal — its hard gates are." },
   { id: "S-APP-HOME", requirement: "NON_LAUNCH", reason: "The Home tab needs the fixture Slack app reinstalled with `home_tab_enabled` and the `app_home_opened` event (OPE-2451); until the board's app carries them, views.publish refuses and the leg cannot go green." },
+  { id: "S-WATCH", requirement: "NON_LAUNCH", reason: "The None click and the forged Not useful are Home-tab deliveries, which need the fixture Slack app reinstalled with the Home tab on (OPE-2451); the watch's own check needs a calendar connector no launch fixture carries, so `test:personal-watch` drives it offline." },
   { id: "S-SLACK-AS-YOU", requirement: "NON_LAUNCH", reason: "Search Slack as you is an admin opt-in that needs the Slack app's MCP toggle and the person's own sign-in, which no launch fixture carries." },
   { id: "S-PERSONAL-BROWSER", requirement: "NON_LAUNCH", reason: "The personal browser is off as shipped and needs a published browser image plus a box backend, which no launch fixture carries; the watch page, the take-over lock and the act card are proved at tier 2 with a fake box backend." },
   { id: "S-MEETING-NATIVE-RECAP", requirement: "NON_LAUNCH", reason: "Native recaps are off as shipped and need the org's platform credential stored, which no launch fixture carries; the read, the watch and the recap are proved at tier 2 with a fake platform reader, and the readers against recorded fixtures." },
@@ -121,6 +126,7 @@ const NON_LAUNCH_ROWS: readonly ReleaseScopeRow[] = [
   { id: "S-BLOCKED-PING", requirement: "NON_LAUNCH", reason: "The leg reaches the ping only when the model calls update_status with blocked, a model choice no knob here forces, so its green is not a release signal — its hard gates are." },
   { id: "S-STEP-LABELS", requirement: "NON_LAUNCH", reason: "Slack's status line has no read API, so this leg cannot see a step label; its green turns on the model running the named read tool, and the label text is pinned offline." },
   { id: "S-A2A-DELEGATE", requirement: "NON_LAUNCH", reason: "Its fixture is a declared third-party A2A reference agent, which a launch deployment must not declare; it runs on a test deployment." },
+  { id: "S-A2A-INBOUND", requirement: "NON_LAUNCH", reason: "Inbound A2A is off as shipped and needs a declared caller, which no launch fixture carries; the authenticated call, the landing and the answer are proved at tier 2." },
 ] as const;
 
 export const LAUNCH_RELEASE_SCOPE: readonly ReleaseScopeRow[] = [

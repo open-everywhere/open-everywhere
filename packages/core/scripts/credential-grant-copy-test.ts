@@ -132,14 +132,14 @@ console.log("1. the phrase helpers:");
   eq(grantRequesterPhrase("Ada Lovelace"), "Ada Lovelace", "a resolved requester is named");
   eq(
     grantRequesterPhrase("discord/9000000000000000003"),
-    "Someone this deployment cannot name",
+    "Someone I can't identify",
     "🔴 an ID-SHAPED label is DROPPED, not printed — the guard is structural, not a convention at one caller",
   );
   eq(grantConversationPhrase("#9000000000000000002"), "that conversation", "…and the same guard covers the room label a scope resolver answered with");
   eq(GRANT_ID_LEAK_PATTERNS.length, 4, "the guard and the gate share ONE list of four shapes");
   eq(
     grantRequesterPhrase(""),
-    "Someone this deployment cannot name",
+    "Someone I can't identify",
     "🔴 an unresolved requester is admitted in words — the principal-key fallback is the exact string the operator read on the card",
   );
 
@@ -193,10 +193,10 @@ console.log("3. the golden:");
       "Tap one button to answer:",
       "• *Approve once* — one call that actually reaches Notion. An attempt blocked before it is sent costs nothing and can be retried — at most 4 attempts in one turn.",
       "• *Approve for this conversation* — every call that conversation makes, until the grant expires.",
-      "• *30 days* is NOT offered for this request. A grant that long has to belong to a room this deployment can name, and this request did not come from one — so it would stop working as soon as this conversation ends, without telling anyone. An operator can declare that room into a domain if this should be lendable for longer.",
+      "• *30 days* is NOT offered for this request. A grant that long has to belong to a room, and this request did not come from one — so it would stop working as soon as this conversation ends, without telling anyone. Ask your admin if this should be lendable for longer.",
       "• *Decline* — nothing is granted.",
       "",
-      "A button is the only thing that can answer this. If the buttons are missing, or a tap seems to do nothing, nothing has been granted — the request then lapses on its own and they can raise a fresh one.",
+      "Answer with a button. If the buttons are missing or a tap does nothing, nothing is granted, and the request lapses on its own.",
       "Approving lets the #proj-chat conversation read a Notion page with your account — the pinned values above, and nothing else in Notion. Whichever button you press, this lends ONE thing: your Notion account doing that one job, and nothing else you can reach in Notion. Only the conversation they asked from can spend it, only while somebody is there asking, and only until it ends.",
     ].join("\n"),
     "the card",
@@ -205,7 +205,7 @@ console.log("3. the golden:");
   eq(
     grantCardText({ ...ask, frozenArgs: {}, resource: "Quarterly report — notion-fetch({})" }, "", undefined, undefined).split("\n").slice(0, 5),
     [
-      "*Someone this deployment cannot name* asks to use your Notion account, for that conversation.",
+      "*Someone I can't identify* asks to use your Notion account, for that conversation.",
       "",
       'They want to read a Notion page — "Quarterly report".',
       'Their reason: "summarise the quarter for the team"',
@@ -218,7 +218,7 @@ console.log("3. the golden:");
   const sessionLine = buttons.find((l) => l.startsWith("• *Approve for this conversation*")) ?? "";
   const withheldLine = buttons.find((l) => l.startsWith("• *30 days* is NOT offered")) ?? "";
   ok(!buttons.some((l) => l.startsWith("• *Approve for 30 days*")), "🔴 a KEYLESS ask's card carries NO standing button — a 30-day promise this row could not keep is not made");
-  ok(withheldLine.includes("has to belong to a room this deployment can name"), "🔴 …and the line in its place says WHY, so the owner is not hunting for a missing button");
+  ok(withheldLine.includes("has to belong to a room"), "🔴 …and the line in its place says WHY, so the owner is not hunting for a missing button");
   ok(withheldLine.includes("stop working as soon as this conversation ends"), "🔴 …naming the exact failure the old button produced");
   ok(!withheldLine.includes("Approve"), "🔴 …and it offers nothing: a withheld arm must never read as a fourth answer");
   const domainLine =
@@ -315,7 +315,7 @@ console.log("3. the golden:");
     const undelivered = grantApproveFailureText("consent_required", false);
     ok(undelivered.includes("stop sending you direct messages"), "the undelivered-link answer names the owner's own stop as a reason the link did not arrive");
     ok(undelivered.includes("press Approve once more"), "…and tells them what to do after they lift it, because the ask is still pending");
-    ok(undelivered.includes("ask an operator"), "…and still keeps the operator remedy for the case where this deployment cannot address them at all");
+    ok(undelivered.includes("ask your admin"), "…and still keeps the admin remedy for the case where this deployment cannot address them at all");
     ok(!undelivered.includes("set_dm_delivery"), "…and names no internal verb — an owner reads this, and a tool name is not a step they can take");
   }
 

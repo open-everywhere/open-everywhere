@@ -37,7 +37,7 @@ A channel agent is not an object. `create_agent` composes it from four existing 
 ## 1. Seat, grain, posture
 
 **seat** — the conversational session. It talks, it forwards jobs, and it may read a little to find
-out what it was asked. It is the **NARROW** surface. A delegating standing or thread seat holds 17 tools at
+out what it was asked. It is the **NARROW** surface. A delegating standing or thread seat holds 18 tools at
 most, the **lean roster** (a conversation seat holds `work` and `cancel_work` from it, never `agent`
 and `task_cancel`), and nothing else — not even the credential grants this chat's own scopes carry, which mount on the
 chat's workers instead (OPE-2023).
@@ -52,10 +52,10 @@ per-container standing root is a seat but no conversation seat, because it canno
 Source: `packages/core/agent/access/work-session.ts#seatTokenForwardsWork`.
 Not to be confused with: the **work session**, which runs the jobs and talks to nobody.
 
-**the lean roster** — the 17 names a lean seat may hold, exactly:
+**the lean roster** — the 18 names a lean seat may hold, exactly:
 `reply`, `edit_reply`, `no_reply`, `react`, `update_status`, `stand_down`, `halt`, `set_dm_delivery`,
 `agent`, `work`, `cancel_work`, `spawn_thread_session`, `complete_thread`,
-`task_cancel`, `read_channel`, `read_thread`, `answer_domain_question`.
+`task_cancel`, `read_channel`, `read_thread`, `look_up`, `answer_domain_question`.
 Five speak verbs, one stop-following verb, one break-glass **halt** (OPE-1602 — the brake pedal is
 on the seat because a brake reached through a dispatch is not a brake; its `resume` partner is not,
 because resuming widens and is a carded admin decision the seat routes), one recipient-stop verb
@@ -160,13 +160,15 @@ Source: `packages/core/agent/access/lean-seat.ts#restrictToolsetForLeanSeat`, ca
 Not to be confused with: a **refusal** at execute time. `packages/core/agent/access/window-gated.ts`
 is the backstop behind the wall, not a second copy of it.
 
-**DM-seat carve-in** — five verbs a narrowed DM or group-DM seat keeps on top of the roster:
-`link_identity`, `confirm_link`, `unlink_identity`, `revoke_credential_grant`, `ask_domain`. Each one
-acts for the CALLER — who they are, what their own account pays for, or (`ask_domain`, OPE-2452) a
-question to a domain they belong to — and each hard-refuses outside a DM. The first four need an answer
+**DM-seat carve-in** — six verbs a narrowed DM or group-DM seat keeps on top of the roster:
+`link_identity`, `confirm_link`, `unlink_identity`, `revoke_credential_grant`, `ask_domain`,
+`expect_bot_reply`. Each one acts for the CALLER — who they are, what their own account pays for, a
+question to a domain they belong to (`ask_domain`, OPE-2452), or a reply to their own ask to another
+bot (`expect_bot_reply`, OPE-2426) — and each hard-refuses outside a DM. The first four need an answer
 the person gives on the seat. `ask_domain` needs THIS person's proven membership and THIS DM as the
-answer's only destination. So the worker-capability index never offers one as a route. That roster rule
-is routing. The containment is a second set with the same five names: `WORKER_SEAT_RESERVED_TOOLS`
+answer's only destination. `expect_bot_reply` needs THIS person's own ask and THIS DM as the only place
+the other bot's reply goes. So the worker-capability index never offers one as a route. That roster rule
+is routing. The containment is a second set with the same six names: `WORKER_SEAT_RESERVED_TOOLS`
 withholds them from a delegated worker, which used to mount the first four.
 Source: `packages/core/agent/access/lean-seat.ts#DM_SEAT_CARVE_IN`,
 `packages/core/agent/access/worker-seat.ts#WORKER_SEAT_RESERVED_TOOLS`.

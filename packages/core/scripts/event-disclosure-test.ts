@@ -194,13 +194,13 @@ function harness(routines: Routine[], rosters: Record<string, RoomRoster>, hydra
   const h = harness([routine({ id: "r-guest4" })], { "slack/T1/C1": OBSERVED_GUEST });
   await fanOutDelivery(ISSUE_BODY, "issues", undefined, h.deps);
   const text = h.posts[0]!;
-  ok(text.includes("r-guest4"), "notice: names the OE-minted routine id — the one handle an operator can act on");
+  ok(!text.includes("r-guest4"), "notice: carries no routine id — a join key is not a name, and the skip row holds it for an operator (OPE-2486)");
   ok(text.includes(CUSTOMER_ID) === false, "🔴 notice: does NOT carry the customer id from the event title — the whole point of withholding");
   ok(text.includes("acme/payments") === false, "🔴 notice: does NOT carry the scope path — naming the repo tells the guest audience what is being watched");
   ok(text.includes(PROMPT) === false && text.includes("security issues") === false, "🔴 notice: does NOT echo the routine's PROMPT (disable-notice.ts does; here it would leak the routine's whole intent)");
   ok(text.includes("issues") === false || text.includes("opened") === false, "notice: does not render the event summary");
   const bare = fireWithheldNoticeText("r-xyz");
-  ok(bare.includes("r-xyz") && bare.includes(CUSTOMER_ID) === false, "notice: the pure text function has exactly one variable — the routine id");
+  ok(!bare.includes("r-xyz") && bare.includes(CUSTOMER_ID) === false, "notice: the pure text function renders no variable at all — no routine id, no event content");
 }
 
 {

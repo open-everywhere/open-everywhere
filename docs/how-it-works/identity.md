@@ -614,6 +614,14 @@ of the set, and every weaker grade stays own-DM only. The default Okta field `ex
 the second. The "no blanket yes" rule holds throughout: with more than one account waiting, a bare
 `confirm` is refused and the accounts are named, same-platform ones included.
 
+**The person's own Okta account (OPE-2453).** When a connection declares a Cross App Access
+sign-in (`mode: "xaa"`) whose `idpIssuer` is this Okta org, the arm also proposes each person's own
+Okta account: platform `okta`, with the Okta user id as the native id, graded `attested` because
+Okta is the authority for its own ids. The `xaa` sign-in admits a person only when the Okta account
+that signed in is a **confirmed** `okta` account on their link-set, so this proposal is what makes
+the sign-in usable. With no `xaa` declaration the arm proposes nothing new. See
+[Cross App Access](../capabilities/connectors-and-providers.md#cross-app-access-xaa-a-personal-connection-with-no-per-app-consent).
+
 `OE_DIRECTORY_OKTA_ORG_URL` must be **`https://`**. Every Okta request carries the API token in an
 `authorization` header, so a plaintext org URL is refused at boot rather than leaking an admin
 credential on every sync.

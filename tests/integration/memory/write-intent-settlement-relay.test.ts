@@ -33,7 +33,7 @@ function siloFilePath(silo: string, rel: string): string {
 
 const CLAIM = "It's now in durable notes and the curated memory index.";
 
-const WITHHELD_OPENING = "No durable memory write is recorded for this turn";
+const WITHHELD_OPENING = "I can't confirm that's saved yet";
 
 const discord = installDiscordWebApiStub({ captureMessages: true });
 afterAll(() => discord.uninstall());

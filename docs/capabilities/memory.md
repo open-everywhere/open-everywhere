@@ -809,7 +809,9 @@ The page is a list of **sections**, each registered by the module that owns its 
 **Your rules** (OPE-2456, `home/rules-home.ts`): the DM rules the person confirmed with "Approve, and
 allow things like this" on an approval card in their DM, each with a Remove button. Remove takes a
 rule away at once. The list reads the viewer's own DM room only. See
-[Pre-approval rules § 7](../how-it-works/pre-approval-rules.md#7-approve-and-allow-things-like-this). The opt-out (below) registers order 40.
+[Pre-approval rules § 7](../how-it-works/pre-approval-rules.md#7-approve-and-allow-things-like-this). The opt-out (below) registers order 40. Order 50 is **Your watch** (OPE-2422, `home/watch-home.ts`): the More, Less and None dial of the
+[chief-of-staff watch](./proactivity-and-routines.md#the-chief-of-staff-watch), and the person's recent nudges, each with a Useful
+and a Not useful button. Opening the page enrols the person at `less` when they have no watch yet.
 
 ## Opting out of agent actions on your content
 
@@ -1172,9 +1174,10 @@ hold a member's own words. Do not read this plane as content-free.
 
 🔴 **A reply sentence that matches a known completed-durability shape is struck unless the host
 recorded a `memory.write` in that turn.** `packages/core/agent/channels/memory-claim-guard.ts` runs at
-the four reply doors, beside the connector-provenance footer. The struck sentence is replaced by one
-host-voiced line saying no durable write is recorded for the turn; every other sentence, and every
-fact the turn produced, goes out unchanged. A `memory.claim_withheld` audit row names the claim by
+the four reply doors, beside the connector-provenance step. The struck sentence is replaced by one
+host-voiced line in plain words, "(I can't confirm that's saved yet.)" (OPE-2487): it says what the
+host observed — no durable write recorded for the turn — and stays true if a late save lands. Every
+other sentence, and every fact the turn produced, goes out unchanged. A `memory.claim_withheld` audit row names the claim by
 shape and sentence position — never by its text.
 
 What is enforced is a **set of shapes, not the whole class**. Six are struck today: a completed
@@ -1208,7 +1211,7 @@ they are the only doors a seat's words leave by. A delegated write reaches the s
 road — the persist at the dispatching turn's own end, named below.
 
 A live run measured what the absence of this cost. A member asked, the agent wrote the note, and the
-reply said "(No durable memory write is recorded for this turn, so I cannot say the note is stored.)"
+reply said "(No durable memory write is recorded for this turn, so I cannot say the note is stored.)" (the note's wording before OPE-2487)
 — an honest sentence about a save that really did land moments later. Only the session persist records
 a write this guard reads as a stored fact, and for a seat's **own** edit it ran at `turn.completed`,
 after the reply had left. (The status board stamps its writes with a turn too, but they are

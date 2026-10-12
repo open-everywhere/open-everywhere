@@ -1,6 +1,7 @@
 import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
+import { PersonFacingError } from "../channels/person-text.js";
 import { actingPrincipalId, bindFrom, type SurfaceBinding } from "../identity/binding.js";
 import { principalIdOf, unattendedOf } from "../access/request.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
@@ -22,13 +23,13 @@ export const LEVELS = CAP_LEVELS;
 export type Level = CapLevel;
 
 import { approvalPostDeps, hasApprovalCardPath } from "../approvals/flow.js";
+import { placeBesideKey } from "../channels/friendly-ids.js";
+import { placeWords } from "../channels/friendly-ids.js";
 export { approvalPostDeps, hasApprovalCardPath };
 
 export function requireCardPathHere(tool: string, platform: string): void {
   if (hasApprovalCardPath(platform)) return;
-  throw new Error(
-    `${tool} needs a surface with an approval-card path — Slack, Discord or a Teams channel for now (this surface is "${platform}") — the approval card renders as a message with Approve/Reject buttons, and a slash command posts it in this channel or not at all. Ask me in this conversation instead: the set_spend_limit / clear_spend_limit tools route the card to a card-capable channel in this domain.`,
-  );
+  throw new PersonFacingError(`${tool} doesn't work here. Ask me in a message instead.`);
 }
 
 export interface SetSpendLimitInput {
@@ -141,6 +142,10 @@ export async function readSpendCoverage(org: string, level: Level, scopeKey: str
     console.warn(`[open-everywhere:spend] set_spend_limit could not read pricing coverage for "${scopeKey}": ${why}`);
     return { models: [], notMeasurable: "the usage ledger could not be read on this turn, so no coverage was measured." };
   }
+}
+
+export function pendingScopeWords(label: string | undefined): string {
+  return label !== undefined && label.length > 0 ? label : "this scope";
 }
 
 export function unpricedCoverageNote(report: CoverageReport, scopeKey: string): string {
@@ -347,13 +352,13 @@ export default defineTool({
         expiresAt: posted.expiresAt,
         ...coverageFields,
         note:
-          `Already pending — the same ${plan.args.level} limit ${proposed} on "${plan.args.scopeKey}" is awaiting an admin's Approve/Reject (pending ${posted.id}). ` +
-          `No new card was posted; tell the user the existing card${venue.sameRoom ? "" : ` in ${venue.surfaceKey}`} still needs an admin to tap Approve or Reject.` +
+          `Already pending — the same ${plan.args.level} limit ${proposed} on ${pendingScopeWords(scopeLabel)} is awaiting an admin's Approve/Reject. ` +
+          `No new card was posted; tell the user in plain words that the existing card${venue.sameRoom ? "" : ` in ${placeWords({ key: venue.surfaceKey })}`} still needs an admin to tap Approve or Reject.` +
           (venue.sameRoom ? "" : " Name that channel — the card is not in this conversation, so the user cannot see it from here.") +
           coverageNote,
       };
     }
-    const subject = `${plan.args.level} limit ${proposed} on "${plan.args.scopeKey}"${tainted ? " ⚠ tainted" : ""}`;
+    const subject = `${plan.args.level} limit ${proposed} on ${placeBesideKey(plan.args.scopeKey)}${tainted ? " ⚠ tainted" : ""}`;
     if (posted.autoApproved) {
       return {
         requested: false,

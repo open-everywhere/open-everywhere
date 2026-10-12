@@ -2,10 +2,13 @@ import { defineSchedule } from "eve/schedules";
 import { deploymentOrg } from "../identity/binding.js";
 import { sweepMeetingBoxes } from "../meetings/lifecycle.js";
 import { sweepNativeWatches } from "../meetings/native-recap.js";
+import { sweepExpiredMeetingRows } from "../meetings/store.js";
 
 export default defineSchedule({
   cron: "*/15 * * * *",
   async run() {
+    const expired = await sweepExpiredMeetingRows(deploymentOrg());
+    if (expired > 0) console.log(`[open-everywhere:meeting-sweep] deleted ${expired} expired meeting row(s)`);
     const { finished, stopped } = await sweepMeetingBoxes(deploymentOrg());
     if (finished.length > 0) console.log(`[open-everywhere:meeting-sweep] finished ${finished.length} meeting(s) past their cap: ${finished.join(", ")}`);
     if (stopped.length > 0) console.log(`[open-everywhere:meeting-sweep] stopped ${stopped.length} unrecorded meeting box(es) past their cap: ${stopped.join(", ")}`);

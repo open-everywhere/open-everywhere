@@ -37,8 +37,8 @@ const skillDelete: ActionKind<SkillDeleteArgs> = {
     const outcomeTag = deleted ? "ok" : "noop";
     emitTelemetry("oe.feature.used", { "oe.feature": "skill_deleted", "oe.outcome": outcomeTag });
     return deleted
-      ? `skill "${args.name}" deleted from domain "${args.domain}".`
-      : `no skill named "${args.name}" in domain "${args.domain}" — nothing to delete (it may already be gone).`;
+      ? `skill ${args.name} deleted from ${args.domain}`
+      : `skill ${args.name} was already gone from ${args.domain}, so nothing changed`;
   },
 };
 

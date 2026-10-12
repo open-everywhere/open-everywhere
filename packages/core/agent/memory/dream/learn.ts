@@ -34,20 +34,20 @@ function proposedSkillSketch(signature: string, request: string, count: number):
   return [
     `---`,
     `name: ${name}`,
-    `description: Auto-proposed from a workflow seen ${count}× (recurrence-gated). Review before enabling.`,
+    `description: Suggested after this task came up ${count} times. Review before enabling.`,
     `---`,
     ``,
     `# ${name}`,
     ``,
-    `This workflow recurred ${count} times, so the dream cycle proposes capturing it as a reusable skill.`,
+    `This task came up ${count} times, so I suggest saving it as a reusable skill.`,
     ``,
     `## Trigger`,
     `Requests like: "${defangProposalField(request, 200)}"`,
     ``,
     `## Steps`,
-    `1. (fill in the repeated steps — the cycle detected the pattern, a human authors the procedure)`,
+    `1. (fill in the repeated steps — I spotted the pattern, and a person writes the procedure)`,
     ``,
-    `> Proposed by the Mode-1 dream cycle. Not active until a human reviews and merges it.`,
+    `> Suggested automatically. Not active until a person reviews and merges it.`,
   ].join("\n");
 }
 

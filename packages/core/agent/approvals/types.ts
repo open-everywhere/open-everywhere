@@ -33,6 +33,9 @@ export interface ActionKind<A = unknown> {
   argsAfterClose?(args: A): A;
   summarize(args: A): string[];
   plainSummary(args: A): string;
+  consequence?(args: A): string | undefined;
+  doneSummary?(args: A): string;
+  readonly consequenceQuotes?: true;
   execute(args: A, decidedBy: string): Promise<string>;
   declined?(args: A, decidedBy: string): Promise<string>;
 }

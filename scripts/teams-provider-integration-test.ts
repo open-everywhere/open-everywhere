@@ -454,4 +454,56 @@ function seedRoutine(id: string, surfaceKey: string, target: Record<string, unkn
   ok(reMention !== null, "⭐ NEGATIVE CONTROL: an @mention in the SAME stood-down conversation still passes — the way back in is never closed");
 }
 
+{
+  const { teamsOnMessage } = await import("@open-everywhere/provider-teams/agent/channels/teams.js");
+  const { bindTeams } = await import("@open-everywhere/provider-teams/agent/channels/teams-identity.js");
+  const { _resetTeamsUserTypeCacheForTest } = await import("@open-everywhere/provider-teams/agent/channels/teams-roster.js");
+  const saved = { ms: process.env.MICROSOFT_TENANT_ID, teams: process.env.TEAMS_TENANT_ID };
+  const dm = (n: number, serviceUrl = TEAMS_SERVICE_URL): unknown => ({
+    scope: "personal",
+    conversationType: "personal",
+    isBotMentioned: false,
+    from: { id: "29:dm-partner", name: "Dee" },
+    recipient: { id: "28:dm-bot" },
+    tenantId: "TEN-DM-HOME",
+    conversation: { id: `a:native-dm-${n}`, conversationType: "personal", tenantId: "TEN-DM-HOME" },
+    serviceUrl,
+    channelData: {},
+    text: "hi",
+  });
+  let rosterCalls = 0;
+  const drive = async (n: number, serviceUrl = TEAMS_SERVICE_URL) => {
+    _resetTeamsUserTypeCacheForTest();
+    const request = async () => {
+      rosterCalls++;
+      return { ok: true, status: 200, body: { userRole: "user" } };
+    };
+    const ctx = { teams: { serviceUrl, request }, thread: { post: async () => ({ id: "p" }) }, isSubscribed: async () => false };
+    const res = (await teamsOnMessage(ctx as never, dm(n, serviceUrl) as never)) as { auth?: { attributes?: Record<string, string> } } | null;
+    return res?.auth;
+  };
+  const verified = (auth: unknown) => bindTeams({ channel: { kind: "teams" }, session: { auth: { current: auth } } } as never).trustVerified;
+  try {
+    delete process.env.TEAMS_TENANT_ID;
+    process.env.MICROSOFT_TENANT_ID = "ten-dm-home";
+    const home = await drive(1);
+    ok(home?.attributes?.["user_type"] === "member" && home.attributes["tenant_home"] === "true", "🔴 native DM: a roster member in the HOME tenant gets the tenant_home stamp (OPE-2446)");
+    ok(verified(home) === true, "🔴 native DM: …and bindTeams verifies that DM partner");
+    process.env.MICROSOFT_TENANT_ID = "TEN-SOMEONE-ELSE";
+    const foreign = await drive(2);
+    ok(foreign?.attributes?.["user_type"] === "member" && foreign.attributes["tenant_home"] === undefined, "native DM negative control: a member under ANOTHER home tenant gets no tenant_home stamp");
+    ok(verified(foreign) === false, "native DM negative control: …and the partner stays unverified");
+    process.env.MICROSOFT_TENANT_ID = "ten-dm-home";
+    const before = rosterCalls;
+    const hostile = await drive(3, "https://attacker.example/");
+    ok(hostile !== undefined && rosterCalls === before, "🔴 native DM: an UNTRUSTED serviceUrl host is never asked (no roster call, so no token leaves)");
+    ok(hostile?.attributes?.["user_type"] === undefined && hostile?.attributes?.["tenant_home"] === undefined, "🔴 native DM: …so no user_type and no tenant_home stamp");
+    ok(verified(hostile) === false, "🔴 native DM: …and the partner stays unverified");
+  } finally {
+    if (saved.ms === undefined) delete process.env.MICROSOFT_TENANT_ID;
+    else process.env.MICROSOFT_TENANT_ID = saved.ms;
+    if (saved.teams !== undefined) process.env.TEAMS_TENANT_ID = saved.teams;
+  }
+}
+
 console.log(`\n✓ teams-provider-integration: ${n} assertions passed (manifest row, RSC manifest block, group-chat window floor, reply gate, target, execute + audit, read adapter, routine dispatch + bindFrom, attended-mention spend gate, engaged-seam admission on the native gate)`);

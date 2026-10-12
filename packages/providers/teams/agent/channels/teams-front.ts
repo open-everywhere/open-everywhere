@@ -1,6 +1,7 @@
 import { POST, type Channel, type HttpRouteDefinition, type RouteHandlerArgs } from "eve/channels";
 import { verifyTeamsRequest, parseTeamsActivity, teamsThreadRootActivityId, isTeamsInputResponseActivity, type TeamsMessageActivity } from "eve/channels/teams";
 import { sendTeamsActivityBackedOff } from "./teams-connector.js";
+import { isTeamsChannelActivity } from "./teams-origin-codec.js";
 import {
   buildTeamsAuth,
   teamsMembershipType,
@@ -9,7 +10,7 @@ import {
   withTeamsUserType,
   type OpenEverywhereTeamsAuth,
 } from "./teams-identity.js";
-import { resolveTeamsUserType, teamsServiceUrlRosterProbe, type TeamsRosterProbe } from "./teams-roster.js";
+import { resolveTeamsUserType, teamsIsHomeTenant, teamsServiceUrlRosterProbe, type TeamsRosterProbe } from "./teams-roster.js";
 import { recordTeamsConversationReference, teamsChannelGrainConversationId, teamsReplyChainRoot } from "./teams-conversation-ref.js";
 import { parseTeamsReaction, routeTeamsStopReaction, type TeamsReactionActivity, type TeamsStopOutcome } from "./teams-stop.js";
 import {
@@ -22,6 +23,9 @@ import {
   type TeamsEngagementVerdict,
 } from "./teams-engagement.js";
 import { teamsGraphTeamId } from "./teams-graph-team-id.js";
+import { resolveTeamsNameDrop } from "./teams-name-drop.js";
+import { parseTeamsOeCommand } from "./teams-commands.js";
+import { liveTeamsChannelIntro, liveTeamsFirstContactIntro, parseTeamsBotAdded, type TeamsBotAddedUpdate, type TeamsIntroOutcome } from "./teams-intro.js";
 import { handleTeamsApprovalInvoke, parseTeamsApprovalInvoke, type TeamsApprovalInvoke, type TeamsInvokeResponseBody } from "../approvals/teams-flow.js";
 import {
   planTeamsSingleWindow,
@@ -32,6 +36,7 @@ import {
   type TeamsSingleWindowFacts,
 } from "./teams-supervisor.js";
 import {
+  commandFailureText,
   shouldRotate,
   EventDedupe,
   ThreadFifo,
@@ -87,6 +92,10 @@ import {
   spreadVendorTs,
   seatCatchUp,
   getSettings,
+  bindFrom,
+  runOeCommand,
+  oeSlash,
+  type OeCommand,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 type RouteHandler = (req: Request, args: RouteHandlerArgs) => Promise<Response>;
@@ -148,7 +157,9 @@ async function teamsAuthWithUserType<A extends OpenEverywhereTeamsAuth>(
 ): Promise<A> {
   const factory: TeamsRosterProbeFor = probeFor ?? ((activity) => teamsServiceUrlRosterProbe(activity.serviceUrl));
   try {
-    return withTeamsUserType(auth, await resolveTeamsUserType(factory(a), a.conversation.id, a.from.id));
+    const userType = await resolveTeamsUserType(factory(a), a.conversation.id, a.from.id);
+    const homeTenant = userType === "member" ? await teamsIsHomeTenant(a.tenantId ?? a.conversation.tenantId) : undefined;
+    return withTeamsUserType(auth, userType, homeTenant);
   } catch {
     return auth;
   }
@@ -355,6 +366,44 @@ export function liveTeamsSupervisorDeps(plan: TeamsFrontPlan, to: RouteHandlerAr
   };
 }
 
+export interface TeamsOeCommandDeps {
+  readonly run?: typeof runOeCommand;
+  readonly send?: (input: { readonly serviceUrl: string; readonly conversationId: string; readonly body: unknown }) => Promise<unknown>;
+  readonly probeFor?: TeamsRosterProbeFor;
+  readonly audit?: typeof appendAudit;
+}
+
+export async function liveTeamsOeCommand(
+  a: TeamsMessageActivity,
+  command: OeCommand,
+  attachSession: AttachSessionForCancel | undefined,
+  deps: TeamsOeCommandDeps = {},
+): Promise<void> {
+  let text: string;
+  try {
+    const auth = await teamsAuthWithUserType(authForActivity(a), a, deps.probeFor);
+    const binding = bindFrom({ channel: { kind: "teams" }, session: { auth: { current: auth } } });
+    await (deps.audit ?? appendAudit)({
+      org: binding.org,
+      platform: "teams",
+      workspace: binding.workspace,
+      surface: `${binding.platform}/${binding.workspace}/${binding.surface}`,
+      principalId: a.from.id,
+      action: "teams.oe_command",
+      detail: { command: command.kind, conversationId: a.conversation.id },
+    }).catch(() => undefined);
+    text = await (deps.run ?? runOeCommand)(command, binding, attachSession ? { attachSession } : {});
+  } catch (err) {
+    console.error(`[open-everywhere:teams-front] "${oeSlash()}" command failed softly: ${String(err)}`);
+    text = commandFailureText(err);
+  }
+  try {
+    await (deps.send ?? sendTeamsActivityBackedOff)({ serviceUrl: a.serviceUrl, conversationId: a.conversation.id, body: { type: "message", text } });
+  } catch (err) {
+    tlog(`"${oeSlash()}" answer could not be posted in ${a.conversation.id}: ${String(err)}`);
+  }
+}
+
 export interface TeamsFrontOptions {
   readonly verify?: (req: Request) => Promise<string>;
   readonly dedupe?: EventDedupe;
@@ -372,9 +421,35 @@ export interface TeamsFrontOptions {
   readonly markRoomWatched?: (partition: Partition, atIso: string) => Promise<void>;
   readonly clearRoomStop?: (partition: Partition, atIso: string, engagedBy: string) => Promise<void>;
   readonly approvalInvoke?: (invoke: TeamsApprovalInvoke, waitUntil: (p: Promise<unknown>) => void) => Promise<TeamsInvokeResponseBody>;
+  readonly oeCommand?: (a: TeamsMessageActivity, command: OeCommand, attachSession: AttachSessionForCancel | undefined) => Promise<void>;
+  readonly channelIntro?: (update: TeamsBotAddedUpdate) => Promise<TeamsIntroOutcome>;
+  readonly firstContactIntro?: (a: TeamsMessageActivity) => Promise<TeamsIntroOutcome>;
 }
 
 const OK = () => new Response("ok");
+const NOT_TEAMS = () => new Response("this bot serves the Microsoft Teams channel only", { status: 403 });
+
+function describeChannelId(parsed: unknown): string {
+  const v = typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>)["channelId"] : undefined;
+  return typeof v === "string" ? JSON.stringify(v.slice(0, 40)) : "absent";
+}
+
+export function guardTeamsChannelOnly(inner: RouteHandler): RouteHandler {
+  return async (req: Request, args: RouteHandlerArgs): Promise<Response> => {
+    const rawBody = await req.text();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(rawBody);
+    } catch {
+      parsed = undefined;
+    }
+    if (parsed !== undefined && !isTeamsChannelActivity(parsed)) {
+      tlog(`refused a non-Teams activity on the internal route (channelId ${describeChannelId(parsed)})`);
+      return NOT_TEAMS();
+    }
+    return inner(new Request(req.url, { method: "POST", headers: req.headers, body: rawBody }), args);
+  };
+}
 
 const DEDUPE_TTL_MS = 10 * 60_000;
 let warnedDedupeStore = false;
@@ -406,6 +481,7 @@ export async function liveTeamsDispatch(
   plan: TeamsFrontPlan,
   to: RouteHandlerArgs["to"],
   probeFor?: TeamsRosterProbeFor,
+  nameDropFor: (a: TeamsMessageActivity, partition: Partition) => Promise<boolean> = (activity, partition) => resolveTeamsNameDrop(activity, partition, "seat"),
 ): Promise<void> {
   const auth = await teamsAuthWithUserType(plan.auth, a, probeFor);
   const wakeCtx: BindableContext = { channel: { kind: "teams" }, session: { auth: { current: auth as unknown as { attributes?: Readonly<Record<string, string>> } } } };
@@ -418,6 +494,8 @@ export async function liveTeamsDispatch(
   }
   const graphTeamId = await teamsGraphTeamId(a.teamId, a.serviceUrl);
   const replyChainRootId = teamsReplyChainRoot(a.conversation.id);
+  const directMention = plan.window.addressing === "direct-mention";
+  const nameDrop = directMention ? false : await nameDropFor(a, plan.partition).catch(() => false);
   const triggerFacts: IngestedChatMessage = { trust, refuted: teamsAuthorRefuted(auth), ...teamsAuthorFacts(auth, a.from.id) };
   await handleTeamsSingleWindowDispatch(
     {
@@ -442,6 +520,7 @@ export async function liveTeamsDispatch(
       ...(a.replyToId ? { threadRootId: teamsThreadRootActivityId(a) ?? a.replyToId } : {}),
       ...(replyChainRootId ? { replyChainRootId } : {}),
       engagementTier,
+      ...(nameDrop ? { nameDrop: true } : {}),
       window: plan.window,
     },
     liveTeamsSupervisorDeps(plan, to),
@@ -453,7 +532,7 @@ export async function liveTeamsDispatch(
     surface: plan.surfaceKey,
     principalId: a.from.id,
     action: "teams.dispatched",
-    detail: { addressing: plan.window.addressing ?? "channel-watch", conversationId: a.conversation.id },
+    detail: { addressing: plan.window.addressing ?? (nameDrop ? "name-drop" : "channel-watch"), conversationId: a.conversation.id },
   }).catch(() => undefined);
 }
 
@@ -550,6 +629,9 @@ export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFr
   const markRoomWatched = opts.markRoomWatched ?? markTeamsRoomWatched;
   const clearRoomStop = opts.clearRoomStop ?? clearTeamsRoomStop;
   const approvalInvoke = opts.approvalInvoke ?? ((invoke: TeamsApprovalInvoke, waitUntil: (p: Promise<unknown>) => void) => handleTeamsApprovalInvoke(invoke, { waitUntil }));
+  const oeCommand = opts.oeCommand ?? ((a: TeamsMessageActivity, command: OeCommand, attachSession: AttachSessionForCancel | undefined) => liveTeamsOeCommand(a, command, attachSession));
+  const channelIntro = opts.channelIntro ?? ((update: TeamsBotAddedUpdate) => liveTeamsChannelIntro(update));
+  const firstContactIntro = opts.firstContactIntro ?? liveTeamsFirstContactIntro;
 
   return async (req: Request, args: RouteHandlerArgs): Promise<Response> => {
     let rawBody: string;
@@ -568,6 +650,10 @@ export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFr
       parsed = JSON.parse(rawBody);
     } catch {
       return forward();
+    }
+    if (!isTeamsChannelActivity(parsed)) {
+      tlog(`refused a non-Teams activity (channelId ${describeChannelId(parsed)})`);
+      return NOT_TEAMS();
     }
     const reaction = parseTeamsReaction(parsed);
     if (reaction) {
@@ -588,6 +674,19 @@ export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFr
       return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json; charset=utf-8" } });
     }
 
+    if (activity?.type === "conversationUpdate") {
+      const added = parseTeamsBotAdded(activity);
+      if (added) {
+        args.waitUntil(
+          channelIntro(added).then(
+            (o) => tlog(`bot added to ${added.conversationId}: intro ${o.posted ? "posted" : `not posted (${o.reason})`}`),
+            (err) => tlog(`intro leg failed: ${String(err)}`),
+          ),
+        );
+      }
+      return forward();
+    }
+
     if (!activity || activity.type !== "message") {
       return forward();
     }
@@ -606,6 +705,26 @@ export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFr
           userId: activity.from.id,
           teamId: activity.teamId,
         }),
+      );
+    }
+
+    const command = machineAuthored ? null : parseTeamsOeCommand(activity.text, activity.isBotMentioned === true || activity.scope === "personal");
+    if (command) {
+      const commandKey = `teams-oe:${activity.conversation.id}:${activity.id}`;
+      if (dedupe.seen(commandKey, now())) return OK();
+      dedupe.mark(commandKey, now());
+      if (!(await markEventSeen(deploymentOrg(), commandKey, new Date(now()).toISOString()))) return OK();
+      tlog(`activity ${activity.id} in ${activity.conversation.id}: "${oeSlash()}" ${command.kind} — answered with no model turn`);
+      args.waitUntil(oeCommand(activity, command, args.attachSession).catch((err) => tlog(`"${oeSlash()}" command failed: ${String(err)}`)));
+      return OK();
+    }
+
+    if (!machineAuthored && activity.scope === "channel" && activity.isBotMentioned === true) {
+      args.waitUntil(
+        firstContactIntro(activity).then(
+          (o) => (o.posted ? tlog(`first contact in ${activity.conversation.id}: intro posted`) : undefined),
+          (err) => tlog(`first-contact intro failed: ${String(err)}`),
+        ),
       );
     }
 
@@ -701,5 +820,6 @@ export function frontTeamsChannel<C extends Channel<any, any, any>>(inner: C, op
     );
   }
   const front = buildTeamsFrontHandler(innerPost.handler, opts);
-  return { ...inner, routes: [POST(PUBLIC_TEAMS_ROUTE, front), ...inner.routes] };
+  const guardedInner = inner.routes.map((r) => (r === innerPost ? { ...innerPost, handler: guardTeamsChannelOnly(innerPost.handler) } : r));
+  return { ...inner, routes: [POST(PUBLIC_TEAMS_ROUTE, front), ...guardedInner] };
 }

@@ -1,4 +1,5 @@
 import {
+  commandFailureText,
   bindFrom,
   MODEL_AB_RATING_MAX,
   MODEL_AB_RATING_MIN,
@@ -72,7 +73,7 @@ export function parseDiscordOeCommandOptions(rawOptions: unknown): OeCommand {
     if (score === undefined || !Number.isInteger(score) || score < MODEL_AB_RATING_MIN || score > MODEL_AB_RATING_MAX) {
       return {
         kind: "error",
-        message: `"${oeSlash("rate")}" needs a whole "score" from ${MODEL_AB_RATING_MIN} to ${MODEL_AB_RATING_MAX} (got ${JSON.stringify(scoreOpt?.value)}).`,
+        message: `Rate with a whole number from ${MODEL_AB_RATING_MIN} to ${MODEL_AB_RATING_MAX}, for example \`${oeSlash("rate 4")}\`.`,
       };
     }
     return { kind: "rate", score };
@@ -88,14 +89,14 @@ export function parseDiscordOeCommandOptions(rawOptions: unknown): OeCommand {
       if (usd === undefined || usd <= 0) {
         return {
           kind: "error",
-          message: `"${oeSlash("budget raise")}" needs a positive "usd" amount (got ${JSON.stringify(usdOpt?.value)}).`,
+          message: `Add an amount in dollars, for example \`${oeSlash("budget raise 25")}\`.`,
         };
       }
       return { kind: "budget-raise", usd };
     }
-    return { kind: "error", message: `Unknown "budget" subcommand "${subName}".` };
+    return { kind: "error", message: `I don't know "${subName}". Try \`${oeSlash("budget")}\`, \`${oeSlash("budget raise 25")}\` or \`${oeSlash("budget clear")}\`.` };
   }
-  return { kind: "error", message: `Unknown "${oeSlash()}" subcommand "${name ?? "?"}" — try "${oeSlash("help")}".` };
+  return { kind: "error", message: `I don't know "${name ?? "that"}". Try \`${oeSlash("help")}\` to see what I can do.` };
 }
 
 interface ParsedOeInvocation {
@@ -114,11 +115,11 @@ export function parseOeCommandInteraction(raw: unknown): ParsedOeInvocation | { 
   const userId = (memberUser ? str(memberUser["id"]) : undefined) ?? (user ? str(user["id"]) : undefined);
   const isBot = memberUser?.["bot"] === true || user?.["bot"] === true;
   if (!userId || isBot) {
-    return { error: "Couldn't identify who invoked this — commands can't be run by a bot." };
+    return { error: "Only a person can use this command." };
   }
   const channelId = str(raw["channel_id"]);
   if (!channelId) {
-    return { error: "Couldn't resolve this channel's id — try again from a real channel or DM." };
+    return { error: "I can't do that here. Try it in a channel or a direct message." };
   }
   const guildId = str(raw["guild_id"]);
   const channelType = channelTypeFromRaw(raw);
@@ -142,7 +143,7 @@ export async function handleDiscordOeCommandInteraction(
     return ephemeral(text);
   } catch (err) {
     console.error(`[open-everywhere:discord-commands] "${oeSlash()}" command failed softly: ${String(err)}`);
-    return ephemeral(`Couldn't complete that: ${err instanceof Error ? err.message : String(err)}`);
+    return ephemeral(commandFailureText(err));
   }
 }
 

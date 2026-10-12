@@ -161,8 +161,8 @@ export const unifiedReplyEntry = defineTool({
       "for its result after your reply and you are called again with it. One answer is ONE " +
       "reply: once you answer a wake with `done: true`, replying to that same wake again in " +
       "this turn is refused. Wherever the conversation can still take one, a second message is " +
-      "discouraged rather than blocked. For a hand-off note whose full answer comes later, pass " +
-      "`done: false`.",
+      "discouraged rather than blocked. For a short line that says what will happen while the full answer " +
+      "comes later, pass `done: false`.",
     inputSchema: z.object({
       text: z.string().min(1).describe("The message to post (the target surface's markdown). One curated message, not a stack."),
       wake: z.string().min(1).describe("The `wake-id` from the envelope of the wake you are answering — your reply posts into that wake's conversation."),
@@ -171,14 +171,14 @@ export const unifiedReplyEntry = defineTool({
         .optional()
         .default(true)
         .describe(
-          "Leave true (the default) to mark this wake answered. Once you mark a wake done, a further reply to that SAME wake in this same turn is REFUSED and posts nothing; a second message is discouraged rather than blocked, and `force: true` posts it at the cost of a near-duplicate in the room. On a surface where your answer CLOSES the conversation — a Linear @mention reply ends the agent session it answers — nothing further can land, so that refusal stands and `force` does not open it. Set false ONLY when you know you will reply to this same wake again later — e.g. you are reporting progress now and the full answer comes after delegated work finishes. While a background worker you started this turn has not reported, `done: true` is REFUSED: you do not have its answer yet, so post a hand-off note with `done: false` and answer when the report arrives.",
+          "Leave true (the default) to mark this wake answered. Once you mark a wake done, a further reply to that SAME wake in this same turn is REFUSED and posts nothing; a second message is discouraged rather than blocked, and `force: true` posts it at the cost of a near-duplicate in the room. On a surface where your answer CLOSES the conversation — a Linear @mention reply ends the agent session it answers — nothing further can land, so that refusal stands and `force` does not open it. Set false ONLY when you know you will reply to this same wake again later — e.g. you are reporting progress now and the full answer comes after delegated work finishes. While a background worker you started this turn has not reported, `done: true` is REFUSED: you do not have its answer yet, so post a short line with `done: false` that says what will happen, never that a worker has it, and answer when the report arrives.",
         ),
       force: z
         .boolean()
         .optional()
         .default(false)
         .describe(
-          "Leave false. Set true ONLY to override a host refusal about the state of the room: that this conversation has moved on (newer messages you have not read are on their way to you), that your own last message here is still the newest one and this should be an edit, or that you already answered this wake in this turn. It posts your reply anyway. It does NOT override a refusal about what the room can still receive — where your answer closed the conversation, no flag reopens it. Use it when posting NOW as a separate message matters more — a time-critical alert, a hand-off note, or something that genuinely has to notify the room again. It costs the room a near-duplicate to read, and it is recorded.",
+          "Leave false. Set true ONLY to override a host refusal about the state of the room: that this conversation has moved on (newer messages you have not read are on their way to you), that your own last message here is still the newest one and this should be an edit, or that you already answered this wake in this turn. It posts your reply anyway. It does NOT override a refusal about what the room can still receive — where your answer closed the conversation, no flag reopens it. Use it when posting NOW as a separate message matters more — a time-critical alert, a line that says what will happen, or something that genuinely has to notify the room again. It costs the room a near-duplicate to read, and it is recorded.",
         ),
     }),
     outputSchema: z.object({ posted: z.boolean(), id: z.string(), note: z.string() }),

@@ -30,10 +30,14 @@ import { loadPrincipals } from "../identity/principals.js";
 import { loadGroups } from "../identity/groups.js";
 import { registerA2aAgents } from "@open-everywhere/core/agent/a2a/agents.js";
 import { A2A_AGENTS } from "../access/a2a-agents.js";
+import { assertA2aInboundDomains, registerA2aInbound } from "@open-everywhere/core/agent/a2a/inbound/declaration.js";
+import { registerA2aInboundPlatform } from "@open-everywhere/core/agent/a2a/inbound/platform.js";
+import { A2A_INBOUND } from "../access/a2a-inbound.js";
 import "../identity/surfaces.js";
 import "../access/browser-hosts.js";
 import "../meetings/policy.js";
 import "../email/policy.js";
+import "../google-chat/policy.js";
 import "../personal-browser/policy.js";
 import "../identity/authors.js";
 import "../routines/collectors.js";
@@ -44,6 +48,10 @@ registerSettings(SETTINGS_OVERRIDES);
 registerModelPricing(loadModelPricing());
 
 registerA2aAgents(A2A_AGENTS);
+
+registerA2aInbound(A2A_INBOUND);
+assertA2aInboundDomains(A2A_INBOUND, loadDomains());
+registerA2aInboundPlatform();
 
 registerConfig({
   loadBundles,

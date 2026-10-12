@@ -1,4 +1,5 @@
 import { defineHook } from "eve/hooks";
+import { tryPrincipalKey } from "../identity/principal-key.js";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { actingPrincipalId, currentTurnAddressed, currentTurnBotName } from "../identity/binding.js";
 import { detectLinkClaim, detectAddressedLinkClaim, mintLinkCode } from "../identity/link-challenge.js";
@@ -109,7 +110,7 @@ export async function observeLinkClaim(input: {
     return undefined;
   }
 
-  const claimant = await humanAccountLabel(input.platform, input.authorId, claimed.claimedTenant ?? input.tenant);
+  const claimant = await humanAccountLabel(input.platform, input.authorId, claimed.claimedTenant ?? input.tenant, claimed.initiatingPlatform);
   if (backCode) await notify(input.notifyClaimant, claimCodeBackReply(backCode));
   else if (backDecision.mint === false && backDecision.reason === "undeliverable") {
     log(`link claim ${claimed.id} recorded, but there is nowhere to post a second code back to "${input.platform}" — the finalize degrades to an acknowledged confirm.`);
@@ -141,7 +142,7 @@ export async function observeLinkClaim(input: {
       error: new Error(`no DM-delivery arm for "${claimed.initiatingPlatform}" — notice not attempted`),
     }).catch(() => undefined);
   }
-  log(`link claim recorded: ${claimant} claimed challenge ${claimed.id} — awaiting the initiator's confirmation.`);
+  log(`link claim recorded: ${tryPrincipalKey(input.platform, claimed.claimedTenant ?? input.tenant, input.authorId) ?? `${input.platform} account ${input.authorId}`} claimed challenge ${claimed.id} — awaiting the initiator's confirmation.`);
   return claimed.id;
 }
 

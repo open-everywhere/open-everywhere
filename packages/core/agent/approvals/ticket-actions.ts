@@ -1,3 +1,4 @@
+import { platformName } from "../channels/friendly-ids.js";
 import { entityActionFn } from "../channels/entity-actions.js";
 import { appendAudit } from "../audit/audit.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
@@ -52,7 +53,7 @@ const ticketSetState: ActionKind<TicketSetStateArgs> = {
   kind: "ticket.set_state",
   policy: "member",
   plainSummary(args) {
-    return `Move ${plainValue(args.platform)} ${plainValue(args.entityId)} to "${plainValue(args.state)}"`;
+    return `Move ${platformName(args.platform)} ${plainValue(args.entityId)} to "${plainValue(args.state)}"`;
   },
   summarize(args) {
     return [`Set ${args.platform} ${args.entityId} state → "${args.state}"`, ...taintedLine(args.tainted)];
@@ -66,7 +67,7 @@ const ticketAssign: ActionKind<TicketAssignArgs> = {
   kind: "ticket.assign",
   policy: "member",
   plainSummary(args) {
-    return `Assign ${plainValue(args.platform)} ${plainValue(args.entityId)} to ${plainValue(args.assignee)}`;
+    return `Assign ${platformName(args.platform)} ${plainValue(args.entityId)} to ${plainValue(args.assignee)}`;
   },
   summarize(args) {
     return [`Assign ${args.platform} ${args.entityId} → ${args.assignee}`, ...taintedLine(args.tainted)];

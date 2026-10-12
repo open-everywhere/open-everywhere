@@ -34,6 +34,7 @@ export const WORKER_INDEX_SEAT_VERBS: ReadonlySet<string> = new Set([
   "set_dm_delivery",
   "ask_domain",
   "answer_domain_question",
+  "expect_bot_reply",
 ]);
 
 export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
@@ -86,7 +87,7 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
   {
     id: "conversation-history",
     headline: "Re-read a room's own history in full, and open or describe what was uploaded into it",
-    tools: ["read_channel", "read_thread", "read_file_upload", "describe_image", "read_routine_transcript"],
+    tools: ["read_channel", "read_thread", "look_up", "read_file_upload", "describe_image", "read_routine_transcript"],
   },
   {
     id: "memory",
@@ -271,7 +272,7 @@ const DO_NOT_PRE_EMPT_THE_GATE =
 function delegationReturnShape(route: "agent", asyncVerb: "spawn_thread_session" | undefined): string {
   const lines = [
     `\`${route}\` does NOT block. It starts the worker in the background and hands you a task receipt at once, so this turn ends and this room stays answerable while the work runs.`,
-    `If this wake owes an answer — it addressed you, or you promised one — acknowledge the hand-off in the same turn with \`done: false\`, which keeps the wake open for the real answer.`,
+    `If this wake owes an answer — it addressed you, or you promised one — post one short line in the same turn with \`done: false\` that says what will happen, never that you handed it off. That reply keeps the wake open for the real answer.`,
     `If nobody asked you anything (a channel-watch wake you are only listening to), delegate silently and call \`no_reply\`: the worker's settlement then ends in silence too, unless it turns up something the room asked for.`,
     `When the worker settles, its completion arrives as a NEW message on a later turn, and that message tells you how to read its output. Stop work you no longer need with \`task_cancel\`, using the task id from the receipt.`,
     `Say which request the result answers. Another message can arrive in this room while a worker runs, and an answer posted against the wrong one reads as a non-sequitur.`,
@@ -333,10 +334,10 @@ export function renderWorkerCapabilityIndex(
     "",
     route === "agent" ? delegationReturnShape(route, asyncVerb) : "",
     "",
-    "And never say you cannot do something that a worker can. Route it, say you have routed it, and",
-    "come back with the answer. Routed work is NOT done until the worker reports back: acknowledge",
-    'it is underway ("handing this off — will report back"), and never tell the room something is',
-    "saved, posted or finished before the worker's own report says so.",
+    "And never say you cannot do something that a worker can. Route it, and come back with the",
+    "answer. Routed work is NOT done until the worker reports back: say what will happen (\"I'll post",
+    "the result here when it's ready\"), never that you handed it off, and never tell the room something",
+    "is saved, posted or finished before the worker's own report says so.",
     "",
     DO_NOT_PRE_EMPT_THE_GATE,
   );

@@ -1,4 +1,11 @@
-import { getSecretVia, type DirectoryAccount, type DirectoryPerson, type DirectoryProvider } from "@open-everywhere/core/agent/adapter-api.js";
+import {
+  declaredConnectionSignIns,
+  getSecretVia,
+  OKTA_LINK_PLATFORM,
+  type DirectoryAccount,
+  type DirectoryPerson,
+  type DirectoryProvider,
+} from "@open-everywhere/core/agent/adapter-api.js";
 import type { OktaAppMapping, OktaDirectoryConfig } from "./config.js";
 
 export type FetchLike = typeof fetch;
@@ -43,6 +50,26 @@ export interface OktaDirectoryDeps {
   readonly config: OktaDirectoryConfig;
   readonly fetch?: FetchLike;
   readonly resolveToken?: (broker: string, ref: string) => Promise<string>;
+  readonly proposeOwnAccount?: () => boolean;
+}
+
+export function xaaNamesOrg(orgUrl: string, declared: ReadonlyMap<string, unknown> = declaredConnectionSignIns()): boolean {
+  let origin: string;
+  try {
+    origin = new URL(orgUrl).origin;
+  } catch {
+    return false;
+  }
+  for (const v of declared.values()) {
+    const rec = v as { mode?: unknown; idpIssuer?: unknown };
+    if (rec.mode !== "xaa" || typeof rec.idpIssuer !== "string") continue;
+    try {
+      if (new URL(rec.idpIssuer).origin === origin) return true;
+    } catch {
+      continue;
+    }
+  }
+  return false;
 }
 
 function displayNameOf(user: OktaUser): string {
@@ -64,6 +91,7 @@ export function makeOktaDirectoryProvider(deps: OktaDirectoryDeps): DirectoryPro
   const { config } = deps;
   const fetchImpl = deps.fetch ?? fetch;
   const resolveToken = deps.resolveToken ?? ((broker: string, ref: string) => getSecretVia(broker, ref));
+  const proposeOwnAccount = deps.proposeOwnAccount ?? (() => xaaNamesOrg(config.orgUrl));
 
   const orgOrigin = new URL(config.orgUrl).origin;
 
@@ -148,6 +176,7 @@ export function makeOktaDirectoryProvider(deps: OktaDirectoryDeps): DirectoryPro
       const users = await getAll<OktaUser>(`/api/v1/users?limit=${PAGE_LIMIT}`, token);
       const groups = await groupsByUser(token);
       const accounts = await accountsByUser(token);
+      const ownAccount = proposeOwnAccount();
 
       const people: DirectoryPerson[] = [];
       for (const user of users) {
@@ -157,7 +186,7 @@ export function makeOktaDirectoryProvider(deps: OktaDirectoryDeps): DirectoryPro
           externalId: user.id,
           displayName: displayNameOf(user),
           ...(email ? { email } : {}),
-          accounts: accounts.get(user.id) ?? [],
+          accounts: ownAccount ? [...(accounts.get(user.id) ?? []), { platform: OKTA_LINK_PLATFORM, nativeId: user.id, grade: "attested" }] : (accounts.get(user.id) ?? []),
           groups: (groups.get(user.id) ?? []).slice().sort(),
           deprovisioned: DEPROVISIONED_STATUSES.has((user.status ?? "").toUpperCase()),
         });

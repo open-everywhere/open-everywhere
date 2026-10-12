@@ -7,6 +7,7 @@ import noReplyTool from "../../agent/tools/no_reply.js";
 import updateStatusTool from "../../agent/tools/update_status.js";
 import standDownTool from "../../agent/tools/stand_down.js";
 import haltTool from "../../agent/tools/halt.js";
+import lookUpTool from "../../agent/tools/look_up.js";
 import askQuestionTool from "../../agent/tools/ask_question.js";
 import reactDynamic from "../../agent/tools/react.js";
 import spawnThreadSessionDynamic from "../../agent/tools/spawn_thread_session.js";
@@ -220,6 +221,7 @@ export async function buildLeanSeatToolset(opts: {
     update_status: rec("update_status", updateStatusTool as MountableEntry),
     stand_down: rec("stand_down", standDownTool as MountableEntry),
     halt: rec("halt", haltTool as MountableEntry),
+    look_up: rec("look_up", lookUpTool as MountableEntry),
   };
   if (opts.allowNoReply) {
     const entry = await tryReplyEntryForSeat(opts.ctx);

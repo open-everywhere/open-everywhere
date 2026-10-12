@@ -82,8 +82,9 @@ const webhookRotate: ActionKind<WebhookRotateArgs> = {
   policy: "member",
   beneficiaryClicker: true,
   plainSummary(args) {
-    return `New signing secret for the ${plainValue(args.hookId, 18)} webhook. Any old secret stops working unless an overlap is declared. ${requesterWords(args.requestedBy, args.surfaceKey)} gets a one-time link`;
+    return `Issue a new signing secret for the ${plainValue(args.hookId, 40)} webhook — the old secret stops working`;
   },
+  consequence: (args) => `${requesterWords(args.requestedBy, args.surfaceKey)} gets a one-time link to it. A declared overlap keeps the old secret working.`,
   summarize(args) {
     return [
       `Issue a new signing secret for the declared "${args.hookId}" webhook`,

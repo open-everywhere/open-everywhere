@@ -9,6 +9,13 @@ export function registerAuditDropCounter(fn: (action: string, platform: string) 
   auditDropCounter = fn;
 }
 
+export function noteAuditDrop(action: string, platform: string): void {
+  try {
+    auditDropCounter?.(action, platform);
+  } catch {
+  }
+}
+
 export async function appendAudit(entry: AuditInput): Promise<void> {
   const record: AuditEntry = { ...entry, ts: entry.ts ?? new Date().toISOString() };
   try {

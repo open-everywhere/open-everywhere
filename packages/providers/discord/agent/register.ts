@@ -19,7 +19,11 @@ import {
   registerAccountDirectory,
   registerProviderDocs,
   registerSurfaceCommandReconciler,
+  registerFriendlyNameResolver,
+  registerAccountDisplayName,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { fetchDiscordInfo } from "./channels/discord-channel-info.js";
+import { discordFriendlyNameResolver } from "./channels/discord-friendly-names.js";
 import { PROVIDER_DOCS } from "./docs-generated.js";
 import { DISCORD_SURFACE_PARITY } from "./surface-parity.js";
 import { DISCORD_PROVIDER_EVENTS } from "./provider-events.js";
@@ -44,6 +48,11 @@ export function registerDiscordProvider(): void {
   registerSurfaceParity("discord", DISCORD_SURFACE_PARITY);
   registerProviderEvents("discord", DISCORD_PROVIDER_EVENTS);
   registerPostArm(discordPostArm);
+  registerFriendlyNameResolver("discord", discordFriendlyNameResolver());
+  registerAccountDisplayName("discord", async (nativeId) => {
+    const info = await fetchDiscordInfo("users", nativeId);
+    return info ? { name: info.name, ...(info.handle ? { handle: info.handle } : {}) } : undefined;
+  });
   registerWakeOriginCodec("discord", discordWakeOriginCodec);
   registerReadAdapter(discordReadAdapter);
   registerSeatCatchUp("discord", discordSeatCatchUpFetch, { timestampPrecisionMs: DISCORD_TIMESTAMP_PRECISION_MS });

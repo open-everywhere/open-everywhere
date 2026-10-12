@@ -33,11 +33,12 @@ import {
 } from "../access/approver-chain.js";
 import { shadowJudgeAuditDetail } from "../access/approval-judge.js";
 import { RESUME_TOOL, TOOL_CONSEQUENCE } from "../access/consequence.js";
-import { haltAuditDetail, haltRefusalMessage, haltScopeFor, resolveHalt, type HaltDeps } from "../access/halt.js";
+import { haltAuditDetail, haltClickNotice, haltScopeFor, resolveHalt, type HaltDeps } from "../access/halt.js";
 import { parseScopeKey, platformOfScopeKey } from "../access/scope-key.js";
 import { rosterHasPrincipal, tryPrincipalKey } from "../identity/principal-key.js";
 import { checkClickerFloor, clickRoomMatches, clickerFloorRefusalNotice, type ClickerFloorRefusal } from "./clicker-floor.js";
 import { checkCardDisclosure, cardDisclosureRefusalNotice } from "./card-disclosure.js";
+import { decidedCardLine } from "./card-layout.js";
 import { pendingCardBlocks, decidedCardBlocks, groupedCardBlocks, judgeLiftNoticeBlocks, judgeLiftNoticeText, GROUPED_CARD_MAX_ITEMS, type GroupedCardItem, type RenderedCard } from "./card.js";
 import { contradictJudgeAllow, judgeContradictionNotice, type ContradictJudgeAllowOutcome } from "./judge-contradiction.js";
 import { applyAllowRule, auditAllowRuleRefused, dmRulesForProposal, planAllowRuleClick, type AllowRulePlan } from "./allow-rule-apply.js";
@@ -429,6 +430,7 @@ async function rewriteCard(post: PostFn, channelId: string, ts: string, card: Re
   body.set("ts", ts);
   body.set("text", card.text);
   body.set("blocks", JSON.stringify(card.blocks));
+  if (card.metadata) body.set("metadata", JSON.stringify(card.metadata));
   const res = await post("chat.update", body.toString()).catch(() => undefined);
   return res?.ok === true;
 }
@@ -1068,6 +1070,7 @@ async function updateCard(post: PostFn, channelId: string, ts: string | undefine
   body.set("ts", ts);
   body.set("text", card.text);
   body.set("blocks", JSON.stringify(card.blocks));
+  if (card.metadata) body.set("metadata", JSON.stringify(card.metadata));
   await post("chat.update", body.toString());
 }
 
@@ -1088,6 +1091,7 @@ async function postRenderedCard(post: PostFn, channelId: string, threadTs: strin
   if (threadTs) body.set("thread_ts", threadTs);
   body.set("text", card.text);
   body.set("blocks", JSON.stringify(card.blocks));
+  if (card.metadata) body.set("metadata", JSON.stringify(card.metadata));
   const res = await post("chat.postMessage", body.toString());
   if (res?.ok === true && typeof res.ts === "string") return { ts: res.ts };
   if (res && typeof res["error"] === "string") return { error: res["error"] as string };
@@ -1112,15 +1116,8 @@ async function postThreadNote(post: PostFn, channelId: string, threadTs: string 
   await post("chat.postMessage", body.toString());
 }
 
-function decisionNoticeText(summaryLines: string[], outcomeLine: string, clickerId: string, status: PendingStatus): string {
-  const what = summaryLines[0] ?? "the requested change";
-  if (status === "rejected") {
-    return outcomeLine === "rejected"
-      ? `⛔ Approval REJECTED by <@${clickerId}> — "${what}" was NOT applied. Propose again if it's still needed.`
-      : `⛔ Approval REJECTED by <@${clickerId}> — "${what}" was NOT applied. ${outcomeLine}.`;
-  }
-  if (status === "expired") return `⌛ Approval EXPIRED without a decision — "${what}" was NOT applied. Propose again if it's still needed.`;
-  return `✅ Approval APPROVED by <@${clickerId}> — "${what}": ${outcomeLine}`;
+function decisionNoticeText(row: PendingActionRow, outcomeLine: string, clickerId: string, status: PendingStatus): string {
+  return decidedCardLine({ ...row, status }, status === "expired" ? undefined : outcomeLine, `<@${clickerId}>`);
 }
 
 function summaryLinesFor(row: PendingActionRow): string[] {
@@ -1310,7 +1307,7 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
     if (haltState.halted) {
       await auditClickerDenial(input.org, row, input.clickerId, "halted", undefined, haltAuditDetail(haltState));
       emitTelemetry("oe.feature.used", { "oe.feature": "approval_decided", "oe.outcome": "halted" });
-      return { outcome: "halted", row, notice: haltRefusalMessage(haltState, "deciding this request") };
+      return { outcome: "halted", row, notice: haltClickNotice(haltState) };
     }
   }
 
@@ -1600,7 +1597,8 @@ export async function wakeWindowOnDecision(
   const surfaceKey = authority?.surfaceKey ?? input.surfaceKey;
   const origin = authority?.origin ?? input.origin;
 
-  const seat = await decisionWakeSeatFor(input.row.org, surfaceKey, { dmOnly: isDiscordDmOrigin(origin) });
+  const teamsChat = origin.platform === "teams" && authority !== undefined && authority.binding.mode !== "channel";
+  const seat = await decisionWakeSeatFor(input.row.org, surfaceKey, { dmOnly: isDiscordDmOrigin(origin) || teamsChat });
   if (!seat) return false;
   const { domainName } = seat;
 
@@ -1695,7 +1693,7 @@ export interface DecisionFeedbackInput {
 
 export async function deliverDecisionFeedback(input: DecisionFeedbackInput, decisionWake?: DecisionWakeDeps): Promise<void> {
   if (!swallowRoomOp(`an approval decision notice (${input.outcome})`)) {
-    await input.postNotice(decisionNoticeText(input.summaryLines, input.outcomeLine, input.clickerId ?? "system", input.outcome)).catch(() => undefined);
+    await input.postNotice(decisionNoticeText(input.row, input.outcomeLine, input.clickerId ?? "system", input.outcome)).catch(() => undefined);
   }
   if (input.target) {
     await wakeWindowOnDecision(

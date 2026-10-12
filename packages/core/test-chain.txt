@@ -92,6 +92,7 @@ test:memory-write-road
 test:memory-visible
 test:person-opt-out
 test:person-opt-out-hooks
+test:personal-watch
 test:memory-claim-guard
 test:approval-claim-guard
 test:request-claim-guard
@@ -187,6 +188,7 @@ test:surface-message-ops
 test:egress-spoof
 test:test-valves
 test:onboarding
+test:person-text-sweep
 test:control
 test:control-http
 test:control-auth
@@ -370,6 +372,8 @@ test:provider-selection
 test:window-capability
 test:window-topology-gate
 test:decision-wake
+test:seat-chatter
+test:voice
 test:self-dispatch
 test:transcript-tool
 test:source-scoped-mount
@@ -481,6 +485,7 @@ test:wake-rate-limit
 test:coalesced-ask
 test:exact-bot-post
 test:aws-sso-identity-binding
+test:xaa-identity-binding
 test:schema-policy-atomicity
 test:memory-reads
 test:memory-schema-policy-atomicity
@@ -500,12 +505,16 @@ test:output-language
 test:audit-export
 test:meetings
 test:meetings-native
+test:meeting-provenance
 test:meeting-speakers
 test:tool-usage
 test:a2a-client
+test:a2a-inbound
 test:domain-question
 test:thread-seat-close
 test:routing-decision-scoring
 test:email
 test:app-code-fingerprint
 test:personal-browser
+test:personal-browser-teach
+test:bot-ask

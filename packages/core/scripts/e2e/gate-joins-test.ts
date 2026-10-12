@@ -1608,6 +1608,9 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
 
   ok(APPROVAL_DECISION_NOTICE.test('✅ Approval APPROVED by <@U123> — "Create routine": applied') === true, "the approve notice is the decision notice");
   ok(APPROVAL_DECISION_NOTICE.test('⛔ Approval REJECTED by <@U123> — "x" was NOT applied.') === true, "the reject notice is the decision notice");
+  ok(APPROVAL_DECISION_NOTICE.test("✅ Approved by <@U123> — routine started — runs daily at 09:00 UTC") === true, "OPE-2481: the one-line approve notice is the decision notice");
+  ok(APPROVAL_DECISION_NOTICE.test("❌ Rejected by <@U123> — Start a routine that runs daily at 09:00 UTC") === true, "OPE-2481: the one-line reject notice is the decision notice");
+  ok(APPROVAL_DECISION_NOTICE.test("⏰ Expired — Start a routine that runs daily at 09:00 UTC") === true, "OPE-2481: the one-line expiry notice is the decision notice");
   ok(APPROVAL_DECISION_NOTICE.test(GPT56_CORRECTION) === false, "a seat reply that mentions an approval is NOT the decision notice");
 
   const src = readFileSync(new URL("./scenarios.ts", import.meta.url), "utf8");

@@ -1,6 +1,7 @@
 import { deliverProactiveDm } from "../channels/dm-audience.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import type { ActionKind } from "./types.js";
+import { QUOTE_MAX, plainQuote } from "./plain-text.js";
 import { personWords, platformName } from "../channels/friendly-ids.js";
 
 export interface ChatDmArgs {
@@ -36,6 +37,8 @@ const chatDm: ActionKind<ChatDmArgs> = {
   kind: "chat.dm",
   policy: "member",
   plainSummary: (args) => `Send a direct message to ${recipientWords(args)}`,
+  consequence: (args) => `${plainQuote(args.text, QUOTE_MAX - 60)} — later messages to them go without asking`,
+  consequenceQuotes: true,
   summarize: summarizeDm,
   async execute(args, decidedBy) {
     await deliverProactiveDm({

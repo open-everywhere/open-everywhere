@@ -33,7 +33,13 @@ export const WAKE_ARM_SURFACE_CONTRACT: Readonly<Record<WakeArmSurface, WakeArmS
       "basis, so this surface cannot tell an abstention from a policy drop. Offering the seam here " +
       "means splitting that function first — its own change, not this seam's.",
   }),
-  teams: Object.freeze({ offers: false, fields: Object.freeze([]) as readonly WakeArmField[], note: "No ambient name-drop route at all — there is no abstention to fill." }),
+  teams: Object.freeze({
+    offers: false,
+    fields: Object.freeze([]) as readonly WakeArmField[],
+    note:
+      "resolveTeamsNameDrop (teams-name-drop.ts, OPE-2444) answers one boolean per message and reports no " +
+      "abstention apart from a policy drop — offering the seam means staging its gates first.",
+  }),
   github: Object.freeze({ offers: false, fields: Object.freeze([]) as readonly WakeArmField[], note: "No ambient name-drop route at all — there is no abstention to fill." }),
   linear: Object.freeze({ offers: false, fields: Object.freeze([]) as readonly WakeArmField[], note: "No ambient name-drop route at all — there is no abstention to fill." }),
   notion: Object.freeze({ offers: false, fields: Object.freeze([]) as readonly WakeArmField[], note: "No ambient name-drop route at all — there is no abstention to fill." }),

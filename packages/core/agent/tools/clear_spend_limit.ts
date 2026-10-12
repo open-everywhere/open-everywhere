@@ -6,12 +6,14 @@ import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { domainForChannel } from "../memory/domain.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getConfig } from "../access/config.js";
-import { defaultScopeKey, assertScopableFromHere, assertScopeKeyShapeForLevel, approvalPostDeps, currentCapsFor, type CurrentCaps } from "./set_spend_limit.js";
+import { defaultScopeKey, assertScopableFromHere, assertScopeKeyShapeForLevel, approvalPostDeps, currentCapsFor, pendingScopeWords, type CurrentCaps } from "./set_spend_limit.js";
 import { CAP_LEVELS, type CapLevel } from "../operational/store.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { friendlyScopeLabel } from "../approvals/scope-label.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { placeBesideKey } from "../channels/friendly-ids.js";
+import { placeWords } from "../channels/friendly-ids.js";
 
 const LEVELS = CAP_LEVELS;
 type Level = CapLevel;
@@ -116,12 +118,12 @@ const clearSpendLimitEntry = defineTool({
         pendingId: posted.id,
         expiresAt: posted.expiresAt,
         note:
-          `Already pending — an identical clear of the ${plan.args.level} override on "${plan.args.scopeKey}" is awaiting an admin's Approve/Reject (pending ${posted.id}). ` +
-          `No new card was posted; tell the user the existing card${venue.sameRoom ? "" : ` in ${venue.surfaceKey}`} still needs an admin to tap Approve or Reject.` +
+          `Already pending — an identical clear of the ${plan.args.level} override on ${pendingScopeWords(scopeLabel)} is awaiting an admin's Approve/Reject. ` +
+          `No new card was posted; tell the user in plain words that the existing card${venue.sameRoom ? "" : ` in ${placeWords({ key: venue.surfaceKey })}`} still needs an admin to tap Approve or Reject.` +
           (venue.sameRoom ? "" : " Name that channel — the card is not in this conversation, so the user cannot see it from here."),
       };
     }
-    const subject = `clear ${plan.args.level} override on "${plan.args.scopeKey}"${tainted ? " ⚠ tainted" : ""}`;
+    const subject = `clear ${plan.args.level} override on ${placeBesideKey(plan.args.scopeKey)}${tainted ? " ⚠ tainted" : ""}`;
     if (posted.autoApproved) {
       return {
         requested: false,

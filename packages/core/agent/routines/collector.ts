@@ -8,6 +8,7 @@ export interface RoutineCollectorDef {
   readonly args?: Readonly<Record<string, unknown>>;
   readonly describe: string;
   readonly timeoutMs?: number;
+  readonly personal?: true;
 }
 
 const COLLECTOR_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/;
@@ -115,12 +116,15 @@ export type RoutineCollectorReader = (input: {
   readonly routineId: string;
   readonly collector: RoutineCollectorDef;
   readonly signal: AbortSignal;
+  readonly forPrincipal?: string;
 }) => Promise<string>;
 
 let READER: RoutineCollectorReader | undefined;
+let READER_PERSONAL = false;
 
-export function registerRoutineCollectorReader(reader: RoutineCollectorReader | undefined): void {
+export function registerRoutineCollectorReader(reader: RoutineCollectorReader | undefined, opts: { readonly personal?: boolean } = {}): void {
   READER = reader;
+  READER_PERSONAL = reader !== undefined && opts.personal === true;
 }
 
 export type CollectedInput =
@@ -133,6 +137,7 @@ export type CollectorFailure =
   | "no_reader"
   | "timeout"
   | "read_failed"
+  | "not_personal"
   | "collection_failed";
 
 export function describeCollectorFailure(failure: CollectorFailure, configValue?: string | number): string {
@@ -147,6 +152,8 @@ export function describeCollectorFailure(failure: CollectorFailure, configValue?
       return `the read did not answer within ${configValue ?? COLLECTOR_DEFAULT_TIMEOUT_MS}ms and was abandoned`;
     case "read_failed":
       return "the read failed";
+    case "not_personal":
+      return "this read is not declared to run as one person";
     case "collection_failed":
       return "the pre-fire collection step broke before this read ran";
   }
@@ -154,7 +161,7 @@ export function describeCollectorFailure(failure: CollectorFailure, configValue?
 
 class CollectorDeadline extends Error {}
 
-async function readWithDeadline(reader: RoutineCollectorReader, input: { org: string; routineId: string; collector: RoutineCollectorDef }): Promise<string> {
+async function readWithDeadline(reader: RoutineCollectorReader, input: { org: string; routineId: string; collector: RoutineCollectorDef; forPrincipal?: string }): Promise<string> {
   const ms = input.collector.timeoutMs ?? COLLECTOR_DEFAULT_TIMEOUT_MS;
   const ac = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -184,6 +191,7 @@ export async function collectRoutineInputs(input: {
   readonly routineId: string;
   readonly names: readonly string[];
   readonly heldKinds: readonly string[];
+  readonly forPrincipal?: string;
 }): Promise<readonly CollectedInput[]> {
   const out: CollectedInput[] = [];
   for (const name of input.names) {
@@ -201,8 +209,17 @@ export async function collectRoutineInputs(input: {
       out.push({ name, ok: false, failure: describeCollectorFailure("no_reader") });
       continue;
     }
+    if (input.forPrincipal !== undefined && (def.personal !== true || !READER_PERSONAL)) {
+      out.push({ name, ok: false, failure: describeCollectorFailure("not_personal") });
+      continue;
+    }
     try {
-      const raw = await readWithDeadline(reader, { org: input.org, routineId: input.routineId, collector: def });
+      const raw = await readWithDeadline(reader, {
+        org: input.org,
+        routineId: input.routineId,
+        collector: def,
+        ...(input.forPrincipal !== undefined ? { forPrincipal: input.forPrincipal } : {}),
+      });
       const { body, truncated } = capBody(raw);
       out.push({ name, ok: true, describe: def.describe, body, truncated });
     } catch (err) {

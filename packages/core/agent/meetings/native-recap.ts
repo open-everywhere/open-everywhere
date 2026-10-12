@@ -1,12 +1,12 @@
 import { createHash, randomBytes } from "node:crypto";
 import { appendAudit } from "../audit/audit.js";
-import { getOperationalStore } from "../operational/provider.js";
 import { getOperatorSecret } from "../credentials/operator-secrets.js";
 import { resolveHalt, haltScopeFor } from "../access/halt.js";
 import { meetingPolicy, type MeetingPolicy } from "./policy.js";
 import { meetingCompletion } from "./transcription.js";
 import { parseRecap, recapPrompt, renderRecapPost } from "./recap.js";
-import { claimMeetingRecap } from "./store.js";
+import { claimMeetingRecap, deleteMeetingRow, getMeetingRow, putMeetingRowIfAbsent } from "./store.js";
+import { markMeetingPostTarget, markPostedRecap } from "./provenance.js";
 import { notifyThread, type FinishDeps } from "./lifecycle.js";
 import {
   nativeMeetingMinutes,
@@ -143,8 +143,10 @@ async function postRecap(args: NativeRecapArgs, result: Extract<NativeTranscript
     }
   }
   const post = renderRecapPost(recap, { platform: args.platform, minutes, missingChunks: 0, empty, source: "native" });
+  await markMeetingPostTarget(args.org, args.origin);
   if (!(await claimMeetingRecap(args.org, args.recapId, rowTtlMs(args)))) return { kind: "duplicate" };
   const messageId = await notifyThread({ id: args.recapId, origin: args.origin }, post, deps);
+  if (messageId !== undefined) await markPostedRecap(args.org, args.origin, messageId);
   const speakers = new Set(result.segments.map((s) => s.speaker).filter((s) => s.length > 0)).size;
   await appendAudit({
     ...auditWhere(args.partition),
@@ -195,31 +197,28 @@ function parseWatch(raw: string | null): Watch | undefined {
 }
 
 async function claimWatch(args: NativeRecapArgs, deadline: number): Promise<number | undefined> {
-  const store = getOperationalStore();
   const value = JSON.stringify({ args, deadline } satisfies Watch);
   let slot: number | undefined;
   for (let n = 0; n < MAX_NATIVE_WATCHES && slot === undefined; n++) {
-    if (await store.putTaskResultIfAbsent(args.org, WATCH(n), value, new Date().toISOString(), rowTtlMs(args))) slot = n;
+    if (await putMeetingRowIfAbsent(args.org, WATCH(n), value, rowTtlMs(args))) slot = n;
   }
   if (slot === undefined) return undefined;
-  if (!(await store.putTaskResultIfAbsent(args.org, `meeting-native-watching:${args.recapId}`, String(slot), new Date().toISOString(), rowTtlMs(args)))) {
+  if (!(await putMeetingRowIfAbsent(args.org, `meeting-native-watching:${args.recapId}`, String(slot), rowTtlMs(args)))) {
     await releaseWatch(args.org, slot, args.recapId);
-    const kept = Number(await store.getTaskResult(args.org, `meeting-native-watching:${args.recapId}`));
+    const kept = Number(await getMeetingRow(args.org, `meeting-native-watching:${args.recapId}`));
     return Number.isInteger(kept) ? kept : slot;
   }
   return slot;
 }
 
 async function releaseWatch(org: string, slot: number, recapId: string): Promise<void> {
-  const store = getOperationalStore();
-  if (parseWatch(await store.getTaskResult(org, WATCH(slot)))?.args.recapId === recapId) await store.deleteTaskResult(org, WATCH(slot));
+  if (parseWatch(await getMeetingRow(org, WATCH(slot)))?.args.recapId === recapId) await deleteMeetingRow(org, WATCH(slot));
 }
 
 export async function nativeWatches(org: string): Promise<{ readonly slot: number; readonly recapId: string; readonly deadline: number }[]> {
-  const store = getOperationalStore();
   const out: { slot: number; recapId: string; deadline: number }[] = [];
   for (let n = 0; n < MAX_NATIVE_WATCHES; n++) {
-    const w = parseWatch(await store.getTaskResult(org, WATCH(n)));
+    const w = parseWatch(await getMeetingRow(org, WATCH(n)));
     if (w !== undefined) out.push({ slot: n, recapId: w.args.recapId, deadline: w.deadline });
   }
   return out;
@@ -229,8 +228,7 @@ export async function startNativeRecap(args: NativeRecapArgs, approvedBy: string
   const policy = deps.policy ?? meetingPolicy();
   if (!policy.native.enabled) throw new Error("recaps from the platform's own transcript were turned off on this deployment after the card was posted, so I did not read it");
   const now = (deps.now ?? Date.now)();
-  const store = getOperationalStore();
-  const settledAlready = (await store.getTaskResult(args.org, `meeting-recap:${args.recapId}`)) !== null;
+  const settledAlready = (await getMeetingRow(args.org, `meeting-recap:${args.recapId}`)) !== null;
   if (settledAlready || (await nativeWatches(args.org)).some((w) => w.recapId === args.recapId)) return { kind: "duplicate" };
   await appendAudit({
     ...auditWhere(args.partition),
@@ -262,17 +260,16 @@ export async function sweepNativeWatches(
   const clock = deps.clock ?? Date.now;
   const started = clock();
   const budget = deps.budgetMs ?? SWEEP_BUDGET_MS;
-  const store = getOperationalStore();
   const settled: string[] = [];
   let deferred = 0;
   const offset = Math.floor(now / SWEEP_TICK_MS) % MAX_NATIVE_WATCHES;
   for (let i = 0; i < MAX_NATIVE_WATCHES; i++) {
     const n = (offset + i) % MAX_NATIVE_WATCHES;
     if (clock() - started > budget) {
-      if (parseWatch(await store.getTaskResult(org, WATCH(n))) !== undefined) deferred++;
+      if (parseWatch(await getMeetingRow(org, WATCH(n))) !== undefined) deferred++;
       continue;
     }
-    const w = parseWatch(await store.getTaskResult(org, WATCH(n)));
+    const w = parseWatch(await getMeetingRow(org, WATCH(n)));
     if (w === undefined) continue;
     const { args } = w;
     if (!policy.native.enabled) {

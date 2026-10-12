@@ -45,24 +45,25 @@ ok(
   "CONTRACT: the false-security sentence does NOT reach the room",
 );
 ok(guarded.body.includes(NO_CARD_NOTE_OPENING), "CONTRACT: the host's own line replaces it");
-ok(guarded.body.includes("notion-rest"), "CONTRACT: the line NAMES the standing grant's credential");
+ok(!guarded.body.includes("notion-rest"), "🔴 CONTRACT (OPE-2487): the line does NOT name the credential id — that is the plane's word, not the room's");
 ok(guarded.body.includes("api.notion.com"), "CONTRACT: the line NAMES the host the grant reaches");
 ok(guarded.body.includes("ctwrite-53128"), "CONTRACT: the run token the room asked for SURVIVES the strike");
 ok(guarded.body.includes("app.notion.com/p/OE-tier-ctwrite-53128"), "CONTRACT: the page link SURVIVES the strike");
 ok(guarded.cause === "standing-write-grant", `CONTRACT: the cause is named for the row (got ${guarded.cause})`);
 ok(
-  guarded.body.includes("cannot say whether this act used it"),
-  "CONTRACT: the line says what rides in this room and admits it cannot say what ran",
+  guarded.body.includes("standing permission to make changes in api.notion.com") && guarded.body.includes("may have used it"),
+  "CONTRACT: the line says what stands in this room and admits it cannot say what ran",
 );
 ok(!/\bcovered\b/i.test(guarded.body), "CONTRACT: and never tells the room this particular act was covered");
-ok(!guarded.body.includes("GET"), "CONTRACT: the line names the MUTATING verbs only — a write grant's read half explains nothing");
-ok(guarded.body.includes("POST") && guarded.body.includes("PATCH"), "CONTRACT: it names POST and PATCH, the verbs that write");
+ok(!/\b(?:GET|POST|PATCH|PUT|DELETE)\b/.test(guarded.body), "🔴 CONTRACT (OPE-2487): the line names no HTTP verb — the place is enough for the room");
+ok(!/\b(?:grant|gate|ungated)\b/i.test(guarded.body.slice(guarded.body.indexOf(NO_CARD_NOTE_OPENING))), "🔴 CONTRACT (OPE-2487): the host's line uses no plane vocabulary (grant, gate, ungated)");
 
 const claimOnly = "I created the page. No approval was required.";
 
 const cardArm = applyApprovalClaimGuard(claimOnly, { approvalGateRan: true, gatedWrites: [], grants: [] });
 ok(cardArm.cause === "approval-gate-ran", "CAUSE: an approval gate that ran this turn contradicts the claim outright");
-ok(cardArm.body.includes("An approval gate ran on this turn"), "CAUSE: and the line says only what the signal proves — a gate RAN, not that a card is in the room");
+ok(cardArm.body.includes("(This needs an approval, or already has one.)"), "CAUSE: and the line says only what the signal proves — an approval path ran, never that the act was approved or that a card is in the room");
+ok(detectNoApprovalClaims(cardArm.body).length === 0, "🔴 CAUSE (OPE-2487): the host line makes no no-approval claim of its own");
 ok(!cardArm.body.includes("No approval was required"), "CAUSE: the contradicted sentence does not post");
 
 const writeArm = applyApprovalClaimGuard(claimOnly, {
@@ -71,9 +72,9 @@ const writeArm = applyApprovalClaimGuard(claimOnly, {
   grants: [],
 });
 ok(writeArm.cause === "gated-connector-write", "CAUSE: a completed gated connector write names the standing approval");
-ok(writeArm.body.includes("A gated notion write ran on it"), "CAUSE: and the line names the connection");
+ok(writeArm.body.includes("this notion change"), "CAUSE: and the line names the connection");
 ok(
-  writeArm.body.includes("an approval already stood"),
+  writeArm.body.includes("an approval for this notion change was already in place"),
   "CAUSE: it says an approval already stood — the one thing common to a session grant, a routine lift and the blanket memo",
 );
 
@@ -205,18 +206,18 @@ ok(notion !== undefined, "JOIN: openWriteHosts reports the write-capable Notion 
 ok(notion?.credential === "notion-rest", `JOIN: beside the connection id that stamps there (got ${String(notion?.credential)})`);
 ok(notion?.credentialed === true, "JOIN: and says a credential rides");
 const sentence = describeStandingWriteGrant({ host: notion!.host, credential: notion!.credential!, verb: notion!.verb });
-ok(sentence === "notion-rest may PATCH, POST to api.notion.com", `JOIN: the room-facing sentence reads "${sentence}"`);
+ok(sentence === "api.notion.com", `JOIN: the room-facing place reads "${sentence}"`);
 ok(
   compiled.find((h) => h.host === "registry.npmjs.org") === undefined,
   "JOIN: a GET-only host never reaches this plane at all — openWriteHosts drops it, so no reply can name it as a write grant",
 );
 ok(
-  describeStandingWriteGrant({ host: "registry.npmjs.org", credential: "npm", verb: ["GET"] }) === "npm may write to registry.npmjs.org",
-  "JOIN: a grant whose verbs are all reads still reads as a write grant — this function may not overrule openWriteHosts",
+  describeStandingWriteGrant({ host: "*.notion.com", credential: "npm", verb: ["GET"] }) === "notion.com",
+  "JOIN: a leading wildcard label is dropped from the place",
 );
 ok(
-  describeStandingWriteGrant({ host: "*", credential: "broad", verb: "any" }) === "broad may make any request to *",
-  'JOIN: the "any" shape is said in words, never expanded into a verb set nobody declared',
+  describeStandingWriteGrant({ host: "*", credential: "broad", verb: "any" }) === "any service",
+  'JOIN: a bare "*" is said in words, never printed as a symbol',
 );
 
 const scenarios = readFileSync(fileURLToPath(new URL("./e2e/scenarios.ts", import.meta.url)), "utf-8");

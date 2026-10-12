@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
-import { surfaceMessageOps } from "@open-everywhere/core/agent/adapter-api.js";
+import { surfaceMessageOps, friendlyGuardSource, isFriendlyGuarded } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerGithubProvider } from "../agent/register.js";
 import { githubMessageOps } from "../agent/channels/github-message-ops.js";
 import { _resetGitHubInstallationTokenCache } from "../agent/channels/github-post-arm.js";
@@ -51,7 +51,8 @@ try {
     registerGithubProvider();
     const resolved = surfaceMessageOps("github");
     ok(resolved !== undefined, "registerGithubProvider() makes surfaceMessageOps('github') resolve to something (OPE-899 was: it resolved undefined)");
-    ok(resolved === githubMessageOps, "…and it resolves to THIS module's ops object, by identity — the same one turn-anchor.ts's postSurfaceText dispatches to");
+    ok(isFriendlyGuarded(resolved), "the registry stores the ops wrapped by the friendly-names guard (OPE-2482)");
+    ok(friendlyGuardSource(resolved) === githubMessageOps, "…and it resolves to THIS module's ops object, by identity — the same one turn-anchor.ts's postSurfaceText dispatches to");
     ok(typeof resolved?.postText === "function" && typeof resolved?.editMessage === "function", "the resolved ops carry postText/editMessage");
     ok(resolved?.postFiles === undefined, "…and NO postFiles (GitHub has no attach-a-file-to-a-comment API)");
     ok(resolved?.setReaction === undefined, "…and NO setReaction (GitHub's fixed reaction set has no raised hand — the bare `stop` comment is the control)");

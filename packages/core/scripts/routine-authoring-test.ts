@@ -38,6 +38,7 @@ const { resolvePartition } = await import("../agent/memory/partition.js");
 const { DISPATCH_TICK_MINUTES } = await import("../agent/routines/schedule.js");
 await import("../agent/approvals/flow.js");
 const { actionKind } = await import("../agent/approvals/actions.js");
+const { routineWords } = await import("../agent/routines/schedule-words.js");
 const { registerSlackBridge } = await import("../agent/channels/slack-bridge.js");
 
 type Routine = import("../agent/routines/routine.js").Routine;
@@ -222,7 +223,8 @@ const enableTool = (await import("../agent/tools/enable_routine.js")).default;
   const msg = await editKind.execute(args as never, "U9");
   const after = (await store.getRoutine(ORG, SURFACE, "r-edit"))!;
   ok(after.prompt === "New instruction.", "edit: the click applies the new text");
-  ok(typeof msg === "string" && msg.includes("r-edit"), "edit: the click returns a human-readable confirmation naming the routine");
+  ok(typeof msg === "string" && msg.includes(routineWords(args.description)), "edit: the click returns a human-readable confirmation naming the routine");
+  ok(typeof msg === "string" && !msg.includes("r-edit"), "edit: the confirmation names the routine in plain words, not by its raw id");
 
   ok(after.id === "r-edit", "edit: the ID is preserved — every routine.fire row keyed on it still resolves");
   ok(after.createdAt === "2026-07-01T00:00:00.000Z", "edit: createdAt is preserved");
@@ -244,7 +246,7 @@ const enableTool = (await import("../agent/tools/enable_routine.js")).default;
   await refuses(() => editTool.execute({ id: "r-fin", prompt: "x" } as never, ctx), /terminal/, "edit: refuses a COMPLETED job — editing a routine that will never fire again changes nothing");
 
   const gone = await editKind.execute({ ...args, id: "r-vanished" } as never, "U9");
-  ok(typeof gone === "string" && /gone|cancelled/.test(gone), "edit: a routine cancelled between propose and click is reported, not re-created");
+  ok(typeof gone === "string" && /stopped before/.test(gone) && /nothing changed/.test(gone), "edit: a routine cancelled between propose and click is reported, not re-created");
   ok((await store.getRoutine(ORG, SURFACE, "r-vanished")) === null, "edit: …and nothing was written");
 }
 

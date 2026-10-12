@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { linearMessageOps } from "../agent/channels/linear-message-ops.js";
 import { registerLinearProvider } from "../agent/register.js";
-import { surfaceMessageOps } from "@open-everywhere/core/agent/adapter-api.js";
+import { surfaceMessageOps, friendlyGuardSource, isFriendlyGuarded } from "@open-everywhere/core/agent/adapter-api.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -35,7 +35,8 @@ try {
     registerLinearProvider();
     const resolved = surfaceMessageOps("linear");
     ok(resolved !== undefined, "registerLinearProvider() makes surfaceMessageOps('linear') resolve to something (OPE-899 was: it resolved undefined)");
-    ok(resolved === linearMessageOps, "…and it resolves to THIS module's ops object, by identity — the same one turn-anchor.ts's postSurfaceText/setSurfaceReaction dispatch to");
+    ok(isFriendlyGuarded(resolved), "the registry stores the ops wrapped by the friendly-names guard (OPE-2482)");
+    ok(friendlyGuardSource(resolved) === linearMessageOps, "…and it resolves to THIS module's ops object, by identity — the same one turn-anchor.ts's postSurfaceText/setSurfaceReaction dispatch to");
     ok(typeof resolved?.postText === "function" && typeof resolved?.editMessage === "function" && typeof resolved?.setReaction === "function", "the resolved ops carry postText/editMessage/setReaction");
     ok(resolved?.postFiles === undefined, "…and NO postFiles (the optional-tier ruling — Linear has no attach-a-file-to-a-comment mutation)");
   }

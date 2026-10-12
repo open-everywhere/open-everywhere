@@ -1,5 +1,5 @@
 import { callLinearGraphQL, createLinearAgentActivity, type LinearApiOptions, type LinearFetch } from "eve/channels/linear";
-import { withRetryAfter, type RetryPolicy } from "@open-everywhere/core/agent/adapter-api.js";
+import { friendlyOutboundText, withRetryAfter, type RetryPolicy } from "@open-everywhere/core/agent/adapter-api.js";
 
 export const LINEAR_SURFACE = "linear";
 
@@ -18,10 +18,34 @@ function baseFetch(api: LinearApi | undefined): LinearFetch {
   return api?.fetch ?? globalThis.fetch;
 }
 
+const MESSAGE_MUTATION = /\b(?:commentCreate|commentUpdate|agentActivityCreate)\s*\(/;
+
+async function renderBodies(value: unknown, depth = 0): Promise<void> {
+  if (depth > 8 || value === null || typeof value !== "object") return;
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (k === "body" && typeof v === "string") (value as Record<string, unknown>)[k] = await friendlyOutboundText(v, "linear");
+    else await renderBodies(v, depth + 1);
+  }
+}
+
+export async function friendlyLinearInit(init: RequestInit | undefined): Promise<RequestInit | undefined> {
+  if (typeof init?.body !== "string") return init;
+  try {
+    const parsed = JSON.parse(init.body) as { query?: unknown; variables?: unknown };
+    if (typeof parsed.query !== "string" || !MESSAGE_MUTATION.test(parsed.query) || parsed.variables === undefined) return init;
+    await renderBodies(parsed.variables);
+    return { ...init, body: JSON.stringify(parsed) };
+  } catch {
+    return init;
+  }
+}
+
 function retryingApi(api: LinearApi | undefined, operation: string): LinearApiOptions {
   const retry = api?.retry;
-  const fetchWithRetry: LinearFetch = (input, init) =>
-    withRetryAfter(() => baseFetch(api)(input, init), { ...retry, surface: LINEAR_SURFACE, operation });
+  const fetchWithRetry: LinearFetch = async (input, init) => {
+    init = await friendlyLinearInit(init);
+    return withRetryAfter(() => baseFetch(api)(input, init), { ...retry, surface: LINEAR_SURFACE, operation });
+  };
   return api?.apiBaseUrl === undefined ? { fetch: fetchWithRetry } : { apiBaseUrl: api.apiBaseUrl, fetch: fetchWithRetry };
 }
 
@@ -50,7 +74,9 @@ export function linearChannelOperation(body: unknown): string {
 
 export function linearChannelApi(api?: LinearApi): LinearApiOptions {
   const retry = api?.retry;
-  const fetchWithRetry: LinearFetch = (input, init) =>
-    withRetryAfter(() => baseFetch(api)(input, init), { ...retry, surface: LINEAR_SURFACE, operation: linearChannelOperation(init?.body) });
+  const fetchWithRetry: LinearFetch = async (input, init) => {
+    init = await friendlyLinearInit(init);
+    return withRetryAfter(() => baseFetch(api)(input, init), { ...retry, surface: LINEAR_SURFACE, operation: linearChannelOperation(init?.body) });
+  };
   return api?.apiBaseUrl === undefined ? { fetch: fetchWithRetry } : { apiBaseUrl: api.apiBaseUrl, fetch: fetchWithRetry };
 }

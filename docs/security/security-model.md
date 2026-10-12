@@ -379,6 +379,14 @@ a chat WAKE marks  ⟸  the room is DECLARED PUBLIC in the trust registry
 
 a chat READ marks  ⟸  any DISTINCT author of the fetched page was POSITIVELY REFUTED,
                       by their platform or by the author-trust register
+                   ∨  the page holds a post OE RECORDED as untrusted content, or the read is
+                      of a thread such a post went into   (a meeting recap, OPE-2464)
+
+a TURN marks       ⟸  it woke in a thread where OE recorded such a post
+                   ∨  it woke in a container where OE posted one in the last seven days
+                      (a backscroll can carry it from any thread of the container)
+                      (both checked at `actions.requested`, before the first action runs;
+                      a marked turn stays marked on redelivery, OPE-2464)
 ```
 
 The two seams differ in one way worth knowing. The **wake** leg runs in the ingress process, outside
@@ -391,8 +399,13 @@ branches on it.
 resolves its own per-author evidence, then asks the one shared join
 (`stampNonMemberChatAuth`), which is what keeps "non-member" meaning the same thing everywhere.
 
+**OE's own post can carry outside content.** A meeting recap is a bot post that a model wrote from an
+untrusted transcript. The author legs never grade a bot, so the host records the recap's message id and its
+thread at the moment it posts it (`meetings/provenance.ts`). That record is a fact about the message, never
+about its words, and it is the only way a bot line marks a turn.
+
 🔴 **Both legs refute; neither infers.** A probe that could not answer, a tenant nobody armed, a bot
-author and a message with no readable author id all mark **nothing**. Marking on silence would set
+author with no recorded post and a message with no readable author id all mark **nothing**. Marking on silence would set
 the bit on every read-heavy turn in an ordinary members-only workspace, and a bit that is always set
 is one nobody can act on.
 

@@ -1,7 +1,9 @@
 import { placeWords } from "../channels/friendly-ids.js";
+import { friendlyMonth, friendlyWhen, PersonFacingError } from "../channels/person-text.js";
 import { unattendedFrom, type SurfaceBinding } from "../identity/binding.js";
 import { cancelAnchoredTurn, type AttachSessionForCancel } from "../channels/turn-cancel.js";
-import { turnChannelKey } from "../channels/turn-registry.js";
+import { turnAnchorAddress, turnChannelKey } from "../channels/turn-registry.js";
+import { ownCardRoom } from "../approvals/card-venue.js";
 import { type Caps } from "../spend/spend.js";
 import { periodOf } from "../spend/spend.js";
 import { effectiveCaps, domainNameForScope } from "../spend/caps.js";
@@ -28,6 +30,7 @@ import { domainSpendWindow, reportDomainForBinding } from "../spend/reporting.js
 import type { SkillDomainRefusal } from "../skills/domain-skills.js";
 import { parseRateTokens, runRate, rateHelpLine, type RateCommand } from "./rate.js";
 import { optOutHelpLine, parseOptOutTokens, runOptOut, type OptOutCommand } from "./optout.js";
+import { parseWatchTokens, runWatch, watchHelpLine, type WatchCommand } from "./watch.js";
 import { agentCommandName, agentDisplayName } from "../identity/bot-name.js";
 import { getAppInfo, hasRealAppVersion, registerAppInfo as storeAppInfo, type AppInfo } from "./app-info.js";
 import { assertPostgresWiredAtBoot } from "../operational/postgres-wiring.js";
@@ -56,6 +59,7 @@ export type OeCommand =
   | { readonly kind: "stop" }
   | RateCommand
   | Extract<OptOutCommand, { kind: "optout" }>
+  | Extract<WatchCommand, { kind: "watch" }>
   | { readonly kind: "error"; readonly message: string };
 
 function parseBudgetTokens(rest: readonly string[]): OeCommand {
@@ -67,12 +71,15 @@ function parseBudgetTokens(rest: readonly string[]): OeCommand {
     if (!amountRaw || !Number.isFinite(usd) || usd <= 0) {
       return {
         kind: "error",
-        message: `"${oeSlash("budget raise")}" needs a positive USD amount, e.g. "${oeSlash("budget raise 25")}" (got ${JSON.stringify(amountRaw ?? "")}).`,
+        message: `Add an amount in dollars, for example \`${oeSlash("budget raise 25")}\`.`,
       };
     }
     return { kind: "budget-raise", usd };
   }
-  return { kind: "error", message: `Unknown "budget" action "${action}" — try "budget", "budget raise <usd>", or "budget clear".` };
+  return {
+    kind: "error",
+    message: `I don't know "${action}". Try \`${oeSlash("budget")}\`, \`${oeSlash("budget raise 25")}\` or \`${oeSlash("budget clear")}\`.`,
+  };
 }
 
 export function parseOeCommandTokens(tokens: readonly string[]): OeCommand {
@@ -83,7 +90,8 @@ export function parseOeCommandTokens(tokens: readonly string[]): OeCommand {
   if (sub === "rate") return parseRateTokens(rest);
   if (sub === "budget") return parseBudgetTokens(rest);
   if (sub === "optout") return parseOptOutTokens(rest);
-  return { kind: "error", message: `Unknown command "${sub}" — try "${oeSlash("help")}" to see what's available.` };
+  if (sub === "watch") return parseWatchTokens(rest);
+  return { kind: "error", message: `I don't know "${sub}". Try \`${oeSlash("help")}\` to see what I can do.` };
 }
 
 export function parseSlackCommandText(text: string | undefined): OeCommand {
@@ -96,16 +104,16 @@ export function parseSlackCommandText(text: string | undefined): OeCommand {
 
 export function renderHelp(): string {
   return [
-    `*${oeSlash()}* — zero-inference control-plane commands (pure logic, code-rendered, no model turn — ` +
-      "these work even during a spend-cap decline or a model/gateway outage):",
-    `• \`${oeSlash("status")}\` — deploy sanity: deployment sha, eve pin, model config, memory provider, telemetry — plus the app version and the context window with its compaction threshold, each where this deployment carries one.`,
-    `• \`${oeSlash("stop")}\` — stand down the turn running in this channel (free, instant, works over a spend cap).`,
-    `• \`${oeSlash("budget")}\` — this channel's and workspace's effective spend caps + current-month spend.`,
-    `• \`${oeSlash("budget raise <usd>")}\` — propose a new monthly USD cap for this channel (posts an approval card; an admin decides).`,
-    `• \`${oeSlash("budget clear")}\` — propose clearing this channel's spend-limit override back to config (posts an approval card).`,
+    `*${oeSlash()}* — quick commands. They answer at once, even when I'm over budget:`,
+    `• \`${oeSlash("status")}\` — check that I'm running, with version details for your admin.`,
+    `• \`${oeSlash("stop")}\` — stop what I'm doing in this channel.`,
+    `• \`${oeSlash("budget")}\` — see this month's spending and limits.`,
+    `• \`${oeSlash("budget raise <usd>")}\` — ask an admin for a new monthly limit for this channel.`,
+    `• \`${oeSlash("budget clear")}\` — ask an admin to put this channel back on the usual limit.`,
     rateHelpLine(),
     optOutHelpLine(),
-    `• \`${oeSlash("help")}\` — this message.`,
+    watchHelpLine(),
+    `• \`${oeSlash("help")}\` — show this list.`,
   ].join("\n");
 }
 
@@ -116,24 +124,25 @@ function fmtTokenCount(n: number): string {
 export function renderStatus(info: AppInfo, memoryProviderId: string, telemetryStatus = "unknown"): string {
   const { contextWindowTokens: windowTokens, compactionThresholdTokens: thresholdTokens } = info;
   return [
-    hasRealAppVersion(info) ? `*${agentDisplayName()}* v${info.version}` : `*${agentDisplayName()}*`,
-    `• deployment sha: \`${info.deploymentSha}\``,
+    hasRealAppVersion(info) ? `*${agentDisplayName()}* v${info.version} is running.` : `*${agentDisplayName()}* is running.`,
+    "_Details for your admin:_",
+    `• build: \`${info.deploymentSha}\``,
     `• eve: \`${info.evePin}\``,
-    `• primary model: \`${info.primaryModel}\``,
-    `• utility model: \`${info.utilityModel}\``,
+    `• main model: \`${info.primaryModel}\``,
+    `• helper model: \`${info.utilityModel}\``,
     ...(windowTokens !== undefined && thresholdTokens !== undefined && windowTokens > 0
       ? [
-          `• context window: \`${fmtTokenCount(windowTokens)}\` tokens — compaction fires at ` +
+          `• context window: \`${fmtTokenCount(windowTokens)}\` tokens — summarised at ` +
             `\`${fmtTokenCount(thresholdTokens)}\` (${Math.round((thresholdTokens / windowTokens) * 100)}%)`,
         ]
       : []),
-    `• memory provider: \`${memoryProviderId}\``,
+    `• memory: \`${memoryProviderId}\``,
     `• telemetry: \`${telemetryStatus}\``,
   ].join("\n");
 }
 
 function fmtCap(n: number | null | undefined, unit: "tokens" | "usd"): string {
-  if (n == null) return "uncapped";
+  if (n == null) return "no limit";
   return unit === "usd" ? `$${n.toFixed(2)}` : fmtTokenCount(n);
 }
 
@@ -149,12 +158,12 @@ export interface BudgetStatusFacts {
 
 export function renderBudgetStatus(f: BudgetStatusFacts): string {
   return [
-    "*Spend status* (current calendar month)",
-    `• this channel: ${fmtTokenCount(f.surfaceTokens)} / ${fmtCap(f.caps.surfaceMonthlyTokens, "tokens")} tokens · ` +
-      `~$${f.surfaceUsd.toFixed(2)} / ${fmtCap(f.caps.surfaceMonthlyUsd, "usd")}`,
-    `• whole workspace: ${fmtTokenCount(f.workspaceTokens)} / ${fmtCap(f.caps.workspaceMonthlyTokens, "tokens")} tokens · ` +
-      `~$${f.workspaceUsd.toFixed(2)} / ${fmtCap(f.caps.workspaceMonthlyUsd, "usd")}`,
-    `_propose a change with \`${oeSlash("budget raise <usd>")}\` or \`${oeSlash("budget clear")}\`._`,
+    "*Spending this month*",
+    `• this channel: about $${f.surfaceUsd.toFixed(2)} of ${fmtCap(f.caps.surfaceMonthlyUsd, "usd")} · ` +
+      `${fmtTokenCount(f.surfaceTokens)} of ${fmtCap(f.caps.surfaceMonthlyTokens, "tokens")} tokens`,
+    `• whole workspace: about $${f.workspaceUsd.toFixed(2)} of ${fmtCap(f.caps.workspaceMonthlyUsd, "usd")} · ` +
+      `${fmtTokenCount(f.workspaceTokens)} of ${fmtCap(f.caps.workspaceMonthlyTokens, "tokens")} tokens`,
+    `_To change this channel's limit, use \`${oeSlash("budget raise <usd>")}\` or \`${oeSlash("budget clear")}\`._`,
   ].join("\n");
 }
 
@@ -213,13 +222,13 @@ export interface OeApprovalDeps {
 function noDomainSpendReason(reason: SkillDomainRefusal): string {
   switch (reason) {
     case "dm":
-      return "a DM belongs to no memory domain";
+      return "a direct message is not part of a domain";
     case "mpim":
-      return "a group chat belongs to no memory domain";
+      return "a group chat is not part of a domain";
     case "external":
-      return "an externally-shared or unconfirmed channel reports no domain spend";
+      return "I can't confirm this channel is only your organisation's";
     case "unassigned":
-      return "this channel is in no memory domain, and no org-wide default domain is configured";
+      return "this channel is not part of a domain yet";
   }
 }
 
@@ -228,7 +237,7 @@ export const BUDGET_RAISE_SCAN_DAYS = 30;
 async function budgetRaiseSpendSentence(binding: SurfaceBinding, deps: OeApprovalDeps): Promise<string> {
   const domains = deps.domains ?? getConfig().loadDomains();
   const resolved = reportDomainForBinding(binding, domains);
-  if (resolved.domain === null) return `\n_No domain spend to show — ${noDomainSpendReason(resolved.reason)}._`;
+  if (resolved.domain === null) return `\n_No domain spending to show here: ${noDomainSpendReason(resolved.reason)}._`;
   try {
     const scan = await (deps.domainSpendWindow ?? domainSpendWindow)(
       binding.org,
@@ -237,23 +246,39 @@ async function budgetRaiseSpendSentence(binding: SurfaceBinding, deps: OeApprova
       BUDGET_RAISE_SCAN_DAYS,
       { domains },
     );
-    return (
-      `\n_Domain \`${scan.domain}\` spent ~$${scan.usd.toFixed(2)} on ${fmtTokenCount(scan.tokens)} tokens over ${fmtTokenCount(scan.calls)} calls ` +
-      `in ${scan.periods.join(", ")} — the whole calendar months holding the last ${BUDGET_RAISE_SCAN_DAYS} days, which is the finest window the spend ledger keeps._`
-    );
+    return `\n_For comparison, ${scan.domain} spent about $${scan.usd.toFixed(2)} in ${monthList(scan.periods)}._`;
   } catch (e) {
     const why = e instanceof Error ? e.message : String(e);
     console.warn(`[open-everywhere:spend] "${oeSlash("budget raise")}" could not scan domain "${resolved.domain}" spend: ${why}`);
-    return `\n_Domain spend NOT shown — the spend ledger could not be read on this turn._`;
+    return `\n_I couldn't load ${resolved.domain}'s spending just now._`;
   }
 }
 
 function requireChannelId(binding: SurfaceBinding): string {
-  const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
+  const channelId = ownCardRoom(binding)?.channelId;
   if (!channelId) {
-    throw new Error("couldn't resolve this channel's id — try this from a real channel or DM, not a synthetic context.");
+    throw new PersonFacingError("I can't do that here. Try it in a channel or a direct message.");
   }
   return channelId;
+}
+
+async function askAdmin<T>(post: () => Promise<T>): Promise<T> {
+  try {
+    return await post();
+  } catch (err) {
+    if (err instanceof PersonFacingError) throw err;
+    console.warn(`[open-everywhere:commands] the budget request could not be sent: ${err instanceof Error ? err.message : String(err)}`);
+    throw new PersonFacingError("I couldn't send that request. Try again in a moment, and if it still fails, ask your admin.");
+  }
+}
+
+function monthList(periods: readonly string[]): string {
+  const words = periods.map(friendlyMonth);
+  return words.length <= 1 ? (words[0] ?? "recent months") : `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
+}
+
+function capitalise(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 export async function runBudgetRaise(binding: SurfaceBinding, usd: number, deps: OeApprovalDeps = {}): Promise<string> {
@@ -277,33 +302,32 @@ export async function runBudgetRaise(binding: SurfaceBinding, usd: number, deps:
 
   const channelId = requireChannelId(binding);
   const scopeLabel = await friendlyScopeLabelFn(plan.scopeKey);
+  const place = placeWords({ key: plan.scopeKey, ...(scopeLabel ? { label: scopeLabel } : {}) });
   const coverageReport = await (deps.readSpendCoverage ?? readSpendCoverage)(plan.args.org, plan.args.level, plan.args.scopeKey, plan.args.monthlyUsd);
   const coverage = coverageReport === undefined ? undefined : frozenCoverage(coverageReport);
-  const posted = await requestApprovalFn(
-    {
-      org: plan.args.org,
-      kind: plan.kind,
-      args: { ...plan.args, ...(scopeLabel ? { scopeLabel } : {}), ...(coverage ? { coverage } : {}) },
-      scopeKey: plan.scopeKey,
-      domain: plan.domain,
-      requestedBy: binding.principalId!,
-      channelId,
-      threadTs: binding.threadTs ?? null,
-      chain: { unattended: unattendedFrom(binding) },
-    },
-    approvalPostDeps(binding.platform),
+  const posted = await askAdmin(() =>
+    requestApprovalFn(
+      {
+        org: plan.args.org,
+        kind: plan.kind,
+        args: { ...plan.args, ...(scopeLabel ? { scopeLabel } : {}), ...(coverage ? { coverage } : {}) },
+        scopeKey: plan.scopeKey,
+        domain: plan.domain,
+        requestedBy: binding.principalId!,
+        channelId,
+        threadTs: binding.threadTs ?? null,
+        chain: { unattended: unattendedFrom(binding) },
+      },
+      approvalPostDeps(binding.platform),
+    ),
   );
   const spendSentence = await budgetRaiseSpendSentence(binding, deps);
   if (posted.autoApproved) {
-    return (
-      `Done — $${usd.toFixed(2)}/month on ${placeWords({ key: plan.scopeKey })} is already in force: the approver chain auto-approved it ` +
-      `(${posted.autoApproved.resolvedBy}), so no card was posted — ${posted.autoApproved.outcome}` +
-      spendSentence
-    );
+    return `Done. The limit for ${place} is now $${usd.toFixed(2)} a month.` + spendSentence;
   }
   return (
-    `Card posted in this channel — proposing $${usd.toFixed(2)}/month on ${placeWords({ key: plan.scopeKey })} ` +
-    `(pending \`${posted.id}\`, expires ${posted.expiresAt}). An admin needs to Approve it.` +
+    `I've asked an admin to approve a limit of $${usd.toFixed(2)} a month for ${place}. ` +
+    `The request is in this channel until ${friendlyWhen(posted.expiresAt)}.` +
     spendSentence
   );
 }
@@ -326,29 +350,29 @@ export async function runBudgetClear(binding: SurfaceBinding, deps: OeApprovalDe
 
   const channelId = requireChannelId(binding);
   const scopeLabel = await friendlyScopeLabelFn(plan.scopeKey);
-  const posted = await requestApprovalFn(
-    {
-      org: plan.args.org,
-      kind: plan.kind,
-      args: { ...plan.args, ...(scopeLabel ? { scopeLabel } : {}) },
-      scopeKey: plan.scopeKey,
-      domain: plan.domain,
-      requestedBy: binding.principalId!,
-      channelId,
-      threadTs: binding.threadTs ?? null,
-      chain: { unattended: unattendedFrom(binding) },
-    },
-    approvalPostDeps(binding.platform),
+  const place = placeWords({ key: plan.scopeKey, ...(scopeLabel ? { label: scopeLabel } : {}) });
+  const posted = await askAdmin(() =>
+    requestApprovalFn(
+      {
+        org: plan.args.org,
+        kind: plan.kind,
+        args: { ...plan.args, ...(scopeLabel ? { scopeLabel } : {}) },
+        scopeKey: plan.scopeKey,
+        domain: plan.domain,
+        requestedBy: binding.principalId!,
+        channelId,
+        threadTs: binding.threadTs ?? null,
+        chain: { unattended: unattendedFrom(binding) },
+      },
+      approvalPostDeps(binding.platform),
+    ),
   );
   if (posted.autoApproved) {
-    return (
-      `Done — the override on ${placeWords({ key: plan.scopeKey })} is already back to the config-as-code cap: the approver chain auto-approved it ` +
-      `(${posted.autoApproved.resolvedBy}), so no card was posted — ${posted.autoApproved.outcome}`
-    );
+    return `Done. ${capitalise(place)} is back on the usual limit.`;
   }
   return (
-    `Card posted in this channel — proposing to clear the override on ${placeWords({ key: plan.scopeKey })} back to the config-as-code cap ` +
-    `(pending \`${posted.id}\`, expires ${posted.expiresAt}). An admin needs to Approve it.`
+    `I've asked an admin to put ${place} back on the usual limit. ` +
+    `The request is in this channel until ${friendlyWhen(posted.expiresAt)}.`
   );
 }
 
@@ -358,12 +382,12 @@ export interface OeCommandDeps {
 
 export async function runStop(binding: SurfaceBinding, attachSession: AttachSessionForCancel | undefined): Promise<string> {
   if (!attachSession) {
-    return "Stop isn't wired on this surface yet — react with the raised-hand emoji on the thread instead.";
+    return "I can't stop from a command here. React to my message with the raised-hand emoji ✋ instead.";
   }
-  const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
+  const channelId = turnAnchorAddress(binding).channelId;
   const channelKey = turnChannelKey(binding.platform, channelId);
   if (!channelKey) {
-    return `Couldn't resolve this channel — try \`${oeSlash("stop")}\` from a real channel or DM, not a synthetic context.`;
+    return `I can't do that here. Try \`${oeSlash("stop")}\` in a channel or a direct message.`;
   }
   const result = await cancelAnchoredTurn({
     org: binding.org,
@@ -410,5 +434,7 @@ export async function runOeCommand(cmd: OeCommand, binding: SurfaceBinding, deps
       return runRate(binding, cmd.score);
     case "optout":
       return runOptOut(binding, cmd.action);
+    case "watch":
+      return runWatch(binding, cmd.action);
   }
 }

@@ -1,3 +1,4 @@
+import { QUOTE_MAX, plainQuote } from "./plain-text.js";
 import { putDomainSkill } from "../skills/domain-skills.js";
 import { armingApproval } from "./arming-context.js";
 import { appendAudit } from "../audit/audit.js";
@@ -24,6 +25,8 @@ const skillCreate: ActionKind<SkillCreateArgs> = {
   plainSummary(args) {
     return `${args.action === "updated" ? "Change" : "Add"} the skill ${plainValue(args.name)} that the agent follows in ${plainValue(args.domain)}`;
   },
+  consequence: (args) => plainQuote(args.content, QUOTE_MAX - 2),
+  consequenceQuotes: true,
   summarize(args) {
     const shown = args.content.length > CARD_BODY_MAX ? `${args.content.slice(0, CARD_BODY_MAX)}\n… (${args.content.length - CARD_BODY_MAX} more bytes)` : args.content;
     return [
@@ -49,7 +52,7 @@ const skillCreate: ActionKind<SkillCreateArgs> = {
       detail: { domain: args.domain, name: args.name, authoredBy: args.authoredBy ?? null, armedBy: decidedBy, tainted: Boolean(args.tainted) },
     });
     emitTelemetry("oe.feature.used", { "oe.feature": "skill_created", "oe.outcome": "ok" });
-    return `skill "${args.name}" ${args.action} in domain "${args.domain}" — armed from the next turn.`;
+    return `skill ${args.name} ${args.action} in ${args.domain}; the agent follows it from its next turn`;
   },
 };
 

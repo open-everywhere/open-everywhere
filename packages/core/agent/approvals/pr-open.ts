@@ -9,7 +9,7 @@ import type { ActionKind } from "./types.js";
 import { resolvePrWriteToken } from "../scm/write-token.js";
 import { DEFAULT_PERMISSIONS, expandMintPermissions } from "../scm/mint.js";
 import { REPO_CAPABILITIES, isRepoCapability, type RepoCapability } from "../access/repo-capabilities.js";
-import { plainValue } from "./plain-text.js";
+import { QUOTE_MAX, linkSafeLine, plainQuote, plainValue } from "./plain-text.js";
 
 export interface PrOpenArgs {
   readonly org: string;
@@ -27,6 +27,17 @@ export interface PrOpenArgs {
 }
 
 const CARD_BODY_MAX = 1200;
+
+function extraMintGrades(capabilities: readonly RepoCapability[] | undefined): string[] {
+  if (!Array.isArray(capabilities)) return [];
+  const known = capabilities.filter((cap) => isRepoCapability(cap));
+  if (known.length === 0) return [];
+  const base = DEFAULT_PERMISSIONS as Readonly<Record<string, string | undefined>>;
+  return Object.entries(expandMintPermissions(DEFAULT_PERMISSIONS, known))
+    .filter(([family, grade]) => grade !== undefined && base[family] !== grade)
+    .map(([family, grade]) => `${family}: ${grade}`)
+    .sort();
+}
 
 function mintGradeLines(capabilities: readonly RepoCapability[]): string[] {
   const malformed = !Array.isArray(capabilities);
@@ -113,6 +124,13 @@ const prOpen: ActionKind<PrOpenArgs> = {
   plainSummary(args) {
     return `Open a pull request on ${plainValue(args.repo)}: ${plainValue(args.title, 70)}`;
   },
+  consequence(args) {
+    const extra = extraMintGrades(args.capabilities);
+    const grants = extra.length > 0 ? ` · the click also grants ${extra.join(", ")} (or the token owner's rights where no GitHub App covers the repo)` : "";
+    const prefix = `${linkSafeLine(args.head, 40)} → ${linkSafeLine(args.base, 40)} at ${plainValue(args.headSha.slice(0, 12), 12)}${grants}`;
+    return args.body.trim().length > 0 ? `${prefix} · ${plainQuote(args.body, QUOTE_MAX - prefix.length - 3)}` : prefix;
+  },
+  consequenceQuotes: true,
   summarize(args) {
     const body = args.body.length > CARD_BODY_MAX ? `${args.body.slice(0, CARD_BODY_MAX)}\n… (${args.body.length - CARD_BODY_MAX} more bytes)` : args.body;
     return [

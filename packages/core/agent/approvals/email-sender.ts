@@ -203,7 +203,8 @@ const emailSender: ActionKind<EmailSenderArgs> = {
   proseArgs: ["why"],
   summarize: emailSenderSummary,
   plainSummary(args) {
-    return `Open a pull request that lets ${plainValue(args.sender)} email ${plainValue(args.inbox)}, for an admin to review`;
+    const who = args.sender.startsWith("*@") ? `anyone at ${plainValue(args.sender.slice(2))}` : plainValue(args.sender);
+    return `Open a pull request that lets ${who} email ${plainValue(args.inbox)}, for an admin to review`;
   },
   async execute(args, decidedBy) {
     return executeEmailSender(args, decidedBy);

@@ -184,7 +184,7 @@ test("a delegated worker raises the grant ask, the ask is scoped to the SEAT's c
   expect(forLine, `the card carries no worker attribution block: ${cardText.slice(0, 400)}`).not.toBeNull();
   expect(forLine?.[2], "the card's opener and its attribution line name two different askers").toBe(asker);
   expect(forLine?.[1], "the attribution line names the agent as the person the ask is for").not.toBe(asker);
-  expect(cardText, "the card does not state HOW the ask was raised").toContain("gave the work to a background task, and the task raised this ask");
+  expect(cardText, "the card does not state HOW the ask was raised").toContain("gave the work to a background task, and that task asked");
   expect(cardText, "the card does not say what a grant actually reaches").toContain("• What a grant reaches: that conversation, never the background task.");
   expect(cardText, "the card lost the worker's stated purpose").toContain(PURPOSE);
   expect(cardText).toContain("Tap one button to answer:");

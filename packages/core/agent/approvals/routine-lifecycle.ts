@@ -1,3 +1,6 @@
+import { routineWords } from "../routines/schedule-words.js";
+import { shortUtc } from "./session-grant.js";
+import { QUOTE_MAX, plainQuote, plainValue } from "./plain-text.js";
 import { placeWords } from "../channels/friendly-ids.js";
 import { updateRoutine } from "../routines/store.js";
 import { mintJobBound } from "../routines/bound.js";
@@ -6,7 +9,6 @@ import { computeNextRun } from "../routines/schedule.js";
 import {
   assertKnownSubscription,
   assertReportConsistent,
-  describeTrigger,
   isJobRoutine,
   nextPromptGeneration,
   type Routine,
@@ -18,7 +20,6 @@ import type { Partition } from "../memory/partition.js";
 import { armingApproval } from "./arming-context.js";
 import { registerActionKind } from "./actions.js";
 import type { ActionKind } from "./types.js";
-import { plainValue } from "./plain-text.js";
 
 const CARD_PROMPT_CHARS = 600;
 
@@ -47,8 +48,10 @@ const routineEdit: ActionKind<RoutineEditArgs> = {
   kind: "routine.edit",
   policy: "member",
   plainSummary(args) {
-    return `Rewrite the instructions of the routine "${plainValue(args.description)}"`;
+    return `Change what ${routineWords(args.description)} does`;
   },
+  consequence: (args) => `Now: ${plainQuote(args.prompt, QUOTE_MAX - 60)} — it asks again before anything it was allowed`,
+  consequenceQuotes: true,
   summarize(args) {
     return [
       `Rewrite routine ${args.id} — ${args.description} — keeps its schedule, history and run state`,
@@ -72,7 +75,7 @@ const routineEdit: ActionKind<RoutineEditArgs> = {
       ...(arming ? { approvalId: arming.id } : {}),
     });
     if (!updated) {
-      return `routine ${args.id} is gone — it was cancelled before this edit was confirmed, so nothing changed.`;
+      return `${routineWords(args.description)} was stopped before this edit, so nothing changed`;
     }
     await appendAudit({
       org: args.partition.org,
@@ -93,11 +96,7 @@ const routineEdit: ActionKind<RoutineEditArgs> = {
         ...(isJobRoutine(updated) ? { jobSeatRotated: true } : {}),
       },
     });
-    return (
-      `routine ${args.id} updated — schedule (${args.description}), history and run state kept. ` +
-      `Any standing approvals it had are revoked (generation ${generation})` +
-      `${isJobRoutine(updated) ? "; the job resumes on a fresh session from its saved progress ledger" : ""}.`
-    );
+    return `${routineWords(args.description)} now follows the new instruction; it asks again before anything it was allowed before`;
   },
 };
 
@@ -120,8 +119,9 @@ const routineEnable: ActionKind<RoutineEnableArgs> = {
   kind: "routine.enable",
   policy: "member",
   plainSummary(args) {
-    return `Turn the routine "${plainValue(args.description)}" back on, so it runs again on its own`;
+    return `Turn ${routineWords(args.description)} back on`;
   },
+  consequence: (args) => `It stopped because ${plainValue(args.disabledReason, 120).replace(/[.\s]+$/u, "")}.`,
   summarize(args) {
     return [
       `Re-arm routine ${args.id} — ${args.description} — will fire again WITHOUT a fresh @-mention`,
@@ -149,7 +149,7 @@ const routineEnable: ActionKind<RoutineEnableArgs> = {
       ...stallResetPatch(),
     });
     if (!updated) {
-      return `routine ${args.id} is gone — it was cancelled before this re-arm was confirmed, so nothing changed.`;
+      return `${routineWords(args.description)} was stopped before this, so nothing changed`;
     }
     await appendAudit({
       org: args.partition.org,
@@ -167,7 +167,7 @@ const routineEnable: ActionKind<RoutineEnableArgs> = {
         nextRunAt: updated.nextRunAt ?? null,
       },
     });
-    return `routine ${args.id} re-armed — ${describeTrigger(updated.trigger, updated.report)}${updated.nextRunAt ? ` (next run ${updated.nextRunAt})` : ""}. Its history and run state were kept.`;
+    return `${routineWords(args.description)} is back on${updated.nextRunAt ? ` — next run ${shortUtc(updated.nextRunAt)}` : ""}`;
   },
 };
 

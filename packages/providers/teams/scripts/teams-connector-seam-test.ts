@@ -112,7 +112,7 @@ const seamCode = stripComments(readFileSync(SEAM, "utf8"));
     },
     {
       file: "agent/channels/teams-directory.ts",
-      why: "the conversation-member directory read — a GET, same posture as the roster probe.",
+      why: "the conversation-member directory read and the friendly-names lookups (one member read, one channel list; OPE-2482) — GETs, same posture as the roster probe.",
     },
     {
       file: "agent/channels/teams-graph-team-id.ts",

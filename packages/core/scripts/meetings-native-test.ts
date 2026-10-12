@@ -15,6 +15,8 @@ const flow = await import("../agent/meetings/native-recap.js");
 const { registerMeetingCompletion, resetMeetingCompletionForTest } = await import("../agent/meetings/transcription.js");
 const { meetingRecapSummary, meetingRecapResult } = await import("../agent/approvals/meeting-recap.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
+const { getMeetingRow } = await import("../agent/meetings/store.js");
+const provenance = await import("../agent/meetings/provenance.js");
 import type { MeetingPolicy } from "../agent/meetings/policy.js";
 import type { NativeRecapArgs } from "../agent/meetings/native-recap.js";
 import type { NativeMeetingRef, NativeTranscriptResult } from "../agent/meetings/native.js";
@@ -53,9 +55,7 @@ const NATIVE_ON: MeetingPolicy = {
 
 {
   ok(DEFAULT_MEETING_POLICY.native.enabled === false && meetingPolicyProblems(DEFAULT_MEETING_POLICY).length === 0, "the shipped default keeps native recaps off and is valid");
-  const blocked = meetingPolicyProblems(NATIVE_ON);
-  ok(blocked.length === 1 && blocked[0]!.includes("native.enabled: true is refused") && blocked[0]!.includes("OPE-2461") && blocked[0]!.includes("OPE-2464"), "native.enabled is refused, naming both blocking tickets");
-  ok(meetingPolicyProblems(NATIVE_ON, { allowEnabledForTest: true }).length === 0, "the complete native block has no other problems");
+  ok(meetingPolicyProblems(NATIVE_ON).length === 0, "the complete native block is valid with native.enabled: true (OPE-2461 and OPE-2464 landed)");
   const off = { ...NATIVE_ON, native: { ...NATIVE_ON.native, enabled: false } };
   ok(meetingPolicyProblems(off).length === 0, "a declared native block with the switch off is valid (the decision is recorded in Git)");
   const probs = (n: Partial<MeetingPolicy["native"]>): readonly string[] => meetingPolicyProblems({ ...DEFAULT_MEETING_POLICY, native: { ...DEFAULT_MEETING_POLICY.native, ...n } as MeetingPolicy["native"] });
@@ -66,7 +66,7 @@ const NATIVE_ON: MeetingPolicy = {
   ok(probs({ teams: { ...NATIVE_ON.native.teams!, clientSecretRef: "hook:abc" } }).some((p) => p.includes("clientSecretRef")), "a secret ref in a reserved namespace is refused");
   ok(probs({ meet: { ...NATIVE_ON.native.meet!, domains: ["Example.org"] } }).some((p) => p.includes("not a lowercase domain")), "a Meet domain must be a lowercase domain");
   ok(probs({ zoom: { ...NATIVE_ON.native.zoom!, why: " " } }).some((p) => p.includes("native.zoom: say why")), "every platform block says why");
-  ok(meetingPolicyProblems({ ...DEFAULT_MEETING_POLICY, native: { enabled: true, watchHours: 24 } }, { allowEnabledForTest: true }).some((p) => p.includes("with no platform")), "native.enabled with no platform is refused");
+  ok(meetingPolicyProblems({ ...DEFAULT_MEETING_POLICY, native: { enabled: true, watchHours: 24 } }).some((p) => p.includes("with no platform")), "native.enabled with no platform is refused");
   ok(meetingPolicyProblems({ ...DEFAULT_MEETING_POLICY, native: undefined } as unknown as MeetingPolicy).some((p) => p.includes("native must be declared")), "a policy with no native block is refused, never read as on");
 }
 
@@ -189,6 +189,8 @@ const deps = { policy: NATIVE_ON, post, now: () => NOW, secret: async (name: str
   const a = args();
   const out = await flow.startNativeRecap(a, "U2", deps);
   ok(out.kind === "posted" && out.posted, "a ready transcript is recapped at the click");
+  ok(await provenance.chatReadCarriesMeetingPost(ORG, { platform: "slack", container: "C1", threadRoot: "1700159720.000100", botMessageIds: [] }), "🔴 the native recap MARKS the thread it went into");
+  ok(await provenance.chatReadCarriesMeetingPost(ORG, { platform: "slack", container: "C1", botMessageIds: [`ts-${posts.length}`] }), "🔴 the native recap MARKS its own post id");
   ok(reads.length === 1 && reads[0]!.secrets[0] === "value-of-TEAMS_TRANSCRIPT_SECRET", "the reader gets the stored secret the policy names, resolved by core");
   ok(reads[0]!.ref.organizerId === OID && reads[0]!.ref.tenantId === TENANT && reads[0]!.ref.startedAfter === undefined, "a `past` ask reads the newest session of the meeting the link names");
   ok(posts.length === 1 && posts[0]!.channelId === "C1" && posts[0]!.threadTs === "1700159720.000100", "ONE recap goes into the thread the ask came from");
@@ -239,7 +241,7 @@ const deps = { policy: NATIVE_ON, post, now: () => NOW, secret: async (name: str
   const out = await flow.startNativeRecap(a, "U2", deps);
   ok(out.kind === "waiting" && posts.length === before, "a transcript that is not ready leaves a watch and posts nothing yet");
   ok(reads.at(-1)!.ref.startedAfter === NOW - flow.NEXT_SESSION_GRACE_MINUTES * 60_000, "a `next` ask reads only a session that started after the ask, less the grace");
-  ok(meetingRecapResult(a, out).includes("every 15 minutes for up to 6 hour(s)"), "the card says how long OE waits");
+  ok(meetingRecapResult(a, out).includes("I check for 6 h"), "the card says how long OE waits");
   ok((await flow.nativeWatches(ORG)).some((w) => w.recapId === a.recapId), "the watch is in the index");
   const readsAtWatch = reads.length;
   const redelivered = await flow.startNativeRecap(a, "U2", deps);
@@ -325,7 +327,7 @@ const deps = { policy: NATIVE_ON, post, now: () => NOW, secret: async (name: str
   let claimedDuringCall: boolean | undefined;
   resetMeetingCompletionForTest();
   registerMeetingCompletion(async () => {
-    claimedDuringCall = (await getOperationalStore().getTaskResult(ORG, `meeting-recap:${c.recapId}`)) !== null;
+    claimedDuringCall = (await getMeetingRow(ORG, `meeting-recap:${c.recapId}`)) !== null;
     return JSON.stringify({ summary: "s", decisions: [], actions: [] });
   });
   await flow.startNativeRecap(c, "U2", deps);

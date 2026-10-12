@@ -18,6 +18,7 @@ import {
 } from "../sandbox/long-lived-box.js";
 import { personalBrowserPolicy, type PersonalBrowserPolicy } from "./policy.js";
 import { BoxCallError, callBox, mintBoxKey } from "./box-client.js";
+import { finishTeaching } from "./teach.js";
 import {
   deletePersonalBrowserState,
   getPersonalBrowserState,
@@ -167,13 +168,16 @@ export async function closeBrowser(
   expect?: (cur: PersonalBrowserState & { readonly box: BrowserBox }) => boolean,
 ): Promise<{ readonly closed: boolean; readonly seconds?: number }> {
   const now = (deps.now ?? Date.now)();
+  if (reason === "closed" && (await getPersonalBrowserState(org, person))?.state.teach !== undefined) {
+    await finishTeaching(org, person, deps.now !== undefined ? { now: deps.now } : {});
+  }
   const taken = await updatePersonalBrowser<{ state: PersonalBrowserState; box: BrowserBox } | undefined>(
     org,
     person,
     (cur) => {
       if (cur?.box === undefined) return { next: undefined, result: undefined };
       if (expect !== undefined && !expect({ ...cur, box: cur.box })) return { next: undefined, result: undefined };
-      const { box, ...rest } = cur;
+      const { box, teach: _teach, ...rest } = cur;
       return { next: { ...rest, lock: { holder: "agent", since: now } }, result: { state: cur, box } };
     },
     now,
@@ -191,6 +195,9 @@ export async function closeBrowser(
     await backend?.stop(box.name);
   } catch (err) {
     console.warn(`[open-everywhere:personal-browser] box stop failed for ${box.name} (its cap still stops it): ${String(err)}`);
+  }
+  if (state.teach !== undefined) {
+    await appendAudit({ ...auditWhere(state.partition), principalId: state.principalId, action: "browser.personal.teach", detail: { phase: "lost", box: box.name } });
   }
   const bill = await billBox(state, box, now);
   await appendAudit({
@@ -355,7 +362,7 @@ export async function ensureBrowserOpen(owner: BrowserOwner, hosts: readonly str
   return { state: { ...state, box }, started: true };
 }
 
-export const BROWSER_READ_OPS = ["go", "look", "scroll", "back", "sites"] as const;
+export const BROWSER_READ_OPS = ["go", "look", "scroll", "back", "sites", "find"] as const;
 export const BROWSER_WRITE_OPS = ["click", "type", "select", "key"] as const;
 export type BrowserReadOp = (typeof BROWSER_READ_OPS)[number];
 export type BrowserWriteOp = (typeof BROWSER_WRITE_OPS)[number];
@@ -464,6 +471,7 @@ export async function handBack(org: string, person: string, by: "card" | "page" 
   if (s === undefined) return false;
   if (s.box !== undefined) await pushLock(s.box, s.lock);
   await appendAudit({ ...auditWhere(s.partition), principalId: s.principalId, action: "browser.personal.handback", detail: { by, box: s.box?.name ?? "" } });
+  if (s.teach !== undefined) await finishTeaching(org, person, deps.now !== undefined ? { now: deps.now } : {});
   return true;
 }
 

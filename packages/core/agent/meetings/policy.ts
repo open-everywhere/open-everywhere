@@ -75,13 +75,8 @@ function hostAllowedFor(platform: MeetingPlatform, host: string): boolean {
   return PLATFORM_HOSTS[platform].includes(host);
 }
 
-const MEETINGS_ENABLE_BLOCKERS = "OPE-2461 (per-row expiry for the shared store) and OPE-2464 (untrusted provenance for the recap post)";
-
-export function meetingPolicyProblems(p: MeetingPolicy, opts: { readonly allowEnabledForTest?: true } = {}): readonly string[] {
+export function meetingPolicyProblems(p: MeetingPolicy): readonly string[] {
   const problems: string[] = [];
-  if (p.enabled === true && opts.allowEnabledForTest !== true) {
-    problems.push(`enabled: true is refused until ${MEETINGS_ENABLE_BLOCKERS} land — keep meetings off`);
-  }
   const int = (v: unknown, lo: number, hi: number, name: string): void => {
     if (typeof v !== "number" || !Number.isInteger(v) || v < lo || v > hi) problems.push(`${name} must be an integer from ${lo} to ${hi}`);
   };
@@ -89,7 +84,7 @@ export function meetingPolicyProblems(p: MeetingPolicy, opts: { readonly allowEn
   if (typeof p.botName !== "string" || p.botName.trim().length === 0 || p.botName.length > 60) problems.push("botName must be 1 to 60 characters");
   int(p.maxMinutes, 5, MAX_MINUTES_CEILING, "maxMinutes");
   int(p.leaveWhenAloneMinutes, 1, 60, "leaveWhenAloneMinutes");
-  if (p.retention?.audioMinutes !== 0) problems.push("retention.audioMinutes must be 0: OE cannot keep audio for a bounded window until per-row expiry exists (OPE-2461)");
+  if (p.retention?.audioMinutes !== 0) problems.push("retention.audioMinutes must be 0: OE never stores meeting audio, so it cannot keep audio for any window");
   int(p.retention?.transcriptDays, 1, 90, "retention.transcriptDays");
   if (typeof p.box?.image !== "string" || p.box.image.trim().length === 0 || /\s/.test(p.box.image)) problems.push("box.image must name an image");
   int(p.box?.vcpus, 1, 8, "box.vcpus");
@@ -99,7 +94,7 @@ export function meetingPolicyProblems(p: MeetingPolicy, opts: { readonly allowEn
   if (route === "gateway" && (typeof p.transcription.model !== "string" || !/^[a-z0-9-]+\/[a-z0-9.-]+$/.test(p.transcription.model))) {
     problems.push(`transcription.model must be a gateway model id like "openai/gpt-4o-transcribe" for the gateway route`);
   }
-  problems.push(...nativePolicyProblems(p.native, opts));
+  problems.push(...nativePolicyProblems(p.native));
   if (!Array.isArray(p.hosts)) {
     problems.push("hosts must be a list");
     return problems;
@@ -137,13 +132,10 @@ export function meetingPolicyProblems(p: MeetingPolicy, opts: { readonly allowEn
   return problems;
 }
 
-function nativePolicyProblems(n: NativeTranscriptPolicy | undefined, opts: { readonly allowEnabledForTest?: true }): string[] {
+function nativePolicyProblems(n: NativeTranscriptPolicy | undefined): string[] {
   const problems: string[] = [];
   if (n === undefined || n === null || typeof n !== "object") return ["native must be declared (spread DEFAULT_MEETING_POLICY to keep it off)"];
   if (typeof n.enabled !== "boolean") problems.push("native.enabled must be true or false");
-  if (n.enabled === true && opts.allowEnabledForTest !== true) {
-    problems.push(`native.enabled: true is refused until ${MEETINGS_ENABLE_BLOCKERS} land — keep native recaps off`);
-  }
   if (typeof n.watchHours !== "number" || !Number.isInteger(n.watchHours) || n.watchHours < 1 || n.watchHours > 72) problems.push("native.watchHours must be an integer from 1 to 72");
   const why = (v: unknown, at: string): void => {
     if (typeof v !== "string" || v.trim().length === 0) problems.push(`${at}: say why this deployment reads the org's meeting transcripts`);
@@ -180,8 +172,8 @@ function nativePolicyProblems(n: NativeTranscriptPolicy | undefined, opts: { rea
   return problems;
 }
 
-export function defineMeetingPolicy(p: MeetingPolicy, opts: { readonly allowEnabledForTest?: true } = {}): MeetingPolicy {
-  const problems = meetingPolicyProblems(p, opts);
+export function defineMeetingPolicy(p: MeetingPolicy): MeetingPolicy {
+  const problems = meetingPolicyProblems(p);
   if (problems.length > 0) {
     throw new Error(`meeting policy is unusable — meetings stay OFF (fail closed):\n${problems.map((x) => `  - ${x}`).join("\n")}`);
   }
@@ -211,7 +203,7 @@ export function meetingPolicy(): MeetingPolicy {
 }
 
 export function setMeetingPolicyForTest(p: MeetingPolicy): void {
-  SLOT.set(defineMeetingPolicy(p, { allowEnabledForTest: true }));
+  SLOT.set(defineMeetingPolicy(p));
 }
 
 export function resetMeetingPolicyForTest(): void {

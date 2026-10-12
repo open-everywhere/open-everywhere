@@ -112,7 +112,7 @@ Create a Slack app from the manifest below, then copy its bot token and signing 
         "command": "/oe",
         "url": "https://YOUR-DEPLOY-URL/eve/v1/slack/commands",
         "description": "Open Everywhere control-plane commands (stop, status, budget) — no model turn.",
-        "usage_hint": "stop | status | budget [raise <usd> | clear] | rate <n> | optout [on | off] | help",
+        "usage_hint": "stop | status | budget [raise <usd> | clear] | rate <n> | optout [on | off] | watch [more | less | none] | help",
         "should_escape": false
       }
     ],

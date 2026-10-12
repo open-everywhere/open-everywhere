@@ -31,6 +31,7 @@ export const WINDOW_GATED_TOOLS: Readonly<Record<string, readonly WindowGrain[]>
   message_thread_seat: ["standing"],
   ask_domain: ["standing"],
   answer_domain_question: ["standing"],
+  expect_bot_reply: ["standing"],
 };
 
 export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
@@ -86,6 +87,7 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "aws",
   "read_channel",
   "read_thread",
+  "look_up",
   "read_work_channel",
   "read_work_thread",
   "session_cost",
@@ -169,6 +171,7 @@ export const JOB_WAKE_TOOLS: ReadonlySet<string> = new Set([
   "report_run_failed",
   "read_channel",
   "read_thread",
+  "look_up",
   "read_notion_page",
   "read_notion_comments",
   "read_linear_issue",
@@ -304,6 +307,10 @@ export function checkWindowGateManifest(
     } else if (name === "ask_domain" || name === "answer_domain_question") {
       if (grainKey(grains) !== "standing") {
         problems.push(`WINDOW_GATED_TOOLS["${name}"] must be exactly ["standing"] (the domain question verbs pass between a DM seat and a domain's standing seat; never a thread seat, never a worker) — got [${grains.join(", ")}]`);
+      }
+    } else if (name === "expect_bot_reply") {
+      if (grainKey(grains) !== "standing") {
+        problems.push(`WINDOW_GATED_TOOLS["expect_bot_reply"] must be exactly ["standing"] (the person's own DM seat opens an asked thread into that DM; never a thread seat, never a worker) — got [${grains.join(", ")}]`);
       }
     } else if (name === "read_thread_seat" || name === "message_thread_seat") {
       if (grainKey(grains) !== "standing") {

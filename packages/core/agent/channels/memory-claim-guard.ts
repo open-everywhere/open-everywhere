@@ -5,7 +5,7 @@ import type { ReplyAudit } from "./reply-post.js";
 export const MEMORY_CLAIM_WITHHELD_ACTION = "memory.claim_withheld";
 
 export const WITHHELD_CLAIM_NOTE =
-  "(No durable memory write is recorded for this turn, so I cannot say the note is stored.)";
+  "(I can't confirm that's saved yet.)";
 
 export type MemoryClaimShape = "stored" | "remembered" | "index-updated";
 

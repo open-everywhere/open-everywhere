@@ -242,7 +242,7 @@ function tiersOf(eng: Record<string, string | undefined>, org: Record<string, st
   ok(summary.some((l) => l.includes("eng-brain") && l.includes("org-brain")), "summarize: names EVERY silo the sweep will touch");
 
   const outcome = await kind.execute(args, "U_MEMBER_1");
-  ok(outcome.includes("MEMORY.md") && outcome.includes("people.md"), "execute: outcome names the files the bullet was removed from");
+  ok(/^deleted \d+ remembered line/.test(outcome), `execute: the outcome says how much was deleted, in plain words (${outcome})`);
 
   const afterEng = await provider.readTier(partition, engTier, engSilo);
   const afterOrg = await provider.readTier(partition, orgTier, orgSilo);
@@ -364,8 +364,7 @@ function tiersOf(eng: Record<string, string | undefined>, org: Record<string, st
   };
   const kind = actionKind("memory.purge")!;
   const outcome = await kind.execute(args, "U_MEMBER_2");
-  ok(outcome.includes("MEMORY.md"), "execute: removed-from names MEMORY.md");
-  ok(outcome.includes("already gone from") && outcome.includes("people.md"), "execute: notes people.md as already-gone (skipped, not an error)");
+  ok(outcome === "deleted 1 remembered line", `execute: the skipped file is not an error, and the line counts only what was removed (${outcome})`);
   ok(!(await provider.readTier(partition, tier, silo))["MEMORY.md"].includes(bullet), "execute: MEMORY.md had the bullet removed");
 }
 
@@ -424,7 +423,7 @@ function tiersOf(eng: Record<string, string | undefined>, org: Record<string, st
   const kind = actionKind("memory.purge")!;
 
   const first = await kind.execute(args, "U_REPLAY_1");
-  ok(first.includes("purged 1 line(s)"), "replay: the FIRST execute reports the real redaction");
+  ok(first.includes("deleted 1 remembered line"), "replay: the FIRST execute reports the real redaction");
   const afterFirst = (await provider.readTier(partition, tier, silo))["MEMORY.md"]!;
   ok(!afterFirst.includes("OPE-582 replay target fact"), "replay: the FIRST execute removed the targeted line");
   ok(afterFirst.includes("OPE-582 bystander fact"), "replay: the FIRST execute left the untargeted line alone");
@@ -454,7 +453,7 @@ function tiersOf(eng: Record<string, string | undefined>, org: Record<string, st
     { postCard: async () => "ts-replay-1" },
   );
   const click1 = await resolveApprovalClick({ org: "default", id: posted.id, decision: "approve", clickerId: "U_CLICKER_1" });
-  ok(click1.outcome === "decided" && click1.outcomeLine.includes("purged 1 line(s)"), "replay: the first click decides and executes");
+  ok(click1.outcome === "decided" && click1.outcomeLine.includes("deleted 1 remembered line"), "replay: the first click decides and executes");
   const click2 = await resolveApprovalClick({ org: "default", id: posted.id, decision: "approve", clickerId: "U_CLICKER_2" });
   ok(click2.outcome === "not-pending", "replay: 🔴 a SECOND decide on the same pending is refused by the CAS — execute() is never reached twice through the click path");
   const clickAudit = (await readAudit({ org: "default", action: "memory.purge" })).filter((e) => e.principalId === "U_CLICKER_1" || e.principalId === "U_CLICKER_2");

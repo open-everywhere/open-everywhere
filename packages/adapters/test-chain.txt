@@ -15,6 +15,7 @@ test:approval-judge-gateway
 test:gateway-vision
 test:oe-oauth
 test:oe-oauth-static
+test:oe-oauth-xaa
 test:agent-browser
 test:neon-pool-error
 test:aws-adapter

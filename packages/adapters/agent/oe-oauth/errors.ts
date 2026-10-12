@@ -26,6 +26,19 @@ export class OeOauthRefreshContendedError extends Error {
   }
 }
 
+export class OeOauthAccessRemovedError extends Error {
+  readonly code = "oe_oauth_access_removed";
+  readonly oauthError?: string;
+  constructor(providerRef: string, subject: { readonly type: "user"; readonly id: string } | { readonly type: "app" }, where: "idp" | "app", oauthError?: string) {
+    super(
+      `connection "${providerRef}": ${subjectLabel(subject)} — the ${where === "idp" ? "identity provider" : "app"} refused access` +
+        `${oauthError ? ` (${oauthError})` : ""}. Your identity-provider admin manages this access; a new sign-in will not restore it.`,
+    );
+    this.name = "OeOauthAccessRemovedError";
+    if (oauthError) this.oauthError = oauthError;
+  }
+}
+
 export class OeOauthError extends Error {
   readonly code = "oe_oauth_error";
   readonly oauthError?: string;

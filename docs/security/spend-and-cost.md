@@ -722,8 +722,9 @@ promises about a caller:
   new, because `spend_report`'s `scope: "domain"` already renders it, per surface. But do not read
   the line as bounded by the room or the workspace it was typed in. Put a channel in an explicit
   domain if you want the line narrowed to that domain.
-- **An aggregate, and nothing else.** One total for tokens, $ and calls. There is no per-surface and
-  no per-principal breakdown, so nothing in the answer names a person or a room.
+- **An aggregate, and nothing else.** The scan returns one total for tokens, $ and calls, and the
+  acknowledgement shows the $ total only (OPE-2486): `/oe budget` already shows the tokens. There is
+  no per-surface and no per-principal breakdown, so nothing in the answer names a person or a room.
 - **The cap ledger, never the observability log.** It reads `spend_ledger` — the durable, keyed
   table the caps themselves sum — so the figure the requester reads is derived from the rows the
   gate enforces against. It does not read `usage_events`.
@@ -731,7 +732,8 @@ promises about a caller:
 **The window is whole calendar months, and the acknowledgement names them.** A `spend_ledger` row is
 keyed by `period` (`YYYY-MM`), so the ledger cannot answer a rolling 30-day question at all — the
 finest window it holds is one calendar month. The scan therefore sums the calendar months that the
-last 30 days touch, which is one month or two, and prints those period names. It over-covers rather
+last 30 days touch, which is one month or two, and names those months in words ("September 2026 and
+October 2026"). It over-covers rather
 than under-covers, and it never claims an exact 30 days the ledger could not support.
 
 **The raise itself is unchanged.** The scan adds a sentence to the requester's own ephemeral

@@ -7,6 +7,7 @@ import { clickerMayDecide } from "../approvals/flow.js";
 import { plainSummaryForRow } from "../approvals/plain-summary.js";
 import { pendingCardExpiryClause } from "../approvals/session-grant.js";
 import { resolveMessagePermalink } from "../channels/surface-message-ops.js";
+import { placeWords } from "../channels/friendly-ids.js";
 import { ATTENTION_LABEL } from "./attention.js";
 
 const WAITING_ITEMS_MAX = 25;
@@ -119,7 +120,7 @@ function renderWaitingMessage(items: readonly WaitingItem[], omitted: number, un
   if (items.length === 0) lines.push("Nothing is waiting on you right now: no open approval card you can decide, and no job blocked on you.");
   else lines.push(`${items.length} thing${items.length === 1 ? " is" : "s are"} waiting on you:`);
   items.forEach((item, n) => {
-    lines.push(`${n + 1}. ${item.sentence} — ${item.status} — ${item.link ?? `in ${item.where}`}`);
+    lines.push(`${n + 1}. ${item.sentence} — ${item.status} — ${item.link ?? `in ${placeWords({ key: item.where })}`}`);
   });
   if (omitted > 0) lines.push(`…and ${omitted} more not shown.`);
   for (const what of unread) lines.push(`(I could not read ${what} just now, so this list may be missing some.)`);

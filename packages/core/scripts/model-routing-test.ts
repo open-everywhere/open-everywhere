@@ -355,7 +355,7 @@ ok(!isSupervisorSession({ channel: { kind: "slack", continuationToken: "C_TXN:17
   );
   ok(!/\bSlack\b/.test(persona), "renderSupervisorPersona: never names the surface (renderSurface injects it)");
   ok(/redirect your task/.test(persona) && /escalate your access/.test(persona) && /wouldn't expect/.test(persona), "renderSupervisorPersona: carries all THREE escalation-valve triggers");
-  ok(/say so in the room and wait for a person/.test(persona), "renderSupervisorPersona: …and the remedy is a real question into the room, not a hedge");
+  ok(/Ask the person in one plain line/.test(persona) && /wait for a person to tell you how to proceed/.test(persona), "renderSupervisorPersona: …and the remedy is a real question into the room, not a hedge");
   ok(!/ask_question/.test(persona), "renderSupervisorPersona: …and it names no verb the seat does not hold");
   ok(/never an authority/.test(persona), "renderSupervisorPersona: marks display names/handles/filenames as author-chosen labels, not claims of standing");
   ok(!persona.includes("reply` posts mid-turn"), "renderSupervisorPersona: OMITS the ships-with-T1.6 reply-tool paragraph");
@@ -365,17 +365,20 @@ ok(!isSupervisorSession({ channel: { kind: "slack", continuationToken: "C_TXN:17
 
 {
   const rubric = REPLY_STYLE_RUBRIC;
-  ok(rubric.startsWith("### How you write"), "reply-style rubric: the exported constant starts with the `How you write` header");
-  ok(/one sentence/.test(rubric) && /Lead with the conclusion/.test(rubric), "reply-style rubric: concision-first (many messages need one sentence) + conclusion-first");
-  ok(/BOTH surprising AND something the reader would act on/.test(rubric), "reply-style rubric: a detail must be BOTH surprising AND action-relevant, not either");
-  ok(/narrating how you worked/.test(rubric) && /Give the finding, not the method/.test(rubric), "reply-style rubric: methodology narration is OUT");
-  ok(/\*\*Provenance\*\*/.test(rubric) && /the logs say X/.test(rubric), "reply-style rubric: …but PROVENANCE stays in — OE surfaces where a fact came from");
-  ok(/why you stayed quiet, why you are blocked/.test(rubric) && /is information/.test(rubric), "reply-style rubric: …and so does self-explanation + a stated uncertainty");
-  ok(/NAMES A REAL THING/.test(rubric) && /`park`/.test(rubric) && /`ledger`/.test(rubric) && /`arm`/.test(rubric), "reply-style rubric: OE's own vocabulary is carved OUT of the banned-word list by name");
-  ok(/overrides every line above/.test(rubric), "reply-style rubric: an explicit human request overrides the whole rubric");
+  ok(rubric.startsWith("### Your voice"), "voice section: the exported constant starts with the `Your voice` header (OPE-2487)");
+  ok(/ordinary office worker who is not technical/.test(rubric), "voice section: it names the reader — an ordinary, non-technical office worker");
+  ok(/the result in one or two lines/.test(rubric) && /one sentence/.test(rubric) && /Lead with the result/.test(rubric), "voice section: result first, in one or two lines");
+  ok(/Use names, never ids/.test(rubric), "voice section: names, never ids");
+  ok(/Say nothing about how you work/.test(rubric) && /hand-offs/.test(rubric) && /security checks/.test(rubric), "voice section: no narration of the machinery and no trust or security wording");
+  ok(/Don't repeat a card/.test(rubric), "voice section: no second copy of what a card shows");
+  ok(/Give the finding, not the method/.test(rubric), "voice section: methodology narration is OUT");
+  ok(/where a fact came from in plain words/.test(rubric) && /what you could not check or cannot do/.test(rubric), "voice section: …but provenance in plain words and a stated limit stay in");
+  ok(!/`park`|`ledger`|`arm`|NAMES A REAL THING/.test(rubric), "🔴 voice section: no carve-out that keeps OE's own internal vocabulary in a room");
+  ok(!/why you stayed quiet/.test(rubric), "🔴 voice section: no carve-out that invites the agent to explain its own machinery");
+  ok(/overrides every line above/.test(rubric) && /What did you read for that\?/.test(rubric), "voice section: a person's ask overrides it — including an ask for the sources");
   ok(/reviewer|review round|review_token|review: false|style review/i.test(rubric) === false, "🔴 reply-style rubric: the constant teaches NO reviewer gate — prose only (OPE-424 ruling)");
-  ok(!renderSupervisorPersona(slackSupervisorCtx("T1", "C_TXN", 3)).includes("### How you write"), "🔴 OPE-542: the supervisor persona no longer carries the reply-style rubric — it moved to the global scope markdown");
-  ok(!renderSupervisorPersona(slackChannelCtx("T1", "C_TXN")).includes("### How you write"), "…and an ordinary channel session's (empty) persona carries it even less");
+  ok(!renderSupervisorPersona(slackSupervisorCtx("T1", "C_TXN", 3)).includes("### Your voice"), "🔴 OPE-542: the supervisor persona no longer carries the reply-style rubric — it moved to the global scope markdown");
+  ok(!renderSupervisorPersona(slackChannelCtx("T1", "C_TXN")).includes("### Your voice"), "…and an ordinary channel session's (empty) persona carries it even less");
 }
 
 const supDomains: Domain[] = [

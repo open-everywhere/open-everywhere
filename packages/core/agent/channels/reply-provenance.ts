@@ -226,7 +226,7 @@ function stripForgedFooter(text: string): string {
     .trimEnd();
 }
 
-function renderProvenanceFooter(p: ReplyProvenance | undefined): string | undefined {
+function renderSourcesLine(p: ReplyProvenance | undefined): string | undefined {
   if (p === undefined) return undefined;
   const listed = p.named.slice(0, MAX_NAMED);
   const overflow = p.named.length - listed.length;
@@ -241,12 +241,6 @@ function renderProvenanceFooter(p: ReplyProvenance | undefined): string | undefi
   });
   for (let i = items.length - 1; i >= 0 && line(items).length > MAX_FOOTER_CHARS; i--) items[i] = listed[i]!;
   return line(items);
-}
-
-function withProvenanceFooter(text: string, p: ReplyProvenance | undefined): string {
-  const body = stripForgedFooter(text);
-  const footer = renderProvenanceFooter(p);
-  return footer === undefined ? body : `${body}\n\n${footer}`;
 }
 
 export async function auditReplyProvenance(
@@ -273,10 +267,16 @@ export async function auditReplyProvenance(
       reads: reads.length,
       named: shown?.named.length ?? 0,
       withheld: connections.length - (shown?.named.length ?? 0),
+      ...sourcesField(shown),
       ...(audit.wakeId ? { wakeId: audit.wakeId } : {}),
       ...(audit.sessionId ? { sessionId: audit.sessionId } : {}),
     },
   }).catch(() => undefined);
+}
+
+function sourcesField(shown: ReplyProvenance | undefined): { readonly sources?: string } {
+  const line = renderSourcesLine(shown);
+  return line === undefined ? {} : { sources: line.slice(PROVENANCE_FOOTER_PREFIX.length).trim() };
 }
 
 export function applyReplyProvenance(
@@ -284,12 +284,10 @@ export function applyReplyProvenance(
   audit: ReplyAudit | undefined,
 ): {
   readonly body: string;
-  readonly bare: string;
-  readonly footer: string | undefined;
   readonly reads: readonly ConnectorRead[];
   readonly shown: ReplyProvenance | undefined;
 } {
   const reads = connectorReadsThisTurn(audit?.turnId);
   const shown = provenanceForReply(reads, audit, audit?.sessionId, audit?.turnId);
-  return { body: withProvenanceFooter(text, shown), bare: withProvenanceFooter(text, undefined), footer: renderProvenanceFooter(shown), reads, shown };
+  return { body: stripForgedFooter(text), reads, shown };
 }

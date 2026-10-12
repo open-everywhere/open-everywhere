@@ -1,5 +1,12 @@
 import type { CardOptionTone, PendingActionRow } from "@open-everywhere/core/agent/adapter-api.js";
-import { approvalLabel, optionsWithoutConfirm, pendingCardLayout, plainSummaryForRow } from "@open-everywhere/core/agent/adapter-api.js";
+import {
+  decidedCardLine,
+  JUDGE_LIFT_BUTTON,
+  judgeLiftLines,
+  optionsWithoutConfirm,
+  pendingCardLayout,
+  pendingCardLines,
+} from "@open-everywhere/core/agent/adapter-api.js";
 
 export const TEAMS_ADAPTIVE_CARD_ACTION_INVOKE = "adaptiveCard/action";
 
@@ -82,21 +89,17 @@ function execute(row: Pick<PendingActionRow, "id" | "org">, title: string, decis
   };
 }
 
-function cardBody(header: string, summaryLines: readonly string[], footer: string): AdaptiveElement[] {
+function cardBody(lines: readonly string[], footer: string | undefined): AdaptiveElement[] {
+  const [headline, ...rest] = lines;
   return [
-    textBlock(header, { weight: "Bolder", size: "Medium" }),
-    ...summaryLines.map((line) => textBlock(line)),
-    textBlock(footer, { isSubtle: true, size: "Small" }),
+    textBlock(headline ?? "", { weight: "Bolder", size: "Medium" }),
+    ...rest.map((line) => textBlock(line, { spacing: "Small" })),
+    ...(footer !== undefined ? [textBlock(footer, { isSubtle: true, size: "Small" })] : []),
   ];
 }
 
-function approvalCardBody(row: PendingActionRow, summaryLines: readonly string[], footer: string): AdaptiveElement[] {
-  return [
-    textBlock(plainSummaryForRow(row), { weight: "Bolder", size: "Medium" }),
-    textBlock(approvalLabel(row.kind), { isSubtle: true, size: "Small", spacing: "None" }),
-    ...summaryLines.map((line) => textBlock(line)),
-    textBlock(footer, { isSubtle: true, size: "Small" }),
-  ];
+function capitalise(text: string): string {
+  return text.length > 0 ? `${text[0]!.toUpperCase()}${text.slice(1)}` : text;
 }
 
 const OPTION_STYLE: Record<CardOptionTone, "positive" | "destructive" | undefined> = { primary: "positive", danger: "destructive", neutral: undefined };
@@ -104,29 +107,16 @@ const OPTION_STYLE: Record<CardOptionTone, "positive" | "destructive" | undefine
 export function pendingTeamsCard(row: PendingActionRow, summaryLines: readonly string[]): TeamsAdaptiveCard {
   const layout = pendingCardLayout(row, summaryLines);
   const actions = optionsWithoutConfirm(layout.options).map((o) => execute(row, o.label, o.verb, OPTION_STYLE[o.tone]));
-  return card(approvalCardBody(row, summaryLines, `Requested by ${layout.requestedBy} · ${layout.expiry}`), actions);
+  return card(cardBody(pendingCardLines(layout), capitalise(layout.expiry)), actions);
 }
 
-export function decidedTeamsCard(row: PendingActionRow, summaryLines: readonly string[], outcomeLine: string, deciderLabel?: string): TeamsAdaptiveCard {
-  const who = deciderLabel ?? row.decidedBy ?? "unknown";
-  const decided =
-    row.status === "approved"
-      ? `✅ Approved by ${who} · ${outcomeLine}`
-      : row.status === "rejected"
-        ? `❌ Rejected by ${who}${outcomeLine === "rejected" ? "" : ` · ${outcomeLine}`}`
-        : "⏰ Expired";
-  return card(approvalCardBody(row, summaryLines, decided));
+export function decidedTeamsCard(row: PendingActionRow, _summaryLines: readonly string[], outcomeLine: string, deciderLabel?: string): TeamsAdaptiveCard {
+  const who = deciderLabel !== undefined && deciderLabel.trim().length > 0 ? deciderLabel : "someone";
+  return card([textBlock(decidedCardLine(row, outcomeLine, who))]);
 }
 
-export function judgeLiftNoticeTeamsCard(row: PendingActionRow, summaryLines: readonly string[], outcomeLine: string): TeamsAdaptiveCard {
-  return card(
-    cardBody(
-      `Ran without asking: ${row.kind}`,
-      summaryLines,
-      `⚡ Auto-approved by the approval judge — no card was posted and this has already run · ${outcomeLine}`,
-    ),
-    [execute(row, "This should not have run", "contradict", "destructive")],
-  );
+export function judgeLiftNoticeTeamsCard(row: PendingActionRow, _summaryLines: readonly string[], outcomeLine: string): TeamsAdaptiveCard {
+  return card(cardBody(judgeLiftLines(row, outcomeLine), undefined), [execute(row, JUDGE_LIFT_BUTTON, "contradict", "destructive")]);
 }
 
 export function teamsCardAttachment(c: TeamsAdaptiveCard): { readonly contentType: string; readonly content: TeamsAdaptiveCard } {

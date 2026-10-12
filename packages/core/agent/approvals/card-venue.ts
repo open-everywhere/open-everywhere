@@ -5,6 +5,7 @@ import type { SurfaceBinding } from "../identity/binding.js";
 import { postedToSurfaceKey, type PriorRejection } from "./flow.js";
 import { checkCardDisclosure, type CardDisclosureDeps } from "./card-disclosure.js";
 import { hasApprovalCardPath } from "../tools/set_spend_limit.js";
+import { admitProviderRegistration } from "../access/provider-selection.js";
 
 export interface ApprovalVenue {
   readonly platform: string;
@@ -37,9 +38,35 @@ export function approvalVenueFor(
 }
 
 function ownRoomVenue(binding: SurfaceBinding): ApprovalVenue | undefined {
+  if (!hasApprovalCardPath(binding.platform)) return undefined;
+  const room = ownCardRoom(binding);
+  if (!room) return undefined;
+  return { platform: binding.platform, channelId: room.channelId, surfaceKey: room.surfaceKey, sameRoom: true };
+}
+
+export interface OwnCardRoom {
+  readonly channelId: string;
+  readonly surfaceKey: string;
+}
+
+export type OwnCardRoomResolver = (binding: SurfaceBinding) => OwnCardRoom | undefined;
+
+const OWN_CARD_ROOMS = new Map<string, OwnCardRoomResolver>();
+
+export function registerOwnCardRoom(platform: string, resolve: OwnCardRoomResolver): void {
+  if (!admitProviderRegistration(platform, "own-card-room")) return;
+  OWN_CARD_ROOMS.set(platform, resolve);
+}
+
+export function ownCardRoom(binding: SurfaceBinding): OwnCardRoom | undefined {
   const ownChannelId = typeof binding.target?.["channelId"] === "string" ? (binding.target["channelId"] as string) : undefined;
-  if (!hasApprovalCardPath(binding.platform) || !ownChannelId) return undefined;
-  return { platform: binding.platform, channelId: ownChannelId, surfaceKey: postedToSurfaceKey(binding, ownChannelId), sameRoom: true };
+  if (ownChannelId) return { channelId: ownChannelId, surfaceKey: postedToSurfaceKey(binding, ownChannelId) };
+  try {
+    const room = OWN_CARD_ROOMS.get(binding.platform)?.(binding);
+    return room && room.channelId.length > 0 && room.surfaceKey.length > 0 ? room : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function inDomainVenues(

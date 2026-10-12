@@ -77,7 +77,7 @@ export function grantConversationPhrase(label: string | undefined): string {
 }
 
 export function grantRequesterPhrase(label: string | undefined): string {
-  return grantDisplayLabel(label) ?? "Someone this deployment cannot name";
+  return grantDisplayLabel(label) ?? "Someone I can't identify";
 }
 
 export function grantDisplayLabel(label: string | undefined): string | undefined {

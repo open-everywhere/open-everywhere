@@ -12,6 +12,7 @@ const { SURFACE, siloTier } = await import("../agent/memory/store.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { bulletSha256, removeBulletLinesBySha } = await import("../agent/memory/purge-redaction.js");
 const { memoryItemsOf, editRefusal, replaceBulletLine, isLineDigest } = await import("../agent/memory/visible.js");
+const { memoryLineForReader } = await import("../agent/memory/provenance-mark.js");
 const { buildHomeView, runHomeAction, homeDomainsFor } = await import("../agent/home/home-view.js");
 const { MEMORY_HOME_ACTIONS } = await import("../agent/home/memory-home.js");
 const { writeMemoryTier, registerMemoryWriteObserver, _resetMemoryWriteObservers, _setMemoryWriteObserverBudgetMsForTest } = await import("../agent/memory/write-road.js");
@@ -155,6 +156,22 @@ console.log("§3 edit from the page");
 
   const same = await runHomeAction(viewer(ALICE, "internal"), MEMORY_HOME_ACTIONS.edit, bulletSha256("- Alice lives in York"), "Alice lives in York");
   ok(same.notice.startsWith("Nothing changed"), "saving the same words changes nothing");
+
+  const { claim, mark } = { claim: "[unverified claim; the turn ingested web]", mark: "[external-provenance: added on a turn that ingested web]" };
+  const marked = `- ${claim} The office moves in May ${mark}`;
+  const before = await aliceFiles();
+  await sqlite.writeTier(ALICE, SURFACE, { ...before, "MEMORY.md": `${before["MEMORY.md"]!.trimEnd()}\n${marked}\n` }, "seed marked");
+  const item = memoryItemsOf(await aliceFiles()).find((i) => i.text.includes("office moves"))!;
+  const shown = memoryLineForReader(item.text);
+  ok(shown === "(unconfirmed) The office moves in May (from the web)", `the page shows the reader form (got ${JSON.stringify(shown)})`);
+  const unchanged = await runHomeAction(viewer(ALICE, "internal"), MEMORY_HOME_ACTIONS.edit, item.sha256, shown);
+  ok(unchanged.notice.startsWith("Nothing changed"), `🔴 saving the reader form unchanged changes nothing (got "${unchanged.notice}")`);
+  ok((await aliceFiles())["MEMORY.md"]!.includes(marked), "…and the stored line keeps both carriers byte for byte");
+  const reworded = await runHomeAction(viewer(ALICE, "internal"), MEMORY_HOME_ACTIONS.edit, item.sha256, shown.replace("May", "June"));
+  ok(reworded.notice.startsWith("Saved"), "a reworded reader form saves");
+  ok((await aliceFiles())["MEMORY.md"]!.includes(`- ${claim} The office moves in June ${mark}`), "🔴 …and the saved line still holds both carriers");
+  await runHomeAction(viewer(ALICE, "internal"), MEMORY_HOME_ACTIONS.forget, bulletSha256(`- ${claim} The office moves in June ${mark}`));
+  ok(!(await aliceFiles())["MEMORY.md"]!.includes("office moves"), "…and the marked line is forgotten again");
 }
 
 console.log("§4 a forged digest reaches only the viewer's own memory");

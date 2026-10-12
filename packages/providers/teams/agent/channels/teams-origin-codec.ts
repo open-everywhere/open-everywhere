@@ -25,6 +25,13 @@ const DEFAULT_TEAMS_SERVICE_HOSTS: readonly string[] = [
   ".botframework.com",
 ];
 
+const TEAMS_BOT_CHANNEL_ID = "msteams";
+
+export function isTeamsChannelActivity(parsed: unknown): boolean {
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return false;
+  return (parsed as Record<string, unknown>)["channelId"] === TEAMS_BOT_CHANNEL_ID;
+}
+
 function teamsServiceHostAllowlist(): readonly string[] {
   const extra = getSettings().teams.serviceHosts;
   return extra.length > 0 ? [...DEFAULT_TEAMS_SERVICE_HOSTS, ...extra] : DEFAULT_TEAMS_SERVICE_HOSTS;

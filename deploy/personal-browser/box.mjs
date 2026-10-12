@@ -1,6 +1,7 @@
 import http from "node:http";
 import net from "node:net";
 import { bareHost, checkedAddress as fenceAddress, hostAllowed as fenceAllowed, parseAllow } from "./fence.mjs";
+import { createRecorder, nameTarget, SECRET_AUTOCOMPLETE, SECRET_NAME } from "./teach.mjs";
 import os from "node:os";
 import path from "node:path";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
@@ -150,8 +151,6 @@ async function state() {
   return { url: page.url(), title: title.slice(0, 200) };
 }
 
-const SECRET_NAME = /pass(word|wd|code)?|otp|2fa|mfa|one.?time|verif\w*.?code|security.?code|auth\w*.?code|cvv|cvc|csc|card.?num|\bpin\b|secret|token/i;
-const SECRET_AUTOCOMPLETE = new Set(["current-password", "new-password", "one-time-code", "cc-number", "cc-csc", "cc-exp", "cc-exp-month", "cc-exp-year"]);
 function snapshotInPage({ max, re, acs }) {
   const SECRET_NAME_RE = new RegExp(re, "i");
   const SECRET_AC = new Set(acs);
@@ -221,6 +220,45 @@ const KEYS = new Set(["Enter", "Tab", "Escape", "Backspace", "Delete", "ArrowUp"
 
 const WRITE_OPS = new Set(["click", "type", "select", "key"]);
 
+const recorder = createRecorder();
+
+function targetFactsInPage({ x, y }) {
+  const sel =
+    'a[href],button,input,select,textarea,summary,[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],[role=option],[role=switch],[role=combobox],[role=textbox],[role=searchbox],[contenteditable=""],[contenteditable=true]';
+  const start = typeof x === "number" ? document.elementFromPoint(x, y) : document.activeElement;
+  const el = start && start.closest ? start.closest(sel) : null;
+  if (!el) return null;
+  const editable = el.isContentEditable === true;
+  return {
+    tag: el.tagName,
+    type: el.getAttribute("type") || "",
+    roleAttr: el.getAttribute("role") || "",
+    editable,
+    ariaLabel: el.getAttribute("aria-label") || "",
+    labelText: (el.labels && el.labels[0] && el.labels[0].innerText) || "",
+    innerText: editable ? "" : (el.innerText || "").slice(0, 200),
+    placeholder: el.getAttribute("placeholder") || "",
+    title: el.getAttribute("title") || "",
+    alt: el.getAttribute("alt") || "",
+    name: el.getAttribute("name") || "",
+    value: (el.getAttribute("type") || "").toLowerCase() === "submit" || (el.getAttribute("type") || "").toLowerCase() === "button" ? el.value || "" : "",
+    autocomplete: el.getAttribute("autocomplete") || "",
+    id: el.id || "",
+  };
+}
+
+async function describeTarget(point) {
+  if (!recorder.recording()) return null;
+  const facts = await page.evaluate(targetFactsInPage, point).catch(() => null);
+  return facts ? nameTarget(facts) : null;
+}
+
+async function noteArrival() {
+  if (!recorder.recording()) return;
+  const s = await state();
+  recorder.noteArrival(s.url);
+}
+
 async function command(body, byPerson = false) {
   const op = body.op;
   if (!byPerson && personHolds()) throw new BoxError("person-holds", "the person has the controls of this browser, so the agent's action was refused");
@@ -244,6 +282,14 @@ async function command(body, byPerson = false) {
   if (op === "look") {
     const snap = await page.evaluate(snapshotInPage, { max: 150, re: SECRET_NAME.source, acs: [...SECRET_AUTOCOMPLETE] });
     return { ...(await state()), ...snap };
+  }
+  if (op === "find") {
+    if (typeof body.role !== "string" || typeof body.name !== "string") throw new BoxError("bad-find", "give the role and the label to find");
+    const snap = await page.evaluate(snapshotInPage, { max: 150, re: SECRET_NAME.source, acs: [...SECRET_AUTOCOMPLETE] });
+    const want = body.name.replace(/\s+/g, " ").trim().toLowerCase();
+    const same = snap.elements.filter((e) => e.role === body.role);
+    const hit = same.find((e) => e.name.toLowerCase() === want) ?? (want.length > 0 ? same.find((e) => e.name.toLowerCase().includes(want)) : undefined);
+    return { ...(await state()), found: hit ? hit.ref : null };
   }
   if (op === "click") {
     await locator(body.ref).click({ timeout: 10_000 });
@@ -298,6 +344,14 @@ async function frame() {
 }
 
 async function input(body) {
+  await noteArrival();
+  const target = body.kind === "click" || body.kind === "dblclick" ? await describeTarget({ x: Number(body.x), y: Number(body.y) }) : body.kind === "text" ? await describeTarget({}) : null;
+  const out = await performInput(body);
+  recorder.input(body, target);
+  return out;
+}
+
+async function performInput(body) {
   const kind = body.kind;
   if (kind === "click" || kind === "dblclick") {
     const x = Number(body.x);
@@ -373,6 +427,12 @@ const server = http.createServer((req, res) => {
       if (req.method === "GET" && url === "/frame") return send(res, 200, await frame(), "image/jpeg");
       if (req.method === "POST" && url === "/cmd") return send(res, 200, { ok: true, ...(await command(parsed)) });
       if (req.method === "POST" && url === "/input") return send(res, 200, { ok: true, ...(await input(parsed)) });
+      if (req.method === "POST" && url === "/teach") {
+        const s = await state();
+        if (parsed.action === "start") return send(res, 200, { ok: true, ...recorder.start(parsed.maxMs, s.url) });
+        if (parsed.action === "stop") return send(res, 200, { ok: true, ...recorder.stop(s.url) });
+        return send(res, 400, { ok: false, code: "bad-teach" });
+      }
       if (req.method === "POST" && url === "/lock") {
         if (parsed.holder !== "agent" && parsed.holder !== "person") return send(res, 400, { ok: false, code: "bad-lock" });
         lock = { holder: parsed.holder, until: typeof parsed.until === "number" ? parsed.until : 0 };

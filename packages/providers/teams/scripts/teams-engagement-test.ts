@@ -54,6 +54,7 @@ function conversationIdFor(scope: Scope): string {
 function activityBody(scope: Scope, opts: { mentioned?: boolean; id?: string; text?: string } = {}): string {
   const body: Record<string, unknown> = {
     type: "message",
+    channelId: "msteams",
     id: opts.id ?? `act-${scope}-${opts.mentioned ? "mention" : "plain"}`,
     serviceUrl: SERVICE_URL,
     from: { id: HUMAN, name: "Hazel" },

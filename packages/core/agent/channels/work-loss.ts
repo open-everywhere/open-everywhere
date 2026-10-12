@@ -1,3 +1,4 @@
+import { failLostInboundTask } from "../a2a/inbound/answer.js";
 import { getOperationalStore } from "../operational/provider.js";
 import type { OperationalStore } from "../operational/store.js";
 import { appendAudit } from "../audit/audit.js";
@@ -54,6 +55,7 @@ export async function notifyLostWorkRequests(
           run: async () => {
             lost = true;
             await (deps.foldFire ?? foldWorkFire)(row, "failed", { org: input.org });
+            await failLostInboundTask({ org: input.org, store, requestId, fire: row.fire!, audit: audit as typeof appendAudit });
           },
         });
         if (lost) {
@@ -186,6 +188,7 @@ export async function notifyRefusedWorkRequest(
         run: async () => {
           folded = true;
           await (deps.foldFire ?? foldWorkFire)(row, "failed", { org });
+          await failLostInboundTask({ org, store, requestId, fire: row.fire!, audit: audit as typeof appendAudit });
         },
       });
       if (folded) {

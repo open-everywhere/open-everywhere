@@ -8,11 +8,31 @@ export const TEAMS_APP_NAME_MAX = 30;
 
 const TEAMS_APP_FULL_NAME_MAX = 100;
 
-const TEAMS_APP_MANIFEST_VERSION = "1.0.3";
+const TEAMS_APP_MANIFEST_VERSION = "1.0.4";
+
+const TEAMS_DEFAULT_COMMAND_NAME = "oe";
+
+const TEAMS_COMMAND_TITLE_MAX = 32;
+
+const TEAMS_OE_COMMAND_VERBS: readonly { readonly verb: string; readonly description: string }[] = [
+  { verb: "help", description: "List the control-plane commands. No model turn." },
+  { verb: "status", description: "Deployment status: build, models, memory provider. No model turn." },
+  { verb: "budget", description: "Spend caps and this month's spend for this conversation. No model turn." },
+  { verb: "stop", description: "Stop the turn running in this conversation. No model turn." },
+];
+
+function teamsCommandLists(commandName: string): readonly unknown[] {
+  const name = commandName.trim() || TEAMS_DEFAULT_COMMAND_NAME;
+  const commands = TEAMS_OE_COMMAND_VERBS.map((c) => ({ title: `${name} ${c.verb}`, description: c.description })).filter(
+    (c) => c.title.length <= TEAMS_COMMAND_TITLE_MAX,
+  );
+  return commands.length === 0 ? [] : [{ scopes: ["team", "groupChat", "personal"], commands }];
+}
 
 export interface TeamsAppManifestOptions {
   readonly appName?: string;
   readonly agentName?: string;
+  readonly commandName?: string;
 }
 
 function teamsManifestAppName(opts: TeamsAppManifestOptions = {}): string {
@@ -62,6 +82,7 @@ export function teamsAppManifestTemplate(opts: TeamsAppManifestOptions = {}): st
           isNotificationOnly: false,
           supportsCalling: false,
           supportsVideo: false,
+          commandLists: teamsCommandLists(opts.commandName ?? TEAMS_DEFAULT_COMMAND_NAME),
         },
       ],
       permissions: ["identity", "messageTeamMembers"],

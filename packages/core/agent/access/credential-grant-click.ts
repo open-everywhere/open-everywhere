@@ -95,8 +95,8 @@ export function grantApproveFailureText(reason: GrantApproveFailure["reason"], p
       return prompted
         ? "Not yet — I have just sent you the link to connect your account. Nothing has been granted."
         :
-          "Your own account is not connected yet, and this deployment could not send you the link to connect it. Nothing has been granted. " +
-          "If you have asked me to stop sending you direct messages, say here that I may message you again and press Approve once more. Otherwise ask an operator to check the connector setup.";
+          "Your own account is not connected yet, and I couldn't send you the link to connect it. Nothing has been granted. " +
+          "If you asked me to stop sending you direct messages, say here that I may message you again and press Approve once more. Otherwise ask your admin to check the setup.";
     case "catalogue_unreachable":
       return "Your account could not be reached just now, so nothing was granted and nothing was spent. Press Approve again in a moment.";
     case "tool_absent":
@@ -104,12 +104,12 @@ export function grantApproveFailureText(reason: GrantApproveFailure["reason"], p
     case "frozen_args_unknown":
       return "That request pins values the tool does not take, so the grant could never have been spent. Nothing was granted, this request is closed, and the person who asked has been told.";
     case "owner_unresolvable":
-      return "This deployment cannot resolve your account for that connector, so nothing could ever be spent under the grant. Nothing was granted. An operator fixes this, not another tap.";
+      return "I can't find your account for this, so nothing was granted. Your admin needs to fix this; another tap won't help.";
     case "standing_unavailable":
       return (
-        `A grant for ${GRANT_MODE_WORDS.standing} needs a room this deployment can name, and this request did not come from one — ` +
+        `A grant for ${GRANT_MODE_WORDS.standing} has to belong to a room, and this request did not come from one — ` +
         "so it would stop working the moment that conversation ends. Nothing was granted and nothing was spent. " +
-        `Approve ${grantModePhrase("once")} or ${grantModePhrase("session")} on the same card instead, or ask an operator to declare that room into a domain.`
+        `Approve ${grantModePhrase("once")} or ${grantModePhrase("session")} on the same card instead.`
       );
     case "not_pending_or_expired":
     case "mint_refused":

@@ -4,6 +4,7 @@ __regDiscord();
 import { createHmac } from "node:crypto";
 import type { RouteHandlerArgs } from "eve/channels";
 import { defineDomain } from "@open-everywhere/core/agent/memory/domain.js";
+import { PersonFacingError, personTextFaults } from "@open-everywhere/core/agent/channels/person-text.js";
 import { registerConfig } from "@open-everywhere/core/agent/access/config.js";
 import type { SurfaceBinding } from "@open-everywhere/core/agent/identity/binding.js";
 import type { RequestApprovalInput } from "@open-everywhere/core/agent/approvals/flow.js";
@@ -136,13 +137,13 @@ function discordBinding(overrides: Partial<SurfaceBinding> = {}): SurfaceBinding
   ok(status.includes("deepseek/deepseek-v4-flash"), "renderStatus includes the utility model");
   ok(status.includes("sqlite"), "renderStatus includes the memory provider");
   ok(status.includes("telemetry: `unknown`"), "renderStatus defaults the telemetry line when the caller omits it");
-  ok(status.includes("deployment sha: `abc1234`"), "renderStatus includes the deployment sha");
+  ok(status.includes("build: `abc1234`"), "renderStatus includes the deployment sha");
   ok(status.includes("eve: `0.44.0`"), "renderStatus includes the eve pin");
   const statusUnknownVersion = renderStatus(
     { version: "1.2.3", primaryModel: "zai/glm-5.2", utilityModel: "deepseek/deepseek-v4-flash", deploymentSha: "unknown", evePin: "unknown" },
     "sqlite",
   );
-  ok(statusUnknownVersion.includes("deployment sha: `unknown`"), "renderStatus states \"unknown\" rather than fabricating a sha when unregistered");
+  ok(statusUnknownVersion.includes("build: `unknown`"), "renderStatus states \"unknown\" rather than fabricating a sha when unregistered");
 
   ok(normalizeAppVersion("0.0.0") === APP_VERSION_UNVERSIONED, "normalizeAppVersion collapses the npm placeholder to the unversioned sentinel");
   ok(normalizeAppVersion("") === APP_VERSION_UNVERSIONED, "…and an empty string");
@@ -156,10 +157,10 @@ function discordBinding(overrides: Partial<SurfaceBinding> = {}): SurfaceBinding
     { version: APP_VERSION_UNVERSIONED, primaryModel: "zai/glm-5.2", utilityModel: "deepseek/deepseek-v4-flash", deploymentSha: "abc1234", evePin: "0.44.0" },
     "sqlite",
   );
-  ok(statusUnversioned.split("\n")[0] === "*Open Everywhere*", "renderStatus prints NO version on the title when the build carries none");
+  ok(statusUnversioned.split("\n")[0] === "*Open Everywhere* is running.", "renderStatus prints NO version on the title when the build carries none");
   ok(!statusUnversioned.includes("v0.0.0") && !statusUnversioned.includes(`v${APP_VERSION_UNVERSIONED}`), "…and never renders the sentinel as if it were a version number");
-  ok(statusUnversioned.includes("deployment sha: `abc1234`"), "…while the sha line — the identity that DOES separate two builds — is unchanged");
-  ok(status.split("\n")[0] === "*Open Everywhere* v1.2.3", "🔴 NEGATIVE CONTROL: a real version still rides the title, so the suppression is conditional and not a deletion");
+  ok(statusUnversioned.includes("build: `abc1234`"), "…while the sha line — the identity that DOES separate two builds — is unchanged");
+  ok(status.split("\n")[0] === "*Open Everywhere* v1.2.3 is running.", "🔴 NEGATIVE CONTROL: a real version still rides the title, so the suppression is conditional and not a deletion");
 
   registerAppInfo({ version: "0.0.0", primaryModel: "m", utilityModel: "u", deploymentSha: "sha1", evePin: "0.44.0" });
   ok(getAppInfo().version === APP_VERSION_UNVERSIONED, "registerAppInfo normalises the placeholder, so every consumer reads the same word");
@@ -171,7 +172,7 @@ function discordBinding(overrides: Partial<SurfaceBinding> = {}): SurfaceBinding
   ok(getAppInfo().version === "unknown", "an UNREGISTERED app still reads \"unknown\" — the OPE-991 default is untouched");
   ok(!hasRealAppVersion(getAppInfo()), "…and it prints no version either: both non-answers are suppressed, for two different reasons");
   const statusUnregistered = renderStatus(getAppInfo(), "sqlite");
-  ok(statusUnregistered.split("\n")[0] === "*Open Everywhere*", "…so an unregistered app's title carries no `vunknown` either");
+  ok(statusUnregistered.split("\n")[0] === "*Open Everywhere* is running.", "…so an unregistered app's title carries no `vunknown` either");
 
   const statusWithTelemetry = renderStatus(
     { version: "1.2.3", primaryModel: "zai/glm-5.2", utilityModel: "deepseek/deepseek-v4-flash", deploymentSha: "abc1234", evePin: "0.44.0" },
@@ -180,7 +181,7 @@ function discordBinding(overrides: Partial<SurfaceBinding> = {}): SurfaceBinding
   );
   ok(statusWithTelemetry.includes("telemetry: `on (default collector)`"), "renderStatus includes an explicit telemetry status");
 
-  ok(!status.includes("compaction fires at"), "renderStatus omits the compaction line when the app registered no window");
+  ok(!status.includes("summarised at"), "renderStatus omits the compaction line when the app registered no window");
   ok(!status.includes("context window:"), "renderStatus omits the context-window line when the app registered no window");
   const statusWithWindow = renderStatus(
     {
@@ -195,7 +196,7 @@ function discordBinding(overrides: Partial<SurfaceBinding> = {}): SurfaceBinding
     "sqlite",
   );
   ok(statusWithWindow.includes("context window: `1,050,000` tokens"), "renderStatus groups the context window with commas");
-  ok(statusWithWindow.includes("compaction fires at `210,000` (20%)"), "renderStatus states the absolute compaction threshold and its percent");
+  ok(statusWithWindow.includes("summarised at `210,000` (20%)"), "renderStatus states the absolute compaction threshold and its percent");
   const statusHalf = renderStatus(
     {
       version: "1.2.3",
@@ -221,7 +222,7 @@ function discordBinding(overrides: Partial<SurfaceBinding> = {}): SurfaceBinding
   ok(uncapped.includes("• this channel:") && !uncapped.includes("discord/G1/C1"), "renderBudgetStatus names the channel in words, not by its scope key");
   ok(uncapped.includes("• whole workspace:") && !uncapped.includes("discord/G1"), "renderBudgetStatus names the workspace in words, not by its scope key");
   ok(uncapped.includes("1,234"), "renderBudgetStatus formats surface token count with separators");
-  ok((uncapped.match(/uncapped/g) ?? []).length === 4, "all four cap components render as uncapped when no caps are configured");
+  ok((uncapped.match(/no limit/g) ?? []).length === 4, "all four cap components render as \"no limit\" when no caps are configured");
 
   const capped = renderBudgetStatus({
     surfaceKey: "discord/G1/C1",
@@ -266,7 +267,7 @@ function discordBinding(overrides: Partial<SurfaceBinding> = {}): SurfaceBinding
   const rendered = renderStatus(getAppInfo(), "sqlite");
   ok(
     rendered.includes(`context window: \`${grouped(answer.contextWindowTokens)}\` tokens`) &&
-      rendered.includes(`fires at \`${grouped(answer.compactionThresholdTokens)}\``),
+      rendered.includes(`summarised at \`${grouped(answer.compactionThresholdTokens)}\``),
     "🔴 the command's line and the tool's fields carry the SAME two numbers — the disagreement the tool's header claims to prevent",
   );
 
@@ -355,7 +356,7 @@ function discordOeInteraction(opts: {
   ok((resStatus as { data: { content: string } }).data.content.includes("Open Everywhere"), "/oe status answers with deploy info");
 
   const resBot = await handleDiscordOeCommandInteraction(discordOeInteraction({ bot: true }));
-  ok((resBot as { data: { content: string } }).data.content.toLowerCase().includes("bot"), "a bot-authored invocation is refused with an ephemeral note, never silently dispatched");
+  ok((resBot as { data: { content: string } }).data.content.toLowerCase().includes("only a person"), "a bot-authored invocation is refused with an ephemeral note, never silently dispatched");
 
   const resNoChannel = await handleDiscordOeCommandInteraction(discordOeInteraction({ channelId: null }));
   ok((resNoChannel as { data: { content: string } }).data.content.toLowerCase().includes("channel"), "a missing channel id is refused with an ephemeral note");
@@ -364,7 +365,7 @@ function discordOeInteraction(opts: {
   ok(resNotOurs === null, "a non-oe interaction returns null so the front route falls back to forwarding");
 
   const resBadOption = await handleDiscordOeCommandInteraction(discordOeInteraction({ options: [{ name: "budget", options: [{ name: "raise", options: [] }] }] }));
-  ok((resBadOption as { data: { content: string } }).data.content.toLowerCase().includes("usd"), "a malformed budget-raise invocation surfaces a helpful ephemeral error, never throws");
+  ok((resBadOption as { data: { content: string } }).data.content.toLowerCase().includes("amount in dollars"), "a malformed budget-raise invocation surfaces a helpful ephemeral error, never throws");
 }
 
 {
@@ -412,7 +413,8 @@ function discordOeInteraction(opts: {
   };
 
   const raiseReply = await runBudgetRaise(discordBinding(), 25, deps);
-  ok(raiseReply.includes("$25.00") && raiseReply.includes("pending-123"), "runBudgetRaise's ack text names the amount and pending id");
+  ok(raiseReply.includes("$25.00") && !raiseReply.includes("pending-123"), "runBudgetRaise's ack text names the amount, and never the pending id (OPE-2486)");
+  ok(personTextFaults(raiseReply).length === 0, `runBudgetRaise's ack reads cleanly — no raw id, debug term or trust plumbing (got ${JSON.stringify(personTextFaults(raiseReply))})`);
   ok(recorded!.kind === "spend.set", "runBudgetRaise proposes a spend.set");
   ok((recorded!.args as { monthlyUsd: number }).monthlyUsd === 25, "runBudgetRaise freezes the requested USD amount");
   ok((recorded!.args as { reason: string }).reason.includes("<@U_REQUESTER>"), "runBudgetRaise's frozen reason names the requester (mention syntax shared by Slack + Discord)");
@@ -426,13 +428,22 @@ function discordOeInteraction(opts: {
 
   recorded = undefined;
   const clearReply = await runBudgetClear(discordBinding(), deps);
-  ok(clearReply.includes("pending-123"), "runBudgetClear's ack text names the pending id");
+  ok(clearReply.includes("usual limit") && !clearReply.includes("pending-123"), "runBudgetClear's ack says what was asked, and never the pending id (OPE-2486)");
+  ok(personTextFaults(clearReply).length === 0, `runBudgetClear's ack reads cleanly (got ${JSON.stringify(personTextFaults(clearReply))})`);
   ok(recorded!.kind === "spend.clear", "runBudgetClear proposes a spend.clear");
   ok(recorded!.scopeKey === "discord/G1/C1", "runBudgetClear defaults to this surface's own scope");
 
+  for (const run of [
+    () => runBudgetRaise(discordBinding(), 10, { ...deps, requestApproval: async () => { throw new Error("spend.set was DENIED by policy rule spend-deny-7"); } }),
+    () => runBudgetClear(discordBinding(), { ...deps, requestApproval: async () => { throw new Error("spend.clear was DENIED by policy rule spend-deny-7"); } }),
+  ]) {
+    await assert.rejects(run, (err: unknown) => err instanceof PersonFacingError && /ask your admin/.test(err.message) && !/spend-deny-7/.test(err.message), "a denied budget request reaches the person as a PersonFacingError that says to ask an admin");
+    n++;
+  }
+
   await assert.rejects(
     () => runBudgetRaise(discordBinding({ target: {} }), 10, deps),
-    /couldn't resolve this channel's id/,
+    /I can't do that here/,
     "runBudgetRaise refuses when no channel id can be resolved",
   );
   n++;
@@ -441,7 +452,7 @@ function discordOeInteraction(opts: {
     ["/oe budget raise", () => runBudgetRaise(discordBinding({ platform: "teams" }), 10, deps)],
     ["/oe budget clear", () => runBudgetClear(discordBinding({ platform: "teams" }), deps)],
   ] as const) {
-    await assert.rejects(run, /approval-card path/, `${label} still refuses on a card-less surface — the fence moved to the door that promises "posted in this channel", it did not disappear`);
+    await assert.rejects(run, /doesn.t work here/, `${label} still refuses on a card-less surface — the fence moved to the door that promises "posted in this channel", it did not disappear`);
     n++;
   }
   ok((await runBudgetRaise(discordBinding(), 25, deps)).includes("$25.00"), "…and the fence takes NOTHING from a card-capable surface: the same raise still acks");
@@ -494,22 +505,21 @@ function discordOeInteraction(opts: {
     scannedWith!.org === "default" && scannedWith!.days === 30 && scannedWith!.nowISO === "2026-09-09T10:00:00.000Z",
     `budget raise: the scan is pinned to the requester's own org and a 30-day window (got ${JSON.stringify(scannedWith)})`,
   );
-  ok(engReply.includes("`eng`") && engReply.includes("$12.50"), `budget raise: the ack shows the requester their own domain's 30-day spend (got: ${engReply})`);
-  ok(engReply.includes("123,456") && engReply.includes("42"), "budget raise: the ack carries the domain's token and call totals too");
-  ok(engReply.includes("2026-08, 2026-09"), "budget raise: the ack NAMES the calendar months summed — the ledger's grain is a month, and the line says so instead of claiming an exact 30 days");
-  ok(!engReply.includes("99.75") && !engReply.includes("`sales`"), "budget raise: a requester in one domain sees NOTHING of another domain's spend");
+  ok(engReply.includes("eng spent") && engReply.includes("$12.50"), `budget raise: the ack shows the requester their own domain's 30-day spend (got: ${engReply})`);
+  ok(engReply.includes("August 2026 and September 2026"), "budget raise: the ack NAMES the calendar months summed, in words — the ledger's grain is a month, and the line says so instead of claiming an exact 30 days");
+  ok(!engReply.includes("99.75") && !engReply.includes("sales"), "budget raise: a requester in one domain sees NOTHING of another domain's spend");
   const salesReply = await runBudgetRaise(inDomain("C_SALES"), 25, deps as never);
   ok(scannedFor === "sales" && salesReply.includes("$99.75"), "budget raise: a requester in the other domain gets THAT domain's figure (negative control — the answer tracks the requester)");
   ok(!salesReply.includes("12.50"), "budget raise: …and still sees nothing of the first domain's spend");
 
   ok(recorded!.kind === "spend.set", "budget raise: the scan did not turn the raise into an act — it is still a spend.set PROPOSAL");
-  ok(salesReply.includes("An admin needs to Approve it."), "budget raise: the ack still says an admin decides — the raise stays admin-gated");
+  ok(salesReply.includes("asked an admin to approve"), "budget raise: the ack still says an admin decides — the raise stays admin-gated");
   ok(JSON.stringify(recorded!.args).indexOf("99.75") === -1, "budget raise: the scanned figure is NOT frozen onto the card — it is the asker's evidence, not the approver's");
 
   scannedFor = undefined;
   const dmReply = await runBudgetRaise(discordBinding({ mode: "dm", workspace: "U_DM", target: { channelId: "U_DM" } }), 10, deps as never);
   ok(scannedFor === undefined, "budget raise: a DM resolves to no domain, so the scan does not run at all");
-  ok(/No domain spend to show/.test(dmReply) && /DM/.test(dmReply), "budget raise: a DM ack states that no domain spend is shown, and why — never a silent zero");
+  ok(/No domain spending to show/.test(dmReply) && /direct message/.test(dmReply), "budget raise: a DM ack states that no domain spend is shown, and why — never a silent zero");
 
   const brokenReply = await runBudgetRaise(inDomain("C_ENG"), 25, {
     ...deps,
@@ -517,8 +527,8 @@ function discordOeInteraction(opts: {
       throw new Error("ledger unreachable");
     },
   } as never);
-  ok(brokenReply.includes("pending-scan"), "budget raise: a failed scan still returns the working proposal ack — the read is fail-soft");
-  ok(/NOT shown/.test(brokenReply) && !brokenReply.includes("$0.00"), "budget raise: a failed scan says the ledger could not be read, never a $0.00 that would read as a clean bill");
+  ok(brokenReply.includes("asked an admin to approve"), "budget raise: a failed scan still returns the working proposal ack — the read is fail-soft");
+  ok(/couldn't load/.test(brokenReply) && !brokenReply.includes("$0.00"), "budget raise: a failed scan says the ledger could not be read, never a $0.00 that would read as a clean bill");
 }
 
 {
@@ -544,11 +554,11 @@ function discordOeInteraction(opts: {
     ok(help.includes("/aria status") && help.includes("/aria rate") && help.includes("/aria help"), "🔴 configured: the help text spells the configured command");
     ok(!/\/oe\b/.test(help), "configured: …and never `/oe`");
     const unknown = parseOeCommandTokens(["frobnicate"]);
-    ok(unknown.kind === "error" && unknown.message.includes('"/aria help"'), "configured: the unknown-command error points at /aria help");
+    ok(unknown.kind === "error" && unknown.message.includes('`/aria help`'), "configured: the unknown-command error points at /aria help");
     const badRaise = parseOeCommandTokens(["budget", "raise", "x"]);
     ok(badRaise.kind === "error" && badRaise.message.includes("/aria budget raise"), "configured: the budget-raise error spells /aria");
     const discordBad = parseDiscordOeCommandOptions([{ name: "nope" }]);
-    ok(discordBad.kind === "error" && discordBad.message.includes('"/aria"') && discordBad.message.includes("/aria help"), "configured: Discord's unknown-subcommand error spells /aria");
+    ok(discordBad.kind === "error" && discordBad.message.includes("/aria help"), "configured: Discord's unknown-subcommand error spells /aria");
     const status = renderStatus({ version: "1.2.3", primaryModel: "m", utilityModel: "u", deploymentSha: "abc", evePin: "0.71.0" }, "sqlite");
     overrideSettingsForTest({ identity: { name: "A Very Long Configured Agent Name That Fills The Whole Setting Width!" } });
     const longDef = buildOeDiscordCommandDefinition() as { description: string };

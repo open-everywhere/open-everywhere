@@ -1,3 +1,4 @@
+agent/channels/a2a-inbound.ts	mounted @open-everywhere/core
 agent/channels/aws-sso-callback.ts	mounted @open-everywhere/core
 agent/channels/control-mcp.ts	mounted @open-everywhere/core
 agent/channels/control-read.ts	mounted @open-everywhere/core
@@ -36,6 +37,7 @@ agent/hooks/loop-breaker.ts	mounted @open-everywhere/core
 agent/hooks/memory.ts	mounted @open-everywhere/core
 agent/hooks/native-input-audit.ts	mounted @open-everywhere/core
 agent/hooks/own-account-ask.ts	mounted @open-everywhere/core
+agent/hooks/personal-watch-enroll.ts	mounted @open-everywhere/core
 agent/hooks/requester-identity.ts	mounted @open-everywhere/core
 agent/hooks/requester-messages.ts	mounted @open-everywhere/core
 agent/hooks/routine-outcome.ts	mounted @open-everywhere/core
@@ -59,6 +61,7 @@ agent/schedules/dream-mode3.ts	mounted @open-everywhere/core
 agent/schedules/meeting-sweep.ts	mounted @open-everywhere/core
 agent/schedules/notion-ingress.ts	mounted @open-everywhere/provider-notion
 agent/schedules/personal-browser-sweep.ts	mounted @open-everywhere/core
+agent/schedules/personal-watch.ts	mounted @open-everywhere/core
 agent/schedules/tidy.ts	mounted @open-everywhere/core
 agent/skills/scoped.ts	mounted @open-everywhere/core
 agent/tools/add_label.ts	mounted @open-everywhere/core
@@ -96,6 +99,7 @@ agent/tools/dm_person.ts	mounted @open-everywhere/core
 agent/tools/edit_reply.ts	mounted @open-everywhere/core
 agent/tools/edit_routine.ts	mounted @open-everywhere/core
 agent/tools/enable_routine.ts	mounted @open-everywhere/core
+agent/tools/expect_bot_reply.ts	mounted @open-everywhere/core
 agent/tools/explain_permission.ts	mounted @open-everywhere/core
 agent/tools/extend_workspace_time.ts	mounted @open-everywhere/adapters
 agent/tools/get_pr_feedback.ts	mounted @open-everywhere/core
@@ -107,6 +111,7 @@ agent/tools/list_repos.ts	mounted @open-everywhere/core
 agent/tools/list_routines.ts	mounted @open-everywhere/core
 agent/tools/list_skills.ts	mounted @open-everywhere/core
 agent/tools/list_webhooks.ts	mounted @open-everywhere/core
+agent/tools/look_up.ts	mounted @open-everywhere/core
 agent/tools/meeting_join.ts	mounted @open-everywhere/core
 agent/tools/meeting_leave.ts	mounted @open-everywhere/core
 agent/tools/meeting_recap.ts	mounted @open-everywhere/core

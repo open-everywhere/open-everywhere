@@ -70,11 +70,11 @@ const PLACE_WORD: Record<SessionMode, string> = { dm: "this DM", mpim: "this gro
 const CAP_LAYER_COPY: Record<CapLayer, { readonly keyLabel: (mode: SessionMode) => string }> = {
   user: { keyLabel: () => "your own allowance" },
   surface: { keyLabel: (mode) => PLACE_WORD[mode] },
-  workspace: { keyLabel: () => "whole workspace" },
+  workspace: { keyLabel: () => "the whole workspace" },
 };
 
 export function spendRefusalCopy(input: SpendRefusalCopyInput): string {
-  const { reason, surfaceKey, workspaceKey, mode, layer, layerKey } = input;
+  const { reason, mode, layer, layerKey } = input;
   const badge = input.badge ?? UNICODE_SPEND_BADGES.refusal;
   const inDm = mode === "dm" || mode === "mpim";
 
@@ -82,15 +82,9 @@ export function spendRefusalCopy(input: SpendRefusalCopyInput): string {
     ? "I can't raise it from in here. Ask an org admin to raise it: permanently in the spend-budgets config, or temporarily by asking me from a channel to propose an override — an admin approves that on a card."
     : "An admin can raise this permanently in the spend-budgets config, or DM me to propose a temporary override — an admin approves it on a card.";
 
-  const breached = layer && layerKey ? `${CAP_LAYER_COPY[layer].keyLabel(mode)} = \`${layerKey}\`` : undefined;
-  const here = `${PLACE_WORD[mode]} = \`${surfaceKey}\``;
-  const keys = breached
-    ? breached === here
-      ? breached
-      : `${breached}, ${here}`
-    : `${here}, whole workspace = \`${workspaceKey}\``;
+  const toRaise = layer && layerKey ? CAP_LAYER_COPY[layer].keyLabel(mode) : `${PLACE_WORD[mode]} or the whole workspace`;
 
-  return `${badge} I'm holding off${inDm ? "" : " here"} — ${reason}. ${remedy} Scope keys for the override: ${keys}.`;
+  return `${badge} I'm holding off${inDm ? "" : " here"} — ${reason}. ${remedy} The cap to raise: ${toRaise}. An admin who needs its scope key can ask me for it.`;
 }
 
 export function spendBypassWarnCopy(reason: string | undefined, badge: string = UNICODE_SPEND_BADGES.warning): string {

@@ -8,6 +8,7 @@ export type IngestionKind =
   | "connector"
   | "web"
   | "webhook"
+  | "a2a-inbound"
   | "routine-event"
   | "delegation-result"
   | "image-description"
@@ -22,6 +23,7 @@ export interface IngestionSource {
   readonly workspaceTrust?: "internal" | "public";
   readonly grantContentOrigin?: "internal" | "external";
   readonly authoredByNonMember?: boolean;
+  readonly carriesUntrustedPost?: boolean;
   readonly label?: string;
 }
 
@@ -41,6 +43,9 @@ function unknownInstance(what: string): IngestionVerdict {
 export function classifyIngestion(src: IngestionSource): IngestionVerdict {
   switch (src.kind) {
     case "chat-message":
+      if (src.carriesUntrustedPost === true) {
+        return untrusted("a chat message OE itself posted from untrusted content (a meeting recap written from a meeting transcript), or the thread it went into — the host recorded the post's provenance when it posted it");
+      }
       if (src.authoredByNonMember === true) {
         return untrusted(
           "a chat message written by an author POSITIVELY REFUTED as a non-member — the surface's own identity probe or the operator's author-trust register said guest/stranger/unlisted, so a person outside the org authored bytes this turn read",
@@ -69,6 +74,9 @@ export function classifyIngestion(src: IngestionSource): IngestionVerdict {
 
     case "webhook":
       return untrusted("a webhook delivery payload — authored by whoever can reach the endpoint");
+
+    case "a2a-inbound":
+      return untrusted("an inbound A2A caller's message — another organisation's agent wrote it; an authenticated caller is still an external author");
 
     case "routine-event":
       return untrusted("a routine's event body — the hydrated entity an outside party's action produced");
@@ -101,6 +109,7 @@ export const INGESTION_KINDS: readonly IngestionKind[] = [
   "connector",
   "web",
   "webhook",
+  "a2a-inbound",
   "routine-event",
   "delegation-result",
   "image-description",

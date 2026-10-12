@@ -1,4 +1,4 @@
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -27,6 +27,8 @@ import {
   type RuntimeSignalFinding,
 } from "../../packages/core/agent/ops/census.js";
 import { readAudit } from "../../packages/core/agent/audit/audit.js";
+import { registerSettings } from "../../packages/core/agent/settings/settings.js";
+import { registerA2aInbound } from "../../packages/core/agent/a2a/inbound/declaration.js";
 import { consequentialAuditActions } from "../../packages/core/agent/audit/action-registry.js";
 import { decryptCredential } from "../../packages/core/agent/credentials/db-broker.js";
 import { getOperationalStore } from "../../packages/core/agent/operational/provider.js";
@@ -45,6 +47,14 @@ const { loadConnectorCredentials } = await importAppModule<typeof import("../../
 );
 const { loadDomains } = await importAppModule<typeof import("../../agent/memory/config/domains.js")>("agent/memory/config/domains.ts", APP_ROOT);
 const { loadWebhooks } = await importAppModule<typeof import("../../agent/webhooks/hooks.js")>("agent/webhooks/hooks.ts", APP_ROOT);
+{
+  const { SETTINGS_OVERRIDES } = await importAppModule<typeof import("../../agent/settings/settings.js")>("agent/settings/settings.ts", APP_ROOT);
+  registerSettings(SETTINGS_OVERRIDES);
+  if (existsSync(join(APP_ROOT, "agent", "access", "a2a-inbound.ts"))) {
+    const { A2A_INBOUND } = await importAppModule<typeof import("../../agent/access/a2a-inbound.js")>("agent/access/a2a-inbound.ts", APP_ROOT);
+    registerA2aInbound(A2A_INBOUND);
+  }
+}
 const CHANNELS_DIR = join(APP_ROOT, "agent", "channels");
 
 const PLUMBING: Record<string, () => Promise<readonly PlumbingCredential[]>> = {

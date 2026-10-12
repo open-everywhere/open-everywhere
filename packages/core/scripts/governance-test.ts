@@ -357,7 +357,8 @@ function ctxFor(principalId: string, channelId: string, channelType: "channel" |
     ok(ran, "the DM arm DOES compute the substance (redirect-and-FULFIL, not refuse)");
     ok(sent.length === 1 && sent[0].principalId === "U_ORG", "the substance was delivered to the requesting principal's DM");
     ok(/TOTALS: org-wide totals/.test(sent[0].text), "the DM carries the rendered substance");
-    ok(/asked in slack\/T1\/C_GENERAL/.test(sent[0].text), "the DM envelope names where it was asked + why it arrived");
+    ok(/asked in <#C_GENERAL>/.test(sent[0].text), "the DM envelope names where it was asked + why it arrived");
+    ok(!/slack\/T1/.test(sent[0].text), "…in words, never by its scope key (OPE-2482: the post arm renders it)");
 
     const delivered = await readAudit({ org: "gov-test", action: "governance.dm_delivered" });
     ok(delivered.length === 1, "exactly one governance.dm_delivered audit row is written");

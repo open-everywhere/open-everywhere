@@ -131,6 +131,12 @@ rule the approval card enforces for `create_skill`, on a surface that shows the 
 review or a comment on the proposal is read back as a **correction** and carried into the next
 proposal, and only an author with standing in the repository can write one.
 
+**A person can also teach one.** A person can do a task once in their own browser, and OE drafts a
+`SKILL.md` from the demonstration (OPE-2454). The person rehearses it and proposes it on an owner-only card, and the
+proposal takes this same pull-request path, with the same switches. The pull request says a person taught it, and the audit
+row names that person. See [Teach a task by
+demonstration](personal-browser.md#teach-a-task-by-demonstration).
+
 ## Declared subagents: the specialist unit
 
 A **skill** changes what the agent knows in the session it already has. A **declared

@@ -18,6 +18,7 @@ import {
   renderCensusReport,
   runtimeSignalFinding,
   ROUTE_ARMING,
+  TOKEN_GATED_ROUTES,
   type ChannelArming,
   type MountedRoute,
   judgeAuditRow,
@@ -28,6 +29,10 @@ import { OAUTH_SIGNING_SECRET_ENV } from "../packages/core/agent/control/oauth-t
 import type { Bundle } from "../packages/core/agent/access/bundle.js";
 import type { ConnectorCredentials } from "../packages/core/agent/access/connector-credentials.js";
 import type { WebhookHook } from "../packages/core/agent/webhooks/config.js";
+import personalBrowserChannel from "../packages/core/agent/channels/personal-browser.js";
+import a2aInboundChannel from "../packages/core/agent/channels/a2a-inbound.js";
+import { registerA2aInbound } from "../packages/core/agent/a2a/inbound/declaration.js";
+import { overrideSettingsForTest, resetSettingsForTest } from "../packages/core/agent/settings/settings.js";
 
 let checks = 0;
 const failures: string[] = [];
@@ -286,6 +291,71 @@ check("every channel the arming table names is a real mounted channel file", () 
       existsSync(join(dirname(fileURLToPath(import.meta.url)), "..", "agent", "channels", entry.channel)),
       `ROUTE_ARMING names agent/channels/${entry.channel}, and no such file exists — the entry can never match a route, so the census would ` +
         `require that channel's dark routes again. Fix the key, or drop the entry if the channel is gone`,
+    );
+  }
+});
+
+const PERSONAL_BROWSER_ROUTES: readonly MountedRoute[] = (personalBrowserChannel.routes ?? []).map((r) => ({
+  channel: "personal-browser.ts",
+  method: r.method,
+  path: r.path,
+}));
+
+check("the personal browser's live POST routes are SKIPPED as token-gated, never probed (OPE-2478)", () => {
+  const plan = planRequiredEndpoints({ routes: PERSONAL_BROWSER_ROUTES, hooks: [], controlHookId: "none", env: {} });
+  assert.deepEqual(
+    plan.endpoints.map((e) => e.path),
+    [],
+    "no personal-browser route may be probed — each answers 404 without its session token",
+  );
+  for (const path of ["/browser/v1/live/control", "/browser/v1/live/input"]) {
+    const skipped = plan.skipped.find((s) => s.path === path);
+    assert.match(skipped?.reason ?? "", /token-gated/u, `${path} must be skipped with the token-gated reason`);
+  }
+});
+
+const A2A_INBOUND_ROUTES: readonly MountedRoute[] = (a2aInboundChannel.routes ?? []).map((r) => ({ channel: "a2a-inbound.ts", method: r.method, path: r.path }));
+const A2A_CALLER_DECL = {
+  name: "census",
+  description: "census fixture",
+  skills: [{ id: "s", name: "S", description: "d" }],
+  callers: [{ name: "census-caller", description: "fixture", domain: "x", auth: { scheme: "bearer" as const, secretRef: "db:census" } }],
+};
+
+check("inbound A2A's POST route is SKIPPED while the ingress is dark, and REQUIRED once armed (OPE-2448)", () => {
+  assert.ok(A2A_INBOUND_ROUTES.some((r) => r.method === "POST" && r.path === "/a2a/jsonrpc"), "the channel no longer declares POST /a2a/jsonrpc — re-join this test");
+  try {
+    resetSettingsForTest();
+    registerA2aInbound({ name: "", description: "", skills: [], callers: [] });
+    const dark = planRequiredEndpoints({ routes: A2A_INBOUND_ROUTES, hooks: [], controlHookId: "none", env: {} });
+    assert.deepEqual(dark.endpoints, [], "a dark inbound route must not be probed — its 404 is the shipped design");
+    assert.match(dark.skipped.find((s) => s.path === "/a2a/jsonrpc")?.reason ?? "", /a2a: \{ inbound: true \}/u, "the skip names the setting to arm");
+    overrideSettingsForTest({ a2a: { inbound: true } });
+    assert.deepEqual(planRequiredEndpoints({ routes: A2A_INBOUND_ROUTES, hooks: [], controlHookId: "none", env: {} }).endpoints, [], "the setting alone does not arm it");
+    resetSettingsForTest();
+    registerA2aInbound(A2A_CALLER_DECL);
+    assert.deepEqual(planRequiredEndpoints({ routes: A2A_INBOUND_ROUTES, hooks: [], controlHookId: "none", env: {} }).endpoints, [], "the declaration alone does not arm it");
+    overrideSettingsForTest({ a2a: { inbound: true } });
+    const armed = planRequiredEndpoints({ routes: A2A_INBOUND_ROUTES, hooks: [], controlHookId: "none", env: {} });
+    assert.deepEqual(armed.endpoints.map((e) => [e.path, e.expect]), [["/a2a/jsonrpc", "mounted"]], "an armed inbound route is required");
+    resetSettingsForTest();
+    registerA2aInbound({ name: "", description: "", skills: [], callers: [] });
+    const unarmed = planRequiredEndpoints({ routes: A2A_INBOUND_ROUTES, hooks: [], controlHookId: "none", env: {}, arming: ROUTE_ARMING.filter((a) => a.channel !== "a2a-inbound.ts") });
+    assert.deepEqual(unarmed.endpoints.map((e) => e.path), ["/a2a/jsonrpc"], "NEGATIVE CONTROL: with no arming entry the dark route is probed (and would red)");
+  } finally {
+    resetSettingsForTest();
+    registerA2aInbound({ name: "", description: "", skills: [], callers: [] });
+  }
+});
+
+check("every TOKEN_GATED_ROUTES entry names a POST route its channel really declares", () => {
+  const byChannel: Record<string, readonly MountedRoute[]> = { "personal-browser.ts": PERSONAL_BROWSER_ROUTES };
+  for (const entry of TOKEN_GATED_ROUTES) {
+    const routes = byChannel[entry.channel];
+    assert.ok(routes, `TOKEN_GATED_ROUTES names ${entry.channel}, which this suite does not load — add it to the join`);
+    assert.ok(
+      routes!.some((r) => r.path === entry.path && r.method.toUpperCase() === "POST"),
+      `${entry.channel} declares no POST ${entry.path} — the entry can never match, so the census would probe the real route again`,
     );
   }
 });

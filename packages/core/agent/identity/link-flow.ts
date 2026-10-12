@@ -107,20 +107,21 @@ export function linkConsentPendingInstructions(targetName: string, ttlMinutes: n
 }
 
 export function linkConsentAsk(input: {
-  readonly initiatorAnchor: string;
-  readonly initiatorName?: string;
-  readonly targetAnchor: string;
+  readonly initiator: string;
+  readonly target: string;
   readonly ttlMinutes: number;
+  readonly checkable: boolean;
 }): string {
-  const attributed = input.initiatorName
-    ? `\n\nThat account calls itself "${input.initiatorName}". That is a name the account sets for ` +
-      `itself, so read it as a claim rather than as something I checked — the account id above is the ` +
-      `part nobody can change.`
-    : "";
+  const check = input.checkable
+    ? `The link opens the account itself, and the address beside a name comes from the platform: those ` +
+      `are the parts nobody can change.\n\n`
+    : `I have nothing beside that name a person can check, so if you do not know who asked, deny it.\n\n`;
   return (
     `Somebody asked me to link your account to theirs, and I need your say-so first.\n\n` +
-    `Who asked: ${input.initiatorAnchor}\n` +
-    `Your account: ${input.targetAnchor}${attributed}\n\n` +
+    `Who asked: ${input.initiator}\n` +
+    `Your account: ${input.target}\n\n` +
+    `A name is what an account calls itself, so read it as a claim rather than as something I checked. ` +
+    check +
     `Linking means the two accounts count as ONE PERSON everywhere I can see, so their work and yours ` +
     `are attributed together.\n\n` +
     `If that account is yours, tell me here and I will record your consent. If you do not recognise it, ` +

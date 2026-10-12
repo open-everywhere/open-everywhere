@@ -12,11 +12,11 @@ points INTO those; it does not replace them.
 
 ## The count
 
-**705 rows: 702 documented, 3 RETIRED, 0 UNDOCUMENTED.** Those three counts partition the rows by the
+**710 rows: 707 documented, 3 RETIRED, 0 UNDOCUMENTED.** Those three counts partition the rows by the
 value in the **`Documented by`** column, which is the only thing counted here: `RETIRED — …` marks a
 row whose sole record is the commit that removed its write site, and a row that names a manual page
 counts as documented whatever else is true of it. Section membership is a different question and
-gives a different number: 697 rows are live behaviours and the other five are the retired action
+gives a different number: 702 rows are live behaviours and the other five are the retired action
 names of § 15 — and two of those five are documented by a manual page, so they count under
 `documented` rather than under `RETIRED`. The `Tested by` column declares only an exemption; the coverage answer comes from `npm run coverage-board` (see [the coverage matrix](../dev/coverage-matrix.md)).
 
@@ -25,7 +25,7 @@ names of § 15 — and two of those five are documented by a manual page, so the
 | 1. The audit log — mechanism | 29 | 0 |
 | 2. The audit log — storage and the append-only posture | 31 | 0 |
 | 3. Reading the log — the control-plane routes | 11 | 0 |
-| 4. The audit action vocabulary | 346 | 0 |
+| 4. The audit action vocabulary | 351 | 0 |
 | 5. Spend — mechanism | 27 | 0 |
 | 6. Spend — gates and refusals | 34 | 0 |
 | 7. Spend — the ledger and the usage rows | 38 | 0 |
@@ -277,6 +277,9 @@ One row per distinct `action` string the code writes. The Id is that string. `<p
 | `bash.background_unredirected` | `packages/core/agent/stall/bash-hang-guard.ts:136` | core/stall | The hang guard records a backgrounded bash command whose output nothing redirects. | `docs/security/audit-and-provenance.md#tool-and-guard-rows` | n/a: unannotated — lane F |
 | `bash.timeout` | `packages/core/agent/stall/bash-hang-guard.ts:148` | core/stall | The hang guard records a bash command that hit its timeout. | `docs/security/audit-and-provenance.md#tool-and-guard-rows` | n/a: unannotated — lane F |
 | `binding.refused` | `packages/core/agent/hooks/binding-bridge.ts:36` | core/hooks | A child turn is refused because its auth attribute bag carries no platform identity. | `docs/glossary.md#3-taint` | n/a: unannotated — lane F |
+| `bot_ask.expected` | `packages/core/agent/tools/expect_bot_reply.ts:117` | core/tools | A person's DM opens an asked thread for another bot's reply to the person's own ask (OPE-2426). | `docs/capabilities/bot-delegation.md#the-audit-trail` | ? |
+| `bot_ask.refused` | `packages/core/agent/tools/expect_bot_reply.ts:36` | core/tools | `expect_bot_reply` refuses, with the reason and the tool. | `docs/capabilities/bot-delegation.md#the-audit-trail` | ? |
+| `bot_ask.reply_relayed` | `packages/core/agent/channels/bot-ask.ts:321` | core/channels | Another bot's reply in an asked thread is relayed to the asker's DM, with the reply slot and the route. | `docs/capabilities/bot-delegation.md#the-audit-trail` | ? |
 | `browser.<verb>` | `packages/core/agent/access/browser-toolkit.ts:197` | core/access | One browser-toolkit verb runs, and the row names the verb in dotted form. | `docs/security/audit-and-provenance.md#tool-and-guard-rows` | n/a: unannotated — lane F |
 | `browser.personal.act_granted` | `packages/core/agent/personal-browser/lifecycle.ts:451` | core/personal-browser | The person, by their own click on the act card, lets the agent click and type on one site in their browser until a stated time. | `docs/capabilities/personal-browser.md#governance` | ? |
 | `browser.personal.action` | `packages/core/agent/personal-browser/lifecycle.ts:401` | core/personal-browser | The agent takes one action in a person's browser; the row names the op and the site, never the text it typed. | `docs/capabilities/personal-browser.md#governance` | ? |
@@ -285,6 +288,7 @@ One row per distinct `action` string the code writes. The Id is that string. `<p
 | `browser.personal.handback` | `packages/core/agent/personal-browser/lifecycle.ts:440` | core/personal-browser | The controls of a person's browser return to the agent — by the person's card, on the watch page, or when the hold expires. | `docs/capabilities/personal-browser.md#governance` | ? |
 | `browser.personal.open` | `packages/core/agent/personal-browser/lifecycle.ts:325` | core/personal-browser | A person's browser box starts on the deployment's sandbox backend; the row names the backend, whether its firewall holds the host list, the host count and the cap, never the box key. | `docs/capabilities/personal-browser.md#governance` | ? |
 | `browser.personal.takeover` | `packages/core/agent/personal-browser/lifecycle.ts:425` | core/personal-browser | The person takes the controls of their browser (on the watch page, or handed them by the agent with a short reason); every agent action is refused until the hand-back. | `docs/capabilities/personal-browser.md#governance` | ? |
+| `browser.personal.teach` | `packages/core/agent/personal-browser/teach.ts:161` | core/personal-browser | A person teaches a task by demonstration in their own browser: the recording starts, is saved as a paused draft, is rehearsed without a click, is discarded, or is lost (its box closed, or the hand-off failed); the row carries the phase and counts, never a label, an address or typed text. | `docs/capabilities/personal-browser.md#teach-a-task-by-demonstration` | ? |
 | `browser.personal.view_opened` | `packages/core/agent/personal-browser/viewer.ts:107` | core/personal-browser | A single-use watch link to a person's browser is opened and starts one watch session; the row carries a session prefix and its expiry. | `docs/capabilities/personal-browser.md#governance` | ? |
 | `chat.dm` | `packages/core/agent/channels/dm-audience.ts:95` | core/channels | A direct message is delivered to one person. | `docs/security/control-plane.md#who-can-click` (+1) | ? |
 | `chat.post` | `packages/core/agent/approvals/chat-post.ts:38` | core/approvals | An approved chat post is executed, and the row names the container and the grant. | `docs/security/control-plane.md#who-can-click` (+1) | ? |
@@ -305,6 +309,7 @@ One row per distinct `action` string the code writes. The Id is that string. `<p
 | `connector.refused` | `packages/core/agent/access/connector-disclosure.ts:95` | core/access | The disclosure gate refuses a connector call. | `docs/security/credentials-and-planes.md#a-write-from-a-channel-path-by-path` (+4) | ? |
 | `connector.unattended_lift` | `packages/core/agent/connections/connector-auth.ts:624` | core/connections | An unattended connector lift is recorded. | `docs/security/permission-homeostasis.md#loop-1--widen-from-evidence` | ? |
 | `connector.use` | `packages/core/agent/access/connector-scope.ts:254` | core/access | The connector scope gate admits one use. | `docs/security/credentials-and-planes.md#why-a-grant-is-a-real-boundary` (+1) | ? |
+| `connector.xaa.link_refused` | `packages/core/agent/connections/xaa-identity-binding.ts:40` | core/connections | An Okta Cross App Access grant is refused for a requester and a connection. At stage `sign-in` the link is spent and the row names the Okta account that signed in (null when the id token did not verify). At stage `mint` a stored grant was re-checked before a mint: `reason` tells a link that is gone (the grant is deleted) from an unreadable link plane (the grant is kept). | `docs/capabilities/connectors-and-providers.md#cross-app-access-xaa-a-personal-connection-with-no-per-app-consent` | ? |
 | `control.oauth_code_issued` | `packages/core/agent/control/oauth-route.ts:162` | core/control | The control plane issues an OAuth authorization code. | `docs/security/control-plane.md#one-more-row-on-this-plane` | n/a: unannotated — lane F |
 | `control.oauth_refused` | `packages/core/agent/control/oauth-route.ts:150` | core/control | The control plane refuses an OAuth grant and names the reason. | `docs/security/control-plane.md#control-plane-mcp-over-https-oauth-21` | ? |
 | `control.oauth_token_issued` | `packages/core/agent/control/oauth-route.ts:279` | core/control | The control plane issues an OAuth access token. | `docs/security/control-plane.md#control-plane-mcp-over-https-oauth-21` | ? |
@@ -440,6 +445,10 @@ One row per distinct `action` string the code writes. The Id is that string. `<p
 | `person.opt_out.cleared` | `packages/core/agent/identity/person-opt-out.ts:45` | core/identity | A person lifts their opt-out of agent actions on their content. | `docs/capabilities/memory.md#opting-out-of-agent-actions-on-your-content` (+1) | ? |
 | `person.opt_out.refused` | `packages/core/agent/identity/person-opt-out.ts:68` | core/identity | The host refuses an agent act on an opted-out person's content: a memory write, or somebody else's message shortcut. | `docs/capabilities/memory.md#opting-out-of-agent-actions-on-your-content` (+1) | ? |
 | `person.opt_out.set` | `packages/core/agent/identity/person-opt-out.ts:30` | core/identity | A person opts out of agent actions on their own content. | `docs/capabilities/memory.md#opting-out-of-agent-actions-on-your-content` (+1) | ? |
+| `personal_watch.dial.set` | `packages/core/agent/personal-watch/state.ts:234` | core/personal-watch | A person sets their chief-of-staff watch to more, less or none, with `/oe watch` or the Home tab. | `docs/capabilities/proactivity-and-routines.md#the-chief-of-staff-watch` (+1) | ? |
+| `personal_watch.nudge` | `packages/core/agent/personal-watch/watch.ts:371` | core/personal-watch | The watch starts a direct message to the person on its own, with nobody asking. | `docs/capabilities/proactivity-and-routines.md#the-chief-of-staff-watch` (+1) | ? |
+| `personal_watch.response` | `packages/core/agent/personal-watch/state.ts:285` | core/personal-watch | A person marks one nudge useful or not useful, and the dose moves. | `docs/capabilities/proactivity-and-routines.md#the-chief-of-staff-watch` (+1) | ? |
+| `personal_watch.silence` | `packages/core/agent/personal-watch/watch.ts:191` | core/personal-watch | The watch holds a finding back, or cannot look, and files the closed reason. | `docs/capabilities/proactivity-and-routines.md#the-chief-of-staff-watch` (+1) | ? |
 | `pr.open` | `packages/core/agent/approvals/pr-open.ts:69` | core/approvals | An approved pull-request action opens a pull request. | `docs/security/control-plane.md#what-the-mcp-exposes` (+10) | ? |
 | `pr.update` | `packages/core/agent/approvals/pr-open.ts:69` | core/approvals | An approved pull-request action updates an existing pull request. | `docs/security/control-plane.md#the-update-siblings-prupdate-and-skillupdate` | ? |
 | `provider.unselected_wake_refused` | `packages/core/agent/channels/unified.ts:658` | core/channels | A wake for a provider bundle this deployment does not carry is refused. | `docs/extending/provider-bundles.md#selecting-which-bundles-a-deployment-carries` | ? |

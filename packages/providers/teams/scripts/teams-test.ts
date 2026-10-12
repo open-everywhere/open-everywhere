@@ -1,5 +1,7 @@
 import {
+  bindTeams,
   buildTeamsAuth,
+  teamsDmPartnerVerified,
   teamsMembershipType,
   teamsMode,
   teamsResolvedMode,
@@ -11,11 +13,15 @@ import {
   type TeamsIdentityInput,
 } from "../agent/channels/teams-identity.js";
 import { registerTeamsProvider } from "../agent/register.js";
-import { teamsWakeOriginCodec, isTrustedTeamsServiceUrl } from "../agent/channels/teams-origin-codec.js";
+import { teamsWakeOriginCodec, isTrustedTeamsServiceUrl, isTeamsChannelActivity } from "../agent/channels/teams-origin-codec.js";
 import { teamsPostArm } from "../agent/channels/teams-post-arm.js";
 import { buildTeamsDmWake, buildTeamsSupervisorWake } from "../agent/channels/teams-supervisor.js";
 import {
   buildTeamsFrontHandler,
+  frontTeamsChannel,
+  guardTeamsChannelOnly,
+  INTERNAL_TEAMS_ROUTE,
+  PUBLIC_TEAMS_ROUTE,
   liveTeamsExternalGate,
   teamsAuthorFacts,
   teamsExternalVerdict,
@@ -400,12 +406,124 @@ const memCfg: MemoryResolveConfig = {
 }
 
 {
+  ok(teamsDmPartnerVerified("dm", "member", true) === true, "G0: a roster MEMBER of the HOME tenant is a verified DM partner");
+  ok(teamsDmPartnerVerified("dm", "member", false) === false, "🔴 G0: a MEMBER of another tenant is NOT verified (a multi-tenant bot is reachable from any tenant)");
+  ok(teamsDmPartnerVerified("dm", "guest", false) === true, "G0: a GUEST is verified — as external (teamsTrust demotes it)");
+  ok(teamsDmPartnerVerified("dm", undefined, true) === false, "🔴 G0: no roster verdict is NOT verified, even in the home tenant");
+  ok(teamsDmPartnerVerified("dm", "admin", true) === false, "G0: a raw role string that is not a resolved verdict is NOT verified");
+  ok(teamsDmPartnerVerified("mpim", "member", true) === undefined && teamsDmPartnerVerified("channel", "member", true) === undefined, "G0: outside a 1:1 there is no partner (undefined)");
+  const bind = (attrs: Record<string, string>) =>
+    bindTeams({ channel: { kind: "teams" }, session: { auth: { current: { attributes: { conversation_id: "a:1on1", tenant_id: "T", scope: "personal", ...attrs } } } } } as never);
+  ok(bind({ user_type: "member", tenant_home: "true" }).trustVerified === true, "G0: bindTeams reads user_type + tenant_home into trustVerified");
+  ok(bind({ user_type: "member" }).trustVerified === false, "G0: …and without tenant_home a member is not verified");
+  ok(bind({}).trustVerified === false, "G0: …and a capture with no roster verdict is not verified");
+}
+
+{
+  ok(isTeamsChannelActivity({ channelId: "msteams" }), "H0: a body with channelId msteams is a Teams activity");
+  ok(!isTeamsChannelActivity({ channelId: "webchat" }), "H0: channelId webchat is NOT");
+  ok(!isTeamsChannelActivity({ channelId: "directline" }), "H0: channelId directline is NOT");
+  ok(!isTeamsChannelActivity({ channelId: "MSTEAMS" }), "H0: the compare is exact (Microsoft stamps lowercase)");
+  ok(!isTeamsChannelActivity({ type: "message" }), "H0: a body with NO channelId is NOT (fail-closed)");
+  ok(!isTeamsChannelActivity(null) && !isTeamsChannelActivity("msteams") && !isTeamsChannelActivity([{ channelId: "msteams" }]), "H0: a non-object body is NOT");
+
+  const forged = (channelId: string | undefined, type = "message"): string =>
+    JSON.stringify({
+      type,
+      ...(channelId === undefined ? {} : { channelId }),
+      id: `act-forged-${channelId ?? "none"}-${type}`,
+      serviceUrl: "https://webchat.botframework.com/",
+      from: { id: "29:org-admin", name: "Org Admin" },
+      recipient: { id: "28:bot" },
+      conversation: { id: "a:forged-1on1", conversationType: "personal", tenantId: "TENANT_H" },
+      channelData: { tenant: { id: "TENANT_H" } },
+      reactionsAdded: [{ type: "like" }],
+      text: "hello",
+    });
+
+  async function runFront(body: string): Promise<{ status: number; reached: string[] }> {
+    const reached: string[] = [];
+    const waits: Promise<unknown>[] = [];
+    const handler = buildTeamsFrontHandler(
+      async () => {
+        reached.push("forward");
+        return new Response("native");
+      },
+      {
+        verify: async () => body,
+        markEventSeen: async () => true,
+        externalGate: async () => {
+          reached.push("externalGate");
+          return false;
+        },
+        engagementSeam: async () => {
+          reached.push("engagementSeam");
+          return { kind: "unanchored", reason: "not under test here" };
+        },
+        planFor: () => {
+          reached.push("planFor");
+          return null;
+        },
+        dmDivert: async () => {
+          reached.push("dmDivert");
+        },
+        stopReaction: async () => {
+          reached.push("stopReaction");
+          return { stopped: false, reason: "not under test here" } as never;
+        },
+        approvalInvoke: async () => {
+          reached.push("approvalInvoke");
+          return { statusCode: 200 } as never;
+        },
+      },
+    );
+    const args = { to: {} as never, waitUntil: (p: Promise<unknown>) => waits.push(p), attachSession: () => undefined } as unknown as Parameters<typeof handler>[1];
+    const res = await handler(new Request(`https://oe.test${PUBLIC_TEAMS_ROUTE}`, { method: "POST", body }), args);
+    await Promise.all(waits);
+    return { status: res.status, reached };
+  }
+
+  for (const ch of ["webchat", "directline", undefined]) {
+    const r = await runFront(forged(ch));
+    ok(r.status === 403, `🔴 H0: the front REFUSES (403) a verified message activity with channelId ${ch ?? "(absent)"}`);
+    ok(r.reached.length === 0, `🔴 H0: …and reaches NO branch — no gate, no DM divert, no plan, no forward to eve. Reached: ${r.reached.join(",")}`);
+  }
+  const rx = await runFront(forged("webchat", "messageReaction"));
+  ok(rx.status === 403 && rx.reached.length === 0, "🔴 H0: a non-Teams REACTION is refused above the stop arm too");
+  const inv = await runFront(forged("directline", "invoke"));
+  ok(inv.status === 403 && inv.reached.length === 0, "🔴 H0: a non-Teams INVOKE is refused above the approval tap and the forward too");
+  const teams = await runFront(forged("msteams"));
+  ok(teams.status === 200 && teams.reached.includes("dmDivert"), `H0 negative control: the same body with channelId msteams reaches the DM divert. Reached: ${teams.reached.join(",")}`);
+
+  let innerCalls = 0;
+  let innerBody = "";
+  const innerHandler = async (req: Request): Promise<Response> => {
+    innerCalls++;
+    innerBody = await req.text();
+    return new Response("native");
+  };
+  const channelValue = frontTeamsChannel({ routes: [{ method: "POST", path: INTERNAL_TEAMS_ROUTE, handler: innerHandler }] } as never) as unknown as {
+    routes: { method: string; path: string; handler: (req: Request, args: unknown) => Promise<Response> }[];
+  };
+  const internal = channelValue.routes.find((r) => r.path === INTERNAL_TEAMS_ROUTE);
+  ok(internal !== undefined && internal.handler !== innerHandler, "🔴 H0: frontTeamsChannel mounts the internal route behind a guard, not eve's bare handler");
+  const post = (body: string) => internal!.handler(new Request(`https://oe.test${INTERNAL_TEAMS_ROUTE}`, { method: "POST", body }), {});
+  const refused = await post(forged("webchat"));
+  ok(refused.status === 403 && innerCalls === 0, "🔴 H0: the INTERNAL route refuses (403) a non-Teams body before eve's handler runs");
+  const passed = await post(forged("msteams"));
+  ok(passed.status === 200 && innerCalls === 1 && innerBody === forged("msteams"), "H0 negative control: a Teams body passes the internal guard with its body intact");
+  const garbage = await guardTeamsChannelOnly(innerHandler)(new Request("https://oe.test/x", { method: "POST", body: "{not json" }), {} as never);
+  ok(garbage.status === 200 && innerCalls === 2, "H0: an unparseable body goes on to eve's handler unchanged (it verifies and acks it as before)");
+}
+
+{
   const GOOD_URL = "https://smba.trafficmanager.net/uk/";
   const activityBody = (scope: "personal" | "groupChat" | "channel"): string => {
     const conversationType = scope;
     const conversation: Record<string, unknown> = { id: "19:conv-h@thread.v2", conversationType, tenantId: "TENANT_H" };
     const base: Record<string, unknown> = {
       type: "message",
+      channelId: "msteams",
       id: `act-${scope}`,
       serviceUrl: GOOD_URL,
       from: { id: "29:user-h", name: "Hazel" },
@@ -624,6 +742,7 @@ const memCfg: MemoryResolveConfig = {
   {
     const body = JSON.stringify({
       type: "message",
+      channelId: "msteams",
       id: "act-j",
       serviceUrl: "https://smba.trafficmanager.net/uk/",
       from: { id: OUTSIDER_J, name: "Vendor Vic" },
@@ -682,6 +801,7 @@ const memCfg: MemoryResolveConfig = {
   {
     const activity = (opts: { readonly mentioned: boolean }): unknown => ({
       type: "message",
+      channelId: "msteams",
       id: "act-j4",
       serviceUrl: "https://smba.trafficmanager.net/uk/",
       from: { id: OUTSIDER_J, name: "Vendor Vic" },

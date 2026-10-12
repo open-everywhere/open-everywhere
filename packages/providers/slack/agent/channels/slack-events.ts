@@ -1667,17 +1667,18 @@ async function fetchChannelTranscript(channelId: string): Promise<string | undef
   return res ? transcriptFromHistory(res) : undefined;
 }
 
-const userProfileCache = new Map<string, Promise<{ name?: string; handle?: string } | undefined>>();
-export function fetchUserProfileNames(userId: string): Promise<{ name?: string; handle?: string } | undefined> {
+const userProfileCache = new Map<string, Promise<{ name?: string; handle?: string; email?: string } | undefined>>();
+export function fetchUserProfileNames(userId: string): Promise<{ name?: string; handle?: string; email?: string } | undefined> {
   let p = userProfileCache.get(userId);
   if (!p) {
     p = (async () => {
       const info = await slackForm("users.info", `user=${encodeURIComponent(userId)}`);
       if (info?.ok !== true) return undefined;
-      const user = info.user as { profile?: { display_name?: string; real_name?: string }; real_name?: string; name?: string } | undefined;
+      const user = info.user as { profile?: { display_name?: string; real_name?: string; email?: string }; real_name?: string; name?: string } | undefined;
       const handle = user?.profile?.display_name?.trim() || undefined;
       const name = user?.profile?.real_name?.trim() || user?.real_name?.trim() || user?.name?.trim() || undefined;
-      return { name, handle };
+      const email = user?.profile?.email?.trim() || undefined;
+      return { name, handle, ...(email ? { email } : {}) };
     })();
     userProfileCache.set(userId, p);
   }

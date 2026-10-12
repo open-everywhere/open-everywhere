@@ -1,4 +1,5 @@
 import { agentDisplayName } from "../identity/bot-name.js";
+import { memoryLineForReader } from "../memory/provenance-mark.js";
 import {
   editPersonalMemoryItem,
   exportPersonalMemory,
@@ -39,7 +40,7 @@ async function personalBlocks(viewer: HomeViewer): Promise<readonly HomeBlock[]>
       text:
         "Only you can see this page. It lists the lines in your personal memory — what I keep from our direct messages. " +
         "Edit changes a line. Forget removes it. Export sends you every memory file in full. " +
-        "Each change goes in the audit log as a fingerprint, never as the words.",
+        "I keep a private record of each change, but never the words.",
     },
     { kind: "buttons", buttons: [{ id: MEMORY_HOME_ACTIONS.exportAll, label: "Export" }, { id: MEMORY_HOME_ACTIONS.refresh, label: "Refresh" }] },
   ];
@@ -53,7 +54,7 @@ async function personalBlocks(viewer: HomeViewer): Promise<readonly HomeBlock[]>
     return blocks;
   }
   for (const item of items.slice(0, HOME_PERSONAL_ITEMS_MAX)) {
-    blocks.push({ kind: "item", text: item.text, ...(item.section ? { label: item.section } : {}), ref: item.sha256, actions: ITEM_ACTIONS });
+    blocks.push({ kind: "item", text: memoryLineForReader(item.text), ...(item.section ? { label: item.section } : {}), ref: item.sha256, actions: ITEM_ACTIONS });
   }
   if (items.length > HOME_PERSONAL_ITEMS_MAX) {
     blocks.push({ kind: "note", text: `${items.length - HOME_PERSONAL_ITEMS_MAX} more lines are not shown here. Export gives you all ${items.length}.` });
@@ -79,7 +80,7 @@ async function domainBlocks(viewer: HomeViewer): Promise<readonly HomeBlock[]> {
     if (unavailable > 0) blocks.push({ kind: "note", text: `${unavailable} of this domain's memory sources could not be read just now.` });
     if (items.length === 0 && unavailable === 0) blocks.push({ kind: "note", text: "This domain has not remembered anything yet." });
     for (const item of items.slice(0, HOME_DOMAIN_ITEMS_MAX)) {
-      blocks.push({ kind: "item", text: item.text, ...(item.section ? { label: item.section } : {}), actions: [] });
+      blocks.push({ kind: "item", text: memoryLineForReader(item.text), ...(item.section ? { label: item.section } : {}), actions: [] });
     }
     const more = items.length - HOME_DOMAIN_ITEMS_MAX;
     const room = rooms[0]!;

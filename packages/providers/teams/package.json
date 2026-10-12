@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/provider-teams",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Open Everywhere Microsoft Teams provider — Teams channel and chat surfaces via Microsoft Graph.",
   "keywords": [
     "agent",
@@ -61,6 +61,10 @@
       "types": "./dist/agent/channels/teams-catch-up.d.ts",
       "default": "./dist/agent/channels/teams-catch-up.js"
     },
+    "./agent/channels/teams-commands.js": {
+      "types": "./dist/agent/channels/teams-commands.d.ts",
+      "default": "./dist/agent/channels/teams-commands.js"
+    },
     "./agent/channels/teams-connector.js": {
       "types": "./dist/agent/channels/teams-connector.d.ts",
       "default": "./dist/agent/channels/teams-connector.js"
@@ -113,9 +117,17 @@
       "types": "./dist/agent/channels/teams-input-response.d.ts",
       "default": "./dist/agent/channels/teams-input-response.js"
     },
+    "./agent/channels/teams-intro.js": {
+      "types": "./dist/agent/channels/teams-intro.d.ts",
+      "default": "./dist/agent/channels/teams-intro.js"
+    },
     "./agent/channels/teams-message-ops.js": {
       "types": "./dist/agent/channels/teams-message-ops.d.ts",
       "default": "./dist/agent/channels/teams-message-ops.js"
+    },
+    "./agent/channels/teams-name-drop.js": {
+      "types": "./dist/agent/channels/teams-name-drop.d.ts",
+      "default": "./dist/agent/channels/teams-name-drop.js"
     },
     "./agent/channels/teams-origin-codec.js": {
       "types": "./dist/agent/channels/teams-origin-codec.d.ts",
@@ -198,7 +210,7 @@
     "test:teams-app-package": "NODE_NO_WARNINGS=1 tsx scripts/teams-app-package-test.ts"
   },
   "dependencies": {
-    "@open-everywhere/core": "0.6.0",
+    "@open-everywhere/core": "0.7.0",
     "zod": "4.5.4"
   },
   "peerDependencies": {

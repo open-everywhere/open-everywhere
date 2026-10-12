@@ -1034,6 +1034,161 @@ Both mechanisms run on both ingresses — the clock dispatcher and the event fan
 one shared step (`routines/pre-fire.ts`). A gate that covered one trigger kind and not the
 other would read as a gate while a whole class of fires ran regardless.
 
+## The chief-of-staff watch
+
+Every routine above starts because a person armed it. The **chief-of-staff watch** is the one
+exception. It is a standing watch per person, **on by default**, that reads the person's own
+calendar and messages them in their own DM when it finds something that needs them: "your 15:00
+overlaps the launch review, do you want me to move one?". Nobody asks for the message.
+
+The watch runs on the routine machinery above. Its reads are [collectors](#pre-run-data-collection),
+and its detector plays the part of a [condition gate](#condition-gates). So a quiet check costs the
+reads and nothing else: no session, no model call, no post and no audit row.
+
+### Turning it on for a deployment
+
+Core declares no source, so the watch reads nothing and sends nothing until the deployment declares
+one in `agent/routines/collectors.ts`:
+
+```ts
+export const ROUTINE_COLLECTORS: readonly RoutineCollectorDef[] = [
+  {
+    name: "calendar.next-3-days",
+    tool: "gcal__list_events",
+    args: { timeMin: "now", timeMax: "+3d", singleEvents: true },
+    describe: "the person's own calendar for the next three days",
+    personal: true,
+  },
+];
+
+export const PERSONAL_WATCH: PersonalWatchDecl = {
+  sources: [{ collector: "calendar.next-3-days", detect: "calendar-conflicts" }],
+};
+```
+
+The boot refuses a source that names an undeclared collector, a collector that is not
+`personal: true`, or an unknown detector. Core ships one
+detector, `calendar-conflicts`. It reads the Google Calendar `events.list` shape, the Microsoft Graph
+`calendarView` shape (UTC times only) and a neutral `{ events: [{ id, title, start, end }] }` list.
+
+🔴 **The read runs as the person.** The reader receives `forPrincipal`, the person's qualified
+principal key, and must read that person's calendar with that person's own sign-in, or throw. A
+throw becomes a named failure and a silence row. Core holds the reader to it in two places: the
+collector must be declared `personal: true`, and the reader must be registered with
+`registerRoutineCollectorReader(reader, { personal: true })`. Otherwise every personal read fails as
+`not_personal` before it runs, so a reader written for shared routine reads never answers for a
+person with a shared credential.
+
+### Who is watched
+
+Once a source is declared, every member of the organisation who talks to the agent in their own 1:1
+DM gets a watch at the default dial, with no click. Opening the Home tab or running `/oe watch` also
+enrols the member. A channel turn, a group DM, a routine fire and an outsider (trust `external`: an
+email sender, a Slack Connect stranger, an unverified person) enrol nobody. `/oe watch` and the
+Home tab refuse to turn an outsider's watch up, but `none` and `/oe watch` alone work for anybody:
+a member whose lookup fails reads as `external`, and must keep the off switch.
+
+### The dial: more, less, none
+
+Each person sets their own dial with `/oe watch more`, `/oe watch less` or `/oe watch none`, or with
+the three buttons under **Your watch** in the Home tab. `/oe watch` alone shows the setting. The
+command keys on the acting person only, so nobody can turn another person's dial.
+
+| Dial | What may interrupt | Most nudges a day | Smallest gap | How often it looks |
+| --- | --- | --- | --- | --- |
+| `more` | a conflict up to 72 hours ahead | 6 | 1 hour | every 30 minutes |
+| `less` (**the default**) | a conflict within 24 hours | 2 | 4 hours | every 2 hours |
+| `none` | nothing | 0 | — | never |
+
+Everyone starts at `less`, not at the middle setting. A conflict that starts within 4 hours is
+`urgent`, within 24 hours `soon`, and later inside the 72-hour window `later`.
+
+**Quiet hours.** The watch never interrupts between 20:00 and 07:00 UTC. A finding held by the quiet
+hours is not dropped: the first check after them considers it again. The window is a tracked
+literal in `personal-watch/dial.ts`, because the store holds no time zone per person.
+
+**The learned dose.** Each nudge the person received is listed under **Your watch** with a
+**Useful** and a **Not useful** button. Not useful raises the person's dampening by one step; Useful
+lowers it by one. Each step raises the urgency the dial lets through by one level. So on `less`, one
+dismissal holds everything but `urgent` conflicts, and two hold everything until the person marks a
+nudge useful or changes the dial. The dose never raises the rate above the dial.
+
+**The calibration ask.** The first nudge a person ever gets ends with one question: do I message
+you about the right amount? It names the three `/oe watch` settings and the Home-tab buttons. The
+watch asks again after ten more nudges, or after 14 days with at least one nudge in between.
+
+### What one check does
+
+The `personal-watch` schedule ticks every 30 minutes. For each watched person whose check is due:
+
+1. It claims the check: it moves the person's next check forward in a compare-and-set, so an
+   overlapping tick skips the person.
+2. It runs the declared reads as that person.
+3. It runs each detector over its read.
+4. It drops what the person was already told, and judges the rest, most urgent first, against the
+   dial, the dose, the quiet hours, the day's count and the gap (`personal-watch/judge.ts`).
+5. It delivers at most **one** nudge per check. Just before the send it judges the finding again
+   against the person's CURRENT row, and in the same write marks it told and records the nudge in
+   the log the gap rule and the daily limit read. So a person who chose `none` a moment ago is not
+   messaged, and a write that fails after the send cannot cause a second nudge. A refused delivery
+   takes the whole reservation back.
+6. It writes the silences back.
+
+The judgement is host code over the dial table and the person's row, so the decision to interrupt
+is never a model's. The DM seat receives a finding the host already let through, and writes the
+words: what overlaps, and an offer to move or decline one of the two events. The fire tells the seat
+to change no calendar before the person answers; that is an instruction to the seat, not a control
+the watch enforces.
+
+**The delivery** takes the path a webhook takes to a person's DM ([Inbound webhook
+triggers](#inbound-webhook-triggers)): the platform's registered DM resolver, the spend gate, then
+the DM's window or a native send. A target that does not resolve to a 1:1 DM is refused, so a
+calendar never reaches a room. The fire is unattended, names the person as its attested principal
+(never an acting one, so it does not borrow their personal connectors), carries the DM standing
+grain, and is **tainted**: an event title is text that anybody who sends an invite can write, so the
+facts sit inside the untrusted fence. The spend gate applies the person's own DM allowance. A person who stopped proactive DMs
+([DM seats and the DM audience](../how-it-works/agent-and-loop.md#dm-seats-and-the-dm-audience)) is not messaged.
+
+### Every silence has an audit row
+
+A finding the watch holds back writes one `personal_watch.silence` row with a closed reason:
+
+| Reason | Meaning |
+| --- | --- |
+| `dial-none` | The person turned the watch to `none` while the check ran. |
+| `below-dial` | The finding is less urgent than the dial lets through. |
+| `dose-lowered` | The dial would let it through, but the person's dismissals hold it. |
+| `quiet-hours` | It is between 20:00 and 07:00 UTC. The finding waits for the morning. |
+| `daily-budget` | The person already got the most nudges their dial allows today. |
+| `min-gap` | The last nudge was too recent, or another finding took this check's one nudge. |
+| `read-failed` | A declared read failed, so the watch could not look. Never reported as a quiet calendar. |
+| `unreadable` | A read answered in a shape the detector does not read. |
+| `dm-stopped` | The person stopped proactive DMs from this deployment. |
+| `delivery-refused` | The DM did not resolve, the spend gate refused, or the send failed. The finding is tried again, unless the write that takes the reservation back fails; the row then carries `release: "failed"`. |
+
+One finding and one reason make one row: the same finding held for the same reason on the next
+check writes nothing new, and a change of reason writes the new one. A row that does not land is
+not marked as filed: the person's row forgets the finding's last filed reason, so the next check
+that holds the same finding back writes a row, for that check's reason. That needs this check's own
+state write to land; when it fails too, the row keeps the older reason and the lost row stays only
+in the drop count and the log. A finding or an outage that
+is gone by then leaves no row. When the store fails both the release write and the
+`release: "failed"` row, the finding stays told, so that row is lost too. The deployment's audit
+drop count and its log record each lost row. A source that reads cleanly forgets its `read-failed` or
+`unreadable` row, so its next outage writes a new one. A nudge writes
+`personal_watch.nudge`. Neither row carries an event title. A check that finds nothing writes no
+row. See [Audit and provenance](../security/audit-and-provenance.md) for the fields.
+
+### What it does not do yet
+
+- **One detector.** It finds calendar conflicts only. Email and other sources need their own
+  detectors.
+- **No time zone per person.** The quiet hours are one UTC window for the deployment.
+- **The Home tab is Slack only.** `/oe watch` works wherever `/oe` works; the Useful and Not useful
+  answers are Home-tab buttons, so on another surface the dose does not move.
+- **The DM seat does not veto.** The host decides whether to interrupt. The seat writes the message
+  it is handed.
+
 ## A routine can name its model role
 
 By default a routine names no role and **inherits**, which is what every routine did before this
@@ -2152,6 +2307,15 @@ delivery from that source already carries. `scope \`entity\`` is a step in the
 | `message.received.unauthenticated` | ❌ not routed | — | an inbound mail that arrived without authentication headers, so the vendor could not check it — refused by the gate (`unauthenticated`) |
 | `message.received.spam` | ❌ not routed | — | an inbound mail the vendor flagged as spam — refused by the gate (`flagged`) |
 | `message.received.blocked` | ❌ not routed | — | an inbound mail the vendor blocked — refused by the gate (`flagged`) |
+
+**google-chat** — no event normalizer · [vendor event index](https://developers.google.com/workspace/chat/receive-respond-interactions)
+
+| Vendor event | Routing | Addressable | What it is |
+|---|---|---|---|
+| `MESSAGE` | ❌ not routed | — | an @mention in a space or a direct message — the front's conversation leg, through the gate, never a routine |
+| `ADDED_TO_SPACE` | ❌ not routed | — | the app was added to a space — acknowledged and dropped; a space wakes nothing until a domain's `reach` lists it |
+| `REMOVED_FROM_SPACE` | ❌ not routed | — | the app was removed from a space — acknowledged and dropped |
+| `CARD_CLICKED` | ❌ not routed | — | a card button tap — acknowledged and dropped; the surface posts no card yet |
 
 <!-- END GENERATED: provider-event-inventory -->
 

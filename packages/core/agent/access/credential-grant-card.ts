@@ -95,7 +95,7 @@ export function grantCardText(ask: CredentialGrantAskRow, requesterLabel: string
       ? []
       : [
           `• Who it is for: ${who}, in their conversation with ${seat}.`,
-          `• How it was raised: ${seat} gave the work to a background task, and the task raised this ask. The task ends when its work does, and it never sees your answer.`,
+          `• How it was raised: ${seat} gave the work to a background task, and that task asked. It never sees your answer.`,
           `• What a grant reaches: that conversation, never the background task.`,
           "",
         ]),
@@ -113,7 +113,7 @@ export function grantCardText(ask: CredentialGrantAskRow, requesterLabel: string
     standingReach === undefined ? standingWithheldLine() : standingButtonLine(standingReach),
     "• *Decline* — nothing is granted.",
     "",
-    "A button is the only thing that can answer this. If the buttons are missing, or a tap seems to do nothing, nothing has been granted — the request then lapses on its own and they can raise a fresh one.",
+    "Answer with a button. If the buttons are missing or a tap does nothing, nothing is granted, and the request lapses on its own.",
     closingReassurance(ask, where, vendor, reach),
   ].join("\n");
 }
@@ -145,9 +145,9 @@ function standingButtonLine(reach: Exclude<GrantScopeReach, "session">): string 
 
 function standingWithheldLine(): string {
   return (
-    `• *${String(STANDING_DAYS)} days* is NOT offered for this request. A grant that long has to belong to a room this deployment can name, ` +
+    `• *${String(STANDING_DAYS)} days* is NOT offered for this request. A grant that long has to belong to a room, ` +
     "and this request did not come from one — so it would stop working as soon as this conversation ends, without telling anyone. " +
-    "An operator can declare that room into a domain if this should be lendable for longer."
+    "Ask your admin if this should be lendable for longer."
   );
 }
 

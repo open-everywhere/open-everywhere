@@ -19,6 +19,8 @@ const { readAudit } = await import("@open-everywhere/core/agent/audit/audit.js")
 const { requestApproval, sweepExpiredPendings, hasApprovalCardPath, judgeLiftNoticeRenderFor } = await import("@open-everywhere/core/agent/approvals/flow.js");
 const { registerActionKind } = await import("@open-everywhere/core/agent/approvals/actions.js");
 const { plainSummaryForRow } = await import("@open-everywhere/core/agent/approvals/plain-summary.js");
+const { shortUtc } = await import("@open-everywhere/core/agent/approvals/session-grant.js");
+const { TAINT_CARD_WARNING } = await import("@open-everywhere/core/agent/approvals/taint-disclosure.js");
 const { cardPosterFor, judgeLiftNoticePosterFor, decisionFeedbackSurfaceFor, registerDecisionFeedbackSurface, clickerFloorRefusalNotice } = await import(
   "@open-everywhere/core/agent/adapter-api.js"
 );
@@ -132,16 +134,29 @@ ok(decisionFeedbackSurfaceFor("teams") !== undefined, "the Teams decision-feedba
     "each button's data decodes to its own verb, bound to the row id",
   );
   const bodyText = JSON.stringify(pending.body);
-  ok(bodyText.includes("Approval requested: spend.set") && bodyText.includes("line one") && bodyText.includes("29:requester"), "the body carries the header, the frozen summary lines and the requester");
+  ok(!bodyText.includes("Approval requested") && !bodyText.includes("spend.set"), "the body shows no kind label");
+  ok(!bodyText.includes("line one") && !bodyText.includes("line two"), "the body does not show the detail lines");
+  ok(!bodyText.includes("29:requester"), "the body shows no raw requester id");
   const first = pending.body[0] as unknown as { type: string; text: string; weight?: string };
   ok(first.type === "TextBlock" && first.text === plainSummaryForRow(r) && first.weight === "Bolder", "OPE-2434: the Teams card's first block is the plain sentence");
-  ok((pending.body[1] as unknown as { text: string }).text === "Approval requested: spend.set", "OPE-2434: the kind label sits directly under the plain sentence");
+  const last = pending.body.at(-1) as unknown as { text: string; isSubtle?: boolean };
+  ok(last.text === `Expires ${shortUtc(r.expiresAt)}` && last.isSubtle === true, "the small footer shows the short expiry, capitalised");
+  const tainted = JSON.stringify(pendingTeamsCard(r, ["line one", "⚠ proposed on a turn that had ingested external content — read the payload above on its own merits; nothing outside this room asked for it."]).body);
+  ok(tainted.includes(TAINT_CARD_WARNING) && !tainted.includes("ingested external content"), "a tainted proposal shows the one warning line, not the full disclosure");
   const decided = decidedTeamsCard({ ...r, status: "approved", decidedBy: "29:x" }, ["line one"], "done", "Ada");
-  ok((decided.body[0] as unknown as { text: string }).text === plainSummaryForRow(r), "OPE-2434: the decided Teams card keeps the same opening sentence");
-  ok(decided.actions === undefined && JSON.stringify(decided.body).includes("Approved by Ada · done"), "the decided card has no actions and names the decider");
+  ok(decided.body.length === 1 && (decided.body[0] as unknown as { text: string }).text === "✅ Approved by Ada — done", "OPE-2481: the decided Teams card is one line that names the decider and the outcome");
+  ok(decided.actions === undefined, "the decided card has no actions");
+  const nameless = decidedTeamsCard({ ...r, status: "approved", decidedBy: "29:x" }, ["line one"], "done");
+  ok((nameless.body[0] as unknown as { text: string }).text === "✅ Approved by someone — done", "with no display name the decider is 'someone', never the raw id");
+  const bare = plainSummaryForRow(r).replace(/[.!?]$/u, "");
+  const rejected = decidedTeamsCard({ ...r, status: "rejected", decidedBy: "29:x" }, ["line one"], "rejected", "Ada");
+  ok((rejected.body[0] as unknown as { text: string }).text === `❌ Rejected by Ada — ${bare}`, "a rejected card names the thing that was not done");
   const notice = judgeLiftNoticeTeamsCard(r, ["line one"], "ran");
   const noticeActions = (notice.actions ?? []) as readonly { data?: unknown }[];
   ok(noticeActions.length === 1 && parseTeamsApprovalData(noticeActions[0]?.data)?.decision === "contradict", "the judge-lift notice carries exactly one button, the contradict verb");
+  const noticeText = (notice.body as unknown as { text: string }[]).map((b) => b.text);
+  ok(noticeText[0] === `Ran without asking: ${bare}` && noticeText[1] === "⚡ Auto-approved and already run · ran", "the judge-lift notice names the act in plain words and says it already ran");
+  ok(!JSON.stringify(notice.body).includes("spend.set"), "the judge-lift notice shows no kind");
 }
 
 const sent: { serviceUrl: string; conversationId: string; body: unknown }[] = [];
@@ -392,8 +407,9 @@ async function auditFor(action: string, id: string) {
 {
   const r = await seed({ kind: "test.admin.teams" });
   const before = innerCalls;
-  await postTap(invokeBody(buildTeamsApprovalData(r, "approve"), { channelId: "webchat", from: { id: "29:org-admin", name: "x" } }), `Bearer ${goodToken}`);
-  ok((await status(r)) === "pending" && innerCalls === before + 1, "a Web Chat invoke impersonating the admin is not a tap: the row stays pending (it forwards to the native channel)");
+  const res = await postTap(invokeBody(buildTeamsApprovalData(r, "approve"), { channelId: "webchat", from: { id: "29:org-admin", name: "x" } }), `Bearer ${goodToken}`);
+  ok(res.status === 403, "a Web Chat invoke is refused (403) by the front's Teams-channel check (OPE-2455)");
+  ok((await status(r)) === "pending" && innerCalls === before, "a Web Chat invoke impersonating the admin is not a tap: the row stays pending, and it is NOT forwarded to the native channel");
 }
 
 {

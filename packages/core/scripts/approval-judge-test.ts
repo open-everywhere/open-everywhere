@@ -820,10 +820,10 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
   ok(texted.autoApproved?.resolvedBy === "judge", "text arm: the judge lifted on the text-only surface too");
   ok(textPosts.length === 1, "text arm: the shared road posts ONE notice through the surface's own text transport");
   ok(textPosts[0]!.channelId === liftInput.channelId, "text arm: it lands in the room the card would have gone to, never a guessed one");
-  ok(textPosts[0]!.text.includes(`Ran without asking: ${liftInput.kind}`), "text arm: it says the act ran without asking, naming the kind");
+  ok(textPosts[0]!.text.startsWith("Ran without asking: ") && !textPosts[0]!.text.includes(liftInput.kind), "text arm: it says the act ran without asking, in plain words with no kind label (OPE-2481)");
   ok(textPosts[0]!.text.includes("already run"), "text arm: it never implies the act is still pending");
-  ok(textPosts[0]!.text.includes(texted.id), "text arm: 🔴 it quotes THIS wedge row's id — the join a reviewer needs, and the contradict instruction's only handle");
-  ok(/cannot carry the "This should not have run" button/.test(textPosts[0]!.text), "text arm: 🔴 the overrule is spelled out in words, because no button can render here");
+  ok(!textPosts[0]!.text.includes(texted.id), "text arm: OPE-2481 — it quotes no row id; the audit trail finds the act by its room and time");
+  ok(/say so in this conversation/.test(textPosts[0]!.text), "text arm: 🔴 the overrule is spelled out in words, because no button can render here");
   ok(!textPosts[0]!.text.includes("oe_approval:"), "text arm: it carries no action_id — a tap route that does not exist is never implied");
   ok(posts.length === 0 && noticed2.length === 0, "text arm: neither the Slack blocks nor the registered poster also fired — ONE road, one render");
 

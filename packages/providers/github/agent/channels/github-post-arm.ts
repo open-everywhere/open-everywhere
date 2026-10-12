@@ -8,6 +8,7 @@ import {
   warmCredential,
   markNotApplied,
   withRetryAfter,
+  friendlyGitHubComment,
   type RateLimitRetryOptions,
   type BrokeredSecret,
   type PostArm,
@@ -97,6 +98,7 @@ export async function githubWrite(
   },
   deps: GitHubWriteDeps = {},
 ): Promise<Response> {
+  const payload = await friendlyGitHubComment(input.body);
   const send = (): Promise<Response> =>
     (deps.fetch ?? (globalThis.fetch as GitHubFetchLike))(`${GITHUB_API_BASE}${input.path}`, {
       method: input.method,
@@ -106,7 +108,7 @@ export async function githubWrite(
         "x-github-api-version": "2022-11-28",
         "content-type": "application/json",
       },
-      body: JSON.stringify(input.body),
+      body: JSON.stringify(payload),
     });
   return withRetryAfter(send, { ...deps.retry, surface: "github", operation: input.operation, retryForbiddenWithRetryAfter: true });
 }

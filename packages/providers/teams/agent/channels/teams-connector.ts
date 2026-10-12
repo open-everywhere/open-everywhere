@@ -1,5 +1,5 @@
 import { resolveTeamsAccessToken } from "eve/channels/teams";
-import { withRetryAfter, type RateLimitRetryOptions } from "@open-everywhere/core/agent/adapter-api.js";
+import { friendlyTeamsActivity, withRetryAfter, type RateLimitRetryOptions } from "@open-everywhere/core/agent/adapter-api.js";
 
 export type TeamsFetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
@@ -39,11 +39,12 @@ export async function teamsConnectorWrite(
   deps: TeamsConnectorDeps = {},
 ): Promise<TeamsConnectorResult> {
   const token = await resolveTeamsAccessToken();
+  const body = input.body === undefined || input.method === "GET" || input.method === "DELETE" ? input.body : await friendlyTeamsActivity(input.body);
   const send = (): Promise<Response> =>
     (deps.fetch ?? (globalThis.fetch as TeamsFetchLike))(`${trimTrailingSlash(input.serviceUrl)}${input.path}`, {
       method: input.method ?? "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json; charset=utf-8" },
-      ...(input.body !== undefined ? { body: JSON.stringify(input.body) } : {}),
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
   const res = await withRetryAfter(send, { ...deps.retry, surface: "teams", operation: input.operation });
   return { ok: res.ok, status: res.status, body: await parseTeamsResponseBody(res) };

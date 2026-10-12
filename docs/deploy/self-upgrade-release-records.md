@@ -89,7 +89,7 @@ explicitly for your first record, because the example record's placeholder sha i
 Pass it also to diff an arbitrary earlier point.
 
 **Derived automatically**, per file diff: the OE package version, the eve framework pin (checked
-across all ten mirrored `package.json` files — the generator refuses to guess if they disagree),
+across all eleven mirrored `package.json` files — the generator refuses to guess if they disagree),
 and any new `packages/providers/*` package. An eve pin change always gets the window-rotation
 migration attached — not a heuristic, every eve bump in this repo's history has needed it.
 

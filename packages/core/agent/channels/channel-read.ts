@@ -2,8 +2,10 @@ import {
   turnOriginPlatform,
   assertTurnSurface,
   resolveWindowSources,
+  deploymentOrg,
   type BindableContext,
 } from "../identity/binding.js";
+import { chatReadCarriesMeetingPost } from "../meetings/provenance.js";
 import type { Domain } from "../memory/domain.js";
 import { domainForChannel, domainRoster, externalPolicyOverrideFor } from "../memory/domain.js";
 import { resolvePartition } from "../memory/partition.js";
@@ -18,6 +20,8 @@ import { spoolNote, type ReadSpool } from "./read-spool.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 import { ageAtRead } from "../access/dated-read.js";
 import { redactMachineLinkCodes } from "../identity/link-challenge.js";
+import { resolveFriendlyIds } from "./friendly-outbound.js";
+import { rawIdLeaks, type FriendlyName } from "./friendly-ids.js";
 export { ChannelScopeError };
 
 export interface RenderedLine {
@@ -36,6 +40,7 @@ export interface ChannelReadResult {
   readonly count: number;
   readonly messages: readonly RenderedLine[];
   readonly authoredByNonMember?: boolean;
+  readonly carriesUntrustedPost?: boolean;
   readonly possiblyIncomplete?: boolean;
   readonly partialReason?: string;
   readonly spool?: ReadSpool;
@@ -48,6 +53,7 @@ export interface ThreadReadResult {
   readonly count: number;
   readonly messages: readonly RenderedLine[];
   readonly authoredByNonMember?: boolean;
+  readonly carriesUntrustedPost?: boolean;
   readonly possiblyIncomplete?: boolean;
   readonly partialReason?: string;
   readonly spool?: ReadSpool;
@@ -182,6 +188,7 @@ export interface ChannelReadOutput {
   count: number;
   messages: ReadOutputLine[];
   authoredByNonMember?: boolean;
+  carriesUntrustedPost?: boolean;
   possiblyIncomplete?: boolean;
   partialReason?: string;
   spool?: ReadSpool;
@@ -213,27 +220,47 @@ function normalizeAdapterFetch(result: readonly RenderedLine[] | AdapterReadFetc
   };
 }
 
+async function readAuthorNames(platform: string, lines: readonly RenderedLine[]): Promise<Map<string, FriendlyName>> {
+  const ids = [...new Set(lines.filter((m) => m.bot !== true && m.authorId !== undefined && m.author === m.authorId).map((m) => m.authorId!))];
+  return ids.length === 0 ? new Map() : resolveFriendlyIds(ids.map((id) => ({ platform, id })));
+}
+
+function authorWithName(m: RenderedLine, names: ReadonlyMap<string, FriendlyName>): string {
+  if (m.bot === true || m.authorId === undefined || m.author !== m.authorId) return m.author;
+  const hit = names.get(m.authorId);
+  const label = hit?.kind === "person" ? hit.label.replace(/[[\]()<>\n\r]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) : "";
+  if (label.length === 0 || rawIdLeaks(label).length > 0 || rawIdLeaks(hit!.label).length > 0) return m.author;
+  return `${label} (${m.author})`;
+}
+
 async function gradeAndProject(
   ctx: BindableContext,
   adapter: ReadAdapter,
   lines: readonly RenderedLine[],
   effectiveLimit: number,
+  where: { readonly platform: string; readonly container: string; readonly threadRoot?: string },
   declared?: { possiblyIncomplete?: boolean; partialReason?: string },
-): Promise<{ count: number; messages: ReadOutputLine[]; authoredByNonMember?: boolean; possiblyIncomplete?: boolean; partialReason?: string }> {
+): Promise<{ count: number; messages: ReadOutputLine[]; authoredByNonMember?: boolean; carriesUntrustedPost?: boolean; possiblyIncomplete?: boolean; partialReason?: string }> {
   const refuted = await adapterRefutedAuthorIds(adapter, ctx, lines);
+  const carriesUntrustedPost = await chatReadCarriesMeetingPost(deploymentOrg(), {
+    ...where,
+    botMessageIds: lines.filter((m) => m.bot === true).map((m) => m.ts),
+  });
   const withholding = refuted.size > 0 && readAuthorPolicy(ctx).authorGrain === "withhold";
   const withheld = (m: RenderedLine): boolean => withholding && m.bot !== true && m.authorId !== undefined && refuted.has(m.authorId);
   const possiblyIncomplete = declared?.possiblyIncomplete !== undefined ? declared.possiblyIncomplete : lines.length >= effectiveLimit;
+  const authorNames = await readAuthorNames(where.platform, lines);
   return {
     count: lines.length,
     messages: lines.map((m) => ({
-      author: m.author,
+      author: authorWithName(m, authorNames),
       ts: m.ts,
       text: withheld(m) ? WITHHELD_BODY_MARKER : m.bot === true ? redactMachineLinkCodes(m.text) : m.text,
       ...(m.readAt !== undefined ? { readAt: m.readAt } : {}),
       ...(m.live !== undefined ? { live: m.live } : {}),
     })),
     ...(refuted.size > 0 && !withholding ? { authoredByNonMember: true } : {}),
+    ...(carriesUntrustedPost ? { carriesUntrustedPost: true } : {}),
     ...(possiblyIncomplete ? { possiblyIncomplete: true } : {}),
     ...(possiblyIncomplete && declared?.partialReason !== undefined ? { partialReason: declared.partialReason } : {}),
   };
@@ -253,7 +280,7 @@ export async function readChannelResult(
   return {
     platform,
     channel,
-    ...(await gradeAndProject(ctx, adapter, fetched.lines, limit ?? DEFAULT_CHANNEL_LIMIT_ESTIMATE, fetched)),
+    ...(await gradeAndProject(ctx, adapter, fetched.lines, limit ?? DEFAULT_CHANNEL_LIMIT_ESTIMATE, { platform, container: channel }, fetched)),
   };
 }
 
@@ -270,12 +297,17 @@ export async function readThreadResult(
     platform,
     channel,
     thread_ts: threadTs,
-    ...(await gradeAndProject(ctx, adapter, fetched.lines, limit ?? DEFAULT_THREAD_LIMIT_ESTIMATE, fetched)),
+    ...(await gradeAndProject(ctx, adapter, fetched.lines, limit ?? DEFAULT_THREAD_LIMIT_ESTIMATE, { platform, container: channel, threadRoot: threadTs }, fetched)),
   };
 }
 
-export function chatReadIngestion(label: string, out: { readonly authoredByNonMember?: boolean }): IngestionSource {
-  return { kind: "chat-message", label, ...(out.authoredByNonMember === true ? { authoredByNonMember: true } : {}) };
+export function chatReadIngestion(label: string, out: { readonly authoredByNonMember?: boolean; readonly carriesUntrustedPost?: boolean }): IngestionSource {
+  return {
+    kind: "chat-message",
+    label,
+    ...(out.authoredByNonMember === true ? { authoredByNonMember: true } : {}),
+    ...(out.carriesUntrustedPost === true ? { carriesUntrustedPost: true } : {}),
+  };
 }
 
 function coverageNote(kind: "channel" | "thread", count: number, reason?: string): string {

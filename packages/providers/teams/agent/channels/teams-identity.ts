@@ -20,13 +20,19 @@ export interface TeamsIdentityInput {
   readonly scope?: string;
   readonly membershipType?: string;
   readonly userType?: string;
+  readonly homeTenant?: boolean;
 }
 
 const TEAMS_USER_TYPE_ATTR = "user_type";
 
-export function withTeamsUserType<A extends OpenEverywhereTeamsAuth>(auth: A, userType: string | undefined): A {
+const TEAMS_HOME_TENANT_ATTR = "tenant_home";
+
+export function withTeamsUserType<A extends OpenEverywhereTeamsAuth>(auth: A, userType: string | undefined, homeTenant?: boolean): A {
   if (!userType) return auth;
-  return { ...auth, attributes: { ...auth.attributes, [TEAMS_USER_TYPE_ATTR]: userType } };
+  return {
+    ...auth,
+    attributes: { ...auth.attributes, [TEAMS_USER_TYPE_ATTR]: userType, ...(homeTenant === true ? { [TEAMS_HOME_TENANT_ATTR]: "true" } : {}) },
+  };
 }
 
 export function buildTeamsAuth(input: TeamsIdentityInput): OpenEverywhereTeamsAuth {
@@ -43,6 +49,7 @@ export function buildTeamsAuth(input: TeamsIdentityInput): OpenEverywhereTeamsAu
   if (input.scope) attributes.scope = input.scope;
   if (input.membershipType) attributes.membership_type = input.membershipType;
   if (input.userType) attributes[TEAMS_USER_TYPE_ATTR] = input.userType;
+  if (input.userType && input.homeTenant === true) attributes[TEAMS_HOME_TENANT_ATTR] = "true";
   const teamsScopeMode = teamsMode(input.scope);
   Object.assign(attributes, rootDmGrainAttrs(teamsScopeMode === "dm" || teamsScopeMode === "mpim"));
   return { authenticator: "teams", principalId: input.userId, principalType: "teams-user", attributes };
@@ -105,6 +112,12 @@ export function teamsTrust(
   return undefined;
 }
 
+export function teamsDmPartnerVerified(mode: SessionMode, userType: string | undefined, homeTenant: boolean): boolean | undefined {
+  if (mode !== "dm") return undefined;
+  if (userType === "guest") return true;
+  return userType === "member" && homeTenant;
+}
+
 type Visibility = "public" | "private";
 type Trust = "internal" | "external";
 
@@ -151,6 +164,7 @@ export const bindTeams: IdentityMapper = (ctx): RawIdentity => {
     ...(teamsTrustGroup(teamsAttr(a, ["team_id", "teamId"])) ?? {}),
     visibility: teamsVisibility(scope, membershipType, mode),
     trust: teamsTrust(scope, membershipType, mode, tenantId, userType),
+    trustVerified: teamsDmPartnerVerified(mode, userType, teamsAttr(a, [TEAMS_HOME_TENANT_ATTR]) === "true"),
     principalId: teamsAuthPrincipalId(ctx) ?? teamsAttr(a, ["user_id", "userId"]),
     ...(teamsMode(scope) !== "dm" && conversationId ? { engagementKey: conversationId } : {}),
     ...(mode === "channel" && teamsAttr(a, ["channel_id", "channelId"])

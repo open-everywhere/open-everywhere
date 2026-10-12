@@ -38,13 +38,11 @@ export async function checkFireDisclosure(surfaceKey: string, deps: FireDisclosu
   }
 }
 
-export function fireWithheldNoticeText(routineId: string): string {
+export function fireWithheldNoticeText(_routineId: string): string {
   return (
-    `🔒 Routine \`${routineId}\` had something to report and I withheld it. This channel's audience ` +
-    `floor resolved to "guest" — it is externally shared, or carries an observed guest/external ` +
-    `member — so org-internal content from a trigger source can't be delivered here. Nothing about ` +
-    `the event is in this message, deliberately. Move the routine to an internal channel (or remove ` +
-    `the external members) and it will resume by itself; the full reason is in the audit log.`
+    `🔒 A routine in this channel has an update, but I can't post it here because this channel ` +
+    `includes guests or people from outside your organisation. Move the routine to an internal ` +
+    `channel, or remove those members, and its updates start again.`
   );
 }
 

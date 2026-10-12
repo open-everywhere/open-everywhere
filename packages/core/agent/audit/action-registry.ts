@@ -386,6 +386,27 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
       "RED-until-leg: no e2e leg drives an external room into an A2A tool; packages/core/scripts/a2a-client-test.ts §9 drives the gate and tests/integration/connectors/a2a-delegation.test.ts reads this row on the integration tier.",
   },
   {
+    action: "a2a.inbound_refused",
+    fields: ["reason"],
+    proves: "the inbound A2A route refused a call before it read the body or started anything: no credential, a token no declared caller verifies, or a verified token whose subject no caller declares (OPE-2448). Throttled to ~one row per reason per minute, with a `suppressed` count — never the credential",
+    notExercised:
+      "RED-until-leg: the e2e scenario S-A2A-INBOUND drives the refusal only on a deployment that turns inbound A2A on; tests/integration/ingress/a2a-inbound.test.ts reads this row on the integration tier.",
+  },
+  {
+    action: "a2a.inbound_accepted",
+    fields: ["caller", "taskId", "landed"],
+    proves: "an AUTHENTICATED, declared inbound A2A caller started a task, and whether it landed as a job in its own surface of its declared domain, or why not (OPE-2448) — ids, counts and a reason, never the task text",
+    notExercised:
+      "RED-until-leg: beside a2a.inbound_refused — tests/integration/ingress/a2a-inbound.test.ts reads this row on the integration tier.",
+  },
+  {
+    action: "a2a.inbound_answered",
+    fields: ["caller", "taskId", "requestId", "outcome", "chars", "written", "write"],
+    proves: "an inbound A2A task's job settled — or was lost or withheld, which ends it `failed` — and whether its answer was written to the caller's task, the task row was gone, or the store failed (`write`), with the outcome and the answer's length (OPE-2448) — never the answer",
+    notExercised:
+      "RED-until-leg: beside a2a.inbound_refused — tests/integration/ingress/a2a-inbound.test.ts reads this row on the integration tier.",
+  },
+  {
     action: "a2a.delegated",
     fields: ["agent", "host", "requestedBy", "approvedBy", "approvedByPolicy", "state"],
     proves: "an approved delegation SENT one task to a declared A2A agent with the asker's identity attached, and the task state it came back in (OPE-2425) — never the task text or the answer",
@@ -422,6 +443,25 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
     fields: ["reason", "domain", "tool"],
     proves: "a DM question or its answer was refused before anything was sent: not a 1:1 internal DM, a non-member in the wake, no verified person, an unknown or closed domain, membership the platform could not prove, a person outside the domain, no running seat, or an answer from the wrong seat or a turn the delivery did not wake (OPE-2452)",
     notExercised: "RED-until-leg: no e2e leg drives a refused DM question; packages/core/scripts/domain-question-test.ts pins every refusal reason in the pure gate functions offline, and tests/integration/channels/domain-question.test.ts drives the real tool for the not-a-member reason and reads this row on the integration tier.",
+  },
+  {
+    action: "bot_ask.expected",
+    fields: ["askId", "bot", "channel", "thread", "windowHours", "cap"],
+    proves: "a person's own DM seat opened an asked thread after the platform proved the person wrote the ask and that it names that bot (OPE-2426) — the only act that lets another bot's Slack message wake the agent outside the e2e driver settings (OPE-1023)",
+    notExercised:
+      "RED-until-leg: no e2e leg drives a second bot in a shared channel yet; packages/core/scripts/bot-ask-test.ts drives the real tool offline and reads this row through the audit seam.",
+  },
+  {
+    action: "bot_ask.refused",
+    fields: ["reason", "tool"],
+    proves: "an asked thread was refused before anything was recorded: not a 1:1 internal DM, a non-member in the wake, no verified person, a scheduled run, a turn a relayed bot reply woke, a platform with no probe, or a message the platform did not prove as the person's ask to that bot (OPE-2426)",
+    notExercised: "RED-until-leg: beside bot_ask.expected — packages/core/scripts/bot-ask-test.ts drives every refusal reason offline.",
+  },
+  {
+    action: "bot_ask.reply_relayed",
+    fields: ["askId", "bot", "channel", "slot", "route", "chars"],
+    proves: "another bot's reply in an asked thread was relayed to the asker's DM (`dm-seat`, `posted` or `failed`), and which reply slot it took under the cap (OPE-2426) — never the reply's text",
+    notExercised: "RED-until-leg: beside bot_ask.expected — packages/core/scripts/bot-ask-test.ts and packages/providers/slack/scripts/slack-bot-ask-test.ts drive the relay offline.",
   },
   {
     action: "connector.op_approved",
@@ -510,7 +550,7 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
    },
 
   { action: "reply.post", fields: ["id", "platform", "chars", "route"], proves: "the agent posted, where, and by which route" },
-  { action: "reply.provenance", fields: [], proves: "the reply carried its provenance footer, naming who the answer came from" },
+  { action: "reply.provenance", fields: [], proves: "the reply drew on connector reads, and which sources the room may be told (detail.sources; no footer since OPE-2487)" },
   { action: "reply.refused", fields: ["reason"], proves: "the post choke point refused to speak, and why" },
   { action: "reply.forced", fields: ["reason"], proves: "a reply was posted past a guard that would have withheld it", notExercised: "a reply posted PAST a guard that would have withheld it; no e2e fixture arms that path." },
   {
@@ -596,6 +636,14 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
       "no e2e leg completes an Identity Center link: it needs a real AWS Identity Center instance, a registered public PKCE client and a browser that can sign in as two different directory users. Driving it needs an Identity Center fixture with two seeded users and a confirmed `aws` linked-id row for one of them.",
   },
   {
+    action: "connector.xaa.link_refused",
+    fields: ["reason", "connection", "signerSubject", "stage"],
+    proves:
+      "an Okta Cross App Access grant was refused for a requester and a connection — at stage sign-in (the link was spent; signerSubject is the Okta account that signed in, or null when the id token did not verify) or at stage mint (a stored grant re-checked before a mint; signerSubject is the grant's Okta account; `reason` tells a link that is gone, where the grant was deleted, from an unreadable link plane, where the grant was kept)",
+    notExercised:
+      "no e2e leg completes an Okta sign-in: it needs a real Okta org with an OIDC app for OE and a browser that can sign in as two directory users. The feature ships dark (no connection declares an xaa sign-in).",
+  },
+  {
     action: "meeting.join",
     fields: ["meetingId", "platform", "host", "requestedBy", "backend", "box", "maxMinutes", "transcription"],
     proves: "a member approved sending OE's meeting bot to one meeting, naming the platform, the host, the box it runs in, its cap and the transcription route",
@@ -632,6 +680,19 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
     fields: ["requestId", "inbox", "sender", "repo", "branch"],
     proves: "a person approved adding an allowed sender to a room inbox, and the pull request that adds it was opened (nothing is allowed until an admin merges it)",
     notExercised: "pairs with email.admitted — the propose leg needs a config repository the e2e app can write to. The unit pack test:email-sender drives the row with fake repository edges.",
+  },
+  {
+    action: "google-chat.admitted",
+    fields: ["space", "route", "trust", "domainId", "threadReply"],
+    proves: "a token-verified Google Chat message passed the surface's gate and woke a seat — which space, which seat kind, the sender's trust, and the sender's Workspace domain id (so an operator can read it off the row for `internalDomainIds`)",
+    notExercised:
+      "S-GCHAT-MENTION-REPLY is not on the e2e board yet: a live leg needs a Google Workspace test tenant with the Chat app published to it (a fixture the run cannot create). The unit pack test:google-chat-front drives the row through the real front with fake deps.",
+  },
+  {
+    action: "google-chat.refused",
+    fields: ["reason", "space", "domainId"],
+    proves: "the Google Chat gate refused a token-verified message before any model saw it, and why (a group chat, direct messages turned off, an outside person's DM, or no domain reaching the space), with the sender's Workspace domain id",
+    notExercised: "pairs with google-chat.admitted — the same live Workspace fixture.",
   },
   {
     action: "browser.personal.open",
@@ -682,6 +743,12 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
     notExercised: "pairs with browser.personal.open — the same browser fixture.",
   },
   {
+    action: "browser.personal.teach",
+    fields: ["phase"],
+    proves: "a person taught a task by demonstration in their own browser (OPE-2454): the recording started, was saved as a paused draft (step counts only, never a label or typed text), was rehearsed without a click, was discarded, or was lost (its box closed, or the hand-off failed)",
+    notExercised: "pairs with browser.personal.open — the same browser fixture.",
+  },
+  {
     action: "meeting.recap_requested",
     fields: ["meetingId", "platform", "host", "roomId", "requestedBy", "when"],
     proves: "a member approved reading one meeting's transcript from the meeting platform with the organisation's credential, naming the platform, the meeting and the person who asked",
@@ -693,6 +760,32 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
     fields: ["meetingId", "platform", "reason", "posted"],
     proves: "a recap from the platform's own transcript ended with no recap, and why: the platform refused (an admin switch or grant off, not transcribed, expired, not found, a bad credential), no transcript appeared before the watch ran out, native recaps were turned off, or a halt covered the ask",
     notExercised: "pairs with meeting.recap_requested — the same live-meeting fixture.",
+  },
+  {
+    action: "personal_watch.silence",
+    fields: ["reason", "kind", "dial", "dampening", "fingerprint", "summary"],
+    proves: "the watch held a finding back (or could not look), and the closed reason why — one row per finding and reason",
+    notExercised:
+      "no e2e leg declares a watch source: the pack's fixtures have no calendar connector, so no live check runs. `test:personal-watch` drives every reason through the real tick and the real audit write.",
+  },
+  {
+    action: "personal_watch.nudge",
+    fields: ["kind", "urgency", "dial", "dampening", "calibrationAsk", "fingerprint"],
+    proves: "the watch started a direct message to the person on its own, with no ask, and under which dial",
+    notExercised: "the same gap as `personal_watch.silence`: no fixture calendar exists for a live check.",
+  },
+  {
+    action: "personal_watch.dial.set",
+    fields: ["dial", "previous", "via"],
+    proves: "a person turned their watch to more, less or none, and through which door (`command` or `app-home`)",
+    notExercised:
+      "S-WATCH drives both doors (a forged `/oe watch` and a forged Home-tab click) and gates on this row, but it is NON_LAUNCH: its Home-tab leg needs the fixture app reinstalled with the Home tab on, as S-APP-HOME does.",
+  },
+  {
+    action: "personal_watch.response",
+    fields: ["response", "dampening", "via", "fingerprint"],
+    proves: "a person marked a nudge useful or not useful, and the dose that answer left",
+    notExercised: "S-WATCH proves only that a forged answer writes NO row; a real answer needs a nudge, which needs a calendar fixture no board carries. `test:personal-watch` drives the row offline.",
   },
   {
     action: "person.opt_out.set",
@@ -832,6 +925,7 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "mcp-server.propose.pr_opened",
   "meeting.status",
   "email.wake_failed",
+  "google-chat.wake_failed",
   "session.generation_retire_skipped",
   "work.session_rotation_deferred",
   "session.generation_retired",
@@ -950,6 +1044,8 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "taint.mode",
   "taint.verdict",
   "teams.dispatched",
+  "teams.intro_posted",
+  "teams.oe_command",
   "teams.read_boundary",
   "thread.ingress_routed",
   "ticket.add_label",
@@ -979,6 +1075,16 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
 ];
 
 export const DYNAMIC_ACTION_SITES: readonly DynamicActionSite[] = [
+  {
+    file: "packages/core/agent/a2a/inbound/audit.ts",
+    expression: "row.action",
+    emits: ["a2a.inbound_refused", "a2a.inbound_accepted"],
+  },
+  {
+    file: "packages/providers/google-chat/agent/channels/google-chat.ts",
+    expression: "row.action",
+    emits: ["google-chat.admitted", "google-chat.refused"],
+  },
   {
     file: "packages/providers/email/agent/channels/email.ts",
     expression: "row.action",

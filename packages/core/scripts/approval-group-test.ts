@@ -104,7 +104,7 @@ ok(join1.length >= 1, "it rewrites the job's open card instead");
 const ids1 = actionIdsIn(join1[join1.length - 1]);
 ok(ids1.includes(`${OE_APPROVAL_PREFIX}approve:${idA}`) && ids1.includes(`${OE_APPROVAL_PREFIX}approve:${idB}`), "the grouped card carries BOTH asks' own buttons");
 ok((await store.getPendingAction("default", idB))?.messageTs === tsA, "the second row points at the shared card");
-ok((join1[join1.length - 1].body.get("text") ?? "").startsWith("One job asks for 2 approvals"), "the grouped card opens with a plain count");
+ok((join1[join1.length - 1].body.get("text") ?? "").startsWith("2 approvals for one job"), "the grouped card opens with a plain count");
 
 calls = [];
 const idC = await propose("sess-job-2", "gamma");
@@ -252,7 +252,7 @@ ok(calls.length === 0, "a repeat click on a SINGLE decided card stays silent, as
   const singleText = pendingCardBlocks(rowW1, ["do kappa"]).text;
   ok(wireText(postW) === singleText, `🔴 SINGLE: chat.postMessage carries the rendered text byte for byte (got ${JSON.stringify(wireText(postW))})`);
   const singleLines = wireText(postW).split("\n");
-  ok(singleLines.length === 4 && singleLines[0] === "Do kappa for the team." && singleLines[1] === "Approval requested: test.group", `SINGLE: the sentence, then the label, each on its own line (got ${JSON.stringify(singleLines)})`);
+  ok(singleLines.length === 2 && singleLines[0] === "Do kappa for the team." && singleLines[1]!.startsWith("Asked by <@"), `SINGLE: the sentence, then the footer, each on its own line, and no label (got ${JSON.stringify(singleLines)})`);
   ok(carriesLineFeeds(postW), "SINGLE: the form body carries encoded line feeds");
 
   calls = [];
@@ -264,16 +264,18 @@ ok(calls.length === 0, "a repeat click on a SINGLE decided card stays silent, as
   const groupedText = groupedCardBlocks(membersW.map((m) => ({ row: m, summaryLines: [`do ${(JSON.parse(m.argsJson) as { what: string }).what}`] }))).text;
   ok(wireText(joinW) === groupedText, `🔴 GROUPED: the join's chat.update carries the rendered text byte for byte (got ${JSON.stringify(wireText(joinW))})`);
   const groupedLines = wireText(joinW).split("\n");
-  ok(groupedLines.length === 4 && groupedLines[1] === "Approval requested: grouped" && groupedLines[2].startsWith("1. ") && groupedLines[3].startsWith("2. "), `GROUPED: the count, the label and one line per item (got ${JSON.stringify(groupedLines)})`);
+  ok(groupedLines.length === 3 && groupedLines[1]!.startsWith("1. ") && groupedLines[2]!.startsWith("2. "), `GROUPED: the count and one line per item, no label (got ${JSON.stringify(groupedLines)})`);
   ok(carriesLineFeeds(joinW), "GROUPED: the form body carries encoded line feeds");
 
   calls = [];
   await handleApprovalPayload({ actions: [{ action_id: `${OE_APPROVAL_PREFIX}approve:${idW1}`, value: "default" }], user: { id: "U_REQ" }, team: { id: "T1" }, channel: { id: "C1" }, message: { ts: tsW } }, { post });
   const redrawW = calls.find((c) => c.method === "chat.update" && c.body.get("ts") === tsW);
   const membersW2 = await store.listPendingActionsForMessage("default", "C1", tsW!);
-  const redrawText = groupedCardBlocks(membersW2.map((m) => ({ row: m, summaryLines: [`do ${(JSON.parse(m.argsJson) as { what: string }).what}`] }))).text;
+  const redrawText = groupedCardBlocks(
+    membersW2.map((m) => ({ row: m, summaryLines: [`do ${(JSON.parse(m.argsJson) as { what: string }).what}`], ...(m.id === idW1 ? { outcomeLine: "did kappa" } : {}) })),
+  ).text;
   ok(wireText(redrawW) === redrawText, `🔴 GROUPED DECIDED: the redraw's chat.update carries the rendered text byte for byte (got ${JSON.stringify(wireText(redrawW))})`);
-  ok(wireText(redrawW).split("\n").length === 4, "GROUPED DECIDED: the redraw keeps one line per item");
+  ok(wireText(redrawW).split("\n").length === 3, "GROUPED DECIDED: the redraw keeps one line per item");
   ok(carriesLineFeeds(redrawW), "GROUPED DECIDED: the form body carries encoded line feeds");
 
   calls = [];
@@ -287,8 +289,7 @@ ok(calls.length === 0, "a repeat click on a SINGLE decided card stays silent, as
   const decidedText = decidedCardBlocks(rowW3, ["do mu"], "did mu").text;
   ok(wireText(decidedW) === decidedText, `🔴 SINGLE DECIDED: the rewrite's chat.update carries the rendered text byte for byte (got ${JSON.stringify(wireText(decidedW))})`);
   const decidedLines = wireText(decidedW).split("\n");
-  ok(decidedLines.length === 4 && decidedLines[1] === "Approval requested: test.group" && decidedLines[3].startsWith("✅ Approved by <@U_REQ>"), `SINGLE DECIDED: the sentence, the label, the detail and the decided line (got ${JSON.stringify(decidedLines)})`);
-  ok(carriesLineFeeds(decidedW), "SINGLE DECIDED: the form body carries encoded line feeds");
+  ok(decidedLines.length === 1 && decidedLines[0]!.startsWith("✅ Approved by <@U_REQ>"), `SINGLE DECIDED: ONE decided line (OPE-2481) (got ${JSON.stringify(decidedLines)})`);
 }
 
 console.log(`approval-group-test: ${n} assertions passed`);

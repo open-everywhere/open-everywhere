@@ -26,7 +26,7 @@ export const RAW_FIELDS = [
 
 const RAW_TAIL = new RegExp(`(?:^|[.\\s(!?])(?:${RAW_FIELDS.join("|")})\\s*\\)?\\s*$`, "u");
 const RAW_COMPOUND_TAIL = new RegExp(`[a-z](?:${RAW_FIELDS.map((f) => f[0]!.toUpperCase() + f.slice(1)).join("|")})\\s*\\)?\\s*$`, "u");
-const RENDERED = /\b(?:personWords|placeWords|requesterWords|recipientWords|scopeWords|plainScope|friendlyScopeLabel)\s*\(/u;
+const RENDERED = /\b(?:personWords|placeWords|placeBesideKey|nameBesideId|channelWords|requesterWords|recipientWords|scopeWords|plainScope|friendlyScopeLabel)\s*\(/u;
 const LOG_OR_THROW = /\bconsole\.|\b\w*log(?:Once)?\??\.?\s*\(|\bwarn\s*\(|\bError\s*\(|\bthrow\b|\bdebug\s*\(/u;
 
 export interface RawIdHit {
@@ -85,10 +85,7 @@ export const BASELINE: Readonly<Record<string, BaselineEntry>> = {
   "packages/core/agent/access/pane-venue.ts": { count: 1, why: ADMIN_ID },
   "packages/core/agent/access/roles.ts": { count: 2, why: ADMIN_ID },
   "packages/core/agent/tools/request_access.ts": { count: 1, why: ADMIN_ID },
-  "packages/core/agent/spend/ingress-gate.ts": { count: 2, why: ADMIN_ID },
   "packages/core/agent/spend/spend.ts": { count: 6, why: ADMIN_ID },
-  "packages/core/agent/approvals/a2a-delegate.ts": { count: 1, why: CHAIN },
-  "packages/core/agent/approvals/connector-op.ts": { count: 1, why: CHAIN },
   "packages/core/agent/approvals/access-request.ts": { count: 5, why: CONFIG_PR },
   "packages/core/agent/approvals/agent-create.ts": { count: 3, why: CONFIG_PR },
   "packages/core/agent/approvals/mcp-server-propose.ts": { count: 3, why: CONFIG_PR },
@@ -116,10 +113,8 @@ export const BASELINE: Readonly<Record<string, BaselineEntry>> = {
   "packages/core/agent/spend/reporting.ts": { count: 2, why: KEY },
   "packages/core/agent/status/status.ts": { count: 1, why: MODEL },
   "packages/core/agent/tools/clear_connector_override.ts": { count: 1, why: MODEL },
-  "packages/core/agent/tools/clear_spend_limit.ts": { count: 2, why: MODEL },
   "packages/core/agent/tools/delegate_to_agent.ts": { count: 1, why: KEY },
-  "packages/core/agent/tools/revoke_connector.ts": { count: 1, why: MODEL },
-  "packages/core/agent/tools/set_spend_limit.ts": { count: 7, why: MODEL },
+  "packages/core/agent/tools/set_spend_limit.ts": { count: 5, why: MODEL },
   "packages/core/agent/tools/spend_report.ts": { count: 1, why: MODEL },
   "packages/core/agent/tools/usage_report.ts": { count: 2, why: MODEL },
   "packages/core/agent/webhooks/achievability.ts": { count: 2, why: OPERATOR },
@@ -135,7 +130,6 @@ export const BASELINE: Readonly<Record<string, BaselineEntry>> = {
   "packages/providers/teams/agent/channels/teams-read.ts": { count: 1, why: MODEL },
   "packages/providers/slack/agent/channels/slack.ts": { count: 1, why: KEY },
   "packages/providers/slack/agent/setup/page.ts": { count: 1, why: "the setup page's config snippet: the principal key IS the value the installing operator pastes into the domain config" },
-  "packages/providers/teams/agent/approvals/teams-card.ts": { count: 1, why: TEAMS },
   "packages/providers/teams/agent/channels/teams-declared-target.ts": { count: 1, why: MODEL },
   "packages/providers/teams/agent/channels/teams-front.ts": { count: 1, why: OPERATOR },
 };

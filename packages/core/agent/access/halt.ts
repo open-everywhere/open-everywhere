@@ -195,6 +195,11 @@ export function haltRefusalMessage(state: HaltState, what: string): string {
   );
 }
 
+export function haltClickNotice(state: HaltState): string {
+  const why = state.halted && state.unreadable !== undefined ? " (its state could not be read, so it holds)" : "";
+  return `⛔ Nothing was decided: an emergency halt is on${why}. Once an admin lifts it, this card works again.`;
+}
+
 export function haltAuditDetail(state: HaltState): Record<string, unknown> {
   if (!state.halted) return {};
   if (state.unreadable !== undefined) return { halt: "unreadable" };

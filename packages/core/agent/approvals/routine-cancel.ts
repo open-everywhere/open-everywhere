@@ -1,10 +1,10 @@
+import { routineWords } from "../routines/schedule-words.js";
 import { removeRoutine } from "../routines/store.js";
 import { appendAudit } from "../audit/audit.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 import type { Partition } from "../memory/partition.js";
 import { registerActionKind } from "./actions.js";
 import type { ActionKind } from "./types.js";
-import { plainValue } from "./plain-text.js";
 
 interface RoutineCancelArgs {
   readonly org: string;
@@ -20,7 +20,7 @@ const routineCancel: ActionKind<RoutineCancelArgs> = {
   kind: "routine.cancel",
   policy: "member",
   plainSummary(args) {
-    return `Stop the routine "${plainValue(args.description)}" — it will not run again`;
+    return `Stop ${routineWords(args.description)} — it will not run again`;
   },
   summarize(args) {
     return [
@@ -43,8 +43,8 @@ const routineCancel: ActionKind<RoutineCancelArgs> = {
     const outcomeTag = cancelled ? "ok" : "noop";
     emitTelemetry("oe.feature.used", { "oe.feature": "routine_cancelled", "oe.outcome": outcomeTag });
     return cancelled
-      ? `routine ${args.id} cancelled — ${args.description}.`
-      : `no routine ${args.id} on this surface — nothing to cancel (it may already be gone).`;
+      ? `${routineWords(args.description)} is stopped`
+      : `${routineWords(args.description)} was already gone, so nothing changed`;
   },
 };
 

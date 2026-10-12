@@ -1,3 +1,6 @@
+import { toolWords, triggerWords } from "../routines/schedule-words.js";
+import { routinePermissionKind, shortUtc } from "./session-grant.js";
+import { QUOTE_MAX, plainQuote, plainValue } from "./plain-text.js";
 import { placeWords } from "../channels/friendly-ids.js";
 import { addRoutine, newRoutineId } from "../routines/store.js";
 import { computeNextRun } from "../routines/schedule.js";
@@ -8,18 +11,17 @@ import {
   ROUTINE_PERMISSION_NEVER_LIFTS_ACTION,
   bundleRaisedDeclarations,
   describeDeclaredPermissions,
+  namesUnliftableTool,
   armDeclaredRoutinePermissions,
   unarmedDeclarations,
 } from "../routines/declared-permissions.js";
 import { resolveRoutineCollector } from "../routines/collector.js";
 import { resolveRoutineGate } from "../routines/gate.js";
-import { describeDeclaredPermissionKind } from "./session-grant.js";
 import { appendAudit } from "../audit/audit.js";
 import type { Partition } from "../memory/partition.js";
 import type { ModelRole } from "../memory/domain.js";
 import { registerActionKind } from "./actions.js";
 import type { ActionKind } from "./types.js";
-import { plainValue } from "./plain-text.js";
 
 export interface RoutineCreateArgs {
   readonly org: string;
@@ -76,12 +78,31 @@ export function modelRoleLines(args: Pick<RoutineCreateArgs, "modelRole">): stri
   ];
 }
 
+function routineWhere(args: RoutineCreateArgs): string {
+  return placeWords({ key: args.report?.kind === "surface" ? args.report.surfaceKey : args.surfaceKey });
+}
+
 const routineCreate: ActionKind<RoutineCreateArgs> = {
   kind: "routine.create",
   policy: "member",
   plainSummary(args) {
-    return `Start a ${args.sessionMode === "job" ? "job" : "routine"} that runs ${plainValue(describeTrigger(args.trigger, args.report), 70)} without anyone asking each time`;
+    return `Start a ${args.sessionMode === "job" ? "job" : "routine"} in ${routineWhere(args)} that runs ${plainValue(triggerWords(args.trigger), 60)}`;
   },
+  doneSummary: (args) => `started a ${args.sessionMode === "job" ? "job" : "routine"} in ${routineWhere(args)}, ${plainValue(triggerWords(args.trigger), 60)}`,
+  consequence(args) {
+    const declared = args.permissions ?? [];
+    const raised = new Set(bundleRaisedDeclarations(declared));
+    const armable = args.tainted ? [] : declared.filter((d) => routinePermissionKind(d.trim()) !== null && !raised.has(d.trim()) && !namesUnliftableTool(d.trim()));
+    const asks = declared.filter((d) => !armable.includes(d));
+    const tail = [
+      ...(armable.length > 0 ? [`may use ${armable.map(toolWords).join(", ")} without asking`] : []),
+      ...(asks.length > 0 ? [`asks first before ${asks.map(toolWords).join(", ")}`] : []),
+      ...(args.report?.kind === "silent" ? ["reports nothing here"] : []),
+    ];
+    const suffix = tail.length > 0 ? ` — ${tail.join("; ")}` : "";
+    return `${plainQuote(args.prompt, QUOTE_MAX - suffix.length)}${suffix}`;
+  },
+  consequenceQuotes: true,
   summarize(args) {
     return [
       `Create ${args.sessionMode === "job" ? "durable JOB" : "routine"} — ${describeTrigger(args.trigger, args.report)} — fires WITHOUT a fresh @-mention`,
@@ -165,9 +186,9 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
     });
     const unarmed = unarmedDeclarations(args.permissions ?? [], armed);
     return (
-      `routine ${routine.id} armed — ${describeTrigger(args.trigger, args.report)}${routine.nextRunAt ? ` (first run ${routine.nextRunAt})` : ""}` +
-      `${armed.length > 0 ? `; standing permission to ${armed.map(describeDeclaredPermissionKind).join(" · ")} (revoke with revoke_routine_permissions)` : ""}` +
-      `${unarmed.length > 0 ? `; NOT armed: ${unarmed.map((d) => `"${d}"`).join(" · ")} — the routine asks a person when it reaches that step${args.tainted ? " (nothing was made standing: this routine was authored in a turn that read external content)" : ""}` : ""}.`
+      `routine started — runs ${triggerWords(args.trigger)}${routine.nextRunAt ? `, first on ${shortUtc(routine.nextRunAt)}` : ""}` +
+      `${armed.length > 0 ? `; may use ${armed.map(toolWords).join(", ")} without asking` : ""}` +
+      `${unarmed.length > 0 ? `; it will ask before ${unarmed.map(toolWords).join(", ")}${args.tainted ? " (nothing was made standing: it was written in a turn that read external content)" : ""}` : ""}`
     );
   },
 };

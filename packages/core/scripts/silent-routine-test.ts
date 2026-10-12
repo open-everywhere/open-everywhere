@@ -1,3 +1,5 @@
+// proves: ROUT-37, ROUT-43
+
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync, readFileSync } from "node:fs";
@@ -241,18 +243,18 @@ const turnStarted = (attributes?: Record<string, string>): Promise<unknown> =>
   ok(landed && posts.length === 1, "leg 3: a self-disable posts EXACTLY one notice into the routine's own surface");
   ok(posts[0]!.origin === origin, "leg 3: it goes to the routine's own dispatch origin — the same place a fire's reply would land, not a guessed target");
   const text = posts[0]!.text;
-  ok(text.includes("r-dead") && /will not run again/i.test(text), "leg 3: the notice names the routine and says it STOPPED (the news is the future, not the past failures)");
-  ok(text.includes("3 consecutive failures"), "leg 3: it carries the reason from the row");
+  ok(!text.includes("r-dead") && /won't run again/i.test(text), "leg 3: the notice says it STOPPED (the news is the future, not the past failures), and never shows the routine id (OPE-2486)");
+  ok(text.includes("failed 3 times in a row"), "leg 3: it says why, in words, from the failure count");
   ok(/set it up again/i.test(text), "leg 3: it gives the recovery action (subscribe_pr's retirement-notice shape)");
   ok(/only sign it stopped/i.test(text), "leg 3: a SILENT routine's notice says why this message matters — nothing else would have told you");
   ok(!/only sign it stopped/i.test(disableNoticeText(routine({ id: "r-p" }), "x", 3)), "leg 3: an ordinary routine gets the same notice WITHOUT the silent-specific line (one code path, not a special case)");
 
   const oneShot = disableNoticeText(routine({ id: "r-once", trigger: { kind: "once", at: "2026-07-02T00:00:00.000Z" } }), "auto-disabled — its one scheduled fire failed", 1);
-  ok(/its one scheduled fire failed/.test(oneShot) && oneShot.includes("r-once"), `🔴 OPE-2394: a one-shot's notice names the routine and says its one scheduled fire failed (saw ${JSON.stringify(oneShot.split("\n")[0])})`);
-  ok(!/consecutive failures/.test(oneShot), "🔴 OPE-2394: a one-shot's notice never counts 'consecutive failures'");
+  ok(/one-time routine didn't work/.test(oneShot) && !oneShot.includes("r-once"), `🔴 OPE-2394: a one-shot's notice says its one run failed, with no routine id (saw ${JSON.stringify(oneShot.split("\n")[0])})`);
+  ok(!/times in a row/.test(oneShot), "🔴 OPE-2394: a one-shot's notice never counts failures in a row");
   ok(/set it up again/i.test(oneShot), "leg 3: the one-shot notice keeps the recovery action");
   const recurring = disableNoticeText(routine({ id: "r-rec" }), "auto-disabled after 3 consecutive failures spanning over an hour", 3);
-  ok(recurring.includes("DISABLED itself after 3 consecutive failures") && !/one scheduled fire/.test(recurring), "NEGATIVE CONTROL: a recurring routine keeps the three-strike wording");
+  ok(recurring.includes("failed 3 times in a row") && !/one-time/.test(recurring), "NEGATIVE CONTROL: a recurring routine keeps the three-strike wording");
 
   ok((await announceSelfDisable(silent, "x", 3, { resolveTarget: (() => null) as never })) === false, "leg 3: an unresolvable target skips the notice (the routine.disabled audit row still stands)");
   ok((await announceSelfDisable(silent, "x", 3, { resolveTarget: (() => ({ origin })) as never })) === false, "leg 3: a platform with no wired post arm fails soft rather than throwing out of the hook");

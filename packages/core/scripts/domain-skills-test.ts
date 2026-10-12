@@ -359,7 +359,7 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
     ok((await getOperationalStore().listDomainSkills("default", "eng")).every((r) => r.name !== "new-skill"), "delete_skill: gone from the store after the confirming click");
 
     const again = await kind.execute({ org: "default", domain: "eng", name: "new-skill" }, "U_CONFIRMER");
-    ok(/nothing to delete/.test(again), "skill.delete execute: a target already gone reports cleanly (no throw)");
+    ok(/already gone/.test(again), "skill.delete execute: a target already gone reports cleanly (no throw)");
   } finally {
     globalThis.fetch = realFetch;
     delete process.env.SLACK_BOT_TOKEN;

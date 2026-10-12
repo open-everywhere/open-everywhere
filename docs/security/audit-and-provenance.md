@@ -84,7 +84,12 @@ Every consequential action is recorded with **who / what / where / when**:
   census — one settled row per worker that parks until its parent generation is retired.
   **A settlement that moves the worker's SOURCES onto the seat writes `delegation.provenance_carried`.**
   Every conversational seat is worker-only for the connector ops, so the ordinary shape of a connector
-  answer is a read the seat delegated — and the reply footer below names the connectors a TURN read.
+  answer is a read the seat delegated — and the reply's `reply.provenance` row names the connectors a
+  TURN read. Its `detail.sources` field (OPE-2487) is the reach-safe line the room used to read as a
+  footer: connection names, the counts the reach rule kept back, and a record title where both
+  disclosure proofs held. A record title is vendor-side text (a Linear issue's or Notion page's
+  title), flattened onto one line and capped at 160 characters, and the log keeps it as long as it
+  keeps the row. No room sees the line, and nothing reads it back into a turn.
   The settlement carries the worker's reads into the seat's own turn, and this row counts what moved:
   the task id, the call id, how many sources, and which proof the seat could offer for the room it
   replies into. It names no connection — the reader learns that from the reply's own
@@ -95,9 +100,9 @@ Every consequential action is recorded with **who / what / where / when**:
   makes the withholding countable. It is written whenever the worker recorded anything, so its absence
   on a settlement has THREE causes. The worker read no connector. Or the dispatch join row the
   carriage joins through was not written: a `taint.mode: "off"` deployment writes none, and on such a
-  deployment a delegated answer still carries no footer. Or the settle could not read the operational
-  store: the carriage is **fail-soft** and catches every store error, so an outage costs the footer
-  and leaves the same absence. The three look identical from the audit trail, so do not read an
+  deployment a delegated answer's row still names no source. Or the settle could not read the operational
+  store: the carriage is **fail-soft** and catches every store error, so an outage costs the
+  sources line and leaves the same absence. The three look identical from the audit trail, so do not read an
   absent row as proof of the first cause. **The worker's TAINT verdict never travels
   this way**: taint says what a worker read and
   rides its own marker, provenance says which system a reply drew on, and the two planes settle on the
@@ -342,9 +347,14 @@ line there instead:
 
 | What the host observed | What the reply says instead |
 | --- | --- |
-| An approval gate ran this turn | A gate ran, so the act was not ungated. The signal is armed by a posted card and by the routine-grant publish path, so the line says a gate ran and never that a card is in the room. |
-| A `write`- or `destructive`-tier connector op completed with no card | A gated write ran, so an approval already stood for this call. |
-| The compiled egress policy leaves a write-capable host open under a named credential | Writes here ride a standing grant, named: the credential, its mutating verbs and its host — and the host cannot say whether this act used it. |
+| An approval gate ran this turn | "(This needs an approval, or already has one.)" The signal is armed when a card POSTS and by the routine-grant publish path, not when a person approves, so the line never says the act was approved or that a card is in the room. |
+| A `write`- or `destructive`-tier connector op completed with no card | "(There was no approval card this time: an approval for this notion change was already in place.)" |
+| The compiled egress policy leaves a write-capable host open under a named credential | "(There was no approval card this time. This room has standing permission to make changes in api.notion.com, so this change may have used it.)" It names the host, never the credential or the HTTP verbs, and it never says this act used the permission. |
+
+The lines are written for an ordinary reader (OPE-2487): they carry the host's observation in the
+room's own words, with no "gate", "grant" or credential id. None says that no approval was needed:
+that is the claim the guard strikes, and the host holds no evidence for it. The credential and verbs stay on the
+`egress.policy` row, and the cause stays on the `approval.claim_withheld` row.
 
 The guard removes the claim from its first word to the end of its sentence. It starts at the claim,
 not at the sentence, because the measured reply carried the page link the room had asked for in the
@@ -430,7 +440,7 @@ shapes, their subjects and their sentence positions — never the words.
 
 🔴 **What it does NOT cover, stated.** The ledger is TURN-stamped, so an `edit_reply` made on a later
 turn reads empty and strikes a claim the first post was entitled to — the same bound the durability
-guard and the provenance footer both carry. It is also SESSION-stamped, and a DELEGATED propose is
+guard and the provenance record both carry. It is also SESSION-stamped, and a DELEGATED propose is
 therefore not evidence: a worker mounts `request_access`, its propose arms the worker's own session,
 and the delegating seat settles in its own and strikes a true report with the card visible in the
 room beside the host's denial. (The durability guard does not share that bound — a delegated memory
@@ -501,6 +511,13 @@ These rows sit on the turn and the cross-surface window. All of them carry ids, 
 | `dm.delivery.skipped` | This deployment's arm cannot reach a member's own recorded workspace, so the send is skipped. | The reason, the link-set id, and **both** workspace ids — the target's and the arm's. |
 | `dm.audience.stopped` | A recipient turns the agent's direct messages off, from their own DM. | The stop. A live grant does not override it. |
 | `dm.audience.resumed` | That recipient turns them back on. | The resume. Both actions are named for **what happened** rather than for the verb, so they survive a rename of the verb. |
+| `personal_watch.dial.set` | A person sets their [chief-of-staff watch](../capabilities/proactivity-and-routines.md#the-chief-of-staff-watch) to `more`, `less` or `none`, with `/oe watch` or the Home tab. | The person's qualified key in `principalId`, the new `dial`, the `previous` one, and the door (`via`: `command` or `app-home`). |
+| `personal_watch.nudge` | The watch started a direct message to the person on its own, with nobody asking. | The finding's `kind` and `urgency`, the `dial` and `dampening` in force, whether the message carried the calibration ask (`calibrationAsk`), and the finding's `fingerprint`. Never an event title. |
+| `personal_watch.silence` | The watch held a finding back, or could not look. One row per finding and reason: the same finding held for the same reason on the next check writes nothing new. | The closed `reason` (`dial-none`, `below-dial`, `dose-lowered`, `quiet-hours`, `daily-budget`, `min-gap`, `read-failed`, `unreadable`, `dm-stopped`, `delivery-refused`), the finding's `kind` and host-written `summary`, the `dial`, the `dampening` and the `fingerprint`. Never an event title. |
+| `personal_watch.response` | The person marked one nudge Useful or Not useful in the Home tab. | The `response`, the `dampening` it left, the door (`via`) and the nudge's `fingerprint`. |
+| `bot_ask.expected` | A person's DM opens an asked thread after the platform proves the person wrote the ask and that it names that bot ([Your DM can ask other bots](../capabilities/bot-delegation.md), OPE-2426). It is the only act that lets another bot's Slack message wake the agent outside the e2e driver settings (OPE-1023). | The ask id, the bot's user id, the channel and thread, the window in hours and the reply cap. Never the ask's text. |
+| `bot_ask.refused` | The host refuses `expect_bot_reply` before anything is recorded, including on a turn a relayed bot reply woke (`relay-turn`). | The closed `reason` and the tool. |
+| `bot_ask.reply_relayed` | Another bot's reply in an asked thread is relayed to the asker's DM. | The ask id, the bot, the channel, the reply slot under the cap, the `route` (`dm-seat`, `posted` or `failed`) and the reply's length. Never the reply's text. |
 | `person.opt_out.set` | A person opts out of agent actions on their own content, with `/oe optout on` or the Home tab's button ([Opting out](../capabilities/memory.md#opting-out-of-agent-actions-on-your-content)). | The person in `principalId`, and the door (`via`: `command` or `app-home`). A repeat writes no row. |
 | `person.opt_out.cleared` | That person lifts it. | The same two fields. |
 | `person.opt_out.refused` | The host refuses an agent act on an opted-out person's content. | The person in `principalId`, the leg (`act`: `memory-write` with its `road` and `tier`, or `message-shortcut` with `requestedBy`), and `storeReadable: false` when the refusal was the fail-closed guess. Never the refused content. |

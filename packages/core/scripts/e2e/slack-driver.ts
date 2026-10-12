@@ -26,6 +26,7 @@ export interface SlackMessage {
   readonly editedTs?: string;
   readonly taskCard?: true;
   readonly blockTexts?: readonly string[];
+  readonly approvalCard?: { readonly kind: string; readonly detail: readonly string[] };
 }
 
 export interface SlackApiButton {
@@ -49,6 +50,24 @@ export interface SlackApiMessage {
   blocks?: readonly SlackApiBlock[];
   files?: readonly { id?: string; name?: string; filetype?: string; mimetype?: string }[];
   edited?: { ts?: string };
+  metadata?: { event_type?: string; event_payload?: Record<string, unknown> };
+}
+
+export const APPROVAL_CARD_METADATA_TYPE = "oe_approval_card";
+
+export function approvalCardOf(m: Pick<SlackApiMessage, "metadata">): { kind: string; detail: string[] } | undefined {
+  if (m.metadata?.event_type !== APPROVAL_CARD_METADATA_TYPE) return undefined;
+  const p = m.metadata.event_payload ?? {};
+  const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+  if (Array.isArray(p["items"])) {
+    const items = (p["items"] as Record<string, unknown>[]).filter((i) => typeof i === "object" && i !== null);
+    return { kind: items.map((i) => String(i["kind"] ?? "")).join("+"), detail: items.flatMap((i) => strings(i["detail"])) };
+  }
+  return typeof p["kind"] === "string" ? { kind: p["kind"], detail: strings(p["detail"]) } : undefined;
+}
+
+export function approvalCardFacts(m: Pick<SlackMessage, "text" | "approvalCard">): string {
+  return m.approvalCard ? [m.text, m.approvalCard.kind, ...m.approvalCard.detail].join("\n") : m.text;
 }
 
 function buttonLabel(b: SlackApiButton): string | undefined {
@@ -94,6 +113,7 @@ export function toMessage(m: SlackApiMessage): SlackMessage {
     );
   const files = (m.files ?? []).map((f) => ({ id: f.id, name: f.name, filetype: f.filetype, mimetype: f.mimetype }));
   const blockTexts = blockTextsOf(m.blocks);
+  const approvalCard = approvalCardOf(m);
   return {
     ts: m.ts ?? "",
     threadTs: m.thread_ts,
@@ -105,6 +125,7 @@ export function toMessage(m: SlackApiMessage): SlackMessage {
     editedTs: m.edited?.ts,
     ...(isEveTaskCardBlocks(m.blocks) ? { taskCard: true as const } : {}),
     ...(blockTexts.length > 0 ? { blockTexts } : {}),
+    ...(approvalCard ? { approvalCard } : {}),
   };
 }
 
@@ -333,13 +354,13 @@ export class SlackDriver {
   }
 
   async replies(rootTs: string): Promise<readonly SlackMessage[]> {
-    const json = await this.api("conversations.replies", { channel: this.cfg.channel, ts: rootTs, limit: "50" });
+    const json = await this.api("conversations.replies", { channel: this.cfg.channel, ts: rootTs, limit: "50", include_all_metadata: "true" });
     const msgs = Array.isArray(json.messages) ? (json.messages as SlackApiMessage[]) : [];
     return msgs.map(toMessage);
   }
 
   async latest(limit = 1): Promise<readonly SlackMessage[]> {
-    const json = await this.api("conversations.history", { channel: this.cfg.channel, limit: String(limit) });
+    const json = await this.api("conversations.history", { channel: this.cfg.channel, limit: String(limit), include_all_metadata: "true" });
     const msgs = Array.isArray(json.messages) ? (json.messages as SlackApiMessage[]) : [];
     return msgs.map(toMessage);
   }
@@ -381,6 +402,7 @@ export class SlackDriver {
       oldest: oldestTs,
       inclusive: "false",
       limit: "50",
+      include_all_metadata: "true",
     });
     const msgs = Array.isArray(json.messages) ? (json.messages as SlackApiMessage[]) : [];
     return msgs.map(toMessage);

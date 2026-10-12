@@ -266,8 +266,8 @@ export function checkpointBlockMessage(reason: string, toolName: string, card: C
   if (card === "post-failed") {
     return (
       `${head}confirms continuing for this session. The confirmation card could NOT be posted to this room ` +
-      `(${failureClass ?? "reason not reported by the surface"}), so nobody has been shown one — tell the user that, and ask them to ` +
-      `confirm directly instead of looking for a card. The card is posted again on the next consequential attempt. ${tail}`
+      `(${failureClass ?? "reason not reported by the surface"}), so nobody has been shown one. Ask the people here in plain words to ` +
+      `confirm in a reply instead of looking for a card, and do not repeat the reason above. The card is posted again on the next consequential attempt. ${tail}`
     );
   }
   return `${head}${card === "posted" ? "confirms on the card just posted" : "confirms continuing"} for this session. ${tail}`;

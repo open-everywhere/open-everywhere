@@ -293,8 +293,9 @@ const NOW = "2026-03-30T11:30:00.000Z";
   ] as const) {
     ok(grantButtonLabel({ argsJson }, 24) === undefined, `🔴 OPE-2363: ${what} offers NO middle button`);
   }
-  ok(pendingCardExpiryClause(ROUTINE_PERMISSION_NO_EXPIRY) === "no expiry — ends when the routine's instruction is edited or the routine is deleted", "a no-clock row's footer names the routine generation, not the year 9999");
-  ok(pendingCardExpiryClause("2026-01-28T17:16:00Z") === "expires 2026-01-28T17:16:00Z", "a clocked row's footer is unchanged");
+  ok(pendingCardExpiryClause(ROUTINE_PERMISSION_NO_EXPIRY) === "open until the routine changes", "a no-clock row's footer names the routine generation, not the year 9999");
+  ok(!pendingCardExpiryClause(ROUTINE_PERMISSION_NO_EXPIRY).includes("9999"), "a no-clock row's footer never shows the sentinel year");
+  ok(pendingCardExpiryClause("2026-01-28T17:16:00Z") === "expires 23 September, 01:00 UTC", "a clocked row's footer shows the instant in short form");
 }
 
 {
@@ -346,19 +347,19 @@ const NOW = "2026-03-30T11:30:00.000Z";
     );
 
   const mixed = await click(["pr.open", "connector:notion"], false);
-  ok(mixed.includes("standing permission to"), "the armed half of a frozen card is reported as standing");
-  ok(mixed.includes(`NOT armed: "connector:notion"`), "…and the half this build cannot arm is NAMED in the outcome the human reads");
-  ok(!mixed.includes(`NOT armed: "pr.open"`), "…without dragging the armed declaration into the refusal");
-  ok(mixed.includes("asks a person"), "…and says what happens instead when the routine reaches that step");
+  ok(mixed.includes("may use pr open without asking"), "the armed half of a frozen card is reported as standing");
+  ok(mixed.includes("it will ask before notion"), "…and the half this build cannot arm is NAMED in the outcome the human reads");
+  ok(!/ask before[^;]*pr open/.test(mixed), "…without dragging the armed declaration into the refusal");
+  ok(mixed.includes("it will ask before"), "…and says what happens instead when the routine reaches that step");
 
   const tainted = await click(["pr.open", "connector:notion"], true);
-  ok(!tainted.includes("standing permission to"), "a TAINTED proposal reports no standing permission at all");
-  ok(tainted.includes(`NOT armed: "pr.open" · "connector:notion"`), "…and names EVERY declaration, not only the one the vocabulary rejects");
+  ok(!tainted.includes("may use"), "a TAINTED proposal reports no standing permission at all");
+  ok(tainted.includes("it will ask before pr open, notion"), "…and names EVERY declaration, not only the one the vocabulary rejects");
   ok(tainted.includes("read external content"), "…and gives the reason, so the human is not left inferring a vocabulary problem");
 
   const clean = await click(["pr.open", "tool:notion__share_page"], false);
-  ok(clean.includes("standing permission to"), "a fully armable card reports its standing set");
-  ok(!clean.includes("NOT armed"), "…and says nothing about anything being unarmed");
+  ok(clean.includes("may use pr open, share page on notion without asking"), "a fully armable card reports its standing set");
+  ok(!clean.includes("ask before"), "…and says nothing about anything being unarmed");
 }
 
 {
@@ -518,7 +519,8 @@ const NOW = "2026-03-30T11:30:00.000Z";
 
     const plainOutcome = await armCard([`tool:${PLAIN}`], false);
     ok((await neverLifts()).length === 0, "🔴 an arm with no raised declaration writes NO `never lifts` row");
-    ok(plainOutcome.includes("standing permission to"), "…and that card really did arm, so the control is a control and not a failed click");
+    const { toolWords } = await import("../agent/routines/schedule-words.js");
+    ok(plainOutcome.includes(`may use ${toolWords(PLAIN)} without asking`), "…and that card really did arm, so the control is a control and not a failed click");
 
     const raisedOutcome = await armCard([`tool:${RAISED}`, `tool:${PLAIN}`], false);
     const rows = await neverLifts();
@@ -526,12 +528,12 @@ const NOW = "2026-03-30T11:30:00.000Z";
     ok(rows[0]?.["declaration"] === `tool:${RAISED}`, "…naming the declaration an operator has to read to fix it");
     ok(rows[0]?.["reason"] === "bundle-declared-destructive", "…and WHY, in the vocabulary of the config that decided it");
     ok(rows[0]?.["id"] === undefined || typeof rows[0]["id"] === "string", "…joined to the routine it was armed for");
-    ok(raisedOutcome.includes(`NOT armed: "tool:${RAISED}"`), "🔴 …and the sentence the human reads names it as NOT armed, driven end to end rather than derived");
-    ok(raisedOutcome.includes(`standing permission to`) && !raisedOutcome.includes(`NOT armed: "tool:${PLAIN}"`), "…while the armable declaration beside it still arms and is not dragged into the clause");
+    ok(raisedOutcome.includes(`it will ask before ${toolWords(RAISED)}`), "🔴 …and the sentence the human reads names it as NOT armed, driven end to end rather than derived");
+    ok(raisedOutcome.includes(`may use ${toolWords(PLAIN)} without asking`) && !raisedOutcome.split("ask before")[1]?.includes(toolWords(PLAIN)), "…while the armable declaration beside it still arms and is not dragged into the clause");
 
     const taintedOutcome = await armCard([`tool:${RAISED}`], true);
     ok((await neverLifts()).length === 1, "🔴 a TAINTED arm writes no `never lifts` row — the reason is taint, and the row must not claim otherwise");
-    ok(taintedOutcome.includes("read external content"), "…and the outcome sentence gives the real reason instead");
+    ok(!taintedOutcome.includes("may use") && taintedOutcome.includes(`it will ask before ${toolWords(RAISED)}`) && taintedOutcome.includes("read external content"), "…and the outcome sentence reports nothing as standing, says the routine will ask, and gives the real reason");
   }
 
   const { declarableRoutinePermission } = await import("../agent/routines/permission-card.js");

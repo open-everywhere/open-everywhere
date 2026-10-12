@@ -49,9 +49,11 @@ export const OPERATIONAL_TABLES = [
   "dm_audience",
   "person_opt_out",
   "personal_browser",
+  "personal_watch",
   "ingress_delivery",
   "attention_state",
   "dm_rule",
+  "meeting_data",
 ] as const;
 
 export const EVENT_DEDUPE_MAX_RETENTION_MS = 24 * 60 * 60_000;
@@ -809,6 +811,13 @@ export interface PersonalBrowserRow {
   readonly updatedAt: string;
 }
 
+export interface PersonalWatchRow {
+  readonly principalKey: string;
+  readonly stateJson: string;
+  readonly version: number;
+  readonly updatedAt: string;
+}
+
 export interface DmAudienceRow {
   readonly address: string;
   readonly firstDmAt?: string;
@@ -1080,6 +1089,9 @@ export interface OperationalStore {
   casPersonalBrowser(org: string, principalKey: string, stateJson: string, at: string, expected: number | null): Promise<number | null>;
   deletePersonalBrowser(org: string, principalKey: string): Promise<boolean>;
   listPersonalBrowsers(org: string): Promise<PersonalBrowserRow[]>;
+  getPersonalWatch(org: string, principalKey: string): Promise<PersonalWatchRow | null>;
+  casPersonalWatch(org: string, principalKey: string, stateJson: string, at: string, expected: number | null): Promise<number | null>;
+  listPersonalWatches(org: string): Promise<PersonalWatchRow[]>;
   listDmRules(org: string, surfaceKey: string): Promise<readonly DmRuleRow[]>;
   upsertDmRule(row: DmRuleRow): Promise<void>;
   removeDmRule(org: string, surfaceKey: string, ruleId: string): Promise<boolean>;
@@ -1140,6 +1152,12 @@ export interface OperationalStore {
   putTaskResultIfAbsent(org: string, taskId: string, resultJson: string, at: string, ttlMs: number): Promise<boolean>;
   getTaskResult(org: string, taskId: string): Promise<string | null>;
   deleteTaskResult(org: string, taskId: string): Promise<boolean>;
+
+  putMeetingData(org: string, key: string, valueJson: string, at: string, expiresAt: string): Promise<void>;
+  putMeetingDataIfAbsent(org: string, key: string, valueJson: string, at: string, expiresAt: string): Promise<boolean>;
+  getMeetingData(org: string, key: string, now: string): Promise<string | null>;
+  deleteMeetingData(org: string, key: string): Promise<boolean>;
+  sweepMeetingData(org: string, now: string): Promise<number>;
 
   putSlackAttachment(org: string, fileId: string, rec: SlackAttachmentRow, at: string, ttlMs: number): Promise<void>;
   getSlackAttachment(org: string, fileId: string): Promise<SlackAttachmentRow | null>;

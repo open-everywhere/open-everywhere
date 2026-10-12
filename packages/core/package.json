@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/core",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Open Everywhere core — the portable, host-agnostic agent runtime: access and approvals, identity, memory, spend, routines, webhooks, connectors, the audit chain and the `oe` roster build.",
   "keywords": [
     "agent",
@@ -61,6 +61,42 @@
     "./agent/a2a/egress.js": {
       "types": "./dist/agent/a2a/egress.d.ts",
       "default": "./dist/agent/a2a/egress.js"
+    },
+    "./agent/a2a/inbound/answer.js": {
+      "types": "./dist/agent/a2a/inbound/answer.d.ts",
+      "default": "./dist/agent/a2a/inbound/answer.js"
+    },
+    "./agent/a2a/inbound/audit.js": {
+      "types": "./dist/agent/a2a/inbound/audit.d.ts",
+      "default": "./dist/agent/a2a/inbound/audit.js"
+    },
+    "./agent/a2a/inbound/auth.js": {
+      "types": "./dist/agent/a2a/inbound/auth.d.ts",
+      "default": "./dist/agent/a2a/inbound/auth.js"
+    },
+    "./agent/a2a/inbound/card.js": {
+      "types": "./dist/agent/a2a/inbound/card.d.ts",
+      "default": "./dist/agent/a2a/inbound/card.js"
+    },
+    "./agent/a2a/inbound/declaration.js": {
+      "types": "./dist/agent/a2a/inbound/declaration.d.ts",
+      "default": "./dist/agent/a2a/inbound/declaration.js"
+    },
+    "./agent/a2a/inbound/handler.js": {
+      "types": "./dist/agent/a2a/inbound/handler.d.ts",
+      "default": "./dist/agent/a2a/inbound/handler.js"
+    },
+    "./agent/a2a/inbound/land.js": {
+      "types": "./dist/agent/a2a/inbound/land.d.ts",
+      "default": "./dist/agent/a2a/inbound/land.js"
+    },
+    "./agent/a2a/inbound/platform.js": {
+      "types": "./dist/agent/a2a/inbound/platform.d.ts",
+      "default": "./dist/agent/a2a/inbound/platform.js"
+    },
+    "./agent/a2a/inbound/task-store.js": {
+      "types": "./dist/agent/a2a/inbound/task-store.d.ts",
+      "default": "./dist/agent/a2a/inbound/task-store.js"
     },
     "./agent/a2a/output.js": {
       "types": "./dist/agent/a2a/output.d.ts",
@@ -934,6 +970,10 @@
       "types": "./dist/agent/boot/notices.d.ts",
       "default": "./dist/agent/boot/notices.js"
     },
+    "./agent/channels/a2a-inbound.js": {
+      "types": "./dist/agent/channels/a2a-inbound.d.ts",
+      "default": "./dist/agent/channels/a2a-inbound.js"
+    },
     "./agent/channels/access-request-ledger.js": {
       "types": "./dist/agent/channels/access-request-ledger.d.ts",
       "default": "./dist/agent/channels/access-request-ledger.js"
@@ -965,6 +1005,10 @@
     "./agent/channels/backscroll-window.js": {
       "types": "./dist/agent/channels/backscroll-window.d.ts",
       "default": "./dist/agent/channels/backscroll-window.js"
+    },
+    "./agent/channels/bot-ask.js": {
+      "types": "./dist/agent/channels/bot-ask.d.ts",
+      "default": "./dist/agent/channels/bot-ask.js"
     },
     "./agent/channels/cancel-note.js": {
       "types": "./dist/agent/channels/cancel-note.d.ts",
@@ -1050,6 +1094,10 @@
       "types": "./dist/agent/channels/friendly-ids.d.ts",
       "default": "./dist/agent/channels/friendly-ids.js"
     },
+    "./agent/channels/friendly-outbound.js": {
+      "types": "./dist/agent/channels/friendly-outbound.d.ts",
+      "default": "./dist/agent/channels/friendly-outbound.js"
+    },
     "./agent/channels/front-queue.js": {
       "types": "./dist/agent/channels/front-queue.d.ts",
       "default": "./dist/agent/channels/front-queue.js"
@@ -1097,6 +1145,10 @@
     "./agent/channels/own-post-ledger.js": {
       "types": "./dist/agent/channels/own-post-ledger.d.ts",
       "default": "./dist/agent/channels/own-post-ledger.js"
+    },
+    "./agent/channels/person-text.js": {
+      "types": "./dist/agent/channels/person-text.d.ts",
+      "default": "./dist/agent/channels/person-text.js"
     },
     "./agent/channels/personal-browser.js": {
       "types": "./dist/agent/channels/personal-browser.d.ts",
@@ -1414,6 +1466,10 @@
       "types": "./dist/agent/commands/rate.d.ts",
       "default": "./dist/agent/commands/rate.js"
     },
+    "./agent/commands/watch.js": {
+      "types": "./dist/agent/commands/watch.d.ts",
+      "default": "./dist/agent/commands/watch.js"
+    },
     "./agent/connections/auth-retry-memo.js": {
       "types": "./dist/agent/connections/auth-retry-memo.d.ts",
       "default": "./dist/agent/connections/auth-retry-memo.js"
@@ -1506,6 +1562,10 @@
       "types": "./dist/agent/connections/oe-oauth-callback.d.ts",
       "default": "./dist/agent/connections/oe-oauth-callback.js"
     },
+    "./agent/connections/oidc-id-token.js": {
+      "types": "./dist/agent/connections/oidc-id-token.d.ts",
+      "default": "./dist/agent/connections/oidc-id-token.js"
+    },
     "./agent/connections/own-account-ask.js": {
       "types": "./dist/agent/connections/own-account-ask.d.ts",
       "default": "./dist/agent/connections/own-account-ask.js"
@@ -1529,6 +1589,10 @@
     "./agent/connections/user-auth-flow.js": {
       "types": "./dist/agent/connections/user-auth-flow.d.ts",
       "default": "./dist/agent/connections/user-auth-flow.js"
+    },
+    "./agent/connections/xaa-identity-binding.js": {
+      "types": "./dist/agent/connections/xaa-identity-binding.d.ts",
+      "default": "./dist/agent/connections/xaa-identity-binding.js"
     },
     "./agent/contributions.js": {
       "types": "./dist/agent/contributions.d.ts",
@@ -1762,6 +1826,10 @@
       "types": "./dist/agent/home/rules-home.d.ts",
       "default": "./dist/agent/home/rules-home.js"
     },
+    "./agent/home/watch-home.js": {
+      "types": "./dist/agent/home/watch-home.d.ts",
+      "default": "./dist/agent/home/watch-home.js"
+    },
     "./agent/hooks/approval-raised.js": {
       "types": "./dist/agent/hooks/approval-raised.d.ts",
       "default": "./dist/agent/hooks/approval-raised.js"
@@ -1837,6 +1905,10 @@
     "./agent/hooks/own-account-ask.js": {
       "types": "./dist/agent/hooks/own-account-ask.d.ts",
       "default": "./dist/agent/hooks/own-account-ask.js"
+    },
+    "./agent/hooks/personal-watch-enroll.js": {
+      "types": "./dist/agent/hooks/personal-watch-enroll.d.ts",
+      "default": "./dist/agent/hooks/personal-watch-enroll.js"
     },
     "./agent/hooks/requester-identity.js": {
       "types": "./dist/agent/hooks/requester-identity.d.ts",
@@ -2105,6 +2177,10 @@
     "./agent/meetings/policy.js": {
       "types": "./dist/agent/meetings/policy.d.ts",
       "default": "./dist/agent/meetings/policy.js"
+    },
+    "./agent/meetings/provenance.js": {
+      "types": "./dist/agent/meetings/provenance.d.ts",
+      "default": "./dist/agent/meetings/provenance.js"
     },
     "./agent/meetings/recap.js": {
       "types": "./dist/agent/meetings/recap.d.ts",
@@ -2462,9 +2538,37 @@
       "types": "./dist/agent/personal-browser/store.d.ts",
       "default": "./dist/agent/personal-browser/store.js"
     },
+    "./agent/personal-browser/teach.js": {
+      "types": "./dist/agent/personal-browser/teach.d.ts",
+      "default": "./dist/agent/personal-browser/teach.js"
+    },
     "./agent/personal-browser/viewer.js": {
       "types": "./dist/agent/personal-browser/viewer.d.ts",
       "default": "./dist/agent/personal-browser/viewer.js"
+    },
+    "./agent/personal-watch/calendar.js": {
+      "types": "./dist/agent/personal-watch/calendar.d.ts",
+      "default": "./dist/agent/personal-watch/calendar.js"
+    },
+    "./agent/personal-watch/deliver.js": {
+      "types": "./dist/agent/personal-watch/deliver.d.ts",
+      "default": "./dist/agent/personal-watch/deliver.js"
+    },
+    "./agent/personal-watch/dial.js": {
+      "types": "./dist/agent/personal-watch/dial.d.ts",
+      "default": "./dist/agent/personal-watch/dial.js"
+    },
+    "./agent/personal-watch/judge.js": {
+      "types": "./dist/agent/personal-watch/judge.d.ts",
+      "default": "./dist/agent/personal-watch/judge.js"
+    },
+    "./agent/personal-watch/state.js": {
+      "types": "./dist/agent/personal-watch/state.d.ts",
+      "default": "./dist/agent/personal-watch/state.js"
+    },
+    "./agent/personal-watch/watch.js": {
+      "types": "./dist/agent/personal-watch/watch.d.ts",
+      "default": "./dist/agent/personal-watch/watch.js"
     },
     "./agent/plugins/extract.js": {
       "types": "./dist/agent/plugins/extract.d.ts",
@@ -2682,6 +2786,10 @@
       "types": "./dist/agent/routines/routine.d.ts",
       "default": "./dist/agent/routines/routine.js"
     },
+    "./agent/routines/schedule-words.js": {
+      "types": "./dist/agent/routines/schedule-words.d.ts",
+      "default": "./dist/agent/routines/schedule-words.js"
+    },
     "./agent/routines/schedule.js": {
       "types": "./dist/agent/routines/schedule.d.ts",
       "default": "./dist/agent/routines/schedule.js"
@@ -2773,6 +2881,10 @@
     "./agent/schedules/personal-browser-sweep.js": {
       "types": "./dist/agent/schedules/personal-browser-sweep.d.ts",
       "default": "./dist/agent/schedules/personal-browser-sweep.js"
+    },
+    "./agent/schedules/personal-watch.js": {
+      "types": "./dist/agent/schedules/personal-watch.d.ts",
+      "default": "./dist/agent/schedules/personal-watch.js"
     },
     "./agent/schedules/routine-dispatch.js": {
       "types": "./dist/agent/schedules/routine-dispatch.d.ts",
@@ -3130,6 +3242,10 @@
       "types": "./dist/agent/tools/enable_routine.d.ts",
       "default": "./dist/agent/tools/enable_routine.js"
     },
+    "./agent/tools/expect_bot_reply.js": {
+      "types": "./dist/agent/tools/expect_bot_reply.d.ts",
+      "default": "./dist/agent/tools/expect_bot_reply.js"
+    },
     "./agent/tools/explain_permission.js": {
       "types": "./dist/agent/tools/explain_permission.d.ts",
       "default": "./dist/agent/tools/explain_permission.js"
@@ -3169,6 +3285,10 @@
     "./agent/tools/list_webhooks.js": {
       "types": "./dist/agent/tools/list_webhooks.d.ts",
       "default": "./dist/agent/tools/list_webhooks.js"
+    },
+    "./agent/tools/look_up.js": {
+      "types": "./dist/agent/tools/look_up.d.ts",
+      "default": "./dist/agent/tools/look_up.js"
     },
     "./agent/tools/meeting_join.js": {
       "types": "./dist/agent/tools/meeting_join.d.ts",
@@ -3541,6 +3661,7 @@
     "test:resolver": "tsx scripts/resolver-test.ts",
     "test:mcp-servers": "tsx scripts/mcp-servers-test.ts",
     "test:a2a-client": "tsx scripts/a2a-client-test.ts",
+    "test:a2a-inbound": "tsx scripts/a2a-inbound-test.ts",
     "test:domain-question": "tsx scripts/domain-question-test.ts",
     "test:mcp-server-propose": "tsx scripts/mcp-server-propose-test.ts",
     "test:set-up-tool-eval-scoring": "tsx scripts/set-up-tool-eval-scoring-test.ts",
@@ -3552,9 +3673,11 @@
     "test:audit-export": "tsx scripts/audit-export-test.ts",
     "test:meetings": "tsx scripts/meetings-test.ts",
     "test:meetings-native": "tsx scripts/meetings-native-test.ts",
+    "test:meeting-provenance": "tsx scripts/meeting-provenance-test.ts",
     "test:meeting-speakers": "tsx scripts/meeting-speakers-test.ts",
     "test:email": "tsx scripts/email-test.ts",
     "test:personal-browser": "tsx scripts/personal-browser-test.ts",
+    "test:personal-browser-teach": "tsx scripts/personal-browser-teach-test.ts",
     "test:tool-usage": "tsx scripts/tool-usage-test.ts",
     "test:connections": "tsx scripts/connections-test.ts",
     "test:connector-credentials": "NODE_NO_WARNINGS=1 tsx scripts/connector-credentials-test.ts",
@@ -3594,6 +3717,8 @@
     "test:memory-visible": "NODE_NO_WARNINGS=1 tsx scripts/memory-visible-test.ts",
     "test:person-opt-out": "NODE_NO_WARNINGS=1 tsx scripts/person-opt-out-test.ts",
     "test:person-opt-out-hooks": "NODE_NO_WARNINGS=1 tsx scripts/person-opt-out-hooks-test.ts",
+    "test:personal-watch": "NODE_NO_WARNINGS=1 tsx scripts/personal-watch-test.ts",
+    "test:bot-ask": "NODE_NO_WARNINGS=1 tsx scripts/bot-ask-test.ts",
     "test:memory-claim-guard": "NODE_NO_WARNINGS=1 tsx scripts/memory-claim-guard-test.ts",
     "test:approval-claim-guard": "NODE_NO_WARNINGS=1 tsx scripts/approval-claim-guard-test.ts",
     "test:request-claim-guard": "NODE_NO_WARNINGS=1 tsx scripts/request-claim-guard-test.ts",
@@ -3661,6 +3786,7 @@
     "test:egress-spoof": "NODE_NO_WARNINGS=1 tsx scripts/egress-spoof-test.ts",
     "test:test-valves": "NODE_NO_WARNINGS=1 tsx scripts/test-valves-test.ts",
     "test:onboarding": "tsx scripts/onboarding-test.ts",
+    "test:person-text-sweep": "NODE_NO_WARNINGS=1 tsx scripts/person-text-sweep-test.ts",
     "test:control": "tsx scripts/control-test.ts",
     "test:control-http": "tsx scripts/control-http-test.ts",
     "test:control-auth": "tsx scripts/control-auth-test.ts",
@@ -3851,6 +3977,8 @@
     "test:window-capability": "NODE_NO_WARNINGS=1 tsx scripts/window-capability-test.ts",
     "test:window-topology-gate": "NODE_NO_WARNINGS=1 tsx scripts/window-topology-gate-test.ts",
     "test:decision-wake": "NODE_NO_WARNINGS=1 tsx scripts/decision-wake-test.ts",
+    "test:seat-chatter": "NODE_NO_WARNINGS=1 tsx scripts/seat-chatter-test.ts",
+    "test:voice": "NODE_NO_WARNINGS=1 tsx scripts/voice-test.ts",
     "test:self-dispatch": "NODE_NO_WARNINGS=1 tsx scripts/self-dispatch-test.ts",
     "test:transcript-tool": "NODE_NO_WARNINGS=1 tsx scripts/transcript-tool-test.ts",
     "test:source-scoped-mount": "NODE_NO_WARNINGS=1 tsx scripts/source-scoped-mount-test.ts",
@@ -3996,6 +4124,7 @@
     "test:seat-catch-up": "NODE_NO_WARNINGS=1 tsx scripts/seat-catch-up-test.ts",
     "test:e2e-control-write-driver": "NODE_NO_WARNINGS=1 tsx scripts/e2e-control-write-driver-test.ts",
     "test:aws-sso-identity-binding": "NODE_NO_WARNINGS=1 tsx scripts/aws-sso-identity-binding-test.ts",
+    "test:xaa-identity-binding": "NODE_NO_WARNINGS=1 tsx scripts/xaa-identity-binding-test.ts",
     "test:connection-execute-fence": "NODE_NO_WARNINGS=1 tsx scripts/connection-execute-fence-test.ts",
     "test:surface-evidence": "NODE_NO_WARNINGS=1 tsx scripts/surface-evidence-test.ts",
     "test:no-native-hitl": "NODE_NO_WARNINGS=1 tsx scripts/no-native-hitl-test.ts"

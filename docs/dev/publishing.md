@@ -13,11 +13,11 @@ that produced it. It is no longer the only copy — every library README states 
 
 ## What ships
 
-Ten packages publish, in two kinds.
+Eleven packages publish, in two kinds.
 
 | Kind | Packages | What a consumer does with it |
 |---|---|---|
-| Library | `@open-everywhere/core`, `@open-everywhere/adapters`, and the seven `@open-everywhere/provider-*` bundles | imports it — an enumerated `exports` map that points at `dist/` |
+| Library | `@open-everywhere/core`, `@open-everywhere/adapters`, and the eight `@open-everywhere/provider-*` bundles | imports it — an enumerated `exports` map that points at `dist/` |
 | Bin | `@open-everywhere/create` | runs it — `npx @open-everywhere/create`, raw `src/**` through the bin's own `tsx` |
 
 `scripts/publish-exports-generate.ts` holds both lists. The publish gate and the publish preview
@@ -173,15 +173,15 @@ guarantee — which is why the turn gate exists. `npm run test:publish-cold-inst
 control: it packs the workspaces, installs them into an empty directory, runs `npx oe-eve-patch` and
 asserts every marker the patch adds is absent before and present after.
 
-**This page is not the only place that states the recipe.** Each of the nine library packages
+**This page is not the only place that states the recipe.** Each of the ten library packages
 carries it in its README § Install (OPE-2206), and `@open-everywhere/core`'s is the one an npm
 consumer reads first. `@open-everywhere/create` carries no install recipe: it is run rather
 than imported, and its README documents `npx @open-everywhere/create` instead.
 
-The publish gate holds the nine READMEs in step, and only those. `scripts/publish-readme.ts` fails a
+The publish gate holds the ten READMEs in step, and only those. `scripts/publish-readme.ts` fails a
 package README that names an `eve@<version>` other than core's `peerDependencies.eve`, so a pin
 re-roll cannot leave one of those pages behind. `npm run test:publish-readme` runs the same rule on
-the test chain, and it also asserts that each of the nine § Install sections still RUNS
+the test chain, and it also asserts that each of the ten § Install sections still RUNS
 `npx oe-eve-patch` — a recipe that names the right version but drops the second command is the defect
 OPE-2206 closed.
 
@@ -295,7 +295,7 @@ The reason is that a consumer reads the list of published versions as the histor
 the tarballs and their diffs. A version per merge would publish that reader a stream of increments
 with no story, and every one of them is permanent.
 
-So: decide a milestone is done, bump all ten packages to the same version together, publish
+So: decide a milestone is done, bump all eleven packages to the same version together, publish
 them together. The sibling dependencies are exact pins (`"@open-everywhere/core": "0.1.0"`), and
 `lint:publish` checks each pin against the version that sibling actually publishes. A bump that
 misses one manifest therefore reds before a publish can create the mismatch — npm would otherwise
@@ -328,7 +328,7 @@ Claim both before the first publish. The npm scope and the GitHub org must match
 | npm | the `@open-everywhere` scope | every library publishes under it; a scope is first-come |
 | GitHub | the `open-everywhere` org | every manifest's `repository.url` already names `github.com/open-everywhere/open-everywhere` |
 
-All ten packages publish under that one scope, the scaffolder included (OPE-2234). `npm create`
+All eleven packages publish under that one scope, the scaffolder included (OPE-2234). `npm create`
 reaches a scoped package through its own mapping, so the scaffolder needs no second name at the
 registry root:
 
@@ -375,14 +375,14 @@ public cut, together with whatever runs the build.
 2. `npm run build:packages` green.
 3. `npm run lint:publish` green — quote the exit code.
 4. `npm run publish:preview` — zero BLOCK rows, and **read every REVIEW row**.
-5. All ten versions equal, and every sibling pin equal to them.
+5. All eleven versions equal, and every sibling pin equal to them.
 6. `npm run test:publish-license` green — every package root carries the Apache-2.0 text.
-7. `npm run test:publish-cold-install` green — quote the exit code. It packs all ten packages,
+7. `npm run test:publish-cold-install` green — quote the exit code. It packs all eleven packages,
    installs them into an empty directory with `eve@<pin>` from the registry, runs `npx oe-eve-patch`
    there, and asserts every marker the committed patch adds is absent before and present after. It
    needs the network and measures in minutes, which is why it is off the test chain; the applier's own
    decisions run on every chain run as `test:eve-patch-applier`. `--keep` leaves the tree on disk.
-8. `npm run test:quickstart` green — quote the exit code. It packs all ten packages, installs the
+8. `npm run test:quickstart` green — quote the exit code. It packs all eleven packages, installs the
    packed wizard on its own, scaffolds the quickstart app with it, points the app at the tarballs and
    runs `npm install` with lifecycle scripts, so the app's `postinstall` applies the eve patch. It then
    asserts that the eve patch probe reads `patched`, that `oe build --check` fails before `oe build`

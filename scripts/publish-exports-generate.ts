@@ -9,6 +9,7 @@ export const PUBLISHABLE_PACKAGES = [
   "packages/providers/discord",
   "packages/providers/email",
   "packages/providers/github",
+  "packages/providers/google-chat",
   "packages/providers/linear",
   "packages/providers/notion",
   "packages/providers/slack",

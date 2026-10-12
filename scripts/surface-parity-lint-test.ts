@@ -157,15 +157,15 @@ function gate(...args: string[]): { code: number; out: string } {
 const green = gate("--check");
 ok(green.code === 0, `the real gate passes on the tracked tree (exit ${green.code})\n${green.out}`);
 ok(green.out.includes("ambient-engagement-seam"), "the gate prints the matrix on a green run");
-ok(/\d+ capabilities × 7 surfaces/.test(green.out), "…with the cell count (seven since OPE-2440 added email)");
+ok(/\d+ capabilities × 8 surfaces/.test(green.out), "…with the cell count (eight since OPE-2442 added Google Chat)");
 ok(/12 row\(s\) cross-checked against the live registries/.test(green.out), "the gate reports the registry-probed rows it ran");
 ok(
   /4 \(ambient-engagement-seam, owned-thread-ingress, engaged-row-promotion, seat-context-admission\) against the bundle sources/.test(green.out),
   "…and names the four that read the bundle sources, not registries alone",
 );
 ok(
-  /judge-lift notice renders on all 7 post-arm platform\(s\)/.test(green.out),
-  "the gate states the judge-lift totality claim it checked, and over all seven post-arm platforms",
+  /judge-lift notice renders on all 8 post-arm platform\(s\)/.test(green.out),
+  "the gate states the judge-lift totality claim it checked, and over all eight post-arm platforms",
 );
 
 {

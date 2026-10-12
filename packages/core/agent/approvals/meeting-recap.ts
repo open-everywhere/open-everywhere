@@ -27,11 +27,11 @@ export function meetingRecapResult(args: NativeRecapArgs, outcome: Awaited<Retur
   const p = platformLabel(args.platform);
   switch (outcome.kind) {
     case "posted":
-      return outcome.posted ? `recap posted in this thread from ${p}'s own transcript` : `the recap was written, and the post into this thread failed`;
+      return outcome.posted ? "recap posted in this thread" : "the recap was written, but the post into this thread failed";
     case "refused":
-      return `${p} gave no transcript for this meeting — the reason is in this thread`;
+      return `${p} gave no transcript — the reason is in this thread`;
     case "waiting":
-      return `${p} has no transcript for this meeting yet — I check every 15 minutes for up to ${args.watchHours} hour(s) and post the recap in this thread`;
+      return `no ${p} transcript yet — the recap comes here when it is ready (I check for ${args.watchHours} h)`;
     case "halted":
       return "a halt covers this conversation, so I did not read the transcript";
     case "duplicate":
@@ -46,7 +46,11 @@ const meetingRecap: ActionKind<NativeRecapArgs> = {
   volatileArgs: ["askedAt"],
   summarize: meetingRecapSummary,
   plainSummary(args) {
-    return `Read the ${plainValue(platformLabel(args.platform))} transcript of one meeting (room ${plainValue(args.roomId)}) and post a recap in this thread`;
+    return `Read the transcript of one ${plainValue(platformLabel(args.platform))} meeting and post a recap here`;
+  },
+  consequence(args) {
+    const whose = args.organiserEmail !== undefined ? ` It reads as ${plainValue(args.organiserEmail)}.` : "";
+    return `Nobody in the meeting is told. OE keeps no transcript.${whose}`;
   },
   async execute(args, decidedBy) {
     return meetingRecapResult(args, await startNativeRecap(args, decidedBy));

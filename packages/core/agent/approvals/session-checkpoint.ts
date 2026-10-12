@@ -35,8 +35,9 @@ const sessionCheckpoint: ActionKind<SessionCheckpointArgs> = {
   kind: CHECKPOINT_KIND,
   policy: "member",
   plainSummary(args) {
-    return `Let the agent keep doing consequential work in ${args.scopeLabel !== undefined ? plainValue(args.scopeLabel) : placeWords({ key: args.scopeKey })} past its cost checkpoint`;
+    return `Let the agent carry on in ${args.scopeLabel !== undefined ? plainValue(args.scopeLabel) : placeWords({ key: args.scopeKey })} past its cost checkpoint`;
   },
+  consequence: (args) => (args.durableSession ? "It asks again once it has spent as much again; the approval has no timer." : `It lasts up to ${checkpointTtlHours()} h in this session.`),
   summarize(args) {
     return [
       "Keep this session going past its cost checkpoint?",
@@ -64,8 +65,8 @@ const sessionCheckpoint: ActionKind<SessionCheckpointArgs> = {
     });
     emitTelemetry("oe.feature.used", { "oe.feature": "spend_checkpoint", "oe.outcome": "continued" });
     return args.durableSession
-      ? "cost checkpoint cleared — the agent may do consequential work again, and asks again only once it has spent as much a second time"
-      : `cost checkpoint cleared — the agent may do consequential work again in this session for up to ${checkpointTtlHours()} h`;
+      ? "the agent carries on, and asks again once it has spent as much a second time"
+      : `the agent carries on in this session for up to ${checkpointTtlHours()} h`;
   },
 };
 

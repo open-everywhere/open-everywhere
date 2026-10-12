@@ -13,6 +13,7 @@ export const WORKER_SEAT_RESERVED_TOOLS: ReadonlySet<string> = new Set<string>([
   "unlink_identity",
   "revoke_credential_grant",
   "ask_domain",
+  "expect_bot_reply",
 ]);
 
 export const WORKER_UNMOUNTED_TOOLS: ReadonlySet<string> = new Set<string>([...WORKER_WITHHELD_TOOLS, ...WORKER_SEAT_RESERVED_TOOLS]);

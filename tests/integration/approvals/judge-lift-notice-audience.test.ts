@@ -43,7 +43,7 @@ const NOTION_DISCUSSION_ID = "it-1894-discussion";
 const TRIGGER = { kind: "scheduled", cron: "0 9 * * 1-5", postPolicy: "every-run" } as const;
 
 const NOTICE_MARK = "Ran without asking";
-const CARD_MARK = "Approval requested";
+const CARD_MARK = "Asked by ";
 
 const cleanups: (() => void)[] = [];
 afterAll(async () => {
@@ -236,12 +236,13 @@ async function expectLiftedNoticeOnVenue(input: {
   expect(venueMessages(NOTICE_MARK), `${input.label}: the venue got more than one notice`).toHaveLength(1);
   expect(venueMessages(CARD_MARK), `${input.label}: a pending card was posted beside the notice`).toEqual([]);
   expect(message.channelId).toBe(input.venueChannelId);
-  expect(message.content).toContain("Ran without asking: routine.create");
-  expect(message.content).toContain("Auto-approved by the approval judge");
+  expect(message.content).toContain("Ran without asking: started a routine in ");
+  expect(message.content.split("\n").length, `${input.label}: the notice is at most three lines`).toBeLessThanOrEqual(3);
+  expect(message.content).not.toContain("routine.create");
+  expect(message.content).toContain("Auto-approved and already run");
   expect(message.content).toContain(input.prompt);
-  const { placeWords } = await import("@open-everywhere/core/agent/channels/friendly-ids.js");
-  expect(message.content).toContain(`Target: ${placeWords({ key: input.originSurfaceKey })}`);
   expect(message.content).not.toContain(input.originSurfaceKey);
+  expect(message.content).toMatch(/started a routine in <#\d+>/u);
   expect(lifted[0]!.detail?.scopeKey, `${input.label}: the lift row does not name the origin room`).toBe(input.originSurfaceKey);
   expect(message.content).not.toContain(CARD_MARK);
   expect(message.content).not.toContain("expires");

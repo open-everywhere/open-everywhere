@@ -40,7 +40,8 @@ export function delegationPendingRefusalMessage(): string {
     "reply: NOTHING was posted. You started a background worker for this conversation in this turn, " +
     "and its report has not arrived. You therefore do not hold the answer it was asked for. " +
     "Do not write that answer from what you believe you know — that is a fabrication, even when it " +
-    "looks right. Post a short hand-off note with `done:false` instead. That keeps this wake " +
+    "looks right. Post a short line with `done:false` instead that says what will happen — never that you " +
+    "handed the work off or that a worker has it. That keeps this wake " +
     "answerable, so you can give the real answer the moment the worker's own report reaches you."
   );
 }
@@ -50,7 +51,10 @@ export function settlementReportOwedMessage(): string {
     "no_reply: nothing was recorded. You told this conversation you had started this work, and the " +
     "worker's report has now arrived — that is what woke this turn. The people waiting are waiting " +
     "for you to relay it, so post it with `reply`: what the worker found, in your own words. " +
-    "This is your own commissioned work coming back, never machine echo."
+    "This is your own commissioned work coming back, never machine echo. " +
+    "One case differs: when an approval card in this conversation shows that the act ran, or that it was " +
+    "rejected or expired, and the report adds nothing beyond it, the card is the report. Then call `no_reply` again. " +
+    "An act the approval only allowed, or a later run of it by the job that failed, is not on the card: post it."
   );
 }
 

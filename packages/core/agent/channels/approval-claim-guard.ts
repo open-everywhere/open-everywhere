@@ -74,23 +74,21 @@ export interface StandingAuthorityView {
 
 const MAX_NAMED_GRANTS = 2;
 
-export const NO_CARD_NOTE_OPENING = "(No card was raised on this turn.";
+export const NO_CARD_NOTE_OPENING = "(There was no approval card this time";
 
 export function standingAuthorityNote(view: StandingAuthorityView): string | undefined {
-  if (view.approvalGateRan) return "(An approval gate ran on this turn, so this act was not ungated.)";
+  if (view.approvalGateRan) return "(This needs an approval, or already has one.)";
   if (view.gatedWrites.length > 0) {
     const connections = [...new Set(view.gatedWrites.map((w) => w.connection))].join(", ");
-    return (
-      `${NO_CARD_NOTE_OPENING} A gated ${connections} write ran on it, ` +
-      `which means an approval already stood for this call — not that the write is ungated.)`
-    );
+    return `${NO_CARD_NOTE_OPENING}: an approval for this ${connections} change was already in place.)`;
   }
   if (view.grants.length > 0) {
-    const named = view.grants.slice(0, MAX_NAMED_GRANTS).map(describeStandingWriteGrant).join("; ");
-    const more = view.grants.length - MAX_NAMED_GRANTS;
+    const hosts = [...new Set(view.grants.map(describeStandingWriteGrant))];
+    const named = hosts.slice(0, MAX_NAMED_GRANTS).join(", ");
+    const more = hosts.length - MAX_NAMED_GRANTS;
     return (
-      `${NO_CARD_NOTE_OPENING} Writes in this room ride a standing grant: ${named}` +
-      `${more > 0 ? `, and ${more} more` : ""}. The host sees the policy, not the request, so it cannot say whether this act used it.)`
+      `${NO_CARD_NOTE_OPENING}. This room has standing permission to make changes in ${named}` +
+      `${more > 0 ? ` and ${more} more` : ""}, so this change may have used it.)`
     );
   }
   return undefined;

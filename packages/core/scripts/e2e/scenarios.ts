@@ -15,7 +15,7 @@ import { SETTINGS } from "../../agent/settings/settings.js";
 import { DISPATCH_TICK_MINUTES } from "../../agent/routines/schedule.js";
 import { newRoutineId } from "../../agent/routines/store.js";
 import type { SlackDriver, SlackMessage } from "./slack-driver.js";
-import { cardJudgeSurface, endsOwnWakeWait, tsAfter } from "./slack-driver.js";
+import { approvalCardFacts, cardJudgeSurface, endsOwnWakeWait, tsAfter } from "./slack-driver.js";
 import { slackVendorEventTime } from "../../agent/channels/wake-timing.js";
 import { ADMIN_UNVERIFIED_MARKER, askPastCoalescedRefusal, awaitChannelSeatQuiet, replyExcerpt } from "./coalesced-ask.js";
 import type { DiscordDriver, DiscordMessage } from "./discord-driver.js";
@@ -103,7 +103,7 @@ import {
   wakeIngressIds,
   WAKE_INGRESS_ACTION,
 } from "./engaged-rows.js";
-import { NAME_DROP_WOKE_ACTION } from "../../agent/channels/name-drop-wake-audit.js";
+import { NAME_DROP_SILENT_ACTION, NAME_DROP_WOKE_ACTION } from "../../agent/channels/name-drop-wake-audit.js";
 import { WAKE_TURN_START_ACTION } from "../../agent/channels/wake-timing.js";
 import { findEvents, seatCatchUpWake, type SeatCatchUpWakeVerdict, type TranscriptWireEvent } from "./transcript-read.js";
 import {
@@ -420,9 +420,9 @@ export function decodeSlackEphemeralText(body: string): string {
 }
 
 export function parseOeStatusFacts(body: string): OeStatusFacts {
-  const sha = /^•\s*deployment sha:\s*`([^`]*)`/mu.exec(body)?.[1];
+  const sha = /^•\s*build:\s*`([^`]*)`/mu.exec(body)?.[1];
   const evePin = /^•\s*eve:\s*`([^`]*)`/mu.exec(body)?.[1];
-  const window = /^•\s*context window:\s*`([\d,]+)`\s*tokens\s*—\s*compaction fires at\s*`([\d,]+)`/mu.exec(body);
+  const window = /^•\s*context window:\s*`([\d,]+)`\s*tokens\s*—\s*summarised at\s*`([\d,]+)`/mu.exec(body);
   const num = (raw: string | undefined): number | undefined => {
     if (raw === undefined) return undefined;
     const n = Number(raw.replaceAll(",", ""));
@@ -2154,7 +2154,7 @@ export const SCENARIOS: readonly Scenario[] = [
 
       ctx.gate(
         facts.contextWindowTokens !== undefined && facts.compactionThresholdTokens !== undefined,
-        `status: a "context window … compaction fires at …" line is present — reply tail: "${statusText.slice(-240)}"`,
+        `status: a "context window … summarised at …" line is present — reply tail: "${statusText.slice(-240)}"`,
       );
       const windowTokens = facts.contextWindowTokens ?? 0;
       const thresholdTokens = facts.compactionThresholdTokens ?? 0;
@@ -2564,16 +2564,17 @@ export const SCENARIOS: readonly Scenario[] = [
           if (!CAP_REFUSAL_MARKER.test(reply.text)) continue;
 
           const claimsOwn = /cap on your own usage/i.test(reply.text);
-          ctx.gate(/Scope keys for the override:/i.test(reply.text), "the DM refusal names the scope keys an admin needs — a refusal with no key costs the reader a round trip");
+          ctx.gate(/The cap to raise: /i.test(reply.text), "the DM refusal names the cap an admin must raise");
+          ctx.gate(!reply.text.includes(workspaceKey) && !reply.text.includes(`/${dm.channelId}`), "…and prints no scope key a person would read raw (OPE-2482)");
           if (/per-workspace cap/i.test(reply.text)) {
-            ctx.gate(reply.text.includes(workspaceKey), `the WORKSPACE cap's refusal names the workspace key (${workspaceKey}) — the only key that raises it`);
+            ctx.gate(/The cap to raise: the whole workspace\./.test(reply.text), "the WORKSPACE cap's refusal names the whole workspace as the cap to raise — the only one that lifts it");
             ctx.gate(!claimsOwn, "…and never claims the workspace's cap is the reader's own — the OPE-1860 defect, read from a live refusal");
           } else if (/per-user cap/i.test(reply.text)) {
             ctx.gate(claimsOwn, "a PER-USER breach is the one refusal that may say the cap is the reader's own");
-            ctx.gate(/your own allowance = /.test(reply.text), "…and it names the allowance key, which is what set_spend_limit level:\"user\" takes");
+            ctx.gate(/The cap to raise: your own allowance\./.test(reply.text), "…and it names the reader's own allowance as the cap to raise");
           } else {
             ctx.gate(!claimsOwn, "a SURFACE-layer refusal in a DM never claims the cap is the reader's own — it is the room's");
-            ctx.gate(reply.text.includes(dm.channelId), "…and names this conversation's own key, which is the one an admin raises");
+            ctx.gate(/The cap to raise: this DM\./.test(reply.text), "…and names this conversation as the cap to raise, which is the one an admin raises");
           }
           const gateSince = auditSinceForVendorInstant(slackVendorEventTime(ts)?.ms ?? Date.parse(runStart) + AUDIT_SINCE_SKEW_MS);
           const gateRow = await pollOptional(
@@ -4661,7 +4662,7 @@ export const SCENARIOS: readonly Scenario[] = [
     run: async (ctx) => {
       const sup = ctx.slackSupervisor!;
       const runStart = await presenceSince(ctx, "runStart", 60_000);
-      const isApprovalCard = (m: SlackMessage) => approveButton(m) !== undefined || (m.blockTexts ?? []).some((t) => t.startsWith("Approval requested: "));
+      const isApprovalCard = (m: SlackMessage) => approveButton(m) !== undefined || m.approvalCard !== undefined;
 
       const marker = factToken("sup");
       const probe = supervisorAsk(marker);
@@ -5140,7 +5141,7 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     id: "S-CARD-SUMMARY",
     title:
-      "OPE-2434: a live Slack approval card OPENS with one plain sentence of what will happen and to whom — the notification text's first line is that sentence, and the `Approval requested: <kind>` label is the second line; the leg rejects its own card, so nothing changes",
+      "OPE-2434 + OPE-2481: a live Slack approval card OPENS with one plain sentence of what will happen and to whom, shows no kind label anywhere a person reads, and carries the kind and the full detail in its message metadata; the leg rejects its own card, so nothing changes",
     requires: ["slack"],
     surface: "slack",
     suite: "core",
@@ -5158,11 +5159,13 @@ export const SCENARIOS: readonly Scenario[] = [
       const raw = JSON.stringify(card!.text);
       const blocks = card!.blockTexts ?? [];
       const sentence = blocks[0] ?? "";
-      ctx.gate(!sentence.startsWith("Approval requested"), `S-CARD-SUMMARY: the card does NOT open with the technical label (header: ${JSON.stringify(sentence)}; text: ${raw})`);
-      ctx.gate(/spend limit/i.test(sentence) && sentence.includes(`$${dollars}.00/mo`), `S-CARD-SUMMARY: the header is the plain sentence — what will happen (the spend limit) and the figure (got ${JSON.stringify(sentence)}; text: ${raw})`);
-      ctx.gate(blocks[1] === "Approval requested: spend.set", `S-CARD-SUMMARY: the technical label is the block after the sentence (got ${JSON.stringify(blocks[1])}; text: ${raw})`);
+      const headline = sentence.replace(/^\*|\*$/gu, "");
+      ctx.gate(/spend limit/i.test(headline) && headline.includes(`$${dollars}.00/mo`), `S-CARD-SUMMARY: the first block is the plain sentence — what will happen (the spend limit) and the figure (got ${JSON.stringify(sentence)}; text: ${raw})`);
+      ctx.gate(![...blocks, card!.text].some((t) => /Approval requested|spend\.set/u.test(t)), `S-CARD-SUMMARY: no visible line carries the kind label (blocks: ${JSON.stringify(blocks)}; text: ${raw})`);
+      ctx.gate(blocks.length <= 4, `S-CARD-SUMMARY: the card is at most four visible lines — headline, consequence, warning, footer (got ${JSON.stringify(blocks)})`);
       const flat = card!.text.replace(/\s+/gu, " ");
-      ctx.gate(flat.startsWith(`${sentence.replace(/\s+/gu, " ")} Approval requested: spend.set`), `S-CARD-SUMMARY: the notification text opens with the sentence, then the label (text: ${raw})`);
+      ctx.gate(flat.startsWith(headline.replace(/\s+/gu, " ")), `S-CARD-SUMMARY: the notification text opens with the sentence (text: ${raw})`);
+      ctx.gate(card!.approvalCard?.kind === "spend.set" && card!.approvalCard.detail.length > 0, `S-CARD-SUMMARY: the message metadata carries the kind and the full detail (got ${JSON.stringify(card!.approvalCard)})`);
       const btn = approveButton(card!)!;
       ctx.gate(ctx.synthetic !== undefined, "S-CARD-SUMMARY: deciding the card needs the synthetic capability");
       const rejected = await ctx.synthetic!.click({ pendingId: btn.pendingId, org: btn.org, decision: "reject", messageTs: card!.ts, channelId: slack.channelId, teamId: (await slack.identity()).teamId });
@@ -5313,6 +5316,165 @@ export const SCENARIOS: readonly Scenario[] = [
         { timeoutMs: AUDIT_ROW_WAIT, what: `the decision notice in card ${card.id}'s reply chain` },
       );
       ctx.gate(notice !== undefined, `S-CARD-teams: a decision notice posted into the card's own reply chain`);
+    },
+  },
+  {
+    id: "J-NAMEDROP-teams",
+    proves: ["PAR-name-drop-mention"],
+    title: "Teams name-drop wake (OPE-2444): a channel message that names the agent without an @mention is ADMITTED by the name-drop road, and a control message that names nobody is not",
+    requires: ["teams", "engagedTeams"],
+    surface: "teams",
+    suite: "core",
+    smoke: false,
+    timeoutMs: AUDIT_ROW_WAIT * 2 + SILENCE_WINDOW,
+    judged: false,
+    run: async (ctx) => {
+      const teams = ctx.teamsEngaged!;
+      if (!ctx.auditRead) {
+        ctx.skip(
+          `J-NAMEDROP-teams: the leg reads the \`${NAME_DROP_WOKE_ACTION}\` row, because a judged NO_REPLY and a dead road are the same silence from outside — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN.`,
+        );
+      }
+      const auditRead = ctx.auditRead!;
+      const sinceIso = await presenceSince(ctx, "J-NAMEDROP-teams", 15_000);
+      const marker = factToken("teams-namedrop");
+      const control = await teams.postPlainRoot(`has anyone seen the release checklist? (${marker}-c)`);
+      const drop = await teams.postPlainRoot(`has anyone asked Open Everywhere about the release? (${marker})`);
+      const rowsFor = async (action: string, rootId: string) =>
+        (await auditRead({ sinceIso, platform: "teams", actions: [action] })).filter((r) => String(r.detail?.container ?? "").includes(rootId));
+      const woke = await pollOptional(async () => {
+        const rows = await rowsFor(NAME_DROP_WOKE_ACTION, drop.id);
+        return rows.length > 0 ? rows : undefined;
+      }, { timeoutMs: AUDIT_ROW_WAIT, what: `a ${NAME_DROP_WOKE_ACTION} row for root ${drop.id}` });
+      if (woke === undefined) {
+        const silent = await rowsFor(NAME_DROP_SILENT_ACTION, drop.id);
+        ctx.gate(
+          silent.length === 0,
+          `J-NAMEDROP-teams: the road saw the name and REFUSED it (${silent.length} \`${NAME_DROP_SILENT_ACTION}\` row(s)) — the addressed fixture channel's domain does not arm nameDropWake`,
+        );
+        ctx.skip(
+          `J-NAMEDROP-teams: no name-drop row for root ${drop.id}. TWO causes look identical here: (1) the tenant has not consented ` +
+            "to the ChannelMessage.Read.Group RSC grant, so Microsoft never delivered the plain message; (2) the road is dead. " +
+            "J-ENGAGED-teams separates the grant: if its plain follow-up woke on this board, cause (2) is the live one.",
+        );
+      }
+      ctx.gate((woke?.length ?? 0) >= 1, `J-NAMEDROP-teams: the road ADMITTED the name-drop — ${woke?.length ?? 0} \`${NAME_DROP_WOKE_ACTION}\` row(s) for root ${drop.id}`);
+      await sleep(SILENCE_WINDOW);
+      const controlRows = [...(await rowsFor(NAME_DROP_WOKE_ACTION, control.id)), ...(await rowsFor(NAME_DROP_SILENT_ACTION, control.id))];
+      ctx.gate(
+        controlRows.length === 0,
+        `J-NAMEDROP-teams: the CONTROL message (no name) wrote NO name-drop row (got ${controlRows.length}) — a row there would mean the road admits everything`,
+      );
+    },
+  },
+  {
+    id: "S-OE-CMD-teams",
+    title: "Teams /oe commands (OPE-2443): an @mention carrying `oe help` answers core's help text in the asking chain with NO model turn — a teams.oe_command row and no teams.dispatched row",
+    requires: ["teams"],
+    surface: "teams",
+    suite: "core",
+    smoke: false,
+    timeoutMs: REPLY_WAIT + AUDIT_ROW_WAIT * 2,
+    judged: false,
+    run: async (ctx) => {
+      const teams = ctx.teams!;
+      const sinceIso = await presenceSince(ctx, "S-OE-CMD-teams", 15_000);
+      const root = await teams.postMention("oe help");
+      const reply = await teams.awaitReply(root.id, { timeoutMs: REPLY_WAIT, contains: "budget" });
+      ctx.gate(reply.text.includes("status") && reply.text.includes("stop"), `S-OE-CMD-teams: the answer is core's help text — it lists status, budget and stop (got ${reply.text.slice(0, 160)})`);
+      if (!ctx.auditRead) {
+        ctx.log("S-OE-CMD-teams: the zero-inference half needs the audit read (E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN) — the reply half passed");
+        return;
+      }
+      const forRoot = async (action: string) =>
+        (await ctx.auditRead!({ sinceIso, platform: "teams", actions: [action] })).filter((r) => String(r.detail?.conversationId ?? "").includes(root.id));
+      const ran = await pollOptional(async () => {
+        const rows = await forRoot("teams.oe_command");
+        return rows.length > 0 ? rows : undefined;
+      }, { timeoutMs: AUDIT_ROW_WAIT, what: `a teams.oe_command row for root ${root.id}` });
+      ctx.gate(ran !== undefined && ran[0]!.detail?.command === "help", `S-OE-CMD-teams: the deployment audited the command as \`help\` (got ${JSON.stringify(ran?.[0]?.detail ?? null)})`);
+      const dispatched = await forRoot("teams.dispatched");
+      ctx.gate(dispatched.length === 0, `S-OE-CMD-teams: NO teams.dispatched row for the command's chain — a command is zero-inference (got ${dispatched.length})`);
+    },
+  },
+  {
+    id: "S-INTRO-teams",
+    title: "Teams channel intro (OPE-2445): the first @mention in a channel posts core's intro once, as a new channel post — and a second @mention posts none",
+    requires: ["teams", "engagedTeams"],
+    surface: "teams",
+    suite: "core",
+    smoke: false,
+    timeoutMs: REPLY_WAIT * 2 + AUDIT_ROW_WAIT * 2,
+    judged: false,
+    run: async (ctx) => {
+      const teams = ctx.teamsEngaged!;
+      if (!ctx.auditRead) ctx.skip("S-INTRO-teams: the leg reads the teams.intro_posted row — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN.");
+      const auditRead = ctx.auditRead!;
+      const sinceIso = await presenceSince(ctx, "S-INTRO-teams", 15_000);
+      const intros = async () => auditRead({ sinceIso, platform: "teams", actions: ["teams.intro_posted"] });
+      const first = await teams.postMention("Quick check: acknowledge in one line.");
+      await teams.awaitReply(first.id, { timeoutMs: REPLY_WAIT });
+      const afterFirst = await pollOptional(async () => {
+        const rows = await intros();
+        return rows.length > 0 ? rows : undefined;
+      }, { timeoutMs: AUDIT_ROW_WAIT, what: "a teams.intro_posted row" });
+      const second = await teams.postMention("And once more: acknowledge in one line.");
+      await teams.awaitReply(second.id, { timeoutMs: REPLY_WAIT });
+      await sleep(AUDIT_ROW_WAIT / 2);
+      const total = (await intros()).length;
+      ctx.gate(total <= 1, `S-INTRO-teams: at most ONE intro in this run across two @mentions — the marker is once per channel (got ${total})`);
+      if (afterFirst === undefined) {
+        ctx.skip(
+          "S-INTRO-teams: no teams.intro_posted row in this run, and TWO causes look identical here: (1) this channel was introduced on an " +
+            "earlier board (the marker is once per channel ever); (2) the first-contact door is dead. The once-only half passed. A fresh " +
+            "fixture channel, or a board right after this code ships, separates them.",
+        );
+      }
+      const row = afterFirst![0]!;
+      ctx.gate(row.detail?.door === "first-contact", `S-INTRO-teams: the intro came through the first-contact door (got ${String(row.detail?.door)})`);
+      const posted = (await teams.channelRootMessages()).find((m) => teams.isBotAuthored(m) && m.text.includes("👋") && (m.createdDateTime ?? "") >= sinceIso);
+      ctx.gate(posted !== undefined, "S-INTRO-teams: the intro is a NEW channel post by the bot, never a reply inside the asking chain");
+    },
+  },
+  {
+    id: "S-CARD-teams-dm",
+    title: "Teams approval card in a 1:1 chat (OPE-2447): a governed ask in a personal chat posts the Adaptive Card INTO the chat, not into another room",
+    requires: ["teams"],
+    surface: "teams",
+    suite: "core",
+    smoke: false,
+    timeoutMs: 1_200_000,
+    judged: false,
+    run: async (ctx) => {
+      const teams = ctx.teams!;
+      const { chatId } = await teams.resolveDmChat().catch((err: unknown) =>
+        ctx.skip(`S-CARD-teams-dm: ${err instanceof Error ? err.message : String(err)} — grant the personal-scope install for the driver user (OPE-887) and re-run.`),
+      );
+      const note = factToken("teamsdmcard");
+      const sinceIso = await presenceSince(ctx, "S-CARD-teams-dm", 60_000);
+      const driven = await teams
+        .postDm(chatId, `schedule a ONE-SHOT check-in for a couple of minutes from now — a single "at" time, not a recurring cron — that posts exactly the word ${note} here. Confirm you've scheduled it.`)
+        .catch((err: unknown) => {
+          if (isMissingChatScopeError(err)) ctx.skip(`S-CARD-teams-dm: Graph 403'd the DM post — grant the driver app Chat.ReadWrite (or ChatMessage.Send + Chat.Read) and re-run. (${String(err)})`);
+          throw err;
+        });
+      const askedAt = driven.createdDateTime ?? sinceIso;
+      const isCard = (m: TeamsMessage): boolean => teams.isBotAuthored(m) && teamsApprovalCardActions(m).length > 0 && (m.createdDateTime ?? "") >= askedAt;
+      const carded = await pollOptional<{ readonly card: TeamsMessage } | { readonly allow: true }>(
+        async () => {
+          const card = (await teams.dmMessages(chatId)).find(isCard);
+          if (card) return { card };
+          if (!ctx.auditRead) return undefined;
+          const rows = await ctx.auditRead({ sinceIso, platform: "teams", actions: [APPROVAL_JUDGE_VERDICT_ACTION] });
+          return findJudgeAllow(rows, "create_routine") !== undefined ? { allow: true } : undefined;
+        },
+        { timeoutMs: FILE_REPLY_WAIT, what: `an OE approval card in the 1:1 chat after ${askedAt}, or the judge's allow row` },
+      );
+      if (carded !== undefined && !("card" in carded)) ctx.skip("the approval judge ALLOWED create_routine with no card, so this run has no card to place. Disarm the judge's starter rule for this room and re-run.");
+      ctx.gate(carded !== undefined, "S-CARD-teams-dm: the governed ask in the 1:1 chat posted its approval card INTO the chat — before OPE-2447 it went to a channel in the domain, or was refused");
+      const card = (carded as { readonly card: TeamsMessage }).card;
+      const actions = teamsApprovalCardActions(card);
+      ctx.gate(actions.some((a) => a.decision === "approve") && actions.some((a) => a.decision === "reject"), `S-CARD-teams-dm: the chat card carries Approve and Reject (got ${JSON.stringify(actions)})`);
     },
   },
   {
@@ -5529,6 +5691,65 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.gate(answered !== undefined, "S-APP-HOME: the forged Forget was answered by republishing the page with a notice");
       const purged = (await read({ sinceIso: forgedAt, actions: ["memory.purge"], limit: 50 })).filter((r) => ownRow(r) && r.detail?.["via"] === "slack-app-home");
       ctx.gate(purged.length === 0, `S-APP-HOME: a digest that names no line of the person's erased nothing (${purged.length} memory.purge row(s) via slack-app-home)`);
+    },
+  },
+
+  {
+    id: "S-WATCH",
+    title: "The chief-of-staff watch dial (OPE-2422): /oe watch reads and moves the person's dial, a Home-tab click moves it, a forged Not useful changes nothing",
+    requires: ["slack", "synthetic"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 300_000,
+    judged: false,
+    run: async (ctx) => {
+      const synthetic = ctx.synthetic!;
+      const read = ctx.auditRead;
+      if (!read) {
+        return ctx.fixtureMissing("S-WATCH gates on personal_watch.dial.set and personal_watch.response rows. Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to run it.");
+      }
+      const { teamId } = await ctx.slack!.identity();
+      const person = synthetic.adminUserId;
+      const ownRow = (r: AuditWireEntry): boolean => r.principalId === `slack/${teamId}/${person}`;
+
+      const reset = await synthetic.slash("watch less");
+      ctx.gate(reset.status === 200, `S-WATCH: /oe watch less answers 200 (got ${reset.status})`);
+      const status = await synthetic.slash("watch");
+      const statusText = decodeSlackEphemeralText(status.body);
+      ctx.gate(status.status === 200 && statusText.startsWith("Less:"), `S-WATCH: /oe watch reads the dial at less — answer head: "${statusText.slice(0, 160)}"`);
+
+      const moreAt = await presenceSince(ctx, "S-WATCH more");
+      const more = await synthetic.slash("watch more");
+      const moreText = decodeSlackEphemeralText(more.body);
+      ctx.gate(more.status === 200 && moreText.startsWith("Done. More:"), `S-WATCH: /oe watch more moves the dial — answer head: "${moreText.slice(0, 160)}"`);
+      const moreRow = await pollOptional(
+        async () => (await read({ sinceIso: moreAt, actions: ["personal_watch.dial.set"], limit: 50 })).find((r) => ownRow(r) && r.detail?.["dial"] === "more" && r.detail?.["via"] === "command"),
+        { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "S-WATCH: the command's personal_watch.dial.set row" },
+      );
+      ctx.gate(moreRow !== undefined, "S-WATCH: a personal_watch.dial.set row names the person, dial more, via command");
+
+      const noneAt = await presenceSince(ctx, "S-WATCH none");
+      const none = await synthetic.homeButton({ teamId, action: "watch.none" });
+      ctx.gate(none.status === 200, `S-WATCH: the signed None click is acknowledged (HTTP ${none.status})`);
+      const noneRow = await pollOptional(
+        async () => (await read({ sinceIso: noneAt, actions: ["personal_watch.dial.set"], limit: 50 })).find((r) => ownRow(r) && r.detail?.["dial"] === "none" && r.detail?.["via"] === "app-home"),
+        { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "S-WATCH: the Home tab's personal_watch.dial.set row" },
+      );
+      ctx.gate(noneRow !== undefined, "S-WATCH: a personal_watch.dial.set row names the person, dial none, via app-home");
+
+      const forgedAt = await presenceSince(ctx, "S-WATCH forged dismiss");
+      const forged = await synthetic.homeSubmit({ teamId, action: "watch.dismiss", ref: "f".repeat(16) });
+      ctx.gate(forged.status === 200, `S-WATCH: the forged Not useful submission is acknowledged (HTTP ${forged.status})`);
+      const answered = await pollOptional(
+        async () => (await read({ sinceIso: forgedAt, actions: ["home.publish"], limit: 50 })).find((r) => (r.principalId === person || ownRow(r)) && r.detail?.["notice"] === true),
+        { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "S-WATCH: the republish after the forged Not useful" },
+      );
+      ctx.gate(answered !== undefined, "S-WATCH: the forged Not useful was answered by republishing the page with a notice");
+      const responses = (await read({ sinceIso: forgedAt, actions: ["personal_watch.response"], limit: 50 })).filter(ownRow);
+      ctx.gate(responses.length === 0, `S-WATCH: a ref that names no nudge of the person's moved no dose (${responses.length} personal_watch.response row(s))`);
+
+      const restore = await synthetic.slash("watch less");
+      ctx.gate(restore.status === 200, `S-WATCH: the dial is restored to less (HTTP ${restore.status})`);
     },
   },
 
@@ -5936,7 +6157,7 @@ export const SCENARIOS: readonly Scenario[] = [
         repo,
         beforeApprove: async (card) => {
           ctx.gate(card.text.includes(repo), "pr.open card names the target repo");
-          const branches = card.text.match(/`([^`]+)`\s*→\s*`([^`]+)`/);
+          const branches = approvalCardFacts(card).match(/`([^`]+)`\s*→\s*`([^`]+)`/);
           ctx.gate(branches !== null, "pr.open card shows the head → base branches");
           if (branches) {
             const head = branches[1];
@@ -6458,6 +6679,49 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
   {
+    id: "S-A2A-INBOUND",
+    title: "Inbound A2A (OPE-2448): the published agent card names its JSON-RPC route and a security scheme, and an unauthenticated or forged call is refused 401 before any task starts, audited",
+    requires: ["synthetic"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 120_000,
+    judged: false,
+    run: async (ctx) => {
+      const base = ctx.synthetic!.targetUrl.replace(/\/+$/u, "");
+      const card = await fetch(`${base}/.well-known/agent-card.json`);
+      if (card.status === 404) {
+        return ctx.fixtureMissing(
+          "precondition a2a-inbound-enabled: the deployment publishes no A2A agent card, so inbound A2A is off. On a TEST deployment, set `a2a: { inbound: true }` in agent/settings/settings.ts " +
+            "and declare a caller in agent/access/a2a-inbound.ts by pull request (copy packages/create/template/agent/access/a2a-inbound.ts), then deploy.",
+        );
+      }
+      ctx.gate(card.status === 200, `a2a-inbound: the agent card answers 200 (got ${card.status})`);
+      const body = (await card.json()) as { supportedInterfaces?: { url?: unknown }[]; securitySchemes?: Record<string, unknown> };
+      ctx.gate((body.supportedInterfaces ?? []).some((i) => String(i.url).endsWith("/a2a/jsonrpc")), "a2a-inbound: the card names the JSON-RPC route");
+      ctx.gate(Object.keys(body.securitySchemes ?? {}).length > 0, "a2a-inbound: the card names a security scheme — there is no anonymous door");
+      const sinceIso = await presenceSince(ctx, "a2a-inbound: the audit window", 5_000);
+      const token = factToken("a2ain");
+      const send = (authorization?: string): Promise<Response> =>
+        fetch(`${base}/a2a/jsonrpc`, {
+          method: "POST",
+          headers: { "content-type": "application/json", ...(authorization !== undefined ? { authorization } : {}) },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "SendMessage", params: { message: { messageId: token, role: "ROLE_USER", parts: [{ text: `hi ${token}` }] } } }),
+        });
+      const anonymous = await send();
+      ctx.gate(anonymous.status === 401, `a2a-inbound: a call with no credential is refused 401 (got ${anonymous.status})`);
+      const forged = await send(`Bearer forged-${token}`);
+      ctx.gate(forged.status === 401, `a2a-inbound: a call with a credential no declared caller holds is refused 401 (got ${forged.status})`);
+      if (ctx.auditRead !== undefined) {
+        const rows = await ctx.auditRead({ sinceIso, actions: ["a2a.inbound_refused", "a2a.inbound_accepted"] });
+        ctx.gate(!rows.some((r) => r.action === "a2a.inbound_accepted"), "a2a-inbound: no refused call started a task (no a2a.inbound_accepted row)");
+        ctx.gate(!JSON.stringify(rows).includes(token), "a2a-inbound: no audit row carries the call's text or its credential");
+        ctx.log(`a2a-inbound: ${rows.filter((r) => r.action === "a2a.inbound_refused").length} a2a.inbound_refused row(s) in the window`);
+      } else {
+        ctx.log("a2a-inbound: no audit read on this run (E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN unset) — the audit rows are not checked");
+      }
+    },
+  },
+  {
     id: "S-CONNECTOR-TIER",
     title: "Connector op tiering, live: a Notion READ (notion__notion-search) answers with NO approval prompt, and a Notion WRITE (notion__notion-create-pages) reports the page and never reads as ungated (optional — needs the connector-write fixture ARMED)",
     requires: ["slack", "connectorWrite"],
@@ -6592,7 +6856,7 @@ export const SCENARIOS: readonly Scenario[] = [
     id: "S-PROVENANCE-DM",
     proves: ["REPLY-50", "REPLY-51"],
     title:
-      "Reply provenance, live (OPE-1717): a DM turn that READS through the Notion connector posts a reply whose footer names that connection and NOTHING else, joined to the deployment's own reply.provenance row — plus a next-turn negative control that reads nothing and carries no footer",
+      "Reply provenance, live (OPE-1717, OPE-2487): a DM turn that READS through the Notion connector writes a reply.provenance row whose sources line names that connection and NOTHING else, and the room's reply carries NO sources footer — plus a next-turn negative control that reads nothing and carries no footer",
     requires: ["slack", "syntheticDm"],
     surface: "notion",
     suite: "core",
@@ -6737,18 +7001,16 @@ export const SCENARIOS: readonly Scenario[] = [
         `provenance row: every connection the turn read is named to this room (named=${named}, connections=${connections.length})`,
       );
 
-      const replyId = typeof provRow.detail?.id === "string" ? (provRow.detail.id as string) : answer.ts;
-      const footerChunk = replyChunks.find((c) => c.ts === replyId) ?? answer;
-      const lines = footerChunk.text.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
-      const footer = lines.find((l) => l.startsWith(PROVENANCE_FOOTER_PREFIX));
+      const sources = typeof provRow.detail?.sources === "string" ? (provRow.detail.sources as string) : undefined;
       ctx.gate(
-        footer !== undefined,
-        `footer: the reply the room received carries a "${PROVENANCE_FOOTER_PREFIX}" line — the row says this turn read ${connections.length} connection(s), so a missing line is the render unwired from the ledger (OPE-1713's defect class). ` +
-          `Reply tail: "${lines.slice(-3).join(" / ").slice(0, 240)}"`,
+        sources === connections.join(", "),
+        `provenance row: detail.sources names the connection and NOTHING else — expected "${connections.join(", ")}", got "${sources ?? "(absent)"}"`,
       );
+      const roomLines = (replyChunks.length > 0 ? replyChunks : [answer]).flatMap((c) => c.text.split("\n").map((l) => l.trim()));
+      const roomFooter = roomLines.find((l) => l.replace(/^[*_>\-#\s]+/, "").startsWith(PROVENANCE_FOOTER_PREFIX));
       ctx.gate(
-        footer === `${PROVENANCE_FOOTER_PREFIX} ${connections.join(", ")}`,
-        `footer: it names the connection and NOTHING else — no ", N in another domain" and no ", N more" — expected "${PROVENANCE_FOOTER_PREFIX} ${connections.join(", ")}", got "${footer ?? "(absent)"}"`,
+        roomFooter === undefined,
+        `room: the reply the room received carries NO "${PROVENANCE_FOOTER_PREFIX}" line (OPE-2487) — got "${roomFooter ?? ""}"`,
       );
 
       const controlToken = factToken("provneg");
@@ -7962,8 +8224,8 @@ export const SCENARIOS: readonly Scenario[] = [
           `🔴 S-JUDGE-LIFT-NOTICE (hard): the post naming pending ${pendingId} carries NO approve button — the act already ran, so anything offering to approve it is an approval card rendered over a completed mutation. Text: "${shown}"`,
         );
         ctx.gate(
-          posted.text.includes(liftedKind),
-          `🔴 S-JUDGE-LIFT-NOTICE (hard): the notice NAMES the act that ran ("${liftedKind}") — a trace that reports an unnamed act tells a member nothing they can act on. Text: "${shown}"`,
+          posted.text.startsWith("Ran without asking: ") && posted.approvalCard?.kind === liftedKind,
+          `🔴 S-JUDGE-LIFT-NOTICE (hard): the notice NAMES the act that ran (lead "Ran without asking: …", metadata kind "${liftedKind}", got ${JSON.stringify(posted.approvalCard?.kind)}) — a trace that reports an unnamed act tells a member nothing they can act on. Text: "${shown}"`,
         );
         const affordance = contradictButton(posted);
         ctx.gate(

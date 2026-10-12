@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { surfaceMessageOps, registerBroker, resetBrokers, setRegisteredConnectorCredentials } from "@open-everywhere/core/agent/adapter-api.js";
+import { surfaceMessageOps, friendlyGuardSource, isFriendlyGuarded, registerBroker, resetBrokers, setRegisteredConnectorCredentials } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerNotionProvider } from "../agent/register.js";
 import { notionMessageOps } from "../agent/channels/notion-message-ops.js";
 import { NOTION_CHANNEL_CREDENTIAL } from "../agent/channels/notion-credentials.js";
@@ -59,7 +59,8 @@ try {
     registerNotionProvider();
     const resolved = surfaceMessageOps("notion");
     ok(resolved !== undefined, "registerNotionProvider() makes surfaceMessageOps('notion') resolve to something (before OPE-1043 it resolved undefined)");
-    ok(resolved === notionMessageOps, "…and it resolves to THIS module's ops object, by identity — the same one turn-anchor.ts's postSurfaceText dispatches to");
+    ok(isFriendlyGuarded(resolved), "the registry stores the ops wrapped by the friendly-names guard (OPE-2482)");
+    ok(friendlyGuardSource(resolved) === notionMessageOps, "…and it resolves to THIS module's ops object, by identity — the same one turn-anchor.ts's postSurfaceText dispatches to");
     ok(typeof resolved?.postText === "function" && typeof resolved?.editMessage === "function", "the resolved ops carry postText/editMessage");
     ok(typeof resolved?.postFiles === "function", "…and postFiles too (OPE-1047: the two-step upload flow is now wired)");
     ok(resolved?.setReaction === undefined, "…and NO setReaction (Notion has no reaction resource for comments)");

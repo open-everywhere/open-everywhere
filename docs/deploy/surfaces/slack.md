@@ -529,7 +529,10 @@ minus any token in `wake.nameDrop.exclude`, which wins over the other three. Mat
 case-insensitive and word-boundary, same as an `@mention`'s name check. The
 channel must be positively confirmed as **not externally shared** (Slack Connect and
 unverifiable channels never trigger it), and the agent then *judges* whether a reply is actually
-warranted — when in doubt it stays silent. If it does reply, it starts a thread on the message and
+warranted. The agent treats a question or request that names it as meant for it, and normally
+answers, even when the question is put to the room about it (*"has anyone asked Ada about the
+release checklist?"*). A question put to someone else by name, or a message that only mentions
+the name in passing, normally gets no reply. When in doubt the agent stays silent. If it does reply, it starts a thread on the message and
 follows that thread from then on, exactly as if it had been mentioned.
 
 Uninvited turns also **fail quietly**: until the agent has actually posted a reply, an error
@@ -791,6 +794,10 @@ sign-in. It is off until an admin turns it on, and the bot stays the normal rout
   is there to approve a card, so a write as them is refused: a routine permission does not lift it.
 - **It is labelled as theirs.** The connection is `slack-as-you`, described as "search Slack as you",
   and the agent says which answers came from their account.
+- **It can ask another bot for them.** A post in their name can @mention another bot in a shared
+  channel. After that carded post, the DM seat's `expect_bot_reply` lets only that bot's replies in
+  that thread wake the agent, for at most six hours, and relays them to the person's DM. See
+  [Your DM can ask other bots](../../capabilities/bot-delegation.md) (OPE-2426).
 
 It rides the host-side connector plane, never the sandbox egress plane: the DM's sandbox already holds
 the bot's Slack key, and the firewall stamps one credential per host per session. The person's token
@@ -894,13 +901,14 @@ Commands (typed as free text after `/oe`):
 
 | Command | What it does | Visibility |
 | --- | --- | --- |
-| `/oe status` | Deploy sanity: the deployment sha and eve pin that identify this build, the app version when the deploy carries one, primary/utility model config, the context window and the token count compaction fires at, memory provider. | Ephemeral (only you see it) |
+| `/oe status` | Says the agent is running, then lists, under "Details for your admin", the build (deployment sha) and eve pin that identify this build, the app version when the deploy carries one, primary/utility model config, the context window and the token count it is summarised at, memory provider. | Ephemeral (only you see it) |
 | `/oe budget` (or `/oe budget status`) | This channel's and workspace's effective spend caps (tokens + USD) and current-month spend — the SAME figures the spend gate enforces. | Ephemeral |
 | `/oe budget raise <usd>` | Proposes a new monthly USD cap for this channel: posts the SAME public approval card `set_spend_limit` posts (Approve/Reject buttons); an admin decides. The ephemeral ack also shows **your own domain's recent spend** from the ledger — see [Spend & cost](../../security/spend-and-cost.md#the-domain-spend-scan-behind-oe-budget-raise). | Card: public in-channel. Ack: ephemeral |
 | `/oe budget clear` | Proposes clearing this channel's spend-limit override back to the config-as-code cap: posts the SAME public approval card `clear_spend_limit` posts. | Card: public in-channel. Ack: ephemeral |
 | `/oe stop` | Stands down the turn currently running in this channel: resolves it from the durable turn-anchor registry and cancels it. **No model turn, nothing spent** — so it works while the channel is over its cap, which is when you are most likely to want it. | Ephemeral |
 | `/oe rate <1-5>` | Records one human mark on the [model A/B test](../../extending/models-and-gateway.md#ab-testing-a-challenger-model): rates this channel's most recent champion/challenger turn, on the arm that turn actually ran. Answers "nothing to rate" — the normal reply — while the test is off. | Ephemeral |
 | `/oe optout on` / `/oe optout off` / `/oe optout` | Turns on (or off, or shows) **your own** opt-out of agent actions on your content: no memory is saved from your own turns (in a shared conversation, a later turn by somebody else can still save what you said, and a [domain question](../../capabilities/domain-questions.md) you ask is not covered yet), and the agent refuses when somebody else hands it one of your messages with a shortcut. Keyed to you alone — there is no argument that names another person. The Home tab has the same switch. See [Opting out](../../capabilities/memory.md#opting-out-of-agent-actions-on-your-content). | Ephemeral |
+| `/oe watch more` / `/oe watch less` / `/oe watch none` / `/oe watch` | Sets (or shows) **your own** dial for the [chief-of-staff watch](../../capabilities/proactivity-and-routines.md#the-chief-of-staff-watch): how often the agent may message you on its own about something that needs you, such as two meetings that overlap. Everyone starts at `less`. `none` turns it off. Keyed to you alone. The Home tab has the same three buttons. | Ephemeral |
 | `/oe help` | Lists the commands. | Ephemeral |
 
 Bare `/oe` (no text) defaults to help — the friendliest landing. `/oe budget` alone (no `raise`/
@@ -919,7 +927,7 @@ for why that's a genuine, documented platform grammar difference, not an inconsi
    ```
 
 4. **Short Description**: `Open Everywhere control-plane commands (stop, status, budget) — no model turn.`
-5. **Usage Hint**: `stop | status | budget [raise <usd> | clear] | rate <n> | optout [on | off] | help`.
+5. **Usage Hint**: `stop | status | budget [raise <usd> | clear] | rate <n> | optout [on | off] | watch [more | less | none] | help`.
 6. **Save**, then reinstall the app if Slack prompts you to (a new command is a scope-adjacent change).
 
 No extra env var is needed — the route reuses `SLACK_SIGNING_SECRET` from [Step 2](#step-2--configure-the-environment) to verify every request (the SAME `v0=` HMAC scheme Event Subscriptions uses), and `SLACK_BOT_TOKEN` to post the `raise`/`clear` approval card.

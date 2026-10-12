@@ -1306,7 +1306,7 @@ rmSync(dir, { recursive: true, force: true });
   ok(bare.reason?.includes("per-surface cap (") === true && bare.reason?.includes("`") === false, `OPE-274: with no scope labels the sentence names the layer but invents no key (got: "${bare.reason}")`);
 
   const dmCopy = spendRefusalCopy({ reason: "you've reached your own monthly budget", surfaceKey: `${wsKey}/${DM}`, workspaceKey: wsKey, mode: "dm", layer: "user", layerKey: ALICE_SCOPE, badge: "⛔" });
-  ok(dmCopy.includes(ALICE_SCOPE), "OPE-274: the DM refusal copy names the person's own allowance key, which is the one an admin raises");
+  ok(dmCopy.includes("The cap to raise: your own allowance") && !dmCopy.includes(ALICE_SCOPE), "OPE-274: the DM refusal copy names the person's own allowance as the cap to raise, in words, never by key (OPE-2482)");
   const dmCopyNoUser = spendRefusalCopy({ reason: "this DM reached its monthly budget", surfaceKey: `${wsKey}/${DM}`, workspaceKey: wsKey, mode: "dm", layer: "surface", layerKey: `${wsKey}/${DM}`, badge: "⛔" });
   ok(!dmCopyNoUser.includes("your own allowance"), "OPE-274: a SURFACE breach in a DM does NOT offer to raise the person's allowance — that remedy would change nothing");
   ok(dmCopy.startsWith("⛔ I'm holding off —") && dmCopyNoUser.startsWith("⛔ I'm holding off —"), "OPE-274: the e2e-pinned 'holding off' opening is unchanged in both DM variants");
@@ -1321,13 +1321,13 @@ rmSync(dir, { recursive: true, force: true });
 
     for (const mode of MODES) {
       const wsCopy = spendRefusalCopy({ reason: "this workspace reached its monthly budget", surfaceKey: keyOf[mode], workspaceKey: wsKey, mode, layer: "workspace", layerKey: LAYER_KEY.workspace, badge: "⛔" });
-      ok(wsCopy.includes(`whole workspace = \`${wsKey}\``), `OPE-1860/${mode}: a WORKSPACE breach names the workspace key, LABELLED as the workspace's — the only key that raises it`);
-      ok(wsCopy.includes(`\`${keyOf[mode]}\``), `OPE-1860/${mode}: …and still names this conversation, so an admin knows which room is asking`);
+      ok(wsCopy.includes("The cap to raise: the whole workspace."), `OPE-1860/${mode}: a WORKSPACE breach names the workspace as the cap to raise — the only one that lifts it`);
+      ok(!wsCopy.includes(wsKey), `OPE-2482/${mode}: …in words: the copy prints no scope key, and an admin asks for one`);
       ok(!wsCopy.includes(OWN_ALLOWANCE), `OPE-1860/${mode}: …and never offers the reader's own allowance, which raising would change nothing`);
 
       const place = mode === "dm" ? "this DM" : mode === "mpim" ? "this group DM" : "this channel";
       const surfCopy = spendRefusalCopy({ reason: `${place} reached its monthly budget`, surfaceKey: keyOf[mode], workspaceKey: wsKey, mode, layer: "surface", layerKey: keyOf[mode], badge: "⛔" });
-      ok(surfCopy.includes(`${place} = \`${keyOf[mode]}\``), `OPE-1860/${mode}: a SURFACE breach names this conversation's own key, labelled "${place}"`);
+      ok(surfCopy.includes(`The cap to raise: ${place}.`) && !surfCopy.includes(keyOf[mode]), `OPE-1860/${mode}: a SURFACE breach names this conversation as the cap to raise, as "${place}", never by key`);
       ok(!surfCopy.includes(OWN_ALLOWANCE), `OPE-1860/${mode}: …and never offers the reader's own allowance for a cap on the room`);
       ok(!surfCopy.includes(`whole workspace`), `OPE-1860/${mode}: …and does not offer the workspace key for a cap the workspace did not set`);
 
@@ -1337,7 +1337,7 @@ rmSync(dir, { recursive: true, force: true });
     }
 
     const userCopy = spendRefusalCopy({ reason: "you've reached your own monthly budget", surfaceKey: keyOf.dm, workspaceKey: wsKey, mode: "dm", layer: "user", layerKey: LAYER_KEY.user, badge: "⛔" });
-    ok(userCopy.includes(`your own allowance = \`${ALICE_SCOPE}\``), 'OPE-1860: layer "user" is the ONLY layer that offers the reader\'s own allowance, and it names that key');
+    ok(userCopy.includes("The cap to raise: your own allowance."), 'OPE-1860: layer "user" is the ONLY layer that offers the reader\'s own allowance as the cap to raise');
 
     budgets4 = { perUser: { default: { surfaceMonthlyTokens: 1 } }, perSurface: { [`${wsKey}/${GROUP}`]: { surfaceMonthlyTokens: 5 } } };
     await store4.recordSpend(mk(GROUP) as never, { period: "2026-07", usage: { inputTokens: 100 }, principalId: ALICE, surfaceMode: "mpim" });
@@ -1347,7 +1347,7 @@ rmSync(dir, { recursive: true, force: true });
     ok(mpimV.over === true, "fixture control: the group DM is over budget too — so the layer assertion below reads a LIVE verdict, not an under-cap pass");
     ok(mpimV.layer === "surface", `OPE-1860: …and it is the ROOM's cap that bit, never the person's (got layer "${mpimV.layer ?? "none"}") — so "your own usage" there was wrong on every refusal it rendered`);
 
-    const labelFor = (copy: string): string => copy.slice(copy.indexOf("Scope keys for the override: "), copy.indexOf(" = `"));
+    const labelFor = (copy: string): string => copy.slice(copy.indexOf("The cap to raise: "), copy.indexOf(". An admin who needs"));
     const workspaceLabels = new Set(
       MODES.map((mode) => labelFor(spendRefusalCopy({ reason: "r", surfaceKey: keyOf[mode], workspaceKey: wsKey, mode, layer: "workspace", layerKey: wsKey, badge: "⛔" }))),
     );
@@ -1357,7 +1357,7 @@ rmSync(dir, { recursive: true, force: true });
 
     const layerless = spendRefusalCopy({ reason: "over budget", surfaceKey: keyOf.channel, workspaceKey: wsKey, mode: "channel", badge: "⛔" });
     ok(!layerless.includes(OWN_ALLOWANCE), "OPE-1860: with no layer on the verdict the copy never guesses that the reader's own allowance is what bit");
-    ok(layerless.includes(`\`${keyOf.channel}\``) && layerless.includes(`\`${wsKey}\``), "OPE-1860: …and offers both keys, as the channel variant always did");
+    ok(layerless.includes("The cap to raise: this channel or the whole workspace.") && !layerless.includes(wsKey), "OPE-1860: …and names both the room and the workspace, as the channel variant always offered both");
     budgets4 = {};
   }
 

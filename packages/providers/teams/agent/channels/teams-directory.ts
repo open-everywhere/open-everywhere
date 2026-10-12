@@ -1,4 +1,4 @@
-import { type DirectoryCandidate } from "@open-everywhere/core/agent/adapter-api.js";
+import { type DirectoryCandidate, type FriendlyName } from "@open-everywhere/core/agent/adapter-api.js";
 import { callTeamsConnectorApi } from "eve/channels/teams";
 import { teamsTeamConversationRefs, type TeamsConversationRef } from "./teams-conversation-ref.js";
 
@@ -94,4 +94,75 @@ function candidateFromMember(member: TeamsRosterMember, q: string): DirectoryCan
   const matched = normalize(nativeId) === q || [name, handle].some((f) => f.length > 0 && normalize(f).includes(q));
   if (!matched) return undefined;
   return { nativeId, ...(name ? { name } : {}), ...(handle ? { handle } : {}) };
+}
+
+const TEAMS_NAME_MAX_TEAMS = 3;
+
+export interface TeamsNameDeps {
+  readonly call?: (input: { readonly serviceUrl: string; readonly path: string; readonly method: "GET" }) => Promise<{ readonly ok: boolean; readonly body: unknown }>;
+  readonly teams?: () => Promise<readonly TeamsConversationRef[]>;
+}
+
+const teamsNameCache = new Map<string, Promise<FriendlyName | undefined>>();
+
+export function teamsFriendlyName(id: string, deps: TeamsNameDeps = {}): Promise<FriendlyName | undefined> {
+  let p = teamsNameCache.get(id);
+  if (!p) {
+    p = lookUpTeamsName(id, deps).catch(() => undefined);
+    const settled = p;
+    void settled.then((hit) => {
+      if (hit === undefined && teamsNameCache.get(id) === settled) teamsNameCache.delete(id);
+    });
+    teamsNameCache.set(id, p);
+    while (teamsNameCache.size > TEAMS_NAME_CACHE_MAX) {
+      const oldest = teamsNameCache.keys().next().value;
+      if (oldest === undefined) break;
+      teamsNameCache.delete(oldest);
+    }
+  }
+  return p;
+}
+
+const TEAMS_NAME_CACHE_MAX = 2000;
+
+async function lookUpTeamsName(id: string, deps: TeamsNameDeps): Promise<FriendlyName | undefined> {
+  const call = deps.call ?? ((input) => callTeamsConnectorApi(input));
+  const teams = (await (deps.teams ?? teamsTeamConversationRefs)()).slice(0, TEAMS_NAME_MAX_TEAMS);
+  const isConversation = /^19:/.test(id);
+  for (const team of teams) {
+    try {
+      if (isConversation) {
+        const res = await call({ serviceUrl: team.serviceUrl, path: `/v3/teams/${encodeURIComponent(team.conversationId)}/conversations`, method: "GET" });
+        const list = res.ok ? (res.body as { conversations?: unknown } | null)?.conversations : undefined;
+        if (!Array.isArray(list)) continue;
+        const hit = (list as Array<{ id?: unknown; name?: unknown }>).find((c) => c.id === id);
+        if (hit) return { label: `#${typeof hit.name === "string" && hit.name.trim() ? hit.name.trim() : "General"}`, kind: "channel" };
+      } else {
+        const res = await call({ serviceUrl: team.serviceUrl, path: `/v3/conversations/${encodeURIComponent(team.conversationId)}/members/${encodeURIComponent(id)}`, method: "GET" });
+        const name = res.ok ? (res.body as { name?: unknown } | null)?.name : undefined;
+        if (typeof name === "string" && name.trim()) return { label: name.trim(), kind: "person" };
+      }
+    } catch {
+    }
+  }
+  return undefined;
+}
+
+export async function teamsAccountProfile(id: string, deps: TeamsNameDeps = {}): Promise<{ name?: string; email?: string } | undefined> {
+  const call = deps.call ?? ((input) => callTeamsConnectorApi(input));
+  const teams = (await (deps.teams ?? teamsTeamConversationRefs)().catch(() => [])).slice(0, TEAMS_NAME_MAX_TEAMS);
+  for (const team of teams) {
+    try {
+      const res = await call({ serviceUrl: team.serviceUrl, path: `/v3/conversations/${encodeURIComponent(team.conversationId)}/members/${encodeURIComponent(id)}`, method: "GET" });
+      const body = res.ok ? (res.body as TeamsRosterMember | null) : null;
+      if (!body) continue;
+      const name = typeof body.name === "string" && body.name.trim() ? body.name.trim() : undefined;
+      const upn = typeof body.userPrincipalName === "string" && body.userPrincipalName.trim() ? body.userPrincipalName.trim() : undefined;
+      const mail = typeof body.email === "string" && body.email.trim() ? body.email.trim() : undefined;
+      const email = upn ?? mail;
+      if (name || email) return { ...(name ? { name } : {}), ...(email ? { email } : {}) };
+    } catch {
+    }
+  }
+  return undefined;
 }

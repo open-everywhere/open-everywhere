@@ -28,6 +28,7 @@ export default defineTool({
     if (binding.mode !== "dm") {
       throw new Error(`unlink_identity is DM-only (this conversation is "${binding.mode}") — a person's identity links are theirs to change, and only they can be identified as themselves in a DM.`);
     }
+    // principal-gate: presence — a HUMAN must be here, acting. The caller's own identity IS the
     const actor = actingPrincipalIdOf(ctx);
     if (!actor) {
       throw new Error("unlink_identity needs a verified person on this turn — only the human whose links these are can remove them.");
@@ -46,17 +47,17 @@ export default defineTool({
     if (!result.ok) throw new Error(result.reason);
     const removedAccount = target ?? { platform: binding.platform, tenant: linkTenantOf(binding.platform, binding.workspace), nativeId: actor };
     const removed = principalKey(removedAccount.platform, removedAccount.tenant, removedAccount.nativeId);
-    const removedName = await humanAccountLabel(removedAccount.platform, removedAccount.nativeId, removedAccount.tenant);
+    const removedName = (surface: string): Promise<string> => humanAccountLabel(removedAccount.platform, removedAccount.nativeId, removedAccount.tenant, surface);
     const caller = { platform: binding.platform, tenant: linkTenantOf(binding.platform, binding.workspace), nativeId: actor };
-    const notice =
-      `${removedName} was just removed from your linked identity. It no longer speaks as you, and ` +
+    const notice = async (surface: string): Promise<string> =>
+      `${await removedName(surface)} was just removed from your linked identity. It no longer speaks as you, and ` +
       `it no longer reaches anything this identity reaches.\n\nIf that was you, nothing to do. If ` +
       `it was not, tell whoever runs this workspace — someone with access to one of your accounts ` +
       `changed who you are here.`;
     const n = await notifyLinkSetMembers(binding.org, result.linkSetId, notice, { except: [caller] });
     if (target && !(target.platform === caller.platform && target.tenant === caller.tenant && target.nativeId === caller.nativeId) && canDeliverDirectMessage(target.platform)) {
       try {
-        await dispatchDirectMessage(target.platform, { principalId: target.nativeId, text: notice });
+        await dispatchDirectMessage(target.platform, { principalId: target.nativeId, text: await notice(target.platform) });
       } catch (err) {
         console.log(`[open-everywhere:identity] unlink ${removed}: the severed account could not be notified: ${String(err)}`);
       }

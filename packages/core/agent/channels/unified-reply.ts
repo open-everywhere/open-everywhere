@@ -52,6 +52,10 @@ function unifiedDedupeLocus(origin: UnifiedWakeOrigin): { channel: string; threa
       return { channel: `${origin.serviceUrl}::${origin.conversationId}`, threadTs: origin.replyToActivityId };
     case "email":
       return { channel: `${origin.inbox}::${origin.threadId}`, threadTs: origin.messageId };
+    case "a2a":
+      return { channel: `a2a::${origin.caller}::${origin.taskId}` };
+    case "google-chat":
+      return { channel: origin.space, ...(origin.thread !== undefined ? { threadTs: origin.thread } : {}) };
     default:
       return { channel: JSON.stringify(origin) };
   }

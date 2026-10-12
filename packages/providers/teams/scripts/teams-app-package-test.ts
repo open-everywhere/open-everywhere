@@ -108,7 +108,7 @@ function unzip(zip: Uint8Array): Map<string, Buffer> {
   ok(m.id === APP_ID && m.bots[0]!.botId === APP_ID && m.webApplicationInfo.id === APP_ID, "manifest: the app id fills id, botId and webApplicationInfo.id");
   ok(m.developer.name === "Acme Ltd" && m.name.short === "Acme Helper", "manifest: the developer name and the configured agent name");
   ok(m.manifestVersion === "1.17" && m.bots[0]!.scopes.includes("team"), "org: schema 1.17 with the team scope kept (the 1.25 floor is a store rule)");
-  ok(built.fileName === "acme-helper-teams-1.0.3.zip", `the file name comes from the agent name and version (got ${built.fileName})`);
+  ok(built.fileName === "acme-helper-teams-1.0.4.zip", `the file name comes from the agent name and version (got ${built.fileName})`);
   const again = buildTeamsAppPackage(base());
   ok(Buffer.from(again.archive!).equals(Buffer.from(built.archive!)), "zip: the same inputs give the same bytes");
   const quoted = buildTeamsAppPackage(base({ developerName: 'Acme "Labs"' }));

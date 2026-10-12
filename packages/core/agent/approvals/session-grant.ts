@@ -1,3 +1,4 @@
+import { friendlyWhen } from "../channels/person-text.js";
 import type { PendingActionRow } from "./types.js";
 
 const PR_OPEN_KIND = "pr.open";
@@ -144,9 +145,12 @@ export function grantButtonLabel(row: Pick<PendingActionRow, "argsJson">, routin
 export const ROUTINE_PERMISSION_NO_EXPIRY = "9999-12-31T23:59:59.999Z";
 
 export function pendingCardExpiryClause(expiresAt: string): string {
-  return expiresAt === ROUTINE_PERMISSION_NO_EXPIRY
-    ? "no expiry — ends when the routine's instruction is edited or the routine is deleted"
-    : `expires ${expiresAt}`;
+  if (expiresAt === ROUTINE_PERMISSION_NO_EXPIRY) return "open until the routine changes";
+  return `expires ${shortUtc(expiresAt)}`;
+}
+
+export function shortUtc(iso: string): string {
+  return Number.isNaN(new Date(iso).getTime()) ? iso : friendlyWhen(iso);
 }
 
 const CONNECTOR_TOOL_DECLARATION_PREFIX = "tool:";

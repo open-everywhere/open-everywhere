@@ -14,12 +14,15 @@ import {
   registerAccountDirectory,
   registerSurfaceMessageOps,
   registerCardPoster,
+  registerOwnCardRoom,
   registerJudgeLiftNoticePoster,
   registerDecisionFeedbackSurface,
   type DispatchTarget,
   type Routine,
   type UnifiedWakeOrigin,
   registerProviderDocs,
+  registerFriendlyNameResolver,
+  registerAccountDisplayName,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { PROVIDER_DOCS } from "./docs-generated.js";
 import { TEAMS_SURFACE_PARITY } from "./surface-parity.js";
@@ -35,8 +38,8 @@ import { teamsReadAdapter } from "./channels/teams-read.js";
 import { teamsSeatCatchUpFetch, TEAMS_TIMESTAMP_PRECISION_MS } from "./channels/teams-catch-up.js";
 import { liveTeamsRoomMembership, liveTeamsAccountActive } from "./channels/teams-fire-eligibility.js";
 import { teamsBotDisplayName } from "./channels/teams-bot-name.js";
-import { fetchTeamsDirectory } from "./channels/teams-directory.js";
-import { postTeamsApprovalCard, postTeamsJudgeLiftNotice, teamsDecisionFeedback } from "./approvals/teams-flow.js";
+import { fetchTeamsDirectory, teamsAccountProfile, teamsFriendlyName } from "./channels/teams-directory.js";
+import { postTeamsApprovalCard, postTeamsJudgeLiftNotice, teamsDecisionFeedback, teamsOwnCardRoom } from "./approvals/teams-flow.js";
 
 function storedString(t: Routine["target"], key: string): string | undefined {
   const v = t?.[key];
@@ -94,8 +97,11 @@ export function registerTeamsProvider(): void {
   registerTeamsBridge({ roomMembership: liveTeamsRoomMembership, accountActive: liveTeamsAccountActive });
   registerBotDisplayName("teams", teamsBotDisplayName);
   registerAccountDirectory("teams", (query) => fetchTeamsDirectory(query));
+  registerFriendlyNameResolver("teams", (id) => teamsFriendlyName(id));
+  registerAccountDisplayName("teams", (id) => teamsAccountProfile(id));
   registerSurfaceMessageOps(teamsMessageOps);
   registerCardPoster("teams", (row, summaryLines) => postTeamsApprovalCard(row, summaryLines));
+  registerOwnCardRoom("teams", teamsOwnCardRoom);
   registerJudgeLiftNoticePoster("teams", (row, summaryLines, outcomeLine) => postTeamsJudgeLiftNotice(row, summaryLines, outcomeLine));
   registerDecisionFeedbackSurface("teams", teamsDecisionFeedback);
   registerReactionSurface("teams");

@@ -1,3 +1,8 @@
+// proves: SEAT-57, SEAT-58
+
+// proves: AP-DMSEAT-confirm_link, AP-DMSEAT-link_identity, AP-DMSEAT-revoke_credential_grant
+// proves: AP-DMSEAT-unlink_identity
+
 import assert from "node:assert/strict";
 
 const __slackStubs = await import("./_slack-test-stubs.js");
@@ -179,7 +184,7 @@ console.log("5. lean-seat interplay:");
     ok(!allowedOnLeanSeat(name), `a narrowed CHANNEL standing seat does NOT hold ${name}`);
     ok(allowedOnLeanSeat(name, true), `a narrowed DM seat DOES hold ${name} — a verb the person must answer back cannot be relocated to a one-shot worker`);
   }
-  eq([...DM_SEAT_CARVE_IN].sort(), ["ask_domain", "confirm_link", "link_identity", "revoke_credential_grant", "unlink_identity"], "the carve-in is EXACTLY the identity trio, the owner's grant off switch and the person's question to a domain — nothing else is seat-shaped");
+  eq([...DM_SEAT_CARVE_IN].sort(), ["ask_domain", "confirm_link", "expect_bot_reply", "link_identity", "revoke_credential_grant", "unlink_identity"], "the carve-in is EXACTLY the identity trio, the owner's grant off switch, the person's question to a domain and the person's asked thread to another bot — nothing else is seat-shaped");
 
   ok(!allowedOnLeanSeat("purge_memory", true), "a DM seat does NOT keep `purge_memory` — memory work relocates cleanly (the worker inherits the DM binding, so its trust gate is the same one)");
   ok(!allowedOnLeanSeat("connection_search", true), "…nor `connection_search` — a DM-spawned worker inherits mode \"dm\", so the DM-only connector wall passes inside it");
@@ -240,3 +245,5 @@ await withOneshot(true, () => {
 });
 
 console.log(`\n✓ dm-delegation: ${n} assertions passed (OPE-306 token grammar · namespace exclusivity · delegation predicate (window-only, no anchor) · inherit-never-escalate · lean-seat interplay · OPE-351 fences · stage-4 group-DM window composition)`);
+
+// proves: SET-017

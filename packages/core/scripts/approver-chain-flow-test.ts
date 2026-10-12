@@ -175,7 +175,7 @@ async function chainRowFor(key: Record<string, unknown>): Promise<Record<string,
 {
   const res = await requestApproval({ ...baseInput, args: argsFor("fastlane"), scopeKey: "slack/T1/C_FAST", domain: "fastlane", channelId: "C_FAST" }, { postCard });
   ok(res.autoApproved !== undefined && res.autoApproved.resolvedBy === "custom:fastlane-lower", "allow: the propose auto-approved, naming the lowering element");
-  ok(res.autoApproved!.outcome.includes("nothing to delete"), "allow: the kind's REAL execute ran the frozen args (harmless noop target)");
+  ok(res.autoApproved!.outcome.includes("already gone"), "allow: the kind's REAL execute ran the frozen args (harmless noop target)");
   const decided = await getOperationalStore().getPendingAction("test-org", res.id);
   ok(decided !== null && decided.status === "approved", "allow: the wedge row exists, status approved");
   ok(decided!.decidedBy === "chain:custom:fastlane-lower", "allow: decidedBy is the chain element, never a human's id");

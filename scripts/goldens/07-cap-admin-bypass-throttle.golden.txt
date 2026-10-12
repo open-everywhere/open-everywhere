@@ -2,7 +2,7 @@ SEED surface cap 50 tokens/month on discord/G7/C7; 205 tokens already recorded; 
 IN  relay message M71 · guild G7 channel C7 (type 0) · from U_ADMIN7 · mention
       | <@BOT> kick off the release checklist
   → POST /channels/C7/messages ⇒ 200 message BM1
-      | ⚠️ this channel reached its monthly budget — the per-surface cap on `discord/G7/C7` (205 / 50 tokens) — proceeding because you're an admin. Ask me here to raise or clear the cap (an approval card follows), or change it permanently in the spend-budgets config.
+      | ⚠️ this channel reached its monthly budget — the per-surface cap on <#C7> (205 / 50 tokens) — proceeding because you're an admin. Ask me here to raise or clear the cap (an approval card follows), or change it permanently in the spend-budgets config.
   → POST /channels/C7/messages/M71/threads {"name":"kick off the release checklist","auto_archive_duration":1440} ⇒ 200 thread TH1
   → PUT /channels/C7/messages/M71/reactions/👀/@me ⇒ 204
   → POST /channels/TH1/typing ⇒ 204

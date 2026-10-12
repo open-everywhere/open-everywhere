@@ -33,11 +33,66 @@ and the worker calls two tools.
 | A sign-in, a code, a CAPTCHA | `my_browser_handoff` | OE gives the person the controls, posts the link, and posts a `browser.personal.handback` card. |
 | "Close my browser" | `my_browser` `close` | Chromium closes cleanly, the box stops, its hours are billed. The logins stay. |
 | "Forget my browser" | `my_browser` `forget` | OE deletes the box's saved profile on the backend (every login in it) and the person's record. |
+| "Let me show you how I cancel an order" | `my_browser_handoff` with `teach` | OE gives the person the controls and records their demonstration. The hand-back saves a paused draft. See [Teach a task by demonstration](#teach-a-task-by-demonstration). |
+| "Show me the draft", "Test it", "Propose it" | `my_browser` `drafts`, `rehearse`, `propose`, `discard` | OE shows the draft as a `SKILL.md`, rehearses it without a click, or posts a `browser.personal.propose` card whose owner-only click opens a skill pull request. |
 
 **Secrets are the person's.** OE never types into a password, one-time-code or card field: the box refuses
 it whatever a card says. When a page needs one, OE hands the person the controls, and the person types it on
 the watch page. The value passes through the deployment on its way to the box, and OE writes it nowhere: no
 audit row, no log, no transcript.
+
+## Teach a task by demonstration
+
+A person can teach OE a task by doing it once in their own browser (OPE-2454). OE writes a **draft skill**
+from the demonstration. The person reads it, tests it, and proposes it by pull request.
+
+1. **The person starts it.** They ask in their DM ("let me show you how I file an expense"). The worker calls
+   `my_browser_handoff` with `teach: { name, goal }`. The name is the skill's name: letters, digits, dots,
+   dashes and underscores, at most 64 characters. OE starts the recording on the box BEFORE it gives the person
+   the controls. So a bad name, a name already in use or a sixth draft refuses before anything changes hands.
+2. **The person does the task.** They use the watch page as for any hand-off. For up to **ten minutes** (or 200
+   steps), the box records one step for each input: the page address, and the role and label of the link,
+   button or field they used. A navigation between inputs becomes an "arrive" step (its address only, never
+   the page title).
+3. **The hand-back ends it.** The owner's click on the hand-back card, Hand back on the page, or an expired hold
+   stops the recording. OE saves a **taught draft** on the person's row. The person's own `close` also saves
+   what they recorded so far.
+4. **The person reviews it.** `my_browser` `drafts` lists the drafts, and `drafts` with a `name` shows one as a
+   `SKILL.md`. The file numbers the steps and quotes each label as data. It marks four kinds of gap with
+   `GAP:`: what to type in each typed field, the inputs, the decision rules and the failure handling.
+5. **The person test-runs it.** `my_browser` `rehearse` is the **test run**. It goes to each recorded page and
+   looks for each recorded link, button and field, and it clicks, types and presses nothing. It reports what it
+   found, what it did not find, and what it did not check. A page that the demonstration reached by a form post
+   can show as not found, because the rehearsal opens each page by its address. Opening a page is a GET in the
+   person's signed-in session: a site that acts when a page is opened (an unsubscribe or a confirm link) acts
+   then.
+6. **The person proposes it.** `my_browser` `propose` posts a `browser.personal.propose` card into the DM. Only
+   the owner's own click opens the pull request: another member's click, or an approver-chain lowering (a config
+   rule, the judge, a bypass), throws. The pull request goes on the config repo, on the same path as the dream
+   cycle's [skill proposals](skills-and-plugins.md#the-agent-proposes-a-skill-the-learn-loops-pull-request).
+   The file goes under `.agents/skills/<name>/SKILL.md`, and merging is what arms the skill. The same switches
+   apply: `memory.skillProposalPr`, `accessRequests.configRepo` and `accessRequests.dryRun`. A second proposal
+   of the same draft updates its own pull request.
+
+**What the demonstration never records.** It never records the text the person types into a field: a text input
+records the FIELD, an editable element (a text field, a textarea, a rich-text editor) is named from its label or
+placeholder and never from its contents, and a secret field (a password, a code, a card) is marked so. A page
+address drops its query and its fragment, and no page title is kept. The `browser.personal.teach` audit rows
+carry counts only, never a label, an address or the goal.
+
+**What the draft does hold.** The labels of the links, buttons and fields the person used, and the page paths,
+read from their signed-in sites. A link's label can name private data ("Message from Jane: salary"). A label can
+also repeat text the person typed (an autocomplete option, a search suggestion). A path can carry an id, a name or
+a token (`/orders/1042`, `/reset-password/<token>`). So the draft is fenced as untrusted content when the agent
+reads it, and a proposal needs the owner's own click on its card. A proposal puts the labels and paths in the
+config repo, where its readers see them: the person reads the draft before they approve.
+
+**The draft is paused, and it stays paused.** Nothing runs a draft on its own, and OE does not make a routine
+from it. The person's browser refuses a routine fire, because it needs the person in the conversation
+([the room rule](#where-it-may-be-used--the-strictest-room-rule)), so a scheduled run of a taught task would
+refuse every time. To run the task, the person asks in their DM. Each first click or keystroke on a site still
+needs their `browser.personal.act` card. A person keeps at most five drafts. The sixth is refused, never evicted:
+the person discards or proposes one first. `forget` deletes every draft with the row.
 
 ## The watch page
 
@@ -117,9 +172,9 @@ conversation can only ever reach its own person's browser.
 | Plane | What holds it |
 | --- | --- |
 | **Egress** | The box reaches only the hosts the person's DM egress declaration admits: the SAME compiled policy the session firewall gets (`access/egress.ts` `compileNetworkPolicy`, with the break-glass narrowing and the network-access level), with every rule and credential transform dropped — so no org credential reaches the box. A site that is not declared is not reachable, on any hop: a redirect from a declared host to an undeclared one is refused too (below). On Vercel the sandbox firewall holds the list at the network. On docker see [the two stacks](#the-two-stacks). |
-| **Approval** | Reading is open. A click, a keystroke, a select or a key press on a site needs the person's `browser.personal.act` card for that site, posted into their DM. Both personal-browser cards execute **only for the owner's own click**: another member's click, or an approver-chain lowering (a config rule, the judge, a bypass), throws and grants nothing. On a surface whose DM cannot show a card (Teams has no card renderer), OE cannot ask, so it reads only and hands the person the controls for anything else. |
+| **Approval** | Reading is open. A click, a keystroke, a select or a key press on a site needs the person's `browser.personal.act` card for that site, posted into their DM. Proposing a taught draft needs the person's `browser.personal.propose` card. All three personal-browser cards execute **only for the owner's own click**: another member's click, or an approver-chain lowering (a config rule, the judge, a bypass), throws and grants nothing. On a surface whose DM cannot show a card (Teams has no card renderer), OE cannot ask, so it reads only and hands the person the controls for anything else. |
 | **Taint** | Every page the browser reads is untrusted external content (`web`): it is fenced, and it taints the turn. A tainted turn still needs the person's own click to act on a site: the act card executes for the owner only, so no approver-chain lowering can grant it on any turn. `my_browser` therefore declares `taint: "disclose"` (the card carries the taint disclosure), and an unattended run never reaches the browser at all (the room rule refuses a turn with no person). |
-| **Audit** | `browser.personal.open`, `.action` (the op and the host, never the text), `.act_granted`, `.takeover` (with the agent's short reason), `.handback`, `.view_opened`, `.closed` (reason, seconds, dollars) and `.forget`. The person's keystrokes, the box key and every cookie value appear in no row. |
+| **Audit** | `browser.personal.open`, `.action` (the op and the host, never the text), `.act_granted`, `.takeover` (with the agent's short reason), `.handback`, `.view_opened`, `.closed` (reason, seconds, dollars), `.forget` and `.teach` (the phase of a taught draft, with counts only). A taught draft's proposal writes `memory.skill_proposal_pr` under the person. The person's keystrokes, the box key and every cookie value appear in no row. |
 | **Halt** | A HALT over the DM, the person, their workspace or the org refuses every browser action, and the sweep closes the box. The halt read fails closed. |
 | **Spend** | Each box session writes one spend-ledger row and one `browser` usage event under the person. On Vercel the dollars are the box's memory GiB-hours at `spend.sandboxGiBHourUsd`; on docker the row records the hours at $0. |
 | **The model never holds the session** | No tool returns a cookie, a field value or the box's address. The agent can USE the signed-in session through the actions; it cannot READ or export it. |
@@ -149,7 +204,9 @@ A just-bash deployment cannot run a box, and the browser refuses with a reason.
   inside the box, with a password and a code, or with a passkey on their phone.
 - **"Signed in days later"** holds only as long as the site's own session cookie lives, and only while the
   profile is used within `keepLoginsDays`.
-- **No recording.** The watch page shows the live page only. Nothing is recorded.
+- **No screen recording.** The watch page shows the live page only, and no frame is stored. A [taught
+  demonstration](#teach-a-task-by-demonstration) records steps — page addresses and the labels of what the
+  person used — never a frame and never typed text.
 - **No auto-carry-on after a page hand-back.** The page posts a note into the DM; the person tells OE to carry
   on. The card hand-back wakes the DM seat.
 - **No org credentials.** A credentialed org host is reachable as a bare host; the org's credential never
@@ -165,9 +222,11 @@ A just-bash deployment cannot run a box, and the browser refuses with a reason.
 | The signed box contract | `packages/core/agent/personal-browser/box-client.ts`, `deploy/personal-browser/box.mjs` |
 | The watch page | `packages/core/agent/personal-browser/viewer.ts`, `packages/core/agent/channels/personal-browser.ts` |
 | The tools and the cards | `packages/core/agent/tools/my_browser.ts`, `my_browser_handoff.ts`, `packages/core/agent/approvals/personal-browser.ts` |
+| Teach by demonstration | `packages/core/agent/personal-browser/teach.ts`, `deploy/personal-browser/teach.mjs` |
 | The sweep schedule | `packages/core/agent/schedules/personal-browser-sweep.ts` (every 5 minutes) |
 | The box backends | `packages/adapters/agent/sandbox/long-lived-box.ts` |
 
-Tests: `npm run test:personal-browser` (core), `test:long-lived-box` (adapters), the audience matrix in
+Tests: `npm run test:personal-browser` and `test:personal-browser-teach` (core), `test:personal-browser-recorder`
+(the box's demonstration recorder), `test:long-lived-box` (adapters), the audience matrix in
 `test:webhook-reveal`, and tier 2 `tests/integration/personal-browser/personal-browser.test.ts`. The live leg
 is `S-PERSONAL-BROWSER` (NON_LAUNCH: the browser is off as shipped).

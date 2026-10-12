@@ -18,7 +18,10 @@ import {
   registerSurfaceStatusReporter,
   registerMemoryWriteObserver,
   registerDomainMembershipProbe,
+  registerFriendlyNameResolver,
+  registerBotAskProbe,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { slackFriendlyNameResolver } from "./channels/slack-friendly-names.js";
 import { PROVIDER_DOCS } from "./docs-generated.js";
 import { slackSurfaceStatus } from "./status.js";
 import { SLACK_SURFACE_PARITY } from "./surface-parity.js";
@@ -44,6 +47,8 @@ import { slackWebhookVerifier } from "./channels/slack-webhook-verifier.js";
 import { registerSlackOps } from "./ops.js";
 import { coalescedRefresh, liveMemoryCanvasDeps } from "./channels/slack-memory-canvas.js";
 import { slackDomainMembershipProbe } from "./channels/slack-home.js";
+import { liveSlackBotAskDeps, slackBotAskProbe } from "./channels/slack-bot-ask.js";
+import { resolveBotIdentity } from "./channels/slack-front.js";
 import { announceSlackSetupCode } from "./setup/claim.js";
 import { reopenSlackSetup, slackInstallState } from "./setup/install-state.js";
 
@@ -63,6 +68,7 @@ export function registerSlackProvider(): void {
   registerSlackAttachmentResolver();
   registerSlackGovernanceMembers();
   registerDomainMembershipProbe("slack", slackDomainMembershipProbe());
+  registerBotAskProbe("slack", slackBotAskProbe(liveSlackBotAskDeps(slackForm, resolveBotIdentity)));
   registerSlackBridge({
     form: slackForm,
     readCall: callSlackRead,
@@ -76,6 +82,7 @@ export function registerSlackProvider(): void {
     reopenSetup: reopenSlackSetup,
   });
   registerSlackOps();
+  registerFriendlyNameResolver("slack", slackFriendlyNameResolver());
   registerSurfaceStatusReporter("slack", () => slackSurfaceStatus());
   registerWebhookVerifier(slackWebhookVerifier);
   registerProviderDocs("slack", PROVIDER_DOCS);

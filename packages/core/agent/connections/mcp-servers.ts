@@ -2,11 +2,13 @@ import type { Binding, Bundle } from "../access/bundle.js";
 import { vercelConnectorHome, type ConnectorCredentials } from "../access/connector-credentials.js";
 import { EVERYONE_GROUP } from "../identity/everyone-group.js";
 import { processRegistryMap } from "../lib/process-registry.js";
-import type { ConnectionSignIn, DiscoverySignIn, StaticConfidentialSignIn } from "./connection-sign-in.js";
+import type { ConnectionSignIn, DiscoverySignIn, StaticConfidentialSignIn, XaaSignIn } from "./connection-sign-in.js";
 
 export type McpServerDiscoverySignIn = Omit<DiscoverySignIn, "resource">;
 
-export type McpServerSignIn = McpServerDiscoverySignIn | StaticConfidentialSignIn;
+export type McpServerXaaSignIn = Omit<XaaSignIn, "resource">;
+
+export type McpServerSignIn = McpServerDiscoverySignIn | StaticConfidentialSignIn | McpServerXaaSignIn;
 
 export interface McpServerPersonalSurface {
   readonly platform: string;
@@ -67,8 +69,16 @@ function declarationProblems(s: McpServerDeclaration, where: string): string[] {
       if (typeof signIn.clientSecretRef !== "string" || signIn.clientSecretRef.trim() === "") {
         bad.push(`${where}: a static-confidential signIn needs a clientSecretRef (the REF of the secret, never the value).`);
       }
+    } else if (signIn.mode === "xaa") {
+      for (const field of ["idpIssuer", "idpClientId", "idpClientSecretRef", "audience", "resourceTokenEndpoint", "resourceClientId", "resourceClientSecretRef"] as const) {
+        const v = (signIn as Record<string, unknown>)[field];
+        if (typeof v !== "string" || v.trim() === "") bad.push(`${where}: an xaa signIn needs ${field}.`);
+      }
+      for (const literal of ["idpClientSecret", "resourceClientSecret"]) {
+        if (literal in signIn) bad.push(`${where}: signIn carries a literal ${literal} — name its credential-store REF in ${literal}Ref instead.`);
+      }
     } else if (signIn.mode !== undefined && signIn.mode !== "discovery-dcr-pkce") {
-      bad.push(`${where}: signIn.mode "${String(signIn.mode)}" is not a sign-in dialect (discovery-dcr-pkce | static-confidential).`);
+      bad.push(`${where}: signIn.mode "${String(signIn.mode)}" is not a sign-in dialect (discovery-dcr-pkce | static-confidential | xaa).`);
     }
   }
   if (s.personalSurface !== undefined) {
@@ -117,6 +127,7 @@ export function declaredMcpServers(): readonly McpServerDeclaration[] {
 export function mcpServerConnectionSignIn(server: McpServerDeclaration): ConnectionSignIn {
   const signIn = server.signIn;
   if (signIn !== undefined && signIn.mode === "static-confidential") return signIn;
+  if (signIn !== undefined && signIn.mode === "xaa") return { ...signIn, resource: server.url };
   return { ...(signIn ?? {}), mode: "discovery-dcr-pkce", resource: server.url };
 }
 

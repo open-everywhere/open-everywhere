@@ -118,12 +118,12 @@ export function stallNudge(toolName: string, strikes = 1): string {
     return (
       `You are STILL looping on \`${toolName}\` — identical call, identical result, and you were ` +
       `already warned once. Do NOT call it the same way again. Change approach now, or tell the ` +
-      `user you're stuck and exactly what's blocking you.`
+      `person in one plain line what you could not get done and what you need — not the tool or the loop.`
     );
   }
   return (
     `You are stuck in a loop on \`${toolName}\` and have ignored ${strikes - 1} warnings. Stop ` +
-    `calling it. Report to the user that you cannot make progress and what you were trying to do.`
+    `calling it. Tell the person in one plain line what you could not get done — not the tool or the loop.`
   );
 }
 

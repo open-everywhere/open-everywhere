@@ -1,4 +1,5 @@
 import { windowTopologyEnabled } from "../access/capabilities.js";
+import { A2A_INBOUND_PLATFORM, inboundDomainForSurfaceKey } from "../a2a/inbound/declaration.js";
 import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
 import {
   isGroupSegment,
@@ -110,7 +111,7 @@ export function defineDomain(domain: Domain): Domain {
   return domain;
 }
 
-export type DomainVia = "roster" | `container:${string}` | `excluded:${string}` | "none";
+export type DomainVia = "roster" | `container:${string}` | `excluded:${string}` | "a2a-inbound" | "none";
 
 export interface DomainRouting {
   readonly domain: Domain | undefined;
@@ -180,6 +181,11 @@ export function domainReachVerdict(
 }
 
 export function resolveDomainForChannel(channelKey: string, domains: readonly Domain[]): DomainRouting {
+  if (channelKey.startsWith(`${A2A_INBOUND_PLATFORM}/`)) {
+    const declared = inboundDomainForSurfaceKey(channelKey);
+    const domain = declared === undefined ? undefined : domains.find((d) => d.name === declared && d.match === undefined);
+    return domain === undefined ? { domain: undefined, via: "none" } : { domain, via: "a2a-inbound" };
+  }
   let winner: { readonly domain: Domain; readonly parsed: ReachEntry; readonly entry: string } | undefined;
   let vetoed: DomainVia | undefined;
   for (const d of domains) {
@@ -305,6 +311,7 @@ export function windowedSupervisorEnabled(channelKey: string, domains: readonly 
 }
 
 export function standingSeatDomainFor(channelKey: string, domains: readonly Domain[]): Domain | undefined {
+  if (channelKey.startsWith(`${A2A_INBOUND_PLATFORM}/`)) return domainForChannel(channelKey, domains);
   return domainForChannel(channelKey, domains) ?? criteriaDomain("org", domains);
 }
 
@@ -314,6 +321,7 @@ export function windowedDomainFor(channelKey: string, domains: readonly Domain[]
 }
 
 export function windowModeFor(channelKey: string, domains: readonly Domain[]): WindowMode {
+  if (channelKey.startsWith(`${A2A_INBOUND_PLATFORM}/`)) return "solo";
   const domain = domainForChannel(channelKey, domains);
   return domain ? resolvedWindowMode(domain, isVouchedInternal) : "solo";
 }
@@ -349,6 +357,7 @@ export function windowGroupFor(channelKey: string, domain: Domain): WindowGroup 
 }
 
 export function windowIdFor(channelKey: string, domains: readonly Domain[]): string | undefined {
+  if (channelKey.startsWith(`${A2A_INBOUND_PLATFORM}/`)) return undefined;
   const domain = domainForChannel(channelKey, domains);
   if (!domain) return undefined;
   return windowGroupFor(channelKey, domain)?.name;

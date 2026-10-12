@@ -50,6 +50,8 @@ export function isFrozenSurfaceBinding(value: unknown): value is SurfaceBinding 
       teams: new Set(["serviceUrl", "conversationId", "tenantId", "channelId", "teamId", "conversationType", "aadObjectId"]),
       github: new Set(["owner", "repo", "issueNumber", "pullRequestNumber", "installationId"]),
       email: new Set(["inbox", "threadId", "messageId", "channelId"]),
+      a2a: new Set(["caller", "taskId"]),
+      "google-chat": new Set(["space", "thread", "messageName", "channelId"]),
     };
     const keys = allowedTargetKeys[String(b.platform)];
     if (

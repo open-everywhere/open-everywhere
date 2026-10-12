@@ -38,6 +38,8 @@ const { postDiscordApprovalCard, postDiscordJudgeLiftNotice, parseDiscordCompone
 );
 const { judgeLiftNoticeBlocks } = await import("@open-everywhere/core/agent/approvals/card.js");
 const { plainSummaryForRow } = await import("@open-everywhere/core/agent/approvals/plain-summary.js");
+const { shortUtc } = await import("@open-everywhere/core/agent/approvals/session-grant.js");
+const { TAINT_CARD_WARNING } = await import("@open-everywhere/core/agent/approvals/taint-disclosure.js");
 const { guildIdFromScopeKey, isGuildAdminViaRest, isGuildMemberViaRest, discordAuthorRoles, _resetDiscordAuthorRolesCache } = await import(
   "@open-everywhere/provider-discord/agent/approvals/discord-admin.js"
 );
@@ -162,14 +164,19 @@ function clickPayload(
   const r = row();
   const card = pendingDiscordCard(r, ["line one", "line two"]);
   ok(card.content.split("\n")[0] === `**${plainSummaryForRow(r)}**`, "OPE-2434: pending card opens with the plain sentence, in bold");
-  ok(card.content.split("\n")[1] === "-# Approval requested: spend.set", "OPE-2434: the kind label sits directly under the plain sentence");
-  ok(card.content.includes("line one") && card.content.includes("line two"), "pending card carries the summary lines");
+  ok(!card.content.includes("Approval requested") && !card.content.includes("spend.set"), "OPE-2481: the card shows no kind label");
+  ok(!card.content.includes("line one") && !card.content.includes("line two"), "OPE-2481: the detail lines are not visible on the card");
+  ok(card.content.split("\n").at(-1) === `-# Asked by <@${r.requestedBy}> · expires ${shortUtc(r.expiresAt)}`, "the footer names the requester and the short expiry");
   ok(card.content.includes(`<@${r.requestedBy}>`), "pending card @-mentions the requester");
-  ok(card.content.includes(`expires ${r.expiresAt}`), "pending card shows the expiry timestamp");
+  ok(!card.content.includes(r.expiresAt), "pending card shows the expiry in short form, not the ISO string");
+  ok(!card.content.includes("⚠"), "an untainted card carries no warning");
+  const taintedCard = pendingDiscordCard(r, ["line one", "⚠ proposed on a turn that had ingested external content — read the payload above on its own merits; nothing outside this room asked for it."]);
+  ok(taintedCard.content.includes(TAINT_CARD_WARNING), "a tainted proposal shows the one warning line");
+  ok(!taintedCard.content.includes("ingested external content"), "…and not the full disclosure line");
   const noClock = pendingDiscordCard(row({ kind: "routine.permission", expiresAt: ROUTINE_PERMISSION_NO_EXPIRY }), ["permission"]);
   ok(!noClock.content.includes("9999"), "🔴 OPE-2162: a no-clock card's footer never prints the 9999 sentinel");
   ok(
-    noClock.content.includes(`-# Requested by <@${r.requestedBy}> · no expiry — ends when the routine's instruction is edited or the routine is deleted`),
+    noClock.content.includes(`-# Asked by <@${r.requestedBy}> · open until the routine changes`),
     "🔴 OPE-2162: …it names the routine generation as the card's bound instead",
   );
   ok(card.content.length < 2000, "pending card content is under Discord's 2000-char message cap");
@@ -200,20 +207,24 @@ function clickPayload(
 
   const approved = decidedDiscordCard({ ...r, status: "approved", decidedBy: "U_ORG_ADMIN" }, ["line one"], "spend limit set");
   ok(approved.components.length === 0, "decided card has NO components (buttons stripped — the UX half; CAS is the correctness half)");
-  ok(approved.content.includes("✅ Approved by <@U_ORG_ADMIN> · spend limit set"), "decided card renders the approved line + outcome");
+  ok(approved.content === "✅ Approved by <@U_ORG_ADMIN> — spend limit set", "decided card is one line: the approved line + outcome");
+  const bare = plainSummaryForRow(r).replace(/[.!?]$/u, "");
   const rejected = decidedDiscordCard({ ...r, status: "rejected", decidedBy: "U_ORG_ADMIN" }, ["line one"], "rejected");
-  ok(rejected.content.includes("❌ Rejected by <@U_ORG_ADMIN>"), "decided card renders the rejected line");
+  ok(rejected.content === `❌ Rejected by <@U_ORG_ADMIN> — ${bare}`, "decided card renders the rejected line with the headline");
+  const declined = decidedDiscordCard({ ...r, status: "rejected", decidedBy: "U_ORG_ADMIN" }, ["line one"], "it will not ask again");
+  ok(declined.content === `❌ Rejected by <@U_ORG_ADMIN> — ${bare} · it will not ask again`, "a durable decline's line follows the headline, so the clicker reads what was recorded");
   const expired = decidedDiscordCard({ ...r, status: "expired", decidedBy: "system" }, ["line one"], "expired");
-  ok(expired.content.includes("⏰ Expired"), "decided card renders the expired line");
+  ok(expired.content === `⏰ Expired — ${bare}`, "decided card renders the expired line");
+  ok(![approved, rejected, expired].some((c) => c.content.includes("line one") || c.content.includes("spend.set")), "a decided card shows no detail line and no kind");
 }
 
 {
   const wedge = row({ id: "wedge-render", status: "approved", decidedBy: JUDGE_LIFT_DECIDED_BY });
   const notice = judgeLiftNoticeDiscordCard(wedge, ["raise the cap to 5000"], "spend limit set");
-  ok(notice.content.includes("**Ran without asking: spend.set**"), "notice leads with 'Ran without asking', never 'Approval requested'");
-  ok(!notice.content.includes("Approval requested"), "notice never claims a card was requested — nobody was asked");
-  ok(notice.content.includes("raise the cap to 5000"), "notice carries the code-rendered summary lines");
-  ok(notice.content.includes("⚡ Auto-approved by the approval judge") && notice.content.includes("spend limit set"), "notice states WHO lifted it and WHAT the executor did");
+  ok(notice.content.split("\n")[0] === `**Ran without asking: ${plainSummaryForRow(wedge).replace(/[.!?]$/u, "")}**`, "notice leads with 'Ran without asking' and the plain headline, never 'Approval requested'");
+  ok(!notice.content.includes("Approval requested") && !notice.content.includes("spend.set"), "notice never claims a card was requested, and shows no kind");
+  ok(!notice.content.includes("raise the cap to 5000"), "notice does not show the detail lines");
+  ok(notice.content.includes("⚡ Auto-approved and already run · spend limit set"), "notice states that it was auto-approved, that it already ran, and WHAT the executor did");
   ok(!notice.content.includes("expires"), "notice carries no expiry line — nothing is pending");
   const nButtons = (notice.components[0] as unknown as { components: { type: number; style: number; label: string; custom_id: string }[] }).components;
   ok(notice.components.length === 1 && nButtons.length === 1, "notice holds exactly ONE button");
@@ -226,9 +237,9 @@ function clickPayload(
   );
   const slack = judgeLiftNoticeBlocks(wedge, ["raise the cap to 5000"], "spend limit set");
   const slackText = JSON.stringify(slack.blocks);
-  ok(slackText.includes(`Ran without asking: ${wedge.kind}`), "cross-surface: Slack's notice uses the same header phrase");
+  ok(slackText.includes(`Ran without asking: ${plainSummaryForRow(wedge).replace(/[.!?]$/u, "")}`), "cross-surface: Slack's notice uses the same header phrase");
   ok(slackText.includes("This should not have run"), "cross-surface: Slack's notice uses the same button label");
-  ok(slackText.includes("⚡ Auto-approved by the approval judge — no card was posted and this has already run · spend limit set"), "cross-surface: the ⚡ context line is word-for-word the same sentence");
+  ok(slackText.includes("⚡ Auto-approved and already run · spend limit set"), "cross-surface: the ⚡ context line is word-for-word the same sentence");
 
   assert.throws(() => judgeLiftNoticeDiscordCard(row({ org: "x".repeat(80), status: "approved", decidedBy: JUDGE_LIFT_DECIDED_BY }), ["l"], "done"), /100/);
   n++;
@@ -354,7 +365,7 @@ const signedHeaders = (body: string, timestamp: string): Headers =>
   ok(id === "dmsg-1", "poster resolves the created message's id");
   ok(calls[0].url.includes("/channels/C_ENG/messages"), "poster targets the pending row's own channel");
   const sent = JSON.parse(String(calls[0].init.body)) as { content: string; components: unknown[] };
-  ok(sent.components.length === 1 && sent.content.includes("Approval requested"), "poster sends the rendered content + components");
+  ok(sent.components.length === 1 && sent.content === pendingDiscordCard(row(), ["line one"]).content, "poster sends the rendered content + components");
   ok((calls[0].init.headers as Record<string, string>).authorization === "Bot test-token", "poster authenticates with the bot token header");
 
   const fetchFail = (async () => ({ ok: false, status: 403, json: async () => ({}) })) as unknown as typeof fetch;
@@ -436,7 +447,7 @@ const signedHeaders = (body: string, timestamp: string): Headers =>
     "clicker-denied renders per-REASON copy, not one generic refusal",
   );
 
-  const haltedNotice = "Refused: deciding this request is halted. …";
+  const haltedNotice = "⛔ Nothing was decided: an emergency halt is on. …";
   const haltedResp = discordResponseFor({ outcome: "halted", row: row({ id: "p-halt" }), notice: haltedNotice }) as { type: number; data: { content: string; flags: number } };
   ok(haltedResp.type === 4 && haltedResp.data.flags === 64, "OPE-1604: halted → ephemeral note, message untouched (the row stays pending for the same person to click after `resume`)");
   ok(haltedResp.data.content === haltedNotice, "🔴 OPE-1604: the halted arm relays core's ONE halt sentence verbatim — Discord and Slack cannot drift on what a halt says");
@@ -591,7 +602,7 @@ const store = getOperationalStore();
     const res = (await handleDiscordApprovalInteraction(clickPayload("oe-approval:dw-approve:approve:default", { user: "U_GUILD_ADMIN", permissions: "8" }), deps)) as Resp;
     ok(res.type === 7, "decision feedback: the interaction response is STILL the type-7 decided card (feedback is additive)");
     ok(notices.length === 1 && notices[0]!.rowId === "dw-approve", "decision feedback: an approve posts exactly one fresh notice for the decided row");
-    ok(notices[0]!.text.includes("APPROVED") && notices[0]!.text.includes("<@U_GUILD_ADMIN>"), "decision feedback: the notice names the outcome + the deciding admin (Discord shares Slack's <@id> mention syntax)");
+    ok(notices[0]!.text.startsWith("✅ Approved by <@U_GUILD_ADMIN> — "), "decision feedback: the notice names the outcome + the deciding admin (Discord shares Slack's <@id> mention syntax)");
     ok(wakes.length === 1 && wakes[0]!.token === DWIN_TOKEN && wakes[0]!.domain === "dwin", "decision feedback: the wake targets the owning window seat's current registry token");
     const origin = wakes[0]!.origin as { platform: string; channelId: string; guildId: string; messageId?: string };
     ok(origin.platform === "discord" && origin.guildId === "G1" && origin.channelId === "C_WIN" && origin.messageId === "900001", "decision feedback: the wake origin carries the INTERACTION's guild id + the row's channel, anchored to the card message");
@@ -602,7 +613,8 @@ const store = getOperationalStore();
     wakes.length = 0;
     notices.length = 0;
     await handleDiscordApprovalInteraction(clickPayload("oe-approval:dw-reject:reject:default", { user: "U_GUILD_ADMIN", permissions: "8" }), deps);
-    ok(notices.length === 1 && notices[0]!.text.includes("REJECTED") && notices[0]!.text.includes("NOT applied"), "decision feedback: a reject notice states plainly nothing was applied");
+    ok(notices.length === 1 && notices[0]!.text.startsWith("❌ Rejected by <@U_GUILD_ADMIN> — ") && !notices[0]!.text.includes("Approved"), "decision feedback: a reject notice states plainly it was rejected, never approved");
+    ok(!notices[0]!.text.includes("\n"), "decision feedback: the notice is one line");
     ok(wakes.length === 1 && wakes[0]!.message.includes("REJECTED"), "decision feedback: a reject emits one wake carrying the rejected outcome");
 
     await store.addPendingAction(winRow({ id: "dw-dm", argsJson: JSON.stringify({ org: "default", scopeKey: "discord/G1/C_WIN", level: "surface", monthlyTokens: 642, currentCap: null }) }));

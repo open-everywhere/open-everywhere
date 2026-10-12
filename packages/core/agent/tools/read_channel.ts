@@ -50,6 +50,7 @@ const readChannelEntry = defineTool({
       }),
     ),
     authoredByNonMember: z.boolean().optional(),
+    carriesUntrustedPost: z.boolean().optional(),
     possiblyIncomplete: z.boolean().optional(),
     partialReason: z.string().optional(),
     spool: z.object({ path: z.string().optional(), shown: z.number(), total: z.number() }).optional(),

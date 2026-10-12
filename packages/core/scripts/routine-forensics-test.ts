@@ -706,8 +706,10 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
     } as never,
     "U_ARMER",
   );
-  const id = /routine (r-[0-9a-f]+)/.exec(String(armed))?.[1];
-  ok(id !== undefined, "taint: the armed routine reports its id");
+  ok(String(armed).startsWith("routine started"), "taint: the click reports the routine as started");
+  ok(!/r-[0-9a-f]{6,}/.test(String(armed)), "taint: the outcome line shows no raw routine id");
+  const id = (await store.listAllRoutines()).find((r) => r.surfaceKey === SURFACE && r.prompt === "Summarise the page I just read.")?.id;
+  ok(id !== undefined, "taint: the armed routine is on the store");
   const stored = await store.getRoutine(ORG, SURFACE, id!);
   ok(stored?.taintedAtCreation === true, "taint: the propose-time verdict is FROZEN ONTO THE ROW (it used to live only on the card and the routine.create audit row)");
 
@@ -729,7 +731,8 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
     } as never,
     "U_ARMER",
   );
-  const cleanId = /routine (r-[0-9a-f]+)/.exec(String(cleanArmed))?.[1];
+  ok(String(cleanArmed).startsWith("routine started"), "taint: the clean click reports the routine as started");
+  const cleanId = (await store.listAllRoutines()).find((r) => r.surfaceKey === SURFACE && r.prompt === "Post the standup reminder.")?.id;
   const cleanStored = await store.getRoutine(ORG, SURFACE, cleanId!);
   ok(cleanStored !== null && !("taintedAtCreation" in cleanStored), "taint: a clean arm stores NO taint key (absent, never `false`)");
   const cleanListed = (await listRoutinesTool.execute({ includeDisabled: true, id: cleanId } as never, ctx)) as { routines: { taintedAtCreation: boolean }[] };

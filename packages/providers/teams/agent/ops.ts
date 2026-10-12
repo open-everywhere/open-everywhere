@@ -1,4 +1,5 @@
 import {
+  agentCommandName,
   configuredAgentName,
   DEPLOY_HOST_PLACEHOLDER,
   getSettings,
@@ -155,5 +156,6 @@ function teamsManifestOptionsFromSettings(opts: { readonly appName?: string } = 
   return {
     ...(opts.appName === undefined ? {} : { appName: opts.appName }),
     ...(agentName === undefined ? {} : { agentName }),
+    commandName: agentCommandName(),
   };
 }

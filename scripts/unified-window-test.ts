@@ -76,6 +76,8 @@ import { handleNotionSupervisorDispatch, notionSupervisorToken, planNotionSingle
 import { buildNotionAuth } from "@open-everywhere/provider-notion/agent/channels/notion-identity.js";
 import { registerDiscordProvider } from "@open-everywhere/provider-discord/agent/register.js";
 import { registerEmailProvider } from "@open-everywhere/provider-email/agent/register.js";
+import { registerA2aInboundPlatform } from "@open-everywhere/core/agent/a2a/inbound/platform.js";
+import { registerGoogleChatProvider } from "@open-everywhere/provider-google-chat/agent/register.js";
 import { registerNotionProvider } from "@open-everywhere/provider-notion/agent/register.js";
 import { registerGithubProvider } from "@open-everywhere/provider-github/agent/register.js";
 import { registerSlackProvider } from "@open-everywhere/provider-slack/agent/register.js";
@@ -135,6 +137,8 @@ registerTeamsProvider();
 registerLinearProvider();
 registerDiscordProvider();
 registerEmailProvider();
+registerA2aInboundPlatform();
+registerGoogleChatProvider();
 {
   const ALL_ORIGIN_PLATFORMS: Record<UnifiedWakeOrigin["platform"], true> = {
     slack: true,
@@ -144,6 +148,8 @@ registerEmailProvider();
     discord: true,
     teams: true,
     email: true,
+    a2a: true,
+    "google-chat": true,
   };
   for (const platform of Object.keys(ALL_ORIGIN_PLATFORMS)) {
     ok(wakeOriginCodec(platform) !== undefined, `wake-origin codec completeness: "${platform}" has a registered codec once boot wiring runs`);

@@ -177,6 +177,10 @@ const spendSet: ActionKind<SpendSetArgs> = {
     ].join(" and ");
     return `Set the monthly spend limit for ${plainScope(args.scopeLabel, args.scopeKey)} to ${figures || "a new figure"}`;
   },
+  consequence(args) {
+    const gap = args.coverage?.measured === "gap" ? ["some usage has no price, so this $ limit does not count it"] : [];
+    return [...spendChangeLines(args), ...gap].join(" · ");
+  },
   summarize(args) {
     return [
       `Set spend limit — ${scopeLine(args.scopeLabel, args.scopeKey, args.level)}`,
@@ -213,7 +217,7 @@ const spendSet: ActionKind<SpendSetArgs> = {
       ...(args.monthlyTokens != null ? [fmtCap(args.monthlyTokens)] : []),
       ...(args.monthlyUsd != null ? [fmtCapUsd(args.monthlyUsd)] : []),
     ].join(" + ");
-    return `spend limit set to ${set} for ${scopeWords(args.scopeLabel, args.scopeKey)} (${args.level})`;
+    return `spend limit set to ${set} for ${scopeWords(args.scopeLabel, args.scopeKey)}`;
   },
 };
 
@@ -231,7 +235,7 @@ const spendClear: ActionKind<SpendClearArgs> = {
   kind: "spend.clear",
   policy: "admin",
   plainSummary(args) {
-    return `Remove the spend limit override for ${plainScope(args.scopeLabel, args.scopeKey)}, so it goes back to the configured limit`;
+    return `Put ${plainScope(args.scopeLabel, args.scopeKey)} back on its configured spend limit`;
   },
   summarize(args) {
     const current = [
@@ -255,8 +259,8 @@ const spendClear: ActionKind<SpendClearArgs> = {
     });
     const scope = scopeWords(args.scopeLabel, args.scopeKey);
     return cleared
-      ? `spend limit override cleared for ${scope} (${args.level}) — reverted to config`
-      : `no spend limit override was set for ${scope} (${args.level}) — nothing to clear`;
+      ? `${scope} is back on its configured spend limit`
+      : `${scope} had no spend limit override, so nothing changed`;
   },
 };
 
@@ -285,7 +289,7 @@ const connectorRevoke: ActionKind<ConnectorRevokeArgs> = {
       action: "admin.connector.revoke",
       detail: { connector: args.connector, ...(args.reason ? { reason: args.reason } : {}) },
     });
-    return `connector \`${args.connector}\` revoked for ${placeWords({ key: args.scopeKey })}`;
+    return `${args.connector} turned off for ${placeWords({ key: args.scopeKey })}`;
   },
 };
 
@@ -299,7 +303,7 @@ const connectorClear: ActionKind<ConnectorClearArgs> = {
   kind: "connector.clear",
   policy: "admin",
   plainSummary(args) {
-    return `Remove the ${plainValue(args.connector)} connector override for ${placeWords({ key: args.scopeKey })}, so it goes back to the configured access`;
+    return `Put the ${plainValue(args.connector)} connector back on its configured access for ${placeWords({ key: args.scopeKey })}`;
   },
   summarize(args) {
     return [`Clear connector override \`${args.connector}\` — for ${placeWords({ key: args.scopeKey })}`, `Reverts to the config-as-code bundle grant`];
@@ -314,8 +318,8 @@ const connectorClear: ActionKind<ConnectorClearArgs> = {
       detail: { connector: args.connector, cleared },
     });
     return cleared
-      ? `connector override cleared for \`${args.connector}\` in ${placeWords({ key: args.scopeKey })} — reverted to config`
-      : `no connector override was set for \`${args.connector}\` in ${placeWords({ key: args.scopeKey })} — nothing to clear`;
+      ? `${args.connector} is back on its configured access in ${placeWords({ key: args.scopeKey })}`
+      : `${args.connector} had no override in ${placeWords({ key: args.scopeKey })}, so nothing changed`;
   },
 };
 
@@ -352,8 +356,8 @@ const haltResume: ActionKind<HaltResumeArgs> = {
       detail: { ...haltAddressFields(address), cleared },
     });
     return cleared
-      ? `halt cleared${args.orgWide === true ? " org-wide" : ` for ${scopeWords(args.scopeLabel, args.scopeKey ?? "")}`} — consequential acts work again`
-      : `no halt was in force${args.orgWide === true ? " org-wide" : ` for ${scopeWords(args.scopeLabel, args.scopeKey ?? "")}`} — nothing to clear`;
+      ? `halt lifted${args.orgWide === true ? " everywhere" : ` for ${scopeWords(args.scopeLabel, args.scopeKey ?? "")}`} — the agent can act again`
+      : `no halt was in force${args.orgWide === true ? " anywhere" : ` for ${scopeWords(args.scopeLabel, args.scopeKey ?? "")}`}, so nothing changed`;
   },
 };
 

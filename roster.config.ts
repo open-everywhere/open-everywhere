@@ -79,6 +79,12 @@ export default defineRoster({
         "wake-origin codec, thread read adapter, and the AgentMail transport. Off until " +
         "agent/email/policy.ts enables it.",
     },
+    "google-chat": {
+      about:
+        "google-chat (OPE-2442) — the agent as a Google Chat app: identity mapper, capability " +
+        "manifest, post arm (threaded replies into the trigger's space), wake-origin codec, and " +
+        "host-notice ops. Off until agent/google-chat/policy.ts enables it.",
+    },
     github: {
       about:
         "github — the CHAT SURFACE only: identity mapper, capability manifest, post arm, " +

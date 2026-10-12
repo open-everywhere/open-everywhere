@@ -222,6 +222,10 @@ export class SyntheticSlack {
     return this.cfg.adminUserId;
   }
 
+  get targetUrl(): string {
+    return this.cfg.targetUrl;
+  }
+
   get org(): string {
     return this.cfg.org;
   }

@@ -86,7 +86,7 @@ try {
   ok(msg.includes("custom:fastlane-lower"), "create_skill/lowered: the reply NAMES the element that lowered the verb");
   ok(msg.includes("no card was posted") && msg.includes("ALREADY run"), "create_skill/lowered: the reply states both corrections (no card; already ran)");
   ok(msg.includes('skill "fast-runbook"'), "create_skill/lowered: the reply still says WHAT was done, in the tool's own voice");
-  ok(msg.includes("armed from the next turn"), "create_skill/lowered: the reply carries the ActionKind's own outcome line");
+  ok(msg.includes("the agent follows it from its next turn"), "create_skill/lowered: the reply carries the ActionKind's own outcome line");
   ok(msg.includes("Tell the user"), "create_skill/lowered: the reply asks to be relayed (with no card, it is the ONLY report the asker can get)");
   ok(cardPosts === 0, `auto-approve posts NO card at all (${cardPosts} posts)`);
 
@@ -102,7 +102,7 @@ try {
   const msg = String(res.message);
   ok(!msg.includes("card posted") && !msg.includes("awaiting a human"), "delete_skill/lowered: no card claim, no waiting-on-a-human claim");
   ok(msg.includes('delete of skill "fast-runbook"') && msg.includes("custom:fastlane-lower"), "delete_skill/lowered: says what was deleted and who lowered it");
-  ok(msg.includes('skill "fast-runbook" deleted from domain "fastlane"'), "delete_skill/lowered: carries skill.delete's own outcome line");
+  ok(msg.includes("skill fast-runbook deleted from fastlane"), "delete_skill/lowered: carries skill.delete's own outcome line");
   ok((await getOperationalStore().listDomainSkills("default", "fastlane")).every((r) => r.name !== "fast-runbook"), "delete_skill/lowered: the skill is actually GONE");
   ok(cardPosts === 0, "auto-approve still posts no card on the second tool");
 }

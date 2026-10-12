@@ -31,9 +31,10 @@ Two surface-wide notes before the rows:
   @mention wake, JWT-validated inbound, identity binding, channel wrap, model turn and reply
   post-back — runs end-to-end against a real Microsoft 365 tenant²⁰. Most other Teams cells
   read 🔧: the code exists and tests pin it, but no live leg has driven that path yet. The
-  approval card is one of those 🔧 cells since OPE-2424²⁷. The ❌ cells are features Teams does
-  not have: slash commands, name-drop wake, the channel intro, first-contact onboarding and
-  DM-partner verification.
+  approval card is one of those 🔧 cells since OPE-2424²⁷, and it covers personal and group chats
+  since OPE-2447. The `/oe` commands¹⁹, the name-drop wake²⁹ and the channel intro³⁰ are 🔧 since
+  OPE-2443, OPE-2444 and OPE-2445. The one ❌ left in this group is pinned-instruction adoption,
+  which Microsoft has no API for (³⁰). DM-partner verification is 🔧 since OPE-2446²⁸.
 - **Discord has two ingestion paths.** The HTTP **interactions** endpoint (slash commands)
   works on a plain serverless deploy; **ambient messages** (@mentions, DMs, channel follow-ups)
   only exist on the **Gateway relay** path¹. Cells below assume the relay is running; without
@@ -45,16 +46,16 @@ Two surface-wide notes before the rows:
 | --- | :-: | :-: | :-: |
 | Wake on @mention in a channel | ✅ | ✅ ²⁰ | ✅ ¹ |
 | Wake in a DM, no mention needed | ✅ | 🔧 | ✅ ¹ |
-| Slash-command invocation | ❔ ² | ❌ | 🔧 |
+| Slash-command invocation | ❔ ² | 🔧 ¹⁹ | 🔧 |
 | Reply without re-tagging (engaged threads) | ✅ | 🔧 ²³ | ✅ ¹ |
 | Judged silence (may decline to reply on a follow) | ✅ | 🔧 | ✅ |
-| Name-drop wake (opt-in, per domain) | ✅ | ❌ | ✅ |
+| Name-drop wake (opt-in, per domain) | ✅ | 🔧 ²⁹ | ✅ |
 | One task = one thread | ✅ | 🔧 ³ | ✅ ⁴ |
 | Working indicators | ✅ ⁵ | 🔧 ⁶ | ✅ ⁷ |
 | Durable multi-turn sessions (resume across messages) | ✅ | 🔧 | ✅ ⁸ |
 | Reads channel backscroll for context | ✅ | 🔧 ²⁵ | 🔧 ¹ |
-| Intro when invited into a channel | ✅ | ❌ | ❌ |
-| First-contact onboarding + pinned-instruction adoption | ✅ | ❌ | ❌ |
+| Intro when invited into a channel | ✅ | 🔧 ³⁰ | ❌ |
+| First-contact onboarding + pinned-instruction adoption | ✅ | 🚧 ³⁰ | ❌ |
 | Stop following on request (judged, no magic word) | ✅ | 🔧 ²³ | ✅ ⁹ |
 | Stop an in-flight turn (a reaction / `/oe stop`) | ✅ | 🔧 ²² | ✅ |
 
@@ -66,7 +67,7 @@ Two surface-wide notes before the rows:
 | Per-surface memory silo | ✅ | 🔧 | ✅ |
 | Domain/org-brain sharing (gated by trust, not public/private) | ✅ | 🚧 ¹⁰ | 🚧 ¹¹ |
 | External/guest trust gate, positively verified | ✅ | 🚧 ¹² | 🚧 ¹² |
-| DM-partner verification (unlocks the shared `dm` layer) | ✅ | ❌ | ❌ |
+| DM-partner verification (unlocks the shared `dm` layer) | ✅ | 🔧 ²⁸ | ❌ |
 | Memory admin tools from any channel/DM | ✅ | 🔧 ¹³ | 🔧 ¹³ |
 
 ## Governance
@@ -81,7 +82,7 @@ Two surface-wide notes before the rows:
 | Spend & usage reporting tools | ✅ | 🔧 | 🔧 |
 | Channel-history read tools (`read_channel` / `read_thread`) | ✅ | 🔧 | 🔧 |
 | Offer to pick a request back up after the person consents (OAuth return hop) | 🚧 ²⁴ | 🚧 ²⁴ | 🚧 ²⁴ |
-| Zero-inference `/oe` slash commands (status/budget, no model turn) | 🔧 ¹⁸ | ❌ ¹⁹ | ✅ ¹⁸ |
+| Zero-inference `/oe` slash commands (status/budget, no model turn) | 🔧 ¹⁸ | 🔧 ¹⁹ | ✅ ¹⁸ |
 
 ## Proactivity
 
@@ -136,8 +137,9 @@ Two surface-wide notes before the rows:
     bind `external` (shared/org memory gated off) unless the deploy vouches for them
     (`identity.blanketTrust: "internal"` or a per-surface vouch). Teams does honour positive facts when
     present. A Shared Channel always binds `external`, with no override. The Bot Connector roster
-    also identifies a guest positively, and a guest binds `external` ahead of any vouch. Teams has no
-    positive check that confirms a member, so the roster can only narrow trust, never widen it.
+    also identifies a guest positively, and a guest binds `external` ahead of any vouch. In a
+    channel or a group chat the roster can only narrow trust, never widen it. In a 1:1 chat a
+    roster member of the home tenant verifies the DM partner (²⁸).
 13. The memory-admin tools aren't platform-gated; they gate on the **caller** being an org or
     domain admin, so your `Domain.admins` lists must carry that platform's user ids — written
     platform-qualified (`teams/<user-id>`, `discord/<user-id>`), since the roster is matched
@@ -172,8 +174,20 @@ Two surface-wide notes before the rows:
     itself is exercised with fabricated signed requests. See
     [Discord](./discord.md#slash-commands-oe-zero-inference-control-plane) /
     [Slack](./slack.md#slash-commands-oe-zero-inference-control-plane).
-19. Teams has no slash-command surface wired at all yet — plain backlog, not a
-    platform limitation (Bot Framework messaging extensions could carry this).
+19. **Teams `/oe` commands, built 2026-10-12 (OPE-2443), not yet live-verified.** A Teams bot
+    command is message text, not a slash-command event, so the inbound route reads the text. A
+    message that starts with `/oe` is a command in any conversation. A message that starts with
+    `oe <verb>` (no slash) is a command only when it @mentions the bot or is in a personal chat, and
+    only for a known verb — that is the text a pick from the app's command list inserts, because the
+    manifest's `commandLists` suggests `oe help`, `oe status`, `oe budget` and `oe stop`. Every verb
+    runs through core's `runOeCommand`, the same dispatcher as Slack and Discord, with no model turn
+    and no spend gate. **The answer is not ephemeral:** a Teams bot cannot post a message that only
+    one channel member sees, so the answer posts into the conversation that asked (the reply chain
+    in a channel). `/oe budget raise` and `/oe budget clear` post their card in place — a channel
+    card in the channel, a chat card in the chat. `/oe stop` stops the turn anchored on the asking
+    conversation. A messaging extension was the other design; it was not chosen, because none of
+    the `/oe` verbs is a search or an action card. See
+    [Teams § `/oe` commands](./teams.md#oe-commands-zero-inference-control-plane).
 20. **Live-verified 2026-07-08** on a real Microsoft 365 tenant against the production deploy
     (single-tenant Azure Bot, app id registered in `teams-app/manifest.filled.json`): an
     @mention of the bot in a team channel ("hello") woke a turn and posted a reply back — the
@@ -183,17 +197,21 @@ Two surface-wide notes before the rows:
     posts a genuine Graph @mention as a real user, the bot wakes, and the reply is read back
     off the message's reply chain and judged. Only the channel-@mention path is exercised so
     far; DM wake, threading, and proactive fires remain 🔧.
-21. **The PROPOSE works on Teams, and since OPE-2424 a Teams CHANNEL hosts the card itself**
-    (²⁷). A personal or group chat still cannot: it carries no channel id, so its card is
+21. **The PROPOSE works on Teams, and every Teams conversation hosts its own card** — a channel
+    since OPE-2424 (²⁷), and a personal or group chat since OPE-2447. A chat carries no channel id,
+    so the Teams bundle names the chat's own conversation as its card room. The redirect below is
+    now for a room with no card path at all (GitHub, Linear, Notion): its card is
     **routed to a card-capable channel in the same domain** — a Slack or Discord channel, or a
-    Teams channel — and the agent tells you which one and that someone there has to act on it. So `purge_memory`, `request_access`, `revoke_connector`,
+    Teams channel — and the agent tells you which one and that someone there has to act on it. Before
+    OPE-2447 a Teams chat took that redirect too, so `purge_memory`, `request_access`, `revoke_connector`,
     `clear_connector_override`, `set_spend_limit`, `clear_spend_limit`, the five routine-authoring
     verbs (`cancel_routine`, `edit_routine`, `enable_routine`, `add_routine_rule`,
     `remove_routine_rule`), `open_pull_request`, `create_skill`, `delete_skill`, the
     three ticket verbs (`set_state`, `assign`, `create_ticket`), `create_agent` and
-    `declare_webhook` all work from a Teams personal or group chat *provided the domain has
-    somewhere to put a card* — if it doesn't, or the room is in no explicit domain, you get a refusal naming
-    the config to change. (`create_agent` also refuses a room that's already IN a domain — its
+    `declare_webhook` worked from a Teams personal or group chat only *provided the domain had
+    somewhere to put a card*. Now they card in the chat. A card-less room that is in no explicit
+    domain, or whose domain holds no card-capable channel, gets a refusal naming the config to
+    change. (`create_agent` also refuses a room that's already IN a domain — its
     whole job is turning a domain-less channel into one, which is exactly the precondition a
     redirect needs, so in practice it either finds no domain to route through or hits that other
     refusal a step later; either way nothing is provisioned from a card-less room that's already
@@ -201,11 +219,11 @@ Two surface-wide notes before the rows:
     moving its card would move the secret with it), which still refuses outright. 🔧 rather than ✅
     because the redirect is pinned by tests, not yet exercised against a live tenant. See
     [Control plane § Asking from a surface that can't host a card](../../security/control-plane.md#in-slack-approvals).
-    The `/oe budget` slash commands are excluded — they refuse rather than redirect, and Teams
-    has no slash-command surface anyway (¹⁹).
-22. **Every surface has a stop control; three of them wear a different shape.** Teams has no
-    slash-command surface, but it does deliver `messageReaction` activities — so the control
-    there is a reaction. Its vocabulary is six fixed values with no ✋ in it, so Teams uses 😠,
+    The `/oe budget` slash commands are excluded — they refuse rather than redirect. On Teams they
+    card in place, because every Teams conversation now hosts its own card (¹⁹).
+22. **Every surface has a stop control; three of them wear a different shape.** Teams delivers
+    `messageReaction` activities, so the control there is a reaction, and since OPE-2443 the
+    `/oe stop` command (¹⁹) as well. Its vocabulary is six fixed values with no ✋ in it, so Teams uses 😠,
     and Teams sends the event only for messages the agent itself sent. Linear delivers
     comment-reaction events and uses ✋ like Slack and Discord, and the host places the glyph on
     the issue's comment (OPE-899/900) the same way it does there. GitHub and Notion send **no**
@@ -257,13 +275,46 @@ Two surface-wide notes before the rows:
     (the `Domain.admins` roster, written `teams/<user-id>`), the same clicker gate, the same halt
     check and the same `approval.*` audit rows. The decided card replaces the pending one, and a
     decision notice posts into the card's own reply chain. The judge-lift notice carries its
-    "This should not have run" button on Teams too. What the card does NOT cover: a personal or
-    group chat carries no channel id, so its card goes to a card-capable channel in the same domain
-    (²¹). Teams has no platform-native admin leg — a team owner is not an OE approver. The
+    "This should not have run" button on Teams too. A personal or group chat hosts its own card
+    since OPE-2447: the card posts into the chat, and the decision wakes the chat's own DM seat and
+    no other. A chat card's decision never wakes a domain window, even under a tenant-wide domain
+    claim. Teams has no platform-native admin leg — a team owner is not an OE approver. The
     audience-floor legs that need a room roster stay inert, because no Teams roster supplier is
     registered; so a kind that hands the clicker a live secret is refused on a Teams tap. 🔧 rather
     than ✅ until the `S-CARD-teams` e2e leg passes on a live tenant — its tap leg needs a person in
     the Teams client, because Graph cannot press a card button.
+28. **Teams DM-partner verification, built 2026-10-12 (OPE-2446), not yet live-verified.** A 1:1
+    partner is verified when the Bot Connector roster reports a recognised member role (`user`,
+    `member`, `owner`, `admin` or `organizer`; any other role gives no verdict) and the chat's tenant
+    is the bot app's own home tenant (`MICROSOFT_TENANT_ID`, or `TEAMS_TENANT_ID`). A member of
+    another tenant, or a deployment with neither setting, stays unverified and fails closed — unless
+    the deployment sets `identity.blanketTrust: "internal"`, which skips the DM-partner gate for
+    every DM, the foreign-tenant member included. The verdict reads the tenant id off the
+    activity, so it rests on the inbound route's `channelId` check (OPE-2455): the route accepts
+    only `msteams`, which the Bot Framework service stamps per channel. No live probe has confirmed
+    that a Direct Line client cannot override `channelId`. The roster lookup goes only to an
+    allowlisted Bot Connector host. 🔧 rather than ✅ until a live 1:1 chat shows a member reaching
+    the `dm` layer.
+29. **Teams name-drop wake, built 2026-10-12 (OPE-2444), not yet live-verified.** A team-channel
+    message that names the agent without an @mention wakes it for a judged turn on a domain with
+    `nameDropWake: true` — the same token set, domain flag and audit rows as Slack and Discord
+    (`surface.name_drop_woke` / `surface.name_drop_silent`). The name is the one Teams relays for the
+    bot on the activity, else the app's Graph display name. Channels only: a personal chat is always
+    answered, and a group chat is gated by the engagement seam (²³). A name-drop engages no reply
+    chain, so a later plain message in that chain does not wake the agent. **The tenant decides
+    whether this ever runs:** Microsoft delivers a non-@mention channel message to the bot only where
+    a team owner consented to `ChannelMessage.Read.Group` at install, and no API reports that
+    consent. Without it, a name-drop never reaches the deployment. The `J-NAMEDROP-teams` e2e leg
+    states the same condition.
+30. **Teams channel intro, built 2026-10-12 (OPE-2445), not yet live-verified.** The agent posts
+    core's fixed intro once per team channel, on the same once-only marker Slack uses. Two doors
+    reach it: the join (the `conversationUpdate` that adds the app to a team, which Teams sends in
+    the General channel only) and the first @mention in any other channel. Unlike Slack's join
+    intro, it is fixed copy and not a judged model turn: the Bot Connector has no backscroll to read
+    first. A personal or group chat, a shared channel, and a room the external-participant policy
+    silences get no intro, and a marker that cannot be written posts nothing. **Pinned-instruction
+    adoption is ⛔ on Teams:** Microsoft Graph has no pinned messages for a team channel, and the
+    Bot Connector has no pin API, so the 🚧 cell is the intro half alone.
 
 ## How to read this — and how it's updated
 

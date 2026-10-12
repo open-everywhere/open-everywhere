@@ -5,6 +5,7 @@ import {
   domainsNamingSilo,
   getConfig,
   readDomainMemory,
+  memoryLineForReader,
   renderMemoryMarkdown,
   type Domain,
   type MemoryWriteEvent,
@@ -57,9 +58,9 @@ function memoryCanvasMarkdown(domain: Domain, groups: Parameters<typeof renderMe
   const name = agentDisplayName();
   const body = renderMemoryMarkdown(`What ${name} knows — ${domain.title ?? domain.name}`, groups, nowIso);
   const footer =
-    `\n---\n${name} keeps this canvas up to date from this domain's memory. ` +
-    `To correct or forget a line, ask ${name} in this channel. A direct edit to this canvas is replaced on the next memory change.\n`;
-  const text = defuseCanvasText(body);
+    `\n---\n${name} keeps this canvas up to date. To correct or forget a line, ask ${name} in this channel. ` +
+    `Edits made directly to this canvas get replaced.\n`;
+  const text = defuseCanvasText(memoryLineForReader(body));
   const cut = text.length > CANVAS_MARKDOWN_MAX ? text.slice(0, CANVAS_MARKDOWN_MAX) + "\n\n_This canvas is full. Ask in this channel for the rest._\n" : text;
   return cut + footer;
 }
@@ -111,8 +112,8 @@ function withdrawnCanvasMarkdown(): string {
   const name = agentDisplayName();
   return (
     `# ${name}'s memory canvas was withdrawn\n\n` +
-    `This channel is shared outside the workspace, or one of its members is not a full member, so ${name} no longer shows a domain's memory here. ` +
-    `The memory itself is unchanged. Members can still ask ${name} about it where the domain's memory is readable.\n`
+    `This channel includes guests or people from outside your organisation, so ${name} no longer shows its memory here. ` +
+    `The memory itself is unchanged. Members can still ask ${name} about it in an internal channel.\n`
   );
 }
 

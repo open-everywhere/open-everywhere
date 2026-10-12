@@ -45,10 +45,11 @@ URL, so this signature is the only door.
 | Route | What it does |
 |---|---|
 | `GET /health` | The page's address and title. |
-| `POST /cmd` | One agent action: `go` (url), `look` (the page's text and its elements, each with a ref), `click` (ref), `type` (ref, text, submit), `select` (ref, value), `key`, `scroll`, `back`, `sites` (cookie domains only). |
+| `POST /cmd` | One agent action: `go` (url), `look` (the page's text and its elements, each with a ref), `find` (role, name: is that element on the page — a read the rehearsal of a taught draft uses), `click` (ref), `type` (ref, text, submit), `select` (ref, value), `key`, `scroll`, `back`, `sites` (cookie domains only). |
 | `GET /frame` | A JPEG of the page (1280×800), for the watch page. |
 | `POST /input` | One event from the person while they hold the controls: `click`, `dblclick`, `text`, `key`, `scroll`, `go`, `back`, `reload`. OE checks the take-over lock before it forwards one. |
 | `POST /lock` | Who holds the controls, from OE. While the person does, `/cmd` refuses. |
+| `POST /teach` | `{"action":"start","maxMs":…}` starts recording the person's demonstration (at most ten minutes); `{"action":"stop"}` stops it and answers with the steps, or `none: true` when no recording was running (OPE-2454). |
 | `POST /shutdown` | Close Chromium cleanly (the profile flushes to disk), then exit. |
 
 An action that fails answers `{ "ok": false, "code": …, "message": … }` with a fixed code and a short fixed
@@ -73,6 +74,12 @@ message, never the page's own error text (which can carry a URL with a token).
   it after they take the controls.
 - **No values leave the box.** No answer carries a field's value or a cookie value. `sites` lists cookie
   domains only.
+- **A demonstration records names, never the text in a field** (`teach.mjs`). While OE has started a
+  recording, each input from the person adds one step: the page's origin and path (never a query, a fragment
+  or a title), and the role and label of the link, button or field they used. A text input records the field,
+  never the text; an editor is named from its label or placeholder, never from its contents; and a secret field
+  is marked so. A path can still carry an id or a token, and a label can repeat typed text. The recording stops
+  at ten minutes or 200 steps, and it lives in the box process's memory only.
 - **One Chromium per profile.** At start the program removes Chromium's stale single-instance lock, because OE
   stops any other box on the same profile before it starts this one.
 - It runs as the image's non-root user (`pwuser`). OE starts the docker container with no capabilities, no

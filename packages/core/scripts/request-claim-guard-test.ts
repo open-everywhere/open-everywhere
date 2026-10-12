@@ -87,6 +87,19 @@ const SIBLING_NOTES: readonly string[] = [
   "(No card was raised on this turn. A gated notion write ran on it, which means an approval already stood for this call — not that the write is ungated.)",
   "(No durable memory write is recorded for this turn, so I cannot say the note is stored.)",
 ];
+{
+  const { standingAuthorityNote } = await import("../agent/channels/approval-claim-guard.js");
+  const { WITHHELD_CLAIM_NOTE } = await import("../agent/channels/memory-claim-guard.js");
+  const rendered = [
+    standingAuthorityNote({ approvalGateRan: true, gatedWrites: [], grants: [] }),
+    standingAuthorityNote({ approvalGateRan: false, gatedWrites: [{ connection: "notion", op: "create-pages", tier: "write" }], grants: [] }),
+    standingAuthorityNote({ approvalGateRan: false, gatedWrites: [], grants: [{ host: "api.notion.com", credential: "notion-rest", verb: ["POST", "PATCH"] }] }),
+    WITHHELD_CLAIM_NOTE,
+  ];
+  for (const note of rendered) {
+    ok(note !== undefined && applyRequestClaimGuard(note, NOTHING).body === note, `SIBLING: today's host-voiced note passes through untouched — ${String(note).slice(0, 40)}…`);
+  }
+}
 for (const note of SIBLING_NOTES) {
   ok(applyRequestClaimGuard(note, NOTHING).body === note, `SIBLING: a host-voiced note passes through untouched — ${note.slice(0, 40)}…`);
 }

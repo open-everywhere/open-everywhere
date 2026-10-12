@@ -355,11 +355,11 @@ console.log("§cap one fire posts at most MAX_RUN_REFUSALS cards:");
   ok(cappedEntry?.permission === describeDeclaredPermissionKind(connectorToolPermissionKind(ops[1]!)), "§cap: named in the SAME plain language every other report line uses");
   const cappedReport = withRunRefusalBlock("The digest is published.", capped.entries);
   ok(
-    cappedReport.includes("no card was offered for it — this run reached its card limit"),
+    cappedReport.includes("not asked this time, because this run already sent as many requests as it may"),
     "🔴 §cap: the report NAMES the capped loss and says why no card came",
   );
-  ok(!cappedReport.includes("no card is waiting for it"), "🔴 §cap: …and never 'no card is waiting', which claims a fact nothing established and sends an owner to an edit_routine bump");
-  ok(!cappedReport.includes("could not be read"), "§cap: …nor blames a store that was never asked");
+  ok(!cappedReport.includes("no approval request is open"), "🔴 §cap: …and never 'no card is waiting', which claims a fact nothing established and sends an owner to an edit_routine bump");
+  ok(!cappedReport.includes("couldn't check"), "§cap: …nor blames a store that was never asked");
 
   const sameSessionAfterNewTurn = await inSession(async () => {
     resetTurnClock("turn_cap_1", Date.now(), "sess-cap");

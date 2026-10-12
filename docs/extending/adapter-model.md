@@ -265,7 +265,9 @@ own package, and it is not documentation:
 if its ambient route can report a real ABSTENTION — "the built-in had no opinion" — separately from a
 policy drop. Slack's `routeNameDropEvent` stages its gates and can. Discord's `nameDropEligible`
 folds the name match into one boolean and cannot, so Discord declines until somebody splits that
-function. Teams, GitHub, Linear and Notion have no ambient name-drop route at all.
+function. Teams has a name-drop route since OPE-2444, and it declines for Discord's reason: its
+`resolveTeamsNameDrop` answers one boolean. GitHub, Linear and Notion have no ambient name-drop route
+at all.
 
 So a new chat surface adapter joins this table with `offers: false` and a `note` saying which of
 those two it is. Changing that to `true` is a change to core plus that surface's route, reviewed

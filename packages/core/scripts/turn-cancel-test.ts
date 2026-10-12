@@ -1119,7 +1119,7 @@ ok(renderHelp().includes("/oe stop"), "…and help ADVERTISES stop — an afford
 {
   const binding = { platform: "slack", org: "org-a", workspace: "T1", target: { channelId: "C1" }, mode: "channel", trust: "internal" } as unknown as SurfaceBinding;
   const unwired = await runStop(binding, undefined);
-  ok(/isn't wired/i.test(unwired), "an unwired surface tells the user plainly instead of failing silently");
+  ok(/can.t stop from a command here/i.test(unwired), "an unwired surface tells the user plainly instead of failing silently");
 
   const calls: { sessionId?: string; turnId?: string } = {};
   const wired = await runStop(binding, fakeAttach("accepted", calls));

@@ -79,7 +79,7 @@ const SURFACES: readonly SurfaceRow[] = [
   { id: "dm-seat", platform: "slack", workspace: "T1", surface: "DM1", mode: "dm", target: { platform: "slack", channelId: "DM1" } },
 ];
 
-const posted: { platform: string; text: string }[] = [];
+const posted: { platform: string; text: string; id: string }[] = [];
 
 for (const platform of new Set(SURFACES.map((s) => s.platform))) {
   registerIdentityMapper(platform, (ctx) => {
@@ -98,13 +98,23 @@ for (const platform of new Set(SURFACES.map((s) => s.platform))) {
   registerPostArm({
     platform,
     dispatchReply: async (_target, text) => {
-      posted.push({ platform, text });
+      posted.push({ platform, text, id: `msg-${posted.length + 1}` });
       return `msg-${posted.length}`;
     },
   });
 }
 
 const lastPosted = (): string => posted[posted.length - 1]?.text ?? "";
+
+async function lastShown(): Promise<string> {
+  const last = posted[posted.length - 1];
+  if (last === undefined) return "";
+  ok(!last.text.includes(PROVENANCE_FOOTER_PREFIX), `🔴 OPE-2487: the room's bytes carry NO sources footer (saw: ${JSON.stringify(last.text.slice(0, 200))})`);
+  const rows = await readAudit({ org: ORG, action: REPLY_PROVENANCE_ACTION });
+  const row = [...rows].reverse().find((r) => (r.detail as { id?: string } | undefined)?.id === last.id);
+  const sources = (row?.detail as { sources?: string } | undefined)?.sources;
+  return sources === undefined ? last.text : `${last.text}\n\n${PROVENANCE_FOOTER_PREFIX} ${sources}`;
+}
 
 function seatCtx(row: SurfaceRow, turnId: string): BindableContext {
   return {
@@ -198,9 +208,9 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
       messageId = await postReply(row.target, ANSWER, replyAuditFor(seatCtx(row, turnId), "tool", `wake-${n}`));
     });
     ok(
-      lastPosted() === `${ANSWER}\n\n${PROVENANCE_FOOTER_PREFIX} notion`,
+      (await lastShown()) === `${ANSWER}\n\n${PROVENANCE_FOOTER_PREFIX} notion`,
       `🔴 §1/${row.id}: the room receives the model's text plus the footer for the WORKER's read. This is the whole ticket — a seat that delegated the read used to post the answer with no footer at all ` +
-        `(saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+        `(saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
     );
     const rows = await provenanceRowsFor(messageId);
     ok(rows.length === 1, `🔴 §1/${row.id}: the reply writes EXACTLY ONE ${REPLY_PROVENANCE_ACTION} row (saw ${rows.length})`);
@@ -233,8 +243,8 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
     messageId = await postReply(row.target, `${ANSWER} (seat)`, replyAuditFor(seatCtx(row, turnId), "tool", "wake-control"));
   });
   ok(
-    lastPosted() === `${ANSWER} (seat)\n\n${PROVENANCE_FOOTER_PREFIX} notion`,
-    `🔴 §2: a seat-turn read names the connection ONCE — not twice, and not "notion, notion" (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+    (await lastShown()) === `${ANSWER} (seat)\n\n${PROVENANCE_FOOTER_PREFIX} notion`,
+    `🔴 §2: a seat-turn read names the connection ONCE — not twice, and not "notion, notion" (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
   );
   const rows = await provenanceRowsFor(messageId);
   ok(rows.length === 1, `🔴 §2: and it writes EXACTLY ONE ${REPLY_PROVENANCE_ACTION} row (saw ${rows.length})`);
@@ -254,8 +264,8 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
     messageId = await postReply(row.target, `${ANSWER} (empty)`, replyAuditFor(seatCtx(row, turnId), "tool", "wake-empty"));
   });
   ok(
-    lastPosted() === `${ANSWER} (empty)`,
-    `🔴 §3: a delegation whose worker read no connector delivers the model's text BYTE-IDENTICAL — no footer, not even a trailing newline (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+    (await lastShown()) === `${ANSWER} (empty)`,
+    `🔴 §3: a delegation whose worker read no connector delivers the model's text BYTE-IDENTICAL — no footer, not even a trailing newline (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
   );
   ok((await provenanceRowsFor(messageId)).length === 0, "🔴 §3: …and writes NO provenance row. An empty record is still a claim, and there is nothing to claim");
   const carried = (await readAudit({ org: ORG, action: DELEGATED_PROVENANCE_ACTION })).filter((r) => (r.detail as { task?: unknown } | undefined)?.task === "agent-empty");
@@ -301,8 +311,8 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
     messageId = await postReply(row.target, `${ANSWER} (two)`, replyAuditFor(seatCtx(row, turnId), "tool", "wake-two"));
   });
   ok(
-    lastPosted() === `${ANSWER} (two)\n\n${PROVENANCE_FOOTER_PREFIX} notion, linear`,
-    `🔴 §5: BOTH workers' sources reach the one reply, in settle order. A carriage that replaced the ledger instead of appending would name only the second (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+    (await lastShown()) === `${ANSWER} (two)\n\n${PROVENANCE_FOOTER_PREFIX} notion, linear`,
+    `🔴 §5: BOTH workers' sources reach the one reply, in settle order. A carriage that replaced the ledger instead of appending would name only the second (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
   );
   const rows = await provenanceRowsFor(messageId);
   ok(rows.length === 1 && ((rows[0]!.detail as { connections?: unknown[] }).connections ?? []).length === 2, "§5: one row for the one reply, naming both connections");
@@ -316,7 +326,7 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
     await runDelegation({ row, taskId: "agent-spent_1", callId: "call_spent", seatTurnId: "seat_turn_spent_1", tools: ["notion__get_page"] });
     await postReply(row.target, `${ANSWER} (first)`, replyAuditFor(seatCtx(row, "seat_turn_spent_1"), "tool", "wake-spent-1"));
   });
-  ok(lastPosted().includes(`${PROVENANCE_FOOTER_PREFIX} notion`), "§6 precondition: the first answer carries the footer");
+  ok((await lastShown()).includes(`${PROVENANCE_FOOTER_PREFIX} notion`), "§6 precondition: the first answer carries the footer");
   const inSeat2 = newSession(SEAT_SESSION);
   await inSeat2(async () => {
     await noteTaskStarted({ taskId: "agent-spent_2", callId: "call_spent", turnId: "turn_seat_1", kind: "agent", tool: "agent" }, SEAT_SESSION);
@@ -328,8 +338,8 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
     messageId = await postReply(row.target, `${ANSWER} (second)`, replyAuditFor(seatCtx(row, "seat_turn_spent_2"), "tool", "wake-spent-2"));
   });
   ok(
-    lastPosted() === `${ANSWER} (second)`,
-    `🔴 §6: the second answer is BYTE-IDENTICAL — the first carry SPENT the row, so nothing is footed onto a reply that drew on nothing (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+    (await lastShown()) === `${ANSWER} (second)`,
+    `🔴 §6: the second answer is BYTE-IDENTICAL — the first carry SPENT the row, so nothing is footed onto a reply that drew on nothing (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
   );
   ok((await provenanceRowsFor(messageId)).length === 0, "🔴 §6: …and it writes no provenance row either");
 }
@@ -381,9 +391,9 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
     messageId = await postReply({ platform: "slack", channelId: "C1" }, `${ANSWER} (unified)`, replyAuditFor(uniCtx("uni_turn_1"), "tool", WAKE_A));
   });
   ok(
-    lastPosted() === `${ANSWER} (unified)\n\n${PROVENANCE_FOOTER_PREFIX} notion`,
+    (await lastShown()) === `${ANSWER} (unified)\n\n${PROVENANCE_FOOTER_PREFIX} notion`,
     `🔴 §7: the reply answering wake A names ONLY the source read for A. Naming "linear" here would tell conversation A that conversation B consulted Linear — the OPE-1713 disclosure, reopened on the ` +
-      `delegated road (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+      `delegated road (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
   );
   const rows = await provenanceRowsFor(messageId);
   ok(
@@ -412,8 +422,8 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
     messageId = await postReply(row.target, "The research worker failed before it answered.", replyAuditFor(seatCtx(row, "seat_turn_dead"), "tool", "wake-dead"));
   });
   ok(
-    lastPosted() === "The research worker failed before it answered.",
-    `🔴 §8: a FAILED delegation's reads never reach the reply — the answer has no sources, so it carries no receipt (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+    (await lastShown()) === "The research worker failed before it answered.",
+    `🔴 §8: a FAILED delegation's reads never reach the reply — the answer has no sources, so it carries no receipt (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
   );
   ok((await provenanceRowsFor(messageId)).length === 0, "🔴 §8: …and it writes no provenance row either");
   const deadRow = (await readAudit({ org: ORG, action: DELEGATED_PROVENANCE_ACTION })).find((r) => (r.detail as { task?: unknown } | undefined)?.task === "agent-dead")?.detail as
@@ -464,9 +474,9 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
     messageId = await postReply({ platform: "slack", channelId: "C1" }, `${ANSWER} (inherited)`, replyAuditFor(uniCtx("inh_turn_1"), "tool", DELIVERED_WAKE));
   });
   ok(
-    lastPosted() === `${ANSWER} (inherited)\n\n${PROVENANCE_FOOTER_PREFIX} notion`,
+    (await lastShown()) === `${ANSWER} (inherited)\n\n${PROVENANCE_FOOTER_PREFIX} notion`,
     `🔴 §9: the room receives the footer for the worker's read even though the reply answers the DELIVERED wake while the carried read was stamped with the TASK wake. A live run posted this answer bare ` +
-      `(saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+      `(saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
   );
   const rows = await provenanceRowsFor(messageId);
   const detail = rows[0]?.detail ?? {};
@@ -517,9 +527,9 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
     messageId = await postReply({ platform: "slack", channelId: "C-SIBLING" }, `${ANSWER} (sibling)`, replyAuditFor(uniCtx("sib_turn_1"), "tool", SIBLING_WAKE));
   });
   ok(
-    !lastPosted().includes("notion") && lastPosted().startsWith(`${ANSWER} (sibling)`),
+    !(await lastShown()).includes("notion") && (await lastShown()).startsWith(`${ANSWER} (sibling)`),
     `🔴 §10: the reply into the SIBLING conversation never NAMES the source. The task's worker read Notion for another room, and §9's second address must not carry the name here — that is OPE-1713 ` +
-      `(saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+      `(saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
   );
   const detail = (await provenanceRowsFor(messageId))[0]?.detail ?? {};
   ok(
@@ -610,8 +620,8 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
     await postReply(row.target, `${ANSWER} (borrowed)`, replyAuditFor(seatCtx(row, turnId), "tool", "wake-borrow"));
   });
   ok(
-    lastPosted() === `${ANSWER} (borrowed)\n\n${PROVENANCE_FOOTER_PREFIX} notion (${LABEL})`,
-    `🔴 §11: THE WHOLE TICKET — the delegated borrowed read foots the PINNED TARGET, exactly as a seat-turn borrowed read does. It used to foot \`notion\` alone (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+    (await lastShown()) === `${ANSWER} (borrowed)\n\n${PROVENANCE_FOOTER_PREFIX} notion (${LABEL})`,
+    `🔴 §11: THE WHOLE TICKET — the delegated borrowed read foots the PINNED TARGET, exactly as a seat-turn borrowed read does. It used to foot \`notion\` alone (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
   );
 
   const inSeat2 = newSession(SEAT_SESSION);
@@ -638,8 +648,8 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
     await postReply(row.target, `${ANSWER} (unpinned)`, replyAuditFor(seatCtx(row, unpinnedTurn), "tool", "wake-unpinned"));
   });
   ok(
-    lastPosted() === `${ANSWER} (unpinned)\n\n${PROVENANCE_FOOTER_PREFIX} notion`,
-    `🔴 §11/NEGATIVE CONTROL: …and its reply names the connection alone, with no parenthesised target (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+    (await lastShown()) === `${ANSWER} (unpinned)\n\n${PROVENANCE_FOOTER_PREFIX} notion`,
+    `🔴 §11/NEGATIVE CONTROL: …and its reply names the connection alone, with no parenthesised target (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
   );
 }
 

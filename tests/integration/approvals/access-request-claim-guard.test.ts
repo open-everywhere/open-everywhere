@@ -25,7 +25,7 @@ const FABRICATED_REPLY =
   "I've submitted the channel-scope request for this channel to widen `e2e-fixture` with POST, tied to `e2e-run-ope2022`. " +
   "It's pending the required approval; I'll report the card/status when it returns.";
 
-const WITHHELD_OPENING = "No access request is recorded for this turn";
+const WITHHELD_OPENING = "I can't confirm a request has gone in yet";
 
 let tsCounter = 0;
 

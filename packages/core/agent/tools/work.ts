@@ -22,6 +22,7 @@ import { rememberWorkForward } from "../hooks/work-task-key.js";
 import { currentInvokerPosture } from "../access/invoker-posture-state.js";
 import { requesterAsksForWake } from "../access/requester-messages.js";
 import { auditTaskContinuation, continuationAdmitted, taskContinuationRefusalMessage } from "../channels/task-provenance.js";
+import { NO_HANDOFF_NARRATION_RULE } from "../instructions/seat-prompt.js";
 
 function quietResultWake(ctx: BindableContext): boolean {
   const v = (ctx as { session?: { auth?: { current?: { attributes?: Record<string, unknown> } } } }).session?.auth?.current?.attributes?.[OE_WORK_RESULT_QUIET_ATTR];
@@ -219,15 +220,21 @@ export async function forwardWork(input: { readonly message: string; readonly ta
   };
 }
 
-const FORWARDED_NOTE =
-  "Forwarded to this conversation's work session. Your turn does not wait on it: tell the people who asked " +
-  "that the work has started (reply with done:false), then carry on. The result arrives to you as a new message.";
+export const FORWARDED_NOTE =
+  "Forwarded to this conversation's work session. Your turn does not wait on it, and the result arrives to you " +
+  "as a new message; relay it then. When the message addressed you, post one short line that says what will happen " +
+  "(reply with done:false); otherwise say it only if the people who asked should hear something now. " +
+  `${flatRule(NO_HANDOFF_NARRATION_RULE)}`;
+
+function flatRule(rule: string): string {
+  return rule.replace(/\s+/g, " ");
+}
 
 export function freshFollowUpNote(taskId: string): string {
   return (
     `The job you asked to continue (task ${taskId}) ran in an earlier work session that can no longer continue it, ` +
     "so this follow-up was forwarded as a NEW job, with the earlier job's brief attached. The new job does not have the earlier job's work. " +
-    "Tell the people who asked that the job could not be continued and starts again as a new job (reply with done:false), then carry on. " +
+    "Tell the people who asked, in one plain line, that this part starts again from the beginning (reply with done:false), then carry on. Do not mention jobs, tasks or sessions. " +
     "The result arrives to you as a new message."
   );
 }

@@ -558,7 +558,7 @@ console.log("8c. the card's answer list reads as options, and promises no reply:
     !card.split("\n").some((l) => /^reply\b/iu.test(l.trim())),
     "🔴 the card NEVER invites a typed reply — copy offering a control this deployment does not have is the defect class this plane's headers exist to stop",
   );
-  ok(card.includes("nothing has been granted"), "…and a card whose buttons are missing or dead says NOTHING was granted…");
+  ok(card.includes("nothing is granted"), "…and a card whose buttons are missing or dead says NOTHING was granted…");
   ok(card.includes("lapses on its own"), "…and that the request lapses by itself, which is true on every surface");
 }
 

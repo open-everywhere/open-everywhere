@@ -1,3 +1,4 @@
+import { QUOTE_MAX, plainQuote } from "./plain-text.js";
 import { requesterWords } from "../channels/friendly-ids.js";
 import { createHash } from "node:crypto";
 import { appendAudit } from "../audit/audit.js";
@@ -44,6 +45,8 @@ const a2aDelegate: ActionKind<A2aDelegateArgs> = {
   plainSummary(args) {
     return `Send one task to the outside agent ${plainValue(args.agent, 30)} at ${plainValue(args.host, 40)}, with ${requesterWords(args.requestedBy, args.scopeKey)}'s identity`;
   },
+  consequence: (args) => plainQuote(args.message, QUOTE_MAX - 2),
+  consequenceQuotes: true,
   summarize: (args) => summarizeDelegate(args),
   async execute(args, decidedBy) {
     const now = new Date();
@@ -62,8 +65,8 @@ const a2aDelegate: ActionKind<A2aDelegateArgs> = {
       detail: { agent: args.agent, host: args.host, requestedBy: args.requestedBy, tainted: Boolean(args.tainted) },
     });
     return decidedBy.startsWith("chain:")
-      ? `approved by ${decidedBy} — the task may be delegated to "${args.agent}" once, with exactly this text`
-      : `approved — the task may be delegated to "${args.agent}" once, with exactly this text; the job must call delegate_to_agent again`;
+      ? `the task goes to ${args.agent} once, with exactly this text`
+      : `the task may go to ${args.agent} once, with exactly this text`;
   },
 };
 

@@ -29,6 +29,7 @@ const AGENT_MESSAGE = "1575667808184";
 function reactionActivity(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     type: "messageReaction",
+    channelId: "msteams",
     reactionsAdded: [{ type: "like" }],
     from: { id: HUMAN, aadObjectId: "aad-1" },
     recipient: { id: AGENT, name: "Test Agent" },
@@ -215,7 +216,7 @@ function captureSink(): { deps: { sink: ReactionSinkDeps }; recorded: IngestedRe
 
   const waited2: Promise<unknown>[] = [];
   const args2 = { ...(args as object), waitUntil: (p: Promise<unknown>) => void waited2.push(p) } as unknown as Parameters<typeof handler>[1];
-  await handler(new Request(`https://example.test${PUBLIC_TEAMS_ROUTE}`, { method: "POST", body: JSON.stringify({ type: "conversationUpdate" }) }), args2);
+  await handler(new Request(`https://example.test${PUBLIC_TEAMS_ROUTE}`, { method: "POST", body: JSON.stringify({ type: "conversationUpdate", channelId: "msteams" }) }), args2);
   await Promise.all(waited2);
   ok((await readAudit({ org: deploymentOrg(), action: REACTION_FEEDBACK_ACTION })).length === before + 1, "negative control: a conversationUpdate records nothing");
 }

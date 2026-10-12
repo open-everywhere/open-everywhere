@@ -27,6 +27,7 @@ const CONVERSATION = "19:chain@thread.tacv2";
 function reactionActivity(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     type: "messageReaction",
+    channelId: "msteams",
     reactionsAdded: [{ type: TEAMS_STOP_REACTION }],
     from: { id: HUMAN, aadObjectId: "aad-1" },
     recipient: { id: AGENT, name: "Test Agent" },
@@ -140,7 +141,7 @@ function recordingDeps(): { deps: TeamsStopDeps; calls: CancelAnchoredTurnInput[
 
   const waited2: Promise<unknown>[] = [];
   const args2 = { ...(args as object), waitUntil: (p: Promise<unknown>) => void waited2.push(p) } as unknown as Parameters<typeof handler>[1];
-  await handler(new Request(`https://example.test${PUBLIC_TEAMS_ROUTE}`, { method: "POST", body: JSON.stringify({ type: "conversationUpdate" }) }), args2);
+  await handler(new Request(`https://example.test${PUBLIC_TEAMS_ROUTE}`, { method: "POST", body: JSON.stringify({ type: "conversationUpdate", channelId: "msteams" }) }), args2);
   await Promise.all(waited2);
   ok(seen.length === 1, "negative control: a conversationUpdate does NOT reach the stop arm");
   ok(forwarded.length === 1, "…it forwards to the native channel exactly as before");

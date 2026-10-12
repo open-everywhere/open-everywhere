@@ -1253,38 +1253,74 @@ still written for **every** execution — it carries `wedgeRowReused` when the r
 already existed — so no act is ever missing from the trail. Two identical authorisations inside one
 turn of one session share a row; anything in a different turn, or a different session, does not.
 
-**Card.** The card is rendered by **code**, from the frozen args — never by the model. It shows
-the action, the scope, current → proposed value where relevant, who asked, and an expiry. A
-`routine.permission` card has no clock, so its footer names the bound that ends it instead: the
-card ends when the routine's instruction is edited or the routine is deleted.
+**Card.** The card is rendered by **code**, from the frozen args — never by the model.
 
-**Every card opens with one plain sentence (OPE-2434).** Before the technical detail, the card says
-what will happen and to whom — "Set the monthly spend limit for #general to $50.00/mo.", "Send a
-direct message to slack person U0123ABC." Each action kind writes that sentence from its frozen args
-(`ActionKind.plainSummary`, `packages/core/agent/approvals/types.ts`), so it is code, like the rest
-of the card. The `Approval requested: <kind>` label sits directly under it, then the detail. Two
-fences keep a frozen value from forging card structure inside the sentence: every interpolated value
-goes through `plainValue` (`packages/core/agent/approvals/plain-text.ts`), which removes the
-characters that open a markup link (`<url|label>`, `[label](url)`), a mention, emphasis or a code
-span, removes every `@` in front of a bare `@everyone` or `@here`, and collapses newlines; and Slack renders the
-sentence as `plain_text`. The cleaner does not remove a bare URL: the address stays visible as
-text, and a surface can still link it. The cleaner covers the sentence only: the detail lines
-under it are not cleaned, and they carry the same values as before. A kind whose sentence cannot render (an unknown kind, broken
-args) still opens with a generic sentence that names the kind, because a card that fails to render
-posts no card. The notification text leads with the sentence too. Slack, Teams and Discord render
-the same layout (`packages/core/agent/approvals/card-layout.ts`): the sentence, the label, the
-detail, who asked and the expiry, then the **options as one ordered list** — Approve first, Reject
-last, and a routine's grant option between them. "Approve, and allow things like this" (OPE-2456)
-is one more entry in that list, offered only where a rule could lift the act. It carries the
-proposed rule as a confirmation, and Slack shows it before the click is sent. Teams and Discord
-send a tap with no confirmation, so they leave that option out. Plain Approve stays one-off and never
-writes a rule. See [pre-approval rules § 7](../how-it-works/pre-approval-rules.md#7-approve-and-allow-things-like-this).
+**A card is a headline, at most one line of consequence, and the buttons (OPE-2434, OPE-2481).** A
+person reads, in this order:
+
+1. **The headline** — what will happen, to what, in plain words, with things named by their friendly
+   names: "Set the monthly spend limit for #general to $50.00/mo.", "Post a message in #general.",
+   "Send the notetaker to the Google Meet meeting and post a recap here." Each action kind writes it
+   from its frozen args (`ActionKind.plainSummary`, `packages/core/agent/approvals/types.ts`).
+2. **At most one consequence line**, only when a person needs it to decide (`ActionKind.consequence`):
+   the figures that change (`$: $50.00/mo → $100.00/mo`), the message or task text that will be sent,
+   the instruction a routine will follow, or who else is affected ("It records everyone for up to 90
+   min. The host admits it. OE keeps the transcript 30 days."). A kind that quotes content
+   (`consequenceQuotes`: a message, a task, a routine's instruction or rule, a skill body, a connector
+   input, an issue or pull request body, an MCP server's host and description) gets up to 1,400 characters, because the card is the injection gate for that content and
+   Discord caps a whole message at 2,000. A longer quote is never cut silently: the line ends with
+   "(N more characters not shown)", so the approver knows the card does not show all of what the click
+   approves.
+3. **A one-line warning** when the proposing turn read outside content: "⚠ Asked for after reading
+   outside content. Check that someone here wants it."
+4. **A footer**: "Asked by @name · expires 13 October, 14:00 UTC". A `routine.permission` card has no
+   clock, so its footer reads "open until the routine changes": the card ends when the routine's
+   instruction is edited or the routine is deleted. Teams prints the expiry alone, because a Teams
+   card cannot name the requester without a display name the row does not hold.
+5. **The options**, as one ordered list.
+
+**No visible line carries a kind label, a model or route name, a backend, a ledger, a raw platform
+id, an internal row id or restated policy prose.** Those are machine keys. The kind and the full
+code-rendered detail (`ActionKind.summarize`, with the taint disclosure) move to the card's
+**metadata** (`CardMeta`, `card-layout.ts`). On Slack that is the message `metadata`
+(`event_type: "oe_approval_card"`, with the kind, the row id and every detail line) and the first
+block's id (`oe_approval_card:<kind>:<row id>`). On every surface it is the pending row and the audit
+trail. The e2e runner reads the kind and the detail from there. The docs disclose each kind's full
+behaviour (for a meeting bot, see [meetings](../capabilities/meetings.md)). The detail is a reading aid,
+not the gate: what the click approves that a person must read is on the card itself, in the headline
+and the consequence line. `npm run test:card-budget` renders every registered kind on
+Slack, Teams and Discord. It fails when a card has more than four visible lines, more than its
+character budget, or any of the banned shapes.
+
+Two fences keep a frozen value from forging card structure. Every value a headline or a consequence
+line interpolates goes through `plainValue` (`packages/core/agent/approvals/plain-text.ts`). It
+removes the characters that open a markup link (`<url|label>`, `[label](url)`), a mention, emphasis
+or a code span, removes every `@` in front of a bare `@everyone` or `@here`, and collapses newlines.
+Quoted content goes through `plainQuote`, which removes the link and mention characters and the
+broadcast `@` but keeps identifiers such as `page_id` readable. So the only mentions a card renders
+are the ones the kind's code wrote (`<#C…>`, `<@U…>`, from `channels/friendly-ids.ts`). Slack renders
+the headline as bold `mrkdwn`, so those mentions show as names, not ids. The cleaner does not remove
+a bare URL: the address stays visible as text, and a surface can still link it. A kind whose headline
+cannot render (an unknown kind, broken args) opens with a generic sentence. It names no kind and tells
+the person to ask the agent what it will do, because a card that fails to render posts no card. The
+notification text is the same visible lines.
+
+**A decided card is one line**: "✅ Approved by @name — message posted in #general", "❌ Rejected by
+@name — Post a message in #general", "⏰ Expired — Post a message in #general" (`decidedCardLine`).
+The decision notice posted into the thread is the same line. Slack, Teams and Discord render the same
+layout (`packages/core/agent/approvals/card-layout.ts`), and the **options are one ordered list** —
+Approve first, Reject last, and a routine's grant option between them. "Approve, and allow things
+like this" (OPE-2456) is one more entry in that list, offered only where a rule could lift the act.
+It carries the proposed rule as a confirmation, and Slack shows it before the click is sent. Teams
+and Discord send a tap with no confirmation, so they leave that option out. Plain Approve stays
+one-off and never writes a rule. See [pre-approval rules § 7](../how-it-works/pre-approval-rules.md#7-approve-and-allow-things-like-this).
 
 **Several asks from one job arrive as one card, on Slack.** A pending row freezes its proposing
 session (`group_key`). When a second ask comes from the same session, into the same room and the
 same thread, while that session's card is still open, it joins that card instead of posting a new
-one: the card is rewritten as one grouped message that opens with a plain count ("One job asks for
-2 approvals — 2 still need a decision"), and each item keeps its own sentence, detail and buttons.
+one: the card is rewritten as one grouped message that opens with a plain count ("2 approvals for
+one job — 2 still open"), and each item keeps its own headline, consequence line and buttons. A
+decided item becomes its one decided line.
 A click still decides exactly one row, through the same click core, and the redraw keeps the other
 items live. A card holds at most five items, and a sixth ask posts its own card. A rewrite that
 fails leaves the ask on a card of its own, so a failed join never hides an ask. Teams and Discord
@@ -1380,6 +1416,7 @@ rule.
 | `agent.create` | `create_agent` | member |
 | `browser.personal.act` | `my_browser` | member |
 | `browser.personal.handback` | `my_browser_handoff` | member |
+| `browser.personal.propose` | — *(no propose tool)* | member |
 | `chat.dm` | `dm_person` | member |
 | `chat.post` | `post_message` | member |
 | `connector.clear` | `clear_connector_override` | admin |

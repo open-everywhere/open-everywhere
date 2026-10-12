@@ -223,7 +223,7 @@ test("a signed Discord click approves a real proposal and the routine really arm
   expect(response.type).toBe(7);
   expect(response.components).toEqual([]);
   expect(response.content).toContain(`✅ Approved by <@${CLICKER_ID}>`);
-  expect(response.content).toContain("armed");
+  expect(response.content).toContain("routine started");
 
   const rows = await decideRows(clickCursor, id);
 
@@ -231,7 +231,7 @@ test("a signed Discord click approves a real proposal and the routine really arm
   expect(approved).toBeDefined();
   expect(approved!.detail?.kind).toBe("routine.create");
   expect(approved!.principalId).toBe(CLICKER_ID);
-  expect(String(approved!.detail?.outcome)).toContain("armed");
+  expect(String(approved!.detail?.outcome)).toContain("routine started");
   expect(rows.filter((r) => r.action === "approval.failed" && r.detail?.id === id).map((r) => r.action)).toEqual([]);
   expect(rows.filter((r) => r.action === "approval.denied" && r.detail?.id === id).map((r) => r.action)).toEqual([]);
 

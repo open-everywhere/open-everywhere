@@ -70,7 +70,7 @@ import {
   swallowRoomOp,
   domainRoster,
 } from "@open-everywhere/core/agent/adapter-api.js";
-import { withEndsTurnFinalChannel } from "@open-everywhere/core/agent/adapter-api.js";
+import { TURN_FAILED_TEXT, withEndsTurnFinalChannel } from "@open-everywhere/core/agent/adapter-api.js";
 import { loadConversationContext } from "./slack-context.js";
 import { slackSpendGate } from "./slack-spend-gate.js";
 import { slackTenantAdmission } from "./slack-tenant-fence.js";
@@ -737,10 +737,8 @@ const slackMentionChannel = slackChannel({
           }
           await setStatusReaction(channel.slack, "blocked", dmWakeThreadOverride(channel.state));
           try {
-            await postWakeText(
-              channel,
-              `:octagonal_sign: I hit an error while handling your request (${data.message}). Please try again or rephrase.`,
-            );
+            console.warn(`[open-everywhere:slack] turn failed: ${data.message}`);
+            await postWakeText(channel, `:octagonal_sign: ${TURN_FAILED_TEXT}`);
           } catch {
           }
         },
@@ -751,7 +749,8 @@ const slackMentionChannel = slackChannel({
           }
           await setStatusReaction(channel.slack, "blocked", dmWakeThreadOverride(channel.state));
           try {
-            await postWakeText(channel, `:octagonal_sign: Task failed: ${data.message}`);
+            console.warn(`[open-everywhere:slack] session failed: ${data.message}`);
+            await postWakeText(channel, `:octagonal_sign: ${TURN_FAILED_TEXT}`);
           } catch {
           }
           await syncPinnedStatus(channel);

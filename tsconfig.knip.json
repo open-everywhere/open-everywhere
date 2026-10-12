@@ -33,6 +33,7 @@
       "@open-everywhere/provider-discord/*": ["./packages/providers/discord/*"],
       "@open-everywhere/provider-email/*": ["./packages/providers/email/*"],
       "@open-everywhere/provider-github/*": ["./packages/providers/github/*"],
+      "@open-everywhere/provider-google-chat/*": ["./packages/providers/google-chat/*"],
       "@open-everywhere/provider-linear/*": ["./packages/providers/linear/*"],
       "@open-everywhere/provider-notion/*": ["./packages/providers/notion/*"],
       "@open-everywhere/provider-slack/*": ["./packages/providers/slack/*"],

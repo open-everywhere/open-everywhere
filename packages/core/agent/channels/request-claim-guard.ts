@@ -7,7 +7,7 @@ import type { ReplyAudit } from "./reply-post.js";
 export const REQUEST_CLAIM_WITHHELD_ACTION = "access_request.claim_withheld";
 
 export const WITHHELD_REQUEST_CLAIM_NOTE =
-  "(No access request is recorded for this turn, so I cannot say one was submitted.)";
+  "(I can't confirm a request has gone in yet.)";
 
 export type RequestClaimShape = "submitted" | "raised" | "pending-approval";
 

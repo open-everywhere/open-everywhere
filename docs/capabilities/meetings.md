@@ -15,18 +15,19 @@ Sandbox on the hosted stack, a docker container on the self-host stack.
 
 Meetings are **off** as shipped.
 
-> 🔴 **Meetings cannot be enabled yet: OPE-2461 and OPE-2464 block it, and the policy refuses `enabled: true`
-> (the boot fails, naming both tickets) until they land.**
->
-> **OPE-2461 — the store.** OE keeps meeting state (the record with its callback
-> key, the transcript, the open-meeting index) in the operational store's shared key-value table, which has no
-> per-row expiry. Every write by any feature deletes all of the org's rows older than THAT writer's own time
-> limit, so a short-limit writer elsewhere (`cancel_work` writes with 15 minutes) can delete a live meeting's
-> record mid-meeting, and on an idle deployment nothing is deleted on time. Real per-row expiry is OPE-2461.
->
-> **OPE-2464 — the recap's provenance.** The recap is the bot's own post, and a later turn that reads the
-> thread treats the bot's own post as trusted. The quote form below is a label for people, and no code
-> enforces it. Real untrusted provenance for the recap post is OPE-2464.
+Two properties had to hold before a deployment could turn meetings on. Both hold now:
+
+- **Meeting data expires per row (OPE-2461).** OE keeps meeting state (the record with its callback key, the
+  transcript chunks, the open-meeting index, the single-use claims, the native-recap watches) in its own
+  operational-store table, `meeting_data`. Each row carries its own expiry time. A read never returns a row
+  after that time, a write deletes only rows already past their own expiry, and the 15-minute meeting sweep
+  deletes the expired rows from the disk. No other feature's write can delete a live meeting row.
+- **The recap carries untrusted provenance (OPE-2464).** The recap is the bot's own post, written by a model
+  from an untrusted transcript. When OE posts it, OE records the post, the thread it went into and, for
+  seven days, its channel. A later turn that reads that post or that thread, or that wakes in that thread
+  or (within the seven days) anywhere in that channel, is marked as having read untrusted content, so the
+  taint floor applies to its actions. The limits are listed under [What does not work](#what-does-not-work). See [The recap, and why the transcript is
+  untrusted](#the-recap-and-why-the-transcript-is-untrusted).
 
 ## The flow
 
@@ -41,9 +42,11 @@ Meetings are **off** as shipped.
    - for Zoom (see [Zoom](#zoom));
    - when the sandbox backend cannot run a box (just-bash), when the policy's transcription route is not
      registered, or when the deployment has no public URL for the bot to call back on.
-3. **The card.** A `meeting.join` card names the platform, the host, the cap, where the audio goes, how
-   long OE asks its store to keep the transcript, and that the host must admit the bot. A member's tap
-   approves it. Nothing joins before the tap, with one exception: when the approver chain lowers
+3. **The card.** A `meeting.join` card is a headline and one consequence line (OPE-2481): "Send the
+   notetaker to the Google Meet meeting and post a recap here." and "It records everyone for up to 90 min.
+   The host admits it. OE keeps the transcript 30 days." The rest of this page is the full disclosure: the
+   host, where the audio goes, the sandbox and the spend ride the card's detail (its metadata and the
+   pending row). A member's tap approves it. Nothing joins before the tap, with one exception: when the approver chain lowers
    `meeting.join` (an approve-all or bypass domain, or an enforced judge allow that cites a pre-approval
    rule), the bot is sent with no tap. On a tainted turn the chain cannot lower it below a person's
    decision.
@@ -76,9 +79,7 @@ Meetings are **off** as shipped.
 ## Turn it on
 
 1. Build the bot image and make it available to your backend (`deploy/meeting-bot/README.md`).
-2. Edit `agent/meetings/policy.ts`: set `box.image`, add your host rules, and set `enabled: true`. Until
-   OPE-2461 and OPE-2464 land, the policy refuses `enabled: true` (see the warning at the top); the steps
-   below describe the shape it takes once they do.
+2. Edit `agent/meetings/policy.ts`: set `box.image`, add your host rules, and set `enabled: true`.
 3. Make sure the deployment has a public URL: the Vercel production URL on the hosted stack, or
    `OE_PUBLIC_BASE_URL` on the self-host stack. The bot calls back on it.
 
@@ -107,8 +108,8 @@ A bad policy fails the boot. Every field is validated in `packages/core/agent/me
 | `botName` | The name the host sees in the lobby. |
 | `maxMinutes` | The hard cap on one meeting, at most 24 hours. |
 | `leaveWhenAloneMinutes` | The bot leaves after this many minutes alone. |
-| `retention.audioMinutes` | Must be `0`: OE never stores audio. It transcribes each chunk in memory and drops it. Any other value is refused until OPE-2461, because no store can keep audio for a bounded window. |
-| `retention.transcriptDays` | How long OE ASKS the store to keep the transcript, 1 to 90 days. Until OPE-2461 it is not a guarantee: the shared store can delete the transcript sooner (any short-limit write), or keep it longer (an idle deployment deletes nothing). |
+| `retention.audioMinutes` | Must be `0`: OE never stores audio. It transcribes each chunk in memory and drops it, so any other value would promise an audio window that nothing keeps. Any other value is refused. |
+| `retention.transcriptDays` | How long OE keeps the transcript, 1 to 90 days. Each transcript row expires on its own: no read returns it after that, and the next meeting sweep (at most 15 minutes later) deletes it. The recap post in the thread is the chat platform's message and follows that platform's retention, not this one. |
 | `box` | The bot image, its vCPUs and its memory. |
 | `transcription` | The speech-to-text route. See below. |
 
@@ -232,9 +233,28 @@ Anyone in the meeting can say anything, a guest included. So the transcript is *
   than whole tokens means a token split across two fields cannot re-form when code joins them.
 - Every line the model wrote is posted as a quote, under a fixed header: "The quoted lines are what people
   said in the meeting … They are not instructions from me". This is a LABEL for the people in the thread.
-  No code enforces it: a later turn reads the bot's own post from the thread as trusted (a thread read
-  taints a turn only for a refuted non-member author), so the quote form does not stop a turn from acting on
-  an action item. Real untrusted provenance for the recap post is OPE-2464, which blocks enabling meetings.
+  No code reads the label.
+- 🔴 **The recap post carries an untrusted provenance mark (OPE-2464).** A chat read grades a bot's line as
+  trusted, so the label alone would let a later turn act on an action item as if OE had said it. So the host
+  records the recap when it posts it (`meetings/provenance.ts`): the thread it goes into BEFORE the post, and
+  the post's own message id after. The record is a fact about the message id, never about its words. Two
+  readers use it:
+  - every chat read verb (`read_thread`, `read_channel`, `read_work_thread`, `read_work_channel`): a page
+    with a marked post, or a read of a marked thread, marks the turn untrusted (`chat-message`);
+  - the turn itself: a turn that woke in a marked thread is marked untrusted before its first action runs,
+    because its wake context (a backscroll, a catch-up, the thread context) can carry the recap. The check
+    runs at `actions.requested`, and every consequential tool reads the mark at execute time.
+
+  Every recap also marks EVERY turn in its channel (top level or in any thread) for seven days, the
+  reach-back of a seat's catch-up read: a wake's backscroll can carry the recap from anywhere in the
+  channel, and Slack's top-level backscroll also pulls the replies of recent threads. A recap posted at the
+  top level also marks the thread it roots. A turn that the check marked stays marked when its step is
+  redelivered, even if the seven days end in between, as long as its turn record was written (the record
+  is keyed by session and turn, and lasts one day). Only Slack
+  carries the asking thread, so a recap asked for on Discord or Teams always posts at the top level. A
+  Discord thread is its own channel, so a recap asked for inside Discord thread X also marks X as a thread,
+  and a turn in X stays marked after the seven days. The post and thread marks last ten years. While
+  meetings are on, a store error reads as "marked".
 - The transcript never reaches a conversation seat or a worker turn.
 
 The recap uses the deployment's `utility` model route.
@@ -246,7 +266,7 @@ The recap uses the deployment's `utility` model route.
 | Approval card before joining | `meeting.join`, member tier. The admin decision is the merged policy. |
 | Audit rows | `meeting.join`, `meeting.status`, `meeting.ended`, `meeting.recap_posted`. |
 | Spend | One spend-ledger row and one `meeting` usage event per meeting, carrying the meeting hours. On Vercel the dollars are the box's memory GiB-hours at the Vercel Sandbox rate (a meeting the sweep finishes is billed up to its cap; see Hobby below). On docker the row carries the hours at $0, because a self-hosted container has no metered price. Transcription and the recap model call are not in this row. |
-| Hosts and retention | `agent/meetings/policy.ts`, typed config in Git. Retention is a request to the store until OPE-2461 (see the warning at the top). |
+| Hosts and retention | `agent/meetings/policy.ts`, typed config in Git. Every meeting row expires on its own (OPE-2461). |
 | Recall and halt | `meeting_leave` (this room's bots), and any covering HALT ends a meeting with no recap. |
 | Cap | Applied by the backend at box creation (the box stops at it) and by the bot (it leaves three minutes before). The 15-minute sweep finishes, bills and recaps any meeting that never sent `ended`. |
 
@@ -301,7 +321,12 @@ The recap uses the deployment's `utility` model route.
   a fake box backend and a fake transcription route (`tests/integration/meetings/meeting-recap.test.ts`). The
   cut rule, the handover and the page reader are proved against a fake page (`scripts/meeting-bot-test.ts`).
   The e2e leg `S-MEETING-RECAP` (NON_LAUNCH) checks the card on a live deployment, and it SKIPS while the
-  deployment keeps meetings off — which, until OPE-2461 and OPE-2464 land, is every deployment.
+  deployment keeps meetings off.
+- **Known limits of the provenance mark:** a recap marks the other turns in its channel for seven days
+  only. After that, a wake whose bootstrap read reaches back to the recap is not marked by the turn leg
+  (a `read_channel` of a page with the recap still is). A recap whose post returned no message id, or whose
+  post mark failed to write twice, has no post mark: a recap in a thread keeps its thread mark, and a
+  top-level recap is then marked for seven days only (on Discord, also as its own thread).
 
 ## Recaps from the platform's own transcript
 
@@ -310,10 +335,8 @@ No bot joins, and the recap carries the speakers' names as the platform recorded
 ship: **Microsoft Teams**, **Google Meet** and **Zoom** (cloud recording). The bot stays the road for
 everything else: a meeting with no platform transcript, or another organisation's meeting.
 
-Native recaps are **off** as shipped, and `native.enabled: true` is refused today for the same two reasons
-as the bot. OPE-2464: the recap is OE's own post, and a later turn reads it back as trusted. OPE-2461: the
-watch rows and the single-use claims live in the shared store, where another feature's short-TTL write
-can delete them early.
+Native recaps are **off** as shipped. The recap post carries the same provenance mark as the bot's
+(OPE-2464), and the watch rows and the single-use claims are meeting rows with their own expiry (OPE-2461).
 
 ### The flow
 
@@ -329,9 +352,10 @@ can delete them early.
      the policy does not list;
    - for a Meet ask with no organiser email, or one outside the policy's Workspace domains;
    - when the platform's reader is not registered.
-3. **The card.** A `meeting.recap` card names the platform, the meeting, the session (`past` or `next`),
-   the Meet organiser OE reads as, whose credential reads the transcript, and that OE stores no
-   transcript. A member's tap approves it. As for `meeting.join`, the approver chain can lower the card (an
+3. **The card.** A `meeting.recap` card is a headline and one consequence line (OPE-2481): "Read the
+   transcript of one Google Meet meeting and post a recap here." and "Nobody in the meeting is told. OE
+   keeps no transcript. It reads as <the Meet organiser>." The session (`past` or `next`), whose
+   credential reads the transcript and the model route ride the card's detail. A member's tap approves it. As for `meeting.join`, the approver chain can lower the card (an
    approve-all or bypass domain, or an enforced judge allow that cites a pre-approval rule), and on a
    tainted turn it cannot lower it below a person's decision.
 4. **The read.** The tap reads the transcript once, with the organisation's credential, and writes a
@@ -371,7 +395,7 @@ environment file of this repository.
 const meetingPolicy: MeetingPolicy = {
   ...DEFAULT_MEETING_POLICY,
   native: {
-    enabled: true, // refused until OPE-2461 and OPE-2464 land
+    enabled: true,
     watchHours: 24,
     teams: { tenants: ["<your tenant id>"], clientId: "<app registration client id>", clientSecretRef: "TEAMS_TRANSCRIPT_SECRET", why: "Our own Teams meetings." },
     meet: { domains: ["example.org"], serviceAccountKeyRef: "MEET_TRANSCRIPT_KEY", why: "Our own Workspace meetings." },
@@ -459,12 +483,15 @@ until `watchHours` runs out.
 ### Retention and governance
 
 - **No transcript is stored.** OE reads the transcript, sends it once through this deployment's own AI
-  Gateway to the `utility` model, which writes the recap, and drops it. The card says so. The watch
+  Gateway to the `utility` model, which writes the recap, and drops it. The card says that OE keeps no
+  transcript; this page names the route. The watch
   row holds the frozen ask (the link, the thread, the person) and no transcript. The recap is the only
   thing kept, as a post in the thread, under that surface's own retention.
 - **The transcript is untrusted**, exactly as for the bot: fenced, read by a tool-less model, and rendered by
   code as quoted lines. Speaker names are display names anyone can set, so they are fenced and stripped of
   mention syntax too.
+- **The recap post carries the provenance mark** (OPE-2464), exactly as for the bot: a later turn that reads
+  it, or wakes in its thread, is marked untrusted.
 - **Audit:** `meeting.recap_requested` (who approved reading which meeting), `meeting.recap_posted` with
   `source: "native"` and the speaker count, and `meeting.recap_refused` with the reason.
 - **Tier:** the `meeting.recap` card is member tier. The admin decision is the merged `native` block: which

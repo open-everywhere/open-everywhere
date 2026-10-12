@@ -37,7 +37,7 @@ npm view @open-everywhere/core version                                          
 **Read the installed one, not the pin.** `oe upgrade` writes the pins before it installs, so an
 upgrade that stopped part way leaves a manifest that names a version the app is not running.
 
-The ten packages publish in lockstep, so one version answers for all of them. Agree the target
+The eleven packages publish in lockstep, so one version answers for all of them. Agree the target
 with the user before you go on. Taking the latest is the normal choice.
 
 ## 2. Read the notes between the two versions

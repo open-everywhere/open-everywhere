@@ -1,4 +1,5 @@
 import { bridgeSlackForm } from "../channels/slack-bridge.js";
+import { platformName } from "../channels/friendly-ids.js";
 import { appendAudit } from "../audit/audit.js";
 import { getConfig } from "../access/config.js";
 import { roleForBinding } from "../access/roles.js";
@@ -20,6 +21,11 @@ type PostFn = (method: string, body: string) => Promise<Record<string, unknown> 
 
 export const OE_CONNECT_ACTION_PREFIX = "oe_connect:";
 
+export function connectorWords(connectorName: string): string {
+  const known = platformName(connectorName);
+  return known !== connectorName ? known : connectorName.charAt(0).toUpperCase() + connectorName.slice(1);
+}
+
 function buttonText(o: ConnectorOption): string {
   if (o.credentialType === "user-oauth") return "Connect my account";
   if (o.credentialType === "service-oauth") return "Connect org account";
@@ -33,7 +39,7 @@ export function buildConnectCard(
 ): { blocks: unknown[]; text: string } {
   const header = {
     type: "section",
-    text: { type: "mrkdwn", text: `🔌 Connect *${connectorName}* — choose how to authorize:` },
+    text: { type: "mrkdwn", text: `🔌 Connect *${connectorWords(connectorName)}*. Pick one:` },
   };
   const buttons = options
     .filter((o) => o.route.kind === "modal" || o.route.kind === "url")
@@ -50,10 +56,10 @@ export function buildConnectCard(
   for (const o of degraded) {
     blocks.push({
       type: "context",
-      elements: [{ type: "mrkdwn", text: `*${optionLabel(o)}*: ${o.route.reason ?? "not available on this surface."}` }],
+      elements: [{ type: "mrkdwn", text: `*${optionLabel(o)}*: ${o.route.reason ?? "not available here."}` }],
     });
   }
-  return { blocks, text: `Connect ${connectorName} — choose how to authorize.` };
+  return { blocks, text: `Connect ${connectorWords(connectorName)}.` };
 }
 
 async function mintOAuthUrl(
@@ -71,37 +77,37 @@ export async function renderNonSlackConnect(
   startAuth: ConnectorAuthorizationStarter = defaultConnectorAuthStarter,
   issuePageLink?: (o: ConnectorOption) => Promise<string | undefined>,
 ): Promise<{ text: string; issued: ConnectorOption[] }> {
-  const lines: string[] = [`Connect *${connectorName}*:`];
+  const lines: string[] = [`Connect *${connectorWords(connectorName)}*:`];
   const issued: ConnectorOption[] = [];
   for (const o of options) {
     if (o.credentialType === "service-oauth") {
       if (o.dashboardUrl) {
-        lines.push(`• *${optionLabel(o)}* — a Vercel team member authorizes the org account on the dashboard: ${o.dashboardUrl}`);
+        lines.push(`• *${optionLabel(o)}* — an admin connects your organisation's account here: ${o.dashboardUrl}`);
         continue;
       }
       if (o.route.kind === "url" && o.vercelConnector && ctx.mode === "dm") {
         try {
           const url = await mintOAuthUrl(startAuth, o.vercelConnector, { type: "app" });
-          lines.push(`• *${optionLabel(o)}* — connect the org account (expires soon): ${url}`);
+          lines.push(`• *${optionLabel(o)}* — connect your organisation's account (this link expires soon): ${url}`);
           issued.push(o);
         } catch {
-          lines.push(`• *${optionLabel(o)}* — couldn't start the org connect flow (the connector isn't fully provisioned; ask an operator).`);
+          lines.push(`• *${optionLabel(o)}* — this isn't set up yet. Ask your admin.`);
         }
         continue;
       }
       if (o.route.kind === "url" && o.vercelConnector) {
-        lines.push(`• *${optionLabel(o)}* — message me directly and ask again: this surface has no buttons, so the link would be posted into the room, and whoever opened it first would bind the org account.`);
+        lines.push(`• *${optionLabel(o)}* — send me a direct message and ask again, so the link stays private.`);
         continue;
       }
-      lines.push(`• *${optionLabel(o)}* — an operator authorizes the org account on the vendor's admin dashboard.`);
+      lines.push(`• *${optionLabel(o)}* — your admin connects this in ${connectorWords(connectorName)}'s own admin settings.`);
       continue;
     }
     if (o.route.kind === "page") {
       const url = issuePageLink ? await issuePageLink(o) : undefined;
       lines.push(
         url
-          ? `• *${optionLabel(o)}* — open this one-time secure page to enter the key (expires soon; it works once): ${url}`
-          : `• *${optionLabel(o)}* — secure key entry isn't available on this deployment right now; ask an operator to set it via the Vercel dashboard/CLI.`,
+          ? `• *${optionLabel(o)}* — enter the key on this private page (it works once and expires soon): ${url}`
+          : `• *${optionLabel(o)}* — I can't take a key here right now. Ask your admin to add it.`,
       );
       continue;
     }
@@ -112,13 +118,13 @@ export async function renderNonSlackConnect(
           type: "user",
           id: rawVaultSubject(ctx.org, ctx.platform, ctx.workspace, ctx.principalId),
         });
-        lines.push(`• *${optionLabel(o)}* — connect your personal account (expires soon): ${url}`);
+        lines.push(`• *${optionLabel(o)}* — connect your own account (this link expires soon): ${url}`);
         issued.push(o);
       } catch {
-        lines.push(`• *${optionLabel(o)}* — couldn't start the connect flow (the connector isn't fully provisioned; ask an operator).`);
+        lines.push(`• *${optionLabel(o)}* — this isn't set up yet. Ask your admin.`);
       }
     } else {
-      lines.push(`• *${optionLabel(o)}* — ${o.route.reason ?? "not available on this surface."}`);
+      lines.push(`• *${optionLabel(o)}* — ${o.route.reason ?? "not available here."}`);
     }
   }
   return { text: lines.join("\n"), issued };
@@ -203,7 +209,7 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
     const catalogue = catalogues.find((c) => c.connector === connectorName);
     const cred = catalogue ? offerableCredential(catalogue, type) : undefined;
     if (!catalogue || !cred) {
-      await ephemeral(post, channelId, clickerId, "This connect option is no longer available.");
+      await ephemeral(post, channelId, clickerId, "This option isn't available any more. Ask me again for a fresh one.");
       return true;
     }
 
@@ -212,12 +218,12 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
 
     if (type === "user-oauth") {
       if (slackIdPrefixMode(channelId) !== "dm") {
-        await ephemeral(post, channelId, clickerId, "Connecting your *personal* account only works in a DM with me — message me directly and try again.");
+        await ephemeral(post, channelId, clickerId, "To connect your own account, send me a direct message and ask again.");
         return true;
       }
       const userConnector = vercelConnectorOf(cred);
       if (!userConnector) {
-        await ephemeral(post, channelId, clickerId, "This connector isn't configured for personal OAuth (no OAuth connector id). Ask an operator.");
+        await ephemeral(post, channelId, clickerId, "Connecting your own account isn't set up yet. Ask your admin.");
         return true;
       }
       return await mintAndDeliverOAuth(post, startAuth, {
@@ -229,7 +235,7 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
     if (type === "service-oauth") {
       const orgRole = clickerRole(org, teamId, channelId, clickerId, domains);
       if (!orgRole.isAdmin) {
-        await ephemeral(post, channelId, clickerId, "Connecting the *org* account is admin-only — your id isn't listed as an admin for this workspace/domain.");
+        await ephemeral(post, channelId, clickerId, "Only an admin can connect your organisation's account. Ask your admin.");
         return true;
       }
       const dash = cred.dashboardUrl;
@@ -240,8 +246,7 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
             post,
             channelId,
             clickerId,
-            "Connecting the *org* account binds one credential for the whole deployment, so it takes an ORG admin — " +
-              "your id is listed as an admin for this domain only. Ask an org admin to click it.",
+            "Your organisation's account is shared by every domain, so only an organisation-wide admin can connect it. Ask one of them to click this.",
           );
           return true;
         }
@@ -255,8 +260,8 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
         channelId,
         clickerId,
         dash
-          ? `Connecting the *org* ${connectorName} account is completed on the Vercel dashboard (needs a Vercel team member): ${dash} — authorize there, then ask me again.`
-          : `Connecting the *org* ${connectorName} account is done by an operator on the vendor's admin dashboard — no self-serve link is configured for it here.`,
+          ? `An admin connects your organisation's ${connectorWords(connectorName)} account here: ${dash}. Then ask me again.`
+          : `Your admin connects your organisation's ${connectorWords(connectorName)} account in ${connectorWords(connectorName)}'s own admin settings.`,
       );
       await appendAudit({
         ...connectWhere(org, teamId, channelId),
@@ -270,11 +275,11 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
     if (type === "api-key") {
       const role = clickerRole(org, teamId, channelId, clickerId, domains);
       if (!role.isAdmin) {
-        await ephemeral(post, channelId, clickerId, "Setting an *org* API key is admin-only — your id isn't listed as an admin for this workspace/domain.");
+        await ephemeral(post, channelId, clickerId, "Only an admin can add a key for your organisation. Ask your admin.");
         return true;
       }
       if (!cred.secretRef) {
-        await ephemeral(post, channelId, clickerId, "This connector's API-key credential has no configured storage ref. Ask an operator.");
+        await ephemeral(post, channelId, clickerId, "Adding a key isn't set up yet. Ask your admin.");
         return true;
       }
       const requestIntake = deps.requestIntake ?? requestCredentialIntake;
@@ -283,7 +288,7 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
         credentialId: cred.id,
       });
       if (!ref) {
-        await ephemeral(post, channelId, clickerId, "This connector's API-key credential has no resolvable storage home. Ask an operator.");
+        await ephemeral(post, channelId, clickerId, "Adding a key isn't set up yet. Ask your admin.");
         return true;
       }
       await requestIntake({
@@ -325,15 +330,15 @@ async function mintAndDeliverOAuth(
     url = (await startAuth(ctx.vercelConnector, { subject: ctx.subject }, { expiresInMs: AUTH_URL_TTL_MS })).url;
   } catch (err) {
     console.error(`[open-everywhere:connector] oauth mint failed for ${ctx.connectorName} (${ctx.subjectLabel}): ${String(err)}`);
-    await ephemeral(post, ctx.channelId, ctx.clickerId, "Couldn't start the connect flow just now — the connector isn't fully provisioned on this deployment. Ask an operator.");
+    await ephemeral(post, ctx.channelId, ctx.clickerId, "I couldn't start connecting just now. This isn't fully set up yet, so ask your admin.");
     return true;
   }
-  const who = ctx.subjectLabel === "user" ? "your personal" : "the org service";
+  const who = ctx.subjectLabel === "user" ? "your own" : "your organisation's";
   await ephemeral(
     post,
     ctx.channelId,
     ctx.clickerId,
-    `Open this link to connect ${who} *${ctx.connectorName}* account (expires soon): ${url}`,
+    `Open this link to connect ${who} *${connectorWords(ctx.connectorName)}* account (it expires soon): ${url}`,
   );
   await appendAudit({
     ...connectWhere(ctx.org, ctx.teamId, ctx.channelId),

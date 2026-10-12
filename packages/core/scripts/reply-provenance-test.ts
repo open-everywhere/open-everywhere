@@ -42,14 +42,14 @@ const CHAN = "C1";
 const OTHER_CHAN = "C2";
 const ANSWER = "The rollout is on track for Thursday.";
 
-const posted: { channel: string; text: string }[] = [];
+const posted: { channel: string; text: string; ts: string }[] = [];
 registerSlackTestBridge({
   channel: { __fixture: "slack" } as never,
   confirmChannelInternal: async () => true,
   form: async (method: string, body: string) => {
     const p = new URLSearchParams(body);
-    if (method === "chat.postMessage") posted.push({ channel: p.get("channel") ?? "", text: p.get("text") ?? "" });
-    if (method === "chat.update") posted.push({ channel: p.get("channel") ?? "", text: p.get("text") ?? "" });
+    if (method === "chat.postMessage") posted.push({ channel: p.get("channel") ?? "", text: p.get("text") ?? "", ts: `ts-${posted.length + 1}` });
+    if (method === "chat.update") posted.push({ channel: p.get("channel") ?? "", text: p.get("text") ?? "", ts: p.get("ts") ?? "" });
     return { ok: true, ts: `ts-${posted.length}` } as never;
   },
 });
@@ -68,6 +68,16 @@ registerConfig({
 });
 
 const lastPosted = (): string => posted[posted.length - 1]?.text ?? "";
+
+async function lastShown(): Promise<string> {
+  const last = posted[posted.length - 1];
+  if (last === undefined) return "";
+  ok(!last.text.includes(PROVENANCE_FOOTER_PREFIX), `🔴 OPE-2487: the room's bytes carry NO sources footer (saw: ${JSON.stringify(last.text.slice(0, 200))})`);
+  const rows = await readAudit({ org: ORG, action: REPLY_PROVENANCE_ACTION });
+  const row = [...rows].reverse().find((r) => (r.detail as { id?: string } | undefined)?.id === last.ts);
+  const sources = (row?.detail as { sources?: string } | undefined)?.sources;
+  return sources === undefined ? last.text : `${last.text}\n\n${PROVENANCE_FOOTER_PREFIX} ${sources}`;
+}
 
 const target: ReplyTarget = { platform: "slack", channelId: CHAN };
 
@@ -180,12 +190,12 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
   });
   ok(posted.length === before + 1, "§1/ROOM: exactly one message reached the room");
   ok(
-    lastPosted().startsWith(ANSWER),
-    `🔴 §1: the model's own text is delivered FIRST and unchanged — the footer is an addition, never a rewrite (saw: ${JSON.stringify(lastPosted().slice(0, 160))})`,
+    (await lastShown()).startsWith(ANSWER),
+    `🔴 §1: the model's own text is delivered FIRST and unchanged — the footer is an addition, never a rewrite (saw: ${JSON.stringify((await lastShown()).slice(0, 160))})`,
   );
   ok(
-    lastPosted().includes(`${PROVENANCE_FOOTER_PREFIX} notion, linear`),
-    `🔴 §1: the room is told BOTH connectors the turn read, in first-read order. This is the whole feature, asserted on the bytes a reader sees (saw: ${JSON.stringify(lastPosted().slice(0, 160))})`,
+    (await lastShown()).includes(`${PROVENANCE_FOOTER_PREFIX} notion, linear`),
+    `🔴 §1: the room is told BOTH connectors the turn read, in first-read order. This is the whole feature, asserted on the bytes a reader sees (saw: ${JSON.stringify((await lastShown()).slice(0, 160))})`,
   );
 }
 
@@ -198,8 +208,8 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
   });
   ok(posted.length === before + 1, "§2/ROOM: one message reached the room");
   ok(
-    lastPosted() === ANSWER,
-    `🔴 §2 NEGATIVE CONTROL: a turn that read no connector delivers the model's text BYTE-IDENTICAL — no footer, no marker, not even a trailing newline (saw: ${JSON.stringify(lastPosted().slice(0, 160))})`,
+    (await lastShown()) === ANSWER,
+    `🔴 §2 NEGATIVE CONTROL: a turn that read no connector delivers the model's text BYTE-IDENTICAL — no footer, no marker, not even a trailing newline (saw: ${JSON.stringify((await lastShown()).slice(0, 160))})`,
   );
   const rows = await readAudit({ org: ORG, action: REPLY_PROVENANCE_ACTION });
   ok(rows.length === 1, "🔴 §2: …and it writes NO provenance row either — an empty record is still a claim, and there is nothing to claim (only §1's row exists)");
@@ -213,11 +223,11 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
     await postReply(target, ANSWER, auditFor("turn_3a"));
   });
   ok(
-    lastPosted().includes("notion") && !lastPosted().includes("github"),
-    `🔴 §3a: the source read in THIS room is named and the one read elsewhere is NOT. Naming a source discloses that it exists, so the name is the thing withheld (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+    (await lastShown()).includes("notion") && !(await lastShown()).includes("github"),
+    `🔴 §3a: the source read in THIS room is named and the one read elsewhere is NOT. Naming a source discloses that it exists, so the name is the thing withheld (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
   );
   ok(
-    lastPosted().includes("1 in another domain"),
+    (await lastShown()).includes("1 in another domain"),
     "🔴 §3a: …and the room is still told that ONE other source was consulted. The count is honest about there being more; only the name is withheld",
   );
 
@@ -227,10 +237,10 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
     await postUnifiedReply({ platform: "slack", channelId: CHAN }, ANSWER, {}, unifiedAuditFor("turn_3bi", WAKE_A));
   });
   ok(
-    lastPosted().includes(`${PROVENANCE_FOOTER_PREFIX} notion`),
-    `🔴 §3b(i): a UNIFIED reply answering the wake its read was made under NAMES the connector — the primary posture renders the same footer a solo seat does (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+    (await lastShown()).includes(`${PROVENANCE_FOOTER_PREFIX} notion`),
+    `🔴 §3b(i): a UNIFIED reply answering the wake its read was made under NAMES the connector — the primary posture renders the same footer a solo seat does (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
   );
-  ok(!lastPosted().includes("another domain"), "🔴 §3b(i): …and nothing is counted as another domain, because nothing was withheld");
+  ok(!(await lastShown()).includes("another domain"), "🔴 §3b(i): …and nothing is counted as another domain, because nothing was withheld");
 
   const inTurn3 = newSession();
   await inTurn3(async () => {
@@ -239,22 +249,22 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
     await postUnifiedReply({ platform: "slack", channelId: CHAN }, ANSWER, {}, unifiedAuditFor("turn_3bii", WAKE_B, WAKE_A));
   });
   ok(
-    !lastPosted().includes("notion") && !lastPosted().includes("linear"),
-    `🔴 §3b(ii): a read recorded under a SIBLING wake is never named, even though it shares this reply's partition surface — the disclosure belongs to the conversation the read was made for (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+    !(await lastShown()).includes("notion") && !(await lastShown()).includes("linear"),
+    `🔴 §3b(ii): a read recorded under a SIBLING wake is never named, even though it shares this reply's partition surface — the disclosure belongs to the conversation the read was made for (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
   );
   ok(
-    lastPosted().includes("2 in another domain"),
+    (await lastShown()).includes("2 in another domain"),
     "🔴 §3b(ii): …and the count still reaches the room, so the reader learns the turn consulted two systems without learning which",
   );
 
   const inTurn4 = newSession();
   await inTurn4(async () => {
     await hook(opResult("github__get_pull_request"), unifiedCtx("turn_3biii", WAKE_A));
-    await postUnifiedReply({ platform: "slack", channelId: CHAN }, ANSWER, {}, bridgeAuditFor("turn_3biii", WAKE_A));
+    await postUnifiedReply({ platform: "slack", channelId: CHAN }, `${ANSWER} (bridge)`, {}, bridgeAuditFor("turn_3biii", WAKE_A));
   });
   ok(
-    lastPosted().includes(`${PROVENANCE_FOOTER_PREFIX} github`),
-    `🔴 §3b(iii): the addressed-mention BRIDGE names the connector too — a route whose audit carries no room label still proves its room with the wake (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+    (await lastShown()).includes(`${PROVENANCE_FOOTER_PREFIX} github`),
+    `🔴 §3b(iii): the addressed-mention BRIDGE names the connector too — a route whose audit carries no room label still proves its room with the wake (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
   );
 
   const inTurn5 = newSession();
@@ -264,8 +274,8 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
     await postUnifiedReply({ platform: "slack", channelId: CHAN }, `${ANSWER} (b)`, {}, unifiedAuditFor("turn_3biv", WAKE_B, WAKE_B));
   });
   ok(
-    !lastPosted().includes("linear") && lastPosted().includes("1 in another domain"),
-    `🔴 §3b(iv): a reply answering the read's own DELIVERY wake names nothing, because the turn had already addressed a different wake and the read is recorded under THAT one (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+    !(await lastShown()).includes("linear") && (await lastShown()).includes("1 in another domain"),
+    `🔴 §3b(iv): a reply answering the read's own DELIVERY wake names nothing, because the turn had already addressed a different wake and the read is recorded under THAT one (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
   );
   const inTurn6 = newSession();
   await inTurn6(async () => {
@@ -274,8 +284,8 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
     await postUnifiedReply({ platform: "slack", channelId: CHAN }, `${ANSWER} (c)`, {}, unifiedAuditFor("turn_3bv", WAKE_A, WAKE_B));
   });
   ok(
-    lastPosted().includes(`${PROVENANCE_FOOTER_PREFIX} linear`),
-    `🔴 §3b(v) THE RESIDUAL, MEASURED: the read is named into the wake the turn ADDRESSED, not the one its delivery stamp named. The module header states this as the cost of preferring the addressed wake; this leg is what makes the claim checkable (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+    (await lastShown()).includes(`${PROVENANCE_FOOTER_PREFIX} linear`),
+    `🔴 §3b(v) THE RESIDUAL, MEASURED: the read is named into the wake the turn ADDRESSED, not the one its delivery stamp named. The module header states this as the cost of preferring the addressed wake; this leg is what makes the claim checkable (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
   );
 
   const inTurn7 = newSession();
@@ -284,8 +294,8 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
     await postUnifiedReply({ platform: "slack", channelId: CHAN }, `${ANSWER} (d)`, {}, unifiedAuditFor("turn_3bvi", WAKE_A));
   });
   ok(
-    !lastPosted().includes("notion") && lastPosted().includes("1 in another domain"),
-    `🔴 §3b(vi): a read the host could place under NEITHER proof is counted by kind and never named, even on a reply whose own partition surface matches it (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+    !(await lastShown()).includes("notion") && (await lastShown()).includes("1 in another domain"),
+    `🔴 §3b(vi): a read the host could place under NEITHER proof is counted by kind and never named, even on a reply whose own partition surface matches it (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
   );
 }
 
@@ -322,7 +332,7 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
     ok(connectorReadsThisTurn("turn_5").length === 0, "🔴 §5: …and a FAILED read records none either — nothing was read, so nothing was drawn on");
     await postReply(target, ANSWER, auditFor("turn_5"));
   });
-  ok(posted.length === before + 1 && lastPosted() === ANSWER, "🔴 §5: so the reply is delivered byte-identical, which is what a turn with no successful read owes");
+  ok(posted.length === before + 1 && (await lastShown()) === ANSWER, "🔴 §5: so the reply is delivered byte-identical, which is what a turn with no successful read owes");
 }
 
 {
@@ -334,8 +344,8 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
     await editPostedMessage(locus, "ts-edit-6", "Corrected: Friday.", auditFor("turn_6"));
   });
   ok(
-    lastPosted().startsWith("Corrected: Friday.") && lastPosted().includes(`${PROVENANCE_FOOTER_PREFIX} notion`),
-    `🔴 §6: the EDITED body carries the footer too, re-derived from the turn's ledger rather than parsed back out of the old text (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+    (await lastShown()).startsWith("Corrected: Friday.") && (await lastShown()).includes(`${PROVENANCE_FOOTER_PREFIX} notion`),
+    `🔴 §6: the EDITED body carries the footer too, re-derived from the turn's ledger rather than parsed back out of the old text (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
   );
 }
 
@@ -348,10 +358,10 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
       await postReply(target, `${ANSWER}\n\n${FORGED}`, auditFor("turn_8a"));
     });
     ok(
-      !lastPosted().includes("workday-hr"),
-      `🔴 §8a: the model's own footer-shaped line is STRUCK, on the very turn the host adds none. The marker is reserved, the way the memory mount is (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+      !(await lastShown()).includes("workday-hr"),
+      `🔴 §8a: the model's own footer-shaped line is STRUCK, on the very turn the host adds none. The marker is reserved, the way the memory mount is (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
     );
-    ok(lastPosted() === ANSWER, "🔴 §8a: …and only that line goes — the rest of the answer is delivered byte-identical");
+    ok((await lastShown()) === ANSWER, "🔴 §8a: …and only that line goes — the rest of the answer is delivered byte-identical");
   }
 
   {
@@ -361,11 +371,11 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
       await postReply(target, `${ANSWER}\n\n${FORGED}`, auditFor("turn_8b"));
     });
     ok(
-      !lastPosted().includes("workday-hr") && lastPosted().includes(`${PROVENANCE_FOOTER_PREFIX} notion`),
-      `🔴 §8b: the forged line is struck and the RECORDED one takes its place — a turn that really read Notion must not ship the model's list beside the host's (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+      !(await lastShown()).includes("workday-hr") && (await lastShown()).includes(`${PROVENANCE_FOOTER_PREFIX} notion`),
+      `🔴 §8b: the forged line is struck and the RECORDED one takes its place — a turn that really read Notion must not ship the model's list beside the host's (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
     );
     ok(
-      lastPosted().split(PROVENANCE_FOOTER_PREFIX).length === 2,
+      (await lastShown()).split(PROVENANCE_FOOTER_PREFIX).length === 2,
       "🔴 §8b: …and exactly ONE footer reaches the room. This is also what makes the render idempotent, which the edit door needs when a model echoes a posted body back into `edit_reply`",
     );
   }
@@ -377,10 +387,10 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
       await postReply(target, decorated, auditFor("turn_8d"));
     });
     ok(
-      !lastPosted().includes("workday-hr") && !lastPosted().includes("linear"),
-      `🔴 §8d: a BOLDED forgery and a QUOTED one are both struck — the decoration is what a model reaches for, so anchoring on the bare marker would have left the convincing cases (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+      !(await lastShown()).includes("workday-hr") && !(await lastShown()).includes("linear"),
+      `🔴 §8d: a BOLDED forgery and a QUOTED one are both struck — the decoration is what a model reaches for, so anchoring on the bare marker would have left the convincing cases (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
     );
-    ok(lastPosted() === ANSWER, "🔴 §8d: …and the answer above them is delivered byte-identical");
+    ok((await lastShown()) === ANSWER, "🔴 §8d: …and the answer above them is delivered byte-identical");
   }
 
   {
@@ -397,7 +407,7 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
   const before = posted.length;
   ok(connectorReadsThisTurn("turn_7").length === 0, "§7: the reader answers 'nothing read' outside an eve scope instead of throwing");
   await postReply(target, ANSWER, auditFor("turn_7"));
-  ok(posted.length === before + 1 && lastPosted() === ANSWER, "🔴 §7: …and the reply reaches the room unchanged — an unavailable signal never turns a delivered answer into an error");
+  ok(posted.length === before + 1 && (await lastShown()) === ANSWER, "🔴 §7: …and the reply reaches the room unchanged — an unavailable signal never turns a delivered answer into an error");
 }
 
 {
@@ -418,10 +428,10 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
     });
     ok(posted.length === before + 1, "§9a/ROOM: exactly one message reached the room");
     ok(
-      lastPosted().includes(`${PROVENANCE_FOOTER_PREFIX} linear (${TITLE_IN_ROOM})`),
-      `🔴 §9a: the room the issue BELONGS to is told which issue the turn read, by name, inside the one footer line (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+      (await lastShown()).includes(`${PROVENANCE_FOOTER_PREFIX} linear (${TITLE_IN_ROOM})`),
+      `🔴 §9a: the room the issue BELONGS to is told which issue the turn read, by name, inside the one footer line (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
     );
-    ok(lastPosted().split("\n").length === 3, "🔴 §9a: …and the reply is still the answer, a blank line and ONE footer line — never a second line, a block or a card");
+    ok((await lastShown()).split("\n").length === 3, "🔴 §9a: …and the reply is still the answer, a blank line and ONE footer line — never a second line, a block or a card");
   }
 
   {
@@ -435,10 +445,10 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
       await postReply({ platform: "slack", channelId: OTHER_CHAN }, ANSWER, auditFor("turn_9b", OTHER_CHAN));
     });
     ok(
-      !lastPosted().includes(TITLE_IN_ROOM) && !lastPosted().includes("linear"),
-      `🔴 §9b: a reply in ANOTHER room names neither the connection nor the record — the reach rule fences the record name exactly as it fences the connection name (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+      !(await lastShown()).includes(TITLE_IN_ROOM) && !(await lastShown()).includes("linear"),
+      `🔴 §9b: a reply in ANOTHER room names neither the connection nor the record — the reach rule fences the record name exactly as it fences the connection name (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
     );
-    ok(lastPosted().includes(`${PROVENANCE_FOOTER_PREFIX} 1 in another domain`), "🔴 §9b: …and the read is still COUNTED by kind, which is the honest floor");
+    ok((await lastShown()).includes(`${PROVENANCE_FOOTER_PREFIX} 1 in another domain`), "🔴 §9b: …and the read is still COUNTED by kind, which is the honest floor");
   }
 
   {
@@ -453,10 +463,10 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
       return connectorReadsThisTurn("turn_9c");
     });
     ok(
-      lastPosted().includes(`${PROVENANCE_FOOTER_PREFIX} linear`) && !lastPosted().includes("("),
-      `🔴 §9c: the connection is named and the RECORD is not — a record the room never named discloses that it exists, which is the whole reason OPE-1713 named connections only (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+      (await lastShown()).includes(`${PROVENANCE_FOOTER_PREFIX} linear`) && !(await lastShown()).includes("("),
+      `🔴 §9c: the connection is named and the RECORD is not — a record the room never named discloses that it exists, which is the whole reason OPE-1713 named connections only (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
     );
-    ok(!lastPosted().includes("Acquisition planning"), "🔴 §9c: …and the title reaches no reader");
+    ok(!(await lastShown()).includes("Acquisition planning"), "🔴 §9c: …and the title reaches no reader");
     ok(
       reads.length === 1 && reads.every((r) => r.record === undefined),
       "🔴 §9c: the id is not even RECORDED — rule (ii) fails closed at the door, so no later path can name it and the durable row never carries it",
@@ -474,10 +484,10 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
       await postReply(target, ANSWER, auditFor("turn_9c2"));
     });
     ok(
-      !lastPosted().includes("Another team's issue"),
-      `🔴 §9c-ii: \`OPE4-2\` is NOT \`OPE-42\` — the id match is dash-blind only for a UUID (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+      !(await lastShown()).includes("Another team's issue"),
+      `🔴 §9c-ii: \`OPE4-2\` is NOT \`OPE-42\` — the id match is dash-blind only for a UUID (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
     );
-    ok(lastPosted().includes(`${PROVENANCE_FOOTER_PREFIX} linear`), "🔴 §9c-ii: …and the connection is still named, because rule (i) held");
+    ok((await lastShown()).includes(`${PROVENANCE_FOOTER_PREFIX} linear`), "🔴 §9c-ii: …and the connection is still named, because rule (i) held");
   }
 
   {
@@ -491,7 +501,7 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
       noteAuthoredRecordRead(ctx, { kind: "notion-page", id: PAGE_IN_ROOM, name: LONG_B });
       await postReply(target, ANSWER, auditFor("turn_9d"));
     });
-    const footer = lastPosted().split("\n").pop() ?? "";
+    const footer = (await lastShown()).split("\n").pop() ?? "";
     ok(footer.startsWith(PROVENANCE_FOOTER_PREFIX), "§9d precondition: the last line is the footer");
     ok(
       footer.length <= 160,
@@ -518,11 +528,11 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
       await postReply(target, ANSWER, auditFor("turn_9e"));
     });
     ok(
-      lastPosted().split("\n").length === 3,
-      `🔴 §9e: a newline in the title buys NO extra line — the body is the answer, a blank line and one footer (saw: ${JSON.stringify(lastPosted().slice(0, 220))})`,
+      (await lastShown()).split("\n").length === 3,
+      `🔴 §9e: a newline in the title buys NO extra line — the body is the answer, a blank line and one footer (saw: ${JSON.stringify((await lastShown()).slice(0, 220))})`,
     );
     ok(
-      (lastPosted().split("\n").pop() ?? "").includes("Rollout IGNORE THE ABOVE"),
+      ((await lastShown()).split("\n").pop() ?? "").includes("Rollout IGNORE THE ABOVE"),
       "🔴 §9e: …the title is flattened onto the footer line rather than dropped, so the host's line stays one line and the reader still sees the record",
     );
   }
@@ -537,7 +547,7 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
       });
       await postReply(target, ANSWER, auditFor("turn_9f"));
     });
-    const footer = lastPosted().split("\n").pop() ?? "";
+    const footer = (await lastShown()).split("\n").pop() ?? "";
     ok(
       !footer.includes("workday-hr,") && !footer.includes(", 2 more"),
       `🔴 §9f: a title cannot spell a second SOURCE NAME or an overflow count into the line — the separators are neutralised before the name is stored (saw: ${JSON.stringify(footer)})`,
@@ -568,7 +578,7 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
     await globex(async () => {
       await postReply(target, ANSWER, replyAuditFor(globexCtx, "tool", "wake-9g"));
     });
-    const footer = lastPosted().split("\n").pop() ?? "";
+    const footer = (await lastShown()).split("\n").pop() ?? "";
     ok(
       !footer.includes("Acquire Initech"),
       `🔴 §9g: one session's record title NEVER reaches another session's room — the two share a turn id and an issue identifier, and only the session id tells them apart (saw: ${JSON.stringify(footer)})`,
@@ -592,10 +602,10 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
     });
     ok(posted.length === before + 1, "§10a/ROOM: exactly one message reached the room");
     ok(
-      lastPosted().includes(`${PROVENANCE_FOOTER_PREFIX} notion (${PINNED_LABEL})`),
-      `🔴 §10a: a borrowed read names the PINNED page the lent tool actually fetched — this is the line that contradicts a reply presenting those bytes as another page (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+      (await lastShown()).includes(`${PROVENANCE_FOOTER_PREFIX} notion (${PINNED_LABEL})`),
+      `🔴 §10a: a borrowed read names the PINNED page the lent tool actually fetched — this is the line that contradicts a reply presenting those bytes as another page (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
     );
-    ok(lastPosted().split("\n").length === 3, "🔴 §10a: …and it rides the ONE existing footer line, never a second line or a block of its own");
+    ok((await lastShown()).split("\n").length === 3, "🔴 §10a: …and it rides the ONE existing footer line, never a second line or a block of its own");
     ok(read !== undefined, "§10a precondition: the door wrote one ledger entry");
     ok(read?.op === BORROWED_READ_OP, "🔴 §10a: the entry's op is HOST-authored — the vendor tool string is model-authored at ask time and the durable row keeps this one");
     ok(read?.record?.kind === BORROWED_RECORD_KIND && read?.record?.id === GRANT_ID, "🔴 §10a: …and the record is the GRANT ROW, so a reader joins this footer to the `grant.used` row for the same call");
@@ -608,10 +618,10 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
       await postReply({ platform: "slack", channelId: OTHER_CHAN }, ANSWER, auditFor("turn_10b", OTHER_CHAN));
     });
     ok(
-      !lastPosted().includes(PINNED_LABEL) && !lastPosted().includes("notion"),
-      `🔴 §10b: a reply in ANOTHER room names neither the connection nor the pinned page — the reach rule is unchanged by this door (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+      !(await lastShown()).includes(PINNED_LABEL) && !(await lastShown()).includes("notion"),
+      `🔴 §10b: a reply in ANOTHER room names neither the connection nor the pinned page — the reach rule is unchanged by this door (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
     );
-    ok(lastPosted().includes(`${PROVENANCE_FOOTER_PREFIX} 1 in another domain`), "🔴 §10b: …and the read is still COUNTED by kind, which is the honest floor");
+    ok((await lastShown()).includes(`${PROVENANCE_FOOTER_PREFIX} 1 in another domain`), "🔴 §10b: …and the read is still COUNTED by kind, which is the honest floor");
   }
 
   {
@@ -622,8 +632,8 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
       return connectorReadsThisTurn("turn_10c");
     });
     ok(
-      lastPosted().includes(`${PROVENANCE_FOOTER_PREFIX} notion`) && !lastPosted().includes("("),
-      `🔴 §10c: with no recoverable label the footer names the CONNECTION alone — the direction this whole module errs in (saw: ${JSON.stringify(lastPosted().slice(0, 200))})`,
+      (await lastShown()).includes(`${PROVENANCE_FOOTER_PREFIX} notion`) && !(await lastShown()).includes("("),
+      `🔴 §10c: with no recoverable label the footer names the CONNECTION alone — the direction this whole module errs in (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
     );
     ok(reads.length === 1 && reads.every((r) => r.record === undefined), "🔴 §10c: …and the entry that WAS written carries no record, so no later path can name one");
   }
@@ -638,8 +648,8 @@ function newSession(): <T>(fn: () => Promise<T>) => Promise<T> {
       });
       await postReply(target, ANSWER, auditFor("turn_10d"));
     });
-    ok(lastPosted().split("\n").length === 3, "🔴 §10d: a label carrying a newline cannot split the footer into a second, unmarked line");
-    ok(!lastPosted().includes("workday-hr"), "🔴 §10d: …and a label shaped like a second source list names no system it did not read");
+    ok((await lastShown()).split("\n").length === 3, "🔴 §10d: a label carrying a newline cannot split the footer into a second, unmarked line");
+    ok(!(await lastShown()).includes("workday-hr"), "🔴 §10d: …and a label shaped like a second source list names no system it did not read");
   }
 }
 

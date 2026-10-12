@@ -8,7 +8,6 @@ import type { Partition } from "../memory/partition.js";
 import type { Tier } from "../memory/store.js";
 import { registerActionKind } from "./actions.js";
 import type { ActionKind } from "./types.js";
-import { plainValue } from "./plain-text.js";
 
 interface MemoryPurgeLocation {
   readonly siloName: string;
@@ -64,10 +63,9 @@ const memoryPurge: ActionKind<MemoryPurgeArgs> = {
   async execute(args, decidedBy) {
     const r = await executeMemoryPurge(args, decidedBy);
     if (r.removedFrom.length === 0) {
-      return `already gone — the matched fact(s) weren't found in any of their recorded files (${r.skipped.join(", ") || "none"})`;
+      return "those facts were already gone, so nothing changed";
     }
-    const skippedNote = r.skipped.length > 0 ? ` (already gone from: ${r.skipped.join(", ")})` : "";
-    return `purged ${r.removedLines} line(s) from ${r.removedFrom.join(", ")}${skippedNote}`;
+    return `deleted ${r.removedLines} remembered line${r.removedLines === 1 ? "" : "s"}`;
   },
 };
 

@@ -1,3 +1,5 @@
+import { routineWords } from "../routines/schedule-words.js";
+import { QUOTE_MAX, plainQuote } from "./plain-text.js";
 import { placeWords } from "../channels/friendly-ids.js";
 import { appendAudit } from "../audit/audit.js";
 import type { Partition } from "../memory/partition.js";
@@ -6,7 +8,6 @@ import { applyPolicyAdd, applyPolicyRemove, POLICY_MAX_RULES, type RoutinePolicy
 import { armingApproval } from "./arming-context.js";
 import { registerActionKind } from "./actions.js";
 import type { ActionKind } from "./types.js";
-import { plainValue } from "./plain-text.js";
 
 interface RoutinePolicyAddArgs {
   readonly org: string;
@@ -27,8 +28,10 @@ const routinePolicyAdd: ActionKind<RoutinePolicyAddArgs> = {
   kind: "routine.policy.add",
   policy: "member",
   plainSummary(args) {
-    return `Add a standing rule to the routine "${plainValue(args.description)}"`;
+    return `Add a standing rule to ${routineWords(args.description)}`;
   },
+  consequence: (args) => `${plainQuote(args.rule, QUOTE_MAX - 50)} — every future run follows it, unattended ones too`,
+  consequenceQuotes: true,
   summarize(args) {
     return [
       `Add a standing rule to routine ${args.routineId} — ${args.description}`,
@@ -46,7 +49,7 @@ const routinePolicyAdd: ActionKind<RoutinePolicyAddArgs> = {
   async execute(args, decidedBy) {
     const routine = await getRoutine(args.org, args.surfaceKey, args.routineId);
     if (!routine) {
-      return `routine ${args.routineId} is gone — it was cancelled before this rule was confirmed, so nothing changed.`;
+      return `${routineWords(args.description)} was stopped before this, so nothing changed`;
     }
     const rule: RoutinePolicyRule = {
       id: args.ruleId,
@@ -59,11 +62,11 @@ const routinePolicyAdd: ActionKind<RoutinePolicyAddArgs> = {
     };
     const result = applyPolicyAdd(routine, rule);
     if (!result.accepted) {
-      return `rule not added to routine ${args.routineId} — ${result.reason}`;
+      return `rule not added — ${result.reason}`;
     }
     const updated = await updateRoutine(args.org, args.surfaceKey, args.routineId, result.patch);
     if (!updated) {
-      return `routine ${args.routineId} is gone — it was cancelled before this rule was confirmed, so nothing changed.`;
+      return `${routineWords(args.description)} was stopped before this, so nothing changed`;
     }
     const arming = armingApproval();
     await appendAudit({
@@ -86,10 +89,7 @@ const routinePolicyAdd: ActionKind<RoutinePolicyAddArgs> = {
         rules: result.count,
       },
     });
-    return (
-      `rule ${rule.id} added to routine ${args.routineId} (${result.count} of ${POLICY_MAX_RULES}). ` +
-      `Every fire from now on is told: “${rule.rule}”. Remove it with \`remove_routine_rule\` — that asks for a confirmation too.`
-    );
+    return `rule added — ${routineWords(args.description)} follows it from its next run (${result.count} of ${POLICY_MAX_RULES} rules)`;
   },
 };
 
@@ -112,8 +112,10 @@ const routinePolicyRemove: ActionKind<RoutinePolicyRemoveArgs> = {
   kind: "routine.policy.remove",
   policy: "member",
   plainSummary(args) {
-    return `Remove a standing rule from the routine "${plainValue(args.description)}"`;
+    return `Remove a standing rule from ${routineWords(args.description)}`;
   },
+  consequence: (args) => `${plainQuote(args.ruleText, QUOTE_MAX - 60)} — someone added it after an incident`,
+  consequenceQuotes: true,
   summarize(args) {
     return [
       `Remove a standing rule from routine ${args.routineId} — ${args.description}`,
@@ -127,15 +129,15 @@ const routinePolicyRemove: ActionKind<RoutinePolicyRemoveArgs> = {
   async execute(args, decidedBy) {
     const routine = await getRoutine(args.org, args.surfaceKey, args.routineId);
     if (!routine) {
-      return `routine ${args.routineId} is gone — it was cancelled before this removal was confirmed, so nothing changed.`;
+      return `${routineWords(args.description)} was stopped before this, so nothing changed`;
     }
     const result = applyPolicyRemove(routine, args.ruleId);
     if (!result.removed) {
-      return `rule ${args.ruleId} is no longer on routine ${args.routineId} — it was already removed, so nothing changed.`;
+      return "that rule was already removed, so nothing changed";
     }
     const updated = await updateRoutine(args.org, args.surfaceKey, args.routineId, result.patch);
     if (!updated) {
-      return `routine ${args.routineId} is gone — it was cancelled before this removal was confirmed, so nothing changed.`;
+      return `${routineWords(args.description)} was stopped before this, so nothing changed`;
     }
     const arming = armingApproval();
     await appendAudit({
@@ -160,7 +162,7 @@ const routinePolicyRemove: ActionKind<RoutinePolicyRemoveArgs> = {
       },
     });
     const left = result.count === 0 ? "it now has no standing rules" : `${result.count} of ${POLICY_MAX_RULES} left`;
-    return `rule ${result.removed.id} removed from routine ${args.routineId} — ${left}. Future fires are no longer told “${result.removed.rule}”.`;
+    return `rule removed — ${routineWords(args.description)} no longer follows it (${left})`;
   },
 };
 

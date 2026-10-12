@@ -245,26 +245,37 @@ For any integration, three ways to wire it, in default order:
 
 ## A reply names what it read
 
-**A reply that drew on a connector says so, and the host writes that line — not the model.**
-Every connector op emits an `action.result` event, and the same hook that writes the
-`connector.op` audit row records READ ops on a turn-local ledger. The reply choke point reads
-that ledger and appends one compact footer:
+**A reply that drew on a connector records what it read, and the host writes that record — not
+the model.** Every connector op emits an `action.result` event, and the same hook that writes the
+`connector.op` audit row records READ ops on a turn-local ledger. The reply choke point reads that
+ledger and writes one compact **sources line** onto the reply's `reply.provenance` audit row, as
+`detail.sources`:
 
 ```
-Sources read this turn: notion, linear
+notion, linear
 ```
 
-The footer is **off** on a turn that read nothing, so an ordinary reply reaches the room
-byte-identical to what the model wrote. It counts a connector once however many times the turn
-read it, and it ignores writes (a created page announces itself) and failed ops (nothing was
-read).
+**The room does not see this line.** Until OPE-2487 the host appended it to the reply as a footer
+(`Sources read this turn: notion, linear`). An ordinary reader took it for machinery, and it never
+shaped what the model wrote, because the host adds it after the answer exists. The fix for a model
+that invents its sources is the read tools themselves, not a printed receipt. So every reply now
+reaches the room as the model wrote it, and a person who wants the sources asks: "what did you read
+for that?" The agent's voice section tells it to answer that question by name. That answer is the
+**model's own account** of its tool calls and its worker's report — nothing reads this row back
+into a turn — so it is not the host-checked receipt the footer was. Only an operator reading the
+row gets that.
+
+The line is absent on a turn that read nothing. It counts a connector once however many times the
+turn read it, and it ignores writes (a created page announces itself) and failed ops (nothing was
+read). Below, "the footer" means this recorded line.
 
 **The model does not write it, and cannot pass its own list off as one.** That is the point. A
 model asked to list its own sources may not know them and may invent them, and an invented
 source list is worse than none, because it reads as a receipt. The ledger is unforgeable
-because only the host writes it — and the line shape is reserved to match: the choke point
+because only the host writes it — and the old footer's shape stays reserved: the choke point
 strikes any line of the model's own text whose first content is `Sources read this turn:`, on
-every reply, including the ones it adds no footer to. The strip skips leading whitespace and
+every reply. With no host footer beside it, a forged one would be the only receipt in the room, so
+the strip matters more now, not less. The strip skips leading whitespace and
 markdown decoration (`*`, `_`, `>`, `-`, `#`) first, so a bolded or quoted forgery goes the
 same way as a bare one. It is a whole-line rule: a sentence that mentions the phrase mid-line
 is ordinary prose and passes through.
@@ -285,9 +296,12 @@ marker, and the two planes share nothing.
 **A borrowed read is named too.** A credential-grant call arrives under the reserved
 `grant__<owner>_<connector>__…` namespace, which the connector hook skips, so the **mount** records
 it instead: the grant row's connection, and the **pinned target** the owner approved. The footer
-then reads `Sources read this turn: notion (Launch checklist)`. The name comes off the grant row
-and never out of the vendor's bytes, so a reply that presents a lent tool's answer as some other
-page is contradicted by a host-written line in the same message. A grant whose row holds no
+then reads `notion (Launch checklist)`. The name comes off the grant row and never out of the
+vendor's bytes, so a reply that presents a lent tool's answer as some other page is contradicted by
+a host-written record. Since OPE-2487 that record is on the row, not in the message, so **only an
+operator reading the row sees the correction.** A person who asks what was read gets the model's
+own answer, which the host does not check. The guard against a misattributed lent read is therefore
+operator-only now. A grant whose row holds no
 recoverable target label names the connection alone. The grant plane's own `grant.*` rows are
 unchanged, and still name both principals.
 
@@ -306,7 +320,7 @@ really read; it can never name one the turn did not.
 **A source the room may not see is counted, never named.** Naming a source discloses that it
 exists. So a connector is named only where the host can prove the reply lands in the room the
 read was scoped to. Everything else is counted by kind:
-`Sources read this turn: notion, 1 in another domain`.
+`notion, 1 in another domain`.
 
 The proof depends on the seat. A **per-surface** seat holds one conversation, so equal partition
 surface keys prove it. A **unified** seat holds several conversations under one partition, and all
@@ -346,7 +360,7 @@ page the agent went and fetched fails the second proof, and the footer then name
 alone. The line stays one plain line:
 
 ```
-Sources read this turn: linear (Rollout plan), notion
+linear (Rollout plan), notion
 ```
 
 Only the **first-party read tools** reach this — `read_notion_page` and `read_linear_issue`, which
@@ -383,10 +397,13 @@ withheld from that room — plus how many it withheld. A row that names sources 
 non-zero `withheld` is how an operator reads back which of a turn's sources a room was not
 shown. A reply whose
 ledger is empty writes no row, so the four routes above have none either. Read the rows with
-`readAudit({ action: "reply.provenance" })`. The row is ids and verbs only: which connection,
-which op verb, never an op argument and never the op's output, the same contract the
-`connector.op` row keeps. The footer's shape is a first cut and is expected to change; the row
-is the durable answer to "what did this reply actually draw on".
+`readAudit({ action: "reply.provenance" })`. The row names which connection and which op verb,
+never an op argument. **One field holds op output:** `detail.sources` (OPE-2487) is the line a
+room used to read, so it can carry a **record title** — a Linear issue's or Notion page's title,
+written by whoever wrote that record — where both disclosure proofs below held, flattened onto one
+line and capped at 160 characters. The audit log keeps it as long as it keeps the row. A title that
+fails either proof is never stored. The row is the durable answer to "what did this reply actually
+draw on".
 
 ## MCP vs REST — when to use which
 
@@ -427,7 +444,10 @@ ServiceNow, Workday, Copilot Studio and similar) takes a whole task in plain lan
 its own system, and reports back. An admin declares each such agent in `agent/access/a2a-agents.ts`.
 `delegate_to_agent` hands it a task after an approval card, with the asker's identity attached, and
 `check_agent_task` follows a task that runs longer than one call. The answer is untrusted, like any
-connector result. See [A2A agents](../extending/a2a-agents.md).
+connector result. The other direction ships dark: with the `a2a.inbound` setting on and a caller
+declared in `agent/access/a2a-inbound.ts`, another organisation's agent can call this one through its
+published agent card, and each call runs as one unattended job bound external in the caller's own
+surface of its declared domain. See [A2A agents](../extending/a2a-agents.md).
 
 ## How a connector reaches the agent — and how you connect one
 
@@ -801,13 +821,14 @@ What the grant buys, and what it does not:
   therefore claims a pin only for a reviewed (connector, tool) pair whose every target argument is
   frozen, and says nothing about one otherwise — including a grant that fixes no arguments, which
   still says out loud that nothing is pinned.
-- **The reply names the page the lent tool actually fetched.** A granted read records its pinned
-  target on the turn's provenance ledger, so the reply footer reads
-  `Sources read this turn: notion (Launch checklist)` — see
+- **The reply's record names the page the lent tool actually fetched.** A granted read records its
+  pinned target on the turn's provenance ledger, so the reply's `reply.provenance` row reads
+  `notion (Launch checklist)` — see
   [*A reply names what it read*](#a-reply-names-what-it-read) above. The name is
   the grant's own pinned target, never a title read out of the vendor's bytes, so a wrong
-  attribution in the model's prose is set against a host-written line in the same message. The
-  footer's reach rule is unchanged: a reply the host cannot place in the room the read was scoped to
+  attribution in the model's prose is set against a host-written record. Since OPE-2487 only an
+  operator reading the row sees that record; a person who asks gets the model's own, unchecked
+  answer. The reach rule is unchanged: a reply the host cannot place in the room the read was scoped to
   names nothing. Three things keep the line honest, and each of them **under-reports**: a call the
   vendor answered with an error records nothing, because nothing was read; a grant whose tier is not
   `read` records nothing; and a grant that pins no target, or whose row holds no recoverable label,
@@ -1110,8 +1131,8 @@ overrides the precedence, and the acting-identity gate below already enforces th
 honours it or says no, and never answers on the org's integration instead. A seat's brief, a system
 note or an earlier turn is not the person naming an account. A lent tool is taken only where **both** hold: the person asking is the one who lent it and
 asked to act with their own account, and the ask is about the resource the tool is pinned to. A lent
-tool's bytes are never presented as another page's body, and an honest provenance footer does not
-licence that — the footer names where the bytes came from, it does not make them an answer to a
+tool's bytes are never presented as another page's body, and an honest provenance record does not
+licence that — the record names where the bytes came from, it does not make them an answer to a
 different question.
 
 🔴 **The rule has to reach the WORKER, and that is where the choice now sits.** The defect it
@@ -1128,7 +1149,8 @@ sentence is not this rule: it exists only where a grant is **mounted**, and only
 target-pinned pair (`grantTargetIsPinned`), so a turn with no lent tool reads nothing; and it speaks
 from inside one tool, which makes the org road the fallback for "any other page" rather than the
 first road for org work. Neither refuses a call: a turn that takes the wrong road is contradicted by
-the reply's provenance footer and by the `grant.used` audit row, not stopped.
+the reply's `reply.provenance` row and by the `grant.used` audit row, not stopped. Since OPE-2487
+neither is in the room, so only an operator reading those rows sees the contradiction.
 
 The verb grants nothing. It names one person, one connector, the arguments to fix and a human
 label for the target, sends one card, and **finishes**. A turn never waits for the owner —
@@ -1510,7 +1532,7 @@ discover. A domain-scoped app row is a separate design, not a smaller version of
 A grant row that names no vendor tool is not a borrow, and the broker fails it closed —
 `no_lent_tool`, before any burn.
 
-### The two `oe-oauth` dialects
+### The three `oe-oauth` dialects
 
 `oe-oauth` is the built-in user-authorization flow. Each connector declares its own sign-in in
 its connection module, next to its URL, with `declareConnectionSignIn(homeRef, { mode, … })` from
@@ -1524,11 +1546,148 @@ deployment authenticates. (The provider map was the `OE_OAUTH_CONFIG` variable u
 | --- | --- | --- | --- |
 | `discovery-dcr-pkce` (default) | Hosted MCP servers that publish RFC 8414 metadata | The adapter registers itself (RFC 7591) | PKCE, public client, no secret |
 | `static-confidential` | Vendors with no discovery and no registration, such as Notion's REST OAuth | A human creates it in the vendor's portal | HTTP Basic over a client id and a client secret |
+| `xaa` | Apps paired with your Okta org through Cross App Access (ID-JAG) | An Okta admin pairs OE with the app; the app issues OE a client | The person signs in to Okta once; each mint is two HTTP Basic token calls |
 
 A `static-confidential` declaration never holds the secret itself. It names a `clientSecretRef`,
 and the adapter reads that ref through the credential broker at the moment of each token
 call — so the secret lives encrypted in the credential store and nowhere else. A literal
 `clientSecret` in the declaration is refused outright.
+
+### Cross App Access (`xaa`): a personal connection with no per-app consent
+
+**It ships dark.** Nothing in this section runs until a connection declares `mode: "xaa"`, which
+needs an Okta org that an admin has set up as below. A deployment that declares no `xaa` sign-in
+behaves exactly as before.
+
+Okta's Cross App Access (XAA) implements the IETF draft *Identity Assertion JWT Authorization
+Grant* (ID-JAG, `draft-ietf-oauth-identity-assertion-authz-grant-04`). The Okta admin pairs OE with
+each app once, in the Okta console, and revokes it there. A person then gets a working personal
+connection to every paired app with no consent screen at the app.
+
+**What the person does.** They sign in to Okta through OE **once** — not once per app. OE needs a
+token from that person to exchange, so this one sign-in cannot be skipped. If the person already
+has an open Okta session, the sign-in usually completes with no prompt. The first time any `xaa`
+connection needs them, the agent sends the ordinary "connect your account" link, and it points at
+Okta. After that, every `xaa` connection that names the same Okta client reuses the same sign-in.
+
+**What a mint does.** Each app token costs two calls:
+
+1. **Leg 1, at Okta** (RFC 8693 token exchange). OE presents the person's Okta refresh token and
+   asks for an ID-JAG for the app's authorization server (`audience`). OE authenticates as its own
+   Okta client.
+2. **Leg 2, at the app** (RFC 7523 JWT bearer grant). OE presents the ID-JAG and gets the app's
+   access token. OE authenticates with the client the APP issued it. The app checks that the
+   ID-JAG names that client.
+
+OE caches the app token for its lifetime and never mints per call. Okta caps ID-JAGs at 250 per
+person, per app, per month without the *Okta for AI Agents* add-on, and an hourly re-mint over a
+working month stays under that cap. The cache is single-flight across processes. OE never stores a
+refresh token from the app: the draft says the app should not return one, and a re-mint is the
+only refresh path.
+
+**Whose sign-in counts.** The sign-in link is a capability URL, and the Okta refresh token it
+yields mints tokens for every `xaa` app. So the completion verifies the Okta id token (signature
+against Okta's JWKS, issuer, audience, expiry and the sign-in's nonce). It then admits the sign-in
+only when the Okta user id (`sub`) is a **confirmed `okta` account on the requester's link-set**.
+This is the same rule as the AWS Identity Center link: a join on the account id, never on an email,
+and a refusal by default. A refused sign-in stores nothing, spends the link and writes one
+`connector.xaa.link_refused` audit row that names the requester. When the refusal comes from the
+binding, the row also names the Okta account that signed in. An id token that does not verify
+names nobody, so its row carries the failed check instead.
+
+OE checks the binding again at **each mint** (once per token lifetime), not only at sign-in. An
+operator who revokes the person's `okta` link, or suspends their link-set, stops the minting at the
+next mint: OE deletes the stored Okta grant, and the person's next sign-in is refused until they
+are linked again. A cached app token still serves until it expires. When the identity-link plane
+cannot be read, the mint is refused with a retryable error and the Okta grant is kept. Each refusal
+row carries a `stage`: `sign-in` for a refused sign-in, `mint` for a refused re-check at a mint. At
+`mint`, the `reason` tells the two cases apart: the link is gone and the grant was deleted, or the
+link plane could not be read and the grant was kept.
+The Okta directory arm proposes each person's own `okta` account (see
+[Identity](../how-it-works/identity.md#pre-populating-links-from-an-idp-okta)), but only while an
+`xaa` sign-in names that Okta org.
+
+**Revocation.** The Okta admin revokes by one of these acts: deactivate the OE agent, unassign the
+person or group, or remove the app's resource connection. The next mint then fails:
+
+| Where it fails | Error | What the person sees |
+| --- | --- | --- |
+| Leg 1 refuses on policy (`access_denied`, `unauthorized_client`, `invalid_target`) | `oe_oauth_access_removed` | The reason, and **no** sign-in link: a new sign-in cannot restore an admin's revocation. |
+| Leg 1 says the Okta grant is dead (`invalid_grant`) | needs re-consent | A new Okta sign-in link. Okta refuses that sign-in if the admin unassigned the person. |
+| Leg 2 refuses (`invalid_grant`, `access_denied`, `unauthorized_client`) | `oe_oauth_access_removed` | The reason, and no sign-in link. |
+
+An app token that OE already holds stays valid until it expires (up to one hour in Okta's
+example). The draft defines no push revocation. A person's offboarding purge deletes their app
+tokens and their Okta grant, and revokes the Okta refresh token at Okta first. When the `xaa`
+declaration is already gone, the purge still deletes the Okta grant, but it cannot revoke the
+refresh token at Okta, because no client is left to authenticate with.
+
+**The declaration.** On a declared MCP server (`agent/access/mcp-servers.ts`), the server's `url`
+is the resource both legs name:
+
+```ts
+{
+  name: "datadog",
+  url: "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp",
+  description: "Datadog: query metrics, logs and monitors.",
+  signIn: {
+    mode: "xaa",
+    idpIssuer: "https://acme.okta.com",            // the Okta ORG authorization server, not /oauth2/default
+    idpClientId: "0oa…",                           // OE's OIDC app in Okta
+    idpClientSecretRef: "db:okta:oe-client-secret",
+    audience: "https://app.datadoghq.com",         // the app's authorization server issuer
+    resourceTokenEndpoint: "https://app.datadoghq.com/oauth2/v1/token",
+    resourceClientId: "…",                         // the client id the APP issued to OE
+    resourceClientSecretRef: "db:datadog:xaa-client-secret",
+    scopes: ["mcp:read"],
+  },
+}
+```
+
+Both secrets are credential-store REFS (`oe secret set <ref>`), each with an optional broker
+(`idpClientSecretBroker`, `resourceClientSecretBroker`, default `db`). A literal secret is refused,
+and every endpoint must be `https`. The values above are placeholders, not a tested Datadog
+configuration. An `xaa` connection acts only as a person: it has no service account, so a bundle
+that grants its `workspace-oauth` credential gets a refusal at mint time.
+
+**Set it up in Okta.** A super admin does these steps in the Okta Admin Console (from Okta's
+agent-to-app guide):
+
+1. Create a custom **OIDC web app** for OE. Grant types: authorization code and refresh token.
+   Scopes: `openid` and `offline_access`. Redirect URI: OE's callback,
+   `<OE_PUBLIC_BASE_URL>/oauth/v1/callback`. Store its client secret with
+   `oe secret set <idpClientSecretRef>`.
+2. On that app, open **Machine Assignments → Resources → Register AI agent**. Okta creates the
+   agent in the STAGED state. Give it the same client credentials.
+3. Make sure the target app is an XAA-enabled Okta Integration Network app, or configure a custom
+   one under **Machine Assignments → Callers → Cross App Access (XAA)**.
+4. On the agent, open **Resource connections → Add resource connection**. Set the resource
+   identifier, the client id that the APP issued to OE, and the scope policy.
+5. Assign people or groups to the OE OIDC app, then activate the agent.
+6. In OE: link each person's Okta account (the directory sync proposes it), store the app's client
+   secret with `oe secret set <resourceClientSecretRef>`, and declare the connection.
+
+**Test it without a paid tenant.** The free [xaa.dev](https://xaa.dev) playground has a simulated
+IdP, a resource authorization server and a resource MCP server, so it can run both legs. It is a
+hosted beta, so it is a manual check, never a gate.
+
+**What is not proven.** The gate tests run both legs against in-process fakes that enforce the
+protocol (`packages/adapters/scripts/oe-oauth-xaa-test.ts`). No run has exercised a live Okta org
+or a live app yet. These points are open:
+
+- Today the apps admit named partner agents only (Datadog's preview names Claude as its only
+  agent). A self-hosted deployment is a new client each time, and no vendor documents a
+  self-service way to register one. Until an app admits OE's client, leg 2 refuses.
+- OE authenticates to Okta with HTTP Basic (`client_secret_basic`). Okta's guide shows
+  `client_secret_post`; Okta normally accepts both, but this is not proven against a live org.
+  `private_key_jwt` is not built.
+- The leg-1 error codes for each Okta revocation act are not documented. The table above is OE's
+  mapping, not Okta's statement.
+- OE presents the person's Okta refresh token as the leg-1 subject token and keeps it. If the OE app
+  in Okta rotates refresh tokens on use, and Okta treats the exchange as a use, the stored token
+  goes stale and the person must sign in again. This is not proven either way.
+- The MCP extension `io.modelcontextprotocol/enterprise-managed-authorization` is not declared in
+  the client capabilities. A server that requires the declaration refuses OE.
 
 ### After you consent: what resumes, and what does not
 

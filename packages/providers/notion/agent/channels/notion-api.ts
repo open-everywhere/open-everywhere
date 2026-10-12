@@ -4,6 +4,7 @@ import {
   CredentialError,
   findConnectorCredential,
   guardCredentialFetch,
+  friendlyOutboundText,
   withRetryAfter,
   type CredentialEndpointRules,
   type RateLimitRetryOptions,
@@ -185,9 +186,24 @@ export function notionOperation(method: string | undefined, url: string): string
   return `${verb} ${shape}`;
 }
 
-function notionFetch(url: string, init: RequestInit, opts: NotionCallOpts): Promise<Response> {
+export async function friendlyNotionInit(url: string, init: RequestInit): Promise<RequestInit> {
+  if (typeof init.body !== "string" || !/\/v1\/comments(?:\/|$|\?)/.test(url) || (init.method !== "POST" && init.method !== "PATCH")) return init;
+  try {
+    const parsed = JSON.parse(init.body) as { rich_text?: unknown };
+    if (!Array.isArray(parsed.rich_text)) return init;
+    for (const item of parsed.rich_text as Array<{ text?: { content?: unknown } }>) {
+      if (item?.text && typeof item.text.content === "string") item.text.content = await friendlyOutboundText(item.text.content, "notion");
+    }
+    return { ...init, body: JSON.stringify(parsed) };
+  } catch {
+    return init;
+  }
+}
+
+async function notionFetch(url: string, init: RequestInit, opts: NotionCallOpts): Promise<Response> {
   const base = opts.fetch ?? (globalThis.fetch as FetchLike);
   const send = guardCredentialFetch(opts.endpoints, "notion credential", base);
+  init = await friendlyNotionInit(url, init);
   return withRetryAfter(() => send(url, init), {
     ...opts.retry,
     surface: "notion",

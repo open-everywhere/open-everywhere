@@ -13,7 +13,7 @@ export function meetingJoinSummary(args: MeetingJoinArgs): string[] {
     "The bot joins as a visible participant. The meeting host must admit it from the lobby.",
     `It records the meeting audio for at most ${args.maxMinutes} minutes, then leaves. It also leaves when the meeting ends or the room empties.`,
     `Transcription: ${args.transcriptionDisclosure}`,
-    `Audio is not stored. OE asks its store to keep the transcript for ${args.transcriptDays} days, but this build's store can delete it sooner or keep it longer (OPE-2461).`,
+    `Audio is not stored. OE keeps the transcript for ${args.transcriptDays} days, then deletes it.`,
     "After the meeting I post a recap with the decisions and actions into this thread.",
     `Runs on this deployment's own sandbox (${inlineForReview(args.backend)}); its hours go to the spend ledger.`,
     ...(args.reason ? [`Reason: ${inlineForReview(args.reason)}`] : []),
@@ -28,12 +28,15 @@ const meetingJoin: ActionKind<MeetingJoinArgs> = {
   proseArgs: ["reason"],
   summarize: meetingJoinSummary,
   plainSummary(args) {
-    return `Send OE's meeting bot to record a ${plainValue(platformLabel(args.platform))} meeting (room ${plainValue(args.roomId)}) and post a recap in this thread`;
+    return `Send the notetaker to the ${plainValue(platformLabel(args.platform))} meeting and post a recap here`;
+  },
+  consequence(args) {
+    return `It records everyone for up to ${args.maxMinutes} min. The host admits it. OE keeps the transcript ${args.transcriptDays} days.`;
   },
   async execute(args, decidedBy) {
     const callbackBase = selfDispatchBaseUrl();
     const rec = await openMeeting(args, decidedBy, callbackBase !== undefined ? { callbackBase } : {});
-    return `meeting bot sent (box ${rec.box.name}, at most ${rec.box.maxMinutes} min) — the host must admit it; the recap comes to this thread after the meeting`;
+    return `notetaker sent (up to ${rec.box.maxMinutes} min) — the host must admit it, and the recap comes here after the meeting`;
   },
 };
 

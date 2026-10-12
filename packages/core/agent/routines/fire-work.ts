@@ -20,6 +20,7 @@ import { FIRE_PRINCIPAL_ATTR, type SurfaceBinding } from "../identity/binding.js
 import type { Domain } from "../memory/domain.js";
 import { oneAttrValue, routineManualStamped, routineMarker, routineSilentStamped } from "./routine.js";
 import { WEBHOOK_MARKER_ATTR } from "./fire-auth.js";
+import { A2A_INBOUND_CALLER_ATTR, A2A_INBOUND_TASK_ATTR } from "../a2a/inbound/platform.js";
 
 export const FIRE_REQUESTER_REASON = "routine-fire";
 
@@ -58,8 +59,12 @@ export function fireRowOf(attributes: Readonly<Record<string, unknown>>): WorkFi
   const attrs = attributes as Record<string, string | readonly string[]>;
   const marker = routineMarker(attrs);
   const creator = oneAttrValue(attrs[FIRE_PRINCIPAL_ATTR]);
+  const a2aCaller = oneAttrValue(attrs[A2A_INBOUND_CALLER_ATTR]);
+  const a2aTask = oneAttrValue(attrs[A2A_INBOUND_TASK_ATTR]);
+  const a2a = a2aCaller !== undefined && a2aCaller.length > 0 && a2aTask !== undefined && a2aTask.length > 0 ? { caller: a2aCaller, taskId: a2aTask } : undefined;
   return {
-    owesRoom: !routineSilentStamped(attrs),
+    owesRoom: a2a === undefined && !routineSilentStamped(attrs),
+    ...(a2a !== undefined ? { a2a } : {}),
     manual: routineManualStamped(attrs),
     ...(marker !== null ? { marker } : {}),
     ...(creator !== undefined && creator.length > 0 ? { creator } : {}),

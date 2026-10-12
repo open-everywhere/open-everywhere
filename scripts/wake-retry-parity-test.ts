@@ -17,6 +17,7 @@ import { registerGithubProvider } from "@open-everywhere/provider-github/agent/r
 import { registerLinearProvider } from "@open-everywhere/provider-linear/agent/register.js";
 import { registerNotionProvider } from "@open-everywhere/provider-notion/agent/register.js";
 import { registerEmailProvider } from "@open-everywhere/provider-email/agent/register.js";
+import { registerGoogleChatProvider } from "@open-everywhere/provider-google-chat/agent/register.js";
 
 import { divertToUnifiedWindow } from "@open-everywhere/core/agent/channels/unified.js";
 import { formatWindowToken } from "@open-everywhere/core/agent/channels/window-key.js";
@@ -33,6 +34,7 @@ registerGithubProvider();
 registerLinearProvider();
 registerNotionProvider();
 registerEmailProvider();
+registerGoogleChatProvider();
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -66,6 +68,11 @@ const SURFACES: ReadonlyArray<{
     frontDoor: "packages/providers/email/agent/channels/email.ts",
     origin: { platform: "email", inbox: "launch@agent.acme.com", threadId: "thr_win", messageId: "<m-win>", to: ["ann@acme.com"] },
   },
+  {
+    platform: "google-chat",
+    frontDoor: "packages/providers/google-chat/agent/channels/google-chat.ts",
+    origin: { platform: "google-chat", workspace: "acme", space: "spaces/AAAAwin", thread: "spaces/AAAAwin/threads/t-win" },
+  },
 ];
 
 const FUNNEL = /\bdivert(?:Inbound)?ToUnifiedWindow\s*\(/;
@@ -94,7 +101,7 @@ console.log("1. every surface reaches the shared dispatch:");
   eq(
     callers,
     SURFACES.map((s) => s.frontDoor).sort(),
-    "🔴 §1: the provider modules that CALL the funnel are EXACTLY the seven front doors — a seventh is a module whose wakes nobody proved are on this road",
+    "🔴 §1: the provider modules that CALL the funnel are EXACTLY the eight front doors — a ninth is a module whose wakes nobody proved are on this road",
   );
 }
 

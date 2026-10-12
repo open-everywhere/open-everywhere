@@ -1,6 +1,7 @@
 import { admitProviderRegistration } from "../access/provider-selection.js";
 import { swallowRoomOp, swallowRoomPost } from "./egress-spoof.js";
 import { bridgeSlackForm } from "./slack-bridge.js";
+import { guardMessageOps } from "./friendly-outbound.js";
 
 export interface OutboundFile {
   readonly bytes: Uint8Array;
@@ -29,7 +30,7 @@ const REGISTRY = new Map<string, SurfaceMessageOps>();
 
 export function registerSurfaceMessageOps(ops: SurfaceMessageOps): void {
   if (!admitProviderRegistration(ops.platform, "surface-message-ops")) return;
-  REGISTRY.set(ops.platform, ops);
+  REGISTRY.set(ops.platform, guardMessageOps(ops));
 }
 
 export function surfaceMessageOps(platform: string | undefined): SurfaceMessageOps | undefined {

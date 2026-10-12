@@ -49,7 +49,7 @@ const HANDOFF_NARRATION = "I've handed this off to make the one-line README chan
 
 {
   const withholdings = [
-    "I can't run that AWS check — this channel has no AWS role granted, and an admin binds one.",
+    "I can't run that AWS check from this channel — it has no AWS access yet, and an admin can add it.",
     "Quick catch-up: Ana shipped the pricing fix and Sam asked about the on-call rota. The pull request and the AWS check are both blocked here — this channel has no grant for either, and an admin can bind one.",
     "I can't request the channel's access from a DM. Ask in the channel itself, or an admin can widen it there.",
     "No request has been filed — I can't request the channel's access from a DM.",

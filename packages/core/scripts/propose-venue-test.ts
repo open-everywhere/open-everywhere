@@ -424,8 +424,8 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   const spendRow = await rowOf(spend.pendingId);
   ok(spendRow["channelId"] === "C1" && spendRow["postedTo"] === "slack/T1/C1", "unchanged: `set_spend_limit` in a card-capable own room hosts its own card, with the asking room's key frozen");
   ok(
-    /^card posted — surface limit \$12\.00\/month \(current: uncapped\) on "slack\/T1\/C1" \(pending [0-9a-f-]{36}\)\.$/.test(withoutDecisionNote(spend.note)),
-    "unchanged: 🔴 …and the note is byte-for-byte the pre-OPE-312 sentence — no venue named, NO redirect instruction appended, because telling someone to go elsewhere for a card that is right there is worse than saying nothing",
+    /^card posted — surface limit \$12\.00\/month \(current: uncapped\) on <#C1> \(slack\/T1\/C1\) \(pending [0-9a-f-]{36}\)\.$/.test(withoutDecisionNote(spend.note)),
+    "unchanged: 🔴 …and the note is the pre-OPE-312 sentence — no venue named, NO redirect instruction appended, because telling someone to go elsewhere for a card that is right there is worse than saying nothing (the place now reads in words with its key beside it, OPE-2482)",
   );
 }
 

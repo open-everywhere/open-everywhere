@@ -16,7 +16,7 @@ await import("../agent/approvals/session-checkpoint.js");
 const { registeredActionKinds, actionKind } = await import("../agent/approvals/actions.js");
 const { plainSummaryForRow, plainSummaryForArgs } = await import("../agent/approvals/plain-summary.js");
 const { plainValue, finishPlainSentence, PLAIN_SUMMARY_MAX } = await import("../agent/approvals/plain-text.js");
-const { pendingCardLayout, pendingCardOptions, approvalLabel } = await import("../agent/approvals/card-layout.js");
+const { pendingCardLayout, pendingCardOptions } = await import("../agent/approvals/card-layout.js");
 const { pendingCardBlocks, decidedCardBlocks, groupedCardBlocks, groupedHeadline, GROUPED_CARD_MAX_ITEMS } = await import("../agent/approvals/card.js");
 
 let n = 0;
@@ -58,17 +58,17 @@ const MARKUP = /[<>[\]*`|]/u;
 {
   const cases: { kind: string; args: unknown; expect: readonly string[] }[] = [
     { kind: "spend.set", args: { scopeKey: "slack/T1/C1", scopeLabel: "#general", level: "surface", monthlyUsd: 50 }, expect: ["spend limit", "#general", "$50.00/mo"] },
-    { kind: "spend.clear", args: { scopeKey: "slack/T1/C1", scopeLabel: "#general", level: "surface", currentCap: null }, expect: ["Remove the spend limit", "#general"] },
-    { kind: "chat.dm", args: { platform: "slack", principalId: "U0123ABC", text: "hi", footer: "f", grant: "g" }, expect: ["direct message", "U0123ABC"] },
-    { kind: "chat.post", args: { platform: "slack", container: "C0999", text: "hi", grant: "g" }, expect: ["Post a message", "C0999"] },
+    { kind: "spend.clear", args: { scopeKey: "slack/T1/C1", scopeLabel: "#general", level: "surface", currentCap: null }, expect: ["back on its configured spend limit", "#general"] },
+    { kind: "chat.dm", args: { platform: "slack", principalId: "U0123ABC", text: "hi", footer: "f", grant: "g" }, expect: ["direct message", "<@U0123ABC>"] },
+    { kind: "chat.post", args: { platform: "slack", container: "C0999", text: "hi", grant: "g" }, expect: ["Post a message", "<#C0999>"] },
     { kind: "ticket.assign", args: { platform: "linear", entityId: "ENG-12", assignee: "ana" }, expect: ["Assign", "ENG-12", "ana"] },
     { kind: "ticket.set_state", args: { platform: "linear", entityId: "ENG-12", state: "Done" }, expect: ["ENG-12", "Done"] },
-    { kind: "ticket.create", args: { platform: "github", target: "acme/web", title: "Fix login", body: "" }, expect: ["work item", "acme/web", "Fix login"] },
+    { kind: "ticket.create", args: { platform: "github", target: "acme/web", title: "Fix login", body: "" }, expect: ["GitHub issue", "acme/web", "Fix login"] },
     { kind: "pr.open", args: { repo: "acme/web", title: "Bump deps", head: "h", base: "main", headSha: "abc", body: "" }, expect: ["pull request", "acme/web", "Bump deps"] },
     { kind: "routine.cancel", args: { id: "r1", description: "daily digest" }, expect: ["Stop the routine", "daily digest"] },
     { kind: "memory.purge", args: { bullets: [{ sha256: "x", chars: 3 }, { sha256: "y", chars: 4 }], locations: [] }, expect: ["delete 2 remembered facts"] },
     { kind: "skill.delete", args: { name: "triage", domain: "eng" }, expect: ["Delete the skill", "triage", "eng"] },
-    { kind: "webhook.rotate", args: { hookId: "stripe", requestedBy: "U1", surfaceKey: "slack/T1/C1" }, expect: ["signing secret", "stripe", "<@U1>", "stops working"] },
+    { kind: "webhook.rotate", args: { hookId: "stripe", requestedBy: "U1", surfaceKey: "slack/T1/C1" }, expect: ["signing secret", "stripe", "stops working"] },
     { kind: "connector.revoke", args: { connector: "notion", scopeKey: "slack/T1/C1" }, expect: ["Turn off", "notion"] },
     { kind: "halt.resume", args: { orgWide: true }, expect: ["Lift the emergency halt", "everywhere"] },
     { kind: "a2a.delegate", args: { org: "default", scopeKey: "slack/T1/C1", agent: "travel-bot", host: "agents.example.com", message: "book", sessionKey: "k", memoKind: "m", requestedBy: "U1" }, expect: ["outside agent", "travel-bot", "agents.example.com", "U1"] },
@@ -110,24 +110,25 @@ const MARKUP = /[<>[\]*`|]/u;
 
 {
   const unknown = plainSummaryForRow({ kind: "no.such.kind", argsJson: "{}" });
-  ok(unknown.startsWith("The agent asks to run no.such.kind"), `an unregistered kind gets the generic sentence (got "${unknown}")`);
+  ok(unknown.startsWith("The agent asks for an action this card cannot describe") && !unknown.includes("no.such.kind"), `an unregistered kind gets the generic sentence, which names no kind (got "${unknown}")`);
   const broken = plainSummaryForRow({ kind: "chat.post", argsJson: "{not json" });
-  ok(broken.startsWith("The agent asks to run chat.post"), "unparseable args get the generic sentence, never a throw");
+  ok(broken === unknown, "unparseable args get the generic sentence, never a throw");
 }
 
 {
   const r = row();
   const headline = plainSummaryForRow(r);
   const card = pendingCardBlocks(r, ["Set spend limit — #general (surface)", "$: none → $50.00/mo"]);
-  const first = card.blocks[0] as { type: string; text: { type: string; text: string } };
-  ok(first.type === "header" && first.text.type === "plain_text" && first.text.text === headline, "🔴 the pending card's FIRST block is the plain sentence, as plain_text");
-  const second = card.blocks[1] as { type: string; elements: { text: string }[] };
-  ok(second.type === "context" && second.elements[0].text === approvalLabel("spend.set"), "the technical label sits directly under the sentence");
+  const first = card.blocks[0] as { type: string; block_id: string; text: { type: string; text: string } };
+  ok(first.type === "section" && first.text.type === "mrkdwn" && first.text.text === `*${headline}*`, "🔴 the pending card's FIRST block is the plain sentence, in bold");
+  ok(first.block_id === `oe_approval_card:spend.set:${r.id}`, "the first block's id carries the kind, where no person reads it");
+  ok(!JSON.stringify(card.blocks.map((b) => (b as { text?: unknown; elements?: unknown }).text ?? (b as { elements?: unknown }).elements)).includes("spend.set"), "🔴 no visible block carries the kind label");
+  ok(!JSON.stringify(card.blocks).includes("Set spend limit — #general (surface)"), "🔴 the detail lines are not visible");
+  ok((card.metadata?.event_payload as { detail?: string[] }).detail?.[0] === "Set spend limit — #general (surface)", "the detail rides the message metadata");
   ok(card.text.split("\n")[0] === headline, "the notification fallback text leads with the sentence");
-  ok(card.text.split("\n")[1] === "Approval requested: spend.set", "the fallback keeps the `Approval requested:` label on its own line (the e2e board keys on it)");
+  ok(!card.text.includes("Approval requested") && !card.text.includes("spend.set"), "the fallback text carries no kind label");
   const decided = decidedCardBlocks({ ...r, status: "approved", decidedBy: "U_ADMIN" }, ["line"], "spend limit set");
-  const dFirst = decided.blocks[0] as unknown as { text: { text: string } };
-  ok(dFirst.text.text === headline, "the decided card keeps the same opening sentence");
+  ok(decided.blocks.length === 1 && decided.text === "✅ Approved by <@U_ADMIN> — spend limit set", `the decided card is ONE line (got ${JSON.stringify(decided.text)})`);
   ok(!decided.blocks.some((b) => b.type === "actions"), "the decided card has no buttons");
 }
 
@@ -160,8 +161,9 @@ const MARKUP = /[<>[\]*`|]/u;
   ok(!actionIds.some((id) => id.endsWith(":g-c")), "a DECIDED item has no buttons");
   const json = JSON.stringify(card.blocks);
   ok(json.includes(`1. ${plainSummaryForRow(a)}`) && json.includes(`2. ${plainSummaryForRow(b)}`), "each item opens with its own numbered plain sentence");
-  ok(json.includes("✅ Approved by <@U_ADMIN>"), "a decided item shows who decided it");
-  ok(card.text.includes("Approval requested:"), "the grouped fallback keeps the label the e2e board keys on");
+  ok(json.includes("3. ✅ Approved by <@U_ADMIN>"), "a decided item is its one decided line");
+  ok(!card.text.includes("Approval requested"), "the grouped fallback carries no label (OPE-2481)");
+  ok((card.metadata?.event_payload as { items?: { kind: string }[] }).items?.map((i) => i.kind).join(",") === "chat.post,ticket.assign,skill.delete", "the grouped metadata carries each item's kind");
   const full = groupedCardBlocks(Array.from({ length: GROUPED_CARD_MAX_ITEMS }, (_, i) => ({ row: row({ id: `g-${i}` }), summaryLines: ["x"] })));
   ok(full.blocks.length <= 50, `a full grouped card (${GROUPED_CARD_MAX_ITEMS} items) fits Slack's 50-block message limit (got ${full.blocks.length})`);
 }

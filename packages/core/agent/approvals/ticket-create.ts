@@ -1,3 +1,5 @@
+import { QUOTE_MAX, plainQuote } from "./plain-text.js";
+import { platformName } from "../channels/friendly-ids.js";
 import { ticketCreateFn } from "../channels/ticket-create.js";
 import { appendAudit } from "../audit/audit.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
@@ -26,7 +28,9 @@ function summarizeCreate(args: TicketCreateArgs): string[] {
 const ticketCreate: ActionKind<TicketCreateArgs> = {
   kind: "ticket.create",
   policy: "member",
-  plainSummary: (args) => `File a new ${plainValue(args.platform)} work item in ${plainValue(args.target)}: ${plainValue(args.title, 60)}`,
+  plainSummary: (args) => `File a new ${platformName(args.platform)} issue in ${plainValue(args.target)}: ${plainValue(args.title, 60)}`,
+  consequence: (args) => (args.body.trim().length > 0 ? plainQuote(args.body, QUOTE_MAX - 2) : undefined),
+  consequenceQuotes: true,
   summarize: summarizeCreate,
   async execute(args, decidedBy) {
     const fn = ticketCreateFn(args.platform);

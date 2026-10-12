@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { surfaceMessageOps } from "@open-everywhere/core/agent/adapter-api.js";
+import { surfaceMessageOps, friendlyGuardSource, isFriendlyGuarded } from "@open-everywhere/core/agent/adapter-api.js";
 import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import { removeTempDir } from "./_temp-dir.js";
 
@@ -32,7 +32,8 @@ try {
     registerTeamsProvider();
     const resolved = surfaceMessageOps("teams");
     ok(resolved !== undefined, "registerTeamsProvider() makes surfaceMessageOps('teams') resolve to something (OPE-899 was: it resolved undefined)");
-    ok(resolved === teamsMessageOps, "…and it resolves to THIS module's ops object, by identity — the same one turn-anchor.ts's postSurfaceText dispatches to");
+    ok(isFriendlyGuarded(resolved), "the registry stores the ops wrapped by the friendly-names guard (OPE-2482)");
+    ok(friendlyGuardSource(resolved) === teamsMessageOps, "…and it resolves to THIS module's ops object, by identity — the same one turn-anchor.ts's postSurfaceText dispatches to");
     ok(typeof resolved?.postText === "function" && typeof resolved?.editMessage === "function", "the resolved ops carry postText/editMessage");
     ok(resolved?.postFiles === undefined, "…and NO postFiles (Teams has no attach-a-file-to-a-message primitive)");
     ok(resolved?.setReaction === undefined, "…and NO setReaction (Teams has no reaction primitive beyond the `angry` stop trigger)");

@@ -1,10 +1,12 @@
-# A2A agents — delegating a task to another organisation's agent
+# A2A agents — delegating to another organisation's agent, and taking its calls
 
 Open Everywhere is the chief of staff. It does not try to hold every system's tools itself. When a
 task belongs to a focused enterprise agent — an Agentforce, ServiceNow, Workday or Copilot Studio
 agent — it hands that agent the task and brings the answer back to the thread that asked. The door
 to those agents is **A2A**, the Agent2Agent protocol, a Linux Foundation project. This page covers
-the outbound half: how a deployment declares an agent, and what happens when the agent delegates.
+both halves. The outbound half: how a deployment declares an agent, and what happens when the agent
+delegates. The [inbound half](#inbound-another-agent-calls-this-one): how another organisation's
+agent calls this one, which ships dark.
 
 ## MCP and A2A side by side
 
@@ -183,5 +185,170 @@ These are the honest edges of the first slice. Each is a known gap, not a hidden
 - **Text first.** Text parts come back as text, data parts as JSON, and a file part as its URL or
   its size. A task that waits on its caller (`input-required`, `auth-required`) is reported as such;
   the client cannot answer it.
-- **Inbound A2A is not built yet.** Open Everywhere does not publish its own agent card, so another
-  agent cannot call it through A2A.
+
+## Inbound: another agent calls this one
+
+A deployment can also take calls: another organisation's agent — for example a Copilot Studio agent
+in a Microsoft shop — reads this deployment's A2A agent card and sends it a task. 🔴 **This is an
+external ingress, and it ships dark.** It exists only when both of these are true:
+
+1. `a2a: { inbound: true }` in `agent/settings/settings.ts`. The shipped value is off.
+2. `agent/access/a2a-inbound.ts` declares at least one caller, by pull request.
+
+With either one missing, `GET /.well-known/agent-card.json` and `POST /a2a/jsonrpc` both answer 404:
+the routes do not exist.
+
+### Declare a caller
+
+```ts
+// agent/access/a2a-inbound.ts
+import { defineA2aInbound } from "@open-everywhere/core/agent/a2a/inbound/declaration.js";
+
+export const A2A_INBOUND = defineA2aInbound({
+  name: "Acme chief of staff", // the card shows it
+  description: "Answers questions about Acme's IT projects.",
+  skills: [
+    // The card lists these: what a caller may ask for. Never the agent's tool roster.
+    { id: "it-questions", name: "IT questions", description: "Answers questions about the IT team's open projects." },
+  ],
+  callers: [
+    {
+      name: "contoso-copilot", // the audit rows and the task owner carry it
+      description: "Contoso's procurement agent in Copilot Studio.",
+      domain: "it", // the ONE team domain its calls land in
+      auth: {
+        scheme: "jwt",
+        issuer: "https://login.microsoftonline.com/<tenant id>/v2.0",
+        jwksUrl: "https://login.microsoftonline.com/<tenant id>/discovery/v2.0/keys",
+        audience: "api://<this deployment's app id>",
+        subject: "<the calling agent's service principal object id>",
+      },
+    },
+    // A platform that can only send a static secret: `npx oe secret set <ref>`, then name the REF.
+    { name: "partner-helpdesk", description: "The partner's helpdesk agent.", domain: "it", auth: { scheme: "bearer", secretRef: "db:a2a-inbound:partner-helpdesk" } },
+  ],
+});
+```
+
+`defineA2aInbound` validates the declaration when the module loads, so a bad entry fails the build
+and the boot. It refuses a caller with no `auth`, a wildcard `subject`, an issuer or JWKS URL that is
+not `https` or that carries a user-info part, a query string or a fragment, a literal secret in
+`auth`, a name declared twice, and two callers that pin one issuer, audience and subject. The boot
+also refuses a caller whose `domain` is not a declared TEAM domain (`agent/memory/config/domains.ts`):
+a missing name and a pseudo-domain such as `org` are both refused. 🔴 **A person cannot add a caller:**
+nothing at runtime writes the list.
+
+### Who is calling
+
+Every call must authenticate. There is no anonymous door. The JSON-RPC route reads the
+`Authorization: Bearer <credential>` header **before it reads the body**, and a call that does not
+authenticate as a declared caller gets a 401 before any task, any store write or any turn:
+
+- **A JWT** (the first scheme). The token's signature must verify against the JWKS of the caller's
+  declared issuer, with the declared `issuer` and `audience`, an `exp` and a `sub`. The verified
+  `sub` must equal the caller's declared `subject`. A token that verifies but whose subject no caller
+  declares is refused. The algorithms are the asymmetric ones only: an HMAC token is refused, so no
+  token can be signed with a public key.
+- **A bearer secret** (the fallback). The secret resolves through its broker by its REF, at most once
+  per 60 seconds on each instance, a failed resolution included, so an unauthenticated burst costs no
+  broker read per request. It is compared in constant time. An unresolvable secret matches nothing.
+  🔴 A revoked or rotated secret takes effect within that window: the old secret can still admit its
+  caller for up to 60 seconds, and a newly stored secret can be refused for up to 60 seconds after a
+  miss.
+
+The 401 body is one constant: it does not say which check failed. Each refusal writes an
+`a2a.inbound_refused` row with the reason — never the credential — throttled to about one row per
+reason per minute, with a `suppressed` count, because the route is public and an unthrottled row per
+refusal would let anyone write unbounded rows into the audit log.
+
+### Where a call lands
+
+One call is one A2A task, and the task becomes ONE job:
+
+- **Its own surface.** The job runs in the work session of the caller's own synthetic surface,
+  `a2a/inbound/<caller>`, inside the caller's declared domain. That surface is bound to the domain by
+  the declaration alone: no domain's `reach` can claim it (a glob included), and it never falls back
+  to the `org` pseudo-domain. It never shares the domain's window, so the job cannot read a room's
+  history, and it never lands in a human channel or DM. A caller whose domain no longer exists is
+  refused, and the task ends `rejected`.
+- **What narrows the job, and what does not.** An inbound caller is another organisation's agent.
+  These hold for every call:
+  - the call binds **external**, so the memory plan reads only the read-only `public` pseudo-domain
+    and writes nothing;
+  - the job is **unattended**: no person is acting, so a gate that needs a person refuses, and the
+    approval chain turns `ask` into `deny`;
+  - the invoker posture is `untrusted-remote`, the narrowest class, the one a webhook fire takes;
+  - the caller's text rides inside the untrusted fence (ingestion kind `a2a-inbound`), and the job's
+    turn is tainted from its first byte.
+
+  🔴 **The external binding narrows MEMORY, not tools.** The surface resolves to the caller's declared
+  domain, so every grant bound to that domain — its tools, its connectors (a Notion workspace, for
+  example), its coding bundles — applies to the job. A read needs no person, so the unattended stamp
+  does not stop it, and anything the job reads through those grants can reach the answer. Only the
+  job's brief tells the model what must not leave the organisation, and a brief is not a control.
+  **Declare a caller only in a domain whose grants you would expose to that organisation.** A
+  per-caller tool and connector roster is not built.
+- **No seat, no room.** The host forwards the task into the work session as a fire that owes no room,
+  so no seat turn runs and nothing posts into any room. A scope over its spend cap (the `public`
+  criteria budget, because the call binds external) and a domain with no work session also end the
+  task `rejected`.
+
+### The answer
+
+The task answers `working` at once. The caller follows it with `tasks/get` (or `GetTask`); a follow-up
+message on a task is refused, because an inbound task takes no further input. When the job settles,
+the work session's result path writes the task's final state, in place of a seat wake:
+
+- `completed` — the job's final report, as the task's one artifact, with every memory citation cut to
+  its silo-relative path (the same pass a room reply takes), cut at 20 000 characters;
+- `failed` or `canceled` — a fixed host sentence. A failed job's error text is never sent, because it
+  can name internal hosts or paths.
+
+Tasks are kept for 24 hours, keyed on the AUTHENTICATED caller: one caller cannot read, or detect,
+another caller's task. The task row keeps ids, states and the answer, never a copy of what the caller
+sent.
+
+### The card
+
+`GET /.well-known/agent-card.json` needs no credential, by the protocol's design. It carries only what
+the declaration chose to publish: the name, the description, the declared skills, the JSON-RPC
+interface and the security schemes the callers use (`bearerJwt`, `bearerSecret`). It never names a
+caller, an issuer, a subject, a domain or a tool. The card is A2A v1.0. The route also answers the
+v0.3 method names (`message/send`, `tasks/get`), so a v0.3 client that reaches the route works.
+Streaming and push notifications are not served.
+
+### Audit
+
+| Row | When | Carries |
+|---|---|---|
+| `a2a.inbound_refused` | A call did not authenticate | the reason (throttled) |
+| `a2a.inbound_accepted` | An authenticated caller started a task | the caller, the task id, whether it landed and why not, the text's length |
+| `work.forwarded` | The task became a job | the request id, the work-session token, `fire: true`, `owesRoom: false` |
+| `a2a.inbound_answered` | The job settled | the caller, the task id, the outcome, the answer's length, whether the task row still existed |
+
+No row carries the task text or the answer.
+
+### How it is tested
+
+- `packages/core/scripts/a2a-inbound-test.ts` (`npm run test:a2a-inbound`) drives the declaration, every
+  authentication refusal, the gate order (404 with the setting off or no caller, 401 before the body,
+  the refusal throttle), the official SDK client end to end against the routes, the owner scope, the
+  card, the answer, the domain binding of an `a2a/` surface, and the fire half of the work request.
+- `tests/integration/ingress/a2a-inbound.test.ts` drives the booted host: the SDK client reads the
+  card, sends a task with a JWT a stubbed issuer's JWKS verifies, the job runs in the caller's own
+  work session with no seat turn and refuses a person-only act, and `tasks/get` returns the report. An
+  unauthenticated call, an undeclared subject, no declaration and the setting off are each refused.
+- The live e2e leg `S-A2A-INBOUND` reads a deployment's card and checks that an unauthenticated call
+  is refused 401 and audited. A deployment with the ingress off ends the leg as the missing-fixture
+  precondition `a2a-inbound-enabled`. The pack holds no caller credential, so the authenticated leg
+  runs on the integration tier only.
+
+### Limits of the inbound half
+
+- **One message per task.** A follow-up message, streaming and push notifications are not served.
+- **No per-caller roster.** A caller holds what its domain grants, narrowed only as listed above. A
+  per-caller tool and connector roster, and a reviewed widening per caller, are not built.
+- **No mTLS.** JWT and bearer secrets only.
+- **The JWKS is fetched directly.** The key set of a declared issuer is fetched by the host, from the
+  declared `https` URL, as the control plane fetches its issuers' key sets; it does not go through the
+  agent's egress guard.

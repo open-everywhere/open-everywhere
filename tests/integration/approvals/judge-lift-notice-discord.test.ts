@@ -134,7 +134,7 @@ async function proposeRoutine(ids: string, prompt: string): Promise<AuditCursor>
 const APPROVAL_ACTIONS = ["approval.autoapproved", "approval.requested", "approval.judge.contradicted"] as const;
 
 const NOTICE_MARK = "Ran without asking";
-const CARD_MARK = "Approval requested";
+const CARD_MARK = "Asked by ";
 
 function noticesThisTurn(): DiscordCreateMessageCall[] {
   return discord.messages.filter((m) => m.content.includes(NOTICE_MARK));
@@ -188,8 +188,9 @@ test("① an armed judge lift POSTS the notice into the Discord room, carrying t
   expect(noticesThisTurn()).toHaveLength(1);
   expect(discord.messages.filter((m) => m.content.includes(CARD_MARK))).toEqual([]);
   expect(message.channelId).toBe(DISCORD_LISTED_CHANNEL_ID);
-  expect(message.content).toContain("Ran without asking: routine.create");
-  expect(message.content).toContain("Auto-approved by the approval judge");
+  expect(message.content).toContain("Ran without asking: started a routine in ");
+  expect(message.content).not.toContain("routine.create");
+  expect(message.content).toContain("Auto-approved and already run");
   expect(message.content).not.toContain(CARD_MARK);
   expect(message.content).not.toContain("expires");
 

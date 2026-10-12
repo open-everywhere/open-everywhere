@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { getConfig } from "../access/config.js";
 import { appendAudit } from "../audit/audit.js";
 import { bulletSha256 } from "./purge-redaction.js";
+import { restoreProvenanceCarriers } from "./provenance-mark.js";
 import { dbProviderId, providerById } from "./provider.js";
 import { memoryRefs, type Domain } from "./domain.js";
 import { siloAccess } from "./resolve.js";
@@ -148,11 +149,11 @@ export async function editPersonalMemoryItem(input: {
   const refusal = editRefusal(input.text);
   if (refusal) return { kind: "refused", reason: refusal };
   if (!isLineDigest(input.sha256)) return { kind: "gone" };
-  const text = input.text.trim();
   const provider = personalProvider();
   const files = await provider.readTier(input.partition, SURFACE);
   const item = memoryItemsOf(files).find((i) => i.sha256 === input.sha256);
   if (!item) return { kind: "gone" };
+  const text = restoreProvenanceCarriers(input.text.trim(), item.text);
   if (item.text === text) return { kind: "unchanged" };
 
   const next: MemoryFiles = { ...files };

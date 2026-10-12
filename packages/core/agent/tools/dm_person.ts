@@ -133,7 +133,7 @@ const dmPersonEntry = defineTool({
       approvalPostDeps(venue.platform, ctx),
     );
 
-    const subject = `start a direct message with ${personWords({ id: target.principalId, platform: target.platform })}`;
+    const subject = `start a direct message with ${personWords({ id: target.principalId, platform: target.platform, ...(recipientLabel !== undefined ? { label: recipientLabel } : {}) })}`;
     if (posted.autoApproved) {
       return {
         pending: false,

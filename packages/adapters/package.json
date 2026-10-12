@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/adapters",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Open Everywhere adapters — the reference Vercel-hosted backends: AI Gateway models and pricing, Sandbox, Neon, OpenTelemetry, AWS and Okta.",
   "keywords": [
     "agent",
@@ -210,6 +210,7 @@
     "test:agent-browser": "tsx scripts/agent-browser-test.ts",
     "test:oe-oauth": "tsx scripts/oe-oauth-test.ts",
     "test:oe-oauth-static": "tsx scripts/oe-oauth-static-client-test.ts",
+    "test:oe-oauth-xaa": "tsx scripts/oe-oauth-xaa-test.ts",
     "test:instrumentation": "tsx scripts/instrumentation-test.ts",
     "test:sandbox-lifecycle": "tsx scripts/sandbox-lifecycle-test.ts",
     "test:sandbox-guard": "tsx scripts/sandbox-live-guard-test.ts",
@@ -228,7 +229,7 @@
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
-    "@open-everywhere/core": "0.6.0",
+    "@open-everywhere/core": "0.7.0",
     "@vercel/otel": "^2.1.3",
     "@vercel/sandbox": "^3.2.1",
     "ai": "^7.0.105"

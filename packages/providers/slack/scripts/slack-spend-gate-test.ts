@@ -1,3 +1,6 @@
+// proves: spend.gate
+// proves: const SLACK_SPEND_BADGES
+
 process.env.OE_SQLITE_PATH = ":memory:";
 
 import assert from "node:assert/strict";
@@ -134,8 +137,8 @@ async function run(opts: {
   const r = await run({ verdict: { over: true, reason: "this channel is over its $5.00 monthly cap" } });
   ok(r.decision === "declined", "over cap + no bypass → declined");
   ok(r.posts.length === 1 && r.posts[0]!.startsWith(":no_entry:"), "over cap posts the :no_entry: refusal");
-  ok(r.posts[0]!.includes("slack/T_ENG/C_TXN"), "the refusal names this surface's scope key (a DM'd model has no other way to learn it)");
-  ok(r.posts[0]!.includes("slack/T_ENG`"), "the refusal names the whole-workspace scope key too");
+  ok(r.posts[0]!.includes("The cap to raise: this channel or the whole workspace."), "the refusal names the caps to raise — this channel and the whole workspace — in words");
+  ok(!r.posts[0]!.includes("slack/T_ENG"), "…and prints no scope key a person would read raw");
   ok((r.audits[0]!.detail as Record<string, unknown>).over === true, "over-cap row records over:true");
   ok((r.audits[0]!.detail as Record<string, unknown>).reason === "this channel is over its $5.00 monthly cap", "the tripped cap's reason rides the audit row");
 }
@@ -192,7 +195,7 @@ ok(spendBypassWarnCopy("over cap").includes(":warning:"), "bypass copy carries t
   ok(r.decision === "declined", "OPE-267: an over-budget DM with no admin bypass is DECLINED — no model turn");
   ok(!/DM me/i.test(r.posts[0]!), 'OPE-267: the DM refusal never says "DM me" — the reader is already in the DM');
   ok(/ask an org admin/i.test(r.posts[0]!), "OPE-267: the DM refusal names the remedy that works from there (ask an org admin)");
-  ok(r.posts[0]!.includes("slack/T_ENG/C_TXN"), "OPE-267: the DM refusal still names the scope key, so the admin it points at can act on it");
+  ok(r.posts[0]!.includes("The cap to raise: ") && !r.posts[0]!.includes("slack/T_ENG/C_TXN"), "OPE-267: the DM refusal still names the cap to raise, so the admin it points at can act — in words, never a raw key (OPE-2482)");
   const c = await run({ verdict: { over: true, reason: "over cap" } });
   ok(/DM me/i.test(c.posts[0]!), "the CHANNEL refusal still points at a DM (an admin raising a channel's cap from their DM is the flow that survives)");
 }

@@ -75,7 +75,7 @@ function args(over: Partial<ChatPostArgs> = {}): ChatPostArgs {
   landsMessageId = "M-1";
   const kind = actionKind("chat.post")!;
   const outcome = await kind.execute(args(), "U_APPROVER");
-  ok(outcome.includes("C_ELSEWHERE"), `execute() reports the container it posted into (${outcome})`);
+  ok(outcome.startsWith("message posted in ") && !outcome.includes("container"), `execute() reports where it posted, in words (${outcome})`);
   ok(posts.length === 1, "the transport was called exactly once");
   ok(posts[0]!.channelId === "C_ELSEWHERE", "the post went to the FROZEN container, not to the asking room");
   ok(posts[0]!.text === "The release note body.", "the posted text is the frozen body, byte for byte");

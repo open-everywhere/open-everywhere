@@ -3,6 +3,8 @@ import { declaredConnectionSignIns } from "@open-everywhere/core/agent/adapter-a
 export const OE_OAUTH_MODE_DISCOVERY = "discovery-dcr-pkce";
 export const OE_OAUTH_MODE_STATIC = "static-confidential";
 
+export const OE_OAUTH_MODE_XAA = "xaa";
+
 export type OeOauthBodyEncoding = "json" | "form";
 
 interface OeOauthProviderConfigBase {
@@ -29,7 +31,25 @@ export interface OeOauthStaticProviderConfig extends OeOauthProviderConfigBase {
   readonly bodyEncoding: OeOauthBodyEncoding;
 }
 
-export type OeOauthProviderConfig = OeOauthDiscoveryProviderConfig | OeOauthStaticProviderConfig;
+export interface OeOauthXaaProviderConfig extends OeOauthProviderConfigBase {
+  readonly mode: typeof OE_OAUTH_MODE_XAA;
+  readonly idpIssuer: string;
+  readonly idpClientId: string;
+  readonly idpClientSecretRef: string;
+  readonly idpClientSecretBroker: string;
+  readonly audience: string;
+  readonly resource?: string;
+  readonly resourceTokenEndpoint: string;
+  readonly resourceClientId: string;
+  readonly resourceClientSecretRef: string;
+  readonly resourceClientSecretBroker: string;
+}
+
+export type OeOauthProviderConfig = OeOauthDiscoveryProviderConfig | OeOauthStaticProviderConfig | OeOauthXaaProviderConfig;
+
+export function isXaa(cfg: OeOauthProviderConfig): cfg is OeOauthXaaProviderConfig {
+  return cfg.mode === OE_OAUTH_MODE_XAA;
+}
 
 export function isStaticConfidential(cfg: OeOauthProviderConfig): cfg is OeOauthStaticProviderConfig {
   return cfg.mode === OE_OAUTH_MODE_STATIC;
@@ -114,6 +134,36 @@ function parseStaticProvider(ref: string, rec: Record<string, unknown>): OeOauth
   };
 }
 
+function parseXaaProvider(ref: string, rec: Record<string, unknown>): OeOauthXaaProviderConfig {
+  const where = `sign-in "${ref}"`;
+  for (const literal of ["clientSecret", "idpClientSecret", "resourceClientSecret"]) {
+    if (literal in rec) {
+      throw new Error(
+        `${where} carries a literal "${literal}". A client secret must NEVER live in a sign-in declaration — store it in the ` +
+          `credential store and name it with "${literal === "clientSecret" ? "idpClientSecretRef" : `${literal}Ref`}".`,
+      );
+    }
+  }
+  const resource = rec.resource === undefined ? undefined : requireString(rec.resource, `${where}.resource`);
+  const scopes = parseScopes(rec.scopes);
+  return {
+    mode: OE_OAUTH_MODE_XAA,
+    ref,
+    idpIssuer: requireHttpsUrl(rec.idpIssuer, `${where}.idpIssuer`),
+    idpClientId: requireString(rec.idpClientId, `${where}.idpClientId`),
+    idpClientSecretRef: requireString(rec.idpClientSecretRef, `${where}.idpClientSecretRef`),
+    idpClientSecretBroker: rec.idpClientSecretBroker === undefined ? "db" : requireString(rec.idpClientSecretBroker, `${where}.idpClientSecretBroker`),
+    audience: requireString(rec.audience, `${where}.audience`),
+    ...(resource ? { resource } : {}),
+    resourceTokenEndpoint: requireHttpsUrl(rec.resourceTokenEndpoint, `${where}.resourceTokenEndpoint`),
+    resourceClientId: requireString(rec.resourceClientId, `${where}.resourceClientId`),
+    resourceClientSecretRef: requireString(rec.resourceClientSecretRef, `${where}.resourceClientSecretRef`),
+    resourceClientSecretBroker:
+      rec.resourceClientSecretBroker === undefined ? "db" : requireString(rec.resourceClientSecretBroker, `${where}.resourceClientSecretBroker`),
+    ...(scopes ? { scopes } : {}),
+  };
+}
+
 function parseDiscoveryProvider(ref: string, rec: Record<string, unknown>): OeOauthDiscoveryProviderConfig {
   const where = `sign-in "${ref}"`;
   const resource = typeof rec.resource === "string" ? rec.resource.trim() : "";
@@ -138,9 +188,13 @@ function parseDeclarations(declared: ReadonlyMap<string, unknown>): Map<string, 
       out.set(ref, parseStaticProvider(ref, rec));
       continue;
     }
+    if (mode === OE_OAUTH_MODE_XAA) {
+      out.set(ref, parseXaaProvider(ref, rec));
+      continue;
+    }
     if (mode !== OE_OAUTH_MODE_DISCOVERY) {
       throw new Error(
-        `sign-in "${ref}".mode ${JSON.stringify(mode)} is not a known oe-oauth mode — use "${OE_OAUTH_MODE_DISCOVERY}" or "${OE_OAUTH_MODE_STATIC}".`,
+        `sign-in "${ref}".mode ${JSON.stringify(mode)} is not a known oe-oauth mode — use "${OE_OAUTH_MODE_DISCOVERY}", "${OE_OAUTH_MODE_STATIC}" or "${OE_OAUTH_MODE_XAA}".`,
       );
     }
     const parsed = parseDiscoveryProvider(ref, rec);

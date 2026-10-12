@@ -7,8 +7,7 @@ export const OPT_OUT_HOME_ACTIONS = {
 } as const;
 
 const SCOPE_NOTE =
-  "When this is on, I save no memory from your own turns with me. In a shared conversation, a later turn by somebody else can still save something you said, and what other people tell me is not covered. A question you ask a domain from your DM is not covered yet: the domain can still save it. I also refuse when somebody else hands me one of your messages with a shortcut. " +
-  "Your own requests still work. Admins can see this choice in the audit log.";
+  "When this is on, I don't save anything from your own messages to me, and I refuse when someone else uses a message shortcut on one of your messages. Your own requests still work. In a shared conversation, someone else's later message can still lead me to save something you said. It doesn't cover what other people tell me, or questions you send to a domain from your DM. Admins can see this setting.";
 
 function whereOf(viewer: HomeViewer): PersonOptOutWhere {
   return {

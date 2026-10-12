@@ -10,7 +10,7 @@ export interface RateCommand {
 }
 
 export function rateHelpLine(): string {
-  return `• \`/${agentCommandName()} rate <${MODEL_AB_RATING_MIN}-${MODEL_AB_RATING_MAX}>\` — mark the model A/B test: rate the last answer in this channel.`;
+  return `• \`/${agentCommandName()} rate <${MODEL_AB_RATING_MIN}-${MODEL_AB_RATING_MAX}>\` — rate my last answer in this channel.`;
 }
 
 export function parseRateTokens(rest: readonly string[]): RateCommand | { readonly kind: "error"; readonly message: string } {
@@ -19,9 +19,7 @@ export function parseRateTokens(rest: readonly string[]): RateCommand | { readon
   if (!raw || !Number.isInteger(score) || score < MODEL_AB_RATING_MIN || score > MODEL_AB_RATING_MAX) {
     return {
       kind: "error",
-      message:
-        `"/${agentCommandName()} rate" needs a whole number from ${MODEL_AB_RATING_MIN} to ${MODEL_AB_RATING_MAX}, ` +
-        `e.g. "/${agentCommandName()} rate 4" (got ${JSON.stringify(raw ?? "")}).`,
+      message: `Rate with a whole number from ${MODEL_AB_RATING_MIN} to ${MODEL_AB_RATING_MAX}, for example \`/${agentCommandName()} rate 4\`.`,
     };
   }
   return { kind: "rate", score };
@@ -74,11 +72,7 @@ export async function runRate(binding: SurfaceBinding, score: number, deps: Rate
   const surfaceKey = defaultScopeKey(binding, "surface");
   const turn = await lastArmedTurn(binding.org, surfaceKey, deps);
   if (!turn) {
-    return (
-      `Nothing to rate here yet — \`/${agentCommandName()} rate\` marks a model A/B test, and this channel has no recorded ` +
-      "A/B turn. That is the normal answer when the test is off, when this room's model is pinned, or " +
-      "when the room's last turn ran on a worker or supervisor seat."
-    );
+    return "There's nothing to rate in this channel yet.";
   }
   try {
     await (deps.appendAudit ?? appendAudit)({
@@ -99,7 +93,8 @@ export async function runRate(binding: SurfaceBinding, score: number, deps: Rate
       },
     });
   } catch (err) {
-    return `Couldn't record that rating: ${String(err)}`;
+    console.warn(`[open-everywhere:rate] could not record a rating: ${String(err)}`);
+    return "I couldn't save that rating. Please try again in a moment.";
   }
   return `Thanks — recorded ${score}/${MODEL_AB_RATING_MAX} for this channel's last answer.`;
 }

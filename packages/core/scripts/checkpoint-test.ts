@@ -151,7 +151,7 @@ ok(checkpointConfigured({ sessionUsd: 1 }), "checkpointConfigured: any component
   ok(before === null, "session.checkpoint: no grant memo before approval");
   const answer = await kind!.execute({ org: "default", scopeKey: "slack/T1/C1", sessionId: memoKey }, "U-APPROVER");
   ok(
-    answer === "cost checkpoint cleared — the agent may do consequential work again in this session for up to 24 h",
+    answer === "the agent carries on in this session for up to 24 h",
     "session.checkpoint execute: the answer names the 24 h clock the grant carries (OPE-2161)",
   );
   ok(
@@ -518,7 +518,7 @@ passed++;
   ok(!msgFailed.includes("card just posted"), "🔴 copy: a FAILED post never claims a card was posted");
   ok(msgFailed.includes("could NOT be posted"), "copy: it says plainly that the card did not reach the room");
   ok(msgFailed.includes("rate limited"), "copy: it names the reason CLASS it was handed");
-  ok(msgFailed.includes("confirm directly"), "copy: it tells the member how to confirm without a card");
+  ok(msgFailed.includes("confirm in a reply"), "copy: it tells the member how to confirm without a card");
   ok(msgFailed.includes("posted again on the next consequential attempt"), "copy: …and that the agent retries, which is what the un-set ask marker really does");
 
   ok(checkpointCardFailureClass(new Error("ratelimited")) === "rate limited", "class: a rate-limit refusal");
@@ -551,7 +551,7 @@ passed++;
     ok(thrown.length > 0, "failed post: the action is still held — a card that did not post never widens what may run");
     ok(!thrown.includes("card just posted"), "🔴 failed post: the thrown message does NOT tell the member to approve a card that does not exist");
     ok(thrown.includes("could NOT be posted"), "failed post: it says the card did not reach the room");
-    ok(thrown.includes("confirm directly"), "failed post: it tells the member how to confirm another way");
+    ok(thrown.includes("confirm in a reply"), "failed post: it tells the member how to confirm another way");
     ok(thrown.includes("no credential is configured, or the surface could not be reached"), "failed post: it names the reason class the transport reported");
 
     const trips = (await readAudit({ org: "default", limit: 1000 })).filter(

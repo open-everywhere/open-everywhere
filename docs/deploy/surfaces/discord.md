@@ -413,7 +413,7 @@ Commands:
 
 | Command | What it does | Visibility |
 | --- | --- | --- |
-| `/oe status` | Deploy sanity: the deployment sha and eve pin that identify this build, the app version when the deploy carries one, primary/utility model config, the context window and the token count compaction fires at, memory provider. | Ephemeral (only you see it) |
+| `/oe status` | Says the agent is running, then lists, under "Details for your admin", the build (deployment sha) and eve pin that identify this build, the app version when the deploy carries one, primary/utility model config, the context window and the token count it is summarised at, memory provider. | Ephemeral (only you see it) |
 | `/oe budget status` | This channel's and server's effective spend caps (tokens + USD) and current-month spend — the SAME figures the spend gate enforces. | Ephemeral |
 | `/oe budget raise <usd>` | Proposes a new monthly USD cap for this channel: posts the SAME public approval card `set_spend_limit` posts (Approve/Reject buttons); an admin decides. The ephemeral ack also shows **your own domain's recent spend** from the ledger — see [Spend & cost](../../security/spend-and-cost.md#the-domain-spend-scan-behind-oe-budget-raise). A Discord channel the operator has not declared internal is `external`, so no domain resolves there and the ack says so instead. | Card: public in-channel. Ack: ephemeral |
 | `/oe budget clear` | Proposes clearing this channel's spend-limit override back to the config-as-code cap: posts the SAME public approval card `clear_spend_limit` posts. | Card: public in-channel. Ack: ephemeral |

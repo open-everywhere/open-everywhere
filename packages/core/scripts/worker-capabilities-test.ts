@@ -112,7 +112,7 @@ ok(/does NOT block/.test(standingBlock), "…and the block says so in as many wo
 ok(/task receipt/.test(standingBlock), "the seat is told what the call hands back — a receipt, not the worker's answer");
 ok(/`done: false`/.test(standingBlock), "the acknowledge route is named exactly: `reply` with `done: false` keeps the wake open for the real answer");
 ok(!/Acknowledge the hand-off in the same turn/.test(standingBlock), "🔴 OPE-2073: the UNCONDITIONAL acknowledgement is gone — it forced a post on a wake nobody asked anything on");
-ok(/If this wake owes an answer — it addressed you, or you promised one — acknowledge the hand-off in the same turn with `done: false`/.test(standingBlock), "🔴 OPE-2073: the acknowledgement is scoped to a wake that owes an answer");
+ok(/If this wake owes an answer — it addressed you, or you promised one — post one short line in the same turn with `done: false` that says what will happen, never that you handed it off/.test(standingBlock), "🔴 OPE-2073: the acknowledgement is scoped to a wake that owes an answer (and, OPE-2480, it narrates no hand-off)");
 ok(/a channel-watch wake you are only listening to\), delegate silently and call `no_reply`/.test(standingBlock), "🔴 OPE-2073: the silent route is named — a channel-watch wake delegates silently and ends with `no_reply`");
 ok(/settlement then ends in silence too/.test(standingBlock), "…and the seat is told the settlement stays silent too, because no hand-off note armed a report");
 ok(/delegate silently and call `no_reply`/.test(threadBlock) && !/Acknowledge the hand-off in the same turn/.test(threadBlock), "OPE-2073: a thread seat carries the same scoped rule");

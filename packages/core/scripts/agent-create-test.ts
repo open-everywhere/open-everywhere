@@ -383,7 +383,7 @@ function fakeDeps(state: FakeState) {
   );
   const card = posts.find((p) => p.method === "chat.postMessage");
   ok(card !== undefined && card.body.get("channel") === "C_AGENT" && card.body.get("thread_ts") === args.threadTs, "e2e: request card posted in the REQUESTING thread");
-  ok(card!.body.get("blocks")!.includes("provisioning a new agent"), "e2e: card blocks render the agent sentence from frozen args");
+  ok(card!.body.get("metadata")!.includes("provisioning a new agent"), "e2e: the card's metadata carries the agent sentence from frozen args (OPE-2481: the detail is not visible)");
 
   const decided = await handleApprovalPayload(
     { actions: [{ action_id: `oe_approval:approve:${pending.id}`, value: "default" }], user: { id: "U_MEMBER" }, channel: { id: "C_AGENT" }, message: { ts: "111.222" } },

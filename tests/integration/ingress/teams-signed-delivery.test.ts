@@ -12,6 +12,7 @@ afterAll(async () => {
 function dmActivity(input: { readonly tenantId: string; readonly authorId: string; readonly conversationId: string; readonly text?: string }): Record<string, unknown> {
   return {
     type: "message",
+    channelId: "msteams",
     id: `it-teams-act-${randomBytes(4).toString("hex")}`,
     serviceUrl: "https://smba.trafficmanager.net/amer/",
     from: { id: input.authorId, name: "IT Fixture User" },

@@ -35,7 +35,7 @@ export async function commitLinkConsent(input: {
   if (!consented) throw new Error("that request is no longer open — it was already answered, or it expired. Ask them to start it again.");
 
   if (canDeliverDirectMessage(c.initiatingPlatform)) {
-    const consenterName = await humanAccountLabel(input.consenter.platform, input.consenter.nativeId, input.consenter.tenant);
+    const consenterName = await humanAccountLabel(input.consenter.platform, input.consenter.nativeId, input.consenter.tenant, c.initiatingPlatform);
     await dispatchDirectMessage(c.initiatingPlatform, {
       principalId: c.initiatingNativeId,
       text:

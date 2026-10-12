@@ -7,19 +7,17 @@ function log(msg: string): void {
   console.log(`[open-everywhere:routines] ${msg}`);
 }
 
-export function disableNoticeText(r: Pick<Routine, "id" | "prompt" | "report" | "trigger">, reason: string, consecutiveFailures: number): string {
+export function disableNoticeText(r: Pick<Routine, "id" | "prompt" | "report" | "trigger">, _reason: string, consecutiveFailures: number): string {
   const what = r.prompt.trim().replace(/\s+/g, " ").slice(0, 160);
   const headline =
     r.trigger.kind === "once"
-      ? `🛑 One-shot routine \`${r.id}\` did not complete: its one scheduled fire failed, and a one-shot routine does not run again.\n`
-      : `🛑 Routine \`${r.id}\` has DISABLED itself after ${consecutiveFailures} consecutive failures and will not run again — ${reason.slice(0, 200)}.\n`;
+      ? `🛑 This one-time routine didn't work, and it won't run again:\n`
+      : `🛑 I stopped this routine because it failed ${consecutiveFailures} times in a row. It won't run again:\n`;
   return (
     headline +
     `> ${what}\n` +
-    (isSilentRoutine(r)
-      ? `This one reported nothing while it was healthy, so this notice is the only sign it stopped. `
-      : ``) +
-    `Ask me to set it up again once whatever it was failing on is fixed.`
+    (isSilentRoutine(r) ? `It doesn't usually post, so this is the only sign it stopped. ` : ``) +
+    `Ask me to set it up again once the problem is fixed.`
   );
 }
 
@@ -28,18 +26,22 @@ export function boundNoticeText(
   verdict: Extract<BoundVerdict, { exhausted: true }>,
 ): string {
   const what = r.prompt.trim().replace(/\s+/g, " ").slice(0, 160);
-  const noun = r.sessionMode === "job" ? "Job" : "Routine";
+  const noun = r.sessionMode === "job" ? "job" : "routine";
   const stalled = verdict.dimension === "stalled";
+  const why = stalled
+    ? "it was waiting for someone to approve more spending"
+    : verdict.dimension === "deadline"
+      ? "it reached its end date"
+      : "it reached its run limit";
+  const silent = isSilentRoutine(r) ? `It doesn't usually post, so this is the only sign it stopped. ` : ``;
   return (
-    `⏹️ ${noun} \`${r.id}\` has STOPPED ${stalled ? "because it was BLOCKED" : "at its ceiling"} and will not run again — ${verdict.reason.slice(0, 200)}.\n` +
+    `⏹️ I stopped this ${noun} because ${why}. It won't run again:\n` +
     `> ${what}\n` +
     (stalled
-      ? `Nothing broke, and it did not run out of runs: a session cost checkpoint paused its consequential actions and the "keep going?" card was never answered, so it kept waking up unable to do its work. ` +
-        (isSilentRoutine(r) ? `It reported nothing while it was running, so this notice is the only sign of it. ` : ``) +
-        `Answer that card — or raise the cost checkpoint for this scope — and THEN ask me to start it again, or it will stall the same way.`
-      : `Nothing failed: it just never finished, so I stopped it rather than keep going unattended. ` +
-        (isSilentRoutine(r) ? `It reported nothing while it was running, so this notice is the only sign of it. ` : ``) +
-        `Ask me to start it again if you still want it — it picks up from where it got to, with a fresh ceiling.`)
+      ? `It kept waking up but couldn't do its work. ${silent}` +
+        `Answer the "keep going?" request (or ask an admin to raise the limit) first, then ask me to start it again.`
+      : `Nothing went wrong. It just didn't finish. ${silent}` +
+        `Ask me to start it again if you still want it. It carries on from where it stopped.`)
   );
 }
 

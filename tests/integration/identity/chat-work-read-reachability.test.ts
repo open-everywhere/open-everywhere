@@ -128,6 +128,7 @@ test("Teams: a delegated worker in it-work-read-fixture-teams holds read_work_ch
   try {
     const activity = {
       type: "message",
+      channelId: "msteams",
       id: `it1064-teams-act-${Date.now()}`,
       serviceUrl: "https://smba.trafficmanager.net/amer/",
       from: { id: TEAMS_AUTHOR_ID, name: "OPE-1064 Fixture Author" },

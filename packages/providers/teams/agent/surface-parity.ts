@@ -27,10 +27,12 @@ export const TEAMS_SURFACE_PARITY: SurfaceParityDeclaration = {
   "seat-context-admission": { unsupported: "the hydration fills no context-line slot — the seat's room context is the catch-up read, which core already admits" },
   "approval-card": {
     supported:
-      "built, not yet proven on a live tenant — a channel hosts its own Adaptive Card and the tap is answered after the Bot Framework JWT verify; a personal or group chat has no channel id, so its card still goes to a card-capable room in the same domain",
+      "built, not yet proven on a live tenant — a channel, a personal chat and a group chat each host their own Adaptive Card, and the tap is answered after the Bot Framework JWT verify",
   },
   "judge-lift-notice": "supported",
-  "name-drop-mention": { unsupported: "not built yet — Leg A wakes on an @mention or room chatter, never on a name-drop match" },
+  "name-drop-mention": {
+    supported: "channels only; a non-@mention message reaches the bot only where the tenant consented to `ChannelMessage.Read.Group`, which no API can probe",
+  },
   "message-edit-wake": { unsupported: "an edit arrives as a `messageUpdate` activity, and the inbound parser admits `message`, `invoke` and `conversationUpdate` only" },
   threads: "supported",
   rooms: "supported",

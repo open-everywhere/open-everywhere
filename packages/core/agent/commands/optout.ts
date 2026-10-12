@@ -12,15 +12,15 @@ export function parseOptOutTokens(rest: readonly string[]): OptOutCommand {
   const [action] = rest;
   if (!action || action === "status") return { kind: "optout", action: "status" };
   if (action === "on" || action === "off") return { kind: "optout", action };
-  return { kind: "error", message: `Unknown "optout" action "${action}" — try "${oeSlash("optout on")}", "${oeSlash("optout off")}" or "${oeSlash("optout")}".` };
+  return { kind: "error", message: `I don't know "${action}". Try \`${oeSlash("optout on")}\`, \`${oeSlash("optout off")}\` or \`${oeSlash("optout")}\`.` };
 }
 
 export function optOutHelpLine(): string {
-  return `• \`${oeSlash("optout on|off")}\` — stop (or allow again) the agent acting on your own content: no memory saved from your own turns, and no shortcut from somebody else on your messages. \`${oeSlash("optout")}\` shows the current state.`;
+  return `• \`${oeSlash("optout on|off")}\` — stop me saving memory from your own messages to me, or allow it again. \`${oeSlash("optout")}\` shows your setting.`;
 }
 
 const SCOPE_LINE =
-  "While it is on, I save no memory from your own turns with me. In a shared conversation, a later turn by somebody else can still save something you said, and what other people tell me is not covered. A question you ask a domain from your DM is not covered yet: the domain can still save it. I also refuse when somebody else hands me one of your messages with a shortcut. Your own requests still work. Admins can see this choice in the audit log.";
+  "While it's on, I don't save anything from your own messages to me, and I refuse when someone else uses a message shortcut on one of your messages. Your own requests still work. In a shared conversation, someone else's later message can still lead me to save something you said. It doesn't cover what other people tell me, or questions you send to a domain from your DM. Admins can see this setting.";
 
 export async function runOptOut(binding: SurfaceBinding, action: "status" | "on" | "off"): Promise<string> {
   const principalKey = actingPrincipalId(binding);

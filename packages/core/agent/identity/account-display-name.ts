@@ -4,6 +4,13 @@ import { processRegistryMap } from "../lib/process-registry.js";
 export interface AccountProfile {
   readonly name?: string;
   readonly handle?: string;
+  readonly email?: string;
+}
+
+function verifiedEmail(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const v = raw.trim();
+  return /^[^\s@<>|()[\]]+@[^\s@<>|()[\]]+\.[^\s@<>|()[\]]+$/.test(v) && v.length <= 254 ? v : undefined;
 }
 
 export type AccountDisplayNameArm = (nativeId: string, tenant?: string) => Promise<AccountProfile | undefined>;
@@ -23,6 +30,7 @@ export function _resetAccountDisplayNamesForTest(): void {
 export const ACCOUNT_NAME_MAX_LEN = 80;
 
 export function sanitizeFragment(raw: string): string {
+  // eslint-disable-next-line no-control-regex -- deliberately matching the control-character range
   const stripped = raw
     .replace(/[\u0000-\u001f\u007f]/g, " ")
     .replace(/\s+/g, " ")
@@ -61,8 +69,9 @@ async function resolveViaArm(arm: AccountDisplayNameArm, nativeId: string, tenan
     if (!result) return undefined;
     const name = typeof result.name === "string" ? sanitizeFragment(result.name) : "";
     const handle = typeof result.handle === "string" ? sanitizeFragment(result.handle) : "";
-    if (!name && !handle) return undefined;
-    return { ...(name ? { name } : {}), ...(handle ? { handle } : {}) };
+    const email = verifiedEmail(result.email);
+    if (!name && !handle && !email) return undefined;
+    return { ...(name ? { name } : {}), ...(handle ? { handle } : {}), ...(email ? { email } : {}) };
   } catch {
     return undefined;
   }
@@ -97,11 +106,68 @@ export function composedAccountName(profile: AccountProfile | undefined): string
     : (profile.name ?? (profile.handle ? `@${profile.handle}` : undefined));
 }
 
-export async function humanAccountLabel(platform: string, nativeId: string, tenant?: string): Promise<string> {
-  const profile = await accountProfileFor(platform, nativeId, tenant);
-  const fallback = `the ${platform} account "${nativeId}"`;
-  const named = composedAccountName(profile);
-  if (!named) return fallback;
-  const workspace = tenant && tenant.length > 0 ? `${platform}/${tenant}` : platform;
-  return `${named} (${nativeId}) on ${workspace}`;
+const PLATFORM_LABEL: Readonly<Record<string, string>> = { slack: "Slack", discord: "Discord", teams: "Microsoft Teams", github: "GitHub", linear: "Linear", notion: "Notion", email: "email" };
+
+function platformLabel(platform: string): string {
+  return PLATFORM_LABEL[platform] ?? platform;
+}
+
+export function linkMarkup(url: string, text: string, surface: string | undefined): string {
+  if (url.startsWith("slack://") && surface !== "slack") return text;
+  if (surface === "slack") return `<${url}|${text.replace(/[|<>]/g, " ").replace(/\s+/g, " ").trim()}>`;
+  if (surface === "discord" || surface === "teams" || surface === "github" || surface === "linear") return `[${text.replace(/[[\]()]/g, " ").replace(/\s+/g, " ").trim()}](${url})`;
+  return text;
+}
+
+export function profileUrl(platform: string, nativeId: string, tenant: string | undefined, profile: AccountProfile | undefined): string | undefined {
+  switch (platform) {
+    case "discord":
+      return /^\d{17,20}$/.test(nativeId) ? `https://discord.com/users/${nativeId}` : undefined;
+    case "slack":
+      return tenant && /^[TE]\w+$/.test(tenant) && /^[UW]\w+$/.test(nativeId) ? `slack://user?team=${tenant}&id=${nativeId}` : undefined;
+    case "github": {
+      const login = profile?.handle ?? (/^\d+$/.test(nativeId) ? undefined : nativeId);
+      return login && /^[A-Za-z0-9-]{1,39}$/.test(login) ? `https://github.com/${login}` : undefined;
+    }
+    case "teams":
+      return profile?.email ? `https://teams.microsoft.com/l/chat/0/0?users=${encodeURIComponent(profile.email)}` : undefined;
+    default:
+      return undefined;
+  }
+}
+
+function verifier(platform: string, nativeId: string, profile: AccountProfile | undefined): string | undefined {
+  if (profile?.email) return profile.email;
+  if (platform === "discord" && profile?.handle) return `@${profile.handle}`;
+  if (platform === "github") {
+    const login = profile?.handle ?? (/^\d+$/.test(nativeId) ? undefined : nativeId);
+    return login ? `@${login}` : undefined;
+  }
+  return undefined;
+}
+
+export interface AccountLinkParts {
+  readonly text: string;
+  readonly linked: boolean;
+  readonly verified: boolean;
+}
+
+export async function accountLinkParts(account: { readonly platform: string; readonly nativeId: string; readonly tenant?: string }, surface: string | undefined): Promise<AccountLinkParts> {
+  const profile = await accountProfileFor(account.platform, account.nativeId, account.tenant);
+  const uniqueHandle = account.platform === "discord" || account.platform === "github";
+  const name = (uniqueHandle ? (profile?.name ?? profile?.handle) : composedAccountName(profile)) ?? `a ${platformLabel(account.platform)} account`;
+  const url = profileUrl(account.platform, account.nativeId, account.tenant, profile);
+  const markup = url ? linkMarkup(url, name, surface) : name;
+  const linked = markup !== name;
+  const check = verifier(account.platform, account.nativeId, profile);
+  const shown = check !== undefined && name.replace(/^@/, "").toLowerCase() !== check.replace(/^@/, "").toLowerCase();
+  return { text: shown ? `${markup} (${check})` : markup, linked, verified: check !== undefined };
+}
+
+export async function accountLinkLabel(account: { readonly platform: string; readonly nativeId: string; readonly tenant?: string }, surface: string | undefined): Promise<string> {
+  return (await accountLinkParts(account, surface)).text;
+}
+
+export async function humanAccountLabel(platform: string, nativeId: string, tenant?: string, surface?: string): Promise<string> {
+  return `${await accountLinkLabel({ platform, nativeId, ...(tenant ? { tenant } : {}) }, surface)} on ${platformLabel(platform)}`;
 }

@@ -1,7 +1,8 @@
-import { callTeamsConnectorApi, type TeamsHandle } from "eve/channels/teams";
+import { callTeamsConnectorApi, resolveTeamsTenantId, type TeamsHandle } from "eve/channels/teams";
 import { dmTrustTtlMs } from "@open-everywhere/core/agent/adapter-api.js";
 import { teamsUserTypeFromMember } from "./teams-identity.js";
 import { teamsChannelGrainConversationId } from "./teams-conversation-ref.js";
+import { isTrustedTeamsServiceUrl } from "./teams-origin-codec.js";
 
 export interface TeamsRosterResponse {
   readonly ok: boolean;
@@ -14,12 +15,13 @@ export function teamsRosterMemberPath(conversationId: string, userId: string): s
   return `/v3/conversations/${encodeURIComponent(conversationId)}/members/${encodeURIComponent(userId)}`;
 }
 
-export function teamsHandleRosterProbe(teams: Pick<TeamsHandle, "request">): TeamsRosterProbe {
+export function teamsHandleRosterProbe(teams: Pick<TeamsHandle, "request" | "serviceUrl">): TeamsRosterProbe | undefined {
+  if (!isTrustedTeamsServiceUrl(teams.serviceUrl)) return undefined;
   return (path) => teams.request(path, undefined as unknown as Parameters<TeamsHandle["request"]>[1], { method: "GET" });
 }
 
 export function teamsServiceUrlRosterProbe(serviceUrl: string | undefined): TeamsRosterProbe | undefined {
-  if (!serviceUrl) return undefined;
+  if (!serviceUrl || !isTrustedTeamsServiceUrl(serviceUrl)) return undefined;
   return (path) => callTeamsConnectorApi({ serviceUrl, path, method: "GET" });
 }
 
@@ -42,6 +44,19 @@ export async function resolveTeamsUserType(
     return userType;
   } catch {
     return undefined;
+  }
+}
+
+export async function teamsIsHomeTenant(
+  tenantId: string | undefined,
+  resolveHome: () => Promise<string | undefined> = () => resolveTeamsTenantId(),
+): Promise<boolean> {
+  if (!tenantId) return false;
+  try {
+    const home = await resolveHome();
+    return typeof home === "string" && home.length > 0 && home.toLowerCase() === tenantId.toLowerCase();
+  } catch {
+    return false;
   }
 }
 

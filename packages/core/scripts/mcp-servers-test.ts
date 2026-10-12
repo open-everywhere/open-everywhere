@@ -64,6 +64,21 @@ console.log("§1 the declaration");
     "§1 a static client with no secret REF is refused",
   );
   refuses(one({ people: { groups: [] } }), "people.groups", "§1 an empty people.groups is refused (omit it for everyone)");
+  const XAA = {
+    mode: "xaa",
+    idpIssuer: "https://acme.okta.com",
+    idpClientId: "0oaOE",
+    idpClientSecretRef: "db:okta:oe-client-secret",
+    audience: "https://auth.fullstory.example",
+    resourceTokenEndpoint: "https://auth.fullstory.example/token",
+    resourceClientId: "fs-client-for-oe",
+    resourceClientSecretRef: "db:fullstory:xaa-client-secret",
+  } as const;
+  ok(defineMcpServers([{ ...FULLSTORY, signIn: XAA }]).length === 1, "§1 an xaa sign-in with every field is a whole declaration");
+  refuses(one({ signIn: { ...XAA, resourceClientSecretRef: "" } }), "needs resourceClientSecretRef", "§1 an xaa sign-in with no app secret REF is refused");
+  refuses(one({ signIn: { ...XAA, idpClientSecret: "s3cret" } as never }), "literal idpClientSecret", "§1 🔴 a literal IdP client secret is refused");
+  const xaaSignIn = mcpServerConnectionSignIn({ ...FULLSTORY, signIn: XAA });
+  ok(xaaSignIn.mode === "xaa" && "resource" in xaaSignIn && xaaSignIn.resource === FULLSTORY.url, "§1 an xaa sign-in names the server's URL as the resource both legs carry");
 }
 
 console.log("§2 the derived config");

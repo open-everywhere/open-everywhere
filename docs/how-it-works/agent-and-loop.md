@@ -26,6 +26,31 @@ Two consequences of this shape matter to you as a user:
   surface's own reply tool. There is no back channel. What you see in Slack is the agent
   deliberately posting to Slack, the same way it would post a PR comment to GitHub.
 
+### How the agent talks
+
+The agent writes for an ordinary office worker who is not technical (OPE-2487). Every message gives
+the result in a line or two, like a capable colleague. It names people, channels and pages by name,
+never by id. It says nothing about how it works: no workers, hand-offs, tools, approval routing,
+grants or security checks. When a card already shows something, it does not say it again.
+
+These rules live in ONE place, the "Your voice" section (`REPLY_STYLE_RUBRIC`,
+`packages/core/agent/instructions/access.ts`). Every root session renders it: a standing seat, a DM,
+a channel and a one-shot worker. The base `agent/instructions.md` points at it and carries no second
+copy. A worker's report is the one exception: it goes to the conversation that started the worker, so
+it keeps the file, the number or the error, and the seat says the result plainly.
+
+A person can always ask for more. "What did you read for that?" gets the pages, threads and files
+the agent read, by name, from the agent's own account of its work. The room no longer gets a
+"Sources read this turn:" footer; the host records that line on the reply's `reply.provenance`
+audit row instead, where only an operator reads it
+([*A reply names what it read*](../capabilities/connectors-and-providers.md#a-reply-names-what-it-read)).
+The host's own notes that replace a struck claim use the same plain words, for example "(I can't
+confirm that's saved yet.)".
+
+These are prompt rules, and the host checks none of them in the reply text. `test:voice` pins the
+section's content. It also reds when an instruction source, or one of the tool results it lists,
+asks for a phrase the section forbids.
+
 ### The toolset it works with
 
 The agent's hands come in three groups, and it matters which is which because they are
@@ -376,15 +401,17 @@ than refuses. Four deliberate carve-outs:
   stranded. That is a per-container standing root (a channel watcher on a non-window token),
   and a DM root on a surface Open Everywhere cannot derive a reply target for from the
   binding alone (see the DM note below).
-- **A DM or group-DM seat that *can* delegate keeps five verbs on top of the roster**:
-  `link_identity`, `confirm_link`, `unlink_identity`, `revoke_credential_grant` and `ask_domain`.
-  Each takes its authority from the shape of this seat — a DM binding, and the person's own acting
-  principal. A worker inherits that shape without the person who earned it, so none of the five may
-  be handed to one. The three identity verbs are interactive challenges as well: the agent issues one
+- **A DM or group-DM seat that *can* delegate keeps six verbs on top of the roster**:
+  `link_identity`, `confirm_link`, `unlink_identity`, `revoke_credential_grant`, `ask_domain` and
+  `expect_bot_reply`. Each takes its authority from the shape of this seat — a DM binding, and the
+  person's own acting principal. A worker inherits that shape without the person who earned it, so
+  none of the six may be handed to one. The three identity verbs are interactive challenges as well: the agent issues one
   and *you* answer it in the same 1:1 DM, which a one-shot worker cannot hold a turn open for.
   `ask_domain` asks one of your domains a question for you, and the answer comes back to this DM
-  (see [Your DM can ask your domains](../capabilities/domain-questions.md)). All five mount on a
-  group-DM seat and all five then refuse there, because each admits `dm` mode alone. Nothing else is
+  (see [Your DM can ask your domains](../capabilities/domain-questions.md)). `expect_bot_reply` waits
+  for another bot's replies to an ask you posted in your own name, and relays them to this DM (see
+  [Your DM can ask other bots](../capabilities/bot-delegation.md)). All six mount on a group-DM seat
+  and all six then refuse there, because each admits `dm` mode alone. Nothing else is
   carved in.
 - **Routine / webhook fires keep their own narrow-kit posture** — the lean cut is about
   delegating conversational seats only.
@@ -1052,6 +1079,35 @@ The result wake carries more host facts:
   sibling job of the same conversation landed earlier in that turn can ride along.
 - **A fire's creator**, for the reply's audit row only (`detail.creatorId`). It changes nothing the
   seat's turn binds as.
+
+### What the room sees while a job runs
+
+A person who asks for a job wants the result. The seat's machinery is not the result (OPE-2480).
+Two rules in the seat's own instructions keep the room to the result:
+
+- **No hand-off narration.** The seat never tells the room that it handed the work off or delegated
+  it, or that a worker or a work session has it. Until the result arrives, it says what will
+  happen. On a message that addressed the seat, the hand-off note (`reply` with `done:false`) stays
+  mandatory: that reply arms the settlement duty. Only its content changes: it says what will
+  happen, never that a worker has the job. On a message that did not address the seat, it may say
+  nothing. The posting paragraph, the honest-ack carve-out and the `work` receipt render the
+  constant `NO_HANDOFF_NARRATION_RULE` (`instructions/seat-prompt.ts`). The `work` section, the
+  addressed-reply paragraph, the `reply` refusal, the `reply` tool's descriptions, the
+  worker-capability index ("What a worker can do that you cannot") and the template's
+  `agent/instructions.md` carry their own wording.
+- **No second reply about a card's outcome.** An approval card shows its own outcome, and the host
+  posts the decision notice in the room. So the seat posts no reply that restates, confirms or
+  corrects that outcome, even when a worker's report about the same act is out of date. What a job
+  did after the decision is not on the card, so the seat still posts it: the act that an armed card
+  only allowed, or a later run of it by the job that failed. A run that the approval itself made
+  and that failed is on the card, so the seat does not post it again. The channel and thread seat persona, the decision wake and the
+  job-result note render the constant `CARD_OUTCOME_RULE`. The DM seat persona does not. The
+  settlement-duty refusal carries its own wording: the duty refuses the first `no_reply` as before,
+  and the refusal tells the seat that it may call `no_reply` again only when the card shows that the
+  act ran, or that it was rejected or expired.
+
+These are prompt rules. No host check reads the reply text for them. `test:seat-chatter` pins every
+source that carries them, and reds when a source asks for a hand-off narration again.
 
 ### Status and the ✋
 

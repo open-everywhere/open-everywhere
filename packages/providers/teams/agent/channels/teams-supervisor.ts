@@ -98,16 +98,19 @@ export interface TeamsSupervisorWakeInput {
   readonly directMention: boolean;
   readonly wakeId: string;
   readonly engagementTier?: WakeEngagementTier;
+  readonly nameDrop?: boolean;
   readonly tail?: readonly WakeMessageInput[];
   readonly catchUpUnavailable?: string;
 }
 
 export function buildTeamsSupervisorWake(input: TeamsSupervisorWakeInput): NormalizedWake {
+  const nameDrop = !input.directMention && input.nameDrop === true;
   return {
     platform: "teams",
     reason: input.directMention ? "mention" : "channel-activity",
-    addressing: input.directMention ? "direct-mention" : "channel-watch",
-    engagementTier: input.directMention ? undefined : input.engagementTier,
+    addressing: input.directMention ? "direct-mention" : nameDrop ? "name-drop" : "channel-watch",
+    engagementTier: input.directMention || nameDrop ? undefined : input.engagementTier,
+    ...(nameDrop ? { nameDrop: { followUp: "channel-not-following" as const } } : {}),
     wakeId: input.wakeId,
     locus: {
       channel: { id: input.channelId },
@@ -159,6 +162,7 @@ export interface TeamsSupervisorDispatch {
   readonly threadRootId?: string;
   readonly replyChainRootId?: string;
   readonly engagementTier?: WakeEngagementTier;
+  readonly nameDrop?: boolean;
   readonly window: UnifiedWindowWake;
 }
 
@@ -174,6 +178,7 @@ export async function handleTeamsSingleWindowDispatch(d: TeamsSupervisorDispatch
       directMention: d.window.addressing === "direct-mention",
       wakeId: d.window.wakeId,
       engagementTier: d.engagementTier,
+      ...(d.nameDrop === true ? { nameDrop: true } : {}),
       tail,
       catchUpUnavailable,
     });

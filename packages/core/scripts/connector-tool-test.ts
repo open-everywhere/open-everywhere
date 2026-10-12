@@ -262,7 +262,7 @@ ok((await handleConnectClick({ type: "block_actions", actions: [{ action_id: "oe
   );
   eq(stDom.calls.length, 0, "🔴 a DOMAIN admin mints NO org credential on the mint route — one domain's admin cannot bind the credential every domain spends");
   ok(
-    recDom.calls.some((c) => decodeURIComponent(c.body.replace(/\+/g, " ")).includes("ORG admin")),
+    recDom.calls.some((c) => decodeURIComponent(c.body.replace(/\+/g, " ")).includes("organisation-wide admin")),
     "…and the refusal says WHY: it takes an org admin, not that they lack standing altogether",
   );
 
@@ -300,7 +300,7 @@ ok((await handleConnectClick({ type: "block_actions", actions: [{ action_id: "oe
   eq(stCh.calls.length, 0, "🔴 …and it mints NOTHING on a CHANNEL — the text is host-posted into the room, so an org URL there is a credential anybody present could claim");
   ok(!inChannel.text.includes(FAKE_URL), "🔴 …so no capability URL reaches the room");
   eq(inChannel.issued.length, 0, "…and nothing is reported as issued, so no oauth_url_issued row claims a mint that never happened");
-  ok(inChannel.text.includes("message me directly"), "…and the degrade line names the working path instead of failing silently");
+  ok(inChannel.text.includes("send me a direct message"), "…and the degrade line names the working path instead of failing silently");
 
   const dashOpt = resolveConnectorOptions({ catalogue: NOTION, platform: "discord", mode: "channel", isAdmin: true, isOrgAdmin: true, hostWriteBroker: true })
     .filter((o) => o.credentialType === "service-oauth");

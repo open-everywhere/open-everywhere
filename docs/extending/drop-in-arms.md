@@ -535,8 +535,10 @@ messages that actually reach it is much smaller than the surface's name suggests
 gates, so it can report a real abstention. Discord's
 `nameDropEligible` (`packages/providers/discord/agent/channels/discord-gateway.ts`) folds the name
 match into one boolean and reports no basis — offering the seam there means splitting that function
-first, which is its own change. Teams, GitHub, Linear and Notion have no ambient name-drop route at
-all, so there is no abstention to fill. Read the table's `note` before assuming an arm reaches a
+first, which is its own change. Teams' `resolveTeamsNameDrop`
+(`packages/providers/teams/agent/channels/teams-name-drop.ts`, OPE-2444) declines for the same
+reason. GitHub, Linear and Notion have no ambient name-drop route at all, so there is no abstention
+to fill. Read the table's `note` before assuming an arm reaches a
 surface.
 
 **What this seam guarantees, exactly:** no arm can suppress a wake the name-drop gave; no arm can

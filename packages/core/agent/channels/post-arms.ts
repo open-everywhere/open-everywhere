@@ -10,6 +10,7 @@ import { expandLinkSet } from "../identity/link-store.js";
 import { isTenantScopedPlatform, tryPrincipalKey } from "../identity/principal-key.js";
 import type { LinkedAccount } from "../identity/link-store.js";
 import { processRegistryMap } from "../lib/process-registry.js";
+import { FRIENDLY_GUARDED, FRIENDLY_SOURCE, friendlyOutboundText, isFriendlyGuarded } from "./friendly-outbound.js";
 
 export interface TargetResolveBag {
   str(k: string): string | undefined;
@@ -80,11 +81,41 @@ export interface PostArm {
   react?(target: ReactTarget, emoji: string): Promise<void>;
 }
 
+function guardPostArm(arm: PostArm): PostArm {
+  if (isFriendlyGuarded(arm)) return arm;
+  const source = arm as unknown as Record<string, unknown>;
+  const guarded: Record<string | symbol, unknown> = {};
+  for (const key of Object.keys(source)) {
+    const value = source[key];
+    guarded[key] = typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(arm) : value;
+  }
+  const p = arm.platform;
+  const wrap = (key: string, textAt: number): void => {
+    const fn = source[key];
+    if (typeof fn !== "function") return;
+    guarded[key] = async (...args: unknown[]) => {
+      if (typeof args[textAt] === "string") args[textAt] = await friendlyOutboundText(args[textAt] as string, p);
+      return (fn as (...a: unknown[]) => unknown).apply(arm, args);
+    };
+  };
+  wrap("dispatchReply", 1);
+  wrap("dispatchUnified", 1);
+  wrap("editMessage", 2);
+  const deliver = source.deliverDirectMessage;
+  if (typeof deliver === "function") {
+    guarded.deliverDirectMessage = async (input: { readonly text: string }) =>
+      (deliver as (i: unknown) => unknown).call(arm, { ...input, text: await friendlyOutboundText(input.text, p) });
+  }
+  guarded[FRIENDLY_GUARDED] = true;
+  guarded[FRIENDLY_SOURCE] = arm;
+  return guarded as unknown as PostArm;
+}
+
 const POST_ARMS = processRegistryMap<PostArm>("post-arms.v1");
 
 export function registerPostArm(arm: PostArm): void {
   if (!admitProviderRegistration(arm.platform, "post-arm")) return;
-  POST_ARMS.set(arm.platform, arm);
+  POST_ARMS.set(arm.platform, guardPostArm(arm));
 }
 
 export function postArm(platform: string | undefined): PostArm | undefined {
@@ -120,7 +151,7 @@ export async function dispatchDirectMessage(platform: string | undefined, input:
 export async function notifyLinkSetMembers(
   org: string,
   linkSetId: string,
-  text: string,
+  text: string | ((platform: string) => string | Promise<string>),
   opts?: { readonly except?: readonly LinkedAccount[] },
 ): Promise<number> {
   let delivered = 0;
@@ -149,7 +180,7 @@ export async function notifyLinkSetMembers(
         continue;
       }
       try {
-        await dispatchDirectMessage(m.platform, { principalId: m.nativeId, text });
+        await dispatchDirectMessage(m.platform, { principalId: m.nativeId, text: typeof text === "string" ? text : await text(m.platform) });
         delivered++;
       } catch (err) {
         console.log(`[open-everywhere:identity] link-set ${linkSetId}: could not notify ${key ?? `${m.platform} account \"${m.nativeId}\"`}: ${String(err)}`);

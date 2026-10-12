@@ -3,6 +3,8 @@ import type { ConnectorCredential, ConnectorCredentials } from "../access/connec
 import type { CredentialBoundDomain } from "../access/domain-credentials.js";
 import { CONTROL_OAUTH_ISSUER } from "../control/oauth-clients.js";
 import { controlOAuthIssuer } from "../control/oauth-resource.js";
+import { a2aInboundDeclaration } from "../a2a/inbound/declaration.js";
+import { getSettings } from "../settings/settings.js";
 import { OAUTH_SIGNING_SECRET_ENV, oauthSigningSecret } from "../control/oauth-tokens.js";
 import type { WebhookHook } from "../webhooks/config.js";
 
@@ -175,6 +177,30 @@ export const ROUTE_ARMING: readonly ChannelArming[] = [
       `(at least 32 characters) AND a valid issuer is declared in agent/control/oauth-clients.ts. One of the two is absent ` +
       `here, so this route's 404 is the shipped design, not a missing mount. Arm both and the census requires it again.`,
   },
+  {
+    channel: "a2a-inbound.ts",
+    armed: () => getSettings().a2a.inbound && a2aInboundDeclaration().callers.length > 0,
+    darkReason:
+      "dark by declaration: inbound A2A (OPE-2448) answers 404 on both routes until `a2a: { inbound: true }` is set in " +
+      "agent/settings/settings.ts AND agent/access/a2a-inbound.ts declares at least one caller. One of the two is absent here, so " +
+      "this route's 404 is the shipped design, not a missing mount. Arm both and the census requires it again (an unauthenticated probe then reads 401).",
+  },
+];
+
+export interface TokenGatedRoute {
+  readonly channel: string;
+  readonly path: string;
+  readonly reason: string;
+}
+
+const PERSONAL_BROWSER_LIVE_REASON =
+  "a token-gated watch-session route of the personal browser (OPE-2441) — it answers 404 without the person's " +
+  "signed session cookie and the CSRF header, and on every request while OE_INTAKE_PAGE_SIGNING_KEY is unset, " +
+  "so a bare probe cannot tell mounted from absent (OPE-2478)";
+
+export const TOKEN_GATED_ROUTES: readonly TokenGatedRoute[] = [
+  { channel: "personal-browser.ts", path: "/browser/v1/live/control", reason: PERSONAL_BROWSER_LIVE_REASON },
+  { channel: "personal-browser.ts", path: "/browser/v1/live/input", reason: PERSONAL_BROWSER_LIVE_REASON },
 ];
 
 export function planRequiredEndpoints(input: {
@@ -226,6 +252,12 @@ export function planRequiredEndpoints(input: {
         meaning: "an undeclared hook id must 404; any other answer means every id answers, and the hook probes above prove nothing",
         expect: "absent",
       });
+      continue;
+    }
+
+    const gated = TOKEN_GATED_ROUTES.find((g) => g.channel === route.channel && g.path === route.path);
+    if (gated) {
+      skipped.push({ method: route.method, path: route.path, channel: route.channel, reason: gated.reason });
       continue;
     }
 

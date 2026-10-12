@@ -23,6 +23,28 @@ export interface MeetingRecord {
   readonly chunks?: number;
 }
 
+const iso = (ms: number): string => new Date(ms).toISOString();
+
+export async function putMeetingRow(org: string, key: string, value: string, ttlMs: number, now: number = Date.now()): Promise<void> {
+  await getOperationalStore().putMeetingData(org, key, value, iso(now), iso(now + ttlMs));
+}
+
+export async function putMeetingRowIfAbsent(org: string, key: string, value: string, ttlMs: number, now: number = Date.now()): Promise<boolean> {
+  return await getOperationalStore().putMeetingDataIfAbsent(org, key, value, iso(now), iso(now + ttlMs));
+}
+
+export async function getMeetingRow(org: string, key: string, now: number = Date.now()): Promise<string | null> {
+  return await getOperationalStore().getMeetingData(org, key, iso(now));
+}
+
+export async function deleteMeetingRow(org: string, key: string): Promise<void> {
+  await getOperationalStore().deleteMeetingData(org, key);
+}
+
+export async function sweepExpiredMeetingRows(org: string, now: number = Date.now()): Promise<number> {
+  return await getOperationalStore().sweepMeetingData(org, iso(now));
+}
+
 const RECORD = (id: string): string => `meeting:${id}`;
 const CHUNK = (id: string, seq: number): string => `meeting-chunk:${id}:${seq}`;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -34,12 +56,12 @@ export function recordTtlMs(maxMinutes: number, transcriptDays: number): number 
 }
 
 export async function putMeetingRecord(rec: MeetingRecord, ttlMs: number): Promise<void> {
-  await getOperationalStore().putTaskResult(rec.org, RECORD(rec.id), JSON.stringify(rec), new Date().toISOString(), ttlMs);
+  await putMeetingRow(rec.org, RECORD(rec.id), JSON.stringify(rec), ttlMs);
 }
 
 export async function getMeetingRecord(org: string, id: string): Promise<MeetingRecord | undefined> {
   if (!MEETING_ID.test(id)) return undefined;
-  const raw = await getOperationalStore().getTaskResult(org, RECORD(id));
+  const raw = await getMeetingRow(org, RECORD(id));
   if (raw === null) return undefined;
   try {
     const rec = JSON.parse(raw) as MeetingRecord;
@@ -50,7 +72,7 @@ export async function getMeetingRecord(org: string, id: string): Promise<Meeting
 }
 
 export async function deleteMeetingRecord(org: string, id: string): Promise<void> {
-  await getOperationalStore().deleteTaskResult(org, RECORD(id));
+  await deleteMeetingRow(org, RECORD(id));
 }
 
 export interface StoredChunk {
@@ -62,7 +84,7 @@ export interface StoredChunk {
 
 export async function putTranscriptChunk(org: string, id: string, seq: number, chunk: StoredChunk | string, ttlMs: number): Promise<void> {
   const c = typeof chunk === "string" ? { text: chunk } : chunk;
-  await getOperationalStore().putTaskResult(org, CHUNK(id, seq), JSON.stringify({ seq, ...c }), new Date().toISOString(), ttlMs);
+  await putMeetingRow(org, CHUNK(id, seq), JSON.stringify({ seq, ...c }), ttlMs);
 }
 
 function parseChunk(raw: string | null): StoredChunk | undefined {
@@ -83,7 +105,7 @@ function parseChunk(raw: string | null): StoredChunk | undefined {
 
 export async function readTranscriptChunk(org: string, id: string, seq: number): Promise<StoredChunk | undefined> {
   if (seq < 0) return undefined;
-  return parseChunk(await getOperationalStore().getTaskResult(org, CHUNK(id, seq)));
+  return parseChunk(await getMeetingRow(org, CHUNK(id, seq)));
 }
 
 export async function readTranscript(
@@ -96,7 +118,7 @@ export async function readTranscript(
   const attendees: string[] = [];
   let labelled = 0;
   for (let seq = 0; seq < count; seq++) {
-    const c = parseChunk(await getOperationalStore().getTaskResult(org, CHUNK(id, seq)));
+    const c = parseChunk(await getMeetingRow(org, CHUNK(id, seq)));
     if (c === undefined) {
       missing.push(seq);
       continue;
@@ -109,21 +131,20 @@ export async function readTranscript(
 }
 
 export async function claimMeetingBilling(org: string, id: string, ttlMs: number): Promise<boolean> {
-  return await getOperationalStore().putTaskResultIfAbsent(org, `meeting-billed:${id}`, "1", new Date().toISOString(), ttlMs);
+  return await putMeetingRowIfAbsent(org, `meeting-billed:${id}`, "1", ttlMs);
 }
 
 export async function claimMeetingRecap(org: string, id: string, ttlMs: number): Promise<boolean> {
-  return await getOperationalStore().putTaskResultIfAbsent(org, `meeting-recap:${id}`, "1", new Date().toISOString(), ttlMs);
+  return await putMeetingRowIfAbsent(org, `meeting-recap:${id}`, "1", ttlMs);
 }
 
 export const MAX_OPEN_MEETINGS = 64;
 const SLOT = (n: number): string => `meeting-open-slot:${n}`;
 
 export async function claimOpenMeetingSlot(org: string, id: string, ttlMs: number, now: number = Date.now()): Promise<number | undefined> {
-  const store = getOperationalStore();
   const value = JSON.stringify({ id, at: now });
   for (let n = 0; n < MAX_OPEN_MEETINGS; n++) {
-    if (await store.putTaskResultIfAbsent(org, SLOT(n), value, new Date(now).toISOString(), ttlMs)) return n;
+    if (await putMeetingRowIfAbsent(org, SLOT(n), value, ttlMs, now)) return n;
   }
   return undefined;
 }
@@ -139,37 +160,34 @@ function parseSlot(raw: string | null): { readonly id: string; readonly at: numb
 }
 
 export async function openMeetingSlots(org: string): Promise<{ readonly slot: number; readonly id: string; readonly at: number }[]> {
-  const store = getOperationalStore();
   const out: { slot: number; id: string; at: number }[] = [];
   for (let n = 0; n < MAX_OPEN_MEETINGS; n++) {
-    const v = parseSlot(await store.getTaskResult(org, SLOT(n)));
+    const v = parseSlot(await getMeetingRow(org, SLOT(n)));
     if (v !== undefined) out.push({ slot: n, ...v });
   }
   return out;
 }
 
 export async function releaseOpenMeetingSlot(org: string, slot: number, id: string): Promise<void> {
-  const store = getOperationalStore();
-  if (parseSlot(await store.getTaskResult(org, SLOT(slot)))?.id === id) await store.deleteTaskResult(org, SLOT(slot));
+  if (parseSlot(await getMeetingRow(org, SLOT(slot)))?.id === id) await deleteMeetingRow(org, SLOT(slot));
 }
 
 export async function claimMeetingOpen(org: string, id: string, ttlMs: number): Promise<boolean> {
-  return await getOperationalStore().putTaskResultIfAbsent(org, `meeting-opening:${id}`, "1", new Date().toISOString(), ttlMs);
+  return await putMeetingRowIfAbsent(org, `meeting-opening:${id}`, "1", ttlMs);
 }
 
 export async function releaseMeetingOpen(org: string, id: string): Promise<void> {
-  await getOperationalStore().deleteTaskResult(org, `meeting-opening:${id}`);
+  await deleteMeetingRow(org, `meeting-opening:${id}`);
 }
 
 export async function raiseChunkHighWater(org: string, id: string, seq: number, ttlMs: number): Promise<void> {
-  const store = getOperationalStore();
-  const raw = await store.getTaskResult(org, `meeting-hw:${id}`);
+  const raw = await getMeetingRow(org, `meeting-hw:${id}`);
   const prev = raw === null ? -1 : Number(raw);
-  if (!(Number.isFinite(prev) && prev >= seq)) await store.putTaskResult(org, `meeting-hw:${id}`, String(seq), new Date().toISOString(), ttlMs);
+  if (!(Number.isFinite(prev) && prev >= seq)) await putMeetingRow(org, `meeting-hw:${id}`, String(seq), ttlMs);
 }
 
 export async function chunkCount(org: string, id: string, reported: number | undefined): Promise<number> {
-  const raw = await getOperationalStore().getTaskResult(org, `meeting-hw:${id}`);
+  const raw = await getMeetingRow(org, `meeting-hw:${id}`);
   const hw = raw === null ? -1 : Number(raw);
   return Math.max(reported ?? 0, Number.isFinite(hw) ? hw + 1 : 0);
 }

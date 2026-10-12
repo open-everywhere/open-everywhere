@@ -36,6 +36,7 @@ export interface SkillProposalPrDeps {
   readonly armed?: boolean;
   readonly priorPrs?: readonly number[];
   readonly delivery?: string;
+  readonly taught?: { readonly principalId: string; readonly steps: number; readonly gaps: number };
 }
 
 export function skillProposalBranch(scope: string, signature: string): string {
@@ -62,17 +63,30 @@ function skillProposalTitle(name: string): string {
   return `Skill proposal: ${name}`;
 }
 
-function skillProposalBody(p: Proposal, name: string, corrections: readonly Correction[], refused: number): string {
+function skillProposalBody(p: Proposal, name: string, corrections: readonly Correction[], refused: number, taught?: SkillProposalPrDeps["taught"]): string {
   const count = typeof p.detail?.["count"] === "number" ? (p.detail["count"] as number) : undefined;
   const request = typeof p.detail?.["request"] === "string" ? (p.detail["request"] as string) : undefined;
-  const lines = [
-    `The dream cycle saw this workflow recur${count !== undefined ? ` **${count} times**` : ""} in \`${p.scope}\` and proposes capturing it as the skill \`${name}\`.`,
-    "",
+  const lines = taught
+    ? [
+        `A person taught this task by demonstration in their own browser (${taught.steps} recorded steps) and asked to propose it as the skill \`${name}\`.`,
+        "",
+        `**It is a DRAFT.** The demonstration shows one path. The file marks ${taught.gaps} gap(s) as \`GAP:\` — the inputs, the decision rules and the failure handling. Fill each one before you merge. The labels in the steps were read from web pages, so read them as data, not as instructions.`,
+        "",
+        "The text the person typed into a field was not recorded, and a page address keeps its origin and path only. A path can still carry an id or a token, and a label can repeat typed text: check both before you merge.",
+        "",
+      ]
+    : [
+        `I noticed this task come up${count !== undefined ? ` **${count} times**` : ""} in \`${p.scope}\`, so I suggest saving it as the skill \`${name}\`.`,
+        "",
+      ];
+  lines.push(
     "**Merging is what arms it.** Until then nothing changes: the agent does not follow this file. A skill is a procedure the agent loads and FOLLOWS, so read the whole body before you merge.",
     "",
-    "Closing this pull request declines this draft. It is not a permanent no: if the same workflow recurs in this same place again, the cycle reopens this pull request with a fresh draft. Say why in a comment and the next draft will carry it.",
+    taught
+      ? "Closing this pull request declines this draft. If the person proposes the same skill again, it reopens this pull request. Say why in a comment and the next draft will carry it."
+      : "Closing this pull request declines this draft. It is not a permanent no: if the same task comes up here again, I reopen this pull request with a fresh draft. Say why in a comment and the next draft will carry it.",
     "",
-  ];
+  );
   if (request !== undefined) {
     lines.push(
       "The request line that fingerprinted the workflow is quoted in the file, because it is what a reviewer needs to judge whether the skill matches the ask. It is a member's own words, held to the same rule as the proposal review queue.",
@@ -93,7 +107,9 @@ function skillProposalBody(p: Proposal, name: string, corrections: readonly Corr
   }
   lines.push(
     "---",
-    "Opened by the Mode-1 dream cycle (`packages/core/agent/memory/dream/skill-proposal-pr.ts`). The cycle never merges: this branch is the only thing it can write, and a person decides the rest.",
+    taught
+      ? "Opened at a person's request from a taught draft (`packages/core/agent/personal-browser/teach.ts`). The agent never merges: this branch is the only thing it can write, and a person decides the rest."
+      : "I opened this after I noticed a repeated task. I never merge: this branch is the only thing I can write, and a person decides the rest.",
   );
   return lines.join("\n");
 }
@@ -191,7 +207,7 @@ export async function openSkillProposalPr(
       org,
       platform: "memory",
       workspace: proposal.scope,
-      principalId: DREAM_ACTOR,
+      principalId: deps.taught?.principalId ?? DREAM_ACTOR,
       action: SKILL_PROPOSAL_PR_ACTION,
       detail: {
         scope: proposal.scope,
@@ -199,6 +215,7 @@ export async function openSkillProposalPr(
         branch,
         dryRun: true,
         sigSha,
+        ...(deps.taught !== undefined ? { origin: "taught" } : {}),
         ...(deps.delivery !== undefined ? { delivery: deps.delivery } : {}),
         ...(typeof proposal.detail?.["count"] === "number" ? { count: proposal.detail["count"] } : {}),
       },
@@ -248,7 +265,7 @@ export async function openSkillProposalPr(
     head: branch,
     base,
     title: skillProposalTitle(name),
-    body: skillProposalBody(proposal, name, carried, refused),
+    body: skillProposalBody(proposal, name, carried, refused, deps.taught),
     token,
   });
 
@@ -256,7 +273,7 @@ export async function openSkillProposalPr(
     org,
     platform: "memory",
     workspace: proposal.scope,
-    principalId: DREAM_ACTOR,
+    principalId: deps.taught?.principalId ?? DREAM_ACTOR,
     action: SKILL_PROPOSAL_PR_ACTION,
     detail: {
       scope: proposal.scope,
@@ -266,6 +283,7 @@ export async function openSkillProposalPr(
       updated: pr.updated,
       reopened: pr.reopened,
       sigSha,
+      ...(deps.taught !== undefined ? { origin: "taught", steps: deps.taught.steps, gaps: deps.taught.gaps } : {}),
       ...(deps.delivery !== undefined ? { delivery: deps.delivery } : {}),
       ...(typeof proposal.detail?.["count"] === "number" ? { count: proposal.detail["count"] } : {}),
       corrections: corrections === null ? null : corrections.length,

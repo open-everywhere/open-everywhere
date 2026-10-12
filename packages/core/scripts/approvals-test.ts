@@ -23,6 +23,7 @@ const { readAudit } = await import("../agent/audit/audit.js");
 const { SESSION_GRANT_RELEASED_ACTION } = await import("../agent/approvals/flow.js");
 const { parseApprovalAction, requestApproval, handleApprovalPayload, resolveApprovalClick, clickerMayDecide, OE_APPROVAL_PREFIX, sweepExpiredPendings, MAX_SESSION_GRANT_RELEASES } = await import("../agent/approvals/flow.js");
 const { pendingCardBlocks, decidedCardBlocks, judgeLiftNoticeBlocks, judgeLiftNoticeText } = await import("../agent/approvals/card.js");
+const { shortUtc } = await import("../agent/approvals/session-grant.js");
 const { ROUTINE_PERMISSION_NO_EXPIRY } = await import("../agent/routines/declared-permissions.js");
 const { registerActionKind, actionKind } = await import("../agent/approvals/actions.js");
 const { effectiveCaps } = await import("../agent/spend/caps.js");
@@ -137,11 +138,11 @@ function row(over: Partial<PendingActionRow> = {}): PendingActionRow {
     ok(ids2.length === 2 && !ids2.some((i) => i.includes("approve_session")), `🔴 OPE-2363: a pr.open card frozen in ${what} has NO middle button`);
   }
   ok(text.includes("<@U_REQUESTER>") || blocks.some((b) => JSON.stringify(b).includes("<@U_REQUESTER>")), "the requester is @-mentioned somewhere on the card");
-  ok(JSON.stringify(blocks).includes(`expires ${r.expiresAt}`), "the card shows the expiry timestamp");
+  ok(JSON.stringify(blocks).includes(`expires ${shortUtc(r.expiresAt)}`), "the card shows the expiry instant, in short form (OPE-2481)");
   const noClock = pendingCardBlocks(row({ id: "p-rp", kind: "routine.permission", expiresAt: ROUTINE_PERMISSION_NO_EXPIRY }), ["permission"]);
   ok(!JSON.stringify(noClock.blocks).includes("9999"), "🔴 OPE-2162: a no-clock card's footer never prints the 9999 sentinel");
   ok(
-    JSON.stringify(noClock.blocks).includes("Requested by <@U_REQUESTER> · no expiry — ends when the routine's instruction is edited or the routine is deleted"),
+    JSON.stringify(noClock.blocks).includes("Asked by <@U_REQUESTER> · open until the routine changes"),
     "🔴 OPE-2162: …it names the routine generation as the card's bound instead",
   );
 
@@ -163,15 +164,16 @@ function row(over: Partial<PendingActionRow> = {}): PendingActionRow {
   ok(noticeActions!.elements[0]!.text.text === "This should not have run", "the notice button says what it does");
   ok(!noticeIds.some((i) => i.includes("approve") || i.includes("reject")), "🔴 the notice is a REVIEW surface, never a decision one — no approve/reject on an act that already ran");
   ok(JSON.stringify(notice.blocks).includes("already run"), "the notice says the action has already run — it never implies a click could undo it");
+  ok(!JSON.stringify(notice.blocks.map((b) => (b as { text?: unknown }).text ?? (b as { elements?: unknown }).elements)).includes("spend.set") && (notice.metadata?.event_payload as { kind?: string }).kind === "spend.set", "OPE-2481: the notice names no kind in visible text; the kind rides the metadata");
   ok(JSON.stringify(notice.blocks).includes("spend limit set"), "the notice relays the executor's own outcome line");
 
   const noticeText = judgeLiftNoticeText({ ...r, status: "approved", decidedBy: "chain:judge" }, ["line one"], "spend limit set");
-  ok(noticeText.includes("Ran without asking: spend.set"), "judgeLiftNoticeText names the kind, as the Block Kit header does");
-  ok(noticeText.includes("line one"), "judgeLiftNoticeText carries the code-rendered summary");
+  ok(noticeText.startsWith("Ran without asking: Set the monthly spend limit"), "judgeLiftNoticeText names the act in plain words, as the Block Kit headline does");
+  ok(!noticeText.includes("spend.set") && !noticeText.includes("line one"), "OPE-2481: judgeLiftNoticeText carries no kind label and no detail line");
   ok(noticeText.includes("spend limit set"), "judgeLiftNoticeText relays the executor's own outcome line");
   ok(noticeText.includes("already run"), "judgeLiftNoticeText says the action has already run");
-  ok(noticeText.includes("p-1"), "🔴 judgeLiftNoticeText quotes the wedge row id — the only handle its instruction can give a reviewer");
-  ok(/cannot carry the "This should not have run" button/.test(noticeText), "🔴 judgeLiftNoticeText spells the overrule out, because a tap cannot land here");
+  ok(!noticeText.includes("p-1"), "OPE-2481: judgeLiftNoticeText quotes no row id — the audit trail finds the act by its room and time");
+  ok(/say so in this conversation/.test(noticeText), "🔴 judgeLiftNoticeText spells the overrule out, because a tap cannot land here");
   ok(!noticeText.includes(OE_APPROVAL_PREFIX), "🔴 judgeLiftNoticeText carries NO action_id — it must never imply a tap route this surface does not route");
 }
 
@@ -773,7 +775,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
     calls.push({ method, body });
     return { ok: true, ts: `${ts++}.0` };
   };
-  const cards = () => calls.filter((c) => c.method === "chat.postMessage" && !(bodyField(c.body, "text") ?? "").includes("REJECTED")).length;
+  const cards = () => calls.filter((c) => c.method === "chat.postMessage" && !(bodyField(c.body, "text") ?? "").startsWith("❌ Rejected by")).length;
   const scope = "slack/T2066/C2066";
   const propose = (reason: string, extra: Record<string, unknown> = {}) =>
     requestApproval(
@@ -824,7 +826,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
     calls.push({ method, body });
     return { ok: true, ts: `${ts++}.0` };
   };
-  const cards = () => calls.filter((c) => c.method === "chat.postMessage" && !(bodyField(c.body, "text") ?? "").includes("REJECTED")).length;
+  const cards = () => calls.filter((c) => c.method === "chat.postMessage" && !(bodyField(c.body, "text") ?? "").startsWith("❌ Rejected by")).length;
   const scope = "slack/T2071/C2071";
   const argsFor = (reason: string, extra: Record<string, unknown> = {}) => ({ org: "default", scopeKey: scope, level: "surface", monthlyUsd: 1609, reason, currentCap: null, currentUsd: 50, tainted: false, ...extra });
   const propose = (reason: string, extra: Record<string, unknown> = {}, over: { scopeKey?: string; channelId?: string } = {}) =>
@@ -937,9 +939,9 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   ok(again.deduped !== true, "re-propose: an identical proposal after a REJECTION is NOT deduped");
   ok(again.id !== first.id, "re-propose: the re-proposal is a genuinely NEW pending id, not the rejected one");
 
-  const notice = calls.find((c) => c.method === "chat.postMessage" && bodyField(c.body, "thread_ts") === "ANCHOR.10" && (bodyField(c.body, "text") ?? "").includes("REJECTED"));
+  const notice = calls.find((c) => c.method === "chat.postMessage" && bodyField(c.body, "thread_ts") === "ANCHOR.10" && (bodyField(c.body, "text") ?? "").startsWith("❌ Rejected by <@U_ORG_ADMIN>"));
   ok(!!notice, "decision notice: a REJECT posts a fresh message into the pending's anchor thread (thread_ts = the mint-time anchor)");
-  ok((bodyField(notice!.body, "text") ?? "").includes("NOT applied"), "decision notice: the reject notice states plainly the change was NOT applied (never an auto-retry)");
+  ok((bodyField(notice!.body, "text") ?? "").includes("Set the monthly spend limit") && !(bodyField(notice!.body, "text") ?? "").includes("\n"), "decision notice: the reject notice is ONE line that names what was rejected (OPE-2481), never an auto-retry");
 }
 
 {
@@ -960,7 +962,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
     return { ok: true };
   };
   await handleApprovalPayload(payloadFor("oe_approval:approve:p-notice-approve", { user: "U_ORG_ADMIN", channel: "C11", ts: "111.222" }), { post });
-  const approveNotice = calls.find((c) => c.method === "chat.postMessage" && bodyField(c.body, "thread_ts") === "ANCHOR.11" && (bodyField(c.body, "text") ?? "").includes("APPROVED"));
+  const approveNotice = calls.find((c) => c.method === "chat.postMessage" && bodyField(c.body, "thread_ts") === "ANCHOR.11" && (bodyField(c.body, "text") ?? "").startsWith("✅ Approved by"));
   ok(!!approveNotice, "decision notice: an APPROVE posts a fresh 'APPROVED' message into the anchor thread");
   await getOperationalStore().clearSpendLimit("default", "slack/T11/C11", "surface");
 }
@@ -1587,11 +1589,11 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
 
     const slackNotice = slackCalls.find((c) => c.method === "chat.postMessage" && bodyField(c.body, "thread_ts") === "ANCHOR.S");
     ok(!!slackNotice, "sweep feedback: the Slack row's expiry notice posts into the mint-frozen anchor thread");
-    ok((bodyField(slackNotice!.body, "text") ?? "").includes("EXPIRED") && (bodyField(slackNotice!.body, "text") ?? "").includes("NOT applied"), "sweep feedback: the Slack notice states EXPIRED + nothing applied");
+    ok((bodyField(slackNotice!.body, "text") ?? "").startsWith("⏰ Expired — "), "sweep feedback: the Slack notice is the one-line expiry, naming what expired");
     ok(bodyField(slackNotice!.body, "channel") === "C_WIN", "sweep feedback: the Slack notice targets the row's own channel");
 
     ok(discordNotices.length === 1 && discordNotices[0]!.rowId === "fb-discord", "sweep feedback: the Discord row's expiry notice goes through the Discord poster exactly once");
-    ok(discordNotices[0]!.text.includes("EXPIRED") && discordNotices[0]!.text.includes("NOT applied"), "sweep feedback: the Discord notice is the same code-rendered decision text");
+    ok(discordNotices[0]!.text.startsWith("⏰ Expired — "), "sweep feedback: the Discord notice is the same one-line expiry");
 
     ok(wakes.length === 2, "sweep feedback: exactly the two FROZEN rows emit a decision wake (NULL postedTo emits none)");
     const slackWake = wakes.find((w) => w.token === WIN_TOKEN);

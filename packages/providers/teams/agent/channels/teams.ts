@@ -1,8 +1,8 @@
 import { teamsChannel, type TeamsInboundMessageContext, type TeamsMessageActivity, type TeamsInboundResult } from "eve/channels/teams";
 import { frontTeamsChannel, INTERNAL_TEAMS_ROUTE } from "./teams-front.js";
 import { buildTeamsAuth, teamsMembershipType } from "./teams-identity.js";
-import { teamsEngagedAdmits } from "./teams-engagement.js";
-import { resolveTeamsUserType, teamsHandleRosterProbe } from "./teams-roster.js";
+import { teamsNativeAdmits } from "./teams-name-drop.js";
+import { resolveTeamsUserType, teamsHandleRosterProbe, teamsIsHomeTenant } from "./teams-roster.js";
 import { admitTeamsInputResponse } from "./teams-input-response.js";
 import {
   finalMessageActionForTurn,
@@ -48,9 +48,10 @@ function auditPartitionForState(state: {
 }
 
 export const teamsOnMessage = async (ctx: TeamsInboundMessageContext, message: TeamsMessageActivity): Promise<TeamsInboundResult> => {
-    if (message.scope !== "personal" && !message.isBotMentioned && !(await teamsEngagedAdmits(message))) return null;
+    if (!(await teamsNativeAdmits(message))) return null;
 
     const userType = await resolveTeamsUserType(teamsHandleRosterProbe(ctx.teams), message.conversation.id, message.from.id);
+    const homeTenant = userType === "member" ? await teamsIsHomeTenant(message.tenantId ?? message.conversation.tenantId) : undefined;
 
     const auth = buildTeamsAuth({
       userId: message.from.id,
@@ -64,6 +65,7 @@ export const teamsOnMessage = async (ctx: TeamsInboundMessageContext, message: T
       scope: message.scope,
       membershipType: teamsMembershipType(message.channelData),
       userType,
+      homeTenant,
     });
 
     if ((await ingressSpendGate({

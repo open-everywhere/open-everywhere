@@ -2,7 +2,7 @@ import { POST, type Channel, type HttpRouteDefinition, type RouteHandlerArgs } f
 import { verifyDiscordSignature } from "eve/channels/discord";
 import { OE_DISCORD_APPROVAL_PREFIX } from "../approvals/discord-card.js";
 import { handleDiscordApprovalInteraction, type DiscordInteractionResponse } from "../approvals/discord-flow.js";
-import { LINK_CONSENT_CLICK_PREFIX, OE_GRANT_ACTION_PREFIX } from "@open-everywhere/core/agent/adapter-api.js";
+import { LINK_CONSENT_CLICK_PREFIX, OE_GRANT_ACTION_PREFIX, friendlyDiscordBody } from "@open-everywhere/core/agent/adapter-api.js";
 import { handleDiscordLinkConsentInteraction } from "../identity/discord-link-consent.js";
 import { handleDiscordGrantCardInteraction } from "../access/discord-grant-click.js";
 import { oeCommandName, type AttachSessionForCancel } from "@open-everywhere/core/agent/adapter-api.js";
@@ -88,8 +88,8 @@ export interface DiscordFrontOptions {
   readonly handleOeCommand?: (raw: unknown, attachSession?: AttachSessionForCancel) => Promise<DiscordInteractionResponse | null>;
 }
 
-function interactionJson(body: DiscordInteractionResponse): Response {
-  return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+async function interactionJson(body: DiscordInteractionResponse): Promise<Response> {
+  return new Response(JSON.stringify(await friendlyDiscordBody(body, { lookup: false })), { status: 200, headers: { "content-type": "application/json" } });
 }
 
 export function buildDiscordFrontHandler(innerHandler: RouteHandler, opts: DiscordFrontOptions = {}): RouteHandler {

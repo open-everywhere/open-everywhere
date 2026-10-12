@@ -21,7 +21,22 @@ export interface StaticConfidentialSignIn {
   readonly scopes?: readonly string[];
 }
 
-export type ConnectionSignIn = DiscoverySignIn | StaticConfidentialSignIn;
+export interface XaaSignIn {
+  readonly mode: "xaa";
+  readonly idpIssuer: string;
+  readonly idpClientId: string;
+  readonly idpClientSecretRef: string;
+  readonly idpClientSecretBroker?: string;
+  readonly audience: string;
+  readonly resource?: string;
+  readonly scopes?: readonly string[];
+  readonly resourceTokenEndpoint: string;
+  readonly resourceClientId: string;
+  readonly resourceClientSecretRef: string;
+  readonly resourceClientSecretBroker?: string;
+}
+
+export type ConnectionSignIn = DiscoverySignIn | StaticConfidentialSignIn | XaaSignIn;
 
 const DECLARED = processRegistryMap<ConnectionSignIn>("connection-sign-in.v1");
 

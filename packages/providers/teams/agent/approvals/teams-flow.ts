@@ -12,6 +12,8 @@ import {
   type DecisionWakeDeps,
   type PendingActionRow,
   type UnifiedWakeOrigin,
+  type OwnCardRoom,
+  type SurfaceBinding,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   TEAMS_ADAPTIVE_CARD_ACTION_INVOKE,
@@ -27,7 +29,7 @@ import {
 import { sendTeamsActivityBackedOff, updateTeamsActivityBackedOff } from "../channels/teams-connector.js";
 import { teamsChannelGrainConversationId, teamsConversationRef, type TeamsConversationRef } from "../channels/teams-conversation-ref.js";
 import { restoreTeamsConversationId } from "../channels/teams-id-restore.js";
-import { isTrustedTeamsServiceUrl } from "../channels/teams-origin-codec.js";
+import { isTeamsChannelActivity, isTrustedTeamsServiceUrl } from "../channels/teams-origin-codec.js";
 import { resolveTeamsUserType, teamsServiceUrlRosterProbe } from "../channels/teams-roster.js";
 
 function log(msg: string): void {
@@ -54,6 +56,15 @@ async function liveResolveRef(channelId: string): Promise<TeamsConversationRef |
 async function cardConversation(channelId: string, deps: TeamsPostDeps): Promise<TeamsConversationRef | undefined> {
   const ref = await (deps.resolveRef ?? liveResolveRef)(channelId);
   return ref && isTrustedTeamsServiceUrl(ref.serviceUrl) ? ref : undefined;
+}
+
+export function teamsOwnCardRoom(binding: Pick<SurfaceBinding, "platform" | "workspace" | "surface" | "target">): OwnCardRoom | undefined {
+  const target = binding.target;
+  const scope = target?.["conversationType"];
+  const conversationId = target?.["conversationId"];
+  if (scope !== "personal" && scope !== "groupChat") return undefined;
+  if (typeof conversationId !== "string" || conversationId.length === 0) return undefined;
+  return { channelId: conversationId, surfaceKey: `${binding.platform}/${binding.workspace}/${binding.surface}` };
 }
 
 export async function postTeamsApprovalCard(row: PendingActionRow, summaryLines: readonly string[], deps: TeamsPostDeps = {}): Promise<string | undefined> {
@@ -133,7 +144,7 @@ export function parseTeamsApprovalInvoke(activity: unknown): TeamsApprovalInvoke
   const invoke = activity as unknown as TeamsInvokeActivity;
   if (invoke.name !== TEAMS_ADAPTIVE_CARD_ACTION_INVOKE) return null;
   const raw = isObject(invoke.raw) ? invoke.raw : (activity as Record<string, unknown>);
-  if (raw["channelId"] !== "msteams") return null;
+  if (!isTeamsChannelActivity(raw)) return null;
   const value = isObject(invoke.value) ? invoke.value : undefined;
   const actionObj = value && isObject(value["action"]) ? value["action"] : undefined;
   const action = parseTeamsApprovalData(actionObj?.["data"]);

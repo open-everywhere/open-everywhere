@@ -41,8 +41,17 @@ md = upsertStatusItem(md, "sess-1", null);
 ok(statusItems(md).length === 1 && !md.includes("`sess-1`"), "null line removes the item");
 
 ok(renderPinned(md).startsWith(PINNED_HEADER), "pinned message leads with the find marker");
-ok(renderPinned(md).includes("`sess-2`"), "pinned message lists active items");
-ok(renderPinned(statusSeed("x")).includes("_(idle)_"), "no items -> idle marker");
+ok(renderPinned(md).includes("Task B") && !renderPinned(md).includes("sess-2"), "pinned message lists active items, and never their session id (OPE-2486)");
+ok(renderPinned(upsertStatusItem(statusSeed("x"), "wrun_X1", statusItemLine("wrun_X1", "working", "Task C", "2026-06-24 09:30Z"))).endsWith("Task C · 24 June, 09:30 UTC"), "pinned message puts the time in words");
+ok(renderPinned(statusSeed("x")).includes("_Nothing in progress._"), "no items -> idle marker");
+ok(
+  renderPinned(upsertStatusItem(statusSeed("x"), "s-9", statusItemLine("s-9", "working", "Fix the `npm test` · `build` thing", "2026-06-24 09:30Z"))).includes("Fix the `npm test` · `build` thing · 24 June"),
+  "the pin keeps the person's own text whole, even when it holds a backtick span — only the trailing key is dropped",
+);
+ok(
+  renderPinned(upsertStatusItem(statusSeed("x"), "s-10", statusItemLine("s-10", "working", "Deploy · `main`", "2026-06-24 09:30Z"))).includes("Deploy · `main` · 24 June"),
+  "…and a summary that ENDS in a backtick span keeps it too",
+);
 ok(renderPinned(undefined).startsWith(PINNED_HEADER), "render is defensive on empty body");
 
 ok(!/open ?everywhere/iu.test(PINNED_HEADER), "the pinned header names no brand — a deployment is locally namable");

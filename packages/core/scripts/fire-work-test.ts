@@ -333,6 +333,39 @@ const PLAN = fireWork.planFireWork({ surfaceKey: SURFACE, origin: ORIGIN, domain
 }
 
 {
+  const { notifyRefusedWorkRequest } = await import("../agent/channels/work-loss.js");
+  const { a2aInboundIdentityAttributes } = await import("../agent/a2a/inbound/platform.js");
+  const { readA2aInboundTask, writeA2aInboundTask } = await import("../agent/a2a/inbound/task-store.js");
+  const { TaskState } = await import("@a2a-js/sdk");
+  const entries: readonly [string, (requestId: string, rows: unknown[]) => Promise<unknown>][] = [
+    ["lost", (requestId, rows) => notifyLostWorkRequests({ org: ORG, requestIds: [requestId], reason: "work-session runtime-changed", workToken: PLAN.workToken }, { store, dispatch: (async () => true) as never, audit: (async (r: unknown) => void rows.push(r)) as never, foldFire: (async () => undefined) as never })],
+    ["refused", (requestId, rows) => notifyRefusedWorkRequest({ org: ORG, requestId, taskId: "agent-x", reason: "task-working" }, { store, dispatch: (async () => true) as never, audit: (async (r: unknown) => void rows.push(r)) as never, foldFire: (async () => undefined) as never })],
+    [
+      "withheld",
+      (requestId, rows) =>
+        wakeSeatNeedsReissue(
+          { requestId, edge: "validate", reason: "stamp-names-another-request", stamped: "other" },
+          { org: () => ORG, store: () => store, audit: async (r: unknown) => void rows.push(r), dispatch: async () => true, mintWakeId, clearLedger: async () => undefined, foldFire: (async () => undefined) as never },
+        ),
+    ],
+  ];
+  for (const [label, run] of entries) {
+    const taskId = `t-${label}-${mintWakeId().slice(0, 8)}`;
+    const { deps: fixedClock, sent } = fakeDeps();
+    const deps = { ...fixedClock, now: () => new Date().toISOString() };
+    await fireWork.forwardFireToWork(RECEIVE, PLAN, { message: "a2a", surfaceKey: SURFACE, origin: ORIGIN, auth: { attributes: routineBag(a2aInboundIdentityAttributes("c16", taskId)) }, wakeId: mintWakeId() }, deps);
+    const requestId = sent[0]!.forward.requestId;
+    const now = new Date().toISOString();
+    await writeA2aInboundTask(store, ORG, "c16", { id: taskId, contextId: "c", status: { state: TaskState.TASK_STATE_WORKING, timestamp: now, message: undefined }, artifacts: [], history: [], metadata: {} }, now);
+    const rows: unknown[] = [];
+    await run(requestId, rows);
+    await run(requestId, rows);
+    eq((await readA2aInboundTask(store, ORG, "c16", taskId))?.status?.state, TaskState.TASK_STATE_FAILED, `§16 🔴 a ${label} inbound job ends its A2A task failed`);
+    eq(rows.filter((r) => (r as { action?: unknown }).action === "a2a.inbound_answered").length, 1, `§16 the ${label} branch answers the task ONCE across a replay`);
+  }
+}
+
+{
   const { deps, sent } = fakeDeps();
   await fireWork.forwardFireToWork(RECEIVE, PLAN, { message: "c", surfaceKey: SURFACE, origin: ORIGIN, auth: { attributes: routineBag({ [FIRE_PRINCIPAL_ATTR]: "U_CREATOR" }) }, wakeId: mintWakeId() }, deps);
   const row = await work.readWorkRequest(store, ORG, sent[0]!.forward.requestId);

@@ -1,6 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
 import { appendAudit } from "../audit/audit.js";
-import { getOperationalStore } from "../operational/provider.js";
 import { appendUsageEvent } from "../spend/usage-events.js";
 import { recordSpend } from "../spend/store.js";
 import { periodOf } from "../spend/spend.js";
@@ -27,6 +26,9 @@ import {
   claimMeetingBilling,
   claimMeetingRecap,
   getMeetingRecord,
+  getMeetingRow,
+  putMeetingRow,
+  putMeetingRowIfAbsent,
   putMeetingRecord,
   putTranscriptChunk,
   readTranscript,
@@ -36,6 +38,7 @@ import {
   type MeetingStatus,
 } from "./store.js";
 import type { MeetingPlatform } from "./link.js";
+import { markMeetingPostTarget, markPostedRecap } from "./provenance.js";
 import type { Partition } from "../memory/partition.js";
 import type { SurfaceMode } from "../operational/store.js";
 
@@ -186,9 +189,8 @@ export async function openMeeting(args: MeetingJoinArgs, approvedBy: string, dep
 }
 
 async function auditJoinOnce(rec: MeetingRecord, policy: MeetingPolicy, replay: boolean): Promise<void> {
-  const store = getOperationalStore();
   const marker = `meeting-join-audited:${rec.id}`;
-  if ((await store.getTaskResult(rec.org, marker)) !== null) return;
+  if ((await getMeetingRow(rec.org, marker)) !== null) return;
   await appendAudit({
     ...auditWhere(rec.partition),
     principalId: rec.approvedBy,
@@ -206,7 +208,7 @@ async function auditJoinOnce(rec: MeetingRecord, policy: MeetingPolicy, replay: 
       ...(replay ? { replay: true } : {}),
     },
   });
-  await store.putTaskResult(rec.org, marker, "1", new Date().toISOString(), recordTtlMs(rec.box.maxMinutes, policy.retention.transcriptDays));
+  await putMeetingRow(rec.org, marker, "1", recordTtlMs(rec.box.maxMinutes, policy.retention.transcriptDays));
 }
 
 export type MeetingEvent =
@@ -282,7 +284,7 @@ export async function handleMeetingCallback(org: string, meetingId: string, rawB
   const policy = deps.policy ?? meetingPolicy();
   const ttl = policy.retention.transcriptDays * DAY_MS;
   const replayKey = verdict.replayKey ?? "";
-  const first = await getOperationalStore().putTaskResultIfAbsent(org, `meeting-msg:${meetingId}:${replayKey}`, "1", new Date().toISOString(), ttl);
+  const first = await putMeetingRowIfAbsent(org, `meeting-msg:${meetingId}:${replayKey}`, "1", ttl);
   if (!first) return { status: 200, body: { ok: true, duplicate: true } };
   const event = parseMeetingEvent(rawBody);
   if ("error" in event) return { status: 400, body: { ok: false, error: event.error } };
@@ -439,6 +441,7 @@ export async function finishMeeting(
     return { posted: false, billed: bill !== undefined };
   }
   if (rec.status === "failed" || reason === "refused") return { posted: false, billed: bill !== undefined };
+  await markMeetingPostTarget(rec.org, rec.origin);
   if (!(await claimMeetingRecap(rec.org, rec.id, ttl))) return { posted: false, billed: bill !== undefined };
   const minutes = Math.max(1, Math.round(boxSeconds(rec.box.createdAt, now) / 60));
   const { text, missing, attendees, labelled } = await readTranscript(rec.org, rec.id, await chunkCount(rec.org, rec.id, rec.chunks));
@@ -456,6 +459,7 @@ export async function finishMeeting(
   }
   const post = renderRecapPost(recap, { platform: rec.platform, minutes, missingChunks: missing.length, empty });
   const messageId = await notifyThread(rec, post, deps);
+  if (messageId !== undefined) await markPostedRecap(rec.org, rec.origin, messageId);
   await putMeetingRecord({ ...rec, status: "recapped", endedAt: new Date(now).toISOString() }, ttl);
   await appendAudit({
     ...auditWhere(rec.partition),

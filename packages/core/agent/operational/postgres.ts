@@ -1,6 +1,6 @@
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
-import { asSurfaceMode, readThreadSeatStateValue, auditSurfaceMode, auditReadOrg, likePrefixPattern, argKeyNeedle, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type CredentialIntakeRow, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type ToolUsageEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow, type PersonOptOutRow, type PersonalBrowserRow, ATTENTION_COLUMNS, attentionPruneBefore, attentionRowFrom, type AttentionDbRow, DM_RULE_COLUMNS, dmRuleRowFrom, type DmRuleDbRow } from "./store.js";
+import { asSurfaceMode, readThreadSeatStateValue, auditSurfaceMode, auditReadOrg, likePrefixPattern, argKeyNeedle, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type CredentialIntakeRow, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type ToolUsageEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow, type PersonOptOutRow, type PersonalBrowserRow, type PersonalWatchRow, ATTENTION_COLUMNS, attentionPruneBefore, attentionRowFrom, type AttentionDbRow, DM_RULE_COLUMNS, dmRuleRowFrom, type DmRuleDbRow } from "./store.js";
 import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn, grantRefundTurnOrdinal } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
@@ -613,6 +613,23 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      updated_at    text NOT NULL,
      PRIMARY KEY (org_id, principal_key)
    )`,
+  `CREATE TABLE IF NOT EXISTS personal_watch (
+     org_id        text NOT NULL,
+     principal_key text NOT NULL,
+     state_json    text NOT NULL,
+     version       integer NOT NULL,
+     updated_at    text NOT NULL,
+     PRIMARY KEY (org_id, principal_key)
+   )`,
+  `CREATE TABLE IF NOT EXISTS meeting_data (
+     org_id      text NOT NULL,
+     data_key    text NOT NULL,
+     value_json  text NOT NULL,
+     created_at  text NOT NULL,
+     expires_at  text NOT NULL,
+     PRIMARY KEY (org_id, data_key)
+   )`,
+  `CREATE INDEX IF NOT EXISTS meeting_data_expiry ON meeting_data (org_id, expires_at)`,
   `CREATE TABLE IF NOT EXISTS instance_meta (
      key   text PRIMARY KEY,
      value text NOT NULL
@@ -756,6 +773,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE dm_audience ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE person_opt_out ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE personal_browser ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE personal_watch ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE meeting_data ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE dm_rule ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE attention_state ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE audit_entry FORCE ROW LEVEL SECURITY`,
@@ -813,6 +832,8 @@ const POLICY_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS dm_audience_org_isolation ON dm_audience`,
   `DROP POLICY IF EXISTS person_opt_out_org_isolation ON person_opt_out`,
   `DROP POLICY IF EXISTS personal_browser_org_isolation ON personal_browser`,
+  `DROP POLICY IF EXISTS personal_watch_org_isolation ON personal_watch`,
+  `DROP POLICY IF EXISTS meeting_data_org_isolation ON meeting_data`,
   `DROP POLICY IF EXISTS dm_rule_org_isolation ON dm_rule`,
   `DROP POLICY IF EXISTS attention_state_org_isolation ON attention_state`,
   `CREATE POLICY spend_org_isolation ON spend_ledger
@@ -936,6 +957,12 @@ const POLICY_STATEMENTS: readonly string[] = [
   `CREATE POLICY personal_browser_org_isolation ON personal_browser
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY personal_watch_org_isolation ON personal_watch
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY meeting_data_org_isolation ON meeting_data
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY dm_rule_org_isolation ON dm_rule
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
@@ -954,6 +981,10 @@ interface PersonalBrowserDbRow {
 }
 
 function personalBrowserRowFrom(r: PersonalBrowserDbRow): PersonalBrowserRow {
+  return { principalKey: r.principal_key, stateJson: r.state_json, version: Number(r.version), updatedAt: r.updated_at };
+}
+
+function personalWatchRowFrom(r: PersonalBrowserDbRow): PersonalWatchRow {
   return { principalKey: r.principal_key, stateJson: r.state_json, version: Number(r.version), updatedAt: r.updated_at };
 }
 
@@ -1494,6 +1525,8 @@ const MUTABLE_TABLE_VERBS: Readonly<Record<string, readonly DmlVerb[]>> = {
   dm_audience: ["SELECT", "INSERT", "UPDATE"],
   person_opt_out: ["SELECT", "INSERT", "UPDATE"],
   personal_browser: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  personal_watch: ["SELECT", "INSERT", "UPDATE"],
+  meeting_data: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   dm_rule: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   attention_state: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   thread_ownership: ["SELECT", "INSERT", "UPDATE", "DELETE"],
@@ -3156,6 +3189,33 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       return (rows as PersonalBrowserDbRow[]).map(personalBrowserRowFrom);
     },
 
+    async getPersonalWatch(org, principalKey) {
+      const { rows } = await client.query("SELECT principal_key, state_json, version, updated_at FROM personal_watch WHERE org_id = $1 AND principal_key = $2", [org, principalKey]);
+      const row = rows[0] as PersonalBrowserDbRow | undefined;
+      return row ? personalWatchRowFrom(row) : null;
+    },
+
+    async casPersonalWatch(org, principalKey, stateJson, at, expected) {
+      if (expected === null) {
+        const { rows } = await client.query(
+          "INSERT INTO personal_watch (org_id, principal_key, state_json, version, updated_at) VALUES ($1, $2, $3, 1, $4) ON CONFLICT (org_id, principal_key) DO NOTHING RETURNING version",
+          [org, principalKey, stateJson, at],
+        );
+        return rows.length > 0 ? 1 : null;
+      }
+      const { rows } = await client.query(
+        "UPDATE personal_watch SET state_json = $3, version = version + 1, updated_at = $4 WHERE org_id = $1 AND principal_key = $2 AND version = $5 RETURNING version",
+        [org, principalKey, stateJson, at, expected],
+      );
+      const row = rows[0] as { version: number } | undefined;
+      return row === undefined ? null : Number(row.version);
+    },
+
+    async listPersonalWatches(org) {
+      const { rows } = await client.query("SELECT principal_key, state_json, version, updated_at FROM personal_watch WHERE org_id = $1 ORDER BY principal_key", [org]);
+      return (rows as PersonalBrowserDbRow[]).map(personalWatchRowFrom);
+    },
+
     async getPersonOptOut(org, principalKey) {
       const { rows } = await client.query("SELECT principal_key, opted_out_at FROM person_opt_out WHERE org_id = $1 AND principal_key = $2", [org, principalKey]);
       const row = rows[0] as PersonOptOutDbRow | undefined;
@@ -3716,6 +3776,42 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     async deleteTaskResult(org, taskId) {
       const { rows } = await client.query("DELETE FROM task_result WHERE org_id = $1 AND task_id = $2 RETURNING task_id", [org, taskId]);
       return rows.length > 0;
+    },
+
+    async putMeetingData(org, key, valueJson, at, expiresAt) {
+      await client.query("DELETE FROM meeting_data WHERE org_id = $1 AND expires_at <= $2", [org, at]);
+      await client.query(
+        `INSERT INTO meeting_data (org_id, data_key, value_json, created_at, expires_at) VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (org_id, data_key) DO UPDATE SET value_json = EXCLUDED.value_json, created_at = EXCLUDED.created_at, expires_at = EXCLUDED.expires_at`,
+        [org, key, valueJson, at, expiresAt],
+      );
+    },
+
+    async putMeetingDataIfAbsent(org, key, valueJson, at, expiresAt) {
+      const { rows } = await client.query(
+        `INSERT INTO meeting_data (org_id, data_key, value_json, created_at, expires_at) VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (org_id, data_key) DO UPDATE SET value_json = EXCLUDED.value_json, created_at = EXCLUDED.created_at, expires_at = EXCLUDED.expires_at
+         WHERE meeting_data.expires_at <= EXCLUDED.created_at
+         RETURNING data_key`,
+        [org, key, valueJson, at, expiresAt],
+      );
+      return rows.length > 0;
+    },
+
+    async getMeetingData(org, key, now) {
+      const { rows } = await client.query("SELECT value_json FROM meeting_data WHERE org_id = $1 AND data_key = $2 AND expires_at > $3", [org, key, now]);
+      const r = (rows as { value_json: string }[])[0];
+      return r ? r.value_json : null;
+    },
+
+    async deleteMeetingData(org, key) {
+      const { rows } = await client.query("DELETE FROM meeting_data WHERE org_id = $1 AND data_key = $2 RETURNING data_key", [org, key]);
+      return rows.length > 0;
+    },
+
+    async sweepMeetingData(org, now) {
+      const { rows } = await client.query("DELETE FROM meeting_data WHERE org_id = $1 AND expires_at <= $2 RETURNING data_key", [org, now]);
+      return rows.length;
     },
 
     async putSlackAttachment(org, fileId, rec, at, ttlMs) {

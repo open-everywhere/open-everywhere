@@ -3,5 +3,5 @@ IN  relay message M61E · guild GS6E channel CS6E (type 0) · from U_RANDO6E · 
       | <@BOT> summarize this thread
   → GET /guilds/GS6E ⇒ ✗ network error (scripted — admin probe explodes)
   → POST /channels/CS6E/messages ⇒ 200 message BM1
-      | ⛔ I'm holding off here — this channel reached its monthly budget — the per-surface cap on `discord/GS6E/CS6E` (205 / 50 tokens). An admin can raise this permanently in the spend-budgets config, or DM me to propose a temporary override — an admin approves it on a card. Scope keys for the override: this channel = `discord/GS6E/CS6E`.
+      | ⛔ I'm holding off here — this channel reached its monthly budget — the per-surface cap on <#CS6E> (205 / 50 tokens). An admin can raise this permanently in the spend-budgets config, or DM me to propose a temporary override — an admin approves it on a card. The cap to raise: this channel. An admin who needs its scope key can ask me for it.
   ⇠ 200 ok

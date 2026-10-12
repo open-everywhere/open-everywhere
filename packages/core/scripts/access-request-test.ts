@@ -701,7 +701,8 @@ function fakeDeps(state: FakeState) {
   );
   const card = posts.find((p) => p.method === "chat.postMessage");
   ok(card !== undefined && card.body.get("channel") === "C1" && card.body.get("thread_ts") === args.threadTs, "e2e: request card posted in the REQUESTING thread");
-  ok(card!.body.get("blocks")!.includes("Request wider access"), "e2e: card blocks render the grant sentence from frozen args");
+  ok(card!.body.get("metadata")!.includes("Request wider access"), "e2e: the card's metadata carries the grant sentence from frozen args (OPE-2481: the detail is not visible)");
+  ok(card!.body.get("blocks")!.includes("Ask an admin, by pull request, to allow"), "e2e: the card's headline asks an admin, in plain words");
 
   const decided = await handleApprovalPayload(
     {
