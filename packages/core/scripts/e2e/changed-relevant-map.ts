@@ -102,8 +102,8 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   {
     area: "routines",
     globs: ["packages/core/agent/routines/**", "packages/core/agent/tools/*_routine*.ts", "packages/core/agent/tools/*routine*.ts"],
-    scenarios: ["S23", "S-TAINT-UNATTENDED-DENY", "S-ROUTINE-CONNECTOR-WRITE", "S-ROUTINE-TEST"],
-    why: "S23 proves create_routine(\"once\") acks; S-TAINT-UNATTENDED-DENY proves a real dispatcher-fired routine's gated action is refused before the approval plane (doctrine P2.6); S-ROUTINE-CONNECTOR-WRITE is the only leg reading a routine's DECLARED standing-permission row back at fire time (routines/declared-permissions.ts), so a change to the grant key or the declare vocabulary reds it; S-ROUTINE-TEST (OPE-2515) is the only leg on a test run, so a change to the test stamp or the allow list (routines/test-run.ts) reds it.",
+    scenarios: ["S23", "S-TAINT-UNATTENDED-DENY", "S-ROUTINE-CONNECTOR-WRITE", "S-ROUTINE-TEST", "S-ASK-WATCH"],
+    why: "S23 proves create_routine(\"once\") acks; S-TAINT-UNATTENDED-DENY proves a real dispatcher-fired routine's gated action is refused before the approval plane (doctrine P2.6); S-ROUTINE-CONNECTOR-WRITE is the only leg reading a routine's DECLARED standing-permission row back at fire time (routines/declared-permissions.ts), so a change to the grant key or the declare vocabulary reds it; S-ROUTINE-TEST (OPE-2515) is the only leg on a test run, so a change to the test stamp or the allow list (routines/test-run.ts) reds it; S-ASK-WATCH (OPE-2510) is the only leg on a watch asked for in chat, so a change to routines/ask-watch.ts or the watch headline reds it.",
   },
   {
     area: "routine-test-run",

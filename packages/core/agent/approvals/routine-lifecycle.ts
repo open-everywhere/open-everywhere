@@ -70,7 +70,8 @@ const routineEdit: ActionKind<RoutineEditArgs> = {
 
     const generation = args.generation + 1;
     const live = await getRoutine(args.org, args.surfaceKey, args.id).catch(() => null);
-    const patch: Partial<Routine> = { prompt: args.prompt, promptGeneration: generation, ...(live === null || isPausedForCheckIn(live) ? {} : attentionResetPatch()) };
+    const stale = args.trigger.kind === "watch" && live?.watchFor !== undefined ? { watchFor: undefined } : {};
+    const patch: Partial<Routine> = { prompt: args.prompt, promptGeneration: generation, ...stale, ...(live === null || isPausedForCheckIn(live) ? {} : attentionResetPatch()) };
     const arming = armingApproval();
     const updated = await updateRoutine(args.org, args.surfaceKey, args.id, patch, {
       authoredBy: args.requestedBy,

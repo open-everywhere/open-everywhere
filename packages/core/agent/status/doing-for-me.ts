@@ -8,6 +8,7 @@ import { routineWords } from "../routines/schedule-words.js";
 import { plainValue } from "../approvals/plain-text.js";
 import { placeWords } from "../channels/friendly-ids.js";
 import { ownerLiveGrants } from "../access/credential-grant-revoke.js";
+import { watchWords } from "../routines/ask-watch.js";
 import { readPersonalWatch } from "../personal-watch/state.js";
 import { personalWatchArmed, personalWatchDecl } from "../personal-watch/watch.js";
 import { discoveryOn } from "../personal-watch/discovery.js";
@@ -78,8 +79,9 @@ export function routineIsTheirs(r: Routine, person: Pick<DoingPerson, "org" | "p
 function routineItem(r: Routine, person: DoingPerson & { readonly dmSurfaceKey: string }): DoingItem {
   const inDm = r.surfaceKey === person.dmSurfaceKey;
   const paused = r.status !== "active";
-  const trigger = capital(routineWords(describeTrigger(r.trigger, r.report)));
-  const what = inDm ? `${trigger}: ${plainValue(r.prompt, 90)}` : trigger;
+  const watch = watchWords(r.trigger, r.watchFor);
+  const trigger = capital(watch ?? routineWords(describeTrigger(r.trigger, r.report)));
+  const what = inDm && watch === undefined ? `${trigger}: ${plainValue(r.prompt, 90)}` : trigger;
   const ran = r.disabledReason?.startsWith("once: fired and ") === true;
   const stopped = !paused
     ? ""

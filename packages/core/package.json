@@ -2698,6 +2698,10 @@
       "types": "./dist/agent/roles/role.d.ts",
       "default": "./dist/agent/roles/role.js"
     },
+    "./agent/routines/ask-watch.js": {
+      "types": "./dist/agent/routines/ask-watch.d.ts",
+      "default": "./dist/agent/routines/ask-watch.js"
+    },
     "./agent/routines/attention.js": {
       "types": "./dist/agent/routines/attention.d.ts",
       "default": "./dist/agent/routines/attention.js"
@@ -3858,6 +3862,7 @@
     "test:personal-watch": "NODE_NO_WARNINGS=1 tsx scripts/personal-watch-test.ts",
     "test:workflow-discovery": "NODE_NO_WARNINGS=1 tsx scripts/workflow-discovery-test.ts",
     "test:first-routine": "NODE_NO_WARNINGS=1 tsx scripts/first-routine-test.ts",
+    "test:ask-watch": "NODE_NO_WARNINGS=1 tsx scripts/ask-watch-test.ts",
     "test:bot-ask": "NODE_NO_WARNINGS=1 tsx scripts/bot-ask-test.ts",
     "test:memory-claim-guard": "NODE_NO_WARNINGS=1 tsx scripts/memory-claim-guard-test.ts",
     "test:approval-claim-guard": "NODE_NO_WARNINGS=1 tsx scripts/approval-claim-guard-test.ts",

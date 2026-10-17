@@ -6430,6 +6430,63 @@ export const SCENARIOS: readonly Scenario[] = [
   },
 
   {
+    id: "S-ASK-WATCH",
+    title: "\"Tell me when …\" (OPE-2510): an ask to be told when a GitHub issue opens ends in ONE watch card that names the app and the condition in words",
+    requires: ["slack"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 1_200_000,
+    judged: false,
+    run: async (ctx) => {
+      const repo = process.env[ENV.githubRepo]?.trim();
+      if (!repo) return ctx.fixtureMissing(`S-ASK-WATCH asks for a watch on a real repo. Set ${ENV.githubRepo} to the e2e GitHub repo (owner/name).`);
+      const slack = ctx.slack!;
+      const { ts: askTs } = await slack.post(slack.mention(`tell me here when a new issue is opened in ${repo}.`));
+      const since = auditSinceForVendorInstant(slackVendorEventTime(askTs)?.ms ?? Date.now() - AUDIT_SINCE_SKEW_MS);
+      const cardOrAllow = await pollOptional<{ readonly card: SlackMessage } | { readonly allow: true }>(
+        async () => {
+          const posted = (await slack.replies(askTs)).find((m) => slack.isBotReply(m) && approveButton(m) !== undefined);
+          if (posted !== undefined) return { card: posted };
+          if (ctx.auditRead === undefined) return undefined;
+          const rows = await ctx.auditRead({ sinceIso: since, actions: [APPROVAL_JUDGE_VERDICT_ACTION] });
+          return findJudgeAllow(rows.filter((r) => r.surface === slack.channelId), "create_routine") !== undefined ? { allow: true } : undefined;
+        },
+        { timeoutMs: FILE_REPLY_WAIT, what: `S-ASK-WATCH: a routine.create card in thread ${askTs}, or the judge's allow row for create_routine` },
+      );
+      ctx.gate(cardOrAllow !== undefined, "S-ASK-WATCH: the ask ended in a routine card (or the judge's allow)");
+      if ("card" in cardOrAllow!) {
+        const card = cardOrAllow.card;
+        const head = card.text.split("\n")[0] ?? "";
+        ctx.gate(/Start a watch in .* that watches GitHub for when /u.test(card.text), `S-ASK-WATCH: the card's headline names the app and the condition in words (${head.slice(0, 160)})`);
+        ctx.gate(!head.includes(".scope") && !head.includes("on github event"), "S-ASK-WATCH: the headline carries no raw filter");
+        ctx.gate(ctx.synthetic !== undefined, "S-ASK-WATCH: deciding the card needs the synthetic capability");
+        const btn = approveButton(card)!;
+        const rejected = await ctx.synthetic!.click({ pendingId: btn.pendingId, org: btn.org, decision: "reject", messageTs: card.ts, channelId: slack.channelId, teamId: (await slack.identity()).teamId });
+        ctx.gate(rejected.status === 200, "S-ASK-WATCH: the reject on the watch card acked 200");
+        const armed = ctx.auditRead ? (await ctx.auditRead({ sinceIso: since, actions: ["routine.create"], limit: 50 })).filter((r) => r.surface === slack.channelId) : [];
+        ctx.gate(armed.length === 0, `S-ASK-WATCH: a rejected watch arms nothing (${armed.length} routine.create row(s))`);
+      } else {
+        ctx.gate(ctx.auditRead !== undefined, "S-ASK-WATCH: the judge path gates on the routine.create row");
+        const row = await pollOptional(
+          async () => (await ctx.auditRead!({ sinceIso: since, actions: ["routine.create"], limit: 50 })).find((r) => r.surface === slack.channelId),
+          { timeoutMs: 120_000, what: "S-ASK-WATCH: the routine.create row" },
+        );
+        ctx.gate(row?.detail?.["watch"] === true, "S-ASK-WATCH: the armed routine is a watch with its condition in words (routine.create watch:true)");
+        const dbUrl = process.env.DATABASE_URL;
+        const id = typeof row?.detail?.["id"] === "string" ? (row.detail["id"] as string) : undefined;
+        if (dbUrl && id) {
+          const store = await wireNeonOperationalStore(dbUrl);
+          const { teamId } = await slack.identity();
+          const disabled = await store.updateRoutine(process.env[ENV.org]?.trim() || "default", `slack/${teamId}/${slack.channelId}`, id, { status: "disabled", disabledReason: "e2e: S-ASK-WATCH cleanup", nextRunAt: null }).catch(() => null);
+          ctx.gate(disabled?.status === "disabled", "S-ASK-WATCH: the leg disabled the watch the judge armed. If not, cancel it in the base channel.");
+        } else {
+          ctx.gate(false, "S-ASK-WATCH: the judge armed a live watch and the leg could not disable it (set DATABASE_URL). Cancel it in the base channel.");
+        }
+      }
+    },
+  },
+
+  {
     id: "S-COVER",
     title: "Out-of-office cover (OPE-2513): /oe cover on from the DM, a mention in a domain channel gets a reply with the host's cover label, /oe cover off, and the recap row lands",
     requires: ["slack", "synthetic", "syntheticDm", "slackUser2"],

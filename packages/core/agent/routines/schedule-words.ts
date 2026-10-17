@@ -35,6 +35,15 @@ export function cronWords(expr: string): string {
   return "on a custom schedule";
 }
 
+const SOURCE_NAMES: Readonly<Record<string, string>> = { github: "GitHub" };
+
+export function sourceWords(source: string): string {
+  const named = SOURCE_NAMES[source];
+  if (named) return named;
+  const words = source.split(/[-_.]+/u).filter((w) => w.length > 0);
+  return words.length === 0 ? "the app" : words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
 export interface TriggerShape {
   readonly kind: string;
   readonly expr?: string;
@@ -56,7 +65,7 @@ export function triggerWords(t: TriggerShape): string {
     case "once":
       return t.at !== undefined ? `once on ${shortUtc(t.at)}` : "once";
     case "event":
-      return t.source !== undefined ? `when ${t.source} sends an event` : "on an event";
+      return t.source !== undefined ? `when ${sourceWords(t.source)} sends an event` : "on an event";
     default:
       return "on its own";
   }

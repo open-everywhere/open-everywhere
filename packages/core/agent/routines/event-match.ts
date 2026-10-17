@@ -29,7 +29,8 @@ export function validateSubscription(source: string, expression: string | undefi
     throw new Error(
       `Unknown event source "${source}"${scheme === source ? "" : ` (it resolves to the "${scheme}" contract, which has no normalizer here)`} — ` +
         (known.length ? `known sources: ${known.join(", ")}.` : "no event source is registered in this deployment.") +
-        " A subscription to an unknown source can never match anything, so it is refused rather than armed.",
+        " A subscription to an unknown source can never match anything, so it is refused rather than armed." +
+        " For an app that sends no events here, set up a check on a cadence with `postPolicy: \"only-on-change\"` and `watchFor` instead.",
     );
   }
   if (expression !== undefined) assertFilterShape(expression);

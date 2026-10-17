@@ -1,6 +1,7 @@
-import { toolWords, triggerWords } from "../routines/schedule-words.js";
+import { sourceWords, toolWords, triggerWords } from "../routines/schedule-words.js";
+import { watchWords } from "../routines/ask-watch.js";
 import { routinePermissionKind, shortUtc } from "./session-grant.js";
-import { QUOTE_MAX, plainQuote, plainValue } from "./plain-text.js";
+import { QUOTE_MAX, plainCode, plainQuote, plainValue } from "./plain-text.js";
 import { placeWords } from "../channels/friendly-ids.js";
 import { addRoutine, newRoutineId } from "../routines/store.js";
 import { computeNextRun } from "../routines/schedule.js";
@@ -33,6 +34,7 @@ export interface RoutineCreateArgs {
   readonly trigger: RoutineTrigger;
   readonly report?: RoutineReport;
   readonly prompt: string;
+  readonly watchFor?: string;
   readonly createdBy?: string;
   readonly tainted?: boolean;
   readonly sessionMode?: "job";
@@ -81,6 +83,14 @@ export function modelRoleLines(args: Pick<RoutineCreateArgs, "modelRole">): stri
   ];
 }
 
+export function watchLead(args: Pick<RoutineCreateArgs, "trigger" | "watchFor">): string {
+  if (watchWords(args.trigger, args.watchFor) === undefined) return "";
+  const condition = `watches for ${plainQuote(args.watchFor ?? "", 160)}`;
+  if (args.trigger.kind !== "event") return `${condition}; each check follows `;
+  const filter = args.trigger.jq !== undefined ? `only events where ${plainCode(args.trigger.jq, 600)}` : `EVERY event from ${sourceWords(args.trigger.source)}`;
+  return `${condition}; it wakes on ${filter}, and then follows `;
+}
+
 function routineWhere(args: RoutineCreateArgs): string {
   return placeWords({ key: args.report?.kind === "surface" ? args.report.surfaceKey : args.surfaceKey });
 }
@@ -89,9 +99,15 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
   kind: "routine.create",
   policy: "member",
   plainSummary(args) {
+    const watch = watchWords(args.trigger, args.watchFor);
+    if (watch !== undefined) return `Start a watch in ${routineWhere(args)} that ${watch}`;
     return `Start a ${args.sessionMode === "job" ? "job" : "routine"} in ${routineWhere(args)} that runs ${plainValue(triggerWords(args.trigger), 60)}`;
   },
-  doneSummary: (args) => `started a ${args.sessionMode === "job" ? "job" : "routine"} in ${routineWhere(args)}, ${plainValue(triggerWords(args.trigger), 60)}`,
+  doneSummary: (args) => {
+    const watch = watchWords(args.trigger, args.watchFor);
+    if (watch !== undefined) return `started a watch in ${routineWhere(args)} that ${watch}`;
+    return `started a ${args.sessionMode === "job" ? "job" : "routine"} in ${routineWhere(args)}, ${plainValue(triggerWords(args.trigger), 60)}`;
+  },
   consequence(args) {
     const declared = args.permissions ?? [];
     const raised = new Set(bundleRaisedDeclarations(declared));
@@ -103,12 +119,14 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       ...(args.report?.kind === "silent" ? ["reports nothing here"] : []),
     ];
     const suffix = tail.length > 0 ? ` — ${tail.join("; ")}` : "";
-    return `${plainQuote(args.prompt, QUOTE_MAX - suffix.length)}${suffix}`;
+    const lead = watchLead(args);
+    return `${lead}${plainQuote(args.prompt, QUOTE_MAX - suffix.length - lead.length)}${suffix}`;
   },
   consequenceQuotes: true,
   summarize(args) {
     return [
       `Create ${args.sessionMode === "job" ? "durable JOB" : "routine"} — ${describeTrigger(args.trigger, args.report)} — fires WITHOUT a fresh @-mention`,
+      ...(watchWords(args.trigger, args.watchFor) !== undefined ? [`👀 watches for: ${plainQuote(args.watchFor ?? "", 140)} (the trigger above and the instruction below decide each post)`] : []),
       ...(args.report?.kind === "silent" ? ["🔇 reports NOTHING here — you will only hear from it if it hits a problem it can't resolve, or if it self-disables"] : []),
       ...(args.report?.kind === "surface" ? [`📤 posts into ${placeWords({ key: args.report.surfaceKey })} — this surface can't post proactively, so its domain's configured reportChannel is where every run will land`] : []),
       ...(args.sessionMode === "job"
@@ -135,6 +153,7 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       trigger: args.trigger,
       ...(args.report ? { report: args.report } : {}),
       prompt: args.prompt,
+      ...(args.watchFor ? { watchFor: args.watchFor } : {}),
       createdBy: args.createdBy,
       createdAt: now.toISOString(),
       status: "active",
@@ -185,12 +204,12 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       surface: args.partition.surface,
       principalId: decidedBy,
       action: "routine.create",
-      detail: { id: routine.id, trigger: describeTrigger(args.trigger, args.report), nextRunAt: routine.nextRunAt, armedBy: decidedBy, tainted: Boolean(args.tainted), ...(args.sessionMode === "job" ? { sessionMode: "job" } : {}), ...(args.report ? { report: args.report.kind } : {}) },
+      detail: { id: routine.id, trigger: describeTrigger(args.trigger, args.report), nextRunAt: routine.nextRunAt, armedBy: decidedBy, tainted: Boolean(args.tainted), ...(args.sessionMode === "job" ? { sessionMode: "job" } : {}), ...(args.report ? { report: args.report.kind } : {}), ...(args.watchFor ? { watch: true } : {}) },
     });
     await endFirstRoutineOffer({ partition: args.partition, decidedBy, outcome: "set-up", room: args.firstRoutineRoom === true, atIso: now.toISOString() });
     const unarmed = unarmedDeclarations(args.permissions ?? [], armed);
     return (
-      `routine started, runs ${triggerWords(args.trigger)}${routine.nextRunAt ? `, first on ${shortUtc(routine.nextRunAt)}` : ""}` +
+      `${watchWords(args.trigger, args.watchFor) !== undefined ? `watch started, it ${watchWords(args.trigger, args.watchFor)}` : `routine started, runs ${triggerWords(args.trigger)}`}${routine.nextRunAt ? `, first on ${shortUtc(routine.nextRunAt)}` : ""}` +
       `${armed.length > 0 ? `; may use ${armed.map(toolWords).join(", ")} without asking` : ""}` +
       `${unarmed.length > 0 ? `; it will ask before ${unarmed.map(toolWords).join(", ")}${args.tainted ? " (nothing was made standing: it was written in a turn that read external content)" : ""}` : ""}` +
       testRunOffer(routine)

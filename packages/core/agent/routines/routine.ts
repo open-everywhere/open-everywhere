@@ -54,6 +54,7 @@ export interface Routine {
   readonly trigger: RoutineTrigger;
   readonly report?: RoutineReport;
   readonly prompt: string;
+  readonly watchFor?: string;
   readonly createdBy?: string;
   readonly createdAt: string;
   readonly taintedAtCreation?: boolean;

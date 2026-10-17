@@ -534,3 +534,4 @@ test:doing-for-me
 test:reply-source-links
 test:workflow-discovery
 test:first-routine
+test:ask-watch

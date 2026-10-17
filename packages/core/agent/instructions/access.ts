@@ -26,6 +26,7 @@ import { renderPendingCancelNote } from "../channels/cancel-note.js";
 import { declaredOpsForReach } from "../hooks/fire-toolset.js";
 import { renderDeclaredReachBlock } from "../routines/watch.js";
 import { firstConversationBlock } from "../onboarding/first-routine.js";
+import { askWatchSeatBlock } from "../routines/ask-watch.js";
 import { NOT_HALTED, haltScopeForCtx, haltSeatParagraph, resolveHalt } from "../access/halt.js";
 import { partialHaltPrefix, resolveTurnHaltReach } from "../channels/halt-per-wake.js";
 import { markDeliveryArm } from "../channels/reply-signal.js";
@@ -569,7 +570,14 @@ export async function renderScopeMarkdown(ctx: BindableContext): Promise<string>
       return "";
     }
   })();
-  const appended = [cancelNote, haltNote, declaredReach, firstConversation].filter((n): n is string => n !== null && n !== undefined && n.length > 0);
+  const askWatch = (() => {
+    try {
+      return askWatchSeatBlock({ binding: bindFrom(ctx), worker: isWorkerSession(ctx) });
+    } catch {
+      return "";
+    }
+  })();
+  const appended = [cancelNote, haltNote, declaredReach, askWatch, firstConversation].filter((n): n is string => n !== null && n !== undefined && n.length > 0);
   if (appended.length === 0) return scope;
   return [...(scope.length > 0 ? [scope] : []), ...appended].join("\n\n");
 }

@@ -59,3 +59,10 @@ export function plainQuote(value: unknown, max: number): string {
   const shown = linkSafeLine(whole.slice(0, room), room).replace(/…$/u, "");
   return `“${shown}…” (${whole.length - shown.length} more characters not shown)`;
 }
+
+const CODE_TWINS: Readonly<Record<string, string>> = { "<": "＜", ">": "＞", "|": "｜", "[": "［", "]": "］" };
+
+export function plainCode(value: unknown, max: number): string {
+  const twinned = typeof value === "string" ? value.replace(LINK_MARKUP, (c) => CODE_TWINS[c] ?? "") : value;
+  return plainQuote(twinned, max);
+}

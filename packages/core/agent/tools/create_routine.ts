@@ -26,6 +26,7 @@ import { validateRoutineGate } from "../routines/gate.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { endFirstRoutineOffer } from "../onboarding/first-routine.js";
+import { cleanWatchFor } from "../routines/ask-watch.js";
 import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { canDispatchRoutinesOn, reportTargetForSurface } from "../schedules/routine-dispatch.js";
 import { reportChannelFor, BINDING_TRUSTED_PLATFORMS } from "../memory/domain.js";
@@ -127,6 +128,14 @@ export default defineTool({
   inputSchema: z.object({
     prompt: z.string().min(1).describe("What you should DO each time it fires, written as a self-contained instruction (an ordinary fire has no prior thread context; a durable job — see `job` — DOES, and accumulates it)."),
     trigger,
+    watchFor: z
+      .string()
+      .optional()
+      .describe(
+        "A WATCH a person asked for ('tell me when …', 'let me know when …'): the condition in their words, one short line with friendly names and no ids, " +
+          "e.g. \"a new issue is opened in acme/web\" or \"the contract comes back signed\". Set it for an event subscription, or for an only-on-change check on an app that sends no events here. " +
+          "The card's headline and the person's list read it; the filter or the prompt still decides each post, so make them say the same thing. Leave it off every other routine.",
+      ),
     job: z
       .boolean()
       .optional()
@@ -235,6 +244,10 @@ export default defineTool({
     const hookRow = eventTrigger.kind === "event" ? findWebhook(declaredHooks, eventTrigger.source) : undefined;
     const eventScheme = eventTrigger.kind === "event" ? webhookScheme(hookRow ? { source: hookRow.source } : { source: eventTrigger.source }) : undefined;
     const t = storedTrigger(eventTrigger, eventScheme);
+    const watchFor = cleanWatchFor(input.watchFor);
+    if (watchFor !== undefined && t.kind !== "event" && t.kind !== "watch") {
+      throw new Error("`watchFor` names what a watch looks for, so it needs an event trigger or `postPolicy: \"only-on-change\"`. Drop it, or make this a watch.");
+    }
     if (t.kind === "event" && t.jq !== undefined) {
       await probeFilter(t.jq, t.source, eventNormalizer(eventScheme ?? t.source)?.matchKeys ?? []);
     }
@@ -330,7 +343,7 @@ export default defineTool({
       {
         org: p.org,
         kind: "routine.create",
-        args: { org: p.org, partition: p, surfaceKey: p.surfaceKey, target, trigger: t, ...(report ? { report } : {}), prompt: input.prompt.trim(), ...(createdBy ? { createdBy } : {}), tainted, ...(input.job ? { sessionMode: "job" as const, boundPolicy: describeBoundPolicy(t, new Date()) } : {}), ...(permissions.length ? { permissions } : {}), ...(collectors.length ? { collectors } : {}), ...(gate ? { gate } : {}), ...(input.modelRole === undefined ? {} : { modelRole: input.modelRole }), ...(binding.mode === "channel" ? { firstRoutineRoom: true as const } : {}) },
+        args: { org: p.org, partition: p, surfaceKey: p.surfaceKey, target, trigger: t, ...(report ? { report } : {}), prompt: input.prompt.trim(), ...(watchFor ? { watchFor } : {}), ...(createdBy ? { createdBy } : {}), tainted, ...(input.job ? { sessionMode: "job" as const, boundPolicy: describeBoundPolicy(t, new Date()) } : {}), ...(permissions.length ? { permissions } : {}), ...(collectors.length ? { collectors } : {}), ...(gate ? { gate } : {}), ...(input.modelRole === undefined ? {} : { modelRole: input.modelRole }), ...(binding.mode === "channel" ? { firstRoutineRoom: true as const } : {}) },
         scopeKey: proposeScopeKey,
         domain: null,
         requestedBy: createdBy,
