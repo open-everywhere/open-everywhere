@@ -51,6 +51,10 @@ export async function readChannelCanvas(call: SlackRawCall, channelId: string, t
   if (info.ok !== true) return failedRead("conversations.info", info);
   const canvasId = channelCanvasIdOf(info);
   if (!canvasId) return { kind: "no-canvas" };
+  return readCanvasById(call, canvasId, text);
+}
+
+export async function readCanvasById(call: SlackRawCall, canvasId: string, text: string): Promise<ChannelCanvasRead> {
   const file = await call("files.info", { file: canvasId });
   if (file.ok !== true) return failedRead("files.info", file);
   const user = (file.file as { user?: unknown } | undefined)?.user;
@@ -88,4 +92,14 @@ export async function classifyChannelTrust(call: SlackRawCall, channelId: string
 
 export function canvasShowsFact(read: ChannelCanvasRead, botUserId: string): boolean {
   return read.kind === "canvas" && read.creator === botUserId && read.holdsText;
+}
+
+export const CANVAS_WRITE_ACTION = "canvas.write";
+
+export function createdCanvasId(rows: readonly AuditWireEntry[], channelId: string): string | undefined {
+  const mine = rows
+    .filter((r) => r.action === CANVAS_WRITE_ACTION && r.detail?.["channel"] === channelId && r.detail?.["op"] === "create")
+    .sort((a, b) => Date.parse(b.ts) - Date.parse(a.ts));
+  const id = mine[0]?.detail?.["canvasId"];
+  return typeof id === "string" && id.length > 0 ? id : undefined;
 }

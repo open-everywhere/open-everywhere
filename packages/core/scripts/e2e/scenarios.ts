@@ -122,7 +122,7 @@ import {
   type NotionTaintReplayResult,
 } from "./notion-taint-replay.js";
 import { extractMemoryPathReads, siloOfPath } from "./memory-reads.js";
-import { CANVAS_REFRESH_ACTION, canvasRefreshVerdict, canvasShowsFact, classifyChannelTrust, readChannelCanvas, type ChannelCanvasRead } from "./memory-canvas.js";
+import { CANVAS_REFRESH_ACTION, CANVAS_WRITE_ACTION, canvasRefreshVerdict, canvasShowsFact, classifyChannelTrust, createdCanvasId, readCanvasById, readChannelCanvas, type ChannelCanvasRead } from "./memory-canvas.js";
 import {
   auditSessionIds,
   decomposeSession,
@@ -6326,6 +6326,77 @@ export const SCENARIOS: readonly Scenario[] = [
         ctx.gate(r.kind === "canvas" || r.kind === "no-canvas", `S-MEMORY-CANVAS: the canvas of the ${why} channel ${c} can be read (${describe(r)})`);
         ctx.gate(!canvasShowsFact(r, bot), `S-MEMORY-CANVAS: the ${why} channel ${c} shows no canvas of the bot's that holds the fact (${describe(r)})`);
       }
+    },
+  },
+
+  {
+    id: "S-CANVAS-LIST",
+    title: "Canvases the agent writes (OPE-2521): a canvas ask posts a card that previews the canvas, and the approved canvas holds the asked text",
+    requires: ["slack", "synthetic"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 900_000,
+    judged: false,
+    run: async (ctx) => {
+      const slack = ctx.slack!;
+      const read = ctx.auditRead;
+      if (!read) {
+        return ctx.fixtureMissing("S-CANVAS-LIST gates on canvas.write rows. Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to run it.");
+      }
+      const channel = slack.channelId;
+      const fact = factToken("canvasbody");
+      const title = `OE canvas check ${factToken("canvastitle")}`;
+      const call = (method: string, params: Record<string, string>) => slack.apiRaw(method, params);
+      const since = await presenceSince(ctx, "S-CANVAS-LIST ask");
+
+      await driveDecide({
+        slack,
+        synthetic: ctx.synthetic!,
+        gate: ctx.gate,
+        log: ctx.log,
+        ask: `create a new canvas in this channel titled "${title}" with one bullet that says: the canvas check token is ${fact}`,
+        leg: "S-CANVAS-LIST",
+        decision: "approve",
+        timeoutMs: FILE_REPLY_WAIT,
+        precheck: (card) => {
+          const visible = [card.text, ...(card.blockTexts ?? [])].join("\n");
+          if (card.approvalCard?.kind !== "canvas.write") return `the card is not a canvas.write card (kind ${card.approvalCard?.kind ?? "none"})`;
+          if (!visible.includes(fact)) return `the card's visible lines do not quote the canvas text carrying the body token ${fact}: ${visible.slice(0, 300)}`;
+          return undefined;
+        },
+      });
+
+      let canvasId: string | undefined;
+      await pollOptional(
+        async () => {
+          const rows = await read({ sinceIso: since, actions: [CANVAS_WRITE_ACTION], platform: "slack", limit: 50 });
+          canvasId = createdCanvasId(rows, channel);
+          return canvasId !== undefined ? true : undefined;
+        },
+        { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 5_000, what: "S-CANVAS-LIST: the canvas.write row of the approved card" },
+      );
+      ctx.gate(
+        canvasId !== undefined,
+        `S-CANVAS-LIST: an approved canvas.write row (op create) names a canvas in ${channel}. None did: the write failed after the click (a deployment app without canvases:write fails here), or the tool never ran`,
+      );
+      if (!canvasId) return;
+
+      const bot = slack.botUserId;
+      let shown = { kind: "no-canvas" } as ChannelCanvasRead;
+      await pollOptional(
+        async () => {
+          shown = await readCanvasById(call, canvasId!, fact);
+          return shown.kind === "missing-scope" || canvasShowsFact(shown, bot) ? true : undefined;
+        },
+        { timeoutMs: 60_000, initialDelayMs: 1_000, maxDelayMs: 5_000, what: "S-CANVAS-LIST: the fact in the created canvas" },
+      );
+      if (shown.kind === "missing-scope") {
+        return ctx.fixtureMissing(`S-CANVAS-LIST: the driver token (E2E_SLACK_USER_TOKEN) lacks the user scope ${shown.scope}, which ${shown.method} needs. Add it to the driver app and reinstall.`);
+      }
+      ctx.gate(
+        canvasShowsFact(shown, bot),
+        `S-CANVAS-LIST: the created canvas is the bot's and holds the run token ${fact} (${shown.kind === "canvas" ? `by ${shown.creator ?? "unknown"}, holds it: ${shown.holdsText}` : shown.kind === "error" ? `${shown.method} failed: ${shown.error}` : shown.kind})`,
+      );
     },
   },
 

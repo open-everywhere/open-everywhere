@@ -1439,12 +1439,14 @@ rule.
 | `browser.personal.act` | `my_browser` | member |
 | `browser.personal.handback` | `my_browser_handoff` | member |
 | `browser.personal.propose` | — *(no propose tool)* | member |
+| `canvas.write` | `write_canvas` | member |
 | `chat.dm` | `dm_person` | member |
 | `chat.post` | `post_message` | member |
 | `connector.clear` | `clear_connector_override` | admin |
 | `connector.revoke` | `revoke_connector` | admin |
 | `email.sender` | `propose_email_sender` | member |
 | `halt.resume` | `resume` | admin |
+| `list.write` | `update_list` | member |
 | `mcp-server.propose` | `propose_mcp_server` | member |
 | `meeting.join` | `meeting_join` | member |
 | `meeting.recap` | `meeting_recap` | member |

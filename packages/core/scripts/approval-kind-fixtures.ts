@@ -154,6 +154,42 @@ export const APPROVAL_KIND_FIXTURES: readonly KindFixture[] = [
     },
   },
   {
+    kind: "canvas.write",
+    args: {
+      org: ORG,
+      scopeKey: SCOPE,
+      channelId: CHANNEL,
+      op: "append",
+      canvasId: "F0EXAMPLE1",
+      title: "Release 4.2.0 plan",
+      markdown: "## Decisions\n- Ship acme/web 4.2.0 on Friday at 16:00 UTC.\n- Alex owns the rollback plan.",
+      requestedBy: REQUESTER,
+      tainted: false,
+    },
+  },
+  {
+    kind: "list.write",
+    args: {
+      org: ORG,
+      scopeKey: SCOPE,
+      channelId: CHANNEL,
+      listId: "F0EXAMPLE2",
+      listTitle: "Release bugs",
+      rows: [
+        {
+          cells: [
+            { columnId: "Col0EXAMPLE1", column: "Title", value: { rich_text: [] }, shown: "Login fails on Safari" },
+            { columnId: "Col0EXAMPLE2", column: "Owner", value: { user: [RECIPIENT] }, shown: "Sam Lee" },
+            { columnId: "Col0EXAMPLE3", column: "Status", value: { select: ["Opt0EXAMPLE1"] }, shown: "In progress" },
+          ],
+        },
+        { rowId: "Rec0EXAMPLE1", title: "Slow search", cells: [{ columnId: "Col0EXAMPLE3", column: "Status", value: { select: ["Opt0EXAMPLE2"] }, shown: "Done" }] },
+      ],
+      requestedBy: REQUESTER,
+      tainted: false,
+    },
+  },
+  {
     kind: "connector.clear",
     args: {
       org: ORG,

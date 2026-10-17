@@ -237,6 +237,17 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     why: "S-MEMORY-CANVAS (OPE-2499) is the only leg that reads a channel canvas. It teaches a run-unique fact in the internal e2e channel, gates on the `memory.canvas_refresh` row the write road's Slack observer writes, and reads the channel's canvas back with the driver's own token to find the fact. Its second half classifies the domain's other channels from Slack itself, and in each shared or guest one gates that the refresh held the canvas back and that no canvas of the bot's holds the fact. `write-road.ts` notifies the observer and `visible.ts` renders the canvas document, so a change to either decides what the canvas shows.",
   },
   {
+    area: "agent-canvas-list",
+    globs: [
+      "packages/core/agent/channels/slack-canvas-list.ts",
+      "packages/core/agent/approvals/slack-doc-write.ts",
+      "packages/core/agent/tools/write_canvas.ts",
+      "packages/core/agent/tools/update_list.ts",
+    ],
+    scenarios: ["S-CANVAS-LIST"],
+    why: "S-CANVAS-LIST (OPE-2521) is the only leg that drives an agent-written canvas. It asks for a canvas in the e2e channel, gates that the canvas.write card previews it, approves it, and reads the canvas the canvas.write row names back from Slack with the driver's own token.",
+  },
+  {
     area: "cover",
     globs: ["packages/core/agent/cover/**", "packages/core/agent/commands/cover.ts", "packages/core/agent/schedules/cover-recap.ts"],
     scenarios: ["S-COVER"],

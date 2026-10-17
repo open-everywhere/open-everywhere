@@ -272,6 +272,8 @@ for (const { kind, args } of APPROVAL_KIND_FIXTURES) {
 {
   const QUOTED_FIELD: Readonly<Record<string, string>> = {
     "chat.post": "text",
+    "canvas.write": "markdown",
+    "list.write": "rows.0.cells.0.shown",
     "chat.dm": "text",
     "a2a.delegate": "message",
     "op.connector": "inputPreview",
@@ -289,8 +291,14 @@ for (const { kind, args } of APPROVAL_KIND_FIXTURES) {
   ok(quoting.length >= 8, `the quoting kinds are registered (got ${quoting.length})`);
   for (const kind of quoting) ok(QUOTED_FIELD[kind] !== undefined, `quoting kind "${kind}" names its quoted field in this test`);
   const withField = (args: Record<string, unknown>, path: string, value: string): Record<string, unknown> => {
-    const [head, sub] = path.split(".");
-    return sub === undefined ? { ...args, [head!]: value } : { ...args, [head!]: { ...(args[head!] as Record<string, unknown>), [sub]: value } };
+    const set = (node: unknown, keys: readonly string[]): unknown => {
+      const [head, ...rest] = keys;
+      if (head === undefined) return value;
+      if (Array.isArray(node)) return node.map((item, i) => (String(i) === head ? set(item, rest) : item));
+      const obj = (node ?? {}) as Record<string, unknown>;
+      return { ...obj, [head]: set(obj[head], rest) };
+    };
+    return set(args, path.split(".")) as Record<string, unknown>;
   };
   const HOSTILE = "<!channel> <@U0EXAMPLE9> <https://evil.example|Docs> [ok](https://evil.example) @everyone @@here";
   for (const kind of quoting) {

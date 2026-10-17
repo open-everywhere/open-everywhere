@@ -183,10 +183,12 @@ agent/tools/stand_down.ts	mounted @open-everywhere/core
 agent/tools/subscribe_pr.ts	mounted @open-everywhere/core
 agent/tools/test_routine.ts	mounted @open-everywhere/core
 agent/tools/unlink_identity.ts	mounted @open-everywhere/core
+agent/tools/update_list.ts	mounted @open-everywhere/core
 agent/tools/update_status.ts	mounted @open-everywhere/core
 agent/tools/usage_report.ts	mounted @open-everywhere/core
 agent/tools/waiting_on_me.ts	mounted @open-everywhere/core
 agent/tools/walk_pr.ts	mounted @open-everywhere/core
 agent/tools/web_fetch.ts	framework-disabled
 agent/tools/work.ts	mounted @open-everywhere/core
+agent/tools/write_canvas.ts	mounted @open-everywhere/core
 agent/tools/write_file.ts	framework-disabled

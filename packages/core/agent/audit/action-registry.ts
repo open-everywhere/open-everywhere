@@ -967,6 +967,8 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "chat.dm",
   "chat.post",
   "chat.post_refused",
+  "canvas.write",
+  "list.write",
   "checkpoint.continue",
   "checkpoint.trip",
   "connector.card_posted",

@@ -48,6 +48,10 @@ const REQUIRED_SCOPES: Record<string, string[]> = {
   "files.info": ["files:read"],
   "conversations.canvases.create": ["canvases:write"],
   "canvases.edit": ["canvases:write"],
+  "canvases.create": ["canvases:write"],
+  "slackLists.items.list": ["lists:read"],
+  "slackLists.items.create": ["lists:write"],
+  "slackLists.items.update": ["lists:write"],
 };
 
 const NOT_SLACK_METHODS: Record<string, string> = {
@@ -94,7 +98,7 @@ for (const root of SCAN_ROOTS) {
 }
 
 const SLACK_METHOD_FAMILIES =
-  "(?:api|apps|assistant|auth|bookmarks|bots|calls|canvases|chat|conversations|dialog|dnd|emoji|files|oauth|pins|reactions|reminders|rtm|search|stars|team|usergroups|users|views|workflows)";
+  "(?:api|apps|assistant|auth|bookmarks|bots|calls|canvases|chat|conversations|dialog|dnd|emoji|files|oauth|pins|reactions|reminders|rtm|search|slackLists|stars|team|usergroups|users|views|workflows)";
 const SLACK_METHOD_BODY = String.raw`(${SLACK_METHOD_FAMILIES}\.[a-zA-Z][a-zA-Z0-9]*(?:\.[a-zA-Z][a-zA-Z0-9]*)*)`;
 const SLACK_METHOD_LITERAL_TS = new RegExp(`["']${SLACK_METHOD_BODY}["']`, "g");
 const SLACK_METHOD_LITERAL_JS = new RegExp("[\"'`]" + SLACK_METHOD_BODY + "[\"'`]", "g");

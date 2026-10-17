@@ -82,6 +82,8 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "check_agent_task",
   "post_message",
   "dm_person",
+  "write_canvas",
+  "update_list",
   "set_dm_delivery",
   "search",
   "aws",

@@ -934,6 +934,10 @@
       "types": "./dist/agent/approvals/skill-delete.d.ts",
       "default": "./dist/agent/approvals/skill-delete.js"
     },
+    "./agent/approvals/slack-doc-write.js": {
+      "types": "./dist/agent/approvals/slack-doc-write.d.ts",
+      "default": "./dist/agent/approvals/slack-doc-write.js"
+    },
     "./agent/approvals/taint-disclosure.js": {
       "types": "./dist/agent/approvals/taint-disclosure.d.ts",
       "default": "./dist/agent/approvals/taint-disclosure.js"
@@ -1305,6 +1309,10 @@
     "./agent/channels/slack-bridge.js": {
       "types": "./dist/agent/channels/slack-bridge.d.ts",
       "default": "./dist/agent/channels/slack-bridge.js"
+    },
+    "./agent/channels/slack-canvas-list.js": {
+      "types": "./dist/agent/channels/slack-canvas-list.d.ts",
+      "default": "./dist/agent/channels/slack-canvas-list.js"
     },
     "./agent/channels/stand-down-silence.js": {
       "types": "./dist/agent/channels/stand-down-silence.d.ts",
@@ -3662,6 +3670,10 @@
       "types": "./dist/agent/tools/unlink_identity.d.ts",
       "default": "./dist/agent/tools/unlink_identity.js"
     },
+    "./agent/tools/update_list.js": {
+      "types": "./dist/agent/tools/update_list.d.ts",
+      "default": "./dist/agent/tools/update_list.js"
+    },
     "./agent/tools/update_status.js": {
       "types": "./dist/agent/tools/update_status.d.ts",
       "default": "./dist/agent/tools/update_status.js"
@@ -3681,6 +3693,10 @@
     "./agent/tools/work.js": {
       "types": "./dist/agent/tools/work.d.ts",
       "default": "./dist/agent/tools/work.js"
+    },
+    "./agent/tools/write_canvas.js": {
+      "types": "./dist/agent/tools/write_canvas.d.ts",
+      "default": "./dist/agent/tools/write_canvas.js"
     },
     "./agent/webhooks/achievability.js": {
       "types": "./dist/agent/webhooks/achievability.d.ts",
@@ -4257,6 +4273,7 @@
     "test:chat-write-grant": "NODE_NO_WARNINGS=1 tsx scripts/chat-write-grant-test.ts",
     "test:chat-write-grant-worker-mount": "NODE_NO_WARNINGS=1 tsx scripts/chat-write-grant-worker-mount-test.ts",
     "test:chat-post-approval": "NODE_NO_WARNINGS=1 tsx scripts/chat-post-approval-test.ts",
+    "test:slack-doc-write": "NODE_NO_WARNINGS=1 tsx scripts/slack-doc-write-test.ts",
     "test:mcp-call-fence": "NODE_NO_WARNINGS=1 tsx scripts/mcp-call-fence-test.ts",
     "test:credential-grant": "NODE_NO_WARNINGS=1 tsx scripts/credential-grant-test.ts",
     "test:credential-grant-copy": "NODE_NO_WARNINGS=1 tsx scripts/credential-grant-copy-test.ts",

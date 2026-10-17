@@ -346,7 +346,13 @@ an outside workspace. Recover with the `reopen_slack_setup` control call. To kee
      [Memory you can see](../../capabilities/memory.md#memory-you-can-see)). Omit it and each refresh
      fails with `missing_scope`, which the deploy log and a `memory.canvas_refresh` audit row record
      per channel. Memory itself is unaffected. A workspace on Slack's free plan has no channel
-     canvases, and the refresh fails there in the same way.
+     canvases, and the refresh fails there in the same way. The same scope lets the agent create and change a
+     canvas a person asks for (`write_canvas`, see [Canvases and Lists](#canvases-and-lists)).
+   - `lists:read` and `lists:write` — **Slack Lists.** The agent reads a List's rows to find the one
+     a person names, and adds or changes rows on a person's approval (`update_list`, see
+     [Canvases and Lists](#canvases-and-lists)). Omit them and every List change fails with
+     `missing_scope`: a row change before its card posts (the row match reads the List with
+     `lists:read`), and an added row after the approval. Nothing else depends on them.
    - `assistant:write` — **the side panel.** Slack requires it for the `app_context_changed` event
      (Step 7). That subscription is what makes Slack tell the agent which room a person is viewing
      when they write from the side panel (see [The side panel](#the-side-panel)). Omit it and the
@@ -1059,6 +1065,54 @@ boots the agent: a DM answer reaches `chat.postMessage` with its buttons, and a 
 the answer and wakes the DM seat with the button's text. The live e2e scenario `S-REPLY-FOLLOWUPS`
 reads a real answer back and forges a signed press on it. No API presses a real button, so no test
 proves that Slack itself draws the buttons.
+
+## Canvases and Lists
+
+A person can ask the agent to **create or change a canvas**, or to **add or change rows in a Slack
+List** (Slack's built-in tracker, with columns such as owner, status and due date). A domain's routine
+work can ask the same way. The feature is on by default. It needs the `canvases:write`, `files:read`,
+`lists:read` and `lists:write` bot scopes, and no setting or env var.
+
+| What the person sees | What OE does |
+| --- | --- |
+| **A card that previews the change.** "Create the canvas "Launch plan" in #eng", with the start of the text quoted under it and a count of the characters it does not show. For a List: "Add 2 rows and change 1 row in the List "Bugs" in #eng", with EVERY row quoted under it, such as `New bug: Owner Ann Lee; Fix login: Status In progress`. A person shows by their display name; when the agent cannot read the name, the change refuses rather than post a card that hides who is assigned. | A worker calls `write_canvas` or `update_list`. The tool checks the room, freezes the exact text or every typed cell, and posts a `canvas.write` or `list.write` card through the normal approval path. Both are `gate:member`: a canvas or a List outlives the conversation, and a rewrite or a changed row cannot be undone from the chat. The room's approver chain applies, so a pre-approval rule can lower the card, and a halt refuses it. |
+| **Approve.** The canvas or the rows change, and the card says so in one line. | The approved card re-reads the file, writes with `canvases.create` (a new canvas, tabbed in the room), `canvases.edit` (add to the end, or rewrite), `slackLists.items.create` or `slackLists.items.update`, and writes one `canvas.write` or `list.write` audit row. The row names the room, the file and how much changed, never the text. |
+| **A refusal in words.** "That List is not shared in this conversation", "The "Status" column takes one of: "To do", "In progress", "Done"". | The model gets the refusal and can correct the call. |
+
+**The room fence.** The agent changes only a canvas or a List that the asking room shows: Slack's
+`files.info` names the room among the file's shares, or the file is the room's own channel canvas. The
+room always comes from the conversation, never from the model. The fence runs when the card posts, and
+again when a person approves it, because the file can leave the room in between. A new canvas is created
+in the asking room.
+
+**Rows.** `update_list` takes each row as column name → value. A person is a Slack mention (the agent
+looks the person up first), a date is `YYYY-MM-DD`, a status is one of the column's choices, and a
+checkbox is yes or no. A changed row is named by the text in its title column, and the name must match
+exactly one row. A List of more than 500 rows refuses a change by name, because the agent cannot
+check that a second row does not match. One call adds or changes at most 20 rows, a text cell holds at
+most 300 characters, and the rows must fit one card (about 1,400 characters). A larger change refuses
+before its card posts, so the card never cuts a row.
+
+**Limits.**
+
+- Slack, only. On another surface both tools refuse in words.
+- The agent does not read a canvas's text or a List's other columns back into the conversation. It
+  reads only what a change needs: the file's title and shares, the List's columns, and the title column
+  of its rows.
+- The agent does not delete a canvas, a List or a row, and it does not create a List.
+- A column type the agent cannot write (a file, a channel, a reference, a vote) refuses by name.
+- Text the agent writes into a canvas or a List cell cannot ping anyone: a mention-shaped or broadcast
+  form in it is defused, as on the memory canvas.
+- An approved List change that fails part way shows "failed" on the card. The `approval.failed` audit
+  row and the agent's follow-up in the conversation say how many new rows were added before it stopped.
+- **Already installed?** The two Lists scopes are new in 0.8.0. Paste the manifest again and reinstall
+  the app, or every List change fails with `missing_scope` (a row change before its card, an added
+  row after the approval).
+
+**What the tests prove.** The unit pack `test:slack-doc-write` (packages/core) pins the room fence, the
+cell encoding, the row match, the card text and the exact Slack calls an approval sends. The live e2e
+scenario `S-CANVAS-LIST` asks the agent for a canvas in a real channel, approves the card, and reads the
+canvas back from Slack.
 
 ## Slash commands: `/oe` (zero-inference control-plane)
 

@@ -45,8 +45,8 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
   },
   {
     id: "artifacts",
-    headline: "Produce something and put it in front of people — a chart, a CSV, an image, a document, a reusable skill",
-    tools: ["post_file", "create_skill", "delete_skill", "load_skill", "list_skills"],
+    headline: "Produce something and put it in front of people — a chart, a CSV, an image, a document, a reusable skill, a Slack canvas, or rows in a Slack List",
+    tools: ["post_file", "create_skill", "delete_skill", "load_skill", "list_skills", "write_canvas", "update_list"],
   },
   {
     id: "code-changes",

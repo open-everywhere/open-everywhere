@@ -73,6 +73,10 @@ const SLACK_ROOM_WRITE_METHODS = new Set([
   "reactions.remove",
   "files.getUploadURLExternal",
   "files.completeUploadExternal",
+  "canvases.create",
+  "canvases.edit",
+  "slackLists.items.create",
+  "slackLists.items.update",
 ]);
 
 function spoofedSlackWrite(method: string): Record<string, unknown> {

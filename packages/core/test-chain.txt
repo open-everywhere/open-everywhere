@@ -450,6 +450,7 @@ test:config-repo-mint
 test:chat-write-grant
 test:chat-write-grant-worker-mount
 test:chat-post-approval
+test:slack-doc-write
 test:mcp-call-fence
 test:credential-grant
 test:credential-grant-copy

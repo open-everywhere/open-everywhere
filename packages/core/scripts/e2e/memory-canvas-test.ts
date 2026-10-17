@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import type { AuditWireEntry } from "./audit-read.js";
-import { CANVAS_REFRESH_ACTION, canvasRefreshVerdict, canvasShowsFact, channelCanvasIdOf, classifyChannelTrust, readChannelCanvas, type SlackRawCall } from "./memory-canvas.js";
+import { CANVAS_REFRESH_ACTION, CANVAS_WRITE_ACTION, canvasRefreshVerdict, canvasShowsFact, channelCanvasIdOf, classifyChannelTrust, createdCanvasId, readCanvasById, readChannelCanvas, type SlackRawCall } from "./memory-canvas.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -119,6 +119,35 @@ const slackFor = (channel: Record<string, unknown>, users: Record<string, Record
 }
 for (const [o, pass] of [["skipped-external", true], ["cleared-guest", true], ["updated", false], ["created", false], ["clear-failed", false]] as const) {
   ok((canvasRefreshVerdict([row("C9", o, "2026-10-14T00:00:01Z")], "C9").kind === "withheld") === pass, `an untrusted channel whose row says ${o} ${pass ? "passes" : "REDS"} the take-down gate`);
+}
+
+{
+  const write = (channel: string, op: string, canvasId: string, ts: string): AuditWireEntry => ({
+    ts,
+    org: "default",
+    platform: "slack",
+    workspace: "T0",
+    surface: channel,
+    action: CANVAS_WRITE_ACTION,
+    detail: { channel, op, canvasId, chars: 12 },
+  });
+  ok(createdCanvasId([], "C1") === undefined, "no canvas.write row ⇒ no canvas to read");
+  ok(createdCanvasId([write("C2", "create", "F2", "2026-10-14T00:00:01Z")], "C1") === undefined, "a row for ANOTHER channel names no canvas here");
+  ok(createdCanvasId([write("C1", "append", "F1", "2026-10-14T00:00:01Z")], "C1") === undefined, "an append row is not a create");
+  ok(
+    createdCanvasId([write("C1", "create", "F_OLD", "2026-10-14T00:00:01Z"), write("C1", "create", "F_NEW", "2026-10-14T00:00:09Z")], "C1") === "F_NEW",
+    "the NEWEST create row names the canvas",
+  );
+  const byId = (user: string, sections: unknown[]): SlackRawCall => async (method) =>
+    method === "files.info" ? { ok: true, file: { id: "F1", user } } : method === "canvases.sections.lookup" ? { ok: true, sections } : { ok: false, error: "unexpected" };
+  const holds = await readCanvasById(byId(BOT, [{ id: "s1" }]), "F1", FACT);
+  ok(canvasShowsFact(holds, BOT), "the bot's canvas with a section holding the fact shows it");
+  const empty = await readCanvasById(byId(BOT, []), "F1", FACT);
+  ok(!canvasShowsFact(empty, BOT), "negative control: no section holds the fact ⇒ not shown");
+  const theirs = await readCanvasById(byId("U0PERSON", [{ id: "s1" }]), "F1", FACT);
+  ok(!canvasShowsFact(theirs, BOT), "negative control: a canvas a person made is not the agent's write");
+  const scope = await readCanvasById(async () => ({ ok: false, error: "missing_scope", needed: "files:read" }), "F1", FACT);
+  ok(scope.kind === "missing-scope" && scope.scope === "files:read", "a missing driver scope is named, never read as a verdict");
 }
 
 console.log(`\n✓ memory-canvas: ${n} assertions passed\n`);

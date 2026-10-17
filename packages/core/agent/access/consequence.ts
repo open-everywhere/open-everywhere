@@ -522,6 +522,12 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   dm_person: member("chat.dm", "disclose",
     "audience-expanding: a direct message interrupts one named human who never asked, is attributed to the deployment, and cannot be un-seen after an edit — so the FIRST message to a person takes the card, which renders the recipient, the full text and the host footer, and is the injection gate before the agent starts a correspondence nobody invited. 🔴 THE CARD DOES NOT REPEAT: later messages to that same person FLOW (OPE-893 — \"ask for forgiveness, not permission ... give the user a way to make it stop\"), so from the second message on the model's bytes reach a person with no reviewer between. What remains is the operator's grant, an audit row per delivery, and the recipient's own stop (set_dm_delivery), which outranks every grant",
   ),
+  write_canvas: member("canvas.write", "disclose",
+    "durable + irreversible: a canvas outlives the conversation that asked for it, the whole room reads it, and a rewrite replaces what people wrote there — so the card quotes the start of the markdown and says how many characters it does not show (the full text rides the card's detail, as for chat.post), and is the injection gate for model-authored text",
+  ),
+  update_list: member("list.write", "disclose",
+    "durable + irreversible: a List is the room's shared tracker, and an added or changed row (an owner, a status, a due date) is what people act on — so the card quotes EVERY row before it lands (a change too long for one quote refuses at propose time, so no row is cut), and is the injection gate for model-authored cells",
+  ),
 
   set_spend_limit: deferToJudge(admin("spend.set", "disclose", "self-modification + money: changes what the org will spend")),
   clear_spend_limit: admin("spend.clear", "disclose", "reverts a spend control — same bar as setting one"),

@@ -26,6 +26,7 @@ import { registerConfig } from "../agent/access/config.js";
 import { defineBinding, defineBundle } from "../agent/access/bundle.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import { resolvePartition } from "../agent/memory/partition.js";
+import { registerSlackBridge, _resetSlackBridgeForTest } from "../agent/channels/slack-bridge.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 registerSlackFixtureMapper();
 registerSlackFixtureManifest();
@@ -109,6 +110,8 @@ const CASES: readonly ToolCase[] = [
   { slug: "create_ticket", entryKey: "_single", ctx: githubCtx },
   { slug: "post_message", entryKey: "_single", ctx: slackCtx },
   { slug: "dm_person", entryKey: "_single", ctx: slackCtx },
+  { slug: "write_canvas", entryKey: "_single", ctx: slackCtx },
+  { slug: "update_list", entryKey: "_single", ctx: slackCtx },
   { slug: "set_dm_delivery", entryKey: "_single", ctx: slackDmCtx },
   { slug: "request_access", entryKey: "_single", ctx: slackCtx },
   { slug: "request_credential_grant", entryKey: "_single", ctx: slackWorkerCtx, delegatedFrom: slackCtx },
@@ -188,6 +191,11 @@ for (const c of CASES) {
   ok(reg.get(names.approval) === undefined, `${c.slug}:${c.entryKey} registers NO approval step (raw dynamic tools stay approval-less)`);
 }
 
+{
+  const modCanvas = (await import("../agent/tools/write_canvas.js")) as { default: { events?: Record<string, (event: unknown, ctx: unknown) => unknown> } };
+  ok((await modCanvas.default.events?.["session.started"]?.({}, slackCtx)) === null, "write_canvas does NOT mount where no Slack provider is wired");
+  registerSlackBridge({} as never);
+}
 console.log("3. resolver returns an UNSTAMPED entry (OPE-867 retirement):");
 for (const c of CASES) {
   const saved: Record<string, string | undefined> = {};
@@ -325,6 +333,8 @@ console.log("5. durable callback descriptors across the REAL tool inventory (OPE
     "create_ticket",
     "post_message",
     "dm_person",
+    "write_canvas",
+    "update_list",
     "set_dm_delivery",
     "request_access",
     "connector",
@@ -399,4 +409,5 @@ console.log("5. durable callback descriptors across the REAL tool inventory (OPE
   }
 }
 
+_resetSlackBridgeForTest();
 console.log(`\ndynamic-tool-replay: ${n} assertions passed.`);

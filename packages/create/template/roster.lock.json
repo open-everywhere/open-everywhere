@@ -181,11 +181,13 @@
         "tool/subscribe_pr": "mounted",
         "tool/test_routine": "mounted",
         "tool/unlink_identity": "mounted",
+        "tool/update_list": "mounted",
         "tool/update_status": "mounted",
         "tool/usage_report": "mounted",
         "tool/waiting_on_me": "mounted",
         "tool/walk_pr": "mounted",
-        "tool/work": "mounted"
+        "tool/work": "mounted",
+        "tool/write_canvas": "mounted"
       }
     },
     "@open-everywhere/provider-github": {

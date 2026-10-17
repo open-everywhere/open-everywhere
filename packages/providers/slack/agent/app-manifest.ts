@@ -116,6 +116,8 @@ export function slackAppManifestTemplate(opts: SlackAppManifestOptions = {}): st
             "pins:write",
             "users:read",
             "canvases:write",
+            "lists:read",
+            "lists:write",
             "assistant:write",
             ...(personalMcp ? [SLACK_MCP_BOT_SCOPE] : []),
           ],

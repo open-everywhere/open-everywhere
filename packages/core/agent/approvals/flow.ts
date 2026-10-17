@@ -75,6 +75,7 @@ import "./agent-create.js";
 import "./ticket-actions.js";
 import "./ticket-create.js";
 import "./chat-post.js";
+import "./slack-doc-write.js";
 import "./connector-op.js";
 import "./a2a-delegate.js";
 import "./chat-dm.js";

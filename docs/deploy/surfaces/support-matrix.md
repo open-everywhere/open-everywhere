@@ -61,6 +61,7 @@ Two surface-wide notes before the rows:
 | Native thumbs up / down on an answer (`reply.feedback`, OPE-2520) | 🔧 | 🔧 | ❌ |
 | Numbered source links on an answer, in a 1:1 conversation (OPE-2520) | 🔧 | 🔧 | ❌ |
 | Suggested follow-ups under an answer, in a 1:1 conversation (OPE-2516) | 🔧 | 🔧 | ❌ |
+| Create and change canvases and Lists, behind a preview card (OPE-2521, [Slack § Canvases and Lists](./slack.md#canvases-and-lists)) | 🔧 | — | — |
 
 ## Memory
 
