@@ -14,6 +14,7 @@ import * as itMemory from "./it-memory.js";
 import * as itMemoryB from "./it-memory-b.js";
 import * as itWorkMemory from "./it-work-memory.js";
 import * as itFireSeat from "./it-fire-seat.js";
+import * as itOptOut from "./it-opt-out.js";
 import * as itNotionWithhold from "./it-notion-withhold.js";
 import * as itJudgeLiftGithub from "./it-judge-lift-github.js";
 import * as itWorkReadFixtureDiscord from "./it-work-read-fixture-discord.js";
@@ -40,6 +41,7 @@ const MODULES: readonly DomainModule[] = [
   itMemoryB,
   itWorkMemory,
   itFireSeat,
+  itOptOut,
   itNotionWithhold,
   itJudgeLiftGithub,
   itWorkReadFixtureDiscord,

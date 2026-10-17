@@ -792,13 +792,13 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
     fields: ["via"],
     proves: "a person opted out of agent actions on their own content, and through which door (`command` or `app-home`)",
     notExercised:
-      "no e2e leg drives `/oe optout` or the Home-tab button: the pack's driver posts messages and cannot invoke a slash command or press a Home-tab button as a person. Driving it needs a user-token slash-command fixture.",
+      "no e2e leg drives `/oe optout` or the Home-tab button: the pack's driver posts messages and cannot invoke a slash command or press a Home-tab button as a person. Driving it needs a user-token slash-command fixture. The integration tier drives `/oe optout on` and `off` through the real signed commands route (`tests/integration/memory/person-opt-out-shared-room.test.ts`, OPE-2497).",
   },
   {
     action: "person.opt_out.cleared",
     fields: ["via"],
     proves: "a person lifted their opt-out, and through which door",
-    notExercised: "the same gap as `person.opt_out.set`: no e2e leg can invoke a slash command or press a Home-tab button as a person.",
+    notExercised: "the same gap as `person.opt_out.set`: no e2e leg can invoke a slash command or press a Home-tab button as a person. The integration spec `person.opt_out.set` names drives it.",
   },
   {
     action: "person.opt_out.refused",
@@ -806,7 +806,7 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
     proves:
       "the host refused an agent act on an opted-out person's content — a memory write (`act: memory-write`, with `road` and `tier`) or somebody else's message shortcut on their message (`act: message-shortcut`, with `requestedBy`)",
     notExercised:
-      "no e2e leg opts a person out first, for the reason `person.opt_out.set` gives; the unit packs (`test:person-opt-out`, `test:slack-side-panel`) drive both legs through the real write road and the real front route.",
+      "no e2e leg opts a person out first, for the reason `person.opt_out.set` gives; the unit packs (`test:person-opt-out`, `test:slack-side-panel`) drive both legs through the real write road and the real front route. The integration tier drives the memory-write leg on a real host, in a shared room, through the work session's persist (`tests/integration/memory/person-opt-out-shared-room.test.ts`, OPE-2497).",
   },
 ];
 

@@ -42,6 +42,7 @@ const silos: MemorySilo[] = [
   defineMemorySilo({ name: "it-memory-brain", provider: "git", description: "integration-tier memory coverage fixture (OPE-551)" }),
   defineMemorySilo({ name: "it-memory-b-brain", provider: "git", description: "OPE-551 silo-isolation negative control — must stay empty of it-memory's facts" }),
   defineMemorySilo({ name: "it-work-memory-brain", provider: "git", description: "integration-tier work-session memory-flush fixture (OPE-2341)" }),
+  defineMemorySilo({ name: "it-opt-out-brain", provider: "git", description: "integration-tier person opt-out fixture (OPE-2497)" }),
   defineMemorySilo({ name: "it-fire-seat-brain", provider: "git", description: "integration-tier routine-fire fixture (OPE-2342)" }),
 ];
 
