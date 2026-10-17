@@ -2,7 +2,7 @@ import { defineHook, type HookContext } from "eve/hooks";
 import { appendAudit } from "../audit/audit.js";
 import { resolvePartition } from "../memory/partition.js";
 import { WAKE_TURN_START_ACTION, type WakeTurnStartDetail } from "../channels/wake-timing.js";
-import { currentWakeId, deploymentOrg, type BindableContext } from "../identity/binding.js";
+import { auditSurfaceModeFrom, currentWakeId, deploymentOrg, type BindableContext } from "../identity/binding.js";
 
 async function auditTurnStart(turnId: string | undefined, ctx: HookContext): Promise<void> {
   try {
@@ -21,6 +21,7 @@ async function auditTurnStart(turnId: string | undefined, ctx: HookContext): Pro
       platform: partition.platform,
       workspace: partition.workspace,
       surface: partition.surfaceKey,
+      ...auditSurfaceModeFrom(c),
       action: WAKE_TURN_START_ACTION,
       ts: detail.turnStartTs,
       detail,

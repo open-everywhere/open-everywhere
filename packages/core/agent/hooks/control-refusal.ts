@@ -1,5 +1,5 @@
 import { appendAudit, type AuditInput } from "../audit/audit.js";
-import { bindFrom, type BindableContext } from "../identity/binding.js";
+import { auditSurfaceModeStamp, bindFrom, type BindableContext } from "../identity/binding.js";
 
 export const HOOK_CANCELLABLE_EDGES = ["session.started", "turn.started", "step.started"] as const;
 
@@ -57,6 +57,7 @@ export async function refuseTurn(
       platform: b.platform,
       workspace: b.workspace,
       surface: b.surface,
+      ...auditSurfaceModeStamp(b),
       action: "hook.refused",
       detail: {
         ...(input.detail ?? {}),

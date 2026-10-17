@@ -1,6 +1,6 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
-import { bindFrom, currentTurnId, type BindableContext } from "../identity/binding.js";
+import { auditSurfaceModeStamp, bindFrom, currentTurnId, type BindableContext } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
 import { markThreadStopped, roomEngagementAddress } from "../channels/engagement.js";
 import { markStoodDownThisTurn, peekDeliveryArm } from "../channels/reply-signal.js";
@@ -63,6 +63,7 @@ export default defineTool({
         platform: partition.platform,
         workspace: partition.workspace,
         surface: partition.surfaceKey,
+        ...auditSurfaceModeStamp(binding),
         action: STAND_DOWN_ACTION,
         detail: {
           surfaceKey: partition.surfaceKey,
@@ -99,6 +100,7 @@ export default defineTool({
       platform: partition.platform,
       workspace: partition.workspace,
       surface: partition.surfaceKey,
+      ...auditSurfaceModeStamp(binding),
       action: STAND_DOWN_ACTION,
       detail: {
         surfaceKey: partition.surfaceKey,

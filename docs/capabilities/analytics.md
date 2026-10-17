@@ -117,12 +117,20 @@ gap-filling it. Four classes of row therefore report as `(unclassified)`:
 
 - rows written before the column existed — nothing is backfilled, because the mode was knowable
   only from the turn's binding and no stored row carries one;
-- rows from a writer that holds no binding;
 - rows whose mode was only a default, never a reading;
-- 🔴 **rows from any audit writer other than the per-action tool writer.** Only
-  `agent/audit/tool-action.ts` stamps the mode today, so `memory.write`, `egress.policy`,
-  `stand_down.*` and most other actions mask their surface. This one does **not** heal as rows age
-  out — it is a property of those writers, and OPE-1940 tracks stamping them.
+- rows whose writer holds no binding where it writes the row: an approval decision
+  (`connector.op_approved`), a click handler, a routine fire or transcript read, the GitHub
+  provider's rows, and a row rebuilt from a stored scope key or a bare partition;
+- rows whose surface names a unified window rather than one conversation (the window's turn-end
+  rows, such as `turn.bare_stop` on platform `unified`);
+- rows whose surface is not the caller's own: a refusal filed under another platform, whose surface
+  reads `unknown` or names the caller's room on the wrong platform.
+
+An audit writer that holds a binding where it writes the row stamps the mode (OPE-1940):
+`memory.write`, `egress.policy`, `connector.grant`, `stand_down.*`, `reply.post`, `reply.edit`,
+`connector.op`, `spend.gate` and the Slack, Discord, Teams, Linear and Notion dispatch and refusal
+rows among them. Before that change only the per-action tool writer stamped it, so a row written
+then from any other writer reports as `(unclassified)` and stays that way.
 
 ## What you can see — the scope model
 

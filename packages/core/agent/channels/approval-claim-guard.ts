@@ -151,6 +151,7 @@ export async function auditWithheldApprovalClaim(
     platform,
     workspace: audit.workspace,
     surface: audit.surface,
+    ...(audit.surfaceMode === undefined ? {} : { surfaceMode: audit.surfaceMode }),
     principalId: audit.principalId,
     action: APPROVAL_CLAIM_WITHHELD_ACTION,
     detail: {

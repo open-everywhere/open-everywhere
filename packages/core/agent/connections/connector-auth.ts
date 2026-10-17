@@ -55,7 +55,8 @@ import { OE_REQUESTER_ATTR, REQUESTER_UNVERIFIED } from "../access/requester-ide
 import { OE_CHAT_NONMEMBER_ATTR, untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getSecretVia } from "../access/credentials.js";
 import { resolvePartition } from "../memory/partition.js";
-import { actingPrincipalId, bindFrom, deploymentOrg, proposingGrantScope, unattendedFrom, type BindableContext } from "../identity/binding.js";
+import { actingPrincipalId, auditSurfaceModeStamp, bindFrom, deploymentOrg, proposingGrantScope, unattendedFrom, type BindableContext } from "../identity/binding.js";
+import type { SessionMode } from "../access/resolver.js";
 import { appendAudit } from "../audit/audit.js";
 import {
   requireUserAuthFlow,
@@ -757,6 +758,7 @@ interface FencedTurnFacts {
   readonly workspace: string;
   readonly surface?: string;
   readonly surfaceKey: string;
+  readonly surfaceMode?: SessionMode;
   readonly principalId?: string;
   readonly grantKey?: string;
 }
@@ -778,6 +780,7 @@ async function fencedTurnFacts(
       workspace: partition.workspace,
       surfaceKey: partition.surfaceKey,
       ...(partition.surface === undefined ? {} : { surface: partition.surface }),
+      ...auditSurfaceModeStamp(binding),
       ...(binding.principalId === undefined ? {} : { principalId: binding.principalId }),
       ...(grantKey === undefined ? {} : { grantKey }),
     };
@@ -849,6 +852,7 @@ export function withUnattendedConnectorFence(
       platform: facts.platform,
       workspace: facts.workspace,
       ...(facts.surface === undefined ? {} : { surface: facts.surface }),
+      ...(facts.surfaceMode === undefined ? {} : { surfaceMode: facts.surfaceMode }),
       ...(facts.principalId === undefined ? {} : { principalId: facts.principalId }),
     };
     if (lifted) {

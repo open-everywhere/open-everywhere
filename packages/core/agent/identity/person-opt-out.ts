@@ -1,6 +1,7 @@
 import { appendAudit } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
 import type { MemoryWriteRoad } from "../memory/write-road.js";
+import type { SessionMode } from "../access/resolver.js";
 
 export interface PersonOptOutState {
   readonly optedOut: boolean;
@@ -25,6 +26,7 @@ export interface PersonOptOutWhere {
   readonly platform: string;
   readonly workspace: string;
   readonly surface: string;
+  readonly surfaceMode?: SessionMode;
   readonly principalKey: string;
 }
 
@@ -36,6 +38,7 @@ export async function setPersonOptOut(where: PersonOptOutWhere, via: PersonOptOu
     platform: where.platform,
     workspace: where.workspace,
     surface: where.surface,
+    ...(where.surfaceMode === undefined ? {} : { surfaceMode: where.surfaceMode }),
     principalId: where.principalKey,
     action: "person.opt_out.set",
     detail: { via },
@@ -51,6 +54,7 @@ export async function clearPersonOptOut(where: PersonOptOutWhere, via: PersonOpt
     platform: where.platform,
     workspace: where.workspace,
     surface: where.surface,
+    ...(where.surfaceMode === undefined ? {} : { surfaceMode: where.surfaceMode }),
     principalId: where.principalKey,
     action: "person.opt_out.cleared",
     detail: { via },
@@ -70,6 +74,7 @@ export async function auditPersonOptOutRefusal(
     platform: where.platform,
     workspace: where.workspace,
     surface: where.surface,
+    ...(where.surfaceMode === undefined ? {} : { surfaceMode: where.surfaceMode }),
     principalId: where.principalKey,
     action: "person.opt_out.refused",
     detail: { ...detail, act },

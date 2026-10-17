@@ -3,7 +3,8 @@ import { gzipSync } from "node:zlib";
 import { getSettings } from "../settings/settings.js";
 import { appendAudit } from "../audit/audit.js";
 import { resolvePartition, domainKeyOf } from "../memory/partition.js";
-import { currentSessionId, type BindableContext } from "../identity/binding.js";
+import { auditSurfaceModeFrom, currentSessionId, type BindableContext } from "../identity/binding.js";
+import type { SessionMode } from "../access/resolver.js";
 import { getOperationalStore } from "../operational/provider.js";
 import type { ModelCallCaptureWrite } from "../operational/store.js";
 import type { ModelBackend, RoutableModel, RoutedCallOptions, RoutingDeps } from "./routing.js";
@@ -219,10 +220,10 @@ function reportCaptureGap(sessionId: string | undefined, turnId: string | undefi
   } catch {
   }
   if (!ctx) return;
-  let where: { org: string; platform: string; workspace: string; surface?: string };
+  let where: { org: string; platform: string; workspace: string; surface?: string; surfaceMode?: SessionMode };
   try {
     const p = resolvePartition(ctx);
-    where = { org: p.org, platform: p.platform, workspace: p.workspace, surface: p.surface };
+    where = { org: p.org, platform: p.platform, workspace: p.workspace, surface: p.surface, ...auditSurfaceModeFrom(ctx) };
   } catch {
     return;
   }

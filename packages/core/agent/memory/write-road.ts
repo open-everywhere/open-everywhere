@@ -5,6 +5,7 @@ import type { MemoryAccess, MemoryProvider } from "./provider.js";
 import type { MemorySilo } from "./silo.js";
 import type { Partition } from "./partition.js";
 import { tierId, type MemoryFiles, type Tier } from "./store.js";
+import type { SessionMode } from "../access/resolver.js";
 
 export type MemoryWriteRoad =
   | "session-persist"
@@ -35,6 +36,7 @@ export interface MemoryWriteRequest {
   readonly kind?: MemoryWriteKind;
   readonly turnId?: string;
   readonly principalId?: string;
+  readonly surfaceMode?: SessionMode;
   readonly platform?: string;
   readonly workspace?: string;
   readonly extra?: Readonly<Record<string, unknown>>;
@@ -68,6 +70,7 @@ export async function writeMemoryTier(req: MemoryWriteRequest): Promise<MemoryWr
     platform: req.platform ?? req.partition.platform,
     workspace: req.workspace ?? req.partition.workspace,
     surface: req.partition.surface,
+    ...(req.surfaceMode === undefined ? {} : { surfaceMode: req.surfaceMode }),
     principalId: req.principalId,
     action: kind === "operational" ? MEMORY_OPERATIONAL_WRITE_ACTION : MEMORY_WRITE_ACTION,
     detail: {
@@ -102,6 +105,7 @@ async function refusedByPersonOptOut(req: MemoryWriteRequest): Promise<boolean> 
       platform: req.partition.platform,
       workspace: req.partition.workspace,
       surface: req.partition.surface,
+      ...(req.surfaceMode === undefined ? {} : { surfaceMode: req.surfaceMode }),
       principalKey: req.principalId,
     },
     "memory-write",

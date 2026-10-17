@@ -43,6 +43,7 @@ interface RawAuditRow {
   readonly platform: string;
   readonly workspace: string;
   readonly surface: string | null;
+  readonly surface_mode: string | null;
   readonly principal_id: string | null;
   readonly action: string;
   readonly detail: string | null;
@@ -72,9 +73,9 @@ function deleteStoredRow(seq: number): void {
 function restoreStoredRow(row: RawAuditRow): void {
   withTamperDb((db) => {
     db.prepare(
-      `INSERT INTO audit_entry (seq, ts, org_id, platform, workspace, surface, principal_id, action, detail, prev_sha)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(row.seq, row.ts, row.org_id, row.platform, row.workspace, row.surface, row.principal_id, row.action, row.detail, row.prev_sha);
+      `INSERT INTO audit_entry (seq, ts, org_id, platform, workspace, surface, surface_mode, principal_id, action, detail, prev_sha)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(row.seq, row.ts, row.org_id, row.platform, row.workspace, row.surface, row.surface_mode, row.principal_id, row.action, row.detail, row.prev_sha);
   });
 }
 

@@ -213,5 +213,111 @@ ok(!("deleteAudit" in await import("../agent/audit/audit.js")), "no delete API e
   ok(findChainBreak(afterDel, { expectGenesis: true })?.action === "d.three", "chain: a deleted middle row is detected at the next surviving row");
 }
 
+{
+  const { registerIdentityMapper, bindFrom } = await import("../agent/identity/binding.js");
+  const { maskedSurfaceKeyOf } = await import("../agent/spend/dm-mask.js");
+  const { replyAuditFor, auditReplyPost } = await import("../agent/channels/reply-post.js");
+  const { runOptOut } = await import("../agent/commands/optout.js");
+  const { ingressSpendGate } = await import("../agent/spend/ingress-gate.js");
+  const { writeMemoryTier } = await import("../agent/memory/write-road.js");
+  const { SURFACE } = await import("../agent/memory/store.js");
+  const { resolvePartition } = await import("../agent/memory/partition.js");
+  type Mapper = Parameters<typeof registerIdentityMapper>[1];
+
+  const PLATFORM = "mode-stamp-probe";
+  const MO = "modestamporg";
+  _setDeploymentIdentityForTest({ org: MO });
+  const mapperFor = (mode: "dm" | "channel" | undefined): Mapper => () => ({
+    workspace: "W1",
+    surface: "S1",
+    ...(mode === undefined ? {} : { mode }),
+    visibility: "private",
+    trust: "external",
+    principalId: "U_P",
+  });
+  const ctx = { channel: { kind: PLATFORM } } as unknown as Parameters<typeof bindFrom>[0];
+  const surfaceKey = `${PLATFORM}/W1/S1`;
+  const fakeProvider = { id: "probe", writeTier: async () => "v1" } as unknown as Parameters<typeof writeMemoryTier>[0]["provider"];
+
+  const writeAll = async (tag: string): Promise<Map<string, { surfaceMode?: string }>> => {
+    const after = Math.max(0, ...(await readAudit({ org: MO })).map((r) => r.seq));
+    await auditReplyPost(replyAuditFor(ctx, "tool"), `m-${tag}`, PLATFORM, 3);
+    await runOptOut(bindFrom(ctx), "on");
+    await runOptOut(bindFrom(ctx), "off");
+    await ingressSpendGate({
+      bindable: ctx,
+      door: "window",
+      post: async () => undefined,
+      checkOverBudget: async () => ({ over: true, reason: "probe" }),
+      bypassFor: async () => null,
+    });
+    await writeMemoryTier({
+      provider: fakeProvider,
+      partition: resolvePartition(ctx),
+      tier: SURFACE,
+      files: { "STATUS.md": tag },
+      message: tag,
+      road: "status-board",
+      kind: "operational",
+      ...(bindFrom(ctx).modeResolved ? { surfaceMode: bindFrom(ctx).mode } : {}),
+    } as Parameters<typeof writeMemoryTier>[0]);
+    const rows = (await readAudit({ org: MO })).filter((r) => r.platform === PLATFORM && r.seq > after);
+    return new Map(rows.map((r) => [r.action, r]));
+  };
+  const FAMILIES = ["reply.post", "person.opt_out.set", "person.opt_out.cleared", "spend.gate", "memory.operational_write"];
+
+  registerIdentityMapper(PLATFORM, mapperFor("dm"));
+  const dm = await writeAll("dm");
+  for (const action of FAMILIES) {
+    ok(dm.has(action), `OPE-1940: the ${action} writer landed a row`);
+    ok(dm.get(action)?.surfaceMode === "dm", `🔴 OPE-1940: the ${action} row carries the RESOLVED dm mode its writer held`);
+  }
+  ok(maskedSurfaceKeyOf({ surfaceKey, surfaceMode: dm.get("reply.post")?.surfaceMode }) === `${PLATFORM}/W1/(dms)`, "OPE-1940: a stamped DM row masks into the (dms) bucket, not (unclassified)");
+
+  registerIdentityMapper(PLATFORM, mapperFor("channel"));
+  const room = await writeAll("room");
+  for (const action of FAMILIES) ok(room.get(action)?.surfaceMode === "channel", `OPE-1940: the ${action} row carries a resolved channel mode`);
+  ok(maskedSurfaceKeyOf({ surfaceKey, surfaceMode: room.get("spend.gate")?.surfaceMode }) === surfaceKey, "🔴 OPE-1940: a stamped room row PUBLISHES its surface — the fidelity the sweep restores");
+
+  registerIdentityMapper(PLATFORM, mapperFor(undefined));
+  const gap = await writeAll("gap");
+  for (const action of FAMILIES) {
+    ok(gap.has(action), `OPE-1940: the ${action} writer still lands a row on a gap-filled binding`);
+    ok(gap.get(action)?.surfaceMode === undefined, `🔴 OPE-1867: the ${action} row carries NO mode when the binding only gap-filled one`);
+  }
+  ok(maskedSurfaceKeyOf({ surfaceKey, surfaceMode: gap.get("reply.post")?.surfaceMode }) === `${PLATFORM}/W1/(unclassified)`, "🔴 OPE-1867: an unstamped row still masks as (unclassified)");
+
+  registerIdentityMapper(PLATFORM, mapperFor("dm"));
+  {
+    const { auditChannelReadRefusal } = await import("../agent/channels/read-scope-audit.js");
+    const captured: Array<{ surface?: string; surfaceMode?: string }> = [];
+    const deps = { audit: async (e: { surface?: string; surfaceMode?: string }) => void captured.push(e) };
+    const refusal = (platform: string) => ({ platform, surfaceId: "X1", callerKey: surfaceKey, domains: [] });
+    await auditChannelReadRefusal(ctx, refusal(PLATFORM), deps);
+    await auditChannelReadRefusal(ctx, refusal("other-platform"), deps);
+    ok(captured[0]?.surface === "S1" && captured[0]?.surfaceMode === "dm", "OPE-1940: a same-platform read refusal carries the caller's resolved mode");
+    ok(captured[1]?.surface === "unknown" && captured[1]?.surfaceMode === undefined, "🔴 OPE-1940: a FOREIGN-caller read refusal carries no mode — its surface is not the caller's");
+  }
+
+  {
+    const { auditSurfaceModeFrom } = await import("../agent/identity/binding.js");
+    ok(auditSurfaceModeFrom(ctx).surfaceMode === "dm", "OPE-1940: auditSurfaceModeFrom reads a resolved mode off a ctx");
+    const unbindable = {
+      get channel(): never {
+        throw new Error("probe: this ctx cannot bind");
+      },
+    } as unknown as Parameters<typeof auditSurfaceModeFrom>[0];
+    let threw = false;
+    let stamp: { surfaceMode?: string } = { surfaceMode: "sentinel" };
+    try {
+      stamp = auditSurfaceModeFrom(unbindable);
+    } catch {
+      threw = true;
+    }
+    ok(!threw && Object.keys(stamp).length === 0, "🔴 OPE-1940: auditSurfaceModeFrom on an unbindable ctx returns an EMPTY stamp and never throws");
+  }
+  _resetDeploymentIdentityForTest();
+}
+
 await removeTempDir(tmp);
 console.log(`✓ audit: ${passed} assertions passed`);

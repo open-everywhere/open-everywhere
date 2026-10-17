@@ -147,6 +147,7 @@ export async function auditWithheldRequestClaim(
     platform,
     workspace: audit.workspace,
     surface: audit.surface,
+    ...(audit.surfaceMode === undefined ? {} : { surfaceMode: audit.surfaceMode }),
     principalId: audit.principalId,
     action: REQUEST_CLAIM_WITHHELD_ACTION,
     detail: {

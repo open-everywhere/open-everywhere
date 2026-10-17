@@ -33,6 +33,7 @@ import {
   type AttachSessionForCancel,
   domainKeyOf,
   resolvePartition,
+  auditSurfaceModeFrom,
   nameDropWakeEnabled,
   seatCatchUp,
   seatCatchUpSinceMs,
@@ -1256,6 +1257,7 @@ export async function dispatchTurn(
     }
   }
   const partition: Partition = resolvePartition(ctxFromAuth(auth));
+  const auditMode = auditSurfaceModeFrom(ctxFromAuth(auth));
   const key = engagementKey(msg);
   const isDm = isDmChannel(msg.channelType);
   const addressed = isDm || msg.mentionsBot;
@@ -1281,6 +1283,7 @@ export async function dispatchTurn(
       platform: "discord",
       workspace: partition.workspace,
       surface: partition.surfaceKey,
+      ...auditMode,
       principalId: msg.author.id,
       action: "discord.external_policy_suppressed",
       detail: { verdict: externalVerdict, channelId: msg.channelId, ...suppressionRendering(acked) },
@@ -1348,6 +1351,7 @@ export async function dispatchTurn(
       platform: "discord",
       workspace: partition.workspace,
       surface: partition.surfaceKey,
+      ...auditMode,
       principalId: msg.author.id,
       action: "discord.dispatched",
       detail: { addressing: "direct-mention", dmWindow: true, channelId: msg.channelId },
@@ -1399,6 +1403,7 @@ export async function dispatchTurn(
         platform: "discord",
         workspace: msg.guildId ?? "unknown",
         surface: partition.surfaceKey,
+        ...auditMode,
         principalId: msg.author.id,
         action: "discord.dispatched",
         detail: { addressing, singleWindow: true, channelId: msg.channelId },

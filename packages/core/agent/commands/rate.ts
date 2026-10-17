@@ -1,6 +1,6 @@
 import { appendAudit, readAudit } from "../audit/audit.js";
 import { defaultScopeKey } from "../tools/set_spend_limit.js";
-import type { SurfaceBinding } from "../identity/binding.js";
+import { auditSurfaceModeStamp, type SurfaceBinding } from "../identity/binding.js";
 import { MODEL_AB_ARM_ACTION, MODEL_AB_RATING_ACTION, MODEL_AB_RATING_MAX, MODEL_AB_RATING_MIN, type ModelArm } from "../model/ab-test.js";
 import { agentCommandName } from "../identity/bot-name.js";
 
@@ -80,6 +80,7 @@ export async function runRate(binding: SurfaceBinding, score: number, deps: Rate
       platform: binding.platform,
       workspace: binding.workspace,
       surface: surfaceKey,
+      ...auditSurfaceModeStamp(binding),
       ...(binding.principalId ? { principalId: binding.principalId } : {}),
       action: MODEL_AB_RATING_ACTION,
       detail: {

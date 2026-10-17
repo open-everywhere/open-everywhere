@@ -1,6 +1,7 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { appendAudit } from "../audit/audit.js";
-import { bindFrom, deploymentOrg, type BindableContext } from "../identity/binding.js";
+import { auditSurfaceModeStamp, bindFrom, deploymentOrg, type BindableContext } from "../identity/binding.js";
+import type { SessionMode } from "../access/resolver.js";
 import { resolvePartition } from "../memory/partition.js";
 
 export const EVE_APPROVAL_SETTLED_ACTION = "approval.eve_settled";
@@ -13,16 +14,19 @@ function stamps(ctx: HookContext): {
   platform: string;
   workspace: string;
   surface?: string;
+  surfaceMode?: SessionMode;
   principalId?: string;
 } {
   try {
     const p = resolvePartition(ctx as unknown as BindableContext);
+    const binding = bindFrom(ctx as unknown as BindableContext);
     return {
       org: p.org,
       platform: p.platform,
       workspace: p.workspace,
       surface: p.surface,
-      principalId: bindFrom(ctx as unknown as BindableContext).principalId,
+      ...auditSurfaceModeStamp(binding),
+      principalId: binding.principalId,
     };
   } catch {
     return { org: deploymentOrg(), platform: "unknown", workspace: "unknown" };

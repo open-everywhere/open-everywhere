@@ -1,5 +1,6 @@
 import {
   appendAudit,
+  auditSurfaceModeFrom,
   bindFrom,
   domainReachVerdict,
   domainRoster,
@@ -217,6 +218,7 @@ async function auditNotionReadRefusal(
     platform: "notion",
     workspace: foreignCaller ? "unknown" : partition.workspace,
     surface: foreignCaller ? "unknown" : partition.surface,
+    ...(foreignCaller ? {} : auditSurfaceModeFrom(ctx)),
     ...(principalId ? { principalId } : {}),
     action: "read.refused",
     detail: {

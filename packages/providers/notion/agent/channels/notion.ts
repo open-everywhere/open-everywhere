@@ -3,6 +3,7 @@ import {
   receiptEventTime,
   spreadVendorTs,
   appendAudit,
+  auditSurfaceModeFrom,
   ingressSpendGate,
   auditAmbientSkip,
   deploymentOrg,
@@ -487,6 +488,7 @@ const notionWebhookRouteHandler = timedNotionWebhookRoute(
           platform: "notion",
           workspace: d.workspaceId ?? "unknown",
           surface: d.pageId || d.discussionId || "unknown",
+          ...auditSurfaceModeFrom({ channel: { kind: "notion" }, session: { auth: { current: d.auth } } } as unknown as Parameters<typeof auditSurfaceModeFrom>[0]),
           principalId: d.auth.principalId || undefined,
           action: "notion.dispatched",
           detail: {

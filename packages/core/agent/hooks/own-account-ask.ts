@@ -10,7 +10,7 @@ import {
   type OwnAccountVendor,
 } from "../connections/own-account-ask.js";
 import { credentialGrantVendors, ownAccountAskVendors } from "../connections/own-account-vendors.js";
-import { currentTurnId, type BindableContext } from "../identity/binding.js";
+import { auditSurfaceModeFrom, currentTurnId, type BindableContext } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
 import type { AuditInput } from "../operational/store.js";
 import { captureEligible } from "./requester-messages.js";
@@ -90,6 +90,7 @@ export function ownAccountAskAuditEntry(recognition: OwnAccountAskRecognition, c
       org: p.org,
       platform: p.platform,
       surface: p.surface,
+      ...auditSurfaceModeFrom(ctx as unknown as BindableContext),
       workspace: p.workspace,
     };
   } catch {

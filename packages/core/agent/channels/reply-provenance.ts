@@ -257,6 +257,7 @@ export async function auditReplyProvenance(
     platform,
     workspace: audit.workspace,
     surface: audit.surface,
+    ...(audit.surfaceMode === undefined ? {} : { surfaceMode: audit.surfaceMode }),
     principalId: audit.principalId,
     action: REPLY_PROVENANCE_ACTION,
     detail: {

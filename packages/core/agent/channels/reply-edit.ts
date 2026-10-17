@@ -61,6 +61,7 @@ export async function auditReplyEditRefused(
     platform: audit.platform,
     workspace: audit.workspace,
     surface: audit.surface,
+    ...(audit.surfaceMode === undefined ? {} : { surfaceMode: audit.surfaceMode }),
     principalId: audit.principalId,
     action: "reply.edit.refused",
     detail: {
@@ -81,6 +82,7 @@ async function auditReplyEdit(audit: ReplyAudit | undefined, id: string, platfor
     platform,
     workspace: audit.workspace,
     surface: audit.surface,
+    ...(audit.surfaceMode === undefined ? {} : { surfaceMode: audit.surfaceMode }),
     principalId: audit.principalId,
     action: "reply.edit",
     detail: {

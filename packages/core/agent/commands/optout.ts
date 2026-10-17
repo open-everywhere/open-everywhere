@@ -1,4 +1,4 @@
-import { actingPrincipalId, type SurfaceBinding } from "../identity/binding.js";
+import { actingPrincipalId, auditSurfaceModeStamp, type SurfaceBinding } from "../identity/binding.js";
 import { clearPersonOptOut, readPersonOptOut, setPersonOptOut } from "../identity/person-opt-out.js";
 import { agentCommandName } from "../identity/bot-name.js";
 
@@ -25,7 +25,7 @@ const SCOPE_LINE =
 export async function runOptOut(binding: SurfaceBinding, action: "status" | "on" | "off"): Promise<string> {
   const principalKey = actingPrincipalId(binding);
   if (!principalKey) return "I could not tell who you are from this command, so I changed nothing.";
-  const where = { org: binding.org, platform: binding.platform, workspace: binding.workspace, surface: binding.surface, principalKey };
+  const where = { org: binding.org, platform: binding.platform, workspace: binding.workspace, surface: binding.surface, ...auditSurfaceModeStamp(binding), principalKey };
   try {
     if (action === "status") {
       const state = await readPersonOptOut(binding.org, principalKey);

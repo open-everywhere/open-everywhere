@@ -1,5 +1,6 @@
 import {
   appendAudit,
+  auditSurfaceModeFrom,
   bindFrom,
   resolveDomainForChannel,
   resolvePartition,
@@ -178,6 +179,7 @@ async function auditLinearRefusal(
     platform: "linear",
     workspace: partition.workspace,
     surface: partition.surface,
+    ...(partition.platform === "linear" ? auditSurfaceModeFrom(ctx) : {}),
     ...(principalId ? { principalId } : {}),
     action: `${direction}.refused`,
     detail: {

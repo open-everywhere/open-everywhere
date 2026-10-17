@@ -2,7 +2,7 @@ import { defineHook, type HookContext } from "eve/hooks";
 import { appendAudit } from "../audit/audit.js";
 import { nonMemberAnsweredIds, QUESTION_REQUEST_KIND } from "../access/held-question.js";
 import { markUntrustedIngestedThisTurn } from "../access/taint-signal.js";
-import { currentSessionId, currentTurnId, type BindableContext } from "../identity/binding.js";
+import { auditSurfaceModeFrom, currentSessionId, currentTurnId, type BindableContext } from "../identity/binding.js";
 import { deploymentOrg } from "../identity/deployment-identity.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -44,7 +44,7 @@ export default defineHook({
           org: p.org,
           platform: p.platform,
           workspace: p.workspace,
-          ...(p.surface === undefined ? {} : { surface: p.surface }),
+          ...(p.surface === undefined ? {} : { surface: p.surface, ...auditSurfaceModeFrom(bind) }),
           action: NONMEMBER_ANSWER_MARKED_AUDIT_ACTION,
           detail: { requestIds: [...stamped], ...(sessionId ? { sessionId } : {}), ...(turnId ? { turnId } : {}) },
         }).catch(() => undefined);

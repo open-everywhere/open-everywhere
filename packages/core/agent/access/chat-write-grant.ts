@@ -1,6 +1,6 @@
 import { appendAudit } from "../audit/audit.js";
 import { allowedSurfaceIdsFrom } from "../channels/channel-read.js";
-import { bindFrom, type BindableContext } from "../identity/binding.js";
+import { auditSurfaceModeStamp, bindFrom, type BindableContext } from "../identity/binding.js";
 import type { Domain } from "../memory/domain.js";
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import { resolveAccessFor } from "./request.js";
@@ -146,7 +146,8 @@ export async function assertChatWriteAllowed(
 async function auditChatWriteRefusal(ctx: BindableContext, refusal: ChatWriteGrantError): Promise<void> {
   try {
     const partition = resolvePartition(ctx);
-    const principalId = bindFrom(ctx).principalId;
+    const binding = bindFrom(ctx);
+    const principalId = binding.principalId;
     const platform = refusal.boundary === "malformed" ? partition.platform : refusal.platform;
     const foreignCaller = partition.platform !== platform;
     await appendAudit({
@@ -154,6 +155,7 @@ async function auditChatWriteRefusal(ctx: BindableContext, refusal: ChatWriteGra
       platform,
       workspace: foreignCaller ? "unknown" : partition.workspace,
       surface: foreignCaller ? "unknown" : partition.surface,
+      ...(foreignCaller ? {} : auditSurfaceModeStamp(binding)),
       ...(principalId ? { principalId } : {}),
       action: "chat.post_refused",
       detail: {

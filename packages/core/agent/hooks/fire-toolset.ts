@@ -1,7 +1,7 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
 import { appendAudit } from "../audit/audit.js";
-import { isScheduleOriginatedAuth, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
+import { auditSurfaceModeFrom, isScheduleOriginatedAuth, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
 import { isWorkSessionChildContext } from "../access/work-session.js";
 import { jobFireStamped } from "../access/job-posture.js";
 import { resolvePartition } from "../memory/partition.js";
@@ -171,6 +171,7 @@ async function auditResolution(ctx: HookContext, org: string, outcome: DeclaredO
       platform: p.platform,
       workspace: p.workspace,
       surface: p.surface,
+      ...auditSurfaceModeFrom(ctx as unknown as BindableContext),
       action: ROUTINE_DECLARED_OPS_RESOLVED_ACTION,
       detail: {
         resolved: outcome.resolved,

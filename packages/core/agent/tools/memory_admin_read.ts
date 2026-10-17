@@ -1,7 +1,7 @@
 import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
-import { bindFrom } from "../identity/binding.js";
+import { auditSurfaceModeStamp, bindFrom } from "../identity/binding.js";
 import { adminStandingSubject } from "../access/admin-standing.js";
 import { getConfig } from "../access/config.js";
 import { adminControlRoles } from "../access/roles.js";
@@ -65,6 +65,7 @@ export default defineTool({
       platform: binding.platform,
       workspace: binding.workspace,
       surface: binding.surface,
+      ...auditSurfaceModeStamp(binding),
       principalId: binding.principalId,
       action: "memory.admin_read",
       detail: { silo: input.silo, relPath: input.relPath, bytes: result.bytes, roles: effective, venue: venue.decision.placement },

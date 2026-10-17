@@ -1,7 +1,7 @@
 import { appendAudit } from "../audit/audit.js";
 import { allowedSurfaceIdsFrom } from "../channels/channel-read.js";
 import { DM_REFUSED_ACTION, dmStoppedRefusalMessage, dmUnreadableRefusalMessage, PERSON_RESOURCE_TYPE, personAddress, readDmAudience } from "../channels/dm-audience.js";
-import { bindFrom, type BindableContext } from "../identity/binding.js";
+import { auditSurfaceModeStamp, bindFrom, type BindableContext } from "../identity/binding.js";
 import type { Domain } from "../memory/domain.js";
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import { resolveAccessFor } from "./request.js";
@@ -183,7 +183,8 @@ function orgOf(ctx: BindableContext): string {
 async function auditChatDmRefusal(ctx: BindableContext, refusal: ChatDmGrantError): Promise<void> {
   try {
     const partition = resolvePartition(ctx);
-    const principalId = bindFrom(ctx).principalId;
+    const binding = bindFrom(ctx);
+    const principalId = binding.principalId;
     const platform = refusal.boundary === "malformed" ? partition.platform : refusal.platform;
     const foreignCaller = partition.platform !== platform;
     await appendAudit({
@@ -191,6 +192,7 @@ async function auditChatDmRefusal(ctx: BindableContext, refusal: ChatDmGrantErro
       platform,
       workspace: foreignCaller ? "unknown" : partition.workspace,
       surface: foreignCaller ? "unknown" : partition.surface,
+      ...(foreignCaller ? {} : auditSurfaceModeStamp(binding)),
       ...(principalId ? { principalId } : {}),
       action: DM_REFUSED_ACTION,
       detail: {

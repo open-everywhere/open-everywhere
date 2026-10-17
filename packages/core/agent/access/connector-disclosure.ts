@@ -1,5 +1,6 @@
 import { appendAudit } from "../audit/audit.js";
-import { bindFrom, deploymentOrg, type BindableContext } from "../identity/binding.js";
+import { auditSurfaceModeStamp, bindFrom, deploymentOrg, type BindableContext } from "../identity/binding.js";
+import type { SessionMode } from "./resolver.js";
 import { resolvePartition } from "../memory/partition.js";
 import { ConfigLoadRefusalError, configOrRefuse } from "./config.js";
 import type { Domain } from "../memory/domain.js";
@@ -38,16 +39,19 @@ async function auditDisclosure(
   let workspace = "unknown";
   let surface: string | undefined;
   let principalId: string | undefined;
+  let surfaceMode: SessionMode | undefined;
   try {
     const p = resolvePartition(ctx);
     org = p.org;
     platform = p.platform;
     workspace = p.workspace;
     surface = p.surface;
-    principalId = bindFrom(ctx).principalId;
+    const binding = bindFrom(ctx);
+    principalId = binding.principalId;
+    surfaceMode = auditSurfaceModeStamp(binding).surfaceMode;
   } catch {
   }
-  await appendAudit({ org, platform, workspace, surface, principalId, action, detail });
+  await appendAudit({ org, platform, workspace, surface, ...(surfaceMode === undefined ? {} : { surfaceMode }), principalId, action, detail });
 }
 
 export class ConnectorAudienceUnverifiedError extends Error {

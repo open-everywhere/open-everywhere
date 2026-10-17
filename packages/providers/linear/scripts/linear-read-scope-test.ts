@@ -8,7 +8,7 @@ import {
   linearIssueScope,
   linearScopeRefusal,
 } from "../agent/channels/linear-scope.js";
-import { ChannelScopeError, connectorReadsThisTurn, defineDomain, registerConfig, type BindableContext, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
+import { ChannelScopeError, connectorReadsThisTurn, defineDomain, registerConfig, registerIdentityMapper, type BindableContext, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerLinearProvider } from "../agent/register.js";
 import { commentAgeAtRead, readLinearIssueEntry } from "../agent/tools/read_linear_issue.js";
 
@@ -366,6 +366,23 @@ const ctxFor = (surface: string, issueId?: string, issueIdentifier?: string, org
     if (savedToken === undefined) delete process.env.LINEAR_AGENT_ACCESS_TOKEN;
     else process.env.LINEAR_AGENT_ACCESS_TOKEN = savedToken;
   }
+}
+
+{
+  const PROBE = "ope1940-foreign-probe";
+  registerIdentityMapper(PROBE, () => ({ workspace: "W1", surface: "S1", mode: "dm", visibility: "private", trust: "internal", principalId: "U_FOREIGN" }));
+  const foreign = { channel: { kind: PROBE } } as unknown as BindableContext;
+  const rows: Array<{ platform?: string; surfaceMode?: string }> = [];
+  const audit = async (e: { platform?: string; surfaceMode?: string }) => void rows.push(e);
+  const resolver = async (): Promise<string | undefined> => TEAM_ENG;
+
+  await assert.rejects(() => assertLinearIssueAllowed(foreign, ISSUE_ENG, DOMAINS, resolver, { audit }), ChannelScopeError, "a foreign caller is refused");
+  ok(rows.length === 1 && rows[0]!.platform === "linear", "OPE-1940: the foreign caller's refusal is filed under linear");
+  ok(rows[0]!.surfaceMode === undefined, "🔴 OPE-1940: …and carries NO mode — the caller's DM mode never rides a linear row");
+
+  rows.length = 0;
+  await assert.rejects(() => assertLinearIssueAllowed(ctxFor(TEAM_LOOSE, ISSUE_LOOSE), ISSUE_SIBLING, DOMAINS, resolver, { audit }), ChannelScopeError, "a linear caller is refused");
+  ok(rows.length === 1 && rows[0]!.surfaceMode === "channel", "OPE-1940 control: a LINEAR caller's refusal carries its resolved mode, so the guard does not mask everything");
 }
 
 console.log(`✓ ${passed} linear read-scope assertions passed`);

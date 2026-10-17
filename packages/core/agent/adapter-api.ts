@@ -274,7 +274,7 @@ export type { ProviderRegistrationRefusal } from "./access/provider-selection.js
 export { registerDocs, registerProviderDocs, clearDocs, visibleDocs, docIndex, readDoc, normalizeDocPath } from "./docs/registry.js";
 export type { DocEntry, RegisteredDoc, DocLookup } from "./docs/registry.js";
 
-export { registerIdentityMapper, registeredIdentityMapperPlatforms, deploymentOrg, bindFrom, assertTurnSurface, TurnOriginFenceError, currentTurnIssue, currentTurnOrganization, authPrincipalId, attestedFireCreatorId } from "./identity/binding.js";
+export { registerIdentityMapper, registeredIdentityMapperPlatforms, deploymentOrg, bindFrom, auditSurfaceModeStamp, auditSurfaceModeFrom, assertTurnSurface, TurnOriginFenceError, currentTurnIssue, currentTurnOrganization, authPrincipalId, attestedFireCreatorId } from "./identity/binding.js";
 export type { IdentityMapper, RawIdentity, Visibility, SurfaceBinding } from "./identity/binding.js";
 export type { SessionMode } from "./access/resolver.js";
 

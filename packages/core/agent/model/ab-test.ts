@@ -1,7 +1,7 @@
 import { defineState } from "eve/context";
 import type { ModelRoute } from "../memory/domain.js";
 import { bareTokenFromEveContext } from "../channels/window-key.js";
-import { bindFrom, currentSessionId, currentTurnId, type BindableContext } from "../identity/binding.js";
+import { auditSurfaceModeStamp, bindFrom, currentSessionId, currentTurnId, type BindableContext } from "../identity/binding.js";
 import { resolvePartition, domainKeyOf } from "../memory/partition.js";
 import { appendAudit } from "../audit/audit.js";
 
@@ -152,6 +152,7 @@ export function noteModelAbArm(ctx: BindableContext, stamp: ModelArmStamp | null
       platform: p.platform,
       workspace: p.workspace,
       surface: domainKeyOf(p),
+      ...auditSurfaceModeStamp(b),
       ...(b.principalId ? { principalId: b.principalId } : {}),
       action: MODEL_AB_ARM_ACTION,
       detail: {

@@ -1,5 +1,6 @@
 import { appendAudit } from "../audit/audit.js";
-import { actingPrincipalId, bindFrom, type BindableContext } from "../identity/binding.js";
+import { actingPrincipalId, auditSurfaceModeStamp, bindFrom, type BindableContext } from "../identity/binding.js";
+import type { SessionMode } from "./resolver.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getConfig } from "./config.js";
 import { governanceChannelFor, governanceDeliveryMode, governanceDomains, isGovernanceChannel, type Domain } from "../memory/domain.js";
@@ -74,7 +75,7 @@ interface VenueResolution {
   readonly principalId?: string;
   readonly isGovernanceChannel: boolean;
   readonly attestation?: FloorAttestation;
-  readonly coords: { org: string; platform: string; workspace: string; surface: string };
+  readonly coords: { org: string; platform: string; workspace: string; surface: string; surfaceMode?: SessionMode };
   readonly enterprise?: string;
 }
 
@@ -82,7 +83,7 @@ async function resolvePaneVenue(ctx: BindableContext): Promise<VenueResolution> 
   const domains = getConfig().loadDomains();
   const b = bindFrom(ctx);
   const part = resolvePartition(ctx);
-  const coords = { org: part.org, platform: part.platform, workspace: part.workspace, surface: part.surface };
+  const coords = { org: part.org, platform: part.platform, workspace: part.workspace, surface: part.surface, ...auditSurfaceModeStamp(b) };
   const base = { domains, channelKey: part.surfaceKey, principalId: actingPrincipalId(b), coords, ...(b.enterprise === undefined ? {} : { enterprise: b.enterprise }) };
 
   const dmFallback = governanceDeliveryMode(domains) === "dm-fallback";

@@ -1,7 +1,7 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
 import { resolvePartition } from "../memory/partition.js";
-import { bindFrom, currentTurnId, deliveryStampOf, isSubagentChildContext, isScheduleOriginatedAuth, type BindableContext } from "../identity/binding.js";
+import { auditSurfaceModeStamp, bindFrom, currentTurnId, deliveryStampOf, isSubagentChildContext, isScheduleOriginatedAuth, type BindableContext } from "../identity/binding.js";
 import { deliveryChangedThisTurn } from "../access/task-wake-signal.js";
 import { planFor } from "../memory/resolve.js";
 import { auditRecurrenceLedger, signatureDigest } from "../memory/dream/recurrence.js";
@@ -83,7 +83,7 @@ async function consolidate(ctx: HookContext): Promise<void> {
       log(`skipped: the turn's person opted out of agent memory about them${optOut.readable ? "" : " (the opt-out store did not answer; fail-closed)"}`);
       dropFromSessionLog(captured.turnTexts);
       await auditPersonOptOutRefusal(
-        { org: p.org, platform: p.platform, workspace: p.workspace, surface: p.surface, principalKey: binding.principalId },
+        { org: p.org, platform: p.platform, workspace: p.workspace, surface: p.surface, ...auditSurfaceModeStamp(binding), principalKey: binding.principalId },
         "memory-write",
         { road: "dream-learn", storeReadable: optOut.readable },
       );
@@ -124,6 +124,7 @@ async function consolidate(ctx: HookContext): Promise<void> {
         platform: p.platform,
         workspace: p.workspace,
         surface: p.surface,
+        ...auditSurfaceModeStamp(binding),
         principalId: binding.principalId,
         action: "memory.learn",
         detail: { silo: target.silo.name, sigSha: signatureDigest(result.signature), count: result.count, distilled: facts?.length ?? 0, version: sha },

@@ -1,6 +1,7 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { appendAudit } from "../audit/audit.js";
-import { bindFrom, currentTurnId, deploymentOrg, type BindableContext } from "../identity/binding.js";
+import { auditSurfaceModeStamp, bindFrom, currentTurnId, deploymentOrg, type BindableContext } from "../identity/binding.js";
+import type { SessionMode } from "../access/resolver.js";
 import { resolvePartition } from "../memory/partition.js";
 import { connectorOpName, isConnectorOpTool, parseQualifiedToolName } from "../access/consequence.js";
 import { connectorOpConsequenceOfTier, connectorOpTierParts } from "../access/connector-op-gating.js";
@@ -36,6 +37,7 @@ async function auditOpResult(event: unknown, ctx: HookContext): Promise<void> {
     let surface: string | undefined;
     let surfaceKey: string | undefined;
     let principalId: string | undefined;
+    let surfaceMode: SessionMode | undefined;
     try {
       const p = resolvePartition(ctx as unknown as BindableContext);
       org = p.org;
@@ -43,7 +45,9 @@ async function auditOpResult(event: unknown, ctx: HookContext): Promise<void> {
       workspace = p.workspace;
       surface = p.surface;
       surfaceKey = p.surfaceKey;
-      principalId = bindFrom(ctx as unknown as BindableContext).principalId;
+      const binding = bindFrom(ctx as unknown as BindableContext);
+      principalId = binding.principalId;
+      surfaceMode = auditSurfaceModeStamp(binding).surfaceMode;
     } catch {
     }
 
@@ -63,6 +67,7 @@ async function auditOpResult(event: unknown, ctx: HookContext): Promise<void> {
       platform,
       workspace,
       surface,
+      ...(surfaceMode === undefined ? {} : { surfaceMode }),
       principalId,
       action: "connector.op",
       detail: {

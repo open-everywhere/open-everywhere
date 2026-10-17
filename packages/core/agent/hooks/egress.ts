@@ -14,7 +14,8 @@ import { credentialKeyArmed, deriveCredentialSubkey } from "../credentials/db-br
 import { getConfig } from "../access/config.js";
 import { resolveNetworkAccessLevel } from "../access/network-access.js";
 import { resolvePartition } from "../memory/partition.js";
-import { bindFrom, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
+import { auditSurfaceModeStamp, bindFrom, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
+import type { SessionMode } from "../access/resolver.js";
 import { narrowByConnectorOverride } from "../access/connector-scope.js";
 import { setConnectorContentOrigin, type ConnectorContentOriginMap } from "../access/connector-content-origin-state.js";
 import { appendAudit, type AuditInput } from "../audit/audit.js";
@@ -236,6 +237,7 @@ export interface EgressAuditScope {
   readonly platform: string;
   readonly workspace: string;
   readonly surface: string;
+  readonly surfaceMode?: SessionMode;
   readonly principalId: string | undefined;
 }
 
@@ -346,6 +348,7 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
           platform: s.platform,
           workspace: s.workspace,
           surface: s.surface,
+          ...(s.surfaceMode === undefined ? {} : { surfaceMode: s.surfaceMode }),
           principalId: s.principalId,
           action: "egress.policy",
           detail: {
@@ -470,6 +473,7 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
       platform: scope.platform,
       workspace: scope.workspace,
       surface: scope.surface,
+      ...(scope.surfaceMode === undefined ? {} : { surfaceMode: scope.surfaceMode }),
       principalId: scope.principalId,
       action: "egress.policy",
       detail: {
@@ -497,6 +501,7 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
         platform: scope.platform,
         workspace: scope.workspace,
         surface: scope.surface,
+        ...(scope.surfaceMode === undefined ? {} : { surfaceMode: scope.surfaceMode }),
         principalId: scope.principalId,
         action: "connector.grant",
         detail: { connectors, scopeKey, phase, ...(undeclared.length > 0 ? { undeclaredContentOrigin: undeclared } : {}) },
@@ -561,12 +566,14 @@ function liveDeps(ctx: HookContext): EgressEnforcementDeps {
     rememberConnectors: (connectors) => egressApplied.update((s) => ({ ...s, connectors })),
     scope: () => {
       const p = resolvePartition(ctx);
+      const binding = bindFrom(ctx);
       return {
         org: p.org,
         platform: p.platform,
         workspace: p.workspace,
         surface: p.surface,
-        principalId: bindFrom(ctx).principalId,
+        ...auditSurfaceModeStamp(binding),
+        principalId: binding.principalId,
       };
     },
     halted: async () => {

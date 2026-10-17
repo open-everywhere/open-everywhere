@@ -7,6 +7,7 @@ import { getRoutine } from "../routines/store.js";
 import { describeTrigger } from "../routines/routine.js";
 import { ROUTINE_PERMISSIONS_REVOKED_ACTION, listRoutinePermissions, revokeRoutinePermissions } from "../routines/declared-permissions.js";
 import { appendAudit } from "../audit/audit.js";
+import { auditSurfaceModeFrom } from "../identity/binding.js";
 
 export default defineTool({
   description:
@@ -26,6 +27,7 @@ export default defineTool({
     const p = resolvePartition(ctx);
     const id = input.id.trim();
 
+    // principal-gate: presence — 🔴 this tool posts NO card at all (open tier), so this refusal is the ONLY
     const requestedBy = actingPrincipalIdOf(ctx);
     if (!requestedBy) {
       throw new Error(
@@ -46,6 +48,7 @@ export default defineTool({
         platform: p.platform,
         workspace: p.workspace,
         surface: p.surface,
+        ...auditSurfaceModeFrom(ctx),
         principalId: requestedBy,
         action: ROUTINE_PERMISSIONS_REVOKED_ACTION,
         detail: { id, revokedBy: requestedBy, count: revoked, rows, permissions: held },

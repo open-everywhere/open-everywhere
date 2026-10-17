@@ -581,6 +581,18 @@ export function delegatedBindingUnresolved(ctx: BindableContext): "empty" | "no-
   }
 }
 
+export function auditSurfaceModeStamp(binding: Pick<SurfaceBinding, "mode" | "modeResolved">): { readonly surfaceMode?: SessionMode } {
+  return binding.modeResolved ? { surfaceMode: binding.mode } : {};
+}
+
+export function auditSurfaceModeFrom(ctx: BindableContext): { readonly surfaceMode?: SessionMode } {
+  try {
+    return auditSurfaceModeStamp(bindFrom(ctx));
+  } catch {
+    return {};
+  }
+}
+
 export function bindFrom(ctx: BindableContext): SurfaceBinding {
   if (isUnifiedWindowContext(ctx)) {
     const frozen = frozenSurfaceBindingFrom(ctx);

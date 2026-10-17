@@ -4,7 +4,7 @@ import { z } from "zod";
 import { resolvePartition } from "../memory/partition.js";
 import { SURFACE } from "../memory/store.js";
 import { surfaceProvider } from "../memory/resolve.js";
-import { bindFrom, currentTurnId } from "../identity/binding.js";
+import { auditSurfaceModeFrom, bindFrom, currentTurnId } from "../identity/binding.js";
 import { writeMemoryTier } from "../memory/write-road.js";
 import { writeTierFile } from "../memory/sandbox-sync.js";
 import { withMemoryRootWritable } from "../memory/root-fence.js";
@@ -47,6 +47,7 @@ export default defineTool({
       road: "status-board",
       kind: "operational",
       principalId: bindFrom(ctx).principalId,
+      ...auditSurfaceModeFrom(ctx),
       turnId: currentTurnId(ctx),
       extra: { state: input.state, sessionId },
     });

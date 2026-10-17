@@ -1,5 +1,5 @@
 import type { BindableContext } from "../identity/binding.js";
-import { bindFrom } from "../identity/binding.js";
+import { auditSurfaceModeStamp, bindFrom } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { resolvePartition } from "../memory/partition.js";
 import { appendAudit } from "./audit.js";
@@ -115,7 +115,7 @@ export async function auditToolAction(
       platform: p.platform,
       workspace: p.workspace,
       surface: p.surface,
-      ...(binding.modeResolved ? { surfaceMode: binding.mode } : {}),
+      ...auditSurfaceModeStamp(binding),
       principalId: binding.principalId,
       action,
       detail,

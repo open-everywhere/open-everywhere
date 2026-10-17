@@ -5,6 +5,7 @@ import { slackBotToken } from "../setup/credentials.js";
 import { RateLimitExhaustedError } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   resolvePartition,
+  auditSurfaceModeFrom,
   cancelAnchoredTurn,
   turnAnchorKey,
   STOP_HAND_SLACK_NAME,
@@ -763,11 +764,12 @@ function wakeState(ev: ParsedMessageEvent, threadTs: string, extra?: Record<stri
 async function appendRouteAudit(surfaceKey: string, action: string, detail: Record<string, unknown>): Promise<void> {
   try {
     const [platform = "slack", workspace = "", surface = ""] = surfaceKey.split("/");
-    const org = resolvePartition({
+    const bindable = {
       channel: { kind: platform },
       session: { auth: { current: { attributes: { team_id: workspace, channel_id: surface }, principalId: "", principalType: "slack-user" } } },
-    } as Parameters<typeof resolvePartition>[0]).org;
-    await getOperationalStore().appendAudit({ ts: new Date().toISOString(), org, platform, workspace, surface, action, detail });
+    } as Parameters<typeof resolvePartition>[0];
+    const org = resolvePartition(bindable).org;
+    await getOperationalStore().appendAudit({ ts: new Date().toISOString(), org, platform, workspace, surface, ...auditSurfaceModeFrom(bindable), action, detail });
   } catch (err) {
     console.warn(`[open-everywhere:slack] route audit write failed: ${String(err)}`);
   }
@@ -816,13 +818,15 @@ async function appendWakeRowForIds(
   detail: Record<string, unknown>,
 ): Promise<void> {
   try {
-    const p = resolvePartition(bindableForSlackIds(ids));
+    const bindable = bindableForSlackIds(ids);
+    const p = resolvePartition(bindable);
     await getOperationalStore().appendAudit({
       ts: new Date().toISOString(),
       org: p.org,
       platform: p.platform,
       workspace: p.workspace,
       surface: p.surface,
+      ...auditSurfaceModeFrom(bindable),
       action,
       detail: { reason, channel: ids.channelId, ts, ...detail },
     });

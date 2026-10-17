@@ -1,4 +1,5 @@
-import { currentTurnId, currentSessionId, type BindableContext } from "../identity/binding.js";
+import { auditSurfaceModeFrom, currentTurnId, currentSessionId, type BindableContext } from "../identity/binding.js";
+import type { SessionMode } from "../access/resolver.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getSettings } from "../settings/settings.js";
 import { appendAudit } from "../audit/audit.js";
@@ -228,10 +229,10 @@ export function reportStepBoundary(ctx: BindableContext, d: StepBoundaryDecision
     );
   } catch {
   }
-  let where: { org: string; platform: string; workspace: string; surface?: string };
+  let where: { org: string; platform: string; workspace: string; surface?: string; surfaceMode?: SessionMode };
   try {
     const p = resolvePartition(ctx);
-    where = { org: p.org, platform: p.platform, workspace: p.workspace, surface: p.surface };
+    where = { org: p.org, platform: p.platform, workspace: p.workspace, surface: p.surface, ...auditSurfaceModeFrom(ctx) };
   } catch {
     return;
   }

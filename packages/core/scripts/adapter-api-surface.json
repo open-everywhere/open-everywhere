@@ -657,6 +657,8 @@
     "auditPersonOptOutRefusal",
     "auditSourcesGateRefusal",
     "auditSupervisorFailure",
+    "auditSurfaceModeFrom",
+    "auditSurfaceModeStamp",
     "auditToolAction",
     "authPrincipalId",
     "authorIsExcluded",

@@ -1,5 +1,5 @@
 import { resolvePartition, domainKeyOf } from "../memory/partition.js";
-import { bindFrom, type BindableContext } from "../identity/binding.js";
+import { auditSurfaceModeStamp, bindFrom, type BindableContext } from "../identity/binding.js";
 import { scopeOverBudget } from "./check.js";
 import { capBypassFor } from "./bypass.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -23,6 +23,7 @@ export interface SpendGateAuditRow {
   readonly platform: string;
   readonly workspace: string;
   readonly surface?: string;
+  readonly surfaceMode?: SessionMode;
   readonly action: string;
   readonly detail?: Readonly<Record<string, unknown>>;
 }
@@ -109,6 +110,7 @@ export async function ingressSpendGate(input: IngressSpendGateInput): Promise<Sp
           platform: partition.platform,
           workspace: partition.workspace,
           surface: partition.surface,
+          ...auditSurfaceModeStamp(binding),
           action: "spend.gate",
           detail: {
             key: domainKeyOf(partition),

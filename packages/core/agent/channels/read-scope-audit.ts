@@ -1,5 +1,6 @@
 import { appendAudit } from "../audit/audit.js";
-import { bindFrom, turnOriginPlatform, currentSessionId, type BindableContext } from "../identity/binding.js";
+import { auditSurfaceModeStamp, bindFrom, turnOriginPlatform, currentSessionId, type BindableContext } from "../identity/binding.js";
+import type { SessionMode } from "../access/resolver.js";
 import { domainForChannel, type Domain } from "../memory/domain.js";
 import { resolvePartition } from "../memory/partition.js";
 
@@ -24,9 +25,13 @@ function targetDomainOf(refusal: ReadScopeRefusal): string | undefined {
   return domainForChannel(`${parts[0]}/${parts[1]}/${refusal.surfaceId}`, refusal.domains)?.name;
 }
 
-function stampedWorkspaceSurface(partition: { platform: string; workspace: string; surface: string }, rowPlatform: string): { workspace: string; surface: string } {
+function stampedWorkspaceSurface(
+  partition: { platform: string; workspace: string; surface: string },
+  rowPlatform: string,
+  mode: { readonly surfaceMode?: SessionMode },
+): { workspace: string; surface: string; surfaceMode?: SessionMode } {
   const foreignCaller = partition.platform !== rowPlatform;
-  return { workspace: foreignCaller ? "unknown" : partition.workspace, surface: foreignCaller ? "unknown" : partition.surface };
+  return foreignCaller ? { workspace: "unknown", surface: "unknown" } : { workspace: partition.workspace, surface: partition.surface, ...mode };
 }
 
 export async function auditChannelReadRefusal(
@@ -36,11 +41,12 @@ export async function auditChannelReadRefusal(
 ): Promise<void> {
   try {
     const partition = resolvePartition(ctx);
-    const principalId = bindFrom(ctx).principalId;
+    const binding = bindFrom(ctx);
+    const principalId = binding.principalId;
     await (deps?.audit ?? appendAudit)({
       org: partition.org,
       platform: refusal.platform,
-      ...stampedWorkspaceSurface(partition, refusal.platform),
+      ...stampedWorkspaceSurface(partition, refusal.platform, auditSurfaceModeStamp(binding)),
       ...(principalId ? { principalId } : {}),
       action: "read.refused",
       detail: {
@@ -66,11 +72,12 @@ async function auditFenceRefusal(
   const action = `${target}.${verb}`;
   try {
     const partition = resolvePartition(ctx);
-    const principalId = bindFrom(ctx).principalId;
+    const binding = bindFrom(ctx);
+    const principalId = binding.principalId;
     await (deps?.audit ?? appendAudit)({
       org: partition.org,
       platform: target,
-      ...stampedWorkspaceSurface(partition, target),
+      ...stampedWorkspaceSurface(partition, target, auditSurfaceModeStamp(binding)),
       ...(principalId ? { principalId } : {}),
       action,
       detail: { target, origin: turnOriginPlatform(ctx) ?? null, sessionId: currentSessionId(ctx) ?? null },

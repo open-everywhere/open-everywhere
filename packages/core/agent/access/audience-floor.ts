@@ -3,6 +3,7 @@ import { criteriaDomain, domainForChannel, type Domain } from "../memory/domain.
 import { principalIdsOnPlatform } from "../identity/principal-key.js";
 import { parseScopeKey } from "./scope-key.js";
 import { getSettings } from "../settings/settings.js";
+import type { SessionMode } from "./resolver.js";
 
 export type AudienceFloor = "guest" | "member" | "admin";
 
@@ -145,6 +146,7 @@ export interface FloorAttestContext {
   readonly platform: string;
   readonly workspace: string;
   readonly surface: string;
+  readonly surfaceMode?: SessionMode;
   readonly principalId?: string;
 }
 
@@ -167,6 +169,7 @@ export async function attestGovernanceChannel(
       platform: ctx.platform,
       workspace: ctx.workspace,
       surface: ctx.surface,
+      ...(ctx.surfaceMode === undefined ? {} : { surfaceMode: ctx.surfaceMode }),
       principalId: ctx.principalId,
       action: "governance.floor_breach",
       detail: {

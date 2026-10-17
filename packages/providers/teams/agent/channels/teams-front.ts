@@ -93,6 +93,8 @@ import {
   seatCatchUp,
   getSettings,
   bindFrom,
+  auditSurfaceModeStamp,
+  auditSurfaceModeFrom,
   runOeCommand,
   oeSlash,
   type OeCommand,
@@ -248,9 +250,11 @@ export async function liveTeamsExternalGate(a: TeamsMessageActivity, probeFor?: 
   let auth: OpenEverywhereTeamsAuth;
   let partition: Partition;
   let roomKey: string;
+  let auditMode: ReturnType<typeof auditSurfaceModeFrom>;
   try {
     auth = authForActivity(a);
     partition = resolvePartition({ channel: { kind: "teams" }, session: { auth: { current: auth } } });
+    auditMode = auditSurfaceModeFrom({ channel: { kind: "teams" }, session: { auth: { current: auth } } });
     roomKey = isDm ? partition.surfaceKey : domainKeyOf(partition);
   } catch {
     return false;
@@ -283,6 +287,7 @@ export async function liveTeamsExternalGate(a: TeamsMessageActivity, probeFor?: 
     platform: "teams",
     workspace: partition.workspace,
     surface: roomKey,
+    ...auditMode,
     principalId: a.from.id,
     action: "teams.external_policy_suppressed",
     detail: { verdict, conversationId: a.conversation.id, ...suppressionRendering(acked) },
@@ -388,6 +393,7 @@ export async function liveTeamsOeCommand(
       platform: "teams",
       workspace: binding.workspace,
       surface: `${binding.platform}/${binding.workspace}/${binding.surface}`,
+      ...auditSurfaceModeStamp(binding),
       principalId: a.from.id,
       action: "teams.oe_command",
       detail: { command: command.kind, conversationId: a.conversation.id },
@@ -531,6 +537,7 @@ export async function liveTeamsDispatch(
     platform: "teams",
     workspace: plan.partition.workspace,
     surface: plan.surfaceKey,
+    ...auditSurfaceModeFrom({ channel: { kind: "teams" }, session: { auth: { current: auth } } }),
     principalId: a.from.id,
     action: "teams.dispatched",
     detail: { addressing: plan.window.addressing ?? (nameDrop ? "name-drop" : "channel-watch"), conversationId: a.conversation.id },
@@ -607,6 +614,7 @@ export async function liveTeamsDmDivert(
     platform: "teams",
     workspace: partition.workspace,
     surface: surfaceKey,
+    ...auditSurfaceModeFrom({ channel: { kind: "teams" }, session: { auth: { current: auth } } }),
     principalId: a.from.id,
     action: "teams.dispatched",
     detail: { addressing: "direct-mention", dmWindow: true, conversationId },

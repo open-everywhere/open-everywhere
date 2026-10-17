@@ -8,6 +8,7 @@ import {
   oeSlash,
   parseSlackCommandText,
   resolvePartition,
+  auditSurfaceModeFrom,
   getOperationalStore,
   admittedTenantsFromConfig,
   unadmittedTenantLog,
@@ -49,16 +50,18 @@ export function bindableForSlashCommand(params: URLSearchParams): BindableContex
 
 async function auditCommandDropped(teamId: string | undefined, channelId: string | undefined, reason: string, enterpriseId?: string): Promise<void> {
   try {
-    const p = resolvePartition({
+    const bindable = {
       channel: { kind: "slack" },
       session: { auth: { current: { attributes: { team_id: teamId ?? "", channel_id: channelId ?? "" }, principalId: "", principalType: "slack-user" } } },
-    } as BindableContext);
+    } as BindableContext;
+    const p = resolvePartition(bindable);
     await getOperationalStore().appendAudit({
       ts: new Date().toISOString(),
       org: p.org,
       platform: p.platform,
       workspace: p.workspace,
       surface: p.surface,
+      ...auditSurfaceModeFrom(bindable),
       action: "surface.wake_dropped",
       detail: { reason, door: "slash-command", channel: channelId ?? null, team: teamId ?? null, enterprise: enterpriseId ?? null },
     });

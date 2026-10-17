@@ -1,5 +1,6 @@
 import { appendAudit } from "../audit/audit.js";
-import { bindFrom, type BindableContext } from "../identity/binding.js";
+import { auditSurfaceModeStamp, bindFrom, type BindableContext } from "../identity/binding.js";
+import type { SessionMode } from "./resolver.js";
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import { getConfig } from "./config.js";
 import { domainForChannel, isGovernanceChannel } from "../memory/domain.js";
@@ -63,7 +64,7 @@ interface AdminReadVenueResolution {
   readonly decision: AdminReadVenue;
   readonly channelKey: string;
   readonly principalId?: string;
-  readonly coords: { org: string; platform: string; workspace: string; surface: string };
+  readonly coords: { org: string; platform: string; workspace: string; surface: string; surfaceMode?: SessionMode };
   readonly governanceChannel?: string;
 }
 
@@ -74,7 +75,7 @@ async function resolveAdminReadVenue(
   const domains = getConfig().loadDomains();
   const b = bindFrom(ctx);
   const part = resolvePartition(ctx);
-  const coords = { org: part.org, platform: part.platform, workspace: part.workspace, surface: part.surface };
+  const coords = { org: part.org, platform: part.platform, workspace: part.workspace, surface: part.surface, ...auditSurfaceModeStamp(b) };
 
   const isGov = isGovernanceChannel(part.surfaceKey, domains);
   const attestation = isGov ? await attestGovernanceChannel(part.surfaceKey, domains, { ...coords, principalId: b.principalId }) : undefined;

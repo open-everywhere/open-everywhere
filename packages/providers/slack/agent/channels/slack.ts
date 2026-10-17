@@ -18,6 +18,7 @@ import {
 } from "./slack-identity.js";
 import {
   resolvePartition,
+  auditSurfaceModeFrom,
   getOperationalStore,
   postOnce,
   outboundKey,
@@ -162,16 +163,18 @@ async function recordQuietFailure(
 ): Promise<void> {
   console.warn(`[open-everywhere:slack] ${event} on an uninvited turn — suppressed on-surface (${message})`);
   try {
-    const p = resolvePartition({
+    const bindable: Parameters<typeof resolvePartition>[0] = {
       channel: { kind: "slack" },
       session: { auth: { current: { attributes: { team_id: state.teamId ?? "", channel_id: state.channelId ?? "" }, principalId: "", principalType: "slack-user" } } },
-    });
+    };
+    const p = resolvePartition(bindable);
     await getOperationalStore().appendAudit({
       ts: new Date().toISOString(),
       org: p.org,
       platform: p.platform,
       workspace: p.workspace,
       surface: p.surface,
+      ...auditSurfaceModeFrom(bindable),
       action: "surface.quiet_fail",
       detail: { event, threadTs: state.threadTs ?? undefined, message: message.slice(0, 500) },
     });
@@ -306,6 +309,7 @@ async function maybeOnboard(ctx: SlackContext, where: BindableContext): Promise<
           silo: target.silo,
           access: target.access,
           road: "pinned-instructions",
+          ...auditSurfaceModeFrom(where),
         });
         adopted = true;
       }
@@ -321,6 +325,7 @@ async function maybeOnboard(ctx: SlackContext, where: BindableContext): Promise<
       message: `onboarding ${p.surfaceKey}`,
       road: "onboarding-marker",
       kind: "operational",
+      ...auditSurfaceModeFrom(where),
     });
     try {
       await ctx.thread.post(introMessage(adopted, await botDisplayName()));
@@ -357,16 +362,18 @@ function auditWakeDropped(message: SlackMessage, reason: string, detail: Record<
   return holdRouteWork(
     (async () => {
       try {
-        const p = resolvePartition({
+        const bindable: Parameters<typeof resolvePartition>[0] = {
           channel: { kind: "slack" },
           session: { auth: { current: { attributes: { team_id: message.teamId ?? "", channel_id: message.channelId }, principalId: "", principalType: "slack-user" } } },
-        });
+        };
+        const p = resolvePartition(bindable);
         await getOperationalStore().appendAudit({
           ts: new Date().toISOString(),
           org: p.org,
           platform: p.platform,
           workspace: p.workspace,
           surface: p.surface,
+          ...auditSurfaceModeFrom(bindable),
           action: "surface.wake_dropped",
           detail: { reason, channel: message.channelId, ts: message.ts, ...detail },
         });
@@ -563,16 +570,18 @@ const slackMentionChannel = slackChannel({
                   `(${channelId ?? "?"}/${threadTs ?? "?"}) — this usually means a judgment call went missing, not that one was made.`,
               );
               try {
-                const p = resolvePartition({
+                const bindable: Parameters<typeof resolvePartition>[0] = {
                   channel: { kind: "slack" },
                   session: { auth: { current: { attributes: { team_id: channel.state.teamId ?? "", channel_id: channelId ?? "" }, principalId: "", principalType: "slack-user" } } },
-                });
+                };
+                const p = resolvePartition(bindable);
                 await getOperationalStore().appendAudit({
                   ts: new Date().toISOString(),
                   org: p.org,
                   platform: p.platform,
                   workspace: p.workspace,
                   surface: p.surface,
+                  ...auditSurfaceModeFrom(bindable),
                   action: "turn.bare_stop",
                   detail: { threadTs, ...(sessionId ? { sessionId } : {}) },
                 });
@@ -616,12 +625,13 @@ const slackMentionChannel = slackChannel({
             const target = (channel.state as unknown as Record<string, unknown>).oeReplyTarget as SupervisorReplyTarget | undefined;
             const channelId = channel.state.channelId ?? undefined;
             const teamId = channel.state.teamId;
-            const partition = channelId
-              ? resolvePartition({
+            const supervisorBindable: Parameters<typeof resolvePartition>[0] | undefined = channelId
+              ? {
                   channel: { kind: "slack" },
                   session: { auth: { current: { attributes: { team_id: teamId ?? "", channel_id: channelId }, principalId: "", principalType: "slack-user" } } },
-                })
+                }
               : undefined;
+            const partition = supervisorBindable ? resolvePartition(supervisorBindable) : undefined;
             const delivery = supervisorTextDelivery(true , capabilitiesForPlatform("slack").midTurnPost);
             if (delivery.droppedProse && isSupervisorProseLeak(true, repliedThisTurn, cardPostedThisTurn)) {
               console.warn(
@@ -635,6 +645,7 @@ const slackMentionChannel = slackChannel({
                     platform: partition.platform,
                     workspace: partition.workspace,
                     surface: partition.surface,
+                    ...(supervisorBindable ? auditSurfaceModeFrom(supervisorBindable) : {}),
                     action: "turn.supervisor_prose_dropped",
                     detail: { threadTs: target?.threadTs, chars: action.text.length, ...(sessionId ? { sessionId } : {}) },
                   });

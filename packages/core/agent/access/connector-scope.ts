@@ -2,7 +2,8 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { SessionAuth } from "eve/context";
-import { bindFrom, deploymentOrg, type BindableContext } from "../identity/binding.js";
+import { auditSurfaceModeStamp, bindFrom, deploymentOrg, type BindableContext } from "../identity/binding.js";
+import type { SessionMode } from "./resolver.js";
 import { resolveAccessForWithGroups } from "./group-request.js";
 import { assertConnectorDisclosure } from "./connector-disclosure.js";
 import { resolvePartition } from "../memory/partition.js";
@@ -193,6 +194,7 @@ async function auditConnectorGate(
   let workspace = "unknown";
   let surface: string | undefined;
   let principalId: string | undefined;
+  let surfaceMode: SessionMode | undefined;
   if (ctx) {
     try {
       const p = resolvePartition(ctx);
@@ -200,11 +202,13 @@ async function auditConnectorGate(
       platform = p.platform;
       workspace = p.workspace;
       surface = p.surface;
-      principalId = bindFrom(ctx).principalId;
+      const binding = bindFrom(ctx);
+      principalId = binding.principalId;
+      surfaceMode = auditSurfaceModeStamp(binding).surfaceMode;
     } catch {
     }
   }
-  await appendAudit({ org, platform, workspace, surface, principalId, action, detail });
+  await appendAudit({ org, platform, workspace, surface, ...(surfaceMode === undefined ? {} : { surfaceMode }), principalId, action, detail });
 }
 
 export async function assertConnectorGranted(connectionName: string, auth: SessionAuth): Promise<void> {

@@ -3,7 +3,7 @@ import type { ChannelEvents, Session, RouteHandlerArgs } from "eve/channels";
 import { defineState } from "eve/context";
 import { SELF_DISPATCH_PATH, handleSelfDispatch, postSelfDispatch, selfDispatchConfigured, type UnifiedDispatchPayload } from "./self-dispatch.js";
 import { appendAudit, auditSilencesEnabled } from "../audit/audit.js";
-import { deploymentOrg, currentWakeId, currentTurnId, currentTurnAddressing, currentTurnAddressed, bindFrom, carriesPlatformIdentity, WORK_FIRE_CREATOR_ATTR, type BindableContext, type SurfaceBinding } from "../identity/binding.js";
+import { auditSurfaceModeStamp, deploymentOrg, currentWakeId, currentTurnId, currentTurnAddressing, currentTurnAddressed, bindFrom, carriesPlatformIdentity, WORK_FIRE_CREATOR_ATTR, type BindableContext, type SurfaceBinding } from "../identity/binding.js";
 import { isFrozenSurfaceBinding, OE_FROZEN_SURFACE_BINDING_ATTR } from "../identity/frozen-surface-binding.internal.js";
 import { getConfig } from "../access/config.js";
 import "../access/eve-patch-probe-boot.js";
@@ -647,6 +647,7 @@ export async function divertToUnifiedWindow(
         platform: input.window.origin.platform,
         workspace: parseWindowToken(bareToken)?.domain ?? "unknown",
         surface: input.surfaceKey,
+        ...(binding === undefined ? {} : auditSurfaceModeStamp(binding)),
         action: WAKE_INGRESS_ACTION,
         ts: new Date(ingressMs).toISOString(),
         detail: wakeIngressDetail({
@@ -696,6 +697,7 @@ export async function divertToUnifiedWindow(
           platform: input.window.origin.platform,
           workspace: parseWindowToken(bareToken)?.domain ?? "unknown",
           surface: input.surfaceKey,
+          ...(binding === undefined ? {} : auditSurfaceModeStamp(binding)),
           action: WAKE_RETRY_ACTION,
           detail: wakeRetryDetail({
             wakeId: input.window.wakeId,

@@ -1,4 +1,5 @@
-import { attestedFireCreatorId, authPrincipalId, bindFrom, currentTurnId, fireResultCreatorId, SCHEDULE_APP_PRINCIPAL_ID, workResultFrozenBinding, type BindableContext } from "../identity/binding.js";
+import { attestedFireCreatorId, auditSurfaceModeStamp, authPrincipalId, bindFrom, currentTurnId, fireResultCreatorId, SCHEDULE_APP_PRINCIPAL_ID, workResultFrozenBinding, type BindableContext } from "../identity/binding.js";
+import type { SessionMode } from "../access/resolver.js";
 import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { appendAudit } from "../audit/audit.js";
 import { swallowRoomPost } from "./egress-spoof.js";
@@ -50,6 +51,7 @@ export interface ReplyAudit {
   readonly platform: string;
   readonly workspace: string;
   readonly surface?: string;
+  readonly surfaceMode?: SessionMode;
   readonly principalId?: string;
   readonly creatorId?: string;
   readonly sessionId?: string;
@@ -70,6 +72,7 @@ export function replyAuditFor(ctx: BindableContext, route: ReplyAudit["route"], 
     platform: p.platform,
     workspace: p.workspace,
     surface: p.surface,
+    ...auditSurfaceModeStamp(resultBinding ?? bindFrom(ctx)),
     principalId:
       attestedCreatorId !== undefined
         ? (authPrincipalId(ctx) ?? bindFrom(ctx).principalId)
@@ -97,6 +100,7 @@ export async function auditReplyPost(audit: ReplyAudit | undefined, id: string, 
     platform,
     workspace: audit.workspace,
     surface: audit.surface,
+    ...(audit.surfaceMode === undefined ? {} : { surfaceMode: audit.surfaceMode }),
     principalId: audit.principalId,
     action: "reply.post",
     detail: {
@@ -128,6 +132,7 @@ async function auditReplyPostFailed(
     platform,
     workspace: audit.workspace,
     surface: audit.surface,
+    ...(audit.surfaceMode === undefined ? {} : { surfaceMode: audit.surfaceMode }),
     principalId: audit.principalId,
     action: "reply.post.failed",
     detail: {
@@ -156,6 +161,7 @@ export async function auditReplyRefused(audit: ReplyAudit | undefined, reason: s
     platform: audit.platform,
     workspace: audit.workspace,
     surface: audit.surface,
+    ...(audit.surfaceMode === undefined ? {} : { surfaceMode: audit.surfaceMode }),
     principalId: audit.principalId,
     action: "reply.refused",
     detail: {
@@ -174,6 +180,7 @@ export async function auditReplyForced(audit: ReplyAudit | undefined, reason: st
     platform: audit.platform,
     workspace: audit.workspace,
     surface: audit.surface,
+    ...(audit.surfaceMode === undefined ? {} : { surfaceMode: audit.surfaceMode }),
     principalId: audit.principalId,
     action: "reply.forced",
     detail: {

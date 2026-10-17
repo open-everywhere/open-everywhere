@@ -122,6 +122,7 @@ export async function auditWithheldMemoryClaim(
     platform,
     workspace: audit.workspace,
     surface: audit.surface,
+    ...(audit.surfaceMode === undefined ? {} : { surfaceMode: audit.surfaceMode }),
     principalId: audit.principalId,
     action: MEMORY_CLAIM_WITHHELD_ACTION,
     detail: {

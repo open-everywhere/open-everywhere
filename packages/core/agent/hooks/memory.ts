@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
 import { resolvePartition } from "../memory/partition.js";
-import { bindFrom, currentTurnId, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
+import { auditSurfaceModeStamp, bindFrom, currentTurnId, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
+import type { SessionMode } from "../access/resolver.js";
 import { writeMemoryTier } from "../memory/write-road.js";
 import { turnPersonOptOut } from "../memory/opt-out-turn.js";
 import { planFor, type ResolvedMemory } from "../memory/resolve.js";
@@ -359,6 +360,7 @@ export async function persistMemoryNow(ctx: MemoryPersistContext, outcome: Memor
             platform: p.platform,
             workspace: p.workspace,
             surface: p.surface,
+            ...auditSurfaceModeStamp(binding),
             principalId,
             action: "memory.write_refused",
             detail: {
@@ -387,6 +389,7 @@ export async function persistMemoryNow(ctx: MemoryPersistContext, outcome: Memor
         access: rm.access,
         road: "session-persist",
         principalId,
+        ...auditSurfaceModeStamp(binding),
         ...(personOptOut ? { personOptOut } : {}),
         turnId: currentTurnId(ctx),
         extra: {
@@ -663,6 +666,7 @@ async function runSupervisorResync(
           platform: p.platform,
           workspace: p.workspace,
           surface: p.surface,
+          ...auditSurfaceModeStamp(binding),
           principalId: binding.principalId,
           action: "memory.index_change",
           detail: {
@@ -691,13 +695,13 @@ function provenanceArmed(): boolean {
 
 async function provenanceTargets(
   ctx: MemoryPersistContext,
-): Promise<{ p: ReturnType<typeof resolvePartition>; principalId: string | undefined; writes: readonly ResolvedMemory[]; sandbox: MemorySandbox } | null> {
+): Promise<{ p: ReturnType<typeof resolvePartition>; principalId: string | undefined; modeStamp: { readonly surfaceMode?: SessionMode }; writes: readonly ResolvedMemory[]; sandbox: MemorySandbox } | null> {
   if (!provenanceArmed()) return null;
   const p = resolvePartition(ctx);
   const binding = bindFrom(ctx);
   const plan = planFor(binding, p);
   if (plan.writes.length === 0 || ctx.getSandbox === undefined) return null;
-  return { p, principalId: binding.principalId, writes: plan.writes, sandbox: await ctx.getSandbox() };
+  return { p, principalId: binding.principalId, modeStamp: auditSurfaceModeStamp(binding), writes: plan.writes, sandbox: await ctx.getSandbox() };
 }
 
 async function captureProvenanceBaseline(ctx: MemoryPersistContext): Promise<void> {
@@ -787,6 +791,7 @@ async function markProvenanceForTurn(ctx: MemoryPersistContext, where: string): 
         platform: target.p.platform,
         workspace: target.p.workspace,
         surface: target.p.surface,
+        ...target.modeStamp,
         principalId: target.principalId,
         action: "memory.provenance_marked",
         detail: {
@@ -894,6 +899,7 @@ export default defineHook({
               platform: p.platform,
               workspace: p.workspace,
               surface: p.surface,
+              ...auditSurfaceModeStamp(binding),
               principalId: binding.principalId,
               action: "memory.trust_gate",
               detail: { mode: binding.mode, reads: plan.reads.length, reason: plan.reason, ...(ctx.session?.id ? { sessionId: ctx.session.id } : {}) },

@@ -1,7 +1,7 @@
 import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
-import { bindFrom, type BindableContext } from "../identity/binding.js";
+import { auditSurfaceModeFrom, bindFrom, type BindableContext } from "../identity/binding.js";
 import { isWorkSessionChildContext } from "../access/work-session.js";
 import { postSurfaceTextStrict } from "../channels/surface-message-ops.js";
 import { resolvePartition } from "../memory/partition.js";
@@ -80,7 +80,7 @@ export default defineTool({
       org: p.org,
       platform: p.platform,
       workspace: p.workspace,
-      ...(p.surface === undefined ? {} : { surface: p.surface }),
+      ...(p.surface === undefined ? {} : { surface: p.surface, ...auditSurfaceModeFrom(c) }),
       action: WORK_QUESTION_POSTED_ACTION,
       detail: { chars: input.question.length, options: options.length },
     }).catch(() => undefined);

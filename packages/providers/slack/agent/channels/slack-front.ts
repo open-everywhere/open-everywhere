@@ -43,6 +43,7 @@ import {
   touchDmSeat as liveTouchDmSeat,
   dmSeatThresholds,
   resolvePartition,
+  auditSurfaceModeFrom,
   domainKeyOf,
   isThreadEngaged,
   divertInboundToUnifiedWindow,
@@ -498,10 +499,11 @@ export function recordWakeFailure(key: string, err: unknown): void {
   void holdRouteWork(
     (async () => {
       try {
-        const p = resolvePartition({
+        const bindable = {
           channel: { kind: "slack" },
           session: { auth: { current: { attributes: { team_id: "", channel_id: channelId }, principalId: "", principalType: "slack-user" } } },
-        } as Parameters<typeof resolvePartition>[0]);
+        } as Parameters<typeof resolvePartition>[0];
+        const p = resolvePartition(bindable);
         const undeliveredAfterHeal = isUndeliveredAfterHeal(err);
         await getOperationalStore().appendAudit({
           ts: new Date().toISOString(),
@@ -509,6 +511,7 @@ export function recordWakeFailure(key: string, err: unknown): void {
           platform: p.platform,
           workspace: p.workspace,
           surface: p.surface,
+          ...auditSurfaceModeFrom(bindable),
           action: "surface.wake_failed",
           detail: {
             fifoKey: key,

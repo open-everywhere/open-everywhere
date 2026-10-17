@@ -1,6 +1,6 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { appendAudit } from "../audit/audit.js";
-import { isSubagentChildContext, isUnifiedWindowContext, type BindableContext } from "../identity/binding.js";
+import { auditSurfaceModeFrom, isSubagentChildContext, isUnifiedWindowContext, type BindableContext } from "../identity/binding.js";
 import { detectBridgeableInputRequest } from "../channels/question-bridge.js";
 import { resolveReplyTarget } from "../channels/reply-post.js";
 import { resolvePartition } from "../memory/partition.js";
@@ -25,6 +25,7 @@ export default defineHook({
           org: p.org,
           platform: p.platform,
           surface: p.surface,
+          ...auditSurfaceModeFrom(bindable),
           workspace: p.workspace,
         });
       } catch (err) {

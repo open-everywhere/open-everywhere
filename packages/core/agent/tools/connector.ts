@@ -1,6 +1,6 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { bindFrom, type BindableContext } from "../identity/binding.js";
+import { auditSurfaceModeStamp, bindFrom, type BindableContext } from "../identity/binding.js";
 import { resolveRole } from "../access/roles.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getConfig } from "../access/config.js";
@@ -104,6 +104,7 @@ const connectorEntry = defineTool({
         platform: partition.platform,
         workspace: partition.workspace,
         surface: partition.surface,
+        ...auditSurfaceModeStamp(binding),
         ...(binding.principalId ? { principalId: binding.principalId } : {}),
         action: "connector.card_posted",
         detail: { connector: catalogue.connector, options: labels },
@@ -166,6 +167,7 @@ const connectorEntry = defineTool({
       platform: partition.platform,
       workspace: partition.workspace,
       surface: partition.surface,
+      ...auditSurfaceModeStamp(binding),
       ...(binding.principalId ? { principalId: binding.principalId } : {}),
       route: "tool",
     };
@@ -177,6 +179,7 @@ const connectorEntry = defineTool({
         platform: partition.platform,
         workspace: partition.workspace,
         surface: partition.surface,
+        ...auditSurfaceModeStamp(binding),
         ...(binding.principalId ? { principalId: binding.principalId } : {}),
         action: "connector.oauth_url_issued",
         detail: { connector: catalogue.connector, subject: o.principal },
