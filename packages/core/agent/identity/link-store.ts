@@ -10,6 +10,7 @@ import type { LinkTransport } from "./link-flow.js";
 import { rawVaultSubject, sharedVaultSubject } from "./oauth-vault-share.js";
 import { purgeSubjectCredentials, purgeSubjectsCredentials, type CredentialPurgeOutcome } from "../credentials/purge.js";
 import { directoryLinkSetVaultArmed } from "../connections/connector-flags.js";
+import { endPersonHoldings, type HoldingsEnded } from "./person-holdings.js";
 import type { LinkChallengeRow, LinkChallengeStatus, LinkSetRow, LinkSetStatus, LinkedIdRow, LinkedIdStatus } from "../operational/store.js";
 import type { LinkSetPrincipal } from "./link-resolve.js";
 
@@ -37,7 +38,7 @@ function evidenceLabel(e: LinkEvidence): string {
 }
 
 export type LinkWriteResult =
-  | { readonly ok: true; readonly linkSetId: string; readonly note: string }
+  | { readonly ok: true; readonly linkSetId: string; readonly note: string; readonly holdings?: HoldingsEnded }
   | { readonly ok: false; readonly reason: string };
 
 export interface LinkedAccount {
@@ -488,20 +489,38 @@ export async function revokeLinkSet(input: { readonly org: string; readonly link
     const set = await store.getLinkSet(input.org, input.linkSetId);
     return { ok: false, reason: set ? `link-set "${input.linkSetId}" is already revoked.` : `no link-set "${input.linkSetId}".` };
   }
+  let confirmedMembers: readonly LinkedIdRow[] = [];
+  let listFailure: string | undefined;
+  try {
+    confirmedMembers = (await store.listLinkedIds(input.org, input.linkSetId)).filter((r) => r.status === "confirmed");
+  } catch (err) {
+    listFailure = `could not list the set's accounts: ${err instanceof Error ? err.message : String(err)}`;
+  }
   const tombstoned = await store.revokeLinkedIdsForSet(input.org, input.linkSetId, at);
   const purge = await purgeLinkSetCredentialsBestEffort(input.org, input.linkSetId);
+  const ended = await endPersonHoldings(input.org, confirmedMembers, input.actor);
+  const failures = [...(listFailure === undefined ? [] : [listFailure]), ...(ended.holdingFailures ?? [])];
+  const holdings: HoldingsEnded = {
+    grantsRevoked: ended.grantsRevoked,
+    browsersForgotten: ended.browsersForgotten,
+    ...(failures.length > 0 ? { holdingFailures: failures } : {}),
+  };
   await auditLink(input.org, "control", undefined, input.actor, "identity.link.revoked", {
     linkSetId: input.linkSetId,
     tombstoned,
     credentialsPurged: purge.purged,
     ...(purge.failed ? { purgeFailed: true } : {}),
+    ...holdings,
   });
   return {
     ok: true,
     linkSetId: input.linkSetId,
+    holdings,
     note:
-      `revoked link-set ${input.linkSetId} (${tombstoned} account(s) tombstoned, ${purge.purged} credential(s) purged)` +
-      (purge.failed ? " — the credential purge FAILED; the revoke stands, re-run purge_link_set_credentials." : "."),
+      `revoked link-set ${input.linkSetId} (${tombstoned} account(s) tombstoned, ${purge.purged} credential(s) purged, ` +
+      `${holdings.grantsRevoked} lent grant(s) revoked, ${holdings.browsersForgotten} personal browser(s) forgotten)` +
+      (purge.failed ? " — the credential purge FAILED; the revoke stands, re-run purge_link_set_credentials." : ".") +
+      (holdings.holdingFailures ? ` Not every holding ended: ${holdings.holdingFailures.join("; ")}.` : ""),
   };
 }
 

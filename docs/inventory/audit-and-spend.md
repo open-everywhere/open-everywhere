@@ -12,11 +12,11 @@ points INTO those; it does not replace them.
 
 ## The count
 
-**710 rows: 707 documented, 3 RETIRED, 0 UNDOCUMENTED.** Those three counts partition the rows by the
+**712 rows: 709 documented, 3 RETIRED, 0 UNDOCUMENTED.** Those three counts partition the rows by the
 value in the **`Documented by`** column, which is the only thing counted here: `RETIRED — …` marks a
 row whose sole record is the commit that removed its write site, and a row that names a manual page
 counts as documented whatever else is true of it. Section membership is a different question and
-gives a different number: 702 rows are live behaviours and the other five are the retired action
+gives a different number: 704 rows are live behaviours and the other five are the retired action
 names of § 15 — and two of those five are documented by a manual page, so they count under
 `documented` rather than under `RETIRED`. The `Tested by` column declares only an exemption; the coverage answer comes from `npm run coverage-board` (see [the coverage matrix](../dev/coverage-matrix.md)).
 
@@ -25,7 +25,7 @@ names of § 15 — and two of those five are documented by a manual page, so the
 | 1. The audit log — mechanism | 29 | 0 |
 | 2. The audit log — storage and the append-only posture | 31 | 0 |
 | 3. Reading the log — the control-plane routes | 11 | 0 |
-| 4. The audit action vocabulary | 351 | 0 |
+| 4. The audit action vocabulary | 353 | 0 |
 | 5. Spend — mechanism | 27 | 0 |
 | 6. Spend — gates and refusals | 34 | 0 |
 | 7. Spend — the ledger and the usage rows | 38 | 0 |
@@ -284,7 +284,7 @@ One row per distinct `action` string the code writes. The Id is that string. `<p
 | `browser.personal.act_granted` | `packages/core/agent/personal-browser/lifecycle.ts:451` | core/personal-browser | The person, by their own click on the act card, lets the agent click and type on one site in their browser until a stated time. | `docs/capabilities/personal-browser.md#governance` | ? |
 | `browser.personal.action` | `packages/core/agent/personal-browser/lifecycle.ts:401` | core/personal-browser | The agent takes one action in a person's browser; the row names the op and the site, never the text it typed. | `docs/capabilities/personal-browser.md#governance` | ? |
 | `browser.personal.closed` | `packages/core/agent/personal-browser/lifecycle.ts:193` | core/personal-browser | A person's browser box stops (closed, idle, cap, halt, unreachable, forget); the row carries the reason and the billed seconds and dollars. | `docs/capabilities/personal-browser.md#governance` | ? |
-| `browser.personal.forget` | `packages/core/agent/personal-browser/lifecycle.ts:584` | core/personal-browser | A person's browser and every login in it are deleted from the sandbox backend at their request. | `docs/capabilities/personal-browser.md#governance` | ? |
+| `browser.personal.forget` | `packages/core/agent/personal-browser/lifecycle.ts:470` | core/personal-browser | A person's browser and every login in it are deleted from the sandbox backend, at their request or when the person is offboarded. | `docs/capabilities/personal-browser.md#governance` | ? |
 | `browser.personal.handback` | `packages/core/agent/personal-browser/lifecycle.ts:440` | core/personal-browser | The controls of a person's browser return to the agent — by the person's card, on the watch page, or when the hold expires. | `docs/capabilities/personal-browser.md#governance` | ? |
 | `browser.personal.open` | `packages/core/agent/personal-browser/lifecycle.ts:325` | core/personal-browser | A person's browser box starts on the deployment's sandbox backend; the row names the backend, whether its firewall holds the host list, the host count and the cap, never the box key. | `docs/capabilities/personal-browser.md#governance` | ? |
 | `browser.personal.takeover` | `packages/core/agent/personal-browser/lifecycle.ts:425` | core/personal-browser | The person takes the controls of their browser (on the watch page, or handed them by the agent with a short reason); every agent action is refused until the hand-back. | `docs/capabilities/personal-browser.md#governance` | ? |
@@ -397,6 +397,8 @@ One row per distinct `action` string the code writes. The Id is that string. `<p
 | `identity.link.suggested` | `packages/core/agent/identity/link-store.ts:367` | core/identity | A directory match suggests an identity link. | `docs/how-it-works/identity.md#what-identity-linking-writes-to-the-audit-log` | ? |
 | `identity.link.suspended` | `packages/core/agent/identity/link-store.ts:455` | core/identity | A link set is suspended. | `docs/how-it-works/identity.md#what-identity-linking-writes-to-the-audit-log` | n/a: unannotated — lane F |
 | `identity.link.unlinked` | `packages/core/agent/identity/link-store.ts:435` | core/identity | An account is unlinked from its link set. | `docs/how-it-works/identity.md#both-transports-what-the-two-call-shape-is-worth` | ? |
+| `identity.offboard.applied` | `packages/core/agent/identity/offboarding.ts:11` | core/identity | A surface's deactivation report passes every gate, and the offboarding lever runs (a revoke, or the purge of an unlinked account). | `docs/how-it-works/identity.md#what-identity-linking-writes-to-the-audit-log` | ? |
+| `identity.offboard.refused` | `packages/core/agent/identity/offboarding.ts:12` | core/identity | A surface's deactivation report is not acted on, and the row names the reason and the manual lever. | `docs/how-it-works/identity.md#what-identity-linking-writes-to-the-audit-log` | ? |
 | `input_response.denied` | `packages/core/agent/approvals/input-response-floor.ts:4` | core/approvals | The input-response floor denies a response. | `docs/security/security-model.md#4-approval-gates-are-governance-not-a-crutch` | n/a: unannotated — lane F |
 | `input_response.dropped` | `packages/core/agent/channels/question-bridge.ts:54` | core/channels | The Notion question return drops an answer eve would not accept, and delivers the comment as an ordinary wake. | `docs/security/audit-and-provenance.md#turn-reply-and-window-rows` | n/a: unannotated — lane F |
 | `input_response.routed` | `packages/core/agent/channels/question-bridge.ts:53` | core/channels | The Notion question return routes a discussion comment to the session that asked, as an answer. | `docs/security/audit-and-provenance.md#turn-reply-and-window-rows` | n/a: no e2e leg drives it — the unified window's answer road is deleted (OPE-2389), and the Notion return leg writes the row; `packages/providers/notion/scripts/notion-question-return-test.ts` pins it |

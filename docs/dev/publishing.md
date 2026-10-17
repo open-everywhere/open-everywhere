@@ -8,7 +8,6 @@ This page is for the maintainer who publishes. A consumer who deploys the reposi
 that produced it. It is no longer the only copy — every library README states the same recipe in
 § Install (OPE-2206), and a consumer reads that one on the npm page.
 
-> **The tarballs are the release surface.** A published version is permanent and diffable by
 > anyone. Treat every publish as a public, irreversible act.
 
 ## What ships
@@ -268,6 +267,15 @@ npm run publish:preview -- --only packages/create
 npm run publish:preview -- --strict            # REVIEW rows fail the run too
 ```
 
+
+
+
+
+
+```bash
+```
+
+
 ### Rehearse the upgrade before you publish
 
 `oe upgrade --from <dir>` takes the release packed in `<dir>`, not the release on the registry. So
@@ -327,7 +335,6 @@ says what the command does.
 
 **One version per milestone.** Not one per batch merge, and not one per pull request.
 
-The reason is that a consumer reads the list of published versions as the history of this project:
 the tarballs and their diffs. A version per merge would publish that reader a stream of increments
 with no story, and every one of them is permanent.
 
@@ -438,6 +445,19 @@ public cut, together with whatever runs the build.
     [Rehearse the upgrade before you publish](#rehearse-the-upgrade-before-you-publish). To put it in
     the proof run, set `OE_PROOF_UPGRADE_REHEARSAL=1` on `scripts/proof-gates-parallel.sh`. The
     script then prints a `suite=test:upgrade-rehearsal` line.
-11. `npm publish --workspace <name>` per package. Publish `@open-everywhere/core` first: every
+11. Slack's live validator accepts the app manifest — quote the exit code (OPE-2502). Every `npm test`
+    already checks each manifest variant against Slack's published JSON schema
+    (`test:slack-manifest-schema`). The schema does not list Slack's scope or event names, so a
+    misspelt scope passes it. Slack's `apps.manifest.validate` checks those. It needs an **app
+    configuration token**: open <https://api.slack.com/apps>, find *Your App Configuration Tokens*,
+    and generate one for the dev workspace. Then pipe it in on standard input:
+    `pbpaste | npm run slack:manifest-validate-live --workspace @open-everywhere/provider-slack`.
+    The script reads the token from standard input only, never prints it, and creates no app. It
+    sends the same manifests the schema test checks. Exit 1 means Slack refused a manifest, and the
+    script prints each error with its JSON pointer. Exit 2 means the check could not run: the token
+    is missing or refused, the network or proxy failed, Slack rate-limited it twice, or Slack
+    answered with an error that is not about the manifest. Exit 2 says
+    nothing about the manifest, so run it again.
+12. `npm publish --workspace <name>` per package. Publish `@open-everywhere/core` first: every
     other package pins it.
-12. Install the result somewhere clean and run it, before announcing anything.
+13. Install the result somewhere clean and run it, before announcing anything.

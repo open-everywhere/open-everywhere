@@ -2106,6 +2106,10 @@
       "types": "./dist/agent/identity/offboarding.d.ts",
       "default": "./dist/agent/identity/offboarding.js"
     },
+    "./agent/identity/person-holdings.js": {
+      "types": "./dist/agent/identity/person-holdings.d.ts",
+      "default": "./dist/agent/identity/person-holdings.js"
+    },
     "./agent/identity/person-opt-out.js": {
       "types": "./dist/agent/identity/person-opt-out.d.ts",
       "default": "./dist/agent/identity/person-opt-out.js"

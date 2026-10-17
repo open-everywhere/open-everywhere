@@ -3,6 +3,7 @@ import { purgeSubjectsCredentials } from "../credentials/purge.js";
 import { admittedTenantsFromConfig, multiTenantPrincipalsAllowed, splitTenantRungs } from "../access/tenant-admission.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { revokeLinkSet } from "./link-store.js";
+import { endPersonHoldings } from "./person-holdings.js";
 import { rawVaultSubject } from "./oauth-vault-share.js";
 import { isTenantScopedPlatform, tryPrincipalKey } from "./principal-key.js";
 
@@ -85,6 +86,7 @@ export async function offboardDeactivatedAccount(report: DeactivationReport): Pr
       );
       if (elsewhere.length > 0) {
         const purge = await purgeSubjectsCredentials([rawVaultSubject(report.org, report.platform, report.tenant, report.nativeId)]);
+        const holdings = await endPersonHoldings(report.org, [{ platform: report.platform, tenant: report.tenant, nativeId: report.nativeId }], `surface-deactivation:${report.source}`);
         const blockedBy = elsewhere.map((m) => tryPrincipalKey(m.platform, m.tenant, m.nativeId) ?? `${m.platform} account "${m.nativeId}"`);
         return await refuse(
           OFFBOARD_REFUSAL.crossWorkspaceSet,
@@ -93,19 +95,21 @@ export async function offboardDeactivatedAccount(report: DeactivationReport): Pr
             (purge.failed
               ? `The purge of the deactivated account's own credentials FAILED; re-run it with purge_link_set_credentials or revoke_link_set.`
               : `The deactivated account's own credentials were purged.`),
-          { linkSetId: row.linkSetId, blockedBy, credentialsPurged: purge.purged, ...(purge.failed ? { purgeFailed: true } : {}) },
+          { linkSetId: row.linkSetId, blockedBy, credentialsPurged: purge.purged, ...(purge.failed ? { purgeFailed: true } : {}), ...holdings },
         );
       }
       const res = await revokeLinkSet({ org: report.org, linkSetId: row.linkSetId, actor });
       if (!res.ok) return await refuse("revoke-failed", res.reason);
-      await audit(report, OFFBOARD_APPLIED_ACTION, account, { outcome: "revoked", linkSetId: row.linkSetId, note: res.note });
+      await audit(report, OFFBOARD_APPLIED_ACTION, account, { outcome: "revoked", linkSetId: row.linkSetId, note: res.note, ...(res.holdings ?? {}) });
       return { kind: "revoked", linkSetId: row.linkSetId, note: res.note };
     }
     const purge = await purgeSubjectsCredentials([rawVaultSubject(report.org, report.platform, report.tenant, report.nativeId)]);
+    const holdings = await endPersonHoldings(report.org, [{ platform: report.platform, tenant: report.tenant, nativeId: report.nativeId }], `surface-deactivation:${report.source}`);
     await audit(report, OFFBOARD_APPLIED_ACTION, account, {
       outcome: "purged-unlinked",
       credentialsPurged: purge.purged,
       ...(purge.failed ? { purgeFailed: true } : {}),
+      ...holdings,
     });
     return { kind: "purged-unlinked", credentialsPurged: purge.purged };
   } catch (err) {

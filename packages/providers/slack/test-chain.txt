@@ -30,6 +30,7 @@ test:slack-reaction-ingest
 test:slack-chat-audit
 test:slack-scope-audit
 test:slack-app-manifest
+test:slack-manifest-schema
 test:slack-offboarding
 test:slack-as-you
 test:slack-workspace-roster

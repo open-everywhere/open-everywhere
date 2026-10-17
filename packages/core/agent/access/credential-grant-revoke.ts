@@ -72,3 +72,13 @@ async function tellBorrowingRoom(org: string, grant: CredentialGrantRow, nowMs: 
   if (ask === null) return "no_target";
   return await postGrantResolution(ask, { kind: "revoked" }, nowMs);
 }
+
+export async function cascadeRevokeOwnerGrants(stamps: GrantAuditStamps, ownerPrincipalId: string, revokerPrincipalId: string, nowMs: number): Promise<number> {
+  let ended = 0;
+  for (const holding of await ownerLiveGrants(stamps.org, ownerPrincipalId, nowMs)) {
+    if (!(await revokeCredentialGrant(stamps, holding.grant.id, revokerPrincipalId, "cascade", nowMs))) continue;
+    ended++;
+    await tellBorrowingRoom(stamps.org, holding.grant, nowMs).catch(() => "failed" as const);
+  }
+  return ended;
+}

@@ -18,13 +18,15 @@ process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: "acme" });
 
 const { offboardDeactivatedAccount, OFFBOARD_REFUSAL, OFFBOARD_APPLIED_ACTION, OFFBOARD_REFUSED_ACTION } = await import("../agent/identity/offboarding.js");
-const { ensureLinkSet, suggestLinkedId, confirmLinkedId } = await import("../agent/identity/link-store.js");
+const { ensureLinkSet, suggestLinkedId, confirmLinkedId, revokeLinkSet } = await import("../agent/identity/link-store.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { registerCredentialPurgeHook } = await import("../agent/credentials/purge.js");
 const { rawVaultSubject, sharedVaultSubject } = await import("../agent/identity/oauth-vault-share.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { registerConfig } = await import("../agent/access/config.js");
 const { defineDomain } = await import("../agent/memory/domain.js");
+
+const { persistKeyFor } = await import("../agent/personal-browser/lifecycle.js");
 
 type DeactivationReport = import("../agent/identity/offboarding.js").DeactivationReport;
 
@@ -65,6 +67,54 @@ async function personWith(linkSetId: string, accounts: readonly { platform: stri
   }
 }
 
+async function seedHoldings(tenant: string, ownerNativeId: string): Promise<void> {
+  const owner = `slack/${tenant}/${ownerNativeId}`;
+  const now = Date.now();
+  await getOperationalStore().addCredentialGrant(ORG, {
+    id: `grant-${ownerNativeId}`,
+    askId: `ask-${ownerNativeId}`,
+    requesterPrincipalId: `slack/${tenant}/U0ROOM`,
+    ownerPrincipalId: owner,
+    ownerSlug: ownerNativeId.toLowerCase(),
+    connector: "notion",
+    verb: "read",
+    resource: "page",
+    mcpTool: "notion-fetch",
+    frozenArgs: { id: `page-${ownerNativeId}` },
+    toolName: `grant__${ownerNativeId.toLowerCase()}_notion__notion_fetch_page`,
+    scopeKey: "oe-grant-room::eng",
+    mode: "standing",
+    tier: "read",
+    status: "active",
+    purpose: "fixture",
+    createdAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + 86_400_000).toISOString(),
+  });
+  const surface = `D0${ownerNativeId}`;
+  const state = {
+    v: 1,
+    org: ORG,
+    person: owner,
+    principalId: ownerNativeId,
+    platform: "slack",
+    dm: { channelId: surface },
+    partition: { org: ORG, platform: "slack", workspace: tenant, surface, workspaceKey: `slack/${tenant}`, surfaceKey: `slack/${tenant}/${surface}` },
+    persistKey: persistKeyFor(ORG, owner),
+    lock: { holder: "agent", since: now },
+    acts: {},
+    links: {},
+    sessions: {},
+  };
+  await getOperationalStore().casPersonalBrowser(ORG, owner, JSON.stringify(state), new Date(now).toISOString(), null);
+}
+
+async function holdingsOf(tenant: string, ownerNativeId: string): Promise<{ grant: string | undefined; browser: boolean }> {
+  return {
+    grant: (await getOperationalStore().getCredentialGrant(ORG, `grant-${ownerNativeId}`))?.status,
+    browser: (await getOperationalStore().getPersonalBrowser(ORG, `slack/${tenant}/${ownerNativeId}`)) !== null,
+  };
+}
+
 let confirmCalls = 0;
 function report(over: Partial<DeactivationReport> & Pick<DeactivationReport, "nativeId">): DeactivationReport {
   return {
@@ -98,6 +148,8 @@ async function lastRow(action: string, nativeId: string): Promise<Record<string,
     { platform: "discord", tenant: "", nativeId: "300000000000000104" },
   ]);
   ok((await setStatus("ls-hazel")) === "active", "precondition: the set is active");
+  await seedHoldings(OUR, "U0HAZEL");
+  ok(JSON.stringify(await holdingsOf(OUR, "U0HAZEL")) === JSON.stringify({ grant: "active", browser: true }), "precondition: a live lent grant and a browser row");
   purged.length = 0;
   const outcome = await offboardDeactivatedAccount(report({ nativeId: "U0HAZEL" }));
   ok(outcome.kind === "revoked", `outcome is revoked (got ${JSON.stringify(outcome)})`);
@@ -108,6 +160,10 @@ async function lastRow(action: string, nativeId: string): Promise<Record<string,
   ok(purged.includes(rawVaultSubject(ORG, "slack", OUR, "U0HAZEL")), "…and the deactivated account's own subject");
   const applied = await lastRow(OFFBOARD_APPLIED_ACTION, "U0HAZEL");
   ok(applied?.["outcome"] === "revoked" && applied?.["linkSetId"] === "ls-hazel" && applied?.["source"] === "slack:user_change", "an identity.offboard.applied row records the revoke and its source");
+  const held = await holdingsOf(OUR, "U0HAZEL");
+  ok(held.grant === "revoked", `🔴 the credential grant the person lent is REVOKED (got ${held.grant})`);
+  ok(!held.browser, "🔴 the person's personal browser row is forgotten");
+  ok(applied?.["grantsRevoked"] === 1 && applied?.["browsersForgotten"] === 1 && applied?.["holdingFailures"] === undefined, "…and the applied row counts both, with no failure");
   const revokedRows = await readAudit({ org: ORG, action: "identity.link.revoked", limit: 50 });
   ok(revokedRows.some((r) => (r.detail as { linkSetId?: string } | undefined)?.linkSetId === "ls-hazel"), "the lever's own identity.link.revoked row is written too");
 }
@@ -128,11 +184,17 @@ async function lastRow(action: string, nativeId: string): Promise<Record<string,
 
 {
   console.log("2b. a partner workspace's own deactivation does not revoke a set that also holds ours:");
+  await seedHoldings(PARTNER, "U0IVYPARTNER");
+  await seedHoldings(OUR, "U0IVY");
   purged.length = 0;
   const outcome = await offboardDeactivatedAccount(report({ deliveringTenant: PARTNER, tenant: PARTNER, nativeId: "U0IVYPARTNER" }));
   ok(outcome.kind === "refused" && outcome.reason === OFFBOARD_REFUSAL.crossWorkspaceSet, `refused as cross-workspace-set (got ${JSON.stringify(outcome)})`);
   ok((await setStatus("ls-ivy")) === "active", "🔴 the internal person's set is still ACTIVE");
   ok(purged.length === 1 && purged[0] === rawVaultSubject(ORG, "slack", PARTNER, "U0IVYPARTNER"), "only the deactivated partner account's own subject is purged");
+  ok(JSON.stringify(await holdingsOf(PARTNER, "U0IVYPARTNER")) === JSON.stringify({ grant: "revoked", browser: false }), "🔴 the deactivated account's own lent grant is revoked and its browser forgotten");
+  ok(JSON.stringify(await holdingsOf(OUR, "U0IVY")) === JSON.stringify({ grant: "active", browser: true }), "🔴 the blocking account in our workspace keeps its grant and its browser");
+  const row = await lastRow(OFFBOARD_REFUSED_ACTION, "U0IVYPARTNER");
+  ok(row?.["grantsRevoked"] === 1 && row?.["browsersForgotten"] === 1, `the refusal row counts the deactivated account's own holdings (got ${JSON.stringify(row)})`);
 }
 
 {
@@ -190,6 +252,7 @@ async function lastRow(action: string, nativeId: string): Promise<Record<string,
 {
   console.log("4. an unconfirmed deactivation revokes nothing:");
   await personWith("ls-kit", [{ platform: "slack", tenant: OUR, nativeId: "U0KIT" }]);
+  await seedHoldings(OUR, "U0KIT");
   const active = await offboardDeactivatedAccount(report({ nativeId: "U0KIT", confirm: async () => ({ deactivated: false, reason: "Slack users.info says the account is active" }) }));
   ok(active.kind === "refused" && active.reason === OFFBOARD_REFUSAL.unconfirmed, `a re-read that says active refuses (got ${JSON.stringify(active)})`);
   const threw = await offboardDeactivatedAccount(
@@ -202,6 +265,7 @@ async function lastRow(action: string, nativeId: string): Promise<Record<string,
   );
   ok(threw.kind === "refused" && threw.reason === OFFBOARD_REFUSAL.unconfirmed, "a re-read that throws refuses — an outage is not evidence");
   ok((await setStatus("ls-kit")) === "active", "🔴 the set is still active");
+  ok(JSON.stringify(await holdingsOf(OUR, "U0KIT")) === JSON.stringify({ grant: "active", browser: true }), "🔴 an active person keeps the grant they lend and their browser");
   const row = await lastRow(OFFBOARD_REFUSED_ACTION, "U0KIT");
   ok(String(row?.["why"] ?? "").includes("revoke_link_set"), "the refusal row tells an admin the manual lever");
 }
@@ -217,11 +281,13 @@ async function lastRow(action: string, nativeId: string): Promise<Record<string,
 }
 
 {
-  console.log("6. an account on no link-set still loses its stored credentials:");
+  console.log("6. an account on no link-set still loses its stored credentials, grants and browser:");
+  await seedHoldings(OUR, "U0SOLO");
   purged.length = 0;
   const outcome = await offboardDeactivatedAccount(report({ nativeId: "U0SOLO" }));
   ok(outcome.kind === "purged-unlinked" && outcome.credentialsPurged === 1, `purged-unlinked (got ${JSON.stringify(outcome)})`);
   ok(purged[0] === rawVaultSubject(ORG, "slack", OUR, "U0SOLO"), "the account's own subject is purged");
+  ok(JSON.stringify(await holdingsOf(OUR, "U0SOLO")) === JSON.stringify({ grant: "revoked", browser: false }), "🔴 its lent grant is revoked and its browser forgotten");
   ok((await lastRow(OFFBOARD_APPLIED_ACTION, "U0SOLO"))?.["outcome"] === "purged-unlinked", "an identity.offboard.applied row records it");
 }
 
@@ -230,6 +296,22 @@ async function lastRow(action: string, nativeId: string): Promise<Record<string,
   const again = await offboardDeactivatedAccount(report({ nativeId: "U0HAZEL" }));
   ok(again.kind === "purged-unlinked", `a repeat finds the account tombstoned and only re-runs the idempotent purge (got ${JSON.stringify(again)})`);
   ok((await setStatus("ls-hazel")) === "revoked", "the set stays revoked");
+}
+
+{
+  console.log("7b. revokeLinkSet itself ends the holdings of every CONFIRMED account, and never a suggested one:");
+  await personWith("ls-ray", [{ platform: "slack", tenant: OUR, nativeId: "U0RAY" }]);
+  const sug = await suggestLinkedId({ org: ORG, linkSetId: "ls-ray", account: { platform: "slack", tenant: OUR, nativeId: "U0RAYSUG" }, evidence: { kind: "config-import", note: "test" } });
+  ok(sug.ok, "fixture: U0RAYSUG only SUGGESTED onto ls-ray");
+  await seedHoldings(OUR, "U0RAY");
+  await seedHoldings(OUR, "U0RAYSUG");
+  const res = await revokeLinkSet({ org: ORG, linkSetId: "ls-ray", actor: "admin:test" });
+  ok(res.ok && res.holdings?.grantsRevoked === 1 && res.holdings.browsersForgotten === 1 && res.holdings.holdingFailures === undefined, `the manual lever ends ONE account's holdings (got ${JSON.stringify(res)})`);
+  ok(JSON.stringify(await holdingsOf(OUR, "U0RAY")) === JSON.stringify({ grant: "revoked", browser: false }), "🔴 the confirmed account's lent grant is revoked and its browser forgotten");
+  ok(JSON.stringify(await holdingsOf(OUR, "U0RAYSUG")) === JSON.stringify({ grant: "active", browser: true }), "🔴 the SUGGESTED account keeps its grant and its browser — a suggestion does not name the person");
+  const rows = await readAudit({ org: ORG, action: "identity.link.revoked", limit: 50 });
+  const detail = rows.find((r) => (r.detail as { linkSetId?: string } | undefined)?.linkSetId === "ls-ray")?.detail as Record<string, unknown> | undefined;
+  ok(detail?.["grantsRevoked"] === 1 && detail?.["browsersForgotten"] === 1, "the lever's identity.link.revoked row counts them");
 }
 
 {

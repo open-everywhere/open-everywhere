@@ -228,6 +228,8 @@
     "test:slack-card-wire-text": "NODE_NO_WARNINGS=1 tsx scripts/slack-card-wire-text-test.ts",
     "test:slack-scope-audit": "NODE_NO_WARNINGS=1 tsx scripts/slack-scope-audit-test.ts",
     "test:slack-app-manifest": "NODE_NO_WARNINGS=1 tsx scripts/slack-app-manifest-test.ts",
+    "test:slack-manifest-schema": "NODE_NO_WARNINGS=1 tsx scripts/slack-manifest-schema-test.ts",
+    "slack:manifest-validate-live": "NODE_NO_WARNINGS=1 tsx scripts/slack-manifest-validate-live.ts",
     "test:slack-offboarding": "NODE_NO_WARNINGS=1 tsx scripts/slack-offboarding-test.ts",
     "test:slack-as-you": "NODE_NO_WARNINGS=1 tsx scripts/slack-as-you-test.ts",
     "test:slack-bot-ask": "NODE_NO_WARNINGS=1 tsx scripts/slack-bot-ask-test.ts",
@@ -279,6 +281,8 @@
   },
   "devDependencies": {
     "@types/node": "latest",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
     "tsx": "latest",
     "typescript": "latest"
   }

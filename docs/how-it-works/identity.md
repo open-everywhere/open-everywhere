@@ -428,7 +428,11 @@ challenge. Every mutation appends an audit row (`identity.link.*`).
 **Automatic offboarding when a surface reports a deactivation (OPE-2423).** When Slack sends a
 `user_change` event whose user is `deleted`, OE runs the same `revoke_link_set` lever by itself:
 the person's link-set is revoked, every account on it is tombstoned, and the credentials stored
-against it are purged (below). This is the one terminal revoke a machine signal can cause, so every
+against it are purged (below). The lever also ends the two holdings that live outside the vault
+(OPE-2504): it revokes every credential grant a confirmed account on the set lends, and it forgets
+each confirmed account's personal browser, which deletes the saved profile and its logins on the box
+backend. The lever spares a `suggested` account on the set, because a suggestion does not prove the
+account is this person. Gate 4 below covers the deactivated account itself. This is the one terminal revoke a machine signal can cause, so every
 gate fails closed, and a refusal leaves things exactly as an admin would find them without it:
 
 1. **The same workspace.** The deactivated account must belong to the workspace that delivered the
@@ -441,13 +445,15 @@ gate fails closed, and a refusal leaves things exactly as an admin would find th
    a forged or replayed event, or one that a reactivation has overtaken, causes nothing. Without the
    `users:read` scope every report refuses.
 4. **A proven link.** Only a `confirmed` account revokes its set. An account with no link-set, or
-   only a `suggested` one, has its own stored credentials purged and nothing else.
+   only a `suggested` one, has its own stored credentials purged, its lent grants revoked and its
+   personal browser forgotten, and nothing else.
 5. **One workspace's word covers one workspace.** The whole-set revoke is refused
    (`cross-workspace-set`) when the set also holds a confirmed account on the same platform in
    another workspace. Under the `identity.allowMultiTenantPrincipals` opt-in — the only posture in
    which an admitted Slack workspace can be a partner's — it is refused when the set holds ANY
    confirmed account outside the reporting workspace, Teams and Discord included. Only the
-   deactivated account's own credentials are purged, and an admin decides the rest. So a partner
+   deactivated account's own credentials are purged, its own lent grants revoked and its own
+   personal browser forgotten, and an admin decides the rest. So a partner
    workspace cannot revoke a person's standing in ours.
 
 A deactivated **guest** of an admitted workspace is offboarded exactly like a member. Each report
@@ -658,10 +664,10 @@ credentials. Read them with the [audit trail](../security/audit-and-provenance.m
 | `identity.link.suggested` | A directory sync proposes an account for a set. | The set id and the evidence label. A suggestion is **not** a link: a `suggested` row stays invisible to link resolution until a person confirms it. |
 | `identity.link.suspended` | An operator puts a set on hold. | The set id. The row names the operator as the principal. |
 | `identity.link.reactivated` | An operator lifts that hold. | The set id, from the same writer and the same call. |
-| `identity.link.revoked` | A set is revoked — the terminal offboarding lever. | The set id, how many account ids were tombstoned, how many credentials the purge destroyed, and a `purgeFailed` flag when the purge did not complete. |
+| `identity.link.revoked` | A set is revoked — the terminal offboarding lever. | The set id, how many account ids were tombstoned, how many credentials the purge destroyed, and a `purgeFailed` flag when the purge did not complete. Also how many lent credential grants were revoked (`grantsRevoked`), how many personal browsers were forgotten (`browsersForgotten`), and `holdingFailures` when one of those did not complete. |
 | `identity.link.credentials_purged` | A set's credentials are purged without revoking the set. | The set id, the set's status at the time, the purged count, and the same `purgeFailed` flag. |
-| `identity.offboard.applied` | A surface's deactivation report passed every gate and the lever ran (OPE-2423). | The account, the source (`slack:user_change`), and the outcome: `revoked` with the set id, or `purged-unlinked` with the purge count. A `revoked` outcome also writes `identity.link.revoked`. |
-| `identity.offboard.refused` | A deactivation report was not acted on. | The account, the source, the reason (`external-workspace`, `unadmitted-tenant`, `unconfirmed`, `cross-workspace-set`, `revoke-failed`, `error`), and a sentence that ends by naming the manual lever. A `cross-workspace-set` row also carries the set id, the accounts that blocked the revoke (`blockedBy`), the account's own purge count, and `purgeFailed` when that purge did not complete. |
+| `identity.offboard.applied` | A surface's deactivation report passed every gate and the lever ran (OPE-2423). | The account, the source (`slack:user_change`), and the outcome: `revoked` with the set id, or `purged-unlinked` with the purge count. Both carry `grantsRevoked`, `browsersForgotten` and, on a failure, `holdingFailures`. A `revoked` outcome also writes `identity.link.revoked`. |
+| `identity.offboard.refused` | A deactivation report was not acted on. | The account, the source, the reason (`external-workspace`, `unadmitted-tenant`, `unconfirmed`, `cross-workspace-set`, `revoke-failed`, `error`), and a sentence that ends by naming the manual lever. A `cross-workspace-set` row also carries the set id, the accounts that blocked the revoke (`blockedBy`), the account's own purge count, and `purgeFailed` when that purge did not complete, plus `grantsRevoked`, `browsersForgotten` and, on a failure, `holdingFailures` for the deactivated account's own holdings. |
 
 🔴 **A control-plane mutation writes two rows, not one.** The store writes the `identity.link.*` row
 above because it is the writer that changed the table. The control plane then writes its own
