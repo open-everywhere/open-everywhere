@@ -611,7 +611,26 @@ function throwingFetch(): typeof fetch {
     registerSurfaceCredentialProbe("discord", () => true);
     surfaces = await heartbeatSurfaces("instance-surfaces-g");
     ok(surfaces.filter((s) => s === "discord").length === 1, "surfaces: replacing an already-registered probe still reports its platform exactly once");
+
+    registerSurfaceCredentialProbe("slack", async () => true);
+    registerSurfaceCredentialProbe("linear", async () => false);
+    registerSurfaceCredentialProbe("github", async () => {
+      throw new Error("store unreachable");
+    });
+    surfaces = await heartbeatSurfaces("instance-surfaces-h");
+    ok(surfaces.includes("slack"), "surfaces: an async probe that resolves true reports its surface");
+    ok(!surfaces.includes("linear"), "surfaces: an async probe that resolves false does NOT report its surface (a Promise is not a yes)");
+    ok(!surfaces.includes("github"), "surfaces: a rejecting async probe reports absent, and the heartbeat still sends");
+
+    registerSurfaceCredentialProbe("teams", () => new Promise<boolean>(() => {}));
+    const started = Date.now();
+    surfaces = await heartbeatSurfaces("instance-surfaces-i");
+    const waited = Date.now() - started;
+    ok(!surfaces.includes("teams"), "surfaces: a probe that never settles reports absent");
+    ok(surfaces.includes("slack"), "surfaces: a hung probe does not cost the other surfaces their answers");
+    ok(waited < 10_000, `surfaces: a hung probe delays the heartbeat by its bound only (waited ${waited} ms)`);
   } finally {
+    registerSurfaceCredentialProbe("teams", () => false);
     if (savedDiscordToken === undefined) delete process.env.DISCORD_BOT_TOKEN;
     else process.env.DISCORD_BOT_TOKEN = savedDiscordToken;
     if (savedGithubAppId === undefined) delete process.env.OE_GITHUB_APP_ID;

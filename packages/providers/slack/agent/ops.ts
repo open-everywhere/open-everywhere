@@ -4,7 +4,6 @@ import {
   declaredMcpServers,
   getSettings,
   registerSurfaceAppManifest,
-  registerSurfaceCredentialProbe,
 } from "@open-everywhere/core/agent/adapter-api-ops.js";
 import { SLACK_AS_YOU_NAME } from "./slack-as-you.js";
 import {
@@ -36,5 +35,4 @@ export function registerSlackOps(): void {
     template: (opts) => slackAppManifestTemplate(slackManifestOptionsFromSettings(opts)),
     appNameMax: SLACK_APP_NAME_MAX,
   });
-  registerSurfaceCredentialProbe("slack", () => Boolean(process.env.SLACK_BOT_TOKEN));
 }

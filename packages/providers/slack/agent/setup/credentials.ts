@@ -113,6 +113,12 @@ export async function slackBotToken(deps: SlackCredentialDeps = {}): Promise<str
   return (await resolveSlackSecret(SLACK_BOT_TOKEN_ENV, fromEnv, SLACK_BOT_TOKEN_REF, deps))?.value;
 }
 
+export async function slackCredentialsConfigured(deps: SlackCredentialDeps = {}): Promise<boolean> {
+  const env = deps.env ?? process.env;
+  if ((env[SLACK_BOT_TOKEN_ENV] ?? "").trim().length > 0) return true;
+  return (await slackBotToken(deps)) !== undefined;
+}
+
 export function slackSecretEnvPresent(deps: SlackCredentialDeps = {}): { readonly signingSecret: boolean; readonly botToken: boolean } {
   const env = deps.env ?? process.env;
   return {

@@ -210,3 +210,4 @@ test:personal-browser-recorder
 test:card-budget
 test:reader-check
 test:docs-generate-merge
+test:slack-credential-probe

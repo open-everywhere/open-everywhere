@@ -51,6 +51,7 @@ import {
   resetSlackCredentialNotices,
   resolveSlackSecret,
   slackBotToken,
+  slackCredentialsConfigured,
   slackSigningSecret,
 } from "../agent/setup/credentials.js";
 
@@ -683,6 +684,21 @@ console.log("  4. credential precedence");
     (await slackSigningSecret({ vault: stored, env: { SLACK_SIGNING_SECRET: "signing-from-the-env" } as NodeJS.ProcessEnv })) === "signing-from-the-env",
     "slackSigningSecret prefers the env",
   );
+
+  ok(await slackCredentialsConfigured({ vault: stored, env: {} as NodeJS.ProcessEnv }), "slackCredentialsConfigured: a store-only bot token counts as configured");
+  ok(
+    await slackCredentialsConfigured({ vault: memoryVault(), env: { SLACK_BOT_TOKEN: "xoxb-from-the-env" } as NodeJS.ProcessEnv }),
+    "slackCredentialsConfigured: an env-only bot token counts as configured",
+  );
+  ok(!(await slackCredentialsConfigured({ vault: memoryVault(), env: {} as NodeJS.ProcessEnv })), "slackCredentialsConfigured: neither home ⇒ not configured");
+  ok(!(await slackCredentialsConfigured({ vault: brokenVault(), env: {} as NodeJS.ProcessEnv })), "slackCredentialsConfigured: an unreachable store and no env ⇒ not configured");
+  resetSlackCredentialNotices();
+  const hungVault = { ...memoryVault(), read: () => new Promise<string | null>(() => {}) } as EncryptedKvVault;
+  const envAnswer = await Promise.race([
+    slackCredentialsConfigured({ vault: hungVault, env: { SLACK_BOT_TOKEN: "xoxb-from-the-env" } as NodeJS.ProcessEnv }),
+    new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 1_000)),
+  ]);
+  ok(envAnswer === true, "slackCredentialsConfigured: a set env var answers true without waiting on the store");
 }
 
 {

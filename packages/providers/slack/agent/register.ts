@@ -15,6 +15,7 @@ import {
   registerProviderDocs,
   registerWebhookVerifier,
   registerBootNotice,
+  registerSurfaceCredentialProbe,
   registerSurfaceStatusReporter,
   registerMemoryWriteObserver,
   registerDomainMembershipProbe,
@@ -51,6 +52,7 @@ import { liveSlackBotAskDeps, slackBotAskProbe } from "./channels/slack-bot-ask.
 import { resolveBotIdentity } from "./channels/slack-front.js";
 import { announceSlackSetupCode } from "./setup/claim.js";
 import { reopenSlackSetup, slackInstallState } from "./setup/install-state.js";
+import { slackCredentialsConfigured } from "./setup/credentials.js";
 
 export function registerSlackProvider(): void {
   registerIdentityMapper("slack", bindSlack);
@@ -84,6 +86,7 @@ export function registerSlackProvider(): void {
   registerSlackOps();
   registerFriendlyNameResolver("slack", slackFriendlyNameResolver());
   registerSurfaceStatusReporter("slack", () => slackSurfaceStatus());
+  registerSurfaceCredentialProbe("slack", () => slackCredentialsConfigured());
   registerWebhookVerifier(slackWebhookVerifier);
   registerProviderDocs("slack", PROVIDER_DOCS);
   registerBootNotice("slack-setup-code", announceSlackSetupCode);

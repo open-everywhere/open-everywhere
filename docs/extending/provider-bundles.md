@@ -54,7 +54,7 @@ owns the implementation):
 | Read adapter | `registerReadAdapter(adapter)` | `channels/channel-read.ts` | how `read_channel`/thread reads render this platform's history. It receives the platform's own container id, resolved host-side from the turn's own binding — the model names no container (see the glossary's **container fence**). A CHAT surface also implements the optional `refutedAuthorIds` member — see below |
 | Reaction surface | `registerReactionSurface(platform)` | `channels/reaction-ingest.ts` | declares that this platform's inbound reaction path reaches `ingestReaction`. `lint:surface-parity` cross-checks the declaration against the bundle's `reaction-feedback-ingest` row — see [status](#status--whats-actually-extracted) |
 | Routine dispatch | `registerRoutineDispatch(platform, provider)` | `schedules/routine-dispatch.ts` | how a fired `create_routine`/cron routine's stored target resolves to this platform's channel module + adapter receive-target (only a platform whose channel supports a PROACTIVE post-back needs this — added OPE-114 stage 4) |
-| Credential-presence probe | `registerSurfaceCredentialProbe(platform, probe)` | `observability/telemetry.ts` | reports this platform "configured" for the heartbeat diagnostic without core hardcoding the vendor's env-var name (added OPE-114 stage 4) |
+| Credential-presence probe | `registerSurfaceCredentialProbe(platform, probe)` | `observability/telemetry.ts` | reports this platform "configured" for the heartbeat diagnostic without core hardcoding the vendor's env-var name (added OPE-114 stage 4). The probe may be async, for a credential the store holds (OPE-2241) |
 
 **Your surface gets the opaque channel key for free.** The model addresses a container by one
 `ch_…` **channel key**, never by a vendor id and never by naming a platform. The single core wake
@@ -394,11 +394,13 @@ standard plane contracts:
   instructions render the readable-channel list. Those resolve through this one registry with
   fail-closed defaults (unregistered ⇒ exactly the "Slack not configured" behaviour: posts
   return undefined, the internal-channel gate stays closed, dispatch dry-runs).
-- **Ops-plane registries**: `registerQuickstartSurfaceGoal` (ops/quickstart.ts) and
-  `registerSurfaceCredentialProbe` (observability/telemetry.ts) let the bundle own its vendor env-key
-  knowledge (`SLACK_BOT_TOKEN`/`SLACK_SIGNING_SECRET` are its rule-6 fingerprints). The shipped
-  ops MCP entry is now the APP-tier `scripts/ops-mcp.ts`, which registers the bundles' light ops
-  arms (`agent/ops.ts` — no channel graph) before serving.
+- **Ops-plane registries**: `registerSurfaceAppManifest` (ops/surface-manifest.ts) in the light ops
+  arm, and `registerSurfaceCredentialProbe` (observability/telemetry.ts) in `register.ts`, let the
+  bundle own its vendor env-key knowledge (`SLACK_BOT_TOKEN`/`SLACK_SIGNING_SECRET` are its rule-6
+  fingerprints). The credential probe registers in `register.ts` and not in the light arm because it
+  reads the credential store, which the light door cannot reach (OPE-2241). The shipped ops MCP entry
+  is now the APP-tier `scripts/ops-mcp.ts`, which registers the bundles' light ops arms
+  (`agent/ops.ts` — no channel graph) before serving.
 
 With slack landed the OPE-114 extraction sweep is COMPLETE: every provider ships as a bundle and
 core registers none inline. External npm distribution is still gated on the OPE-23 publishing

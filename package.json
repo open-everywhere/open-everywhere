@@ -221,6 +221,7 @@
     "test:teams-approvals": "NODE_NO_WARNINGS=1 tsx scripts/teams-approvals-test.ts",
     "test:teams-parity": "NODE_NO_WARNINGS=1 tsx scripts/teams-parity-test.ts",
     "test:linear-integration": "NODE_NO_WARNINGS=1 tsx scripts/linear-provider-integration-test.ts",
+    "test:slack-credential-probe": "NODE_NO_WARNINGS=1 tsx scripts/slack-credential-probe-test.ts",
     "test:linear-external-policy-room": "NODE_NO_WARNINGS=1 tsx scripts/linear-external-policy-room-test.ts",
     "test:linear-external-policy-author": "NODE_NO_WARNINGS=1 tsx scripts/linear-external-policy-author-test.ts",
     "test:linear-chat-nonmember-taint": "NODE_NO_WARNINGS=1 tsx scripts/linear-chat-nonmember-taint-test.ts",

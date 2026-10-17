@@ -284,21 +284,35 @@ export async function initTelemetry(): Promise<void> {
 const HEARTBEAT_INTERVAL_MS = 6 * 60 * 60 * 1000;
 let lastHeartbeatAt = 0;
 
-const SURFACE_CREDENTIAL_PROBES: Record<string, () => boolean> = {};
+const SURFACE_CREDENTIAL_PROBES: Record<string, () => boolean | Promise<boolean>> = {};
 
-export function registerSurfaceCredentialProbe(platform: string, probe: () => boolean): void {
+export function registerSurfaceCredentialProbe(platform: string, probe: () => boolean | Promise<boolean>): void {
   if (!admitProviderRegistration(platform, "surface-credential-probe")) return;
   SURFACE_CREDENTIAL_PROBES[platform] = probe;
 }
 
-function surfacesWithCreds(): string[] {
-  const present = new Set<string>();
-  for (const [platform, probe] of Object.entries(SURFACE_CREDENTIAL_PROBES)) {
-    try {
-      if (probe()) present.add(platform);
-    } catch {
-    }
+const SURFACE_PROBE_TIMEOUT_MS = 2_000;
+
+async function probeReportsPresent(probe: () => boolean | Promise<boolean>): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), SURFACE_PROBE_TIMEOUT_MS);
+    });
+    return (await Promise.race([Promise.resolve().then(probe), timeout])) === true;
+  } catch {
+    return false;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
+}
+
+async function surfacesWithCreds(): Promise<string[]> {
+  const present = new Set<string>();
+  const answers = await Promise.all(
+    Object.entries(SURFACE_CREDENTIAL_PROBES).map(async ([platform, probe]) => [platform, await probeReportsPresent(probe)] as const),
+  );
+  for (const [platform, isPresent] of answers) if (isPresent) present.add(platform);
   try {
     if ((getConfig().loadWebhooks?.() ?? []).length > 0) present.add("webhooks");
   } catch {
@@ -330,13 +344,25 @@ function operationalProviderId(): string {
   }
 }
 
+let pendingHeartbeat: Promise<void> | undefined;
+
 export function maybeHeartbeat(now: number = Date.now()): void {
   if (!cachedInstance) return;
   if (now - lastHeartbeatAt < HEARTBEAT_INTERVAL_MS) return;
   lastHeartbeatAt = now;
+  const run = emitHeartbeat()
+    .catch(() => {})
+    .finally(() => {
+      if (pendingHeartbeat === run) pendingHeartbeat = undefined;
+    });
+  pendingHeartbeat = run;
+}
+
+async function emitHeartbeat(): Promise<void> {
+  const surfaces = await surfacesWithCreds();
   const appInfo = getAppInfo();
   emitTelemetry("oe.instance.heartbeat", {
-    "oe.surfaces": surfacesWithCreds(),
+    "oe.surfaces": surfaces,
     "oe.memory_provider": memoryProviderId(),
     "oe.operational_provider": operationalProviderId(),
     "oe.model.primary": appInfo.primaryModel,
@@ -481,6 +507,7 @@ export function emitTelemetry(eventName: string, attrs: TelemetryAttrs = {}): vo
 }
 
 export async function flushTelemetry(): Promise<void> {
+  if (pendingHeartbeat) await pendingHeartbeat;
   const cfg = readTelemetryConfig();
   if (flushTimer) {
     clearTimeout(flushTimer);
@@ -516,6 +543,7 @@ export function __resetTelemetryForTest(overrides: { fetchImpl?: typeof fetch } 
   initStarted = false;
   ephemeralState = null;
   lastHeartbeatAt = 0;
+  pendingHeartbeat = undefined;
 }
 
 export function __queueLengthForTest(): number {
