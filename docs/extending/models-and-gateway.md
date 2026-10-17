@@ -58,6 +58,11 @@ one outage. When the primary route fails (an outage, a refusal, no answer in 40 
 chunk goes to the fallback route. The table is `TRANSCRIPTION` in `agent/model/stacks.ts`; the
 transports are `packages/adapters/agent/model/transcription-routes.ts`.
 
+The same role hears **voice clips** sent to the agent in chat (OPE-2524). The app's
+`registerGatewayMeetingModels(…, TRANSCRIPTION_ROLE)` line registers both, so an app that passes its
+role needs no other change. A clip is one call along the same primary and fallback routes. See
+[Voice clips](../capabilities/voice-clips.md).
+
 | Stack | primary | fallback |
 |---|---|---|
 | `american-closed` | `microsoft/mai-transcribe-2` through the AI Gateway (Azure, ZDR) | `spacexai/grok-stt` through the AI Gateway (xAI, ZDR) |

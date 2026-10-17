@@ -1,5 +1,13 @@
 import { experimental_transcribe as transcribe, generateText, gateway } from "ai";
-import { registerMeetingCompletion, registerTranscriptionRoute, type MeetingCompletion, type TranscriptionInput, type TranscriptionRoute } from "@open-everywhere/core/agent/adapter-api.js";
+import {
+  registerMeetingCompletion,
+  registerTranscriptionRoute,
+  registerVoiceTranscriber,
+  type MeetingCompletion,
+  type TranscriptionInput,
+  type TranscriptionRoute,
+  type VoiceTranscriber,
+} from "@open-everywhere/core/agent/adapter-api.js";
 import { gatewayTranscriptionModel, type GatewayRoutedDefaults } from "./gateway.js";
 import { resolvedDreamCallSettings } from "./dream-judge.js";
 import { roleDisclosure, transcribeWithFallback, type RoleTranscript, type TranscriptionDeps, type TranscriptionRoleSpec } from "./transcription-routes.js";
@@ -43,6 +51,14 @@ export function stackTranscriptionRoute(role: TranscriptionRoleSpec, deps: Trans
   };
 }
 
+export function voiceClipTranscriber(role: TranscriptionRoleSpec, deps: TranscriptionDeps = {}): VoiceTranscriber {
+  const run = transcribeWithFallback(role, deps);
+  return async (clip) => {
+    const r = await run({ audio: clip.audio, mediaType: clip.mediaType, ...(clip.abortSignal ? { abortSignal: clip.abortSignal } : {}) });
+    return { text: r.text, model: r.route.id, ...(r.costUsd !== undefined ? { costUsd: r.costUsd } : {}) };
+  };
+}
+
 function gatewayMeetingCompletion(defaults: GatewayRoutedDefaults): MeetingCompletion {
   return async (scope, prompt) => {
     const s = resolvedDreamCallSettings(scope, defaults);
@@ -58,5 +74,6 @@ function gatewayMeetingCompletion(defaults: GatewayRoutedDefaults): MeetingCompl
 
 export function registerGatewayMeetingModels(defaults: GatewayRoutedDefaults, transcription?: TranscriptionRoleSpec): void {
   registerTranscriptionRoute(transcription === undefined ? gatewayTranscriptionRoute() : stackTranscriptionRoute(transcription));
+  if (transcription !== undefined) registerVoiceTranscriber(voiceClipTranscriber(transcription));
   registerMeetingCompletion(gatewayMeetingCompletion(defaults));
 }

@@ -27,6 +27,7 @@ const REQUIRED_IDS = [
   "S-SPEND-REFUSAL-KEYS",
   "S11",
   "S13",
+  "S-VOICE-CLIP",
   "S14",
   "S-LINK-SLACK",
   "J4",

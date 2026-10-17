@@ -278,8 +278,10 @@ an outside workspace. Recover with the `reopen_slack_setup` control call. To kee
      delegated worker posts into the thread). Omit this and every file post fails with Slack's
      `missing_scope`; the agent reports the blocker instead of delivering the file.
    - `files:read` — download user-uploaded attachments (the `describe_image` tool fetches an
-     image's `url_private`, which Slack only serves to an app with this scope). Omit it and
-     image reads fail; text replies are unaffected.
+     image's `url_private`, which Slack only serves to an app with this scope, and a voice clip
+     sent to the agent is downloaded the same way — see
+     [Voice clips](../../capabilities/voice-clips.md)). Omit it and image reads and voice clips
+     fail; text replies are unaffected.
    - `channels:history` — read public-channel messages in the thread it's working.
    - `channels:read` — **positively confirm a public channel's identity** (`conversations.info`:
      shared-ness, member count, name/topic; also backs `conversations.members`). This is the

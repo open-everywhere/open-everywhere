@@ -12,7 +12,8 @@ import {
   type TranscribeRequest,
   type TranscriptionRoleSpec,
 } from "../agent/model/transcription-routes.js";
-import { stackTranscriptionRoute } from "../agent/model/meeting-gateway.js";
+import { registerGatewayMeetingModels, stackTranscriptionRoute, voiceClipTranscriber } from "../agent/model/meeting-gateway.js";
+import { voiceTranscriber } from "@open-everywhere/core/agent/adapter-api.js";
 import { GATEWAY_TARGET_HOST } from "../agent/model/gateway.js";
 
 let n = 0;
@@ -84,6 +85,36 @@ const timed = (text: string): TimedTranscript => ({ text, segments: [], words: [
   });
   await assert.rejects(run({ ...AUDIO, abortSignal: ctl.signal }), /aborted by caller/);
   ok(calls.length === 1, "a caller abort stops the call without the fallback");
+}
+
+{
+  const calls: string[] = [];
+  const hear = voiceClipTranscriber(GW_ROLE, {
+    warn: () => {},
+    gateway: async (id) => {
+      calls.push(id);
+      if (id === "lab-a/stt") throw new Error("Providers considered: azure");
+      return { ...timed("book the room"), costUsd: 0.003 };
+    },
+  });
+  const r = await hear({ audio: AUDIO.audio, mediaType: "audio/webm" });
+  ok(calls.join(",") === "lab-a/stt,lab-b/stt", "a voice clip walks the role's primary, then its fallback");
+  ok(r.text === "book the room" && r.model === "lab-b/stt", "the spend row names the model that ANSWERED, not the primary");
+  ok(r.costUsd === 0.003, "the provider's measured cost is carried to the spend row");
+}
+{
+  const ctl = new AbortController();
+  let seen: AbortSignal | undefined;
+  const hear = voiceClipTranscriber({ primary: GW_ROLE.primary }, { gateway: async (_id, req) => ((seen = req.abortSignal), timed("ok")) });
+  await hear({ audio: AUDIO.audio, mediaType: "audio/webm", abortSignal: ctl.signal });
+  ctl.abort();
+  ok(seen?.aborted === true, "the voice clip's deadline signal reaches the route");
+}
+{
+  registerGatewayMeetingModels({ id: "lab/utility" } as never);
+  ok(voiceTranscriber() === undefined, "no transcription role ⇒ no voice-clip transcriber registers");
+  registerGatewayMeetingModels({ id: "lab/utility" } as never, GW_ROLE);
+  ok(typeof voiceTranscriber() === "function", "the app's transcription role registers the voice-clip transcriber at boot, with no app change");
 }
 
 {

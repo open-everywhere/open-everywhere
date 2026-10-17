@@ -227,6 +227,7 @@ async function runFront(
     channelFacts?: (channelId: string) => { internal: boolean; channelType?: string; appCanRead?: boolean };
     dmChannel?: string | null;
     ambient?: boolean;
+    hearVoiceClips?: NonNullable<Parameters<typeof buildFrontHandler>[1]>["hearVoiceClips"];
   } = {},
 ) {
   const dispatched: Dispatched[] = [];
@@ -279,6 +280,7 @@ async function runFront(
         return { token: SEAT_TOKEN, generation: 3, freshGeneration: false, tail: [] as readonly WakeMessageInput[] } as never;
       },
       touchDmSeatFn: async () => {},
+      ...(opts.hearVoiceClips ? { hearVoiceClips: opts.hearVoiceClips } : {}),
     },
   );
   const res = await handler(mkReq(body), fakeArgs as unknown as Parameters<typeof handler>[1]);
@@ -421,6 +423,15 @@ async function runFront(
   const retry = await runFront(inChannel, { dedupe });
   eq(retry.dispatched.length, 0, "seed(redelivery): Slack redelivering the click wakes nothing a second time");
   eq(resolveSlackAttachment("F1"), undefined, "seed(redelivery): 🔴 …and re-seeds nothing — the registration sits BEHIND the dedupe, not in front of it");
+}
+
+{
+  const CLIP = { id: "F_CLIP", name: "audio_message.webm", mimetype: "audio/webm", url_private: "https://files.slack.com/files-pri/T1-F_CLIP/audio_message.webm" };
+  let hearCalls = 0;
+  const spy: NonNullable<Parameters<typeof buildFrontHandler>[1]>["hearVoiceClips"] = async (ev) => (hearCalls++, ev);
+  const woken = await runFront(urlencoded(messageShortcut({ channel: { id: PUBLIC_CHANNEL } }, { files: [CLIP] })), { ambient: true, hearVoiceClips: spy });
+  ok(woken.fifo.keys.includes(supervisorFifoKey(PUBLIC_CHANNEL)), "voice(shortcut): the shortcut on a clip message DID reach the seat's queue (the positive control for the road)");
+  eq(hearCalls, 0, "voice(shortcut): 🔴 …and the target message's voice clip was NOT heard — another person's speech never leaves the shortcut's untrusted fence");
 }
 
 {

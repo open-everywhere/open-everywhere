@@ -144,6 +144,10 @@
       "types": "./dist/agent/channels/slack-tenant-fence.d.ts",
       "default": "./dist/agent/channels/slack-tenant-fence.js"
     },
+    "./agent/channels/slack-voice-clips.js": {
+      "types": "./dist/agent/channels/slack-voice-clips.d.ts",
+      "default": "./dist/agent/channels/slack-voice-clips.js"
+    },
     "./agent/channels/slack-wake-backscroll.js": {
       "types": "./dist/agent/channels/slack-wake-backscroll.d.ts",
       "default": "./dist/agent/channels/slack-wake-backscroll.js"

@@ -171,6 +171,8 @@ export { registerExtraEgressHosts, extraEgressHosts, resetExtraEgressHostsForTes
 
 export { registerAttachmentResolver, resolveAttachment, resolveGuardedAttachment, AttachmentOversizeError } from "./channels/attachments.js";
 export type { AttachmentResolver, ResolvedAttachment, GuardedAttachment } from "./channels/attachments.js";
+export { registerVoiceTranscriber, voiceTranscriber, hearVoiceClips, voiceClipBody, isVoiceClip, MAX_VOICE_CLIP_BYTES } from "./channels/voice-clips.js";
+export type { VoiceTranscriber, VoiceClipAudio, VoiceClipTranscript, VoiceClipOutcome, VoiceClipLoader } from "./channels/voice-clips.js";
 
 export { getConfig, registerConfig } from "./access/config.js";
 

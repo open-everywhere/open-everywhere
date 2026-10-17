@@ -86,6 +86,7 @@ export interface AttributedModelCall {
   readonly model?: string;
   readonly generationId?: string;
   readonly what?: string;
+  readonly usdMicros?: number;
   readonly arm?: ModelArmStamp;
 }
 
@@ -120,6 +121,7 @@ export async function recordModelCall(ctx: SpendAttributionContext, call: Attrib
         principalId: bindFrom(ctx).principalId,
         routineId,
         model,
+        ...(call.usdMicros !== undefined && Number.isFinite(call.usdMicros) && call.usdMicros >= 0 ? { usdMicros: Math.round(call.usdMicros) } : {}),
         ...((): { surfaceMode?: SurfaceMode } => {
           const mode = turnSurfaceMode(ctx);
           return mode ? { surfaceMode: mode } : {};

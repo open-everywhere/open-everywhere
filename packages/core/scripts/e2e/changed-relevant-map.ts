@@ -156,6 +156,17 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     why: "S-APP-HOME (OPE-2451) is the only live leg on the person's Home tab: a signed open publishes the page, Export hands the person their memory, and a forged Forget erases nothing. A change to the page model, the memory data plane behind it or the Slack half reaches exactly that leg. The domain memory canvas is NOT here: S-APP-HOME never reads a canvas, so it has its own area below (OPE-2499).",
   },
   {
+    area: "voice-clips",
+    globs: [
+      "packages/core/agent/channels/voice-clips.ts",
+      "packages/providers/slack/agent/channels/slack-voice-clips.ts",
+      "packages/adapters/agent/model/meeting-gateway.ts",
+      "packages/adapters/agent/model/transcription-routes.ts",
+    ],
+    scenarios: ["S-VOICE-CLIP"],
+    why: "S-VOICE-CLIP (OPE-2524) is the only live leg that sends a real voice clip. It uploads a spoken clip with no typed text into the real DM and gates that the reply carries the word the clip spoke, and that a `voice.transcribed` row with no transcript landed. The core file decides and bills, the Slack file fetches and rewrites the message, and the two adapters files build the transcriber from the stack's transcription role, so a change to any of them changes whether the agent hears the clip.",
+  },
+  {
     area: "doing-for-you",
     globs: [
       "packages/core/agent/home/doing-home.ts",

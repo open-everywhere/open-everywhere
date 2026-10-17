@@ -3,7 +3,8 @@ process.env.OE_SQLITE_PATH = ":memory:";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { registerSlackProvider } from "../agent/register.js";
-import { buildFrontHandler, classifyEnvelope, dmFifoKey, ThreadFifo, EventDedupe, recordWakeFailure } from "../agent/channels/slack-front.js";
+import { buildFrontHandler, classifyEnvelope, dmFifoKey, ThreadFifo, EventDedupe, recordWakeFailure, type FrontOptions } from "../agent/channels/slack-front.js";
+import { withSlackVoiceClips } from "../agent/channels/slack-voice-clips.js";
 import {
   DM_BOT_AUTHOR_DROP_REASON,
   DM_DRIVER_ADMIT_REASON,
@@ -19,6 +20,12 @@ import {
   registerSurfaces,
   defineSurface,
   type WakeMessageInput,
+  hearVoiceClips,
+  MAX_VOICE_CLIP_BYTES,
+  markThreadEngaged,
+  markThreadStopped,
+  resolvePartition,
+  shouldDeliverReply,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 registerSlackProvider();
@@ -117,6 +124,7 @@ async function runFront(
     sendThrowsFirst?: Error;
     sendThrowsAlways?: Error;
     selfBotId?: string | null;
+    extra?: Partial<FrontOptions>;
   } = {},
 ) {
   const dispatched: Dispatched[] = [];
@@ -185,6 +193,7 @@ async function runFront(
       touchDmSeatFn: async (org, surfaceKey) => {
         touched.push({ org, surfaceKey });
       },
+      ...opts.extra,
     },
   );
   const seatCalls: Array<{ surfaceKey: string; channelId?: string; legacyChannelId?: string }> = [];
@@ -902,4 +911,140 @@ overrideSettingsForTest({ externalPolicy: { authorGrain: "taint", roomGrain: "en
   );
 }
 
-console.log(`✓ slack-dm-divert: ${n} assertions passed (classification, window token + fence, addressing, DM auth attrs, dm envelope, carried tail, bot/dedupe/fail-closed, no escape hatch (OPE-368), group-DM divert + mention leg + sibling suppression, OPE-1023 named-driver DM carve-out, OPE-525 external-participant policy, OPE-963 pruned-deployment re-delivery, OPE-970 undelivered-after-heal reason)`);
+{
+  const CLIP_URL = "https://files.slack.com/files-pri/T1-F_CLIP/audio_message.webm";
+  const clipFile = { id: "F_CLIP", name: "audio_message.webm", mimetype: "audio/webm", url_private: CLIP_URL };
+  const pulled: Array<{ url: string; max: number }> = [];
+  const mediaTypes: string[] = [];
+  let hearCalls = 0;
+  const hear = (ev: Parameters<typeof withSlackVoiceClips>[0]) => {
+    hearCalls++;
+    return withSlackVoiceClips(ev, {
+      pull: async (_ctx, ref, max) => (pulled.push({ url: ref.urlPrivate, max }), new Uint8Array([1, 2, 3])),
+      hear: (input) =>
+        hearVoiceClips({
+          ...input,
+          transcriber: async (c) => (mediaTypes.push(c.mediaType), { text: "chase order 4417 please", model: "lab/stt" }),
+          enabled: true,
+          overBudget: async () => false,
+          record: async () => {},
+          audit: async () => {},
+        }),
+    });
+  };
+
+  const r = await runFront(dmEnvelope("EvVoice1", { ts: "1768686433.000100", text: "", subtype: "file_share", files: [clipFile] }), { partnerTrust: "internal", extra: { hearVoiceClips: hear } });
+  eq(r.dispatched.length, 1, "🔴 a DM that is only a voice clip WAKES the DM seat");
+  ok(r.dispatched[0]!.message.includes("[voice clip] chase order 4417 please"), "🔴 …and the wake carries the clip's transcript as the person's message");
+  ok(!r.dispatched[0]!.message.includes("file_share"), "…as a plain message");
+  eq(pulled, [{ url: CLIP_URL, max: MAX_VOICE_CLIP_BYTES }], "the clip is fetched from the EVENT's own url_private, under the size cap");
+  eq(mediaTypes, ["audio/webm"], "…and sent to speech-to-text with the event's media type");
+
+  const both = await runFront(dmEnvelope("EvVoice2", { ts: "1768686433.000200", text: "context below", subtype: "file_share", files: [clipFile] }), { partnerTrust: "internal", extra: { hearVoiceClips: hear } });
+  const msg = both.dispatched[0]!.message;
+  ok(msg.includes("context below") && msg.indexOf("context below") < msg.indexOf("[voice clip] chase order 4417 please"), "typed text first, then the transcript");
+
+  const failing = (ev: Parameters<typeof withSlackVoiceClips>[0]) =>
+    withSlackVoiceClips(ev, {
+      pull: async () => new Uint8Array([1]),
+      hear: (input) => hearVoiceClips({ ...input, transcriber: async () => { throw new Error("both routes down"); }, enabled: true, overBudget: async () => false, audit: async () => {} }),
+    });
+  const failed = await runFront(dmEnvelope("EvVoice3", { ts: "1768686433.000300", text: "", subtype: "file_share", files: [clipFile] }), { partnerTrust: "internal", extra: { hearVoiceClips: failing } });
+  eq(failed.dispatched.length, 1, "a clip that cannot be transcribed still wakes the seat");
+  ok(failed.dispatched[0]!.message.includes("[voice clip — could not be transcribed]"), "…with one line saying the clip was not heard");
+
+  hearCalls = 0;
+  const channelClip = JSON.stringify({
+    type: "event_callback",
+    event_id: "EvVoice4",
+    team_id: TEAM,
+    event: { type: "message", channel_type: "channel", channel: "C_ROOM", user: USER, ts: "1768686433.000400", text: "", subtype: "file_share", files: [clipFile] },
+  });
+  await runFront(channelClip, { partnerTrust: "internal", extra: { hearVoiceClips: hear, ambientEnabledFor: () => true, seatedSurfaceFor: () => true } });
+  eq(hearCalls, 0, "🔴 an unaddressed channel clip is NEVER heard — a room's audio reaches speech-to-text only when someone pointed it at the agent");
+
+  hearCalls = 0;
+  await runFront(mentionEnvelope("EvVoice5", "C_ROOM", { ts: "1768686433.000500", files: [clipFile] }), {
+    partnerTrust: "internal",
+    extra: { hearVoiceClips: hear, ambientEnabledFor: () => false, seatedSurfaceFor: () => true, mentionPolicyFor: async () => ({ suppressNative: true, addressing: "direct-mention" as const }) },
+  });
+  eq(hearCalls, 1, "an @mention diverted to the seat hears its clip");
+
+  hearCalls = 0;
+  const mpimMention = await runFront(mentionEnvelope("EvVoice6", MPIM_CHANNEL, { ts: "1768686433.000600", files: [clipFile] }), { partnerTrust: "internal", extra: { hearVoiceClips: hear } });
+  eq(hearCalls, 1, "a group-DM @mention hears its clip");
+  ok(mpimMention.dispatched.some((d) => d.message.includes("[voice clip] chase order 4417 please")), "🔴 …and the group-DM seat's wake carries the transcript");
+  hearCalls = 0;
+  await runFront(mentionEnvelope("EvVoice7", MPIM_CHANNEL, { ts: "1768686433.000700", bot_id: OTHER_BOT, files: [clipFile] }), { partnerTrust: "internal", extra: { hearVoiceClips: hear } });
+  eq(hearCalls, 0, "🔴 a BOT's group-DM @mention is never heard — no download, no speech-to-text call, no spend");
+
+  const ROOM = "C_VOICE_ROOM";
+  const roomP = resolvePartition({
+    channel: { kind: "slack" },
+    session: { auth: { current: { attributes: { team_id: TEAM, channel_id: ROOM, channel_type: "channel" }, principalId: USER, principalType: "slack-user" } } },
+  } as never);
+  const threadClip = (eventId: string, threadTs: string, ts: string) =>
+    JSON.stringify({
+      type: "event_callback",
+      event_id: eventId,
+      team_id: TEAM,
+      event: { type: "message", channel_type: "channel", channel: ROOM, user: USER, ts, thread_ts: threadTs, text: "", subtype: "file_share", files: [clipFile] },
+    });
+  const HELD = "1768686533.000100";
+  const STOPPED = "1768686533.000200";
+  const WATCHED = "1768686533.000300";
+  await markThreadEngaged(roomP, HELD, new Date(NOW_MS).toISOString(), { participating: true });
+  await markThreadEngaged(roomP, STOPPED, new Date(NOW_MS).toISOString(), { participating: true });
+  await markThreadStopped(roomP, STOPPED);
+  await markThreadEngaged(roomP, WATCHED, new Date(NOW_MS).toISOString());
+  for (const seated of [true, false]) {
+    const road = seated ? "seat road" : "unseated engaged-thread road";
+    const extra = { hearVoiceClips: hear, ambientEnabledFor: () => false, seatedSurfaceFor: () => seated };
+    hearCalls = 0;
+    await runFront(threadClip(`EvVoiceHeld${road}`, HELD, seated ? "1768686534.000100" : "1768686535.000100"), { partnerTrust: "internal", extra });
+    eq(hearCalls, 1, `${road}: a clip in a thread the agent HOLDS is heard`);
+    hearCalls = 0;
+    await runFront(
+      JSON.stringify({ type: "event_callback", event_id: `EvVoiceTyped${road}`, team_id: TEAM, event: { type: "message", channel_type: "channel", channel: ROOM, user: USER, ts: seated ? "1768686534.000400" : "1768686535.000400", thread_ts: HELD, text: "typed only" } }),
+      { partnerTrust: "internal", extra },
+    );
+    eq(hearCalls, 0, `${road}: a message with NO clip never enters the voice step (no extra store read on the hot path)`);
+    hearCalls = 0;
+    await runFront(threadClip(`EvVoiceStopped${road}`, STOPPED, seated ? "1768686534.000200" : "1768686535.000200"), { partnerTrust: "internal", extra });
+    eq(hearCalls, 0, `🔴 ${road}: a clip in a STOOD-DOWN thread is never heard — the road drops it, so it must not be downloaded or billed`);
+    hearCalls = 0;
+    await runFront(threadClip(`EvVoiceWatched${road}`, WATCHED, seated ? "1768686534.000300" : "1768686535.000300"), { partnerTrust: "internal", extra });
+    eq(hearCalls, 1, `${road}: a clip in a name-drop WATCHER thread is heard, as the same words typed there would reach the agent`);
+    if (seated) {
+      hearCalls = 0;
+      await runFront(threadClip(`EvVoiceShared${road}`, HELD, "1768686534.000500"), { partnerTrust: "internal", channelFacts: { internal: false, channelType: "channel", extShared: true, trustChecked: true }, extra });
+      eq(hearCalls, 0, `🔴 ${road}: a clip in a held thread of a room that is NOT confirmed internal is never heard — the seat drops that wake, so the audio must not leave`);
+      hearCalls = 0;
+      await runFront(threadClip(`EvVoiceInfoDown${road}`, HELD, "1768686534.000600"), {
+        partnerTrust: "internal",
+        extra: { ...extra, channelFactsFor: async () => { throw new Error("conversations.info down"); } },
+      });
+      eq(hearCalls, 0, `${road}: an unreadable room (conversations.info throws) is not confirmed internal, so its clip is not heard (fail-closed)`);
+    }
+  }
+  const heardThread = await withSlackVoiceClips(
+    { channelId: ROOM, ts: "9.1", threadTs: HELD, teamId: TEAM, userId: USER, subtype: "file_share", text: "", authoredText: "", isAppMention: false, attachments: [{ kind: "file", id: "F_CLIP", mimeType: "audio/webm", url: CLIP_URL }] },
+    { hear: async () => [{ heard: true, text: "status?" }] },
+  );
+  ok(shouldDeliverReply({ subtype: heardThread.subtype, authorIsBot: false, isAppMention: false, inThread: true, isEngaged: true, stopped: false } as never).deliver, "🔴 the heard `file_share` passes `shouldDeliverReply`, which drops any subtype");
+  ok(!shouldDeliverReply({ subtype: "file_share", authorIsBot: false, isAppMention: false, inThread: true, isEngaged: true, stopped: false } as never).deliver, "…while the raw upload does not (the negative control)");
+
+  const base = { channelId: "D1", ts: "1.1", text: "", authoredText: "", isAppMention: false, attachments: [{ kind: "file" as const, id: "F", mimeType: "audio/webm", url: CLIP_URL }] };
+  const okHear = async () => [{ heard: true as const, text: "hello" }];
+  const plain = await withSlackVoiceClips({ ...base, subtype: "file_share" }, { hear: okHear });
+  eq([plain.subtype, plain.text, plain.authoredText], [undefined, "[voice clip] hello", "[voice clip] hello"], "🔴 a heard `file_share` is a plain message, so the thread gates (which drop every subtype) admit it");
+  let editHears = 0;
+  const edit = { ...base, subtype: "message_changed" };
+  ok((await withSlackVoiceClips(edit, { hear: async () => (editHears++, [{ heard: true as const, text: "again" }]) })) === edit && editHears === 0, "🔴 an EDIT of a clip message is not heard again — no second download or bill for the same audio");
+  const untouched = { ...base, subtype: "file_share" };
+  ok((await withSlackVoiceClips(untouched, { hear: async () => { throw new Error("boom"); } })) === untouched, "a failing step gives the message back unchanged");
+  const noClip = { ...base, attachments: [{ kind: "image" as const, id: "I", mimeType: "image/png" }] };
+  ok((await withSlackVoiceClips(noClip, { hear: async () => { throw new Error("must not run"); } })) === noClip, "a message with no clip is not touched");
+}
+
+console.log(`✓ slack-dm-divert: ${n} assertions passed (classification, window token + fence, addressing, DM auth attrs, dm envelope, carried tail, bot/dedupe/fail-closed, no escape hatch (OPE-368), group-DM divert + mention leg + sibling suppression, OPE-1023 named-driver DM carve-out, OPE-525 external-participant policy, OPE-963 pruned-deployment re-delivery, OPE-970 undelivered-after-heal reason, OPE-2524 voice clips)`);

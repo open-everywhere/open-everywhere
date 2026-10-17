@@ -359,6 +359,10 @@ export class SlackDriver {
   }
 
   async uploadImage(input: { filename: string; bytes: Uint8Array; title?: string; threadTs?: string; initialComment?: string }): Promise<void> {
+    await this.uploadFile(input);
+  }
+
+  async uploadFile(input: { filename: string; bytes: Uint8Array; title?: string; threadTs?: string; initialComment?: string }): Promise<{ fileId: string }> {
     const title = input.title ?? input.filename;
     const step1 = await this.api("files.getUploadURLExternal", Object.fromEntries(new URLSearchParams(buildUploadUrlBody({ filename: input.filename, length: input.bytes.byteLength }))));
     const uploadUrl = typeof step1.upload_url === "string" ? step1.upload_url : "";
@@ -370,6 +374,7 @@ export class SlackDriver {
       "files.completeUploadExternal",
       Object.fromEntries(new URLSearchParams(buildCompleteUploadBody({ fileId, title, channel: this.cfg.channel, threadTs: input.threadTs, initialComment: input.initialComment }))),
     );
+    return { fileId };
   }
 
   async awaitFileReply(rootTs: string, opts: { timeoutMs: number; filetype?: string; afterTs?: string }): Promise<SlackMessage> {

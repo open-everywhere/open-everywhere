@@ -1374,6 +1374,10 @@
       "types": "./dist/agent/channels/unified.d.ts",
       "default": "./dist/agent/channels/unified.js"
     },
+    "./agent/channels/voice-clips.js": {
+      "types": "./dist/agent/channels/voice-clips.d.ts",
+      "default": "./dist/agent/channels/voice-clips.js"
+    },
     "./agent/channels/wake-accounting.js": {
       "types": "./dist/agent/channels/wake-accounting.d.ts",
       "default": "./dist/agent/channels/wake-accounting.js"
@@ -3744,6 +3748,7 @@
     "test:meetings-native": "tsx scripts/meetings-native-test.ts",
     "test:meeting-provenance": "tsx scripts/meeting-provenance-test.ts",
     "test:meeting-speakers": "tsx scripts/meeting-speakers-test.ts",
+    "test:voice-clips": "NODE_NO_WARNINGS=1 tsx scripts/voice-clips-test.ts",
     "test:meetings-discord": "tsx scripts/meetings-discord-test.ts",
     "test:email": "tsx scripts/email-test.ts",
     "test:personal-browser": "tsx scripts/personal-browser-test.ts",

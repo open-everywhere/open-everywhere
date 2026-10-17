@@ -5,6 +5,7 @@ import {
   registerAttachmentResolver,
   AttachmentOversizeError,
   type SlackAttachmentRow,
+  type BindableContext,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { fetchSlackAttachment } from "../access/slack-attachment-fetch.js";
 
@@ -63,6 +64,16 @@ export async function resolveSlackAttachmentDurable(fileId: string, org?: string
   }
 }
 
+export async function pullSlackAttachmentBytes(ctx: BindableContext, ref: { readonly urlPrivate: string; readonly id?: string }, maxBytes: number): Promise<Uint8Array> {
+  const res = await fetchSlackAttachment(ctx, ref);
+  if (!res.ok) throw new Error(`fetching the upload failed (HTTP ${res.status})`);
+  const declared = Number.parseInt(res.headers.get("content-length") ?? "", 10);
+  if (Number.isFinite(declared) && declared > maxBytes) throw new AttachmentOversizeError(declared, "declared", maxBytes);
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  if (bytes.byteLength > maxBytes) throw new AttachmentOversizeError(bytes.byteLength, "actual", maxBytes);
+  return bytes;
+}
+
 export function registerSlackAttachmentResolver(): void {
   registerAttachmentResolver({
     platform: "slack",
@@ -80,15 +91,7 @@ export function registerSlackAttachmentResolver(): void {
         ref: `slack-file:${attachmentId}`,
         mimeType: rec.mimeType,
         name: rec.name,
-        async pull({ maxBytes }) {
-          const res = await fetchSlackAttachment(ctx, { urlPrivate: rec.urlPrivate, id: attachmentId });
-          if (!res.ok) throw new Error(`fetching the upload failed (HTTP ${res.status})`);
-          const declared = Number.parseInt(res.headers.get("content-length") ?? "", 10);
-          if (Number.isFinite(declared) && declared > maxBytes) throw new AttachmentOversizeError(declared, "declared", maxBytes);
-          const bytes = new Uint8Array(await res.arrayBuffer());
-          if (bytes.byteLength > maxBytes) throw new AttachmentOversizeError(bytes.byteLength, "actual", maxBytes);
-          return bytes;
-        },
+        pull: ({ maxBytes }) => pullSlackAttachmentBytes(ctx, { urlPrivate: rec.urlPrivate, id: attachmentId }, maxBytes),
       };
     },
   });

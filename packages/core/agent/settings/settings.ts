@@ -205,6 +205,9 @@ export interface AgentSettings {
     readonly stepBudget: number;
     readonly stepBackstopMultiple: number;
   };
+  readonly voiceClips: {
+    readonly enabled: boolean;
+  };
   readonly wake: {
     readonly nameDropInclude: readonly string[];
     readonly nameDropExclude: readonly string[];
@@ -1044,6 +1047,14 @@ export const SETTINGS = {
       format: (v) => `${v} chars`,
     } satisfies SettingSpec<number>,
   },
+  voiceClips: {
+    enabled: {
+      path: "voiceClips.enabled",
+      shipped: true,
+      summary:
+        "Hear voice clips (OPE-2524). On (shipped), an audio file or voice clip that a person sends in a conversation the agent already answers is transcribed through the stack's transcription role (`agent/model/stacks.ts`, the same primary and fallback routes a meeting uses) and handled as if the person had typed it. The transcript joins the message body with the author's own trust, and the audio is held in memory for the one call only. Slack is the one wired surface: a DM, a group DM, an @mention, and a reply in a thread the agent is in and was not asked to stand down. A clip in a room that did not address the agent is never downloaded, and neither is a bot's clip (the named e2e driver's DM aside). A call that carries a measured cost bills to the conversation's spend row (an answer with no cost field, and a failed attempt, record no row). A conversation over its cap is not transcribed; the cap check fails open with a warning. Off, a clip reaches the agent as a file it cannot hear, with one line saying so.",
+    } satisfies SettingSpec<boolean>,
+  },
   turn: {
     stepBudget: {
       path: "turn.stepBudget",
@@ -1390,6 +1401,9 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
     turn: {
       stepBudget: resolve(SETTINGS.turn.stepBudget, o.turn?.stepBudget),
       stepBackstopMultiple: resolve(SETTINGS.turn.stepBackstopMultiple, o.turn?.stepBackstopMultiple),
+    },
+    voiceClips: {
+      enabled: resolve(SETTINGS.voiceClips.enabled, o.voiceClips?.enabled),
     },
     wake: {
       nameDropInclude: resolve(SETTINGS.wake.nameDropInclude, o.wake?.nameDropInclude),

@@ -9,6 +9,7 @@ import { bindSlack } from "../agent/channels/slack-identity.js";
 import { slackTenantAdmission } from "../agent/channels/slack-tenant-fence.js";
 import { admitInbound } from "../agent/channels/slack.js";
 import { buildFrontHandler, ThreadFifo } from "../agent/channels/slack-front.js";
+import { withSlackVoiceClips } from "../agent/channels/slack-voice-clips.js";
 import { stripComments } from "./_source-scan-utils.js";
 import { _resetDeploymentIdentityForTest } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -507,6 +508,23 @@ async function dropRows(ts: string) {
 
   ok(!/deps\.wake\(/.test(stripComments("/** talks about `deps.wake(...)` */\nconst x = 1;")), "the comment strip really removes a doc-comment mention (the scan reads code)");
   ok(/deps\.wake\(/.test(stripComments("await deps.wake(input);")), "…and really keeps a genuine call (it is not stripping everything)");
+}
+
+{
+  const heardTeams: string[] = [];
+  const clipEvent = (teamId: string) => ({
+    channelId: "G0BGROUP",
+    ts: "1.1",
+    teamId,
+    text: "",
+    authoredText: "",
+    isAppMention: true,
+    attachments: [{ kind: "file" as const, id: "F_CLIP", mimeType: "audio/webm", url: "https://files.slack.com/files-pri/x/clip.webm" }],
+  });
+  const hear = async () => (heardTeams.push("called"), [{ heard: true as const, text: "hi" }]);
+  const foreign = clipEvent(FOREIGN_TEAM);
+  ok((await withSlackVoiceClips(foreign, { hear })) === foreign && heardTeams.length === 0, "🔴 a FOREIGN workspace's clip is not heard: no download, no speech-to-text call, no spend");
+  ok((await withSlackVoiceClips(clipEvent(HOME_TEAM), { hear })).text === "[voice clip] hi" && heardTeams.length === 1, "…while the declared workspace's clip is heard");
 }
 
 console.log(`slack-tenant-fence: ${n} assertions passed`);

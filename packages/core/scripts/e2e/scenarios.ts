@@ -240,6 +240,7 @@ import {
 import { liveMeasurementVerdict, liveTaintGateDecision, taintContextLine, type UnmeasuredArm } from "./taint-context-line.js";
 import { freshQaRunToken, namesQaHeading, qaAuditGates, qaBrief, qaFixtureDrift, qaHeading, QA_FIXTURE_DIR, QA_FIXTURE_FILES } from "./qa-repo.js";
 import { THIRD_PARTY_JUDGE_CLAUSE, THIRD_PARTY_REPLY_ASK, THIRD_PARTY_STEP } from "./browser-third-party.js";
+import { VOICE_CLIP_WORD, voiceClipBytes } from "./voice-clip-fixture.js";
 import { readWakeSplits, summariseWakeSplits } from "./wake-split.js";
 import {
   approveButton,
@@ -2814,6 +2815,42 @@ export const SCENARIOS: readonly Scenario[] = [
         reply.text,
         "real-DM arithmetic sanity",
       );
+    },
+  },
+  {
+    id: "S-VOICE-CLIP",
+    title: "Voice clip in a real Slack DM (OPE-2524): the clip is transcribed through the deployment's own transcription role and answered as if the person had typed it",
+    requires: ["slack", "syntheticDm"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 690_000,
+    judged: false,
+    run: async (ctx) => {
+      const dm = ctx.dm!;
+      await fenceDmSeat(ctx, "S-VOICE-CLIP");
+      const sinceIso = await presenceSince(ctx, "sinceIso", 60_000);
+      const { fileId } = await dm.uploadFile({ filename: "voice-clip.mp3", title: "voice clip", bytes: voiceClipBytes() });
+      const clipMsg = await pollUntil(async () => (await dm.latest(10)).find((m) => (m.files ?? []).some((f) => f.id === fileId)), {
+        timeoutMs: 60_000,
+        what: `the DM message carrying the uploaded clip ${fileId}`,
+      });
+      const reply = await awaitOwnWakeReply(ctx, dm, clipMsg.ts, { what: "S-VOICE-CLIP", timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+      ctx.gate(
+        reply.text.toLowerCase().includes(VOICE_CLIP_WORD),
+        `🔴 the reply carries the word the clip SPOKE ("${VOICE_CLIP_WORD}") — the clip has no typed text, so only a heard clip gives it (reply: ${JSON.stringify(reply.text.slice(0, 160))})`,
+      );
+      await assertDmDoorAdmitted(ctx, sinceIso, "S-VOICE-CLIP");
+      if (ctx.auditRead) {
+        const auditRead = ctx.auditRead;
+        const row = await pollOptional(
+          async () => (await auditRead({ sinceIso, actions: ["voice.transcribed"] })).find((r) => Number((r.detail as { heard?: unknown } | undefined)?.heard) >= 1),
+          { timeoutMs: 60_000, what: "a voice.transcribed audit row with heard >= 1" },
+        );
+        ctx.gate(row !== undefined, "a `voice.transcribed` row with heard >= 1 proves the deployment's own transcription role heard the clip");
+        ctx.gate(row === undefined || !JSON.stringify(row).toLowerCase().includes(VOICE_CLIP_WORD), "…and the audit row carries no transcript");
+      } else {
+        ctx.log("audit read not wired (set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN) — S-VOICE-CLIP leans on the reply alone");
+      }
     },
   },
   {

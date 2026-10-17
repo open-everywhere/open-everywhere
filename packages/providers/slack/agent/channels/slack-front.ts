@@ -118,6 +118,7 @@ import {
   type ParsedHomeSubmission,
 } from "./slack-home.js";
 import { persistSlackAttachment, registerSlackAttachment } from "./slack-attachments.js";
+import { hasSlackVoiceClip, withSlackVoiceClips } from "./slack-voice-clips.js";
 import {
   parseSlackShortcutPayload,
   shortcutMessageEvent,
@@ -380,6 +381,7 @@ export function resolveBotIdentity(): Promise<{ readonly userId?: string; readon
 
 export interface FrontOptions {
   readonly signingSecret?: string;
+  readonly hearVoiceClips?: (ev: ParsedMessageEvent) => Promise<ParsedMessageEvent>;
   readonly dedupe?: EventDedupe;
   readonly fifo?: ThreadFifo;
   readonly getBotIdentity?: () => Promise<{ readonly userId?: string; readonly botId?: string }>;
@@ -579,9 +581,19 @@ export function mentionSiblingSuppressed(input: {
   return input.authoredText.includes(`<@${input.botUserId}>`);
 }
 
+async function threadHearsClips(p: { readonly org: string; readonly surfaceKey: string }, threadTs: string): Promise<boolean> {
+  try {
+    const row = await getOperationalStore().getEngagement(p.org, p.surfaceKey, threadTs);
+    return row !== null && row.stopped !== true;
+  } catch {
+    return false;
+  }
+}
+
 export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions = {}): RouteHandler {
   const dedupe = opts.dedupe ?? new EventDedupe();
   const fifo = opts.fifo ?? new ThreadFifo(recordWakeFailure);
+  const hearVoice = opts.hearVoiceClips ?? ((ev: ParsedMessageEvent) => withSlackVoiceClips(ev));
   const getBotIdentity = opts.getBotIdentity ?? resolveBotIdentity;
   const now = opts.now ?? (() => Date.now());
   const resolveSigningSecret = async (): Promise<string | undefined> => opts.signingSecret ?? (await slackSigningSecret());
@@ -679,7 +691,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     const notYetSeen = (env: SlackEventEnvelope, ev: ParsedMessageEvent): Promise<boolean> =>
       notYetSeenKey(wakeKey(env, ev.channelId, ev.ts), ev);
 
-    const scheduleUnownedWake = (ev: ParsedMessageEvent, label: string, directMention = false, onWake?: () => void, seatEngaged = false): void => {
+    const scheduleUnownedWake = (ev: ParsedMessageEvent, label: string, directMention = false, onWake?: () => void, seatEngaged = false, hearsMentionClip = false): void => {
       let ambient = false;
       let surfaceKey: string | undefined;
       try {
@@ -698,15 +710,24 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       if (addressedOrAmbient) {
         const supKey = supervisorFifoKey(ev.channelId);
         args.waitUntil(
-          fifo.enqueue(supKey, () =>
-            deliverWithStrandRetry(() =>
+          fifo.enqueue(supKey, async () => {
+            const hears =
+              !ev.botId &&
+              hasSlackVoiceClip(ev) &&
+              ((directMention && hearsMentionClip) ||
+                (seatEngaged &&
+                  ev.threadTs !== undefined &&
+                  (await channelFactsFor(ev.channelId).then((f) => f.internal === true, () => false)) &&
+                  (await threadHearsClips(resolvePartition(bindableFor(ev)), ev.threadTs))));
+            const heard = hears ? await hearVoice(ev) : ev;
+            return deliverWithStrandRetry(() =>
               routeSupervisorEvent(
-                ev,
+                heard,
                 withSingleWindowDiversion(liveSupervisorDeps(send), args.to, surfaceKey!),
                 directMention ? { directMention: true } : undefined,
               ).then(logOutcome(`${label}-supervisor`, ev.channelId, ev.ts)),
-            ),
-          ),
+            );
+          }),
         );
         return;
       }
@@ -905,7 +926,8 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       if (!(await notYetSeen(decision.env, dev))) return OK();
       args.waitUntil(
         fifo.enqueue(dmFifoKey(dev.channelId), async () => {
-          await deliverWithStrandRetry(() => scheduleDmWake(dev, decision.dmKind, driverAdmitted));
+          const heard = await hearVoice(dev);
+          await deliverWithStrandRetry(() => scheduleDmWake(heard, decision.dmKind, driverAdmitted));
           console.log(`[open-everywhere:slack-front] ${decision.dmKind} ${dev.channelId}/${dev.ts}: woke — diverted to the DM window seat`);
         }),
       );
@@ -998,7 +1020,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         console.log(
           `[open-everywhere:slack-front] app_mention ${mev.channelId}/${mev.ts}: single-window — diverting to the unified supervisor (native forward suppressed)`,
         );
-        scheduleUnownedWake(mev, "single-window-mention", true);
+        scheduleUnownedWake(mev, "single-window-mention", true, undefined, false, true);
         return OK();
       }
       if (mev) {
@@ -1012,7 +1034,8 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
           );
           args.waitUntil(
             fifo.enqueue(dmFifoKey(mev.channelId), async () => {
-              await deliverWithStrandRetry(() => scheduleDmWake({ ...mev, channelType: "mpim" }, "mpim"));
+              const heard = mev.botId ? mev : await hearVoice(mev);
+              await deliverWithStrandRetry(() => scheduleDmWake({ ...heard, channelType: "mpim" }, "mpim"));
             }),
           );
           return OK();
@@ -1318,7 +1341,10 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
 
     const threadKey = slackContinuationToken(ev.channelId, ev.threadTs);
     args.waitUntil(
-      fifo.enqueue(threadKey, () => routeMessageEvent(ev, liveDeps(send)).then(logOutcome("engaged-thread", ev.channelId, ev.threadTs!))),
+      fifo.enqueue(threadKey, async () => {
+        const heard = !ev.botId && hasSlackVoiceClip(ev) && (await threadHearsClips(p, ev.threadTs!)) ? await hearVoice(ev) : ev;
+        return routeMessageEvent(heard, liveDeps(send)).then(logOutcome("engaged-thread", ev.channelId, ev.threadTs!));
+      }),
     );
     return OK();
   }

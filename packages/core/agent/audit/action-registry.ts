@@ -889,6 +889,7 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "admin.approval.judge_rearm",
   "admin.connector.clear_override",
   "attention.ping_failed",
+  "voice.transcribed",
   "admin.model.clear_domain",
   "admin.model.set_domain",
   "admin.routine.cancel",
