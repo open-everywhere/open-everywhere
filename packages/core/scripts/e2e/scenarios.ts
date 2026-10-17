@@ -224,6 +224,7 @@ import {
   s23ConfirmationCheck,
 } from "./gate-joins.js";
 import { haltConfirmation } from "../../agent/tools/halt.js";
+import { noteNamesViewedRoom, slackTsAt, toolCallsNamingRoom, turnRows, viewedRoomRows } from "./side-panel.js";
 import { awaitDelegatedAnswer, DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, dS, pollForFinalReply, pollForOwnWakeReply, REPLY_EDIT_ACTION, seatDelegationRows, TASK_WAKE_ACTION, WORK_FORWARDED_ACTION, type OwnWakeCandidate } from "./read-channel-lib.js";
 import {
   CLAIMED_REQUEST_SHAPES,
@@ -577,10 +578,12 @@ async function awaitOwnWakeReply(
     readonly timeoutMs: number;
     readonly skip?: (m: SlackMessage) => boolean;
     readonly want?: { readonly label: string; readonly match: (m: SlackMessage) => boolean };
+    readonly threadTs?: string;
   },
 ): Promise<SlackMessage> {
   const read = ctx.auditRead;
   const vendor = slackVendorEventTime(anchorTs);
+  const threadRoot = opts.threadTs ?? anchorTs;
   if (!read || !vendor) {
     ctx.log(
       `reply-wait ${opts.what}: UNATTRIBUTED — ${read ? `the driver's own post ts ${anchorTs} carries no readable vendor instant` : "no control-plane audit reader (E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN unset)"}, ` +
@@ -590,7 +593,8 @@ async function awaitOwnWakeReply(
       opts.skip === undefined && opts.want === undefined
         ? undefined
         : (m: SlackMessage) => (opts.skip?.(m) ?? false) || (opts.want !== undefined && !opts.want.match(m));
-    return driver.awaitAnyReply(anchorTs, { timeoutMs: opts.timeoutMs, ...(degradedSkip ? { skip: degradedSkip } : {}) });
+    const degradedSkipAfter = opts.threadTs === undefined ? degradedSkip : (m: SlackMessage) => !tsAfter(m.ts, anchorTs) || (degradedSkip?.(m) ?? false);
+    return driver.awaitAnyReply(threadRoot, { timeoutMs: opts.timeoutMs, ...(degradedSkipAfter ? { skip: degradedSkipAfter } : {}) });
   }
   const { teamId } = await driver.identity();
   const surfaceKey = `slack/${teamId}/${driver.channelId}`;
@@ -613,7 +617,7 @@ async function awaitOwnWakeReply(
         return lastRows;
       },
       fetchCandidates: async (): Promise<readonly OwnWakeCandidate[]> => {
-        const msgs = await driver.collectBotMessagesAfter(anchorTs, anchorTs);
+        const msgs = await driver.collectBotMessagesAfter(threadRoot, anchorTs);
         const out: OwnWakeCandidate[] = [];
         for (const m of msgs) {
           seen.set(m.ts, m);
@@ -5725,6 +5729,93 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.gate(answered !== undefined, "S-APP-HOME: the forged Forget was answered by republishing the page with a notice");
       const purged = (await read({ sinceIso: forgedAt, actions: ["memory.purge"], limit: 50 })).filter((r) => ownRow(r) && r.detail?.["via"] === "slack-app-home");
       ctx.gate(purged.length === 0, `S-APP-HOME: a digest that names no line of the person's erased nothing (${purged.length} memory.purge row(s) via slack-app-home)`);
+    },
+  },
+
+  {
+    id: "S-SIDE-PANEL",
+    title: "Slack side panel (OPE-2505): a signed side-panel message wakes the person's own DM seat, which answers in the panel thread, gets the viewed channel as context, and runs no tool call that reads that channel",
+    requires: ["slack", "synthetic", "syntheticDm"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 900_000,
+    judged: false,
+    run: async (ctx) => {
+      const read = ctx.auditRead;
+      const transcriptRead = ctx.transcriptRead;
+      if (!read || !transcriptRead) {
+        return ctx.fixtureMissing("S-SIDE-PANEL gates on the turn's audit rows and on its transcript (the host note, and the absence of any tool call naming the viewed channel). Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to run it.");
+      }
+      const slack = ctx.slack!;
+      const dm = ctx.dm!;
+      const synthetic = ctx.synthetic!;
+      const { userId: personId, teamId } = await slack.identity();
+      const viewed = slack.channelId;
+      const info = await slack.apiRaw("conversations.info", { channel: viewed });
+      const viewedName = (info.channel as { name?: unknown } | undefined)?.name;
+      if (info.ok !== true || typeof viewedName !== "string") {
+        return ctx.fixtureMissing(`S-SIDE-PANEL: the driver token could not read the viewed channel's name (conversations.info ${viewed}: ${String(info.error ?? "no name")}). It needs channels:read, or groups:read for a private channel.`);
+      }
+      const room = { id: viewed, name: viewedName };
+      ctx.log(
+        "S-SIDE-PANEL: the side-panel message is FORGED, so this leg proves the host's side-panel road and not the board app's manifest. " +
+          "A real person also needs the app manifest re-applied with features.agent_view, the bot scope assistant:write and the bot event app_context_changed (UPGRADING 0.6.0).",
+      );
+
+      await fenceDmSeat(ctx, "S-SIDE-PANEL");
+      const { ts: threadTs } = await dm.post(fixtureLine("e2e S-SIDE-PANEL: this message opens a side-panel thread. Reply with one word: ok."));
+      await fenceDmSeat(ctx, "S-SIDE-PANEL");
+
+      const askAt = await presenceSince(ctx, "S-SIDE-PANEL ask");
+      const rootMs = slackVendorEventTime(threadTs)?.ms ?? 0;
+      const askTs = slackTsAt(Math.max(Date.now(), rootMs + 1_000));
+      const sent = await synthetic.sidePanelMessage({
+        text: fixtureLine("In one short line: which room do I have open beside you?"),
+        dmChannelId: dm.channelId,
+        userId: personId,
+        teamId,
+        ts: askTs,
+        threadTs,
+        viewedChannelId: viewed,
+      });
+      ctx.gate(sent.status === 200, `S-SIDE-PANEL: the signed side-panel message is acknowledged (${sent.label}, HTTP ${sent.status})`);
+
+      const answer = await awaitOwnWakeReply(ctx, dm, askTs, { what: "S-SIDE-PANEL", timeoutMs: FILE_REPLY_WAIT, threadTs, skip: (m) => isPendingWorkHandoff(m.text) });
+      ctx.gate(answer.threadTs === threadTs, `S-SIDE-PANEL: the DM seat answered in the panel thread ${threadTs} (the answer's thread: ${answer.threadTs ?? "none — it posted flat in the DM"})`);
+
+      await sleep(15_000);
+      const rows = await read({ sinceIso: askAt, limit: 1000 });
+      const replyRow = rows.find((r) => r.action === REPLY_POST_ACTION && dS(r, "id") === answer.ts);
+      const wakeId = replyRow ? dS(replyRow, "wakeId") : undefined;
+      ctx.gate(wakeId !== undefined, `S-SIDE-PANEL: a reply.post row names the answer ${answer.ts} and its wake (${rows.length} row(s) read since the ask)`);
+      const turn = turnRows(rows, wakeId!);
+      const sessions = auditSessionIds(turn);
+      ctx.log(`S-SIDE-PANEL: the turn holds ${turn.length} audit row(s) over ${sessions.length} session(s): ${[...new Set(turn.map((r) => r.action))].join(", ")}`);
+
+      const askMs = Date.parse(askAt);
+      const events: TranscriptWireEvent[] = [];
+      for (const sessionId of sessions) {
+        const got = await transcriptRead(sessionId);
+        ctx.gate(got.length > 0, `S-SIDE-PANEL: the transcript of session ${sessionId} is readable, so the scan below sees its tool calls`);
+        events.push(...got);
+      }
+      ctx.gate(
+        noteNamesViewedRoom(events, viewed, askMs),
+        `S-SIDE-PANEL: the seat's wake carries the host note naming the viewed channel ${viewed}. Without it the host dropped the room: the person is not graded a full member, Slack does not confirm the channel internal, or app_context never reached the DM door`,
+      );
+
+      const calls = toolCallsNamingRoom(events, room, askMs);
+      ctx.gate(
+        calls.length === 0,
+        `S-SIDE-PANEL: no tool call of the turn reads the viewed channel ${viewed} (#${viewedName}), by id or name in its input or as a no-target read's channel (found ${calls.length}${calls.length > 0 ? `: ${calls.join(", ")}` : ""})`,
+      );
+
+      ctx.gate(rows.length < 1000, `S-SIDE-PANEL: the audit page since the ask is not truncated (${rows.length} of at most 1000 rows), so an absence on it means something`);
+      const leaks = viewedRoomRows(turn, viewed);
+      ctx.gate(
+        leaks.length === 0,
+        `S-SIDE-PANEL: no audit row linked to the turn names the viewed channel ${viewed} (found ${leaks.length}${leaks.length > 0 ? `: ${leaks.map((r) => r.action).join(", ")}` : ""})`,
+      );
     },
   },
 

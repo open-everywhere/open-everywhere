@@ -170,10 +170,44 @@ export function buildChannelMentionEnvelope(input: ChannelMentionInput): Record<
   };
 }
 
+export const SIDE_PANEL_CHANNEL_ENTITY_TYPE = "slack#/types/channel_id";
+
+export interface SidePanelMessageInput {
+  readonly text: string;
+  readonly dmChannelId: string;
+  readonly userId: string;
+  readonly teamId: string;
+  readonly ts: string;
+  readonly threadTs: string;
+  readonly viewedChannelId: string;
+  readonly eventId?: string;
+}
+
+export function buildSidePanelMessageEnvelope(input: SidePanelMessageInput): Record<string, unknown> {
+  return {
+    type: "event_callback",
+    team_id: input.teamId,
+    event_id: input.eventId ?? `EvE2ESP${input.ts.replace(".", "")}`,
+    event_time: Math.floor(Number.parseFloat(input.ts)),
+    event: {
+      type: "message",
+      channel_type: "im",
+      channel: input.dmChannelId,
+      user: input.userId,
+      text: input.text,
+      ts: input.ts,
+      event_ts: input.ts,
+      thread_ts: input.threadTs,
+      team: input.teamId,
+      app_context: { entities: [{ type: SIDE_PANEL_CHANNEL_ENTITY_TYPE, value: input.viewedChannelId, team_id: input.teamId }] },
+    },
+  };
+}
+
 export interface SyntheticResult {
   readonly status: number;
   readonly body: string;
-  readonly label: "synthetic click" | "synthetic command" | "synthetic mention";
+  readonly label: "synthetic click" | "synthetic command" | "synthetic mention" | "synthetic side-panel message";
 }
 
 export function buildHomeOpenedEnvelope(input: { readonly userId: string; readonly teamId: string }): Record<string, unknown> {
@@ -280,6 +314,11 @@ export class SyntheticSlack {
   async channelMention(input: { text: string; userId: string; teamId: string; ts: string }): Promise<SyntheticResult> {
     const rawBody = JSON.stringify(buildChannelMentionEnvelope({ ...input, channelId: this.cfg.channel }));
     return this.signedPost(SYNTHETIC_SLACK_ROUTE, rawBody, "synthetic mention", "application/json");
+  }
+
+  async sidePanelMessage(input: SidePanelMessageInput): Promise<SyntheticResult> {
+    const rawBody = JSON.stringify(buildSidePanelMessageEnvelope(input));
+    return this.signedPost(SYNTHETIC_SLACK_ROUTE, rawBody, "synthetic side-panel message", "application/json");
   }
 
   async connectClick(input: Omit<ConnectClickInput, "userId" | "org"> & { userId?: string; org?: string }): Promise<SyntheticResult> {

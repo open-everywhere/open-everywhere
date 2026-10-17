@@ -156,6 +156,12 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     why: "S-APP-HOME (OPE-2451) is the only live leg on the person's Home tab: a signed open publishes the page, Export hands the person their memory, and a forged Forget erases nothing. A change to the page model, the memory data plane behind it or the Slack half reaches exactly that leg. The domain memory canvas is NOT here: S-APP-HOME never reads a canvas, so it has its own area below (OPE-2499).",
   },
   {
+    area: "slack-side-panel",
+    globs: ["packages/providers/slack/agent/channels/slack-side-panel.ts"],
+    scenarios: ["S-SIDE-PANEL"],
+    why: "S-SIDE-PANEL (OPE-2505) is the only live leg on the Slack side panel. It forges a signed side-panel message that names the e2e channel as the viewed room, and gates that the person's DM seat answers in the panel thread, that the seat's wake carries the host note naming the room, and that no tool call of the turn reads the room: none names it by id or name, apart from the answer tools and the name lookup, and no no-target read returns it. `slack-side-panel.ts` parses the room, runs the strictest-default gates and writes the note, so a change to it changes all three answers.",
+  },
+  {
     area: "domain-memory-canvas",
     globs: [
       "packages/providers/slack/agent/channels/slack-memory-canvas.ts",

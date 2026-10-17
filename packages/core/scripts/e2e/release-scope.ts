@@ -69,6 +69,7 @@ const REQUIRED_IDS = [
   "S-TAINT-UNATTENDED-DENY",
   "S-ROUTINE-CONNECTOR-WRITE",
   "S-DM-STOP-GRANT",
+  "S-SIDE-PANEL",
   "J-ENGAGED-slack",
   "J-ENGAGED-github",
   "J-ENGAGED-notion",
