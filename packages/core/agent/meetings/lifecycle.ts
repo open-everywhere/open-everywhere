@@ -11,8 +11,10 @@ import { resolveHalt, haltScopeFor } from "../access/halt.js";
 import { boxIsLive, boxSeconds, boxesPastCap, clampBoxMinutes, resolveLongLivedBoxBackend, registeredLongLivedBoxBackend, type BoxListing, type BoxSpec, type LongLivedBoxBackend } from "../sandbox/long-lived-box.js";
 import { meetingPolicy, type MeetingPolicy } from "./policy.js";
 import { meetingCompletion, transcriptionRoute } from "./transcription.js";
-import { parseRecap, recapPrompt, renderRecapPost } from "./recap.js";
+import { neutraliseMentions, parseRecap, recapPrompt, renderRecapPost } from "./recap.js";
 import { contextTail, labelSegments, parseAttendees, parseSpeakerSpans, renderChunkText, transcriptionContext, usableSegments, type SpeakerSpan } from "./speakers.js";
+import { discordRoom } from "./discord-voice.js";
+import { SNOWFLAKE } from "./link.js";
 import {
   MAX_OPEN_MEETINGS,
   deleteMeetingRecord,
@@ -33,6 +35,10 @@ import {
   putTranscriptChunk,
   readTranscript,
   readTranscriptChunk,
+  getVoiceSession,
+  deleteVoiceSession,
+  claimDiscordGuild,
+  releaseDiscordGuild,
   recordTtlMs,
   type MeetingRecord,
   type MeetingStatus,
@@ -54,6 +60,8 @@ export interface MeetingJoinArgs {
   readonly platform: MeetingPlatform;
   readonly host: string;
   readonly roomId: string;
+  readonly channelLabel?: string;
+  readonly serverLabel?: string;
   readonly requestedBy: string;
   readonly origin: { readonly platform: string; readonly channelId: string; readonly threadTs: string | null };
   readonly partition: Partition;
@@ -82,7 +90,7 @@ export function meetingBoxSpec(args: MeetingJoinArgs, policy: MeetingPolicy, cal
     purpose: "meeting",
     ref: args.meetingId,
     image: policy.box.image,
-    command: ["node", "/opt/oe-meeting-bot/bot.mjs"],
+    command: ["node", args.platform === "discord" ? "/opt/oe-meeting-bot/discord.mjs" : "/opt/oe-meeting-bot/bot.mjs"],
     vcpus: policy.box.vcpus,
     memoryMb: policy.box.memoryMb,
     shmMb: 1024,
@@ -146,8 +154,14 @@ export async function openMeeting(args: MeetingJoinArgs, approvedBy: string, dep
     }
     throw new Error("this meeting bot is already being sent, so I did not send a second one");
   }
+  const room = discordRoom(args);
+  if (room !== undefined && !(await claimDiscordGuild(args.org, room.guildId, args.meetingId, ttl, now()))) {
+    await releaseMeetingOpen(args.org, args.meetingId);
+    throw new Error("the meeting bot is already recording a voice channel on this Discord server, and Discord allows it in one voice channel per server — so I did not send it");
+  }
   const slot = await claimOpenMeetingSlot(args.org, args.meetingId, ttl, now());
   if (slot === undefined) {
+    if (room !== undefined) await releaseDiscordGuild(args.org, room.guildId, args.meetingId);
     await releaseMeetingOpen(args.org, args.meetingId);
     throw new Error(`this deployment already has ${MAX_OPEN_MEETINGS} meeting bots running, so I did not send another`);
   }
@@ -158,6 +172,8 @@ export async function openMeeting(args: MeetingJoinArgs, approvedBy: string, dep
     platform: args.platform,
     host: args.host,
     roomId: args.roomId,
+    ...(args.channelLabel !== undefined ? { channelLabel: args.channelLabel } : {}),
+    ...(args.serverLabel !== undefined ? { serverLabel: args.serverLabel } : {}),
     requestedBy: args.requestedBy,
     approvedBy,
     origin: args.origin,
@@ -176,6 +192,7 @@ export async function openMeeting(args: MeetingJoinArgs, approvedBy: string, dep
   } catch (err) {
     await deleteMeetingRecord(args.org, args.meetingId);
     await releaseOpenMeetingSlot(args.org, slot, args.meetingId);
+    if (room !== undefined) await releaseDiscordGuild(args.org, room.guildId, args.meetingId);
     await releaseMeetingOpen(args.org, args.meetingId);
     throw err;
   }
@@ -220,7 +237,10 @@ export type MeetingEvent =
       readonly text?: string;
       readonly speakers?: readonly SpeakerSpan[];
       readonly attendees?: readonly string[];
+      readonly speaker?: string;
+      readonly atMs?: number;
     }
+  | { readonly type: "voice" }
   | { readonly type: "ended"; readonly chunks: number; readonly reason: string };
 
 const STATES = new Set(["lobby", "admitted", "refused", "failed"]);
@@ -249,6 +269,8 @@ export function parseMeetingEvent(raw: string): MeetingEvent | { readonly error:
     if (audio !== undefined && !/^audio\/[a-z0-9.+-]+(;.*)?$/.test(audio.mediaType)) return { error: "chunk.audio.mediaType must be an audio type" };
     const speakers = parseSpeakerSpans(o.speakers);
     const attendees = parseAttendees(o.attendees);
+    const speaker = typeof o.speaker === "string" && SNOWFLAKE.test(o.speaker) ? o.speaker : undefined;
+    const atMs = typeof o.atMs === "number" && Number.isFinite(o.atMs) && o.atMs >= 0 && o.atMs <= 25 * 60 * 60_000 ? Math.round(o.atMs) : undefined;
     return {
       type: "chunk",
       seq: o.seq,
@@ -256,8 +278,11 @@ export function parseMeetingEvent(raw: string): MeetingEvent | { readonly error:
       ...(text !== undefined ? { text } : {}),
       ...(speakers !== undefined && speakers.length > 0 ? { speakers } : {}),
       ...(attendees !== undefined && attendees.length > 0 ? { attendees } : {}),
+      ...(speaker !== undefined ? { speaker } : {}),
+      ...(atMs !== undefined ? { atMs } : {}),
     };
   }
+  if (o.type === "voice") return { type: "voice" };
   if (o.type === "ended") {
     if (typeof o.chunks !== "number" || !Number.isInteger(o.chunks) || o.chunks < 0 || o.chunks > MAX_MEETING_CHUNKS) return { error: "ended.chunks must be an integer" };
     return { type: "ended", chunks: o.chunks, reason: typeof o.reason === "string" ? o.reason.slice(0, 40) : "ended" };
@@ -293,12 +318,35 @@ export async function handleMeetingCallback(org: string, meetingId: string, rawB
     if (rec.status === "ended" || rec.status === "recapped") return { status: 200, body: { ok: true } };
     const wasAdmitted = rec.status === "admitted";
     const status: MeetingStatus = event.state === "admitted" ? "admitted" : event.state === "lobby" ? "lobby" : wasAdmitted ? "admitted" : "failed";
+    if (rec.platform === "discord" && event.state === "admitted" && !wasAdmitted && !(await notifyVoiceChannel(rec, DISCORD_RECORDING_NOTICE, deps))) {
+      const failed: MeetingRecord = { ...rec, status: "failed" };
+      await putMeetingRecord(failed, recordTtlMs(rec.box.maxMinutes, policy.retention.transcriptDays));
+      await appendAudit({ ...auditWhere(rec.partition), principalId: rec.requestedBy, action: "meeting.status", detail: { meetingId, state: "failed", detail: "notice-failed" } });
+      await notifyThread(rec, "I could not post the recording notice in the Discord voice channel, so the meeting bot left without recording. Give it Send Messages in that channel and ask again.", deps);
+      await finishMeeting(failed, "notice-failed", deps);
+      return { status: 200, body: { ok: true, ended: true } };
+    }
     await putMeetingRecord({ ...rec, status }, recordTtlMs(rec.box.maxMinutes, policy.retention.transcriptDays));
     await appendAudit({ ...auditWhere(rec.partition), principalId: rec.requestedBy, action: "meeting.status", detail: { meetingId, state: event.state, ...(event.detail ? { detail: event.detail } : {}) } });
     if (!wasAdmitted && (event.state === "refused" || event.state === "failed")) {
       await notifyThread(rec, event.state === "refused" ? "The meeting bot was not admitted, so there will be no recap." : "The meeting bot could not join the meeting, so there will be no recap.", deps);
     }
     return { status: 200, body: { ok: true } };
+  }
+
+  if (event.type === "voice") {
+    if (rec.platform !== "discord") return { status: 400, body: { ok: false, error: "voice is for Discord meetings" } };
+    if (rec.status === "ended" || rec.status === "recapped") return { status: 200, body: { ok: true, ended: true } };
+    const session = await getVoiceSession(org, meetingId);
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        ...(session?.credentials !== undefined ? { credentials: session.credentials } : {}),
+        ...(session?.failed !== undefined ? { failed: session.failed } : {}),
+        ...(session?.members !== undefined ? { others: session.members.filter((m) => m.id !== session.credentials?.userId).length } : {}),
+      },
+    };
   }
 
   if (event.type === "chunk") {
@@ -313,7 +361,9 @@ export async function handleMeetingCallback(org: string, meetingId: string, rawB
       ? ({ kind: "audio", mediaType: event.audio.mediaType, data: Buffer.from(event.audio.base64, "base64") } as const)
       : ({ kind: "text", text: event.text ?? "" } as const);
     const previous = await readTranscriptChunk(org, meetingId, event.seq - 1);
-    const attendees = event.attendees ?? previous?.attendees ?? [];
+    const session = rec.platform === "discord" ? await getVoiceSession(org, meetingId) : undefined;
+    const members = session?.roster ?? session?.members ?? [];
+    const attendees = rec.platform === "discord" ? members.map((m) => m.name) : (event.attendees ?? previous?.attendees ?? []);
     const prompt = transcriptionContext({ ...(previous?.tail !== undefined ? { previousTail: previous.tail } : {}), attendees });
     let result: Awaited<ReturnType<typeof route.transcribe>>;
     try {
@@ -328,8 +378,12 @@ export async function handleMeetingCallback(org: string, meetingId: string, rawB
     }
     const plain = typeof result === "string" ? result : result.text;
     const segments = typeof result === "string" ? [] : usableSegments(plain, result.segments);
-    const chunk = renderChunkText(plain, segments.length > 0 && event.speakers !== undefined ? labelSegments(segments, event.speakers) : []);
-    await putTranscriptChunk(org, meetingId, event.seq, { text: chunk.text, tail: contextTail(plain), ...(attendees.length > 0 ? { attendees } : {}), labelled: chunk.labelled }, ttl);
+    const speakerName = event.speaker !== undefined ? members.find((m) => m.id === event.speaker)?.name : undefined;
+    const lines = speakerName !== undefined && plain.trim().length > 0
+      ? [{ speaker: speakerName, text: plain.trim() }]
+      : segments.length > 0 && event.speakers !== undefined ? labelSegments(segments, event.speakers) : [];
+    const chunk = renderChunkText(plain, lines);
+    await putTranscriptChunk(org, meetingId, event.seq, { text: chunk.text, tail: contextTail(plain), ...(attendees.length > 0 ? { attendees } : {}), labelled: chunk.labelled, ...(event.atMs !== undefined ? { atMs: event.atMs } : {}) }, ttl);
     await raiseChunkHighWater(org, meetingId, event.seq, ttl);
     return { status: 200, body: { ok: true } };
   }
@@ -368,6 +422,22 @@ export async function notifyThread(rec: Pick<MeetingRecord, "id" | "origin">, te
   } catch (err) {
     console.warn(`[open-everywhere:meetings] thread post failed for ${rec.id}: ${String(err)}`);
     return undefined;
+  }
+}
+
+export const DISCORD_RECORDING_NOTICE =
+  "🔴 Recording: OE's meeting notetaker is in this voice channel and records each speaker for a written recap. The recap goes to the thread that asked for it. Audio is not stored. To stop it, ask OE to leave the meeting in that thread.";
+export const DISCORD_STOPPED_NOTICE = "⏹️ OE's meeting notetaker left this voice channel and stopped recording.";
+
+async function notifyVoiceChannel(rec: MeetingRecord, text: string, deps: FinishDeps): Promise<boolean> {
+  const room = discordRoom(rec);
+  if (room === undefined) return false;
+  try {
+    await (deps.post ?? postSurfaceTextStrict)("discord", { channelId: room.channelId, text });
+    return true;
+  } catch (err) {
+    console.warn(`[open-everywhere:meetings] voice channel notice failed for ${rec.id}: ${String(err)}`);
+    return false;
   }
 }
 
@@ -424,6 +494,11 @@ export async function finishMeeting(
   const ttl = recordTtlMs(rec.box.maxMinutes, policy.retention.transcriptDays);
   await putMeetingRecord({ ...rec, status: "ended", endedAt: new Date(now).toISOString() }, ttl);
   await releaseOpenMeetingSlot(rec.org, rec.slot, rec.id);
+  const room = discordRoom(rec);
+  if (room !== undefined) {
+    await deleteVoiceSession(rec.org, rec.id);
+    await releaseDiscordGuild(rec.org, room.guildId, rec.id);
+  }
   await appendAudit({
     ...auditWhere(rec.partition),
     principalId: rec.requestedBy,
@@ -436,6 +511,7 @@ export async function finishMeeting(
       ...(bill !== undefined ? { seconds: bill.seconds, usdMicros: Math.round(bill.usd * 1_000_000) } : {}),
     },
   });
+  if (rec.status === "admitted" && reason !== "halted") await notifyVoiceChannel(rec, DISCORD_STOPPED_NOTICE, deps);
   if (reason === "halted") {
     await claimMeetingRecap(rec.org, rec.id, ttl);
     return { posted: false, billed: bill !== undefined };
@@ -451,13 +527,14 @@ export async function finishMeeting(
     const complete = meetingCompletion();
     if (complete !== undefined) {
       try {
-        recap = parseRecap(await complete(rec.partition.surfaceKey, recapPrompt(text, { platform: rec.platform, minutes, attendees, labelled: labelled > 0 })));
+        recap = parseRecap(await complete(rec.partition.surfaceKey, recapPrompt(text, { platform: rec.platform, minutes, attendees, labelled: labelled > 0, ...(rec.platform === "discord" ? { labelSource: "voice" as const } : {}) })));
       } catch (err) {
         console.warn(`[open-everywhere:meetings] recap completion failed for ${rec.id}: ${String(err)}`);
       }
     }
   }
-  const post = renderRecapPost(recap, { platform: rec.platform, minutes, missingChunks: missing.length, empty });
+  const roomName = rec.channelLabel !== undefined ? neutraliseMentions(rec.channelLabel.replace(/^#/, "")) : "";
+  const post = renderRecapPost(recap, { platform: rec.platform, minutes, missingChunks: missing.length, empty, ...(roomName.length > 0 ? { room: roomName } : {}) });
   const messageId = await notifyThread(rec, post, deps);
   if (messageId !== undefined) await markPostedRecap(rec.org, rec.origin, messageId);
   await putMeetingRecord({ ...rec, status: "recapped", endedAt: new Date(now).toISOString() }, ttl);
@@ -507,6 +584,8 @@ export async function sweepMeetingBoxes(org: string, deps: FinishDeps = {}): Pro
     }
     if (rec.status === "ended" || rec.status === "recapped") {
       await releaseOpenMeetingSlot(org, slot, id);
+      const room = discordRoom(rec);
+      if (room !== undefined) await releaseDiscordGuild(org, room.guildId, id);
       continue;
     }
     if (await (deps.halted ?? meetingHalted)(rec)) {

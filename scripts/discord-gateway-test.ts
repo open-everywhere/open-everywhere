@@ -1,4 +1,6 @@
 import { createHmac } from "node:crypto";
+import { voiceSyncEnvelope as relayVoiceSyncEnvelope, parseSyncAnswer as relayParseSyncAnswer } from "../deploy/discord-relay/voice.js";
+import { parseVoiceSync } from "@open-everywhere/core/agent/meetings/discord-voice.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { registerDiscordProvider as __regDiscord } from "@open-everywhere/provider-discord/agent/register.js";
@@ -239,6 +241,28 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   ok(heartbeatAt < dispatchAt, "heartbeat order: heartbeat is classified BEFORE any turn dispatch");
   const heartbeatBranch = src.slice(heartbeatAt, reactionAt);
   ok(/if \(heartbeat\) \{[\s\S]*?return new Response\("ok", \{ status: 200 \}\);[\s\S]*?\}/.test(heartbeatBranch), "heartbeat order: a classified heartbeat RETURNS 200 rather than falling through");
+}
+
+{
+  const env = relayVoiceSyncEnvelope("555555555555555555", [
+    { meetingId: "mtg_aaaaaaaaaaaaaaaaaaaaaaaaaa", credentials: { guildId: "111111111111111111", channelId: "222222222222222222", userId: "555555555555555555", sessionId: "s1", token: "t1", endpoint: "c-ams1.discord.media:443" }, members: [{ id: "444444444444444444", name: "Ana" }] },
+  ]);
+  const parsed = parseVoiceSync(env);
+  ok(parsed !== null && parsed.relayId === "555555555555555555" && parsed.sessions[0]?.credentials?.token === "t1" && parsed.sessions[0]?.members?.[0]?.name === "Ana", "voice sync: the relay's own envelope parses on the deploy, credentials and members intact");
+  ok(parseRelayPayload(env) === null && parseRelayReaction(env) === null && parseRelayHeartbeat(env) === null, "voice sync: a VOICE_SYNC envelope is not a message, a reaction or a heartbeat");
+  const heartbeat = { source: "discord-gateway-relay", event: "HEARTBEAT", heartbeat: { relayId: "R_bot1", ts: 1 } };
+  ok(parseVoiceSync(heartbeat) === null && parseVoiceSync(relayEnvelope({ id: "M1", content: "hi", channelId: "C1", author: { id: "U1", bot: false } })) === null, "voice sync: a heartbeat or a message is not a voice sync");
+  const answer = relayParseSyncAnswer(JSON.parse(JSON.stringify({ voice: [{ meetingId: "mtg_aaaaaaaaaaaaaaaaaaaaaaaaaa", guildId: "111111111111111111", channelId: "222222222222222222", deadlineMs: 5 }], nextPollMs: 3000 })));
+  ok(answer.voice.length === 1 && answer.nextPollMs === 3000, "voice sync: the relay reads the deploy's answer shape (VoiceSyncAnswer)");
+
+  const src = readFileSync(fileURLToPath(new URL("../packages/providers/discord/agent/channels/discord-gateway.ts", import.meta.url)), "utf8");
+  const voiceAt = src.indexOf("const voiceSync = parseVoiceSync(json);");
+  const reactionAt = src.indexOf("const reaction = parseRelayReaction(json);");
+  const dispatchAt = src.indexOf("dispatchTurn(msg, auth, gatewaySend");
+  const gateAt = src.indexOf("const rejection = relayGate(");
+  ok(voiceAt > 0 && gateAt > 0 && gateAt < voiceAt, "voice sync: classified only AFTER the relay's HMAC gate");
+  ok(voiceAt < reactionAt && voiceAt < dispatchAt, "voice sync: classified before the reaction leg and any turn dispatch");
+  ok(/if \(voiceSync\) \{[\s\S]*?return new Response\(JSON\.stringify\(answer\)/.test(src.slice(voiceAt, reactionAt)), "voice sync: a classified sync RETURNS the desired state, never falls through");
 }
 
 {

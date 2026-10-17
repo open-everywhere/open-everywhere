@@ -21,6 +21,7 @@ import {
 
 const REQUESTER_HEADING = "Requester's visible messages:";
 const EARLIER_HEADING = "Requester's messages from EARLIER turns";
+const QUOTE_HEADING = "The person's own words";
 const STARTER_ROUTINE_RULE = "routine-reports-here";
 
 function freshUnlistedChannelId(): string {
@@ -134,7 +135,10 @@ test("a person's ask on the seat reaches the judge of the work-session child tha
     askText: `<@9000000000000000001> ${humanNonce} please set up a routine that summarises the numbers every weekday morning`,
     briefNonce,
   });
-  expect(childOpening, "precondition: the child never received the person's words as a message").not.toContain(humanNonce);
+  const quoteAt = childOpening.indexOf(QUOTE_HEADING);
+  expect(quoteAt, "precondition: the child's opening carries the host's quote of the person's words").toBeGreaterThan(-1);
+  expect(childOpening.slice(quoteAt), "…and the person's nonce sits inside that quote").toContain(humanNonce);
+  expect(childOpening.slice(0, quoteAt), "…and nowhere before it: the seat's brief did not carry it").not.toContain(humanNonce);
 
   const judged = await waitFor(() => (prompts.some((p) => p.includes("Action: create_routine")) ? [...prompts] : undefined), "the judge to be consulted for the child's create_routine proposal");
   const forRoutine = judged.filter((p) => p.includes("Action: create_routine"));
@@ -145,6 +149,7 @@ test("a person's ask on the seat reaches the judge of the work-session child tha
     expect(p).not.toContain(EARLIER_HEADING);
   }
   for (const p of judged) expect(p).not.toContain(briefNonce);
+  for (const p of judged) expect(p).not.toContain(QUOTE_HEADING);
   for (const p of forRoutine) expect(p).not.toContain("<wake");
 
   const rows = await routineApprovalRows(cursor, "approval.autoapproved");

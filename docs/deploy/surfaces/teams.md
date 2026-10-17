@@ -560,8 +560,9 @@ posts as a new post, not inside the reply chain that asked, and the agent says w
   row holds the requester's `29:` id and not a display name
   ([Approval cards](../../security/control-plane.md#in-slack-approvals)). Several asks from one job
   still post one Teams card each; grouping them into one card is Slack-only today.
-- **What the person sees.** A decided card replaces the pending one, and a decision notice posts
-  into the card's own reply chain. A notice with no tap behind it — a TTL expiry, or a card a
+- **What the person sees.** A decided card replaces the pending one. A decision notice posts into
+  the card's own reply chain too, unless the card was replaced, a seat took the decision wake and
+  no thread seat or worker owns the reply chain: then the decided card already shows the same line. A notice with no tap behind it — a TTL expiry, or a card a
   routine grant released — posts as a new post in the channel instead. A refused tap — a
   non-admin on an admin-tier card, a tap from another Teams channel, a guest — shows a note to
   that person only, and the card stays live.
@@ -856,7 +857,9 @@ run `E2E_ONLY=J-TEAMS-DM npm run test:e2e-driver` and read the skip reason.
 3. **The tap.** Graph cannot press a card button, and the deployment trusts only invokes that
    Microsoft signs, so this leg needs a person in the Teams client. Set `E2E_TEAMS_CARD_TAP=manual`,
    run the leg, and tap **Reject** on the card when the log says `TAP NOW`. The leg then gates on the
-   decision row (named for a `29:` principal) and on the decision notice in the card's reply chain.
+   decision row (named for a `29:` principal). It then gates on the decision notice in the card's
+   reply chain, or, when a seat took the wake and the notice did not post, on a delivered
+   `approval.decision_wake` row and the decided card in place of the pending one.
    Without `E2E_TEAMS_CARD_TAP=manual` the leg SKIPS after legs 1 and 2 — it never scores green over
    a tap nobody made.
 

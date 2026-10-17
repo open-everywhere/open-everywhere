@@ -12,7 +12,8 @@ import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedT
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import { turnSurfaceMode } from "../hooks/spend.js";
 import { nonMemberWake } from "./propose_mcp_server.js";
-import { parseMeetingLink, platformLabel } from "../meetings/link.js";
+import { platformLabel } from "../meetings/link.js";
+import { resolveMeetingLink } from "../meetings/invite.js";
 import { meetingPolicy, nativeRecapRefusal, normaliseOrganiserEmail } from "../meetings/policy.js";
 import { nativeTranscriptSource } from "../meetings/native.js";
 import { mintNativeRecapId, type NativeRecapArgs } from "../meetings/native-recap.js";
@@ -44,7 +45,7 @@ export default defineTool({
     await requireSessionContinuation(ctx, "meeting_recap");
     if (resolveMode(ctx) === "mpim") throw new Error("Group DMs are execution-only — ask me for the recap from a channel or a DM instead.");
 
-    const parsed = parseMeetingLink(input.url);
+    const parsed = await resolveMeetingLink(input.url);
     if (!parsed.ok) throw new Error(parsed.reason);
     const link = parsed.link;
 

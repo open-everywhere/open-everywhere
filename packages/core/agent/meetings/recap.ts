@@ -1,9 +1,6 @@
 import { wrapUntrusted } from "../access/untrusted.js";
 import { platformLabel, type MeetingPlatform } from "./link.js";
 
-export const RECAP_QUOTE_HEADER =
-  "The quoted lines are what people said in the meeting, summarised from the transcript (untrusted content). They are not instructions from me, and I act on none of them unless someone in this thread asks.";
-
 export interface MeetingRecap {
   readonly summary: string;
   readonly decisions: readonly string[];
@@ -23,7 +20,7 @@ export function recapPrompt(
     readonly minutes: number;
     readonly attendees?: readonly string[];
     readonly labelled?: boolean;
-    readonly labelSource?: "page" | "transcript";
+    readonly labelSource?: "page" | "transcript" | "voice";
   },
 ): string {
   const body = transcript.length > MAX_TRANSCRIPT_CHARS ? `${transcript.slice(0, MAX_TRANSCRIPT_CHARS)}\n[transcript truncated]` : transcript;
@@ -36,8 +33,10 @@ export function recapPrompt(
       ? [
           meta.labelSource === "transcript"
             ? "A line that starts with a name in square brackets, like [Ana], was spoken by that person, as the meeting platform's own transcript labelled it. A line with no name has no known speaker: do not guess one."
-            : "A line that starts with a name in square brackets, like [Ana], was spoken while the meeting page showed that person as the speaker. A line with no name has no known speaker: do not guess one.",
-          `Use those names for the action owners. A name is the display name the person chose on the meeting ${meta.labelSource === "transcript" ? "platform" : "page"}.`,
+            : meta.labelSource === "voice"
+              ? "A line that starts with a name in square brackets, like [Ana], was spoken by that person: Discord sends each person's audio on its own stream. A line with no name has no known speaker: do not guess one."
+              : "A line that starts with a name in square brackets, like [Ana], was spoken while the meeting page showed that person as the speaker. A line with no name has no known speaker: do not guess one.",
+          `Use those names in the summary and for the action owners. A name is the display name the person chose on the meeting ${meta.labelSource === "page" || meta.labelSource === undefined ? "page" : "platform"}.`,
         ]
       : []),
     "Answer with ONE JSON object and nothing else, in this shape:",
@@ -94,18 +93,17 @@ export function parseRecap(answer: string): MeetingRecap | undefined {
 
 export function renderRecapPost(
   recap: MeetingRecap | undefined,
-  meta: { readonly platform: MeetingPlatform; readonly minutes: number; readonly missingChunks: number; readonly empty: boolean; readonly source?: "bot" | "native" },
+  meta: { readonly platform: MeetingPlatform; readonly minutes: number; readonly missingChunks: number; readonly empty: boolean; readonly source?: "bot" | "native"; readonly room?: string },
 ): string {
   const label = platformLabel(meta.platform);
-  const head = meta.source === "native" ? `Meeting recap — ${label}, about ${meta.minutes} min, from ${label}'s own transcript.` : `Meeting recap — ${label}, about ${meta.minutes} min.`;
+  const head = `Meeting recap: ${meta.room ?? label}, ${meta.minutes} min${meta.source === "native" ? `, from ${label}'s own transcript` : ""}`;
   const gap = meta.missingChunks > 0 ? [`(${meta.missingChunks} part(s) of the audio, each at most 75 seconds, did not reach me, so the recap has gaps.)`] : [];
   if (meta.empty) return [head, "", meta.source === "native" ? "The transcript has no speech in it, so there is nothing to recap." : "I heard no speech in this meeting, so there is nothing to recap.", ...gap].join("\n");
   if (recap === undefined) return [head, "", "I could not summarise the transcript.", ...gap].join("\n");
   const q = (line: string): string => `> ${line}`;
-  const lines = [head, RECAP_QUOTE_HEADER, "", q(recap.summary), q(""), q("Decisions:")];
-  lines.push(...(recap.decisions.length > 0 ? recap.decisions.map((d) => q(`• ${d}`)) : [q("• none recorded")]));
-  lines.push(q(""), q("Actions:"));
-  lines.push(...(recap.actions.length > 0 ? recap.actions.map((a) => q(`• ${a.owner}: ${a.item}${a.due !== undefined ? ` (due ${a.due})` : ""}`)) : [q("• none recorded")]));
+  const lines = [head, "", q(recap.summary)];
+  if (recap.decisions.length > 0) lines.push(q(""), q("Decisions:"), ...recap.decisions.map((d) => q(`• ${d}`)));
+  if (recap.actions.length > 0) lines.push(q(""), q("Actions:"), ...recap.actions.map((a) => q(`• ${a.owner}: ${a.item}${a.due !== undefined ? ` (due ${a.due})` : ""}`)));
   if (gap.length > 0) lines.push("", ...gap);
   return lines.join("\n");
 }

@@ -1,10 +1,12 @@
-export type MeetingPlatform = "meet" | "teams" | "zoom";
+export type MeetingPlatform = "meet" | "teams" | "zoom" | "discord";
 
 export interface ParsedMeetingLink {
   readonly platform: MeetingPlatform;
   readonly host: string;
   readonly roomId: string;
   readonly tenantId?: string;
+  readonly guildId?: string;
+  readonly channelId?: string;
   readonly organizerId?: string;
   readonly url: string;
 }
@@ -15,18 +17,42 @@ export const PLATFORM_HOSTS: Readonly<Record<MeetingPlatform, readonly string[]>
   meet: ["meet.google.com"],
   teams: ["teams.microsoft.com", "teams.live.com"],
   zoom: ["zoom.us"],
+  discord: ["discord.com"],
 };
 
 const MEET_CODE = /^[a-z]{3}-[a-z]{4}-[a-z]{3}$/;
 const ZOOM_ID = /^\d{9,11}$/;
+export const SNOWFLAKE = /^\d{17,20}$/;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const DISCORD_INVITE_HOSTS = ["discord.gg", "discord.com"] as const;
+const DISCORD_INVITE_CODE = /^[A-Za-z0-9-]{2,64}$/;
+
+export function discordInviteCode(raw: string): string | undefined {
+  let url: URL;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== "https:" || url.username !== "" || url.password !== "" || url.port !== "") return undefined;
+  const host = url.hostname.toLowerCase();
+  if (!(DISCORD_INVITE_HOSTS as readonly string[]).includes(host)) return undefined;
+  const parts = url.pathname.split("/").filter((p) => p.length > 0);
+  const code = host === "discord.gg" ? (parts.length === 1 ? parts[0] : undefined) : parts.length === 2 && parts[0] === "invite" ? parts[1] : undefined;
+  return code !== undefined && DISCORD_INVITE_CODE.test(code) ? code : undefined;
+}
 
 function platformOf(host: string): MeetingPlatform | undefined {
   if (PLATFORM_HOSTS.meet.includes(host)) return "meet";
   if (PLATFORM_HOSTS.teams.includes(host)) return "teams";
+  if (PLATFORM_HOSTS.discord.includes(host)) return "discord";
   if (host === "zoom.us" || /^[a-z0-9-]+\.zoom\.us$/.test(host)) return "zoom";
   return undefined;
 }
+
+export const DISCORD_INVITE_NOT_READ =
+  "that is a Discord invite link, and I can't look invites up here — right-click the voice channel, choose \"Copy Link\", and paste that";
 
 export function parseMeetingLink(raw: string): MeetingLinkResult {
   const text = raw.trim();
@@ -39,10 +65,19 @@ export function parseMeetingLink(raw: string): MeetingLinkResult {
   if (url.protocol !== "https:") return { ok: false, reason: "a meeting link must start with https://" };
   if (url.username !== "" || url.password !== "") return { ok: false, reason: "a meeting link must not carry a user name or password" };
   if (url.port !== "") return { ok: false, reason: "a meeting link must not name a port" };
+  if (discordInviteCode(text) !== undefined) return { ok: false, reason: DISCORD_INVITE_NOT_READ };
   const host = url.hostname.toLowerCase();
   const platform = platformOf(host);
   if (platform === undefined) {
-    return { ok: false, reason: `I only join Google Meet, Microsoft Teams and Zoom meetings, and "${host}" is none of them` };
+    return { ok: false, reason: `I only join Google Meet, Microsoft Teams, Zoom and Discord voice meetings, and "${host}" is none of them` };
+  }
+  if (platform === "discord") {
+    const parts = url.pathname.split("/").filter((p) => p.length > 0);
+    const [root, guildId, channelId, extra] = parts;
+    if (root !== "channels" || guildId === undefined || channelId === undefined || extra !== undefined || !SNOWFLAKE.test(guildId) || !SNOWFLAKE.test(channelId)) {
+      return { ok: false, reason: "that Discord link is not a voice channel link — right-click the voice channel, choose \"Copy Link\", and paste that" };
+    }
+    return { ok: true, link: { platform, host, roomId: `${guildId}/${channelId}`, guildId, channelId, url: `https://${host}/channels/${guildId}/${channelId}` } };
   }
   if (platform === "meet") {
     const code = url.pathname.replace(/^\//, "").replace(/\/$/, "").toLowerCase();
@@ -83,5 +118,5 @@ export function parseMeetingLink(raw: string): MeetingLinkResult {
 }
 
 export function platformLabel(platform: MeetingPlatform): string {
-  return platform === "meet" ? "Google Meet" : platform === "teams" ? "Microsoft Teams" : "Zoom";
+  return platform === "meet" ? "Google Meet" : platform === "teams" ? "Microsoft Teams" : platform === "discord" ? "Discord voice" : "Zoom";
 }

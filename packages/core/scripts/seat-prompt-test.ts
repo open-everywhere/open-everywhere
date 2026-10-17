@@ -1114,4 +1114,14 @@ function ok(cond: boolean, label: string): void {
   ok(renderSupervisorPersona(standingCtx).includes("## This channel"), "negative control: a standing window token still reads the channel persona");
 }
 
+{
+  const { WORKER_REQUEST_SECTION, renderWorkerPersona } = await import("../agent/instructions/seat-prompt.js");
+  const worker = renderWorkerPersona(true);
+  ok(worker.includes(WORKER_REQUEST_SECTION), "🔴 OPE-2473: the worker persona carries the request-and-brief section");
+  ok(/a detail the brief tells you to find first is not a reason to stop/.test(WORKER_REQUEST_SECTION), "🔴 OPE-2473: a brief's precondition never stops a tool that needs none");
+  ok(/Never ask a person for an id, a receipt or any other value that this system made/.test(WORKER_REQUEST_SECTION), "🔴 OPE-2473: a person is never asked for a system-made value");
+  ok(/limit in the brief on what you may\s+change still holds/.test(WORKER_REQUEST_SECTION), "OPE-2473: the brief's limits on change still hold");
+  ok(!renderSeatPersona({ seatKind: "conversational", delivery: { kind: "dual-mode" } }).includes(WORKER_REQUEST_SECTION), "negative control: the seat persona does not carry the worker section");
+}
+
 console.log(`✓ seat-prompt: ${passed} assertions passed`);

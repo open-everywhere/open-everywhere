@@ -4,8 +4,10 @@ import {
   Events,
   GatewayIntentBits,
   Partials,
+  PermissionFlagsBits,
 } from "discord.js";
 import { proofContent } from "./proof-log.js";
+import { channelRefusal, heldReport, credentialsFrom, nextDelay, parseSyncAnswer, planVoice, voiceStatePayload, voiceSyncEnvelope } from "./voice.js";
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
 const INGEST_URL = process.env.OE_INGEST_URL;
@@ -95,6 +97,7 @@ const client = new Client({
     GatewayIntentBits.DirectMessages,
     GatewayIntentBits.GuildMessageReactions,
     GatewayIntentBits.DirectMessageReactions,
+    GatewayIntentBits.GuildVoiceStates,
   ],
   partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User],
 });
@@ -204,6 +207,91 @@ function toHeartbeatPayload() {
   };
 }
 
+const held = new Map();
+const voiceState = new Map();
+const voiceServer = new Map();
+let lastDesired = [];
+
+client.on("raw", (packet) => {
+  if (packet?.t === "VOICE_STATE_UPDATE" && packet.d?.user_id === client.user?.id) voiceState.set(packet.d.guild_id, packet.d);
+  else if (packet?.t === "VOICE_SERVER_UPDATE") voiceServer.set(packet.d.guild_id, packet.d);
+});
+
+function sendVoiceState(guildId, channelId) {
+  const guild = client.guilds.cache.get(guildId);
+  guild?.shard.send(voiceStatePayload(guildId, channelId));
+}
+
+function joinVoice(v) {
+  const guild = client.guilds.cache.get(v.guildId);
+  const channel = guild?.channels.cache.get(v.channelId);
+  const me = guild?.members.me;
+  const canConnect = Boolean(channel && me && channel.permissionsFor(me)?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.SendMessages]));
+  const failed = channelRefusal(channel, canConnect);
+  held.set(v.meetingId, { guildId: v.guildId, channelId: v.channelId, deadlineMs: v.deadlineMs, since: Date.now(), ...(failed ? { failed } : {}) });
+  if (failed) {
+    console.warn(`[oe-discord-relay] voice: cannot join ${v.guildId}#${v.channelId} for ${v.meetingId}: ${failed}`);
+    return;
+  }
+  voiceServer.delete(v.guildId);
+  held.get(v.meetingId).sent = true;
+  sendVoiceState(v.guildId, v.channelId);
+  console.log(`[oe-discord-relay] voice: joining ${v.guildId}#${v.channelId} for ${v.meetingId}`);
+}
+
+function leaveVoice(meetingId) {
+  const h = held.get(meetingId);
+  held.delete(meetingId);
+  if (!h?.sent) return;
+  sendVoiceState(h.guildId, null);
+  voiceServer.delete(h.guildId);
+  console.log(`[oe-discord-relay] voice: left ${h.guildId}#${h.channelId} (${meetingId})`);
+}
+
+function voiceReports() {
+  const out = [];
+  for (const [meetingId, h] of held) {
+    const report = heldReport(h, credentialsFrom(voiceState.get(h.guildId), voiceServer.get(h.guildId), h), Date.now());
+    if (report.failed) {
+      out.push({ meetingId, failed: report.failed });
+      continue;
+    }
+    const channel = client.guilds.cache.get(h.guildId)?.channels.cache.get(h.channelId);
+    const members = channel?.members
+      ? [...channel.members.values()].filter((m) => m.id !== client.user?.id).map((m) => ({ id: m.id, name: m.displayName }))
+      : undefined;
+    out.push({ meetingId, ...report, ...(members ? { members } : {}) });
+  }
+  return out;
+}
+
+async function syncVoice() {
+  let nextPollMs;
+  try {
+    const body = JSON.stringify(voiceSyncEnvelope(client.user.id, voiceReports()));
+    const signature = "sha256=" + createHmac("sha256", RELAY_SECRET).update(body).digest("hex");
+    const res = await fetch(INGEST_URL, { method: "POST", headers: { "content-type": "application/json", "x-oe-relay-signature": signature }, body, signal: AbortSignal.timeout(15_000) });
+    if (res.ok) {
+      const answer = parseSyncAnswer(await res.json().catch(() => null));
+      lastDesired = answer.voice;
+      nextPollMs = answer.nextPollMs;
+    } else {
+      console.warn(`[oe-discord-relay] voice sync answered ${res.status}`);
+    }
+  } catch (err) {
+    console.warn("[oe-discord-relay] voice sync failed:", err?.message ?? err);
+  }
+  const plan = planVoice(lastDesired, held, Date.now());
+  for (const id of plan.leave) leaveVoice(id);
+  for (const v of plan.join) joinVoice(v);
+  return nextPollMs;
+}
+
+function scheduleVoiceSync(delay) {
+  const timer = setTimeout(async () => scheduleVoiceSync(nextDelay(await syncVoice())), delay);
+  timer.unref?.();
+}
+
 client.once(Events.ClientReady, (c) => {
   const mode = INGEST_URL ? `FORWARD → ${INGEST_URL}` : "PROOF (log only — set OE_INGEST_URL to forward)";
   const guilds = [...c.guilds.cache.values()].map((g) => `${g.name} (${g.id})`).join(", ") || "none yet";
@@ -218,6 +306,7 @@ client.once(Events.ClientReady, (c) => {
     const timer = setInterval(beat, HEARTBEAT_MS);
     timer.unref?.();
   }
+  if (INGEST_URL) scheduleVoiceSync(1_000);
 });
 
 client.on(Events.MessageCreate, async (message) => {
@@ -243,6 +332,7 @@ client.on(Events.ShardResume, (id) => console.log(`[oe-discord-relay] shard ${id
 for (const sig of ["SIGINT", "SIGTERM"]) {
   process.on(sig, () => {
     console.log(`[oe-discord-relay] ${sig} — closing gateway`);
+    for (const id of [...held.keys()]) leaveVoice(id);
     client.destroy().finally(() => flushLogs().finally(() => process.exit(0)));
   });
 }

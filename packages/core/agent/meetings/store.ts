@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { getOperationalStore } from "../operational/provider.js";
 import type { Partition } from "../memory/partition.js";
 import type { MeetingPlatform } from "./link.js";
@@ -10,6 +11,8 @@ export interface MeetingRecord {
   readonly platform: MeetingPlatform;
   readonly host: string;
   readonly roomId: string;
+  readonly channelLabel?: string;
+  readonly serverLabel?: string;
   readonly requestedBy: string;
   readonly approvedBy: string;
   readonly origin: { readonly platform: string; readonly channelId: string; readonly threadTs: string | null };
@@ -80,6 +83,7 @@ export interface StoredChunk {
   readonly tail?: string;
   readonly attendees?: readonly string[];
   readonly labelled?: number;
+  readonly atMs?: number;
 }
 
 export async function putTranscriptChunk(org: string, id: string, seq: number, chunk: StoredChunk | string, ttlMs: number): Promise<void> {
@@ -90,13 +94,14 @@ export async function putTranscriptChunk(org: string, id: string, seq: number, c
 function parseChunk(raw: string | null): StoredChunk | undefined {
   if (raw === null) return undefined;
   try {
-    const v = JSON.parse(raw) as { text?: unknown; tail?: unknown; attendees?: unknown; labelled?: unknown };
+    const v = JSON.parse(raw) as { text?: unknown; tail?: unknown; attendees?: unknown; labelled?: unknown; atMs?: unknown };
     if (typeof v.text !== "string") return undefined;
     return {
       text: v.text,
       ...(typeof v.tail === "string" ? { tail: v.tail } : {}),
       ...(Array.isArray(v.attendees) ? { attendees: v.attendees.filter((a): a is string => typeof a === "string") } : {}),
       ...(typeof v.labelled === "number" ? { labelled: v.labelled } : {}),
+      ...(typeof v.atMs === "number" && Number.isFinite(v.atMs) ? { atMs: v.atMs } : {}),
     };
   } catch {
     return undefined;
@@ -113,7 +118,7 @@ export async function readTranscript(
   id: string,
   count: number,
 ): Promise<{ readonly text: string; readonly missing: number[]; readonly attendees: string[]; readonly labelled: number }> {
-  const parts: string[] = [];
+  const chunks: { readonly seq: number; readonly chunk: StoredChunk }[] = [];
   const missing: number[] = [];
   const attendees: string[] = [];
   let labelled = 0;
@@ -123,11 +128,17 @@ export async function readTranscript(
       missing.push(seq);
       continue;
     }
-    if (c.text.trim().length > 0) parts.push(c.text.trim());
+    chunks.push({ seq, chunk: c });
     for (const a of c.attendees ?? []) if (!attendees.includes(a)) attendees.push(a);
     labelled += c.labelled ?? 0;
   }
-  return { text: parts.join("\n"), missing, attendees, labelled };
+  return { text: transcriptOrder(chunks).map((c) => c.text.trim()).filter((t) => t.length > 0).join("\n"), missing, attendees, labelled };
+}
+
+export function transcriptOrder(chunks: readonly { readonly seq: number; readonly chunk: StoredChunk }[]): StoredChunk[] {
+  const timed = chunks.length > 0 && chunks.every((c) => c.chunk.atMs !== undefined);
+  const sorted = [...chunks].sort((a, b) => (timed ? a.chunk.atMs! - b.chunk.atMs! : 0) || a.seq - b.seq);
+  return sorted.map((c) => c.chunk);
 }
 
 export async function claimMeetingBilling(org: string, id: string, ttlMs: number): Promise<boolean> {
@@ -190,4 +201,83 @@ export async function chunkCount(org: string, id: string, reported: number | und
   const raw = await getMeetingRow(org, `meeting-hw:${id}`);
   const hw = raw === null ? -1 : Number(raw);
   return Math.max(reported ?? 0, Number.isFinite(hw) ? hw + 1 : 0);
+}
+
+export interface VoiceCredentials {
+  readonly guildId: string;
+  readonly channelId: string;
+  readonly userId: string;
+  readonly sessionId: string;
+  readonly token: string;
+  readonly endpoint: string;
+}
+
+export interface VoiceMember {
+  readonly id: string;
+  readonly name: string;
+}
+
+export interface VoiceSession {
+  readonly credentials?: VoiceCredentials;
+  readonly members?: readonly VoiceMember[];
+  readonly roster?: readonly VoiceMember[];
+  readonly failed?: string;
+  readonly at: number;
+}
+
+const VOICE = (id: string): string => `meeting-voice:${id}`;
+
+export async function putVoiceSession(org: string, id: string, session: VoiceSession, ttlMs: number): Promise<void> {
+  await putMeetingRow(org, VOICE(id), JSON.stringify(session), ttlMs);
+}
+
+export async function getVoiceSession(org: string, id: string): Promise<VoiceSession | undefined> {
+  if (!MEETING_ID.test(id)) return undefined;
+  const raw = await getMeetingRow(org, VOICE(id));
+  if (raw === null) return undefined;
+  try {
+    const v = JSON.parse(raw) as VoiceSession;
+    return typeof v.at === "number" ? v : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function deleteVoiceSession(org: string, id: string): Promise<void> {
+  await deleteMeetingRow(org, VOICE(id));
+}
+
+const STALE_GUILD_CLAIM_MS = 30 * 60_000;
+
+function parseGuildClaim(raw: string | null): { readonly id: string; readonly at: number } | undefined {
+  if (raw === null) return undefined;
+  try {
+    const v = JSON.parse(raw) as { id?: unknown; at?: unknown };
+    return typeof v.id === "string" && typeof v.at === "number" ? { id: v.id, at: v.at } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function claimDiscordGuild(org: string, guildId: string, id: string, ttlMs: number, now: number = Date.now()): Promise<boolean> {
+  const key = `meeting-guild:${guildId}`;
+  const value = JSON.stringify({ id, at: now });
+  if (await putMeetingRowIfAbsent(org, key, value, ttlMs, now)) return true;
+  const raw = await getMeetingRow(org, key, now);
+  const holder = parseGuildClaim(raw);
+  if (holder?.id === id) return true;
+  if (holder !== undefined) {
+    const rec = await getMeetingRecord(org, holder.id);
+    const over = rec !== undefined && (rec.status === "ended" || rec.status === "recapped" || rec.status === "failed");
+    const dead = rec === undefined && now - holder.at > STALE_GUILD_CLAIM_MS && !(await openMeetingSlots(org)).some((s) => s.id === holder.id);
+    if (!over && !dead) return false;
+  }
+  const staleTag = createHash("sha256").update(raw ?? "").digest("hex").slice(0, 32);
+  if (!(await putMeetingRowIfAbsent(org, `meeting-guild-reclaim:${guildId}:${staleTag}`, id, ttlMs, now))) return false;
+  await deleteMeetingRow(org, key);
+  return await putMeetingRowIfAbsent(org, key, value, ttlMs, now);
+}
+
+export async function releaseDiscordGuild(org: string, guildId: string, id: string): Promise<void> {
+  if (parseGuildClaim(await getMeetingRow(org, `meeting-guild:${guildId}`))?.id === id) await deleteMeetingRow(org, `meeting-guild:${guildId}`);
 }

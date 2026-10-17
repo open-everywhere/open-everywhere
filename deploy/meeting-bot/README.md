@@ -1,6 +1,8 @@
 # Open Everywhere meeting bot
 
-OE's own meeting bot (OPE-2459). One box runs one bot for one meeting. OE starts the box through its own
+OE's own meeting bot (OPE-2459). One box runs one bot for one meeting. The image carries two programs:
+`bot.mjs` joins a Google Meet or Microsoft Teams meeting in a headless Chromium, and `discord.mjs` joins a
+Discord voice channel with no browser (OPE-2473). OE picks the program per platform. OE starts the box through its own
 sandbox backend: a Vercel Sandbox on the hosted stack, a docker container on the self-host stack. No
 third-party meeting vendor hears the meeting.
 
@@ -29,7 +31,7 @@ key.
 |---|---|
 | `OE_MEETING_ID` | The meeting id (`mtg_…`). |
 | `OE_MEETING_URL` | The meeting link, re-serialised by OE's parser. |
-| `OE_MEETING_PLATFORM` | `meet` or `teams`. |
+| `OE_MEETING_PLATFORM` | `meet`, `teams` or `discord`. |
 | `OE_MEETING_BOT_NAME` | The name the bot shows in the lobby. |
 | `OE_MEETING_CALLBACK` | `https://<deployment>/meetings/v1/<id>`. |
 | `OE_MEETING_SECRET` | This meeting's Standard Webhooks key (`whsec_…`). |
@@ -55,7 +57,44 @@ single-use. The body is one JSON object:
   (`speakers.js`). Both are optional: the bot leaves `speakers` out when the page's indicator disagrees with
   the audio (always on, inverted or never on, over the last three minutes or within the chunk). The check
   cannot catch an indicator that lights the wrong person. The `box` route sends no `speakers`, because its speech command gives no segment times.
-- `{"type":"ended","chunks":42,"reason":"meeting-ended"|"alone"|"cap"|"terminated"|"refused"|"failed"}`
+- `{"type":"ended","chunks":42,"reason":"meeting-ended"|"alone"|"cap"|"terminated"|"refused"|"failed"|"voice-lost"}`
+- Discord only: `{"type":"voice"}`. OE answers with this call's voice credentials once the relay reported them
+  (`{"ok":true,"credentials":{…},"others":2}`), with the relay's join failure (`{"failed":"stage-channel"}`), or
+  with `{"ended":true}`. A Discord chunk is
+  `{"type":"chunk","seq":0,"audio":{"mediaType":"audio/wav","base64":"…"},"speaker":"<Discord user id>","atMs":6000}`:
+  one member's speech, and when its first frame arrived, in ms from the capture start.
+
+## Discord voice (`discord.mjs`)
+
+The relay (`deploy/discord-relay/`) holds the bot token and the gateway session, and asks Discord to join. The box
+holds neither. It reads the call's voice credentials from OE's answer to its signed `voice` callback, and hands
+them to `@discordjs/voice` through an adapter that sends nothing to the gateway. Then it receives each member's
+audio on its own stream (`discord-voice.js`):
+
+- it subscribes to a member at each speaking start, because a stream ends after a second of silence;
+- it drops a frame that still ends in the DAVE marker `0xFAFA` (about two per member after a join);
+- it cuts each member's speech at a turn change (also while the previous speaker's stream is still open), at the
+  first pause after 45 s, or at 75 s, and sends a 16 kHz mono
+  WAV file with the member's id and its arrival time;
+- it reads who is in the call from the voice gateway (opcodes 5, 11 and 13), and leaves when it has been alone
+  for `OE_MEETING_ALONE_MINUTES`; the relay's member list is the fallback (`@discordjs/voice` itself maps each
+  SSRC to its member and routes the frames);
+- it starts its capture only after OE answered `admitted` without `ended`: OE posts the recording notice in the
+  channel's chat first, and ends the meeting when it cannot;
+- when Discord moves the call to another voice server, the relay reports the new token and endpoint, and the bot
+  hands them to the connection (not proven live);
+- it leaves when OE answers that the meeting ended, at the deadline, or when the voice connection is lost for 60 s.
+
+The versions are the spike's (OPE-2472): `@discordjs/voice` 0.19.2, `@snazzah/davey` 0.1.12 (the DAVE
+end-to-end encryption, Linux prebuilds), `prism-media` 1.3.5 and `opusscript` 0.0.8.
+
+**What the sandbox proved (2026-10-11).** The real `discord.mjs` ran against a fake OE callback and a local TLS
+WebSocket in the place of Discord's voice server. Given credentials only, it opened the voice WebSocket and sent
+the voice `Identify` with the forwarded server id, user id, session id and voice token
+(`{"server_id":…,"user_id":…,"session_id":"s1","token":"t1","max_dave_protocol_version":1}`). It held no bot
+token and sent nothing to a gateway. With a failure code instead, it sent `status: failed` with that code, then
+`ended`. **Not proven:** the same against Discord's own voice servers, and the audio receive after it. The spike
+received audio in a process that also held the gateway session.
 
 ## What the bot does and does not do
 

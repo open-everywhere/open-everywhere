@@ -84,6 +84,8 @@ import {
   healPrunedDeploymentStrand,
   engagedFollowUpContract,
   dispatchNativeWakeWithRetry,
+  parseVoiceSync,
+  syncDiscordVoice,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
 export { splitForDiscord };
@@ -1597,6 +1599,12 @@ export default withEndsTurnFinalChannel(defineChannel<DiscordGatewayState, Disco
       if (heartbeat) {
         waitUntil(appendAudit(discordHeartbeatAuditRow(heartbeat, deploymentOrg())).catch(() => undefined));
         return new Response("ok", { status: 200 });
+      }
+
+      const voiceSync = parseVoiceSync(json);
+      if (voiceSync) {
+        const answer = await syncDiscordVoice(deploymentOrg(), voiceSync);
+        return new Response(JSON.stringify(answer), { status: 200, headers: { "content-type": "application/json" } });
       }
 
       const reaction = parseRelayReaction(json);

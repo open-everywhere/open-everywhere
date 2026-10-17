@@ -19,6 +19,28 @@ export function renderRoomQuestion(question: string, options: readonly string[])
   return lines.join("\n");
 }
 
+const SYSTEM_VALUE_ASKS: readonly RegExp[] = [
+  /\b(?:join|meeting|job|task)\s+receipts?\b/i,
+  /\b(?:meeting|task|job|session|run|wake|notetaker|bot)[\s-]?(?:id|ids|identifiers?)\b/i,
+  /(?<!\b(?:pull|merge)\s)\brequest[\s-]?(?:id|ids|identifiers?|receipts?)\b/i,
+  /\b(?:mtg|wrun|wake)_[A-Za-z0-9]/,
+];
+export function asksForSystemValue(question: string): string | undefined {
+  for (const re of SYSTEM_VALUE_ASKS) {
+    const m = re.exec(question);
+    if (m) return m[0];
+  }
+  return undefined;
+}
+
+export function systemValueRefusal(matched: string): string {
+  return (
+    `ask_room: nothing was posted. Your question asks a person for "${matched}", and people do not hold values this system made. ` +
+    "Find it with your tools, or call the tool that needs none: `meeting_leave`, for one, takes no argument and finds this conversation's bot itself. " +
+    "If no tool can find it, finish and report what you could not find."
+  );
+}
+
 function roomAddress(ctx: BindableContext): { platform: string; channelId: string; threadTs?: string } {
   const binding = bindFrom(ctx);
   const id = binding.platform === "notion" ? binding.anchorChannelId : binding.target?.channelId;
@@ -30,7 +52,7 @@ function roomAddress(ctx: BindableContext): { platform: string; channelId: strin
 
 export default defineTool({
   description:
-    "Ask the room that gave you this job ONE question you cannot answer yourself. The question is posted into the room at once, and this call returns at once: it does NOT wait for the answer. After it returns, finish your task: report what you did so far and say that the job waits for the answer to this question. The answer reaches this job later, as a continuation of the same task. Ask only when you cannot do the job without the answer.",
+    "Ask the room that gave you this job ONE question you cannot answer yourself. The question is posted into the room at once, and this call returns at once: it does NOT wait for the answer. After it returns, finish your task: report what you did so far and say that the job waits for the answer to this question. The answer reaches this job later, as a continuation of the same task. Ask only when you cannot do the job without the answer, and only for a decision or a fact a person holds: never for an id or a receipt this system made.",
   inputSchema: z.object({
     question: z.string().min(1).max(1000).describe("The question, in one or two sentences, for the people in the room."),
     options: z.array(z.string().min(1).max(120)).max(6).optional().describe("Short answer choices, when the answer is one of a few."),
@@ -38,6 +60,8 @@ export default defineTool({
   outputSchema: z.object({ posted: z.boolean(), message: z.string() }),
   approval: never(),
   async execute(input, ctx) {
+    const systemValue = asksForSystemValue([input.question, ...(input.options ?? [])].join("\n"));
+    if (systemValue !== undefined) throw new Error(systemValueRefusal(systemValue));
     const c = ctx as unknown as BindableContext;
     if (!isWorkSessionChildContext(c)) {
       throw new Error("ask_room: only a job of this conversation's work session can ask the room this way. Nothing was posted.");

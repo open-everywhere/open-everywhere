@@ -1,7 +1,7 @@
 import { processRegistrySlot } from "../lib/process-registry.js";
 import { secretNameRefusal } from "../credentials/operator-secrets.js";
 import type { Trust } from "../identity/binding.js";
-import { PLATFORM_HOSTS, platformLabel, type MeetingPlatform, type ParsedMeetingLink } from "./link.js";
+import { PLATFORM_HOSTS, SNOWFLAKE, platformLabel, type MeetingPlatform, type ParsedMeetingLink } from "./link.js";
 
 export interface MeetingHostRule {
   readonly platform: MeetingPlatform;
@@ -9,6 +9,7 @@ export interface MeetingHostRule {
   readonly tenants?: readonly string[];
   readonly owner?: "unverifiable";
   readonly zoom?: { readonly reviewedApp: string };
+  readonly guilds?: readonly string[];
   readonly why: string;
 }
 
@@ -103,8 +104,8 @@ export function meetingPolicyProblems(p: MeetingPolicy): readonly string[] {
   const seen = new Set<string>();
   for (const rule of p.hosts) {
     const at = `host "${String(rule.host)}"`;
-    if (rule.platform !== "meet" && rule.platform !== "teams" && rule.platform !== "zoom") {
-      problems.push(`${at}: platform must be meet, teams or zoom`);
+    if (rule.platform !== "meet" && rule.platform !== "teams" && rule.platform !== "zoom" && rule.platform !== "discord") {
+      problems.push(`${at}: platform must be meet, teams, zoom or discord`);
       continue;
     }
     if (typeof rule.host !== "string" || !hostAllowedFor(rule.platform, rule.host)) {
@@ -121,6 +122,15 @@ export function meetingPolicyProblems(p: MeetingPolicy): readonly string[] {
       }
     } else if (rule.tenants !== undefined) {
       problems.push(`${at}: tenants apply to Teams only`);
+    }
+    if (rule.platform === "discord") {
+      if (!Array.isArray(rule.guilds) || rule.guilds.length === 0) {
+        problems.push(`${at}: a Discord rule must list the server (guild) ids whose voice channels OE may join`);
+      } else {
+        for (const g of rule.guilds) if (typeof g !== "string" || !SNOWFLAKE.test(g)) problems.push(`${at}: guild "${String(g)}" is not a Discord server id`);
+      }
+    } else if (rule.guilds !== undefined) {
+      problems.push(`${at}: guilds apply to Discord only`);
     }
     if (rule.platform === "meet" && rule.owner !== "unverifiable") {
       problems.push(`${at}: a Meet link names no organiser, so OE cannot refuse an outside room — set owner: "unverifiable" to accept that in Git, or drop the rule`);
@@ -223,6 +233,9 @@ function matchMeetingHost(policy: MeetingPolicy, link: ParsedMeetingLink): { rea
       return { refusal: "that Teams meeting belongs to an organisation outside the tenants this deployment may join, so I won't join it (external meetings are refused)" };
     }
   }
+  if (link.platform === "discord" && (link.guildId === undefined || !(rule.guilds ?? []).includes(link.guildId))) {
+    return { refusal: "that Discord voice channel is on a server this deployment may not join — an admin adds the server id to the Discord rule in agent/meetings/policy.ts" };
+  }
   return { rule };
 }
 
@@ -286,6 +299,7 @@ export function nativeRecapRefusal(
     if (!n.meet.domains.includes(email.slice(email.lastIndexOf("@") + 1))) return "that organiser is outside this deployment's Google Workspace domains, so I won't read the meeting's transcript";
     return undefined;
   }
+  if (link.platform === "discord") return "Discord keeps no transcript of a voice channel, so there is no platform transcript to recap — ask me to join the voice channel instead, and OE's notetaker records it";
   if (n.zoom === undefined) return none;
   return undefined;
 }

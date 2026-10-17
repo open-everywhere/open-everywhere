@@ -2158,6 +2158,14 @@
       "types": "./dist/agent/lib/process-registry.d.ts",
       "default": "./dist/agent/lib/process-registry.js"
     },
+    "./agent/meetings/discord-voice.js": {
+      "types": "./dist/agent/meetings/discord-voice.d.ts",
+      "default": "./dist/agent/meetings/discord-voice.js"
+    },
+    "./agent/meetings/invite.js": {
+      "types": "./dist/agent/meetings/invite.d.ts",
+      "default": "./dist/agent/meetings/invite.js"
+    },
     "./agent/meetings/lifecycle.js": {
       "types": "./dist/agent/meetings/lifecycle.d.ts",
       "default": "./dist/agent/meetings/lifecycle.js"
@@ -3675,6 +3683,7 @@
     "test:meetings-native": "tsx scripts/meetings-native-test.ts",
     "test:meeting-provenance": "tsx scripts/meeting-provenance-test.ts",
     "test:meeting-speakers": "tsx scripts/meeting-speakers-test.ts",
+    "test:meetings-discord": "tsx scripts/meetings-discord-test.ts",
     "test:email": "tsx scripts/email-test.ts",
     "test:personal-browser": "tsx scripts/personal-browser-test.ts",
     "test:personal-browser-teach": "tsx scripts/personal-browser-teach-test.ts",

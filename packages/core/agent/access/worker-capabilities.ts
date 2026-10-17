@@ -147,7 +147,7 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
   },
   {
     id: "meetings",
-    headline: "Join a meeting by its link (Google Meet, Microsoft Teams) with OE's own notetaker bot and post a recap with the decisions and actions in this thread afterwards, recap a Teams, Meet or Zoom meeting from the platform's own transcript with no bot, or stop a notetaker bot this conversation sent",
+    headline: "Join a meeting by its link (Google Meet, Microsoft Teams, a Discord voice channel) with OE's own notetaker bot and post a recap with the decisions and actions in this thread afterwards, recap a Teams, Meet or Zoom meeting from the platform's own transcript with no bot, or stop the notetaker bot this conversation sent (the stop needs no meeting id)",
     tools: ["meeting_join", "meeting_recap", "meeting_leave"],
   },
   {

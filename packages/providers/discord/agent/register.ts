@@ -15,6 +15,7 @@ import {
   registerNativeAdminCheck,
   registerNativeMemberCheck,
   registerScopeLabelResolver,
+  registerMeetingInviteResolver,
   registerBotDisplayName,
   registerAccountDirectory,
   registerProviderDocs,
@@ -39,6 +40,7 @@ import { discordBotDisplayName } from "./channels/discord-bot-name.js";
 import { fetchGuildDirectory } from "./channels/discord-directory.js";
 import { postDiscordApprovalCard, postDiscordJudgeLiftNotice } from "./approvals/discord-flow.js";
 import { discordScopeLabelResolver } from "./approvals/discord-scope-label.js";
+import { discordInviteResolver } from "./channels/discord-invite.js";
 import { guildIdFromScopeKey, isGuildAdminViaRest, isGuildMemberViaRest } from "./approvals/discord-admin.js";
 import { reconcileDiscordCommands } from "./commands/discord-command-sync.js";
 
@@ -74,6 +76,7 @@ export function registerDiscordProvider(): void {
     return guildId ? isGuildMemberViaRest(guildId, principalId) : false;
   });
   registerScopeLabelResolver("discord", discordScopeLabelResolver);
+  registerMeetingInviteResolver("discord", discordInviteResolver);
   registerBotDisplayName("discord", discordBotDisplayName);
   registerAccountDirectory("discord", (query) => fetchGuildDirectory(query));
   registerProviderDocs("discord", PROVIDER_DOCS);

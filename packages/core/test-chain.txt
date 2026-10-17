@@ -507,6 +507,7 @@ test:meetings
 test:meetings-native
 test:meeting-provenance
 test:meeting-speakers
+test:meetings-discord
 test:tool-usage
 test:a2a-client
 test:a2a-inbound

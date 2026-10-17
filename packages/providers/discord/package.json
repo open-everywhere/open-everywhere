@@ -100,6 +100,10 @@
       "types": "./dist/agent/channels/discord-interaction-defer.d.ts",
       "default": "./dist/agent/channels/discord-interaction-defer.js"
     },
+    "./agent/channels/discord-invite.js": {
+      "types": "./dist/agent/channels/discord-invite.d.ts",
+      "default": "./dist/agent/channels/discord-invite.js"
+    },
     "./agent/channels/discord-message-ops.js": {
       "types": "./dist/agent/channels/discord-message-ops.d.ts",
       "default": "./dist/agent/channels/discord-message-ops.js"

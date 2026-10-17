@@ -82,6 +82,11 @@ export class DiscordDriver {
     return toMessage(json);
   }
 
+  async guildId(): Promise<string> {
+    const json = (await this.api("GET", `/channels/${this.cfg.channel}`)) as { guild_id?: string };
+    return json.guild_id ?? "";
+  }
+
   async fetchMessage(messageId: string, channelId: string = this.cfg.channel): Promise<DiscordMessage> {
     const json = (await this.api("GET", `/channels/${channelId}/messages/${messageId}`)) as DiscordApiMessage;
     return toMessage(json);

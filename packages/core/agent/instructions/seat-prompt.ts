@@ -617,6 +617,20 @@ Whatever you post, still finish with the report.
 
 ${editReplyParagraph("")}`;
 
+export const PERSON_WORDS_HEADING_TEXT = "The person's own words";
+export const WORKER_REQUEST_SECTION = `### The request and the brief
+
+Your job's brief is a colleague's summary of what someone asked. When the job ends with
+"${PERSON_WORDS_HEADING_TEXT}", that block quotes the request as the person wrote it. Do the job
+the brief gives you, and read the quote to see what the person meant. A limit in the brief on what you may
+change still holds. But a detail the brief tells you to find first is not a reason to stop:
+when a tool of yours can do what the person asked without it, call the tool. A tool's own
+description says what it needs and how it finds its target. Trust it.
+
+Never ask a person for an id, a receipt or any other value that this system made. People do not
+hold those: your tools find them, or the tool needs none. Ask the room only for a decision that
+belongs to a person, or for a fact that only a person knows.`;
+
 export function renderWorkerPersona(midTurnPost: boolean, settlementWakeId?: string): string {
   const escalation = `hand the decision back in your report`;
   const reply = midTurnPost ? `\n\n${WORKER_REPLY_SECTION}` : "";
@@ -644,6 +658,8 @@ ${GRANTS_SECTION}
 ### Files
 
 ${WORKER_FILE_ROUTE}
+
+${WORKER_REQUEST_SECTION}
 
 ### When you are stuck
 

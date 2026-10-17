@@ -298,29 +298,46 @@ function decisionFeedback(invoke: TeamsApprovalInvoke, res: ApprovalClickResolut
           origin: { platform: "teams", serviceUrl: invoke.serviceUrl, conversationId: invoke.conversationId, ...(invoke.tenantId ? { tenantId: invoke.tenantId } : {}) },
         }
       : null;
-  const updateCard = async (): Promise<void> => {
+  const updateCard = async (): Promise<boolean> => {
     const activityId = row.messageTs ?? invoke.replyToId;
-    if (!trusted || !activityId) return;
+    if (!trusted || !activityId) return false;
     const card = decidedTeamsCard(row, res.summaryLines, outcomeLine, res.outcome === "decided" ? invoke.clickerName : undefined);
-    await (deps.update ?? updateTeamsActivityBackedOff)({
+    return (deps.update ?? updateTeamsActivityBackedOff)({
       serviceUrl: invoke.serviceUrl,
       conversationId: invoke.conversationId,
       activityId,
       body: { type: "message", id: activityId, attachments: [teamsCardAttachment(card)] },
-    }).catch((err: unknown) => log(`decided-card update failed for ${row.id}: ${(err as Error)?.message ?? String(err)}`));
+    }).then(
+      () => true,
+      (err: unknown) => {
+        log(`decided-card update failed for ${row.id}: ${(err as Error)?.message ?? String(err)}`);
+        return false;
+      },
+    );
   };
-  const feedback = deliverDecisionFeedback(
-    {
-      row,
-      summaryLines: res.summaryLines,
-      outcome: res.outcome === "expired" ? "expired" : (row.status as ApprovalOutcome),
-      outcomeLine,
-      executed: res.outcome === "expired" ? "none" : res.executed,
-      ...(res.outcome === "decided" ? { clickerId: invoke.clickerId } : {}),
-      target,
-      postNotice,
-    },
-    deps.decisionWake,
+  return updateCard().then((edited) =>
+    deliverDecisionFeedback(
+      {
+        row,
+        summaryLines: res.summaryLines,
+        outcome: res.outcome === "expired" ? "expired" : (row.status as ApprovalOutcome),
+        outcomeLine,
+        executed: res.outcome === "expired" ? "none" : res.executed,
+        ...(res.outcome === "decided" ? { clickerId: invoke.clickerId } : {}),
+        target,
+        cardShowsOutcome: edited,
+        noticeThread: trusted
+          ? {
+              platform: "teams",
+              serviceUrl: invoke.serviceUrl,
+              conversationId: invoke.conversationId,
+              ...(invoke.tenantId ? { tenantId: invoke.tenantId } : {}),
+              ...((row.messageTs ?? invoke.replyToId) ? { replyToActivityId: (row.messageTs ?? invoke.replyToId)! } : {}),
+            }
+          : null,
+        postNotice,
+      },
+      deps.decisionWake,
+    ),
   );
-  return Promise.all([updateCard(), feedback]).then(() => undefined);
 }

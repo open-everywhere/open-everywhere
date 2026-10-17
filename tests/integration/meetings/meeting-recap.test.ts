@@ -66,19 +66,23 @@ async function postClick(customId: string): Promise<{ status: number; body: stri
 }
 
 async function askToJoin(ids: string): Promise<{ cursor: AuditCursor; handle: ScriptedHandle }> {
+  return await askWorker(ids, `join this meeting ${MEET_LINK}`, { tool: "meeting_join", input: { url: MEET_LINK, reason: `weekly sync ${ids}` } });
+}
+
+async function askWorker(ids: string, ask: string, call: { tool: string; input: Record<string, unknown> }): Promise<{ cursor: AuditCursor; handle: ScriptedHandle }> {
   const handle: ScriptedHandle = registerScript({
     parent: [
-      { calls: [{ tool: "work", input: { message: `join this meeting ${MEET_LINK} (${ids})` }, id: `${ids}-delegate` }] },
+      { calls: [{ tool: "work", input: { message: `${ask} (${ids})` }, id: `${ids}-delegate` }] },
       { say: NO_REPLY_SENTINEL },
     ],
     child: [
-      { delayMs: 120_000, calls: [{ tool: "meeting_join", input: { url: MEET_LINK, reason: `weekly sync ${ids}` }, id: `${ids}-join` }] },
-      { say: "asked" },
+      { delayMs: 120_000, calls: [{ ...call, id: `${ids}-call` }] },
+      { say: "done" },
     ],
   });
   disposeLater(handle);
   const cursor = await auditCursor();
-  await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `<@9000000000000000001> join ${MEET_LINK} ${ids}` });
+  await discordMentionWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: `<@9000000000000000001> ${ask} ${ids}` });
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), `the ${ids} receipt step`);
   const settlement = disposeLater(armSettlement(handle, { parent: [{ say: NO_REPLY_SENTINEL }] }));
   const taskId = await workTaskIdOfCall(cursor, handle, `${ids}-delegate`, `${ids} forward receipt`);
@@ -254,4 +258,45 @@ test("①② an approved meeting_join opens a box, and the bot's signed callback
   expect(status.filter((r) => r.detail?.meetingId === frozen.meetingId).map((r) => r.detail?.state)).toEqual(["admitted"]);
   const ended = await rowsSinceCursor(endCursor, ["meeting.ended"]);
   expect(ended.filter((r) => r.detail?.meetingId === frozen.meetingId).length).toBe(1);
+});
+
+test("③ a worker in the room stops the running bot with NO argument (OPE-2473 live test)", async () => {
+  const { cursor, handle: joinHandle } = await askToJoin("m3");
+  const requested = await waitForAuditRows({
+    probe: async () => (await rowsSinceCursor(cursor, ["approval.requested"])).find((r) => r.detail?.kind === "meeting.join"),
+    label: "the m3 meeting.join approval.requested row",
+    actions: ["approval.requested"],
+    cursor,
+    kind: "meeting.join",
+    timeoutMs: 60_000,
+  });
+  const s = await getStore();
+  const row = await s.getPendingAction(org, requested.detail?.id as string);
+  const frozen = JSON.parse(row!.argsJson) as { meetingId: string };
+  const { buildDiscordApprovalCustomId } = await import("@open-everywhere/provider-discord/agent/approvals/discord-card.js");
+  const clickCursor = await auditCursor();
+  expect((await postClick(buildDiscordApprovalCustomId(row!, "approve"))).status).toBe(200);
+  await waitForAuditRows({
+    probe: async () => (await rowsSinceCursor(clickCursor, ["meeting.join"])).find((r) => r.detail?.meetingId === frozen.meetingId),
+    label: "the m3 meeting.join row",
+    actions: ["meeting.join"],
+    cursor: clickCursor,
+    timeoutMs: 60_000,
+  });
+
+  joinHandle.dispose();
+  const { cursor: stopCursor, handle } = await askWorker("m4", "stop recording now", { tool: "meeting_leave", input: {} });
+  const endedRow = await waitForAuditRows({
+    probe: async () => (await rowsSinceCursor(stopCursor, ["meeting.ended"])).find((r) => r.detail?.meetingId === frozen.meetingId),
+    label: "the m3 meeting.ended row",
+    actions: ["meeting.ended"],
+    cursor: stopCursor,
+    timeoutMs: 60_000,
+  });
+  expect(endedRow.detail?.reason).toBe("stopped");
+  expect(endedRow.detail?.stoppedBy, "the stopper is the person who asked").toBeTruthy();
+  const step = handle.requests.find((r) => r.role === "child" && r.stepIndex === 1);
+  expect(JSON.stringify(step ?? {}), "the worker's meeting_leave result says the bot stopped").toContain("Stopped the meeting bot");
+  const storeMod = await import("@open-everywhere/core/agent/meetings/store.js");
+  expect((await storeMod.getMeetingRecord(org, frozen.meetingId))?.status, "the stop finished the meeting and posted its recap").toBe("recapped");
 });

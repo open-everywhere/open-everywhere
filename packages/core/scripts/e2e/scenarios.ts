@@ -5330,11 +5330,25 @@ export const SCENARIOS: readonly Scenario[] = [
         typeof decision.principalId === "string" && decision.principalId.startsWith("29:"),
         `S-CARD-teams: the decision names a Bot Framework principal off the verified activity (${String(decision.principalId)})`,
       );
-      const notice = await pollOptional(
-        async () => (await teams.replies(card.id)).find((m) => teams.isBotReply(m)),
-        { timeoutMs: AUDIT_ROW_WAIT, what: `the decision notice in card ${card.id}'s reply chain` },
+      const reached = await pollOptional(
+        async () => {
+          const woke = (await ctx.auditRead!({ sinceIso, platform: "teams", actions: ["approval.decision_wake"] })).some((r) => r.detail?.id === pendingId && r.detail?.delivered === true);
+          if (woke) return "wake";
+          return (await teams.replies(card.id)).some((m) => teams.isBotReply(m)) ? "notice" : undefined;
+        },
+        { timeoutMs: AUDIT_ROW_WAIT, what: `the decision wake for pending ${pendingId}, or the decision notice in card ${card.id}'s reply chain` },
       );
-      ctx.gate(notice !== undefined, `S-CARD-teams: a decision notice posted into the card's own reply chain`);
+      ctx.gate(reached !== undefined, `S-CARD-teams: the decision reached the seat as a wake or the card's reply chain as a notice (${String(reached)})`);
+      if (reached === "wake") {
+        const decidedCard = await pollOptional(
+          async () => {
+            const m = (await teams.channelRootMessages()).find((x) => x.id === card.id) ?? (await teams.replies(driven.id)).find((x) => x.id === card.id);
+            return m !== undefined && teamsApprovalCardActions(m).length === 0 ? m : undefined;
+          },
+          { timeoutMs: AUDIT_ROW_WAIT, what: `card ${card.id} replaced by the decided card` },
+        );
+        ctx.gate(decidedCard !== undefined, `S-CARD-teams: with no notice, the decided card replaced pending card ${card.id} in the room`);
+      }
     },
   },
   {
@@ -9679,6 +9693,41 @@ export const SCENARIOS: readonly Scenario[] = [
       const reply = await slack.awaitAnyReply(ts, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) }).catch(() => undefined);
       if (reply !== undefined && /meetings are not enabled/i.test(reply.text)) {
         return ctx.skip("this deployment keeps meetings off (agent/meetings/policy.ts) — enable a meet.google.com rule to run the leg");
+      }
+      const cards = await pollOptional(
+        async () => {
+          const rows = (await auditRead({ sinceIso: since, actions: ["approval.requested"] })).filter((e) => (e.detail as { kind?: unknown } | undefined)?.kind === "meeting.join");
+          return rows.length > 0 ? rows : undefined;
+        },
+        { timeoutMs: FILE_REPLY_WAIT, what: "a meeting.join approval.requested row" },
+      );
+      ctx.gate((cards?.length ?? 0) === 1, `the ask raised exactly ONE meeting.join card (found ${cards?.length ?? 0})`);
+      const joined = await auditRead({ sinceIso: since, actions: ["meeting.join"] });
+      ctx.gate(joined.length === 0, "nothing joined before a member approved the card (no meeting.join row)");
+    },
+  },
+  {
+    id: "S-MEETING-DISCORD-VOICE",
+    title:
+      "Meetings on Discord voice (OPE-2473): an ask in the e2e guild to join a voice channel of that guild raises ONE meeting.join card, and nothing joins before a member approves",
+    requires: ["discord"],
+    surface: "discord",
+    suite: "core",
+    timeoutMs: 900_000,
+    judged: false,
+    run: async (ctx) => {
+      const auditRead = ctx.auditRead;
+      if (!auditRead) return ctx.skip("needs the control-read audit reader (set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN)");
+      const discord = ctx.discord!;
+      const guild = await discord.guildId();
+      if (!/^\d{17,20}$/.test(guild)) return ctx.skip("the e2e Discord channel names no guild");
+      const link = `https://discord.com/channels/${guild}/100000000000000001`;
+      const since = await presenceSince(ctx, "ask", 60_000);
+      const msg = await discord.post(discord.mention(fixtureLine(`join this voice channel and send me a recap afterwards: ${link}`)));
+      const threadId = await discord.awaitThread(msg.id, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
+      const reply = threadId !== undefined ? await discord.awaitReply(threadId, msg.id, { timeoutMs: FILE_REPLY_WAIT }).catch(() => undefined) : undefined;
+      if (reply !== undefined && /meetings are not enabled/i.test(reply.content)) {
+        return ctx.skip("this deployment keeps meetings off (agent/meetings/policy.ts) — enable a Discord rule for the e2e guild to run the leg");
       }
       const cards = await pollOptional(
         async () => {

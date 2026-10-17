@@ -1095,8 +1095,11 @@ Two rules in the seat's own instructions keep the room to the result:
   addressed-reply paragraph, the `reply` refusal, the `reply` tool's descriptions, the
   worker-capability index ("What a worker can do that you cannot") and the template's
   `agent/instructions.md` carry their own wording.
-- **No second reply about a card's outcome.** An approval card shows its own outcome, and the host
-  posts the decision notice in the room. So the seat posts no reply that restates, confirms or
+- **No second reply about a card's outcome.** An approval card shows its own outcome, and the
+  decision wake tells the seat. After a click, the host posts a decision notice in the room only
+  when the card did not change, no seat took the wake, or a thread seat or worker owns the card's
+  thread. The TTL sweep and a grant release always
+  post it. So the seat posts no reply that restates, confirms or
   corrects that outcome, even when a worker's report about the same act is out of date. What a job
   did after the decision is not on the card, so the seat still posts it: the act that an armed card
   only allowed, or a later run of it by the job that failed. A run that the approval itself made
@@ -1239,6 +1242,27 @@ returns at once, and the worker finishes its task and says that it waits for the
 someone answers in the room, the seat forwards the answer with `work` and the job's task id, and the
 same worker continues. Approvals work the same way: a connector op that needs a person posts an OE
 approval card and returns, and the call runs again after a member approves.
+
+`ask_room` refuses a question that asks a person for a value this system made: a join receipt, or the
+id of a meeting, a task, a job, a request, a session, a run or a wake (OPE-2473). People do not hold
+those values, so such a question can never be answered. The refusal posts nothing, and it tells the
+worker to find the value with its tools, or to call a tool that needs none.
+
+### The job carries the person's own words
+
+A job's brief is the seat model's summary of the request. A worker may hold no read of the
+conversation it works for: its chat-surface work read needs the domain's work grant for that surface
+(see [A chat surface can be a work surface too](../capabilities/connectors-and-providers.md#a-chat-surface-can-be-a-work-surface-too)),
+and a domain of a fresh install declares none. So the forward appends
+the verified requester's own words to the job, quoted, after the brief, under the heading "The
+person's own words" (OPE-2473). These are the same asks that the job's approval judge reads: this
+turn's, this wake's, and this requester's only. An unverified requester or a non-member wake adds
+nothing, and the job is the brief alone. Only the host writes that heading: a copy of it in the seat's
+brief is renamed, so the worker never sees a quote that no person made. The quote is for the worker
+model only. The judge never reads it: the judge's requester messages come from the request row, and
+the job's opening message is never captured as a requester's words. The worker persona tells the worker to do the job the brief
+gives, to keep the brief's limits on what it may change, and not to stop for a detail that its tool
+does not need.
 
 A **sign-in** works the same way. When a worker in the work session needs the asking person's own
 account and it is not connected, the call settles `needs-sign-in` at once. The personal sign-in link

@@ -124,6 +124,18 @@ export function renderWorkRequest(input: { readonly requestId: string; readonly 
   return `${envelope}\n${REQUEST_OPEN(input.requestId, input.taskId)}\n${defangWorkBlocks(input.brief)}\n${REQUEST_CLOSE}`;
 }
 
+export const PERSON_WORDS_HEADING = "The person's own words";
+
+export function renderJobBrief(brief: string, requesterAsks: readonly string[]): string {
+  const seatText = brief.split(PERSON_WORDS_HEADING).join(SEAT_NOTE_HEADING);
+  const asks = requesterAsks.map((a) => a.trim()).filter((a) => a.length > 0);
+  if (asks.length === 0) return seatText;
+  const quoted = asks.map((a) => a.split(/\r?\n/).map((line) => `> ${line}`).join("\n")).join("\n>\n");
+  return `${seatText}\n\n${PERSON_WORDS_HEADING}, quoted as they wrote them:\n${quoted}`;
+}
+
+export const SEAT_NOTE_HEADING = "The seat's note on what the person said";
+
 export function renderFreshFollowUpBrief(input: { readonly taskId: string; readonly message: string; readonly earlierBrief?: string }): string {
   const lines = [
     `This follow-up was meant to continue an earlier job (task ${input.taskId}). That job ran in an earlier work session, which can no longer continue it, so this is a NEW job: you do not have the earlier job's work.`,

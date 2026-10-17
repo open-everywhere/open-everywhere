@@ -151,6 +151,8 @@ export type { EmailTransport, InboundEmail, EmailDeliveryVerdict, EmailReplyRequ
 
 export { registerMeetingCompletion, registerTranscriptionRoute } from "./meetings/transcription.js";
 export type { MeetingCompletion, TranscriptionInput, TranscriptionOptions, TranscriptionResult, TranscriptionRoute, TranscriptSegment } from "./meetings/transcription.js";
+export { parseVoiceSync, syncDiscordVoice } from "./meetings/discord-voice.js";
+export type { VoiceSyncAnswer, VoiceSyncReport } from "./meetings/discord-voice.js";
 export { nativeTranscriptSource, registerNativeTranscriptSource } from "./meetings/native.js";
 export type { NativeMeetingRef, NativeReadContext, NativeRefusalReason, NativeTranscriptResult, NativeTranscriptSegment, NativeTranscriptSource } from "./meetings/native.js";
 export type { NativeTranscriptPolicy } from "./meetings/policy.js";
@@ -607,6 +609,9 @@ export type { NativeAdminCheck, NativeMemberCheck } from "./access/native-admin.
 
 export { registerScopeLabelResolver } from "./approvals/scope-label.js";
 export type { ScopeLabelResolver } from "./approvals/scope-label.js";
+
+export { registerMeetingInviteResolver } from "./meetings/invite.js";
+export type { MeetingInviteLookup, MeetingInviteResolver } from "./meetings/invite.js";
 
 export { oeCommandName, oeSlash, runOeCommand } from "./commands/core.js";
 export { commandFailureText, COMMAND_FAILED_TEXT, PersonFacingError, TURN_FAILED_TEXT } from "./channels/person-text.js";

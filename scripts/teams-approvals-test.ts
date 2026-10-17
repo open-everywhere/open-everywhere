@@ -290,13 +290,17 @@ const handler = buildTeamsFrontHandler(
           return { id: "notice-1" };
         },
         update: async (input) => {
+          if (updateFails) throw new Error("HTTP 404");
           updates.push({ activityId: input.activityId });
           return { id: input.activityId };
         },
+        ...(teamsWake ? { decisionWake: teamsWake } : {}),
       });
     },
   },
 );
+let teamsWake: { readonly dispatch: () => Promise<boolean> } | undefined;
+let updateFails = false;
 const pendingWaits: Promise<unknown>[] = [];
 const routeArgs = { waitUntil: (p: Promise<unknown>) => void pendingWaits.push(p), to: {} as never, attachSession: (() => undefined) as never } as never;
 async function postTap(body: unknown, auth: string | undefined): Promise<Response> {
@@ -356,6 +360,68 @@ async function auditFor(action: string, id: string) {
   const again = await postTap(invokeBody(buildTeamsApprovalData(r, "approve")), `Bearer ${goodToken}`);
   const againBody = (await again.json()) as { type: string };
   ok(againBody.type === "application/vnd.microsoft.activity.message" && memberExecuted.length === 1, "a re-tap of a decided card changes nothing and runs nothing again");
+}
+
+{
+  const { overrideSettingsForTest } = await import("@open-everywhere/core/agent/settings/settings.js");
+  const { getConfig } = await import("@open-everywhere/core/agent/access/config.js");
+  const { supervisorGrainFor } = await import("@open-everywhere/core/agent/channels/unified-supervisor.js");
+  const base = getConfig();
+  registerConfig({
+    ...base,
+    loadDomains: () => [
+      defineDomain({ name: "org", match: "org", admins: ["teams/29:org-admin"] }),
+      defineDomain({ name: "twin", reach: [`teams/${TENANT}/${CHANNEL}`], admins: ["teams/29:org-admin"], ambientSupervisor: true, mode: "solo" }),
+    ],
+  });
+  const executedBefore = memberExecuted.length;
+  const { getSettings } = await import("@open-everywhere/core/agent/settings/settings.js");
+  const topologyBefore = getSettings().window.topology;
+  overrideSettingsForTest({ window: { topology: true } });
+  try {
+    const grain = supervisorGrainFor(`teams/${TENANT}/${CHANNEL}`, getConfig().loadDomains());
+    ok(grain.unified === true && grain.domainName === "twin", "decide once (Teams) setup: the fixture channel resolves a window grain");
+    await getOperationalStore().rotateChannelSession("default", grain.registryKey, `oe-dom:twin:win:teams/${TENANT}/${CHANNEL}:oe-sup:g1`, new Date().toISOString());
+    let woke = 0;
+    teamsWake = {
+      dispatch: async () => {
+        woke += 1;
+        return true;
+      },
+    };
+
+    const r = await seed();
+    notices.length = 0;
+    updates.length = 0;
+    await postTap(invokeBody(buildTeamsApprovalData(r, "approve")), `Bearer ${goodToken}`);
+    ok((await status(r)) === "approved" && woke === 1, "decide once (Teams): the tap decides, and the standing seat takes the wake");
+    ok(updates.some((u) => u.activityId === r.messageTs), "decide once (Teams): the card message is replaced by the decided render");
+    ok(notices.length === 0, `🔴 decide once (Teams): the decided card shows the outcome and the seat took the wake, so no notice repeats it (got ${notices.length})`);
+
+    const r2 = await seed();
+    notices.length = 0;
+    updateFails = true;
+    await postTap(invokeBody(buildTeamsApprovalData(r2, "approve")), `Bearer ${goodToken}`);
+    updateFails = false;
+    ok((await status(r2)) === "approved", "decide once (Teams): the second tap decides");
+    ok(notices.length === 1, `decide once (Teams): a card update that FAILED still posts the notice (got ${notices.length})`);
+
+    const { unifiedThreadRef } = await import("@open-everywhere/core/agent/channels/unified-window.js");
+    const r3 = await seed();
+    const ref = unifiedThreadRef({ platform: "teams", serviceUrl: SERVICE_URL, conversationId: `${CHANNEL};messageid=${r3.messageTs}`, tenantId: TENANT, replyToActivityId: r3.messageTs! });
+    await getOperationalStore().putThreadOwner("default", ref.channelKey, ref.threadKey, "oe-dom:twin:t/owner:oe-sup:g1", new Date().toISOString(), 60_000);
+    notices.length = 0;
+    await postTap(invokeBody(buildTeamsApprovalData(r3, "approve")), `Bearer ${goodToken}`);
+    await getOperationalStore().clearThreadOwner("default", ref.channelKey, ref.threadKey);
+    ok((await status(r3)) === "approved" && woke === 3, "decide once (Teams): the third tap decides, and the standing seat takes its wake too");
+    ok(notices.length === 1, `decide once (Teams): a reply chain that a thread seat or a worker owns still gets the notice (got ${notices.length})`);
+  } finally {
+    teamsWake = undefined;
+    updateFails = false;
+    memberExecuted = memberExecuted.slice(0, executedBefore);
+    overrideSettingsForTest({ window: { topology: topologyBefore } });
+    registerConfig(base);
+  }
 }
 
 {

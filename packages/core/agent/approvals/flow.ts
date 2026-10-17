@@ -11,7 +11,7 @@ import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 import { dmWindowRegistryKey, grainUsesUnifiedWindow, supervisorGrainFor } from "../channels/unified-supervisor.js";
 import { dmAnchorDomain, dmAnchorSurfaceForToken, isDmAnchorWindowToken } from "../channels/window-key.js";
-import { mintWakeId, type UnifiedWakeOrigin } from "../channels/unified-window.js";
+import { mintWakeId, unifiedThreadRef, type UnifiedWakeOrigin } from "../channels/unified-window.js";
 import { dispatchApprovalDecisionWake } from "../channels/unified.js";
 import { postSurfaceText, surfaceMessageOps } from "../channels/surface-message-ops.js";
 import { renderApprovalDecisionMessage, type ApprovalOutcome } from "./decision-wake.js";
@@ -1062,16 +1062,17 @@ export interface HandleApprovalDeps {
   readonly waitUntil?: (p: Promise<unknown>) => void;
 }
 
-async function updateCard(post: PostFn, channelId: string, ts: string | undefined, card: RenderedCard): Promise<void> {
-  if (!ts) return;
-  if (swallowRoomOp("a slack approval-card rewrite")) return;
+async function updateCard(post: PostFn, channelId: string, ts: string | undefined, card: RenderedCard): Promise<boolean> {
+  if (!ts) return false;
+  if (swallowRoomOp("a slack approval-card rewrite")) return false;
   const body = new URLSearchParams();
   body.set("channel", channelId);
   body.set("ts", ts);
   body.set("text", card.text);
   body.set("blocks", JSON.stringify(card.blocks));
   if (card.metadata) body.set("metadata", JSON.stringify(card.metadata));
-  await post("chat.update", body.toString());
+  const res = await post("chat.update", body.toString()).catch(() => undefined);
+  return res?.ok === true;
 }
 
 async function updateCardText(post: PostFn, channelId: string, ts: string | undefined, text: string): Promise<void> {
@@ -1456,7 +1457,7 @@ async function rowDecisionFeedback(
     const surface = decisionFeedbackSurfaceFor(platform);
     if (!surface) return;
     await deliverDecisionFeedback(
-      { row, ...what, target: await surface.wakeTarget(row).catch(() => null), postNotice: (text) => surface.postNotice(row, text) },
+      { row, ...what, target: await surface.wakeTarget(row).catch(() => null), cardShowsOutcome: false, noticeThread: null, postNotice: (text) => surface.postNotice(row, text) },
       deps.decisionWake,
     );
     return;
@@ -1470,6 +1471,8 @@ async function rowDecisionFeedback(
       row,
       ...what,
       target: platform === "slack" ? slackDecisionWakeTarget(row, workspace) : discordDecisionWakeTarget(row, workspace),
+      cardShowsOutcome: false,
+      noticeThread: null,
       postNotice,
     },
     deps.decisionWake,
@@ -1642,6 +1645,10 @@ export async function wakeWindowOnDecision(
   return delivered;
 }
 
+function slackNoticeThread(channelId: string, threadTs: string | undefined): UnifiedWakeOrigin | null {
+  return threadTs ? { platform: "slack", channelId, threadTs } : null;
+}
+
 function slackDecisionWakeTarget(row: PendingActionRow, teamId: string | undefined): { surfaceKey: string; origin: UnifiedWakeOrigin } | null {
   if (!teamId) return null;
   return {
@@ -1688,15 +1695,25 @@ export interface DecisionFeedbackInput {
   readonly executed: "ok" | "failed" | "none";
   readonly clickerId?: string;
   readonly target: { surfaceKey: string; origin: UnifiedWakeOrigin } | null;
+  readonly cardShowsOutcome: boolean;
+  readonly noticeThread: UnifiedWakeOrigin | null;
   readonly postNotice: (text: string) => Promise<unknown>;
 }
 
-export async function deliverDecisionFeedback(input: DecisionFeedbackInput, decisionWake?: DecisionWakeDeps): Promise<void> {
-  if (!swallowRoomOp(`an approval decision notice (${input.outcome})`)) {
-    await input.postNotice(decisionNoticeText(input.row, input.outcomeLine, input.clickerId ?? "system", input.outcome)).catch(() => undefined);
+async function threadOwnedBySession(org: string, origin: UnifiedWakeOrigin | null): Promise<boolean> {
+  if (origin === null) return true;
+  try {
+    const ref = unifiedThreadRef(origin);
+    return (await getOperationalStore().getThreadOwner(org, ref.channelKey, ref.threadKey)) !== null;
+  } catch {
+    return true;
   }
+}
+
+export async function deliverDecisionFeedback(input: DecisionFeedbackInput, decisionWake?: DecisionWakeDeps): Promise<void> {
+  let woke = false;
   if (input.target) {
-    await wakeWindowOnDecision(
+    woke = await wakeWindowOnDecision(
       {
         row: input.row,
         outcome: input.outcome,
@@ -1707,7 +1724,11 @@ export async function deliverDecisionFeedback(input: DecisionFeedbackInput, deci
         origin: input.target.origin,
       },
       decisionWake,
-    ).catch(() => undefined);
+    ).catch(() => false);
+  }
+  if (input.cardShowsOutcome && woke && !(await threadOwnedBySession(input.row.org, input.noticeThread))) return;
+  if (!swallowRoomOp(`an approval decision notice (${input.outcome})`)) {
+    await input.postNotice(decisionNoticeText(input.row, input.outcomeLine, input.clickerId ?? "system", input.outcome)).catch(() => undefined);
   }
 }
 
@@ -1769,7 +1790,7 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
       case "lost-race":
         return true;
       case "expired": {
-        await updateCard(post, channelId, messageTs, await decidedRenderFor(res.row, res.summaryLines, "expired", channelId, messageTs));
+        const edited = await updateCard(post, channelId, messageTs, await decidedRenderFor(res.row, res.summaryLines, "expired", channelId, messageTs));
         await deliverDecisionFeedback(
           {
             row: res.row,
@@ -1778,6 +1799,8 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
             outcomeLine: "expired",
             executed: "none",
             target: slackDecisionWakeTarget(res.row, teamId),
+            cardShowsOutcome: edited,
+            noticeThread: slackNoticeThread(channelId, res.row.threadTs ?? messageTs),
             postNotice: (text) => postThreadNote(post, channelId, res.row.threadTs ?? messageTs, text),
           },
           deps.decisionWake,
@@ -1798,7 +1821,7 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
         return true;
       }
       case "decided": {
-        await updateCard(post, channelId, messageTs, await decidedRenderFor(res.row, res.summaryLines, res.outcomeLine, channelId, messageTs));
+        const edited = await updateCard(post, channelId, messageTs, await decidedRenderFor(res.row, res.summaryLines, res.outcomeLine, channelId, messageTs));
         await deliverDecisionFeedback(
           {
             row: res.row,
@@ -1808,6 +1831,8 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
             executed: res.executed,
             clickerId,
             target: slackDecisionWakeTarget(res.row, teamId),
+            cardShowsOutcome: edited,
+            noticeThread: slackNoticeThread(channelId, res.row.threadTs ?? messageTs),
             postNotice: (text) => postThreadNote(post, channelId, res.row.threadTs ?? messageTs, text),
           },
           deps.decisionWake,

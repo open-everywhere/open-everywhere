@@ -25,6 +25,25 @@ carries its own small bill (~$3–5/mo), and POSTs to Vercel, which serverless i
   the deploy's `/eve/v1/discord-gateway` ingestion channel. (That channel is the follow-on build —
   until it exists, stay in PROOF mode.)
 
+## Voice meetings (OPE-2473)
+
+In FORWARD mode the relay also serves OE's Discord voice meetings (`voice.js`). It syncs with the deploy on a
+timer: a signed `VOICE_SYNC` POST to the same ingestion route. The deploy answers with the voice channels the
+bot must be in, and the next interval (3 s while a meeting is open, 10 s while Discord meetings are on, 5 min
+otherwise). The relay joins those channels (gateway opcode 4, muted), and reports for each one the call's voice
+credentials and the channel's members. It leaves a channel when the deploy no longer lists it, and at the
+meeting's cap even when the deploy stops answering.
+
+🔴 The relay forwards ONLY the call's voice credentials (session id, voice token, endpoint), never the bot token.
+OE hands them to the meeting's own box, which receives the audio.
+
+It needs the **Guild Voice States** intent (not privileged, so no portal toggle; the relay asks for it) and the
+**View Channel**, **Connect** and **Send Messages** permissions in the voice channel. OE posts a recording notice
+in the channel's chat before the bot records, and does not record when it cannot. It does not need **Speak**. A
+Stage channel, a text channel, or a channel without those permissions is reported as a failure, and the bot does
+not join. A join that gets no credentials within 30 s fails; a later gap (Discord moving the call) does not. The
+operator guide is [`docs/capabilities/meetings.md` § Discord voice](../../docs/capabilities/meetings.md#discord-voice).
+
 ## What only you can do (browser / account / payment)
 
 An agent can't create accounts, add payment, or click OAuth — these two are yours, both one-time:

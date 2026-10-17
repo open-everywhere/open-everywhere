@@ -12,7 +12,7 @@ import { dispatchWorkRequest } from "../channels/unified.js";
 import { generationOfTask, noteGenerationDelegation } from "../channels/generation-retirement.js";
 import { continuationRoute, resolveWorkGeneration, workSessionLedgerId, type ContinuationRoute, type WorkGeneration } from "../channels/work-generation.js";
 import { notifyLostWorkRequests } from "../channels/work-loss.js";
-import { OE_WORK_RESULT_QUIET_ATTR, readWorkBrief, readWorkRequest, readWorkTaskRequest, renderFreshFollowUpBrief, renderWorkRequest, rememberWorkBrief, rememberWorkReportPromised, rememberWorkRequest, workLedgerId, workRequestIdFor, workTokenForSeat, WORK_FORWARDED_ACTION, type WorkRowStore } from "../channels/work.js";
+import { OE_WORK_RESULT_QUIET_ATTR, readWorkBrief, readWorkRequest, readWorkTaskRequest, renderFreshFollowUpBrief, renderJobBrief, renderWorkRequest, rememberWorkBrief, rememberWorkReportPromised, rememberWorkRequest, workLedgerId, workRequestIdFor, workTokenForSeat, WORK_FORWARDED_ACTION, type WorkRowStore } from "../channels/work.js";
 import { parseWindowToken, isWorkWindowToken } from "../channels/window-key.js";
 import { ownAccountStampToForward } from "../connections/own-account-carriage.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -151,7 +151,7 @@ export async function forwardWork(input: { readonly message: string; readonly ta
     recorded !== undefined ? recorded.fresh : route.kind === "ended" && input.taskId !== undefined ? { taskId: input.taskId, from: route.from, reason: route.reason } : undefined;
   const deliveryToken = recorded !== undefined ? recorded.token : route.kind === "holding" ? route.token : generation.token;
   const deliveredTaskId = fresh !== undefined ? undefined : input.taskId;
-  const brief =
+  const seatBrief =
     fresh === undefined
       ? input.message
       : renderFreshFollowUpBrief({
@@ -162,6 +162,7 @@ export async function forwardWork(input: { readonly message: string; readonly ta
             return earlier !== undefined ? { earlierBrief: earlier } : {};
           })()),
         });
+  const brief = renderJobBrief(seatBrief, requesterAsks);
   const loss =
     recorded !== undefined
       ? recorded.loss
@@ -281,10 +282,16 @@ export default windowGated("work", defineTool({
     "Hand a job to this conversation's work session and keep talking. Use it for anything that needs " +
     "real work: reading or changing code, calling a connector, research, a long task. It returns at once " +
     "with a request id; your turn does not wait. When the job finishes, its result arrives to you as a new " +
-    "message, and you relay it to the people who asked. Give a self-contained brief — the work session " +
-    "sees only this message.",
+    "message, and you relay it to the people who asked. Give a self-contained brief: the work session " +
+    "sees this message and the asker's own words, and nothing else of this conversation.",
   inputSchema: z.object({
-    message: z.string().min(1).describe("The job, with everything needed to do it: the goal, what to return, and whether it may change files."),
+    message: z
+      .string()
+      .min(1)
+      .describe(
+        "The job, with everything needed to do it: the goal, what to return, and whether it may change files. " +
+          "Add what you know that the job needs. Add no condition, required detail or precaution that the person did not state: each tool states its own limits.",
+      ),
     taskId: z
       .string()
       .regex(/^[A-Za-z0-9_-]{1,80}$/)

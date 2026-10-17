@@ -172,7 +172,7 @@ function eveContextStorage(): AsyncLocalStorage<unknown> {
 }
 
 const ctx = {} as BindableContext;
-const recapLine = (bot: boolean): RenderedLine => ({ author: bot ? "B0" : "U1", ts: "100.9", text: "Meeting recap — Zoom, about 30 min.", ...(bot ? { bot: true } : { authorId: "U1" }) });
+const recapLine = (bot: boolean): RenderedLine => ({ author: bot ? "B0" : "U1", ts: "100.9", text: "Meeting recap: Zoom, 30 min", ...(bot ? { bot: true } : { authorId: "U1" }) });
 const pageAdapter = (lines: readonly RenderedLine[]): ReadAdapter => ({
   platform: "slack",
   wakeAddress: () => undefined,

@@ -1309,7 +1309,12 @@ notification text is the same visible lines.
 
 **A decided card is one line**: "✅ Approved by @name — message posted in #general", "❌ Rejected by
 @name — Post a message in #general", "⏰ Expired — Post a message in #general" (`decidedCardLine`).
-The decision notice posted into the thread is the same line. Slack, Teams and Discord render the same
+The decision notice is the same line, so a click skips it only when the card edit succeeded, a
+standing seat took the decision wake, and no thread seat or worker owns the thread the notice posts
+into. Then the edited card already shows the outcome, and the room does not read it twice
+(OPE-2473). The notice
+exists for a session whose history does not see a card edit. The TTL sweep and a session-grant
+release do not edit the card, so they always post the notice. Slack, Teams and Discord render the same
 layout (`packages/core/agent/approvals/card-layout.ts`), and the **options are one ordered list** —
 Approve first, Reject last, and a routine's grant option between them. "Approve, and allow things
 like this" (OPE-2456) is one more entry in that list, offered only where a rule could lift the act.

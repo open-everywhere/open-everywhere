@@ -183,9 +183,10 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
       "packages/adapters/agent/model/meeting-gateway.ts",
       "agent/meetings/policy.ts",
       "deploy/meeting-bot/**",
+      "deploy/discord-relay/voice.js",
     ],
-    scenarios: ["S-MEETING-RECAP", "S-MEETING-NATIVE-RECAP"],
-    why: "S-MEETING-RECAP (OPE-2459) is the only live leg on OE's own meeting bot: a channel ask with a Meet link raises one meeting.join card and nothing joins before a click. The join, the callbacks, the speaker names and the recap are tier 2's (OPE-2469); the bot's cut rule, handover and page reader are scripts/meeting-bot-test.ts. S-MEETING-NATIVE-RECAP (OPE-2471) is its twin for the platform's own transcript: a Zoom ask raises one meeting.recap card and nothing is read before a click; the read, the watch and the native recap are tier 2's.",
+    scenarios: ["S-MEETING-RECAP", "S-MEETING-NATIVE-RECAP", "S-MEETING-DISCORD-VOICE"],
+    why: "S-MEETING-RECAP (OPE-2459) is the only live leg on OE's own meeting bot: a channel ask with a Meet link raises one meeting.join card and nothing joins before a click. The join, the callbacks, the speaker names and the recap are tier 2's (OPE-2469); the bot's cut rule, handover and page reader are scripts/meeting-bot-test.ts. S-MEETING-NATIVE-RECAP (OPE-2471) is its twin for the platform's own transcript: a Zoom ask raises one meeting.recap card and nothing is read before a click; the read, the watch and the native recap are tier 2's. S-MEETING-DISCORD-VOICE (OPE-2473) is the same card leg asked in the e2e guild with a Discord voice channel link; the Discord bot's frame filter, member count, re-subscribe and cuts are scripts/meeting-bot-discord-test.ts, and the relay's voice sync is scripts/discord-relay-voice-test.ts.",
   },
   {
     area: "email",

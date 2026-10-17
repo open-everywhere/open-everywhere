@@ -1368,6 +1368,38 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
     ok(wakes[0]!.message.includes("NOT delegate it again"), "decision wake: the approved wake forbids re-delegating the same act");
     await store.clearSpendLimit("default", "slack/TW/C_WIN", "surface");
 
+    {
+      const { unifiedThreadRef } = await import("../agent/channels/unified-window.js");
+      const sent: { method: string; text: string }[] = [];
+      const recPost = (updateOk: boolean) => async (method: string, body: string) => {
+        sent.push({ method, text: new URLSearchParams(body).get("text") ?? "" });
+        return { ok: method === "chat.update" ? updateOk : true };
+      };
+      const notices = (): number => sent.filter((c) => c.method === "chat.postMessage" && c.text.startsWith("✅ Approved by ")).length;
+      const once = async (id: string, tokens: number, deps: Parameters<typeof handleApprovalPayload>[1]): Promise<void> => {
+        sent.length = 0;
+        await store.addPendingAction(winRow({ id, argsJson: JSON.stringify({ org: "default", scopeKey: "slack/TW/C_WIN", level: "surface", monthlyTokens: tokens, currentCap: null }) }));
+        await handleApprovalPayload(winPayload(`oe_approval:approve:${id}`), deps);
+        await store.clearSpendLimit("default", "slack/TW/C_WIN", "surface");
+      };
+
+      await once("p-win-once", 801, { post: recPost(true), decisionWake });
+      ok(sent.some((c) => c.method === "chat.update" && c.text.startsWith("✅ Approved by ")), "decide once: the click edits the card to its decided line");
+      ok(notices() === 0, `🔴 decide once: the card shows the outcome and the seat took the wake, so no notice repeats it (got ${notices()})`);
+
+      await once("p-win-editfail", 802, { post: recPost(false), decisionWake });
+      ok(notices() === 1, `decide once: a card edit that FAILED still posts the notice (got ${notices()})`);
+
+      await once("p-win-noseat", 803, { post: recPost(true), decisionWake: { ...decisionWake, dispatch: async () => false } });
+      ok(notices() === 1, `decide once: a wake no seat took still posts the notice (got ${notices()})`);
+
+      const ref = unifiedThreadRef({ platform: "slack", channelId: "C_WIN", threadTs: "ANCHOR.W" });
+      await store.putThreadOwner("default", ref.channelKey, ref.threadKey, "oe-dom:win:t/slack/TW/C_WIN/ANCHOR.W:oe-sup:g1", new Date().toISOString(), 60_000);
+      await once("p-win-owned", 804, { post: recPost(true), decisionWake });
+      await store.clearThreadOwner("default", ref.channelKey, ref.threadKey);
+      ok(notices() === 1, `decide once: a card in a thread that a thread seat or a worker owns still posts the notice (got ${notices()})`);
+    }
+
     registerActionKind({
       kind: "test.throws",
       policy: "admin",
@@ -2176,6 +2208,36 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   const noTurnA = await inSession(() => requestApproval(proposal({ measured: "no-traffic", windowDays: 30 }), { post }));
   const noTurnB = await inSession(() => requestApproval(proposal({ measured: "none", why: "ledger unreachable" }), { post }));
   ok(noTurnA.id !== noTurnB.id && noTurnB.deduped !== true, "OPE-1556: with no readable (session, turn) the guard is inert — two differing measurements mint two cards, exactly as before this shipped");
+
+  await import("../agent/approvals/meeting-join.js");
+  ok(JSON.stringify(actionKind("meeting.join")?.volatileArgs) === JSON.stringify(["channelLabel", "serverLabel"]), "OPE-2473: `meeting.join` declares the Discord room labels as volatile");
+  const join = (labels: Record<string, string>) => ({
+    org: "default",
+    kind: "meeting.join" as const,
+    args: {
+      org: "default",
+      scopeKey: "slack/T12/C13",
+      meetingId: "mtg_redeliver000000000000000",
+      url: "https://discord.com/channels/111111111111111111/222222222222222222",
+      platform: "discord",
+      host: "discord.com",
+      roomId: "111111111111111111/222222222222222222",
+      ...labels,
+      requestedBy: "U_REQUESTER",
+      origin: { platform: "slack", channelId: "C13", threadTs: null },
+      maxMinutes: 120,
+      transcriptDays: 30,
+      transcriptionDisclosure: "test",
+      backend: "fake",
+    },
+    scopeKey: "slack/T12/C13",
+    requestedBy: "U_REQUESTER",
+    channelId: "C13",
+    chain: { unattended: false },
+  });
+  const named = await inTurn("sess-join", "turn_1", () => requestApproval(join({ channelLabel: "#General", serverLabel: "the Acme server" }), { post }));
+  const unnamed = await inTurn("sess-join", "turn_1", () => requestApproval(join({}), { post }));
+  ok(unnamed.deduped === true && unnamed.id === named.id, "🔴 OPE-2473: a redelivered meeting_join whose name lookup failed lands on the card it already minted");
 }
 
 {

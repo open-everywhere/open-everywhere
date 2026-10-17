@@ -221,4 +221,32 @@ ok(!/once\(\)/.test(notionReason.replace(/never returns `?once\(\)`?/gi, "")), "
   ok(card.includes("> use staging? or prod?") && card.includes("Options: staging · prod"), "§9 the card quotes the question on one line and lists the options");
 }
 
+{
+  const mod = await import("../agent/tools/ask_room.js");
+  const askRoom = mod.default as unknown as { description: string; execute: (input: unknown, ctx: unknown) => Promise<unknown> };
+  const LIVE = "Please share the meeting join receipt or meeting ID for the notetaker in the Discord voice channel #General. I can’t safely stop a recording without identifying the exact meeting; I won’t stop another meeting by guessing.";
+  ok(mod.asksForSystemValue(LIVE) !== undefined, `§10 🔴 the live question asks for a system-made value (got ${String(mod.asksForSystemValue(LIVE))})`);
+  for (const q of ["What is the task id?", "Which request id did the job get?", "Can you paste the wrun_41M4 run?", "Send me the session ID please", "which mtg_abc123 is it?"]) {
+    ok(mod.asksForSystemValue(q) !== undefined, `§10 "${q}" asks for a system-made value`);
+  }
+  for (const q of ["Which of the two drafts should I post?", "Use staging or prod?", "What is the pull request ID you want reviewed?", "Which Linear ticket number is this for?", "Paste the meeting link, please.", "Do you want the receipt from the vendor attached?"]) {
+    ok(mod.asksForSystemValue(q) === undefined, `§10 negative control: "${q}" is an ordinary question (got ${String(mod.asksForSystemValue(q))})`);
+  }
+  let refusal = "";
+  try {
+    await askRoom.execute({ question: LIVE }, { session: { auth: { current: { attributes: {} } } } });
+  } catch (err) {
+    refusal = String((err as Error).message);
+  }
+  ok(refusal.startsWith("ask_room: nothing was posted") && refusal.includes("meeting_leave") && !refusal.includes("only a job of this conversation's work session"), `§10 🔴 ask_room refuses the live question at once, before its context check (got: ${refusal})`);
+  let ordinary = "";
+  try {
+    await askRoom.execute({ question: "Use staging or prod?" }, { session: { auth: { current: { attributes: {} } } } });
+  } catch (err) {
+    ordinary = String((err as Error).message);
+  }
+  ok(ordinary.includes("only a job of this conversation's work session"), `§10 negative control: an ordinary question passes the guard (got: ${ordinary})`);
+  ok(/never for an id or a receipt this system made/.test(askRoom.description), "§10 the description says a person is never asked for a system-made id");
+}
+
 console.log(`no-native-hitl: ${passed} assertions passed`);

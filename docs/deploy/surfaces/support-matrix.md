@@ -273,8 +273,9 @@ Two surface-wide notes before the rows:
     and it counts a tap only from the `msteams` channel of the bot registration.
     A verified tap goes through the same decide core as Slack and Discord: the same approver tiers
     (the `Domain.admins` roster, written `teams/<user-id>`), the same clicker gate, the same halt
-    check and the same `approval.*` audit rows. The decided card replaces the pending one, and a
-    decision notice posts into the card's own reply chain. The judge-lift notice carries its
+    check and the same `approval.*` audit rows. The decided card replaces the pending one. A
+    decision notice posts into the card's own reply chain too, unless the card was replaced, a seat
+    took the decision wake and no thread seat or worker owns the reply chain. The judge-lift notice carries its
     "This should not have run" button on Teams too. A personal or group chat hosts its own card
     since OPE-2447: the card posts into the chat, and the decision wakes the chat's own DM seat and
     no other. A chat card's decision never wakes a domain window, even under a tenant-wide domain

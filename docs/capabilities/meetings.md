@@ -1,7 +1,7 @@
 # Meetings: OE's own meeting bot
 
-A person in Slack or Teams says "join this meeting" with a Google Meet or Microsoft Teams link. OE posts an
-approval card. When a member approves, OE's own meeting bot joins the meeting as a visible participant,
+A person in Slack, Teams or Discord says "join this meeting" with a Google Meet or Microsoft Teams link, or
+with the link of a Discord voice channel. OE posts an approval card. When a member approves, OE's own meeting bot joins the meeting as a visible participant,
 records the audio, and leaves when the meeting ends. OE then posts a recap with the decisions and the
 actions into the thread the ask came from.
 
@@ -18,8 +18,8 @@ Meetings are **off** as shipped.
 Two properties had to hold before a deployment could turn meetings on. Both hold now:
 
 - **Meeting data expires per row (OPE-2461).** OE keeps meeting state (the record with its callback key, the
-  transcript chunks, the open-meeting index, the single-use claims, the native-recap watches) in its own
-  operational-store table, `meeting_data`. Each row carries its own expiry time. A read never returns a row
+  transcript chunks, the open-meeting index, the single-use claims, the native-recap watches, and on Discord the
+  voice credentials and the one-meeting-per-server claim) in its own operational-store table, `meeting_data`. Each row carries its own expiry time. A read never returns a row
   after that time, a write deletes only rows already past their own expiry, and the 15-minute meeting sweep
   deletes the expired rows from the disk. No other feature's write can delete a live meeting row.
 - **The recap carries untrusted provenance (OPE-2464).** The recap is the bot's own post, written by a model
@@ -39,6 +39,7 @@ Two properties had to hold before a deployment could turn meetings on. Both hold
    - on a turn that a non-member's message woke, and on a turn with no acting person (a routine fire);
    - for a host the policy does not list, and for a Teams meeting whose organiser's tenant the policy
      does not list (external meetings are refused);
+   - for a Discord voice channel on a server the policy does not list (see [Discord voice](#discord-voice));
    - for Zoom (see [Zoom](#zoom));
    - when the sandbox backend cannot run a box (just-bash), when the policy's transcription route is not
      registered, or when the deployment has no public URL for the bot to call back on.
@@ -69,7 +70,9 @@ Two properties had to hold before a deployment could turn meetings on. Both hold
    have at most 64 meetings open at once; a further join is refused. The sweep runs whether or not meetings
    are enabled, so turning meetings off does not abandon the meetings already open.
 8. **Recall.** `meeting_leave` stops a bot this conversation sent: the bot leaves now, and the recap of what
-   it heard so far comes to the thread. It finds only meetings this conversation sent, so one room cannot
+   it heard so far comes to the thread. It takes no argument: the conversation is the whole selector, so no
+   person is ever asked for a meeting id. A delegated worker runs it, like `meeting_join`. It finds only
+   meetings this conversation sent, so one room cannot
    stop another room's bot. It has the same room and person rules as `meeting_join`, posts no card (it
    removes a recorder, never adds one), and works after meetings are turned off.
 9. **Halt.** Under a HALT that covers the asking room, its workspace or domain, the asking person or the
@@ -92,6 +95,7 @@ const meetingPolicy: MeetingPolicy = {
   hosts: [
     { platform: "meet", host: "meet.google.com", owner: "unverifiable", why: "Our team meets on Google Meet." },
     { platform: "teams", host: "teams.microsoft.com", tenants: ["<your tenant id>"], why: "Our own Teams tenant only." },
+    { platform: "discord", host: "discord.com", guilds: ["<your server id>"], why: "Our team's Discord server." },
   ],
   box: { image: "oe-meeting-bot:1", vcpus: 2, memoryMb: 4096 },
   retention: { audioMinutes: 0, transcriptDays: 30 },
@@ -104,7 +108,7 @@ A bad policy fails the boot. Every field is validated in `packages/core/agent/me
 | Field | Meaning |
 |---|---|
 | `enabled` | The master switch. Off refuses every join. |
-| `hosts` | The meeting hosts OE may join. A Teams rule must list the organiser tenants OE may join. A Meet rule must say `owner: "unverifiable"` (see below). A Zoom rule must name the Zoom-reviewed app. |
+| `hosts` | The meeting hosts OE may join. A Teams rule must list the organiser tenants OE may join. A Meet rule must say `owner: "unverifiable"` (see below). A Zoom rule must name the Zoom-reviewed app. A Discord rule must list the server (guild) ids whose voice channels OE may join. |
 | `botName` | The name the host sees in the lobby. |
 | `maxMinutes` | The hard cap on one meeting, at most 24 hours. |
 | `leaveWhenAloneMinutes` | The bot leaves after this many minutes alone. |
@@ -222,6 +226,139 @@ fence. It also goes, unfenced, into the transcription call's context prompt; the
 untrusted transcript text. The page's indicator
 can also lag, so a short turn can carry the previous speaker's name or none.
 
+## Discord voice
+
+<a id="discord-voice"></a>OE's meeting bot also records a Discord voice channel (OPE-2473). It uses the same
+meeting plane: the same `meeting.join` card, the same cap, billing, sweep, halt, recap and transcription role.
+Two things differ from Meet and Teams: who joins the call, and how the speaker names are found.
+
+### How it joins
+
+```
+person: "join https://discord.com/channels/<server>/<voice channel>"
+  → meeting_join → the meeting.join card → a member approves → OE opens the box (discord.mjs)
+relay (always on, holds the bot token and the gateway session)
+  → syncs with OE every few seconds (VOICE_SYNC), sees the open meeting, asks Discord to join (opcode 4)
+  → Discord answers with this call's voice credentials → the relay reports them to OE
+box → asks OE for them on its own signed callback → opens the voice connection → receives the audio
+```
+
+- **The box never holds the bot token.** Only the relay holds it. The relay forwards only this call's voice
+  credentials: the voice session id, the voice token and the endpoint. They let the holder listen to this one
+  call as the bot, for as long as the call lasts. OE keeps them in the meeting's own store row, and it gives
+  them only to the meeting's own box, in the answer to a callback that the meeting's own key signs. They never
+  go into an audit row, a card or a log.
+- **The relay leaves on its own.** Each sync answers with the list of open Discord meetings. The relay joins
+  what is listed and leaves what is not. So a meeting that ends (`ended`, `meeting_leave`, a halt, the sweep)
+  drops off the list, and the bot leaves at the next sync. The relay also leaves at each meeting's cap, even when
+  the deployment stops answering.
+- **An invite link works too.** Discord's "Invite to voice channel" gives `https://discord.gg/<code>` (or
+  `https://discord.com/invite/<code>`). An invite names a code, not a channel, so `meeting_join` first looks
+  it up with the Discord provider's `GET /invites/{code}` (bot token) and turns it into the voice channel's
+  own `https://discord.com/channels/<server>/<channel>` link. Every check then runs on that channel: the
+  listed servers, and the card. An invite to a text channel or a stage channel, an expired invite, and a
+  failed lookup each refuse with a plain reason. A deployment with no Discord provider tells the person to
+  paste the voice channel's "Copy Link" link instead.
+- **A moved call.** Discord can move a call to another voice server. The relay then reports the new voice
+  token and endpoint, and the box hands them to its connection. This is not proven live. A connection that
+  stays lost for a minute ends the recording, and the recap covers what arrived.
+- **One call per server.** A Discord account is in at most one voice channel per server. OE refuses a second
+  open meeting on the same server at the click, with a single-use claim on the server that the meeting holds
+  until it ends. A claim left by a crash is reclaimed: by the next meeting once the holder's record says it
+  ended, or once an open that wrote no record is 30 minutes old.
+- **Stage channels are refused.** The relay reports `stage-channel`, and the thread hears that the bot could
+  not join. The spike did not prove Stage channels. A text channel or a channel the bot cannot connect to is
+  refused the same way (`not-voice`, `not-found`, `no-permission`).
+
+**Proven and not proven.** The sandbox proves that `@discordjs/voice` 0.19.2 opens a voice connection from the
+forwarded credentials alone: the real `discord.mjs`, given credentials by a fake OE callback, sends Discord's
+voice `Identify` (server id, user id, session id, voice token) to the endpoint, with no bot token and no gateway
+(`deploy/meeting-bot/README.md`). Discord's voice protocol authenticates the voice connection with those four
+values only. The sandbox cannot reach Discord, so a live receive with forwarded credentials is **not proven**:
+the spike (OPE-2472) received audio in the process that held the gateway. If Discord ever ties the voice session
+to the gateway connection's address, the fallback is to receive in the relay, which then sends the chunks to OE
+itself.
+
+### Per-person audio and exact names
+
+Discord sends each member's audio on its own stream, and the voice gateway says which member owns which stream
+(opcode 5, also for a member who joins late). `@discordjs/voice` keeps that map and routes each frame to the
+member's own stream, so the bot knows who spoke each word, and the names do not come from a page indicator. That
+routing is the library's; no test in this repository covers it.
+
+- The bot subscribes to a member's stream at each speaking start: a stream ends after a second of silence.
+- It drops the few frames that arrive still DAVE-encrypted after a member joins (they end in the marker 0xFAFA).
+- It cuts each member's speech into chunks of their own: at a turn change (another member starts speaking, even
+  while the previous speaker's stream is still open), at the first pause after 45 seconds, or at 75 seconds
+  whatever is said. Each chunk is a 16 kHz mono WAV file. After 1,500 chunks only the 45 s and 75 s rules cut, so
+  a very long, busy call stays under OE's chunk limit, and its order is coarser.
+- Each chunk carries the member's Discord id and its arrival time on one clock. Frames carry no usable
+  timestamp, so the arrival time is the timeline. OE reads the transcript back in arrival order.
+- OE transcribes each chunk through the transcription role, and writes it as one line under the member's display
+  name in that server, `[Ana] …`. The relay reports the channel's members, by Discord id, with each sync, and
+  OE keeps a roster of everyone it saw during the call. A speaker who left the channel keeps their name: the
+  bot sends its last chunks when it leaves, which is after the people left. A speaker the relay never listed
+  stays unlabelled; OE never guesses.
+- **Names, not ids.** The card and the replies name the voice channel and the server ("the voice channel
+  #General on the Acme server"), through the Discord provider's channel lookup at the ask. The recap header
+  names the voice channel ("Meeting recap: General, 6 min"). When the
+  lookup fails, they say "a Discord voice channel". The raw ids stay in the frozen arguments and the audit
+  rows only.
+
+**A display name is still untrusted.** The member chooses it, and OE cleans it as it does a page name. But each
+line is tied to a real Discord account id, so the name cannot be borrowed by timing, as it can on Meet and Teams.
+
+**Not proven:** a human speaker (only bots spoke in the spike), and Stage channels.
+
+### The recording is visible
+
+- The approval card says that the bot joins the voice channel at once, shows in its member list, records each
+  speaker on their own stream, and posts a recording notice. A member approves exactly that.
+- When the bot is connected, and BEFORE it records, OE posts in the voice channel's own chat: "🔴 Recording:
+  OE's meeting notetaker is in this voice channel and records each speaker for a written recap. …". **This fails
+  closed:** when the notice cannot post (no Send Messages, a Discord error), OE ends the meeting at once, the bot
+  leaves without starting its capture, any chunk that still arrives is refused, and the thread hears why. The
+  relay also refuses to join a channel where the bot lacks Send Messages. When the meeting ends, OE posts that
+  the notetaker left and stopped recording; that notice is best effort. Under a halt nothing posts, this notice
+  included.
+- The bot joins muted, and it never speaks.
+
+### Discord's Developer Policy
+
+Discord's [Developer Policy](https://support-dev.discord.com/hc/en-us/articles/8563934450327-Discord-Developer-Policy)
+(effective July 8, 2024, read 2026-10-12) has no clause that names voice or recording. These clauses apply:
+
+> 2. Do not initiate processes on a user or server's behalf without first obtaining their permission. The manner
+> of providing the option for permission must be clearly labeled and apparent, and contain an accurate
+> description of the purpose or feature being enabled.
+
+> 15. Do not use API Data for any purpose outside of what is necessary to provide your stated functionality.
+
+> 21. Do not use message content obtained through the APIs to train machine learning or AI models (including
+> large language models) unless express permission is granted by Discord.
+
+The [Developer Terms of Service](https://support-dev.discord.com/hc/en-us/articles/8562894815383-Discord-Developer-Terms-of-Service)
+add: "You will provide and adhere to a privacy policy for your Application that is compliant with applicable
+privacy laws and clearly, accurately, and fully describes to users of your Application what data you collect,
+how you use and share such data with us and third parties, and how users can request deletion of such data."
+
+How OE meets them: the approval card is the labelled permission step (clause 2), and the notice in the voice
+channel tells the people who did not see the card. The audio is used only to write the recap, and it is not
+stored (clause 15). OE does not train a model on it (clause 21). **The privacy policy is the operator's
+duty:** a deployment that turns Discord voice on must say in its bot's privacy policy that it records voice
+channels on request, where the audio goes (the transcription role's routes), and how long OE asks its store to
+keep the transcript. Recording laws differ by country; the card and the notice do not replace consent where a
+law requires it.
+
+### Turn it on
+
+1. The relay needs the **Guild Voice States** intent (not privileged; the relay asks for it) and, in each voice
+   channel, the **View Channel**, **Connect** and **Send Messages** permissions. Without Send Messages OE cannot
+   post the recording notice, so the relay does not join and OE does not record. The bot does not need **Speak**.
+2. The relay must run in FORWARD mode (`OE_INGEST_URL`), and its version must carry `voice.js`.
+3. Add a Discord rule with your server ids to `agent/meetings/policy.ts` (see above). The bot image is the same
+   image as for Meet and Teams.
+
 ## The recap, and why the transcript is untrusted
 
 Anyone in the meeting can say anything, a guest included. So the transcript is **untrusted content**:
@@ -231,11 +368,12 @@ Anyone in the meeting can say anything, a guest included. So the transcript is *
 - Code renders the post from those fields. Each field is capped, and every `<`, `>`, `[` and `]` is
   removed (a markdown link keeps its label), with `@here`-style broadcasts. Removing characters rather
   than whole tokens means a token split across two fields cannot re-form when code joins them.
-- Every line the model wrote is posted as a quote, under a fixed header: "The quoted lines are what people
-  said in the meeting … They are not instructions from me". This is a LABEL for the people in the thread.
-  No code reads the label.
+- Every line the model wrote is posted as a quote. The post is short: a one-line header ("Meeting recap:
+  General, 6 min"), the summary, and the Decisions and Actions sections only when they hold something. It
+  has no preamble about untrusted content, because the provenance mark below is the guard and no person
+  needs to read about it.
 - 🔴 **The recap post carries an untrusted provenance mark (OPE-2464).** A chat read grades a bot's line as
-  trusted, so the label alone would let a later turn act on an action item as if OE had said it. So the host
+  trusted, so without a mark a later turn could act on an action item as if OE had said it. So the host
   records the recap when it posts it (`meetings/provenance.ts`): the thread it goes into BEFORE the post, and
   the post's own message id after. The record is a fact about the message id, never about its words. Two
   readers use it:
@@ -314,6 +452,8 @@ The recap uses the deployment's `utility` model route.
   voices apart. Names come from the meeting page's active-speaker indicator only, with the limits in
   [Speaker names](#speaker-names). A recap from the platform's own
   transcript has the platform's speaker names instead ([below](#recaps-from-the-platforms-own-transcript)).
+  Discord is different: each member's audio arrives on its own stream (see [Discord voice](#discord-voice)).
+- **Discord Stage channels**, and **two calls on one Discord server at once**. See [Discord voice](#discord-voice).
 - **A deployment on just-bash**, or with no public URL.
 - **Not proven live:** a full one-hour meeting through the real Meet and Teams web clients, UDP media under a
   restricted Vercel network policy, join success against Teams bot detection, and the speaker reader's
@@ -322,6 +462,14 @@ The recap uses the deployment's `utility` model route.
   cut rule, the handover and the page reader are proved against a fake page (`scripts/meeting-bot-test.ts`).
   The e2e leg `S-MEETING-RECAP` (NON_LAUNCH) checks the card on a live deployment, and it SKIPS while the
   deployment keeps meetings off.
+- **Not proven live on Discord:** a receive with forwarded credentials against Discord's servers, a human
+  speaker, and the relay's join on a real server. The Discord path is proved on the meeting plane with a fake box
+  backend and a fake relay report (`packages/core/scripts/meetings-discord-test.ts`); the bot's frame filter, member
+  count, re-subscribe, cuts and timeline with fake streams (`scripts/meeting-bot-discord-test.ts`); and the relay's
+  join, leave, join timeout and credential pairing offline (`scripts/discord-relay-voice-test.ts`). The SSRC to
+  member routing inside `@discordjs/voice` has no test here. The e2e leg
+  `S-MEETING-DISCORD-VOICE` (NON_LAUNCH) asks in the e2e guild and checks the card; it SKIPS while meetings are
+  off.
 - **Known limits of the provenance mark:** a recap marks the other turns in its channel for seven days
   only. After that, a wake whose bootstrap read reaches back to the recap is not marked by the turn leg
   (a `read_channel` of a page with the recap still is). A recap whose post returned no message id, or whose
