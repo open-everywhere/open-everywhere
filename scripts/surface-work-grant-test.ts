@@ -275,4 +275,109 @@ ok(allowedOnWorkerSeat("read_work_thread") === true, "the WORK thread read REACH
   ok(LEAN_SEAT_TOOLS.has("read_work_channel") === false, "🔴 §6: the seat STILL cannot make the work read — the grant arms the worker, not the seat");
 }
 
+{
+  const { createRequire } = await import("node:module");
+  const { dirname, join } = await import("node:path");
+  const { pathToFileURL } = await import("node:url");
+  const { bindFrom } = await import("@open-everywhere/core/agent/identity/binding.js");
+  const { adoptDelegatedAuthority } = await import("@open-everywhere/core/agent/identity/delegated-binding.js");
+  const { registerConfig } = await import("@open-everywhere/core/agent/access/config.js");
+  const readWorkThread = (await import("@open-everywhere/core/agent/tools/read_work_thread.js")).default;
+  const readWorkChannel = (await import("@open-everywhere/core/agent/tools/read_work_channel.js")).default;
+
+  const require = createRequire(import.meta.url);
+  const eveRoot = dirname(require.resolve("eve/package.json"));
+  const { ContextContainer, contextStorage } = (await import(pathToFileURL(join(eveRoot, "dist/src/context/container.js")).href)) as {
+    ContextContainer: new () => unknown;
+    contextStorage: { run<T>(store: unknown, fn: () => T): T };
+  };
+
+  const mixed = [
+    defineDomain({
+      name: "mixed-worker",
+      reach: [SLACK_CHANNEL, DISCORD_CHANNEL],
+      credentials: [{ connector: "slack", credential: WORK_ROLE, use: CHAT_ROLE }],
+    }),
+  ];
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => mixed,
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  } as never);
+  const bothSources = "slack,discord";
+
+  function workerOf(parent: BindableContext, platform: string): BindableContext {
+    return {
+      channel: { kind: "subagent", continuationToken: "subagent:wrun_parent:0" },
+      session: {
+        id: `sess-worker-${platform}`,
+        parent: { sessionId: "sess-seat", callId: `call-${platform}` },
+        auth: {
+          current: {
+            ...parent.session?.auth?.current,
+            attributes: { ...(parent.session?.auth?.current?.attributes as Record<string, string>), oe_platform: platform },
+          },
+        },
+      },
+    } as unknown as BindableContext;
+  }
+  function asWorker<T>(parent: BindableContext, fn: () => T): T {
+    return contextStorage.run(new ContextContainer(), () => {
+      assert.ok(
+        adoptDelegatedAuthority({ binding: bindFrom(parent), requester: { kind: "requester", principalId: "U_WG" }, nonMemberWake: false }, "turn_0"),
+        "fixture must install the child's dispatch authority",
+      );
+      return fn();
+    });
+  }
+  type Resolver = (event: unknown, ctx: unknown) => unknown;
+  const resolverOf = (tool: unknown): Resolver => (tool as { events: Record<string, Resolver> }).events["session.started"];
+
+  const discordWorker = workerOf(discordCtx(bothSources), "discord");
+  const slackWorker = workerOf(slackCtx(bothSources), "slack");
+
+  asWorker(discordCtx(bothSources), () => {
+    ok(surfaceWorkReadPlatforms(discordWorker, mixed).join(",") === "slack", "§7/CONTROL: the Discord worker's window resolves its domain, and Slack is the granted source");
+    ok(
+      surfaceWorkReadMount(discordWorker, () => mixed) === false,
+      "🔴 §7: a Discord worker on a window where only Slack holds the grant does NOT mount the work reads (explicit false)",
+    );
+    ok(resolverOf(readWorkThread)({}, discordWorker) === null, "🔴 §7: …and read_work_thread's own resolver mounts nothing for it");
+    ok(resolverOf(readWorkChannel)({}, discordWorker) === null, "🔴 §7: …and read_work_channel's own resolver mounts nothing for it");
+    assert.throws(
+      () => assertSurfaceWorkGrant(discordWorker, mixed, "discord"),
+      (err: unknown) => err instanceof SurfaceWorkGrantError && err.platform === "discord",
+      "§7: the per-turn check refuses the Discord worker's own platform",
+    );
+    passed++;
+  });
+
+  asWorker(slackCtx(bothSources), () => {
+    ok(surfaceWorkReadMount(slackWorker, () => mixed) === true, "§7: a Slack worker on the SAME window still mounts the work reads");
+    ok(resolverOf(readWorkThread)({}, slackWorker) !== null, "§7: …and read_work_thread's own resolver mounts it");
+    ok(resolverOf(readWorkChannel)({}, slackWorker) !== null, "§7: …and read_work_channel's own resolver mounts it");
+    assertSurfaceWorkGrant(slackWorker, mixed, "slack");
+    passed++;
+  });
+
+  asWorker(discordCtx(bothSources), () => {
+    ok(
+      surfaceWorkReadMount(workerOf(slackCtx(bothSources), "slack"), () => mixed) === false,
+      "🔴 §7: a Discord-dispatched worker whose inherited stamp says Slack does NOT mount (explicit false)",
+    );
+  });
+  asWorker(slackCtx(bothSources), () => {
+    ok(
+      surfaceWorkReadMount(workerOf(discordCtx(bothSources), "discord"), () => mixed) === true,
+      "🔴 §7: a Slack-dispatched worker whose inherited stamp says Discord still mounts",
+    );
+  });
+
+  ok(surfaceWorkReadMount(discordCtx(bothSources), () => mixed) === true, "§7: a non-child context on the same window keeps the any-granted-source mount");
+}
+
 console.log(`✓ surface-work-grant: ${passed} assertions passed`);

@@ -162,7 +162,9 @@ Three rules, and they differ from the plumbing credentials above:
   the agent was woken on) mounts on the grant **or** on the provider being one of the window's own
   chat sources. A third class is the **intersection**: `read_work_channel` and `read_work_thread`
   mount on the grant **and** on the provider being one of the window's own chat sources, so a grant
-  on a surface the domain receives no wakes from mounts nothing. `lint:work-mount` fails a work tool
+  on a surface the domain receives no wakes from mounts nothing. A delegated worker asks about its
+  own origin platform only: on a window where only Slack holds the grant, a Discord-woken worker
+  mounts neither verb, because the call would be refused. `lint:work-mount` fails a work tool
   that fits none of the three, and fails a new work tool that is not classified at all.
 - **Work tools are the worker's.** A conversational seat delegates; the delegated worker mounts the
   work tools. The seat's own vocabulary stays the uniform chat API.

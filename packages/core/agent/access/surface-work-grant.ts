@@ -1,6 +1,6 @@
 import { containerWorkRoleFor, hasWorkGrant, hasGithubWorkGrant, GITHUB_CONNECTOR, WORK_ROLES } from "./work-grant.js";
 import { resolveAccessFor } from "./request.js";
-import { resolveWindowSources, type BindableContext } from "../identity/binding.js";
+import { isSubagentChildContext, resolveWindowSources, turnOriginPlatform, type BindableContext } from "../identity/binding.js";
 import { resolveDomainForChannel, type Domain } from "../memory/domain.js";
 import { resolvePartition } from "../memory/partition.js";
 
@@ -53,7 +53,10 @@ export function surfaceWorkReadPlatforms(ctx: BindableContext, domains: readonly
 
 export function surfaceWorkReadMount(ctx: BindableContext, domains: () => readonly Domain[]): boolean {
   try {
-    return surfaceWorkReadPlatforms(ctx, domains()).length > 0;
+    const platforms = surfaceWorkReadPlatforms(ctx, domains());
+    if (!isSubagentChildContext(ctx)) return platforms.length > 0;
+    const origin = turnOriginPlatform(ctx);
+    return origin !== undefined && platforms.includes(origin);
   } catch {
     return false;
   }
