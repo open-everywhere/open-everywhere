@@ -416,6 +416,7 @@ export interface OeStatusFacts {
   readonly evePin?: string;
   readonly contextWindowTokens?: number;
   readonly compactionThresholdTokens?: number;
+  readonly dataPolicy?: string;
 }
 
 export function decodeSlackEphemeralText(body: string): string {
@@ -433,6 +434,7 @@ export function parseOeStatusFacts(body: string): OeStatusFacts {
   const sha = /^•\s*build:\s*`([^`]*)`/mu.exec(body)?.[1];
   const evePin = /^•\s*eve:\s*`([^`]*)`/mu.exec(body)?.[1];
   const window = /^•\s*context window:\s*`([\d,]+)`\s*tokens\s*—\s*summarised at\s*`([\d,]+)`/mu.exec(body);
+  const dataPolicy = /^•\s*data policy:\s*(.+?)\s*$/mu.exec(body)?.[1];
   const num = (raw: string | undefined): number | undefined => {
     if (raw === undefined) return undefined;
     const n = Number(raw.replaceAll(",", ""));
@@ -443,6 +445,7 @@ export function parseOeStatusFacts(body: string): OeStatusFacts {
     ...(evePin !== undefined ? { evePin } : {}),
     ...(num(window?.[1]) !== undefined ? { contextWindowTokens: num(window?.[1]) } : {}),
     ...(num(window?.[2]) !== undefined ? { compactionThresholdTokens: num(window?.[2]) } : {}),
+    ...(dataPolicy !== undefined ? { dataPolicy } : {}),
   };
 }
 
@@ -2856,6 +2859,36 @@ export const SCENARIOS: readonly Scenario[] = [
       } else {
         ctx.log("audit read not wired (set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN) — S-VOICE-CLIP leans on the reply alone");
       }
+    },
+  },
+  {
+    id: "S-DATA-POLICY",
+    title: "The data policy on a live turn (OPE-2535): `/oe status` names the target's `models.dataPolicy`, and a DM turn is answered under it",
+    requires: ["slack", "synthetic", "syntheticDm"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 690_000,
+    judged: false,
+    run: async (ctx) => {
+      const { teamId } = await ctx.slack!.identity();
+      const res = await ctx.synthetic!.slash("status", { teamId });
+      ctx.gate(res.status === 200, `/oe status answers 200 (got ${res.status})`);
+      const facts = parseOeStatusFacts(decodeSlackEphemeralText(res.body));
+      ctx.gate(facts.dataPolicy !== undefined, "status: a `data policy` line is present");
+      if (facts.dataPolicy === "none") {
+        return ctx.fixtureMissing("S-DATA-POLICY needs a target that sets `models.dataPolicy` (for example `{ zeroRetention: true }`); this one reports `data policy: none`.");
+      }
+      ctx.log(`S-DATA-POLICY: the target demands ${facts.dataPolicy}`);
+      const dm = ctx.dm!;
+      await fenceDmSeat(ctx, "S-DATA-POLICY");
+      const sinceIso = await presenceSince(ctx, "sinceIso", 60_000);
+      const { ts } = await dm.post(fixtureLine("quick one — what's 6*7? reply with just the number"));
+      const reply = await awaitOwnWakeReply(ctx, dm, ts, { what: "S-DATA-POLICY", timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+      ctx.gate(
+        reply.text.includes("42"),
+        `🔴 the turn is answered under the data policy (${facts.dataPolicy}): a provider that meets the rows served the model — reply: ${JSON.stringify(reply.text.slice(0, 160))}`,
+      );
+      await assertDmDoorAdmitted(ctx, sinceIso, "S-DATA-POLICY");
     },
   },
   {

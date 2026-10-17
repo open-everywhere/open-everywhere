@@ -178,6 +178,12 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     why: "S-VOICE-CLIP (OPE-2524) is the only live leg that sends a real voice clip. It uploads a spoken clip with no typed text into the real DM and gates that the reply carries the word the clip spoke, and that a `voice.transcribed` row with no transcript landed. The core file decides and bills, the Slack file fetches and rewrites the message, and the two adapters files build the transcriber from the stack's transcription role, so a change to any of them changes whether the agent hears the clip.",
   },
   {
+    area: "data-policy",
+    globs: ["packages/adapters/agent/model/gateway.ts", "packages/core/agent/model/data-policy.ts"],
+    scenarios: ["S-DATA-POLICY"],
+    why: "S-DATA-POLICY (OPE-2535) is the only leg that runs a turn under `models.dataPolicy`. It reads the policy off `/oe status` and gates that a DM turn is answered under it. `gateway.ts` puts the rows on every model call and names a refusal, and `data-policy.ts` defines and validates them, so a change to either decides whether a turn under a policy is served.",
+  },
+  {
     area: "doing-for-you",
     globs: [
       "packages/core/agent/home/doing-home.ts",

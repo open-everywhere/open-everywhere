@@ -1,4 +1,4 @@
-import { gateway, generateText } from "ai";
+import { generateText } from "ai";
 import {
   type ModelRoute,
   modelRouteFor,
@@ -13,7 +13,7 @@ import {
   registerFailureFacetJudge,
   stampModelCall,
 } from "@open-everywhere/core/agent/adapter-api.js";
-import { applyGatewayOptions, type GatewayRoutedDefaults } from "./gateway.js";
+import { applyGatewayOptions, gatewayLanguageModel, type GatewayRoutedDefaults } from "./gateway.js";
 
 export function utilityRouteForScope(scope: string): ModelRoute {
   try {
@@ -49,7 +49,7 @@ function gatewayDreamCompletion(defaults: GatewayRoutedDefaults): DreamCompletio
   return async (scope, prompt) => {
     const s = resolvedDreamCallSettings(scope, defaults);
     const { text } = await generateText({
-      model: gateway(s.id),
+      model: gatewayLanguageModel(s.id),
       prompt,
       ...(s.reasoning !== undefined ? { reasoning: s.reasoning } : {}),
       ...(s.providerOptions !== undefined

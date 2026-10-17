@@ -83,6 +83,7 @@
     "lint:contributions": "tsx scripts/contributions-lint.ts",
     "lint:roster": "tsx packages/core/scripts/oe-cli.ts build --check",
     "lint:model-ids": "tsx scripts/model-ids-lint.ts",
+    "lint:model-adapter": "tsx scripts/model-adapter-lint.ts",
     "lint:brand-literals": "tsx scripts/brand-literal-lint.ts",
     "lint:friendly-ids": "tsx scripts/friendly-ids-lint.ts",
     "test:friendly-ids-lint": "NODE_NO_WARNINGS=1 tsx scripts/friendly-ids-lint-test.ts",

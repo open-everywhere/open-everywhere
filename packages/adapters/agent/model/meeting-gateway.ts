@@ -1,4 +1,4 @@
-import { experimental_transcribe as transcribe, generateText, gateway } from "ai";
+import { experimental_transcribe as transcribe, generateText } from "ai";
 import {
   registerMeetingCompletion,
   registerTranscriptionRoute,
@@ -8,7 +8,7 @@ import {
   type TranscriptionRoute,
   type VoiceTranscriber,
 } from "@open-everywhere/core/agent/adapter-api.js";
-import { gatewayTranscriptionModel, type GatewayRoutedDefaults } from "./gateway.js";
+import { gatewayLanguageModel, gatewayTranscriptionModel, type GatewayRoutedDefaults } from "./gateway.js";
 import { resolvedDreamCallSettings } from "./dream-judge.js";
 import { roleDisclosure, transcribeWithFallback, type RoleTranscript, type TranscriptionDeps, type TranscriptionRoleSpec } from "./transcription-routes.js";
 
@@ -63,7 +63,7 @@ function gatewayMeetingCompletion(defaults: GatewayRoutedDefaults): MeetingCompl
   return async (scope, prompt) => {
     const s = resolvedDreamCallSettings(scope, defaults);
     const { text } = await generateText({
-      model: gateway(s.id),
+      model: gatewayLanguageModel(s.id),
       prompt,
       ...(s.reasoning !== undefined ? { reasoning: s.reasoning } : {}),
       ...(s.providerOptions !== undefined ? { providerOptions: s.providerOptions as Parameters<typeof generateText>[0]["providerOptions"] } : {}),

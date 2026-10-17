@@ -1,5 +1,5 @@
 import { experimental_transcribe as transcribe } from "ai";
-import { getOperatorSecret } from "@open-everywhere/core/agent/adapter-api.js";
+import { type ModelDataPolicy, dataPolicyActive, dataPolicyRows, getOperatorSecret, getSettings } from "@open-everywhere/core/agent/adapter-api.js";
 import { GATEWAY_TARGET_HOST, gatewayTranscriptionModel, sharedHostPlaneFetch } from "./gateway.js";
 
 export type TranscriptionVia = "gateway" | "deepinfra" | "self-hosted";
@@ -43,6 +43,7 @@ export interface TranscriptionDeps {
   readonly secret?: (name: string) => Promise<string>;
   readonly attemptTimeoutMs?: number;
   readonly warn?: (message: string) => void;
+  readonly dataPolicy?: () => ModelDataPolicy;
 }
 
 export const DEEPINFRA_SECRET = "DEEPINFRA_API_KEY";
@@ -205,7 +206,14 @@ export function routeTransport(r: TranscriptionRouteSpec, deps: TranscriptionDep
   const f = deps.fetch ?? (deps.hostPlane ?? sharedHostPlaneFetch)(roleHostPlaneHosts({ primary: r })) ?? lateFetch;
   if (r.via === "deepinfra") {
     const call = deepinfraCall(f, deps.secret ?? storeOnlySecret);
-    return (req) => call(r, req);
+    const policy = deps.dataPolicy ?? (() => getSettings().models.dataPolicy);
+    return async (req) => {
+      const p = policy();
+      if (dataPolicyActive(p)) {
+        throw new Error(`models.dataPolicy (${dataPolicyRows(p).join(", ")}): the deepinfra route cannot carry these rows, so it refuses`);
+      }
+      return await call(r, req);
+    };
   }
   const call = selfHostedCall(f);
   return (req) => call(r, req);

@@ -36,6 +36,8 @@ import { parseSuggestTokens, runSuggest, suggestHelpLine, type SuggestCommand } 
 import { coverHelpLine, parseCoverTokens, runCover, type CoverCommand } from "./cover.js";
 import { agentCommandName, agentDisplayName } from "../identity/bot-name.js";
 import { getAppInfo, hasRealAppVersion, registerAppInfo as storeAppInfo, type AppInfo } from "./app-info.js";
+import { dataPolicyWords, type ModelDataPolicy } from "../model/data-policy.js";
+import { getSettings } from "../settings/settings.js";
 import { assertPostgresWiredAtBoot } from "../operational/postgres-wiring.js";
 
 export function oeCommandName(): string {
@@ -130,7 +132,12 @@ function fmtTokenCount(n: number): string {
   return String(Math.trunc(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
-export function renderStatus(info: AppInfo, memoryProviderId: string, telemetryStatus = "unknown"): string {
+export function renderStatus(
+  info: AppInfo,
+  memoryProviderId: string,
+  telemetryStatus = "unknown",
+  dataPolicy: ModelDataPolicy = getSettings().models.dataPolicy,
+): string {
   const { contextWindowTokens: windowTokens, compactionThresholdTokens: thresholdTokens } = info;
   return [
     hasRealAppVersion(info) ? `*${agentDisplayName()}* v${info.version} is running.` : `*${agentDisplayName()}* is running.`,
@@ -145,6 +152,7 @@ export function renderStatus(info: AppInfo, memoryProviderId: string, telemetryS
             `\`${fmtTokenCount(thresholdTokens)}\` (${Math.round((thresholdTokens / windowTokens) * 100)}%)`,
         ]
       : []),
+    `• data policy: ${dataPolicyWords(dataPolicy)}`,
     `• memory: \`${memoryProviderId}\``,
     `• telemetry: \`${telemetryStatus}\``,
   ].join("\n");

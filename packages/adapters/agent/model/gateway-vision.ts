@@ -1,4 +1,5 @@
-import { gateway, generateText } from "ai";
+import { generateText } from "ai";
+import { gatewayLanguageModel } from "./gateway.js";
 import {
   type ImageDescribeRequest,
   type ImageDescribeResult,
@@ -93,7 +94,7 @@ export function gatewayImageDescriber(defaults: GatewayVisionDefaults): ImageDes
       let res: { text: string } & VisionCallTelemetry;
       try {
         res = await generateText({
-          model: gateway(defaults.id),
+          model: gatewayLanguageModel(defaults.id),
           messages: [
             {
               role: "user",

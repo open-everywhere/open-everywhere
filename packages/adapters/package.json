@@ -220,6 +220,7 @@
     "test:native-transcripts": "tsx scripts/native-transcripts-test.ts",
     "test:gateway-probe": "NODE_NO_WARNINGS=1 tsx scripts/gateway-probe-test.ts",
     "test:model-gateway": "tsx scripts/model-gateway-test.ts",
+    "test:model-data-policy": "tsx scripts/model-data-policy-test.ts",
     "test:transcription-routes": "tsx scripts/transcription-routes-test.ts",
     "test:host-plane-union": "tsx scripts/host-plane-union-test.ts",
     "test:dream-judge-gateway": "tsx scripts/dream-judge-gateway-test.ts",

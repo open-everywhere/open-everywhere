@@ -179,6 +179,8 @@ export { getConfig, registerConfig } from "./access/config.js";
 
 export { SETTINGS, getSettings, defineSettings, registerSettings, resetSettingsForTest, overrideSettingsForTest, settingDocs } from "./settings/settings.js";
 export type { AgentSettings, AgentSettingsOverrides, SettingSpec, SettingDoc, TaintTierMode, ApprovalJudgeMode, AdminRoleRule, OktaAppSetting, DirectoryAutoConfirm, SandboxBackendChoice, BlanketTrust } from "./settings/settings.js";
+export { dataPolicyRows, dataPolicyActive } from "./model/data-policy.js";
+export type { ModelDataPolicy, DataPolicyRegion } from "./model/data-policy.js";
 
 export { registerProvider, registerPostgres } from "./memory/provider.js";
 export { resolveMemoryProviderId, MEMORY_PROVIDER_FLOOR } from "./memory/provider.js";

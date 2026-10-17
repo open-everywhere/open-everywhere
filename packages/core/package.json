@@ -2482,6 +2482,10 @@
       "types": "./dist/agent/model/call-capture.d.ts",
       "default": "./dist/agent/model/call-capture.js"
     },
+    "./agent/model/data-policy.js": {
+      "types": "./dist/agent/model/data-policy.d.ts",
+      "default": "./dist/agent/model/data-policy.js"
+    },
     "./agent/model/default-model.js": {
       "types": "./dist/agent/model/default-model.d.ts",
       "default": "./dist/agent/model/default-model.js"

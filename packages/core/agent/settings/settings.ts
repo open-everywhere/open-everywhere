@@ -1,6 +1,7 @@
 import { processRegistrySlot } from "../lib/process-registry.js";
 import { e2eDriversProblem, driverAllowlistProblem, type E2eDriverIdentity } from "../testing/driver-allowlist.js";
 import { sandboxRegionProblem } from "../sandbox/vercel-create.js";
+import { dataPolicyRows, validateDataPolicy, type ModelDataPolicy } from "../model/data-policy.js";
 
 export type TaintTierMode = "enforced" | "dryrun";
 
@@ -104,6 +105,7 @@ export interface AgentSettings {
     readonly stack: string;
     readonly primary: string;
     readonly force: string;
+    readonly dataPolicy: ModelDataPolicy;
   };
   readonly discord: {
     readonly autoThread: boolean;
@@ -598,6 +600,14 @@ export const SETTINGS = {
         "A HARD PIN: one model id for EVERY resolved route (was `OE_FORCE_MODEL`). Set, it wins over the stack, over `models.primary`, over a domain's concrete route pin, over the runtime domain pick and over the model-policy envelope. Only the model id moves: the route's reasoning and provider hints and the reasoning ceiling stay as they are, and a route's `tier` is dropped. Empty (shipped) pins nothing.",
       format: (v) => (v === "" ? "`` (no pin)" : v),
     } satisfies SettingSpec<string>,
+    dataPolicy: {
+      path: "models.dataPolicy",
+      shipped: {} as ModelDataPolicy,
+      validate: validateDataPolicy,
+      summary:
+        "What EVERY model call demands of its provider, on every target: `{ zeroRetention?, noTraining?, region? }` (OPE-2535). `zeroRetention: true` allows only providers with a zero-data-retention agreement, `noTraining: true` only providers that do not train on prompts, and `region` (`\"eu\"` or `\"us\"`) only providers that run the inference in that region. The model adapter puts the rows on every call it serves: the turn, compaction, the utility judges, the approval judge, the meeting recap, the image describer, gateway transcription, and a bare model id string (a declared subagent's model, eve's `evaluate()`) through the AI SDK default provider the adapter installs. A call cannot remove a row. Two exceptions: under `eve dev`, eve resolves a literal model id string through its own local gateway, and those calls carry no rows; and a default provider another module set first is kept, so under a policy every call through it refuses. FAIL CLOSED: a call that no provider can serve errors and names the rows; it never falls back. With any row set, the `deepinfra` transcription route refuses, because it cannot carry the rows. Empty (shipped) demands nothing.",
+      format: (v) => (dataPolicyRows(v).length === 0 ? "{} (no demand)" : dataPolicyRows(v).join(", ")),
+    } satisfies SettingSpec<ModelDataPolicy>,
   },
   discord: {
     autoThread: {
@@ -1343,6 +1353,7 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
       stack: resolve(SETTINGS.models.stack, o.models?.stack),
       primary: resolve(SETTINGS.models.primary, o.models?.primary),
       force: resolve(SETTINGS.models.force, o.models?.force),
+      dataPolicy: resolve(SETTINGS.models.dataPolicy, o.models?.dataPolicy),
     },
     discord: {
       autoThread: resolve(SETTINGS.discord.autoThread, o.discord?.autoThread),

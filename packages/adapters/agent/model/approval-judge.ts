@@ -1,10 +1,10 @@
-import { gateway, generateText } from "ai";
+import { generateText } from "ai";
 import {
   type ApprovalJudgeCompletion,
   type JudgePass,
   registerApprovalJudgeCompletion,
 } from "@open-everywhere/core/agent/adapter-api.js";
-import { applyGatewayOptions, type GatewayRoutedDefaults } from "./gateway.js";
+import { applyGatewayOptions, gatewayLanguageModel, type GatewayRoutedDefaults } from "./gateway.js";
 
 const SCRUTINY_MAX_OUTPUT_TOKENS = 512;
 
@@ -24,7 +24,7 @@ function gatewayApprovalJudgeCompletion(defaults: GatewayRoutedDefaults): Approv
   return async (prompt, pass) => {
     const s = approvalJudgeCallSettings(pass, defaults);
     const { text } = await generateText({
-      model: gateway(s.id),
+      model: gatewayLanguageModel(s.id),
       prompt,
       ...(s.maxOutputTokens !== undefined ? { maxOutputTokens: s.maxOutputTokens } : {}),
       ...(s.providerOptions !== undefined

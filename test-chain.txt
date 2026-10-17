@@ -22,6 +22,7 @@ lint:capability-docs
 lint:contributions
 lint:roster
 lint:model-ids
+lint:model-adapter
 test:model-ids-scope
 test:model-pricing-wiring
 test:model-stacks
