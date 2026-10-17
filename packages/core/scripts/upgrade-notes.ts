@@ -11,6 +11,7 @@ export interface ReleaseNote {
   readonly env: ReleaseEnvChange;
   readonly manualSteps: readonly string[];
   readonly removedFiles: readonly string[];
+  readonly newDefaults: readonly string[];
 }
 
 export interface ConfigMigration {
@@ -137,6 +138,7 @@ function parseRelease(value: unknown, index: number, problems: string[]): Releas
   for (const path of removedFiles) {
     if (!REL_PATH.test(path)) problems.push(`${at}.removedFiles: "${path}" is not an app-relative path like "agent/instrumentation.ts".`);
   }
+  const newDefaults = value.newDefaults === undefined ? [] : stringList(value.newDefaults, `${at}.newDefaults`, problems);
   if (bad) return undefined;
   return {
     version: version as string,
@@ -148,6 +150,7 @@ function parseRelease(value: unknown, index: number, problems: string[]): Releas
     env,
     manualSteps,
     removedFiles,
+    newDefaults,
   };
 }
 
@@ -289,6 +292,16 @@ const preamble = (newest: string): readonly string[] => [
   "not offered it. A core without the offer prints none: run `npx oe upgrade --plan --to <target>`",
   "after the upgrade to see it.",
   "",
+  "A release that turns behaviour ON without a config change lists it under \"New defaults\": a new",
+  "feature that is on by default, or a setting whose default value changes. The release author",
+  "writes each line to name the setting that turns it off, or to say that no setting does. No gate",
+  "checks that wording. The target's own `oe` prints each one as a DEFAULT line before the install:",
+  "`npx -p @open-everywhere/core@<target> oe upgrade --plan --to <target>`. The installed core has no",
+  "entry for the target, so a plain `npx oe upgrade --plan` prints no DEFAULT line for it.",
+  "`npx oe upgrade` repeats every DEFAULT line at the end. A new default applies at the next deploy,",
+  "so set each one you do not want in your config first. A core at 0.7.0 or earlier prints no",
+  "DEFAULT line.",
+  "",
   "Read the entries between your installed version and your target, oldest first.",
   "",
   "## An app below 0.1.4",
@@ -340,12 +353,13 @@ export function renderUpgradingMarkdown(notes: UpgradingNotes, released?: string
     lines.push(...section("Config migrations", migrationLines(release.configMigrations)));
     lines.push(...section("Environment", envLines(release.env)));
     lines.push(...section("Manual steps", release.manualSteps));
+    lines.push(...section("New defaults (they apply at the next deploy unless your config turns them off)", release.newDefaults));
     lines.push(...section("Removed template files (delete each one the app still has)", release.removedFiles.map((p) => `\`${p}\``)));
     if (
-      release.breaking.length + release.configMigrations.length + release.env.added.length + release.env.removed.length + release.manualSteps.length + release.removedFiles.length ===
+      release.breaking.length + release.configMigrations.length + release.env.added.length + release.env.removed.length + release.manualSteps.length + release.removedFiles.length + release.newDefaults.length ===
       0
     ) {
-      lines.push("No breaking change, no config migration, no env change and no manual step.", "");
+      lines.push("No breaking change, no config migration, no env change, no manual step and no new default.", "");
     }
   }
   return `${lines.join("\n").replace(/\n+$/u, "")}\n`;

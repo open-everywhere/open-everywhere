@@ -58,6 +58,16 @@ read each one, copy the file, and bind it as the template's `agent/access/bundle
 not offered it. A core without the offer prints none: run `npx oe upgrade --plan --to <target>`
 after the upgrade to see it.
 
+A release that turns behaviour ON without a config change lists it under "New defaults": a new
+feature that is on by default, or a setting whose default value changes. The release author
+writes each line to name the setting that turns it off, or to say that no setting does. No gate
+checks that wording. The target's own `oe` prints each one as a DEFAULT line before the install:
+`npx -p @open-everywhere/core@<target> oe upgrade --plan --to <target>`. The installed core has no
+entry for the target, so a plain `npx oe upgrade --plan` prints no DEFAULT line for it.
+`npx oe upgrade` repeats every DEFAULT line at the end. A new default applies at the next deploy,
+so set each one you do not want in your config first. A core at 0.7.0 or earlier prints no
+DEFAULT line.
+
 Read the entries between your installed version and your target, oldest first.
 
 ## An app below 0.1.4
@@ -119,6 +129,17 @@ eve peer: `0.71.0`
 - Decide whether voice clips may leave the deployment. A heard clip goes to the transcription role's routes in `agent/model/stacks.ts`. If your data policy refuses that, set `voiceClips.enabled: false` in `agent/settings/settings.ts` before you deploy.
 - Optional — out-of-office cover (OPE-2513). Nothing to configure. A member turns it on in their own DM with `/oe cover on [until YYYY-MM-DD]`. While cover is on, the agent answers questions that name the person in its channels, with a `Cover for <name>, who is away:` label. `/oe cover off`, or the end date, sends one recap to the person's DM.
 - Optional — create a GitHub App in one click (OPE-2529). The ops MCP server's new tool `surface_app_create` (`{ "surface": "github", "baseUrl": "https://<your-deploy-url>" }`) generates the App manifest, and writes the App's id, private key and webhook secret into `.env.local`. It refuses to overwrite names that `.env.local` already holds. An existing App needs no change. See `docs/deploy/surfaces/github.md`.
+
+**New defaults (they apply at the next deploy unless your config turns them off)**
+
+- An unwatched recurring routine posts a Keep going card after 100 runs and pauses 24 runs later (OPE-2511). To turn it off, set `routines.attentionWarnRuns: 0` in `agent/settings/settings.ts`.
+- A voice clip sent to the agent on Slack is transcribed and answered (OPE-2524). To turn it off, set `voiceClips.enabled: false` in `agent/settings/settings.ts`.
+- The chief-of-staff watch offers a routine for work that a person repeats on the same weekday (OPE-2512). To turn it off, set `routines.discoveryMinWeeks: 0` in `agent/settings/settings.ts`. A person whose watch dial is `none` gets no offer.
+- Every person gets the "What I do for you" list on the Slack Home tab and the `doing_for_me` tool in a DM (OPE-2522). No setting turns off the Home tab list. To remove the tool, exclude `tool/doing_for_me` under `core.exclude` in `roster.config.ts`, with a reason, before `npx oe build --accept`.
+- On Slack, a person can run a clock routine once as a test with every write blocked, through the `test_routine` tool (OPE-2515). No setting in `agent/settings/settings.ts` turns it off. To remove it, exclude `tool/test_routine` under `core.exclude` in `roster.config.ts`, with a reason, before `npx oe build --accept`. Keep `hook/routine-test-run` mounted, because it blocks the writes of a test that was already requested. The create and edit replies still offer a test after that.
+- A person's first DM conversation, and a room's first conversation, may end in one routine offer (OPE-2514). To turn it off, set `routines.firstConversationDays: 0` in `agent/settings/settings.ts`.
+- GitHub calls go through the GitHub App only, and `GITHUB_TOKEN` is no longer a fallback (OPE-2530). The new setting `github.auth` ships `"app"`. To keep using `GITHUB_TOKEN`, set `github: { auth: "token", tokenRepos: ["owner/repo", …] }` in `agent/settings/settings.ts`, and list in `tokenRepos` each repository besides `OE_ACCESS_CONFIG_REPO` that the agent works on (see the config migration).
+- A Slack DM conversation becomes an agent session, with a title and the "needs you" state (OPE-2519). Slack's Stop button appears only after you paste the manifest again (manual steps). No setting turns it off.
 
 ## 0.7.0 — 2026-10-13
 
@@ -511,4 +532,4 @@ The install wizard starts on a fresh machine and on Windows.
 
 eve peer: `0.54.3`
 
-No breaking change, no config migration, no env change and no manual step.
+No breaking change, no config migration, no env change, no manual step and no new default.

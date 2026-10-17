@@ -474,7 +474,11 @@ public cut, together with whatever runs the build.
    line, `suite=test:quickstart` (OPE-2354). Without the variable, the script prints no such line. `--keep` leaves the app on disk.
 9. A template file that this release deletes is named in `removedFiles` of the release's entry in
    `packages/core/upgrading.json`, so `oe upgrade --plan` tells an upgraded app to delete it.
-   `npm run lint:template-paths` refuses the tree otherwise (OPE-2354).
+   `npm run lint:template-paths` refuses the tree otherwise (OPE-2354). A behaviour that this
+   release turns on without a config change goes in `newDefaults` of the same entry: one line per
+   new default, naming the setting that turns it off, or saying that no setting does. The target's
+   own `oe upgrade --plan` prints each line as a `DEFAULT` line before the install (OPE-2517). No gate checks this list, so the release author
+   owns it.
 10. `npm run test:upgrade-rehearsal` green — quote the exit code in the ship ticket, before the
     ship is posted. It scaffolds an app on the previous published release, upgrades it to the packed
     tree with `npx oe upgrade --from <dir>`, then runs `npm ci`, `oe build --check`,

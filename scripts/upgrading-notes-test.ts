@@ -58,6 +58,20 @@ ok(
   "the page lists a release's removed template files",
 );
 
+ok(notesOf(record(release())).releases[0]!.newDefaults.length === 0, "an entry with no newDefaults reads as an empty list — an older published record still parses");
+ok(problemsOf(record(release({ newDefaults: "voice clips" }))).some((p) => p.includes("newDefaults")), "a newDefaults that is not an array is refused");
+ok(problemsOf(record(release({ newDefaults: [" "] }))).some((p) => p.includes("newDefaults")), "an empty new-default line is refused");
+ok(
+  renderUpgradingMarkdown(notesOf(record(release({ newDefaults: ["voice clips are heard; turn off in agent/settings.ts"] })))).includes(
+    "**New defaults (they apply at the next deploy unless your config turns them off)**\n\n- voice clips are heard; turn off in agent/settings.ts",
+  ),
+  "🔴 the page lists a release's new defaults",
+);
+ok(
+  !renderUpgradingMarkdown(notesOf(record(release({ newDefaults: ["x is on"] })))).includes("no new default."),
+  "…and a release with a new default does not claim it has none",
+);
+
 ok(problemsOf("not an object").length === 1, "a non-object record is refused");
 ok(problemsOf({ schemaVersion: 2, releases: [release()] }).some((p) => p.includes("schemaVersion")), "an unknown schemaVersion is refused");
 ok(problemsOf({ schemaVersion: 1 }).some((p) => p.includes("releases")), "a record with no releases array is refused");
@@ -134,7 +148,7 @@ ok(rendered.includes("add an override (apply by hand)"), "🔴 a migration with 
 ok(rendered.includes("pin undici (codemod `pin-undici`)"), "a migration with a codemod names it");
 ok(rendered.includes("add `OE_NEW_NAME`") && rendered.includes("remove `OE_OLD_NAME`"), "both env directions reach the page");
 ok(rendered.includes("re-paste the Slack manifest"), "a manual step reaches the page");
-ok(rendered.includes("No breaking change, no config migration, no env change and no manual step."), "a release that needs nothing says so, rather than rendering an empty section");
+ok(rendered.includes("No breaking change, no config migration, no env change, no manual step and no new default."), "a release that needs nothing says so, rather than rendering an empty section");
 ok(rendered.endsWith("\n") && !rendered.endsWith("\n\n"), "the page ends with exactly one newline");
 ok(
   rendered.includes("## An app below 0.1.4\n") && rendered.includes(`\`\`\`sh\n${bootstrapCommands("0.3.0").join("\n")}\n\`\`\`\n`),

@@ -55,13 +55,19 @@ nothing. Each entry names:
 | CONFIG | a change to this app's own config files. A codemod applies some; the rest are yours. |
 | ENV + / ENV - | an env NAME the deployment starts or stops needing. The admin sets the value. |
 | MANUAL | a step outside the files — a dashboard change, a URL to re-paste, a key to rotate. |
+| DEFAULT | behaviour the release turns on with no config change. It applies at the next deploy. The line says which setting turns it off, if one does. |
 
 The installed copy of the record cannot know about a release published after it, so `--plan`
 says plainly which crossed versions it has no entry for. The full window is printed again in
 step 3, after the install puts the target's own copy on disk. The same text is in
 `node_modules/@open-everywhere/core/UPGRADING.md`.
 
-**Stop and ask the user** when the window holds a breaking change, an env change or a manual step.
+The installed core prints no DEFAULT line for the target. To see the target's new defaults before
+the install, run the target's own `oe`:
+`npx -p @open-everywhere/core@<target> oe upgrade --plan --to <target>`.
+
+**Stop and ask the user** when the window holds a breaking change, an env change, a manual step or
+a new default.
 Those are decisions, not steps.
 
 `--plan` also prints a **template drift** report. It compares every file the scaffold copied into
@@ -185,6 +191,7 @@ Commit on a branch, never on the default branch. The body carries:
 - what changed in `roster.lock.json`, in your own words;
 - **the env names the deployment needs before this merges**, names only;
 - the manual steps, and who does each one.
+- each new default, and the setting the user chose for it, or that no setting turns it off.
 - the template files you synced or deleted, and each SYNC or DELETE line you left as it is, with the reason.
 
 Then stop. The admin reviews the lock diff and merges. The merge deploys.

@@ -282,6 +282,7 @@ function printNote(io: UpgradeIo, note: ReleaseNote): void {
   for (const n of note.env.added) io.out(`     ENV +     ${n}`);
   for (const n of note.env.removed) io.out(`     ENV -     ${n}`);
   for (const s of note.manualSteps) io.out(`     MANUAL    ${s}`);
+  for (const d of note.newDefaults) io.out(`     DEFAULT   ${d}`);
 }
 
 function printWindow(io: UpgradeIo, window: readonly ReleaseNote[], installed: string, target: string): void {
@@ -570,6 +571,7 @@ export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, 
     for (const name of release.env.added) io.out(`  ENV: add ${name} to the deployment's environment before the next deploy (${release.version}).`);
     for (const name of release.env.removed) io.out(`  ENV: ${name} is no longer read; remove it after the next deploy (${release.version}).`);
     for (const manual of release.manualSteps) io.out(`  MANUAL (${release.version}): ${manual}`);
+    for (const fresh of release.newDefaults) io.out(`  DEFAULT (${release.version}): ${fresh} — it applies at the next deploy unless your config turns it off (the line says whether a setting can).`);
   }
   if (drift !== undefined && drift.delete > 0) {
     io.out(`  DELETE: ${drift.delete} file(s) that a release removed from the template are still in the app — see the drift report above. oe upgrade deleted none of them.`);

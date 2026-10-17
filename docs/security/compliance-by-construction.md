@@ -209,6 +209,74 @@ that runs them is yours.
 | **Retention of your own rows** | Your operational store | Audit, usage and spend rows live in your database. The audit record has **no delete path** in this tree — see [Audit & provenance](./audit-and-provenance.md). 🔴 The default store deletes no usage or spend row either: retention is your own job on the database — see [Spend & cost controls](./spend-and-cost.md#per-event-usage-capture). |
 | **Who may act** | Your `agent/access/` config | Bundles, grants and credential bindings are yours to write, and a per-binding expansion is a guardrail change that the fence holds. |
 
+## What the chat platform already covers on Teams
+
+On Microsoft Teams, the agent's replies and approval cards are ordinary Teams chat and channel
+messages. Microsoft holds their text, and it stores a compliance copy of each message in the
+mailbox of every person in the chat, or in the team's mailbox for a channel (private channels
+differ, see the retention link). So the tenant's Microsoft Purview controls are built to reach the
+agent's messages through the same store as a person's:
+
+- **Retention and deletion.** A Teams retention policy keeps or deletes chat and channel messages,
+  card content included ([Learn about retention for Teams](https://learn.microsoft.com/en-us/purview/retention-policies-teams)).
+- **Legal hold and eDiscovery.** eDiscovery searches those mailboxes, and a hold suspends the
+  deletion of their messages ([eDiscovery in Teams](https://learn.microsoft.com/en-us/microsoftteams/ediscovery-investigation)).
+- **Data loss prevention.** A DLP policy for the *Teams chat and channel messages* location checks
+  messages ([DLP and Teams](https://learn.microsoft.com/en-us/purview/dlp-microsoft-teams)).
+- **Communication compliance.** A policy can detect and review Teams messages
+  ([Communication compliance channels](https://learn.microsoft.com/en-us/purview/communication-compliance-channels)).
+
+🔴 **Open Everywhere configures none of these.** Each one applies only when your tenant has the
+licence and an admin turns on the policy. DLP for Teams chat needs an E5 licence, for example.
+The agent's sender is a bot, not a user account, and DLP and communication compliance select
+messages by their sender. This repository proves none of the four controls for the bot's messages,
+so test each one in your tenant before you rely on it. Purview's own limits apply too: a Teams
+retention policy keeps no voice memo from the mobile client. Purview sees what the agent posts in
+Teams, not what it does in the sandbox or on another surface.
+
+Open Everywhere keeps its own record alongside Purview: the [hash-chained audit
+record](#the-audit-record-is-hash-chained). That record stores ids, counts, reasons and digests in
+place of message text ([Audit & provenance](./audit-and-provenance.md)). 🔴 Some fields keep
+outside text:
+
+- The `reply.provenance` row's `detail.sources` keeps record titles, each up to 120 characters and
+  the whole line up to 160. A person outside the deployment can write a title.
+- The `error` field of a row that records a caught error keeps the upstream error text. Only a
+  writer that uses `auditErrorDetail` scrubs credential shapes from it and caps it at 300
+  characters. Other writers do not scrub the text, and some do not cap it. For example, the
+  `approval.failed`, `memory.delete` and `egress.policy` rows keep the raw message. An
+  `approval.approved` row's `outcome` can repeat that message. So an upstream error that echoes a
+  credential can put it in the log.
+- The `frames` field of a `delegation.worker_turn_failed` row can carry up to 120 characters of
+  chosen text in each of eight frames.
+
+A review of the code at this release found these fields. No gate keeps the list complete. The audit
+record has no delete path, so treat all of this text as kept for the life of the log.
+
+The two records split the job. Purview holds the conversation text under your tenant's policies.
+The audit record proves who acted, where and under which grant.
+
+## New defaults reach a deployment only by upgrade
+
+Slack lets a workspace admin choose whether new AI features turn on automatically
+([Manage access to AI features in Slack](https://slack.com/help/articles/28244420881555-Manage-access-to-AI-features-in-Slack)).
+Open Everywhere needs no such switch. Its behaviour lives in Git (see [Behaviour lives in Git, never
+in an environment variable](#behaviour-lives-in-git-never-in-an-environment-variable)), and a
+release changes it only when someone upgrades the app and deploys it. A new default applies at the
+next deploy. The target's own `oe` prints each new default of every release it crosses as a
+`DEFAULT` line, before anything is installed:
+`npx -p @open-everywhere/core@<target> oe upgrade --plan --to <target>`.
+
+- Enforced by: `packages/core/scripts/upgrade-notes.ts` (the `newDefaults` list of each release
+  entry in `packages/core/upgrading.json`) and `packages/core/scripts/oe-upgrade.ts`.
+- Proved by: `npm run test:upgrading-notes`, `npm run test:oe-upgrade`.
+- 🔴 **`npx oe upgrade --plan` alone does not show the target's new defaults.** It runs the
+  installed core, which has no entry for the target. Run the target's own `oe`, as above.
+- 🔴 **The list is as complete as the release author makes it.** No gate proves that a release
+  named every new default, or that a line names the setting that turns it off. The roster lock diff catches a new capability, not a changed default.
+  Read the release notes and the lock diff as well.
+- Read: [Upgrading](../deploy/consuming-as-packages.md#upgrading).
+
 ## Using this page in an assessment
 
 Each row above answers a question an assessor asks, and answers it with a file rather than an

@@ -141,6 +141,10 @@ const manifestOf = (root: string): { dependencies: Record<string, string>; devDe
   const full = harness();
   await runUpgradeCommand(["--plan"], full.io, fixtureApp({ notes: recordOf(note({ manualSteps: ["the installed step"] })) }));
   ok(full.text().includes("MANUAL    the installed step"), "own record: an installed record that holds the target is read as before");
+  const defaults = harness();
+  await runUpgradeCommand(["--plan"], defaults.io, fixtureApp({ notes: recordOf(note({ newDefaults: ["voice clips are heard"] })) }));
+  ok(defaults.text().includes("DEFAULT   voice clips are heard"), `🔴 --plan prints a release's new defaults before the install\n${defaults.text()}`);
+  ok(defaults.calls.length === 0, "…and --plan still spawns nothing");
   ok(!full.text().includes("read from this oe's own"), "own record: and the own-record line does not print then");
 }
 
@@ -196,7 +200,9 @@ const manifestOf = (root: string): { dependencies: Record<string, string>; devDe
 }
 
 {
-  const root = fixtureApp({ notes: recordOf(note({ env: { added: ["OE_NEW_NAME"], removed: ["OE_OLD_NAME"] }, manualSteps: ["re-paste the Slack manifest"] })) });
+  const root = fixtureApp({
+    notes: recordOf(note({ env: { added: ["OE_NEW_NAME"], removed: ["OE_OLD_NAME"] }, manualSteps: ["re-paste the Slack manifest"], newDefaults: ["voice clips are heard"] })),
+  });
   const h = harness();
   const code = await runUpgradeCommand([], h.io, root);
   ok(code === 0, "a clean upgrade exits 0");
@@ -230,6 +236,7 @@ const manifestOf = (root: string): { dependencies: Record<string, string>; devDe
   ok(h.text().includes("ENV: add OE_NEW_NAME"), "🔴 an env name the release adds is repeated at the end, where an operator will act on it");
   ok(h.text().includes("ENV: OE_OLD_NAME is no longer read"), "an env name the release removes is repeated too");
   ok(h.text().includes("MANUAL (0.1.4): re-paste the Slack manifest"), "a manual step is repeated at the end");
+  ok(h.text().includes("DEFAULT (0.1.4): voice clips are heard — it applies at the next deploy"), "🔴 a new default is repeated at the end (OPE-2517)");
 }
 
 {

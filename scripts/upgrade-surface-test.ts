@@ -90,6 +90,7 @@ const note = (version: string, ...breaking: string[]): ReleaseNote => ({
   env: { added: [], removed: [] },
   manualSteps: [],
   removedFiles: [],
+  newDefaults: [],
 });
 const withEnv = (r: ReleaseNote, added: string[], removed: string[] = []): ReleaseNote => ({ ...r, env: { added, removed } });
 const empty: Surface = { table: [], roster: [], slackScope: [], slackEvent: [], env: [], route: [], schedule: [] };

@@ -193,6 +193,23 @@ version bump that changes an existing capability's behaviour without adding or r
 contribution produces *no* lock diff — only a new or vanished capability turns the lock red.
 Read the release notes as well as the lock.
 
+**New defaults.** A release can turn behaviour on without a change to your config: a new feature
+that is on by default, or a setting whose default value changes. Your config lives in Git, so a new
+default is never switched on for you in a dashboard. It arrives with the version bump, and you see
+it before it applies. Each release entry lists its new defaults. The release author writes each
+line to name the setting that turns it off, or to say that no setting does. No gate checks that
+wording. The target's own `oe` prints each new default as a `DEFAULT` line before the install:
+`npx -p @open-everywhere/core@<target> oe upgrade --plan --to <target>`. A plain
+`npx oe upgrade --plan` runs the installed core, which has no entry for the target, so it prints no
+`DEFAULT` line for the target. `npx oe upgrade` repeats every `DEFAULT` line at the end. A new
+default applies at the next deploy, so set each one you do not want in your config first. Slack gives a workspace admin
+a switch for the same decision, *Future AI feature releases*
+([Manage access to AI features in Slack](https://slack.com/help/articles/28244420881555-Manage-access-to-AI-features-in-Slack)).
+Open Everywhere has no such switch, because the version bump is the switch: an app takes no new
+default until someone runs the upgrade and deploys it. A core at 0.7.0 or earlier prints no
+`DEFAULT` line. [`UPGRADING.md`](../../packages/core/UPGRADING.md) lists each release's new
+defaults.
+
 **The lockfile.** Before the install, `oe upgrade` drops the `package-lock.json` entries of `eve`,
 of every `@open-everywhere/*` package and of every package that peers on one of them. npm then
 resolves that set again from the new pins, and every other locked entry stays as it was. Without
