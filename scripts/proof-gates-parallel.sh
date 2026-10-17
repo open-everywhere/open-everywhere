@@ -36,4 +36,7 @@ for pid in "$P1" "$P2" "$P3"; do wait "$pid" || RED=1; done
 if [ "${OE_PROOF_QUICKSTART:-}" = "1" ]; then
   gate test:quickstart test-quickstart || RED=1
 fi
+if [ "${OE_PROOF_UPGRADE_REHEARSAL:-}" = "1" ]; then
+  gate test:upgrade-rehearsal test-upgrade-rehearsal || RED=1
+fi
 exit "$RED"

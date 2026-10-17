@@ -191,13 +191,14 @@ can leave it behind. Read the pin from core's `peerDependencies.eve`, as that se
 
 ## The order of the checks
 
-Run all six. Each answers a different question, and the preview is the only one a human reads.
+Run all seven. Each answers a different question, and the preview is the only one a human reads.
 
 ```bash
 npm run build:packages             # every library needs a fresh dist/ before it is packed
 npm run lint:publish               # the CLOSED question: does each manifest obey the rules?
 npm run test:publish-cold-install  # the CONSUMER question: does a cold install actually work?
 npm run test:quickstart            # the STRANGER question: does the scaffolded app install, patch and build?
+npm run test:upgrade-rehearsal     # the OPERATOR question: does an app on the previous release upgrade, build and boot?
 npm run publish:preview            # the OPEN question: is there anything in these bytes we would regret?
 npm publish --workspace <name>     # by hand, one package at a time, after reading the preview
 ```
@@ -280,6 +281,41 @@ npm pack --workspaces --pack-destination /tmp/oe-release     # in this repositor
 npx oe upgrade --plan --from /tmp/oe-release                  # in the app: the plan, nothing written
 npx oe upgrade --from /tmp/oe-release                         # in the app: the seven steps
 ```
+
+`npm run test:upgrade-rehearsal` (`scripts/upgrade-rehearsal-test.ts`) runs this rehearsal as a
+script, so it does not depend on a scratch app that somebody kept. It scaffolds a new app with the
+PREVIOUS published `@open-everywhere/create` (the highest published core below this tree's version,
+or `--previous <version>`). It installs that app from the registry and proves the baseline green.
+Then it packs this tree and runs `npx oe upgrade --from <dir>` in the app, with the app's own `oe`.
+After the upgrade it runs the checks a deploy runs:
+
+| Check | What a red means |
+| --- | --- |
+| Every dependency in `package.json` has a `package-lock.json` entry, and `npm ci` exits 0 | The deploy install refuses the committed lockfile |
+| `oe build --check` | `roster.lock.json` lacks a roster name that the release offers |
+| `npm run typecheck` | App code uses an export that the release removed |
+| `npm run build` (`oe build`, then `eve build`) | The deploy build fails |
+| The boot probe: every module under `agent/` loads, the agent definition is present, and no two channels declare one route | The deployed function dies at cold start |
+
+The 0.7.0 release found two misses on a test deployment that no gate had found. The lockfile lacked
+`@open-everywhere/provider-google-chat`, and `roster.lock.json` lacked `tool/look_up`. The first
+two rows are the checks that refuse these two states. Each of these two rows has a negative control
+in the script: it puts the miss into the upgraded app and shows that the check goes red. The boot
+probe has a negative control too.
+
+🔴 The rehearsal is green on 0.7.0. On the documented path, neither miss happens: `oe upgrade`
+re-pins only the packages that the app declares and adds none, and it always runs
+`oe build --accept`. The test deployment reached both states by hand steps: a dependency added with no
+install, and no `--accept`. So the rehearsal goes red when the documented path itself leaves a
+lockfile gap or an unreviewed roster name. On a hand-edited app, the same two checks catch the miss
+at deploy time: `npm ci`, then `oe build --check`.
+
+The script needs the network (the previous release, third-party packages, and the model catalogue
+that `eve build` reads), so it is off the test chain. Off Vercel, the app's `eve build` provisions
+its sandbox template on the app's `sandbox.selfHostBackend`. An app scaffolded before that setting
+was declared in the template takes the `docker` default, so the script then needs a running Docker
+daemon, and it refuses early without one.
+`--keep` leaves the app on disk.
 
 The run pins each `@open-everywhere/*` package to `file:<its tarball>`, so do not commit the app's
 `package.json` or lockfile. `eve` still comes from the registry. Leg 8 of
@@ -395,6 +431,13 @@ public cut, together with whatever runs the build.
 9. A template file that this release deletes is named in `removedFiles` of the release's entry in
    `packages/core/upgrading.json`, so `oe upgrade --plan` tells an upgraded app to delete it.
    `npm run lint:template-paths` refuses the tree otherwise (OPE-2354).
-10. `npm publish --workspace <name>` per package. Publish `@open-everywhere/core` first: every
+10. `npm run test:upgrade-rehearsal` green — quote the exit code in the ship ticket, before the
+    ship is posted. It scaffolds an app on the previous published release, upgrades it to the packed
+    tree with `npx oe upgrade --from <dir>`, then runs `npm ci`, `oe build --check`,
+    `npm run typecheck`, `npm run build` and a boot probe in the app. See
+    [Rehearse the upgrade before you publish](#rehearse-the-upgrade-before-you-publish). To put it in
+    the proof run, set `OE_PROOF_UPGRADE_REHEARSAL=1` on `scripts/proof-gates-parallel.sh`. The
+    script then prints a `suite=test:upgrade-rehearsal` line.
+11. `npm publish --workspace <name>` per package. Publish `@open-everywhere/core` first: every
     other package pins it.
-11. Install the result somewhere clean and run it, before announcing anything.
+12. Install the result somewhere clean and run it, before announcing anything.

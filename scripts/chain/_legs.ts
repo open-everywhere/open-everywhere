@@ -278,6 +278,15 @@ export const OFF_CHAIN_BY_DESIGN: ReadonlyMap<string, string> = new Map([
       "proof script runs it only when the run sets `OE_PROOF_QUICKSTART=1` (OPE-2354), and " +
       "`docs/dev/publishing.md` § Before you publish lists it.",
   ],
+  [
+    `${ROOT_PKG_LABEL} test:upgrade-rehearsal`,
+    "a PRE-PUBLISH gate (OPE-2498): it scaffolds an app with the PREVIOUS published scaffolder from the " +
+      "public registry, installs it, packs this tree and runs `npx oe upgrade --from <dir>` in the app, then " +
+      "`npm ci`, `oe build --check`, `npm run typecheck`, a full `eve build` and a boot probe. It needs the " +
+      "network and measures in minutes. Its fast halves, the upgrade machinery against stand-in packages, ARE " +
+      "on the chain as `test:oe-upgrade` and `test:oe-upgrade-packed`. The proof script runs it only when the run " +
+      "sets `OE_PROOF_UPGRADE_REHEARSAL=1`, and `docs/dev/publishing.md` § Before you publish lists it.",
+  ],
 ]);
 
 export const SUITE_FILE_WITHOUT_SCRIPT: ReadonlyMap<string, string> = new Map([
