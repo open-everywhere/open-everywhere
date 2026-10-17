@@ -252,7 +252,7 @@ try {
     const { execFileSync } = await import("node:child_process");
     const run = (mode: string): { kept: boolean; own: boolean; refused: string; sent: number; errors: string[] } =>
       JSON.parse(
-        execFileSync("npx", ["tsx", "scripts/_default-provider-install-fixture.ts", mode], { encoding: "utf8", env: { ...process.env, NODE_NO_WARNINGS: "1" } })
+        execFileSync(process.execPath, ["--import", "tsx", "scripts/_default-provider-install-fixture.ts", mode], { encoding: "utf8", env: { ...process.env, NODE_NO_WARNINGS: "1" } })
           .trim()
           .split("\n")
           .pop()!,

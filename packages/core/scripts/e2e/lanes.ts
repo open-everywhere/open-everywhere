@@ -145,6 +145,7 @@ export const LANE_DECLARATIONS: readonly LaneDeclaration[] = [
   { id: "S-ROOM-SUGGEST", parallel: "safe", resources: ["seat:e2e-unified"] },
   { id: "S-DOING", parallel: "safe", resources: ["seat:e2e-unified"] },
   { id: "S-ROUTINE-TEST", parallel: "safe", resources: ["seat:e2e-unified"] },
+  { id: "S-ROUTINE-TEST-discord", parallel: "safe", resources: ["seat:e2e-unified"] },
   { id: "S-ASK-WATCH", parallel: "safe", resources: ["seat:e2e-unified"] },
   { id: "S-EXIT-KIT", parallel: "serial", why: "exports the org, erases a person and sets the org retention setting through the control plane" },
   { id: "S-COVER", parallel: "safe", resources: ["seat:e2e-unified", "seat:dm"] },
