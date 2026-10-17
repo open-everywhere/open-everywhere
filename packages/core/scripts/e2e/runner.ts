@@ -48,6 +48,23 @@ import { replyExcerpt } from "./coalesced-ask.js";
 import { emptySkipCounts, isGapKind, renderSkipBreakdown } from "./skip-summary.js";
 import { boardGaps, isDeclaredGap, releaseBoardProblems, renderBoard, LAUNCH_SURFACES, type BoardLeg } from "./board.js";
 import {
+  boardRan,
+  DEFAULT_MAX_LANES,
+  planBoard,
+  readLastBoard,
+  redNowLine,
+  renderBoardPlan,
+  riskOf,
+  riskOrder,
+  runLanes,
+  selectedByDiff,
+  writeBoardRecord,
+  stopsBoard,
+  type LastBoard,
+} from "./board-plan.js";
+import { laneDeclarationIndex, laneDeclarationProblems, renderLaneDeclarationProblems } from "./lanes.js";
+import { execFileSync } from "node:child_process";
+import {
   RELEASE_SCOPE_NAMES,
   releasePhaseProblem,
   releaseScopeIndex,
@@ -224,7 +241,7 @@ async function main(): Promise<void> {
     report.available.size > 0 ? [...report.available].join(", ") : "none (dry mode only when no canonical release scope is armed)"
   }; judge: ${judge.name}`);
   console.log(`seat lock: /tmp/oe-e2e-locks/domain-${process.env.E2E_UNIFIED_DOMAIN?.trim() || "e2e-unified"}.lock — hold it for the whole live drive; never run a second driver against any surface of this domain`);
-  if (auditTarget) {
+  if (auditTarget && !process.argv.includes("--plan")) {
     const measured = await measureDeploymentClockSkew(auditTarget);
     console.log(renderClockSkewLine(measured.skew, measured.unavailable));
   }
@@ -338,9 +355,91 @@ async function main(): Promise<void> {
   const includeExpensive = process.argv.includes("--include-expensive") || (process.env.E2E_INCLUDE_EXPENSIVE ?? "").trim() === "1";
   if (includeExpensive) console.log("expensive legs: included (--include-expensive / E2E_INCLUDE_EXPENSIVE=1)");
 
+  const flagValue = async (name: string): Promise<string | undefined> => {
+    const i = process.argv.findIndex((a) => a === name || a.startsWith(`${name}=`));
+    if (i === -1) return undefined;
+    const value = process.argv[i]!.includes("=") ? process.argv[i]!.slice(name.length + 1) : process.argv[i + 1];
+    if (value === undefined || value.trim() === "" || value.startsWith("--")) {
+      console.error(`✗ ${name} needs a value`);
+      await exitAfterFlush(1);
+    }
+    return value;
+  };
+  const laneProblems = renderLaneDeclarationProblems(laneDeclarationProblems());
+  if (laneProblems.length > 0) {
+    console.error(`✗ the lane declarations do not match the roster (lanes.ts) — ${laneProblems.join("; ")}`);
+    await exitAfterFlush(1);
+  }
+  const planOnly = process.argv.includes("--plan");
+  const failFast = !process.argv.includes("--full-board");
+  const serial = process.argv.includes("--serial");
+  const maxLanesRaw = await flagValue("--max-lanes");
+  const maxLanes = serial ? 1 : maxLanesRaw === undefined ? DEFAULT_MAX_LANES : Number(maxLanesRaw);
+  if (!Number.isInteger(maxLanes) || maxLanes < 1) {
+    console.error(`✗ --max-lanes needs a whole number of at least 1 — got "${maxLanesRaw}"`);
+    await exitAfterFlush(1);
+  }
+  const diffBase = await flagValue("--diff-base");
+  const changedRaw = await flagValue("--changed");
+  if (diffBase !== undefined && changedRaw !== undefined) {
+    console.error("✗ pass --diff-base or --changed, not both: each one is the whole release diff");
+    await exitAfterFlush(1);
+  }
+  let changedPaths: readonly string[] | undefined;
+  if (changedRaw !== undefined) {
+    changedPaths = changedRaw.split(",").map((p) => p.trim()).filter(Boolean);
+  } else if (diffBase !== undefined) {
+    try {
+      const top = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
+      changedPaths = execFileSync("git", ["diff", "--name-only", `${diffBase}...HEAD`], { cwd: top, encoding: "utf8" })
+        .split("\n")
+        .map((p) => p.trim())
+        .filter(Boolean);
+    } catch (err) {
+      console.error(`✗ --diff-base ${diffBase}: git could not list the release diff (${err instanceof Error ? err.message.split("\n")[0] : String(err)})`);
+      await exitAfterFlush(1);
+    }
+  }
+  const diffSelection = selectedByDiff(changedPaths);
+  const lastBoardPath = await flagValue("--last-board");
+  let lastBoard: LastBoard | undefined;
+  try {
+    lastBoard = readLastBoard(lastBoardPath);
+  } catch (err) {
+    console.log(`last board: unreadable (${err instanceof Error ? err.message : String(err)}), so no leg ranks as red last board`);
+  }
+  if (changedPaths) {
+    console.log(
+      `release diff: ${changedPaths.length} changed path(s) select ${diffSelection!.size} of ${SCENARIOS.length} legs` +
+        (releaseScope ? " — a scoped release runs its whole scope, so the diff only orders the legs" : ""),
+    );
+  }
+  if (lastBoard) console.log(`last board: ${lastBoard.path} (${lastBoard.reds.size} red)`);
+  if (planOnly) {
+    const plan = planBoard({
+      scenarios: SCENARIOS,
+      ...(changedPaths ? { changedPaths } : {}),
+      selectByDiff: !releaseScope,
+      ...(lastBoard ? { lastBoard } : {}),
+      maxLanes,
+      keep: (scenario) => {
+        const row = releaseIndex?.get(scenario.id);
+        if (row?.requirement === "NON_LAUNCH") return false;
+        if (only.size > 0 && !only.has(scenario.id.toUpperCase())) return false;
+        if (suiteSel === "smoke" && scenario.smoke !== true) return false;
+        if (surfaceFilter.size > 0 && !surfaceFilter.has(scenario.surface)) return false;
+        const explicitlyNamed = row?.requirement === "REQUIRED" || only.has(scenario.id.toUpperCase());
+        return !(scenario.expensive === true && !includeExpensive && !explicitlyNamed);
+      },
+    });
+    for (const line of renderBoardPlan(plan)) console.log(line);
+    return;
+  }
+
   const board: BoardLeg[] = [];
   const recordBoard = (scenario: Scenario, row: Omit<BoardLeg, "id" | "surface" | "requirement" | "equivalents">): void => {
     const releaseRow = releaseIndex?.get(scenario.id);
+    if (row.status === "RED") console.error(redNowLine(scenario.id, row.reason));
     board.push({
       id: scenario.id,
       surface: scenario.surface,
@@ -351,6 +450,8 @@ async function main(): Promise<void> {
   const wakeEvidence: LegWakeEvidence[] = [];
   const liveRun = report.available.size > 0 || releaseScope !== undefined;
 
+  const runnable: Scenario[] = [];
+  let firstRanRed: string | undefined;
   for (const scenario of SCENARIOS) {
     const releaseRow = releaseIndex?.get(scenario.id);
     if (releaseRow?.requirement === "NON_LAUNCH") {
@@ -387,6 +488,13 @@ async function main(): Promise<void> {
       console.log(`– ${scenario.id} ${scenario.title}: skipped (surface ${scenario.surface} not in E2E_SURFACES)`);
       continue;
     }
+    if (diffSelection && !releaseScope && !diffSelection.has(scenario.id)) {
+      skipped++;
+      skipCounts["filtered-diff"]++;
+      recordBoard(scenario, { status: "FILTERED", reason: "not selected by the release diff" });
+      console.log(`– ${scenario.id} ${scenario.title}: skipped (not selected by the release diff)`);
+      continue;
+    }
     const explicitlyNamed = releaseRow?.requirement === "REQUIRED" || only.has(scenario.id.toUpperCase());
     const category = skipCategory(scenario, report.available, explicitlyNamed, includeExpensive);
     if (category !== undefined) {
@@ -406,7 +514,11 @@ async function main(): Promise<void> {
       console.log(`– ${scenario.id} ${scenario.title}: skipped (${reason})`);
       continue;
     }
+    runnable.push(scenario);
+  }
 
+  const runLeg = async (scenario: Scenario, overlapping: () => readonly string[]): Promise<void> => {
+    const releaseRow = releaseIndex?.get(scenario.id);
     let gates = 0;
     let judgedCount = 0;
     let reported = 0;
@@ -520,7 +632,6 @@ async function main(): Promise<void> {
     const startedAt = Date.now();
     const secs = () => `${((Date.now() - startedAt) / 1000).toFixed(1)}s`;
     const legSinceIso = new Date().toISOString();
-    const boardRow = board.length;
     try {
       await withTimeout(scenario.run(wrapScenarioDrivers(ctx, readerCollector)), scenario.timeoutMs);
       passed++;
@@ -529,9 +640,11 @@ async function main(): Promise<void> {
       recordBoard(scenario, {
         status: "GREEN",
         evidence: `${gates} gates, ${judgedCount} judged${reportTag}, ${secs()}`,
+        durationMs: Date.now() - startedAt,
       });
       console.log(`✓ ${scenario.id} ${scenario.title}: passed (${gates} gates, ${judgedCount} judged${reportTag}${judgeTag}, ${secs()})`);
     } catch (err) {
+      if (stopsBoard(err)) firstRanRed ??= scenario.id;
       if (err instanceof FixtureMissing) {
         if (liveRun && releaseRow?.requirement !== "REQUIRED" && isDeclaredGap(scenario.surface, err.message)) {
           declaredGaps++;
@@ -562,7 +675,7 @@ async function main(): Promise<void> {
       } else {
         failed++;
         const message = scenarioFailureMessage(err);
-        recordBoard(scenario, { status: "RED", reason: message, evidence: `failed after ${secs()}` });
+        recordBoard(scenario, { status: "RED", reason: message, evidence: `failed after ${secs()}`, durationMs: Date.now() - startedAt });
         console.error(`✗ ${scenario.id} ${scenario.title} (${secs()}): ${message}`);
       }
     }
@@ -570,20 +683,54 @@ async function main(): Promise<void> {
     postedTexts.push(...readerCollector.texts());
 
     if (liveRun) {
-      const legStatus = board[boardRow]?.status ?? "UNKNOWN";
+      const legStatus = board.find((row) => row.id === scenario.id)?.status ?? "UNKNOWN";
       if (legStatus === "RED") await new Promise((resolve) => setTimeout(resolve, WAKE_EVIDENCE_SETTLE_MS));
+      const shared = overlapping();
       const captured = await captureWakeEvidence(
         wakeAuditRead,
-        { legId: scenario.id, surface: scenario.surface, sinceIso: legSinceIso, untilIso: new Date().toISOString(), status: legStatus },
+        {
+          legId: scenario.id,
+          surface: scenario.surface,
+          sinceIso: legSinceIso,
+          untilIso: new Date().toISOString(),
+          status: legStatus,
+          ...(shared.length > 0 ? { concurrentWith: shared } : {}),
+        },
         { limit: WAKE_EVIDENCE_LIMIT, timeoutMs: WAKE_EVIDENCE_TIMEOUT_MS },
       );
       wakeEvidence.push(captured);
       if (captured.status === "RED") for (const line of renderLegWakeEvidence(captured)) console.error(`  ${line}`);
     }
+  };
+
+  const ordered = riskOrder(runnable, riskOf(changedPaths, lastBoard));
+  const byId = new Map(ordered.map((scenario) => [scenario.id, scenario]));
+  if (ordered.length > 0) {
+    console.log(`lanes: ${ordered.length} legs in risk order, up to ${maxLanes} at once${failFast ? "; the board stops at the first leg that runs and fails" : ""}`);
+  }
+  const lanes = await runLanes(
+    ordered.map((scenario) => scenario.id),
+    laneDeclarationIndex(),
+    { maxLanes, stop: () => failFast && firstRanRed !== undefined, run: (id, overlapping) => runLeg(byId.get(id)!, overlapping) },
+  );
+  for (const id of lanes.notStarted) {
+    const scenario = byId.get(id)!;
+    const reason = `not started — the board stopped at the first red (${firstRanRed}); run with --full-board for every leg`;
+    skipped++;
+    skipCounts["stopped-first-red"]++;
+    recordBoard(scenario, { status: "FILTERED", reason });
+    console.log(`– ${scenario.id} ${scenario.title}: ${reason}`);
   }
 
   const gaps = boardGaps(board);
   for (const line of renderBoard(board)) console.log(line);
+  if (liveRun && boardRan(board)) {
+    try {
+      console.log(`e2e board record: ${writeBoardRecord(board, { startedAt: runStartedIso })}`);
+    } catch (err) {
+      console.log(`e2e board record: not written (${err instanceof Error ? err.message : String(err)})`);
+    }
+  }
   try {
     const calibration = readerJudge && postedTexts.length > 0 ? await calibrateReaderJudge(readerJudge) : undefined;
     const review = await reviewPostedTexts(postedTexts, { ...(readerJudge ? { judge: readerJudge } : {}), ...(calibration ? { calibration } : {}) });

@@ -4154,6 +4154,7 @@
     "test:aws-sso-callback": "NODE_NO_WARNINGS=1 tsx scripts/aws-sso-callback-test.ts",
     "e2e:read-channel": "NODE_NO_WARNINGS=1 tsx scripts/e2e/read-channel.ts",
     "e2e:driver": "NODE_NO_WARNINGS=1 tsx scripts/e2e/runner.ts",
+    "e2e:plan": "NODE_NO_WARNINGS=1 tsx scripts/e2e/runner.ts --plan",
     "e2e:fanin": "NODE_NO_WARNINGS=1 tsx scripts/e2e/single-window-fanin.ts",
     "e2e:window-gate": "NODE_NO_WARNINGS=1 tsx scripts/e2e/window-gate.ts",
     "e2e:solo-window": "NODE_NO_WARNINGS=1 tsx scripts/e2e/solo-window.ts",

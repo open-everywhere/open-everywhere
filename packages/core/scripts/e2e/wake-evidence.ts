@@ -19,6 +19,7 @@ export interface LegWakeWindow {
   readonly surface: string;
   readonly sinceIso: string;
   readonly untilIso: string;
+  readonly concurrentWith?: readonly string[];
 }
 
 export interface LegWakeEvidence extends LegWakeWindow {
@@ -130,7 +131,8 @@ export async function captureWakeEvidence(
 }
 
 export function renderLegWakeEvidence(evidence: LegWakeEvidence): string[] {
-  const head = `wake evidence ${evidence.legId} (${evidence.surface}, ${evidence.status}) window ${evidence.sinceIso} → ${evidence.untilIso}`;
+  const shared = evidence.concurrentWith && evidence.concurrentWith.length > 0 ? ` shared with ${evidence.concurrentWith.join(", ")}` : "";
+  const head = `wake evidence ${evidence.legId} (${evidence.surface}, ${evidence.status}) window ${evidence.sinceIso} → ${evidence.untilIso}${shared}`;
   if (evidence.error !== undefined) return [`${head}: NOT CAPTURED — ${evidence.error} (this is not an absence of rows)`];
   if (evidence.rows.length === 0) {
     const caveat = evidence.incomplete

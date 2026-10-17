@@ -2344,7 +2344,7 @@ const { parseAppMentionEvent } = await import(
   const counts = emptySkipCounts();
   ok(SKIP_KINDS.every((k) => counts[k] === 0), "emptySkipCounts starts every bucket at zero");
   ok(renderSkipBreakdown(counts) === "none", "renderSkipBreakdown reports 'none' when every bucket is zero — the negative control for the non-empty case below");
-  ok(SKIP_KINDS.length === 7, "the skip-reason taxonomy has exactly 7 closed categories");
+  ok(SKIP_KINDS.length === 9, "the skip-reason taxonomy has exactly 9 closed categories");
   counts["missing-capability"] = 3;
   counts["filtered-only"] = 1;
   ok(

@@ -120,6 +120,7 @@ test:scenario-pin-lint
 test:core-dist-freshness
 test:e2e-runner-zero-scenario
 test:e2e-board
+test:e2e-board-plan
 test:e2e-pacing
 test:memory-eval-fixture
 test:e2e-engaged-fixture

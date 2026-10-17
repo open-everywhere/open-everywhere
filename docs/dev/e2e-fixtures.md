@@ -148,3 +148,12 @@ resolves through the criteria domains (`org`, `dm`, `public`) instead.
   The note says which.
 - **Synthetic rooms are never probed.** The integration tier declares domains over fabricated ids;
   those rows say so and carry no name.
+
+## A room's domain decides its lane
+
+The board runs two legs at once only when the seats and fixtures they declare do not overlap
+(`packages/core/scripts/e2e/lanes.ts`, OPE-2364). A seat follows the domain: every room in
+`e2e-unified` shares one seat, and each `e2e-engaged` room is its own seat. When a room moves to
+another domain, update the rows of the legs that drive it in the same pull request. A row that
+names too few seats lets two legs crowd one seat, and both legs then go red for a reason that is
+not the product's.

@@ -543,8 +543,8 @@ export const ALWAYS_RELEVANT: readonly string[] = [...SMOKE_FLOOR, ...LAUNCH_SUR
 
 export const UNMAPPED_BY_DESIGN: readonly { id: string; why: string }[] = [];
 
-export function relevantScenarios(changedPaths: readonly string[]): string[] {
-  const ids = new Set<string>(ALWAYS_RELEVANT);
+export function changedAreaScenarios(changedPaths: readonly string[]): string[] {
+  const ids = new Set<string>();
   for (const path of changedPaths) {
     for (const area of CHANGED_RELEVANT_MAP) {
       if (area.globs.some((g) => pathMatchesGlob(path, g))) {
@@ -553,4 +553,8 @@ export function relevantScenarios(changedPaths: readonly string[]): string[] {
     }
   }
   return [...ids];
+}
+
+export function relevantScenarios(changedPaths: readonly string[]): string[] {
+  return [...new Set<string>([...ALWAYS_RELEVANT, ...changedAreaScenarios(changedPaths)])];
 }

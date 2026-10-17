@@ -2,6 +2,8 @@ export type SkipKind =
   | "filtered-only"
   | "filtered-suite"
   | "filtered-surface"
+  | "filtered-diff"
+  | "stopped-first-red"
   | "missing-capability"
   | "expensive-not-included"
   | "fixture-missing"
@@ -11,6 +13,8 @@ export const SKIP_KINDS: readonly SkipKind[] = [
   "filtered-only",
   "filtered-suite",
   "filtered-surface",
+  "filtered-diff",
+  "stopped-first-red",
   "missing-capability",
   "expensive-not-included",
   "fixture-missing",

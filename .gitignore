@@ -67,6 +67,9 @@ packages/core/scripts/eval/results/
 # Live e2e phase-decomposition records (scripts/e2e/transcript-timings.ts) — run-local timing
 # series, same posture as the eval results above: recorded, never tracked, never gated on.
 packages/core/scripts/e2e/results/
+# The same records when the runner runs from the repository root: the results directory follows the
+# runner's cwd (OPE-2364's board record, the wake evidence, the timings).
+/scripts/e2e/results/
 # Warm-seed fill plans captured by eval runs — run-local, regenerated per run.
 packages/core/scripts/eval/seeds/
 # Soak-lane prefix-replay dumps (scripts/soak/soak-replay.ts) — transcript-grade prompt/response

@@ -18,6 +18,7 @@ export interface BoardLeg {
   readonly equivalents?: readonly string[];
   readonly reason?: string;
   readonly evidence?: string;
+  readonly durationMs?: number;
 }
 
 export interface BoardTotals {
