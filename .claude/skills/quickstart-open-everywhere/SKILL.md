@@ -79,6 +79,10 @@ To turn it off, `OE_TELEMETRY=off` (or `DO_NOT_TRACK=1`) must be set on the DEPL
 `printf off | npx vercel env add OE_TELEMETRY production`. On the Docker route, put it in the
 container's environment. Every boot prints a line that says whether telemetry is on.
 
+eve's own CLI telemetry is separate: Open Everywhere sets `EVE_TELEMETRY_DISABLED=1` where it
+starts eve (its npm scripts and `Dockerfile`), and `OE_TELEMETRY` does not change it. For an `eve`
+command run by hand, or an app scaffolded before 0.8.0, read the eve section of the page above.
+
 ## Status, at every step
 
 - `npx @open-everywhere/create --check --json` — the step list as data: `satisfied`, `detail`, and a
