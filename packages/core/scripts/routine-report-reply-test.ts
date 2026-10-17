@@ -249,5 +249,33 @@ async function attentionOf(id: string) {
   ok((await attentionOf(old))?.runs === 12, "…and the count stays");
 }
 
+{
+  const id = "r-race";
+  const record = { runs: 124, warnedAtRun: 100, cardId: "card-race" };
+  await routineStore.addRoutine({} as never, routine({ id, attention: record }));
+  const ts = await postReport(id, TOP);
+  const live = reportThread.liveReportReplyDeps();
+  const deps = {
+    ...live,
+    getRoutine: async (...a: Parameters<typeof live.getRoutine>) => {
+      const read = await live.getRoutine(...a);
+      await routineStore.updateRoutine(ORG, SURFACE, id, attentionPausePatch({ attention: record }, 124, new Date()));
+      return read;
+    },
+  };
+  const before = (await readAudit({ org: ORG, action: ROUTINE_CHECKIN_ACTION })).length;
+  const outcome = await reportThread.checkInFromReportReply({ org: ORG, origin: { ...TOP, threadTs: ts }, principalId: "U-MEMBER" }, deps);
+  const after = await routineStore.getRoutine(ORG, SURFACE, id);
+  ok(after !== null && isPausedForCheckIn(after), "🔴 a pause that lands after the reply's read keeps its record: the Resume card still recognises the routine");
+  ok(outcome === "not-active", "…and the reply reports the routine as paused, not as checked in");
+  ok((await readAudit({ org: ORG, action: ROUTINE_CHECKIN_ACTION })).length === before, "…and writes no check-in audit row");
+
+  const second = "r-race-clear";
+  await routineStore.addRoutine({} as never, routine({ id: second, attention: record }));
+  const ts2 = await postReport(second, TOP);
+  ok((await reportThread.checkInFromReportReply({ org: ORG, origin: { ...TOP, threadTs: ts2 }, principalId: "U-MEMBER" })) === "checked-in", "a reply on an active routine with a record still checks in");
+  ok((await attentionOf(second)) === undefined, "…and clears the record");
+}
+
 console.log(`✓ routine-report-reply: ${passed} assertions passed`);
 process.exit(0);

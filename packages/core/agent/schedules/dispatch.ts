@@ -21,7 +21,7 @@ import { applyRoutineAttention, type RoutineAttentionDeps } from "./routine-atte
 import { dispatchTestRuns, type TestRunPost } from "./routine-test-run.js";
 import { sweepEventReach, type EventReachSweepDeps } from "./event-reach-sweep.js";
 import { foldRoutineOutcome, retireExhaustedRoutine } from "../routines/outcome-fold.js";
-import { getRoutine, listAllRoutines, updateRoutine } from "../routines/store.js";
+import { listAllRoutines, updateRoutine, updateRoutineIf } from "../routines/store.js";
 import { computeNextRun, isDue, DISPATCH_TICK_MINUTES } from "../routines/schedule.js";
 import { isClockScheduled, isJobRoutine, routineReportSurfaceKey, type Routine } from "../routines/routine.js";
 import { renderFireMessage } from "../routines/fire-message.js";
@@ -260,9 +260,9 @@ export async function dispatchTick(
       }
       continue;
     }
-    const attentionLive = countsTowardCheckIn(r) ? await getRoutine(r.org, r.surfaceKey, r.id).catch(() => null) : null;
+    const counted = countsTowardCheckIn(r);
     try {
-      await updateRoutine(r.org, r.surfaceKey, r.id, {
+      await updateRoutineIf(r.org, r.surfaceKey, r.id, () => true, (live) => ({
         lastRunAt: now.toISOString(),
         nextRunAt: next ? next.toISOString() : null,
         lastOutcome: undefined,
@@ -270,8 +270,8 @@ export async function dispatchTick(
         lastStallAt: undefined,
         ...(r.manualRunAt !== undefined ? { manualRunAt: undefined } : {}),
         ...(r.bound ? { fireCount: (r.fireCount ?? 0) + 1 } : {}),
-        ...(attentionLive !== null ? attentionCountPatch(attentionLive) : {}),
-      });
+        ...(counted ? attentionCountPatch(live) : {}),
+      }));
       let fireTarget = dest.target;
       let jobAnchor = r.jobSessionAnchor;
       if (isJobRoutine(r)) {

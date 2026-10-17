@@ -770,6 +770,7 @@ export function checkApprovalSites(
 const POST_TURN_WRITE_PRIMITIVES: readonly string[] = [
   "addRoutine",
   "updateRoutine",
+  "updateRoutineIf",
   "removeRoutine",
   "putDomainSkill",
   "deleteDomainSkill",

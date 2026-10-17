@@ -1,7 +1,7 @@
 import { approvalPostDeps, hasApprovalCardPath, requestApproval } from "../approvals/flow.js";
 import { attentionPausePatch, attentionStep, isPausedForCheckIn, planAttentionCard, type AttentionStage } from "../routines/attention.js";
 import { auditRoutineDisabled } from "../routines/fire-audit.js";
-import { getRoutine, updateRoutine } from "../routines/store.js";
+import { getRoutine, updateRoutineIf } from "../routines/store.js";
 import type { Routine } from "../routines/routine.js";
 import type { RequestApprovalDeps } from "../approvals/flow.js";
 
@@ -28,24 +28,37 @@ export async function applyRoutineAttention(listed: Routine, now: Date, target: 
     if (step.kind === "warn") {
       const cardId = await postCheckInCard(r, "warn", step.runs, target, deps, step.runsLeft);
       if (cardId === undefined) return NONE;
-      const live = await getRoutine(r.org, r.surfaceKey, r.id).catch(() => null);
-      if (live === null || live.status !== "active" || attentionStep(live).kind !== "warn") return NONE;
-      const written = await updateRoutine(r.org, r.surfaceKey, r.id, { attention: { ...(live.attention ?? { runs: step.runs }), warnedAtRun: step.runs, cardId } }).catch(() => null);
-      if (written === null) return NONE;
+      const written = await updateRoutineIf(
+        r.org,
+        r.surfaceKey,
+        r.id,
+        (live) => live.status === "active" && attentionStep(live).kind === "warn",
+        (live) => ({ attention: { ...(live.attention ?? { runs: step.runs }), warnedAtRun: step.runs, cardId } }),
+      ).catch(() => null);
+      if (written === null || written.kind !== "written") return NONE;
       log(`CHECK-IN: ${r.id} on ${r.surfaceKey} — Keep going card posted after ${step.runs} runs`);
       return { kind: "warned" };
     }
-    const patch = attentionPausePatch(r, step.runs, now);
-    const paused = await updateRoutine(r.org, r.surfaceKey, r.id, patch);
-    if (!paused) return NONE;
-    log(`CHECK-IN: ${r.id} on ${r.surfaceKey} paused — ${patch.disabledReason}`);
-    await auditRoutineDisabled(r, patch.disabledReason ?? "", r.consecutiveFailures, undefined, { checkIn: true, runs: step.runs }).catch(() => undefined);
+    const guarded = await updateRoutineIf(
+      r.org,
+      r.surfaceKey,
+      r.id,
+      (live) => live.status === "active" && attentionStep(live).kind === "pause",
+      (live) => attentionPausePatch(live, step.runs, now),
+    );
+    if (guarded.kind !== "written") return NONE;
+    const paused = guarded.routine;
+    log(`CHECK-IN: ${r.id} on ${r.surfaceKey} paused — ${paused.disabledReason}`);
+    await auditRoutineDisabled(r, paused.disabledReason ?? "", r.consecutiveFailures, undefined, { checkIn: true, runs: step.runs }).catch(() => undefined);
     const cardId = await postCheckInCard(paused, "paused", step.runs, target, deps);
     if (cardId !== undefined) {
-      const live = await getRoutine(r.org, r.surfaceKey, r.id).catch(() => null);
-      if (live !== null && isPausedForCheckIn(live) && live.attention?.pausedAt === patch.attention?.pausedAt) {
-        await updateRoutine(r.org, r.surfaceKey, r.id, { attention: { ...live.attention!, cardId } }).catch(() => null);
-      }
+      await updateRoutineIf(
+        r.org,
+        r.surfaceKey,
+        r.id,
+        (live) => isPausedForCheckIn(live) && live.attention?.pausedAt === paused.attention?.pausedAt,
+        (live) => ({ attention: { ...live.attention!, cardId } }),
+      ).catch(() => null);
     }
     return { kind: "paused" };
   } catch (err) {
@@ -60,6 +73,8 @@ async function postCheckInCard(r: Routine, stage: AttentionStage, runs: number, 
   const { platform, ...card } = plan;
   if (deps.postCard === undefined && deps.post === undefined && !hasApprovalCardPath(platform)) return undefined;
   try {
+    // approval-chain: exempt — `routine.attention` is a NON_TOOL_ACTION_KIND (access/consequence.ts), so
+    // approval-authority: headless — the clock dispatcher has no live model turn or wake envelope.
     const posted = await requestApproval(card, {
       ...approvalPostDeps(platform),
       ...(deps.post ? { post: deps.post } : {}),

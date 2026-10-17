@@ -3,7 +3,7 @@ import { QUOTE_MAX, plainQuote } from "./plain-text.js";
 import { placeWords } from "../channels/friendly-ids.js";
 import { appendAudit } from "../audit/audit.js";
 import type { Partition } from "../memory/partition.js";
-import { getRoutine, updateRoutine } from "../routines/store.js";
+import { getRoutine, updateRoutineIf } from "../routines/store.js";
 import { attentionResetPatch, isPausedForCheckIn } from "../routines/attention.js";
 import { applyPolicyAdd, applyPolicyRemove, POLICY_MAX_RULES, type RoutinePolicyRule } from "../routines/policy.js";
 import { armingApproval } from "./arming-context.js";
@@ -65,8 +65,8 @@ const routinePolicyAdd: ActionKind<RoutinePolicyAddArgs> = {
     if (!result.accepted) {
       return `rule not added: ${result.reason}`;
     }
-    const updated = await updateRoutine(args.org, args.surfaceKey, args.routineId, { ...result.patch, ...(isPausedForCheckIn(routine) ? {} : attentionResetPatch()) });
-    if (!updated) {
+    const written = await updateRoutineIf(args.org, args.surfaceKey, args.routineId, () => true, (live) => ({ ...result.patch, ...(isPausedForCheckIn(live) ? {} : attentionResetPatch()) }));
+    if (written.kind !== "written") {
       return `${routineWords(args.description)} was stopped before this, so nothing changed`;
     }
     const arming = armingApproval();
@@ -136,8 +136,8 @@ const routinePolicyRemove: ActionKind<RoutinePolicyRemoveArgs> = {
     if (!result.removed) {
       return "that rule was already removed, so nothing changed";
     }
-    const updated = await updateRoutine(args.org, args.surfaceKey, args.routineId, { ...result.patch, ...(isPausedForCheckIn(routine) ? {} : attentionResetPatch()) });
-    if (!updated) {
+    const written = await updateRoutineIf(args.org, args.surfaceKey, args.routineId, () => true, (live) => ({ ...result.patch, ...(isPausedForCheckIn(live) ? {} : attentionResetPatch()) }));
+    if (written.kind !== "written") {
       return `${routineWords(args.description)} was stopped before this, so nothing changed`;
     }
     const arming = armingApproval();

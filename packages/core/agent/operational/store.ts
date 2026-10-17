@@ -424,6 +424,13 @@ export interface RoutinePromptRevisionRow {
   readonly recordedAt: string;
 }
 
+export type RoutineGuardedWrite =
+  | { readonly kind: "written"; readonly routine: Routine }
+  | { readonly kind: "refused"; readonly routine: Routine }
+  | { readonly kind: "gone" };
+
+export const ROUTINE_GUARDED_WRITE_ATTEMPTS = 8;
+
 export interface RoutinePromptProvenance {
   readonly authoredBy?: string;
   readonly armedBy?: string;
@@ -1042,6 +1049,14 @@ export interface OperationalStore {
   getRoutine(org: string, surfaceKey: string, id: string): Promise<Routine | null>;
   addRoutine(routine: Routine): Promise<Routine>;
   updateRoutine(org: string, surfaceKey: string, id: string, patch: Partial<Routine>, provenance?: RoutinePromptProvenance): Promise<Routine | null>;
+  updateRoutineIf(
+    org: string,
+    surfaceKey: string,
+    id: string,
+    precondition: (live: Routine) => boolean,
+    patch: Partial<Routine> | ((live: Routine) => Partial<Routine>),
+    provenance?: RoutinePromptProvenance,
+  ): Promise<RoutineGuardedWrite>;
   removeRoutine(org: string, surfaceKey: string, id: string): Promise<boolean>;
   listAllRoutines(): Promise<Routine[]>;
   listRoutinePromptRevisions(org: string, surfaceKey: string, routineId?: string): Promise<RoutinePromptRevisionRow[]>;

@@ -279,7 +279,7 @@ const read = (id: string, surfaceKey = SURFACE) => routineStore.getRoutine(ORG, 
   const live = getOperationalStore();
   const broken = new Proxy(live, {
     get(t, p, r) {
-      if (p === "updateRoutine") {
+      if (p === "updateRoutine" || p === "updateRoutineIf") {
         return async () => {
           throw new Error("operational store down");
         };

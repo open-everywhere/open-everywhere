@@ -1,7 +1,7 @@
 import { routineWords } from "../routines/schedule-words.js";
 import { shortUtc } from "./session-grant.js";
 import { QUOTE_MAX, plainQuote } from "./plain-text.js";
-import { getRoutine, updateRoutine } from "../routines/store.js";
+import { updateRoutineIf } from "../routines/store.js";
 import { computeNextRun } from "../routines/schedule.js";
 import { attentionResetPatch, attentionWarnRuns, isPausedForCheckIn, ROUTINE_CHECKIN_ACTION, type RoutineAttentionArgs } from "../routines/attention.js";
 import { appendAudit } from "../audit/audit.js";
@@ -38,23 +38,27 @@ const routineAttention: ActionKind<RoutineAttentionArgs> = {
   },
   async execute(args, decidedBy) {
     const what = routineWords(args.description);
-    const live = await getRoutine(args.org, args.surfaceKey, args.routineId);
-    if (!live) return `${what} no longer exists, so nothing changed`;
     const where = whereFromScope(args.org, args.surfaceKey);
-    if (isPausedForCheckIn(live)) {
-      const next = computeNextRun(live.trigger, new Date());
-      const updated = await updateRoutine(args.org, args.surfaceKey, args.routineId, {
-        status: "active",
-        disabledReason: undefined,
-        nextRunAt: next ? next.toISOString() : null,
-        ...attentionResetPatch(),
-      });
-      if (!updated) return `${what} no longer exists, so nothing changed`;
+    let resumed = false;
+    const written = await updateRoutineIf(
+      args.org,
+      args.surfaceKey,
+      args.routineId,
+      (live) => isPausedForCheckIn(live) || live.status === "active",
+      (live) => {
+        resumed = isPausedForCheckIn(live);
+        if (!resumed) return attentionResetPatch();
+        const next = computeNextRun(live.trigger, new Date());
+        return { status: "active", disabledReason: undefined, nextRunAt: next ? next.toISOString() : null, ...attentionResetPatch() };
+      },
+    );
+    if (written.kind === "gone") return `${what} no longer exists, so nothing changed`;
+    if (written.kind === "refused") return `${what} stopped for another reason, so nothing changed`;
+    if (resumed) {
+      const updated = written.routine;
       await appendAudit({ ...where, principalId: decidedBy, action: ROUTINE_CHECKIN_ACTION, detail: { id: args.routineId, stage: args.stage, resumed: true, runs: args.runs } });
       return `resumed ${what}${updated.nextRunAt ? `, next run ${shortUtc(updated.nextRunAt)}` : ""}`;
     }
-    if (live.status !== "active") return `${what} stopped for another reason, so nothing changed`;
-    await updateRoutine(args.org, args.surfaceKey, args.routineId, attentionResetPatch());
     await appendAudit({ ...where, principalId: decidedBy, action: ROUTINE_CHECKIN_ACTION, detail: { id: args.routineId, stage: args.stage, resumed: false, runs: args.runs } });
     const again = attentionWarnRuns();
     return again > 0 ? `kept ${what} running. I'll check again after ${again} more runs` : `kept ${what} running`;

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { initOperationalSchema, makeOperationalPostgresStore, setOrgContext, type PgClient } from "../agent/operational/postgres.js";
-import { PROMOTER_LIST_MAX, spendLedgerConjuncts, type AuditFilter, type SpendLedgerFilter, type SpendLedgerRow } from "../agent/operational/store.js";
+import { PROMOTER_LIST_MAX, ROUTINE_GUARDED_WRITE_ATTEMPTS, spendLedgerConjuncts, type AuditFilter, type SpendLedgerFilter, type SpendLedgerRow } from "../agent/operational/store.js";
 import type { Routine } from "../agent/routines/routine.js";
 import { openTestPg, closeAllTestPg } from "./test-pg-driver.js";
 import { pinSuiteStore, pinnedSuiteStorePath } from "./_suite-store.js";
@@ -356,6 +356,73 @@ const store = makeOperationalPostgresStore(client);
     nextRunAt: null,
   });
   ok(onceDisabled?.status === "disabled" && onceDisabled.trigger.kind === "once", "routine: postgres updateRoutine's generic patch disables a once row without disturbing its trigger");
+}
+
+{
+  const { sqliteOperationalStore } = await import("../agent/operational/sqlite.js");
+  const PAUSE = { status: "disabled" as const, disabledReason: "paused", attention: { runs: 8, pausedAt: "2026-06-23T08:00:00Z" } };
+  const SK = "local/dev/cas";
+  let pgGap: (() => Promise<void>) | undefined;
+  const gapClient: typeof client = {
+    ...client,
+    query: (async (sql: string, params?: unknown[]) => {
+      if (pgGap !== undefined && /^UPDATE routine SET data = \$1 .*AND data = \$5/su.test(sql)) {
+        const land = pgGap;
+        pgGap = undefined;
+        await land();
+      }
+      return client.query(sql, params as never);
+    }) as typeof client.query,
+  };
+  const pgCas = makeOperationalPostgresStore(gapClient);
+  for (const [name, s] of [["pg", pgCas], ["sqlite", sqliteOperationalStore]] as const) {
+    const ORG_CAS = `cas-${name}`;
+    await s.addRoutine(routine(ORG_CAS, SK, "r-cas", { attention: { runs: 7 } }));
+
+    const plain = await s.updateRoutineIf(ORG_CAS, SK, "r-cas", (r) => r.status === "active", { lastRunAt: "2026-06-21T08:00:00Z" });
+    ok(plain.kind === "written" && plain.routine.lastRunAt === "2026-06-21T08:00:00Z", `cas (${name}): a holding precondition writes the patch`);
+    const refused = await s.updateRoutineIf(ORG_CAS, SK, "r-cas", (r) => r.status === "disabled", { lastRunAt: "2026-06-22T08:00:00Z" });
+    ok(refused.kind === "refused" && refused.routine.lastRunAt === "2026-06-21T08:00:00Z", `cas (${name}): a refused precondition writes nothing and hands back the live row`);
+    ok((await s.getRoutine(ORG_CAS, SK, "r-cas"))?.lastRunAt === "2026-06-21T08:00:00Z", `cas (${name}): …and the stored row is unchanged`);
+    ok((await s.updateRoutineIf(ORG_CAS, SK, "nope", () => true, {})).kind === "gone", `cas (${name}): a missing id is gone`);
+    const fn = await s.updateRoutineIf(ORG_CAS, SK, "r-cas", () => true, (live) => ({ attention: { runs: (live.attention?.runs ?? 0) + 1 } }));
+    ok(fn.kind === "written" && fn.routine.attention?.runs === 8, `cas (${name}): a function patch is built from the live row`);
+
+    let asked = 0;
+    const pause = (): Promise<unknown> => s.updateRoutine(ORG_CAS, SK, "r-cas", PAUSE);
+    if (name === "pg") pgGap = async () => void (await pause());
+    const raced = await s.updateRoutineIf(
+      ORG_CAS,
+      SK,
+      "r-cas",
+      (live) => {
+        asked++;
+        if (name === "sqlite" && asked === 1) void pause();
+        return live.status === "active" && live.attention !== undefined;
+      },
+      { attention: undefined },
+    );
+    const after = await s.getRoutine(ORG_CAS, SK, "r-cas");
+    ok(after?.status === "disabled" && after.attention?.pausedAt === "2026-06-23T08:00:00Z", `🔴 cas (${name}): the pause that landed in the gap survives — the stale clear does not land on top of it`);
+    ok(raced.kind === "refused" && asked === 2, `🔴 cas (${name}): the guarded write read again, asked again, and refused the paused row (asked ${asked} times)`);
+
+    if (name === "sqlite") {
+      let spins = 0;
+      const spin = s.updateRoutineIf(
+        ORG_CAS,
+        SK,
+        "r-cas",
+        () => {
+          spins++;
+          void s.updateRoutine(ORG_CAS, SK, "r-cas", { lastRunAt: `2026-06-24T08:00:${String(spins).padStart(2, "0")}Z` });
+          return true;
+        },
+        { consecutiveFailures: 0 },
+      );
+      const threw = await spin.then(() => false, () => true);
+      ok(threw && spins === ROUTINE_GUARDED_WRITE_ATTEMPTS, `cas (${name}): a row that moves on every attempt throws after ${ROUTINE_GUARDED_WRITE_ATTEMPTS} attempts (spun ${spins})`);
+    }
+  }
 }
 
 {

@@ -406,6 +406,109 @@ overrideSettingsForTest({ routines: { attentionWarnRuns: 3, attentionPauseRuns: 
 }
 
 {
+  const { registerOperationalStore, resetOperationalStore } = await import("../agent/operational/provider.js");
+  const real = getOperationalStore();
+  let between: { readonly id: string; readonly land: () => Promise<unknown> } | undefined;
+  const take = (id: string): (() => Promise<unknown>) | undefined => {
+    if (between?.id !== id) return undefined;
+    const land = between.land;
+    between = undefined;
+    return land;
+  };
+  registerOperationalStore({
+    ...real,
+    async getRoutine(org, surfaceKey, id) {
+      const read = await real.getRoutine(org, surfaceKey, id);
+      await take(id)?.();
+      return read;
+    },
+    async updateRoutineIf(org, surfaceKey, id, precondition, patch, provenance) {
+      await take(id)?.();
+      return real.updateRoutineIf(org, surfaceKey, id, precondition, patch, provenance);
+    },
+  });
+  resetOperationalStore();
+
+  {
+    const id = "r-press-meets-pause";
+    const r0 = routine({ id, attention: { runs: 5, warnedAtRun: 3, cardId: "card-pp" } });
+    await routineStore.addRoutine({} as never, r0);
+    between = { id, land: () => routineStore.updateRoutine(ORG, SURFACE, id, attention.attentionPausePatch(r0, 5, new Date(clock))) };
+    const answer = await actionKind(attention.ROUTINE_ATTENTION_KIND)!.execute(attention.attentionCardArgs(r0, "warn", 3, 2), "U-MEMBER");
+    const after = await routineStore.getRoutine(ORG, SURFACE, id);
+    ok(between === undefined, "precondition: the pause landed inside the press");
+    ok(!(after?.status === "disabled" && !attention.isPausedForCheckIn(after)), "🔴 press meets pause: the routine is never left disabled with no pause record — that row no card can resume");
+    ok(after?.status === "active" && after.attention === undefined && answer.startsWith("resumed"), `🔴 press meets pause: the press decides on the paused row and resumes it (answer: ${answer})`);
+    await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, id);
+  }
+
+  {
+    const id = "r-pause-meets-reply";
+    await routineStore.addRoutine({} as never, routine({ id, nextRunAt: new Date(clock).toISOString(), attention: { runs: 5, warnedAtRun: 3, cardId: "card-pr" } }));
+    between = { id, land: () => routineStore.updateRoutine(ORG, SURFACE, id, attention.attentionResetPatch()) };
+    const before = receives;
+    await tick();
+    const after = await routineStore.getRoutine(ORG, SURFACE, id);
+    ok(between === undefined, "precondition: the check-in landed inside the tick");
+    ok(after?.status === "active", "🔴 pause meets reply: a check-in that lands after the tick's read wins, and the routine is not paused");
+    ok(receives - before === 1 && after?.attention?.runs === 1, "pause meets reply: …so it fires as usual and counts again from zero");
+    await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, id);
+  }
+
+  {
+    const id = "r-count-meets-reply";
+    await routineStore.addRoutine({} as never, routine({ id, nextRunAt: new Date(clock).toISOString(), attention: { runs: 2 } }));
+    between = { id, land: () => routineStore.updateRoutine(ORG, SURFACE, id, attention.attentionResetPatch()) };
+    await tick();
+    const after = await routineStore.getRoutine(ORG, SURFACE, id);
+    ok(between === undefined, "precondition: the check-in landed inside the tick's count write");
+    ok(after?.attention?.runs === 1, `🔴 count meets reply: the count builds on the cleared record, so the check-in stands (runs ${after?.attention?.runs})`);
+    await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, id);
+  }
+
+  {
+    const partition = { org: ORG, platform: "slack", workspace: "T1", surface: CHAN, workspaceKey: "slack/T1", surfaceKey: SURFACE, key: SURFACE };
+    const id = "r-edit-meets-pause";
+    const r0 = routine({ id, attention: { runs: 5, warnedAtRun: 3, cardId: "card-ep" } });
+    await routineStore.addRoutine({} as never, r0);
+    between = { id, land: () => routineStore.updateRoutine(ORG, SURFACE, id, attention.attentionPausePatch(r0, 5, new Date(clock))) };
+    await actionKind("routine.edit")!.execute(
+      {
+        org: ORG,
+        partition,
+        surfaceKey: SURFACE,
+        id,
+        prompt: "Post the open incident count, by team.",
+        previousPrompt: "Post the open incident count.",
+        description: "every 15 min (posts every run)",
+        requestedBy: "U-OWNER",
+        trigger: { kind: "interval", everyMinutes: 15 },
+        generation: 1,
+      },
+      "U-MEMBER",
+    );
+    const edited = await routineStore.getRoutine(ORG, SURFACE, id);
+    ok(between === undefined && edited?.prompt === "Post the open incident count, by team.", "precondition: the pause landed inside the edit, and the edit wrote");
+    ok(edited !== null && attention.isPausedForCheckIn(edited), "🔴 edit meets pause: the edit keeps the pause record, so the Resume card still works");
+    await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, id);
+
+    const ruled = "r-rule-meets-pause";
+    const r1 = routine({ id: ruled, attention: { runs: 5, warnedAtRun: 3, cardId: "card-rp" } });
+    await routineStore.addRoutine({} as never, r1);
+    between = { id: ruled, land: () => routineStore.updateRoutine(ORG, SURFACE, ruled, attention.attentionPausePatch(r1, 5, new Date(clock))) };
+    const common = { org: ORG, partition, surfaceKey: SURFACE, routineId: ruled, description: "every 15 min (posts every run)", ruleId: "p-race-1", requestedBy: "U-OWNER" };
+    await actionKind("routine.policy.add")!.execute({ ...common, rule: "Skip weekends.", why: "Nobody reads it then.", source: "human", countBefore: 0 }, "U-MEMBER");
+    const after = await routineStore.getRoutine(ORG, SURFACE, ruled);
+    ok(between === undefined && (after?.policy ?? []).length === 1, "precondition: the pause landed inside the rule change, and the rule landed");
+    ok(after !== null && attention.isPausedForCheckIn(after), "🔴 rule meets pause: the rule change keeps the pause record, so the Resume card still works");
+    await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, ruled);
+  }
+
+  registerOperationalStore(real);
+  resetOperationalStore();
+}
+
+{
   const id = "r-live-card";
   await routineStore.addRoutine({} as never, routine({ id, nextRunAt: new Date(clock).toISOString() }));
   for (let i = 0; i < 4; i++) await tick();

@@ -1,6 +1,6 @@
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
-import { asSurfaceMode, readThreadSeatStateValue, auditSurfaceMode, auditReadOrg, likePrefixPattern, argKeyNeedle, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type CredentialIntakeRow, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type ToolUsageEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow, type PersonOptOutRow, type PersonalBrowserRow, type PersonalWatchRow, type PersonalCoverRow, type QuestionLedgerRow, ATTENTION_COLUMNS, attentionPruneBefore, attentionRowFrom, type AttentionDbRow, DM_RULE_COLUMNS, dmRuleRowFrom, type DmRuleDbRow } from "./store.js";
+import { asSurfaceMode, readThreadSeatStateValue, auditSurfaceMode, auditReadOrg, likePrefixPattern, argKeyNeedle, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, ROUTINE_GUARDED_WRITE_ATTEMPTS, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type CredentialIntakeRow, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type RoutinePromptProvenance, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type ToolUsageEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow, type PersonOptOutRow, type PersonalBrowserRow, type PersonalWatchRow, type PersonalCoverRow, type QuestionLedgerRow, ATTENTION_COLUMNS, attentionPruneBefore, attentionRowFrom, type AttentionDbRow, DM_RULE_COLUMNS, dmRuleRowFrom, type DmRuleDbRow } from "./store.js";
 import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn, grantRefundTurnOrdinal } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
@@ -1671,6 +1671,34 @@ const UPSERT_SPEND =
      usd_micros_measured = spend_ledger.usd_micros_measured + excluded.usd_micros_measured,
      calls               = spend_ledger.calls + 1`;
 
+async function recordRoutinePromptRevisions(
+  client: PgClient,
+  org: string,
+  surfaceKey: string,
+  id: string,
+  existing: Routine,
+  updated: Routine,
+  patch: Partial<Routine>,
+  provenance: RoutinePromptProvenance | undefined,
+): Promise<void> {
+  if (patch.prompt === undefined || patch.prompt === existing.prompt) return;
+  const prior = await client.query("SELECT 1 FROM routine_prompt_revisions WHERE org_id = $1 AND surface_key = $2 AND routine_id = $3 LIMIT 1", [org, surfaceKey, id]);
+  const writes = routinePromptRevisionWrites({
+    existing,
+    updated,
+    ...(provenance ? { provenance } : {}),
+    hasPriorRevisions: prior.rows.length > 0,
+    nowIso: new Date().toISOString(),
+  });
+  for (const w of writes) {
+    await client.query(
+      `INSERT INTO routine_prompt_revisions (org_id, surface_key, routine_id, prompt, generation, authored_by, armed_by, approval_id, recorded_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [org, surfaceKey, id, w.prompt, w.generation, w.authoredBy ?? null, w.armedBy ?? null, w.approvalId ?? null, w.recordedAt],
+    );
+  }
+}
+
 function renderSpendConjuncts(conjuncts: string[], offset: number): string[] {
   let n = offset;
   return conjuncts.map((c) => c.replace("?", () => `$${++n}`));
@@ -2092,28 +2120,28 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       if (!row) return null;
       const existing = JSON.parse(row.data) as Routine;
       const updated: Routine = { ...existing, ...patch, id: existing.id, org: existing.org, surfaceKey: existing.surfaceKey };
-      if (patch.prompt !== undefined && patch.prompt !== existing.prompt) {
-        const prior = await client.query(
-          "SELECT 1 FROM routine_prompt_revisions WHERE org_id = $1 AND surface_key = $2 AND routine_id = $3 LIMIT 1",
-          [org, surfaceKey, id],
-        );
-        const writes = routinePromptRevisionWrites({
-          existing,
-          updated,
-          ...(provenance ? { provenance } : {}),
-          hasPriorRevisions: prior.rows.length > 0,
-          nowIso: new Date().toISOString(),
-        });
-        for (const w of writes) {
-          await client.query(
-            `INSERT INTO routine_prompt_revisions (org_id, surface_key, routine_id, prompt, generation, authored_by, armed_by, approval_id, recorded_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-            [org, surfaceKey, id, w.prompt, w.generation, w.authoredBy ?? null, w.armedBy ?? null, w.approvalId ?? null, w.recordedAt],
-          );
-        }
-      }
+      await recordRoutinePromptRevisions(client, org, surfaceKey, id, existing, updated, patch, provenance);
       await client.query("UPDATE routine SET data = $1 WHERE org_id = $2 AND id = $3", [JSON.stringify(updated), org, id]);
       return updated;
+    },
+
+    async updateRoutineIf(org, surfaceKey, id, precondition, patch, provenance) {
+      for (let attempt = 0; attempt < ROUTINE_GUARDED_WRITE_ATTEMPTS; attempt++) {
+        const { rows } = await client.query("SELECT data FROM routine WHERE org_id = $1 AND id = $2 AND surface_key = $3", [org, id, surfaceKey]);
+        const row = rows[0] as { data: string } | undefined;
+        if (!row) return { kind: "gone" };
+        const existing = JSON.parse(row.data) as Routine;
+        if (!precondition(existing)) return { kind: "refused", routine: existing };
+        const p = typeof patch === "function" ? patch(existing) : patch;
+        const updated: Routine = { ...existing, ...p, id: existing.id, org: existing.org, surfaceKey: existing.surfaceKey };
+        await recordRoutinePromptRevisions(client, org, surfaceKey, id, existing, updated, p, provenance);
+        const written = await client.query(
+          "UPDATE routine SET data = $1 WHERE org_id = $2 AND id = $3 AND surface_key = $4 AND data = $5 RETURNING id",
+          [JSON.stringify(updated), org, id, surfaceKey, row.data],
+        );
+        if (written.rows.length > 0) return { kind: "written", routine: updated };
+      }
+      throw new Error(`routine ${id} changed ${ROUTINE_GUARDED_WRITE_ATTEMPTS} times during one guarded write`);
     },
 
     async listRoutinePromptRevisions(org, surfaceKey, routineId) {

@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Routine } from "../routines/routine.js";
-import { asSurfaceMode, readThreadSeatStateValue, auditSurfaceMode, auditReadOrg, likePrefixPattern, argKeyNeedle, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type ChannelSessionRuntimeStamp, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow, type PersonOptOutRow, type PersonalBrowserRow, type PersonalWatchRow, type PersonalCoverRow, type QuestionLedgerRow, ATTENTION_COLUMNS, attentionPruneBefore, attentionRowFrom, type AttentionDbRow, DM_RULE_COLUMNS, dmRuleRowFrom, type DmRuleDbRow } from "./store.js";
+import { asSurfaceMode, readThreadSeatStateValue, auditSurfaceMode, auditReadOrg, likePrefixPattern, argKeyNeedle, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, ROUTINE_GUARDED_WRITE_ATTEMPTS, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type ChannelSessionRuntimeStamp, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type RoutinePromptProvenance, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow, type PersonOptOutRow, type PersonalBrowserRow, type PersonalWatchRow, type PersonalCoverRow, type QuestionLedgerRow, ATTENTION_COLUMNS, attentionPruneBefore, attentionRowFrom, type AttentionDbRow, DM_RULE_COLUMNS, dmRuleRowFrom, type DmRuleDbRow } from "./store.js";
 import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn, grantRefundTurnOrdinal } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
@@ -1407,6 +1407,34 @@ function dmAudienceRowFrom(r: { address: string; first_dm_at: string | null; sto
   };
 }
 
+function recordSqliteRoutinePromptRevisions(
+  handle: DatabaseSync,
+  org: string,
+  surfaceKey: string,
+  id: string,
+  existing: Routine,
+  updated: Routine,
+  patch: Partial<Routine>,
+  provenance: RoutinePromptProvenance | undefined,
+): void {
+  if (patch.prompt === undefined || patch.prompt === existing.prompt) return;
+  const prior = handle.prepare("SELECT 1 FROM routine_prompt_revisions WHERE org_id = ? AND surface_key = ? AND routine_id = ? LIMIT 1").get(org, surfaceKey, id);
+  const writes = routinePromptRevisionWrites({
+    existing,
+    updated,
+    ...(provenance ? { provenance } : {}),
+    hasPriorRevisions: prior !== undefined,
+    nowIso: new Date().toISOString(),
+  });
+  const insert = handle.prepare(
+    `INSERT INTO routine_prompt_revisions (org_id, surface_key, routine_id, prompt, generation, authored_by, armed_by, approval_id, recorded_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  for (const w of writes) {
+    insert.run(org, surfaceKey, id, w.prompt, w.generation, w.authoredBy ?? null, w.armedBy ?? null, w.approvalId ?? null, w.recordedAt);
+  }
+}
+
 export const sqliteOperationalStore: OperationalStore = {
   id: "sqlite",
   root: operationalRoot,
@@ -1516,27 +1544,29 @@ export const sqliteOperationalStore: OperationalStore = {
     if (!row) return null;
     const existing = JSON.parse(row.data) as Routine;
     const updated: Routine = { ...existing, ...patch, id: existing.id, org: existing.org, surfaceKey: existing.surfaceKey };
-    if (patch.prompt !== undefined && patch.prompt !== existing.prompt) {
-      const prior = handle
-        .prepare("SELECT 1 FROM routine_prompt_revisions WHERE org_id = ? AND surface_key = ? AND routine_id = ? LIMIT 1")
-        .get(org, surfaceKey, id);
-      const writes = routinePromptRevisionWrites({
-        existing,
-        updated,
-        ...(provenance ? { provenance } : {}),
-        hasPriorRevisions: prior !== undefined,
-        nowIso: new Date().toISOString(),
-      });
-      const insert = handle.prepare(
-        `INSERT INTO routine_prompt_revisions (org_id, surface_key, routine_id, prompt, generation, authored_by, armed_by, approval_id, recorded_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      );
-      for (const w of writes) {
-        insert.run(org, surfaceKey, id, w.prompt, w.generation, w.authoredBy ?? null, w.armedBy ?? null, w.approvalId ?? null, w.recordedAt);
-      }
-    }
+    recordSqliteRoutinePromptRevisions(handle, org, surfaceKey, id, existing, updated, patch, provenance);
     handle.prepare("UPDATE routine SET data = ? WHERE org_id = ? AND id = ?").run(JSON.stringify(updated), org, id);
     return updated;
+  },
+
+  async updateRoutineIf(org, surfaceKey, id, precondition, patch, provenance) {
+    const handle = getDb();
+    for (let attempt = 0; attempt < ROUTINE_GUARDED_WRITE_ATTEMPTS; attempt++) {
+      const row = handle.prepare("SELECT data FROM routine WHERE org_id = ? AND id = ? AND surface_key = ?").get(org, id, surfaceKey) as
+        | { data: string }
+        | undefined;
+      if (!row) return { kind: "gone" };
+      const existing = JSON.parse(row.data) as Routine;
+      if (!precondition(existing)) return { kind: "refused", routine: existing };
+      const p = typeof patch === "function" ? patch(existing) : patch;
+      const updated: Routine = { ...existing, ...p, id: existing.id, org: existing.org, surfaceKey: existing.surfaceKey };
+      recordSqliteRoutinePromptRevisions(handle, org, surfaceKey, id, existing, updated, p, provenance);
+      const info = handle
+        .prepare("UPDATE routine SET data = ? WHERE org_id = ? AND id = ? AND surface_key = ? AND data = ?")
+        .run(JSON.stringify(updated), org, id, surfaceKey, row.data);
+      if (info.changes > 0) return { kind: "written", routine: updated };
+    }
+    throw new Error(`routine ${id} changed ${ROUTINE_GUARDED_WRITE_ATTEMPTS} times during one guarded write`);
   },
 
   async listRoutinePromptRevisions(org, surfaceKey, routineId) {

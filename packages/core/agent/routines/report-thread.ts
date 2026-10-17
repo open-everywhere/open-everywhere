@@ -6,7 +6,7 @@ import { isThreadScopedWakeOrigin, isUnifiedWakeOrigin, unifiedThreadRef, type U
 import { wakeOriginCodec } from "../channels/wake-origin-codec.js";
 import { workRequestIdFor } from "../channels/work.js";
 import { triggerAuthors } from "../channels/wake-envelope.js";
-import { getRoutine, updateRoutine } from "./store.js";
+import { getRoutine, updateRoutineIf } from "./store.js";
 import { attentionResetPatch, attentionRuns, ROUTINE_CHECKIN_ACTION } from "./attention.js";
 
 export const REPORT_THREAD_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -66,13 +66,13 @@ export async function recordRoutineReportThreads(
 export interface ReportReplyDeps {
   readonly store: Pick<OperationalStore, "getRoutineReportThread">;
   readonly getRoutine: typeof getRoutine;
-  readonly updateRoutine: typeof updateRoutine;
+  readonly updateRoutineIf: typeof updateRoutineIf;
   readonly audit: (row: Parameters<typeof appendAudit>[0]) => Promise<unknown>;
   readonly now: () => Date;
 }
 
 export function liveReportReplyDeps(): ReportReplyDeps {
-  return { store: getOperationalStore(), getRoutine, updateRoutine, audit: appendAudit, now: () => new Date() };
+  return { store: getOperationalStore(), getRoutine, updateRoutineIf, audit: appendAudit, now: () => new Date() };
 }
 
 export type ReportReplyOutcome = "not-a-thread" | "no-report" | "gone" | "not-active" | "nothing-to-clear" | "checked-in" | "error";
@@ -96,9 +96,19 @@ export async function checkInFromReportReply(
     if (live === null) return "gone";
     if (live.status !== "active") return "not-active";
     if (live.attention === undefined) return "nothing-to-clear";
-    const runs = attentionRuns(live);
-    const updated = await deps.updateRoutine(input.org, row.routineSurface, row.routineId, attentionResetPatch());
-    if (updated === null) return "gone";
+    let runs = 0;
+    const written = await deps.updateRoutineIf(
+      input.org,
+      row.routineSurface,
+      row.routineId,
+      (r) => r.status === "active" && r.attention !== undefined,
+      (r) => {
+        runs = attentionRuns(r);
+        return attentionResetPatch();
+      },
+    );
+    if (written.kind === "gone") return "gone";
+    if (written.kind === "refused") return written.routine.status !== "active" ? "not-active" : "nothing-to-clear";
     await deps
       .audit({ ...whereOf(input.org, row.routineSurface), principalId: input.principalId, action: ROUTINE_CHECKIN_ACTION, detail: { id: row.routineId, via: "reply", resumed: false, runs } })
       .catch(() => undefined);

@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import type { Partition } from "../memory/partition.js";
 import { assertKnownModelRole, assertKnownSubscription, assertReportConsistent, type Routine } from "./routine.js";
 import { getOperationalStore } from "../operational/provider.js";
-import type { RoutinePromptProvenance, RoutinePromptRevisionRow } from "../operational/store.js";
+import type { RoutineGuardedWrite, RoutinePromptProvenance, RoutinePromptRevisionRow } from "../operational/store.js";
+
+export type { RoutineGuardedWrite };
 
 export function routinesRoot(): string {
   return getOperationalStore().root();
@@ -39,6 +41,17 @@ export function updateRoutine(
   provenance?: RoutinePromptProvenance,
 ): Promise<Routine | null> {
   return getOperationalStore().updateRoutine(org, surfaceKey, id, patch, provenance);
+}
+
+export function updateRoutineIf(
+  org: string,
+  surfaceKey: string,
+  id: string,
+  precondition: (live: Routine) => boolean,
+  patch: Partial<Routine> | ((live: Routine) => Partial<Routine>),
+  provenance?: RoutinePromptProvenance,
+): Promise<RoutineGuardedWrite> {
+  return getOperationalStore().updateRoutineIf(org, surfaceKey, id, precondition, patch, provenance);
 }
 
 export function listRoutinePromptRevisions(org: string, surfaceKey: string, routineId?: string): Promise<RoutinePromptRevisionRow[]> {
