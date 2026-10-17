@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "../audit/tool-action.js";
 import { defineHook } from "eve/hooks";
 import { tryPrincipalKey } from "../identity/principal-key.js";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
@@ -132,14 +133,14 @@ export async function observeLinkClaim(input: {
       });
     } catch (err) {
       log(`link claim ${claimed.id} recorded, but the confirmation notice could not be delivered: ${String(err)}`);
-      await auditLinkNoticeUndeliverable({ org: input.org, challenge: claimed, error: err }).catch(() => undefined);
+      await auditLinkNoticeUndeliverable({ org: input.org, challenge: claimed, error: auditErrorDetail(err).error }).catch(() => undefined);
     }
   } else {
     log(`link claim ${claimed.id} recorded — no DM-delivery arm for "${claimed.initiatingPlatform}", notice not attempted.`);
     await auditLinkNoticeUndeliverable({
       org: input.org,
       challenge: claimed,
-      error: new Error(`no DM-delivery arm for "${claimed.initiatingPlatform}" — notice not attempted`),
+      error: auditErrorDetail(`no DM-delivery arm for "${claimed.initiatingPlatform}" — notice not attempted`).error,
     }).catch(() => undefined);
   }
   log(`link claim recorded: ${tryPrincipalKey(input.platform, claimed.claimedTenant ?? input.tenant, input.authorId) ?? `${input.platform} account ${input.authorId}`} claimed challenge ${claimed.id} — awaiting the initiator's confirmation.`);

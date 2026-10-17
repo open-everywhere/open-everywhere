@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "../audit/tool-action.js";
 import { appendAudit } from "../audit/audit.js";
 import { parsePrincipalKey } from "../identity/principal-key.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -218,7 +219,7 @@ export async function discoverForPerson(
       return { ...cur, proposals: [...cur.proposals, record] };
     });
     if (!reserved) return late !== undefined ? { proposed: false, held: { work, reason: late } } : none;
-    const posted = await deps.propose({ org, principalKey, work }).catch((err: unknown) => ({ ok: false as const, reason: String(err) }));
+    const posted = await deps.propose({ org, principalKey, work }).catch((err: unknown) => ({ ok: false as const, reason: auditErrorDetail(err).error }));
     if (!posted.ok) {
       await update((cur) => ({ ...cur, proposals: cur.proposals.filter((p) => !(p.fingerprint === record.fingerprint && p.at === record.at)) })).catch(() => undefined);
       console.warn(`[open-everywhere:personal-watch] a routine proposal for ${principalKey} did not post: ${posted.reason}`);

@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "../audit/tool-action.js";
 import type { ConnectionAuthProvider, ConnectionAuthResolver, TokenResult } from "eve/connections";
 import type { SessionAuth, SessionContext } from "eve/context";
 import type { ApprovalStatus } from "eve/tools/approval";
@@ -387,7 +388,7 @@ export function userAwareProviderToken(
             subject: "user",
             outcome: authRequired ? "auth-required" : "error",
             name: e instanceof Error ? e.name : "unknown",
-            ...(authRequired ? {} : { message: e instanceof Error ? e.message.slice(0, 160) : String(e).slice(0, 160) }),
+            ...(authRequired ? {} : { message: auditErrorDetail(e).error }),
           });
           if (authRequired) {
             let url: string | undefined;

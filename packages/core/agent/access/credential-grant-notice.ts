@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "../audit/tool-action.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { canDeliverDirectMessage } from "../channels/post-arms.js";
 import { assertProactiveDmAllowed, deliverProactiveDm, dmDeliveryFooter, ProactiveDmRefusedError } from "../channels/dm-audience.js";
@@ -163,7 +164,7 @@ async function auditOwnerNotice(
       ownerPlatform,
       requester: grant.requesterPrincipalId,
       verb: grant.verb,
-      ...(err === undefined ? {} : { error: err instanceof Error ? err.name : "unknown" }),
+      ...(err === undefined ? {} : { error: auditErrorDetail(err instanceof Error ? err.name : "unknown").error }),
     });
   } catch (auditErr) {
     log(`grant.notified row was not written for grant ${grant.id}: ${String(auditErr)}`);

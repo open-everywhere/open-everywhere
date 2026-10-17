@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "../audit/tool-action.js";
 import { defineSchedule } from "eve/schedules";
 import { getConfig } from "../access/config.js";
 import { readAudit, appendAudit } from "../audit/audit.js";
@@ -54,7 +55,7 @@ async function slackSurfaceNames(rows: readonly AuditEntry[], post: Mode3Poster)
 }
 
 function errBrief(err: unknown): string {
-  return String(err instanceof Error ? err.message : err).split("\n")[0].slice(0, 160);
+  return auditErrorDetail(String(err instanceof Error ? err.message : err).split("\n")[0]).error;
 }
 
 interface OrgDigestOutcome {

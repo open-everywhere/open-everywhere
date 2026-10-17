@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "../audit/tool-action.js";
 import {
   credentialGrantDisclosureLine,
   credentialGrantRefusalMessage,
@@ -220,7 +221,7 @@ async function auditUndisclosedCall(
     requester: grant.requesterPrincipalId,
     resource: grantAuditResource(grant),
     verb: grant.verb,
-    ...(err === undefined ? {} : { error: err instanceof Error ? err.name : "unknown" }),
+    ...(err === undefined ? {} : { error: auditErrorDetail(err instanceof Error ? err.name : "unknown").error }),
   });
 }
 

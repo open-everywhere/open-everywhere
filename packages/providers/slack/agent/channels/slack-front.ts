@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "@open-everywhere/core/agent/adapter-api.js";
 import { parseSlackUserDeactivation, routeSlackUserDeactivation, type SlackUserDeactivation } from "./slack-offboarding.js";
 import type { OffboardOutcome } from "@open-everywhere/core/agent/adapter-api.js";
 import { POST, type Channel, type HttpRouteDefinition, type RouteHandlerArgs } from "eve/channels";
@@ -536,7 +537,7 @@ export function recordWakeFailure(key: string, err: unknown): void {
           action: "surface.wake_failed",
           detail: {
             fifoKey: key,
-            message: String(err instanceof Error ? err.message : err).slice(0, 500),
+            message: auditErrorDetail(err).error,
             ...(undeliveredAfterHeal
               ? { reason: "pruned-deployment-heal-retry-failed", remedy: "seat healed for its next wake; this message got no answer" }
               : {}),

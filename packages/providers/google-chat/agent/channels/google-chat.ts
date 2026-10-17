@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "@open-everywhere/core/agent/adapter-api.js";
 import { defineChannel, POST, type RouteHandlerArgs } from "eve/channels";
 import {
   appendAudit,
@@ -150,7 +151,7 @@ const channel = defineChannel({
             platform: "google-chat",
             workspace: policy.workspace,
             action: "google-chat.wake_failed",
-            detail: { error: err instanceof Error ? err.name : "error" },
+            detail: { error: auditErrorDetail(err instanceof Error ? err.name : "error").error },
           })
             .then(() => undefined)
             .catch(() => undefined),

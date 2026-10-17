@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "../audit/tool-action.js";
 import { appendAudit, noteAuditDrop } from "../audit/audit.js";
 import { personAddress, readDmAudience } from "../channels/dm-audience.js";
 import { deploymentOrg } from "../identity/binding.js";
@@ -247,7 +248,7 @@ export async function checkPerson(org: string, principalKey: string, state: Pers
       continue;
     }
     const live: PersonalWatchState = current;
-    const result = await deps.deliver({ org, principalKey, finding: f, calibrationAsk, now }).catch((err: unknown): WatchDeliveryResult => ({ ok: false, reason: String(err) }));
+    const result = await deps.deliver({ org, principalKey, finding: f, calibrationAsk, now }).catch((err: unknown): WatchDeliveryResult => ({ ok: false, reason: auditErrorDetail(err).error }));
     if (!result.ok) {
       const released = await updatePersonalWatch(
         org,

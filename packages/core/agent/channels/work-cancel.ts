@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "../audit/tool-action.js";
 import { getConfig } from "../access/config.js";
 import { criteriaDomain } from "../memory/domain.js";
 import { rosterHasPrincipal, tryPrincipalKey } from "../identity/principal-key.js";
@@ -164,7 +165,7 @@ export async function stopAnchoredWorkJobs(
         if (fresh) relayed += 1;
         else repeated += 1;
       } catch (err) {
-        await auditWorkCancel(deps, input.org, row, job.taskId, cancelId, workTokenForSeat(row.seatToken), { outcome: "error", via: "reaction", note: String(err).slice(0, 200) });
+        await auditWorkCancel(deps, input.org, row, job.taskId, cancelId, workTokenForSeat(row.seatToken), { outcome: "error", via: "reaction", note: auditErrorDetail(err).error });
       }
     }
   } catch (err) {

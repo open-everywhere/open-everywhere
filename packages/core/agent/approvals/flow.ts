@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "../audit/tool-action.js";
 import { createHash, randomUUID } from "node:crypto";
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
@@ -1463,7 +1464,7 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
     return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: await withRuleLine(outcome), executed: "ok" };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.failed", detail: { id: row.id, kind: row.kind, ...venue, error: message } });
+    await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.failed", detail: { id: row.id, kind: row.kind, ...venue, ...auditErrorDetail(err) } });
     emitTelemetry("oe.feature.used", { "oe.feature": "approval_decided", "oe.outcome": "failed" });
     return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: await withRuleLine(`FAILED: ${message}`), executed: "failed" };
   } finally {

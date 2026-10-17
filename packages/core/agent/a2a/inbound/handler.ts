@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "../../audit/tool-action.js";
 import { randomUUID } from "node:crypto";
 import { Role, TaskState, type Message, type Task } from "@a2a-js/sdk";
 import {
@@ -131,7 +132,7 @@ class InboundExecutor implements AgentExecutor {
     try {
       outcome = await this.deps.land({ caller: this.caller, taskId, text, wakeId });
     } catch (err) {
-      await this.deps.audit({ action: A2A_INBOUND_ACCEPTED_ACTION, caller: this.caller.name, detail: { caller: this.caller.name, taskId, wakeId, landed: false, reason: "forward-failed", error: err instanceof Error ? err.name : "error" } });
+      await this.deps.audit({ action: A2A_INBOUND_ACCEPTED_ACTION, caller: this.caller.name, detail: { caller: this.caller.name, taskId, wakeId, landed: false, reason: "forward-failed", error: auditErrorDetail(err instanceof Error ? err.name : "error").error } });
       finish(TaskState.TASK_STATE_FAILED, "The task could not be started. It may or may not run; do not resend it without checking with the operator.");
       return;
     }

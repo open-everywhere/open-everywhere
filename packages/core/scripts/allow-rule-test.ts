@@ -357,5 +357,43 @@ let ruleSource: PendingActionRow | undefined;
   ok(["applyAllowRule", "planAllowRuleClick", "auditAllowRuleRefused", "executeDomainRulePr"].every((x) => names.includes(x)), "one writer: the rule writers are on the human-only manifest, so no tool may import them");
 }
 
+{
+  const ECHO = "upstream said: Authorization: Bearer sk-live-abcdefghijklmnop rejected (token xoxb-1234567890-abcdefghijkl)";
+  registerActionKind({
+    kind: "echo.fail",
+    policy: "member",
+    summarize: () => ["echo"],
+    plainSummary: () => "Echo",
+    async execute() {
+      throw new Error(ECHO);
+    },
+  });
+  const failing = await stored(row({ kind: "echo.fail" }));
+  const f = await click(failing, "approve");
+  ok(f.outcome === "decided" && f.executed === "failed", "scrub: the throwing act is decided as failed");
+  const failedRow = (await readAudit({ org: ORG } as never)).find((x) => x.action === "approval.failed" && x.detail?.id === failing.id);
+  const failedError = String(failedRow?.detail?.error);
+  ok(failedRow !== undefined && failedError.includes("[redacted]"), `scrub: approval.failed carries the error, with the credential struck (got ${failedError})`);
+  ok(!failedError.includes("sk-live-abcdefghijklmnop") && !failedError.includes("xoxb-1234567890"), "scrub: neither echoed token reaches the approval.failed row");
+  ok(failedError.includes("upstream said"), "scrub (negative control): the diagnostic text around the token survives");
+
+  const store = getOperationalStore() as unknown as Record<string, unknown>;
+  const list = store["listDmRules"];
+  store["listDmRules"] = async () => {
+    throw new Error(ECHO);
+  };
+  try {
+    const target = await stored(row({ args: { what: "rule write that fails", tainted: false } }));
+    const w = await click(target, "approve_rule");
+    ok(w.outcome === "decided" && w.outcomeLine.includes("no rule was written"), "scrub: the failed rule write is reported on the card");
+    const refusedRow = (await readAudit({ org: ORG } as never)).find((x) => x.action === "approval.rule.refused" && x.detail?.id === target.id && x.detail?.reason === "write-failed");
+    const refusedError = String(refusedRow?.detail?.error);
+    ok(refusedRow !== undefined && refusedError.includes("[redacted]"), `scrub: the write-failed row carries the error, with the credential struck (got ${refusedError})`);
+    ok(!refusedError.includes("sk-live-abcdefghijklmnop") && !refusedError.includes("xoxb-1234567890"), "scrub: neither echoed token reaches the write-failed row");
+  } finally {
+    store["listDmRules"] = list;
+  }
+}
+
 console.log(`allow-rule-test: ${n} assertions passed`);
 process.exit(0);

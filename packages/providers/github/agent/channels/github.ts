@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "@open-everywhere/core/agent/adapter-api.js";
 import type { HttpRouteDefinition, RouteHandlerArgs } from "eve/channels";
 import { githubChannel, type GitHubChannel, type GitHubChannelState, type GitHubInboundContext, type GitHubComment, type GitHubInboundResult } from "eve/channels/github";
 import { buildGitHubAuth, githubAuthorFacts, githubBotMentioned } from "./github-identity.js";
@@ -294,7 +295,7 @@ export function liveGitHubSupervisorDeps(send: GitHubSend, ev: GitHubAmbientEven
           await auditSupervisorFailure(
             { org: deploymentOrg(), platform: "github", workspace: ev.owner, surface: surfaceKey },
             "surface.wake_failed",
-            { message: String(err instanceof Error ? err.message : err).slice(0, 500), wakeId: window.wakeId },
+            { message: auditErrorDetail(err).error, wakeId: window.wakeId },
           );
           throw err;
         }

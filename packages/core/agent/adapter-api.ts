@@ -255,7 +255,7 @@ export type { ActingIdentityVerdict, OwnAccountVendor } from "./connections/own-
 export { ownAccountVendorFor } from "./connections/own-account-vendors.js";
 export { assertGithubActingIdentity, GITHUB_CONNECTOR, GITHUB_OWN_ACCOUNT_VENDOR } from "./scm/github-acting-identity.js";
 
-export { auditToolAction } from "./audit/tool-action.js";
+export { auditToolAction, auditErrorDetail } from "./audit/tool-action.js";
 export { registerAuditDropCounter, appendAudit } from "./audit/audit.js";
 export type { AuditInput } from "./audit/audit.js";
 export { bootVerifyAuditChainTail } from "./audit/chain.js";

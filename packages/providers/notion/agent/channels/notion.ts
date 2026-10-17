@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "@open-everywhere/core/agent/adapter-api.js";
 import { defineChannel, POST, type RouteHandlerArgs } from "eve/channels";
 import {
   receiptEventTime,
@@ -323,7 +324,7 @@ async function deliverNotionAnswer(input: {
       { continuationToken: input.token, context: input.context },
     );
   } catch (err) {
-    const error = (err instanceof Error ? err.message : String(err)).slice(0, 300);
+    const error = auditErrorDetail(err).error;
     log(`answer ${input.answer.requestId} could NOT be delivered (${error}) — falling back to an ordinary wake, the question stays open`);
     await appendAudit({
       org: input.answerOrg,

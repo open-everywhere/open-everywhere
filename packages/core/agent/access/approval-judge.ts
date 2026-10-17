@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "../audit/tool-action.js";
 import { createHash } from "node:crypto";
 import { defineState } from "eve/context";
 import {
@@ -431,7 +432,7 @@ export async function runApprovalJudge(ctx: ApprovalJudgeContext, opts: RunAppro
       }
       return { verdict: parsed.verdict, source: "pass2", reasoning: parsed.reason, cacheKey, cacheHit: false, passes: 2, pass1, ...citation };
     } catch (e) {
-      return { verdict: "defer", source: "error", reasoning: `judge call failed: ${e instanceof Error ? e.message : String(e)}`, cacheKey, cacheHit: false, passes: 0 };
+      return { verdict: "defer", source: "error", reasoning: `judge call failed: ${auditErrorDetail(e).error}`, cacheKey, cacheHit: false, passes: 0 };
     }
   };
 
@@ -444,7 +445,7 @@ export async function runApprovalJudge(ctx: ApprovalJudgeContext, opts: RunAppro
     }, opts.timeoutMs);
   });
   try {
-    const result = await Promise.race([run().catch((e): ApprovalJudgeRun => ({ verdict: "defer", source: "error", reasoning: `judge run failed: ${e instanceof Error ? e.message : String(e)}`, cacheKey, cacheHit: false, passes: 0 })), timeout]);
+    const result = await Promise.race([run().catch((e): ApprovalJudgeRun => ({ verdict: "defer", source: "error", reasoning: `judge run failed: ${auditErrorDetail(e).error}`, cacheKey, cacheHit: false, passes: 0 })), timeout]);
     return result;
   } finally {
     if (timer !== undefined) clearTimeout(timer);

@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "../audit/tool-action.js";
 import { appendAudit } from "../audit/audit.js";
 import { purgeSubjectsCredentials } from "../credentials/purge.js";
 import { admittedTenantsFromConfig, multiTenantPrincipalsAllowed, splitTenantRungs } from "../access/tenant-admission.js";
@@ -66,7 +67,7 @@ export async function offboardDeactivatedAccount(report: DeactivationReport): Pr
     }
     const confirmation = await report.confirm().catch((err: unknown): DeactivationConfirmation => ({
       deactivated: false,
-      reason: `the live re-read failed (${err instanceof Error ? err.message : String(err)})`,
+      reason: `the live re-read failed (${auditErrorDetail(err).error})`,
     }));
     if (!confirmation.deactivated) {
       return await refuse(
@@ -113,7 +114,7 @@ export async function offboardDeactivatedAccount(report: DeactivationReport): Pr
     });
     return { kind: "purged-unlinked", credentialsPurged: purge.purged };
   } catch (err) {
-    return await refuse("error", err instanceof Error ? err.message : String(err)).catch(() => ({ kind: "refused" as const, reason: "error" }));
+    return await refuse("error", auditErrorDetail(err).error).catch(() => ({ kind: "refused" as const, reason: "error" }));
   }
 }
 

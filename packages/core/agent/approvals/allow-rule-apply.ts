@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "../audit/tool-action.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { DM_RULES_MAX_PER_ROOM, type DmRuleRow } from "../operational/store.js";
 import { appendAudit } from "../audit/audit.js";
@@ -73,7 +74,7 @@ export async function applyAllowRule(
     return await executeDomainRulePr({ proposal: plan.proposal, row, clickerId, venue }, deps.pr);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await auditAllowRuleRefused(row, clickerId, "write-failed", { ...venue, error: message });
+    await auditAllowRuleRefused(row, clickerId, "write-failed", { ...venue, ...auditErrorDetail(err) });
     return `no rule was written: ${message}`;
   }
 }

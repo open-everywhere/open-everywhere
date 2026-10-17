@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "../audit/tool-action.js";
 import { approvalPostDeps, hasApprovalCardPath, requestApproval, type RequestApprovalDeps } from "../approvals/flow.js";
 import { parsePrincipalKey } from "../identity/principal-key.js";
 import { resolveDeclaredTarget } from "../schedules/routine-dispatch.js";
@@ -31,7 +32,7 @@ export function proposeRoutineCard(edges: ProposalPostEdges = {}): ProposeRoutin
         principalId: person.id,
       });
     } catch (err) {
-      return { ok: false, reason: `the DM resolver failed: ${err instanceof Error ? err.message : String(err)}` };
+      return { ok: false, reason: `the DM resolver failed: ${auditErrorDetail(err).error}` };
     }
     if (!resolved.ok) return { ok: false, reason: resolved.reason };
     const { surfaceKey, dispatch } = resolved;
@@ -60,7 +61,7 @@ export function proposeRoutineCard(edges: ProposalPostEdges = {}): ProposeRoutin
       );
       return { ok: true, cardId: posted.id };
     } catch (err) {
-      return { ok: false, reason: `the card did not post: ${err instanceof Error ? err.message : String(err)}` };
+      return { ok: false, reason: `the card did not post: ${auditErrorDetail(err).error}` };
     }
   };
 }

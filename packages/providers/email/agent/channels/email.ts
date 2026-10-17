@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "@open-everywhere/core/agent/adapter-api.js";
 import { defineChannel, POST, type RouteHandlerArgs } from "eve/channels";
 import {
   appendAudit,
@@ -196,7 +197,7 @@ const channel = defineChannel({
               workspace: mail ? emailDomainOf(mail.inbox) || "-" : "-",
               action: "email.wake_failed",
               detail: {
-                error: err instanceof Error ? err.name : "error",
+                error: auditErrorDetail(err instanceof Error ? err.name : "error").error,
                 transport: verified.transport.id,
                 ...(mail ? { inbox: mail.inbox, deliveryId: mail.deliveryId } : {}),
               },

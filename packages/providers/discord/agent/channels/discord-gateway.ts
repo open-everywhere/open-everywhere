@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "@open-everywhere/core/agent/adapter-api.js";
 import { defineChannel, POST, type RouteHandlerArgs } from "eve/channels";
 import { buildDiscordAuth, type OpenEverywhereDiscordAuth } from "./discord-identity.js";
 import { threadParentChannelId } from "./discord-channel-info.js";
@@ -1049,7 +1050,7 @@ async function divertDiscordDmToWindow(input: {
     });
   } catch (err) {
     await auditSupervisorFailure({ org, platform: input.partition.platform, workspace: input.partition.workspace, surface: surfaceKey }, "surface.wake_failed", {
-      message: String(err instanceof Error ? err.message : err).slice(0, 500),
+      message: auditErrorDetail(err).error,
       wakeId,
       addressing: "direct-mention",
     });
@@ -1212,7 +1213,7 @@ export async function divertDiscordWakeToUnifiedWindow(input: {
       await auditSupervisorFailure(
         { org: deploymentOrg(), platform: input.partition.platform, workspace: input.partition.workspace, surface: domainSurfaceKey },
         "surface.wake_failed",
-        { message: String(err instanceof Error ? err.message : err).slice(0, 500), wakeId, addressing: input.addressing },
+        { message: auditErrorDetail(err).error, wakeId, addressing: input.addressing },
       );
       throw err;
     }

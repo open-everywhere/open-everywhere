@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "../audit/tool-action.js";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
 import type { BrokeredSecret } from "../access/credentials.js";
@@ -59,7 +60,7 @@ export function warmCredential<Ctx = void>(spec: WarmCredentialSpec<Ctx>): WarmC
       platform: spec.platform,
       workspace: "unknown",
       action: spec.auditAction,
-      detail: { credential: spec.name, ...(key ? { key } : {}), error: message.slice(0, 300) },
+      detail: { credential: spec.name, ...(key ? { key } : {}), error: auditErrorDetail(message).error },
     }).catch(() => undefined);
   }
 

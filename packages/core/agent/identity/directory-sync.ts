@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { appendAudit, readAudit } from "../audit/audit.js";
+import { auditErrorDetail } from "../audit/tool-action.js";
 import { directoryProvider, type DirectoryGrade, type DirectoryPerson, type DirectoryProvider } from "./directory.js";
 import { ensureLinkSet, confirmLinkedId, listLinkSetsWithIds, setLinkSetHold, suggestLinkedId, type LinkEvidence } from "./link-store.js";
 import { isTenantScopedPlatform, tryPrincipalKey } from "./principal-key.js";
@@ -481,7 +482,7 @@ export async function runDirectorySync(opts: { readonly orgs?: readonly string[]
         workspace: provider.id,
         principalId: `${DIRECTORY_SYNC_ACTOR}:${provider.id}`,
         action: DIRECTORY_SYNC_ACTION,
-        detail: { outcome: `failed: ${String(err instanceof Error ? err.message : err).split("\n")[0].slice(0, 160)}`, provider: provider.id, startedAt: failedAt, finishedAt: failedAt },
+        detail: { outcome: `failed: ${auditErrorDetail(String(err instanceof Error ? err.message : err).split("\n")[0]).error}`, provider: provider.id, startedAt: failedAt, finishedAt: failedAt },
       });
     }
   }

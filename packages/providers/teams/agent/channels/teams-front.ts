@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "@open-everywhere/core/agent/adapter-api.js";
 import { POST, type Channel, type HttpRouteDefinition, type RouteHandlerArgs } from "eve/channels";
 import { verifyTeamsRequest, parseTeamsActivity, teamsThreadRootActivityId, isTeamsInputResponseActivity, type TeamsMessageActivity } from "eve/channels/teams";
 import { sendTeamsActivityBackedOff } from "./teams-connector.js";
@@ -482,7 +483,7 @@ function recordTeamsWakeFailure(key: string, err: unknown): void {
     workspace: key.split("/")[1] ?? "unknown",
     surface: key,
     action: "surface.wake_failed",
-    detail: { fifoKey: key, message: String(err instanceof Error ? err.message : err).slice(0, 500) },
+    detail: { fifoKey: key, message: auditErrorDetail(err).error },
   }).catch(() => undefined);
 }
 

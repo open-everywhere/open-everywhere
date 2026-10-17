@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "../audit/tool-action.js";
 import { defineChannel, GET, POST } from "eve/channels";
 import type { ChannelEvents, Session, RouteHandlerArgs } from "eve/channels";
 import { defineState } from "eve/context";
@@ -267,7 +268,7 @@ function failureDiag(code: string | undefined, details: Record<string, unknown> 
   if (details && typeof details === "object") {
     for (const k of ["errorId", "name", "statusCode", "generationId", "gatewayName", "gatewayType", "upstreamType", "upstreamStatusCode", "upstreamMessage"]) {
       const v = details[k];
-      if (typeof v === "string" && v.length > 0) out[k] = v.slice(0, 200);
+      if (typeof v === "string" && v.length > 0) out[k] = auditErrorDetail(v).error;
       else if (typeof v === "number" && Number.isFinite(v)) out[k] = String(v);
     }
   }
@@ -561,7 +562,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         surface,
         action: "unified.supervisor_turn_failed",
         detail: {
-          message: String(data.message).slice(0, 500),
+          message: auditErrorDetail(data.message).error,
           ...failureDiag(data.code, data.details),
           ...unresumableAuditDetail(data.message, data.code),
         },
@@ -577,7 +578,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         surface,
         action: "unified.supervisor_session_failed",
         detail: {
-          message: String(data.message).slice(0, 500),
+          message: auditErrorDetail(data.message).error,
           ...failureDiag(data.code, data.details),
           ...unresumableAuditDetail(data.message, data.code),
         },
@@ -795,7 +796,7 @@ export async function divertInboundToUnifiedWindow(
       await audit({ routed: "none", reason: "owner-divert-rate-limited", ownerId: route.token, grain: route.grain, attempts: err.attempts, waitedMs: err.waitedMs });
       throw err;
     }
-    const errMsg = (err instanceof Error ? err.message : String(err)).slice(0, 300);
+    const errMsg = auditErrorDetail(err).error;
     await audit({ routed: "standing", reason: "owner-divert-failed", ownerId: route.token, grain: route.grain, error: errMsg });
     return divertToUnifiedWindow(receive, input);
   }

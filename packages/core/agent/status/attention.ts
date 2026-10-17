@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "../audit/tool-action.js";
 import { defineState } from "eve/context";
 import { getOperationalStore } from "../operational/provider.js";
 import type { AttentionRow, AttentionStateName } from "../operational/store.js";
@@ -152,7 +153,7 @@ export async function recordAttention(where: AttentionWhere, sessionId: string, 
         ...auditWhere,
         principalId: where.personId,
         action: ATTENTION_PING_FAILED_ACTION,
-        detail: { sessionId, reason: err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200) },
+        detail: { sessionId, reason: auditErrorDetail(err).error },
       }).catch(() => undefined);
     }
     console.warn(`[open-everywhere:attention] the blocked ping did not land: ${String(err)}`);

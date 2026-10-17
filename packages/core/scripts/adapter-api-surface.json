@@ -669,6 +669,7 @@
     "attestedFireCreatorId",
     "auditAmbientSkip",
     "auditChannelReadRefusal",
+    "auditErrorDetail",
     "auditNameDropSilent",
     "auditNameDropWoke",
     "auditNoReplySentinelObserved",

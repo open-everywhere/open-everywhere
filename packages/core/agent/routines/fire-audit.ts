@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "../audit/tool-action.js";
 import { appendAudit, readAudit, type AuditInput } from "../audit/audit.js";
 import type { TeamsMembershipUnresolved } from "../channels/teams-bridge.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -196,7 +197,7 @@ export async function auditRoutineFireLost(r: Routine, error: string, deps: Rout
       action: ROUTINE_AUDIT.fireLost,
       detail: {
         routineId: r.id,
-        error: error.slice(0, 300),
+        error: auditErrorDetail(error).error,
         sessionId: null,
         note: "delivery rejected — no session started, so no sessionId exists for this fire",
       },

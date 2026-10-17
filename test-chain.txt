@@ -140,6 +140,8 @@ lint:audit-query-docs
 test:audit-query-docs-lint
 lint:audit-actions
 test:audit-actions-lint
+lint:audit-error-detail
+test:audit-error-detail-lint
 lint:coverage-matrix
 test:coverage-matrix
 lint:approver-policy

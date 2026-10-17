@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "../audit/tool-action.js";
 import type { CollectedInput } from "./collector.js";
 
 export interface RoutineGateVerdict {
@@ -85,7 +86,7 @@ export function evaluateRoutineGate(name: string | undefined, collected: readonl
   try {
     verdict = def.decide(collected);
   } catch (err) {
-    return { fire: false, gate: name, why: `the condition gate threw — failing closed: ${String(err)}` };
+    return { fire: false, gate: name, why: `the condition gate threw — failing closed: ${auditErrorDetail(err).error}` };
   }
   if (typeof verdict?.fire !== "boolean" || typeof verdict?.why !== "string" || verdict.why.length === 0) {
     return { fire: false, gate: name, why: "the condition gate returned no usable verdict — failing closed" };

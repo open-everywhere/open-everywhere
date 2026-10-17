@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "../audit/tool-action.js";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -993,7 +994,7 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
             workspace: "control",
             principalId: actor,
             action: "memory.delete",
-            detail: { silo: a.silo, relPath: a.relPath, deleted: false, error: message },
+            detail: { silo: a.silo, relPath: a.relPath, deleted: false, ...auditErrorDetail(e) },
           });
           return errorResult(`memory_delete_file failed: ${message}`);
         }

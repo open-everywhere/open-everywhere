@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "../audit/tool-action.js";
 import { wrapUntrusted } from "../access/untrusted.js";
 import { classifyConnectorOpTier } from "../access/consequence.js";
 import { connectorToolPermissionKind, routinePermissionKind } from "../approvals/session-grant.js";
@@ -227,7 +228,7 @@ export async function collectRoutineInputs(input: {
         out.push({ name, ok: false, failure: describeCollectorFailure("timeout", def.timeoutMs ?? COLLECTOR_DEFAULT_TIMEOUT_MS) });
         continue;
       }
-      out.push({ name, ok: false, failure: describeCollectorFailure("read_failed"), detail: String(err).slice(0, COLLECTOR_DETAIL_MAX_CHARS) });
+      out.push({ name, ok: false, failure: describeCollectorFailure("read_failed"), detail: auditErrorDetail(err).error.slice(0, COLLECTOR_DETAIL_MAX_CHARS) });
     }
   }
   return out;

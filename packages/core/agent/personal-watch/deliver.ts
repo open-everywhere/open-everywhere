@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "../audit/tool-action.js";
 import type { RouteHandlerArgs } from "eve/channels";
 import type { ScheduleHandlerArgs } from "eve/schedules";
 import { wrapUntrusted } from "../access/untrusted.js";
@@ -57,7 +58,7 @@ export async function deliverWatchNudge(edges: WatchDeliveryEdges, d: WatchDeliv
       principalId: person.id,
     });
   } catch (err) {
-    return { ok: false, reason: `the DM resolver failed: ${err instanceof Error ? err.message : String(err)}` };
+    return { ok: false, reason: `the DM resolver failed: ${auditErrorDetail(err).error}` };
   }
   if (!resolved.ok) return { ok: false, reason: resolved.reason };
   const { surfaceKey, dispatch: dest } = resolved;
@@ -78,7 +79,7 @@ export async function deliverWatchNudge(edges: WatchDeliveryEdges, d: WatchDeliv
       dest.origin !== undefined && (await divertTriggeredFire(edges.to, { message, surfaceKey, origin: dest.origin, auth, wakeId: mintWakeId() }));
     if (!diverted) await edges.to(dest.channel, dest.target).send(message, { auth });
   } catch (err) {
-    return { ok: false, reason: `the send failed: ${err instanceof Error ? err.message : String(err)}` };
+    return { ok: false, reason: `the send failed: ${auditErrorDetail(err).error}` };
   }
   return { ok: true, surfaceKey };
 }

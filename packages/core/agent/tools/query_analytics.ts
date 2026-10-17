@@ -7,7 +7,7 @@ import { schemaCard } from "../analytics/registry.js";
 import { executeAnalytics } from "../analytics/execute.js";
 import { resolveAssumedModel } from "../spend/reporting.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { auditToolAction } from "../audit/tool-action.js";
+import { auditErrorDetail, auditToolAction } from "../audit/tool-action.js";
 import { z } from "zod";
 
 export default defineTool({
@@ -32,7 +32,7 @@ export default defineTool({
     try {
       scope = resolveAnalyticsScope(ctx, input.scope);
     } catch (err) {
-      await auditToolAction(ctx, "analytics.refused", { dataset: input.dataset, scope: input.scope, mode: input.mode, reason: String(err instanceof Error ? err.message : err) });
+      await auditToolAction(ctx, "analytics.refused", { dataset: input.dataset, scope: input.scope, mode: input.mode, reason: auditErrorDetail(err).error });
       throw err;
     }
 
@@ -52,7 +52,7 @@ export default defineTool({
       const compiled = compileAnalyticsQuery(effective, scope, domains);
       result = await executeAnalytics(compiled, { store: getOperationalStore(), domains, assumed: resolveAssumedModel() });
     } catch (err) {
-      await auditToolAction(ctx, "analytics.refused", { dataset: input.dataset, scope: input.scope, mode: effective.mode, reason: String(err instanceof Error ? err.message : err) });
+      await auditToolAction(ctx, "analytics.refused", { dataset: input.dataset, scope: input.scope, mode: effective.mode, reason: auditErrorDetail(err).error });
       throw err;
     }
 

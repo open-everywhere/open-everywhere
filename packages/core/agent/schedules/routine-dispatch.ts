@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "../audit/tool-action.js";
 import type { Channel } from "eve/channels";
 import type { DiscordReceiveTarget } from "eve/channels/discord";
 import type { SessionMode } from "../access/resolver.js";
@@ -178,7 +179,7 @@ export async function resolveDeclaredTarget(spec: DeclaredTargetSpec): Promise<R
   try {
     resolved = await arm(spec);
   } catch (err) {
-    return { ok: false, reason: `the ${spec.platform} target resolver failed: ${err instanceof Error ? err.message : String(err)}` };
+    return { ok: false, reason: `the ${spec.platform} target resolver failed: ${auditErrorDetail(err).error}` };
   }
   if (!resolved.ok) return resolved;
   const dispatch = resolveSurfaceTarget(resolved.facts);

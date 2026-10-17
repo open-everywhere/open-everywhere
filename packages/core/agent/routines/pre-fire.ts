@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "../audit/tool-action.js";
 import { auditCollectorFailures } from "./fire-audit.js";
 import { COLLECTOR_DETAIL_MAX_CHARS, collectRoutineInputs, collectionCarriesData, describeCollectorFailure, type CollectedInput } from "./collector.js";
 import { evaluateRoutineGate, type RoutineGateOutcome } from "./gate.js";
@@ -22,7 +23,7 @@ export async function runPreFire(r: Routine, nowIso: string): Promise<PreFireOut
     const heldKinds = names.length === 0 ? [] : await routinePermissionKinds(r.org, r, nowIso).catch(() => []);
     collected = await collectRoutineInputs({ org: r.org, routineId: r.id, names, heldKinds });
   } catch (err) {
-    collectionError = String(err);
+    collectionError = auditErrorDetail(err).error;
     collected = collectionFailed(names, collectionError);
   }
 
@@ -53,8 +54,8 @@ function collectionFailed(names: readonly string[], error: string): readonly Col
 
 export function preFireFallback(r: Routine, err: unknown): PreFireOutcome {
   return {
-    collected: collectionFailed(r.collectors ?? [], String(err)),
-    gate: { fire: r.gate === undefined, gate: r.gate, why: `the pre-fire step failed — failing closed: ${String(err)}` },
+    collected: collectionFailed(r.collectors ?? [], auditErrorDetail(err).error),
+    gate: { fire: r.gate === undefined, gate: r.gate, why: `the pre-fire step failed — failing closed: ${auditErrorDetail(err).error}` },
     tainted: false,
   };
 }

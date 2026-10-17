@@ -275,7 +275,11 @@ The smallest seam in the tree, and the reference implementation of all five rule
 (`packages/core/agent/audit/tool-action.ts`) reduces a caught error to the one short, scrubbed
 line an audit row carries. An upstream error string is provider-echoed and
 attacker-influenceable, so it is treated as untrusted text, and a credential shape a provider
-echoes back must not land in our own audit store.
+echoes back must not land in our own audit store. The writers OPE-2545 swept go through it, so an
+arm reaches their rows. `npm run lint:audit-error-detail` refuses a writer that
+it can see skipping the reducer (OPE-2545). The lint is a text scan with named limits
+([Audit & provenance](../security/audit-and-provenance.md#inside-the-append-path)), so an arm is
+not a promise about every row.
 
 **The built-in arm.** `SECRET_SHAPES` — five prefix-anchored regexes covering the credential
 families this deployment holds (`Bearer`, `sk-`, `xox*-`, `gh*_`, `AKIA`). Conservative by

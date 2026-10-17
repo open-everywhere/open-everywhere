@@ -241,12 +241,17 @@ outside text:
 
 - The `reply.provenance` row's `detail.sources` keeps record titles, each up to 120 characters and
   the whole line up to 160. A person outside the deployment can write a title.
-- The `error` field of a row that records a caught error keeps the upstream error text. Only a
-  writer that uses `auditErrorDetail` scrubs credential shapes from it and caps it at 300
-  characters. Other writers do not scrub the text, and some do not cap it. For example, the
-  `approval.failed`, `memory.delete` and `egress.policy` rows keep the raw message. An
-  `approval.approved` row's `outcome` can repeat that message. So an upstream error that echoes a
-  credential can put it in the log.
+- The `error` field of a row that records a caught error keeps the upstream error text. The writers
+  OPE-2545 swept pass that text through `auditErrorDetail`, which strikes the credential shapes it
+  knows and caps the text at 300 characters. `npm run lint:audit-error-detail` refuses a
+  writer that it can see storing error text any other way. 🔴 The lint is a text scan, and it does
+  not see every writer. It misses error text held in a variable under a key that is not
+  error-named, text that a helper renders, a record built under a name with no `detail` in it, a
+  spread of an object built elsewhere, and a template nested in a template. The scrub knows five
+  prefix shapes plus any `auditScrub` arm, so a credential of another shape still lands. The
+  `eve.patch.refused` and `eve.patch.unverifiable` boot rows stay unscrubbed, because their module
+  must take no new import. An `approval.approved` row's `outcome` keeps the act's own result text, and nothing
+  scrubs it.
 - The `frames` field of a `delegation.worker_turn_failed` row can carry up to 120 characters of
   chosen text in each of eight frames.
 

@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "../audit/tool-action.js";
 import { appendAudit } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
 import type { OperationalStore } from "../operational/store.js";
@@ -260,7 +261,7 @@ export async function drainGenerationRetirements(
         await auditRetirement(p, deps, GENERATION_RETIRE_SKIPPED_AUDIT_ACTION, { skipped: "no-active-session", status: outcome.status ?? "" });
       }
     } catch (err) {
-      const error = (err instanceof Error ? err.message : String(err)).slice(0, 300);
+      const error = auditErrorDetail(err).error;
       console.warn(`[open-everywhere:generation-retirement] reset refused for ${p.token}: ${error} — the generation's workers stay parked`);
       await auditRetirement(p, deps, GENERATION_RETIRE_SKIPPED_AUDIT_ACTION, { skipped: "reset-failed", error });
     }

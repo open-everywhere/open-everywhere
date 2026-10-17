@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "@open-everywhere/core/agent/adapter-api.js";
 import { SLACK_EVE_CREDENTIALS } from "../setup/eve-credentials.js";
 import {
   slackChannel,
@@ -176,7 +177,7 @@ async function recordQuietFailure(
       surface: p.surface,
       ...auditSurfaceModeFrom(bindable),
       action: "surface.quiet_fail",
-      detail: { event, threadTs: state.threadTs ?? undefined, message: message.slice(0, 500) },
+      detail: { event, threadTs: state.threadTs ?? undefined, message: auditErrorDetail(message).error },
     });
   } catch (err) {
     console.warn(`[open-everywhere:slack] quiet-fail audit write failed: ${String(err)}`);

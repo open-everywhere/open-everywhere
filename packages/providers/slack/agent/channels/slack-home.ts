@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   appendAudit,
   bindFrom,
@@ -343,7 +344,7 @@ async function publishHome(userId: string, viewer: HomeViewer, deps: SlackHomeDe
       trust: viewer.trust,
       domains: viewer.domains.length,
       notice: notice !== undefined,
-      ...(ok ? {} : { error: typeof res?.error === "string" ? res.error : "no response" }),
+      ...(ok ? {} : { error: auditErrorDetail(typeof res?.error === "string" ? res.error : "no response").error }),
     },
   }).catch(() => undefined);
   return ok;

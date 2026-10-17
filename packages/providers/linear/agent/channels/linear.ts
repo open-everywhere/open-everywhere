@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   linearChannel,
   parseLinearWebhookEvent,
@@ -549,7 +550,7 @@ export function liveLinearSupervisorDeps(
           await auditSupervisorFailure(
             { org: deploymentOrg(), platform: "linear", workspace: organizationId, surface: surfaceKey },
             "surface.wake_failed",
-            { message: String(err instanceof Error ? err.message : err).slice(0, 500), wakeId: window.wakeId },
+            { message: auditErrorDetail(err).error, wakeId: window.wakeId },
           );
           throw err;
         }
@@ -920,7 +921,7 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
       workspace: organizationId,
       ...(surfaceKey === undefined ? {} : { surface: surfaceKey }),
       action: "linear.mention_divert_failed",
-      detail: { agentSessionId, error: String(err).slice(0, 300) },
+      detail: { agentSessionId, error: auditErrorDetail(err).error },
     }).catch(() => undefined);
     await createLinearActivity({ credentials: linearCredentialsForOrg(organizationId), activity: { agentSessionId, content: { type: "error", body: LINEAR_MENTION_DIVERT_FAILED_TEXT } } }).catch(() => undefined);
   }

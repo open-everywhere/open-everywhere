@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "../audit/tool-action.js";
 import { appendAudit, readAudit } from "../audit/audit.js";
 import { resolveTurnAnchor, TURN_ANCHOR_TTL_MS, type TurnAnchorQuery } from "./turn-registry.js";
 import { isWorkWindowToken } from "./window-key.js";
@@ -105,7 +106,7 @@ export async function cancelAnchoredTurn(input: CancelAnchoredTurnInput): Promis
     const res = await input.attachSession(anchor.sessionId).cancel({ turnId: anchor.turnId });
     status = typeof res?.status === "string" ? res.status : undefined;
   } catch (err) {
-    await auditCancel(input, { outcome: "error", anchorSurfaceKey: anchor.surfaceKey, note: String(err), sessionId: anchor.sessionId, turnId: anchor.turnId });
+    await auditCancel(input, { outcome: "error", anchorSurfaceKey: anchor.surfaceKey, note: auditErrorDetail(err).error, sessionId: anchor.sessionId, turnId: anchor.turnId });
     return { outcome: "error", message: "Couldn't reach that turn to stand it down — try again in a moment.", sessionId: anchor.sessionId, turnId: anchor.turnId };
   }
 

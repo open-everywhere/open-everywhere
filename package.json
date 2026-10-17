@@ -76,6 +76,8 @@
     "coverage-board": "tsx scripts/coverage-board.ts",
     "test:coverage-matrix": "NODE_NO_WARNINGS=1 tsx scripts/coverage-matrix-test.ts",
     "test:audit-actions-lint": "NODE_NO_WARNINGS=1 tsx scripts/audit-actions-lint-test.ts",
+    "lint:audit-error-detail": "tsx scripts/audit-error-detail-lint.ts",
+    "test:audit-error-detail-lint": "NODE_NO_WARNINGS=1 tsx scripts/audit-error-detail-lint-test.ts",
     "test:audit-query-docs-lint": "NODE_NO_WARNINGS=1 tsx scripts/audit-query-docs-lint-test.ts",
     "lint:approver-policy": "tsx scripts/approver-policy-docs.ts --check",
     "lint:contributions": "tsx scripts/contributions-lint.ts",

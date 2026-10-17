@@ -1,3 +1,4 @@
+import { auditErrorDetail } from "../audit/tool-action.js";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
@@ -485,8 +486,8 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
         reason,
         policyFingerprint: fingerprint,
         ...writeHostsAuditFields(writeHosts),
-        ...(compileError ? { error: compileError } : {}),
-        ...(enforceError ? { enforceError } : {}),
+        ...(compileError ? { error: auditErrorDetail(compileError).error } : {}),
+        ...(enforceError ? { enforceError: auditErrorDetail(enforceError).error } : {}),
         ...(abortError ? { aborted: true } : {}),
         ...(enforceError && phase === "turn.started" ? { reapplyFailed: true } : {}),
       },

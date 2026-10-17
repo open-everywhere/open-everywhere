@@ -591,6 +591,22 @@ ordinary writer uses.
   space, then truncates. The order matters: the scrub sees the whole message, so a redaction arm
   cannot be evaded by length. An upstream error string is attacker-influenceable and
   provider-echoed, so the row treats it as untrusted text — a diagnostic, never an instruction.
+- **The writers OPE-2545 swept use that reducer, and a lint checks the writers it can see.**
+  `npm run lint:audit-error-detail` (`scripts/audit-error-detail-lint.ts`, OPE-2545) reads every
+  audit write in `packages/core/agent` and the provider bundles. It refuses an error-named field
+  (`error`, `…Error`) whose value is not `auditErrorDetail(…).error`, a literal, or a name bound to
+  one. Under any other key, it refuses a `.message`, `.stack` or `String(err)` read, also inside a
+  template's `${…}`. A truncation is not a scrub, so `String(err).slice(0, 300)` is refused too.
+  The log cannot be edited, so a token that lands there stays. 🔴 The lint is a text scan of
+  shapes, not of data flow. Its test pins five shapes it cannot see: error text held in a variable
+  or a parameter under a key that is not error-named, text a helper renders, a record built under
+  a name with no `detail` in it, a spread of an object built elsewhere, and a template nested in a
+  template. The OPE-2545 review found writers of those shapes by hand and scrubbed each one where
+  its error text is built, so a green lint is not proof that every row is scrubbed. Two rows stay
+  unscrubbed on purpose, both in `access/eve-patch-probe-boot.ts`: `eve.patch.refused` carries text
+  the product writes itself, and `eve.patch.unverifiable` carries the `require.resolve` error for
+  eve's own install path. That module evaluates first in the import graph, behind a top-level
+  `await`, so it takes no new import that could close an init cycle.
 - **The backing location is readable.** `auditRoot` reports where the log writes — the SQLite file
   path, or `postgres`. Logs and admin views print it, so a reader can tell which store answered
   before they read an empty result as an empty log.
