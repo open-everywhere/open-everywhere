@@ -884,6 +884,10 @@ export { surfaceAppManifest, surfaceAppManifestSurfaces, surfaceAppNameProblem, 
 export { surfaceAppPackageSource, surfaceAppPackageSurfaces } from "./ops/surface-manifest.js";
 export type { SurfaceAppPackageSource } from "./ops/surface-manifest.js";
 export type { SurfaceAppManifestSource, SurfaceAppManifest } from "./ops/surface-manifest.js";
+export { registerSurfaceAppCreateFlow, surfaceAppCreateFlow, surfaceAppCreateSurfaces } from "./ops/surface-app-create.js";
+export type { SurfaceAppCreateFlow, SurfaceAppCreateResult, SurfaceAppCreateVariant } from "./ops/surface-app-create.js";
+export { scmAppPermissionFloor, unionPermissions, SCM_MINT_JOB_SETS } from "./scm/app-permissions.js";
+export type { PermissionGrade } from "./scm/app-permissions.js";
 export { registerPreflightProbe } from "./ops/probes.js";
 export type { PreflightProbe } from "./ops/probes.js";
 

@@ -19,3 +19,4 @@ test:github-wake-failure-audit
 test:github-rate-limit
 test:github-write-seam
 test:github-reaction-scope
+test:github-app-manifest

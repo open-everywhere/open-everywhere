@@ -28,11 +28,19 @@ import {
   surfaceAppPackageSource,
   surfaceAppPackageSurfaces,
 } from "./surface-manifest.js";
+import {
+  startSurfaceAppCreate,
+  surfaceAppCreateFlow,
+  surfaceAppCreateNameProblem,
+  surfaceAppCreateStatus,
+  surfaceAppCreateSurfaces,
+} from "./surface-app-create.js";
 
 export const OPS_TOOL_NAMES = [
   "preflight",
   "surface_manifest",
   "surface_app_package",
+  "surface_app_create",
   "scaffold_env",
   "scaffold_credential_key",
   "secret_set",
@@ -315,6 +323,116 @@ export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
         findings: built.findings,
         steps: built.steps,
         manifest: built.manifest,
+      });
+    },
+  );
+
+  server.registerTool(
+    "surface_app_create",
+    {
+      title: "Create a surface's app in one click",
+      description:
+        "Create a surface's app from a generated manifest (github). action start: open a local page that sends the manifest to the " +
+        "vendor; hand the person `openUrl` to open in a browser on THIS computer. They confirm the app on the vendor's site, and the " +
+        "vendor's keys go straight into the project's .env.local — no value is ever returned. action status: whether the person " +
+        "finished, which env names were written, and the app's install link. Refuses to overwrite env names the file already holds " +
+        "unless replace is true. Needs baseUrl (the deployed host the webhook points at).",
+      inputSchema: {
+        surface: z.string().describe('the surface, e.g. "github"'),
+        action: z.enum(["start", "status"]).default("start"),
+        baseUrl: z.string().optional().describe("start: this deployment's public origin, e.g. https://oe.example.com"),
+        variant: z.string().optional().describe("start: the shape of app to create (default: the surface's first; the reply lists them)"),
+        appName: z.string().optional().describe("start: the app's name (default: the configured identity.name, else the project name)"),
+        owner: z.string().optional().describe("start: the organization to create the app under (default: the person's own account)"),
+        replace: z.boolean().optional().describe("start: overwrite env names the file already holds — the old app's keys are lost from the file"),
+        path: z.string().optional().describe("override the target env file (default <project>/.env.local)"),
+      },
+    },
+    async (a) => {
+      const flow = surfaceAppCreateFlow(a.surface);
+      if (flow === undefined) {
+        const available = surfaceAppCreateSurfaces();
+        return json({
+          ok: false,
+          surface: a.surface,
+          available,
+          note:
+            available.length === 0
+              ? "no surface registered a one-click app flow in this process."
+              : `no one-click app flow is registered for "${a.surface}". Registered: ${available.join(", ")}. For another surface, use surface_manifest or surface_app_package.`,
+        });
+      }
+      const variants = flow.variants.map((v) => ({ name: v.name, summary: v.summary }));
+      if (a.action === "status") {
+        const status = surfaceAppCreateStatus(a.surface);
+        if (status === undefined) return json({ ok: false, surface: a.surface, note: "no flow was started in this ops server. Call with action start." });
+        return json({ ok: status.state !== "failed" && status.state !== "expired", ...status, ...(status.state === "done" ? { after: flow.after } : {}) });
+      }
+      if (a.baseUrl === undefined) return json({ ok: false, surface: a.surface, note: "start needs baseUrl: the app's webhook points at the deployed host. Deploy first." });
+      const host = normalizeDeployHost(a.baseUrl);
+      if (host === undefined) {
+        return json({ ok: false, surface: a.surface, note: `refusing the baseUrl you passed (${a.baseUrl.length} characters) — it is not a host.` });
+      }
+      const variant = a.variant ?? flow.variants[0]?.name;
+      if (variant === undefined || !flow.variants.some((v) => v.name === variant)) {
+        return json({ ok: false, surface: a.surface, variants, note: "unknown variant. Pass one of the names in variants." });
+      }
+      if (a.appName !== undefined) {
+        const problem = surfaceAppCreateNameProblem(flow, a.appName);
+        if (problem !== undefined) return json({ ok: false, surface: a.surface, note: `refusing the appName: ${problem}.` });
+      }
+      if (a.owner !== undefined) {
+        const problem = flow.ownerProblem(a.owner);
+        if (problem !== undefined) return json({ ok: false, surface: a.surface, note: `refusing the owner: ${problem}.` });
+      }
+      const file = envFilePath(a.path);
+      const refusal = envTargetRefusal(file);
+      if (refusal) return json({ ok: false, surface: a.surface, file, note: refusal });
+      const writes = [...flow.envNames(variant)].sort();
+      const held = loadEnvFile(file);
+      const already = writes.filter((name) => (held[name] ?? "") !== "");
+      if (already.length > 0 && a.replace !== true) {
+        return json({
+          ok: false,
+          surface: a.surface,
+          file,
+          alreadySet: already,
+          note: "the env file already holds these names, so an app is probably set up. Pass replace:true only to create a NEW app and replace them.",
+        });
+      }
+      const writeEnv = (values: Readonly<Record<string, string>>): string | undefined => {
+        const late = envTargetRefusal(file);
+        if (late) return late;
+        const rhs: Record<string, string> = {};
+        for (const [name, value] of Object.entries(values)) {
+          if (!ENV_NAME_PATTERN.test(name)) return "the vendor flow named an env key that is not an environment variable name";
+          const line = envAssignmentValue(value.replace(/\r?\n/g, "\\n"));
+          if (line === undefined) return `the value for ${name} cannot be written as one .env line`;
+          rhs[name] = line;
+        }
+        const existing = existsSync(file) ? readFileSync(file, "utf-8") : "";
+        const next = mergeEnv(existing, rhs);
+        writeFileSync(file, next.endsWith("\n") ? next : next + "\n", { encoding: "utf-8", mode: 0o600 });
+        return undefined;
+      };
+      const status = await startSurfaceAppCreate({
+        surface: a.surface,
+        flow,
+        host,
+        variant,
+        writeEnv,
+        ...(a.appName === undefined ? {} : { appName: a.appName.trim() }),
+        ...(a.owner === undefined ? {} : { owner: a.owner }),
+      });
+      return json({
+        ok: true,
+        ...status,
+        variants,
+        file,
+        writes,
+        note:
+          `Ask the person to open openUrl in a browser on THIS computer (it is a local page). It sends them to ${flow.vendor}, where they ` +
+          "confirm the app. Then call this tool with action status. The keys go straight into the env file; none reaches this conversation.",
       });
     },
   );

@@ -150,27 +150,79 @@ same layer the other non-Slack platforms use.
 
 ## Setup
 
-1. **Create (or reuse) a GitHub App** with a webhook pointed at
-   `https://<your-deploy-url>/eve/v1/github`, a webhook secret, and repo permissions for
-   Issues + Pull requests (read/write) and Contents (read — the mention leg's sandbox
-   checkout). **Grant Issues *and* Pull requests, both at read/write — neither alone is
-   enough.** GitHub serves an issue and a PR through the same `/issues/{n}` endpoints but
-   routes permission by the resource the number names, so an App missing either family goes
-   403 on half of its own conversations: missing Issues and it cannot read a plain issue,
-   missing Pull requests and its replies never land on a PR thread. Subscribe to
-   **`issue_comment`** + **`pull_request_review_comment`** (mention
-   turns; `issue_comment` also feeds the ambient leg) and, for the routine fan-out,
-   `issues` / `pull_request` / `check_suite` / `check_run` / `workflow_run` (the Checks events
-   only appear once the Checks permission is granted).
-   You do **not** need to subscribe to `installation` / `installation_repositories` — GitHub
-   sends both to every App automatically and they are absent from the "Subscribe to events"
-   list for that reason ("All GitHub Apps receive this event by default. You cannot manually
-   subscribe to this event."). They arrive on the same webhook URL, so each org that installs
-   the App registers itself with no extra configuration (see *Multi-org installs* below).
-   On the App's settings page, under **Display information**, upload [`brand/png/mark-square-1024.png`](../../../brand/png/mark-square-1024.png), the project mark, as its logo. Skip this when you set [`identity.name`](../configuration-reference.md) and chose your own icon: with no name configured the agent presents as the project, so the project mark is its default avatar.
+1. **Create the GitHub App in one click.** The ops MCP server generates the App's manifest and
+   catches the keys GitHub hands back (OPE-2529). The agent driving setup calls:
+
+   ```
+   surface_app_create { "surface": "github", "baseUrl": "https://<your-deploy-url>" }
+   ```
+
+   The reply carries `openUrl`, a page on your own computer. Open it in a browser on that computer.
+   GitHub opens with the App filled in: its name, the webhook at
+   `https://<your-deploy-url>/eve/v1/github`, a generated webhook secret, and the permissions and
+   events below. Check the name and confirm. GitHub App names are unique across GitHub, so change
+   the name there if GitHub says it is taken. GitHub then sends the App's id, private key and
+   webhook secret back to the local page, which writes them into `.env.local`. You copy no key, and
+   no value passes through the chat. `surface_app_create { "surface": "github", "action": "status" }`
+   then lists the names written and the App's install link.
+
+   - `owner: "<org login>"` creates the App under an organization. Without it, the App belongs to
+     your own account.
+   - `variant: "source-control"` creates an App for the [source-control plane](../../capabilities/source-control.md)
+     only: no events and no @mention replies. The default, `full`, also serves this page's
+     conversational surface. Both keep the webhook on, because install self-registration
+     (below) arrives through it.
+   - The tool refuses to overwrite names `.env.local` already holds. Pass `replace: true` only to
+     replace an existing App's keys with a new App's keys.
+
+   **Permissions and events.** The manifest takes its permissions from the source-control plane's
+   mint bodies (`scm/app-permissions.ts`) and its events from this bundle's event inventory
+   (`agent/provider-events.ts`). This table is generated from the same builder, so the doc, the
+   manifest and the code cannot drift:
+
+   <!-- BEGIN GENERATED: github-app-permissions (scripts/github-app-manifest-docs.ts) -->
+
+   | Repository permission | Access | Shape | Why |
+   | --- | --- | --- | --- |
+   | Actions | Read-only | full App only | the `workflow_job`, `workflow_run` events |
+   | Checks | Read-only | full App only | the `check_run`, `check_suite` events |
+   | Contents | Read and write | both | open a pull request; check out a repo; write memory; read a pull request; the `push`, `release` events |
+   | Issues | Read and write | both | read a conversation; reply in a conversation; act on an issue; the `issue_comment`, `issues` events |
+   | Metadata | Read-only | both | open a pull request; check out a repo; write memory; read a pull request; read a conversation; reply in a conversation; act on an issue |
+   | Pull requests | Read and write | both | open a pull request; read a pull request; read a conversation; reply in a conversation; the `pull_request`, `pull_request_review`, `pull_request_review_comment` events |
+
+   Events (full App only): `check_run`, `check_suite`, `issue_comment`, `issues`, `pull_request`, `pull_request_review`, `pull_request_review_comment`, `push`, `release`, `workflow_job`, `workflow_run`. GitHub sends `installation` and `installation_repositories` to every App with an active webhook, so neither is listed.
+
+   <!-- END GENERATED: github-app-permissions -->
+
+   **Issues and Pull requests, both at read and write — neither alone is enough.** GitHub serves an
+   issue and a PR through the same `/issues/{n}` endpoints but routes permission by the resource the
+   number names, so an App missing either family goes 403 on half of its own conversations: missing
+   Issues and it cannot read a plain issue, missing Pull requests and its replies never land on a PR
+   thread. An opt-in [capability set](../../capabilities/source-control.md#per-binding-capability-sets)
+   (`workflows`) needs one more permission. The manifest does not grant it, and the
+   `permission_fit_report` names the App update when a binding asks for it.
+
+   You do **not** subscribe to `installation` / `installation_repositories` — GitHub sends both to
+   every App automatically and they are absent from the "Subscribe to events" list for that reason
+   ("All GitHub Apps receive this event by default. You cannot manually subscribe to this event.").
+   They arrive on the same webhook URL, so each org that installs the App registers itself with no
+   extra configuration (see *Multi-org installs* below).
+
+   **By hand.** Without the ops server, create the App at GitHub → **Settings → Developer settings
+   → GitHub Apps → New GitHub App**. Point the webhook at `https://<your-deploy-url>/eve/v1/github`,
+   set a webhook secret, grant the permissions in the table and subscribe to its events. Then set the
+   environment in step 3 yourself.
+
+   On the App's settings page, under **Display information**, upload [`brand/png/mark-square-1024.png`](../../../brand/png/mark-square-1024.png), the project mark, as its logo. The manifest has no logo field. Skip this when you set [`identity.name`](../configuration-reference.md) and chose your own icon: with no name configured the agent presents as the project, so the project mark is its default avatar.
 2. **Install the App** on the repos the agent should live on.
-3. **Configure the environment** (the conversational surface uses the **bare** names — the
-   `OE_GITHUB_*` set is the separate source-control plane, even when both point at one App):
+3. **Configure the environment.** The full App writes every name below into `.env.local`, plus
+   the `OE_GITHUB_*` source-control set (`OE_GITHUB_APP_ID`, `OE_GITHUB_APP_SLUG`,
+   `OE_GITHUB_APP_PRIVATE_KEY`, `OE_GITHUB_APP_CLIENT_ID`) for the same App. The source-control
+   App writes only the `OE_GITHUB_*` set and `GITHUB_WEBHOOK_SECRET`. `OE_GITHUB_BOT_USER_ID` is
+   written only when GitHub's bot-user lookup answers. Push the names that `status` lists in
+   `written`, piped from the file and never printed, then redeploy. By hand, set them yourself. The conversational surface uses the **bare** names — the
+   `OE_GITHUB_*` set is the separate source-control plane, even when both point at one App:
 
    ```bash
    GITHUB_APP_ID=…            # the App's numeric id

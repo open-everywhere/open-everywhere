@@ -1,6 +1,6 @@
 ---
 name: quickstart-open-everywhere
-description: Set up, configure or deploy an Open Everywhere app — from a fresh scaffold to an agent that answers in Slack. Use when the user wants to set up Open Everywhere, deploy it, or connect Slack, Notion or GitHub. Two routes are supported, Vercel and Docker, and step 1 is to ask which. Drives the open-everywhere-ops MCP server (preflight, surface_manifest, scaffold_env, scaffold_credential_key, secret_set/list/rm) and the `@open-everywhere/create --check --json` status report.
+description: Set up, configure or deploy an Open Everywhere app — from a fresh scaffold to an agent that answers in Slack. Use when the user wants to set up Open Everywhere, deploy it, or connect Slack, Notion or GitHub. Two routes are supported, Vercel and Docker, and step 1 is to ask which. Drives the open-everywhere-ops MCP server (preflight, surface_manifest, surface_app_create, scaffold_env, scaffold_credential_key, secret_set/list/rm) and the `@open-everywhere/create --check --json` status report.
 ---
 
 # Quickstart Open Everywhere
@@ -238,6 +238,27 @@ person in chat cannot add one.
 
 With no server declared, nothing changes: the build writes no connection for one, and only the
 shipped connections (Notion) stay mounted.
+
+## Optional: connect GitHub
+
+Offer this step after the first deploy, when the user wants the agent to work in GitHub. The
+GitHub App is one click: the ops server generates its manifest, and GitHub hands the App's keys
+back to a page on this computer, so the user copies nothing.
+
+1. Call `surface_app_create { surface: "github", baseUrl: "https://<host>" }`. Pass
+   `owner: "<org login>"` to create the App under an organization. The default App also answers
+   @mentions on issues and pull requests; `variant: "source-control"` creates one for checkout,
+   pull requests and ticket actions only.
+2. Give the user the `openUrl` from the reply. It is a local page: they open it in a browser on
+   this computer. GitHub opens with the App filled in. They check the name (GitHub App names are
+   unique, so they change it if GitHub says it is taken) and confirm.
+3. Call `surface_app_create { surface: "github", action: "status" }`. `state: "done"` lists the
+   env names written to `.env.local` and the App's install link. Ask the user to open the link and
+   install the App on the repositories the agent works in.
+4. On the Vercel route, push each name in `written` exactly as in step 9, then redeploy. On the
+   Docker route, add each one to the server's `.env` (Docker step 6), then restart the stack.
+
+The tool never returns a value, and it refuses to overwrite names `.env.local` already holds.
 
 ## Develop locally
 

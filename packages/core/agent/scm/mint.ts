@@ -42,6 +42,16 @@ export const ISSUE_WRITE_PERMISSIONS: MintPermissions = {
   metadata: "read",
 };
 
+export const SCM_MINT_JOB_SETS: Readonly<Record<string, MintPermissions>> = {
+  "open a pull request": DEFAULT_PERMISSIONS,
+  "check out a repo": READ_PERMISSIONS,
+  "write memory": MEMORY_WRITE_PERMISSIONS,
+  "read a pull request": PR_READ_PERMISSIONS,
+  "read a conversation": CONVERSATION_READ_PERMISSIONS,
+  "reply in a conversation": CONVERSATION_WRITE_PERMISSIONS,
+  "act on an issue": ISSUE_WRITE_PERMISSIONS,
+};
+
 export const EXPANSION_FORBIDDEN_FAMILIES: readonly string[] = ["contents"];
 
 export const REPO_CAPABILITY_PERMISSIONS: Readonly<Record<RepoCapability, MintPermissions>> = {

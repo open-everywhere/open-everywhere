@@ -2554,6 +2554,10 @@
       "types": "./dist/agent/ops/status.d.ts",
       "default": "./dist/agent/ops/status.js"
     },
+    "./agent/ops/surface-app-create.js": {
+      "types": "./dist/agent/ops/surface-app-create.d.ts",
+      "default": "./dist/agent/ops/surface-app-create.js"
+    },
     "./agent/ops/surface-manifest.js": {
       "types": "./dist/agent/ops/surface-manifest.d.ts",
       "default": "./dist/agent/ops/surface-manifest.js"
@@ -2953,6 +2957,10 @@
     "./agent/schedules/tidy.js": {
       "types": "./dist/agent/schedules/tidy.d.ts",
       "default": "./dist/agent/schedules/tidy.js"
+    },
+    "./agent/scm/app-permissions.js": {
+      "types": "./dist/agent/scm/app-permissions.d.ts",
+      "default": "./dist/agent/scm/app-permissions.js"
     },
     "./agent/scm/app.js": {
       "types": "./dist/agent/scm/app.d.ts",
@@ -3881,6 +3889,7 @@
     "test:control-memory": "NODE_NO_WARNINGS=1 tsx scripts/control-memory-test.ts",
     "test:memory-admin": "NODE_NO_WARNINGS=1 tsx scripts/memory-admin-test.ts",
     "test:ops": "tsx scripts/ops-test.ts",
+    "test:ops-app-create": "tsx scripts/ops-app-create-test.ts",
     "test:plugins": "tsx scripts/plugins-test.ts",
     "test:scm": "tsx scripts/scm-test.ts",
     "test:scm-broker": "tsx scripts/scm-broker-test.ts",

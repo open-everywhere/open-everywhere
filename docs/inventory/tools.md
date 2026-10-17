@@ -5,12 +5,12 @@ manual that documents each one. It is an audit artefact, not a guide. It reads f
 outward, so a behaviour the manual never mentions still gets a row. A row marked **UNDOCUMENTED**
 is a gap in the manual, never a gap in the code. No row carries that mark today.
 
-228 rows, of which 0 are undocumented and 2 are reviewed exemptions. The plane covers five sub-planes: the agent tool roster
+229 rows, of which 0 are undocumented and 2 are reviewed exemptions. The plane covers five sub-planes: the agent tool roster
 (113 rows), the machinery that registers and checks that roster (20), per-seat tool availability
-(21), the two MCP servers — control with 40 verbs and 11 HTTP routes, ops with 8 verbs — and the
+(21), the two MCP servers — control with 40 verbs and 11 HTTP routes, ops with 9 verbs — and the
 `/oe` commands (7). Three sections carry rows beyond their verbs: the route section adds one for the token
 family that arms the read routes, the ops section four for server-wide properties, and the command
-section three for the parsing and registration rules. That is why those sections hold 12, 11 and
+section three for the parsing and registration rules. That is why those sections hold 12, 13 and
 10 rows. Connector operations and the injected browser family are named at runtime. A connector
 operation runs through `connection_execute` by its `connection` and `tool`, and its gates read it as
 `<connection>__<operation>`. No static scan can produce these names, so they are out of scope here —
@@ -344,7 +344,7 @@ The routes the deployment mounts itself, beside the MCP server.
 
 ## G. Ops MCP verbs
 
-8 verbs, registered by `buildOpsServer()`. This server runs as a local process under the operator's
+9 verbs, registered by `buildOpsServer()`. This server runs as a local process under the operator's
 own environment, which is its whole trust root. It is deliberately not on the control plane: an
 operator-side agent can provision a deployment that has no comm surface yet, and the deployed agent
 never holds a secret verb.
@@ -354,6 +354,7 @@ never holds a secret verb.
 | OPS-preflight | `preflight` | Check the prerequisites for running/deploying Open Everywhere (node, model key, providers, durable DB, control-plane auth) … | `packages/core/agent/ops/server.ts:280` | `docs/security/security-model.md#cross-domain-isolation-within-one-org` (+6) | ? |
 | OPS-surface_manifest | `surface_manifest` | Return the paste-ready app manifest for a chat surface (e.g. slack), with baseUrl substituted for the ${DEPLOY_HOST_PLACEHOLDER} | `packages/core/agent/ops/server.ts:307` | `docs/deploy/agent-driven-setup.md#what-you-are-driving` | ? |
 | OPS-surface_app_package | `surface_app_package` | Build the upload-ready app package for a chat surface that takes one (teams): fill the manifest, check it against the org (admin-centre) or store route's listing rules, and write the zip inside the project. A package with a blocking finding is not written, and every icon and output path must resolve inside the project. | `packages/core/agent/ops/server.ts:374` | `docs/deploy/surfaces/teams.md#what-the-package-checks` (+1) | ? |
+| OPS-surface_app_create | `surface_app_create` | Create a surface's app from a generated manifest (github): `start` opens a page on 127.0.0.1 that POSTs the manifest to the vendor, and the vendor's redirect, checked against a 32-byte state, hands back a one-time code. The exchange runs in this process and writes the keys into the env file through the same write gate. It refuses names the file already holds unless `replace` is set. The replies carry env names, the app's name and its install link, never a value. | `packages/core/agent/ops/server.ts` | `docs/deploy/surfaces/github.md#setup` (+1) | ? |
 | OPS-scaffold_env | `scaffold_env` | Write non-secret configuration into the project's .env.local — `values` takes only the names on `ENV_CONFIG_NAMES`, and its schema refuses any other. A secret is named in `secretNames`: the reply gives the person's `npx oe env set <NAME>` command and whether the file holds a value (presence only). | `packages/core/agent/ops/server.ts:479` | `docs/deploy/agent-driven-setup.md#what-you-are-driving` (+1) | ? |
 | OPS-scaffold_credential_key | `scaffold_credential_key` | Generate the deployment's AES-256-GCM credential-store key (${CREDENTIAL_KEY_ENV_NAME}) straight into the project's .env.local. | `packages/core/agent/ops/server.ts:556` | `docs/deploy/agent-driven-setup.md#what-you-are-driving` | ? |
 | OPS-secret_set | `secret_set` | Encrypt one or more secrets into this deployment's own credential store (AES-256-GCM, keyed by OE_CREDENTIAL_ENCRYPTION_KEY) so channels and connectors resolve them WITHOUT env vars. Takes NAMES, never values: each value is read from the project's .env.local. | `packages/core/agent/ops/server.ts:641` | `docs/security/credentials-and-planes.md#getting-a-key-into-the-db-broker-the-operator-door-oe-secret` (+3) | ? |

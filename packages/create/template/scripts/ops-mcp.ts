@@ -25,5 +25,5 @@ registerSurfaceTrustPreflight();
 const server = buildOpsServer();
 await server.connect(new StdioServerTransport());
 process.stderr.write(
-  "open-everywhere-ops MCP server ready on stdio (preflight · surface_manifest · surface_app_package · scaffold_env · scaffold_credential_key · secret_set/list/rm)\n",
+  "open-everywhere-ops MCP server ready on stdio (preflight · surface_manifest · surface_app_package · surface_app_create · scaffold_env · scaffold_credential_key · secret_set/list/rm)\n",
 );

@@ -179,6 +179,7 @@ test:discord-relay-voice
 test:it-memory-config
 test:it-prepare
 lint:setup-steps-docs
+lint:github-app-manifest-docs
 lint:skill-sync
 lint:ops-secret-args
 test:scripted-wake-ownership

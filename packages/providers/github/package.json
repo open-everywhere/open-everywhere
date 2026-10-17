@@ -36,6 +36,10 @@
   ],
   "exports": {
     "./package.json": "./package.json",
+    "./agent/app-manifest.js": {
+      "types": "./dist/agent/app-manifest.d.ts",
+      "default": "./dist/agent/app-manifest.js"
+    },
     "./agent/channels/github-catch-up.js": {
       "types": "./dist/agent/channels/github-catch-up.d.ts",
       "default": "./dist/agent/channels/github-catch-up.js"
@@ -142,6 +146,7 @@
     "test:github-reaction-feedback": "NODE_NO_WARNINGS=1 tsx scripts/github-reaction-feedback-test.ts",
     "test:github-engagement": "NODE_NO_WARNINGS=1 tsx scripts/github-engagement-test.ts",
     "test:github-mint-scope": "NODE_NO_WARNINGS=1 tsx scripts/github-mint-scope-test.ts",
+    "test:github-app-manifest": "NODE_NO_WARNINGS=1 tsx scripts/github-app-manifest-test.ts",
     "test:github-reaction-scope": "NODE_NO_WARNINGS=1 tsx scripts/github-reaction-scope-test.ts"
   },
   "dependencies": {

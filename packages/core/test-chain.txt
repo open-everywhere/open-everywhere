@@ -206,6 +206,7 @@ test:control-spend-scope
 test:control-memory
 test:memory-admin
 test:ops
+test:ops-app-create
 test:plugins
 test:scm
 test:scm-broker

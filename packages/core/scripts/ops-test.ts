@@ -869,6 +869,7 @@ const ok = (label: string, cond: boolean) => {
     preflight: {},
     surface_manifest: { surface: "slack" },
     surface_app_package: { surface: "teams", baseUrl: "oe.example.com", route: "org" },
+    surface_app_create: { surface: "github", action: "status" },
     scaffold_env: {},
     scaffold_credential_key: {},
     secret_set: { names: ["OPS_TEST_2396_ABSENT"] },

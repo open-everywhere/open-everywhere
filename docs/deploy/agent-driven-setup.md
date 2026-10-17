@@ -18,13 +18,14 @@ The repository registers an MCP server in `.mcp.json`:
 | --- | --- | --- |
 | `open-everywhere-ops` | `npx tsx scripts/ops-mcp.ts` | The **outside-in** plane. It stands an instance up. |
 
-It exposes eight tools:
+It exposes nine tools:
 
 | Tool | What it does | Writes anything? |
 | --- | --- | --- |
 | `preflight` | Reports every prerequisite, plus each configured provider's live posture. | no |
 | `surface_manifest` | Returns the chat app's paste-ready manifest for a surface, with your deploy host substituted. | no |
 | `surface_app_package` | Builds the upload-ready Teams app zip for the admin-centre (`org`) or store route, checks it, and writes it into the project. See [Listing the Teams app](./surfaces/teams.md#listing-in-the-teams-admin-centre). | the zip, inside the project |
+| `surface_app_create` | Creates a surface's app in one click from a generated manifest (GitHub): it opens a local page, the person confirms the app on the vendor's site, and the vendor's keys go straight into `.env.local`. Never returns a value. See [step 14](#step-14--mint-the-chat-app). | `.env.local` |
 | `scaffold_env` | Writes non-secret config into the project's `.env.local`. For a secret, it takes the **name** and returns the command the operator runs. | `.env.local` |
 | `scaffold_credential_key` | Mints the credential store's AES-256-GCM key into `.env.local`. Never returns the value. | `.env.local` |
 | `secret_set` | Encrypts secrets, **by name**, from `.env.local` into the deployment's own credential store. | the store |
@@ -303,7 +304,8 @@ code is correct and the deployment is missing a row.
 ## Step 14 — Mint the chat app
 
 **Human step, and the hardest one to hand over.** Slack, Discord and Teams all reserve app creation
-for a person with workspace-admin rights. You cannot do it, and you should not pretend to.
+for a person with workspace-admin rights. You cannot do it, and you should not pretend to. GitHub
+also needs a person to confirm the App, but the setup generates everything else (below).
 
 For Slack, the exact action:
 
@@ -350,6 +352,35 @@ terminal and pastes the value at its hidden prompt. Call the tool again with the
 read `present: true`.
 
 Then push both to the deployment with `vercel env add`, exactly as in step 11, and redeploy. Slack verifies the Event Subscriptions URL with a signed challenge, so the verification fails until a deploy that holds `SLACK_SIGNING_SECRET` is up: after that redeploy, ask the operator to choose **Retry** under Event Subscriptions.
+
+For GitHub, the App is one click (OPE-2529). GitHub's App manifest flow creates a pre-configured App
+and hands its keys back, so the person copies nothing:
+
+```
+surface_app_create { "surface": "github", "baseUrl": "https://<the deployment's host>" }
+```
+
+Give the person the `openUrl` from the reply. It is a page on THIS computer, so they open it in a
+browser here. GitHub opens with the App filled in, and they confirm it. Then call
+`surface_app_create { "surface": "github", "action": "status" }`: `state: "done"` lists the env names
+written and the App's install link. Ask the person to install the App on the repositories the agent
+works in, then push each written name to the deployment as in step 11 and redeploy. The
+[GitHub guide](./surfaces/github.md#setup) lists the permissions and events, the `owner` and `variant`
+options, and the by-hand route.
+
+**Which surfaces generate their app.** Every surface that asks a person to create an app is listed
+here. Where the vendor offers a manifest or a one-click flow, the setup generates it:
+
+| Surface | What the person creates | What the setup generates |
+| --- | --- | --- |
+| Slack | a Slack app | The app manifest (`surface_manifest`). The person pastes it, then copies two values into their own terminal. |
+| Teams | an Azure Bot with its Entra app, and a Teams app package | The app package zip (`surface_app_package`). The setup generates nothing for the Azure Bot: the person creates it in the Azure Portal. |
+| GitHub | a GitHub App | The App manifest flow (`surface_app_create`). One click, and the keys land in `.env.local`. |
+| Discord | an application with a bot | Nothing. Discord has no app manifest and no one-click create flow. The person creates the application in the Developer Portal and builds the invite link with its URL Generator. |
+| Notion | an internal integration | Nothing. Notion has no manifest for an internal integration. The person ticks its capabilities by hand. |
+| Linear | an OAuth application | Nothing. Linear has no app manifest. The person fills in the application form by hand. |
+| Google Chat | a Chat app on a Google Cloud project, with a service account | Nothing. Google Cloud has no manifest for a Chat app's configuration. The person sets it in the Cloud console. |
+| Email | no app: a mailbox service account and its webhook | Nothing to generate. |
 
 The per-surface details, including the scopes each capability needs and the surface-specific traps,
 are in the surface guides: [Slack](./surfaces/slack.md), [Teams](./surfaces/teams.md),
