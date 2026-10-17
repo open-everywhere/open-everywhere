@@ -130,7 +130,7 @@ export interface SlashCommandInput {
   readonly text: string;
   readonly userId: string;
   readonly channelId: string;
-  readonly teamId?: string;
+  readonly teamId: string;
 }
 
 export function buildSlashCommandBody(input: SlashCommandInput): string {
@@ -139,7 +139,7 @@ export function buildSlashCommandBody(input: SlashCommandInput): string {
     text: input.text,
     user_id: input.userId,
     channel_id: input.channelId,
-    team_id: input.teamId ?? "",
+    team_id: input.teamId,
   }).toString();
 }
 
@@ -272,8 +272,8 @@ export class SyntheticSlack {
     return this.signedPost(SYNTHETIC_SLACK_ROUTE, encodeInteractionBody(payload), "synthetic click");
   }
 
-  async slash(text: string, channelId?: string): Promise<SyntheticResult> {
-    const body = buildSlashCommandBody({ text, userId: this.cfg.adminUserId, channelId: channelId ?? this.cfg.channel });
+  async slash(text: string, input: { teamId: string; channelId?: string }): Promise<SyntheticResult> {
+    const body = buildSlashCommandBody({ text, userId: this.cfg.adminUserId, channelId: input.channelId ?? this.cfg.channel, teamId: input.teamId });
     return this.signedPost(SYNTHETIC_COMMANDS_ROUTE, body, "synthetic command");
   }
 

@@ -436,6 +436,11 @@ export function parseOeStatusFacts(body: string): OeStatusFacts {
     ...(num(window?.[2]) !== undefined ? { compactionThresholdTokens: num(window?.[2]) } : {}),
   };
 }
+
+export function watchDialAnswerSets(text: string, dial: "more" | "less" | "none"): boolean {
+  const line = `${dial[0]!.toUpperCase()}${dial.slice(1)}:`;
+  return text.startsWith(`Done. ${line}`) || text.startsWith(`It was already set. ${line}`);
+}
 const PROVENANCE_DELEGATION_ACTIONS = ["delegation.task_started", "delegation.task_settled", "delegation.task_failed", "delegation.worker_turn_failed"] as const;
 const NOTION_CONNECTOR = "notion";
 function armingProbeOf(ctx: ScenarioContext): ArmingProbe {
@@ -2112,15 +2117,16 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     id: "S6",
     title: "/oe zero-inference (synthetic command)",
-    requires: ["synthetic"],
+    requires: ["synthetic", "slack"],
     surface: "slack",
     suite: "core",
     timeoutMs: 120_000,
     judged: false,
     run: async (ctx) => {
       const synthetic = ctx.synthetic!;
+      const { teamId } = await ctx.slack!.identity();
       for (const text of ["status", "budget"]) {
-        const res = await synthetic.slash(text);
+        const res = await synthetic.slash(text, { teamId });
         ctx.log(`${res.label}: /oe ${text} → ${res.status}`);
         ctx.gate(res.status === 200, `/oe ${text} answers 200`);
         ctx.gate(res.body.trim().length > 0, `/oe ${text} returns a well-formed response body`);
@@ -2138,7 +2144,8 @@ export const SCENARIOS: readonly Scenario[] = [
     judged: false,
     run: async (ctx) => {
       const synthetic = ctx.synthetic!;
-      const res = await synthetic.slash("status", ctx.slackUnifiedA!.channelId);
+      const { teamId } = await ctx.slackUnifiedA!.identity();
+      const res = await synthetic.slash("status", { teamId, channelId: ctx.slackUnifiedA!.channelId });
       ctx.log(`${res.label}: /oe status on the unified container → ${res.status}`);
       ctx.gate(res.status === 200, `/oe status answers 200 on the unified seat (got ${res.status})`);
       const statusText = decodeSlackEphemeralText(res.body);
@@ -5713,14 +5720,15 @@ export const SCENARIOS: readonly Scenario[] = [
       const person = synthetic.adminUserId;
       const ownRow = (r: AuditWireEntry): boolean => r.principalId === `slack/${teamId}/${person}`;
 
-      const reset = await synthetic.slash("watch less");
-      ctx.gate(reset.status === 200, `S-WATCH: /oe watch less answers 200 (got ${reset.status})`);
-      const status = await synthetic.slash("watch");
+      const reset = await synthetic.slash("watch less", { teamId });
+      const resetText = decodeSlackEphemeralText(reset.body);
+      ctx.gate(reset.status === 200 && watchDialAnswerSets(resetText, "less"), `S-WATCH: /oe watch less sets the dial to less (HTTP ${reset.status}) — answer head: "${resetText.slice(0, 160)}"`);
+      const status = await synthetic.slash("watch", { teamId });
       const statusText = decodeSlackEphemeralText(status.body);
       ctx.gate(status.status === 200 && statusText.startsWith("Less:"), `S-WATCH: /oe watch reads the dial at less — answer head: "${statusText.slice(0, 160)}"`);
 
       const moreAt = await presenceSince(ctx, "S-WATCH more");
-      const more = await synthetic.slash("watch more");
+      const more = await synthetic.slash("watch more", { teamId });
       const moreText = decodeSlackEphemeralText(more.body);
       ctx.gate(more.status === 200 && moreText.startsWith("Done. More:"), `S-WATCH: /oe watch more moves the dial — answer head: "${moreText.slice(0, 160)}"`);
       const moreRow = await pollOptional(
@@ -5749,8 +5757,9 @@ export const SCENARIOS: readonly Scenario[] = [
       const responses = (await read({ sinceIso: forgedAt, actions: ["personal_watch.response"], limit: 50 })).filter(ownRow);
       ctx.gate(responses.length === 0, `S-WATCH: a ref that names no nudge of the person's moved no dose (${responses.length} personal_watch.response row(s))`);
 
-      const restore = await synthetic.slash("watch less");
-      ctx.gate(restore.status === 200, `S-WATCH: the dial is restored to less (HTTP ${restore.status})`);
+      const restore = await synthetic.slash("watch less", { teamId });
+      const restoreText = decodeSlackEphemeralText(restore.body);
+      ctx.gate(restore.status === 200 && watchDialAnswerSets(restoreText, "less"), `S-WATCH: the dial is restored to less (HTTP ${restore.status}) — answer head: "${restoreText.slice(0, 160)}"`);
     },
   },
 

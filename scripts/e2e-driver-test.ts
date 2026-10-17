@@ -176,11 +176,12 @@ const {
   SEED_WRITE_ACTIONS,
   handoffFromReplyPostRows,
   replyIsPendingWorkHandoff,
-  parseOeStatusFacts, decodeSlackEphemeralText, oeStatusCompactionThresholdTokens,
+  parseOeStatusFacts, decodeSlackEphemeralText, oeStatusCompactionThresholdTokens, watchDialAnswerSets,
   haltWakeForSlackAnchor, haltSetEvidence, haltClearEvidence, haltOwnedBySet, haltOwnedByWake, cleanupExactHalt,
   grantRowWaitMs, grantRowMissingNote, GRANTED_CALL_WAIT_MS,
 } = await import("../packages/core/scripts/e2e/scenarios.js");
 const { renderStatus } = await import("@open-everywhere/core/agent/commands/core.js");
+const { runWatch } = await import("@open-everywhere/core/agent/commands/watch.js");
 const { haltConfirmation } = await import("@open-everywhere/core/agent/tools/halt.js");
 const { NO_CARD_NOTE_OPENING } = await import("@open-everywhere/core/agent/channels/approval-claim-guard.js");
 const { emptySkipCounts, renderSkipBreakdown, SKIP_KINDS } = await import("../packages/core/scripts/e2e/skip-summary.js");
@@ -5249,6 +5250,20 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   ok(params.get("command") === "/oe", "slash body carries command=/oe");
   ok(params.get("text") === "status", "slash body carries the subcommand text");
   ok(params.get("user_id") === "U2ADMIN" && params.get("channel_id") === "C123", "slash body carries user_id + channel_id");
+  ok(params.get("team_id") === "T1", `slash body carries the workspace's team_id (got "${params.get("team_id")}")`);
+}
+
+{
+  const refusal = await runWatch(
+    { platform: "slack", workspace: "dev", principalId: "U2ADMIN", principalAttested: false, trust: "internal", org: "default" } as unknown as Parameters<typeof runWatch>[0],
+    "less",
+  );
+  ok(refusal.startsWith("I could not tell who you are"), `runWatch refuses a binding with no tenant (got "${refusal.slice(0, 80)}")`);
+  ok(watchDialAnswerSets(refusal, "less") === false, "S-WATCH's reset gate reads the no-tenant refusal as NOT a set");
+  ok(watchDialAnswerSets("The watch is for members of this organisation, so I changed nothing.", "less") === false, "S-WATCH's reset gate reads the non-member refusal as NOT a set");
+  ok(watchDialAnswerSets("Done. Less: I tell you only about calendar conflicts within a day.", "less") === true, "S-WATCH's reset gate reads a changed dial as a set");
+  ok(watchDialAnswerSets("It was already set. Less: I tell you only about calendar conflicts within a day.", "less") === true, "S-WATCH's reset gate reads an unchanged dial as a set");
+  ok(watchDialAnswerSets("Done. More: I tell you about calendar conflicts up to three days ahead.", "less") === false, "S-WATCH's reset gate reads a set to another dial as NOT a set to less");
 }
 
 {
