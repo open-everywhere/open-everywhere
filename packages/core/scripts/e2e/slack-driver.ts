@@ -188,6 +188,28 @@ export function endsOwnWakeWait(m: SlackMessage, skip: ((m: SlackMessage) => boo
   return passesSkip(m, skip) && (want?.(m) ?? true);
 }
 
+export interface SteppedOverMessage {
+  readonly text: string;
+  readonly editedTs?: string;
+}
+
+export function nextReplyCandidate(
+  msgs: readonly SlackMessage[],
+  opts: {
+    readonly floorTs: string;
+    readonly steppedOver: ReadonlyMap<string, SteppedOverMessage>;
+    readonly isBotReply: (m: SlackMessage) => boolean;
+    readonly skip?: (m: SlackMessage) => boolean;
+  },
+): SlackMessage | undefined {
+  return msgs.find((m) => {
+    if (!opts.isBotReply(m) || !passesSkip(m, opts.skip)) return false;
+    const seen = opts.steppedOver.get(m.ts);
+    if (seen !== undefined) return seen.text !== m.text || seen.editedTs !== m.editedTs;
+    return tsAfter(m.ts, opts.floorTs);
+  });
+}
+
 export function mergeBotMessagesAfter(
   threadMsgs: readonly SlackMessage[],
   historyMsgs: readonly SlackMessage[],

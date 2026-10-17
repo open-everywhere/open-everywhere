@@ -7,6 +7,7 @@ import {
   DELEGATION_TASK_SETTLED_ACTION,
   DELEGATION_TASK_STARTED_ACTION,
   forwardedJobsDispatchedAtOrAfter,
+  REPLY_EDIT_ACTION,
   tasksDispatchedAtOrAfter,
   WORK_FORWARDED_ACTION,
   wakeLineage,
@@ -279,6 +280,36 @@ export function classifySettlementReply(
       detail: `message ${opts.messageId} carried the SETTLEMENT REPORT of task ${pairing.task}, and ${missing} — it cannot be tied to this ask, so it is stepped over (OPE-1965)`,
     };
   }
+  const rewrite = rewriteAfterReport(rows, opts.messageId, pairing);
+  if (rewrite !== undefined) {
+    const lineage = wakeLineage(rows, opts.askWakeId, opts.floorMs);
+    if (rewrite.wake === undefined || !lineage.has(rewrite.wake)) {
+      return {
+        kind: "step-over",
+        detail:
+          `message ${opts.messageId} carried the SETTLEMENT REPORT of task ${pairing.task} and was then rewritten in place ` +
+          (rewrite.wake === undefined
+            ? `by a ${REPLY_EDIT_ACTION} row that names no wake`
+            : `under wake ${rewrite.wake}, which is OUTSIDE the ask's own lineage (ask wake ${opts.askWakeId})`) +
+          " — the edit cannot be tied to this ask (OPE-2127)",
+      };
+    }
+    if (!opts.answersAsk) {
+      return {
+        kind: "step-over",
+        detail:
+          `message ${opts.messageId} carried the SETTLEMENT REPORT of task ${pairing.task} and was then rewritten in place under ` +
+          `wake ${rewrite.wake} on the ask's own lineage, but its text does not carry what the ask asked for (OPE-2127)`,
+      };
+    }
+    return {
+      kind: "answer",
+      wakeId: rewrite.wake,
+      detail:
+        `message ${opts.messageId} first carried the SETTLEMENT REPORT of task ${pairing.task}, and was then rewritten in place under ` +
+        `wake ${rewrite.wake} on the ask's own lineage — the edited text carries what the ask asked for, so the edit is the ANSWER (OPE-2127)`,
+    };
+  }
   if (!tasksDispatchedAtOrAfter(rows, opts.floorMs).has(pairing.task) && !forwardedJobsDispatchedAtOrAfter(rows, opts.floorMs).has(pairing.task)) {
     return {
       kind: "step-over",
@@ -311,6 +342,23 @@ export function classifySettlementReply(
       `message ${opts.messageId} carried the SETTLEMENT REPORT of task ${pairing.task}, which THIS ask dispatched, posted under wake ` +
       `${postedBy}${postedBy === opts.askWakeId ? "" : ", minted for that task"}, and it carries what the ask asked for — the delegated ANSWER (OPE-1988)`,
   };
+}
+
+function rewriteAfterReport(
+  rows: readonly AuditWireEntry[],
+  messageId: string,
+  pairing: SettlementReportPairing,
+): { readonly row: AuditWireEntry; readonly wake: string | undefined } | undefined {
+  const settled = rows.find((r) => r.action === SETTLEMENT_REPORT_POSTED_ACTION && dstr(r, "task") === pairing.task && dstr(r, "wake") === pairing.wake);
+  if (settled === undefined) return undefined;
+  let newest: AuditWireEntry | undefined;
+  for (const r of rows) {
+    if (r.action !== REPLY_EDIT_ACTION || dstr(r, "id") !== messageId) continue;
+    const after = positionCompare(r, settled);
+    if (after === undefined || after <= 0) continue;
+    if (newest === undefined || (positionCompare(r, newest) ?? 0) > 0) newest = r;
+  }
+  return newest === undefined ? undefined : { row: newest, wake: dstr(newest, "wakeId") };
 }
 
 export function replyPostSessionId(rows: readonly AuditWireEntry[], messageId: string): string | undefined {
@@ -878,12 +926,26 @@ export function readsAsClarifyingQuestion(text: string): boolean {
   return flat.includes("?") && CLARIFYING_ASK_RE.test(flat);
 }
 
+export interface AuditPageCompleteness {
+  readonly capped: boolean;
+  readonly scanTruncated: boolean;
+}
+
+export function pageIsCut(page: AuditPageCompleteness | undefined): boolean {
+  return page !== undefined && (page.capped || page.scanTruncated);
+}
+
+export function auditPageNote(page: AuditPageCompleteness | undefined): string {
+  return page === undefined ? "completeness flags not read" : `capped=${page.capped} scanTruncated=${page.scanTruncated}`;
+}
+
 export const MEMORY_CLAIM_WITHHELD_ACTION = "memory.claim_withheld";
 
 export type SeedSettlementKind =
   | "unjoinable"
   | "unread"
   | "inline"
+  | "cut"
   | "unsettled"
   | "unposted"
   | "settled";
@@ -901,7 +963,7 @@ export interface SeedSettlementRead {
 
 export function seedSettlementRead(
   rows: readonly AuditWireEntry[],
-  opts: { readonly seedWakeId?: string; readonly seedTurnStartMs?: number; readonly ackId?: string },
+  opts: { readonly seedWakeId?: string; readonly seedTurnStartMs?: number; readonly ackId?: string; readonly page?: AuditPageCompleteness },
 ): SeedSettlementRead {
   const floor = typeof opts.seedTurnStartMs === "number" && Number.isFinite(opts.seedTurnStartMs) ? opts.seedTurnStartMs : undefined;
   const base = { dispatched: [] as readonly string[], unsettled: [] as readonly string[], claimsWithheld: 0 };
@@ -978,6 +1040,14 @@ export function seedSettlementRead(
   }
   const alsoSaid = otherSessions.size === 0 ? "" : ` (${otherSessions.size} dispatch(es) inside the same window belong to ANOTHER session and are not this turn's)`;
   if (dispatched.length === 0) {
+    if (pageIsCut(opts.page)) {
+      return {
+        ...base,
+        claimsWithheld,
+        kind: "cut",
+        detail: `this read holds no seed-turn dispatch, but the route CUT its page (${auditPageNote(opts.page)}), so the dispatch row may be behind the cut — "the seat wrote inline" is NOT recorded${alsoSaid}`,
+      };
+    }
     return {
       ...base,
       claimsWithheld,

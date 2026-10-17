@@ -7345,6 +7345,7 @@ await removeTempDir(dir);
       ok(seedWriteWaitMs({ kind: "settled" }) === delegatedWait && seedWriteWaitMs({ kind: "unposted" }) === delegatedWait, "…and every delegated kind takes the same budget");
       ok(seedWriteWaitMs({ kind: "inline" }) === 60_000, `OPE-2100 NEGATIVE CONTROL: an INLINE seed turn keeps AUDIT_ROW_WAIT (got ${seedWriteWaitMs({ kind: "inline" })}ms)`);
       ok(seedWriteWaitMs(undefined) === 60_000, "OPE-2100 NEGATIVE CONTROL: an UNJOINED seed route keeps AUDIT_ROW_WAIT too");
+      ok(seedWriteWaitMs({ kind: "cut" }) === delegatedWait, "🔴 OPE-2039: a CUT seed page cannot say the seat wrote inline, so it takes the delegated budget — the 60-s bound is the one that redded a live run on a delegated turn");
       const memReadSrc = SCENARIOS.find((s) => s.id === "S-MEM-READ")!.run.toString().replace(/\s+/g, "");
       ok(
         memReadSrc.includes("NOSETTLEMENTwithin${seedWriteWaitMs(delegated)/1e3}s") || memReadSrc.includes("NOSETTLEMENTwithin${seedWriteWaitMs(delegated)/1000}s"),
@@ -8400,7 +8401,7 @@ await removeTempDir(dir);
   const SEED_SETTLEMENT_TS = "1000.000003";
   const SEED_TASK = "task_933d7c41f8ab4e2f91d07b5c";
 
-  const runLeg = async (seedDelegates: boolean) => {
+  const runLeg = async (seedDelegates: boolean, page?: { readonly capped: boolean; readonly scanTruncated: boolean }) => {
     let canary = "";
     let askPosted = false;
     let readsSinceAsk = 0;
@@ -8494,6 +8495,14 @@ await removeTempDir(dir);
         readsSinceAsk++;
         return recallRows();
       },
+      ...(page === undefined
+        ? {}
+        : {
+            async auditWindowRead(opts: { actions?: readonly string[] }) {
+              ok(opts.actions?.includes("memory.write") === true, "OPE-2039: only the seed window read goes through the flag-carrying reader");
+              return { entries: seedWindowRows(), ...page };
+            },
+          }),
       async transcriptRead(sessionId: string) {
         return sessionId === WORKER
           ? [
@@ -8554,6 +8563,22 @@ await removeTempDir(dir);
   );
   ok(!seedEvidence.includes("after the settlement post"), "…and the inline evidence sentence carries no settlement ceiling, so it is byte-identical to the pre-OPE-2036 one");
   ok(!inline.logs.some((l) => l.startsWith("seed round-trip:")), "…and no round trip is reported for a turn that never delegated");
+
+  const cutPage = await runLeg(false, { capped: true, scanTruncated: false });
+  const cutRoute = cutPage.logs.find((l) => l.startsWith("seed route:")) ?? "";
+  ok(cutRoute.startsWith("seed route: PAGE CUT"), `🔴 OPE-2039: an inline seed read off a CAPPED page is NOT recorded as IN-SEAT (route line: ${cutRoute.slice(0, 220)})`);
+  ok(cutRoute.includes("[page: capped=true scanTruncated=false]"), `…and the route line carries the route's own flags (route line: ${cutRoute.slice(-120)})`);
+  ok(
+    (cutPage.logs.find((l) => l.startsWith("seed evidence:")) ?? "").includes("1 memory.write row(s) count as the SEED's own write"),
+    "…and the gate still runs §16's filter and passes on the seat's own write — a refused absence is not a red",
+  );
+  const clearPage = await runLeg(false, { capped: false, scanTruncated: false });
+  const clearRoute = clearPage.logs.find((l) => l.startsWith("seed route:")) ?? "";
+  ok(clearRoute.startsWith("seed route: IN-SEAT") && clearRoute.includes("[page: capped=false scanTruncated=false]"), `OPE-2039 NEGATIVE CONTROL: a complete page still reads IN-SEAT, and says the flags were clear (route line: ${clearRoute.slice(0, 220)})`);
+  ok(
+    (inline.logs.find((l) => l.startsWith("seed route:")) ?? "").includes("[page: completeness flags not read]"),
+    "OPE-2039: with no flag-carrying reader wired, the route line says the flags were not read rather than implying a complete page",
+  );
 
   const delegatedSeed = await runLeg(true);
   const delegatedRoute = delegatedSeed.logs.find((l) => l.startsWith("seed route:")) ?? "";

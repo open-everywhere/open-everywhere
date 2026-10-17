@@ -53,6 +53,8 @@ import {
   seedAckLatchDetail,
   seedMemoryWrites,
   seedSettlementRead,
+  pageIsCut,
+  auditPageNote,
   settlementReportPairings,
   spendCapRaisedByThisRun,
   dollarOnlySpendCardFault,
@@ -66,6 +68,7 @@ import {
   workerRoadForOp,
 } from "./gate-joins.js";
 import { runFallbackCheck } from "./judge.js";
+import { nextReplyCandidate, SlackDriver, type SlackMessage, type SteppedOverMessage } from "./slack-driver.js";
 import { classifyDelegatedAnswer, forwardedJobsDispatchedAtOrAfter, tasksDispatchedAtOrAfter } from "./read-channel-lib.js";
 import { seatCatchUpWake, SEAT_READ_RESULT_TYPES, SEAT_READ_TOOL, type TranscriptWireEvent } from "./transcript-read.js";
 
@@ -417,6 +420,176 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
 
   const dispatchedHere = rowsRb.map((r) => (r.action === "delegation.task_started" ? row(r.action, "2026-01-27T00:33:17.000Z", r.detail as Record<string, unknown>, r.seq, "ingest") : r));
   ok(classifySettlementReply(dispatchedHere, { ...keysRb, messageId: REPORT_Rb, answersAsk: true }).kind === "answer", "…and the SAME rows with the dispatch inside this turn answer — a seat that delegates and settles under its own wake has answered its ask");
+}
+
+{
+  const SURFACE = "slack/T0EXAMPLE/C0EXWORKFL";
+  const ASK_TS = "1769932082.000000";
+  const ASK_VENDOR_ISO = new Date(Number.parseFloat(ASK_TS) * 1000).toISOString();
+  const ASK_WAKE = "cf00df06";
+  const MINTED = "remember-task-wake-not-quoted";
+  const FOREIGN_TASK = "task_768e5dc";
+  const REMEMBER_TASK = "task_618539";
+  const MSG = "1769932146.000000";
+  const reportRows = [
+    row("wake.ingress", "2026-02-01T07:48:02.100Z", { wakeId: ASK_WAKE, vendorTs: ASK_VENDOR_ISO, surfaceKey: SURFACE }, 1),
+    row("wake.turn_start", "2026-02-01T07:48:03.000Z", { wakeId: ASK_WAKE, turnStartTs: "2026-02-01T07:48:03.000Z" }, 2),
+    row("delegation.task_started", "2026-02-01T07:44:13.000Z", { task: FOREIGN_TASK, continuation: false }, 0, "ingest"),
+    row("delegation.task_started", "2026-02-01T07:48:29.000Z", { task: REMEMBER_TASK, continuation: false }, 3, "ingest"),
+    row("reply.post", "2026-02-01T07:48:40.000Z", { id: MSG, wakeId: ASK_WAKE, chars: 160 }, 4),
+    row("delegation.settlement_report_posted", "2026-02-01T07:48:40.050Z", { task: FOREIGN_TASK, wake: ASK_WAKE }, 5),
+  ];
+  const editRows = [
+    row("unified.task_wake", "2026-02-01T07:50:41.000Z", { task: REMEMBER_TASK, wakeId: MINTED, inheritedWakeId: ASK_WAKE, outcome: "installed" }, 6, "unified"),
+    row("reply.edit", "2026-02-01T07:51:03.000Z", { id: MSG, platform: "slack", chars: 64, wakeId: MINTED }, 7),
+  ];
+  const askWakeId = wakeIdForVendorInstant(reportRows, Date.parse(ASK_VENDOR_ISO), SURFACE);
+  const keys = { askWakeId, floorMs: turnStartMs(reportRows, ASK_WAKE) };
+  ok(askWakeId === ASK_WAKE, "the ask's own wake is found by its vendor instant, so the fixture exercises the full classification and not the fail-closed path");
+
+  ok(classifySettlementReply(reportRows, { ...keys, messageId: MSG, answersAsk: false }).kind === "step-over", "OPE-2127 premise: the PR task's report, posted into the remember thread, is stepped over — a previous leg dispatched that task");
+
+  const edited = classifySettlementReply([...reportRows, ...editRows], { ...keys, messageId: MSG, answersAsk: true });
+  ok(edited.kind === "answer", `🔴 OPE-2127: a stepped-over report that the seat rewrote in place under a wake on the ask's lineage IS the answer (got ${edited.kind}: ${edited.detail})`);
+  ok(edited.kind === "answer" && edited.wakeId === MINTED, "…and it names the wake that EDITED the message, not the wake that posted the report");
+
+  ok(classifySettlementReply([...reportRows, ...editRows], { ...keys, messageId: MSG, answersAsk: false }).kind === "step-over", "🔴 control: the edited text must still carry what the ask asked for — the content gate applies to the edit");
+  const foreignEdit = [...reportRows, editRows[0]!, row("reply.edit", "2026-02-01T07:51:03.000Z", { id: MSG, platform: "slack", chars: 64, wakeId: "another-legs-wake" }, 7)];
+  ok(classifySettlementReply(foreignEdit, { ...keys, messageId: MSG, answersAsk: true }).kind === "step-over", "🔴 control: an edit under a wake OUTSIDE the ask's lineage is stepped over — a foreign edit never ends this wait");
+  const noWakeEdit = [...reportRows, editRows[0]!, row("reply.edit", "2026-02-01T07:51:03.000Z", { id: MSG, platform: "slack", chars: 64 }, 7)];
+  ok(classifySettlementReply(noWakeEdit, { ...keys, messageId: MSG, answersAsk: true }).kind === "step-over", "control: an edit row that names no wake cannot be placed, so it fails closed to step-over");
+  const editBeforeReport = [...reportRows, editRows[0]!, row("reply.edit", "2026-02-01T07:48:40.020Z", { id: MSG, platform: "slack", chars: 64, wakeId: MINTED }, 4.5)];
+  ok(classifySettlementReply(editBeforeReport, { ...keys, messageId: MSG, answersAsk: true }).kind === "step-over", "🔴 control: an edit that stands BEFORE the settlement row does not replace the report — the report still decides");
+  const otherMessage = [...reportRows, editRows[0]!, row("reply.edit", "2026-02-01T07:51:03.000Z", { id: "1769932233.000000", platform: "slack", chars: 64, wakeId: MINTED }, 7)];
+  ok(classifySettlementReply(otherMessage, { ...keys, messageId: MSG, answersAsk: true }).kind === "step-over", "control: an edit of ANOTHER message changes nothing about this one");
+
+  const BOT = "U0OPENEVERYWHERE";
+  const before: SlackMessage = { ts: MSG, userId: BOT, text: "PR #157 is open … I canceled the redundant worker." };
+  const after: SlackMessage = { ts: MSG, userId: BOT, text: "Noted — the release decision is `shipit-47215`, and it's saved.", editedTs: "1769932263.000000" };
+  const steppedOver = new Map<string, SteppedOverMessage>([[MSG, { text: before.text }]]);
+  const pick = (msgs: readonly SlackMessage[]) => nextReplyCandidate(msgs, { floorTs: MSG, steppedOver, isBotReply: (m) => m.userId === BOT });
+  ok(pick([before]) === undefined, "control: the stepped-over message, unchanged, is not a candidate again — the wait does not loop on it");
+  ok(pick([after]) === after, "🔴 OPE-2127: the SAME message, edited, IS a candidate again — the defect was a wait keyed on `ts` alone");
+  const newer: SlackMessage = { ts: "1769932283.000000", userId: BOT, text: "a newer reply" };
+  ok(pick([before, newer]) === newer, "…and a newer message is still a candidate, exactly as before");
+  ok(pick([{ ...after, userId: "U0HUMAN" }]) === undefined, "control: a non-bot message is never a candidate, edited or not");
+  ok(nextReplyCandidate([after], { floorTs: MSG, steppedOver: new Map(), isBotReply: (m) => m.userId === BOT }) === undefined, "control: with nothing stepped over, a message at the floor is not newer, so it is not a candidate — the floor rule is unchanged");
+
+  process.env.OE_SQLITE_PATH = join("/tmp", `oe-gate-joins-halt-test-${process.pid}.sqlite3`);
+  const { awaitNonSettlementReply } = await import("./scenarios.js");
+  interface Phase {
+    readonly thread: readonly SlackMessage[] | ((threadReadsInPhase: number) => readonly SlackMessage[]);
+    readonly rows: (readsInPhase: number) => readonly AuditWireEntry[];
+  }
+  const drive = async (phases: readonly Phase[], timeoutMs: number) => {
+    const logs: string[] = [];
+    let phase = 0;
+    let reads = 0;
+    let threadReads = 0;
+    const at = () => phases[Math.min(phase, phases.length - 1)]!;
+    const driver = new SlackDriver({ botUserId: BOT, channel: "C0EXWORKFL" } as never);
+    Object.assign(driver, {
+      identity: async () => ({ userId: "U0EXOWNER", teamId: "T0EXAMPLE" }),
+      replies: async () => {
+        const t = at().thread;
+        return typeof t === "function" ? t(threadReads++) : t;
+      },
+    });
+    const ctx = {
+      auditRead: async () => at().rows(reads++),
+      log: (line: string) => {
+        logs.push(line);
+        if (line.includes("stepping over it")) {
+          phase++;
+          reads = 0;
+          threadReads = 0;
+        }
+      },
+    };
+    const reply = await awaitNonSettlementReply(ctx, driver, ASK_TS, {
+      what: "remember",
+      sinceIso: "2026-02-01T07:47:53.000Z",
+      timeoutMs,
+      answers: (m) => m.text.includes("shipit-47215"),
+    }).catch((err: unknown) => err);
+    return { reply, logs };
+  };
+  const answeredWith = (r: unknown) => (r instanceof Error ? `error: ${r.message}` : (r as SlackMessage).text);
+  const reportPhase: Phase = { thread: [before], rows: () => reportRows };
+
+  const driven = await drive([reportPhase, { thread: [after], rows: () => [...reportRows, ...editRows] }], 30_000);
+  ok(answeredWith(driven.reply).includes("shipit-47215"), `🔴 OPE-2127: the wait returns the EDITED message as the answer (got ${answeredWith(driven.reply)}; log: ${driven.logs.join(" | ").slice(0, 400)})`);
+  ok(driven.logs.some((l) => l.includes("rewritten in place") && l.startsWith("reply-wait remember: answer")), "…and its log names the edit as the reason it answered");
+
+  const lagging = await drive([reportPhase, { thread: [after], rows: (k) => (k < 2 ? [...reportRows, editRows[0]!] : [...reportRows, ...editRows]) }], 30_000);
+  ok(answeredWith(lagging.reply).includes("shipit-47215"), `🔴 OPE-2127: an edit whose reply.edit row lags the Slack edit is still answered — the wait holds for the row (got ${answeredWith(lagging.reply)}; log: ${lagging.logs.join(" | ").slice(0, 300)})`);
+
+  const firstEdit: SlackMessage = { ts: MSG, userId: BOT, text: "Working on the release decision now.", editedTs: "1769932233.000000" };
+  const foreignEditRow = row("reply.edit", "2026-02-01T07:49:53.000Z", { id: MSG, platform: "slack", chars: 40, wakeId: "another-legs-wake" }, 6.5);
+  const twoEdits = await drive(
+    [
+      reportPhase,
+      { thread: [firstEdit], rows: () => [...reportRows, foreignEditRow] },
+      { thread: [after], rows: (k) => (k < 2 ? [...reportRows, foreignEditRow, editRows[0]!] : [...reportRows, foreignEditRow, ...editRows]) },
+    ],
+    30_000,
+  );
+  ok(answeredWith(twoEdits.reply).includes("shipit-47215"), `🔴 OPE-2127: a second edit is placed by ITS OWN reply.edit row, not by the first edit's (got ${answeredWith(twoEdits.reply)}; log: ${twoEdits.logs.join(" | ").slice(0, 500)})`);
+  ok(twoEdits.logs.filter((l) => l.includes("stepping over it")).length === 2, "…after stepping over the report AND the foreign edit — two step-overs, each logged");
+
+  const race = await drive(
+    [
+      { thread: (k) => (k === 0 ? [before] : [after]), rows: () => [...reportRows, ...editRows] },
+      { thread: [after], rows: () => [...reportRows, ...editRows] },
+    ],
+    70_000,
+  );
+  ok(answeredWith(race.reply).includes("shipit-47215"), `🔴 OPE-2127: an edit that lands between the thread read and the audit read is classified at its new text (got ${answeredWith(race.reply)}; log: ${race.logs.join(" | ").slice(0, 400)})`);
+  ok(race.logs.some((l) => l.includes("changed while it was classified")), "…and the log says the message changed while it was classified");
+
+  const raceLag = await drive(
+    [
+      { thread: (k) => (k === 0 ? [before] : [after]), rows: (k) => (k < 2 ? [...reportRows, editRows[0]!] : [...reportRows, ...editRows]) },
+      { thread: [after], rows: () => [...reportRows, ...editRows] },
+    ],
+    75_000,
+  );
+  ok(answeredWith(raceLag.reply).includes("shipit-47215"), `🔴 OPE-2127: an edit found by the re-read holds for its own lagging reply.edit row (got ${answeredWith(raceLag.reply)}; log: ${raceLag.logs.join(" | ").slice(0, 400)})`);
+
+  const reReadTwoEdits = await drive(
+    [
+      reportPhase,
+      {
+        thread: (k) => (k === 0 ? [firstEdit] : [after]),
+        rows: (k) => (k < 3 ? [...reportRows, foreignEditRow, editRows[0]!] : [...reportRows, foreignEditRow, ...editRows]),
+      },
+      { thread: [after], rows: () => [...reportRows, foreignEditRow, ...editRows] },
+    ],
+    75_000,
+  );
+  ok(answeredWith(reReadTwoEdits.reply).includes("shipit-47215"), `🔴 OPE-2127: a second edit found by the re-read is never placed by the first edit's row (got ${answeredWith(reReadTwoEdits.reply)}; log: ${reReadTwoEdits.logs.join(" | ").slice(0, 500)})`);
+
+  const editN = (n: number): SlackMessage => ({ ts: MSG, userId: BOT, text: `edit ${n}: the release decision is shipit-47215`, editedTs: `17902619${n}0.000000` });
+  const foreignEditN = (n: number) => row("reply.edit", `2026-01-29T15:20:4${n}.000Z`, { id: MSG, platform: "slack", chars: 40, wakeId: "another-legs-wake" }, 6 + n / 10);
+  const exhausted = await drive(
+    [
+      reportPhase,
+      { thread: [editN(1)], rows: () => [...reportRows, foreignEditN(1)] },
+      { thread: [editN(2)], rows: () => [...reportRows, foreignEditN(1), foreignEditN(2)] },
+      { thread: [editN(3)], rows: () => [...reportRows, foreignEditN(1), foreignEditN(2)] },
+    ],
+    30_000,
+  );
+  ok(
+    exhausted.reply instanceof Error && exhausted.reply.message.includes("budget ran out on an edit"),
+    `🔴 OPE-2127: when the step budget runs out on an edit of a stepped-over report, the wait refuses to grade it (got ${answeredWith(exhausted.reply)})`,
+  );
+
+  const noEdit = await drive([reportPhase], 4_000);
+  ok(noEdit.reply instanceof Error, "🔴 negative control: with no edit, the stepped-over report is NEVER returned — the wait still times out on a foreign report");
+  const lostRow = await drive([reportPhase, { thread: [after], rows: () => [...reportRows, editRows[0]!] }], 70_000);
+  ok(lostRow.reply instanceof Error, `🔴 negative control: an edit with no reply.edit row is NOT graded as the answer — it is a known foreign report (got ${answeredWith(lostRow.reply)})`);
+  ok(lostRow.logs.some((l) => l.includes("the edit cannot be placed — stepping over it again")), "…and the log says the edit could not be placed");
 }
 
 {
@@ -1109,6 +1282,13 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
       !before.detail.includes("after the settlement post"),
       `🔴 OPE-2036: with no ceiling the evidence sentence is the pre-fix one, byte for byte — a reader never meets a count that can only be zero (got ${before.detail})`,
     );
+    const cappedRead = seedSettlementRead(inlineRows, { ...seedOpts, page: { capped: true, scanTruncated: false } });
+    ok(cappedRead.kind === "cut", `🔴 OPE-2039: a CAPPED page with no dispatch row answers \`cut\`, not \`inline\` (got ${cappedRead.kind}: ${cappedRead.detail})`);
+    ok(cappedRead.detail.includes("capped=true scanTruncated=false") && cappedRead.detail.includes("NOT recorded"), `…and the sentence names the flags and says the absence is not recorded (got ${cappedRead.detail})`);
+    ok(seedSettlementRead(inlineRows, { ...seedOpts, page: { capped: false, scanTruncated: true } }).kind === "cut", "🔴 OPE-2039: a TRUNCATED per-action scan is a cut page too — the dispatch action may be the one that filled its scan");
+    ok(seedSettlementRead(inlineRows, { ...seedOpts, page: { capped: false, scanTruncated: false } }).kind === "inline", "OPE-2039 NEGATIVE CONTROL: a page the route reports complete still answers INLINE");
+    ok(seedSettlementRead([dispatch, ...inlineRows], { ...seedOpts, page: { capped: true, scanTruncated: true } }).kind === "unsettled", "OPE-2039 CONTROL: a dispatch IN HAND is a presence, so a cut page does not touch it");
+    ok(!pageIsCut(undefined) && auditPageNote(undefined) === "completeness flags not read", "OPE-2039: with no flag-carrying reader the read is not called cut, and the log line says the flags were not read");
     const legZeroDispatch = row("delegation.task_started", "2026-01-31T14:24:02.000Z", { task: "task_legzero", session: SEAT }, 9, "ingest");
     const stillInline = seedSettlementRead([legZeroDispatch, ...inlineRows], seedOpts);
     ok(stillInline.kind === "inline", "🔴 OPE-2036 NEGATIVE CONTROL: a dispatch BELOW the seed turn's start is a PREVIOUS leg's and never makes this turn delegated");

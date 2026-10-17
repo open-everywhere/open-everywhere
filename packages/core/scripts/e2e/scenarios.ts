@@ -15,7 +15,7 @@ import { SETTINGS } from "../../agent/settings/settings.js";
 import { DISPATCH_TICK_MINUTES } from "../../agent/routines/schedule.js";
 import { newRoutineId } from "../../agent/routines/store.js";
 import type { SlackDriver, SlackMessage } from "./slack-driver.js";
-import { approvalCardFacts, cardJudgeSurface, endsOwnWakeWait, tsAfter } from "./slack-driver.js";
+import { approvalCardFacts, cardJudgeSurface, endsOwnWakeWait, nextReplyCandidate, tsAfter, type SteppedOverMessage } from "./slack-driver.js";
 import { slackVendorEventTime } from "../../agent/channels/wake-timing.js";
 import { ADMIN_UNVERIFIED_MARKER, askPastCoalescedRefusal, awaitChannelSeatQuiet, replyExcerpt } from "./coalesced-ask.js";
 import type { DiscordDriver, DiscordMessage } from "./discord-driver.js";
@@ -30,7 +30,7 @@ import type { NotionDriver } from "./notion-driver.js";
 import { archiveNotionPageByTitle, notionMinuteFloor, notionPageIdFromText, msToNextMinuteBoundary, pinNotionQueryPage, type NotionComment, type NotionPagePinResult } from "./notion-driver.js";
 import { GITHUB_NOTION_REST_ACTIONS, githubNotionForward, githubNotionOriginLifecycle, githubNotionReplyNamesBlock, githubNotionReplyRow } from "./github-notion-rest.js";
 import type { PrApi } from "./pr-api.js";
-import { buildUnifiedAuditQuery, type AuditQueryOpts, type AuditWireEntry, type UnifiedAuditCall, type UnifiedAuditWire } from "./audit-read.js";
+import { buildUnifiedAuditQuery, type AuditQueryOpts, type AuditWindowRead, type AuditWireEntry, type UnifiedAuditCall, type UnifiedAuditWire } from "./audit-read.js";
 import { ARMING_ADVISORY_LOOKBACK_DAYS, armingNote, CREDENTIAL_BOUND_ACTION, deriveConnectorArming, deriveOrgConsent, orgConsentMissingReason, lookbackIso, watchConnectorArming, type ArmingProbe } from "./connector-arming.js";
 import { slackVendorTimestamp } from "./suspended-approval.js";
 import { CONNECTOR_CARD_ACTIONS, completedConnectorWrites, connectorCardRequest, connectorCardRun, forwardedWorkSessionStale } from "./connector-card.js";
@@ -201,6 +201,8 @@ import {
   seedMemoryWrites,
   seedSettlementRead,
   type SeedSettlementRead,
+  auditPageNote,
+  type AuditPageCompleteness,
   type SeedWriteRead,
   SETTLEMENT_REPORT_POSTED_ACTION,
   spendCapRaisedByThisRun,
@@ -339,6 +341,7 @@ export interface ScenarioContext {
   readonly unifiedAuditCall?: UnifiedAuditCall;
   readonly targetUrl?: string;
   readonly auditRead?: (opts: AuditQueryOpts) => Promise<readonly AuditWireEntry[]>;
+  readonly auditWindowRead?: (opts: AuditQueryOpts) => Promise<AuditWindowRead>;
   readonly transcriptRead?: (sessionId: string) => Promise<readonly TranscriptWireEvent[]>;
   readonly prRepo?: string;
   readonly prApi?: PrApi;
@@ -1101,8 +1104,18 @@ async function gateSeatCatchUp(
 
 const SETTLEMENT_STEPS = 3;
 
+const editRowsFor = (rows: readonly AuditWireEntry[], messageId: string): readonly AuditWireEntry[] =>
+  rows.filter((r) => r.action === REPLY_EDIT_ACTION && (r.detail as { id?: unknown } | undefined)?.id === messageId);
+
+const editRowIsNewer = (a: AuditWireEntry, b: AuditWireEntry): boolean =>
+  typeof a.seq === "number" && typeof b.seq === "number" ? a.seq > b.seq : Date.parse(a.ts) > Date.parse(b.ts);
+
+const newestEditRow = (rows: readonly AuditWireEntry[]): AuditWireEntry | undefined =>
+  rows.reduce<AuditWireEntry | undefined>((best, r) => (best === undefined || editRowIsNewer(r, best) ? r : best), undefined);
+
 const SETTLEMENT_WAIT_ACTIONS = [
   REPLY_POST_ACTION,
+  REPLY_EDIT_ACTION,
   SETTLEMENT_REPORT_POSTED_ACTION,
   WAKE_INGRESS_ACTION,
   WAKE_TURN_START_ACTION,
@@ -1110,8 +1123,8 @@ const SETTLEMENT_WAIT_ACTIONS = [
   DELEGATION_TASK_STARTED_ACTION,
 ];
 
-async function awaitNonSettlementReply(
-  ctx: ScenarioContext,
+export async function awaitNonSettlementReply(
+  ctx: Pick<ScenarioContext, "auditRead" | "log">,
   driver: SlackDriver,
   anchorTs: string,
   opts: {
@@ -1124,9 +1137,26 @@ async function awaitNonSettlementReply(
 ): Promise<SlackMessage> {
   const read = ctx.auditRead;
   const deadline = Date.now() + opts.timeoutMs;
-  const wait = (afterTs: string): Promise<SlackMessage> =>
-    driver.awaitThreadReply(anchorTs, { afterTs, timeoutMs: Math.max(1, deadline - Date.now()), ...(opts.skip ? { skip: opts.skip } : {}) });
-  let reply = await wait(anchorTs);
+  const steppedOver = new Map<string, SteppedOverMessage>();
+  const editSeen = new Map<string, AuditWireEntry>();
+  let polled: readonly AuditWireEntry[] = [];
+  let rereads = 0;
+  let changedInHand: string | undefined;
+  const editStates = new Map<string, number>();
+  const bumpEditState = (ts: string): void => {
+    editStates.set(ts, (editStates.get(ts) ?? 0) + 1);
+  };
+  const waitNext = async (): Promise<SlackMessage> => {
+    const m = await wait();
+    if (steppedOver.has(m.ts)) bumpEditState(m.ts);
+    return m;
+  };
+  let floorTs = anchorTs;
+  const wait = (): Promise<SlackMessage> =>
+    driver.awaitThreadMessage(anchorTs, { timeoutMs: Math.max(1, deadline - Date.now()), what: `a substantive bot reply in thread ${anchorTs}` }, (msgs) =>
+      nextReplyCandidate(msgs, { floorTs, steppedOver, isBotReply: (m) => driver.isBotReply(m), ...(opts.skip ? { skip: opts.skip } : {}) }),
+    );
+  let reply = await wait();
   if (!read) {
     ctx.log(`reply-wait ${opts.what}: no control-plane audit reader — a previous task's settlement report posted in this turn would be graded as the answer (OPE-1965)`);
     return reply;
@@ -1137,21 +1167,36 @@ async function awaitNonSettlementReply(
   let askWakeId: string | undefined;
   let floorMs: number | undefined;
   for (let step = 0; step < SETTLEMENT_STEPS; step++) {
+    const edited = steppedOver.has(reply.ts) || changedInHand === reply.ts;
+    changedInHand = undefined;
+    const seenEdit = editSeen.get(reply.ts);
     let verdict: SettlementReplyVerdict | undefined;
     try {
       verdict = await pollOptional(
         async () => {
           const rows = await read({ sinceIso: opts.sinceIso, actions: SETTLEMENT_WAIT_ACTIONS, limit: OWN_WAKE_AUDIT_PAGE });
+          polled = rows;
           if (!rows.some((r) => r.action === REPLY_POST_ACTION && (r.detail as { id?: unknown } | undefined)?.id === reply.ts)) return undefined;
+          if (edited) {
+            const edits = editRowsFor(rows, reply.ts);
+            if (edits.length < (editStates.get(reply.ts) ?? 1)) return undefined;
+            if (!edits.some((r) => seenEdit === undefined || editRowIsNewer(r, seenEdit))) return undefined;
+          }
           if (askWakeId === undefined && vendor) askWakeId = wakeIdForVendorInstant(rows, vendor.ms, surfaceKey);
           if (floorMs === undefined && askWakeId !== undefined) floorMs = turnStartMs(rows, askWakeId);
           return classifySettlementReply(rows, { messageId: reply.ts, askWakeId, floorMs, answersAsk: opts.answers(reply) });
         },
-        { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: `reply-wait ${opts.what}: the ${REPLY_POST_ACTION} row for message ${reply.ts}` },
+        { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: `reply-wait ${opts.what}: the ${edited ? REPLY_EDIT_ACTION : REPLY_POST_ACTION} row for message ${reply.ts}` },
       );
     } catch (err) {
       ctx.log(`reply-wait ${opts.what}: the settlement-report read failed (${String(err instanceof Error ? err.message : err)}) — grading the reply in hand`);
       return reply;
+    }
+    if (verdict === undefined && edited) {
+      ctx.log(`reply-wait ${opts.what}: no new ${REPLY_EDIT_ACTION} row named the edit of message ${reply.ts} within ${AUDIT_ROW_WAIT}ms, so the edit cannot be placed — stepping over it again (OPE-2127)`);
+      steppedOver.set(reply.ts, { text: reply.text, ...(reply.editedTs !== undefined ? { editedTs: reply.editedTs } : {}) });
+      reply = await waitNext();
+      continue;
     }
     if (verdict === undefined) {
       ctx.log(`reply-wait ${opts.what}: no ${REPLY_POST_ACTION} row named message ${reply.ts} within ${AUDIT_ROW_WAIT}ms, so it could not be classified — grading it as the answer`);
@@ -1161,8 +1206,32 @@ async function awaitNonSettlementReply(
       ctx.log(`reply-wait ${opts.what}: ${verdict.kind} — ${verdict.detail}`);
       return reply;
     }
-    ctx.log(`reply-wait ${opts.what}: ${verdict.detail} — stepping over it and waiting again`);
-    reply = await wait(reply.ts);
+    if (rereads < SETTLEMENT_STEPS) {
+      const fresh = await driver
+        .replies(anchorTs)
+        .then((msgs) => msgs.find((m) => m.ts === reply.ts))
+        .catch(() => undefined);
+      if (fresh !== undefined && (fresh.text !== reply.text || fresh.editedTs !== reply.editedTs)) {
+        rereads++;
+        ctx.log(`reply-wait ${opts.what}: message ${reply.ts} changed while it was classified — classifying it again at its current text (OPE-2127)`);
+        reply = fresh;
+        changedInHand = fresh.ts;
+        bumpEditState(fresh.ts);
+        step--;
+        continue;
+      }
+    }
+    ctx.log(`reply-wait ${opts.what}: ${verdict.detail} — stepping over it and waiting again, for a newer message or an edit of this one (OPE-2127)`);
+    steppedOver.set(reply.ts, { text: reply.text, ...(reply.editedTs !== undefined ? { editedTs: reply.editedTs } : {}) });
+    const newestEdit = newestEditRow(editRowsFor(polled, reply.ts));
+    if (newestEdit !== undefined) editSeen.set(reply.ts, newestEdit);
+    if (tsAfter(reply.ts, floorTs)) floorTs = reply.ts;
+    reply = await waitNext();
+  }
+  if (steppedOver.has(reply.ts)) {
+    throw new Error(
+      `reply-wait ${opts.what}: the ${SETTLEMENT_STEPS}-step budget ran out on an edit of message ${reply.ts}, which this wait already stepped over as a settlement report it could not tie to the ask — it is not graded as the answer (OPE-2127)`,
+    );
   }
   return reply;
 }
@@ -1727,8 +1796,17 @@ export const SCENARIOS: readonly Scenario[] = [
       let seedTurnStartMs: number | undefined;
       let seedRead: SeedWriteRead | undefined;
       let seedDelegation: SeedSettlementRead | undefined;
+      let seedPage: AuditPageCompleteness | undefined;
       const readSeedWindow = async (): Promise<readonly AuditWireEntry[]> => {
-        const rows = await auditRead({ sinceIso: purgeStart, actions: [...SEED_WRITE_ACTIONS], limit: 1000 });
+        const seedQuery = { sinceIso: purgeStart, actions: [...SEED_WRITE_ACTIONS], limit: 1000 };
+        let rows: readonly AuditWireEntry[];
+        if (ctx.auditWindowRead) {
+          const page = await ctx.auditWindowRead(seedQuery);
+          seedPage = { capped: page.capped, scanTruncated: page.scanTruncated };
+          rows = page.entries;
+        } else {
+          rows = await auditRead(seedQuery);
+        }
         if (seedWakeId === undefined && seedVendorMs !== undefined) seedWakeId = wakeIdForVendorInstant(rows, seedVendorMs, seedSurfaceKey);
         if (seedTurnStartMs === undefined && seedWakeId !== undefined) seedTurnStartMs = turnStartMs(rows, seedWakeId);
         return rows;
@@ -1738,6 +1816,7 @@ export const SCENARIOS: readonly Scenario[] = [
           ...(seedWakeId === undefined ? {} : { seedWakeId }),
           ...(seedTurnStartMs === undefined ? {} : { seedTurnStartMs }),
           ackId: seedAck.ts,
+          ...(seedPage === undefined ? {} : { page: seedPage }),
         });
         seedDelegation = read;
         return read;
@@ -1759,12 +1838,14 @@ export const SCENARIOS: readonly Scenario[] = [
             ? `UNJOINED — ${seedDelegation?.detail ?? "no audit read completed"}; the gate takes §16's inline path, which is its pre-OPE-2036 behaviour`
             : delegated.kind === "inline"
               ? `IN-SEAT — ${delegated.detail}`
-              : `DELEGATED — ${delegated.detail}`
-        }`,
+              : delegated.kind === "cut"
+                ? `PAGE CUT — ${delegated.detail}; the gate takes §16's inline path with the delegated budget, because the route is unknown`
+                : `DELEGATED — ${delegated.detail}`
+        } [page: ${auditPageNote(seedPage)}]`,
       );
 
       const seedWrite =
-        delegated === undefined || delegated.kind === "inline"
+        delegated === undefined || delegated.kind === "inline" || delegated.kind === "cut"
           ?
             await pollOptional(
               async () => {

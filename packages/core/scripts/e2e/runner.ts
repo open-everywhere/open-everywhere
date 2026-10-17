@@ -140,6 +140,8 @@ async function main(): Promise<void> {
   const auditTarget = (process.env.E2E_TARGET_URL ?? "").trim();
   const auditToken = (process.env.E2E_CONTROL_READ_TOKEN ?? "").trim();
   const auditRead = auditTarget && auditToken ? (opts: Parameters<typeof fetchAudit>[2]) => fetchAudit(auditTarget, auditToken, opts) : undefined;
+  const auditWindowRead =
+    auditTarget && auditToken ? (opts: Parameters<typeof fetchAuditWindow>[2]) => fetchAuditWindow(auditTarget, auditToken, opts) : undefined;
   const wakeAuditRead =
     auditTarget && auditToken
       ? (opts: { sinceIso: string; untilIso: string; limit: number; timeoutMs: number }) => fetchAuditWindow(auditTarget, auditToken, opts)
@@ -456,6 +458,7 @@ async function main(): Promise<void> {
       unifiedAuditCall,
       targetUrl: auditTarget || undefined,
       auditRead,
+      auditWindowRead,
       transcriptRead,
       prRepo: pr.ok ? pr.cfg.repo : undefined,
       prApi: prApiDriver,
