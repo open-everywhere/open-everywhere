@@ -258,6 +258,8 @@ let grantScope = "";
     first: true,
   });
   ok((await readDmAudience(ORG, BOB)).delivered, "…and a chat.dm delivery to the SAME person DOES spend it — so the absence above is a fact about the plane, not about the harness");
+  ok(dmed.at(-1)?.generated === true, "🔴 OPE-2542: a chat.dm delivery reaches the arm marked generated — the model wrote it");
+  ok(card.generated === undefined, "🔴 OPE-2542: the grant card reaches the arm with NO generated flag — host copy carries no AI label");
 
   const approved = await approveCredentialGrant(stamps, ask.sent ? ask.askId : "", "session", "slack/T1/U-owner", NOW + 500, undefined, BORROW_DEPS);
   ok(approved.approved, "Bob approves, and a live grant exists");
@@ -399,6 +401,23 @@ console.log("7. no plane bypasses the road:");
   ok(
     PROACTIVE_DM_PLANES.every((r) => r.stop === "exempt" || r.stop === "outranks"),
     "§8: every plane takes one of the two standings — the table admits no third state",
+  );
+}
+
+{
+  const RULED_GENERATED = ["chat.dm", "attention.blocked"] as const;
+  const generated = PROACTIVE_DM_PLANES.filter((r) => r.generated).map((r) => r.plane);
+  ok(
+    generated.length === RULED_GENERATED.length && RULED_GENERATED.every((p) => generated.includes(p)),
+    `🔴 §9/OPE-2542: EXACTLY these planes carry model text — ${RULED_GENERATED.join(", ")}. Saw: ${generated.join(", ") || "none"}. dm_person's text and the blocked ping's status line are the model's; every other plane is host copy`,
+  );
+  ok(
+    PROACTIVE_DM_PLANES.every((r) => typeof r.generated === "boolean"),
+    "§9: every plane answers `generated` — a plane with no answer cannot reach the road",
+  );
+  ok(
+    PROACTIVE_DM_PLANES.every((r) => !r.generated || r.stop === "outranks"),
+    "🔴 §9: only a plane ON THE ROAD can carry `generated` — an exempt plane calls the post arm itself, so the row's flag would label nothing",
   );
 }
 

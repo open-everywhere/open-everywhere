@@ -17,6 +17,7 @@ export interface ProactiveDmPlaneRow {
   readonly what: string;
   readonly stop: ProactiveDmStopStanding;
   readonly recordsDelivery: boolean;
+  readonly generated: boolean;
   readonly exemptBecause?: string;
 }
 
@@ -27,6 +28,7 @@ export const PROACTIVE_DM_PLANES: readonly ProactiveDmPlaneRow[] = [
     what: "A message the model wrote, to a person an operator granted.",
     stop: "outranks",
     recordsDelivery: true,
+    generated: true,
   },
   {
     plane: "credential.grant.card",
@@ -34,6 +36,7 @@ export const PROACTIVE_DM_PLANES: readonly ProactiveDmPlaneRow[] = [
     what: "The card that asks an owner to lend their own connector credential to somebody else's conversation.",
     stop: "outranks",
     recordsDelivery: false,
+    generated: false,
   },
   {
     plane: "credential.grant.notice",
@@ -41,6 +44,7 @@ export const PROACTIVE_DM_PLANES: readonly ProactiveDmPlaneRow[] = [
     what: "The once-per-grant notice that the owner's credential was just used.",
     stop: "outranks",
     recordsDelivery: false,
+    generated: false,
   },
   {
     plane: "credential.grant.consent",
@@ -48,6 +52,7 @@ export const PROACTIVE_DM_PLANES: readonly ProactiveDmPlaneRow[] = [
     what: "The link an owner opens to connect their own account before they can answer a grant card.",
     stop: "outranks",
     recordsDelivery: false,
+    generated: false,
   },
   {
     plane: "connector.sign_in",
@@ -55,6 +60,7 @@ export const PROACTIVE_DM_PLANES: readonly ProactiveDmPlaneRow[] = [
     what: "The private link a person opens to connect their own account, when a job they asked for needs it (OPE-2340).",
     stop: "outranks",
     recordsDelivery: false,
+    generated: false,
   },
   {
     plane: "identity.link-set",
@@ -62,6 +68,7 @@ export const PROACTIVE_DM_PLANES: readonly ProactiveDmPlaneRow[] = [
     what: "The alert that an account joined or left the recipient's own linked identity.",
     stop: "exempt",
     recordsDelivery: false,
+    generated: false,
     exemptBecause:
       "It is not somebody else's errand: it tells a person that their OWN identity changed, and it is the only thing that makes a quiet takeover loud. A stop request throttles chattiness and this message is important, so it stays exempt — a security alert about the recipient themselves is not what a person is asking to be spared.",
   },
@@ -75,6 +82,7 @@ export const PROACTIVE_DM_PLANES: readonly ProactiveDmPlaneRow[] = [
     what: "The link handshake: the challenge sent to a named TARGET account, and the answer sent back to the account that started it.",
     stop: "exempt",
     recordsDelivery: false,
+    generated: false,
     exemptBecause:
       "Mixed, and stated at its weakest: the answers `identity/link-consent.ts` and `hooks/link-claim.ts` send go back to the account that began the handshake, but `tools/link_identity.ts` cold-DMs the named TARGET account, which began nothing — it is the challenge that proves that account's ownership, and its copy names the initiator so the person can judge it. A stopped person can therefore still be made to receive that challenge, repeatedly, by anyone who names their account. It stays exempt on the rule that a stop request throttles chattiness: a challenge against the recipient's own account is important, and silencing it would let a link be claimed without the one message that can contest it. The repetition is the real cost, and it belongs to a rate limit on this plane rather than to the stop. NO SUCH RATE LIMIT EXISTS TODAY: `tools/link_identity.ts` names that gap in its own header, and one DM per TTL-bounded single-use request is the only bound the plane has.",
   },
@@ -84,6 +92,7 @@ export const PROACTIVE_DM_PLANES: readonly ProactiveDmPlaneRow[] = [
     what: "An admin's own pane read — a usage report, a spend report, a connector disclosure — delivered privately back to the admin who asked for it.",
     stop: "exempt",
     recordsDelivery: false,
+    generated: false,
     exemptBecause:
       "It answers the recipient's own tool call. The DM is the private venue for a pane they just asked for, because an org-grain read must not land in a room, so it is a reply rather than a message the agent starts. A stop request throttles chattiness, and an answer the person asked for this minute is not chattiness — silencing it would drop the reply to their own command.",
   },
@@ -93,6 +102,7 @@ export const PROACTIVE_DM_PLANES: readonly ProactiveDmPlaneRow[] = [
     what: "The one ping the work session or a thread seat sends its own person when it reports itself blocked on them (OPE-2433): the clipped status line and a link to the work.",
     stop: "outranks",
     recordsDelivery: false,
+    generated: true,
   },
 ];
 

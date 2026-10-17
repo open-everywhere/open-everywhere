@@ -1,3 +1,5 @@
+// proves: REPLY-56, REPLY-57
+
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
@@ -220,6 +222,17 @@ async function rowFor(messageId: string): Promise<Record<string, unknown> | unde
     ok(last()?.intent?.sources?.[0]?.url === URL_, `🔴 §6 POSITIVE CONTROL: the terminal post of the same turn DOES carry the link (saw ${JSON.stringify(last()?.intent)})`);
     ok((await rowFor(last()!.id))?.links === 1, "§6: …and its row counts it");
   });
+}
+
+{
+  const { postDomainAnswerFallback } = await import("../agent/tools/answer_domain_question.js");
+  await postDomainAnswerFallback({ platform: "slack", channelId: DM }, { domain: { name: "launch", title: "Launch" }, question: "When do we ship?", answer: "Friday.", declined: false });
+  const c = last();
+  ok(c?.member === "dispatchUnified" && c.text.includes("Friday."), `§6b precondition: the fallback reached the arm through the unified door (saw ${JSON.stringify(c)})`);
+  ok(c?.intent?.generated === true, `🔴 §6b/OPE-2542: the domain-answer fallback relays model text, so it is marked generated (saw ${JSON.stringify(c?.intent)})`);
+  ok(c?.intent?.feedback !== true && (c?.intent?.sources ?? []).length === 0, "§6b: …and it carries no thumbs and no links: it has no reply audit");
+  await postUnifiedReply({ platform: "slack", channelId: DM }, "A host line through the same door.");
+  ok(last()?.intent?.generated !== true, `🔴 §6b NEGATIVE CONTROL: the same door with no audit and no flag is NOT marked (saw ${JSON.stringify(last()?.intent)})`);
 }
 
 {

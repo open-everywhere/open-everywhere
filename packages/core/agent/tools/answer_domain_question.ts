@@ -11,6 +11,7 @@ import { getOperationalStore } from "../operational/provider.js";
 import { mintWakeId } from "../channels/unified-window.js";
 import { dispatchSeatMessage } from "../channels/unified.js";
 import { postUnifiedReply } from "../channels/unified-reply.js";
+import type { UnifiedWakeOrigin } from "../channels/unified-window.js";
 import {
   DOMAIN_ANSWER_MAX_CHARS,
   DOMAIN_QUESTION_ANSWER_DELIVERED_ACTION,
@@ -40,6 +41,10 @@ export function domainAnswerNote(route: DomainAnswerRoute, declined: boolean): s
   if (route === "dm-seat") return `${what} went to the person's DM, and their DM seat will tell them. Nothing was posted here, and nothing more is needed.`;
   if (route === "posted") return `${what} was posted into the person's DM. Nothing was posted here, and nothing more is needed.`;
   return `${what} could not reach the person's DM: their DM seat could not be woken and the post failed. Nobody saw it. Do not post it here; the person can ask again.`;
+}
+
+export function postDomainAnswerFallback(origin: UnifiedWakeOrigin, input: Parameters<typeof renderDomainAnswerPost>[0]): Promise<string> {
+  return postUnifiedReply(origin, renderDomainAnswerPost(input), {}, undefined, undefined, undefined, { generated: true });
 }
 
 export default windowGated(
@@ -99,7 +104,7 @@ export default windowGated(
         if (woke) route = "dm-seat";
       }
       if (route === "failed") {
-        route = await postUnifiedReply(q.dmOrigin, renderDomainAnswerPost({ domain: domain!, question: q.question, answer, declined }))
+        route = await postDomainAnswerFallback(q.dmOrigin, { domain: domain!, question: q.question, answer, declined })
           .then(() => "posted" as const)
           .catch(() => "failed" as const);
       }

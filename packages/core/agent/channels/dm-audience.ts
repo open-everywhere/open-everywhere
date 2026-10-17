@@ -218,6 +218,7 @@ export async function deliverProactiveDm(input: {
     principalId: input.recipientId,
     text: `${input.text}${input.footer}`,
     ...(input.actions === undefined ? {} : { actions: input.actions }),
+    ...(plane.generated ? { generated: true } : {}),
   });
   if (plane.recordsDelivery) await noteDmAudienceDelivery(input.where.org, input.address, new Date().toISOString());
   await appendAudit({

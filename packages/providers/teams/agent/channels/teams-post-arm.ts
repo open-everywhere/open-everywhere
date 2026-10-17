@@ -164,10 +164,11 @@ async function deliverTeamsDirectMessage(input: DirectMessageRequest): Promise<D
     throw markNotApplied(new Error("the direct message couldn't reach Teams — the stored serviceUrl is not a Bot Framework host."));
   }
 
+  const intent: PostIntent | undefined = input.generated === true ? { terminal: true, generated: true } : undefined;
   const parts = splitTeamsMessageText(input.text);
   let messageId = "";
   for (const part of parts) {
-    const res = await sendTeamsActivityBackedOff({ serviceUrl: ref.serviceUrl, conversationId: ref.conversationId, body: { type: "message", text: part } });
+    const res = await sendTeamsActivityBackedOff({ serviceUrl: ref.serviceUrl, conversationId: ref.conversationId, body: teamsAnswerActivity(part, intent) });
     if (messageId.length === 0) messageId = res.id;
   }
   return { surfaceId: ref.conversationId, messageId: messageId || "unknown" };

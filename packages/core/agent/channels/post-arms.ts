@@ -35,6 +35,7 @@ export interface DirectMessageRequest {
   readonly principalId: string;
   readonly text: string;
   readonly actions?: readonly DirectMessageAction[];
+  readonly generated?: boolean;
 }
 
 export const DM_WORKSPACE_UNREACHABLE_REASON = "workspace-unreachable";
@@ -133,11 +134,12 @@ export function answerIntent(
   sources: readonly SourceLink[],
   terminal = true,
   host = false,
+  relaysModelText = false,
 ): PostIntent {
   if (host) return { terminal };
   return {
     terminal,
-    ...(audit !== undefined ? { generated: true } : {}),
+    ...(audit !== undefined || relaysModelText ? { generated: true } : {}),
     ...(audit !== undefined && terminal ? { feedback: true } : {}),
     ...(terminal && sources.length > 0 ? { sources } : {}),
   };

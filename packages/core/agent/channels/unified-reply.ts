@@ -69,13 +69,13 @@ export async function postUnifiedReply(
   audit?: ReplyAudit,
   replier?: ReplierLabel,
   intent?: PostIntent,
-  opts?: { readonly host?: boolean },
+  opts?: { readonly host?: boolean; readonly generated?: boolean },
 ): Promise<string> {
   const claimGuard = guardMemoryClaims(truncateMemoryCitationPaths(text), audit);
   const approvalGuard = guardApprovalClaims(claimGuard.body, audit);
   const requestGuard = guardRequestClaims(approvalGuard.body, audit);
   const provenance = applyReplyProvenance(requestGuard.body, audit, landsInDirectConversation(origin.platform, unifiedEditLocus(origin)?.channelId));
-  const postIntent = answerIntent(audit, provenance.sources, intent?.terminal ?? true, opts?.host === true);
+  const postIntent = answerIntent(audit, provenance.sources, intent?.terminal ?? true, opts?.host === true, opts?.generated === true);
   const cover = await coverLabelForReply(audit?.org, audit?.wakeId);
   const clean = cover ? withCoverLabel(provenance.body, cover.label) : provenance.body;
   const arm = postArm(origin.platform);

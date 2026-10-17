@@ -160,6 +160,26 @@ try {
       const delivered = await teamsPostArm.deliverDirectMessage!({ principalId: KEY_PERSON, text: "a granted DM" });
       ok(delivered.surfaceId === "19:hazel1to1@thread.v2", "🔴 a DM at the ADDRESS spelling lands in the stored 1:1 chat");
       ok(sends.every((c) => !c.url.endsWith("/v3/conversations")), "…with no conversation create — the stored reference was found from the spelling");
+      const hostDm = JSON.parse(sends.find((c) => c.url.endsWith("/activities"))?.body ?? "{}") as Record<string, unknown>;
+      ok(
+        JSON.stringify(hostDm) === JSON.stringify({ type: "message", text: "a granted DM" }),
+        `…and a host DM is the plain { type, text } activity, with no AI label (got ${JSON.stringify(hostDm)})`,
+      );
+      sends.length = 0;
+      await teamsPostArm.deliverDirectMessage!({ principalId: KEY_PERSON, text: "a message the model wrote", generated: true });
+      const modelDms = sends.filter((c) => c.url.endsWith("/activities")).map((c) => JSON.parse(c.body) as { text?: string; entities?: { additionalType?: unknown }[] });
+      ok(
+        modelDms.length === 1 && JSON.stringify(modelDms[0]?.entities?.[0]?.additionalType) === JSON.stringify(["AIGeneratedContent"]),
+        `🔴 OPE-2542: a DM of MODEL text carries Teams' "AI generated" label (got ${JSON.stringify(modelDms)})`,
+      );
+      ok(modelDms[0]?.text === "a message the model wrote", "…and its text is unchanged");
+      sends.length = 0;
+      await teamsPostArm.deliverDirectMessage!({ principalId: KEY_PERSON, text: "word ".repeat(20_000), generated: true });
+      const longParts = sends.filter((c) => c.url.endsWith("/activities")).map((c) => JSON.parse(c.body) as { entities?: { additionalType?: unknown }[] });
+      ok(
+        longParts.length > 1 && longParts.every((b) => JSON.stringify(b.entities?.[0]?.additionalType) === JSON.stringify(["AIGeneratedContent"])),
+        `🔴 OPE-2542: every part of a split model DM carries the label (parts: ${longParts.length})`,
+      );
 
       sends.length = 0;
       await recordTeamsConversationReference({ scope: "channel", tenantId: TENANT, conversationId: "19:otherRoom@thread.tacv2", serviceUrl: SERVICE_URL, userId: RAW_COLD_PERSON, teamId: "TEAM_A" });
