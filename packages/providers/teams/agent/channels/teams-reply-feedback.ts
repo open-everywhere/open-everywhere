@@ -19,6 +19,10 @@ function kindWords(kind: string): string {
       return "Notion page";
     case "linear-issue":
       return "Linear issue";
+    case "github-issue":
+      return "GitHub issue";
+    case "github-pull-request":
+      return "GitHub pull request";
     default:
       return "Source";
   }

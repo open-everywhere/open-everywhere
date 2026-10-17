@@ -1,5 +1,6 @@
 import {
   currentSessionId,
+  currentTurnGithubTarget,
   currentTurnId,
   currentTurnIssue,
   currentTurnPage,
@@ -25,15 +26,22 @@ export function stampReadReach(bind: BindableContext, turnId: string | undefined
   };
 }
 
-export type AuthoredRecordKind = "notion-page" | "linear-issue";
+export type AuthoredRecordKind = "notion-page" | "linear-issue" | "github-issue" | "github-pull-request";
 
-const AUTHORED_READ_TOOLS: Readonly<Record<AuthoredRecordKind, { readonly connection: string; readonly op: string }>> = {
-  "notion-page": { connection: "notion", op: "read_notion_page" },
-  "linear-issue": { connection: "linear", op: "read_linear_issue" },
+const AUTHORED_READ_TOOLS: Readonly<Record<AuthoredRecordKind, { readonly connection: string; readonly ops: readonly [string, ...string[]] }>> = {
+  "notion-page": { connection: "notion", ops: ["read_notion_page", "read_notion_comments"] },
+  "linear-issue": { connection: "linear", ops: ["read_linear_issue"] },
+  "github-issue": { connection: "github", ops: ["read_github_issue"] },
+  "github-pull-request": { connection: "github", ops: ["read_github_issue", "check_pr_status", "get_pr_feedback", "walk_pr"] },
 };
+
+export function githubRecordId(repo: string, number: number): string {
+  return `${repo}#${number}`;
+}
 
 export interface AuthoredRecordRead {
   readonly kind: AuthoredRecordKind;
+  readonly op?: string;
   readonly id: string;
   readonly alsoKnownAs?: readonly (string | undefined)[];
   readonly name?: string;
@@ -57,6 +65,11 @@ function roomRecordId(kind: AuthoredRecordKind, bind: BindableContext): string |
       return currentTurnIssue(bind);
     case "notion-page":
       return currentTurnPage(bind);
+    case "github-issue":
+    case "github-pull-request": {
+      const target = currentTurnGithubTarget(bind);
+      return target === undefined ? undefined : githubRecordId(`${target.owner}/${target.repo}`, target.number);
+    }
   }
 }
 
@@ -73,6 +86,8 @@ export function noteAuthoredRecordRead(ctx: unknown, read: AuthoredRecordRead): 
   try {
     const spec = AUTHORED_READ_TOOLS[read.kind];
     if (spec === undefined || typeof read.id !== "string" || read.id.length === 0) return;
+    const op = read.op ?? spec.ops[0];
+    if (!spec.ops.includes(op)) return;
     const bind = ctx as BindableContext;
     const turnId = currentTurnId(bind);
     if (turnId === undefined || turnId.length === 0) return;
@@ -87,11 +102,11 @@ export function noteAuthoredRecordRead(ctx: unknown, read: AuthoredRecordRead): 
     noteConnectorRead(turnId, {
       ...stampReadReach(bind, turnId, surfaceKey),
       connection: spec.connection,
-      op: spec.op,
+      op,
       ...(named ? { record: { kind: read.kind, id: read.id } } : {}),
       ...(citable ? { cite: { kind: read.kind, id: read.id } } : {}),
     });
-    noteDelegatedRead(bind, spec.connection, spec.op, undefined, citable ? { kind: read.kind, id: read.id, name: read.name, url: read.url } : undefined);
+    noteDelegatedRead(bind, spec.connection, op, undefined, citable ? { kind: read.kind, id: read.id, name: read.name, url: read.url } : undefined);
     if (named) rememberRecordName(currentSessionId(bind), turnId, read.kind, read.id, read.name);
     if (citable) rememberSourceLink(currentSessionId(bind), turnId, read.kind, read.id, read.name, read.url);
   } catch {

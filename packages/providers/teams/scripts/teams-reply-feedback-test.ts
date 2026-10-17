@@ -33,6 +33,16 @@ console.log("§1 the activity");
   ok(cites?.length === 2 && cites[0]?.position === 1 && cites[1]?.position === 2, "🔴 the citations are numbered 1 and 2, matching the markers");
   ok(cites[0]?.appearance?.name === "Launch checklist" && cites[0].appearance.url === SOURCES[0]!.url && cites[0].appearance["@type"] === "DigitalDocument", "each citation names its record and links it");
   ok(cites[1]?.appearance?.abstract === "Linear issue: Fix login", `the abstract says the kind in words, never an id (got ${cites[1]?.appearance?.abstract})`);
+  const gh = teamsAnswerActivity("x", {
+    terminal: true,
+    feedback: true,
+    sources: [
+      { kind: "github-issue", name: "Scratch app drops frames", url: "https://github.com/acme/web/issues/1" },
+      { kind: "github-pull-request", name: "Fix the frame drop", url: "https://github.com/acme/web/pull/2" },
+    ],
+  }) as Record<string, any>;
+  ok(gh.entities?.[0]?.citation?.[0]?.appearance?.abstract === "GitHub issue: Scratch app drops frames", `🔴 a GitHub issue says "GitHub issue" (got ${gh.entities?.[0]?.citation?.[0]?.appearance?.abstract})`);
+  ok(gh.entities?.[0]?.citation?.[1]?.appearance?.abstract === "GitHub pull request: Fix the frame drop", `🔴 a GitHub pull request says "GitHub pull request" (got ${gh.entities?.[0]?.citation?.[1]?.appearance?.abstract})`);
   const plain = teamsAnswerActivity("Plain.", { terminal: true });
   ok(JSON.stringify(plain) === JSON.stringify({ type: "message", text: "Plain." }), "🔴 neither links nor thumbs: the activity is exactly what it was before");
   ok(JSON.stringify(teamsAnswerActivity("Plain.", undefined)) === JSON.stringify({ type: "message", text: "Plain." }), "no intent: the plain activity");

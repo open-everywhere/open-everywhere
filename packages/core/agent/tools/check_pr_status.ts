@@ -7,6 +7,7 @@ import { repoAllowed } from "../scm/provider.js";
 import { githubWorkMount } from "../scm/github-work.js";
 import { assertGithubActingIdentity } from "../scm/github-acting-identity.js";
 import { fetchPullRequestStatus, describePrStatus, resolveReadToken } from "../scm/pr-status.js";
+import { githubRecordId, noteAuthoredRecordRead } from "../channels/read-reach.js";
 
 export const checkPrStatusEntry = defineTool({
   description:
@@ -35,6 +36,7 @@ export const checkPrStatusEntry = defineTool({
     await assertGithubActingIdentity(ctx as BindableContext, "check_pr_status");
     const token = await resolveReadToken(input.repo);
     const status = await fetchPullRequestStatus({ repo: input.repo, number: input.number, token });
+    noteAuthoredRecordRead(ctx, { kind: "github-pull-request", op: "check_pr_status", id: githubRecordId(input.repo, input.number), name: status.title, url: status.url });
     return {
       url: status.url,
       title: status.title,

@@ -53,6 +53,8 @@ export interface PrFeedbackDigest {
   readonly checksSummary: PrChecksSummary;
   readonly truncation: PrFeedbackTruncation;
   readonly repoPrivate?: boolean;
+  readonly title?: string;
+  readonly url?: string;
 }
 
 interface RawUser {
@@ -102,7 +104,7 @@ export async function fetchPrFeedback(opts: {
   const { repo, number, token } = opts;
   const bodies = { n: 0 };
 
-  const pr = await getJson<{ head?: { sha?: string }; base?: { repo?: { private?: boolean } } }>(
+  const pr = await getJson<{ head?: { sha?: string }; base?: { repo?: { private?: boolean } }; title?: unknown; html_url?: unknown }>(
     fetchFn,
     `${apiBase}/repos/${repo}/pulls/${number}`,
     token,
@@ -171,6 +173,8 @@ export async function fetchPrFeedback(opts: {
   };
 
   const repoPrivate = pr.base?.repo?.private;
+  const title = typeof pr.title === "string" && pr.title.length > 0 ? pr.title : undefined;
+  const url = typeof pr.html_url === "string" && pr.html_url.length > 0 ? pr.html_url : undefined;
   return {
     repo,
     number,
@@ -181,6 +185,8 @@ export async function fetchPrFeedback(opts: {
     checksSummary,
     truncation,
     ...(typeof repoPrivate === "boolean" ? { repoPrivate } : {}),
+    ...(title !== undefined ? { title } : {}),
+    ...(url !== undefined ? { url } : {}),
   };
 }
 

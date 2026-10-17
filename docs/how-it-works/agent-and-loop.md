@@ -2218,6 +2218,13 @@ aliases, must match the room's own record id. When it does not, the entry still 
 turn read that system, but it carries no record at all. The id of a record the room may not be told
 about therefore never enters the ledger, and no later path can name it.
 
+The door admits a closed set of record kinds, and each kind lists the read tools that may record it
+(OPE-2543): a Notion page (`read_notion_page`, `read_notion_comments`), a Linear issue
+(`read_linear_issue`), a GitHub issue (`read_github_issue`) and a GitHub pull request
+(`read_github_issue`, `check_pr_status`, `get_pr_feedback`, `walk_pr`). A tool name that its kind does not list
+records nothing. A GitHub record's id is `owner/repo#number`, and the room's own record is the issue
+or pull request that the GitHub delivery is anchored to.
+
 ## Why memory lives on disk, and why the transport matters
 
 A subtle but load-bearing detail: **MCP tool results flow straight into the model's

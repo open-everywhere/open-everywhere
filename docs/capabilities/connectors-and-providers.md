@@ -279,8 +279,12 @@ Slack context line, Teams citations), and only where all of these hold:
 - the reply lands in a 1:1 conversation between the app and one person (a Slack `D…` DM, a Teams
   personal chat) — the post arm declares which conversations are 1:1;
 - a first-party read tool fetched the record for this conversation, and knew its title and its
-  `https:` url: `read_notion_page` or `read_linear_issue`, on the seat or on a worker for it (the
-  delegation settle carries the citation, as it carries the read);
+  `https:` url: `read_notion_page`, `read_notion_comments`, `read_linear_issue`,
+  `read_github_issue`, `check_pr_status`, `get_pr_feedback` or `walk_pr`, on the seat or on a worker for it (the
+  delegation settle carries the citation, as it carries the read). A GitHub issue and a GitHub pull
+  request are two record kinds, so a surface that says the kind in words says the right one.
+  `read_notion_comments` cites the page only when it reads the whole page. A `block` drill-in names
+  `notion` and cites nothing, because it never opens the page;
 - the reach rule below holds for that read, so a turn that served two conversations never cites one
   conversation's read in the other.
 

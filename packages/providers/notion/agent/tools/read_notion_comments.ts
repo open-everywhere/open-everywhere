@@ -1,6 +1,6 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { readNotionComments, resolveBlockOwningPage, resolveNotionCredential, type NotionCommentSummary } from "../channels/notion-api.js";
+import { readNotionComments, readNotionPageIdentity, resolveBlockOwningPage, resolveNotionCredential, type NotionCommentSummary } from "../channels/notion-api.js";
 import { notionCallerCredential } from "../channels/notion-credentials.js";
 import { assertNotionActingIdentity } from "../channels/notion-acting-identity.js";
 import { assertNotionBlockAllowed, assertNotionPageAllowed } from "../channels/notion-scope.js";
@@ -16,6 +16,7 @@ import {
   resolvePartition,
   declaredWorkspaceTrust,
   ageAtRead,
+  noteAuthoredRecordRead,
   type SurfaceTrust,
   type BindableContext,
 } from "@open-everywhere/core/agent/adapter-api.js";
@@ -108,6 +109,19 @@ export const readNotionCommentsEntry = defineTool({
       workspaceTrust = declaredWorkspaceTrust(resolvePartition(ctx2 as BindableContext).workspaceKey);
     } catch {
       workspaceTrust = undefined;
+    }
+    if (input.block) {
+      noteAuthoredRecordRead(ctx2 as BindableContext, { kind: "notion-page", op: "read_notion_comments", id: input.block });
+    } else {
+      const identity = await readNotionPageIdentity(page, { ...cred });
+      noteAuthoredRecordRead(ctx2 as BindableContext, {
+        kind: "notion-page",
+        op: "read_notion_comments",
+        id: page,
+        alsoKnownAs: [input.page],
+        name: identity.title,
+        url: identity.url,
+      });
     }
     return {
       page,

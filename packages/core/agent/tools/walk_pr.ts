@@ -8,6 +8,7 @@ import { assertGithubActingIdentity } from "../scm/github-acting-identity.js";
 import { githubWorkMount } from "../scm/github-work.js";
 import { describePrStatus, fetchPullRequestStatus, prStateLabel, resolveReadToken } from "../scm/pr-status.js";
 import { fetchPrDiff } from "../scm/pr-diff.js";
+import { githubRecordId, noteAuthoredRecordRead } from "../channels/read-reach.js";
 import { fetchConfigFacts } from "../review/facts-artifact.js";
 import { buildNarratorBrief, renderWalkthrough } from "../review/pr-walkthrough.js";
 
@@ -56,6 +57,7 @@ export const walkPrEntry = defineTool({
       fetchPullRequestStatus({ repo: input.repo, number: input.number, token }),
       fetchPrDiff({ repo: input.repo, number: input.number, token }),
     ]);
+    noteAuthoredRecordRead(ctx, { kind: "github-pull-request", op: "walk_pr", id: githubRecordId(input.repo, input.number), name: status.title, url: status.url });
 
     const facts = await fetchConfigFacts({
       repo: input.repo,

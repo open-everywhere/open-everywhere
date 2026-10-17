@@ -195,6 +195,10 @@ close that loop:
   has no `issues` family and GitHub refuses a plain issue under it. Each body is capped,
   each title and body is fenced as untrusted text, and the result says what it dropped.
 
+All three, and `walk_pr`, record their read for the answer's sources (OPE-2543). An answer in a 1:1 conversation
+then shows the issue or pull request as a numbered source link, with its title as the link text
+([Connectors § Numbered source links](./connectors-and-providers.md#a-reply-names-what-it-read)).
+
 The whole read loop is host-side with the **read-scoped** credential. A repo grant never opens
 `api.github.com` on the sandbox's compiled policy. An operator declaration that names the host
 opens it: a bundle connection or `domains` entry, or a declared browser host. So does the `full`

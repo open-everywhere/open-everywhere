@@ -8,6 +8,7 @@ import { githubWorkMount } from "../scm/github-work.js";
 import { assertGithubActingIdentity } from "../scm/github-acting-identity.js";
 import { resolveReadToken } from "../scm/pr-status.js";
 import { fetchPrFeedback, renderPrFeedbackForModel, type PrFeedbackDigest } from "../scm/pr-feedback.js";
+import { githubRecordId, noteAuthoredRecordRead } from "../channels/read-reach.js";
 
 const prFeedbackOutputSchema = z.object({
   repo: z.string(),
@@ -32,6 +33,8 @@ const prFeedbackOutputSchema = z.object({
     bodiesClipped: z.number(),
     maxBodyChars: z.number(),
   }),
+  title: z.string().optional(),
+  url: z.string().optional(),
   repoPrivate: z.boolean().optional(),
 });
 
@@ -53,7 +56,9 @@ export const getPrFeedbackEntry = defineTool({
     }
     await assertGithubActingIdentity(ctx as BindableContext, "get_pr_feedback");
     const token = await resolveReadToken(input.repo);
-    return (await fetchPrFeedback({ repo: input.repo, number: input.number, token })) as unknown as z.infer<typeof prFeedbackOutputSchema>;
+    const digest = await fetchPrFeedback({ repo: input.repo, number: input.number, token });
+    noteAuthoredRecordRead(ctx, { kind: "github-pull-request", op: "get_pr_feedback", id: githubRecordId(input.repo, input.number), name: digest.title, url: digest.url });
+    return digest as unknown as z.infer<typeof prFeedbackOutputSchema>;
   },
   toModelOutput(output) {
     return { type: "text" as const, value: renderPrFeedbackForModel(output as unknown as PrFeedbackDigest) };

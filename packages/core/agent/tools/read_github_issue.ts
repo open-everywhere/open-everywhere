@@ -8,6 +8,7 @@ import { githubWorkMount } from "../scm/github-work.js";
 import { assertGithubActingIdentity } from "../scm/github-acting-identity.js";
 import { resolveConversationReadToken } from "../scm/pr-status.js";
 import { fetchGithubIssue, renderGithubIssueForModel, type GithubIssueDigest } from "../scm/issue-read.js";
+import { githubRecordId, noteAuthoredRecordRead } from "../channels/read-reach.js";
 
 const githubIssueOutputSchema = z.object({
   repo: z.string(),
@@ -48,7 +49,15 @@ export const readGithubIssueEntry = defineTool({
     }
     await assertGithubActingIdentity(ctx as BindableContext, "read_github_issue");
     const token = await resolveConversationReadToken(input.repo);
-    return (await fetchGithubIssue({ repo: input.repo, number: input.number, token })) as unknown as z.infer<typeof githubIssueOutputSchema>;
+    const digest = await fetchGithubIssue({ repo: input.repo, number: input.number, token });
+    noteAuthoredRecordRead(ctx, {
+      kind: digest.kind === "pull_request" ? "github-pull-request" : "github-issue",
+      op: "read_github_issue",
+      id: githubRecordId(input.repo, input.number),
+      name: digest.title,
+      url: digest.url,
+    });
+    return digest as unknown as z.infer<typeof githubIssueOutputSchema>;
   },
   toModelOutput(output) {
     return { type: "text" as const, value: renderGithubIssueForModel(output as unknown as GithubIssueDigest) };

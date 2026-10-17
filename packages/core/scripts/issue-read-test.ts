@@ -253,4 +253,179 @@ const ISSUE = { title: "Scratch app drops frames", state: "open", body: "The app
   ok((await taints(undefined)) === true, "§7 NEGATIVE CONTROL: an unread visibility falls closed and taints");
 }
 
+{
+  const { createRequire } = await import("node:module");
+  const { dirname, join } = await import("node:path");
+  const { pathToFileURL } = await import("node:url");
+  const { generateKeyPairSync } = await import("node:crypto");
+  const { registerConfig } = await import("../agent/access/config.js");
+  const { defineDomain } = await import("../agent/memory/domain.js");
+  const { defineBundle, defineBinding } = await import("../agent/access/bundle.js");
+  const { registerIdentityMapper } = await import("../agent/identity/binding.js");
+  const { resetGitHubApp } = await import("../agent/scm/provider.js");
+  const { connectorReadsThisTurn, applyReplyProvenance } = await import("../agent/channels/reply-provenance.js");
+  const { replyAuditFor } = await import("../agent/channels/reply-post.js");
+  const { noteAuthoredRecordRead } = await import("../agent/channels/read-reach.js");
+  const issueTool = await import("../agent/tools/read_github_issue.js");
+  const statusTool = await import("../agent/tools/check_pr_status.js");
+  const feedbackTool = await import("../agent/tools/get_pr_feedback.js");
+  const walkTool = await import("../agent/tools/walk_pr.js");
+
+  const PLATFORM = "issuereadcitetestplatform";
+  registerIdentityMapper(PLATFORM, (c) => {
+    const a = (c as { session?: { auth?: { current?: { attributes?: Record<string, string> } } } }).session?.auth?.current?.attributes;
+    return { workspace: a?.["ws"], surface: a?.["room"], mode: "channel", visibility: "public", trust: "internal", principalId: "U_C" };
+  });
+  const domain = defineDomain({ name: "irc-domain", reach: [`${PLATFORM}/W1/CROOM`] });
+  registerConfig({
+    loadBundles: () => [defineBundle({ name: "coding", repos: ["acme/web"] })],
+    loadBindings: () => [defineBinding({ bundle: "coding", scope: { level: "domain", domain: "irc-domain" } })],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [domain],
+    loadSilos: () => [],
+    domainsForSurface: ({ workspaceKey, surface }) => [domain].filter((d) => (d.reach ?? []).includes(`${workspaceKey}/${surface}`)).map((d) => d.name),
+  });
+  const ctxFor = (turnId: string) =>
+    ({
+      channel: { kind: PLATFORM },
+      session: {
+        id: "issue-read-cite-test",
+        turn: { id: turnId, sequence: 1 },
+        auth: { current: { attributes: { ws: "W1", room: "CROOM" }, principalId: "U_C", principalType: "test-user" } },
+      },
+    }) as never;
+
+  const nodeRequire = createRequire(import.meta.url);
+  const eveRoot = dirname(nodeRequire.resolve("eve/package.json"));
+  const eveAbs = (rel: string): string => pathToFileURL(join(eveRoot, rel)).href;
+  const { ContextContainer, contextStorage } = await import(eveAbs("dist/src/context/container.js"));
+  const { SessionKey } = await import(eveAbs("dist/src/context/keys.js"));
+  const inSession = <T>(fn: () => Promise<T>): Promise<T> => {
+    const c = new ContextContainer();
+    c.set(SessionKey, { sessionId: "issue-read-cite-test", auth: null, turn: 1, parent: undefined });
+    return contextStorage.run(c, fn);
+  };
+
+  const ISSUE_URL = "https://github.com/acme/web/issues/1";
+  const PR_URL = "https://github.com/acme/web/pull/2";
+  const PR_TITLE = "Fix the frame drop";
+  const pkcs1 = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs1", format: "pem" }) as string;
+  const SAVED: Record<string, string | undefined> = {};
+  const setEnv = (name: string, value: string): void => {
+    if (!(name in SAVED)) SAVED[name] = process.env[name];
+    process.env[name] = value;
+  };
+  setEnv("OE_GITHUB_APP_ID", "222");
+  setEnv("OE_GITHUB_APP_PRIVATE_KEY", pkcs1);
+  setEnv("OE_GITHUB_APP_SLUG", "open-everywhere");
+  setEnv("OE_GITHUB_BOT_USER_ID", "12345");
+  setEnv("OE_GITHUB_INSTALLATIONS", JSON.stringify({ acme: "4242" }));
+  resetGitHubApp();
+  const savedFetch = globalThis.fetch;
+  globalThis.fetch = (async (u: string) => {
+    const url = String(u);
+    const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json" } });
+    if (url.includes("/access_tokens")) return json({ token: "tok_4242", expires_at: "2099-01-01T00:00:00Z", repositories: [] }, 201);
+    if (url.endsWith("/repos/acme/web")) return json({ private: true });
+    if (url.endsWith("/repos/acme/web/issues/1")) return json({ ...ISSUE, html_url: ISSUE_URL, comments: 0 });
+    if (url.endsWith("/repos/acme/web/issues/2")) return json({ ...ISSUE, title: PR_TITLE, html_url: PR_URL, comments: 0, pull_request: { url: "x" } });
+    if (url.endsWith("/repos/acme/web/pulls/2")) {
+      return json({ html_url: PR_URL, title: PR_TITLE, state: "open", merged: false, draft: false, updated_at: "2026-06-04T13:35:00Z", head: { sha: "abc123" }, base: { ref: "main", repo: { private: true } } });
+    }
+    if (/\/(reviews|comments)\?per_page=100$/u.test(url)) return json([]);
+    return json({ message: "Not Found" }, 404);
+  }) as typeof fetch;
+
+  type Exec = { execute: (i: unknown, c: unknown) => Promise<unknown> };
+  const run = async (entry: unknown, input: unknown, turnId: string) =>
+    inSession(async () => {
+      const ctx = ctxFor(turnId);
+      await (entry as Exec).execute(input, ctx);
+      const reads = connectorReadsThisTurn(turnId);
+      const audit = replyAuditFor(ctx, "tool", `wake-${turnId}`);
+      return { reads, direct: applyReplyProvenance("answer", audit, true).sources, shared: applyReplyProvenance("answer", audit, false).sources };
+    });
+  try {
+    const issue = await run(issueTool.readGithubIssueEntry, { repo: "acme/web", number: 1 }, "turn-cite-issue");
+    ok(issue.reads.length === 1, `🔴 §8 read_github_issue writes ONE reply-provenance entry for its read (saw ${issue.reads.length})`);
+    ok(
+      issue.reads[0]?.connection === "github" && issue.reads[0]?.op === "read_github_issue",
+      `🔴 §8 …under the connection and op core picks (saw: ${JSON.stringify({ c: issue.reads[0]?.connection, op: issue.reads[0]?.op })})`,
+    );
+    ok(
+      issue.reads[0]?.cite?.kind === "github-issue" && issue.reads[0]?.cite?.id === "acme/web#1",
+      `🔴 §8 …and the entry may CITE the issue, by kind and \`owner/repo#number\` (saw: ${JSON.stringify(issue.reads[0]?.cite)})`,
+    );
+    ok(
+      issue.direct.length === 1 && issue.direct[0]?.name === ISSUE.title && issue.direct[0]?.url === ISSUE_URL && issue.direct[0]?.kind === "github-issue",
+      `🔴 §8 a 1:1 reply gets ONE numbered source link: the issue TITLE as its text and GitHub's own url (saw: ${JSON.stringify(issue.direct)})`,
+    );
+    ok(!JSON.stringify(issue.direct).includes("acme/web#1"), "§8 …and the person-facing link carries no raw id");
+    ok(issue.shared.length === 0, "§8 NEGATIVE CONTROL: a reply in a shared room gets no link");
+    ok(issue.reads[0]?.record === undefined, "§8 NEGATIVE CONTROL: a turn not woken on this issue records no RECORD (rule ii), so the provenance line names `github` alone");
+
+    const prAsIssue = await run(issueTool.readGithubIssueEntry, { repo: "acme/web", number: 2 }, "turn-cite-pr-as-issue");
+    ok(
+      prAsIssue.reads[0]?.cite?.kind === "github-pull-request" && prAsIssue.direct[0]?.name === PR_TITLE && prAsIssue.direct[0]?.url === PR_URL,
+      `🔴 §8 read_github_issue on a PULL REQUEST cites it as a pull request (saw: ${JSON.stringify(prAsIssue.reads[0]?.cite)})`,
+    );
+
+    const status = await run(statusTool.checkPrStatusEntry, { repo: "acme/web", number: 2 }, "turn-cite-status");
+    ok(
+      status.reads.length === 1 && status.reads[0]?.connection === "github" && status.reads[0]?.op === "check_pr_status" && status.reads[0]?.cite?.kind === "github-pull-request",
+      `🔴 §8 check_pr_status writes a cited entry under its own op (saw: ${JSON.stringify(status.reads)})`,
+    );
+    ok(status.direct[0]?.name === PR_TITLE && status.direct[0]?.url === PR_URL, `🔴 §8 …and a 1:1 reply links the PR by title (saw: ${JSON.stringify(status.direct)})`);
+
+    const feedback = await run(feedbackTool.getPrFeedbackEntry, { repo: "acme/web", number: 2 }, "turn-cite-feedback");
+    ok(
+      feedback.reads.length === 1 && feedback.reads[0]?.op === "get_pr_feedback" && feedback.reads[0]?.cite?.id === "acme/web#2",
+      `🔴 §8 get_pr_feedback writes a cited entry under its own op (saw: ${JSON.stringify(feedback.reads)})`,
+    );
+    const walk = await inSession(async () => {
+      const ctx = ctxFor("turn-cite-walk");
+      await (walkTool.walkPrEntry as unknown as Exec).execute({ repo: "acme/web", number: 2 }, ctx).catch(() => undefined);
+      return connectorReadsThisTurn("turn-cite-walk");
+    });
+    ok(
+      walk.length === 1 && walk[0]?.op === "walk_pr" && walk[0]?.cite?.kind === "github-pull-request" && walk[0]?.cite?.id === "acme/web#2",
+      `🔴 §8 walk_pr writes a cited entry under its own op (saw: ${JSON.stringify(walk)})`,
+    );
+    ok(feedback.direct[0]?.name === PR_TITLE && feedback.direct[0]?.url === PR_URL, `🔴 §8 …with the title and url off the PR object it already fetches (saw: ${JSON.stringify(feedback.direct)})`);
+  } finally {
+    globalThis.fetch = savedFetch;
+    resetGitHubApp();
+    for (const [k, v] of Object.entries(SAVED)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+
+  const githubCtx = (turnId: string, number: string) =>
+    ({
+      channel: { kind: "channel:github" },
+      session: {
+        id: "issue-read-cite-test",
+        turn: { id: turnId, sequence: 1 },
+        auth: { current: { attributes: { owner: "Acme", repo: "Web", issue_number: number }, principalId: "U_G", principalType: "github-user" } },
+      },
+    }) as never;
+  const recordOn = (turnId: string, anchor: string, read: Parameters<typeof noteAuthoredRecordRead>[1]) =>
+    inSession(async () => {
+      noteAuthoredRecordRead(githubCtx(turnId, anchor), read);
+      return connectorReadsThisTurn(turnId);
+    });
+  const same = await recordOn("turn-rule-ii-same", "1", { kind: "github-issue", op: "read_github_issue", id: "acme/web#1", name: "t", url: ISSUE_URL });
+  ok(
+    same[0]?.record?.kind === "github-issue" && same[0]?.record?.id === "acme/web#1",
+    `🔴 §8 a turn anchored on THIS issue records it — the id compares case-blind, as GitHub's owner and repo do (saw: ${JSON.stringify(same[0]?.record)})`,
+  );
+  const other = await recordOn("turn-rule-ii-other", "11", { kind: "github-issue", op: "read_github_issue", id: "acme/web#1", name: "t", url: ISSUE_URL });
+  ok(other.length === 1 && other[0]?.record === undefined, "🔴 §8 NEGATIVE CONTROL: a turn anchored on issue 11 does not record issue 1");
+
+  const forged = await recordOn("turn-forged-op", "1", { kind: "github-issue", op: "check_pr_status", id: "acme/web#1", name: "t", url: ISSUE_URL });
+  ok(forged.length === 0, "🔴 §8 an op the kind's row does not list records NOTHING — a caller cannot pick its own label");
+}
+
 console.log(`✓ issue-read: ${passed} assertions passed`);

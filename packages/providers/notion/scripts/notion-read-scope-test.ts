@@ -346,4 +346,60 @@ const ctxForTurn = (page: string, turnId: string, ws = WS): BindableContext => {
   }
 }
 
+{
+  const nodeRequire = createRequire(import.meta.url);
+  const eveRoot = dirname(nodeRequire.resolve("eve/package.json"));
+  const eveAbs = (rel: string): string => pathToFileURL(join(eveRoot, rel)).href;
+  const { ContextContainer, contextStorage } = await import(eveAbs("dist/src/context/container.js"));
+  const { SessionKey } = await import(eveAbs("dist/src/context/keys.js"));
+
+  const PAGE_TITLE = "Payments rollout plan";
+  const PAGE_URL = `https://www.notion.so/${PAGE_A.replace(/-/g, "")}`;
+  resetBrokers();
+  registerBroker("test", {
+    async getSecret(ref) {
+      if (ref === "test:notion:chat") return "fake-chat-token";
+      throw new Error(`no secret for ${ref}`);
+    },
+  });
+  resetRegisteredConnectorCredentials();
+  setRegisteredConnectorCredentials([
+    { connector: "notion", allows: ["api-key"], credentials: [{ id: "channel-key", type: "api-key", secretRef: "test:notion:chat", broker: "test", intake: false }] },
+  ]);
+  const realFetch = globalThis.fetch;
+  const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "content-type": "application/json" } });
+  globalThis.fetch = (async (input: unknown) => {
+    const url = String(input);
+    if (url.includes("/v1/pages/")) return json({ url: PAGE_URL, properties: { Name: { type: "title", title: [{ plain_text: PAGE_TITLE }] } } });
+    if (url.includes("/v1/blocks/") && !url.includes("/children")) return json({ object: "block", id: PAGE_A, parent: { type: "page_id", page_id: PAGE_A } });
+    return json({ results: [], has_more: false });
+  }) as unknown as typeof fetch;
+  try {
+    const exec = readNotionCommentsEntry as unknown as { execute: (i: unknown, c: unknown) => Promise<Record<string, unknown>> };
+    const readsFor = async (input: Record<string, unknown>, turnId: string) => {
+      const container = new ContextContainer();
+      container.set(SessionKey, { sessionId: "notion-read-scope-test", auth: null, turn: 1, parent: undefined });
+      return contextStorage.run(container, async () => {
+        await exec.execute(input, ctxForTurn(PAGE_A, turnId));
+        return connectorReadsThisTurn(turnId);
+      });
+    };
+    const reads = await readsFor({ page: PAGE_A }, "turn-comments-door");
+    ok(reads.length === 1, `🔴 OPE-2543: read_notion_comments writes ONE reply-provenance entry for its read (saw ${reads.length})`);
+    ok(
+      reads[0]?.connection === "notion" && reads[0]?.op === "read_notion_comments",
+      `🔴 …under its OWN op name, so the durable row says which tool read (saw: ${JSON.stringify({ connection: reads[0]?.connection, op: reads[0]?.op })})`,
+    );
+    ok(reads[0]?.cite?.kind === "notion-page" && reads[0]?.cite?.id === PAGE_A, `🔴 …and it may CITE the page, whose title and url the identity read returned (saw: ${JSON.stringify(reads[0]?.cite)})`);
+    ok(reads[0]?.record?.id === PAGE_A, "…and the turn woken on this page records it (rule ii)");
+    const drill = await readsFor({ page: PAGE_A, block: PAGE_A2 }, "turn-comments-block");
+    ok(drill.length === 1 && drill[0]?.op === "read_notion_comments", "a `block` drill-in still names `notion`");
+    ok(drill[0]?.cite === undefined, "🔴 NEGATIVE CONTROL: a `block` drill-in CITES nothing — it never opened the page");
+  } finally {
+    globalThis.fetch = realFetch;
+    resetRegisteredConnectorCredentials();
+    resetBrokers();
+  }
+}
+
 console.log(`✓ ${passed} notion read-scope assertions passed`);
