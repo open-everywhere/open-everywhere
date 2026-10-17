@@ -748,7 +748,7 @@ export { buildIngestedReaction, ingestReaction, liveReactionSink } from "./chann
 export type { ReactionSinkDeps, ReactionIngestOutcome, ReactionVerb } from "./channels/reaction-ingest.js";
 
 export { assertSurfaceAllowed, chatReadIngestion, readChannelResult, readThreadResult } from "./channels/channel-read.js";
-export type { RenderedLine } from "./channels/channel-read.js";
+export type { ReadFile, RenderedLine } from "./channels/channel-read.js";
 
 export { encodeChannelKey, decodeChannelKey, isChannelKey, CHANNEL_KEY_PREFIX } from "./channels/channel-key.js";
 export type { ChannelAddress } from "./channels/channel-key.js";

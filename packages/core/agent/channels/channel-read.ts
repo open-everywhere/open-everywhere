@@ -5,6 +5,7 @@ import {
   deploymentOrg,
   type BindableContext,
 } from "../identity/binding.js";
+import { z } from "zod";
 import { chatReadCarriesMeetingPost } from "../meetings/provenance.js";
 import type { Domain } from "../memory/domain.js";
 import { domainForChannel, domainRoster, externalPolicyOverrideFor } from "../memory/domain.js";
@@ -32,6 +33,26 @@ export interface RenderedLine {
   readonly bot?: boolean;
   readonly readAt?: string;
   readonly live?: boolean;
+  readonly files?: readonly ReadFile[];
+}
+
+export interface ReadFile {
+  readonly id: string;
+  readonly name: string;
+  readonly mimetype?: string;
+}
+
+export const READ_FILES_SCHEMA = z.array(z.object({ id: z.string(), name: z.string(), mimetype: z.string().optional() })).optional();
+
+const READ_FILE_NAME_MAX = 80;
+const READ_FILES_PER_LINE = 8;
+const READ_FILE_ID_RE = /^[A-Za-z0-9._:@+~-]{1,128}$/;
+const READ_FILE_MIME_RE = /^[\w.+-]{1,64}\/[\w.+-]{1,64}$/;
+
+function readFileForModel(f: ReadFile): { id: string; name: string; mimetype?: string } | undefined {
+  if (!READ_FILE_ID_RE.test(f.id)) return undefined;
+  const name = f.name.replace(/[[\]()<>"`\n\r]+/g, " ").replace(/\s+/g, " ").trim().slice(0, READ_FILE_NAME_MAX) || "(unnamed file)";
+  return { id: f.id, name, ...(f.mimetype !== undefined && READ_FILE_MIME_RE.test(f.mimetype) ? { mimetype: f.mimetype } : {}) };
 }
 
 export interface ChannelReadResult {
@@ -180,6 +201,7 @@ export interface ReadOutputLine {
   text: string;
   readAt?: string;
   live?: boolean;
+  files?: { id: string; name: string; mimetype?: string }[];
 }
 
 export interface ChannelReadOutput {
@@ -250,6 +272,8 @@ async function gradeAndProject(
   const withheld = (m: RenderedLine): boolean => withholding && m.bot !== true && m.authorId !== undefined && refuted.has(m.authorId);
   const possiblyIncomplete = declared?.possiblyIncomplete !== undefined ? declared.possiblyIncomplete : lines.length >= effectiveLimit;
   const authorNames = await readAuthorNames(where.platform, lines);
+  const filesOf = (m: RenderedLine): { id: string; name: string; mimetype?: string }[] =>
+    withheld(m) ? [] : (m.files ?? []).slice(0, READ_FILES_PER_LINE).flatMap((f) => readFileForModel(f) ?? []);
   return {
     count: lines.length,
     messages: lines.map((m) => ({
@@ -258,6 +282,7 @@ async function gradeAndProject(
       text: withheld(m) ? WITHHELD_BODY_MARKER : m.bot === true ? redactMachineLinkCodes(m.text) : m.text,
       ...(m.readAt !== undefined ? { readAt: m.readAt } : {}),
       ...(m.live !== undefined ? { live: m.live } : {}),
+      ...(filesOf(m).length > 0 ? { files: filesOf(m) } : {}),
     })),
     ...(refuted.size > 0 && !withholding ? { authoredByNonMember: true } : {}),
     ...(carriesUntrustedPost ? { carriesUntrustedPost: true } : {}),
@@ -320,6 +345,12 @@ function ageSuffix(m: RenderedLine): string {
   return age ? ` (${age} before this read)` : "";
 }
 
+function filesSuffix(m: RenderedLine): string {
+  const files = (m.files ?? []).flatMap((f) => readFileForModel(f) ?? []);
+  if (files.length === 0) return "";
+  return ` [files: ${files.map((f) => `${f.name} (${f.mimetype !== undefined ? `${f.mimetype}, ` : ""}attachment id ${f.id})`).join("; ")}]`;
+}
+
 function provenanceLine(messages: readonly RenderedLine[]): string {
   const live = messages.find((m) => m.live === true && m.readAt !== undefined);
   if (!live) return "";
@@ -336,7 +367,7 @@ export function keyedReadResult<T extends { readonly platform: string; readonly 
 export function renderChannelBody(out: ChannelReadResult): string {
   if (out.count === 0) return `No readable messages in ${out.channel}.`;
   const body =
-    `Recent messages in ${out.channel} (oldest first):\n` + out.messages.map((m) => `[${m.author}] ${m.text}${ageSuffix(m)}`).join("\n");
+    `Recent messages in ${out.channel} (oldest first):\n` + out.messages.map((m) => `[${m.author}] ${m.text}${filesSuffix(m)}${ageSuffix(m)}`).join("\n");
   const covered = out.possiblyIncomplete ? body + coverageNote("channel", out.count, out.partialReason) : body;
   const dated = covered + provenanceLine(out.messages);
   return out.spool ? dated + spoolNote("channel", out.spool) : dated;
@@ -349,7 +380,7 @@ export function channelReadSource(out: ChannelReadResult): string {
 export function renderThreadBody(out: ThreadReadResult): string {
   if (out.count === 0) return `No readable replies in thread ${out.thread_ts}.`;
   const body =
-    `Thread ${out.thread_ts} in ${out.channel} (oldest first):\n` + out.messages.map((m) => `[${m.author}] ${m.text}${ageSuffix(m)}`).join("\n");
+    `Thread ${out.thread_ts} in ${out.channel} (oldest first):\n` + out.messages.map((m) => `[${m.author}] ${m.text}${filesSuffix(m)}${ageSuffix(m)}`).join("\n");
   const covered = out.possiblyIncomplete ? body + coverageNote("thread", out.count, out.partialReason) : body;
   const dated = covered + provenanceLine(out.messages);
   return out.spool ? dated + spoolNote("thread", out.spool) : dated;

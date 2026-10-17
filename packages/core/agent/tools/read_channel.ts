@@ -4,7 +4,7 @@ import { ingestUntrustedModelOutput } from "../access/untrusted.js";
 import { type BindableContext, TurnOriginFenceError } from "../identity/binding.js";
 import { resolveWindowSources } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
-import { readChannelResult, chatReadIngestion, renderChannelBody, channelReadSource, keyedReadResult, WindowSourcesRefusalError } from "../channels/channel-read.js";
+import { readChannelResult, chatReadIngestion, renderChannelBody, channelReadSource, keyedReadResult, WindowSourcesRefusalError, READ_FILES_SCHEMA } from "../channels/channel-read.js";
 import { resolveWakeChannel } from "../channels/wake-container.js";
 import { auditSourcesGateRefusal, auditOriginFenceRefusal } from "../channels/read-scope-audit.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
@@ -47,6 +47,7 @@ const readChannelEntry = defineTool({
         text: z.string(),
         readAt: z.string().optional(),
         live: z.boolean().optional(),
+        files: READ_FILES_SCHEMA,
       }),
     ),
     authoredByNonMember: z.boolean().optional(),

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { ingestUntrustedModelOutput } from "../access/untrusted.js";
 import { type BindableContext, TurnOriginFenceError } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
-import { readThreadResult, chatReadIngestion, renderThreadBody, threadReadSource, keyedReadResult, WindowSourcesRefusalError } from "../channels/channel-read.js";
+import { readThreadResult, chatReadIngestion, renderThreadBody, threadReadSource, keyedReadResult, WindowSourcesRefusalError, READ_FILES_SCHEMA } from "../channels/channel-read.js";
 import { resolveWakeChannel, requireWakeThreadRoot } from "../channels/wake-container.js";
 import { auditSourcesGateRefusal, auditOriginFenceRefusal } from "../channels/read-scope-audit.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
@@ -24,8 +24,11 @@ function safeDomains(): readonly Domain[] {
 const readWorkThreadEntry = defineTool({
   description:
     "Read every reply in the thread this task was delegated from — the work-surface read. It takes " +
-    "no target: it always reads the thread you were delegated in. If the task was delegated from the " +
-    "top level of a channel, use `read_work_channel` instead.",
+    "no target: it always reads the thread you were delegated in. A reply that carries files lists " +
+    "each one by name, media type and attachment id; pass that id to `describe_image` as " +
+    "{ kind: \"attachment\", ref }. An id resolves only for a recent upload; an older one can be " +
+    "refused. When you tell a person about a file, use its name. If the task " +
+    "was delegated from the top level of a channel, use `read_work_channel` instead.",
   inputSchema: z.object({
     limit: z.number().int().min(1).max(MAX_LIMIT).optional().describe(`Max replies to fetch (default 100, max ${MAX_LIMIT}).`),
   }),
@@ -34,7 +37,7 @@ const readWorkThreadEntry = defineTool({
     channel: z.string(),
     thread_ts: z.string(),
     count: z.number(),
-    messages: z.array(z.object({ author: z.string(), ts: z.string(), text: z.string() })),
+    messages: z.array(z.object({ author: z.string(), ts: z.string(), text: z.string(), files: READ_FILES_SCHEMA })),
     authoredByNonMember: z.boolean().optional(),
     carriesUntrustedPost: z.boolean().optional(),
     possiblyIncomplete: z.boolean().optional(),

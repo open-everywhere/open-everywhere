@@ -1259,11 +1259,11 @@ turn of one session share a row; anything in a different turn, or a different se
 person reads, in this order:
 
 1. **The headline** — what will happen, to what, in plain words, with things named by their friendly
-   names: "Set the monthly spend limit for #general to $50.00/mo.", "Post a message in #general.",
+   names: "Set the monthly spend limit for #general to $50/mo.", "Post a message in #general.",
    "Send the notetaker to the Google Meet meeting and post a recap here." Each action kind writes it
    from its frozen args (`ActionKind.plainSummary`, `packages/core/agent/approvals/types.ts`).
 2. **At most one consequence line**, only when a person needs it to decide (`ActionKind.consequence`):
-   the figures that change (`$: $50.00/mo → $100.00/mo`), the message or task text that will be sent,
+   the figures that change, in plain words ("From $50/mo to $100/mo"), the message or task text that will be sent,
    the instruction a routine will follow, or who else is affected ("It records everyone for up to 90
    min. The host admits it. OE keeps the transcript 30 days."). A kind that quotes content
    (`consequenceQuotes`: a message, a task, a routine's instruction or rule, a skill body, a connector
@@ -1279,10 +1279,12 @@ person reads, in this order:
    card cannot name the requester without a display name the row does not hold.
 5. **The options**, as one ordered list.
 
-**No visible line carries a kind label, a model or route name, a backend, a ledger, a raw platform
-id, an internal row id or restated policy prose.** Those are machine keys. The kind and the full
-code-rendered detail (`ActionKind.summarize`, with the taint disclosure) move to the card's
-**metadata** (`CardMeta`, `card-layout.ts`). On Slack that is the message `metadata`
+**No visible line carries a kind label, a model or route name, a backend, a ledger, a figure label
+(`$:`, `tokens:`), talk about pricing coverage, a raw platform id, an internal row id or restated
+policy prose.** Those are machine keys. The kind and the full code-rendered detail
+(`ActionKind.summarize`, with the taint disclosure) move to the card's **metadata** (`CardMeta`,
+`card-layout.ts`). A spend card's pricing coverage caveat is part of that detail, so the approver
+does not see it on the visible lines ([spend and cost](./spend-and-cost.md)). On Slack that is the message `metadata`
 (`event_type: "oe_approval_card"`, with the kind, the row id and every detail line) and the first
 block's id (`oe_approval_card:<kind>:<row id>`). On every surface it is the pending row and the audit
 trail. The e2e runner reads the kind and the detail from there. The docs disclose each kind's full

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { ingestUntrustedModelOutput } from "../access/untrusted.js";
 import { type BindableContext, TurnOriginFenceError } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
-import { readChannelResult, chatReadIngestion, renderChannelBody, channelReadSource, keyedReadResult, WindowSourcesRefusalError } from "../channels/channel-read.js";
+import { readChannelResult, chatReadIngestion, renderChannelBody, channelReadSource, keyedReadResult, WindowSourcesRefusalError, READ_FILES_SCHEMA } from "../channels/channel-read.js";
 import { resolveWakeChannel } from "../channels/wake-container.js";
 import { auditSourcesGateRefusal, auditOriginFenceRefusal } from "../channels/read-scope-audit.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
@@ -40,7 +40,7 @@ const readWorkChannelEntry = defineTool({
     platform: z.string(),
     channel: z.string(),
     count: z.number(),
-    messages: z.array(z.object({ author: z.string(), ts: z.string(), text: z.string() })),
+    messages: z.array(z.object({ author: z.string(), ts: z.string(), text: z.string(), files: READ_FILES_SCHEMA })),
     authoredByNonMember: z.boolean().optional(),
     carriesUntrustedPost: z.boolean().optional(),
     possiblyIncomplete: z.boolean().optional(),

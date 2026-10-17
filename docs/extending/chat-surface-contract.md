@@ -608,6 +608,19 @@ renders exactly as it did before this contract existed — the fix exists for th
 content mixes a live field with a history stream (Linear's topic line, OPE-1038); a surface with no
 such field (Slack, Discord, Teams) sets neither and is unaffected.
 
+**MAY carry the message's files.** A line MAY set `files`: one `{ id, name, mimetype? }` per file
+the message carries (`ReadFile`, `channels/channel-read.ts`). The id is the platform file id, the
+same id `describe_image` resolves as `{ kind: "attachment", ref }`, so a delegated worker can find an
+upload in its thread by name and read it. The id resolves only while the attachment plane holds it:
+on Slack, an upload the front saw in an event in about the last 24 hours (`slack-attachments.ts`; the
+durable row is pruned on a later write). An older upload is still listed, and `describe_image` can
+refuse its id. Set nothing else: no download URL and no token, because a
+reader that held a URL could fetch outside the attachment plane. Core drops an id that could not be
+a file id, strips the frame characters from a name, caps the list at eight files, and withholds a
+withheld author's files with the body. The render puts the name first:
+`[files: probe.png (image/png, attachment id F0…)]`. Slack sets it today
+(`slack-read.ts` `slackMessageFiles`), and a file shared with no comment is a read line too.
+
 ### 4.6 `read_thread` — read this thread
 
 As `read_channel`, addressed to the thread root `wakeAddress` returned.

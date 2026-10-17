@@ -1330,13 +1330,26 @@ function spendCardSegment(cardText: string, label: string): string | undefined {
   return undefined;
 }
 
+function plainSpendClauses(cardText: string): SpendCardComponents {
+  let tokens: string | undefined;
+  let usd: string | undefined;
+  for (const m of cardText.matchAll(/\bfrom\s+(no limit|\$[\d,.]+\/mo|[\d,]+ tokens\/mo)\s+to\s+(no limit|\$[\d,.]+\/mo|[\d,]+ tokens\/mo)/giu)) {
+    const [, from, to] = m;
+    const clause = `${from} → ${to}`;
+    if (/tokens\/mo/u.test(`${from} ${to}`)) tokens ??= clause;
+    else if (/\$/u.test(`${from} ${to}`)) usd ??= clause;
+  }
+  return { tokens, usd };
+}
+
 export function spendCardComponents(cardText: string): SpendCardComponents {
-  return { tokens: spendCardSegment(cardText, "tokens:"), usd: spendCardSegment(cardText, "$:") };
+  const plain = plainSpendClauses(cardText);
+  return { tokens: spendCardSegment(cardText, "tokens:") ?? plain.tokens, usd: spendCardSegment(cardText, "$:") ?? plain.usd };
 }
 
 export function dollarOnlySpendCardFault(cardText: string): string | undefined {
   const { tokens, usd } = spendCardComponents(cardText);
-  if (usd === undefined || !usd.includes("→")) return `the card has no "$: … → …" segment (got ${JSON.stringify(usd)})`;
+  if (usd === undefined || !usd.includes("→")) return `the card shows no $ change ("From $A/mo to $B/mo") (got ${JSON.stringify(usd)})`;
   if (tokens !== undefined && tokens.includes("→")) return `the card also changes the token cap: "${tokens}"`;
   return undefined;
 }
@@ -1525,4 +1538,21 @@ const SPEND_SUBJECT = /\b(?:spend\w*|cap|limit|budget)\b|set_spend_limit/i;
 
 export function readsAsSpendRefusalReport(text: string): boolean {
   return REFUSAL_SHAPE.test(text) && SPEND_SUBJECT.test(text);
+}
+
+export function isDescribeImageOk(row: { readonly action?: string; readonly detail?: unknown }): boolean {
+  return row.action === "describe_image" && (row.detail as { ok?: unknown } | undefined)?.ok === true;
+}
+
+const SLACK_MENTION_SPLIT = /(<[#@!][^>]*>)/u;
+
+export function textOpensWithHeadline(text: string, headline: string): boolean {
+  const flat = (s: string): string => s.replace(/&lt;/gu, "<").replace(/&gt;/gu, ">").replace(/&amp;/gu, "&").replace(/\s+/gu, " ").trim();
+  const parts = flat(headline).split(SLACK_MENTION_SPLIT);
+  if (parts.filter((_, i) => i % 2 === 0).join("").trim().length === 0) return false;
+  const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const slot = (token: string): string =>
+    token.startsWith("<#") ? "(?:<#[^>]*>|#\\S+)" : `(?:<${esc(token.charAt(1))}[^>]*>|@\\S+(?: \\S+){0,3}?)`;
+  const source = parts.map((p, i) => (i % 2 === 0 ? esc(p) : slot(p))).join("");
+  return new RegExp(`^${source}`, "u").test(flat(text));
 }

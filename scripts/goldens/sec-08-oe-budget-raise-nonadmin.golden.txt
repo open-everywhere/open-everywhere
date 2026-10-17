@@ -2,8 +2,8 @@ IN  discord interaction · "/oe budget raise usd:5" by NON-admin U_PLEB8 in guil
       | {"type":2,"data":{"name":"oe","options":[{"name":"budget","options":[{"name":"raise","options":[{"name":"usd","value":5}]}]}]},"guild_id":"GS8","channel_id":"CS8","channel":{"type":0},"member":{"user":{"id":"U_PLEB8"},"permissions":"0"}}
   → GET /channels/CS8 ⇒ 404 (unscripted — lookup fail-opens)
   → POST /channels/CS8/messages ⇒ 200 message BM1 [buttons: Approve/Reject]
-      | **Set the monthly spend limit for <#CS8> to $5.00/mo.**
-      | $: none (uncapped) → $5.00/mo
+      | **Set the monthly spend limit for <#CS8> to $5/mo.**
+      | From no limit to $5/mo
       | -# Asked by <@U_PLEB8> · expires <when>
   ⇠ 200
       | {

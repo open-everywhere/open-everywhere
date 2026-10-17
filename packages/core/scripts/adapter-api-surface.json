@@ -407,6 +407,7 @@
     "ReactionVerb",
     "ReadAdapter",
     "ReadAuthorProbe",
+    "ReadFile",
     "ReadScopeAuditDeps",
     "ReadScopeReason",
     "ReadScopeRefusal",

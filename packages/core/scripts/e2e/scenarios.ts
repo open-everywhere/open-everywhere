@@ -204,6 +204,8 @@ import {
   SETTLEMENT_REPORT_POSTED_ACTION,
   spendCapRaisedByThisRun,
   dollarOnlySpendCardFault,
+  isDescribeImageOk,
+  textOpensWithHeadline,
   type SettlementReplyVerdict,
   turnStartMs,
   UNACCOUNTED_WAKES_ACTION,
@@ -508,7 +510,8 @@ const FILLER_ACK_RE = new RegExp(
     "|(?:^|[.!?,;:\u2014\u2013-]\\s*|\\b(?:(?:i['\u2019]?m|we['\u2019]?re|am|are)\\s+(?:still\\s+)?|still\\s+))(?:on it|checking|working on)\\b" +
     "|\\b(?:i['\u2019]?m|we['\u2019]?re)\\s+(?:now\\s+)?pulling\\b" +
     "|" +
-    `${PROMISE_SUBJECT}\\s+(?:look|check|report|update|retrieve|return|fetch|get|run|confirm|post|reply)\\b`,
+    `${PROMISE_SUBJECT}\\s+(?:look|check|report|update|retrieve|return|fetch|get|run|confirm|post|reply)\\b` +
+    `|^(?:(?:got it|sure|ok(?:ay)?|thanks|thank you)(?:\\s+for\\s+(?:the|your|this)\\s+\\w+)?[.!?]+\\s+)?[^.!?\\n]*?${PROMISE_SUBJECT}\\s+\\w+\\b[^.!?\\n]*?\\b(?:once|as soon as|after)\\s+(?:i|we)(?:['’]ve|\\s+have)\\b`,
   "i",
 );
 
@@ -4331,13 +4334,22 @@ export const SCENARIOS: readonly Scenario[] = [
         threadTs: describeTs,
         initialComment: slack.mention("what's in the attached image? Use describe_image to read the attachment and tell me briefly what it shows."),
       });
-      const describeReply = await slack.awaitThreadReply(describeTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+      const describeDeadline = Date.now() + FILE_REPLY_WAIT;
+      const describeLeft = (): number => Math.max(1, describeDeadline - Date.now());
+      let describeReply = await slack.awaitThreadReply(describeTs, { timeoutMs: describeLeft(), skip: (m) => isFillerAck(m.text) });
       if (ctx.auditRead) {
-        const rows = await ctx.auditRead({ sinceIso: describeStart, actions: ["describe_image"] });
+        const auditRead = ctx.auditRead;
+        const describeRow = await pollOptional(
+          async () => (await auditRead({ sinceIso: describeStart, actions: ["describe_image"] })).find(isDescribeImageOk),
+          { timeoutMs: describeLeft(), what: "a describe_image audit row with ok:true" },
+        );
         ctx.gate(
-          rows.some((r) => r.action === "describe_image" && (r.detail as { ok?: unknown } | undefined)?.ok === true),
+          describeRow !== undefined,
           "describe_image: a describe_image audit row with ok:true landed (trusted-fetch + vision executed — the sec-15 product proof; a confabulated reply that never called the tool REDS here)",
         );
+        if (await replyIsPendingWorkHandoff(ctx, describeStart)(describeReply.ts, describeReply.text)) {
+          describeReply = await slack.awaitThreadReply(describeTs, { afterTs: describeReply.ts, timeoutMs: describeLeft(), skip: (m) => isFillerAck(m.text) });
+        }
       } else {
         ctx.log("audit read not wired (set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN) — leaning on the judged reply alone for describe_image");
       }
@@ -4412,7 +4424,7 @@ export const SCENARIOS: readonly Scenario[] = [
           ctx.gate(has("browser.snapshot"), "snapshot-first kit: a browser.snapshot audit row landed (host-less by contract — the example.com title is judged from the reply)");
           ctx.gate(!has("browser.evaluate"), "snapshot-first kit: NO browser.evaluate row — page scripting is off unless a host declares it");
           ctx.gate(
-            rows.some((r) => r.action === "describe_image" && (r.detail as { ok?: unknown } | undefined)?.ok === true),
+            rows.some(isDescribeImageOk),
             "browser-QA loop: a describe_image audit row with ok:true landed (the { path } vision read of the screenshot succeeded)",
           );
         } else {
@@ -5168,11 +5180,10 @@ export const SCENARIOS: readonly Scenario[] = [
       const blocks = card!.blockTexts ?? [];
       const sentence = blocks[0] ?? "";
       const headline = sentence.replace(/^\*|\*$/gu, "");
-      ctx.gate(/spend limit/i.test(headline) && headline.includes(`$${dollars}.00/mo`), `S-CARD-SUMMARY: the first block is the plain sentence — what will happen (the spend limit) and the figure (got ${JSON.stringify(sentence)}; text: ${raw})`);
+      ctx.gate(/spend limit/i.test(headline) && headline.includes(`$${dollars.toLocaleString("en-US")}/mo`), `S-CARD-SUMMARY: the first block is the plain sentence — what will happen (the spend limit) and the figure (got ${JSON.stringify(sentence)}; text: ${raw})`);
       ctx.gate(![...blocks, card!.text].some((t) => /Approval requested|spend\.set/u.test(t)), `S-CARD-SUMMARY: no visible line carries the kind label (blocks: ${JSON.stringify(blocks)}; text: ${raw})`);
       ctx.gate(blocks.length <= 4, `S-CARD-SUMMARY: the card is at most four visible lines — headline, consequence, warning, footer (got ${JSON.stringify(blocks)})`);
-      const flat = card!.text.replace(/\s+/gu, " ");
-      ctx.gate(flat.startsWith(headline.replace(/\s+/gu, " ")), `S-CARD-SUMMARY: the notification text opens with the sentence (text: ${raw})`);
+      ctx.gate(textOpensWithHeadline(card!.text, headline), `S-CARD-SUMMARY: the notification text opens with the sentence (headline: ${JSON.stringify(headline)}; text: ${raw})`);
       ctx.gate(card!.approvalCard?.kind === "spend.set" && card!.approvalCard.detail.length > 0, `S-CARD-SUMMARY: the message metadata carries the kind and the full detail (got ${JSON.stringify(card!.approvalCard)})`);
       const btn = approveButton(card!)!;
       ctx.gate(ctx.synthetic !== undefined, "S-CARD-SUMMARY: deciding the card needs the synthetic capability");

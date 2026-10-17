@@ -11,6 +11,7 @@ import {
   markNotApplied,
   type BindableContext,
   type ReadScopeAuditDeps,
+  type ReadFile,
   type RenderedLine,
   type WakeReadAddress,
   domainRoster,
@@ -77,15 +78,29 @@ export interface RenderedMessage {
   readonly text: string;
   readonly authorId?: string;
   readonly bot?: boolean;
+  readonly files?: readonly ReadFile[];
+}
+
+export function slackMessageFiles(raw: unknown): ReadFile[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ReadFile[] = [];
+  for (const f of raw as Array<Record<string, unknown>>) {
+    if (typeof f !== "object" || f === null) continue;
+    if (typeof f.id !== "string" || f.id.length === 0 || f.mode === "tombstone") continue;
+    const name = typeof f.name === "string" && f.name.length > 0 ? f.name : typeof f.title === "string" ? f.title : "";
+    out.push({ id: f.id, name, ...(typeof f.mimetype === "string" && f.mimetype.length > 0 ? { mimetype: f.mimetype } : {}) });
+  }
+  return out;
 }
 
 export function renderMessages(raw: unknown, opts: { oldestFirst?: boolean } = {}): RenderedMessage[] {
   if (!Array.isArray(raw)) return [];
   const out: RenderedMessage[] = [];
   for (const m of raw as Array<Record<string, unknown>>) {
-    if (typeof m.subtype === "string" && m.subtype.length > 0) continue;
+    const files = slackMessageFiles(m.files);
+    if (typeof m.subtype === "string" && m.subtype.length > 0 && !(m.subtype === "file_share" && files.length > 0)) continue;
     const text = typeof m.text === "string" ? m.text : "";
-    if (!text) continue;
+    if (!text && files.length === 0) continue;
     const user = typeof m.user === "string" && m.user.length > 0 ? m.user : undefined;
     const botId = typeof m.bot_id === "string" && m.bot_id.length > 0 ? m.bot_id : undefined;
     out.push({
@@ -93,6 +108,7 @@ export function renderMessages(raw: unknown, opts: { oldestFirst?: boolean } = {
       ts: (m.ts as string) ?? "",
       text,
       ...(botId !== undefined ? { bot: true } : user !== undefined ? { authorId: user } : {}),
+      ...(files.length > 0 ? { files } : {}),
     });
   }
   if (opts.oldestFirst === false) out.reverse();

@@ -42,6 +42,8 @@ const SNOWFLAKE = /(?<![\w<@#])\d{17,20}(?![\w>])/u;
 const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/iu;
 const SHORT_INTERNAL_ID = /\b[a-z]{1,3}-[0-9a-f]{8}\b/u;
 const ISO_INSTANT = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/u;
+const FIGURE_LABEL = /(?:^|[\s·*])(?:\$|tokens):\s/u;
+const PRICING_TALK = /\b(?:no price|unpriced|pricing coverage)\b/iu;
 
 function leaks(text: string): string[] {
   const out: string[] = [];
@@ -60,6 +62,10 @@ function leaks(text: string): string[] {
   if (short) out.push(`internal id "${short[0]}"`);
   const iso = ISO_INSTANT.exec(text);
   if (iso) out.push(`ISO instant "${iso[0]}"`);
+  const label = FIGURE_LABEL.exec(text);
+  if (label) out.push(`figure label "${label[0].trim()}"`);
+  const pricing = PRICING_TALK.exec(text);
+  if (pricing) out.push(`pricing talk "${pricing[0]}"`);
   return out;
 }
 
@@ -74,9 +80,12 @@ function leaks(text: string): string[] {
     ["quote action 00000000-0000-4000-8000-000000000085", "internal row id"],
     ["Let routine r-1a2b3c4d use it", "internal id"],
     ["expires 2026-03-16T07:01:00.000Z", "ISO instant"],
+    ["$: $50.00/mo → $2575.00/mo", "figure label"],
+    ["Set spend limit · tokens: none (uncapped) → 1 tokens/mo", "figure label"],
+    ["some usage has no price, so this $ limit does not count it", "pricing talk"],
   ];
   for (const [text, shape] of bad) ok(leaks(text).some((l) => l.startsWith(shape)), `🔴 the detector catches a ${shape} in "${text}" (got ${JSON.stringify(leaks(text))})`);
-  for (const clean of ["Post a message in <#C0EXAMPLE1>.", "Asked by <@U0EXAMPLE1> · expires 13 October, 14:00 UTC", "Set the monthly spend limit for #general to $100.00/mo."]) {
+  for (const clean of ["Post a message in <#C0EXAMPLE1>.", "Asked by <@U0EXAMPLE1> · expires 13 October, 14:00 UTC", "Set the monthly spend limit for #general to $100.00/mo.", "From $50/mo to $2,575/mo"]) {
     ok(leaks(clean).length === 0, `a clean line passes the detector: "${clean}" (got ${JSON.stringify(leaks(clean))})`);
   }
 }

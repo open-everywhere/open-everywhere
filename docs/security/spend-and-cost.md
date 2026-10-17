@@ -60,17 +60,20 @@ test is the ledger's own: a model prices at its committed rate, a stampless row 
 sole configured model, and anything neither path prices contributed **$0** to the `usd_micros`
 column the cap sums. The proposal still posts its card — an unpriced model is a deployer's pricing
 gap, not a reason to refuse an admin — and the tool's reply carries a sentence the agent relays in
-the asking channel. **The card renders it too, and the decision row records it.** The coverage is
-measured before the card is minted and frozen into the pending row's args, so the approver reads it
-on the card — which matters most on a [redirected card](./control-plane.md), where the approver is
-in a different room from the reply. The card states all four answers explicitly: every model
-priced, the named models with no rate, *no traffic in the window*, or *not measured*. The last two
-are never rendered as silence or as the "every model priced" tick, because a scope that ran nothing
-has proved nothing and a card that says so anyway is a clean bill nobody earned. The
+the asking channel. **The card's detail carries it too, and the decision row records it.** The
+coverage is measured before the card is minted and frozen into the pending row's args. The card's
+detail lines state all four answers explicitly: every model priced, the named models with no rate,
+*no traffic in the window*, or *not measured*. The last two are never rendered as silence or as
+the "every model priced" tick, because a scope that ran nothing has proved nothing and a card that
+says so anyway is a clean bill nobody earned. **The approver does not see that detail on the card's
+visible lines.** It rides the card's metadata (on Slack, the message `metadata`), and the visible
+consequence line carries only the figures (OPE-2489). That matters most on a
+[redirected card](./control-plane.md), where the approver is in a different room from the reply and
+does not read the tool's sentence either. The
 `admin.spend.set_limit` audit row carries the same summary —
 `pricingCoverage: "full" | "gap" | "no-traffic" | "not-measured" | "unknown"` (the last for a
 coverage state written by a newer deploy than the one rendering it — never a clean bill it cannot
-vouch for), plus `unratedModels` and `unobservedModels` on a gap — so what the approver read is
+vouch for), plus `unratedModels` and `unobservedModels` on a gap — so what the card's detail said is
 recoverable after the fact, the way
 `set_domain_model`'s `unpriced` flag is. Both propose doors freeze it: the tool and
 `/oe budget raise`. Freezing it puts coverage inside the frozen args, so it joins the
@@ -530,7 +533,7 @@ criteria domain.
 🔴 **The coverage read is only taken for a dollar proposal, and a failed read never reads as a clean
 bill.** `readSpendCoverage` returns nothing at all when the proposal sets no dollar cap. When the
 ledger read throws, it returns the same **not measurable** channel a criteria domain uses, and both
-the card and the note then say the ledger could not be read. An empty model list with no
+the card's detail and the note then say the ledger could not be read. An empty model list with no
 not-measurable marker is the positive answer — every model this scope ran on is priced — so the two
 must never be conflated.
 
@@ -540,9 +543,10 @@ window answers it on the first of the month as well as on the last.
 
 `frozenCoverage` freezes the answer into one of four states — **full**, **gap**, **no traffic** or
 **none** — splitting models that carry no rate from models that were never observed.
-`SpendCoverage` carries those four states onto the approval card **and** its audit row, so the
-approver and the trail read one frozen value rather than two independent reads.
-`spendCoverageLines` renders the approver-facing sentence directly under the proposed figures, and
+`SpendCoverage` carries those four states into the approval card's detail **and** its audit row, so
+the card and the trail hold one frozen value rather than two independent reads.
+`spendCoverageLines` renders the coverage sentence into the card's detail lines (metadata, not the
+visible lines), and
 `spendCoverageDetail` records the same frozen value on the `admin.spend.set_limit` row's detail.
 
 `unpricedCoverageNote` composes the sentence the asking channel hears. 🔴 **It names two remedies,
@@ -737,8 +741,8 @@ October 2026"). It over-covers rather
 than under-covers, and it never claims an exact 30 days the ledger could not support.
 
 **The raise itself is unchanged.** The scan adds a sentence to the requester's own ephemeral
-acknowledgement. It is not frozen onto the approval card — the pricing-coverage read above is on the
-card because the **approver** needs it, while this figure is for the **asker** — and it changes
+acknowledgement. It is not frozen onto the approval card — the pricing-coverage read above is frozen
+into the card's detail and the decision row, while this figure is for the **asker** — and it changes
 nothing about who may decide. A non-admin proposes; an admin still clicks Approve. A broken ledger
 read is fail-soft in the same way the coverage read is: the proposal still posts, and the
 acknowledgement says the ledger could not be read.

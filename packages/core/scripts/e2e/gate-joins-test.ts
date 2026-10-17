@@ -57,6 +57,8 @@ import {
   spendCapRaisedByThisRun,
   dollarOnlySpendCardFault,
   spendCardComponents,
+  isDescribeImageOk,
+  textOpensWithHeadline,
   turnStartMs,
   unattendedArmRoad,
   unifiedTurnSessionId,
@@ -1971,4 +1973,58 @@ console.log("27. the fire report join ignores the creation turn's posts:");
   ok(dstrOf(nativeJoin.report, "id") === "1800.100" && nativeJoin.replies.length === 1, `a native fire's own post counts by session, and the creation turn's posts still do not (saw ${nativeJoin.replies.length} replies)`);
 }
 
+{
+  const { isFillerAck: fillerAck070 } = await import("./scenarios.js");
+  const FART_INTERIM = "I'll describe the attached image once I've inspected it.";
+  ok(fillerAck070(FART_INTERIM), "🔴 0.7.0 F-ART: the deferred promise reads as FILLER, so the reply latch steps over it");
+  ok(fillerAck070("I’ll summarise the thread after I have read it."), "…a curly apostrophe and another verb and deferral word read the same way");
+  ok(fillerAck070("Got it, and will describe it as soon as we've fetched the file."), "…and so does an elided subject with \"as soon as we\"");
+  ok(fillerAck070("Got it! I'll describe the image once I've opened it."), "…and so does a promise after a short ACK sentence");
+  ok(fillerAck070("Thanks for the upload. I'll describe it once I've inspected it."), "…including a thank-you sentence");
+  ok(!fillerAck070("I'll describe it: the image shows a single dark square on a light background."), "🔴 NEGATIVE CONTROL: a promise that carries the answer itself, with no deferral, is NOT filler");
+  ok(!fillerAck070("The image shows a dark square. It was uploaded once the thread started."), "…and a substantive answer with a time clause but no first-person promise is NOT filler");
+  ok(!fillerAck070("I'll note that the deploy failed when we merged it, and again after we reverted."), "…and a past-tense \"when we\" or \"after we\" inside an answer is NOT filler");
+  ok(!fillerAck070("The deploy pipeline will run once we merge the branch."), "…and a NOUN subject still never opens the promise branch, deferral or not");
+  ok(!fillerAck070("I'll be brief: the logs show the deploy broke once we enabled the flag."), "🔴 NEGATIVE CONTROL (review): a past-tense \"once we\" after a promise verb is NOT filler");
+  ok(!fillerAck070("Here is the answer: 42. We will revisit after we've merged the fix."), "…and a deferred promise AFTER the answer's first sentence is NOT filler");
+  ok(!fillerAck070("Sure, the answer is 42. We will revisit after we've merged the fix."), "…and an ACK opener that carries the answer is NOT filler");
+
+  ok(isDescribeImageOk({ action: "describe_image", detail: { ok: true, ref: "attachment:F1" } }), "an ok:true describe_image row is the evidence");
+  ok(isDescribeImageOk({ action: "describe_image", detail: { ok: false, reason: "vision-error" } }) === false, "🔴 NEGATIVE CONTROL: an ok:false row is not");
+  ok(isDescribeImageOk({ action: "describe_image", detail: { ok: "true" } }) === false, "…nor a string \"true\"");
+  ok(isDescribeImageOk({ action: "browser.screenshot", detail: { ok: true } }) === false, "…nor another action's ok:true row");
+
+  const head = "Set the monthly spend limit for <#C0EXAMPLE1> to $2,575/mo";
+  ok(textOpensWithHeadline("Set the monthly spend limit for #watercooler3 to $2,575/mo\nFrom $50/mo to $2,575/mo\nAsked by @Ana", head), "🔴 0.7.0 S-CARD-SUMMARY: a text with the mention rewritten into a name opens with the headline");
+  ok(textOpensWithHeadline("Set the monthly spend limit for <#C0EXAMPLE1|watercooler3> to $2,575/mo", head), "…and so does the <#C…|name> spelling");
+  ok(textOpensWithHeadline(`${head}\nmore`, head), "…and the raw mrkdwn itself");
+  ok(textOpensWithHeadline("Set   the monthly spend limit\nfor #general to $2,575/mo", head), "…with whitespace collapsed");
+  ok(textOpensWithHeadline("Set the monthly spend limit for #general to $9,999/mo", head) === false, "🔴 NEGATIVE CONTROL: a different figure after the mention does not match");
+  ok(textOpensWithHeadline("Approval requested\nSet the monthly spend limit for #general to $2,575/mo", head) === false, "…and a text that does not OPEN with the headline does not match");
+  ok(textOpensWithHeadline("Set the monthly spend limit for  to $2,575/mo", head) === false, "…and an empty mention slot does not match");
+  ok(textOpensWithHeadline("Set the monthly spend limit for #general to X and more. to $2,575/mo", head) === false, "🔴 NEGATIVE CONTROL (review): a channel slot holds one #name, never a run of other words");
+  const userHead = "Asked by <@U0EXAMPLE1> for <#C0EXAMPLE1>";
+  ok(textOpensWithHeadline("Asked by @Ana María López for #general", userHead), "…a person slot reads a display name of several words");
+  ok(textOpensWithHeadline("Asked by Ana for #general", userHead) === false, "…and a person slot with no @ name does not match");
+  ok(textOpensWithHeadline("anything", "<#C0EXAMPLE1>") === false, "…and a headline with no words at all never matches");
+
+  const legSrc = readFileSync(new URL("./scenarios.ts", import.meta.url), "utf8");
+  const fart = legSrc.indexOf('id: "F-ART"');
+  const fartEnd = legSrc.indexOf("process.env.E2E_BROWSER_QA", fart);
+  ok(fart > 0 && fartEnd > fart && fartEnd - fart < 20_000, "F-ART: the slice ends at leg 4's E2E_BROWSER_QA arm, so the leg-3 checks below read F-ART and nothing after it");
+  const fartBody = legSrc.slice(fart, fartEnd);
+  ok(fart > 0 && /pollOptional\(\s*async \(\) => \(await auditRead\(\{ sinceIso: describeStart, actions: \["describe_image"\] \}\)\)\.find\(isDescribeImageOk\)/u.test(fartBody), "🔴 0.7.0 F-ART: leg 3 polls for the describe_image ok:true row");
+  ok(fartBody.includes("timeoutMs: describeLeft()") && fartBody.includes("const describeDeadline = Date.now() + FILE_REPLY_WAIT;"), "…inside the one FILE_REPLY_WAIT budget the reply already had");
+  ok(!/const rows = await ctx\.auditRead\(\{ sinceIso: describeStart/u.test(fartBody), "🔴 …and no longer reads the row ONCE");
+  const card = legSrc.indexOf('id: "S-CARD-SUMMARY"');
+  const cardBody = legSrc.slice(card, legSrc.indexOf('id: "S-BLOCKED-PING"', card));
+  ok(card > 0 && cardBody.includes("textOpensWithHeadline(card!.text, headline)") && !cardBody.includes("flat.startsWith("), "🔴 0.7.0 S-CARD-SUMMARY: the text gate reads through the mention-aware reader, not a byte compare");
+  const plain = "Set the monthly spend limit for #general to $2,575/mo\nFrom $50/mo to $2,575/mo\nAsked by <@U1> · expires 13 October, 14:00 UTC";
+  ok(spendCardComponents(plain).usd === "$50/mo → $2,575/mo" && spendCardComponents(plain).tokens === undefined, `the plain line reads as a $ change and no token change (got ${JSON.stringify(spendCardComponents(plain))})`);
+  ok(dollarOnlySpendCardFault(plain) === undefined, "a plain dollar-only card is not a fault");
+  ok(dollarOnlySpendCardFault("Set the monthly spend limit for #general to $50/mo\nFrom no limit to $50/mo") === undefined, "…nor one that raises from no limit");
+  const plainTokens = "Set the monthly spend limit for #general to 1 tokens/mo and $382/mo\nFrom $50/mo to $382/mo, and from no limit to 1 tokens/mo";
+  ok(dollarOnlySpendCardFault(plainTokens)?.includes("1 tokens/mo") === true, `🔴 OPE-2069 on the plain line: a card that also moves the token cap is a fault (got ${JSON.stringify(dollarOnlySpendCardFault(plainTokens))})`);
+  ok(dollarOnlySpendCardFault("Set the monthly spend limit for #general to 5 tokens/mo\nFrom no limit to 5 tokens/mo") !== undefined, "…and a tokens-only plain card is a fault for a dollar ask");
+}
 console.log(`✓ ${n} gate-joins assertions passed`);

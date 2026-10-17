@@ -64,6 +64,27 @@ function fmtCapUsd(usd: number | null): string {
   return usd === null ? "none (uncapped)" : `$${usd.toFixed(2)}/mo`;
 }
 
+function plainUsd(usd: number): string {
+  const whole = Number.isInteger(usd);
+  return `$${usd.toLocaleString("en-US", { minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: 2 })}`;
+}
+
+function plainCapUsd(usd: number | null): string {
+  return usd === null ? "no limit" : `${plainUsd(usd)}/mo`;
+}
+function plainCapTokens(tokens: number | null): string {
+  return tokens === null ? "no limit" : `${tokens.toLocaleString("en-US")} tokens/mo`;
+}
+
+export function spendConsequenceLine(args: Pick<SpendSetArgs, "monthlyTokens" | "monthlyUsd" | "currentCap" | "currentUsd">): string | undefined {
+  const clauses: string[] = [];
+  if (args.monthlyUsd != null) clauses.push(`from ${plainCapUsd(args.currentUsd ?? null)} to ${plainCapUsd(args.monthlyUsd)}`);
+  if (args.monthlyTokens != null) clauses.push(`from ${plainCapTokens(args.currentCap)} to ${plainCapTokens(args.monthlyTokens)}`);
+  if (clauses.length === 0) return undefined;
+  const line = clauses.join(", and ");
+  return line.charAt(0).toUpperCase() + line.slice(1);
+}
+
 function scopeLine(label: string | undefined, scopeKey: string, level: string): string {
   return `${scopeWords(label, scopeKey)} (${level})`;
 }
@@ -172,14 +193,13 @@ const spendSet: ActionKind<SpendSetArgs> = {
   proseArgs: ["reason"],
   plainSummary(args) {
     const figures = [
-      ...(args.monthlyTokens != null ? [fmtCap(args.monthlyTokens)] : []),
-      ...(args.monthlyUsd != null ? [fmtCapUsd(args.monthlyUsd)] : []),
+      ...(args.monthlyTokens != null ? [plainCapTokens(args.monthlyTokens)] : []),
+      ...(args.monthlyUsd != null ? [plainCapUsd(args.monthlyUsd)] : []),
     ].join(" and ");
     return `Set the monthly spend limit for ${plainScope(args.scopeLabel, args.scopeKey)} to ${figures || "a new figure"}`;
   },
   consequence(args) {
-    const gap = args.coverage?.measured === "gap" ? ["some usage has no price, so this $ limit does not count it"] : [];
-    return [...spendChangeLines(args), ...gap].join(" · ");
+    return spendConsequenceLine(args);
   },
   summarize(args) {
     return [
@@ -214,9 +234,9 @@ const spendSet: ActionKind<SpendSetArgs> = {
       },
     });
     const set = [
-      ...(args.monthlyTokens != null ? [fmtCap(args.monthlyTokens)] : []),
-      ...(args.monthlyUsd != null ? [fmtCapUsd(args.monthlyUsd)] : []),
-    ].join(" + ");
+      ...(args.monthlyTokens != null ? [plainCapTokens(args.monthlyTokens)] : []),
+      ...(args.monthlyUsd != null ? [plainCapUsd(args.monthlyUsd)] : []),
+    ].join(" and ");
     return `spend limit set to ${set} for ${scopeWords(args.scopeLabel, args.scopeKey)}`;
   },
 };

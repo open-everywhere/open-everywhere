@@ -18,7 +18,7 @@ import {
   type SlackMemberProbe,
 } from "../agent/channels/slack-events.js";
 import { withPatchedFetch } from "./_fetch-test-utils.js";
-import { renderMessages, slackReadAdapter } from "../agent/channels/slack-read.js";
+import { renderMessages, slackMessageFiles, slackReadAdapter } from "../agent/channels/slack-read.js";
 import { readChannelResult, defineDomain, registerConfig, registerSurfaces, defineSurface, type ReadAdapter, type RenderedLine } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerSlackProvider } from "../agent/register.js";
 
@@ -326,4 +326,25 @@ registerSurfaces([]);
 _resetAuthorMemberCache();
 delete process.env["SLACK_BOT_TOKEN"];
 
+{
+  const upload = {
+    user: "U_MEMBER",
+    ts: "5",
+    text: "what's in the attached image?",
+    files: [
+      { id: "F0C1NKEL7U0", name: "probe.png", title: "probe", mimetype: "image/png", url_private: "https://files.slack.com/files-pri/T1-F0C1NKEL7U0/probe.png", permalink: "https://x.slack.com/files/U1/F0C1NKEL7U0/probe.png" },
+      { id: "F0GONE", mode: "tombstone" },
+      { name: "no id" },
+    ],
+  };
+  const [line] = renderMessages([upload], { oldestFirst: true });
+  ok(JSON.stringify(line?.files) === JSON.stringify([{ id: "F0C1NKEL7U0", name: "probe.png", mimetype: "image/png" }]), `🔴 the upload's file reaches the read line as id, name and media type (got ${JSON.stringify(line?.files)})`);
+  ok(!JSON.stringify(line).includes("files.slack.com") && !JSON.stringify(line).includes("permalink"), "🔴 no file URL reaches the read line");
+  const [fileOnly] = renderMessages([{ user: "U_MEMBER", ts: "6", text: "", subtype: "file_share", files: [{ id: "F0ONLY", title: "notes", mimetype: "text/plain" }] }], { oldestFirst: true });
+  ok(fileOnly?.files?.[0]?.id === "F0ONLY" && fileOnly.files[0].name === "notes", "a file shared with no comment is a read line, named by its title");
+  ok(renderMessages([{ user: "U_MEMBER", ts: "7", text: "joined", subtype: "channel_join" }], { oldestFirst: true }).length === 0, "negative control: a system line is still skipped");
+  ok(renderMessages([{ user: "U_MEMBER", ts: "8", text: "", subtype: "file_share" }], { oldestFirst: true }).length === 0, "…and a file_share line with no file left is skipped too");
+  ok(!("files" in (renderMessages([{ user: "U_MEMBER", ts: "9", text: "plain" }], { oldestFirst: true })[0] ?? {})), "a line with no files carries no `files` key");
+  ok(slackMessageFiles(undefined).length === 0 && slackMessageFiles([null, 3]).length === 0, "a missing or malformed `files` field reads as no files");
+}
 console.log(`\n✅ slack non-member author: ${passed} assertions passed`);

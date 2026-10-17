@@ -57,7 +57,7 @@ const MARKUP = /[<>[\]*`|]/u;
 
 {
   const cases: { kind: string; args: unknown; expect: readonly string[] }[] = [
-    { kind: "spend.set", args: { scopeKey: "slack/T1/C1", scopeLabel: "#general", level: "surface", monthlyUsd: 50 }, expect: ["spend limit", "#general", "$50.00/mo"] },
+    { kind: "spend.set", args: { scopeKey: "slack/T1/C1", scopeLabel: "#general", level: "surface", monthlyUsd: 50 }, expect: ["spend limit", "#general", "$50/mo"] },
     { kind: "spend.clear", args: { scopeKey: "slack/T1/C1", scopeLabel: "#general", level: "surface", currentCap: null }, expect: ["back on its configured spend limit", "#general"] },
     { kind: "chat.dm", args: { platform: "slack", principalId: "U0123ABC", text: "hi", footer: "f", grant: "g" }, expect: ["direct message", "<@U0123ABC>"] },
     { kind: "chat.post", args: { platform: "slack", container: "C0999", text: "hi", grant: "g" }, expect: ["Post a message", "<#C0999>"] },
@@ -132,6 +132,35 @@ const MARKUP = /[<>[\]*`|]/u;
   ok(!decided.blocks.some((b) => b.type === "actions"), "the decided card has no buttons");
 }
 
+{
+  const { spendConsequenceLine } = await import("../agent/approvals/actions.js");
+  const { dollarOnlySpendCardFault } = await import("./e2e/gate-joins.js");
+  const gapArgs = {
+    org: "default", scopeKey: "slack/T1/C1", level: "surface", monthlyUsd: 2575, currentUsd: 50, currentCap: null, scopeLabel: "#general",
+    coverage: { measured: "gap", windowDays: 30, unratedModels: ["acme/m1"], unobservedModels: [] },
+  };
+  const r = row({ argsJson: JSON.stringify(gapArgs) });
+  const kind = actionKind("spend.set")!;
+  const detail = kind.summarize(JSON.parse(r.argsJson));
+  const card = pendingCardBlocks(r, detail);
+  const layout = pendingCardLayout(r, detail);
+  ok(layout.consequence === "From $50/mo to $2,575/mo", `🔴 the consequence line is plain: "From $50/mo to $2,575/mo" (got ${JSON.stringify(layout.consequence)})`);
+  ok(plainSummaryForRow(r).includes("$2,575/mo"), `the headline names the figure the same way (got ${JSON.stringify(plainSummaryForRow(r))})`);
+  const visible = [card.text, JSON.stringify(card.blocks)].join("\n");
+  ok(!/\$: |tokens: |no price|pricing|ledger/u.test(visible), `🔴 no visible line carries a "$:" label or pricing talk (got ${JSON.stringify(card.text)})`);
+  const meta = (card.metadata?.event_payload as { detail?: string[] }).detail ?? [];
+  ok(meta.some((l) => l.includes("pricing coverage") && l.includes("acme/m1")), "the unpriced-usage caveat rides the metadata detail");
+  ok(meta.some((l) => l.startsWith("$: $50.00/mo → $2575.00/mo")), "…and so does the labelled figure line an operator reads");
+  const fullDetail = kind.summarize({ ...gapArgs, coverage: { measured: "full", windowDays: 30 } });
+  ok(!fullDetail.some((l) => l.includes("does NOT count")), "negative control: full coverage carries no gap caveat");
+  ok(spendConsequenceLine({ monthlyUsd: 50, currentUsd: null, currentCap: null }) === "From no limit to $50/mo", "a first cap reads from no limit");
+  ok(spendConsequenceLine({ monthlyUsd: 12.5, currentUsd: 10, currentCap: null }) === "From $10/mo to $12.50/mo", "a figure with cents keeps them");
+  ok(spendConsequenceLine({ monthlyTokens: 2_000_000, currentCap: 1_000_000, currentUsd: null }) === "From 1,000,000 tokens/mo to 2,000,000 tokens/mo", "a token cap reads in tokens");
+  ok(spendConsequenceLine({ currentCap: null, currentUsd: null }) === undefined, "a proposal that sets nothing has no consequence line");
+  ok(dollarOnlySpendCardFault(card.text) === undefined, `the board's spend reader passes the rendered dollar-only card (got ${dollarOnlySpendCardFault(card.text)})`);
+  const both = pendingCardBlocks(row({ argsJson: JSON.stringify({ ...gapArgs, monthlyTokens: 1 }) }), ["d"]);
+  ok(dollarOnlySpendCardFault(both.text)?.includes("1 tokens/mo") === true, `…and faults a rendered card that also moves the token cap (got ${JSON.stringify(both.text)})`);
+}
 {
   const conv = pendingCardOptions(row());
   ok(conv.map((o) => o.verb).join(",") === "approve,reject", "a conversation card offers Approve and Reject only (OPE-2363)");
