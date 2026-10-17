@@ -312,6 +312,7 @@
     "test:suites": "NODE_NO_WARNINGS=1 vitest run --config vitest.chain.config.ts",
     "test:surface-work-grant": "NODE_NO_WARNINGS=1 tsx scripts/surface-work-grant-test.ts",
     "test:write-if-changed": "NODE_NO_WARNINGS=1 tsx scripts/write-if-changed-test.ts",
+    "test:docs-generate-merge": "NODE_NO_WARNINGS=1 tsx scripts/docs-generate-merge-test.ts",
     "test:posix-path": "NODE_NO_WARNINGS=1 tsx scripts/posix-path-test.ts",
     "lint:ambient-env": "tsx scripts/ambient-env-lint.ts",
     "test:ambient-env-lint": "NODE_NO_WARNINGS=1 tsx scripts/ambient-env-lint-test.ts",

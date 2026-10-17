@@ -83,6 +83,14 @@ So the manual the agent quotes is the manual in the repo, at the commit that was
 that installs Open Everywhere from npm, it is the manual of the installed core version. If you change
 a doc, regenerate and commit — see the contributor guide (`AGENTS.md`).
 
+The generator compiles each doc one source line to one embed line. So two branches that edit
+different lines of the same doc usually also merge cleanly in the generated module, and the merge
+result passes `npm run lint:docs-generate` with no regeneration. The derived title and summary stay
+single lines. When both branches change the opening paragraph of one doc, the merge can conflict on
+the summary, or it can merge cleanly and fail `lint:docs-generate`. In both cases, regenerate on the
+merge result; never pick a side. `npm run test:docs-generate-merge` proves the clean cases with a
+real two-branch `git merge`.
+
 ### …and it cannot be silently incomplete
 
 Byte-identical docs are only half of it: a manual can be perfectly in sync and still fail to mention

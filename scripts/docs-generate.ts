@@ -54,13 +54,20 @@ function bundleIds(): string[] {
     .sort();
 }
 
+function renderMarkdownLines(markdown: string): string {
+  return markdown
+    .split("\n")
+    .map((line) => `      ${JSON.stringify(line)},\n`)
+    .join("");
+}
+
 function renderEntry(path: string, markdown: string): string {
   return (
     `  {\n` +
-    `    path: ${JSON.stringify(path)},\n` +
     `    title: ${JSON.stringify(docTitleOf(path, markdown))},\n` +
+    `    path: ${JSON.stringify(path)},\n` +
     `    summary: ${JSON.stringify(docSummaryOf(markdown))},\n` +
-    `    markdown: ${JSON.stringify(markdown)},\n` +
+    `    markdown: [\n${renderMarkdownLines(markdown)}    ].join("\\n"),\n` +
     `  },\n`
   );
 }
