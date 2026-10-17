@@ -484,6 +484,8 @@ function getDb(): DatabaseSync {
       cache_read_tokens  INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS tool_usage_org_ts ON tool_usage (org_id, ts);
+    -- OPE-2550: room discovery reads one room at a time.
+    CREATE INDEX IF NOT EXISTS tool_usage_org_surface_ts ON tool_usage (org_id, surface_key, ts);
     -- identity link-sets (P1): the three tables behind DB-backed cross-surface identity. See the
     -- LinkSetRow section in store.ts for what they are, and the postgres twin for the RLS half.
     -- Read-write (a person severs an account, an admin suspends a set); the immutable HISTORY is
@@ -777,6 +779,7 @@ function getDb(): DatabaseSync {
       words        TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS question_ledger_org_ts ON question_ledger (org_id, ts);
+    CREATE INDEX IF NOT EXISTS question_ledger_org_surface_ts ON question_ledger (org_id, surface_key, ts);
     -- room_watch (OPE-2539): one row per shared room that workflow discovery offered a routine to — store.ts's
     -- RoomWatchRow. Every write is a compare-and-set on version.
     CREATE TABLE IF NOT EXISTS room_watch (
@@ -2436,18 +2439,33 @@ export const sqliteOperationalStore: OperationalStore = {
     return rows.map((r) => ({ ts: r.ts, connector: r.connector, tool: r.tool }));
   },
 
-  async listRoomConnectorCalls(org, since, limit) {
+  async listDiscoveryRooms(org, since) {
+    const rows = getDb()
+      .prepare(
+        `SELECT surface_key FROM tool_usage
+           WHERE org_id = ?1 AND surface_mode = 'channel' AND event = 'call' AND outcome = 'ok' AND connector <> ''
+             AND principal_id IS NOT NULL AND principal_id <> '' AND ts >= ?2
+             AND session_id NOT IN (SELECT session_id FROM usage_events WHERE org_id = ?1 AND kind = 'routine')
+         UNION
+         SELECT surface_key FROM question_ledger WHERE org_id = ?1 AND surface_mode = 'channel' AND ts >= ?2
+         ORDER BY surface_key`,
+      )
+      .all(org, since) as { surface_key: string }[];
+    return rows.map((r) => r.surface_key);
+  },
+
+  async listRoomConnectorCalls(org, surfaceKey, since, limit) {
     const rows = getDb()
       .prepare(
         `SELECT ts, surface_key, principal_id, connector, tool FROM (
            SELECT seq, ts, surface_key, principal_id, connector, tool FROM tool_usage
-           WHERE org_id = ?1 AND surface_mode = 'channel' AND event = 'call' AND outcome = 'ok' AND connector <> ''
-             AND principal_id IS NOT NULL AND principal_id <> '' AND ts >= ?2
+           WHERE org_id = ?1 AND surface_key = ?2 AND surface_mode = 'channel' AND event = 'call' AND outcome = 'ok' AND connector <> ''
+             AND principal_id IS NOT NULL AND principal_id <> '' AND ts >= ?3
              AND session_id NOT IN (SELECT session_id FROM usage_events WHERE org_id = ?1 AND kind = 'routine')
-           ORDER BY seq DESC LIMIT ?3
+           ORDER BY seq DESC LIMIT ?4
          ) recent ORDER BY seq ASC`,
       )
-      .all(org, since, Math.max(0, Math.floor(limit))) as { ts: string; surface_key: string; principal_id: string; connector: string; tool: string }[];
+      .all(org, surfaceKey, since, Math.max(0, Math.floor(limit))) as { ts: string; surface_key: string; principal_id: string; connector: string; tool: string }[];
     return rows.map((r) => ({ ts: r.ts, surfaceKey: r.surface_key, principalId: r.principal_id, connector: r.connector, tool: r.tool }));
   },
 
@@ -2478,16 +2496,16 @@ export const sqliteOperationalStore: OperationalStore = {
     return rows.map(questionRowFrom);
   },
 
-  async listRoomQuestions(org, since, limit) {
+  async listRoomQuestions(org, surfaceKey, since, limit) {
     const rows = getDb()
       .prepare(
         `SELECT ts, surface_key, principal_id, fingerprint, words FROM (
            SELECT seq, ts, surface_key, principal_id, fingerprint, words FROM question_ledger
-           WHERE org_id = ?1 AND surface_mode = 'channel' AND ts >= ?2
-           ORDER BY seq DESC LIMIT ?3
+           WHERE org_id = ?1 AND surface_key = ?2 AND surface_mode = 'channel' AND ts >= ?3
+           ORDER BY seq DESC LIMIT ?4
          ) recent ORDER BY seq ASC`,
       )
-      .all(org, since, Math.max(0, Math.floor(limit))) as unknown as QuestionLedgerSqliteRow[];
+      .all(org, surfaceKey, since, Math.max(0, Math.floor(limit))) as unknown as QuestionLedgerSqliteRow[];
     return rows.map(questionRowFrom);
   },
 

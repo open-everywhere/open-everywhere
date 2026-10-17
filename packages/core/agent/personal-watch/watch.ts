@@ -108,6 +108,7 @@ export interface PersonalWatchTickDeps {
   readonly readCalls?: (org: string, principalId: string, surfacePrefix: string, since: string, limit: number) => Promise<PersonConnectorCallRow[]>;
   readonly readQuestions?: (org: string, principalId: string, surfacePrefix: string, since: string, limit: number) => Promise<QuestionLedgerRow[]>;
   readonly proposeRoom?: ProposeRoomRoutine;
+  readonly listRooms?: RoomDiscoveryDeps["listRooms"];
   readonly readRoomCalls?: RoomDiscoveryDeps["readRoomCalls"];
   readonly readRoomQuestions?: RoomDiscoveryDeps["readRoomQuestions"];
 }
@@ -328,7 +329,7 @@ export async function personalWatchTick(deps: PersonalWatchTickDeps): Promise<Pe
   if (discoveryOn() && deps.proposeRoom) {
     const rooms = await roomDiscoveryTick(
       org,
-      { proposeRoom: deps.proposeRoom, ...(deps.readRoomCalls ? { readRoomCalls: deps.readRoomCalls } : {}), ...(deps.readRoomQuestions ? { readRoomQuestions: deps.readRoomQuestions } : {}) },
+      { proposeRoom: deps.proposeRoom, ...(deps.listRooms ? { listRooms: deps.listRooms } : {}), ...(deps.readRoomCalls ? { readRoomCalls: deps.readRoomCalls } : {}), ...(deps.readRoomQuestions ? { readRoomQuestions: deps.readRoomQuestions } : {}) },
       now,
     );
     report.roomProposed = rooms.proposed;

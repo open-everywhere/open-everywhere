@@ -211,6 +211,10 @@ try {
     ok(parse("on", [{ name: "until", type: 3, value: "next week" }]).kind === "error", "a date core cannot read answers core's own error");
     ok(JSON.stringify(parse("off")) === JSON.stringify({ kind: "cover", action: "off" }), "`/oe cover off` parses to core's `off`");
     ok(JSON.stringify(parse("status")) === JSON.stringify({ kind: "cover", action: "status" }), "`/oe cover status` parses to core's status read");
+    const suggest = def.options.find((o) => o.name === "suggest");
+    ok(suggest?.type === 2 && JSON.stringify(suggest.options!.map((o) => o.name)) === JSON.stringify(["off", "on", "status"]) && suggest.description.length <= 100, "🔴 the `/oe` command body declares a `suggest` group with `off`, `on` and `status`");
+    const parseSuggest = (sub: string) => parseDiscordOeCommandOptions([{ name: "suggest", type: 2, options: [{ name: sub, type: 1 }] }]);
+    ok(["off", "on", "status"].every((a) => JSON.stringify(parseSuggest(a)) === JSON.stringify({ kind: "suggest", action: a })), "`/oe suggest off|on|status` parses to core's actions");
   }
 
   console.log("§6 no note");

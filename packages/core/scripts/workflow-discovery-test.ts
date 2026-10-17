@@ -384,7 +384,7 @@ console.log("§8 repeated questions");
     await at("2026-10-05T09:02:00.000Z", "UBEN", "channel", "C-OPS");
     const mine = await eng.listPersonQuestions(o, "UANN", "slack/T1/", "2026-07-01T00:00:00.000Z", 100);
     ok(mine.length === 1 && mine[0]!.surfaceKey === "slack/T1/D-UANN", `🔴 ${name}: the person's read holds their own DM questions only, and the keep deleted the row older than ${questions.QUESTION_LEDGER_KEEP_DAYS} days`);
-    const room = await eng.listRoomQuestions(o, "2026-07-01T00:00:00.000Z", 100);
+    const room = await eng.listRoomQuestions(o, "slack/T1/C-OPS", "2026-07-01T00:00:00.000Z", 100);
     ok(room.length === 2 && room.every((r) => r.surfaceKey === "slack/T1/C-OPS") && room[0]!.principalId === "UANN" && room[1]!.principalId === "UBEN", `${name}: the room read holds the room's questions, oldest first, with who asked`);
     const tu = (over: Partial<ToolUsageEntry>): ToolUsageEntry => ({ org: o, ts: "2026-10-05T09:00:00.000Z", surfaceKey: "slack/T1/C-OPS", surfaceMode: "channel", principalId: "UANN", sessionId: "s-room", event: "call", tool: "list_issues", connector: "linear", outcome: "ok", inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, ...over });
     await eng.appendToolUsage(tu({}));
@@ -392,8 +392,18 @@ console.log("§8 repeated questions");
     await eng.appendToolUsage(tu({ ts: "2026-10-05T09:02:00.000Z", sessionId: "s-room-routine" }));
     await eng.appendUsageEvent({ org: o, surfaceKey: "slack/T1/C-OPS", sessionId: "s-room-routine", principalId: "UANN", ts: "2026-10-05T09:02:00.000Z", kind: "routine", routineId: "r9", inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 });
     await eng.appendToolUsage(tu({ ts: "2026-10-05T09:03:00.000Z", outcome: "error" }));
-    const roomCalls = await eng.listRoomConnectorCalls(o, "2026-05-05T23:30:00.000Z", 100);
+    const roomCalls = await eng.listRoomConnectorCalls(o, "slack/T1/C-OPS", "2026-05-05T23:30:00.000Z", 100);
     ok(roomCalls.length === 1 && roomCalls[0]!.surfaceKey === "slack/T1/C-OPS" && roomCalls[0]!.principalId === "UANN", `🔴 ${name}: the room read holds ok connector calls in rooms only, and never a routine's run`);
+    await eng.appendToolUsage(tu({ ts: "2026-10-05T09:04:00.000Z", surfaceKey: "slack/T1/C-DEV" }));
+    await at("2026-10-05T09:05:00.000Z", "UBEN", "channel", "C-ASK");
+    ok((await eng.listRoomConnectorCalls(o, "slack/T1/C-OPS", "2026-05-05T23:30:00.000Z", 100)).length === 1 && (await eng.listRoomConnectorCalls(o, "slack/T1/C-DEV", "2026-05-05T23:30:00.000Z", 100)).length === 1, `🔴 ${name}: a room's connector read holds that room's rows only`);
+    ok((await eng.listRoomQuestions(o, "slack/T1/C-ASK", "2026-07-01T00:00:00.000Z", 100)).length === 1, `${name}: a room's question read holds that room's rows only`);
+    const listed = await eng.listDiscoveryRooms(o, "2026-05-05T23:30:00.000Z");
+    ok(listed.join(",") === "slack/T1/C-ASK,slack/T1/C-DEV,slack/T1/C-OPS", `🔴 ${name}: the room list names each room with a call or a question once, sorted, and never a DM (got ${listed.join(",")})`);
+    const R = `routine-org-${name}`;
+    await eng.appendToolUsage({ ...tu({ ts: "2026-10-05T09:06:00.000Z", surfaceKey: "slack/T1/C-ROUTINE", sessionId: "s-routine-only" }), org: R });
+    await eng.appendUsageEvent({ org: R, surfaceKey: "slack/T1/C-ROUTINE", sessionId: "s-routine-only", principalId: "UANN", ts: "2026-10-05T09:06:00.000Z", kind: "routine", routineId: "r1", inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 });
+    ok((await eng.listDiscoveryRooms(R, "2026-05-05T23:30:00.000Z")).length === 0, `${name}: the room list leaves out a room where only a routine's session called a connector`);
   }
 
   const qrows = (who: string, dates: readonly string[], text = "who is on call this week?"): QuestionLedgerRow[] =>
@@ -482,7 +492,16 @@ console.log("§9 shared rooms");
   let roomCalls: RoomConnectorCallRow[] = shared;
   let roomQuestions: QuestionLedgerRow[] = [];
   const roomTick = (now: Date, over: Partial<Parameters<typeof watch.personalWatchTick>[0]> = {}) =>
-    watch.personalWatchTick({ deliver, now, dmStopped: async () => false, proposeRoom, readRoomCalls: async () => roomCalls, readRoomQuestions: async () => roomQuestions, ...over });
+    watch.personalWatchTick({
+      deliver,
+      now,
+      dmStopped: async () => false,
+      proposeRoom,
+      listRooms: async () => [...new Set([...roomCalls, ...roomQuestions].map((r) => r.surfaceKey))].sort(),
+      readRoomCalls: async (_o, key) => roomCalls.filter((c) => c.surfaceKey === key),
+      readRoomQuestions: async (_o, key) => roomQuestions.filter((q) => q.surfaceKey === key),
+      ...over,
+    });
   const r1 = await roomTick(NOW);
   ok(r1.roomProposed === 1 && roomCards.length === 1 && roomCards[0]!.channel === "C-OPS", "🔴 the tick posts ONE card into the room itself — today a room's shared pattern is never found");
   const card = roomCards[0]!;
@@ -529,6 +548,8 @@ console.log("§9 shared rooms");
   await roomDiscovery.updateRoomWatch(ORG, ROOM, (cur) => ({ ...cur, proposals: cur.proposals.map((p) => ({ ...p, at: "2026-11-05T10:00:00.000Z" })) }));
   await roomTick(new Date("2026-11-12T10:00:00.000Z"));
   ok(roomCards.length === 2, "🔴 a room gets at most one card per fourteen days");
+  const gapRows = (await readAudit({ org: ORG, action: "room_watch.silence" })).filter((r) => r.surface === "C-OPS");
+  ok(gapRows.length === 1 && gapRows[0]!.detail?.["reason"] === "proposal-gap" && gapRows[0]!.detail?.["fingerprint"] === "weekly:linear/list_issues:3", "🔴 the gap hold files one `room_watch.silence` row, proposal-gap, naming the idea (OPE-2550) — today it files none");
   await roomTick(new Date("2026-11-20T10:00:00.000Z"));
   ok(roomCards.length === 3 && /list issues on linear every Wednesday/u.test(roomCards[2]!.text), "…and the next new idea is offered after the gap");
 
@@ -558,6 +579,155 @@ console.log("§9 shared rooms");
   await roomTick(NOW, { readRoomCalls: async () => ((read = true), []) });
   ok(!read, "`discoveryMinWeeks: 0` reads no room ledger");
   overrideSettingsForTest({ routines: { discoveryMinWeeks: 3 } });
+}
+
+console.log("§10 the room's stop, the holds, the per-room scan");
+{
+  const O = "stop-org";
+  const store = getOperationalStore();
+  const ROOM = "slack/T1/C-STOP";
+  const where = { org: O, platform: "slack", workspace: "T1", surface: "C-STOP", surfaceKey: ROOM, principalKey: "slack/T1/UANN" };
+  const pattern: RoomConnectorCallRow[] = MONDAYS.map((d, i) => ({ ts: `${d}T09:00:00.000Z`, surfaceKey: ROOM, principalId: i === 1 ? "UBEN" : "UANN", connector: "pagerduty", tool: "list_incidents" }));
+  const posted: string[] = [];
+  const roomReads: string[] = [];
+  const proposeRoom: import("../agent/personal-watch/room-discovery.js").ProposeRoomRoutine = async ({ surfaceKey }) => (posted.push(surfaceKey), { ok: true, cardId: `card-${posted.length}` });
+  const deps = (over: Partial<import("../agent/personal-watch/room-discovery.js").RoomDiscoveryDeps> = {}) => ({
+    proposeRoom,
+    listRooms: async () => [ROOM],
+    readRoomCalls: async (_o: string, key: string) => (roomReads.push(key), pattern.filter((c) => c.surfaceKey === key)),
+    readRoomQuestions: async () => [],
+    ...over,
+  });
+  const newDay = () => roomDiscovery.updateRoomWatch(O, roomDiscovery.ROOM_SCAN_KEY, (cur) => ({ proposals: cur.proposals }));
+  const silences = async () => (await readAudit({ org: O, action: "room_watch.silence" })).filter((r) => r.surface === "C-STOP");
+
+  const first = await roomDiscovery.stopRoomDiscovery(where, "2026-10-01T00:00:00.000Z");
+  const again = await roomDiscovery.stopRoomDiscovery(where, "2026-10-01T01:00:00.000Z");
+  ok(first.changed && !again.changed, "a stop changes the room once, and a repeat says nothing changed");
+  const stopRow = (await store.getRoomWatch(O, ROOM))!;
+  ok(JSON.parse(stopRow.stateJson).stoppedAt === "2026-10-01T00:00:00.000Z" && !stopRow.stateJson.includes("UANN"), "🔴 the room's row records the stop, with no person id");
+  const stoppedRows = await readAudit({ org: O, action: "room_watch.stopped" });
+  ok(stoppedRows.length === 2 && stoppedRows.every((r) => r.principalId === "slack/T1/UANN" && r.surface === "C-STOP" && r.detail?.["via"] === "command") && stoppedRows.filter((r) => r.detail?.["changed"] === true).length === 1, "each stop files `room_watch.stopped` naming who, and only the first says changed");
+
+  const held = await roomDiscovery.roomDiscoveryTick(O, deps(), NOW);
+  ok(held.proposed === 0 && posted.length === 0 && held.held === 1, "🔴 a stopped room gets no card — today the stop does not exist and the card posts");
+  ok(roomReads.length === 0, "🔴 the scan reads no ledger of a stopped room");
+  const stopSilence = await silences();
+  ok(stopSilence.length === 1 && stopSilence[0]!.detail?.["reason"] === "room-stopped" && stopSilence[0]!.detail?.["fingerprint"] === "", "🔴 the hold files one `room_watch.silence` row, room-stopped — today a room hold files none");
+  await newDay();
+  await roomDiscovery.roomDiscoveryTick(O, deps(), new Date("2026-10-13T10:00:00.000Z"));
+  ok((await silences()).length === 1 && posted.length === 0, "the same hold on the next day's scan files nothing new, and still posts nothing");
+
+  const lifted = await roomDiscovery.resumeRoomDiscovery({ ...where, principalKey: "slack/T1/UBEN" });
+  const liftedAgain = await roomDiscovery.resumeRoomDiscovery({ ...where, principalKey: "slack/T1/UBEN" });
+  ok(lifted.changed && !liftedAgain.changed, "a lift changes the room once");
+  const resumedRows = await readAudit({ org: O, action: "room_watch.resumed" });
+  ok(resumedRows.some((r) => r.principalId === "slack/T1/UBEN" && r.detail?.["changed"] === true), "the lift files `room_watch.resumed` naming who");
+  ok(!("silence" in JSON.parse((await store.getRoomWatch(O, ROOM))!.stateJson)), "the lift forgets the last hold, so a new stop files its row again");
+  await newDay();
+  const open = await roomDiscovery.roomDiscoveryTick(O, deps(), new Date("2026-06-18T09:30:00.000Z"));
+  ok(open.proposed === 1 && posted.join(",") === ROOM && roomReads.includes(ROOM), "🔴 after the lift the scan reads the room again and the card posts");
+
+  const RACE = "slack/T1/C-RACE";
+  const racing = MONDAYS.map((d, i) => ({ ts: `${d}T11:00:00.000Z`, surfaceKey: RACE, principalId: i === 1 ? "UBEN" : "UANN", connector: "github", tool: "list_prs" }));
+  await newDay();
+  const beforeRace = posted.length;
+  await roomDiscovery.roomDiscoveryTick(
+    O,
+    deps({
+      listRooms: async () => [RACE],
+      readRoomCalls: async () => {
+        await roomDiscovery.stopRoomDiscovery({ ...where, surface: "C-RACE", surfaceKey: RACE });
+        return racing;
+      },
+    }),
+    new Date("2026-10-15T10:00:00.000Z"),
+  );
+  const raceRows = (await readAudit({ org: O, action: "room_watch.silence" })).filter((r) => r.surface === "C-RACE");
+  ok(posted.length === beforeRace && raceRows.length === 1 && raceRows[0]!.detail?.["reason"] === "room-stopped" && raceRows[0]!.detail?.["fingerprint"] === "weekly:github/list_prs:1", "🔴 a stop made during the scan holds the card, and the row names the idea it held");
+  await newDay();
+  await roomDiscovery.roomDiscoveryTick(O, deps({ listRooms: async () => [RACE] }), new Date("2026-10-15T12:00:00.000Z"));
+  ok((await readAudit({ org: O, action: "room_watch.silence" })).filter((r) => r.surface === "C-RACE").length === 1, "🔴 the next scan of that stopped room files no second row: one stop, one row");
+  const LIFT = "slack/T1/C-LIFT";
+  await roomDiscovery.updateRoomWatch(O, LIFT, (cur) => ({ ...cur }));
+  await roomDiscovery.fileRoomSilence(O, LIFT, "room-stopped", undefined, NOW);
+  ok(!("silence" in JSON.parse((await store.getRoomWatch(O, LIFT))!.stateJson)), "🔴 a room-stopped memory is not written onto a room that is no longer stopped");
+
+  const REFUSE = "slack/T1/C-REFUSE";
+  const refusing = MONDAYS.map((d, i) => ({ ts: `${d}T12:00:00.000Z`, surfaceKey: REFUSE, principalId: i === 1 ? "UBEN" : "UANN", connector: "linear", tool: "list_cycles" }));
+  for (const day of ["2026-10-16", "2026-10-17"]) {
+    await newDay();
+    await roomDiscovery.roomDiscoveryTick(O, deps({ listRooms: async () => [REFUSE], readRoomCalls: async () => refusing, proposeRoom: async () => ({ ok: false, reason: "no card path" }) }), new Date(`${day}T10:00:00.000Z`));
+  }
+  const refusedRows = (await readAudit({ org: O, action: "room_watch.silence" })).filter((r) => r.surface === "C-REFUSE");
+  ok(refusedRows.length === 1 && refusedRows[0]!.detail?.["reason"] === "delivery-refused" && refusedRows[0]!.detail?.["kind"] === "connector-op", "🔴 a refused room post files one delivery-refused row, and the retry next day files no second");
+  ok(roomDiscovery.ROOM_SILENCE_REASONS.join(",") === "room-stopped,proposal-gap,delivery-refused", "the hold reasons are a closed set of three");
+
+  const B = "busy-org";
+  const QUIET = "slack/T1/C-QUIET";
+  const BUSY = "slack/T1/C-BUSY";
+  const tu = (over: Partial<ToolUsageEntry>): ToolUsageEntry => ({ org: B, ts: "2026-09-21T09:00:00.000Z", surfaceKey: QUIET, surfaceMode: "channel", principalId: "UANN", sessionId: "s-quiet", event: "call", tool: "list_incidents", connector: "pagerduty", outcome: "ok", inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, ...over });
+  for (const [i, d] of MONDAYS.entries()) await store.appendToolUsage(tu({ ts: `${d}T09:00:00.000Z`, principalId: i === 1 ? "UBEN" : "UANN" }));
+  for (let i = 0; i <= roomDiscovery.ROOM_READ_LIMIT; i++) {
+    await store.appendToolUsage(tu({ ts: new Date(Date.parse("2026-10-06T00:00:00.000Z") + i * 1000).toISOString(), surfaceKey: BUSY, principalId: "UCAL", sessionId: "s-busy", connector: "github", tool: "get_issue" }));
+  }
+  const busyPosted: string[] = [];
+  const busy = await roomDiscovery.roomDiscoveryTick(B, { proposeRoom: async ({ surfaceKey }) => (busyPosted.push(surfaceKey), { ok: true, cardId: "c" }) }, NOW);
+  ok(busy.proposed === 1 && busyPosted.join(",") === QUIET, `🔴 the quiet room's pattern is found under a busy room's ${roomDiscovery.ROOM_READ_LIMIT + 1} newer rows — today one org-wide read of ${roomDiscovery.ROOM_READ_LIMIT} rows cuts it (posted: ${busyPosted.join(",") || "none"})`);
+
+  const T = "budget-org";
+  const tRooms = ["slack/T1/C-B1", "slack/T1/C-B2", "slack/T1/C-B3"];
+  const tCalls = tRooms.flatMap((k) => MONDAYS.map((d, i) => ({ ts: `${d}T09:00:00.000Z`, surfaceKey: k, principalId: i === 1 ? "UBEN" : "UANN", connector: "pagerduty", tool: "list_incidents" })));
+  const tPosted: string[] = [];
+  const tDeps = { proposeRoom: async ({ surfaceKey }: { surfaceKey: string }) => (tPosted.push(surfaceKey), { ok: true as const, cardId: "c" }), budgetMs: 0, listRooms: async () => [...tRooms].reverse(), readRoomCalls: async (_o: string, k: string) => tCalls.filter((c) => c.surfaceKey === k), readRoomQuestions: async () => [] };
+  await roomDiscovery.roomDiscoveryTick(T, tDeps, NOW);
+  ok(tPosted.join(",") === "slack/T1/C-B1" && JSON.parse((await store.getRoomWatch(T, roomDiscovery.ROOM_SCAN_KEY))!.stateJson).resumeAfter === "slack/T1/C-B1", "a scan out of time scans one room and leaves a cursor");
+  await roomDiscovery.roomDiscoveryTick(T, tDeps, new Date(NOW.getTime() + 1_800_000));
+  await roomDiscovery.roomDiscoveryTick(T, tDeps, new Date(NOW.getTime() + 3_600_000));
+  ok(tPosted.join(",") === tRooms.join(","), "🔴 the next ticks the same day resume after the cursor, so every room is reached");
+  const tAfter = await roomDiscovery.roomDiscoveryTick(T, tDeps, new Date(NOW.getTime() + 5_400_000));
+  ok(tAfter.proposed === 0 && !("resumeAfter" in JSON.parse((await store.getRoomWatch(T, roomDiscovery.ROOM_SCAN_KEY))!.stateJson)), "…and a finished scan clears the cursor, so the day's clock holds again");
+  await roomDiscovery.updateRoomWatch(T, roomDiscovery.ROOM_SCAN_KEY, (cur) => ({ ...cur, resumeAfter: "slack/T1/C-B1" }));
+  await roomDiscovery.roomDiscoveryTick(T, { ...tDeps, listRooms: async () => { throw new Error("store down"); } }, new Date(NOW.getTime() + 7_200_000));
+  ok(JSON.parse((await store.getRoomWatch(T, roomDiscovery.ROOM_SCAN_KEY))!.stateJson).resumeAfter === "slack/T1/C-B1", "🔴 a resumed scan that fails before its first room keeps its cursor");
+
+  const { runSuggest, parseSuggestTokens } = await import("../agent/commands/suggest.js");
+  const { parseOeCommandTokens, renderHelp } = await import("../agent/commands/core.js");
+  ok(parseOeCommandTokens(["suggest", "off"]).kind === "suggest" && parseSuggestTokens(["maybe"]).kind === "error" && renderHelp().includes("suggest off|on"), "`/oe suggest off` parses, a typo answers in words, and help lists it");
+  const binding = (over: Record<string, unknown> = {}) =>
+    ({ org: ORG, platform: "slack", workspace: "T1", surface: "C-CMD", principalId: "UANN", principalAttested: false, trust: "internal", mode: "channel", ...over }) as unknown as Parameters<typeof runSuggest>[0];
+  const firstStatus = await runSuggest(binding(), "status");
+  ok(firstStatus.startsWith("When people here repeat the same work each week"), `the bare command reads the room as on (got "${firstStatus}")`);
+  const offAnswer = await runSuggest(binding({ principalId: "UGUEST", trust: "external" }), "off");
+  ok(offAnswer.startsWith("Done. I won't suggest routines here."), "anybody in the room may stop it, an outside account too");
+  ok(JSON.parse((await store.getRoomWatch(ORG, "slack/T1/C-CMD"))!.stateJson).stoppedAt !== undefined, "🔴 the command's stop lands on the room's own row");
+  ok((await runSuggest(binding(), "status")).startsWith("My routine suggestions are off here."), "the bare command reads the stop back");
+  ok((await runSuggest(binding({ principalId: "UGUEST", trust: "external" }), "on")).startsWith("Only a member"), "🔴 only a member may lift the stop");
+  ok((await runSuggest(binding(), "on")).startsWith("Done. I may suggest a routine here again."), "a member lifts it");
+  ok((await runSuggest(binding({ surface: "D-UANN", mode: "dm" }), "off")).startsWith("This works in a shared channel"), "a DM changes nothing and points to `/oe watch none`");
+  ok(!(await store.getRoomWatch(ORG, "slack/T1/D-UANN")), "…and writes no row for the DM");
+  for (const a of ["status", "on", "off"] as const) {
+    const said = await runSuggest(binding(), a);
+    ok(!/UANN|C-CMD|slack\/T1/u.test(said), `the ${a} answer names no raw id or key`);
+  }
+  await runSuggest(binding(), "on");
+
+  let body = "";
+  const capture = proposeRoomRoutineCard({
+    resolveTarget: (async () => ({ ok: true, surfaceKey: ROOM, dispatch: { channel: {} as never, target: { channelId: "C-STOP" }, mode: "channel", attributes: {} } })) as never,
+    post: async (method: string, b: string) => (method === "chat.postMessage" ? (body = b) : undefined, { ok: true, ts: "1760009421.000001" }),
+    floor: (async () => ({ floor: "member", roster: { humanMemberIds: ["UANN", "UBEN"], resolved: true } })) as never,
+  });
+  const work = roomDiscovery.findRoomPatterns(pattern, [], NOW, 3).get(ROOM)![0]!;
+  const card = await capture({ org: O, surfaceKey: ROOM, work });
+  ok(card.ok && decodeURIComponent(body.replace(/\+/gu, " ")).includes("`/oe suggest off` stops these."), "🔴 the room's card tells the room how to stop suggestions");
+  const { consequenceForRow } = await import("../agent/approvals/plain-summary.js");
+  const long = "a".repeat(31);
+  overrideSettingsForTest({ identity: { commandName: long } });
+  const roomArgs = roomDiscovery.roomRoutineSuggestArgs({ org: O, surfaceKey: ROOM, target: {}, work: { ...work, people: 12 } });
+  const line = consequenceForRow({ kind: "routine.suggest", argsJson: JSON.stringify(roomArgs) }) ?? "";
+  ok(line.endsWith(`\`/${long} suggest off\` stops these.`), `🔴 a 31-character command name still fits the card's line (got "${line}")`);
+  overrideSettingsForTest({ identity: { commandName: "oe" } });
 }
 
 removeTempDir(tmp);

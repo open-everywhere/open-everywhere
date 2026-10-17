@@ -1522,6 +1522,10 @@
       "types": "./dist/agent/commands/rate.d.ts",
       "default": "./dist/agent/commands/rate.js"
     },
+    "./agent/commands/suggest.js": {
+      "types": "./dist/agent/commands/suggest.d.ts",
+      "default": "./dist/agent/commands/suggest.js"
+    },
     "./agent/commands/watch.js": {
       "types": "./dist/agent/commands/watch.d.ts",
       "default": "./dist/agent/commands/watch.js"

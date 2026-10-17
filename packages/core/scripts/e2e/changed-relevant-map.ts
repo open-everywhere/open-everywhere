@@ -258,13 +258,14 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     globs: [
       "packages/core/agent/personal-watch/**",
       "packages/core/agent/commands/watch.ts",
+      "packages/core/agent/commands/suggest.ts",
       "packages/core/agent/home/watch-home.ts",
       "packages/core/agent/hooks/personal-watch-enroll.ts",
       "packages/core/agent/hooks/question-ledger.ts",
       "packages/core/agent/schedules/personal-watch.ts",
     ],
-    scenarios: ["S-WATCH", "S-DOING"],
-    why: "S-WATCH (OPE-2422) is the only live leg on the chief-of-staff watch: the person's dial through `/oe watch` and the Home tab, and a forged Not useful that moves no dose. The check itself has no live fixture and is driven offline.",
+    scenarios: ["S-WATCH", "S-DOING", "S-ROOM-SUGGEST"],
+    why: "S-WATCH (OPE-2422) is the only live leg on the chief-of-staff watch: the person's dial through `/oe watch` and the Home tab, and a forged Not useful that moves no dose. The check itself has no live fixture and is driven offline. S-ROOM-SUGGEST (OPE-2550) is the live leg on the room's stop for room discovery's cards.",
   },
   {
     area: "meetings",

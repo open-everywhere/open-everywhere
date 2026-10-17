@@ -414,6 +414,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      cache_read_tokens  bigint NOT NULL DEFAULT 0
    )`,
   `CREATE INDEX IF NOT EXISTS tool_usage_org_ts ON tool_usage (org_id, ts)`,
+  `CREATE INDEX IF NOT EXISTS tool_usage_org_surface_ts ON tool_usage (org_id, surface_key, ts)`,
   `CREATE TABLE IF NOT EXISTS identity_link_sets (
      org_id     text NOT NULL,
      id         text NOT NULL,
@@ -641,6 +642,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      words        text NOT NULL
    )`,
   `CREATE INDEX IF NOT EXISTS question_ledger_org_ts ON question_ledger (org_id, ts)`,
+  `CREATE INDEX IF NOT EXISTS question_ledger_org_surface_ts ON question_ledger (org_id, surface_key, ts)`,
   `CREATE TABLE IF NOT EXISTS room_watch (
      org_id      text NOT NULL,
      surface_key text NOT NULL,
@@ -3011,16 +3013,30 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       return (rows as { ts: string; connector: string; tool: string }[]).map((r) => ({ ts: String(r.ts), connector: r.connector, tool: r.tool }));
     },
 
-    async listRoomConnectorCalls(org, since, limit) {
+    async listDiscoveryRooms(org, since) {
+      const { rows } = await client.query(
+        `SELECT surface_key FROM tool_usage
+             WHERE org_id = $1 AND surface_mode = 'channel' AND event = 'call' AND outcome = 'ok' AND connector <> ''
+               AND principal_id IS NOT NULL AND principal_id <> '' AND ts >= $2
+             AND session_id NOT IN (SELECT session_id FROM usage_events WHERE org_id = $1 AND kind = 'routine')
+           UNION
+           SELECT surface_key FROM question_ledger WHERE org_id = $1 AND surface_mode = 'channel' AND ts >= $2
+           ORDER BY surface_key`,
+        [org, since],
+      );
+      return (rows as { surface_key: string }[]).map((r) => r.surface_key);
+    },
+
+    async listRoomConnectorCalls(org, surfaceKey, since, limit) {
       const { rows } = await client.query(
         `SELECT ts, surface_key, principal_id, connector, tool FROM (
              SELECT seq, ts, surface_key, principal_id, connector, tool FROM tool_usage
-             WHERE org_id = $1 AND surface_mode = 'channel' AND event = 'call' AND outcome = 'ok' AND connector <> ''
-               AND principal_id IS NOT NULL AND principal_id <> '' AND ts >= $2
+             WHERE org_id = $1 AND surface_key = $2 AND surface_mode = 'channel' AND event = 'call' AND outcome = 'ok' AND connector <> ''
+               AND principal_id IS NOT NULL AND principal_id <> '' AND ts >= $3
                AND session_id NOT IN (SELECT session_id FROM usage_events WHERE org_id = $1 AND kind = 'routine')
-             ORDER BY seq DESC LIMIT $3
+             ORDER BY seq DESC LIMIT $4
            ) recent ORDER BY seq ASC`,
-        [org, since, Math.max(0, Math.floor(limit))],
+        [org, surfaceKey, since, Math.max(0, Math.floor(limit))],
       );
       return (rows as { ts: string; surface_key: string; principal_id: string; connector: string; tool: string }[]).map((r) => ({
         ts: String(r.ts),
@@ -3056,14 +3072,14 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       return (rows as QuestionLedgerDbRow[]).map(questionRowFrom);
     },
 
-    async listRoomQuestions(org, since, limit) {
+    async listRoomQuestions(org, surfaceKey, since, limit) {
       const { rows } = await client.query(
         `SELECT ts, surface_key, principal_id, fingerprint, words FROM (
              SELECT seq, ts, surface_key, principal_id, fingerprint, words FROM question_ledger
-             WHERE org_id = $1 AND surface_mode = 'channel' AND ts >= $2
-             ORDER BY seq DESC LIMIT $3
+             WHERE org_id = $1 AND surface_key = $2 AND surface_mode = 'channel' AND ts >= $3
+             ORDER BY seq DESC LIMIT $4
            ) recent ORDER BY seq ASC`,
-        [org, since, Math.max(0, Math.floor(limit))],
+        [org, surfaceKey, since, Math.max(0, Math.floor(limit))],
       );
       return (rows as QuestionLedgerDbRow[]).map(questionRowFrom);
     },

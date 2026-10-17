@@ -152,3 +152,67 @@ test("the compiled personal-watch task asks a shared room about work two people 
     slack.uninstall();
   }
 });
+
+test("a room stopped with /oe suggest off gets no card from the compiled personal-watch task", async () => {
+  const room = "C0OPE2550STOP";
+  const person = "U0OPE2550ANN";
+  const slack = installSlackWebApiStub((method) => {
+    if (method === "users.info") return { ok: true, user: { id: person, team_id: SLACK_TEAM_ID, deleted: false, is_bot: false, is_restricted: false } };
+    if (method === "chat.postMessage") return { ok: true, ts: "1760009420.255000", channel: room };
+    return undefined;
+  });
+  const { base } = await bootAgent({ sharedSqlite: true, stubbedProviderTransport: true });
+  try {
+    const org = deploymentOrg();
+    const store = getOperationalStore();
+    const { updateRoomWatch, ROOM_SCAN_KEY } = await import("@open-everywhere/core/agent/personal-watch/room-discovery.js");
+    await updateRoomWatch(org, ROOM_SCAN_KEY, (cur) => ({ proposals: cur.proposals }));
+    const now = Date.now();
+    for (const [weeks, who] of [[1, "U0OPE2550ANN"], [2, "U0OPE2550BEN"], [3, "U0OPE2550ANN"]] as const) {
+      await store.appendToolUsage({
+        org,
+        ts: new Date(now - weeks * 7 * DAY_MS).toISOString(),
+        surfaceKey: `slack/${SLACK_TEAM_ID}/${room}`,
+        surfaceMode: "channel",
+        principalId: who,
+        sessionId: `s-ope2550-${weeks}`,
+        event: "call",
+        tool: "list_incidents",
+        connector: "pagerduty",
+        outcome: "ok",
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+      });
+    }
+    const cursor = await auditCursor();
+
+    const { buildSlashCommandBody, signSlackRequest, SYNTHETIC_COMMANDS_ROUTE } = await import("../../../packages/core/scripts/e2e/synthetic");
+    const secret = process.env.SLACK_SIGNING_SECRET;
+    expect(secret, "bootAgent sets the fork's signing secret").toBeTruthy();
+    const rawBody = buildSlashCommandBody({ text: "suggest off", userId: person, channelId: room, teamId: SLACK_TEAM_ID });
+    const signed = signSlackRequest(rawBody, secret!);
+    const res = await fetch(`${base}${SYNTHETIC_COMMANDS_ROUTE}`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", "x-slack-request-timestamp": signed.timestamp, "x-slack-signature": signed.signature },
+      body: rawBody,
+      signal: AbortSignal.timeout(60_000),
+    });
+    const body = await res.text();
+    expect(res.status, body.slice(0, 200)).toBe(200);
+    expect(String((JSON.parse(body) as { text?: unknown }).text ?? ""), "🔴 the command did not stop the room").toMatch(/^Done\. I won't suggest routines here\./u);
+    const stopped = await waitFor(async () => (await rowsSinceCursor(cursor, ["room_watch.stopped"], { limit: 50 })).find((r) => r.surface === room), "the room_watch.stopped row");
+    expect(stopped.principalId).toBe(`slack/${SLACK_TEAM_ID}/${person}`);
+
+    await runScheduleTask("schedules/personal-watch.ts");
+
+    const posts = slack.calls.filter((c) => c.method === "chat.postMessage" && c.params.get("channel") === room);
+    expect(posts.length, "🔴 a card was posted into a stopped room").toBe(0);
+    const proposals = await rowsSinceCursor(cursor, ["room_watch.proposal"], { limit: 200 });
+    expect(proposals.some((r) => r.surface === room), "🔴 a room_watch.proposal row names the stopped room").toBe(false);
+    const holds = (await rowsSinceCursor(cursor, ["room_watch.silence"], { limit: 200 })).filter((r) => r.surface === room);
+    expect(holds.map((r) => detailOf(r).reason), "🔴 the hold filed no room-stopped silence row").toEqual(["room-stopped"]);
+  } finally {
+    slack.uninstall();
+  }
+});

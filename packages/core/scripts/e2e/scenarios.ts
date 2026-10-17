@@ -450,6 +450,11 @@ export function watchDialAnswerSets(text: string, dial: "more" | "less" | "none"
   const line = `${dial[0]!.toUpperCase()}${dial.slice(1)}:`;
   return text.startsWith(`Done. ${line}`) || text.startsWith(`It was already set. ${line}`);
 }
+export function suggestAnswerSets(text: string, state: "on" | "off"): boolean {
+  return state === "off"
+    ? text.startsWith("Done. I won't suggest routines here.") || text.startsWith("My routine suggestions were already off here.")
+    : text.startsWith("Done. I may suggest a routine here again.") || text.startsWith("My routine suggestions were already on here.");
+}
 const PROVENANCE_DELEGATION_ACTIONS = ["delegation.task_started", "delegation.task_settled", "delegation.task_failed", "delegation.worker_turn_failed"] as const;
 const NOTION_CONNECTOR = "notion";
 function armingProbeOf(ctx: ScenarioContext): ArmingProbe {
@@ -6458,6 +6463,54 @@ export const SCENARIOS: readonly Scenario[] = [
       const restore = await synthetic.slash("watch less", { teamId });
       const restoreText = decodeSlackEphemeralText(restore.body);
       ctx.gate(restore.status === 200 && watchDialAnswerSets(restoreText, "less"), `S-WATCH: the dial is restored to less (HTTP ${restore.status}) — answer head: "${restoreText.slice(0, 160)}"`);
+    },
+  },
+
+  {
+    id: "S-ROOM-SUGGEST",
+    title: "The room's stop for routine suggestions (OPE-2550): /oe suggest off in a shared channel stops them, /oe suggest reads it, /oe suggest on lifts it",
+    requires: ["slack", "synthetic"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 180_000,
+    judged: false,
+    run: async (ctx) => {
+      const synthetic = ctx.synthetic!;
+      const read = ctx.auditRead;
+      if (!read) {
+        return ctx.fixtureMissing("S-ROOM-SUGGEST gates on room_watch.stopped and room_watch.resumed rows. Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to run it.");
+      }
+      const { teamId } = await ctx.slack!.identity();
+      const person = synthetic.adminUserId;
+      const ownRow = (r: AuditWireEntry): boolean => r.principalId === `slack/${teamId}/${person}`;
+
+      const reset = await synthetic.slash("suggest on", { teamId });
+      const resetText = decodeSlackEphemeralText(reset.body);
+      ctx.gate(reset.status === 200 && suggestAnswerSets(resetText, "on"), `S-ROOM-SUGGEST: /oe suggest on leaves the channel on (HTTP ${reset.status}) — answer head: "${resetText.slice(0, 160)}"`);
+
+      const offAt = await presenceSince(ctx, "S-ROOM-SUGGEST off");
+      const off = await synthetic.slash("suggest off", { teamId });
+      const offText = decodeSlackEphemeralText(off.body);
+      ctx.gate(off.status === 200 && offText.startsWith("Done. I won't suggest routines here."), `S-ROOM-SUGGEST: /oe suggest off stops suggestions in the channel — answer head: "${offText.slice(0, 160)}"`);
+      const stopped = await pollOptional(
+        async () => (await read({ sinceIso: offAt, actions: ["room_watch.stopped"], limit: 50 })).find((r) => ownRow(r) && r.detail?.["changed"] === true && r.detail?.["via"] === "command"),
+        { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "S-ROOM-SUGGEST: the room_watch.stopped row" },
+      );
+      ctx.gate(stopped !== undefined, "S-ROOM-SUGGEST: a room_watch.stopped row names the person, changed, via command");
+
+      const status = await synthetic.slash("suggest", { teamId });
+      const statusText = decodeSlackEphemeralText(status.body);
+      ctx.gate(status.status === 200 && statusText.startsWith("My routine suggestions are off here."), `S-ROOM-SUGGEST: /oe suggest reads the stop back — answer head: "${statusText.slice(0, 160)}"`);
+
+      const onAt = await presenceSince(ctx, "S-ROOM-SUGGEST on");
+      const on = await synthetic.slash("suggest on", { teamId });
+      const onText = decodeSlackEphemeralText(on.body);
+      ctx.gate(on.status === 200 && onText.startsWith("Done. I may suggest a routine here again."), `S-ROOM-SUGGEST: /oe suggest on lifts the stop — answer head: "${onText.slice(0, 160)}"`);
+      const resumed = await pollOptional(
+        async () => (await read({ sinceIso: onAt, actions: ["room_watch.resumed"], limit: 50 })).find((r) => ownRow(r) && r.detail?.["changed"] === true && r.detail?.["via"] === "command"),
+        { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "S-ROOM-SUGGEST: the room_watch.resumed row" },
+      );
+      ctx.gate(resumed !== undefined, "S-ROOM-SUGGEST: a room_watch.resumed row names the person, changed, via command");
     },
   },
 

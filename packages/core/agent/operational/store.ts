@@ -1114,10 +1114,11 @@ export interface OperationalStore {
   appendUsageEvent(entry: UsageEventEntry): Promise<void>;
   appendToolUsage(entry: ToolUsageEntry): Promise<void>;
   listPersonConnectorCalls(org: string, principalId: string, surfacePrefix: string, since: string, limit: number): Promise<PersonConnectorCallRow[]>;
-  listRoomConnectorCalls(org: string, since: string, limit: number): Promise<RoomConnectorCallRow[]>;
+  listDiscoveryRooms(org: string, since: string): Promise<string[]>;
+  listRoomConnectorCalls(org: string, surfaceKey: string, since: string, limit: number): Promise<RoomConnectorCallRow[]>;
   appendQuestion(entry: QuestionLedgerEntry, pruneBefore: string): Promise<void>;
   listPersonQuestions(org: string, principalId: string, surfacePrefix: string, since: string, limit: number): Promise<QuestionLedgerRow[]>;
-  listRoomQuestions(org: string, since: string, limit: number): Promise<QuestionLedgerRow[]>;
+  listRoomQuestions(org: string, surfaceKey: string, since: string, limit: number): Promise<QuestionLedgerRow[]>;
   usageForSession(org: string, sessionId: string): Promise<UsageEventEntry[]>;
   usageSummary(org: string, filter?: UsageSummaryFilter): Promise<UsageSummaryRow[]>;
   pruneUsageEvents(org: string, olderThanTs: string): Promise<number>;

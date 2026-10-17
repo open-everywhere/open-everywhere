@@ -87,6 +87,11 @@ export function parseDiscordOeCommandOptions(rawOptions: unknown): OeCommand {
     const until = str(findOpt(optArray(sub?.options), "until")?.value);
     return parseOeCommandTokens(["cover", ...(subName ? [subName] : []), ...(subName === "on" && until ? ["until", until] : [])]);
   }
+  if (name === "suggest") {
+    const sub = optArray(first.options)[0];
+    const subName = sub ? str(sub.name) : undefined;
+    return parseOeCommandTokens(["suggest", ...(subName ? [subName] : [])]);
+  }
   if (name === "budget") {
     const sub = optArray(first.options)[0];
     const subName = sub ? str(sub.name) : undefined;
@@ -229,6 +234,16 @@ export function buildOeDiscordCommandDefinition(): Record<string, unknown> {
           },
           { name: "off", description: "Turn cover off. Your recap follows in your DM.", type: SUB_COMMAND },
           { name: "status", description: "Show whether cover is on.", type: SUB_COMMAND },
+        ],
+      },
+      {
+        name: "suggest",
+        description: "Stop or allow my routine suggestions in this channel or thread.",
+        type: SUB_COMMAND_GROUP,
+        options: [
+          { name: "off", description: "Stop my routine suggestions in this channel or thread.", type: SUB_COMMAND },
+          { name: "on", description: "Allow them again (members only).", type: SUB_COMMAND },
+          { name: "status", description: "Show whether they are on in this channel or thread.", type: SUB_COMMAND },
         ],
       },
       { name: "help", description: `List the ${oeSlash()} commands.`, type: SUB_COMMAND },

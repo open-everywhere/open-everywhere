@@ -1503,8 +1503,8 @@ is offered nowhere: the person's discovery reads only their DM questions.
 **The agent asks the room, in the room.** One `routine.suggest` card posts into the room:
 
 > **Set up a routine to list incidents on pagerduty every Monday at 09:00 UTC?**
-> 2 people in this room asked me for this in 3 of the last 5 weeks. Nothing runs until someone presses
-> Set it up, and I won't suggest it here again.
+> 2 people here asked me for this in 3 of the last 5 weeks. Nothing runs until someone sets it up.
+> `/oe suggest off` stops these.
 
 A member of the organisation in the room may answer it (member tier). A room whose roster holds a
 guest or an outside account gets no card, because no member-tier click is accepted there, and the
@@ -1517,6 +1517,30 @@ idea once, and the organisation's rooms are scanned at most once a day. The same
 `room_watch.proposal`, and the answers write `room_watch.proposal.accepted` and
 `room_watch.proposal.declined`.
 
+**The room's stop (OPE-2550).** A person in the room types `/oe suggest off`, and the room's row
+records the stop. The room is the conversation the command is typed in, with the same key as the
+room's card: a Slack channel, a Discord channel or thread, or one Teams reply chain. On Teams, type it
+as a reply under the card. The room then gets no card, and the scan reads none of its calls or
+questions. The ledgers still record the room, and the scan's room list still names it. Anybody the
+surface names may stop it. Only a member of the organisation may lift it, with `/oe suggest on`,
+because only a member may answer the room's card. `/oe suggest` shows the setting. In a DM the command
+changes nothing and points to `/oe watch none`. A stop writes `room_watch.stopped` and a lift writes
+`room_watch.resumed`, each naming who typed it. The room's row holds no person id.
+
+**Every room hold the scan decides is filed (OPE-2550).** The scan writes one `room_watch.silence` row
+when it holds a room back, with a closed reason: `room-stopped` (the room's stop), `proposal-gap` (a card less than 14
+days ago) or `delivery-refused` (the card did not post, or the room's audience refused it). The row
+names the idea by its fingerprint and host-written summary, never by question words. The room's row
+remembers the last hold, so the same hold on the next scan writes nothing new. One stop writes one
+row. A posted card or a lift forgets it. A read that fails holds the room with a log line only.
+
+**The scan reads per room (OPE-2550).** The scan lists the rooms with evidence in the 35-day window,
+then reads each room's own ledgers. Each read takes at most 10,000 rows for that one room, newest
+first, and a full read writes a log line. There is no cap for the organisation, so a busy room never
+cuts the weeks of a quiet room. Each read uses an index on the room key. One tick starts no new room
+after two minutes, and a room already started finishes. It then records the last room it reached, and
+the next tick (30 minutes later) resumes at the next room.
+
 ### What it does not do yet
 
 - **A question matches only word for word.** "Who is on call this week?" and "who's on call?" are two
@@ -1526,12 +1550,12 @@ idea once, and the organisation's rooms are scanned at most once a day. The same
 - **A habit can still get two cards, or none.** A person whose habit spans the room and their DM (or
   another room) can get both a room card and a DM card. A habit one person carries alone in a room is
   offered only when that person's own watch runs: they have a watch row, and their dial is not `none`.
-- **The room read has a cap.** One scan reads at most 10,000 tool rows and 10,000 question rows for
-  the organisation, newest first. On a busy deployment the oldest weeks can fall off, and a room
-  pattern is then missed. A full read writes a log line.
-- **A room hold is not filed.** A room card held by the 14-day gap writes no silence row, and a room
-  card that did not post writes only a log line. A room has no stop of its own: the off switch is the
-  deployment setting.
+- **One room's read has a cap.** A room with more than 10,000 rows in one ledger in 35 days loses its
+  oldest rows, and a pattern there can be missed. Another room is never cut. A full read writes a log
+  line.
+- **The room's stop covers cards only.** `/oe suggest off` stops new routine suggestions in the room.
+  It does not take back a card that already posted, and it does not pause a routine that already
+  runs there.
 - **Workflow discovery needs a card path.** A platform with no approval card path gets no proposal.
   The first refused attempt for an idea files one `delivery-refused` row.
 - **One detector.** It finds calendar conflicts only. Email and other sources need their own

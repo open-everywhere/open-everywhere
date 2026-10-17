@@ -1,6 +1,7 @@
 import { plainValue } from "./plain-text.js";
 import { actionKind, registerActionKind } from "./actions.js";
 import { appendAudit } from "../audit/audit.js";
+import { agentCommandName } from "../identity/bot-name.js";
 import { parsePrincipalKey } from "../identity/principal-key.js";
 import { proposalWhen, type RoutineSuggestArgs } from "../personal-watch/discovery.js";
 import { recordRoomProposalOutcome, type RoomRoutineSuggestArgs } from "../personal-watch/room-discovery.js";
@@ -36,7 +37,7 @@ const routineSuggest: ActionKind<AnyRoutineSuggestArgs> = {
   },
   consequence(args) {
     if (isRoomCard(args)) {
-      return `${args.people} people in this room asked me for this in ${args.weeks} of the last 5 weeks. Nothing runs until someone presses Set it up, and I won't suggest it here again.`;
+      return `${args.people} people here asked me for this in ${args.weeks} of the last 5 weeks. Nothing runs until someone sets it up. \`/${agentCommandName()} suggest off\` stops these.`;
     }
     return `You asked me for this in ${args.weeks} of the last 5 weeks. Nothing runs until you press Set it up, and I won't suggest it again.`;
   },

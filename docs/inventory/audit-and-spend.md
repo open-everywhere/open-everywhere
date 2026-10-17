@@ -12,11 +12,11 @@ points INTO those; it does not replace them.
 
 ## The count
 
-**723 rows: 720 documented, 3 RETIRED, 0 UNDOCUMENTED.** Those three counts partition the rows by the
+**726 rows: 723 documented, 3 RETIRED, 0 UNDOCUMENTED.** Those three counts partition the rows by the
 value in the **`Documented by`** column, which is the only thing counted here: `RETIRED — …` marks a
 row whose sole record is the commit that removed its write site, and a row that names a manual page
 counts as documented whatever else is true of it. Section membership is a different question and
-gives a different number: 715 rows are live behaviours and the other five are the retired action
+gives a different number: 718 rows are live behaviours and the other five are the retired action
 names of § 15 — and two of those five are documented by a manual page, so they count under
 `documented` rather than under `RETIRED`. The `Tested by` column declares only an exemption; the coverage answer comes from `npm run coverage-board` (see [the coverage matrix](../dev/coverage-matrix.md)).
 
@@ -25,7 +25,7 @@ names of § 15 — and two of those five are documented by a manual page, so the
 | 1. The audit log — mechanism | 29 | 0 |
 | 2. The audit log — storage and the append-only posture | 31 | 0 |
 | 3. Reading the log — the control-plane routes | 11 | 0 |
-| 4. The audit action vocabulary | 361 | 0 |
+| 4. The audit action vocabulary | 364 | 0 |
 | 5. Spend — mechanism | 27 | 0 |
 | 6. Spend — gates and refusals | 34 | 0 |
 | 7. Spend — the ledger and the usage rows | 38 | 0 |
@@ -456,8 +456,8 @@ One row per distinct `action` string the code writes. The Id is that string. `<p
 | `personal_watch.dial.set` | `packages/core/agent/personal-watch/state.ts:199` | core/personal-watch | A person sets their chief-of-staff watch to more, less or none, with `/oe watch` or the Home tab. | `docs/capabilities/proactivity-and-routines.md#the-chief-of-staff-watch` (+1) | ? |
 | `personal_watch.nudge` | `packages/core/agent/personal-watch/watch.ts:278` | core/personal-watch | The watch starts a direct message to the person on its own, with nobody asking. | `docs/capabilities/proactivity-and-routines.md#the-chief-of-staff-watch` (+1) | ? |
 | `personal_watch.proposal` | `packages/core/agent/personal-watch/discovery.ts:303` | core/personal-watch | Workflow discovery posts a routine proposal card into the person's own DM. | `docs/capabilities/proactivity-and-routines.md#workflow-discovery-a-routine-for-work-you-repeat` (+1) | ? |
-| `personal_watch.proposal.accepted` | `packages/core/agent/approvals/routine-suggest.ts:90` | core/personal-watch | The person presses Set it up, and the routine is armed through `routine.create`. | `docs/capabilities/proactivity-and-routines.md#workflow-discovery-a-routine-for-work-you-repeat` (+1) | ? |
-| `personal_watch.proposal.declined` | `packages/core/agent/approvals/routine-suggest.ts:101` | core/personal-watch | The person presses No thanks, and the idea is never offered again. | `docs/capabilities/proactivity-and-routines.md#workflow-discovery-a-routine-for-work-you-repeat` (+1) | ? |
+| `personal_watch.proposal.accepted` | `packages/core/agent/approvals/routine-suggest.ts:63` | core/personal-watch | The person presses Set it up, and the routine is armed through `routine.create`. | `docs/capabilities/proactivity-and-routines.md#workflow-discovery-a-routine-for-work-you-repeat` (+1) | ? |
+| `personal_watch.proposal.declined` | `packages/core/agent/approvals/routine-suggest.ts:74` | core/personal-watch | The person presses No thanks, and the idea is never offered again. | `docs/capabilities/proactivity-and-routines.md#workflow-discovery-a-routine-for-work-you-repeat` (+1) | ? |
 | `personal_watch.response` | `packages/core/agent/personal-watch/state.ts:240` | core/personal-watch | A person marks one nudge useful or not useful, and the dose moves. | `docs/capabilities/proactivity-and-routines.md#the-chief-of-staff-watch` (+1) | ? |
 | `personal_watch.silence` | `packages/core/agent/personal-watch/watch.ts:133` | core/personal-watch | The watch holds a finding back, or cannot look, and files the closed reason. | `docs/capabilities/proactivity-and-routines.md#the-chief-of-staff-watch` (+1) | ? |
 | `pr.open` | `packages/core/agent/approvals/pr-open.ts:69` | core/approvals | An approved pull-request action opens a pull request. | `docs/security/control-plane.md#what-the-mcp-exposes` (+10) | ? |
@@ -482,9 +482,12 @@ One row per distinct `action` string the code writes. The Id is that string. `<p
 | `reply.refused` | `packages/core/agent/channels/reply-post.ts:105` | core/channels | The host refuses a reply, and the row carries the reason and the rejected wake id. | `docs/security/audit-and-provenance.md#whats-logged` | ? |
 | `reply.stand_down_ack` | `packages/core/agent/channels/stand-down-silence.ts:12` | core/channels | The one post a stand-down allows writes this row beside its reply.post. | `docs/security/audit-and-provenance.md#whats-logged` | n/a: unannotated — lane F |
 | `review.pr_walkthrough` | `packages/core/agent/tools/post_pr_walkthrough.ts:133` | core/tools | A pull-request walkthrough is posted. | `docs/capabilities/pr-walkthrough.md#related` | n/a: unannotated — lane F |
-| `room_watch.proposal` | `packages/core/agent/personal-watch/room-discovery.ts:329` | core/personal-watch | Room discovery posts a routine proposal card into a shared room, for work two or more people there repeat. | `docs/capabilities/proactivity-and-routines.md#shared-rooms` (+1) | ? |
-| `room_watch.proposal.accepted` | `packages/core/agent/approvals/routine-suggest.ts:82` | core/personal-watch | A member presses Set it up on a room's card, and the routine is armed in the room through `routine.create`. | `docs/capabilities/proactivity-and-routines.md#shared-rooms` (+1) | ? |
-| `room_watch.proposal.declined` | `packages/core/agent/approvals/routine-suggest.ts:96` | core/personal-watch | A member presses No thanks on a room's card, and the room is never offered the idea again. | `docs/capabilities/proactivity-and-routines.md#shared-rooms` (+1) | ? |
+| `room_watch.proposal` | `packages/core/agent/personal-watch/room-discovery.ts:462` | core/personal-watch | Room discovery posts a routine proposal card into a shared room, for work two or more people there repeat. | `docs/capabilities/proactivity-and-routines.md#shared-rooms` (+1) | ? |
+| `room_watch.proposal.accepted` | `packages/core/agent/approvals/routine-suggest.ts:55` | core/personal-watch | A member presses Set it up on a room's card, and the routine is armed in the room through `routine.create`. | `docs/capabilities/proactivity-and-routines.md#shared-rooms` (+1) | ? |
+| `room_watch.proposal.declined` | `packages/core/agent/approvals/routine-suggest.ts:69` | core/personal-watch | A member presses No thanks on a room's card, and the room is never offered the idea again. | `docs/capabilities/proactivity-and-routines.md#shared-rooms` (+1) | ? |
+| `room_watch.silence` | `packages/core/agent/personal-watch/room-discovery.ts:183` | core/personal-watch | Room discovery holds a room back for its stop, the 14-day gap or a refused card, and files the closed reason once per hold (OPE-2550). | `docs/capabilities/proactivity-and-routines.md#shared-rooms` (+1) | ? |
+| `room_watch.stopped` | `packages/core/agent/personal-watch/room-discovery.ts:163` | core/personal-watch | A person in a shared room types `/oe suggest off`, and the room gets no more routine suggestions (OPE-2550). | `docs/capabilities/proactivity-and-routines.md#shared-rooms` (+1) | ? |
+| `room_watch.resumed` | `packages/core/agent/personal-watch/room-discovery.ts:163` | core/personal-watch | A member types `/oe suggest on`, and the room's stop is lifted (OPE-2550). | `docs/capabilities/proactivity-and-routines.md#shared-rooms` (+1) | ? |
 | `routine.cancel` | `packages/core/agent/approvals/routine-cancel.ts:37` | core/approvals | A routine is cancelled through an approved action. | `docs/security/control-plane.md#who-can-click` (+1) | n/a: unannotated — lane F |
 | `routine.collect_failed` | `packages/core/agent/routines/fire-audit.ts:16` | core/routines | A routine's pre-run collector could not collect; the fire still happened. | `docs/capabilities/on-call-conventions.md#2-read-the-lessons-log-first--as-a-collector-not-as-an-instruction` (+3) | n/a: unannotated — lane F |
 | `routine.complete` | `packages/core/agent/tools/complete_job.ts:50` | core/tools | A durable job completes. | `docs/capabilities/proactivity-and-routines.md#durable-jobs-persistent-multi-step-work` | ? |

@@ -824,6 +824,24 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
     notExercised: "the same gap as `room_watch.proposal`. `test:workflow-discovery` presses the real card kind.",
   },
   {
+    action: "room_watch.silence",
+    fields: ["reason", "fingerprint", "kind", "summary"],
+    proves: "room discovery held a room back, and the closed reason why (`room-stopped`, `proposal-gap`, `delivery-refused`) — one row per stop, or per idea and reason; the same hold on the next scan files nothing new",
+    notExercised: "a live hold needs a room pattern, which needs three weeks of several people's activity in one room, which no board carries. `test:workflow-discovery` drives every reason through the real tick and the real audit write.",
+  },
+  {
+    action: "room_watch.stopped",
+    fields: ["changed", "via"],
+    proves: "a person in a shared room stopped the agent's routine suggestions there with `/oe suggest off` (`principalId` names who)",
+    notExercised: "S-ROOM-SUGGEST drives a signed `/oe suggest off` in the base channel and gates on this row, but it is NON_LAUNCH: no board has run it live yet. `test:workflow-discovery` drives the row offline.",
+  },
+  {
+    action: "room_watch.resumed",
+    fields: ["changed", "via"],
+    proves: "a member lifted a room's stop on routine suggestions with `/oe suggest on` (`principalId` names who)",
+    notExercised: "the same gap as `room_watch.stopped`: S-ROOM-SUGGEST is NON_LAUNCH. `test:workflow-discovery` drives the row offline.",
+  },
+  {
     action: "cover.set",
     fields: ["on", "until", "questions", "via"],
     proves: "a person turned their out-of-office cover on (with its end date) or off, and through which door (`command`, or `end-date` when the date passed)",

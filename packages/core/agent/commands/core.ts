@@ -32,6 +32,7 @@ import type { SkillDomainRefusal } from "../skills/domain-skills.js";
 import { parseRateTokens, runRate, rateHelpLine, type RateCommand } from "./rate.js";
 import { optOutHelpLine, parseOptOutTokens, runOptOut, type OptOutCommand } from "./optout.js";
 import { parseWatchTokens, runWatch, watchHelpLine, type WatchCommand } from "./watch.js";
+import { parseSuggestTokens, runSuggest, suggestHelpLine, type SuggestCommand } from "./suggest.js";
 import { coverHelpLine, parseCoverTokens, runCover, type CoverCommand } from "./cover.js";
 import { agentCommandName, agentDisplayName } from "../identity/bot-name.js";
 import { getAppInfo, hasRealAppVersion, registerAppInfo as storeAppInfo, type AppInfo } from "./app-info.js";
@@ -62,6 +63,7 @@ export type OeCommand =
   | RateCommand
   | Extract<OptOutCommand, { kind: "optout" }>
   | Extract<WatchCommand, { kind: "watch" }>
+  | Extract<SuggestCommand, { kind: "suggest" }>
   | Extract<CoverCommand, { kind: "cover" }>
   | { readonly kind: "error"; readonly message: string };
 
@@ -94,6 +96,7 @@ export function parseOeCommandTokens(tokens: readonly string[]): OeCommand {
   if (sub === "budget") return parseBudgetTokens(rest);
   if (sub === "optout") return parseOptOutTokens(rest);
   if (sub === "watch") return parseWatchTokens(rest);
+  if (sub === "suggest") return parseSuggestTokens(rest);
   if (sub === "cover") return parseCoverTokens(rest);
   return { kind: "error", message: `I don't know "${sub}". Try \`${oeSlash("help")}\` to see what I can do.` };
 }
@@ -117,6 +120,7 @@ export function renderHelp(): string {
     rateHelpLine(),
     optOutHelpLine(),
     watchHelpLine(),
+    suggestHelpLine(),
     coverHelpLine(),
     `• \`${oeSlash("help")}\` — show this list.`,
   ].join("\n");
@@ -450,6 +454,8 @@ export async function runOeCommand(cmd: OeCommand, binding: SurfaceBinding, deps
       return runOptOut(binding, cmd.action);
     case "watch":
       return runWatch(binding, cmd.action);
+    case "suggest":
+      return runSuggest(binding, cmd.action);
     case "cover":
       return runCover(binding, cmd);
   }
