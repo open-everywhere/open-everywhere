@@ -354,7 +354,7 @@ The two classes overlap completely, and the false-positive class reaches 1.00, s
 separates them — `dream/ops.ts` says as much where it declares `factTokens`. Substituting that
 stricter token set does not separate them either. This is also why the rule would contradict the
 plane's own posture: a same-polarity, high-overlap pair is a **`consolidate`**, one of the
-[`DESTRUCTIVE_KINDS`](#what-the-dream-cycle-may-do-by-itself) the dream cycle only ever **proposes**
+[destructive kinds](#what-the-dream-cycle-may-do-by-itself) the dream cycle only ever **proposes**
 for review, at a stricter bar than any auto-apply could use.
 
 **So every host road that supersedes keys on an EXACT identity.** The dream cycle's recurrence
@@ -1440,8 +1440,9 @@ session with no silos. A delta is advisory, so a missing reminder never breaks a
 
 **Three operation kinds auto-apply, and four never do.** `SAFE_KINDS`
 (`packages/core/agent/memory/dream/ops.ts`) holds `dedup`, `link-repair` and `salience-reorder`.
-`consolidate`, `contradiction`, `supersede` and `stale` are `DESTRUCTIVE_KINDS`: they are
-**proposed** and never applied by the cycle itself.
+`applySafeOps` (`packages/core/agent/memory/dream/tidy.ts`) applies only these three. Every other
+kind is destructive: `consolidate`, `contradiction`, `supersede` and `stale` are **proposed** and
+never applied by the cycle itself.
 
 **A freehand pair that states one fact is a `supersede`, and only a judge may raise it.** Two
 same-subject bullets with matching polarity, at least one of them undated, are put to the judge with

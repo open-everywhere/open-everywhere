@@ -1,11 +1,4 @@
-import {
-  defineInteractiveAuthorization,
-  type ConnectionAuthProvider,
-  type ConnectionAuthResolver,
-  type InteractiveAuthorizationDefinition,
-  type JsonValue,
-  type TokenResult,
-} from "eve/connections";
+import type { ConnectionAuthProvider, ConnectionAuthResolver, TokenResult } from "eve/connections";
 import type { SessionAuth, SessionContext } from "eve/context";
 import type { ApprovalStatus } from "eve/tools/approval";
 import { connectorToolPermissionKind } from "../approvals/session-grant.js";
@@ -95,33 +88,6 @@ function requesterForAuthority(auth: MemberPlaneAuthLike | undefined) {
 
 function nonMemberWakeForAuthority(auth: MemberPlaneAuthLike | undefined): boolean {
   return delegatedNonMemberWakeThisTurn(undefined) ?? nonMemberWakeFromAuth(auth, OE_CHAT_NONMEMBER_ATTR);
-}
-
-function appStaticToken(opts: {
-  readonly connector: string;
-  readonly secretRef: string;
-  readonly broker: string;
-}): ConnectionAuthResolver {
-  return async (ctx: SessionContext): Promise<ConnectionAuthProvider> => ({
-    principalType: "app",
-    async getToken() {
-      await assertConnectorGranted(opts.connector, ctx.session.auth);
-      return { token: await getSecretVia(opts.broker, opts.secretRef) };
-    },
-  });
-}
-
-function appConnectToken(opts: {
-  readonly connector: string;
-  readonly vercelConnector: string;
-}): ConnectionAuthResolver {
-  return async (ctx: SessionContext): Promise<ConnectionAuthProvider> => ({
-    principalType: "app",
-    async getToken(o) {
-      await assertConnectorGranted(opts.connector, ctx.session.auth);
-      return requireUserAuthFlow(opts.connector).mintServiceToken(opts.vercelConnector, o);
-    },
-  });
 }
 
 export function appProviderToken(opts: {
@@ -933,23 +899,3 @@ export function withUnattendedConnectorFence(
   };
 }
 
-function userInteractiveOAuth<Resume extends JsonValue = JsonValue>(opts: {
-  readonly connector: string;
-  readonly getToken: InteractiveAuthorizationDefinition<Resume>["getToken"];
-  readonly startAuthorization: InteractiveAuthorizationDefinition<Resume>["startAuthorization"];
-  readonly completeAuthorization: InteractiveAuthorizationDefinition<Resume>["completeAuthorization"];
-  readonly displayName?: string;
-  readonly evict?: InteractiveAuthorizationDefinition<Resume>["evict"];
-}): ConnectionAuthResolver {
-  return async (ctx: SessionContext): Promise<ConnectionAuthProvider> =>
-    defineInteractiveAuthorization<Resume>({
-      displayName: opts.displayName,
-      async getToken(o) {
-        await assertConnectorGranted(opts.connector, ctx.session.auth);
-        return opts.getToken(o);
-      },
-      startAuthorization: opts.startAuthorization,
-      completeAuthorization: opts.completeAuthorization,
-      evict: opts.evict,
-    });
-}

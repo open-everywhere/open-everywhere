@@ -68,6 +68,13 @@ const has = (ops: readonly MemoryOp[], kind: string) => ops.some((o) => o.kind =
 }
 
 {
+  eq([...SAFE_KINDS].sort().join(","), "dedup,link-repair,salience-reorder", "kinds: SAFE_KINDS is exactly the three auto-apply kinds");
+  for (const kind of ["consolidate", "contradiction", "supersede", "stale"] as const) {
+    ok(!isSafe(kind), `kinds: ${kind} is destructive (outside SAFE_KINDS, never auto-applied)`);
+  }
+}
+
+{
   const files: MemoryFiles = { "m.md": "## S\n- alpha fact\n- beta fact\n- alpha fact\n\nprose - not a bullet\n" };
   const r = dedupBullets(files);
   eq((r.files["m.md"].match(/- alpha fact/g) ?? []).length, 1, "dedup: duplicate bullet dropped, first kept");

@@ -9,16 +9,7 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 const SURFACE_FILES: ReadonlySet<string> = new Set(["index.ts", "adapter-api.ts", "contributions.ts"]);
 
-export const KNOWN_UNREACHED_EXPORTS: ReadonlyMap<string, string> = new Map<string, string>([
-  [
-    "packages/core/agent/access/credential-bindings-codemod.ts::registerOverlayHome",
-    "OPE-1455: an out-of-repo vendor adapter registers its overlay home through this function",
-  ],
-  [
-    "packages/core/agent/control/http.ts::handleControlRequest",
-    "OPE-1455: an out-of-repo self-host route mounts this handler directly",
-  ],
-]);
+export const KNOWN_UNREACHED_EXPORTS: ReadonlyMap<string, string> = new Map<string, string>([]);
 
 const BASELINE_OWNER = /^OPE-\d+: \S/u;
 

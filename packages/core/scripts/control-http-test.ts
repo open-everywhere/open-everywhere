@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { AddressInfo } from "node:net";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { createAdminHttpServer } from "../agent/control/http.js";
+import fs from "node:fs";
+import { createServer, type IncomingMessage } from "node:http";
+import { createAdminHttpServer, handleControlRequest, type AdminHttpOptions } from "../agent/control/http.js";
 import { CONTROL_TOOL_NAMES } from "../agent/control/server.js";
 
 import { pinSuiteStore } from "./_suite-store.js";
@@ -90,6 +92,59 @@ async function listen(server: import("node:http").Server): Promise<string> {
   ok("session_transcript over HTTP: the mount's reader is the one called, with the caller's session id", asked === "wrun_abc");
   await client.close();
   configured.close();
+}
+
+{
+  const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { exports: Record<string, unknown> };
+  ok("handleControlRequest: control/http is a published subpath (the consumer's import path)", "./agent/control/http.js" in pkg.exports);
+
+  let bodiesParsedByMount = 0;
+  const readBody = async (req: IncomingMessage): Promise<unknown> => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+    const raw = Buffer.concat(chunks).toString("utf-8");
+    return raw ? JSON.parse(raw) : undefined;
+  };
+  const mount = (opts?: AdminHttpOptions) =>
+    createServer((req, res) => {
+      void (async () => {
+        const parsed = req.method === "POST" ? await readBody(req) : undefined;
+        if (parsed !== undefined) bodiesParsedByMount++;
+        await (opts === undefined ? handleControlRequest(req, res) : handleControlRequest(req, res, opts, parsed));
+      })().catch(() => {
+        if (!res.headersSent) res.writeHead(500).end();
+      });
+    });
+  const post = (url: string) =>
+    fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    });
+
+  const bare = mount();
+  const bareUrl = await listen(bare);
+  ok("handleControlRequest: a direct mount with no options refuses with 401", (await post(bareUrl)).status === 401);
+  bare.close();
+
+  const viewer = mount({
+    authenticate: async () => ({ issuer: "https://idp.test", subject: "u1", emailVerified: true, roles: ["viewer"] }),
+    requiredRole: "admin",
+  });
+  const viewerUrl = await listen(viewer);
+  ok("handleControlRequest: an identity without the required role is refused with 403", (await post(viewerUrl)).status === 403);
+  viewer.close();
+
+  bodiesParsedByMount = 0;
+  const open = mount({ allowUnauthenticated: true });
+  const openUrl = await listen(open);
+  const client = new Client({ name: "http-self-host-mount", version: "0" });
+  await client.connect(new StreamableHTTPClientTransport(new URL(openUrl)));
+  const names = (await client.listTools()).tools.map((t) => t.name).sort();
+  ok("handleControlRequest: a pre-parsed body round-trips the admin tools", JSON.stringify(names) === JSON.stringify([...CONTROL_TOOL_NAMES].sort()));
+  ok("handleControlRequest: the mount parsed the bodies itself (the drained-stream path ran)", bodiesParsedByMount >= 2);
+  await client.close();
+  open.close();
 }
 
 console.log(`\n✓ control HTTP transport: ${n} assertions passed (fail-closed + e2e round-trip)\n`);

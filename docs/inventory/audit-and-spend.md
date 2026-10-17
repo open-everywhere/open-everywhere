@@ -45,7 +45,7 @@ cells, because a reader who greps one needs to find the fact rather than conclud
 write site. The manual states it at
 [Audit & provenance § Action tags that are not audit actions](../security/audit-and-provenance.md#action-tags-that-are-not-audit-actions).
 
-Two contradictions carry a ticket (§ 16). Six behaviours are dead (§ 17), and three are
+Two contradictions carry a ticket (§ 16). Five behaviours are dead (§ 17), and three are
 implemented but inert in the configuration this repository ships (§ 18).
 
 ## What a row means
@@ -852,7 +852,7 @@ grammar rather than a symbol.
 | `oe.reaction.removed` | `packages/core/agent/observability/telemetry.ts:30` | core/observability | Emits on reaction removal with the same three low-cardinality labels. | `docs/deploy/telemetry.md#events` | n/a: unannotated — lane F |
 | `wizard.started` | `packages/core/agent/observability/telemetry.ts:33` | core/observability | RETIRED (OPE-2233): nothing emits it. The name stays in the closed vocabulary so already-published `create-open-everywhere` versions are still accepted — the unscoped name the scaffolder shipped under before OPE-2234. | `docs/deploy/telemetry.md#the-retired-install-wizard-events` | n/a: unannotated — lane F |
 | `wizard.completed` | `packages/core/agent/observability/telemetry.ts:34` | core/observability | RETIRED (OPE-2233): nothing emits it. The name stays in the closed vocabulary for the same reason as `wizard.started`. | `docs/deploy/telemetry.md#the-retired-install-wizard-events` | n/a: unannotated — lane F |
-| `const RESOURCE_ATTR_KEYS` | `packages/core/agent/observability/telemetry.ts:114` | core/observability | Declares the seven resource attributes stamped once per batch, and nothing else. | `docs/deploy/telemetry.md#resource-attributes-stamped-once-per-batch-on-every-event` | n/a: unannotated — lane F |
+| `resourceAttributes` | `packages/core/agent/observability/telemetry.ts:356` | core/observability | Stamps the seven resource attributes once per batch, and nothing else. `scripts/telemetry-test.ts` pins the sent set exactly. | `docs/deploy/telemetry.md#resource-attributes-stamped-once-per-batch-on-every-event` | n/a: unannotated — lane F |
 | `const FEATURE_VALUES` | `packages/core/agent/observability/telemetry.ts:41` | core/observability | Closes the feature label to a declared list, enforced by the emitter and by a both-way source scan. | `docs/deploy/telemetry.md#what-is-collected--the-complete-vocabulary` | n/a: unannotated — lane F |
 | `const OUTCOME_VALUES` | `packages/core/agent/observability/telemetry.ts:61` | core/observability | Closes the outcome label to a declared list. | `docs/deploy/telemetry.md#what-is-collected--the-complete-vocabulary` | n/a: unannotated — lane F |
 | `const CLOSED_ATTR_VALUES` | `packages/core/agent/observability/telemetry.ts:88` | core/observability | Enforces the two value lists at run time, so a hoisted variable is held to the same closure as a literal. | `docs/deploy/telemetry.md#how-the-vocabulary-is-enforced-at-run-time` | n/a: unannotated — lane F |
@@ -1017,7 +1017,6 @@ code; they are recorded so step 3 does not spend a test on them.
 | `resolveUserCapsWithLayer`'s `layer` and `configKey` | `packages/core/agent/spend/caps.ts:59` | Its own comment says the layer exists "for the REPORT". The report reads `userCapInventory` instead, so no product caller reads either field. |
 | `SpendLedgerFilter.routineId` | `packages/core/agent/operational/store.ts:152` | No product read filters the ledger by routine, although `packages/core/agent/spend/store.ts:60` advertises "a routine's month". |
 | `generationIdOf` | `packages/core/agent/spend/usage-events.ts:13` | The gateway generation id is written on every row and no report, view or tool reads it back. |
-| `const RESOURCE_ATTR_KEYS` | `packages/core/agent/observability/telemetry.ts:114` | A module-local since OPE-2142: no other file reads it. `deploy/oe-telemetry/src/schema.ts` keeps its own copy. |
 
 ## 18. Findings — inert in the shipped configuration
 

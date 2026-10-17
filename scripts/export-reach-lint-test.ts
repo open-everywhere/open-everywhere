@@ -268,10 +268,7 @@ export function useIt(n: number): number {
     ok(verdict.scanned > 500, `the scan reaches the tree — ${verdict.scanned} modules`);
     ok(verdict.exports > 1000, `…and its exports — ${verdict.exports} value exports`);
     ok(verdict.importers > 1500, `…and the importer sweep — ${verdict.importers} files`);
-    const pinned = [
-      "packages/core/agent/access/credential-bindings-codemod.ts::registerOverlayHome",
-      "packages/core/agent/control/http.ts::handleControlRequest",
-    ];
+    const pinned: string[] = [];
     const keys = [...KNOWN_UNREACHED_EXPORTS.keys()].sort();
     ok(
       keys.length === pinned.length && keys.every((k, n) => k === pinned[n]),

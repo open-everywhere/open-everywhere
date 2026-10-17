@@ -1,4 +1,12 @@
-import { assertConnectorCredentialsValid, vercelConnectorHome, vercelConnectorOf, type ConnectorCredentials } from "../agent/access/connector-credentials.js";
+import fs from "node:fs";
+import {
+  assertConnectorCredentialsValid,
+  registerExclusiveCredentialHome,
+  resetExclusiveCredentialHomes,
+  vercelConnectorHome,
+  vercelConnectorOf,
+  type ConnectorCredentials,
+} from "../agent/access/connector-credentials.js";
 import {
   applyBindingOverride,
   applyOverridesToConnectorCredentials,
@@ -6,11 +14,13 @@ import {
   emitCredentialBindingsModule,
   parseCredentialBindingsFile,
   parseCredentialBindingsModule,
+  registerOverlayHome,
   renormalizeCredentialBindingsModule,
   stringifyCredentialBindings,
   CredentialBindingsCodemodError,
   type CredentialBindingsFile,
   type CredentialBindingOverride,
+  type OverlayHomeCodec,
 } from "../agent/access/credential-bindings-codemod.js";
 
 let passed = 0;
@@ -132,6 +142,89 @@ const notion: ConnectorCredentials = {
   const stale = applyOverridesToConnectorCredentials(base, [{ connector: "notion", credential: "ghost", broker: "db", secretRef: "db:notion:ghost" }]);
   ok(stale[0].credentials.length === 2 && !stale[0].credentials.some((c) => c.id === "ghost"), "overlay: stale override is inert");
   ok(applyOverridesToConnectorCredentials(base, []) === base, "overlay: empty overrides returns the base set unchanged");
+}
+
+{
+  const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { exports: Record<string, unknown> };
+  ok("./agent/access/credential-bindings-codemod.js" in pkg.exports, "vendor home: the codemod is a published subpath (the consumer's import path)");
+
+  type VaultOverride = CredentialBindingOverride & { readonly vaultPath?: string };
+  const vaultPathOf = (o: CredentialBindingOverride): string | undefined => (o as VaultOverride).vaultPath;
+  const RAW_VAULT = { connector: "notion", credential: "team-key", vaultPath: "kv/notion/team-key" };
+
+  throwsWith(() => parseCredentialBindingsFile({ overrides: [RAW_VAULT] }), "has no home", "vendor home: unregistered, a vault override is refused");
+
+  registerExclusiveCredentialHome({
+    name: "test-vault",
+    validFor: ["api-key"],
+    validateConfig: (config, where) => {
+      if (typeof config.path !== "string" || !config.path) throw new Error(`${where}: test-vault home needs { path }`);
+    },
+  });
+  const vaultCodec = (display: string): OverlayHomeCodec => ({
+    kind: "test-vault",
+    display,
+    emptyHint: "{ vaultPath }",
+    claimsRaw: (o) => "vaultPath" in o,
+    claims: (o) => vaultPathOf(o) !== undefined,
+    parseRaw: (o, where) => {
+      if (typeof o.vaultPath !== "string" || !o.vaultPath) throw new CredentialBindingsCodemodError(`override for ${where} needs a string vaultPath`);
+      return { vaultPath: o.vaultPath } as Partial<CredentialBindingOverride>;
+    },
+    serialize: (o) => ({ vaultPath: vaultPathOf(o) }),
+    sameHome: (a, b) => vaultPathOf(a) === vaultPathOf(b),
+    apply: (c, o) => {
+      const { broker: _b, secretRef: _s, ...rest } = c;
+      return { ...rest, home: { kind: "test-vault", config: { path: vaultPathOf(o)! } } };
+    },
+  });
+  registerOverlayHome(vaultCodec("an early vault home"));
+  registerOverlayHome(vaultCodec("a vault home"));
+
+  const parsed = parseCredentialBindingsFile({ overrides: [RAW_VAULT] });
+  ok(vaultPathOf(parsed.overrides[0]) === "kv/notion/team-key", "vendor home: registered, the codec's parseRaw carries its own field");
+  ok(
+    stringifyCredentialBindings(parsed) === JSON.stringify({ overrides: [RAW_VAULT] }, null, 2) + "\n",
+    "vendor home: stringify emits the codec's serialize portion after connector/credential",
+  );
+  const text = emitCredentialBindingsModule(parsed);
+  ok(emitCredentialBindingsModule(parseCredentialBindingsModule(text)) === text, "vendor home: the module round trip is byte-stable");
+  throwsWith(
+    () => parseCredentialBindingsFile({ overrides: [{ ...RAW_VAULT, broker: "db", secretRef: "db:notion:team-key" }] }),
+    "has BOTH a broker home and a vault home",
+    "vendor home: a raw override with two homes is refused, and the LAST registration's display names it",
+  );
+  throwsWith(
+    () => parseCredentialBindingsFile({ overrides: [{ connector: "notion", credential: "team-key" }] }),
+    "{ vaultPath }",
+    "vendor home: the no-home refusal lists the registered codec's hint",
+  );
+
+  ok(!applyBindingOverride(parsed, parsed.overrides[0]).changed, "vendor home: the same vault path re-applied is a no-op (codec sameHome)");
+  const rehomed = applyBindingOverride(parsed, OV);
+  ok(rehomed.changed && rehomed.file.overrides[0].broker === "db", "vendor home: a broker stamp over a vault home is a re-stamp across kinds");
+
+  const merged = applyOverridesToConnectorCredentials([notion], parsed.overrides);
+  const cred = merged[0].credentials.find((c) => c.id === "team-key")!;
+  ok(
+    cred.home?.kind === "test-vault" && cred.home.config.path === "kv/notion/team-key" && cred.broker === undefined && cred.secretRef === undefined,
+    "vendor home: apply re-stamps the credential through the codec (vault home set, broker stamp stripped)",
+  );
+  let validWithHome = true;
+  try {
+    assertConnectorCredentialsValid(merged);
+  } catch {
+    validWithHome = false;
+  }
+  ok(validWithHome, "vendor home: the re-stamped set passes assertConnectorCredentialsValid with the registered exclusive home");
+  resetExclusiveCredentialHomes();
+  let refusal = "";
+  try {
+    assertConnectorCredentialsValid(merged);
+  } catch (err) {
+    refusal = err instanceof Error ? err.message : String(err);
+  }
+  ok(refusal.includes('unknown credential home kind "test-vault"'), `vendor home: without the registered home the same set is refused (message: "${refusal}")`);
 }
 
 

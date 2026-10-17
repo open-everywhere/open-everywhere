@@ -36,16 +36,6 @@ export const EVENT_SCHEMA: Readonly<Record<string, readonly string[]>> = Object.
   "wizard.completed": Object.freeze(["oe.wizard.version", "oe.wizard.platform", "oe.wizard.steps_completed"]),
 });
 
-const RESOURCE_ATTR_KEYS: readonly string[] = Object.freeze([
-  "service.name",
-  "service.version",
-  "service.instance.id",
-  "deployment.environment.name",
-  "oe.host",
-  "oe.node.major",
-  "oe.instance.ephemeral",
-]);
-
 export const FEATURE_VALUES = Object.freeze([
   "agent_created",
   "approval_requested",

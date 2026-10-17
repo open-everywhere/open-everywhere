@@ -180,6 +180,38 @@ function throwingFetch(): typeof fetch {
 }
 
 {
+  const DOCUMENTED_RESOURCE_KEYS = [
+    "deployment.environment.name",
+    "oe.host",
+    "oe.instance.ephemeral",
+    "oe.node.major",
+    "service.instance.id",
+    "service.name",
+    "service.version",
+  ];
+  const sentResourceKeys = async (ephemeral: boolean): Promise<string[]> => {
+    clearTelemetryEnv();
+    const { calls, impl } = fakeFetch();
+    __resetTelemetryForTest({ fetchImpl: impl });
+    __setInstanceForTest({ id: "instance-resource", ephemeral });
+    emitTelemetry("oe.turn.failed", { "oe.surface": "slack", "oe.error.code": "x" });
+    await flushTelemetry();
+    const body = calls[0]?.body as { resourceLogs: { resource: { attributes: { key: string }[] } }[] } | undefined;
+    clearTelemetryEnv();
+    __resetTelemetryForTest();
+    return (body?.resourceLogs[0]?.resource.attributes ?? []).map((a) => a.key).sort();
+  };
+  assert.deepEqual(await sentResourceKeys(true), DOCUMENTED_RESOURCE_KEYS, "resource: an ephemeral instance sends exactly the seven documented keys");
+  n++;
+  assert.deepEqual(
+    await sentResourceKeys(false),
+    DOCUMENTED_RESOURCE_KEYS.filter((k) => k !== "oe.instance.ephemeral"),
+    "resource: a durable instance sends the six others and omits oe.instance.ephemeral",
+  );
+  n++;
+}
+
+{
   const EXPECTED_SCHEMA: Record<string, readonly string[]> = {
     "oe.instance.first_boot": [],
     "oe.instance.heartbeat": [
