@@ -12,6 +12,7 @@ import {
   isSurface,
   reexportsStar,
   staleBaselineEntries,
+  unownedBaselineEntries,
   unreadableExportsIn,
 } from "./export-reach-lint.js";
 
@@ -267,11 +268,16 @@ export function useIt(n: number): number {
     ok(verdict.scanned > 500, `the scan reaches the tree — ${verdict.scanned} modules`);
     ok(verdict.exports > 1000, `…and its exports — ${verdict.exports} value exports`);
     ok(verdict.importers > 1500, `…and the importer sweep — ${verdict.importers} files`);
-    ok(verdict.carried > 0, `the ratchet is exercised on the real tree — ${verdict.carried} entr(ies) carried`);
+    const pinned = [
+      "packages/core/agent/access/credential-bindings-codemod.ts::registerOverlayHome",
+      "packages/core/agent/control/http.ts::handleControlRequest",
+    ];
+    const keys = [...KNOWN_UNREACHED_EXPORTS.keys()].sort();
     ok(
-      verdict.carried <= KNOWN_UNREACHED_EXPORTS.size,
-      `carried is a subset of the baseline — ${verdict.carried} of ${KNOWN_UNREACHED_EXPORTS.size}`,
+      keys.length === pinned.length && keys.every((k, n) => k === pinned[n]),
+      `the baseline is exactly the pinned keeps — it holds ${keys.length}: ${keys.join(", ")}`,
     );
+    ok(verdict.carried <= KNOWN_UNREACHED_EXPORTS.size, `carried is a subset of the baseline — ${verdict.carried}`);
     ok(verdict.ruledOn + verdict.wholesaleSkipped === verdict.scanned, "every scanned module is either ruled on or counted as skipped");
     ok(verdict.wholesaleSkipped > 0, `the wholesale skip is real and counted — ${verdict.wholesaleSkipped} module(s)`);
     ok(verdict.ruledOn < verdict.scanned, "…so the rule reaches fewer modules than it scans");
@@ -308,6 +314,33 @@ export function useIt(n: number): number {
     ok(namedRun.wholesaleSkipped === 0, "a DESTRUCTURED dynamic import names its bindings, so nothing is skipped");
     ok(namedRun.reds.length === 1, "…and the export it does not name is reported");
     ok(namedRun.reds[0]!.includes("localHelper"), "…by name");
+  }
+
+  {
+    const key = "packages/core/agent/a.ts::b";
+    const bare = unownedBaselineEntries(new Map([[key, ""]]));
+    ok(bare.length === 1 && bare[0]!.includes(key), "owner: a line with no owner is reported, by name");
+    ok(bare[0]!.includes("OPE-<n>: <why it is kept>"), "owner: …and the message says what to write");
+    ok(unownedBaselineEntries(new Map([[key, "OPE-12"]])).length === 1, "owner: a ticket with no reason is reported");
+    ok(unownedBaselineEntries(new Map([[key, "keep it: an out-of-tree consumer"]])).length === 1, "owner: a reason with no ticket is reported");
+    ok(
+      unownedBaselineEntries(new Map([[key, "OPE-12: an out-of-tree consumer reads it"]])).length === 0,
+      "owner: a ticket and a reason pass (negative control)",
+    );
+    ok(unownedBaselineEntries(new Map()).length === 0, "owner: an empty baseline reports nothing");
+  }
+
+  {
+    const key = "packages/core/agent/helpers.ts::localHelper";
+    const tree = fixtureTree({
+      "packages/core/agent/helpers.ts": `export function localHelper(n: number): number {\n  return n;\n}\nexport const seed = localHelper(1);\n`,
+      "packages/core/agent/adapter-api.ts": `export { seed } from "./helpers.js";`,
+    });
+    const unowned = auditExportReach(tree, { owners: new Map([[key, ""]]) });
+    ok(unowned.reds.length === 1 && unowned.reds[0]!.includes("no owner"), "owner wiring: an owner-less line reds the audit");
+    ok(unowned.carried === 1, "owner wiring: …while the export itself is carried by the same line");
+    const owned = auditExportReach(tree, { owners: new Map([[key, "OPE-12: a fixture keep"]]) });
+    ok(owned.reds.length === 0, `owner wiring: the owned line is green (negative control): ${owned.reds.join(" | ")}`);
   }
 
   {

@@ -3,7 +3,7 @@ import { deploymentOrg } from "../identity/binding.js";
 import { routinePartition } from "./partition.js";
 import type { Routine } from "./routine.js";
 
-export const FIRE_ATTRS_SENT_ACTION = "routine.fire_attrs_sent";
+const FIRE_ATTRS_SENT_ACTION = "routine.fire_attrs_sent";
 export const FIRE_ATTRS_SEEN_ACTION = "routine.fire_attrs_seen";
 
 function attributeKeyNames(attributes: Readonly<Record<string, unknown>> | undefined): readonly string[] {

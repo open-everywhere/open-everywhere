@@ -10,7 +10,7 @@ export const TEAMS_TEAM_ADDRESS_KIND = "team";
 
 const TEAMS_CONVERSATION_ADDRESS_KIND = "conversation";
 
-export const TEAMS_TEAM_ADDRESS_READ_LIMIT = 8;
+const TEAMS_TEAM_ADDRESS_READ_LIMIT = 8;
 
 const TEAMS_REPLY_CHAIN_SUFFIX = ";messageid=";
 

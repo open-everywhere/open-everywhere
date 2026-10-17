@@ -36,7 +36,7 @@ export interface MemorySyncTiming {
 
 export type SyncPhase = "baseline" | "sandbox" | "index" | "versions";
 
-export class MemorySyncTimingCollector {
+class MemorySyncTimingCollector {
   private readonly startedAt = Date.now();
   private readonly phases: Partial<Record<SyncPhase, number>> = {};
   private readonly silos: SiloSyncTiming[] = [];

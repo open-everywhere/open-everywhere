@@ -3,8 +3,6 @@ import { loadThreadContextMessages } from "eve/channels/slack";
 import type { SlackMessage } from "eve/channels/slack";
 import { MAX_MESSAGES, renderContext, type ContextLine } from "@open-everywhere/core/agent/adapter-api.js";
 
-export { renderContext, type ContextLine };
-
 export function readMoreHint(): string {
   return (
     "Note: the block above is the most recent messages only, capped for context size — there may " +

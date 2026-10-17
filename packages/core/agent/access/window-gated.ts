@@ -1,5 +1,6 @@
 import { defineDurableSchema, defineDynamic, defineTool, type ToolDefinition } from "eve/tools";
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
 export interface GatedToolEntry {
   readonly description: string;
   readonly inputSchema: unknown;
@@ -20,7 +21,7 @@ import { allowedOnRestrictedJobWake, jobFireStamped, resolveJobWakePosture } fro
 import { isJobSession, jobWakeEscalated } from "./job-session-state.js";
 import { allowedOnLeanSeat, resolveLeanSeatPosture } from "./lean-seat.js";
 import { canDelegateFromSeat } from "./delegation-mount.js";
-export { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, withheldFromGrain, checkWindowGateManifest, fullKit } from "./window-gate-manifest.js";
+export { WINDOW_GATED_TOOLS, withheldFromGrain, fullKit } from "./window-gate-manifest.js";
 export type { WindowToolSource } from "./window-gate-manifest.js";
 
 export function approvalRequestOf(entry: { readonly approval?: LooseApproval }): ((ctx: any) => any) | undefined {

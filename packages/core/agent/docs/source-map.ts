@@ -1,6 +1,6 @@
 const SURFACE_DOC_DIR = "docs/deploy/surfaces";
 
-export const UNIVERSAL_SURFACE_DOCS: readonly string[] = ["support-matrix.md"];
+const UNIVERSAL_SURFACE_DOCS: readonly string[] = ["support-matrix.md"];
 
 export const MAX_SUMMARY_CHARS = 240;
 

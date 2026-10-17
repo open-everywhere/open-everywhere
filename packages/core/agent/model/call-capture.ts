@@ -12,7 +12,7 @@ export const CAPTURE_GAP_ACTION = "soak.capture_gap";
 
 export const CAPTURE_SCHEMA_VERSION = 1;
 
-export const CAPTURE_MAX_BODY_B64_BYTES = 8_000_000;
+const CAPTURE_MAX_BODY_B64_BYTES = 8_000_000;
 
 const MAX_TRACKED_CAPTURE_TURNS = 512;
 

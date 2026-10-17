@@ -23,7 +23,7 @@ export interface RepoSkillsEntry {
   agents?: Record<string, RepoAgentDef>;
 }
 
-export const repoSkillsState = defineState<Record<string, RepoSkillsEntry>>(
+const repoSkillsState = defineState<Record<string, RepoSkillsEntry>>(
   "open-everywhere.repo-skills",
   () => ({}),
 );

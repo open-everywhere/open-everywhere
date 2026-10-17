@@ -36,7 +36,7 @@ export const EVENT_SCHEMA: Readonly<Record<string, readonly string[]>> = Object.
   "wizard.completed": Object.freeze(["oe.wizard.version", "oe.wizard.platform", "oe.wizard.steps_completed"]),
 });
 
-export const RESOURCE_ATTR_KEYS: readonly string[] = Object.freeze([
+const RESOURCE_ATTR_KEYS: readonly string[] = Object.freeze([
   "service.name",
   "service.version",
   "service.instance.id",
@@ -418,7 +418,7 @@ function otlpAttributes(attrs: Record<string, TelemetryAttrValue>): { key: strin
   return Object.entries(attrs).map(([key, value]) => ({ key, value: otlpValue(value) }));
 }
 
-export function buildOtlpPayload(records: readonly QueuedTelemetryRecord[]): Record<string, unknown> {
+function buildOtlpPayload(records: readonly QueuedTelemetryRecord[]): Record<string, unknown> {
   return {
     resourceLogs: [
       {

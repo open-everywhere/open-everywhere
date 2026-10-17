@@ -9,71 +9,28 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 const SURFACE_FILES: ReadonlySet<string> = new Set(["index.ts", "adapter-api.ts", "contributions.ts"]);
 
-export const KNOWN_UNREACHED_EXPORTS: ReadonlySet<string> = new Set([
-  "packages/adapters/agent/aws/sso.ts::OE_AWS_SSO_CALLBACK_PATH",
-  "packages/adapters/agent/oe-oauth/errors.ts::subjectLabel",
-  "packages/adapters/agent/postgres/neon.ts::configureLocalWsProxy",
-  "packages/core/agent/access/approver-chain.ts::chainTaintKinds",
-  "packages/core/agent/access/approver-chain.ts::chainTaintSignal",
-  "packages/core/agent/access/aws-screen.ts::AWS_S3_HIGH_LEVEL_FANOUT",
-  "packages/core/agent/access/consequence.ts::POST_TURN_WRITE_PRIMITIVES",
-  "packages/core/agent/access/credential-bindings-codemod.ts::registerOverlayHome",
-  "packages/core/agent/access/group-request.ts::buildResolveRequestWithGroups",
-  "packages/core/agent/access/permission-proposal.ts::PERMISSION_CONFIG_FILE",
-  "packages/core/agent/access/window-gated.ts::WINDOW_UNGATED_TOOLS",
-  "packages/core/agent/access/window-gated.ts::checkWindowGateManifest",
-  "packages/core/agent/channels/channel-read.ts::ChannelScopeError",
-  "packages/core/agent/channels/context-render.ts::MAX_CHARS",
-  "packages/core/agent/channels/generation-retirement.ts::RETIREMENT_CONFIRM_TIMEOUT_MS",
-  "packages/core/agent/channels/self-dispatch.ts::SELF_DISPATCH_ATTEMPTS",
-  "packages/core/agent/channels/self-dispatch.ts::SELF_DISPATCH_TIMEOUT_MS",
-  "packages/core/agent/connections/connector-auth.ts::appConnectToken",
-  "packages/core/agent/connections/connector-auth.ts::appStaticToken",
-  "packages/core/agent/connections/connector-auth.ts::userInteractiveOAuth",
-  "packages/core/agent/control/auth.ts::INJECT_TOKEN_ENV",
-  "packages/core/agent/control/http.ts::handleControlRequest",
-  "packages/core/agent/docs/source-map.ts::UNIVERSAL_SURFACE_DOCS",
-  "packages/core/agent/hooks/link-claim.ts::claimBodyOf",
-  "packages/core/agent/identity/principals.ts::accountRefKey",
-  "packages/core/agent/instructions/access.ts::renderRecoveryReadDoctrine",
-  "packages/core/agent/memory/dream/mode3.ts::FAILURE_ACTIONS",
-  "packages/core/agent/memory/dream/ops.ts::DESTRUCTIVE_KINDS",
-  "packages/core/agent/memory/sync-timing.ts::MemorySyncTimingCollector",
-  "packages/core/agent/model/call-capture.ts::CAPTURE_MAX_BODY_B64_BYTES",
-  "packages/core/agent/model/policy.ts::REASONING_ORDER",
-  "packages/core/agent/observability/telemetry.ts::RESOURCE_ATTR_KEYS",
-  "packages/core/agent/observability/telemetry.ts::buildOtlpPayload",
-  "packages/core/agent/plugins/extract.ts::renderGeneratedSkillModule",
-  "packages/core/agent/routines/fire-carriage.ts::FIRE_ATTRS_SENT_ACTION",
-  "packages/core/agent/routines/github-fanout.ts::DELIVERY_DEDUPE_TTL_MS",
-  "packages/core/agent/routines/match-stamp.ts::MATCH_STAMP_WINDOW_MS",
-  "packages/core/agent/scm/repo-skills.ts::repoSkillsState",
-  "packages/core/agent/stall/guard.ts::reduceResult",
-  "packages/core/agent/tools/set_dm_delivery.ts::isOneToOneDm",
-  "packages/providers/github/agent/channels/github-reaction-scope.ts::GITHUB_REACTION_POLL_HOURLY_BUDGET",
-  "packages/providers/linear/agent/channels/linear-graphql.ts::LINEAR_SURFACE",
-  "packages/providers/notion/agent/channels/notion-api.ts::BLOCK_PARENT_MAX_HOPS",
-  "packages/providers/notion/agent/channels/notion-api.ts::NOTION_API_BASE",
-  "packages/providers/notion/agent/channels/notion-api.ts::retrieveBlock",
-  "packages/providers/notion/agent/channels/notion-api.ts::retrievePage",
-  "packages/providers/notion/agent/channels/notion-supervisor.ts::notionExternalAuthorDecision",
-  "packages/providers/slack/agent/channels/slack-context.ts::renderContext",
-  "packages/providers/slack/agent/channels/slack-events.ts::PREFER_NO_REPLY_TOOL",
-  "packages/providers/slack/agent/channels/slack-events.ts::_engagementWakeMode",
-  "packages/providers/slack/agent/channels/slack-events.ts::_resetBotDisplayName",
-  "packages/providers/slack/agent/channels/slack-events.ts::nameDropAbstained",
-  "packages/providers/slack/agent/channels/slack-events.ts::slackDmWake",
-  "packages/providers/slack/agent/channels/slack-events.ts::slackWakeSpendGate",
-  "packages/providers/slack/agent/channels/slack-events.ts::withholdNameDropContext",
-  "packages/providers/slack/agent/channels/slack-front.ts::_resetBotIdentity",
-  "packages/providers/slack/agent/channels/slack-front.ts::_resetDmTrustCache",
-  "packages/providers/slack/agent/channels/slack-front.ts::deliverWithStrandRetry",
-  "packages/providers/slack/agent/channels/slack-identity.ts::slackWorkspaceVouched",
-  "packages/providers/slack/agent/channels/slack-wake-backscroll.ts::_resetWakeBotIdentity",
-  "packages/providers/teams/agent/channels/teams-conversation-ref.ts::TEAMS_TEAM_ADDRESS_READ_LIMIT",
-  "packages/providers/teams/agent/channels/teams-front.ts::liveTeamsFrontPlan",
-  "packages/providers/teams/agent/channels/teams-graph-boundary.ts::TEAMS_READ_BOUNDARY_SOURCES",
+export const KNOWN_UNREACHED_EXPORTS: ReadonlyMap<string, string> = new Map<string, string>([
+  [
+    "packages/core/agent/access/credential-bindings-codemod.ts::registerOverlayHome",
+    "OPE-1455: an out-of-repo vendor adapter registers its overlay home through this function",
+  ],
+  [
+    "packages/core/agent/control/http.ts::handleControlRequest",
+    "OPE-1455: an out-of-repo self-host route mounts this handler directly",
+  ],
 ]);
+
+const BASELINE_OWNER = /^OPE-\d+: \S/u;
+
+export function unownedBaselineEntries(baseline: ReadonlyMap<string, string>): string[] {
+  const unowned: string[] = [];
+  for (const [key, owner] of baseline) {
+    if (!BASELINE_OWNER.test(owner)) {
+      unowned.push(`${key} — no owner: a baseline line must say "OPE-<n>: <why it is kept>" (got ${JSON.stringify(owner)})`);
+    }
+  }
+  return unowned;
+}
 
 const EXPORT_REACH_REMEDY =
   "Fix: delete the `export` keyword — the name keeps working inside its own file. If the export is\n" +
@@ -88,6 +45,7 @@ export interface ImportSite {
 
 export interface AuditOptions {
   readonly baseline?: ReadonlySet<string>;
+  readonly owners?: ReadonlyMap<string, string>;
 }
 
 export interface ReachVerdict {
@@ -366,8 +324,9 @@ export function staleBaselineEntries(baseline: ReadonlySet<string>, stillOwed: R
 }
 
 export function auditExportReach(root: string, options: AuditOptions = {}): ReachVerdict {
-  const baseline = options.baseline ?? KNOWN_UNREACHED_EXPORTS;
-  const checkStale = options.baseline !== undefined || resolve(root) === REPO_ROOT;
+  const owners = options.owners ?? (options.baseline === undefined ? KNOWN_UNREACHED_EXPORTS : undefined);
+  const baseline: ReadonlySet<string> = options.baseline ?? new Set((owners ?? KNOWN_UNREACHED_EXPORTS).keys());
+  const checkStale = options.baseline !== undefined || options.owners !== undefined || resolve(root) === REPO_ROOT;
   const resolveSpec = makeResolver(root);
   const importers = importerFiles(root);
 
@@ -431,6 +390,7 @@ export function auditExportReach(root: string, options: AuditOptions = {}): Reac
   }
 
   if (checkStale) reds.push(...staleBaselineEntries(baseline, stillOwed));
+  if (owners !== undefined) reds.push(...unownedBaselineEntries(owners));
 
   return {
     reds,

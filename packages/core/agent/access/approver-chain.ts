@@ -48,11 +48,11 @@ export interface ApprovalChainRequest {
   readonly beneficiaryClicker?: boolean;
 }
 
-export function chainTaintSignal(): boolean {
+function chainTaintSignal(): boolean {
   return untrustedIngestedThisTurn();
 }
 
-export function chainTaintKinds(): readonly string[] {
+function chainTaintKinds(): readonly string[] {
   return taintKindsThisTurn();
 }
 

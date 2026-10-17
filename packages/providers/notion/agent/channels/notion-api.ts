@@ -12,7 +12,7 @@ import {
 import { NOTION_CHANNEL_CREDENTIAL, NOTION_PROVIDER } from "./notion-credentials.js";
 import type { NotionParentLink } from "./notion-ancestry-trust.js";
 
-export const NOTION_API_BASE = "https://api.notion.com";
+const NOTION_API_BASE = "https://api.notion.com";
 const NOTION_API_VERSION = "2022-06-28";
 
 const NOTION_FILE_UPLOAD_VERSION = "2026-03-11";
@@ -264,13 +264,13 @@ export interface NotionBlockParent {
   readonly parent?: { readonly type?: string; readonly page_id?: string; readonly block_id?: string };
 }
 
-export async function retrieveBlock(blockId: string, opts: NotionCallOpts): Promise<NotionBlockParent> {
+async function retrieveBlock(blockId: string, opts: NotionCallOpts): Promise<NotionBlockParent> {
   const res = await notionFetch(`${NOTION_API_BASE}/v1/blocks/${encodeURIComponent(blockId)}`, { method: "GET", headers: notionHeaders(opts) }, opts);
   if (!res.ok) throw new Error(`retrieveBlock ${blockId} failed: ${res.status} ${await safeText(res)}`);
   return (await res.json()) as NotionBlockParent;
 }
 
-export const BLOCK_PARENT_MAX_HOPS = 5;
+const BLOCK_PARENT_MAX_HOPS = 5;
 export async function resolveBlockOwningPage(blockId: string, opts: NotionCallOpts): Promise<string | undefined> {
   let id = blockId;
   for (let hop = 0; hop < BLOCK_PARENT_MAX_HOPS; hop++) {
@@ -302,7 +302,7 @@ export interface NotionPageParent {
   };
 }
 
-export async function retrievePage(pageId: string, opts: NotionCallOpts): Promise<NotionPageParent> {
+async function retrievePage(pageId: string, opts: NotionCallOpts): Promise<NotionPageParent> {
   const res = await notionFetch(`${NOTION_API_BASE}/v1/pages/${encodeURIComponent(pageId)}`, { method: "GET", headers: notionHeaders(opts) }, opts);
   if (!res.ok) throw new Error(`retrievePage ${pageId} failed: ${res.status} ${await safeText(res)}`);
   return (await res.json()) as NotionPageParent;

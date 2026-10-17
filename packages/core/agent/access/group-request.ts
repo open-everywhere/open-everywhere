@@ -51,7 +51,7 @@ export async function withLinkSetGroups(
   return out;
 }
 
-export async function buildResolveRequestWithGroups(ctx: BindableContext): Promise<ResolveRequest> {
+async function buildResolveRequestWithGroups(ctx: BindableContext): Promise<ResolveRequest> {
   return withLinkSetGroups(buildResolveRequest(ctx), resolvePartition(ctx).org);
 }
 

@@ -13,7 +13,7 @@ export type OpKind =
   | "stale";
 
 export const SAFE_KINDS: readonly OpKind[] = ["dedup", "link-repair", "salience-reorder"];
-export const DESTRUCTIVE_KINDS: readonly OpKind[] = ["consolidate", "contradiction", "supersede", "stale"];
+const DESTRUCTIVE_KINDS: readonly OpKind[] = ["consolidate", "contradiction", "supersede", "stale"];
 
 export function isSafe(kind: OpKind): boolean {
   return (SAFE_KINDS as readonly string[]).includes(kind);

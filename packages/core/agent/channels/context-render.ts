@@ -6,7 +6,7 @@ import type { AuthorTrustQuery } from "../identity/author-trust.js";
 import { redactMachineLinkCodes } from "../identity/link-challenge.js";
 
 export const MAX_MESSAGES = 10;
-export const MAX_CHARS = 12_000;
+const MAX_CHARS = 12_000;
 
 export const WAKE_BACKSCROLL_MAX = 10;
 

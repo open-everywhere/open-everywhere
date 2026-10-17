@@ -109,7 +109,6 @@ import { slackSpendGate, type SpendGateDecision, type SpendGateDoor } from "./sl
 import { slackTenantAdmission } from "./slack-tenant-fence.js";
 import { holdRouteWork } from "./slack-route-hold.js";
 import { fetchWakeBackscrollLines, fetchWakeEnvelopeBackscroll, RAW_FETCH_REACHBACK_HOURS, WAKE_BACKSCROLL_MAX, type WakeBackscrollLines } from "./slack-wake-backscroll.js";
-export { PREFER_NO_REPLY_TOOL };
 import { registerSlackAttachment } from "./slack-attachments.js";
 import {
   nameDropPattern,
@@ -613,7 +612,7 @@ function seatWakeAddressing(opts: SlackWakeOpts): "direct-mention" | "name-drop"
   return opts.nameDrop === true ? "name-drop" : "channel-watch";
 }
 
-export function slackDmWake(ev: ParsedMessageEvent, opts: SlackWakeOpts): NormalizedWake {
+function slackDmWake(ev: ParsedMessageEvent, opts: SlackWakeOpts): NormalizedWake {
   return slackJudgedWake(ev, "direct-mention", opts, "dm");
 }
 
@@ -774,7 +773,7 @@ async function appendRouteAudit(surfaceKey: string, action: string, detail: Reco
   }
 }
 
-export async function slackWakeSpendGate(ev: ParsedMessageEvent, p: Partition, threadRootTs: string): Promise<SpendGateDecision> {
+async function slackWakeSpendGate(ev: ParsedMessageEvent, p: Partition, threadRootTs: string): Promise<SpendGateDecision> {
   return slackSpendGate({
     bindable: bindableFor(ev),
     mode: slackMode(ev.channelType, ev.channelId),
@@ -1007,8 +1006,6 @@ function authForEvent(ev: ParsedMessageEvent, facts?: ChannelFacts): OpenEverywh
   });
 }
 
-export const _engagementWakeMode = (ev: ParsedMessageEvent) => slackMode(ev.channelType, ev.channelId);
-
 export interface WakeTrigger {
   readonly id: string;
   readonly pattern: RegExp;
@@ -1051,7 +1048,7 @@ export function shouldNameDropWake(input: NameDropInput): ReplyDecision {
   return { deliver: true, reason: "name-dropped in an enabled internal channel — judged wake" };
 }
 
-export function nameDropAbstained(input: NameDropInput): boolean {
+function nameDropAbstained(input: NameDropInput): boolean {
   if (input.textMatchesName) return false;
   return shouldNameDropWake({ ...input, textMatchesName: true }).deliver;
 }
@@ -1289,10 +1286,6 @@ export function botDisplayName(): Promise<string | undefined> {
   return botDisplayNamePromise;
 }
 
-export function _resetBotDisplayName(): void {
-  botDisplayNamePromise = undefined;
-}
-
 const channelTrustCache = new Map<
   string,
   { internal: boolean; meta?: ChannelJoinMeta; canRead: boolean; extShared?: boolean; trustChecked?: boolean; at: number }
@@ -1507,7 +1500,7 @@ function externalPolicyDropReason(verdict: SlackExternalVerdict): string {
   return `externalPolicy verdict "${verdict}" — the wake is suppressed`;
 }
 
-export async function withholdNameDropContext(
+async function withholdNameDropContext(
   nw: NormalizedWake,
   policy: ExternalPolicy,
   teamId: string | undefined,

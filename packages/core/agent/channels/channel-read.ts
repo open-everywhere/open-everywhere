@@ -23,7 +23,6 @@ import { ageAtRead } from "../access/dated-read.js";
 import { redactMachineLinkCodes } from "../identity/link-challenge.js";
 import { resolveFriendlyIds } from "./friendly-outbound.js";
 import { rawIdLeaks, type FriendlyName } from "./friendly-ids.js";
-export { ChannelScopeError };
 
 export interface RenderedLine {
   readonly author: string;

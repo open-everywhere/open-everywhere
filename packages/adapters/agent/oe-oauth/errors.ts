@@ -1,4 +1,4 @@
-export function subjectLabel(subject: { readonly type: "user"; readonly id: string } | { readonly type: "app" }): string {
+function subjectLabel(subject: { readonly type: "user"; readonly id: string } | { readonly type: "app" }): string {
   return subject.type === "app" ? "app" : `user:${subject.id}`;
 }
 

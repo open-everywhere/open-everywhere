@@ -97,7 +97,7 @@ function nonMemberWakeForAuthority(auth: MemberPlaneAuthLike | undefined): boole
   return delegatedNonMemberWakeThisTurn(undefined) ?? nonMemberWakeFromAuth(auth, OE_CHAT_NONMEMBER_ATTR);
 }
 
-export function appStaticToken(opts: {
+function appStaticToken(opts: {
   readonly connector: string;
   readonly secretRef: string;
   readonly broker: string;
@@ -111,7 +111,7 @@ export function appStaticToken(opts: {
   });
 }
 
-export function appConnectToken(opts: {
+function appConnectToken(opts: {
   readonly connector: string;
   readonly vercelConnector: string;
 }): ConnectionAuthResolver {
@@ -933,7 +933,7 @@ export function withUnattendedConnectorFence(
   };
 }
 
-export function userInteractiveOAuth<Resume extends JsonValue = JsonValue>(opts: {
+function userInteractiveOAuth<Resume extends JsonValue = JsonValue>(opts: {
   readonly connector: string;
   readonly getToken: InteractiveAuthorizationDefinition<Resume>["getToken"];
   readonly startAuthorization: InteractiveAuthorizationDefinition<Resume>["startAuthorization"];

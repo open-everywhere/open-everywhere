@@ -744,7 +744,7 @@ export function checkApprovalSites(
   return problems;
 }
 
-export const POST_TURN_WRITE_PRIMITIVES: readonly string[] = [
+const POST_TURN_WRITE_PRIMITIVES: readonly string[] = [
   "addRoutine",
   "updateRoutine",
   "removeRoutine",

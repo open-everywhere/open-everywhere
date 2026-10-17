@@ -100,7 +100,6 @@ import {
   stripUnfencedSlackAttachments,
   slackEnterpriseIdFromEnvelope,
   slackForm,
-  _resetAuthorMemberCache,
 } from "./slack-events.js";
 import { buildSlackAuth, withForwardedSlackEnvelope, type ForwardedSlackEnvelope } from "./slack-identity.js";
 import { holdRouteWork, routeHoldQuiesced, withSlackRouteHold } from "./slack-route-hold.js";
@@ -378,10 +377,6 @@ export function resolveBotIdentity(): Promise<{ readonly userId?: string; readon
   return botIdentityPromise;
 }
 
-export function _resetBotIdentity(): void {
-  botIdentityPromise = undefined;
-}
-
 export interface FrontOptions {
   readonly signingSecret?: string;
   readonly dedupe?: EventDedupe;
@@ -478,7 +473,7 @@ const logOutcome =
     );
   };
 
-export async function deliverWithStrandRetry<T>(deliver: () => Promise<T>): Promise<T> {
+async function deliverWithStrandRetry<T>(deliver: () => Promise<T>): Promise<T> {
   try {
     return await deliver();
   } catch (err) {
@@ -569,10 +564,6 @@ export function withSingleWindowDiversion(
 async function liveDmPartnerTrust(userId: string, teamId: string | undefined): Promise<"internal" | "external" | undefined> {
   const member = await slackAuthorIsMember(userId, teamId);
   return member === undefined ? undefined : member ? "internal" : "external";
-}
-
-export function _resetDmTrustCache(): void {
-  _resetAuthorMemberCache();
 }
 
 export function mentionSiblingSuppressed(input: {

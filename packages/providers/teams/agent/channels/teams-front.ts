@@ -291,7 +291,7 @@ export async function liveTeamsExternalGate(a: TeamsMessageActivity, probeFor?: 
   return true;
 }
 
-export function liveTeamsFrontPlan(a: TeamsMessageActivity): TeamsFrontPlan | null {
+function liveTeamsFrontPlan(a: TeamsMessageActivity): TeamsFrontPlan | null {
   try {
     const auth = authForActivity(a);
     const partition = resolvePartition({ channel: { kind: "teams" }, session: { auth: { current: auth } } });

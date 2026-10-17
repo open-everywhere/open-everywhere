@@ -17,7 +17,7 @@ export function defineModelPolicy(policy: ModelPolicy): ModelPolicy {
   return policy;
 }
 
-export const REASONING_ORDER: readonly ModelReasoning[] = [
+const REASONING_ORDER: readonly ModelReasoning[] = [
   "provider-default",
   "none",
   "minimal",

@@ -5,7 +5,7 @@ import {
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { githubConversationKey } from "./github-identity.js";
 
-export const GITHUB_REACTION_POLL_HOURLY_BUDGET = 60;
+const GITHUB_REACTION_POLL_HOURLY_BUDGET = 60;
 
 const GITHUB_POLL_BUDGET_TTL_MS = 6 * 60 * 60 * 1000;
 

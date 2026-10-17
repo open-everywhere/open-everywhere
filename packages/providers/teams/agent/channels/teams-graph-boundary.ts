@@ -9,7 +9,7 @@ export {
   type TeamsReadBoundary,
 } from "./teams-graph-roles.js";
 
-export const TEAMS_READ_BOUNDARY_SOURCES: readonly string[] = [
+const TEAMS_READ_BOUNDARY_SOURCES: readonly string[] = [
   "https://learn.microsoft.com/en-us/graph/api/channel-list-messages",
   "https://learn.microsoft.com/en-us/graph/api/chatmessage-list-replies",
   "https://learn.microsoft.com/en-us/microsoftteams/platform/graph-api/rsc/resource-specific-consent",

@@ -68,10 +68,6 @@ function liveWakeBotIdentity(): Promise<WakeBotIdentity> {
   return wakeBotIdentityPromise;
 }
 
-export function _resetWakeBotIdentity(): void {
-  wakeBotIdentityPromise = undefined;
-}
-
 const liveDeps: WakeBackscrollDeps = { request: liveRequest, identity: liveWakeBotIdentity };
 
 export interface WakeBackscrollLines {

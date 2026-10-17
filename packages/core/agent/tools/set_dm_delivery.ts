@@ -6,7 +6,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { personAddress, readDmAudience, resumeDmAudience, stopDmAudience } from "../channels/dm-audience.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
-export function isOneToOneDm(ctx: BindableContext): boolean {
+function isOneToOneDm(ctx: BindableContext): boolean {
   try {
     return bindFrom(ctx).mode === "dm";
   } catch {
@@ -42,6 +42,7 @@ const setDmDeliveryEntry = defineTool({
         "set_dm_delivery: this only works in a one-to-one direct message, so nothing was changed — reply that you could NOT change it here, and ask them to tell you in their own DM with you.",
       );
     }
+    // principal-gate: presence — a HUMAN must be here, acting. The acting principal, never an
     const actor = actingPrincipalIdOf(c);
     if (!actor) {
       throw new Error(

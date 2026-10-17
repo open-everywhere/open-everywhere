@@ -1,6 +1,6 @@
 import type { AuditEntry } from "../../operational/store.js";
 
-export const FAILURE_ACTIONS = [
+const FAILURE_ACTIONS = [
   "surface.quiet_fail",
   "turn.bare_stop",
   "webhook.rejected",

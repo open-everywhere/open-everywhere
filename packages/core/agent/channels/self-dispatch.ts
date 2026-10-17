@@ -22,9 +22,9 @@ export const SELF_DISPATCH_MAX_BODY_BYTES = 512 * 1024;
 
 const SELF_DISPATCH_MAX_SKEW_MS = 5 * 60 * 1000;
 
-export const SELF_DISPATCH_TIMEOUT_MS = 15_000;
+const SELF_DISPATCH_TIMEOUT_MS = 15_000;
 
-export const SELF_DISPATCH_ATTEMPTS = 2;
+const SELF_DISPATCH_ATTEMPTS = 2;
 
 export interface UnifiedDispatchPayload {
   readonly message: string;

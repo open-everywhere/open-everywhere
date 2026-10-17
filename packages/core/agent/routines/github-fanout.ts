@@ -8,7 +8,7 @@ const GITHUB_EVENT_HEADER = "x-github-event";
 
 export type GitHubFanOutDeps = TriggerAdmitDeps;
 
-export { DELIVERY_DEDUPE_TTL_MS, deliveryDedupeKey } from "./ingress.js";
+export { deliveryDedupeKey } from "./ingress.js";
 
 export function fanOutGitHubDelivery(
   body: string,

@@ -2,7 +2,7 @@ import { getOperationalStore } from "../operational/provider.js";
 import { updateRoutine } from "./store.js";
 import type { Routine } from "./routine.js";
 
-export const MATCH_STAMP_WINDOW_MS = 60_000;
+const MATCH_STAMP_WINDOW_MS = 60_000;
 
 function matchStampThrottleKey(routineId: string): string {
   return `routinematch:${routineId}`;

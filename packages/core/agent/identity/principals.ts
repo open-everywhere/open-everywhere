@@ -50,7 +50,7 @@ function compareAccounts(a: PrincipalAccountRef, b: PrincipalAccountRef): number
   return a.id === b.id ? 0 : a.id < b.id ? -1 : 1;
 }
 
-export function accountRefKey(a: PrincipalAccountRef): string {
+function accountRefKey(a: PrincipalAccountRef): string {
   return JSON.stringify([a.platform, a.tenant ?? "", a.id]);
 }
 

@@ -57,7 +57,7 @@ interface NeonConfig {
   webSocketConstructor?: unknown;
 }
 
-export function configureLocalWsProxy(neonConfig: NeonConfig): void {
+function configureLocalWsProxy(neonConfig: NeonConfig): void {
   const proxy = process.env.OE_NEON_WS_PROXY?.trim();
   if (!proxy) return;
   neonConfig.wsProxy = (host, port) => `${proxy}/v1?address=${host}:${port}`;

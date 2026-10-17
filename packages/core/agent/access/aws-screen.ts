@@ -22,7 +22,7 @@ const CLI_SERVICE_TO_IAM_PREFIX: Readonly<Record<string, string>> = {
   s3api: "s3",
 };
 
-export const AWS_S3_HIGH_LEVEL_FANOUT: Readonly<Record<string, readonly string[]>> = {
+const AWS_S3_HIGH_LEVEL_FANOUT: Readonly<Record<string, readonly string[]>> = {
   ls: ["s3:ListBucket", "s3:ListAllMyBuckets"],
   cp: ["s3:GetObject", "s3:PutObject", "s3:ListBucket"],
   mv: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"],

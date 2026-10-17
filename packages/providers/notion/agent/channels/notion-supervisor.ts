@@ -244,7 +244,7 @@ export function notionIngestedMessages(d: {
   return [grade(d.trigger), ...d.threadComments.map(grade)];
 }
 
-export function notionExternalAuthorDecision(d: {
+function notionExternalAuthorDecision(d: {
   readonly trigger: NotionWakeMessage;
   readonly threadComments: readonly NotionWakeMessage[];
   readonly ingested: readonly IngestedChatMessage[];

@@ -13,7 +13,7 @@ import { BINDING_TRUSTED_PLATFORMS } from "../memory/domain.js";
 import { humanAccountLabel } from "../identity/account-display-name.js";
 import { isWakeEnvelopeShaped, triggerMessageBody, type WakeTrust } from "../channels/wake-envelope.js";
 
-export function claimBodyOf(text: string | undefined): string | undefined {
+function claimBodyOf(text: string | undefined): string | undefined {
   if (text === undefined) return undefined;
   if (!isWakeEnvelopeShaped(text)) return text;
   return triggerMessageBody(text);

@@ -14,7 +14,6 @@ import { makePkce, makeState } from "../oe-oauth/pkce.js";
 
 export type FetchLike = typeof fetch;
 
-export { OE_AWS_SSO_CALLBACK_PATH };
 const DEFAULT_SSO_SCOPES = ["sso:account:access", "openid"] as const;
 const DEFAULT_PENDING_TTL_MS = 15 * 60 * 1000;
 const DEFAULT_EXPIRY_SKEW_MS = 60 * 1000;

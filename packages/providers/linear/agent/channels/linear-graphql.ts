@@ -1,7 +1,7 @@
 import { callLinearGraphQL, createLinearAgentActivity, type LinearApiOptions, type LinearFetch } from "eve/channels/linear";
 import { friendlyOutboundText, withRetryAfter, type RetryPolicy } from "@open-everywhere/core/agent/adapter-api.js";
 
-export const LINEAR_SURFACE = "linear";
+const LINEAR_SURFACE = "linear";
 
 export const LINEAR_ACTIVITY_OPERATION = "AgentActivityCreate";
 

@@ -198,7 +198,7 @@ async function withConfirmTimeout(
 
 const UNIFIED_TOKEN_PREFIX = "unified:";
 
-export const RETIREMENT_CONFIRM_TIMEOUT_MS = 5_000;
+const RETIREMENT_CONFIRM_TIMEOUT_MS = 5_000;
 
 async function registryState(
   store: Pick<OperationalStore, "getChannelSession">,

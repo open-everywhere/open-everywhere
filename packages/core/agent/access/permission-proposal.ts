@@ -9,7 +9,7 @@ import {
   type PermissionEvidence,
 } from "./permission-evidence.js";
 
-export const PERMISSION_CONFIG_FILE = "agent/access/bundles.ts";
+const PERMISSION_CONFIG_FILE = "agent/access/bundles.ts";
 
 export interface PermissionDiff {
   readonly file: string;

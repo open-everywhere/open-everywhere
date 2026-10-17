@@ -62,7 +62,7 @@ import {
   type WindowGrain,
 } from "../identity/binding.js";
 
-export function renderRecoveryReadDoctrine(lean: boolean): string {
+function renderRecoveryReadDoctrine(lean: boolean): string {
   if (!lean) return "";
   return [
     "## When somebody refers to something you cannot see",

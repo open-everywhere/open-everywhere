@@ -74,7 +74,7 @@ function reduceRequest(state: StallState, turnId: string | null, callId: string,
   return { ...s, pending };
 }
 
-export function reduceResult(state: StallState, turnId: string | null, callId: string, toolName: string, output: unknown, threshold: number): StallState {
+function reduceResult(state: StallState, turnId: string | null, callId: string, toolName: string, output: unknown, threshold: number): StallState {
   const s = reduceTurn(state, turnId);
   if (!isGuardedTool(toolName)) return s;
   const inputKey = s.pending[callId]?.inputKey ?? inputKeyOf(undefined);

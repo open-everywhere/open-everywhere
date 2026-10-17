@@ -163,7 +163,7 @@ export default defineAgent({
 `;
 }
 
-export function renderGeneratedSkillModule(
+function renderGeneratedSkillModule(
   pluginName: string,
   skillContent: Record<string, SkillPackageDefinition>,
   registryEntry: PluginManifestEntry,

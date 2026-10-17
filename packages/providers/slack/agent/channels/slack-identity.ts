@@ -82,7 +82,7 @@ function enterpriseIdOfUser(u: Record<string, unknown>): string | undefined {
   return typeof id === "string" && id.length > 0 ? id : undefined;
 }
 
-export function slackWorkspaceVouched(teamId: string | undefined, enterpriseId: string | undefined): boolean {
+function slackWorkspaceVouched(teamId: string | undefined, enterpriseId: string | undefined): boolean {
   const team = surfaceKeySegment(teamId);
   if (team.length === 0) return false;
   const enterprise = surfaceKeySegment(enterpriseId);
