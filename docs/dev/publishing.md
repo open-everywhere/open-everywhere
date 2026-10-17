@@ -350,11 +350,23 @@ where one of these names has no step (OPE-2533):
 | A table in `OPERATIONAL_TABLES` (`agent/operational/store.ts`) | The owner boot and `runtimeRoleGrantsSql`, in the same line |
 | A roster name in the template's `roster.lock.json` | `oe build --accept` |
 | A Slack scope or bot event in the app manifest | A re-applied Slack manifest |
+| A route that a package's channel mounts, named `METHOD /path` (`POST /a2a/jsonrpc`) | "Update an edge allowlist …" |
+| A schedule that a package contributes, named by its short name (`cover-recap`) | "Update a cron budget …" |
+
+An env name of the deployment contract (`DEPLOYMENT_CONTRACT` in `agent/ops/contract.ts`) has a
+different step (OPE-2541). The entry's `env.added` holds it, or a manual step names it in backticks.
+`oe upgrade` tells every operator to set each `env.added` name before the next deploy. So put a name
+there only when every host needs it. A name for one route, or one of two alternatives, goes in a
+manual step that says when to set it. A breaking line or the summary alone does not count. An env
+name outside the contract (a surface's own bundle names, a tuning value) has no check.
+
+The route and schedule lists come from every package's `agent/contributions.ts`, not only the
+template's lock. An app that selects a provider the template leaves out mounts its routes too. The
+test reads each route off the channel's own `defineChannel` object, as the deploy census does.
 
 `scripts/upgrade-surface-baseline.json` holds the names that shipped by 0.7.0 with no such entry. It
 is shrink-only: a retired name leaves it. The test pins each list's size, so a new name cannot enter
-it unseen. An env name, a route or a schedule has no such check yet, so the author writes those steps
-by hand, as 0.7.0's entry does.
+it unseen.
 
 ## Versions track milestones, not merges
 
