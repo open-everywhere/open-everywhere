@@ -2953,6 +2953,20 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       }));
     },
 
+    async listPersonConnectorCalls(org, principalId, surfacePrefix, since, limit) {
+      const { rows } = await client.query(
+        `SELECT ts, connector, tool FROM (
+             SELECT seq, ts, connector, tool FROM tool_usage
+             WHERE org_id = $1 AND principal_id = $2 AND event = 'call' AND outcome = 'ok' AND connector <> ''
+               AND substr(surface_key, 1, length($3::text)) = $3::text AND ts >= $4
+               AND session_id NOT IN (SELECT session_id FROM usage_events WHERE org_id = $1 AND kind = 'routine')
+             ORDER BY seq DESC LIMIT $5
+           ) recent ORDER BY seq ASC`,
+        [org, principalId, surfacePrefix, since, Math.max(0, Math.floor(limit))],
+      );
+      return (rows as { ts: string; connector: string; tool: string }[]).map((r) => ({ ts: String(r.ts), connector: r.connector, tool: r.tool }));
+    },
+
     async appendToolUsage(entry: ToolUsageEntry) {
       await client.query(
         `INSERT INTO tool_usage (org_id, ts, surface_key, surface_mode, principal_id, session_id, event, tool, connector, outcome, model, input_tokens, output_tokens, cache_read_tokens)

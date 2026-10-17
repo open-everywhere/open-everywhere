@@ -10,6 +10,7 @@ import { placeWords } from "../channels/friendly-ids.js";
 import { ownerLiveGrants } from "../access/credential-grant-revoke.js";
 import { readPersonalWatch } from "../personal-watch/state.js";
 import { personalWatchArmed, personalWatchDecl } from "../personal-watch/watch.js";
+import { discoveryOn } from "../personal-watch/discovery.js";
 import type { WatchDial } from "../personal-watch/dial.js";
 import { waitingOnPerson, type WaitingDeps } from "./waiting-on-me.js";
 
@@ -131,7 +132,7 @@ async function watchItem(person: DoingPerson): Promise<DoingItem | undefined> {
   const paused = state.dial === "none";
   const text = paused
     ? "My watch over your calendar is off. Turn it back on with /oe watch less."
-    : `I watch ${watchSourceWords()}, and message you here when something needs you. Setting: ${DIAL_SHORT[state.dial]}.${armed ? "" : " No calendar is connected yet, so I do not look."}`;
+    : `I watch ${watchSourceWords()}, and message you here when something needs you. Setting: ${DIAL_SHORT[state.dial]}.${armed ? "" : discoveryOn() ? " No calendar is connected yet. I still look for work you repeat each week." : " No calendar is connected yet, so I do not look."}`;
   return { kind: "watch", label: "Watch", text, state: paused ? "paused" : "on", ...(paused ? { actions: [] } : { ref: doingRef("watch", DOING_WATCH_KEY), actions: ["pause"] as const }) };
 }
 

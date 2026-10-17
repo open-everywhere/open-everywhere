@@ -788,6 +788,24 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
     notExercised: "S-WATCH proves only that a forged answer writes NO row; a real answer needs a nudge, which needs a calendar fixture no board carries. `test:personal-watch` drives the row offline.",
   },
   {
+    action: "personal_watch.proposal",
+    fields: ["fingerprint", "connector", "tool", "weekday", "hour", "weeks", "dial"],
+    proves: "the watch posted a routine proposal card into the person's own DM, for which repeated connector op and weekday, under which dial",
+    notExercised: "a live proposal needs three weeks of a person's real tool-call history, which no board carries. `test:workflow-discovery` drives the real tick and the tier-2 spec drives the compiled schedule.",
+  },
+  {
+    action: "personal_watch.proposal.accepted",
+    fields: ["fingerprint"],
+    proves: "the person pressed Set it up on a routine proposal, and the routine was armed through `routine.create` (its own row sits beside this one)",
+    notExercised: "the same gap as `personal_watch.proposal`. `test:workflow-discovery` presses the real card kind.",
+  },
+  {
+    action: "personal_watch.proposal.declined",
+    fields: ["fingerprint"],
+    proves: "the person pressed No thanks on a routine proposal, and the watch recorded it so the idea is never offered again",
+    notExercised: "the same gap as `personal_watch.proposal`. `test:workflow-discovery` presses the real card kind.",
+  },
+  {
     action: "cover.set",
     fields: ["on", "until", "questions", "via"],
     proves: "a person turned their out-of-office cover on (with its end date) or off, and through which door (`command`, or `end-date` when the date passed)",

@@ -12,11 +12,11 @@ points INTO those; it does not replace them.
 
 ## The count
 
-**717 rows: 714 documented, 3 RETIRED, 0 UNDOCUMENTED.** Those three counts partition the rows by the
+**720 rows: 717 documented, 3 RETIRED, 0 UNDOCUMENTED.** Those three counts partition the rows by the
 value in the **`Documented by`** column, which is the only thing counted here: `RETIRED — …` marks a
 row whose sole record is the commit that removed its write site, and a row that names a manual page
 counts as documented whatever else is true of it. Section membership is a different question and
-gives a different number: 709 rows are live behaviours and the other five are the retired action
+gives a different number: 712 rows are live behaviours and the other five are the retired action
 names of § 15 — and two of those five are documented by a manual page, so they count under
 `documented` rather than under `RETIRED`. The `Tested by` column declares only an exemption; the coverage answer comes from `npm run coverage-board` (see [the coverage matrix](../dev/coverage-matrix.md)).
 
@@ -452,10 +452,13 @@ One row per distinct `action` string the code writes. The Id is that string. `<p
 | `person.opt_out.cleared` | `packages/core/agent/identity/person-opt-out.ts:45` | core/identity | A person lifts their opt-out of agent actions on their content. | `docs/capabilities/memory.md#opting-out-of-agent-actions-on-your-content` (+1) | ? |
 | `person.opt_out.refused` | `packages/core/agent/identity/person-opt-out.ts:68` | core/identity | The host refuses an agent act on an opted-out person's content: a memory write, or somebody else's message shortcut. | `docs/capabilities/memory.md#opting-out-of-agent-actions-on-your-content` (+1) | ? |
 | `person.opt_out.set` | `packages/core/agent/identity/person-opt-out.ts:30` | core/identity | A person opts out of agent actions on their own content. | `docs/capabilities/memory.md#opting-out-of-agent-actions-on-your-content` (+1) | ? |
-| `personal_watch.dial.set` | `packages/core/agent/personal-watch/state.ts:234` | core/personal-watch | A person sets their chief-of-staff watch to more, less or none, with `/oe watch` or the Home tab. | `docs/capabilities/proactivity-and-routines.md#the-chief-of-staff-watch` (+1) | ? |
-| `personal_watch.nudge` | `packages/core/agent/personal-watch/watch.ts:371` | core/personal-watch | The watch starts a direct message to the person on its own, with nobody asking. | `docs/capabilities/proactivity-and-routines.md#the-chief-of-staff-watch` (+1) | ? |
-| `personal_watch.response` | `packages/core/agent/personal-watch/state.ts:285` | core/personal-watch | A person marks one nudge useful or not useful, and the dose moves. | `docs/capabilities/proactivity-and-routines.md#the-chief-of-staff-watch` (+1) | ? |
-| `personal_watch.silence` | `packages/core/agent/personal-watch/watch.ts:191` | core/personal-watch | The watch holds a finding back, or cannot look, and files the closed reason. | `docs/capabilities/proactivity-and-routines.md#the-chief-of-staff-watch` (+1) | ? |
+| `personal_watch.dial.set` | `packages/core/agent/personal-watch/state.ts:199` | core/personal-watch | A person sets their chief-of-staff watch to more, less or none, with `/oe watch` or the Home tab. | `docs/capabilities/proactivity-and-routines.md#the-chief-of-staff-watch` (+1) | ? |
+| `personal_watch.nudge` | `packages/core/agent/personal-watch/watch.ts:278` | core/personal-watch | The watch starts a direct message to the person on its own, with nobody asking. | `docs/capabilities/proactivity-and-routines.md#the-chief-of-staff-watch` (+1) | ? |
+| `personal_watch.proposal` | `packages/core/agent/personal-watch/discovery.ts:318` | core/personal-watch | Workflow discovery posts a routine proposal card into the person's own DM. | `docs/capabilities/proactivity-and-routines.md#workflow-discovery-a-routine-for-work-you-repeat` (+1) | ? |
+| `personal_watch.proposal.accepted` | `packages/core/agent/approvals/routine-suggest.ts:59` | core/personal-watch | The person presses Set it up, and the routine is armed through `routine.create`. | `docs/capabilities/proactivity-and-routines.md#workflow-discovery-a-routine-for-work-you-repeat` (+1) | ? |
+| `personal_watch.proposal.declined` | `packages/core/agent/approvals/routine-suggest.ts:65` | core/personal-watch | The person presses No thanks, and the idea is never offered again. | `docs/capabilities/proactivity-and-routines.md#workflow-discovery-a-routine-for-work-you-repeat` (+1) | ? |
+| `personal_watch.response` | `packages/core/agent/personal-watch/state.ts:240` | core/personal-watch | A person marks one nudge useful or not useful, and the dose moves. | `docs/capabilities/proactivity-and-routines.md#the-chief-of-staff-watch` (+1) | ? |
+| `personal_watch.silence` | `packages/core/agent/personal-watch/watch.ts:133` | core/personal-watch | The watch holds a finding back, or cannot look, and files the closed reason. | `docs/capabilities/proactivity-and-routines.md#the-chief-of-staff-watch` (+1) | ? |
 | `pr.open` | `packages/core/agent/approvals/pr-open.ts:69` | core/approvals | An approved pull-request action opens a pull request. | `docs/security/control-plane.md#what-the-mcp-exposes` (+10) | ? |
 | `pr.update` | `packages/core/agent/approvals/pr-open.ts:69` | core/approvals | An approved pull-request action updates an existing pull request. | `docs/security/control-plane.md#the-update-siblings-prupdate-and-skillupdate` | ? |
 | `provider.unselected_wake_refused` | `packages/core/agent/channels/unified.ts:658` | core/channels | A wake for a provider bundle this deployment does not carry is refused. | `docs/extending/provider-bundles.md#selecting-which-bundles-a-deployment-carries` | ? |

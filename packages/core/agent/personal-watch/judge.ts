@@ -10,7 +10,8 @@ export type WatchSilenceReason =
   | "read-failed"
   | "unreadable"
   | "dm-stopped"
-  | "delivery-refused";
+  | "delivery-refused"
+  | "proposal-gap";
 
 export interface WatchFinding {
   readonly kind: string;

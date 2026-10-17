@@ -2,6 +2,7 @@ import { tryPrincipalKey } from "../identity/principal-key.js";
 import { DEFAULT_WATCH_DIAL, type WatchDial } from "../personal-watch/dial.js";
 import { enrollPersonalWatch, readPersonalWatch, recordPersonalWatchResponse, setPersonalWatchDial, type PersonalWatchWhere } from "../personal-watch/state.js";
 import { personalWatchArmed } from "../personal-watch/watch.js";
+import { discoveryOn } from "../personal-watch/discovery.js";
 import { registerHomeAction, registerHomeSection, type HomeBlock, type HomeItemAction, type HomeViewer } from "./home-view.js";
 
 export const WATCH_HOME_ACTIONS = {
@@ -48,7 +49,14 @@ async function watchBlocks(viewer: HomeViewer): Promise<readonly HomeBlock[]> {
     }
     return blocks;
   }
-  if (!personalWatchArmed()) blocks.push({ kind: "note", text: "This deployment has not connected a calendar for the watch yet, so I do not look. Your setting is kept for when it does." });
+  if (!personalWatchArmed()) {
+    blocks.push({
+      kind: "note",
+      text: discoveryOn()
+        ? "This deployment has not connected a calendar for the watch yet. I still look for work you repeat each week, and offer to make it a routine."
+        : "This deployment has not connected a calendar for the watch yet, so I do not look. Your setting is kept for when it does.",
+    });
+  }
   await enrollPersonalWatch(where.org, where.principalKey);
   const read = await readPersonalWatch(where.org, where.principalKey);
   if (!read.readable) {

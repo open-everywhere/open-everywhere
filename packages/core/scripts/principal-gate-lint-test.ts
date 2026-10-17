@@ -501,7 +501,11 @@ class Policies {
     at("schedules/routine-attention.ts")?.exempt === true && (at("schedules/routine-attention.ts")?.exemptReason ?? "").length >= 12,
     "real-r5: the routine check-in card's propose is exempt, and it states why",
   );
-  ok(attended.filter((a) => a.exempt).length === 5, "real-r5: exactly five exemptions exist — the non-tool checkpoint, the routine permission card, the routine check-in card, requestApproval's own default site, and the pass-through duplicate guard. A sixth is a decision, not a detail");
+  ok(
+    at("personal-watch/propose.ts")?.exempt === true && (at("personal-watch/propose.ts")?.exemptReason ?? "").length >= 12,
+    "real-r5: the workflow-discovery card's propose is exempt, and it states why",
+  );
+  ok(attended.filter((a) => a.exempt).length === 6, "real-r5: exactly six exemptions exist — the non-tool checkpoint, the routine permission card, the routine check-in card, the routine proposal card, requestApproval's own default site, and the pass-through duplicate guard. A seventh is a decision, not a detail");
   ok(at("access/approval-dedupe.ts")?.exempt === true && (at("access/approval-dedupe.ts")?.exemptReason ?? "").length >= 12, "real-r5: the pass-through duplicate guard is exempt, and it states why");
   const eveSites = attended.filter((a) => a.shape === "eve-approval");
   ok(eveSites.length >= 4, `real-r5E: the eve ApprovalPolicy inventory is non-empty (${eveSites.length}) — zero would mean the detector went blind, not that the tree stopped authoring policies`);
@@ -544,8 +548,9 @@ class Policies {
   const defects = checkApprovalAuthoritySites(sites);
   ok(defects.length === 0, `real-r6: every approvalPostDeps site carries proposal authority or states why it is headless (${defects.map((d) => `${d.file}:${d.line}`).join(", ")})`);
   ok(sites.filter((s) => !s.authorityExempt).length >= 20, `real-r6: model-turn approval inventory did not collapse (${sites.length})`);
-  ok(sites.filter((s) => s.authorityExempt).length === 4, "real-r6: exactly the two slash-command callers, the routine permission proposal and the routine check-in card are headless exemptions");
+  ok(sites.filter((s) => s.authorityExempt).length === 5, "real-r6: exactly the two slash-command callers, the routine permission proposal, the routine check-in card and the routine proposal card are headless exemptions");
   ok(sites.some((s) => s.authorityExempt && s.file.endsWith("schedules/routine-attention.ts")), "real-r6: …and the check-in card's site is one of them");
+  ok(sites.some((s) => s.authorityExempt && s.file.endsWith("personal-watch/propose.ts")), "real-r6: …and so is the proposal card's site");
 }
 
 {

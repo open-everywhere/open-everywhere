@@ -79,6 +79,7 @@ import "./a2a-delegate.js";
 import "./chat-dm.js";
 import "./session-checkpoint.js";
 import "./routine-attention.js";
+import "./routine-suggest.js";
 import { ROUTINE_PERMISSION_KIND, parseRoutinePermissionArgs, routineCardGenerationState } from "./routine-permission.js";
 import { ROUTINE_ATTENTION_KIND, type RoutineAttentionArgs } from "../routines/attention.js";
 import { getRoutine } from "../routines/store.js";

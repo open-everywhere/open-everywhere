@@ -522,6 +522,12 @@ export interface UsageSummaryRow {
   readonly sessions: number;
 }
 
+export interface PersonConnectorCallRow {
+  readonly ts: string;
+  readonly connector: string;
+  readonly tool: string;
+}
+
 export type ToolUsageEvent = "call" | "card";
 export type ToolUsageOutcome = "ok" | "error" | "rejected" | "";
 
@@ -1072,6 +1078,7 @@ export interface OperationalStore {
 
   appendUsageEvent(entry: UsageEventEntry): Promise<void>;
   appendToolUsage(entry: ToolUsageEntry): Promise<void>;
+  listPersonConnectorCalls(org: string, principalId: string, surfacePrefix: string, since: string, limit: number): Promise<PersonConnectorCallRow[]>;
   usageForSession(org: string, sessionId: string): Promise<UsageEventEntry[]>;
   usageSummary(org: string, filter?: UsageSummaryFilter): Promise<UsageSummaryRow[]>;
   pruneUsageEvents(org: string, olderThanTs: string): Promise<number>;

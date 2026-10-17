@@ -1459,6 +1459,7 @@ rule.
 | `routine.permission` | — *(no propose tool)* | member |
 | `routine.policy.add` | `add_routine_rule` | member |
 | `routine.policy.remove` | `remove_routine_rule` | member |
+| `routine.suggest` | — *(no propose tool)* | member |
 | `session.checkpoint` | — *(no propose tool)* | member |
 | `skill.create` | `create_skill` | member |
 | `skill.delete` | `delete_skill` | member |

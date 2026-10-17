@@ -10,6 +10,8 @@ import { WATCH_DIAL_POLICY, WATCH_URGENCIES, calibrationDue } from "./dial.js";
 import { judgeFinding, type WatchFinding, type WatchSilenceReason } from "./judge.js";
 import { parseWatchState, updatePersonalWatch, type PersonalWatchState } from "./state.js";
 import type { WatchDelivery, WatchDeliveryResult } from "./deliver.js";
+import { discoverForPerson, discoveryOn, repeatedWorkSummary, type ProposeRoutine } from "./discovery.js";
+import type { PersonConnectorCallRow } from "../operational/store.js";
 
 export type PersonalWatchDetectorName = "calendar-conflicts";
 
@@ -99,11 +101,14 @@ export interface PersonalWatchTickDeps {
   readonly collect?: typeof collectRoutineInputs;
   readonly dmStopped?: (org: string, principalKey: string) => Promise<boolean>;
   readonly budgetMs?: number;
+  readonly propose?: ProposeRoutine;
+  readonly readCalls?: (org: string, principalId: string, surfacePrefix: string, since: string, limit: number) => Promise<PersonConnectorCallRow[]>;
 }
 
 export interface PersonalWatchTickReport {
   readonly checked: number;
   readonly nudged: number;
+  readonly proposed: number;
   readonly silenced: number;
   readonly deferred: number;
 }
@@ -147,7 +152,7 @@ function nextCheckAfter(state: PersonalWatchState, now: Date): string | undefine
   return every === undefined ? undefined : new Date(now.getTime() + every * 60_000).toISOString();
 }
 
-export async function checkPerson(org: string, principalKey: string, state: PersonalWatchState, deps: PersonalWatchTickDeps, now: Date): Promise<CheckResult & { silencedRows: number }> {
+export async function checkPerson(org: string, principalKey: string, state: PersonalWatchState, deps: PersonalWatchTickDeps, now: Date): Promise<CheckResult & { silencedRows: number; proposed: boolean }> {
   const silences: Record<string, WatchSilenceReason> = {};
   const lost: string[] = [];
   let silencedRows = 0;
@@ -169,13 +174,16 @@ export async function checkPerson(org: string, principalKey: string, state: Pers
   };
 
   const sources = DECL.sources;
-  const collected = await (deps.collect ?? collectRoutineInputs)({
-    org,
-    routineId: `personal-watch:${principalKey}`,
-    names: sources.map((s) => s.collector),
-    heldKinds: sources.map((s) => connectorToolPermissionKind(resolveRoutineCollector(s.collector)?.tool ?? "")),
-    forPrincipal: principalKey,
-  });
+  const collected =
+    sources.length === 0
+      ? []
+      : await (deps.collect ?? collectRoutineInputs)({
+          org,
+          routineId: `personal-watch:${principalKey}`,
+          names: sources.map((s) => s.collector),
+          heldKinds: sources.map((s) => connectorToolPermissionKind(resolveRoutineCollector(s.collector)?.tool ?? "")),
+          forPrincipal: principalKey,
+        });
   const findings: WatchFinding[] = [];
   const cleared: string[] = [];
   for (const source of sources) {
@@ -277,7 +285,15 @@ export async function checkPerson(org: string, principalKey: string, state: Pers
       detail: { kind: f.kind, urgency: f.urgency, dial: live.dial, dampening: live.dampening, calibrationAsk, fingerprint: f.fingerprint },
     }).catch(() => undefined);
   }
-  return { nudged, silences, cleared: [...cleared, ...lost], silencedRows };
+  let proposed = false;
+  if (!nudged && deps.propose) {
+    const outcome = await discoverForPerson(org, principalKey, state, { propose: deps.propose, dmStopped: deps.dmStopped ?? liveDmStopped, ...(deps.readCalls ? { readCalls: deps.readCalls } : {}) }, now, (mutate) =>
+      updatePersonalWatch(org, principalKey, mutate, now.toISOString()),
+    );
+    proposed = outcome.proposed;
+    if (outcome.held) await silence(outcome.held.work.fingerprint, outcome.held.reason, { kind: "repeated-work", urgency: "soon", summary: repeatedWorkSummary(outcome.held.work) });
+  }
+  return { nudged, silences, cleared: [...cleared, ...lost], silencedRows, proposed };
 }
 
 export function applyCheck(current: PersonalWatchState, result: Pick<CheckResult, "silences" | "cleared">, now: Date): PersonalWatchState {
@@ -298,8 +314,8 @@ export function checkDue(state: PersonalWatchState, now: Date): boolean {
 }
 
 export async function personalWatchTick(deps: PersonalWatchTickDeps): Promise<PersonalWatchTickReport> {
-  const report = { checked: 0, nudged: 0, silenced: 0, deferred: 0 };
-  if (!personalWatchArmed()) return report;
+  const report = { checked: 0, nudged: 0, proposed: 0, silenced: 0, deferred: 0 };
+  if (!personalWatchArmed() && !(discoveryOn() && deps.propose)) return report;
   const org = deps.org ?? deploymentOrg();
   const now = deps.now ?? new Date();
   const started = Date.now();
@@ -341,6 +357,7 @@ export async function personalWatchTick(deps: PersonalWatchTickDeps): Promise<Pe
       report.checked++;
       report.silenced += result.silencedRows;
       if (result.nudged) report.nudged++;
+      if (result.proposed) report.proposed++;
       await updatePersonalWatch(org, row.principalKey, (current) => applyCheck(current, result, now), now.toISOString());
     } catch (err) {
       console.warn(`[open-everywhere:personal-watch] the check for ${row.principalKey} failed: ${String(err)}`);

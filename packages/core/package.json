@@ -902,6 +902,10 @@
       "types": "./dist/agent/approvals/routine-policy.d.ts",
       "default": "./dist/agent/approvals/routine-policy.js"
     },
+    "./agent/approvals/routine-suggest.js": {
+      "types": "./dist/agent/approvals/routine-suggest.d.ts",
+      "default": "./dist/agent/approvals/routine-suggest.js"
+    },
     "./agent/approvals/scope-label.js": {
       "types": "./dist/agent/approvals/scope-label.d.ts",
       "default": "./dist/agent/approvals/scope-label.js"
@@ -2610,9 +2614,17 @@
       "types": "./dist/agent/personal-watch/dial.d.ts",
       "default": "./dist/agent/personal-watch/dial.js"
     },
+    "./agent/personal-watch/discovery.js": {
+      "types": "./dist/agent/personal-watch/discovery.d.ts",
+      "default": "./dist/agent/personal-watch/discovery.js"
+    },
     "./agent/personal-watch/judge.js": {
       "types": "./dist/agent/personal-watch/judge.d.ts",
       "default": "./dist/agent/personal-watch/judge.js"
+    },
+    "./agent/personal-watch/propose.js": {
+      "types": "./dist/agent/personal-watch/propose.d.ts",
+      "default": "./dist/agent/personal-watch/propose.js"
     },
     "./agent/personal-watch/state.js": {
       "types": "./dist/agent/personal-watch/state.d.ts",
@@ -3807,6 +3819,7 @@
     "test:person-opt-out-hooks": "NODE_NO_WARNINGS=1 tsx scripts/person-opt-out-hooks-test.ts",
     "test:cover": "NODE_NO_WARNINGS=1 tsx scripts/cover-test.ts",
     "test:personal-watch": "NODE_NO_WARNINGS=1 tsx scripts/personal-watch-test.ts",
+    "test:workflow-discovery": "NODE_NO_WARNINGS=1 tsx scripts/workflow-discovery-test.ts",
     "test:bot-ask": "NODE_NO_WARNINGS=1 tsx scripts/bot-ask-test.ts",
     "test:memory-claim-guard": "NODE_NO_WARNINGS=1 tsx scripts/memory-claim-guard-test.ts",
     "test:approval-claim-guard": "NODE_NO_WARNINGS=1 tsx scripts/approval-claim-guard-test.ts",

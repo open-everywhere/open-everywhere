@@ -426,6 +426,27 @@ export const APPROVAL_KIND_FIXTURES: readonly KindFixture[] = [
     },
   },
   {
+    kind: "routine.suggest",
+    args: {
+      org: ORG,
+      principalKey: `slack/${WORKSPACE}/${REQUESTER}`,
+      personId: REQUESTER,
+      fingerprint: "weekly:linear/list_issues:1",
+      summary: "list issues on linear on Mondays, in 3 of the last 5 weeks",
+      work: "list issues on linear",
+      weeks: 3,
+      create: {
+        org: ORG,
+        partition: PARTITION,
+        surfaceKey: SCOPE,
+        target: { channelId: CHANNEL },
+        trigger: { kind: "cron", expr: "0 9 * * 1" },
+        prompt: "It is Monday. The person who set this up asks me to list issues on linear most Mondays. Do it for them now with the linear connection, the way they usually ask, and post what you found here. Ask before you change anything.",
+        createdBy: REQUESTER,
+      },
+    },
+  },
+  {
     kind: "session.checkpoint",
     args: {
       org: ORG,

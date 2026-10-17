@@ -582,6 +582,11 @@ export const NON_TOOL_ACTION_KINDS: Readonly<Record<string, ActionKindEntry>> = 
     reason:
       "the ROUTINE CHECK-IN CARD (OPE-2511): a recurring routine that has run `routines.attentionWarnRuns` times with no human check-in posts Keep going where its reports land, and pauses itself after `routines.attentionPauseRuns` more runs with a Resume card. Raised by the clock dispatcher, not by a verb, so it needs pinning here. Member on purpose: a press keeps or restarts standing autonomy a member card already armed, which is the bar `routine.enable` sets, and the click re-reads the live row so it can only clear the check-in count or lift the check-in's own pause, never revive a routine that stopped for another reason",
   },
+  "routine.suggest": {
+    tier: "gate:member",
+    reason:
+      "the WORKFLOW DISCOVERY CARD (OPE-2512): the chief-of-staff watch tick posts it into a person's own 1:1 DM when their tool-call ledger shows the same connector op on the same weekday for `routines.discoveryMinWeeks` weeks. Raised by the schedule, not by a verb, so it needs pinning here. Set it up hands a host-written, untainted `routine.create` argument set to that kind's own execute, so it arms exactly what a member card arms and declares no standing permission; No thanks only records the answer. Member on purpose, because the person is a member and the decision is theirs, and `execute` and `declined` refuse any clicker but that person",
+  },
   "routine.permission": {
     tier: "gate:member",
     reason:

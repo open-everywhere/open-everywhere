@@ -4,6 +4,7 @@ import { tryPrincipalKey } from "../identity/principal-key.js";
 import { DEFAULT_WATCH_DIAL, WATCH_DIALS, parseWatchDial, type WatchDial } from "../personal-watch/dial.js";
 import { enrollPersonalWatch, readPersonalWatch, setPersonalWatchDial } from "../personal-watch/state.js";
 import { personalWatchArmed } from "../personal-watch/watch.js";
+import { discoveryOn } from "../personal-watch/discovery.js";
 
 function oeSlash(sub: string): string {
   return `/${agentCommandName()} ${sub}`;
@@ -35,7 +36,11 @@ export async function runWatch(binding: SurfaceBinding, action: "status" | Watch
   if (!principalKey) return "I could not tell who you are from this command, so I changed nothing.";
   const member = binding.trust === "internal";
   if (!member && action !== "none" && action !== "status") return "The watch is for members of this organisation, so I changed nothing.";
-  const armedNote = personalWatchArmed() ? "" : " Your calendar isn't connected for this yet, so I don't look until it is.";
+  const armedNote = personalWatchArmed()
+    ? ""
+    : discoveryOn()
+      ? " Your calendar isn't connected for this yet. I still look for work you repeat each week."
+      : " Your calendar isn't connected for this yet, so I don't look until it is.";
   const quiet = " I stay quiet between 20:00 and 07:00 UTC.";
   try {
     if (action === "status") {

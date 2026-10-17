@@ -13,6 +13,16 @@ export interface WatchNudgeRecord {
   readonly response?: WatchResponse;
 }
 
+export type WatchProposalOutcome = "accepted" | "declined";
+
+export interface WatchProposalRecord {
+  readonly fingerprint: string;
+  readonly summary: string;
+  readonly at: string;
+  readonly outcome?: WatchProposalOutcome;
+  readonly decidedAt?: string;
+}
+
 export type WatchDialSource = "default" | "command" | "app-home";
 
 export interface PersonalWatchState {
@@ -28,14 +38,17 @@ export interface PersonalWatchState {
   readonly silenced: Readonly<Record<string, WatchSilenceReason>>;
   readonly lastAskedAt?: string;
   readonly nudgesSinceAsk: number;
+  readonly proposals: readonly WatchProposalRecord[];
+  readonly lastDiscoveryAt?: string;
 }
 
 export const NUDGE_LOG_MAX = 20;
 export const TOLD_MAX = 200;
 export const SILENCED_MAX = 200;
+export const PROPOSAL_LOG_MAX = 100;
 
 export function freshWatchState(at: string): PersonalWatchState {
-  return { dial: DEFAULT_WATCH_DIAL, dialSource: "default", dampening: 0, enrolledAt: at, nudges: [], told: [], silenced: {}, nudgesSinceAsk: 0 };
+  return { dial: DEFAULT_WATCH_DIAL, dialSource: "default", dampening: 0, enrolledAt: at, nudges: [], told: [], silenced: {}, nudgesSinceAsk: 0, proposals: [] };
 }
 
 function strOrUndef(v: unknown): string | undefined {
@@ -57,6 +70,17 @@ export function parseWatchState(json: string): PersonalWatchState {
       return { fingerprint, kind: strOrUndef(o["kind"]) ?? "unknown", summary: strOrUndef(o["summary"]) ?? "", at, ...(response ? { response } : {}) };
     })
     .filter((n): n is WatchNudgeRecord => n !== undefined);
+  const proposals = (Array.isArray(raw["proposals"]) ? raw["proposals"] : [])
+    .map((p): WatchProposalRecord | undefined => {
+      const o = p as Record<string, unknown>;
+      const fingerprint = strOrUndef(o?.["fingerprint"]);
+      const at = strOrUndef(o?.["at"]);
+      if (!fingerprint || !at) return undefined;
+      const outcome = o["outcome"] === "accepted" || o["outcome"] === "declined" ? o["outcome"] : undefined;
+      const decidedAt = strOrUndef(o["decidedAt"]);
+      return { fingerprint, summary: strOrUndef(o["summary"]) ?? "", at, ...(outcome ? { outcome } : {}), ...(decidedAt ? { decidedAt } : {}) };
+    })
+    .filter((p): p is WatchProposalRecord => p !== undefined);
   const told = (Array.isArray(raw["told"]) ? raw["told"] : []).filter((t): t is string => typeof t === "string");
   const silencedRaw = typeof raw["silenced"] === "object" && raw["silenced"] !== null ? (raw["silenced"] as Record<string, unknown>) : {};
   const silenced: Record<string, WatchSilenceReason> = {};
@@ -74,6 +98,8 @@ export function parseWatchState(json: string): PersonalWatchState {
     silenced,
     ...(strOrUndef(raw["lastAskedAt"]) ? { lastAskedAt: strOrUndef(raw["lastAskedAt"])! } : {}),
     nudgesSinceAsk: typeof raw["nudgesSinceAsk"] === "number" && raw["nudgesSinceAsk"] >= 0 ? Math.floor(raw["nudgesSinceAsk"]) : 0,
+    proposals,
+    ...(strOrUndef(raw["lastDiscoveryAt"]) ? { lastDiscoveryAt: strOrUndef(raw["lastDiscoveryAt"])! } : {}),
   };
 }
 
@@ -81,7 +107,7 @@ export function capWatchState(s: PersonalWatchState): PersonalWatchState {
   const silencedKeys = Object.keys(s.silenced);
   const silenced =
     silencedKeys.length <= SILENCED_MAX ? s.silenced : Object.fromEntries(silencedKeys.slice(-SILENCED_MAX).map((k) => [k, s.silenced[k]!] as const));
-  return { ...s, nudges: s.nudges.slice(-NUDGE_LOG_MAX), told: s.told.slice(-TOLD_MAX), silenced };
+  return { ...s, nudges: s.nudges.slice(-NUDGE_LOG_MAX), told: s.told.slice(-TOLD_MAX), silenced, proposals: s.proposals.slice(-PROPOSAL_LOG_MAX) };
 }
 
 export interface PersonalWatchRead {
@@ -226,4 +252,24 @@ export async function recordPersonalWatchResponse(
     }).catch(() => undefined);
   }
   return { outcome, dampening };
+}
+
+export async function recordProposalOutcome(org: string, principalKey: string, fingerprint: string, outcome: WatchProposalOutcome, at = new Date().toISOString()): Promise<"recorded" | "unchanged" | "unknown"> {
+  let result = "unknown" as "recorded" | "unchanged" | "unknown";
+  await updatePersonalWatch(
+    org,
+    principalKey,
+    (current, existed) => {
+      const i = existed ? current.proposals.findIndex((p) => p.fingerprint === fingerprint) : -1;
+      if (i < 0) return undefined;
+      if (current.proposals[i]!.outcome !== undefined) {
+        result = "unchanged";
+        return undefined;
+      }
+      result = "recorded";
+      return { ...current, proposals: current.proposals.map((p, j) => (j === i ? { ...p, outcome, decidedAt: at } : p)) };
+    },
+    at,
+  );
+  return result;
 }

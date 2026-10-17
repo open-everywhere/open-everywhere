@@ -2386,6 +2386,21 @@ export const sqliteOperationalStore: OperationalStore = {
     return Number(getDb().prepare("DELETE FROM usage_events WHERE org_id = ? AND ts < ?").run(org, olderThanTs).changes);
   },
 
+  async listPersonConnectorCalls(org, principalId, surfacePrefix, since, limit) {
+    const rows = getDb()
+      .prepare(
+        `SELECT ts, connector, tool FROM (
+           SELECT seq, ts, connector, tool FROM tool_usage
+           WHERE org_id = ?1 AND principal_id = ?2 AND event = 'call' AND outcome = 'ok' AND connector <> ''
+             AND substr(surface_key, 1, length(?3)) = ?3 AND ts >= ?4
+             AND session_id NOT IN (SELECT session_id FROM usage_events WHERE org_id = ?1 AND kind = 'routine')
+           ORDER BY seq DESC LIMIT ?5
+         ) recent ORDER BY seq ASC`,
+      )
+      .all(org, principalId, surfacePrefix, since, Math.max(0, Math.floor(limit))) as { ts: string; connector: string; tool: string }[];
+    return rows.map((r) => ({ ts: r.ts, connector: r.connector, tool: r.tool }));
+  },
+
   async appendToolUsage(entry) {
     getDb()
       .prepare(

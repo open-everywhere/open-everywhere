@@ -148,6 +148,7 @@ export interface AgentSettings {
     readonly jobMaxDays: number;
     readonly attentionWarnRuns: number;
     readonly attentionPauseRuns: number;
+    readonly discoveryMinWeeks: number;
   };
   readonly rotation: {
     readonly quietGapHours: number;
@@ -803,6 +804,14 @@ export const SETTINGS = {
       summary:
         "Further runs after the Keep going card before the routine pauses itself and posts a Resume card. Counted from the run the card actually posted, so a routine never pauses without a warning.",
     } satisfies SettingSpec<number>,
+    discoveryMinWeeks: {
+      path: "routines.discoveryMinWeeks",
+      shipped: 3,
+      validate: (v) => (Number.isInteger(v) && v >= 0 && v <= 5 ? undefined : "must be an integer from 0 to 5 (0 turns workflow discovery off; the detector reads five weeks)"),
+      summary:
+        "Workflow discovery (OPE-2512): the weeks, out of the last five, in which a person must run the same connector op on the same weekday before their chief-of-staff watch offers ONE routine for it, as a Set it up / No thanks card in their own DM. It reads only the person's own tool-call ledger, and obeys their watch dial. A declined idea is never offered again. `0` turns it off.",
+      format: (v) => (v === 0 ? "off" : `${v} weeks`),
+    } satisfies SettingSpec<number>,
   },
   rotation: {
     quietGapHours: {
@@ -1345,6 +1354,7 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
       jobMaxDays: resolve(SETTINGS.routines.jobMaxDays, o.routines?.jobMaxDays),
       attentionWarnRuns: resolve(SETTINGS.routines.attentionWarnRuns, o.routines?.attentionWarnRuns),
       attentionPauseRuns: resolve(SETTINGS.routines.attentionPauseRuns, o.routines?.attentionPauseRuns),
+      discoveryMinWeeks: resolve(SETTINGS.routines.discoveryMinWeeks, o.routines?.discoveryMinWeeks),
     },
     rotation: {
       quietGapHours: resolve(SETTINGS.rotation.quietGapHours, o.rotation?.quietGapHours),
