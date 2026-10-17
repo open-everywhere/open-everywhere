@@ -11,6 +11,7 @@ import {
   registerSeatCatchUp,
   registerWebhookVerifier,
   registerSurfaceMessageOps,
+  registerEventReach,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { PROVIDER_DOCS } from "./docs-generated.js";
 import { GITHUB_SURFACE_PARITY } from "./surface-parity.js";
@@ -21,6 +22,7 @@ import { bindGitHub } from "./channels/github-identity.js";
 import { githubPostArm } from "./channels/github-post-arm.js";
 import { githubWakeOriginCodec } from "./channels/github-origin-codec.js";
 import { githubWebhookVerifier } from "./channels/github-webhook-verifier.js";
+import { githubEventsReach } from "./channels/github-event-reach.js";
 import { githubReadAdapter } from "./channels/github-read.js";
 import { githubSeatCatchUpFetch, GITHUB_TIMESTAMP_PRECISION_MS } from "./channels/github-catch-up.js";
 import { githubMessageOps } from "./channels/github-message-ops.js";
@@ -37,6 +39,7 @@ export function registerGithubProvider(): void {
   registerSurfaceMessageOps(githubMessageOps);
   registerReactionSurface("github");
   registerWebhookVerifier(githubWebhookVerifier);
+  registerEventReach("github", () => githubEventsReach());
   registerProviderDocs("github", PROVIDER_DOCS);
   registerGithubOps();
 

@@ -67,7 +67,7 @@ export async function announceBoundExhausted(
   return postRoutineNotice(r, boundNoticeText(r, verdict), "ceiling", deps);
 }
 
-async function postRoutineNotice(r: Routine, text: string, what: string, deps: DisableNoticeDeps): Promise<boolean> {
+export async function postRoutineNotice(r: Routine, text: string, what: string, deps: DisableNoticeDeps): Promise<boolean> {
   try {
     const dest = (deps.resolveTarget ?? resolveRoutineTarget)(r);
     const origin = dest?.origin;

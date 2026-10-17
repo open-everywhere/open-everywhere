@@ -3,6 +3,7 @@ import { unattendedFrom } from "../identity/binding.js";
 import { plainValue } from "../approvals/plain-text.js";
 import { isProviderSelected } from "../access/provider-selection.js";
 import { registeredEventSources } from "./event-model.js";
+import { eventReach } from "./event-reach.js";
 import { cronWords, sourceWords, type TriggerShape } from "./schedule-words.js";
 
 export const WATCH_FOR_MAX_CHARS = 120;
@@ -11,8 +12,10 @@ export const DEFAULT_POLL_WORDS = "every hour";
 
 const GENERIC_WEBHOOK_SCHEME = "oe-standard-webhook";
 
-export function watchableEventSources(): readonly string[] {
-  return registeredEventSources().filter((s) => s !== GENERIC_WEBHOOK_SCHEME && isProviderSelected(s));
+export async function watchableEventSources(): Promise<readonly string[]> {
+  const candidates = registeredEventSources().filter((s) => s !== GENERIC_WEBHOOK_SCHEME && isProviderSelected(s));
+  const reach = await Promise.all(candidates.map((s) => eventReach(s)));
+  return candidates.filter((_, i) => reach[i] === "reaches");
 }
 
 export function cleanWatchFor(raw: string | undefined): string | undefined {
@@ -38,7 +41,7 @@ export function watchWords(t: TriggerShape, watchFor: string | undefined): strin
   return undefined;
 }
 
-export function askWatchBlock(sources: readonly string[] = watchableEventSources()): string {
+export function askWatchBlock(sources: readonly string[]): string {
   const names = [...new Set(sources.map(sourceWords))];
   const eventLine =
     names.length > 0
@@ -68,11 +71,11 @@ export interface AskWatchTurn {
   readonly worker: boolean;
 }
 
-export function askWatchSeatBlock(turn: AskWatchTurn, sources?: readonly string[]): string {
+export async function askWatchSeatBlock(turn: AskWatchTurn, sources?: readonly string[]): Promise<string> {
   try {
     if (turn.worker || unattendedFrom(turn.binding)) return "";
     if (turn.binding.mode !== "dm" && turn.binding.mode !== "channel") return "";
-    return askWatchBlock(sources);
+    return askWatchBlock(sources ?? (await watchableEventSources()));
   } catch {
     return "";
   }

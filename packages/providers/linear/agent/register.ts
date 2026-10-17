@@ -15,6 +15,7 @@ import {
   registerEventNormalizer,
   registerEventScopeGrant,
   registerSurfaceMessageOps,
+  registerEventReach,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { PROVIDER_DOCS } from "./docs-generated.js";
 import { LINEAR_SURFACE_PARITY } from "./surface-parity.js";
@@ -26,6 +27,7 @@ import { linearEntityAdapter } from "./channels/linear-actions.js";
 import { linearTicketCreateAdapter } from "./channels/linear-create.js";
 import { linearCredentialsConfigured } from "./channels/linear-credentials.js";
 import { linearEventNormalizer, linearEventScopeGrant } from "./channels/linear-event-normalizer.js";
+import { linearEventsReach } from "./channels/linear-event-reach.js";
 import { linearMessageOps } from "./channels/linear-message-ops.js";
 import { linearReadAdapter } from "./channels/linear-read.js";
 import { linearSeatCatchUpFetch, LINEAR_TIMESTAMP_PRECISION_MS } from "./channels/linear-catch-up.js";
@@ -48,5 +50,6 @@ export function registerLinearProvider(): void {
   registerSurfaceCredentialProbe("linear", linearCredentialsConfigured);
   registerEventNormalizer(linearEventNormalizer);
   registerEventScopeGrant(linearEventScopeGrant);
+  registerEventReach("linear", () => linearEventsReach());
   registerProviderDocs("linear", PROVIDER_DOCS);
 }

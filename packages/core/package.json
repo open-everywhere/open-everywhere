@@ -2774,6 +2774,10 @@
       "types": "./dist/agent/routines/event-model.d.ts",
       "default": "./dist/agent/routines/event-model.js"
     },
+    "./agent/routines/event-reach.js": {
+      "types": "./dist/agent/routines/event-reach.d.ts",
+      "default": "./dist/agent/routines/event-reach.js"
+    },
     "./agent/routines/events.js": {
       "types": "./dist/agent/routines/events.d.ts",
       "default": "./dist/agent/routines/events.js"
@@ -3005,6 +3009,10 @@
     "./agent/schedules/dream-mode3.js": {
       "types": "./dist/agent/schedules/dream-mode3.d.ts",
       "default": "./dist/agent/schedules/dream-mode3.js"
+    },
+    "./agent/schedules/event-reach-sweep.js": {
+      "types": "./dist/agent/schedules/event-reach-sweep.d.ts",
+      "default": "./dist/agent/schedules/event-reach-sweep.js"
     },
     "./agent/schedules/meeting-sweep.js": {
       "types": "./dist/agent/schedules/meeting-sweep.d.ts",

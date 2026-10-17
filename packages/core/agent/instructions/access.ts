@@ -570,9 +570,9 @@ export async function renderScopeMarkdown(ctx: BindableContext): Promise<string>
       return "";
     }
   })();
-  const askWatch = (() => {
+  const askWatch = await (async (): Promise<string> => {
     try {
-      return askWatchSeatBlock({ binding: bindFrom(ctx), worker: isWorkerSession(ctx) });
+      return await askWatchSeatBlock({ binding: bindFrom(ctx), worker: isWorkerSession(ctx) });
     } catch {
       return "";
     }

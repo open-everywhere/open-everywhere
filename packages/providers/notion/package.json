@@ -67,6 +67,10 @@
       "types": "./dist/agent/channels/notion-event-normalizer.d.ts",
       "default": "./dist/agent/channels/notion-event-normalizer.js"
     },
+    "./agent/channels/notion-event-reach.js": {
+      "types": "./dist/agent/channels/notion-event-reach.d.ts",
+      "default": "./dist/agent/channels/notion-event-reach.js"
+    },
     "./agent/channels/notion-identity.js": {
       "types": "./dist/agent/channels/notion-identity.d.ts",
       "default": "./dist/agent/channels/notion-identity.js"

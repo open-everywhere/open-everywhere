@@ -13,6 +13,7 @@ import {
   registerEventScopeGrant,
   registerSubtreePlatform,
   registerSurfaceMessageOps,
+  registerEventReach,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerNotionTrustRoots } from "./channels/notion-ancestry-trust.js";
 import { PROVIDER_DOCS } from "./docs-generated.js";
@@ -27,6 +28,7 @@ import { notionSeatCatchUpFetch, NOTION_TIMESTAMP_PRECISION_MS } from "./channel
 import { registerNotionWorkSearch } from "./channels/notion-work-search.js";
 import { notionWebhookVerifier } from "./channels/notion-webhook-verifier.js";
 import { notionEventNormalizer, notionEventScopeGrant } from "./channels/notion-event-normalizer.js";
+import { notionEventsReach } from "./channels/notion-event-reach.js";
 import { registerNotionMemory } from "./memory/memory.js";
 
 export function registerNotionProvider(): void {
@@ -43,6 +45,7 @@ export function registerNotionProvider(): void {
   registerWebhookVerifier(notionWebhookVerifier);
   registerEventNormalizer(notionEventNormalizer);
   registerEventScopeGrant(notionEventScopeGrant);
+  registerEventReach("notion", () => notionEventsReach());
   registerSubtreePlatform("notion", registerNotionTrustRoots);
   registerNotionMemory();
   registerProviderDocs("notion", PROVIDER_DOCS);

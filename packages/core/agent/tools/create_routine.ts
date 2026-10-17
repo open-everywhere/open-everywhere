@@ -27,6 +27,8 @@ import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { endFirstRoutineOffer } from "../onboarding/first-routine.js";
 import { cleanWatchFor } from "../routines/ask-watch.js";
+import { eventReach } from "../routines/event-reach.js";
+import { sourceWords } from "../routines/schedule-words.js";
 import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { canDispatchRoutinesOn, reportTargetForSurface } from "../schedules/routine-dispatch.js";
 import { reportChannelFor, BINDING_TRUSTED_PLATFORMS } from "../memory/domain.js";
@@ -247,6 +249,13 @@ export default defineTool({
     const watchFor = cleanWatchFor(input.watchFor);
     if (watchFor !== undefined && t.kind !== "event" && t.kind !== "watch") {
       throw new Error("`watchFor` names what a watch looks for, so it needs an event trigger or `postPolicy: \"only-on-change\"`. Drop it, or make this a watch.");
+    }
+    if (t.kind === "event" && (await eventReach(t.source)) === "deaf") {
+      const app = sourceWords(t.source);
+      throw new Error(
+        `${app}'s events don't reach this deployment, so a routine on them would never fire. ` +
+          `Set it up as a check on a schedule instead (\`postPolicy: "only-on-change"\`), or ask an admin to set up ${app}'s webhook first.`,
+      );
     }
     if (t.kind === "event" && t.jq !== undefined) {
       await probeFilter(t.jq, t.source, eventNormalizer(eventScheme ?? t.source)?.matchKeys ?? []);

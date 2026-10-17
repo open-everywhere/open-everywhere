@@ -26,6 +26,8 @@ registerConfig({ loadBundles: () => [], loadBindings: () => [], pluginRegistry: 
 await import("../agent/routines/github-normalizer.js");
 await import("../agent/webhooks/oe-standard-webhook.js");
 const aw = await import("../agent/routines/ask-watch.js");
+const { registerEventReach, eventReach } = await import("../agent/routines/event-reach.js");
+let githubReach: boolean | "throw" = false;
 const { triggerWords, sourceWords } = await import("../agent/routines/schedule-words.js");
 const { registeredEventSources } = await import("../agent/routines/event-model.js");
 const { renderScopeMarkdown } = await import("../agent/instructions/access.js");
@@ -87,7 +89,16 @@ console.log("§1 the words");
   ok(aw.watchWords({ kind: "cron", expr: "0 9 * * 1" }, "x") === undefined, "a clock routine is not a watch, whatever it carries");
   ok(aw.watchWords({ kind: "event", source: "github" }, undefined) === undefined, "a watch nobody described reads as before");
   ok(registeredEventSources().includes("oe-standard-webhook"), "fixture: the generic webhook contract is registered");
-  ok(JSON.stringify(aw.watchableEventSources()) === JSON.stringify(["github"]), "🔴 the apps that send events here: GitHub, and never the generic webhook contract");
+  ok(JSON.stringify(await aw.watchableEventSources()) === "[]", "🔴 GitHub with no probe (no bundle mounts its route) is never offered");
+  registerEventReach("github", () => {
+    if (githubReach === "throw") throw new Error("probe down");
+    return githubReach;
+  });
+  ok(JSON.stringify(await aw.watchableEventSources()) === "[]", "🔴 GitHub whose route admits no delivery (no webhook secret) is never offered");
+  githubReach = "throw";
+  ok(JSON.stringify(await aw.watchableEventSources()) === "[]", "🔴 a probe that cannot answer offers nothing");
+  githubReach = true;
+  ok(JSON.stringify(await aw.watchableEventSources()) === JSON.stringify(["github"]), "🔴 the apps that send events here: GitHub, and never the generic webhook contract");
 }
 
 console.log("§2 the seat block");
@@ -103,26 +114,30 @@ console.log("§2 the seat block");
   ok(!ID_LIKE.test(block), "the block carries no id");
   ok(aw.askWatchBlock([]).includes("No app sends its events here yet."), "with no app that sends events, the block says so");
   ok(aw.askWatchBlock(["github"]).includes("GitHub sends its events here. For it,"), "one app reads in the singular");
-  ok(aw.askWatchSeatBlock({ binding: dmOf("UAMY", "DAMY"), worker: false }) === aw.askWatchBlock(), "🔴 a live DM turn reads the block");
-  ok(aw.askWatchSeatBlock({ binding: roomOf("UAMY", "CROOM"), worker: false }) === aw.askWatchBlock(), "🔴 a live room turn reads the block");
-  ok(aw.askWatchSeatBlock({ binding: dmOf("UAMY", "DAMY"), worker: true }) === "", "🔴 a worker never reads it");
-  ok(aw.askWatchSeatBlock({ binding: { ...dmOf("UAMY", "DAMY"), principalId: undefined } as SurfaceBinding, worker: false }) === "", "🔴 a fire (no acting person) never reads it");
-  ok(aw.askWatchSeatBlock({ binding: { ...dmOf("UAMY", "DAMY"), mode: "mpim" } as unknown as SurfaceBinding, worker: false }) === "", "a group DM never reads it");
+  ok((await aw.askWatchSeatBlock({ binding: dmOf("UAMY", "DAMY"), worker: false })) === aw.askWatchBlock(["github"]), "🔴 a live DM turn reads the block");
+  ok((await aw.askWatchSeatBlock({ binding: roomOf("UAMY", "CROOM"), worker: false })) === aw.askWatchBlock(["github"]), "🔴 a live room turn reads the block");
+  ok((await aw.askWatchSeatBlock({ binding: dmOf("UAMY", "DAMY"), worker: true })) === "", "🔴 a worker never reads it");
+  ok((await aw.askWatchSeatBlock({ binding: { ...dmOf("UAMY", "DAMY"), principalId: undefined } as SurfaceBinding, worker: false })) === "", "🔴 a fire (no acting person) never reads it");
+  ok((await aw.askWatchSeatBlock({ binding: { ...dmOf("UAMY", "DAMY"), mode: "mpim" } as unknown as SurfaceBinding, worker: false })) === "", "a group DM never reads it");
   const ctxFor = (person: string, attrs: Record<string, string>) => ({
     channel: { kind: "slack" },
     session: { auth: { current: { principalId: person, attributes: { oe_platform: "slack", team_id: "T1", user_id: person, ...attrs } } } },
   });
   const dm = await renderScopeMarkdown(ctxFor("UAMY", { channel_id: "DAMY", channel_type: "im", dm_partner_trust: "internal" }) as never);
-  ok(dm.includes(aw.askWatchBlock()), "🔴 the REAL seat prompt of a DM turn carries the block");
+  ok(dm.includes(aw.askWatchBlock(["github"])), "🔴 the REAL seat prompt of a DM turn carries the block");
   ok(dm === (await renderScopeMarkdown(ctxFor("UAMY", { channel_id: "DAMY", channel_type: "im", dm_partner_trust: "internal" }) as never)), "the same bytes on the next turn");
   const room = await renderScopeMarkdown(ctxFor("UAMY", { channel_id: "CROOM", channel_type: "channel", trust_checked: "true" }) as never);
-  ok(room.includes(aw.askWatchBlock()), "🔴 the REAL seat prompt of a room turn carries the block");
+  ok(room.includes(aw.askWatchBlock(["github"])), "🔴 the REAL seat prompt of a room turn carries the block");
+  githubReach = false;
+  const deafDm = await renderScopeMarkdown(ctxFor("UAMY", { channel_id: "DAMY", channel_type: "im", dm_partner_trust: "internal" }) as never);
+  ok(deafDm.includes(aw.askWatchBlock([])) && !deafDm.includes("GitHub sends its events here"), "🔴 the REAL seat prompt never offers a GitHub event watch while GitHub's events do not reach here");
+  githubReach = true;
   const taskToken = `oe-dom:paris:win:${taskWindowId("slack/T1/CROOM", "1700.5")}:oe-sup:g1`;
   ok(classifySessionId(taskToken).kind === "task", "fixture guard: the worker token classifies task-grain");
   const worker = await renderScopeMarkdown({ channel: { kind: "channel:unified", continuationToken: taskToken }, session: { auth: { current: { principalId: "UAMY", attributes: { oe_platform: "slack", oe_grain: "task", team_id: "T1", user_id: "UAMY", channel_id: "CROOM", channel_type: "channel", trust_checked: "true" } } } } } as never);
-  ok(!worker.includes(aw.askWatchBlock()), "🔴 the REAL prompt of a worker never carries the block");
+  ok(!worker.includes(aw.askWatchBlock(["github"])), "🔴 the REAL prompt of a worker never carries the block");
   const fire = await renderScopeMarkdown({ channel: { kind: "slack" }, session: { auth: { current: { attributes: { oe_platform: "slack", team_id: "T1", channel_id: "CROOM", channel_type: "channel", trust_checked: "true" } } } } } as never);
-  ok(!fire.includes(aw.askWatchBlock()), "🔴 the REAL prompt of a fire (no acting person) never carries the block");
+  ok(!fire.includes(aw.askWatchBlock(["github"])), "🔴 the REAL prompt of a fire (no acting person) never carries the block");
 }
 
 console.log("§3 the real create_routine");
@@ -250,6 +265,96 @@ const plainArgsLater = (): RoutineCreateArgs => ({ org: ORG, partition: {} as ne
   const after = await listAllRoutines();
   ok(after.find((r) => r.id === pollRow!.id)?.watchFor === undefined, "🔴 a new prompt on a polling watch clears its condition, so the list cannot misname it");
   ok(after.find((r) => r.id === evRow!.id)?.watchFor === "a new issue is opened in acme/web", "an event watch keeps it: its filter did not change");
+
+  console.log("§7 an app whose events do not reach here");
+  const { sweepEventReach, unreachableNoticeText, reachableAgainNoticeText, MAX_REACH_NOTICES_PER_TICK } = await import("../agent/schedules/event-reach-sweep.js");
+  const { updateRoutine, addRoutine } = await import("../agent/routines/store.js");
+  const { dispatchTick } = await import("../agent/schedules/dispatch.js");
+  ok((await eventReach("my-ci", { hooks: () => [{ id: "my-ci", source: "oe-standard-webhook" } as never] })) === "reaches", "a declared hook's deliveries reach here");
+  ok((await eventReach("gmail", { hooks: () => [] })) === "unknown", "🔴 a source with no probe is unknown, so nothing refuses or posts on a guess");
+  githubReach = "throw";
+  ok((await eventReach("github", { hooks: () => [] })) === "unknown", "🔴 a probe that throws is unknown, never deaf");
+  githubReach = false;
+  ok((await eventReach("github", { hooks: () => [] })) === "deaf", "a probe that says no is deaf");
+
+  await refuses(
+    () => createTool.execute({ prompt: "Tell me about it.", trigger: { kind: "event", source: "github", jq: JQ }, watchFor: "a pull request is merged in acme/web" }, dmCtx),
+    "GitHub's events don't reach this deployment",
+    "🔴 an event watch on an app whose events do not reach here is refused",
+  );
+  await refuses(
+    () => createTool.execute({ prompt: "Tell me about it.", trigger: { kind: "event", source: "github", jq: JQ } }, dmCtx),
+    "GitHub's events don't reach this deployment, so a routine on them would never fire. Set it up as a check on a schedule instead (`postPolicy: \"only-on-change\"`)",
+    "🔴 …and so is an event routine with no condition, with the polling road named",
+  );
+
+  const posts: string[] = [];
+  const sweepDeps = { resolveTarget: () => ({ origin: { kind: "fixture" } }) as never, post: async (_o: unknown, text: string) => (posts.push(text), "ts") };
+  const evId = evRow!.id;
+  const live = async (): Promise<Routine> => (await listAllRoutines()).find((r) => r.id === evId)!;
+  const t0 = new Date("2026-10-14T12:00:00.000Z");
+  let res = await sweepEventReach(await listAllRoutines(), t0, sweepDeps);
+  ok(res.told === 1 && posts.length === 1, `🔴 an armed watch on an app that stopped delivering tells its room (told ${res.told}, posts ${posts.length})`);
+  const told = posts[0]!;
+  ok(told === unreachableNoticeText(await live()), "the room reads the host-composed line");
+  ok(told.includes("GitHub's events no longer reach me, so this watch can't fire") && told.includes("watches GitHub for when a new issue is opened in acme/web"), `🔴 the line names the app and the watch in words (${told})`);
+  ok(told.includes("check on a schedule instead"), "the line names the way out");
+  ok(!ID_LIKE.test(told) && !told.includes(evId) && !told.includes(".scope"), "🔴 the line carries no id and no filter");
+  ok((await live()).unreachableSince === t0.toISOString() && (await live()).status === "active", "🔴 the row is marked, and the routine stays active");
+  res = await sweepEventReach(await listAllRoutines(), new Date(t0.getTime() + 60_000), sweepDeps);
+  ok(res.told === 0 && posts.length === 1, "🔴 the next tick tells the room nothing new");
+  githubReach = "throw";
+  res = await sweepEventReach(await listAllRoutines(), new Date(t0.getTime() + 120_000), sweepDeps);
+  ok(res.told + res.recovered === 0 && posts.length === 1 && (await live()).unreachableSince !== undefined, "🔴 an unknown answer changes nothing");
+  githubReach = true;
+  res = await sweepEventReach(await listAllRoutines(), new Date(t0.getTime() + 180_000), sweepDeps);
+  ok(res.recovered === 1 && posts.length === 2 && posts[1]!.startsWith("✅ GitHub's events reach me again, so this watch works again"), `🔴 the room is told when the app delivers again (${posts[1] ?? "none"})`);
+  ok((await live()).unreachableSince === undefined, "🔴 the mark clears, so a later outage is told too");
+  ok(posts[1] === reachableAgainNoticeText(await live()) && !ID_LIKE.test(posts[1]!), "the room reads the host-composed line, with no id");
+  res = await sweepEventReach(await listAllRoutines(), new Date(t0.getTime() + 240_000), sweepDeps);
+  ok(res.told + res.recovered === 0 && posts.length === 2, "negative control: a watch whose app delivers posts nothing");
+  githubReach = false;
+  await sweepEventReach(await listAllRoutines(), t0, sweepDeps);
+  ok(posts.length === 3 && (await live()).unreachableSince !== undefined, "fixture: the watch is marked deaf again");
+  await updateRoutine(ORG, evRow!.surfaceKey, evId, { status: "disabled" });
+  res = await sweepEventReach(await listAllRoutines(), t0, sweepDeps);
+  ok(res.told + res.recovered === 0 && posts.length === 3 && (await live()).unreachableSince === undefined, "🔴 a stopped routine loses its mark, and its room hears nothing");
+  await updateRoutine(ORG, evRow!.surfaceKey, evId, { status: "active" });
+  res = await sweepEventReach(await listAllRoutines(), t0, sweepDeps);
+  ok(res.told === 1 && posts.length === 4, "🔴 a watch re-enabled while its app is still deaf tells its room again");
+  githubReach = true;
+  await sweepEventReach(await listAllRoutines(), t0, sweepDeps);
+  ok((await live()).unreachableSince === undefined, "fixture: the watch is back");
+  const extra = MAX_REACH_NOTICES_PER_TICK + 2;
+  for (let i = 0; i < extra; i++) await addRoutine({ org: ORG, surfaceKey: evRow!.surfaceKey } as never, { ...(await live()), id: `${evId}-cap${i}`, unreachableSince: undefined });
+  githubReach = false;
+  const capPosts: string[] = [];
+  const capDeps = { ...sweepDeps, post: async (_o: unknown, text: string) => (capPosts.push(text), "ts") };
+  res = await sweepEventReach(await listAllRoutines(), t0, capDeps);
+  ok(res.told === MAX_REACH_NOTICES_PER_TICK && capPosts.length === MAX_REACH_NOTICES_PER_TICK, `🔴 one tick posts at most ${MAX_REACH_NOTICES_PER_TICK} lines (posted ${capPosts.length})`);
+  res = await sweepEventReach(await listAllRoutines(), t0, capDeps);
+  ok(res.told === extra + 1 - MAX_REACH_NOTICES_PER_TICK, `🔴 the rest carry over to the next tick (told ${res.told})`);
+  for (const r of (await listAllRoutines()).filter((x) => x.id.startsWith(`${evId}-cap`))) await updateRoutine(ORG, r.surfaceKey, r.id, { status: "disabled" });
+  await sweepEventReach(await listAllRoutines(), t0, capDeps);
+  githubReach = true;
+  await sweepEventReach(await listAllRoutines(), t0, sweepDeps);
+  const clockOnly = (await listAllRoutines()).filter((r) => r.trigger.kind !== "event");
+  githubReach = false;
+  ok((await sweepEventReach(clockOnly, t0, sweepDeps)).told === 0, "negative control: a clock routine is never told");
+  ok((await sweepEventReach([{ ...(await live()), status: "disabled" }], t0, sweepDeps)).told === 0, "negative control: a stopped routine is never told");
+
+  const tickPosts: string[] = [];
+  await dispatchTick({
+    to: (() => {
+      throw new Error("no fire expected");
+    }) as never,
+    waitUntil: () => undefined,
+    appAuth: {} as never,
+    now: new Date(),
+    eventReach: { resolveTarget: sweepDeps.resolveTarget, post: async (_o: unknown, text: string) => (tickPosts.push(text), "ts") },
+  } as never);
+  ok(tickPosts.length === 1 && tickPosts[0]!.includes("GitHub's events no longer reach me"), `🔴 the REAL dispatcher tick tells the room (posts: ${tickPosts.length})`);
+  githubReach = true;
 }
 
 console.log("§6 only an ask arms a routine");

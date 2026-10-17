@@ -68,6 +68,7 @@ export interface Routine {
   promptGeneration?: number;
   manualRunAt?: string;
   testRun?: RoutineTestRequest;
+  unreachableSince?: string;
   nextRunAt?: string | null;
   lastRunAt?: string;
   lastOutcome?: RunOutcome;

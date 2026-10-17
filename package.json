@@ -212,6 +212,7 @@
     "proof:notion-rest-oauth": "NODE_NO_WARNINGS=1 tsx scripts/notion-rest-oauth-live-proof.ts",
     "test:provider-selection-integration": "NODE_NO_WARNINGS=1 tsx scripts/provider-selection-integration-test.ts",
     "test:webhook-source-vocabulary-live": "NODE_NO_WARNINGS=1 tsx scripts/webhook-source-vocabulary-live-test.ts",
+    "test:event-reach-live": "NODE_NO_WARNINGS=1 tsx scripts/event-reach-live-test.ts",
     "test:wake-origin-fixtures": "NODE_NO_WARNINGS=1 tsx scripts/wake-origin-fixtures-boot.ts",
     "test:unified-window": "NODE_NO_WARNINGS=1 tsx scripts/unified-window-test.ts",
     "test:slack-cover": "NODE_NO_WARNINGS=1 tsx scripts/slack-cover-test.ts",

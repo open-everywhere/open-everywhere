@@ -67,6 +67,10 @@
       "types": "./dist/agent/channels/linear-event-normalizer.d.ts",
       "default": "./dist/agent/channels/linear-event-normalizer.js"
     },
+    "./agent/channels/linear-event-reach.js": {
+      "types": "./dist/agent/channels/linear-event-reach.d.ts",
+      "default": "./dist/agent/channels/linear-event-reach.js"
+    },
     "./agent/channels/linear-graphql.js": {
       "types": "./dist/agent/channels/linear-graphql.d.ts",
       "default": "./dist/agent/channels/linear-graphql.js"

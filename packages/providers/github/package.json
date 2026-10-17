@@ -48,6 +48,10 @@
       "types": "./dist/agent/channels/github-engagement.d.ts",
       "default": "./dist/agent/channels/github-engagement.js"
     },
+    "./agent/channels/github-event-reach.js": {
+      "types": "./dist/agent/channels/github-event-reach.d.ts",
+      "default": "./dist/agent/channels/github-event-reach.js"
+    },
     "./agent/channels/github-identity.js": {
       "types": "./dist/agent/channels/github-identity.d.ts",
       "default": "./dist/agent/channels/github-identity.js"

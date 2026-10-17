@@ -19,6 +19,7 @@ import { checkBound } from "../routines/bound.js";
 import { attentionCountPatch, countsTowardCheckIn } from "../routines/attention.js";
 import { applyRoutineAttention, type RoutineAttentionDeps } from "./routine-attention.js";
 import { dispatchTestRuns, type TestRunPost } from "./routine-test-run.js";
+import { sweepEventReach, type EventReachSweepDeps } from "./event-reach-sweep.js";
 import { foldRoutineOutcome, retireExhaustedRoutine } from "../routines/outcome-fold.js";
 import { getRoutine, listAllRoutines, updateRoutine } from "../routines/store.js";
 import { computeNextRun, isDue, DISPATCH_TICK_MINUTES } from "../routines/schedule.js";
@@ -77,6 +78,7 @@ export async function dispatchTick(
     readonly fireWindow?: FireWindowDeps;
     readonly attention?: RoutineAttentionDeps;
     readonly testRunPost?: TestRunPost;
+    readonly eventReach?: EventReachSweepDeps;
   },
 ): Promise<void> {
   const { to, waitUntil, appAuth } = args;
@@ -107,6 +109,12 @@ export async function dispatchTick(
     return { fired: 0, refused: 0 };
   });
   if (tests.fired + tests.refused > 0) log(`tick: ${tests.fired} test run(s) started, ${tests.refused} refused`);
+
+  const reach = await sweepEventReach(all, now, args.eventReach ?? {}).catch((err: unknown) => {
+    log(`event-reach sweep skipped: ${String(err)}`);
+    return { told: 0, recovered: 0 };
+  });
+  if (reach.told + reach.recovered > 0) log(`tick: ${reach.told} room(s) told an app stopped delivering, ${reach.recovered} told it is back`);
 
   const due = all
     .filter((r) => r.status === "active" && isClockScheduled(r.trigger) && isDue(r.nextRunAt, now))

@@ -656,6 +656,8 @@ export {
   scopeIdOf,
 } from "./routines/event-model.js";
 export type { EventNormalizer, NormalizedEvent, TriggerDelivery, ScopeStep, ScopeKind, EntityPointer } from "./routines/event-model.js";
+export { registerEventReach } from "./routines/event-reach.js";
+export type { EventReachProbe } from "./routines/event-reach.js";
 export {
   registerProviderEvents,
   providerEventsFor,
