@@ -402,9 +402,9 @@ async function assertOwnHost(base: string): Promise<void> {
   if (refused) {
     throw new Error(
       `integration harness: the agent answering ${base} REFUSED this fork's control read token, so it is a DIFFERENT ` +
-        "agent host — almost certainly another worktree's integration run that bound the port between our free-port " +
-        "probe and our own listen. Every signed wake would have gone to it. Re-run when the box is not running a " +
-        "second integration suite (the tier is sized for ONE suite at a time).",
+        "agent host. Every signed wake would have gone to it. The port reservation hands its socket to the bundle's " +
+        "listener with no gap (OPE-2555, scripts/ephemeral-port.ts), so a foreign host here is unexpected. Read the " +
+        "boot log for \"[srvx] Failed to start server\" and for a \"bindListenerOnReservation:\" error, and file it with that log.",
     );
   }
 }
@@ -465,10 +465,10 @@ export async function bootAgent(opts: BootOptions = {}): Promise<{ base: string 
   process.env.NITRO_HOST = "127.0.0.1";
   if (opts.selfBaseUrl === true) process.env.OE_PUBLIC_BASE_URL = `http://127.0.0.1:${reserved.port}`;
   else delete process.env.OE_PUBLIC_BASE_URL;
-  await reserved.release();
 
   bootedOutputDir = join(ROOT, ".output");
-  await import(pathToFileURL(join(bootedOutputDir, "server", "index.mjs")).href);
+  const entry = pathToFileURL(join(bootedOutputDir, "server", "index.mjs")).href;
+  await reserved.bindListenerOnReservation(() => import(entry));
   const base = `http://127.0.0.1:${reserved.port}`;
   const deadline = Date.now() + 60_000;
   for (;;) {

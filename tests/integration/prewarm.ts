@@ -16,14 +16,13 @@ const PREWARM_STATE_ENV = ["OE_PGLITE_DIR", "OE_MEMORY_DIR"] as const;
 
 const PREWARM_MODEL_ENV = "NODE_ENV";
 
-async function pinListenerEnvForPrewarm(reserved: { readonly port: number; readonly release: () => Promise<void> }): Promise<() => void> {
+function pinListenerEnvForPrewarm(reserved: { readonly port: number }): () => void {
   const names = ["PORT", "NITRO_PORT", "HOST", "NITRO_HOST"] as const;
   const before = names.map((k) => [k, process.env[k]] as const);
   process.env.PORT = String(reserved.port);
   process.env.NITRO_PORT = String(reserved.port);
   process.env.HOST = "127.0.0.1";
   process.env.NITRO_HOST = "127.0.0.1";
-  await reserved.release();
   return () => {
     for (const [k, v] of before) {
       if (v === undefined) delete process.env[k];
@@ -115,9 +114,11 @@ async function prewarmFromBuiltBundle(root: string, log: (message: string) => vo
     readBundledCompiledArtifacts: () => { manifest?: unknown; metadata?: unknown; moduleMap?: unknown } | null | undefined;
     resolveRuntimeAgentGraph: (input: { manifest: unknown; moduleMap: unknown }) => Promise<unknown>;
   };
-  const restoreListenerEnv = await pinListenerEnvForPrewarm(await reserveEphemeralPort());
+  const reserved = await reserveEphemeralPort();
+  const restoreListenerEnv = pinListenerEnvForPrewarm(reserved);
   try {
-    await import(pathToFileURL(join(root, ".output", "server", "index.mjs")).href);
+    const entry = pathToFileURL(join(root, ".output", "server", "index.mjs")).href;
+    await reserved.bindListenerOnReservation(() => import(entry));
   } finally {
     restoreListenerEnv();
   }
