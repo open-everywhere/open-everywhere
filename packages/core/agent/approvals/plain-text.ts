@@ -22,12 +22,24 @@ export function plainValue(value: unknown, max: number = PLAIN_VALUE_MAX): strin
   return cutClean(cleaned, max);
 }
 
+const EM_DASH = /\s*—\s*/gu;
+
+export function withoutDashes(line: string): string {
+  return line
+    .split(/(“[^”]*”|"[^"]*")/u)
+    .map((part, i) => (i % 2 === 1 ? part : part.replace(EM_DASH, ", ").replace(/,\s*([,.;:!?])/gu, "$1")))
+    .join("")
+    .replace(/^,\s*/u, "")
+    .replace(/,\s*$/u, "")
+    .trim();
+}
+
 export function finishPlainLine(line: string, max: number): string {
-  return cutClean(line.replace(/\s+/gu, " ").trim(), max);
+  return cutClean(withoutDashes(line.replace(/\s+/gu, " ").trim()), max);
 }
 
 export function finishPlainSentence(sentence: string): string {
-  const one = sentence.replace(/\s+/gu, " ").trim();
+  const one = withoutDashes(sentence.replace(/\s+/gu, " ").trim());
   const capped = cutClean(one, PLAIN_SUMMARY_MAX);
   return /[.!?…]$/u.test(capped) ? capped : `${capped}.`;
 }

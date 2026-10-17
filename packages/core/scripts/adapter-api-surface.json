@@ -65,6 +65,7 @@
     "BrowserToolEntry",
     "BuiltInWakeAnswer",
     "CHANNEL_KEY_PREFIX",
+    "CLICK_NOTICE",
     "CLOSING_PROSE_DROPPED_ACTION",
     "CODE_BLOCK_STYLE",
     "COMMAND_FAILED_TEXT",

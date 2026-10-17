@@ -89,14 +89,37 @@ function bareHeadline(row: Pick<PendingActionRow, "kind" | "argsJson">): string 
   return plainSummaryForRow(row).replace(/[.!?]$/u, "");
 }
 
-export function decidedCardLine(row: Pick<PendingActionRow, "kind" | "argsJson" | "status">, outcomeLine: string | undefined, who: string): string {
-  if (row.status === "approved") return `✅ Approved by ${who} — ${outcomeLine ?? bareHeadline(row)}`;
-  if (row.status === "rejected") {
-    const declined = outcomeLine === undefined || outcomeLine === "rejected" ? "" : ` · ${outcomeLine}`;
-    return `❌ Rejected by ${who} — ${bareHeadline(row)}${declined}`;
-  }
-  return `⏰ Expired — ${bareHeadline(row)}`;
+const FAILED_PREFIX = "FAILED:";
+
+function plainOutcome(outcomeLine: string): string {
+  return outcomeLine.startsWith(FAILED_PREFIX) ? "it failed" : finishPlainLine(outcomeLine, DECIDED_OUTCOME_MAX);
 }
+
+const DECIDED_OUTCOME_MAX = 200;
+
+export function decidedCardLine(row: Pick<PendingActionRow, "kind" | "argsJson" | "status">, outcomeLine: string | undefined, who: string): string {
+  if (row.status === "approved") {
+    if (outcomeLine?.startsWith(FAILED_PREFIX) === true) return `⚠️ Approved by ${who}, but it failed: ${bareHeadline(row)}`;
+    return `✅ Approved by ${who}: ${outcomeLine === undefined ? bareHeadline(row) : plainOutcome(outcomeLine)}`;
+  }
+  if (row.status === "rejected") {
+    const declined = outcomeLine === undefined || outcomeLine === "rejected" ? "" : ` · ${plainOutcome(outcomeLine)}`;
+    return `❌ Rejected by ${who}: ${bareHeadline(row)}${declined}`;
+  }
+  return `⏰ Expired: ${bareHeadline(row)}`;
+}
+
+export const CLICK_NOTICE = {
+  unknown: "I can't find this request any more. It may already be decided.",
+  unknownItem: "I can't find that item any more. The other items on this card are unchanged.",
+  notPending: "Nothing changed: this request was already decided.",
+  unregistered: "Nothing changed: I can't run this kind of request any more.",
+  denied: "Only an admin can decide this request. It is still open.",
+  deniedDiscord: "Only an admin, or a server administrator for this server's own requests, can decide this. It is still open.",
+  noClicker: "Nothing changed: I couldn't tell who clicked.",
+  noPlace: "Nothing changed: I couldn't tell where this was clicked.",
+  failed: "Nothing changed: something went wrong. Try again in a moment.",
+} as const;
 
 export function judgeLiftHeadline(row: Pick<PendingActionRow, "kind" | "argsJson">): string {
   return `Ran without asking: ${doneSummaryForRow(row) ?? bareHeadline(row)}`;
@@ -110,7 +133,7 @@ export function judgeLiftLines(row: Pick<PendingActionRow, "kind" | "argsJson">,
 const JUDGE_LIFT_CONSEQUENCE_MAX = 120;
 
 export function judgeLiftOutcome(outcomeLine: string): string {
-  return `⚡ Auto-approved and already run · ${finishPlainLine(outcomeLine, JUDGE_LIFT_OUTCOME_MAX)}`;
+  return `⚡ Auto-approved and already run · ${outcomeLine.startsWith(FAILED_PREFIX) ? "it failed" : finishPlainLine(outcomeLine, JUDGE_LIFT_OUTCOME_MAX)}`;
 }
 
 const JUDGE_LIFT_OUTCOME_MAX = 200;

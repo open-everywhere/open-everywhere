@@ -1,5 +1,5 @@
 import { placeWords } from "../channels/friendly-ids.js";
-import { friendlyMonth, friendlyWhen, PersonFacingError } from "../channels/person-text.js";
+import { friendlyMonth, PersonFacingError } from "../channels/person-text.js";
 import { unattendedFrom, type SurfaceBinding } from "../identity/binding.js";
 import { cancelAnchoredTurn, type AttachSessionForCancel } from "../channels/turn-cancel.js";
 import { turnAnchorAddress, turnChannelKey } from "../channels/turn-registry.js";
@@ -22,6 +22,7 @@ import {
   requireCardPathHere,
   readSpendCoverage,
   frozenCoverage,
+  capsAfterClearFor,
   type SetSpendLimitInput,
   type CurrentCaps,
 } from "../tools/set_spend_limit.js";
@@ -217,7 +218,12 @@ export interface OeApprovalDeps {
   readonly domainSpendWindow?: typeof domainSpendWindow;
   readonly domains?: readonly Domain[];
   readonly nowISO?: () => string;
+  readonly capsAfterClear?: typeof capsAfterClearFor;
 }
+
+export const CARD_IS_THE_ANSWER = "";
+
+const ALREADY_WAITING = "That request is already waiting for an admin.";
 
 function noDomainSpendReason(reason: SkillDomainRefusal): string {
   switch (reason) {
@@ -237,7 +243,10 @@ export const BUDGET_RAISE_SCAN_DAYS = 30;
 async function budgetRaiseSpendSentence(binding: SurfaceBinding, deps: OeApprovalDeps): Promise<string> {
   const domains = deps.domains ?? getConfig().loadDomains();
   const resolved = reportDomainForBinding(binding, domains);
-  if (resolved.domain === null) return `\n_No domain spending to show here: ${noDomainSpendReason(resolved.reason)}._`;
+  if (resolved.domain === null) {
+    console.log(`[open-everywhere:spend] "${oeSlash("budget raise")}" shows no domain spend: ${noDomainSpendReason(resolved.reason)}`);
+    return "";
+  }
   try {
     const scan = await (deps.domainSpendWindow ?? domainSpendWindow)(
       binding.org,
@@ -246,11 +255,11 @@ async function budgetRaiseSpendSentence(binding: SurfaceBinding, deps: OeApprova
       BUDGET_RAISE_SCAN_DAYS,
       { domains },
     );
-    return `\n_For comparison, ${scan.domain} spent about $${scan.usd.toFixed(2)} in ${monthList(scan.periods)}._`;
+    return `For comparison, ${scan.domain} spent about $${scan.usd.toFixed(2)} in ${monthList(scan.periods)}.`;
   } catch (e) {
     const why = e instanceof Error ? e.message : String(e);
     console.warn(`[open-everywhere:spend] "${oeSlash("budget raise")}" could not scan domain "${resolved.domain}" spend: ${why}`);
-    return `\n_I couldn't load ${resolved.domain}'s spending just now._`;
+    return `I couldn't load ${resolved.domain}'s spending just now.`;
   }
 }
 
@@ -323,13 +332,10 @@ export async function runBudgetRaise(binding: SurfaceBinding, usd: number, deps:
   );
   const spendSentence = await budgetRaiseSpendSentence(binding, deps);
   if (posted.autoApproved) {
-    return `Done. The limit for ${place} is now $${usd.toFixed(2)} a month.` + spendSentence;
+    return [`Done. The limit for ${place} is now ${plainUsd(usd)} a month.`, spendSentence].filter(Boolean).join("\n");
   }
-  return (
-    `I've asked an admin to approve a limit of $${usd.toFixed(2)} a month for ${place}. ` +
-    `The request is in this channel until ${friendlyWhen(posted.expiresAt)}.` +
-    spendSentence
-  );
+  if (posted.deduped) return [ALREADY_WAITING, spendSentence].filter(Boolean).join("\n");
+  return spendSentence || CARD_IS_THE_ANSWER;
 }
 
 export async function runBudgetClear(binding: SurfaceBinding, deps: OeApprovalDeps = {}): Promise<string> {
@@ -346,7 +352,8 @@ export async function runBudgetClear(binding: SurfaceBinding, deps: OeApprovalDe
   const current: CurrentCaps = { tokens: caps.surfaceMonthlyTokens ?? null, usd: caps.surfaceMonthlyUsd ?? null };
 
   const input: ClearSpendLimitInput = {};
-  const plan = planClearSpendLimit(binding, input, current, domain);
+  const after = await (deps.capsAfterClear ?? capsAfterClearFor)(binding.org, workspaceKey, level, scopeKey, binding.mode, binding.trust);
+  const plan = planClearSpendLimit(binding, input, current, domain, after);
 
   const channelId = requireChannelId(binding);
   const scopeLabel = await friendlyScopeLabelFn(plan.scopeKey);
@@ -368,12 +375,15 @@ export async function runBudgetClear(binding: SurfaceBinding, deps: OeApprovalDe
     ),
   );
   if (posted.autoApproved) {
-    return `Done. ${capitalise(place)} is back on the usual limit.`;
+    return `Done. ${capitalise(place)} is back on the default limit.`;
   }
-  return (
-    `I've asked an admin to put ${place} back on the usual limit. ` +
-    `The request is in this channel until ${friendlyWhen(posted.expiresAt)}.`
-  );
+  if (posted.deduped) return ALREADY_WAITING;
+  return CARD_IS_THE_ANSWER;
+}
+
+function plainUsd(usd: number): string {
+  const whole = Number.isInteger(usd);
+  return `$${usd.toLocaleString("en-US", { minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: 2 })}`;
 }
 
 export interface OeCommandDeps {

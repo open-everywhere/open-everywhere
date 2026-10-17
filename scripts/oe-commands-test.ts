@@ -30,6 +30,7 @@ const {
   computeBudgetStatusFacts,
   runBudgetRaise,
   runBudgetClear,
+  CARD_IS_THE_ANSWER,
   runOeCommand,
   registerAppInfo,
   getAppInfo,
@@ -410,10 +411,12 @@ function discordOeInteraction(opts: {
     },
     friendlyScopeLabel: async () => undefined,
     readSpendCoverage: async () => ({ models: ["test/no-rate-model"] }),
+    capsAfterClear: async () => ({ tokens: null, usd: 50 }),
+    domains: [],
   };
 
   const raiseReply = await runBudgetRaise(discordBinding(), 25, deps);
-  ok(raiseReply.includes("$25.00") && !raiseReply.includes("pending-123"), "runBudgetRaise's ack text names the amount, and never the pending id (OPE-2486)");
+  ok(raiseReply === CARD_IS_THE_ANSWER, `runBudgetRaise returns no receipt beside its visible card (got ${JSON.stringify(raiseReply)})`);
   ok(personTextFaults(raiseReply).length === 0, `runBudgetRaise's ack reads cleanly — no raw id, debug term or trust plumbing (got ${JSON.stringify(personTextFaults(raiseReply))})`);
   ok(recorded!.kind === "spend.set", "runBudgetRaise proposes a spend.set");
   ok((recorded!.args as { monthlyUsd: number }).monthlyUsd === 25, "runBudgetRaise freezes the requested USD amount");
@@ -428,7 +431,12 @@ function discordOeInteraction(opts: {
 
   recorded = undefined;
   const clearReply = await runBudgetClear(discordBinding(), deps);
-  ok(clearReply.includes("usual limit") && !clearReply.includes("pending-123"), "runBudgetClear's ack says what was asked, and never the pending id (OPE-2486)");
+  ok(clearReply === CARD_IS_THE_ANSWER, `🔴 OPE-2490: runBudgetClear returns no receipt beside its visible card (got ${JSON.stringify(clearReply)})`);
+  ok((recorded!.args as { afterUsd?: number | null }).afterUsd === 50 && (recorded!.args as { afterCap?: number | null }).afterCap === null, "🔴 OPE-2490: runBudgetClear freezes the figure the scope falls back to, so the card names it");
+  const dedupedReply = await runBudgetClear(discordBinding(), { ...deps, requestApproval: async () => ({ id: "pending-123", expiresAt: "2026-07-07T00:00:00.000Z", deduped: true }) } as never);
+  ok(dedupedReply === "That request is already waiting for an admin.", `an identical waiting request posts nothing new, so the asker hears why (got ${JSON.stringify(dedupedReply)})`);
+  const autoReply = await runBudgetClear(discordBinding(), { ...deps, requestApproval: async () => ({ id: "pending-123", autoApproved: { outcome: "done" } }) } as never);
+  ok(autoReply.startsWith("Done.") && personTextFaults(autoReply).length === 0, `no card posted, so the reply says what happened (got ${JSON.stringify(autoReply)})`);
   ok(personTextFaults(clearReply).length === 0, `runBudgetClear's ack reads cleanly (got ${JSON.stringify(personTextFaults(clearReply))})`);
   ok(recorded!.kind === "spend.clear", "runBudgetClear proposes a spend.clear");
   ok(recorded!.scopeKey === "discord/G1/C1", "runBudgetClear defaults to this surface's own scope");
@@ -455,7 +463,8 @@ function discordOeInteraction(opts: {
     await assert.rejects(run, /doesn.t work here/, `${label} still refuses on a card-less surface — the fence moved to the door that promises "posted in this channel", it did not disappear`);
     n++;
   }
-  ok((await runBudgetRaise(discordBinding(), 25, deps)).includes("$25.00"), "…and the fence takes NOTHING from a card-capable surface: the same raise still acks");
+  recorded = undefined;
+  ok((await runBudgetRaise(discordBinding(), 25, deps)) === CARD_IS_THE_ANSWER && recorded !== undefined, "…and the fence takes NOTHING from a card-capable surface: the same raise still posts its card");
 
   recorded = undefined;
   const dmRaise = await runBudgetRaise(
@@ -463,7 +472,7 @@ function discordOeInteraction(opts: {
     10,
     deps,
   );
-  ok(dmRaise.includes("$10.00"), "runBudgetRaise from a DM acks the amount — a DM's own cap is enforceable since OPE-267");
+  ok(dmRaise === CARD_IS_THE_ANSWER, "runBudgetRaise from a DM posts its card, and no receipt beside it — a DM's own cap is enforceable since OPE-267");
   ok(recorded!.kind === "spend.set", "runBudgetRaise from a DM proposes a spend.set");
   ok(recorded!.scopeKey === "discord/U_DM_USER/C1", "runBudgetRaise from a DM defaults to that DM's OWN surface key, never the workspace bucket");
   n += 3;
@@ -513,13 +522,13 @@ function discordOeInteraction(opts: {
   ok(!salesReply.includes("12.50"), "budget raise: …and still sees nothing of the first domain's spend");
 
   ok(recorded!.kind === "spend.set", "budget raise: the scan did not turn the raise into an act — it is still a spend.set PROPOSAL");
-  ok(salesReply.includes("asked an admin to approve"), "budget raise: the ack still says an admin decides — the raise stays admin-gated");
+  ok(!salesReply.includes("asked an admin"), "budget raise: the ack repeats nothing the card says (OPE-2490); the card shows that an admin decides");
   ok(JSON.stringify(recorded!.args).indexOf("99.75") === -1, "budget raise: the scanned figure is NOT frozen onto the card — it is the asker's evidence, not the approver's");
 
   scannedFor = undefined;
   const dmReply = await runBudgetRaise(discordBinding({ mode: "dm", workspace: "U_DM", target: { channelId: "U_DM" } }), 10, deps as never);
   ok(scannedFor === undefined, "budget raise: a DM resolves to no domain, so the scan does not run at all");
-  ok(/No domain spending to show/.test(dmReply) && /direct message/.test(dmReply), "budget raise: a DM ack states that no domain spend is shown, and why — never a silent zero");
+  ok(dmReply === CARD_IS_THE_ANSWER, `budget raise: a DM ack carries no figure line, so it can never read as a zero (got ${JSON.stringify(dmReply)})`);
 
   const brokenReply = await runBudgetRaise(inDomain("C_ENG"), 25, {
     ...deps,
@@ -527,7 +536,7 @@ function discordOeInteraction(opts: {
       throw new Error("ledger unreachable");
     },
   } as never);
-  ok(brokenReply.includes("asked an admin to approve"), "budget raise: a failed scan still returns the working proposal ack — the read is fail-soft");
+  ok(recorded!.kind === "spend.set" && brokenReply.length > 0, "budget raise: a failed scan still posts the proposal — the read is fail-soft");
   ok(/couldn't load/.test(brokenReply) && !brokenReply.includes("$0.00"), "budget raise: a failed scan says the ledger could not be read, never a $0.00 that would read as a clean bill");
 }
 

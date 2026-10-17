@@ -393,7 +393,7 @@ await withPatchedFetch(vendor.fetch as unknown as typeof globalThis.fetch, async
     "…and it never shows the room the MINTED TOOL NAME",
   );
   ok(
-    posted[0]?.text.includes("This conversation reaches the tool through the next task it hands work to."),
+    posted[0]?.text.includes("The next task this conversation hands off can use it."),
     "…it says how the tool is REACHED instead — through the next task the seat delegates, because the tool mounts on the workers (OPE-2023)",
   );
 

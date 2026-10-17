@@ -286,7 +286,7 @@ console.log("4. an owner who has not connected their own account is sent a link,
   eq(dmed[dmed.length - 1]?.principalId, "U-owner", "…to the OWNER, never to the requesting room");
   eq((await store.getCredentialGrantAsk(ORG, askId))?.status, "pending", "🔴 THE ASK STAYS PENDING — connecting is a step, not a refusal");
   eq(vendor.seen.length, 0, "…and the vendor was never dialled: the probe runs BEFORE the mint");
-  ok(!posted.some((p) => p.text.includes("could not be minted")), "…and the requester's room was told nothing — nobody has answered yet");
+  ok(!posted.some((p) => p.text.includes("could not be set up")), "…and the requester's room was told nothing — nobody has answered yet");
 
   registerUserAuthFlow(authFlow({ hasFreshGrant: async () => true }));
   const after = await approveCredentialGrant(stamps, askId, "session", OWNER, NOW + 600, undefined, deps(server({ tools: PUBLISHED })));
@@ -310,8 +310,8 @@ console.log("5. a tool the connection does not publish closes the ask and tells 
   eq(row?.grantId, undefined, "…and no grant was minted");
 
   const notice = posted[posted.length - 1]?.text ?? "";
-  ok(notice.includes("approved the credential grant"), "the requester's room is told the owner APPROVED…");
-  ok(notice.includes("could not be minted"), "…and that it could not be minted");
+  ok(notice.includes("approved, but it could not be set up"), "the requester's room is told the owner APPROVED…");
+  ok(notice.includes("Nothing was granted"), "…and that nothing was granted");
   ok(!notice.includes("declined") && !notice.includes("expired with no answer"), "…and NEVER that they declined or that it lapsed — the owner made a decision and it was yes");
 
   const refusal = (await readAudit({ org: ORG })).filter((r) => r.action === "grant.refused").at(-1);
@@ -526,7 +526,7 @@ console.log("8b. a widened grant is reported to the room, and only a widened one
   const wideOk = await approveCredentialGrant(stamps, wide.askId, "session", OWNER, NOW + 500, undefined, deps(server({ tools: PUBLISHED })));
   ok(wideOk.approved, "the owner answers the `once` ask with `this conversation`…");
   const widened = posted[posted.length - 1]?.text ?? "";
-  ok(widened.includes("granted MORE than was asked"), "…and the ROOM is told the owner went wider than the request");
+  ok(widened.includes("granted more than was asked"), "…and the ROOM is told the owner went wider than the request");
   ok(
     widened.includes(`the request was for ${GRANT_MODE_WORDS.once}`) && widened.includes(`the grant is for ${GRANT_MODE_WORDS.session}`),
     "…naming BOTH breadths, in the same words the card spelled them with",
@@ -580,12 +580,12 @@ console.log("8d. an ask that cannot carry a 30-day grant is not offered one:");
 console.log("9. an approve or a decline rewrites the owner's card — it no longer says 'tap one button':");
 {
   const approvedText = approvedGrantCardText(askRowFixture as never, grantRowFixture as never, NOW);
-  ok(approvedText.includes("✅ APPROVED"), "the approved card says what was decided");
+  ok(approvedText.includes("✅ You approved"), "the approved card says what was decided");
   ok(approvedText.includes("Tapping a button on this card now does nothing"), "…and states the buttons are dead");
   ok(!approvedText.includes("Tap one button to answer"), "NEGATIVE CONTROL: the live card's own call-to-action is gone from the decided one");
 
   const declinedText = declinedGrantCardText(askRowFixture as never);
-  ok(declinedText.includes("🚫 DECLINED"), "the declined card says what was decided");
+  ok(declinedText.includes("🚫 You declined"), "the declined card says what was decided");
   ok(declinedText.includes("Nothing was granted and nothing was spent"), "…and that nothing was spent");
   ok(!declinedText.includes("Tap one button to answer"), "NEGATIVE CONTROL: same for the decline card");
 
@@ -596,7 +596,7 @@ console.log("9. an approve or a decline rewrites the owner's card — it no long
     const approved = await approveCredentialGrant(stamps, askId, "session", OWNER, NOW + 500, undefined, deps(vendor));
     ok(approved.approved, "the approval mints a grant (fixture sanity)");
     eq(chatUpdates.length, before + 1, "the approve path rewrote the owner's card exactly once");
-    ok(chatUpdates[chatUpdates.length - 1].text.includes("✅ APPROVED"), "…with the approved terminal copy");
+    ok(chatUpdates[chatUpdates.length - 1].text.includes("✅ You approved"), "…with the approved terminal copy");
     ok(!chatUpdates[chatUpdates.length - 1].text.includes("Tap one button to answer"), "…never the live card's buttons-are-open copy");
   }
   {
@@ -605,7 +605,7 @@ console.log("9. an approve or a decline rewrites the owner's card — it no long
     const declined = await declineCredentialGrant(stamps, askId, OWNER, NOW + 500);
     ok(declined, "the decline is recorded (fixture sanity)");
     eq(chatUpdates.length, before + 1, "the decline path rewrote the owner's card exactly once");
-    ok(chatUpdates[chatUpdates.length - 1].text.includes("🚫 DECLINED"), "…with the declined terminal copy");
+    ok(chatUpdates[chatUpdates.length - 1].text.includes("🚫 You declined"), "…with the declined terminal copy");
   }
 }
 

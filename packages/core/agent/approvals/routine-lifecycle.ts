@@ -167,7 +167,7 @@ const routineEnable: ActionKind<RoutineEnableArgs> = {
         nextRunAt: updated.nextRunAt ?? null,
       },
     });
-    return `${routineWords(args.description)} is back on${updated.nextRunAt ? ` — next run ${shortUtc(updated.nextRunAt)}` : ""}`;
+    return `${routineWords(args.description)} is back on${updated.nextRunAt ? `, next run ${shortUtc(updated.nextRunAt)}` : ""}`;
   },
 };
 

@@ -715,7 +715,7 @@ function fakeDeps(state: FakeState) {
   );
   ok(decided === true, "e2e: the tap is ours and handled");
   const update = posts.find((p) => p.method === "chat.update");
-  ok(update !== undefined && update.body.get("text")!.includes("dry-run —"), "e2e: member tap executed the kind (dry-run) and the card shows the outcome");
+  ok(update !== undefined && update.body.get("text")!.includes("dry-run, "), "e2e: member tap executed the kind (dry-run) and the card shows the outcome");
 }
 
 {

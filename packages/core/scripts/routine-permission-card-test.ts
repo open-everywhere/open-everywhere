@@ -694,7 +694,7 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
   const context = blocks.text.split("\n").at(-1);
   const { plainSummaryForRow } = await import("../agent/approvals/plain-summary.js");
   const bare = plainSummaryForRow((res as unknown as { row: never }).row).replace(/[.!?]$/u, "");
-  ok(context === `❌ Rejected by <@U_ADMIN> — ${bare}`, `§click: a hookless kind's decided card is one line — no appended outcome clause (got ${String(context)})`);
+  ok(context === `❌ Rejected by <@U_ADMIN>: ${bare}`, `§click: a hookless kind's decided card is one line — no appended outcome clause (got ${String(context)})`);
   ok(!blocks.text.includes(" · ") && !blocks.text.includes("rejected"), "§click: the literal 'rejected' never shows on the card");
 }
 

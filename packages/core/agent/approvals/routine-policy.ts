@@ -62,7 +62,7 @@ const routinePolicyAdd: ActionKind<RoutinePolicyAddArgs> = {
     };
     const result = applyPolicyAdd(routine, rule);
     if (!result.accepted) {
-      return `rule not added — ${result.reason}`;
+      return `rule not added: ${result.reason}`;
     }
     const updated = await updateRoutine(args.org, args.surfaceKey, args.routineId, result.patch);
     if (!updated) {
@@ -89,7 +89,7 @@ const routinePolicyAdd: ActionKind<RoutinePolicyAddArgs> = {
         rules: result.count,
       },
     });
-    return `rule added — ${routineWords(args.description)} follows it from its next run (${result.count} of ${POLICY_MAX_RULES} rules)`;
+    return `rule added. ${routineWords(args.description)} follows it from its next run (${result.count} of ${POLICY_MAX_RULES} rules)`;
   },
 };
 
@@ -162,7 +162,7 @@ const routinePolicyRemove: ActionKind<RoutinePolicyRemoveArgs> = {
       },
     });
     const left = result.count === 0 ? "it now has no standing rules" : `${result.count} of ${POLICY_MAX_RULES} left`;
-    return `rule removed — ${routineWords(args.description)} no longer follows it (${left})`;
+    return `rule removed. ${routineWords(args.description)} no longer follows it (${left})`;
   },
 };
 

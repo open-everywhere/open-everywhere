@@ -5,19 +5,19 @@ IN  discord interaction · APPROVE click by NON-admin member U_PLEB3 (permission
       | {
       |  "type": 4,
       |  "data": {
-      |   "content": "Only a domain/org admin — or a server administrator, for this server's own scopes — can decide this request.",
+      |   "content": "Only an admin, or a server administrator for this server's own requests, can decide this. It is still open.",
       |   "flags": 64
       |  }
       | }
 IN  discord interaction · APPROVE click by guild ADMINISTRATOR U_ADMIN3 (permissions 8) — row was still pending
       | {"type":3,"data":{"custom_id":"oe-approval:sec3-row:approve:default","component_type":2},"message":{"id":"900901"},"channel_id":"C_CLICK","guild_id":"GS3","member":{"user":{"id":"U_ADMIN3"},"permissions":"8"}}
   → POST /channels/CS3/messages ⇒ 200 message BM1
-      | ✅ Approved by <@U_ADMIN3> — spend limit set to 500 tokens/mo for <#CS3>
+      | ✅ Approved by <@U_ADMIN3>: spend limit set to 500 tokens/mo for <#CS3>
   ⇠ 200
       | {
       |  "type": 7,
       |  "data": {
-      |   "content": "✅ Approved by <@U_ADMIN3> — spend limit set to 500 tokens/mo for <#CS3>",
+      |   "content": "✅ Approved by <@U_ADMIN3>: spend limit set to 500 tokens/mo for <#CS3>",
       |   "components": []
       |  }
       | }

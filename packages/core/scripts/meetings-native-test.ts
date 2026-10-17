@@ -223,7 +223,7 @@ const deps = { policy: NATIVE_ON, post, now: () => NOW, secret: async (name: str
   for (const reason of ["not-transcribed", "expired", "not-found", "credential"] as const) {
     ok(native.nativeRefusalSentence("zoom", reason).startsWith(reason === "credential" ? "The organisation's Zoom credential" : "Zoom"), `the ${reason} sentence names the platform`);
   }
-  ok(meetingRecapResult(a, out).includes("the reason is in this thread"), "the card points at the thread");
+  ok(meetingRecapResult(a, out).includes("The reason is in this thread"), "the card points at the thread");
 }
 
 {

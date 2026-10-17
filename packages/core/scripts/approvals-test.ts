@@ -476,7 +476,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   calls.length = 0;
   ok((await handleApprovalPayload(payloadFor("oe_approval:contradict:p-never-existed"), { post })) === true, "an unknown-row contradict click is still owned by the handler");
   ok(calls.every((c) => c.method !== "chat.update"), "🔴 an unknown-row contradict click NEVER edits the message — the judge-lift notice is not erasable by clicking it");
-  ok(calls.some((c) => c.method === "chat.postMessage"), "an unknown-row contradict click answers in-thread instead");
+  ok(calls.some((c) => c.method === "chat.postEphemeral"), "an unknown-row contradict click answers the clicker alone, in the thread (OPE-2490)");
   calls.length = 0;
   await handleApprovalPayload(payloadFor("oe_approval:approve:p-never-existed"), { post });
   ok(calls.some((c) => c.method === "chat.update"), "contrast: an unknown-row APPROVE click still replaces the now-moot card");
@@ -523,7 +523,8 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   const handled = await handleApprovalPayload(payloadFor("oe_approval:approve:p-admin-denied", { user: "U_RANDOM_MEMBER" }), { post });
   ok(handled === true, "handleApprovalPayload: an admin-policy click by a non-admin still returns true");
   ok((await store.getPendingAction("default", "p-admin-denied"))?.status === "pending", "handleApprovalPayload: a denied admin click leaves the row PENDING (not consumed)");
-  ok(calls.some((c) => c.method === "chat.postMessage" && (bodyField(c.body, "text") ?? "").includes("only a domain/org admin")), "handleApprovalPayload: a denial posts an explanatory note");
+  ok(calls.some((c) => c.method === "chat.postEphemeral" && bodyField(c.body, "user") === "U_RANDOM_MEMBER" && (bodyField(c.body, "text") ?? "").includes("Only an admin")), "handleApprovalPayload: a denial shows the clicker alone an explanatory note (OPE-2490)");
+  ok(!calls.some((c) => c.method === "chat.postMessage" && (bodyField(c.body, "text") ?? "").includes("Only an admin")), "🔴 OPE-2490: the denial never posts into the room");
   const adminDenied = (await readAudit({ org: "default", action: "approval.denied" })).find((e) => e.detail?.id === "p-admin-denied");
   ok(adminDenied?.detail?.reason === "not-admin" && adminDenied?.principalId === "U_RANDOM_MEMBER", "a refused ADMIN-tier click audits approval.denied (reason \"not-admin\") — it audited nothing at all before OPE-185");
   ok(
@@ -939,9 +940,9 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   ok(again.deduped !== true, "re-propose: an identical proposal after a REJECTION is NOT deduped");
   ok(again.id !== first.id, "re-propose: the re-proposal is a genuinely NEW pending id, not the rejected one");
 
-  const notice = calls.find((c) => c.method === "chat.postMessage" && bodyField(c.body, "thread_ts") === "ANCHOR.10" && (bodyField(c.body, "text") ?? "").startsWith("❌ Rejected by <@U_ORG_ADMIN>"));
+  const notice = calls.find((c) => c.method === "chat.postMessage" && bodyField(c.body, "thread_ts") === "ANCHOR.10" && (bodyField(c.body, "text") ?? "").startsWith("❌ Rejected by <@U_ORG_ADMIN>: "));
   ok(!!notice, "decision notice: a REJECT posts a fresh message into the pending's anchor thread (thread_ts = the mint-time anchor)");
-  ok((bodyField(notice!.body, "text") ?? "").includes("Set the monthly spend limit") && !(bodyField(notice!.body, "text") ?? "").includes("\n"), "decision notice: the reject notice is ONE line that names what was rejected (OPE-2481), never an auto-retry");
+  ok((bodyField(notice!.body, "text") ?? "").includes("Set the monthly spend limit") && !(bodyField(notice!.body, "text") ?? "").includes("\n"), "decision notice: the reject notice is ONE line that names what was rejected, never an auto-retry");
 }
 
 {
@@ -963,8 +964,56 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   };
   await handleApprovalPayload(payloadFor("oe_approval:approve:p-notice-approve", { user: "U_ORG_ADMIN", channel: "C11", ts: "111.222" }), { post });
   const approveNotice = calls.find((c) => c.method === "chat.postMessage" && bodyField(c.body, "thread_ts") === "ANCHOR.11" && (bodyField(c.body, "text") ?? "").startsWith("✅ Approved by"));
-  ok(!!approveNotice, "decision notice: an APPROVE posts a fresh 'APPROVED' message into the anchor thread");
+  ok(!!approveNotice, "decision notice: with no seat to wake, an APPROVE states its outcome in the anchor thread (OPE-2473)");
   await getOperationalStore().clearSpendLimit("default", "slack/T11/C11", "surface");
+}
+
+{
+  const store = getOperationalStore();
+  await store.addPendingAction(
+    row({
+      id: "p-notice-stale",
+      argsJson: JSON.stringify({ org: "default", scopeKey: "slack/T12/C12", level: "surface", monthlyTokens: 900, currentCap: null }),
+      scopeKey: "slack/T12/C12",
+      channelId: "C12",
+      threadTs: "ANCHOR.12",
+      requestedBy: "U_ORG_ADMIN",
+      domain: null,
+    }),
+  );
+  const calls: { method: string; body: string }[] = [];
+  const post = async (method: string, body: string) => {
+    calls.push({ method, body });
+    return method === "chat.update" ? { ok: false, error: "message_not_found" } : { ok: true };
+  };
+  await handleApprovalPayload(payloadFor("oe_approval:approve:p-notice-stale", { user: "U_ORG_ADMIN", channel: "C12", ts: "121.222" }), { post });
+  const stale = calls.find((c) => c.method === "chat.postMessage" && bodyField(c.body, "thread_ts") === "ANCHOR.12");
+  ok((bodyField(stale?.body ?? "", "text") ?? "").startsWith("✅ Approved by <@U_ORG_ADMIN>: "), "🔴 OPE-2490: a refused card rewrite falls back to a notice that states the outcome, so the room is never left with a card that looks open");
+  await getOperationalStore().clearSpendLimit("default", "slack/T12/C12", "surface");
+}
+
+{
+  const store = getOperationalStore();
+  await store.addPendingAction(
+    row({
+      id: "p-notice-stale-expired",
+      argsJson: JSON.stringify({ org: "default", scopeKey: "slack/T13/C13", level: "surface", monthlyTokens: 900, currentCap: null }),
+      scopeKey: "slack/T13/C13",
+      channelId: "C13",
+      threadTs: "ANCHOR.13",
+      requestedBy: "routine:r-1",
+      domain: null,
+      expiresAt: "2020-01-01T00:00:00.000Z",
+    }),
+  );
+  const calls: { method: string; body: string }[] = [];
+  const post = async (method: string, body: string) => {
+    calls.push({ method, body });
+    return method === "chat.update" ? { ok: false, error: "message_not_found" } : { ok: true };
+  };
+  await handleApprovalPayload(payloadFor("oe_approval:approve:p-notice-stale-expired", { user: "U_ORG_ADMIN", channel: "C13", ts: "131.222" }), { post });
+  const stale = calls.find((c) => c.method === "chat.postMessage" && bodyField(c.body, "thread_ts") === "ANCHOR.13");
+  ok((bodyField(stale?.body ?? "", "text") ?? "").startsWith("⏰ Expired: "), "🔴 OPE-2490: a late click that expires a card Slack would not redraw posts the expiry line, so the card never looks open in silence");
 }
 
 {
@@ -1621,11 +1670,12 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
 
     const slackNotice = slackCalls.find((c) => c.method === "chat.postMessage" && bodyField(c.body, "thread_ts") === "ANCHOR.S");
     ok(!!slackNotice, "sweep feedback: the Slack row's expiry notice posts into the mint-frozen anchor thread");
-    ok((bodyField(slackNotice!.body, "text") ?? "").startsWith("⏰ Expired — "), "sweep feedback: the Slack notice is the one-line expiry, naming what expired");
+    ok((bodyField(slackNotice!.body, "text") ?? "").endsWith(", your request expired before anyone answered it."), "sweep feedback: the Slack notice tells the asker it expired, and copies nothing from the card (OPE-2490)");
     ok(bodyField(slackNotice!.body, "channel") === "C_WIN", "sweep feedback: the Slack notice targets the row's own channel");
+    ok(slackCalls.some((c) => c.method === "chat.update" && (bodyField(c.body, "text") ?? "").startsWith("⏰ Expired: ")), "🔴 OPE-2490: the sweep redraws the Slack card in place to its expired line");
 
     ok(discordNotices.length === 1 && discordNotices[0]!.rowId === "fb-discord", "sweep feedback: the Discord row's expiry notice goes through the Discord poster exactly once");
-    ok(discordNotices[0]!.text.startsWith("⏰ Expired — "), "sweep feedback: the Discord notice is the same one-line expiry");
+    ok(discordNotices[0]!.text.startsWith("⏰ Expired: "), "sweep feedback: a Discord card the sweep cannot redraw gets the one-line expiry, naming what expired");
 
     ok(wakes.length === 2, "sweep feedback: exactly the two FROZEN rows emit a decision wake (NULL postedTo emits none)");
     const slackWake = wakes.find((w) => w.token === WIN_TOKEN);
@@ -1660,6 +1710,22 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   } finally {
     overrideSettingsForTest({ window: { topology: false } });
   }
+}
+
+{
+  const store = getOperationalStore();
+  await store.addPendingAction(
+    row({ id: "fb2-slack", org: "sweepfb2", scopeKey: "slack/TW2/C_NOSEAT", channelId: "C_NOSEAT", threadTs: "ANCHOR.N", messageTs: "222.9", postedTo: "slack/TW2/C_NOSEAT", argsJson: JSON.stringify({ org: "sweepfb2", scopeKey: "slack/TW2/C_NOSEAT", level: "surface", monthlyTokens: 5, currentCap: null }), expiresAt: new Date(Date.now() - 60_000).toISOString() }),
+  );
+  const calls: { method: string; body: string }[] = [];
+  const post = async (method: string, body: string) => {
+    calls.push({ method, body });
+    return { ok: true };
+  };
+  ok((await sweepExpiredPendings("sweepfb2", new Date(), { post })) === 1, "sweep (no seat): the aged-out row expires");
+  ok(calls.some((c) => c.method === "chat.update" && (bodyField(c.body, "text") ?? "").startsWith("⏰ Expired: ")), "sweep (no seat): the card is redrawn in place");
+  const notice = calls.find((c) => c.method === "chat.postMessage" && bodyField(c.body, "thread_ts") === "ANCHOR.N");
+  ok((bodyField(notice?.body ?? "", "text") ?? "").startsWith("⏰ Expired: "), "🔴 sweep (no seat): with no seat to wake, the notice still states the outcome (OPE-2473), not only the asker's short line");
 }
 
 {
@@ -1720,7 +1786,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
 
   const notices = (["audience-floor", "unattested-room", "foreign-room", "guest-clicker"] as const).map((r) => clickerFloorRefusalNotice(r));
   ok(new Set(notices).size === 4, "clickerFloorRefusalNotice: each refusal reason gets its own copy");
-  ok(notices.every((t) => t.toLowerCase().includes("still pending")), "clickerFloorRefusalNotice: every refusal says the request is STILL PENDING (the card is not consumed)");
+  ok(notices.every((t) => t.toLowerCase().includes("still open")), "clickerFloorRefusalNotice: every refusal says the request is still open (the card is not consumed)");
 
   const { checkClickerFloor } = await import("../agent/approvals/clicker-floor.js");
   let floorDepCalls = 0;
@@ -1782,7 +1848,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   ok(memberExecuted.length === 0, "clicker gate: an OBSERVED-guest room does NOT execute the member-tier kind");
   ok((await store.getPendingAction("default", "p-cf-guest"))?.status === "pending", "clicker gate: a refused click leaves the row PENDING — the same card can still be decided from an internal room");
   ok((await deniedAudit("p-cf-guest"))?.detail?.reason === "audience-floor", "clicker gate: the refusal writes ONE approval.denied audit row naming the reason");
-  ok(guestCalls.some((c) => c.method === "chat.postMessage" && (bodyField(c.body, "text") ?? "").includes("still pending")), "clicker gate: the clicker gets the one-renderer refusal note in-thread");
+  ok(guestCalls.some((c) => c.method === "chat.postEphemeral" && (bodyField(c.body, "text") ?? "").includes("still open")), "clicker gate: the clicker alone gets the one-renderer refusal note in-thread (OPE-2490)");
   ok(guestCalls.every((c) => c.method !== "chat.update"), "clicker gate: the card itself is left untouched (nothing was decided)");
 
   memberExecuted = [];
@@ -2473,14 +2539,15 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   );
 
   const releaseNotices: string[] = [];
+  const releaseRedraws: string[] = [];
   const first = await resolveApprovalClick({
     org: "default",
     id: posted[0]!.id,
     decision: "approve_session",
     clickerId: "U_RANDOM_MEMBER",
     releaseFeedback: {
-      post: async (_method: string, body: string) => {
-        releaseNotices.push(body);
+      post: async (method: string, body: string) => {
+        (method === "chat.update" ? releaseRedraws : releaseNotices).push(body);
         return { ok: true } as Record<string, unknown>;
       },
     },
@@ -2493,6 +2560,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   const rest = await Promise.all(posted.slice(1).map(async (p) => (await store.getPendingAction("default", p.id))?.status));
   ok(rest.every((s) => s === "approved"), "🔴 OPE-251: …and their cards are DECIDED, so nobody is left clicking a card for a session that was already granted");
 
+  ok(releaseRedraws.length === fanOut.length - 1, `🔴 OPE-2490: every released card is redrawn in place to its decided line (saw ${String(releaseRedraws.length)})`);
   ok(
     releaseNotices.length === fanOut.length - 1,
     `🔴 OPE-251: every released row posts its own decision notice into its own conversation (saw ${String(releaseNotices.length)} for ${String(fanOut.length - 1)} released rows)`,

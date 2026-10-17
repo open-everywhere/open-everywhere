@@ -6,7 +6,7 @@ import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { domainForChannel } from "../memory/domain.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getConfig } from "../access/config.js";
-import { defaultScopeKey, assertScopableFromHere, assertScopeKeyShapeForLevel, approvalPostDeps, currentCapsFor, pendingScopeWords, type CurrentCaps } from "./set_spend_limit.js";
+import { defaultScopeKey, assertScopableFromHere, assertScopeKeyShapeForLevel, approvalPostDeps, capsAfterClearFor, currentCapsFor, pendingScopeWords, type CurrentCaps } from "./set_spend_limit.js";
 import { CAP_LEVELS, type CapLevel } from "../operational/store.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
@@ -36,7 +36,7 @@ export interface SpendClearPlan {
   readonly domain: string | null;
 }
 
-export function planClearSpendLimit(binding: SurfaceBinding, input: ClearSpendLimitInput, current: CurrentCaps, domain: string | null): SpendClearPlan {
+export function planClearSpendLimit(binding: SurfaceBinding, input: ClearSpendLimitInput, current: CurrentCaps, domain: string | null, after?: CurrentCaps): SpendClearPlan {
   if (!actingPrincipalId(binding)) {
     throw new Error("clear_spend_limit needs a verified sender on this turn — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not propose removing a spend override in that person's name. Ask a person in this conversation to propose it.");
   }
@@ -46,7 +46,7 @@ export function planClearSpendLimit(binding: SurfaceBinding, input: ClearSpendLi
   assertScopeKeyShapeForLevel("clear_spend_limit", level, scopeKey);
   return {
     kind: "spend.clear",
-    args: { org: binding.org, scopeKey, level, currentCap: current.tokens, currentUsd: current.usd },
+    args: { org: binding.org, scopeKey, level, currentCap: current.tokens, currentUsd: current.usd, ...(after ? { afterCap: after.tokens, afterUsd: after.usd } : {}) },
     scopeKey,
     domain,
   };
@@ -83,8 +83,9 @@ const clearSpendLimitEntry = defineTool({
     const domain = level === "user" ? null : level === "domain" ? scopeKey : (domainForChannel(scopeKey, getConfig().loadDomains())?.name ?? null);
     const workspaceKey = `${binding.platform}/${binding.workspace}`;
     const current: CurrentCaps = await currentCapsFor(binding.org, workspaceKey, level, scopeKey, binding.mode, binding.trust);
+    const after: CurrentCaps = await capsAfterClearFor(binding.org, workspaceKey, level, scopeKey, binding.mode, binding.trust);
 
-    const plan = planClearSpendLimit(binding, input, current, domain);
+    const plan = planClearSpendLimit(binding, input, current, domain, after);
 
     const venueResult = await checkApprovalVenue(binding, resolvePartition(ctx), () => getConfig().loadDomains());
     if ("refusal" in venueResult) {

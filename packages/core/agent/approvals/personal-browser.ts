@@ -1,5 +1,6 @@
 import { inlineForReview } from "./review-surface.js";
 import { plainValue } from "./plain-text.js";
+import { friendlyWhen } from "../channels/person-text.js";
 import { registerActionKind } from "./actions.js";
 import { grantAct, handBack } from "../personal-browser/lifecycle.js";
 import { getPersonalBrowserState } from "../personal-browser/store.js";
@@ -48,7 +49,7 @@ const browserAct: ActionKind<BrowserActArgs> = {
   async execute(args, decidedBy) {
     ownerOnly(args.principalId, decidedBy);
     const until = await grantAct(args.org, args.person, args.host, args.minutes, decidedBy);
-    return `the agent may click and type on ${args.host} in your browser until ${new Date(until).toISOString().slice(11, 16)} UTC`;
+    return `the agent may click and type on ${args.host} in your browser until ${friendlyWhen(new Date(until).toISOString())}`;
   },
 };
 

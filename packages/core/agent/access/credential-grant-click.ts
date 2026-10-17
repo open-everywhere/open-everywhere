@@ -49,7 +49,7 @@ export async function resolveGrantCardClick(input: GrantClickInput): Promise<Gra
       await note(declined ? "declined" : "gone");
       return declined
         ? { outcome: "declined", text: "Declined. Nothing was granted, and the conversation that asked has been told." }
-        : { outcome: "gone", text: "That request is no longer open — it was already answered, or it expired." };
+        : { outcome: "gone", text: "That request is no longer open. It was already answered, or it expired." };
     }
 
     const mode: CredentialGrantMode = input.answer;
@@ -57,7 +57,7 @@ export async function resolveGrantCardClick(input: GrantClickInput): Promise<Gra
     if (!approved.approved) {
       if (approved.reason === "not_pending_or_expired") {
         await note("gone");
-        return { outcome: "gone", text: "That request is no longer open — it was already answered, or it expired." };
+        return { outcome: "gone", text: "That request is no longer open. It was already answered, or it expired." };
       }
       const prompted = approved.prompted === true;
       await note("failed", approved.reason === "consent_required" ? { linkDelivered: prompted, reason: approved.reason } : { reason: approved.reason });
@@ -93,7 +93,7 @@ export function grantApproveFailureText(reason: GrantApproveFailure["reason"], p
   switch (reason) {
     case "consent_required":
       return prompted
-        ? "Not yet — I have just sent you the link to connect your account. Nothing has been granted."
+        ? "Not yet. I just sent you the link to connect your account. Nothing has been granted."
         :
           "Your own account is not connected yet, and I couldn't send you the link to connect it. Nothing has been granted. " +
           "If you asked me to stop sending you direct messages, say here that I may message you again and press Approve once more. Otherwise ask your admin to check the setup.";
@@ -107,8 +107,8 @@ export function grantApproveFailureText(reason: GrantApproveFailure["reason"], p
       return "I can't find your account for this, so nothing was granted. Your admin needs to fix this; another tap won't help.";
     case "standing_unavailable":
       return (
-        `A grant for ${GRANT_MODE_WORDS.standing} has to belong to a room, and this request did not come from one — ` +
-        "so it would stop working the moment that conversation ends. Nothing was granted and nothing was spent. " +
+        `A grant for ${GRANT_MODE_WORDS.standing} has to belong to a room, and this request did not come from one. ` +
+        "So it would stop working the moment that conversation ends. Nothing was granted and nothing was spent. " +
         `Approve ${grantModePhrase("once")} or ${grantModePhrase("session")} on the same card instead.`
       );
     case "not_pending_or_expired":

@@ -144,13 +144,13 @@ ok(decisionFeedbackSurfaceFor("teams") !== undefined, "the Teams decision-feedba
   const tainted = JSON.stringify(pendingTeamsCard(r, ["line one", "⚠ proposed on a turn that had ingested external content — read the payload above on its own merits; nothing outside this room asked for it."]).body);
   ok(tainted.includes(TAINT_CARD_WARNING) && !tainted.includes("ingested external content"), "a tainted proposal shows the one warning line, not the full disclosure");
   const decided = decidedTeamsCard({ ...r, status: "approved", decidedBy: "29:x" }, ["line one"], "done", "Ada");
-  ok(decided.body.length === 1 && (decided.body[0] as unknown as { text: string }).text === "✅ Approved by Ada — done", "OPE-2481: the decided Teams card is one line that names the decider and the outcome");
+  ok(decided.body.length === 1 && (decided.body[0] as unknown as { text: string }).text === "✅ Approved by Ada: done", "OPE-2481: the decided Teams card is one line that names the decider and the outcome");
   ok(decided.actions === undefined, "the decided card has no actions");
   const nameless = decidedTeamsCard({ ...r, status: "approved", decidedBy: "29:x" }, ["line one"], "done");
-  ok((nameless.body[0] as unknown as { text: string }).text === "✅ Approved by someone — done", "with no display name the decider is 'someone', never the raw id");
+  ok((nameless.body[0] as unknown as { text: string }).text === "✅ Approved by someone: done", "with no display name the decider is 'someone', never the raw id");
   const bare = plainSummaryForRow(r).replace(/[.!?]$/u, "");
   const rejected = decidedTeamsCard({ ...r, status: "rejected", decidedBy: "29:x" }, ["line one"], "rejected", "Ada");
-  ok((rejected.body[0] as unknown as { text: string }).text === `❌ Rejected by Ada — ${bare}`, "a rejected card names the thing that was not done");
+  ok((rejected.body[0] as unknown as { text: string }).text === `❌ Rejected by Ada: ${bare}`, "a rejected card names the thing that was not done");
   const notice = judgeLiftNoticeTeamsCard(r, ["line one"], "ran");
   const noticeActions = (notice.actions ?? []) as readonly { data?: unknown }[];
   ok(noticeActions.length === 1 && parseTeamsApprovalData(noticeActions[0]?.data)?.decision === "contradict", "the judge-lift notice carries exactly one button, the contradict verb");
@@ -353,7 +353,9 @@ async function auditFor(action: string, id: string) {
   ok(memberExecuted.length === 1 && memberExecuted[0] === "29:clicker", "the frozen act ran exactly once, decided by the tapping principal");
   const approved = await auditFor("approval.approved", r.id);
   ok(approved.length === 1 && approved[0]?.principalId === "29:clicker" && approved[0]?.detail?.venueChannel === CHANNEL, "approval.approved names the clicker and the venue channel");
-  ok(notices.some((x) => x.conversationId === `${CHANNEL};messageid=1700000000001` && x.text.length > 0), "the decision notice posts into the card's own reply chain");
+  const tapNotice = notices.find((x) => x.conversationId === `${CHANNEL};messageid=1700000000001`);
+  ok(tapNotice !== undefined && tapNotice.text.startsWith("✅ Approved by an admin: "), `the decision notice posts into the card's own reply chain and states the outcome (got ${JSON.stringify(tapNotice?.text)})`);
+  ok(!notices.some((x) => x.text.includes("<@")), "🔴 OPE-2490: no Teams notice spells a raw <@29:…> id");
   ok(updates.some((u) => u.activityId === r.messageTs), "the card message itself is updated to the decided render");
   ok(innerCalls === 0, "an OE tap is never forwarded to the native channel");
 
@@ -467,7 +469,7 @@ async function auditFor(action: string, id: string) {
     channelData: { channel: { id: OTHER_CHANNEL } },
   });
   const res = (await (await postTap(body, `Bearer ${goodToken}`)).json()) as { value: unknown };
-  ok(typeof res.value === "string" && /not applied/.test(res.value) && (await status(r)) === "pending" && memberExecuted.length === 1, "a tenant-less tap from another room is refused and the row stays pending");
+  ok(typeof res.value === "string" && /Nothing changed/.test(res.value) && (await status(r)) === "pending" && memberExecuted.length === 1, "a tenant-less tap from another room is refused and the row stays pending");
 }
 
 {

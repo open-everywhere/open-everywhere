@@ -18,8 +18,10 @@ const RESPONSE_CHANNEL_MESSAGE = 4;
 const EPHEMERAL_FLAG = 64;
 
 function ephemeral(content: string): DiscordInteractionResponse {
-  return { type: RESPONSE_CHANNEL_MESSAGE, data: { content, flags: EPHEMERAL_FLAG } };
+  return { type: RESPONSE_CHANNEL_MESSAGE, data: { content: content.length > 0 ? content : DISCORD_CARD_ACK, flags: EPHEMERAL_FLAG } };
 }
+
+const DISCORD_CARD_ACK = "👍";
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;

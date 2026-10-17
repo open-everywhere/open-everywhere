@@ -8,7 +8,7 @@ import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { domainForChannel, type Domain } from "../memory/domain.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getConfig } from "../access/config.js";
-import { effectiveCaps, effectiveUserCaps, domainNameForScope } from "../spend/caps.js";
+import { activeSpendLimitsForOrg, applyCapOverrides, applyUserCapOverrides, effectiveCaps, effectiveUserCaps, domainNameForScope, resolveCaps, resolveUserCaps } from "../spend/caps.js";
 import { usageSummary } from "../spend/usage-events.js";
 import { modelPricing, soleConfiguredModel } from "../spend/pricing.js";
 import { UNKNOWN_MODEL } from "../spend/spend.js";
@@ -61,6 +61,30 @@ export async function currentCapsFor(
   const capsSurfaceArg = level === "workspace" ? workspaceKey : scopeKey;
   const capsDomainArg = level === "domain" ? scopeKey : domainNameForScope(scopeKey, mode, trust);
   const caps = await effectiveCaps(org, workspaceKey, capsSurfaceArg, capsDomainArg);
+  return {
+    tokens: (level === "workspace" ? caps.workspaceMonthlyTokens : caps.surfaceMonthlyTokens) ?? null,
+    usd: (level === "workspace" ? caps.workspaceMonthlyUsd : caps.surfaceMonthlyUsd) ?? null,
+  };
+}
+
+export async function capsAfterClearFor(
+  org: string,
+  workspaceKey: string,
+  level: Level,
+  scopeKey: string,
+  mode: SurfaceBinding["mode"],
+  trust: SurfaceBinding["trust"],
+): Promise<CurrentCaps> {
+  const others = (await activeSpendLimitsForOrg(org)).filter((l) => !(l.level === level && l.scopeKey === scopeKey));
+  if (level === "user") {
+    const parsed = parseScopeKey(scopeKey);
+    if (parsed.kind !== "principal") return { tokens: null, usd: null };
+    const caps = applyUserCapOverrides(resolveUserCaps(parsed.id, parsed.platform, parsed.tenant), others, scopeKey);
+    return { tokens: caps.surfaceMonthlyTokens ?? null, usd: caps.surfaceMonthlyUsd ?? null };
+  }
+  const capsSurfaceArg = level === "workspace" ? workspaceKey : scopeKey;
+  const capsDomainArg = level === "domain" ? scopeKey : domainNameForScope(scopeKey, mode, trust);
+  const caps = applyCapOverrides(resolveCaps(workspaceKey, capsSurfaceArg, capsDomainArg), others, workspaceKey, capsSurfaceArg, capsDomainArg);
   return {
     tokens: (level === "workspace" ? caps.workspaceMonthlyTokens : caps.surfaceMonthlyTokens) ?? null,
     usd: (level === "workspace" ? caps.workspaceMonthlyUsd : caps.surfaceMonthlyUsd) ?? null,

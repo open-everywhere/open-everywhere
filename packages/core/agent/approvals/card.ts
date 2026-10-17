@@ -141,8 +141,8 @@ export interface GroupedCardItem {
 export const GROUPED_CARD_MAX_ITEMS = 5;
 
 export function groupedHeadline(total: number, open: number): string {
-  if (open === 0) return `${total} approvals for one job — all decided`;
-  return `${total} approvals for one job — ${open} still open`;
+  if (open === 0) return `${total} approvals for one job, all decided`;
+  return `${total} approvals for one job, ${open} still open`;
 }
 
 export function groupedCardBlocks(items: readonly GroupedCardItem[]): RenderedCard {

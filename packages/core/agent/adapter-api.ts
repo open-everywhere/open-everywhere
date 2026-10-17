@@ -121,6 +121,7 @@ export {
   pendingCardLines,
   cardFooter,
   decidedCardLine,
+  CLICK_NOTICE,
   footerRequester,
   judgeLiftHeadline,
   judgeLiftLines,

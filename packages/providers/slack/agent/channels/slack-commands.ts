@@ -67,6 +67,7 @@ async function auditCommandDropped(teamId: string | undefined, channelId: string
 }
 
 function ephemeralResponse(text: string): Response {
+  if (text.length === 0) return new Response(null, { status: 200 });
   return new Response(JSON.stringify({ response_type: "ephemeral", text }), {
     status: 200,
     headers: { "content-type": "application/json" },

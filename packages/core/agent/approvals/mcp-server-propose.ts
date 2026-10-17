@@ -19,6 +19,7 @@ import { inlineForReview } from "./review-surface.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import type { ActionKind } from "./types.js";
 import { plainValue } from "./plain-text.js";
+import { cardSitsWhereAsked } from "./requester-note.js";
 
 export interface McpServerProposeArgs {
   readonly org: string;
@@ -181,11 +182,11 @@ export async function executeMcpServerPropose(args: McpServerProposeArgs, decide
   const adminOk = (await post("chat.postMessage", adminBody.toString()))?.ok === true;
 
   const askingPlatform = platformOfScopeKey(args.scopeKey);
-  if (askingPlatform) {
+  if (askingPlatform && !(await cardSitsWhereAsked(args.org, args.channelId, args.threadTs))) {
     await (deps.postThreadNote ?? postSurfaceText)(askingPlatform, {
       channelId: args.channelId,
       threadTs: args.threadTs,
-      text: `MCP server request sent — PR ${pr.url} is with the admins. Nothing is set up until they merge it.`,
+      text: `MCP server request sent. Pull request ${pr.url} is with the admins. Nothing is set up until they merge it.`,
     });
   }
 

@@ -214,21 +214,21 @@ function cardData(raw: string, max: number): { readonly text: string; readonly t
 
 export function expiredGrantCardText(ask: CredentialGrantAskRow, requesterNotified: boolean): string {
   return [
-    `⌛ EXPIRED — this request timed out.`,
+    `⌛ This request timed out.`,
     "",
     askActionSentence(ask, "wanted"),
     "",
     "Nothing was granted and nothing was spent. Tapping a button on this card now does nothing.",
     requesterNotified
       ? "The person who asked has been told the request lapsed, and they can ask again if they still need it."
-      : "This deployment could not reach the conversation they asked from, so they have NOT been told — they may still be waiting on an answer.",
+      : "I could not reach the conversation they asked from, so they have not been told. They may still be waiting on an answer.",
   ].join("\n");
 }
 
 export function refusedGrantCardText(ask: CredentialGrantAskRow, gate: GrantApproveGate): string {
   const vendor = connectorDisplayName(ask.connector);
   return [
-    `🚫 NOT GRANTED — your ${vendor} account could not lend this.`,
+    `🚫 Not granted: your ${vendor} account could not lend this.`,
     "",
     askActionSentence(ask, "wanted"),
     "",
@@ -245,7 +245,7 @@ export type GrantApproveGate = "tool_absent" | "frozen_args_unknown";
 
 export function approvedGrantCardText(ask: CredentialGrantAskRow, grant: Pick<CredentialGrantRow, "mode" | "expiresAt">, nowMs: number): string {
   return [
-    `✅ APPROVED — you approved this request.`,
+    `✅ You approved this request.`,
     "",
     askActionSentence(ask, "wanted"),
     "",
@@ -256,7 +256,7 @@ export function approvedGrantCardText(ask: CredentialGrantAskRow, grant: Pick<Cr
 
 export function declinedGrantCardText(ask: CredentialGrantAskRow): string {
   return [
-    `🚫 DECLINED — you declined this request.`,
+    `🚫 You declined this request.`,
     "",
     askActionSentence(ask, "wanted"),
     "",

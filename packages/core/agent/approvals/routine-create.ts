@@ -186,7 +186,7 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
     });
     const unarmed = unarmedDeclarations(args.permissions ?? [], armed);
     return (
-      `routine started — runs ${triggerWords(args.trigger)}${routine.nextRunAt ? `, first on ${shortUtc(routine.nextRunAt)}` : ""}` +
+      `routine started, runs ${triggerWords(args.trigger)}${routine.nextRunAt ? `, first on ${shortUtc(routine.nextRunAt)}` : ""}` +
       `${armed.length > 0 ? `; may use ${armed.map(toolWords).join(", ")} without asking` : ""}` +
       `${unarmed.length > 0 ? `; it will ask before ${unarmed.map(toolWords).join(", ")}${args.tainted ? " (nothing was made standing: it was written in a turn that read external content)" : ""}` : ""}`
     );

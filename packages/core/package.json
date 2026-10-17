@@ -866,6 +866,10 @@
       "types": "./dist/agent/approvals/pr-open.d.ts",
       "default": "./dist/agent/approvals/pr-open.js"
     },
+    "./agent/approvals/requester-note.js": {
+      "types": "./dist/agent/approvals/requester-note.d.ts",
+      "default": "./dist/agent/approvals/requester-note.js"
+    },
     "./agent/approvals/review-surface.js": {
       "types": "./dist/agent/approvals/review-surface.d.ts",
       "default": "./dist/agent/approvals/review-surface.js"

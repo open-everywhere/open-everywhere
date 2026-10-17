@@ -307,7 +307,7 @@ console.log("3. the golden:");
 
   eq(
     grantApproveFailureText("consent_required", true),
-    "Not yet — I have just sent you the link to connect your account. Nothing has been granted.",
+    "Not yet. I just sent you the link to connect your account. Nothing has been granted.",
     "🔴 the tap answer POINTS AT the connect message and never repeats the step — that duplication is what made the detour read as two",
   );
 
@@ -360,7 +360,7 @@ console.log("3. the golden:");
   eq(
     approvedGrantCardText(ask, { expiresAt: SESSION_EXPIRY, mode: "session" }, NOW),
     [
-      "✅ APPROVED — you approved this request.",
+      "✅ You approved this request.",
       "",
       'They asked to read a Notion page — "Quarterly report".',
       "",
@@ -373,7 +373,7 @@ console.log("3. the golden:");
   eq(
     declinedGrantCardText(ask),
     [
-      "🚫 DECLINED — you declined this request.",
+      "🚫 You declined this request.",
       "",
       'They asked to read a Notion page — "Quarterly report".',
       "",
@@ -385,7 +385,7 @@ console.log("3. the golden:");
   eq(
     expiredGrantCardText(ask, true),
     [
-      "⌛ EXPIRED — this request timed out.",
+      "⌛ This request timed out.",
       "",
       'They asked to read a Notion page — "Quarterly report".',
       "",
@@ -398,7 +398,7 @@ console.log("3. the golden:");
   eq(
     refusedGrantCardText(ask, "tool_absent"),
     [
-      "🚫 NOT GRANTED — your Notion account could not lend this.",
+      "🚫 Not granted: your Notion account could not lend this.",
       "",
       'They asked to read a Notion page — "Quarterly report".',
       "",
@@ -413,10 +413,10 @@ console.log("3. the golden:");
   eq(
     grantResolutionText(ask, { askedMode: "once", grant: grantRow, kind: "approved" }, NOW),
     [
-      'ada approved the credential grant — read a Notion page — "Quarterly report".',
+      'ada approved: read a Notion page — "Quarterly report".',
       "The grant is for this conversation, for the next 12 hours (until 04:19 UTC).",
-      "This conversation reaches the tool through the next task it hands work to.",
-      "ada granted MORE than was asked: the request was for once, and the grant is for this conversation.",
+      "The next task this conversation hands off can use it.",
+      "ada granted more than was asked: the request was for once, and the grant is for this conversation.",
       DISCLOSURE,
     ].join("\n"),
     "the room's resolution notice (approved, wider than asked)",
@@ -425,7 +425,7 @@ console.log("3. the golden:");
   eq(
     grantResolutionText(ask, { askedMode: "session", grant: { ...grantRow, toolName: undefined }, kind: "approved" }, NOW),
     [
-      'ada approved the credential grant — read a Notion page — "Quarterly report".',
+      'ada approved: read a Notion page — "Quarterly report".',
       "The grant is for this conversation, for the next 12 hours (until 04:19 UTC).",
       DISCLOSURE,
     ].join("\n"),
@@ -434,16 +434,15 @@ console.log("3. the golden:");
 
   eq(
     grantResolutionText(ask, { kind: "declined" }, NOW),
-    'ada declined the credential grant — read a Notion page — "Quarterly report". Nothing was granted and no tool is mounted. Do not ask again for the same thing — find another way, or ask the room.',
+    'ada declined: read a Notion page — "Quarterly report". Nothing was granted. Please do not ask again for the same thing.',
     "the room's resolution notice (declined)",
   );
 
   eq(
     grantResolutionText(ask, { kind: "expired" }, NOW),
     [
-      'The credential grant request — read a Notion page — "Quarterly report" — expired with no answer from ada.',
-      "Nothing was granted and no tool is mounted. ada did not decline — the request simply timed out.",
-      "You can ask again if it is still needed.",
+      'The request expired with no answer from ada: read a Notion page — "Quarterly report".',
+      "Nothing was granted. ada did not decline, so you can ask again if it is still needed.",
     ].join("\n"),
     "the room's resolution notice (expired)",
   );
@@ -451,9 +450,9 @@ console.log("3. the golden:");
   eq(
     grantResolutionText(ask, { gate: "tool_absent", kind: "refused" }, NOW),
     [
-      'ada approved the credential grant — read a Notion page — "Quarterly report" — but it could not be minted.',
+      'ada approved, but it could not be set up: read a Notion page — "Quarterly report".',
       "Their Notion connection publishes no tool by that name, so there was nothing to lend.",
-      "Nothing was granted and no tool is mounted. Check the tool name and the arguments against the connection, then ask again.",
+      "Nothing was granted. Check the tool name and the arguments against the connection, then ask again.",
     ].join("\n"),
     "the room's resolution notice (refused)",
   );

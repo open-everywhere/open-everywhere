@@ -207,14 +207,14 @@ function clickPayload(
 
   const approved = decidedDiscordCard({ ...r, status: "approved", decidedBy: "U_ORG_ADMIN" }, ["line one"], "spend limit set");
   ok(approved.components.length === 0, "decided card has NO components (buttons stripped — the UX half; CAS is the correctness half)");
-  ok(approved.content === "✅ Approved by <@U_ORG_ADMIN> — spend limit set", "decided card is one line: the approved line + outcome");
+  ok(approved.content === "✅ Approved by <@U_ORG_ADMIN>: spend limit set", "decided card is one line: the approved line + outcome");
   const bare = plainSummaryForRow(r).replace(/[.!?]$/u, "");
   const rejected = decidedDiscordCard({ ...r, status: "rejected", decidedBy: "U_ORG_ADMIN" }, ["line one"], "rejected");
-  ok(rejected.content === `❌ Rejected by <@U_ORG_ADMIN> — ${bare}`, "decided card renders the rejected line with the headline");
+  ok(rejected.content === `❌ Rejected by <@U_ORG_ADMIN>: ${bare}`, "decided card renders the rejected line with the headline");
   const declined = decidedDiscordCard({ ...r, status: "rejected", decidedBy: "U_ORG_ADMIN" }, ["line one"], "it will not ask again");
-  ok(declined.content === `❌ Rejected by <@U_ORG_ADMIN> — ${bare} · it will not ask again`, "a durable decline's line follows the headline, so the clicker reads what was recorded");
+  ok(declined.content === `❌ Rejected by <@U_ORG_ADMIN>: ${bare} · it will not ask again`, "a durable decline's line follows the headline, so the clicker reads what was recorded");
   const expired = decidedDiscordCard({ ...r, status: "expired", decidedBy: "system" }, ["line one"], "expired");
-  ok(expired.content === `⏰ Expired — ${bare}`, "decided card renders the expired line");
+  ok(expired.content === `⏰ Expired: ${bare}`, "decided card renders the expired line");
   ok(![approved, rejected, expired].some((c) => c.content.includes("line one") || c.content.includes("spend.set")), "a decided card shows no detail line and no kind");
 }
 
@@ -544,7 +544,7 @@ const store = getOperationalStore();
 
 {
   const res = (await handleDiscordApprovalInteraction(clickPayload("oe-approval:no-such-row:approve:default", { user: "U_GUILD_ADMIN", permissions: "8" }))) as Resp;
-  ok(res.type === 4 && String(res.data?.content).includes("no longer known"), "an unknown pending id answers the not-known ephemeral note");
+  ok(res.type === 4 && String(res.data?.content).includes("can't find this request"), "an unknown pending id answers the not-known ephemeral note");
 }
 
 {
@@ -603,7 +603,7 @@ const store = getOperationalStore();
     const res = (await handleDiscordApprovalInteraction(clickPayload("oe-approval:dw-approve:approve:default", { user: "U_GUILD_ADMIN", permissions: "8" }), deps)) as Resp;
     ok(res.type === 7, "decision feedback: the interaction response is STILL the type-7 decided card (feedback is additive)");
     ok(res.data?.content?.includes("Approved by <@U_GUILD_ADMIN>") === true, "decision feedback: the edited card itself shows the outcome and the deciding admin");
-    ok(notices.length === 0, `🔴 decision feedback: the seat took the wake, so the room gets no second post that repeats the card (got ${notices.length})`);
+    ok(notices.length === 1 && /^<@\w+>, <@U_GUILD_ADMIN> approved your request\.$/u.test(notices[0]!.text), `🔴 decision feedback: the seat took the wake, so the room gets no second post that repeats the card, only the asker's short line (got ${JSON.stringify(notices.map((x) => x.text))})`);
     ok(wakes.length === 1 && wakes[0]!.token === DWIN_TOKEN && wakes[0]!.domain === "dwin", "decision feedback: the wake targets the owning window seat's current registry token");
     const origin = wakes[0]!.origin as { platform: string; channelId: string; guildId: string; messageId?: string };
     ok(origin.platform === "discord" && origin.guildId === "G1" && origin.channelId === "C_WIN" && origin.messageId === "900001", "decision feedback: the wake origin carries the INTERACTION's guild id + the row's channel, anchored to the card message");
@@ -617,7 +617,7 @@ const store = getOperationalStore();
     await handleDiscordApprovalInteraction(clickPayload("oe-approval:dw-approve-noseat:approve:default", { user: "U_GUILD_ADMIN", permissions: "8" }), deps);
     ok(wakes.length === 1, "decision feedback (no seat took the wake): the wake was still tried once");
     ok(notices.length === 1 && notices[0]!.rowId === "dw-approve-noseat", "decision feedback (no seat took the wake): an approve posts exactly one fresh notice for the decided row");
-    ok(notices[0]!.text.startsWith("✅ Approved by <@U_GUILD_ADMIN> — "), "decision feedback: the notice names the outcome + the deciding admin (Discord shares Slack's <@id> mention syntax)");
+    ok(notices[0]!.text.startsWith("✅ Approved by <@U_GUILD_ADMIN>: "), "decision feedback: the notice names the outcome + the deciding admin (Discord shares Slack's <@id> mention syntax)");
     await store.clearSpendLimit("default", "discord/G1/C_WIN", "surface");
 
     {
@@ -632,7 +632,7 @@ const store = getOperationalStore();
       seatTakesWake = false;
       await store.clearThreadOwner("default", ref.channelKey, ref.threadKey);
       ok(wakes.length === 1, "decision feedback (owned channel): the standing seat took the wake");
-      ok(notices.length === 1 && notices[0]!.rowId === "dw-approve-owned", `decision feedback (owned channel): a thread seat or a worker owns the card's channel, so the notice still posts (got ${notices.length})`);
+      ok(notices.length === 1 && notices[0]!.rowId === "dw-approve-owned" && notices[0]!.text.startsWith("✅ Approved by <@U_GUILD_ADMIN>: "), `decision feedback (owned channel): a thread seat or a worker owns the card's channel, so the notice still posts and states the outcome (got ${JSON.stringify(notices.map((x) => x.text))})`);
       await store.clearSpendLimit("default", "discord/G1/C_WIN", "surface");
     }
 
@@ -640,7 +640,7 @@ const store = getOperationalStore();
     wakes.length = 0;
     notices.length = 0;
     await handleDiscordApprovalInteraction(clickPayload("oe-approval:dw-reject:reject:default", { user: "U_GUILD_ADMIN", permissions: "8" }), deps);
-    ok(notices.length === 1 && notices[0]!.text.startsWith("❌ Rejected by <@U_GUILD_ADMIN> — ") && !notices[0]!.text.includes("Approved"), "decision feedback: a reject notice states plainly it was rejected, never approved");
+    ok(notices.length === 1 && notices[0]!.text.startsWith("❌ Rejected by <@U_GUILD_ADMIN>: ") && !notices[0]!.text.includes("Approved"), "decision feedback: a reject notice states plainly it was rejected, never approved");
     ok(!notices[0]!.text.includes("\n"), "decision feedback: the notice is one line");
     ok(wakes.length === 1 && wakes[0]!.message.includes("REJECTED"), "decision feedback: a reject emits one wake carrying the rejected outcome");
 
@@ -715,7 +715,7 @@ const store = getOperationalStore();
     ok(!!wakes[0] && wakes[0].message.includes("APPROVED"), "decision feedback (DM seat): the wake states the approved outcome");
     const dmWakeAudit = (await readAudit({ org: "default", action: "approval.decision_wake" })).find((e) => e.detail?.id === "dw-dmseat-approve");
     ok(dmWakeAudit?.detail?.delivered === true && dmWakeAudit.detail.domain === `oe-dm/${DM_SURFACE}`, "decision feedback (DM seat): approval.decision_wake records delivered:true on the DM pseudo-domain");
-    ok(notices.length === 0, `decision feedback (DM seat): the DM seat took the wake, so no notice repeats the decided card (got ${notices.length})`);
+    ok(notices.length === 1 && / approved your request\.$/u.test(notices[0]!.text) && !notices[0]!.text.includes("Approved by"), `decision feedback (DM seat): the DM seat took the wake, so no notice repeats the decided card; the asker, whom an admin answered, gets one short line (got ${JSON.stringify(notices.map((x) => x.text))})`);
     await store.clearSpendLimit("default", DM_SURFACE, "surface");
 
     await store.addPendingAction(winRow({ id: "dw-guild-noguild", postedTo: "discord/G1/C_WIN", argsJson: JSON.stringify({ org: "default", scopeKey: "discord/G1/C_WIN", level: "surface", monthlyTokens: 651, currentCap: null }) }));

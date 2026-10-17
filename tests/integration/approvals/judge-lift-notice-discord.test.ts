@@ -212,8 +212,8 @@ test("② a signed click on THAT button records the contradiction, and a second 
   const first = await postClick(noticeButtonCustomId);
   expect(first.status).toBe(200);
   expect(first.type).toBe(4);
-  expect(first.content).toContain("recorded");
-  expect(first.content).toContain("does NOT undo the action");
+  expect(first.content).toContain("Noted for review");
+  expect(first.content).toContain("does not undo the action");
   expect(first.components).toBeUndefined();
 
   const recorded = await waitForAuditRows({
@@ -266,7 +266,7 @@ test("③ 🔴 with the judge OFF no notice reaches the room, and a contradict c
   const clickCursor = await auditCursor();
   const refused = await postClick(`oe-approval:${pendingId}:contradict:${deploymentOrg}`);
   expect(refused.type).toBe(4);
-  expect(refused.content).toContain("not auto-approved by the approval judge");
+  expect(refused.content).toContain("Nobody auto-approved this action");
   expect(await rowsSinceCursor(clickCursor, ["approval.judge.contradicted"])).toEqual([]);
 });
 

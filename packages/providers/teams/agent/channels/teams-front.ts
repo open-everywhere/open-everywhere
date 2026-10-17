@@ -397,6 +397,7 @@ export async function liveTeamsOeCommand(
     console.error(`[open-everywhere:teams-front] "${oeSlash()}" command failed softly: ${String(err)}`);
     text = commandFailureText(err);
   }
+  if (text.length === 0) return;
   try {
     await (deps.send ?? sendTeamsActivityBackedOff)({ serviceUrl: a.serviceUrl, conversationId: a.conversation.id, body: { type: "message", text } });
   } catch (err) {

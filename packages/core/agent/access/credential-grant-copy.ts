@@ -187,9 +187,8 @@ function remainingText(remaining: readonly string[]): string {
 
 export function grantRevokedRoomText(connector: string, mcpTool: string | undefined): string {
   return (
-    `The owner has ended the credential grant this conversation held — it can no longer ${grantActionPhrase(connector, mcpTool)} with their ` +
-    `${connectorDisplayName(connector)} account. The borrowed tool may still appear in your tool list; every call on it is now refused. ` +
-    "Do not ask for it again unless somebody here asks you to."
+    `The owner took back their ${connectorDisplayName(connector)} access. This conversation can no longer ${grantActionPhrase(connector, mcpTool)} with it. ` +
+    "The tool may still show, but every call on it is refused. Please do not ask for it again unless somebody here asks you to."
   );
 }
 

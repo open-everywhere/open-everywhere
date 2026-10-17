@@ -247,24 +247,54 @@ export interface SpendClearArgs {
   readonly level: CapLevel;
   readonly currentCap: number | null;
   readonly currentUsd?: number | null;
+  readonly afterCap?: number | null;
+  readonly afterUsd?: number | null;
   readonly scopeLabel?: string;
   readonly tainted?: boolean;
+}
+
+export function spendClearConsequenceLine(args: Pick<SpendClearArgs, "currentCap" | "currentUsd" | "afterCap" | "afterUsd">): string | undefined {
+  if (args.afterCap === undefined && args.afterUsd === undefined) return undefined;
+  const clauses: string[] = [];
+  const nowUsd = args.currentUsd ?? null;
+  const afterUsd = args.afterUsd ?? null;
+  const afterCap = args.afterCap ?? null;
+  if (nowUsd !== null || afterUsd !== null) clauses.push(`from ${plainCapUsd(nowUsd)} to ${plainCapUsd(afterUsd)}`);
+  if (args.currentCap !== null || afterCap !== null) clauses.push(`from ${plainCapTokens(args.currentCap)} to ${plainCapTokens(afterCap)}`);
+  if (clauses.length === 0) return undefined;
+  const line = `${clauses.join(", and ")} (the default)`;
+  return line.charAt(0).toUpperCase() + line.slice(1);
+}
+
+function spendClearAfterWords(args: Pick<SpendClearArgs, "afterCap" | "afterUsd">): string | undefined {
+  if (args.afterCap === undefined && args.afterUsd === undefined) return undefined;
+  const parts = [...(args.afterUsd != null ? [plainCapUsd(args.afterUsd)] : []), ...(args.afterCap != null ? [plainCapTokens(args.afterCap)] : [])];
+  return parts.length > 0 ? parts.join(" and ") : "no limit";
 }
 
 const spendClear: ActionKind<SpendClearArgs> = {
   kind: "spend.clear",
   policy: "admin",
+  volatileArgs: ["afterCap", "afterUsd"],
   plainSummary(args) {
-    return `Put ${plainScope(args.scopeLabel, args.scopeKey)} back on its configured spend limit`;
+    return `Reset the spend limit for ${plainScope(args.scopeLabel, args.scopeKey)} to the default`;
+  },
+  consequence(args) {
+    return spendClearConsequenceLine(args);
+  },
+  doneSummary(args) {
+    const after = spendClearAfterWords(args);
+    return `reset the spend limit for ${scopeWords(args.scopeLabel, args.scopeKey)} to ${after ?? "the default"}`;
   },
   summarize(args) {
     const current = [
       ...(args.currentCap !== null ? [fmtCap(args.currentCap)] : []),
       ...(args.currentUsd != null ? [fmtCapUsd(args.currentUsd)] : []),
     ];
+    const after = spendClearAfterWords(args);
     return [
       `Clear spend limit override — ${scopeLine(args.scopeLabel, args.scopeKey, args.level)}`,
-      `${current.length ? current.join(" + ") : "none (uncapped)"} → reverts to the config-as-code cap`,
+      `${current.length ? current.join(" + ") : "none (uncapped)"} → ${after === undefined ? "the configured limit" : `${after} (the configured limit)`}`,
       ...spendTaintLines(args.tainted),
     ];
   },
@@ -279,7 +309,7 @@ const spendClear: ActionKind<SpendClearArgs> = {
     });
     const scope = scopeWords(args.scopeLabel, args.scopeKey);
     return cleared
-      ? `${scope} is back on its configured spend limit`
+      ? `the spend limit for ${scope} is back to the default`
       : `${scope} had no spend limit override, so nothing changed`;
   },
 };
@@ -376,7 +406,7 @@ const haltResume: ActionKind<HaltResumeArgs> = {
       detail: { ...haltAddressFields(address), cleared },
     });
     return cleared
-      ? `halt lifted${args.orgWide === true ? " everywhere" : ` for ${scopeWords(args.scopeLabel, args.scopeKey ?? "")}`} — the agent can act again`
+      ? `halt lifted${args.orgWide === true ? " everywhere" : ` for ${scopeWords(args.scopeLabel, args.scopeKey ?? "")}`}, so the agent can act again`
       : `no halt was in force${args.orgWide === true ? " anywhere" : ` for ${scopeWords(args.scopeLabel, args.scopeKey ?? "")}`}, so nothing changed`;
   },
 };

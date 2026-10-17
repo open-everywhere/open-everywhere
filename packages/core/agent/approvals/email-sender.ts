@@ -15,6 +15,7 @@ import { inlineForReview } from "./review-surface.js";
 import { plainValue } from "./plain-text.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import type { ActionKind } from "./types.js";
+import { cardSitsWhereAsked } from "./requester-note.js";
 
 export const EMAIL_SENDERS_DEFAULT_PATH = "agent/email/senders.ts";
 
@@ -184,14 +185,15 @@ export async function executeEmailSender(args: EmailSenderArgs, decidedBy: strin
   });
 
   const askingPlatform = platformOfScopeKey(args.scopeKey);
-  let noted = false;
-  if (askingPlatform) {
+  const cardIsHere = await cardSitsWhereAsked(args.org, args.channelId, args.threadTs);
+  let noted = cardIsHere;
+  if (askingPlatform && !cardIsHere) {
     const note = deps.postThreadNote ?? postSurfaceText;
     noted =
       (await note(askingPlatform, {
         channelId: args.channelId,
         threadTs: args.threadTs,
-        text: `Email sender request sent — PR ${pr.url} is with the admins. ${args.sender} can email ${args.inbox} once it is merged.`,
+        text: `Email sender request sent. Pull request ${pr.url} is with the admins. ${args.sender} can email ${args.inbox} once it is merged.`,
       }).catch(() => undefined)) !== undefined;
   }
   return `${pr.updated ? `updated PR #${pr.number}` : `opened PR #${pr.number}`} — ${pr.url}; an admin merges it to allow the sender${noted ? "" : " (the thread note did not post — tell the requester the link)"}`;

@@ -29,9 +29,9 @@ export function meetingRecapResult(args: NativeRecapArgs, outcome: Awaited<Retur
     case "posted":
       return outcome.posted ? "recap posted in this thread" : "the recap was written, but the post into this thread failed";
     case "refused":
-      return `${p} gave no transcript — the reason is in this thread`;
+      return `${p} gave no transcript. The reason is in this thread`;
     case "waiting":
-      return `no ${p} transcript yet — the recap comes here when it is ready (I check for ${args.watchHours} h)`;
+      return `no ${p} transcript yet. The recap comes here when it is ready (I check for ${args.watchHours} h)`;
     case "halted":
       return "a halt covers this conversation, so I did not read the transcript";
     case "duplicate":

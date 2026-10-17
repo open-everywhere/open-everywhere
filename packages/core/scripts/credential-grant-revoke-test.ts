@@ -283,8 +283,8 @@ console.log("4. the OWNER's DM call ends the grant, tells the room, and the brok
 
   eq(posted.length, postsBefore + 1, "THE BORROWING ROOM WAS TOLD — one host-authored post, with no model in this tier and nothing else that could author it");
   eq(posted[posted.length - 1].target, { channelId: "C-ROOM", platform: "slack" }, "…into the address the ASK pinned, never a room resolved at revoke time");
-  ok(posted[posted.length - 1].text.includes("The owner has ended the credential grant"), "…saying the owner ended it");
-  ok(posted[posted.length - 1].text.includes("every call on it is now refused"), "…and telling the seat what its still-mounted tool now does, so the refusal does not read as a fault");
+  ok(posted[posted.length - 1].text.includes("The owner took back their"), "…saying the owner ended it");
+  ok(posted[posted.length - 1].text.includes("every call on it is refused"), "…and telling the seat what its still-mounted tool now does, so the refusal does not read as a fault");
   ok(!posted[posted.length - 1].text.includes("draft the Q3 summary"), "NEGATIVE CONTROL: the room is NOT told the owner's reason — a person's reason for taking their credential back is theirs (§6.2)");
   for (const { name, re } of GRANT_ID_LEAK_PATTERNS) ok(!re.test(posted[posted.length - 1].text), `…and the room notice carries no ${name}`);
   ok(!posted[posted.length - 1].text.includes(grantA), "…nor the grant's own id");
@@ -418,7 +418,7 @@ console.log("7. the room notice really varies with the grant it describes:");
   ok(floor.includes("read one thing in Notion"), "…and an unreviewed one falls to the generic floor rather than printing the vendor's tool id");
   ok(reviewed !== floor, "NEGATIVE CONTROL: the two really differ — the copy is a function of its arguments, not one fixed sentence");
   ok(
-    reviewed.includes("The borrowed tool may still appear in your tool list"),
+    reviewed.includes("The tool may still show, but every call on it is refused"),
     "…and it states the honest fact about the mount: the tool stays and the calls are refused, because the mount projects EXISTENCE and the broker refuses on STATE",
   );
 }

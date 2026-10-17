@@ -20,7 +20,7 @@ const routineCancel: ActionKind<RoutineCancelArgs> = {
   kind: "routine.cancel",
   policy: "member",
   plainSummary(args) {
-    return `Stop ${routineWords(args.description)} — it will not run again`;
+    return `Stop ${routineWords(args.description)} for good`;
   },
   summarize(args) {
     return [

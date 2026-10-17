@@ -62,24 +62,12 @@ export function clickRoomMatches(row: PendingActionRow, clickSurfaceKey: string)
 export function clickerFloorRefusalNotice(reason: ClickerFloorRefusal): string {
   switch (reason) {
     case "audience-floor":
-      return (
-        "I didn't apply that: this channel's audience floor resolved to \"guest\" — it's externally shared, " +
-        "or carries an observed guest/external member — so a decision made here can't stand in for one made " +
-        "inside the org. The request is still pending; decide it from an internal channel and it will apply."
-      );
+      return "Nothing changed: this channel has people from outside the org, so a decision here doesn't count. Decide it from an internal channel. The request is still open.";
     case "unattested-room":
-      return (
-        "I didn't apply that: approving it would hand YOU a live signing secret, and I couldn't verify who " +
-        "is in this channel (the membership list didn't resolve). The request is still pending; decide it " +
-        "from a channel whose membership I can read and it will apply."
-      );
+      return "Nothing changed: approving this sends you a secret, and I couldn't check who is in this channel. Decide it from a channel I can check. The request is still open.";
     case "foreign-room":
-      return "I didn't apply that: this click didn't come from the channel the card was posted in. The request is still pending.";
+      return "Nothing changed: that click didn't come from the channel the card is in. The request is still open.";
     case "guest-clicker":
-      return (
-        "I didn't apply that: you could not be confirmed as a member of this workspace, so this decision " +
-        "can't be made on the org's behalf. The request is still pending; a confirmed member of the org " +
-        "can decide it and it will apply."
-      );
+      return "Nothing changed: I couldn't confirm you are a member of this workspace. A member can decide it. The request is still open.";
   }
 }

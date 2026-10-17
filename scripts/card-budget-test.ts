@@ -7,6 +7,7 @@ import type { PendingActionRow } from "@open-everywhere/core/agent/approvals/typ
 const dir = join(tmpdir(), `open-everywhere-card-budget-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
+delete process.env.DATABASE_URL;
 
 const { registerConfig } = await import("@open-everywhere/core/agent/access/config.js");
 registerConfig({ loadBundles: () => [], loadBindings: () => [], pluginRegistry: {}, skillContent: {}, loadDomains: () => [], loadSilos: () => [], domainsForSurface: () => [] } as never);
@@ -14,9 +15,17 @@ await import("@open-everywhere/core/agent/approvals/flow.js");
 await import("@open-everywhere/core/agent/approvals/session-checkpoint.js");
 const { registeredActionKinds, actionKind } = await import("@open-everywhere/core/agent/approvals/actions.js");
 const { withTaintDisclosure } = await import("@open-everywhere/core/agent/approvals/taint-disclosure.js");
-const { pendingCardLayout, decidedCardLine, APPROVAL_CARD_METADATA_TYPE, APPROVAL_CARD_BLOCK_PREFIX, CARD_METADATA_DETAIL_MAX } = await import("@open-everywhere/core/agent/approvals/card-layout.js");
+const { pendingCardLayout, decidedCardLine, judgeLiftOutcome, CLICK_NOTICE, APPROVAL_CARD_METADATA_TYPE, APPROVAL_CARD_BLOCK_PREFIX, CARD_METADATA_DETAIL_MAX } = await import("@open-everywhere/core/agent/approvals/card-layout.js");
+const { decisionNoticeText } = await import("@open-everywhere/core/agent/approvals/flow.js");
+const { plainSummaryForRow } = await import("@open-everywhere/core/agent/approvals/plain-summary.js");
+const { clickerFloorRefusalNotice } = await import("@open-everywhere/core/agent/approvals/clicker-floor.js");
+const { inputResponseRefusalNotice } = await import("@open-everywhere/core/agent/approvals/input-response-floor.js");
+const { judgeContradictionNotice } = await import("@open-everywhere/core/agent/approvals/judge-contradiction.js");
+const { approvedGrantCardText, declinedGrantCardText, expiredGrantCardText, refusedGrantCardText } = await import("@open-everywhere/core/agent/access/credential-grant-card.js");
+const { grantResolutionText } = await import("@open-everywhere/core/agent/access/credential-grant-resolution.js");
+const { grantRevokedRoomText } = await import("@open-everywhere/core/agent/access/credential-grant-copy.js");
 const { CONSEQUENCE_MAX } = await import("@open-everywhere/core/agent/approvals/plain-summary.js");
-const { QUOTE_MAX } = await import("@open-everywhere/core/agent/approvals/plain-text.js");
+const { QUOTE_MAX, withoutDashes } = await import("@open-everywhere/core/agent/approvals/plain-text.js");
 const { PLAIN_SUMMARY_MAX } = await import("@open-everywhere/core/agent/approvals/plain-text.js");
 const { pendingCardBlocks, decidedCardBlocks, judgeLiftNoticeBlocks, judgeLiftNoticeText, groupedCardBlocks } = await import("@open-everywhere/core/agent/approvals/card.js");
 const { rawIdLeaks } = await import("@open-everywhere/core/agent/channels/friendly-ids.js");
@@ -44,6 +53,13 @@ const SHORT_INTERNAL_ID = /\b[a-z]{1,3}-[0-9a-f]{8}\b/u;
 const ISO_INSTANT = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/u;
 const FIGURE_LABEL = /(?:^|[\s·*])(?:\$|tokens):\s/u;
 const PRICING_TALK = /\b(?:no price|unpriced|pricing coverage)\b/iu;
+const EM_DASH = /—/u;
+const CAPS_WORD = /\b(?:APPROVED|REJECTED|DECLINED|EXPIRED|DENIED|FAILED|PENDING|GRANTED|NOT|ONLY|NEVER|YOU|MORE|ALREADY)\b/u;
+const JARGON = /\((?:surface|workspace|domain|user)\)|\baudience floor\b|\bdomain\/org\b|\baged out\b|\bmounted\b|\bminted\b|\bcontrol plane\b|\baudit trail\b|\bthis deployment\b/iu;
+
+function outsideQuotes(text: string): string {
+  return text.replace(/“[^”]*”/gu, "“”");
+}
 
 function leaks(text: string): string[] {
   const out: string[] = [];
@@ -66,6 +82,11 @@ function leaks(text: string): string[] {
   if (label) out.push(`figure label "${label[0].trim()}"`);
   const pricing = PRICING_TALK.exec(text);
   if (pricing) out.push(`pricing talk "${pricing[0]}"`);
+  if (EM_DASH.test(outsideQuotes(text))) out.push("em-dash");
+  const caps = CAPS_WORD.exec(text);
+  if (caps) out.push(`capital status word "${caps[0]}"`);
+  const jargon = JARGON.exec(text);
+  if (jargon) out.push(`jargon "${jargon[0]}"`);
   return out;
 }
 
@@ -83,9 +104,14 @@ function leaks(text: string): string[] {
     ["$: $50.00/mo → $2575.00/mo", "figure label"],
     ["Set spend limit · tokens: none (uncapped) → 1 tokens/mo", "figure label"],
     ["some usage has no price, so this $ limit does not count it", "pricing talk"],
+    ["✅ Approved by <@U1> — spend limit set", "em-dash"],
+    ["✅ APPROVED — you approved this request.", "capital status word"],
+    ["Clear spend limit override — a direct message (surface)", "jargon"],
+    ["this channel's audience floor resolved to guest", "jargon"],
+    ["Only a domain/org admin can decide this request.", "jargon"],
   ];
   for (const [text, shape] of bad) ok(leaks(text).some((l) => l.startsWith(shape)), `🔴 the detector catches a ${shape} in "${text}" (got ${JSON.stringify(leaks(text))})`);
-  for (const clean of ["Post a message in <#C0EXAMPLE1>.", "Asked by <@U0EXAMPLE1> · expires 13 October, 14:00 UTC", "Set the monthly spend limit for #general to $100.00/mo.", "From $50/mo to $2,575/mo"]) {
+  for (const clean of ["Post a message in <#C0EXAMPLE1>.", "Asked by <@U0EXAMPLE1> · expires 13 October, 14:00 UTC", "Set the monthly spend limit for #general to $100.00/mo.", "From $50/mo to $2,575/mo", "“Ship it — today” — later messages go without asking".replace(/” — later/u, "”, later")]) {
     ok(leaks(clean).length === 0, `a clean line passes the detector: "${clean}" (got ${JSON.stringify(leaks(clean))})`);
   }
 }
@@ -368,6 +394,144 @@ for (const { kind, args } of APPROVAL_KIND_FIXTURES) {
   ok(toolWords("tool:notion__update_page") === "update page on notion", "a connector tool reads as words");
   ok(triggerWords({ kind: "once", at: "2026-03-16T07:01:00.000Z" }) === "once on 16 March, 07:01 UTC", "a one-shot reads as a short date");
   for (const w of [routineWords('cron "0 9 * * 1-5" (UTC; posts every run)'), toolWords("tool:notion__update_page")]) ok(leaks(w).length === 0 && !w.includes("*"), `no raw expression or id in "${w}"`);
+}
+
+{
+  const f = APPROVAL_KIND_FIXTURES.find((x) => x.kind === "routine.policy.add")!;
+  const r = row(f.kind, f.args, { status: "approved", decidedBy: "U0EXAMPLE3" });
+  const dashed = decidedCardLine(r, "rule added — the routine follows it from its next run", "<@U0EXAMPLE3>");
+  ok(leaks(dashed).length === 0 && dashed.includes("rule added, the routine follows it"), `🔴 an executor's em-dash never reaches the decided line (got ${JSON.stringify(dashed)})`);
+  const failed = decidedCardLine(r, "FAILED: SqliteError: no such table pending_actions (id 00000000-0000-4000-8000-000000000085)", "<@U0EXAMPLE3>");
+  ok(!failed.includes("Sqlite") && !failed.includes("3f2a1b4c") && failed.includes("but it failed") && leaks(failed).length === 0, `🔴 a failed act says it failed, never the raw error (got ${JSON.stringify(failed)})`);
+  ok(withoutDashes("rule added — it applies at once") === "rule added, it applies at once", "withoutDashes: a code-written dash becomes a comma");
+  ok(withoutDashes("“Ship it — today” — later ones go without asking") === "“Ship it — today”, later ones go without asking", "withoutDashes: quoted content keeps its own dash");
+  ok(withoutDashes('Create agent "Foo — Bar" — bound here') === 'Create agent "Foo — Bar", bound here', "withoutDashes: a straight-quoted name keeps its own dash, so the card shows the frozen value");
+  const judged = judgeLiftOutcome("FAILED: ECONNRESET at 10.0.0.4");
+  ok(!judged.includes("ECONNRESET") && judged.includes("it failed"), `🔴 the judge-lift outcome never shows a raw error (got ${JSON.stringify(judged)})`);
+}
+
+{
+  const outcomes = [
+    ["approved", "ok"],
+    ["approved", "failed"],
+    ["rejected", "none"],
+    ["expired", "none"],
+  ] as const;
+  for (const { kind, args } of APPROVAL_KIND_FIXTURES) {
+    for (const [status, executed] of outcomes) {
+      for (const surface of ["slack", "discord"] as const) {
+        const scope = `${surface}/T0EXAMPLE1/C0EXAMPLE1`;
+        const r = row(kind, args, { status, scopeKey: scope, postedTo: scope });
+        const decider = status === "expired" ? undefined : "U0EXAMPLE3";
+        const notice = decisionNoticeText(r, status, decider, executed);
+        const tag = `${kind} ${status} ${surface}`;
+        ok(notice !== undefined, `${tag}: another person's decision tells the asker`);
+        ok(notice!.startsWith("<@U0EXAMPLE1>, "), `${tag}: the notice addresses the asker by mention (got ${JSON.stringify(notice)})`);
+        ok(leaks(notice!).length === 0, `${tag}: no banned shape in the notice "${notice}" (got ${JSON.stringify(leaks(notice!))})`);
+        const card = decidedCardLine(r, executed === "failed" ? "FAILED: boom" : "done", "<@U0EXAMPLE3>");
+        ok(notice !== card && !notice!.includes(plainSummaryForRow(r).replace(/[.!?]$/u, "")), `🔴 ${tag}: the notice is not a copy of the card's line or headline`);
+        ok(notice!.length <= 80, `${tag}: the notice is one short line (got ${notice!.length})`);
+        if (status !== "expired") ok(decisionNoticeText(r, status, "U0EXAMPLE1", executed) === undefined, `🔴 ${tag}: no notice when the asker is the decider`);
+      }
+    }
+  }
+  const sp = APPROVAL_KIND_FIXTURES.find((x) => x.kind === "spend.clear")!;
+  ok(decisionNoticeText(row(sp.kind, sp.args, { scopeKey: "teams/T1/19:abc", postedTo: "teams/T1/19:abc", requestedBy: "29:1a2b" }), "approved", "29:9z", "ok") === undefined, "🔴 a Teams card gets no notice, never a raw <@29:…> id");
+  ok(decisionNoticeText(row(sp.kind, sp.args, { scopeKey: "teams/T1/19:abc", postedTo: "slack/T0EXAMPLE1/C0EXAMPLE1" }), "approved", "U0EXAMPLE3", "ok") === undefined, "🔴 a venue-walked card whose asker is on another platform gets no notice");
+  ok(decisionNoticeText(row(sp.kind, sp.args), "approved", "U0EXAMPLE3", "ok") === "<@U0EXAMPLE1>, <@U0EXAMPLE3> approved your request.", "negative control: the home-platform notice is the one short line");
+  const teamsRow = row(sp.kind, sp.args, { scopeKey: "teams/T1/19:abc", postedTo: "teams/T1/19:abc", requestedBy: "29:1a2b" });
+  const stale = decisionNoticeText(teamsRow, "approved", "29:9z", "ok", { outcomeLine: "the spend limit for #general is back to $25/mo", row: teamsRow });
+  ok(stale === "✅ Approved by an admin: the spend limit for #general is back to $25/mo", `🔴 a stale Teams card's notice states the outcome and names nobody raw (got ${JSON.stringify(stale)})`);
+  const staleExpired = decisionNoticeText(row(sp.kind, sp.args, { status: "expired" }), "expired", undefined, "none", { outcomeLine: "expired", row: row(sp.kind, sp.args) });
+  ok(staleExpired?.startsWith("⏰ Expired: ") === true && leaks(staleExpired).length === 0, `a stale card's expiry notice says what expired (got ${JSON.stringify(staleExpired)})`);
+}
+
+{
+  const lines: [string, string][] = [
+    ...Object.entries(CLICK_NOTICE).map(([k, v]) => [`CLICK_NOTICE.${k}`, v] as [string, string]),
+    ...(["audience-floor", "unattested-room", "foreign-room", "guest-clicker"] as const).map((r) => [`clicker floor ${r}`, clickerFloorRefusalNotice(r)] as [string, string]),
+    ...(["audience-floor", "unattested-room", "foreign-room", "guest-clicker", "guest-answerer"] as const).map((r) => [`input response ${r}`, inputResponseRefusalNotice(r)] as [string, string]),
+    ...(["recorded", "already-recorded", "not-judge-lift", "unknown"] as const).map((o) => [`judge contradiction ${o}`, judgeContradictionNotice(o)] as [string, string]),
+  ];
+  ok(lines.length >= 20, `the refusal set is populated (got ${lines.length})`);
+  ok(/does not stop the agent approving similar actions/u.test(judgeContradictionNotice("recorded")), "🔴 the overrule note still says the auto-approval stays on");
+  for (const [label, text] of lines) {
+    ok(leaks(text).length === 0, `${label}: no banned shape in "${text}" (got ${JSON.stringify(leaks(text))})`);
+    ok(!text.includes("\n") && text.length <= 180, `${label}: one line of at most 180 characters (got ${text.length})`);
+  }
+}
+
+{
+  const RESOURCE = "Quarterly report";
+  const ask = {
+    connector: "notion",
+    createdAt: "2026-02-09T02:30:45.132Z",
+    expiresAt: "2026-02-09T03:00:45.132Z",
+    frozenArgs: { id: "quarterly-report" },
+    id: "ask-1",
+    mcpTool: "notion-fetch",
+    ownerNativeId: "U-OWNER",
+    ownerPlatform: "discord",
+    ownerPrincipalId: "discord/G1/U-OWNER",
+    ownerSlug: "ada",
+    purpose: "summarise the quarter for the team",
+    requestedMode: "once",
+    requesterPrincipalId: "discord/G1/U-ASKER",
+    resource: RESOURCE,
+    scopeKey: "sess-1",
+    status: "pending",
+    toolName: "grant__ada_notion__notion_fetch_quarterly_report",
+    verb: "notion_fetch",
+  } as never;
+  const NOW = Date.parse("2026-02-09T02:30:45.132Z");
+  const grant = { ...(ask as object), askId: "ask-1", id: "00000000-0000-4000-8000-000000000018", expiresAt: "2026-02-09T14:30:45.132Z", mode: "session", status: "active", tier: "read" } as never;
+  const own = (text: string): string[] => text.split("\n").filter((l) => l.length > 0 && !l.includes(RESOURCE) && !l.includes("summarise the quarter"));
+  const texts: [string, string][] = [
+    ["approved card", approvedGrantCardText(ask, grant, NOW)],
+    ["declined card", declinedGrantCardText(ask)],
+    ["expired card (told)", expiredGrantCardText(ask, true)],
+    ["expired card (not told)", expiredGrantCardText(ask, false)],
+    ["refused card", refusedGrantCardText(ask, "tool_absent")],
+    ["room: approved", grantResolutionText(ask, { kind: "approved", grant, askedMode: "once" }, NOW)],
+    ["room: declined", grantResolutionText(ask, { kind: "declined" }, NOW)],
+    ["room: expired", grantResolutionText(ask, { kind: "expired" }, NOW)],
+    ["room: refused", grantResolutionText(ask, { kind: "refused", gate: "frozen_args_unknown" }, NOW)],
+    ["room: revoked", grantRevokedRoomText("notion", "notion-fetch")],
+  ];
+  for (const [label, text] of texts) {
+    const lines = own(text);
+    ok(lines.length > 0, `grant ${label}: has host-written lines to check`);
+    for (const line of lines) ok(leaks(line).length === 0, `grant ${label}: no banned shape in "${line}" (got ${JSON.stringify(leaks(line))})`);
+    ok(!/\bDo not ask again\b.*find another way/u.test(text), `grant ${label}: no instruction written for the model`);
+  }
+}
+
+{
+  const f = APPROVAL_KIND_FIXTURES.find((x) => x.kind === "spend.clear")!;
+  const layout = pendingCardLayout(row(f.kind, f.args), ["detail"]);
+  ok(layout.headline === "Reset the spend limit for #general to the default.", `the clear card's headline is the plain ask (got ${JSON.stringify(layout.headline)})`);
+  ok(layout.consequence === "From $50/mo to $25/mo, and from 2,000,000 tokens/mo to no limit (the default)", `🔴 the clear card names the figures it moves between (got ${JSON.stringify(layout.consequence)})`);
+  const old = { ...f.args } as Record<string, unknown>;
+  delete old["afterCap"];
+  delete old["afterUsd"];
+  ok(pendingCardLayout(row(f.kind, old), ["detail"]).consequence === undefined, "a card frozen before OPE-2490 shows no figure line rather than a guessed one");
+  const detail = actionKind("spend.clear")!.summarize(f.args as never).join("\n");
+  ok(JSON.stringify(actionKind("spend.clear")!.volatileArgs) === JSON.stringify(["afterCap", "afterUsd"]), "the clear card's fallback figures are volatile, so a redelivered step lands on the card it already minted");
+  ok(!detail.includes("config-as-code"), `the clear card's detail says "the configured limit", never "config-as-code" (got ${JSON.stringify(detail)})`);
+}
+
+{
+  const { getOperationalStore } = await import("@open-everywhere/core/agent/operational/provider.js");
+  const { withArmingApproval } = await import("@open-everywhere/core/agent/approvals/arming-context.js");
+  const { cardSitsWhereAsked } = await import("@open-everywhere/core/agent/approvals/requester-note.js");
+  const f = APPROVAL_KIND_FIXTURES.find((x) => x.kind === "access.request")!;
+  const card = row(f.kind, f.args, { id: "00000000-0000-4000-8000-000000000089", channelId: "C0EXAMPLE1", threadTs: "1760453300.000100" });
+  await getOperationalStore().addPendingAction(card);
+  const armed = <T>(fn: () => Promise<T>): Promise<T> => withArmingApproval({ id: card.id, kind: card.kind }, fn);
+  ok((await armed(() => cardSitsWhereAsked("acme", "C0EXAMPLE1", "1760453300.000100"))) === true, "🔴 a card in the asking thread is the asker's answer: the note does not post");
+  ok((await armed(() => cardSitsWhereAsked("acme", "C0EXAMPLE2", "1760453300.000100"))) === false, "negative control: a card in another channel leaves the note to post");
+  ok((await armed(() => cardSitsWhereAsked("acme", "C0EXAMPLE1", null))) === false, "negative control: a card in another thread leaves the note to post");
+  ok((await cardSitsWhereAsked("acme", "C0EXAMPLE1", "1760453300.000100")) === false, "outside a decide the note posts (fail-soft toward the note)");
 }
 
 console.log(`card-budget-test: ${n} assertions passed`);

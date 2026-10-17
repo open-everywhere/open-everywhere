@@ -58,7 +58,7 @@ const MARKUP = /[<>[\]*`|]/u;
 {
   const cases: { kind: string; args: unknown; expect: readonly string[] }[] = [
     { kind: "spend.set", args: { scopeKey: "slack/T1/C1", scopeLabel: "#general", level: "surface", monthlyUsd: 50 }, expect: ["spend limit", "#general", "$50/mo"] },
-    { kind: "spend.clear", args: { scopeKey: "slack/T1/C1", scopeLabel: "#general", level: "surface", currentCap: null }, expect: ["back on its configured spend limit", "#general"] },
+    { kind: "spend.clear", args: { scopeKey: "slack/T1/C1", scopeLabel: "#general", level: "surface", currentCap: null }, expect: ["Reset the spend limit", "#general", "the default"] },
     { kind: "chat.dm", args: { platform: "slack", principalId: "U0123ABC", text: "hi", footer: "f", grant: "g" }, expect: ["direct message", "<@U0123ABC>"] },
     { kind: "chat.post", args: { platform: "slack", container: "C0999", text: "hi", grant: "g" }, expect: ["Post a message", "<#C0999>"] },
     { kind: "ticket.assign", args: { platform: "linear", entityId: "ENG-12", assignee: "ana" }, expect: ["Assign", "ENG-12", "ana"] },
@@ -128,7 +128,7 @@ const MARKUP = /[<>[\]*`|]/u;
   ok(card.text.split("\n")[0] === headline, "the notification fallback text leads with the sentence");
   ok(!card.text.includes("Approval requested") && !card.text.includes("spend.set"), "the fallback text carries no kind label");
   const decided = decidedCardBlocks({ ...r, status: "approved", decidedBy: "U_ADMIN" }, ["line"], "spend limit set");
-  ok(decided.blocks.length === 1 && decided.text === "✅ Approved by <@U_ADMIN> — spend limit set", `the decided card is ONE line (got ${JSON.stringify(decided.text)})`);
+  ok(decided.blocks.length === 1 && decided.text === "✅ Approved by <@U_ADMIN>: spend limit set", `the decided card is ONE line (got ${JSON.stringify(decided.text)})`);
   ok(!decided.blocks.some((b) => b.type === "actions"), "the decided card has no buttons");
 }
 

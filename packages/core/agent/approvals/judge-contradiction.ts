@@ -80,13 +80,13 @@ export async function contradictJudgeAllow(input: ContradictJudgeAllowInput): Pr
 export function judgeContradictionNotice(outcome: ContradictJudgeAllowOutcome): string {
   switch (outcome) {
     case "recorded":
-      return "recorded — your overrule is in the audit trail for review. It does NOT undo the action (it already ran) and it does not turn the approval judge off; an operator does that with the control plane's disarm.";
+      return "Noted for review. This does not undo the action, which already ran, and it does not stop the agent approving similar actions on its own. An operator can turn that off.";
     case "already-recorded":
-      return "this action was already flagged, so it is in the trail once. Nothing changed.";
+      return "Someone already flagged this action. Nothing changed.";
     case "not-judge-lift":
-      return "this action was not auto-approved by the approval judge, so there is no judge verdict to overrule.";
+      return "Nobody auto-approved this action, so there is nothing to flag.";
     case "unknown":
-      return "that action is no longer known (it may have aged out).";
+      return "I can't find that action any more.";
   }
 }
 

@@ -146,7 +146,7 @@ test("the compiled tidy cron task runs the credential-grant TTL sweep, and a lap
   const cardEdit = edits.find((e) => e.channelId === LAPSED_CARD_DM);
   expect(cardEdit, `the owner's card was not rewritten (edits: ${JSON.stringify(edits.map((e) => e.channelId))})`).toBeDefined();
   expect(cardEdit?.messageId, "…and it must rewrite the card the delivery named, not some other message in the DM").toBe(LAPSED_CARD_MSG);
-  expect(cardEdit?.content).toContain("EXPIRED");
+  expect(cardEdit?.content).toContain("timed out");
   expect(edits.some((e) => e.channelId === ANSWERED_CARD_DM), "NEGATIVE CONTROL: the answered ask's card is left alone").toBe(false);
   expect(edits.some((e) => e.channelId === STALE_CARD_DM), "NEGATIVE CONTROL: nor is a backlog ask's card rewritten").toBe(false);
 

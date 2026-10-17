@@ -451,6 +451,8 @@ export const APPROVAL_KIND_FIXTURES: readonly KindFixture[] = [
       level: "surface",
       currentCap: 2000000,
       currentUsd: 50,
+      afterCap: null,
+      afterUsd: 25,
       scopeLabel: "#general",
       tainted: false,
     },

@@ -5,7 +5,7 @@ IN  discord interaction · APPROVE click by U_BADM4, ADMINISTRATOR of a DIFFEREN
       | {
       |  "type": 4,
       |  "data": {
-      |   "content": "Only a domain/org admin — or a server administrator, for this server's own scopes — can decide this request.",
+      |   "content": "Only an admin, or a server administrator for this server's own requests, can decide this. It is still open.",
       |   "flags": 64
       |  }
       | }
@@ -16,19 +16,19 @@ IN  discord interaction · APPROVE click from a DM by U_DMCLICK4 (no member enve
       | {
       |  "type": 4,
       |  "data": {
-      |   "content": "Only a domain/org admin — or a server administrator, for this server's own scopes — can decide this request.",
+      |   "content": "Only an admin, or a server administrator for this server's own requests, can decide this. It is still open.",
       |   "flags": 64
       |  }
       | }
 IN  discord interaction · APPROVE click by U_AADM4, ADMINISTRATOR of the row's OWN guild GS4A — row survived both denials
       | {"type":3,"data":{"custom_id":"oe-approval:sec4-row:approve:default","component_type":2},"message":{"id":"900901"},"channel_id":"C_CLICK","guild_id":"GS4A","member":{"user":{"id":"U_AADM4"},"permissions":"8"}}
   → POST /channels/CS4A/messages ⇒ 200 message BM1
-      | ✅ Approved by <@U_AADM4> — spend limit set to 500 tokens/mo for <#CS4A>
+      | ✅ Approved by <@U_AADM4>: spend limit set to 500 tokens/mo for <#CS4A>
   ⇠ 200
       | {
       |  "type": 7,
       |  "data": {
-      |   "content": "✅ Approved by <@U_AADM4> — spend limit set to 500 tokens/mo for <#CS4A>",
+      |   "content": "✅ Approved by <@U_AADM4>: spend limit set to 500 tokens/mo for <#CS4A>",
       |   "components": []
       |  }
       | }

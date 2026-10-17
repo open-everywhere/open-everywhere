@@ -38,7 +38,6 @@ import { parseScopeKey, platformOfScopeKey } from "../access/scope-key.js";
 import { rosterHasPrincipal, tryPrincipalKey } from "../identity/principal-key.js";
 import { checkClickerFloor, clickRoomMatches, clickerFloorRefusalNotice, type ClickerFloorRefusal } from "./clicker-floor.js";
 import { checkCardDisclosure, cardDisclosureRefusalNotice } from "./card-disclosure.js";
-import { decidedCardLine } from "./card-layout.js";
 import { pendingCardBlocks, decidedCardBlocks, groupedCardBlocks, judgeLiftNoticeBlocks, judgeLiftNoticeText, GROUPED_CARD_MAX_ITEMS, type GroupedCardItem, type RenderedCard } from "./card.js";
 import { contradictJudgeAllow, judgeContradictionNotice, type ContradictJudgeAllowOutcome } from "./judge-contradiction.js";
 import { applyAllowRule, auditAllowRuleRefused, dmRulesForProposal, planAllowRuleClick, type AllowRulePlan } from "./allow-rule-apply.js";
@@ -53,6 +52,7 @@ import { withTaintDisclosure } from "./taint-disclosure.js";
 import { withArmingApproval } from "./arming-context.js";
 import { getSettings } from "../settings/settings.js";
 import type { ActionKind, PendingActionRow, PendingStatus } from "./types.js";
+import { CLICK_NOTICE, decidedCardLine } from "./card-layout.js";
 import type { BindableContext } from "../identity/binding.js";
 import "./memory-purge.js";
 import "./access-request.js";
@@ -1117,8 +1117,40 @@ async function postThreadNote(post: PostFn, channelId: string, threadTs: string 
   await post("chat.postMessage", body.toString());
 }
 
-function decisionNoticeText(row: PendingActionRow, outcomeLine: string, clickerId: string, status: PendingStatus): string {
-  return decidedCardLine({ ...row, status }, status === "expired" ? undefined : outcomeLine, `<@${clickerId}>`);
+async function postClickerNote(post: PostFn, channelId: string, threadTs: string | undefined, user: string, text: string): Promise<void> {
+  if (swallowRoomOp("a slack approval click note")) return;
+  const body = new URLSearchParams();
+  body.set("channel", channelId);
+  body.set("user", user);
+  if (threadTs) body.set("thread_ts", threadTs);
+  body.set("text", text);
+  await post("chat.postEphemeral", body.toString());
+}
+
+const MENTION_PLATFORMS: ReadonlySet<string> = new Set(["slack", "discord"]);
+
+export function decisionNoticeText(
+  row: Pick<PendingActionRow, "requestedBy" | "scopeKey" | "postedTo">,
+  status: PendingStatus,
+  clickerId: string | undefined,
+  executed: "ok" | "failed" | "none",
+  staleCard?: { readonly outcomeLine: string; readonly row: Pick<PendingActionRow, "kind" | "argsJson"> },
+): string | undefined {
+  const surface = (row.postedTo ?? row.scopeKey).split("/")[0] ?? "";
+  if (staleCard !== undefined) {
+    const who = MENTION_PLATFORMS.has(surface) && clickerId !== undefined && clickerId !== "system" && /^[\w-]+$/u.test(clickerId) ? `<@${clickerId}>` : "an admin";
+    return decidedCardLine({ ...staleCard.row, status }, status === "expired" ? undefined : staleCard.outcomeLine, who);
+  }
+  if (clickerId !== undefined && clickerId === row.requestedBy) return undefined;
+  if (!MENTION_PLATFORMS.has(surface)) return undefined;
+  const askerPlatform = row.scopeKey.split("/")[0] ?? "";
+  if (askerPlatform !== surface || !/^[\w-]+$/u.test(row.requestedBy)) return undefined;
+  const asker = `<@${row.requestedBy}>`;
+  const by = clickerId !== undefined && /^[\w-]+$/u.test(clickerId) && clickerId !== "system" ? `<@${clickerId}>` : "an admin";
+  if (status === "approved") return executed === "failed" ? `${asker}, ${by} approved your request, but it failed.` : `${asker}, ${by} approved your request.`;
+  if (status === "rejected") return `${asker}, ${by} declined your request.`;
+  if (status === "expired") return `${asker}, your request expired before anyone answered it.`;
+  return undefined;
 }
 
 function summaryLinesFor(row: PendingActionRow): string[] {
@@ -1462,6 +1494,12 @@ async function rowDecisionFeedback(
     );
     return;
   }
+  let cardRedrawn = false;
+  if (platform === "slack" && row.messageTs) {
+    cardRedrawn = await decidedRenderFor(row, what.summaryLines, what.outcomeLine, row.channelId, row.messageTs)
+      .then((card) => updateCard(post, row.channelId, row.messageTs ?? undefined, card))
+      .catch(() => false);
+  }
   const postNotice =
     platform === "slack"
       ? (text: string) => postThreadNote(post, row.channelId, row.threadTs ?? row.messageTs ?? undefined, text)
@@ -1471,8 +1509,8 @@ async function rowDecisionFeedback(
       row,
       ...what,
       target: platform === "slack" ? slackDecisionWakeTarget(row, workspace) : discordDecisionWakeTarget(row, workspace),
-      cardShowsOutcome: false,
-      noticeThread: null,
+      cardShowsOutcome: cardRedrawn,
+      noticeThread: cardRedrawn ? slackNoticeThread(row.channelId, row.threadTs ?? row.messageTs ?? undefined) : null,
       postNotice,
     },
     deps.decisionWake,
@@ -1726,9 +1764,10 @@ export async function deliverDecisionFeedback(input: DecisionFeedbackInput, deci
       decisionWake,
     ).catch(() => false);
   }
-  if (input.cardShowsOutcome && woke && !(await threadOwnedBySession(input.row.org, input.noticeThread))) return;
-  if (!swallowRoomOp(`an approval decision notice (${input.outcome})`)) {
-    await input.postNotice(decisionNoticeText(input.row, input.outcomeLine, input.clickerId ?? "system", input.outcome)).catch(() => undefined);
+  const statesOutcome = !input.cardShowsOutcome || !woke || (await threadOwnedBySession(input.row.org, input.noticeThread));
+  const notice = decisionNoticeText(input.row, input.outcome, input.clickerId, input.executed, statesOutcome ? { outcomeLine: input.outcomeLine, row: input.row } : undefined);
+  if (notice !== undefined && !swallowRoomOp(`an approval decision notice (${input.outcome})`)) {
+    await input.postNotice(notice).catch(() => undefined);
   }
 }
 
@@ -1773,14 +1812,14 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
     switch (res.outcome) {
       case "unknown":
         if (parsed.decision === "contradict") {
-          await postThreadNote(post, channelId, messageTs, `<@${clickerId}> ${judgeContradictionNotice("unknown")}`);
+          await postClickerNote(post, channelId, messageTs, clickerId, judgeContradictionNotice("unknown"));
           return true;
         }
         if (await messageHostsOtherRows(org, channelId, messageTs, parsed.id)) {
-          await postThreadNote(post, channelId, messageTs, `<@${clickerId}> that item is no longer known (it may have already been decided or has aged out); the other items on this card are unchanged.`);
+          await postClickerNote(post, channelId, messageTs, clickerId, CLICK_NOTICE.unknownItem);
           return true;
         }
-        await updateCardText(post, channelId, messageTs, "This approval request is no longer known (it may have already been decided or has aged out).");
+        await updateCardText(post, channelId, messageTs, CLICK_NOTICE.unknown);
         return true;
       case "not-pending":
         await redrawGroupedCard(post, org, channelId, messageTs);
@@ -1808,16 +1847,16 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
         return true;
       }
       case "denied":
-        await postThreadNote(post, channelId, res.row.threadTs ?? messageTs, `<@${clickerId}> only a domain/org admin can decide this request.`);
+        await postClickerNote(post, channelId, res.row.threadTs ?? messageTs, clickerId, CLICK_NOTICE.denied);
         return true;
       case "clicker-denied":
-        await postThreadNote(post, channelId, res.row.threadTs ?? messageTs, `<@${clickerId}> ${clickerFloorRefusalNotice(res.reason)}`);
+        await postClickerNote(post, channelId, res.row.threadTs ?? messageTs, clickerId, clickerFloorRefusalNotice(res.reason));
         return true;
       case "halted":
-        await postThreadNote(post, channelId, res.row.threadTs ?? messageTs, `<@${clickerId}> ${res.notice}`);
+        await postClickerNote(post, channelId, res.row.threadTs ?? messageTs, clickerId, res.notice);
         return true;
       case "contradicted": {
-        await postThreadNote(post, channelId, res.row.threadTs ?? messageTs, `<@${clickerId}> ${judgeContradictionNotice(res.contradiction)}`);
+        await postClickerNote(post, channelId, res.row.threadTs ?? messageTs, clickerId, judgeContradictionNotice(res.contradiction));
         return true;
       }
       case "decided": {

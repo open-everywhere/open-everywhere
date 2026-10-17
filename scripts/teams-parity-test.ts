@@ -270,6 +270,9 @@ function partitionOf(a: TeamsMessageActivity): Partition {
     },
   });
   ok(posted[2]?.text === COMMAND_FAILED_TEXT, "runner: a raw error posts the generic line, never its message");
+  const beforeCard = posted.length;
+  await liveTeamsOeCommand(asked, { kind: "budget-clear" }, undefined, { send, probeFor: () => undefined, run: async () => "" });
+  ok(posted.length === beforeCard, "🔴 runner: an empty answer posts nothing beside the card");
 
   const manifest = JSON.parse(teamsAppManifestTemplate()) as { version: string; bots: { commandLists?: { scopes: string[]; commands: { title: string; description: string }[] }[] }[] };
   const lists = manifest.bots[0]!.commandLists ?? [];
@@ -438,7 +441,7 @@ function partitionOf(a: TeamsMessageActivity): Partition {
     readSpendCoverage: async () => undefined,
     domains: [],
   });
-  ok(recorded?.channelId === PERSONAL_CONV && reply.includes("asked an admin to approve") && !reply.includes("pending-chat"), `card: /oe budget raise from a personal chat cards into the chat (got ${recorded?.channelId})`);
+  ok(recorded?.channelId === PERSONAL_CONV && reply === "" && !reply.includes("pending-chat"), `card: /oe budget raise from a personal chat cards into the chat (got ${recorded?.channelId})`);
 
   const { wakeWindowOnDecision } = await import("@open-everywhere/core/agent/approvals/flow.js");
   const { dmWindowRegistryKey, supervisorGrainFor } = await import("@open-everywhere/core/agent/channels/unified-supervisor.js");

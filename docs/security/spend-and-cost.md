@@ -713,8 +713,9 @@ promises about a caller:
   takes no domain argument — and the same resolution then decides which ledger rows are summed. A
   DM, a group chat, an externally-shared or unconfirmed channel, and an unassigned channel with no
   org-wide default domain all resolve to **no** domain, and the scan does not run. The
-  acknowledgement then says which of those applies. It never renders an absent figure as `$0.00`,
-  because a proposal answered by a zero would read as a clean bill nobody earned.
+  acknowledgement then carries no figure line at all, and the card in the room is the whole answer
+  (OPE-2490). The reason goes to the log. It never renders an absent figure as `$0.00`, because a
+  proposal answered by a zero would read as a clean bill nobody earned.
 
   **"Your domain" can be the `org` pseudo-domain, and that bucket is wide.** An internal channel that
   no explicit domain claims falls through to the `org` criteria domain, which this repo ships by

@@ -14,6 +14,7 @@ import {
   type UnifiedWakeOrigin,
   type OwnCardRoom,
   type SurfaceBinding,
+  CLICK_NOTICE,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   TEAMS_ADAPTIVE_CARD_ACTION_INVOKE,
@@ -196,17 +197,17 @@ function cardResponse(card: TeamsAdaptiveCard): TeamsInvokeResponseBody {
 export function teamsResponseFor(res: ApprovalClickResolution, deciderLabel?: string): TeamsInvokeResponseBody {
   switch (res.outcome) {
     case "unknown":
-      return messageResponse("This approval request is no longer known (it may have already been decided or has aged out).");
+      return messageResponse(CLICK_NOTICE.unknown);
     case "not-pending":
     case "expired-race":
     case "lost-race":
-      return messageResponse("Nothing changed — this request was already decided.");
+      return messageResponse(CLICK_NOTICE.notPending);
     case "unregistered-kind":
-      return messageResponse("Nothing changed — this deployment cannot decide this kind of request.");
+      return messageResponse(CLICK_NOTICE.unregistered);
     case "expired":
       return cardResponse(decidedTeamsCard(res.row, res.summaryLines, "expired"));
     case "denied":
-      return messageResponse("Only a domain/org admin can decide this request. It is still pending.");
+      return messageResponse(CLICK_NOTICE.denied);
     case "clicker-denied":
       return messageResponse(clickerFloorRefusalNotice(res.reason));
     case "halted":
@@ -238,17 +239,17 @@ export async function handleTeamsApprovalInvoke(invoke: TeamsApprovalInvoke, dep
   try {
     if (!invoke.clickerId) {
       console.error(`[open-everywhere:teams-approvals] approval tap on ${action.id} carries no user id — ignoring the tap`);
-      return messageResponse("Couldn't read who clicked — this decision was not applied.");
+      return messageResponse(CLICK_NOTICE.noClicker);
     }
     const clickerId = invoke.clickerId;
     if (!invoke.tenantId) {
       console.error(`[open-everywhere:teams-approvals] approval tap on ${action.id} carries no tenant — refusing the tap`);
-      return messageResponse("Couldn't read where this was clicked — this decision was not applied.");
+      return messageResponse(CLICK_NOTICE.noPlace);
     }
     const userType = await (deps.userType ?? liveUserType)(invoke).catch(() => undefined);
     const known = await (deps.readRow ?? ((org: string, id: string) => getOperationalStore().getPendingAction(org, id)))(action.org, action.id).catch(() => null);
     const surfaceKey = teamsClickSurfaceKey(invoke, known);
-    if (!surfaceKey) return messageResponse("Couldn't read where this was clicked — this decision was not applied.");
+    if (!surfaceKey) return messageResponse(CLICK_NOTICE.noPlace);
 
     const res = await (deps.resolve ?? resolveApprovalClick)({
       org: action.org,
@@ -277,7 +278,7 @@ export async function handleTeamsApprovalInvoke(invoke: TeamsApprovalInvoke, dep
     return teamsResponseFor(res, invoke.clickerName);
   } catch (err) {
     console.error(`[open-everywhere:teams-approvals] tap handling failed softly for ${action.id}: ${String(err)}`);
-    return messageResponse("Something went wrong handling this click — the decision was not applied.");
+    return messageResponse(CLICK_NOTICE.failed);
   }
 }
 

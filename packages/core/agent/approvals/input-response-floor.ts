@@ -28,30 +28,14 @@ export interface InputResponseDeps {
 export function inputResponseRefusalNotice(reason: InputResponseRefusal): string {
   switch (reason) {
     case "audience-floor":
-      return (
-        "I didn't take that answer: this channel's audience floor resolved to \"guest\" — it's externally shared, " +
-        "or carries an observed guest/external member — so an answer given here can't stand in for one given inside " +
-        "the org. The question is still open; answer it from an internal channel and I'll carry on."
-      );
-    case "guest-answerer":
-      return (
-        "I didn't take that answer: you could not be confirmed as a member of this workspace, so this answer " +
-        "can't stand in for the org's. The question is still open; a confirmed member of the org can answer it " +
-        "and I'll carry on."
-      );
+      return "I didn't take that answer: this channel has people from outside the org. Answer from an internal channel. The question is still open.";
     case "unattested-room":
-      return (
-        "I didn't take that answer: I couldn't verify who is in this conversation. The question is still open; " +
-        "answer it from a room whose membership I can read and I'll carry on."
-      );
+      return "I didn't take that answer: I couldn't check who is in this conversation. Answer from a room I can check. The question is still open.";
     case "foreign-room":
       return "I didn't take that answer: it didn't come from the room I asked in. The question is still open.";
+    case "guest-answerer":
     case "guest-clicker":
-      return (
-        "I didn't take that answer: you could not be confirmed as a member of this workspace, so this answer " +
-        "can't stand in for the org's. The question is still open; a confirmed member of the org can answer it " +
-        "and I'll carry on."
-      );
+      return "I didn't take that answer: I couldn't confirm you are a member of this workspace. A member can answer it. The question is still open.";
   }
 }
 

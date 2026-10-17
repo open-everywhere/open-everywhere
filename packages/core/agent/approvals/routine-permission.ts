@@ -145,7 +145,7 @@ const routinePermission: ActionKind<RoutinePermissionArgs> = {
         action: "routine.permission_declined_stale",
         detail: { routine: args.routineId, grant: args.grantKind, declaration: args.declaration, key: args.grantKey },
       }).catch(() => undefined);
-      return `nothing was remembered — ${recheck.why}`;
+      return `nothing was remembered: ${recheck.why}`;
     }
     const now = new Date();
     await getOperationalStore()

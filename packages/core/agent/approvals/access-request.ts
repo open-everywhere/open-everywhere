@@ -16,6 +16,7 @@ import { platformOfScopeKey } from "../access/scope-key.js";
 import { inlineForReview } from "./review-surface.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import type { ActionKind } from "./types.js";
+import { cardSitsWhereAsked } from "./requester-note.js";
 
 export interface AccessRequestArgs {
   readonly org: string;
@@ -179,19 +180,19 @@ export async function executeAccessRequest(args: AccessRequestArgs, decidedBy: s
   adminBody.set("channel", cfg.adminChannel);
   adminBody.set(
     "text",
-    `:inbox_tray: Access request — ${sentence}.\nRequested by <@${args.requestedBy}> · sent by <@${decidedBy}>` +
+    `:inbox_tray: Access request: ${sentence}.\nRequested by <@${args.requestedBy}> · sent by <@${decidedBy}>` +
       `${args.reason ? ` · reason: ${inlineForReview(args.reason)}` : ""}\nReview and merge to grant: ${pr.url}`,
   );
   const adminRes = await post("chat.postMessage", adminBody.toString());
   const adminOk = adminRes?.ok === true;
 
   const askingPlatform = platformOfScopeKey(args.scopeKey);
-  if (askingPlatform) {
+  if (askingPlatform && !(await cardSitsWhereAsked(args.org, args.channelId, args.threadTs))) {
     const threadNote = deps.postThreadNote ?? postSurfaceText;
     await threadNote(askingPlatform, {
       channelId: args.channelId,
       threadTs: args.threadTs,
-      text: `Access request sent — PR ${pr.url} is with the admins. Merging it grants: ${sentence.charAt(0).toLowerCase()}${sentence.slice(1)}.`,
+      text: `Access request sent. Pull request ${pr.url} is with the admins. Merging it grants: ${sentence.charAt(0).toLowerCase()}${sentence.slice(1)}.`,
     });
   }
 

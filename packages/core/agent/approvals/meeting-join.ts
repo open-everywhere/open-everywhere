@@ -48,9 +48,9 @@ const meetingJoin: ActionKind<MeetingJoinArgs> = {
     const callbackBase = selfDispatchBaseUrl();
     const rec = await openMeeting(args, decidedBy, callbackBase !== undefined ? { callbackBase } : {});
     if (args.platform === "discord") {
-      return `notetaker sent to ${discordRoomWords(args)} (up to ${rec.box.maxMinutes} min) — it posts a recording notice there, and the recap comes here after the meeting`;
+      return `notetaker sent to ${discordRoomWords(args)} (up to ${rec.box.maxMinutes} min). It posts a recording notice there, and the recap comes here after the meeting`;
     }
-    return `notetaker sent (up to ${rec.box.maxMinutes} min) — the host must admit it, and the recap comes here after the meeting`;
+    return `notetaker sent (up to ${rec.box.maxMinutes} min). The host must admit it, and the recap comes here after the meeting`;
   },
 };
 

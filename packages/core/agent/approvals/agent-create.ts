@@ -28,6 +28,7 @@ import { inlineForReview } from "./review-surface.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import type { ActionKind } from "./types.js";
 import { plainValue } from "./plain-text.js";
+import { cardSitsWhereAsked } from "./requester-note.js";
 
 export interface AgentCreateArgs {
   readonly org: string;
@@ -210,12 +211,12 @@ export async function executeAgentCreate(args: AgentCreateArgs, decidedBy: strin
   const adminOk = adminRes?.ok === true;
 
   const askingPlatform = platformOfScopeKey(args.scopeKey);
-  if (askingPlatform) {
+  if (askingPlatform && !(await cardSitsWhereAsked(args.org, args.channelId, args.threadTs))) {
     const threadNote = deps.postThreadNote ?? postSurfaceText;
     await threadNote(askingPlatform, {
       channelId: args.channelId,
       threadTs: args.threadTs,
-      text: `Agent request sent — PR ${pr.url} is with the admins. Merging it provisions agent "${args.spec.name}" for this channel.`,
+      text: `Agent request sent. Pull request ${pr.url} is with the admins. Merging it provisions agent "${args.spec.name}" for this channel.`,
     });
   }
 

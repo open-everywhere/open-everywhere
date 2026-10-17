@@ -20,6 +20,7 @@ import { inlineForReview } from "./review-surface.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import type { ActionKind } from "./types.js";
 import { plainValue } from "./plain-text.js";
+import { cardSitsWhereAsked } from "./requester-note.js";
 
 export interface WebhookDeclareArgs {
   readonly org: string;
@@ -221,12 +222,12 @@ export async function executeWebhookDeclare(args: WebhookDeclareArgs, decidedBy:
   const adminOk = adminRes?.ok === true;
 
   const askingPlatform = platformOfScopeKey(args.scopeKey);
-  if (askingPlatform) {
+  if (askingPlatform && !(await cardSitsWhereAsked(args.org, args.channelId, args.threadTs))) {
     const threadNote = deps.postThreadNote ?? postSurfaceText;
     await threadNote(askingPlatform, {
       channelId: args.channelId,
       threadTs: args.threadTs,
-      text: `Webhook declaration sent — PR ${pr.url} is with the admins. Merging it declares the ingress; an operator then sets its secret before anything can authenticate.`,
+      text: `Webhook declaration sent. Pull request ${pr.url} is with the admins. Merging it declares the ingress; an operator then sets its secret before anything can authenticate.`,
     });
   }
 

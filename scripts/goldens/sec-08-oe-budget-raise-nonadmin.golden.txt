@@ -9,7 +9,7 @@ IN  discord interaction · "/oe budget raise usd:5" by NON-admin U_PLEB8 in guil
       | {
       |  "type": 4,
       |  "data": {
-      |   "content": "I've asked an admin to approve a limit of $5.00 a month for <#CS8>. The request is in this channel until <when>.\n_No domain spending to show here: I can't confirm this channel is only your organisation's._",
+      |   "content": "👍",
       |   "flags": 64
       |  }
       | }
@@ -19,7 +19,7 @@ IN  discord interaction · U_PLEB8 clicks APPROVE on their OWN card (self-approv
       | {
       |  "type": 4,
       |  "data": {
-      |   "content": "Only a domain/org admin — or a server administrator, for this server's own scopes — can decide this request.",
+      |   "content": "Only an admin, or a server administrator for this server's own requests, can decide this. It is still open.",
       |   "flags": 64
       |  }
       | }

@@ -38,30 +38,29 @@ export function grantResolutionText(ask: CredentialGrantAskRow, resolution: Gran
     case "approved": {
       const mounts = resolution.grant.toolName !== undefined;
       return [
-        `${ownerLead} approved the credential grant — ${what}.`,
+        `${ownerLead} approved: ${what}.`,
         `The grant is ${grantModePhrase(resolution.grant.mode)}, ${grantExpiryPhrase(resolution.grant.expiresAt, nowMs)}.`,
-        ...(mounts ? ["This conversation reaches the tool through the next task it hands work to."] : []),
+        ...(mounts ? ["The next task this conversation hands off can use it."] : []),
         ...breadthLines(resolution.grant, resolution.askedMode, owner),
         credentialGrantDisclosureLine(resolution.grant, nowMs),
       ].join("\n");
     }
     case "declined":
-      return `${ownerLead} declined the credential grant — ${what}. Nothing was granted and no tool is mounted. Do not ask again for the same thing — find another way, or ask the room.`;
+      return `${ownerLead} declined: ${what}. Nothing was granted. Please do not ask again for the same thing.`;
     case "expired":
       return [
-        `The credential grant request — ${what} — expired with no answer from ${owner}.`,
-        `Nothing was granted and no tool is mounted. ${ownerLead} did not decline — the request simply timed out.`,
-        "You can ask again if it is still needed.",
+        `The request expired with no answer from ${owner}: ${what}.`,
+        `Nothing was granted. ${ownerLead} did not decline, so you can ask again if it is still needed.`,
       ].join("\n");
     case "revoked":
       return grantRevokedRoomText(ask.connector, ask.mcpTool);
     case "refused":
       return [
-        `${ownerLead} approved the credential grant — ${what} — but it could not be minted.`,
+        `${ownerLead} approved, but it could not be set up: ${what}.`,
         resolution.gate === "tool_absent"
           ? `Their ${connectorDisplayName(ask.connector)} connection publishes no tool by that name, so there was nothing to lend.`
           : `The ${connectorDisplayName(ask.connector)} tool does not take the arguments the request fixed, so the grant could never have been spent.`,
-        "Nothing was granted and no tool is mounted. Check the tool name and the arguments against the connection, then ask again.",
+        "Nothing was granted. Check the tool name and the arguments against the connection, then ask again.",
       ].join("\n");
   }
 }
@@ -73,7 +72,7 @@ function sentenceLead(owner: string): string {
 function breadthLines(grant: CredentialGrantRow, askedMode: CredentialGrantMode, owner: string): readonly string[] {
   if (!grantModeIsBroader(grant.mode, askedMode)) return [];
   return [
-    `${sentenceLead(owner)} granted MORE than was asked: the request was for ${GRANT_MODE_WORDS[askedMode]}, and the grant is for ${GRANT_MODE_WORDS[grant.mode]}.`,
+    `${sentenceLead(owner)} granted more than was asked: the request was for ${GRANT_MODE_WORDS[askedMode]}, and the grant is for ${GRANT_MODE_WORDS[grant.mode]}.`,
   ];
 }
 

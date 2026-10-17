@@ -1307,14 +1307,23 @@ cannot render (an unknown kind, broken args) opens with a generic sentence. It n
 the person to ask the agent what it will do, because a card that fails to render posts no card. The
 notification text is the same visible lines.
 
-**A decided card is one line**: "✅ Approved by @name — message posted in #general", "❌ Rejected by
-@name — Post a message in #general", "⏰ Expired — Post a message in #general" (`decidedCardLine`).
-The decision notice is the same line, so a click skips it only when the card edit succeeded, a
-standing seat took the decision wake, and no thread seat or worker owns the thread the notice posts
-into. Then the edited card already shows the outcome, and the room does not read it twice
-(OPE-2473). The notice
-exists for a session whose history does not see a card edit. The TTL sweep and a session-grant
-release do not edit the card, so they always post the notice. Slack, Teams and Discord render the same
+**A decided card is one line**: "✅ Approved by @name: message posted in #general", "❌ Rejected by
+@name: Post a message in #general", "⏰ Expired: Post a message in #general" (`decidedCardLine`).
+The card updates in place to that line. A failed act reads "⚠️ Approved by @name, but it failed", and
+the raw error stays in the `approval.failed` audit row. **A second post repeats the card only where
+something cannot see the card.** The notice exists for a session whose history does not see a card
+edit (OPE-2473). So it states the outcome, as the decided line, only when the card did not change
+(a Discord or Teams sweep or session-grant release, or a rewrite Slack refused), when no standing seat
+took the decision wake, or when a thread seat or worker owns the thread. A Slack sweep or release
+redraws the card in place. Otherwise the card is the room's record (OPE-2490): when the asker decided
+their own request, nothing else posts, and when somebody else decided it, or it expired, one short line
+tells the asker ("@asker, @admin approved your request."). A card on a surface that cannot spell a
+mention (Teams, Google Chat), or whose asker is on another platform, gets no such short line, because it
+would show a raw id. A notice that states the outcome names a person only where the surface can spell a
+mention (Slack, Discord), so on Teams or Google Chat it names nobody. A refused click (not an admin, an outside channel, a halt) shows its note to the
+clicker only. On Slack that is an ephemeral message in the card's thread. Code-written card text
+carries no em-dash: `withoutDashes` (`plain-text.ts`) turns each one into a comma, and quoted content
+keeps its own characters. Slack, Teams and Discord render the same
 layout (`packages/core/agent/approvals/card-layout.ts`), and the **options are one ordered list** —
 Approve first, Reject last, and a routine's grant option between them. "Approve, and allow things
 like this" (OPE-2456) is one more entry in that list, offered only where a rule could lift the act.
@@ -1326,7 +1335,7 @@ one-off and never writes a rule. See [pre-approval rules § 7](../how-it-works/p
 session (`group_key`). When a second ask comes from the same session, into the same room and the
 same thread, while that session's card is still open, it joins that card instead of posting a new
 one: the card is rewritten as one grouped message that opens with a plain count ("2 approvals for
-one job — 2 still open"), and each item keeps its own headline, consequence line and buttons. A
+one job, 2 still open"), and each item keeps its own headline, consequence line and buttons. A
 decided item becomes its one decided line.
 A click still decides exactly one row, through the same click core, and the redraw keeps the other
 items live. A card holds at most five items, and a sixth ask posts its own card. A rewrite that

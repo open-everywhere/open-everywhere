@@ -510,15 +510,15 @@ console.log("7. the lapse copy:");
   const declined = grantResolutionText(ask, { kind: "declined" }, NOW);
   ok(lapse.includes('read a Notion page — "Launch page"'), "the lapse notice names the borrow the way the owner's own card named it");
   ok(!lapse.includes("`notion_fetch`") && !lapse.includes(ask.resource), "…and never the raw verb or the code-shaped resource column");
-  ok(lapse.includes("expired") && lapse.includes("no answer"), "…and says the request TIMED OUT");
-  ok(!lapse.includes("declined the credential grant"), "a lapse is NEVER reported as a decline — the owner made no decision at all");
+  ok(lapse.includes("expired") && lapse.includes("no answer"), "…and says the request timed out");
+  ok(!lapse.includes("declined:"), "a lapse is NEVER reported as a decline — the owner made no decision at all");
   ok(lapse.includes("did not decline"), "…and it says so out loud, because 'expired' alone reads as a soft no");
   ok(lapse.includes("ask again"), "…so asking again stays open");
-  ok(declined.includes("Do not ask again"), "NEGATIVE CONTROL: the DECLINE arm still tells the room to stop — the two arms give opposite advice, so neither can be passing on shared copy");
+  ok(declined.includes("do not ask again"), "NEGATIVE CONTROL: the DECLINE arm still tells the room to stop — the two arms give opposite advice, so neither can be passing on shared copy");
   ok(!declined.includes("did not decline"), "…and the decline arm carries none of the lapse wording");
 
   const card = expiredGrantCardText(ask, true);
-  ok(card.includes("EXPIRED"), "the owner's card is rewritten to say expired");
+  ok(card.includes("timed out"), "the owner's card is rewritten to say it timed out");
   ok(card.includes("read a Notion page") && card.includes('— "Launch page"'), "…and still names what was asked for, so the owner reads one story");
   ok(card.includes("does nothing"), "…and says a tap achieves nothing, which is true whether or not the surface kept the buttons");
   ok(!card.includes(ask.purpose), "the model-authored purpose is NOT replayed into the expired card — it has served its purpose and nothing needs it again");
@@ -527,7 +527,7 @@ console.log("7. the lapse copy:");
   const cardUntold = expiredGrantCardText(ask, false);
   ok(card.includes("has been told"), "when the requester WAS told, the card says so");
   ok(!cardUntold.includes("has been told"), "NEGATIVE CONTROL: when the requester was NOT told, the card does not claim they were");
-  ok(cardUntold.includes("NOT been told"), "…it says the opposite out loud, so the owner knows somebody may still be waiting");
+  ok(cardUntold.includes("not been told"), "…it says the opposite out loud, so the owner knows somebody may still be waiting");
 }
 
 {

@@ -9,6 +9,7 @@ import {
   type DecisionWakeDeps,
   type ApprovalOutcome,
   type PendingActionRow,
+  CLICK_NOTICE,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   OE_DISCORD_APPROVAL_PREFIX,
@@ -134,7 +135,7 @@ export interface DiscordApprovalDeps {
 export function discordResponseFor(res: ApprovalClickResolution): DiscordInteractionResponse {
   switch (res.outcome) {
     case "unknown":
-      return ephemeral("This approval request is no longer known (it may have already been decided or has aged out).");
+      return ephemeral(CLICK_NOTICE.unknown);
     case "not-pending":
     case "expired-race":
     case "unregistered-kind":
@@ -145,7 +146,7 @@ export function discordResponseFor(res: ApprovalClickResolution): DiscordInterac
       return { type: RESPONSE_UPDATE_MESSAGE, data: { content: card.content, components: card.components } };
     }
     case "denied":
-      return ephemeral("Only a domain/org admin — or a server administrator, for this server's own scopes — can decide this request.");
+      return ephemeral(CLICK_NOTICE.deniedDiscord);
     case "clicker-denied":
       return ephemeral(clickerFloorRefusalNotice(res.reason));
     case "halted":
@@ -169,7 +170,7 @@ export async function handleDiscordApprovalInteraction(raw: unknown, deps: Disco
 
     if (!click.clickerId) {
       console.error(`[open-everywhere:discord-approvals] component click "${click.customId}" carries no user id — ignoring the click`);
-      return ephemeral("Couldn't read who clicked — this decision was not applied.");
+      return ephemeral(CLICK_NOTICE.noClicker);
     }
     const clickerId = click.clickerId;
 
@@ -238,6 +239,6 @@ export async function handleDiscordApprovalInteraction(raw: unknown, deps: Disco
     return discordResponseFor(res);
   } catch (err) {
     console.error(`[open-everywhere:discord-approvals] click handling failed softly for "${click.customId}": ${String(err)}`);
-    return ephemeral("Something went wrong handling this click — the decision was not applied.");
+    return ephemeral(CLICK_NOTICE.failed);
   }
 }
