@@ -540,3 +540,4 @@ test:reply-follow-ups
 test:workflow-discovery
 test:first-routine
 test:ask-watch
+test:exit-kit

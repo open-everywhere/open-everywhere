@@ -100,6 +100,12 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     why: "S-MEM-READ and J2 exercise recall/silo isolation/purge directly; S-DM-NOTION's DM seat carries personal memory as part of its journey.",
   },
   {
+    area: "exit-kit",
+    globs: ["packages/core/agent/exit/**"],
+    scenarios: ["S-EXIT-KIT"],
+    why: "S-EXIT-KIT (OPE-2527) is the only leg that runs the org export and the per-person erasure against a live store, so a change to the catalogue, the SQL builder or either function reds it.",
+  },
+  {
     area: "routines",
     globs: ["packages/core/agent/routines/**", "packages/core/agent/tools/*_routine*.ts", "packages/core/agent/tools/*routine*.ts"],
     scenarios: ["S23", "S-TAINT-UNATTENDED-DENY", "S-ROUTINE-CONNECTOR-WRITE", "S-ROUTINE-TEST", "S-ASK-WATCH"],

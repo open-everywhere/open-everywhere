@@ -175,6 +175,16 @@ export const sqliteProvider: MemoryProvider = {
     }
   },
 
+  async exportFiles(org) {
+    return getDb()
+      .prepare("SELECT tier_path, rel_path, content FROM memory_file WHERE org_id = ? ORDER BY tier_path, rel_path")
+      .all(org)
+      .map((r) => {
+        const row = r as { tier_path: string; rel_path: string; content: string };
+        return { tierPath: row.tier_path, relPath: row.rel_path, content: row.content };
+      });
+  },
+
   root() {
     return openedPath ?? dbPath().path;
   },

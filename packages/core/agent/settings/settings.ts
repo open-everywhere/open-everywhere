@@ -187,6 +187,10 @@ export interface AgentSettings {
     readonly sandboxMemoryGiB: number;
     readonly sandboxGiBHourUsd: number;
   };
+  readonly retention: {
+    readonly sessionTranscriptDays: number;
+    readonly storedStateDays: number;
+  };
   readonly skills: {
     readonly domainSkillCap: number;
   };
@@ -269,6 +273,9 @@ const slackSuggestedPromptsProblem = (v: readonly SlackSuggestedPrompt[]): strin
 
 const positiveInt = (value: number): string | undefined =>
   Number.isInteger(value) && value > 0 ? undefined : "must be a positive integer";
+
+const nonNegativeInt = (value: number): string | undefined =>
+  Number.isInteger(value) && value >= 0 ? undefined : "must be a whole number of days, 0 or more";
 
 const positiveNumber = (value: number): string | undefined =>
   Number.isFinite(value) && value > 0 ? undefined : "must be a positive number";
@@ -984,6 +991,24 @@ export const SETTINGS = {
         "Accept a per-instance, ephemeral operational store (the PGlite or sqlite floor) on a Vercel host (was `OE_ALLOW_EPHEMERAL_OPERATIONAL=1`). Off (shipped), a Vercel host with no hosted Postgres refuses to boot: the audit log, the spend ledger and break-glass revocations would be per-instance, so a revoke would report success and never take effect. Set `DATABASE_URL` instead. On is for a knowingly single-instance host only. Off a Vercel host the floor is correct, and this setting is inert.",
     } satisfies SettingSpec<boolean>,
   },
+  retention: {
+    sessionTranscriptDays: {
+      path: "retention.sessionTranscriptDays",
+      shipped: 90,
+      validate: nonNegativeInt,
+      summary:
+        "Days a FINISHED session transcript is kept. The daily tidy pass deletes every finished run whose last activity is older, together with its events, steps, hooks and streams, and writes one `exit.retention_swept` audit row with the counts. A live run is never touched. It acts on eve's local workflow world (`.eve/.workflow-data`, the default off Vercel). On Vercel the transcripts live in Vercel's hosted workflow store, which offers no delete call, so this setting cannot reach them there and the audit row says so. 0 keeps every transcript. See docs/security/exit-and-your-data.md.",
+      format: (v) => (v === 0 ? "0 (keep every transcript)" : `${v} d`),
+    } satisfies SettingSpec<number>,
+    storedStateDays: {
+      path: "retention.storedStateDays",
+      shipped: 90,
+      validate: nonNegativeInt,
+      summary:
+        "Days the conversational state in the operational store is kept: conversation tails and DM summaries, job results, Slack file links, captured webhook bodies, status lines, the words of repeated questions and soak captures. The daily tidy pass deletes the older rows (agent/exit/catalogue.ts lists each table and its time column). The audit log, the usage and tool-call ledgers and the skill and prompt histories are append-only, and this setting never deletes them. Nor does it delete decided approval cards, grants or memory proposals (the runtime role holds no DELETE on them), or meeting data, which expires by its own clock and holds long-lived provenance marks. Memory is not aged: a person removes it with Forget, and an operator with `oe erase`. 0 keeps all of it.",
+      format: (v) => (v === 0 ? "0 (keep all of it)" : `${v} d`),
+    } satisfies SettingSpec<number>,
+  },
   skills: {
     domainSkillCap: {
       path: "skills.domainSkillCap",
@@ -1434,6 +1459,10 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
     storage: {
       allowEphemeralMemory: resolve(SETTINGS.storage.allowEphemeralMemory, o.storage?.allowEphemeralMemory),
       allowEphemeralOperational: resolve(SETTINGS.storage.allowEphemeralOperational, o.storage?.allowEphemeralOperational),
+    },
+    retention: {
+      sessionTranscriptDays: resolve(SETTINGS.retention.sessionTranscriptDays, o.retention?.sessionTranscriptDays),
+      storedStateDays: resolve(SETTINGS.retention.storedStateDays, o.retention?.storedStateDays),
     },
     skills: {
       domainSkillCap: resolve(SETTINGS.skills.domainSkillCap, o.skills?.domainSkillCap),

@@ -79,6 +79,7 @@ export const SECTION_ROOT: readonly DocEntry[] = [
       "- [The control plane](./security/control-plane.md) — runtime admin via MCP; the override doctrine.",
       "- [What revoke actually reaches](./security/revocation-latency.md) — per-plane revocation latency, and the lever that forces the earliest one.",
       "- [Audit & provenance](./security/audit-and-provenance.md) — how you know what the agent did.",
+      "- [Exit and your data](./security/exit-and-your-data.md) — the org export, per-person erasure, transcript delete and the retention setting, and what each one reaches on each backing.",
       "- [Permission homeostasis](./security/permission-homeostasis.md) — the two loops that propose widening and tightening grants from run evidence.",
       "- [The upgrade diff fence](./security/self-upgrade-fence.md) — why a self-upgrading agent cannot edit its own guardrails, and the deployment shape it needs.",
       "- [Spend & cost controls](./security/spend-and-cost.md) — caps, budgets, break-glass.",

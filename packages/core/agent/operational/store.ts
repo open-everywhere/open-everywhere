@@ -6,6 +6,7 @@ import type { SessionTailEntry } from "../channels/session-tail.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow } from "./credential-grant-rows.js";
 import type { AuditEpochSeal } from "../audit/chain.js";
 import type { AuditDetail } from "../audit/scrubbed-text.js";
+import type { ExitRowFilter } from "../exit/sql.js";
 
 export const OPERATIONAL_TABLES = [
   "spend_ledger",
@@ -1037,6 +1038,12 @@ export interface ClaimedIngressDelivery extends DueIngressDelivery {
   readonly claimedAt: string;
 }
 
+export interface ExitTableAccess {
+  readRows(table: string, org: string | null, offset: number, limit: number): Promise<Record<string, unknown>[]>;
+  selectDistinct(table: string, org: string, column: string, filter: ExitRowFilter): Promise<string[]>;
+  deleteRows(table: string, org: string, filter: ExitRowFilter): Promise<number>;
+}
+
 export interface OperationalStore {
   readonly id: string;
   root(): string;
@@ -1184,6 +1191,8 @@ export interface OperationalStore {
   claimAttentionPing(org: string, sessionId: string, since: string): Promise<boolean>;
 
   runAnalyticsQuery(compiled: CompiledAnalyticsQuery): Promise<Record<string, unknown>[]>;
+
+  readonly exitTables?: ExitTableAccess;
 
   enqueueIngressDelivery(org: string, write: IngressDeliveryWrite): Promise<boolean>;
   listDueIngressDeliveries(org: string, source: string, nowIso: string, staleBeforeIso: string, limit: number): Promise<readonly DueIngressDelivery[]>;

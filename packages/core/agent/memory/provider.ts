@@ -9,6 +9,7 @@ import { resolveMemoryProviderId } from "./backing-selection.js";
 import {
   deleteTier as gitDeleteTier,
   deleteFile as gitDeleteFile,
+  exportFiles as gitExportFiles,
   ensureTier as gitEnsureTier,
   readTier as gitReadTier,
   storeRoot as gitStoreRoot,
@@ -45,6 +46,14 @@ export interface MemoryProvider {
   deleteFile?(p: Partition, tier: Tier, relPath: string, silo?: MemorySilo, access?: MemoryAccess): Promise<string | null>;
 
   root?(): string;
+
+  exportFiles?(org: string): Promise<MemoryExportFile[]>;
+}
+
+export interface MemoryExportFile {
+  readonly tierPath: string;
+  readonly relPath: string;
+  readonly content: string;
 }
 
 export const gitProvider: MemoryProvider = {
@@ -56,6 +65,7 @@ export const gitProvider: MemoryProvider = {
   deleteTier: gitDeleteTier,
   deleteFile: gitDeleteFile,
   root: gitStoreRoot,
+  exportFiles: gitExportFiles,
 };
 
 export { resolveMemoryProviderId, MEMORY_PROVIDER_FLOOR } from "./backing-selection.js";

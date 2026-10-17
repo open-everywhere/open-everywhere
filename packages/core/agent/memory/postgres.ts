@@ -304,6 +304,14 @@ export function makePostgresProvider(client: PgClient): MemoryProvider {
       await client.query("DELETE FROM memory_tier WHERE org_id = $1 AND tier_path = $2", [p.org, path]);
     },
 
+    async exportFiles(org) {
+      const { rows } = await client.query(
+        "SELECT tier_path, rel_path, content FROM memory_file WHERE org_id = $1 ORDER BY tier_path, rel_path",
+        [org],
+      );
+      return (rows as { tier_path: string; rel_path: string; content: string }[]).map((r) => ({ tierPath: r.tier_path, relPath: r.rel_path, content: r.content }));
+    },
+
     async deleteFile(p, tier, relPath) {
       const path = tierRelDir(p, tier);
       const { rows } = await client.query(

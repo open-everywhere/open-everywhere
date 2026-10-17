@@ -12,6 +12,7 @@ import { createHash } from "node:crypto";
 import { AUDIT_CHAIN_EPOCH_ACTION, auditEpochDetail, auditEpochSealFor, auditRowSha, withOrgAuditLock } from "../audit/chain.js";
 import { deploymentOrg } from "../identity/deployment-identity.js";
 import { assembleAnalyticsSql } from "../analytics/compile.js";
+import { buildExitDelete, buildExitSelectDistinct, buildExitSelectPage } from "../exit/sql.js";
 import type { AuditDetailBuilder } from "../audit/scrubbed-text.js";
 
 export type { PgClient } from "../memory/postgres.js";
@@ -3540,6 +3541,21 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         [since, org, sessionId],
       );
       return rows.length > 0;
+    },
+
+    exitTables: {
+      async readRows(table, org, offset, limit) {
+        const { sql, params } = buildExitSelectPage("dollar", table, org, offset, limit);
+        return (await client.query(sql, params)).rows as Record<string, unknown>[];
+      },
+      async selectDistinct(table, org, column, filter) {
+        const { sql, params } = buildExitSelectDistinct("dollar", table, org, column, filter);
+        return ((await client.query(sql, params)).rows as { v: unknown }[]).map((r) => String(r.v));
+      },
+      async deleteRows(table, org, filter) {
+        const { sql, params } = buildExitDelete("dollar", table, org, filter);
+        return (await client.query(sql, params)).rows.length;
+      },
     },
 
     async runAnalyticsQuery(compiled) {

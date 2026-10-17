@@ -1882,6 +1882,38 @@
       "types": "./dist/agent/email/transport.d.ts",
       "default": "./dist/agent/email/transport.js"
     },
+    "./agent/exit/catalogue.js": {
+      "types": "./dist/agent/exit/catalogue.d.ts",
+      "default": "./dist/agent/exit/catalogue.js"
+    },
+    "./agent/exit/erase.js": {
+      "types": "./dist/agent/exit/erase.d.ts",
+      "default": "./dist/agent/exit/erase.js"
+    },
+    "./agent/exit/export.js": {
+      "types": "./dist/agent/exit/export.d.ts",
+      "default": "./dist/agent/exit/export.js"
+    },
+    "./agent/exit/retention.js": {
+      "types": "./dist/agent/exit/retention.d.ts",
+      "default": "./dist/agent/exit/retention.js"
+    },
+    "./agent/exit/sql.js": {
+      "types": "./dist/agent/exit/sql.d.ts",
+      "default": "./dist/agent/exit/sql.js"
+    },
+    "./agent/exit/transcript-delete.js": {
+      "types": "./dist/agent/exit/transcript-delete.d.ts",
+      "default": "./dist/agent/exit/transcript-delete.js"
+    },
+    "./agent/exit/transcript-store.js": {
+      "types": "./dist/agent/exit/transcript-store.d.ts",
+      "default": "./dist/agent/exit/transcript-store.js"
+    },
+    "./agent/exit/workflow-world.js": {
+      "types": "./dist/agent/exit/workflow-world.d.ts",
+      "default": "./dist/agent/exit/workflow-world.js"
+    },
     "./agent/home/doing-home.js": {
       "types": "./dist/agent/home/doing-home.d.ts",
       "default": "./dist/agent/home/doing-home.js"
@@ -3870,6 +3902,7 @@
     "test:roles-presets": "tsx scripts/roles-presets-test.ts",
     "test:output-language": "tsx scripts/output-language-test.ts",
     "test:audit-export": "tsx scripts/audit-export-test.ts",
+    "test:exit-kit": "tsx scripts/exit-kit-test.ts",
     "test:meetings": "tsx scripts/meetings-test.ts",
     "test:meetings-native": "tsx scripts/meetings-native-test.ts",
     "test:meeting-provenance": "tsx scripts/meeting-provenance-test.ts",

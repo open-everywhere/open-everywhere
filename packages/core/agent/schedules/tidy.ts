@@ -20,6 +20,8 @@ import { sweepCredentialGrants } from "../access/credential-grant-flow.js";
 import { getSettings } from "../settings/settings.js";
 import { sweepIdleThreadSeats } from "../channels/thread-seat-close.js";
 import { liveThreadSeatCloseDeps } from "../channels/unified.js";
+import { retentionSweep } from "../exit/retention.js";
+import { resolveTranscriptStore } from "../exit/transcript-store.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:dream/tidy] ${msg}`);
@@ -58,6 +60,8 @@ export interface TidyTickReport {
   readonly grantCardsExpired: number;
   readonly expiredGrants: number;
   readonly expiredThreadSeats: number;
+  readonly retentionRows: number;
+  readonly retentionTranscripts: number;
 }
 
 export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: readonly string[] } = {}): Promise<TidyTickReport> {
@@ -71,7 +75,7 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
     domains = getConfig().loadDomains();
   } catch (err) {
     log(`tick skipped — config not registered: ${String(err)}`);
-    return { orgs: 0, silos: 0, applied: 0, proposed: 0, changed: 0, judged: noJudge, expiredApprovals: 0, expiredGrantAsks: 0, grantLapseNotices: 0, grantCardsExpired: 0, expiredGrants: 0, expiredThreadSeats: 0 };
+    return { orgs: 0, silos: 0, applied: 0, proposed: 0, changed: 0, judged: noJudge, expiredApprovals: 0, expiredGrantAsks: 0, grantLapseNotices: 0, grantCardsExpired: 0, expiredGrants: 0, expiredThreadSeats: 0, retentionRows: 0, retentionTranscripts: 0 };
   }
 
   const judge = dreamJudge();
@@ -88,6 +92,8 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
   let grantCardsExpired = 0;
   let expiredGrants = 0;
   let expiredThreadSeats = 0;
+  let retentionRows = 0;
+  let retentionTranscripts = 0;
 
   for (const org of orgs) {
     const orgStart = { siloCount, applied, proposed, changed, expiredApprovals, expiredGrantAsks };
@@ -206,6 +212,22 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
       log(`skip thread-seat-sweep ${org} — ${String(err)}`);
     }
 
+    try {
+      const { retention } = getSettings();
+      const swept = await retentionSweep({
+        store: getOperationalStore(),
+        org,
+        now,
+        storedStateDays: retention.storedStateDays,
+        sessionTranscriptDays: retention.sessionTranscriptDays,
+        transcripts: resolveTranscriptStore(process.cwd()),
+      });
+      retentionRows += Object.values(swept.rows).reduce((n, v) => n + v, 0);
+      retentionTranscripts += swept.transcriptsDeleted;
+    } catch (err) {
+      log(`skip retention-sweep ${org} — ${String(err)}`);
+    }
+
     const orgSilos = siloCount - orgStart.siloCount;
     const orgApplied = applied - orgStart.applied;
     const orgProposed = proposed - orgStart.proposed;
@@ -237,9 +259,10 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
     `tick: ${orgs.length} org(s), ${siloCount} silo(s) — ${applied} safe op(s) applied, ${changed} silo(s) written, ` +
       `${proposed} proposal(s) recorded, ${expiredApprovals} approval(s) expired, ` +
       `${expiredGrantAsks} grant ask(s) lapsed (${grantLapseNotices} notice(s), ${grantCardsExpired} card(s) updated), ` +
-      `${expiredGrants} grant(s) expired, ${expiredThreadSeats} idle thread seat(s) closed${judgeNote}`,
+      `${expiredGrants} grant(s) expired, ${expiredThreadSeats} idle thread seat(s) closed, ` +
+      `${retentionRows} row(s) and ${retentionTranscripts} transcript(s) aged out${judgeNote}`,
   );
-  return { orgs: orgs.length, silos: siloCount, applied, proposed, changed, judged, expiredApprovals, expiredGrantAsks, grantLapseNotices, grantCardsExpired, expiredGrants, expiredThreadSeats };
+  return { orgs: orgs.length, silos: siloCount, applied, proposed, changed, judged, expiredApprovals, expiredGrantAsks, grantLapseNotices, grantCardsExpired, expiredGrants, expiredThreadSeats, retentionRows, retentionTranscripts };
 }
 
 export default defineSchedule({

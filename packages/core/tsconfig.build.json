@@ -34,6 +34,7 @@
     "scripts/eve-framework-tools.ts",
     "scripts/oe-wrap-untrusted.ts",
     "scripts/oe-secret.ts",
+    "scripts/oe-exit.ts",
     "scripts/oe-env.ts",
     "scripts/oe-overlays.ts",
     "scripts/oe-upgrade.ts",

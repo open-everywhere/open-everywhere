@@ -61,10 +61,13 @@ if (subcommand === "wrap-untrusted") {
 } else if (subcommand === "overlays") {
   const { runOverlaysCommand } = await import("./oe-overlays.js");
   process.exit(runOverlaysCommand(argv.slice(1), { out: (l) => console.log(l), err: (l) => console.error(l) }, process.cwd()));
+} else if (subcommand === "export" || subcommand === "erase" || subcommand === "transcript") {
+  const { runExitCommand } = await import("./oe-exit.js");
+  await exitAfterFlush(await runExitCommand(subcommand, argv.slice(1), { out: (l) => console.log(l), err: (l) => console.error(l), cwd: process.cwd() }));
 } else if (subcommand === "build" || subcommand.startsWith("--")) {
   await runBuild(subcommand === "build" ? argv.slice(1) : argv);
 } else {
-  console.error(`oe: unknown subcommand "${subcommand}". Known: build, env, overlays, upgrade, secret, wrap-untrusted.`);
+  console.error(`oe: unknown subcommand "${subcommand}". Known: build, env, erase, export, overlays, upgrade, secret, transcript, wrap-untrusted.`);
   process.exit(2);
 }
 

@@ -5,6 +5,9 @@ import { A2A_AGENTS_FILE, loadAppA2aAgents, loadAppSpendBudgets } from "./app-co
 import { classifyAnswers, renderRepliesPerWake, repliesPerWake } from "./duplicate-post.js";
 import type { SkipKind } from "./skip-summary.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
+import { exportOrg } from "../../agent/exit/export.js";
+import { erasePerson, EXIT_PERSON_ERASED_ACTION } from "../../agent/exit/erase.js";
+import { EXPORT_SECRET_MARKER } from "../../agent/exit/catalogue.js";
 import { dmAnchorDomain } from "../../agent/channels/window-key.js";
 import { detectNoApprovalClaims, NO_CARD_NOTE_OPENING } from "../../agent/channels/approval-claim-guard.js";
 import { DM_REFUSED_ACTION, DM_RESUME_ACTION, DM_STOP_ACTION, personAddress } from "../../agent/channels/dm-audience.js";
@@ -6733,6 +6736,67 @@ export const SCENARIOS: readonly Scenario[] = [
         } else {
           ctx.gate(false, "S-ASK-WATCH: the judge armed a live watch and the leg could not disable it (set DATABASE_URL). Cancel it in the base channel.");
         }
+      }
+    },
+  },
+
+  {
+    id: "S-EXIT-KIT",
+    title: "Exit kit (OPE-2527): an org export carries a seeded person's rows and no secret in clear, and an erasure removes them with one hash-named audit row",
+    requires: ["controlWrite"],
+    surface: "cross",
+    suite: "core",
+    timeoutMs: 600_000,
+    judged: false,
+    run: async (ctx) => {
+      const cfg = ctx.controlWriteConfig!;
+      const org = cfg.org;
+      const { readFileSync, rmSync } = await import("node:fs");
+      const { tmpdir } = await import("node:os");
+      const path = await import("node:path");
+      const store = await wireNeonOperationalStore(cfg.storeEnv["DATABASE_URL"]!);
+      const pkg = "@neondatabase/serverless";
+      const { neon } = (await import(pkg)) as { neon: (url: string) => { query(text: string, params?: unknown[]): Promise<unknown> } };
+      const sql = neon(cfg.storeEnv["DATABASE_URL"]!);
+      const token = `exit${Date.now().toString(36)}${randomBytes(3).toString("hex")}`;
+      const person = `e2e/${token}`;
+      const room = `e2e/exit/${token}`;
+      const seededAt = "2026-01-01T00:00:00.000Z";
+      await sql.query(
+        "INSERT INTO question_ledger (org_id, ts, surface_key, surface_mode, principal_id, fingerprint, words) VALUES ($1, $2, $3, 'channel', $4, 'e2e', $5)",
+        [org, seededAt, room, token, `S-EXIT-KIT words ${token}`],
+      );
+      await sql.query(
+        "INSERT INTO dm_rule (org_id, surface_key, rule_id, owner_id, rule, subject_json, source_action_id, created_at, updated_at) VALUES ($1, $2, 'r1', $3, $4, '{}', 'e2e', $5, $5)",
+        [org, room, token, `S-EXIT-KIT rule ${token}`, seededAt],
+      );
+      await sql.query("INSERT INTO session_tail (org_id, surface_key, token, seq, at, entry_json) VALUES ($1, $2, 'e2e', 1, $3, $4)", [org, room, seededAt, JSON.stringify({ text: `S-EXIT-KIT line ${token}` })]);
+
+      const out = path.join(tmpdir(), `oe-e2e-exit-${token}`);
+      try {
+        const manifest = await exportOrg({ store, org, outDir: out, transcripts: { kind: "hosted" }, actor: "e2e:S-EXIT-KIT" });
+        ctx.gate(readFileSync(path.join(out, "operational/question_ledger.jsonl"), "utf8").includes(`S-EXIT-KIT words ${token}`), "S-EXIT-KIT: the export carries the seeded person's row");
+        const creds = readFileSync(path.join(out, "operational/stored_credential.jsonl"), "utf8").split("\n").filter((l) => l.length > 0);
+        ctx.gate(creds.every((l) => (JSON.parse(l) as { ciphertext?: unknown }).ciphertext === EXPORT_SECRET_MARKER), `S-EXIT-KIT: no stored secret left in clear (${creds.length} credential row(s), every value replaced)`);
+        ctx.gate(manifest.auditChain.rows > 0 && manifest.transcripts.store === "hosted", "S-EXIT-KIT: the manifest walked the audit chain and names the hosted transcript store");
+
+        const report = await erasePerson({ store, org, person, transcripts: { kind: "hosted" }, actor: "e2e:S-EXIT-KIT" });
+        ctx.gate(report.rows["question_ledger"] === 1 && report.rows["dm_rule"] === 1 && report.rows["session_tail"] === 1, `S-EXIT-KIT: the erasure removed the three seeded rows (${JSON.stringify(report.rows)})`);
+        ctx.gate(report.refused.length === 0, `S-EXIT-KIT: the store role was refused nothing (${report.refused.join(", ") || "none"})`);
+        ctx.gate(report.dmRooms.length === 1 && report.dmRooms[0] === room, "S-EXIT-KIT: the DM room came from the person's own DM rule");
+        const left = (await sql.query(
+          "SELECT (SELECT COUNT(*) FROM question_ledger WHERE org_id = $1 AND principal_id = $2) + (SELECT COUNT(*) FROM session_tail WHERE org_id = $1 AND surface_key = $3) AS n",
+          [org, token, room],
+        )) as { n: number | string }[];
+        ctx.gate(Number(left[0]?.n) === 0, "S-EXIT-KIT: no seeded row is left in the store");
+        const row = (await store.readAuditChain(org, { tailLimit: 200 })).find((r) => r.action === EXIT_PERSON_ERASED_ACTION && r.detail?.["personSha256"] === report.personSha256);
+        ctx.gate(row !== undefined, "S-EXIT-KIT: one exit.person_erased row, joined by the person's hash");
+        ctx.gate(!JSON.stringify(row?.detail ?? {}).includes(token), "S-EXIT-KIT: the audit row holds no erased value");
+      } finally {
+        rmSync(out, { recursive: true, force: true });
+        await sql.query("DELETE FROM question_ledger WHERE org_id = $1 AND principal_id = $2", [org, token]).catch(() => undefined);
+        await sql.query("DELETE FROM dm_rule WHERE org_id = $1 AND surface_key = $2", [org, room]).catch(() => undefined);
+        await sql.query("DELETE FROM session_tail WHERE org_id = $1 AND surface_key = $2", [org, room]).catch(() => undefined);
       }
     },
   },

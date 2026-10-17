@@ -602,6 +602,26 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
     proves: "stored memory was destroyed on a human decision — irreversible, so the row is the only record it happened",
   },
   {
+    action: "exit.export",
+    fields: ["tables", "rows", "memoryFiles", "transcriptStore", "transcriptRuns", "auditChainVerified", "sha256"],
+    proves: "an operator exported the org's data with `oe export`, how much left, and a digest of exactly what was written",
+  },
+  {
+    action: "exit.person_erased",
+    fields: ["personSha256", "rows", "dmRooms", "memoryTiers", "transcriptStore", "transcriptsDeleted", "transcriptsShared"],
+    proves: "an operator erased one person with `oe erase` — what was destroyed, by count, with the person named only by hash",
+  },
+  {
+    action: "exit.transcript_deleted",
+    fields: ["sessionId", "outcome", "files", "captures"],
+    proves: "one session transcript was deleted, and whether the store that holds it could be reached",
+  },
+  {
+    action: "exit.retention_swept",
+    fields: ["storedStateDays", "sessionTranscriptDays", "rows", "transcriptsDeleted", "transcriptStore"],
+    proves: "the daily retention sweep ran under the org's retention settings, and what it aged out",
+  },
+  {
     action: "memory.export",
     fields: ["via", "silo", "items", "chars", "sha256"],
     proves:

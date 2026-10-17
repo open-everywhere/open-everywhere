@@ -4,6 +4,8 @@ import { SECRET_STORE_ENV_KEYS } from "../agent/credentials/operator-secrets.js"
 import { registerDeploymentIdentity } from "../agent/identity/deployment-identity.js";
 import { registerOperationalPgliteLazy } from "../agent/operational/pglite-client.js";
 import { initOperationalSchema, type PgClient } from "../agent/operational/postgres.js";
+import { gitProvider, registerPostgres, resolveMemoryProviderId, type MemoryProvider } from "../agent/memory/provider.js";
+import { sqliteProvider } from "../agent/memory/sqlite.js";
 import {
   registerOperationalPostgres,
   requireArmedOperationalFloor,
@@ -88,6 +90,18 @@ export async function connectOperatorStoreForCli(argv: readonly string[] = proce
 export function declareOperatorOrg(org: string | undefined): void {
   if (org === undefined || org.trim().length === 0 || org.startsWith("-")) return;
   registerDeploymentIdentity({ org });
+}
+
+export async function connectOperatorMemory(): Promise<{ readonly providers: readonly MemoryProvider[]; readonly label: string }> {
+  const id = resolveMemoryProviderId();
+  if (id === "postgres") {
+    const url = process.env.DATABASE_URL?.trim();
+    if (!url) throw new Error("the memory backing is postgres but DATABASE_URL is not set — put it in .env.local, or pass --root-env PATH.");
+    return { providers: [registerPostgres(await neonClient(url))], label: "hosted Postgres (DATABASE_URL)" };
+  }
+  if (id === "git") return { providers: [gitProvider, sqliteProvider], label: "git working tree + the local sqlite file (DM memory)" };
+  if (id === "sqlite") return { providers: [sqliteProvider], label: "local sqlite file" };
+  return { providers: [], label: `the ${id} backing, which keeps its files in your own workspace` };
 }
 
 export function resetOperatorStoreConnection(): void {

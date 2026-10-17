@@ -11,6 +11,7 @@ import { CONVERSATION_SUMMARY_PARTITION, parseConversationSummary, SESSION_TAIL_
 import type { ModelReasoning } from "../memory/domain.js";
 import { AUDIT_CHAIN_EPOCH_ACTION, auditEpochDetail, auditEpochSealFor, auditRowSha, withOrgAuditLock } from "../audit/chain.js";
 import { assembleAnalyticsSql } from "../analytics/compile.js";
+import { buildExitDelete, buildExitSelectDistinct, buildExitSelectPage } from "../exit/sql.js";
 
 function dbPath(): { readonly path: string; readonly fromEnv: boolean } {
   if (process.env.OE_SQLITE_PATH) return { path: process.env.OE_SQLITE_PATH, fromEnv: true };
@@ -2930,6 +2931,21 @@ export const sqliteOperationalStore: OperationalStore = {
       )
       .run(since, org, sessionId, since, since);
     return info.changes > 0;
+  },
+
+  exitTables: {
+    async readRows(table, org, offset, limit) {
+      const { sql, params } = buildExitSelectPage("qmark", table, org, offset, limit);
+      return getDb().prepare(sql).all(...(params as (string | number)[])) as Record<string, unknown>[];
+    },
+    async selectDistinct(table, org, column, filter) {
+      const { sql, params } = buildExitSelectDistinct("qmark", table, org, column, filter);
+      return (getDb().prepare(sql).all(...(params as (string | number)[])) as { v: unknown }[]).map((r) => String(r.v));
+    },
+    async deleteRows(table, org, filter) {
+      const { sql, params } = buildExitDelete("qmark", table, org, filter);
+      return getDb().prepare(sql).all(...(params as (string | number)[])).length;
+    },
   },
 
   async runAnalyticsQuery(compiled) {

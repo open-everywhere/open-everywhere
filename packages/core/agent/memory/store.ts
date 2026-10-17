@@ -199,6 +199,26 @@ export function __resetStagingSweepForTest(): void {
   stagingSwept = false;
 }
 
+function splitTierPath(orgRel: string): { readonly tierPath: string; readonly relPath: string } | undefined {
+  const parts = orgRel.split("/");
+  let cut = -1;
+  if (parts[0] === "@silos" && parts.length > 2) cut = 2;
+  else if (parts.length > 3 && parts[2] === "@workspace") cut = 3;
+  else if (parts.length > 4 && parts[2] === "@surfaces") cut = 4;
+  if (cut < 0) return undefined;
+  return { tierPath: parts.slice(0, cut).join("/"), relPath: parts.slice(cut).join("/") };
+}
+
+export async function exportFiles(org: string): Promise<{ tierPath: string; relPath: string; content: string }[]> {
+  const files = await readDir(join(ROOT, safeName(org)));
+  const out: { tierPath: string; relPath: string; content: string }[] = [];
+  for (const [rel, content] of Object.entries(files)) {
+    const split = splitTierPath(rel);
+    if (split !== undefined) out.push({ ...split, content });
+  }
+  return out.sort((a, b) => (a.tierPath + "/" + a.relPath).localeCompare(b.tierPath + "/" + b.relPath));
+}
+
 export function storeRoot(): string {
   return ROOT;
 }
