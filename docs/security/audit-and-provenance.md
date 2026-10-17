@@ -606,11 +606,10 @@ ordinary writer uses.
   The log cannot be edited, so a token that lands there stays. 🔴 The lint is a text scan of
   shapes, not of data flow. Its test pins the shapes it cannot see: error text held in a variable
   or a parameter under a key that is not error-named, text a helper renders, a record built under
-  a name with no `detail` in it, and a spread of an object built elsewhere. Its text scan tells a
-  regex from a division by the last token before the `/`. A regex that opens a statement after
-  `if (…)` still reads as a division, and a quote inside it hides the rest of its file from the
-  lint. Before OPE-2549 a quoted regex or a nested template did this in seven agent files; on
-  2026-10-14 no scanned file loses a write. The OPE-2545 review found writers of those shapes by hand and scrubbed each one where
+  a name with no `detail` in it, and a spread of an object built elsewhere. The lint parses each
+  file (OPE-2554), so the grammar tells a comment, a string or a regex from code. Before OPE-2549 a
+  quoted regex or a nested template hid the rest of its file from the text scan, in seven agent
+  files. The OPE-2545 review found writers of those shapes by hand and scrubbed each one where
   its error text is built, so a green lint is not proof that every row is scrubbed. Two rows stay
   unscrubbed on purpose, both in `access/eve-patch-probe-boot.ts`: `eve.patch.refused` carries text
   the product writes itself, and `eve.patch.unverifiable` carries the `require.resolve` error for
@@ -630,8 +629,13 @@ ordinary writer uses.
   `test:audit-detail-brand` pins that gap. In an audit write, the lint's `plain-record-spread` rule
   refuses a spread of a name the same file types as a plain record, a call to a function the scanned
   tree declares to return one, and `...Object.fromEntries(…)`. It cannot see a plain-record
-  variable imported from another file, or one in a branch of a conditional spread. A cast of a whole detail bypasses the type: the lint refuses `as AuditDetail`, also
-  through `unknown`, but it cannot tell an `as never` or `as any` from a legitimate one.
+  variable imported from another file, or one in a branch of a conditional spread. A cast bypasses the type: the lint refuses every cast whose target type names
+  `ScrubbedAuditText`, `AuditDetail` or `AuditDetailBuilder`. That covers `as AuditDetail`, a cast
+  through `unknown`, and a cast to a container such as `as AuditDetail[]` or
+  `as Record<string, ScrubbedAuditText>` (OPE-2554). A renamed import of the brand
+  (`AuditDetail as AD`) counts as the brand. The lint reads the type as written, so a cast to a
+  local alias or interface of the brand (`type D = AuditDetail[]; x as D`) is not seen. It cannot
+  tell an `as never` or `as any` from a legitimate one.
   The two approval rows that store an act's result text, `approval.approved` and
   `admin.approval.decide`, scrub their `outcome` with `scrubAuditText`.
 - **The backing location is readable.** `auditRoot` reports where the log writes — the SQLite file

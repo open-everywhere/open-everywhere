@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { blankCommentsAndStrings, parseSource } from "./hook-throw-lint.js";
 import { BRAND_MINT_FILE, MIN_PLAUSIBLE_WRITES, auditErrorDetailFindings, carriesRawErrorText, isAuditWriter, readScanFiles, scanTree } from "./audit-error-detail-lint.js";
 
 let n = 0;
@@ -7,6 +8,14 @@ const ok = (cond: boolean, label: string): void => {
   n++;
 };
 const findings = (source: string) => auditErrorDetailFindings("made-up.ts", source).findings;
+const throws = (fn: () => unknown): boolean => {
+  try {
+    fn();
+    return false;
+  } catch {
+    return true;
+  }
+};
 
 {
   const flow = findings(
@@ -108,12 +117,32 @@ const findings = (source: string) => auditErrorDetailFindings("made-up.ts", sour
   ok(findings('const half = total / 2; const s = "a/b";\nawait appendAudit({ action: "a", detail: { error: message } });\n').length === 1, "blanker (negative control): a division is not a regex, so the write after it is still read");
   const afterComment = findings('f(a, // note\n  /can\'t/);\nawait appendAudit({ action: "a", detail: { error: message } });\n');
   ok(afterComment.length === 1 && afterComment[0]!.line === 3, "blanker: a quoted regex on the line after a `//` comment is judged by the token before the comment");
+  const afterIf = findings('if (ok) /\'/.test(s);\nawait appendAudit({ action: "a", detail: { error: message } });\n');
+  ok(afterIf.length === 1 && afterIf[0]!.line === 2, "blanker: a regex that opens a statement after `if (…)` is a regex, so the write after it is read (CLOSED, OPE-2554)");
+  const afterWhile = findings('while (go()) /"/g.exec(s);\nfor (;;) /`/.test(s);\nawait appendAudit({ action: "a", detail: { error: message } });\n');
+  ok(afterWhile.length === 1 && afterWhile[0]!.line === 3, "blanker: a quoted regex after `while (…)` and `for (…)` does not hide the rest of the file");
+  ok(findings('const r = (a + b) / 2; const s = "it\'s";\nawait appendAudit({ action: "a", detail: { error: message } });\n').length === 1, "blanker (negative control): a division after `)` is still a division");
+  const jsx = 'const el = <p>appendAudit(error, message.stack)</p>;\n';
+  const jsxCode = blankCommentsAndStrings(jsx, parseSource(jsx, "v.tsx"));
+  ok(!jsxCode.includes("appendAudit") && jsxCode.includes("const el"), "blanker: JSX text in a `.tsx` file is text, so it is blanked, and the code around it is kept");
+  ok(auditErrorDetailFindings("v.tsx", jsx).findings.length === 0, "blanker: a write QUOTED in JSX text is not a write");
+  ok(throws(() => parseSource(jsx, "v.ts")), "parser: JSX in a `.ts` file is a syntax error, and it throws (the dialect follows the file name)");
+  ok(throws(() => auditErrorDetailFindings("m.ts", "const a = xs as AuditDetail[];\nconst b = ;\n")), "parser: a file with a syntax error throws, so the lint never reports it clean");
+  ok(findings('await appendAudit({ action: "a", detail: { outcome: `x ${{ a: 1 }.a + err.message}` } });\n').length === 1, "raw-error-text: a template part that opens with an object literal is parsed as an expression and read");
+  ok(findings('await appendAudit({ action: "a", detail: { outcome: `x ${ { a: 1, b: 2 }[k] + "{" + err.message + "}" }` } });\n').length === 1, "raw-error-text: balanced braces inside strings in a template part do not hide the read");
+  for (const part of ['"}" + err.message', "a /* } */ + err.message", '/}/.test(s) ? err.message : ""']) {
+    ok(findings(`await appendAudit({ action: "a", detail: { outcome: \`x \${${part}}\` } });\n`).length === 1, `raw-error-text: a lone \`}\` in a literal or a comment does not close the part early (\`\${${part}}\`)`);
+  }
+  ok(findings('await appendAudit({ action: "a", detail: { outcome: `x ${ { m: err.message }.m }` } });\n').length === 1, "raw-error-text: an object literal inside a template part is read");
+  ok(findings('await appendAudit({ action: "a", detail: { outcome: `x ${(() => { return err.message; })()}` } });\n').length === 1, "raw-error-text: a function body inside a template part is read");
+  ok(findings('await appendAudit({ action: "a", detail: { outcome: `x ${ { m: scrubAuditText(err.message) }.m }` } });\n').length === 0, "raw-error-text (negative control): a reducer call inside a part's object literal is still accepted");
+  ok(findings('await appendAudit({ action: "a", detail: { meta: { note: `x ${err.message}` } } });\n').map((f) => f.key).join(",") === "note", "raw-error-text: a template in a nested object answers for its own key only");
 }
 
 {
   ok(findings('import { extra } from "./elsewhere.js";\nawait appendAudit({ action: "a", detail: { id, ...extra } });\n').length === 0, "LIMIT: a plain-record VARIABLE imported from another file is not seen — its type lives in that file");
+  ok(findings('await appendAudit({ action: "a", detail: { outcome: (() => { return err.message; })() } });\n').length === 0, "LIMIT: a function body directly in the value (not in a template part) is skipped like a nested object");
   ok(findings('function f(extra: Record<string, unknown>, ok: boolean) {\n  return appendAudit({ action: "a", detail: { id, ...(ok ? extra : {}) } });\n}\n').length === 0, "LIMIT: a plain record in a BRANCH of a conditional spread is not seen — only a spread's subject is read");
-  ok(findings('if (ok) /\'/.test(s);\nawait appendAudit({ action: "a", detail: { error: message } });\n').length === 0, "LIMIT: a regex that opens a statement after `if (…)` reads as a division, and its quote blanks the rest of the file");
 }
 
 {
@@ -132,7 +161,7 @@ const findings = (source: string) => auditErrorDetailFindings("made-up.ts", sour
   const cast = findings('const x = raw as ScrubbedAuditText;\nconst y = <ScrubbedAuditText>raw;\n');
   ok(cast.length === 2 && cast.every((f) => f.rule === "brand-cast") && cast[0]!.line === 1 && cast[1]!.line === 2, "brand-cast: both cast forms are refused, on their lines");
   ok(findings('// a cast `as ScrubbedAuditText` in a comment\nconst s = "as ScrubbedAuditText";\n').length === 0, "brand-cast (negative control): a comment or a string that names the cast is not a cast");
-  ok(auditErrorDetailFindings(BRAND_MINT_FILE, "return text as ScrubbedAuditText;\n").findings.length === 0, "brand-cast (negative control): the module that mints the brand may cast");
+  ok(auditErrorDetailFindings(BRAND_MINT_FILE, "function f(text: string) { return text as ScrubbedAuditText; }\n").findings.length === 0, "brand-cast (negative control): the module that mints the brand may cast");
   const shapeCast = findings('const d = raw as AuditDetail;\nconst e = raw as unknown as AuditDetail;\nconst f = raw as AuditDetailBuilder;\n');
   ok(shapeCast.length === 3 && shapeCast.every((f) => f.rule === "brand-cast"), "brand-cast: a cast of a whole detail to `AuditDetail`, through `unknown` or not, is refused");
   ok(findings('const d: AuditDetail = { id };\nfunction g(x: AuditDetailBuilder) {}\n').length === 0, "brand-cast (negative control): annotating with the detail type is not a cast");
@@ -140,6 +169,30 @@ const findings = (source: string) => auditErrorDetailFindings("made-up.ts", sour
   ok(findings('function g(raw: string) { return <ScrubbedAuditText>raw; }\nasync function h(x: unknown) { return await <AuditDetail>x; }\nconst g = (x: unknown) => <AuditDetail>x;\n').length === 3, "brand-cast: an angle cast after a keyword or an arrow (`return <ScrubbedAuditText>raw`, `=> <AuditDetail>x`) is refused");
   ok(findings('const xs = Array.of<AuditDetail>(d);\n').length === 0, "brand-cast (negative control): a type argument after a MEMBER named like a keyword (`Array.of<AuditDetail>`) is not a cast");
   ok(findings('type T = ScrubbedAuditText;\nconst v: ScrubbedAuditText = scrubAuditText(t);\n').length === 0, "brand-cast (negative control): naming the type is not a cast");
+  const containers = findings(
+    [
+      "const a = <AuditDetail[]>xs;",
+      "const b = xs as Array<AuditDetail>;",
+      "const c = xs as readonly ScrubbedAuditText[];",
+      "const d = m as Record<string, ScrubbedAuditText>;",
+      "const e = r as { error: ScrubbedAuditText };",
+      "const f = p as Promise<AuditDetail>;",
+      "const g = t as [AuditDetail, number];",
+      "const h = xs as unknown as ReadonlyArray<AuditDetailBuilder>;",
+      'const i = x as import("./scrubbed-text.js").AuditDetail;',
+      "const j = x as audit.ScrubbedAuditText | undefined;",
+      "",
+    ].join("\n"),
+  );
+  ok(containers.length === 10 && containers.every((f) => f.rule === "brand-cast"), `brand-cast: a cast to a CONTAINER of the brand is refused, in every form (found ${containers.length}: ${containers.map((f) => f.value).join("; ")})`);
+  ok(containers.map((f) => f.line).join(",") === "1,2,3,4,5,6,7,8,9,10", "brand-cast: each container cast is named on its own line");
+  ok(findings('const xs: AuditDetail[] = [];\nconst ys = [] satisfies AuditDetail[];\nconst n = x as { AuditDetail: string };\nconst k = x as const;\n').length === 0, "brand-cast (negative control): an annotation, `satisfies`, a property NAMED like the brand and `as const` are not brand casts");
+  ok(auditErrorDetailFindings(BRAND_MINT_FILE, "const xs = raw as ScrubbedAuditText[];\n").findings.length === 0, "brand-cast (negative control): the module that mints the brand may cast to a container of it");
+  const renamed = findings('import type { AuditDetail as AD, ScrubbedAuditText as S } from "./scrubbed-text.js";\nconst a = x as AD;\nconst b = y as S[];\n');
+  ok(renamed.length === 2 && renamed[0]!.line === 2 && renamed[1]!.line === 3, "brand-cast: a cast to a RENAMED import of the brand is refused");
+  ok(findings('import type { "AuditDetail" as AD } from "./s.js";\nimport AE = audit.ScrubbedAuditText;\nexport import AF = audit.AuditDetail;\nconst a = x as AD;\nconst b = y as AE;\nconst c = z as AF;\n').length === 3, "brand-cast: a string-named import and an `import X =` alias of the brand, exported or not, are refused");
+  ok(findings('import type { Other as AuditDetailish } from "./x.js";\nconst a = x as AuditDetailish;\n').length === 0, "brand-cast (negative control): a renamed import of another type is not the brand");
+  ok(findings("type D = AuditDetail[];\nconst a = xs as D;\n").length === 0, "LIMIT: a cast to a local ALIAS of the brand is not seen — the rule reads the type as written, not resolved");
 }
 
 console.log(`audit-error-detail-lint-test: ${n} assertions passed`);

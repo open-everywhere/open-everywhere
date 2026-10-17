@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseSync } from "oxc-parser";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..");
@@ -19,142 +20,54 @@ export interface HookThrowFinding {
   readonly detail: string;
 }
 
-const REGEX_AFTER_WORD = /(?:^|[^\w$])(?:return|typeof|case|in|of|void|delete|throw|new|yield|await|else|do)$/;
-
-function regexEnd(source: string, open: number, prevSig: number): number | undefined {
-  const k = prevSig;
-  const prev = k < 0 ? "" : source[k]!;
-  const opensRegex = prev === "" || /[(,=:[!&|?{};+\-*%<>~^]/.test(prev) || REGEX_AFTER_WORD.test(source.slice(Math.max(0, k - 8), k + 1));
-  if (!opensRegex) return undefined;
-  let j = open + 1;
-  let inClass = false;
-  while (j < source.length) {
-    const ch = source[j]!;
-    if (ch === "\n") return undefined;
-    if (ch === "\\") {
-      j += 2;
-      continue;
-    }
-    if (ch === "[") inClass = true;
-    else if (ch === "]") inClass = false;
-    else if (ch === "/" && !inClass) {
-      j++;
-      while (j < source.length && /[a-z]/i.test(source[j]!)) j++;
-      return j;
-    }
-    j++;
-  }
-  return undefined;
+export interface AstNode {
+  readonly type: string;
+  readonly start: number;
+  readonly end: number;
+  readonly [key: string]: unknown;
 }
 
-function templateEnd(source: string, open: number): number {
-  let j = open + 1;
-  while (j < source.length) {
-    const ch = source[j]!;
-    if (ch === "\\") {
-      j += 2;
-      continue;
-    }
-    if (ch === "`") return j + 1;
-    if (ch === "$" && source[j + 1] === "{") {
-      let sig = j + 1;
-      j += 2;
-      let depth = 1;
-      while (j < source.length && depth > 0) {
-        const d = source[j]!;
-        const two = source.slice(j, j + 2);
-        if (two === "//") {
-          const nl = source.indexOf("\n", j);
-          j = nl === -1 ? source.length : nl;
-        } else if (two === "/*") {
-          const end = source.indexOf("*/", j + 2);
-          j = end === -1 ? source.length : end + 2;
-        } else if (d === "/" && regexEnd(source, j, sig) !== undefined) {
-          j = regexEnd(source, j, sig)!;
-          sig = j - 1;
-        } else if (d === "`") {
-          j = templateEnd(source, j);
-          sig = j - 1;
-        } else if (d === '"' || d === "'") {
-          j++;
-          while (j < source.length && source[j] !== d) j += source[j] === "\\" ? 2 : 1;
-          j++;
-          sig = j - 1;
-        } else {
-          if (d === "{") depth++;
-          else if (d === "}") depth--;
-          if (!/\s/.test(d)) sig = j;
-          j++;
-        }
-      }
-      continue;
-    }
-    j++;
-  }
-  return source.length;
+export interface ParsedSource {
+  readonly program: AstNode;
+  readonly comments: readonly { readonly start: number; readonly end: number }[];
 }
 
-export function blankCommentsAndStrings(source: string): string {
+export function parseSource(source: string, fileName = "source.ts"): ParsedSource {
+  const lang = /\.[cm]?tsx$/.test(fileName) ? "tsx" : "ts";
+  const { program, comments, errors } = parseSync(fileName, source, { lang, sourceType: "module" });
+  if (errors.length > 0) throw new SyntaxError(`${fileName}: the parser cannot read this file: ${errors[0]!.message}`);
+  return { program: program as unknown as AstNode, comments };
+}
+
+export function childNodes(node: AstNode): AstNode[] {
+  const out: AstNode[] = [];
+  for (const key in node) {
+    if (key === "parent") continue;
+    const value = node[key];
+    if (value === null || typeof value !== "object") continue;
+    if (Array.isArray(value)) {
+      for (const v of value) if (v !== null && typeof v === "object" && typeof v.type === "string") out.push(v as AstNode);
+    } else if (typeof (value as { type?: unknown }).type === "string") out.push(value as AstNode);
+  }
+  return out;
+}
+
+function isBlankedText(node: AstNode): boolean {
+  if (node.type === "TemplateLiteral" || node.type === "TSTemplateLiteralType" || node.type === "JSXText") return true;
+  return node.type === "Literal" && (typeof node.value === "string" || node.regex !== undefined);
+}
+
+export function blankCommentsAndStrings(source: string, parsed: ParsedSource = parseSource(source)): string {
   const out = source.split("");
-  let i = 0;
-  let sig = -1;
-  const keep = (n: number): void => {
-    for (let k = i; k < Math.min(n, out.length); k++) if (out[k] !== "\n") out[k] = " ";
+  const blank = (from: number, to: number): void => {
+    for (let k = from; k < to; k++) if (out[k] !== "\n" && out[k] !== "\r") out[k] = " ";
   };
-  while (i < source.length) {
-    const two = source.slice(i, i + 2);
-    if (two === "//") {
-      let j = source.indexOf("\n", i);
-      if (j === -1) j = source.length;
-      keep(j);
-      i = j;
-      continue;
-    }
-    if (two === "/*") {
-      let j = source.indexOf("*/", i + 2);
-      j = j === -1 ? source.length : j + 2;
-      keep(j);
-      i = j;
-      continue;
-    }
-    const c = source[i]!;
-    if (c === "/") {
-      const end = regexEnd(source, i, sig);
-      if (end !== undefined) {
-        keep(end);
-        i = end;
-        sig = end - 1;
-        continue;
-      }
-    }
-    if (c === "`") {
-      const j = templateEnd(source, i);
-      keep(j);
-      i = j;
-      sig = j - 1;
-      continue;
-    }
-    if (c === '"' || c === "'") {
-      let j = i + 1;
-      while (j < source.length) {
-        if (source[j] === "\\") {
-          j += 2;
-          continue;
-        }
-        if (source[j] === c) {
-          j++;
-          break;
-        }
-        j++;
-      }
-      keep(j);
-      i = j;
-      sig = j - 1;
-      continue;
-    }
-    if (!/\s/.test(c)) sig = i;
-    i++;
-  }
+  for (const c of parsed.comments) blank(c.start, c.end);
+  const walk = (node: AstNode): void => {
+    if (isBlankedText(node)) blank(node.start, node.end);
+    else for (const child of childNodes(node)) walk(child);
+  };
+  walk(parsed.program);
   return out.join("");
 }
 
@@ -194,7 +107,7 @@ export function hookThrowFindings(
   const pendingHit = new Set<string>();
 
   for (const { file, source } of files) {
-    const code = blankCommentsAndStrings(source).split("\n");
+    const code = blankCommentsAndStrings(source, parseSource(source, file)).split("\n");
     const raw = source.split("\n");
     for (let n = 0; n < code.length; n++) {
       if (!/\bthrow\b/.test(code[n] ?? "")) continue;

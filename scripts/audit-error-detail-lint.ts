@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { KNOWN_ROAD_NAMES, SCAN_PATHSPECS, isGeneratedManualModule } from "./audit-action-scan-lib.js";
-import { blankCommentsAndStrings } from "./hook-throw-lint.js";
+import { type AstNode, type ParsedSource, blankCommentsAndStrings, childNodes, parseSource } from "./hook-throw-lint.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -15,7 +15,49 @@ const NOT_A_WRITE = new Set(["auditErrorDetail", "auditErrorFrames", "readAudit"
 
 export const BRAND_MINT_FILE = "packages/core/agent/audit/tool-action.ts";
 
-const BRAND_CAST = /\bas\s+(?:unknown\s+as\s+)?(?:ScrubbedAuditText|AuditDetail(?:Builder)?)\b|(?:(?<![\w$\])>]\s*)|(?<=(?:(?<!\.\s*)\b(?:return|yield|await|typeof|case|throw|in|of|void|delete|new|else|do)|=>)\s*))<\s*(?:ScrubbedAuditText|AuditDetail(?:Builder)?)\s*>/g;
+const BRAND_TYPES: ReadonlySet<string> = new Set(["ScrubbedAuditText", "AuditDetail", "AuditDetailBuilder"]);
+
+export function brandCasts(parsed: ParsedSource, source: string): Array<{ readonly at: number; readonly value: string }> {
+  const out: Array<{ readonly at: number; readonly value: string }> = [];
+  const nameOf = (n: unknown): string | undefined => {
+    const node = n as { readonly type?: string; readonly name?: string; readonly right?: unknown } | null | undefined;
+    if (node?.type === "Identifier") return node.name;
+    if (node?.type === "TSQualifiedName") return nameOf(node.right);
+    if (node?.type === "Literal" && typeof (node as { readonly value?: unknown }).value === "string") return (node as { readonly value: string }).value;
+    return undefined;
+  };
+  const brandNames = new Set(BRAND_TYPES);
+  for (const top of (parsed.program.body as readonly AstNode[] | undefined) ?? []) {
+    const statement = top.type === "ExportNamedDeclaration" && top.declaration ? (top.declaration as AstNode) : top;
+    if (statement.type === "TSImportEqualsDeclaration") {
+      const local = nameOf(statement.id);
+      if (BRAND_TYPES.has(nameOf(statement.moduleReference) ?? "") && local !== undefined) brandNames.add(local);
+      continue;
+    }
+    if (statement.type !== "ImportDeclaration") continue;
+    for (const spec of (statement.specifiers as readonly AstNode[] | undefined) ?? []) {
+      const local = nameOf(spec.local);
+      if (spec.type === "ImportSpecifier" && BRAND_TYPES.has(nameOf(spec.imported) ?? "") && local !== undefined) brandNames.add(local);
+    }
+  }
+  const namesBrand = (type: AstNode): boolean => {
+    if (type.type === "TSTypeReference" && brandNames.has(nameOf(type.typeName) ?? "")) return true;
+    if (type.type === "TSImportType" && BRAND_TYPES.has(nameOf(type.qualifier) ?? "")) return true;
+    return childNodes(type).some(namesBrand);
+  };
+  const walk = (node: AstNode): void => {
+    if (node.type === "TSAsExpression" || node.type === "TSTypeAssertion") {
+      const type = node.typeAnnotation as AstNode;
+      if (namesBrand(type)) {
+        const text = source.slice(type.start, type.end);
+        out.push({ at: node.type === "TSAsExpression" ? type.start : node.start, value: node.type === "TSAsExpression" ? `as ${text}` : `<${text}>` });
+      }
+    }
+    for (const child of childNodes(node)) walk(child);
+  };
+  walk(parsed.program);
+  return out;
+}
 
 export interface AuditErrorDetailFinding {
   readonly rule: "error-field" | "raw-error-text" | "brand-cast" | "plain-record-spread";
@@ -176,27 +218,51 @@ function blankRanges(text: string, ranges: ReadonlyArray<[number, number]>): str
   return out;
 }
 
-function templateSubstitutions(original: string): string[] {
-  const out: string[] = [];
-  for (let at = original.indexOf("${"); at !== -1; at = original.indexOf("${", at + 2)) {
-    let depth = 0;
-    for (let i = at + 1; i < original.length; i++) {
-      if (original[i] === "{") depth++;
-      else if (original[i] === "}" && --depth === 0) {
-        out.push(original.slice(at + 2, i));
-        break;
-      }
-    }
+function reducerRanges(code: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  const re = /\b(?:auditError(?:Detail|Frames)|scrubAuditText)\s*\(/g;
+  for (let m = re.exec(code); m !== null; m = re.exec(code)) {
+    const close = closeOf(code, m.index + m[0].length - 1);
+    ranges.push([m.index, close]);
+    re.lastIndex = close;
   }
-  return out;
+  return ranges;
+}
+
+function templateParts(original: string): Array<{ readonly at: number; readonly code: string }> | undefined {
+  const wrapped = `(${original}\n)`;
+  let parsed: ParsedSource;
+  try {
+    parsed = parseSource(wrapped);
+  } catch {
+    return undefined;
+  }
+  const out = wrapped.split("");
+  const blank = (from: number, to: number): void => {
+    for (let k = from; k < to; k++) if (out[k] !== "\n" && out[k] !== "\r") out[k] = " ";
+  };
+  for (const c of parsed.comments) blank(c.start, c.end);
+  const spans: Array<[number, number]> = [];
+  const walk = (node: AstNode): void => {
+    if (node.type === "TemplateLiteral") for (const e of (node.expressions as readonly AstNode[] | undefined) ?? []) spans.push([e.start, e.end]);
+    const literal = node.type === "Literal" && (typeof node.value === "string" || node.regex !== undefined);
+    if (literal || node.type === "TemplateElement" || node.type === "TSTemplateLiteralType" || node.type === "JSXText") blank(node.start, node.end);
+    else for (const child of childNodes(node)) walk(child);
+  };
+  walk(parsed.program);
+  const code = out.join("");
+  return spans.map(([a, b]) => ({ at: a - 1, code: code.slice(a, b) }));
 }
 
 export function carriesRawErrorText(code: string, original: string = code): boolean {
   const skipped = skippedRanges(code);
   if (RAW_ERROR_TEXT.test(blankRanges(code, skipped))) return true;
-  return templateSubstitutions(blankRanges(original, skipped)).some((part) => {
-    const partCode = blankCommentsAndStrings(part);
-    return RAW_ERROR_TEXT.test(blankRanges(partCode, skippedRanges(partCode)));
+  const outside = blankRanges(original, skipped);
+  const parts = templateParts(original);
+  if (parts === undefined) return RAW_ERROR_TEXT.test(outside);
+  return parts.some(({ at, code: part }) => {
+    if (skipped.some(([a, b]) => at >= a && at < b)) return false;
+    return RAW_ERROR_TEXT.test(blankRanges(part, reducerRanges(part)));
   });
 }
 
@@ -252,8 +318,7 @@ function plainRecordSpreads(span: string, plainNames: ReadonlySet<string>, plain
   return out;
 }
 
-export function auditErrorDetailFindings(file: string, source: string, treePlainFns: ReadonlySet<string> = new Set()): AuditErrorDetailScan {
-  const code = blankCommentsAndStrings(source);
+export function auditErrorDetailFindings(file: string, source: string, treePlainFns: ReadonlySet<string> = new Set(), parsed: ParsedSource = parseSource(source, file), code: string = blankCommentsAndStrings(source, parsed)): AuditErrorDetailScan {
   const plainFns = new Set([...treePlainFns, ...plainRecordFunctionsIn(code)]);
   const scrubbed = scrubbedNamesIn(code);
   const plainNames = plainRecordNamesIn(code);
@@ -292,9 +357,9 @@ export function auditErrorDetailFindings(file: string, source: string, treePlain
     }
   }
   if (file !== BRAND_MINT_FILE) {
-    for (const m of code.matchAll(BRAND_CAST)) {
-      const line = source.slice(0, m.index ?? 0).split("\n").length;
-      findings.push({ rule: "brand-cast", file, line, key: "ScrubbedAuditText", value: m[0].replace(/\s+/g, " ") });
+    for (const cast of brandCasts(parsed, source)) {
+      const line = source.slice(0, cast.at).split("\n").length;
+      findings.push({ rule: "brand-cast", file, line, key: "ScrubbedAuditText", value: cast.value.replace(/\s+/g, " ") });
     }
   }
   return { findings, writes: spans.length };
@@ -313,9 +378,13 @@ export function scanTree(files: readonly { readonly file: string; readonly sourc
   const findings: AuditErrorDetailFinding[] = [];
   let writes = 0;
   const plainFns = new Set<string>();
-  for (const { source } of files) for (const name of plainRecordFunctionsIn(blankCommentsAndStrings(source))) plainFns.add(name);
-  for (const { file, source } of files) {
-    const scan = auditErrorDetailFindings(file, source, plainFns);
+  const parsedFiles = files.map(({ file, source }) => {
+    const parsed = parseSource(source, file);
+    return { file, source, parsed, code: blankCommentsAndStrings(source, parsed) };
+  });
+  for (const { code } of parsedFiles) for (const name of plainRecordFunctionsIn(code)) plainFns.add(name);
+  for (const { file, source, parsed, code } of parsedFiles) {
+    const scan = auditErrorDetailFindings(file, source, plainFns, parsed, code);
     findings.push(...scan.findings);
     writes += scan.writes;
   }

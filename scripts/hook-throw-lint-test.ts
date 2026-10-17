@@ -99,6 +99,10 @@ const ok = (cond: boolean, label: string): void => {
   ok(!/\bthrow\b/.test(blanked), "the blanker leaves no `throw` word behind in comments or strings");
   ok(blanked.includes("const real = 1;"), "the blanker leaves real code alone (negative control)");
   ok(blankCommentsAndStrings("const s = 'it\\'s fine'; throw x;").includes("throw"), "an escaped quote does not run the string to the end of the file");
+  const afterIf = hookThrowFindings([{ file: "made-up.ts", source: "if (ok) /'/.test(s);\nthrow new Error('x');\n" }], []);
+  ok(afterIf.length === 1 && afterIf[0]!.line === 2, "a quoted regex that opens a statement after `if (…)` does not hide the throw after it");
+  ok(blankCommentsAndStrings("const r = /throw/; const d = (a) / 2; throw x;").replace(/\s+/g, " ") === "const r = ; const d = (a) / 2; throw x;", "a regex literal is blanked and a division after `)` is kept (negative control)");
+  ok(!blankCommentsAndStrings("type T = `throw ${string}`; const real = 1;").includes("throw"), "a template literal TYPE is text, so it is blanked");
 }
 
 {
