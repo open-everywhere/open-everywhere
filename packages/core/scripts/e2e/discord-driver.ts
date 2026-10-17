@@ -82,6 +82,11 @@ export class DiscordDriver {
     return toMessage(json);
   }
 
+  async selfId(): Promise<string> {
+    const json = (await this.api("GET", "/users/@me")) as { id?: string };
+    return json.id ?? "";
+  }
+
   async guildId(): Promise<string> {
     const json = (await this.api("GET", `/channels/${this.cfg.channel}`)) as { guild_id?: string };
     return json.guild_id ?? "";

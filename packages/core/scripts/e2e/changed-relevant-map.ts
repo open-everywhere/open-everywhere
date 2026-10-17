@@ -119,8 +119,8 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
       "packages/core/agent/access/test-run-fence.ts",
       "packages/core/agent/access/test-run-state.ts",
     ],
-    scenarios: ["S-ROUTINE-TEST"],
-    why: "S-ROUTINE-TEST (OPE-2515) is the only live leg on a routine test run: the dispatcher starts it in its own thread, the toolset fence blocks the run's write on a real model turn, and the hook posts the summary. `test:routine-test-run` drives the same road offline.",
+    scenarios: ["S-ROUTINE-TEST", "S-ROUTINE-TEST-discord"],
+    why: "S-ROUTINE-TEST (OPE-2515) is the only live leg on a Slack routine test run: the dispatcher starts it in its own thread, the toolset fence blocks the run's write on a real model turn, and the hook posts the summary. S-ROUTINE-TEST-discord (OPE-2540) is the same road on Discord, through the bundle's test-run arm. `test:routine-test-run` and `test:routine-test-run-surfaces` drive both offline.",
   },
   {
     area: "webhooks",

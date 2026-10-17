@@ -18,6 +18,10 @@ function testThrottleKey(routineId: string): string {
   return `routinetest:${routineId}`;
 }
 
+function threadedSurface(surfaceKey: string): boolean {
+  return surfaceKey.split("/")[0] === "slack";
+}
+
 function newTestId(): string {
   return `t-${randomBytes(4).toString("hex")}`;
 }
@@ -25,7 +29,8 @@ function newTestId(): string {
 export default defineTool({
   description:
     "Run an existing routine ONCE as a TEST, without letting it change anything. Use it when someone wants to try a routine they just set up or edited ('test it', 'try it first', 'what would it post?'). " +
-    "The test runs the routine's real reads and the real model, in a new thread in this room. It BLOCKS every write and every post outside that thread, and it ends with a list of the writes the routine would have made. " +
+    "The test runs the routine's real reads and the real model, on a new post in this room (a new thread on Slack). It BLOCKS every write and every post other than its own answer, and it ends with a list of the writes the routine would have made. " +
+    "An event routine's test replays the last event the routine matched. " +
     "It does not run instantly: the scheduler starts it within a few minutes — say so in plain words. It does not touch the schedule, the run history or any counter. " +
     "Use run_routine_now instead only when the person wants a REAL run that posts and writes. Get the id from list_routines.",
   inputSchema: z.object({
@@ -85,7 +90,7 @@ export default defineTool({
       queued: true,
       withinMinutes: DISPATCH_TICK_MINUTES,
       message:
-        `A test of ${name} starts within ${DISPATCH_TICK_MINUTES} minutes, in a new thread in this room. ` +
+        `A test of ${name} starts within ${DISPATCH_TICK_MINUTES} minutes, ${threadedSurface(routine.surfaceKey) ? "in a new thread in this room" : "in this room"}. ` +
         "It runs the real reads and model, blocks every write, and ends with a list of what it would have changed.",
     };
   },

@@ -7,6 +7,7 @@ import type { UnifiedWakeOrigin } from "../channels/unified-window.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 import { bridgeSlackChannel, bridgeSlackForm } from "../channels/slack-bridge.js";
 import { soleAdmittedTenantFromConfig } from "../access/tenant-admission.js";
+import { noteTestRunSurface } from "../routines/test-run.js";
 
 export interface DispatchTarget {
   readonly channel: Channel<any, any, any>;
@@ -26,10 +27,16 @@ export type DeclaredTargetResolution =
   | { readonly ok: true; readonly facts: RoutineTargetFacts }
   | { readonly ok: false; readonly reason: string };
 
+export interface RoutineTestRunArm {
+  readonly post: (dest: DispatchTarget, text: string, anchor?: string) => Promise<string | undefined>;
+  readonly target: (dest: DispatchTarget, anchor: string) => Readonly<Record<string, unknown>>;
+}
+
 export interface RoutineDispatchProvider {
   readonly resolveTarget: (routine: Routine) => DispatchTarget | null;
   readonly resolveDeclaredTarget?: (spec: DeclaredTargetSpec) => Promise<DeclaredTargetResolution>;
   readonly reportTargetFor?: (surfaceKey: string) => Readonly<Record<string, unknown>> | null;
+  readonly testRun?: RoutineTestRunArm;
 }
 
 const ROUTINE_DISPATCH: Map<string, RoutineDispatchProvider> = new Map();
@@ -37,6 +44,7 @@ const ROUTINE_DISPATCH: Map<string, RoutineDispatchProvider> = new Map();
 export function registerRoutineDispatch(platform: string, provider: RoutineDispatchProvider): void {
   if (!admitProviderRegistration(platform, "routine-dispatch")) return;
   ROUTINE_DISPATCH.set(platform, provider);
+  noteTestRunSurface(platform, provider.testRun !== undefined);
 }
 
 export function resolveRegisteredRoutineDispatch(platform: string): RoutineDispatchProvider | undefined {

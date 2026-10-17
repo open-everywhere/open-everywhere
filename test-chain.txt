@@ -176,6 +176,7 @@ test:glossary-citations-lint
 test:thread-seat-tools
 test:discord-gateway-turn-policy
 test:discord-declared-target
+test:routine-test-run-surfaces
 test:publish-license
 test:publish-readme
 test:linear-read-work-grant

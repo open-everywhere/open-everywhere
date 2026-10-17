@@ -26,7 +26,7 @@ export const EXIT_TABLES: readonly ExitTableSpec[] = [
     orderBy: ["org_id", "surface_key", "principal_id", "routine_id", "model", "period", "cost_source"],
     holds: "token and cost counters per room, person and month — counts only, no message text",
   },
-  { table: "routine", orgColumn: "org_id", orderBy: ["org_id", "id"], holds: "routines and watches, with their prompts", surfaceColumn: "surface_key" },
+  { table: "routine", orgColumn: "org_id", orderBy: ["org_id", "id"], holds: "routines and watches, with their prompts and the last event an event routine matched", surfaceColumn: "surface_key" },
   { table: "routine_prompt_revisions", orgColumn: "org_id", orderBy: ["seq"], holds: "the edit history of routine prompts", appendOnly: true },
   { table: "audit_entry", orgColumn: "org_id", orderBy: ["seq"], holds: "the hash-chained audit log", appendOnly: true },
   { table: "spend_limit", orgColumn: "org_id", orderBy: ["org_id", "scope_key", "level"], holds: "spend limits an admin set" },

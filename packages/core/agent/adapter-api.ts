@@ -937,7 +937,7 @@ export { gateGithubDelivery, verifyGithubSignature } from "./routines/events.js"
 export { fanOutGitHubDelivery } from "./routines/github-fanout.js";
 
 export { registerRoutineDispatch } from "./schedules/routine-dispatch.js";
-export type { RoutineDispatchProvider, DispatchTarget, DeclaredTargetSpec, DeclaredTargetResolution } from "./schedules/routine-dispatch.js";
+export type { RoutineDispatchProvider, RoutineTestRunArm, DispatchTarget, DeclaredTargetSpec, DeclaredTargetResolution } from "./schedules/routine-dispatch.js";
 export type { Routine } from "./routines/routine.js";
 
 export { appendUsageEvent, usageForSession } from "./spend/usage-events.js";

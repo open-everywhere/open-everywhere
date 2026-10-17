@@ -195,7 +195,7 @@ cancel-and-recreate they replace:
 | Ask | Verb | What happens |
 | --- | --- | --- |
 | "show me what it'll actually say" | *(no verb needed)* | `create_routine` returns a **preview**: the exact message the first fire will receive, protocol block and all, rendered by the same code the dispatcher uses. |
-| "test it first — what would it post?" | `test_routine` | Runs the routine **once as a test**, in a new thread in this room. The real reads and the real model run, but every write is blocked and nothing is posted outside that thread. The thread ends with a list of the writes it would have made. See [Test it before it runs](#test-it-before-it-runs). |
+| "test it first — what would it post?" | `test_routine` | Runs the routine **once as a test**, on a new opening post in this room (a new thread on Slack). The real reads and the real model run, but every write is blocked and nothing is posted but the test's own answer. The test ends with a list of the writes it would have made. An event routine's test replays the last event it matched. See [Test it before it runs](#test-it-before-it-runs). |
 | "run the digest now, don't wait for 9am" | `run_routine_now` | Brings the next run forward without touching the schedule. It isn't instant — the routine becomes *due* and the scheduler picks it up **within about 10 minutes** — and it's limited to one manual run per routine per few minutes. |
 | "change what it says" | `edit_routine` | Proposes a card showing the **old and new text side by side**. Confirming rewrites the instruction and keeps the schedule, the id, the run history, a watch's baseline and a job's progress. ⚠️ It also **revokes any standing approvals** the routine had built up, so it goes back to asking. |
 | "start it again, I've fixed the problem" | `enable_routine` | Proposes a card naming **why it stopped**. Confirming re-arms it in place, clears the strike counter, and keeps everything it had learned. |
@@ -218,11 +218,32 @@ blocked*. Ask for it, and `test_routine` runs the routine **once as a test**:
 
 - It starts within one dispatcher tick (about 10 minutes), like `run_routine_now`. It starts whether
   or not the routine is due, and it also works on a routine that is turned off.
-- It posts a thread root in the routine's own room — *🧪 Test run of the routine …, asked by you* — and
-  runs the routine into that thread. The routine's real [pre-run reads](#pre-run-data-collection)
-  and the real model run, with the fire message a real run gets. If its
-  [condition gate](#condition-gates) says the real run would skip now, the root says so, and the test
-  runs anyway.
+- It posts an opening post in the routine's own room — *🧪 Test run of the routine …, asked by you* — and
+  runs the routine in a session of its own, anchored on that post. The routine's real
+  [pre-run reads](#pre-run-data-collection) and the real model run, with the fire message a real run
+  gets. If its [condition gate](#condition-gates) says the real run would skip now, the opening post
+  says so, and the test runs anyway.
+- **Where the answer lands depends on the platform.**
+  - **Slack:** the opening post is a thread root, and the answer and the list land in that thread.
+  - **Teams:** the opening post starts a reply chain of its own (in a channel, a new post in the
+    channel; in a chat, a new message), and the list replies to it. The run's answer goes where the
+    routine's answers always go: the routine's own conversation.
+  - **Discord:** Discord has no thread for this, so the answer lands in the routine's own channel
+    after the opening post, and the list is a Discord reply to the opening post.
+
+  On every platform the test runs in a session of its own, so it never continues the room's
+  conversation or a person's own chat.
+- **An event routine replays its last event.** An [event routine](#event-ingress--de-duplication-fan-out-and-matching) runs when an event
+  arrives, so its test replays the **last event its trigger matched**. The opening post names the event
+  by its kind and time, never by its contents. The routine keeps that event when it arrives, but only
+  when the routine's room may read it (the event's read grant), and it keeps at most one event a minute.
+  The test checks the read grant and the room's audience again before it starts, because either can
+  change after the event arrived. For an event from a configured webhook, it reads the hook's
+  declaration as it is now: when the hook is gone, or now shares less of each event (for example it
+  became trigger-only), the test is refused. It reads the thing the event is about again, as a real
+  run does. If the routine's filter would not match that event now (the filter was edited), the opening
+  post says so, and the test runs anyway. An event routine that has matched no event yet cannot be
+  tested, and the reply says so.
 - **It blocks every write.** Only reads run: reads of rooms, threads, files, tickets and pages,
   connector operations whose tier is `read`, and the answer in the test thread itself. Every other tool
   call is stopped before it runs, and the run is told to carry on as if it had worked. That includes a
@@ -231,13 +252,16 @@ blocked*. Ask for it, and `test_routine` runs the routine **once as a test**:
   (`record_watch_state`, `report_run_failed` and the rest). A blocked connector write posts no
   permission card. A tool that eve runs as a workflow, such as `ask_question`, cannot be stopped at
   the call, so the test takes it away instead, and the list does not name it.
-- **It ends with a host-written list** in the thread: *It would have made these writes. I blocked all
+- **It ends with a host-written list** beside the opening post: *It would have made these writes. I blocked all
   of them, so nothing was changed*, with one line for each write and a short quote of what it would
   have written. When the run tried no writes, it says that instead. When the list cannot be read back,
   it says that, and never "it tried no writes".
 - **A test that cannot start says so in the room**, in one top-level line that names why: the routine
-  cannot be tested, its creator is no longer in the room, the deployment is halted, or its spending
-  limit is reached. The creator check is the one a real run meets.
+  cannot be tested, its creator is no longer in the room, the deployment is halted, its spending
+  limit is reached, or (for an event routine) the room can no longer read the event or its people may
+  not see it. The creator check is the one a real run meets, on Teams as well; a Teams room check
+  that cannot answer lets the test start and writes a `routine.eligibility_unresolved` row, as a real
+  run does.
 - **No fence, no test.** The `routine-test-run` hook is the only part that marks a test's session, and
   the write fence works only on a marked session. When an app excludes `hook/routine-test-run` in
   `roster.config.ts`, a test cannot block its writes. Then `test_routine` queues no test, the create
@@ -249,9 +273,11 @@ blocked*. Ask for it, and `test_routine` runs the routine **once as a test**:
 
 Some limits are deliberate:
 
-- **Slack only, for now.** The test needs a thread of its own to run in, and the durable-job thread is
-  the same Slack-only mechanism.
-- **An event routine cannot be tested.** It runs on an event, and a test has no event to give it.
+- **Slack, Teams and Discord.** A test needs a session of its own, and each platform's bundle says how
+  to anchor one. A platform whose bundle does not is refused in words: *a test run is not available on
+  this platform*.
+- **An event routine replays a kept event, not a live one.** It is the latest event the routine kept,
+  and it can be up to a minute older than the latest delivery.
 - **A finished job cannot be tested.** Completion is terminal.
 - **One test per routine per dispatcher tick.** A second request inside that window is refused.
 - **A person asks for a test.** A routine fire has no acting sender, so it cannot start a test of
@@ -1896,9 +1922,9 @@ and asking the agent `list_routines` reads them back:
 | --- | --- | --- |
 | `routine.fire` | the fire's own turn ends | It ran. Carries the routine id **and** the session id — the handle for the session transcript, including for a fire that decided to stay silent. |
 | `routine.skip` | it was due/matched but not dispatched | It didn't run, and why: `over_budget`, `unresolved_target` (no wired channel), `fanout_cap` (an event matched more routines than the per-delivery cap, `routines.eventMaxFanout`, shipped 3), `filter_invalid`, `grant_refused`, `grant_drift`, `audience_floor`, `creator_removed_from_room` (the clock leg, Slack and Teams — the creator is no longer a member of the room this fire posts into), `creator_account_inactive` (the clock leg, Slack and Teams — the creator's account is deactivated/deleted, or on Teams disabled in Entra), `halted` (a break-glass halt covers this routine's address — the deployment's posture, not the routine's mistake, so the routine stays armed and fires again once an admin runs `resume`), or `condition_gate` (its declared condition gate said no — the row names the gate and the one line the predicate gave, and it is the only place a human learns why a healthy-looking routine has not run). |
-| `routine.eligibility_unresolved` | a creator-eligibility check could not answer, so it did not block the fire | This fire was **not** really checked, which check it was, and why. Today the Teams room-membership check writes it, with a closed-set cause: `read_error` (a Graph call that failed — network, 5xx, or a permission the install lacks), `team_id_unresolved` (the Bot Connector could not give the team's Microsoft 365 group id), `roster_incomplete` (the roster is past the probe's page bound, so the creator was neither found nor ruled out), `malformed_response`, `no_provider`, or `missing_ids`. A fire that WAS checked writes nothing, so the row's presence is the signal — without it a fail-open and a pass leave the same trace, which is none. The row says the fire was not CHECKED, never that it ran: a later gate on the same tick (the spend cap) can still decline it, and that decline writes its own `routine.skip`. Throttled like `routine.skip`. |
+| `routine.eligibility_unresolved` | a creator-eligibility check could not answer, so it did not block the fire | This fire was **not** really checked, which check it was, and why. Today the Teams room-membership check writes it, with a closed-set cause: `read_error` (a Graph call that failed — network, 5xx, or a permission the install lacks), `team_id_unresolved` (the Bot Connector could not give the team's Microsoft 365 group id), `roster_incomplete` (the roster is past the probe's page bound, so the creator was neither found nor ruled out), `malformed_response`, `no_provider`, or `missing_ids`. A fire that WAS checked writes nothing, so the row's presence is the signal — without it a fail-open and a pass leave the same trace, which is none. The row says the fire was not CHECKED, never that it ran: a later gate on the same tick (the spend cap) can still decline it, and that decline writes its own `routine.skip`. Throttled like `routine.skip`. A row that a [test run](#test-it-before-it-runs) wrote carries `test` (the test id), names no fire, and throttles apart from the real fires' rows. |
 | `routine.run_now` | somebody asks for a fire with `run_routine_now` | Who asked, and when. It records the REQUEST. The fire that follows writes its own `routine.fire` row carrying `manual: true`, so a request that never becomes a run is visibly a request with no fire. |
-| `routine.test_requested` / `routine.test_fired` / `routine.test_blocked` | somebody asks for a [test run](#test-it-before-it-runs), the dispatcher starts it, and the test blocks a write | Who asked; whether the test started, or why not (`fence-unmounted`, `not-testable`, `unresolved-target`, `halted`, `creator_removed_from_room`, `creator_account_inactive`, `over-budget`, `root-post-failed`); and one row per blocked write, with the tool and a short description. A test writes no `routine.fire` row, because it is not a run. |
+| `routine.test_requested` / `routine.test_fired` / `routine.test_blocked` | somebody asks for a [test run](#test-it-before-it-runs), the dispatcher starts it, and the test blocks a write | Who asked; whether the test started, or why not (`fence-unmounted`, `not-testable`, `unresolved-target`, `halted`, `grant-refused`, `posture-changed`, `audience-floor`, `creator_removed_from_room`, `creator_account_inactive`, `over-budget`, `grant-drift`, `hydration-failed`, `root-post-failed`), and `replayed` for an event routine's replay; and one row per blocked write, with the tool and a short description. A test writes no `routine.fire` row, because it is not a run. |
 | `routine.collect_failed` | a fire's declared [pre-run collectors](#pre-run-data-collection) did not all collect | The run could not look. Names each collector and a closed-set reason — refused for a permission the routine does not hold, unknown to this deployment's config, broken at the read, or broken AROUND the reads before this collector ran (the collection step itself failed) — plus the recorded cause of a read that threw. The fire still happened, unless the routine also declares a condition gate: a collection that broke as a whole fails that gate closed, and this row is then the only record. Throttled like `routine.skip`. |
 | `routine.fire_lost` | the delivery itself was rejected | It was dispatched but never started — an archived channel, a kicked bot, an API failure. The row says explicitly that there is no session id. |
 | `routine.stalled` | a fire was refused a consequential tool by a [cost checkpoint](../security/spend-and-cost.md) | It ran but couldn't act, and which tool it was refused. One row per blocked fire, not per refused tool. Without it a job's second and later blocked fires wrote nothing at all — `checkpoint.trip` is once per session, and a durable job's fires share one session. |
@@ -2845,12 +2871,47 @@ hook module calls `noteTestRunFenceMounted` (`routines/test-run.ts`) when it loa
 module map loads every mounted module before any handler runs, so the mark is set in every process of a
 deployment that mounts the hook, and in none of a deployment that excludes it. `testRunRefusal` reads
 the same mark, so `test_routine` and the create and edit offer refuse too. It then runs `runPreFire`,
-posts the thread root, and sends the fire NATIVE into that thread. It never takes the window divert,
-because a test needs a session that is a test from its first turn to its last.
+posts the opening post, and sends the fire NATIVE, anchored on that post. It never takes the window
+divert, because a test needs a session that is a test from its first turn to its last.
 
-The bag is the real fire bag from `routineFireAttributes`, plus `thread_ts` and two host-set stamps:
-`open_everywhere_routine_test` (the test id) and `open_everywhere_routine_test_by` (the asker). The
-stamps drive four things:
+**The anchor, per surface (OPE-2540).** A `RoutineTestRunArm` (`schedules/routine-dispatch.ts`) has two
+edges: `post` (a host post in the routine's room, at the top level or beside the anchor) and `target`
+(the receive target for a fire anchored on a post). Core's Slack arm is inline in
+`schedules/routine-test-run.ts`: the target is the thread. A bundle registers its arm on its routine
+dispatcher (`registerRoutineDispatch(…, { testRun })`), and `registerRoutineDispatch` notes the
+platform for `testRunRefusal`.
+
+- **Discord** (`provider-discord/agent/channels/discord-dispatch-target.ts`): the target is
+  `{ channelId, conversationId: <opening post id> }`. eve keys a Discord session on
+  `(channel, conversation)`, so the test has its own session in the routine's channel.
+- **Teams** (`provider-teams/agent/channels/teams-test-run.ts`): the arm posts the opening activity
+  itself, to the conversation id without its `;messageid=` suffix, and the target is the routine's
+  reference with `replyToActivityId: <opening activity id>`. eve keys a Teams session on
+  `(tenant, conversation, reply id)`. eve's own `initialMessage` root keeps no reply id in a 1:1 chat,
+  so a 1:1 test fired through it would continue the person's own chat session.
+
+Only the delivery changes. The bag stays the routine's own bag, so the test binds to the routine's
+surface, memory and spend grain. A fired turn's closing prose is dropped, so the run's answer is the
+`reply` it makes. On Teams and Discord that `reply` goes to the routine's own conversation, as a real
+run's does, and not under the opening post. Only the host summary goes beside the opening post.
+
+**An event routine's replay (OPE-2540).** The event fan-out (`routines/ingress.ts`) keeps the matched
+event on the row as `lastEvent` (`captureReplayEvent`, `routines/match-stamp.ts`), after the read grant
+passes and before every other reason not to fire. It is coalesced to one write a minute per routine,
+and an event larger than `REPLAY_EVENT_MAX_CHARS` is not kept. The kept event carries the `readableBy`
+and the posture its config hook had when it arrived. So the test first re-resolves that hook from
+config (`findWebhook`): a hook that is gone refuses (`grant-refused`), a posture that now redacts or
+projects more than the kept event refuses (`posture-changed`), and the grant check runs on the hook's
+LIVE `readableBy`. A vendor event (no declared grant) is checked by its source's grant adapter, which
+reads live config already. The test then checks `checkEventReadGrant` and `checkFireDisclosure`, after
+the halt and before the creator check, and re-reads the event's
+entity with `hydratePointer` (a refused read stops the test). It renders the message with
+`eventPrompt`, the event plane's one prompt builder, and stamps the taint signal as the event fan-out
+does. A filter that no longer matches the kept event is told in the opening post, not obeyed.
+
+The bag is the real fire bag from `routineFireAttributes`, plus `thread_ts` on Slack and three host-set
+stamps: `open_everywhere_routine_test` (the test id), `open_everywhere_routine_test_by` (the asker) and
+`open_everywhere_routine_test_anchor` (the opening post's id). The stamps drive four things:
 
 - `hooks/routine-test-run.ts` marks the session at `turn.started`. The mark is sticky, so a later reply
   in the test thread stays fenced. A mark that cannot be written cancels the turn.
@@ -2866,7 +2927,8 @@ stamps drive four things:
   stall for one.
 
 At the end of the root turn, the hook reads the test's `routine.test_blocked` rows and posts the
-summary into the thread. A compare-and-set on the test id makes it once per test, across a redelivered
+summary beside the opening post: into the thread on Slack, and through the bundle's arm, anchored on
+`open_everywhere_routine_test_anchor`, on every other surface. A compare-and-set on the test id makes it once per test, across a redelivered
 turn end too. The root session also counts the calls it blocked. When that count is larger than the
 rows read back, the summary says how many could not be listed.
 

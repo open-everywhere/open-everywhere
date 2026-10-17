@@ -450,6 +450,7 @@
     "RoutedCallOptions",
     "Routine",
     "RoutineDispatchProvider",
+    "RoutineTestRunArm",
     "SCM_MINT_JOB_SETS",
     "SEAT_CATCH_UP_ACTION",
     "SESSION_TAIL_MAX_ENTRIES",

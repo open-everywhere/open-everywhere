@@ -79,9 +79,25 @@ type TestRunStamp = import("../agent/routines/test-run.js").TestRunStamp;
   const base = { status: "active", trigger: { kind: "cron" }, surfaceKey: "slack/T1/C1" };
   ok(testRun.testRunRefusal(base) === null, "refusal: an active Slack clock routine can be tested");
   ok(testRun.testRunRefusal({ ...base, status: "disabled" }) === null, "refusal: a disabled routine can be tested before it is turned back on");
-  ok(testRun.testRunRefusal({ ...base, trigger: { kind: "event" } }) !== null, "refusal: an event routine has no event to test with");
+  ok(testRun.testRunRefusal({ ...base, trigger: { kind: "event" } }) === testRun.TEST_RUN_NO_EVENT_REFUSAL, "refusal: an event routine that has matched no event has nothing to replay");
+  const kept = testRun.replayEventFor({ source: "hook", event: "build", scope: [{ kind: "container", id: "x" }], fields: {}, summary: "Build 7 failed" } as never, "2026-07-02T11:00:00.000Z");
+  ok(testRun.testRunRefusal({ ...base, trigger: { kind: "event" }, lastEvent: kept }) === null, "🔴 refusal: an event routine with a kept event CAN be tested (OPE-2540)");
+  ok(testRun.testRunRefusal({ ...base, trigger: { kind: "event" }, lastEvent: { at: "x", event: { nonsense: true } } }) === testRun.TEST_RUN_NO_EVENT_REFUSAL, "refusal: an unreadable kept event reads as no event");
+  ok(testRun.replayEventFor({ source: "hook", event: "build", scope: [], fields: {}, summary: "x".repeat(testRun.REPLAY_EVENT_MAX_CHARS) } as never, "t") === undefined, "replay: an event too large to keep is not kept");
+  const withActor = testRun.replayEventFor({ source: "hook", event: "build", scope: [{ kind: "container", id: "x" }], fields: {}, summary: "s", actor: { id: "42", handle: "alice" } } as never, "t");
+  ok(withActor !== undefined && !("actor" in withActor.event) && !JSON.stringify(withActor).includes("alice"), "🔴 replay: the kept event drops the actor — nothing reads it, so the row does not keep it");
   ok(testRun.testRunRefusal({ ...base, status: "done" }) !== null, "refusal: a finished job is terminal");
-  ok(testRun.testRunRefusal({ ...base, surfaceKey: "teams/T/C" }) !== null, "refusal: Slack only for now");
+  ok(testRun.testRunRefusal({ ...base, surfaceKey: "acmechat/T/C" }) === "a test run is not available on this platform", "refusal: a platform with no test-run arm is refused in words");
+  testRun.noteTestRunSurface("acmechat", true);
+  ok(testRun.testRunRefusal({ ...base, surfaceKey: "acmechat/T/C" }) === null, "🔴 refusal: a platform whose bundle registers a test-run arm can be tested (OPE-2540)");
+  testRun.noteTestRunSurface("acmechat", false);
+  ok(testRun.testRunRefusal({ ...base, surfaceKey: "acmechat/T/C" }) !== null, "refusal: …and a re-registration without the arm takes it away");
+  const flat = testRun.testRunKickoffText({ routine: "the routine “digest”", askedBy: "<@U1>", threaded: false });
+  ok(flat.includes("posts only its answer, in this room") && !flat.includes("thread"), "kickoff: a surface with no threads does not promise a thread");
+  const replayLine = testRun.testRunKickoffText({ routine: "r", askedBy: "<@U1>", replay: testRun.replayEventWords({ at: "2026-07-02T11:00:00.000Z", event: { event: "pull_request", action: "<!channel> opened", summary: "s" } as never }), filterSkip: true });
+  ok(replayLine.includes("a “pull request channel opened” event from 2026-07-02 11:00 UTC") && !replayLine.includes("<!"), "kickoff: the replayed event is named by its kind and time, with no payload markup");
+  ok(replayLine.includes("Its filter would not match that event now"), "kickoff: a filter that no longer matches is told, not obeyed");
+  ok(testRun.renderTestRunSummary({ routine: "r", blocked: [], threaded: false }).includes("nothing was posted but its answer"), "summary: a surface with no threads does not claim a thread");
   ok(testRun.testRunOffer(base).includes("test it") && testRun.testRunOffer({ ...base, trigger: { kind: "event" } }) === "", "offer: shown only where a test is possible");
 }
 
@@ -436,6 +452,180 @@ const { ROUTINE_AUDIT } = await import("../agent/routines/fire-audit.js");
   await routineStore.updateRoutine(ORG, SURFACE, "r-digest", { testRun: { id: "t-00000a12", requestedBy: "U-ASKER", requestedAt: "2026-07-02T13:10:00.000Z" } });
   await tick(new Date("2026-07-02T13:10:00.000Z"));
   ok(sends.length === sendsBefore + 1 && sends.at(-1)!.attrs[testRun.ROUTINE_TEST_ATTR] === "t-00000a12", "control: with the hook mounted, the same request starts its test");
+}
+
+const { registerEventNormalizer } = await import("../agent/routines/event-model.js");
+const { admitTrigger } = await import("../agent/routines/ingress.js");
+const { dispatchTestRuns } = await import("../agent/schedules/routine-test-run.js");
+const REPLAY_SENTINEL = "Build 7 of acme/web failed on main";
+{
+  registerEventNormalizer({
+    source: "build-hook",
+    matchKeys: ["status"],
+    scopeKeys: [],
+    scopeKinds: ["container"],
+    resolvesActor: false,
+    normalize: (d: { readonly source: string; readonly body: string }) => {
+      const body = JSON.parse(d.body) as { status?: string };
+      return { source: d.source, event: "build", action: "finished", scope: [{ kind: "container", id: "acme/web" }], fields: { status: body.status ?? "" }, summary: REPLAY_SENTINEL };
+    },
+  } as never);
+  const EV_ID = "r-build";
+  await routineStore.addRoutine({} as never, routine({ id: EV_ID, trigger: { kind: "event", source: "build-hook", jq: '.fields.status == "failed"' } as never, nextRunAt: null, prompt: "Explain the failed build." }));
+
+  const before = (await testTool.execute({ id: EV_ID } as never, humanCtx)) as { queued: boolean; message: string };
+  ok(!before.queued && before.message.includes("has not matched an event yet"), "🔴 event: before any event, the test is refused in words — there is nothing to replay");
+
+  const deliver = async (status: string, grant: "allow" | "refuse", at: string): Promise<void> => {
+    await admitTrigger(
+      { source: "build-hook", scheme: "build-hook", headers: {}, body: JSON.stringify({ status }), receivedAt: at, readableBy: [{ level: "org" }] } as never,
+      {
+        to: (() => ({ send: async () => undefined })) as never,
+        org: ORG,
+        now: () => new Date(at),
+        grant: {
+          resolve: () => {
+            if (grant === "refuse") throw new Error("no grant");
+            return {} as never;
+          },
+        },
+      } as never,
+    );
+  };
+  await deliver("failed", "refuse", "2026-07-02T14:00:00.000Z");
+  ok((await routineStore.getRoutine(ORG, SURFACE, EV_ID))?.lastEvent === undefined, "🔴 event: an event the read grant refuses is NOT kept for a replay");
+  await deliver("passed", "allow", "2026-07-02T14:01:00.000Z");
+  ok((await routineStore.getRoutine(ORG, SURFACE, EV_ID))?.lastEvent === undefined, "event: an event the filter does not match is not kept");
+  await deliver("failed", "allow", "2026-07-02T14:02:00.000Z");
+  const keptRow = await routineStore.getRoutine(ORG, SURFACE, EV_ID);
+  ok(keptRow?.lastEvent?.event.summary === REPLAY_SENTINEL && keptRow.lastEvent.at === "2026-07-02T14:02:00.000Z", "🔴 event: the fan-out keeps the matched, granted event on the row (OPE-2540)");
+
+  const queued = (await testTool.execute({ id: EV_ID } as never, humanCtx)) as { queued: boolean };
+  ok(queued.queued, "🔴 event: with a kept event, the test is queued");
+  const evSends: { target: Record<string, unknown>; message: string; attrs: Record<string, string> }[] = [];
+  const evTo = ((_c: unknown, target: Record<string, unknown>) => ({
+    send: async (message: string, opts: { auth: { attributes: Record<string, string> } }) => void evSends.push({ target, message, attrs: opts.auth.attributes }),
+  })) as never;
+  const buildHook = { id: "build-hook", source: "build-hook", readableBy: [{ level: "org" }] };
+  const runEvent = async (over: Record<string, unknown> = {}) =>
+    dispatchTestRuns([(await routineStore.getRoutine(ORG, SURFACE, EV_ID))!], {
+      to: evTo,
+      waitUntil: () => undefined,
+      appAuth: { attributes: {} } as never,
+      now: new Date("2026-07-02T14:10:00.000Z"),
+      cap: 3,
+      confirmRoomMembership: async () => true,
+      confirmCreatorActive: async () => true,
+      eventGrant: { resolve: () => ({}) as never },
+      webhooks: () => [buildHook],
+      ...over,
+    } as never);
+  const postsBefore = slackPosts.length;
+  const res = await runEvent();
+  ok(res.fired === 1 && evSends.length === 1, "🔴 event: the test fires once");
+  const evRoot = slackPosts.slice(postsBefore).find((p) => p.text.startsWith("🧪 Test run of"));
+  ok(evRoot !== undefined && evRoot.text.includes("It replays the last event the routine matched: a “build finished” event from 2026-07-02 14:02 UTC"), "🔴 event: the thread root names the event it replays, by kind and time");
+  ok(!evRoot!.text.includes(REPLAY_SENTINEL) && !evRoot!.text.includes("filter would not match"), "event: the root carries no payload text, and the filter still matches");
+  ok(evSends[0]!.message.includes(REPLAY_SENTINEL) && evSends[0]!.message.includes("Explain the failed build."), "🔴 event: the fire message is the event plane's prompt over the kept event");
+  ok(evSends[0]!.attrs[testRun.ROUTINE_TEST_ATTR] !== undefined && evSends[0]!.attrs["thread_ts"] === evSends[0]!.target["threadTs"], "event: the fire carries the test stamp, and the bag names the thread the delivery does");
+  const { OE_TAINTED_FIRE_ATTR } = await import("../agent/access/taint-signal.js");
+  ok(evSends[0]!.attrs[OE_TAINTED_FIRE_ATTR] !== undefined, "🔴 event: a replayed event is an outside party's text, so the fire carries the taint stamp");
+  const evAfter = await routineStore.getRoutine(ORG, SURFACE, EV_ID);
+  ok(evAfter?.testRun === undefined && evAfter?.lastEvent !== undefined && evAfter?.lastRunAt === undefined, "event: the request is consumed, the kept event stays, and no run is recorded");
+  const replayed = await readAudit({ org: ORG, action: testRun.ROUTINE_TEST_FIRED_ACTION });
+  ok(replayed.some((r) => (r.detail as Record<string, unknown>)?.["id"] === EV_ID && (r.detail as Record<string, unknown>)?.["replayed"] === true), "event: the start is audited as a replay");
+
+  const ask = async (): Promise<void> => {
+    await routineStore.updateRoutine(ORG, SURFACE, EV_ID, { testRun: { id: `t-${Math.random().toString(16).slice(2, 10)}`, requestedBy: "U-ASKER", requestedAt: "2026-07-02T14:10:00.000Z" } });
+  };
+  await ask();
+  const sendsBefore = evSends.length;
+  const revoked = await runEvent({ eventGrant: { resolve: () => { throw new Error("revoked"); } } });
+  ok(revoked.refused === 1 && evSends.length === sendsBefore, "🔴 event: a revoked read grant refuses the replay — nothing fires");
+  ok(slackPosts.some((p) => p.text.includes("can no longer read the event it would replay")), "event: …and the room is told why, in words");
+  await ask();
+  const gone = await runEvent({ webhooks: () => [] });
+  ok(gone.refused === 1 && evSends.length === sendsBefore, "🔴 event: a config hook that is gone refuses the replay");
+  ok(slackPosts.some((p) => p.text.includes("the hook its event came from is no longer configured")), "event: …and the room is told why, in words");
+  await ask();
+  const narrowed = await runEvent({ webhooks: () => [{ ...buildHook, readableBy: [] }] });
+  ok(narrowed.refused === 1 && evSends.length === sendsBefore, "🔴 event: a hook whose readableBy was narrowed refuses the replay — the frozen declaration does not grant");
+  await ask();
+  const triggerOnly = await runEvent({ webhooks: () => [{ ...buildHook, posture: "trigger-only" }] });
+  ok(triggerOnly.refused === 1 && evSends.length === sendsBefore, "🔴 event: a hook flipped to trigger-only refuses the replay of a payload-bearing event");
+  const posture = await readAudit({ org: ORG, action: testRun.ROUTINE_TEST_FIRED_ACTION });
+  ok(posture.some((r) => (r.detail as Record<string, unknown>)?.["reason"] === "posture-changed"), "event: the posture refusal is audited with its own reason");
+  await ask();
+  const guests = await runEvent({ disclosure: { floor: async () => ({ roster: { resolved: true }, floor: "guest" }) } });
+  ok(guests.refused === 1 && evSends.length === sendsBefore, "🔴 event: a room whose audience may not see the event gets no replay");
+  await routineStore.updateRoutine(ORG, SURFACE, EV_ID, { trigger: { kind: "event", source: "build-hook", jq: '.fields.status == "passed"' } as never });
+  await ask();
+  const p2 = slackPosts.length;
+  const unmatched = await runEvent();
+  ok(unmatched.fired === 1 && slackPosts.slice(p2).some((p) => p.text.includes("Its filter would not match that event now")), "event: a filter that no longer matches the kept event is told in the root, and the test still runs");
+}
+
+const { registerRoutineDispatch } = await import("../agent/schedules/routine-dispatch.js");
+{
+  const armPosts: { channel: string; text: string; anchor?: string }[] = [];
+  let seq = 0;
+  registerRoutineDispatch("acmechat", {
+    resolveTarget: (r) => ({ channel: { __fixture: "acmechat" } as never, target: { channelId: String(r.target?.["channelId"] ?? "") }, mode: "channel", attributes: { channel_id: String(r.target?.["channelId"] ?? "") } }),
+    testRun: {
+      post: async (dest, text, anchor) => {
+        armPosts.push({ channel: String((dest.target as { channelId: string }).channelId), text, ...(anchor !== undefined ? { anchor } : {}) });
+        return `m-${++seq}`;
+      },
+      target: (dest, anchor) => ({ channelId: (dest.target as { channelId: string }).channelId, conversationId: anchor }),
+    },
+  });
+  const AC_SURFACE = "acmechat/W1/R1";
+  await routineStore.addRoutine({} as never, routine({ id: "r-acme", surfaceKey: AC_SURFACE, target: { channelId: "R1" } }));
+  await routineStore.updateRoutine(ORG, AC_SURFACE, "r-acme", { testRun: { id: "t-0000ac01", requestedBy: "U-ASKER", requestedAt: "2026-07-02T15:00:00.000Z" } });
+  const sendsBefore = sends.length;
+  const slackBefore = slackPosts.length;
+  await tick(new Date("2026-07-02T15:00:00.000Z"));
+  const root = armPosts.find((p) => p.text.startsWith("🧪 Test run of"));
+  ok(root !== undefined && root.anchor === undefined && root.channel === "R1", "🔴 surface: the bundle's arm posts the opening post, at the top level of the routine's own room");
+  ok(root!.text.includes("posts only its answer, in this room") && !root!.text.includes("thread"), "surface: the opening post makes no thread promise");
+  ok(slackPosts.length === slackBefore, "surface: nothing posts through Slack");
+  ok(sends.length === sendsBefore + 1, "🔴 surface: the test fires once");
+  const fire = sends.at(-1)!;
+  ok(fire.target["conversationId"] === "m-1" && fire.target["channelId"] === "R1", "🔴 surface: the fire is anchored on the opening post (a session of its own), through the arm's target");
+  ok(fire.attrs[testRun.ROUTINE_TEST_ANCHOR_ATTR] === "m-1" && fire.attrs["thread_ts"] === undefined, "surface: the bag carries the anchor, and no Slack thread stamp");
+  ok(fire.attrs["channel_id"] === "R1" && fire.attrs[ROUTINE_MARKER.id] === "r-acme", "🔴 surface: the bag is the routine's own bag, so the test binds to the routine's own room");
+
+  const { postTestRunSummary } = await import("../agent/hooks/routine-test-run.js");
+  const text = await postTestRunSummary(fire.attrs, false, { read: async () => [{ tool: "post_message", what: "post message: “hi”" }] });
+  const summary = armPosts.find((p) => p.anchor === "m-1");
+  ok(text !== undefined && summary !== undefined && summary.text === text, "🔴 surface: the summary posts beside the opening post, through the bundle's arm");
+  ok(summary!.text.includes("post message: “hi”") && !summary!.text.includes("r-acme"), "surface: the summary lists the blocked write, with no raw id");
+
+  const latchAttrs = { ...fire.attrs, [testRun.ROUTINE_TEST_ATTR]: "t-0000ac09" };
+  const missed = await postTestRunSummary(latchAttrs, false, { read: async () => [], surface: async () => undefined });
+  ok(missed === undefined, "surface: an unresolvable room posts no summary");
+  const retried: string[] = [];
+  const retry = await postTestRunSummary(latchAttrs, false, { read: async () => [], surface: async () => ({ routine: "the routine", post: async (_a, t) => (retried.push(t), true) }) });
+  ok(retry !== undefined && retried.length === 1, "🔴 surface: …and the latch is not spent, so the next turn end posts the summary");
+
+  const hookAttrs = { ...fire.attrs, [testRun.ROUTINE_TEST_ATTR]: "t-0000ac0a" };
+  const hookSession = new FakeEveContext();
+  const kept = (await routineStore.getRoutine(ORG, AC_SURFACE, "r-acme"))!;
+  await routineStore.removeRoutine({ org: ORG, surfaceKey: AC_SURFACE } as never, "r-acme");
+  const before1 = armPosts.length;
+  await inEveContext(hookSession, async () => {
+    await testHook.events!["turn.completed"]!({} as never, fireTurnCtx(hookAttrs));
+  });
+  ok(armPosts.length === before1, "surface: a turn end whose routine row cannot be read posts no summary");
+  await routineStore.addRoutine({} as never, kept);
+  await inEveContext(hookSession, async () => {
+    await testHook.events!["turn.completed"]!({} as never, fireTurnCtx(hookAttrs));
+  });
+  ok(armPosts.slice(before1).some((p) => p.anchor === "m-1" && p.text.startsWith("🧪 Test run of")), "🔴 surface: …and the next turn end of the same test session posts it");
+
+  await routineStore.updateRoutine(ORG, AC_SURFACE, "r-acme", { status: "done", testRun: { id: "t-0000ac02", requestedBy: "U-ASKER", requestedAt: "2026-07-02T15:10:00.000Z" } });
+  await tick(new Date("2026-07-02T15:10:00.000Z"));
+  ok(armPosts.some((p) => p.text.includes("did not start") && p.text.includes("finished job")), "surface: a refusal is told in the routine's room through the arm");
 }
 
 rmSync(dir, { recursive: true, force: true });

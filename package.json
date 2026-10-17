@@ -252,6 +252,7 @@
     "test:conversation-grant-scope": "NODE_NO_WARNINGS=1 tsx scripts/conversation-grant-scope-test.ts",
     "test:discord": "NODE_NO_WARNINGS=1 tsx scripts/discord-test.ts",
     "test:discord-declared-target": "NODE_NO_WARNINGS=1 tsx scripts/discord-declared-target-test.ts",
+    "test:routine-test-run-surfaces": "NODE_NO_WARNINGS=1 tsx scripts/routine-test-run-surfaces-test.ts",
     "test:discord-backscroll": "NODE_NO_WARNINGS=1 tsx scripts/discord-backscroll-test.ts",
     "test:discord-contextline-trust": "NODE_NO_WARNINGS=1 tsx scripts/discord-contextline-trust-test.ts",
     "test:discord-dm-divert": "NODE_NO_WARNINGS=1 tsx scripts/discord-dm-divert-test.ts",

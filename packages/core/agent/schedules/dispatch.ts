@@ -103,6 +103,8 @@ export async function dispatchTick(
     ...(args.confirmCreatorInternal ? { confirmCreatorInternal: args.confirmCreatorInternal } : {}),
     ...(args.confirmRoomMembership ? { confirmRoomMembership: args.confirmRoomMembership } : {}),
     ...(args.confirmCreatorActive ? { confirmCreatorActive: args.confirmCreatorActive } : {}),
+    ...(args.confirmTeamsRoomMembership ? { confirmTeamsRoomMembership: args.confirmTeamsRoomMembership } : {}),
+    ...(args.confirmTeamsCreatorActive ? { confirmTeamsCreatorActive: args.confirmTeamsCreatorActive } : {}),
     ...(args.testRunPost ? { post: args.testRunPost } : {}),
   }).catch((err: unknown) => {
     log(`test runs skipped: ${String(err)}`);

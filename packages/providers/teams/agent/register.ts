@@ -32,6 +32,7 @@ import { teamsMessageOps } from "./channels/teams-message-ops.js";
 import teamsChannel from "./channels/teams.js";
 import { bindTeams, teamsMode } from "./channels/teams-identity.js";
 import { resolveTeamsDeclaredTarget } from "./channels/teams-declared-target.js";
+import { teamsTestRunArm } from "./channels/teams-test-run.js";
 import { teamsPostArm } from "./channels/teams-post-arm.js";
 import { teamsWakeOriginCodec } from "./channels/teams-origin-codec.js";
 import { teamsReadAdapter } from "./channels/teams-read.js";
@@ -93,6 +94,7 @@ export function registerTeamsProvider(): void {
   registerRoutineDispatch("teams", {
     resolveTarget: resolveTeamsTarget,
     resolveDeclaredTarget: (spec) => resolveTeamsDeclaredTarget(spec),
+    testRun: teamsTestRunArm,
   });
   registerTeamsBridge({ roomMembership: liveTeamsRoomMembership, accountActive: liveTeamsAccountActive });
   registerBotDisplayName("teams", teamsBotDisplayName);

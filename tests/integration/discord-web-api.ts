@@ -15,6 +15,7 @@ export interface DiscordCreateMessageCall {
   readonly channelId: string;
   readonly content: string;
   readonly components: readonly Record<string, unknown>[];
+  readonly replyTo?: string;
 }
 
 export interface InstallDiscordWebApiStubOptions {
@@ -45,11 +46,13 @@ export function installDiscordWebApiStub(options: InstallDiscordWebApiStubOption
     if (options.captureMessages && method === "POST") {
       const created = CREATE_MESSAGE_PATH.exec(path);
       if (created) {
-        const body = JSON.parse(String(init?.body ?? "{}")) as { content?: unknown; components?: unknown };
+        const body = JSON.parse(String(init?.body ?? "{}")) as { content?: unknown; components?: unknown; message_reference?: { message_id?: unknown } };
+        const replyTo = body.message_reference?.message_id;
         messages.push({
           channelId: created[1]!,
           content: typeof body.content === "string" ? body.content : "",
           components: Array.isArray(body.components) ? (body.components as Record<string, unknown>[]) : [],
+          ...(typeof replyTo === "string" ? { replyTo } : {}),
         });
         return Response.json({ id: `stub-message-${nextMessageId++}` }, { status: 200 });
       }

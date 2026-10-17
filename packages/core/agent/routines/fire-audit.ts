@@ -56,8 +56,8 @@ export function skipThrottleKey(routineId: string, reason: RoutineSkipReason): s
   return `routineskip:${routineId}:${reason}`;
 }
 
-function eligibilityUnresolvedThrottleKey(routineId: string, check: EligibilityCheckName): string {
-  return `routineeligibility:${routineId}:${check}`;
+function eligibilityUnresolvedThrottleKey(routineId: string, check: EligibilityCheckName, test?: string): string {
+  return test === undefined ? `routineeligibility:${routineId}:${check}` : `routineeligibility:${routineId}:${check}:test`;
 }
 
 export function collectFailedThrottleKey(routineId: string): string {
@@ -119,11 +119,15 @@ export type EligibilityUnresolvedCause = TeamsMembershipUnresolved;
 
 export async function auditRoutineEligibilityUnresolved(
   r: Routine,
-  detail: { readonly check: EligibilityCheckName; readonly cause: EligibilityUnresolvedCause },
+  detail: {
+    readonly check: EligibilityCheckName;
+    readonly cause: EligibilityUnresolvedCause;
+    readonly test?: string;
+  },
   deps: RoutineAuditDeps = {},
 ): Promise<boolean> {
   const nowIso = (deps.now?.() ?? new Date()).toISOString();
-  const carried = await admitThrottled(r.org, eligibilityUnresolvedThrottleKey(r.id, detail.check), nowIso, deps);
+  const carried = await admitThrottled(r.org, eligibilityUnresolvedThrottleKey(r.id, detail.check, detail.test), nowIso, deps);
   if (carried === null) return false;
   await write(
     {
@@ -135,6 +139,7 @@ export async function auditRoutineEligibilityUnresolved(
         routineId: r.id,
         check: detail.check,
         cause: detail.cause,
+        ...(detail.test !== undefined ? { test: detail.test } : {}),
         ...(carried > 0 ? { suppressed: carried, windowMs: SKIP_WINDOW_MS } : {}),
       },
     },

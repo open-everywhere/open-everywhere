@@ -7,6 +7,7 @@ import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { isSubagentChildContext, type BindableContext } from "../identity/binding.js";
 import { oneAttrValue } from "../routines/routine.js";
 import { getRoutine } from "../routines/store.js";
+import { resolveRegisteredRoutineDispatch, resolveSurfaceTarget } from "../schedules/routine-dispatch.js";
 import { describeTrigger } from "../routines/routine.js";
 import { routineWords } from "../routines/schedule-words.js";
 import {
@@ -67,6 +68,25 @@ export interface TestRunSummaryDeps {
   readonly now?: () => Date;
   readonly read?: (stamp: TestRunStamp, now: Date) => Promise<BlockedCall[]>;
   readonly counted?: number;
+  readonly surface?: (stamp: TestRunStamp) => Promise<SurfaceSummaryEdge | undefined>;
+}
+
+interface SurfaceSummaryEdge {
+  readonly routine: string;
+  readonly post: (anchor: string, text: string) => Promise<boolean>;
+}
+
+async function liveSurfaceEdge(stamp: TestRunStamp): Promise<SurfaceSummaryEdge | undefined> {
+  const platform = stamp.surfaceKey.split("/")[0] ?? "";
+  const arm = resolveRegisteredRoutineDispatch(platform)?.testRun;
+  if (arm === undefined) return undefined;
+  const r = await getRoutine(stamp.org, stamp.surfaceKey, stamp.routineId).catch(() => null);
+  const dest = r ? resolveSurfaceTarget({ surfaceKey: r.surfaceKey, target: r.target }) : null;
+  if (r === null || dest === null) return undefined;
+  return {
+    routine: routineWords(describeTrigger(r.trigger, r.report)),
+    post: async (anchor, text) => (await arm.post(dest, text, anchor).catch(() => undefined)) !== undefined,
+  };
 }
 
 const SUMMARY_LATCH_MS = 24 * 60 * 60_000;
@@ -75,9 +95,15 @@ export async function postTestRunSummary(attrs: Attrs, failed: boolean, deps: Te
   try {
     const stamp = routineTestStamped(attrs);
     if (stamp === null) return undefined;
+    const slack = (stamp.surfaceKey.split("/")[0] ?? "slack") === "slack" || stamp.surfaceKey === "";
     const channel = oneAttrValue(attrs?.["channel_id"]);
     const thread = oneAttrValue(attrs?.["thread_ts"]);
-    if (channel === undefined || thread === undefined) return undefined;
+    if (slack ? channel === undefined || thread === undefined : stamp.anchor === undefined) return undefined;
+    const edge = slack ? undefined : await (deps.surface ?? liveSurfaceEdge)(stamp);
+    if (!slack && edge === undefined) {
+      log(`summary of test ${stamp.testId} not posted: the routine's room could not be resolved`);
+      return undefined;
+    }
     const now = (deps.now ?? (() => new Date()))();
     const first = await getOperationalStore()
       .markEventSeen(stamp.org, `routinetestsummary:${stamp.testId}`, now.toISOString(), SUMMARY_LATCH_MS)
@@ -90,8 +116,15 @@ export async function postTestRunSummary(attrs: Attrs, failed: boolean, deps: Te
     } catch {
       unreadable = true;
     }
-    const text = renderTestRunSummary({ routine: await routineName(stamp), blocked, failed, unreadable, counted: deps.counted ?? 0 });
-    const body = new URLSearchParams({ channel, thread_ts: thread, text });
+    const text = renderTestRunSummary({ routine: edge?.routine ?? (await routineName(stamp)), blocked, failed, unreadable, counted: deps.counted ?? 0, ...(slack ? {} : { threaded: false }) });
+    if (edge !== undefined) {
+      if (!(await edge.post(stamp.anchor!, text))) {
+        log(`summary of test ${stamp.testId} did not post`);
+        return undefined;
+      }
+      return text;
+    }
+    const body = new URLSearchParams({ channel: channel!, thread_ts: thread!, text });
     await (deps.post ?? bridgeSlackForm)("chat.postMessage", body.toString());
     return text;
   } catch (err) {
@@ -129,7 +162,13 @@ async function onTurnEnded(ctx: HookContext, failed: boolean): Promise<void> {
     if (stamp === null) return;
     if (reported.get()[stamp.testId] === true) return;
     reported.update((s) => ({ ...s, [stamp.testId]: true }));
-    await postTestRunSummary(attrs, failed, { counted: testRunBlockedCount() });
+    const posted = await postTestRunSummary(attrs, failed, { counted: testRunBlockedCount() });
+    if (posted === undefined) {
+      reported.update((s) => {
+        const { [stamp.testId]: _gone, ...rest } = s;
+        return rest;
+      });
+    }
   } catch (err) {
     log(`turn end skipped: ${String(err)}`);
   }

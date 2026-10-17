@@ -1,13 +1,14 @@
 import type {
   Routine,
   DispatchTarget,
+  RoutineTestRunArm,
   DeclaredTargetResolution,
   DeclaredTargetSpec,
   SessionMode,
   UnifiedWakeOrigin,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import discord from "./discord.js";
-import { discordOpenDmChannel } from "./discord-post.js";
+import { discordOpenDmChannel, discordPostMessage } from "./discord-post.js";
 import { fetchDiscordInfo } from "./discord-channel-info.js";
 
 function storedString(t: Routine["target"], key: string): string | undefined {
@@ -81,3 +82,21 @@ export async function resolveDiscordDeclaredTarget(
   }
   return { ok: true, facts: { surfaceKey: `discord/${spec.principalId}/${channelId}`, target: { channelId, channelType: "1" } } };
 }
+
+function targetChannelId(dest: DispatchTarget): string | undefined {
+  const v = (dest.target as { channelId?: unknown }).channelId;
+  return typeof v === "string" && v.length > 0 ? v : undefined;
+}
+
+export const discordTestRunArm: RoutineTestRunArm = {
+  post: async (dest, text, anchor) => {
+    const channelId = targetChannelId(dest);
+    if (channelId === undefined) return undefined;
+    try {
+      return await discordPostMessage(channelId, text, anchor !== undefined ? { replyToMessageId: anchor } : undefined);
+    } catch {
+      return undefined;
+    }
+  },
+  target: (dest, anchor) => ({ channelId: targetChannelId(dest) ?? "", conversationId: anchor }),
+};

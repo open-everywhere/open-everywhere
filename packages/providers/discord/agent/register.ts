@@ -29,7 +29,7 @@ import { PROVIDER_DOCS } from "./docs-generated.js";
 import { DISCORD_SURFACE_PARITY } from "./surface-parity.js";
 import { DISCORD_PROVIDER_EVENTS } from "./provider-events.js";
 import { registerDiscordOps } from "./ops.js";
-import { resolveDiscordTarget, discordReportTargetFor, resolveDiscordDeclaredTarget } from "./channels/discord-dispatch-target.js";
+import { resolveDiscordTarget, discordReportTargetFor, resolveDiscordDeclaredTarget, discordTestRunArm } from "./channels/discord-dispatch-target.js";
 import { bindDiscord } from "./channels/discord-identity.js";
 import { discordPostArm } from "./channels/discord-post-arm.js";
 import { discordWakeOriginCodec } from "./channels/discord-origin-codec.js";
@@ -66,6 +66,7 @@ export function registerDiscordProvider(): void {
     resolveTarget: resolveDiscordTarget,
     reportTargetFor: discordReportTargetFor,
     resolveDeclaredTarget: (spec) => resolveDiscordDeclaredTarget(spec),
+    testRun: discordTestRunArm,
   });
   registerNativeAdminCheck("discord", async (scopeKey, principalId) => {
     const guildId = guildIdFromScopeKey(scopeKey);

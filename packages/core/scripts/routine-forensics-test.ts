@@ -635,7 +635,7 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
     "throttle: the key is built ONLY from OE-minted parts (routine id + a closed reason set) — a hostile delivery stream cannot mint fresh keys to defeat it",
   );
   ok(
-    seenKeys.every((k) => /^(routineskip:r-[A-Za-z0-9_-]+:[a-z_]+|routinematch:r-[A-Za-z0-9_-]+)$/.test(k)),
+    seenKeys.every((k) => /^(routineskip:r-[A-Za-z0-9_-]+:[a-z_]+|routinematch:r-[A-Za-z0-9_-]+|routinereplay:r-[A-Za-z0-9_-]+)$/.test(k)),
     "throttle: every throttle key this leg mints is OE-minted parts only — the match stamp's included",
   );
   ok(

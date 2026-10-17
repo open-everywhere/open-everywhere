@@ -398,18 +398,20 @@ function harness(routines: Routine[], repos: readonly string[] = ["me/proj"]) {
   }
   function stampHarness(routines: Routine[], repos: readonly string[] = ["me/proj"], t0 = Date.parse("2026-07-28T09:00:00.000Z")) {
     const writes: Patch[] = [];
+    const kept: Patch[] = [];
     const clock = { ms: t0 };
     const base = harness(routines, repos);
     return {
       ...base,
       writes,
+      kept,
       clock,
       deps: {
         ...base.deps,
         matchStamp: {
           now: () => new Date(clock.ms),
           update: async (org: string, surfaceKey: string, id: string, patch: Record<string, unknown>) => {
-            writes.push({ id, org, surfaceKey, patch });
+            ("lastEvent" in patch ? kept : writes).push({ id, org, surfaceKey, patch });
             const row = routines.find((r) => r.id === id);
             if (row) Object.assign(row, patch);
             return row ?? null;
@@ -424,6 +426,7 @@ function harness(routines: Routine[], repos: readonly string[] = ["me/proj"]) {
     const h = stampHarness([r]);
     await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
     ok(h.fired.length === 1 && h.writes.length === 1, "match stamp: a matching subscription writes exactly one stamp");
+    ok(h.kept.length === 1 && h.kept[0]!.id === "r-stamp", "match stamp: …and keeps the event once, for a test replay (OPE-2540)");
     const w = h.writes[0]!;
     ok(w.id === "r-stamp" && w.org === "acme" && w.surfaceKey === "slack/T1/C1", "match stamp: the stamp is written against the matching routine's own (org, surfaceKey, id)");
     ok(w.patch["firstMatchAt"] === "2026-07-28T09:00:00.000Z", "match stamp: the FIRST match sets firstMatchAt");
@@ -434,14 +437,14 @@ function harness(routines: Routine[], repos: readonly string[] = ["me/proj"]) {
     const r = routine({ id: "r-stamp-nomatch", trigger: { kind: "event", source: "github", jq: '.scope.container == "other/repo"' } });
     const h = stampHarness([r]);
     await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
-    ok(h.fired.length === 0 && h.writes.length === 0, "match stamp: a filter that does not match writes NO stamp");
+    ok(h.fired.length === 0 && h.writes.length === 0 && h.kept.length === 0, "match stamp: a filter that does not match writes NO stamp and keeps no event");
   }
 
   {
     const r = routine({ id: "r-stamp-broken", trigger: { kind: "event", source: "github", jq: '.scope.container == "me/proj" and' } });
     const h = stampHarness([r]);
     await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
-    ok(h.writes.length === 0, "match stamp: a filter that will NOT EVALUATE never stamps — a broken filter must not look like a working one");
+    ok(h.writes.length === 0 && h.kept.length === 0, "match stamp: a filter that will NOT EVALUATE never stamps and keeps no event — a broken filter must not look like a working one");
     ok(
       h.audited.length === 1 && h.audited[0]!.detail?.["reason"] === "filter_invalid",
       "match stamp: …and it still reports itself through the existing filter_invalid skip row, so the failure is not silent either",
@@ -451,7 +454,7 @@ function harness(routines: Routine[], repos: readonly string[] = ["me/proj"]) {
     const r = routine({ id: "r-stamp-nonbool", trigger: { kind: "event", source: "github", jq: ".fields.action" } });
     const h = stampHarness([r]);
     await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
-    ok(h.writes.length === 0, "match stamp: a non-boolean filter result never stamps either");
+    ok(h.writes.length === 0 && h.kept.length === 0, "match stamp: a non-boolean filter result never stamps, and keeps no event, either");
   }
 
   {
@@ -460,6 +463,7 @@ function harness(routines: Routine[], repos: readonly string[] = ["me/proj"]) {
     await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
     ok(h.fired.length === 0, "match stamp: the ungranted routine does not fire");
     ok(h.writes.length === 1 && h.writes[0]!.patch["lastMatchAt"] !== undefined, "OPE-184: a GRANT-REFUSED match still stamps — the stamp is strictly BEFORE the read-grant check");
+    ok(h.kept.length === 0, "🔴 OPE-2540: a GRANT-REFUSED match keeps NO event for a test replay — an event the domain may not read is never kept");
     ok(h.audited.some((e) => e.detail?.["reason"] === "grant_refused"), "match stamp: …and the downstream reason keeps its own separate vocabulary (routine.skip/grant_refused)");
   }
 

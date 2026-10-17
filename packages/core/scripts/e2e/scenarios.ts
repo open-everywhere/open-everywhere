@@ -6718,6 +6718,87 @@ export const SCENARIOS: readonly Scenario[] = [
   },
 
   {
+    id: "S-ROUTINE-TEST-discord",
+    title: "Routine test run on Discord (OPE-2540): a requested test posts its opening message in the routine's channel, runs in a session of its own, blocks its write, and replies to the opening message with the summary",
+    requires: ["discord"],
+    surface: "discord",
+    suite: "core",
+    timeoutMs: 2_400_000,
+    judged: false,
+    run: async (ctx) => {
+      const read = ctx.auditRead;
+      if (!read) {
+        return ctx.fixtureMissing("S-ROUTINE-TEST-discord gates on routine.test_fired, routine.test_blocked and routine.fire rows. Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to run it.");
+      }
+      const dbUrl = process.env.DATABASE_URL;
+      if (!dbUrl) {
+        return ctx.fixtureMissing("S-ROUTINE-TEST-discord seeds its routine through the operational store. Set DATABASE_URL to the deployment's database — the same URL the window rotate uses.");
+      }
+      const store = await wireNeonOperationalStore(dbUrl);
+      const discord = ctx.discord!;
+      const org = process.env[ENV.org]?.trim() || "default";
+      const guildId = await discord.guildId();
+      const driverId = await discord.selfId();
+      ctx.gate(guildId.length > 0 && driverId.length > 0, "S-ROUTINE-TEST-discord: the driver reads its guild and its own user id");
+      const surfaceKey = `discord/${guildId}/${discord.channelId}`;
+      const word = factToken("rtestd");
+      const posted = distinctFactToken("rtpostd", [word]);
+      const now = new Date();
+      const nextRunAt = new Date(now.getTime() + 365 * 24 * 60 * 60_000).toISOString();
+      const id = newRoutineId();
+      const testId = `t-${randomBytes(4).toString("hex")}`;
+      const sinceIso = await presenceSince(ctx, "S-ROUTINE-TEST-discord seed");
+      const floor = ((BigInt(Date.parse(sinceIso)) - 1420070400000n) << 22n).toString();
+      await store.addRoutine({
+        id,
+        org,
+        surfaceKey,
+        target: { channelId: discord.channelId, guildId },
+        trigger: { kind: "interval", everyMinutes: 1440 },
+        prompt: `Use the post_message tool to post the word ${posted} into this channel. Then answer with the single word ${word}.`,
+        createdBy: driverId,
+        createdAt: now.toISOString(),
+        status: "active",
+        nextRunAt,
+        consecutiveFailures: 0,
+        testRun: { id: testId, requestedBy: driverId, requestedAt: now.toISOString() },
+      });
+      ctx.log(`S-ROUTINE-TEST-discord: seeded routine ${id} with test ${testId}, next real run ${nextRunAt}`);
+      try {
+        const started = await pollOptional(
+          async () => (await read({ sinceIso, actions: ["routine.test_fired"], limit: 50 })).find((r) => r.detail?.["test"] === testId),
+          { timeoutMs: 1_500_000, initialDelayMs: 30_000, maxDelayMs: 60_000, what: "S-ROUTINE-TEST-discord: the routine.test_fired row" },
+        );
+        ctx.gate(started !== undefined, "S-ROUTINE-TEST-discord: the dispatcher took the test request within two ticks (a routine.test_fired row)");
+        ctx.gate(started!.detail?.["started"] === true, `S-ROUTINE-TEST-discord: the test started (routine.test_fired started:true, reason ${String(started!.detail?.["reason"] ?? "none")})`);
+
+        const ours = async () => (await discord.messagesAfter(floor)).filter((m) => discord.isBotReply(m));
+        const root = (await ours()).filter((m) => m.content.startsWith("🧪 Test run of")).sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1))[0];
+        ctx.gate(root !== undefined, "S-ROUTINE-TEST-discord: the host posted the test's opening message in the routine's channel");
+        ctx.gate(root!.content.includes("in this room") && !root!.content.includes(id), "S-ROUTINE-TEST-discord: the opening message makes no thread promise and names no raw id");
+        const summary = await pollOptional(
+          async () => (await ours()).find((m) => m.content.startsWith("🧪 Test run of") && m.id !== root!.id),
+          { timeoutMs: 600_000, initialDelayMs: 10_000, maxDelayMs: 20_000, what: "S-ROUTINE-TEST-discord: the summary after the opening message" },
+        );
+        ctx.gate(summary !== undefined, "S-ROUTINE-TEST-discord: the test ends with the host-written summary");
+        ctx.gate(summary!.content.includes("post message"), "S-ROUTINE-TEST-discord: the summary names the blocked post");
+        const after = await ours();
+        ctx.gate(after.some((m) => m.content.includes(word)), "S-ROUTINE-TEST-discord: the run's answer landed in the routine's channel");
+        ctx.gate(!after.some((m) => m.content.includes(posted)), "S-ROUTINE-TEST-discord: the blocked post never reached the channel");
+
+        const blocked = (await read({ sinceIso, actions: ["routine.test_blocked"], limit: 100 })).filter((r) => r.detail?.["test"] === testId);
+        ctx.gate(blocked.some((r) => r.detail?.["tool"] === "post_message"), `S-ROUTINE-TEST-discord: the run's post_message call was blocked and recorded (${blocked.length} routine.test_blocked row(s))`);
+        const fires = (await read({ sinceIso, actions: ["routine.fire"], limit: 100 })).filter((r) => r.detail?.["routineId"] === id);
+        ctx.gate(fires.length === 0, `S-ROUTINE-TEST-discord: a test is not a run — no routine.fire row (${fires.length})`);
+        const row = (await store.listRoutines(org, surfaceKey)).find((r) => r.id === id);
+        ctx.gate(row?.nextRunAt === nextRunAt && row?.lastRunAt === undefined && row?.testRun === undefined, "S-ROUTINE-TEST-discord: the schedule did not move, and the request was consumed");
+      } finally {
+        await store.updateRoutine(org, surfaceKey, id, { status: "disabled", disabledReason: "e2e: S-ROUTINE-TEST-discord cleanup", nextRunAt: null }).catch(() => undefined);
+      }
+    },
+  },
+
+  {
     id: "S-ASK-WATCH",
     title: "\"Tell me when …\" (OPE-2510): an ask to be told when a GitHub issue opens ends in ONE watch card that names the app and the condition in words",
     requires: ["slack"],

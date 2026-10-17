@@ -21,7 +21,7 @@ import { eventPrompt } from "./events.js";
 import { preFireFallback, runPreFire, type PreFireOutcome } from "./pre-fire.js";
 import { normalizeDelivery, type NormalizedEvent, type StoredSubscription, type TriggerDelivery } from "./event-model.js";
 import { evaluateSubscription, isEventTrigger, storedFilter } from "./event-match.js";
-import { stampSubscriptionMatch, type MatchStampDeps } from "./match-stamp.js";
+import { captureReplayEvent, stampSubscriptionMatch, type MatchStampDeps } from "./match-stamp.js";
 import { captureDocument } from "../webhooks/capture-window.js";
 import { CAPTURE_MAX_DELIVERIES } from "../operational/store.js";
 import { checkEventReadGrant, eventGrantPartitions, type EventGrantDeps } from "./event-authz.js";
@@ -204,6 +204,7 @@ async function fanOut(ev: NormalizedEvent, deps: TriggerAdmitDeps): Promise<FanO
       );
       continue;
     }
+    await captureReplayEvent(r, ev, stampDeps);
     const dest = resolveTarget(r);
     if (!dest) {
       unwired++;

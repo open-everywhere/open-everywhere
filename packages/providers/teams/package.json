@@ -161,6 +161,10 @@
       "types": "./dist/agent/channels/teams-supervisor.d.ts",
       "default": "./dist/agent/channels/teams-supervisor.js"
     },
+    "./agent/channels/teams-test-run.js": {
+      "types": "./dist/agent/channels/teams-test-run.d.ts",
+      "default": "./dist/agent/channels/teams-test-run.js"
+    },
     "./agent/channels/teams.js": {
       "types": "./dist/agent/channels/teams.d.ts",
       "default": "./dist/agent/channels/teams.js"
