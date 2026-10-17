@@ -562,6 +562,25 @@ const tokRef = "oe-oauth:tok:notion:user:U1";
   }
 
   {
+    const calls: RevokeCall[] = [];
+    const v = memVault();
+    const declared = { now: new Map<string, OeOauthProviderConfig>([["linear", { mode: "discovery-dcr-pkce", ref: "linear", resource: RESOURCE }]]) };
+    const { purge } = makeOeOauth(() => declared.now, { vault: v, fetch: purgeFetch({ revocation: true }, calls), redirectUri: () => REDIRECT });
+    const vaultOnly = makeOeOauthTokenVault(() => declared.now, { vault: v, fetch: purgeFetch({ revocation: true }, calls), redirectUri: () => REDIRECT });
+    await vaultOnly.startAuthorization("linear", { type: "user", id: "U1" }, {});
+    const LS = "ls:default/SET-9";
+    await seedTok(v, `oe-oauth:tok:linear:user:${LS}`, { accessToken: "A9", refreshToken: "R9", obtainedAt: 0 });
+    await seedTok(v, "oe-oauth:tok:linear:user:ls:default/SET-10", { accessToken: "A10", refreshToken: "R10", obtainedAt: 0 });
+    await seedTok(v, `oe-oauth:tok:linear:user:X:user:${LS}`, { accessToken: "AX", obtainedAt: 0 });
+    declared.now = new Map();
+    ok((await purge.purgeSubject(LS)) === 1, "purge hook (nothing declared): the subject's token for an undeclared connection is purged");
+    ok((await v.read(`oe-oauth:tok:linear:user:${LS}`)) === null, "🔴 purge hook (nothing declared): the ciphertext row is gone");
+    ok(calls.length === 1 && calls[0].token === "R9", "purge hook (nothing declared): the stored DCR client still revokes the refresh token at the provider");
+    ok((await v.read("oe-oauth:tok:linear:user:ls:default/SET-10")) !== null, "purge hook (nothing declared): ANOTHER subject's token stays");
+    ok((await v.read(`oe-oauth:tok:linear:user:X:user:${LS}`)) !== null, "🔴 purge hook (nothing declared): a ref that only ENDS with the subject key is not this subject's");
+  }
+
+  {
     const v = memVault();
     const vault = makeOeOauthTokenVault(providers, { vault: v, fetch: purgeFetch({ revocation: false }, []) });
     await seedTok(v, tokRef, { accessToken: "AT-live", refreshToken: "RT-live", obtainedAt: 0 });

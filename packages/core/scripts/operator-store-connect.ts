@@ -104,6 +104,29 @@ export async function connectOperatorMemory(): Promise<{ readonly providers: rea
   return { providers: [], label: `the ${id} backing, which keeps its files in your own workspace` };
 }
 
+export const OPERATOR_BOX_BACKENDS = ["vercel", "docker"] as const;
+export type OperatorBoxBackend = (typeof OPERATOR_BOX_BACKENDS)[number];
+
+export interface OperatorHoldersTarget {
+  readonly purgeHooks: readonly string[];
+  readonly boxBackend: OperatorBoxBackend | undefined;
+}
+
+export async function connectOperatorHolders(boxBackend: OperatorBoxBackend | undefined): Promise<OperatorHoldersTarget> {
+  const pkg = "@open-everywhere/adapters/agent/operator-holders.js";
+  type Mod = { registerOperatorHolders(opts: { boxBackend?: OperatorBoxBackend }): OperatorHoldersTarget };
+  let mod: Mod;
+  try {
+    mod = (await import(pkg)) as Mod;
+  } catch (err) {
+    throw new Error(
+      `cannot load the credential-purge hooks and the box backend: @open-everywhere/adapters is not installed where this runs (${String(err instanceof Error ? err.message : err)}). ` +
+        "Run `oe erase` from the app's root, after `npm install`.",
+    );
+  }
+  return mod.registerOperatorHolders(boxBackend === undefined ? {} : { boxBackend });
+}
+
 export function resetOperatorStoreConnection(): void {
   connected = null;
   requireArmedOperationalFloor(false);

@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { appendAudit } from "../audit/audit.js";
+import { getOperationalStore } from "../operational/provider.js";
 import { appendUsageEvent } from "../spend/usage-events.js";
 import { recordSpend } from "../spend/store.js";
 import { periodOf } from "../spend/spend.js";
@@ -490,8 +491,11 @@ export async function grantAct(org: string, person: string, host: string, minute
 
 export async function forgetBrowser(org: string, person: string, deps: LifecycleDeps = {}, by?: string): Promise<{ readonly existed: boolean }> {
   const found = await getPersonalBrowserState(org, person);
-  await closeBrowser(org, person, "forget", deps, by);
   const backend = deps.backend ?? registeredLongLivedBoxBackend();
+  if (backend === undefined && (found !== undefined || (await getOperationalStore().getPersonalBrowser(org, person)) != null)) {
+    throw new Error("no box backend is registered in this process, so the saved browser profile cannot be deleted — the record stays; run this where the box backend is reachable");
+  }
+  await closeBrowser(org, person, "forget", deps, by);
   const persistKey = found?.state.persistKey ?? persistKeyFor(org, person);
   try {
     await backend?.forget?.(persistKey);

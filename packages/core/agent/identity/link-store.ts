@@ -39,7 +39,7 @@ function evidenceLabel(e: LinkEvidence): string {
 }
 
 export type LinkWriteResult =
-  | { readonly ok: true; readonly linkSetId: string; readonly note: string; readonly holdings?: HoldingsEnded }
+  | { readonly ok: true; readonly linkSetId: string; readonly note: string; readonly holdings?: HoldingsEnded; readonly purge?: CredentialPurgeOutcome; readonly tombstoned?: number }
   | { readonly ok: false; readonly reason: string };
 
 export interface LinkedAccount {
@@ -517,6 +517,8 @@ export async function revokeLinkSet(input: { readonly org: string; readonly link
     ok: true,
     linkSetId: input.linkSetId,
     holdings,
+    purge,
+    tombstoned,
     note:
       `revoked link-set ${input.linkSetId} (${tombstoned} account(s) tombstoned, ${purge.purged} credential(s) purged, ` +
       `${holdings.grantsRevoked} lent grant(s) revoked, ${holdings.browsersForgotten} personal browser(s) forgotten)` +

@@ -592,6 +592,27 @@ export function makeOeOauthTokenVault(source: OeOauthProviderSource, deps: OeOau
           lastError = e;
         }
       }
+      const tokPrefix = "oe-oauth:tok:";
+      const tokSuffix = `:${subjectKey(subject)}`;
+      let undeclaredAttempts = 0;
+      try {
+        for (const ref of await vault.listRefs(tokPrefix)) {
+          if (!ref.endsWith(tokSuffix)) continue;
+          const providerRef = ref.slice(tokPrefix.length, ref.length - tokSuffix.length);
+          if (providerRef.length === 0 || providerRef.includes(":") || all.has(providerRef)) continue;
+          undeclaredAttempts++;
+          try {
+            if (await forget(providerRef, subject)) purged++;
+          } catch (e) {
+            failures++;
+            lastError = e;
+          }
+        }
+      } catch (e) {
+        failures++;
+        lastError = e;
+        undeclaredAttempts++;
+      }
       const seenIdp = new Set<string>();
       for (const cfg of all.values()) {
         if (!isXaa(cfg) || seenIdp.has(idpKey(cfg))) continue;
@@ -617,7 +638,7 @@ export function makeOeOauthTokenVault(source: OeOauthProviderSource, deps: OeOau
         lastError = e;
         orphanFailed = true;
       }
-      if (failures > 0 && purged === 0 && failures === all.size + seenIdp.size + (orphanFailed ? 1 : 0)) throw lastError;
+      if (failures > 0 && purged === 0 && failures === all.size + undeclaredAttempts + seenIdp.size + (orphanFailed ? 1 : 0)) throw lastError;
       return purged;
     },
 

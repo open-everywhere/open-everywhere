@@ -1882,6 +1882,10 @@
       "types": "./dist/agent/email/transport.d.ts",
       "default": "./dist/agent/email/transport.js"
     },
+    "./agent/exit/authority.js": {
+      "types": "./dist/agent/exit/authority.d.ts",
+      "default": "./dist/agent/exit/authority.js"
+    },
     "./agent/exit/catalogue.js": {
       "types": "./dist/agent/exit/catalogue.d.ts",
       "default": "./dist/agent/exit/catalogue.js"

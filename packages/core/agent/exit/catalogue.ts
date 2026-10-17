@@ -111,7 +111,7 @@ export const EXIT_TABLES: readonly ExitTableSpec[] = [
     holds: "which platform accounts belong to one link set",
     personColumns: ["native_id"],
     platformColumn: "platform",
-    keptOnErase: "`revoke_link_set` reads it to end the person's stored credentials, browser profile and grants — run that first, and the rows stay as its record",
+    keptOnErase: "when the person's account is confirmed on a link-set, `oe erase` revokes the set first and reads these rows to end their stored credentials, browser profile and grants; the tombstoned rows stay as the revoke's record, and they stop the accounts being linked again; a suggested row, or one whose set is gone, stays as the record of an unproven claim and grants nothing",
   },
   {
     table: "identity_link_challenges",
@@ -152,7 +152,7 @@ export const EXIT_TABLES: readonly ExitTableSpec[] = [
     orderBy: ["org_id", "id"],
     holds: "asks to use another person's connector account",
     personColumns: ["requester_principal_id", "owner_principal_id"],
-    keptOnErase: "a decided ask is the record its grant was minted from; `revoke_link_set` ends the person's live grants",
+    keptOnErase: "a decided ask is the record its grant was minted from; `oe erase` revokes the person's live grants first",
   },
   {
     table: "credential_grant",
@@ -160,7 +160,7 @@ export const EXIT_TABLES: readonly ExitTableSpec[] = [
     orderBy: ["org_id", "id"],
     holds: "grants to use another person's connector account — metadata, never a credential",
     personColumns: ["requester_principal_id", "owner_principal_id"],
-    keptOnErase: "a live grant stays usable until it is revoked — run `revoke_link_set` first; a spent row is what keeps a once-only grant single-use",
+    keptOnErase: "`oe erase` revokes every live grant the person lends first; a revoked or spent row is what keeps a once-only grant single-use",
   },
   {
     table: "dm_audience",
@@ -184,7 +184,7 @@ export const EXIT_TABLES: readonly ExitTableSpec[] = [
     orderBy: ["org_id", "principal_key"],
     holds: "a person's browser record",
     personColumns: ["principal_key"],
-    keptOnErase: "Forget (or `revoke_link_set`) reads it to delete the saved browser profile, which holds the person's logins — run that first",
+    keptOnErase: "`oe erase` forgets the browser first, which deletes this row with the saved profile; the row stays only when the forget failed, because it is the only record of where the profile is",
   },
   { table: "personal_watch", orgColumn: "org_id", orderBy: ["org_id", "principal_key"], holds: "a person's watch settings and ledger", personColumns: ["principal_key"] },
   { table: "personal_cover", orgColumn: "org_id", orderBy: ["org_id", "principal_key"], holds: "a person's out-of-office cover", personColumns: ["principal_key"] },

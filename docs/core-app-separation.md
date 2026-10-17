@@ -66,6 +66,18 @@ through `packages/core/agent/scaffold/app-root.ts` (see [below](#scripts-that-re
 not by a relative climb. A product module under `packages/core/agent` that climbed into `agent/`
 would break the split just as badly and no suite would say so. Keep the rule by review there.
 
+**One run-time reach from core into adapters, pinned (OPE-2560).** `oe erase` must end a person's
+credentials and saved browser profile, and the purge hooks and the box backend that do it live in
+adapters. `packages/core/scripts/operator-store-connect.ts` (`connectOperatorHolders`) loads
+`@open-everywhere/adapters/agent/operator-holders.js` with a name-as-variable dynamic import, the
+recipe `neonClient` uses for the Postgres driver. It is not a dependency: core declares no adapters
+dependency, nothing under `packages/core/agent` reaches it, `scripts/` is never traced into a hosted
+function, and a missing package makes the command stop before it changes anything. Section 1 does not
+see a variable specifier, so it pins this one by its string instead: that file is the only core file
+with a quoted string literal that opens with `@open-everywhere/adapters/`, and it has exactly one. A second
+quoted literal that names the package fails the gate. A specifier assembled from parts, or a template
+literal, is not caught: review keeps those out.
+
 "Via the barrel only" means through `@open-everywhere/core/agent/adapter-api.js` and nothing else
 — see [The adapter model § Import the ports from one door](./extending/adapter-model.md#import-the-ports-from-one-door-the-adapter-api-barrel).
 

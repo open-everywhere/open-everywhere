@@ -1,8 +1,10 @@
+import { processRegistryMap } from "../lib/process-registry.js";
+
 export interface CredentialPurgeHook {
   purgeSubject(subjectId: string): Promise<number>;
 }
 
-const registeredHooks = new Map<string, CredentialPurgeHook>();
+const registeredHooks = processRegistryMap<CredentialPurgeHook>("credential-purge.v1");
 
 export function registerCredentialPurgeHook(name: string, hook: CredentialPurgeHook): void {
   registeredHooks.set(name, hook);

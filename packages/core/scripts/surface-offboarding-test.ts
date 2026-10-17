@@ -27,6 +27,23 @@ const { registerConfig } = await import("../agent/access/config.js");
 const { defineDomain } = await import("../agent/memory/domain.js");
 
 const { persistKeyFor } = await import("../agent/personal-browser/lifecycle.js");
+const { registerLongLivedBoxBackend } = await import("../agent/sandbox/long-lived-box.js");
+
+const forgottenProfiles: string[] = [];
+registerLongLivedBoxBackend({
+  backend: "docker",
+  metered: false,
+  maxMinutesCeiling: 60,
+  open: async () => {
+    throw new Error("no box opens in this test");
+  },
+  status: async () => undefined,
+  list: async () => [],
+  stop: async () => undefined,
+  forget: async (key: string) => {
+    forgottenProfiles.push(key);
+  },
+});
 
 type DeactivationReport = import("../agent/identity/offboarding.js").DeactivationReport;
 
@@ -163,6 +180,7 @@ async function lastRow(action: string, nativeId: string): Promise<Record<string,
   const held = await holdingsOf(OUR, "U0HAZEL");
   ok(held.grant === "revoked", `🔴 the credential grant the person lent is REVOKED (got ${held.grant})`);
   ok(!held.browser, "🔴 the person's personal browser row is forgotten");
+  ok(forgottenProfiles.includes(persistKeyFor(ORG, `slack/${OUR}/U0HAZEL`)), "🔴 and the saved profile is deleted on the box backend");
   ok(applied?.["grantsRevoked"] === 1 && applied?.["browsersForgotten"] === 1 && applied?.["holdingFailures"] === undefined, "…and the applied row counts both, with no failure");
   const revokedRows = await readAudit({ org: ORG, action: "identity.link.revoked", limit: 50 });
   ok(revokedRows.some((r) => (r.detail as { linkSetId?: string } | undefined)?.linkSetId === "ls-hazel"), "the lever's own identity.link.revoked row is written too");

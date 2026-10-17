@@ -27,4 +27,5 @@ test:default-adapters
 test:native-transcripts
 test:transcription-routes
 test:host-plane-union
+test:operator-holders
 test:host-plane-targets

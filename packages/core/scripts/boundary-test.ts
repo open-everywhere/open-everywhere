@@ -169,6 +169,14 @@ function firstStringPresent(text: string, strings: string[]): string | undefined
       );
     }
   }
+
+  const ADAPTERS_REACH_FILE = "packages/core/scripts/operator-store-connect.ts";
+  for (const f of files) {
+    const needle = new RegExp(`(?<!\\\\)["']${["@open-everywhere", "adapters"].join("\\/")}\\/`, "g");
+    const hits = (stripComments(readFileSync(f, "utf-8")).match(needle) ?? []).length;
+    if (rel(f) === ADAPTERS_REACH_FILE) ok(hits === 1, `the one pinned run-time reach into adapters stays one: ${rel(f)} names the package ${hits} time(s)`);
+    else ok(hits === 0, `core names @open-everywhere/adapters/ only in ${ADAPTERS_REACH_FILE}: ${rel(f)} names it ${hits} time(s)`);
+  }
 }
 
 {

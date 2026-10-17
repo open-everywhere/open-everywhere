@@ -176,6 +176,10 @@
       "types": "./dist/agent/oe-oauth/user-auth-flow.d.ts",
       "default": "./dist/agent/oe-oauth/user-auth-flow.js"
     },
+    "./agent/operator-holders.js": {
+      "types": "./dist/agent/operator-holders.d.ts",
+      "default": "./dist/agent/operator-holders.js"
+    },
     "./agent/postgres/neon.js": {
       "types": "./dist/agent/postgres/neon.d.ts",
       "default": "./dist/agent/postgres/neon.js"
@@ -217,6 +221,7 @@
     "test:neon-pool-error": "tsx scripts/neon-pool-error-test.ts",
     "test:agent-browser": "tsx scripts/agent-browser-test.ts",
     "test:oe-oauth": "tsx scripts/oe-oauth-test.ts",
+    "test:operator-holders": "tsx scripts/operator-holders-test.ts",
     "test:oe-oauth-static": "tsx scripts/oe-oauth-static-client-test.ts",
     "test:oe-oauth-xaa": "tsx scripts/oe-oauth-xaa-test.ts",
     "test:instrumentation": "tsx scripts/instrumentation-test.ts",

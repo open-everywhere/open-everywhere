@@ -7,6 +7,7 @@ import { EXIT_TABLES } from "./catalogue.js";
 import type { ExitRowFilter } from "./sql.js";
 import { deleteLocalRun } from "./workflow-world.js";
 import type { TranscriptStore } from "./transcript-store.js";
+import type { AuthorityEnded } from "./authority.js";
 
 export const EXIT_PERSON_ERASED_ACTION = "exit.person_erased";
 
@@ -50,6 +51,7 @@ export interface ErasePersonOptions {
   readonly memory?: readonly MemoryProvider[];
   readonly transcripts?: TranscriptStore;
   readonly actor: string;
+  readonly authority?: AuthorityEnded;
   readonly now?: Date;
 }
 
@@ -58,6 +60,7 @@ export interface ErasePersonReport {
   readonly rows: Readonly<Record<string, number>>;
   readonly refused: readonly string[];
   readonly kept: Readonly<Record<string, string>>;
+  readonly authority: AuthorityEnded | null;
   readonly dmRooms: readonly string[];
   readonly memoryTiers: number;
   readonly transcripts: {
@@ -158,6 +161,7 @@ export async function erasePerson(opts: ErasePersonOptions): Promise<ErasePerson
     rows,
     refused,
     kept: Object.fromEntries(EXIT_TABLES.filter((t) => t.keptOnErase !== undefined).map((t) => [t.table, t.keptOnErase!])),
+    authority: opts.authority ?? null,
     dmRooms,
     memoryTiers,
     transcripts: { store: opts.transcripts?.kind ?? "none", deleted, live, shared: shared.sort() },
@@ -179,6 +183,17 @@ export async function erasePerson(opts: ErasePersonOptions): Promise<ErasePerson
       transcriptsDeleted: deleted,
       transcriptsLive: live,
       transcriptsShared: shared.length,
+      authorityEnded: opts.authority !== undefined && opts.authority.started && opts.authority.failures.length === 0,
+      ...(opts.authority !== undefined
+        ? {
+            linkSet: opts.authority.linkSet,
+            accountsRevoked: opts.authority.accountsRevoked,
+            credentialsPurged: opts.authority.credentialsPurged,
+            grantsRevoked: opts.authority.grantsRevoked,
+            browsersForgotten: opts.authority.browsersForgotten,
+            authorityFailures: opts.authority.failures.length,
+          }
+        : {}),
     },
   });
   return report;

@@ -608,8 +608,9 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
   },
   {
     action: "exit.person_erased",
-    fields: ["personSha256", "rows", "dmRooms", "memoryTiers", "transcriptStore", "transcriptsDeleted", "transcriptsShared"],
-    proves: "an operator erased one person with `oe erase` — what was destroyed, by count, with the person named only by hash",
+    fields: ["personSha256", "rows", "dmRooms", "memoryTiers", "transcriptStore", "transcriptsDeleted", "transcriptsShared", "authorityEnded", "linkSet", "accountsRevoked", "credentialsPurged", "grantsRevoked", "browsersForgotten", "authorityFailures"],
+    proves:
+      "an operator erased one person with `oe erase` — what was destroyed, by count, with the person named only by hash, and what of the person's links, credentials and holdings ended first (OPE-2560)",
   },
   {
     action: "exit.transcript_deleted",

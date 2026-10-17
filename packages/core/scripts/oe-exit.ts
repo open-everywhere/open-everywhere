@@ -6,29 +6,43 @@ import { deleteTranscript } from "../agent/exit/transcript-delete.js";
 import { HOSTED_TRANSCRIPTS_NOTE, type TranscriptStore } from "../agent/exit/transcript-store.js";
 import { LOCAL_WORKFLOW_DATA_DIR } from "../agent/exit/workflow-world.js";
 import { deploymentOrg } from "../agent/identity/deployment-identity.js";
+import { endPersonAuthority, type AuthorityEnded } from "../agent/exit/authority.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
 import { SET_BY_CLI } from "../agent/credentials/operator-secrets.js";
-import { connectOperatorMemory, connectOperatorStore, declareOperatorOrg, loadRootOfTrustEnv } from "./operator-store-connect.js";
+import { registerLongLivedBoxBackend, type LongLivedBoxBackend } from "../agent/sandbox/long-lived-box.js";
+import {
+  OPERATOR_BOX_BACKENDS,
+  connectOperatorHolders,
+  connectOperatorMemory,
+  connectOperatorStore,
+  declareOperatorOrg,
+  loadRootOfTrustEnv,
+  type OperatorBoxBackend,
+} from "./operator-store-connect.js";
 
 export interface ExitCliIo {
   out(line: string): void;
   err(line: string): void;
   readonly cwd: string;
+  readonly boxBackend?: LongLivedBoxBackend;
 }
 
 const USAGE = [
   "usage:",
   "  oe export --out DIR                          export everything the org holds, in open formats",
-  "  oe erase --person KEY [--dm ROOM]… --yes     erase one person's data (KEY: platform/id or platform/workspace/id)",
+  "  oe erase --person KEY [--dm ROOM]… --yes     end one person's links, credentials and holdings, then erase their data",
+  "                                               (KEY: platform/id or platform/workspace/id)",
   "  oe transcript delete SESSION_ID              delete one session transcript (SESSION_ID starts with wrun_)",
   "",
   "  --org ORG               the org (default \"default\")",
   "  --root-env PATH         read DATABASE_URL from PATH (default ./.env.local)",
   "  --transcripts-dir DIR   eve's workflow data on the host that serves the agent (default ./.eve/.workflow-data when it exists)",
+  "  --box-backend KIND      erase: the deployment's box backend, vercel or docker, so the person's saved browser profile",
+  "                          can be deleted (none by default — a profile then stays, and the erase exits 1)",
   "  --json                  print the report as JSON",
 ].join("\n");
 
-const VALUE_FLAGS = ["--out", "--person", "--dm", "--org", "--root-env", "--transcripts-dir"];
+const VALUE_FLAGS = ["--out", "--person", "--dm", "--org", "--root-env", "--transcripts-dir", "--box-backend"];
 
 function flagValue(args: readonly string[], name: string): string | undefined {
   const i = args.indexOf(name);
@@ -71,6 +85,18 @@ function transcriptLine(store: TranscriptStore | undefined): string {
     return "transcripts: not reached — on Vercel they are in the hosted workflow store, which offers no export or delete; off Vercel, run on the host that serves the agent or pass --transcripts-dir";
   }
   return store.kind === "local" ? `transcripts: ${store.dataDir}` : `transcripts: ${HOSTED_TRANSCRIPTS_NOTE}`;
+}
+
+function authorityLine(a: AuthorityEnded): string {
+  const set =
+    a.linkSet === "revoked"
+      ? `link-set revoked (${a.accountsRevoked} account(s) tombstoned)`
+      : a.linkSet === "already-revoked"
+        ? "link-set was already revoked"
+        : a.linkSet === "suggested-only"
+          ? "link-set left alone (the account is only suggested onto it)"
+          : "no link-set";
+  return `${set}, ${a.credentialsPurged} stored credential(s) purged, ${a.grantsRevoked} lent grant(s) revoked, ${a.browsersForgotten} personal browser(s) forgotten`;
 }
 
 export async function runExitCommand(command: string, args: readonly string[], io: ExitCliIo): Promise<number> {
@@ -123,8 +149,21 @@ export async function runExitCommand(command: string, args: readonly string[], i
         io.err(`✗ oe erase: this deletes ${person}'s data and cannot be undone. Run \`oe export\` first if you need a copy, then add --yes.`);
         return 2;
       }
+      const box = flagValue(args, "--box-backend");
+      if (box !== undefined && !(OPERATOR_BOX_BACKENDS as readonly string[]).includes(box)) {
+        io.err(`✗ oe erase: --box-backend is ${OPERATOR_BOX_BACKENDS.join(" or ")}, not "${box}".`);
+        return 2;
+      }
       await connectOperatorStore();
+      const holders = await connectOperatorHolders(box as OperatorBoxBackend | undefined);
+      if (io.boxBackend !== undefined) registerLongLivedBoxBackend(io.boxBackend);
       const memory = await connectOperatorMemory();
+      const authority = await endPersonAuthority({ org: deploymentOrg(), person, actor: SET_BY_CLI });
+      if (!authority.started) {
+        if (json) io.out(JSON.stringify({ authority }, null, 2));
+        for (const failure of authority.failures) io.err(`✗ oe erase: ${failure}`);
+        return 1;
+      }
       const report = await erasePerson({
         store: getOperationalStore(),
         org: deploymentOrg(),
@@ -133,11 +172,14 @@ export async function runExitCommand(command: string, args: readonly string[], i
         memory: memory.providers,
         ...(transcripts ? { transcripts } : {}),
         actor: SET_BY_CLI,
+        authority,
       });
+      const boxNamed = holders.boxBackend !== undefined || io.boxBackend !== undefined;
       if (json) io.out(JSON.stringify(report, null, 2));
       else {
         const rows = Object.values(report.rows).reduce((n, v) => n + v, 0);
         io.out(`✓ erased ${person}: ${rows} rows in ${Object.keys(report.rows).length} tables, ${report.dmRooms.length} DM room(s), ${report.memoryTiers} DM memory tier(s)`);
+        io.out(`  Ended first: ${authorityLine(authority)}`);
         if (report.dmRooms.length === 0) io.out("  No DM room found. Pass --dm ROOM, or the DM tail, DM memory and DM transcripts stay.");
         io.out(`  ${transcriptLine(transcripts)} — ${report.transcripts.deleted} deleted, ${report.transcripts.live} still running (not touched)`);
         if (report.transcripts.shared.length > 0) {
@@ -146,12 +188,20 @@ export async function runExitCommand(command: string, args: readonly string[], i
         }
         io.out("  Kept: the audit log, the usage and tool-call ledgers (append-only), and spend counters. The audit row names the person by hash only.");
         io.out(`  Kept by design: ${Object.keys(report.kept).join(", ")} — docs/security/exit-and-your-data.md says why.`);
-        io.out("  Not ended: stored OAuth tokens, the saved browser profile and the grants this person lends. Run revoke_link_set first (offboarding), then this.");
         if (report.refused.length > 0) {
           io.err(`✗ this store role may not delete from ${report.refused.join(", ")}. Run \`oe erase\` again with the owner DATABASE_URL to finish.`);
         }
+        for (const failure of authority.failures) io.err(`✗ not ended: ${failure}`);
+        for (const notice of authority.notices ?? []) io.out(`  ! left alone: ${notice}`);
+        if (authority.failures.length > 0) {
+          io.err(
+            boxNamed
+              ? "  Fix the cause and run `oe erase` again. A holding named on another confirmed account is ended with `oe erase --person <that account>`."
+              : "  Name the deployment's box backend (--box-backend vercel|docker) if a browser profile is listed, and run `oe erase` again. A holding named on another confirmed account is ended with `oe erase --person <that account>`.",
+          );
+        }
       }
-      return report.refused.length > 0 ? 1 : 0;
+      return report.refused.length > 0 || authority.failures.length > 0 ? 1 : 0;
     }
 
     if (command === "transcript") {

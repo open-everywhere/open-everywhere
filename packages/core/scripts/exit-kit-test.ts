@@ -411,9 +411,167 @@ for (const make of [sqliteEngine, pgliteEngine]) {
   ok(lines.some((l) => l.includes("transcripts: not reached")), "cli: with no world on this host, the export says the transcripts were not reached");
   ok((await runExitCommand("erase", ["--person", "slack/T9/U9", "--yes"], io)) === 0, `cli: erase with --yes runs (${lines.slice(-2).join(" | ")})`);
   ok(Number((db.prepare("SELECT COUNT(*) AS n FROM question_ledger WHERE org_id = 'default'").get() as { n: number }).n) === 0, "cli: the erase removed the row");
+  ok(lines.some((l) => l.includes("Ended first: no link-set, 0 stored credential(s) purged")), `cli: the erase report says what ended first (${lines.slice(-6).join(" | ")})`);
+  ok((await runExitCommand("erase", ["--person", "slack/T9/U9", "--box-backend", "lambda", "--yes"], io)) === 2, "cli: an unknown --box-backend is refused");
   ok((await runExitCommand("transcript", ["delete", "wrun_ABC"], io)) === 1, "cli: a transcript delete with no world directory is refused");
   ok((await runExitCommand("transcript", ["delete", "wrun_ABC", "--transcripts-dir", "nowhere"], io)) === 0, "cli: a named directory without the run deletes nothing and says so");
   db.close();
+}
+
+{
+  const { randomBytes } = await import("node:crypto");
+  process.env.OE_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
+  const { runExitCommand } = await import("./oe-exit.js");
+  const { ensureLinkSet, suggestLinkedId, confirmLinkedId } = await import("../agent/identity/link-store.js");
+  const { getOperationalStore } = await import("../agent/operational/provider.js");
+  const { encryptedKvVault } = await import("../agent/credentials/kv-vault.js");
+  const { persistKeyFor } = await import("../agent/personal-browser/lifecycle.js");
+  const { resetLongLivedBoxBackendForTest } = await import("../agent/sandbox/long-lived-box.js");
+  const { readAudit } = await import("../agent/audit/audit.js");
+  const ORG = "default";
+  const store = getOperationalStore();
+  const vault = encryptedKvVault();
+  const cwd = join(SUITE_DIR, "cli-authority");
+  mkdirSync(cwd, { recursive: true });
+  const lines: string[] = [];
+  const forgotten: string[] = [];
+  const fakeBox = { backend: "docker", metered: false, maxMinutesCeiling: 60, open: async () => { throw new Error("no open in this test"); }, status: async () => undefined, list: async () => [], stop: async () => undefined, forget: async (key: string) => void forgotten.push(key) } as unknown as import("../agent/sandbox/long-lived-box.js").LongLivedBoxBackend;
+  const io = (box: boolean) => ({ out: (l: string) => lines.push(l), err: (l: string) => lines.push(l), cwd, ...(box ? { boxBackend: fakeBox } : {}) });
+  const token = JSON.stringify({ accessToken: "at", refreshToken: "rt", obtainedAt: 1 });
+
+  const seedHoldings = async (owner: string, slug: string): Promise<void> => {
+    const now = Date.now();
+    await store.addCredentialGrant(ORG, {
+      id: `grant-${slug}`, askId: `ask-${slug}`, requesterPrincipalId: "github/room", ownerPrincipalId: owner, ownerSlug: slug,
+      connector: "notion", verb: "read", resource: "page", mcpTool: "notion-fetch", frozenArgs: { id: "p" },
+      toolName: `grant__${slug}_notion__notion_fetch_page`, scopeKey: "oe-grant-room::eng", mode: "standing", tier: "read",
+      status: "active", purpose: "fixture", createdAt: new Date(now).toISOString(), expiresAt: new Date(now + 86_400_000).toISOString(),
+    });
+    const [platform, nativeId] = owner.split("/") as [string, string];
+    const state = {
+      v: 1, org: ORG, person: owner, principalId: nativeId, platform, dm: { channelId: "D1" },
+      partition: { org: ORG, platform, workspace: "-", surface: "D1", workspaceKey: `${platform}/-`, surfaceKey: `${platform}/-/D1` },
+      persistKey: persistKeyFor(ORG, owner), lock: { holder: "agent", since: now }, acts: {}, links: {}, sessions: {},
+    };
+    await store.casPersonalBrowser(ORG, owner, JSON.stringify(state), new Date(now).toISOString(), null);
+  };
+
+  await ensureLinkSet({ org: ORG, linkSetId: "S7", handle: "S7" });
+  for (const account of [{ platform: "github", tenant: "", nativeId: "77" }, { platform: "linear", tenant: "", nativeId: "L77" }]) {
+    ok((await suggestLinkedId({ org: ORG, linkSetId: "S7", account, evidence: { kind: "config-import", note: "test" } })).ok, `fixture: ${account.nativeId} suggested`);
+    ok((await confirmLinkedId({ org: ORG, account, evidence: { kind: "config-import", note: "test" } })).ok, `fixture: ${account.nativeId} confirmed`);
+  }
+  await vault.write("oe-oauth:tok:notion:user:ls:default/S7", token);
+  await vault.write("aws-sso:tok:p:default/linear/L77", token);
+  await vault.write("oe-oauth:tok:notion:user:ls:default/S8", token);
+  await seedHoldings("github/77", "a77");
+
+  ok((await runExitCommand("erase", ["--person", "github/77", "--yes"], io(true))) === 0, `cli authority: erase with a box backend exits 0 (${lines.slice(-8).join(" | ")})`);
+  ok((await store.getLinkSet(ORG, "S7"))?.status === "revoked", "cli authority: the person's link-set is revoked");
+  ok((await store.listLinkedIds(ORG, "S7")).every((r) => r.status === "revoked"), "cli authority: every account on the set is tombstoned, and the rows stay");
+  ok((await vault.read("oe-oauth:tok:notion:user:ls:default/S7")) === null, "cli authority: the OAuth token on the set's shared subject is purged, through the real oe-oauth hook");
+  ok((await vault.read("aws-sso:tok:p:default/linear/L77")) === null, "cli authority: the Identity Center token on the other account's own subject is purged, through the real aws-sso hook");
+  ok((await vault.read("oe-oauth:tok:notion:user:ls:default/S8")) !== null, "cli authority: another set's token stays");
+  ok((await store.getCredentialGrant(ORG, "grant-a77"))?.status === "revoked", "cli authority: the grant the person lends is revoked");
+  ok((await store.getPersonalBrowser(ORG, "github/77")) == null, "cli authority: the personal browser record is gone");
+  ok(forgotten.includes(persistKeyFor(ORG, "github/77")), "cli authority: the saved browser profile was deleted on the box backend");
+  ok(lines.some((l) => l.includes("Ended first: link-set revoked (2 account(s) tombstoned), 2 stored credential(s) purged, 1 lent grant(s) revoked, 1 personal browser(s) forgotten")), "cli authority: the report counts what ended");
+  const audit = await readAudit({ org: ORG, limit: 500 });
+  ok(audit.some((r) => r.action === "identity.link.revoked" && r.detail?.["linkSetId"] === "S7" && r.detail?.["credentialsPurged"] === 2), "cli authority: the revoke wrote the in-agent receipt (identity.link.revoked)");
+  ok(audit.some((r) => r.action === "browser.personal.forget"), "cli authority: the forget wrote its in-agent receipt");
+  const erasedRow = audit.find((r) => r.action === EXIT_PERSON_ERASED_ACTION && r.detail?.["linkSet"] === "revoked");
+  ok(erasedRow?.detail?.["authorityEnded"] === true && erasedRow.detail?.["credentialsPurged"] === 2 && erasedRow.detail?.["authorityFailures"] === 0, `cli authority: the erasure row records what ended first (${JSON.stringify(erasedRow?.detail)})`);
+
+  resetLongLivedBoxBackendForTest();
+  const db = new DatabaseSync(pinnedSuiteStorePath());
+  const ledger = (who: string) => Number((db.prepare("SELECT COUNT(*) AS n FROM question_ledger WHERE org_id = 'default' AND principal_id = ?").get(who) as { n: number }).n);
+  db.prepare("INSERT INTO question_ledger (org_id, ts, surface_key, surface_mode, principal_id, fingerprint, words) VALUES ('default', '2026-10-01T00:00:00.000Z', 'github/-/C9', 'channel', '88', 'f', 'w')").run();
+  await vault.write("oe-oauth:tok:linear:user:p:default/github/88", token);
+  await seedHoldings("github/88", "b88");
+  const before = lines.length;
+  ok((await runExitCommand("erase", ["--person", "github/88", "--yes"], io(false))) === 1, `cli authority: with no box backend and a browser to forget, the erase exits 1 (${lines.slice(before).join(" | ")})`);
+  ok(lines.slice(before).some((l) => l.includes("github/88 has a saved browser profile") && l.includes("--box-backend")), "cli authority: the refusal names the account and the flag that finishes it");
+  ok((await store.getPersonalBrowser(ORG, "github/88")) != null, "cli authority: 🔴 with no box backend the browser record STAYS, the only pointer to the profile");
+  ok((await vault.read("oe-oauth:tok:linear:user:p:default/github/88")) !== null, "cli authority: the refused run purged nothing");
+  ok((await store.getCredentialGrant(ORG, "grant-b88"))?.status === "active", "cli authority: the refused run revoked no grant");
+  ok(ledger("88") === 1, "cli authority: the refused run erased no row");
+  ok((await runExitCommand("erase", ["--person", "github/88", "--yes"], io(true))) === 0, "cli authority: a re-run with a box backend runs");
+  ok((await store.getPersonalBrowser(ORG, "github/88")) == null && forgotten.includes(persistKeyFor(ORG, "github/88")), "cli authority: the re-run forgot the browser");
+  ok((await vault.read("oe-oauth:tok:linear:user:p:default/github/88")) === null, "cli authority: the person's own token is purged although no connection declares it");
+  ok((await store.getCredentialGrant(ORG, "grant-b88"))?.status === "revoked" && ledger("88") === 0, "cli authority: the re-run revoked the grant and erased the row");
+
+  resetLongLivedBoxBackendForTest();
+  await ensureLinkSet({ org: ORG, linkSetId: "S9", handle: "S9" });
+  for (const account of [{ platform: "github", tenant: "", nativeId: "99" }, { platform: "linear", tenant: "", nativeId: "L99" }]) {
+    ok((await suggestLinkedId({ org: ORG, linkSetId: "S9", account, evidence: { kind: "config-import", note: "test" } })).ok, `fixture: ${account.nativeId} suggested`);
+    ok((await confirmLinkedId({ org: ORG, account, evidence: { kind: "config-import", note: "test" } })).ok, `fixture: ${account.nativeId} confirmed`);
+  }
+  await seedHoldings("linear/L99", "cl99");
+  const beforeC = lines.length;
+  ok((await runExitCommand("erase", ["--person", "github/99", "--yes"], io(false))) === 1, "cli authority: two browsers on the set and no backend — the erase exits 1");
+  ok((await store.getLinkSet(ORG, "S9"))?.status === "active", "cli authority: 🔴 the set is NOT revoked, so a re-run can still reach every account's browser");
+  ok((await store.getPersonalBrowser(ORG, "linear/L99")) != null, "cli authority: the other account's browser record stays");
+  ok(lines.slice(beforeC).some((l) => l.includes("linear/L99 has a saved browser profile")), "cli authority: the refusal names the OTHER account");
+  ok((await runExitCommand("erase", ["--person", "github/99", "--yes"], io(true))) === 0, "cli authority: the re-run with a backend runs");
+  ok((await store.getLinkSet(ORG, "S9"))?.status === "revoked", "cli authority: the re-run revoked the set");
+  ok(forgotten.includes(persistKeyFor(ORG, "linear/L99")) && (await store.getPersonalBrowser(ORG, "linear/L99")) == null, "cli authority: the OTHER account's browser is forgotten too");
+
+  await ensureLinkSet({ org: ORG, linkSetId: "S5", handle: "S5" });
+  const d = { platform: "github", tenant: "", nativeId: "55" };
+  ok((await suggestLinkedId({ org: ORG, linkSetId: "S5", account: d, evidence: { kind: "config-import", note: "test" } })).ok, "fixture: 55 suggested");
+  ok((await confirmLinkedId({ org: ORG, account: d, evidence: { kind: "config-import", note: "test" } })).ok, "fixture: 55 confirmed");
+  db.prepare("DELETE FROM identity_link_sets WHERE org_id = 'default' AND id = 'S5'").run();
+  await vault.write("oe-oauth:tok:notion:user:p:default/github/55", token);
+  const beforeD = lines.length;
+  ok((await runExitCommand("erase", ["--person", "github/55", "--yes"], io(true))) === 0, `cli authority: a row whose set is gone does not fail the erase (${lines.slice(beforeD).join(" | ")})`);
+  ok((await vault.read("oe-oauth:tok:notion:user:p:default/github/55")) === null, "cli authority: the account's own token is purged when its set is gone");
+  ok(lines.slice(beforeD).some((l) => l.includes("Ended first: no link-set, 1 stored credential(s) purged")), "cli authority: the report says no link-set");
+  await ensureLinkSet({ org: ORG, linkSetId: "S6", handle: "S6" });
+  for (const account of [{ platform: "github", tenant: "", nativeId: "61" }, { platform: "linear", tenant: "", nativeId: "L61" }]) {
+    ok((await suggestLinkedId({ org: ORG, linkSetId: "S6", account, evidence: { kind: "config-import", note: "test" } })).ok, `fixture: ${account.nativeId} suggested`);
+    ok((await confirmLinkedId({ org: ORG, account, evidence: { kind: "config-import", note: "test" } })).ok, `fixture: ${account.nativeId} confirmed`);
+  }
+  await seedHoldings("linear/L61", "fl61");
+  const flaky = { ...fakeBox, forget: async () => { throw new Error("backend timeout"); } } as typeof fakeBox;
+  ok((await runExitCommand("erase", ["--person", "github/61", "--yes"], { ...io(false), boxBackend: flaky })) === 1, "cli authority: a failed forget on the other account exits 1");
+  ok((await store.getLinkSet(ORG, "S6"))?.status === "revoked", "fixture: the set was revoked");
+  const beforeF = lines.length;
+  ok((await runExitCommand("erase", ["--person", "github/61", "--yes"], io(true))) === 1, "cli authority: 🔴 a re-run for the named person stays red while the other account still holds its browser");
+  ok(lines.slice(beforeF).some((l) => l.includes("linear/L61, a confirmed account on link-set S6, still holds a saved browser profile") && l.includes("oe erase --person linear/L61")), `cli authority: the re-run names the other account and the command that ends it (${lines.slice(beforeF).join(" | ")})`);
+  const residueRow = (await readAudit({ org: ORG, limit: 500 })).filter((r) => r.action === EXIT_PERSON_ERASED_ACTION && r.detail?.["linkSet"] === "already-revoked").pop();
+  ok(residueRow?.detail?.["authorityEnded"] === false, "cli authority: the re-run's row does not read ended");
+  ok((await runExitCommand("erase", ["--person", "linear/L61", "--yes"], io(true))) === 0, "cli authority: the named command ends the other account's holdings");
+  ok((await store.getPersonalBrowser(ORG, "linear/L61")) == null && (await store.getCredentialGrant(ORG, "grant-fl61"))?.status === "revoked", "cli authority: the other account's browser and grant are gone");
+  ok((await runExitCommand("erase", ["--person", "github/61", "--yes"], io(true))) === 0, "cli authority: with nothing left, the named person's re-run is green");
+
+  await ensureLinkSet({ org: ORG, linkSetId: "S4", handle: "S4" });
+  const g1 = { platform: "github", tenant: "", nativeId: "41" };
+  ok((await suggestLinkedId({ org: ORG, linkSetId: "S4", account: g1, evidence: { kind: "config-import", note: "test" } })).ok, "fixture: 41 suggested");
+  ok((await confirmLinkedId({ org: ORG, account: g1, evidence: { kind: "config-import", note: "test" } })).ok, "fixture: 41 confirmed");
+  ok((await suggestLinkedId({ org: ORG, linkSetId: "S4", account: { platform: "linear", tenant: "", nativeId: "L41" }, evidence: { kind: "config-import", note: "test" } })).ok, "fixture: L41 only suggested");
+  await seedHoldings("linear/L41", "gl41");
+  ok((await runExitCommand("erase", ["--person", "github/41", "--yes"], io(true))) === 0, "cli authority: the revoke with a suggested account on the set exits 0");
+  ok((await store.getPersonalBrowser(ORG, "linear/L41")) != null && !forgotten.includes(persistKeyFor(ORG, "linear/L41")), "cli authority: the suggested account's browser is untouched by the revoke");
+  const beforeG = lines.length;
+  ok((await runExitCommand("erase", ["--person", "github/41", "--yes"], io(true))) === 0, `cli authority: 🔴 a re-run does NOT turn red on a never-confirmed account (${lines.slice(beforeG).join(" | ")})`);
+  ok(lines.slice(beforeG).some((l) => l.includes("left alone: linear/L41 was only suggested onto link-set S4") && l.includes("established it is the same person")), "cli authority: the re-run lists the suggested account as left alone, with the caveat");
+  ok((await store.getPersonalBrowser(ORG, "linear/L41")) != null, "cli authority: the suggested account's browser is still untouched");
+
+  resetLongLivedBoxBackendForTest();
+  await store.casPersonalBrowser(ORG, "github/44", "{ not json", new Date().toISOString(), null);
+  const { forgetBrowser } = await import("../agent/personal-browser/lifecycle.js");
+  let refusedForget = false;
+  await forgetBrowser(ORG, "github/44").catch(() => (refusedForget = true));
+  ok(refusedForget && (await store.getPersonalBrowser(ORG, "github/44")) != null, "forget: 🔴 with no backend, an unparseable row is refused and kept");
+
+  const { registerCredentialPurgeHook, resetCredentialPurgeHook } = await import("../agent/credentials/purge.js");
+  registerCredentialPurgeHook("broken", { purgeSubject: async () => { throw new Error("vault unreachable"); } });
+  ok((await runExitCommand("erase", ["--person", "github/66", "--yes"], io(true))) === 1, "cli authority: a failed purge exits 1");
+  const failedRow = (await readAudit({ org: ORG, limit: 500 })).find((r) => r.action === EXIT_PERSON_ERASED_ACTION && r.detail?.["linkSet"] === "none" && Number(r.detail?.["authorityFailures"]) > 0);
+  ok(failedRow?.detail?.["authorityEnded"] === false, `cli authority: 🔴 a run with a failed lever records authorityEnded: false (${JSON.stringify(failedRow?.detail)})`);
+  resetCredentialPurgeHook();
+  db.close();
+  console.log("  ✓ cli: oe erase ends the person's links, credentials and holdings first");
 }
 
 rmSync(join(SUITE_DIR, "export-sqlite"), { recursive: true, force: true });
