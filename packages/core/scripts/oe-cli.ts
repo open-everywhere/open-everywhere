@@ -52,6 +52,11 @@ if (subcommand === "wrap-untrusted") {
   process.exit(
     await runEnvCommand(argv.slice(1), { out: (l) => console.log(l), err: (l) => console.error(l), readValue: readValueFromTerminalOrStdin }),
   );
+} else if (subcommand === "sovereignty") {
+  const { runSovereigntyCommand } = await import("./oe-sovereignty.js");
+  await exitAfterFlush(
+    await runSovereigntyCommand(argv.slice(1), { out: (t) => process.stdout.write(t), err: (l) => console.error(l) }, process.cwd(), { ...process.env }),
+  );
 } else if (subcommand === "upgrade") {
   const { runUpgradeCommand, realUpgradeIo } = await import("./oe-upgrade.js");
   await exitAfterFlush(await runUpgradeCommand(argv.slice(1), realUpgradeIo(), process.cwd()));
@@ -67,7 +72,7 @@ if (subcommand === "wrap-untrusted") {
 } else if (subcommand === "build" || subcommand.startsWith("--")) {
   await runBuild(subcommand === "build" ? argv.slice(1) : argv);
 } else {
-  console.error(`oe: unknown subcommand "${subcommand}". Known: build, env, erase, export, overlays, upgrade, secret, transcript, wrap-untrusted.`);
+  console.error(`oe: unknown subcommand "${subcommand}". Known: build, env, erase, export, overlays, upgrade, secret, sovereignty, transcript, wrap-untrusted.`);
   process.exit(2);
 }
 

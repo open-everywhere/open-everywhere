@@ -46,6 +46,7 @@ export const OPS_TOOL_NAMES = [
   "secret_set",
   "secret_list",
   "secret_rm",
+  "sovereignty",
 ] as const;
 
 function projectDir(): string {
@@ -690,6 +691,33 @@ export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
         envFallbackPresent,
         ...(notes.length > 0 ? { note: notes.join(" ") } : {}),
       });
+    },
+  );
+
+  server.registerTool(
+    "sovereignty",
+    {
+      title: "Sovereignty report",
+      description:
+        "For each piece of this deployment's data (memory, transcripts, tool-call logs, run state, audit, credentials, config, gateway, " +
+        "model route, transcription, chat surface, runtime logs, telemetry, other outbound calls): where it lives, which region, which company could be " +
+        "compelled to hand it over, and the config that decides it. Read from the app's own settings, roster and env; it probes nothing. " +
+        "Read-only. The same map as `npx oe sovereignty`.",
+      inputSchema: {
+        host: z
+          .enum(["vercel", "docker"])
+          .optional()
+          .describe("where the deployment runs. Omit it and the report reads VERCEL=1 or a linked .vercel/project.json, else says unknown."),
+        envPath: z.string().optional(),
+      },
+    },
+    async (a) => {
+      const { gatherSovereigntyInput, registerAppSettings } = await import("./sovereignty-facts.js");
+      const { sovereigntyReport } = await import("./sovereignty.js");
+      const root = projectDir();
+      const settingsProblem = await registerAppSettings(root);
+      if (settingsProblem !== undefined) return { isError: true, ...json({ ok: false, note: settingsProblem }) };
+      return json({ ok: true, ...sovereigntyReport(await gatherSovereigntyInput(root, mergedEnv(a.envPath), a.host)) });
     },
   );
 

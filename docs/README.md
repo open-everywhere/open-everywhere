@@ -62,6 +62,8 @@ model, or jump straight to a section. New here? Start with
 
 - [Security model](./security/security-model.md) — the threat model and fail-closed posture. Start here to evaluate.
 - [Compliance by construction](./security/compliance-by-construction.md) — the controls that hold because of how the code is built, each with the file that enforces it and the gate that proves it; and, separately, what stays yours to configure.
+- [Sovereignty: where your data lives](./security/sovereignty.md) — for each piece of data, where it lives, which region, and which company could be compelled to hand it over; `npx oe sovereignty` prints it for your deployment.
+- [OWASP Top 10 for Agentic Applications](./security/owasp-agentic-top-10.md) — each `ASI` risk, the control that answers it, the file and gate behind the control, and the gap.
 - [Credentials & the two planes](./security/credentials-and-planes.md) — egress firewall vs connector plane.
 - [The control plane](./security/control-plane.md) — runtime admin via MCP; the override doctrine.
 - [What revoke actually reaches](./security/revocation-latency.md) — per-plane revocation latency, and the lever that forces the earliest one.

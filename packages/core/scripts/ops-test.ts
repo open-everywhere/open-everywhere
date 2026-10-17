@@ -875,6 +875,7 @@ const ok = (label: string, cond: boolean) => {
     secret_set: { names: ["OPS_TEST_2396_ABSENT"] },
     secret_list: {},
     secret_rm: { name: "OPS_TEST_2396" },
+    sovereignty: {},
   };
   ok("the stale-core arms cover every tool", JSON.stringify(Object.keys(minimalArgs).sort()) === JSON.stringify([...OPS_TOOL_NAMES].sort()));
   setInstalled(CORE_PACKAGE_VERSION);

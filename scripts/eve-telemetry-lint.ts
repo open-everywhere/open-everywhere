@@ -3,6 +3,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { eveCommands } from "../packages/core/agent/ops/eve-scripts.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SWITCH = "EVE_TELEMETRY_DISABLED=1";
@@ -18,28 +19,6 @@ function ok(cond: boolean, label: string): void {
     process.exit(1);
   }
   passed++;
-}
-
-const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
-
-function eveCommands(script: string): { readonly prefix: readonly string[]; readonly command: string }[] {
-  const found: { prefix: string[]; command: string }[] = [];
-  for (const part of script.split(/&&|\|\||;/)) {
-    const words = part.trim().split(/\s+/).filter(Boolean);
-    const prefix: string[] = [];
-    for (;;) {
-      const word = words[0];
-      if (word === undefined) break;
-      if (ASSIGNMENT.test(word)) prefix.push(words.shift()!);
-      else if (word === "env" || word === "cross-env" || word === "npx" || word === "node") words.shift();
-      else if (word === "npm" && words[1] === "exec") words.splice(0, 2);
-      else if (word.startsWith("-")) words.shift();
-      else break;
-    }
-    const command = words[0];
-    if (command !== undefined && (/^eve(@\S+)?$/.test(command) || /(^|\/)eve\/bin\/eve\.js$/.test(command))) found.push({ prefix, command: part.trim() });
-  }
-  return found;
 }
 
 function scriptsMissingSwitch(scripts: Readonly<Record<string, string>>): string[] {
@@ -97,7 +76,7 @@ ok(
   scriptsMissingSwitch({ build: "NODE_OPTIONS=--max-old-space-size=6144 eve build" }).length === 1,
   "tier 1: an env prefix without the switch is refused (negative control)",
 );
-for (const script of ["npx eve start", "npx eve@0.71.0 dev", "npx -p eve@0.71.0 eve dev","npx -y eve info", "npx --yes eve info", "npm exec eve -- info", "npm exec -- eve info", "env X=1 eve dev", "cross-env X=1 eve dev", "node node_modules/eve/bin/eve.js build", "./node_modules/eve/bin/eve.js build"]) {
+for (const script of ["npx eve start", "npx eve@0.71.0 dev", "npx -p eve@0.71.0 eve dev","npx -y eve info", "npx --yes eve info", "npm exec eve -- info", "npm exec -- eve info", "env X=1 eve dev", "cross-env X=1 eve dev", "node node_modules/eve/bin/eve.js build", "./node_modules/eve/bin/eve.js build", "dotenv -e .env.local -- eve dev", "dotenv -e .env.local eve dev", "npx -p foo eve dev", "node -r dotenv/config node_modules/eve/bin/eve.js dev", "env -u X eve dev", "dotenv --weird-flag value eve dev", "npx -c 'eve dev'", "dotenv -e .env -- sh -c \"eve dev\"", "concurrently \"eve dev\" \"tsx watch w.ts\"", "pnpm exec eve dev", "bunx eve dev", "nodemon --exec \"eve dev\""]) {
   ok(scriptsMissingSwitch({ x: script }).length === 1, `tier 1: \`${script}\` without the switch is refused (negative control)`);
 }
 ok(
@@ -105,7 +84,7 @@ ok(
   "tier 1: the switch on the first command of a chain does not cover the second (negative control)",
 );
 ok(
-  scriptsMissingSwitch({ dev: `${SWITCH} eve dev`, build: `NODE_OPTIONS=x ${SWITCH} eve build`, a: `env ${SWITCH} npx -y eve info`, b: `cross-env ${SWITCH} eve dev` }).length === 0,
+  scriptsMissingSwitch({ dev: `${SWITCH} eve dev`, build: `NODE_OPTIONS=x ${SWITCH} eve build`, a: `env ${SWITCH} npx -y eve info`, b: `cross-env ${SWITCH} eve dev`, c: `${SWITCH} dotenv -e .env -- eve dev`, d: `dotenv -v ${SWITCH} -- eve dev` }).length === 0,
   "tier 1: a script with the switch passes",
 );
 ok(

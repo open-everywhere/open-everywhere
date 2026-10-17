@@ -209,6 +209,7 @@ test:control-memory
 test:memory-admin
 test:ops
 test:ops-app-create
+test:sovereignty
 test:plugins
 test:scm
 test:scm-broker

@@ -18,7 +18,7 @@ The repository registers an MCP server in `.mcp.json`:
 | --- | --- | --- |
 | `open-everywhere-ops` | `npx tsx scripts/ops-mcp.ts` | The **outside-in** plane. It stands an instance up. |
 
-It exposes nine tools:
+It exposes ten tools:
 
 | Tool | What it does | Writes anything? |
 | --- | --- | --- |
@@ -31,6 +31,7 @@ It exposes nine tools:
 | `secret_set` | Encrypts secrets, **by name**, from `.env.local` into the deployment's own credential store. | the store |
 | `secret_list` | Lists stored secret **names**, who set them, and when. Never a value. | no |
 | `secret_rm` | Deletes one stored secret. | the store |
+| `sovereignty` | For each piece of the deployment's data, where it lives, which region and which company could be compelled to hand it over, from the app's own config. The same map as `npx oe sovereignty` ([Sovereignty](../security/sovereignty.md)). | no |
 
 **A server started before an upgrade refuses every call.** The server holds the core it loaded at
 start. After an `npm install` moves the app to a new `@open-everywhere/core`, each call compares the

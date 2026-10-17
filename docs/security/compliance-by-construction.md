@@ -41,10 +41,13 @@ apply a fine-grained policy, and on any backend running the policy in dry-run
 - 🔴 **Three things narrow this, and an assessor should ask about all three.** A binding that
   resolves `networkAccess: "full"` adds a `"*"` catch-all and the deny stops meaning anything (the
   default is `none`, `access/network-access.ts`). And the policy is *enforced* only where a firewall
-  applies it. That is the Vercel Sandbox natively. Off Vercel, it is the egress-proxy sidecar the
-  default `docker()` backend runs beside the sandbox. The deployment arms that proxy by setting
-  `OE_EGRESS_PROXY_URL`. Unarmed, `docker()` takes only the coarse allow-all/deny-all strings, and
-  the dev-only `justbash` backend rejects a network policy outright. And `egress.enforce: false`
+  applies it. That is the Vercel Sandbox natively. Off Vercel, it is the egress-proxy sidecar, which
+  the deployment arms by setting `OE_EGRESS_PROXY_URL`. The proxy fronts the `justbash` backend,
+  whose egress leaves through the app process. It cannot front the `docker` backend: eve starts each
+  session container on the Docker daemon's default network, outside the proxy, so the app refuses to
+  boot on `docker` with the proxy set (`packages/core/agent/access/self-host-egress.ts`, OPE-2407).
+  Without the proxy, `docker` applies only the coarse deny-all, and a session that needs a host
+  allow-list aborts. And `egress.enforce: false`
   puts the session in dry-run. The policy is compiled and audited, never applied, so the session
   runs unfirewalled. A `deny-all` produced by a compile error is applied even then. The compilation
   is structural. The enforcement depends on where you run and what you declared. See

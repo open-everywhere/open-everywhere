@@ -37,6 +37,7 @@
     "scripts/oe-exit.ts",
     "scripts/oe-env.ts",
     "scripts/oe-overlays.ts",
+    "scripts/oe-sovereignty.ts",
     "scripts/oe-upgrade.ts",
     "scripts/upgrade-codemods.ts",
     "scripts/upgrade-notes.ts",

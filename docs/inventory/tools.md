@@ -57,7 +57,7 @@ this inventory become a lint later. The sources, in the order a future lint woul
 | Tier and gating | `packages/core/agent/access/consequence.ts` `TOOL_CONSEQUENCE` | 106 |
 | Seat reach | `lean-seat.ts`, `window-gate-manifest.ts`, `worker-capability-index.generated.ts`, `job-posture.ts` | 106 |
 | Control MCP | `CONTROL_TOOL_NAMES` (`control/server.ts:63`) and `CONTROL_WRITE_TOOL_NAMES` (`control/writes.ts:76`) | 39 |
-| Ops MCP | `OPS_TOOL_NAMES` (`ops/server.ts:67`) | 8 |
+| Ops MCP | `OPS_TOOL_NAMES` (`ops/server.ts:74`) | 10 |
 | Doc coverage | `packages/core/agent/docs/capability-map.ts` `docCodeSpans()` over every `docs/**/*.md` | all |
 
 The 15 tool rows with no `summary` are eve's own framework tools, the four framework slots this
@@ -364,6 +364,7 @@ never holds a secret verb.
 | OPS-secret_set | `secret_set` | Encrypt one or more secrets into this deployment's own credential store (AES-256-GCM, keyed by OE_CREDENTIAL_ENCRYPTION_KEY) so channels and connectors resolve them WITHOUT env vars. Takes NAMES, never values: each value is read from the project's .env.local. | `packages/core/agent/ops/server.ts:641` | `docs/security/credentials-and-planes.md#getting-a-key-into-the-db-broker-the-operator-door-oe-secret` (+3) | ? |
 | OPS-secret_list | `secret_list` | Names, who set them and when — NEVER values or any part of one. | `packages/core/agent/ops/server.ts:708` | `docs/security/credentials-and-planes.md#getting-a-key-into-the-db-broker-the-operator-door-oe-secret` (+3) | ? |
 | OPS-secret_rm | `secret_rm` | Remove one secret from the credential store. The ciphertext row is DELETED, not retired — the name then fails closed UNLESS the process that resolves it holds an environment variable of the same name, which resolution falls back to by design. The reply reports `envFallbackPresent` for the ops process (presence only) and the org it acted on. | `packages/core/agent/ops/server.ts:729` | `docs/security/credentials-and-planes.md#getting-a-key-into-the-db-broker-the-operator-door-oe-secret` (+3) | ? |
+| OPS-sovereignty | `sovereignty` | For each piece of the deployment's data (memory, transcripts, tool-call logs, run state, audit, credentials, config, gateway, model route, transcription, chat surface, runtime logs, telemetry, other outbound calls): where it lives, which region, which company could be compelled to hand it over, and the config that decides it. Read from the app's own settings, roster and env; it probes nothing, and it fails closed on a settings file that does not load. The same map as `npx oe sovereignty`. | `packages/core/agent/ops/server.ts:907` | `docs/security/sovereignty.md#the-report-for-your-deployment` (+1) | ? |
 
 Four properties of this server are behaviours in their own right:
 

@@ -2626,6 +2626,10 @@
       "types": "./dist/agent/ops/contract.d.ts",
       "default": "./dist/agent/ops/contract.js"
     },
+    "./agent/ops/eve-scripts.js": {
+      "types": "./dist/agent/ops/eve-scripts.d.ts",
+      "default": "./dist/agent/ops/eve-scripts.js"
+    },
     "./agent/ops/package-info.js": {
       "types": "./dist/agent/ops/package-info.d.ts",
       "default": "./dist/agent/ops/package-info.js"
@@ -2641,6 +2645,14 @@
     "./agent/ops/server.js": {
       "types": "./dist/agent/ops/server.d.ts",
       "default": "./dist/agent/ops/server.js"
+    },
+    "./agent/ops/sovereignty-facts.js": {
+      "types": "./dist/agent/ops/sovereignty-facts.d.ts",
+      "default": "./dist/agent/ops/sovereignty-facts.js"
+    },
+    "./agent/ops/sovereignty.js": {
+      "types": "./dist/agent/ops/sovereignty.d.ts",
+      "default": "./dist/agent/ops/sovereignty.js"
     },
     "./agent/ops/status.js": {
       "types": "./dist/agent/ops/status.d.ts",
@@ -4044,6 +4056,7 @@
     "test:control-memory": "NODE_NO_WARNINGS=1 tsx scripts/control-memory-test.ts",
     "test:memory-admin": "NODE_NO_WARNINGS=1 tsx scripts/memory-admin-test.ts",
     "test:ops": "tsx scripts/ops-test.ts",
+    "test:sovereignty": "tsx scripts/sovereignty-test.ts",
     "test:ops-app-create": "tsx scripts/ops-app-create-test.ts",
     "test:plugins": "tsx scripts/plugins-test.ts",
     "test:scm": "tsx scripts/scm-test.ts",

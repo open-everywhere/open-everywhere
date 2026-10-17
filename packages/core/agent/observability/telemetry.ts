@@ -155,17 +155,19 @@ function parseHeaders(raw: string | undefined): Record<string, string> {
 
 let config: TelemetryConfig | undefined;
 
+export function telemetrySwitches(env: NodeJS.ProcessEnv): { readonly enabled: boolean; readonly url: string; readonly redirected: boolean } {
+  const enabled = !isOffValue(env.OE_TELEMETRY) && !isDntTruthy(env.DO_NOT_TRACK);
+  const redirectUrl = env.OE_TELEMETRY_OTLP_URL?.trim();
+  return { enabled, url: redirectUrl || DEFAULT_TELEMETRY_URL, redirected: Boolean(redirectUrl) };
+}
+
 function readTelemetryConfig(): TelemetryConfig {
   if (config !== undefined) return config;
-  const enabled = !isOffValue(process.env.OE_TELEMETRY) && !isDntTruthy(process.env.DO_NOT_TRACK);
-  const debug = process.env.OE_TELEMETRY_DEBUG === "1";
-  const redirectUrl = process.env.OE_TELEMETRY_OTLP_URL?.trim();
+  const switches = telemetrySwitches(process.env);
   config = {
-    enabled,
-    debug,
-    url: redirectUrl || DEFAULT_TELEMETRY_URL,
+    ...switches,
+    debug: process.env.OE_TELEMETRY_DEBUG === "1",
     headers: parseHeaders(process.env.OE_TELEMETRY_OTLP_HEADERS),
-    redirected: Boolean(redirectUrl),
   };
   return config;
 }
