@@ -789,8 +789,8 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
   },
   {
     action: "personal_watch.proposal",
-    fields: ["fingerprint", "connector", "tool", "weekday", "hour", "weeks", "dial"],
-    proves: "the watch posted a routine proposal card into the person's own DM, for which repeated connector op and weekday, under which dial",
+    fields: ["fingerprint", "kind", "connector", "tool", "weekday", "hour", "weeks", "dial"],
+    proves: "the watch posted a routine proposal card into the person's own DM, for which repeated connector op or repeated question (`kind`; a question names its hash, never its words) and weekday, under which dial",
     notExercised: "a live proposal needs three weeks of a person's real tool-call history, which no board carries. `test:workflow-discovery` drives the real tick and the tier-2 spec drives the compiled schedule.",
   },
   {
@@ -804,6 +804,24 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
     fields: ["fingerprint"],
     proves: "the person pressed No thanks on a routine proposal, and the watch recorded it so the idea is never offered again",
     notExercised: "the same gap as `personal_watch.proposal`. `test:workflow-discovery` presses the real card kind.",
+  },
+  {
+    action: "room_watch.proposal",
+    fields: ["fingerprint", "kind", "connector", "tool", "weekday", "hour", "weeks", "people"],
+    proves: "the watch posted a routine proposal card into a shared room, for which repeated connector op or question (a question names its hash, never its words), on which weekday, from how many people",
+    notExercised: "a live proposal needs three weeks of several people's real activity in one room, which no board carries. `test:workflow-discovery` drives the real tick and the tier-2 spec drives the compiled schedule.",
+  },
+  {
+    action: "room_watch.proposal.accepted",
+    fields: ["fingerprint"],
+    proves: "a member pressed Set it up on a room's routine proposal (`principalId` names who), and the routine was armed in the room through `routine.create`",
+    notExercised: "the same gap as `room_watch.proposal`. `test:workflow-discovery` presses the real card kind.",
+  },
+  {
+    action: "room_watch.proposal.declined",
+    fields: ["fingerprint"],
+    proves: "a member pressed No thanks on a room's routine proposal, and the room's row recorded it so the idea is never offered there again",
+    notExercised: "the same gap as `room_watch.proposal`. `test:workflow-discovery` presses the real card kind.",
   },
   {
     action: "cover.set",

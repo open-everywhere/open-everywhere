@@ -51,6 +51,8 @@ export const OPERATIONAL_TABLES = [
   "personal_browser",
   "personal_watch",
   "personal_cover",
+  "question_ledger",
+  "room_watch",
   "ingress_delivery",
   "attention_state",
   "dm_rule",
@@ -528,6 +530,29 @@ export interface PersonConnectorCallRow {
   readonly tool: string;
 }
 
+export interface RoomConnectorCallRow extends PersonConnectorCallRow {
+  readonly surfaceKey: string;
+  readonly principalId: string;
+}
+
+export interface QuestionLedgerEntry {
+  readonly org: string;
+  readonly ts: string;
+  readonly surfaceKey: string;
+  readonly surfaceMode: "dm" | "channel";
+  readonly principalId: string;
+  readonly fingerprint: string;
+  readonly words: string;
+}
+
+export interface QuestionLedgerRow {
+  readonly ts: string;
+  readonly surfaceKey: string;
+  readonly principalId: string;
+  readonly fingerprint: string;
+  readonly words: string;
+}
+
 export type ToolUsageEvent = "call" | "card";
 export type ToolUsageOutcome = "ok" | "error" | "rejected" | "";
 
@@ -825,6 +850,13 @@ export interface PersonalWatchRow {
   readonly updatedAt: string;
 }
 
+export interface RoomWatchRow {
+  readonly surfaceKey: string;
+  readonly stateJson: string;
+  readonly version: number;
+  readonly updatedAt: string;
+}
+
 export interface PersonalCoverRow {
   readonly principalKey: string;
   readonly stateJson: string;
@@ -1079,6 +1111,10 @@ export interface OperationalStore {
   appendUsageEvent(entry: UsageEventEntry): Promise<void>;
   appendToolUsage(entry: ToolUsageEntry): Promise<void>;
   listPersonConnectorCalls(org: string, principalId: string, surfacePrefix: string, since: string, limit: number): Promise<PersonConnectorCallRow[]>;
+  listRoomConnectorCalls(org: string, since: string, limit: number): Promise<RoomConnectorCallRow[]>;
+  appendQuestion(entry: QuestionLedgerEntry, pruneBefore: string): Promise<void>;
+  listPersonQuestions(org: string, principalId: string, surfacePrefix: string, since: string, limit: number): Promise<QuestionLedgerRow[]>;
+  listRoomQuestions(org: string, since: string, limit: number): Promise<QuestionLedgerRow[]>;
   usageForSession(org: string, sessionId: string): Promise<UsageEventEntry[]>;
   usageSummary(org: string, filter?: UsageSummaryFilter): Promise<UsageSummaryRow[]>;
   pruneUsageEvents(org: string, olderThanTs: string): Promise<number>;
@@ -1107,6 +1143,8 @@ export interface OperationalStore {
   getPersonalWatch(org: string, principalKey: string): Promise<PersonalWatchRow | null>;
   casPersonalWatch(org: string, principalKey: string, stateJson: string, at: string, expected: number | null): Promise<number | null>;
   listPersonalWatches(org: string): Promise<PersonalWatchRow[]>;
+  getRoomWatch(org: string, surfaceKey: string): Promise<RoomWatchRow | null>;
+  casRoomWatch(org: string, surfaceKey: string, stateJson: string, at: string, expected: number | null): Promise<number | null>;
   getPersonalCover(org: string, principalKey: string): Promise<PersonalCoverRow | null>;
   casPersonalCover(org: string, principalKey: string, stateJson: string, at: string, expected: number | null): Promise<number | null>;
   listPersonalCovers(org: string): Promise<PersonalCoverRow[]>;

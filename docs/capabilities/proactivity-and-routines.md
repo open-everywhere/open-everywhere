@@ -1424,11 +1424,77 @@ pressed anything. A card that did not post takes the idea back, so a later scan 
 `routines.discoveryMinWeeks: 0` turns workflow discovery off for the deployment. It is a
 `routine.suggest` card, member tier, and raised by the schedule rather than by a tool.
 
+#### Repeated questions
+
+Some repeated work makes no connector call: "who is on call this week?" or "what is our refund
+policy?". Discovery also finds a **question** that a person asks the agent again and again on the same
+weekday (OPE-2539), and offers the same card in their DM:
+
+> **Set up a routine to answer "who is on call this week?" every Friday at 16:00 UTC?**
+
+**The evidence is the question ledger** (`question_ledger`). The `question-ledger` hook writes one row
+when all of these hold:
+
+- a member of the organisation (trust `internal`, a live person, never a routine fire) asked the
+  agent in their own 1:1 DM, or @mentioned the agent in a shared room. A thread reply that does not
+  @mention the agent is not recorded;
+- the message is one line that ends in `?`, with 3 to 24 words and no link or code;
+- the turn ended with an answer and made **no** connector call. A turn that made one is already in
+  the tool ledger, so the same work is never offered twice;
+- the person did not opt out of the agent remembering their content
+  ([Memory](memory.md)). An unreadable opt-out reads as opted out. Discovery also drops the rows of a
+  person who opted out after they were written.
+
+The row keeps the question's **normalized words** (lower case, with mentions and punctuation removed)
+and their hash, never the answer. Each append deletes the organisation's rows older than 42 days.
+Two questions match only when their normalized words are equal: a question asked again in other words
+is another question. The weekly rule is the one above. The person's discovery reads only the questions
+from their own DM. The dial, the DM stop, the gap and the once-per-idea rule hold a question card
+exactly as they hold an op card. The routine instruction quotes the question as the thing to answer
+and asks before any change. The audit rows name the question by its hash, never by its words.
+
+#### Shared rooms
+
+A room can repeat work that no one person repeats: Alice lists the open incidents one Monday, and Bob
+the next. Discovery also reads the two ledgers **per room** (OPE-2539): the connector ops that people
+ran in a shared room, and the questions they asked the agent there. A room pattern follows the same
+weekly rule, and it must come from **at least two different people**. A connector op that one person
+in the room repeats on their own is left to that person's DM, because their own discovery reads their
+room calls too, so a habit one person carries alone inside the room gets one card, in their DM. A question that only one person repeats in a room
+is offered nowhere: the person's discovery reads only their DM questions.
+
+**The agent asks the room, in the room.** One `routine.suggest` card posts into the room:
+
+> **Set up a routine to list incidents on pagerduty every Monday at 09:00 UTC?**
+> 2 people in this room asked me for this in 3 of the last 5 weeks. Nothing runs until someone presses
+> Set it up, and I won't suggest it here again.
+
+A member of the organisation in the room may answer it (member tier). A room whose roster holds a
+guest or an outside account gets no card, because no member-tier click is accepted there, and the
+idea stays reserved. **Set it up** arms the routine
+in the room through `routine.create`'s own execute, created by the person who pressed, so a fire binds
+as that person. **No thanks** goes on the room's row (`room_watch`), and the room is never offered that
+idea again. A room has no dial, so the rules are fixed: at most one card per room per 14 days, each
+idea once, and the organisation's rooms are scanned at most once a day. The same
+`routines.discoveryMinWeeks` setting governs it, and `0` turns it off. A posted card writes
+`room_watch.proposal`, and the answers write `room_watch.proposal.accepted` and
+`room_watch.proposal.declined`.
+
 ### What it does not do yet
 
-- **Workflow discovery reads tool calls only.** A question the person asks every Monday with no
-  connector call behind it leaves no ledger row, so it is not found. A domain seat does not propose
-  routines for a shared room yet: the ledger is read per person.
+- **A question matches only word for word.** "Who is on call this week?" and "who's on call?" are two
+  questions. A question asked to a delegated job, whose connector call ran in the job's own session,
+  can be found both as a question and as an op; the once-per-idea rule and the proposal gap still
+  hold each one.
+- **A habit can still get two cards, or none.** A person whose habit spans the room and their DM (or
+  another room) can get both a room card and a DM card. A habit one person carries alone in a room is
+  offered only when that person's own watch runs: they have a watch row, and their dial is not `none`.
+- **The room read has a cap.** One scan reads at most 10,000 tool rows and 10,000 question rows for
+  the organisation, newest first. On a busy deployment the oldest weeks can fall off, and a room
+  pattern is then missed. A full read writes a log line.
+- **A room hold is not filed.** A room card held by the 14-day gap writes no silence row, and a room
+  card that did not post writes only a log line. A room has no stop of its own: the off switch is the
+  deployment setting.
 - **Workflow discovery needs a card path.** A platform with no approval card path gets no proposal.
   The first refused attempt for an idea files one `delivery-refused` row.
 - **One detector.** It finds calendar conflicts only. Email and other sources need their own

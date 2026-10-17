@@ -249,6 +249,7 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
       "packages/core/agent/commands/watch.ts",
       "packages/core/agent/home/watch-home.ts",
       "packages/core/agent/hooks/personal-watch-enroll.ts",
+      "packages/core/agent/hooks/question-ledger.ts",
       "packages/core/agent/schedules/personal-watch.ts",
     ],
     scenarios: ["S-WATCH", "S-DOING"],

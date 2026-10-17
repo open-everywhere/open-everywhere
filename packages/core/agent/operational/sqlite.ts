@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Routine } from "../routines/routine.js";
-import { asSurfaceMode, readThreadSeatStateValue, auditSurfaceMode, auditReadOrg, likePrefixPattern, argKeyNeedle, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type ChannelSessionRuntimeStamp, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow, type PersonOptOutRow, type PersonalBrowserRow, type PersonalWatchRow, type PersonalCoverRow, ATTENTION_COLUMNS, attentionPruneBefore, attentionRowFrom, type AttentionDbRow, DM_RULE_COLUMNS, dmRuleRowFrom, type DmRuleDbRow } from "./store.js";
+import { asSurfaceMode, readThreadSeatStateValue, auditSurfaceMode, auditReadOrg, likePrefixPattern, argKeyNeedle, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type ChannelSessionRuntimeStamp, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow, type PersonOptOutRow, type PersonalBrowserRow, type PersonalWatchRow, type PersonalCoverRow, type QuestionLedgerRow, ATTENTION_COLUMNS, attentionPruneBefore, attentionRowFrom, type AttentionDbRow, DM_RULE_COLUMNS, dmRuleRowFrom, type DmRuleDbRow } from "./store.js";
 import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn, grantRefundTurnOrdinal } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
@@ -764,6 +764,29 @@ function getDb(): DatabaseSync {
       updated_at    TEXT NOT NULL,
       PRIMARY KEY (org_id, principal_key)
     );
+    -- question_ledger (OPE-2539): the questions people asked in a turn that made no connector call — store.ts's
+    -- QuestionLedgerEntry. Normalized words and their hash only; every append deletes the org's rows past the keep.
+    CREATE TABLE IF NOT EXISTS question_ledger (
+      seq          INTEGER PRIMARY KEY AUTOINCREMENT,
+      org_id       TEXT NOT NULL,
+      ts           TEXT NOT NULL,        -- ISO-8601
+      surface_key  TEXT NOT NULL,
+      surface_mode TEXT NOT NULL,        -- 'dm' | 'channel'
+      principal_id TEXT NOT NULL,
+      fingerprint  TEXT NOT NULL,
+      words        TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS question_ledger_org_ts ON question_ledger (org_id, ts);
+    -- room_watch (OPE-2539): one row per shared room that workflow discovery offered a routine to — store.ts's
+    -- RoomWatchRow. Every write is a compare-and-set on version.
+    CREATE TABLE IF NOT EXISTS room_watch (
+      org_id      TEXT NOT NULL,
+      surface_key TEXT NOT NULL,          -- the room's surface key, or 'scan' for the org-wide scan clock
+      state_json  TEXT NOT NULL,
+      version     INTEGER NOT NULL,
+      updated_at  TEXT NOT NULL,
+      PRIMARY KEY (org_id, surface_key)
+    );
     -- meeting_data (OPE-2461): the meeting rows, each with its OWN expiry — store.ts's meeting_data section.
     -- A read ignores a row past expires_at, a write deletes only such rows, and the meeting sweep deletes
     -- them on a timer. Never task_result: that table's prune runs by the calling writer's TTL, not the row's.
@@ -1338,6 +1361,18 @@ function personalBrowserRowFrom(r: PersonalBrowserSqliteRow): PersonalBrowserRow
 
 function personalWatchRowFrom(r: PersonalBrowserSqliteRow): PersonalWatchRow {
   return { principalKey: r.principal_key, stateJson: r.state_json, version: Number(r.version), updatedAt: r.updated_at };
+}
+
+interface QuestionLedgerSqliteRow {
+  readonly ts: string;
+  readonly surface_key: string;
+  readonly principal_id: string;
+  readonly fingerprint: string;
+  readonly words: string;
+}
+
+function questionRowFrom(r: QuestionLedgerSqliteRow): QuestionLedgerRow {
+  return { ts: r.ts, surfaceKey: r.surface_key, principalId: r.principal_id, fingerprint: r.fingerprint, words: r.words };
 }
 
 function personalCoverRowFrom(r: PersonalBrowserSqliteRow): PersonalCoverRow {
@@ -2401,6 +2436,61 @@ export const sqliteOperationalStore: OperationalStore = {
     return rows.map((r) => ({ ts: r.ts, connector: r.connector, tool: r.tool }));
   },
 
+  async listRoomConnectorCalls(org, since, limit) {
+    const rows = getDb()
+      .prepare(
+        `SELECT ts, surface_key, principal_id, connector, tool FROM (
+           SELECT seq, ts, surface_key, principal_id, connector, tool FROM tool_usage
+           WHERE org_id = ?1 AND surface_mode = 'channel' AND event = 'call' AND outcome = 'ok' AND connector <> ''
+             AND principal_id IS NOT NULL AND principal_id <> '' AND ts >= ?2
+             AND session_id NOT IN (SELECT session_id FROM usage_events WHERE org_id = ?1 AND kind = 'routine')
+           ORDER BY seq DESC LIMIT ?3
+         ) recent ORDER BY seq ASC`,
+      )
+      .all(org, since, Math.max(0, Math.floor(limit))) as { ts: string; surface_key: string; principal_id: string; connector: string; tool: string }[];
+    return rows.map((r) => ({ ts: r.ts, surfaceKey: r.surface_key, principalId: r.principal_id, connector: r.connector, tool: r.tool }));
+  },
+
+  async appendQuestion(entry, pruneBefore) {
+    const db = getDb();
+    db.prepare("INSERT INTO question_ledger (org_id, ts, surface_key, surface_mode, principal_id, fingerprint, words) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+      entry.org,
+      entry.ts,
+      entry.surfaceKey,
+      entry.surfaceMode,
+      entry.principalId,
+      entry.fingerprint,
+      entry.words,
+    );
+    db.prepare("DELETE FROM question_ledger WHERE org_id = ? AND ts < ?").run(entry.org, pruneBefore);
+  },
+
+  async listPersonQuestions(org, principalId, surfacePrefix, since, limit) {
+    const rows = getDb()
+      .prepare(
+        `SELECT ts, surface_key, principal_id, fingerprint, words FROM (
+           SELECT seq, ts, surface_key, principal_id, fingerprint, words FROM question_ledger
+           WHERE org_id = ?1 AND principal_id = ?2 AND surface_mode = 'dm' AND substr(surface_key, 1, length(?3)) = ?3 AND ts >= ?4
+           ORDER BY seq DESC LIMIT ?5
+         ) recent ORDER BY seq ASC`,
+      )
+      .all(org, principalId, surfacePrefix, since, Math.max(0, Math.floor(limit))) as unknown as QuestionLedgerSqliteRow[];
+    return rows.map(questionRowFrom);
+  },
+
+  async listRoomQuestions(org, since, limit) {
+    const rows = getDb()
+      .prepare(
+        `SELECT ts, surface_key, principal_id, fingerprint, words FROM (
+           SELECT seq, ts, surface_key, principal_id, fingerprint, words FROM question_ledger
+           WHERE org_id = ?1 AND surface_mode = 'channel' AND ts >= ?2
+           ORDER BY seq DESC LIMIT ?3
+         ) recent ORDER BY seq ASC`,
+      )
+      .all(org, since, Math.max(0, Math.floor(limit))) as unknown as QuestionLedgerSqliteRow[];
+    return rows.map(questionRowFrom);
+  },
+
   async appendToolUsage(entry) {
     getDb()
       .prepare(
@@ -2645,6 +2735,27 @@ export const sqliteOperationalStore: OperationalStore = {
       .prepare("SELECT principal_key, state_json, version, updated_at FROM personal_watch WHERE org_id = ? ORDER BY principal_key")
       .all(org) as unknown as PersonalBrowserSqliteRow[];
     return rows.map(personalWatchRowFrom);
+  },
+
+  async getRoomWatch(org, surfaceKey) {
+    const row = getDb().prepare("SELECT surface_key, state_json, version, updated_at FROM room_watch WHERE org_id = ? AND surface_key = ?").get(org, surfaceKey) as
+      | { surface_key: string; state_json: string; version: number; updated_at: string }
+      | undefined;
+    return row ? { surfaceKey: row.surface_key, stateJson: row.state_json, version: Number(row.version), updatedAt: row.updated_at } : null;
+  },
+
+  async casRoomWatch(org, surfaceKey, stateJson, at, expected) {
+    const db = getDb();
+    if (expected === null) {
+      const changes = db
+        .prepare("INSERT INTO room_watch (org_id, surface_key, state_json, version, updated_at) VALUES (?, ?, ?, 1, ?) ON CONFLICT (org_id, surface_key) DO NOTHING")
+        .run(org, surfaceKey, stateJson, at).changes;
+      return changes > 0 ? 1 : null;
+    }
+    const changes = db
+      .prepare("UPDATE room_watch SET state_json = ?, version = version + 1, updated_at = ? WHERE org_id = ? AND surface_key = ? AND version = ?")
+      .run(stateJson, at, org, surfaceKey, expected).changes;
+    return changes > 0 ? expected + 1 : null;
   },
 
   async getPersonalCover(org, principalKey) {

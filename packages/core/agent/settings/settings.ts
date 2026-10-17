@@ -836,7 +836,7 @@ export const SETTINGS = {
       shipped: 3,
       validate: (v) => (Number.isInteger(v) && v >= 0 && v <= 5 ? undefined : "must be an integer from 0 to 5 (0 turns workflow discovery off; the detector reads five weeks)"),
       summary:
-        "Workflow discovery (OPE-2512): the weeks, out of the last five, in which a person must run the same connector op on the same weekday before their chief-of-staff watch offers ONE routine for it, as a Set it up / No thanks card in their own DM. It reads only the person's own tool-call ledger, and obeys their watch dial. A declined idea is never offered again. `0` turns it off.",
+        "Workflow discovery (OPE-2512, OPE-2539): the weeks, out of the last five, in which a person must run the same connector op, or ask the agent the same question with no connector call, on the same weekday before their chief-of-staff watch offers ONE routine for it, as a Set it up / No thanks card in their own DM. It reads only the person's own tool-call and question ledgers, and obeys their watch dial and DM stop. The same rule asks a shared room, with one card in the room, about work that two or more people there repeat, at most once per room per 14 days. A declined idea is never offered again. `0` turns both off.",
       format: (v) => (v === 0 ? "off" : `${v} weeks`),
     } satisfies SettingSpec<number>,
     firstConversationDays: {

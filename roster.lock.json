@@ -53,6 +53,7 @@
         "hook/native-input-audit": "mounted",
         "hook/own-account-ask": "mounted",
         "hook/personal-watch-enroll": "mounted",
+        "hook/question-ledger": "mounted",
         "hook/requester-identity": "mounted",
         "hook/requester-messages": "mounted",
         "hook/routine-outcome": "mounted",

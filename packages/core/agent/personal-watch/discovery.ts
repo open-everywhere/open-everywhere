@@ -1,8 +1,9 @@
 import { auditErrorDetail } from "../audit/tool-action.js";
 import { appendAudit } from "../audit/audit.js";
 import { parsePrincipalKey } from "../identity/principal-key.js";
+import { readPersonOptOut } from "../identity/person-opt-out.js";
 import { getOperationalStore } from "../operational/provider.js";
-import type { PersonConnectorCallRow } from "../operational/store.js";
+import type { PersonConnectorCallRow, QuestionLedgerRow } from "../operational/store.js";
 import type { Partition } from "../memory/partition.js";
 import type { RoutineCreateArgs } from "../approvals/routine-create.js";
 import { toolWords, cronWords } from "../routines/schedule-words.js";
@@ -37,67 +38,132 @@ export interface RepeatedWork {
   readonly fingerprint: string;
   readonly connector: string;
   readonly tool: string;
+  readonly question?: string;
   readonly weekday: number;
   readonly hour: number;
   readonly weeks: number;
+  readonly people?: number;
 }
 
-export function findRepeatedWork(calls: readonly PersonConnectorCallRow[], now: Date, minWeeks: number): RepeatedWork[] {
+export interface WeeklyEvent {
+  readonly ts: string;
+  readonly key: string;
+  readonly person?: string;
+}
+
+export interface WeeklyPattern {
+  readonly key: string;
+  readonly weekday: number;
+  readonly hour: number;
+  readonly weeks: number;
+  readonly people: number;
+}
+
+export function findWeekly(events: readonly WeeklyEvent[], now: Date, minWeeks: number, minPeople = 1): WeeklyPattern[] {
   if (minWeeks <= 0) return [];
   const from = now.getTime() - DISCOVERY_WINDOW_DAYS * DAY_MS;
   const firstWeek = Math.floor((now.getTime() - MONDAY_EPOCH_MS) / WEEK_MS) - 4;
   const recent = now.getTime() - DISCOVERY_RECENT_DAYS * DAY_MS;
-  const ops = new Map<string, { connector: string; tool: string; dates: Set<string>; days: Map<number, { weeks: Set<number>; dates: Set<string>; hours: number[]; last: number }> }>();
-  for (const c of calls) {
-    const ms = Date.parse(c.ts);
-    if (!Number.isFinite(ms) || ms < from || ms > now.getTime() || c.connector.length === 0) continue;
+  const keys = new Map<string, { dates: Set<string>; days: Map<number, { weeks: Set<number>; dates: Set<string>; hours: number[]; people: Set<string>; last: number }> }>();
+  for (const e of events) {
+    const ms = Date.parse(e.ts);
+    if (!Number.isFinite(ms) || ms < from || ms > now.getTime() || e.key.length === 0) continue;
     const week = Math.floor((ms - MONDAY_EPOCH_MS) / WEEK_MS);
     if (week < firstWeek) continue;
-    const key = `${c.connector}/${c.tool}`;
-    let op = ops.get(key);
-    if (!op) {
-      op = { connector: c.connector, tool: c.tool, dates: new Set(), days: new Map() };
-      ops.set(key, op);
+    let k = keys.get(e.key);
+    if (!k) {
+      k = { dates: new Set(), days: new Map() };
+      keys.set(e.key, k);
     }
     const d = new Date(ms);
     const date = d.toISOString().slice(0, 10);
-    op.dates.add(date);
+    k.dates.add(date);
     const weekday = d.getUTCDay();
-    let day = op.days.get(weekday);
+    let day = k.days.get(weekday);
     if (!day) {
-      day = { weeks: new Set(), dates: new Set(), hours: [], last: 0 };
-      op.days.set(weekday, day);
+      day = { weeks: new Set(), dates: new Set(), hours: [], people: new Set(), last: 0 };
+      k.days.set(weekday, day);
     }
     day.weeks.add(week);
     day.dates.add(date);
     day.hours.push(d.getUTCHours());
+    if (e.person !== undefined) day.people.add(e.person);
     day.last = Math.max(day.last, ms);
   }
-  const found: RepeatedWork[] = [];
-  for (const [key, op] of ops) {
-    for (const [weekday, day] of op.days) {
+  const found: WeeklyPattern[] = [];
+  for (const [key, k] of keys) {
+    for (const [weekday, day] of k.days) {
       if (day.weeks.size < minWeeks || day.last < recent) continue;
-      if (day.dates.size / op.dates.size < DISCOVERY_WEEKDAY_SHARE) continue;
+      if (day.dates.size / k.dates.size < DISCOVERY_WEEKDAY_SHARE) continue;
+      if (minPeople > 1 && day.people.size < minPeople) continue;
       const hours = [...day.hours].sort((a, b) => a - b);
-      found.push({ fingerprint: `weekly:${key}:${weekday}`, connector: op.connector, tool: op.tool, weekday, hour: hours[Math.floor((hours.length - 1) / 2)]!, weeks: day.weeks.size });
+      found.push({ key, weekday, hour: hours[Math.floor((hours.length - 1) / 2)]!, weeks: day.weeks.size, people: day.people.size });
     }
   }
+  return found;
+}
+
+export function strongestFirst<T extends Pick<RepeatedWork, "weeks" | "fingerprint">>(found: T[]): T[] {
   return found.sort((a, b) => b.weeks - a.weeks || a.fingerprint.localeCompare(b.fingerprint));
+}
+
+export function findRepeatedWork(calls: readonly PersonConnectorCallRow[], now: Date, minWeeks: number): RepeatedWork[] {
+  const ops = new Map<string, PersonConnectorCallRow>();
+  const events: WeeklyEvent[] = [];
+  for (const c of calls) {
+    if (c.connector.length === 0) continue;
+    const key = `${c.connector}/${c.tool}`;
+    if (!ops.has(key)) ops.set(key, c);
+    events.push({ ts: c.ts, key });
+  }
+  return strongestFirst(
+    findWeekly(events, now, minWeeks).map((p) => {
+      const op = ops.get(p.key)!;
+      return { fingerprint: `weekly:${p.key}:${p.weekday}`, connector: op.connector, tool: op.tool, weekday: p.weekday, hour: p.hour, weeks: p.weeks };
+    }),
+  );
+}
+
+export function findRepeatedQuestions(rows: readonly Pick<QuestionLedgerRow, "ts" | "fingerprint" | "words">[], now: Date, minWeeks: number): RepeatedWork[] {
+  const words = new Map<string, string>();
+  for (const r of rows) if (!words.has(r.fingerprint)) words.set(r.fingerprint, r.words);
+  return strongestFirst(
+    findWeekly(
+      rows.map((r) => ({ ts: r.ts, key: r.fingerprint })),
+      now,
+      minWeeks,
+    ).map((p) => ({ fingerprint: `weekly:q:${p.key}:${p.weekday}`, connector: "", tool: "", question: words.get(p.key)!, weekday: p.weekday, hour: p.hour, weeks: p.weeks })),
+  );
 }
 
 export function proposalCron(w: Pick<RepeatedWork, "weekday" | "hour">): string {
   return `0 ${w.hour} * * ${w.weekday}`;
 }
 
-export function repeatedWorkWords(w: Pick<RepeatedWork, "connector" | "tool">): string {
+export function repeatedWorkWords(w: Pick<RepeatedWork, "connector" | "tool" | "question">): string {
+  if (w.question !== undefined) return `answer "${w.question}"`;
   return toolWords(`${w.connector}__${w.tool}`);
 }
 
 export function repeatedWorkSummary(w: RepeatedWork): string {
-  return `${repeatedWorkWords(w)} on ${DAY_NAMES[w.weekday]}s, in ${w.weeks} of the last 5 weeks`;
+  const what = w.question !== undefined ? "a repeated question" : repeatedWorkWords(w);
+  return `${what} on ${DAY_NAMES[w.weekday]}s, in ${w.weeks} of the last 5 weeks`;
 }
 
-export function proposalPrompt(w: Pick<RepeatedWork, "connector" | "tool" | "weekday">): string {
+export function proposalPrompt(w: Pick<RepeatedWork, "connector" | "tool" | "weekday" | "question">, who: "person" | "room" = "person"): string {
+  const asker = who === "room" ? "The people in this room" : "The person who set this up";
+  if (w.question !== undefined) {
+    return (
+      `It is ${DAY_NAMES[w.weekday]}. ${asker} ask me this question most ${DAY_NAMES[w.weekday]}s: "${w.question}" ` +
+      `Answer it for them now, the way you usually do, and post the answer here. Ask before you change anything.`
+    );
+  }
+  if (who === "room") {
+    return (
+      `It is ${DAY_NAMES[w.weekday]}. ${asker} ask me to ${repeatedWorkWords(w)} most ${DAY_NAMES[w.weekday]}s. ` +
+      `Do it for them now with the ${w.connector} connection, the way they usually ask, and post what you found here. Ask before you change anything.`
+    );
+  }
   return (
     `It is ${DAY_NAMES[w.weekday]}. The person who set this up asks me to ${repeatedWorkWords(w)} most ${DAY_NAMES[w.weekday]}s. ` +
     `Do it for them now with the ${w.connector} connection, the way they usually ask, and post what you found here. Ask before you change anything.`
@@ -158,6 +224,12 @@ export interface DiscoveryDeps {
   readonly propose: ProposeRoutine;
   readonly dmStopped: (org: string, principalKey: string) => Promise<boolean>;
   readonly readCalls?: (org: string, principalId: string, surfacePrefix: string, since: string, limit: number) => Promise<PersonConnectorCallRow[]>;
+  readonly readQuestions?: (org: string, principalId: string, surfacePrefix: string, since: string, limit: number) => Promise<QuestionLedgerRow[]>;
+  readonly optedOut?: (org: string, principalKey: string) => Promise<boolean>;
+}
+
+async function liveOptedOut(org: string, principalKey: string): Promise<boolean> {
+  return (await readPersonOptOut(org, principalKey)).optedOut;
 }
 
 export function discoveryScanDue(state: Pick<PersonalWatchState, "lastDiscoveryAt">, now: Date): boolean {
@@ -201,8 +273,12 @@ export async function discoverForPerson(
     const since = new Date(now.getTime() - DISCOVERY_WINDOW_DAYS * DAY_MS).toISOString();
     const read = deps.readCalls ?? ((o, p, s, f, l) => getOperationalStore().listPersonConnectorCalls(o, p, s, f, l));
     const calls = await read(org, person.id, prefix, since, DISCOVERY_READ_LIMIT);
+    const readQ = deps.readQuestions ?? ((o, p, s, f, l) => getOperationalStore().listPersonQuestions(o, p, s, f, l));
+    const asked = await readQ(org, person.id, prefix, since, DISCOVERY_READ_LIMIT);
+    const questions = asked.length > 0 && (await (deps.optedOut ?? liveOptedOut)(org, principalKey).catch(() => true)) ? [] : asked;
     const offered = new Set(claimed.proposals.map((p) => p.fingerprint));
-    const work = findRepeatedWork(calls, now, discoveryMinWeeks()).find((w) => !offered.has(w.fingerprint));
+    const minWeeks = discoveryMinWeeks();
+    const work = strongestFirst([...findRepeatedWork(calls, now, minWeeks), ...findRepeatedQuestions(questions, now, minWeeks)]).find((w) => !offered.has(w.fingerprint));
     if (!work) return none;
     const verdict = judgeProposal(claimed, now);
     if (!verdict.propose) return { proposed: false, held: { work, reason: verdict.reason } };
@@ -232,7 +308,7 @@ export async function discoverForPerson(
       surface: "home",
       principalId: principalKey,
       action: "personal_watch.proposal",
-      detail: { fingerprint: work.fingerprint, connector: work.connector, tool: work.tool, weekday: work.weekday, hour: work.hour, weeks: work.weeks, dial: reserved.dial },
+      detail: { fingerprint: work.fingerprint, kind: work.question !== undefined ? "question" : "connector-op", connector: work.connector, tool: work.tool, weekday: work.weekday, hour: work.hour, weeks: work.weeks, dial: reserved.dial },
     }).catch(() => undefined);
     return { proposed: true };
   } catch (err) {

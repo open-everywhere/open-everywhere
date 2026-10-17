@@ -1,6 +1,6 @@
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
-import { asSurfaceMode, readThreadSeatStateValue, auditSurfaceMode, auditReadOrg, likePrefixPattern, argKeyNeedle, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type CredentialIntakeRow, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type ToolUsageEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow, type PersonOptOutRow, type PersonalBrowserRow, type PersonalWatchRow, type PersonalCoverRow, ATTENTION_COLUMNS, attentionPruneBefore, attentionRowFrom, type AttentionDbRow, DM_RULE_COLUMNS, dmRuleRowFrom, type DmRuleDbRow } from "./store.js";
+import { asSurfaceMode, readThreadSeatStateValue, auditSurfaceMode, auditReadOrg, likePrefixPattern, argKeyNeedle, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type CredentialIntakeRow, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type ToolUsageEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow, type PersonOptOutRow, type PersonalBrowserRow, type PersonalWatchRow, type PersonalCoverRow, type QuestionLedgerRow, ATTENTION_COLUMNS, attentionPruneBefore, attentionRowFrom, type AttentionDbRow, DM_RULE_COLUMNS, dmRuleRowFrom, type DmRuleDbRow } from "./store.js";
 import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn, grantRefundTurnOrdinal } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
@@ -629,6 +629,25 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      updated_at    text NOT NULL,
      PRIMARY KEY (org_id, principal_key)
    )`,
+  `CREATE TABLE IF NOT EXISTS question_ledger (
+     seq          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+     org_id       text NOT NULL,
+     ts           text NOT NULL,
+     surface_key  text NOT NULL,
+     surface_mode text NOT NULL,
+     principal_id text NOT NULL,
+     fingerprint  text NOT NULL,
+     words        text NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS question_ledger_org_ts ON question_ledger (org_id, ts)`,
+  `CREATE TABLE IF NOT EXISTS room_watch (
+     org_id      text NOT NULL,
+     surface_key text NOT NULL,
+     state_json  text NOT NULL,
+     version     integer NOT NULL,
+     updated_at  text NOT NULL,
+     PRIMARY KEY (org_id, surface_key)
+   )`,
   `CREATE TABLE IF NOT EXISTS meeting_data (
      org_id      text NOT NULL,
      data_key    text NOT NULL,
@@ -783,6 +802,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE personal_browser ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE personal_watch ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE personal_cover ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE question_ledger ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE room_watch ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE meeting_data ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE dm_rule ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE attention_state ENABLE ROW LEVEL SECURITY`,
@@ -843,6 +864,8 @@ const POLICY_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS personal_browser_org_isolation ON personal_browser`,
   `DROP POLICY IF EXISTS personal_watch_org_isolation ON personal_watch`,
   `DROP POLICY IF EXISTS personal_cover_org_isolation ON personal_cover`,
+  `DROP POLICY IF EXISTS question_ledger_org_isolation ON question_ledger`,
+  `DROP POLICY IF EXISTS room_watch_org_isolation ON room_watch`,
   `DROP POLICY IF EXISTS meeting_data_org_isolation ON meeting_data`,
   `DROP POLICY IF EXISTS dm_rule_org_isolation ON dm_rule`,
   `DROP POLICY IF EXISTS attention_state_org_isolation ON attention_state`,
@@ -973,6 +996,12 @@ const POLICY_STATEMENTS: readonly string[] = [
   `CREATE POLICY personal_cover_org_isolation ON personal_cover
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY question_ledger_org_isolation ON question_ledger
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY room_watch_org_isolation ON room_watch
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY meeting_data_org_isolation ON meeting_data
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
@@ -999,6 +1028,18 @@ function personalBrowserRowFrom(r: PersonalBrowserDbRow): PersonalBrowserRow {
 
 function personalWatchRowFrom(r: PersonalBrowserDbRow): PersonalWatchRow {
   return { principalKey: r.principal_key, stateJson: r.state_json, version: Number(r.version), updatedAt: r.updated_at };
+}
+
+interface QuestionLedgerDbRow {
+  readonly ts: string;
+  readonly surface_key: string;
+  readonly principal_id: string;
+  readonly fingerprint: string;
+  readonly words: string;
+}
+
+function questionRowFrom(r: QuestionLedgerDbRow): QuestionLedgerRow {
+  return { ts: String(r.ts), surfaceKey: r.surface_key, principalId: r.principal_id, fingerprint: r.fingerprint, words: r.words };
 }
 
 function personalCoverRowFrom(r: PersonalBrowserDbRow): PersonalCoverRow {
@@ -1544,6 +1585,8 @@ const MUTABLE_TABLE_VERBS: Readonly<Record<string, readonly DmlVerb[]>> = {
   personal_browser: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   personal_watch: ["SELECT", "INSERT", "UPDATE"],
   personal_cover: ["SELECT", "INSERT", "UPDATE"],
+  question_ledger: ["SELECT", "INSERT", "DELETE"],
+  room_watch: ["SELECT", "INSERT", "UPDATE"],
   meeting_data: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   dm_rule: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   attention_state: ["SELECT", "INSERT", "UPDATE", "DELETE"],
@@ -2967,6 +3010,63 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       return (rows as { ts: string; connector: string; tool: string }[]).map((r) => ({ ts: String(r.ts), connector: r.connector, tool: r.tool }));
     },
 
+    async listRoomConnectorCalls(org, since, limit) {
+      const { rows } = await client.query(
+        `SELECT ts, surface_key, principal_id, connector, tool FROM (
+             SELECT seq, ts, surface_key, principal_id, connector, tool FROM tool_usage
+             WHERE org_id = $1 AND surface_mode = 'channel' AND event = 'call' AND outcome = 'ok' AND connector <> ''
+               AND principal_id IS NOT NULL AND principal_id <> '' AND ts >= $2
+               AND session_id NOT IN (SELECT session_id FROM usage_events WHERE org_id = $1 AND kind = 'routine')
+             ORDER BY seq DESC LIMIT $3
+           ) recent ORDER BY seq ASC`,
+        [org, since, Math.max(0, Math.floor(limit))],
+      );
+      return (rows as { ts: string; surface_key: string; principal_id: string; connector: string; tool: string }[]).map((r) => ({
+        ts: String(r.ts),
+        surfaceKey: r.surface_key,
+        principalId: r.principal_id,
+        connector: r.connector,
+        tool: r.tool,
+      }));
+    },
+
+    async appendQuestion(entry, pruneBefore) {
+      await client.query("INSERT INTO question_ledger (org_id, ts, surface_key, surface_mode, principal_id, fingerprint, words) VALUES ($1, $2, $3, $4, $5, $6, $7)", [
+        entry.org,
+        entry.ts,
+        entry.surfaceKey,
+        entry.surfaceMode,
+        entry.principalId,
+        entry.fingerprint,
+        entry.words,
+      ]);
+      await client.query("DELETE FROM question_ledger WHERE org_id = $1 AND ts < $2", [entry.org, pruneBefore]);
+    },
+
+    async listPersonQuestions(org, principalId, surfacePrefix, since, limit) {
+      const { rows } = await client.query(
+        `SELECT ts, surface_key, principal_id, fingerprint, words FROM (
+             SELECT seq, ts, surface_key, principal_id, fingerprint, words FROM question_ledger
+             WHERE org_id = $1 AND principal_id = $2 AND surface_mode = 'dm' AND substr(surface_key, 1, length($3::text)) = $3::text AND ts >= $4
+             ORDER BY seq DESC LIMIT $5
+           ) recent ORDER BY seq ASC`,
+        [org, principalId, surfacePrefix, since, Math.max(0, Math.floor(limit))],
+      );
+      return (rows as QuestionLedgerDbRow[]).map(questionRowFrom);
+    },
+
+    async listRoomQuestions(org, since, limit) {
+      const { rows } = await client.query(
+        `SELECT ts, surface_key, principal_id, fingerprint, words FROM (
+             SELECT seq, ts, surface_key, principal_id, fingerprint, words FROM question_ledger
+             WHERE org_id = $1 AND surface_mode = 'channel' AND ts >= $2
+             ORDER BY seq DESC LIMIT $3
+           ) recent ORDER BY seq ASC`,
+        [org, since, Math.max(0, Math.floor(limit))],
+      );
+      return (rows as QuestionLedgerDbRow[]).map(questionRowFrom);
+    },
+
     async appendToolUsage(entry: ToolUsageEntry) {
       await client.query(
         `INSERT INTO tool_usage (org_id, ts, surface_key, surface_mode, principal_id, session_id, event, tool, connector, outcome, model, input_tokens, output_tokens, cache_read_tokens)
@@ -3246,6 +3346,28 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     async listPersonalWatches(org) {
       const { rows } = await client.query("SELECT principal_key, state_json, version, updated_at FROM personal_watch WHERE org_id = $1 ORDER BY principal_key", [org]);
       return (rows as PersonalBrowserDbRow[]).map(personalWatchRowFrom);
+    },
+
+    async getRoomWatch(org, surfaceKey) {
+      const { rows } = await client.query("SELECT surface_key, state_json, version, updated_at FROM room_watch WHERE org_id = $1 AND surface_key = $2", [org, surfaceKey]);
+      const row = rows[0] as { surface_key: string; state_json: string; version: number; updated_at: string } | undefined;
+      return row ? { surfaceKey: row.surface_key, stateJson: row.state_json, version: Number(row.version), updatedAt: row.updated_at } : null;
+    },
+
+    async casRoomWatch(org, surfaceKey, stateJson, at, expected) {
+      if (expected === null) {
+        const { rows } = await client.query(
+          "INSERT INTO room_watch (org_id, surface_key, state_json, version, updated_at) VALUES ($1, $2, $3, 1, $4) ON CONFLICT (org_id, surface_key) DO NOTHING RETURNING version",
+          [org, surfaceKey, stateJson, at],
+        );
+        return rows.length > 0 ? 1 : null;
+      }
+      const { rows } = await client.query(
+        "UPDATE room_watch SET state_json = $3, version = version + 1, updated_at = $4 WHERE org_id = $1 AND surface_key = $2 AND version = $5 RETURNING version",
+        [org, surfaceKey, stateJson, at, expected],
+      );
+      const row = rows[0] as { version: number } | undefined;
+      return row === undefined ? null : Number(row.version);
     },
 
     async getPersonalCover(org, principalKey) {

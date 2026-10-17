@@ -12,7 +12,8 @@ import { judgeFinding, type WatchFinding, type WatchSilenceReason } from "./judg
 import { parseWatchState, updatePersonalWatch, type PersonalWatchState } from "./state.js";
 import type { WatchDelivery, WatchDeliveryResult } from "./deliver.js";
 import { discoverForPerson, discoveryOn, repeatedWorkSummary, type ProposeRoutine } from "./discovery.js";
-import type { PersonConnectorCallRow } from "../operational/store.js";
+import { roomDiscoveryTick, type ProposeRoomRoutine, type RoomDiscoveryDeps } from "./room-discovery.js";
+import type { PersonConnectorCallRow, QuestionLedgerRow } from "../operational/store.js";
 
 export type PersonalWatchDetectorName = "calendar-conflicts";
 
@@ -104,12 +105,17 @@ export interface PersonalWatchTickDeps {
   readonly budgetMs?: number;
   readonly propose?: ProposeRoutine;
   readonly readCalls?: (org: string, principalId: string, surfacePrefix: string, since: string, limit: number) => Promise<PersonConnectorCallRow[]>;
+  readonly readQuestions?: (org: string, principalId: string, surfacePrefix: string, since: string, limit: number) => Promise<QuestionLedgerRow[]>;
+  readonly proposeRoom?: ProposeRoomRoutine;
+  readonly readRoomCalls?: RoomDiscoveryDeps["readRoomCalls"];
+  readonly readRoomQuestions?: RoomDiscoveryDeps["readRoomQuestions"];
 }
 
 export interface PersonalWatchTickReport {
   readonly checked: number;
   readonly nudged: number;
   readonly proposed: number;
+  readonly roomProposed: number;
   readonly silenced: number;
   readonly deferred: number;
 }
@@ -288,7 +294,7 @@ export async function checkPerson(org: string, principalKey: string, state: Pers
   }
   let proposed = false;
   if (!nudged && deps.propose) {
-    const outcome = await discoverForPerson(org, principalKey, state, { propose: deps.propose, dmStopped: deps.dmStopped ?? liveDmStopped, ...(deps.readCalls ? { readCalls: deps.readCalls } : {}) }, now, (mutate) =>
+    const outcome = await discoverForPerson(org, principalKey, state, { propose: deps.propose, dmStopped: deps.dmStopped ?? liveDmStopped, ...(deps.readCalls ? { readCalls: deps.readCalls } : {}), ...(deps.readQuestions ? { readQuestions: deps.readQuestions } : {}) }, now, (mutate) =>
       updatePersonalWatch(org, principalKey, mutate, now.toISOString()),
     );
     proposed = outcome.proposed;
@@ -315,10 +321,18 @@ export function checkDue(state: PersonalWatchState, now: Date): boolean {
 }
 
 export async function personalWatchTick(deps: PersonalWatchTickDeps): Promise<PersonalWatchTickReport> {
-  const report = { checked: 0, nudged: 0, proposed: 0, silenced: 0, deferred: 0 };
-  if (!personalWatchArmed() && !(discoveryOn() && deps.propose)) return report;
+  const report = { checked: 0, nudged: 0, proposed: 0, roomProposed: 0, silenced: 0, deferred: 0 };
   const org = deps.org ?? deploymentOrg();
   const now = deps.now ?? new Date();
+  if (discoveryOn() && deps.proposeRoom) {
+    const rooms = await roomDiscoveryTick(
+      org,
+      { proposeRoom: deps.proposeRoom, ...(deps.readRoomCalls ? { readRoomCalls: deps.readRoomCalls } : {}), ...(deps.readRoomQuestions ? { readRoomQuestions: deps.readRoomQuestions } : {}) },
+      now,
+    );
+    report.roomProposed = rooms.proposed;
+  }
+  if (!personalWatchArmed() && !(discoveryOn() && deps.propose)) return report;
   const started = Date.now();
   const budget = deps.budgetMs ?? PERSONAL_WATCH_TICK_BUDGET_MS;
   let rows;

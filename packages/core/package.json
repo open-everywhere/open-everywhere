@@ -1970,6 +1970,10 @@
       "types": "./dist/agent/hooks/personal-watch-enroll.d.ts",
       "default": "./dist/agent/hooks/personal-watch-enroll.js"
     },
+    "./agent/hooks/question-ledger.js": {
+      "types": "./dist/agent/hooks/question-ledger.d.ts",
+      "default": "./dist/agent/hooks/question-ledger.js"
+    },
     "./agent/hooks/requester-identity.js": {
       "types": "./dist/agent/hooks/requester-identity.d.ts",
       "default": "./dist/agent/hooks/requester-identity.js"
@@ -2653,6 +2657,14 @@
     "./agent/personal-watch/propose.js": {
       "types": "./dist/agent/personal-watch/propose.d.ts",
       "default": "./dist/agent/personal-watch/propose.js"
+    },
+    "./agent/personal-watch/questions.js": {
+      "types": "./dist/agent/personal-watch/questions.d.ts",
+      "default": "./dist/agent/personal-watch/questions.js"
+    },
+    "./agent/personal-watch/room-discovery.js": {
+      "types": "./dist/agent/personal-watch/room-discovery.d.ts",
+      "default": "./dist/agent/personal-watch/room-discovery.js"
     },
     "./agent/personal-watch/state.js": {
       "types": "./dist/agent/personal-watch/state.d.ts",

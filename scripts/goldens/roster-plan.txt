@@ -45,6 +45,7 @@ agent/hooks/memory.ts	mounted @open-everywhere/core
 agent/hooks/native-input-audit.ts	mounted @open-everywhere/core
 agent/hooks/own-account-ask.ts	mounted @open-everywhere/core
 agent/hooks/personal-watch-enroll.ts	mounted @open-everywhere/core
+agent/hooks/question-ledger.ts	mounted @open-everywhere/core
 agent/hooks/requester-identity.ts	mounted @open-everywhere/core
 agent/hooks/requester-messages.ts	mounted @open-everywhere/core
 agent/hooks/routine-outcome.ts	mounted @open-everywhere/core

@@ -23,6 +23,20 @@ export interface WatchProposalRecord {
   readonly decidedAt?: string;
 }
 
+export function parseProposalRecords(value: unknown): WatchProposalRecord[] {
+  return (Array.isArray(value) ? value : [])
+    .map((p): WatchProposalRecord | undefined => {
+      const o = p as Record<string, unknown>;
+      const fingerprint = strOrUndef(o?.["fingerprint"]);
+      const at = strOrUndef(o?.["at"]);
+      if (!fingerprint || !at) return undefined;
+      const outcome = o["outcome"] === "accepted" || o["outcome"] === "declined" ? o["outcome"] : undefined;
+      const decidedAt = strOrUndef(o["decidedAt"]);
+      return { fingerprint, summary: strOrUndef(o["summary"]) ?? "", at, ...(outcome ? { outcome } : {}), ...(decidedAt ? { decidedAt } : {}) };
+    })
+    .filter((p): p is WatchProposalRecord => p !== undefined);
+}
+
 export type FirstConversationOutcome = "offered" | "declined" | "set-up";
 
 export interface FirstConversationRecord {
@@ -80,17 +94,7 @@ export function parseWatchState(json: string): PersonalWatchState {
       return { fingerprint, kind: strOrUndef(o["kind"]) ?? "unknown", summary: strOrUndef(o["summary"]) ?? "", at, ...(response ? { response } : {}) };
     })
     .filter((n): n is WatchNudgeRecord => n !== undefined);
-  const proposals = (Array.isArray(raw["proposals"]) ? raw["proposals"] : [])
-    .map((p): WatchProposalRecord | undefined => {
-      const o = p as Record<string, unknown>;
-      const fingerprint = strOrUndef(o?.["fingerprint"]);
-      const at = strOrUndef(o?.["at"]);
-      if (!fingerprint || !at) return undefined;
-      const outcome = o["outcome"] === "accepted" || o["outcome"] === "declined" ? o["outcome"] : undefined;
-      const decidedAt = strOrUndef(o["decidedAt"]);
-      return { fingerprint, summary: strOrUndef(o["summary"]) ?? "", at, ...(outcome ? { outcome } : {}), ...(decidedAt ? { decidedAt } : {}) };
-    })
-    .filter((p): p is WatchProposalRecord => p !== undefined);
+  const proposals = parseProposalRecords(raw["proposals"]);
   const fcRaw = typeof raw["firstConversation"] === "object" && raw["firstConversation"] !== null ? (raw["firstConversation"] as Record<string, unknown>) : undefined;
   const fcSince = strOrUndef(fcRaw?.["since"]);
   const fcSurface = strOrUndef(fcRaw?.["surfaceKey"]);

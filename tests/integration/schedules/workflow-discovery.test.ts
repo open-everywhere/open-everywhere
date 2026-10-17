@@ -3,7 +3,7 @@ import { expect, test } from "vitest";
 import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
 import { getOperationalStore } from "@open-everywhere/core/agent/operational/provider.js";
 
-import { auditCursor, bootAgent, rowsSinceCursor, runScheduleTask, SLACK_TEAM_ID, type AuditRow } from "../harness";
+import { auditCursor, bootAgent, registerScript, rowsSinceCursor, runScheduleTask, seatReply, SLACK_TEAM_ID, slackDmWake, slackTs, waitFor, type AuditRow } from "../harness";
 import { installSlackWebApiStub } from "../slack-web-api";
 
 const PERSON = "U0OPE2512DSC";
@@ -69,6 +69,84 @@ test("the compiled personal-watch task offers a routine for repeated work, with 
     const blocks = JSON.stringify(JSON.parse(posts[0]!.params.get("blocks") ?? "[]"));
     expect(blocks, "the card has no Set it up button").toContain('"Set it up"');
     expect(blocks, "the card has no No thanks button").toContain('"No thanks"');
+    expect(blocks, "the card leaks the fingerprint").not.toContain("weekly:");
+  } finally {
+    slack.uninstall();
+  }
+});
+
+test("a DM question answered with no connector call lands in the question ledger, through the mounted hook", async () => {
+  const asker = "U0OPE2539ASK";
+  const dm = "D0OPE2539ASK";
+  const slack = installSlackWebApiStub((method, params) => {
+    if (method === "auth.test") return { ok: true, user_id: "U0OPE2539BOT", bot_id: "B0OPE2539BOT", team_id: SLACK_TEAM_ID };
+    if (method === "users.info") return { ok: true, user: { id: params.get("user"), team_id: SLACK_TEAM_ID, is_bot: false, is_restricted: false, is_ultra_restricted: false, is_stranger: false } };
+    if (method === "chat.postMessage" || method === "chat.update") return { ok: true, ts: slackTs(Date.now(), 253_900), channel: params.get("channel") };
+    if (method === "agents.sessions.setStatus" || method === "reactions.add" || method === "reactions.remove") return { ok: true };
+    return undefined;
+  });
+  await bootAgent({ sharedSqlite: true, stubbedProviderTransport: true });
+  const script = registerScript({ parent: [seatReply("Priya is on call this week.", "ope2539-answer")] });
+  try {
+    const org = deploymentOrg();
+    const res = await slackDmWake({ channelId: dm, userId: asker, text: "Who is on call this week?", ts: slackTs(Date.now(), 253_901) });
+    expect(res.status, `the DM wake POST was not accepted: ${res.body.slice(0, 200)}`).toBe(200);
+    const rows = await waitFor(async () => {
+      const got = await getOperationalStore().listPersonQuestions(org, asker, `slack/${SLACK_TEAM_ID}/`, new Date(Date.now() - DAY_MS).toISOString(), 10);
+      return got.length > 0 ? got : undefined;
+    }, "🔴 the question_ledger row for the DM question — the question-ledger hook is not mounted, or never saw the turn");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.words, "the row holds the normalized words").toBe("who is on call this week?");
+    expect(rows[0]!.surfaceKey).toBe(`slack/${SLACK_TEAM_ID}/${dm}`);
+  } finally {
+    script.dispose();
+    slack.uninstall();
+  }
+});
+
+test("the compiled personal-watch task asks a shared room about work two people there repeat", async () => {
+  const room = "C0OPE2539ROOM";
+  const slack = installSlackWebApiStub((method) => {
+    if (method === "chat.postMessage") return { ok: true, ts: "1760009420.254000", channel: room };
+    return undefined;
+  });
+  await bootAgent({ sharedSqlite: true, stubbedProviderTransport: true });
+  try {
+    const org = deploymentOrg();
+    const store = getOperationalStore();
+    const { updateRoomWatch, ROOM_SCAN_KEY } = await import("@open-everywhere/core/agent/personal-watch/room-discovery.js");
+    await updateRoomWatch(org, ROOM_SCAN_KEY, (cur) => ({ proposals: cur.proposals }));
+    const now = Date.now();
+    for (const [weeks, who] of [[1, "U0OPE2539ANN"], [2, "U0OPE2539BEN"], [3, "U0OPE2539ANN"]] as const) {
+      await store.appendToolUsage({
+        org,
+        ts: new Date(now - weeks * 7 * DAY_MS).toISOString(),
+        surfaceKey: `slack/${SLACK_TEAM_ID}/${room}`,
+        surfaceMode: "channel",
+        principalId: who,
+        sessionId: `s-ope2539-${weeks}`,
+        event: "call",
+        tool: "list_incidents",
+        connector: "pagerduty",
+        outcome: "ok",
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+      });
+    }
+    const cursor = await auditCursor();
+
+    await runScheduleTask("schedules/personal-watch.ts");
+
+    const weekday = new Date(now).getUTCDay();
+    const fingerprint = `weekly:pagerduty/list_incidents:${weekday}`;
+    const rows = await rowsSinceCursor(cursor, ["room_watch.proposal"], { limit: 200 });
+    expect(rows.some((r) => detailOf(r).fingerprint === fingerprint), "🔴 no room_watch.proposal row — the compiled task never ran room discovery").toBe(true);
+    const posts = slack.calls.filter((c) => c.method === "chat.postMessage" && c.params.get("channel") === room);
+    expect(posts.length, "🔴 no card was posted into the room").toBe(1);
+    const blocks = JSON.stringify(JSON.parse(posts[0]!.params.get("blocks") ?? "[]"));
+    expect(blocks, "the card has no Set it up button").toContain('"Set it up"');
+    expect(blocks, "the card leaks a person id").not.toContain("U0OPE2539");
     expect(blocks, "the card leaks the fingerprint").not.toContain("weekly:");
   } finally {
     slack.uninstall();
