@@ -195,6 +195,7 @@ test:friendly-ids-lint
 test:friendly-names
 test:brand-literal-lint
 test:template-drift
+lint:template-paths
 test:template-adapters
 test:npm-command
 lint:doc-links

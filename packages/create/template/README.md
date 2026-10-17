@@ -16,6 +16,11 @@ route first:
   Gateway with OIDC, so it needs no gateway key.
 - **Docker** — self-host a container that satisfies the
   [deployment contract](https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/contract.md).
+  This app carries the image (`Dockerfile`) and the stack (`docker-compose.yml`: the app behind the
+  egress proxy in `deploy/egress-proxy/`, with Postgres). Run `npm install` once, then
+  `docker compose up --build` on the server. This stack runs the `justbash` sandbox backend: the
+  agent's shell shares the app process's filesystem and environment. That is development grade, and
+  it does not meet the contract's `sandbox-backend` requirement.
 
 These are the two supported routes. Some steps stay with you: creating the Slack app, approving
 each deploy, and pasting each secret where the agent's tools can read it but the chat cannot.
@@ -67,6 +72,8 @@ without a public tunnel.
 | `agent/webhooks/hooks.ts` | Inbound webhook triggers. |
 | `AGENTS.md`, `CLAUDE.md` | The guide a coding agent reads in this repository. |
 | `.mcp.json`, `scripts/ops-mcp.ts` | The `open-everywhere-ops` MCP server: setup status, `.env.local` values and stored secrets, for a coding agent. |
+| `Dockerfile`, `.dockerignore`, `docker-compose.yml` | The Docker route: the app's image, and the stack that runs it behind the egress proxy with Postgres. |
+| `deploy/egress-proxy/` | The egress proxy's image: the only container on the Docker route with a route to the internet. It is a copy of the Open Everywhere repository's `deploy/egress-proxy`. |
 | `scripts/env-pipe.mjs` | `npm run -s env:pipe`: writes one `.env.local` value to a pipe for `vercel env add`. It refuses a terminal or a file. Never run it bare. |
 | `.claude/skills/quickstart-open-everywhere/` | The setup skill that drives that server. |
 

@@ -173,6 +173,7 @@
     "test:upgrading-notes": "NODE_NO_WARNINGS=1 tsx scripts/upgrading-notes-test.ts",
     "test:oe-upgrade": "NODE_NO_WARNINGS=1 tsx scripts/oe-upgrade-test.ts",
     "test:template-drift": "NODE_NO_WARNINGS=1 tsx scripts/template-drift-test.ts",
+    "lint:template-paths": "tsx scripts/template-paths.ts",
     "test:template-adapters": "NODE_NO_WARNINGS=1 tsx scripts/template-adapters-boot-test.ts",
     "test:personal-browser-fence": "tsx scripts/personal-browser-fence-test.ts",
     "test:personal-browser-recorder": "tsx scripts/personal-browser-recorder-test.ts",

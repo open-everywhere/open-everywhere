@@ -197,6 +197,62 @@ const INSTRUCTIONS_ALLOWANCE: readonly { readonly reference: string; readonly te
 }
 
 {
+  const EGRESS_PROXY_FILES = [
+    "Dockerfile",
+    "squid.conf",
+    "tier-b.conf",
+    "gen-ca.sh",
+    "install-ca.sh",
+    "entrypoint.sh",
+    "control/acl.ts",
+    "control/handlers.ts",
+    "control/helper.js",
+    "control/server.ts",
+  ];
+  for (const rel of ["Dockerfile", ".dockerignore", "docker-compose.yml"]) ok(templateFiles.includes(rel), `template ${rel}: present (the Docker route)`);
+  const shipped = templateFiles.filter((f) => f.startsWith("deploy/egress-proxy/")).map((f) => f.slice("deploy/egress-proxy/".length)).sort();
+  eq(shipped, [...EGRESS_PROXY_FILES].sort(), "template deploy/egress-proxy/: exactly the proxy's build context (no test file, no README)");
+  for (const rel of EGRESS_PROXY_FILES) {
+    eq(
+      readFileSync(join(TEMPLATE, "deploy", "egress-proxy", ...rel.split("/")), "utf8"),
+      readFileSync(join(PACKAGES, "..", "deploy", "egress-proxy", ...rel.split("/")), "utf8"),
+      `template deploy/egress-proxy/${rel}: byte-identical to the repository's deploy/egress-proxy/${rel}`,
+    );
+  }
+  const proxyDockerfile = readFileSync(join(TEMPLATE, "deploy", "egress-proxy", "Dockerfile"), "utf8");
+  const copied = [...proxyDockerfile.matchAll(/^COPY\s+(.+)\s+\S+$/gm)].flatMap((m) => m[1]!.trim().split(/\s+/)).map((p) => p.replace(/\/$/, ""));
+  ok(copied.length > 0, "the egress proxy's Dockerfile COPYs its files");
+  for (const p of copied) ok(EGRESS_PROXY_FILES.some((f) => f === p || f.startsWith(`${p}/`)), `the proxy image COPYs ${p}, and the template ships it`);
+
+  const dockerfile = readFileSync(join(TEMPLATE, "Dockerfile"), "utf8");
+  ok(/^COPY package\.json package-lock\.json \.\/$/m.test(dockerfile) && /^RUN npm ci\b/m.test(dockerfile), "template Dockerfile: installs from the lockfile with `npm ci`");
+  ok(/probeEvePatch/.test(dockerfile) && /status !== "patched"/.test(dockerfile), "template Dockerfile: fails the build when the eve patch probe does not read `patched`");
+  ok(/npm run build$/m.test(dockerfile), "template Dockerfile: builds with the app's own `npm run build`");
+  const bases = [...dockerfile.matchAll(/^FROM (\S+)/gm)].map((m) => m[1]);
+  eq(bases, ["node:24-alpine", "node:24-alpine"], "template Dockerfile: both stages run Node 24, the contract's `node-24` range");
+  ok(/^CMD \["npx", "eve", "start", "--host", "0\.0\.0\.0"\]$/m.test(dockerfile), "template Dockerfile: serves with `eve start` on every interface");
+  ok(!/\bpackages\/|build:packages|patch-package/.test(dockerfile.replace(/^#.*$/gm, "")), "template Dockerfile: no workspace step (an app installs @open-everywhere/* from npm)");
+
+  const dockerignore = readFileSync(join(TEMPLATE, ".dockerignore"), "utf8").split("\n");
+  for (const line of ["node_modules", ".env", ".env.*", ".git", ".output", "deploy"]) {
+    ok(dockerignore.includes(line), `template .dockerignore: excludes \`${line}\``);
+  }
+
+  const compose = readFileSync(join(TEMPLATE, "docker-compose.yml"), "utf8");
+  ok(/context: \.\/deploy\/egress-proxy$/m.test(compose), "template docker-compose.yml: builds the proxy from the shipped deploy/egress-proxy");
+  ok(/context: \.\n\s+dockerfile: Dockerfile$/m.test(compose), "template docker-compose.yml: builds the app from its own Dockerfile");
+  ok(/networks: \[oe-net-internal\]\s+# internal ONLY/.test(compose) && /internal: true/.test(compose), "template docker-compose.yml: the app is on the internal-only network");
+  ok(/OE_EGRESS_PROXY_TOKEN: "\$\{OE_EGRESS_PROXY_TOKEN:\?/.test(compose), "template docker-compose.yml: refuses to start without OE_EGRESS_PROXY_TOKEN");
+  ok(/NO_PROXY: "[^"]*neon-wsproxy/.test(compose), "template docker-compose.yml: the Postgres WebSocket bypasses the proxy (the app exits at boot otherwise, OPE-2193)");
+  ok(!/OE_SANDBOX_BACKEND/.test(compose), "template docker-compose.yml: names no retired OE_SANDBOX_BACKEND (OPE-2411)");
+
+  const settingsMod = (await import(pathToFileURL(join(TEMPLATE, "agent", "settings", "settings.ts")).href)) as {
+    SETTINGS_OVERRIDES?: { sandbox?: { selfHostBackend?: unknown } };
+  };
+  eq(settingsMod.SETTINGS_OVERRIDES?.sandbox?.selfHostBackend, "justbash", "template agent/settings/settings.ts: declares `sandbox.selfHostBackend: \"justbash\"` (the image builds with no Docker daemon)");
+}
+
+{
   const templateScripts = new Set(Object.keys((tpl as { scripts?: Record<string, string> }).scripts ?? {}));
   const aboutTheRepository = (line: string): boolean => /Open Everywhere repository|clone of the repository/.test(line);
   const exemptFile = (rel: string): boolean => rel.startsWith("claude/skills/");
@@ -205,10 +261,10 @@ const INSTRUCTIONS_ALLOWANCE: readonly { readonly reference: string; readonly te
     if (exemptFile(rel) || !/\.(ts|md|json)$/.test(rel)) continue;
     const lines = readFileSync(join(TEMPLATE, ...rel.split("/")), "utf8").split("\n");
     lines.forEach((line, i) => {
-      if (aboutTheRepository(line)) return;
       for (const m of line.matchAll(/npm run (?:-s )?([a-z][\w:-]*)/g)) {
         if (!templateScripts.has(m[1]!)) offenders.push(`${rel}:${i + 1} names \`npm run ${m[1]}\`, which the template's package.json does not define`);
       }
+      if (aboutTheRepository(line)) return;
       for (const m of line.matchAll(/\bpackages\/(?:core|adapters|providers|create)\/[\w./-]+/g)) {
         offenders.push(`${rel}:${i + 1} names the repository path ${m[0]} (use the package specifier, e.g. @open-everywhere/core/…)`);
       }

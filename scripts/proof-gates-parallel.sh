@@ -33,4 +33,7 @@ gate test test & P2=$!
 gate build build & P3=$!
 RED=0
 for pid in "$P1" "$P2" "$P3"; do wait "$pid" || RED=1; done
+if [ "${OE_PROOF_QUICKSTART:-}" = "1" ]; then
+  gate test:quickstart test-quickstart || RED=1
+fi
 exit "$RED"

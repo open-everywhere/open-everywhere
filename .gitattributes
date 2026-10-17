@@ -2,3 +2,7 @@
 # leg would conflict on the same end-of-file hunk; the built-in union driver keeps both lines instead.
 # scripts/chain/_legs.ts names the two shapes a union merge can leave and the gates that refuse them.
 test-chain.txt merge=union
+
+# The template path record (OPE-2354): one scaffolded path per line, sorted. scripts/template-paths.ts
+# refuses a duplicate or an unsorted line that a union merge can leave.
+packages/create/template-paths.txt merge=union

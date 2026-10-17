@@ -170,7 +170,7 @@ Then:
 1. **Install and build.** `npm install`, then `npm run build`.
 2. **Postgres.** Provision one the container can reach. The user runs `npx oe env set DATABASE_URL`
    and pastes its connection string at the prompt. That one value resolves both stores to postgres;
-   set no provider selector.
+   set no provider selector. The compose stack of step 6 also carries a Postgres of its own.
 3. **Key.** `scaffold_credential_key`.
 4. **Model route.** There is no OIDC off Vercel, so the user supplies `AI_GATEWAY_API_KEY` (Vercel
    → AI Gateway → API Keys issues one for any host) with `npx oe env set AI_GATEWAY_API_KEY`. Running a different model backend instead is
@@ -179,11 +179,17 @@ Then:
    which `--check` cannot see: that step stays `missing` on the Docker route either way, so read it
    and move on rather than chasing a green it cannot give.
 5. **Slack app.** Exactly as steps 5–7 of the Vercel route.
-6. **Run it.** Build the image and run it on the server, with the contract's environment set and a
-   public HTTPS URL in front. The Open Everywhere repository's own `Dockerfile` and
-   `docker-compose.yml` are the starting point
-   (`https://github.com/open-everywhere/open-everywhere`); a scaffolded app ships neither, so copy
-   them from there.
+6. **Run it.** The app ships its own `Dockerfile` and `docker-compose.yml`: the image, the egress
+   proxy (`deploy/egress-proxy/`), Postgres and its WebSocket bridge. On the server, the user puts
+   the contract's environment in `.env`, with `OE_EGRESS_PROXY_TOKEN` (`openssl rand -hex 32`) and
+   a `POSTGRES_PASSWORD`, then runs `docker compose up --build`. The compose file sets
+   `DATABASE_URL` to its own `postgres` service. For the managed Postgres of step 2 instead, put
+   its `DATABASE_URL` in `.env`, then delete the app's `DATABASE_URL` and `OE_NEON_WS_PROXY` lines
+   and the `postgres` and `neon-wsproxy` services from the compose file. Put a TLS-terminating
+   reverse proxy in front that forwards `/eve/` and `/.well-known/workflow/`.
+   Tell the user plainly: this stack runs the `justbash` sandbox backend, so the agent's shell
+   shares the app process's filesystem and environment, every `.env` value included. That is
+   development grade, and it does not meet the contract's `sandbox-backend` requirement.
 7. **Prove it, then the Slack URLs and the hello.** As steps 11–13 of the Vercel route, with
    `--route docker --host https://<host>`.
 

@@ -38,9 +38,11 @@ coding agent and ask it to set up Open Everywhere. The agent reads the app's `AG
 route first: **Vercel** (the `vercel` CLI plus Marketplace Neon) or **Docker** (a self-hosted
 container that satisfies the
 [deployment contract](https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/contract.md)).
-Vercel is the one route that the project runs end to end. The Docker route is partly proven, and a
-scaffolded app carries no `Dockerfile`: see the
-[deployment contract](https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/contract.md).
+Vercel is the one route that the project runs end to end. The Docker route is partly proven: a
+scaffolded app carries its `Dockerfile` and a `docker-compose.yml` with the egress proxy and Postgres,
+and the
+[deployment contract](https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/contract.md)
+says which requirements that stack meets.
 
 ## Use
 

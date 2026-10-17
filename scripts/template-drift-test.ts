@@ -17,6 +17,7 @@ import {
 } from "../packages/core/scripts/template-drift.js";
 import { parseUpgradingNotes, removedFilesUpTo } from "../packages/core/scripts/upgrade-notes.js";
 import { RENAMED_ON_COPY, scaffoldApp, scaffoldPathFor, listFiles } from "../packages/create/src/scaffold.js";
+import { parseTemplatePaths, readTemplatePathInputs, renderTemplatePaths, templatePathProblems } from "./template-paths.js";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const TEMPLATE = join(REPO, "packages/create/template");
@@ -38,6 +39,8 @@ for (const rel of listFiles(TEMPLATE)) {
 ok(templateFileKind("agent/lib/register-adapters.ts") === "owned", "register-adapters.ts is template-owned");
 ok(templateFileKind("scripts/ops-mcp.ts") === "owned", "ops-mcp.ts is template-owned");
 ok(templateFileKind("scripts/env-pipe.mjs") === "owned", "env-pipe.mjs is template-owned");
+ok(templateFileKind("docker-compose.yml") === "config", "docker-compose.yml is the app's own config (OPE-2405): an operator edits it for a managed Postgres");
+ok(templateFileKind("Dockerfile") === "owned" && templateFileKind("deploy/egress-proxy/squid.conf") === "owned", "the Dockerfile and the egress proxy are template-owned");
 ok(templateFileKind("AGENTS.md") === "owned" && templateFileKind("README.md") === "owned" && templateFileKind(".env.example") === "owned", "AGENTS.md, README.md and .env.example are template-owned");
 ok(templateFileKind(".claude/skills/quickstart-open-everywhere/SKILL.md") === "owned", "the skills are template-owned");
 ok(templateFileKind("roster.config.ts") === "config" && templateFileKind("agent/access/bundles.ts") === "config" && templateFileKind("agent/instructions.md") === "config", "the app's config-as-code is config");
@@ -250,6 +253,28 @@ function assertReport(text: string, where: string): void {
   rmSync(join(owned, "agent/instrumentation.ts"));
   const gone = templateDrift({ appRoot: owned, templateDir: TEMPLATE, version: TARGET, appName: "upgraded-app", removedFiles: removed });
   ok(!gone.entries.some((e) => e.path === "agent/instrumentation.ts"), "a removed file that the app no longer has prints nothing");
+}
+
+{
+  const held = ["AGENTS.md", "agent/agent.ts"];
+  const clean = templatePathProblems({ template: held, recorded: ["AGENTS.md", "agent/agent.ts", "agent/instrumentation.ts"], removedFiles: ["agent/instrumentation.ts"] });
+  ok(clean.length === 0, `a removed path that a release names, and every held path recorded: no problem — got ${JSON.stringify(clean)}`);
+  const silent = templatePathProblems({ template: held, recorded: ["AGENTS.md", "agent/agent.ts", "agent/instrumentation.ts"], removedFiles: [] });
+  ok(silent.length === 1 && silent[0]!.includes("agent/instrumentation.ts") && silent[0]!.includes("removedFiles"), `🔴 a template file dropped with no removedFiles entry is refused — got ${JSON.stringify(silent)}`);
+  const unrecorded = templatePathProblems({ template: [...held, "Dockerfile"], recorded: held, removedFiles: [] });
+  ok(unrecorded.length === 1 && unrecorded[0]!.includes("Dockerfile") && unrecorded[0]!.includes("--write"), `a new template file the record does not list is refused, and the fix is named — got ${JSON.stringify(unrecorded)}`);
+  const typo = templatePathProblems({ template: held, recorded: held, removedFiles: ["agent/instrumentaton.ts"] });
+  ok(typo.length === 1 && typo[0]!.includes("agent/instrumentaton.ts"), `a removedFiles path the template never held is refused — got ${JSON.stringify(typo)}`);
+  ok(templatePathProblems({ template: held, recorded: ["agent/agent.ts", "AGENTS.md"], removedFiles: [] }).some((p) => p.includes("not sorted")), "an unsorted record is refused (a union merge can leave one)");
+  ok(templatePathProblems({ template: held, recorded: ["AGENTS.md", "AGENTS.md", "agent/agent.ts"], removedFiles: [] }).some((p) => p.includes("more than once")), "a record that lists a path twice is refused");
+  ok(
+    JSON.stringify(parseTemplatePaths(renderTemplatePaths(["b", "a", "b"]))) === JSON.stringify(["a", "b"]),
+    "the rendered record parses back to the paths, sorted, without duplicates",
+  );
+  const real = readTemplatePathInputs(REPO);
+  const realProblems = [...real.problems, ...templatePathProblems(real)];
+  ok(realProblems.length === 0, `this checkout's template path record holds — got ${JSON.stringify(realProblems)}`);
+  ok(real.recorded.includes("agent/instrumentation.ts") && !real.template.includes("agent/instrumentation.ts"), "the record keeps agent/instrumentation.ts, which 0.2.0 removed (the OPE-2352 case)");
 }
 
 console.log(`template-drift-test: ${passed} assertions passed`);

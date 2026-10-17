@@ -23,9 +23,12 @@ const eq = <T>(actual: T, expected: T, label: string): void => {
 const REPO_ROOT = process.cwd();
 const keep = process.argv.includes("--keep");
 
-const CHILD_ENV: NodeJS.ProcessEnv = Object.fromEntries(
-  Object.entries(process.env).filter(([k]) => !/AI_GATEWAY_API_KEY|AI_GATEWAY_KEY/.test(k) && k !== "VERCEL"),
-);
+const CHILD_ENV: NodeJS.ProcessEnv = {
+  ...Object.fromEntries(
+    Object.entries(process.env).filter(([k]) => !/AI_GATEWAY_API_KEY|AI_GATEWAY_KEY/.test(k) && k !== "VERCEL" && k !== "DOCKER_CONTEXT"),
+  ),
+  DOCKER_HOST: "unix:///nonexistent/oe-quickstart-no-docker.sock",
+};
 
 function run(cmd: string, args: readonly string[], cwd: string): { code: number; out: string } {
   try {
@@ -145,6 +148,9 @@ try {
   ok(existsSync(join(app, ".env.example")), "the tarball carried .env.example");
   for (const rel of [".mcp.json", ".claude/skills/quickstart-open-everywhere/SKILL.md", "AGENTS.md", "CLAUDE.md", "scripts/ops-mcp.ts"]) {
     ok(existsSync(join(app, ...rel.split("/"))), `the tarball carried the agent route: ${rel}`);
+  }
+  for (const rel of ["Dockerfile", ".dockerignore", "docker-compose.yml", "deploy/egress-proxy/Dockerfile", "deploy/egress-proxy/entrypoint.sh", "deploy/egress-proxy/control/server.ts"]) {
+    ok(existsSync(join(app, ...rel.split("/"))), `the tarball carried the Docker route: ${rel}`);
   }
 
   const manifest = JSON.parse(readFileSync(join(app, "package.json"), "utf8")) as {
@@ -322,7 +328,7 @@ try {
   const eve = run(process.execPath, [binOf(app, "eve", "eve"), "build"], app);
   eq(eve.code, 0, `\`eve build\` succeeds in the scaffolded app${eve.code === 0 ? "" : `:\n${tail(eve.out)}`}`);
   const serverDir = join(app, ".output", "server");
-  ok(existsSync(serverDir), "eve build wrote .output/server (the non-Vercel output directory eve 0.54.3 uses)");
+  ok(existsSync(serverDir), "eve build wrote .output/server (eve's output directory when VERCEL is unset)");
   const serverModules = walk(serverDir).filter((f) => f.endsWith(".mjs"));
   ok(serverModules.length > 0, `.output/server holds compiled modules (${serverModules.length} .mjs file(s))`);
   const bareImports = serverModules.filter((f) => /from\s*"@open-everywhere\//.test(readFileSync(f, "utf8")));

@@ -42,5 +42,9 @@ node_modules/
 *.pem
 *.key
 
+# The egress proxy's MITM CA (Tier B). It lives in a Docker volume; a copy on disk is a real secret.
+deploy/egress-proxy/ca/
+deploy/egress-proxy/*.crt
+
 # A built Teams app package (`surface_app_package`): rebuilt from config, never committed.
 teams-app/*.zip

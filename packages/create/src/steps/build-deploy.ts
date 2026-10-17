@@ -24,7 +24,7 @@ function deployOrigin(ctx: StepContext): string | undefined {
 
 function deployCommand(ctx: StepContext): string {
   return routeOf(ctx) === "docker"
-    ? "build the image and run it on your server (the deployment contract states what it must satisfy)"
+    ? "`docker compose up --build` on your server (the app's Dockerfile and docker-compose.yml; the deployment contract states what it must satisfy)"
     : "npx vercel deploy --prod";
 }
 
@@ -54,7 +54,7 @@ export const buildDeployStep: SetupStep = {
         "`npm run build` (= `oe build`, then `eve build`) — must be green.",
         vercel
           ? "Deploy is a SEPARATE, explicit step: `npx vercel deploy --prod` (confirm the scope and team first). A `git push` does NOT deploy."
-          : "Deploy is a SEPARATE, explicit step: build the image and run it on your server, with the contract's environment set. See https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/contract.md.",
+          : "Deploy is a SEPARATE, explicit step: on your server, put the contract's environment in `.env` (with `OE_EGRESS_PROXY_TOKEN`), then run `docker compose up --build`. The app's `Dockerfile` builds the image, and `docker-compose.yml` puts it behind the egress proxy with Postgres. This stack runs the `justbash` sandbox backend: the agent's shell shares the app process's filesystem and environment. That is development grade, and it does not meet the contract's `sandbox-backend` requirement. See https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/contract.md.",
         "Then re-run `npx @open-everywhere/create --check --host https://<host>`: it probes the deployed Slack route.",
         "The probe passes on the route's own `401 unauthorized`, which proves the function booted and the route is mounted. It does NOT prove the deployment holds SLACK_SIGNING_SECRET: the route answers the same without it. Only Event Subscriptions showing **Verified** in the Slack console proves that.",
       ],

@@ -12,7 +12,7 @@
       "consequence": "An older runtime fails at install or at the first use of a language or standard-library feature the tree assumes.",
       "routes": {
         "vercel": "Set the project's Node.js Version to 24.x (Project → Settings → Build and Deployment).",
-        "docker": "The repository's `Dockerfile` pins the base image; a hand-rolled image must match the same range."
+        "docker": "The `Dockerfile` pins the base image (a scaffolded app's and the repository's alike); a hand-rolled image must match the same range."
       }
     },
     {

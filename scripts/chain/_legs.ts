@@ -274,8 +274,9 @@ export const OFF_CHAIN_BY_DESIGN: ReadonlyMap<string, string> = new Map([
     "a PRE-PUBLISH gate (OPE-2213): it packs all eleven publishable packages, scaffolds the quickstart app " +
       "with the packed scaffolder, runs a real `npm install` with lifecycle scripts, then `oe build` and a full " +
       "`eve build`. It needs the network and measures in minutes. Its fast half, the scaffold and the template " +
-      "drift check, IS on the chain as `@open-everywhere/create test:scaffold`. Run it from " +
-      "`docs/dev/publishing.md` § Before you publish.",
+      "drift check, IS on the chain as `@open-everywhere/create test:scaffold` and `lint:template-paths`. The " +
+      "proof script runs it only when the run sets `OE_PROOF_QUICKSTART=1` (OPE-2354), and " +
+      "`docs/dev/publishing.md` § Before you publish lists it.",
   ],
 ]);
 

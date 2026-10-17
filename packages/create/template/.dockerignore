@@ -1,0 +1,35 @@
+# The build context of this app's image (Dockerfile, docker-compose.yml).
+#
+# node_modules stays out: the image installs its own (musl) dependencies with `npm ci`. A host copy
+# would put glibc native modules over them and break the runtime image.
+node_modules
+**/node_modules
+
+# Version control and agent or editor state.
+.git
+.claude
+.vscode
+.idea
+
+# Build output: the image runs its own `oe build` and `eve build`.
+.vercel
+.output
+.nitro
+.eve
+
+# Local secrets and env values. An image layer must never carry one.
+.env
+.env.*
+*.pem
+*.key
+
+# Local state from `npm run dev`, and the egress proxy's own build context.
+.open-everywhere-data
+.open-everywhere-memory
+.workflow-data
+deploy
+
+# Logs and OS files.
+*.log
+npm-debug.log*
+.DS_Store

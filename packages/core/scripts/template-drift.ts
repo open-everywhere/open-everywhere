@@ -32,7 +32,7 @@ const CONFIG_PREFIXES: readonly string[] = [
   "agent/spend/",
   "agent/webhooks/",
 ];
-const CONFIG_FILES: ReadonlySet<string> = new Set(["roster.config.ts", "agent/instructions.md", ".gitignore"]);
+const CONFIG_FILES: ReadonlySet<string> = new Set(["roster.config.ts", "agent/instructions.md", ".gitignore", "docker-compose.yml"]);
 const MANAGED_FILES: ReadonlySet<string> = new Set(["package.json", "roster.lock.json", "scripts/goldens/roster-plan.txt"]);
 
 export function templateFileKind(path: string): TemplateFileKind {

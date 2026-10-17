@@ -9,13 +9,15 @@ Two routes are supported:
 | Route | What it is | What is proven |
 | --- | --- | --- |
 | `vercel` | A Vercel project with Neon from the Marketplace. | End to end: a scaffolded app deploys and answers a real Slack DM. |
-| `docker` | The repository's root `Dockerfile` plus the `docker-compose.yml` sidecars, on a server you run. | Partly. The image builds and boots on `justbash`, its default backend. `npm run test:docker-smoke` proves, on the compose topology, that a real model call succeeds through the enforcing egress proxy while the session stays deny-by-default (OPE-2406). On 0.3.0 the compose stack (Postgres, egress proxy, `justbash`) answered a signed Discord mention with a real model call, with the model host bypassing the proxy. The `docker` sandbox backend does not run in the image, and it cannot run behind the proxy (OPE-2407). So no Docker configuration meets the [`sandbox-backend`](#req-sandbox-backend) requirement today. No test drives a turn on every change. |
+| `docker` | The app's `Dockerfile` plus the `docker-compose.yml` sidecars (egress proxy, Postgres), on a server you run. A scaffolded app carries both. | Partly. The image builds and boots on `justbash`, its default backend. `npm run test:docker-smoke` proves, on the compose topology, that a real model call succeeds through the enforcing egress proxy while the session stays deny-by-default (OPE-2406). On 2026-10-14 a scaffolded app's own image (0.7.0 packages) passed the same smoke, real model call included (`OE_SMOKE_APP_DIR`, OPE-2405). On 0.3.0 the compose stack (Postgres, egress proxy, `justbash`) answered a signed Discord mention with a real model call, with the model host bypassing the proxy. The `docker` sandbox backend does not run in the image, and it cannot run behind the proxy (OPE-2407). So no Docker configuration meets the [`sandbox-backend`](#req-sandbox-backend) requirement today. No test drives a turn on every change. |
 
-The `Dockerfile` and `docker-compose.yml` live in the
-[repository](https://github.com/open-everywhere/open-everywhere), and the image builds the whole
-workspace. An app scaffolded with `@open-everywhere/create` carries no `Dockerfile`. To run a
-scaffolded app on Docker, write an image for it against the requirements below. The repository's
-`Dockerfile` is the reference recipe.
+An app scaffolded with `@open-everywhere/create` carries its own `Dockerfile`, `.dockerignore`,
+`docker-compose.yml` and the egress proxy's build context (`deploy/egress-proxy/`) (OPE-2405). Its
+image installs the `@open-everywhere/*` packages from npm with `npm ci`, so run `npm install` once
+before the first build. `OE_SMOKE_APP_DIR=<app> npm run test:docker-smoke` builds and boots a
+scaffolded app's image, in the repository. The
+[repository](https://github.com/open-everywhere/open-everywhere)'s own root `Dockerfile` builds the
+whole workspace instead, for this repository's reference app.
 
 Any other host is inferred from this page plus the Docker route. Nothing beyond those two is
 tested.
@@ -52,7 +54,7 @@ it at runtime would answer "cannot tell" on every real deployment. A test fails 
 literal and `engines.node` disagree.
 
 - **Vercel:** set the project's Node.js Version to 24.x (Project → Settings → Build and Deployment).
-- **Docker:** the repository's `Dockerfile` pins the base image. A hand-rolled image must match the range.
+- **Docker:** the `Dockerfile` pins the base image (a scaffolded app's and the repository's alike). A hand-rolled image must match the range.
 
 <a id="req-public-https-url"></a>
 

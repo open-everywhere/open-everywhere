@@ -14,6 +14,11 @@ BOOT_TIMEOUT=180
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+APP_DIR="$(cd "${OE_SMOKE_APP_DIR:-$ROOT}" && pwd)"
+if [ ! -f "$APP_DIR/Dockerfile" ] || [ ! -f "$APP_DIR/deploy/egress-proxy/Dockerfile" ]; then
+  echo "docker-smoke: $APP_DIR has no Dockerfile or no deploy/egress-proxy/Dockerfile" >&2
+  exit 2
+fi
 
 pass=0
 fail=0
@@ -42,13 +47,14 @@ wait_for_log() {
 }
 
 echo "== OPE-25 / OPE-2406 / OPE-2407 Vercel-less Docker smoke =="
+echo "-- app: $APP_DIR --"
 echo "-- building $IMAGE (off-Vercel: eve build emits the Nitro node-server bundle) --"
 if [ "${OE_SMOKE_SKIP_BUILD:-0}" = "1" ]; then
   echo "-- OE_SMOKE_SKIP_BUILD=1: reusing $IMAGE and $PROXY_IMAGE as tagged --"
 else
-  "$DOCKER" build -t "$IMAGE" "$ROOT"
+  "$DOCKER" build -t "$IMAGE" "$APP_DIR"
   echo "-- building $PROXY_IMAGE (deploy/egress-proxy) --"
-  "$DOCKER" build -t "$PROXY_IMAGE" "$ROOT/deploy/egress-proxy"
+  "$DOCKER" build -t "$PROXY_IMAGE" "$APP_DIR/deploy/egress-proxy"
 fi
 
 echo "-- LEG 1: booting $NAME on the backend the app declares, no proxy --"
