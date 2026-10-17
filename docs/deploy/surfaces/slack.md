@@ -961,6 +961,11 @@ is the Messages tab and the side panel:
   thread's turn only: it never falls back to the channel's newest turn.
 - When a second message is steered into a running turn, the turn's park settles both agent sessions:
   the one the turn started on and the one of the last message.
+- A DM message can arrive while another turn of the DM seat still runs, for example the turn that
+  reads a forwarded job's result. The message gets its own turn, but the running turn's park can set
+  the message's agent session first. That park sends the state it reads then: `suspended` when the
+  running turn reported through `update_status` that it waits on its person, or while a forwarded
+  job of that session waits, else `active`. The new turn then sets `processing`.
 - A message that arrives inside a thread gets no title, because it does not open the agent
   session. Slack's side panel may send its first message inside a thread. No test sends a real
   panel message, so whether a panel conversation gets a title is unproven.
@@ -987,7 +992,10 @@ signed DM door: the title before `processing`, `suspended` after `update_status(
 stops a held turn and sets the session `active`. The integration test
 `tests/integration/channels/slack-job-wait.test.ts` forwards a DM job whose worker asks with
 `ask_room`: the session goes `suspended` at the job's settlement, another message keeps it so, and the
-answer forwarded to the same task parks it `active`. The live e2e scenario
+answer forwarded to the same task parks it `active`. The test holds the seat's result-wake
+turn, so the other message usually arrives while that turn still runs. When it does, the test proves
+that the turn's park sends `suspended` and never `active`. The test also accepts a run in which the
+message arrives after that park. The live e2e scenario
 `S-SESSION-STOP` forges a signed press on a real deployment. No API can press the real button, so no
 test proves that Slack itself shows it.
 
