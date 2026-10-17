@@ -330,10 +330,12 @@ function envLines(env: ReleaseEnvChange): readonly string[] {
   return [...env.added.map((n) => `add \`${n}\``), ...env.removed.map((n) => `remove \`${n}\``)];
 }
 
-export function renderUpgradingMarkdown(notes: UpgradingNotes): string {
-  const lines: string[] = [...preamble(notes.releases[0]!.version)];
+export function renderUpgradingMarkdown(notes: UpgradingNotes, released?: string): string {
+  const isUnreleased = (r: ReleaseNote): boolean => released !== undefined && compareVersions(r.version, released) > 0;
+  const bootstrapTarget = notes.releases.find((r) => !isUnreleased(r)) ?? notes.releases[0]!;
+  const lines: string[] = [...preamble(bootstrapTarget.version)];
   for (const release of notes.releases) {
-    lines.push(`## ${release.version} — ${release.date}`, "", release.summary, "", `eve peer: \`${release.evePeer}\``, "");
+    lines.push(`## ${release.version} — ${isUnreleased(release) ? "not released yet" : release.date}`, "", release.summary, "", `eve peer: \`${release.evePeer}\``, "");
     lines.push(...section("Breaking", release.breaking));
     lines.push(...section("Config migrations", migrationLines(release.configMigrations)));
     lines.push(...section("Environment", envLines(release.env)));

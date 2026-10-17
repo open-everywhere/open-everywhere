@@ -141,6 +141,15 @@ ok(
   "🔴 the page carries the bootstrap for an app below 0.1.4 as one command block, naming the NEWEST release",
 );
 ok(!rendered.includes("@open-everywhere/core@0.2.0"), "…and never an older release in the record (the negative control)");
+const twoReleases = notesOf(record(release({ version: "0.3.0" }), release({ version: "0.2.0", date: "2026-09-30" })));
+const nextOnMain = renderUpgradingMarkdown(twoReleases, "0.2.0");
+ok(nextOnMain.includes("## 0.3.0 — not released yet\n") && !nextOnMain.includes("## 0.3.0 — 2026-10-03"), "🔴 an entry above core's version is headed \"not released yet\", not with a date");
+ok(nextOnMain.includes("## 0.2.0 — 2026-09-30\n"), "…and the released entry keeps its date");
+ok(
+  nextOnMain.includes(`\`\`\`sh\n${bootstrapCommands("0.2.0").join("\n")}\n\`\`\`\n`) && !nextOnMain.includes("@open-everywhere/core@0.3.0"),
+  "🔴 the bootstrap names the newest RELEASED entry, never a version npm does not hold yet",
+);
+ok(renderUpgradingMarkdown(twoReleases, "0.3.0").includes("## 0.3.0 — 2026-10-03\n"), "…and the same entry renders its date once core reaches it (the negative control)");
 ok(
   bootstrapCommands("0.3.0")[0] === "npm install --prefix .open-everywhere/bootstrap @open-everywhere/core@0.3.0 tsx@4",
   "🔴 the bootstrap installs tsx BESIDE the target core: the oe bin needs it, and core declares it only as a dev dependency",
@@ -166,7 +175,7 @@ for (const file of [NOTES_FILE, PAGE_FILE]) {
 ok(unknownCodemods(repoNotes.releases).length === 0, "every codemod this tree's record names is in the registry");
 
 const page = existsSync(join(CORE, PAGE_FILE)) ? readFileSync(join(CORE, PAGE_FILE), "utf8") : undefined;
-ok(page === renderUpgradingMarkdown(repoNotes), `🔴 packages/core/${PAGE_FILE} IS the rendering of ${NOTES_FILE} — a hand edit or a stale page goes red here`);
+ok(page === renderUpgradingMarkdown(repoNotes, corePkg.version), `🔴 packages/core/${PAGE_FILE} IS the rendering of ${NOTES_FILE} — a hand edit or a stale page goes red here`);
 
 const newest: ReleaseNote | undefined = repoNotes.releases[0];
 ok(newest !== undefined && compareVersions(newest.version, corePkg.version) >= 0, "the record's newest entry is not older than the package version");

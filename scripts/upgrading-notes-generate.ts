@@ -71,7 +71,7 @@ if (unknown.length > 0) {
 if (problems.length > 0) fail();
 
 const pagePath = join(CORE, PAGE_FILE);
-const rendered = renderUpgradingMarkdown(notes);
+const rendered = renderUpgradingMarkdown(notes, pkg.version);
 if (check) {
   const onDisk = existsSync(pagePath) ? readFileSync(pagePath, "utf8") : undefined;
   if (onDisk !== rendered) {

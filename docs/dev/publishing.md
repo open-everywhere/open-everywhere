@@ -331,6 +331,31 @@ The run pins each `@open-everywhere/*` package to `file:<its tarball>`, so do no
 does not hold the target. [Consuming as packages](../deploy/consuming-as-packages.md#upgrading)
 says what the command does.
 
+🔴 The rehearsal boots no operational store, so it does not prove a new table or its grants. The
+release record does that part, below.
+
+### Write the upgrade step in the pull request, not at the release
+
+A pull request that changes what an upgrading host must do writes the step into the NEXT release's
+entry in `packages/core/upgrading.json`. That entry's version is above the version core's
+`package.json` holds. `UPGRADING.md` heads it "not released yet", and its bootstrap block still names
+the newest released version. The release pull request keeps the entry, checks the version and sets
+the date.
+
+`npm run test:upgrade-surface` (`scripts/upgrade-surface-test.ts`, on the test chain) refuses a tree
+where one of these names has no step (OPE-2533):
+
+| A pull request adds | One line of an entry names it, in backticks, and carries |
+| --- | --- |
+| A table in `OPERATIONAL_TABLES` (`agent/operational/store.ts`) | The owner boot and `runtimeRoleGrantsSql`, in the same line |
+| A roster name in the template's `roster.lock.json` | `oe build --accept` |
+| A Slack scope or bot event in the app manifest | A re-applied Slack manifest |
+
+`scripts/upgrade-surface-baseline.json` holds the names that shipped by 0.7.0 with no such entry. It
+is shrink-only: a retired name leaves it. The test pins each list's size, so a new name cannot enter
+it unseen. An env name, a route or a schedule has no such check yet, so the author writes those steps
+by hand, as 0.7.0's entry does.
+
 ## Versions track milestones, not merges
 
 **One version per milestone.** Not one per batch merge, and not one per pull request.

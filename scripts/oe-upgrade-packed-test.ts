@@ -91,7 +91,7 @@ function makeNew(pkg: string, options: { readonly codemodId?: string; readonly n
 
   const notesJsonPath = join(pkg, "upgrading.json");
   const notes = JSON.parse(readFileSync(notesJsonPath, "utf8")) as { schemaVersion: number; releases: Record<string, unknown>[] };
-  notes.releases = notes.releases.filter((r) => r.version !== NEW);
+  notes.releases = notes.releases.filter((r) => compareVersions(String(r.version), OLD) <= 0);
   notes.releases.unshift({
     version: NEW,
     date: "2026-10-03",

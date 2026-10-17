@@ -125,6 +125,7 @@ lint:release-records
 test:release-record
 lint:upgrading-notes
 test:upgrading-notes
+test:upgrade-surface
 test:oe-upgrade
 test:upgrade-diff-fence
 test:suite-lock

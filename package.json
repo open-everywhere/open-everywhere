@@ -174,6 +174,7 @@
     "release-record:generate": "tsx scripts/release-record-generate.ts",
     "lint:upgrading-notes": "tsx scripts/upgrading-notes-generate.ts --check",
     "test:upgrading-notes": "NODE_NO_WARNINGS=1 tsx scripts/upgrading-notes-test.ts",
+    "test:upgrade-surface": "NODE_NO_WARNINGS=1 tsx scripts/upgrade-surface-test.ts",
     "test:oe-upgrade": "NODE_NO_WARNINGS=1 tsx scripts/oe-upgrade-test.ts",
     "test:template-drift": "NODE_NO_WARNINGS=1 tsx scripts/template-drift-test.ts",
     "lint:template-paths": "tsx scripts/template-paths.ts",
