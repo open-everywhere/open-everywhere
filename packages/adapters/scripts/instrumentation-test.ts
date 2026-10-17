@@ -19,6 +19,9 @@ delete process.env.OTEL_EXPORTER_OTLP_HEADERS;
 delete process.env.OTEL_EXPORTER_OTLP_TRACES_HEADERS;
 delete process.env.VERCEL;
 delete process.env.VERCEL_ENV;
+delete process.env.VERCEL_OTEL_ENDPOINTS;
+delete process.env.VERCEL_OTEL_ENDPOINTS_PORT;
+delete process.env.VERCEL_OTEL_ENDPOINTS_PROTOCOL;
 process.env.DO_NOT_TRACK = "1";
 
 const mod = await import("../agent/instrumentation.js");
@@ -40,6 +43,7 @@ for (const audience of ["public", "private", "unknown"] as const) {
   }
 }
 
+// proves: ENV-138, ENV-139, ENV-152, ENV-153, ENV-154, ENV-155
 ok(mod.resolveOtlpTarget({}) === undefined, "no endpoint → no target");
 ok(mod.otlpDestination !== undefined && !isOtelIntegration(mod.otlpDestination), "no endpoint at load → the otlp destination is disabled");
 ok(
@@ -86,4 +90,31 @@ ok(
   "traces headers override general headers key by key",
 );
 
-console.log(`✓ instrumentation: ${passed} assertions passed (otel() declaration, metadata-only policy, OTLP env resolution)`);
+// proves: ENV-156, ENV-157, ENV-158
+ok(mod.resolveVercelCollectorTarget({}) === undefined, "vercel collector: VERCEL_OTEL_ENDPOINTS unset → no target");
+ok(
+  same(mod.resolveVercelCollectorTarget({ VERCEL_OTEL_ENDPOINTS: "1" }), { url: "http://localhost:4318/v1/traces", protocol: "http/protobuf", headers: {} }),
+  "vercel collector: set → http://localhost:4318/v1/traces, http/protobuf by default",
+);
+ok(
+  same(mod.resolveVercelCollectorTarget({ VERCEL_OTEL_ENDPOINTS: "1", VERCEL_OTEL_ENDPOINTS_PORT: "9999", VERCEL_OTEL_ENDPOINTS_PROTOCOL: "http/json" }), {
+    url: "http://localhost:9999/v1/traces",
+    protocol: "http/json",
+    headers: {},
+  }),
+  "vercel collector: the port and the protocol come from VERCEL_OTEL_ENDPOINTS_PORT and VERCEL_OTEL_ENDPOINTS_PROTOCOL",
+);
+ok(
+  mod.resolveVercelCollectorTarget({ VERCEL_OTEL_ENDPOINTS: "1", VERCEL_OTEL_ENDPOINTS_PROTOCOL: "grpc" })?.protocol === "http/json",
+  "vercel collector: a protocol other than http/protobuf selects JSON, as @vercel/otel does",
+);
+const REQUEST_CONTEXT = Symbol.for("@vercel/request-context");
+const slot = globalThis as Record<symbol, unknown>;
+ok(mod.vercelTraceDrainsConfigured() === false, "trace drains: no Vercel request context → not configured");
+slot[REQUEST_CONTEXT] = { get: () => ({ telemetry: { traceDrains: [] } }) };
+ok(mod.vercelTraceDrainsConfigured() === false, "trace drains: an empty drain list → not configured");
+slot[REQUEST_CONTEXT] = { get: () => ({ telemetry: { traceDrains: [{}] } }) };
+ok(mod.vercelTraceDrainsConfigured() === true, "trace drains: one drain on the request → configured, so the collector skips the span");
+delete slot[REQUEST_CONTEXT];
+
+console.log(`✓ instrumentation: ${passed} assertions passed (otel() declaration, metadata-only policy, OTLP env resolution, Vercel's OTel collector)`);

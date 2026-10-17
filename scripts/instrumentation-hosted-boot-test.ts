@@ -37,7 +37,7 @@ interface BootReport {
   readonly probeSpan: string;
 }
 
-async function child(app: AppName): Promise<void> {
+async function child(app: AppName, traceDrains: boolean): Promise<void> {
   const eveSrc = dirname(createRequire(import.meta.url).resolve("eve"));
   const load = async <T>(rel: string): Promise<T> => (await import(pathToFileURL(join(eveSrc, rel)).href)) as T;
   const layoutModule = await load<{ resolveInstrumentationLayout(i: { agentRoot: string }): { modulePathsBySlot: Record<string, string> } }>(
@@ -87,6 +87,11 @@ async function child(app: AppName): Promise<void> {
 
   const probeSpan = `oe-otlp-probe-${process.pid}`;
   if (booted) {
+    if (traceDrains) {
+      (globalThis as Record<symbol, unknown>)[Symbol.for("@vercel/request-context")] = {
+        get: () => ({ headers: {}, url: "/", waitUntil: (task: () => Promise<unknown>) => void task().catch(() => undefined), telemetry: { traceDrains: [{}], reportSpans: () => undefined } }),
+      };
+    }
     api.trace.getTracer("oe.instrumentation-boot-test").startSpan(probeSpan).end();
     await runtime?.forceFlush();
     await providers.shutdownInstrumentationProviders();
@@ -124,9 +129,10 @@ function childEnv(extra: Readonly<Record<string, string>>): NodeJS.ProcessEnv {
   return { ...env, ...extra };
 }
 
-function runChild(app: AppName, extra: Readonly<Record<string, string>>): Promise<BootReport> {
+function runChild(app: AppName, extra: Readonly<Record<string, string>>, traceDrains = false): Promise<BootReport> {
   return new Promise((done, fail) => {
-    const proc = spawn(process.execPath, [TSX, fileURLToPath(import.meta.url), "--child", app], {
+    const args = [TSX, fileURLToPath(import.meta.url), "--child", app, ...(traceDrains ? ["--trace-drains"] : [])];
+    const proc = spawn(process.execPath, args, {
       cwd: REPO,
       env: childEnv(extra),
       stdio: ["ignore", "pipe", "pipe"],
@@ -194,6 +200,9 @@ async function main(): Promise<void> {
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const vercelCollector = createServer(server.listeners("request")[0] as Parameters<typeof createServer>[0]);
+  await new Promise<void>((r) => vercelCollector.listen(0, () => r()));
+  const vercelPort = String((vercelCollector.address() as AddressInfo).port);
   const hits = (prefix: string): Received[] => received.filter((h) => h.path.startsWith(prefix));
 
   try {
@@ -231,14 +240,42 @@ async function main(): Promise<void> {
     check(!e.slots.includes("agent-runs"), "E local: no Agent Runs destination", e.slots);
     check(received.length === before, "E local: nothing is exported anywhere", received.length - before);
 
+    const gBefore = received.length;
+    const g = await runChild("reference", { VERCEL: "1", VERCEL_ENV: "production", VERCEL_OTEL_ENDPOINTS: "1", VERCEL_OTEL_ENDPOINTS_PORT: vercelPort });
+    assertBootContract("G vercel-production+vercel-collector", g, true);
+    const gHits = received.slice(gBefore).filter((h) => h.path === "/v1/traces");
+    check(gHits.some((h) => h.body.includes(Buffer.from(g.probeSpan))),
+      "G vercel-production+vercel-collector: 🔴 OPE-2358 — the probe span reaches Vercel's collector at http://localhost:<VERCEL_OTEL_ENDPOINTS_PORT>/v1/traces",
+      received.slice(gBefore).map((h) => h.path));
+    check(gHits.every((h) => String(h.headers["content-type"]).includes("protobuf")), "G vercel-production+vercel-collector: the default protocol is http/protobuf",
+      gHits.map((h) => h.headers["content-type"]));
+    check(g.slots.includes("agent-runs"), "G vercel-production+vercel-collector: the Agent Runs destination stays seeded beside the collector", g.slots);
+
+    const gjBefore = received.length;
+    const gj = await runChild("template", {
+      VERCEL: "1", VERCEL_ENV: "preview", VERCEL_OTEL_ENDPOINTS: "1", VERCEL_OTEL_ENDPOINTS_PORT: vercelPort, VERCEL_OTEL_ENDPOINTS_PROTOCOL: "http/json",
+    });
+    assertBootContract("G vercel-preview+vercel-collector template", gj, true);
+    const gjHits = received.slice(gjBefore).filter((h) => h.path === "/v1/traces");
+    check(gjHits.some((h) => h.body.toString("utf8").includes(gj.probeSpan)) && gjHits.every((h) => String(h.headers["content-type"]).includes("json")),
+      "G vercel-preview+vercel-collector template: VERCEL_OTEL_ENDPOINTS_PROTOCOL=http/json sends the probe span as JSON",
+      gjHits.map((h) => h.headers["content-type"]));
+
+    const hBefore = received.length;
+    const h = await runChild("reference", { VERCEL: "1", VERCEL_ENV: "production", VERCEL_OTEL_ENDPOINTS: "1", VERCEL_OTEL_ENDPOINTS_PORT: vercelPort }, true);
+    assertBootContract("H vercel-production+vercel-collector+trace-drains", h, true);
+    check(received.length === hBefore, "H vercel-production+vercel-collector+trace-drains: the collector receives nothing — the runtime delivers to the drains",
+      received.slice(hBefore).map((r) => r.path));
+
     const f = await runScript(join(REPO, "scripts", "boot-smoke-test.ts"), { VERCEL: "1", VERCEL_ENV: "production" });
     check(f.code === 0 && f.out.includes("✓ boot-smoke:"), "F vercel-production: every agent module loads clean (test:boot under VERCEL=1, VERCEL_ENV=production)", f.tail);
   } finally {
     server.close();
+    vercelCollector.close();
   }
-  console.log(`✓ instrumentation-hosted-boot: ${passed} assertions passed (Vercel production/preview, OTLP on Vercel and self-host, local, every agent module under the Vercel env)`);
+  console.log(`✓ instrumentation-hosted-boot: ${passed} assertions passed (Vercel production/preview, OTLP on Vercel and self-host, Vercel's OTel collector, local, every agent module under the Vercel env)`);
 }
 
 const childIndex = process.argv.indexOf("--child");
-if (childIndex !== -1) await child(process.argv[childIndex + 1] as AppName);
+if (childIndex !== -1) await child(process.argv[childIndex + 1] as AppName, process.argv.includes("--trace-drains"));
 else await main();

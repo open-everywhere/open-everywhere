@@ -212,7 +212,7 @@ rather than a guess.
 eve owns the OpenTelemetry pipeline. It registers one tracer provider for the process, from the
 files in `agent/instrumentation/`, and it creates the spans for every model call (run → turn →
 step/tool-call). Nothing in the app calls `registerOTel`: a second registration stops the boot.
-Two destinations can receive the spans:
+Three destinations can receive the spans:
 
 - **Vercel Agent Runs.** On Vercel preview and production, eve exports to Agent Runs by default.
   See eve's Agent Runs guide to configure it with `agent/instrumentation/agent-runs.ts`, or to
@@ -226,8 +226,18 @@ OTEL_EXPORTER_OTLP_ENDPOINT=https://api.axiom.co        # or your collector
 OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer%20xaat-…,X-Axiom-Dataset=<dataset>"
 ```
 
-Each header value is percent-decoded, so write a space as `%20`. With no endpoint set, the OTLP
-destination is disabled. The [configuration reference](configuration-reference.md#observability)
+Each header value is percent-decoded, so write a space as `%20`.
+
+- **Vercel's OTel collector.** On Vercel, an OpenTelemetry integration can read spans from a
+  collector on the function's own host. Vercel then sets `VERCEL_OTEL_ENDPOINTS` (with
+  `VERCEL_OTEL_ENDPOINTS_PORT` and `VERCEL_OTEL_ENDPOINTS_PROTOCOL`), and the same
+  `agent/instrumentation/otlp.ts` destination also exports to that collector, with `@vercel/otel`'s
+  own rules. You configure nothing for this. A request that reports trace drains skips the
+  collector, because the Agent Runs export delivers those spans to the drains. If
+  `agent/instrumentation/agent-runs.ts` turns Agent Runs off, a request with trace drains sends its
+  spans to neither the drains nor the collector.
+
+With no endpoint and no Vercel collector, the OTLP destination is disabled. The [configuration reference](configuration-reference.md#observability)
 lists every variable.
 
 **Spans carry no model inputs or outputs.** `agent/instrumentation/otel.ts` declares eve's
@@ -235,7 +245,8 @@ process-wide `otel()` trace policy, and the policy records neither content direc
 audience in every environment. This policy is a ceiling for every OpenTelemetry destination, so
 no destination can add the content back. Without it, eve's default records content for a public
 conversation and in development. `npm run test:instrumentation-hosted-boot` boots the app's
-instrumentation through eve's registration path with Vercel's env and checks this policy.
+instrumentation through eve's registration path with Vercel's env and checks this policy. It also
+proves that a span reaches Vercel's OTel collector, and that a request with trace drains skips it.
 
 ## Signal 3 — errors & alerting
 

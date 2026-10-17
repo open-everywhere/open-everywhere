@@ -72,11 +72,11 @@ four authored ones not at all, which is where a new behaviour would slip in unre
 | The settings mechanism | 10 |
 | Settings keys (the schema) | 86 |
 | This deployment's overrides | 7 |
-| Environment variables the runtime reads | 108 |
+| Environment variables the runtime reads | 111 |
 | Dynamic env read sites (key not statically resolvable) | 11 |
 | The configuration reference, its generators and its ratchets | 10 |
 | The model registry | 27 |
-| **Total** | **259** |
+| **Total** | **262** |
 
 OPE-2411 part 2 moved twenty-three of the environment variables into config (eighteen new settings
 keys, two access-request config fields, and each connector's sign-in declaration), deleted the
@@ -380,12 +380,12 @@ means total over two-level specs, not over any nesting.
 | ENV-132 | `OE_TRANSCRIPT_RELAY_SECRET` | `packages/core/agent/control/transcript-relay.ts:142` | the shared secret the transcript relay route authenticates with. | `docs/deploy/configuration-reference.md#control-plane-remote-admin-auth` *(2 pages)* | ? |
 | ENV-134 | `OE_VISIBILITY` | `packages/core/agent/identity/binding.ts:394` | the binding visibility stand-in, read ONLY by bindLocal, clamped to private/public. | `docs/deploy/configuration-reference.md#identity-partitioning` | ? |
 | ENV-135 | `OE_WEBHOOK_HOOKS_PATH` | `agent/access/access-requests.ts:53` | where the generated webhook table lives in that repo. | `docs/deploy/configuration-reference.md#access-requests-the-widen-slow-path` | ? |
-| ENV-138 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `packages/adapters/agent/instrumentation.ts:80` | the standard OTel endpoint var. The adapters OTLP destination (packages/adapters/agent/instrumentation.ts) reads it with the OTel SDK's own conventions. | `docs/deploy/configuration-reference.md#observability` *(2 pages)* | ? |
-| ENV-139 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `packages/adapters/agent/instrumentation.ts:79` | the standard OTel traces endpoint var, same convention. | `docs/deploy/configuration-reference.md#observability` | ? |
+| ENV-138 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `packages/adapters/agent/instrumentation.ts:82` | the standard OTel endpoint var. The adapters OTLP destination (packages/adapters/agent/instrumentation.ts) reads it with the OTel SDK's own conventions. | `docs/deploy/configuration-reference.md#observability` *(2 pages)* | ? |
+| ENV-139 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `packages/adapters/agent/instrumentation.ts:81` | the standard OTel traces endpoint var, same convention. | `docs/deploy/configuration-reference.md#observability` | ? |
 | ENV-140 | `SLACK_BOT_TOKEN` | `packages/providers/slack/agent/setup/credentials.ts` | the Slack bot token. Since OPE-2231 the env var is the FIRST of two homes — the resolver falls back to this deployment's encrypted credential store, where `/setup` puts it. | `docs/deploy/configuration-reference.md#surface-credentials` *(7 pages)* | ? |
 | ENV-141 | `SLACK_SIGNING_SECRET` | `packages/providers/slack/agent/setup/credentials.ts` | the Slack request signing secret. Same two homes as ENV-140, env first (OPE-2231). Setting it also CLOSES `/setup`. | `docs/deploy/configuration-reference.md#surface-credentials` *(5 pages)* | ? |
 | ENV-142 | `TEAMS_APP_ID` | `packages/providers/teams/agent/channels/teams-post-arm.ts:62` | the Teams spelling of that same app identity. | `docs/deploy/configuration-reference.md#surface-credentials` | ? |
-| ENV-143 | `VERCEL` | `packages/adapters/agent/instrumentation.ts:16` | Vercel's own marker that this process runs on Vercel. | `docs/deploy/configuration-reference.md#host-injected-set-by-the-platform-not-you` *(7 pages)* | ? |
+| ENV-143 | `VERCEL` | `packages/core/agent/access/platform.ts:9` | Vercel's own marker that this process runs on Vercel. | `docs/deploy/configuration-reference.md#host-injected-set-by-the-platform-not-you` *(7 pages)* | ? |
 | ENV-144 | `VERCEL_DEPLOYMENT_ID` | `packages/core/agent/control/read-route.ts:344` | Vercel's id for this deployment. | `docs/deploy/rollback.md#the-deployed-state-census` *(2 pages)* | ? |
 | ENV-145 | `VERCEL_ENV` | `packages/core/agent/observability/ship.ts:176` | Vercel's deployment environment name. | `docs/deploy/configuration-reference.md#host-injected-set-by-the-platform-not-you` | ? |
 | ENV-146 | `VERCEL_GIT_COMMIT_SHA` | `agent/agent.ts:351` | the commit Vercel built this deployment from. | `docs/deploy/configuration-reference.md#host-injected-set-by-the-platform-not-you` | ? |
@@ -393,10 +393,13 @@ means total over two-level specs, not over any nesting.
 | ENV-149 | `VERCEL_URL` | `packages/core/agent/channels/self-dispatch.ts:79` | the per-deployment hostname Vercel injects — the self-dispatch route builds its own callback origin from it. No operator sets it. | `docs/deploy/configuration-reference.md#host-injected-set-by-the-platform-not-you` | ? |
 | ENV-150 | `OE_APP_ROOT` | `packages/core/agent/scaffold/app-root.ts:54` | the absolute path of the deployer's app checkout that operator scripts load the app config from (agent/scaffold/app-root.ts, OPE-2195). A path; no deployed function reads it. | `docs/core-app-separation.md#scripts-that-read-the-deployers-app` | ? |
 | ENV-151 | `INIT_CWD` | `packages/core/agent/scaffold/app-root.ts:70` | the directory where the operator ran npm, injected by npm into every script. The app-root resolver (agent/scaffold/app-root.ts, OPE-2195) starts its walk there for a workspace script. | `docs/core-app-separation.md#scripts-that-read-the-deployers-app` | ? |
-| ENV-152 | `OTEL_EXPORTER_OTLP_PROTOCOL` | `packages/adapters/agent/instrumentation.ts:83` | the standard OTel protocol var, same convention. | `docs/deploy/configuration-reference.md#observability` | ? |
-| ENV-153 | `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` | `packages/adapters/agent/instrumentation.ts:83` | the standard OTel traces protocol var, same convention. | `docs/deploy/configuration-reference.md#observability` | ? |
-| ENV-154 | `OTEL_EXPORTER_OTLP_HEADERS` | `packages/adapters/agent/instrumentation.ts:89` | the standard OTel collector-headers var (collector auth), same convention. | `docs/deploy/configuration-reference.md#observability` *(2 pages)* | ? |
-| ENV-155 | `OTEL_EXPORTER_OTLP_TRACES_HEADERS` | `packages/adapters/agent/instrumentation.ts:89` | the standard OTel traces collector-headers var, same convention. | `docs/deploy/configuration-reference.md#observability` | ? |
+| ENV-152 | `OTEL_EXPORTER_OTLP_PROTOCOL` | `packages/adapters/agent/instrumentation.ts:85` | the standard OTel protocol var, same convention. | `docs/deploy/configuration-reference.md#observability` | ? |
+| ENV-153 | `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` | `packages/adapters/agent/instrumentation.ts:85` | the standard OTel traces protocol var, same convention. | `docs/deploy/configuration-reference.md#observability` | ? |
+| ENV-154 | `OTEL_EXPORTER_OTLP_HEADERS` | `packages/adapters/agent/instrumentation.ts:91` | the standard OTel collector-headers var (collector auth), same convention. | `docs/deploy/configuration-reference.md#observability` *(2 pages)* | ? |
+| ENV-155 | `OTEL_EXPORTER_OTLP_TRACES_HEADERS` | `packages/adapters/agent/instrumentation.ts:91` | the standard OTel traces collector-headers var, same convention. | `docs/deploy/configuration-reference.md#observability` | ? |
+| ENV-156 | `VERCEL_OTEL_ENDPOINTS` | `packages/adapters/agent/instrumentation.ts:110` | Vercel's marker that this function has an OTel collector on its own host, for a Vercel OpenTelemetry integration. Vercel injects it; the adapters OTLP destination exports there with @vercel/otel's own rules (OPE-2358). | `docs/deploy/configuration-reference.md#host-injected-set-by-the-platform-not-you` | ? |
+| ENV-157 | `VERCEL_OTEL_ENDPOINTS_PORT` | `packages/adapters/agent/instrumentation.ts:111` | the port of that Vercel collector, injected by Vercel (default 4318). | `docs/deploy/configuration-reference.md#host-injected-set-by-the-platform-not-you` | ? |
+| ENV-158 | `VERCEL_OTEL_ENDPOINTS_PROTOCOL` | `packages/adapters/agent/instrumentation.ts:112` | the protocol of that Vercel collector, injected by Vercel (default http/protobuf). | `docs/deploy/configuration-reference.md#host-injected-set-by-the-platform-not-you` | ? |
 
 ## Dynamic env read sites (key not statically resolvable)
 
