@@ -10,7 +10,7 @@ const ok = (label: string, cond: boolean) => {
 process.env.OE_SQLITE_PATH = join("/tmp", `oe-changed-relevant-map-test-${process.pid}.sqlite3`);
 
 const { SCENARIOS } = await import("./e2e/scenarios.js");
-const { CHANGED_RELEVANT_MAP, ALWAYS_RELEVANT, UNMAPPED_BY_DESIGN, relevantScenarios } = await import(
+const { CHANGED_RELEVANT_MAP, ALWAYS_RELEVANT, LAUNCH_SURFACE_FLOOR, SMOKE_FLOOR, SPEND_CAP_FLOOR, UNMAPPED_BY_DESIGN, relevantScenarios } = await import(
   "./e2e/changed-relevant-map.js"
 );
 
@@ -73,7 +73,11 @@ ok("at least one area's note is about J-ENGAGED-notion, so the wording check abo
 
 const discordOnly = relevantScenarios(["packages/providers/discord/agent/channels/discord-events.ts"]);
 ok("a Discord-only change selects J-DISC", discordOnly.includes("J-DISC"));
-ok("a Discord-only change does NOT select J-GH (github-only surface)", !discordOnly.includes("J-GH"));
+const githubArea = CHANGED_RELEVANT_MAP.find((a) => a.area === "github-provider")!;
+ok(
+  "a Discord-only change selects nothing from the github-provider area beyond the floor",
+  githubArea.scenarios.filter((id) => discordOnly.includes(id)).every((id) => ALWAYS_RELEVANT.includes(id)),
+);
 ok("a Discord-only change does NOT select J-LIN (linear-only surface)", !discordOnly.includes("J-LIN"));
 
 const linearOnly = relevantScenarios(["packages/providers/linear/agent/whatever.ts"]);
@@ -105,6 +109,53 @@ ok(
   "relevantScenarios([]) returns exactly ALWAYS_RELEVANT (no changed path ⇒ no area matches)",
   noChanges.length === ALWAYS_RELEVANT.length && ALWAYS_RELEVANT.every((id) => noChanges.includes(id)),
 );
+
+const DRIVER = { github: "github", notion: "notionAmbient" } as const;
+const legStartsOn = (s: { readonly surface: string; readonly requires: readonly string[] } | undefined, surface: keyof typeof DRIVER): boolean =>
+  s !== undefined && s.surface === surface && s.requires.includes(DRIVER[surface]) && !s.requires.includes("slack");
+const startsOn = (id: string, surface: keyof typeof DRIVER): boolean => legStartsOn(SCENARIOS.find((x) => x.id === id), surface);
+for (const id of [...SMOKE_FLOOR, ...LAUNCH_SURFACE_FLOOR, ...SPEND_CAP_FLOOR]) {
+  ok(`floor id ${id} is in ALWAYS_RELEVANT`, ALWAYS_RELEVANT.includes(id));
+}
+for (const id of ["J-GH", "J-ENGAGED-github", "J-NOT", "J-ENGAGED-notion"]) {
+  ok(`${id} is on the launch-surface floor (OPE-2494)`, LAUNCH_SURFACE_FLOOR.includes(id));
+}
+ok("S10 is on the spend-cap floor (OPE-2503)", SPEND_CAP_FLOOR.includes("S10"));
+for (const [paths, label] of [
+  [[], "no changed path"],
+  [["README.md"], "an unrelated top-level file"],
+  [["packages/providers/discord/agent/channels/discord-events.ts"], "a Discord-only change"],
+  [["packages/providers/slack/agent/channels/slack-events.ts"], "a Slack-only change"],
+  [["packages/core/agent/memory/write-road.ts"], "a core memory change"],
+] as const) {
+  const picked = relevantScenarios(paths);
+  for (const surface of ["github", "notion"] as const) {
+    ok(`${label} starts at least one leg on ${surface} (OPE-2494)`, picked.some((id) => startsOn(id, surface)));
+    ok(`${label} starts BOTH ${surface} floor legs, the mention leg and the engaged leg`, picked.filter((id) => LAUNCH_SURFACE_FLOOR.includes(id) && startsOn(id, surface)).length === 2);
+  }
+  ok(`${label} runs S10, the spend-cap refusal leg (OPE-2503)`, picked.includes("S10"));
+}
+ok("negative control: a leg labelled github that requires the Slack driver does not start on GitHub", !legStartsOn({ surface: "github", requires: ["github", "slack"] }, "github"));
+ok("negative control: S-NOTION-WRITE (labelled notion, started in Slack) does not start on Notion", !startsOn("S-NOTION-WRITE", "notion"));
+ok("positive control: J-GH starts on GitHub and J-NOT starts on Notion", startsOn("J-GH", "github") && startsOn("J-NOT", "notion"));
+
+const beyondFloor = (ids: string[]) => ids.filter((id) => !ALWAYS_RELEVANT.includes(id));
+for (const path of [
+  "packages/providers/slack/agent/channels/slack-memory-canvas.ts",
+  "packages/core/agent/memory/write-road.ts",
+  "packages/core/agent/memory/visible.ts",
+]) {
+  ok(`${path} selects S-MEMORY-CANVAS`, beyondFloor(relevantScenarios([path])).includes("S-MEMORY-CANVAS"));
+}
+ok("S-MEMORY-CANVAS is NOT on the floor (it is a diff-selected leg)", !ALWAYS_RELEVANT.includes("S-MEMORY-CANVAS"));
+ok(
+  "a canvas-only change does not select S-APP-HOME (S-APP-HOME never reads a canvas)",
+  !relevantScenarios(["packages/providers/slack/agent/channels/slack-memory-canvas.ts"]).includes("S-APP-HOME"),
+);
+const homeOnly = relevantScenarios(["packages/providers/slack/agent/channels/slack-home.ts"]);
+ok("negative control: a Home-tab file selects S-APP-HOME", homeOnly.includes("S-APP-HOME"));
+const coreHomeOnly = relevantScenarios(["packages/core/agent/home/memory-home.ts"]);
+ok("negative control: a core Home-tab file does NOT select S-MEMORY-CANVAS", !coreHomeOnly.includes("S-MEMORY-CANVAS"));
 
 const unrelated = relevantScenarios(["README.md"]);
 ok("an unrelated top-level file selects nothing beyond ALWAYS_RELEVANT", unrelated.length === ALWAYS_RELEVANT.length);

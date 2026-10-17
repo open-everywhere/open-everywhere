@@ -121,6 +121,7 @@ import {
   type NotionTaintReplayResult,
 } from "./notion-taint-replay.js";
 import { extractMemoryPathReads, siloOfPath } from "./memory-reads.js";
+import { CANVAS_REFRESH_ACTION, canvasRefreshVerdict, canvasShowsFact, classifyChannelTrust, readChannelCanvas, type ChannelCanvasRead } from "./memory-canvas.js";
 import {
   auditSessionIds,
   decomposeSession,
@@ -5724,6 +5725,112 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.gate(answered !== undefined, "S-APP-HOME: the forged Forget was answered by republishing the page with a notice");
       const purged = (await read({ sinceIso: forgedAt, actions: ["memory.purge"], limit: 50 })).filter((r) => ownRow(r) && r.detail?.["via"] === "slack-app-home");
       ctx.gate(purged.length === 0, `S-APP-HOME: a digest that names no line of the person's erased nothing (${purged.length} memory.purge row(s) via slack-app-home)`);
+    },
+  },
+
+  {
+    id: "S-MEMORY-CANVAS",
+    title: "Domain memory canvas (OPE-2499): a taught fact appears in the internal channel's canvas, and in no canvas of a shared or guest channel of the same domain",
+    requires: ["slack"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 900_000,
+    judged: false,
+    run: async (ctx) => {
+      const slack = ctx.slack!;
+      const read = ctx.auditRead;
+      if (!read) {
+        return ctx.fixtureMissing("S-MEMORY-CANVAS gates on memory.canvas_refresh rows. Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to run it.");
+      }
+      const channel = slack.channelId;
+      const bot = slack.botUserId;
+      const fact = factToken("canvas");
+      const call = (method: string, params: Record<string, string>) => slack.apiRaw(method, params);
+      const describe = (r: ChannelCanvasRead): string =>
+        r.kind === "canvas" ? `canvas ${r.canvasId} by ${r.creator ?? "unknown"}, holds the fact: ${r.holdsText}` : r.kind === "no-canvas" ? "no channel canvas" : r.kind === "missing-scope" ? `${r.method} needs the driver scope ${r.scope}` : `${r.method} failed: ${r.error}`;
+      const refuseOnScope = (r: ChannelCanvasRead): void => {
+        if (r.kind === "missing-scope") ctx.fixtureMissing(`S-MEMORY-CANVAS: the driver token (E2E_SLACK_USER_TOKEN) lacks the user scope ${r.scope}, which ${r.method} needs. Add it to the driver app and reinstall.`);
+      };
+
+      const taughtAt = await presenceSince(ctx, "S-MEMORY-CANVAS teach");
+      const { ts } = await slack.post(slack.mention(`remember: the memory canvas check token for this run is ${fact}`));
+      await slack.awaitThreadReply(ts, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+
+      let rows: readonly AuditWireEntry[] = [];
+      await pollOptional(
+        async () => {
+          rows = await read({ sinceIso: taughtAt, actions: [CANVAS_REFRESH_ACTION], platform: "slack", limit: 200 });
+          return canvasRefreshVerdict(rows, channel).kind === "wrote" ? true : undefined;
+        },
+        { timeoutMs: 180_000, initialDelayMs: 2_000, maxDelayMs: 10_000, what: "S-MEMORY-CANVAS: the base channel's memory.canvas_refresh row" },
+      );
+      const rowKey = (rs: readonly AuditWireEntry[]) => rs.filter((r) => r.detail?.["trigger"] === "memory-write").map((r) => `${r.surface}@${r.ts}`).sort().join(",");
+      for (let i = 0, prev = rowKey(rows); i < 12; i++) {
+        await sleep(10_000);
+        rows = await read({ sinceIso: taughtAt, actions: [CANVAS_REFRESH_ACTION], platform: "slack", limit: 200 });
+        const now = rowKey(rows);
+        if (now === prev) break;
+        prev = now;
+      }
+      const base = canvasRefreshVerdict(rows, channel);
+      const baseRow = rows.find((r) => r.surface === channel && r.detail?.["trigger"] === "memory-write");
+      ctx.gate(
+        base.kind === "wrote",
+        base.kind === "none"
+          ? `S-MEMORY-CANVAS: a memory.canvas_refresh row names the base channel ${channel} after the teach — none did. Its domain shows no canvas (no memory, or memoryCanvas: false), the app is not in it, or the fact was never written`
+          : base.outcome === "failed"
+            ? `S-MEMORY-CANVAS: the base channel's canvas refresh FAILED. The usual cause is a deployment Slack app without the bot scope canvases:write (app-manifest.ts lists it); reinstall the app with it`
+            : `S-MEMORY-CANVAS: the base channel's canvas was written (created or updated) — the row says "${base.outcome}"`,
+      );
+
+      let shown: ChannelCanvasRead = { kind: "no-canvas" };
+      await pollOptional(
+        async () => {
+          shown = await readChannelCanvas(call, channel, fact);
+          return shown.kind === "missing-scope" || canvasShowsFact(shown, bot) ? true : undefined;
+        },
+        { timeoutMs: 60_000, initialDelayMs: 1_000, maxDelayMs: 5_000, what: "S-MEMORY-CANVAS: the fact in the base channel's canvas" },
+      );
+      refuseOnScope(shown);
+      const chars = baseRow?.detail?.["chars"];
+      ctx.gate(
+        canvasShowsFact(shown, bot),
+        `S-MEMORY-CANVAS: the base channel's canvas is the bot's and holds the taught fact ${fact} (${describe(shown)}; the rendered document was ${String(chars)} chars, and the canvas cuts at 90000)`,
+      );
+
+      const domain = baseRow?.detail?.["domain"];
+      const others = [
+        ...new Set(
+          rows
+            .filter((r) => r.detail?.["trigger"] === "memory-write" && r.detail?.["domain"] === domain && typeof r.surface === "string" && r.surface !== channel)
+            .map((r) => r.surface as string),
+        ),
+      ];
+      const { teamId } = await slack.identity();
+      const untrusted: { channel: string; why: string }[] = [];
+      for (const c of others) {
+        const trust = await classifyChannelTrust(call, c, teamId);
+        if (trust.kind === "missing-scope") ctx.fixtureMissing(`S-MEMORY-CANVAS: the driver token (E2E_SLACK_USER_TOKEN) lacks the user scope ${trust.scope}, which ${trust.method} needs. Add it to the driver app and reinstall.`);
+        ctx.gate(trust.kind !== "error", `S-MEMORY-CANVAS: the driver can classify the domain channel ${c} (${trust.kind === "error" ? `${trust.method} failed: ${trust.error}` : trust.kind})`);
+        if (trust.kind === "untrusted") untrusted.push({ channel: c, why: trust.why });
+      }
+      ctx.log(`domain ${String(domain)}: ${others.length} other channel(s), ${untrusted.length} shared or guest — ${untrusted.map((u) => `${u.channel} (${u.why})`).join(", ") || "none"}`);
+      if (untrusted.length === 0) {
+        return ctx.fixtureMissing(
+          `S-MEMORY-CANVAS: the internal half is GREEN, but Slack shows no shared or guest channel among the domain ${String(domain)}'s channels the app sits in, so nothing proves the trust gate keeps the canvas out of one. Add a Slack Connect channel, or a channel with a guest member, to the domain's reach (agent/memory/config/domains/), invite the app and the driver user, and rerun.`,
+        );
+      }
+      for (const { channel: c, why } of untrusted) {
+        const verdict = canvasRefreshVerdict(rows, c);
+        ctx.gate(
+          verdict.kind === "withheld",
+          `S-MEMORY-CANVAS: the trust gate held the canvas back in the ${why} channel ${c} — its row says "${verdict.kind === "none" ? "no row" : verdict.outcome}" (created, updated or clear-failed here is a leak or a canvas that may still be up)`,
+        );
+        const r = await readChannelCanvas(call, c, fact);
+        refuseOnScope(r);
+        ctx.gate(r.kind === "canvas" || r.kind === "no-canvas", `S-MEMORY-CANVAS: the canvas of the ${why} channel ${c} can be read (${describe(r)})`);
+        ctx.gate(!canvasShowsFact(r, bot), `S-MEMORY-CANVAS: the ${why} channel ${c} shows no canvas of the bot's that holds the fact (${describe(r)})`);
+      }
     },
   },
 

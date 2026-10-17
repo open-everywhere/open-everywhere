@@ -16,7 +16,7 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
       "J4", "J-MPIM", "S20", "S23", "S24", "F-ART", "F-QA-REPO", "F-EDIT", "F-SEC", "J-SUP", "J-UNIFIED", "J-UNI-X", "J-PR",
       "S-PR-SESSION", "S-PR-BOUNDARY", "S-AWS-BOUNDARY", "J-WORKFLOW", "S-NOTION-WRITE",
       "S-CONNECTOR-TIER", "S-DM-NOTION", "S-EVE-CARD", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-TAINT-DRYRUN",
-      "S-TAINT-ROUTE-LIVE", "S-TAINT-UNATTENDED-DENY",
+      "S-TAINT-ROUTE-LIVE", "S-TAINT-UNATTENDED-DENY", "S-MEMORY-CANVAS",
     ],
     why: "Slack is the default e2e surface — every scenario without its own dedicated surface drives through it (`surface: \"slack\"` or `\"cross\"` in scenarios.ts), so a Slack provider change is broadly relevant by construction, not an over-selection.",
   },
@@ -151,10 +151,19 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
       "packages/core/agent/home/**",
       "packages/core/agent/memory/visible.ts",
       "packages/providers/slack/agent/channels/slack-home.ts",
-      "packages/providers/slack/agent/channels/slack-memory-canvas.ts",
     ],
     scenarios: ["S-APP-HOME"],
-    why: "S-APP-HOME (OPE-2451) is the only live leg on the person's Home tab: a signed open publishes the page, Export hands the person their memory, and a forged Forget erases nothing. A change to the page model, the memory data plane behind it or the Slack half reaches exactly that leg.",
+    why: "S-APP-HOME (OPE-2451) is the only live leg on the person's Home tab: a signed open publishes the page, Export hands the person their memory, and a forged Forget erases nothing. A change to the page model, the memory data plane behind it or the Slack half reaches exactly that leg. The domain memory canvas is NOT here: S-APP-HOME never reads a canvas, so it has its own area below (OPE-2499).",
+  },
+  {
+    area: "domain-memory-canvas",
+    globs: [
+      "packages/providers/slack/agent/channels/slack-memory-canvas.ts",
+      "packages/core/agent/memory/write-road.ts",
+      "packages/core/agent/memory/visible.ts",
+    ],
+    scenarios: ["S-MEMORY-CANVAS"],
+    why: "S-MEMORY-CANVAS (OPE-2499) is the only leg that reads a channel canvas. It teaches a run-unique fact in the internal e2e channel, gates on the `memory.canvas_refresh` row the write road's Slack observer writes, and reads the channel's canvas back with the driver's own token to find the fact. Its second half classifies the domain's other channels from Slack itself, and in each shared or guest one gates that the refresh held the canvas back and that no canvas of the bot's holds the fact. `write-road.ts` notifies the observer and `visible.ts` renders the canvas document, so a change to either decides what the canvas shows.",
   },
   {
     area: "personal-watch",
@@ -410,7 +419,13 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   },
 ];
 
-export const ALWAYS_RELEVANT: readonly string[] = ["J1", "J-TEAMS"];
+export const SMOKE_FLOOR: readonly string[] = ["J1", "J-TEAMS"];
+
+export const LAUNCH_SURFACE_FLOOR: readonly string[] = ["J-GH", "J-ENGAGED-github", "J-NOT", "J-ENGAGED-notion"];
+
+export const SPEND_CAP_FLOOR: readonly string[] = ["S10"];
+
+export const ALWAYS_RELEVANT: readonly string[] = [...SMOKE_FLOOR, ...LAUNCH_SURFACE_FLOOR, ...SPEND_CAP_FLOOR];
 
 export const UNMAPPED_BY_DESIGN: readonly { id: string; why: string }[] = [];
 

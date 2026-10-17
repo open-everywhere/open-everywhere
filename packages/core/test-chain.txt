@@ -488,6 +488,7 @@ test:aws-sso-identity-binding
 test:xaa-identity-binding
 test:schema-policy-atomicity
 test:memory-reads
+test:memory-canvas
 test:memory-schema-policy-atomicity
 test:e2e-grant-fence-rows
 test:boot-notices

@@ -295,6 +295,18 @@ export class SlackDriver {
     return id;
   }
 
+  async apiRaw(method: string, params: Record<string, string>): Promise<Record<string, unknown>> {
+    const res = await fetch(`https://slack.com/api/${method}`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${this.cfg.token}`,
+        "content-type": "application/x-www-form-urlencoded; charset=utf-8",
+      },
+      body: new URLSearchParams(params).toString(),
+    });
+    return (await res.json()) as Record<string, unknown>;
+  }
+
   private async api(method: string, params: Record<string, string>): Promise<Record<string, unknown>> {
     const res = await fetch(`https://slack.com/api/${method}`, {
       method: "POST",
