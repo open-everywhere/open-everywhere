@@ -271,6 +271,30 @@ The line is absent on a turn that read nothing. It counts a connector once howev
 turn read it, and it ignores writes (a created page announces itself) and failed ops (nothing was
 read). Below, "the footer" means this recorded line.
 
+**Numbered source links, in a 1:1 conversation (OPE-2520).** The line above names SYSTEMS, and no
+room reads it. A **source link** names a RECORD the person can open: `[1] Launch checklist`, the link
+on the title. The host adds them under an answer on Slack and Teams, drawn by the surface itself (a
+Slack context line, Teams citations), and only where all of these hold:
+
+- the reply lands in a 1:1 conversation between the app and one person (a Slack `D…` DM, a Teams
+  personal chat) — the post arm declares which conversations are 1:1;
+- a first-party read tool fetched the record for this conversation, and knew its title and its
+  `https:` url: `read_notion_page` or `read_linear_issue`, on the seat or on a worker for it (the
+  delegation settle carries the citation, as it carries the read);
+- the reach rule below holds for that read, so a turn that served two conversations never cites one
+  conversation's read in the other.
+
+A shared room gets no links: a turn can read a record and leave it out of the answer, and its title
+would then reach people the answer did not address. A connector op's read names no record, so it
+gives no link. At most five links show, in read order. The title is flattened onto one line with no
+link grammar, and the url must be `https:` with no link grammar either. The title and the url live in
+process memory for the turn, never on the ledger. A worker's read carries them to the seat on the
+short-lived delegated-reads row, which the settle spends, and the spent form keeps no title and no
+url. The `reply.provenance` row records only how many
+links the reply showed (`detail.links`). See the
+[Slack](../deploy/surfaces/slack.md#sources-and-thumbs-on-an-answer) and
+[Teams](../deploy/surfaces/teams.md#sources-thumbs-and-the-ai-label) pages for what each surface draws.
+
 **The model does not write it, and cannot pass its own list off as one.** That is the point. A
 model asked to list its own sources may not know them and may invent them, and an invented
 source list is worse than none, because it reads as a receipt. The ledger is unforgeable

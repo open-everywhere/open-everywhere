@@ -1,6 +1,6 @@
 import { getOperationalStore } from "../operational/provider.js";
 import { deploymentOrg, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
-import { noteConnectorRead, rememberRecordName, type ConnectorRead } from "./reply-provenance.js";
+import { cleanSourceLink, noteConnectorRead, rememberRecordName, rememberSourceLink, type ConnectorRead } from "./reply-provenance.js";
 import { resolveUnifiedWakeTarget, sameUnifiedConversation } from "./unified-window.js";
 import type { TaskWakeInstall } from "./task-wake.js";
 
@@ -18,10 +18,18 @@ export interface DelegatedReadRecord {
   readonly name: string;
 }
 
+export interface DelegatedReadCite {
+  readonly kind: string;
+  readonly id: string;
+  readonly name: string;
+  readonly url: string;
+}
+
 export interface DelegatedRead {
   readonly connection: string;
   readonly op: string;
   readonly record?: DelegatedReadRecord;
+  readonly cite?: DelegatedReadCite;
 }
 
 export interface DelegatingParentLink {
@@ -56,6 +64,13 @@ function capRecordName(name: string): string {
   return chars.length <= MAX_DELEGATED_RECORD_NAME_CHARS ? name : chars.slice(0, MAX_DELEGATED_RECORD_NAME_CHARS).join("");
 }
 
+function readCite(v: unknown): DelegatedReadCite | undefined {
+  const c = v as { kind?: unknown; id?: unknown; name?: unknown; url?: unknown } | null | undefined;
+  if (typeof c?.kind !== "string" || c.kind.length === 0 || typeof c.id !== "string" || c.id.length === 0) return undefined;
+  const link = cleanSourceLink(typeof c.name === "string" ? c.name : undefined, typeof c.url === "string" ? c.url : undefined);
+  return link === undefined ? undefined : { kind: c.kind, id: c.id, name: link.name, url: link.url };
+}
+
 function parseDelegatedReads(raw: string | null): readonly DelegatedRead[] {
   if (raw === null) return [];
   try {
@@ -63,7 +78,7 @@ function parseDelegatedReads(raw: string | null): readonly DelegatedRead[] {
     const reads = (parsed as { reads?: unknown } | null)?.reads;
     if (!Array.isArray(reads)) return [];
     return reads.flatMap((r): DelegatedRead[] => {
-      const row = r as { connection?: unknown; op?: unknown; record?: unknown } | null;
+      const row = r as { connection?: unknown; op?: unknown; record?: unknown; cite?: unknown } | null;
       if (typeof row?.connection !== "string" || row.connection.length === 0) return [];
       if (typeof row.op !== "string" || row.op.length === 0) return [];
       const rec = row.record as { kind?: unknown; id?: unknown; name?: unknown } | null | undefined;
@@ -76,7 +91,8 @@ function parseDelegatedReads(raw: string | null): readonly DelegatedRead[] {
         rec.name.length > 0
           ? { kind: rec.kind, id: rec.id, name: capRecordName(rec.name) }
           : undefined;
-      return [{ connection: row.connection, op: row.op, ...(record === undefined ? {} : { record }) }];
+      const cite = readCite(row.cite);
+      return [{ connection: row.connection, op: row.op, ...(record === undefined ? {} : { record }), ...(cite === undefined ? {} : { cite }) }];
     });
   } catch {
     return [];
@@ -106,7 +122,7 @@ async function writeSpentDelegatedReads(org: string, childToken: string, replayK
   await getOperationalStore().putTaskResult(
     org,
     delegatedProvenanceKey(childToken),
-    JSON.stringify({ reads: [], spent: { by: replayKey, reads: [...reads] } }),
+    JSON.stringify({ reads: [], spent: { by: replayKey, reads: reads.map(({ cite: _cite, ...rest }) => rest) } }),
     new Date().toISOString(),
     DELEGATED_PROVENANCE_TTL_MS,
   );
@@ -129,11 +145,28 @@ let appendQueue: Promise<unknown> = Promise.resolve();
 async function appendDelegatedRead(org: string, childToken: string, read: DelegatedRead): Promise<void> {
   const cur = await readDelegatedReads(org, childToken);
   if (cur.length >= MAX_DELEGATED_READS) return;
-  if (cur.some((r) => r.connection === read.connection && r.op === read.op && r.record?.kind === read.record?.kind && r.record?.id === read.record?.id)) return;
+  if (
+    cur.some(
+      (r) =>
+        r.connection === read.connection &&
+        r.op === read.op &&
+        r.record?.kind === read.record?.kind &&
+        r.record?.id === read.record?.id &&
+        r.cite?.kind === read.cite?.kind &&
+        r.cite?.id === read.cite?.id,
+    )
+  )
+    return;
   await writeDelegatedReads(org, childToken, [...cur, read]);
 }
 
-export function noteDelegatedRead(bind: BindableContext, connection: string, op: string, record?: DelegatedReadRecord): void {
+export function noteDelegatedRead(
+  bind: BindableContext,
+  connection: string,
+  op: string,
+  record?: DelegatedReadRecord,
+  cite?: { readonly kind: string; readonly id: string; readonly name?: string; readonly url?: string },
+): void {
   try {
     if (connection.length === 0 || op.length === 0) return;
     if (!isSubagentChildContext(bind)) return;
@@ -145,7 +178,9 @@ export function noteDelegatedRead(bind: BindableContext, connection: string, op:
       record !== undefined && record.kind.length > 0 && record.id.length > 0 && record.name.length > 0
         ? { kind: record.kind, id: record.id, name: capRecordName(record.name) }
         : undefined;
-    const read: DelegatedRead = { connection, op, ...(carried === undefined ? {} : { record: carried }) };
+    const citeLink = cite === undefined || cite.kind.length === 0 || cite.id.length === 0 ? undefined : cleanSourceLink(cite.name, cite.url);
+    const cited = citeLink === undefined || cite === undefined ? undefined : { kind: cite.kind, id: cite.id, name: citeLink.name, url: citeLink.url };
+    const read: DelegatedRead = { connection, op, ...(carried === undefined ? {} : { record: carried }), ...(cited === undefined ? {} : { cite: cited }) };
     appendQueue = appendQueue.then(() => appendDelegatedRead(org, childToken, read)).catch(() => undefined);
   } catch {
   }
@@ -218,7 +253,11 @@ export async function settleDelegatedReads(input: {
           connection: read.connection,
           op: read.op,
           ...(read.record === undefined ? {} : { record: { kind: read.record.kind, id: read.record.id } }),
+          ...(read.cite === undefined ? {} : { cite: { kind: read.cite.kind, id: read.cite.id } }),
         });
+        if (read.cite !== undefined) {
+          rememberSourceLink(input.sessionId, input.turnId, read.cite.kind, read.cite.id, read.cite.name, read.cite.url);
+        }
         if (read.record !== undefined) {
           rememberRecordName(input.sessionId, input.turnId, read.record.kind, read.record.id, read.record.name);
         }

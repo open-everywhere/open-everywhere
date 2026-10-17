@@ -27,9 +27,11 @@ export interface SlackMessage {
   readonly taskCard?: true;
   readonly blockTexts?: readonly string[];
   readonly approvalCard?: { readonly kind: string; readonly detail: readonly string[] };
+  readonly feedbackActionId?: string;
 }
 
 export interface SlackApiButton {
+  type?: string;
   action_id?: string;
   value?: string;
   text?: string | { text?: string };
@@ -108,12 +110,13 @@ export function toMessage(m: SlackApiMessage): SlackMessage {
   const actions = (m.blocks ?? [])
     .flatMap((b) =>
       [...(b.elements ?? []), ...(b.actions ?? [])]
-        .filter((e): e is SlackApiButton & { action_id: string } => typeof e.action_id === "string")
+        .filter((e): e is SlackApiButton & { action_id: string } => typeof e.action_id === "string" && e.type !== "feedback_buttons")
         .map((e) => ({ actionId: e.action_id, value: e.value, blockId: b.block_id, text: buttonLabel(e) })),
     );
   const files = (m.files ?? []).map((f) => ({ id: f.id, name: f.name, filetype: f.filetype, mimetype: f.mimetype }));
   const blockTexts = blockTextsOf(m.blocks);
   const approvalCard = approvalCardOf(m);
+  const feedback = (m.blocks ?? []).flatMap((b) => b.elements ?? []).find((e) => e.type === "feedback_buttons" && typeof e.action_id === "string");
   return {
     ts: m.ts ?? "",
     threadTs: m.thread_ts,
@@ -126,6 +129,7 @@ export function toMessage(m: SlackApiMessage): SlackMessage {
     ...(isEveTaskCardBlocks(m.blocks) ? { taskCard: true as const } : {}),
     ...(blockTexts.length > 0 ? { blockTexts } : {}),
     ...(approvalCard ? { approvalCard } : {}),
+    ...(feedback?.action_id ? { feedbackActionId: feedback.action_id } : {}),
   };
 }
 

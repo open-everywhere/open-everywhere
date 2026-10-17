@@ -1,6 +1,6 @@
 import { appendAudit } from "../audit/audit.js";
 import { swallowRoomOp } from "./egress-spoof.js";
-import { postArm } from "./post-arms.js";
+import { answerIntent, landsInDirectConversation, postArm } from "./post-arms.js";
 import { isOwnPost, type OwnPostLedgerDeps } from "./own-post-ledger.js";
 import { markNotApplied, platformFailureClass, platformFailureStatus, type PlatformFailureClass } from "./platform-failure.js";
 import { truncateMemoryCitationPaths } from "./turn-delivery.js";
@@ -107,8 +107,9 @@ export async function editPostedMessage(
   const claimGuard = guardMemoryClaims(truncateMemoryCitationPaths(text), audit);
   const approvalGuard = guardApprovalClaims(claimGuard.body, audit);
   const requestGuard = guardRequestClaims(approvalGuard.body, audit);
-  const provenance = applyReplyProvenance(requestGuard.body, audit);
+  const provenance = applyReplyProvenance(requestGuard.body, audit, landsInDirectConversation(locus.platform, locus.channelId));
   text = provenance.body;
+  const intent = answerIntent(audit, provenance.sources);
   const arm = postArm(locus.platform);
   if (!arm?.editMessage) {
     await auditReplyEditRefused(audit, EDIT_NO_ARM_REFUSAL_REASON);
@@ -120,20 +121,20 @@ export async function editPostedMessage(
   }
   if (swallowRoomOp(`a ${locus.platform} edit (${text.length}c)`)) {
     await auditReplyEdit(audit, messageId, locus.platform, text.length);
-    await auditReplyProvenance(audit, messageId, locus.platform, provenance.reads, provenance.shown);
+    await auditReplyProvenance(audit, messageId, locus.platform, provenance.reads, provenance.shown, intent.sources?.length ?? 0);
     await auditWithheldMemoryClaim(audit, locus.platform, claimGuard.withheld);
     await auditWithheldApprovalClaim(audit, locus.platform, approvalGuard.withheld, approvalGuard.cause);
     await auditWithheldRequestClaim(audit, locus.platform, requestGuard.withheld);
     return;
   }
   try {
-    await arm.editMessage(locus, messageId, text);
+    await arm.editMessage(locus, messageId, text, intent);
   } catch (err) {
     await auditReplyEditRefused(audit, EDIT_PLATFORM_ERROR_REASON, platformFailureStatus(err), platformFailureClass(err));
     throw err;
   }
   await auditReplyEdit(audit, messageId, locus.platform, text.length);
-  await auditReplyProvenance(audit, messageId, locus.platform, provenance.reads, provenance.shown);
+  await auditReplyProvenance(audit, messageId, locus.platform, provenance.reads, provenance.shown, intent.sources?.length ?? 0);
   await auditWithheldMemoryClaim(audit, locus.platform, claimGuard.withheld);
   await auditWithheldApprovalClaim(audit, locus.platform, approvalGuard.withheld, approvalGuard.cause);
   await auditWithheldRequestClaim(audit, locus.platform, requestGuard.withheld);

@@ -15,7 +15,7 @@ import { auditWithheldMemoryClaim, guardMemoryClaims } from "./memory-claim-guar
 import { auditWithheldApprovalClaim, guardApprovalClaims } from "./approval-claim-guard.js";
 import { auditWithheldRequestClaim, guardRequestClaims } from "./request-claim-guard.js";
 import { swallowRoomPost } from "./egress-spoof.js";
-import { postArm, type PostIntent } from "./post-arms.js";
+import { answerIntent, landsInDirectConversation, postArm, type PostIntent } from "./post-arms.js";
 import { outboundKey, postOnce } from "../operational/post-once.js";
 import { coverLabelForReply, recordCoverReply, withCoverLabel } from "../cover/wake.js";
 import type { EditLocus } from "./reply-edit.js";
@@ -69,11 +69,13 @@ export async function postUnifiedReply(
   audit?: ReplyAudit,
   replier?: ReplierLabel,
   intent?: PostIntent,
+  opts?: { readonly host?: boolean },
 ): Promise<string> {
   const claimGuard = guardMemoryClaims(truncateMemoryCitationPaths(text), audit);
   const approvalGuard = guardApprovalClaims(claimGuard.body, audit);
   const requestGuard = guardRequestClaims(approvalGuard.body, audit);
-  const provenance = applyReplyProvenance(requestGuard.body, audit);
+  const provenance = applyReplyProvenance(requestGuard.body, audit, landsInDirectConversation(origin.platform, unifiedEditLocus(origin)?.channelId));
+  const postIntent = answerIntent(audit, provenance.sources, intent?.terminal ?? true, opts?.host === true);
   const cover = await coverLabelForReply(audit?.org, audit?.wakeId);
   const clean = cover ? withCoverLabel(provenance.body, cover.label) : provenance.body;
   const arm = postArm(origin.platform);
@@ -95,13 +97,13 @@ export async function postUnifiedReply(
     run: async () => {
       let realId: string;
       try {
-        realId = await dispatchUnifiedReply(origin, body, deps, nativeReplier, intent);
+        realId = await dispatchUnifiedReply(origin, body, deps, nativeReplier, postIntent);
       } catch (err) {
         await notePostFailure(audit, err, origin.platform);
         throw err;
       }
       await auditReplyPost(audit, realId, origin.platform, body.length, intent?.terminal);
-      await auditReplyProvenance(audit, realId, origin.platform, provenance.reads, provenance.shown);
+      await auditReplyProvenance(audit, realId, origin.platform, provenance.reads, provenance.shown, postIntent.sources?.length ?? 0);
       await auditWithheldMemoryClaim(audit, origin.platform, claimGuard.withheld);
       await auditWithheldApprovalClaim(audit, origin.platform, approvalGuard.withheld, approvalGuard.cause);
       await auditWithheldRequestClaim(audit, origin.platform, requestGuard.withheld);

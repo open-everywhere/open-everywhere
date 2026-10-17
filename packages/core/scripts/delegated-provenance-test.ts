@@ -26,8 +26,8 @@ const { registerPostArm } = await import("../agent/channels/post-arms.js");
 const { postReply, replyAuditFor } = await import("../agent/channels/reply-post.js");
 type ReplyTarget = import("../agent/channels/reply-post.js").ReplyTarget;
 const { PROVENANCE_FOOTER_PREFIX, REPLY_PROVENANCE_ACTION } = await import("../agent/channels/reply-provenance.js");
-const { delegatedProvenanceKey, delegatingParentLink, delegatedSecondAddress, heldTurnWakeProvable } = await import("../agent/channels/delegated-provenance.js");
-const { noteBorrowedRecordRead, BORROWED_RECORD_KIND, BORROWED_READ_OP } = await import("../agent/channels/read-reach.js");
+const { delegatedProvenanceKey, delegatingParentLink, delegatedSecondAddress, heldTurnWakeProvable, settleDelegatedReads } = await import("../agent/channels/delegated-provenance.js");
+const { noteBorrowedRecordRead, noteAuthoredRecordRead, BORROWED_RECORD_KIND, BORROWED_READ_OP } = await import("../agent/channels/read-reach.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { taskWakeKey } = await import("../agent/channels/task-wake.js");
 const { registerUnifiedWakeTarget } = await import("../agent/channels/unified-window.js");
@@ -651,6 +651,92 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
     (await lastShown()) === `${ANSWER} (unpinned)\n\n${PROVENANCE_FOOTER_PREFIX} notion`,
     `🔴 §11/NEGATIVE CONTROL: …and its reply names the connection alone, with no parenthesised target (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
   );
+}
+
+{
+  const URL_ = "https://www.notion.so/Launch-checklist-0123456789abcdef0123456789abcdef";
+  const TITLE = "Launch checklist";
+  const intents: { channelId: string; sources: readonly { name: string; url: string }[]; feedback: boolean }[] = [];
+  registerPostArm({
+    platform: "slack",
+    isDirectConversation: (locus) => locus.channelId.startsWith("D"),
+    dispatchReply: async (target, text, _replier, intent) => {
+      const channelId = (target as { channelId: string }).channelId;
+      intents.push({ channelId, sources: intent?.sources ?? [], feedback: intent?.feedback === true });
+      posted.push({ platform: "slack", text, id: `msg-${posted.length + 1}` });
+      return `msg-${posted.length}`;
+    },
+  });
+
+  const delegateAuthoredRead = async (callId: string, taskId: string): Promise<void> => {
+    const inSeat = newSession(SEAT_SESSION);
+    await inSeat(async () => {
+      await noteTaskStarted({ taskId, callId, turnId: "turn_seat_1", kind: "agent", tool: "agent" }, SEAT_SESSION);
+    });
+    const inWorker = newSession(`worker-${callId}`);
+    await inWorker(async () => {
+      noteAuthoredRecordRead(workerCtx(callId, "worker_turn_1"), { kind: "notion-page", id: "0123456789abcdef0123456789abcdef", name: TITLE, url: URL_ });
+    });
+  };
+
+  await delegateAuthoredRead("call_cite_dm", "agent-cite-dm");
+  const carried = (await awaitWorkerRow(`subagent:${SEAT_SESSION}:call_cite_dm`, 1)) as { reads?: Record<string, unknown>[] };
+  ok(
+    JSON.stringify(carried.reads?.[0]?.cite) === JSON.stringify({ kind: "notion-page", id: "0123456789abcdef0123456789abcdef", name: TITLE, url: URL_ }),
+    `🔴 §12: the worker's row carries the citation — kind, id, title and url (saw ${JSON.stringify(carried.reads?.[0])})`,
+  );
+  ok(carried.reads?.[0]?.record === undefined, "§12: …and still NO record: rule (ii) is decided against the worker's own stamps, which name no room");
+
+  const dmRow = SURFACES.find((r) => r.id === "dm-seat")!;
+  const dmTurn = "seat_turn_cite_dm";
+  const inSeatDm = newSession(SEAT_SESSION);
+  await inSeatDm(async () => {
+    await applyTaskSettlement(
+      [{ taskId: "agent-cite-dm", status: "completed", agentId: null }],
+      SEAT_SESSION,
+      seatCtx(dmRow, dmTurn) as unknown as Parameters<typeof applyTaskSettlement>[2],
+    );
+    await postReply(dmRow.target, `${ANSWER} (cited)`, replyAuditFor(seatCtx(dmRow, dmTurn), "tool", "wake-cite-dm"));
+  });
+  const dmIntent = intents[intents.length - 1];
+  ok(
+    dmIntent?.channelId === "DM1" && dmIntent.sources.length === 1 && dmIntent.sources[0]?.name === TITLE && dmIntent.sources[0]?.url === URL_,
+    `🔴 §12: THE TICKET — the delegated read reaches the person's 1:1 reply as ONE numbered source link, with its title and url (saw ${JSON.stringify(dmIntent)})`,
+  );
+  ok(dmIntent?.feedback === true, "🔴 §12: …and the answer asks for the surface's native thumbs");
+  ok(!lastPosted().includes(URL_) && !lastPosted().includes("Sources"), "§12: the link rides the intent, never the answer's text: the arm draws it natively");
+  const dmRows = await readAudit({ org: ORG, action: REPLY_PROVENANCE_ACTION });
+  const dmRowRec = [...dmRows].reverse().find((r) => (r.detail as { id?: string } | undefined)?.id === posted[posted.length - 1]?.id);
+  ok((dmRowRec?.detail as { links?: number } | undefined)?.links === 1, `🔴 §12: the durable row records ONE link shown (saw ${JSON.stringify(dmRowRec?.detail)})`);
+
+  await delegateAuthoredRead("call_cite_ch", "agent-cite-ch");
+  await awaitWorkerRow(`subagent:${SEAT_SESSION}:call_cite_ch`, 1);
+  const chRow = SURFACES[0]!;
+  const chTurn = "seat_turn_cite_ch";
+  const inSeatCh = newSession(SEAT_SESSION);
+  await inSeatCh(async () => {
+    await applyTaskSettlement(
+      [{ taskId: "agent-cite-ch", status: "completed", agentId: null }],
+      SEAT_SESSION,
+      seatCtx(chRow, chTurn) as unknown as Parameters<typeof applyTaskSettlement>[2],
+    );
+    await postReply(chRow.target, `${ANSWER} (shared)`, replyAuditFor(seatCtx(chRow, chTurn), "tool", "wake-cite-ch"));
+  });
+  const chIntent = intents[intents.length - 1];
+  ok(
+    chIntent?.channelId === "C1" && chIntent.sources.length === 0,
+    `🔴 §12/NEGATIVE CONTROL: a reply in a SHARED room carries no source link, though the read was carried to it (saw ${JSON.stringify(chIntent)})`,
+  );
+  ok(chIntent?.feedback === true, "§12/NEGATIVE CONTROL: …and the thumbs still go out: a rating discloses nothing");
+
+  await delegateAuthoredRead("call_cite_replay", "agent-cite-replay");
+  const replayToken = `subagent:${SEAT_SESSION}:call_cite_replay`;
+  await awaitWorkerRow(replayToken, 1);
+  const settled = await settleDelegatedReads({ org: ORG, childToken: replayToken, sessionId: SEAT_SESSION, turnId: "seat_turn_cite_replay", reach: undefined, replayKey: "replay-1" });
+  ok(settled.found === 1, "§12 precondition: the replay-keyed settle found the worker's read");
+  const spentRaw = await getOperationalStore().getTaskResult(ORG, delegatedProvenanceKey(replayToken));
+  ok(spentRaw !== null && spentRaw.includes("read_notion_page"), "§12: the spent form still holds the read, for a replay");
+  ok(!String(spentRaw).includes(URL_) && !String(spentRaw).includes(TITLE), `🔴 §12: …and neither the title nor the url (saw ${String(spentRaw).slice(0, 240)})`);
 }
 
 await removeTempDir(dir);

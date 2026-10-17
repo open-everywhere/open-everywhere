@@ -103,6 +103,7 @@ export const readLinearIssueEntry = defineTool({
       id: res.identifier ?? issue,
       alsoKnownAs: [res.id, issue],
       name: res.title,
+      url: res.url,
     });
     return {
       ...(workspaceTrust !== undefined ? { workspaceTrust } : {}),

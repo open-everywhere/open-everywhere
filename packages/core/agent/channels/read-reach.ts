@@ -9,7 +9,7 @@ import {
 } from "../identity/binding.js";
 import { addressedWakeThisTurn } from "../access/dispatch-origin-signal.js";
 import { resolvePartition } from "../memory/partition.js";
-import { noteConnectorRead, rememberRecordName, type ConnectorRead, type ConnectorReadProof } from "./reply-provenance.js";
+import { noteConnectorRead, rememberRecordName, rememberSourceLink, type ConnectorRead, type ConnectorReadProof } from "./reply-provenance.js";
 import { noteDelegatedRead } from "./delegated-provenance.js";
 
 export type ReadReach = Pick<ConnectorRead, "proof" | "surfaceKey" | "wakeId">;
@@ -37,6 +37,7 @@ export interface AuthoredRecordRead {
   readonly id: string;
   readonly alsoKnownAs?: readonly (string | undefined)[];
   readonly name?: string;
+  readonly url?: string;
 }
 
 function idKey(v: string): string {
@@ -82,14 +83,17 @@ export function noteAuthoredRecordRead(ctx: unknown, read: AuthoredRecordRead): 
       surfaceKey = undefined;
     }
     const named = roomHoldsRecordId(read, bind);
+    const citable = typeof read.name === "string" && read.name.length > 0 && typeof read.url === "string" && read.url.length > 0;
     noteConnectorRead(turnId, {
       ...stampReadReach(bind, turnId, surfaceKey),
       connection: spec.connection,
       op: spec.op,
       ...(named ? { record: { kind: read.kind, id: read.id } } : {}),
+      ...(citable ? { cite: { kind: read.kind, id: read.id } } : {}),
     });
-    noteDelegatedRead(bind, spec.connection, spec.op);
+    noteDelegatedRead(bind, spec.connection, spec.op, undefined, citable ? { kind: read.kind, id: read.id, name: read.name, url: read.url } : undefined);
     if (named) rememberRecordName(currentSessionId(bind), turnId, read.kind, read.id, read.name);
+    if (citable) rememberSourceLink(currentSessionId(bind), turnId, read.kind, read.id, read.name, read.url);
   } catch {
   }
 }

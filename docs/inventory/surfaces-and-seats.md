@@ -273,7 +273,7 @@ all 6 — the bundles that register no poster still get the notice, in words.
 
 ## C. Reply, edit and settlement
 
-55 behaviours, 0 UNDOCUMENTED. Owning pages: docs/extending/chat-surface-contract.md (§4) · docs/security/audit-and-provenance.md.
+57 behaviours, 0 UNDOCUMENTED. Owning pages: docs/extending/chat-surface-contract.md (§4) · docs/security/audit-and-provenance.md.
 
 | ID | Behaviour | Code | Documented by | Tested by |
 |---|---|---|---|---|
@@ -331,6 +331,8 @@ all 6 — the bundles that register no poster still get the notice, in words.
 | `REPLY-53` | Records a stop eve accepted and never applied as turn.stop_ignored, keeping turn.cancelled strict. | `TURN_STOP_IGNORED_ACTION` — `packages/core/agent/channels/turn-cancel.ts:52` | [security/audit-and-provenance.md#whats-logged](../security/audit-and-provenance.md#whats-logged) — names the action `turn.stop_ignored`, not the rule | ? |
 | `REPLY-54` | Refuses a react whose wake origin has no reaction primitive and steers to reply or no_reply. | `reactEntry` — `packages/core/agent/tools/react.ts:32` | `docs/extending/chat-surface-contract.md#415-how-a-turn-ends` | ? |
 | `REPLY-55` | Emits telemetry for every reaction but durably records reaction.feedback only on the bot's own reply. | `ingestReaction` — `packages/core/agent/channels/reaction-ingest.ts:166` | [extending/provider-bundles.md#chat-surface-plane](../extending/provider-bundles.md#chat-surface-plane) | ? |
+| `REPLY-56` | Hands the arm numbered source links only for a 1:1 conversation the arm proves, and only for reads the reach rule names. | `applyReplyProvenance` + `landsInDirectConversation` — `packages/core/agent/channels/reply-provenance.ts:947`, `packages/core/agent/channels/post-arms.ts:283` | `docs/extending/chat-surface-contract.md#412-the-reply-choke-point--target-de-duplication-and-what-lands` | `packages/core/scripts/reply-source-links-test.ts`, `packages/core/scripts/delegated-provenance-test.ts` §12 |
+| `REPLY-57` | Records a native thumbs click under an answer as one reply.feedback row, with a comment's length and never its words. | `recordReplyFeedback` — `packages/core/agent/channels/reply-feedback.ts:59` | [security/audit-and-provenance.md#whats-logged](../security/audit-and-provenance.md#whats-logged) | `tests/integration/channels/reply-feedback.test.ts`, e2e `S-REPLY-FEEDBACK` |
 
 ## D. Delegation and thread seats
 

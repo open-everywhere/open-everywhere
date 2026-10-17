@@ -92,6 +92,7 @@ import {
 import { botReplyCandidate, slackBotReplyFacts } from "./slack-bot-ask.js";
 import { sidePanelViewedRoom, slackDmSystemNote } from "./slack-side-panel.js";
 import { parseAgentSessionStopped, routeAgentSessionStop, setSlackSessionStatus, slackSessionTitle } from "./slack-agent-session.js";
+import { parseSlackFeedbackClick, routeSlackFeedbackClick, type ParsedSlackFeedbackClick } from "./slack-reply-feedback.js";
 import {
   renderWakeMessage,
   slackChannelFactsFor,
@@ -144,6 +145,7 @@ export type FrontDecision =
   | { readonly kind: "setkey-submit"; readonly reason: string; readonly payload: unknown }
   | { readonly kind: "connect-click"; readonly reason: string; readonly payload: unknown }
   | { readonly kind: "grant-click"; readonly reason: string; readonly payload: unknown }
+  | { readonly kind: "feedback-click"; readonly reason: string; readonly payload: unknown; readonly click: ParsedSlackFeedbackClick }
   | { readonly kind: "mention"; readonly reason: string; readonly env: SlackEventEnvelope }
   | { readonly kind: "dm-wake"; readonly reason: string; readonly env: SlackEventEnvelope; readonly dmKind: "im" | "mpim" }
   | { readonly kind: "shortcut"; readonly reason: string; readonly shortcut: ParsedSlackShortcut }
@@ -273,6 +275,11 @@ export function classifyEnvelope(rawBody: string, contentType: string): FrontDec
     const grantClick = parseOeGrantClickPayload(rawBody);
     if (grantClick !== undefined) {
       return { kind: "grant-click", reason: "block_actions oe_grant: click — ours, never forwarded", payload: grantClick };
+    }
+    const feedbackPayload = decodeInteractivityPayload(rawBody);
+    const feedbackClick = parseSlackFeedbackClick(feedbackPayload);
+    if (feedbackClick !== undefined) {
+      return { kind: "feedback-click", reason: `block_actions oe_feedback ${feedbackClick.rating} — ours, never forwarded`, payload: feedbackPayload, click: feedbackClick };
     }
     const homePayload = decodeInteractivityPayload(rawBody);
     const homeClick = parseHomeClick(homePayload);
@@ -1130,6 +1137,21 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
           .catch(() => {
             console.warn("[open-everywhere:slack-front] grant click failed after acknowledgement");
           }),
+      );
+      return new Response(null, { status: 200 });
+    }
+
+    if (decision.kind === "feedback-click") {
+      if (slackInteractivityTenantFenceDeclined(interactivityFenceIds(decision.payload), "feedback-click", "front-interactivity-branch")) {
+        return fencedAck(new Response(null, { status: 200 }));
+      }
+      const click = decision.click;
+      args.waitUntil(
+        routeSlackFeedbackClick(click)
+          .then((recorded) => {
+            if (!recorded) console.warn("[open-everywhere:slack-front] a thumbs click was not recorded");
+          })
+          .catch(() => undefined),
       );
       return new Response(null, { status: 200 });
     }

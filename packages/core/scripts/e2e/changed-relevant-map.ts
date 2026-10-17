@@ -201,6 +201,16 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     why: "S-SESSION-STOP (OPE-2519) is the only live leg on Slack's native Stop button. It forges a signed agent_session_stopped press for the person's running DM turn, and gates that the press takes the ✋ arm's cancel road (`turn.cancel_requested` with via `stop-button`) and that the turn's own process writes `turn.cancelled`. `slack-agent-session.ts` parses the press and resolves the turn, and `surface-session-state.ts` drives the session state the button appears on.",
   },
   {
+    area: "reply-feedback",
+    globs: [
+      "packages/providers/slack/agent/channels/slack-reply-blocks.ts",
+      "packages/providers/slack/agent/channels/slack-reply-feedback.ts",
+      "packages/core/agent/channels/reply-feedback.ts",
+    ],
+    scenarios: ["S-REPLY-FEEDBACK"],
+    why: "S-REPLY-FEEDBACK (OPE-2520) is the only live leg on the native thumbs. It reads a DM answer back and gates that it carries Slack's feedback_buttons, then forges a signed thumbs-down on that message and gates on the one reply.feedback row. `slack-reply-blocks.ts` renders the control, `slack-reply-feedback.ts` parses the click and `reply-feedback.ts` writes the row, so a change to any of them changes an answer this leg gates.",
+  },
+  {
     area: "domain-memory-canvas",
     globs: [
       "packages/providers/slack/agent/channels/slack-memory-canvas.ts",

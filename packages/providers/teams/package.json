@@ -145,6 +145,10 @@
       "types": "./dist/agent/channels/teams-read.d.ts",
       "default": "./dist/agent/channels/teams-read.js"
     },
+    "./agent/channels/teams-reply-feedback.js": {
+      "types": "./dist/agent/channels/teams-reply-feedback.d.ts",
+      "default": "./dist/agent/channels/teams-reply-feedback.js"
+    },
     "./agent/channels/teams-roster.js": {
       "types": "./dist/agent/channels/teams-roster.d.ts",
       "default": "./dist/agent/channels/teams-roster.js"
@@ -202,6 +206,7 @@
     "test:teams-bot-name": "NODE_NO_WARNINGS=1 tsx scripts/teams-bot-name-test.ts",
     "test:teams-stop": "NODE_NO_WARNINGS=1 tsx scripts/teams-stop-test.ts",
     "test:teams-reaction-feedback": "NODE_NO_WARNINGS=1 tsx scripts/teams-reaction-feedback-test.ts",
+    "test:teams-reply-feedback": "NODE_NO_WARNINGS=1 tsx scripts/teams-reply-feedback-test.ts",
     "test:teams-engagement": "NODE_NO_WARNINGS=1 tsx scripts/teams-engagement-test.ts",
     "test:teams-message-ops": "NODE_NO_WARNINGS=1 tsx scripts/teams-message-ops-test.ts",
     "test:teams-id-restore": "NODE_NO_WARNINGS=1 tsx scripts/teams-id-restore-test.ts",

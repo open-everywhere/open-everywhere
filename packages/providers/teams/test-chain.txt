@@ -19,3 +19,4 @@ test:teams-id-restore
 test:teams-declared-target
 test:teams-spend-attribution
 test:teams-app-package
+test:teams-reply-feedback

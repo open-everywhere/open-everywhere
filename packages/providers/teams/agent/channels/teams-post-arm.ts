@@ -13,9 +13,11 @@ import {
   type TeamsConversationRef,
 } from "./teams-conversation-ref.js";
 import { restoreTeamsPersonId } from "./teams-id-restore.js";
+import { isTeamsPersonalConversationId, teamsAnswerActivity } from "./teams-reply-feedback.js";
 import { markNotApplied, carryFailureSignals } from "@open-everywhere/core/agent/adapter-api.js";
 import type {
   PostArm,
+  PostIntent,
   TargetResolveBag,
   ReplyTarget,
   UnifiedWakeOrigin,
@@ -28,7 +30,7 @@ import type {
 export type TeamsTarget = Extract<ReplyTarget, { platform: "teams" }>;
 type TeamsOrigin = Extract<UnifiedWakeOrigin, { platform: "teams" }>;
 
-export async function dispatchTeamsReply(target: TeamsTarget, text: string): Promise<string> {
+export async function dispatchTeamsReply(target: TeamsTarget, text: string, intent?: PostIntent): Promise<string> {
   if (!process.env.MICROSOFT_APP_ID && !process.env.TEAMS_APP_ID) {
     throw markNotApplied(new Error("reply couldn't post to Teams — MICROSOFT_APP_ID is not set."));
   }
@@ -40,17 +42,17 @@ export async function dispatchTeamsReply(target: TeamsTarget, text: string): Pro
         serviceUrl: target.serviceUrl,
         conversationId: target.conversationId,
         activityId: target.replyToActivityId,
-        body: { type: "message", text },
+        body: teamsAnswerActivity(text, intent),
       })
     : await sendTeamsActivityBackedOff({
         serviceUrl: target.serviceUrl,
         conversationId: target.conversationId,
-        body: { type: "message", text },
+        body: teamsAnswerActivity(text, intent),
       });
   return res.id;
 }
 
-async function liveTeamsPost(origin: TeamsOrigin, text: string): Promise<string> {
+async function liveTeamsPost(origin: TeamsOrigin, text: string, intent?: PostIntent): Promise<string> {
   if (!process.env.MICROSOFT_APP_ID && !process.env.TEAMS_APP_ID) {
     throw markNotApplied(new Error(`unified reply couldn't post to Teams — MICROSOFT_APP_ID is not set (conversation ${origin.conversationId})`));
   }
@@ -64,12 +66,12 @@ async function liveTeamsPost(origin: TeamsOrigin, text: string): Promise<string>
           serviceUrl: origin.serviceUrl,
           conversationId: origin.conversationId,
           activityId: origin.replyToActivityId,
-          body: { type: "message", text },
+          body: teamsAnswerActivity(text, intent),
         })
       : await sendTeamsActivityBackedOff({
           serviceUrl: origin.serviceUrl,
           conversationId: origin.conversationId,
-          body: { type: "message", text },
+          body: teamsAnswerActivity(text, intent),
         });
     id = res.id;
   } catch (err) {
@@ -78,7 +80,7 @@ async function liveTeamsPost(origin: TeamsOrigin, text: string): Promise<string>
   return id || "unknown";
 }
 
-export async function editTeamsMessage(locus: EditLocus, messageId: string, text: string): Promise<void> {
+export async function editTeamsMessage(locus: EditLocus, messageId: string, text: string, intent?: PostIntent): Promise<void> {
   if (!process.env.MICROSOFT_APP_ID && !process.env.TEAMS_APP_ID) {
     throw markNotApplied(new Error("edit_reply couldn't update the Teams message — MICROSOFT_APP_ID is not set."));
   }
@@ -99,7 +101,7 @@ export async function editTeamsMessage(locus: EditLocus, messageId: string, text
       serviceUrl: locus.serviceUrl,
       conversationId: locus.channelId,
       activityId: messageId,
-      body: { type: "message", text },
+      body: teamsAnswerActivity(text, intent),
     });
   } catch (err) {
     throw carryFailureSignals(err, new Error(`edit_reply couldn't update the Teams message — the Connector update failed (conversation ${locus.channelId})`));
@@ -178,8 +180,10 @@ export const teamsPostArm: PostArm = {
     const conversationId = bag.str("conversationId");
     return serviceUrl && conversationId ? { platform: "teams", serviceUrl, conversationId } : null;
   },
-  dispatchReply: (target, text) => dispatchTeamsReply(target as TeamsTarget, text),
-  dispatchUnified: (origin, text, deps: UnifiedReplyDeps) => (deps.postTeams ?? liveTeamsPost)(origin as TeamsOrigin, text),
+  dispatchReply: (target, text, _replier, intent) => dispatchTeamsReply(target as TeamsTarget, text, intent),
+  dispatchUnified: (origin, text, deps: UnifiedReplyDeps, _replier, intent) =>
+    deps.postTeams ? deps.postTeams(origin as TeamsOrigin, text) : liveTeamsPost(origin as TeamsOrigin, text, intent),
+  isDirectConversation: (locus) => isTeamsPersonalConversationId(locus.channelId),
   describeRedriveTarget: (origin) => `teams conversation ${(origin as TeamsOrigin).conversationId}`,
   redriveContainerId: (origin) => (origin as TeamsOrigin).conversationId,
   editMessage: editTeamsMessage,

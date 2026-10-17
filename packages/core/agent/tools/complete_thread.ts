@@ -78,7 +78,7 @@ export default windowGated("complete_thread", defineTool({
     const text = completionPostFor(repliedWakesThisTurn(currentTurnId(c)).length > 0, report);
     let posted: "seat" | "host" | "failed" = "seat";
     if (text !== undefined) {
-      posted = await postUnifiedReply(origin, text, {}, replyAuditFor(c, "tool", wakeId ?? undefined))
+      posted = await postUnifiedReply(origin, text, {}, replyAuditFor(c, "tool", wakeId ?? undefined), undefined, undefined, { host: true })
         .then(() => "host" as const)
         .catch(() => "failed" as const);
     }

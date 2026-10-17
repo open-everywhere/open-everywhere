@@ -171,7 +171,7 @@ const connectorEntry = defineTool({
       ...(binding.principalId ? { principalId: binding.principalId } : {}),
       route: "tool",
     };
-    await postReply(target, text, audit);
+    await postReply(target, text, audit, undefined, { host: true });
     await cardAudit();
     for (const o of issued) {
       await appendAudit({

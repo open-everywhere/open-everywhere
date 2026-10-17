@@ -17,6 +17,7 @@ export interface ConnectorRead {
   readonly wakeId?: string;
   readonly alsoWakeId?: string;
   readonly record?: ConnectorReadRecord;
+  readonly cite?: ConnectorReadRecord;
 }
 
 interface ReplyProvenanceState {
@@ -64,13 +65,15 @@ function readState(v: unknown): ReplyProvenanceState {
   const reads = Array.isArray(s.reads)
     ? s.reads.flatMap((r): ConnectorRead[] => {
         if (typeof r !== "object" || r === null) return [];
-        const raw = r as { connection?: unknown; op?: unknown; surfaceKey?: unknown; wakeId?: unknown; alsoWakeId?: unknown; proof?: unknown; record?: unknown };
+        const raw = r as { connection?: unknown; op?: unknown; surfaceKey?: unknown; wakeId?: unknown; alsoWakeId?: unknown; proof?: unknown; record?: unknown; cite?: unknown };
         if (typeof raw.connection !== "string" || raw.connection.length === 0) return [];
         if (typeof raw.op !== "string" || raw.op.length === 0) return [];
         const record = readRecord(raw.record);
+        const cite = readRecord(raw.cite);
         return [
           {
             ...(record !== undefined ? { record } : {}),
+            ...(cite !== undefined ? { cite } : {}),
             proof: raw.proof === "surface" || raw.proof === "wake" ? raw.proof : "none",
             connection: raw.connection,
             op: raw.op,
@@ -97,6 +100,7 @@ export function noteConnectorRead(turnId: string | undefined, read: ConnectorRea
       ? { alsoWakeId: read.alsoWakeId }
       : {}),
     ...(read.record !== undefined && read.record.kind.length > 0 && read.record.id.length > 0 ? { record: { kind: read.record.kind, id: read.record.id } } : {}),
+    ...(read.cite !== undefined && read.cite.kind.length > 0 && read.cite.id.length > 0 ? { cite: { kind: read.cite.kind, id: read.cite.id } } : {}),
   };
   const same = (a: ConnectorRead, b: ConnectorRead): boolean =>
     a.connection === b.connection &&
@@ -106,7 +110,9 @@ export function noteConnectorRead(turnId: string | undefined, read: ConnectorRea
     a.wakeId === b.wakeId &&
     a.alsoWakeId === b.alsoWakeId &&
     a.record?.kind === b.record?.kind &&
-    a.record?.id === b.record?.id;
+    a.record?.id === b.record?.id &&
+    a.cite?.kind === b.cite?.kind &&
+    a.cite?.id === b.cite?.id;
   try {
     slot.update((cur) => {
       const state = readState(cur);
@@ -159,6 +165,61 @@ function recordDisplayName(
   return key === undefined ? undefined : recordNames.get(key);
 }
 
+export const MAX_SOURCE_LINKS = 5;
+
+const MAX_SOURCE_URL_CHARS = 512;
+
+export interface SourceLink {
+  readonly kind: string;
+  readonly name: string;
+  readonly url: string;
+}
+
+const sourceLinks = new Map<string, { readonly name: string; readonly url: string }>();
+
+function cleanSourceUrl(raw: string | undefined): string | undefined {
+  if (typeof raw !== "string" || raw.length === 0 || raw.length > MAX_SOURCE_URL_CHARS) return undefined;
+  if (/[\s<>|()[\]"`]/u.test(raw)) return undefined;
+  try {
+    return new URL(raw).protocol === "https:" ? raw : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function cleanSourceName(raw: string | undefined): string | undefined {
+  const flat = flattenRecordName(raw);
+  if (flat === undefined) return undefined;
+  const label = flat.replace(/[<>|[\]*_~`]/gu, " ").replace(/\s+/gu, " ").trim();
+  return label.length === 0 ? undefined : label;
+}
+
+export function cleanSourceLink(name: string | undefined, url: string | undefined): { readonly name: string; readonly url: string } | undefined {
+  const label = cleanSourceName(name);
+  const href = cleanSourceUrl(url);
+  return label === undefined || href === undefined ? undefined : { name: label, url: href };
+}
+
+export function rememberSourceLink(
+  sessionId: string | undefined,
+  turnId: string | undefined,
+  kind: string,
+  id: string,
+  name: string | undefined,
+  url: string | undefined,
+): void {
+  const key = recordNameKey(sessionId, turnId, kind, id);
+  if (key === undefined) return;
+  const link = cleanSourceLink(name, url);
+  if (link === undefined) return;
+  sourceLinks.delete(key);
+  if (sourceLinks.size >= MAX_RECORD_NAMES) {
+    const oldest = sourceLinks.keys().next();
+    if (oldest.done !== true) sourceLinks.delete(oldest.value);
+  }
+  sourceLinks.set(key, link);
+}
+
 export function connectorReadsThisTurn(turnId: string | undefined): readonly ConnectorRead[] {
   if (turnId === undefined || turnId.length === 0) return [];
   let state: ReplyProvenanceState;
@@ -175,6 +236,7 @@ export interface ReplyProvenance {
   readonly named: readonly string[];
   readonly otherDomains: number;
   readonly records?: Readonly<Record<string, string>>;
+  readonly links?: readonly SourceLink[];
 }
 
 function provenanceForReply(
@@ -192,6 +254,8 @@ function provenanceForReply(
   const named: string[] = [];
   const other = new Set<string>();
   const records: Record<string, string> = {};
+  const links: SourceLink[] = [];
+  const cited = new Set<string>();
   for (const r of reads) {
     const visible =
       r.proof === "wake"
@@ -202,6 +266,14 @@ function provenanceForReply(
           : false;
     if (visible) {
       if (!named.includes(r.connection)) named.push(r.connection);
+      if (r.cite !== undefined && links.length < MAX_SOURCE_LINKS) {
+        const key = recordNameKey(sessionId, turnId, r.cite.kind, r.cite.id);
+        const link = key === undefined ? undefined : sourceLinks.get(key);
+        if (key !== undefined && link !== undefined && !cited.has(key)) {
+          cited.add(key);
+          links.push({ kind: r.cite.kind, name: link.name, url: link.url });
+        }
+      }
       if (records[r.connection] === undefined) {
         const name = recordDisplayName(sessionId, turnId, r.record);
         if (name !== undefined) records[r.connection] = name;
@@ -211,7 +283,12 @@ function provenanceForReply(
     }
   }
   for (const n of named) other.delete(n);
-  return { named, otherDomains: other.size, ...(Object.keys(records).length > 0 ? { records } : {}) };
+  return {
+    named,
+    otherDomains: other.size,
+    ...(Object.keys(records).length > 0 ? { records } : {}),
+    ...(links.length > 0 ? { links } : {}),
+  };
 }
 
 export const PROVENANCE_FOOTER_PREFIX = "Sources read this turn:";
@@ -249,6 +326,7 @@ export async function auditReplyProvenance(
   platform: string,
   reads: readonly ConnectorRead[],
   shown: ReplyProvenance | undefined,
+  linked = 0,
 ): Promise<void> {
   if (!audit || reads.length === 0) return;
   const connections = [...new Set(reads.map((r) => r.connection))];
@@ -269,6 +347,7 @@ export async function auditReplyProvenance(
       named: shown?.named.length ?? 0,
       withheld: connections.length - (shown?.named.length ?? 0),
       ...sourcesField(shown),
+      links: linked,
       ...(audit.wakeId ? { wakeId: audit.wakeId } : {}),
       ...(audit.sessionId ? { sessionId: audit.sessionId } : {}),
     },
@@ -283,12 +362,14 @@ function sourcesField(shown: ReplyProvenance | undefined): { readonly sources?: 
 export function applyReplyProvenance(
   text: string,
   audit: ReplyAudit | undefined,
+  direct = false,
 ): {
   readonly body: string;
   readonly reads: readonly ConnectorRead[];
   readonly shown: ReplyProvenance | undefined;
+  readonly sources: readonly SourceLink[];
 } {
   const reads = connectorReadsThisTurn(audit?.turnId);
   const shown = provenanceForReply(reads, audit, audit?.sessionId, audit?.turnId);
-  return { body: stripForgedFooter(text), reads, shown };
+  return { body: stripForgedFooter(text), reads, shown, sources: direct ? (shown?.links ?? []) : [] };
 }

@@ -1,8 +1,10 @@
 import { slackForm, botDisplayName } from "./slack-events.js";
 import { markdownToSlackMrkdwn } from "./slack-mrkdwn.js";
+import { isSlackBlocksRefusal, slackReplyBlocks } from "./slack-reply-blocks.js";
 import { markNotApplied } from "@open-everywhere/core/agent/adapter-api.js";
 import type {
   PostArm,
+  PostIntent,
   TargetResolveBag,
   ReplyTarget,
   ReplierLabel,
@@ -67,10 +69,31 @@ function classifiedPostError(res: SlackPostResult | undefined, message: string):
   return res?.ok === false ? markNotApplied(err) : err;
 }
 
-async function dispatchSlackReply(target: SlackTarget, text: string, replier?: ReplierLabel): Promise<string> {
+export async function postSlackAnswer(
+  base: URLSearchParams,
+  intent: PostIntent | undefined,
+  replier: ReplierLabel | undefined,
+  errPrefix: string,
+  post: SlackPostFn = livePost,
+  resolveDisplayName: () => Promise<string | undefined> = botDisplayName,
+): Promise<string> {
+  const blocks = slackReplyBlocks(base.get("text") ?? "", intent);
+  if (blocks === undefined) return postSlackMessage(base, replier, errPrefix, post, resolveDisplayName);
+  const withBlocks = new URLSearchParams(base);
+  withBlocks.set("blocks", JSON.stringify(blocks));
+  try {
+    return await postSlackMessage(withBlocks, replier, errPrefix, post, resolveDisplayName);
+  } catch (err) {
+    if (!isSlackBlocksRefusal(err)) throw err;
+    console.warn("[open-everywhere:slack-post-arm] Slack refused the answer's blocks; posting the text alone");
+    return postSlackMessage(base, replier, errPrefix, post, resolveDisplayName);
+  }
+}
+
+async function dispatchSlackReply(target: SlackTarget, text: string, replier?: ReplierLabel, intent?: PostIntent): Promise<string> {
   const body = new URLSearchParams({ channel: target.channelId, text: markdownToSlackMrkdwn(text) });
   if (target.threadTs) body.set("thread_ts", target.threadTs);
-  return postSlackMessage(body, replier, "reply couldn't post to Slack");
+  return postSlackAnswer(body, intent, replier, "reply couldn't post to Slack");
 }
 
 export function slackThreadTarget(origin: Pick<SlackOrigin, "threadTs" | "replyAnchorTs">): string | undefined {
@@ -78,11 +101,11 @@ export function slackThreadTarget(origin: Pick<SlackOrigin, "threadTs" | "replyA
   return anchor && anchor.length > 0 ? anchor : undefined;
 }
 
-async function liveSlackPost(origin: SlackOrigin, text: string, replier?: ReplierLabel): Promise<string> {
+async function liveSlackPost(origin: SlackOrigin, text: string, replier?: ReplierLabel, intent?: PostIntent): Promise<string> {
   const body = new URLSearchParams({ channel: origin.channelId, text: markdownToSlackMrkdwn(text) });
   const threadTarget = slackThreadTarget(origin);
   if (threadTarget) body.set("thread_ts", threadTarget);
-  return postSlackMessage(body, replier, "unified reply couldn't post to Slack");
+  return postSlackAnswer(body, intent, replier, "unified reply couldn't post to Slack");
 }
 
 function slackDirectMessageActionBlock(actions: readonly DirectMessageAction[]): Record<string, unknown> | undefined {
@@ -120,9 +143,22 @@ async function deliverSlackDirectMessage(input: DirectMessageRequest): Promise<D
   return { surfaceId: dmChannelId, messageId: ts };
 }
 
-async function editSlackMessage(locus: EditLocus, messageId: string, text: string): Promise<void> {
-  const body = new URLSearchParams({ channel: locus.channelId, ts: messageId, text: markdownToSlackMrkdwn(text) });
-  const res = await slackForm("chat.update", body.toString());
+export async function editSlackMessage(
+  locus: EditLocus,
+  messageId: string,
+  text: string,
+  intent?: PostIntent,
+  form: (method: string, body: string) => Promise<Record<string, unknown> | undefined> = slackForm,
+): Promise<void> {
+  const rendered = markdownToSlackMrkdwn(text);
+  const body = new URLSearchParams({ channel: locus.channelId, ts: messageId, text: rendered });
+  const blocks = slackReplyBlocks(rendered, intent);
+  if (blocks !== undefined) body.set("blocks", JSON.stringify(blocks));
+  let res = await form("chat.update", body.toString());
+  if (res?.ok !== true && blocks !== undefined && isSlackBlocksRefusal(String(res?.error))) {
+    body.set("blocks", "[]");
+    res = await form("chat.update", body.toString());
+  }
   if (res?.ok !== true) {
     throw markNotApplied(
       new Error(`edit_reply couldn't update the Slack message — ${(res?.error as string) ?? "chat.update returned no ok (check SLACK_BOT_TOKEN)"}`),
@@ -137,14 +173,15 @@ export const slackPostArm: PostArm = {
     return channelId ? { platform: "slack", channelId, threadTs: bag.threadTs } : null;
   },
   displayNameCapable: true,
-  dispatchReply: (target, text, replier) => dispatchSlackReply(target as SlackTarget, text, replier),
-  dispatchUnified: (origin, text, deps: UnifiedReplyDeps, replier) =>
-    deps.postSlack ? deps.postSlack(origin as SlackOrigin, text) : liveSlackPost(origin as SlackOrigin, text, replier),
+  dispatchReply: (target, text, replier, intent) => dispatchSlackReply(target as SlackTarget, text, replier, intent),
+  dispatchUnified: (origin, text, deps: UnifiedReplyDeps, replier, intent) =>
+    deps.postSlack ? deps.postSlack(origin as SlackOrigin, text) : liveSlackPost(origin as SlackOrigin, text, replier, intent),
+  isDirectConversation: (locus) => locus.channelId.startsWith("D"),
   describeRedriveTarget: (origin) => {
     const o = origin as SlackOrigin;
     return `slack ${o.threadTs ? `thread in ${o.channelId}` : `channel ${o.channelId}`}`;
   },
   redriveContainerId: (origin) => (origin as SlackOrigin).channelId,
   deliverDirectMessage: deliverSlackDirectMessage,
-  editMessage: editSlackMessage,
+  editMessage: (locus, messageId, text, intent) => editSlackMessage(locus, messageId, text, intent),
 };

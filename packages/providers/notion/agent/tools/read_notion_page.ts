@@ -112,6 +112,7 @@ export const readNotionPageEntry = defineTool({
             id: page,
             alsoKnownAs: [requestedPage],
             name: identity.title,
+            url: identity.url,
           });
           return {
             page,

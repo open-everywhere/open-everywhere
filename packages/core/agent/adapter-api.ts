@@ -285,7 +285,7 @@ export type { SessionMode } from "./access/resolver.js";
 export { noteAuthoredRecordRead } from "./channels/read-reach.js";
 export type { AuthoredRecordKind, AuthoredRecordRead } from "./channels/read-reach.js";
 export { connectorReadsThisTurn } from "./channels/reply-provenance.js";
-export type { ConnectorRead, ConnectorReadRecord } from "./channels/reply-provenance.js";
+export type { ConnectorRead, ConnectorReadRecord, SourceLink } from "./channels/reply-provenance.js";
 
 export { surfaceKeySegment, trustGroupKeyFor } from "./identity/binding.js";
 
@@ -759,6 +759,9 @@ export { isAllowedDriver } from "./testing/driver-allowlist.js";
 
 export { buildIngestedReaction, ingestReaction, liveReactionSink } from "./channels/reaction-ingest.js";
 export type { ReactionSinkDeps, ReactionIngestOutcome, ReactionVerb } from "./channels/reaction-ingest.js";
+
+export { recordReplyFeedback, REPLY_FEEDBACK_ACTION } from "./channels/reply-feedback.js";
+export type { ReplyFeedbackClick, ReplyFeedbackRating, ReplyFeedbackSurface } from "./channels/reply-feedback.js";
 
 export { assertSurfaceAllowed, chatReadIngestion, readChannelResult, readThreadResult } from "./channels/channel-read.js";
 export type { ReadFile, RenderedLine } from "./channels/channel-read.js";

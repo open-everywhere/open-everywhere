@@ -400,6 +400,8 @@ an outside workspace. Recover with the `reopen_slack_setup` control call. To kee
      reaction emits anonymous volume telemetry); reactions on *other* messages are counted but
      not stored. Needs the `reactions:read` scope from Step 2. Omit these and the feature is
      silently off — nothing else changes.
+     The thumbs under an answer are a separate road and need no event: see
+     [Sources and thumbs on an answer](#sources-and-thumbs-on-an-answer).
    - `app_home_opened` — **the Home tab page.** When a person opens the agent's Home tab, the agent
      publishes their private page: everything it does for them on its own, with Pause and Remove (see
      [Everything I do for you](../../capabilities/proactivity-and-routines.md#everything-i-do-for-you-one-list-per-person)),
@@ -974,6 +976,45 @@ signed DM door: the title before `processing`, `suspended` after `update_status(
 stops a held turn and sets the session `active`. The live e2e scenario
 `S-SESSION-STOP` forges a signed press on a real deployment. No API can press the real button, so no
 test proves that Slack itself shows it.
+
+## Sources and thumbs on an answer
+
+Every answer the agent posts on Slack carries Slack's own **thumbs up / down** under it. An answer
+that a first-party read fed also lists its **sources**: compact numbered links, one line under the
+answer. Both are on by default, and neither needs a setting, an env var or a new scope.
+
+| What the person sees | What OE does |
+| --- | --- |
+| **Sources.** `Sources: [1] Launch checklist · [2] Fix login`, each title a link. | Only in the person's 1:1 DM with the app. Only records that a first-party read tool fetched for this conversation: a Notion page (`read_notion_page`) or a Linear issue (`read_linear_issue`), whether the seat read it or a worker read it for the seat. At most five, in the order the turn read them. A title is the record's own title on one line, never an id. A link is the record's own `https:` url, which the person opens with their own access. |
+| **No sources in a shared room.** | A channel, a thread or a group DM gets no links. A turn can read a record and leave it out of the answer, and in a shared room its title would reach people the answer did not address. The `reply.provenance` row still records what the turn read, and `detail.links` counts the links a reply showed. |
+| **Thumbs up / down.** | Slack's native `feedback_buttons` element, in a `context_actions` block. A click comes to the interactivity URL, takes the tenant fence, and writes one `reply.feedback` audit row: the rating, the rater, the conversation and the rated message's ts. A click changes nothing else and wakes nothing. A 👍 / 👎 *reaction* still writes `reaction.feedback`, as before. |
+
+**How the answer is posted.** When `blocks` is present, Slack shows the blocks and not `text`, so the
+answer itself also rides the blocks, as `section` blocks of at most 3000 characters each. A long
+answer is cut at line ends, and a cut never leaves a code block open. `text` stays the notification
+fallback. An edit sends the blocks again. If Slack refuses a post for its blocks (`invalid_blocks`),
+OE posts the answer once more as text alone, so a refused block never costs the answer.
+
+**Limits.**
+
+- A read through a connector (MCP) names no record, so it gives no link. The hosted Notion MCP is
+  one such connector: a turn that read Notion only through it shows no sources.
+- A host post (a notice, the connect card, a thread's completion line) and a part of an answer that is still being written (`done: false`) get no thumbs
+  and no links. The links go under the whole answer, once.
+- A link's title and url live in process memory for the turn. A worker's read also carries them on
+  the short-lived delegated-reads row, from the read to the settle; the settle that spends the row
+  drops them. A reply that a different process posts, or a replayed step, shows no links. It never
+  shows a wrong one.
+
+**What the tests prove.** The unit packs `test:reply-source-links` (packages/core) and
+`test:slack-reply-feedback` (packages/providers/slack) pin the 1:1 rule, the reach rule, the url and
+title fence, the blocks and the click. `test:delegated-provenance` proves a worker's read reaches the
+seat's 1:1 reply as a link and a shared-room reply as none. The integration test
+`tests/integration/channels/reply-feedback.test.ts` boots the agent: a DM answer reaches
+`chat.postMessage` with the thumbs, and a signed click writes one `reply.feedback` row. The live e2e
+scenario `S-REPLY-FEEDBACK` reads a real answer back and forges a signed click on it. No API presses a
+real feedback button, and no live leg drives a source link, because the board's only live Notion road
+is the hosted MCP.
 
 ## Slash commands: `/oe` (zero-inference control-plane)
 

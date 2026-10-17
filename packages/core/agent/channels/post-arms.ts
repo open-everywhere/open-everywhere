@@ -1,8 +1,9 @@
 import type { BindableContext } from "../identity/binding.js";
-import type { ReplyTarget, ReplierLabel } from "./reply-post.js";
+import type { ReplyAudit, ReplyTarget, ReplierLabel } from "./reply-post.js";
 import type { EditLocus } from "./reply-edit.js";
 import type { UnifiedWakeOrigin } from "./unified-window.js";
 import type { UnifiedReplyDeps } from "./unified-reply.js";
+import type { SourceLink } from "./reply-provenance.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 import { soleAdmittedTenantFromConfig } from "../access/tenant-admission.js";
 import { appendAudit } from "../audit/audit.js";
@@ -62,16 +63,20 @@ export type ReactTarget =
 
 export interface PostIntent {
   readonly terminal: boolean;
+  readonly sources?: readonly SourceLink[];
+  readonly feedback?: boolean;
+  readonly generated?: boolean;
 }
 
 export interface PostArm {
   readonly platform: string;
   resolveTarget?(bag: TargetResolveBag): ReplyTarget | null;
-  dispatchReply?(target: ReplyTarget, text: string, replier?: ReplierLabel): Promise<string>;
+  dispatchReply?(target: ReplyTarget, text: string, replier?: ReplierLabel, intent?: PostIntent): Promise<string>;
+  isDirectConversation?(locus: { readonly channelId: string }): boolean;
   readonly displayNameCapable?: boolean;
   dispatchUnified?(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps, replier?: ReplierLabel, intent?: PostIntent): Promise<string>;
   closeUnifiedSilently?(origin: UnifiedWakeOrigin, deps: UnifiedReplyDeps, answered?: boolean): Promise<void>;
-  editMessage?(locus: EditLocus, messageId: string, text: string): Promise<void>;
+  editMessage?(locus: EditLocus, messageId: string, text: string, intent?: PostIntent): Promise<void>;
   editReachable?(locus: { readonly platform: string; readonly channelId: string }): Promise<boolean>;
   retargetEditLocus?(origin: UnifiedWakeOrigin, locus: EditLocus): Promise<EditLocus>;
   describeRedriveTarget?(origin: UnifiedWakeOrigin): string;
@@ -90,17 +95,22 @@ function guardPostArm(arm: PostArm): PostArm {
     guarded[key] = typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(arm) : value;
   }
   const p = arm.platform;
-  const wrap = (key: string, textAt: number): void => {
+  const wrap = (key: string, textAt: number, intentAt: number): void => {
     const fn = source[key];
     if (typeof fn !== "function") return;
     guarded[key] = async (...args: unknown[]) => {
       if (typeof args[textAt] === "string") args[textAt] = await friendlyOutboundText(args[textAt] as string, p);
+      const intent = args[intentAt] as PostIntent | undefined;
+      if (intent?.sources !== undefined && intent.sources.length > 0) {
+        const sources = await Promise.all(intent.sources.map(async (s) => ({ ...s, name: await friendlyOutboundText(s.name, p) })));
+        args[intentAt] = { ...intent, sources };
+      }
       return (fn as (...a: unknown[]) => unknown).apply(arm, args);
     };
   };
-  wrap("dispatchReply", 1);
-  wrap("dispatchUnified", 1);
-  wrap("editMessage", 2);
+  wrap("dispatchReply", 1, 3);
+  wrap("dispatchUnified", 1, 4);
+  wrap("editMessage", 2, 3);
   const deliver = source.deliverDirectMessage;
   if (typeof deliver === "function") {
     guarded.deliverDirectMessage = async (input: { readonly text: string }) =>
@@ -116,6 +126,30 @@ const POST_ARMS = processRegistryMap<PostArm>("post-arms.v1");
 export function registerPostArm(arm: PostArm): void {
   if (!admitProviderRegistration(arm.platform, "post-arm")) return;
   POST_ARMS.set(arm.platform, guardPostArm(arm));
+}
+
+export function answerIntent(
+  audit: ReplyAudit | undefined,
+  sources: readonly SourceLink[],
+  terminal = true,
+  host = false,
+): PostIntent {
+  if (host) return { terminal };
+  return {
+    terminal,
+    ...(audit !== undefined ? { generated: true } : {}),
+    ...(audit !== undefined && terminal ? { feedback: true } : {}),
+    ...(terminal && sources.length > 0 ? { sources } : {}),
+  };
+}
+
+export function landsInDirectConversation(platform: string | undefined, channelId: string | undefined): boolean {
+  if (channelId === undefined || channelId.length === 0) return false;
+  try {
+    return postArm(platform)?.isDirectConversation?.({ channelId }) === true;
+  } catch {
+    return false;
+  }
 }
 
 export function postArm(platform: string | undefined): PostArm | undefined {

@@ -3,7 +3,7 @@ import type { SessionMode } from "../access/resolver.js";
 import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { appendAudit } from "../audit/audit.js";
 import { swallowRoomPost } from "./egress-spoof.js";
-import { postArm } from "./post-arms.js";
+import { answerIntent, landsInDirectConversation, postArm, type PostIntent } from "./post-arms.js";
 import { outboundKey, postOnce } from "../operational/post-once.js";
 import { withReplierPrefix, truncateMemoryCitationPaths, type ReplierLabel } from "./turn-delivery.js";
 import { recordOwnPost } from "./own-post-ledger.js";
@@ -232,11 +232,18 @@ export async function recordLandedPost(input: {
   });
 }
 
-export async function postReply(target: ReplyTarget, text: string, audit?: ReplyAudit, replier?: ReplierLabel): Promise<string> {
+export async function postReply(
+  target: ReplyTarget,
+  text: string,
+  audit?: ReplyAudit,
+  replier?: ReplierLabel,
+  opts?: { readonly host?: boolean },
+): Promise<string> {
   const claimGuard = guardMemoryClaims(truncateMemoryCitationPaths(text), audit);
   const approvalGuard = guardApprovalClaims(claimGuard.body, audit);
   const requestGuard = guardRequestClaims(approvalGuard.body, audit);
-  const provenance = applyReplyProvenance(requestGuard.body, audit);
+  const provenance = applyReplyProvenance(requestGuard.body, audit, landsInDirectConversation(target.platform, replyEditLocus(target)?.channelId));
+  const postIntent = answerIntent(audit, provenance.sources, true, opts?.host === true);
   const cover = await coverLabelForReply(audit?.org, audit?.wakeId);
   const clean = cover ? withCoverLabel(provenance.body, cover.label) : provenance.body;
   const arm = postArm(target.platform);
@@ -258,13 +265,13 @@ export async function postReply(target: ReplyTarget, text: string, audit?: Reply
     run: async () => {
       let realId: string;
       try {
-        realId = await dispatchReply(target, body, nativeReplier);
+        realId = await dispatchReply(target, body, nativeReplier, postIntent);
       } catch (err) {
         await notePostFailure(audit, err, target.platform);
         throw err;
       }
       await auditReplyPost(audit, realId, target.platform, body.length);
-      await auditReplyProvenance(audit, realId, target.platform, provenance.reads, provenance.shown);
+      await auditReplyProvenance(audit, realId, target.platform, provenance.reads, provenance.shown, postIntent.sources?.length ?? 0);
       await auditWithheldMemoryClaim(audit, target.platform, claimGuard.withheld);
       await auditWithheldApprovalClaim(audit, target.platform, approvalGuard.withheld, approvalGuard.cause);
       await auditWithheldRequestClaim(audit, target.platform, requestGuard.withheld);
@@ -314,12 +321,12 @@ export function replyEditLocus(target: ReplyTarget): EditLocus | null {
   }
 }
 
-async function dispatchReply(target: ReplyTarget, text: string, replier?: ReplierLabel): Promise<string> {
+async function dispatchReply(target: ReplyTarget, text: string, replier?: ReplierLabel, intent?: PostIntent): Promise<string> {
   const swallowed = swallowRoomPost(`a ${target.platform} reply (${text.length}c)`, target.platform);
   if (swallowed !== undefined) return swallowed;
   const arm = postArm(target.platform);
   if (!arm?.dispatchReply) {
     throw new Error(`reply couldn't post — no mid-turn post arm registered for "${target.platform}".`);
   }
-  return arm.dispatchReply(target, text, replier);
+  return arm.dispatchReply(target, text, replier, intent);
 }

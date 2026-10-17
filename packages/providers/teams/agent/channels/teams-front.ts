@@ -13,6 +13,7 @@ import {
 import { resolveTeamsUserType, teamsIsHomeTenant, teamsServiceUrlRosterProbe, type TeamsRosterProbe } from "./teams-roster.js";
 import { recordTeamsConversationReference, teamsChannelGrainConversationId, teamsReplyChainRoot } from "./teams-conversation-ref.js";
 import { parseTeamsReaction, routeTeamsStopReaction, type TeamsReactionActivity, type TeamsStopOutcome } from "./teams-stop.js";
+import { parseTeamsFeedbackInvoke, routeTeamsFeedbackInvoke } from "./teams-reply-feedback.js";
 import {
   clearTeamsRoomStop,
   markTeamsEngaged,
@@ -673,6 +674,17 @@ export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFr
         ),
       );
       return OK();
+    }
+
+    const feedbackClick = parseTeamsFeedbackInvoke(parsed);
+    if (feedbackClick) {
+      args.waitUntil(
+        routeTeamsFeedbackInvoke(feedbackClick).then(
+          (recorded) => tlog(`thumbs ${feedbackClick.rating} in ${feedbackClick.conversationId}: ${recorded ? "recorded" : "not recorded"}`),
+          (err) => tlog(`thumbs leg failed: ${String(err)}`),
+        ),
+      );
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json; charset=utf-8" } });
     }
 
     const activity = parseTeamsActivity(parsed);

@@ -5999,6 +5999,54 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.gate(partner.action === "turn.cancelled", `S-SESSION-STOP: the turn really stopped — its own process wrote turn.cancelled (got ${partner.action})`);
     },
   },
+  {
+    id: "S-REPLY-FEEDBACK",
+    title: "Native thumbs on an answer (OPE-2520): a DM answer carries Slack's feedback_buttons, and a signed thumbs-down on it writes one reply.feedback row naming the rater, the rating and the message",
+    requires: ["slack", "synthetic", "syntheticDm"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 600_000,
+    judged: false,
+    run: async (ctx) => {
+      const read = ctx.auditRead;
+      if (!read) {
+        return ctx.fixtureMissing("S-REPLY-FEEDBACK gates on the reply.feedback audit row. Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to run it.");
+      }
+      const dm = ctx.dm!;
+      const synthetic = ctx.synthetic!;
+      const { userId: personId, teamId } = await ctx.slack!.identity();
+      await fenceDmSeat(ctx, "S-REPLY-FEEDBACK");
+      const askAt = await presenceSince(ctx, "S-REPLY-FEEDBACK ask");
+      const token = factToken("thumbs");
+      const { ts: askTs } = await dm.post(fixtureLine(`e2e S-REPLY-FEEDBACK: reply with one short sentence that ends with the word ${token}.`));
+
+      const answer = await pollUntil(
+        async () => (await dm.collectBotMessagesAfter(askTs, askTs)).find((m) => m.text.includes(token) && m.feedbackActionId !== undefined),
+        { timeoutMs: FILE_REPLY_WAIT, what: "the DM answer carrying the run token AND Slack's native thumbs" },
+      );
+      ctx.gate(answer.feedbackActionId === "oe_feedback", `S-REPLY-FEEDBACK: the answer carries the native thumbs (action id ${String(answer.feedbackActionId)})`);
+
+      const clicked = await synthetic.clickBlockAction({
+        actionId: "oe_feedback",
+        value: "down",
+        buttonText: "Bad response",
+        userId: personId,
+        teamId,
+        channelId: dm.channelId,
+        messageTs: answer.ts,
+        ...(answer.threadTs ? { threadTs: answer.threadTs } : {}),
+      });
+      ctx.gate(clicked.status === 200, `S-REPLY-FEEDBACK: the signed thumbs click is acknowledged (${clicked.label}, HTTP ${clicked.status})`);
+
+      const row = await pollUntil(
+        async () => (await read({ sinceIso: askAt, actions: ["reply.feedback"], limit: 200 })).find((r) => dS(r, "messageId") === answer.ts),
+        { timeoutMs: AUDIT_ROW_WAIT, what: `a reply.feedback row for the answer ${answer.ts}` },
+      );
+      ctx.gate(dS(row, "rating") === "down", `S-REPLY-FEEDBACK: the row records the thumbs-down (got ${String(dS(row, "rating"))})`);
+      ctx.gate(row.principalId === personId, `S-REPLY-FEEDBACK: the row names the person who clicked (${String(row.principalId)})`);
+      ctx.gate(dS(row, "channelId") === dm.channelId && dS(row, "via") === "native", "S-REPLY-FEEDBACK: the row names the DM and the native road");
+    },
+  },
 
   {
     id: "S-MEMORY-CANVAS",

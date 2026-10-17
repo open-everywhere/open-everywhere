@@ -6156,6 +6156,8 @@ export const SECTION_DEPLOY: readonly DocEntry[] = [
       "| First-contact onboarding + pinned-instruction adoption | ✅ | 🚧 ³⁰ | ❌ |",
       "| Stop following on request (judged, no magic word) | ✅ | 🔧 ²³ | ✅ ⁹ |",
       "| Stop an in-flight turn (a reaction / `/oe stop`) | ✅ | 🔧 ²² | ✅ |",
+      "| Native thumbs up / down on an answer (`reply.feedback`, OPE-2520) | 🔧 | 🔧 | ❌ |",
+      "| Numbered source links on an answer, in a 1:1 conversation (OPE-2520) | 🔧 | 🔧 | ❌ |",
       "",
       "## Memory",
       "",
