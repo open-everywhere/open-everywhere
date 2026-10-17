@@ -66,6 +66,7 @@ import { createPacingGate, paceMaybe, renderPacingLine } from "./pacing.js";
 import { summariseTimings, writeTimingsRecords, type TimingsRecord } from "./timings-record.js";
 import { fmtMs } from "./transcript-timings.js";
 import { scenarioFailureMessage } from "./failure-message.js";
+import { exitAfterFlush } from "../exit-after-flush.js";
 
 const WAKE_EVIDENCE_LIMIT = 1000;
 const WAKE_EVIDENCE_TIMEOUT_MS = 20_000;
@@ -263,11 +264,11 @@ async function main(): Promise<void> {
     .toLowerCase();
   if (releaseIdx !== -1 && !releaseRaw) {
     console.error(`✗ --release-scope needs one of: ${RELEASE_SCOPE_NAMES.join(", ")}`);
-    process.exit(1);
+    await exitAfterFlush(1);
   }
   if (releaseRaw && !RELEASE_SCOPE_NAMES.includes(releaseRaw as ReleaseScopeName)) {
     console.error(`✗ release scope "${releaseRaw}" is not one of: ${RELEASE_SCOPE_NAMES.join(", ")}`);
-    process.exit(1);
+    await exitAfterFlush(1);
   }
   const releaseScope = releaseRaw as ReleaseScopeName | undefined;
   const releaseRows = releaseScope ? releaseScopeRows(releaseScope) : undefined;
@@ -288,14 +289,14 @@ async function main(): Promise<void> {
           `duplicate=${problems.duplicate.join(",") || "none"}; invalid-equivalent=${problems.invalidEquivalent.join(",") || "none"}; ` +
           `invalid-reason=${problems.invalidReason.join(",") || "none"}; invalid-phase=${problems.invalidPhase.join(",") || "none"}`,
       );
-      process.exit(1);
+      await exitAfterFlush(1);
     }
     if (only.size > 0 || (process.env.E2E_SURFACES ?? "").trim() || !["", "core", "full"].includes((process.env.E2E_SUITE ?? "").trim().toLowerCase())) {
       console.error(
         `✗ E2E_RELEASE_SCOPE=${releaseScope} cannot be combined with --only/E2E_ONLY, E2E_SURFACES, or a non-core E2E_SUITE; ` +
           "the reviewed scope itself is the complete selector.",
       );
-      process.exit(1);
+      await exitAfterFlush(1);
     }
     console.log(`release scope=${releaseScope}: ${releaseRows.filter((row) => row.requirement === "REQUIRED").length} REQUIRED, ${releaseRows.filter((row) => row.requirement === "NON_LAUNCH").length} NON_LAUNCH`);
   }
@@ -304,7 +305,7 @@ async function main(): Promise<void> {
     const unknown = [...only].filter((id) => !known.has(id));
     if (unknown.length > 0) {
       console.error(`✗ --only names unknown scenario id(s): ${unknown.join(", ")} (known: ${[...known].join(", ")})`);
-      process.exit(1);
+      await exitAfterFlush(1);
     }
     console.log(`selective run: ${[...only].join(", ")}`);
   }
@@ -313,7 +314,7 @@ async function main(): Promise<void> {
   const KNOWN_SUITES = new Set(["", "smoke", "core", "full"]);
   if (!KNOWN_SUITES.has(suiteRaw)) {
     console.error(`✗ E2E_SUITE="${suiteRaw}" is not one of: smoke, core, full`);
-    process.exit(1);
+    await exitAfterFlush(1);
   }
   const suiteSel = suiteRaw === "full" ? "core" : suiteRaw || "core";
   const surfaceFilter = new Set(
@@ -326,7 +327,7 @@ async function main(): Promise<void> {
   const unknownSurfaces = [...surfaceFilter].filter((s) => !KNOWN_SURFACES.has(s));
   if (unknownSurfaces.length > 0) {
     console.error(`✗ E2E_SURFACES names unknown surface(s): ${unknownSurfaces.join(", ")} (known: ${[...KNOWN_SURFACES].join(", ")})`);
-    process.exit(1);
+    await exitAfterFlush(1);
   }
   if (suiteSel !== "core" || surfaceFilter.size > 0) {
     console.log(`suite=${suiteSel}${surfaceFilter.size > 0 ? `; surfaces=${[...surfaceFilter].join(",")}` : ""}`);
@@ -594,7 +595,7 @@ async function main(): Promise<void> {
       `✗ e2e driver pack: the board does not match the roster — missing rows: ${gaps.missing.join(", ") || "none"}; ` +
         `rows for unknown ids: ${gaps.unknown.join(", ") || "none"}. Every scenario must reach the board exactly once.`,
     );
-    process.exit(1);
+    await exitAfterFlush(1);
   }
   let releaseScopeFailed = false;
   if (releaseScope) {
@@ -640,7 +641,7 @@ async function main(): Promise<void> {
         `matching nothing, or a capability gap against what the roster actually requires.`,
     );
     console.error(`  skip breakdown: ${renderSkipBreakdown(skipCounts)}`);
-    process.exit(1);
+    await exitAfterFlush(1);
   }
 
   const costTarget = (process.env.E2E_TARGET_URL ?? "").trim();
@@ -740,12 +741,12 @@ async function main(): Promise<void> {
   if (skipped > 0) console.log(`  skip breakdown: ${renderSkipBreakdown(skipCounts)}`);
   if (failed > 0 || modelRoutingFailed || releaseScopeFailed) {
     console.error(`✗ e2e driver pack: ${summary}`);
-    process.exit(1);
+    await exitAfterFlush(1);
   }
   console.log(`✓ e2e driver pack: ${summary}`);
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error(`✗ e2e driver pack crashed: ${String(err)}`);
-  process.exit(1);
+  await exitAfterFlush(1);
 });

@@ -7,7 +7,7 @@ import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rm
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { npmCommand } from "./npm-command.js";
+import { type ChildResult, finishedRun, IncompleteChildRun, npmCommand } from "./npm-command.js";
 import { BOOTSTRAP_PREFIX, bootstrapCommands, compareVersions } from "../packages/core/scripts/upgrade-notes.js";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -39,8 +39,11 @@ function run(command: string, args: readonly string[], cwd: string, env?: NodeJS
     const output = execFileSync(command, [...args], { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 });
     return { status: 0, output };
   } catch (err) {
-    const e = err as { status?: number; stdout?: string; stderr?: string };
-    return { status: e.status ?? 1, output: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+    const e = err as ChildResult & { stdout?: string; stderr?: string };
+    const output = `${e.stdout ?? ""}${e.stderr ?? ""}`;
+    const status = finishedRun(e, `${command} ${args.join(" ")}`).status;
+    if (output.includes("INCOMPLETE RUN —")) throw new IncompleteChildRun(`${command} ${args.join(" ")} reported a step that did not finish`, output);
+    return { status, output };
   }
 }
 
@@ -122,7 +125,12 @@ const io = {
       console.log("DRIVER install: the NEW core replaced the OLD one");
       return 0;
     }
-    if (args.includes("upgrade-codemods")) return spawnSync(command, args, { cwd, stdio: "inherit" }).status ?? 1;
+    if (args.includes("upgrade-codemods")) {
+      const r = spawnSync(command, args, { cwd, stdio: "inherit" });
+      // A step that did not finish is not a failed step (OPE-2509): say so, rather than hand the upgrade an exit code.
+      if (r.status === null || (r.status >= 129 && r.status <= 143)) throw new Error("INCOMPLETE RUN — oe upgrade-codemods did not finish (exit " + r.status + ", signal " + r.signal + (r.error ? ", " + r.error.message : "") + ")");
+      return r.status;
+    }
     console.log("DRIVER skipped: " + args.join(" "));
     return 0;
   },
@@ -282,7 +290,12 @@ const io = {
   out: (l) => console.log(l),
   err: (l) => console.error(l),
   registry: { latestVersion: async () => target, evePeer: async () => eve },
-  run: (command, args, cwd) => spawnSync(command, args, { cwd, stdio: "inherit" }).status ?? 1,
+  run: (command, args, cwd) => {
+    const r = spawnSync(command, args, { cwd, stdio: "inherit" });
+    // A step that did not finish is not a failed step (OPE-2509): say so, rather than hand the upgrade an exit code.
+    if (r.status === null || (r.status >= 129 && r.status <= 143)) throw new Error("INCOMPLETE RUN — " + command + " " + args.join(" ") + " did not finish (exit " + r.status + ", signal " + r.signal + (r.error ? ", " + r.error.message : "") + ")");
+    return r.status;
+  },
 };
 process.exit(await runUpgradeCommand(["--to", target], io, app));
 `;

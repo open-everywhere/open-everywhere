@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { tsxCommand } from "./npm-command.js";
+import { finishedRun, tsxCommand } from "./npm-command.js";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -196,7 +196,7 @@ check("deploy:cloud-proof-verify CLI: exit 0 on a complete fanned-out series, ex
     const run = (lines: string[]): number => {
       const file = join(dir, "evidence.txt");
       writeFileSync(file, lines.join("\n"));
-      return spawnSync(...tsxCommand(root, [join(root, "scripts", "deploy", "cloud-proof-verify.ts"), file]), { encoding: "utf8" }).status ?? -1;
+      return finishedRun(spawnSync(...tsxCommand(root, [join(root, "scripts", "deploy", "cloud-proof-verify.ts"), file]), { encoding: "utf8" }), "cloud-proof-verify.ts").status;
     };
     assert.equal(run([...mainRun(), ...series(4)]), 0, "a complete green series verifies pass");
     assert.equal(run([...mainRun(), ...series(4).slice(0, 3)]), 1, "🔴 a partial series exits 1");

@@ -14,6 +14,7 @@ import {
 } from "../agent/memory/root-fence.js";
 import { lockCommand } from "../agent/memory/readonly.js";
 import { posixWriteBitsAbsentReason, withoutDacOverride, writeBitsBite } from "../../../scripts/dac-fence.js";
+import { finishedRun, type ChildResult } from "../../../scripts/npm-command.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -75,7 +76,7 @@ async function runMeasurement(): Promise<number> {
         execFileSync("/bin/sh", ["-c", `mkdir -p '${dirname(path)}' && cat > '${path}'`], { input: content, stdio: ["pipe", "pipe", "pipe"] });
         return 0;
       } catch (err) {
-        return (err as { status?: number }).status ?? 1;
+        return finishedRun(err as ChildResult, "the docker-backend write").status;
       }
     };
     ok(dockerWrite(join(root, "unowned-docker", "stolen.md"), "x") !== 0, "docker: creating a NEW silo directory under the fenced root fails");

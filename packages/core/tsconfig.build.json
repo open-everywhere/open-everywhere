@@ -29,6 +29,7 @@
   "include": [
     "agent/**/*.ts",
     "scripts/oe-cli.ts",
+    "scripts/exit-after-flush.ts",
     "scripts/code-fingerprint.ts",
     "scripts/eve-framework-tools.ts",
     "scripts/oe-wrap-untrusted.ts",

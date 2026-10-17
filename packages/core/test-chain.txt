@@ -522,3 +522,4 @@ test:personal-browser-teach
 test:bot-ask
 test:reader-instructions
 test:agent-setup
+test:exit-after-flush

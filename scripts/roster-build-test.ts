@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { finishedRun, type ChildResult } from "./npm-command.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -32,8 +33,8 @@ function oe(...args: string[]): { code: number; out: string } {
     const out = execFileSync(process.execPath, [TSX_CLI, CLI, "build", ...args], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
     return { code: 0, out };
   } catch (err) {
-    const e = err as { status?: number; stdout?: string; stderr?: string };
-    return { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+    const e = err as ChildResult & { stdout?: string; stderr?: string };
+    return { code: finishedRun(e, "`oe build`").status, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
   }
 }
 
@@ -195,8 +196,8 @@ write(
       const out = execFileSync(process.execPath, [TSX_CLI, CLI, "overlays", ...args], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
       return { code: 0, out };
     } catch (err) {
-      const e = err as { status?: number; stdout?: string; stderr?: string };
-      return { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+      const e = err as ChildResult & { stdout?: string; stderr?: string };
+      return { code: finishedRun(e, "`oe overlays`").status, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
     }
   };
   const GRANTS = "agent/access/grants.generated.ts";

@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { finishedRun } from "./npm-command.js";
 
 import {
   checkProviderEvents,
@@ -107,7 +108,7 @@ try {
 
   const run = (args: readonly string[]): { status: number; out: string } => {
     const r = spawnSync(process.execPath, [TSX, GATE, ...args], { cwd: root, encoding: "utf8" });
-    return { status: r.status ?? -1, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
+    return { status: finishedRun(r, "the provider-events gate").status, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
   };
 
   const green = run(["--check"]);

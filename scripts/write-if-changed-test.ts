@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeFileIfChanged } from "./write-if-changed.js";
+import { finishedRun } from "./npm-command.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
@@ -38,7 +39,7 @@ function generatedOutputs(root: string): string[] {
 
 function run(script: string, args: readonly string[] = []): { status: number; stdout: string; stderr: string } {
   const r = spawnSync(process.execPath, [TSX, script, ...args], { encoding: "utf8", cwd: ROOT });
-  return { status: r.status ?? -1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+  return { status: finishedRun(r, "the generator").status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
 }
 
 const TRACKED = generatedOutputs(ROOT);

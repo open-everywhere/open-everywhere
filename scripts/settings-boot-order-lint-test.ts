@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { finishedRun } from "./npm-command.js";
 import {
   EAGER_SETTINGS_READ_ALLOWLIST,
   auditEagerReads,
@@ -29,7 +30,7 @@ function lint(...args: string[]): { code: number; out: string } {
     encoding: "utf8",
     env: { ...process.env, NODE_NO_WARNINGS: "1" },
   });
-  return { code: r.status ?? -1, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
+  return { code: finishedRun(r, "the settings boot-order lint").status, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
 }
 
 function stack(...frames: string[]): string {

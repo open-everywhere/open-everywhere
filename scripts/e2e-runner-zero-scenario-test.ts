@@ -1,32 +1,47 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { tsxCommand } from "./npm-command.js";
+import { finishedRun, IncompleteChildRun, tsxCommand, type ChildResult } from "./npm-command.js";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+let lastOut = "";
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
-  assert.ok(cond, label);
+  assert.ok(cond, cond ? label : `${label}\n--- the runner's output for this run ---\n${lastOut}`);
   n++;
 };
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER = join(REPO, "packages/core/scripts/e2e/runner.ts");
 const [TSX, TSX_ARGS] = tsxCommand(REPO, [RUNNER]);
+const RUN_TIMEOUT_MS = 120_000;
 
-function run(env: Record<string, string>): { code: number; out: string } {
+function run(env: Record<string, string>, timeout = RUN_TIMEOUT_MS): { code: number; out: string } {
   try {
     const out = execFileSync(TSX, TSX_ARGS, {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       env: { PATH: process.env.PATH ?? "", ...env },
-      timeout: 30_000,
+      timeout,
     });
+    lastOut = out;
     return { code: 0, out };
   } catch (err) {
-    const e = err as { status?: number | null; stdout?: string; stderr?: string };
-    return { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+    const e = err as ChildResult & { stdout?: string; stderr?: string };
+    lastOut = `${e.stdout ?? ""}${e.stderr ?? ""}`;
+    return { code: finishedRun(e, "the e2e runner").status, out: lastOut };
   }
+}
+
+{
+  let thrown: unknown;
+  try {
+    run({ E2E_RELEASE_SCOPE: "launch" }, 100);
+  } catch (err) {
+    thrown = err;
+  }
+  ok(thrown instanceof IncompleteChildRun, `🔴 a runner killed at its ceiling THROWS IncompleteChildRun, never a graded { code, out } — got ${String(thrown)}`);
+  ok(thrown instanceof IncompleteChildRun && /INCOMPLETE RUN — the e2e runner timed out/.test(thrown.message), "…and the error says the run timed out, in plain words");
 }
 
 {

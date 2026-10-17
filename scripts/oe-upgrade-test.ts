@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { lockfileEntriesToDrop, runUpgradeCommand, type UpgradeIo, type UpgradeRegistry } from "../packages/core/scripts/oe-upgrade.js";
+import { finishedRun, type ChildResult } from "./npm-command.js";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = join(REPO, "packages/core/scripts/oe-cli.ts");
@@ -890,8 +891,8 @@ const FULL_SET = ["core", "adapters", "provider-slack", "create"].map((n) => ({
   try {
     output = execFileSync(process.execPath, [TSX_CLI, CLI, "upgrade", "--to", "0.0.1"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   } catch (err) {
-    const e = err as { status?: number; stdout?: string; stderr?: string };
-    status = e.status ?? 1;
+    const e = err as ChildResult & { stdout?: string; stderr?: string };
+    status = finishedRun(e, "`oe upgrade --to 0.0.1`").status;
     output = `${e.stdout ?? ""}${e.stderr ?? ""}`;
   }
   ok(status === 1, `🔴 \`oe upgrade\` is REACHABLE through the oe bin — exit 1 on the downgrade, got ${status}`);
@@ -905,8 +906,8 @@ const FULL_SET = ["core", "adapters", "provider-slack", "create"].map((n) => ({
       const output = execFileSync(process.execPath, [TSX_CLI, CLI, ...args], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
       return { status: 0, output };
     } catch (err) {
-      const e = err as { status?: number; stdout?: string; stderr?: string };
-      return { status: e.status ?? 1, output: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+      const e = err as ChildResult & { stdout?: string; stderr?: string };
+      return { status: finishedRun(e, `oe ${args.join(" ")}`).status, output: `${e.stdout ?? ""}${e.stderr ?? ""}` };
     }
   };
   const unknown = runCli(["upgrade-codemods", "nobody-wrote-this"]);

@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { finishedRun, type ChildResult } from "../../../scripts/npm-command.js";
 import { EVE_PATCH_PARTS, _resetEvePatchTurnCheckForTest, assertEvePatchedAtTurn, type MarkerGlobals } from "../agent/access/eve-patch-probe.js";
 
 let n = 0;
@@ -74,8 +75,8 @@ function bootAgainstFarm(): { status: number; output: string } {
     });
     return { status: 0, output: String(out) };
   } catch (err) {
-    const e = err as { status?: number; stdout?: Buffer | string; stderr?: Buffer | string };
-    return { status: typeof e.status === "number" ? e.status : -1, output: `${String(e.stdout ?? "")}\n${String(e.stderr ?? "")}` };
+    const e = err as ChildResult;
+    return { status: finishedRun(e, "the probe boot").status, output: `${String(e.stdout ?? "")}\n${String(e.stderr ?? "")}` };
   }
 }
 

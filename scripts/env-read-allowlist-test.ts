@@ -12,6 +12,7 @@ import {
   type EnvAllowlist,
 } from "./env-read-allowlist.js";
 import { collectExportedNameConstants, dynamicSiteKey, processEnvAliases, scanAliasDotReads, scanComputedEnvReads } from "./env-read-scan.js";
+import { finishedRun } from "./npm-command.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const LINT = join(root, "scripts", "env-docs-lint.ts");
@@ -51,7 +52,7 @@ function lint(cwd: string): { code: number; out: string } {
     encoding: "utf8",
     env: { ...process.env, NODE_NO_WARNINGS: "1" },
   });
-  return { code: r.status ?? -1, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
+  return { code: finishedRun(r, "the env-read allowlist lint").status, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
 }
 
 function synthetic(entries: Record<string, AllowEntry>): EnvAllowlist {

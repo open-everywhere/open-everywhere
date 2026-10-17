@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { npxCommand } from "./npm-command.js";
+import { type ChildResult, finishedRun, npxCommand } from "./npm-command.js";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -253,8 +253,8 @@ const PAGE = [
       const out = execFileSync(...npxCommand(["tsx", MATRIX_CLI, "--root", root, "--check"]), { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
       return { code: 0, out };
     } catch (err) {
-      const e = err as { status?: number; stdout?: string; stderr?: string };
-      return { code: e.status ?? -1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+      const e = err as ChildResult & { stdout?: string; stderr?: string };
+      return { code: finishedRun(e, "the coverage-matrix CLI").status, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
     }
   };
   const header = "| Id | Behaviour | Tested by |\n| --- | --- | --- |\n";

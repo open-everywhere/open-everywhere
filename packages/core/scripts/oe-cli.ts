@@ -14,6 +14,7 @@ import {
 } from "../agent/scaffold/roster-plan.js";
 import { SLOT_DIR } from "../agent/scaffold/roster-config.js";
 import { readEveFrameworkTools } from "./eve-framework-tools.js";
+import { exitAfterFlush } from "./exit-after-flush.js";
 import { APP_CODE_FINGERPRINT_MODULE, writeAppCodeFingerprint } from "./code-fingerprint.js";
 import {
   CONFIG_FILE,
@@ -65,14 +66,6 @@ if (subcommand === "wrap-untrusted") {
 } else {
   console.error(`oe: unknown subcommand "${subcommand}". Known: build, env, overlays, upgrade, secret, wrap-untrusted.`);
   process.exit(2);
-}
-
-async function exitAfterFlush(code: number): Promise<never> {
-  process.stdout.once("error", () => process.exit(code));
-  process.stderr.once("error", () => process.exit(code));
-  await new Promise<void>((done) => process.stdout.write("", () => done()));
-  await new Promise<void>((done) => process.stderr.write("", () => done()));
-  process.exit(code);
 }
 
 function flagValue(args: readonly string[], name: string): string | undefined {

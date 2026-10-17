@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { npmCommand } from "./npm-command.js";
+import { finishedRun, npmCommand } from "./npm-command.js";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CORE_DIR = join(REPO, "packages", "core");
@@ -40,12 +40,19 @@ const scratch = mkdtempSync(join(tmpdir(), "oe-bin-packed-"));
 const keep = process.argv.includes("--keep");
 
 function run(command: string, args: readonly string[], cwd: string, env: NodeJS.ProcessEnv): Promise<{ status: number; output: string }> {
-  return new Promise((done) => {
+  return new Promise((done, fail) => {
     const child = spawn(command, [...args], { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
     let output = "";
     child.stdout.on("data", (c: Buffer) => (output += c.toString("utf8")));
     child.stderr.on("data", (c: Buffer) => (output += c.toString("utf8")));
-    child.on("close", (code) => done({ status: code ?? 1, output }));
+    child.on("error", fail);
+    child.on("close", (code, signal) => {
+      try {
+        done({ status: finishedRun({ status: code, signal, stdout: output }, `${command} ${args.join(" ")}`).status, output });
+      } catch (err) {
+        fail(err);
+      }
+    });
   });
 }
 

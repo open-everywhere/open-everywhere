@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { tsxCommand } from "./npm-command.js";
+import { finishedRun, tsxCommand } from "./npm-command.js";
 import { mkdtempSync, mkdirSync, existsSync, globSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -144,11 +144,18 @@ function spawnWrapper(args: string[], env: Record<string, string>): Promise<numb
       cwd: repoRoot,
       env: { PATH: process.env.PATH ?? "", ...env },
     });
+    let stdout = "";
     let stderr = "";
+    child.stdout?.on("data", (d) => (stdout += String(d)));
     child.stderr?.on("data", (d) => (stderr += String(d)));
     child.on("error", reject);
-    child.on("exit", (code, signal) => resolve(code ?? (signal ? 1 : 0)));
-    void stderr;
+    child.on("close", (code, signal) => {
+      try {
+        resolve(finishedRun({ status: code, signal, stdout, stderr }, "the suite-lock wrapper").status);
+      } catch (err) {
+        reject(err);
+      }
+    });
   });
 }
 

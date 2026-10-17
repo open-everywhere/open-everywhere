@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { evePatchFileName, evePatchTargets, missingEveMarkers } from "../packages/core/agent/publish/eve-patch-pack.js";
-import { npmCommand } from "./npm-command.js";
+import { type ChildResult, finishedRun, npmCommand } from "./npm-command.js";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CORE_DIR = join(REPO, "packages", "core");
@@ -63,8 +63,8 @@ function run(
     const output = execFileSync(command, [...args], { cwd, ...(env === undefined ? {} : { env }), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 });
     return { status: 0, output };
   } catch (err) {
-    const e = err as { status?: number; stdout?: string; stderr?: string };
-    return { status: e.status ?? 1, output: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+    const e = err as ChildResult & { stdout?: string; stderr?: string };
+    return { status: finishedRun(e, `${command} ${args.join(" ")}`).status, output: `${e.stdout ?? ""}${e.stderr ?? ""}` };
   }
 }
 

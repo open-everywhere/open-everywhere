@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { collectShaPins } from "./scenario-pin-lint-lib.js";
+import { finishedRun } from "./npm-command.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const LINT = join(root, "scripts", "scenario-pin-lint.ts");
@@ -22,7 +23,7 @@ function lint(...args: string[]): { code: number; out: string } {
     encoding: "utf8",
     env: { ...process.env, NODE_NO_WARNINGS: "1" },
   });
-  return { code: r.status ?? -1, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
+  return { code: finishedRun(r, "the scenario-pin lint").status, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
 }
 
 function fixtureDir(files: Record<string, string>): string {

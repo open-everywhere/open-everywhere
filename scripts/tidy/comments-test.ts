@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { finishedRun } from "../npm-command.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COMMENTS = join(HERE, "comments.mjs");
@@ -39,7 +40,7 @@ interface Run {
 
 function tidy(cwd: string, args: string[]): Run {
   const r = spawnSync(process.execPath, [COMMENTS, ...args], { cwd, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
-  return { status: r.status ?? -1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+  return { status: finishedRun(r, "the comments tidy CLI").status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
 }
 
 function scratchRepo(): string {

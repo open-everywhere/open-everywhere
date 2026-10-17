@@ -3733,6 +3733,7 @@
     "test:memory-resolve": "tsx scripts/memory-resolve-test.ts",
     "test:memory-write-fence": "NODE_NO_WARNINGS=1 tsx scripts/memory-write-fence-test.ts",
     "test:memory-root-fence": "NODE_NO_WARNINGS=1 tsx scripts/memory-root-fence-test.ts",
+    "test:exit-after-flush": "NODE_NO_WARNINGS=1 tsx scripts/exit-after-flush-test.ts",
     "test:memory-credential-seam": "tsx scripts/memory-credential-seam-test.ts",
     "test:model-routing": "NODE_NO_WARNINGS=1 tsx scripts/model-routing-test.ts",
     "test:model-policy": "NODE_NO_WARNINGS=1 tsx scripts/model-policy-test.ts",

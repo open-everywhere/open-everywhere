@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { DocEntry } from "@open-everywhere/core/agent/docs/registry.js";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { finishedRun } from "./npm-command.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
@@ -29,7 +30,7 @@ function git(cwd: string, args: readonly string[]): { status: number; out: strin
     ["-c", "user.name=oe-test", "-c", "user.email=oe-test@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", ...args],
     { cwd, encoding: "utf8" },
   );
-  return { status: r.status ?? -1, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
+  return { status: finishedRun(r, `git ${args.join(" ")}`).status, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
 }
 
 function mustGit(cwd: string, args: readonly string[]): string {
@@ -40,7 +41,7 @@ function mustGit(cwd: string, args: readonly string[]): string {
 
 function generate(root: string, check: boolean): { status: number; out: string } {
   const r = spawnSync(process.execPath, [TSX, DOCS_GENERATE, "--root", root, ...(check ? ["--check"] : [])], { encoding: "utf8", cwd: ROOT });
-  return { status: r.status ?? -1, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
+  return { status: finishedRun(r, "docs-generate").status, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
 }
 
 function pickLines(lines: readonly string[]): [number, number] {

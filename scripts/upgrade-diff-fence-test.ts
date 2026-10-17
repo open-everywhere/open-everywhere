@@ -1,12 +1,13 @@
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PROTECTED_PATH_RULES, checkManifestPaths } from "./upgrade-fence/manifest.js";
 import { OVERRIDE_REMEDY, formatUpgradeFenceReport, judgeUpgradeDiff, ruleFor } from "./upgrade-fence/judge.js";
 import { FenceFetchTimeoutError, listPullRequestFiles, type FenceFetchFn } from "./upgrade-fence/pr-files.js";
+import { finishedRun } from "./npm-command.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const problems: string[] = [];
@@ -240,75 +241,89 @@ const MARKED_BODY = "Bumps eve.\n\noe-upgrade: 111111111111111111111111111111111
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const port = (server.address() as { port: number }).port;
+  try {
 
-  const runDriver = (eventPath: string, token: string): Promise<{ code: number; out: string }> =>
-    new Promise((resolve) => {
-      execFile(
-        process.execPath,
-        [TSX, DRIVER],
-        {
-          cwd: ROOT,
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            GITHUB_EVENT_NAME: "pull_request",
-            GITHUB_EVENT_PATH: eventPath,
-            GITHUB_REPOSITORY: "acme/oe",
-            GITHUB_TOKEN: token,
-            GITHUB_API_URL: `http://127.0.0.1:${port}`,
+    const runDriver = (eventPath: string, token: string): Promise<{ code: number; out: string }> =>
+      new Promise((resolve, reject) => {
+        execFile(
+          process.execPath,
+          [TSX, DRIVER],
+          {
+            cwd: ROOT,
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              GITHUB_EVENT_NAME: "pull_request",
+              GITHUB_EVENT_PATH: eventPath,
+              GITHUB_REPOSITORY: "acme/oe",
+              GITHUB_TOKEN: token,
+              GITHUB_API_URL: `http://127.0.0.1:${port}`,
+            },
           },
-        },
-        (err, stdout, stderr) => {
-          const code = err ? ((err as { code?: number }).code ?? -1) : 0;
-          resolve({ code, out: `${stdout}${stderr}` });
-        },
-      );
-    });
+          (err, stdout, stderr) => {
+            const e = err as (Error & { code?: number | string | null; signal?: NodeJS.Signals | null }) | null;
+            const result = {
+              status: e ? (typeof e.code === "number" ? e.code : null) : 0,
+              signal: e?.signal ?? null,
+              ...(typeof e?.code === "string" ? { error: Object.assign(e, { code: e.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" ? "ENOBUFS" : e.code }) } : {}),
+              stdout,
+              stderr,
+            };
+            try {
+              resolve({ code: finishedRun(result, "the upgrade-fence driver").status, out: `${stdout}${stderr}` });
+            } catch (incomplete) {
+              reject(incomplete);
+            }
+          },
+        );
+      });
 
-  const run = async (
-    caseName: string,
-    changed: string[],
-    user: { login: string; type: string },
-    body: string,
-  ): Promise<{ code: number; out: string }> => {
-    files = changed.map((filename) => ({ filename }));
-    const eventPath = join(tmp, `${caseName}.json`);
-    writeFileSync(eventPath, JSON.stringify({ pull_request: { number: 7, title: "chore: upgrade", body, user } }));
-    return runDriver(eventPath, "test-token");
-  };
+    const run = async (
+      caseName: string,
+      changed: string[],
+      user: { login: string; type: string },
+      body: string,
+    ): Promise<{ code: number; out: string }> => {
+      files = changed.map((filename) => ({ filename }));
+      const eventPath = join(tmp, `${caseName}.json`);
+      writeFileSync(eventPath, JSON.stringify({ pull_request: { number: 7, title: "chore: upgrade", body, user } }));
+      return runDriver(eventPath, "test-token");
+    };
 
-  const BOT_USER = { login: "open-everywhere[bot]", type: "Bot" };
-  const PERSON_USER = { login: "example-owner", type: "User" };
+    const BOT_USER = { login: "open-everywhere[bot]", type: "Bot" };
+    const PERSON_USER = { login: "example-owner", type: "User" };
 
-  const red = await run("refuse", [...CLEAN_UPGRADE_DIFF, "packages/core/agent/approvals/session-grant.ts"], BOT_USER, MARKED_BODY);
-  if (red.code !== 1) fail(`5: the job must EXIT 1 on an access-plane diff — got exit ${red.code}\n${red.out}`);
-  if (!red.out.includes("REFUSED")) fail(`5: the refusal must say so in the job log — got:\n${red.out}`);
-  if (!red.out.includes("::error file=packages/core/agent/approvals/session-grant.ts::")) {
-    fail(`5: the refusal must annotate the offending file — got:\n${red.out}`);
+    const red = await run("refuse", [...CLEAN_UPGRADE_DIFF, "packages/core/agent/approvals/session-grant.ts"], BOT_USER, MARKED_BODY);
+    if (red.code !== 1) fail(`5: the job must EXIT 1 on an access-plane diff — got exit ${red.code}\n${red.out}`);
+    if (!red.out.includes("REFUSED")) fail(`5: the refusal must say so in the job log — got:\n${red.out}`);
+    if (!red.out.includes("::error file=packages/core/agent/approvals/session-grant.ts::")) {
+      fail(`5: the refusal must annotate the offending file — got:\n${red.out}`);
+    }
+
+    const green = await run("pass", CLEAN_UPGRADE_DIFF, BOT_USER, MARKED_BODY);
+    if (green.code !== 0) fail(`5: a clean upgrade diff must EXIT 0 — got exit ${green.code}\n${green.out}`);
+    if (green.out.includes("REFUSED")) fail(`5: negative control — the clean run must not print a refusal:\n${green.out}`);
+    if (!green.out.includes("no protected path changed")) fail(`5: the clean run must say what it checked — got:\n${green.out}`);
+
+    const person = await run("person-refuse", ["agent/access/bundles.ts"], PERSON_USER, "hand-written config change");
+    if (person.code !== 1) fail(`5: a PERSON-authored protected-path change must EXIT 1 — the fence reads no author since OPE-1315. Got exit ${person.code}\n${person.out}`);
+    if (!person.out.includes("REFUSED")) fail(`5: the person-authored refusal must say REFUSED in the job log — got:\n${person.out}`);
+    if (!person.out.includes(OVERRIDE_REMEDY)) fail(`5: the person-authored refusal must name the remedy "${OVERRIDE_REMEDY}" — got:\n${person.out}`);
+    if (!person.out.includes("::error file=agent/access/bundles.ts::")) fail(`5: the person-authored refusal must annotate the file as an ERROR — got:\n${person.out}`);
+    if (person.out.includes("::warning file=")) fail(`5: the warn lane is deleted — no annotation may be a warning:\n${person.out}`);
+
+    const personClean = await run("person-pass", CLEAN_UPGRADE_DIFF, PERSON_USER, "hand-written config change");
+    if (personClean.code !== 0) fail(`5: a person's clean diff must still EXIT 0 — got exit ${personClean.code}\n${personClean.out}`);
+
+    files = CLEAN_UPGRADE_DIFF.map((filename) => ({ filename }));
+    const eventPath = join(tmp, "notoken.json");
+    writeFileSync(eventPath, JSON.stringify({ pull_request: { number: 7, title: "t", body: "", user: { login: "x", type: "User" } } }));
+    const noToken = await runDriver(eventPath, "");
+    if (noToken.code !== 1) fail(`5: a fence with no credential must EXIT 1, not report clean — got exit ${noToken.code}\n${noToken.out}`);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    rmSync(tmp, { recursive: true, force: true });
   }
-
-  const green = await run("pass", CLEAN_UPGRADE_DIFF, BOT_USER, MARKED_BODY);
-  if (green.code !== 0) fail(`5: a clean upgrade diff must EXIT 0 — got exit ${green.code}\n${green.out}`);
-  if (green.out.includes("REFUSED")) fail(`5: negative control — the clean run must not print a refusal:\n${green.out}`);
-  if (!green.out.includes("no protected path changed")) fail(`5: the clean run must say what it checked — got:\n${green.out}`);
-
-  const person = await run("person-refuse", ["agent/access/bundles.ts"], PERSON_USER, "hand-written config change");
-  if (person.code !== 1) fail(`5: a PERSON-authored protected-path change must EXIT 1 — the fence reads no author since OPE-1315. Got exit ${person.code}\n${person.out}`);
-  if (!person.out.includes("REFUSED")) fail(`5: the person-authored refusal must say REFUSED in the job log — got:\n${person.out}`);
-  if (!person.out.includes(OVERRIDE_REMEDY)) fail(`5: the person-authored refusal must name the remedy "${OVERRIDE_REMEDY}" — got:\n${person.out}`);
-  if (!person.out.includes("::error file=agent/access/bundles.ts::")) fail(`5: the person-authored refusal must annotate the file as an ERROR — got:\n${person.out}`);
-  if (person.out.includes("::warning file=")) fail(`5: the warn lane is deleted — no annotation may be a warning:\n${person.out}`);
-
-  const personClean = await run("person-pass", CLEAN_UPGRADE_DIFF, PERSON_USER, "hand-written config change");
-  if (personClean.code !== 0) fail(`5: a person's clean diff must still EXIT 0 — got exit ${personClean.code}\n${personClean.out}`);
-
-  files = CLEAN_UPGRADE_DIFF.map((filename) => ({ filename }));
-  const eventPath = join(tmp, "notoken.json");
-  writeFileSync(eventPath, JSON.stringify({ pull_request: { number: 7, title: "t", body: "", user: { login: "x", type: "User" } } }));
-  const noToken = await runDriver(eventPath, "");
-  if (noToken.code !== 1) fail(`5: a fence with no credential must EXIT 1, not report clean — got exit ${noToken.code}\n${noToken.out}`);
-
-  await new Promise<void>((resolve) => server.close(() => resolve()));
 }
 
 {

@@ -30,14 +30,55 @@ export function tsxCommand(repoRoot: string, args: readonly string[]): [string, 
   return [process.execPath, [join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs"), ...args]];
 }
 
-export function spawnFailure(
-  result: { status: number | null; signal?: NodeJS.Signals | null; error?: (Error & { code?: unknown }) | undefined },
-  label: string,
-): string | undefined {
+export interface ChildResult {
+  status?: number | null;
+  signal?: NodeJS.Signals | null;
+  error?: (Error & { code?: unknown }) | undefined;
+  stdout?: string | Buffer | null;
+  stderr?: string | Buffer | null;
+}
+
+export function spawnFailure(result: Pick<ChildResult, "status" | "signal" | "error">, label: string): string | undefined {
+  const signal = result.signal ? ` (signal ${result.signal})` : "";
   if (result.error) {
-    const code = typeof result.error.code === "string" ? ` (${result.error.code})` : "";
-    return `${label} did not start${code}: ${result.error.message}`;
+    const code = typeof result.error.code === "string" ? result.error.code : undefined;
+    if (code === "ETIMEDOUT") return `${label} timed out and was killed${signal}`;
+    if (code === "ENOBUFS") return `${label} overflowed its maxBuffer and was killed${signal}`;
+    return `${label} did not start${code ? ` (${code})` : ""}: ${result.error.message}`;
   }
-  if (result.status === null) return `${label} ended without an exit code${result.signal ? ` (signal ${result.signal})` : ""}`;
+  if (result.status == null) return `${label} ended without an exit code${signal}`;
   return undefined;
+}
+
+const RELAYED_SIGNAL_CODES: ReadonlyMap<number, string> = new Map([
+  [129, "SIGHUP"],
+  [130, "SIGINT"],
+  [134, "SIGABRT"],
+  [135, "SIGBUS"],
+  [137, "SIGKILL"],
+  [139, "SIGSEGV"],
+  [143, "SIGTERM"],
+]);
+
+export class IncompleteChildRun extends Error {
+  readonly output: string;
+  constructor(reason: string, output: string) {
+    super(
+      `INCOMPLETE RUN — ${reason}. Its output is cut, so it is not graded as an answer. ` +
+        `Output so far (${output.length} chars):\n${output === "" ? "(none)" : output}`,
+    );
+    this.name = "IncompleteChildRun";
+    this.output = output;
+  }
+}
+
+export function finishedRun(result: ChildResult, label: string): { status: number; stdout: string; stderr: string } {
+  const stdout = String(result.stdout ?? "");
+  const stderr = String(result.stderr ?? "");
+  const relayed = result.status == null ? undefined : RELAYED_SIGNAL_CODES.get(result.status);
+  const reason =
+    spawnFailure(result, label) ??
+    (relayed ? `${label} exited ${result.status}, the code a wrapper relays for ${relayed} — the script itself was killed` : undefined);
+  if (reason !== undefined) throw new IncompleteChildRun(reason, `${stdout}${stderr}`);
+  return { status: result.status!, stdout, stderr };
 }

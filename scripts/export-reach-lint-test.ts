@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { finishedRun } from "./npm-command.js";
 import {
   KNOWN_UNREACHED_EXPORTS,
   auditExportReach,
@@ -49,7 +50,7 @@ function lint(treeRoot: string, ...args: string[]): { code: number; out: string 
     encoding: "utf8",
     env: { ...process.env, NODE_NO_WARNINGS: "1" },
   });
-  return { code: r.status ?? -1, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
+  return { code: finishedRun(r, "the export-reach lint").status, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
 }
 
 try {

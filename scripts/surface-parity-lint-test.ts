@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { finishedRun } from "./npm-command.js";
 
 import {
   SURFACE_CAPABILITIES,
@@ -151,7 +152,7 @@ function problemsFor(rows: Record<string, unknown>, probes?: CapabilityProbe): r
 
 function gate(...args: string[]): { code: number; out: string } {
   const r = spawnSync(process.execPath, [TSX, GATE, ...args], { cwd: root, encoding: "utf8", env: { ...process.env } });
-  return { code: r.status ?? -1, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
+  return { code: finishedRun(r, "the surface-parity gate").status, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
 }
 
 const green = gate("--check");

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NEVER_SHIP_RULES, exitCode, redact, scanNeverShip } from "./publish-preview.js";
+import { finishedRun } from "./npm-command.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PREVIEW = join(root, "scripts", "publish-preview.ts");
@@ -152,7 +153,7 @@ function preview(outDir: string, ...args: string[]): { code: number; out: string
     encoding: "utf8",
     env: { ...process.env, NODE_NO_WARNINGS: "1" },
   });
-  return { code: r.status ?? -1, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
+  return { code: finishedRun(r, "publish-preview").status, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
 }
 
 const scratch: string[] = [];

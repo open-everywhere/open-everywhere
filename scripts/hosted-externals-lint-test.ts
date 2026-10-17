@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { isGeneratedDocsPage } from "./hosted-externals-source-scan.js";
+import { finishedRun } from "./npm-command.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const LINT = join(root, "scripts", "hosted-externals-lint.ts");
@@ -43,7 +44,7 @@ function runLint(treeRoot: string): { code: number; stderr: string } {
     encoding: "utf8",
     env: { ...process.env, NODE_NO_WARNINGS: "1" },
   });
-  return { code: r.status ?? -1, stderr: `${r.stderr ?? ""}${r.stdout ?? ""}` };
+  return { code: finishedRun(r, "the hosted-externals lint").status, stderr: `${r.stderr ?? ""}${r.stdout ?? ""}` };
 }
 
 try {

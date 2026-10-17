@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { finishedRun } from "../../../scripts/npm-command.js";
 import {
   defaultTemplateDir,
   isScaffoldableDir,
@@ -504,7 +505,7 @@ try {
       git("add", "-A");
       const commit = git("-c", "user.name=oe-test", "-c", "user.email=oe-test@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "scaffold");
       ok(commit.status === 0, `golden: the scaffold commits (${commit.stderr.trim()})`);
-      const build = spawnSync(process.execPath, [tsxCli, oeCli, "build", "--accept"], { cwd: app, encoding: "utf8", timeout: 120_000 });
+      const build = finishedRun(spawnSync(process.execPath, [tsxCli, oeCli, "build", "--accept"], { cwd: app, encoding: "utf8", timeout: 120_000 }), "`oe build --accept`");
       ok(build.status === 0, `golden: \`oe build --accept\` succeeds on a fresh scaffold (${(build.stdout + build.stderr).trim().split("\n").slice(-5).join(" | ")})`);
       const status = git("status", "--porcelain").stdout.trim();
       ok(
@@ -513,7 +514,7 @@ try {
           "Fix: scaffold the template, run `oe build --accept` in it, then copy its roster.lock.json (versions back to " +
           `${VERSION_PLACEHOLDER}) and scripts/goldens/roster-plan.txt into packages/create/template/, and review both diffs`,
       );
-      const check = spawnSync(process.execPath, [tsxCli, oeCli, "build", "--check"], { cwd: app, encoding: "utf8", timeout: 120_000 });
+      const check = finishedRun(spawnSync(process.execPath, [tsxCli, oeCli, "build", "--check"], { cwd: app, encoding: "utf8", timeout: 120_000 }), "`oe build --check`");
       ok(check.status === 0, "golden: `oe build --check` passes on the built scaffold, golden included");
     }
   } finally {

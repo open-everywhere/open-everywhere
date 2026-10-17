@@ -3,6 +3,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { finishedRun } from "./npm-command.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const LINT = join(root, "scripts", "overlay-lint.ts");
@@ -47,7 +48,7 @@ function lint(args: readonly string[] = []): { code: number; out: string } {
   });
   const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
   ok(!out.includes(FETCH_GUARD_MARKER), `lint(${JSON.stringify(args)}): no real fetch() escaped the run`);
-  return { code: r.status ?? -1, out };
+  return { code: finishedRun(r, "the overlay lint").status, out };
 }
 
 function withPerturbed(rel: string, mutate: (text: string) => string, fn: (original: string) => void): void {
@@ -157,3 +158,5 @@ for (const [i, rel] of LINT_OVERLAYS.entries()) {
 rmSync(scratchRoot, { recursive: true, force: true });
 
 console.log(`\n✓ overlay drift lint: ${passed} assertions passed (${OVERLAYS.length} machine-owned overlays, perturbed only as scratch copies)\n`);
+
+// proves: AP-MOD-app-identity-groups.generated

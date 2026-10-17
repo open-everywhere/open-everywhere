@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { finishedRun, type ChildResult } from "../../../scripts/npm-command.js";
 
 import { EVE_PATCH_PARTS } from "../agent/access/eve-patch-probe.js";
 import {
@@ -449,8 +450,8 @@ try {
     try {
       return { code: 0, out: execFileSync(process.execPath, [applier], { cwd: project, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }) };
     } catch (err) {
-      const e = err as { status?: number; stdout?: string; stderr?: string };
-      return { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+      const e = err as ChildResult & { stdout?: string; stderr?: string };
+      return { code: finishedRun(e, "the eve patch applier").status, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
     }
   };
   const markerCount = (): number => {

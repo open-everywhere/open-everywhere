@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { finishedRun } from "../../../scripts/npm-command.js";
 import { SETUP_STEPS } from "../src/steps/index.js";
 import { main, parseArgs, scaffoldNodeRefusal } from "../src/cli.js";
 
@@ -22,9 +23,9 @@ const CONFIG_PREFIXES = /^(OE_|SLACK_|E2E_|EVAL_|AI_GATEWAY|DATABASE_URL)/;
 const CLEAN_ENV: NodeJS.ProcessEnv = { ...process.env };
 for (const key of Object.keys(CLEAN_ENV)) if (CONFIG_PREFIXES.test(key)) delete CLEAN_ENV[key];
 
-function runCli(args: readonly string[], cwd: string): { status: number | null; stdout: string; stderr: string } {
+function runCli(args: readonly string[], cwd: string): { status: number; stdout: string; stderr: string } {
   const result = spawnSync(process.execPath, [tsxCli, cliPath, ...args], { cwd, encoding: "utf8", env: { ...CLEAN_ENV }, input: "", timeout: 120_000 });
-  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+  return finishedRun(result, `the create CLI ${args.join(" ")}`);
 }
 
 {
